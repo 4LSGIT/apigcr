@@ -117,10 +117,15 @@
   .rail .acc { font-family: var(--mono); font-size: 10px; padding: 1px 5px; border-radius: 4px; background: var(--surface-2); color: var(--text-2); border: 1px solid var(--border); white-space: nowrap; flex: 0 0 auto; }
   .rail .dirty { margin: 6px 12px 2px; padding: 6px 8px; border: 1px dashed var(--accent-2); border-radius: 6px; font-size: 11.5px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; color: var(--text-2); }
   .rail .hint { font-size: 11px; color: var(--text-muted); padding: 8px 12px 0; line-height: 1.4; }
+  .rail .ph .rail-x { padding: 2px 6px; font-size: 11px; }
+  #rail-show { display: none; }
   @media (min-width: 1000px) {
-    .email { grid-template-columns: 210px minmax(300px, 36%) 1fr; }
-    .rail { display: flex; }
-    #view-sel, #mb-btn, #mb-panel, .bar .brk { display: none !important; }
+    .email:not(.rail-off) { grid-template-columns: 210px minmax(300px, 36%) 1fr; }
+    .email:not(.rail-off) .rail { display: flex; }
+    .email:not(.rail-off) #view-sel, .email:not(.rail-off) #mb-btn,
+    .email:not(.rail-off) #mb-panel, .email:not(.rail-off) .bar .brk { display: none !important; }
+    /* collapsed: the menus are back in the bar, and this brings the rail back */
+    .email.rail-off #rail-show { display: inline-flex; }
   }
   .check { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; cursor: pointer; white-space: nowrap; }
   .status-line { font-size: 11px; color: var(--text-muted); padding: 5px 10px; min-height: 22px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
@@ -333,7 +338,8 @@
   <div class="email" id="email">
     <!-- ── Rail: views + mailboxes (desktop; phones keep the menus in the bar) ── -->
     <aside class="rail" id="rail" aria-label="Views and mailboxes">
-      <div class="ph">Views <button class="linkish" type="button" id="rail-manage" title="Rename, update, delete or make a view the default">Manage</button></div>
+      <div class="ph">Views <button class="linkish" type="button" id="rail-manage" title="Rename, update, delete or make a view the default">Manage</button>
+        <button class="btn icon rail-x" type="button" id="rail-hide" aria-controls="rail" aria-expanded="true" title="Hide views and mailboxes (more room for the conversation)"><i class="fa-solid fa-angles-left" aria-hidden="true"></i></button></div>
       <div id="rail-views"></div>
       <div id="rail-dirty"></div>
       <div class="ph">Mailboxes</div>
@@ -344,6 +350,7 @@
     <!-- ── List ── -->
     <section class="list-col" aria-label="Messages">
       <div class="bar">
+        <button class="btn icon" type="button" id="rail-show" aria-controls="rail" aria-expanded="true" title="Show views and mailboxes in a column"><i class="fa-solid fa-table-columns" aria-hidden="true"></i></button>
         <select id="view-sel" aria-label="Saved view"></select>
         <button class="btn mb-btn" type="button" id="mb-btn" aria-expanded="false" aria-controls="mb-panel" title="Choose which mailboxes this list combines" hidden><span class="mb-dots" id="mb-dots"></span><span id="mb-label">All mailboxes</span><i class="fa-solid fa-chevron-down" aria-hidden="true"></i></button>
         <span class="brk" aria-hidden="true"></span>
@@ -474,6 +481,7 @@ const state = {
   mailboxes: [],        // GET /api/mail/mailboxes
   viewer: { su: false, role: null },
   views: [],            // GET /api/mail/views
+  viewCounts: {},       // GET /api/mail/views/counts: view id → INBOX unread under its filters
   viewId: null,         // active saved view (null = none)
   boxSel: null,         // Set of mailbox ids the list combines (null = every readable box)
   messages: [],
@@ -625,12 +633,33 @@ async function loadSummary() {
   state.mailboxes = Array.isArray(data && data.mailboxes) ? data.mailboxes : [];
   state.viewer = (data && data.viewer) || state.viewer;
   renderMailboxPicker();
+  loadViewCounts(); // read state moved: the views' counts with it
 }
 
 async function loadViews() {
   const data = await api('/api/mail/views', 'GET');
   state.views = Array.isArray(data && data.views) ? data.views : [];
   if (state.viewId != null && !state.views.some((v) => v.id === state.viewId)) state.viewId = null;
+  renderViewSelect();
+  loadViewCounts();
+}
+
+/**
+ * Each saved view's unread count, from the server (its mailboxes + filters,
+ * INBOX — mailReadService.viewCounts). Decoration: a failure just shows no
+ * counts. Sequence-guarded — summary and views both ask, often together.
+ */
+let countsSeq = 0;
+async function loadViewCounts() {
+  const seq = ++countsSeq;
+  if (!state.views.length) { state.viewCounts = {}; return; }
+  let counts = {};
+  try {
+    const data = await api('/api/mail/views/counts', 'GET');
+    counts = (data && data.counts) || {};
+  } catch (_) { /* no counts this time */ }
+  if (seq !== countsSeq) return;
+  state.viewCounts = counts;
   renderViewSelect();
 }
 
@@ -654,6 +683,9 @@ function renderMailboxPicker() {
   E('mb-label').textContent = label + (unread ? ` (${unread})` : '');
   const total = state.mailboxes.reduce((n, m) => n + (m.inbox_unread || 0), 0);
   E('tab-email-n').textContent = total ? String(total) : '';
+  // The shell's sidebar Comms badge (index.html commsBadgeSet): this page
+  // just counted it, so hand it over rather than make the shell fetch again.
+  try { if (typeof P.commsBadgeSet === 'function') P.commsBadgeSet(total, state.mailboxes.length); } catch (_) { /* decoration */ }
   btn.title = sel && sel.length ? sel.map((id) => boxById(id).address).join(', ') : 'Choose which mailboxes this list combines';
   panel.replaceChildren(
     h('label', { className: 'mb-opt' }, h('input', {
@@ -686,7 +718,10 @@ function toggleBoxPanel(open) {
 function renderViewSelect() {
   const sel = E('view-sel');
   const opts = [h('option', { value: '' }, 'No saved view')];
-  for (const v of state.views) opts.push(h('option', { value: String(v.id) }, v.name + (v.is_default ? ' ★' : '')));
+  for (const v of state.views) {
+    const n = viewUnread(v);
+    opts.push(h('option', { value: String(v.id) }, v.name + (n ? ` (${n})` : '') + (v.is_default ? ' ★' : '')));
+  }
   sel.replaceChildren(...opts);
   sel.value = state.viewId != null ? String(state.viewId) : '';
   sel.hidden = !state.views.length;
@@ -700,13 +735,14 @@ function renderViewSelect() {
  * view menu and the mailbox picker (phones and narrow windows keep those;
  * CSS shows one or the other) — applyView / toggleBox do the work.
  *   - "All mail" = no view: every readable box, no filters.
- *   - A view's unread count is shown only when the summary can say it
- *     honestly: its filters narrow nothing but unread (INBOX unread of its
- *     boxes); a client / case / files / search view would need a server count.
+ *   - Counts: "All mail" = every box's INBOX unread (the summary); a view =
+ *     the server's count under its own mailboxes + filters (viewCounts).
+ *   - Collapsible: « hides the rail (the menus come back in the bar, the
+ *     conversation gets the width); the button in the bar brings it back.
+ *     Remembered per browser (localStorage — a convenience, not state).
  *   - "Unsaved changes" appears when the screen no longer matches the active
  *     view (or "All mail"): Save as view, or Update the active one.
  */
-const isNarrowing = (f) => Object.keys(f || {}).some((k) => k !== 'unread_only' && f[k] !== false && f[k] !== null && f[k] !== '');
 function normFilters(f) {
   return JSON.stringify(Object.keys(f || {}).filter((k) => f[k] !== false && f[k] !== null && f[k] !== '').sort().map((k) => [k, f[k]]));
 }
@@ -718,10 +754,23 @@ function railDirty() {
     ? normIds(scopeIds()) !== normIds(v.mailbox_ids) || normFilters(f) !== normFilters(v.filters)
     : scopeIds() !== null || Object.keys(f).length > 0;
 }
+/** Unread for a rail / menu entry: null = All mail (the summary), else the server's count for that view. */
 function viewUnread(v) {
-  if (v && isNarrowing(v.filters)) return null;
-  const ids = v && Array.isArray(v.mailbox_ids) && v.mailbox_ids.length ? v.mailbox_ids.map(Number) : null;
-  return state.mailboxes.filter((m) => !ids || ids.includes(m.id)).reduce((n, m) => n + (m.inbox_unread || 0), 0);
+  if (!v) return state.mailboxes.reduce((n, m) => n + (m.inbox_unread || 0), 0);
+  const n = state.viewCounts[v.id];
+  return Number.isFinite(n) ? n : null;
+}
+
+// ── Rail collapse (remembered per browser; storage may be absent) ──
+const RAIL_KEY = 'yc-comms-rail';
+function setRail(open, remember = true) {
+  E('email').classList.toggle('rail-off', !open);
+  E('rail-hide').setAttribute('aria-expanded', open ? 'true' : 'false');
+  E('rail-show').setAttribute('aria-expanded', open ? 'true' : 'false');
+  if (remember) { try { localStorage.setItem(RAIL_KEY, open ? 'on' : 'off'); } catch (_) { /* private mode */ } }
+}
+function railRemembered() {
+  try { return localStorage.getItem(RAIL_KEY) !== 'off'; } catch (_) { return true; }
 }
 function accessLabel(m) {
   return ['R', m.can_send ? 'S' : '', m.can_manage ? 'M' : ''].filter(Boolean).join('·');
@@ -1642,6 +1691,9 @@ async function init() {
   E('f-inbox').addEventListener('click', () => { if (pressed('f-folders')) { setFolders(false); loadList(); } });
   E('f-folders').addEventListener('click', () => { if (!pressed('f-folders')) { setFolders(true); loadList(); } });
   E('rail-manage').addEventListener('click', openViews);
+  E('rail-hide').addEventListener('click', () => setRail(false));
+  E('rail-show').addEventListener('click', () => setRail(true));
+  setRail(railRemembered(), false);
   E('view-sel').addEventListener('change', () => {
     const v = state.views.find((x) => String(x.id) === E('view-sel').value) || null;
     applyView(v);

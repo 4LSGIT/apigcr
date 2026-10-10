@@ -155,7 +155,10 @@ async function walk(page, W, record) {
   };
 
   if (ONLY.has('tabs')) {
-    const tabs = await page.evaluate(() => [...document.querySelectorAll('#appSidebar [data-tab]')].map((e) => e.dataset.tab));
+    // data-tab-also: tabs reached from a hub rather than their own sidebar item
+    // (Settings, from More Features since 2026-10-11) — surveyed all the same.
+    const tabs = await page.evaluate(() => [...new Set([...document.querySelectorAll('#appSidebar [data-tab]')]
+      .flatMap((e) => [e.dataset.tab, ...(e.dataset.tabAlso || '').split(' ').filter(Boolean)]))]);
     for (const t of tabs) {
       await page.evaluate((t) => openMainTab(t), t); await sleep(1500);
       await record(`tab:${t}`, await measure(page, await frameOf(page, VISIBLE_TAB_FRAME)), await shot('tab_' + t));

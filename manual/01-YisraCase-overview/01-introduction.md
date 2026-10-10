@@ -59,13 +59,13 @@ YisraCase is organized into tabs down the left sidebar, in this order:
 | **Calendar** | Appointments *and* events in one list over a date window — see [Calendar tab](../05-Subsystems/12-calendar-tab.md) |
 | **Events** | Dated obligations and milestones, distinct from appointments — see [Events](08-events.md) |
 | **Tasks** | Your personal task queue |
+| **Comms** | The firm's email in one place — every mailbox shared with you, with your unread count on the tab. Shown once at least one mailbox is shared with you — see [Mailboxes and Comms](../08-Admin-Tools/08-mailboxes.md) |
 | **Log** | The activity log across records — see [Activity log](06-activity-log.md) |
 | **Bills** | Billing records *(placeholder; full feature in progress)* |
 | **Pipeline Board** | Where every case sits by stage and lane — see [Pipelines](13-pipelines.md) |
 | **Custom** | Your own pinned view, if you've pinned one — see [YisraView](../05-Subsystems/05-YisraView.md) |
-| **Settings** | Personal and firm settings |
 | **Admin** | Firm administration. Hidden unless your account has the authorization for it |
-| **More Features** | Everything else — see below |
+| **More Features** | Everything else, including **Settings** (personal and firm settings — also one click on "Hi, *your name*!" at the top) — see below |
 
 Opening any record takes you to a detail page that shows everything connected to it: related contacts or cases, appointments, tasks, and the full activity log.
 
@@ -75,6 +75,8 @@ Most of this manual's smaller systems don't have a sidebar tab of their own —
 they live behind **More Features**, and the section READMEs refer to that as
 "the **More** menu." What you'll find there:
 
+- **Settings** — personal and firm settings (it had its own sidebar tab until
+  Comms took that place).
 - **Staff tools** — Reports, Views, Documents, Video Manager, Redirects Manager,
   Asset Manager, Form Builder, Form Inbox, Campaigns, YisraCase Config, Court
   Preview, Feature Requests, Support Inbox, Signatures, Automations, Manuals

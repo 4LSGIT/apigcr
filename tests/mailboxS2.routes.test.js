@@ -653,6 +653,36 @@ describe('saved views (inbox_views) — caller-owned only', () => {
     expect(ids(r)).toEqual([]);
   });
 
+  test('counts: each view\'s INBOX unread under its own boxes + filters = the list it opens with Unread on', async () => {
+    W.read(READER, 101);
+    W.caseRow('CaseA1', '26-11111');
+    W.T.mail_messages.find((m) => m.id === 102).log_id = W.logRow({ log_about_type: 'case', log_about_id: 'CaseA1' });
+    const mk = async (t, body) => (await call('POST', '/api/mail/views', { t: tok(t), body })).json.view.id;
+    const box1 = await mk(READER, { name: 'Box 1', mailbox_ids: [1] });
+    const shop = await mk(READER, { name: 'Shop', filters: { from_domain: 'shop.test' } });
+    const cased = await mk(READER, { name: 'Cased', filters: { has_case: true } });
+    // stored before a grant was revoked / before validation tightened: no query, no failure
+    W.T.inbox_views.push({ id: 90, user: READER, name: 'Gone', mailbox_ids: '[2]', filters: '{}', is_default: 0, sort_order: 0 });
+    W.T.inbox_views.push({ id: 91, user: READER, name: 'Bad', mailbox_ids: null, filters: '{"from_domain":"nope"}', is_default: 0, sort_order: 0 });
+    W.statements.length = 0;
+    const r = await call('GET', '/api/mail/views/counts', { t: tok(READER) });
+    expect(r.status).toBe(200);
+    expect(r.json.counts).toEqual({ [box1]: 3, [shop]: 2, [cased]: 1, 90: 0 });
+    expect(W.statements.filter((x) => x.sql.startsWith('SELECT COUNT(*) AS n FROM mail_messages'))).toHaveLength(3);
+    // each count is exactly the unread list of that view
+    for (const id of [box1, shop, cased]) {
+      const list = await call('GET', `/api/mail/messages?view=${id}&unread_only=1`, { t: tok(READER) });
+      expect([id, list.json.messages.length]).toEqual([id, r.json.counts[id]]);
+    }
+    // all_folders views count the INBOX only: a Sent copy is never "read"
+    const all = await mk(SU, { name: 'Box 2 everything', mailbox_ids: [2], filters: { all_folders: true } });
+    expect((await call('GET', '/api/mail/views/counts', { t: tok(SU) })).json.counts).toEqual({ [all]: 2 });
+    // another user's views never appear; no views → no mail query at all
+    W.statements.length = 0;
+    expect((await call('GET', '/api/mail/views/counts', { t: tok(NOBODY) })).json).toEqual({ status: 'success', counts: {} });
+    expect(W.statements.some((x) => /mail_messages/.test(x.sql))).toBe(false);
+  });
+
   test('validation: name, filter vocabulary, sort_order, the 50-view cap', async () => {
     for (const body of [{}, { name: '' }, { name: 'x'.repeat(65) }, { name: 'a', filters: { body: 'x' } },
       { name: 'a', filters: { unread_only: 'yes' } }, { name: 'a', filters: { from_domain: 'nope' } },

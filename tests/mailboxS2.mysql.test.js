@@ -346,11 +346,12 @@ maybe('mailbox S2 on real MySQL', () => {
       [408, 2, 'Shared <shared@gmail.test>', 'intake@firm.test', null, att([{ part: '2', mime: null, cid: 'ii_m' }]), '<img src="cid:ii_m">'],
       [409, 2, 'x@y.test', 'intake@firm.test', null, att([{ part: '2', mime: 'image/gif', cid: '<b@x>' }]), '<img src="cid:b@x">'],
       [410, 2, 'x@y.test', 'intake@firm.test', null, att([{ mime: 'application/pdf' }]), null],
+      [412, 2, 'intake@firm.test', 'x@y.test', null, att([{ part: '2', mime: 'application/pdf' }]), null, 'Sent'], // a sent file: never "unread"
     ];
-    for (const [id, mb, from, to, cc, a, html] of rows) {
+    for (const [id, mb, from, to, cc, a, html, folder = 'INBOX'] of rows) {
       await q(`INSERT INTO mail_messages (id, mailbox_id, folder, uid, message_id, thread_key, from_addr, to_addrs, cc_addrs, subject, date, attachments, body_html)
-               VALUES (?, ?, 'INBOX', ?, ?, ?, ?, ?, ?, 's', ?, ?, ?)`, [id, mb, id, `m${id}@x.test`, `m${id}@x.test`, from, to, cc, new Date(Date.UTC(2026, 9, 3) + id * 60e3), a, html]);
-      W.message(id, { mailbox_id: mb, from_addr: from, to_addrs: to, cc_addrs: cc, attachments: a, body_html: html, date: new Date(Date.UTC(2026, 9, 3) + id * 60e3) });
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 's', ?, ?, ?)`, [id, mb, folder, id, `m${id}@x.test`, `m${id}@x.test`, from, to, cc, new Date(Date.UTC(2026, 9, 3) + id * 60e3), a, html]);
+      W.message(id, { mailbox_id: mb, folder, from_addr: from, to_addrs: to, cc_addrs: cc, attachments: a, body_html: html, date: new Date(Date.UTC(2026, 9, 3) + id * 60e3) });
     }
     try {
       const mine = (r) => ids(r).filter((id) => id > 400);
@@ -365,6 +366,16 @@ maybe('mailbox S2 on real MySQL', () => {
       expect(mine(await call('GET', '/api/mail/messages?has_files=1', { t: tok(SU) }))).toEqual(clip);
       expect(await world({ has_files: 1 })).toEqual(clip);
       expect(mine(await call('GET', '/api/mail/messages?client_only=1&has_files=1', { t: tok(SU) }))).toEqual([406, 402]);
+      // per-view unread counts on the engine (one COUNT per view through scopeWhere) = the view's unread list
+      const mkView = async (body) => (await call('POST', '/api/mail/views', { t: tok(SU), body })).json.view.id;
+      const vIds = [await mkView({ name: 'Clients', filters: { client_only: true } }), await mkView({ name: 'Files', filters: { has_files: true, all_folders: true } }),
+        await mkView({ name: 'Box 2', mailbox_ids: [2], filters: { no_case: true } })];
+      const counts = (await call('GET', '/api/mail/views/counts', { t: tok(SU) })).json.counts;
+      for (const id of vIds) {
+        const unread = (await call('GET', `/api/mail/messages?view=${id}&unread_only=1&all_folders=0&limit=100`, { t: tok(SU) })).json.messages.length;
+        expect([id, counts[id]]).toEqual([id, unread]);
+      }
+      expect(counts[vIds[0]]).toBeGreaterThan(0);
       // the same predicates inside INSERT … SELECT (mark-all)
       expect((await call('POST', '/api/mail/read', { t: tok(SU), body: { all: true, filters: { client_only: true, has_files: true } } })).json.marked).toBe(2);
       // no_case: 401 linked to a case → gone from it

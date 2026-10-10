@@ -694,6 +694,7 @@ scripts/mobile-survey/fixtures/api/mail/messages.json
 scripts/mobile-survey/fixtures/api/mail/messages/301/related.json
 scripts/mobile-survey/fixtures/api/mail/threads/t1%40example-firm.test.json
 scripts/mobile-survey/fixtures/api/mail/views.json
+scripts/mobile-survey/fixtures/api/mail/views/counts.json
 scripts/mobile-survey/fixtures/api/mailboxes.json
 scripts/mobile-survey/fixtures/api/tasks.json
 scripts/mobile-survey/fixtures/firm-data.json
@@ -864,6 +865,7 @@ tests/caseUi.sync.test.js
 tests/caseUi.timeline.test.js
 tests/checklistView.autoGrow.test.js
 tests/checklists.s1notes.test.js
+tests/commsShell.test.js
 tests/contactOrgKind.test.js
 tests/contactRelationService.updateType.test.js
 tests/contactRoles.roleForms.test.js

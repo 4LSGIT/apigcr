@@ -24,8 +24,9 @@ gaps above); everything else from the September delta pass is folded into the
 body. Governing migrations in `ref/migrations/`.*
 
 - **Comms hub read side is live (mailbox S2, 10-09):** `routes/api.mail.js`
-  → `services/mailbox/mailReadService.js`; pane `public/comms.html` (Admin →
-  Comms); design `ref/MAILBOX_SYSTEM_DESIGN.md` §4.3/§4.4 "As built";
+  → `services/mailbox/mailReadService.js`; pane `public/comms.html` (the
+  shell's Comms tab `tabComms` + sidebar badge — `commsBadgeSet`/`Refresh` in
+  index.html, fed by the pane; Settings moved to More Features 10-11); design `ref/MAILBOX_SYSTEM_DESIGN.md` §4.3/§4.4 "As built";
   operators `manual/08-Admin-Tools/08-mailboxes.md`. What a session touching
   unrelated code needs to know:
   - **Mail HTML has ONE sink:** `public/js/mailRender.js` → the `srcdoc` of an

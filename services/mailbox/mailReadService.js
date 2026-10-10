@@ -18,6 +18,7 @@
  *   setRead(db, userId, id, read)            per-user read state, idempotent
  *   markRead(db, userId, body)               bulk: {ids} or {all, mailbox_ids?, filters?}
  *   listViews / createView / updateView / deleteView   inbox_views, caller-owned
+ *   viewCounts(db, userId)                   unread per saved view (INBOX, the view's filters)
  *   caseLink(db, userId, id, body)           attach the message's log row to a case
  *
  * Spec: ref/MAILBOX_SYSTEM_DESIGN.md §4.3 (read state), §4.4 (hub), D6, OQ1
@@ -1066,6 +1067,40 @@ async function listViews(db, userId) {
   return rows.map(shapeView);
 }
 
+/**
+ * Unread per saved view: how many messages the view's list holds that are
+ * unread for the caller — its mailboxes ∩ readable, its filters, through
+ * scopeWhere (the list's own predicates, so the number is what opening the
+ * view with Unread on shows). INBOX only, whatever the view's all_folders
+ * says: a Sent copy is never "read" by anyone, so counting other folders
+ * would count the mailbox's own outgoing mail — summary() counts INBOX for
+ * the same reason. One COUNT per view (VIEWS_MAX caps them); a view whose
+ * boxes are all gone counts 0 without a query, and a stored filter that no
+ * longer validates gets no count rather than failing the call.
+ * @returns {{counts: Object<string, number>}} view id → unread
+ */
+async function viewCounts(db, userId) {
+  const uid = Number(userId);
+  const views = await listViews(db, uid);
+  const counts = {};
+  if (!views.length) return { counts };
+  const readable = [...(await readableScope(db, uid)).keys()].sort((a, b) => a - b);
+  for (const v of views) {
+    const ids = v.mailbox_ids ? readable.filter(id => v.mailbox_ids.includes(id)) : readable;
+    if (!ids.length) { counts[v.id] = 0; continue; }
+    let where;
+    try {
+      where = scopeWhere(checkFilters({ ...readFilters(v.filters || {}), unread_only: true, all_folders: false }), null);
+    } catch (_) { continue; }
+    const [[row]] = await db.query(
+      `SELECT COUNT(*) AS n FROM mail_messages m${JOINS} WHERE m.mailbox_id IN (?)${where.extra}`,
+      [uid, ids, ...where.params]
+    );
+    counts[v.id] = Number(row && row.n) || 0;
+  }
+  return { counts };
+}
+
 /** Validate a view body. `partial` = PATCH. Returns DB-shaped columns. */
 async function validateView(db, userId, body, { partial }) {
   if (!body || typeof body !== 'object' || Array.isArray(body)) throw httpError(400, 'request body must be a JSON object');
@@ -1349,6 +1384,7 @@ module.exports = {
   setRead,
   markRead,
   listViews,
+  viewCounts,
   createView,
   updateView,
   deleteView,

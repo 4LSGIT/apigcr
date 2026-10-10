@@ -68,8 +68,8 @@
        script (VersionGuard.start()). See public/js/versionGuard.js. -->
   <script src="/js/versionGuard.js"></script>
   <!-- EASTER EGG — remove this one line (and public/js/mascot/) to disable.
-       A Win95-style desktop pet, summoned by long-pressing the header logo or
-       from the mascot tile under More. Entirely self-contained — no deps, no
+       A Win95-style desktop pet, summoned by long-pressing the header logo
+       (its More Features tile gave way to Settings, 2026-10-11). Entirely self-contained — no deps, no
        assets, no network, no server side — and opt-in only: it never appears
        for anyone who has not asked for it.
 
@@ -572,6 +572,15 @@
       <i class="fa-solid fa-list"></i><span>Tasks</span>
       <span class="sb-badge" id="sbTasksBadge" style="display:none" title="Your overdue + due-today tasks">0</span>
     </div>
+    <!-- Comms hub (mailbox arc S2): every mailbox you can read, in one place.
+         Hidden until GET /api/mail/mailboxes says you can read at least one
+         (grant, SU, or the attorney read bypass) — commsBadgeSet below; the
+         badge is your INBOX unread over those boxes. Took Settings' place in
+         the sidebar 2026-10-11 (Settings: More Features, or "Hi, <name>!"). -->
+    <div class="sb-item" id="sbComms" data-tab="tabComms" onclick="openMainTab('tabComms')" style="display:none" title="Comms">
+      <i class="fa-solid fa-comments"></i><span>Comms</span>
+      <span class="sb-badge" id="sbCommsBadge" style="display:none" title="Unread in the inboxes you can read">0</span>
+    </div>
     <div class="sb-item" data-tab="tabLogs" onclick="logs?'':tabLogGet(0);openMainTab('tabLogs')" title="Log">
       <i class="fa-solid fa-box-archive"></i><span>Log</span>
     </div>
@@ -591,13 +600,12 @@
     </div>
 
     <div class="sb-section-label">Settings</div>
-    <div class="sb-item" data-tab="tabSettings" onclick="openMainTab('tabSettings')" title="Settings">
-      <i class="fa-solid fa-gear"></i><span>Settings</span>
-    </div>
     <div class="sb-item" id="sbAdmin" data-tab="tabAdmin" onclick="openMainTab('tabAdmin')" style="display:none" title="Admin">
       <i class="fa-solid fa-mug-hot"></i><span>Admin</span>
     </div>
-    <div class="sb-item" data-tab="tabMore" onclick="openMainTab('tabMore')" title="More Features">
+    <!-- data-tab-also: Settings lives in More Features now (its tile opens
+         tabSettings), so More Features is the item lit while you are there. -->
+    <div class="sb-item" data-tab="tabMore" data-tab-also="tabSettings" onclick="openMainTab('tabMore')" title="More Features">
       <i class="fa-solid fa-grip"></i><span>More Features</span>
     </div>
 
@@ -662,8 +670,10 @@
     <button class="home-btn" onclick="openMainTab('tabMore')">
       <i class="fa-solid fa-grip fa-2xl"></i><br /><br />More Features
     </button>
-    <button class="home-btn" onclick="openMainTab('tabSettings')">
-      <i class="fa-solid fa-gear fa-2xl"></i><br /><br />Settings
+    <!-- Comms took Settings' Home slot with its sidebar one (2026-10-11);
+         shown with sbComms, by commsBadgeSet. -->
+    <button id="homeComms" class="home-btn" onclick="openMainTab('tabComms')" style="display:none">
+      <i class="fa-solid fa-comments fa-2xl"></i><br /><br />Comms
     </button>
     <!-- Quick search — only shown on narrow viewports where the header search is hidden -->
     <div class="home-search">
@@ -688,6 +698,14 @@
        now lives in tabMore as campaignsDiv.) -->
   <div id="tabPipeline" class="tab-main">
     <iframe data-src="/pipelineBoard.html"></iframe>
+  </div>
+
+  <!-- Comms hub — promoted from its Admin pilot tile (mailbox arc S2,
+       2026-10-11). Same lazy data-src as tabPipeline; the pane fills the tab
+       (it was an 80vh panel in Admin). What it shows is decided by mailbox
+       grants, never by this tab being visible. -->
+  <div id="tabComms" class="tab-main">
+    <iframe data-src="/comms.html" title="Comms"></iframe>
   </div>
 
 
@@ -2544,6 +2562,46 @@
       } catch (_) { /* badge is decoration — never let it break the shell */ }
     }
     window.tasksBadgeRefresh = tasksBadgeRefresh;
+
+    /**
+     * Comms entry + badge (sidebar Comms item, Home's Comms button). Shown
+     * once the user can read at least one mailbox; badge = INBOX unread over
+     * those boxes — the same numbers the hub's summary shows
+     * (GET /api/mail/mailboxes). Set from three places:
+     *   - boot (loadUserContext) and every 5 minutes while this page is
+     *     visible: mail arrives on the ingest worker's ~5-minute poll and
+     *     nothing pokes the shell when it does;
+     *   - comms.html, through window.commsBadgeSet, each time it recounts
+     *     (open / mark read / refresh) — it already has the numbers.
+     * boxes === null (the fetch failed) shows the entry without a badge: the
+     * hub explains its own errors, and hiding the door would hide that too.
+     */
+    function commsBadgeSet(total, boxes) {
+      const show = boxes == null || boxes > 0;
+      for (const id of ['sbComms', 'homeComms']) {
+        const el = E(id);
+        if (el) el.style.display = show ? '' : 'none';
+      }
+      const b = E('sbCommsBadge');
+      if (b) {
+        const n = Number(total) || 0;
+        b.textContent = n;
+        b.style.display = show && n ? '' : 'none';
+      }
+    }
+    async function commsBadgeRefresh() {
+      try {
+        if (!user?.user) return;
+        const r = await apiSend('/api/mail/mailboxes', 'GET');
+        const boxes = Array.isArray(r && r.mailboxes) ? r.mailboxes : [];
+        commsBadgeSet(boxes.reduce((n, m) => n + (Number(m.inbox_unread) || 0), 0), boxes.length);
+      } catch (_) { commsBadgeSet(0, null); } // decoration — never let it break the shell
+    }
+    window.commsBadgeSet = commsBadgeSet;
+    window.commsBadgeRefresh = commsBadgeRefresh;
+    setInterval(() => {
+      if (document.visibilityState === 'visible' && user?.user) commsBadgeRefresh();
+    }, 5 * 60 * 1000);
   </script>
 
   <div id="tabLogs" class="tab-main">
@@ -2772,11 +2830,15 @@
        rows. Keep new buttons inside the row they belong to rather than
        appending to the end.
 
-       Row 5's fourth tile is the cat, a toy holding that slot square until a
-       real feature wants it — replace THAT tile rather than starting a seventh
-       row. (data-placeholder, which ensureStrip() skips so a tile that opens
-       nothing never reaches the pill strip, is unused while the cat sits
-       there; keep the mechanism for the next gap in the grid.)
+       Row 5's fourth tile was the cat, a toy holding that slot square until a
+       real feature wanted it. Settings did (2026-10-11, when Comms took its
+       sidebar and Home places): Settings joined row 1 beside Theme, and Get
+       Clio Code moved down into the cat's slot. Casey is still summoned by
+       long-pressing the header logo. The grid has NO free slot now — the
+       next tile starts a seventh row or replaces something; ask first.
+       (data-placeholder, which ensureStrip() skips so a tile that opens
+       nothing never reaches the pill strip, is unused; keep the mechanism for
+       the next gap in the grid.)
 
        Rows went 3-wide to 4-wide with the Theme tile. One theme per row no
        longer divides evenly across 22 features, so a row is now a task rather
@@ -2784,10 +2846,12 @@
        shaped, when things happen, and what goes out. The help row leads
        because it is the row you want when you do not know where to look. -->
 
-  <!-- Where you get help, and how the app looks to you: how it works, what you
-       want next, one-off lookups, and your own theme. -->
+  <!-- Where you get help, and how the app works for you: how it works, your
+       settings and your theme, and what you want next. Settings opens its own
+       main tab (tabSettings) — it is not a panel here; the sidebar's More
+       Features item stays lit while you are on it (data-tab-also). -->
   <button class="big-button" data-target="manualsDiv"         data-exclusive-group="more" data-hover-anim="fa-flip" style="--fa-animation-duration:1.4s"><i class="fa-solid fa-book fa-2xl"></i><br><br>Manuals</button>
-  <button class="big-button" onclick="showClioCode()" data-hover-anim="fa-spin-pulse" style="--fa-animation-duration:1.6s"><i class="fa-solid fa-c fa-2xl"></i><br><br>Get Clio Code</button>
+  <button class="big-button" onclick="openMainTab('tabSettings')" data-hover-anim="fa-spin" style="--fa-animation-duration:3s"><i class="fa-solid fa-gear fa-2xl"></i><br><br>Settings</button>
   <button class="big-button" data-target="themeCustomDiv" data-exclusive-group="more" data-hover-anim="fa-spin" style="--fa-animation-duration:2.4s"><i class="fa-solid fa-palette fa-2xl"></i><br><br>Theme</button>
   <button class="big-button" data-target="featureRequestsDiv" data-exclusive-group="more" data-hover-anim="fa-beat-fade" style="--fa-beat-fade-scale:1.15; --fa-animation-duration:1.1s"><i class="fa-solid fa-lightbulb fa-2xl"></i><br><br>Feature Requests</button>
   <br><br>
@@ -2820,17 +2884,12 @@
   <button class="big-button" data-target="viewsDiv" data-exclusive-group="more" data-hover-anim="fa-beat" style="--fa-beat-scale:1.12; --fa-animation-duration:1.2s"><i class="fa-solid fa-table-list fa-2xl"></i><br><br>Views</button>
   <br><br>
   <!-- When things happen: what can be booked, when, and the court email as it
-       will go out. -->
+       will go out — and the Clio sign-in code, the loosest fit on the grid,
+       parked in the cat's old slot when Settings took its row-1 place. -->
   <button class="big-button" data-target="availabilityDiv" data-exclusive-group="more" data-hover-anim="fa-fade" style="--fa-animation-duration:1.6s"><i class="fa-solid fa-calendar fa-2xl"></i><br><br>Availability Manager</button>
   <button class="big-button" data-target="bookingDiv" data-exclusive-group="more" data-hover-anim="fa-flip" style="--fa-animation-duration:2s; --fa-flip-y:0; --fa-flip-x:1"><i class="fa-solid fa-calendar-week fa-2xl"></i><br><br>Booking Manager</button>
   <button class="big-button" data-target="courtPreviewDiv" data-exclusive-group="more" data-hover-anim="fa-shake" style="--fa-animation-duration:0.6s"><i class="fa-solid fa-gavel fa-2xl"></i><br><br>Court Preview</button>
-  <!-- Standing in for the feature this slot has not got yet: the easter egg
-       from public/js/mascot/, which until now could only be reached by a
-       long-press of the header logo that nobody would ever find by accident.
-       First press fetches Casey, the next one opens the trick panel. It is
-       always CASEY — one cat, many forms — so this label never changes; which
-       form Casey takes is picked inside the panel ("Change form…"). -->
-  <button class="big-button" onclick="toggleMascot()" title="Casey the YisraCat" data-hover-anim="fa-bounce" style="--fa-animation-duration:1.2s"><i class="fa-solid fa-cat fa-2xl"></i><br><br>Casey</button>
+  <button class="big-button" onclick="showClioCode()" data-hover-anim="fa-spin-pulse" style="--fa-animation-duration:1.6s"><i class="fa-solid fa-c fa-2xl"></i><br><br>Get Clio Code</button>
   <br><br>
   <!-- What goes out, and what comes back as numbers: the message, the page it
        lands on, the links that get there, and the reporting over all of it.
@@ -2841,11 +2900,18 @@
   <button class="big-button" data-target="redirectsDiv"    data-exclusive-group="more" data-hover-anim="fa-spin" style="--fa-animation-duration:2.5s"><i class="fa-solid fa-signs-post fa-2xl"></i><br><br>Redirects Manager</button>
   <button class="big-button" data-target="landingPagesDiv" data-exclusive-group="more" data-hover-anim="fa-bounce" style="--fa-animation-duration:1.4s"><i class="fa-solid fa-sitemap fa-2xl"></i><br><br>Landing Pages</button>
   <button class="big-button" data-target="reportsDiv" data-exclusive-group="more" data-hover-anim="fa-beat" style="--fa-beat-scale:1.12; --fa-animation-duration:1.3s"><i class="fa-solid fa-chart-column fa-2xl"></i><br><br>Reports</button>
+  <!-- Casey's way back in, now that its tile went to Settings: a small paw
+       under the grid, not a tile (the rows stay full, the pill strip never
+       sees it, drill-in hides it). toggleMascot() is the old tile's handler:
+       the first press summons, a press while Casey is out opens the trick
+       panel — the panel's ONLY entry; the logo long-press only summons and
+       dismisses. -->
+  <div class="more-egg-row"><button type="button" class="more-egg" onclick="toggleMascot()" title="Casey the YisraCat" aria-label="Casey the YisraCat"><i class="fa-solid fa-paw" aria-hidden="true"></i></button></div>
     <!-- Panels are kept in the same order as the buttons above. Order has no
        effect on rendering (they are all display:none until opened) — it just
-       keeps the two lists readable side by side. Three grid tiles have no panel
-       here on purpose: Get Clio Code is a Swal, and the two placeholders are
-       inert. -->
+       keeps the two lists readable side by side. Two grid tiles have no panel
+       here on purpose: Get Clio Code is a Swal, and Settings opens its own
+       main tab (tabSettings). -->
 
   <!-- What the client fills in -->
   <!-- Simple Forms: the friendly builder. Same form_templates records and the
@@ -3220,12 +3286,10 @@
        rows, grouped by what the row is for. Keep new buttons inside the row
        they belong to rather than appending to the end; every row is full, so
        the next tile starts a fifth row — see the same note on the More
-       Features grid above. Row 5 (comms: mailboxes, 2026-10-08; the comms hub
-       itself, S2 2026-10-09) is that row, short by design until the comms
-       hub's phone/phonebook admin tiles join it (ref/MAILBOX_SYSTEM_DESIGN.md
-       §5). The hub sits here for its pilot: Admin is shown to SU/admin only,
-       so it moves to a staff-wide home (sidebar or Home) when it goes
-       firm-wide — the attorney read bypass is live in the API already. -->
+       Features grid above. Row 5 (comms admin: mailboxes, 2026-10-08) is that
+       row, short by design until the comms hub's phone/phonebook admin tiles
+       join it (ref/MAILBOX_SYSTEM_DESIGN.md §5). The hub itself piloted here
+       and moved to the sidebar (tabComms) on 2026-10-11. -->
 
   <!-- Who gets in: the two key registries, and CTA links — the bearer grants
        (/c/<token>) you mint to let a recipient run one pre-authorized plan. -->
@@ -3250,11 +3314,9 @@
   <button class="big-button" data-target="systemAlertsDiv" data-exclusive-group="admin" data-hover-anim="fa-beat" style="--fa-beat-scale:1.25; --fa-animation-duration:0.7s"><i class="fa-solid fa-triangle-exclamation fa-2xl"></i><br><br>System Alerts (SU)</button>
   <button class="big-button" data-target="issueReportsDiv" data-exclusive-group="admin" data-hover-anim="fa-spin" style="--fa-animation-duration:3s"><i class="fa-solid fa-life-ring fa-2xl"></i><br><br>Support Inbox</button>
   <br><br>
-  <!-- Comms: mailboxes and who may read / send / manage each one, and the
-       hub where granted staff read them (Email tab; Phone arrives with S-PH).
-       Comms is NOT "(SU)": what it shows is decided by mailbox grants. -->
+  <!-- Comms admin: mailboxes and who may read / send / manage each one. The
+       hub where granted staff read them is the sidebar's Comms tab. -->
   <button class="big-button" data-target="mailboxesDiv" data-exclusive-group="admin" data-hover-anim="fa-bounce" style="--fa-animation-duration:1.2s"><i class="fa-solid fa-envelope-open-text fa-2xl"></i><br><br>Mailboxes (SU)</button>
-  <button class="big-button" data-target="commsDiv" data-exclusive-group="admin" data-hover-anim="fa-beat" style="--fa-beat-scale:1.15; --fa-animation-duration:1.1s"><i class="fa-solid fa-comments fa-2xl"></i><br><br>Comms</button>
 
   <div id="sequencesDiv" style="display:none"></div>
   <div id="readonlyKeysDiv" style="display:none; margin-top:10px;">
@@ -3307,14 +3369,17 @@
     <iframe data-src="/mailboxAdmin.html"
             style="width:100%; height:80vh; border:1px solid var(--border); border-radius:6px; background:var(--page-bg);"></iframe>
   </div>
-  <div id="commsDiv" style="display:none; margin-top:10px;">
-    <iframe data-src="/comms.html"
-            style="width:100%; height:80vh; border:1px solid var(--border); border-radius:6px; background:var(--page-bg);"></iframe>
-  </div>
 </div>
 <style>
   /* Drill-in pill strip for big-button tabs */
   .feature-strip { display:none; align-items:center; flex-wrap:wrap; gap:6px; margin:0 0 12px; }
+  /* More Features: Casey's paw under the grid (see the markup) */
+  .more-egg-row { text-align:center; margin:14px 0 4px; }
+  /* #tabMore: the id outranks style.css's dark-theme button rule (0,7,2), which
+     would otherwise paint the paw a grey box */
+  #tabMore .more-egg { background:transparent; border:0; box-shadow:none; padding:4px 8px; cursor:pointer; color:var(--text-muted); opacity:.45; font-size:14px; }
+  #tabMore .more-egg:hover, #tabMore .more-egg:focus-visible { opacity:1; color:var(--accent-2); background:transparent; }
+  .drill-active > .more-egg-row { display:none; }
   .drill-active .feature-strip { display:flex; }
   .drill-active > .big-button, .drill-active > br { display:none; }
   .pill-button {
@@ -3442,7 +3507,7 @@
     });
   }
 
-  // ── The mascot tile ──────────────────────────────────────────────────
+  // ── The mascot paw (More Features, under the grid — was the Casey tile) ──
   // Toggles the mascot, the same as long-pressing the logo does.
   //
   // The engine is optional in every direction: it can be deleted outright, and
@@ -3950,7 +4015,7 @@
         if (btn) btn.classList.add('active');
       } else {
         document.querySelectorAll('#appSidebar .sb-item').forEach(el => {
-          if (el.dataset.tab === tabName) el.classList.add('active');
+          if (el.dataset.tab === tabName || (el.dataset.tabAlso || '').split(' ').includes(tabName)) el.classList.add('active');
         });
       }
     }
@@ -4517,6 +4582,7 @@ async function initAuth() {
       applyCustomTab(user.user_custom_tab || null);
 
       tasksBadgeRefresh();   // sidebar Tasks badge (fire-and-forget)
+      commsBadgeRefresh();   // sidebar Comms entry + unread badge (fire-and-forget)
 
       // ?open= is either a main tab id, or `file:<n>` pointing into ?files=.
       // Everything else is rejected: E('file:0') is null, E('whatever-a-user-typed')

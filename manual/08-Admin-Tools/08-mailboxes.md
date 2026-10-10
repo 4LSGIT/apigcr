@@ -156,17 +156,18 @@ Click **Access** on a row. Each person gets any mix of:
 - A **Manage** holder who is not a superuser may change who has access to that
   box, its display name and its colour — nothing else; host, login, secret, send
   credential, folders and Active stay superuser-only. The server enforces
-  this today, but the Admin tab is superuser-only, so they have no screen for
-  it until the comms hub moves out of Admin.
+  this today, but Mailboxes is on the superuser-only Admin tab, so they have
+  no screen for it yet (the comms hub itself is in the sidebar now).
 
 Every change — mailbox or grant — is recorded in `admin_audit_log` under the
 tool `mailboxes`.
 
 ## Reading mail — Comms
 
-**Where:** Admin → **Comms** for now (the pilot). It shows the mail of every
-box you can read in one list; the **Phone** tab is a placeholder until the
-phone slice.
+**Where:** **Comms** in the sidebar (and on Home), with your unread count on
+it — shown once at least one mailbox is shared with you. It piloted under
+Admin → Comms. It shows the mail of every box you can read in one list; the
+**Phone** tab is a placeholder until the phone slice.
 
 - **The list** is the Inbox of every box you can read, newest first, with
   the box shown when you can read more than one. Each mailbox has its own
@@ -182,11 +183,15 @@ phone slice.
 - **On a wide screen** your saved views and the mailboxes sit in a column
   on the left instead of the two menus: click a view (or **All mail** — every
   box, no filters) to show it; tick mailboxes to combine them. Each box shows
-  your unread count and your access (R read · S send · M manage); a view
-  shows its unread count when it narrows only by mailbox and Unread. When
-  the screen no longer matches the view you picked, **Unsaved changes**
-  offers **Save as view** or **Update** that view; **Manage** renames,
-  deletes or sets the default. The Email tab shows your unread total.
+  your unread count and your access (R read · S send · M manage); each view
+  shows how many unread Inbox messages it holds under its own filters (the
+  same count appears in the view menu). When the screen no longer matches
+  the view you picked, **Unsaved changes** offers **Save as view** or
+  **Update** that view; **Manage** renames, deletes or sets the default.
+  **«** hides the column (the menus come back above the list, and the
+  conversation gets the room); the column button next to the menus brings it
+  back, and your browser remembers which you chose. The Email tab shows your
+  unread total.
   - **Client mail** keeps mail to or from a client — someone who is Primary or
     Secondary on a case — by its sender or one of its first five recipients
     (To, then Cc). The firm's own addresses never count, even when a staff

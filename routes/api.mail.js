@@ -17,6 +17,8 @@
  *                                             {all:true, mailbox_ids?, filters?} = everything the
  *                                             list shows for that scope (every page)
  *   GET    /api/mail/views                    the caller's saved views
+ *   GET    /api/mail/views/counts             {counts: {<view id>: unread}} — each view's INBOX
+ *                                             unread under its own mailboxes + filters
  *   POST   /api/mail/views                    {name, mailbox_ids?, filters?, is_default?, sort_order?}
  *   PATCH  /api/mail/views/:id                caller-owned only (404 otherwise)
  *   DELETE /api/mail/views/:id                caller-owned only (404 otherwise)
@@ -135,6 +137,12 @@ router.get('/api/mail/views', ...guard, async (req, res) => {
   try {
     res.json({ status: 'success', views: await svc.listViews(req.db, req.auth.userId) });
   } catch (err) { sendError(res, 'GET /api/mail/views', err); }
+});
+
+router.get('/api/mail/views/counts', ...guard, async (req, res) => {
+  try {
+    res.json({ status: 'success', ...(await svc.viewCounts(req.db, req.auth.userId)) });
+  } catch (err) { sendError(res, 'GET /api/mail/views/counts', err); }
 });
 
 router.post('/api/mail/views', ...guard, async (req, res) => {

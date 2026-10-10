@@ -471,6 +471,16 @@ function makeWorld() {
       return bulk(rows, p[0]);
     }
 
+    // viewCounts: one COUNT per view, the list's scope predicates
+    const COUNT_HEAD = `SELECT COUNT(*) AS n FROM mail_messages m ${JOINS} WHERE m.mailbox_id IN (?)`;
+    if (sql.startsWith(COUNT_HEAD)) {
+      const mbs = new Set(p[1].map(Number));
+      const { preds, pi } = parsePreds(sql.slice(COUNT_HEAD.length), p, 2);
+      if (pi !== p.length) throw new Error(`mailboxS2World: view-count params mismatch (${pi} used of ${p.length})`);
+      // COUNT(*) comes back as a number (mysql2)
+      return [[{ n: T.mail_messages.filter(x => mbs.has(x.mailbox_id)).filter(x => { const j = joined(x, p[0]); return preds.every(f => f(j)); }).length }]];
+    }
+
     // ── views ──
     const viewOut = (v) => ({ id: v.id, name: v.name, mailbox_ids: parseJsonCol(v.mailbox_ids), filters: parseJsonCol(v.filters), is_default: v.is_default, sort_order: v.sort_order });
     if (sql === 'SELECT id, name, mailbox_ids, filters, is_default, sort_order FROM inbox_views WHERE user = ? ORDER BY sort_order ASC, id ASC') {

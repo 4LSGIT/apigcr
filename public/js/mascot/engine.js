@@ -223,9 +223,10 @@
  *   explains today's verdict from the console.
  *
  * HOW YOU GET IT
- *   The Casey tile in More (a second press opens the trick panel; its
- *   "Change form…" button opens the form picker), or a long-press of the
- *   header logo for ~0.9s.
+ *   The paw under the More Features grid (it was the Casey tile until
+ *   Settings took that slot, 2026-10-11; a second press opens the trick
+ *   panel; its "Change form…" button opens the form picker), or a
+ *   long-press of the header logo for ~0.9s.
  *   Either one puts it away again. So does double-clicking the animal, or
  *   Mascot.off() from the console. The choice is remembered per browser in
  *   localStorage. OFF by default for everyone — a colleague who never presses

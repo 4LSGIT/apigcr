@@ -99,12 +99,18 @@ const THREAD = {
   }],
 };
 
-async function boot({ handler, width = 1024 } = {}) {
+async function boot({ handler, width = 1024, storage = null, before = null } = {}) {
   const dom = new JSDOM('<!DOCTYPE html><html><head></head><body></body></html>', {
     url: 'https://app.4lsg.com/comms.html', runScripts: 'dangerously', pretendToBeVisual: true,
   });
   DOMS.push(dom);
   const { window } = dom;
+  if (storage === 'throw') {
+    Object.defineProperty(window, 'localStorage', { configurable: true, get() { throw new Error('SecurityError: storage disabled'); } });
+  } else if (storage) {
+    for (const [k, v] of Object.entries(storage)) window.localStorage.setItem(k, v);
+  }
+  if (before) before(window);
   window.Element.prototype.scrollIntoView = function () {};
   Object.defineProperty(window, 'innerWidth', { value: width, configurable: true });
   window.firmData = { firmTimezone: 'America/Detroit' };
@@ -142,6 +148,7 @@ function standard(over = {}) {
     if (over[`${method} ${url}`]) return over[`${method} ${url}`](payload, opts);
     if (url === '/api/mail/mailboxes') return { mailboxes: fresh(MB), viewer: { su: true, role: null } };
     if (url === '/api/mail/views') return { views: [] };
+    if (url === '/api/mail/views/counts') return { counts: {} };
     if (url === '/api/mail/messages' && method === 'GET') return { messages: fresh(ROWS), next_cursor: null };
     if (url === '/api/mail/threads/root%40x.test') return fresh(THREAD);
     if (url === '/api/mail/messages/12') return { thread_key: null, subject: 'Threadless', messages: [{ ...ROWS[1], body_text: 'only text', body_html: null, attachments: [], copies: [{ id: 12, mailbox_id: 2, folder: 'INBOX', unread: false }] }] };
@@ -632,7 +639,7 @@ describe('comms hub pane', () => {
     expect(['f-client', 'f-files', 'f-hascase', 'f-nocase'].map((id) => on(doc, id))).toEqual([false, false, false, false]);
   });
 
-  test('rail: views and mailboxes as lists over the SAME state as the menus — counts only when honest, Unsaved changes → Save / Update', async () => {
+  test('rail: views and mailboxes as lists over the SAME state as the menus — server counts per view, Unsaved changes → Save / Update', async () => {
     let views = [
       { id: 4, name: 'Billing unread', mailbox_ids: [1], filters: { unread_only: true }, is_default: false, sort_order: 0 },
       { id: 5, name: 'Client docs', mailbox_ids: null, filters: { client_only: true, has_files: true }, is_default: true, sort_order: 1 },
@@ -641,14 +648,16 @@ describe('comms hub pane', () => {
       handler: standard({
         'GET /api/mail/mailboxes': () => ({ mailboxes: [{ ...fresh(MB[0]), can_manage: true }, fresh(MB[1])], viewer: { su: false, role: null } }),
         'GET /api/mail/views': () => ({ views: fresh(views) }),
+        'GET /api/mail/views/counts': () => ({ counts: { 4: 2, 5: 7 } }),
         'PATCH /api/mail/views/5': (p) => { views = views.map((v) => (v.id === 5 ? { ...v, ...p } : v)); return { view: views[1] }; },
       }),
     });
     const lastList = () => calls.filter((c) => c.url === '/api/mail/messages').pop().payload;
     const vitems = () => [...doc.querySelectorAll('#rail-views .vitem')];
     const bitems = () => [...doc.querySelectorAll('#rail-boxes .bitem')];
-    // All mail = every box's INBOX unread; a view narrowing only by unread gets its boxes' count; a client/files view none
-    expect(vitems().map((b) => b.textContent)).toEqual(['All mail3', 'Billing unread2', 'Client docs ★']);
+    // All mail = every box's INBOX unread (summary); each saved view = the server's count under its own filters
+    expect(vitems().map((b) => b.textContent)).toEqual(['All mail3', 'Billing unread2', 'Client docs ★7']);
+    expect([...doc.querySelectorAll('#view-sel option')].map((o) => o.textContent)).toEqual(['No saved view', 'Billing unread (2)', 'Client docs (7) ★']);
     expect(vitems().map((b) => b.classList.contains('on'))).toEqual([false, false, true]); // the default view is active
     expect(doc.getElementById('rail-dirty').textContent).toBe('');
     expect(doc.getElementById('tab-email-n').textContent).toBe('3');
@@ -693,6 +702,85 @@ describe('comms hub pane', () => {
     doc.getElementById('rail-manage').click();
     expect(doc.getElementById('views-backdrop').classList.contains('open')).toBe(true);
     expect(errors).toEqual([]);
+  });
+
+  test('view counts: fetched with the views, refreshed when read state moves, absent (never an error) when the call fails', async () => {
+    let n = 0;
+    let fail = false;
+    const views = [{ id: 4, name: 'Clients', mailbox_ids: null, filters: { client_only: true }, is_default: false, sort_order: 0 }];
+    const { window, doc, calls, errors } = await boot({
+      handler: standard({
+        'GET /api/mail/views': () => ({ views }),
+        'GET /api/mail/views/counts': () => { if (fail) throw new Error('down'); n++; return { counts: { 4: n } }; },
+      }),
+    });
+    const label = () => doc.querySelector('#rail-views .vitem[data-view="4"]').textContent;
+    expect(label()).toBe('Clients1');
+    doc.querySelector('#msg-list .msg').click();            // opening marks it read → summary + counts refresh
+    await tick(window, 600);
+    expect(calls.filter((c) => c.url === '/api/mail/views/counts').length).toBeGreaterThan(1);
+    expect(label()).toBe(`Clients${n}`);
+    fail = true;
+    doc.getElementById('refresh-btn').click();
+    await tick(window, 60);
+    expect(label()).toBe('Clients');
+    expect(errors).toEqual([]);
+    // no views → no counts call at all
+    const bare = await boot({ handler: standard() });
+    expect(bare.calls.some((c) => c.url === '/api/mail/views/counts')).toBe(false);
+  });
+
+  test('view counts: an older response arriving last never overwrites a newer one', async () => {
+    const pending = [];
+    const views = [{ id: 4, name: 'Clients', mailbox_ids: null, filters: { client_only: true }, is_default: false, sort_order: 0 }];
+    const { window, doc } = await boot({
+      handler: standard({
+        'GET /api/mail/views': () => ({ views }),
+        'GET /api/mail/views/counts': () => new Promise((r) => pending.push(r)),
+      }),
+    });
+    const label = () => doc.querySelector('#rail-views .vitem[data-view="4"]').textContent;
+    // boot asked once (with the views); Refresh asks again before that answered
+    doc.getElementById('refresh-btn').click();
+    await new Promise((r) => window.setTimeout(r, 30));
+    expect(pending.length).toBe(2);
+    pending[pending.length - 1]({ counts: { 4: 9 } });     // the newest answers first
+    await new Promise((r) => window.setTimeout(r, 10));
+    expect(label()).toBe('Clients9');
+    for (const r of pending.slice(0, -1)) r({ counts: { 4: 1 } });  // stale ones straggle in
+    await new Promise((r) => window.setTimeout(r, 10));
+    expect(label()).toBe('Clients9');
+  });
+
+  test('rail collapses to the menus and comes back; the choice is remembered per browser (and storage may be missing)', async () => {
+    const { window, doc } = await boot({ handler: standard() });
+    const email = doc.getElementById('email');
+    expect(email.classList.contains('rail-off')).toBe(false);
+    doc.getElementById('rail-hide').click();
+    expect([email.classList.contains('rail-off'), window.localStorage.getItem('yc-comms-rail'), doc.getElementById('rail-show').getAttribute('aria-expanded')])
+      .toEqual([true, 'off', 'false']);
+    doc.getElementById('rail-show').click();
+    expect([email.classList.contains('rail-off'), window.localStorage.getItem('yc-comms-rail')]).toEqual([false, 'on']);
+    // a fresh load honours "off"
+    const again = await boot({ handler: standard(), storage: { 'yc-comms-rail': 'off' } });
+    expect(again.doc.getElementById('email').classList.contains('rail-off')).toBe(true);
+    // storage that throws: the rail just shows, nothing breaks
+    const locked = await boot({ handler: standard(), storage: 'throw' });
+    expect([locked.doc.getElementById('email').classList.contains('rail-off'), locked.errors]).toEqual([false, []]);
+    locked.doc.getElementById('rail-hide').click();
+    expect(locked.doc.getElementById('email').classList.contains('rail-off')).toBe(true);
+    // the CSS: collapsed brings the menus + the show button back, at the rail's width only
+    const css = HTML.match(/@media \(min-width: 1000px\) \{([\s\S]*?)\n  \}/)[1];
+    expect(css).toMatch(/\.email:not\(\.rail-off\) \.rail \{ display: flex; \}/);
+    expect(css).toMatch(/\.email:not\(\.rail-off\) #view-sel/);
+    expect(css).toMatch(/\.email\.rail-off #rail-show \{ display: inline-flex; \}/);
+  });
+
+  test('the shell\'s sidebar badge gets the unread total from the pane (no second fetch)', async () => {
+    const got = [];
+    const { window } = await boot({ handler: standard(), before: (w) => { w.commsBadgeSet = (n, boxes) => got.push([n, boxes]); } });
+    expect(got[got.length - 1]).toEqual([3, 2]);
+    expect(window.document.getElementById('tab-email-n').textContent).toBe('3');
   });
 
   test('Inbox | All folders is one choice; mail a mailbox SENT names its recipient, not the firm', async () => {

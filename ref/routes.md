@@ -1,7 +1,7 @@
 # Routes
 
-_Generated 2026-10-10T21:24:34.655Z_  
-_732 routes total — DELETE: 61, GET: 303, PATCH: 50, POST: 280, PUT: 35, _ALL: 3_
+_Generated 2026-10-10T22:41:13.375Z_  
+_733 routes total — DELETE: 61, GET: 304, PATCH: 50, POST: 280, PUT: 35, _ALL: 3_
 
 ## Global middleware chain
 
@@ -409,6 +409,7 @@ _732 routes total — DELETE: 61, GET: 303, PATCH: 50, POST: 280, PUT: 35, _ALL:
 | POST | `/api/mail/views` | `jwtOrApiKey`, `requireJwt` | — |
 | DELETE | `/api/mail/views/:id` | `jwtOrApiKey`, `requireJwt` | — |
 | PATCH | `/api/mail/views/:id` | `jwtOrApiKey`, `requireJwt` | — |
+| GET | `/api/mail/views/counts` | `jwtOrApiKey`, `requireJwt` | — |
 | GET | `/api/mailboxes` | `jwtOrApiKey`, `requireJwt` | — |
 | POST | `/api/mailboxes` | `jwtOrApiKey`, `superuserCheck`, `elevationCheck`, `rateLimitMiddleware` | — |
 | PATCH | `/api/mailboxes/:id` | `jwtOrApiKey`, `requireJwt` | — |
@@ -1002,4 +1003,4 @@ _732 routes total — DELETE: 61, GET: 303, PATCH: 50, POST: 280, PUT: 35, _ALL:
 
 ---
 
-_732 routes total — DELETE: 61, GET: 303, PATCH: 50, POST: 280, PUT: 35, _ALL: 3_
+_733 routes total — DELETE: 61, GET: 304, PATCH: 50, POST: 280, PUT: 35, _ALL: 3_
