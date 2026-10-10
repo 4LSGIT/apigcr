@@ -194,12 +194,28 @@ phone slice.
 - **Images are hidden** until you click **Show images**: a remote image tells
   the sender that you opened the message. Message content is displayed
   boxed off from YisraCase — scripts and forms in an email never run, and
-  links open in a new tab.
+  links open in a new tab. **Always show from <sender>** remembers that
+  sender for you (only you): their mail then opens with images shown, and
+  **Stop** on that line hides them again. It trusts the exact address, not
+  the whole domain; a fake From line borrowing that address could learn you
+  opened it, nothing more.
 - **Attachments** show as a paperclip and count on the message in the list
-  and on its header in the conversation, and as buttons under it; they
-  download from the mail server when clicked (see Attachments above). Only an
-  image drawn inside the message itself (a signature logo) is not listed —
-  it appears in the message when you click **Show images**.
+  and on its header in the conversation, and as a row of buttons under it.
+  Clicking the name of a PDF or a picture opens it in a viewer (**New tab**
+  there opens a PDF full size; some phones cannot show a PDF inside a page,
+  so use New tab or Download); anything else downloads. The eye button views,
+  the arrow downloads, and the folder button **saves it to a case**: pick the
+  case — the email's own case and the cases of the clients in the
+  conversation are offered first, or search — and it goes into that case's
+  Dropbox folder and onto its Documents tab, exactly like an upload from the
+  case. Every file comes from the mail server when you click it (see
+  Attachments above). Only an image drawn inside the message itself (a
+  signature logo) is not listed — it appears when you click **Show images**.
+- **In this conversation** (under the subject) lists the people in the
+  conversation who are contacts in YisraCase — sender first — with the cases
+  they are a client on, open ones first. Click a name to open the contact,
+  a case to open the case. The firm's own addresses are never listed, and an
+  attorney or trustee shows as a name without their cases.
 - **Link to case** puts the email on a case's log. If the email is already
   on the log (the old Gmail sync logs Stuart's inbox, for instance), that entry
   is linked — never a second copy. If it is not on the log yet (a box that

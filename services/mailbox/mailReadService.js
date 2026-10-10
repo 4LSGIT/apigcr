@@ -5,6 +5,10 @@
  * services/mailbox/mailReadService.js
  *
  *   summary(db, userId)                      readable mailboxes (+ colour) + INBOX unread/total counts
+ *   related(db, userId, messageId)           contacts the conversation's outside addresses belong
+ *                                            to, with their client cases (open the file from mail)
+ *   listImageSenders / trustImageSender / untrustImageSender
+ *                                            the caller's "always show images from" senders
  *   listMessages(db, userId, query)          the mixed-inbox list (keyset-paginated, NO bodies)
  *   getThread(db, userId, threadKey)         one thread, merged across readable mailboxes (bodies)
  *   getMessage(db, userId, id)               one message (bodies) — threadless mail
@@ -92,6 +96,10 @@ const INBOX = 'INBOX';
 // Case-link on a store-only folder waits this long after the worker stored the
 // message: two ~5-min pollers (the worker, the Apps Script source) plus margin.
 const STORE_ONLY_GRACE_MIN = 10;
+const RELATED_ADDR_MAX = 50;             // outside addresses looked up per conversation
+const RELATED_CASES_PER_CONTACT = 10;
+const CLIENT_RELATIONS = Object.freeze(['Primary', 'Secondary']); // case_relate types that make a "client file"
+const STAGE_RANK = Object.freeze({ Open: 0, Pending: 1, Filed: 2, Concluded: 3, Closed: 4 });
 
 // The saved-view filter vocabulary (inbox_views.filters) = the list's query
 // filters. Unknown keys are refused on write and ignored on read.
@@ -210,6 +218,18 @@ function cursorOf(row) {
 function emailsIn(s) {
   if (!s) return [];
   return (String(s).match(EMAIL_IN_RE) || []).map(e => e.toLowerCase());
+}
+
+/**
+ * The sender's bare address from a display From. The <angle> address wins:
+ * a display name can itself look like an address ("x@y.com via List
+ * <list@z.org>"), and the angle part is the one the mail was sent as.
+ */
+function senderOf(fromAddr) {
+  if (!fromAddr) return null;
+  const angle = /<([^<>]+)>\s*$/.exec(String(fromAddr));
+  const inAngle = angle ? emailsIn(angle[1])[0] : null;
+  return inAngle || emailsIn(fromAddr)[0] || null;
 }
 
 function attachmentParts(v) {
@@ -576,7 +596,7 @@ async function getThread(db, userId, threadKey) {
   if (!rows.length) throw httpError(404, 'Thread not found');
   // Back to oldest-first (date, id) — the order collapse() picks primaries in.
   const list = rows.slice(0, THREAD_MAX).reverse().map(r => shapeFull(r, scope));
-  const messages = collapse(list);
+  const messages = await markTrust(db, userId, collapse(list));
   return {
     thread_key: key,
     subject: (messages.find(m => m.subject) || {}).subject || null,
@@ -609,8 +629,163 @@ async function getMessage(db, userId, messageId) {
     thread_key: m.thread_key,
     subject: m.subject,
     truncated: false,
-    messages: [{ ...m, copies: [{ id: m.id, mailbox_id: m.mailbox_id, mailbox_address: m.mailbox_address, folder: m.folder, unread: m.unread }] }],
+    messages: await markTrust(db, userId, [{ ...m, copies: [{ id: m.id, mailbox_id: m.mailbox_id, mailbox_address: m.mailbox_address, folder: m.folder, unread: m.unread }] }]),
   };
+}
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Images: "always show images from this sender" (per user)
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// Remote images stay blocked by default (a tracking pixel is a read receipt).
+// A reader may trust a SENDER ADDRESS for themselves: messages from it then
+// render with remote images allowed and inline images fetched, exactly as if
+// "Show images" had been clicked. Per user (privacy is personal; read state is
+// too), per exact address (never a whole domain). The From header is the
+// sender's own claim, so a forged From from a trusted address can at most
+// learn that the message was opened — the sanitizer, the sandbox and the CSP
+// are unchanged whatever the trust (mailRender only widens img-src).
+
+const SENDER_RE = /^[^\s@<>"(),;:[\]\\]+@[^\s@<>"(),;:[\]\\]+\.[^\s@<>"(),;:[\]\\]+$/;
+
+function cleanSender(v) {
+  if (typeof v !== 'string') throw httpError(400, 'address must be an email address');
+  const a = v.trim().toLowerCase();
+  if (!a || a.length > 255 || !SENDER_RE.test(a)) throw httpError(400, 'address must be an email address');
+  return a;
+}
+
+/** `from_email` + `images_trusted` (the CALLER's list) on every message. */
+async function markTrust(db, userId, messages) {
+  for (const m of messages) m.from_email = senderOf(m.from_addr);
+  const senders = [...new Set(messages.map(m => m.from_email).filter(Boolean))];
+  let trusted = new Set();
+  if (senders.length) {
+    const [rows] = await db.query(
+      'SELECT address FROM mail_image_senders WHERE user = ? AND address IN (?)',
+      [Number(userId), senders]
+    );
+    trusted = new Set(rows.map(r => String(r.address).toLowerCase()));
+  }
+  for (const m of messages) m.images_trusted = !!(m.from_email && trusted.has(m.from_email));
+  return messages;
+}
+
+async function listImageSenders(db, userId) {
+  const [rows] = await db.query(
+    'SELECT address, created_at FROM mail_image_senders WHERE user = ? ORDER BY address ASC',
+    [Number(userId)]
+  );
+  return { senders: rows.map(r => ({ address: String(r.address), created_at: toDate(r.created_at) })) };
+}
+
+async function trustImageSender(db, userId, body) {
+  const address = cleanSender(body && body.address);
+  await db.query(
+    'INSERT INTO mail_image_senders (user, address) VALUES (?, ?) ON DUPLICATE KEY UPDATE address = address',
+    [Number(userId), address]
+  );
+  return { address };
+}
+
+async function untrustImageSender(db, userId, address) {
+  const a = cleanSender(address);
+  const [r] = await db.query('DELETE FROM mail_image_senders WHERE user = ? AND address = ?', [Number(userId), a]);
+  return { address: a, removed: Number(r.affectedRows) || 0 };
+}
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Related: open the client's file from the mail
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Contacts behind the conversation's OUTSIDE addresses (firm domains and the
+ * firm's own mailboxes left out), each with the cases they are a CLIENT on
+ * (case_relate Primary / Secondary — an attorney or trustee "Other" on fifty
+ * cases is a contact chip, not fifty case chips). Senders before recipients,
+ * then first appearance; a contact's cases open stages first, then newest.
+ * Only ACTIVE contact_emails rows match (one active owner per address,
+ * uk_email_active). Scope: the conversation as the caller can read it.
+ */
+async function related(db, userId, messageId) {
+  const v = await loadVisible(db, userId, messageId);
+  const scope = await readableScope(db, userId);
+  const [[anchor]] = await db.query('SELECT thread_key FROM mail_messages WHERE id = ? LIMIT 1', [v.id]);
+  const [rows] = anchor && anchor.thread_key
+    ? await db.query(
+      `SELECT from_addr, to_addrs, cc_addrs FROM mail_messages
+        WHERE thread_key = ? AND mailbox_id IN (?)
+        ORDER BY date DESC, id DESC LIMIT ?`,
+      [anchor.thread_key, [...scope.keys()], THREAD_MAX])
+    : await db.query('SELECT from_addr, to_addrs, cc_addrs FROM mail_messages WHERE id = ? LIMIT 1', [v.id]);
+
+  const [boxes] = await db.query('SELECT address FROM mailboxes');
+  const own = new Set(boxes.map(b => String(b.address).toLowerCase()));
+  const firm = firmDomains();
+  const outside = (a) => {
+    const d = a.slice(a.lastIndexOf('@') + 1);
+    return !own.has(a) && !firm.has(d) && ![...firm].some(f => d.endsWith(`.${f}`));
+  };
+  const role = new Map(); // address → 'from' | 'to', in first-seen order (senders first)
+  for (const r of rows) { const f = senderOf(r.from_addr); if (f && outside(f) && !role.has(f)) role.set(f, 'from'); }
+  for (const r of rows) {
+    for (const a of [...emailsIn(r.to_addrs), ...emailsIn(r.cc_addrs)]) if (outside(a) && !role.has(a)) role.set(a, 'to');
+  }
+  const addrs = [...role.keys()].slice(0, RELATED_ADDR_MAX);
+  if (!addrs.length) return { contacts: [] };
+
+  const [hits] = await db.query(
+    `SELECT ce.email, c.contact_id, c.contact_name, c.contact_kind
+       FROM contact_emails ce
+       JOIN contacts c ON c.contact_id = ce.contact_id
+      WHERE ce.email IN (?) AND ce.end_date IS NULL`,
+    [addrs]
+  );
+  const order = new Map(addrs.map((a, i) => [a, i]));
+  const byContact = new Map();
+  for (const h of hits) {
+    const email = String(h.email).toLowerCase();
+    const id = Number(h.contact_id);
+    if (!byContact.has(id)) {
+      byContact.set(id, { contact_id: id, name: h.contact_name || null, kind: h.contact_kind || 'person', emails: [], role: 'to', rank: Infinity, cases: [] });
+    }
+    const c = byContact.get(id);
+    c.emails.push(email);
+    if (role.get(email) === 'from') c.role = 'from';
+    c.rank = Math.min(c.rank, order.has(email) ? order.get(email) : Infinity);
+  }
+  if (!byContact.size) return { contacts: [] };
+
+  const [caseRows] = await db.query(
+    `SELECT cr.case_relate_client_id AS contact_id, cr.case_relate_type AS relation,
+            ca.case_id, ca.case_number, ca.case_number_full, ca.case_type, ca.case_stage, ca.case_status, ca.case_open_date
+       FROM case_relate cr
+       JOIN cases ca ON ca.case_id = cr.case_relate_case_id
+      WHERE cr.case_relate_client_id IN (?) AND cr.case_relate_type IN (?)`,
+    [[...byContact.keys()], [...CLIENT_RELATIONS]]
+  );
+  const openTime = (r) => { const d = toDate(r.case_open_date); return d ? d.getTime() : -Infinity; };
+  caseRows.sort((a, b) =>
+    ((STAGE_RANK[a.case_stage] ?? 9) - (STAGE_RANK[b.case_stage] ?? 9)) ||
+    (openTime(b) - openTime(a)) || String(a.case_id).localeCompare(String(b.case_id)));
+  for (const r of caseRows) {
+    const c = byContact.get(Number(r.contact_id));
+    if (!c || c.cases.length >= RELATED_CASES_PER_CONTACT || c.cases.some(x => x.case_id === r.case_id)) continue;
+    c.cases.push({
+      case_id: r.case_id,
+      case_number: r.case_number_full || r.case_number || null,
+      case_type: r.case_type || null,
+      case_stage: r.case_stage || null,
+      case_status: r.case_status || null,
+      relation: r.relation,
+    });
+  }
+  const contacts = [...byContact.values()]
+    .sort((a, b) => (a.role === b.role ? 0 : a.role === 'from' ? -1 : 1) || (a.rank - b.rank) || a.contact_id - b.contact_id)
+    .map(({ rank, ...c }) => c);
+  return { contacts };
 }
 
 
@@ -1011,7 +1186,14 @@ module.exports = {
   updateView,
   deleteView,
   caseLink,
+  related,
+  listImageSenders,
+  trustImageSender,
+  untrustImageSender,
   // exported for tests
+  senderOf,
+  CLIENT_RELATIONS,
+  RELATED_CASES_PER_CONTACT,
   emissionPending,
   folderEmits,
   STORE_ONLY_GRACE_MIN,

@@ -99,8 +99,12 @@ function makeWorld() {
     log: [],
     cases: [],
     email_ingest_executions: [],
+    mail_image_senders: [],
+    contacts: [],
+    contact_emails: [],
+    case_relate: [],
   };
-  const seq = { channel_grants: 0, inbox_views: 0, log: 0, email_ingest_executions: 0 };
+  const seq = { channel_grants: 0, inbox_views: 0, log: 0, email_ingest_executions: 0, mail_image_senders: 0, contact_emails: 0, case_relate: 0 };
   const statements = [];
   let snapshot = null;
 
@@ -142,8 +146,21 @@ function makeWorld() {
       T.mail_messages.push(row);
       return id;
     },
-    caseRow(case_id, case_number, case_number_full = null) {
-      T.cases.push({ case_id, case_number, case_number_full });
+    caseRow(case_id, case_number, case_number_full = null, over = {}) {
+      T.cases.push({ case_id, case_number, case_number_full, case_type: 'BK', case_stage: 'Open', case_status: 'New', case_open_date: null, ...over });
+    },
+    /** A contact with active (or, via over.end_date, ended) email rows. */
+    contact(contact_id, name, emails = [], { kind = 'person', ended = [] } = {}) {
+      T.contacts.push({ contact_id, contact_name: name, contact_kind: kind });
+      for (const e of emails) T.contact_emails.push({ id: ++seq.contact_emails, contact_id, email: e, end_date: null });
+      for (const e of ended) T.contact_emails.push({ id: ++seq.contact_emails, contact_id, email: e, end_date: new Date('2025-01-01') });
+      return contact_id;
+    },
+    relate(case_id, contact_id, type = 'Primary') {
+      T.case_relate.push({ case_relate_id: ++seq.case_relate, case_relate_case_id: case_id, case_relate_client_id: contact_id, case_relate_type: type });
+    },
+    trust(user, address) {
+      T.mail_image_senders.push({ id: ++seq.mail_image_senders, user, address, created_at: new Date('2026-10-09T10:00:00Z') });
     },
     logRow(over = {}) {
       const id = over.log_id || ++seq.log;
@@ -496,6 +513,65 @@ function makeWorld() {
       const l = logRow(p[2]);
       if (l) { l.log_about_type = p[0]; l.log_about_id = p[1]; }
       return [{ affectedRows: l ? 1 : 0 }];
+    }
+
+    // ── trusted image senders (per user) ──
+    if (sql === 'SELECT address FROM mail_image_senders WHERE user = ? AND address IN (?)') {
+      const want = new Set(p[1].map(a => String(a).toLowerCase()));
+      return [T.mail_image_senders.filter(r => r.user === Number(p[0]) && want.has(String(r.address).toLowerCase())).map(r => ({ address: r.address }))];
+    }
+    if (sql === 'SELECT address, created_at FROM mail_image_senders WHERE user = ? ORDER BY address ASC') {
+      return [T.mail_image_senders.filter(r => r.user === Number(p[0])).sort((a, b) => String(a.address).localeCompare(String(b.address)))
+        .map(r => ({ address: r.address, created_at: new Date(r.created_at) }))];
+    }
+    if (sql === 'INSERT INTO mail_image_senders (user, address) VALUES (?, ?) ON DUPLICATE KEY UPDATE address = address') {
+      const dup = T.mail_image_senders.find(r => r.user === Number(p[0]) && ci(r.address, p[1]));
+      if (dup) return [{ affectedRows: 1, insertId: dup.id }];   // CLIENT_FOUND_ROWS: unchanged row = 1
+      const id = ++seq.mail_image_senders;
+      T.mail_image_senders.push({ id, user: Number(p[0]), address: p[1], created_at: new Date() });
+      return [{ affectedRows: 1, insertId: id }];
+    }
+    if (sql === 'DELETE FROM mail_image_senders WHERE user = ? AND address = ?') {
+      const before = T.mail_image_senders.length;
+      T.mail_image_senders = T.mail_image_senders.filter(r => !(r.user === Number(p[0]) && ci(r.address, p[1])));
+      return [{ affectedRows: before - T.mail_image_senders.length }];
+    }
+
+    // ── related (contacts + client cases behind a conversation) ──
+    if (sql === 'SELECT thread_key FROM mail_messages WHERE id = ? LIMIT 1') {
+      const x = T.mail_messages.find(r => r.id === Number(p[0]));
+      return [x ? [{ thread_key: x.thread_key }] : []];
+    }
+    if (sql === 'SELECT from_addr, to_addrs, cc_addrs FROM mail_messages WHERE thread_key = ? AND mailbox_id IN (?) ORDER BY date DESC, id DESC LIMIT ?') {
+      const ids = new Set(p[1].map(Number));
+      return [T.mail_messages.filter(x => ci(x.thread_key, p[0]) && ids.has(x.mailbox_id)).sort(cmpDesc).slice(0, Number(p[2]))
+        .map(x => ({ from_addr: x.from_addr, to_addrs: x.to_addrs, cc_addrs: x.cc_addrs }))];
+    }
+    if (sql === 'SELECT from_addr, to_addrs, cc_addrs FROM mail_messages WHERE id = ? LIMIT 1') {
+      const x = T.mail_messages.find(r => r.id === Number(p[0]));
+      return [x ? [{ from_addr: x.from_addr, to_addrs: x.to_addrs, cc_addrs: x.cc_addrs }] : []];
+    }
+    if (sql === 'SELECT address FROM mailboxes') return [T.mailboxes.map(b => ({ address: b.address }))];
+    if (sql === 'SELECT ce.email, c.contact_id, c.contact_name, c.contact_kind FROM contact_emails ce JOIN contacts c ON c.contact_id = ce.contact_id WHERE ce.email IN (?) AND ce.end_date IS NULL') {
+      const want = new Set(p[0].map(a => String(a).toLowerCase()));
+      const out = [];
+      for (const e of T.contact_emails) {
+        if (e.end_date != null || !want.has(String(e.email).toLowerCase())) continue;
+        const c = T.contacts.find(x => x.contact_id === e.contact_id);
+        if (c) out.push({ email: e.email, contact_id: c.contact_id, contact_name: c.contact_name, contact_kind: c.contact_kind });
+      }
+      return [out];
+    }
+    if (sql === 'SELECT cr.case_relate_client_id AS contact_id, cr.case_relate_type AS relation, ca.case_id, ca.case_number, ca.case_number_full, ca.case_type, ca.case_stage, ca.case_status, ca.case_open_date FROM case_relate cr JOIN cases ca ON ca.case_id = cr.case_relate_case_id WHERE cr.case_relate_client_id IN (?) AND cr.case_relate_type IN (?)') {
+      const who = new Set(p[0].map(Number)); const types = new Set(p[1]);
+      const out = [];
+      for (const r of T.case_relate) {
+        if (!who.has(r.case_relate_client_id) || !types.has(r.case_relate_type)) continue;
+        const ca = T.cases.find(x => ci(x.case_id, r.case_relate_case_id));
+        if (ca) out.push({ contact_id: r.case_relate_client_id, relation: r.case_relate_type, case_id: ca.case_id, case_number: ca.case_number, case_number_full: ca.case_number_full,
+          case_type: ca.case_type, case_stage: ca.case_stage, case_status: ca.case_status, case_open_date: ca.case_open_date ? new Date(ca.case_open_date) : null });
+      }
+      return [out];
     }
 
     // ── lib/auth.jwtOrApiKey's fire-and-forget audit row ──

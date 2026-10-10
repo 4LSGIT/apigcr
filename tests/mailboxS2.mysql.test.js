@@ -12,6 +12,7 @@
  *   mysql -uroot -e "CREATE DATABASE yc_s2_test CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci"
  *   mysql -uroot yc_s2_test < ref/database.sql
  *   mysql -uroot yc_s2_test < ref/migrations/2026-10-09_mailbox_s2.sql   # until the dump carries mailboxes.color
+ *   mysql -uroot yc_s2_test < ref/migrations/2026-10-09_mail_image_senders.sql   # …and mail_image_senders
  *   mysql_tzinfo_to_sql /usr/share/zoneinfo | mysql -uroot mysql      # CONVERT_TZ(…'EST5EDT')
  *   YC_TEST_MYSQL_URL=mysql://user:pass@127.0.0.1:3306/yc_s2_test npx jest tests/mailboxS2.mysql.test.js
  *
@@ -87,7 +88,7 @@ maybe('mailbox S2 on real MySQL', () => {
 
   beforeEach(async () => {
     jest.spyOn(console, 'log').mockImplementation(() => {});
-    for (const t of ['mailboxes', 'channel_grants', 'mail_messages', 'mail_read_state', 'inbox_views', 'log', 'jwt_api_audit_log', 'email_ingest_executions']) {
+    for (const t of ['mailboxes', 'channel_grants', 'mail_messages', 'mail_read_state', 'inbox_views', 'log', 'jwt_api_audit_log', 'email_ingest_executions', 'mail_image_senders']) {
       await q(`DELETE FROM ${t}`);
     }
     await q('DELETE FROM users WHERE user IN (1, 5, 6, 9)');
@@ -244,6 +245,41 @@ maybe('mailbox S2 on real MySQL', () => {
     const th = await call('GET', '/api/mail/threads/long%40x.test', { t: tok(READER) });
     const got = th.json.messages.map((m) => m.id);
     expect([th.json.truncated, got.length, got[0], got[got.length - 1]]).toEqual([true, svc.THREAD_MAX, 5003, 5000 + N - 1]);
+  });
+
+  test('always-show-images senders on the engine: per user, case-blind unique key, IN lookup on every read', async () => {
+    expect((await call('POST', '/api/mail/image-senders', { t: tok(READER), body: { address: 'S102@Outside.test' } })).status).toBe(201);
+    expect((await call('POST', '/api/mail/image-senders', { t: tok(READER), body: { address: 's102@outside.test' } })).status).toBe(201); // ON DUPLICATE: no 2nd row
+    expect(await q('SELECT user, address FROM mail_image_senders')).toEqual([{ user: READER, address: 's102@outside.test' }]);
+    const t = await call('GET', '/api/mail/threads/root%40x.test', { t: tok(READER) });
+    expect(t.json.messages.map((m) => [m.id, m.from_email, m.images_trusted])).toEqual([[101, 's101@outside.test', false], [102, 's102@outside.test', true]]);
+    expect((await call('GET', '/api/mail/threads/root%40x.test', { t: tok(SU) })).json.messages.every((m) => !m.images_trusted)).toBe(true);
+    expect((await call('DELETE', '/api/mail/image-senders/S102%40OUTSIDE.TEST', { t: tok(READER) })).json.removed).toBe(1);
+  });
+
+  test('related on the engine: active contact emails → client cases (Primary/Secondary), firm + mailbox addresses skipped', async () => {
+    await q("DELETE FROM case_relate WHERE case_relate_client_id IN (9500, 9600)");
+    await q('DELETE FROM contact_emails WHERE contact_id IN (9500, 9600)');
+    await q('DELETE FROM contacts WHERE contact_id IN (9500, 9600)');
+    await q(`INSERT INTO contacts (contact_id, contact_kind, contact_type, contact_name, contact_lfm_name, contact_rname, contact_fname, contact_mname, contact_lname, contact_pname, contact_phone)
+             VALUES (9500, 'person', 'Client', 'Doe, Jane', 'Doe, Jane', 'Jane Doe', 'Jane', '', 'Doe', '', ''),
+                    (9600, 'person', 'Trustee', 'Trustee, Tom', 'Trustee, Tom', 'Tom Trustee', 'Tom', '', 'Trustee', '', '')`);
+    await q(`INSERT INTO contact_emails (contact_id, email, end_date) VALUES (9500, 'jane@client.test', NULL), (9600, 't@trustee.test', NULL), (9600, 'old@trustee.test', '2025-01-01')`);
+    await q("UPDATE cases SET case_stage = 'Filed', case_type = 'BK', case_open_date = '2026-01-01' WHERE case_id = 'CaseA1'");
+    await q("UPDATE cases SET case_stage = 'Open', case_type = 'BK', case_open_date = '2026-05-01' WHERE case_id = 'CaseB2'");
+    await q(`INSERT INTO case_relate (case_relate_case_id, case_relate_client_id, case_relate_type) VALUES ('CaseA1', 9500, 'Primary'), ('CaseB2', 9500, 'Secondary'), ('CaseB2', 9600, 'Other')`);
+    await q("UPDATE mail_messages SET from_addr = 'Jane <JANE@client.test>', to_addrs = 'billing@firm.test, intake@firm.test', cc_addrs = 'Tom <t@trustee.test>, old@trustee.test' WHERE id = 101");
+    try {
+      const r = await call('GET', '/api/mail/messages/102/related', { t: tok(READER) });
+      expect(r.json.contacts.map((c) => [c.contact_id, c.role, c.cases.map((x) => [x.case_id, x.case_stage, x.relation])])).toEqual([
+        [9500, 'from', [['CaseB2', 'Open', 'Secondary'], ['CaseA1', 'Filed', 'Primary']]],
+        [9600, 'to', []],
+      ]);
+    } finally {
+      await q("DELETE FROM case_relate WHERE case_relate_client_id IN (9500, 9600)");
+      await q('DELETE FROM contact_emails WHERE contact_id IN (9500, 9600)');
+      await q('DELETE FROM contacts WHERE contact_id IN (9500, 9600)');
+    }
   });
 
   test('inline vs attached on the engine: a Gmail-style PDF with a Content-ID counts; an image the body draws does not', async () => {

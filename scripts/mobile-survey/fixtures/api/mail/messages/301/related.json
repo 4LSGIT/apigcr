@@ -1,0 +1,11 @@
+{
+  "status": "success",
+  "contacts": [
+    { "contact_id": 1405, "name": "Counsel, Opposing Q. (a deliberately long contact name for wrapping)", "kind": "person", "emails": ["a-really-long-sender-address-for-overflow-checks@opposing-counsel-law-group.test"], "role": "from",
+      "cases": [
+        { "case_id": "TESTCASE1", "case_number": "26-99999-xyz", "case_type": "BK", "case_stage": "Filed", "case_status": "Confirmed", "relation": "Primary" },
+        { "case_id": "TESTCASE2", "case_number": "25-12345-abc", "case_type": "BK", "case_stage": "Closed", "case_status": "Discharged", "relation": "Secondary" }
+      ] },
+    { "contact_id": 1406, "name": "Paralegal Services Group LLC", "kind": "org", "emails": ["paralegal@opposing-counsel-law-group.test"], "role": "to", "cases": [] }
+  ]
+}

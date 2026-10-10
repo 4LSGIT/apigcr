@@ -49,6 +49,14 @@ body. Governing migrations in `ref/migrations/`.*
     attachment one. Inline = an image the HTML body references as `cid:`
     (`mailReadService.markInline`; the API's `inline` flag). Anything listing
     or forwarding attachments (S3 compose) uses that flag, never `cid`.
+  - **`mail_image_senders` is read on EVERY Comms thread / message open**
+    (`markTrust`) — per-user "always show images from" addresses. Migration
+    `2026-10-09_mail_image_senders.sql` goes BEFORE that backend.
+  - **Viewing a mail attachment in-page means a `blob:` URL on the APP
+    origin** — comms.html re-types the blob itself (PDF / raster images only,
+    `viewKind`); never widen that list to SVG/HTML or trust the part route's
+    type. Saving one to a case reuses `/api/documents/upload-link` →
+    Dropbox → `/upload-commit` (no new server path).
   - **`mailboxes.color`** (migration `2026-10-09_mailbox_s2.sql`): stored
     `#rrggbb` per box, cosmetic, manager-editable like `display_name`; random
     unused `PALETTE` default on create. Every mailbox projection selects it —

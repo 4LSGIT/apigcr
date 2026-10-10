@@ -32,6 +32,11 @@
  *     Mark read ↔ Mark unread against the server and the list row.
  *   - Files vs inline: the server's `inline` decides (a Content-ID alone does
  *     not — Gmail gives every attachment one).
+ *   - Hub polish: each file is View (PDF / raster image only, blob RE-TYPED by
+ *     the page) · Download · Save to case (the documents upload flow:
+ *     upload-link → Dropbox → upload-commit, case picked from suggestions or
+ *     search); "Always show from <sender>" per reader; the conversation's
+ *     contacts + client cases open the file.
  *   - Phone tab rendered and disabled; the empty hub explains itself.
  *   - Phone widths: opening a message switches to the thread (stacked
  *     navigation, .show-thread), Back returns to the list.
@@ -126,6 +131,7 @@ function standard(over = {}) {
     if (url === '/api/mail/threads/root%40x.test') return fresh(THREAD);
     if (url === '/api/mail/messages/12') return { thread_key: null, subject: 'Threadless', messages: [{ ...ROWS[1], body_text: 'only text', body_html: null, attachments: [], copies: [{ id: 12, mailbox_id: 2, folder: 'INBOX', unread: false }] }] };
     if (url === '/api/mail/read' && method === 'POST') return { marked: (payload.ids || []).length };
+    if (/^\/api\/mail\/messages\/\d+\/related$/.test(url)) return { contacts: [] };
     throw new Error(`unexpected ${method} ${url}`);
   };
 }
@@ -220,7 +226,7 @@ describe('comms hub pane', () => {
     window.HTMLAnchorElement.prototype.click = function () { downloads.push([this.getAttribute('href'), this.getAttribute('download')]); };
     doc.querySelector('#msg-list .msg').click();
     await tick(window, 80);
-    doc.querySelector('.att').click();
+    doc.querySelector('.att .att-dl').click();
     await tick(window, 40);
     const c = calls.find((x) => x.url === '/api/mailboxes/1/messages/11/parts/2');
     expect(c).toMatchObject({ method: 'GET', opts: { responseType: 'blob' } });
@@ -323,6 +329,184 @@ describe('comms hub pane', () => {
     await tick(window, 40);
     expect(calls.filter((c) => c.url === '/api/mail/read').pop().payload).toEqual({ ids: [11] });
     expect(doc.querySelector('#msg-list .msg[data-id="11"]').classList.contains('unread')).toBe(false);
+  });
+
+  // ── hub polish: attachments, viewer, save to case, trusted senders, related ──
+  const blobCapture = (window) => {
+    const made = [];
+    window.URL.createObjectURL = (b) => { made.push(b); return `blob:https://app.4lsg.com/${made.length}`; };
+    const revoked = [];
+    window.URL.revokeObjectURL = (u) => revoked.push(u);
+    return { made, revoked };
+  };
+  const withAtts = (atts, over = {}) => {
+    const t = fresh(THREAD);
+    Object.assign(t.messages[0], { attachments: atts, ...over });
+    return t;
+  };
+
+  test('each file: the name views a PDF / image (else downloads); View only where viewable; Download and Save to case always', async () => {
+    const thread = withAtts([
+      { part: '2', filename: 'Untitled.pdf', size: 5, mime: 'application/pdf', cid: 'f_1', inline: false },
+      { part: '3', filename: 'Exhibit A.docx', size: 5, mime: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', cid: null, inline: false },
+      { part: '4', filename: 'scan.PDF', size: 5, mime: 'application/octet-stream', cid: null, inline: false },        // generic mime, .pdf name
+      { part: '5', filename: 'evil.pdf', size: 5, mime: 'text/html', cid: null, inline: false },                       // HTML dressed as a PDF
+      { part: '6', filename: 'logo.svg', size: 5, mime: 'image/svg+xml', cid: null, inline: false },                   // script-capable image
+    ]);
+    const { window, doc } = await boot({ handler: standard({ 'GET /api/mail/threads/root%40x.test': () => fresh(thread) }) });
+    doc.querySelector('#msg-list .msg').click();
+    await tick(window, 80);
+    const rows = [...doc.querySelectorAll('.att')].map((r) => [r.dataset.part, !!r.querySelector('.att-view'), !!r.querySelector('.att-dl'), !!r.querySelector('.att-save')]);
+    expect(rows).toEqual([['2', true, true, true], ['3', false, true, true], ['4', true, true, true], ['5', false, true, true], ['6', false, true, true]]);
+  });
+
+  test('viewer: the blob is re-typed by the page (never trusted), PDFs get an iframe + New tab, images an <img>; closing revokes', async () => {
+    const thread = withAtts([
+      { part: '2', filename: 'Untitled.pdf', size: 5, mime: 'application/pdf', cid: 'f_1', inline: false },
+      { part: '4', filename: 'scan.pdf', size: 5, mime: 'application/octet-stream', cid: null, inline: false },
+      { part: '7', filename: 'photo.jpg', size: 5, mime: 'image/jpeg', cid: 'f_p', inline: false },
+    ]);
+    const { window, doc, calls } = await boot({
+      handler: standard({
+        'GET /api/mail/threads/root%40x.test': () => fresh(thread),
+        'GET /api/mailboxes/1/messages/11/parts/2': () => new window.Blob(['<script>x</script>'], { type: 'text/html' }),
+        'GET /api/mailboxes/1/messages/11/parts/4': () => new window.Blob(['%PDF'], { type: 'application/octet-stream' }),
+        'GET /api/mailboxes/1/messages/11/parts/7': () => new window.Blob(['jpg'], { type: 'image/jpeg' }),
+      }),
+    });
+    const { made, revoked } = blobCapture(window);
+    const opened = [];
+    window.open = (...a) => { opened.push(a); return null; };
+    doc.querySelector('#msg-list .msg').click();
+    await tick(window, 80);
+    doc.querySelector('.att[data-part="2"] .att-name').click();   // the name views a PDF
+    await tick(window, 40);
+    expect(calls.find((c) => c.url === '/api/mailboxes/1/messages/11/parts/2').opts).toEqual({ responseType: 'blob' });
+    expect(made.map((b) => b.type)).toEqual(['application/pdf']);  // the server said text/html: ignored
+    const frame = doc.querySelector('#viewer-body iframe');
+    expect([frame.getAttribute('src'), doc.getElementById('viewer-tab').hidden, doc.getElementById('viewer-title').textContent]).toEqual(['blob:https://app.4lsg.com/1', false, 'Untitled.pdf']);
+    doc.getElementById('viewer-tab').click();
+    expect(opened).toEqual([['blob:https://app.4lsg.com/1', '_blank', 'noopener']]);
+    doc.getElementById('viewer-close').click();
+    expect(revoked).toEqual([]);                                   // a tab is reading it: revoked later, not now
+    doc.querySelector('.att[data-part="4"] .att-view').click();
+    await tick(window, 40);
+    expect(made[1].type).toBe('application/pdf');
+    doc.querySelector('.att[data-part="7"] .att-view').click();    // opening another closes (and revokes) the first
+    await tick(window, 40);
+    expect(revoked).toEqual(['blob:https://app.4lsg.com/2']);
+    expect([made[2].type, doc.querySelector('#viewer-body img').getAttribute('src'), doc.getElementById('viewer-tab').hidden]).toEqual(['image/jpeg', 'blob:https://app.4lsg.com/3', true]);
+    doc.getElementById('viewer-close').click();
+    expect(revoked).toEqual(['blob:https://app.4lsg.com/2', 'blob:https://app.4lsg.com/3']);
+    expect(doc.getElementById('viewer-backdrop').classList.contains('open')).toBe(false);
+  });
+
+  test('save to case: suggestions (the linked case, then the conversation\'s client cases) → part blob → upload-link → Dropbox → upload-commit', async () => {
+    const thread = withAtts([{ part: '2', filename: 'Untitled.pdf', size: 5, mime: 'application/pdf', cid: 'f_1', inline: false }],
+      { case: { case_id: 'CaseA1', case_number: '26-11111' } });
+    const xhrs = [];
+    const { window, doc, calls } = await boot({
+      handler: standard({
+        'GET /api/mail/threads/root%40x.test': () => fresh(thread),
+        'GET /api/mail/messages/11/related': () => ({ contacts: [{ contact_id: 500, name: 'Doe, Jane', kind: 'person', emails: ['jane@client.test'], role: 'from', cases: [
+          { case_id: 'CaseA1', case_number: '26-11111', case_stage: 'Filed' }, { case_id: 'CaseB2', case_number: '26-22222', case_type: 'BK', case_stage: 'Open' }] }] }),
+        'GET /api/mailboxes/1/messages/11/parts/2': () => new window.Blob(['%PDF-1.7'], { type: 'application/pdf' }),
+        'POST /api/documents/upload-link': () => ({ link: 'https://content.dropboxapi.com/apitul/1/abc', path: '/Cases/B2/Untitled.pdf', ticket: 'tkt', placement: 'case' }),
+        'POST /api/documents/upload-commit': () => ({ document: { id: 9 }, link_type: 'case', link_id: 'CaseB2' }),
+      }),
+    });
+    window.XMLHttpRequest = class {
+      constructor() { this.upload = {}; this.headers = {}; xhrs.push(this); }
+      open(method, url) { this.method = method; this.url = url; }
+      setRequestHeader(k, v) { this.headers[k] = v; }
+      send(body) { this.body = body; this.status = 200; this.responseText = JSON.stringify({ id: 'id:dbx123' }); setTimeout(() => this.onload(), 0); }
+    };
+    doc.querySelector('#msg-list .msg').click();
+    await tick(window, 80);
+    doc.querySelector('.att .att-save').click();
+    expect(doc.getElementById('case-title').textContent).toBe('Save “Untitled.pdf” to a case');
+    const sugg = [...doc.querySelectorAll('#case-sugg li')];
+    expect(sugg.map((li) => li.querySelector('.l1').textContent)).toEqual(['26-11111', '26-22222Open']);
+    expect(doc.getElementById('case-sugg-wrap').hidden).toBe(false);
+    sugg[1].click();
+    await tick(window, 80);
+    expect(doc.getElementById('case-backdrop').classList.contains('open')).toBe(false);
+    expect(calls.find((c) => c.url === '/api/documents/upload-link').payload).toEqual({ case_id: 'CaseB2', filename: 'Untitled.pdf' });
+    expect(xhrs.map((x) => [x.method, x.url, x.headers['Content-Type'], x.body && x.body.size])).toEqual([['POST', 'https://content.dropboxapi.com/apitul/1/abc', 'application/octet-stream', 8]]);
+    expect(calls.find((c) => c.url === '/api/documents/upload-commit').payload).toEqual({ ticket: 'tkt', external_id: 'id:dbx123' });
+    expect(doc.getElementById('toast').textContent).toBe('Saved Untitled.pdf to 26-22222');
+    // and nothing was case-LINKED by a save
+    expect(calls.some((c) => /case-link/.test(c.url))).toBe(false);
+  });
+
+  test('images: "Always show from <sender>" trusts for this reader and re-renders; Stop hides them again', async () => {
+    const thread = withAtts(THREAD.messages[0].attachments, { from_email: 'evil@x.test', images_trusted: false });
+    const { window, doc, calls } = await boot({
+      handler: standard({
+        'GET /api/mail/threads/root%40x.test': () => fresh(thread),
+        'POST /api/mail/image-senders': (p) => ({ address: p.address }),
+        'DELETE /api/mail/image-senders/evil%40x.test': () => ({ address: 'evil@x.test', removed: 1 }),
+        'GET /api/mailboxes/1/messages/11/parts/3': () => new window.Blob([new Uint8Array([137, 80, 78, 71])], { type: 'image/png' }),
+      }),
+    });
+    doc.querySelector('#msg-list .msg').click();
+    await tick(window, 80);
+    const trust = doc.querySelector('.notice .trust-btn');
+    expect(trust.textContent).toBe('Always show from evil@x.test');
+    trust.click();
+    await tick(window, 80);
+    expect(calls.find((c) => c.url === '/api/mail/image-senders' && c.method === 'POST').payload).toEqual({ address: 'evil@x.test' });
+    expect(doc.querySelector('.notice')).toBeNull();
+    expect(doc.querySelector('iframe').srcdoc).toContain('img-src data: https: http:');
+    expect(calls.some((c) => c.url === '/api/mailboxes/1/messages/11/parts/3')).toBe(true);   // inline image fetched too
+    expect(doc.querySelector('.trustline').textContent).toMatch(/you trust evil@x\.test/);
+    doc.querySelector('.trustline .untrust-btn').click();
+    await tick(window, 80);
+    expect(calls.some((c) => c.url === '/api/mail/image-senders/evil%40x.test' && c.method === 'DELETE')).toBe(true);
+    expect(doc.querySelector('.notice .trust-btn')).not.toBeNull();
+    expect(doc.querySelector('iframe').srcdoc).toContain("img-src data:;");
+  });
+
+  test('a trusted sender\'s mail opens with images shown (remote allowed, inline fetched) — no click', async () => {
+    const thread = withAtts(THREAD.messages[0].attachments, { from_email: 'evil@x.test', images_trusted: true });
+    const { window, doc, calls } = await boot({
+      handler: standard({
+        'GET /api/mail/threads/root%40x.test': () => fresh(thread),
+        'GET /api/mailboxes/1/messages/11/parts/3': () => new window.Blob([new Uint8Array([137, 80, 78, 71])], { type: 'image/png' }),
+      }),
+    });
+    doc.querySelector('#msg-list .msg').click();
+    await tick(window, 120);
+    expect(doc.querySelector('.notice')).toBeNull();
+    expect(doc.querySelector('iframe').srcdoc).toContain('src="https://track.test/p.gif"');
+    expect(calls.filter((c) => c.url === '/api/mailboxes/1/messages/11/parts/3')).toHaveLength(1);  // once, not a loop
+  });
+
+  test('related: contacts and their client cases open the file; nothing related → no strip', async () => {
+    const { window, doc, calls } = await boot({
+      handler: standard({
+        'GET /api/mail/messages/11/related': () => ({ contacts: [
+          { contact_id: 500, name: 'Doe, Jane', kind: 'person', emails: ['jane@client.test'], role: 'from', cases: [{ case_id: 'CaseB2', case_number: '26-22222', case_stage: 'Open' }] },
+          { contact_id: 600, name: 'Acme Trustee LLC', kind: 'org', emails: ['t@trustee.test'], role: 'to', cases: [] },
+        ] }),
+        'GET /api/mail/messages/12/related': () => new Promise(() => {}), // still loading
+      }),
+    });
+    doc.querySelector('#msg-list .msg').click();
+    await tick(window, 80);
+    expect(calls.some((c) => c.url === '/api/mail/messages/11/related')).toBe(true);
+    const strip = doc.getElementById('thread-related');
+    expect([strip.hidden, strip.textContent]).toEqual([false, 'In this conversation:Doe, Jane26-22222 · OpenAcme Trustee LLC']);
+    strip.querySelector('.chip.person').click();
+    strip.querySelector('.chip.case').click();
+    expect(calls.filter((c) => c.addFile).map((c) => c.addFile)).toEqual([['Doe, Jane', 'client', '500'], ['26-22222', 'case', 'CaseB2']]);
+    // the link-to-case picker offers the same cases first
+    [...doc.querySelectorAll('.mactions button')].find((b) => /Link to case/.test(b.textContent)).click();
+    expect([...doc.querySelectorAll('#case-sugg li .l1')].map((x) => x.textContent)).toEqual(['26-22222Open']);
+    // another conversation: the previous one's people never linger while its own load
+    doc.querySelectorAll('#msg-list .msg')[1].click();
+    await tick(window, 80);
+    expect([strip.hidden, strip.textContent]).toEqual([true, '']);
   });
 
   test('mark unread → DELETE …/read for the copy the reader opened', async () => {

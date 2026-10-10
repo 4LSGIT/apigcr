@@ -183,8 +183,38 @@
     background: var(--warn-soft); border: 1px solid var(--warn); color: var(--warn-on-soft);
   }
   .atts { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 10px 8px; }
-  .att { max-width: 100%; }
+  /* One file = one joined group: name (views a PDF / image, else downloads),
+     then View · Download · Save to case. */
+  .att { display: inline-flex; align-items: stretch; max-width: 100%; min-width: 0; border: 1px solid var(--border); border-radius: 4px; background: var(--surface-2); }
+  .att > .btn { border: none; border-radius: 0; background: transparent; }
+  .att > .btn:hover { background: var(--hover); }
+  .att > .btn + .btn { border-left: 1px solid var(--border); }
+  .att .att-name { min-width: 0; }
   .att .nm { overflow: hidden; text-overflow: ellipsis; max-width: 220px; }
+
+  /* ── Related: the client's file, straight from the mail ── */
+  .related { display: flex; flex-wrap: wrap; gap: 4px 6px; align-items: center; padding: 6px 12px; border-bottom: 1px solid var(--border); font-size: 11.5px; min-width: 0; }
+  .related .lbl { color: var(--text-muted); font-weight: 600; }
+  .related .who { display: inline-flex; flex-wrap: wrap; gap: 4px; align-items: center; min-width: 0; margin-right: 6px; }
+  .related .chip { max-width: 100%; }
+  .chip.person { cursor: pointer; color: var(--text); }
+  .chip.person:hover, .chip.case:hover { border-color: var(--accent-2); }
+  .pick-list li.sugg .l1 { display: flex; gap: 6px; align-items: baseline; flex-wrap: wrap; }
+
+  /* ── Images: always-show line ── */
+  .trustline { margin: 0 10px 8px; font-size: 11.5px; color: var(--text-muted); display: flex; gap: 6px; align-items: center; flex-wrap: wrap; overflow-wrap: anywhere; }
+  .linkish { background: none; border: none; padding: 0; color: var(--accent-2); cursor: pointer; font: inherit; text-decoration: underline; }
+  /* the address is the point of the button (you are trusting THAT sender): let it wrap, never clip */
+  .notice .trust-btn { white-space: normal; overflow-wrap: anywhere; text-align: left; max-width: 100%; }
+
+  /* ── Attachment viewer (PDF / image only — see VIEW_KINDS) ── */
+  .modal.viewer { max-width: 1000px; height: calc(100vh - 48px); display: flex; flex-direction: column; padding: 10px 12px; }
+  .viewer-head { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; min-width: 0; }
+  .viewer-head h3 { margin: 0; flex: 1 1 12em; min-width: 0; font-size: 14px; overflow-wrap: anywhere; }
+  .viewer-body { flex: 1 1 auto; min-height: 0; display: flex; align-items: center; justify-content: center; background: var(--page-bg); border: 1px solid var(--border); border-radius: 4px; overflow: auto; }
+  .viewer-body img { max-width: 100%; max-height: 100%; object-fit: contain; }
+  .viewer-body iframe { width: 100%; height: 100%; border: 0; background: #fff; }
+  .viewer-hint { font-size: 11px; color: var(--text-muted); margin: -4px 0 6px; }
   .mbody { padding: 0 10px 10px; }
   /* The frame's sandbox/srcdoc are set by mailRender.js; only its box is styled here. */
   .mail-frame { display: block; width: 100%; border: 1px solid var(--border); border-radius: 4px; background: #fff; }
@@ -236,7 +266,8 @@
     .bar { padding: 6px 8px; }
     .bar input.domain { flex: 1 1 120px; }
     .chip { max-width: 120px; }
-    .att .nm { max-width: 150px; }
+    .att .nm { max-width: 110px; }
+    .modal.viewer { height: calc(100vh - 24px); padding: 8px; }
     .thread-body { padding: 6px 6px 16px; }
     .modal { padding: 14px; }
     .modal-backdrop { padding: 12px 8px; }
@@ -280,6 +311,7 @@
         <button class="btn icon back-btn" type="button" id="back-btn" title="Back to messages"><i class="fa-solid fa-arrow-left"></i></button>
         <h2 id="thread-subject"></h2>
       </div>
+      <div class="related" id="thread-related" aria-label="Contacts and cases in this conversation" hidden></div>
       <div class="thread-body" id="thread-body">
         <div class="empty" id="thread-empty">Select a message to read it.</div>
       </div>
@@ -309,10 +341,30 @@
   <div class="modal" role="dialog" aria-modal="true" aria-labelledby="case-title">
     <h3 id="case-title">Link to a case</h3>
     <div class="modal-err" id="case-msg" role="alert"></div>
+    <div id="case-sugg-wrap" hidden>
+      <span class="yc-flabel">From this conversation</span>
+      <ul class="pick-list" id="case-sugg"></ul>
+      <span class="yc-flabel">Or search</span>
+    </div>
     <input type="search" id="case-q" placeholder="Case number, caption or client name" aria-label="Search cases" maxlength="100">
     <span class="yc-hint" id="case-hint">The email is put on the case's log (a message that was not logged yet gets its log entry now).</span>
     <ul class="pick-list" id="case-results"></ul>
     <div class="modal-actions"><button class="btn" type="button" id="case-cancel">Cancel</button></div>
+  </div>
+</div>
+
+<!-- ── Attachment viewer ── -->
+<div class="modal-backdrop" id="viewer-backdrop">
+  <div class="modal viewer" role="dialog" aria-modal="true" aria-labelledby="viewer-title">
+    <div class="viewer-head">
+      <h3 id="viewer-title"></h3>
+      <button class="btn small" type="button" id="viewer-tab" hidden><i class="fa-solid fa-up-right-from-square"></i> New tab</button>
+      <button class="btn small" type="button" id="viewer-dl"><i class="fa-solid fa-download"></i> Download</button>
+      <button class="btn small" type="button" id="viewer-save"><i class="fa-solid fa-folder-plus"></i> Save to case</button>
+      <button class="btn small" type="button" id="viewer-close">Close</button>
+    </div>
+    <div class="viewer-hint" id="viewer-hint" hidden>Not showing? Use New tab or Download — some phones cannot show a PDF inside a page.</div>
+    <div class="viewer-body" id="viewer-body"></div>
   </div>
 </div>
 
@@ -332,6 +384,27 @@ const R = window.YCMailRender;
 const INLINE_IMAGE_MIME = ['image/png', 'image/jpeg', 'image/gif', 'image/webp']; // the part route's inline allowlist (images)
 const INLINE_IMAGE_MAX = 12;           // cid images fetched per message on "Show images"
 const INLINE_IMAGE_BYTES = 3 * 1024 * 1024;
+const partUrl = (m, a) => `/api/mailboxes/${m.mailbox_id}/messages/${m.id}/parts/${encodeURIComponent(a.part)}`;
+
+/*
+ * VIEWABLE ATTACHMENTS. The viewer shows an attachment from a blob: URL —
+ * which carries THIS page's origin — so only types that can never run script
+ * are viewable: PDFs (the browser's PDF viewer) and raster images (an <img>).
+ * The blob is re-wrapped with the type decided HERE, never the one the bytes
+ * or the server suggest, so an HTML or SVG file renamed .pdf is a broken PDF,
+ * not a page on the app's origin. Everything else is Download only.
+ */
+const VIEW_IMAGE_EXT = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp' };
+const GENERIC_MIME = ['', 'application/octet-stream', 'binary/octet-stream', 'application/x-download', 'application/force-download'];
+function viewKind(a) {
+  const mime = String((a && a.mime) || '').toLowerCase();
+  const ext = (/\.([a-z0-9]{1,5})$/i.exec(String((a && a.filename) || '')) || [])[1];
+  const e = ext ? ext.toLowerCase() : '';
+  if (mime === 'application/pdf' || mime === 'application/x-pdf' || (GENERIC_MIME.includes(mime) && e === 'pdf')) return { kind: 'pdf', type: 'application/pdf' };
+  if (INLINE_IMAGE_MIME.includes(mime)) return { kind: 'image', type: mime };
+  if (GENERIC_MIME.includes(mime) && VIEW_IMAGE_EXT[e]) return { kind: 'image', type: VIEW_IMAGE_EXT[e] };
+  return null;
+}
 
 const state = {
   mailboxes: [],        // GET /api/mail/mailboxes
@@ -348,6 +421,9 @@ const state = {
   threadSeq: 0,
   render: new Map(),    // message id → { allowRemote, mode, cidMap, tall }
   linking: null,        // message being case-linked
+  picker: null,         // the open case picker: { mode:'link'|'save', m, a? }
+  related: [],          // GET …/related contacts for the open conversation
+  viewer: null,         // { url, m, a, kind, tabbed }
 };
 
 /**
@@ -665,6 +741,8 @@ async function openMessage(m) {
   E('thread-head').hidden = false;
   E('thread-subject').textContent = m.subject || '(no subject)';
   E('thread-body').replaceChildren(h('div', { className: 'empty' }, 'Loading…'));
+  state.related = [];
+  renderRelated();
   try {
     const url = m.thread_key
       ? `/api/mail/threads/${encodeURIComponent(m.thread_key)}`
@@ -677,6 +755,7 @@ async function openMessage(m) {
       newIds: new Set(msgs.filter((x) => x.unread).map((x) => x.id)),
     };
     renderThread();
+    loadRelated(m.id, seq);
     // Mark-read on open: every unread copy of every message shown.
     const ids = [];
     for (const x of msgs) for (const c of (x.copies || [])) if (c.unread) ids.push(c.id);
@@ -696,6 +775,175 @@ async function openMessage(m) {
 
 function closeThread() {
   E('email').classList.remove('show-thread');
+}
+
+// ── Related: the client's file, straight from the mail ──────
+/** Contacts behind the conversation's outside addresses + their client cases. Never blocks reading. */
+async function loadRelated(messageId, seq) {
+  try {
+    const data = await api(`/api/mail/messages/${messageId}/related`, 'GET');
+    if (seq !== state.threadSeq) return;
+    state.related = Array.isArray(data && data.contacts) ? data.contacts : [];
+  } catch (_) {
+    if (seq !== state.threadSeq) return;
+    state.related = [];
+  }
+  renderRelated();
+}
+
+function openContact(c) {
+  try { P.addFile(String(c.name || c.contact_id), 'client', String(c.contact_id)); }
+  catch (_) { toast('Could not open the contact'); }
+}
+
+function relatedCaseChip(c) {
+  return h('span', {
+    className: 'chip case', title: `Open case ${c.case_number || c.case_id}${c.case_stage ? ` (${c.case_stage})` : ''}`,
+    role: 'button', tabindex: '0',
+    onclick: (e) => { e.stopPropagation(); openCase(c); },
+    onkeydown: (e) => { if (e.key === 'Enter') openCase(c); },
+  }, icon('fa-briefcase'), `${c.case_number || c.case_id}${c.case_stage ? ` · ${c.case_stage}` : ''}`);
+}
+
+function renderRelated() {
+  const box = E('thread-related');
+  const list = state.related || [];
+  box.hidden = !list.length;
+  if (!list.length) { box.replaceChildren(); return; }
+  box.replaceChildren(h('span', { className: 'lbl' }, 'In this conversation:'), ...list.map((c) => h('span', { className: 'who' },
+    h('span', {
+      className: 'chip person', title: `Open ${c.name || 'contact'} (${(c.emails || []).join(', ')})`, role: 'button', tabindex: '0',
+      onclick: () => openContact(c), onkeydown: (e) => { if (e.key === 'Enter') openContact(c); },
+    }, icon(c.kind === 'org' ? 'fa-building' : 'fa-user'), c.name || (c.emails || [])[0] || `contact ${c.contact_id}`),
+    ...(c.cases || []).map(relatedCaseChip))));
+}
+
+/** The message's own case first, then the conversation's client cases — one row per case. */
+function caseSuggestions(m) {
+  const out = [];
+  const seen = new Set();
+  const add = (c, who) => {
+    if (!c || !c.case_id || seen.has(c.case_id)) return;
+    seen.add(c.case_id);
+    out.push({ ...c, who });
+  };
+  if (m && m.case) add(m.case, 'this email is linked to it');
+  for (const p of state.related || []) for (const c of (p.cases || [])) add(c, p.name || '');
+  return out;
+}
+
+// ── Images from a trusted sender ────────────────────────────
+async function trustSender(m) {
+  const address = m.from_email;
+  if (!address) return;
+  try {
+    await api('/api/mail/image-senders', 'POST', { address });
+    setTrust(address, true);
+    toast(`Images from ${address} will always be shown`);
+  } catch (err) { toast(`Couldn't save that: ${err.message}`); }
+}
+async function untrustSender(m) {
+  const address = m.from_email;
+  if (!address) return;
+  try {
+    await api(`/api/mail/image-senders/${encodeURIComponent(address)}`, 'DELETE');
+    setTrust(address, false);
+    toast(`Images from ${address} are hidden again`);
+  } catch (err) { toast(`Couldn't change that: ${err.message}`); }
+}
+/** Flip every open message from `address` and re-render the opened ones. */
+function setTrust(address, on) {
+  const t = state.thread;
+  if (!t) return;
+  for (const x of t.messages) {
+    if (x.from_email !== address) continue;
+    x.images_trusted = on;
+    const rs = state.render.get(x.id);
+    if (rs) { rs.autoTried = false; if (!on) { rs.allowRemote = false; rs.cidMap = null; } }
+    const card = E('thread-body').querySelector(`.mcard[data-id="${x.id}"]`);
+    if (card && card.querySelector('.mail-frame')) refill(card, x);
+  }
+}
+
+// ── Attachment viewer ───────────────────────────────────────
+async function viewAttachment(m, a) {
+  const vk = viewKind(a);
+  if (!vk) return downloadPart(m, a);
+  closeViewer();
+  state.viewer = { url: null, m, a, kind: vk.kind, tabbed: false };
+  const v = state.viewer;
+  E('viewer-title').textContent = a.filename || `attachment ${a.part}`;
+  E('viewer-tab').hidden = vk.kind !== 'pdf';
+  E('viewer-hint').hidden = vk.kind !== 'pdf';
+  E('viewer-body').replaceChildren(h('div', { className: 'empty' }, 'Loading from the mail server…'));
+  E('viewer-backdrop').classList.add('open');
+  try {
+    const blob = await api(partUrl(m, a), 'GET', null, {}, { responseType: 'blob' });
+    if (state.viewer !== v) return; // closed / replaced meanwhile
+    // Re-typed HERE (see VIEW_IMAGE_EXT): never the type the bytes claim.
+    v.url = URL.createObjectURL(new Blob([blob], { type: vk.type }));
+    E('viewer-body').replaceChildren(vk.kind === 'image'
+      ? h('img', { src: v.url, alt: a.filename || 'attachment' })
+      : h('iframe', { src: v.url, title: a.filename || 'PDF attachment', referrerpolicy: 'no-referrer' }));
+  } catch (err) {
+    if (state.viewer !== v) return;
+    E('viewer-body').replaceChildren(h('div', { className: 'inline-error' }, err.message || 'Could not load the attachment'));
+  }
+}
+function closeViewer() {
+  const v = state.viewer;
+  state.viewer = null;
+  E('viewer-backdrop').classList.remove('open');
+  E('viewer-body').replaceChildren();
+  // A tab opened from it may still be reading the blob: give it time.
+  if (v && v.url) { if (v.tabbed) setTimeout(() => URL.revokeObjectURL(v.url), 5 * 60_000); else URL.revokeObjectURL(v.url); }
+}
+function viewerNewTab() {
+  const v = state.viewer;
+  if (!v || !v.url || v.kind !== 'pdf') return;
+  v.tabbed = true;
+  window.open(v.url, '_blank', 'noopener');
+}
+
+// ── Save an attachment to a case's Dropbox folder ───────────
+/*
+ * The documents upload flow, unchanged (public/documents.html): /upload-link
+ * picks the case's folder (or the shared no-folder ladder) and mints a Dropbox
+ * temporary upload link; the browser POSTs the bytes straight to Dropbox
+ * (Cloud Run never holds them); /upload-commit registers what landed and links
+ * it to the case — and, through apiSend, tells every open Documents tab.
+ */
+function putToDropbox(url, blob, onProgress) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', url);
+    xhr.setRequestHeader('Content-Type', 'application/octet-stream');
+    xhr.upload.onprogress = (e) => { if (e.lengthComputable && onProgress) onProgress(Math.round((e.loaded / e.total) * 100)); };
+    xhr.onload = () => {
+      if (xhr.status !== 200) return reject(new Error(`Upload to Dropbox failed (${xhr.status})`));
+      let meta = null;
+      try { meta = JSON.parse(xhr.responseText); } catch (_) { /* the bytes landed; commit falls back to the path */ }
+      resolve(meta);
+    };
+    xhr.onerror = () => reject(new Error('Network error uploading to Dropbox'));
+    xhr.send(blob);
+  });
+}
+
+async function saveToCase(m, a, c) {
+  const label = c.case_number_full || c.case_number || c.case_id;
+  const name = a.filename || `attachment-${a.part}`;
+  toast(`Saving ${name} to ${label}…`);
+  try {
+    const blob = await api(partUrl(m, a), 'GET', null, {}, { responseType: 'blob' });
+    const issued = await api('/api/documents/upload-link', 'POST', { case_id: c.case_id, filename: name });
+    if (!issued || !issued.link || !issued.ticket) throw new Error('the server did not return an upload link');
+    const meta = await putToDropbox(issued.link, blob, (pct) => toast(`Saving ${name} to ${label}… ${pct}%`));
+    await api('/api/documents/upload-commit', 'POST', { ticket: issued.ticket, external_id: (meta && meta.id) || undefined });
+    toast(`Saved ${name} to ${label}${issued.note ? ` — ${issued.note}` : ''}`);
+  } catch (err) {
+    toast(`Couldn't save ${name}: ${err.message}`);
+  }
 }
 
 function renderThread() {
@@ -773,6 +1021,13 @@ function fillCard(card, m) {
   const rs = state.render.get(m.id) || { allowRemote: false, mode: 'html', cidMap: null, tall: false };
   state.render.set(m.id, rs);
   const hasHtml = m.body_html != null && String(m.body_html).trim() !== '';
+  // A trusted sender's mail opens as if "Show images" had been clicked: remote
+  // images on this render, inline ones fetched right after (once per card).
+  if (m.images_trusted && !rs.autoTried) {
+    rs.autoTried = true;
+    rs.allowRemote = true;
+    if (inlineParts(m).length) setTimeout(() => showImages(card, m), 0);
+  }
   const built = R.createFrame(document, m, {
     mode: hasHtml ? rs.mode : 'text', allowRemote: rs.allowRemote, cidMap: rs.cidMap || {},
     title: `Message from ${personName(m.from_addr)}`,
@@ -804,17 +1059,37 @@ function fillCard(card, m) {
     kids.push(h('div', { className: 'notice' },
       icon('fa-eye-slash'),
       `Images hidden to protect your privacy (${built.blocked.remote} remote${built.blocked.inline ? `, ${built.blocked.inline} inline` : ''}). Remote images tell the sender you opened this.`,
-      h('button', { className: 'btn small', type: 'button', onclick: (e) => showImages(card, m, e.target) }, 'Show images')));
+      h('button', { className: 'btn small', type: 'button', onclick: (e) => showImages(card, m, e.target) }, 'Show images'),
+      m.from_email ? h('button', {
+        className: 'btn small trust-btn', type: 'button', title: `Always show images in mail from ${m.from_email} (just for you)`,
+        onclick: () => trustSender(m),
+      }, `Always show from ${m.from_email}`) : null));
+  } else if (built.mode === 'html' && m.images_trusted && m.from_email) {
+    kids.push(h('div', { className: 'trustline' }, icon('fa-eye'), `Images shown: you trust ${m.from_email}.`,
+      h('button', { className: 'linkish untrust-btn', type: 'button', onclick: () => untrustSender(m) }, 'Stop')));
   }
   const files = attachedFiles(m);
   if (files.length) {
-    kids.push(h('div', { className: 'atts' }, files.map((a) => h('button', {
-      className: 'btn small att', type: 'button', title: `${a.filename || 'attachment'}${a.mime ? ` · ${a.mime}` : ''}`,
-      onclick: (e) => downloadPart(m, a, e.currentTarget),
-    }, icon('fa-paperclip'), h('span', { className: 'nm' }, a.filename || `part ${a.part}`), h('span', { className: 'muted' }, bytes(a.size))))));
+    kids.push(h('div', { className: 'atts' }, files.map((a) => {
+      const vk = viewKind(a);
+      const nm = a.filename || `part ${a.part}`;
+      return h('div', { className: 'att', dataset: { part: String(a.part) } },
+        h('button', {
+          className: 'btn small att-name', type: 'button', title: `${vk ? 'View' : 'Download'} ${nm}${a.mime ? ` · ${a.mime}` : ''}`,
+          onclick: (e) => (vk ? viewAttachment(m, a) : downloadPart(m, a, e.currentTarget)),
+        }, icon('fa-paperclip'), h('span', { className: 'nm' }, nm), h('span', { className: 'muted' }, bytes(a.size))),
+        vk ? h('button', { className: 'btn small att-view', type: 'button', title: `View ${nm}`, 'aria-label': `View ${nm}`, onclick: () => viewAttachment(m, a) }, icon('fa-eye')) : null,
+        h('button', { className: 'btn small att-dl', type: 'button', title: `Download ${nm}`, 'aria-label': `Download ${nm}`, onclick: (e) => downloadPart(m, a, e.currentTarget) }, icon('fa-download')),
+        h('button', { className: 'btn small att-save', type: 'button', title: `Save ${nm} to a case's Dropbox folder`, 'aria-label': `Save ${nm} to a case`, onclick: () => openSavePicker(m, a) }, icon('fa-folder-plus')));
+    })));
   }
   kids.push(h('div', { className: 'mbody' }, built.frame));
   slot.replaceChildren(...kids);
+}
+
+/** Images the body draws (server `inline`), within the per-message fetch budget. */
+function inlineParts(m) {
+  return (m.attachments || []).filter((a) => a.inline && a.cid && INLINE_IMAGE_MIME.includes(a.mime) && (a.size == null || a.size <= INLINE_IMAGE_BYTES)).slice(0, INLINE_IMAGE_MAX);
 }
 
 function refill(card, m) {
@@ -826,14 +1101,14 @@ async function showImages(card, m, btn) {
   const rs = state.render.get(m.id);
   if (btn) btn.disabled = true;
   rs.allowRemote = true;
-  const inline = (m.attachments || []).filter((a) => a.inline && a.cid && INLINE_IMAGE_MIME.includes(a.mime) && (a.size == null || a.size <= INLINE_IMAGE_BYTES)).slice(0, INLINE_IMAGE_MAX);
+  const inline = inlineParts(m);
   if (inline.length) {
     rs.cidMap = rs.cidMap || {};
     // One at a time: every part fetch is its own IMAP login on the server
     // (request-scoped connection), and Gmail caps concurrent IMAP sessions.
     for (const a of inline) {
       try {
-        const blob = await api(`/api/mailboxes/${m.mailbox_id}/messages/${m.id}/parts/${encodeURIComponent(a.part)}`, 'GET', null, {}, { responseType: 'blob' });
+        const blob = await api(partUrl(m, a), 'GET', null, {}, { responseType: 'blob' });
         if (!blob || !INLINE_IMAGE_MIME.includes(String(blob.type).toLowerCase())) continue;
         rs.cidMap[String(a.cid).replace(/^<|>$/g, '').toLowerCase()] = await new Promise((res, rej) => {
           const fr = new FileReader();
@@ -905,20 +1180,50 @@ function openCase(c) {
 // ── Link to case ────────────────────────────────────────────
 let caseTimer = null;
 let caseSeq = 0;
-function openCaseLink(m) {
-  state.linking = m;
+/** ONE case picker for both jobs: link the email, or save an attachment. */
+function openCasePicker(picker, { title, hint }) {
+  state.picker = picker;
+  state.linking = picker.mode === 'link' ? picker.m : null;
+  E('case-title').textContent = title;
   E('case-msg').classList.remove('show');
   E('case-q').value = '';
   E('case-results').replaceChildren();
-  E('case-hint').textContent = m.log_id
-    ? 'The email is already on the firm log; this links that entry to the case.'
-    : 'This email is not on the log yet — linking adds it to the log of the case you pick.';
+  E('case-hint').textContent = hint;
+  const sugg = caseSuggestions(picker.m);
+  E('case-sugg-wrap').hidden = !sugg.length;
+  E('case-sugg').replaceChildren(...sugg.map((c) => h('li', {
+    className: 'sugg', tabindex: '0', onclick: () => pickCase(c), onkeydown: (e) => { if (e.key === 'Enter') pickCase(c); },
+  },
+    h('div', { className: 'l1' }, c.case_number || c.case_id, c.case_stage ? h('span', { className: 'chip' }, c.case_stage) : null),
+    h('div', { className: 'l2' }, [c.case_type, c.who].filter(Boolean).join(' · ')))));
   E('case-backdrop').classList.add('open');
   E('case-q').focus();
+}
+function openCaseLink(m) {
+  openCasePicker({ mode: 'link', m }, {
+    title: 'Link to a case',
+    hint: m.log_id
+      ? 'The email is already on the firm log; this links that entry to the case.'
+      : 'This email is not on the log yet — linking adds it to the log of the case you pick.',
+  });
+}
+function openSavePicker(m, a) {
+  closeViewer();
+  openCasePicker({ mode: 'save', m, a }, {
+    title: `Save “${a.filename || `attachment ${a.part}`}” to a case`,
+    hint: 'It goes into the case\'s Dropbox folder (the unsorted uploads folder if the case has none yet) and shows on its Documents tab.',
+  });
+}
+function pickCase(c) {
+  const p = state.picker;
+  if (!p) return;
+  if (p.mode === 'save') { closeCaseLink(); saveToCase(p.m, p.a, c); return; }
+  linkCase(c);
 }
 function closeCaseLink() {
   E('case-backdrop').classList.remove('open');
   state.linking = null;
+  state.picker = null;
 }
 async function searchCases() {
   const q = E('case-q').value.trim();
@@ -929,7 +1234,7 @@ async function searchCases() {
     if (seq !== caseSeq) return;
     const rows = (data && data.cases) || [];
     E('case-results').replaceChildren(...(rows.length ? rows.map((c) => h('li', {
-      tabindex: '0', onclick: () => linkCase(c), onkeydown: (e) => { if (e.key === 'Enter') linkCase(c); },
+      tabindex: '0', onclick: () => pickCase(c), onkeydown: (e) => { if (e.key === 'Enter') pickCase(c); },
     },
       h('div', { className: 'l1' }, c.case_number_full || c.case_number || '(no case number)'),
       h('div', { className: 'l2' }, [c.case_id, c.case_type, c.case_stage].filter(Boolean).join(' · ')),
@@ -1101,10 +1406,16 @@ async function init() {
   E('views-backdrop').addEventListener('click', (e) => { if (e.target === E('views-backdrop')) closeViews(); });
   E('case-q').addEventListener('input', () => { clearTimeout(caseTimer); caseTimer = setTimeout(searchCases, 250); });
   E('case-cancel').addEventListener('click', closeCaseLink);
+  E('viewer-close').addEventListener('click', closeViewer);
+  E('viewer-tab').addEventListener('click', viewerNewTab);
+  E('viewer-dl').addEventListener('click', () => { const v = state.viewer; if (v) downloadPart(v.m, v.a); });
+  E('viewer-save').addEventListener('click', () => { const v = state.viewer; if (v) openSavePicker(v.m, v.a); });
+  E('viewer-backdrop').addEventListener('click', (e) => { if (e.target === E('viewer-backdrop')) closeViewer(); });
   E('case-backdrop').addEventListener('click', (e) => { if (e.target === E('case-backdrop')) closeCaseLink(); });
   document.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape') return;
-    if (E('case-backdrop').classList.contains('open')) closeCaseLink();
+    if (E('viewer-backdrop').classList.contains('open')) closeViewer();
+    else if (E('case-backdrop').classList.contains('open')) closeCaseLink();
     else if (E('views-backdrop').classList.contains('open')) closeViews();
     else if (!E('mb-panel').hidden) toggleBoxPanel(false);
   });
@@ -1121,7 +1432,7 @@ async function init() {
 // The shell pings visible frames when their tab is re-entered (index.html
 // pingBecameVisible). Refresh the list and counts quietly; an open thread stays.
 window.ycBecameVisible = () => {
-  if (E('case-backdrop').classList.contains('open') || E('views-backdrop').classList.contains('open')) return;
+  if (E('case-backdrop').classList.contains('open') || E('views-backdrop').classList.contains('open') || E('viewer-backdrop').classList.contains('open')) return;
   loadSummary().catch(() => {});
   loadList({ silent: true });
 };

@@ -32,6 +32,11 @@
  *   - attachment_count back to "no cid"                                 → Gmail-PDF count test
  *   - markInline ignoring the body reference / the image test           → thread inline tests
  *   - the page-body read unconditional / dropped                        → body-read tests
+ * Hub polish (images per sender, related), mutation-checked:
+ *   - markTrust ignoring the caller (user = ?) / never trusting       → per-user trust tests
+ *   - senderOf taking the first address instead of the <angle> one    → "via Group" test
+ *   - related keeping firm / mailbox addresses, ended emails, non-client relations,
+ *     losing senders-first or the stage order, or the per-contact cap → related tests
  * Mailbox colour (v3), mutation-checked:
  *   - summary dropping `color` / passing it through un-normalized        → colour test
  */
@@ -122,7 +127,8 @@ describe('humans only', () => {
       ['GET', '/api/mail/threads/root%40x.test'], ['POST', '/api/mail/messages/101/read'],
       ['DELETE', '/api/mail/messages/101/read'], ['POST', '/api/mail/read'], ['GET', '/api/mail/views'],
       ['POST', '/api/mail/views'], ['PATCH', '/api/mail/views/1'], ['DELETE', '/api/mail/views/1'],
-      ['POST', '/api/mail/messages/101/case-link'],
+      ['POST', '/api/mail/messages/101/case-link'], ['GET', '/api/mail/messages/101/related'],
+      ['GET', '/api/mail/image-senders'], ['POST', '/api/mail/image-senders'], ['DELETE', '/api/mail/image-senders/a%40b.test'],
     ];
     for (const [method, url] of routes) {
       expect((await call(method, url)).status).toBe(401);
@@ -697,6 +703,102 @@ describe('case link (about-link machinery)', () => {
       expect((await call('POST', '/api/mail/messages/101/case-link', { t: tok(READER), body })).status).toBe(400);
     }
     expect(W.T.log).toEqual([]);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+describe('always show images from a sender (per user)', () => {
+  test('trust / list / untrust are the caller\'s own; addresses are validated and lowercased; trust is idempotent', async () => {
+    let r = await call('POST', '/api/mail/image-senders', { t: tok(READER), body: { address: '  Deals@Shop.TEST ' } });
+    expect([r.status, r.json.address]).toEqual([201, 'deals@shop.test']);
+    expect((await call('POST', '/api/mail/image-senders', { t: tok(READER), body: { address: 'deals@shop.test' } })).status).toBe(201);
+    await call('POST', '/api/mail/image-senders', { t: tok(SU), body: { address: 'noreply@court.test' } });
+    expect(W.T.mail_image_senders.filter((x) => x.user === READER).map((x) => x.address)).toEqual(['deals@shop.test']);
+    expect((await call('GET', '/api/mail/image-senders', { t: tok(READER) })).json.senders.map((x) => x.address)).toEqual(['deals@shop.test']);
+    expect((await call('GET', '/api/mail/image-senders', { t: tok(SU) })).json.senders.map((x) => x.address)).toEqual(['noreply@court.test']);
+    // someone else's trust is not yours to remove
+    expect((await call('DELETE', '/api/mail/image-senders/noreply%40court.test', { t: tok(READER) })).json.removed).toBe(0);
+    expect(W.T.mail_image_senders).toHaveLength(2);
+    r = await call('DELETE', `/api/mail/image-senders/${encodeURIComponent('DEALS@shop.test')}`, { t: tok(READER) });
+    expect(r.json).toMatchObject({ address: 'deals@shop.test', removed: 1 });
+    for (const bad of [{}, { address: 'nope' }, { address: 'a b@c.test' }, { address: '<a@b.test>' }, { address: 5 }, { address: `${'x'.repeat(250)}@b.test` }]) {
+      expect((await call('POST', '/api/mail/image-senders', { t: tok(READER), body: bad })).status).toBe(400);
+    }
+  });
+
+  test('thread and single-message reads carry from_email (the <angle> address) and images_trusted for THIS reader only', async () => {
+    W.T.mail_messages.find((m) => m.id === 102).from_addr = '"someone@else.test via Group" <Group@Lists.test>';
+    W.trust(READER, 'group@lists.test');
+    const t = await call('GET', '/api/mail/threads/root%40x.test', { t: tok(READER) });
+    expect(t.json.messages.map((m) => [m.id, m.from_email, m.images_trusted])).toEqual([[101, 's101@outside.test', false], [102, 'group@lists.test', true]]);
+    const other = await call('GET', '/api/mail/threads/root%40x.test', { t: tok(SU) });
+    expect(other.json.messages.map((m) => m.images_trusted)).toEqual([false, false]);
+    W.trust(READER, 'deals@shop.test');
+    const one = await call('GET', '/api/mail/messages/103', { t: tok(READER) });
+    expect([one.json.messages[0].from_email, one.json.messages[0].images_trusted]).toEqual(['deals@shop.test', true]);
+  });
+});
+
+describe('related: open the client\'s file from the mail', () => {
+  beforeEach(() => {
+    // the conversation root@x.test: 101 from a client, 102 cc'ing a trustee; firm addresses on both
+    Object.assign(W.T.mail_messages.find((m) => m.id === 101), { from_addr: 'Jane Doe <JANE@client.test>', to_addrs: 'Billing <billing@firm.test>', cc_addrs: 'staff@firm.test' });
+    Object.assign(W.T.mail_messages.find((m) => m.id === 102), { from_addr: 'billing@firm.test', to_addrs: 'jane@client.test, Trustee <t@trustee.test>, intake@firm.test', cc_addrs: 'nobody@unknown.test' });
+    W.contact(500, 'Doe, Jane', ['jane@client.test']);
+    W.contact(600, 'Trustee, Tom', ['t@trustee.test'], { kind: 'person' });
+    W.contact(700, 'Old Owner', [], { ended: ['nobody@unknown.test'] });   // an ENDED email row never matches
+    W.contact(800, 'Firm Staff', ['staff@firm.test']);                      // firm domain: never looked up
+    W.caseRow('CaseOld', '20-00001', null, { case_stage: 'Closed', case_open_date: '2020-01-01' });
+    W.caseRow('CaseNew', '26-11111', '26-11111-tjt', { case_stage: 'Filed', case_open_date: '2026-02-01' });
+    W.caseRow('CaseOpen', null, null, { case_stage: 'Open', case_open_date: '2026-09-01' });
+    W.caseRow('CaseOther', '26-22222', null, { case_stage: 'Open' });
+    W.caseRow('CaseShut', '25-33333', null, { case_stage: 'Closed', case_open_date: '2026-10-01' }); // newest, but closed
+    W.relate('CaseOld', 500, 'Primary');
+    W.relate('CaseNew', 500, 'Secondary');
+    W.relate('CaseOpen', 500, 'Primary');
+    W.relate('CaseShut', 500, 'Primary');
+    W.relate('CaseOther', 600, 'Other');  // the trustee is on it, not a client of it
+  });
+
+  test('outside addresses only, senders first; client cases open-first then newest; non-clients are a contact chip with no cases', async () => {
+    W.statements.length = 0;
+    const r = await call('GET', '/api/mail/messages/102/related', { t: tok(READER) });
+    expect(r.status).toBe(200);
+    expect(r.json.contacts).toEqual([
+      { contact_id: 500, name: 'Doe, Jane', kind: 'person', emails: ['jane@client.test'], role: 'from', cases: [
+        { case_id: 'CaseOpen', case_number: null, case_type: 'BK', case_stage: 'Open', case_status: 'New', relation: 'Primary' },
+        { case_id: 'CaseNew', case_number: '26-11111-tjt', case_type: 'BK', case_stage: 'Filed', case_status: 'New', relation: 'Secondary' },
+        { case_id: 'CaseShut', case_number: '25-33333', case_type: 'BK', case_stage: 'Closed', case_status: 'New', relation: 'Primary' },
+        { case_id: 'CaseOld', case_number: '20-00001', case_type: 'BK', case_stage: 'Closed', case_status: 'New', relation: 'Primary' },
+      ] },
+      { contact_id: 600, name: 'Trustee, Tom', kind: 'person', emails: ['t@trustee.test'], role: 'to', cases: [] },
+    ]);
+    // the lookup never asked about a firm address or a firm mailbox
+    const lookup = W.statements.find((x) => x.sql.startsWith('SELECT ce.email'));
+    expect([...lookup.params[0]].sort()).toEqual(['jane@client.test', 'nobody@unknown.test', 't@trustee.test']);
+  });
+
+  test('threadless mail looks at that one message; nothing outside → no contact query at all; unreadable → 404', async () => {
+    W.T.mail_messages.find((m) => m.id === 103).to_addrs = 'Jane <jane@client.test>';
+    const r = await call('GET', '/api/mail/messages/103/related', { t: tok(READER) });
+    expect(r.json.contacts.map((c) => [c.contact_id, c.role])).toEqual([[500, 'to']]);
+    Object.assign(W.T.mail_messages.find((m) => m.id === 104), { from_addr: 'billing@firm.test', to_addrs: 'intake@firm.test', cc_addrs: null });
+    W.statements.length = 0;
+    expect((await call('GET', '/api/mail/messages/104/related', { t: tok(READER) })).json).toEqual({ status: 'success', contacts: [] });
+    expect(W.statements.some((x) => /contact_emails/.test(x.sql))).toBe(false);
+    expect((await call('GET', '/api/mail/messages/202/related', { t: tok(READER) })).status).toBe(404);
+    expect((await call('GET', '/api/mail/messages/202/related', { t: tok(SS) })).status).toBe(200); // attorney READ bypass
+  });
+
+  test('at most RELATED_CASES_PER_CONTACT cases per contact', async () => {
+    for (let i = 0; i < read.RELATED_CASES_PER_CONTACT + 4; i++) {
+      W.caseRow(`Bulk${i}`, `26-3${String(i).padStart(4, '0')}`, null, { case_stage: 'Closed', case_open_date: `2019-01-${String(i + 1).padStart(2, '0')}` });
+      W.relate(`Bulk${i}`, 500);
+    }
+    const r = await call('GET', '/api/mail/messages/101/related', { t: tok(READER) });
+    const jane = r.json.contacts.find((c) => c.contact_id === 500);
+    expect(jane.cases).toHaveLength(read.RELATED_CASES_PER_CONTACT);
+    expect(jane.cases[0].case_id).toBe('CaseOpen');
   });
 });
 

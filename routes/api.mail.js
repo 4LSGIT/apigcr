@@ -22,6 +22,11 @@
  *   POST   /api/mail/messages/:id/case-link   {case_id} — about-link the message's log row
  *                                             to a case; a store-only message gets its
  *                                             log row created first
+ *   GET    /api/mail/messages/:id/related     contacts behind the conversation's outside
+ *                                             addresses + their client cases (open the file)
+ *   GET    /api/mail/image-senders            the caller's "always show images from" senders
+ *   POST   /api/mail/image-senders            {address} — trust one (idempotent)
+ *   DELETE /api/mail/image-senders/:address   stop trusting one (encodeURIComponent it)
  *
  * Auto-mounted (server.js readdirSync); req.db injected. UI: public/comms.html.
  * Service: services/mailbox/mailReadService.js. Spec: ref/MAILBOX_SYSTEM_DESIGN.md
@@ -152,6 +157,32 @@ router.post('/api/mail/messages/:id/case-link', ...guard, async (req, res) => {
     const out = await svc.caseLink(req.db, req.auth.userId, req.params.id, req.body);
     res.json({ status: 'success', ...out });
   } catch (err) { sendError(res, 'POST /api/mail/messages/:id/case-link', err); }
+});
+
+// ─── GET /api/mail/messages/:id/related ───
+router.get('/api/mail/messages/:id/related', ...guard, async (req, res) => {
+  try {
+    res.json({ status: 'success', ...(await svc.related(req.db, req.auth.userId, req.params.id)) });
+  } catch (err) { sendError(res, 'GET /api/mail/messages/:id/related', err); }
+});
+
+// ─── /api/mail/image-senders ───  (per user; never another user's list)
+router.get('/api/mail/image-senders', ...guard, async (req, res) => {
+  try {
+    res.json({ status: 'success', ...(await svc.listImageSenders(req.db, req.auth.userId)) });
+  } catch (err) { sendError(res, 'GET /api/mail/image-senders', err); }
+});
+
+router.post('/api/mail/image-senders', ...guard, async (req, res) => {
+  try {
+    res.status(201).json({ status: 'success', ...(await svc.trustImageSender(req.db, req.auth.userId, req.body)) });
+  } catch (err) { sendError(res, 'POST /api/mail/image-senders', err); }
+});
+
+router.delete('/api/mail/image-senders/:address', ...guard, async (req, res) => {
+  try {
+    res.json({ status: 'success', ...(await svc.untrustImageSender(req.db, req.auth.userId, req.params.address)) });
+  } catch (err) { sendError(res, 'DELETE /api/mail/image-senders/:address', err); }
 });
 
 module.exports = router;
