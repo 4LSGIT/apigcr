@@ -6,7 +6,10 @@
  *
  *   summary(db, userId)                      readable mailboxes (+ colour) + INBOX unread/total counts
  *   related(db, userId, messageId)           contacts the conversation's outside addresses belong
- *                                            to, with their client cases (open the file from mail)
+ *                                            to, with their client cases (open the file from mail),
+ *                                            + the outside addresses no contact holds (add to client)
+ *   firstSeen(db, userId, address)           the firm-local day of the earliest readable mail with
+ *                                            that address (the add-to-client start-date default)
  *   listImageSenders / trustImageSender / untrustImageSender
  *                                            the caller's "always show images from" senders
  *   listMessages(db, userId, query)          the mixed-inbox list (keyset-paginated, NO bodies)
@@ -80,6 +83,7 @@ const { inferDirection, firmDomains } = require('../emailIngestService');
 const { emitText, folderConfig } = require('./mailboxIngestService');
 const { escapeLike } = require('../../lib/escapeLike');
 const { withTransaction } = require('../../lib/withTransaction');
+const { utcToLocal } = require('../timezoneService');
 const mailboxColor = require('../../public/js/mailboxColor');
 
 const { httpError } = mbx;
@@ -100,16 +104,25 @@ const RELATED_ADDR_MAX = 50;             // outside addresses looked up per conv
 const RELATED_CASES_PER_CONTACT = 10;
 const CLIENT_RELATIONS = Object.freeze(['Primary', 'Secondary']); // case_relate types that make a "client file"
 const STAGE_RANK = Object.freeze({ Open: 0, Pending: 1, Filed: 2, Concluded: 3, Closed: 4 });
+// Addresses nobody files under a client: the related strip never offers to
+// add them (they still never match a contact). Local part only, exact words.
+const AUTOMATED_RE = /^(?:no[-_.]?reply|do[-_.]?not[-_.]?reply|mailer[-_.]?daemon|postmaster|bounces?|notifications?)(?:[+._-][^@]*)?@/i;
+// client_only checks the sender + the first N To/Cc addresses (in that order).
+const CLIENT_FILTER_RECIPIENTS = 5;
 
 // The saved-view filter vocabulary (inbox_views.filters) = the list's query
 // filters. Unknown keys are refused on write and ignored on read.
 const FILTER_KEYS = Object.freeze({
   unread_only: 'bool',
   has_case: 'bool',
+  no_case: 'bool',
+  client_only: 'bool',
+  has_files: 'bool',
   all_folders: 'bool',
   from_domain: 'domain',
   q: 'text',
 });
+const BOOL_FILTERS = Object.freeze(Object.keys(FILTER_KEYS).filter(k => FILTER_KEYS[k] === 'bool'));
 
 const DOMAIN_RE = /^(?=.{1,128}$)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/i;
 const CASE_ID_RE = /^[A-Za-z0-9_-]{1,20}$/;
@@ -230,6 +243,55 @@ function senderOf(fromAddr) {
   const angle = /<([^<>]+)>\s*$/.exec(String(fromAddr));
   const inAngle = angle ? emailsIn(angle[1])[0] : null;
   return inAngle || emailsIn(fromAddr)[0] || null;
+}
+
+/**
+ * Display-form address list → [{email, name}] in order. Commas inside a
+ * quoted name ("Doe, Jane" <jane@x>) or an <angle> part do not split; the
+ * <angle> address wins over the name (senderOf's rule); a bare address has
+ * name null. Segments with no address are dropped.
+ */
+function addressList(s) {
+  if (!s) return [];
+  const str = String(s);
+  const segs = [];
+  let cur = '';
+  let quoted = false;
+  let angle = false;
+  for (let i = 0; i < str.length; i++) {
+    const ch = str[i];
+    if (quoted && ch === '\\' && i + 1 < str.length) { cur += ch + str[++i]; continue; }
+    if (ch === '"' && !angle) quoted = !quoted;
+    else if (!quoted && ch === '<') angle = true;
+    else if (!quoted && ch === '>') angle = false;
+    if (ch === ',' && !quoted && !angle) { segs.push(cur); cur = ''; continue; }
+    cur += ch;
+  }
+  segs.push(cur);
+  const out = [];
+  for (const seg of segs) {
+    const a = /<([^<>]*)>\s*$/.exec(seg);
+    const email = a ? emailsIn(a[1])[0] : emailsIn(seg)[0];
+    if (!email) continue;
+    let name = a ? seg.slice(0, a.index).trim() : '';
+    if (/^".*"$/.test(name)) name = name.slice(1, -1).replace(/\\(.)/g, '$1').trim();
+    out.push({ email, name: name && name.toLowerCase() !== email ? name : null });
+  }
+  return out;
+}
+
+function escapeRe(s) {
+  return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * An address on a firm domain (firmDomains(): the email_domains setting, never
+ * empty — it defaults to 4lsg.com — or a subdomain of one) as a MySQL REGEXP:
+ * the firm's own staff are no client's address for the client filter, the
+ * same rule related() applies in JS. Read per call (the setting is live).
+ */
+function firmAddressPattern() {
+  return `@([^@]*[.])?(${[...firmDomains()].map(escapeRe).join('|')})$`;
 }
 
 function attachmentParts(v) {
@@ -366,11 +428,17 @@ async function summary(db, userId) {
 function readFilters(src, { strict } = { strict: false }) {
   const f = {};
   if (!src || typeof src !== 'object') return f;
-  if (has(src, 'unread_only')) f.unread_only = strict ? toBool(src.unread_only, 'unread_only') : toFlag(src.unread_only, 'unread_only');
-  if (has(src, 'has_case')) f.has_case = strict ? toBool(src.has_case, 'has_case') : toFlag(src.has_case, 'has_case');
-  if (has(src, 'all_folders')) f.all_folders = strict ? toBool(src.all_folders, 'all_folders') : toFlag(src.all_folders, 'all_folders');
+  for (const k of BOOL_FILTERS) {
+    if (has(src, k)) f[k] = strict ? toBool(src[k], k) : toFlag(src[k], k);
+  }
   if (has(src, 'from_domain')) f.from_domain = cleanDomain(src.from_domain);
   if (has(src, 'q')) f.q = cleanQ(src.q);
+  return f;
+}
+
+/** The one contradiction in the vocabulary: on a case AND not on one. */
+function checkFilters(f) {
+  if (f.has_case && f.no_case) throw httpError(400, 'has_case and no_case cannot both be on');
   return f;
 }
 
@@ -384,10 +452,69 @@ function strictFilters(f, label = 'filters') {
   for (const k of Object.keys(f)) {
     if (!has(FILTER_KEYS, k)) throw httpError(400, `${label}: unknown key "${k}" (allowed: ${Object.keys(FILTER_KEYS).join(', ')})`);
   }
-  const clean = readFilters(f, { strict: true });
+  const clean = checkFilters(readFilters(f, { strict: true }));
   for (const k of Object.keys(clean)) if (clean[k] === null || clean[k] === false) delete clean[k];
   return clean;
 }
+
+/*
+ * CLIENT COMMUNICATIONS (client_only). A message is client mail when its
+ * sender, or one of its first CLIENT_FILTER_RECIPIENTS To/Cc addresses, is an
+ * ACTIVE contact_emails address of a contact who is a CLIENT on some case
+ * (case_relate Primary / Secondary — related()'s rule), leaving out the
+ * firm's own addresses (EMAIL_DOMAINS + subdomains, and every mailbox
+ * address): staff sit on test cases as clients, and every outgoing message
+ * would match through its own From. Incoming mail matches on the sender,
+ * outgoing on its recipients. The candidates are a JSON_TABLE (a lateral
+ * table function), JOINed to contact_emails so each is an index probe
+ * (idx_email_history, then idx_case_relate_client): `ce.email IN (<per-row
+ * expressions>)` scans every contact_emails row per walked message instead
+ * (EXPLAIN on production 8.4: type ALL, 972 rows). The JSON_TABLE column is
+ * declared general_ci — ce.email's collation — or the index is unusable.
+ *   sender  = the <angle> address, else the whole value (senderOf's rule for
+ *             a single From; from_addr is stored lowercased, display form).
+ *   recipients = the first N address-shaped tokens of "To,Cc" in order — the
+ *             same token class as EMAIL_IN_RE, so a quoted "Doe, Jane" name
+ *             never yields a token.
+ * Params: the client relations (IN (?)), the firm-address REGEXP.
+ *
+ * Both per-row filters below are SCALAR subqueries (0 < (SELECT COUNT(*) …)),
+ * never EXISTS: MySQL flattens an EXISTS into a semi-join when it likes the
+ * cost, and measured on 8.0.46 the has_files one (a) lost the list's
+ * backward index walk + LIMIT (DuplicateWeedout + a filesort per branch) and
+ * (b) MARKED NOTHING inside markRead's INSERT … SELECT while the same
+ * predicate listed the right rows. A scalar subquery is never flattened — it
+ * stays a dependent subquery evaluated per walked row
+ * (tests/mailboxS2.mysql.test.js pins the plan and the mark-all count).
+ */
+const ADDR_TOKEN_SQL = `'[^[:space:]<>,;:"()]+@[^[:space:]<>,;:"()]+'`;
+const JT_COL = 'CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci';
+const CLIENT_WHERE = `0 < (SELECT COUNT(*) FROM JSON_TABLE(JSON_ARRAY(SUBSTRING_INDEX(SUBSTRING_INDEX(m.from_addr, '<', -1), '>', 1), ${
+  Array.from({ length: CLIENT_FILTER_RECIPIENTS }, (_, i) => `REGEXP_SUBSTR(CONCAT_WS(',', m.to_addrs, m.cc_addrs), ${ADDR_TOKEN_SQL}, 1, ${i + 1})`).join(', ')}),
+       '$[*]' COLUMNS (addr VARCHAR(255) ${JT_COL} PATH '$')) x
+     JOIN contact_emails ce ON ce.email = x.addr AND ce.end_date IS NULL
+     JOIN case_relate cr ON cr.case_relate_client_id = ce.contact_id AND cr.case_relate_type IN (?)
+     WHERE ce.email NOT REGEXP ?
+       AND NOT EXISTS (SELECT 1 FROM mailboxes mb WHERE mb.address = ce.email))`;
+
+/*
+ * HAS FILES (has_files) — the list's paperclip, in SQL: at least one part
+ * that markInline() would NOT call inline, i.e. not (an image AND a
+ * Content-ID AND the body references it as cid:). The reference test is a
+ * substring LOCATE (case-blind under the column's general_ci) of "cid:<id>"
+ * and of its "@"→"%40" form (the one URL-encoding mail clients use there);
+ * JSON_TABLE's columns are declared general_ci because they otherwise take
+ * the CONNECTION's collation and LOCATE against body_html would be an
+ * illegal collation mix. Known gap vs markInline, one way only: a cid that
+ * is a strict prefix of another referenced cid counts as drawn (a missed
+ * file in this filter, never a false one).
+ */
+const FILES_WHERE = `0 < (SELECT COUNT(*) FROM JSON_TABLE(m.attachments, '$[*]' COLUMNS (
+       part VARCHAR(64) ${JT_COL} PATH '$.part', mime VARCHAR(255) ${JT_COL} PATH '$.mime', cid VARCHAR(512) ${JT_COL} PATH '$.cid')) a
+     WHERE a.part IS NOT NULL
+       AND NOT (COALESCE(a.mime, '') LIKE 'image/%' AND COALESCE(a.cid, '') <> ''
+         AND (LOCATE(CONCAT('cid:', REGEXP_REPLACE(a.cid, '^<|>$', '')), COALESCE(m.body_html, '')) > 0
+           OR LOCATE(CONCAT('cid:', REPLACE(REGEXP_REPLACE(a.cid, '^<|>$', ''), '@', '%40')), COALESCE(m.body_html, '')) > 0)))`;
 
 /**
  * The list's predicates beyond the mailbox, as exact SQL fragments + params
@@ -409,6 +536,9 @@ function scopeWhere(filters, cursor) {
   }
   if (filters.unread_only) where.push('rs.message_fk IS NULL');
   if (filters.has_case) where.push('c.case_id IS NOT NULL');
+  if (filters.no_case) where.push('c.case_id IS NULL');
+  if (filters.client_only) { where.push(CLIENT_WHERE); params.push([...CLIENT_RELATIONS], firmAddressPattern()); }
+  if (filters.has_files) where.push(FILES_WHERE);
   if (filters.from_domain) {
     // from_addr is the display form: "Name <a@b>" or bare "a@b".
     const e = escapeLike(filters.from_domain);
@@ -425,8 +555,8 @@ function scopeWhere(filters, cursor) {
 
 /**
  * The mixed-inbox list.
- * query: { view?, mailbox_ids?, unread_only?, has_case?, all_folders?,
- *          from_domain?, q?, cursor?, limit? }
+ * query: { view?, mailbox_ids?, unread_only?, has_case?, no_case?, client_only?,
+ *          has_files?, all_folders?, from_domain?, q?, cursor?, limit? }
  * A `view` (the caller's own) supplies mailbox_ids + filters; explicit params
  * override its filters. Scope = readable ∩ (view or param mailbox_ids).
  * @returns {{messages, next_cursor, scope_ids, view_id}}
@@ -444,7 +574,7 @@ async function listMessages(db, userId, query = {}) {
   if (query.view !== undefined && query.view !== '' && query.view !== null) {
     view = await getOwnView(db, uid, toId(query.view, 'view'));
   }
-  const filters = { ...(view ? readFilters(view.filters || {}) : {}), ...readFilters(query) };
+  const filters = checkFilters({ ...(view ? readFilters(view.filters || {}) : {}), ...readFilters(query) });
 
   const scope = await readableScope(db, uid);
   let wanted = idList(query.mailbox_ids, 'mailbox_ids', VIEW_IDS_MAX);
@@ -708,6 +838,10 @@ async function untrustImageSender(db, userId, address) {
  * then first appearance; a contact's cases open stages first, then newest.
  * Only ACTIVE contact_emails rows match (one active owner per address,
  * uk_email_active). Scope: the conversation as the caller can read it.
+ *
+ * `unmatched`: the outside addresses no active row holds, same order, each
+ * {email, name (the display name the mail carried, or null), role} — the
+ * hub's "add to client" chips. Automated senders (AUTOMATED_RE) are left out.
  */
 async function related(db, userId, messageId) {
   const v = await loadVisible(db, userId, messageId);
@@ -733,8 +867,14 @@ async function related(db, userId, messageId) {
   for (const r of rows) {
     for (const a of [...emailsIn(r.to_addrs), ...emailsIn(r.cc_addrs)]) if (outside(a) && !role.has(a)) role.set(a, 'to');
   }
+  const names = new Map(); // address → the first display name the conversation gave it
+  for (const r of rows) {
+    for (const x of [...addressList(r.from_addr), ...addressList(r.to_addrs), ...addressList(r.cc_addrs)]) {
+      if (x.name && !names.has(x.email)) names.set(x.email, x.name);
+    }
+  }
   const addrs = [...role.keys()].slice(0, RELATED_ADDR_MAX);
-  if (!addrs.length) return { contacts: [] };
+  if (!addrs.length) return { contacts: [], unmatched: [] };
 
   const [hits] = await db.query(
     `SELECT ce.email, c.contact_id, c.contact_name, c.contact_kind
@@ -756,7 +896,11 @@ async function related(db, userId, messageId) {
     if (role.get(email) === 'from') c.role = 'from';
     c.rank = Math.min(c.rank, order.has(email) ? order.get(email) : Infinity);
   }
-  if (!byContact.size) return { contacts: [] };
+  const held = new Set(hits.map(h => String(h.email).toLowerCase()));
+  const unmatched = addrs
+    .filter(a => !held.has(a) && !AUTOMATED_RE.test(a))
+    .map(a => ({ email: a, name: names.get(a) || null, role: role.get(a) }));
+  if (!byContact.size) return { contacts: [], unmatched };
 
   const [caseRows] = await db.query(
     `SELECT cr.case_relate_client_id AS contact_id, cr.case_relate_type AS relation,
@@ -785,7 +929,30 @@ async function related(db, userId, messageId) {
   const contacts = [...byContact.values()]
     .sort((a, b) => (a.role === b.role ? 0 : a.role === 'from' ? -1 : 1) || (a.rank - b.rank) || a.contact_id - b.contact_id)
     .map(({ rank, ...c }) => c);
-  return { contacts };
+  return { contacts, unmatched };
+}
+
+/**
+ * The firm-local day ('YYYY-MM-DD') of the earliest message the caller can
+ * read that carries `address` as From / To / Cc — the add-to-client dialog's
+ * start-date default next to the log's own earliest row (a store-only mailbox
+ * logs nothing, so the log alone would say "today" for a client who has
+ * written for months). LIKE narrows; the REGEXP pins the address between
+ * list delimiters, so mjane@x never counts for jane@x. Null when none.
+ */
+async function firstSeen(db, userId, address) {
+  const a = cleanSender(address);
+  const scope = await readableScope(db, userId);
+  if (!scope.size) return { address: a, first_seen: null };
+  const like = `%${escapeLike(a)}%`;
+  const [[row]] = await db.query(
+    `SELECT MIN(date) AS first_date FROM mail_messages
+      WHERE mailbox_id IN (?) AND (from_addr LIKE ? OR to_addrs LIKE ? OR cc_addrs LIKE ?)
+        AND CONCAT_WS(',', from_addr, to_addrs, cc_addrs) REGEXP ?`,
+    [[...scope.keys()], like, like, like, `(^|[<,[:space:]])${escapeRe(a)}($|[>,[:space:]])`]
+  );
+  const d = toDate(row && row.first_date);
+  return { address: a, first_seen: d ? utcToLocal(d).toISODate() : null };
 }
 
 
@@ -812,8 +979,8 @@ async function setRead(db, userId, messageId, read) {
  *   { ids: [..≤500] }                              those of them the caller can read
  *   { all: true, mailbox_ids?: [..], filters?: {} } every message the LIST would show
  *       for (readable ∩ mailbox_ids) + filters, every page — the same scope
- *       predicates (scopeWhere: INBOX unless all_folders, unread_only,
- *       has_case, from_domain, q). "Mark all read" with a filter on clears the
+ *       predicates (scopeWhere: INBOX unless all_folders, then every
+ *       FILTER_KEYS filter). "Mark all read" with a filter on clears the
  *       filtered list, never the whole mailbox behind it.
  * Grant scoping is in the statement itself (mailbox_id IN readable). The
  * anti-join keeps `marked` = rows newly marked (mysql2 sets CLIENT_FOUND_ROWS,
@@ -1187,11 +1354,16 @@ module.exports = {
   deleteView,
   caseLink,
   related,
+  firstSeen,
   listImageSenders,
   trustImageSender,
   untrustImageSender,
   // exported for tests
   senderOf,
+  addressList,
+  AUTOMATED_RE,
+  CLIENT_FILTER_RECIPIENTS,
+  firmAddressPattern,
   CLIENT_RELATIONS,
   RELATED_CASES_PER_CONTACT,
   emissionPending,

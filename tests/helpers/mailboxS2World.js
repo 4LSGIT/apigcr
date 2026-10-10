@@ -63,6 +63,30 @@ function likeToRegExp(pattern) {
 }
 const like = (v, p) => v != null && likeToRegExp(p).test(String(v));
 
+/** A MySQL (ICU) REGEXP as the engine runs it on a general_ci column: case-blind; POSIX classes → JS. */
+const icu = (p) => new RegExp(String(p).replace(/\[:space:\]/g, '\\s'), 'i');
+
+// mailReadService.scopeWhere's client_only / has_files fragments, verbatim
+// (whitespace-normalized like every statement). The world evaluates the SAME
+// semantics in JS; tests/mailboxS2.mysql.test.js proves them on the engine.
+const ADDR_TOKEN = `'[^[:space:]<>,;:"()]+@[^[:space:]<>,;:"()]+'`;
+const CLIENT_RECIPIENTS = 5;
+const JT = 'CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci';
+const CLIENT_FRAG = norm(`0 < (SELECT COUNT(*) FROM JSON_TABLE(JSON_ARRAY(SUBSTRING_INDEX(SUBSTRING_INDEX(m.from_addr, '<', -1), '>', 1), ${
+  Array.from({ length: CLIENT_RECIPIENTS }, (_, i) => `REGEXP_SUBSTR(CONCAT_WS(',', m.to_addrs, m.cc_addrs), ${ADDR_TOKEN}, 1, ${i + 1})`).join(', ')}),
+  '$[*]' COLUMNS (addr VARCHAR(255) ${JT} PATH '$')) x
+  JOIN contact_emails ce ON ce.email = x.addr AND ce.end_date IS NULL
+  JOIN case_relate cr ON cr.case_relate_client_id = ce.contact_id AND cr.case_relate_type IN (?)
+  WHERE ce.email NOT REGEXP ?
+  AND NOT EXISTS (SELECT 1 FROM mailboxes mb WHERE mb.address = ce.email))`);
+const FILES_FRAG = norm(`0 < (SELECT COUNT(*) FROM JSON_TABLE(m.attachments, '$[*]' COLUMNS (
+  part VARCHAR(64) ${JT} PATH '$.part', mime VARCHAR(255) ${JT} PATH '$.mime', cid VARCHAR(512) ${JT} PATH '$.cid')) a
+  WHERE a.part IS NOT NULL
+  AND NOT (COALESCE(a.mime, '') LIKE 'image/%' AND COALESCE(a.cid, '') <> ''
+  AND (LOCATE(CONCAT('cid:', REGEXP_REPLACE(a.cid, '^<|>$', '')), COALESCE(m.body_html, '')) > 0
+  OR LOCATE(CONCAT('cid:', REPLACE(REGEXP_REPLACE(a.cid, '^<|>$', ''), '@', '%40')), COALESCE(m.body_html, '')) > 0)))`);
+const ADDR_TOKEN_RE = /[^\s<>,;:"()]+@[^\s<>,;:"()]+/g;
+
 /** 'YYYY-MM-DD HH:MM:SS' (UTC, as the service binds) | Date → epoch ms. */
 function ms(v) {
   if (v == null) return null;
@@ -190,6 +214,34 @@ function makeWorld() {
   const logRow = (id) => (id == null ? null : T.log.find(l => l.log_id === Number(id)) || null);
   const isRead = (user, mid) => T.mail_read_state.some(r => r.user === Number(user) && r.message_fk === Number(mid));
 
+  /** CLIENT_FRAG, row by row: SUBSTRING_INDEX sender + the first N address tokens of "To,Cc". */
+  function isClientMail(m, types, firm) {
+    const cands = [];
+    if (m.from_addr != null) cands.push(String(m.from_addr).split('<').pop().split('>')[0]);
+    const rcpt = [m.to_addrs, m.cc_addrs].filter(v => v != null).join(',');
+    cands.push(...(rcpt.match(ADDR_TOKEN_RE) || []).slice(0, CLIENT_RECIPIENTS));
+    return T.contact_emails.some(e => e.end_date == null
+      && cands.some(c => ci(c, e.email))
+      && T.case_relate.some(r => r.case_relate_client_id === e.contact_id && types.has(r.case_relate_type))
+      && !firm.test(String(e.email))
+      && !T.mailboxes.some(b => ci(b.address, e.email)));
+  }
+
+  /** FILES_FRAG, row by row: a part that is not (image + cid + a LOCATE hit for cid:<id> or its %40 form). */
+  function hasFiles(m) {
+    const list = parseJsonCol(m.attachments);
+    if (!Array.isArray(list)) return false;
+    const body = String(m.body_html == null ? '' : m.body_html).toLowerCase();
+    return list.some(a => {
+      if (!a || typeof a !== 'object' || a.part == null) return false;
+      const mime = String(a.mime == null ? '' : a.mime).toLowerCase();
+      const cid = a.cid == null ? '' : String(a.cid);
+      if (!mime.startsWith('image/') || cid === '') return true;
+      const bare = cid.replace(/^<|>$/g, '').toLowerCase();
+      return !(body.includes(`cid:${bare}`) || body.includes(`cid:${bare.replace(/@/g, '%40')}`));
+    });
+  }
+
   function joined(m, user) {
     const l = logRow(m.log_id);
     const c = l && l.log_about_type === 'case' ? T.cases.find(x => ci(x.case_id, l.log_about_id)) || null : null;
@@ -251,6 +303,12 @@ function makeWorld() {
       else if (frag === 'm.id < ?') { const id = Number(p[pi++]); preds.push(j => j.m.id < id); }
       else if (frag === 'rs.message_fk IS NULL') preds.push(j => j.unread === 1);
       else if (frag === 'c.case_id IS NOT NULL') preds.push(j => !!j.c);
+      else if (frag === 'c.case_id IS NULL') preds.push(j => !j.c);
+      else if (frag === CLIENT_FRAG) {
+        const types = new Set(p[pi++]); const firm = icu(p[pi++]);
+        preds.push(j => isClientMail(j.m, types, firm));
+      }
+      else if (frag === FILES_FRAG) preds.push(j => hasFiles(j.m));
       else if (frag === '(m.from_addr LIKE ? OR m.from_addr LIKE ?)') {
         const a = p[pi++]; const bb = p[pi++]; preds.push(j => like(j.m.from_addr, a) || like(j.m.from_addr, bb));
       }
@@ -552,6 +610,16 @@ function makeWorld() {
       return [x ? [{ from_addr: x.from_addr, to_addrs: x.to_addrs, cc_addrs: x.cc_addrs }] : []];
     }
     if (sql === 'SELECT address FROM mailboxes') return [T.mailboxes.map(b => ({ address: b.address }))];
+    // firstSeen: LIKE narrows, the REGEXP pins the address between delimiters
+    if (sql === "SELECT MIN(date) AS first_date FROM mail_messages WHERE mailbox_id IN (?) AND (from_addr LIKE ? OR to_addrs LIKE ? OR cc_addrs LIKE ?) AND CONCAT_WS(',', from_addr, to_addrs, cc_addrs) REGEXP ?") {
+      const ids = new Set(p[0].map(Number)); const re = icu(p[4]);
+      const hits = T.mail_messages.filter(x => ids.has(x.mailbox_id)
+        && (like(x.from_addr, p[1]) || like(x.to_addrs, p[2]) || like(x.cc_addrs, p[3]))
+        && re.test([x.from_addr, x.to_addrs, x.cc_addrs].filter(v => v != null).join(','))
+        && x.date != null);
+      const min = hits.reduce((acc, x) => (acc == null || ms(x.date) < acc ? ms(x.date) : acc), null);
+      return [[{ first_date: min == null ? null : new Date(min) }]];
+    }
     if (sql === 'SELECT ce.email, c.contact_id, c.contact_name, c.contact_kind FROM contact_emails ce JOIN contacts c ON c.contact_id = ce.contact_id WHERE ce.email IN (?) AND ce.end_date IS NULL') {
       const want = new Set(p[0].map(a => String(a).toLowerCase()));
       const out = [];

@@ -19,6 +19,14 @@
  * Every connection runs production's sql_mode (no STRICT, no ONLY_FULL_GROUP_BY,
  * no NO_BACKSLASH_ESCAPES, IGNORE_SPACE on) and the pool's timezone 'Z', like
  * startup/db.js. Worker run 2026-10-09: MySQL 8.0.46, all green.
+ *
+ * Add to client + filters (2026-10-10), mutation-checked HERE (the fake world
+ * only matches their text): client_only keeping mailbox / firm addresses,
+ * "Other" relations or ended rows, or checking 4 recipients; has_files without
+ * the %40 form, with the NULL-cid three-valued bug, with JSON_TABLE columns on
+ * the connection collation, or as an EXISTS (semi-join: lost walk + mark-all
+ * marking nothing); the client candidates as `IN (…)` (a contact_emails scan
+ * per row — the EXPLAIN test); first-seen without the REGEXP escape or bound.
  */
 
 'use strict';
@@ -293,6 +301,95 @@ maybe('mailbox S2 on real MySQL', () => {
     expect(t.json.messages[0].attachments.map((a) => [a.filename, a.inline])).toEqual([['Untitled.pdf', false], ['sig.png', true]]);
   });
 
+  test('client_only / has_files / no_case on the engine = the fake world, row for row (REGEXP_SUBSTR, the firm REGEXP, JSON_TABLE through mysql2)', async () => {
+    const { makeWorld } = require('./helpers/mailboxS2World');
+    const svc = require('../services/mailbox/mailReadService');
+    const CIDS = [9700, 9701, 9702, 9703, 9704];
+    const wipe = async () => {
+      await q('DELETE FROM case_relate WHERE case_relate_client_id IN (?)', [CIDS]);
+      await q('DELETE FROM contact_emails WHERE contact_id IN (?)', [CIDS]);
+      await q('DELETE FROM contacts WHERE contact_id IN (?)', [CIDS]);
+    };
+    await wipe();
+    const W = makeWorld();
+    W.user(SU, { auth: 'authorized - SU' });
+    W.mailbox(1, { address: 'billing@firm.test' });
+    W.mailbox(2, { address: 'intake@firm.test' });
+    W.mailbox(3, { address: 'shared@gmail.test' });
+    await q("INSERT INTO mailboxes (id, address, domain, imap_host, imap_user, ingest_folders) VALUES (3, 'shared@gmail.test', 'gmail.test', 'h', 'u', '{}')");
+    const people = [ // [id, name, active emails, ended emails, [case, relation]]
+      [9700, 'Jane', ['jane@client.test'], [], ['CaseA1', 'Primary']],
+      [9701, 'Rick', ['rick@client.test'], [], ['CaseB2', 'Secondary']],
+      [9702, 'Tom', ['t@trustee.test'], [], ['CaseA1', 'Other']],
+      [9703, 'Old', [], ['old@client.test'], ['CaseA1', 'Primary']],
+      [9704, 'Stuart', ['stuart@firm.test', 'stu@sub.firm.test', 'shared@gmail.test'], [], ['CaseB2', 'Primary']],
+    ];
+    W.caseRow('CaseA1', '26-11111'); W.caseRow('CaseB2', '26-22222');
+    for (const [id, name, act, ended, [cs, rel]] of people) {
+      await q(`INSERT INTO contacts (contact_id, contact_kind, contact_type, contact_name, contact_lfm_name, contact_rname, contact_fname, contact_mname, contact_lname, contact_pname, contact_phone)
+               VALUES (?, 'person', 'Client', ?, ?, ?, ?, '', 'X', '', '')`, [id, name, name, name, name]);
+      for (const e of act) await q('INSERT INTO contact_emails (contact_id, email, end_date) VALUES (?, ?, NULL)', [id, e]);
+      for (const e of ended) await q("INSERT INTO contact_emails (contact_id, email, end_date) VALUES (?, ?, '2025-01-01')", [id, e]);
+      await q('INSERT INTO case_relate (case_relate_case_id, case_relate_client_id, case_relate_type) VALUES (?, ?, ?)', [cs, id, rel]);
+      W.contact(id, name, act, { ended });
+      W.relate(cs, id, rel);
+    }
+    const att = (l) => JSON.stringify(l);
+    const rows = [ // id, box, from, to, cc, attachments, body_html
+      [401, 1, 'Jane Doe <jane@client.test>', 'billing@firm.test', null, '[]', '<p>x</p>'],
+      [402, 1, 'Stuart <stuart@firm.test>', '"Roe, Rick" <RICK@client.test>', null, att([{ part: '2', mime: 'application/pdf', cid: 'f_1' }, { part: '3', mime: 'image/png', cid: 'ii_sig' }]), '<img src="cid:ii_sig">'],
+      [403, 1, 't@trustee.test', 'billing@firm.test', null, att([{ part: '2', mime: 'image/png', cid: 'ii_sig' }]), '<img src="cid:II_SIG">'],
+      [404, 1, 'old@client.test', 'billing@firm.test', null, att([{ part: '2', mime: 'image/jpeg', cid: 'ii_photo' }]), '<p>attached</p>'],
+      [405, 1, 'Stuart <stuart@firm.test>', 'billing@firm.test', 'stu@sub.firm.test', att([{ part: '2', mime: 'image/png', cid: 'image001.png@01DD' }]), '<img src="cid:image001.png%4001DD">'],
+      [406, 1, 'v@vendor.test', 'a@v.test, b@v.test, "C, D" <c@v.test>, d@v.test', 'jane@client.test', att([{ part: '2', mime: 'image/png' }]), '<p>x</p>'],
+      [407, 1, 'v@vendor.test', 'a@v.test, b@v.test, c@v.test, d@v.test, e@v.test', 'jane@client.test', att([{ part: '2', mime: 'image/png', cid: 'ii_x' }]), null],
+      [408, 2, 'Shared <shared@gmail.test>', 'intake@firm.test', null, att([{ part: '2', mime: null, cid: 'ii_m' }]), '<img src="cid:ii_m">'],
+      [409, 2, 'x@y.test', 'intake@firm.test', null, att([{ part: '2', mime: 'image/gif', cid: '<b@x>' }]), '<img src="cid:b@x">'],
+      [410, 2, 'x@y.test', 'intake@firm.test', null, att([{ mime: 'application/pdf' }]), null],
+    ];
+    for (const [id, mb, from, to, cc, a, html] of rows) {
+      await q(`INSERT INTO mail_messages (id, mailbox_id, folder, uid, message_id, thread_key, from_addr, to_addrs, cc_addrs, subject, date, attachments, body_html)
+               VALUES (?, ?, 'INBOX', ?, ?, ?, ?, ?, ?, 's', ?, ?, ?)`, [id, mb, id, `m${id}@x.test`, `m${id}@x.test`, from, to, cc, new Date(Date.UTC(2026, 9, 3) + id * 60e3), a, html]);
+      W.message(id, { mailbox_id: mb, from_addr: from, to_addrs: to, cc_addrs: cc, attachments: a, body_html: html, date: new Date(Date.UTC(2026, 9, 3) + id * 60e3) });
+    }
+    try {
+      const mine = (r) => ids(r).filter((id) => id > 400);
+      const world = async (f) => (await svc.listMessages(W.db, SU, f)).messages.map((m) => m.id);
+      const client = mine(await call('GET', '/api/mail/messages?client_only=1', { t: tok(SU) }));
+      expect(client).toEqual([406, 402, 401]);
+      expect(await world({ client_only: 1 })).toEqual(client);
+      // has_files on the engine = the list's own paperclip = the world
+      const all = (await call('GET', '/api/mail/messages', { t: tok(SU) })).json.messages.filter((m) => m.id > 400);
+      const clip = all.filter((m) => m.attachment_count > 0).map((m) => m.id);
+      expect(clip).toEqual([408, 407, 406, 404, 402]);
+      expect(mine(await call('GET', '/api/mail/messages?has_files=1', { t: tok(SU) }))).toEqual(clip);
+      expect(await world({ has_files: 1 })).toEqual(clip);
+      expect(mine(await call('GET', '/api/mail/messages?client_only=1&has_files=1', { t: tok(SU) }))).toEqual([406, 402]);
+      // the same predicates inside INSERT … SELECT (mark-all)
+      expect((await call('POST', '/api/mail/read', { t: tok(SU), body: { all: true, filters: { client_only: true, has_files: true } } })).json.marked).toBe(2);
+      // no_case: 401 linked to a case → gone from it
+      expect((await call('POST', '/api/mail/messages/401/case-link', { t: tok(SU), body: { case_id: 'CaseA1' } })).status).toBe(409); // INBOX emits, cursor 103
+      await q("UPDATE mailboxes SET ingest_state = '{\"INBOX\":{\"uidvalidity\":1,\"last_uid\":999}}' WHERE id = 1");
+      expect((await call('POST', '/api/mail/messages/401/case-link', { t: tok(SU), body: { case_id: 'CaseA1' } })).status).toBe(200);
+      expect(mine(await call('GET', '/api/mail/messages?no_case=1&client_only=1', { t: tok(SU) }))).toEqual([406, 402]);
+    } finally {
+      await wipe();
+    }
+  });
+
+  test('first-seen on the engine: LIKE + REGEXP pin the address, MIN(date) as a firm-local day, readable boxes only', async () => {
+    await q("UPDATE mail_messages SET to_addrs = 'billing@firm.test, Jane <jane@client.test>', date = '2026-03-01 03:00:00' WHERE id = 101");
+    await q("UPDATE mail_messages SET from_addr = 'mjane@client.test', date = '2025-01-01 12:00:00' WHERE id = 103");
+    await q("UPDATE mail_messages SET to_addrs = 'jane@client.test.evil', date = '2025-01-02 12:00:00' WHERE id = 104");
+    await q("UPDATE mail_messages SET cc_addrs = 'a@b.test,jane@client.test', date = '2026-01-05 15:00:00' WHERE id = 202");
+    expect((await call('GET', '/api/mail/first-seen?address=jane%40client.test', { t: tok(READER) })).json.first_seen).toBe('2026-02-28');
+    expect((await call('GET', '/api/mail/first-seen?address=jane%40client.test', { t: tok(SU) })).json.first_seen).toBe('2026-01-05');
+    // a REGEXP metacharacter in the address is escaped: "+" is literal
+    await q("UPDATE mail_messages SET from_addr = 'Jo <jo+1@client.test>', date = '2026-07-04 16:00:00' WHERE id = 105");
+    expect((await call('GET', '/api/mail/first-seen?address=jo%2B1%40client.test', { t: tok(READER) })).json.first_seen).toBe('2026-07-04');
+    expect((await call('GET', '/api/mail/first-seen?address=joo1%40client.test', { t: tok(READER) })).json.first_seen).toBeNull();
+  });
+
   test('mailbox colour on the engine (ref/migrations/2026-10-09_mailbox_s2.sql applied): default on create, manager edit, every projection', async () => {
     const { mintElevationToken } = require('../lib/auth.superuser');
     const C = require('../public/js/mailboxColor');
@@ -333,6 +430,29 @@ maybe('mailbox S2 on real MySQL', () => {
     const plan = (await q('EXPLAIN ' + sql, p)).filter((e) => e.table === 'm');
     expect(plan).toHaveLength(2);
     for (const e of plan) {
+      expect(e.key).toBe('idx_mail_messages_mailbox_date');
+      expect(e.Extra).toMatch(/Backward index scan/);
+      expect(e.Extra).not.toMatch(/filesort/);
+    }
+    // …and still with the per-row subquery filters on (client / files / no case),
+    // with contact_emails at production's size (~1k rows; the plan is cost-based)
+    await q('DELETE FROM contacts WHERE contact_id = 9800000'); // cascades to its emails
+    await q(`INSERT INTO contacts (contact_id, contact_kind, contact_type, contact_name, contact_lfm_name, contact_rname, contact_fname, contact_mname, contact_lname, contact_pname, contact_phone)
+             VALUES (9800000, 'person', 'Client', 'Bulk', 'Bulk', 'Bulk', 'B', '', 'X', '', '')`);
+    await q('INSERT INTO contact_emails (contact_id, email) VALUES ?', [Array.from({ length: 1000 }, (_, i) => [9800000, `p${i}@people.test`])]);
+    await q('ANALYZE TABLE contact_emails');
+    captured.length = 0;
+    await require('../services/mailbox/mailReadService').listMessages(spy, SU, { client_only: 1, has_files: 1, no_case: 1 });
+    const [sql2, p2] = captured.find(([s]) => /UNION ALL/.test(s));
+    const full2 = await q('EXPLAIN ' + sql2, p2);
+    await q('DELETE FROM contacts WHERE contact_id = 9800000');
+    // the client candidates probe contact_emails by index — never a scan per walked row
+    const ce = full2.filter((e) => e.table === 'ce');
+    expect(ce).toHaveLength(2);
+    for (const e of ce) expect([e.type, e.key]).toEqual(['ref', 'idx_email_history']);
+    const plan2 = full2.filter((e) => e.table === 'm');
+    expect(plan2).toHaveLength(2);
+    for (const e of plan2) {
       expect(e.key).toBe('idx_mail_messages_mailbox_date');
       expect(e.Extra).toMatch(/Backward index scan/);
       expect(e.Extra).not.toMatch(/filesort/);

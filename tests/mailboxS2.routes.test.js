@@ -39,6 +39,14 @@
  *     losing senders-first or the stage order, or the per-contact cap → related tests
  * Mailbox colour (v3), mutation-checked:
  *   - summary dropping `color` / passing it through un-normalized        → colour test
+ * Add to client + filters (2026-10-10), mutation-checked:
+ *   - has_case + no_case accepted (list or strict filters)               → contradiction test
+ *   - no_case evaluated as has_case; client_only never applied           → filter tests
+ *   - related's unmatched keeping held / automated addresses, dropping names,
+ *     splitting a quoted "Doe, Jane"                                     → unmatched tests
+ *   - first-seen reporting the UTC day                                   → first-seen test
+ *   The client / files / first-seen SQL semantics are mutation-checked on the
+ *   engine (tests/mailboxS2.mysql.test.js): this world matches their text.
  */
 
 'use strict';
@@ -366,6 +374,92 @@ describe('filters', () => {
 
   test('a bad flag value is a 400', async () => {
     expect((await call('GET', '/api/mail/messages?unread_only=maybe', { t: tok(SU) })).status).toBe(400);
+    for (const k of ['no_case', 'client_only', 'has_files']) {
+      expect([k, (await call('GET', `/api/mail/messages?${k}=maybe`, { t: tok(SU) })).status]).toEqual([k, 400]);
+    }
+  });
+
+  test('no_case is has_case\'s complement (unlogged mail included); both on is a 400, however they arrive', async () => {
+    W.caseRow('CaseA1', '26-11111');
+    W.T.mail_messages.find((m) => m.id === 101).log_id = W.logRow({ log_about_type: 'case', log_about_id: 'CaseA1' });
+    W.T.mail_messages.find((m) => m.id === 102).log_id = W.logRow({ log_about_type: 'contact', log_about_id: '77' });
+    expect(ids(await call('GET', '/api/mail/messages?no_case=1', { t: tok(READER) }))).toEqual([104, 103, 102]);
+    expect(ids(await call('GET', '/api/mail/messages?no_case=1&has_case=0', { t: tok(READER) }))).toEqual([104, 103, 102]);
+    const both = await call('GET', '/api/mail/messages?no_case=1&has_case=1', { t: tok(READER) });
+    expect([both.status, both.json.message]).toEqual([400, 'has_case and no_case cannot both be on']);
+    const v = (await call('POST', '/api/mail/views', { t: tok(READER), body: { name: 'Unfiled', filters: { no_case: true } } })).json.view;
+    expect(v.filters).toEqual({ no_case: true });
+    expect(ids(await call('GET', `/api/mail/messages?view=${v.id}`, { t: tok(READER) }))).toEqual([104, 103, 102]);
+    expect((await call('GET', `/api/mail/messages?view=${v.id}&has_case=1`, { t: tok(READER) })).status).toBe(400);
+    expect(ids(await call('GET', `/api/mail/messages?view=${v.id}&has_case=1&no_case=0`, { t: tok(READER) }))).toEqual([101]);
+    expect((await call('POST', '/api/mail/views', { t: tok(READER), body: { name: 'x', filters: { has_case: true, no_case: true } } })).status).toBe(400);
+    expect((await call('POST', '/api/mail/read', { t: tok(READER), body: { all: true, filters: { has_case: true, no_case: true } } })).status).toBe(400);
+  });
+
+  describe('client_only — mail to / from a CLIENT (Primary / Secondary on a case), never through a firm address', () => {
+    beforeEach(() => {
+      W.mailbox(3, { address: 'shared@gmail.test' });                      // a firm mailbox on an outside domain
+      W.contact(500, 'Doe, Jane', ['jane@client.test']);
+      W.contact(510, 'Roe, Rick', ['rick@client.test']);
+      W.contact(600, 'Trustee, Tom', ['t@trustee.test']);
+      W.contact(700, 'Old Owner', [], { ended: ['old@client.test'] });
+      W.contact(800, 'Stuart (test client)', ['stuart@firm.test', 'stu@sub.firm.test', 'shared@gmail.test']);
+      for (const c of ['CaseA1', 'CaseB2', 'CaseT']) W.caseRow(c, c);
+      W.relate('CaseA1', 500, 'Primary');
+      W.relate('CaseB2', 510, 'Secondary');
+      W.relate('CaseA1', 600, 'Other');
+      W.relate('CaseA1', 700, 'Primary');
+      W.relate('CaseT', 800, 'Primary');
+      const set = (id, f) => Object.assign(W.T.mail_messages.find((m) => m.id === id), f);
+      set(101, { from_addr: 'Jane Doe <jane@client.test>', to_addrs: 'billing@firm.test' });                   // client sender
+      set(102, { from_addr: 'Stuart <stuart@firm.test>', to_addrs: '"Roe, Rick" <RICK@client.test>' });         // outgoing: To, quoted comma name
+      set(103, { from_addr: 't@trustee.test', to_addrs: 'billing@firm.test' });                                 // Other relation
+      set(104, { from_addr: 'old@client.test', to_addrs: 'billing@firm.test' });                                // ended row
+      W.message(105, { mailbox_id: 1, from_addr: 'Stuart <stuart@firm.test>', to_addrs: 'billing@firm.test', cc_addrs: 'stu@sub.firm.test' }); // staff on a test case
+      W.message(106, { mailbox_id: 1, from_addr: 'v@vendor.test', to_addrs: 'a@v.test, b@v.test, "C, D" <c@v.test>, d@v.test', cc_addrs: 'jane@client.test' }); // 5th address
+      W.message(107, { mailbox_id: 1, from_addr: 'v@vendor.test', to_addrs: 'a@v.test, b@v.test, c@v.test, d@v.test, e@v.test', cc_addrs: 'jane@client.test' }); // 6th
+      W.message(108, { mailbox_id: 1, from_addr: 'Shared <shared@gmail.test>', to_addrs: 'billing@firm.test' }); // a mailbox address
+    });
+
+    test('sender or one of the first five To/Cc addresses; Other / ended / firm / subdomain / mailbox addresses never count', async () => {
+      W.statements.length = 0;
+      const r = await call('GET', '/api/mail/messages?client_only=1', { t: tok(READER) });
+      expect(ids(r)).toEqual([106, 102, 101]);
+      const branch = W.statements.find((x) => x.sql.startsWith('(SELECT'));
+      expect(branch.params).toEqual(expect.arrayContaining([['Primary', 'Secondary'], read.firmAddressPattern()]));
+      expect(read.firmAddressPattern()).toBe('@([^@]*[.])?(firm\\.test)$');
+    });
+
+    test('combines with the other filters, saves in a view, and mark-all clears exactly that list', async () => {
+      W.read(READER, 101);
+      expect(ids(await call('GET', '/api/mail/messages?client_only=1&unread_only=1', { t: tok(READER) }))).toEqual([106, 102]);
+      const v = (await call('POST', '/api/mail/views', { t: tok(READER), body: { name: 'Clients', filters: { client_only: true, no_case: true } } })).json.view;
+      expect(v.filters).toEqual({ client_only: true, no_case: true });
+      expect(ids(await call('GET', `/api/mail/messages?view=${v.id}`, { t: tok(READER) }))).toEqual([106, 102, 101]);
+      expect((await call('POST', '/api/mail/read', { t: tok(READER), body: { all: true, filters: { client_only: true } } })).json.marked).toBe(2);
+      expect(W.readSet(READER)).toEqual([101, 102, 106]);
+    });
+  });
+
+  test('has_files = the paperclip (attachment_count > 0), in SQL: inline images the body draws are not files', async () => {
+    const att = (list) => JSON.stringify(list);
+    const fx = {
+      301: { attachments: att([{ part: '2', mime: 'application/pdf', cid: 'f_1', filename: 'a.pdf' }, { part: '3', mime: 'image/png', cid: 'ii_sig' }]), body_html: '<img src="cid:ii_sig">' }, // Gmail PDF + sig
+      302: { attachments: att([{ part: '2', mime: 'image/png', cid: 'ii_sig' }]), body_html: '<p>x</p><img src="cid:II_SIG">' },          // only the sig (case-blind)
+      303: { attachments: att([{ part: '2', mime: 'image/jpeg', cid: 'ii_photo', filename: 'paystub.jpg' }]), body_html: '<p>see attached</p>' }, // phone photo
+      304: { attachments: att([{ part: '2', mime: 'image/png', cid: 'image001.png@01DD' }]), body_html: '<img src="cid:image001.png%4001DD">' }, // Outlook, %40
+      305: { attachments: att([{ part: '2', mime: 'image/png', filename: 'logo.png' }]), body_html: '<p>x</p>' },                       // no cid
+      306: { attachments: att([{ part: '2', mime: 'image/png', cid: 'ii_x' }]), body_html: null },                                       // no html body
+      307: { attachments: '[]' },
+      308: { attachments: att([{ part: '2', mime: null, cid: 'ii_m' }]), body_html: '<img src="cid:ii_m">' },                             // no mime: a file
+      309: { attachments: att([{ part: '2', mime: 'image/gif', cid: '<b@x>' }]), body_html: '<img src="cid:b@x">' },                       // bracketed id
+      310: { attachments: att([{ mime: 'application/pdf' }]) },                                                                            // no part: not a part
+    };
+    for (const [id, f] of Object.entries(fx)) W.message(Number(id), { mailbox_id: 1, ...f });
+    const all = (await call('GET', '/api/mail/messages', { t: tok(READER) })).json.messages.filter((m) => m.id > 300);
+    const clip = all.filter((m) => m.attachment_count > 0).map((m) => m.id);
+    expect(clip).toEqual([308, 306, 305, 303, 301]);
+    expect(ids(await call('GET', '/api/mail/messages?has_files=1', { t: tok(READER) }))).toEqual(clip);
   });
 });
 
@@ -773,6 +867,8 @@ describe('related: open the client\'s file from the mail', () => {
       ] },
       { contact_id: 600, name: 'Trustee, Tom', kind: 'person', emails: ['t@trustee.test'], role: 'to', cases: [] },
     ]);
+    // only an ENDED row holds nobody@ — an address to add to a client
+    expect(r.json.unmatched).toEqual([{ email: 'nobody@unknown.test', name: null, role: 'to' }]);
     // the lookup never asked about a firm address or a firm mailbox
     const lookup = W.statements.find((x) => x.sql.startsWith('SELECT ce.email'));
     expect([...lookup.params[0]].sort()).toEqual(['jane@client.test', 'nobody@unknown.test', 't@trustee.test']);
@@ -784,10 +880,48 @@ describe('related: open the client\'s file from the mail', () => {
     expect(r.json.contacts.map((c) => [c.contact_id, c.role])).toEqual([[500, 'to']]);
     Object.assign(W.T.mail_messages.find((m) => m.id === 104), { from_addr: 'billing@firm.test', to_addrs: 'intake@firm.test', cc_addrs: null });
     W.statements.length = 0;
-    expect((await call('GET', '/api/mail/messages/104/related', { t: tok(READER) })).json).toEqual({ status: 'success', contacts: [] });
+    expect((await call('GET', '/api/mail/messages/104/related', { t: tok(READER) })).json).toEqual({ status: 'success', contacts: [], unmatched: [] });
     expect(W.statements.some((x) => /contact_emails/.test(x.sql))).toBe(false);
     expect((await call('GET', '/api/mail/messages/202/related', { t: tok(READER) })).status).toBe(404);
     expect((await call('GET', '/api/mail/messages/202/related', { t: tok(SS) })).status).toBe(200); // attorney READ bypass
+  });
+
+  test('unmatched: outside addresses no active contact row holds — senders first, with the name the mail gave; automated senders left out', async () => {
+    W.message(110, { mailbox_id: 1, thread_key: 'u@x.test', from_addr: '"Smith, Ann" <ann@new.test>', to_addrs: 'billing@firm.test, "Bob \\"B\\" Lee" <BOB@new.test>', cc_addrs: 'jane@client.test, carl@new.test' });
+    W.message(111, { mailbox_id: 1, thread_key: 'u@x.test', from_addr: 'billing@firm.test', to_addrs: 'ann@new.test, Dee <dee@new.test>', cc_addrs: 'noreply@vendor.test' });
+    W.message(112, { mailbox_id: 1, thread_key: 'u@x.test', from_addr: 'Mailer <do_not_reply@court.test>', to_addrs: 'billing@firm.test' });
+    W.message(113, { mailbox_id: 2, thread_key: 'u@x.test', from_addr: 'Eve <eve@new.test>', to_addrs: 'intake@firm.test' }); // box 2: not readable for READER
+    const r = await call('GET', '/api/mail/messages/111/related', { t: tok(READER) });
+    expect(r.json.contacts.map((c) => c.contact_id)).toEqual([500]);
+    // senders first, then recipients newest message first (111 before 110) — related()'s order
+    expect(r.json.unmatched).toEqual([
+      { email: 'ann@new.test', name: 'Smith, Ann', role: 'from' },
+      { email: 'dee@new.test', name: 'Dee', role: 'to' },
+      { email: 'bob@new.test', name: 'Bob "B" Lee', role: 'to' },
+      { email: 'carl@new.test', name: null, role: 'to' },
+    ]);
+    // SU reads box 2 too: Eve is a sender of the same conversation
+    expect((await call('GET', '/api/mail/messages/111/related', { t: tok(SU) })).json.unmatched.map((u) => [u.email, u.role]).slice(0, 2))
+      .toEqual([['eve@new.test', 'from'], ['ann@new.test', 'from']]);
+  });
+
+  test('AUTOMATED_RE: no-reply style local parts only, whole words', () => {
+    for (const a of ['noreply@x.test', 'no-reply@x.test', 'no_reply+1@x.test', 'do_not_reply@psc.uscourts.gov', 'donotreply@x.test', 'Do-Not-Reply@x.test',
+      'mailer-daemon@x.test', 'postmaster@x.test', 'bounce@x.test', 'bounces+abc@x.test', 'notification@x.test', 'notifications@github.test']) {
+      expect([a, read.AUTOMATED_RE.test(a)]).toEqual([a, true]);
+    }
+    for (const a of ['jane.noreply@x.test', 'notify@x.test', 'replyto@x.test', 'noreplyjane@x.test', 'bouncer@x.test', 'jane@noreply.test']) {
+      expect([a, read.AUTOMATED_RE.test(a)]).toEqual([a, false]);
+    }
+  });
+
+  test('addressList: quoted commas and escapes, the <angle> address over the name, bare addresses unnamed, junk dropped', () => {
+    expect(read.addressList('"Doe, Jane" <JANE@x.test>, b@y.test, Bob <bob@z.test>, undisclosed-recipients:;, "x@y.com via L" <list@z.org>, "Q \\"q\\" Z" <q@q.test>, "jane@x.test" <jane@x.test>'))
+      .toEqual([
+        { email: 'jane@x.test', name: 'Doe, Jane' }, { email: 'b@y.test', name: null }, { email: 'bob@z.test', name: 'Bob' },
+        { email: 'list@z.org', name: 'x@y.com via L' }, { email: 'q@q.test', name: 'Q "q" Z' }, { email: 'jane@x.test', name: null },
+      ]);
+    expect(read.addressList(null)).toEqual([]);
   });
 
   test('at most RELATED_CASES_PER_CONTACT cases per contact', async () => {
@@ -799,6 +933,38 @@ describe('related: open the client\'s file from the mail', () => {
     const jane = r.json.contacts.find((c) => c.contact_id === 500);
     expect(jane.cases).toHaveLength(read.RELATED_CASES_PER_CONTACT);
     expect(jane.cases[0].case_id).toBe('CaseOpen');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+describe('first-seen: the add-to-client start-date default', () => {
+  test('the earliest readable mail carrying the address (From / To / Cc), as a FIRM-LOCAL day', async () => {
+    const set = (id, f) => Object.assign(W.T.mail_messages.find((m) => m.id === id), f);
+    set(101, { to_addrs: 'billing@firm.test, Jane <jane@client.test>', date: new Date('2026-03-01T03:00:00Z') }); // 22:00 Feb 28 in Detroit
+    set(102, { from_addr: 'jane@client.test', date: new Date('2026-04-01T15:00:00Z') });
+    set(201, { cc_addrs: 'a@b.test, jane@client.test', date: new Date('2026-01-05T15:00:00Z') });                 // box 2
+    set(103, { from_addr: 'mjane@client.test', date: new Date('2025-01-01T15:00:00Z') });                        // not her
+    set(104, { to_addrs: 'jane@client.test.evil', date: new Date('2025-01-02T15:00:00Z') });                     // not her
+    W.statements.length = 0;
+    const r = await call('GET', '/api/mail/first-seen?address=JANE%40client.test', { t: tok(READER) });
+    expect(r.json).toEqual({ status: 'success', address: 'jane@client.test', first_seen: '2026-02-28' });
+    const q = W.statements.find((x) => x.sql.startsWith('SELECT MIN(date)'));
+    expect(q.params[0]).toEqual([1]);                                       // the reader's scope only
+    expect(q.params.slice(1, 4)).toEqual(['%jane@client.test%', '%jane@client.test%', '%jane@client.test%']);
+    expect((await call('GET', '/api/mail/first-seen?address=jane@client.test', { t: tok(SU) })).json.first_seen).toBe('2026-01-05');
+  });
+
+  test('LIKE metacharacters are escaped; none seen → null; no readable mailbox → null without a mail query; junk → 400', async () => {
+    W.statements.length = 0;
+    expect((await call('GET', '/api/mail/first-seen?address=a_b%25c@x.test', { t: tok(READER) })).json.first_seen).toBeNull();
+    expect(W.statements.find((x) => x.sql.startsWith('SELECT MIN(date)')).params[1]).toBe('%a\\_b\\%c@x.test%');
+    W.statements.length = 0;
+    expect((await call('GET', '/api/mail/first-seen?address=x@y.test', { t: tok(NOBODY) })).json).toEqual({ status: 'success', address: 'x@y.test', first_seen: null });
+    expect(W.statements.some((x) => /mail_messages/.test(x.sql))).toBe(false);
+    for (const bad of ['', 'not-an-address', 'a@b', '%40x.test', 'a b@x.test']) {
+      expect([bad, (await call('GET', `/api/mail/first-seen?address=${encodeURIComponent(bad)}`, { t: tok(READER) })).status]).toEqual([bad, 400]);
+    }
+    expect((await call('GET', '/api/mail/first-seen', { t: tok(READER) })).status).toBe(400);
   });
 });
 

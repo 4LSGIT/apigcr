@@ -688,6 +688,7 @@ scripts/mobile-survey/fixtures/api/cta/10/executions.json
 scripts/mobile-survey/fixtures/api/cta/2/executions.json
 scripts/mobile-survey/fixtures/api/documents.json
 scripts/mobile-survey/fixtures/api/field-defs.json
+scripts/mobile-survey/fixtures/api/mail/first-seen.json
 scripts/mobile-survey/fixtures/api/mail/mailboxes.json
 scripts/mobile-survey/fixtures/api/mail/messages.json
 scripts/mobile-survey/fixtures/api/mail/messages/301/related.json
@@ -1039,6 +1040,7 @@ tests/mascotSkins.test.js
 tests/moduleLoad.smoke.test.js
 tests/multipartBody.test.js
 tests/nameKeyOrgKind.test.js
+tests/orphanAdoptDialog.opts.test.js
 tests/pageLanding.landingAssets.test.js
 tests/pageLanding.originsep.test.js
 tests/paramsMappingBareScalar.test.js

@@ -3969,10 +3969,17 @@ async function CaseAdoptDialog(value, onDone = null) {
 
 
 /* ──────────────────────────────────────────────────────────────────────────
-   OrphanAdoptDialog(value, type, onDone)
+   OrphanAdoptDialog(value, type, onDone, opts)
 
    type ∈ {'phone','email'}. Replaces the orphan-row "+ Add as new contact"
-   affordance with an attach-or-create dialog.
+   affordance with an attach-or-create dialog. Also the comms hub's "add to
+   client" (public/comms.html), which passes opts:
+     opts.earliest  'YYYY-MM-DD' — another earliest sighting (the hub's first
+                    readable mail with the address: a store-only mailbox logs
+                    nothing). The start-date default is the EARLIER of it and
+                    the log's own earliest row; anything not a date is ignored.
+     opts.name      the display name the mail carried: the contact search
+                    starts with it, and Create new prefills it.
 
    Flow:
      1. Parallel: contact-lookup (suggested matches) + orphan-earliest
@@ -3995,7 +4002,7 @@ async function CaseAdoptDialog(value, onDone = null) {
    onDone is invoked ONLY on the attach success path. The create-new path
    delegates file-opening to newContact's own addFile call.
    ────────────────────────────────────────────────────────────────────────── */
-async function OrphanAdoptDialog(value, type, onDone = null) {
+async function OrphanAdoptDialog(value, type, onDone = null, opts = {}) {
   if (type !== 'phone' && type !== 'email') {
     console.error('OrphanAdoptDialog: invalid type', type);
     return;
@@ -4013,9 +4020,14 @@ async function OrphanAdoptDialog(value, type, onDone = null) {
   const matches = (lookupRes.status === 'fulfilled' && lookupRes.value && Array.isArray(lookupRes.value.matches))
     ? lookupRes.value.matches
     : [];
-  const earliest = (earliestRes.status === 'fulfilled' && earliestRes.value)
+  const logEarliest = (earliestRes.status === 'fulfilled' && earliestRes.value)
     ? (earliestRes.value.earliest_log_date || null)
     : null;
+  const o = (opts && typeof opts === 'object') ? opts : {};
+  const seenEarliest = /^\d{4}-\d{2}-\d{2}$/.test(String(o.earliest || '')) ? String(o.earliest) : null;
+  // ISO dates sort as strings: the earlier of the two sightings.
+  const earliest = [logEarliest, seenEarliest].filter(Boolean).sort()[0] || null;
+  const knownName = typeof o.name === 'string' ? o.name.trim() : '';
 
   const today = new Date().toISOString().slice(0, 10);
   const defaultStart = earliest || today;
@@ -4109,6 +4121,7 @@ async function OrphanAdoptDialog(value, type, onDone = null) {
       // ContactPicker → selecting clears suggested-match highlight and enables Attach
       picker = ContactPicker(E('oadPicker'), {
         placeholder: 'Search contacts…',
+        initialQuery: knownName,
         onSelect: (cid, row) => {
           setSelected(cid, row.contact_name);
           markSelected(null);
@@ -4125,6 +4138,7 @@ async function OrphanAdoptDialog(value, type, onDone = null) {
         if (picker) picker.destroy();
         Swal.close();
         const prefill = { force_create: true };
+        if (knownName) prefill.name = knownName;
         if (isPhone) { prefill.phone = value; prefill.phone_start_date = chosenDate; }
         else         { prefill.email = value; prefill.email_start_date = chosenDate; }
         newContact(prefill, () => {
@@ -4239,7 +4253,7 @@ async function OrphanAdoptDialog(value, type, onDone = null) {
     if (!confirmForce.isConfirmed) {
       // User backed out of the transfer — re-open the picker dialog so they
       // can choose a different contact or Create new.
-      return OrphanAdoptDialog(value, type, onDone);
+      return OrphanAdoptDialog(value, type, onDone, opts);
     }
     try {
       await P.apiSend(endpoint + '?force=true', 'POST', body);

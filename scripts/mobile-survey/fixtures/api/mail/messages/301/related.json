@@ -7,5 +7,11 @@
         { "case_id": "TESTCASE2", "case_number": "25-12345-abc", "case_type": "BK", "case_stage": "Closed", "case_status": "Discharged", "relation": "Secondary" }
       ] },
     { "contact_id": 1406, "name": "Paralegal Services Group LLC", "kind": "org", "emails": ["paralegal@opposing-counsel-law-group.test"], "role": "to", "cases": [] }
+  ],
+  "unmatched": [
+    { "email": "an-extremely-long-unmatched-address-for-overflow@some-new-correspondent-domain.test", "name": null, "role": "from" },
+    { "email": "jane.newclient@gmail.test", "name": "Jane Newclient (via a very long display name for wrapping)", "role": "to" },
+    { "email": "bob@new.test", "name": "Bob", "role": "to" },
+    { "email": "carl@new.test", "name": null, "role": "to" }
   ]
 }

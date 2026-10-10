@@ -1,7 +1,7 @@
 # Routes
 
-_Generated 2026-10-10T18:01:51.402Z_  
-_731 routes total — DELETE: 61, GET: 302, PATCH: 50, POST: 280, PUT: 35, _ALL: 3_
+_Generated 2026-10-10T21:24:34.655Z_  
+_732 routes total — DELETE: 61, GET: 303, PATCH: 50, POST: 280, PUT: 35, _ALL: 3_
 
 ## Global middleware chain
 
@@ -392,6 +392,7 @@ _731 routes total — DELETE: 61, GET: 302, PATCH: 50, POST: 280, PUT: 35, _ALL:
 | POST | `/api/m/:token/cancel` | — | — |
 | POST | `/api/m/:token/reschedule` | — | — |
 | GET | `/api/m/:token/slots` | — | — |
+| GET | `/api/mail/first-seen` | `jwtOrApiKey`, `requireJwt` | — |
 | GET | `/api/mail/image-senders` | `jwtOrApiKey`, `requireJwt` | — |
 | POST | `/api/mail/image-senders` | `jwtOrApiKey`, `requireJwt` | — |
 | DELETE | `/api/mail/image-senders/:address` | `jwtOrApiKey`, `requireJwt` | — |
@@ -1001,4 +1002,4 @@ _731 routes total — DELETE: 61, GET: 302, PATCH: 50, POST: 280, PUT: 35, _ALL:
 
 ---
 
-_731 routes total — DELETE: 61, GET: 302, PATCH: 50, POST: 280, PUT: 35, _ALL: 3_
+_732 routes total — DELETE: 61, GET: 303, PATCH: 50, POST: 280, PUT: 35, _ALL: 3_

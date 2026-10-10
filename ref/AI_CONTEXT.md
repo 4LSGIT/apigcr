@@ -64,6 +64,19 @@ body. Governing migrations in `ref/migrations/`.*
     the per-theme drawing rule live in ONE module shared by server and panes:
     `public/js/mailboxColor.js` (its SURFACES mirror `theme.css`, test-pinned —
     retune the surfaces there and that test tells you to follow).
+  - **Per-row subquery filters on the list are SCALAR, never `EXISTS`**
+    (`client_only`, `has_files`: `0 < (SELECT COUNT(*) …)`). MySQL flattens
+    an EXISTS into a semi-join: measured, that lost the per-branch backward
+    index walk AND made mark-all's `INSERT … SELECT` mark nothing while the
+    list was right. Per-row address lookups go through a `JSON_TABLE`
+    JOINed to `contact_emails` (an index probe); `col IN (<per-row exprs>)`
+    scans the table per row. `JSON_TABLE` string columns take the
+    CONNECTION collation unless declared — declare `utf8mb4_general_ci`.
+  - **`OrphanAdoptDialog(value, type, onDone, opts)`** (scripts.js) takes
+    `opts.earliest` (another first sighting; the start date defaults to the
+    earlier of it and the log's) and `opts.name` (search + Create-new
+    prefill). Comms' "add to client" is its second caller; the log tab
+    passes no opts.
 - **CTA links are live end to end (10-07, arc S0–S4):** SU-minted bearer
   links (`4lsg.com/c/<token>`) whose option buttons run frozen plans of
   registry internal functions as user 0. Design (canonical, review-folded):

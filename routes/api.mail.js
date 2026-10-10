@@ -6,8 +6,9 @@
  *
  *   GET    /api/mail/mailboxes                readable mailboxes + INBOX unread/total (view switcher)
  *   GET    /api/mail/messages                 the mixed-inbox list — keyset-paginated, NO bodies
- *            ?view=&mailbox_ids=1,2&unread_only=1&has_case=1&all_folders=1
- *             &from_domain=example.com&q=…&cursor=<next_cursor>&limit=≤100
+ *            ?view=&mailbox_ids=1,2&unread_only=1&has_case=1|no_case=1&client_only=1
+ *             &has_files=1&all_folders=1&from_domain=example.com&q=…
+ *             &cursor=<next_cursor>&limit=≤100
  *   GET    /api/mail/messages/:id             one message with bodies (threadless mail)
  *   GET    /api/mail/threads/:threadKey       the thread, merged across readable mailboxes (bodies)
  *   POST   /api/mail/messages/:id/read        mark read   (idempotent)
@@ -23,7 +24,10 @@
  *                                             to a case; a store-only message gets its
  *                                             log row created first
  *   GET    /api/mail/messages/:id/related     contacts behind the conversation's outside
- *                                             addresses + their client cases (open the file)
+ *                                             addresses + their client cases (open the file),
+ *                                             + the outside addresses no contact holds
+ *   GET    /api/mail/first-seen?address=      firm-local day of the earliest readable mail
+ *                                             with that address (add-to-client start date)
  *   GET    /api/mail/image-senders            the caller's "always show images from" senders
  *   POST   /api/mail/image-senders            {address} — trust one (idempotent)
  *   DELETE /api/mail/image-senders/:address   stop trusting one (encodeURIComponent it)
@@ -164,6 +168,13 @@ router.get('/api/mail/messages/:id/related', ...guard, async (req, res) => {
   try {
     res.json({ status: 'success', ...(await svc.related(req.db, req.auth.userId, req.params.id)) });
   } catch (err) { sendError(res, 'GET /api/mail/messages/:id/related', err); }
+});
+
+// ─── GET /api/mail/first-seen?address= ───
+router.get('/api/mail/first-seen', ...guard, async (req, res) => {
+  try {
+    res.json({ status: 'success', ...(await svc.firstSeen(req.db, req.auth.userId, (req.query || {}).address)) });
+  } catch (err) { sendError(res, 'GET /api/mail/first-seen', err); }
 });
 
 // ─── /api/mail/image-senders ───  (per user; never another user's list)

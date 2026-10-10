@@ -77,6 +77,7 @@
   .bar select { max-width: 100%; flex: 1 1 120px; }
   .bar input[type="search"] { flex: 1 1 140px; }
   .bar input.domain { flex: 0 1 130px; }
+  .bar select.case-sel { flex: 0 1 auto; }
   .check { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; cursor: pointer; white-space: nowrap; }
   .status-line { font-size: 11px; color: var(--text-muted); padding: 5px 10px; min-height: 22px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 
@@ -198,7 +199,9 @@
   .related .who { display: inline-flex; flex-wrap: wrap; gap: 4px; align-items: center; min-width: 0; margin-right: 6px; }
   .related .chip { max-width: 100%; }
   .chip.person { cursor: pointer; color: var(--text); }
-  .chip.person:hover, .chip.case:hover { border-color: var(--accent-2); }
+  .chip.person:hover, .chip.case:hover, .chip.add:hover { border-color: var(--accent-2); }
+  /* an address no contact holds: dashed = "not on file yet", click to add it to a client */
+  .chip.add { cursor: pointer; color: var(--text); border-style: dashed; background: transparent; }
   .pick-list li.sugg .l1 { display: flex; gap: 6px; align-items: baseline; flex-wrap: wrap; }
 
   /* ── Images: always-show line ── */
@@ -297,7 +300,13 @@
         <input type="search" id="f-q" placeholder="From or subject" aria-label="Search from or subject" maxlength="200">
         <input type="text" class="domain" id="f-domain" placeholder="from domain" aria-label="Sender domain" maxlength="128" spellcheck="false">
         <label class="check"><input type="checkbox" id="f-unread"> Unread</label>
-        <label class="check"><input type="checkbox" id="f-case"> On a case</label>
+        <label class="check" title="Mail to or from a client — someone Primary or Secondary on a case: the sender, or one of the first five recipients. The firm's own addresses never count."><input type="checkbox" id="f-client"> Client mail</label>
+        <label class="check" title="Has attachments (images drawn inside the message do not count)"><input type="checkbox" id="f-files"> Has files</label>
+        <select id="f-case" class="case-sel" aria-label="Case link" title="Whether the email is on a case's log">
+          <option value="">Any case</option>
+          <option value="has">On a case</option>
+          <option value="no">Not on a case</option>
+        </select>
         <label class="check" title="Include Sent and other ingested folders, not just the Inbox"><input type="checkbox" id="f-folders"> All folders</label>
       </div>
       <div class="status-line"><span id="status"></span><button class="btn small" type="button" id="readall-btn" hidden>Mark all read</button></div>
@@ -423,6 +432,8 @@ const state = {
   linking: null,        // message being case-linked
   picker: null,         // the open case picker: { mode:'link'|'save', m, a? }
   related: [],          // GET …/related contacts for the open conversation
+  unmatched: [],        // …and its outside addresses no contact holds (add to client)
+  addsOpen: false,      // every unmatched chip shown, not just the first ADDS_SHOWN
   viewer: null,         // { url, m, a, kind, tabbed }
 };
 
@@ -600,7 +611,9 @@ function applyView(v) {
   E('f-q').value = f.q || '';
   E('f-domain').value = f.from_domain || '';
   E('f-unread').checked = !!f.unread_only;
-  E('f-case').checked = !!f.has_case;
+  E('f-client').checked = !!f.client_only;
+  E('f-files').checked = !!f.has_files;
+  E('f-case').value = f.has_case ? 'has' : (f.no_case ? 'no' : '');
   E('f-folders').checked = !!f.all_folders;
   renderViewSelect();
   renderMailboxPicker();
@@ -613,7 +626,10 @@ function currentFilters() {
   if (q) f.q = q;
   if (d) f.from_domain = d;
   if (E('f-unread').checked) f.unread_only = true;
-  if (E('f-case').checked) f.has_case = true;
+  if (E('f-client').checked) f.client_only = true;
+  if (E('f-files').checked) f.has_files = true;
+  if (E('f-case').value === 'has') f.has_case = true;
+  else if (E('f-case').value === 'no') f.no_case = true;
   if (E('f-folders').checked) f.all_folders = true;
   return f;
 }
@@ -633,7 +649,10 @@ function listParams(cursor) {
   if (ids) p.mailbox_ids = ids.join(',');
   const f = currentFilters();
   p.unread_only = f.unread_only ? 1 : 0;
+  p.client_only = f.client_only ? 1 : 0;
+  p.has_files = f.has_files ? 1 : 0;
   p.has_case = f.has_case ? 1 : 0;
+  p.no_case = f.no_case ? 1 : 0;
   p.all_folders = f.all_folders ? 1 : 0;
   p.q = f.q || '';
   p.from_domain = f.from_domain || '';
@@ -742,6 +761,8 @@ async function openMessage(m) {
   E('thread-subject').textContent = m.subject || '(no subject)';
   E('thread-body').replaceChildren(h('div', { className: 'empty' }, 'Loading…'));
   state.related = [];
+  state.unmatched = [];
+  state.addsOpen = false;
   renderRelated();
   try {
     const url = m.thread_key
@@ -784,11 +805,36 @@ async function loadRelated(messageId, seq) {
     const data = await api(`/api/mail/messages/${messageId}/related`, 'GET');
     if (seq !== state.threadSeq) return;
     state.related = Array.isArray(data && data.contacts) ? data.contacts : [];
+    state.unmatched = Array.isArray(data && data.unmatched) ? data.unmatched : [];
   } catch (_) {
     if (seq !== state.threadSeq) return;
     state.related = [];
+    state.unmatched = [];
   }
   renderRelated();
+}
+
+/*
+ * ADD TO CLIENT. An outside address no contact holds opens the shell's
+ * attach-or-create dialog (scripts.js OrphanAdoptDialog — the log tab's
+ * "attach to contact"): attach it to an existing contact (search starts with
+ * the name the mail gave) or create a new client with it, start date
+ * included. The start-date default is the earlier of the log's first sighting
+ * and this hub's: the first READABLE mail with the address (GET
+ * /api/mail/first-seen) — a store-only mailbox logs nothing. Attaching or
+ * creating reloads this strip, so the chip becomes the contact's.
+ */
+async function addToClient(u) {
+  const dlg = P.OrphanAdoptDialog;
+  if (typeof dlg !== 'function') { toast('Adding to a client needs the app window — open Comms from the menu'); return; }
+  const seq = state.threadSeq;
+  const anchor = state.thread ? state.thread.anchorId : state.selectedId;
+  let earliest = null;
+  try {
+    const r = await api('/api/mail/first-seen', 'GET', { address: u.email });
+    earliest = (r && r.first_seen) || null;
+  } catch (_) { /* the dialog falls back to the log's date, then today */ }
+  dlg(u.email, 'email', () => { if (seq === state.threadSeq && anchor != null) loadRelated(anchor, seq); }, { earliest, name: u.name || '' });
 }
 
 function openContact(c) {
@@ -805,17 +851,40 @@ function relatedCaseChip(c) {
   }, icon('fa-briefcase'), `${c.case_number || c.case_id}${c.case_stage ? ` · ${c.case_stage}` : ''}`);
 }
 
+const ADDS_SHOWN = 3; // "add to client" chips before "+N more" (a reply-all can carry dozens)
+
+function addChip(u) {
+  return h('span', {
+    className: 'chip add', title: `Add ${u.email} to a client — an existing contact or a new one`, role: 'button', tabindex: '0',
+    onclick: () => addToClient(u), onkeydown: (e) => { if (e.key === 'Enter') addToClient(u); },
+  }, icon('fa-user-plus'), u.name || u.email);
+}
+
 function renderRelated() {
   const box = E('thread-related');
   const list = state.related || [];
-  box.hidden = !list.length;
-  if (!list.length) { box.replaceChildren(); return; }
-  box.replaceChildren(h('span', { className: 'lbl' }, 'In this conversation:'), ...list.map((c) => h('span', { className: 'who' },
-    h('span', {
-      className: 'chip person', title: `Open ${c.name || 'contact'} (${(c.emails || []).join(', ')})`, role: 'button', tabindex: '0',
-      onclick: () => openContact(c), onkeydown: (e) => { if (e.key === 'Enter') openContact(c); },
-    }, icon(c.kind === 'org' ? 'fa-building' : 'fa-user'), c.name || (c.emails || [])[0] || `contact ${c.contact_id}`),
-    ...(c.cases || []).map(relatedCaseChip))));
+  const adds = state.unmatched || [];
+  box.hidden = !list.length && !adds.length;
+  if (box.hidden) { box.replaceChildren(); return; }
+  const kids = [];
+  if (list.length) {
+    kids.push(h('span', { className: 'lbl' }, 'In this conversation:'), ...list.map((c) => h('span', { className: 'who' },
+      h('span', {
+        className: 'chip person', title: `Open ${c.name || 'contact'} (${(c.emails || []).join(', ')})`, role: 'button', tabindex: '0',
+        onclick: () => openContact(c), onkeydown: (e) => { if (e.key === 'Enter') openContact(c); },
+      }, icon(c.kind === 'org' ? 'fa-building' : 'fa-user'), c.name || (c.emails || [])[0] || `contact ${c.contact_id}`),
+      ...(c.cases || []).map(relatedCaseChip))));
+  }
+  if (adds.length) {
+    const shown = state.addsOpen ? adds : adds.slice(0, ADDS_SHOWN);
+    kids.push(h('span', { className: 'who adds' },
+      h('span', { className: 'lbl' }, 'Add to a client:'),
+      ...shown.map(addChip),
+      adds.length > shown.length ? h('button', {
+        className: 'linkish more-adds', type: 'button', onclick: () => { state.addsOpen = true; renderRelated(); },
+      }, `+${adds.length - shown.length} more`) : null));
+  }
+  box.replaceChildren(...kids);
 }
 
 /** The message's own case first, then the conversation's client cases — one row per case. */
@@ -1286,7 +1355,10 @@ function viewSummary(v) {
   const f = v.filters || {};
   const bits = [];
   if (f.unread_only) bits.push('unread');
+  if (f.client_only) bits.push('client mail');
+  if (f.has_files) bits.push('with files');
   if (f.has_case) bits.push('on a case');
+  if (f.no_case) bits.push('not on a case');
   if (f.all_folders) bits.push('all folders');
   if (f.from_domain) bits.push(`from ${f.from_domain}`);
   if (f.q) bits.push(`"${f.q}"`);
@@ -1390,7 +1462,7 @@ async function init() {
   const debounced = () => { clearTimeout(qTimer); qTimer = setTimeout(() => loadList(), 350); };
   E('f-q').addEventListener('input', debounced);
   E('f-domain').addEventListener('change', () => loadList());
-  for (const id of ['f-unread', 'f-case', 'f-folders']) E(id).addEventListener('change', () => loadList());
+  for (const id of ['f-unread', 'f-client', 'f-files', 'f-case', 'f-folders']) E(id).addEventListener('change', () => loadList());
   E('view-sel').addEventListener('change', () => {
     const v = state.views.find((x) => String(x.id) === E('view-sel').value) || null;
     applyView(v);

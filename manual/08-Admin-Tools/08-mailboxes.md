@@ -175,7 +175,18 @@ phone slice.
   Narrow it with the **mailbox picker** (tick
   any combination of boxes — say shoshana@ and billing@ together), the
   search (sender or subject — not the message text), a sender domain,
-  **Unread**, **On a case**, and **All folders** (adds Sent).
+  **Unread**, **Client mail**, **Has files**, the case menu (**On a case** /
+  **Not on a case**), and **All folders** (adds Sent).
+  - **Client mail** keeps mail to or from a client — someone who is Primary or
+    Secondary on a case — by its sender or one of its first five recipients
+    (To, then Cc). The firm's own addresses never count, even when a staff
+    member is set up as a client on a test case, and neither do the firm's
+    mailboxes. An attorney or trustee on a case is not a client of it.
+  - **Has files** keeps mail with a real attachment — what the paperclip
+    counts; a signature logo drawn inside the message is not a file.
+  - **Not on a case** is mail not yet on any case's log. **Client mail** +
+    **Has files** + **Not on a case**, saved as a view, is a "documents
+    clients sent that nobody has filed yet" queue.
 - **Read / unread is yours alone.** An unread message stands out in the
   list: a blue dot, bold sender, subject and date, on a white row (the lighter
   row in the dark theme); read ones are plain, on the page's grey. Opening a
@@ -216,6 +227,17 @@ phone slice.
   they are a client on, open ones first. Click a name to open the contact,
   a case to open the case. The firm's own addresses are never listed, and an
   attorney or trustee shows as a name without their cases.
+- **Add to a client** (the dashed names on the same strip) lists the
+  addresses in the conversation that no contact has yet — the first three,
+  then **+N more**. No-reply and mailer-daemon style senders are left out.
+  Clicking one opens the same **Attach email to contact** window as the
+  Log's attach button: attach the address to an existing contact (the search
+  starts with the name the email carried) or **Create new contact** with it
+  (the name is filled in too). The **start date on contact** is filled in
+  with the earliest the address was seen — its first email in the boxes you
+  can read, or its first log entry, whichever is earlier — so its older mail
+  and log entries count as that contact's; change it if you know better.
+  Once attached, the name moves up to the contacts on the strip.
 - **Link to case** puts the email on a case's log. If the email is already
   on the log (the old Gmail sync logs Stuart's inbox, for instance), that entry
   is linked — never a second copy. If it is not on the log yet (a box that

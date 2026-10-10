@@ -37,6 +37,12 @@
  *     upload-link → Dropbox → upload-commit, case picked from suggestions or
  *     search); "Always show from <sender>" per reader; the conversation's
  *     contacts + client cases open the file.
+ *   - Add to client (follow-up): outside addresses no contact holds are dashed
+ *     chips (3, then "+N more") that call the SHELL's OrphanAdoptDialog with
+ *     {earliest: GET /api/mail/first-seen, name}; attaching reloads the strip
+ *     (never a stale conversation's); outside the shell it says so.
+ *   - Client mail / Has files / the case menu (On / Not on a case) ride every
+ *     list call explicitly, restore from a view, save, mark-all, read back.
  *   - Phone tab rendered and disabled; the empty hub explains itself.
  *   - Phone widths: opening a message switches to the thread (stacked
  *     navigation, .show-thread), Back returns to the list.
@@ -488,7 +494,7 @@ describe('comms hub pane', () => {
         'GET /api/mail/messages/11/related': () => ({ contacts: [
           { contact_id: 500, name: 'Doe, Jane', kind: 'person', emails: ['jane@client.test'], role: 'from', cases: [{ case_id: 'CaseB2', case_number: '26-22222', case_stage: 'Open' }] },
           { contact_id: 600, name: 'Acme Trustee LLC', kind: 'org', emails: ['t@trustee.test'], role: 'to', cases: [] },
-        ] }),
+        ], unmatched: [{ email: 'new@person.test', name: null, role: 'to' }] }),
         'GET /api/mail/messages/12/related': () => new Promise(() => {}), // still loading
       }),
     });
@@ -496,7 +502,7 @@ describe('comms hub pane', () => {
     await tick(window, 80);
     expect(calls.some((c) => c.url === '/api/mail/messages/11/related')).toBe(true);
     const strip = doc.getElementById('thread-related');
-    expect([strip.hidden, strip.textContent]).toEqual([false, 'In this conversation:Doe, Jane26-22222 · OpenAcme Trustee LLC']);
+    expect([strip.hidden, strip.textContent]).toEqual([false, 'In this conversation:Doe, Jane26-22222 · OpenAcme Trustee LLCAdd to a client:new@person.test']);
     strip.querySelector('.chip.person').click();
     strip.querySelector('.chip.case').click();
     expect(calls.filter((c) => c.addFile).map((c) => c.addFile)).toEqual([['Doe, Jane', 'client', '500'], ['26-22222', 'case', 'CaseB2']]);
@@ -507,6 +513,112 @@ describe('comms hub pane', () => {
     doc.querySelectorAll('#msg-list .msg')[1].click();
     await tick(window, 80);
     expect([strip.hidden, strip.textContent]).toEqual([true, '']);
+  });
+
+  test('add to client: addresses no contact holds are dashed chips (3, then "+N more") that open the shell\'s attach-or-create dialog', async () => {
+    let related = { contacts: [], unmatched: [
+      { email: 'ann@new.test', name: 'Smith, Ann', role: 'from' },
+      { email: 'dee@new.test', name: null, role: 'to' },
+      { email: 'bob@new.test', name: 'Bob', role: 'to' },
+      { email: 'carl@new.test', name: null, role: 'to' },
+    ] };
+    let seenFails = false;
+    const { window, doc, calls, errors } = await boot({
+      handler: standard({
+        'GET /api/mail/messages/11/related': () => fresh(related),
+        'GET /api/mail/first-seen': (p) => { if (seenFails) throw new Error('boom'); return { address: p.address, first_seen: '2026-02-28' }; },
+      }),
+    });
+    const dialogs = [];
+    window.OrphanAdoptDialog = (...a) => { dialogs.push(a); };
+    doc.querySelector('#msg-list .msg').click();
+    await tick(window, 80);
+    const strip = doc.getElementById('thread-related');
+    expect([strip.hidden, strip.textContent]).toEqual([false, 'Add to a client:Smith, Anndee@new.testBob+1 more']);
+    expect([...strip.querySelectorAll('.chip.add')].map((c) => c.title)).toEqual([
+      'Add ann@new.test to a client — an existing contact or a new one', 'Add dee@new.test to a client — an existing contact or a new one',
+      'Add bob@new.test to a client — an existing contact or a new one']);
+    strip.querySelector('.more-adds').click();
+    expect(strip.querySelectorAll('.chip.add')).toHaveLength(4);
+    expect(strip.querySelector('.more-adds')).toBeNull();
+    // click: the first-seen day, then the dialog with the email, the start-date hint and the name
+    strip.querySelector('.chip.add').click();
+    await tick(window, 40);
+    expect(calls.find((c) => c.url === '/api/mail/first-seen')).toMatchObject({ method: 'GET', payload: { address: 'ann@new.test' } });
+    expect(dialogs.map(([v, t, fn, o]) => [v, t, typeof fn, o])).toEqual([['ann@new.test', 'email', 'function', { earliest: '2026-02-28', name: 'Smith, Ann' }]]);
+    // attached → the strip reloads: Ann is a contact now
+    related = { contacts: [{ contact_id: 900, name: 'Smith, Ann', kind: 'person', emails: ['ann@new.test'], role: 'from', cases: [] }], unmatched: related.unmatched.slice(1) };
+    const before = calls.filter((c) => c.url === '/api/mail/messages/11/related').length;
+    dialogs[0][2]({ action: 'attached', contact_id: 900 });
+    await tick(window, 40);
+    expect(calls.filter((c) => c.url === '/api/mail/messages/11/related')).toHaveLength(before + 1);
+    expect(strip.textContent).toBe('In this conversation:Smith, AnnAdd to a client:dee@new.testBobcarl@new.test'); // still expanded
+    // first-seen failing never blocks the dialog (it falls back to the log, then today)
+    seenFails = true;
+    strip.querySelector('.chip.add').click();
+    await tick(window, 40);
+    expect(dialogs[1][0]).toBe('dee@new.test');
+    expect(dialogs[1][3]).toEqual({ earliest: null, name: '' });
+    // a stale callback (another conversation opened meanwhile) does not repaint this one
+    doc.querySelectorAll('#msg-list .msg')[1].click();
+    await tick(window, 80);
+    const n = calls.filter((c) => c.url === '/api/mail/messages/11/related').length;
+    dialogs[1][2]({ action: 'created' });
+    await tick(window, 40);
+    expect(calls.filter((c) => c.url === '/api/mail/messages/11/related')).toHaveLength(n);
+    expect(errors).toEqual([]);
+  });
+
+  test('add to client outside the shell (no dialog to call) says so instead of failing', async () => {
+    const { window, doc, calls } = await boot({
+      handler: standard({ 'GET /api/mail/messages/11/related': () => ({ contacts: [], unmatched: [{ email: 'ann@new.test', name: null, role: 'from' }] }) }),
+    });
+    doc.querySelector('#msg-list .msg').click();
+    await tick(window, 80);
+    doc.querySelector('#thread-related .chip.add').click();
+    await tick(window, 20);
+    expect(doc.getElementById('toast').textContent).toMatch(/needs the app window/);
+    expect(calls.some((c) => c.url === '/api/mail/first-seen')).toBe(false);
+  });
+
+  test('client mail / has files / not on a case: ride every list call, restore from a view, save, and read back in words', async () => {
+    const views = [{ id: 8, name: 'To file', mailbox_ids: null, filters: { client_only: true, no_case: true }, is_default: true, sort_order: 0 }];
+    const { window, doc, calls } = await boot({
+      handler: standard({
+        'GET /api/mail/views': () => ({ views }),
+        'POST /api/mail/views': (p) => ({ view: { id: 9, ...p, mailbox_ids: p.mailbox_ids || null, sort_order: 0 } }),
+        'POST /api/mail/read': () => ({ marked: 0 }),
+      }),
+    });
+    expect([doc.getElementById('f-client').checked, doc.getElementById('f-files').checked, doc.getElementById('f-case').value]).toEqual([true, false, 'no']);
+    expect(calls.find((c) => c.url === '/api/mail/messages').payload).toMatchObject({ client_only: 1, has_files: 0, has_case: 0, no_case: 1 });
+    doc.getElementById('f-files').checked = true;
+    doc.getElementById('f-files').dispatchEvent(new window.Event('change'));
+    await tick(window);
+    expect(calls.filter((c) => c.url === '/api/mail/messages').pop().payload).toMatchObject({ client_only: 1, has_files: 1, has_case: 0, no_case: 1 });
+    doc.getElementById('f-case').value = 'has';
+    doc.getElementById('f-case').dispatchEvent(new window.Event('change'));
+    await tick(window);
+    expect(calls.filter((c) => c.url === '/api/mail/messages').pop().payload).toMatchObject({ has_case: 1, no_case: 0 });
+    doc.getElementById('f-case').value = 'no';
+    doc.getElementById('f-case').dispatchEvent(new window.Event('change'));
+    await tick(window);
+    doc.getElementById('views-btn').click();
+    expect(doc.querySelector('#vw-list .vw-sum').textContent).toBe('All mailboxes— client mail, not on a case');
+    doc.getElementById('vw-name').value = 'Docs to file';
+    doc.getElementById('vw-save').click();
+    await tick(window, 60);
+    expect(calls.find((c) => c.url === '/api/mail/views' && c.method === 'POST').payload)
+      .toEqual({ name: 'Docs to file', filters: { client_only: true, has_files: true, no_case: true }, is_default: false });
+    // mark-all carries them too
+    window.confirm = () => true;
+    doc.getElementById('readall-btn').click();
+    await tick(window, 40);
+    expect(calls.find((c) => c.url === '/api/mail/read').payload).toEqual({ all: true, filters: { client_only: true, has_files: true, no_case: true } });
+    // a view without them clears the controls
+    doc.getElementById('view-sel').value = '';
+    doc.getElementById('view-sel').dispatchEvent(new window.Event('change'));
+    expect([doc.getElementById('f-client').checked, doc.getElementById('f-files').checked, doc.getElementById('f-case').value]).toEqual([false, false, '']);
   });
 
   test('mark unread → DELETE …/read for the copy the reader opened', async () => {
@@ -552,10 +664,10 @@ describe('comms hub pane', () => {
       }),
     });
     const first = calls.find((c) => c.url === '/api/mail/messages');
-    expect(first.payload).toEqual({ mailbox_ids: '1', unread_only: 1, q: 'plan', has_case: 0, all_folders: 0, from_domain: '' });
+    expect(first.payload).toEqual({ mailbox_ids: '1', unread_only: 1, q: 'plan', client_only: 0, has_files: 0, has_case: 0, no_case: 0, all_folders: 0, from_domain: '' });
     expect(doc.getElementById('f-unread').checked).toBe(true);
     expect(doc.getElementById('mb-label').textContent).toBe('Billing — billing@firm.test (2)');
-    doc.getElementById('f-case').checked = true;
+    doc.getElementById('f-case').value = 'has';
     doc.getElementById('f-case').dispatchEvent(new window.Event('change'));
     await tick(window);
     expect(calls.filter((c) => c.url === '/api/mail/messages').pop().payload).toMatchObject({ mailbox_ids: '1', unread_only: 1, has_case: 1 });
