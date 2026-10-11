@@ -22,6 +22,9 @@ from one host to another is just editing the row.
 - **Address** is stored lower-cased and must be unique. Its domain is derived
   from it.
 - **Host** is the bare host name — no `https://`, no port.
+- **Port** is the IMAP port: 993 (or 143). The sending ports (587, 465, 25,
+  2525) are refused — with one there, every check, the folder listing and
+  the copy to Sent fail.
 - **Send credential**: none means the box is **read-only** in YisraCase. It
   must be an SMTP or Google sender — a Pabbly sender cannot send replies or
   Cc/Bcc, so Comms greys the box out. A **Google** sender must be the one
@@ -229,7 +232,10 @@ Admin → Comms. It shows the mail of every box you can read in one list; the
 **Phone** tab is a placeholder until the phone slice.
 
 - **The list** is the Inbox of every box you can read, newest first, with
-  the box shown when you can read more than one. For the Google mailbox the
+  the box shown when you can read more than one. Mail arrives with the
+  5-minute check; **Refresh** (the circular arrow) re-reads the list and also
+  checks the mail servers right away (at most once every 30 seconds for the
+  whole office), so new mail shows within moments. For the Google mailbox the
   Inbox comes from Google's labels (above); an email that is not in the Inbox
   carries a small tag saying where it is — **Sent**, **Archived**, or the
   folder name. Each mailbox has its own
@@ -387,8 +393,8 @@ people who can send from a box they can read.
   automation emails through the same account, and attempts the provider
   refused: by default 1,500 for Google and 300 for SMTP, changed with the
   `mail_send_daily_budget` app setting (`{"gmail": n, "smtp": n}`). At the
-  limit Comms refuses to send (nothing goes out), says so, and IT gets one
-  warning a day. Automations are not stopped by it. Separately, more than
+  limit Comms refuses to send (nothing goes out), says so, and IT is
+  emailed (the hourly alert digest; once a day per account). Automations are not stopped by it. Separately, more than
   30 sends by one person within 10 minutes are refused for a few minutes.
 - Every send, refused send and failed send is recorded in `admin_audit_log`
   under the tool `mail_send` — who, which box, how many recipients; never

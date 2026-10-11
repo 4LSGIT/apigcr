@@ -104,6 +104,7 @@ const EMIT_ID_KINDS = Object.freeze(['rfc', 'provider']);
 const EMIT_FIELDS = ['emit_source_name', 'emit_id_kind'];
 const MAX_INGEST_FOLDERS = 25;
 const MAX_SECRET_LEN = 1024;
+const SMTP_PORTS = Object.freeze([25, 465, 587, 2525]); // never an IMAP port (validation, imap_port)
 
 const MAILBOX_FIELDS = new Set([
   'address', 'display_name', 'color', 'imap_host', 'imap_port', 'imap_user', 'imap_secret',
@@ -592,6 +593,13 @@ function validateMailboxBody(body, { partial }) {
     const p = body.imap_port;
     const n = typeof p === 'number' ? p : (typeof p === 'string' && /^\d+$/.test(p.trim()) ? Number(p) : NaN);
     if (!Number.isInteger(n) || n < 1 || n > 65535) throw httpError(400, 'imap_port must be an integer 1-65535');
+    // The mail-SENDING ports. An SMTP port copied into the IMAP field fails
+    // every poll, the folder listing and the hub's Sent APPEND with a TLS
+    // "wrong version number" (live 2026-10-11: mailbox 3 on 587) — say so at
+    // save time instead.
+    if (SMTP_PORTS.includes(n)) {
+      throw httpError(400, `imap_port ${n} is a mail-sending (SMTP) port — IMAP is 993 (TLS) or 143 (STARTTLS)`);
+    }
     clean.imap_port = n;
   }
 

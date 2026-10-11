@@ -420,7 +420,7 @@
         <span class="brk" aria-hidden="true"></span>
         <input type="search" id="f-q" placeholder="From or subject" aria-label="Search from or subject" maxlength="200">
         <input type="text" class="domain" id="f-domain" placeholder="from domain" aria-label="Sender domain" maxlength="128" spellcheck="false">
-        <button class="btn icon" type="button" id="refresh-btn" title="Refresh"><i class="fa-solid fa-rotate"></i></button>
+        <button class="btn icon" type="button" id="refresh-btn" title="Refresh — and check the mail servers now (they are checked every 5 minutes anyway)" aria-label="Refresh"><i class="fa-solid fa-rotate" aria-hidden="true"></i></button>
         <button class="btn icon" type="button" id="views-btn" title="Saved views"><i class="fa-solid fa-bookmark"></i></button>
         <button class="btn primary" type="button" id="compose-btn" title="Write a new email from one of your mailboxes" hidden><i class="fa-solid fa-pen" aria-hidden="true"></i> Compose</button>
       </div>
@@ -2337,7 +2337,7 @@ async function init() {
     loadList();
   });
   E('mb-btn').addEventListener('click', () => toggleBoxPanel());
-  E('refresh-btn').addEventListener('click', () => { loadSummary().catch(() => {}); loadList(); });
+  E('refresh-btn').addEventListener('click', refreshNow);
   E('readall-btn').addEventListener('click', markAllRead);
   E('back-btn').addEventListener('click', closeThread);
   E('views-btn').addEventListener('click', openViews);
@@ -2368,6 +2368,43 @@ async function init() {
     if (def) applyView(def);
   }
   loadList();
+}
+
+// ── Refresh: what is stored now, and ask the mail servers ───
+// The button re-reads the list at once (as before) and also starts an ingest
+// pass (POST /mailbox-ingest — every mailbox, lock-guarded; the server runs at
+// most one staff-triggered pass per 30 s and answers {skipped} otherwise), so
+// new mail need not wait for the 5-minute tick. When the pass stored mail the
+// list is read again. Re-entering the tab (ycBecameVisible) does NOT start a
+// pass: every open Comms tab doing so would multiply the IMAP logins.
+var REFRESH_LIMITS = { ingestCooldownMs: 30_000, lockRetryMs: 15_000 };
+let ingestBusy = false;
+let ingestAt = 0;
+async function refreshNow() {
+  loadSummary().catch(() => {});
+  loadList();
+  if (ingestBusy || Date.now() - ingestAt < REFRESH_LIMITS.ingestCooldownMs) return;
+  ingestBusy = true;
+  ingestAt = Date.now();
+  const spin = E('refresh-btn').querySelector('i');
+  if (spin) spin.classList.add('fa-spin');
+  E('refresh-btn').setAttribute('aria-busy', 'true');
+  try {
+    const out = await api('/mailbox-ingest', 'POST');
+    if (out && !out.skipped && (Number(out.stored) || 0) + (Number(out.backfilled) || 0) > 0) {
+      loadSummary().catch(() => {});
+      loadList({ silent: true });
+    } else if (out && out.skipped && !out.throttled) {
+      // the 5-minute pass holds the lock right now: read again once it is likely done
+      setTimeout(() => { loadSummary().catch(() => {}); loadList({ silent: true }); }, REFRESH_LIMITS.lockRetryMs);
+    }
+  } catch (_) {
+    /* the scheduled pass still runs; the list shown is what is stored */
+  } finally {
+    ingestBusy = false;
+    if (spin) spin.classList.remove('fa-spin');
+    E('refresh-btn').removeAttribute('aria-busy');
+  }
 }
 
 // The shell pings visible frames when their tab is re-entered (index.html

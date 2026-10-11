@@ -12,6 +12,8 @@
  * and runIngest (its own suite covers it).
  *
  * Mutation-checked:
+ *   - staff throttle removed / applied to the x-api-key tick  → "staff-triggered runs" (S3 follow-up)
+ *   - details returned to a non-SU staff caller               → "staff-triggered runs" (S3 follow-up)
  *   - inline allowlist widened to text/html  → "sender-declared HTML is never served inline"
  *   - grant check removed                    → "no grant → 404; grant without read → 403"
  *   - cursor/identity args not passed        → "passes the cursor UIDVALIDITY and the stored Message-ID"
@@ -43,7 +45,8 @@ const app = express();
 app.use(express.json());
 app.use((req, res, next) => { req.db = W.db; next(); });
 app.use(require('../routes/api.mailboxes'));
-app.use(require('../routes/mailboxIngest'));
+const ingestRouter = require('../routes/mailboxIngest');
+app.use(ingestRouter);
 
 let server; let base;
 beforeAll(async () => {
@@ -88,6 +91,7 @@ beforeEach(() => {
     stream: Readable.from([Buffer.from('%PDF-bytes')]), mime: 'application/pdf', filename: 'x', close: jest.fn(),
   }));
   ingest.runIngest.mockReset();
+  ingestRouter._resetStaffThrottle();
 });
 afterEach(() => jest.restoreAllMocks());
 
@@ -192,5 +196,22 @@ describe('ALL /mailbox-ingest', () => {
     const f = await call('POST', '/mailbox-ingest', { apiKey: process.env.INTERNAL_API_KEY });
     expect(f.status).toBe(500);
     expect(f.json).toMatchObject({ error: 'Mailbox ingest run failed', code: 'ETIMEDOUT' });
+  });
+
+  test('staff-triggered runs (the comms hub Refresh): one per window for all staff; the x-api-key tick never throttled; counts only unless SU', async () => {
+    const full = { skipped: false, stored: 2, emitted: 1, errors: 0, durationMs: 9, details: [{ mailbox_id: 7, folder: 'INBOX.Secret', error: 'x' }], emitSources: { 'gmail-firm': 'ok' }, pipeline: { a: 1 } };
+    ingest.runIngest.mockResolvedValue(full);
+    const first = await call('POST', '/mailbox-ingest', { t: tok(1) });
+    expect(first.status).toBe(200);
+    expect(first.json).toEqual({ skipped: false, stored: 2, emitted: 1, errors: 0, durationMs: 9 }); // no details for a non-SU
+    const again = await call('POST', '/mailbox-ingest', { t: tok(5) });                            // another person, same window
+    expect(again.json).toMatchObject({ skipped: true, throttled: true });
+    expect(ingest.runIngest).toHaveBeenCalledTimes(1);
+    for (let i = 0; i < 3; i++) {
+      expect((await call('POST', '/mailbox-ingest', { apiKey: process.env.INTERNAL_API_KEY })).json).toEqual(full); // the tick: always runs, full summary
+    }
+    expect(ingest.runIngest).toHaveBeenCalledTimes(4);
+    ingestRouter._resetStaffThrottle();
+    expect((await call('POST', '/mailbox-ingest', { t: tok(6, 'authorized - SU') })).json).toEqual(full);            // an SU sees the details
   });
 });

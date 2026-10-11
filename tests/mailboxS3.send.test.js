@@ -23,7 +23,8 @@
  *   - the grant check moved INTO emailService                       → "automation sends stay grant-blind"
  *   - listSendable on can_read instead of can_send                  → identities tests
  *   - checkBudget removed; `used < budget` → `<=`                   → budget tests
- *   - the budget alert's dedup_key dropped                          → "ONE warning alert per transport per day"
+ *   - the budget alert's dedup_key dropped; its severity back to warning
+ *     (S3 follow-up: a warning never emails, the 429 says IT was told) → "ONE error alert per transport per day"
  *   - the gmail transport not counting its aliases                  → the Gmail budget / send tests
  *   - APPEND attempted for a gmail credential                       → "Gmail: no APPEND, no IMAP connection"
  *   - a send-time email_log INSERT added in the service             → "ONE email_log row (the adapter's)"
@@ -55,6 +56,11 @@
  *   - a Sent copy from an alias not treated as own mail             → "a SENT copy is own mail"
  *   - a Google sender for another address allowed                   → 409 credential_mismatch test
  *   - the rejected-recipients warning dropped                       → "recipients the relay refused"
+ *
+ * S3 follow-up (executor, 2026-10-12), each mutation fails a test here:
+ *   - MID_MAX back to 500                                           → "a 512-character thread id"
+ *   - the gmail_server warning back to "the server files its own"   → the APPEND-skipped test
+ *   - the rate check back BEFORE the SU elevation check             → "elevation-rejected attempts do not use up the window"
  */
 
 'use strict';
@@ -447,7 +453,12 @@ describe('SMTP send (an APPEND host)', () => {
     transport.appendSent.mockResolvedValueOnce({ appended: false, folder: null, uid: null, reason: 'no_sent_folder' });
     r = await call('POST', '/api/mail/send', { t: tok(SENDER), body: NEW_MSG() });
     expect(r.status).toBe(200);
-    expect(r.json.warnings.map((w) => w.code)).toEqual(['append_skipped']);
+    expect(r.json.warnings).toEqual([{ code: 'append_skipped', message: expect.stringMatching(/has no Sent folder/) }]);
+
+    // a Google mailbox sending through a non-Google relay: nothing files the copy — say what fixes it
+    transport.appendSent.mockResolvedValueOnce({ appended: false, folder: null, uid: null, reason: 'gmail_server' });
+    r = await call('POST', '/api/mail/send', { t: tok(SENDER), body: NEW_MSG() });
+    expect(r.json.warnings).toEqual([{ code: 'append_skipped', message: expect.stringMatching(/never writes into a Google mailbox\. Give this box its Google sender/) }]);
 
     transport.appendSent.mockRejectedValueOnce(Object.assign(new Error('IMAP ETIMEDOUT: timed out'), { code: 'ETIMEDOUT' }));
     r = await call('POST', '/api/mail/send', { t: tok(SENDER), body: NEW_MSG() });
@@ -455,7 +466,7 @@ describe('SMTP send (an APPEND host)', () => {
     expect(r.json.warnings.map((w) => w.code)).toEqual(['append_failed']);
     await new Promise((res) => setTimeout(res, 20));
     expect(W.T.system_alerts.map((a) => [a.kind, a.severity])).toEqual([['mailbox_send_append_failed', 'warning']]);
-    expect(mockSendMail).toHaveBeenCalledTimes(3);
+    expect(mockSendMail).toHaveBeenCalledTimes(4);
   });
 
   test('a box with no IMAP login: sent, APPEND skipped (no_imap)', async () => {
@@ -526,6 +537,17 @@ describe('reply correctness', () => {
     const opts = mockSendMail.mock.calls[0][0];
     expect([opts.inReplyTo, opts.references]).toEqual(['<r3@x.test>', '<root@x.test> <r2@x.test> <r3@x.test>']);
     expect(r.json.thread_key).toBe('root@x.test');
+  });
+
+  test('a 512-character thread id (the column\'s width) still threads; a longer one is dropped, never sent half', async () => {
+    const long = `${'k'.repeat(512 - '@x.test'.length)}@x.test`;
+    W.message(106, { mailbox_id: 1, message_id: 'p6@x.test', in_reply_to: null, thread_key: long, subject: 'Long', from_addr: 'client@outside.test', to_addrs: 'billing@firm.test' });
+    let r = await call('POST', '/api/mail/send', { t: tok(SENDER), body: { mailbox_id: 1, to: ['client@outside.test'], body_text: 'Ok', in_reply_to_message_fk: 106 } });
+    expect(mockSendMail.mock.calls[0][0].references).toBe(`<${long}> <p6@x.test>`);
+    expect(r.json.thread_key).toBe(long);
+    W.message(107, { mailbox_id: 1, message_id: 'p7@x.test', in_reply_to: null, thread_key: `k${long}`, subject: 'Long', from_addr: 'client@outside.test', to_addrs: 'billing@firm.test' });
+    r = await call('POST', '/api/mail/send', { t: tok(SENDER), body: { mailbox_id: 1, to: ['client@outside.test'], body_text: 'Ok', in_reply_to_message_fk: 107 } });
+    expect(mockSendMail.mock.calls[1][0].references).toBe('<p7@x.test>');
   });
 
   test('a box sending through a SHARED credential (another address): its bare address, no sender name, no signature — and the budget counts it', async () => {
@@ -634,7 +656,7 @@ describe('daily budget (design §4.2)', () => {
     for (let i = 0; i < n; i++) W.sent({ source, from_email: from, processed_at: Date.now() - hoursAgo * 3600_000 });
   };
 
-  test('at the budget: 429, nothing dispatched, ONE warning alert per transport per day', async () => {
+  test('at the budget: 429, nothing dispatched, ONE error alert per transport per day', async () => {
     fill(300, 'BILLING@firm.test');
     let r = await call('POST', '/api/mail/send', { t: tok(SENDER), body: NEW_MSG() });
     expect([r.status, r.json.message]).toEqual([429, expect.stringMatching(/daily limit \(300 of 300/)]);
@@ -643,7 +665,7 @@ describe('daily budget (design §4.2)', () => {
     expect(mockSendMail).not.toHaveBeenCalled();
     await new Promise((res) => setTimeout(res, 20));
     expect(W.T.system_alerts).toHaveLength(1);
-    expect(W.T.system_alerts[0]).toMatchObject({ kind: 'mailbox_send_budget', severity: 'warning', group_key: 'app:mailbox_send_budget:smtp:mail.firm.test:billing@firm.test' });
+    expect(W.T.system_alerts[0]).toMatchObject({ kind: 'mailbox_send_budget', severity: 'error', group_key: 'app:mailbox_send_budget:smtp:mail.firm.test:billing@firm.test' });
     expect(W.T.admin_audit_log.map((a) => a.status)).toEqual(['refused_budget', 'refused_budget']);
   });
 
@@ -675,6 +697,15 @@ describe('per-user send rate (route)', () => {
     expect(mockSendMail).toHaveBeenCalledTimes(mailRouter.SEND_RATE_MAX);
     // …and it is THAT user's window: a colleague still sends
     expect((await call('POST', '/api/mail/send', { t: tok(SENDONLY), body: NEW_MSG() })).status).toBe(200);
+  });
+
+  test('an SU\'s elevation-rejected attempts do not use up the window (a prompt-and-retry is ONE send)', async () => {
+    W.setting('mail_send_daily_budget', JSON.stringify({ smtp: 1000 }));
+    for (let i = 0; i < mailRouter.SEND_RATE_MAX + 1; i++) {
+      expect((await call('POST', '/api/mail/send', { t: tok(SU, 'authorized - SU'), body: NEW_MSG() })).status).toBe(401);
+    }
+    expect((await call('POST', '/api/mail/send', { t: tok(SU, 'authorized - SU'), elevate: SU, body: NEW_MSG() })).status).toBe(200);
+    expect(mockSendMail).toHaveBeenCalledTimes(1);
   });
 });
 

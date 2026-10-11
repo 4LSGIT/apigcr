@@ -61,7 +61,10 @@
  *     one), counted from email_log over the last 24 hours — automation sends
  *     through the same account included, refused attempts (FAILED-… rows)
  *     too, since the provider counts them. Breach → 429, nothing dispatched,
- *     ONE warning alert per transport per day (dedup_key). Never retried here.
+ *     ONE error alert per transport per day (dedup_key) — error, not warning:
+ *     a spent budget is no transient blip, it stops every hub send through
+ *     that account until the window rolls, so IT must hear of it (the hourly
+ *     digest emails at error and above). Never retried here.
  *     Defaults DEFAULT_DAILY_BUDGET, overridable per provider by the
  *     app_settings row `mail_send_daily_budget` ({"gmail":n,"smtp":n}). A
  *     soft limit: two sends racing at the edge can both pass.
@@ -101,7 +104,7 @@ const HTML_MAX = 500_000;
 const NAME_MAX = 128;
 const QUOTE_MAX = 20_000;           // characters of the quoted original
 const ADDR_MAX = 254;
-const MID_MAX = 500;
+const MID_MAX = 512;               // mail_messages.message_id / in_reply_to / thread_key are varchar(512)
 const DEFAULT_DAILY_BUDGET = Object.freeze({ gmail: 1500, smtp: 300 });
 const BUDGET_SETTING = 'mail_send_daily_budget';
 const SEND_PROVIDERS = Object.freeze(['smtp', 'gmail']); // pabbly: no headers, no Cc/Bcc
@@ -117,7 +120,7 @@ const BODY_KEYS = Object.freeze([
 ]);
 
 const EMAIL_RE = /^[^\s@<>()[\]\\,;:"]+@[^\s@<>()[\]\\,;:"]+\.[^\s@<>()[\]\\,;:"]+$/;
-const MID_RE = /^[^\s<>\u0000-\u001f\u007f]{1,500}$/;
+const MID_RE = /^[^\s<>\u0000-\u001f\u007f]{1,512}$/;
 const GMAIL_ID_RE = /^[0-9a-f]{1,16}$/;
 const QUOTE_STYLE = 'margin:0 0 0 .8ex;border-left:1px solid #ccc;padding-left:1ex';
 
@@ -583,7 +586,7 @@ async function budgetFor(db, provider) {
   return Number.isInteger(n) && n > 0 ? n : DEFAULT_DAILY_BUDGET[provider];
 }
 
-/** Refuse (429 + one warning alert per transport per day) when the budget is spent. */
+/** Refuse (429 + one ERROR alert per transport per day — header, GUARDRAILS) when the budget is spent. */
 async function checkBudget(db, cred, mailbox) {
   const t = await transportOf(db, cred);
   const budget = await budgetFor(db, cred.provider);
@@ -598,7 +601,7 @@ async function checkBudget(db, cred, mailbox) {
     kind: 'mailbox_send_budget',
     group_key: `app:mailbox_send_budget:${t.key}`,
     dedup_key: `mailbox_send_budget:${t.key}:${day}`,
-    severity: 'warning',
+    severity: 'error',
     title: `Mail send budget reached: ${mailbox.address}`,
     message: `${used} sends through ${t.key} in the last 24 hours (budget ${budget}). The comms hub is refusing sends through it ` +
       `until the count drops; automation sends are not stopped by this check. Raise or lower the budget with the ` +
@@ -774,7 +777,7 @@ async function sendFromMailbox(db, userId, mailboxId, bodyIn) {
         if (!r.appended) {
           warnings.push({ code: 'append_skipped', message: r.reason === 'no_sent_folder'
             ? 'Sent, but the mailbox has no Sent folder, so no copy was saved there.'
-            : 'Sent, but no copy was saved to Sent (the server files its own).' });
+            : 'Sent, but no copy was saved to Sent: YisraCase never writes into a Google mailbox. Give this box its Google sender (Admin → Mailboxes) and Google files what it sends.' });
         }
       } catch (err) {
         append.reason = 'error';

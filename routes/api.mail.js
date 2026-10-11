@@ -275,9 +275,6 @@ router.get('/api/mail/messages/:id/reply', ...guard, async function getReplyDefa
 // ─── POST /api/mail/send ───
 router.post('/api/mail/send', ...guard, async function sendMail(req, res) {
   const uid = req.auth.userId;
-  if (sendLimited(`u${uid}`)) {
-    return res.status(429).json({ status: 'error', message: 'Too many sends from you in a few minutes — wait a little and try again.' });
-  }
   const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body : {};
   const meta = {
     mailbox_id: Number(body.mailbox_id) || null,
@@ -294,6 +291,11 @@ router.post('/api/mail/send', ...guard, async function sendMail(req, res) {
         error: 'Elevation required — confirm your password to send as a mailbox through superuser access.',
         code: 'elevation_required',
       });
+    }
+    // Counted only once the caller may send: an SU's elevation prompt-and-retry
+    // is one send, not two against the window.
+    if (sendLimited(`u${uid}`)) {
+      return res.status(429).json({ status: 'error', message: 'Too many sends from you in a few minutes — wait a little and try again.' });
     }
     const out = await send.sendFromMailbox(req.db, uid, body.mailbox_id, body);
     auditSend(req, 'sent', {

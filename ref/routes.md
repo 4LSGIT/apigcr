@@ -1,6 +1,6 @@
 # Routes
 
-_Generated 2026-10-11T17:20:35.999Z_  
+_Generated 2026-10-11T22:08:23.357Z_  
 _737 routes total — DELETE: 61, GET: 306, PATCH: 50, POST: 282, PUT: 35, _ALL: 3_
 
 ## Global middleware chain
@@ -790,7 +790,7 @@ _737 routes total — DELETE: 61, GET: 306, PATCH: 50, POST: 282, PUT: 35, _ALL:
 
 | Method | Path | Middlewares | Handler |
 |--------|------|-------------|---------|
-| _ALL | `/mailbox-ingest` | `jwtOrApiKey` | — |
+| _ALL | `/mailbox-ingest` | `jwtOrApiKey` | `runMailboxIngest` |
 
 ## /manual
 

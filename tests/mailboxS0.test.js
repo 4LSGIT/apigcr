@@ -674,6 +674,8 @@ describe('validation', () => {
     [{ address: 'not-an-email', imap_host: 'h.example.com', imap_user: 'u' }, /valid email/],
     [{ address: 'x@y.com', imap_host: 'https://h.example.com', imap_user: 'u' }, /hostname/],
     [{ address: 'x@y.com', imap_host: 'h.example.com', imap_user: 'u', imap_port: 70000 }, /imap_port/],
+    [{ address: 'x@y.com', imap_host: 'h.example.com', imap_user: 'u', imap_port: 587 }, /587 is a mail-sending \(SMTP\) port/],
+    [{ address: 'x@y.com', imap_host: 'h.example.com', imap_user: 'u', imap_port: '465' }, /465 is a mail-sending/],
     [{ address: 'x@y.com', imap_host: 'h.example.com', imap_user: 'u', domain: 'z.com' }, /derived/],
     [{ address: 'x@y.com', imap_host: 'h.example.com', imap_user: 'u', send_credential_id: 99 }, /email_credentials/],
     [{ address: 'x@y.com', imap_host: 'h.example.com', imap_user: 'u', ingest_folders: {} }, /at least one folder/],

@@ -174,7 +174,7 @@ maybe('mailbox S3 on real MySQL', () => {
     await expect(S.sendFromMailbox(pool, SENDER, 1, { to: ['c@x.test'], subject: 'Hi', body_text: 'x' })).rejects.toMatchObject({ status: 429 });
     await expect(S.sendFromMailbox(pool, SENDER, 1, { to: ['c@x.test'], subject: 'Hi', body_text: 'x' })).rejects.toMatchObject({ status: 429 });
     const alerts = await q("SELECT kind, severity FROM system_alerts WHERE kind = 'mailbox_send_budget'");
-    expect(alerts).toEqual([{ kind: 'mailbox_send_budget', severity: 'warning' }]);
+    expect(alerts).toEqual([{ kind: 'mailbox_send_budget', severity: 'error' }]);
   });
 
   test('the Gmail transport counts every alias of the Google account', async () => {

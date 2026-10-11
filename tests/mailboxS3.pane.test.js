@@ -492,3 +492,60 @@ describe('Inbox | Sent | All folders (S3)', () => {
     expect(calls.find((c) => c.url === '/api/mail/views' && c.method === 'POST').payload.filters).toEqual({ sent_only: true });
   });
 });
+
+describe('Refresh checks the mail servers (S3 follow-up)', () => {
+  const lists = (calls) => calls.filter((c) => c.url === '/api/mail/messages' && c.method === 'GET').length;
+  const runs = (calls) => calls.filter((c) => c.url === '/mailbox-ingest').length;
+
+  test('Refresh re-reads the list AND starts one ingest pass; new mail → the list again; a second click inside the cooldown starts none', async () => {
+    const { window, doc, calls, errors } = await boot({ handler: standard({ 'POST /mailbox-ingest': () => ({ skipped: false, stored: 2, backfilled: 0 }) }) });
+    const before = lists(calls);
+    doc.getElementById('refresh-btn').click();
+    await tick(window, 60);
+    expect(runs(calls)).toBe(1);
+    expect(calls.find((c) => c.url === '/mailbox-ingest').method).toBe('POST');
+    expect(lists(calls)).toBe(before + 2);                 // at once, then after the pass stored mail
+    doc.getElementById('refresh-btn').click();
+    await tick(window, 60);
+    expect(runs(calls)).toBe(1);                           // cooldown: the list only
+    expect(lists(calls)).toBe(before + 3);
+    window.REFRESH_LIMITS.ingestCooldownMs = 0;
+    doc.getElementById('refresh-btn').click();
+    await tick(window, 60);
+    expect(runs(calls)).toBe(2);
+    expect(errors).toEqual([]);
+  });
+
+  test('nothing new → no second read; the 5-minute pass holding the lock → one read again shortly; a failed pass is quiet', async () => {
+    let reply = { skipped: false, stored: 0, backfilled: 0 };
+    const { window, doc, calls, errors } = await boot({ handler: standard({ 'POST /mailbox-ingest': () => { if (reply instanceof Error) throw reply; return reply; } }) });
+    window.REFRESH_LIMITS.ingestCooldownMs = 0;
+    window.REFRESH_LIMITS.lockRetryMs = 20;
+    let before = lists(calls);
+    doc.getElementById('refresh-btn').click();
+    await tick(window, 60);
+    expect(lists(calls)).toBe(before + 1);
+    reply = { skipped: true, reason: 'another ingest run holds the lock' };
+    before = lists(calls);
+    doc.getElementById('refresh-btn').click();
+    await tick(window, 80);
+    expect(lists(calls)).toBe(before + 2);                 // at once + after lockRetryMs
+    reply = { skipped: true, throttled: true };
+    before = lists(calls);
+    doc.getElementById('refresh-btn').click();
+    await tick(window, 80);
+    expect(lists(calls)).toBe(before + 1);                 // throttled: someone just checked — no retry
+    reply = new Error('Mailbox ingest run failed');
+    doc.getElementById('refresh-btn').click();
+    await tick(window, 60);
+    expect(doc.getElementById('refresh-btn').querySelector('i').classList.contains('fa-spin')).toBe(false);
+    expect(errors).toEqual([]);
+  });
+
+  test('re-entering the tab re-reads the list but never starts a pass', async () => {
+    const { window, calls } = await boot({ handler: standard() });
+    window.ycBecameVisible();
+    await tick(window, 60);
+    expect(runs(calls)).toBe(0);
+  });
+});

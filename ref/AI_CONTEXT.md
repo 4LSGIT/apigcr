@@ -123,8 +123,12 @@ body. Governing migrations in `ref/migrations/`.*
     MySQL eats the backslash and it matches nothing.
   - Knobs: `app_settings.mail_send_daily_budget` (`{"gmail":n,"smtp":n}`;
     defaults 1500 / 300 per sending account, counted from `email_log`); alert
-    kinds `mailbox_send_budget` / `mailbox_send_append_failed` (warning);
-    `admin_audit_log` tool `mail_send`.
+    kinds `mailbox_send_budget` (error) / `mailbox_send_append_failed`
+    (warning); `admin_audit_log` tool `mail_send`.
+  - **`/mailbox-ingest` is also the comms hub's Refresh** (10-12): staff-JWT
+    runs throttled to one per 30 s for all staff, non-SU callers get counts
+    only (`routes/mailboxIngest.js`); the scheduler's x-api-key tick is
+    never throttled.
 - **CTA links are live end to end (10-07, arc S0–S4):** SU-minted bearer
   links (`4lsg.com/c/<token>`) whose option buttons run frozen plans of
   registry internal functions as user 0. Design (canonical, review-folded):
