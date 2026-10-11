@@ -23,15 +23,20 @@
  * exactly as they do for the Apps Script source. The returned log_id is
  * stamped on the stored row (the tier bridge).
  *
- * The one deliberate exception to BOTH tiers: a message flagged \Draft is
- * neither stored nor emitted (the DRAFT GUARD, processUids; design §4.1).
- * Drafts are unsent — no communication happened — and Gmail deletes and
- * re-creates a draft as a new message on every autosave: stored, each save
- * would be a garbage revision whose UID is gone by the next poll (orphan-purge
- * noise on every re-key). The Apps Script adapter skips drafts too. The UID
- * still counts as processed (the cursor moves past it); it is counted
- * (summary.draftsSkipped, the folder's drafts_skipped_total) and never fetched
- * with bodies (imapTransport returns drafts as metadata only).
+ * The one deliberate exception to BOTH tiers: a draft — flagged \Draft, or
+ * carrying the Gmail \Draft label — is neither stored nor emitted (the DRAFT
+ * GUARD, isDraft / processUids; design §4.1). The label is what catches Gmail:
+ * it does not set the \Draft flag on a draft seen through All Mail (live,
+ * 2026-10-11 — a flag-only guard stored one; imapTransport DRAFTS COME BACK
+ * AS METADATA ONLY). Drafts are unsent — no communication happened — and
+ * Gmail deletes and re-creates a draft as a new message on every autosave:
+ * stored, each save would be a garbage revision whose UID is gone by the next
+ * poll (orphan-purge noise on every re-key). The Apps Script adapter skips
+ * drafts too (ref/gas.js GmailMessage.isDraft() — Gmail's own draft state,
+ * which IMAP shows as the label, not the flag). The UID still counts as
+ * processed (the cursor moves past it); it is counted (summary.draftsSkipped,
+ * the folder's drafts_skipped_total) and never fetched with bodies
+ * (imapTransport returns drafts as metadata only).
  *
  * ── EMISSION IDENTITY (S1-G) ─────────────────────────────────────────────────
  * email_log dedupes on (source, message_id) ONLY — per source, never across
@@ -68,7 +73,7 @@
  *                         (INTERNALDATE, minus slack) is still emitted —
  *                         set only by a re-key (see below); null = store-only
  *   checked_at            last successful new pass (the re-key's emit horizon)
- *   drafts_skipped_total  \Draft messages passed over (DRAFT GUARD)
+ *   drafts_skipped_total  drafts passed over (DRAFT GUARD: flag or Gmail label)
  *   errors / backfill_errors / last_error / last_error_at   failure streaks
  *   rekeyed_at, backfill_done_at                            breadcrumbs
  *
@@ -111,8 +116,9 @@
  * Every stored row carries `gmail_labels`: the X-GM-LABELS the transport
  * fetched with the message (Gmail only; NULL elsewhere and on rows stored
  * before S2-L). Stored as fetched, never refreshed by ingest — archiving in
- * Gmail after we stored the row is not seen. It changes nothing the worker
- * decides: what is stored, skipped (drafts), emitted and keyed is exactly as
+ * Gmail after we stored the row is not seen. One label decides something: the
+ * \Draft label is a DRAFT GUARD signal (above). Beyond that labels change
+ * nothing the worker decides — what is stored, emitted and keyed is as
  * before; the envelope does not carry labels. Readers: the comms hub's
  * Inbox / Sent scoping (mail_messages.in_inbox, mailReadService).
  * snapshotLabels() re-fetches labels for rows already stored — under the
@@ -260,9 +266,15 @@ function emitKeyOf(kind, m) {
   return (m && m.envelope && m.envelope.messageId) || null;
 }
 
-/** A \Draft message — never stored, never emitted (the DRAFT GUARD). */
+/**
+ * A draft — never stored, never emitted (the DRAFT GUARD): the transport's
+ * marker, the \Draft flag, or the Gmail \Draft label (the only signal Gmail
+ * gives in All Mail — header). Re-checked here, not trusted to the transport.
+ */
 function isDraft(m) {
-  return !!m && (m.draft === true || (Array.isArray(m.flags) && m.flags.includes('draft')));
+  return !!m && (m.draft === true
+    || (Array.isArray(m.flags) && m.flags.includes('draft'))
+    || transport.hasDraftLabel(m.labels));
 }
 
 function backfillPending(st) {

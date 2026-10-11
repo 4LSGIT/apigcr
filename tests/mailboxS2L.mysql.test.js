@@ -11,7 +11,9 @@
  * lists the setup, including ref/migrations/2026-10-11_mailbox_s2l_labels.sql).
  * Worker run 2026-10-11: MySQL 8.0.46 and 8.4.6, all green.
  *
- * Mutation-checked here: snapshotLabels without acquireLock (the held-lock
+ * Mutation-checked here: the label half of isDraft removed (the fake account
+ * bypasses the transport, so isDraft is the only guard in play) → the first
+ * test stores uid 5; snapshotLabels without acquireLock (the held-lock
  * test writes), the CASE write without CAST(? AS JSON) still passes on the
  * engine (assignment parses the text) — kept for explicitness, not relied on.
  */
@@ -95,14 +97,15 @@ maybe('mailbox S2-L on real MySQL', () => {
     return (await r.json()).messages.map((m) => m.id);
   };
 
-  test('the worker stores the snapshot; in_inbox follows it; the hub lists the \\Inbox rows', async () => {
+  test('the worker stores the snapshot; in_inbox follows it; the hub lists the \\Inbox rows; a \\Draft-labelled draft never lands', async () => {
     S.addFolder(ALL, 12, []);
     S.deliver(ALL, gmsg(1, ['\\Inbox', '\\Important']));
     S.deliver(ALL, gmsg(2, ['\\Sent']));
     S.deliver(ALL, gmsg(3, []));
     S.deliver(ALL, gmsg(4, null));
+    S.deliver(ALL, { ...gmsg(5, ['\\Draft']), flags: ['seen'] }); // Gmail's draft: the label, no \\Draft flag
     const s = await svc.runIngest(pool);
-    expect([s.skipped, s.stored, s.emitted]).toEqual([false, 4, 0]);
+    expect([s.skipped, s.stored, s.emitted, s.draftsSkipped]).toEqual([false, 4, 0, 1]);
     const rows = await q('SELECT id, uid, gmail_labels, in_inbox FROM mail_messages WHERE mailbox_id = 2 ORDER BY uid');
     expect(rows.map((r) => [r.uid, r.gmail_labels, r.in_inbox])).toEqual([
       [1, ['\\Inbox', '\\Important'], 1], [2, ['\\Sent'], 0], [3, [], 0], [4, null, 0],

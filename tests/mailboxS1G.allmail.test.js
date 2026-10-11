@@ -3,9 +3,12 @@
 /**
  * Mailbox system S1-G, All-Mail slice — the Gmail mailbox polls
  * `[Gmail]/All Mail` as its ONLY folder (inbound, sent and filed-away mail in
- * one copy each), and the DRAFT GUARD: a \Draft message is neither stored nor
- * emitted (services/mailbox/mailboxIngestService.js processUids;
- * services/mailbox/imapTransport.js fetchMessages; design §4.1).
+ * one copy each), and the DRAFT GUARD: a draft — \Draft flag, or the Gmail
+ * \Draft LABEL — is neither stored nor emitted
+ * (services/mailbox/mailboxIngestService.js isDraft / processUids;
+ * services/mailbox/imapTransport.js fetchMessages; design §4.1). The label
+ * half exists because Gmail does not flag drafts in All Mail: on 2026-10-11
+ * mailbox 2 stored a test draft with FLAGS (\Seen) + X-GM-LABELS (\Draft).
  * Run: npx jest tests/mailboxS1G.allmail.test.js
  *
  * HARNESS: the worker half runs the REAL worker over the S1 world
@@ -19,6 +22,10 @@
  *   - guard reads only m.draft (not \Draft flags) → "the guard reads the \Draft flag itself …"
  *   - cursor not advanced past a skipped draft    → "a skipped draft is never fetched again …"
  *   - transport downloads draft bodies            → "transport: a \Draft message comes back metadata-only …"
+ *   - service guard ignores the \Draft label      → "Gmail: a draft carrying only the \Draft LABEL …" + "the guard reads the Gmail \Draft label …"
+ *   - transport ignores the \Draft label          → "transport, Gmail: the \Draft LABEL alone …"
+ *   - hasDraftLabel case-sensitive / substring    → "the guard reads the Gmail \Draft label …"
+ *   - labels read without X-GM-EXT-1              → "transport, Gmail: the \Draft LABEL alone …" (its last half)
  */
 
 'use strict';
@@ -149,6 +156,30 @@ describe('All Mail only + the draft guard (worker)', () => {
     expect(svc.isDraft({ flags: ['seen', 'answered'] })).toBe(false);
     expect(svc.isDraft(null)).toBe(false);
   });
+
+  test('Gmail: a draft carrying only the \\Draft LABEL (no flag — what Gmail sends in All Mail) is neither stored nor emitted', async () => {
+    S.addFolder(ALL, 11, []);
+    const id = allMailBox();
+    S.deliver(ALL, gmsg(1, { labels: ['\\Inbox'] }));
+    // the live row-99 shape: \Seen only, labelled \Draft
+    S.deliver(ALL, gmsg(2, { from: STUART, to: [{ name: '', address: 'drafts@mailinator.com' }], flags: ['seen'], labels: ['\\Draft'] }));
+    S.deliver(ALL, gmsg(3, { from: STUART, flags: ['seen'], labels: ['Trigger Label', '\\Sent'] }));
+    const s = await run();
+
+    expect(s).toMatchObject({ stored: 2, emitted: 2, draftsSkipped: 1, errors: 0 });
+    expect(W.rows(id, ALL).map(r => r.uid)).toEqual([1, 3]);
+    expect(P.envelopes.map(e => e.headers.message_id)).toEqual([hex(1), hex(3)]);
+    expect(W.state(id)[ALL]).toMatchObject({ last_uid: 3, drafts_skipped_total: 1 });
+  });
+
+  test('the guard reads the Gmail \\Draft label (any case); a user label merely NAMED Draft is not one', () => {
+    expect(svc.isDraft({ flags: ['seen'], labels: ['\\Draft'] })).toBe(true);
+    expect(svc.isDraft({ flags: [], labels: ['IT', '\\draft'] })).toBe(true);
+    expect(svc.isDraft({ flags: ['seen'], labels: ['Draft', 'Drafts', '\\Drafts'] })).toBe(false);
+    expect(svc.isDraft({ flags: ['seen'], labels: [] })).toBe(false);
+    expect(svc.isDraft({ flags: ['seen'], labels: null })).toBe(false);
+    expect(svc.isDraft({ flags: ['seen'], labels: '\\Draft' })).toBe(false); // not a list
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -158,7 +189,10 @@ describe('All Mail only + the draft guard (worker)', () => {
 const realT = jest.requireActual('../services/mailbox/imapTransport');
 
 class FakeClient extends EventEmitter {
-  constructor(opts, script) { super(); this.opts = opts; this.script = script; this.calls = []; }
+  constructor(opts, script) {
+    super(); this.opts = opts; this.script = script; this.calls = [];
+    this.capabilities = new Map((script.caps || ['IMAP4rev1']).map(c => [c, true]));
+  }
   async connect() { this.calls.push(['connect']); }
   async mailboxOpen(path) { this.calls.push(['mailboxOpen', path]); return { path, uidValidity: 11n, uidNext: 10, exists: 2 }; }
   async fetchAll(range, query) { this.calls.push(['fetchAll', range, query]); return this.script.rows; }
@@ -190,5 +224,26 @@ describe('transport: drafts come back metadata-only', () => {
     expect(out.map(m => [m.uid, m.draft, m.text])).toEqual([[3, true, null], [4, false, 'body of 4']]);
     expect(out[0].flags).toEqual(['draft', 'seen']);
     expect(clients[0].calls.filter(c => c[0] === 'download').map(c => c[1])).toEqual(['4']);
+  });
+
+  test('transport, Gmail: the \\Draft LABEL alone (FLAGS (\\Seen), the live shape) comes back metadata-only; no X-GM-EXT-1 → labels unread', async () => {
+    const clients = [];
+    const rows = [
+      { uid: 5, flags: new Set(['\\Seen']), labels: new Set(['\\Draft']), envelope: { messageId: '<d@x>' }, bodyStructure: { type: 'text/plain', part: '1' }, headers: Buffer.from('') },
+      { uid: 6, flags: new Set(['\\Seen']), labels: new Set(['\\Sent']), envelope: { messageId: '<s@x>' }, bodyStructure: { type: 'text/plain', part: '1' }, headers: Buffer.from('') },
+    ];
+    const script = { caps: ['IMAP4rev1', 'X-GM-EXT-1'], rows };
+    realT.factory.create = (opts) => { const c = new FakeClient(opts, script); clients.push(c); return c; };
+    const row = { id: 2, address: 'stuart@4lsg.com', imap_host: 'imap.gmail.com', imap_port: 993, imap_user: 'stuart@4lsg.com', imap_secret: encrypt('pw') };
+    let out;
+    await realT.withMailbox(row, async (s) => { await s.openFolder(ALL); out = await s.fetchMessages([5, 6]); });
+    expect(out.map(m => [m.uid, m.draft, m.text, m.labels])).toEqual([[5, true, null, ['\\Draft']], [6, false, 'body of 6', ['\\Sent']]]);
+    expect(out[0].flags).toEqual(['seen']);
+    expect(clients[0].calls.filter(c => c[0] === 'download').map(c => c[1])).toEqual(['6']);
+
+    // A server without X-GM-EXT-1 has no labels to read: nothing label-like is trusted.
+    script.caps = ['IMAP4rev1'];
+    await realT.withMailbox({ ...row, imap_host: 'gcam1191.siteground.biz' }, async (s) => { await s.openFolder('INBOX'); out = await s.fetchMessages([5]); });
+    expect([out[0].draft, out[0].labels]).toEqual([false, null]);
   });
 });

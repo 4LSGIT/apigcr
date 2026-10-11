@@ -85,6 +85,14 @@ body. Governing migrations in `ref/migrations/`.*
     printed back WITHOUT the USING, and the stored column then matches
     nothing (measured 8.0 + 8.4). Migration `2026-10-11_mailbox_s2l_labels.sql` goes BEFORE
     that backend (the worker INSERTs `gmail_labels`).
+  - **A Gmail draft is the `\Draft` LABEL, not the flag** (10-11, live):
+    seen through All Mail, Gmail sets no `\Draft` flag on drafts, so the
+    flag-only DRAFT GUARD stored one (mailbox 2, FLAGS `\Seen`, labels
+    `["\Draft"]`). The guard is now flag OR label — one definition,
+    `imapTransport.hasDraftLabel`, read by the transport (no body download)
+    and by `mailboxIngestService.isDraft`. The S1-G guard's real-server
+    proof ran on Dovecot; the Gmail runbook's step-3c `draft_labelled` gate
+    caught it. Gmail IMAP semantics need a check on Gmail itself.
   - **`OrphanAdoptDialog(value, type, onDone, opts)`** (scripts.js) takes
     `opts.earliest` (another first sighting; the start date defaults to the
     earlier of it and the log's) and `opts.name` (search + Create-new
@@ -993,10 +1001,12 @@ stamps `last_used_at` (that column = last HTTP post). Feeder tell in
 copy of inbound, sent and label-filed mail; never All Mail ALONGSIDE other
 folders (double store — `GET /api/mailboxes/:id/folders` warns). A
 provider-id mailbox emits its sent mail too (the Apps Script posts it — design
-§4.1 amendment). **`\Draft` messages are never stored nor emitted** (worker
-DRAFT GUARD; Gmail re-creates drafts per autosave). Gmail labels
+§4.1 amendment). **Drafts are never stored nor emitted** (worker DRAFT
+GUARD: the `\Draft` flag OR the Gmail `\Draft` label — Gmail does not flag
+drafts in All Mail — and Gmail re-creates drafts per autosave). Gmail labels
 (X-GM-LABELS) are stored per row as a snapshot for the comms hub
-(`mail_messages.gmail_labels`, S2-L) and are never part of emission.
+(`mail_messages.gmail_labels`, S2-L) and never ride the envelope; `\Draft`
+is the one label the worker acts on.
 Pilot, gate and retirement runbook: `ref/MAILBOX_GMAIL_PARITY.md`.
 Operators: manual/08-Admin-Tools/08-mailboxes.md.
 

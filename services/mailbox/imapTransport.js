@@ -96,11 +96,17 @@
  * 4/3 of the file) — the only size known without downloading.
  *
  * ── DRAFTS COME BACK AS METADATA ONLY ────────────────────────────────────────
- * A message flagged \Draft is returned with `draft: true` and NO bodies — its
- * text parts are never downloaded, because the worker never stores a draft
- * (ref/MAILBOX_SYSTEM_DESIGN.md §4.1, the two-tier exception). Gmail re-saves a
- * draft as a NEW message (new UID, old one expunged) every autosave; in All
- * Mail that is a stream of throwaway UIDs.
+ * A draft is returned with `draft: true` and NO bodies — its text parts are
+ * never downloaded, because the worker never stores a draft
+ * (ref/MAILBOX_SYSTEM_DESIGN.md §4.1, the two-tier exception). A draft is a
+ * message flagged \Draft OR — on an X-GM-EXT-1 server — one carrying the
+ * Gmail \Draft LABEL (hasDraftLabel). The label is the signal that matters:
+ * Gmail does NOT set the \Draft flag on a draft seen through All Mail (live,
+ * 2026-10-11: mailbox 2 stored a test draft with FLAGS (\Seen) and
+ * X-GM-LABELS (\Draft) — the flag-only guard let it through). The label
+ * rides the same FETCH as the flags (GMAIL LABELS), so this costs no round
+ * trip. Gmail re-saves a draft as a NEW message (new UID, old one expunged)
+ * every autosave; in All Mail that is a stream of throwaway UIDs.
  */
 
 'use strict';
@@ -285,6 +291,18 @@ function labelList(v) {
 }
 
 /**
+ * True when a label list (labelList's output) holds Gmail's \Draft system
+ * label — the draft signal on Gmail, which does not flag drafts in All Mail
+ * (DRAFTS COME BACK AS METADATA ONLY). Case-insensitive like the IMAP flag it
+ * stands in for; a user label merely named "Draft" (no backslash) is not one.
+ * null / not an array → false. The ONE definition: the worker's DRAFT GUARD
+ * reads it too.
+ */
+function hasDraftLabel(labels) {
+  return Array.isArray(labels) && labels.some(l => typeof l === 'string' && l.toLowerCase() === '\\draft');
+}
+
+/**
  * Which provider id this connection yields: 'gmail' (X-GM-MSGID) or null.
  * Read from the live capability set after login — see PROVIDER-NATIVE IDS.
  */
@@ -455,8 +473,9 @@ function makeSession(client, row, secret) {
 
     /**
      * Full metadata + capped text bodies for the given UIDs, ascending. A UID
-     * the server no longer has is simply absent from the result. A \Draft
-     * message comes back with `draft: true` and no bodies (header doc).
+     * the server no longer has is simply absent from the result. A draft —
+     * \Draft flag, or the Gmail \Draft label — comes back with `draft: true`
+     * and no bodies (header doc).
      * `labels`: Gmail labels on X-GM-EXT-1 servers, else null (GMAIL LABELS).
      */
     fetchMessages: guard(async (uids) => {
@@ -506,7 +525,7 @@ function makeSession(client, row, secret) {
           attachments: st.attachments,
           draft: false,
         };
-        if (msg.flags.includes('draft')) {
+        if (msg.flags.includes('draft') || hasDraftLabel(msg.labels)) {
           msg.draft = true;
           out.push(msg);
           continue;
@@ -683,6 +702,7 @@ module.exports = {
   gmailHexId,
   gmailLabelsSupported,
   labelList,
+  hasDraftLabel,
   mapFlags,
   sanitizeError,
   scrub,

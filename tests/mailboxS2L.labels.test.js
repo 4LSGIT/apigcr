@@ -15,7 +15,9 @@
  *      parses into a Set with system labels' backslash intact.
  *   2. THE TRANSPORT over a fake ImapFlow client (the `factory` seam).
  *   3. THE WORKER over the S1 world (tests/helpers/mailboxS1World.js): rows
- *      carry gmail_labels; everything else the worker does is unchanged.
+ *      carry gmail_labels; everything else the worker does is unchanged —
+ *      except that the \Draft label is a DRAFT GUARD signal (Gmail does not
+ *      flag drafts in All Mail; tests/mailboxS1G.allmail.test.js owns it).
  *   4. THE RE-SNAPSHOT (service + route) over the S1 world: lock, UIDVALIDITY,
  *      identity, bounds, SU + elevation, audit.
  * The non-Gmail no-op ran against a real Dovecot IMAPS + MySQL 8.4.6 in the
@@ -106,6 +108,16 @@ describe('imapflow 2.3.0 pin: X-GM-LABELS', () => {
     expect([...utf7.rows[0].labels]).toEqual(['Café']);
   });
 
+  test('a Gmail draft as All Mail really sends it (live 2026-10-11): FLAGS (\\Seen) only — the \\Draft LABEL is the one signal', async () => {
+    const { wire, rows } = await imapflowFetch(['IMAP4rev1', 'X-GM-EXT-1'],
+      `* 1 FETCH (UID 187847 FLAGS (\\Seen) X-GM-MSGID ${DEC} X-GM-LABELS (\\Draft))`,
+      { uid: true, flags: true, labels: true });
+    expect(wire).toBe('A1 UID FETCH 5 (UID FLAGS X-GM-MSGID X-GM-LABELS)');
+    expect([...rows[0].flags]).toEqual(['\\Seen']);
+    expect([...rows[0].labels]).toEqual(['\\Draft']);
+    expect(T.hasDraftLabel(T.labelList(rows[0].labels))).toBe(true);
+  });
+
   test('no X-GM-EXT-1: labels:true asks nothing (Dovecot would answer BAD to an unknown item)', async () => {
     const { wire } = await imapflowFetch(['IMAP4rev1'], '* 1 FETCH (UID 5)', { uid: true, envelope: true, labels: true });
     expect(wire).toBe('A1 UID FETCH 5 (UID ENVELOPE)');
@@ -162,7 +174,7 @@ describe('transport: labels on fetchMessages, fetchLabels', () => {
       fetchRow(5, { labels: new Set(['\\Inbox', '\\Important']) }),
       fetchRow(6, { labels: new Set() }),
       fetchRow(7),                                                       // attribute missing
-      fetchRow(8, { labels: new Set(['\\Draft']), flags: new Set(['\\Draft']) }),
+      fetchRow(8, { labels: new Set(['\\Draft']), flags: new Set(['\\Seen']) }), // Gmail's draft: label, no flag
     ];
     let out;
     await T.withMailbox(connRow(), async (s) => {
@@ -171,7 +183,7 @@ describe('transport: labels on fetchMessages, fetchLabels', () => {
       out = await s.fetchMessages([5, 6, 7, 8]);
     });
     expect(out.map(m => [m.uid, m.labels])).toEqual([[5, ['\\Inbox', '\\Important']], [6, []], [7, null], [8, ['\\Draft']]]);
-    expect(out[3].draft).toBe(true); // the draft path is unchanged (metadata only)
+    expect(out[3].draft).toBe(true); // the \\Draft label alone makes it a draft (metadata only)
     expect(clients[0].calls.filter(c => c[0] === 'download')).toHaveLength(3); // 5, 6, 7 bodies; never the draft's
     expect(T.labelList(['a', 'a', '', null, 'b'])).toEqual(['a', 'b']);
     expect(T.labelList(null)).toBeNull();
@@ -272,7 +284,7 @@ describe('worker: gmail_labels on every stored row; ingest otherwise unchanged',
     expect(svc.buildRow(1, ALL, msg(9, { labels: ['\\Inbox'] })).gmail_labels).toBe('["\\\\Inbox"]');
   });
 
-  test('labels change nothing the worker decides: same rows, same envelopes, same summary, drafts still skipped', async () => {
+  test('labels change nothing else the worker decides (the \\Draft label aside): same rows, envelopes, summary; drafts skipped', async () => {
     const runWith = async (withLabels) => {
       worldSetup();
       S.providerIdKind = 'gmail'; S.labelsKind = withLabels ? 'gmail' : null;
