@@ -18,6 +18,9 @@
  *     failures generic.
  *   - Public state hides WHY a link is off (the B1 minter kill switch reads
  *     as 'disabled').
+ *   - S3i: an enum with display:'radio' renders as a fieldset of radios
+ *     (choice_labels escaped, the choice is the value, optional adds "(none)",
+ *     a rejected POST keeps the pick); inline bindings run through the form.
  *   - LIMITERS ARE WIRED: reads 30/min/IP, respond 10/min/IP (the /d/ bug
  *     that sat unwired for seven weeks), password attempts 5/15 min/token+IP
  *     with reserve-then-refund (wrong guesses capped, burst-safe; correct
@@ -675,6 +678,135 @@ describe('clicker inputs (§12)', () => {
     expect(html).not.toContain('cta-in-pick-help');
     const d = await (await req(`/c/${row.token}`, asJson)).json();
     expect(d.options[0].inputs[0].hint).toBe('A sentence or two — <i>no</i> case numbers');
+  });
+
+  // ── S3i: enum presentation (radio group, choice labels) + inline bindings on the page ──
+  describe('enum as radio buttons, choice labels, inline bindings (S3i)', () => {
+    const RADIO = { name: 'pick', label: 'Which <one>?', type: 'enum', required: true, maxlen: 1, choices: ['A', 'B', 'C'],
+      choice_labels: ['A — Counsel', 'B — <b>Detroit</b>', 'C — "Plain" talk'], display: 'radio', hint: 'Pick <i>one</i>' };
+    const LINE = { name: 'phone', label: 'Phone', type: 'text', required: false, maxlen: 80 };
+    const radioLink = (pick = RADIO, over = {}) => seed({
+      options: [{ value: 'answer', label: 'Send', inputs: [pick, LINE],
+        plan: [LOGN('Pick [[input:pick]] / phone [[input:phone]]')] }],
+      ...over,
+    });
+    const radios = (html) => [...html.matchAll(/<input type="radio"[^>]*>/g)].map((m) => m[0]);
+
+    test('display:radio → a fieldset with one radio per choice; labels escaped, the VALUE is the choice; required; nothing pre-checked', async () => {
+      const row = radioLink();
+      const res = await req(`/c/${row.token}/answer`);
+      expect(res.status).toBe(200);
+      const html = await res.text();
+      expect(html).toContain('<fieldset class="cta-field" id="cta-in-pick" aria-describedby="cta-in-pick-help cta-in-pick-hint">');
+      expect(html).toContain('<legend class="input-label">Which &lt;one&gt;?</legend>');
+      expect(radios(html)).toEqual([
+        '<input type="radio" id="cta-in-pick-0" name="in_pick" value="A" required>',
+        '<input type="radio" id="cta-in-pick-1" name="in_pick" value="B" required>',
+        '<input type="radio" id="cta-in-pick-2" name="in_pick" value="C" required>',
+      ]);
+      expect(html).toContain('<span>A — Counsel</span>');
+      expect(html).toContain('<span>B — &lt;b&gt;Detroit&lt;/b&gt;</span>');
+      expect(html).toContain('<span>C — &quot;Plain&quot; talk</span>');
+      expect(html).not.toContain('<b>Detroit</b>');
+      expect(html).not.toMatch(/<select[^>]*name="in_pick"/);
+      // the SU hint, then the Required line — the same two lines every field has
+      expect(html).toContain('<div class="sub-label" id="cta-in-pick-help">Pick &lt;i&gt;one&lt;/i&gt;</div>');
+      expect(html).toContain('<div class="sub-label" id="cta-in-pick-hint">Required</div>');
+      expect(html).not.toContain('(none)');
+      expect(allWrites()).toEqual([]);
+    });
+
+    test('a default is pre-checked; an OPTIONAL group adds a "(none)" radio (checked when nothing is picked)', async () => {
+      const dflt = await (await req(`/c/${radioLink({ ...RADIO, default: 'B' }).token}/answer`)).text();
+      expect(radios(dflt).filter((r) => / checked/.test(r))).toEqual(['<input type="radio" id="cta-in-pick-1" name="in_pick" value="B" required checked>']);
+
+      const optional = await (await req(`/c/${radioLink({ ...RADIO, required: false }).token}/answer`)).text();
+      expect(radios(optional)).toEqual([
+        '<input type="radio" id="cta-in-pick-0" name="in_pick" value="A">',
+        '<input type="radio" id="cta-in-pick-1" name="in_pick" value="B">',
+        '<input type="radio" id="cta-in-pick-2" name="in_pick" value="C">',
+        '<input type="radio" id="cta-in-pick-none" name="in_pick" value="" checked>',
+      ]);
+      expect(optional).toContain('<span>(none)</span>');
+      expect(optional).toContain('<div class="sub-label" id="cta-in-pick-hint">Optional</div>');
+
+      // optional WITH a default: a blank answer is filled with the default, so there is no "(none)" to offer
+      const row = radioLink({ ...RADIO, required: false, default: 'B' });
+      const both = await (await req(`/c/${row.token}/answer`)).text();
+      expect(radios(both)).toEqual([
+        '<input type="radio" id="cta-in-pick-0" name="in_pick" value="A">',
+        '<input type="radio" id="cta-in-pick-1" name="in_pick" value="B" checked>',
+        '<input type="radio" id="cta-in-pick-2" name="in_pick" value="C">',
+      ]);
+      expect(both).not.toContain('(none)');
+      // …and that is what the server does with a blank pick
+      const res = await req(`/c/${row.token}/respond`, { method: 'POST', form: { value: 'answer', in_pick: '' } });
+      expect(res.status).toBe(200);
+      expect(planMessages().map((l) => l.message)).toEqual(['Pick B / phone ']);
+    });
+
+    test('choice_labels also name a dropdown\'s rows (display unset); without labels a radio shows the choice', async () => {
+      const { display: _d, ...asSelect } = RADIO;
+      const sel = await (await req(`/c/${radioLink(asSelect).token}/answer`)).text();
+      expect(sel).toMatch(/<select id="cta-in-pick" name="in_pick" class="cta-input" required[^>]*><option value="" selected>Choose…<\/option><option value="A">A — Counsel<\/option><option value="B">B — &lt;b&gt;Detroit&lt;\/b&gt;<\/option><option value="C">C — &quot;Plain&quot; talk<\/option><\/select>/);
+      expect(radios(sel)).toEqual([]);
+
+      const { choice_labels: _l, ...bare } = RADIO;
+      const plain = await (await req(`/c/${radioLink(bare).token}/answer`)).text();
+      expect(plain).toContain('value="A" required><span>A</span>');
+    });
+
+    test('POST: the picked radio and the one-liners land in ONE step (inline), normalized; execution keeps the values', async () => {
+      const row = radioLink();
+      const res = await req(`/c/${row.token}/respond`, { method: 'POST', form: { value: 'answer', in_pick: 'B', in_phone: '  main <line>  ' } });
+      expect(res.status).toBe(200);
+      expect(await res.text()).toContain('✓ Done');
+      expect(planMessages().map((l) => l.message)).toEqual(['Pick B / phone main <line>']);
+      expect(JSON.parse(W.execs(row.id)[0].inputs)).toEqual({ pick: 'B', phone: 'main <line>' });
+    });
+
+    test('POST: a blank optional one-liner is \'\' in the text; a LABEL is not a value', async () => {
+      const row = radioLink(RADIO, { mode: 'repeatable', max_uses: 3 });
+      const ok = await req(`/c/${row.token}/respond`, { method: 'POST', form: { value: 'answer', in_pick: 'C', in_phone: '' } });
+      expect(ok.status).toBe(200);
+      expect(planMessages().map((l) => l.message)).toEqual(['Pick C / phone ']);
+
+      const bad = await req(`/c/${row.token}/respond`, { method: 'POST', form: { value: 'answer', in_pick: 'A — Counsel' } });
+      expect(bad.status).toBe(400);
+      expect(await bad.text()).toContain('<div class="cta-field-error" role="alert">Choose one of the listed options.</div>');
+      expect(W.link(row.id).uses_count).toBe(1);   // the rejected one burned nothing
+    });
+
+    test('POST: nothing picked on a required group → 400, the fieldset flagged, the typed one-liner echoed, the pick still unchecked', async () => {
+      const row = radioLink();
+      const res = await req(`/c/${row.token}/respond`, { method: 'POST', form: { value: 'answer', in_phone: 'kept "line"' } });
+      expect(res.status).toBe(400);
+      const html = await res.text();
+      expect(html).toContain('<fieldset class="cta-field has-error" id="cta-in-pick" aria-describedby="cta-in-pick-help cta-in-pick-hint" aria-invalid="true">');
+      expect(html).toContain('<div class="cta-field-error" role="alert">This field is required.</div>');
+      expect(html).toContain('value="kept &quot;line&quot;"');
+      expect(radios(html).some((r) => / checked/.test(r))).toBe(false);
+      expect(writes()).toEqual([]);
+    });
+
+    test('POST: a rejected sibling field re-renders with the radio that WAS picked still checked', async () => {
+      const row = radioLink(RADIO, { options: [{ value: 'answer', label: 'Send',
+        inputs: [RADIO, { ...LINE, pattern: '[^#]+' }], plan: [LOGN('Pick [[input:pick]] / phone [[input:phone]]')] }] });
+      const res = await req(`/c/${row.token}/respond`, { method: 'POST', form: { value: 'answer', in_pick: 'C', in_phone: '#' } });
+      expect(res.status).toBe(400);
+      expect(radios(await res.text()).filter((r) => / checked/.test(r))).toEqual(['<input type="radio" id="cta-in-pick-2" name="in_pick" value="C" required checked>']);
+    });
+
+    test('JSON: the descriptor carries display + choice_labels; respond takes the choice', async () => {
+      const row = radioLink();
+      const d = await (await req(`/c/${row.token}/answer`, asJson)).json();
+      expect(d.selected.inputs[0]).toEqual({ name: 'pick', label: 'Which <one>?', hint: 'Pick <i>one</i>', type: 'enum', required: true,
+        choices: ['A', 'B', 'C'], choice_labels: ['A — Counsel', 'B — <b>Detroit</b>', 'C — "Plain" talk'], display: 'radio', maxlen: 1 });
+      expect(JSON.stringify(d)).not.toMatch(/\[\[input|create_log/);
+      const r = await req(`/c/${row.token}/respond`, { method: 'POST', ...asJson, json: { value: 'answer', inputs: { pick: 'A' } } });
+      expect(await r.json()).toMatchObject({ ok: true, status: 'success' });
+      expect(planMessages().map((l) => l.message)).toEqual(['Pick A / phone ']);
+    });
   });
 
   test('JSON: descriptor + selected carry the declarations (never pattern/plans); respond takes inputs:{}', async () => {

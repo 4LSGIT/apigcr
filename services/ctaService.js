@@ -44,9 +44,15 @@
  *     plan_result only when the CTA was minted with return_plan_result=1.
  *     result_template is the curated public output.
  *  6. Timeout executions always log by=0 — never attributed_user_id.
- *  7. CLICKER INPUTS (§12, slice S1i). An option may declare `inputs`; a plan
- *     param whose WHOLE top-level value is "[[input:name]]" is a binding, and
- *     only into a param its function opens via __meta.ctaInputParams. Values
+ *  7. CLICKER INPUTS (§12, slice S1i; inline bindings S3i). An option may
+ *     declare `inputs`; a plan param whose WHOLE top-level value is
+ *     "[[input:name]]" is a binding, and only into a param its function opens
+ *     via __meta.ctaInputParams. A kind:'content' param may also carry the
+ *     marker INLINE, any number of times, inside its text ("Pick: [[input:a]]
+ *     / [[input:b]]") — never a recipient, never a nested value, and ONLY on
+ *     an SU mint: a workflow mint's text has been through the engine's {{...}}
+ *     pass and may carry a lead's own words, so a marker inside it stays a
+ *     mint error there (S3i review B1; linkRefusal backs it at click). Values
  *     are validated twice server-side — each input (type → normalize → maxlen
  *     → pattern, the pattern on V8's LINEAR-TIME engine only — see
  *     LINEAR_RE), then __validateFunctionParams on the substituted step — at
@@ -179,7 +185,14 @@ const TIMEOUT_CLAIM_SQL =
 
 // ─── §12 clicker inputs ─────────────────────────────────────────────────────
 const INPUT_TYPES = Object.freeze(['text', 'phone', 'email', 'number', 'enum', 'date', 'html']);
-const INPUT_KEYS = new Set(['name', 'label', 'hint', 'type', 'required', 'default', 'maxlen', 'pattern', 'choices']);
+const INPUT_KEYS = new Set([
+  'name', 'label', 'hint', 'type', 'required', 'default', 'maxlen', 'pattern',
+  'choices', 'choice_labels', 'display',
+]);
+// How an enum is drawn on the confirm page. 'select' is the default and is
+// never stored, so a pre-S3i declaration and a new dropdown are the same row.
+const ENUM_DISPLAYS = Object.freeze(['select', 'radio']);
+const MAX_CHOICE_LABEL = 100;      // what the clicker reads next to a choice (plain text, escaped)
 const INPUT_NAME_RE = /^[a-zA-Z_][a-zA-Z0-9_]{0,63}$/;   // the result_var rule (decisions.js VAR_RE)
 // Names that would hit Object.prototype machinery wherever a plain object is
 // keyed by input name (a qs-parsed body, an author's spread). Every map here
@@ -192,7 +205,10 @@ const MAX_INPUT_LEN = 1000;         // maxlen server cap (§12)
 const MAX_RAW_INPUT = 4 * MAX_INPUT_LEN;   // pre-normalization guard; maxlen is checked on the NORMALIZED value
 const MAX_PATTERN = 100;
 const MAX_CHOICES = 20;
-const BINDING_RE = /^\[\[input:([^\]]*)\]\]$/;   // a WHOLE param value — Ruling 5, no splicing
+const BINDING_RE = /^\[\[input:([^\]]*)\]\]$/;   // a WHOLE param value (Ruling 5)
+// An INLINE binding (S3i): the marker inside a content param's text. Global —
+// always used through String.replace / a fresh lastIndex, never a bare exec.
+const INLINE_RE = /\[\[input:([a-zA-Z_][a-zA-Z0-9_]{0,63})\]\]/g;
 const BINDING_MARK = '[[input:';
 const INPUT_REF_RE = /^input:([a-zA-Z_][a-zA-Z0-9_]{0,63})$/;   // result_template [[input:x]]
 // One address, nothing a mailer could read as a second recipient or a header
@@ -533,26 +549,55 @@ function openedInputParams(reg = registry()) {
 }
 
 /**
+ * How a TOP-LEVEL param value binds clicker inputs (S3i):
+ *   null                 no "[[input:" marker anywhere in it
+ *   { whole: name }      the value IS "[[input:name]]" (BINDING_RE). `name` is
+ *                        whatever sits between the brackets — an undeclared or
+ *                        malformed one is the caller's "no such input" error
+ *   { inline: [names] }  a string carrying one or more well-formed markers
+ *                        inside its text (unique names, first-seen order)
+ *   { stray: true }      the marker is there but is not a binding: malformed
+ *                        ("[[input:" with no valid name / no "]]"), or below
+ *                        the top level (inside an array or object)
+ * A string that still shows the marker once its well-formed markers are taken
+ * out is stray as a whole — "[[inp[[input:a]]ut:b]]" must not become a
+ * binding of `a` that leaves a live-looking `b` marker behind.
+ */
+function parseBinding(v) {
+  if (typeof v !== 'string') return findInputMark(v, '') == null ? null : { stray: true };
+  if (!v.includes(BINDING_MARK)) return null;
+  const whole = BINDING_RE.exec(v);
+  if (whole) return { whole: whole[1] };
+  const names = [];
+  const rest = v.replace(INLINE_RE, (_, n) => { if (!names.includes(n)) names.push(n); return ''; });
+  if (!names.length || rest.includes(BINDING_MARK)) return { stray: true };
+  return { inline: names };
+}
+
+/**
  * Why binding input `decl` into fn.param can't run, as { code, spec }:
  * code null = fine; 'binding_closed' = undeclared input or a param no longer
  * opened; 'recipient_type' = a recipient fed by a type that can't guarantee
- * ONE recipient of the kind the transport takes. Shared by the click path
- * (prepareRun) and the link-level refusal (linkRefusal) — the mint checks the
- * same rules with its own, more specific 400s.
+ * ONE recipient of the kind the transport takes — which an INLINE binding
+ * never can (text around an address is not an address), so inline is fine
+ * only into a kind:'content' param. Shared by the click path (prepareRun) and
+ * the link-level refusal (linkRefusal) — the mint checks the same rules with
+ * its own, more specific 400s.
  */
-function bindingProblem(fn, param, decl, reg) {
+function bindingProblem(fn, param, decl, reg, inline = false) {
   const spec = openedParamSpec(fn, param, reg);
   if (!decl || !spec) return { code: 'binding_closed', spec: null };
+  if (inline) return spec.kind === 'content' ? { code: null, spec } : { code: 'recipient_type', spec };
   if (spec.kind === 'recipient' && !RECIPIENT_TYPES.has(decl.type)) return { code: 'recipient_type', spec };
   if (spec.type && decl.type !== spec.type) return { code: 'recipient_type', spec };
   return { code: null, spec };
 }
 
 /**
- * Every [[input:x]] binding in options that DECLARE inputs, as
- * { option, step, param, name, decl }. Input-less options are skipped: a
- * marker there is never substituted (prepareRun returns their plan untouched),
- * so it is just text.
+ * Every [[input:x]] binding in options that DECLARE inputs — whole-value and
+ * inline (S3i) alike — as { option, step, param, name, decl, inline }.
+ * Input-less options are skipped: a marker there is never substituted
+ * (prepareRun returns their plan untouched), so it is just text.
  */
 function listBindings(options) {
   const out = [];
@@ -563,8 +608,12 @@ function listBindings(options) {
     for (const step of Array.isArray(o.plan) ? o.plan : []) {
       if (!step || !isPlainObject(step.params)) continue;
       for (const [k, v] of Object.entries(step.params)) {
-        const m = typeof v === 'string' ? BINDING_RE.exec(v) : null;
-        if (m) out.push({ option: o, step, param: k, name: m[1], decl: byName.get(m[1]) });
+        const pb = parseBinding(v);
+        if (!pb || pb.stray) continue;
+        const names = pb.inline || [pb.whole];
+        for (const name of names) {
+          out.push({ option: o, step, param: k, name, decl: byName.get(name), inline: !!pb.inline });
+        }
       }
     }
   }
@@ -581,7 +630,8 @@ function hasRecipientBinding(options, reg = registry()) {
 
 /**
  * LINK-LEVEL refusal (S1i review B1 + N2): a state the mint would have refused
- * that exists anyway — a param closed or retyped since mint, or max_uses
+ * that exists anyway — a param closed or retyped since mint, an inline
+ * binding on a row that is not an SU mint (S3i review B1), or max_uses
  * removed from a repeatable open-recipient link behind the hard rule's back
  * (PATCH now refuses that; a SQL edit could still do it). Pure. Returns null
  * or { reason, detail }. Called by BOTH respond() and the GET pre-check
@@ -591,7 +641,13 @@ function hasRecipientBinding(options, reg = registry()) {
 function linkRefusal(row, reg = registry()) {
   let recipient = false;
   for (const b of listBindings(row && row.options)) {
-    const p = bindingProblem(b.step.fn, b.param, b.decl, reg);
+    // S3i review B1: the mint refuses an inline binding on anything but an SU
+    // mint; a row that carries one anyway (a SQL edit, a future mint path)
+    // never runs it.
+    if (b.inline && row.mint_source !== 'su') {
+      return { reason: 'workflow_inline', detail: `option "${b.option.value}": ${b.step.fn}.${b.param} carries [[input:${b.name}]] inside text on a ${row.mint_source} mint` };
+    }
+    const p = bindingProblem(b.step.fn, b.param, b.decl, reg, b.inline);
     if (p.code) return { reason: p.code, detail: `option "${b.option.value}": ${b.step.fn}.${b.param} ← [[input:${b.name}]]` };
     if (p.spec.kind === 'recipient') recipient = true;
   }
@@ -801,10 +857,18 @@ function validateInputValue(decl, raw) {
 /**
  * Validate an option's `inputs` declarations at mint. Returns the normalized
  * array (stored in the option): { name, label, hint?, type, required, maxlen,
- * choices?, pattern?, default? } — a stored default has passed the full value
- * pipeline, so the timeout path and the HTML pre-fill can use it as-is.
- * `hint` is SU help text shown under the field (escaped, like the label);
- * blank is omitted.
+ * choices?, choice_labels?, display?, pattern?, default? } — a stored default
+ * has passed the full value pipeline, so the timeout path and the HTML
+ * pre-fill can use it as-is. `hint` is SU help text shown under the field
+ * (escaped, like the label); blank is omitted.
+ *
+ * Enum presentation (S3i) — page-only, the value pipeline never reads either:
+ *   display        'select' (default, never stored) | 'radio' — one radio
+ *                  button per choice instead of a dropdown
+ *   choice_labels  what the clicker reads for each choice, parallel to
+ *                  `choices` (same length, plain text, escaped at render).
+ *                  The VALUE submitted, validated, stored and substituted is
+ *                  always the choice itself.
  */
 function validateInputDecls(raw, ol) {
   if (raw == null) return [];
@@ -860,8 +924,28 @@ function validateInputDecls(raw, ol) {
         uniq.add(c);
       }
       decl.choices = ch.slice();
-    } else if (d.choices !== undefined) {
-      throw bad(`${il}.choices applies to type enum only`);
+
+      if (d.choice_labels != null) {
+        const cl = d.choice_labels;
+        if (!Array.isArray(cl) || cl.length !== ch.length) {
+          throw bad(`${il}.choice_labels must be an array with one label per choice (${ch.length})`);
+        }
+        decl.choice_labels = cl.map((l, k) => {
+          const t = typeof l === 'string' ? l.replace(/\s+/g, ' ').trim() : '';
+          if (!t || t.length > MAX_CHOICE_LABEL || CONTROL_RE.test(t)) {
+            throw bad(`${il}.choice_labels[${k}] must be 1–${MAX_CHOICE_LABEL} chars of plain text`);
+          }
+          return t;
+        });
+      }
+      if (d.display != null) {
+        if (!ENUM_DISPLAYS.includes(d.display)) throw bad(`${il}.display must be one of ${ENUM_DISPLAYS.join(', ')}`);
+        if (d.display !== 'select') decl.display = d.display;   // the default is never stored
+      }
+    } else {
+      for (const k of ['choices', 'choice_labels', 'display']) {
+        if (d[k] !== undefined) throw bad(`${il}.${k} applies to type enum only`);
+      }
     }
 
     if (d.pattern != null) {
@@ -887,6 +971,41 @@ function substituteValue(value, decl, spec) {
     return htmlEscape(value).replace(/\n/g, '<br>');
   }
   return value;
+}
+
+/**
+ * Substitute one step's bindings into a COPY of its params — the one place a
+ * clicker value becomes a param, shared by both mint validator passes and the
+ * click. `bound` is [{ param, spec, whole: decl } | { param, spec, inline:
+ * Map(name → decl) }]; `get(decl)` returns the input's normalized value, or
+ * undefined for "left blank, no default".
+ *
+ *   whole    undefined → the param is ABSENT (S1i contract, unchanged);
+ *            else substituteValue (type-aware escape)
+ *   inline   every marker replaced in ONE pass by its substituteValue, a blank
+ *            by '' — each occurrence escaped on its own, so the SU's literal
+ *            markup around it stays markup and the clicker's text never does.
+ *            The replacement is a FUNCTION: a value is never re-scanned (a
+ *            clicker who types "[[input:other]]" gets those characters, not
+ *            another input's value) and "$&" / "$1" in it are inert.
+ */
+function applyBindings(params, bound, get) {
+  const out = JSON.parse(JSON.stringify(params || {}));
+  for (const b of bound) {
+    if (b.whole) {
+      const v = get(b.whole);
+      if (v === undefined) delete out[b.param];
+      else out[b.param] = substituteValue(v, b.whole, b.spec);
+    } else {
+      out[b.param] = String(out[b.param]).replace(INLINE_RE, (m, name) => {
+        const decl = b.inline.get(name);
+        if (!decl) return m;   // parseBinding listed every name — unreachable, and inert if not
+        const v = get(decl);
+        return v === undefined ? '' : substituteValue(v, decl, b.spec);
+      });
+    }
+  }
+  return out;
 }
 
 /** First path inside `v` carrying the [[input: marker, or null (deep, values only). */
@@ -982,19 +1101,30 @@ function prepareRun(option, submitted, reg = registry()) {
   const plan = [];
   for (const step of option.plan || []) {
     const fn = step && step.fn;
-    const params = JSON.parse(JSON.stringify((step && step.params) || {}));
-    const bound = [];
-    for (const [k, v] of Object.entries(params)) {
-      const m = typeof v === 'string' ? BINDING_RE.exec(v) : null;
-      if (!m) continue;
-      const decl = byName.get(m[1]);
-      const problem = bindingProblem(fn, k, decl, reg);
-      if (problem.code) return { ok: false, code: 'binding_closed', error: `${fn}.${k} ← [[input:${m[1]}]] (${problem.code})` };
-      const { spec } = problem;
-      bound.push(decl.name);
-      if (!(decl.name in values)) delete params[k];   // omitted optional input: the param is absent
-      else params[k] = substituteValue(values[decl.name], decl, spec);
+    const stored = (step && step.params) || {};
+    const bound = [];     // applyBindings descriptors, one per bound param
+    const names = [];     // every input this step takes (the per-field error map)
+    for (const [k, v] of Object.entries(stored)) {
+      const pb = parseBinding(v);
+      // A stray marker (malformed or nested) is refused at mint; a stored one
+      // is just text, as it always was.
+      if (!pb || pb.stray) continue;
+      const inline = pb.inline ? new Map() : null;
+      let spec = null;
+      for (const name of pb.inline || [pb.whole]) {
+        const decl = byName.get(name);
+        const problem = bindingProblem(fn, k, decl, reg, !!pb.inline);
+        if (problem.code) return { ok: false, code: 'binding_closed', error: `${fn}.${k} ← [[input:${name}]] (${problem.code})` };
+        ({ spec } = problem);
+        if (inline) inline.set(name, decl);
+        else bound.push({ param: k, spec, whole: decl });
+        if (!names.includes(name)) names.push(name);
+      }
+      if (inline) bound.push({ param: k, spec, inline });
     }
+    // An omitted optional input: a whole-value param is absent, an inline
+    // marker is '' (applyBindings).
+    const params = applyBindings(stored, bound, (decl) => (decl.name in values ? values[decl.name] : undefined));
     if (bound.length) {
       const err = reg.__validateFunctionParams(fn, params);
       if (err) {
@@ -1002,7 +1132,7 @@ function prepareRun(option, submitted, reg = registry()) {
         // this is defense in depth — log it, answer generically.
         console.warn(`[CTA] click-time re-validation rejected ${fn}: ${err.error}`);
         const errs = Object.create(null);
-        for (const n of bound) errs[n] = INPUT_MSG.rejected;
+        for (const n of names) errs[n] = INPUT_MSG.rejected;
         return { ok: false, code: 'invalid_inputs', errors: errs, formError: null };
       }
     }
@@ -1017,6 +1147,9 @@ function publicInputs(decls) {
     const o = { name: d.name, label: d.label, type: d.type, required: d.required };
     if (hasOwn(d, 'hint')) o.hint = d.hint;
     if (d.choices) o.choices = d.choices.slice();
+    // S3i: how the page shows the enum — an agent picks by `choices` either way.
+    if (Array.isArray(d.choice_labels)) o.choice_labels = d.choice_labels.slice();
+    if (d.display) o.display = d.display;
     o.maxlen = d.maxlen;
     if (hasOwn(d, 'default')) o.default = d.default;
     return o;
@@ -1032,7 +1165,7 @@ function publicInputs(decls) {
  * declarations (§12). Returns { plan, bindings } — bindings is
  * [{ step, param, name, kind, html }] for the policy gates in validateMint.
  */
-function validatePlan(plan, label, reg, decls = []) {
+function validatePlan(plan, label, reg, decls = [], { allowInline = true } = {}) {
   if (!Array.isArray(plan) || plan.length < 1 || plan.length > MAX_PLAN_STEPS) {
     throw bad(`${label}.plan must be an array of 1–${MAX_PLAN_STEPS} {fn, params} steps`);
   }
@@ -1058,69 +1191,106 @@ function validatePlan(plan, label, reg, decls = []) {
     const ph = findPlaceholder(params, `${sl}.params`);
     if (ph) throw bad(`${ph}: unresolved {{...}} placeholder — CTA params are frozen literals at mint`);
 
-    // §12 bindings: "[[input:name]]" as a WHOLE top-level value, into an
-    // opened param, naming a declared input. Anything else carrying the
-    // marker is a splice or a nested binding — Ruling 5, rejected.
-    const stepBindings = [];
+    // §12 bindings, naming a declared input, into an opened param:
+    //   whole   "[[input:name]]" as the param's WHOLE top-level value (S1i)
+    //   inline  the marker inside the text of a kind:'content' param, any
+    //           number of times (S3i) — never a recipient: text around an
+    //           address is not ONE address, and the transport would decide
+    //           what it means. SU mints only (allowInline): the text around
+    //           an inline marker must be the SU's own. A workflow mint's
+    //           params have been through the engine's {{...}} pass, so that
+    //           text can be a lead's — "hello [[input:note]] bye" typed into
+    //           a website form would otherwise pull the clicker's `note`
+    //           into whatever param quoted the lead (S3i review B1).
+    // Anything else carrying the marker — malformed, or below the top level —
+    // is rejected.
+    const stepBindings = [];   // one per (param, input): the policy/audit rows
+    const bound = [];          // one per bound param: applyBindings descriptors
     for (const [k, v] of Object.entries(params)) {
-      const m = typeof v === 'string' ? BINDING_RE.exec(v) : null;
-      if (!m) continue;
-      const decl = byName.get(m[1]);
-      if (!decl) throw bad(`${sl}.params.${k}: [[input:${m[1]}]] — no input "${m[1]}" is declared on this option`);
-      const spec = openedParamSpec(step.fn, k, reg);
-      if (!spec) {
-        throw bad(`${sl}.params.${k}: ${step.fn}.${k} is not open to clicker inputs (${step.fn} opens: ${listOpened(step.fn, reg)})`);
+      // An input-less option only ever had the whole-value check (below, "no
+      // input is declared"); every other marker there is just text (N1).
+      const pb = decls.length ? parseBinding(v)
+        : (typeof v === 'string' && BINDING_RE.test(v) ? { whole: BINDING_RE.exec(v)[1] } : null);
+      if (!pb || pb.stray) continue;
+      if (pb.inline && !allowInline) {
+        throw bad(`${sl}.params.${k}: [[input:…]] inside other text is not available to workflow mints — a workflow's text may ` +
+          'carry outside words (a {{placeholder}} that resolved to a lead\'s message), and a marker in it would bind. ' +
+          'Bind the input as the param\'s WHOLE top-level value, or mint this link via POST /api/cta (§12)');
       }
-      if (spec.kind === 'recipient' && !RECIPIENT_TYPES.has(decl.type)) {
-        throw bad(`${sl}.params.${k}: ${step.fn}.${k} is a recipient — bind a phone or email input (input "${decl.name}" is ${decl.type}, which could carry a list of recipients)`);
+      const names = pb.inline || [pb.whole];
+      const inline = pb.inline ? new Map() : null;
+      let spec = null;
+      for (const name of names) {
+        const decl = byName.get(name);
+        if (!decl) throw bad(`${sl}.params.${k}: [[input:${name}]] — no input "${name}" is declared on this option`);
+        spec = openedParamSpec(step.fn, k, reg);
+        if (!spec) {
+          throw bad(`${sl}.params.${k}: ${step.fn}.${k} is not open to clicker inputs (${step.fn} opens: ${listOpened(step.fn, reg)})`);
+        }
+        if (inline) {
+          if (spec.kind !== 'content') {
+            throw bad(`${sl}.params.${k}: ${step.fn}.${k} is a recipient — it takes [[input:${name}]] as its WHOLE value, never inside other text (one recipient per use)`);
+          }
+          inline.set(name, decl);
+        } else {
+          if (spec.kind === 'recipient' && !RECIPIENT_TYPES.has(decl.type)) {
+            throw bad(`${sl}.params.${k}: ${step.fn}.${k} is a recipient — bind a phone or email input (input "${decl.name}" is ${decl.type}, which could carry a list of recipients)`);
+          }
+          if (spec.type && decl.type !== spec.type) {
+            throw bad(`${sl}.params.${k}: ${step.fn}.${k} takes a ${spec.type} input (input "${decl.name}" is ${decl.type}) — the send would fail on every click`);
+          }
+          bound.push({ param: k, spec, whole: decl });
+        }
+        stepBindings.push({ step: i + 1, param: k, name: decl.name, kind: spec.kind, html: spec.html, inline: !!inline, decl });
       }
-      if (spec.type && decl.type !== spec.type) {
-        throw bad(`${sl}.params.${k}: ${step.fn}.${k} takes a ${spec.type} input (input "${decl.name}" is ${decl.type}) — the send would fail on every click`);
-      }
-      stepBindings.push({ step: i + 1, param: k, name: decl.name, kind: spec.kind, html: spec.html, decl, spec });
+      if (inline) bound.push({ param: k, spec, inline });
     }
     // Only where inputs are declared (S1i review N1): an input-less option's
     // marker is never substituted, so it is just text — and WF27 step 47
     // freezes the raw website form body into init_data, where a spam message
     // carrying a literal "[[input:" must not fail the mint.
-    const bound = new Set(stepBindings.map((b) => b.param));
+    const boundParams = new Set(bound.map((b) => b.param));
     for (const [k, v] of decls.length ? Object.entries(params) : []) {
-      if (bound.has(k)) continue;
+      if (boundParams.has(k)) continue;
       const stray = findInputMark(v, `${sl}.params.${k}`);
       if (stray) {
-        throw bad(`${stray}: [[input:…]] must be a param's whole top-level value — no splicing inside strings, no nesting (§12 Ruling 5)`);
+        throw bad(`${stray}: [[input:…]] is not a binding here — write it as [[input:name]], as a top-level param's whole value ` +
+          'or inside the text of a content param; it cannot be malformed or nested inside an array or object (§12)');
       }
     }
 
-    if (!stepBindings.length) {
+    if (!bound.length) {
       const err = reg.__validateFunctionParams(step.fn, params);
       if (err) throw bad(`${sl} (${step.fn}): ${err.error}`);
     } else {
       // Validator pass 1 (§12 "Mint"): every binding filled with its default,
-      // else a type-appropriate sample — substituted exactly as a click would.
-      const filled = JSON.parse(JSON.stringify(params));
-      for (const b of stepBindings) {
-        const sample = hasOwn(b.decl, 'default') ? b.decl.default
-          : (b.decl.type === 'enum' ? b.decl.choices[0] : INPUT_SAMPLES[b.decl.type]);
-        filled[b.param] = substituteValue(sample, b.decl, b.spec);
-      }
-      let err = reg.__validateFunctionParams(step.fn, filled);
+      // else a type-appropriate sample — substituted exactly as a click would
+      // (applyBindings is the click's own substitution).
+      const sampleOf = (decl) => (hasOwn(decl, 'default') ? decl.default
+        : (decl.type === 'enum' ? decl.choices[0] : INPUT_SAMPLES[decl.type]));
+      let err = reg.__validateFunctionParams(step.fn, applyBindings(params, bound, sampleOf));
       if (err) throw bad(`${sl} (${step.fn}) with default/sample inputs: ${err.error}`);
       // …and the blank-optional variant: an optional input with no default
-      // leaves its param ABSENT at click — a function that requires that
-      // param would fail every blank submission, so it fails the mint instead.
-      const omittable = stepBindings.filter((b) => !b.decl.required && !hasOwn(b.decl, 'default'));
+      // leaves a whole-value param ABSENT at click (an inline marker: '') — a
+      // function that requires that param would fail every blank submission,
+      // so it fails the mint instead.
+      const omittable = [];
+      for (const b of stepBindings) {
+        if (!b.decl.required && !hasOwn(b.decl, 'default') && !omittable.includes(b.name)) omittable.push(b.name);
+      }
       if (omittable.length) {
-        for (const b of omittable) delete filled[b.param];
-        err = reg.__validateFunctionParams(step.fn, filled);
+        err = reg.__validateFunctionParams(step.fn,
+          applyBindings(params, bound, (decl) => (omittable.includes(decl.name) ? undefined : sampleOf(decl))));
         if (err) {
           throw bad(`${sl} (${step.fn}) with optional input${omittable.length === 1 ? '' : 's'} ` +
-            `${omittable.map((b) => `"${b.name}"`).join(', ')} left blank: ${err.error} — make the input required or give it a default`);
+            `${omittable.map((n) => `"${n}"`).join(', ')} left blank: ${err.error} — make the input required or give it a default`);
         }
       }
     }
     for (const b of stepBindings) {
-      bindings.push({ step: b.step, param: b.param, name: b.name, kind: b.kind, html: b.html });
+      const row = { step: b.step, param: b.param, name: b.name, kind: b.kind, html: b.html };
+      if (b.inline) row.inline = true;
+      bindings.push(row);
     }
 
     // Round-trip: the stored plan is exactly what JSON can carry.
@@ -1138,7 +1308,7 @@ function validatePlan(plan, label, reg, decls = []) {
  * bindingsByValue (option value → validatePlan bindings) feeds the §12
  * policy gates in validateMint and is never stored.
  */
-function validateOptions(raw, reg) {
+function validateOptions(raw, reg, planOpts = {}) {
   if (!Array.isArray(raw) || raw.length < 1 || raw.length > MAX_OPTIONS) {
     throw bad(`options must be an array of 1–${MAX_OPTIONS} options`);
   }
@@ -1159,7 +1329,7 @@ function validateOptions(raw, reg) {
     if (!label || label.length > MAX_LABEL) throw bad(`${ol}.label must be 1–${MAX_LABEL} chars`);
 
     const decls = validateInputDecls(o.inputs, ol);
-    const { plan, bindings } = validatePlan(o.plan, ol, reg, decls);
+    const { plan, bindings } = validatePlan(o.plan, ol, reg, decls, planOpts);
     const out = { value, label, plan };
     bindingsByValue.set(value, bindings);
 
@@ -1269,7 +1439,15 @@ async function validateMint(db, input, { now = new Date() } = {}) {
     if (maxUses == null) throw bad('max_uses must be a positive integer (or null for "until expiry")');
   }
 
-  const { options, bindingsByValue } = validateOptions(input.options, reg);
+  // S3i review B1: inline bindings are an SU-mint feature. Read here, ahead of
+  // the mint_source validation below (anything but a clean 'su'/absent is
+  // treated as not-SU; a bad value still gets its own 400 further down).
+  // 'su' stands for "an SU wrote every character of these params" — true of
+  // POST /api/cta, and of the alerting digest mint only because its options
+  // declare no inputs. A system mint that ever declares inputs AND quotes
+  // outside text must not ride on 'su' for this.
+  const allowInline = input.mint_source == null || input.mint_source === 'su';
+  const { options, bindingsByValue } = validateOptions(input.options, reg, { allowInline });
   const values = new Set(options.map((o) => o.value));
 
   let timeoutOption = null;
@@ -1883,7 +2061,8 @@ async function executeOpened(db, row, option, { executionId, via, responderUserI
  *                          exhausted | unknown_option | minter_inactive |
  *                          password_required | bad_password | conflict |
  *                          refused (+ reason: binding_closed | recipient_type |
- *                          unbounded_recipient — linkRefusal; public: disabled)
+ *                          workflow_inline | unbounded_recipient — linkRefusal;
+ *                          public: disabled)
  *   { ok: false, code: 'invalid_inputs', errors, form_error? }  (§12) —
  *                          errors: { <input name>: generic message }; nothing
  *                          was claimed, counted or run
@@ -2258,6 +2437,7 @@ module.exports = {
   // §12 clicker inputs
   CTA_RISKS,
   INPUT_TYPES,
+  ENUM_DISPLAYS,
   openedParamSpec,
   openedInputParams,
   linkRefusal,
@@ -2265,6 +2445,7 @@ module.exports = {
   hasRecipientBinding,
   validateInputValue,
   prepareRun,
+  parseBinding,
   linearRegexAvailable,
   publicInputs,
   // runner internals (exported for tests and S3)

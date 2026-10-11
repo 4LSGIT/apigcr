@@ -257,7 +257,8 @@
   .in-card .fld { margin-bottom: 10px; }
   .in-card .fgrid .fld { margin-bottom: 0; }
   .choice-row { display: flex; gap: 6px; align-items: center; margin-bottom: 6px; min-width: 0; }
-  .choice-row input { flex: 1 1 auto; }
+  .choice-row input { flex: 1 1 0; min-width: 0; }
+  .choice-row input.mono { flex: 0 1 32%; }   /* the value; the label next to it takes the rest */
   .bind-line { display: block; font-size: var(--fs-xs); color: var(--text-muted); margin-top: 4px; line-height: 1.45; word-break: break-word; }
   .bind-line code, .fn-open code { font-size: 11px; }
   .bind-line.unbound { color: var(--warn); }
@@ -361,7 +362,8 @@
         </p>
         <p>
           <b>Clicker inputs:</b> an option can ask the clicker for values — a phone number, a message, a choice
-          from a list — and pass each one into its plan as a step param's whole value, <code>[[input:name]]</code>.
+          from a list — and pass each one into its plan with <code>[[input:name]]</code>: as a step param's whole
+          value, or inside the text of a content param (several answers in one email body).
           Only params a function opens to clicker input can take one (the step shows which). The server
           validates every value and escapes text that lands in an email body. Inputs make the default protection
           password; a reusable link where the clicker picks the recipient needs a use cap, and the risky shapes
@@ -510,6 +512,13 @@ const MAX_CHOICES = 20;
 const MIN_MAXLEN = { phone: 12, date: 10 };
 const RECIPIENT_TYPES = ['phone', 'email'];
 const BINDING_RE = /^\[\[input:([^\]]*)\]\]$/;   // a WHOLE param value (§12 Ruling 5)
+// S3i (ctaService INLINE_RE / BINDING_MARK / ENUM_DISPLAYS / MAX_CHOICE_LABEL):
+// the marker inside a content param's text, and how an enum is drawn.
+const INLINE_RE = /\[\[input:([a-zA-Z_][a-zA-Z0-9_]{0,63})\]\]/g;
+const BINDING_MARK = '[[input:';
+const ENUM_DISPLAYS = ['select', 'radio'];
+const ENUM_DISPLAY_LABEL = { select: 'Dropdown', radio: 'Radio buttons' };
+const MAX_CHOICE_LABEL = 100;
 /** Types whose max length the pane fixes (hidden field): the value is checked normalized, so it isn't the clicker's to size. */
 const FIXED_MAXLEN = { phone: '16', date: '10', enum: '64' };
 const INPUT_MAXLEN_DEFAULT = { text: '200', phone: '16', email: '254', number: '20', enum: '64', date: '10', html: '1000' };
@@ -522,7 +531,7 @@ const INPUT_TYPE_HINT = {
   phone: 'Normalized to +1XXXXXXXXXX before it is used. Phone and Email are the only types a recipient param takes.',
   email: 'One address, lowercased. No lists.',
   number: 'A plain decimal — 42, -3.5.',
-  enum: 'The clicker picks one of your choices from a dropdown.',
+  enum: 'The clicker picks one of your choices — from a dropdown, or as radio buttons.',
   date: 'A date picker on the page; used as YYYY-MM-DD.',
   html: 'Raw markup, passed on unescaped — needs the acknowledgment above the Mint button.',
 };
@@ -1143,15 +1152,41 @@ function optionView(c, o) {
     </div>`;
 }
 
-/** Every whole-value "[[input:x]]" in a stored plan, as [{ si, fn, param, name }]. */
+/**
+ * Mirror of ctaService.parseBinding (hint only): the inputs ONE top-level
+ * param value binds, as [{ name, inline }] — the whole value "[[input:x]]"
+ * (inline false), or well-formed markers inside its text (inline true, unique
+ * names, first seen first). A malformed or nested marker binds nothing.
+ */
+function valueBindings(v) {
+  if (typeof v !== 'string' || !v.includes(BINDING_MARK)) return [];
+  const whole = BINDING_RE.exec(v);
+  if (whole) return [{ name: whole[1], inline: false }];
+  const names = [];
+  const rest = v.replace(INLINE_RE, (_, n) => { if (!names.includes(n)) names.push(n); return ''; });
+  if (!names.length || rest.includes(BINDING_MARK)) return [];
+  return names.map((name) => ({ name, inline: true }));
+}
+/** The marker anywhere in the VALUES of v (never its keys) — ctaService.findInputMark. */
+function hasInputMark(v) {
+  if (typeof v === 'string') return v.includes(BINDING_MARK);
+  if (Array.isArray(v)) return v.some(hasInputMark);
+  return v !== null && typeof v === 'object' && Object.values(v).some(hasInputMark);
+}
+/** A top-level param value carrying the marker with no binding in it (the mint refuses it on an option with inputs). */
+function strayMarker(v) {
+  if (typeof v === 'string') return v.includes(BINDING_MARK) && !valueBindings(v).length;
+  return hasInputMark(v);
+}
+
+/** Every "[[input:x]]" binding in a stored plan — whole-value and inline — as [{ si, fn, param, name, inline }]. */
 function planBindings(steps) {
   const out = [];
   (Array.isArray(steps) ? steps : []).forEach((s, si) => {
     const p = s && s.params;
     if (!p || typeof p !== 'object' || Array.isArray(p)) return;
     for (const [k, v] of Object.entries(p)) {
-      const m = typeof v === 'string' ? BINDING_RE.exec(v) : null;
-      if (m) out.push({ si, fn: String((s && s.fn) || ''), param: k, name: m[1] });
+      for (const b of valueBindings(v)) out.push({ si, fn: String((s && s.fn) || ''), param: k, name: b.name, inline: b.inline });
     }
   });
   return out;
@@ -1161,11 +1196,15 @@ function planBindings(steps) {
 function declSummaryHtml(dcl, steps) {
   const bits = [esc(INPUT_TYPE_LABEL[dcl.type] || dcl.type), dcl.required ? 'required' : 'optional'];
   if (!FIXED_MAXLEN[dcl.type]) bits.push(`max ${esc(dcl.maxlen)}`);
-  if (Array.isArray(dcl.choices) && dcl.choices.length) bits.push(`choices ${dcl.choices.map((c) => `<code>${esc(c)}</code>`).join(' ')}`);
+  if (Array.isArray(dcl.choices) && dcl.choices.length) {
+    const lab = Array.isArray(dcl.choice_labels) ? dcl.choice_labels : [];
+    bits.push(`choices ${dcl.choices.map((c, k) => `<code>${esc(c)}</code>${lab[k] && lab[k] !== c ? ` (${esc(lab[k])})` : ''}`).join(' ')}`);
+    if (dcl.type === 'enum') bits.push(`shown as ${esc((ENUM_DISPLAY_LABEL[dcl.display || 'select'] || dcl.display).toLowerCase())}`);
+  }
   if (Object.prototype.hasOwnProperty.call(dcl, 'default')) bits.push(`default <code>${esc(dcl.default)}</code>`);
   if (dcl.pattern) bits.push(`pattern <code>${esc(dcl.pattern)}</code>`);
   const into = planBindings(steps).filter((b) => b.name === dcl.name)
-    .map((b) => `step ${b.si + 1} <code>${esc(b.fn)}.${esc(b.param)}</code>`);
+    .map((b) => `step ${b.si + 1} <code>${esc(b.fn)}.${esc(b.param)}</code>${b.inline ? ' (in its text)' : ''}`);
   return `
     <div class="in-val">
       <div class="in-val-k">${esc(dcl.label)} <code class="muted">${esc(dcl.name)}</code></div>
@@ -1684,7 +1723,7 @@ function newInput() {
   return {
     name: '', nameTouched: false, label: '', hint: '', type: 'text', required: true,
     maxlen: INPUT_MAXLEN_DEFAULT.text, maxlenTouched: false,
-    default: '', pattern: '', choices: [], sample: '',
+    default: '', pattern: '', choices: [], choice_labels: [], display: 'select', sample: '',
   };
 }
 function newDraft() {
@@ -1844,18 +1883,28 @@ function stepParams(s) {
     return v && typeof v === 'object' && !Array.isArray(v) ? v : null;
   } catch { return null; }
 }
-/** Every whole-value "[[input:x]]" in a builder option's steps, as [{ si, fn, param, name }]. */
+/** Every "[[input:x]]" binding in a builder option's steps — whole-value and inline — as [{ si, fn, param, name, inline }]. */
 function draftBindings(o) {
   const out = [];
   o.steps.forEach((s, si) => {
     const p = stepParams(s);
     if (!p) return;
     for (const [k, v] of Object.entries(p)) {
-      const m = typeof v === 'string' ? BINDING_RE.exec(v) : null;
-      if (m) out.push({ si, fn: String(s.fn || '').trim(), param: k, name: m[1] });
+      for (const b of valueBindings(v)) out.push({ si, fn: String(s.fn || '').trim(), param: k, name: b.name, inline: b.inline });
     }
   });
   return out;
+}
+/**
+ * Why this binding can't run, or null (mirror of ctaService.bindingProblem +
+ * the mint's inline rule): an inline binding only goes into a content param —
+ * a recipient takes its input as the whole value.
+ */
+function bindingWhy(b, type) {
+  const sp = openedSpec(b.fn, b.param);
+  if (!sp) return 'not open to clicker input';
+  if (b.inline) return sp.kind === 'content' ? null : 'a recipient takes the input as its whole value, not inside other text';
+  return bindMismatch(sp, type);
 }
 /** A declared input of `o` bound into an open RECIPIENT param — what the hard rule and open_recipient_repeatable key on. */
 function bindsRecipient(o) {
@@ -2180,7 +2229,7 @@ function optionCardHtml(o, oi) {
         ${fieldErrHtml(`options.${oi}.result_template`)}
       </div>
       <span class="yc-flabel" style="margin-top:4px">Plan <span class="req">*</span></span>
-      <span class="yc-hint" style="margin:0 0 8px">Steps run in order, as automations (user 0); a failure stops the plan. Params are frozen JSON — no <code>{{placeholders}}</code>, no <code>_</code>-prefixed keys${o.inputs.length ? '; a clicker input goes in as a param\'s whole value, <code>"[[input:name]]"</code> (or use <b>Bind to</b> on the input)' : ''}.</span>
+      <span class="yc-hint" style="margin:0 0 8px">Steps run in order, as automations (user 0); a failure stops the plan. Params are frozen JSON — no <code>{{placeholders}}</code>, no <code>_</code>-prefixed keys${o.inputs.length ? '; a clicker input goes in as <code>[[input:name]]</code> — a param\'s whole value (or use <b>Bind to</b> on the input), or inside the text of a content param, e.g. <code>"&lt;p&gt;Pick: [[input:pick]]&lt;/p&gt;"</code>. In an HTML body put it <b>between</b> tags, never inside one (<code>href=</code>, <code>src=</code>, <code>style</code>): the escaping makes an answer safe as text, not as a link or an attribute' : ''}.</span>
       ${o.steps.map((s, si) => stepHtml(oi, s, si, o.steps.length)).join('')}
       <button class="btn small" type="button" data-act="step-add"${o.steps.length >= 20 ? ' disabled title="Up to 20 steps"' : ''}>+ Add step</button>
     </div>`;
@@ -2258,7 +2307,8 @@ function inputsBlockHtml(o, oi) {
     <div class="in-block" data-inputs="${oi}">
       <span class="yc-flabel">Clicker inputs <span class="muted">(optional)</span></span>
       <span class="yc-hint" style="margin:0 0 8px">Fields the clicker fills in on this option's confirm page before the plan runs — a
-        phone number, a message, a choice. Each one is passed into a step param as that param's whole value; only params a
+        phone number, a message, a choice. Each one is passed into a step param — as the param's whole value, or inside the
+        text of a content param (a message body), so several inputs can share one email; only params a
         function opens to clicker input can take one (each step lists them). Inputs make the default protection <b>password</b>.</span>
       ${o.inputs.map((inp, ij) => inputCardHtml(o, oi, inp, ij, n)).join('')}
       ${fieldErrHtml(`options.${oi}.inputs`)}
@@ -2319,7 +2369,7 @@ function inputCardHtml(o, oi, inp, ij, n) {
         <div class="fld">
           <span class="yc-flabel">Required</span>
           <label class="check"><input type="checkbox" id="${id}-req" data-bind="${p}.required"${inp.required ? ' checked' : ''}> The clicker must fill it in</label>
-          <span class="yc-hint">Optional with no default: a blank answer leaves the param out of the step.</span>
+          <span class="yc-hint">Optional with no default: a blank answer leaves the param out of the step — or, where the input sits inside a param's text, nothing in its place.</span>
           ${fieldErrHtml(`${p}.required`)}
         </div>
       </div>
@@ -2360,18 +2410,27 @@ function inputCardHtml(o, oi, inp, ij, n) {
 
 function choicesHtml(p, oi, ij, inp) {
   const n = inp.choices.length;
+  const disp = ENUM_DISPLAYS.includes(inp.display) ? inp.display : 'select';
   return `
       <div class="fld" style="margin-top:10px">
         <span class="yc-flabel">Choices <span class="req">*</span></span>
         ${inp.choices.map((c, ck) => `
         <div class="choice-row" data-ck="${ck}">
-          <input type="text" class="mono" id="o${oi}i${ij}c${ck}" data-bind="${p}.choices.${ck}" maxlength="64" value="${esc(c)}" autocomplete="off" spellcheck="false" aria-label="Choice ${ck + 1}">
+          <input type="text" class="mono" id="o${oi}i${ij}c${ck}" data-bind="${p}.choices.${ck}" maxlength="64" value="${esc(c)}" autocomplete="off" spellcheck="false" aria-label="Choice ${ck + 1}" placeholder="value">
+          <input type="text" id="o${oi}i${ij}l${ck}" data-bind="${p}.choice_labels.${ck}" maxlength="${MAX_CHOICE_LABEL}" value="${esc(inp.choice_labels[ck] == null ? '' : inp.choice_labels[ck])}" autocomplete="off" aria-label="Label for choice ${ck + 1}" placeholder="label (optional)">
           <button class="btn icon danger" type="button" data-act="choice-del" title="Remove choice">✕</button>
         </div>`).join('')}
         <button class="btn small" type="button" data-act="choice-add"${n >= MAX_CHOICES ? ` disabled title="Up to ${MAX_CHOICES} choices"` : ''}>+ Add choice</button>
-        <span class="yc-hint">1–${MAX_CHOICES} choices. Each is both what the clicker picks and the value passed on — letters, digits,
-          <code>_</code> and <code>-</code> only, like an option value.</span>
+        <span class="yc-hint">1–${MAX_CHOICES} choices. The first box is the value passed on — letters, digits,
+          <code>_</code> and <code>-</code> only, like an option value. The second is what the clicker reads for it (max ${MAX_CHOICE_LABEL});
+          blank shows the value.</span>
         ${fieldErrHtml(`${p}.choices`)}
+      </div>
+      <div class="fld" style="margin-top:10px">
+        <label class="yc-flabel" for="o${oi}i${ij}-display">Show as</label>
+        <select id="o${oi}i${ij}-display" data-bind="${p}.display">${ENUM_DISPLAYS.map((x) => `<option value="${x}"${disp === x ? ' selected' : ''}>${esc(ENUM_DISPLAY_LABEL[x])}</option>`).join('')}</select>
+        <span class="yc-hint">Radio buttons show every choice at once — good for a handful. An optional radio group with no default gets a "(none)" row.</span>
+        ${fieldErrHtml(`${p}.display`)}
       </div>`;
 }
 
@@ -2411,9 +2470,15 @@ function bindOptionsHtml(o, inp) {
     const ps = stepParams(s);
     for (const { param, spec } of openedParams(fn)) {
       const mine = !!name && !!ps && ps[param] === `[[input:${name}]]`;
+      // The param's text already carries inputs: picking it here would replace
+      // that whole text with the bare binding — this input's marker, or another's.
+      const inl = !mine && !!ps ? valueBindings(ps[param]).filter((b) => b.inline) : [];
+      const inText = !!name && inl.some((b) => b.name === name);
+      const hasText = inl.length > 0;
       const why = bindMismatch(spec, inp.type);
-      const tail = mine ? ' (bound)' : !ps ? ' (fix the params JSON first)' : why ? ` (${why})` : '';
-      rows.push(`<option value="${si}|${esc(param)}"${mine || !ps ? ' disabled' : ''}>${esc(`Step ${si + 1} · ${fn}.${param} — ${specShort(spec)}${tail}`)}</option>`);
+      const tail = mine ? ' (bound)' : inText ? ' (used in its text)' : hasText ? ' (its text has inputs — type the marker in)'
+        : !ps ? ' (fix the params JSON first)' : why ? ` (${why})` : '';
+      rows.push(`<option value="${si}|${esc(param)}"${mine || hasText || !ps ? ' disabled' : ''}>${esc(`Step ${si + 1} · ${fn}.${param} — ${specShort(spec)}${tail}`)}</option>`);
     }
   });
   const head = !state.fnMeta ? (state.fnMetaErr ? 'Function list unavailable — type the binding into the params' : 'Loading the function list…')
@@ -2427,12 +2492,11 @@ function bindLineHtml(o, inp) {
   if (!name) return 'Name it, then bind it to a step param.';
   const hits = draftBindings(o).filter((b) => b.name === name);
   if (!hits.length) {
-    return `Not bound yet — every input must feed a step: pick a param above, or put <code>"[[input:${esc(name)}]]"</code> as a param's whole value.`;
+    return `Not bound yet — every input must feed a step: pick a param above, or type <code>[[input:${esc(name)}]]</code> into a step's params — as a param's whole value, or inside the text of a content param.`;
   }
   return `Bound to ${hits.map((b) => {
-    const sp = state.fnMeta ? openedSpec(b.fn, b.param) : undefined;
-    const why = sp === undefined ? null : sp === null ? 'not open to clicker input' : bindMismatch(sp, inp.type);
-    return `step ${b.si + 1} <code>${esc(b.fn)}.${esc(b.param)}</code>${why ? ` <span class="warn-text">— ${esc(why)}</span>` : ''}`;
+    const why = state.fnMeta ? bindingWhy(b, inp.type) : null;
+    return `step ${b.si + 1} <code>${esc(b.fn)}.${esc(b.param)}</code>${b.inline ? ' (in its text)' : ''}${why ? ` <span class="warn-text">— ${esc(why)}</span>` : ''}`;
   }).join(', ')}.`;
 }
 
@@ -2445,10 +2509,18 @@ function stepBindNote(o, s) {
   const fn = String(s.fn || '').trim();
   const bad = [];
   for (const [k, v] of Object.entries(ps)) {
-    const m = typeof v === 'string' ? BINDING_RE.exec(v) : null;
-    if (!m) continue;
-    if (!names.has(m[1])) bad.push(`${k}: no input named "${m[1]}" on this option`);
-    else if (state.fnMeta && !openedSpec(fn, k)) bad.push(`${fn ? `${fn}.` : ''}${k} is not open to clicker input`);
+    if (strayMarker(v)) { bad.push(`${k}: [[input:…]] is malformed or nested — write [[input:name]] in a top-level text value`); continue; }
+    const seen = new Set();   // one line per (param, reason), however many inputs share it
+    for (const b of valueBindings(v)) {
+      let line = null;
+      if (!names.has(b.name)) line = `${k}: no input named "${b.name}" on this option`;
+      else if (state.fnMeta) {
+        const sp = openedSpec(fn, k);
+        if (!sp) line = `${fn ? `${fn}.` : ''}${k} is not open to clicker input`;
+        else if (b.inline && sp.kind !== 'content') line = `${fn ? `${fn}.` : ''}${k} is a recipient — it takes [[input:${b.name}]] as its whole value, not inside other text`;
+      }
+      if (line && !seen.has(line)) { seen.add(line); bad.push(line); }
+    }
   }
   return bad.map(esc).join(' · ');
 }
@@ -2470,6 +2542,12 @@ function bindInput(sel) {
   if (!INPUT_NAME_RE.test(name)) { showToast('Give the input a valid name first'); return; }
   const ps = stepParams(s);
   if (!ps) { showToast(`Step ${si + 1}: fix the params JSON first`); return; }
+  // The picker disables this row; the handler refuses it too — a param whose
+  // text carries inputs is authored text, and this would replace all of it.
+  if (valueBindings(ps[param]).some((b) => b.inline)) {
+    showToast(`Step ${si + 1}: ${param} already has inputs in its text — type [[input:${name}]] into it`);
+    return;
+  }
   ps[param] = `[[input:${name}]]`;
   s.params = paramsText(ps);
   inp.name = name;
@@ -2639,13 +2717,22 @@ function inputFromDecl(dcl) {
     default: has('default') ? String(dcl.default) : '',
     pattern: has('pattern') ? String(dcl.pattern) : '',
     choices: Array.isArray(dcl && dcl.choices) ? dcl.choices.map(String) : [],
+    // S3i: labels ride along index-for-index; a label equal to its choice is the blank default.
+    choice_labels: Array.isArray(dcl && dcl.choices)
+      ? dcl.choices.map((c, k) => {
+        const l = Array.isArray(dcl.choice_labels) && dcl.choice_labels[k] != null ? String(dcl.choice_labels[k]) : '';
+        return l === String(c) ? '' : l;
+      })
+      : [],
+    display: has('display') && ENUM_DISPLAYS.includes(dcl.display) ? dcl.display : 'select',
     sample: '',
   };
 }
 
 /**
  * Builder input → the §12 declaration POST /api/cta takes. maxlen goes as a
- * number when it is one (else as typed, so the server says why); choices only
+ * number when it is one (else as typed, so the server says why); choices
+ * (+ their labels when any is set, + display when not the dropdown) only
  * for enum, a pattern never for enum; blank default/pattern omitted.
  * withSample: the test value stands in as the default (the test-values dry run).
  */
@@ -2655,8 +2742,15 @@ function inputDecl(i, withSample) {
   const ml = String(i.maxlen).trim();
   if (/^\d+$/.test(ml)) decl.maxlen = Number(ml);
   else if (ml) decl.maxlen = ml;
-  if (i.type === 'enum') decl.choices = i.choices.map((c) => String(c).trim()).filter((c) => c !== '');
-  else if (String(i.pattern).trim() !== '') decl.pattern = i.pattern;
+  if (i.type === 'enum') {
+    // Blank choice rows are dropped WITH their label, so the two stay index-for-index.
+    const rows = i.choices.map((c, k) => ({ c: String(c).trim(), l: String((i.choice_labels || [])[k] == null ? '' : i.choice_labels[k]).trim() }))
+      .filter((r) => r.c !== '');
+    decl.choices = rows.map((r) => r.c);
+    // The server wants a label per choice or none at all: a blank one shows its value.
+    if (rows.some((r) => r.l !== '')) decl.choice_labels = rows.map((r) => r.l || r.c);
+    if (i.display && i.display !== 'select') decl.display = i.display;
+  } else if (String(i.pattern).trim() !== '') decl.pattern = i.pattern;
   const def = withSample && String(i.sample).trim() !== '' ? i.sample : i.default;
   if (String(def).trim() !== '') decl.default = def;
   return decl;
@@ -2665,6 +2759,7 @@ function inputDecl(i, withSample) {
 const FIELD_WORD = {
   name: 'Name', label: 'Label', hint: 'Hint', type: 'Type', required: 'Required', maxlen: 'Max length',
   choices: 'Choices', pattern: 'Pattern', default: 'Default',
+  choice_labels: 'Choice labels', display: 'Show as',
 };
 
 /**
@@ -2680,11 +2775,15 @@ function mapMintError(message) {
   let m;
   const idxByName = (oi, name) => (d.options[oi] ? d.options[oi].inputs.map((x) => String(x.name).trim()).lastIndexOf(name) : -1);
 
-  if ((m = /^options\[(\d+)\]\.inputs\[(\d+)\]\.(name|label|hint|type|required|maxlen|choices|pattern|default)\b(:?)\s*([\s\S]*)$/.exec(msg))) {
+  if ((m = /^options\[(\d+)\]\.inputs\[(\d+)\]\.(name|label|hint|type|required|maxlen|choice_labels|choices|pattern|default|display)\b(:?)\s*([\s\S]*)$/.exec(msg))) {
     const oi = Number(m[1]); const ij = Number(m[2]);
     const inp = d.options[oi] && d.options[oi].inputs[ij];
     let field = m[3];
     if (field === 'maxlen' && inp && FIXED_MAXLEN[inp.type]) field = 'type';   // the pane fixes that length
+    if (field === 'choice_labels') {                                           // the labels sit in the choice rows
+      const k = /^\[(\d+)\]\s*([\s\S]*)$/.exec(m[5]);
+      return { anchor: `options.${oi}.inputs.${ij}.choices`, text: k ? `Label for choice ${Number(k[1]) + 1} ${k[2]}` : `Choice labels ${m[5]}` };
+    }
     return { anchor: `options.${oi}.inputs.${ij}.${field}`, text: `${FIELD_WORD[m[3]]}${m[5] ? `${m[4] ? ':' : ''} ${m[5]}` : ''}` };
   }
   if ((m = /^options\[(\d+)\]\.inputs: duplicate input name "([^"]*)"/.exec(msg))) {
@@ -2782,7 +2881,7 @@ function previewInputRow(o, i) {
   const into = draftBindings(o).filter((b) => b.name === name).map((b) => {
     const sp = openedSpec(b.fn, b.param);
     const how = !sp || !sp.html ? '' : i.type === 'html' ? ' — raw HTML, passed as typed' : ' — escaped as text, line breaks become <br>';
-    return `step ${b.si + 1} <code>${esc(b.fn)}.${esc(b.param)}</code>${esc(how)}`;
+    return `step ${b.si + 1} <code>${esc(b.fn)}.${esc(b.param)}</code>${b.inline ? ' (in its text)' : ''}${esc(how)}`;
   });
   const v = String(i.sample).trim() !== '' ? String(i.sample) : String(i.default);
   return `
@@ -2938,10 +3037,17 @@ function onMintClick(e) {
     case 'in-up': if (ij > 0) swap(d.options[oi].inputs, ij, ij - 1); break;
     case 'in-down': if (ij < d.options[oi].inputs.length - 1) swap(d.options[oi].inputs, ij, ij + 1); break;
     case 'in-del': if (ij >= 0) d.options[oi].inputs.splice(ij, 1); break;
-    case 'choice-add': if (inp && inp.choices.length < MAX_CHOICES) inp.choices.push(''); break;
+    case 'choice-add':
+      if (inp && inp.choices.length < MAX_CHOICES) {
+        while (inp.choice_labels.length < inp.choices.length) inp.choice_labels.push('');
+        inp.choices.push('');
+        inp.choice_labels.push('');
+      }
+      break;
     case 'choice-del':
       if (inp && ck >= 0) {
         const [gone] = inp.choices.splice(ck, 1);
+        inp.choice_labels.splice(ck, 1);
         if (String(gone).trim() !== '' && inp.default === String(gone).trim()) inp.default = '';
         if (String(gone).trim() !== '' && inp.sample === String(gone).trim()) inp.sample = '';
       }

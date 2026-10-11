@@ -53,7 +53,10 @@
  * CLICKER INPUTS (§12, slice S1i): an option that declares inputs renders on
  * the landing page as a link to its confirm page (like a confirm_text
  * option); the confirm page renders its fields above the confirm button —
- * labels and hints ESCAPED, enum as a <select>, the SU's own hint (decl.hint)
+ * labels and hints ESCAPED, enum as a <select> or, with display:'radio'
+ * (S3i), one radio button per choice in a <fieldset>; choice_labels are what
+ * the clicker reads, the choice itself is what is submitted. The SU's own
+ * hint (decl.hint)
  * and the required/maxlen line in .sub-label under the control. Form fields
  * are named in_<name> (flat keys, parser-agnostic); the JSON surface sends
  * `inputs: {name: value}`. A rejected submission re-renders the confirm page
@@ -139,7 +142,16 @@ const FIELD_CSS = `
   font-family:inherit;border:1px solid #c7d2fe;border-radius:6px;background:#fff;color:#111827}
 textarea.cta-input{min-height:96px;resize:vertical}
 .cta-field-error{margin:4px 0 0;font-size:13px;font-weight:600;color:#991b1b}
-.cta-field.has-error .cta-input{border-color:#991b1b}`;
+.cta-field.has-error .cta-input{border-color:#991b1b}
+fieldset.cta-field{border:0;padding:0;min-width:0}
+fieldset.cta-field legend{padding:0}
+.cta-choice{display:flex;align-items:flex-start;gap:10px;width:100%;max-width:420px;box-sizing:border-box;
+  margin:0 0 6px;padding:10px 12px;font-size:15px;line-height:1.4;color:#111827;background:#fff;
+  border:1px solid #c7d2fe;border-radius:6px;cursor:pointer;overflow-wrap:anywhere}
+.cta-choice input{flex:none;width:18px;height:18px;margin:1px 0 0;accent-color:#312e81}
+.cta-choice:has(input:checked){border-color:#312e81;background:#f5f3ff}
+.cta-choice:focus-within{outline:2px solid #4f46e5;outline-offset:1px}
+.cta-field.has-error .cta-choice{border-color:#991b1b}`;
 const TEXTAREA_OVER = 120;   // a text input longer than this renders as a <textarea>
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -387,13 +399,45 @@ function inputField(d, values, errors) {
   const aria = ` aria-describedby="${htmlEscape(describedBy)}"${err ? ' aria-invalid="true"' : ''}`;
   const common = `id="${htmlEscape(id)}" name="${htmlEscape(name)}" class="cta-input"${req}${aria}`;
 
+  // A length hint only where the clicker controls the length — a phone or
+  // date is checked on its normalized form, so "up to 16" would mislead.
+  const hint = [d.required ? 'Required' : 'Optional', TYPE_HINT[d.type]]
+    .concat(LENGTH_HINT_TYPES.has(d.type) ? [`up to ${d.maxlen} characters`] : [])
+    .filter(Boolean).join(' · ');
+  const under = `${help ? `
+          <div class="sub-label" id="${htmlEscape(id)}-help">${htmlEscape(help)}</div>` : ''}
+          <div class="sub-label" id="${htmlEscape(id)}-hint">${htmlEscape(hint)}</div>${err ? `
+          <div class="cta-field-error" role="alert">${htmlEscape(err)}</div>` : ''}`;
+
+  // What the clicker reads for a choice: its choice_labels entry (S3i), else
+  // the choice. The submitted value is always the choice itself.
+  const labels = Array.isArray(d.choice_labels) ? d.choice_labels : [];
+  const choiceText = (c, k) => (typeof labels[k] === 'string' && labels[k] !== '' ? labels[k] : c);
+
+  if (d.type === 'enum' && d.display === 'radio') {
+    // One radio per choice, grouped: the <legend> is the label (a <label for>
+    // can name only one control). `required` on a radio makes the GROUP
+    // required. An optional group gets an explicit "(none)" so a pick can be
+    // taken back — the dropdown's blank row. NOT when the input has a default:
+    // a blank answer is then filled with the default, so a row that says
+    // "(none)" would promise something the server doesn't do (S3i review).
+    const radio = (value, text, k) => `
+          <label class="cta-choice"><input type="radio" id="${htmlEscape(`${id}-${k}`)}" name="${htmlEscape(name)}" value="${htmlEscape(value)}"${req}${value === val ? ' checked' : ''}><span>${htmlEscape(text)}</span></label>`;
+    const rows = (d.choices || []).map((c, k) => radio(c, choiceText(c, k), k)).join('')
+      + (d.required || hasOwn(d, 'default') ? '' : radio('', '(none)', 'none'));
+    return `
+        <fieldset class="cta-field${err ? ' has-error' : ''}" id="${htmlEscape(id)}"${aria}>
+          <legend class="input-label">${htmlEscape(d.label)}</legend>${rows}${under}
+        </fieldset>`;
+  }
+
   let control;
   if (d.type === 'enum') {
     const blank = !d.required || !hasOwn(d, 'default') || val === ''
       ? `<option value=""${val === '' ? ' selected' : ''}>${d.required ? 'Choose…' : '(none)'}</option>`
       : '';
-    const opts = (d.choices || []).map((c) =>
-      `<option value="${htmlEscape(c)}"${c === val ? ' selected' : ''}>${htmlEscape(c)}</option>`).join('');
+    const opts = (d.choices || []).map((c, k) =>
+      `<option value="${htmlEscape(c)}"${c === val ? ' selected' : ''}>${htmlEscape(choiceText(c, k))}</option>`).join('');
     control = `<select ${common}>${blank}${opts}</select>`;
   } else if (d.type === 'html' || (d.type === 'text' && d.maxlen > TEXTAREA_OVER)) {
     control = `<textarea ${common} maxlength="${d.maxlen}" rows="4">${htmlEscape(val)}</textarea>`;
@@ -408,18 +452,10 @@ function inputField(d, values, errors) {
     control = `<input ${attrs} ${common} value="${htmlEscape(val)}">`;
   }
 
-  // A length hint only where the clicker controls the length — a phone or
-  // date is checked on its normalized form, so "up to 16" would mislead.
-  const hint = [d.required ? 'Required' : 'Optional', TYPE_HINT[d.type]]
-    .concat(LENGTH_HINT_TYPES.has(d.type) ? [`up to ${d.maxlen} characters`] : [])
-    .filter(Boolean).join(' · ');
   return `
         <div class="cta-field${err ? ' has-error' : ''}">
           <label class="input-label" for="${htmlEscape(id)}">${htmlEscape(d.label)}</label>
-          ${control}${help ? `
-          <div class="sub-label" id="${htmlEscape(id)}-help">${htmlEscape(help)}</div>` : ''}
-          <div class="sub-label" id="${htmlEscape(id)}-hint">${htmlEscape(hint)}</div>${err ? `
-          <div class="cta-field-error" role="alert">${htmlEscape(err)}</div>` : ''}
+          ${control}${under}
         </div>`;
 }
 

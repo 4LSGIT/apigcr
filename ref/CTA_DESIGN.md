@@ -4,8 +4,10 @@
 **approve with changes** (verified @ `9e7fabae`) · all amendments folded below.
 **Shipped:** S0–S4 live 2026-10-07 (WF27 **v8 published**; S4 independently
 reviewed, see §11). Open: watch gate (first organic spam hit end-to-end),
-S5 login tier (§7), **S2i** (pane support for §12 inputs; S1i backend
-shipped 2026-10-08). Manager UI: `public/ctaManager.html` (Admin → CTA Links,
+S5 login tier (§7). §12 inputs: S1i backend + S2i pane shipped 2026-10-08;
+**S3i** (2026-10-11: inline bindings — Ruling 5 revisited — and enum
+radio/choice labels, §12) is written, tested and independently reviewed
+(approve with changes, folded — §12 Slices), **pending deploy**. Manager UI: `public/ctaManager.html` (Admin → CTA Links,
 frontend-only slice over §5.3 — list/detail/PATCH/mint+dry_run), plus the
 send slice 2026-10-08 (`POST /api/cta/:id/send` + the pane's Send… dialog).
 **This file (`ref/CTA_DESIGN.md`) is canonical**; the project doc
@@ -151,8 +153,9 @@ against `services/logService.js` at build time.
 ## 4. Plans
 
 Per **option**: `plan: [{fn, params}]`, 1–20 steps. Params are **frozen
-literals at mint** — except declared clicker inputs (§12) — and no `{{...}}`
-resolution at click time. `create_cta` mints get the engine's normal
+literals at mint** — except declared clicker inputs (§12: a `[[input:name]]`
+marker, whole-value or inline, stays in the stored params and is substituted
+at click) — and no `{{...}}` resolution at click time. `create_cta` mints get the engine's normal
 `{{...}}` pass before the function runs, so dynamic content freezes into the
 row; `create_cta` strips engine-injected `_`-prefixed params before
 persisting.
@@ -527,7 +530,7 @@ blast radius is external (carrier/domain reputation, TCPA).
 ### Declarations (no migration — lives in `options` JSON; update its COMMENT)
 
 Per option: `inputs: [{name, label, hint?, type, required, default?, maxlen,
-pattern?, choices?}]`.
+pattern?, choices?, choice_labels?, display?}]`.
 - `name` matches the result_var rule (`^[a-zA-Z_][a-zA-Z0-9_]{0,63}$`),
   unique per option. `label` ≤100 chars. `hint` (added with S2i,
   2026-10-08) is optional SU help text, trimmed, ≤200 chars, blank not
@@ -537,6 +540,16 @@ pattern?, choices?}]`.
   canonical one, don't write a new one). `enum` requires `choices` (≤20,
   option-value charset). `html` is clicker-authored raw markup and trips the
   `raw_html_input` acknowledgment (below).
+- **Enum presentation (S3i, 2026-10-11) — page-only; the value pipeline
+  never reads either key, and neither is allowed on another type:**
+  `display` ∈ `select | radio` (default `select`, **never stored** — a
+  pre-S3i row and a new dropdown are the same shape; `radio` draws one radio
+  button per choice). `choice_labels` is what the clicker reads for each
+  choice: an array parallel to `choices` (same length, each 1–100 chars of
+  plain text, whitespace collapsed, escaped at render) — value `A`, label
+  "A — Counsel". What is submitted, validated, stored in
+  `cta_executions.inputs` and substituted is always the **choice**, never
+  its label (a submitted label is `Choose one of the listed options.`).
 - `maxlen` mandatory; server cap 1000. `pattern` optional: ≤100 chars, runs
   after type check + length cap. **As built (supersedes Ruling 4's lint):**
   patterns execute on V8's linear-time regex engine
@@ -551,11 +564,77 @@ pattern?, choices?}]`.
 
 ### Binding
 
-`[[input:name]]` stands for a **whole param value only** — no splicing
-inside strings (Ruling 5; revisit in a later version). Mint rejects:
-a binding to an undeclared input; a declared input never bound; a binding
-into a param not opened by `ctaInputParams` (below). The existing rules
-stand unchanged: no `{{...}}`, no `_`-prefixed keys.
+`[[input:name]]` binds a declared input into an opened param (below), two
+ways:
+
+- **Whole value** (S1i): the param's entire top-level value is the marker.
+  A blank optional input with no default leaves the param **absent**.
+- **Inline** (S3i, 2026-10-11 — Ruling 5's "revisit in a later version",
+  Fred: "I don't see why we can't allow multiple params into one email
+  body"): the marker inside the text of a **`kind:'content'`** param, any
+  number of times, several inputs per param —
+  `"<p>Pick: [[input:pick]]</p><p>Phone: [[input:phone]]</p>"`. A blank
+  optional input with no default renders `''`.
+
+Inline rules (each locked in `tests/ctaInputs.test.js`, mutation-checked):
+
+- **SU mints only (independent review B1).** `create_cta` refuses an inline
+  binding (mint 400), and `linkRefusal` refuses a non-`su` row that carries
+  one anyway (`workflow_inline`). The text around an inline marker must be
+  the minting SU's own. A workflow mint's params have been through the
+  engine's `{{...}}` pass, so that text can be a third party's: a lead who
+  types `hello [[input:note]] bye` into a website form would have turned an
+  email that quotes `{{lead_message}}` into one that carries the clicker's
+  `note` — to the lead. Pre-S3i that mint failed closed ("no splicing");
+  it still does.
+- **Never a recipient.** Inline into a `kind:'recipient'` param is a mint
+  400 and, for a param that turns recipient after mint, a link refusal
+  (`recipient_type`). Text around an address is not ONE address; the
+  one-recipient-per-use guarantee behind the hard rule needs the whole
+  value. So an inline-only link is never open-recipient: no risk code, no
+  forced `max_uses`.
+- **Per-occurrence escape — for a TEXT position.** Each marker is
+  substituted by the same `substituteValue` a whole-value binding gets: a
+  non-`html` input into an `html:true` param is escaped + nl2br; the SU's
+  literal markup around it stays markup. A `type:'html'` input passes raw
+  inline too (already behind `raw_html_input`). The escape is
+  **context-blind**: it is right between tags and inside a quoted,
+  non-URL attribute, and nowhere else — `<img src=[[input:a]]>` (unquoted)
+  lets an answer add attributes, `<a href="[[input:u]]">` takes a
+  `javascript:` URL, and a marker inside `<style>`/`<script>` is that
+  language's to parse. The mint does not police where the SU puts a marker
+  (the SU authors the whole template and could write any of that directly);
+  the manual and the pane say "between tags". A mint-time refusal of
+  in-tag markers is a candidate rule if this ever bites.
+- **One pass, function replacement** (`applyBindings`): a substituted value
+  is never re-scanned — a clicker who types `[[input:other]]` gets those
+  characters, not another input's value — and `$&`/`$1` in a value are
+  inert.
+- **Malformed is refused, not guessed.** On an option that declares inputs,
+  a top-level string that carries `[[input:` without a well-formed marker —
+  or still shows the mark once its well-formed markers are removed
+  (`[[inp[[input:a]]ut:b]]`) — is a mint 400. So is a marker nested inside
+  an array/object. Input-less options are untouched: a marker there is just
+  text (S1i review N1, WF27 step 47).
+- Everything a whole-value binding is subject to sees an inline one too
+  (`listBindings`): `linkRefusal` (a param closed since mint), the PATCH cap
+  guard, the expiry sweep (defaults substituted), both validator passes.
+
+**Known landmine, pre-S3i and unchanged (review B1's narrower variant):** on
+a workflow mint, a param whose RESOLVED value is exactly `[[input:x]]` (x
+declared on that option, the param opened) binds — the service cannot tell a
+resolved marker from an authored one. Any template that resolves to exactly
+that does it: `{{lead_message}}` alone, `{{empty}}{{lead_message}}`,
+`[[input:{{field}}]]`. It takes a lead typing the marker into a field a
+workflow quotes into an opened param of an input-declaring option; no
+workflow does that today (WF27's option is input-less). The fix belongs in
+`create_cta` (mark authored bindings before the `{{...}}` pass), filed in
+`ref/plans.md` territory — do not paper over it in the service.
+
+Mint rejects: a binding to an undeclared input; a declared input never
+bound (inline counts); a binding into a param not opened by
+`ctaInputParams` (below). The existing rules stand unchanged: no `{{...}}`,
+no `_`-prefixed keys.
 
 ### Opened params — `__meta.ctaInputParams` (Ruling 6c, kept)
 
@@ -580,7 +659,10 @@ Only a declared `type: 'html'` input passes raw — behind the acknowledgment.
 ### Validation — twice, server-side
 
 - **Mint:** `__validateFunctionParams` runs per step with defaults (or
-  type-appropriate samples) substituted; dry_run included.
+  type-appropriate samples) substituted; dry_run included. Then again with
+  every optional default-less input left blank (whole-value: param absent;
+  inline: `''`) — a function that requires that param fails the mint, not
+  every blank submission.
 - **Click:** each input is validated (type → normalize → maxlen → pattern),
   substituted, then `__validateFunctionParams` runs again before step 1.
   Per-field errors, generic — never plan internals. Client-side checks are
@@ -614,12 +696,17 @@ Only a declared `type: 'html'` input passes raw — behind the acknowledgment.
 ### Surfaces
 
 - HTML pages: fields render above the option buttons (labels escaped,
-  type-appropriate controls, enum as select, the SU's `hint` then the
-  required/maxlen line under each control, both in `aria-describedby`); the
-  confirm page echoes entered values escaped.
+  type-appropriate controls, enum as a select — or, with `display:'radio'`,
+  a `<fieldset>` of radio buttons with the label as its `<legend>`; an
+  optional radio group with no default gets a "(none)" row, the dropdown's
+  blank — the SU's
+  `hint` then the required/maxlen line under each control, both in
+  `aria-describedby`); the confirm page echoes entered values escaped (a
+  rejected POST keeps the picked radio).
 - JSON: the descriptor exposes **declarations** (name, label, hint, type,
-  required, choices, maxlen, default) per option so agents can fill them —
-  never plans; respond accepts `inputs: {...}`.
+  required, choices, choice_labels, display, maxlen, default) per option so
+  agents can fill them — never plans, never bindings; respond accepts
+  `inputs: {...}` (an enum by its **choice**).
 - `result_template` may reference `[[input:x]]` (escaped, as all template
   output).
 
@@ -639,3 +726,24 @@ values post-normalization — same SU-only exposure and redaction posture as
 - **S2i — pane:** input builder in the mint form, ack checkboxes, dry_run
   sample values, detail view shows submitted inputs; mobile survey;
   manual/08-Admin-Tools/07-cta-links.md update.
+- **S3i — inline bindings + enum presentation (2026-10-11).** One slice,
+  backend + `/c/` page + pane: `ctaService` (`parseBinding`,
+  `applyBindings` — the single substitution shared by both mint validator
+  passes and the click; `listBindings`/`bindingProblem` inline-aware;
+  `choice_labels`/`display` in `validateInputDecls` + `publicInputs`),
+  `routes/ctaActions.js` (radio fieldset, labels in select and radio),
+  `public/ctaManager.html` (`valueBindings` mirrors `parseBinding`; a label
+  box per choice + **Show as**; the Bind-to picker won't overwrite a param
+  that already uses the input in its text). No schema change (COMMENT-only
+  migration `ref/migrations/2026-10-11_cta_inline_bindings_comment.sql`).
+  No new opened param — `EXPECTED_OPENED` is unchanged. Same gate as S1i:
+  **independent review before deploy** — done 2026-10-11, approve with
+  changes, all folded: **B1** inline is SU-mint-only (above); the optional
+  radio group drops "(none)" when the input has a default (blank is filled
+  with the default, so the row lied); the pane's Bind-to picker no longer
+  replaces a param whose text carries any input; the `inline` flag of
+  `bindingProblem`, the sweep's inline-into-recipient refusal and the pane's
+  label escaping got the tests they lacked; the escape's context-blindness
+  is documented rather than policed. First use: the litigation-site
+  homepage pick sent to SS (radio A–D + optional one-liners → one email to
+  IT).

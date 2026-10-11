@@ -495,6 +495,7 @@ ref/migrations/2026-10-08_mailbox_s1.sql
 ref/migrations/2026-10-09_mail_image_senders.sql
 ref/migrations/2026-10-09_mailbox_s1g.sql
 ref/migrations/2026-10-09_mailbox_s2.sql
+ref/migrations/2026-10-11_cta_inline_bindings_comment.sql
 ref/migrations/2026-10-11_mailbox_s1g_allmail.sql
 ref/migrations/2026-10-11_mailbox_s2l_labels.sql
 ref/migrations/S1_notes_migration.sql

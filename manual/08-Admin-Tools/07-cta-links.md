@@ -79,9 +79,15 @@ set it up in the builder; the server checks every value again on every click.
   under the field on the confirm page — what to enter, the format, an
   example.
 - **Types:** Text · Phone number (normalized to +1…) · Email address (one
-  address, lowercased) · Number · Choice from a list (you list the choices;
-  each is also the value passed on) · Date · HTML (raw markup — see the
-  acknowledgments below).
+  address, lowercased) · Number · Choice from a list · Date · HTML (raw
+  markup — see the acknowledgments below).
+- **Choice from a list:** each choice row has two boxes — the **value**
+  passed into the plan (letters, digits, `_`, `-`) and an optional **label**
+  the clicker reads for it (value `A`, label "A — Counsel"; blank shows the
+  value). **Show as** picks a dropdown or **radio buttons** (every choice
+  visible at once — good for a handful; an optional radio group with no
+  default gets a "(none)" row). Emails, logs and the submitted-inputs view
+  always carry the value, not the label.
 - **Max length** (text, email, number, HTML — phone, date and choice
   lengths are fixed by the pane), an optional **Default** (pre-filled on the
   page, used when left blank) and an optional **Pattern**: a regular
@@ -100,11 +106,27 @@ set it up in the builder; the server checks every value again on every click.
   takes a matching Phone number or Email address input. Every input has to
   be bound — the line under **Bind to** says where it goes, or that it
   isn't bound yet.
+- **Several inputs in one message:** in a *content* param (a body, a
+  subject, a log message — not a recipient) you can also type the marker
+  **inside the text**, as many as you like:
+  `"html": "<p>Pick: [[input:pick]]</p><p>Phone: [[input:phone]]</p>"`.
+  Each answer is dropped in where its marker sits; one left blank (optional,
+  no default) leaves nothing there. The bind line reads "(in its text)", and
+  the **Bind to** picker won't offer a param whose text already has inputs
+  in it — picking it would replace your text. A recipient always takes its
+  input as the whole value. Links minted by a workflow (`create_cta`) can't
+  use markers inside text at all: a workflow's text may quote a lead's own
+  words, and a marker in it must never bind.
 - A **result template** can echo an input with `[[input:name]]`.
 
 **Escaping.** Text a clicker types into an email body (`send_email.html`) is
-escaped, line breaks kept — they write a message, not markup. Only an
-HTML-type input passes through raw.
+escaped, line breaks kept — they write a message, not markup. That holds
+for each marker inside your text too, **as long as the marker sits between
+tags**: your HTML around it stays HTML and their answer is shown as text.
+Don't put a marker inside a tag — in an `href`, a `src`, an unquoted
+attribute, a `<style>` block. The escaping makes an answer safe to *read*,
+not safe as a link or an attribute (`href="[[input:url]]"` would accept a
+`javascript:` address). Only an HTML-type input passes through raw.
 
 **Protection.** Inputs make the default **password**. Choosing *none* is
 allowed — the builder notes that the choice is your acceptance.

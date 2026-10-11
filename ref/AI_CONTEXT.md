@@ -147,11 +147,19 @@ body. Governing migrations in `ref/migrations/`.*
     hashes live there in the clear (v1 posture; hashing filed to the
     access-control arc).
   - **Clicker inputs are live (10-08, §12):** options may declare typed,
-    length-capped inputs bound whole-param via `[[input:name]]` into params
-    a function opens with `__meta.ctaInputParams` (snapshot:
+    length-capped inputs bound via `[[input:name]]` into params a function
+    opens with `__meta.ctaInputParams` (snapshot:
     `tests/ctaInputs.test.js` — opening a param is the same reviewed
-    decision as function eligibility). Non-html inputs bound into
-    `html:true` params are escaped at substitution. **Landmine:** input
+    decision as function eligibility) — as the param's whole value, or
+    (S3i, 10-11) inline inside a `kind:'content'` param's text, never a
+    recipient, and **only on SU mints** — `create_cta` text has been
+    through `{{...}}` and may be a lead's words, so a marker in it stays a
+    mint error. `ctaService.applyBindings` is the ONE substitution (mint
+    samples and click alike): per-occurrence, one pass, function
+    replacement — keep it that way. Non-html inputs bound into
+    `html:true` params are escaped at substitution. Enums may carry
+    page-only `display:'radio'` + `choice_labels`; the value is always the
+    choice. **Landmine:** input
     `pattern`s run on V8's linear-time regex engine — the Dockerfile `CMD`'s
     `--enable-experimental-regexp-engine` is load-bearing; if the boot log
     says UNAVAILABLE, pattern-bearing mints refuse.

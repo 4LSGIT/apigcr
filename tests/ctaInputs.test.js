@@ -12,8 +12,15 @@
  *   - Declarations: name/label/type/required/maxlen/choices/pattern/default
  *     rules, the pattern lint (nested quantifiers, backreferences, wide
  *     quantifier count), defaults normalized through the value pipeline.
- *   - The BINDING MATRIX: undeclared / unused / unopened / spliced / nested /
+ *   - The BINDING MATRIX: undeclared / unused / unopened / nested / malformed /
  *     no-meta function / input-less option / result_template [[input:x]].
+ *   - INLINE BINDINGS (S3i): the marker inside a content param's text — each
+ *     occurrence escaped on its own, one pass (a value is never re-scanned,
+ *     "$&" is inert), blank optional → '', never into a recipient, and every
+ *     guard a whole-value binding has (linkRefusal, the PATCH cap guard, the
+ *     sweep) sees an inline one too.
+ *   - ENUM PRESENTATION (S3i): display 'select'|'radio' and choice_labels are
+ *     page-only — validated at mint, in the descriptor, never in the pipeline.
  *   - BOTH validator passes: mint (defaults-or-samples AND the blank-optional
  *     variant) and click (re-validation of the substituted step).
  *   - ESCAPE-ON-SUBSTITUTE: non-html input → html:true param is escaped +
@@ -278,6 +285,38 @@ describe('input declarations (mint)', () => {
     await expect(cta.mintCta(db, withInput({ ...e, choices: ['yes', 'no'] }))).resolves.toBeTruthy();
   });
 
+  test('enum presentation (S3i): display select|radio, choice_labels parallel to choices; enum only', async () => {
+    const e = { name: 'pick', label: 'Pick', type: 'enum', required: true, maxlen: 10, choices: ['A', 'B'] };
+    const stored = async (decl) => JSON.parse(W.link((await cta.mintCta(db, withInput(decl))).id).options)[0].inputs[0];
+
+    // radio is stored; the default 'select' never is (an old row and a new dropdown are the same shape)
+    expect(await stored({ ...e, display: 'radio' })).toEqual({ ...e, display: 'radio' });
+    expect(await stored({ ...e, display: 'select' })).toEqual(e);
+    expect(await stored({ ...e, display: null })).toEqual(e);
+    await expect400(cta.mintCta(db, withInput({ ...e, display: 'checkbox' })), /inputs\[0\]\.display must be one of select, radio/);
+    await expect400(cta.mintCta(db, withInput({ ...e, display: true })), /display must be one of/);
+
+    // labels: one per choice, plain text 1–100, whitespace collapsed — markup is kept as TEXT (escaped at render)
+    expect(await stored({ ...e, choice_labels: ['  A —  Counsel ', '<b>B</b>'] }))
+      .toEqual({ ...e, choice_labels: ['A — Counsel', '<b>B</b>'] });
+    await expect400(cta.mintCta(db, withInput({ ...e, choice_labels: ['only one'] })), /choice_labels must be an array with one label per choice \(2\)/);
+    await expect400(cta.mintCta(db, withInput({ ...e, choice_labels: 'A,B' })), /choice_labels must be an array/);
+    await expect400(cta.mintCta(db, withInput({ ...e, choice_labels: ['ok', ' '] })), /choice_labels\[1\] must be 1–100 chars of plain text/);
+    await expect400(cta.mintCta(db, withInput({ ...e, choice_labels: ['ok', 7] })), /choice_labels\[1\] must be/);
+    await expect400(cta.mintCta(db, withInput({ ...e, choice_labels: ['ok', 'x'.repeat(101)] })), /choice_labels\[1\] must be/);
+    await expect400(cta.mintCta(db, withInput({ ...e, choice_labels: ['ok', 'bell\u0007'] })), /choice_labels\[1\] must be/);
+    await expect(cta.mintCta(db, withInput({ ...e, choice_labels: ['ok', 'x'.repeat(100)] }))).resolves.toBeTruthy();
+
+    // neither key on any other type
+    await expect400(cta.mintCta(db, withInput({ ...IN.note, display: 'radio' })), /inputs\[0\]\.display applies to type enum only/);
+    await expect400(cta.mintCta(db, withInput({ ...IN.note, choice_labels: ['a'] })), /choice_labels applies to type enum only/);
+
+    // page-only: the pipeline takes the CHOICE, never its label
+    const d = { ...e, display: 'radio', choice_labels: ['A — Counsel', 'B — Detroit'] };
+    expect(cta.validateInputValue(d, 'B')).toEqual({ value: 'B' });
+    expect(cta.validateInputValue(d, 'B — Detroit')).toEqual({ error: 'Choose one of the listed options.' });
+  });
+
   test('pattern: ≤100 chars, compiles alone, and must compile on the LINEAR-TIME engine (S1i review R1)', async () => {
     const p = (pattern) => withInput({ ...IN.note, pattern });
     await expect400(cta.mintCta(db, p('x'.repeat(101))), /1–100 character string/);
@@ -319,7 +358,7 @@ describe('input declarations (mint)', () => {
 // The binding matrix
 // ═════════════════════════════════════════════════════════════════════════════
 
-describe('binding matrix — [[input:name]] (Ruling 5)', () => {
+describe('binding matrix — [[input:name]]', () => {
   test('a whole top-level value of an opened param binds; stored frozen as the token', async () => {
     const r = await cta.mintCta(db, mint({ options: [opt({ inputs: [IN.to, IN.msg], plan: [SMS()] })] }));
     expect(JSON.parse(W.link(r.id).options)[0].plan[0].params).toEqual({ from: '2485559999', to: '[[input:to]]', message: '[[input:msg]]' });
@@ -357,16 +396,18 @@ describe('binding matrix — [[input:name]] (Ruling 5)', () => {
     await expect(cta.mintCta(db, mint({ options: [opt({ inputs: [IN.email], plan: [EMAIL({ to: '[[input:email]]', html: 'x' })] })] }))).resolves.toBeTruthy();
   });
 
-  test('splicing inside a string and nesting below the top level → 400', async () => {
-    await expect400(cta.mintCta(db, mint({ options: [opt({ plan: [LOG('Note: [[input:note]]')] })] })),
-      /params\.message: \[\[input:…\]\] must be a param's whole top-level value — no splicing/);
-    await expect400(cta.mintCta(db, mint({ options: [opt({ plan: [LOG('[[input:note]] ')] })] })), /no splicing/);
+  test('nesting below the top level and a malformed marker → 400 (inline into a content param is the S3i block below)', async () => {
     await expect400(cta.mintCta(db, mint({ options: [opt({ plan: [
       LOG('[[input:note]]'),
       { fn: 'start_workflow', params: { workflow_id: '27', init_data: { lead: { email: '[[input:note]]' } } } },
-    ] })] })), /plan\[1\]\.params\.init_data\.lead\.email: \[\[input:…\]\] must be/);
+    ] })] })), /plan\[1\]\.params\.init_data\.lead\.email: \[\[input:…\]\] is not a binding here/);
     await expect400(cta.mintCta(db, mint({ options: [opt({ plan: [LOG('[[input:note]]'), { fn: 'create_log', params: { type: 'note', data: ['[[input:note]]'] } }] })] })),
-      /params\.data\[0\]: \[\[input:…\]\] must be/);
+      /params\.data\[0\]: \[\[input:…\]\] is not a binding here .* nested inside an array or object/);
+    // malformed: the mark with no valid name / no closing brackets — alone, or next to a real marker
+    for (const bad of ['Note: [[input:', 'Note: [[input:9x]]', 'Note: [[input:a b]] x', '[[input:note]] and [[input:', '[[inp[[input:note]]ut:note]]']) {
+      await expect400(cta.mintCta(db, mint({ options: [opt({ plan: [LOG('[[input:note]]'), LOG(bad)] })] })),
+        /plan\[1\]\.params\.message: \[\[input:…\]\] is not a binding here/);
+    }
   });
 
   test('result_template [[input:x]] must name an input of THIS option', async () => {
@@ -380,6 +421,317 @@ describe('binding matrix — [[input:name]] (Ruling 5)', () => {
   test('one input may feed several params', async () => {
     const r = await cta.mintCta(db, mint({ options: [opt({ plan: [LOG(), { fn: 'create_task', params: { title: 'Follow up', assigned_to: 22, description: '[[input:note]]' } }] })] }));
     expect(r.options[0].inputs).toEqual(['note']);
+  });
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Inline bindings (S3i) — the marker inside a content param's text
+// ═════════════════════════════════════════════════════════════════════════════
+
+describe('inline bindings — [[input:name]] inside a content param (S3i)', () => {
+  const A = { name: 'a', label: 'A', type: 'text', required: true, maxlen: 200 };
+  const B = { name: 'b', label: 'B', type: 'text', required: false, maxlen: 200 };
+  const PICK = { name: 'pick', label: 'Pick', type: 'enum', required: true, maxlen: 4, choices: ['A', 'B', 'C', 'D'] };
+
+  test('parseBinding: whole / inline (unique, first-seen) / stray / none', () => {
+    expect(cta.parseBinding('plain')).toBeNull();
+    expect(cta.parseBinding(42)).toBeNull();
+    expect(cta.parseBinding({ k: 'v' })).toBeNull();
+    expect(cta.parseBinding('[[input:a]]')).toEqual({ whole: 'a' });
+    expect(cta.parseBinding('[[input:not a name]]')).toEqual({ whole: 'not a name' });   // the caller's "no such input"
+    expect(cta.parseBinding('x [[input:a]] y')).toEqual({ inline: ['a'] });
+    expect(cta.parseBinding('[[input:a]] ')).toEqual({ inline: ['a'] });
+    expect(cta.parseBinding('[[input:b]][[input:a]] [[input:b]]')).toEqual({ inline: ['b', 'a'] });
+    for (const stray of ['x [[input:', '[[input:9x]] y', 'x [[input:a b]]', '[[input:a]] [[input:', '[[inp[[input:a]]ut:b]]']) {
+      expect(cta.parseBinding(stray)).toEqual({ stray: true });
+    }
+    expect(cta.parseBinding(['[[input:a]]'])).toEqual({ stray: true });
+    expect(cta.parseBinding({ deep: { er: 'x [[input:a]]' } })).toEqual({ stray: true });
+  });
+
+  test('several inputs land in ONE email: each occurrence escaped on its own in html, raw in the subject; stored frozen', async () => {
+    const html = '<p><b>Pick:</b> [[input:pick]]</p><p>A: [[input:a]]</p><p>B: [[input:b]] / again [[input:a]]</p>';
+    const { m, r } = await mintAndRespond(
+      { options: [opt({ inputs: [PICK, A, B], plan: [EMAIL({ subject: 'Picked [[input:pick]] — [[input:a]]', html })] })] },
+      { pick: 'C', a: '<i>main</i> & "line"\r\ntwo', b: 'yes' },
+    );
+    expect(r).toMatchObject({ ok: true, status: 'success' });
+    // the row keeps the markers — nothing is resolved at mint
+    expect(JSON.parse(W.link(m.id).options)[0].plan[0].params).toMatchObject({ subject: 'Picked [[input:pick]] — [[input:a]]', html });
+    expect(emailService.sendEmail).toHaveBeenCalledTimes(1);
+    const mail = emailService.sendEmail.mock.calls[0][1];
+    const a = '&lt;i&gt;main&lt;/i&gt; &amp; &quot;line&quot;<br>two';
+    expect(mail.html).toBe(`<p><b>Pick:</b> C</p><p>A: ${a}</p><p>B: yes / again ${a}</p>`);
+    expect(mail.subject).toBe('Picked C — <i>main</i> & "line"\ntwo');   // html:false — as typed
+    expect(mail.to).toBe('client@example.com');                          // the literal recipient, untouched
+  });
+
+  test('ONE PASS: a value that looks like a marker, or carries $-patterns, is text — never another input, never re-scanned', async () => {
+    const { r } = await mintAndRespond(
+      { options: [opt({ inputs: [A, B], plan: [LOG('a=[[input:a]] b=[[input:b]]')] })] },
+      { a: '[[input:b]] $& $1 $$ $`', b: 'SECRET-B' },
+    );
+    expect(r.ok).toBe(true);
+    expect(decodeLog(W.logs[0]).message).toBe('a=[[input:b]] $& $1 $$ $` b=SECRET-B');
+    // and into an html param the look-alike is escaped like any other text
+    emailService.sendEmail.mockClear();
+    const e = await mintAndRespond(
+      { options: [opt({ inputs: [A, B], plan: [EMAIL({ html: '<p>[[input:a]]</p><p>[[input:b]]</p>' })] })] },
+      { a: '[[input:b]]<script>', b: 'bee' },
+    );
+    expect(e.r.ok).toBe(true);
+    expect(emailService.sendEmail.mock.calls[0][1].html).toBe('<p>[[input:b]]&lt;script&gt;</p><p>bee</p>');
+  });
+
+  test('a blank optional input is \'\' inline — while a whole-value binding of the same input still leaves its param ABSENT', async () => {
+    const html = '<p>A: [[input:a]]</p><p>B: [[input:b]]</p>';
+    const { r } = await mintAndRespond({ options: [opt({ inputs: [A, B], plan: [EMAIL({ html })] })] }, { a: 'only a' });
+    expect(r).toMatchObject({ ok: true, status: 'success' });
+    expect(emailService.sendEmail.mock.calls[0][1].html).toBe('<p>A: only a</p><p>B: </p>');
+
+    // the same blank input, bound both ways in one plan (prepareRun is the click's own substitution)
+    const m = await cta.mintCta(db, mint({ options: [opt({ inputs: [A, B], plan: [
+      EMAIL({ html }),
+      { fn: 'create_task', params: { title: 'T', assigned_to: 22, description: '[[input:b]]' } },
+    ] })] }));
+    const stored = JSON.parse(W.link(m.id).options)[0];
+    const prep = cta.prepareRun(stored, { a: 'only a', b: '  ' });
+    expect(prep.ok).toBe(true);
+    expect(prep.plan[0].params.html).toBe('<p>A: only a</p><p>B: </p>');
+    expect(prep.plan[1].params).toEqual({ title: 'T', assigned_to: 22 });   // description absent, as S1i
+    expect({ ...prep.values }).toEqual({ a: 'only a' });
+    // prepareRun never mutates the stored plan (a repeatable link runs it again)
+    expect(stored.plan[0].params.html).toBe(html);
+    expect(stored.plan[1].params.description).toBe('[[input:b]]');
+  });
+
+  test('a default fills an inline marker left blank; whitespace-only counts as blank', async () => {
+    const { r } = await mintAndRespond(
+      { options: [opt({ inputs: [A, { ...B, default: 'n/a' }], plan: [LOG('a=[[input:a]] b=[[input:b]]')] })] },
+      { a: 'x', b: '   ' },
+    );
+    expect(r.ok).toBe(true);
+    expect(decodeLog(W.logs[0]).message).toBe('a=x b=n/a');
+  });
+
+  test('a declared html input passes RAW inline too — and still needs its acknowledgment', async () => {
+    const body = { options: [opt({ inputs: [A, IN.body], plan: [EMAIL({ html: '<div>[[input:a]]</div>[[input:body]]' })] })] };
+    await expect400(cta.mintCta(db, mint(body)), /raw_html_input/, 'risk_acceptance_required');
+    const { r } = await mintAndRespond({ ...body, accept_risks: ['raw_html_input'] }, { a: '<b>x</b>', body: '<p>Hi <a href="https://x.test">there</a></p>' });
+    expect(r.ok).toBe(true);
+    expect(emailService.sendEmail.mock.calls[0][1].html).toBe('<div>&lt;b&gt;x&lt;/b&gt;</div><p>Hi <a href="https://x.test">there</a></p>');
+  });
+
+  test('NEVER into a recipient: inline in send_email.to / send_sms.to is a mint 400 (dry_run too); whole-value still binds', async () => {
+    const em = { ...IN.email, name: 'e' };
+    const body = (to) => mint({ max_uses: 2, mode: 'repeatable', accept_risks: ['open_recipient_repeatable'],
+      options: [opt({ inputs: [em], plan: [EMAIL({ to, html: 'x' })] })] });
+    for (const to of ['[[input:e]], boss@example.com', 'Fred <[[input:e]]>', '[[input:e]] ', '[[input:e]][[input:e]]']) {
+      await expect400(cta.mintCta(db, body(to)),
+        /plan\[0\]\.params\.to: send_email\.to is a recipient — it takes \[\[input:e\]\] as its WHOLE value, never inside other text/);
+      await expect400(cta.mintCta(db, { ...body(to), dry_run: true }), /as its WHOLE value/);
+    }
+    await expect400(cta.mintCta(db, mint({ max_uses: 2, mode: 'repeatable', accept_risks: ['open_recipient_repeatable'],
+      options: [opt({ inputs: [IN.to], plan: [SMS('+1[[input:to]]', 'hi')] })] })), /send_sms\.to is a recipient — it takes \[\[input:to\]\] as its WHOLE value/);
+    await expect(cta.mintCta(db, body('[[input:e]]'))).resolves.toBeTruthy();
+    expect(emailService.sendEmail).not.toHaveBeenCalled();
+  });
+
+  test('inline obeys the rest of the matrix: undeclared name, unopened param, and it COUNTS as bound', async () => {
+    await expect400(cta.mintCta(db, mint({ options: [opt({ plan: [LOG('Note: [[input:note]] / [[input:nope]]')] })] })),
+      /params\.message: \[\[input:nope\]\] — no input "nope" is declared/);
+    await expect400(cta.mintCta(db, mint({ options: [opt({ plan: [LOG(), { fn: 'send_sms', params: { from: 'x[[input:note]]', to: '2485550100', message: 'x' } }] })] })),
+      /send_sms\.from is not open to clicker inputs \(send_sms opens: to, message\)/);
+    await expect400(cta.mintCta(db, mint({ options: [opt({ plan: [LOG(), { fn: 'create_log', params: { type: 'note', message: 'x', subject: 'Re [[input:note]]' } }] })] })),
+      /create_log\.subject is not open to clicker inputs/);
+    // an input used ONLY inline is bound (no "declared but never bound")
+    const r = await cta.mintCta(db, mint({ options: [opt({ inputs: [IN.note, IN.msg], plan: [LOG('[[input:note]] — [[input:msg]]')] })] }));
+    expect(r.options[0].inputs).toEqual(['note', 'msg']);
+    // …and one that appears nowhere still is not
+    await expect400(cta.mintCta(db, mint({ options: [opt({ inputs: [IN.note, IN.msg], plan: [LOG('only [[input:note]]')] })] })),
+      /inputs: "msg" is declared but never bound/);
+  });
+
+  test('an input-less option: an inline marker is just text (never substituted), exactly as before', async () => {
+    const m = await cta.mintCta(db, mint({ options: [{ value: 'go', label: 'Go', plan: [LOG('literal [[input:note]] stays')] }] }));
+    const r = await cta.respond(db, { token: m.token, value: 'go' });
+    expect(r.ok).toBe(true);
+    expect(decodeLog(W.logs[0]).message).toBe('literal [[input:note]] stays');
+  });
+
+  test('mint validator: samples go through the inline substitution; an all-optional inline param a function REQUIRES fails the mint', () => withTempFn(
+    'cta_test_int_inline', async (p) => ({ success: true, output: { n: p.n } }),
+    { category: 'dev', description: 'integer sink', params: [{ name: 'n', type: 'integer', required: true }], ctaInputParams: { n: { kind: 'content' } } },
+    async () => {
+      const m = (decl, n) => mint({ options: [{ value: 'go', label: 'Go', inputs: [decl], plan: [{ fn: 'cta_test_int_inline', params: { n } }] }] });
+      const num = { name: 'v', label: 'V', type: 'number', required: true, maxlen: 5 };
+      // "1[[input:v]]" with the number sample "1" → "11": an integer. With text around it: not.
+      await expect(cta.mintCta(db, m(num, '1[[input:v]]'))).resolves.toBeTruthy();
+      await expect400(cta.mintCta(db, m(num, 'n=[[input:v]]')), /plan\[0\] \(cta_test_int_inline\) with default\/sample inputs: n: must be an integer/);
+      // optional + no default: blank leaves "" — a required param then fails EVERY blank submission, so the mint refuses
+      await expect400(cta.mintCta(db, m({ ...num, required: false }, '[[input:v]][[input:v]]')),
+        /with optional input "v" left blank: n is required — make the input required or give it a default/);
+      await expect(cta.mintCta(db, m({ ...num, required: false, default: '7' }, '[[input:v]][[input:v]]'))).resolves.toBeTruthy();
+    },
+  ));
+
+  test('click-time re-validation covers an inline step too: a value the function rejects claims nothing', () => withTempFn(
+    'cta_test_int_inline2', async (p) => ({ success: true, output: { n: p.n } }),
+    { category: 'dev', description: 'integer sink', params: [{ name: 'n', type: 'integer', required: true }], ctaInputParams: { n: { kind: 'content' } } },
+    async () => {
+      const txt = { name: 'v', label: 'V', type: 'text', required: true, maxlen: 5, default: '5' };
+      const m = await cta.mintCta(db, mint({ options: [{ value: 'go', label: 'Go', inputs: [txt], plan: [{ fn: 'cta_test_int_inline2', params: { n: '1[[input:v]]' } }] }] }));
+      const bad = await cta.respond(db, { token: m.token, value: 'go', inputs: { v: 'abc' } });
+      expect(bad).toEqual({ ok: false, code: 'invalid_inputs', errors: { v: "This value can't be used for this action." } });
+      expect(claims()).toHaveLength(0);
+      expect(W.execs()).toHaveLength(0);
+      const ok = await cta.respond(db, { token: m.token, value: 'go', inputs: { v: '2' } });
+      expect(ok).toMatchObject({ ok: true, status: 'success' });
+    },
+  ));
+
+  test('BINDING CLOSED after mint — an inline binding is refused like a whole one: nothing claimed, public "disabled"', () => withTempFn(
+    'cta_test_closable_inline', async () => ({ success: true, output: {} }),
+    { category: 'dev', description: 'c', params: [{ name: 's', type: 'string', required: true }], ctaInputParams: { s: { kind: 'content' } } },
+    async () => {
+      const m = await cta.mintCta(db, mint({ options: [{ value: 'go', label: 'Go', inputs: [A], plan: [{ fn: 'cta_test_closable_inline', params: { s: 'said: [[input:a]]' } }] }] }));
+      const row = () => cta.getCtaById(db, m.id);
+      expect(cta.linkRefusal(await row())).toBeNull();
+
+      // the param becomes a RECIPIENT: inline can never be one recipient
+      registry.cta_test_closable_inline.__meta.ctaInputParams = { s: { kind: 'recipient' } };
+      expect(cta.linkRefusal(await row())).toMatchObject({ reason: 'recipient_type' });
+      expect(cta.hasRecipientBinding((await row()).options)).toBe(true);
+      expect(await cta.respond(db, { token: m.token, value: 'go', inputs: { a: 'x' } })).toEqual({ ok: false, code: 'refused', reason: 'recipient_type' });
+      expect(cta.prepareRun((await row()).options[0], { a: 'x' })).toMatchObject({ ok: false, code: 'binding_closed' });
+
+      // the param is closed outright
+      delete registry.cta_test_closable_inline.__meta.ctaInputParams;
+      expect(cta.linkRefusal(await row())).toMatchObject({ reason: 'binding_closed', detail: expect.stringContaining('cta_test_closable_inline.s ← [[input:a]]') });
+      expect(cta.hasRecipientBinding((await row()).options)).toBe(true);   // conservative: a closed binding counts
+      expect(await cta.respond(db, { token: m.token, value: 'go', inputs: { a: 'x' } })).toEqual({ ok: false, code: 'refused', reason: 'binding_closed' });
+      expect(claims()).toHaveLength(0);
+      expect(W.execs()).toHaveLength(0);
+    },
+  ));
+
+  // The `inline` flag itself (S3i review NB2): a PHONE/EMAIL input passes a
+  // recipient's type check, so only the flag stands between "said: a@x.com,
+  // boss@y.com" and the transport. A text input would be refused on type
+  // alone and prove nothing.
+  test('an EMAIL input inline in a param that becomes an email recipient is refused on the inline flag alone — click and sweep', () => withTempFn(
+    'cta_test_inline_rcpt', async () => ({ success: true, output: {} }),
+    { category: 'dev', description: 'c', params: [{ name: 's', type: 'string', required: true }], ctaInputParams: { s: { kind: 'content' } } },
+    async () => {
+      const em = { ...IN.email, name: 'e', default: 'dflt@example.com' };
+      const plan = (s) => [{ fn: 'cta_test_inline_rcpt', params: { s } }];
+      const inl = await cta.mintCta(db, mint({ timeout: '1h', timeout_option: 'go', options: [{ value: 'go', label: 'Go', inputs: [em], plan: plan('[[input:e]], boss@example.com') }] }));
+      const whole = await cta.mintCta(db, mint({ options: [{ value: 'go', label: 'Go', inputs: [em], plan: plan('[[input:e]]') }] }));
+      const row = (m) => cta.getCtaById(db, m.id);
+
+      registry.cta_test_inline_rcpt.__meta.ctaInputParams = { s: { kind: 'recipient', type: 'email' } };
+      // the whole-value twin is a perfectly good recipient binding…
+      expect(cta.linkRefusal(await row(whole))).toBeNull();
+      expect(cta.prepareRun((await row(whole)).options[0], { e: 'a@x.com' })).toMatchObject({ ok: true });
+      // …the inline one never is
+      expect(cta.linkRefusal(await row(inl))).toMatchObject({ reason: 'recipient_type' });
+      expect(cta.prepareRun((await row(inl)).options[0], { e: 'a@x.com' })).toMatchObject({ ok: false, code: 'binding_closed', error: expect.stringContaining('(recipient_type)') });
+      expect(await cta.respond(db, { token: inl.token, value: 'go', inputs: { e: 'a@x.com' } })).toEqual({ ok: false, code: 'refused', reason: 'recipient_type' });
+      expect(claims()).toHaveLength(0);
+
+      // the sweep claims it (so it can never fire later) and records it failed — the plan does not run
+      W.link(inl.id).expires_at = new Date(Date.now() - 1000);
+      const sum = await cta.sweepExpired(db);
+      expect(sum).toMatchObject({ claimed: 1, blocked: 1, success: 0 });
+      expect(W.execs(inl.id)[0]).toMatchObject({ responded_via: 'timeout', status: 'failed' });
+    },
+  ));
+
+  // ── S3i review B1: inline is an SU-mint feature ──────────────────────────
+  describe('workflow mints never get inline bindings (review B1)', () => {
+    const NOTE = { name: 'note', label: 'Internal note', type: 'text', required: true, maxlen: 200 };
+    // What create_cta receives AFTER the engine's {{...}} pass: the step
+    // config said html: "<blockquote>{{lead_message}}</blockquote>", and the
+    // lead typed the marker into the website form.
+    const resolved = (leadMessage) => ({
+      name: 'WF lead follow-up', prompt: 'Add a note and reply?', timeout: '3d', protection: 'none', _execution_id: 777,
+      options: [{ value: 'reply', label: 'Reply', inputs: [NOTE], plan: [
+        { fn: 'create_log', params: { type: 'note', message: '[[input:note]]' } },
+        { fn: 'send_email', params: { from: 'info@4lsg.com', to: 'lead@example.com', subject: 'We got your message',
+          html: `<p>You wrote:</p><blockquote>${leadMessage}</blockquote>` } },
+      ] }],
+    });
+
+    test('a lead\'s text carrying the marker cannot become a binding: the workflow mint is refused, nothing is stored', async () => {
+      await expect(registry.create_cta(resolved('hello [[input:note]] bye'), db))
+        .rejects.toThrow(/plan\[1\]\.params\.html: \[\[input:…\]\] inside other text is not available to workflow mints/);
+      expect(W.tables.cta_links.size).toBe(0);
+      // the service-level statement of the same rule
+      await expect400(cta.mintCta(db, { ...mint({ options: [opt({ plan: [LOG('Note: [[input:note]]')] })] }), mint_source: 'workflow', minted_by: 0, source_execution_id: 777 }),
+        /inside other text is not available to workflow mints/);
+      // ordinary lead text and a whole-value binding still mint from a workflow
+      const ok = await registry.create_cta(resolved('hello there'), db);
+      expect(ok.success).toBe(true);
+    });
+
+    test('the SAME plan on an SU mint binds (the SU wrote the text) — and the note reaches only where the SU put it', async () => {
+      const su = resolved('hello [[input:note]] bye');
+      delete su._execution_id;
+      const m = await cta.mintCta(db, { ...su, minted_by: SU });
+      const r = await cta.respond(db, { token: m.token, value: 'reply', inputs: { note: 'staff <only>' } });
+      expect(r).toMatchObject({ ok: true, status: 'success' });
+      expect(emailService.sendEmail.mock.calls[0][1].html).toBe('<p>You wrote:</p><blockquote>hello staff &lt;only&gt; bye</blockquote>');
+    });
+
+    test('a non-SU row that carries an inline binding anyway is refused at click and by the sweep — never run', async () => {
+      const row = W.seedLink({ mint_source: 'workflow', minted_by: 0, source_execution_id: 777, timeout_option: 'go',
+        options: [{ value: 'go', label: 'Go', inputs: [{ ...NOTE, default: 'd' }],
+          plan: [{ fn: 'create_log', params: { type: 'note', message: 'x [[input:note]] y' } }] }] });
+      const stored = await cta.getCtaById(db, row.id);
+      expect(cta.linkRefusal(stored)).toMatchObject({ reason: 'workflow_inline', detail: expect.stringContaining('create_log.message') });
+      expect(await cta.respond(db, { token: row.token, value: 'go', inputs: { note: 'n' } })).toEqual({ ok: false, code: 'refused', reason: 'workflow_inline' });
+      expect(claims()).toHaveLength(0);
+      expect(W.logs).toHaveLength(0);
+      // the identical row as an SU mint runs
+      expect(cta.linkRefusal({ ...stored, mint_source: 'su' })).toBeNull();
+      // a whole-value binding on a workflow row is untouched by this rule
+      const whole = W.seedLink({ mint_source: 'workflow', minted_by: 0, source_execution_id: 778,
+        options: [{ value: 'go', label: 'Go', inputs: [NOTE], plan: [{ fn: 'create_log', params: { type: 'note', message: '[[input:note]]' } }] }] });
+      expect(cta.linkRefusal(await cta.getCtaById(db, whole.id))).toBeNull();
+
+      W.link(row.id).expires_at = new Date(Date.now() - 1000);
+      const sum = await cta.sweepExpired(db);
+      expect(sum).toMatchObject({ claimed: 1, blocked: 1, success: 0 });
+      expect(W.logs.map(decodeLog).some((l) => /x d y/.test(l.message || ''))).toBe(false);
+    });
+  });
+
+  test('inline-only content links are NOT open-recipient: no risk code, no forced cap, PATCH may lift the cap', async () => {
+    const m = await cta.mintCta(db, mint({ mode: 'repeatable', max_uses: 3,
+      options: [opt({ inputs: [A], plan: [EMAIL({ html: '<p>[[input:a]]</p>' })] })] }));
+    expect(m.risks_accepted).toEqual([]);
+    expect(cta.hasRecipientBinding((await cta.getCtaById(db, m.id)).options)).toBe(false);
+    await expect(cta.patchCta(db, m.id, { max_uses: null })).resolves.toMatchObject({ changed: true });
+    await expect(cta.mintCta(db, mint({ mode: 'repeatable', options: [opt({ inputs: [A], plan: [EMAIL({ html: '<p>[[input:a]]</p>' })] })] }))).resolves.toBeTruthy();
+  });
+
+  test('the expiry sweep substitutes DEFAULTS into inline markers', async () => {
+    const m = await cta.mintCta(db, mint({ timeout: '1h', timeout_option: 'go',
+      options: [opt({ inputs: [{ ...A, default: 'no <answer>' }, { ...PICK, default: 'D' }], plan: [EMAIL({ subject: 'Timed out: [[input:pick]]', html: '<p>[[input:pick]]: [[input:a]]</p>' })] })] }));
+    W.link(m.id).expires_at = new Date(Date.now() - 1000);
+    const sum = await cta.sweepExpired(db);
+    expect(sum).toMatchObject({ claimed: 1, success: 1, failed: 0, blocked: 0 });
+    expect(emailService.sendEmail.mock.calls[0][1]).toMatchObject({ subject: 'Timed out: D', html: '<p>D: no &lt;answer&gt;</p>' });
+    expect(JSON.parse(W.execs()[0].inputs)).toEqual({ a: 'no <answer>', pick: 'D' });
+  });
+
+  test('audit: the execution row holds the normalized values for inline-bound inputs', async () => {
+    const { r } = await mintAndRespond(
+      { options: [opt({ inputs: [PICK, B], plan: [LOG('[[input:pick]] / [[input:b]]')] })] },
+      { pick: 'B', b: '  spaced  ' },
+    );
+    expect(r.ok).toBe(true);
+    expect(JSON.parse(W.execs()[0].inputs)).toEqual({ pick: 'B', b: 'spaced' });
   });
 });
 
@@ -770,7 +1122,8 @@ describe('N1 — the splice scan only runs where inputs are declared (WF27 step 
 
   test('…while an option that DOES declare inputs still rejects a stray marker', async () => {
     await expect400(cta.mintCta(db, mint({ options: [opt({ plan: [LOG('[[input:note]]'),
-      { fn: 'start_workflow', params: { workflow_id: '27', init_data: { body: 'x [[input:note]]' } } }] })] })), /no splicing/);
+      { fn: 'start_workflow', params: { workflow_id: '27', init_data: { body: 'x [[input:note]]' } } }] })] })),
+    /init_data\.body: \[\[input:…\]\] is not a binding here/);
   });
 });
 
@@ -962,6 +1315,18 @@ describe('publicDescriptor — declarations (§12 Surfaces)', () => {
     ]);
     expect(d.options[0].inputs[1]).not.toHaveProperty('hint');
     expect(JSON.stringify(d)).not.toMatch(/\[a-z|\[\[input|create_task|create_log/);
+  });
+
+  test('S3i: an enum\'s display and choice_labels ride along (an agent still picks by choices); inline bindings never do', async () => {
+    const pick = { name: 'pick', label: 'Pick', type: 'enum', required: true, maxlen: 1, choices: ['A', 'B'],
+      choice_labels: ['A — Counsel', 'B — Detroit'], display: 'radio' };
+    const m = await cta.mintCta(db, mint({ options: [opt({ inputs: [pick, IN.note], plan: [LOG('Picked [[input:pick]]: [[input:note]]')] })] }));
+    const d = cta.publicDescriptor(await cta.getCtaById(db, m.id));
+    expect(d.options[0].inputs).toEqual([
+      { name: 'pick', label: 'Pick', type: 'enum', required: true, choices: ['A', 'B'], choice_labels: ['A — Counsel', 'B — Detroit'], display: 'radio', maxlen: 1 },
+      { name: 'note', label: 'Note', type: 'text', required: true, maxlen: 500 },
+    ]);
+    expect(JSON.stringify(d)).not.toMatch(/\[\[input|Picked|create_log/);
   });
 });
 

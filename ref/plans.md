@@ -365,6 +365,19 @@ Active surfaces with known next steps.
   change only. Decide storage; liveHost likely becomes a shell-hosted pane or
   gets a postMessage token broker.
 
+- **`create_cta`: a resolved `{{placeholder}}` can read as an authored
+  `[[input:x]]` (2026-10-11, CTA S3i review).** Inline bindings are SU-mint
+  only, so the wide form is closed. The narrow one predates S3i: a workflow
+  mint param whose RESOLVED value is exactly `[[input:x]]` (declared on that
+  option, into an opened param) binds — `{{var}}` alone,
+  `{{empty}}{{var}}`, `[[input:{{field}}]]` — because the service sees only
+  resolved params. No workflow does this today (WF27's
+  option declares no inputs). Fix in `lib/internal_functions/cta.js`, not the
+  service: tell authored bindings from resolved text before the `{{...}}`
+  pass (the engine would have to hand the step its unresolved config), or
+  refuse a whole-value marker on workflow mints unless the step lists it in
+  an explicit `bindings` param. `ref/CTA_DESIGN.md` §12 "Known landmine".
+
 
 ---
 

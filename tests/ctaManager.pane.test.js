@@ -25,7 +25,9 @@
  *     the hard rule as a required field; the acknowledge-to-proceed boxes and
  *     what accept_risks carries; the server's mint errors placed under the
  *     field they name; the test-values dry run; submitted inputs in the
- *     detail; Duplicate carrying declarations. Wherever a server answer
+ *     detail; Duplicate carrying declarations. S3i: inline bindings (the
+ *     pane's valueBindings mirrors ctaService.parseBinding) and the enum's
+ *     Show-as / choice labels. Wherever a server answer
  *     matters these run against the REAL routes/api.cta.js + ctaService over
  *     tests/helpers/ctaWorld.js (real JWT + SU elevation), so the error
  *     mapping and the risk boxes are checked against the server's own words.
@@ -1408,6 +1410,11 @@ describe('clicker inputs (§12, S2i)', () => {
       ['closed param', ONE([T()], [{ fn: 'lookup_contact', params: { contact_id: '[[input:msg]]' } }]), 'options.0.steps.0.params', /not open to clicker inputs/],
       ['recipient fed a text input', ONE([T()], [{ fn: 'send_sms', params: { from: '2485559999', to: '[[input:msg]]', message: 'hi' } }]), 'options.0.steps.0.params', /is a recipient — bind a phone or email input/],
       ['undeclared binding', ONE([T()], [{ fn: 'create_log', params: { type: 'note', message: '[[input:msg]]', subject: '[[input:zzz]]' } }]), 'options.0.steps.0.params', /no input "zzz" is declared/],
+      // S3i
+      ['inline into a recipient', ONE([{ ...PHONE }], [{ fn: 'send_sms', params: { from: '2485559999', to: '+1[[input:to]]', message: 'hi' } }]), 'options.0.steps.0.params', /is a recipient — it takes \[\[input:to\]\] as its WHOLE value/],
+      ['malformed marker', ONE([T()], [LOGM(), { fn: 'create_log', params: { type: 'note', message: 'x [[input:' } }]), 'options.0.steps.1.params', /\[\[input:…\]\] is not a binding here/],
+      ['bad choice label', ONE([T({ type: 'enum', maxlen: '64', choices: ['a', 'b'], choice_labels: ['fine', 'x'.repeat(101)] })], [LOGM()]), 'options.0.inputs.0.choices', /^Label for choice 2 must be 1–100 chars of plain text$/],
+      ['bad display', ONE([T({ type: 'enum', maxlen: '64', choices: ['a'], display: 'checkbox' })], [LOGM()]), 'options.0.inputs.0.display', /^Show as must be one of select, radio$/],
       ['unknown function', ONE([T()], [{ fn: 'nope_fn', params: {} }, LOGM()]), 'options.0.steps.0.fn', /unknown function "nope_fn"/],
       ['timeout option without a default', ONE([T()], [LOGM()], { timeout_option: 'go' }), 'options.0.inputs.0.default', /timeout option/],
       ['result template names no input', ONE([T()], [LOGM()], {}, { result_template: 'x [[input:nope]]' }), 'options.0.result_template', /^Result template references \[\[input:nope\]\]/],
@@ -1564,6 +1571,184 @@ describe('clicker inputs (§12, S2i)', () => {
     expect(body.options[0].plan).toEqual(SRC.options[0].plan);
     expect(body).toMatchObject({ mode: 'repeatable', max_uses: '4', protection: 'password', accept_risks: ['open_recipient_repeatable'] });
     expect(doc.querySelector('#preview-region .ok-box')).not.toBeNull();
+  });
+
+  // ── S3i: inline bindings + enum presentation ──────────────────────────────
+  describe('inline bindings and enum presentation (S3i)', () => {
+    const EMAIL_STEP = (params) => ({ fn: 'send_email', params: { from: 'info@4lsg.com', to: 'it@example.com', subject: 'Answer', ...params } });
+    const PICK = { name: 'pick', label: 'Pick', type: 'enum', maxlen: '64', choices: ['A', 'B'] };
+
+    test('mirrors: valueBindings equals ctaService.parseBinding; the display list and the label cap are the server\'s', async () => {
+      const { window } = await openBuilder(realHandler());
+      const mine = window.eval('(v) => JSON.stringify(valueBindings(v))');
+      const stray = window.eval('(v) => strayMarker(v)');
+      const values = ['plain', '', '[[input:a]]', '[[input:not a name]]', 'x [[input:a]] y', '[[input:a]] ', '[[input:b]][[input:a]] [[input:b]]',
+        'x [[input:', '[[input:9x]] y', 'x [[input:a b]]', '[[input:a]] [[input:', '[[inp[[input:a]]ut:b]]', 42, null, ['[[input:a]]'], { k: 'x [[input:a]]' }, { k: 'v' },
+        { '[[input:a]]': 1 }, { 'k [[input:': { deep: ['fine'] } }, [{ k: ['x', { z: '[[input:' }] }]];   // the mark in a KEY is not a marker; values at any depth are
+      for (const v of values) {
+        const pb = ctaService.parseBinding(v);
+        const want = !pb || pb.stray ? [] : pb.whole !== undefined ? [{ name: pb.whole, inline: false }] : pb.inline.map((name) => ({ name, inline: true }));
+        expect([JSON.stringify(v), JSON.parse(mine(v))]).toEqual([JSON.stringify(v), want]);
+        expect([JSON.stringify(v), stray(v)]).toEqual([JSON.stringify(v), !!(pb && pb.stray)]);
+      }
+      expect(window.eval('[...ENUM_DISPLAYS]')).toEqual([...ctaService.ENUM_DISPLAYS]);
+      expect(Object.keys(window.eval('({ ...ENUM_DISPLAY_LABEL })')).sort()).toEqual([...ctaService.ENUM_DISPLAYS].sort());
+      const cap = window.eval('MAX_CHOICE_LABEL');
+      const mintable = async (label) => {
+        try {
+          await ctaService.mintCta(makeCtaWorld(), { name: 'n', prompt: 'p', minted_by: SU_ID, protection: 'none', dry_run: true,
+            options: [{ value: 'go', label: 'Go', inputs: [{ name: 'v', label: 'L', type: 'enum', required: true, maxlen: 4, choices: ['a'], choice_labels: [label] }], plan: [LOGM('v')] }] });
+          return true;
+        } catch (e) { if (!(e instanceof ctaService.CtaError)) throw e; return false; }
+      };
+      expect([await mintable('x'.repeat(cap)), await mintable('x'.repeat(cap + 1))]).toEqual([true, false]);
+    });
+
+    test('enum editor: a label box per choice and "Show as" → choice_labels (a blank one shows its value) + display; rows stay paired', async () => {
+      const b = await openBuilder(realHandler());
+      const { window, doc, calls, errors } = b;
+      const $ = (id) => doc.getElementById(id);
+      await injectDraft(window, ONE([{ ...PICK, choices: ['A', '', 'B', 'C'], choice_labels: ['A — Counsel', 'orphan', '', 'C — Plain talk'] }],
+        [{ fn: 'create_log', params: { type: 'note', message: 'Picked [[input:pick]]' } }]));
+      expect($('o0i0l0').value).toBe('A — Counsel');
+      expect($('o0i0-display').value).toBe('select');
+      expect([...$('o0i0-display').options].map((o) => [o.value, o.textContent])).toEqual([['select', 'Dropdown'], ['radio', 'Radio buttons']]);
+      expect($('o0i0-used').textContent).toBe('Bound to step 1 create_log.message (in its text).');
+
+      // a dropdown with labels: display is not sent; the blank CHOICE row goes with its label, the blank LABEL shows its value
+      await dry(b);
+      expect(posts(calls)[0].options[0].inputs).toEqual([
+        { name: 'pick', label: 'Pick', type: 'enum', required: true, maxlen: 64, choices: ['A', 'B', 'C'], choice_labels: ['A — Counsel', 'B', 'C — Plain talk'] },
+      ]);
+      expect(doc.querySelector('#preview-region .ok-box')).not.toBeNull();
+
+      setValue(window, $('o0i0-display'), 'radio', 'change');
+      setValue(window, $('o0i0l2'), 'B — Detroit');
+      // removing a choice takes its label with it
+      doc.querySelector('.opt-card[data-oi="0"] .in-card[data-ij="0"] .choice-row[data-ck="1"] [data-act="choice-del"]').click();
+      await tick(window);
+      expect([0, 1, 2].map((k) => [$(`o0i0c${k}`).value, $(`o0i0l${k}`).value])).toEqual([['A', 'A — Counsel'], ['B', 'B — Detroit'], ['C', 'C — Plain talk']]);
+      doc.querySelector('.opt-card[data-oi="0"] .in-card[data-ij="0"] [data-act="choice-add"]').click();
+      await tick(window);
+      expect([$('o0i0c3').value, $('o0i0l3').value]).toEqual(['', '']);
+      setValue(window, $('o0i0c3'), 'D');
+      await dry(b);
+      expect(posts(calls)[1].options[0].inputs).toEqual([
+        { name: 'pick', label: 'Pick', type: 'enum', required: true, maxlen: 64, choices: ['A', 'B', 'C', 'D'],
+          choice_labels: ['A — Counsel', 'B — Detroit', 'C — Plain talk', 'D'], display: 'radio' },
+      ]);
+      expect(doc.querySelector('#preview-region .ok-box')).not.toBeNull();
+
+      // no labels at all → the key is not sent
+      for (const k of [0, 1, 2]) setValue(window, $(`o0i0l${k}`), ' ');
+      await dry(b);
+      expect(posts(calls)[2].options[0].inputs[0]).toEqual({ name: 'pick', label: 'Pick', type: 'enum', required: true, maxlen: 64, choices: ['A', 'B', 'C', 'D'], display: 'radio' });
+      expect(errors).toEqual([]);
+    });
+
+    test('inline: several inputs in one email body count as bound; the picker won\'t overwrite that text; the real dry run passes', async () => {
+      const b = await openBuilder(realHandler());
+      const { window, doc, calls, errors } = b;
+      const $ = (id) => doc.getElementById(id);
+      await injectDraft(window, ONE([{ ...PICK, sample: 'B' }, { ...TEXT, name: 'phone', label: 'Phone line', required: false, sample: '<main>' }],
+        [EMAIL_STEP({ subject: 'Picked [[input:pick]]', html: '<p>Pick: [[input:pick]]</p><p>Phone: [[input:phone]]</p>' })]));
+      expect($('o0i0-used').textContent).toBe('Bound to step 1 send_email.subject (in its text), step 1 send_email.html (in its text).');
+      expect($('o0i0-used').classList.contains('unbound')).toBe(false);
+      expect($('o0i1-used').textContent).toBe('Bound to step 1 send_email.html (in its text).');
+      const rows = (id) => [...$(id).options].map((o) => [o.textContent, o.disabled]);
+      expect(rows('o0i1-bind')).toEqual([
+        ['Choose a step param…', false],
+        ['Step 1 · send_email.html — content · HTML (used in its text)', true],
+        // the subject's text carries ANOTHER input: picking it for this one would replace "Picked [[input:pick]]"
+        ['Step 1 · send_email.subject — content (its text has inputs — type the marker in)', true],
+        ['Step 1 · send_email.to — recipient · email (needs a Phone number or Email address input)', false],
+      ]);
+      // a disabled row can't be picked, so the authored text survives; plain literal text is still replaceable (S2i behaviour)
+      const before = $('o0s0-params').value;
+      setValue(window, $('o0i1-bind'), '0|subject', 'change');
+      expect($('o0s0-params').value).toBe(before);
+      expect(doc.querySelector('[data-step-bind="0.0"]').hidden).toBe(true);
+      expect(window.eval('needsMaxUses(state.draft)')).toBe(false);
+      expect(window.eval('detectedRisks(state.draft)')).toEqual([]);
+
+      await dry(b);
+      expect(posts(calls)[0].options[0].plan).toEqual([EMAIL_STEP({ subject: 'Picked [[input:pick]]', html: '<p>Pick: [[input:pick]]</p><p>Phone: [[input:phone]]</p>' })]);
+      const block = doc.querySelector('#preview-region').textContent.replace(/\s+/g, ' ');
+      expect(block).toContain('Test values pass');
+      expect(block).toContain('Pick pick Choice from a list · required → step 1 send_email.subject (in its text), step 1 send_email.html (in its text) — escaped as text, line breaks become <br>');
+      expect(block).toContain('Phone line phone Text · optional → step 1 send_email.html (in its text) — escaped as text');
+      expect(errors).toEqual([]);
+    });
+
+    test('inline hints before the server says it: a recipient, an undeclared name, a malformed marker', async () => {
+      const b = await openBuilder(realHandler());
+      const { window, doc } = b;
+      const note = () => doc.querySelector('[data-step-bind="0.0"]');
+      const set = async (params) => {
+        setValue(window, doc.getElementById('o0s0-params'), JSON.stringify(params));
+        await tick(window);
+      };
+      await injectDraft(window, ONE([{ ...TEXT, name: 'e', type: 'email', maxlen: '254' }], [EMAIL_STEP({ to: '[[input:e]]', html: 'x' })]));
+      expect(note().hidden).toBe(true);
+      expect(doc.getElementById('o0i0-used').textContent).toBe('Bound to step 1 send_email.to.');
+
+      await set({ from: 'info@4lsg.com', to: 'Fred <[[input:e]]>', subject: 's', html: 'x' });
+      expect([note().hidden, note().textContent]).toEqual([false, 'send_email.to is a recipient — it takes [[input:e]] as its whole value, not inside other text']);
+      expect(doc.getElementById('o0i0-used').textContent).toBe('Bound to step 1 send_email.to (in its text) — a recipient takes the input as its whole value, not inside other text.');
+
+      await set({ from: 'info@4lsg.com', to: 'it@example.com', subject: 's', html: 'To [[input:e]] and [[input:zzz]] and [[input:zzz]]' });
+      expect(note().textContent).toBe('html: no input named "zzz" on this option');
+
+      await set({ from: 'info@4lsg.com', to: 'it@example.com', subject: 's [[input:', html: 'To [[input:e]]', attachment_urls: ['[[input:e]]'] });
+      expect(note().textContent).toBe('subject: [[input:…]] is malformed or nested — write [[input:name]] in a top-level text value · attachment_urls: [[input:…]] is malformed or nested — write [[input:name]] in a top-level text value');
+      expect(doc.getElementById('o0i0-used').textContent).toBe('Bound to step 1 send_email.html (in its text).');
+    });
+
+    test('detail + Duplicate: display, labels and inline bindings are listed, and the copy the real server takes is the same link', async () => {
+      const SRC = fullRow({
+        id: 9, name: 'Pick a homepage', mode: 'repeatable', max_uses: 3, protection: 'none',
+        options: [{
+          value: 'answer', label: 'Send my answer',
+          inputs: [
+            { name: 'pick', label: 'Which homepage?', type: 'enum', required: true, maxlen: 1, choices: ['A', 'B', 'C'],
+              choice_labels: ['A — Counsel', 'B', '"><img src=x onerror=alert(1)> C'], display: 'radio' },
+            { name: 'phone', label: 'Phone number', type: 'text', required: false, maxlen: 120 },
+          ],
+          plan: [EMAIL_STEP({ subject: 'SS picked [[input:pick]]', html: '<p>[[input:pick]]</p><p>[[input:phone]]</p>' })],
+        }],
+      });
+      const b = await boot({
+        handler: realHandler((url, method) => {
+          if (url === '/api/cta' && method === 'GET') return { ctas: [row({ id: 9, mode: 'repeatable', max_uses: 3 })] };
+          if (url === '/api/cta/9/executions') return { cta: SRC, executions: [] };
+          return undefined;
+        }),
+      });
+      const { window, doc, calls, errors } = b;
+      doc.querySelector('#list-region tr.row[data-id="9"]').click();
+      await tick(window, 60);
+      const optText = doc.querySelector('#detail-region .opt-view').textContent.replace(/\s+/g, ' ');
+      expect(optText).toContain('Which homepage? pick Choice from a list · required · choices A (A — Counsel) B C ("><img src=x onerror=alert(1)> C) · shown as radio buttons → step 1 send_email.subject (in its text), step 1 send_email.html (in its text)');
+      expect(doc.querySelector('#detail-region img')).toBeNull();   // a label is shown as text, never rendered
+      expect(optText).toContain('Phone number phone Text · optional · max 120 → step 1 send_email.html (in its text)');
+      // a content-only link: "No cap" stays available
+      doc.querySelector('#detail-region [data-act="edit"]').click();
+      await tick(window);
+      expect(doc.getElementById('p-nocap').disabled).toBe(false);
+      doc.getElementById('patch-cancel').click();
+
+      doc.querySelector('#detail-region [data-act="duplicate"]').click();
+      await tick(window, 60);
+      expect(doc.getElementById('o0i0-display').value).toBe('radio');
+      expect([0, 1, 2].map((k) => doc.getElementById(`o0i0l${k}`).value)).toEqual(['A — Counsel', '', '"><img src=x onerror=alert(1)> C']);   // "B" == its value → blank
+      expect(doc.querySelector('#mint-region img')).toBeNull();     // …and in the builder it is an input's value, not markup
+      await dry(b);
+      const body = posts(calls)[0];
+      expect(body.options[0].inputs).toEqual(SRC.options[0].inputs);
+      expect(body.options[0].plan).toEqual(SRC.options[0].plan);
+      expect(doc.querySelector('#preview-region .ok-box')).not.toBeNull();
+      expect(errors).toEqual([]);
+    });
   });
 
   test('Extend / limits: "No cap" is locked on a link whose clicker picks the recipient (the function list is fetched for it)', async () => {
