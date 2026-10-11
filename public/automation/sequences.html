@@ -4043,8 +4043,9 @@ function seqEnrollStatusBadge(status) {
 // behavior; see scheduleFromStep in lib/sequenceEngine.js.
 const SEQ_SKIP_TEXT = {
   unschedulable:
-    "window passed — this step's send time was already behind when the "
-    + "sequence started (e.g. appointment booked on short notice)",
+    "window passed — this step's send time was already behind when it "
+    + "came up for scheduling (appointment booked on short notice, or the "
+    + "enrollment was stuck past it and then recovered)",
   condition_failed:      'template condition not met — enrollment cancelled',
   step_condition_failed: 'step condition not met',
   fire_guard_failed:     'fire guard blocked — too close to the appointment',
@@ -4702,8 +4703,8 @@ async function handleSequenceFireNow(enrollmentId, jobId, scheduledRaw) {
 // Recover stuck enrollment — handler for the denyButton in the enrollment-
 // detail modal. Distinct from Fire Now: this CREATES a new scheduled_jobs
 // row (because the enrollment has no pending/running job), whereas Fire Now
-// reschedules an EXISTING pending job. Parallel handler lives in contact.html
-// as handleContactSequenceRecover.
+// reschedules an EXISTING pending job. Parallel handler (same name) lives in
+// public/automation/automationsWidget.html.
 // ─────────────────────────────────────────────────────────────
 async function handleSequenceRecover(enrollmentId) {
   const result = await Swal.fire({
@@ -4711,8 +4712,9 @@ async function handleSequenceRecover(enrollmentId) {
     html: `
       <div style="text-align:left;font-size:13px;line-height:1.5">
         <p>This enrollment is <b>active</b> but has no pending job — likely wedged when scheduling the next step failed (e.g. a transient calendar API blip).</p>
-        <p style="margin-top:10px">Recovery schedules the next step for <b>now</b>. The next <code>/process-jobs</code> tick (up to ~5 min away) will pick it up.</p>
-        <p style="margin-top:8px;color:var(--text-2);font-size:11px">The step's <code>fire_guard</code> and <code>condition</code> still apply at execution — a step that fails its condition will skip, just as it would have at the original time.</p>
+        <p style="margin-top:10px">Recovery puts it back on schedule: the next step is placed by <b>its own timing rule</b>, counted from now — a "next business day" step waits for the next business day, an appointment reminder goes out at its usual time before the appointment.</p>
+        <p style="margin-top:8px">An appointment reminder whose send time has <b>already passed</b> is skipped, not sent late. If nothing is left to send, the enrollment is marked completed.</p>
+        <p style="margin-top:8px;color:var(--text-2);font-size:11px">A step with no delay, or one set to a fixed date that has already passed, runs right away — the same as at enrollment. To send any other step right away, use <b>Fire Now</b> on it afterwards. The step's <code>fire_guard</code> and <code>condition</code> still apply at execution.</p>
       </div>
     `,
     icon: 'question',
@@ -4725,24 +4727,32 @@ async function handleSequenceRecover(enrollmentId) {
 
   try {
     const resp = await api(`/sequences/enrollments/${enrollmentId}/recover`, 'POST');
+    // skipped_steps = steps the scheduling walk passed over because their
+    // send time had already gone by (never sent late — see the route).
+    const skipped = Array.isArray(resp.skipped_steps) ? resp.skipped_steps : [];
+    const skippedTxt = skipped.length
+      ? `Skipped step${skipped.length > 1 ? 's' : ''} ${skipped.join(', ')} — send time already passed. `
+      : '';
     const title = resp.status === 'completed'
       ? `Enrollment ${enrollmentId} → completed`
       : `Step ${resp.step_number} scheduled (job ${resp.job_id})`;
     const text = resp.status === 'completed'
-      ? 'No next step in template — marked completed'
-      : 'Will fire on next process-jobs tick';
-    Swal.fire({
-      toast: true, position: 'top-end', icon: 'success',
-      title, text,
-      timer: 2500, showConfirmButton: false,
-    });
-    setTimeout(() => viewSequenceEnrollment(enrollmentId), 250);
+      ? (skipped.length ? `${skippedTxt}Nothing left to send.` : 'No next step in template — marked completed')
+      : `${skippedTxt}Fires ${seqEnrollFmtDate(resp.new_scheduled_at)}`;
+    // A dialog the operator dismisses, not a toast: re-opening the detail
+    // modal below replaces whatever SweetAlert popup is showing, and the
+    // fire time / skipped steps are the whole point of this confirmation.
+    await Swal.fire({ icon: 'success', title, text });
+    viewSequenceEnrollment(enrollmentId);
   } catch (e) {
-    Swal.fire({
-      toast: true, position: 'top-end', icon: 'error',
-      title: e.message || 'Recovery failed',
-      timer: 3500, showConfirmButton: false,
+    // A failed recovery leaves the enrollment stuck and the server message
+    // says why (and whether retrying can help) — a dialog, not a toast.
+    await Swal.fire({
+      icon: 'error',
+      title: 'Recovery failed',
+      text: e.message || 'Recovery failed',
     });
+    viewSequenceEnrollment(enrollmentId);
   }
 }
 

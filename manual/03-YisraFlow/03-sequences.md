@@ -32,6 +32,7 @@ When something doesn't fire when you expected:
 1. Find the enrollment in the template's Enrollments tab. Status `cancelled` and `cancel_reason` will tell you why.
 2. If the enrollment is `active`, look at its step log — which step ran last, what was the result?
 3. If a step skipped, the `skip_reason` says which guard it failed (`condition_failed`, `fire_guard_failed`, `step_condition_failed`).
+4. If the enrollment is `active` but its step history shows **no pending step**, it is stuck: the last step ran, then scheduling the next one failed. Open the enrollment and use **Recover stuck enrollment**. Recovery puts the next step back on the schedule by its own timing rule, counted from now, instead of sending it on the spot. An appointment reminder (`before_appt` / `before_appt_fixed`) whose send time already passed while the enrollment was stuck is skipped (`unschedulable`), never sent late; the confirmation lists the skipped steps so you can follow up by hand. If nothing is left to send, the enrollment completes. Two timing rules still run right away, exactly as they do at enrollment: `immediate`, and a `delay` with a fixed `at` date that has already passed. To send any other placed step immediately, use **Fire Now** on it. If recovery itself fails twice with the same message, the step's timing or the enrollment's data is the problem — cancel the enrollment.
 
 ---
 

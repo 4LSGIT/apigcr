@@ -26,7 +26,7 @@
 const express         = require('express');
 const router          = express.Router();
 const jwtOrApiKey     = require('../lib/auth.jwtOrApiKey');
-const { enrollContact, enrollContactByTemplateId, previewEnrollmentSteps, cancelSequences, validateTemplateFilters, scheduleStepJob } = require('../lib/sequenceEngine');
+const { enrollContact, enrollContactByTemplateId, previewEnrollmentSteps, cancelSequences, validateTemplateFilters, scheduleFromStep } = require('../lib/sequenceEngine');
 const { diffSequenceSteps, validateSequenceDraftShape, canonical, parseMaybeJson } = require('../lib/versionDiff');
 const toJson = v => v == null ? null : (typeof v === 'string' ? v : JSON.stringify(v));
 
@@ -2215,8 +2215,9 @@ router.post('/sequences/enrollments/:id/fire-next', jwtOrApiKey, async (req, res
 
 // POST /sequences/enrollments/:id/recover
 //
-// Recover a stuck (wedged) enrollment by re-creating the missing
-// scheduled_jobs row for whichever step should run next.
+// Recover a stuck (wedged) enrollment by putting it back on its timeline:
+// re-run the engine's own scheduling walk (sequenceEngine.scheduleFromStep)
+// from whichever step should run next.
 //
 // "Stuck" = enrollment.status='active' AND no pending/running
 // scheduled_jobs row. This state is normally created by the
@@ -2236,20 +2237,58 @@ router.post('/sequences/enrollments/:id/fire-next', jwtOrApiKey, async (req, res
 //     INSERTed the enrollment but scheduling the first step threw):
 //     target is enrollment.current_step (which is 1 from the initial
 //     INSERT).
-//   - If no step exists at the target step_number in the template
-//     (e.g., template was truncated after enrollment): mark the
-//     enrollment 'completed', mirroring advanceToNextStep's terminal
-//     branch.
 //
-// Idempotency: delegates the INSERT to sequenceEngine.scheduleStepJob,
-// which short-circuits if a pending/running row already exists for the
-// same (enrollmentId, step_number) idempotency_key. Two simultaneous
-// clicks → only the first INSERT lands; the second is a no-op (and we
-// surface a 409 below for clarity).
+// Timing — the target step is placed by ITS OWN timing rule, exactly as
+// enrollment and advanceToNextStep place steps (same function). Until
+// 2026-10 this route inserted the job at NOW() regardless of timing, so a
+// recovered `next_business_day` step fired on the spot (night, Shabbos,
+// Yom Tov) and a recovered appt-anchored reminder ("your meeting starts
+// in 10 minutes") went out days early or after its window. No execution-
+// time guard catches either: fire_guard only blocks too-CLOSE-to-appt, and
+// an appt-scoped template condition (`appt_status = 'Scheduled'`) passes
+// for an early send and for any past appt nobody marked.
+//
+// floor = NOW (scheduleFromStep's default; floorDate deliberately not
+// passed). For appt-anchored steps (before_appt / before_appt_fixed) that
+// means: a step whose send time passed while the enrollment sat wedged is
+// SKIPPED (logged 'skipped'/'unschedulable') and the walk moves on to the
+// next step that still fits — it is never sent late. The alternative floor
+// (the last executed step's scheduled time, i.e. "what the engine would
+// have done had it never wedged") sends the missed step late AND every
+// later advance inherits that past floor, so one click on a long-wedged
+// enrollment bursts every remaining reminder — after the appointment too.
+// A wedge has no alert and is found hours or days later, so the late
+// branch is the one that actually runs; skipping is the safe side of it.
+// What this gives up: a missed reminder whose wording was still true is
+// dropped rather than sent late. The response lists `skipped_steps` so the
+// operator can follow up by hand. All other timing types are computed
+// from now (delay → now + delay, next_business_day → the next one, …).
+// Two engine rules still produce a near-immediate job, exactly as they do
+// at enrollment: `immediate` (now + 5s), and an absolute `delay.at` whose
+// time has already passed (calculateStepTime returns it as-is; the floor
+// only governs appt-anchored types). Bound those with a step condition.
+//
+// Terminal: if no step from the target onward can be placed (template
+// exhausted, or every remaining window has passed), scheduleFromStep marks
+// the enrollment 'completed' and this route reports status:'completed'.
+//
+// Errors: a THROW from the walk (malformed timing, appt-anchored step with
+// no trigger_data.appt_time, delay.at resolving empty, DB blip) is
+// returned as a 500 and nothing is scheduled — the enrollment stays
+// wedged. That is deliberate: the old behavior force-fired such a step at
+// NOW(), bypassing the broken timing. A repeatable failure here is a
+// config/data problem; cancel the enrollment rather than retry. Steps the
+// walk skipped BEFORE it threw stay skipped (their log rows are committed
+// and the next attempt resumes after them), so the 500 reports them too.
+//
+// Idempotency: the INSERT is sequenceEngine.scheduleStepJob (called by the
+// walk), which short-circuits if a pending/running row already exists for
+// the same (enrollmentId, step_number) idempotency_key; the pre-check
+// below 409s the common double-click first.
 //
 // Fire_guard / condition: NOT a force-execute. The step's guards still
 // apply when /process-jobs picks the job up — same semantics as
-// /fire-next.
+// /fire-next. To send the placed step immediately, /fire-next it.
 router.post('/sequences/enrollments/:id/recover', jwtOrApiKey, async (req, res) => {
   const db = req.db;
   const id = parseInt(req.params.id, 10);
@@ -2259,9 +2298,12 @@ router.post('/sequences/enrollments/:id/recover', jwtOrApiKey, async (req, res) 
   }
 
   try {
-    // 1) Load enrollment
+    // 1) Load enrollment. scheduleFromStep needs id / template_id /
+    //    template_version (PINNED-READ: it throws without a positive
+    //    integer version — recovering onto current_version could resurrect
+    //    a renumbered step) / total_steps (walk cap).
     const [[en]] = await db.query(
-      `SELECT id, template_id, template_version, status, current_step FROM sequence_enrollments WHERE id = ?`,
+      `SELECT id, template_id, template_version, status, current_step, total_steps, trigger_data FROM sequence_enrollments WHERE id = ?`,
       [id]
     );
     if (!en) return res.status(404).json({ error: 'Enrollment not found' });
@@ -2291,8 +2333,9 @@ router.post('/sequences/enrollments/:id/recover', jwtOrApiKey, async (req, res) 
     }
 
     // 3) Determine target step_number — see route comment for rationale.
+    //    lastLog.id is also the watermark for "what did THIS recovery skip".
     const [[lastLog]] = await db.query(
-      `SELECT step_number FROM sequence_step_log
+      `SELECT id, step_number FROM sequence_step_log
         WHERE enrollment_id = ?
         ORDER BY id DESC LIMIT 1`,
       [id]
@@ -2301,81 +2344,120 @@ router.post('/sequences/enrollments/:id/recover', jwtOrApiKey, async (req, res) 
       ? lastLog.step_number + 1
       : en.current_step;
 
-    // 4) Load the step row. If absent, complete the enrollment (mirrors
-    //    advanceToNextStep terminal branch).
-    // PINNED-READ: recover must resume on the enrollment's pinned version —
-    // recovering onto current_version could resurrect a renumbered step.
-    const [[step]] = await db.query(
-      `SELECT id, step_number, timing FROM sequence_steps
-        WHERE template_id = ? AND version = ? AND step_number = ? LIMIT 1`,
-      [en.template_id, en.template_version, targetStepNumber]
+    // Job watermark for the read-back in step 7: the walk's job is the first
+    // row above this id.
+    const [[jobMark]] = await db.query(
+      `SELECT COALESCE(MAX(id), 0) AS max_id FROM scheduled_jobs
+        WHERE sequence_enrollment_id = ?`,
+      [id]
     );
-    if (!step) {
-      await db.query(
-        `UPDATE sequence_enrollments
-            SET status = 'completed', completed_at = NOW(), updated_at = NOW()
-          WHERE id = ?`,
-        [id]
-      );
-      console.log(`[sequence] Recovery completed enrollment ${id} — no step ${targetStepNumber} in template`);
+    const preWalkMaxJobId = Number(jobMark && jobMark.max_id) || 0;
+
+    // Which steps did THIS walk pass over because their window is gone?
+    // Best-effort and informational: logStep swallows its own errors, so a
+    // missing row never means the skip didn't happen, and a failed read here
+    // must not turn a completed recovery into an error.
+    const readSkippedSteps = async () => {
+      try {
+        const [rows] = await db.query(
+          `SELECT step_number FROM sequence_step_log
+            WHERE enrollment_id = ? AND id > ?
+              AND status = 'skipped' AND skip_reason = 'unschedulable'
+            ORDER BY id ASC`,
+          [id, lastLog ? lastLog.id : 0]
+        );
+        return rows.map(r => r.step_number);
+      } catch (e) {
+        console.error(`[POST /sequences/enrollments/:id/recover] enrollment ${id}: skipped-steps read failed:`, e.message);
+        return [];
+      }
+    };
+
+    // 4) Place it with the engine's own walk. No floorDate → floor = now
+    //    (see route comment). Same trigger_data parse as executeStep.
+    const triggerData = (typeof en.trigger_data === 'string'
+      ? JSON.parse(en.trigger_data)
+      : en.trigger_data) || {};
+
+    let placedAt;
+    try {
+      placedAt = await scheduleFromStep(db, en, targetStepNumber, triggerData);
+    } catch (err) {
+      console.error(`[POST /sequences/enrollments/:id/recover] enrollment ${id}: walk from step ${targetStepNumber} threw:`, err);
+      // The walk may have skipped steps before the one that threw; those
+      // skips are committed, so say so — the retry will not report them.
+      const skippedBeforeFailure = await readSkippedSteps();
+      const failedAt = skippedBeforeFailure.length
+        ? Math.max(targetStepNumber, ...skippedBeforeFailure) + 1
+        : targetStepNumber;
+      return res.status(500).json({
+        error:         'Failed to recover enrollment',
+        step_number:   failedAt,
+        skipped_steps: skippedBeforeFailure,
+        message: `Could not schedule step ${failedAt}: ${err.message}. `
+               + (skippedBeforeFailure.length
+                   ? `Step(s) ${skippedBeforeFailure.join(', ')} were skipped first (send time already passed). `
+                   : '')
+               + `Nothing was scheduled; the enrollment is still stuck. If this `
+               + `repeats, the step's timing or the enrollment's trigger data is at `
+               + `fault, not a passing blip — cancel the enrollment instead.`,
+      });
+    }
+
+    // 5) What the walk skipped on its way to a placement (or to completion).
+    const skippedSteps = await readSkippedSteps();
+
+    // 6) Nothing placeable from the target onward → the walk completed the
+    //    enrollment (scheduleFromStep's terminal branch).
+    if (!placedAt) {
+      console.log(`[sequence] Recovery completed enrollment ${id} — nothing placeable from step ${targetStepNumber}`);
       return res.json({
         success:        true,
         enrollment_id:  id,
         status:         'completed',
         step_number:    targetStepNumber,
-        note: 'Template has no step at the target number; marked enrollment completed.',
+        skipped_steps:  skippedSteps,
+        note: skippedSteps.length
+          ? `The send window had already passed for step(s) ${skippedSteps.join(', ')} and nothing later could be scheduled; marked enrollment completed.`
+          : `Nothing left to schedule from step ${targetStepNumber}; marked enrollment completed.`,
       });
     }
 
-    // 5) Advance enrollment.current_step if it's behind targetStepNumber.
-    //    This covers the edge where advanceToNextStep threw before its
-    //    UPDATE current_step ran.
-    if (en.current_step !== targetStepNumber) {
-      await db.query(
-        `UPDATE sequence_enrollments
-            SET current_step = ?, updated_at = NOW()
-          WHERE id = ?`,
-        [targetStepNumber, id]
-      );
-    }
-
-    // 6) Schedule. scheduleStepJob expects step.timing parsed already
-    //    where it matters, but it only reads step.step_number and step.id
-    //    for the INSERT — timing isn't touched here. Schedule for NOW so
-    //    the next /process-jobs tick picks it up.
-    const now = new Date();
-    await scheduleStepJob(db, id, step, now);
-
-    // 7) Read back the row we just (probably) inserted. If scheduleStepJob
-    //    short-circuited because a pending row materialized between our
-    //    check and the call (very unlikely but possible under concurrent
-    //    recovery clicks), surface that.
+    // 7) Read back the job the walk inserted: the FIRST row above the
+    //    pre-walk watermark. Not status-filtered — a near-immediate step can
+    //    be claimed (even finished, and have queued its successor) by the
+    //    Cloud Tasks doorbell before this SELECT runs; the walk's own row is
+    //    still the lowest new id.
     const [[after]] = await db.query(
-      `SELECT id, scheduled_time, status FROM scheduled_jobs
-        WHERE sequence_enrollment_id = ?
-          AND idempotency_key = ?
-          AND status IN ('pending', 'running')
-        ORDER BY id DESC LIMIT 1`,
-      [id, `seq-${id}-step-${step.step_number}`]
+      `SELECT id, scheduled_time, status, data FROM scheduled_jobs
+        WHERE sequence_enrollment_id = ? AND id > ?
+        ORDER BY id ASC LIMIT 1`,
+      [id, preWalkMaxJobId]
     );
     if (!after) {
-      // Shouldn't happen — scheduleStepJob either inserts or finds a
-      // pending/running existing row. Belt-and-braces 500.
+      // Shouldn't happen — the walk returned a time, so scheduleStepJob
+      // either inserted or found a pending/running row. Belt-and-braces 500.
       return res.status(500).json({
-        error: 'Recovery insert did not produce a pending job; please check logs',
+        error: 'Recovery did not produce a scheduled job; please check logs',
       });
     }
+    const afterData = typeof after.data === 'string' ? JSON.parse(after.data) : (after.data || {});
+    const placedStepNumber = Number(afterData.stepNumber) || targetStepNumber;
 
     return res.json({
       success:           true,
       enrollment_id:     id,
       job_id:            after.id,
-      step_number:       step.step_number,
+      step_number:       placedStepNumber,
       new_scheduled_at:  new Date(after.scheduled_time).toISOString(),
-      note: "Job dispatched via Cloud Tasks (typically within a few seconds "
-          + "when the accelerator is enabled; otherwise on the next "
-          + "/process-jobs tick, within ~1 min). The step's fire_guard "
-          + "and condition still apply at execution.",
+      skipped_steps:     skippedSteps,
+      note: "Step placed by its own timing rule, counted from now"
+          + (skippedSteps.length
+              ? ` (step(s) ${skippedSteps.join(', ')} skipped — send window already passed)`
+              : '')
+          + ". It runs at new_scheduled_at; the step's fire_guard and "
+          + "condition still apply at execution. To send it sooner, "
+          + "use /fire-next.",
     });
   } catch (err) {
     console.error('[POST /sequences/enrollments/:id/recover] failed:', err);

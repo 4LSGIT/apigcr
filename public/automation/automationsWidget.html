@@ -479,8 +479,9 @@ function cseqJobBadge(status) {
 // intended behavior — see scheduleFromStep in lib/sequenceEngine.js.
 const CSEQ_SKIP_TEXT = {
   unschedulable:
-    "window passed — this step's send time was already behind when the "
-    + "sequence started (e.g. appointment booked on short notice)",
+    "window passed — this step's send time was already behind when it "
+    + "came up for scheduling (appointment booked on short notice, or the "
+    + "enrollment was stuck past it and then recovered)",
   condition_failed:      'template condition not met — enrollment cancelled',
   step_condition_failed: 'step condition not met',
   fire_guard_failed:     'fire guard blocked — too close to the appointment',
@@ -1010,8 +1011,8 @@ async function handleSequenceFireNow(enrollmentId, jobId, scheduledRaw) {
 // Recover stuck enrollment — handler for the denyButton in the enrollment-
 // detail modal. Distinct from Fire Now: this CREATES a new scheduled_jobs
 // row (because the enrollment has no pending/running job), whereas Fire Now
-// reschedules an EXISTING pending job. Parallel handler lives in
-// public/automation/sequences.html as seqEnrollRecover.
+// reschedules an EXISTING pending job. Parallel handler (same name) lives in
+// public/automation/sequences.html.
 //
 // Flow mirrors handleSequenceFireNow: close drill-down modal so the
 // confirm dialog owns the screen, confirm, POST /recover, toast, reload
@@ -1024,8 +1025,9 @@ async function handleSequenceRecover(enrollmentId) {
     html: `
       <div style="text-align:left;font-size:13px;line-height:1.5">
         <p>This enrollment is <b>active</b> but has no pending job — likely wedged when scheduling the next step failed (e.g. a transient calendar API blip).</p>
-        <p style="margin-top:10px">Recovery schedules the next step for <b>now</b>. The next <code>/process-jobs</code> tick (up to ~5 min away) will pick it up.</p>
-        <p style="margin-top:8px;color:var(--text-muted);font-size:11px">The step's <code>fire_guard</code> and <code>condition</code> still apply at execution — a step that fails its condition will skip, just as it would have at the original time.</p>
+        <p style="margin-top:10px">Recovery puts it back on schedule: the next step is placed by <b>its own timing rule</b>, counted from now — a "next business day" step waits for the next business day, an appointment reminder goes out at its usual time before the appointment.</p>
+        <p style="margin-top:8px">An appointment reminder whose send time has <b>already passed</b> is skipped, not sent late. If nothing is left to send, the enrollment is marked completed.</p>
+        <p style="margin-top:8px;color:var(--text-muted);font-size:11px">A step with no delay, or one set to a fixed date that has already passed, runs right away — the same as at enrollment. To send any other step right away, use <b>Fire Now</b> on it afterwards. The step's <code>fire_guard</code> and <code>condition</code> still apply at execution.</p>
       </div>
     `,
     icon: 'question',
@@ -1041,16 +1043,31 @@ async function handleSequenceRecover(enrollmentId) {
 
   try {
     const resp = await api(`/sequences/enrollments/${enrollmentId}/recover`, 'POST');
-    if (resp.status === 'completed') {
-      cseqToast('success', `Enrollment ${enrollmentId} → completed (no next step).`);
-    } else {
-      cseqToast('success', `Step ${resp.step_number} scheduled (job ${resp.job_id}).`);
-    }
+    // skipped_steps = steps the scheduling walk passed over because their
+    // send time had already gone by (never sent late — see the route).
+    const skipped = Array.isArray(resp.skipped_steps) ? resp.skipped_steps : [];
+    const skippedTxt = skipped.length
+      ? `Skipped step${skipped.length > 1 ? 's' : ''} ${skipped.join(', ')} — send time already passed. `
+      : '';
+    // A dialog the operator dismisses, not a toast: re-opening the detail
+    // modal below replaces whatever SweetAlert popup is showing, and the
+    // fire time / skipped steps are the whole point of this confirmation.
+    await Swal.fire(resp.status === 'completed'
+      ? { icon: 'success', title: `Enrollment ${enrollmentId} → completed`,
+          text: skipped.length ? `${skippedTxt}Nothing left to send.` : 'No next step in template.' }
+      : { icon: 'success', title: `Step ${resp.step_number} scheduled (job ${resp.job_id})`,
+          text: `${skippedTxt}Fires ${cseqFmtDate(resp.new_scheduled_at)}` });
     await loadSequences();
-    setTimeout(() => viewEnrollment(enrollmentId), 250);
+    viewEnrollment(enrollmentId);
   } catch (e) {
-    cseqToast('error', e.message || 'Recovery failed');
-    setTimeout(() => viewEnrollment(enrollmentId), 250);
+    // A failed recovery leaves the enrollment stuck and the server message
+    // says why (and whether retrying can help) — a dialog, not a toast.
+    await Swal.fire({
+      icon: 'error',
+      title: 'Recovery failed',
+      text: e.message || 'Recovery failed',
+    });
+    viewEnrollment(enrollmentId);
   }
 }
 

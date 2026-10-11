@@ -177,8 +177,11 @@ describe('context-construction sites carry the pinned version (review D6)', () =
   });
 
   test('recover route selects template_version into its explicit enrollment column list', () => {
+    // The row is handed to scheduleFromStep as its enrollment context
+    // (2026-10: recover delegates to the engine walk), so the list must also
+    // carry total_steps (walk cap) and trigger_data (timing input).
     expect(seqRoutesSrc).toMatch(
-      /SELECT id, template_id, template_version, status, current_step FROM sequence_enrollments/
+      /SELECT id, template_id, template_version, status, current_step, total_steps, trigger_data FROM sequence_enrollments/
     );
   });
 });
