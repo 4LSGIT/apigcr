@@ -40,8 +40,19 @@ const CONNECTION_LIMIT = 10;
 const MAX_IDLE         = 8;       // MUST be < CONNECTION_LIMIT — arms the sweeper
 const IDLE_TIMEOUT_MS  = 30_000;  // MUST be well under server wait_timeout (60s)
 
-const pool = mysql.createPool({
+// Connection target: Cloud SQL Unix socket when INSTANCE_CONNECTION_NAME is set,
+// host TCP otherwise (today's SiteGround behavior, unchanged). See lib/dbTarget.js.
+// The idle-connection policy above was sized for SiteGround's 60s wait_timeout;
+// it stays as-is on Cloud SQL (default wait_timeout 28800s), where the sweeper
+// is merely conservative — recycling an idle socket early costs one handshake.
+const target = require("../lib/dbTarget").dbTarget({
+  instance: process.env.INSTANCE_CONNECTION_NAME,
   host: process.env.host,
+});
+if (target.warning) console.error(`[db] ${target.warning}`);
+
+const pool = mysql.createPool({
+  ...target.config,
   user: process.env.user,
   password: process.env.password,
   database: process.env.database,
@@ -152,7 +163,7 @@ promisePool.execute = async function (...args) {
 
 if (process.env.ENVIRONMENT === "development") {
   promisePool.query("SELECT 1")
-    .then(() => console.log(`[db] connected to ${process.env.database}@${process.env.host} as ${process.env.user}`))
+    .then(() => console.log(`[db] connected to ${process.env.database}@${target.label} as ${process.env.user}`))
     .catch((err) => console.error(`[db] connection failed: ${err.code || err.name} — ${err.message}`));
 }
 

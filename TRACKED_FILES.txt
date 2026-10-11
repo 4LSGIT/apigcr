@@ -33,6 +33,7 @@ lib/courtResolve.js
 lib/credentialCrypto.js
 lib/credentialInjection.js
 lib/ctaLinks.js
+lib/dbTarget.js
 lib/domainEventDrain.js
 lib/domainEvents.js
 lib/errorMiddleware.js
@@ -674,6 +675,9 @@ scripts/customFieldsS5Wf37Repoint.js
 scripts/dbkq_convert.js
 scripts/dbkq_v12_polish.js
 scripts/dbkq_verify.js
+scripts/dbmigrate/README.md
+scripts/dbmigrate/dump.sh
+scripts/dbmigrate/parity.js
 scripts/dump-schema.js
 scripts/encrypt-smtp-passwords.js
 scripts/esign_e2e_check.js
@@ -895,8 +899,10 @@ tests/customFields.s6.test.js
 tests/customView.rowExpand.test.js
 tests/dbConsoleSplitSql.test.js
 tests/dbPoolIdleRecycling.test.js
+tests/dbTarget.test.js
 tests/dbTransientRetry.test.js
 tests/dbkqV12Polish.test.js
+tests/dbmigrateParity.test.js
 tests/decisionResume.order.test.js
 tests/documentGenerateFn.test.js
 tests/documentGenerateService.test.js

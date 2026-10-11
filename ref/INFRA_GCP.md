@@ -124,6 +124,10 @@ export command). Non-secret values inline.
 
 - **DB (SiteGround remote MySQL, reached via the NAT IP):** `host`, `database`, `user`,
   `password`, `user_ro`, `password_ro` (lowercase names are historical; keep them).
+  Optional, UNSET in prod today: `INSTANCE_CONNECTION_NAME` (`PROJECT:REGION:INSTANCE`) —
+  when set, both pools connect over the Cloud SQL Unix socket `/cloudsql/<name>` and
+  ignore `host` (needs `--add-cloudsql-instances` on the revision); `INSTANCE_CONNECTION_NAME_RO`
+  overrides it for the readonly pool only. See `lib/dbTarget.js`.
 - **App identity:** `ENVIRONMENT=production`, `APP_URL=https://app.4lsg.com`,
   `FIRM_TIMEZONE=America/Detroit`, `EMAIL_DOMAIN=@4lsg.com`,
   `EMAIL_DOMAINS=@4lsg.com,@metrodetroitbankruptcylaw.com`, `IT_EMAIL=it@4lsg.com`,

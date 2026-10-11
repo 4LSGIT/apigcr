@@ -13,6 +13,11 @@
 //   database_ro  → database
 //   port_ro      → port (mysql2 default 3306)
 //
+// Connection target mirrors the main pool (lib/dbTarget.js):
+//   INSTANCE_CONNECTION_NAME_RO → INSTANCE_CONNECTION_NAME → unset
+//   set   → Cloud SQL Unix socket; host_ro / host / port_ro / port are ignored
+//   unset → host TCP as above (unchanged)
+//
 // connectionLimit deliberately small — this pool is for human/Claude
 // interactive use, not app traffic.
 
@@ -25,12 +30,18 @@ if (!roUser || !roPass) {
   console.warn("[dbReadonly] user_ro / password_ro not set — /api/readonly/sql will fail until configured.");
 }
 
-const pool = mysql.createPool({
+const target = require("../lib/dbTarget").dbTarget({
+  instance: process.env.INSTANCE_CONNECTION_NAME_RO || process.env.INSTANCE_CONNECTION_NAME,
   host:     process.env.host_ro     || process.env.host,
+  port:     process.env.port_ro     || process.env.port || 3306,
+});
+if (target.warning) console.error(`[dbReadonly] ${target.warning}`);
+
+const pool = mysql.createPool({
+  ...target.config,
   user:     roUser     || "MISSING_USER_RO",
   password: roPass     || "MISSING_PASSWORD_RO",
   database: process.env.database_ro || process.env.database,
-  port:     process.env.port_ro     || process.env.port || 3306,
   timezone: "Z",
   connectionLimit: 3,
   waitForConnections: true,
@@ -78,7 +89,7 @@ const promisePool = pool.promise();
 
 if (process.env.ENVIRONMENT === "development" && roUser && roPass) {
   promisePool.query("SELECT 1")
-    .then(() => console.log(`[dbReadonly] connected as ${roUser}@${process.env.host_ro || process.env.host}`))
+    .then(() => console.log(`[dbReadonly] connected as ${roUser}@${target.label}`))
     .catch((err) => console.error(`[dbReadonly] connection failed: ${err.code || err.name} — ${err.message}`));
 }
 
