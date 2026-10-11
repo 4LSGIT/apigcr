@@ -36,6 +36,23 @@
  *   POST   /api/mail/image-senders            {address} — trust one (idempotent)
  *   DELETE /api/mail/image-senders/:address   stop trusting one (encodeURIComponent it)
  *
+ *   S3 — compose / reply (services/mailbox/mailboxSendService.js):
+ *   GET    /api/mail/identities               the mailboxes the caller may send AS (SU: all;
+ *                                             else can_send grants — no attorney bypass),
+ *                                             each {sendable, reason, signature}
+ *   GET    /api/mail/messages/:id/reply       reply defaults ?all=1 (reply-all) &mailbox_id=
+ *                                             → {mailbox_id, to, cc, subject, quote, over_cap}
+ *   POST   /api/mail/send                     {mailbox_id, to:[…], cc?, bcc?, subject,
+ *                                             body_text | body_html, in_reply_to_message_fk?,
+ *                                             quote_original?, signature?}
+ *                                             → {email_log_id, provider_message_id, thread_key,
+ *                                                append, read_seed, warnings}
+ *            400 bad body · 403 read-only access · 404 no access / no mailbox · 409 the box
+ *            cannot send (inactive, no / unusable credential) · 429 daily budget or your own
+ *            send rate · 502 the provider refused (nothing sent) · 401 elevation_required
+ *            for an SU (the S0 rule: an SU-bypass WRITE needs step-up; apiSend prompts and
+ *            retries — nothing was dispatched)
+ *
  * Auto-mounted (server.js readdirSync); req.db injected. UI: public/comms.html.
  * Service: services/mailbox/mailReadService.js. Spec: ref/MAILBOX_SYSTEM_DESIGN.md
  * §4.3, §4.4, D6.
@@ -59,14 +76,28 @@
 const express = require('express');
 const router = express.Router();
 const jwtOrApiKey = require('../lib/auth.jwtOrApiKey');
+const { auditAdminAction, verifyElevationToken, stepupEnabled } = require('../lib/auth.superuser');
+const { makeLimiter } = require('../lib/rateLimiter');
 const svc = require('../services/mailbox/mailReadService');
+const send = require('../services/mailbox/mailboxSendService');
+const mbx = require('../services/mailboxService');
+
+// Per-USER send rate (S3), on top of the per-transport daily budget: a runaway
+// client loop or a stuck key, not a policy. Per Cloud Run instance like every
+// lib/rateLimiter consumer — best-effort by design.
+const SEND_RATE_WINDOW_MS = 10 * 60 * 1000;
+const SEND_RATE_MAX = 30;
+let sendLimited = makeLimiter(SEND_RATE_WINDOW_MS, SEND_RATE_MAX);
 
 function sendError(res, label, err) {
   const status = Number.isInteger(err && err.status) ? err.status : 500;
   if (status >= 500) {
     console.error(`[mail] ${label} error:`, err && err.code ? err.code : '', err && err.message);
   }
-  res.status(status).json({ status: 'error', message: (status >= 500 ? null : err && err.message) || 'Mail request failed' });
+  // A 5xx says nothing — except an error the service marked `expose` (S3: the
+  // provider's refusal of a send, which the sender needs to read).
+  const expose = status < 500 || !!(err && err.expose === true);
+  res.status(status).json({ status: 'error', message: (expose ? err && err.message : null) || 'Mail request failed' });
 }
 
 /** Staff JWT only — grants and read state resolve against a user id. */
@@ -205,5 +236,87 @@ router.delete('/api/mail/image-senders/:address', ...guard, async (req, res) => 
     res.json({ status: 'success', ...(await svc.untrustImageSender(req.db, req.auth.userId, req.params.address)) });
   } catch (err) { sendError(res, 'DELETE /api/mail/image-senders/:address', err); }
 });
+
+
+// ─────────────────────────────────────────────────────────────
+// S3 — compose / reply
+// ─────────────────────────────────────────────────────────────
+
+/** admin_audit_log row for a send attempt (tool mail_send) — never the bodies or addresses. */
+function auditSend(req, status, details, errorMessage = null) {
+  auditAdminAction(req.db, {
+    tool: 'mail_send',
+    userId: req.auth.userId,
+    username: req.auth.username ?? null,
+    route: req.originalUrl,
+    method: req.method,
+    status,
+    errorMessage,
+    ip: req.headers['x-forwarded-for']?.split(',').shift() || req.socket?.remoteAddress,
+    userAgent: req.headers['user-agent'] || 'unknown',
+    details,
+  }).catch(err => console.error('[mail] send audit failed:', err.message));
+}
+
+// ─── GET /api/mail/identities ───
+router.get('/api/mail/identities', ...guard, async function getMailIdentities(req, res) {
+  try {
+    res.json({ status: 'success', ...(await send.listIdentities(req.db, req.auth.userId)) });
+  } catch (err) { sendError(res, 'GET /api/mail/identities', err); }
+});
+
+// ─── GET /api/mail/messages/:id/reply ───  ?all=1&mailbox_id=
+router.get('/api/mail/messages/:id/reply', ...guard, async function getReplyDefaults(req, res) {
+  try {
+    res.json({ status: 'success', ...(await send.replyDefaults(req.db, req.auth.userId, req.params.id, req.query || {})) });
+  } catch (err) { sendError(res, 'GET /api/mail/messages/:id/reply', err); }
+});
+
+// ─── POST /api/mail/send ───
+router.post('/api/mail/send', ...guard, async function sendMail(req, res) {
+  const uid = req.auth.userId;
+  if (sendLimited(`u${uid}`)) {
+    return res.status(429).json({ status: 'error', message: 'Too many sends from you in a few minutes — wait a little and try again.' });
+  }
+  const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body : {};
+  const meta = {
+    mailbox_id: Number(body.mailbox_id) || null,
+    in_reply_to_message_fk: Number(body.in_reply_to_message_fk) || null,
+  };
+  try {
+    // S0 rule: an SU acting through the bypass needs step-up on a WRITE.
+    // Checked before anything is dispatched, so apiSend's prompt-and-retry
+    // can never send twice.
+    if (await mbx.isSuperuser(req.db, uid)
+        && !(!stepupEnabled() || verifyElevationToken(req.headers['x-su-elevation'], uid))) {
+      auditSend(req, 'rejected_no_elevation', meta);
+      return res.status(401).json({
+        error: 'Elevation required — confirm your password to send as a mailbox through superuser access.',
+        code: 'elevation_required',
+      });
+    }
+    const out = await send.sendFromMailbox(req.db, uid, body.mailbox_id, body);
+    auditSend(req, 'sent', {
+      ...meta,
+      email_log_id: out.email_log_id,
+      provider_message_id: out.provider_message_id,
+      recipients: out.recipients,
+      append: out.append.appended ? `appended:${out.append.folder}` : out.append.reason,
+      read_seed_job: out.read_seed.job_id,
+      warnings: out.warnings.map(w => w.code),
+    });
+    res.json({ status: 'success', ...out });
+  } catch (err) {
+    if (err && (err.status === 429 || err.status === 502)) {
+      auditSend(req, err.status === 429 ? 'refused_budget' : 'send_failed', meta, err.message);
+    }
+    sendError(res, 'POST /api/mail/send', err);
+  }
+});
+
+// Test hook (the lib/auth.superuser _resetRateLimits precedent): a fresh send
+// limiter, so suites do not share one window across tests.
+router._resetSendRateLimit = () => { sendLimited = makeLimiter(SEND_RATE_WINDOW_MS, SEND_RATE_MAX); };
+router.SEND_RATE_MAX = SEND_RATE_MAX;
 
 module.exports = router;

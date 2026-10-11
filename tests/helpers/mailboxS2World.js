@@ -325,6 +325,17 @@ function makeWorld() {
         preds.push(j => isClientMail(j.m, types, firm));
       }
       else if (frag === FILES_FRAG) preds.push(j => hasFiles(j.m));
+      // S3's Sent scope (mailReadService SENT_WHERE): the bound label is an
+      // exact JSON MEMBER OF match (case-sensitive), the folder REGEXP is
+      // case-blind (general_ci) — tests/mailboxS3.mysql.test.js holds the
+      // engine to the same edge matrix.
+      else if (frag === '(? MEMBER OF (m.gmail_labels) OR m.folder REGEXP ?)') {
+        const label = p[pi++]; const re = icu(p[pi++]);
+        preds.push(j => {
+          const l = parseJsonCol(j.m.gmail_labels);
+          return (Array.isArray(l) ? l : (l == null ? [] : [l])).some(x => x === label) || re.test(String(j.m.folder || ''));
+        });
+      }
       else if (frag === '(m.from_addr LIKE ? OR m.from_addr LIKE ?)') {
         const a = p[pi++]; const bb = p[pi++]; preds.push(j => like(j.m.from_addr, a) || like(j.m.from_addr, bb));
       }

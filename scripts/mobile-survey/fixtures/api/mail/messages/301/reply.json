@@ -1,0 +1,18 @@
+{
+  "status": "success",
+  "in_reply_to_message_fk": 301,
+  "mailbox_id": 2,
+  "all": true,
+  "max_recipients": 10,
+  "over_cap": false,
+  "subject": "Re: Re: Fwd: Motion to extend the deadline for filing objections to the amended plan — please confirm by Friday",
+  "to": [{ "email": "a-really-long-sender-address-for-overflow-checks@opposing-counsel-law-group.test", "name": "Counsel, Opposing Q." }],
+  "cc": [
+    { "email": "billing@example-firm.test", "name": "Billing" },
+    { "email": "paralegal-with-a-long-address@opposing-counsel-law-group.test", "name": null }
+  ],
+  "quote": {
+    "header": "On Wed, Oct 7, 2026 at 9:12 AM, \"Counsel, Opposing Q.\" <a-really-long-sender-address-for-overflow-checks@opposing-counsel-law-group.test> wrote:",
+    "text": "Counsel — we need the objection deadline moved to the 21st. Please confirm by Friday.\nhttps://a-very-long-link-that-should-wrap.example-court.test/cases/2026/41823/docket/entries/00042/attachments/1?download=true&token=abcdefghijklmnopqrstuvwxyz"
+  }
+}

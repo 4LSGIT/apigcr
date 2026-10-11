@@ -72,6 +72,19 @@
  * labelled row is a SENT copy when its snapshot holds \Sent (placeOf); a
  * labelled row in neither is "Archived" — shown under All folders only.
  *
+ * ── SENT SCOPE (S3, ruling 2026-10-11) ──────────────────────────────────────
+ * The hub's third scope (Inbox | Sent | All folders) is the filter
+ * `sent_only`: a row whose Gmail snapshot holds \Sent, OR whose folder's last
+ * path segment is a Sent folder's name (SENT_FOLDER_SQL_RE: Sent / Sent Items /
+ * Sent Messages / Sent Mail — "INBOX.Sent" on SiteGround). The folder half
+ * also catches a Gmail row fetched from [Gmail]/Sent Mail (the selected
+ * folder's own label is left out). ONE fragment (SENT_WHERE) shared by the
+ * list and mark-all like every scope predicate; the label is a BOUND
+ * parameter (`? MEMBER OF (gmail_labels)`), so no backslash ever sits in the
+ * SQL text. It walks idx_mail_messages_mailbox_date like All folders.
+ * sent_only + all_folders is a 400 (one scope at a time); a saved view that
+ * scopes to Sent gets no unread count (viewCounts).
+ *
  * ── CASE LINK ────────────────────────────────────────────────────────────────
  * Reuses the about-link machinery (logService.setLogAbout, about_type 'case')
  * on the message's log row. A message with no stamped log_id first looks for
@@ -136,6 +149,7 @@ const FILTER_KEYS = Object.freeze({
   client_only: 'bool',
   has_files: 'bool',
   all_folders: 'bool',
+  sent_only: 'bool',           // S3: the Sent scope (SENT SCOPE above)
   from_domain: 'domain',
   q: 'text',
 });
@@ -478,9 +492,10 @@ function readFilters(src, { strict } = { strict: false }) {
   return f;
 }
 
-/** The one contradiction in the vocabulary: on a case AND not on one. */
+/** The contradictions in the vocabulary: on a case AND not on one; Sent AND All folders. */
 function checkFilters(f) {
   if (f.has_case && f.no_case) throw httpError(400, 'has_case and no_case cannot both be on');
+  if (f.sent_only && f.all_folders) throw httpError(400, 'sent_only and all_folders cannot both be on — pick one scope');
   return f;
 }
 
@@ -558,6 +573,16 @@ const FILES_WHERE = `0 < (SELECT COUNT(*) FROM JSON_TABLE(m.attachments, '$[*]' 
          AND (LOCATE(CONCAT('cid:', REGEXP_REPLACE(a.cid, '^<|>$', '')), COALESCE(m.body_html, '')) > 0
            OR LOCATE(CONCAT('cid:', REPLACE(REGEXP_REPLACE(a.cid, '^<|>$', ''), '@', '%40')), COALESCE(m.body_html, '')) > 0)))`;
 
+/*
+ * SENT SCOPE (header). The Gmail \Sent system label (SENT_LABEL, bound as a
+ * parameter) or a Sent folder name on the last path segment. REGEXP on the
+ * general_ci folder column is case-blind (ICU). tests/mailboxS3.mysql.test.js
+ * holds the engine to the edge matrix; the fake world compiles the same bound
+ * pattern case-blind.
+ */
+const SENT_FOLDER_SQL_RE = '(^|[./])(sent|sent items|sent messages|sent mail)$';
+const SENT_WHERE = '(? MEMBER OF (m.gmail_labels) OR m.folder REGEXP ?)';
+
 /**
  * The list's predicates beyond the mailbox, as exact SQL fragments + params
  * (tests/helpers/mailboxS2World.js parses these texts — keep them verbatim).
@@ -568,7 +593,8 @@ const FILES_WHERE = `0 < (SELECT COUNT(*) FROM JSON_TABLE(m.attachments, '$[*]' 
 function scopeWhere(filters, cursor) {
   const where = [];
   const params = [];
-  if (!filters.all_folders) where.push('m.in_inbox = 1'); // INBOX / SENT (header)
+  if (filters.sent_only) { where.push(SENT_WHERE); params.push(SENT_LABEL, SENT_FOLDER_SQL_RE); } // SENT SCOPE (header)
+  else if (!filters.all_folders) where.push('m.in_inbox = 1'); // INBOX / SENT (header)
   if (cursor && cursor.date) {
     where.push('(m.date < ? OR (m.date = ? AND m.id < ?) OR m.date IS NULL)');
     params.push(sqlUtc(cursor.date), sqlUtc(cursor.date), cursor.id);
@@ -637,7 +663,7 @@ async function listMessages(db, userId, query = {}) {
   // walks (mailbox_id, in_inbox = 1, date) — only Inbox rows are read, so an
   // All Mail box's archived and sent mail costs nothing; All folders walks
   // (mailbox_id, date).
-  const index = filters.all_folders ? 'idx_mail_messages_mailbox_date' : 'idx_mail_messages_mailbox_inbox_date';
+  const index = filters.all_folders || filters.sent_only ? 'idx_mail_messages_mailbox_date' : 'idx_mail_messages_mailbox_inbox_date';
   for (const id of ids) {
     branches.push(
       `(SELECT ${LIST_COLS} FROM mail_messages m FORCE INDEX (${index})${JOINS}
@@ -1137,7 +1163,10 @@ async function viewCounts(db, userId) {
     if (!ids.length) { counts[v.id] = 0; continue; }
     let where;
     try {
-      where = scopeWhere(checkFilters({ ...readFilters(v.filters || {}), unread_only: true, all_folders: false }), null);
+      const f = readFilters(v.filters || {});
+      // A Sent view counts nothing: sent mail is nobody's unread (S3).
+      if (f.sent_only) continue;
+      where = scopeWhere(checkFilters({ ...f, unread_only: true, all_folders: false }), null);
     } catch (_) { continue; }
     const [[row]] = await db.query(
       `SELECT COUNT(*) AS n FROM mail_messages m${JOINS} WHERE m.mailbox_id IN (?)${where.extra}`,
@@ -1459,6 +1488,9 @@ module.exports = {
   parseCursor,
   cursorOf,
   FILTER_KEYS,
+  SENT_WHERE,
+  SENT_FOLDER_SQL_RE,
+  SENT_LABEL,
   LIST_COLS,
   PAGE_MAX,
   THREAD_MAX,

@@ -14,6 +14,13 @@
 //     behavior change outside this slice's scope.)
 //   - On send failure, log a FAILED-<ts> row to email_log BEFORE rethrowing.
 //
+// Hub-only options (mailbox S3, emailService HUB-ONLY OPTIONS): cc, bcc,
+// inReplyTo, references, messageId reach nodemailer's mailOptions ONLY when
+// present — a call without them builds exactly the mailOptions it built
+// before (tests/mailboxS3.adapters.test.js pins the key set). email_log is
+// untouched: still one 'outbound-smtp' row keyed by info.messageId (= the
+// caller's messageId when it passed one), to_email = `to` only.
+//
 // email_log.delivery_info — WHAT A ROW DOES AND DOESN'T PROVE:
 //   The row is written as soon as transporter.sendMail RESOLVES. That means
 //   the relay returned 250 on the handoff and nothing more — it is NOT
@@ -110,6 +117,8 @@ async function sendEmail(db, {
   attachments, attachmentUrls,
   // attachmentNames, credential, emailRow.credential_id: ignored for SMTP
   emailRow,
+  // hub-only (S3) — see the header
+  cc, bcc, inReplyTo, references, messageId,
 }) {
   const mergedAttachments = buildAttachments(attachments, attachmentUrls);
 
@@ -120,6 +129,11 @@ async function sendEmail(db, {
     text,
     html,
     ...(mergedAttachments.length && { attachments: mergedAttachments }),
+    ...(cc && { cc }),
+    ...(bcc && { bcc }),
+    ...(inReplyTo && { inReplyTo }),
+    ...(references && { references }),
+    ...(messageId && { messageId }),
   };
 
   let info;

@@ -22,11 +22,16 @@
  *   - Role bypass (S2): users.roles containing 'attorney' (READ_BYPASS_ROLES)
  *     grants READ on every mailbox without a grant row — design §1 "SU and SS
  *     see everything". READ ONLY: can_send / can_manage still come from the
- *     user's grant row (send semantics are S3's decision), and `su` stays
+ *     user's grant row, and `su` stays
  *     false, so a role reader is never treated as an SU by the routes (no
  *     SU projection, no SU-only diagnostics, no bypass writes). DB-sourced
  *     for the same reason as the SU check: a role removed in the Users pane
  *     takes effect on the next request. Rows carry `role` when it applied.
+ *   - SEND (S3): the attorney bypass does NOT extend to can_send. Reading
+ *     every box is a visibility right; sending AS an identity is an act, so
+ *     it needs an explicit can_send grant. Only the SU bypass sends without
+ *     a grant row.
+ *     listSendable is the set the comms hub's identity picker offers.
  *   - Enforcement seat (D6): grant checks run on INTERACTIVE routes only —
  *     never inside emailService / phoneService — so workflow and automation
  *     sends are untouched. Nothing in this file is called from those services.
@@ -319,6 +324,36 @@ async function listReadable(db, userId, channelType = 'mailbox') {
     [uid, channelType]
   );
   return rows.map(r => ({ channel_id: r.channel_id, ...shapeGrantFlags(r) }));
+}
+
+/**
+ * What a user can SEND AS (S3): [{id, address, domain, display_name, color,
+ * active, send_credential_id}], address order. SU: every mailbox (the S0 SU
+ * bypass). Everyone else: mailboxes they hold a can_send grant on — NO role
+ * bypass (header, SEND): an attorney without the grant gets nothing here.
+ * Inactive boxes and boxes without a send credential are included; the
+ * caller says why they cannot be used. send_credential_id is for the send
+ * service — routes project it away for non-SU callers.
+ */
+async function listSendable(db, userId) {
+  if (await isSuperuser(db, userId)) {
+    const [rows] = await db.query(
+      `SELECT m.id, m.address, m.domain, m.display_name, m.color, m.active, m.send_credential_id
+         FROM mailboxes m ORDER BY m.address ASC`
+    );
+    return rows.map(shapeFlags);
+  }
+  const uid = Number(userId);
+  if (!Number.isInteger(uid) || uid < 0) return [];
+  const [rows] = await db.query(
+    `SELECT m.id, m.address, m.domain, m.display_name, m.color, m.active, m.send_credential_id
+       FROM channel_grants g
+       JOIN mailboxes m ON m.id = g.channel_id
+      WHERE g.user = ? AND g.channel_type = 'mailbox' AND g.can_send = 1
+      ORDER BY m.address ASC`,
+    [uid]
+  );
+  return rows.map(shapeFlags);
 }
 
 
@@ -930,6 +965,7 @@ module.exports = {
   roleBypass,
   getAccess,
   listReadable,
+  listSendable,
   // mailboxes
   listMailboxesFor,
   getMailbox,

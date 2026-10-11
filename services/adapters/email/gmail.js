@@ -31,6 +31,21 @@
 // Auth: buildHeadersForCredential is async and handles oauth2 refresh
 // internally. If it returns {} (credential not connected, refresh failed,
 // out of allowed_urls scope) we throw rather than send unauthenticated.
+//
+// Hub-only options (mailbox S3, emailService HUB-ONLY OPTIONS), each used
+// ONLY when present — a call without them builds the same MIME and the same
+// request body as before (tests/mailboxS3.adapters.test.js):
+//   cc / inReplyTo / references / messageId → MailComposer headers. Gmail
+//     replaces the Message-ID on every API send (live: every automation send
+//     stored in mailbox 2 carries <CA…@mail.gmail.com>), so messageId is
+//     cosmetic here; the provider id Gmail returns is the stable handle.
+//   bcc → MailComposer drops Bcc from the compiled message by default, and
+//     the Gmail API reads the recipients FROM the raw headers — so with a bcc
+//     the compiled node keeps it (keepBcc); Gmail delivers to it and strips
+//     it from what the recipients get, as for any Gmail send.
+//   threadId → {raw, threadId}: Gmail files the reply in the sender's own
+//     existing conversation (it also needs matching References and Subject).
+// lookupThreadId() (S3) reads a message's Gmail threadId for that.
 
 const MailComposer = require('nodemailer/lib/mail-composer');
 const { buildHeadersForCredential } = require('../../../lib/credentialInjection');
@@ -193,10 +208,14 @@ async function materializeAttachments(mergedAttachments) {
 // MIME compilation
 // ─────────────────────────────────────────────────────────────
 
-function compileMime(mailOptions) {
+function compileMime(mailOptions, { keepBcc = false } = {}) {
   return new Promise((resolve, reject) => {
     const composer = new MailComposer(mailOptions);
-    composer.compile().build((err, message) => {
+    const node = composer.compile();
+    // Only a hub send with a bcc sets this (see the header): the Gmail API
+    // takes its recipients from the raw headers.
+    if (keepBcc) node.keepBcc = true;
+    node.build((err, message) => {
       if (err) return reject(err);
       resolve(message);  // Buffer of full RFC 5322 bytes (CRLF endings)
     });
@@ -233,6 +252,10 @@ async function sendEmail(db, {
   emailRow,
   // attachmentNames: ignored — Gmail uses real MIME; names come from
   // {url, name} entries or {filename} on inline attachments.
+  // hub-only (S3) — see the header
+  // (messageId is renamed: the function already has a `messageId` — the
+  // Gmail id Gmail hands back.)
+  cc, bcc, inReplyTo, references, messageId: rfcMessageId, threadId,
 }) {
   if (!credential) {
     throw new Error(
@@ -271,11 +294,16 @@ async function sendEmail(db, {
     text,
     html,
     ...(mergedAttachments.length && { attachments: mergedAttachments }),
+    ...(cc && { cc }),
+    ...(bcc && { bcc }),
+    ...(inReplyTo && { inReplyTo }),
+    ...(references && { references }),
+    ...(rfcMessageId && { messageId: rfcMessageId }),
   };
 
   let mimeBuffer;
   try {
-    mimeBuffer = await compileMime(mailOptions);
+    mimeBuffer = await compileMime(mailOptions, { keepBcc: !!bcc });
   } catch (err) {
     const wrapped = new Error(`Gmail adapter: MIME compilation failed: ${err.message}`);
     logEmail(db, `FAILED-${Date.now()}`, from, to, subject, `MIME COMPILE FAILED: ${err.message}`);
@@ -314,7 +342,7 @@ async function sendEmail(db, {
         ...headers,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ raw: base64UrlEncode(mimeBuffer) }),
+      body: JSON.stringify({ raw: base64UrlEncode(mimeBuffer), ...(threadId && { threadId: String(threadId) }) }),
     });
   } catch (err) {
     logEmail(db, `FAILED-${Date.now()}`, from, to, subject, `NETWORK FAILED: ${err.message}`);
@@ -409,6 +437,37 @@ async function listSendAs(db, credentialId) {
   return Array.isArray(data?.sendAs) ? data.sendAs : [];
 }
 
+// ─────────────────────────────────────────────────────────────
+// Thread id of one message (mailbox S3)
+//
+// GET users/me/messages/{id}?format=minimal → its threadId, so a hub reply
+// can be filed in the sender's own Gmail conversation. `messageId` is the
+// Gmail message id (hex) — what the ingest worker stores as
+// mail_messages.provider_id for an X-GM-EXT-1 mailbox. Best-effort by
+// contract: null on ANY failure (no token, 403 scope, 404 — e.g. the message
+// lives in another Google account), never a throw — a reply without a
+// threadId still threads for every recipient by its headers.
+// ─────────────────────────────────────────────────────────────
+
+const GMAIL_MESSAGE_URL = 'https://gmail.googleapis.com/gmail/v1/users/me/messages/';
+
+async function lookupThreadId(db, credentialId, messageId) {
+  const id = String(messageId == null ? '' : messageId).trim().toLowerCase();
+  if (credentialId == null || !/^[0-9a-f]{1,16}$/.test(id)) return null;
+  try {
+    const url = `${GMAIL_MESSAGE_URL}${id}?format=minimal`;
+    const headers = await buildHeadersForCredential(db, credentialId, url);
+    if (!headers || !headers.Authorization) return null;
+    const res = await fetch(url, { method: 'GET', headers });
+    if (!res.ok) return null;
+    const data = await res.json();
+    const t = data && data.threadId ? String(data.threadId) : '';
+    return /^[0-9a-f]{1,16}$/i.test(t) ? t : null;
+  } catch (_) {
+    return null;
+  }
+}
+
 module.exports = {
   capabilities: {
     html: true,
@@ -417,4 +476,5 @@ module.exports = {
   },
   sendEmail,
   listSendAs,
+  lookupThreadId,
 };

@@ -1,0 +1,9 @@
+{
+  "status": "success",
+  "max_recipients": 10,
+  "identities": [
+    { "id": 1, "address": "billing@example-firm.test", "display_name": "Billing", "color": "#2f6fd1", "active": true, "sendable": true, "reason": null, "reason_text": null, "signature": true },
+    { "id": 2, "address": "a-very-long-intake-address-for-overflow@another-long-domain-name.test", "display_name": "Intake (shared) — a long display name to wrap", "color": "#fff3bf", "active": true, "sendable": true, "reason": null, "reason_text": null, "signature": false },
+    { "id": 3, "address": "read-only-box-with-a-long-local-part@example-firm.test", "display_name": null, "color": null, "active": true, "sendable": false, "reason": "no_send_credential", "reason_text": "Read-only: this mailbox has no send credential (a superuser sets one in Admin → Mailboxes).", "signature": false }
+  ]
+}

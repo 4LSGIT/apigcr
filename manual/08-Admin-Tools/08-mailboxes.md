@@ -7,10 +7,10 @@ the comms hub (design: `ref/MAILBOX_SYSTEM_DESIGN.md`).
 **Where:** Admin → **Mailboxes**. Adding and editing mailboxes is SU only and
 asks for [elevation](README.md) like the other SU tools.
 
-> **Polling is live (S1) and so is reading (S2).** Every active mailbox with
+> **Polling, reading and sending are live (S1–S3).** Every active mailbox with
 > **Ingest enabled** is read over IMAP every 5 minutes and stored in
-> YisraCase; people with **Read** see it in **Comms** (below). Sending arrives
-> with S3.
+> YisraCase; people with **Read** see it in **Comms**, people with **Send**
+> write and reply from it there (both below).
 
 ## A mailbox is connection data
 
@@ -22,7 +22,13 @@ from one host to another is just editing the row.
 - **Address** is stored lower-cased and must be unique. Its domain is derived
   from it.
 - **Host** is the bare host name — no `https://`, no port.
-- **Send credential**: none means the box is **read-only** in YisraCase.
+- **Send credential**: none means the box is **read-only** in YisraCase. It
+  must be an SMTP or Google sender — a Pabbly sender cannot send replies or
+  Cc/Bcc, so Comms greys the box out. A **Google** sender must be the one
+  for the box's own address: Google sends any other address under its own
+  name, so Comms refuses that pairing too. The sender's name and signature are
+  used only when the sender's own address is the box's; a shared domain
+  sender sends as the box's bare address, without a signature.
 - **Mailboxes are never deleted** — stored mail will reference them. Untick
   **Active** to retire one.
 
@@ -194,14 +200,15 @@ Click **Access** on a row. Each person gets any mix of:
 | Flag | Means |
 |---|---|
 | **Read** | sees the box's mail in Comms |
-| **Send** | can send as the box (S3) |
+| **Send** | can write and reply as the box in Comms |
 | **Manage** | can grant and revoke access on this box, rename it and change its colour |
 
 - Ticks **save immediately**. A grant keeps at least one tick — use **Remove**
   to take access away entirely.
 - **Superusers need no grant** — they see every mailbox.
 - **Attorneys read every mailbox without a grant** (the `attorney` role in
-  Users — Stuart). Read only: sending or managing a box still needs the tick.
+  Users — Stuart). Read only: sending or managing a box still needs the tick
+  — Stuart sends only from the boxes he has **Send** on.
   The role is checked on every request, so removing it takes effect at once.
 - **Automations need no grant**: workflow, sequence and campaign sends are not
   checked against mailbox access (and the automations user cannot hold one).
@@ -231,8 +238,10 @@ Admin → Comms. It shows the mail of every box you can read in one list; the
   Narrow it with the **mailbox picker** (tick
   any combination of boxes — say shoshana@ and billing@ together), the
   search (sender or subject — not the message text), a sender domain, and
-  the filter buttons (a pressed button is on): **Inbox** / **All folders**
-  (adds Sent — a message a mailbox sent shows who it went to, "To: …"),
+  the filter buttons (a pressed button is on): **Inbox** / **Sent** / **All
+  folders** (one at a time — **Sent** is the mail the boxes sent: Google's
+  Sent label, or a polled Sent folder; **All folders** is everything; a
+  message a mailbox sent shows who it went to, "To: …"),
   **Unread**, **Client mail**, **Has files**, **On a case** / **Not on a
   case** (one or the other).
 - **On a wide screen** your saved views and the mailboxes sit in a column
@@ -240,7 +249,8 @@ Admin → Comms. It shows the mail of every box you can read in one list; the
   box, no filters) to show it; tick mailboxes to combine them. Each box shows
   your unread count and your access (R read · S send · M manage); each view
   shows how many unread Inbox messages it holds under its own filters (the
-  same count appears in the view menu). When the screen no longer matches
+  same count appears in the view menu; a view of **Sent** shows none — sent
+  mail is never unread). When the screen no longer matches
   the view you picked, **Unsaved changes** offers **Save as view** or
   **Update** that view; **Manage** renames, deletes or sets the default.
   **«** hides the column (the menus come back above the list, and the
@@ -320,3 +330,66 @@ Admin → Comms. It shows the mail of every box you can read in one list; the
   replaces its mailboxes and filters with the ones on screen. A view only
   narrows what you can already read — if every box in it stops being shared
   with you, it shows nothing.
+
+## Sending mail — Comms
+
+**Who:** people with **Send** on a box (Access, above), and superusers — who
+confirm their password first ([elevation](README.md)), as for the other
+superuser changes. Comms shows **Compose** and the **Reply** buttons only to
+people who can send from a box they can read.
+
+- **Compose** (top of the left column on a wide screen, else in the bar
+  above the list) writes a new email. **Reply** and **Reply all** sit on
+  every message in a conversation; the reply opens at the end of the
+  conversation.
+- **From** lists the boxes you can send as, in their colours. A box that
+  cannot send right now is greyed out with the reason — no send credential
+  (read-only), switched off, a Pabbly sender, or a Google sender for a
+  different address. A reply starts from the box
+  the email arrived in when you can send from it.
+- **To / Cc / Bcc**: type an address, or part of a contact's name or email —
+  matching contacts are offered with their cases — and press Enter, Tab or a
+  comma; a pasted list is split for you. **At most 10 recipients** in all:
+  Comms is for one-to-one mail, not bulk (that is what campaigns are for).
+  **Reply** goes to the sender; **Reply all** also copies everyone else on
+  the email except the box you send from. Replying to an email your own box
+  sent — anything under **Sent**, automation emails included — goes to that
+  email's recipients. Switching between Reply and Reply all keeps what you
+  wrote.
+- **Subject** is "Re: …" on a reply. Changing it is allowed; YisraCase still
+  keeps the reply in the original conversation (Gmail may show it as a new
+  one).
+- **The message** is plain text — a blank line starts a new paragraph.
+  **Add signature** (ticked when the box has a signature of its own —
+  Connections → Email Senders) adds it under your text. A reply quotes the
+  original under your text; **Original message** → untick **Include it** to
+  leave it out. Attachments cannot be sent from Comms yet.
+- **Send** sends straight away — there is no undo and no scheduling. While
+  it says **Sending…** the window stays open; if the mail server refuses one
+  of several recipients you are told which.
+  **✕** (or Esc) closes the window and keeps what you wrote until the page
+  is reloaded — nothing is saved on the server; **Discard** throws it away;
+  leaving the page with unsent text asks first.
+- **Where it shows.** A sent email appears after the box's next check —
+  about 5 minutes — under **Sent**, already marked read for you; an open
+  conversation re-reads itself for a few minutes after you reply.
+  - **The Google mailbox**: Google files the email in Sent itself and the
+    poll of All Mail picks it up, exactly like mail sent from Gmail —
+    including reaching the log the way Gmail's own sent mail does.
+  - **Other mailboxes (SiteGround)**: YisraCase also saves a copy in the
+    box's Sent folder, so Outlook and webmail show it. It appears in Comms
+    only if that Sent folder is one of the box's polled folders (Folders,
+    above). If the copy cannot be saved, the email still went out — you are
+    told, and IT gets a warning. Like other Sent mail of these boxes it is
+    not put on any log by itself — use **Link to case** on it.
+- **Daily limit.** Each sending account (one Google account, or one SMTP
+  login) may send a set number of emails in any 24 hours — counting
+  automation emails through the same account, and attempts the provider
+  refused: by default 1,500 for Google and 300 for SMTP, changed with the
+  `mail_send_daily_budget` app setting (`{"gmail": n, "smtp": n}`). At the
+  limit Comms refuses to send (nothing goes out), says so, and IT gets one
+  warning a day. Automations are not stopped by it. Separately, more than
+  30 sends by one person within 10 minutes are refused for a few minutes.
+- Every send, refused send and failed send is recorded in `admin_audit_log`
+  under the tool `mail_send` — who, which box, how many recipients; never
+  the text or the addresses.

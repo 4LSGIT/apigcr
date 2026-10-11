@@ -20,6 +20,9 @@
  *   listFolders(row)       the SU folder listing (S1-G): every folder with its
  *                          special-use flag and STATUS counts, plus whether
  *                          the server will hand us provider ids. Read-only.
+ *   appendSent(row, raw)   the comms hub's Sent copy (S3): APPEND one message
+ *                          the hub just sent to the mailbox's Sent folder —
+ *                          the module's ONLY writer (see READ-ONLY below).
  *
  * The SESSION also carries fetchLabels(uids) — Gmail labels only, for the SU
  * label re-snapshot (S2-L, mailboxIngestService.snapshotLabels).
@@ -48,8 +51,19 @@
  * Folders are opened with EXAMINE (`readOnly:true`), so the server can never
  * set \Seen or clear \Recent on our account — staff still read this mail in
  * Outlook / Apple Mail (design §4.3: v1 never writes flags back). Nothing in
- * this module issues STORE, APPEND, COPY, MOVE or EXPUNGE. S3's Sent APPEND
- * will be the first writer and arrives as its own reviewed function.
+ * this module issues STORE, COPY, MOVE or EXPUNGE, and APPEND exactly once:
+ * appendSent() (S3), its own function with its own connection, never reached
+ * from the ingest session — it adds one new message (flagged \Seen) to a
+ * Sent folder and touches no existing one.
+ *
+ * ── NEVER APPEND TO GMAIL (S3) ───────────────────────────────────────────────
+ * Gmail files mail sent through the account into Sent by itself, and an
+ * APPENDed copy is a SECOND message with its own X-GM-MSGID: a second row in
+ * All Mail and — for a mailbox emitting under a provider-keyed source
+ * (gmail-firm) — a second email_log emission of the same send. So appendSent
+ * refuses any server advertising X-GM-EXT-1 ('gmail_server') before it lists
+ * a folder. The send service already skips Gmail-API sends without
+ * connecting; this is the second, independent layer.
  *
  * ── TLS, ALWAYS ──────────────────────────────────────────────────────────────
  * Port 143 → STARTTLS, mandatory (`doSTARTTLS:true` refuses a server that does
@@ -678,6 +692,79 @@ async function fetchPart(row, folder, uid, partId, { uidValidity = null, message
   }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Sent APPEND (S3)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Leaf names a Sent folder goes by when the server marks none with the RFC
+// 6154 \Sent special-use flag, in preference order (Dovecot/SiteGround
+// "INBOX.Sent", Migadu "Sent", Outlook-made "Sent Items", Apple "Sent
+// Messages"). Compared case-blind on the last path segment.
+const SENT_NAMES = Object.freeze(['sent', 'sent items', 'sent messages', 'sent mail']);
+
+/**
+ * The folder a Sent copy goes to, from a LIST result: the selectable folder
+ * flagged \Sent, else the first selectable one whose leaf is a SENT_NAMES
+ * entry (in SENT_NAMES order), else null. Never creates one.
+ */
+function pickSentFolder(list) {
+  const folders = (Array.isArray(list) ? list : []).map((f) => {
+    const flags = [...((f && f.flags) || [])].map(String);
+    const path = f && f.path != null ? String(f.path) : '';
+    const delim = f && f.delimiter ? String(f.delimiter) : null;
+    return {
+      path,
+      leaf: (delim ? path.split(delim).pop() : path).trim().toLowerCase(),
+      special: f && f.specialUse ? String(f.specialUse).toLowerCase() : '',
+      selectable: !!path && !flags.some(x => /^\\(noselect|nonexistent)$/i.test(x)),
+    };
+  }).filter(f => f.selectable);
+  const flagged = folders.find(f => f.special === '\\sent');
+  if (flagged) return flagged.path;
+  for (const name of SENT_NAMES) {
+    const hit = folders.find(f => f.leaf === name);
+    if (hit) return hit.path;
+  }
+  return null;
+}
+
+/**
+ * APPEND `raw` (one RFC 5322 message, Buffer or string) to the mailbox's Sent
+ * folder, flagged \Seen, INTERNALDATE now. A request-scoped connection,
+ * always logged out.
+ *
+ * @returns {Promise<{appended:boolean, folder:string|null, uid:number|null,
+ *                    reason:null|'gmail_server'|'no_sent_folder'}>}
+ *   appended:false is not an error — the caller reports it as a warning
+ *   (the mail itself was already sent). Throws sanitized errors only.
+ */
+async function appendSent(row, raw) {
+  if (!(Buffer.isBuffer(raw) || (typeof raw === 'string' && raw.length))) {
+    throw typedError('BAD_MESSAGE', 'appendSent needs the composed message', { sanitized: true });
+  }
+  const secret = decryptSecret(row);
+  const client = makeClient(row, secret);
+  try {
+    await client.connect();
+  } catch (err) {
+    try { client.close(); } catch (_) { /* never connected */ }
+    throw sanitizeError(err, { secret, user: row.imap_user });
+  }
+  try {
+    // NEVER APPEND TO GMAIL (header) — decided before anything is listed.
+    if (gmailLabelsSupported(client)) return { appended: false, folder: null, uid: null, reason: 'gmail_server' };
+    const folder = pickSentFolder(await client.list());
+    if (!folder) return { appended: false, folder: null, uid: null, reason: 'no_sent_folder' };
+    const res = await client.append(folder, raw, ['\\Seen'], new Date());
+    const uid = res && Number.isFinite(Number(res.uid)) && Number(res.uid) > 0 ? Number(res.uid) : null;
+    return { appended: true, folder, uid, reason: null };
+  } catch (err) {
+    throw sanitizeError(err, { secret, user: row.imap_user });
+  } finally {
+    await closeClient(client);
+  }
+}
+
 /**
  * The SU folder listing (S1-G): {provider_id_kind, folders:[…]} for one
  * mailbox. Connect, LIST + STATUS, log out — no folder is opened, nothing is
@@ -695,7 +782,10 @@ module.exports = {
   withMailbox,
   fetchPart,
   listFolders,
+  appendSent,
   // exported for the worker + tests
+  pickSentFolder,
+  SENT_NAMES,
   analyzeStructure,
   normalizeMessageId,
   providerIdKind,

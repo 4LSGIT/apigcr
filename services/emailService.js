@@ -24,9 +24,27 @@
  *     Bypasses the email_credentials lookup. Caller supplies a pre-built
  *     emailRow (loaded from DB or synthesized). Used by the diagnostic
  *     test route to send through the Gmail adapter without flipping any
- *     production email_credentials row's provider column. Not currently
- *     called by any other production code path — sendEmail remains the
- *     normal public entry point.
+ *     production email_credentials row's provider column, and by the comms
+ *     hub's compose/reply (services/mailbox/mailboxSendService.js, mailbox
+ *     S3), which sends as a mailbox through its send_credential_id row.
+ *     sendEmail remains the normal public entry point.
+ *
+ *   HUB-ONLY OPTIONS (mailbox S3) — sendEmailDirect only:
+ *     cc, bcc            address strings (bcc reaches the Gmail adapter's
+ *                        MIME so Gmail can deliver it; nodemailer strips it
+ *                        from what recipients see)
+ *     in_reply_to        '<id>' — the reply's parent
+ *     references         '<root> … <parent>' — the threading chain
+ *     message_id         '<id>' — a caller-chosen Message-ID (the hub needs
+ *                        the SMTP copy it APPENDs to Sent to carry the same
+ *                        one; Gmail rewrites it on its own sends anyway)
+ *     thread_id          Gmail API threadId (gmail adapter only) — files the
+ *                        reply in the sender's existing Gmail conversation
+ *   The public sendEmail STRIPS them (HUB_ONLY_OPTIONS): every automation /
+ *   workflow / campaign send stays byte-identical whatever keys its caller
+ *   happens to pass. The adapters only set a header when its option is
+ *   present, so a call without them builds exactly what it built before.
+ *   Grant checks are NOT here (design D6): the hub's route checks can_send.
  *
  * Adapter contract (services/adapters/email/<provider>.js):
  *   module.exports = {
@@ -180,6 +198,8 @@ async function sendEmailDirect(db, emailRow, {
   attachment_urls,
   attachment_names,
   signature = false,
+  // HUB-ONLY OPTIONS (header) — absent for every caller but the comms hub.
+  cc, bcc, in_reply_to, references, message_id, thread_id,
 }) {
   if (!from || !to || !subject) {
     throw new Error('Missing required email fields (from, to, subject)');
@@ -233,7 +253,28 @@ async function sendEmailDirect(db, emailRow, {
     attachmentNames: attachment_names,
     credential,
     emailRow,
+    // Hub-only (S3): undefined for every other caller, and each adapter sets
+    // a header only when its value is present.
+    cc,
+    bcc,
+    inReplyTo:  in_reply_to,
+    references,
+    messageId:  message_id,
+    threadId:   thread_id,
   });
+}
+
+/**
+ * The options only the comms hub may pass (sendEmailDirect). The public
+ * sendEmail drops them so an automation caller can never start setting
+ * headers it did not set before (see HUB-ONLY OPTIONS in the header).
+ */
+const HUB_ONLY_OPTIONS = Object.freeze(['cc', 'bcc', 'in_reply_to', 'references', 'message_id', 'thread_id']);
+
+function withoutHubOnly(opts) {
+  const out = { ...opts };
+  for (const k of HUB_ONLY_OPTIONS) delete out[k];
+  return out;
 }
 
 // -------------------- PUBLIC: sendEmail --------------------
@@ -273,9 +314,9 @@ async function sendEmail(db, opts) {
   }
 
   // Forward already-normalized bodies; sendEmailDirect will idempotently
-  // re-normalize for direct callers.
+  // re-normalize for direct callers. Hub-only options never pass this way.
   return sendEmailDirect(db, emailRow, {
-    ...opts,
+    ...withoutHubOnly(opts),
     text: bodies.text,
     html: bodies.html,
   });
@@ -285,4 +326,4 @@ const VALID_PROVIDERS = Object.freeze(Object.keys(ADAPTERS));
 
 // normalizeBodies is exported as a TEST SEAM (pure function, no SMTP/adapters).
 // Additive — nothing else imports it.
-module.exports = { sendEmail, sendEmailDirect, VALID_PROVIDERS, normalizeBodies };
+module.exports = { sendEmail, sendEmailDirect, VALID_PROVIDERS, normalizeBodies, HUB_ONLY_OPTIONS };

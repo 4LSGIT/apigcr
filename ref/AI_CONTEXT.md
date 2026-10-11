@@ -98,6 +98,33 @@ body. Governing migrations in `ref/migrations/`.*
     earlier of it and the log's) and `opts.name` (search + Create-new
     prefill). Comms' "add to client" is its second caller; the log tab
     passes no opts.
+- **Comms hub send side is live (mailbox S3, 10-11):** `GET /api/mail/identities`,
+  `GET /api/mail/messages/:id/reply`, `POST /api/mail/send` in `routes/api.mail.js`
+  → `services/mailbox/mailboxSendService.js`; design `ref/MAILBOX_SYSTEM_DESIGN.md`
+  §4.2 "As built (S3)"; operators `manual/08-Admin-Tools/08-mailboxes.md`
+  "Sending mail". What a session touching unrelated code needs to know:
+  - **`emailService.sendEmailDirect` takes HUB-ONLY options** (`cc`, `bcc`,
+    `in_reply_to`, `references`, `message_id`, `thread_id`); the public
+    `sendEmail` strips them (`HUB_ONLY_OPTIONS`) and the smtp / gmail adapters
+    set each header only when its option is present — every automation caller
+    builds the message it always did (`tests/mailboxS3.adapters.test.js` pins
+    the baseline). The grant check stays OUT of emailService (D6: on the
+    interactive route only; automation sends are grant-blind by design).
+  - **`imapTransport.appendSent` is the transport's one writer** (APPEND to
+    the Sent folder) and refuses any X-GM-EXT-1 server — Gmail files its own
+    sends; a copy would double-store and double-emit. The send service also
+    never calls it for a `gmail` credential.
+  - **`scheduled_jobs` `data.type` `mail_sent_read_seed`** (`one_time`,
+    dispatched in `lib/job_executor`): marks a hub send's stored copy read for
+    its sender once ingest has stored it; throws to retry, completes quietly
+    on its last attempt.
+  - **List filter `sent_only`** (`mailReadService.SENT_WHERE`): the Gmail
+    `\Sent` label is a BOUND parameter — written into SQL text as `'\Sent'`
+    MySQL eats the backslash and it matches nothing.
+  - Knobs: `app_settings.mail_send_daily_budget` (`{"gmail":n,"smtp":n}`;
+    defaults 1500 / 300 per sending account, counted from `email_log`); alert
+    kinds `mailbox_send_budget` / `mailbox_send_append_failed` (warning);
+    `admin_audit_log` tool `mail_send`.
 - **CTA links are live end to end (10-07, arc S0–S4):** SU-minted bearer
   links (`4lsg.com/c/<token>`) whose option buttons run frozen plans of
   registry internal functions as user 0. Design (canonical, review-folded):
@@ -490,7 +517,8 @@ Unified `scheduled_jobs` queue, index (status, scheduled_time), drained by
 `internal_function`, `custom_code` (vm sandbox, 5s). Engine-internal:
 `workflow_resume`, `sequence_step` (hidden from list unless
 `?internal=true`). App-managed: `task_due_reminder`, `task_daily_digest`,
-`hook_retry` (3 attempts, 120s backoff), `campaign_send`. Effective retry
+`hook_retry` (3 attempts, 120s backoff), `campaign_send`, `mail_sent_read_seed`
+(mailbox S3, §0). Effective retry
 backoff floor = the poll cadence (~5 min). Recurring `internal_function`
 jobs are the house pattern for daily services (oauth refresh, event digest).
 

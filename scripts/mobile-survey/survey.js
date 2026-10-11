@@ -212,6 +212,23 @@ async function walk(page, W, record) {
       await record(`dialog:${key}`, await measure(page, fr), await shot('dialog_' + key));
     }
     await page.evaluate(() => Swal.close());
+
+    // Comms composers (mailbox S3): they live in the comms pane, not the shell —
+    // opened through the pane's own functions (top-level names of its one
+    // inline script), with fixtures/api/mail/identities.json and
+    // …/messages/301/reply.json (long names / addresses / subject to wrap).
+    const PANE_DIALOGS = [
+      ['comms-compose', 'openCompose()'],
+      ['comms-reply-all', 'openMessage(state.messages[0]).then(() => openReply(state.thread.messages.find((m) => m.id === 301), true))'],
+    ];
+    for (const [key, js] of PANE_DIALOGS) {
+      await page.evaluate(() => openMainTab('tabComms')); await sleep(1500);
+      const fr = await frameOf(page, VISIBLE_TAB_FRAME);
+      if (!fr) { await record(`dialog:${key}`, await measure(page, null), await shot('dialog_' + key)); continue; }
+      await fr.evaluate((js) => { try { return (0, eval)(js); } catch (e) { console.error(e); } }, js); await sleep(1500);
+      await record(`dialog:${key}`, await measure(page, fr), await shot('dialog_' + key));
+      await fr.evaluate(() => { if (state.composer) closeComposer(state.composer, { keepDraft: false }); closeThread(); });
+    }
   }
 }
 

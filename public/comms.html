@@ -13,9 +13,10 @@
 <script src="/js/mailRender.js"></script>
 <script src="/js/mailboxColor.js"></script>
 <style>
-  /* Comms hub — mailbox-system arc, slice S2 (Email tab; Phone arrives with
-     slice S-PH). Spec: ref/MAILBOX_SYSTEM_DESIGN.md §4.3, §4.4, D6 · API:
-     routes/api.mail.js · service: services/mailbox/mailReadService.js ·
+  /* Comms hub — mailbox-system arc, slices S2 (read) + S3 (compose / reply /
+     Sent; Phone arrives with slice S-PH). Spec: ref/MAILBOX_SYSTEM_DESIGN.md
+     §4.2, §4.3, §4.4, D6 · API: routes/api.mail.js · services:
+     services/mailbox/mailReadService.js, mailboxSendService.js ·
      renderer: public/js/mailRender.js. Component shapes follow
      mailboxAdmin.html (theme.css tokens only, .btn, badges, modal, toast).
 
@@ -307,6 +308,65 @@
   }
   .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
 
+  /* ── Compose / reply (S3) ──────────────────────────────────────
+     One composer, two homes: the New message modal and a reply box at the
+     end of the open conversation. Recipients are chips; every value the
+     composer shows (names, addresses, the quoted original) is TEXT. */
+  .rail .rail-compose { display: flex; padding: 10px 12px 0; }
+  .rail .rail-compose .btn { flex: 1 1 auto; justify-content: center; }
+  @media (min-width: 1000px) { .email:not(.rail-off) #compose-btn { display: none !important; } }
+  .modal.compose { max-width: 680px; }
+  .cf-head { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; min-width: 0; }
+  .cf-head h3, .cf-head .cf-title { margin: 0; font-size: 14px; font-weight: 700; flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+  .reply-box { border: 1px solid var(--accent); border-radius: 6px; background: var(--surface); padding: 10px; margin: 4px 0 10px; min-width: 0; }
+  .composer { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+  .cf-row { display: flex; align-items: flex-start; gap: 8px; min-width: 0; }
+  .cf-lbl { flex: 0 0 52px; font-size: var(--fs-sm); font-weight: 700; color: var(--text); padding-top: 6px; }
+  .cf-field { flex: 1 1 auto; min-width: 0; position: relative; }
+  .cf-more { flex: 0 0 auto; padding-top: 6px; display: inline-flex; gap: 8px; font-size: 12px; }
+  .idents { display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; }
+  .fchip.ident { max-width: 100%; min-width: 0; height: auto; min-height: 26px; }
+  .fchip.ident .nm { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .fchip.ident:disabled { opacity: 0.55; cursor: not-allowed; }
+  .rcpt {
+    display: flex; flex-wrap: wrap; gap: 4px; align-items: center; min-width: 0; min-height: 32px; padding: 3px 4px;
+    border: 1px solid var(--border); border-radius: 4px; background: var(--surface-2); cursor: text;
+  }
+  .rcpt:focus-within { border-color: var(--accent); }
+  /* 0,3,1: beats `.modal input[type="text"]` (0,2,1, the New message modal) and
+     theme.css's dark control baseline — the field is the .rcpt box, not the input */
+  .composer .rcpt input[type="text"] {
+    flex: 1 1 120px; width: auto; min-width: 60px; border: 0; outline: 0; background: transparent; color: var(--text);
+    font: inherit; font-size: 13px; padding: 4px 2px; border-radius: 0;
+  }
+  .rchip {
+    display: inline-flex; align-items: center; gap: 2px; max-width: 100%; min-width: 0; padding: 1px 0 1px 8px;
+    border-radius: 12px; border: 1px solid var(--accent); background: var(--accent-soft); color: var(--accent-on-soft); font-size: 12px;
+  }
+  .rchip .nm { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .rchip button { border: 0; background: transparent; color: inherit; cursor: pointer; padding: 0 7px; font-size: 14px; line-height: 1; font-family: inherit; }
+  .sugg-list {
+    position: absolute; left: 0; right: 0; top: 100%; z-index: 20; list-style: none; margin: 2px 0 0; padding: 0;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 4px; box-shadow: var(--shadow); max-height: 260px; overflow-y: auto;
+  }
+  .sugg-list li { padding: 6px 9px; cursor: pointer; min-width: 0; }
+  .sugg-list li.on, .sugg-list li:hover { background: var(--hover); }
+  .sugg-list li[aria-disabled="true"] { cursor: default; opacity: 0.6; }
+  .sugg-list .l1 { font-weight: 700; overflow-wrap: anywhere; }
+  .sugg-list .l2 { font-size: 11.5px; color: var(--text-muted); overflow-wrap: anywhere; }
+  .composer input.cf-subject[type="text"], .composer textarea.cf-body {
+    width: 100%; min-width: 0; background: var(--surface-2); color: var(--text); border: 1px solid var(--border);
+    border-radius: 4px; padding: 7px 9px; font-size: 13px; font-family: inherit;
+  }
+  .composer textarea.cf-body { min-height: 150px; resize: vertical; line-height: 1.45; }
+  .cf-quote { border: 1px dashed var(--border); border-radius: 4px; padding: 6px 8px; font-size: 12px; min-width: 0; }
+  .cf-quote summary { cursor: pointer; color: var(--text-muted); }
+  .cf-quote .qhead { margin-top: 6px; color: var(--text-muted); overflow-wrap: anywhere; }
+  .cf-quote .qtext { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text-muted); max-height: 200px; overflow-y: auto; margin-top: 4px; padding-left: 8px; border-left: 2px solid var(--border); }
+  .cf-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .cf-count { font-size: 11px; color: var(--text-muted); margin-left: auto; }
+  .cf-count.over { color: var(--danger); font-weight: 700; }
+
   /* ── Phone (≤768px, the shell's one breakpoint): stacked navigation ── */
   @media (max-width: 768px) {
     .tabs { padding: 6px 8px 0; }
@@ -323,6 +383,9 @@
     .thread-body { padding: 6px 6px 16px; }
     .modal { padding: 14px; }
     .modal-backdrop { padding: 12px 8px; }
+    .cf-row { flex-wrap: wrap; gap: 4px; }
+    .cf-lbl { flex: 0 0 100%; padding-top: 0; }
+    .cf-more { padding-top: 0; }
   }
 </style>
 </head>
@@ -338,6 +401,7 @@
   <div class="email" id="email">
     <!-- ── Rail: views + mailboxes (desktop; phones keep the menus in the bar) ── -->
     <aside class="rail" id="rail" aria-label="Views and mailboxes">
+      <div class="rail-compose"><button class="btn primary" type="button" id="rail-compose" hidden><i class="fa-solid fa-pen" aria-hidden="true"></i> Compose</button></div>
       <div class="ph">Views <button class="linkish" type="button" id="rail-manage" title="Rename, update, delete or make a view the default">Manage</button>
         <button class="btn icon rail-x" type="button" id="rail-hide" aria-controls="rail" aria-expanded="true" title="Hide views and mailboxes (more room for the conversation)"><i class="fa-solid fa-angles-left" aria-hidden="true"></i></button></div>
       <div id="rail-views"></div>
@@ -358,11 +422,13 @@
         <input type="text" class="domain" id="f-domain" placeholder="from domain" aria-label="Sender domain" maxlength="128" spellcheck="false">
         <button class="btn icon" type="button" id="refresh-btn" title="Refresh"><i class="fa-solid fa-rotate"></i></button>
         <button class="btn icon" type="button" id="views-btn" title="Saved views"><i class="fa-solid fa-bookmark"></i></button>
+        <button class="btn primary" type="button" id="compose-btn" title="Write a new email from one of your mailboxes" hidden><i class="fa-solid fa-pen" aria-hidden="true"></i> Compose</button>
       </div>
       <div class="mb-panel" id="mb-panel" role="group" aria-label="Mailboxes in this list" hidden></div>
       <div class="fbar" role="group" aria-label="Filters">
         <span class="seg" role="group" aria-label="Folders">
           <button type="button" id="f-inbox" aria-pressed="true" title="The Inbox of each mailbox">Inbox</button>
+          <button type="button" id="f-sent" aria-pressed="false" title="Mail the mailboxes sent (Google's Sent label, or a Sent folder)">Sent</button>
           <button type="button" id="f-folders" aria-pressed="false" title="Include Sent and other ingested folders, not just the Inbox">All folders</button>
         </span>
         <button class="fchip" type="button" id="f-unread" aria-pressed="false">Unread</button>
@@ -439,6 +505,17 @@
   </div>
 </div>
 
+<!-- ── New message (S3) — the composer is built by the script ── -->
+<div class="modal-backdrop" id="compose-backdrop">
+  <div class="modal compose" role="dialog" aria-modal="true" aria-labelledby="compose-title">
+    <div class="cf-head">
+      <h3 id="compose-title">New message</h3>
+      <button class="btn icon" type="button" id="compose-close" title="Close — what you wrote is kept until you reload the page" aria-label="Close"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button>
+    </div>
+    <div id="compose-slot"></div>
+  </div>
+</div>
+
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
 <script>
@@ -498,6 +575,12 @@ const state = {
   unmatched: [],        // …and its outside addresses no contact holds (add to client)
   addsOpen: false,      // every unmatched chip shown, not just the first ADDS_SHOWN
   viewer: null,         // { url, m, a, kind, tabbed }
+  // S3 — compose / reply
+  identities: null,     // GET /api/mail/identities (loaded when a composer first opens)
+  maxRecipients: 10,    // the server's cap (identities carries it)
+  composer: null,       // the ONE open composer (new-message modal or a reply box)
+  drafts: new Map(),    // draft key → unsent composer state — this page's lifetime only, never storage
+  sentWatch: null,      // { timer, key } — re-reading a conversation until a reply's copy arrives
 };
 
 /**
@@ -522,12 +605,12 @@ function h(tag, attrs, ...kids) {
 const icon = (cls) => h('i', { className: `fa-solid ${cls}`, 'aria-hidden': 'true' });
 
 let toastTimer = null;
-function toast(msg) {
+function toast(msg, ms = 2400) {
   const t = E('toast');
   t.textContent = msg;
   t.classList.add('show');
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => t.classList.remove('show'), 2400);
+  toastTimer = setTimeout(() => t.classList.remove('show'), ms);
 }
 
 function showError(where, msg) {
@@ -621,8 +704,13 @@ const boxDot = (id) => paint(h('span', { className: 'mdot', 'aria-hidden': 'true
 /** Filter chips are buttons: aria-pressed is the state (and what CSS draws). */
 const pressed = (id) => E(id).getAttribute('aria-pressed') === 'true';
 function setPressed(id, on) { E(id).setAttribute('aria-pressed', on ? 'true' : 'false'); }
-/** Inbox | All folders — exactly one is pressed. */
-function setFolders(all) { setPressed('f-folders', all); setPressed('f-inbox', !all); }
+/** Inbox | Sent | All folders — exactly one is pressed (S3 added Sent). */
+function setScope(scope) {
+  setPressed('f-inbox', scope === 'inbox');
+  setPressed('f-sent', scope === 'sent');
+  setPressed('f-folders', scope === 'all');
+}
+function scopeNow() { return pressed('f-sent') ? 'sent' : (pressed('f-folders') ? 'all' : 'inbox'); }
 
 /** The READABLE boxes the list combines, in summary order; null = all of them. */
 function selectedIds() {
@@ -688,6 +776,10 @@ function renderMailboxPicker() {
   // The shell's sidebar Comms badge (index.html commsBadgeSet): this page
   // just counted it, so hand it over rather than make the shell fetch again.
   try { if (typeof P.commsBadgeSet === 'function') P.commsBadgeSet(total, state.mailboxes.length); } catch (_) { /* decoration */ }
+  // Compose shows once a box you can read lets you send (S3). The identity
+  // list itself loads when a composer opens — boot makes no extra call.
+  E('compose-btn').hidden = !canSendAny();
+  E('rail-compose').hidden = !canSendAny();
   btn.title = sel && sel.length ? sel.map((id) => boxById(id).address).join(', ') : 'Choose which mailboxes this list combines';
   panel.replaceChildren(
     h('label', { className: 'mb-opt' }, h('input', {
@@ -837,7 +929,7 @@ function applyView(v) {
   setPressed('f-files', !!f.has_files);
   setPressed('f-hascase', !!f.has_case);
   setPressed('f-nocase', !!f.no_case);
-  setFolders(!!f.all_folders);
+  setScope(f.sent_only ? 'sent' : (f.all_folders ? 'all' : 'inbox'));
   renderViewSelect();
   renderMailboxPicker();
 }
@@ -854,6 +946,7 @@ function currentFilters() {
   if (pressed('f-hascase')) f.has_case = true;
   else if (pressed('f-nocase')) f.no_case = true;
   if (pressed('f-folders')) f.all_folders = true;
+  else if (pressed('f-sent')) f.sent_only = true;
   return f;
 }
 
@@ -877,6 +970,7 @@ function listParams(cursor) {
   p.has_case = f.has_case ? 1 : 0;
   p.no_case = f.no_case ? 1 : 0;
   p.all_folders = f.all_folders ? 1 : 0;
+  if (f.sent_only) p.sent_only = 1; // S3's Sent scope (only when on — Inbox / All stay as they were)
   p.q = f.q || '';
   p.from_domain = f.from_domain || '';
   if (cursor) p.cursor = cursor;
@@ -979,6 +1073,11 @@ function refreshCountsSoon() {
 
 // ── Thread ──────────────────────────────────────────────────
 async function openMessage(m) {
+  // A reply box belongs to its conversation: opening another one closes it
+  // (what was written is kept as a draft for this page's lifetime).
+  const cmp = state.composer;
+  if (cmp && cmp.kind === 'reply' && cmp.convo !== convoOf(m.thread_key, m.id)) closeComposer(cmp, { keepDraft: true });
+  if (!state.thread || state.thread.key !== (m.thread_key || null)) stopSentWatch();
   state.selectedId = m.id;
   for (const li of E('msg-list').querySelectorAll('.msg')) li.classList.toggle('selected', Number(li.dataset.id) === m.id);
   E('email').classList.add('show-thread');
@@ -1258,6 +1357,9 @@ function renderThread() {
     const expanded = isAnchor || m.unread || m === last;
     nodes.push(messageCard(m, { expanded, anchor: isAnchor }));
   }
+  // the open reply box (S3) survives a re-render of its own conversation
+  const cmp = state.composer;
+  if (cmp && cmp.kind === 'reply' && cmp.convo === convoOf(t.key, t.anchorId) && cmp.wrap) nodes.push(cmp.wrap);
   body.replaceChildren(...nodes);
   const a = body.querySelector('.mcard.anchor');
   if (a && a.scrollIntoView) a.scrollIntoView({ block: 'nearest' });
@@ -1334,6 +1436,11 @@ function fillCard(card, m) {
     className: 'btn small read-toggle', type: 'button',
     onclick: () => (m.unread ? markRead(m) : markUnread(m)),
   }, icon(m.unread ? 'fa-envelope-open' : 'fa-envelope'), m.unread ? 'Mark read' : 'Mark unread'));
+  if (canSendAny()) {
+    actions.append(
+      h('button', { className: 'btn small reply-btn', type: 'button', title: 'Reply to the sender', onclick: () => openReply(m, false) }, icon('fa-reply'), 'Reply'),
+      h('button', { className: 'btn small reply-all-btn', type: 'button', title: 'Reply to the sender and everyone else on it', onclick: () => openReply(m, true) }, icon('fa-reply-all'), 'Reply all'));
+  }
   if (hasHtml) {
     actions.append(h('button', {
       className: 'btn small', type: 'button',
@@ -1586,6 +1693,7 @@ function viewSummary(v) {
   if (f.has_case) bits.push('on a case');
   if (f.no_case) bits.push('not on a case');
   if (f.all_folders) bits.push('all folders');
+  if (f.sent_only) bits.push('sent');
   if (f.from_domain) bits.push(`from ${f.from_domain}`);
   if (f.q) bits.push(`"${f.q}"`);
   const boxes = Array.isArray(v.mailbox_ids) && v.mailbox_ids.length
@@ -1667,7 +1775,7 @@ async function markAllRead() {
   const body = { all: true, filters: currentFilters() };
   const ids = scopeIds();
   if (ids) body.mailbox_ids = ids;
-  const narrowed = Object.keys(body.filters).some((k) => k !== 'all_folders');
+  const narrowed = Object.keys(body.filters).some((k) => k !== 'all_folders' && k !== 'sent_only');
   if (!window.confirm(`Mark every message in this list as read${narrowed ? ' (only those matching the filters)' : ''}, including pages not loaded yet?`)) return;
   E('readall-btn').disabled = true;
   try {
@@ -1682,6 +1790,521 @@ async function markAllRead() {
   }
 }
 
+// ── Compose / reply (S3) ────────────────────────────────────
+/*
+ * SENDING AS A MAILBOX. One composer, two homes: the New message modal
+ * (#compose-backdrop) and a reply box at the end of the open conversation —
+ * one open at a time. The server owns everything that must be right: the
+ * grant check (can_send), the quoted original, the signature, the threading
+ * headers and the guardrails (POST /api/mail/send). This page offers:
+ *   - From: the mailboxes you may send AS (GET /api/mail/identities, loaded
+ *     the first time a composer opens); one that cannot send says why.
+ *   - To / Cc / Bcc as chips: type an address (Enter, comma or Tab adds it),
+ *     paste a list, or pick a contact from the type-ahead (GET /api/contacts
+ *     ?q= — the shell's ContactPicker endpoint; the contact's email on file).
+ *   - Plain text (the server makes the HTML part); "Add signature" when the
+ *     box has its own; on a reply, the original quoted below (untick to drop).
+ * Drafts live in memory only (state.drafts — closing a composer keeps what
+ * you wrote until the page reloads, and leaving the page with unsent text
+ * asks first). Nothing you type is ever written to browser storage.
+ * Sent mail reaches the list only with the mailbox's next ingest check
+ * (~5 min): after a reply, the conversation is re-read every
+ * COMPOSE_LIMITS.watchEveryMs for a while and re-opened when the copy lands.
+ */
+var COMPOSE_LIMITS = { watchEveryMs: 60_000, watchTimes: 12, suggestDelayMs: 250, blurDelayMs: 150 };
+const RCPT_LABEL = { to: 'To', cc: 'Cc', bcc: 'Bcc' };
+const EMAIL_OK = /^[^\s@<>()[\]\\,;:"]+@[^\s@<>()[\]\\,;:"]+\.[^\s@<>()[\]\\,;:"]+$/;
+
+function canSendAny() { return state.mailboxes.some((m) => m.can_send); }
+/** Which conversation a reply box belongs to: its thread key, or — threadless mail — the message itself. */
+function convoOf(threadKey, messageId) { return threadKey ? `k:${threadKey}` : `m:${messageId}`; }
+const sendableIdentities = () => (state.identities || []).filter((i) => i.sendable);
+const identityById = (id) => (state.identities || []).find((i) => i.id === id) || null;
+
+async function ensureIdentities() {
+  if (state.identities) return state.identities;
+  const data = await api('/api/mail/identities', 'GET');
+  state.identities = Array.isArray(data && data.identities) ? data.identities : [];
+  if (data && Number.isInteger(data.max_recipients)) state.maxRecipients = data.max_recipients;
+  return state.identities;
+}
+
+/** "Name <a@b>" | "a@b" → {email, name} or null. */
+function parseAddress(s) {
+  const t = String(s || '').trim();
+  if (!t) return null;
+  const m = /^(.*?)\s*<([^<>]*)>\s*$/.exec(t);
+  const email = (m ? m[2] : t).trim();
+  if (!EMAIL_OK.test(email) || email.length > 254) return null;
+  const name = m ? m[1].replace(/^"(.*)"$/, '$1').replace(/["\\<>]/g, '').trim() : '';
+  return { email, name: name && name.toLowerCase() !== email.toLowerCase() ? name : null };
+}
+
+/** Paste / typed text → address strings (commas, semicolons and newlines split; a quoted name may hold a comma). */
+function splitAddresses(text) {
+  const out = [];
+  let cur = '';
+  let quoted = false;
+  let angle = false;
+  for (const ch of String(text || '')) {
+    if (ch === '"' && !angle) quoted = !quoted;
+    else if (!quoted && ch === '<') angle = true;
+    else if (!quoted && ch === '>') angle = false;
+    if (!quoted && !angle && (ch === ',' || ch === ';' || ch === '\n' || ch === '\r')) { if (cur.trim()) out.push(cur.trim()); cur = ''; continue; }
+    cur += ch;
+  }
+  if (cur.trim()) out.push(cur.trim());
+  return out;
+}
+
+function identityDot(i) {
+  const MC = window.YCMailboxColor;
+  const v = MC ? MC.variants(i && i.color) : null;
+  const el = h('span', { className: 'mdot mbc', 'aria-hidden': 'true' });
+  el.style.setProperty('--mbc-l', v ? v.light : 'var(--text-muted)');
+  el.style.setProperty('--mbc-d', v ? v.dark : 'var(--text-muted)');
+  return el;
+}
+
+/** The cases a contact search row carries (JSON_ARRAYAGG: a string or an array; a no-case row is all nulls). */
+function contactCases(v) {
+  let list = v;
+  if (typeof list === 'string') { try { list = JSON.parse(list); } catch (_) { list = []; } }
+  return (Array.isArray(list) ? list : []).filter((c) => c && c.case_id).map((c) => String(c.case_number || c.case_id));
+}
+
+const totalRecipients = (c) => c.to.length + c.cc.length + c.bcc.length;
+const hasRecipient = (c, email) => ['to', 'cc', 'bcc'].some((f) => c[f].some((r) => r.email.toLowerCase() === email.toLowerCase()));
+
+/**
+ * A composer: its state (plain data — what a draft keeps) + its DOM.
+ * kind 'new' | 'reply'; a reply carries parentId, threadKey, all and the
+ * server's defaults (identity, To, Cc, subject, quote).
+ */
+function makeComposer(opts) {
+  const key = opts.kind === 'reply' ? `reply:${opts.parentId}` : 'new';
+  const saved = state.drafts.get(key);
+  const d = opts.defaults || {};
+  const firstSendable = sendableIdentities()[0] || null;
+  const c = saved ? { ...saved, to: [...saved.to], cc: [...saved.cc], bcc: [...saved.bcc] } : {
+    kind: opts.kind, key,
+    parentId: opts.parentId || null, threadKey: opts.threadKey || null, convo: opts.convo || null, all: !!opts.all,
+    identityId: d.mailbox_id != null ? d.mailbox_id : (firstSendable ? firstSendable.id : null),
+    to: (d.to || []).map((r) => ({ email: r.email, name: r.name || null })),
+    cc: (d.cc || []).map((r) => ({ email: r.email, name: r.name || null })),
+    bcc: [],
+    showCc: !!(d.cc && d.cc.length), showBcc: false,
+    subject: d.subject || '', body: '',
+    quote: d.quote || null, includeQuote: true,
+    signature: null, dirty: false,
+  };
+  if (c.signature === null) { const i = identityById(c.identityId); c.signature = !!(i && i.signature); }
+  c.sending = false;
+  buildComposer(c);
+  return c;
+}
+
+/** The plain-data part of a composer — what state.drafts holds. */
+function draftOf(c) {
+  const { el, wrap, ui, sending, ...rest } = c;
+  return { ...rest, to: [...c.to], cc: [...c.cc], bcc: [...c.bcc] };
+}
+
+function touch(c) { c.dirty = true; }
+
+function buildComposer(c) {
+  const ui = {};
+  c.ui = ui;
+  ui.err = h('div', { className: 'modal-err', role: 'alert' });
+  ui.idents = h('div', { className: 'idents', role: 'group', 'aria-label': 'Send as' });
+  ui.identNote = h('span', { className: 'yc-hint' });
+  ui.rows = {};
+  for (const f of ['to', 'cc', 'bcc']) ui.rows[f] = rcptField(c, f);
+  ui.ccLink = h('button', { className: 'linkish cc-link', type: 'button', onclick: () => { c.showCc = true; paintRows(c); ui.rows.cc.input.focus(); } }, 'Cc');
+  ui.bccLink = h('button', { className: 'linkish bcc-link', type: 'button', onclick: () => { c.showBcc = true; paintRows(c); ui.rows.bcc.input.focus(); } }, 'Bcc');
+  ui.rows.to.row.append(h('span', { className: 'cf-more' }, ui.ccLink, ui.bccLink));
+
+  ui.subject = h('input', { type: 'text', className: 'cf-subject', maxlength: '500', 'aria-label': 'Subject', placeholder: 'Subject' });
+  ui.subject.value = c.subject;
+  ui.subject.addEventListener('input', () => { c.subject = ui.subject.value; touch(c); });
+  ui.body = h('textarea', { className: 'cf-body', rows: '8', 'aria-label': 'Message', placeholder: c.kind === 'reply' ? 'Write your reply' : 'Write your message' });
+  ui.body.value = c.body;
+  ui.body.addEventListener('input', () => { c.body = ui.body.value; touch(c); });
+
+  ui.sigBox = h('input', { type: 'checkbox', className: 'sig-box' });
+  ui.sigBox.addEventListener('change', () => { c.signature = ui.sigBox.checked; touch(c); });
+  ui.sigLabel = h('label', { className: 'check sig-label', title: 'The mailbox\'s own signature (Connections → Email Senders), added below your text' }, ui.sigBox, 'Add signature');
+
+  const kids = [ui.err,
+    h('div', { className: 'cf-row' }, h('span', { className: 'cf-lbl' }, 'From'), h('div', { className: 'cf-field' }, ui.idents, ui.identNote)),
+    ui.rows.to.row, ui.rows.cc.row, ui.rows.bcc.row,
+    h('div', { className: 'cf-row' }, h('span', { className: 'cf-lbl' }, 'Subject'), h('div', { className: 'cf-field' }, ui.subject)),
+    ui.body, ui.sigLabel];
+  if (c.kind === 'reply' && c.quote) {
+    ui.quoteBox = h('input', { type: 'checkbox', className: 'quote-box' });
+    ui.quoteBox.checked = !!c.includeQuote;
+    ui.quoteBox.addEventListener('change', () => { c.includeQuote = ui.quoteBox.checked; touch(c); });
+    kids.push(h('details', { className: 'cf-quote' },
+      h('summary', null, 'Original message (quoted below your reply)'),
+      h('label', { className: 'check' }, ui.quoteBox, 'Include it'),
+      h('div', { className: 'qhead' }, c.quote.header || ''),
+      h('div', { className: 'qtext' }, c.quote.text || '')));
+  }
+  ui.send = h('button', { className: 'btn primary send-btn', type: 'button', onclick: () => sendComposer(c) }, icon('fa-paper-plane'), 'Send');
+  ui.discard = h('button', { className: 'btn discard-btn', type: 'button', onclick: () => discardComposer(c) }, 'Discard');
+  ui.count = h('span', { className: 'cf-count' });
+  kids.push(h('div', { className: 'cf-actions' }, ui.send, ui.discard, ui.count),
+    h('span', { className: 'yc-hint' }, 'Sent mail shows in the mailbox\'s list after its next check — about 5 minutes.'));
+  c.el = h('div', { className: 'composer', dataset: { kind: c.kind } }, ...kids);
+  paintIdentities(c);
+  paintRows(c);
+  paintCount(c);
+}
+
+function composerError(c, msg) {
+  const b = c.ui.err;
+  b.textContent = msg || '';
+  b.classList.toggle('show', !!msg);
+}
+
+function paintIdentities(c) {
+  const ui = c.ui;
+  const all = state.identities || [];
+  ui.idents.replaceChildren(...all.map((i) => h('button', {
+    className: 'fchip ident', type: 'button', dataset: { id: String(i.id) },
+    'aria-pressed': c.identityId === i.id ? 'true' : 'false', disabled: !i.sendable,
+    title: i.sendable ? i.address : `${i.address} — ${i.reason_text || 'cannot send'}`,
+    onclick: () => { c.identityId = i.id; c.signature = !!i.signature; touch(c); paintIdentities(c); },
+  }, identityDot(i), h('span', { className: 'nm' }, i.display_name ? `${i.display_name} — ${i.address}` : i.address))));
+  const cur = identityById(c.identityId);
+  const blocked = all.filter((i) => !i.sendable);
+  ui.identNote.textContent = !sendableIdentities().length
+    ? 'You cannot send from any mailbox yet — ask whoever manages one for Send access.'
+    : (blocked.length ? `Greyed out: ${blocked.map((i) => `${i.address} (${i.reason_text || 'cannot send'})`).join('; ')}` : '');
+  ui.sigLabel.hidden = !(cur && cur.sendable && cur.signature);
+  ui.sigBox.checked = !!c.signature;
+}
+
+function paintRows(c) {
+  c.ui.rows.cc.row.hidden = !(c.showCc || c.cc.length);
+  c.ui.rows.bcc.row.hidden = !(c.showBcc || c.bcc.length);
+  c.ui.ccLink.hidden = !c.ui.rows.cc.row.hidden;
+  c.ui.bccLink.hidden = !c.ui.rows.bcc.row.hidden;
+}
+
+function paintCount(c) {
+  const n = totalRecipients(c);
+  c.ui.count.textContent = `${n} of ${state.maxRecipients} recipients`;
+  c.ui.count.classList.toggle('over', n > state.maxRecipients);
+}
+
+/** One recipient field: chips + an input + the type-ahead list. */
+function rcptField(c, field) {
+  const input = h('input', { type: 'text', autocomplete: 'off', spellcheck: 'false', 'aria-label': RCPT_LABEL[field], placeholder: field === 'to' ? 'Name or email address' : '', 'aria-autocomplete': 'list' });
+  const box = h('div', { className: 'rcpt', dataset: { field } }, input);
+  box.addEventListener('click', (e) => { if (e.target === box) input.focus(); });
+  const list = h('ul', { className: 'sugg-list', role: 'listbox', 'aria-label': `${RCPT_LABEL[field]} suggestions` });
+  list.hidden = true;
+  const row = h('div', { className: 'cf-row', dataset: { field } }, h('span', { className: 'cf-lbl' }, RCPT_LABEL[field]), h('div', { className: 'cf-field' }, box, list));
+  const f = { field, input, box, list, row, items: [], active: -1, seq: 0, timer: null };
+
+  input.addEventListener('input', () => {
+    if (/[,;\n]/.test(input.value)) { commitTyped(c, f); return; }
+    clearTimeout(f.timer);
+    f.timer = setTimeout(() => suggest(c, f), COMPOSE_LIMITS.suggestDelayMs);
+  });
+  input.addEventListener('keydown', (e) => {
+    const open = !f.list.hidden && f.items.length;
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      if (!open) return;
+      e.preventDefault();
+      moveActive(f, e.key === 'ArrowDown' ? 1 : -1);
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      if (open && f.active >= 0) pickSuggestion(c, f, f.items[f.active]);
+      else commitTyped(c, f);
+    } else if (e.key === 'Tab') {
+      if (open && f.active >= 0 && input.value.trim()) { e.preventDefault(); pickSuggestion(c, f, f.items[f.active]); }
+      else if (input.value.trim()) commitTyped(c, f);
+    } else if (e.key === 'Escape') {
+      if (open) { e.preventDefault(); e.stopPropagation(); hideSuggest(f); }
+    } else if (e.key === 'Backspace' && !input.value && c[field].length) {
+      removeRecipient(c, field, c[field][c[field].length - 1].email);
+    }
+  });
+  input.addEventListener('blur', () => {
+    setTimeout(() => {
+      if (document.activeElement === input) return;
+      hideSuggest(f);
+      if (input.value.trim()) commitTyped(c, f, { quiet: true });
+    }, COMPOSE_LIMITS.blurDelayMs);
+  });
+  paintChips(c, f);
+  return f;
+}
+
+function paintChips(c, f) {
+  for (const old of f.box.querySelectorAll('.rchip')) old.remove();
+  for (const r of c[f.field]) {
+    f.box.insertBefore(h('span', { className: 'rchip', title: r.name ? `${r.name} <${r.email}>` : r.email, dataset: { email: r.email } },
+      h('span', { className: 'nm' }, r.name || r.email),
+      h('button', { type: 'button', 'aria-label': `Remove ${r.email}`, onclick: (e) => { e.stopPropagation(); removeRecipient(c, f.field, r.email); } }, '×')), f.input);
+  }
+}
+
+function addRecipient(c, field, r) {
+  if (hasRecipient(c, r.email)) return true; // once is enough (To beats Cc beats Bcc, as the server does)
+  if (totalRecipients(c) >= state.maxRecipients) {
+    composerError(c, `At most ${state.maxRecipients} recipients — the hub is not for bulk mail.`);
+    return false;
+  }
+  c[field].push(r);
+  touch(c);
+  composerError(c, '');
+  paintChips(c, c.ui.rows[field]);
+  paintRows(c);
+  paintCount(c);
+  return true;
+}
+
+function removeRecipient(c, field, email) {
+  c[field] = c[field].filter((r) => r.email.toLowerCase() !== String(email).toLowerCase());
+  touch(c);
+  paintChips(c, c.ui.rows[field]);
+  paintRows(c);
+  paintCount(c);
+}
+
+/** Turn what is typed in a field into chips. false (and the bad text stays) when something is not an address. */
+function commitTyped(c, f, { quiet = false } = {}) {
+  const parts = splitAddresses(f.input.value);
+  const bad = [];
+  let notAddress = null;
+  for (let i = 0; i < parts.length; i++) {
+    const r = parseAddress(parts[i]);
+    if (!r) { bad.push(parts[i]); if (notAddress == null) notAddress = parts[i]; continue; }
+    if (!addRecipient(c, f.field, r)) { bad.push(...parts.slice(i)); break; } // the cap (addRecipient said so)
+  }
+  f.input.value = bad.join(', ');
+  hideSuggest(f);
+  if (notAddress != null && !quiet) composerError(c, `"${notAddress}" is not an email address.`);
+  return !bad.length;
+}
+
+async function suggest(c, f) {
+  const q = f.input.value.trim();
+  const seq = ++f.seq;
+  if (q.length < 2) { hideSuggest(f); return; }
+  let rows = [];
+  try {
+    const data = await api('/api/contacts', 'GET', { q, limit: 8 });
+    rows = Array.isArray(data && data.contacts) ? data.contacts : [];
+  } catch (_) { rows = []; }
+  if (seq !== f.seq || f.input.value.trim() !== q) return;
+  const items = rows.map((r) => {
+    const email = String(r.contact_email || '').trim();
+    const cases = contactCases(r.cases);
+    return {
+      email, name: r.contact_name ? String(r.contact_name) : null, ok: EMAIL_OK.test(email),
+      meta: [email || 'no email on file', cases.length ? (cases.length > 1 ? `${cases[0]} +${cases.length - 1}` : cases[0]) : ''].filter(Boolean).join(' · '),
+    };
+  });
+  const typed = parseAddress(q);
+  if (typed && !items.some((i) => i.email.toLowerCase() === typed.email.toLowerCase())) items.unshift({ ...typed, ok: true, meta: 'Use this address' });
+  f.items = items;
+  f.active = items.findIndex((i) => i.ok);
+  paintSuggest(c, f);
+}
+
+function paintSuggest(c, f) {
+  if (!f.items.length) { hideSuggest(f); return; }
+  f.list.replaceChildren(...f.items.map((it, n) => {
+    const li = h('li', {
+      role: 'option', className: n === f.active ? 'on' : '', 'aria-selected': n === f.active ? 'true' : 'false',
+      'aria-disabled': it.ok ? null : 'true', title: it.ok ? '' : 'No email address on file for this contact',
+    }, h('div', { className: 'l1' }, it.name || it.email), h('div', { className: 'l2' }, it.meta));
+    li.addEventListener('mousedown', (e) => e.preventDefault()); // keep focus in the input
+    li.addEventListener('click', () => { if (it.ok) pickSuggestion(c, f, it); });
+    return li;
+  }));
+  f.list.hidden = false;
+}
+
+function moveActive(f, step) {
+  const ok = f.items.map((it, i) => (it.ok ? i : -1)).filter((i) => i >= 0);
+  if (!ok.length) return;
+  const at = ok.indexOf(f.active);
+  f.active = ok[(at + step + ok.length) % ok.length];
+  [...f.list.children].forEach((li, i) => { li.classList.toggle('on', i === f.active); li.setAttribute('aria-selected', i === f.active ? 'true' : 'false'); });
+}
+
+function pickSuggestion(c, f, it) {
+  if (!it || !it.ok) return;
+  if (addRecipient(c, f.field, { email: it.email, name: it.name || null })) f.input.value = '';
+  hideSuggest(f);
+  f.input.focus();
+}
+
+function hideSuggest(f) {
+  f.seq++;
+  clearTimeout(f.timer);
+  f.items = [];
+  f.active = -1;
+  f.list.hidden = true;
+  f.list.replaceChildren();
+}
+
+/** Show a composer in its home; the one already open (if any) closes, its text kept. */
+function mountComposer(c) {
+  const cur = state.composer;
+  if (cur && cur !== c && !closeComposer(cur, { keepDraft: true })) { toast('Still sending the last message — one moment'); return false; }
+  state.composer = c;
+  if (c.kind === 'new') {
+    E('compose-title').textContent = 'New message';
+    E('compose-slot').replaceChildren(c.el);
+    E('compose-backdrop').classList.add('open');
+    (c.to.length ? c.ui.subject : c.ui.rows.to.input).focus();
+    return;
+  }
+  const close = h('button', { className: 'btn icon', type: 'button', title: 'Close — what you wrote is kept until you reload the page', 'aria-label': 'Close the reply', onclick: () => closeComposer(c, { keepDraft: true }) }, icon('fa-xmark'));
+  c.wrap = h('div', { className: 'reply-box', dataset: { parent: String(c.parentId) } },
+    h('div', { className: 'cf-head' }, h('div', { className: 'cf-title' }, c.all ? 'Reply all' : 'Reply'), close), c.el);
+  E('thread-body').append(c.wrap);
+  if (c.wrap.scrollIntoView) c.wrap.scrollIntoView({ block: 'nearest' });
+  c.ui.body.focus();
+}
+
+function closeComposer(c, { keepDraft }) {
+  // A send in flight is not a draft and its composer stays put until the
+  // server answers: closing here used to keep the text and offer it again
+  // with Send live — a second copy to the same people. → false = not closed.
+  if (c.sending) return false;
+  if (keepDraft && c.dirty) state.drafts.set(c.key, draftOf(c));
+  if (!keepDraft) state.drafts.delete(c.key);
+  for (const f of Object.values(c.ui.rows)) hideSuggest(f);
+  if (c.kind === 'new') {
+    E('compose-backdrop').classList.remove('open');
+    E('compose-slot').replaceChildren();
+  } else if (c.wrap) {
+    c.wrap.remove();
+  }
+  if (state.composer === c) state.composer = null;
+  return true;
+}
+
+function discardComposer(c) {
+  if (c.sending) return; // too late to discard — it is on its way
+  const hasText = c.body.trim() || totalRecipients(c) || (c.kind === 'new' && c.subject.trim());
+  if (c.dirty && hasText && !window.confirm('Discard this message? What you wrote will be lost.')) return;
+  closeComposer(c, { keepDraft: false });
+}
+
+function unsentWork() {
+  const c = state.composer;
+  return !!((c && c.dirty && (c.body.trim() || totalRecipients(c))) || [...state.drafts.values()].some((d) => d.body && d.body.trim()));
+}
+
+async function openCompose() {
+  if (!canSendAny()) { toast('You cannot send from any mailbox yet'); return; }
+  try { await ensureIdentities(); } catch (err) { toast(`Couldn't load your mailboxes: ${err.message}`); return; }
+  if (!sendableIdentities().length) { toast('None of your mailboxes can send right now'); return; }
+  mountComposer(makeComposer({ kind: 'new' }));
+}
+
+async function openReply(m, all) {
+  const t = state.thread;
+  const cur = state.composer;
+  if (cur && cur.kind === 'reply' && cur.parentId === m.id && cur.all === !!all) { if (cur.ui) cur.ui.body.focus(); return; }
+  try { await ensureIdentities(); } catch (err) { toast(`Couldn't load your mailboxes: ${err.message}`); return; }
+  const key = `reply:${m.id}`;
+  let defaults = null;
+  // Reply ↔ Reply all on the same message: the recipients change, the text
+  // already written does not (it used to be dropped without a word).
+  const prior = cur && cur.kind === 'reply' && cur.parentId === m.id ? cur : state.drafts.get(key);
+  const carry = prior && prior.all !== !!all && prior.body && prior.body.trim() ? prior.body : null;
+  if (!state.drafts.has(key) || state.drafts.get(key).all !== !!all) {
+    state.drafts.delete(key);
+    try {
+      defaults = await api(`/api/mail/messages/${m.id}/reply`, 'GET', { all: all ? 1 : 0 });
+    } catch (err) { toast(`Couldn't start the reply: ${err.message}`); return; }
+    if (!defaults || defaults.mailbox_id == null) { toast('None of your mailboxes can send right now'); return; }
+  }
+  if (!state.thread || state.thread !== t) return; // the reader moved on meanwhile
+  const c = makeComposer({ kind: 'reply', parentId: m.id, threadKey: t.key || null, convo: convoOf(t.key, t.anchorId), all: !!all, defaults });
+  if (carry) { c.body = carry; c.ui.body.value = carry; c.dirty = true; }
+  if (defaults && defaults.over_cap) composerError(c, `Reply all would go to more than ${state.maxRecipients} people — remove some before sending.`);
+  mountComposer(c); // closes the open one, its text kept (refused while that one is still sending)
+}
+
+async function sendComposer(c) {
+  if (c.sending) return;
+  composerError(c, '');
+  for (const f of Object.values(c.ui.rows)) if (f.input.value.trim() && !commitTyped(c, f)) return;
+  const ident = identityById(c.identityId);
+  if (!ident || !ident.sendable) { composerError(c, 'Pick a mailbox to send from.'); return; }
+  if (!c.to.length) { composerError(c, 'Add at least one recipient in To.'); return; }
+  if (totalRecipients(c) > state.maxRecipients) { composerError(c, `At most ${state.maxRecipients} recipients.`); return; }
+  if (c.kind === 'new' && !c.subject.trim()) { composerError(c, 'Add a subject.'); return; }
+  if (!c.body.trim()) { composerError(c, 'Write a message first.'); return; }
+  const out1 = (r) => (r.name ? { email: r.email, name: r.name } : r.email);
+  const payload = { mailbox_id: ident.id, to: c.to.map(out1), subject: c.subject.trim(), body_text: c.body };
+  if (c.cc.length) payload.cc = c.cc.map(out1);
+  if (c.bcc.length) payload.bcc = c.bcc.map(out1);
+  if (ident.signature) payload.signature = !!c.signature;
+  if (c.kind === 'reply') { payload.in_reply_to_message_fk = c.parentId; payload.quote_original = !!(c.quote && c.includeQuote); }
+  c.sending = true;
+  c.ui.send.disabled = true;
+  c.ui.send.replaceChildren(icon('fa-spinner'), 'Sending…');
+  try {
+    const out = await api('/api/mail/send', 'POST', payload);
+    c.sending = false; // sent: now it may close (closeComposer refuses one in flight)
+    closeComposer(c, { keepDraft: false });
+    const warn = ((out && out.warnings) || []).map((w) => w.message).filter(Boolean).join(' ');
+    toast(`Sent from ${(out && out.from) || ident.address}. ${warn || 'It shows in the list after the mailbox\'s next check (about 5 minutes).'}`, 6000);
+    if (c.kind === 'reply' && c.threadKey) watchForSent(c.threadKey);
+  } catch (err) {
+    const msg = (err && err.message) || 'Sending failed — nothing was sent.';
+    composerError(c, msg);
+    // the reader opened another conversation meanwhile: the box (and its text)
+    // comes back with this error when they return — say so now
+    if (!c.el.isConnected) toast(`Not sent: ${msg}`, 8000);
+  } finally {
+    c.sending = false;
+    c.ui.send.disabled = false;
+    c.ui.send.replaceChildren(icon('fa-paper-plane'), 'Send');
+  }
+}
+
+/** After a reply: re-read the conversation for a while; re-open it when a new copy shows up. */
+function watchForSent(key) {
+  stopSentWatch();
+  let n = 0;
+  const timer = setInterval(async () => {
+    n++;
+    const t = state.thread;
+    if (n > COMPOSE_LIMITS.watchTimes || !t || t.key !== key) { stopSentWatch(); return; }
+    const cmp = state.composer;
+    if (cmp && cmp.kind === 'reply' && cmp.dirty) return; // never yank a reply in progress
+    let data;
+    try { data = await api(`/api/mail/threads/${encodeURIComponent(key)}`, 'GET'); } catch (_) { return; }
+    if (!state.thread || state.thread.key !== key) return;
+    const known = new Set(state.thread.messages.flatMap((x) => (x.copies || [x]).map((cp) => cp.id)));
+    const fresh = ((data && data.messages) || []).some((x) => (x.copies || [x]).some((cp) => !known.has(cp.id)));
+    if (!fresh) return;
+    stopSentWatch();
+    const anchor = state.messages.find((r) => r.id === state.thread.anchorId)
+      || { id: state.thread.anchorId, thread_key: key, subject: state.thread.subject };
+    openMessage(anchor);
+    loadList({ silent: true });
+  }, COMPOSE_LIMITS.watchEveryMs);
+  state.sentWatch = { timer, key };
+}
+
+function stopSentWatch() {
+  if (state.sentWatch) clearInterval(state.sentWatch.timer);
+  state.sentWatch = null;
+}
+
 // ── Wiring ──────────────────────────────────────────────────
 async function init() {
   let qTimer = null;
@@ -1692,8 +2315,18 @@ async function init() {
   // On a case / Not on a case: one, the other, or neither
   E('f-hascase').addEventListener('click', () => { const on = !pressed('f-hascase'); setPressed('f-hascase', on); if (on) setPressed('f-nocase', false); loadList(); });
   E('f-nocase').addEventListener('click', () => { const on = !pressed('f-nocase'); setPressed('f-nocase', on); if (on) setPressed('f-hascase', false); loadList(); });
-  E('f-inbox').addEventListener('click', () => { if (pressed('f-folders')) { setFolders(false); loadList(); } });
-  E('f-folders').addEventListener('click', () => { if (!pressed('f-folders')) { setFolders(true); loadList(); } });
+  E('f-inbox').addEventListener('click', () => { if (scopeNow() !== 'inbox') { setScope('inbox'); loadList(); } });
+  E('f-sent').addEventListener('click', () => { if (scopeNow() !== 'sent') { setScope('sent'); loadList(); } });
+  E('f-folders').addEventListener('click', () => { if (scopeNow() !== 'all') { setScope('all'); loadList(); } });
+  E('compose-btn').addEventListener('click', () => openCompose());
+  E('rail-compose').addEventListener('click', () => openCompose());
+  E('compose-close').addEventListener('click', () => { if (state.composer && state.composer.kind === 'new') closeComposer(state.composer, { keepDraft: true }); });
+  window.addEventListener('beforeunload', (e) => {
+    // In-memory drafts die with the page: ask before letting that happen.
+    if (!unsentWork()) return;
+    e.preventDefault();
+    e.returnValue = '';
+  });
   E('rail-manage').addEventListener('click', openViews);
   E('rail-hide').addEventListener('click', () => setRail(false));
   E('rail-show').addEventListener('click', () => setRail(true));
@@ -1724,6 +2357,7 @@ async function init() {
     if (E('viewer-backdrop').classList.contains('open')) closeViewer();
     else if (E('case-backdrop').classList.contains('open')) closeCaseLink();
     else if (E('views-backdrop').classList.contains('open')) closeViews();
+    else if (E('compose-backdrop').classList.contains('open') && state.composer) closeComposer(state.composer, { keepDraft: true });
     else if (!E('mb-panel').hidden) toggleBoxPanel(false);
   });
 
@@ -1739,7 +2373,8 @@ async function init() {
 // The shell pings visible frames when their tab is re-entered (index.html
 // pingBecameVisible). Refresh the list and counts quietly; an open thread stays.
 window.ycBecameVisible = () => {
-  if (E('case-backdrop').classList.contains('open') || E('views-backdrop').classList.contains('open') || E('viewer-backdrop').classList.contains('open')) return;
+  if (E('case-backdrop').classList.contains('open') || E('views-backdrop').classList.contains('open') || E('viewer-backdrop').classList.contains('open')
+      || E('compose-backdrop').classList.contains('open')) return;
   loadSummary().catch(() => {});
   loadList({ silent: true });
 };
