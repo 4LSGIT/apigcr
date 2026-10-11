@@ -196,7 +196,7 @@ describe('grant matrix — the list, the summary, single messages', () => {
     W.read(SU, 101);
     W.statements.length = 0;
     const r = await call('GET', '/api/mail/mailboxes', { t: tok(SU) });
-    expect(r.json.viewer).toEqual({ su: true, role: null });
+    expect(r.json.viewer).toEqual({ su: true, role: null, can_send: true });
     expect(r.json.mailboxes.map((m) => [m.id, m.inbox_total, m.inbox_unread])).toEqual([[1, 4, 3], [2, 2, 2]]);
     expect(W.statements.filter((s) => /FROM mail_messages/.test(s.sql))).toHaveLength(1);
   });
@@ -216,7 +216,7 @@ describe('attorney READ bypass (users.roles, DB-sourced)', () => {
   test('an attorney reads every mailbox without a grant row', async () => {
     expect(ids(await call('GET', '/api/mail/messages', { t: tok(SS) }))).toEqual([202, 201, 104, 103, 102, 101]);
     const sum = await call('GET', '/api/mail/mailboxes', { t: tok(SS) });
-    expect(sum.json.viewer).toEqual({ su: false, role: 'attorney' });
+    expect(sum.json.viewer).toEqual({ su: false, role: 'attorney', can_send: false }); // reading every box is not a send right (S3)
     expect(sum.json.mailboxes.map((m) => m.id)).toEqual([1, 2]);
     expect((await call('GET', '/api/mail/messages/202', { t: tok(SS) })).status).toBe(200);
   });
@@ -229,6 +229,7 @@ describe('attorney READ bypass (users.roles, DB-sourced)', () => {
       .toEqual({ can_read: true, can_send: true, can_manage: false, su: false, role: 'attorney' });
     const sum = await call('GET', '/api/mail/mailboxes', { t: tok(SS) });
     expect(sum.json.mailboxes.map((m) => [m.id, m.can_send, m.can_manage])).toEqual([[1, false, false], [2, true, false]]);
+    expect(sum.json.viewer.can_send).toBe(true);
   });
 
   test('the admin surfaces stay closed: public projection, no PATCH, no SU diagnostics', async () => {

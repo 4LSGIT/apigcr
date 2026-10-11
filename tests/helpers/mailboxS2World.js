@@ -430,6 +430,16 @@ function makeWorld() {
       return [rows.sort(byAddr)];
     }
 
+    // ── mailReadService: summary — send-only boxes (S3.1: Ingest off AND no IMAP
+    // login; a seeded box without these fields is the DB default, ingest on) ──
+    if (sql === 'SELECT id FROM mailboxes WHERE id IN (?) AND ingest_enabled = 0 AND imap_secret IS NULL') {
+      const ids = new Set(p[0].map(Number));
+      return [T.mailboxes.filter(b => ids.has(Number(b.id)) && Number(b.ingest_enabled ?? 1) === 0 && b.imap_secret == null).map(b => ({ id: b.id }))];
+    }
+    if (sql === "SELECT COUNT(*) AS n FROM channel_grants WHERE user = ? AND channel_type = 'mailbox' AND can_send = 1") {
+      return [[{ n: T.channel_grants.filter(g => g.user === Number(p[0]) && g.channel_type === 'mailbox' && Number(g.can_send) === 1).length }]];
+    }
+
     // ── mailReadService: summary ──
     if (sql === 'SELECT m.mailbox_id, COUNT(*) AS total, SUM(rs.message_fk IS NULL) AS unread FROM mail_messages m LEFT JOIN mail_read_state rs ON rs.user = ? AND rs.message_fk = m.id WHERE m.mailbox_id IN (?) AND m.in_inbox = 1 GROUP BY m.mailbox_id') {
       if (p.length !== 2) throw new Error('mailboxS2World: summary params mismatch');

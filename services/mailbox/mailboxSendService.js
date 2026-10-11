@@ -487,9 +487,14 @@ async function loadParent(db, userId, messageId, label = 'message id') {
 
 /**
  * Reply / reply-all defaults for message `messageId`:
- *   identity  q.mailbox_id when the caller can send as it, else the box the
- *             message sits in, else a sendable box the message was addressed
- *             to, else the first sendable one, else null (cannot reply).
+ *   identity  q.mailbox_id when the caller can send as it; else — the address
+ *             the mail was SENT TO wins (Fred, 2026-10-12; Gmail's "reply from
+ *             the same address") — for the box's own mail the sendable box it
+ *             came FROM, else the first sendable box in its To, then its Cc
+ *             (header order); else the box the message sits in; else the
+ *             first sendable one; else null (cannot reply). This is what makes
+ *             a SEND-ONLY identity (a Google alias such as it@ whose mail
+ *             lands in the account's own box — design §4.2) reply as itself.
  *   to        the sender — or, when the message is the box's OWN mail (its
  *             From is one of the caller's sendable boxes, or the stored row is
  *             a Sent copy: the \Sent label / a Sent folder — mail the account
@@ -509,14 +514,22 @@ async function replyDefaults(db, userId, messageId, q = {}) {
   const tos = read.addressList(parent.to_addrs);
   const ccs = read.addressList(parent.cc_addrs);
   const want = q.mailbox_id !== undefined && q.mailbox_id !== null && q.mailbox_id !== '' ? toId(q.mailbox_id, 'mailbox_id') : null;
-  const identity = (want && sendable.find(i => i.id === want))
-    || sendable.find(i => i.id === Number(parent.mailbox_id))
-    || sendable.find(i => [...tos, ...ccs].some(a => a.email === lower(i.address)))
-    || sendable[0] || null;
-  const me = identity ? lower(identity.address) : null;
-
   const from = read.addressList(parent.from_addr)[0] || null;
   const own = !!(from && mine.has(from.email)) || isSentCopy(parent);
+  /** The first sendable box among these addresses, in their order. */
+  const boxFor = (list) => {
+    for (const a of list) {
+      const hit = sendable.find(i => lower(i.address) === a.email);
+      if (hit) return hit;
+    }
+    return null;
+  };
+  const identity = (want && sendable.find(i => i.id === want))
+    || (own && from ? boxFor([from]) : null)
+    || boxFor(tos) || boxFor(ccs)
+    || sendable.find(i => i.id === Number(parent.mailbox_id))
+    || sendable[0] || null;
+  const me = identity ? lower(identity.address) : null;
   const shape = (a) => ({ email: a.email, name: a.name || null });
   const to = (own ? tos : (from ? [from] : [])).map(shape);
   const taken = new Set(to.map(a => a.email));

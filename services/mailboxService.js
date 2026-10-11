@@ -727,6 +727,30 @@ function toDbAssignments(clean) {
  * left (an explicit null = none).
  * @returns {{id:number, mailbox:object}} mailbox in the SU projection
  */
+/**
+ * ONE poller per IMAP account (S3.1, 2026-10-12). A second active,
+ * ingest-enabled box on the same host + login would store every message
+ * twice and — emitting — log it and fire its rules twice. A SEND-ONLY
+ * identity (a Google alias such as it@4lsg.com, whose mail lands in the
+ * account's own box: Ingest off, no password — design §4.2) may name the
+ * same account freely; this refuses only the poll. Compared under the
+ * columns' general_ci collation, i.e. case-blind. `row` = the box as it
+ * will be after the write.
+ */
+async function assertSinglePoller(db, id, row) {
+  if (!Number(row.active) || !Number(row.ingest_enabled)) return;
+  const [[dup]] = await db.query(
+    `SELECT id, address FROM mailboxes
+      WHERE id <> ? AND active = 1 AND ingest_enabled = 1 AND imap_host = ? AND imap_user = ? LIMIT 1`,
+    [Number(id) || 0, String(row.imap_host || '').toLowerCase(), String(row.imap_user || '')]
+  );
+  if (dup) {
+    throw httpError(409, `${row.imap_user} on ${row.imap_host} is already checked by mailbox #${dup.id} (${dup.address}) — ` +
+      'a second box polling it would store, log and fire rules twice. For a send-as address of that account, untick ' +
+      'Ingest enabled and leave the password empty.');
+  }
+}
+
 async function createMailbox(db, body) {
   const clean = validateMailboxBody(body, { partial: false });
   if (!has(clean, 'ingest_folders')) clean.ingest_folders = JSON.parse(JSON.stringify(DEFAULT_INGEST_FOLDERS));
@@ -735,6 +759,11 @@ async function createMailbox(db, body) {
     clean.color = mailboxColor.pick(used.map(r => r.color));
   }
   await assertSendCredential(db, clean.send_credential_id);
+  await assertSinglePoller(db, null, {
+    imap_host: clean.imap_host, imap_user: clean.imap_user,
+    active: has(clean, 'active') ? clean.active : 1,                 // the column defaults
+    ingest_enabled: has(clean, 'ingest_enabled') ? clean.ingest_enabled : 1,
+  });
 
   const { cols, vals } = toDbAssignments(clean);
   let result;
@@ -790,6 +819,15 @@ async function updateMailbox(db, mailboxId, body, { su = false } = {}) {
 
   if (has(clean, 'send_credential_id')) await assertSendCredential(db, clean.send_credential_id);
   await assertEmitOverride(db, id, clean);
+  const POLL_KEYS = ['imap_host', 'imap_user', 'active', 'ingest_enabled'];
+  if (POLL_KEYS.some(k => has(clean, k))) {
+    const [[now]] = await db.query(
+      'SELECT imap_host, imap_user, active, ingest_enabled FROM mailboxes WHERE id = ? LIMIT 1', [id]
+    );
+    const after = { ...now };
+    for (const k of POLL_KEYS) if (has(clean, k)) after[k] = clean[k];
+    await assertSinglePoller(db, id, after);
+  }
 
   const before = await getMailbox(db, id, { su });
   const { cols, vals } = toDbAssignments(clean);

@@ -556,7 +556,7 @@ function viewKind(a) {
 
 const state = {
   mailboxes: [],        // GET /api/mail/mailboxes
-  viewer: { su: false, role: null },
+  me: { su: false, role: null, can_send: false }, // GET /api/mail/mailboxes .viewer (was state.viewer — that key is the attachment viewer's)
   views: [],            // GET /api/mail/views
   viewCounts: {},       // GET /api/mail/views/counts: view id → Inbox unread under its filters
   viewId: null,         // active saved view (null = none)
@@ -721,7 +721,7 @@ function selectedIds() {
 async function loadSummary() {
   const data = await api('/api/mail/mailboxes', 'GET');
   state.mailboxes = Array.isArray(data && data.mailboxes) ? data.mailboxes : [];
-  state.viewer = (data && data.viewer) || state.viewer;
+  state.me = (data && data.viewer) || state.me;
   renderMailboxPicker();
   loadViewCounts(); // read state moved: the views' counts with it
 }
@@ -775,7 +775,7 @@ function renderMailboxPicker() {
   E('tab-email-n').textContent = total ? String(total) : '';
   // The shell's sidebar Comms badge (index.html commsBadgeSet): this page
   // just counted it, so hand it over rather than make the shell fetch again.
-  try { if (typeof P.commsBadgeSet === 'function') P.commsBadgeSet(total, state.mailboxes.length); } catch (_) { /* decoration */ }
+  try { if (typeof P.commsBadgeSet === 'function') P.commsBadgeSet(total, state.mailboxes.length, !!(state.me && state.me.can_send)); } catch (_) { /* decoration */ }
   // Compose shows once a box you can read lets you send (S3). The identity
   // list itself loads when a composer opens — boot makes no extra call.
   E('compose-btn').hidden = !canSendAny();
@@ -1815,7 +1815,8 @@ var COMPOSE_LIMITS = { watchEveryMs: 60_000, watchTimes: 12, suggestDelayMs: 250
 const RCPT_LABEL = { to: 'To', cc: 'Cc', bcc: 'Bcc' };
 const EMAIL_OK = /^[^\s@<>()[\]\\,;:"]+@[^\s@<>()[\]\\,;:"]+\.[^\s@<>()[\]\\,;:"]+$/;
 
-function canSendAny() { return state.mailboxes.some((m) => m.can_send); }
+/** Offer Compose / Reply? The server's word (a send-only grant has no readable box to carry can_send), else a readable box that can. */
+function canSendAny() { return !!(state.me && state.me.can_send) || state.mailboxes.some((m) => m.can_send); }
 /** Which conversation a reply box belongs to: its thread key, or — threadless mail — the message itself. */
 function convoOf(threadKey, messageId) { return threadKey ? `k:${threadKey}` : `m:${messageId}`; }
 const sendableIdentities = () => (state.identities || []).filter((i) => i.sendable);

@@ -87,7 +87,7 @@ describe('wiring: Comms is a sidebar tab, Settings lives in More Features', () =
 });
 
 describe('the badge and the active item, run for real', () => {
-  const BADGE_SRC = between('    function commsBadgeSet(total, boxes) {', '    }, 5 * 60 * 1000);');
+  const BADGE_SRC = between('    function commsBadgeSet(total, boxes, canSend) {', '    }, 5 * 60 * 1000);');
   const ACTIVE_SRC = (() => {
     const a = HTML.indexOf('    function updateSidebarActive(tabName) {');
     const b = HTML.indexOf('\n    }\n', a);
@@ -133,6 +133,14 @@ describe('the badge and the active item, run for real', () => {
     down.w.commsBadgeSet(5, 1);
     await down.w.commsBadgeRefresh();
     expect([down.shown('sbComms'), down.shown('homeComms'), down.shown('sbCommsBadge')]).toEqual([true, true, false]);
+  });
+
+  test('nothing to read but a box to send as (a send-only identity, S3.1) → the entry shows, no badge', async () => {
+    const t = boot({ api: () => ({ mailboxes: [], viewer: { su: false, role: null, can_send: true } }) });
+    await t.w.commsBadgeRefresh();
+    expect([t.shown('sbComms'), t.shown('homeComms'), t.shown('sbCommsBadge')]).toEqual([true, true, false]);
+    t.w.commsBadgeSet(0, 0, false);
+    expect(t.shown('sbComms')).toBe(false);
   });
 
   test('signed out → no fetch; the 5-minute refresh runs only while the page is visible', async () => {

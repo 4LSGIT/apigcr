@@ -440,9 +440,24 @@ const FULL_COLS = `m.id, m.mailbox_id, m.folder, m.gmail_labels, m.in_inbox, m.m
  * one per mailbox. Unread counts the Inbox only (in_inbox — INBOX / SENT
  * above): the hub's default scope, and a Sent copy is mail the mailbox itself
  * sent.
+ *
+ * SEND-ONLY boxes (S3.1, 2026-10-12) are left out: Ingest off AND no IMAP
+ * login (SEND_ONLY_SQL) = an identity row, e.g. a Google alias (it@4lsg.com)
+ * whose mail lands in the account's own box. It stores nothing, so it has no
+ * place on the reading surfaces; it appears in the From picker
+ * (GET /api/mail/identities). A paused box keeps its login and stays listed.
+ * `viewer.can_send` tells the pane whether to offer Compose / Reply at all —
+ * a send-only grant has no readable box to carry can_send.
  */
+const SEND_ONLY_SQL = 'SELECT id FROM mailboxes WHERE id IN (?) AND ingest_enabled = 0 AND imap_secret IS NULL';
+const CAN_SEND_SQL = "SELECT COUNT(*) AS n FROM channel_grants WHERE user = ? AND channel_type = 'mailbox' AND can_send = 1";
+
 async function summary(db, userId) {
   const scope = await readableScope(db, userId);
+  if (scope.size) {
+    const [so] = await db.query(SEND_ONLY_SQL, [[...scope.keys()]]);
+    for (const r of so) scope.delete(Number(r.id));
+  }
   const ids = [...scope.keys()];
   const counts = new Map();
   if (ids.length) {
@@ -456,7 +471,12 @@ async function summary(db, userId) {
     );
     for (const r of rows) counts.set(Number(r.mailbox_id), { total: Number(r.total) || 0, unread: Number(r.unread) || 0 });
   }
-  const viewer = { su: await mbx.isSuperuser(db, userId), role: null };
+  const viewer = { su: await mbx.isSuperuser(db, userId), role: null, can_send: false };
+  if (viewer.su) viewer.can_send = true;
+  else {
+    const [[g]] = await db.query(CAN_SEND_SQL, [Number(userId)]);
+    viewer.can_send = Number(g && g.n) > 0;
+  }
   const mailboxes = [...scope.values()].map(r => {
     if (r.role) viewer.role = r.role;
     const c = counts.get(Number(r.id)) || { total: 0, unread: 0 };

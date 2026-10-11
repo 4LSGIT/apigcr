@@ -668,6 +668,38 @@ describe('credential-redirect guard', () => {
   });
 });
 
+describe('one poller per IMAP account (S3.1)', () => {
+  const post = (body) => call('POST', '/api/mailboxes', { t: SU(), elev: ELEV(), body });
+  const patch = (id, body) => call('PATCH', `/api/mailboxes/${id}`, { t: SU(), elev: ELEV(), body });
+
+  test('a second box polling the same host + login is a 409 (case-blind); a SEND-ONLY identity of that account is fine', async () => {
+    const real = await seedMailbox({ imap_host: 'imap.gmail.com', imap_user: 'stuart@4lsg.com', address: 'stuart@4lsg.com' });
+    let r = await post({ address: 'it@4lsg.com', imap_host: 'IMAP.gmail.com', imap_user: 'Stuart@4lsg.com', imap_secret: SECRET });
+    expect(r.status).toBe(409);
+    expect(r.json.message).toMatch(/already checked by mailbox #\d+ \(stuart@4lsg\.com\).*untick Ingest enabled/);
+    expect(W.T.mailboxes).toHaveLength(1);
+    // the send-as identity: Ingest off, no password
+    r = await post({ address: 'it@4lsg.com', imap_host: 'imap.gmail.com', imap_user: 'stuart@4lsg.com', ingest_enabled: false });
+    expect(r.status).toBe(201);
+    const alias = r.json.id;
+    // …and it can never start polling while the real box does
+    r = await patch(alias, { ingest_enabled: true });
+    expect(r.status).toBe(409);
+    expect(W.T.mailboxes.find((b) => b.id === alias).ingest_enabled).toBe(0);
+    // the real box retired → the guard steps aside (one poller, whichever row it is)
+    expect((await patch(real, { active: false })).status).toBe(200);
+    expect((await patch(alias, { ingest_enabled: true })).status).toBe(200);
+    // and the real box cannot come back while the other one polls
+    expect((await patch(real, { active: true })).status).toBe(409);
+  });
+
+  test('different logins on one host (SiteGround: one box per address) are not duplicates', async () => {
+    await seedMailbox();
+    const r = await post({ address: 'it@4lsg.com', imap_host: 'gcam1191.siteground.biz', imap_user: 'it@4lsg.com', imap_secret: SECRET });
+    expect(r.status).toBe(201);
+  });
+});
+
 describe('validation', () => {
   test.each([
     [{ address: 'x@y.com', imap_host: 'h.example.com' }, /imap_user is required/],

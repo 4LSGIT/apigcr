@@ -143,7 +143,7 @@ maybe('mailbox S2 on real MySQL', () => {
     expect((await call('GET', '/api/mail/messages/202', { t: tok(READER) })).status).toBe(404);
     expect((await call('PATCH', '/api/mailboxes/1', { t: tok(SS), body: { display_name: 'x' } })).status).toBe(403);
     const sum = await call('GET', '/api/mail/mailboxes', { t: tok(SS) });
-    expect(sum.json.viewer).toEqual({ su: false, role: 'attorney' });
+    expect(sum.json.viewer).toEqual({ su: false, role: 'attorney', can_send: false });
     expect(sum.json.mailboxes.map((m) => [m.id, m.inbox_total, m.inbox_unread])).toEqual([[1, 5, 5], [2, 2, 2]]);
   });
 

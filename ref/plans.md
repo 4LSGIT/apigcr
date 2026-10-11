@@ -333,7 +333,7 @@ Active surfaces with known next steps.
   - **Attachments** (compose + forward). Forwarding a stored message's files must use the API's `inline` flag, never `cid` (AI_CONTEXT §0). Bodies are plain text in v1 (the server builds the HTML).
   - **Forward**, **server-side drafts** (the pane keeps one in memory per page), **scheduled send**, **signature management** (v1 uses the send credential's own signature, only when its address is the box's).
   - **Reply-To** is not captured at ingest, so replies go to From. Capture it (a `mail_messages` column) if a list/no-reply sender makes that wrong in practice.
-  - **Send-only grants** (can_send without can_read) have no hub: the Comms tab and Compose are gated on readable boxes. Decide whether that grant shape should exist at all before building UI for it.
+  - **Per-address READING for send-only boxes** (S3.1 shipped per-address SENDING: one send-only box per Google alias). Reading mail sent to it@ still needs Read on the whole account box. Next: a read grant on an alias box shows the account box's mail addressed to that alias (To/Cc match; Bcc/Delivered-To are not stored). The Comms tab itself is still gated on readable boxes (shell), so a send-only-only person has no tab to compose from.
   - **Budget query cost**: the per-transport COUNT walks every `email_log` row of its `source` (ref on `ux_email_log_source_message`; ~1.7k gmail rows at ship). Add `(source, processed_at)` if outbound volume grows ~10×.
 
 - **Custom fields: per-case-type scoping as data (if it gets common).** Since 2026-10-06 a case field meant for some types is a `show_when` on `case_type` (one Custom Fields section, mounted by every Case Details variant). `show_when` v1 is ONE condition, so a type-scoped field cannot also carry a second condition. If that bites, add a first-class `case_types` (JSON list) to `field_defs`, ANDed with `show_when`, rather than growing v1 into and/or trees.
@@ -419,8 +419,6 @@ Active surfaces with known next steps.
   - **Checkbox/radio option labels** ("Active", "Notify assigner…", "All-day event", "SMS") vary: 13px `--text-2`, 0.9em, inherited. The next "one look" layer.
   - **yc-forms sizes are rem-based** — `.yc-label` 0.92rem (14.72px), `.yc-sublabel` 0.8rem (12.8px) against the app's 14/12px tokens. Converge when yc-forms is next touched; check that every page loading it also loads `theme.css` first.
   - **The mobile survey asserts overflow only.** The label/hint uniformity checks were session-scratch Playwright scripts; a `--looks` mode in `scripts/mobile-survey/` would make them a gate.
-
-- **`public/comms.html` `state.viewer` is two things** (found in mailbox S3, pre-existing since S2): the state object literal declares `viewer` twice — the mailbox summary's `{su, role}` (never read) and the attachment viewer. A summary refresh that lands while an attachment is loading replaces the viewer's state, so that load bails and the viewer stays on "Loading…". Rename the summary's key (e.g. `me`) when comms.html is next touched.
 
 - **Documentation currency** now has a mechanism (2026-09-14): doc≠code divergences are filed to scratch `ns=docs` at discovery; the weekly docs review (`ref/DOCS_REVIEW.md`) drains the queue and updates `ref/AI_CONTEXT.md`'s currency header. No more ad-hoc drift sweeps.
 

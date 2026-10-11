@@ -574,7 +574,8 @@
     </div>
     <!-- Comms hub (mailbox arc S2): every mailbox you can read, in one place.
          Hidden until GET /api/mail/mailboxes says you can read at least one
-         (grant, SU, or the attorney read bypass) — commsBadgeSet below; the
+         (grant, SU, or the attorney read bypass) or may send as one
+         (viewer.can_send — a send-only identity, S3.1) — commsBadgeSet below; the
          badge is your INBOX unread over those boxes. Took Settings' place in
          the sidebar 2026-10-11 (Settings: More Features, or "Hi, <name>!"). -->
     <div class="sb-item" id="sbComms" data-tab="tabComms" onclick="openMainTab('tabComms')" style="display:none" title="Comms">
@@ -2565,7 +2566,9 @@
 
     /**
      * Comms entry + badge (sidebar Comms item, Home's Comms button). Shown
-     * once the user can read at least one mailbox; badge = INBOX unread over
+     * once the user can read at least one mailbox or may send as one
+     * (`canSend` = the summary's viewer.can_send: a send-only identity such
+     * as a Google alias has no readable box, S3.1); badge = INBOX unread over
      * those boxes — the same numbers the hub's summary shows
      * (GET /api/mail/mailboxes). Set from three places:
      *   - boot (loadUserContext) and every 5 minutes while this page is
@@ -2576,8 +2579,8 @@
      * boxes === null (the fetch failed) shows the entry without a badge: the
      * hub explains its own errors, and hiding the door would hide that too.
      */
-    function commsBadgeSet(total, boxes) {
-      const show = boxes == null || boxes > 0;
+    function commsBadgeSet(total, boxes, canSend) {
+      const show = boxes == null || boxes > 0 || !!canSend;
       for (const id of ['sbComms', 'homeComms']) {
         const el = E(id);
         if (el) el.style.display = show ? '' : 'none';
@@ -2594,7 +2597,7 @@
         if (!user?.user) return;
         const r = await apiSend('/api/mail/mailboxes', 'GET');
         const boxes = Array.isArray(r && r.mailboxes) ? r.mailboxes : [];
-        commsBadgeSet(boxes.reduce((n, m) => n + (Number(m.inbox_unread) || 0), 0), boxes.length);
+        commsBadgeSet(boxes.reduce((n, m) => n + (Number(m.inbox_unread) || 0), 0), boxes.length, !!(r && r.viewer && r.viewer.can_send));
       } catch (_) { commsBadgeSet(0, null); } // decoration — never let it break the shell
     }
     window.commsBadgeSet = commsBadgeSet;

@@ -61,6 +61,10 @@
  *   - MID_MAX back to 500                                           → "a 512-character thread id"
  *   - the gmail_server warning back to "the server files its own"   → the APPEND-skipped test
  *   - the rate check back BEFORE the SU elevation check             → "elevation-rejected attempts do not use up the window"
+ *   - reply identity back to "the box the message sits in" first     → send-only identities: reply defaults
+ *   - send-only boxes left on the reading surfaces / a paused box
+ *     dropped with them                                               → send-only identities: reading surfaces
+ *   - viewer.can_send from readable boxes only                       → send-only identities: reading surfaces
  */
 
 'use strict';
@@ -625,6 +629,72 @@ describe('reply correctness', () => {
     r = await call('GET', '/api/mail/messages/102/reply', { t: tok(READER) });
     expect(r.json.mailbox_id).toBeNull();                                                // can read, cannot reply
     expect((await call('GET', '/api/mail/messages/102/reply', { t: tok(NOBODY) })).status).toBe(404);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+describe('send-only identities — a Google alias as its own box (S3.1)', () => {
+  // it@firm.test is a send-as alias of the Google account behind box 2 (credential 11):
+  // its mail lands in box 2's store; box 7 is the identity — Ingest off, no IMAP login.
+  const ALIAS = 7;
+  function seedAlias() {
+    W.cred(6, { email: 'it@firm.test', from_name: 'Firm IT', provider: 'gmail', credential_id: 11, smtp_host: '', smtp_user: '', signature_html: '<b>IT desk</b>', signature_text: 'IT desk' });
+    W.mailbox(ALIAS, { address: 'it@firm.test', display_name: 'IT (alias)', send_credential_id: 6, ingest_enabled: 0, imap_secret: null,
+      imap_host: 'imap.gmail.com', imap_user: 'stuart@firm.test' });
+    W.grant(SS, ALIAS, { read: 0, send: 1 });          // per-address SEND permission
+    W.message(210, { mailbox_id: 2, folder: '[Gmail]/All Mail', gmail_labels: '["\\\\Inbox"]', provider_id: 'abc210', message_id: 'x210@outside.test',
+      thread_key: 'x210@outside.test', subject: 'Laptop', from_addr: 'Client <client@outside.test>', to_addrs: 'it@firm.test' });
+  }
+
+  test('reply defaults FROM the address the mail was sent to: To, then Cc, then the box it sits in; own Sent mail from the box it came from', async () => {
+    seedAlias();
+    W.message(211, { mailbox_id: 2, folder: '[Gmail]/All Mail', gmail_labels: '["\\\\Inbox"]', provider_id: 'abc211', message_id: 'x211@outside.test',
+      thread_key: 'x211@outside.test', subject: 'Both', from_addr: 'client@outside.test', to_addrs: 'stuart@firm.test', cc_addrs: 'it@firm.test' });
+    W.message(212, { mailbox_id: 2, folder: '[Gmail]/All Mail', gmail_labels: '["\\\\Sent"]', provider_id: 'abc212', message_id: 'x212@mail.gmail.com',
+      thread_key: 'x212@mail.gmail.com', subject: 'Fixed', from_addr: 'Firm IT <it@firm.test>', to_addrs: 'client@outside.test' });
+    W.message(213, { mailbox_id: 2, folder: '[Gmail]/All Mail', gmail_labels: '["\\\\Inbox"]', provider_id: 'abc213', message_id: 'x213@outside.test',
+      thread_key: 'x213@outside.test', subject: 'Cc only', from_addr: 'client@outside.test', to_addrs: 'someone@outside.test', cc_addrs: 'it@firm.test' });
+    const reply = async (id, t = tok(SS)) => (await call('GET', `/api/mail/messages/${id}/reply`, { t })).json;
+    expect((await reply(210)).mailbox_id).toBe(ALIAS);                    // sent to it@ → reply as it@
+    expect((await reply(211)).mailbox_id).toBe(2);                        // To beats Cc
+    expect((await reply(213)).mailbox_id).toBe(ALIAS);                    // Cc when To has none of mine
+    expect(await reply(212)).toMatchObject({ mailbox_id: ALIAS, to: [{ email: 'client@outside.test', name: null }] }); // own mail: from it@, to its recipients
+    // someone who may send from box 2 but not as it@ replies from box 2
+    W.user(10, { roles: 'staff' });
+    W.grant(10, 2, { read: 1, send: 1 });
+    expect((await reply(210, tok(10))).mailbox_id).toBe(2);
+  });
+
+  test('the send goes out AS the alias (its sender row: name, signature); same account: Gmail files it, the seed finds it in box 2, one budget', async () => {
+    seedAlias();
+    const r = await call('POST', '/api/mail/send', { t: tok(SS), body: { mailbox_id: ALIAS, to: ['client@outside.test'], body_text: 'On it', in_reply_to_message_fk: 210, signature: true } });
+    expect(r.status).toBe(200);
+    expect(r.json).toMatchObject({ from: 'it@firm.test', append: { reason: 'gmail_files_sent' }, read_seed: { scheduled: true } });
+    expect(gmailRaw()).toMatch(/^From: Firm IT <it@firm\.test>/m);
+    expect(gmailRaw()).toMatch(/IT desk/);
+    const budget = statementsLike(/FROM email_log WHERE source = \? AND from_email IN/).slice(-1)[0];
+    expect(budget.params[0]).toBe('outbound-gmail');
+    expect(budget.params[1]).toEqual(expect.arrayContaining(['stuart@firm.test', 'automations@firm.test', 'it@firm.test']));
+    expect(transport.appendSent).not.toHaveBeenCalled();
+  });
+
+  test('reading surfaces leave a send-only box out; the From picker has it; a send-only grant still gets Compose (viewer.can_send)', async () => {
+    seedAlias();
+    let sum = (await call('GET', '/api/mail/mailboxes', { t: tok(SS) })).json;
+    expect(sum.mailboxes.map((m) => m.id)).not.toContain(ALIAS);
+    expect(sum.viewer.can_send).toBe(true);
+    expect((await call('GET', '/api/mail/mailboxes', { t: tok(SU, 'authorized - SU') })).json.mailboxes.map((m) => m.id)).not.toContain(ALIAS);
+    const ids = (await call('GET', '/api/mail/identities', { t: tok(SS) })).json.identities;
+    expect(ids.find((i) => i.id === ALIAS)).toMatchObject({ sendable: true, signature: true });
+    // a person who may only SEND as it@ (no readable box at all)
+    W.user(11, { roles: 'staff' });
+    W.grant(11, ALIAS, { read: 0, send: 1 });
+    sum = (await call('GET', '/api/mail/mailboxes', { t: tok(11) })).json;
+    expect([sum.mailboxes, sum.viewer.can_send]).toEqual([[], true]);
+    // a PAUSED box (Ingest off but it keeps its login) is still listed
+    W.T.mailboxes.find((b) => b.id === 1).ingest_enabled = 0;
+    expect((await call('GET', '/api/mail/mailboxes', { t: tok(SENDER) })).json.mailboxes.map((m) => m.id)).toEqual([1]);
+    expect((await call('GET', '/api/mail/mailboxes', { t: tok(READER) })).json.viewer.can_send).toBe(false);
   });
 });
 

@@ -125,6 +125,12 @@ body. Governing migrations in `ref/migrations/`.*
     defaults 1500 / 300 per sending account, counted from `email_log`); alert
     kinds `mailbox_send_budget` (error) / `mailbox_send_append_failed`
     (warning); `admin_audit_log` tool `mail_send`.
+  - **Send-only boxes** (S3.1, 10-12): a mailbox row with Ingest off AND no
+    IMAP secret is a SEND identity (a Google alias of an account another box
+    polls). Off the reading surfaces (summary), in the From picker; its
+    grants are per-address send permissions. `mailboxService.assertSinglePoller`
+    refuses a second active, ingest-enabled box on one IMAP host + login.
+    Reply identity = the address the mail was sent to, before its box.
   - **`/mailbox-ingest` is also the comms hub's Refresh** (10-12): staff-JWT
     runs throttled to one per 30 s for all staff, non-SU callers get counts
     only (`routes/mailboxIngest.js`); the scheduler's x-api-key tick is

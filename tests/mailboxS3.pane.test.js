@@ -165,6 +165,20 @@ describe('compose (S3)', () => {
     expect([ro.doc.getElementById('compose-btn').hidden, ro.doc.getElementById('rail-compose').hidden]).toEqual([true, true]);
   });
 
+  test('a send-only grant (S3.1): no readable box can send, the server says the person can — Compose and Reply are offered; the summary\'s viewer is not the attachment viewer\'s state', async () => {
+    const ro = MB.map((m) => ({ ...m, can_send: false }));
+    const badge = [];
+    const { window, doc } = await boot({ mailboxes: ro, before: (w) => { w.commsBadgeSet = (...args) => badge.push(args); },
+      handler: standard({ 'GET /api/mail/mailboxes': () => ({ mailboxes: fresh(ro), viewer: { su: false, role: null, can_send: true } }) }) });
+    expect([doc.getElementById('compose-btn').hidden, doc.getElementById('rail-compose').hidden]).toEqual([false, false]);
+    expect(badge[badge.length - 1]).toEqual([3, 2, true]);          // the shell keeps its Comms entry for a send-only person too
+    expect(window.eval('state.me.can_send')).toBe(true);
+    expect(window.eval('state.viewer')).toBeNull();           // the attachment viewer's key, untouched by the summary
+    doc.querySelector('#msg-list .msg').click();
+    await tick(window, 80);
+    expect(doc.querySelector('.mactions .reply-btn')).not.toBeNull();
+  });
+
   test('From: the server\'s identities — the sendable one pressed, the read-only one disabled with its reason', async () => {
     const { window, doc, calls } = await boot({ handler: standard() });
     await openCompose(window, doc);

@@ -341,8 +341,8 @@ Admin → Comms. It shows the mail of every box you can read in one list; the
 
 **Who:** people with **Send** on a box (Access, above), and superusers — who
 confirm their password first ([elevation](README.md)), as for the other
-superuser changes. Comms shows **Compose** and the **Reply** buttons only to
-people who can send from a box they can read.
+superuser changes. Comms shows **Compose** and the **Reply** buttons to
+anyone who may send from at least one box.
 
 - **Compose** (top of the left column on a wide screen, else in the bar
   above the list) writes a new email. **Reply** and **Reply all** sit on
@@ -351,8 +351,11 @@ people who can send from a box they can read.
 - **From** lists the boxes you can send as, in their colours. A box that
   cannot send right now is greyed out with the reason — no send credential
   (read-only), switched off, a Pabbly sender, or a Google sender for a
-  different address. A reply starts from the box
-  the email arrived in when you can send from it.
+  different address. A reply starts from the address the email was sent
+  to — its **To**, then its **Cc** — when you may send as it (so mail to
+  it@4lsg.com is answered from it@4lsg.com, not stuart@), else from the box
+  the email sits in; a reply to mail your own box sent starts from the
+  address it was sent from.
 - **To / Cc / Bcc**: type an address, or part of a contact's name or email —
   matching contacts are offered with their cases — and press Enter, Tab or a
   comma; a pasted list is split for you. **At most 10 recipients** in all:
@@ -394,8 +397,42 @@ people who can send from a box they can read.
   refused: by default 1,500 for Google and 300 for SMTP, changed with the
   `mail_send_daily_budget` app setting (`{"gmail": n, "smtp": n}`). At the
   limit Comms refuses to send (nothing goes out), says so, and IT is
-  emailed (the hourly alert digest; once a day per account). Automations are not stopped by it. Separately, more than
-  30 sends by one person within 10 minutes are refused for a few minutes.
+  emailed (the hourly alert digest; once a day per account). Automations
+  are not stopped by it. Separately, more than 30 sends by one person within
+  10 minutes are refused for a few minutes.
 - Every send, refused send and failed send is recorded in `admin_audit_log`
   under the tool `mail_send` — who, which box, how many recipients; never
   the text or the addresses.
+
+## Send-as addresses (one Google account, many addresses)
+
+All the firm's 4lsg.com addresses — stuart@, it@, billing@, office@ and the
+rest — are one Google account (Stuart's): mail to any of them lands in the
+**Stuart — Workspace** box, and Google sends as any of them. To let someone
+send as one of those addresses, give that address its **own box** — a
+*send-only* box:
+
+1. Connections → Email Senders: the address must already be a Google sender
+   there (it@4lsg.com, billing@4lsg.com … are).
+2. Admin → Mailboxes → **Add**: Address = that address (e.g. it@4lsg.com);
+   Host `imap.gmail.com`, Login `stuart@4lsg.com`; **no password**; untick
+   **Ingest enabled**; Send credential = that address's sender.
+3. **Access** → give **Send** to whoever may send as it — per address
+   (Read on it means nothing: its mail is read in Stuart's box).
+
+What that gives:
+
+- The address appears under **From** for the people with Send on it, with
+  its own name and signature from its sender row.
+- **Reply** to mail sent to that address starts from it automatically.
+- It is never checked for mail and never shows in the mailbox list — its mail
+  is in Stuart's box. The copy of what it sends lands there too (Google files
+  it under Sent), already marked read for the sender.
+- It counts toward the same Google daily limit as every other 4lsg.com
+  address.
+- A box with no password and Ingest off is what makes it send-only. Two boxes
+  can never both check one account: ticking **Ingest enabled** on a box whose
+  host and login another active box already checks is refused (it would
+  store, log and fire rules twice).
+- Reading is not per address yet: to read mail sent to it@, a person needs
+  Read on Stuart's box (all of it).
