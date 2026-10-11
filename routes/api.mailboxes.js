@@ -25,6 +25,10 @@
  *                                              for a stored message (emit identity +
  *                                              derived text); the Gmail parity gate's
  *                                              pre-emission text check (S1-G)
+ *   POST   /api/mailboxes/:id/labels/snapshot  SU only (+ elevation) — re-fetch the
+ *                                              Gmail labels of one polled folder's
+ *                                              stored rows {folder?, after_uid?, limit?};
+ *                                              bounded, under the ingest lock (S2-L)
  *
  * Auto-mounted (server.js readdirSync); req.db injected. UI:
  * public/mailboxAdmin.html (Admin → Mailboxes). Spec:
@@ -71,7 +75,9 @@ const {
 const { pipeline } = require('stream');
 const svc = require('../services/mailboxService');
 const imapTransport = require('../services/mailbox/imapTransport');
-const { loadConnectionRow, previewEmission, folderConfig } = require('../services/mailbox/mailboxIngestService');
+const {
+  loadConnectionRow, previewEmission, folderConfig, snapshotLabels,
+} = require('../services/mailbox/mailboxIngestService');
 
 const TOOL = 'mailboxes';
 
@@ -595,6 +601,76 @@ router.get('/api/mailboxes/:id/messages/:mid/emit-preview', jwtOrApiKey, require
     res.json({ status: 'success', preview });
   } catch (err) {
     sendError(res, 'GET /api/mailboxes/:id/messages/:mid/emit-preview', err);
+  }
+});
+
+// ─── POST /api/mailboxes/:id/labels/snapshot ───  SU only, elevated (a write)
+//
+// Body {folder?, after_uid?, limit?}. Re-fetches X-GM-LABELS for the stored
+// rows of one POLLED folder (folder may be omitted when the mailbox polls
+// exactly one) — UIDs above after_uid, at most `limit` (default 500, max
+// 1000) — and overwrites their gmail_labels snapshot: the backfill for rows
+// stored before S2-L, and the only label refresh until S4. The service runs
+// it under the ingest lock and against the cursor's UIDVALIDITY
+// (mailboxIngestService.snapshotLabels); loop on next_after_uid until done
+// (the runbook block in ref/MAILBOX_GMAIL_PARITY.md does). 409 while an
+// ingest run holds the lock or a re-sync is pending — retry after the tick.
+router.post('/api/mailboxes/:id/labels/snapshot', jwtOrApiKey, requireJwt, async (req, res) => {
+  try {
+    const id = await resolveSuOnly(req, res);
+    if (!id) return;
+    if (!isElevated(req)) return rejectNoElevation(req, res);
+    const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body : null;
+    if (!body) return res.status(400).json({ status: 'error', message: 'request body must be a JSON object' });
+    for (const k of Object.keys(body)) {
+      if (!['folder', 'after_uid', 'limit'].includes(k)) {
+        return res.status(400).json({ status: 'error', message: `unknown field "${k}"` });
+      }
+    }
+    if (body.folder !== undefined && body.folder !== null && typeof body.folder !== 'string') {
+      return res.status(400).json({ status: 'error', message: 'folder must be a string' });
+    }
+    const opts = { folder: body.folder == null ? null : body.folder };
+    if (body.after_uid !== undefined) opts.afterUid = body.after_uid;
+    if (body.limit !== undefined) opts.limit = body.limit;
+    let out;
+    try {
+      out = await snapshotLabels(req.db, id, opts);
+    } catch (err) {
+      if (err && err.imap) {
+        // Sanitized by imapTransport — no credential can be in it.
+        console.warn(`[mailboxes] label snapshot mailbox ${id}:`, err.message);
+        return res.status(502).json({
+          status: 'error',
+          message: 'Could not read labels from the mail server',
+          code: err.code || null,
+          detail: String(err.message || '').slice(0, 300),
+        });
+      }
+      if (err && Number.isInteger(err.status) && err.status < 500) {
+        return res.status(err.status).json({ status: 'error', message: err.message, code: err.code || null });
+      }
+      throw err;
+    }
+    if (out.skipped) {
+      return res.status(409).json({ status: 'error', code: 'INGEST_LOCK_HELD', message: out.reason, retry: true });
+    }
+    audit(req, 'success', {
+      action: 'mailbox_labels_snapshot',
+      mailbox_id: id,
+      folder: out.folder,
+      after_uid: out.after_uid,
+      labels_supported: out.labels_supported,
+      scanned: out.scanned,
+      updated: out.updated,
+      gone: out.gone,
+      mismatched: out.mismatched,
+      unlabelled: out.unlabelled,
+      done: out.done,
+    });
+    res.json({ status: 'success', ...out });
+  } catch (err) {
+    sendError(res, 'POST /api/mailboxes/:id/labels/snapshot', err);
   }
 });
 

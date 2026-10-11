@@ -481,7 +481,7 @@ const state = {
   mailboxes: [],        // GET /api/mail/mailboxes
   viewer: { su: false, role: null },
   views: [],            // GET /api/mail/views
-  viewCounts: {},       // GET /api/mail/views/counts: view id → INBOX unread under its filters
+  viewCounts: {},       // GET /api/mail/views/counts: view id → Inbox unread under its filters
   viewId: null,         // active saved view (null = none)
   boxSel: null,         // Set of mailbox ids the list combines (null = every readable box)
   messages: [],
@@ -582,10 +582,12 @@ function bareAddress(addr) {
 /**
  * Who a list row is about: the sender — or, for mail one of the hub's own
  * mailboxes SENT (All folders), "To: <first recipient>" (the mockup's rule;
- * the firm's own name on every Sent row says nothing).
+ * the firm's own name on every Sent row says nothing). Sent = From is one of
+ * the readable boxes, or the server says so (`sent`: a Gmail copy labelled
+ * Sent — mail sent through the account under another From, automations@ say).
  */
 function rowWho(m) {
-  const own = m.from_addr && state.mailboxes.some((b) => String(b.address).toLowerCase() === bareAddress(m.from_addr));
+  const own = m.sent || (m.from_addr && state.mailboxes.some((b) => String(b.address).toLowerCase() === bareAddress(m.from_addr)));
   return own && m.to_addrs
     ? { text: `To: ${personName(firstAddress(m.to_addrs))}`, title: `To: ${m.to_addrs}` }
     : { text: personName(m.from_addr), title: m.from_addr || '' };
@@ -646,7 +648,7 @@ async function loadViews() {
 
 /**
  * Each saved view's unread count, from the server (its mailboxes + filters,
- * INBOX — mailReadService.viewCounts). Decoration: a failure just shows no
+ * Inbox — mailReadService.viewCounts). Decoration: a failure just shows no
  * counts. Sequence-guarded — summary and views both ask, often together.
  */
 let countsSeq = 0;
@@ -665,7 +667,7 @@ async function loadViewCounts() {
 
 /**
  * The mailbox picker: a button summarizing the combination + an in-flow panel
- * of checkboxes (one per readable box, with its colour and INBOX unread).
+ * of checkboxes (one per readable box, with its colour and Inbox unread).
  * Any set can be combined; "All" (or unticking the last box) = every box.
  */
 function renderMailboxPicker() {
@@ -735,7 +737,7 @@ function renderViewSelect() {
  * view menu and the mailbox picker (phones and narrow windows keep those;
  * CSS shows one or the other) — applyView / toggleBox do the work.
  *   - "All mail" = no view: every readable box, no filters.
- *   - Counts: "All mail" = every box's INBOX unread (the summary); a view =
+ *   - Counts: "All mail" = every box's Inbox unread (the summary); a view =
  *     the server's count under its own mailboxes + filters (viewCounts).
  *   - Collapsible: « hides the rail (the menus come back in the bar, the
  *     conversation gets the width); the button in the bar brings it back.
@@ -913,7 +915,9 @@ function caseChip(c) {
 function msgRow(m) {
   const chips = h('span', { className: 'chips' });
   if (multiBox() && m.mailbox_address) chips.append(paint(h('span', { className: 'chip box', title: m.mailbox_address }, boxDot(m.mailbox_id), m.mailbox_address), m.mailbox_id));
-  if (m.folder && m.folder.toUpperCase() !== 'INBOX') chips.append(h('span', { className: 'chip folder' }, m.folder));
+  // Where it sits, when not the Inbox — the server's `place`: the folder name,
+  // or for a Gmail copy 'Sent' / 'Archived' (mailReadService.placeOf).
+  if (m.place) chips.append(h('span', { className: 'chip folder' }, m.place));
   if (m.case) chips.append(caseChip(m.case));
   else if (m.log_id) chips.append(h('span', { className: 'chip', title: 'On the firm log' }, icon('fa-box-archive'), 'Logged'));
   if (m.attachment_count) chips.append(h('span', { className: 'chip', title: `${m.attachment_count} attachment(s)` }, icon('fa-paperclip'), String(m.attachment_count)));
@@ -1270,7 +1274,7 @@ function messageCard(m, { expanded, anchor }) {
       h('span', { className: 'mdate' }, fullDate(m.date))),
     h('div', { className: 'mmeta mexp' }, m.to_addrs ? `To: ${m.to_addrs}` : '', m.cc_addrs ? ` · Cc: ${m.cc_addrs}` : ''),
     h('div', { className: 'mmeta mexp' }, (m.copies || [m]).map((c) => h('span', { className: 'cp' }, boxDot(c.mailbox_id),
-      `${c.mailbox_address || ''}${c.folder && c.folder.toUpperCase() !== 'INBOX' ? ` / ${c.folder}` : ''}`))),
+      `${c.mailbox_address || ''}${c.place ? ` / ${c.place}` : ''}`))),
     h('div', { className: 'msnip' }, m.snippet || ''),
   );
   const toggle = () => {

@@ -107,9 +107,10 @@ one log entry instead of two.
 - The Google inbox reads **All Mail only**, so its **sent** mail feeds rules
   and the log too — as the Apps Script ingest always did (replies to clients
   land on their timelines); firm-to-firm mail is skipped as usual.
-- In the **Comms hub**, that mailbox's new mail shows under **All folders**:
-  it has no separate Inbox folder in YisraCase, and its sent mail is not set
-  apart yet.
+- In the **Comms hub**, that mailbox reads like Gmail: its Inbox is what
+  Google had in the Inbox when each email arrived, its sent mail is tagged
+  **Sent**, and mail Google filed away or archived is tagged **Archived** and
+  shows under **All folders** only (Google labels, below).
 - To undo it, set both values back to empty in one save together with Emit
   to rules off on All Mail (the checklist has the exact call). Do **not** turn
   the `gmail-firm` source off: that also cuts off the Apps Script ingest.
@@ -118,6 +119,41 @@ one log entry instead of two.
   whether each configured folder exists, whether it is All Mail (with a
   warning when All Mail is listed alongside other folders), and whether the
   server hands out Google ids.
+
+## Google labels
+
+All Mail is one folder, so Comms tells a Google mailbox's Inbox, Sent and
+archived mail apart by **Google's labels**, which YisraCase records with each
+email when it is stored. They are a **snapshot**: archiving or re-labelling an
+email in Gmail afterwards does not move it in Comms (a later slice keeps them
+in sync). Other mailboxes go by their folders, as before.
+
+Emails stored before labels were recorded (and any time you want them
+refreshed) get them from the superuser console — one call per batch of up to
+1,000, repeated until it says `done`:
+
+```js
+const ID = 2; // the Google mailbox
+let after = 0, r = null;
+do {
+  try {
+    r = await apiSend(`/api/mailboxes/${ID}/labels/snapshot`, 'POST', { after_uid: after, limit: 500 });
+  } catch (e) {
+    if (e.status === 409 && e.body && e.body.retry) { await new Promise((ok) => setTimeout(ok, 30000)); continue; }
+    throw e; // anything else: stop and read it
+  }
+  console.log(r.scanned, 'checked,', r.updated, 'labelled', r.done ? '(done)' : '');
+  after = r.next_after_uid;
+} while (!r || !r.done);
+```
+
+It only reads labels from Google and writes them onto stored emails: nothing
+is re-ingested, nothing reaches rules, the sync's bookmarks are untouched.
+While the 5-minute sync is running it answers **409** and the loop above waits
+and retries; a sync that starts during a call (a few seconds each) skips that
+turn and the next one catches up. Only a folder the mailbox currently polls
+can be labelled; on a non-Google mailbox it answers `labels_supported: false`
+and changes nothing.
 
 ## Attachments
 
@@ -186,7 +222,10 @@ Admin → Comms. It shows the mail of every box you can read in one list; the
 **Phone** tab is a placeholder until the phone slice.
 
 - **The list** is the Inbox of every box you can read, newest first, with
-  the box shown when you can read more than one. Each mailbox has its own
+  the box shown when you can read more than one. For the Google mailbox the
+  Inbox comes from Google's labels (above); an email that is not in the Inbox
+  carries a small tag saying where it is — **Sent**, **Archived**, or the
+  folder name. Each mailbox has its own
   colour (the stripe on the left of a message and the dot on its mailbox
   tag), the same for everyone — chosen in Admin → Mailboxes (Colour, above).
   Narrow it with the **mailbox picker** (tick

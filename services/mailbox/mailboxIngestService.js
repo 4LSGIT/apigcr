@@ -8,6 +8,8 @@
  *                                 active, ingest-enabled mailbox
  *   loadConnectionRow(db, id)     the secret-bearing row the transport needs
  *                                 (also used by the attachment route)
+ *   snapshotLabels(db, id, opts)  the SU Gmail-label re-snapshot of stored
+ *                                 rows (S2-L; GMAIL LABELS below)
  *
  * Spec: ref/MAILBOX_SYSTEM_DESIGN.md §4.1, D1/D4/D6. Driven by POST
  * /mailbox-ingest (routes/mailboxIngest.js), ticked by Cloud Scheduler.
@@ -104,6 +106,18 @@
  * had already run) — at-least-once into a deduping pipeline. Emission is in
  * no transaction (it runs external side effects); the only transaction here
  * is the re-key, which is pure DB (retries:1).
+ *
+ * ── GMAIL LABELS (S2-L, design OQ5) ──────────────────────────────────────────
+ * Every stored row carries `gmail_labels`: the X-GM-LABELS the transport
+ * fetched with the message (Gmail only; NULL elsewhere and on rows stored
+ * before S2-L). Stored as fetched, never refreshed by ingest — archiving in
+ * Gmail after we stored the row is not seen. It changes nothing the worker
+ * decides: what is stored, skipped (drafts), emitted and keyed is exactly as
+ * before; the envelope does not carry labels. Readers: the comms hub's
+ * Inbox / Sent scoping (mail_messages.in_inbox, mailReadService).
+ * snapshotLabels() re-fetches labels for rows already stored — under the
+ * ingest LOCK, against the cursor's UIDVALIDITY, by row id — the backfill for
+ * rows stored before S2-L and the only refresh there is until S4.
  *
  * ── NO MODULE-SCOPE STATE (design §2) ────────────────────────────────────────
  * `limits` is configuration, read at call time. No caches, no connections.
@@ -448,7 +462,8 @@ function buildRow(mailboxId, folder, m) {
   const refs = messageIdList(firstHeader(hdr, 'references'));
   const inReplyTo = env.inReplyTo || messageIdList(firstHeader(hdr, 'in-reply-to'))[0] || null;
   // Thread root: first References entry (oldest ancestor), else the parent,
-  // else the message itself. Subject/participants fallback is S2's (OQ1).
+  // else the message itself — the whole rule (OQ1, answered in S2: no
+  // subject/participants fallback).
   const threadKey = refs[0] || inReplyTo || env.messageId || null;
   const from = envelopeAddrs(env.from);
   const snippetSrc = m.text != null ? m.text : htmlToText(m.html, { links: false });
@@ -458,6 +473,8 @@ function buildRow(mailboxId, folder, m) {
     uid: m.uid,
     message_id: cut(env.messageId, 512),
     provider_id: m.providerId ? cut(String(m.providerId), 64) : null,
+    // GMAIL LABELS: the snapshot as fetched; null = not Gmail / unknown.
+    gmail_labels: Array.isArray(m.labels) ? JSON.stringify(m.labels.map(String)) : null,
     in_reply_to: cut(inReplyTo, 512),
     thread_key: cut(threadKey, 512),
     from_addr: from.length ? cut(displayAddr(from[0]), 255) : null,
@@ -730,7 +747,7 @@ async function stampLogId(db, rowId, logId) {
 }
 
 const INSERT_COLS = [
-  'mailbox_id', 'folder', 'uid', 'message_id', 'provider_id', 'in_reply_to', 'thread_key', 'from_addr',
+  'mailbox_id', 'folder', 'uid', 'message_id', 'provider_id', 'gmail_labels', 'in_reply_to', 'thread_key', 'from_addr',
   'to_addrs', 'cc_addrs', 'subject', 'date', 'snippet', 'body_text', 'body_html',
   'attachments', 'size', 'flags',
 ];
@@ -1417,6 +1434,128 @@ async function runIngest(db, opts = {}) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Gmail label re-snapshot (S2-L) — SU route POST /api/mailboxes/:id/labels/snapshot
+// ─────────────────────────────────────────────────────────────────────────────
+
+const LABEL_SNAPSHOT_DEFAULT = 500;
+const LABEL_SNAPSHOT_MAX = 1000;
+
+/** A 4xx-shaped error (routes/api.mailboxes.js sends err.status). */
+function statusError(status, code, message) {
+  const err = new Error(message);
+  err.status = status;
+  err.code = code;
+  return err;
+}
+
+/**
+ * Re-fetch the Gmail labels of one POLLED folder's stored rows and overwrite
+ * their `gmail_labels` snapshot — the backfill for rows stored before S2-L,
+ * and a manual refresh. One bounded call: the `limit` (≤ 1000) lowest UIDs
+ * above `afterUid`; the caller loops on `next_after_uid` until `done`.
+ *
+ *   - Under the ingest LOCK — acquireLock(), the worker's own
+ *     GET_LOCK(CONCAT('mailbox_ingest:', DATABASE()), 0). Held →
+ *     { skipped: true }: nothing read, nothing written — retry after the
+ *     tick. A re-key moves UIDs, so labels are never fetched by UID while the
+ *     worker might be running; the lock is re-checked before the write, and a
+ *     lost lock writes nothing (409).
+ *   - Only a folder in ingest_folders (a breadcrumb folder's rows keep NULL:
+ *     the hub reads them by folder name), only with a cursor, and only when
+ *     the server's UIDVALIDITY equals the cursor's — else stored UIDs may name
+ *     other mail (409, "re-sync pending").
+ *   - Rows are updated by PRIMARY KEY. A stored provider_id that differs from
+ *     the server's X-GM-MSGID at that UID is skipped and counted
+ *     (`mismatched`), never written; a UID the server no longer has is
+ *     `gone`; a reply without the attribute is `unlabelled` (left as is).
+ *   - Not Gmail (no X-GM-EXT-1): `labels_supported: false`, nothing written.
+ *   - ingest_state is read, never written (it stays worker-only).
+ *
+ * @returns {Promise<object>} { skipped } | { mailbox_id, folder, uidvalidity,
+ *   labels_supported, scanned, updated, gone, mismatched, unlabelled,
+ *   after_uid, next_after_uid, done }
+ */
+async function snapshotLabels(db, mailboxId, { folder = null, afterUid = 0, limit = LABEL_SNAPSHOT_DEFAULT } = {}) {
+  const after = afterUid;
+  const lim = limit;
+  if (!Number.isInteger(after) || after < 0) throw statusError(400, 'BAD_AFTER_UID', 'after_uid must be a non-negative integer');
+  if (!Number.isInteger(lim) || lim < 1 || lim > LABEL_SNAPSHOT_MAX) {
+    throw statusError(400, 'BAD_LIMIT', `limit must be an integer 1..${LABEL_SNAPSHOT_MAX}`);
+  }
+  const lock = await acquireLock(db);
+  if (!lock) return { skipped: true, reason: 'another ingest run holds the lock — retry after it finishes' };
+  try {
+    const mb = await loadConnectionRow(db, mailboxId);
+    if (!mb) throw statusError(404, 'NOT_FOUND', 'Mailbox not found');
+    const polled = folderConfig(mb.ingest_folders).map(([f]) => f);
+    let name;
+    if (folder == null || folder === '') {
+      if (polled.length !== 1) throw statusError(400, 'FOLDER_REQUIRED', `folder is required — this mailbox polls ${polled.length} folders`);
+      name = polled[0];
+    } else {
+      name = polled.find(f => f.toLowerCase() === String(folder).toLowerCase());
+      if (!name) throw statusError(400, 'NOT_POLLED', `${JSON.stringify(String(folder))} is not a folder this mailbox polls`);
+    }
+    const states = parseJson(mb.ingest_state) || {};
+    const stKey = Object.keys(states).find(k => k.toLowerCase() === name.toLowerCase());
+    const st = stKey ? states[stKey] : null;
+    if (!st || st.uidvalidity == null || !Number.isFinite(Number(st.uidvalidity))) {
+      throw statusError(409, 'NO_CURSOR', `${JSON.stringify(name)} has not been polled yet — nothing stored to label`);
+    }
+    const out = {
+      mailbox_id: Number(mb.id), folder: name, uidvalidity: Number(st.uidvalidity), labels_supported: null,
+      scanned: 0, updated: 0, gone: 0, mismatched: 0, unlabelled: 0,
+      after_uid: after, next_after_uid: null, done: true,
+    };
+    const [rows] = await db.query(
+      'SELECT id, uid, provider_id FROM mail_messages WHERE mailbox_id = ? AND folder = ? AND uid > ? ORDER BY uid ASC LIMIT ?',
+      [mb.id, name, after, lim]
+    );
+    if (!rows.length) return out;
+    out.scanned = rows.length;
+    out.done = rows.length < lim;
+    out.next_after_uid = out.done ? null : Number(rows[rows.length - 1].uid);
+
+    const updates = await transport.withMailbox(mb, async (session) => {
+      out.labels_supported = session.labelsKind === 'gmail';
+      if (!out.labels_supported) { out.done = true; out.next_after_uid = null; return []; }
+      const box = await session.openFolder(name);
+      if (box.uidValidity !== out.uidvalidity) {
+        throw statusError(409, 'UIDVALIDITY_MISMATCH', `${JSON.stringify(name)} UIDVALIDITY changed since the last ingest — re-sync pending; retry after the next tick`);
+      }
+      const got = new Map((await session.fetchLabels(rows.map(r => Number(r.uid)))).map(g => [Number(g.uid), g]));
+      const list = [];
+      for (const r of rows) {
+        const g = got.get(Number(r.uid));
+        if (!g) { out.gone++; continue; }
+        const mine = r.provider_id == null ? '' : String(r.provider_id).toLowerCase();
+        const theirs = g.providerId == null ? '' : String(g.providerId).toLowerCase();
+        if (mine && theirs && mine !== theirs) { out.mismatched++; continue; }
+        if (!Array.isArray(g.labels)) { out.unlabelled++; continue; }
+        list.push({ id: Number(r.id), labels: JSON.stringify(g.labels.map(String)) });
+      }
+      return list;
+    });
+
+    if (updates.length && lock.lost()) {
+      throw statusError(409, 'LOCK_LOST', 'lost the ingest lock before writing — nothing written; retry');
+    }
+    for (const part of chunks(updates, limits.idChunk)) {
+      const cases = part.map(() => 'WHEN ? THEN CAST(? AS JSON)').join(' ');
+      await db.query(
+        `UPDATE mail_messages SET gmail_labels = CASE id ${cases} END
+          WHERE mailbox_id = ? AND folder = ? AND id IN (?)`,
+        [...part.flatMap(u => [u.id, u.labels]), mb.id, name, part.map(u => u.id)]
+      );
+      out.updated += part.length;
+    }
+    return out;
+  } finally {
+    await lock.release();
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Emission preview (S1-G) — the pre-emission text-parity check
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -1476,6 +1615,7 @@ module.exports = {
   runIngest,
   loadConnectionRow,
   previewEmission,
+  snapshotLabels,
   // exported for tests
   planRekey,
   buildRow,
@@ -1493,4 +1633,5 @@ module.exports = {
   SOURCE_NAME,
   ID_KINDS,
   LOCK_EXPR,
+  LABEL_SNAPSHOT_MAX,
 };

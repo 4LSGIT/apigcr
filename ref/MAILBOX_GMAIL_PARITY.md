@@ -34,7 +34,7 @@ twice). Drafts are never stored or emitted (design §4.1).
 | INBOX **62,012** messages, Sent **26,206**, All Mail **136,929** | same listing | full backfill would pull GBs over Gmail IMAP (≈2.5 GB/day download cap per account — a lockout also hits Stuart's own IMAP clients) and multiply the SiteGround DB (897 MB) → every folder runs **`backfill:false`** (store only mail arriving after first sight) |
 | GAS posts every message of every thread under `Trigger Label`, **including the firm's own replies** | `forwardEmailsToIngest()` walks `thread.getMessages()`; ~30% of 30-day gmail-firm volume is from firm domains | and it posts ALL sent mail: all 51 sent messages of the 50 newest sent threads (2026-10-08…10) have gmail-firm rows, sent-only threads included (14 firm-to-firm skipped, 37 logged). **Ruling 2026-10-11: sent mail EMITS for this provider-id mailbox** (design §4.1 amendment; "store-only Sent" was the §4.1 per-folder policy, mislabelled D6 here before) — parity, not new exposure; firm-to-firm skip applies |
 | Gmail keeps drafts in All Mail and re-creates a draft as a new message on every autosave | Gmail IMAP semantics; the Apps Script adapter skips drafts in code | the worker's **DRAFT GUARD**: a `\Draft` message is never stored nor emitted, its bodies never downloaded; counted in `ingest_state.<folder>.drafts_skipped_total` (design §4.1) |
-| The S2 comms hub scopes its default list and unread counts to the `INBOX` folder | `services/mailbox/mailReadService.js` (`scopeWhere`, `summary`) | after step 3b the mailbox's new mail lists only under **All folders**, sent mail not told apart. SS sees this box through the attorney READ bypass. Fix = per-message Gmail labels (design OQ5) — lossless to defer (All Mail UIDs are stable) |
+| The S2 comms hub scoped its default list and unread counts to the `INBOX` folder | `services/mailbox/mailReadService.js` (`scopeWhere`, `summary`) | after step 3b the mailbox's new mail listed only under **All folders**, sent mail not told apart (SS sees this box through the attorney READ bypass). **Resolved by S2-L (2026-10-11, design OQ5):** X-GM-LABELS stored per row at ingest; the hub's Inbox = `mail_messages.in_inbox` (folder INBOX OR `\Inbox`). Rows stored between step 3b and the S2-L deploy are labelled by **step 3c** |
 | GAS runs two side jobs: Pabbly **docs@** relay, **Clio "Payment method submitted"** forward | `processOneMessage()` | disabling the GAS trigger kills both — **retirement prerequisite** (§5) |
 | Court NEFs are single-part **text/html**; GAS `text` is Gmail's `getPlainBody()`, the worker's is `htmlToText()` | 316/316 sampled court executions `content_type text/html` | the text Layer 3 sees differs by feeder; and from step 4 whichever feeder arrives FIRST runs Layer 3 — so text parity is part of the **gate**, before anything emits (G4) |
 | **htmlToText now matches Gmail where it matters** (S1-G follow-up, 2026-10-09) | Before: 80 recent court NEFs replayed through the gate script → **STOP**, 151 court VALUE differences (links dropped — Gmail renders `label <url>` — plus CRLF, `&nbsp`). The follow-up renders `<a href>` as `label <url>` (quoted / unquoted, `HREF=`), LF line ends, bare `&nbsp` decoded, `<hr>` as a break, `<img alt>` as its alt. After: the same 80 → **REVIEW, 0 VALUE** (prod-matched rules: 136 format, 12 gas-tail-cut, 6 gmail-render, 1 gmail-css-leak, 1 gmail-input-artifact); with rules 8/12/15/16/22 forced onto all 80 → still 0 VALUE (rule 16's 57 and rule 8's 7 differences are all gmail-input-artifact). Rules 9/10 (341 meetings) identical throughout | The residual differences are Gmail's renderings, and in each the worker's value is equal or better (complete filer names, the claims-NEF tail Gmail drops, no `*`/`&nbsp`/CSS junk). They are the **documented REVIEW-pass classes** (§2 G4) |
@@ -151,6 +151,50 @@ working day re-run **G1** (expect an All Mail row: `no_provider_id = 0`,
 and label-filed mail, all of which GAS posts — expect `lookalike_unmatched = 0`;
 `gas_never_posted` near 0, G3 says what any are). G4 need not re-run: the text
 derivation is unchanged and G4 compares by message, not folder.
+
+### Step 3c — label the All Mail rows (S2-L; store-only, any time after its deploy)
+Sequence: `ref/migrations/2026-10-11_mailbox_s2l_labels.sql` FIRST (the S2-L
+worker INSERTs `gmail_labels` — a backend before it fails every tick), then
+push. From the deploy on, every new row carries its labels; this block labels
+the rows stored since step 3b's baseline (the re-snapshot route reads labels
+by UID under the ingest lock and writes nothing else). It asserts the base and
+retries while a tick holds the lock:
+```js
+const ID = 2, ALL = '[Gmail]/All Mail';
+const lst = await apiSend(`/api/mailboxes/${ID}/folders`, 'GET');
+if (lst.provider_id_kind !== 'gmail' || lst.warnings.length || lst.configured.length !== 1
+    || lst.configured[0].folder !== ALL || !lst.configured[0].all_mail) {
+  throw new Error('unexpected base: ' + JSON.stringify({ configured: lst.configured, warnings: lst.warnings }));
+}
+let after = 0, r = null; const tot = { scanned: 0, updated: 0, gone: 0, mismatched: 0, unlabelled: 0 };
+do {
+  try {
+    r = await apiSend(`/api/mailboxes/${ID}/labels/snapshot`, 'POST', { folder: ALL, after_uid: after, limit: 500 });
+  } catch (e) {
+    if (e.status === 409 && e.body && e.body.retry) { await new Promise((ok) => setTimeout(ok, 30000)); continue; }
+    throw e;
+  }
+  if (r.folder !== ALL || r.labels_supported !== true) throw new Error('unexpected answer: ' + JSON.stringify(r));
+  for (const k of Object.keys(tot)) tot[k] += r[k];
+  after = r.next_after_uid;
+} while (!r || !r.done);
+console.table(tot); // expect mismatched 0; gone = rows deleted in Gmail since (harmless)
+```
+Then, with any `ycro_` key:
+```sql
+SELECT folder, COUNT(*) AS n, SUM(gmail_labels IS NULL) AS no_labels, SUM(in_inbox) AS inbox,
+       SUM(CONCAT(CONVERT(CHAR(92) USING utf8mb4), 'Sent') MEMBER OF (gmail_labels)) AS sent,
+       SUM(CONCAT(CONVERT(CHAR(92) USING utf8mb4), 'Draft') MEMBER OF (gmail_labels)) AS draft_labelled
+  FROM mail_messages WHERE mailbox_id = 2 GROUP BY folder;
+```
+Expect, on the `[Gmail]/All Mail` row: `no_labels = 0`; `inbox` + `sent` +
+archived ≈ `n`; **`draft_labelled = 0`**. The DRAFT GUARD keys on the
+`\Draft` FLAG; Gmail's draft LABEL shows in All Mail, but one third-party
+report says Gmail does not set the FLAG there (unverified on Gmail — the
+guard's real-server proof ran on Dovecot). A non-zero `draft_labelled` means drafts
+are being stored and — once step 4 flips emission — would be EMITTED, which
+the Apps Script never does: **STOP before step 4** and report (the INBOX and
+Sent Mail breadcrumb rows keep NULL labels; they are read by folder).
 
 ### Step 4 — emit: ONE atomic PATCH, then a live test
 **Prerequisite:** the gate (step 3) passed, step 3b done and its G1/G2
@@ -461,8 +505,9 @@ SELECT DATE(e.created_at) AS day_utc, COUNT(*) AS worker_first_with_rules,
   (design §4.1 amendment). GAS posts it today (§0), so parity.
 - **Drafts** (ruling 2026-10-11): never stored, never emitted (design §4.1).
 
-**Open, not blocking step 4:** per-message Gmail labels for the S2 hub
-(design OQ5; §0) — needed before anyone relies on the hub for this box.
+- **Per-message Gmail labels for the S2 hub** (design OQ5): done — S2-L
+  (2026-10-11), snapshot at ingest, step 3c labels the earlier rows. Its
+  draft check (`draft_labelled = 0`) gates step 4.
 
 **Before step 6 (retirement):**
 - **GAS side jobs**: the Pabbly **docs@** relay (~60 messages / 30 days) and

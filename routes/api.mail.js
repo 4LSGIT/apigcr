@@ -4,11 +4,13 @@
  * Mail (comms hub, Email tab) API — mailbox-system arc, slice S2
  * routes/api.mail.js
  *
- *   GET    /api/mail/mailboxes                readable mailboxes + INBOX unread/total (view switcher)
+ *   GET    /api/mail/mailboxes                readable mailboxes + Inbox unread/total (view switcher)
  *   GET    /api/mail/messages                 the mixed-inbox list — keyset-paginated, NO bodies
  *            ?view=&mailbox_ids=1,2&unread_only=1&has_case=1|no_case=1&client_only=1
  *             &has_files=1&all_folders=1&from_domain=example.com&q=…
  *             &cursor=<next_cursor>&limit=≤100
+ *            Every message carries in_inbox / sent / place (where it sits — S2-L;
+ *            "Inbox" = mail_messages.in_inbox, mailReadService INBOX / SENT)
  *   GET    /api/mail/messages/:id             one message with bodies (threadless mail)
  *   GET    /api/mail/threads/:threadKey       the thread, merged across readable mailboxes (bodies)
  *   POST   /api/mail/messages/:id/read        mark read   (idempotent)
@@ -17,7 +19,7 @@
  *                                             {all:true, mailbox_ids?, filters?} = everything the
  *                                             list shows for that scope (every page)
  *   GET    /api/mail/views                    the caller's saved views
- *   GET    /api/mail/views/counts             {counts: {<view id>: unread}} — each view's INBOX
+ *   GET    /api/mail/views/counts             {counts: {<view id>: unread}} — each view's Inbox
  *                                             unread under its own mailboxes + filters
  *   POST   /api/mail/views                    {name, mailbox_ids?, filters?, is_default?, sort_order?}
  *   PATCH  /api/mail/views/:id                caller-owned only (404 otherwise)

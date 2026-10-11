@@ -73,6 +73,18 @@ body. Governing migrations in `ref/migrations/`.*
     JOINed to `contact_emails` (an index probe); `col IN (<per-row exprs>)`
     scans the table per row. `JSON_TABLE` string columns take the
     CONNECTION collation unless declared — declare `utf8mb4_general_ci`.
+  - **"Inbox" is `mail_messages.in_inbox`** (mailbox S2-L, 10-11): a
+    generated VIRTUAL column — folder `INBOX` OR the row's Gmail label snapshot
+    (`gmail_labels`, X-GM-LABELS stored at ingest) holds `\Inbox` — indexed
+    `(mailbox_id, in_inbox, date)`. Every Inbox-scoped read (list, summary /
+    sidebar badge, view counts, mark-all) goes through it; never re-derive it
+    from `folder`. Labels are a snapshot (archiving in Gmail later is not
+    seen); the SU route `POST /api/mailboxes/:id/labels/snapshot` re-fetches
+    them under the ingest lock. The label's backslash comes from
+    `CONVERT(CHAR(92) USING utf8mb4)`: the shorter `CHAR(92 USING …)` is
+    printed back WITHOUT the USING, and the stored column then matches
+    nothing (measured 8.0 + 8.4). Migration `2026-10-11_mailbox_s2l_labels.sql` goes BEFORE
+    that backend (the worker INSERTs `gmail_labels`).
   - **`OrphanAdoptDialog(value, type, onDone, opts)`** (scripts.js) takes
     `opts.earliest` (another first sighting; the start date defaults to the
     earlier of it and the log's) and `opts.name` (search + Create-new
@@ -982,7 +994,9 @@ copy of inbound, sent and label-filed mail; never All Mail ALONGSIDE other
 folders (double store — `GET /api/mailboxes/:id/folders` warns). A
 provider-id mailbox emits its sent mail too (the Apps Script posts it — design
 §4.1 amendment). **`\Draft` messages are never stored nor emitted** (worker
-DRAFT GUARD; Gmail re-creates drafts per autosave).
+DRAFT GUARD; Gmail re-creates drafts per autosave). Gmail labels
+(X-GM-LABELS) are stored per row as a snapshot for the comms hub
+(`mail_messages.gmail_labels`, S2-L) and are never part of emission.
 Pilot, gate and retirement runbook: `ref/MAILBOX_GMAIL_PARITY.md`.
 Operators: manual/08-Admin-Tools/08-mailboxes.md.
 

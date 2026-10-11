@@ -29,6 +29,12 @@
  *     can only agree if the service builds them from the same fragments.
  *   - `NOW() - INTERVAL ? MINUTE` is evaluated against Date.now(); rows'
  *     ingested_at defaults to their `date` (old mail — outside any grace).
+ *   - mail_messages.in_inbox (S2-L) is the generated column's expression in JS:
+ *     folder INBOX (case-blind) OR the gmail_labels array holds exactly
+ *     "\Inbox" (case-sensitive, like JSON MEMBER OF) — the engine's edge
+ *     matrix in tests/mailboxS2.mysql.test.js holds the world to it. A list
+ *     branch must FORCE the (mailbox_id, in_inbox, date) index exactly when
+ *     it scopes to the Inbox (else this world throws).
  */
 
 'use strict';
@@ -37,10 +43,10 @@ const norm = (sql) => String(sql).replace(/\s+/g, ' ').trim();
 const ci = (a, b) => a != null && b != null && String(a).toLowerCase() === String(b).toLowerCase();
 const clone = (v) => structuredClone(v);
 
-const LIST_COLS = 'm.id, m.mailbox_id, m.folder, m.thread_key, m.from_addr, m.to_addrs, m.cc_addrs, ' +
+const LIST_COLS = 'm.id, m.mailbox_id, m.folder, m.gmail_labels, m.in_inbox, m.thread_key, m.from_addr, m.to_addrs, m.cc_addrs, ' +
   'm.subject, m.date, m.snippet, m.attachments, m.log_id, (rs.message_fk IS NULL) AS unread, ' +
   'c.case_id AS case_id, c.case_number AS case_number, c.case_number_full AS case_number_full';
-const FULL_COLS = 'm.id, m.mailbox_id, m.folder, m.message_id, m.in_reply_to, m.thread_key, ' +
+const FULL_COLS = 'm.id, m.mailbox_id, m.folder, m.gmail_labels, m.in_inbox, m.message_id, m.in_reply_to, m.thread_key, ' +
   'm.from_addr, m.to_addrs, m.cc_addrs, m.subject, m.date, m.snippet, m.body_text, m.body_html, ' +
   'm.attachments, m.flags, m.log_id, (rs.message_fk IS NULL) AS unread, ' +
   'c.case_id AS case_id, c.case_number AS case_number, c.case_number_full AS case_number_full';
@@ -101,6 +107,14 @@ function parseJsonCol(v) {
   try { return JSON.parse(v); } catch (_) { return v; }
 }
 
+/** mail_messages.in_inbox, as the generated column computes it (S2-L). */
+function inInbox(m) {
+  if (ci(m.folder, 'INBOX')) return 1;
+  const l = parseJsonCol(m.gmail_labels);
+  // MEMBER OF treats a scalar document as a one-element array
+  return (Array.isArray(l) ? l : [l]).some(x => x === '\\Inbox') ? 1 : 0;
+}
+
 /** DESC on date with NULL last, then id DESC — MySQL's order for the list. */
 function cmpDesc(a, b) {
   const da = ms(a.date);
@@ -157,7 +171,7 @@ function makeWorld() {
     },
     message(id, over = {}) {
       const row = {
-        id, mailbox_id: 1, folder: 'INBOX', uid: id, message_id: `m${id}@x.test`, provider_id: null,
+        id, mailbox_id: 1, folder: 'INBOX', uid: id, message_id: `m${id}@x.test`, provider_id: null, gmail_labels: null,
         in_reply_to: null, thread_key: `m${id}@x.test`, from_addr: `Sender ${id} <s${id}@outside.test>`,
         to_addrs: 'box1@firm.test', cc_addrs: null, subject: `Subject ${id}`,
         date: new Date(Date.UTC(2026, 9, 1, 12, 0, 0) + id * 60_000), snippet: `snippet ${id}`,
@@ -256,16 +270,18 @@ function makeWorld() {
       else if (col === 'case_id') out.case_id = c ? c.case_id : null;
       else if (col === 'case_number') out.case_number = c ? c.case_number : null;
       else if (col === 'case_number_full') out.case_number_full = c ? c.case_number_full : null;
-      else out[col] = col === 'attachments' ? parseJsonCol(m.attachments) : (m[col] instanceof Date ? new Date(m[col]) : m[col]);
+      else if (col === 'in_inbox') out.in_inbox = inInbox(m);
+      else if (col === 'attachments' || col === 'gmail_labels') out[col] = parseJsonCol(m[col]);
+      else out[col] = m[col] instanceof Date ? new Date(m[col]) : m[col];
     }
     return out;
   }
-  const listCols = ['id', 'mailbox_id', 'folder', 'thread_key', 'from_addr', 'to_addrs', 'cc_addrs', 'subject', 'date', 'snippet', 'attachments', 'log_id', 'unread', 'case_id', 'case_number', 'case_number_full'];
-  const fullCols = ['id', 'mailbox_id', 'folder', 'message_id', 'in_reply_to', 'thread_key', 'from_addr', 'to_addrs', 'cc_addrs', 'subject', 'date', 'snippet', 'body_text', 'body_html', 'attachments', 'flags', 'log_id', 'unread', 'case_id', 'case_number', 'case_number_full'];
+  const listCols = ['id', 'mailbox_id', 'folder', 'gmail_labels', 'in_inbox', 'thread_key', 'from_addr', 'to_addrs', 'cc_addrs', 'subject', 'date', 'snippet', 'attachments', 'log_id', 'unread', 'case_id', 'case_number', 'case_number_full'];
+  const fullCols = ['id', 'mailbox_id', 'folder', 'gmail_labels', 'in_inbox', 'message_id', 'in_reply_to', 'thread_key', 'from_addr', 'to_addrs', 'cc_addrs', 'subject', 'date', 'snippet', 'body_text', 'body_html', 'attachments', 'flags', 'log_id', 'unread', 'case_id', 'case_number', 'case_number_full'];
 
   // ── the list: parse the UNION ALL ──
   const BRANCH_RE = new RegExp(
-    '^\\(SELECT ' + esc(LIST_COLS) + ' FROM mail_messages m FORCE INDEX \\(idx_mail_messages_mailbox_date\\) ' + esc(JOINS) +
+    '^\\(SELECT ' + esc(LIST_COLS) + ' FROM mail_messages m FORCE INDEX \\((idx_mail_messages_mailbox_date|idx_mail_messages_mailbox_inbox_date)\\) ' + esc(JOINS) +
     ' WHERE m\\.mailbox_id = \\?(.*?) ORDER BY m\\.date DESC, m\\.id DESC LIMIT \\?\\)$'
   );
   function esc(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
@@ -294,7 +310,7 @@ function makeWorld() {
     const preds = [];
     const extra = String(extraIn || '').replace(/^ AND /, '');
     for (const frag of extra ? splitAnd(extra) : []) {
-      if (frag === 'm.folder = ?') { const f = p[pi++]; preds.push(j => ci(j.m.folder, f)); }
+      if (frag === 'm.in_inbox = 1') preds.push(j => inInbox(j.m) === 1);
       else if (frag === '(m.date < ? OR (m.date = ? AND m.id < ?) OR m.date IS NULL)') {
         const d1 = ms(p[pi++]); const d2 = ms(p[pi++]); const id = Number(p[pi++]);
         preds.push(j => { const d = ms(j.m.date); return d == null || d < d1 || (d === d2 && j.m.id < id); });
@@ -329,9 +345,15 @@ function makeWorld() {
     for (const b of branches) {
       const bm = BRANCH_RE.exec(b);
       if (!bm) throw new Error(`mailboxS2World: unparsed list branch: ${b.slice(0, 300)}`);
+      // The Inbox walk and the Inbox predicate go together (S2-L): the
+      // (mailbox_id, in_inbox, date) index only orders the Inbox rows.
+      const inboxScoped = splitAnd(String(bm[2] || '').replace(/^ AND /, '')).includes('m.in_inbox = 1');
+      if ((bm[1] === 'idx_mail_messages_mailbox_inbox_date') !== inboxScoped) {
+        throw new Error(`mailboxS2World: FORCE INDEX (${bm[1]}) with${inboxScoped ? '' : 'out'} the Inbox predicate`);
+      }
       const user = p[pi++];
       const mailboxId = p[pi++];
-      const parsed = parsePreds(bm[1], p, pi);
+      const parsed = parsePreds(bm[2], p, pi);
       const preds = parsed.preds;
       pi = parsed.pi;
       const lim = Number(p[pi++]);
@@ -398,11 +420,12 @@ function makeWorld() {
     }
 
     // ── mailReadService: summary ──
-    if (sql === 'SELECT m.mailbox_id, COUNT(*) AS total, SUM(rs.message_fk IS NULL) AS unread FROM mail_messages m LEFT JOIN mail_read_state rs ON rs.user = ? AND rs.message_fk = m.id WHERE m.mailbox_id IN (?) AND m.folder = ? GROUP BY m.mailbox_id') {
+    if (sql === 'SELECT m.mailbox_id, COUNT(*) AS total, SUM(rs.message_fk IS NULL) AS unread FROM mail_messages m LEFT JOIN mail_read_state rs ON rs.user = ? AND rs.message_fk = m.id WHERE m.mailbox_id IN (?) AND m.in_inbox = 1 GROUP BY m.mailbox_id') {
+      if (p.length !== 2) throw new Error('mailboxS2World: summary params mismatch');
       const ids = new Set(p[1].map(Number));
       const by = new Map();
       for (const x of T.mail_messages) {
-        if (!ids.has(x.mailbox_id) || !ci(x.folder, p[2])) continue;
+        if (!ids.has(x.mailbox_id) || inInbox(x) !== 1) continue;
         const r = by.get(x.mailbox_id) || { mailbox_id: x.mailbox_id, total: 0, unread: 0 };
         r.total++; if (!isRead(p[0], x.id)) r.unread++;
         by.set(x.mailbox_id, r);

@@ -20,6 +20,12 @@
  * provider_id, the fake IMAP session reports providerIdKind and lists
  * folders, and msg() takes a providerId.
  *
+ * S2-L: msg() takes `labels` (the transport's array, or null), rows carry
+ * gmail_labels (JSON text as bound), the fake session reports labelsKind and
+ * answers fetchLabels(uids) from server.labels (uid → array; absent = the
+ * message's own labels), and the label re-snapshot's SELECT / CASE UPDATE
+ * are modelled.
+ *
  * FIDELITY THAT MATTERS
  *   - UNIQUE(mailbox_id, folder, uid) is enforced ROW BY ROW in ascending id
  *     order, on INSERT and on every UPDATE of uid — as InnoDB does for a
@@ -156,6 +162,29 @@ function makeWorld() {
     if (sql === 'SELECT id, log_id FROM mail_messages WHERE mailbox_id = ? AND folder = ? AND uid = ? LIMIT 1') {
       return [msgRowsIn(p[0], p[1]).filter(r => Number(r.uid) === Number(p[2])).slice(0, 1).map(r => ({ id: r.id, log_id: r.log_id }))];
     }
+    // snapshotLabels (S2-L): the page of stored rows, then the CASE write
+    if (sql === 'SELECT id, uid, provider_id FROM mail_messages WHERE mailbox_id = ? AND folder = ? AND uid > ? ORDER BY uid ASC LIMIT ?') {
+      return [msgRowsIn(p[0], p[1]).filter(r => r.uid != null && Number(r.uid) > Number(p[2]))
+        .sort((a, b) => a.uid - b.uid).slice(0, Number(p[3]))
+        .map(r => ({ id: r.id, uid: r.uid, provider_id: r.provider_id ?? null }))];
+    }
+    if ((m = /^UPDATE mail_messages SET gmail_labels = CASE id ((?:WHEN \? THEN CAST\(\? AS JSON\) ?)+)END WHERE mailbox_id = \? AND folder = \? AND id IN \(\?\)$/.exec(sql))) {
+      const pairs = (m[1].match(/WHEN/g) || []).length;
+      const map = new Map();
+      for (let i = 0; i < pairs; i++) {
+        JSON.parse(p[2 * i + 1]); // CAST(? AS JSON) refuses non-JSON
+        map.set(Number(p[2 * i]), String(p[2 * i + 1]));
+      }
+      const ids = new Set(p[2 * pairs + 2].map(Number));
+      let n = 0;
+      // CASE without ELSE: an id in the IN-list but not in the CASE would be set NULL — as on MySQL
+      for (const r of msgRowsIn(p[2 * pairs], p[2 * pairs + 1]).filter(x => ids.has(x.id))) {
+        r.gmail_labels = map.has(r.id) ? map.get(r.id) : null;
+        n++;
+      }
+      T.labelWrites = (T.labelWrites || 0) + 1;
+      return [{ affectedRows: n }];
+    }
     if (sql === 'SELECT id, uid, message_id, provider_id FROM mail_messages WHERE mailbox_id = ? AND folder = ?') {
       return [msgRowsIn(p[0], p[1]).map(r => ({ id: r.id, uid: r.uid, message_id: r.message_id, provider_id: r.provider_id ?? null }))];
     }
@@ -236,6 +265,12 @@ function makeWorld() {
     }
 
     // ── auth middleware audit (fire-and-forget in lib/auth.jwtOrApiKey) ──
+    // lib/auth.superuser auditAdminAction (SU routes)
+    if (sql === 'INSERT INTO admin_audit_log (tool, user_id, username, route, method, status, error_message, duration_ms, ip_address, user_agent, details) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)') {
+      T.admin_audit_log = T.admin_audit_log || [];
+      T.admin_audit_log.push({ tool: p[0], user_id: p[1], route: p[3], method: p[4], status: p[5], details: p[10] == null ? null : JSON.parse(p[10]) });
+      return [{ affectedRows: 1, insertId: T.admin_audit_log.length }];
+    }
     if (/^INSERT INTO jwt_api_audit_log /.test(sql)) {
       T.jwt_api_audit_log = T.jwt_api_audit_log || [];
       T.jwt_api_audit_log.push(clone(p));
@@ -320,6 +355,7 @@ function msg(uid, over = {}) {
   return {
     uid,
     providerId: over.providerId === undefined ? null : over.providerId,
+    labels: over.labels === undefined ? null : over.labels,
     size: 1000 + uid,
     flags: over.flags || [],
     internalDate: over.internalDate || new Date('2026-10-01T12:00:00Z'),
@@ -350,6 +386,9 @@ function makeImapServer() {
     connects: 0,
     logouts: 0,
     providerIdKind: null,  // 'gmail' to model an X-GM-EXT-1 server
+    labelsKind: null,      // 'gmail' to model X-GM-LABELS (S2-L)
+    labels: {},            // uid → labels array the server reports NOW (fetchLabels); absent = the message's own
+    labelCalls: [],
     folderList: null,      // listFolders() result override
     failConnect: null,     // Error to throw from withMailbox before fn
     failOpen: {},          // folder → Error
@@ -399,6 +438,17 @@ function makeImapServer() {
         }));
       },
       get providerIdKind() { return server.providerIdKind; },
+      get labelsKind() { return server.labelsKind; },
+      async fetchLabels(uids) {
+        server.labelCalls.push(uids.slice());
+        if (server.labelsKind !== 'gmail') throw Object.assign(new Error('IMAP NO_GMAIL_LABELS'), { code: 'NO_GMAIL_LABELS', imap: true, sanitized: true });
+        const want = new Set(uids);
+        return opened.messages.filter(m => want.has(m.uid)).sort((a, b) => a.uid - b.uid).map(m => ({
+          uid: m.uid,
+          providerId: m.providerId ?? null,
+          labels: Object.prototype.hasOwnProperty.call(server.labels, m.uid) ? server.labels[m.uid] : (m.labels ?? null),
+        }));
+      },
       async fetchMessages(uids) {
         server.fetchCalls.push(uids.slice());
         if (server.failFetchOnUid != null && uids.includes(server.failFetchOnUid)) throw server.failFetchErr;
@@ -423,6 +473,7 @@ function clone2(m) {
     envelope: { ...m.envelope, date: m.envelope.date ? new Date(m.envelope.date) : null },
     attachments: (m.attachments || []).map(a => ({ ...a })),
     flags: (m.flags || []).slice(),
+    labels: Array.isArray(m.labels) ? m.labels.slice() : (m.labels ?? null),
   };
 }
 

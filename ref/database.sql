@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-10-11T07:21:47.652Z
+-- Generated: 2026-10-11T11:53:04.495Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:23e0a31a523a2a27c416936012545e90
+-- Fingerprint: sha256:f839901ea08fa33a479e824b99a1fcbe
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -2165,8 +2165,10 @@ CREATE TABLE `mail_messages` (
   `uid` int unsigned DEFAULT NULL COMMENT 'IMAP UID within (mailbox, folder, UIDVALIDITY). NULLABLE on purpose: UIDVALIDITY re-key parks rows at NULL, then sets finals (§4.1) - UNIQUE allows many NULLs. Never make NOT NULL',
   `message_id` varchar(512) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'Message-ID header (brackets stripped). Secondary dedupe + re-key match key for rows WITHOUT provider_id; the emit key under the default emission (mailbox-imap)',
   `provider_id` varchar(64) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'provider-native message id: Gmail = lowercase hex X-GM-MSGID (the id Gmail web/API/Apps Script use, = gmail-firm email_log.message_id); NULL for hosts without one. Identity for secondary dedupe + re-key where present; the emit key when mailboxes.emit_id_kind = provider (S1-G)',
+  `gmail_labels` json DEFAULT NULL COMMENT 'Gmail labels at ingest (S2-L): the X-GM-LABELS list fetched with the message - system labels keep their leading backslash (Inbox, Sent, Important...), user labels as named; [] = none (archived). NULL = not Gmail (no X-GM-EXT-1) or stored before S2-L. A SNAPSHOT: archiving/relabelling in Gmail later is not seen until POST /api/mailboxes/:id/labels/snapshot re-fetches it (sync is S4). Never read by ingest or emission; the hub reads it through in_inbox',
+  `in_inbox` tinyint unsigned GENERATED ALWAYS AS (((`folder` = _utf8mb4'INBOX') or (0 <> coalesce(concat(convert(char(92) using utf8mb4),_utf8mb4'Inbox') member of (`gmail_labels`),0)))) VIRTUAL NOT NULL COMMENT 'GENERATED (S2-L): 1 = in the Inbox for the comms hub - folder INBOX, OR the gmail_labels snapshot holds the Inbox system label (backslash + Inbox; CHAR(92) keeps the DDL free of escapes). The ONE definition of Inbox for the hub list, unread and view counts and mark-all (services/mailbox/mailReadService.js); indexed with mailbox_id + date',
   `in_reply_to` varchar(512) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `thread_key` varchar(512) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'from References/In-Reply-To; subject+participants fallback (OQ1)',
+  `thread_key` varchar(512) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'thread root, written by the worker: the first References id, else In-Reply-To, else the message''s own Message-ID (brackets stripped) - the whole rule (OQ1, answered in S2: no subject/participants fallback). The hub groups a thread by it across every readable mailbox',
   `from_addr` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'first From: address in display form - Name <a@b> (name quoted when it has specials) or bare a@b; emails lowercased',
   `to_addrs` text COLLATE utf8mb4_general_ci COMMENT 'To: list, comma-separated display forms (see from_addr); NULL when empty',
   `cc_addrs` text COLLATE utf8mb4_general_ci COMMENT 'Cc: list, comma-separated display forms (see from_addr); NULL when empty',
@@ -4390,7 +4392,8 @@ ALTER TABLE `mail_messages`
   ADD KEY `idx_mail_messages_message_id` (`message_id`(191)),
   ADD KEY `idx_mail_messages_thread_key` (`thread_key`(191)),
   ADD KEY `idx_mail_messages_mailbox_ingested` (`mailbox_id`,`ingested_at`),
-  ADD KEY `idx_mail_messages_mailbox_provider` (`mailbox_id`,`provider_id`);
+  ADD KEY `idx_mail_messages_mailbox_provider` (`mailbox_id`,`provider_id`),
+  ADD KEY `idx_mail_messages_mailbox_inbox_date` (`mailbox_id`,`in_inbox`,`date`);
 
 --
 -- Indexes for table `mail_read_state`

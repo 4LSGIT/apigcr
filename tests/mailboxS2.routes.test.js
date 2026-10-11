@@ -270,9 +270,10 @@ describe('the list carries no bodies', () => {
     expect(listSql[0].sql).not.toMatch(/body_html|body_text/);
     expect(listSql[0].sql).not.toMatch(/\bOFFSET\b/i);
     expect(Object.keys(r.json.messages[0]).sort()).toEqual([
-      'attachment_count', 'case', 'cc_addrs', 'date', 'folder', 'from_addr', 'id', 'log_id', 'mailbox_address',
-      'mailbox_id', 'snippet', 'subject', 'thread_key', 'to_addrs', 'unread',
+      'attachment_count', 'case', 'cc_addrs', 'date', 'folder', 'from_addr', 'id', 'in_inbox', 'log_id', 'mailbox_address',
+      'mailbox_id', 'place', 'sent', 'snippet', 'subject', 'thread_key', 'to_addrs', 'unread',
     ]);
+    expect(r.text).not.toMatch(/gmail_labels/); // the snapshot itself stays server-side (S2-L)
   });
 
   test('attachment_count excludes only images the HTML body draws (cid: referenced) — a Content-ID alone is not "inline"', async () => {
@@ -370,6 +371,11 @@ describe('filters', () => {
   test('all_folders adds Sent; the default is INBOX', async () => {
     expect(ids(await call('GET', '/api/mail/messages?mailbox_ids=2', { t: tok(SU) }))).toEqual([202, 201]);
     expect(ids(await call('GET', '/api/mail/messages?mailbox_ids=2&all_folders=1', { t: tok(SU) }))).toEqual([203, 202, 201]);
+  });
+
+  test('a SiteGround row (no labels) is placed by its folder: INBOX none, Sent named, never "sent"', async () => {
+    const all = (await call('GET', '/api/mail/messages?mailbox_ids=2&all_folders=1', { t: tok(SU) })).json.messages;
+    expect(all.map((m) => [m.id, m.in_inbox, m.sent, m.place])).toEqual([[203, false, false, 'Sent'], [202, true, false, null], [201, true, false, null]]);
   });
 
   test('a bad flag value is a 400', async () => {
@@ -692,6 +698,71 @@ describe('saved views (inbox_views) — caller-owned only', () => {
     }
     for (let i = 0; i < 50; i++) W.T.inbox_views.push({ id: 1000 + i, user: READER, name: `v${i}`, mailbox_ids: null, filters: '{}', is_default: 0, sort_order: 0 });
     expect((await call('POST', '/api/mail/views', { t: tok(READER), body: { name: 'one more' } })).status).toBe(409);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+describe('S2-L: a Gmail All Mail box is scoped by its label snapshot', () => {
+  // Box 3 = the Workspace box after runbook step 3b: [Gmail]/All Mail only.
+  const ALL = '[Gmail]/All Mail';
+  const L = (...l) => JSON.stringify(l);
+  beforeEach(() => {
+    W.mailbox(3, { address: 'stuart@firm.test', ingest_folders: JSON.stringify({ [ALL]: { emit_to_rules: false, backfill: false } }), ingest_state: null });
+    W.message(301, { mailbox_id: 3, folder: ALL, gmail_labels: L('\\Inbox', '\\Important'), subject: 'Inbound' });
+    W.message(302, { mailbox_id: 3, folder: ALL, gmail_labels: L('\\Sent'), from_addr: 'Automations <automations@firm.test>', to_addrs: 'Client <c@client.test>', subject: 'Sent by an automation' });
+    W.message(303, { mailbox_id: 3, folder: ALL, gmail_labels: L('Clio/Clio Team - Payments'), subject: 'Filed by a filter' });
+    W.message(304, { mailbox_id: 3, folder: ALL, gmail_labels: L(), subject: 'Archived' });
+    W.message(305, { mailbox_id: 3, folder: ALL, gmail_labels: null, subject: 'Stored before S2-L' });
+    W.message(306, { mailbox_id: 3, folder: ALL, gmail_labels: L('\\Inbox', '\\Sent'), subject: 'Sent to self' });
+    W.message(307, { mailbox_id: 3, folder: 'INBOX', gmail_labels: L('\\Important'), subject: 'Polled from INBOX (label omitted)' });
+    W.message(308, { mailbox_id: 3, folder: ALL, gmail_labels: L('\\INBOX', 'Inbox'), subject: 'Not the system label' });
+  });
+
+  test('the default list = the \\Inbox label (or folder INBOX); All folders = everything; Inbox walks its own index', async () => {
+    W.statements.length = 0;
+    expect(ids(await call('GET', '/api/mail/messages?mailbox_ids=3', { t: tok(SU) }))).toEqual([307, 306, 301]);
+    expect(W.statements.find((x) => x.sql.startsWith('(SELECT')).sql).toContain('FORCE INDEX (idx_mail_messages_mailbox_inbox_date)');
+    W.statements.length = 0;
+    expect(ids(await call('GET', '/api/mail/messages?mailbox_ids=3&all_folders=1', { t: tok(SU) }))).toEqual([308, 307, 306, 305, 304, 303, 302, 301]);
+    expect(W.statements.find((x) => x.sql.startsWith('(SELECT')).sql).toContain('FORCE INDEX (idx_mail_messages_mailbox_date)');
+    // mixed with a SiteGround box: each by its own rule
+    expect(ids(await call('GET', '/api/mail/messages?mailbox_ids=2,3', { t: tok(SU) }))).toEqual([307, 306, 301, 202, 201]);
+  });
+
+  test('every row says where it sits: in_inbox, sent (\\Sent), place (Sent / Archived / folder / null)', async () => {
+    const all = (await call('GET', '/api/mail/messages?mailbox_ids=3&all_folders=1', { t: tok(SU) })).json.messages;
+    expect(all.map((m) => [m.id, m.in_inbox, m.sent, m.place])).toEqual([
+      [308, false, false, 'Archived'],
+      [307, true, false, null],
+      [306, true, true, 'Sent'],
+      [305, false, false, ALL],          // no snapshot: by folder, as before S2-L
+      [304, false, false, 'Archived'],
+      [303, false, false, 'Archived'],
+      [302, false, true, 'Sent'],
+      [301, true, false, null],
+    ]);
+  });
+
+  test('summary, view counts and mark-all count the Inbox the list shows — never Sent or archived copies', async () => {
+    const sum = (await call('GET', '/api/mail/mailboxes', { t: tok(SU) })).json.mailboxes.find((m) => m.id === 3);
+    expect([sum.inbox_total, sum.inbox_unread]).toEqual([3, 3]);
+    W.read(SU, 301);
+    const v = (await call('POST', '/api/mail/views', { t: tok(SU), body: { name: 'Stuart', mailbox_ids: [3], filters: { all_folders: true } } })).json.view.id;
+    expect((await call('GET', '/api/mail/views/counts', { t: tok(SU) })).json.counts).toEqual({ [v]: 2 });
+    expect((await call('POST', '/api/mail/read', { t: tok(SU), body: { all: true, mailbox_ids: [3] } })).json.marked).toBe(2);
+    expect(W.readSet(SU)).toEqual([301, 306, 307]);
+    expect((await call('GET', '/api/mail/mailboxes', { t: tok(SU) })).json.mailboxes.find((m) => m.id === 3).inbox_unread).toBe(0);
+  });
+
+  test('threads and single messages carry the place of every copy', async () => {
+    W.message(309, { mailbox_id: 2, folder: 'INBOX', thread_key: 'm302@x.test', message_id: 'm302@x.test', subject: 'the client got it' });
+    const th = await call('GET', '/api/mail/threads/m302%40x.test', { t: tok(SU) });
+    expect(th.json.messages).toHaveLength(1);
+    expect(th.json.messages[0].copies.map((c) => [c.id, c.place])).toEqual([[302, 'Sent'], [309, null]]);
+    expect(th.json.messages[0].copies.every((c) => !('gmail_labels' in c))).toBe(true);
+    const one = await call('GET', '/api/mail/messages/304', { t: tok(SU) });
+    expect([one.json.messages[0].place, one.json.messages[0].sent, one.json.messages[0].in_inbox]).toEqual(['Archived', false, false]);
+    expect(one.text).not.toMatch(/gmail_labels/);
   });
 });
 

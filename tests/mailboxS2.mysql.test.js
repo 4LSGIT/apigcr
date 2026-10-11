@@ -13,12 +13,22 @@
  *   mysql -uroot yc_s2_test < ref/database.sql
  *   mysql -uroot yc_s2_test < ref/migrations/2026-10-09_mailbox_s2.sql   # until the dump carries mailboxes.color
  *   mysql -uroot yc_s2_test < ref/migrations/2026-10-09_mail_image_senders.sql   # …and mail_image_senders
+ *   mysql -uroot yc_s2_test < ref/migrations/2026-10-11_mailbox_s2l_labels.sql   # …and gmail_labels / in_inbox (S2-L)
  *   mysql_tzinfo_to_sql /usr/share/zoneinfo | mysql -uroot mysql      # CONVERT_TZ(…'EST5EDT')
  *   YC_TEST_MYSQL_URL=mysql://user:pass@127.0.0.1:3306/yc_s2_test npx jest tests/mailboxS2.mysql.test.js
  *
  * Every connection runs production's sql_mode (no STRICT, no ONLY_FULL_GROUP_BY,
  * no NO_BACKSLASH_ESCAPES, IGNORE_SPACE on) and the pool's timezone 'Z', like
- * startup/db.js. Worker run 2026-10-09: MySQL 8.0.46, all green.
+ * startup/db.js. Worker run 2026-10-09: MySQL 8.0.46, all green. S2-L run
+ * 2026-10-11: MySQL 8.0.46 AND 8.4.6 (production's version), all green.
+ *
+ * S2-L (Gmail labels), mutation-checked HERE: the in_inbox expression without
+ * its folder half, or with CHAR(92 USING utf8mb4) (printed back without
+ * USING → matches nothing) — the edge-matrix test (dropping the _utf8mb4
+ * introducers does NOT bite, under a latin1 client either: CONCAT coerces —
+ * they are belt-and-braces); the Inbox list back on
+ * idx_mail_messages_mailbox_date / the summary counting every row — the plan
+ * and engine = world tests.
  *
  * Add to client + filters (2026-10-10), mutation-checked HERE (the fake world
  * only matches their text): client_only keeping mailbox / firm addresses,
@@ -426,7 +436,7 @@ maybe('mailbox S2 on real MySQL', () => {
     expect(pub.json.mailboxes.map((m) => m.color)).toEqual(['#c2255c']);
   });
 
-  test('the list walks idx_mail_messages_mailbox_date backwards with a LIMIT (no filesort per branch)', async () => {
+  test('the Inbox list walks idx_mail_messages_mailbox_inbox_date, All folders idx_mail_messages_mailbox_date — backwards with a LIMIT, no filesort per branch; the summary is a covering range', async () => {
     const rows = [];
     for (let i = 0; i < 4000; i++) {
       rows.push([10000 + i, 1 + (i % 2), i % 5 === 0 ? 'Sent' : 'INBOX', 10000 + i, `bulk${i}@x.test`, `bulk${i}@x.test`, 'a@b.test', 'x', `s${i}`,
@@ -441,10 +451,27 @@ maybe('mailbox S2 on real MySQL', () => {
     const plan = (await q('EXPLAIN ' + sql, p)).filter((e) => e.table === 'm');
     expect(plan).toHaveLength(2);
     for (const e of plan) {
+      expect(e.key).toBe('idx_mail_messages_mailbox_inbox_date');
+      expect(e.Extra).toMatch(/Backward index scan/);
+      expect(e.Extra).not.toMatch(/filesort/);
+    }
+    // All folders: the (mailbox_id, date) walk
+    captured.length = 0;
+    await require('../services/mailbox/mailReadService').listMessages(spy, SU, { all_folders: 1, cursor: `${Date.UTC(2025, 3, 1)}.15000` });
+    const [sqlA, pA] = captured.find(([s]) => /UNION ALL/.test(s));
+    const planA = (await q('EXPLAIN ' + sqlA, pA)).filter((e) => e.table === 'm');
+    expect(planA).toHaveLength(2);
+    for (const e of planA) {
       expect(e.key).toBe('idx_mail_messages_mailbox_date');
       expect(e.Extra).toMatch(/Backward index scan/);
       expect(e.Extra).not.toMatch(/filesort/);
     }
+    // the summary (the sidebar badge): a range on the in_inbox index, covering
+    captured.length = 0;
+    await require('../services/mailbox/mailReadService').summary(spy, SU);
+    const [sqlS, pS] = captured.find(([s]) => /GROUP BY m\.mailbox_id/.test(s));
+    const planS = (await q('EXPLAIN ' + sqlS, pS)).filter((e) => e.table === 'm');
+    expect(planS.map((e) => [e.key, /Using index/.test(e.Extra || '')])).toEqual([['idx_mail_messages_mailbox_inbox_date', true]]);
     // …and still with the per-row subquery filters on (client / files / no case),
     // with contact_emails at production's size (~1k rows; the plan is cost-based)
     await q('DELETE FROM contacts WHERE contact_id = 9800000'); // cascades to its emails
@@ -464,9 +491,78 @@ maybe('mailbox S2 on real MySQL', () => {
     const plan2 = full2.filter((e) => e.table === 'm');
     expect(plan2).toHaveLength(2);
     for (const e of plan2) {
-      expect(e.key).toBe('idx_mail_messages_mailbox_date');
+      expect(e.key).toBe('idx_mail_messages_mailbox_inbox_date');
       expect(e.Extra).toMatch(/Backward index scan/);
       expect(e.Extra).not.toMatch(/filesort/);
     }
+  });
+  test('S2-L in_inbox on the engine = the world, row for row (edge matrix; the column comes from ref/migrations/2026-10-11_mailbox_s2l_labels.sql)', async () => {
+    const { makeWorld } = require('./helpers/mailboxS2World');
+    const W = makeWorld();
+    const ALL = '[Gmail]/All Mail';
+    const cases = [ // [id, folder, labels (JS array | null | raw JSON text), expected]
+      [601, 'INBOX', null, 1], [602, 'inbox', null, 1], [603, 'Sent', null, 0],
+      [604, ALL, ['\\Inbox', '\\Important'], 1], [605, ALL, ['\\Inbox', '\\Sent'], 1], [606, ALL, ['\\Sent'], 0],
+      [607, ALL, [], 0], [608, ALL, ['Clio/Payments'], 0], [609, ALL, null, 0], [610, ALL, ['\\INBOX'], 0],
+      [611, ALL, ['Inbox'], 0], [612, 'INBOX', ['\\Important'], 1], [613, ALL, ['Café', '\\Inbox'], 1],
+      [614, ALL, '"\\\\Inbox"', 1], [615, ALL, '{"a":"\\\\Inbox"}', 0],
+    ];
+    for (const [id, folder, labels] of cases) {
+      const json = labels == null ? null : (typeof labels === 'string' ? labels : JSON.stringify(labels));
+      await q('INSERT INTO mail_messages (id, mailbox_id, folder, uid, message_id, thread_key, date, attachments, gmail_labels) VALUES (?, 1, ?, ?, ?, ?, ?, ?, ?)',
+        [id, folder, id, `e${id}@x.test`, `e${id}@x.test`, new Date(Date.UTC(2026, 9, 5) + id * 60e3), '[]', json]);
+      W.message(id, { mailbox_id: 1, folder, gmail_labels: json });
+    }
+    const engine = await q('SELECT id, in_inbox FROM mail_messages WHERE id BETWEEN 601 AND 699 ORDER BY id');
+    expect(engine.map((r) => [r.id, r.in_inbox])).toEqual(cases.map(([id, , , want]) => [id, want]));
+    // the world's projection agrees on every row (list + all folders)
+    const world = (await W.db.query(`(SELECT ${require('../services/mailbox/mailReadService').LIST_COLS.replace(/\s+/g, ' ')} FROM mail_messages m FORCE INDEX (idx_mail_messages_mailbox_date) LEFT JOIN mail_read_state rs ON rs.user = ? AND rs.message_fk = m.id LEFT JOIN log l ON l.log_id = m.log_id LEFT JOIN cases c ON l.log_about_type = 'case' AND c.case_id = l.log_about_id WHERE m.mailbox_id = ? ORDER BY m.date DESC, m.id DESC LIMIT ?) ORDER BY \`date\` DESC, id DESC LIMIT ?`, [SU, 1, 99, 99]))[0];
+    expect(Object.fromEntries(world.map((r) => [r.id, r.in_inbox]))).toEqual(Object.fromEntries(engine.map((r) => [r.id, r.in_inbox])));
+    // gmail_labels comes back parsed (mysql2) with the backslash intact
+    const [one] = await q('SELECT gmail_labels FROM mail_messages WHERE id = 604');
+    expect(one.gmail_labels).toEqual(['\\Inbox', '\\Important']);
+  });
+
+  test('S2-L hub on the engine = the world: Inbox list, All folders, place / sent, summary, view counts, mark-all', async () => {
+    const { makeWorld } = require('./helpers/mailboxS2World');
+    const svc = require('../services/mailbox/mailReadService');
+    const ALL = '[Gmail]/All Mail';
+    const W = makeWorld();
+    W.user(SU, { auth: 'authorized - SU' });
+    W.mailbox(1, { address: 'billing@firm.test' });
+    W.mailbox(2, { address: 'intake@firm.test' });
+    W.mailbox(3, { address: 'stuart@firm.test' });
+    await q("INSERT INTO mailboxes (id, address, domain, imap_host, imap_user, ingest_folders) VALUES (3, 'stuart@firm.test', 'firm.test', 'imap.gmail.com', 'u', '{\"[Gmail]/All Mail\":{\"emit_to_rules\":false}}')");
+    const rows = [ // id, folder, labels, from
+      [701, ALL, ['\\Inbox', '\\Important'], 'Client <c@client.test>'],
+      [702, ALL, ['\\Sent'], 'Automations <automations@firm.test>'],
+      [703, ALL, ['Clio/Clio Team - Payments'], 'Clio <noreply@clio.test>'],
+      [704, ALL, [], 'x@y.test'],
+      [705, ALL, null, 'x@y.test'],
+      [706, ALL, ['\\Inbox', '\\Sent'], 'Stuart <stuart@firm.test>'],
+      [707, 'INBOX', ['\\Important'], 'x@y.test'],
+    ];
+    for (const [id, folder, labels, from] of rows) {
+      const json = labels == null ? null : JSON.stringify(labels);
+      const date = new Date(Date.UTC(2026, 9, 6) + id * 60e3);
+      await q('INSERT INTO mail_messages (id, mailbox_id, folder, uid, message_id, thread_key, from_addr, to_addrs, subject, date, attachments, gmail_labels) VALUES (?, 3, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        [id, folder, id, `g${id}@x.test`, `g${id}@x.test`, from, 'c@client.test', 's', date, '[]', json]);
+      W.message(id, { mailbox_id: 3, folder, gmail_labels: json, from_addr: from, to_addrs: 'c@client.test', message_id: `g${id}@x.test`, thread_key: `g${id}@x.test`, date });
+    }
+    const shape = (r) => r.messages.map((m) => [m.id, m.in_inbox, m.sent, m.place]);
+    const viaEngine = async (qs) => shape((await call('GET', `/api/mail/messages?mailbox_ids=3${qs}`, { t: tok(SU) })).json);
+    const viaWorld = async (f) => shape(await svc.listMessages(W.db, SU, { mailbox_ids: '3', ...f }));
+    expect(await viaEngine('')).toEqual([[707, true, false, null], [706, true, true, 'Sent'], [701, true, false, null]]);
+    expect(await viaWorld({})).toEqual(await viaEngine(''));
+    expect((await viaEngine('&all_folders=1')).map((r) => r[0])).toEqual([707, 706, 705, 704, 703, 702, 701]);
+    expect(await viaWorld({ all_folders: 1 })).toEqual(await viaEngine('&all_folders=1'));
+    expect((await viaEngine('&all_folders=1')).find((r) => r[0] === 705)).toEqual([705, false, false, ALL]);
+    const sum = (await call('GET', '/api/mail/mailboxes', { t: tok(SU) })).json.mailboxes.find((m) => m.id === 3);
+    expect([sum.inbox_total, sum.inbox_unread]).toEqual([3, 3]);
+    expect((await svc.summary(W.db, SU)).mailboxes.find((m) => m.id === 3)).toMatchObject({ inbox_total: 3, inbox_unread: 3 });
+    const v = (await call('POST', '/api/mail/views', { t: tok(SU), body: { name: 'Stuart', mailbox_ids: [3], filters: { all_folders: true } } })).json.view.id;
+    expect((await call('GET', '/api/mail/views/counts', { t: tok(SU) })).json.counts[v]).toBe(3);
+    expect((await call('POST', '/api/mail/read', { t: tok(SU), body: { all: true, mailbox_ids: [3] } })).json.marked).toBe(3);
+    expect((await q('SELECT message_fk FROM mail_read_state WHERE user = ? AND message_fk > 700 ORDER BY message_fk', [SU])).map((r) => r.message_fk)).toEqual([701, 706, 707]);
   });
 });

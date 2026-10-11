@@ -4,7 +4,7 @@
  * Mail read service — mailbox-system arc, slice S2 (comms hub, Email tab)
  * services/mailbox/mailReadService.js
  *
- *   summary(db, userId)                      readable mailboxes (+ colour) + INBOX unread/total counts
+ *   summary(db, userId)                      readable mailboxes (+ colour) + Inbox unread/total counts
  *   related(db, userId, messageId)           contacts the conversation's outside addresses belong
  *                                            to, with their client cases (open the file from mail),
  *                                            + the outside addresses no contact holds (add to client)
@@ -18,7 +18,7 @@
  *   setRead(db, userId, id, read)            per-user read state, idempotent
  *   markRead(db, userId, body)               bulk: {ids} or {all, mailbox_ids?, filters?}
  *   listViews / createView / updateView / deleteView   inbox_views, caller-owned
- *   viewCounts(db, userId)                   unread per saved view (INBOX, the view's filters)
+ *   viewCounts(db, userId)                   unread per saved view (Inbox, the view's filters)
  *   caseLink(db, userId, id, body)           attach the message's log row to a case
  *
  * Spec: ref/MAILBOX_SYSTEM_DESIGN.md §4.3 (read state), §4.4 (hub), D6, OQ1
@@ -47,13 +47,30 @@
  *
  * ── THE LIST (keyset) ────────────────────────────────────────────────────────
  * One statement: a UNION ALL of one branch per mailbox in scope, each a
- * backward walk of idx_mail_messages_mailbox_date (mailbox_id, date [, id] —
- * InnoDB appends the PK; FORCE INDEX, see the branch) stopping at its own
- * LIMIT, merged and cut again. No
+ * backward walk of idx_mail_messages_mailbox_inbox_date (mailbox_id,
+ * in_inbox, date [, id]) for the Inbox or idx_mail_messages_mailbox_date
+ * (mailbox_id, date [, id]) for All folders — InnoDB appends the PK; FORCE
+ * INDEX, see the branch — stopping at its own LIMIT, merged and cut again. No
  * OFFSET: the cursor is the last row's (date, id). NULL dates (no Date header
  * AND no INTERNALDATE — the worker almost never stores one) sort last, as
- * they do in the index walked backwards. Default scope is the INBOX folder;
+ * they do in the index walked backwards. Default scope is the Inbox (below);
  * `all_folders` adds Sent etc. (the thread view always merges every folder).
+ *
+ * ── INBOX / SENT (S2-L, design OQ5) ─────────────────────────────────────────
+ * "Inbox" is the generated column mail_messages.in_inbox: folder INBOX, OR
+ * the row's Gmail label snapshot (gmail_labels) holds \Inbox. A Gmail
+ * mailbox polling [Gmail]/All Mail (one folder, no INBOX) gets its Inbox from
+ * the label; every other row — SiteGround, rows stored before S2-L — from its
+ * folder, as before. The folder half is OR'ed in for labelled rows too:
+ * Gmail is reported to leave the selected folder's own label out, and a row
+ * stored from INBOX is in the Inbox whatever its snapshot says. Labels are a
+ * snapshot taken at ingest: mail archived in Gmail afterwards stays in the
+ * Inbox here until a refresh (POST /api/mailboxes/:id/labels/snapshot; sync
+ * is S4). Every Inbox-scoped read — the list, summary(), viewCounts(),
+ * markRead {all} — goes through in_inbox, walking
+ * idx_mail_messages_mailbox_inbox_date (mailbox_id, in_inbox, date). A
+ * labelled row is a SENT copy when its snapshot holds \Sent (placeOf); a
+ * labelled row in neither is "Archived" — shown under All folders only.
  *
  * ── CASE LINK ────────────────────────────────────────────────────────────────
  * Reuses the about-link machinery (logService.setLogAbout, about_type 'case')
@@ -97,7 +114,6 @@ const VIEWS_MAX = 50;
 const VIEW_IDS_MAX = 50;
 const Q_MAX = 200;
 const LOG_MESSAGE_SOFT_CAP = 50000; // emailIngestService._bodyForLog
-const INBOX = 'INBOX';
 // Case-link on a store-only folder waits this long after the worker stored the
 // message: two ~5-min pollers (the worker, the Apps Script source) plus margin.
 const STORE_ONLY_GRACE_MIN = 10;
@@ -345,6 +361,30 @@ function caseOf(r) {
   return { case_id: r.case_id, case_number: r.case_number_full || r.case_number || null };
 }
 
+const SENT_LABEL = '\\Sent';
+
+/** gmail_labels (parsed JSON or text) → array of strings, or null (not Gmail / pre-S2-L). */
+function labelsOf(v) {
+  const l = parseJson(v);
+  return Array.isArray(l) ? l.map(String) : null;
+}
+
+/**
+ * Where a row sits, for the API (INBOX / SENT in the header):
+ *   in_inbox  the generated column — the ONE definition of the Inbox
+ *   sent      its Gmail snapshot holds \Sent (false when it has no snapshot:
+ *             a SiteGround Sent row is named by its folder instead)
+ *   place     the location tag the pane prints, null when in the Inbox:
+ *             labelled → 'Sent' | 'Archived'; unlabelled → its folder name
+ */
+function placeOf(r) {
+  const inInbox = !!Number(r.in_inbox);
+  const labels = labelsOf(r.gmail_labels);
+  if (!labels) return { in_inbox: inInbox, sent: false, place: inInbox ? null : (r.folder || null) };
+  const sent = labels.includes(SENT_LABEL);
+  return { in_inbox: inInbox, sent, place: sent ? 'Sent' : (inInbox ? null : 'Archived') };
+}
+
 /** Readable mailboxes as Map(id → row). */
 async function readableScope(db, userId) {
   const rows = await mbx.listReadable(db, userId, 'mailbox');
@@ -365,12 +405,12 @@ const JOINS = `
   LEFT JOIN cases c ON l.log_about_type = 'case' AND c.case_id = l.log_about_id`;
 
 // NEVER add body_text / body_html here: this is the list projection.
-const LIST_COLS = `m.id, m.mailbox_id, m.folder, m.thread_key, m.from_addr, m.to_addrs, m.cc_addrs,
+const LIST_COLS = `m.id, m.mailbox_id, m.folder, m.gmail_labels, m.in_inbox, m.thread_key, m.from_addr, m.to_addrs, m.cc_addrs,
   m.subject, m.date, m.snippet, m.attachments, m.log_id,
   (rs.message_fk IS NULL) AS unread,
   c.case_id AS case_id, c.case_number AS case_number, c.case_number_full AS case_number_full`;
 
-const FULL_COLS = `m.id, m.mailbox_id, m.folder, m.message_id, m.in_reply_to, m.thread_key,
+const FULL_COLS = `m.id, m.mailbox_id, m.folder, m.gmail_labels, m.in_inbox, m.message_id, m.in_reply_to, m.thread_key,
   m.from_addr, m.to_addrs, m.cc_addrs, m.subject, m.date, m.snippet, m.body_text, m.body_html,
   m.attachments, m.flags, m.log_id,
   (rs.message_fk IS NULL) AS unread,
@@ -382,9 +422,10 @@ const FULL_COLS = `m.id, m.mailbox_id, m.folder, m.message_id, m.in_reply_to, m.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Readable mailboxes with the caller's INBOX counts — one grouped query, not
- * one per mailbox. Unread counts the INBOX only: the hub's default scope, and
- * a Sent copy is mail the mailbox itself sent.
+ * Readable mailboxes with the caller's Inbox counts — one grouped query, not
+ * one per mailbox. Unread counts the Inbox only (in_inbox — INBOX / SENT
+ * above): the hub's default scope, and a Sent copy is mail the mailbox itself
+ * sent.
  */
 async function summary(db, userId) {
   const scope = await readableScope(db, userId);
@@ -395,9 +436,9 @@ async function summary(db, userId) {
       `SELECT m.mailbox_id, COUNT(*) AS total, SUM(rs.message_fk IS NULL) AS unread
          FROM mail_messages m
          LEFT JOIN mail_read_state rs ON rs.user = ? AND rs.message_fk = m.id
-        WHERE m.mailbox_id IN (?) AND m.folder = ?
+        WHERE m.mailbox_id IN (?) AND m.in_inbox = 1
         GROUP BY m.mailbox_id`,
-      [Number(userId), ids, INBOX]
+      [Number(userId), ids]
     );
     for (const r of rows) counts.set(Number(r.mailbox_id), { total: Number(r.total) || 0, unread: Number(r.unread) || 0 });
   }
@@ -527,7 +568,7 @@ const FILES_WHERE = `0 < (SELECT COUNT(*) FROM JSON_TABLE(m.attachments, '$[*]' 
 function scopeWhere(filters, cursor) {
   const where = [];
   const params = [];
-  if (!filters.all_folders) { where.push('m.folder = ?'); params.push(INBOX); }
+  if (!filters.all_folders) where.push('m.in_inbox = 1'); // INBOX / SENT (header)
   if (cursor && cursor.date) {
     where.push('(m.date < ? OR (m.date = ? AND m.id < ?) OR m.date IS NULL)');
     params.push(sqlUtc(cursor.date), sqlUtc(cursor.date), cursor.id);
@@ -589,13 +630,17 @@ async function listMessages(db, userId, query = {}) {
 
   const branches = [];
   const params = [];
+  // FORCE INDEX: the walk is the point. Left to itself the optimizer picks
+  // the UNIQUE (mailbox_id, folder, uid) key + a filesort of the whole
+  // mailbox once a filter is on and a box is a few thousand rows (measured,
+  // MySQL 8.0 — tests/mailboxS2.mysql.test.js pins the plan). Inbox scope
+  // walks (mailbox_id, in_inbox = 1, date) — only Inbox rows are read, so an
+  // All Mail box's archived and sent mail costs nothing; All folders walks
+  // (mailbox_id, date).
+  const index = filters.all_folders ? 'idx_mail_messages_mailbox_date' : 'idx_mail_messages_mailbox_inbox_date';
   for (const id of ids) {
-    // FORCE INDEX: the walk is the point. Left to itself the optimizer picks
-    // the UNIQUE (mailbox_id, folder, uid) key + a filesort of the whole
-    // mailbox once the INBOX filter is on and a box is a few thousand rows
-    // (measured, MySQL 8.0 — tests/mailboxS2.mysql.test.js pins the plan).
     branches.push(
-      `(SELECT ${LIST_COLS} FROM mail_messages m FORCE INDEX (idx_mail_messages_mailbox_date)${JOINS}
+      `(SELECT ${LIST_COLS} FROM mail_messages m FORCE INDEX (${index})${JOINS}
          WHERE m.mailbox_id = ?${extra}
          ORDER BY m.date DESC, m.id DESC LIMIT ?)`
     );
@@ -626,6 +671,7 @@ async function listMessages(db, userId, query = {}) {
       mailbox_id: Number(r.mailbox_id),
       mailbox_address: mb.address || null,
       folder: r.folder,
+      ...placeOf(r),
       thread_key: r.thread_key || null,
       from_addr: r.from_addr || null,
       to_addrs: r.to_addrs || null,
@@ -659,6 +705,7 @@ function shapeFull(r, scope) {
     mailbox_id: Number(r.mailbox_id),
     mailbox_address: mb.address || null,
     folder: r.folder,
+    ...placeOf(r),
     message_id: r.message_id || null,
     thread_key: r.thread_key || null,
     from_addr: r.from_addr || null,
@@ -696,7 +743,7 @@ function collapse(list) {
       ...primary,
       unread: copies.some(c => c.unread),
       case: primary.case || (copies.find(c => c.case) || {}).case || null,
-      copies: copies.map(c => ({ id: c.id, mailbox_id: c.mailbox_id, mailbox_address: c.mailbox_address, folder: c.folder, unread: c.unread })),
+      copies: copies.map(c => ({ id: c.id, mailbox_id: c.mailbox_id, mailbox_address: c.mailbox_address, folder: c.folder, place: c.place, unread: c.unread })),
     });
   }
   out.sort((a, b) => {
@@ -760,7 +807,7 @@ async function getMessage(db, userId, messageId) {
     thread_key: m.thread_key,
     subject: m.subject,
     truncated: false,
-    messages: await markTrust(db, userId, [{ ...m, copies: [{ id: m.id, mailbox_id: m.mailbox_id, mailbox_address: m.mailbox_address, folder: m.folder, unread: m.unread }] }]),
+    messages: await markTrust(db, userId, [{ ...m, copies: [{ id: m.id, mailbox_id: m.mailbox_id, mailbox_address: m.mailbox_address, folder: m.folder, place: m.place, unread: m.unread }] }]),
   };
 }
 
@@ -980,7 +1027,7 @@ async function setRead(db, userId, messageId, read) {
  *   { ids: [..≤500] }                              those of them the caller can read
  *   { all: true, mailbox_ids?: [..], filters?: {} } every message the LIST would show
  *       for (readable ∩ mailbox_ids) + filters, every page — the same scope
- *       predicates (scopeWhere: INBOX unless all_folders, then every
+ *       predicates (scopeWhere: the Inbox unless all_folders, then every
  *       FILTER_KEYS filter). "Mark all read" with a filter on clears the
  *       filtered list, never the whole mailbox behind it.
  * Grant scoping is in the statement itself (mailbox_id IN readable). The
@@ -1071,12 +1118,12 @@ async function listViews(db, userId) {
  * Unread per saved view: how many messages the view's list holds that are
  * unread for the caller — its mailboxes ∩ readable, its filters, through
  * scopeWhere (the list's own predicates, so the number is what opening the
- * view with Unread on shows). INBOX only, whatever the view's all_folders
- * says: a Sent copy is never "read" by anyone, so counting other folders
- * would count the mailbox's own outgoing mail — summary() counts INBOX for
- * the same reason. One COUNT per view (VIEWS_MAX caps them); a view whose
- * boxes are all gone counts 0 without a query, and a stored filter that no
- * longer validates gets no count rather than failing the call.
+ * view with Unread on shows). Inbox only (in_inbox), whatever the view's
+ * all_folders says: a Sent copy is never "read" by anyone, so counting other
+ * folders would count the mailbox's own outgoing mail — summary() counts the
+ * Inbox for the same reason. One COUNT per view (VIEWS_MAX caps them); a view
+ * whose boxes are all gone counts 0 without a query, and a stored filter that
+ * no longer validates gets no count rather than failing the call.
  * @returns {{counts: Object<string, number>}} view id → unread
  */
 async function viewCounts(db, userId) {
@@ -1406,6 +1453,7 @@ module.exports = {
   folderEmits,
   STORE_ONLY_GRACE_MIN,
   emailsIn,
+  placeOf,
   referencedCids,
   markInline,
   parseCursor,

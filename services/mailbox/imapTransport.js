@@ -21,6 +21,9 @@
  *                          special-use flag and STATUS counts, plus whether
  *                          the server will hand us provider ids. Read-only.
  *
+ * The SESSION also carries fetchLabels(uids) — Gmail labels only, for the SU
+ * label re-snapshot (S2-L, mailboxIngestService.snapshotLabels).
+ *
  * ── NO PROCESS-GLOBAL STATE (design §2, tenancy audit A3/P0-5) ───────────────
  * No module-scope caches, no pooled or reused connections. A connection lives
  * inside one ingest run or one HTTP request and is always closed.
@@ -66,6 +69,23 @@
  * the value is a decimal 64-bit integer; everywhere else it is null, and the
  * worker never emits a provider-keyed message without one. The transport
  * still never asks which provider it is talking to — it reads capabilities.
+ *
+ * ── GMAIL LABELS (S2-L) ─────────────────────────────────────────────────────
+ * On a server advertising X-GM-EXT-1, fetchMessages() also asks for
+ * X-GM-LABELS (imapflow 2.3.0: `labels: true` → the X-GM-LABELS atom in the
+ * SAME FETCH — no extra round trip — parsed into a Set of strings, system
+ * labels with their backslash: "\Inbox", "\Sent", "\Important" …, user
+ * labels as named; tests/mailboxS2L.labels.test.js pins both). Each message
+ * then carries `labels` (an array — [] = Gmail says "no labels", i.e.
+ * archived); everywhere else, and on a Gmail reply that somehow lacks the
+ * attribute, `labels` is null = unknown. The gate is X-GM-EXT-1 alone — the
+ * capability that governs X-GM-LABELS — not providerIdKind's OBJECTID
+ * exclusion, which is about what `emailId` means, not about labels. Labels
+ * are a SNAPSHOT at fetch time: archiving in Gmail later is not seen
+ * (design OQ5). Gmail is reported to leave the SELECTED folder's own label
+ * out of the list (fetched while INBOX is open, a message may lack
+ * "\Inbox"); the sanctioned Gmail folder is All Mail, which is no label,
+ * and the hub ORs the folder in (mail_messages.in_inbox) regardless.
  *
  * ── ATTACHMENTS ARE NOT DOWNLOADED (D1) ──────────────────────────────────────
  * fetchMessages() reads ENVELOPE, BODYSTRUCTURE, flags, size, internal date,
@@ -244,6 +264,26 @@ function normalizeMessageId(v) {
   return s || null;
 }
 
+/** True when this connection can be asked for X-GM-LABELS (see GMAIL LABELS). */
+function gmailLabelsSupported(client) {
+  const caps = client && client.capabilities;
+  return !!caps && typeof caps.has === 'function' && caps.has('X-GM-EXT-1');
+}
+
+/**
+ * imapflow's `labels` (a Set) → a plain array of non-empty strings, server
+ * order kept (it is a snapshot); absent / not a collection → null (unknown).
+ */
+function labelList(v) {
+  if (v == null || typeof v === 'string' || typeof v[Symbol.iterator] !== 'function') return null;
+  const out = [];
+  for (const l of v) {
+    const s = l == null ? '' : String(l);
+    if (s && !out.includes(s)) out.push(s);
+  }
+  return out;
+}
+
 /**
  * Which provider id this connection yields: 'gmail' (X-GM-MSGID) or null.
  * Read from the live capability set after login — see PROVIDER-NATIVE IDS.
@@ -348,6 +388,8 @@ function makeSession(client, row, secret) {
   const user = row.imap_user;
   const idKind = providerIdKind(client);
   const providerIdOf = (m) => (idKind === 'gmail' ? gmailHexId(m && m.emailId) : null);
+  const labelsOn = gmailLabelsSupported(client);
+  const labelsOf = (m) => (labelsOn ? labelList(m && m.labels) : null);
   const guard = (fn) => async (...args) => {
     try {
       return await fn(...args);
@@ -415,15 +457,18 @@ function makeSession(client, row, secret) {
      * Full metadata + capped text bodies for the given UIDs, ascending. A UID
      * the server no longer has is simply absent from the result. A \Draft
      * message comes back with `draft: true` and no bodies (header doc).
+     * `labels`: Gmail labels on X-GM-EXT-1 servers, else null (GMAIL LABELS).
      */
     fetchMessages: guard(async (uids) => {
       const want = [...new Set((uids || []).map(Number).filter(u => Number.isInteger(u) && u > 0))];
       if (!want.length) return [];
       const wanted = new Set(want);
-      const rows = await client.fetchAll(want.join(','), {
+      const query = {
         uid: true, envelope: true, bodyStructure: true, flags: true,
         internalDate: true, size: true, headers: true,
-      }, { uid: true });
+      };
+      if (labelsOn) query.labels = true; // the same FETCH: X-GM-LABELS is one more item
+      const rows = await client.fetchAll(want.join(','), query, { uid: true });
 
       const byUid = new Map();
       // Unsolicited FETCH rows (flag changes from another session) can ride
@@ -438,6 +483,7 @@ function makeSession(client, row, secret) {
         const msg = {
           uid,
           providerId: providerIdOf(m),
+          labels: labelsOf(m),
           size: Number.isFinite(Number(m.size)) ? Number(m.size) : null,
           flags: mapFlags(m.flags),
           internalDate: toDate(m.internalDate),
@@ -479,6 +525,28 @@ function makeSession(client, row, secret) {
     }),
 
     /**
+     * Gmail labels for the given UIDs of the open folder, ascending:
+     * [{uid, providerId, labels}] — UID + X-GM-LABELS (+ the X-GM-MSGID
+     * imapflow adds unasked), nothing else: no envelope, no bodies. A UID the
+     * server no longer has is absent. Only on X-GM-EXT-1 (check
+     * `labelsKind` first); elsewhere it throws NO_GMAIL_LABELS. The SU label
+     * re-snapshot's one IMAP read (mailboxIngestService.snapshotLabels).
+     */
+    fetchLabels: guard(async (uids) => {
+      if (!labelsOn) throw typedError('NO_GMAIL_LABELS', 'this server does not offer Gmail labels (no X-GM-EXT-1)', { sanitized: true });
+      const want = [...new Set((uids || []).map(Number).filter(u => Number.isInteger(u) && u > 0))];
+      if (!want.length) return [];
+      const wanted = new Set(want);
+      const rows = await client.fetchAll(want.join(','), { uid: true, labels: true }, { uid: true });
+      const byUid = new Map();
+      for (const m of rows) if (wanted.has(Number(m.uid))) byUid.set(Number(m.uid), m);
+      return [...byUid.keys()].sort((a, b) => a - b).map((uid) => {
+        const m = byUid.get(uid);
+        return { uid, providerId: providerIdOf(m), labels: labelsOf(m) };
+      });
+    }),
+
+    /**
      * Every folder on the account: path (what ingest_folders names), its
      * special-use flag (\\Sent, \\All …), selectability and STATUS counts.
      * For the SU folder listing — never called by the ingest worker.
@@ -504,6 +572,9 @@ function makeSession(client, row, secret) {
 
     /** 'gmail' when this connection yields X-GM-MSGID provider ids, else null. */
     get providerIdKind() { return idKind; },
+
+    /** 'gmail' when this connection yields X-GM-LABELS (GMAIL LABELS), else null. */
+    get labelsKind() { return labelsOn ? 'gmail' : null; },
 
     get folder() { return opened; },
   };
@@ -610,6 +681,8 @@ module.exports = {
   normalizeMessageId,
   providerIdKind,
   gmailHexId,
+  gmailLabelsSupported,
+  labelList,
   mapFlags,
   sanitizeError,
   scrub,

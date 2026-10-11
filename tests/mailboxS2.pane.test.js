@@ -77,13 +77,13 @@ const MB = [
   { id: 2, address: 'intake@firm.test', display_name: null, color: '#fff3bf', active: true, can_send: false, can_manage: false, inbox_total: 1, inbox_unread: 1 },
 ];
 const ROWS = [
-  { id: 11, mailbox_id: 1, mailbox_address: 'billing@firm.test', folder: 'INBOX', thread_key: 'root@x.test', from_addr: `Evil ${EVIL} <evil@x.test>`, to_addrs: 'billing@firm.test', cc_addrs: null, subject: `Subject ${EVIL}`, date: '2026-10-08T14:00:00.000Z', snippet: `snip ${EVIL}`, unread: true, attachment_count: 1, log_id: null, case: null },
-  { id: 12, mailbox_id: 2, mailbox_address: 'intake@firm.test', folder: 'INBOX', thread_key: null, from_addr: 'a@b.test', to_addrs: null, cc_addrs: null, subject: 'Threadless', date: '2026-10-07T14:00:00.000Z', snippet: null, unread: false, attachment_count: 0, log_id: 5, case: { case_id: 'CaseA1', case_number: '26-11111' } },
+  { id: 11, mailbox_id: 1, mailbox_address: 'billing@firm.test', folder: 'INBOX', in_inbox: true, sent: false, place: null, thread_key: 'root@x.test', from_addr: `Evil ${EVIL} <evil@x.test>`, to_addrs: 'billing@firm.test', cc_addrs: null, subject: `Subject ${EVIL}`, date: '2026-10-08T14:00:00.000Z', snippet: `snip ${EVIL}`, unread: true, attachment_count: 1, log_id: null, case: null },
+  { id: 12, mailbox_id: 2, mailbox_address: 'intake@firm.test', folder: 'INBOX', in_inbox: true, sent: false, place: null, thread_key: null, from_addr: 'a@b.test', to_addrs: null, cc_addrs: null, subject: 'Threadless', date: '2026-10-07T14:00:00.000Z', snippet: null, unread: false, attachment_count: 0, log_id: 5, case: { case_id: 'CaseA1', case_number: '26-11111' } },
 ];
 const THREAD = {
   thread_key: 'root@x.test', subject: `Subject ${EVIL}`, truncated: false,
   messages: [{
-    id: 11, mailbox_id: 1, mailbox_address: 'billing@firm.test', folder: 'INBOX', message_id: 'root@x.test', thread_key: 'root@x.test',
+    id: 11, mailbox_id: 1, mailbox_address: 'billing@firm.test', folder: 'INBOX', in_inbox: true, sent: false, place: null, message_id: 'root@x.test', thread_key: 'root@x.test',
     from_addr: `Evil ${EVIL} <evil@x.test>`, to_addrs: 'billing@firm.test', cc_addrs: null, subject: `Subject ${EVIL}`,
     date: '2026-10-08T14:00:00.000Z', snippet: 'snip',
     body_text: 'plain', body_html: `<p>Hello</p><script>window.top.__pwned=2</script><img src="https://track.test/p.gif"><img src="cid:logo@x">${EVIL}`,
@@ -95,7 +95,7 @@ const THREAD = {
       { part: '4', filename: 'photo.jpg', size: 20, mime: 'image/jpeg', cid: 'f_photo', inline: false }, // attached, not drawn
     ],
     unread: true, log_id: null, case: null,
-    copies: [{ id: 11, mailbox_id: 1, mailbox_address: 'billing@firm.test', folder: 'INBOX', unread: true }, { id: 31, mailbox_id: 2, mailbox_address: 'intake@firm.test', folder: 'INBOX', unread: true }],
+    copies: [{ id: 11, mailbox_id: 1, mailbox_address: 'billing@firm.test', folder: 'INBOX', place: null, unread: true }, { id: 31, mailbox_id: 2, mailbox_address: 'intake@firm.test', folder: 'INBOX', place: null, unread: true }],
   }],
 };
 
@@ -151,7 +151,7 @@ function standard(over = {}) {
     if (url === '/api/mail/views/counts') return { counts: {} };
     if (url === '/api/mail/messages' && method === 'GET') return { messages: fresh(ROWS), next_cursor: null };
     if (url === '/api/mail/threads/root%40x.test') return fresh(THREAD);
-    if (url === '/api/mail/messages/12') return { thread_key: null, subject: 'Threadless', messages: [{ ...ROWS[1], body_text: 'only text', body_html: null, attachments: [], copies: [{ id: 12, mailbox_id: 2, folder: 'INBOX', unread: false }] }] };
+    if (url === '/api/mail/messages/12') return { thread_key: null, subject: 'Threadless', messages: [{ ...ROWS[1], body_text: 'only text', body_html: null, attachments: [], copies: [{ id: 12, mailbox_id: 2, folder: 'INBOX', place: null, unread: false }] }] };
     if (url === '/api/mail/read' && method === 'POST') return { marked: (payload.ids || []).length };
     if (/^\/api\/mail\/messages\/\d+\/related$/.test(url)) return { contacts: [] };
     throw new Error(`unexpected ${method} ${url}`);
@@ -784,7 +784,7 @@ describe('comms hub pane', () => {
   });
 
   test('Inbox | All folders is one choice; mail a mailbox SENT names its recipient, not the firm', async () => {
-    const sent = { ...ROWS[1], id: 13, folder: '[Gmail]/Sent Mail', from_addr: 'Billing <billing@firm.test>', to_addrs: '"Doe, Jane" <jane@x.test>, b@y.test', thread_key: null };
+    const sent = { ...ROWS[1], id: 13, folder: 'INBOX.Sent', in_inbox: false, place: 'INBOX.Sent', from_addr: 'Billing <billing@firm.test>', to_addrs: '"Doe, Jane" <jane@x.test>, b@y.test', thread_key: null };
     const { window, doc, calls } = await boot({ handler: standard({ 'GET /api/mail/messages': () => ({ messages: fresh([ROWS[0], sent]), next_cursor: null }) }) });
     const from = [...doc.querySelectorAll('#msg-list .msg .from')];
     expect(from.map((f) => [f.textContent, f.title])).toEqual([
@@ -803,6 +803,35 @@ describe('comms hub pane', () => {
     doc.getElementById('f-inbox').click();
     await tick(window);
     expect([on(doc, 'f-inbox'), on(doc, 'f-folders'), lastList().all_folders]).toEqual([true, false, 0]);
+  });
+
+  test('S2-L: the server\'s place is the location tag (none in the Inbox); a Gmail Sent copy names its recipient even from another From', async () => {
+    const ALL = '[Gmail]/All Mail';
+    const g = (over) => ({ ...ROWS[1], mailbox_id: 2, mailbox_address: 'intake@firm.test', folder: ALL, thread_key: null, case: null, log_id: null, ...over });
+    const rows = [
+      g({ id: 21, in_inbox: true, sent: false, place: null, from_addr: 'Client <c@client.test>', subject: 'inbound' }),
+      g({ id: 22, in_inbox: false, sent: true, place: 'Sent', from_addr: 'Automations <automations@firm.test>', to_addrs: 'Client <c@client.test>', subject: 'by automation' }),
+      g({ id: 23, in_inbox: false, sent: false, place: 'Archived', from_addr: 'Clio <noreply@clio.test>', subject: 'filed' }),
+      { ...ROWS[0], id: 24, folder: 'INBOX.Sent', in_inbox: false, place: 'INBOX.Sent', from_addr: 'billing@firm.test', to_addrs: 'x@y.test' },
+    ];
+    const { window, doc } = await boot({ handler: standard({ 'GET /api/mail/messages': () => ({ messages: fresh(rows), next_cursor: null }) }) });
+    const li = [...doc.querySelectorAll('#msg-list .msg')];
+    expect(li.map((r) => [r.querySelector('.from').textContent, (r.querySelector('.chip.folder') || {}).textContent || null])).toEqual([
+      ['Client', null],                    // folder All Mail, but in the Inbox: no tag
+      ['To: Client', 'Sent'],              // From is no readable box — the server's `sent` says so
+      ['Clio', 'Archived'],
+      ['To: x@y.test', 'INBOX.Sent'],      // no snapshot: the folder, as before
+    ]);
+    expect(doc.body.textContent).not.toContain(ALL);
+    // thread copies print the place too
+    const thread = fresh(THREAD);
+    thread.messages[0].copies = [{ id: 11, mailbox_id: 1, mailbox_address: 'billing@firm.test', folder: 'INBOX', place: null, unread: false },
+      { id: 32, mailbox_id: 2, mailbox_address: 'intake@firm.test', folder: ALL, place: 'Sent', unread: false }];
+    const w2 = await boot({ handler: standard({ 'GET /api/mail/threads/root%40x.test': () => thread }) });
+    w2.doc.querySelector('#msg-list .msg').click();
+    await tick(w2.window, 80);
+    expect([...w2.doc.querySelectorAll('.mcard .cp')].map((c) => c.textContent)).toEqual(['billing@firm.test', 'intake@firm.test / Sent']);
+    void window;
   });
 
   test('mark unread → DELETE …/read for the copy the reader opened', async () => {

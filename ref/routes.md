@@ -1,7 +1,7 @@
 # Routes
 
-_Generated 2026-10-10T22:41:13.375Z_  
-_733 routes total — DELETE: 61, GET: 304, PATCH: 50, POST: 280, PUT: 35, _ALL: 3_
+_Generated 2026-10-11T11:52:50.194Z_  
+_734 routes total — DELETE: 61, GET: 304, PATCH: 50, POST: 281, PUT: 35, _ALL: 3_
 
 ## Global middleware chain
 
@@ -418,6 +418,7 @@ _733 routes total — DELETE: 61, GET: 304, PATCH: 50, POST: 280, PUT: 35, _ALL:
 | POST | `/api/mailboxes/:id/grants` | `jwtOrApiKey`, `requireJwt` | — |
 | DELETE | `/api/mailboxes/:id/grants/:grantId` | `jwtOrApiKey`, `requireJwt` | — |
 | PATCH | `/api/mailboxes/:id/grants/:grantId` | `jwtOrApiKey`, `requireJwt` | — |
+| POST | `/api/mailboxes/:id/labels/snapshot` | `jwtOrApiKey`, `requireJwt` | — |
 | GET | `/api/mailboxes/:id/messages/:mid/emit-preview` | `jwtOrApiKey`, `requireJwt` | — |
 | GET | `/api/mailboxes/:id/messages/:mid/parts/:part` | `jwtOrApiKey`, `requireJwt` | — |
 | GET | `/api/manage-config` | — | — |
@@ -1003,4 +1004,4 @@ _733 routes total — DELETE: 61, GET: 304, PATCH: 50, POST: 280, PUT: 35, _ALL:
 
 ---
 
-_733 routes total — DELETE: 61, GET: 304, PATCH: 50, POST: 280, PUT: 35, _ALL: 3_
+_734 routes total — DELETE: 61, GET: 304, PATCH: 50, POST: 281, PUT: 35, _ALL: 3_

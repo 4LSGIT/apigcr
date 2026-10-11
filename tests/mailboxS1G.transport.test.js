@@ -205,12 +205,18 @@ describe('provider ids through the session facade', () => {
     });
   });
 
-  test('the fetch query itself is unchanged from S1 (imapflow adds the id; nothing extra is asked)', async () => {
+  test('the fetch query is S1\'s (imapflow adds the id unasked) — plus `labels` on X-GM-EXT-1 only (S2-L, the same FETCH)', async () => {
     script.caps = ['IMAP4rev1', 'X-GM-EXT-1'];
     script.rows = [fetchRow(5, DEC)];
     await T.withMailbox(row(), async (s) => { await s.openFolder('INBOX'); await s.fetchMessages([5]); });
     const fa = clients[0].calls.find(c => c[0] === 'fetchAll');
-    expect(Object.keys(fa[2]).sort()).toEqual(['bodyStructure', 'envelope', 'flags', 'headers', 'internalDate', 'size', 'uid']);
+    expect(Object.keys(fa[2]).sort()).toEqual(['bodyStructure', 'envelope', 'flags', 'headers', 'internalDate', 'labels', 'size', 'uid']);
+    // a non-Gmail server: S1's query exactly
+    script.caps = ['IMAP4rev1'];
+    await T.withMailbox(row({ imap_host: 'gcam1191.siteground.biz' }), async (s) => { await s.openFolder('INBOX'); await s.fetchMessages([5]); });
+    const fb = clients[1].calls.find(c => c[0] === 'fetchAll');
+    expect(Object.keys(fb[2]).sort()).toEqual(['bodyStructure', 'envelope', 'flags', 'headers', 'internalDate', 'size', 'uid']);
+    expect(clients.flatMap(c => c.calls).filter(c => c[0] === 'fetchAll')).toHaveLength(2); // no extra round trip
   });
 });
 
