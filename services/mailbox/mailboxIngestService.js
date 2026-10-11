@@ -21,6 +21,16 @@
  * exactly as they do for the Apps Script source. The returned log_id is
  * stamped on the stored row (the tier bridge).
  *
+ * The one deliberate exception to BOTH tiers: a message flagged \Draft is
+ * neither stored nor emitted (the DRAFT GUARD, processUids; design §4.1).
+ * Drafts are unsent — no communication happened — and Gmail deletes and
+ * re-creates a draft as a new message on every autosave: stored, each save
+ * would be a garbage revision whose UID is gone by the next poll (orphan-purge
+ * noise on every re-key). The Apps Script adapter skips drafts too. The UID
+ * still counts as processed (the cursor moves past it); it is counted
+ * (summary.draftsSkipped, the folder's drafts_skipped_total) and never fetched
+ * with bodies (imapTransport returns drafts as metadata only).
+ *
  * ── EMISSION IDENTITY (S1-G) ─────────────────────────────────────────────────
  * email_log dedupes on (source, message_id) ONLY — per source, never across
  * sources (AI_CONTEXT §27). So the identity a message is emitted under is the
@@ -56,6 +66,7 @@
  *                         (INTERNALDATE, minus slack) is still emitted —
  *                         set only by a re-key (see below); null = store-only
  *   checked_at            last successful new pass (the re-key's emit horizon)
+ *   drafts_skipped_total  \Draft messages passed over (DRAFT GUARD)
  *   errors / backfill_errors / last_error / last_error_at   failure streaks
  *   rekeyed_at, backfill_done_at                            breadcrumbs
  *
@@ -233,6 +244,11 @@ function emissionConfig(mb) {
 function emitKeyOf(kind, m) {
   if (kind === 'provider') return (m && m.providerId) || null;
   return (m && m.envelope && m.envelope.messageId) || null;
+}
+
+/** A \Draft message — never stored, never emitted (the DRAFT GUARD). */
+function isDraft(m) {
+  return !!m && (m.draft === true || (Array.isArray(m.flags) && m.flags.includes('draft')));
 }
 
 function backfillPending(st) {
@@ -834,6 +850,7 @@ function newSummary() {
     skippedBudget: 0,
     errors: 0,
     noProviderId: 0,
+    draftsSkipped: 0,
     pipeline: {},
     emitDisabled: null,
     emitSources: {},
@@ -993,7 +1010,16 @@ async function processUids(ctx, session, mb, folder, cfg, st, uids, pass, onBatc
       const row = have.get(uid);
       const m = byUid.get(uid);
       try {
-        if (m) await processMessage(ctx, mb, folder, cfg, st, m, pass, row || null);
+        if (isDraft(m)) {
+          // DRAFT GUARD (header): not stored, not emitted — even if an older
+          // build stored it (a legacy row never emits from here). The UID is
+          // processed: the cursor moves past it.
+          summary.draftsSkipped++;
+          ctx.folderStats.drafts_skipped = (ctx.folderStats.drafts_skipped || 0) + 1;
+          st.drafts_skipped_total = (Number(st.drafts_skipped_total) || 0) + 1;
+        } else if (m) {
+          await processMessage(ctx, mb, folder, cfg, st, m, pass, row || null);
+        }
         // else: already stored (nothing to do) or expunged between SEARCH and FETCH
       } catch (err) {
         err.progressUid = last;
@@ -1457,6 +1483,7 @@ module.exports = {
   emitText,
   emitKeyOf,
   emissionConfig,
+  isDraft,
   htmlToText,
   parseHeaderBlock,
   folderConfig,

@@ -514,9 +514,13 @@ router.get('/api/mailboxes/:id/messages/:mid/parts/:part', jwtOrApiKey, requireJ
 //     and how big are they (the backfill decision);
 //   - will ingest capture provider ids (provider_id_kind 'gmail') — the
 //     precondition for an emit_id_kind 'provider' override.
-// `configured` checks the mailbox's ingest_folders against the server: a
-// folder that does not exist, or one that is \All (Gmail All Mail — every
-// labelled message again, never poll it).
+// `configured` checks the mailbox's ingest_folders against the server: does
+// each folder exist, and is it \All (Gmail All Mail). All Mail as the ONLY
+// folder is the sanctioned Gmail configuration (one copy of every message);
+// All Mail ALONGSIDE any other folder stores every labelled message twice —
+// `warnings` says so (ALL_MAIL_ALONGSIDE_OTHER_FOLDERS). The special-use flag
+// comes from the server, so this catches localized All Mail names a name
+// check would miss.
 router.get('/api/mailboxes/:id/folders', jwtOrApiKey, requireJwt, async (req, res) => {
   try {
     const id = await resolveSuOnly(req, res);
@@ -549,12 +553,23 @@ router.get('/api/mailboxes/:id/folders', jwtOrApiKey, requireJwt, async (req, re
         all_mail: !!(f && f.special_use === '\\All'),
       };
     });
+    const warnings = [];
+    const allMail = configured.filter(c => c.all_mail);
+    if (allMail.length && configured.length > allMail.length) {
+      warnings.push({
+        code: 'ALL_MAIL_ALONGSIDE_OTHER_FOLDERS',
+        message: `${allMail.map(c => c.folder).join(', ')} is polled alongside ${configured.length - allMail.length} other ` +
+          'folder(s): every labelled message is stored twice. On Gmail poll All Mail ONLY.',
+        folders: configured.map(c => c.folder),
+      });
+    }
     res.json({
       status: 'success',
       mailbox_id: id,
       provider_id_kind: out.provider_id_kind,
       emit_override: { emit_source_name: row.emit_source_name || null, emit_id_kind: row.emit_id_kind || null },
       configured,
+      warnings,
       folders: out.folders,
     });
   } catch (err) {

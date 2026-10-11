@@ -14,6 +14,7 @@
  * Mutation-checked:
  *   - SU gate replaced by can_manage          → "grant holders (manage included) get 403; strangers 404"
  *   - configured-folder check dropped         → "flags configured folders that are missing or All Mail"
+ *   - All-Mail-alongside warning dropped      → "All Mail alongside other folders is warned; All Mail ONLY is clean"
  */
 
 'use strict';
@@ -105,6 +106,18 @@ describe('GET /api/mailboxes/:id/folders', () => {
     expect(byName.INBOX).toMatchObject({ exists: true, messages: 62012, backfill: false, all_mail: false });
     expect(byName[SENT]).toMatchObject({ exists: false }); // localized/misspelt name caught before polling
     expect(byName['[Gmail]/All Mail']).toMatchObject({ exists: true, all_mail: true });
+  });
+
+  test('All Mail alongside other folders is warned; All Mail ONLY is clean', async () => {
+    const r = await call(`/api/mailboxes/${MB}/folders`, { t: SU() });
+    expect(r.json.warnings).toEqual([expect.objectContaining({
+      code: 'ALL_MAIL_ALONGSIDE_OTHER_FOLDERS', folders: ['INBOX', SENT, '[Gmail]/All Mail'],
+    })]);
+    expect(r.json.warnings[0].message).toMatch(/stored twice/);
+    W.T.mailboxes.find(b => b.id === MB).ingest_folders = JSON.stringify({ '[Gmail]/All Mail': { emit_to_rules: true, backfill: false } });
+    const r2 = await call(`/api/mailboxes/${MB}/folders`, { t: SU() });
+    expect(r2.json.warnings).toEqual([]);
+    expect(r2.json.configured).toEqual([expect.objectContaining({ folder: '[Gmail]/All Mail', exists: true, all_mail: true, backfill: false })]);
   });
 
   test('grant holders (manage included) get 403; strangers 404; no IMAP connection is made', async () => {

@@ -79,6 +79,15 @@ Untick **Ingest enabled** to stop polling a box entirely.
   every rule would fire twice. Store-only (Emit unticked) is always safe.
 - The same message in two YisraCase mailboxes (To: one, Cc: the other) is
   logged once; both stored copies link to that log entry.
+- **Drafts are never copied** — not stored, not fed to rules — in any folder.
+  They are unsent, and Gmail saves a new copy of a draft every few seconds
+  while you type. The message you finally send is copied normally.
+- **Google mailboxes: poll `[Gmail]/All Mail` and nothing else.** Google
+  shows each label as its own folder, so the same email sits in several;
+  All Mail holds every email once — received, sent, and whatever your filters
+  file away under labels. Never list All Mail **together with** other
+  folders: every labelled email would be stored twice (the superuser folder
+  listing warns about it).
 
 ## Emitting as another source (the Google inbox)
 
@@ -95,13 +104,20 @@ one log entry instead of two.
   *emits as gmail-firm (provider id)*.
 - A message that arrives without a Google id is **stored but not fed to
   rules**, and a warning is recorded — it is never fed under a different id.
+- The Google inbox reads **All Mail only**, so its **sent** mail feeds rules
+  and the log too — as the Apps Script ingest always did (replies to clients
+  land on their timelines); firm-to-firm mail is skipped as usual.
+- In the **Comms hub**, that mailbox's new mail shows under **All folders**:
+  it has no separate Inbox folder in YisraCase, and its sent mail is not set
+  apart yet.
 - To undo it, set both values back to empty in one save together with Emit
-  to rules off on INBOX (the checklist has the exact call). Do **not** turn
+  to rules off on All Mail (the checklist has the exact call). Do **not** turn
   the `gmail-firm` source off: that also cuts off the Apps Script ingest.
 - Superusers can list a mailbox's folders from the console
   (`GET /api/mailboxes/<id>/folders`): exact folder names, message counts,
-  whether each configured folder exists, and whether the server hands out
-  Google ids.
+  whether each configured folder exists, whether it is All Mail (with a
+  warning when All Mail is listed alongside other folders), and whether the
+  server hands out Google ids.
 
 ## Attachments
 

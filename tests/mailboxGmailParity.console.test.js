@@ -18,6 +18,7 @@
  *   - unwrap() a no-op                           → "court NEFs with Gmail's renderings only: REVIEW …"
  *   - unwrap() joins every line break            → "a short-line break is not a wrap: rejoining it is not allowed …"
  *   - court flag never set                       → "a court VALUE difference is STOP"
+ *   - per-log-row dedupe dropped                 → "one Gmail message stored in two folders … is compared once"
  */
 
 'use strict';
@@ -219,6 +220,14 @@ describe('the gate script, end to end', () => {
     const res = await runGate([g], calls);
     expect(res.verdict).toBe('PASS');
     expect(calls.filter(u => u === '/api/email-ingest/rules/test-transform')).toHaveLength(4); // 15 + 16, GAS + worker
+  });
+
+  test('one Gmail message stored in two folders (pre-switch INBOX + Sent) is compared once', async () => {
+    const a = message({ html: NEF_HTML, gasText: NEF_GAS, rules: [12] });
+    const copy = { html: a.html, row: { ...a.row, mid: a.row.mid + 500 } };   // same email_log row (el_id), another folder's row
+    const res = await runGate([copy, a]);
+    expect(res.report).toHaveLength(1);
+    expect(res.report[0].mid).toBe(copy.row.mid);
   });
 
   test('a truncated Apps Script raw_input: text read from the preview, or the row skipped when the cut fell inside it', async () => {

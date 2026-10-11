@@ -3,8 +3,10 @@
 // SELECTs through the SU DB console, GET …/emit-preview, POST
 // /api/email-ingest/rules/test-transform (zero side effects).
 //
-// For each INBOX message of the Gmail mailbox that the Apps Script adapter
-// also logged AND that matched at least one rule in production, it runs every
+// For each stored message of the Gmail mailbox (every folder — All Mail is the
+// sanctioned configuration; pass `folder` to narrow) that the Apps Script
+// adapter also logged AND that matched at least one rule in production, it
+// runs every
 // matched rule's PRODUCTION transform twice — on the Apps Script envelope as
 // logged, and on the same envelope with text/html swapped for what the worker
 // emits (GET …/emit-preview = the worker's own emitText) — and compares the
@@ -34,7 +36,7 @@
 // STOP on any court-mail VALUE difference; REVIEW when only REVIEW-pass classes
 // (or non-court differences) remain — read the examples, then accept by ruling;
 // PASS when identical.
-await (async function textParity({ address = 'stuart@4lsg.com', limit = 60, sinceUtc = null } = {}) {
+await (async function textParity({ address = 'stuart@4lsg.com', limit = 60, sinceUtc = null, folder = null } = {}) {
   const sql = async (query) => (await apiSend('/admin/db/query', 'POST', { query })).rows;
   const lit = (s) => `'${String(s).replace(/\\/g, '\\\\').replace(/'/g, "''")}'`;
   const asObj = (v) => {
@@ -149,14 +151,18 @@ await (async function textParity({ address = 'stuart@4lsg.com', limit = 60, sinc
              ORDER BY (e.status = 'duplicate'), e.id LIMIT 1) AS gas_raw
       FROM mail_messages m
       JOIN email_log l ON l.source = 'gmail-firm' AND l.message_id = m.provider_id
-     WHERE m.mailbox_id = ${Number(mb.id)} AND m.folder = 'INBOX'
+     WHERE m.mailbox_id = ${Number(mb.id)}
+       ${folder ? `AND m.folder = ${lit(folder)}` : ''}
        ${sinceUtc ? `AND m.ingested_at >= ${lit(sinceUtc)}` : ''}
      ORDER BY m.id DESC LIMIT ${Number(limit)}`);
 
   const report = [];
   const diffs = [];
   let compared = 0; let textSame = 0; let textChecked = 0; let skipped = 0;
+  const seenLog = new Set(); // one Gmail message stored in two folders (pre-All-Mail INBOX + Sent) = one comparison
   for (const r of rows) {
+    if (seenLog.has(Number(r.el_id))) continue;
+    seenLog.add(Number(r.el_id));
     const matched = ((asObj(r.meta) || {}).matched_rules || []).map(Number);
     const gas = envelopeOf(r.gas_raw);
     if (!gas || gas.text == null) { skipped++; continue; } // no Apps Script copy, or its text was cut off

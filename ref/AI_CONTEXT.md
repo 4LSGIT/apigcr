@@ -977,6 +977,12 @@ provider id is stored + alerted, NEVER emitted under the RFC id. In-process
 emission reads source `id`/`name`/`active` only — never `api_key`, never
 stamps `last_used_at` (that column = last HTTP post). Feeder tell in
 `email_ingest_executions`: `remote_ip` NULL = worker, set = HTTP adapter.
+**Gmail = `[Gmail]/All Mail` as the ONLY folder** (ruling 2026-10-11): one
+copy of inbound, sent and label-filed mail; never All Mail ALONGSIDE other
+folders (double store — `GET /api/mailboxes/:id/folders` warns). A
+provider-id mailbox emits its sent mail too (the Apps Script posts it — design
+§4.1 amendment). **`\Draft` messages are never stored nor emitted** (worker
+DRAFT GUARD; Gmail re-creates drafts per autosave).
 Pilot, gate and retirement runbook: `ref/MAILBOX_GMAIL_PARITY.md`.
 Operators: manual/08-Admin-Tools/08-mailboxes.md.
 

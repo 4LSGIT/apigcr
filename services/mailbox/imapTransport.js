@@ -74,6 +74,13 @@
  * `attachments` ([{part, filename, size, mime, cid?}]) and streamed later, on
  * demand, by fetchPart(). `size` there is the server's ENCODED size (base64 ≈
  * 4/3 of the file) — the only size known without downloading.
+ *
+ * ── DRAFTS COME BACK AS METADATA ONLY ────────────────────────────────────────
+ * A message flagged \Draft is returned with `draft: true` and NO bodies — its
+ * text parts are never downloaded, because the worker never stores a draft
+ * (ref/MAILBOX_SYSTEM_DESIGN.md §4.1, the two-tier exception). Gmail re-saves a
+ * draft as a NEW message (new UID, old one expunged) every autosave; in All
+ * Mail that is a stream of throwaway UIDs.
  */
 
 'use strict';
@@ -406,7 +413,8 @@ function makeSession(client, row, secret) {
 
     /**
      * Full metadata + capped text bodies for the given UIDs, ascending. A UID
-     * the server no longer has is simply absent from the result.
+     * the server no longer has is simply absent from the result. A \Draft
+     * message comes back with `draft: true` and no bodies (header doc).
      */
     fetchMessages: guard(async (uids) => {
       const want = [...new Set((uids || []).map(Number).filter(u => Number.isInteger(u) && u > 0))];
@@ -450,7 +458,13 @@ function makeSession(client, row, secret) {
           textTruncated: false,
           htmlTruncated: false,
           attachments: st.attachments,
+          draft: false,
         };
+        if (msg.flags.includes('draft')) {
+          msg.draft = true;
+          out.push(msg);
+          continue;
+        }
         for (const [key, part] of [['text', st.textPart], ['html', st.htmlPart]]) {
           if (!part) continue;
           const d = await client.download(String(uid), part, { uid: true, maxBytes: limits.maxBodyBytes });
