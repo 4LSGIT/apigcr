@@ -582,7 +582,7 @@
       <i class="fa-solid fa-comments"></i><span>Comms</span>
       <span class="sb-badge" id="sbCommsBadge" style="display:none" title="Unread in the inboxes you can read">0</span>
     </div>
-    <div class="sb-item" data-tab="tabLogs" onclick="logs?'':tabLogGet(0);openMainTab('tabLogs')" title="Log">
+    <div class="sb-item" data-tab="tabLogs" onclick="openLogsTab()" title="Log">
       <i class="fa-solid fa-box-archive"></i><span>Log</span>
     </div>
     <div class="sb-item" data-tab="tabBills" onclick="openMainTab('tabBills')" title="Bills">
@@ -661,7 +661,7 @@
     <button class="home-btn" onclick="newContact()">
       <i class="fa-solid fa-user-plus fa-2xl"></i><br /><br />New Client
     </button>
-    <button class="home-btn" onclick="logs?'':tabLogGet(0);openMainTab('tabLogs')">
+    <button class="home-btn" onclick="openLogsTab()">
       <i class="fa-solid fa-box-archive fa-2xl"></i><br /><br />Log
     </button>
     <div style="height: 5px"></div>
@@ -1333,6 +1333,11 @@
     #tabCalendar .calx-b-superseded { color: var(--text-muted); text-decoration: line-through; }
     #tabCalendar tbody tr { cursor: pointer; }
     #tabCalendar .calx-note { color: var(--text-muted); font-size: 0.85rem; margin-top: 8px; }
+    /* U9b-P2 — the quick-action cell. Small buttons, wrapping inside the cell;
+       on phones the labels drop and the icons carry title/aria-label, so the
+       column stays a column of icons rather than widening the table. */
+    #tabCalendar .calx-acts button { font-size: 0.78rem; padding: 3px 8px; margin: 1px 0; white-space: nowrap; }
+    @media (max-width: 768px) { #tabCalendar .calx-acts .calx-al { display: none; } }
 
     /* U9b-P1 — List | Grid. A joined two-button segment; the pressed half
        takes the same accent fill as .calx-chip.on so the bar keeps one
@@ -1424,6 +1429,7 @@
         <th>Attached to</th>
         <th>With</th>
         <th>State</th>
+        <th>Actions</th>
       </tr>
     </table>
     <div id="calxFoot" class="calx-note"></div>
@@ -1484,10 +1490,24 @@
        screen, in which case the next Grid show reboots it (calxWire says
        why). It is a DIRECT child of the tab so openMainTab()'s lazy data-src
        swap can load it: calxApplyView() arms data-src only in Grid mode,
-       which brings the grid up on every path that opens this tab — F5
-       restore's bare openMainTab included — and keeps List mode from loading
+       which brings the grid up on every path that opens this tab — a bare
+       openMainTab included — and keeps List mode from loading
        FullCalendar at all. The chosen mode persists per browser under
        `yc-calendar-view`.
+
+       QUICK ACTIONS (U9b-P2): an Actions cell per row, the old tabs' buttons
+       for the row's own kind, through the SHARED helpers rather than private
+       copies. Appts get the Appts tab's four through the shell's apptUpdate();
+       events get the Events tab's Complete/Cancel through scripts.js, a
+       deadline taking scripts.js's twins of the met|moot / cancelled|moot
+       dialogs eventform asks (ref/plans.md: fold eventform onto them).
+       Nothing here refetches: every one of those writes goes through apiSend,
+       the sniff announces it, and the LIVENESS subscriber below refetches once
+       (a reschedule's two announcements land inside one debounce). The rows
+       carry state + resolution, not appt_status/event_status, so
+       calxApptStatus() maps back — exactly, see APPT_STATE in
+       services/caseEventService.js. Superseded and cancelled rows get no
+       actions; a resolved EVENT gets none either, as in eventform.
        ═══════════════════════════════════════════════════════════════════════ */
 
     let calxRows = null;          // null = never loaded (drives first-open)
@@ -1607,6 +1627,57 @@
       return '<span class="calx-key">—</span>';
     }
 
+    /* An appt row's status, as the Appts tab passes it to apptUpdate() — the
+       inverse of APPT_STATE (services/caseEventService.js). A live row maps
+       to 'Scheduled' even when the stored status is one of the blank-enum
+       rows: confirmCorrection() and correctionBannerHtml() treat '' and
+       'Scheduled' alike, so the dialogs come out identical. */
+    const CALX_APPT_STATUS = { attended: 'Attended', no_show: 'No Show', cancelled: 'Canceled' };
+    function calxApptStatus(row) {
+      return row.state === 'live' ? 'Scheduled' : (CALX_APPT_STATUS[row.resolution] || null);
+    }
+
+    /** The Actions cell. Same rule as the Appts tab: every action except the
+     *  one matching the current status. */
+    function calxActions(row) {
+      const btn = (act, icon, label) => '<button type="button" data-calx-act="' + act + '" title="' + label
+        + '" aria-label="' + label + '"><i class="fa-solid ' + icon + '"></i><span class="calx-al"> ' + label + '</span></button>';
+      if (row.source === 'appt') {
+        // cancelled + superseded (a Rescheduled appt) get nothing, so the
+        // Appts tab's "hide Cancel on Canceled / Reschedule on Rescheduled"
+        // never has a row to apply to here.
+        if (row.state !== 'live' && row.state !== 'resolved') return '';
+        const s = calxApptStatus(row);
+        const b = [];
+        if (s !== 'Attended') b.push(btn('Attended', 'fa-user-check', 'Attended'));
+        if (s !== 'No Show') b.push(btn('No Show', 'fa-user-xmark', 'No Show'));
+        b.push(btn('Cancel', 'fa-calendar-xmark', 'Cancel'));
+        b.push(btn('Reschedule', 'fa-user-clock', 'Reschedule'));
+        return b.join(' ');
+      }
+      // Events: only while live (eventform: "Status actions are only offered
+      // while it is Scheduled").
+      if (row.state !== 'live') return '';
+      return btn('complete', 'fa-check', 'Complete') + ' ' + btn('cancel', 'fa-ban', 'Cancel');
+    }
+
+    /** Run a quick action. No callback and no refetch — see QUICK ACTIONS. */
+    function calxAct(row, act) {
+      if (row.source === 'appt') {
+        // Reschedule's picker is a datetime-local: 'YYYY-MM-DDTHH:MM', the
+        // shape the Appts tab passes (appt_datetime_local). Cancel and the
+        // two status actions ignore the date, as they do from the Appts tab.
+        const date = act === 'Reschedule'
+          ? String(row.starts_at || '').slice(0, 16).replace(' ', 'T') : null;
+        apptUpdate(row.source_id, act, date, null, calxApptStatus(row));
+        return;
+      }
+      // kind_key is events.kind, the column eventform's efIsDeadline() reads.
+      const deadline = row.kind_key === 'deadline';
+      if (act === 'complete') (deadline ? eventCompleteDeadline : eventComplete)(row.source_id);
+      else if (act === 'cancel') (deadline ? eventCancelDeadline : eventCancel)(row.source_id);
+    }
+
     /** The kinds currently selected. Empty = all (the "All" chip). */
     function calxSelectedKinds() {
       return [...document.querySelectorAll('#calxKinds .calx-chip.on')]
@@ -1670,7 +1741,7 @@
         if (!calxRows.length) {
           const row = table.insertRow();
           row.style.cursor = 'default';
-          row.innerHTML = '<td colspan="6" style="color:var(--text-muted)">Nothing on the calendar for '
+          row.innerHTML = '<td colspan="7" style="color:var(--text-muted)">Nothing on the calendar for '
             + calxEsc(calxFilterSentence()) + '.</td>';
         } else {
           calxRows.forEach((r) => {
@@ -1690,14 +1761,18 @@
               '<td>' + label + '</td>' +
               '<td>' + calxAnchor(r) + '</td>' +
               '<td>' + calxWithName(r) + '</td>' +
-              '<td>' + calxBadge(r) + '</td>';
+              '<td>' + calxBadge(r) + '</td>' +
+              '<td class="calx-acts">' + calxActions(r) + '</td>';
             // Row click opens the row's OWN form, through the shell's existing
             // openers — the same two Swals the Appts and Events tabs use, so
             // there is one way to open an appointment and one way to open an
             // event in this whole application. An anchor click is excluded so
-            // the case/contact links still navigate.
+            // the case/contact links still navigate; a quick-action click runs
+            // its action instead (see QUICK ACTIONS).
             row.onclick = (ev) => {
               if (ev.target.closest('a')) return;
+              const act = ev.target.closest('button[data-calx-act]');
+              if (act) { calxAct(r, act.dataset.calxAct); return; }
               if (r.source === 'appt') showAppt(r.source_id);
               else showEvent(r.source_id);
             };
@@ -2885,6 +2960,13 @@
 
     function exportLog() {
       return exportLogCsv(getLogFilterParams, 'yisracase-log');
+    }
+
+    /** Sole opener for the Log tab — sidebar item AND home button, and F5
+     *  restore (openMainTabOnBoot). Was an inline onclick on both buttons. */
+    function openLogsTab() {
+      if (!logs) tabLogGet(0);                         // first open
+      openMainTab('tabLogs');
     }
 
     async function tabLogGet(offset) {
@@ -4801,7 +4883,12 @@ async function initAuth() {
         !openIsIndex && !openIsStale && params.open && E(params.open)
           ? params.open
           : "tabHome";
-      openMainTab(openTab);
+      // With ?files= this is a placeholder: restoreOpenFiles() re-opens the
+      // real view once the files are up, through the tab's opener. Without,
+      // this IS the restore — so it goes through the opener here, and each
+      // boot calls a tab's opener exactly once (openMainTabOnBoot says why).
+      if (params.files) openMainTab(openTab);
+      else openMainTabOnBoot(openTab);
 
       // Rebuild the workspace, THEN hand the address bar over to syncWorkspaceUrl().
       //
@@ -5366,8 +5453,34 @@ async function initAuth() {
         // boot, so an old one would now select a completely unrelated file.
         // (URLs written before the case_id fix contain exactly that.)
         const stale = open && open.indexOf("file-div") === 0;
-        openMainTab(!stale && open && E(open) ? open : "tabHome");
+        openMainTabOnBoot(!stale && open && E(open) ? open : "tabHome");
       }
+    }
+
+    /**
+     * Open a MAIN tab on boot (?open=) through the tab's own opener, where it
+     * has one. A bare openMainTab() only shows the div: the list tabs fetch in
+     * their opener ("first open" / stale refetch), so a bare restore showed
+     * an F5'd Cases, Contacts, Appts, Calendar, Events or Log tab EMPTY until
+     * someone pressed Refresh. Tabs with no opener — and file divs, and Home —
+     * fall through to openMainTab().
+     *
+     * Called from exactly ONE place per boot (the boot's own ?open= when there
+     * are no ?files=, else restoreOpenFiles' tail), never both: an opener's
+     * first-open guard (`if (!cases)`, `calxRows === null`) stays falsy until
+     * its GET resolves, so a second call would fetch the list twice.
+     */
+    function openMainTabOnBoot(tabId) {
+      const opener = {
+        tabCases:    openCasesTab,
+        tabContacts: openContactsTab,
+        tabAppts:    openApptsTab,
+        tabCalendar: openCalendarTab,
+        tabEvents:   openEventsTab,
+        tabLogs:     openLogsTab,
+      }[tabId];
+      if (opener) opener();
+      else openMainTab(tabId);
     }
 
     function toggleOpenFilesList() {

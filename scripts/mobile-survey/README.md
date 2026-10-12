@@ -6,10 +6,10 @@ hosts, at the widths you pass:
 
 | Group     | What it opens |
 |-----------|---------------|
-| `tabs`    | every sidebar tab |
+| `tabs`    | every sidebar tab, plus the Calendar tab's List (rows + quick actions) and Grid modes |
 | `panels`  | every More Features / Admin panel (each `[data-target]` tile — new tiles are picked up automatically) |
 | `files`   | a case file and a contact file, and every tab inside each (Refresh is skipped: it opens a reload confirm) |
-| `dialogs` | New Client, New Case, New Appointment, New Event, Reschedule, the appointments calendar, Show Appointment, the two Log adopt dialogs (case docket, phone/email) |
+| `dialogs` | New Client, New Case, New Appointment, New Event, Reschedule, the appointments calendar, Show Appointment, the two deadline quick actions (complete, cancel), the two Log adopt dialogs (case docket, phone/email) |
 
 For each surface it records **horizontal overflow**: the shell document, the
 pane document, any visible nested frame (e.g. `tasks.html` inside a case tab),
@@ -89,7 +89,10 @@ an unbroken URL, a short code — and one with a number no contact holds at
 `…/conversations/5555550198` (Add to contact, an attachment-only text, a
 call), and All numbers at `phone-lines/all/{conversations,calls}` +
 `…/all/conversations/5555550199` (line tags, "via" bubbles, the From pickers)
-— surveyed as `tab:tabComms:phone-*`), the
+— surveyed as `tab:tabComms:phone-*`), the Calendar tab's list
+(`calendar-range` — one row per action-cell shape, surveyed as
+`tab:tabCalendar:list`; Grid is `tab:tabCalendar:grid`, against an empty
+`calendar-feed`), the
 Connections phone-line Access editor (`phone-lines/admin`,
 `phone-lines/1/grants`, `users`; `panel:connectionsDiv:phone-access`) — enough to fill the tables
 that tend to overflow and to put every conditional Overview / Case Details box

@@ -435,6 +435,10 @@ Active surfaces with known next steps.
   - **yc-forms sizes are rem-based** — `.yc-label` 0.92rem (14.72px), `.yc-sublabel` 0.8rem (12.8px) against the app's 14/12px tokens. Converge when yc-forms is next touched; check that every page loading it also loads `theme.css` first.
   - **The mobile survey asserts overflow only.** The label/hint uniformity checks were session-scratch Playwright scripts; a `--looks` mode in `scripts/mobile-survey/` would make them a gate.
 
+- **Deadline dialogs live twice (U9b-P2, 2026-10-13).** `public/scripts.js` `eventCompleteDeadline` / `eventCancelDeadline` / `eventPatchStatus` (the Calendar list's quick actions) are copies of `eventform.html`'s `efCompleteDeadline` / `efCancelDeadline` / `efPatchStatus` — the pane's copies can't be reached from the shell. Move eventform onto the scripts.js twins (its action bar then branches exactly as the Calendar list does) and delete its copies.
+
+- **`apptUpdate()` refetches the Appts tab from anywhere (U9b-P2, 2026-10-13).** All six of its write branches call `tabApptsGet(offsets.appts)` unconditionally, so an action from the Calendar list also costs a hidden GET /api/appts (+ calendar-types), non-silent — an empty or failed Appts fetch toasts over the Calendar tab. Dies with the old tabs at U9b-P4; if apptUpdate outlives them, gate the refetch on the Appts tab being the caller.
+
 - **Documentation currency** now has a mechanism (2026-09-14): doc≠code divergences are filed to scratch `ns=docs` at discovery; the weekly docs review (`ref/DOCS_REVIEW.md`) drains the queue and updates `ref/AI_CONTEXT.md`'s currency header. No more ad-hoc drift sweeps.
 
 ---

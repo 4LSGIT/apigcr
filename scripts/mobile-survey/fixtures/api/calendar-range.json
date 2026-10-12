@@ -1,0 +1,206 @@
+{
+ "status": "success",
+ "items": [
+  {
+   "case_id": "TESTCASE1",
+   "type_key": "meeting_consult",
+   "all_day": false,
+   "resolution": null,
+   "location": null,
+   "status_norm": null,
+   "source": "appt",
+   "source_id": 7000,
+   "kind_key": "meeting",
+   "title": "Strategy Session",
+   "starts_at": "2026-10-14 10:00:00",
+   "ends_at": "2026-10-14 11:00:00",
+   "state": "live",
+   "link_type": "case",
+   "link_id": "TESTCASE1",
+   "display": {
+    "case_label": "26-99999 Testcase"
+   },
+   "attendees": [
+    {
+     "party": "user",
+     "id": 2
+    }
+   ]
+  },
+  {
+   "case_id": null,
+   "type_key": "meeting_341",
+   "all_day": false,
+   "resolution": "attended",
+   "location": null,
+   "status_norm": null,
+   "source": "appt",
+   "source_id": 7001,
+   "kind_key": "meeting",
+   "title": "341 Meeting of Creditors \u2014 Continued Hearing Placeholder Title",
+   "starts_at": "2026-10-15 09:30:00",
+   "state": "resolved",
+   "link_type": "contact",
+   "link_id": "9001",
+   "display": {
+    "contact_name": "Jane Testcase"
+   },
+   "attendees": [
+    {
+     "party": "user",
+     "id": 2
+    }
+   ]
+  },
+  {
+   "case_id": null,
+   "type_key": null,
+   "all_day": false,
+   "resolution": "no_show",
+   "location": null,
+   "status_norm": null,
+   "source": "appt",
+   "source_id": 7002,
+   "kind_key": "meeting",
+   "title": "Walk-in",
+   "starts_at": "2026-10-16 14:15:00",
+   "state": "resolved",
+   "link_type": "contact",
+   "link_id": "9001",
+   "display": {
+    "contact_name": "Jane Testcase"
+   },
+   "attendees": [
+    {
+     "party": "user",
+     "id": 2
+    }
+   ]
+  },
+  {
+   "case_id": null,
+   "type_key": "meeting_consult",
+   "all_day": false,
+   "resolution": "cancelled",
+   "location": null,
+   "status_norm": null,
+   "source": "appt",
+   "source_id": 7003,
+   "kind_key": "meeting",
+   "title": "Strategy Session",
+   "starts_at": "2026-10-17 11:00:00",
+   "state": "cancelled",
+   "link_type": "contact",
+   "link_id": "9001",
+   "display": {
+    "contact_name": "Jane Testcase"
+   },
+   "attendees": [
+    {
+     "party": "user",
+     "id": 2
+    }
+   ]
+  },
+  {
+   "case_id": "TESTCASE1",
+   "type_key": "deadline_objection",
+   "all_day": true,
+   "resolution": null,
+   "location": null,
+   "status_norm": null,
+   "source": "event",
+   "source_id": 8000,
+   "kind_key": "deadline",
+   "title": "Deadline to Object to Discharge \u2014 Jane Testcase (26-99999) \u2014 an overlong authored title",
+   "starts_at": "2026-10-18 00:00:00",
+   "state": "live",
+   "link_type": "case",
+   "link_id": "TESTCASE1",
+   "docket": "26-99999",
+   "display": {
+    "case_label": "26-99999 Testcase"
+   },
+   "attendees": [
+    {
+     "party": "firm"
+    }
+   ]
+  },
+  {
+   "case_id": "TESTCASE1",
+   "type_key": "hearing_confirmation",
+   "all_day": false,
+   "resolution": null,
+   "location": null,
+   "status_norm": null,
+   "source": "event",
+   "source_id": 8001,
+   "kind_key": "hearing",
+   "title": "Confirmation Hearing",
+   "starts_at": "2026-10-20 13:30:00",
+   "state": "live",
+   "link_type": "case",
+   "link_id": "TESTCASE1",
+   "docket": "26-99999",
+   "display": {
+    "case_label": "26-99999 Testcase"
+   },
+   "attendees": [
+    {
+     "party": "user",
+     "id": 2
+    }
+   ]
+  },
+  {
+   "case_id": null,
+   "type_key": null,
+   "all_day": true,
+   "resolution": "missed",
+   "location": null,
+   "status_norm": null,
+   "source": "event",
+   "source_id": 8002,
+   "kind_key": "deadline",
+   "title": "Proof of Claim Bar Date",
+   "starts_at": "2026-10-21 00:00:00",
+   "state": "resolved",
+   "link_type": "case_number",
+   "link_id": "2:26-bk-41234",
+   "docket": "2:26-bk-41234",
+   "display": {},
+   "attendees": [
+    {
+     "party": "firm"
+    }
+   ]
+  },
+  {
+   "case_id": "TESTCASE1",
+   "type_key": "deadline_objection",
+   "all_day": true,
+   "resolution": "moot",
+   "location": null,
+   "status_norm": null,
+   "source": "event",
+   "source_id": 8003,
+   "kind_key": "deadline",
+   "title": "Objection Deadline",
+   "starts_at": "2026-10-22 00:00:00",
+   "state": "cancelled",
+   "link_type": "case",
+   "link_id": "TESTCASE1",
+   "display": {
+    "case_label": "26-99999 Testcase"
+   },
+   "attendees": [
+    {
+     "party": "firm"
+    }
+   ]
+  }
+ ],
+ "has_more": false,
+ "limit": 1000
+}

@@ -192,6 +192,21 @@ async function walk(page, W, record) {
       }
       if (cf) await cf.evaluate(() => { closeNewText(); showTab('email'); });
     }
+
+    // Calendar (U9b): both modes. The loop above opens the tab bare, which
+    // fetches nothing — so List goes through the tab's own opener here, with
+    // fixtures/api/calendar-range (every action-cell shape: live / attended /
+    // no-show / cancelled appts, live / missed / moot events, overlong
+    // titles); then Grid (calendar.html in #calxGridFrame). The mode persists
+    // in localStorage, which outlives the page — so it goes back to List, or
+    // the next width's loop would open the tab in Grid.
+    if (tabs.includes('tabCalendar')) {
+      await page.evaluate(() => { calxSetView('list'); openCalendarTab(); }); await sleep(1500);
+      await record('tab:tabCalendar:list', await measure(page, null), await shot('calendar_list'));
+      await page.evaluate(() => calxSetView('grid')); await sleep(2500);
+      await record('tab:tabCalendar:grid', await measure(page, await frameOf(page, VISIBLE_TAB_FRAME)), await shot('calendar_grid'));
+      await page.evaluate(() => calxSetView('list'));
+    }
   }
 
   if (ONLY.has('panels')) {
@@ -237,6 +252,9 @@ async function walk(page, W, record) {
       ['reschedule', "apptUpdate(7000, 'Reschedule', '2026-10-07T10:00')"],
       ['appt-calendar', 'tabApptsCal()'],
       ['show-appt', 'showAppt(7000)'],
+      // the Calendar list's deadline quick actions (scripts.js, U9b-P2)
+      ['deadline-complete', 'eventCompleteDeadline(8000)'],
+      ['deadline-cancel', 'eventCancelDeadline(8000)'],
       ['adopt-docket', "CaseAdoptDialog('2:26-bk-41234')"],
       ['adopt-phone', "OrphanAdoptDialog('3135550100', 'phone')"],
     ];

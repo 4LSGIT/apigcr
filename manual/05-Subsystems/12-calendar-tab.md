@@ -56,6 +56,22 @@ Sorted by start time, ascending; **all-day rows come first within their day**.
 Clicking a row opens that row's own form — the appointment dialog or the event
 dialog, the same two the old tabs use.
 
+## Quick actions
+
+The last column holds the old tabs' row buttons, for the row's own kind
+(icons only on a phone):
+
+- **Appointments** — *Attended · No Show · Cancel · Reschedule*, exactly the
+  Appointments tab's: every action except the one matching the current status,
+  and the same *Status Correction* warning when the appointment is already
+  attended or a no-show.
+- **Events** — *Complete · Cancel* while the event is live. A deadline asks the
+  same outcome questions as the event form (below); every other kind confirms
+  and closes.
+
+Cancelled and superseded rows, and events already resolved, have no buttons —
+open the row to change them. The list updates itself after each action.
+
 ## Pagination
 
 There is none, deliberately. The page is capped at 1000 rows server-side, and
@@ -72,7 +88,8 @@ change is remembered and applied when you come back to it.
 
 ## Deadline outcomes
 
-Completing or cancelling a **deadline** from the event form asks *how*:
+Completing or cancelling a **deadline** — from the event form or from the
+list's quick actions — asks *how*:
 
 - **Complete** → *Met* (default) or *Moot — it stopped applying*.
 - **Cancel** → a *no longer applies (moot)* checkbox.

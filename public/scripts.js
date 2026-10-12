@@ -3477,6 +3477,98 @@ function eventCancel(id, onDone) {
 
 
 /* ──────────────────────────────────────────────────────────────────────────
+   eventCompleteDeadline(id, onDone)  /  eventCancelDeadline(id, onDone)
+   (U9b-P2)
+
+   The DEADLINE twins of eventComplete/eventCancel: same confirm-PATCH-Toast-
+   onDone shape, plus the one question a deadline has that no other kind does.
+   Complete asks met | moot; Cancel asks cancelled | moot. 'missed' is never
+   offered — the nightly sweep writes it for a deadline whose date passed
+   untouched; a person marking one complete is not describing a miss.
+
+   These are copies of eventform.html's efCompleteDeadline/efCancelDeadline/
+   efPatchStatus, which live inside that pane and so cannot be reached from
+   the shell. Keep the wording and the retry rule in step until eventform is
+   moved onto these (ref/plans.md).
+
+   eventPatchStatus: send the resolution, and if the server rejects it (400)
+   send the same action without one and let the server write its own §3.7
+   default — a cached page against a rolled-back server must not turn "mark
+   this met" into a deadline that stays open. Any other status propagates.
+   ────────────────────────────────────────────────────────────────────────── */
+async function eventPatchStatus(id, path, body, resolution) {
+  const url = `/api/events/${id}${path}`;
+  try {
+    return await P.apiSend(url, 'PATCH', { ...body, resolution });
+  } catch (err) {
+    if (!err || err.status !== 400) throw err;
+    console.warn('[event] resolution ' + JSON.stringify(resolution) +
+      ' rejected (400: ' + (err.message || '') + ') — retrying without it');
+    return await P.apiSend(url, 'PATCH', body);
+  }
+}
+
+function eventCompleteDeadline(id, onDone) {
+  Swal.fire({
+    customClass: { popup: 'yc-popup' },
+    title: 'Complete this deadline',
+    input: 'radio',
+    inputValue: 'met',
+    inputOptions: { met: 'Met — the obligation was satisfied', moot: 'Moot — it stopped applying' },
+    icon: 'question',
+    showCancelButton: true,
+    confirmButtonText: 'Mark complete',
+    showLoaderOnConfirm: true,
+    allowOutsideClick: () => !Swal.isLoading(),
+    preConfirm: async (choice) => {
+      try {
+        return { data: await eventPatchStatus(id, '/complete', {}, choice === 'moot' ? 'moot' : 'met') };
+      } catch (err) {
+        Swal.showValidationMessage((err && err.message) || 'Failed to complete event');
+        return false;
+      }
+    },
+  }).then((result) => {
+    if (!result.isConfirmed || !result.value) return;
+    const { data } = result.value;
+    Toast.fire({ icon: data.status || 'success', title: data.title || 'Done!', text: data.message });
+    if (data.status === 'success' && typeof onDone === 'function') onDone();
+  });
+}
+
+function eventCancelDeadline(id, onDone) {
+  Swal.fire({
+    customClass: { popup: 'yc-popup' },
+    title: 'Cancel this deadline?',
+    html: 'This also removes it from the calendar.' +
+      '<label style="display:flex;align-items:center;gap:8px;margin-top:14px;font-size:0.88rem;text-align:left">' +
+      '<input type="checkbox" id="evMoot" style="width:15px;height:15px">' +
+      '<span>It no longer applies (moot), rather than being called off</span></label>',
+    icon: 'warning',
+    showCancelButton: true,
+    confirmButtonText: 'Cancel deadline',
+    cancelButtonText: 'Keep',
+    showLoaderOnConfirm: true,
+    allowOutsideClick: () => !Swal.isLoading(),
+    preConfirm: async () => {
+      const moot = !!(document.getElementById('evMoot') || {}).checked;
+      try {
+        return { data: await eventPatchStatus(id, '/cancel', { delete_gcal: true }, moot ? 'moot' : 'cancelled') };
+      } catch (err) {
+        Swal.showValidationMessage((err && err.message) || 'Failed to cancel event');
+        return false;
+      }
+    },
+  }).then((result) => {
+    if (!result.isConfirmed || !result.value) return;
+    const { data } = result.value;
+    Toast.fire({ icon: data.status || 'success', title: data.title || 'Canceled', text: data.message });
+    if (data.status === 'success' && typeof onDone === 'function') onDone();
+  });
+}
+
+
+/* ──────────────────────────────────────────────────────────────────────────
    splitDocket(raw)  (Phase 4.1 — moved here as the single JS source)
 
    Parse a typed docket into { short, full, ok }.

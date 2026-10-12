@@ -186,3 +186,268 @@ describe('Calendar tab contract with the rest of the shell', () => {
     expect(stray).toEqual([]);
   });
 });
+
+/* ═════════════════════════════════════════════════════════════════════════
+   U9b-P1 + P2 — the toggle, the writers, the quick actions, F5 restore.
+
+   Two kinds of check. STRUCTURE (where an element sits, which callback a
+   button names) is read off the parsed document — jsdom, scripts NOT run.
+   BEHAVIOUR that is decided by a pure function (which actions a row gets,
+   which helper an action calls, what a 400 does, which opener a restored tab
+   goes through) runs that function's REAL source, cut out of the page by
+   name and evaluated in a vm with the shell globals it calls stubbed — so a
+   rule change in the page is a test failure here, not a regex that still
+   happens to match.
+   ═════════════════════════════════════════════════════════════════════════ */
+
+const vm = require('vm');
+const { JSDOM } = require('jsdom');
+const SCRIPTS_JS = fs.readFileSync(path.join(ROOT, 'public/scripts.js'), 'utf8');
+const DOC = new JSDOM(HTML).window.document;
+const CALX = inlineScripts(HTML).find((b) => b.includes('CALENDAR TAB — Unified Events U9'));
+
+/** The full source of `function name(…) {…}` (async or not), by brace count. */
+function fnSrc(src, name) {
+  const m = new RegExp(`(?:async\\s+)?function\\s+${name}\\s*\\(`).exec(src);
+  if (!m) throw new Error(`function ${name} not found`);
+  let i = src.indexOf('{', m.index + m[0].length - 1);
+  // skip the parameter list's own braces (destructuring defaults)
+  let paren = 0;
+  for (let j = m.index + m[0].length - 1; j < src.length; j++) {
+    if (src[j] === '(') paren++;
+    else if (src[j] === ')' && --paren === 0) { i = src.indexOf('{', j); break; }
+  }
+  let depth = 0;
+  for (let j = i; j < src.length; j++) {
+    if (src[j] === '{') depth++;
+    else if (src[j] === '}' && --depth === 0) return src.slice(m.index, j + 1);
+  }
+  throw new Error(`function ${name}: unbalanced`);
+}
+
+describe('U9b-P1 — List | Grid and the New buttons (static)', () => {
+  test('the List | Grid toggle exists with exactly those two views', () => {
+    const views = [...DOC.querySelectorAll('#calxViewToggle > button[data-view]')].map((b) => b.dataset.view);
+    expect(views).toEqual(['list', 'grid']);
+  });
+
+  test('both New buttons route their callback through calxAfterCreate', () => {
+    // The callback cancels the create's own queued bus echo; a button that
+    // passes its own refetch instead costs two list fetches per create.
+    expect(DOC.getElementById('calxNewAppt').getAttribute('onclick')).toMatch(/\bonCreated:\s*calxAfterCreate\b/);
+    expect(DOC.getElementById('calxNewEvent').getAttribute('onclick')).toMatch(/\bonSaved:\s*calxAfterCreate\b/);
+    expect(fnSrc(CALX, 'calxAfterCreate')).toMatch(/clearTimeout\(calxBusDeb\)/);
+  });
+
+  test('the mode persists under yc-calendar-view', () => {
+    expect(CALX).toMatch(/const CALX_VIEW_KEY = 'yc-calendar-view';/);
+    expect(CALX).toContain('localStorage.getItem(CALX_VIEW_KEY)');
+    expect(CALX).toContain('localStorage.setItem(CALX_VIEW_KEY');
+  });
+
+  test('#calxGridFrame is a DIRECT child of #tabCalendar', () => {
+    // openMainTab()'s lazy data-src swap is `:scope > iframe[data-src]` —
+    // nest the frame one level deeper and Grid restores to a blank frame.
+    expect(DOC.querySelector('#tabCalendar > iframe#calxGridFrame')).not.toBeNull();
+  });
+
+  test('calxGet takes a last-request-wins ticket and checks it after every await', () => {
+    const get = fnSrc(CALX, 'calxGet');
+    expect(get).toMatch(/const seq = \+\+calxSeq;/);
+    // once after the fetch resolves, once in the catch
+    expect(get.match(/if \(seq !== calxSeq\) return;/g)).toHaveLength(2);
+  });
+});
+
+describe('U9b-P2 — Calendar list quick actions', () => {
+  // One row per shape the read layer can produce (state × resolution × source).
+  const R = {
+    apptLive:      { source: 'appt',  source_id: 1, state: 'live',       resolution: null,        starts_at: '2026-10-14 10:00:00' },
+    apptAttended:  { source: 'appt',  source_id: 2, state: 'resolved',   resolution: 'attended',  starts_at: '2026-10-15 09:30:00' },
+    apptNoShow:    { source: 'appt',  source_id: 3, state: 'resolved',   resolution: 'no_show',   starts_at: '2026-10-16 14:15:00' },
+    apptCancelled: { source: 'appt',  source_id: 4, state: 'cancelled',  resolution: 'cancelled', starts_at: '2026-10-17 11:00:00' },
+    apptSuperseded:{ source: 'appt',  source_id: 5, state: 'superseded', resolution: null,        starts_at: '2026-10-18 11:00:00' },
+    deadlineLive:  { source: 'event', source_id: 6, state: 'live',       resolution: null, kind_key: 'deadline' },
+    hearingLive:   { source: 'event', source_id: 7, state: 'live',       resolution: null, kind_key: 'hearing' },
+    unmappedLive:  { source: 'event', source_id: 8, state: 'live',       resolution: null, kind_key: null },
+    deadlineMet:   { source: 'event', source_id: 9, state: 'resolved',   resolution: 'met', kind_key: 'deadline' },
+    deadlineMissed:{ source: 'event', source_id: 10, state: 'resolved',  resolution: 'missed', kind_key: 'deadline' },
+    eventMoot:     { source: 'event', source_id: 11, state: 'cancelled', resolution: 'moot', kind_key: 'deadline' },
+    eventSuperseded:{ source: 'event', source_id: 12, state: 'superseded', resolution: null, kind_key: 'hearing' },
+  };
+
+  /** calxActions/calxAct/calxApptStatus, real source, shell globals stubbed. */
+  function load() {
+    const calls = [];
+    const rec = (name) => (...args) => { calls.push([name, ...args]); };
+    const ctx = vm.createContext({
+      apptUpdate: rec('apptUpdate'), eventComplete: rec('eventComplete'), eventCancel: rec('eventCancel'),
+      eventCompleteDeadline: rec('eventCompleteDeadline'), eventCancelDeadline: rec('eventCancelDeadline'),
+    });
+    const statusMap = /const CALX_APPT_STATUS = [^\n]+/.exec(CALX)[0];
+    vm.runInContext([statusMap, fnSrc(CALX, 'calxApptStatus'), fnSrc(CALX, 'calxActions'), fnSrc(CALX, 'calxAct'),
+      'this.api = { calxActions, calxAct, calxApptStatus };'].join('\n'), ctx);
+    const acts = (row) => [...ctx.api.calxActions(row).matchAll(/data-calx-act="([^"]+)"/g)].map((m) => m[1]);
+    return { ...ctx.api, acts, calls };
+  }
+
+  test('appts: the Appts tab rule — every action but the one matching the status', () => {
+    const { acts } = load();
+    expect(acts(R.apptLive)).toEqual(['Attended', 'No Show', 'Cancel', 'Reschedule']);
+    expect(acts(R.apptAttended)).toEqual(['No Show', 'Cancel', 'Reschedule']);
+    expect(acts(R.apptNoShow)).toEqual(['Attended', 'Cancel', 'Reschedule']);
+  });
+
+  test('events: Complete + Cancel while live, whatever the kind (eventform parity)', () => {
+    const { acts } = load();
+    for (const r of [R.deadlineLive, R.hearingLive, R.unmappedLive]) expect(acts(r)).toEqual(['complete', 'cancel']);
+  });
+
+  test('cancelled, superseded and resolved-event rows get no actions', () => {
+    const { calxActions } = load();
+    for (const r of [R.apptCancelled, R.apptSuperseded, R.deadlineMet, R.deadlineMissed, R.eventMoot, R.eventSuperseded]) {
+      expect(calxActions(r)).toBe('');
+    }
+  });
+
+  test('appt status maps back exactly as APPT_STATE (caseEventService) maps it forward', () => {
+    const { calxApptStatus } = load();
+    expect(calxApptStatus(R.apptLive)).toBe('Scheduled');
+    expect(calxApptStatus(R.apptAttended)).toBe('Attended');
+    expect(calxApptStatus(R.apptNoShow)).toBe('No Show');
+    expect(calxApptStatus(R.apptCancelled)).toBe('Canceled');
+  });
+
+  test('an appt action is apptUpdate with the Appts tab\'s args shape; no refetch callback', () => {
+    const { calxAct, calls } = load();
+    calxAct(R.apptLive, 'Reschedule');
+    calxAct(R.apptNoShow, 'Attended');
+    calxAct(R.apptAttended, 'Cancel');
+    expect(calls).toEqual([
+      // datetime-local's shape — what the Appts tab passes as appt_datetime_local
+      ['apptUpdate', 1, 'Reschedule', '2026-10-14T10:00', null, 'Scheduled'],
+      // currentStatus drives apptUpdate's confirmCorrection guard
+      ['apptUpdate', 3, 'Attended', null, null, 'No Show'],
+      ['apptUpdate', 2, 'Cancel', null, null, 'Attended'],
+    ]);
+  });
+
+  test('an event action takes the deadline dialogs only on a deadline, and passes no callback', () => {
+    const { calxAct, calls } = load();
+    calxAct(R.deadlineLive, 'complete');
+    calxAct(R.deadlineLive, 'cancel');
+    calxAct(R.hearingLive, 'complete');
+    calxAct(R.unmappedLive, 'cancel');
+    expect(calls).toEqual([
+      ['eventCompleteDeadline', 6], ['eventCancelDeadline', 6],
+      ['eventComplete', 7], ['eventCancel', 8],
+    ]);
+  });
+
+  test('the cell is wired: header, row cell, click routed before the row opener', () => {
+    const ths = [...DOC.querySelectorAll('#calxTable th')].map((t) => t.textContent.trim());
+    expect(ths[ths.length - 1]).toBe('Actions');
+    const get = fnSrc(CALX, 'calxGet');
+    // the empty state spans every column
+    expect(get).toContain(`colspan="${ths.length}"`);
+    expect(get).toContain(`'<td class="calx-acts">' + calxActions(r) + '</td>'`);
+    // an action click must not ALSO open the row's form
+    const onclick = get.slice(get.indexOf('row.onclick'));
+    const act = onclick.indexOf('calxAct(r, act.dataset.calxAct); return;');
+    expect(act).toBeGreaterThan(-1);
+    expect(act).toBeLessThan(onclick.indexOf('showAppt(r.source_id)'));
+  });
+
+  test('the actions write through the shared helpers — no direct /api call from the tab', () => {
+    // The U9 fence above already forbids apiSend('/api/events|appts') in the
+    // block; this pins that the actions did not route around it some other way.
+    expect(CALX).not.toMatch(/fetch\(|XMLHttpRequest/);
+  });
+});
+
+describe('U9b-P2 — scripts.js deadline helpers (eventform parity)', () => {
+  function load(apiSend) {
+    const calls = [];
+    const ctx = vm.createContext({
+      P: { apiSend: async (...a) => { calls.push(a); return apiSend(...a); } },
+      console: { warn() {} },
+    });
+    vm.runInContext(fnSrc(SCRIPTS_JS, 'eventPatchStatus') + '\nthis.eventPatchStatus = eventPatchStatus;', ctx);
+    return { eventPatchStatus: ctx.eventPatchStatus, calls };
+  }
+  const fail = (status) => Object.assign(new Error('nope ' + status), { status });
+
+  test('a 400 retries the same action WITHOUT the resolution', async () => {
+    let n = 0;
+    const { eventPatchStatus, calls } = load(async () => { if (n++ === 0) throw fail(400); return { status: 'success' }; });
+    await expect(eventPatchStatus(6, '/cancel', { delete_gcal: true }, 'moot')).resolves.toEqual({ status: 'success' });
+    expect(calls).toEqual([
+      ['/api/events/6/cancel', 'PATCH', { delete_gcal: true, resolution: 'moot' }],
+      ['/api/events/6/cancel', 'PATCH', { delete_gcal: true }],
+    ]);
+  });
+
+  test.each([404, 500, undefined])('a %s propagates, with no retry', async (status) => {
+    const { eventPatchStatus, calls } = load(async () => { throw fail(status); });
+    await expect(eventPatchStatus(6, '/complete', {}, 'met')).rejects.toThrow('nope');
+    expect(calls).toHaveLength(1);
+  });
+
+  test('Complete offers met | moot — never missed (the nightly sweep owns it)', () => {
+    const src = fnSrc(SCRIPTS_JS, 'eventCompleteDeadline');
+    const opts = /inputOptions:\s*\{([^}]*)\}/.exec(src)[1];
+    expect([...opts.matchAll(/(\w+):/g)].map((m) => m[1])).toEqual(['met', 'moot']);
+    expect(src).toMatch(/eventPatchStatus\(id, '\/complete', \{\}, choice === 'moot' \? 'moot' : 'met'\)/);
+  });
+
+  test('Cancel answers cancelled | moot and still deletes the calendar entry', () => {
+    expect(fnSrc(SCRIPTS_JS, 'eventCancelDeadline'))
+      .toMatch(/eventPatchStatus\(id, '\/cancel', \{ delete_gcal: true \}, moot \? 'moot' : 'cancelled'\)/);
+  });
+});
+
+describe('U9b-P2 — F5 restore goes through each tab\'s opener', () => {
+  const SHELL = HTML;   // the boot + restore code spans blocks; read the page
+
+  function load() {
+    const calls = [];
+    const rec = (name) => () => calls.push(name);
+    const ctx = vm.createContext({
+      openCasesTab: rec('openCasesTab'), openContactsTab: rec('openContactsTab'),
+      openApptsTab: rec('openApptsTab'), openCalendarTab: rec('openCalendarTab'),
+      openEventsTab: rec('openEventsTab'), openLogsTab: rec('openLogsTab'),
+      openMainTab: (t) => calls.push('openMainTab:' + t),
+    });
+    vm.runInContext(fnSrc(SHELL, 'openMainTabOnBoot') + '\nthis.f = openMainTabOnBoot;', ctx);
+    return { f: ctx.f, calls };
+  }
+
+  test('each list tab restores through its opener; anything else is a bare openMainTab', () => {
+    const { f, calls } = load();
+    for (const t of ['tabCases', 'tabContacts', 'tabAppts', 'tabCalendar', 'tabEvents', 'tabLogs',
+                     'tabHome', 'tabTasks', 'file-div3']) f(t);
+    expect(calls).toEqual(['openCasesTab', 'openContactsTab', 'openApptsTab', 'openCalendarTab',
+      'openEventsTab', 'openLogsTab', 'openMainTab:tabHome', 'openMainTab:tabTasks', 'openMainTab:file-div3']);
+  });
+
+  test('exactly one opener call per boot: the boot site defers to restore when ?files= is present', () => {
+    // An opener's first-open guard stays falsy until its GET resolves, so the
+    // boot site and the restore tail must never BOTH run the opener.
+    expect(SHELL).toMatch(/if \(params\.files\) openMainTab\(openTab\);\s*else openMainTabOnBoot\(openTab\);/);
+    expect(SHELL).not.toMatch(/^\s*openMainTab\(openTab\);/m);
+    expect(SHELL).toMatch(/if \(params\.files\) await restoreOpenFiles\(params\.files, params\.open\);/);
+    expect(SHELL.match(/openMainTabOnBoot\(/g)).toHaveLength(3);   // declaration + the two sites
+  });
+
+  test('restoreOpenFiles routes a main tab through the helper; a file stays bare', () => {
+    const restore = fnSrc(SHELL, 'restoreOpenFiles');
+    expect(restore).toContain('openMainTabOnBoot(!stale && open && E(open) ? open : "tabHome")');
+    expect(restore).toContain('openMainTab(target && E(target) ? target : "tabHome")');
+  });
+
+  test('the Log tab has a real opener, used by both its buttons', () => {
+    expect(fnSrc(SHELL, 'openLogsTab')).toMatch(/if \(!logs\) tabLogGet\(0\);\s*(?:\/\/[^\n]*)?\s*openMainTab\('tabLogs'\);/);
+    expect(DOC.querySelector('.sb-item[data-tab="tabLogs"]').getAttribute('onclick')).toBe('openLogsTab()');
+    expect(SHELL).not.toContain("logs?'':tabLogGet(0)");
+  });
+});
