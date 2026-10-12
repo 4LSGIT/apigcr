@@ -20,8 +20,10 @@
  *             orphans and suppressed rows invisible; a number on the FROM
  *             side of an incoming row is not that line's; a line-to-line text
  *             is on both lines, once each.
- *   reads     conversations grouped by party, newest activity first, paged by
- *             last id; one conversation oldest-first with an older cursor,
+ *   reads     conversations grouped by party over texts AND calls (a number
+ *             that only called has one; `last` shaped by kind), newest
+ *             activity first, paged by last id; one conversation oldest-first
+ *             with an older cursor,
  *             its texts AND calls interleaved (`kind`; calls shaped like the
  *             call log's; suppressed calls out); the call log newest-first,
  *             missed / unanswered / duration; names from the ACTIVE owner of
@@ -170,8 +172,8 @@ describe('line attribution', () => {
     const convos = async (line) => (await call('GET', `/api/phone-lines/${line}/conversations`, { t: T.su() })).json.conversations;
     const l1 = await convos(1);
     expect(l1.map((c) => c.other_party)).toEqual(['3135550001', '22395', S.L3, '3135550002']);
-    // P2's only line-1 SMS is #4 (incoming); #12 has line 1 on the FROM side of an INCOMING row → not line 1's
-    expect(l1.find((c) => c.other_party === S.P2)).toMatchObject({ count: 1, last_id: 4 });
+    // P2 on line 1 = call #3 + SMS #4; #12 has line 1 on the FROM side of an INCOMING row → not line 1's
+    expect(l1.find((c) => c.other_party === S.P2)).toMatchObject({ count: 2, last_id: 4 });
     // P3 only ever sent a suppressed text → no conversation
     expect(l1.some((c) => c.other_party === S.P3)).toBe(false);
     // the orphan call (to 7344663328) is on no line; nobody's call log has it
@@ -208,6 +210,31 @@ describe('reads', () => {
     // P2's number belonged to a contact whose ownership ENDED → no name
     expect(c.conversations.find((x) => x.other_party === S.P2).contact).toBeNull();
     expect(c.next_cursor).toBeNull();
+  });
+
+  test('conversations count texts AND calls: a number that only CALLED has one, its `last` a call (missed / unanswered / duration)', async () => {
+    const S = SPH_SEED(W);
+    // line 6 has no texts at all — every conversation is calls (P4's call has a NULL direction: from side = line 6)
+    const six = (await call('GET', '/api/phone-lines/6/conversations', { t: T.su() })).json.conversations;
+    expect(six.map((c) => [c.other_party, c.count, c.last_id])).toEqual([[S.P4, 1, 14], [S.P2, 1, 11], [S.P1, 1, 10]]);
+    expect(six.find((c) => c.other_party === S.P1)).toMatchObject({
+      contact: { contact_id: 501, name: 'Pat One' },
+      last: { id: 10, kind: 'call', direction: 'incoming', at: '2026-10-01T12:08:00.000Z', duration_s: 30, status: 'no-answer', unanswered: true, missed: true },
+    });
+    expect(six.find((c) => c.other_party === S.P2).last).toEqual({
+      id: 11, kind: 'call', direction: 'outgoing', at: '2026-10-01T12:09:00.000Z', duration_s: 125, status: 'completed', unanswered: false, missed: false,
+    });
+    expect(six.find((c) => c.other_party === S.P1).last).not.toHaveProperty('snippet');
+    // a text newer than the call: the conversation's `last` is the text; the count holds both
+    W.sms(S.L6, S.P1, 'outgoing', { body: 'sorry we missed you' });             // 16
+    const again = (await call('GET', '/api/phone-lines/6/conversations', { t: T.su() })).json.conversations;
+    expect(again[0]).toMatchObject({ other_party: S.P1, count: 2, last_id: 16, last: { id: 16, kind: 'sms', direction: 'outgoing', snippet: 'sorry we missed you' } });
+    // a suppressed call does not make a conversation, nor does a call with no number (#15, line 1)
+    W.call(S.L6, '3135550009', 'incoming', { suppressed: 1 });
+    const l6 = (await call('GET', '/api/phone-lines/6/conversations', { t: T.su() })).json.conversations;
+    expect(l6.some((c) => c.other_party === '3135550009')).toBe(false);
+    const l1 = (await call('GET', '/api/phone-lines/1/conversations', { t: T.su() })).json.conversations;
+    expect(l1.some((c) => c.last_id === 15)).toBe(false);
   });
 
   test('conversations page by the last id; a malformed cursor is a 400', async () => {

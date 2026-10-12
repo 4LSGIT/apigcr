@@ -187,7 +187,11 @@ maybe('S-PH phone reads on real MySQL', () => {
     }
     // spot-check the engine's own answers (the world could be wrong in step)
     const c1 = await phone.listConversations(pool, { id: 1, phone_number: S.L1 }, {});
-    expect(c1.conversations.map(c => [c.other_party, c.count])).toEqual([[S.P1, 3], ['22395', 1], [S.L3, 1], [S.P2, 1]]);
+    expect(c1.conversations.map(c => [c.other_party, c.count])).toEqual([[S.P1, 3], ['22395', 1], [S.L3, 1], [S.P2, 2]]);
+    // a line with no texts at all: every conversation is calls, `last` a call
+    const c6 = await phone.listConversations(pool, { id: 6, phone_number: S.L6 }, {});
+    expect(c6.conversations.map(c => [c.other_party, c.count, c.last.kind])).toEqual([[S.P4, 1, 'call'], [S.P2, 1, 'call'], [S.P1, 1, 'call']]);
+    expect(c6.conversations[2].last).toMatchObject({ id: 10, missed: true, duration_s: 30 });
     expect(c1.conversations[0].contact).toEqual({ contact_id: 501, name: 'Pat One' });
     expect(c1.conversations.find(c => c.other_party === S.P2).contact).toBeNull();
     // one conversation = its texts AND its calls (the call's fields from raw_extra)

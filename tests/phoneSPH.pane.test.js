@@ -6,7 +6,8 @@
  * top-level window is its own parent, so window.apiSend IS the pane's
  * P.apiSend):
  *   - public/comms.html Phone tab: lazy boot on first open, the lines rail +
- *     picker, Texts / Calls, a conversation as TEXT bubbles with its calls
+ *     picker, Conversations (texts AND calls per number; a call-last row
+ *     previews the call) / Calls, a conversation as TEXT bubbles with its calls
  *     as call boxes among them (ordered by when each happened), compose only
  *     where the line grants can_send (and is active, and the number is
  *     textable), send → POST /api/phone-lines/:id/sms + a pending bubble until
@@ -144,7 +145,7 @@ async function openPhone(env) {
 }
 
 describe('comms.html — Phone tab', () => {
-  test('lazy: nothing phone-shaped until the tab opens; then readable → rail + picker → Texts of the first ACTIVE line', async () => {
+  test('lazy: nothing phone-shaped until the tab opens; then readable → rail + picker → Conversations of the first ACTIVE line', async () => {
     const env = await bootComms();
     const { doc, calls, errors } = env;
     expect(phoneCalls(calls)).toEqual([]);
@@ -161,6 +162,7 @@ describe('comms.html — Phone tab', () => {
     expect(rail[1].querySelector('.acc').textContent).toBe('R');
     expect(rail[2].querySelector('.sub').textContent).toBe('(248) 000-0007 · inactive');
     expect([...doc.getElementById('ph-line-sel').options].map((o) => o.value)).toEqual(['1', '3', '7']);
+    expect(doc.getElementById('ph-v-msgs').textContent).toBe('Conversations');
     expect(doc.querySelectorAll('#ph-list .msg')).toHaveLength(2);
     // re-opening the tab does not re-boot
     doc.getElementById('tab-email').click();
@@ -308,6 +310,31 @@ describe('comms.html — Phone tab', () => {
     expect(bubs[1].querySelector('.bt').textContent).not.toBe('');
     // a call box carries no text body of its own
     expect(bubs[1].childNodes).toHaveLength(2);
+  });
+
+  test('Conversations list: a row whose last item is a CALL previews the call (missed in red, no "You:"); a text-last row is unchanged', async () => {
+    const callLast = (id, party, over) => ({ other_party: party, count: 1, last_id: id, contact: null, last: { id, kind: 'call', at: '2026-10-08T16:00:00.000Z', duration_s: 185, status: 'completed', unanswered: false, missed: false, ...over } });
+    const rows = [
+      callLast(40, '3135550040', { direction: 'incoming', status: 'no-answer', unanswered: true, missed: true, duration_s: 30 }),
+      callLast(39, '3135550039', { direction: 'outgoing', status: 'no-answer', unanswered: true }),
+      callLast(38, '3135550038', { direction: 'incoming' }),
+      { other_party: '3135550037', count: 2, last_id: 37, contact: null, last: { id: 37, kind: 'sms', direction: 'outgoing', snippet: 'see you then', at: '2026-10-08T15:00:00.000Z' } },
+    ];
+    const env = await bootComms({ over: { 'GET /api/phone-lines/1/conversations': () => ({ conversations: fresh(rows), next_cursor: null }) } });
+    await openPhone(env);
+    const { doc, errors } = env;
+    expect(errors).toEqual([]);
+    const snips = [...doc.querySelectorAll('#ph-list .msg .snippet')];
+    expect(snips.map((x) => x.textContent)).toEqual(['Missed call', 'Outgoing call · no answer', 'Incoming call · 3m 05s', 'You: see you then']);
+    expect(snips.map((x) => x.className)).toEqual(['snippet call missed', 'snippet call', 'snippet call', 'snippet']);
+    expect(snips.slice(0, 3).map((x) => x.querySelector('i').className)).toEqual(['fa-solid fa-phone-slash', 'fa-solid fa-phone-slash', 'fa-solid fa-phone']);
+    expect(snips[3].querySelector('i')).toBeNull();
+  });
+
+  test('an empty Conversations list says texts OR calls', async () => {
+    const env = await bootComms({ over: { 'GET /api/phone-lines/1/conversations': () => ({ conversations: [], next_cursor: null }) } });
+    await openPhone(env);
+    expect(env.doc.getElementById('ph-list').textContent).toBe('No texts or calls on this line.');
   });
 
   test('a number with only calls opens a conversation of call boxes; the empty one says texts OR calls', async () => {

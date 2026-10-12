@@ -479,9 +479,12 @@ lines alike (design: `ref/MAILBOX_SYSTEM_DESIGN.md` §4.4, slice S-PH).
 - **Lines.** On a wide screen the lines are listed on the left (with your
   access: **R** read · **S** send · **M** manage); on a narrow one pick the
   line in the bar. Your last line is remembered in this browser.
-- **Texts** lists the line's conversations — one per number, newest activity
-  first, the contact's name when the number belongs to a client on file
-  (**Open contact** opens their file). Opening one shows the texts as
+- **Conversations** lists the line's conversations — one per number that
+  texted or called the line (or was texted or called from it), newest
+  activity first, the contact's name when the number belongs to a client on
+  file (**Open contact** opens their file). A row whose latest event was a
+  call shows the call instead of a text (**Missed call** in red, "Incoming
+  call · 3m 05s", "Outgoing call · no answer"). Opening one shows the texts as
   bubbles — yours on the right, theirs on the left — with the **calls** with
   that number among them as small call boxes (incoming on the left, outgoing
   on the right: direction and length, **Missed call** in red, "no answer"

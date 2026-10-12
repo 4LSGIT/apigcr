@@ -386,6 +386,8 @@
   .phone .bar #ph-line-sel { flex: 1 1 160px; }
   .msg .r2 .kind { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-2); }
   .msg.missed .kind { color: var(--danger); font-weight: 700; }
+  .msg .snippet.call i { margin-right: 5px; }
+  .msg .snippet.call.missed { color: var(--danger); font-weight: 600; }
   .msg .dir { flex: 0 0 auto; color: var(--text-muted); font-size: 11px; }
   .thread-head .who-sub { display: block; font-size: 11.5px; font-weight: 400; color: var(--text-muted); }
   .ph-thread { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
@@ -516,7 +518,7 @@
       <div class="bar">
         <select id="ph-line-sel" aria-label="Phone line"></select>
         <span class="seg" role="group" aria-label="Show">
-          <button type="button" id="ph-v-msgs" aria-pressed="true" title="Text conversations, newest first">Texts</button>
+          <button type="button" id="ph-v-msgs" aria-pressed="true" title="Conversations — the texts and calls with each number, newest first">Conversations</button>
           <button type="button" id="ph-v-calls" aria-pressed="false" title="The call log, newest first">Calls</button>
         </span>
         <button class="btn icon" type="button" id="ph-refresh" title="Refresh" aria-label="Refresh"><i class="fa-solid fa-rotate" aria-hidden="true"></i></button>
@@ -2548,8 +2550,8 @@ window.ycBecameVisible = () => {
 // Per-line texts and the call log, read from phone_event_log (both
 // providers) through /api/phone-lines/* (routes/api.phoneComms.js). The
 // lines are the ones the caller can READ (their grants; SU and attorneys
-// every line). Texts = SMS conversations grouped by the other party, newest
-// activity first; Calls = the call log. Sending (POST
+// every line). Conversations = the texts AND calls with each number, grouped
+// by the other party, newest activity first; Calls = the call log. Sending (POST
 // /api/phone-lines/:id/sms) is offered only where the line grants can_send
 // and is active; the provider's webhook echo then lands the copy in
 // phone_event_log, so an open conversation is re-read a few times after a
@@ -2712,7 +2714,7 @@ async function phoneLoad({ append = false, silent = false } = {}) {
   } catch (err) {
     if (seq !== ph.seq) return;
     E('ph-status').textContent = '';
-    showError(E('ph-error'), `Couldn't load ${ph.view === 'calls' ? 'calls' : 'texts'}: ${err.message}`);
+    showError(E('ph-error'), `Couldn't load ${ph.view === 'calls' ? 'calls' : 'conversations'}: ${err.message}`);
   }
 }
 
@@ -2728,9 +2730,18 @@ function convoRow(c) {
       h('span', { className: 'from', title: fmtPhone(c.other_party) }, phWho(c.other_party, c.contact)),
       h('span', { className: 'date' }, listDate(last.at))),
     c.contact ? h('div', { className: 'r2' }, h('span', { className: 'kind' }, fmtPhone(c.other_party))) : null,
-    h('div', { className: 'snippet' }, `${mine ? 'You: ' : ''}${last.snippet || ''}`),
+    convoSnippet(last, mine),
   );
   return li;
+}
+
+/** The list row's preview: the last text, or what the last call was. */
+function convoSnippet(last, mine) {
+  if (last.kind === 'call') {
+    return h('div', { className: 'snippet call' + (last.missed ? ' missed' : '') },
+      icon(last.missed || last.unanswered ? 'fa-phone-slash' : 'fa-phone'), phCallLabel(last));
+  }
+  return h('div', { className: 'snippet' }, `${mine ? 'You: ' : ''}${last.snippet || ''}`);
 }
 
 function callRow(c) {
@@ -2759,7 +2770,7 @@ function renderPhoneList() {
   const noun = ph.view === 'calls' ? 'call' : 'conversation';
   E('ph-status').textContent = n ? `${n}${ph.next ? '+' : ''} ${noun}${n === 1 ? '' : 's'}` : '';
   if (!n) {
-    list.replaceChildren(h('li', { className: 'empty' }, ph.view === 'calls' ? 'No calls on this line.' : 'No texts on this line.'));
+    list.replaceChildren(h('li', { className: 'empty' }, ph.view === 'calls' ? 'No calls on this line.' : 'No texts or calls on this line.'));
     return;
   }
   const items = ph.rows.map(ph.view === 'calls' ? callRow : convoRow);

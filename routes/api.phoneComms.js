@@ -14,7 +14,8 @@
  *   POST   /api/phone-lines/:id/grants               SU or can_manage   {user, can_read, can_send, can_manage}
  *   PATCH  /api/phone-lines/:id/grants/:grantId      SU or can_manage   ownership-scoped
  *   DELETE /api/phone-lines/:id/grants/:grantId      SU or can_manage   ownership-scoped
- *   GET    /api/phone-lines/:id/conversations        can_read — SMS conversations, newest first
+ *   GET    /api/phone-lines/:id/conversations        can_read — conversations (texts AND calls) per
+ *                                                    number, newest activity first
  *                                                    ?cursor=&limit=≤100
  *   GET    /api/phone-lines/:id/conversations/:party can_read — one conversation (its texts AND
  *                                                    calls, each item `kind` sms|call), newest

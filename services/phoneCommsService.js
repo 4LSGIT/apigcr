@@ -297,8 +297,16 @@ async function contactsFor(db, phones) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * SMS conversations on a line — one per other_party, newest activity first.
- * @returns {{conversations:[{other_party, count, last_id, last:{id, direction, snippet, at}, contact}], next_cursor}}
+ * Conversations on a line — one per other_party, texts AND calls (a number
+ * that only ever called has one too; calls joined the list 2026-10-12, after
+ * S-PH), newest activity first. `count` counts both. `last` is the newest
+ * item, shaped by kind:
+ *   {id, kind:'sms',  direction, snippet, at}
+ *   {id, kind:'call', direction, at, duration_s, status, unanswered, missed}
+ * COST: each page reads every row of the line through idx_phone_event_line
+ * (forced) and groups them — live 2026-10-12 line 1: 6.6K rows, ~16 ms;
+ * ref/plans.md has the threshold note.
+ * @returns {{conversations:[{other_party, count, last_id, last, contact}], next_cursor}}
  */
 async function listConversations(db, line, query = {}) {
   const limit = pageLimit(query.limit);
@@ -313,7 +321,7 @@ async function listConversations(db, line, query = {}) {
   const [groups] = await db.query(
     `SELECT other_party, MAX(id) AS last_id, COUNT(*) AS n
        FROM phone_event_log FORCE INDEX (idx_phone_event_line)
-      WHERE line_number = ? AND event_type = 'sms' AND suppressed = 0 AND other_party IS NOT NULL
+      WHERE line_number = ? AND suppressed = 0 AND other_party IS NOT NULL
       GROUP BY other_party
      ${before != null ? 'HAVING MAX(id) < ?' : ''}
       ORDER BY last_id DESC
@@ -325,7 +333,11 @@ async function listConversations(db, line, query = {}) {
   const latest = new Map();
   if (lastIds.length) {
     const [rows] = await db.query(
-      `SELECT id, direction, body, JSON_UNQUOTE(JSON_EXTRACT(raw_extra, '$.ts')) AS ts, processed_at
+      `SELECT id, event_type, direction, body, processed_at,
+              JSON_UNQUOTE(JSON_EXTRACT(raw_extra, '$.ts')) AS ts,
+              JSON_UNQUOTE(JSON_EXTRACT(raw_extra, '$.started_at')) AS started_at,
+              JSON_UNQUOTE(JSON_EXTRACT(raw_extra, '$.ended_at')) AS ended_at,
+              JSON_UNQUOTE(JSON_EXTRACT(raw_extra, '$.provider_status')) AS provider_status
          FROM phone_event_log
         WHERE id IN (?)`,
       [lastIds]
@@ -340,7 +352,9 @@ async function listConversations(db, line, query = {}) {
         other_party: String(g.other_party),
         count: Number(g.n),
         last_id: Number(g.last_id),
-        last: r ? { id: Number(r.id), direction: r.direction, snippet: snippet(r.body), at: eventAt(r.ts, r.processed_at) } : null,
+        last: !r ? null : (r.event_type === 'call'
+          ? { id: Number(r.id), kind: 'call', direction: r.direction, at: eventAt(r.started_at, r.processed_at), ...callFields(r) }
+          : { id: Number(r.id), kind: 'sms', direction: r.direction, snippet: snippet(r.body), at: eventAt(r.ts, r.processed_at) }),
         contact: names.get(String(g.other_party)) || null,
       };
     }),

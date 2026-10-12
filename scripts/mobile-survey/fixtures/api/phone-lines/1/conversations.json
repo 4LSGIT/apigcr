@@ -9,6 +9,7 @@
    "last_id": 40,
    "last": {
     "id": 40,
+    "kind": "sms",
     "direction": "incoming",
     "snippet": "Thanks \u2014 I'll upload the paystubs tonight, the portal kept timing out on my phone earlier today when I tried",
     "at": "2026-10-12T14:05:00.000Z"
@@ -19,11 +20,28 @@
    }
   },
   {
+   "other_party": "5555550197",
+   "count": 4,
+   "last_id": 39,
+   "last": {
+    "id": 39,
+    "kind": "call",
+    "direction": "incoming",
+    "at": "2026-10-11T16:30:00.000Z",
+    "duration_s": 31,
+    "status": "no-answer",
+    "unanswered": true,
+    "missed": true
+   },
+   "contact": null
+  },
+  {
    "other_party": "5555550198",
    "count": 2,
    "last_id": 38,
    "last": {
     "id": 38,
+    "kind": "sms",
     "direction": "outgoing",
     "snippet": "Reminder: your 341 meeting is Thursday at 10:00",
     "at": "2026-10-11T18:00:00.000Z"
@@ -36,6 +54,7 @@
    "last_id": 31,
    "last": {
     "id": 31,
+    "kind": "sms",
     "direction": "incoming",
     "snippet": "Your verification code is 123456",
     "at": "2026-10-09T09:00:00.000Z"
