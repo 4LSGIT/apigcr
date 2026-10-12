@@ -368,6 +368,13 @@ async function executeCourtActions(db, { payload, subject, body, dryRun, preview
     found:                !!(r && r.found),
     case_id:              (r && r.case_id) ?? null,
     case_number:          (r && r.case_number) ?? null,
+    // S1: `case_number_full` reads the value PATCHED by the fill block below
+    // (STEP 2), and `would_fill_docket` closes over `fillFull` set there.
+    // Safe: resolvedSummary is only ever called via finish(), which runs
+    // after STEP 2 on every path — a call added before STEP 2 would throw
+    // (fillFull is in its temporal dead zone until then).
+    case_number_full:     (r && r.case_number_full) ?? null,
+    would_fill_docket:    !!fillFull,
     primary_contact_id:   (r && r.primary_contact_id) ?? null,
     primary_contact_name: (r && r.primary_contact_name) ?? null,
   });
@@ -394,6 +401,27 @@ async function executeCourtActions(db, { payload, subject, body, dryRun, preview
 
   // ── STEP 2: RESOLVE ───────────────────────────────────────────────────
   const resolved = await resolveCase(db, caseNumber);
+
+  // S1: native case_number_full fill (Pabbly docket-PATCH replacement).
+  // Detection = exactly the courtResolve fallback path, recomputed (the
+  // resolver doesn't report which query matched): email carried the full
+  // form, the case row holds only the bare docket. Grounding gate: the
+  // full docket must appear literally in the email text — kills a
+  // hallucinated judge suffix (caseNumber is AI-extracted).
+  const rawDocket = (caseNumber == null ? '' : String(caseNumber).trim());
+  let fillFull = null;
+  if (
+    resolved.found &&
+    !(resolved.case_number_full && String(resolved.case_number_full).trim()) &&
+    rawDocket &&
+    rawDocket !== resolved.case_number &&
+    rawDocket.replace(/-[a-z]+$/i, '') === resolved.case_number &&
+    `${subject || ''}\n${body || ''}`.toLowerCase().includes(rawDocket.toLowerCase())
+  ) {
+    fillFull = rawDocket;
+    resolved.case_number_full = rawDocket; // in-memory: identity tokens, role twins, emit
+  }
+
   // Name preference: email's own case_name → case_caption (adversary captions /
   // creditor-side cases where the debtor isn't our client) → Primary client.
   const caseName =
@@ -884,6 +912,36 @@ async function executeCourtActions(db, { payload, subject, body, dryRun, preview
   }
 
   try {
+  // S1 Phase 2: persist the fill. Runs on every path that reaches dispatch
+  // (outcomes 'executed' AND 'none' — a dup-guard run still resolved a real
+  // docket), never on queued-at-STEP-3/4 paths (those re-run from the review
+  // queue and fill then). Not an action: no applied[] entry, no
+  // appliedOrIntended bump — a fill-only run stays outcome 'none'.
+  // Inside the dispatch try, before any action runs: a throw here (collision
+  // check / UPDATE) must hit the HARDEN #1 audit-on-error catch below like
+  // any dispatch failure.
+  if (fillFull && !effectiveDryRun) {
+    const { checkCaseNumberCollision } = require('./caseService'); // lazy, roleResolver pattern
+    const conflict = await checkCaseNumberCollision(db, resolved.case_id, { case_number_full: fillFull });
+    if (conflict) {
+      skipped.push({ type: 'fill_docket', reason: 'docket_collision',
+                     conflict_case_id: conflict.case_id });
+    } else {
+      const [r] = await db.query(
+        `UPDATE cases SET case_number_full=?
+          WHERE case_id=? AND (case_number_full IS NULL OR case_number_full='')`,
+        [fillFull, resolved.case_id]
+      );
+      if (r.affectedRows === 1) {
+        pushChange('case', resolved.case_id, 'case_number_full', null, fillFull);
+      }
+      // affectedRows 0 = raced (interim Pabbly PATCH won) — correct value is
+      // already there; no change row, no skip entry.
+    }
+  } else if (fillFull && effectiveDryRun) {
+    pushChange('case', resolved.case_id, 'case_number_full', null, fillFull); // plan row, dry_run=1
+  }
+
   for (const i of dispatchOrder) {
     const act = actions[i] || {};
     const type = act.type;
