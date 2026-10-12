@@ -3849,6 +3849,34 @@
     new URL(window.location).searchParams.forEach((value, key) => {
       params[key] = value;
     });
+    // SEC-1 (2026-10-12): stale auto-login bookmarks (/?user=…&pass=…[&qp=…])
+    // predate this shell — nothing here consumes `pass`, but the full URL
+    // rides the Referer header on every boot fetch and landed plaintext
+    // passwords in jwt_api_audit_log (and in browser history). Scrub
+    // credential-shaped params from the address bar NOW, synchronously,
+    // before the first fetch fires, and drop them from the params snapshot
+    // so nothing downstream can ever echo one. Exact names only — the
+    // legit boot params (?qp=, ?case=, ?files=, ?open=, …) are untouched,
+    // and /reset-password?token=… is a different page entirely.
+    (() => {
+      const SENSITIVE = /^(password|api_key|apikey|secret|token|pass|pwd|auth|key)$/i;
+      const u = new URL(window.location);
+      let dirty = false;
+      for (const k of [...u.searchParams.keys()]) {
+        if (SENSITIVE.test(k)) {
+          u.searchParams.delete(k);
+          delete params[k];
+          dirty = true;
+        }
+      }
+      if (dirty) {
+        const qs = u.searchParams.toString();
+        // try/catch: Safari throttles replaceState and throws when exceeded —
+        // a briefly dirty address bar must never break boot.
+        try { history.replaceState(null, "", u.pathname + (qs ? "?" + qs : "") + u.hash); }
+        catch (_) {}
+      }
+    })();
     // Top-level state used across tab handlers
     user = {};
     // The Logs tab's page size — and only the Logs tab's, since the other
