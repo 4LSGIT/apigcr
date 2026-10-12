@@ -77,6 +77,17 @@ recurring job, and is exposed as the `run_error_sweep`
   `system_alerts`.
 - **Phase B** emails **one** grouped digest of undigested rows.
 
+Phase A also runs four **state checks**. These are for things that are broken
+without any row saying "failed". Each opens one alert while the condition
+holds and resolves it by itself when the condition clears:
+
+| Check | Opens when | Kind |
+|---|---|---|
+| OAuth | a connection's token refresh is failing (critical) | `refresh_failed` |
+| Stuck workflow execution | an execution has not moved for 30 minutes and is either still mid-step or has nothing queued to resume it | `execution_stuck` |
+| Stuck sequence enrollment | an enrollment is `active` with no pending step for 15 minutes — see [Sequences](../03-YisraFlow/03-sequences.md), "When something doesn't fire when you expected" | `enrollment_stuck` |
+| Workflow start latency | more than a quarter of the last hour's workflow starts took over 20 seconds | `start_latency` |
+
 ### Acknowledge / Resolve buttons in the digest
 
 Each group block in the digest email carries **Acknowledge** and **Resolve**

@@ -848,6 +848,7 @@ tests/aiService.attachments.test.js
 tests/aimatch.service.test.js
 tests/alertingDigestCta.test.js
 tests/alertingStartLatency.test.js
+tests/alertingStuckEnrollments.test.js
 tests/apiAlertIt.routes.test.js
 tests/apiAppSettings.validate.test.js
 tests/apiCalendarTypes.routes.test.js
