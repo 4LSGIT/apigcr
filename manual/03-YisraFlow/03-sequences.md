@@ -106,9 +106,11 @@ Past times are returned as-is — the next `/process-jobs` tick fires them. If a
 scheduled_jobs fires { type: 'sequence_step', enrollmentId, stepId }
         │
         ├─ 1. Enrollment still active?              No → skip (enrollment_not_active)
-        ├─ 2. Template condition passes?            No → CANCEL ENROLLMENT, stop
+        ├─ 2. Template condition passes?            Fails → CANCEL ENROLLMENT, stop
+        │                                           ERRORS → HOLD + alert, stop
         ├─ 3. Fire guard passes?                    No → skip step, schedule next
-        ├─ 4. Step condition passes?                No → skip step, schedule next
+        ├─ 4. Step condition passes?                Fails → skip step, schedule next
+        │                                           ERRORS → HOLD + alert, stop
         ├─ 5. Resolve placeholders in action_config (universal resolver)
         ├─ 6. Execute action (with retry per error_policy)
         ├─ 7. Log result to sequence_step_log
@@ -116,6 +118,8 @@ scheduled_jobs fires { type: 'sequence_step', enrollmentId, stepId }
 ```
 
 Steps 3 and 4 *skip* and continue. Step 2 *cancels* and stops. The distinction is intentional — the template condition is "does this enrollment still make sense at all," while step conditions and fire guards are "does this *one step* make sense right now."
+
+Conditions are **tri-state**: *pass*, *fail*, and *error*. Fail is the author's verdict and behaves as above. **Error means the verdict could not be computed** — the condition's SQL threw (e.g. comparing a DATE column to `''`), the query isn't a SELECT, a placeholder has no param mapping, or an assert names a column the query doesn't select. An errored condition never cancels and never skips: the step is **held** — nothing is sent, nothing advances — and IT is alerted. See [Condition errors — held enrollments](#condition-errors--held-enrollments) below.
 
 ### Condition syntax
 
@@ -145,9 +149,25 @@ Used in both `sequence_templates.condition` (cancel-level) and `sequence_steps.c
 
 **`assert_mode`:** `"all"` (AND, default) or `"any"` (OR).
 
-**Only `SELECT` is allowed.** Anything else returns false (treats condition as failed).
+**Only `SELECT` is allowed.** Anything else is a condition **error** — the step holds and alerts (it does not silently fail).
 
-**No row found = condition fails.** If your `WHERE` matches zero rows, the condition is treated as false — the step is skipped (or for a template condition, the enrollment is cancelled).
+**No row found = condition fails.** If your `WHERE` matches zero rows, the condition is treated as false — the step is skipped (or for a template condition, the enrollment is cancelled). This is deliberate semantics ("is there such an appt?"), not an error.
+
+**Errors hold, they never cancel or skip.** A condition whose verdict cannot be computed — the query throws (the classic: `date_column = ''` is `ER_WRONG_VALUE` against a `DATE` column; compare to `IS NULL` instead), a non-SELECT, an unmapped `:placeholder`, an `assert` field the query doesn't select, a non-array `in` — puts the enrollment in the held state described below instead of guessing a verdict.
+
+### Condition errors — held enrollments
+
+When a template or step condition **errors** at fire time, the engine writes a `failed` log row whose message explains the state, and stops: the enrollment stays `active` with no scheduled job. That shape pages IT twice — the step-failure scan picks up the log row on the next 15-minute sweep, and the stuck-enrollment scan opens an `enrollment_stuck` alert once the wedge is 15 minutes idle.
+
+**Held still counts as active.** A held enrollment blocks a new enrollment of the same contact in the same template scope (the duplicate-enrollment guard), and a workflow's `enroll_sequence` with `skip_if_enrolled: true` converges on it silently — resolve the hold before expecting re-enrollment to do anything.
+
+**Repair paths:**
+
+- **Recover** (the enrollment's *Recover stuck enrollment* button) re-places the **held step itself** — unlike every other recovery, which resumes at the *next* step — so the condition re-evaluates at fire. This is the fix for transient errors (a DB blip) and data errors you've since corrected. The step is placed by its own timing rule counted from now, not fired immediately; use *fire-next* after Recover to send sooner. If the condition is still broken it holds and alerts again.
+- **Cancel** the enrollment, when it shouldn't run at all.
+- **Skip past the held step**: `POST /sequences/enrollments/:id/recover` with body `{"skip_held_step": true}` logs the held step as skipped (`held_step_skipped`) and resumes from the next step. API-only — there is no button.
+
+**A broken condition on a published version cannot be fixed in place.** Condition edits are *structural* changes, so publishing with migrate-in-flight is refused — and migration only repoints current-version enrollments anyway. Fix the condition on the draft, publish, and handle the held enrollment with cancel or `skip_held_step` (re-enrolling picks up the new version). The **preview** panel evaluates conditions tri-state too and flags an erroring condition in red before you publish — run it.
 
 ### Fire guard syntax
 

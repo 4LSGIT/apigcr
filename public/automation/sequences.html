@@ -606,6 +606,7 @@
       padding: 8px 10px; border-radius: 6px; margin-bottom: 12px;
     }
     .seq-pv-amber { background: var(--warn-soft); color: var(--warn); border: 1px solid var(--warn); }
+    .seq-pv-red { background: var(--danger-soft); color: var(--danger); border: 1px solid var(--danger); }
 
     .seq-pv-step { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; margin-bottom: 10px; background: var(--surface); }
     .seq-pv-step-head { display: flex; align-items: baseline; gap: 8px; }
@@ -620,6 +621,8 @@
       display: inline-block; font-size: 10px; font-weight: 600; padding: 2px 7px; border-radius: 10px;
       background: var(--warn-soft); color: var(--warn); border: 1px solid var(--warn);
     }
+    .seq-pv-skip-err { background: var(--danger-soft); color: var(--danger); border-color: var(--danger); }
+    .seq-pv-cond-err { margin-top: 4px; font-size: 11px; line-height: 1.4; color: var(--danger); overflow-wrap: anywhere; }
 
     .seq-pv-k { font-size: 10px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-muted); }
     .seq-pv-msg { margin-top: 8px; }
@@ -4291,7 +4294,17 @@ function seqRenderPreviewResult(preview) {
     <div class="seq-pv-sub">contact #${esc(p.contact_id)}${tpl.type ? ' · ' + esc(tpl.type) : ''}</div>
   </div>`;
 
-  if (verdict !== 'would_proceed') {
+  // Three verdicts, three banners. 'would_hold_at_first_step' is a stable
+  // token (condition ERRORED — production holds the enrollment and alerts,
+  // it does NOT cancel); its message travels separately in
+  // template_condition_error. Any other non-proceed verdict is the clean
+  // cancel case.
+  if (verdict === 'would_hold_at_first_step') {
+    html += `<div class="seq-pv-banner seq-pv-red"><i class="fa-solid fa-circle-exclamation"></i>` +
+      `<span>Template condition ERRORS — the enrollment would be HELD (not cancelled) and alert IT. Fix the condition before publishing.` +
+      (p.template_condition_error ? `<br>${esc(p.template_condition_error)}` : '') +
+      `</span></div>`;
+  } else if (verdict !== 'would_proceed') {
     html += `<div class="seq-pv-banner seq-pv-amber"><i class="fa-solid fa-triangle-exclamation"></i>` +
       `<span>Would cancel at enrollment: template condition failed — steps shown for information</span></div>`;
   }
@@ -4317,6 +4330,12 @@ function seqRenderPreviewStep(s) {
   let skipBadge = '';
   if (s.would_skip === 'fire_guard_failed')        skipBadge = `<span class="seq-pv-skip">skipped · fire guard</span>`;
   else if (s.would_skip === 'step_condition_failed') skipBadge = `<span class="seq-pv-skip">skipped · step condition</span>`;
+  // Step-condition ERROR (would_skip stays null — production HOLDS here,
+  // not skips): its own red badge + the error text, so a broken condition
+  // never hides behind a clean-looking step card.
+  else if (s.condition_error) skipBadge =
+    `<span class="seq-pv-skip seq-pv-skip-err">step condition ERRORS — would hold + alert</span>` +
+    `<div class="seq-pv-cond-err">${esc(s.condition_error)}</div>`;
 
   return `<div class="seq-pv-step">
     <div class="seq-pv-step-head">

@@ -74,7 +74,7 @@ function makeDb({ enrollment, steps, jobs = [], logs = [] }) {
       ([id]) => [state.jobs
         .filter(j => j.sequence_enrollment_id === id && ['pending', 'running'].includes(j.status))
         .sort((a, b) => b.id - a.id).slice(0, 1)]],
-    [/^SELECT id, step_number FROM sequence_step_log WHERE enrollment_id = \? ORDER BY id DESC LIMIT 1$/,
+    [/^SELECT id, step_number, step_id, skip_reason FROM sequence_step_log WHERE enrollment_id = \? ORDER BY id DESC LIMIT 1$/,
       ([id]) => [state.logs.filter(l => l.enrollment_id === id).sort((a, b) => b.id - a.id).slice(0, 1)]],
     [/^SELECT step_number FROM sequence_step_log WHERE enrollment_id = \? AND id > \? AND status = 'skipped' AND skip_reason = 'unschedulable' ORDER BY id ASC$/,
       ([id, after]) => [state.logs
@@ -134,13 +134,13 @@ function makeDb({ enrollment, steps, jobs = [], logs = [] }) {
   };
 }
 
-async function recover(db, id = '7') {
+async function recover(db, id = '7', body = undefined) {
   const res = {
     code: 200, body: undefined,
     status(c) { this.code = c; return this; },
     json(b) { this.body = b; return this; },
   };
-  await recoverHandler({ db, params: { id } }, res);
+  await recoverHandler({ db, params: { id }, body }, res);
   return res;
 }
 
@@ -496,5 +496,97 @@ describe('POST /sequences/enrollments/:id/recover — refusals and failures', ()
     const bad = makeDb({ enrollment: ENROLLMENT, steps: [] });
     expect((await recover(bad, 'abc')).code).toBe(400);
     expect(bad.state.sql).toHaveLength(0);
+  });
+});
+
+describe('POST /sequences/enrollments/:id/recover — condition-error holds (tri-state, 2026-10)', () => {
+  // A held step: executeStep's Guards 2/4 wrote a 'failed' row with the
+  // condition-error discriminator in skip_reason. Unlike every other last
+  // row, the held step was never dealt with — recovery re-fires IT, not +1.
+  const heldLog = (n, reason = 'step_condition_error') =>
+    ({ enrollment_id: 7, step_id: 1, step_number: n, status: 'failed', skip_reason: reason });
+  const actionFailedLog = (n) =>
+    ({ enrollment_id: 7, step_id: 1, step_number: n, status: 'failed', skip_reason: null });
+
+  test('last row is a condition-error hold → the SAME step is re-placed and flagged held_step_rerun', async () => {
+    const db = makeDb({
+      enrollment: ENROLLMENT,
+      steps: [step(2, { type: 'delay', value: 1, unit: 'hours' }), step(3, { type: 'immediate' })],
+      logs: [sentLog(1), heldLog(2, 'template_condition_error')],
+      jobs: HISTORY,
+    });
+    const res = await recover(db);
+
+    expect(res.code).toBe(200);
+    expect(res.body).toMatchObject({ success: true, step_number: 2, held_step_rerun: true });
+    expect(res.body.note).toMatch(/Held step re-placed — its condition re-evaluates at execution/);
+    const [job] = pendingJobs(db);
+    expect(JSON.parse(job.data).stepNumber).toBe(2);
+    // placed by its own timing from now, not fired on the spot
+    expect(job.scheduled_time.toISOString()).toBe(iso(NOW.getTime() + 1 * HOUR));
+    expect(db.state.enrollments[0]).toMatchObject({ status: 'active', current_step: 2 });
+  });
+
+  test('last row is an ACTION failure (null skip_reason) → +1 preserved; re-running would re-send', async () => {
+    const db = makeDb({
+      enrollment: ENROLLMENT,
+      steps: [step(3, { type: 'immediate' })],
+      logs: [sentLog(1), actionFailedLog(2)],
+    });
+    const res = await recover(db);
+    expect(res.body).toMatchObject({ success: true, step_number: 3 });
+    expect(res.body.held_step_rerun).toBeUndefined();
+    expect(JSON.parse(pendingJobs(db)[0].data).stepNumber).toBe(3);
+  });
+
+  test('skip_held_step:true on a held row → held step logged skipped/held_step_skipped, walk resumes at the NEXT step', async () => {
+    const db = makeDb({
+      enrollment: ENROLLMENT,
+      steps: [step(2, { type: 'delay', value: 1, unit: 'hours' }), step(3, { type: 'immediate' })],
+      logs: [sentLog(1), heldLog(2)],
+    });
+    const res = await recover(db, '7', { skip_held_step: true });
+
+    expect(res.code).toBe(200);
+    expect(res.body).toMatchObject({ success: true, step_number: 3, skipped_held_step: 2 });
+    expect(res.body.note).toMatch(/Held step 2 skipped \(held_step_skipped\)/);
+    const skipRow = db.state.logs.find(l => l.skip_reason === 'held_step_skipped');
+    expect(skipRow).toMatchObject({ step_number: 2, status: 'skipped' });
+    // the skipped held step is reported in its own field, never in the
+    // unschedulable skipped_steps list
+    expect(res.body.skipped_steps).toEqual([]);
+    expect(JSON.parse(pendingJobs(db)[0].data).stepNumber).toBe(3);
+  });
+
+  test('skip_held_step:true when the last row is NOT a hold → 409, nothing logged, nothing walked', async () => {
+    const db = makeDb({
+      enrollment: ENROLLMENT,
+      steps: [step(3, { type: 'immediate' })],
+      logs: [sentLog(2)],
+    });
+    const res = await recover(db, '7', { skip_held_step: true });
+
+    expect(res.code).toBe(409);
+    expect(res.body.error).toMatch(/no held step to skip/);
+    expect(db.state.jobs).toHaveLength(0);
+    expect(db.state.logs).toHaveLength(1);
+    expect(db.state.sql.some(s => /FROM sequence_steps/.test(s))).toBe(false);
+  });
+
+  test('held step whose window is now gone: recover skips it as unschedulable and moves on — same walk rules as everything else', async () => {
+    // The held step is appt-anchored and its send time passed during the
+    // hold; the walk drops it (skipped/unschedulable) and places step 3.
+    const appt = NOW.getTime() + 5 * HOUR;
+    const db = makeDb({
+      enrollment: { ...ENROLLMENT, trigger_data: { appt_time: iso(appt) } },
+      steps: [
+        step(2, { type: 'before_appt_fixed', hoursBack: 24 }),
+        step(3, { type: 'before_appt_fixed', hoursBack: 2 }),
+      ],
+      logs: [sentLog(1), heldLog(2)],
+    });
+    const res = await recover(db);
+    expect(res.body).toMatchObject({ success: true, step_number: 3, skipped_steps: [2] });
+    expect(JSON.parse(pendingJobs(db)[0].data).stepNumber).toBe(3);
   });
 });

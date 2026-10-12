@@ -26,7 +26,7 @@
 const express         = require('express');
 const router          = express.Router();
 const jwtOrApiKey     = require('../lib/auth.jwtOrApiKey');
-const { enrollContact, enrollContactByTemplateId, previewEnrollmentSteps, cancelSequences, validateTemplateFilters, scheduleFromStep } = require('../lib/sequenceEngine');
+const { enrollContact, enrollContactByTemplateId, previewEnrollmentSteps, cancelSequences, validateTemplateFilters, scheduleFromStep, logStep, CONDITION_ERROR_REASONS, HELD_STEP_SKIPPED } = require('../lib/sequenceEngine');
 const { diffSequenceSteps, validateSequenceDraftShape, canonical, parseMaybeJson } = require('../lib/versionDiff');
 const toJson = v => v == null ? null : (typeof v === 'string' ? v : JSON.stringify(v));
 
@@ -1996,6 +1996,27 @@ router.get('/sequences/enrollments/:id', jwtOrApiKey, async (req, res) => {
          LEFT JOIN sequence_step_log l
            ON l.enrollment_id = sj.sequence_enrollment_id
           AND l.step_number   = CAST(JSON_UNQUOTE(JSON_EXTRACT(sj.data, '$.stepNumber')) AS UNSIGNED)
+          -- Job-scoped (2026-10-12): one step can now legitimately have
+          -- SEVERAL jobs over its life — a condition-error hold consumes its
+          -- job, and Recover re-places the SAME step as a NEW job. A bare
+          -- (enrollment, step_number) join would hang the old 'failed' log
+          -- row on the fresh pending job and, after the re-fire, fan every
+          -- job×log pair out 2×2. Each log row therefore attaches to the
+          -- LATEST job created at-or-before its executed_at: the row must
+          -- postdate the job (l.executed_at >= sj.created_at) and no newer
+          -- job for the step may predate the row (NOT EXISTS; id breaks
+          -- same-second created_at ties so the match is unique).
+          AND l.executed_at  >= sj.created_at
+          AND NOT EXISTS (
+                SELECT 1 FROM scheduled_jobs sj2
+                 WHERE sj2.type = 'sequence_step'
+                   AND sj2.sequence_enrollment_id = sj.sequence_enrollment_id
+                   AND CAST(JSON_UNQUOTE(JSON_EXTRACT(sj2.data, '$.stepNumber')) AS UNSIGNED)
+                       <=> l.step_number
+                   AND (sj2.created_at > sj.created_at
+                        OR (sj2.created_at = sj.created_at AND sj2.id > sj.id))
+                   AND sj2.created_at <= l.executed_at
+              )
          LEFT JOIN sequence_steps s ON s.id = l.step_id
          WHERE sj.type = 'sequence_step' AND sj.sequence_enrollment_id = ?
          ORDER BY sj.scheduled_time ASC, sj.id ASC`,
@@ -2006,6 +2027,14 @@ router.get('/sequences/enrollments/:id', jwtOrApiKey, async (req, res) => {
       // NULL-safe compare (<=>) so a log row with a NULL step_number (the
       // 'enrollment_not_active' path) is treated as unmatched and surfaces
       // here rather than vanishing.
+      //
+      // MIRROR OF PASS 1's join (2026-10-12): pass 1 attaches each log row
+      // to the latest same-step job with created_at <= executed_at, so "has
+      // a corresponding job" here means exactly "∃ same-step job with
+      // created_at <= executed_at" — the latest such job always satisfies
+      // pass 1's full predicate (the NOT EXISTS there only picks WHICH job
+      // wins). Diverging the two predicates makes rows vanish from both
+      // passes or appear in both.
       const [orphanRows] = await db.query(
         `SELECT
            NULL                       AS job_id,
@@ -2035,6 +2064,7 @@ router.get('/sequences/enrollments/:id', jwtOrApiKey, async (req, res) => {
                 AND sj.sequence_enrollment_id = l.enrollment_id
                 AND CAST(JSON_UNQUOTE(JSON_EXTRACT(sj.data, '$.stepNumber')) AS UNSIGNED)
                     <=> l.step_number
+                AND sj.created_at <= l.executed_at
            )`,
         [id]
       );
@@ -2230,9 +2260,23 @@ router.post('/sequences/enrollments/:id/fire-next', jwtOrApiKey, async (req, res
 //
 // Target step selection:
 //   - If sequence_step_log has any rows for this enrollment: target is
-//     (most-recent log row's step_number) + 1. This is robust to the
-//     edge where advanceToNextStep threw BEFORE updating
-//     enrollment.current_step.
+//     (most-recent log row's step_number) + 1 — EXCEPT when that row is a
+//     condition-error hold (skip_reason in CONDITION_ERROR_REASONS, written
+//     by executeStep Guards 2/4 when a template/step condition ERRORS
+//     rather than cleanly failing). Then the target is that SAME step: the
+//     hold means "this step was never dealt with — nothing ran, nothing
+//     advanced", so recovery re-fires it and the condition re-evaluates.
+//     This is the repair for transient/data/environment errors. Every
+//     OTHER log row (sent, skipped, action-failed, step_not_found, ...)
+//     keeps +1 — re-running an action-failed step would re-send.
+//   - Deterministic config errors (the condition itself is broken) cannot
+//     be fixed in place — a condition edit is STRUCTURAL (lib/versionDiff),
+//     so publish+migrate_in_flight 409s, and migration only repoints
+//     CURRENT-version enrollments anyway. The exits are cancel, or
+//     body {"skip_held_step": true}: logs the held step
+//     'skipped'/'held_step_skipped' and walks from the NEXT step. API-only
+//     (no UI button); 409 when the last log row is not a condition-error
+//     hold, so the flag can't silently skip a step that was never held.
 //   - If no log rows exist (enrollment-time wedge — _enrollWithTemplate
 //     INSERTed the enrollment but scheduling the first step threw):
 //     target is enrollment.current_step (which is 1 from the initial
@@ -2257,8 +2301,9 @@ router.post('/sequences/enrollments/:id/fire-next', jwtOrApiKey, async (req, res
 // have done had it never wedged") sends the missed step late AND every
 // later advance inherits that past floor, so one click on a long-wedged
 // enrollment bursts every remaining reminder — after the appointment too.
-// A wedge has no alert and is found hours or days later, so the late
-// branch is the one that actually runs; skipping is the safe side of it.
+// A wedge pages within ~30 min (_scanStuckEnrollments) but is often acted
+// on hours later, so the late branch is the one that actually runs;
+// skipping is the safe side of it.
 // What this gives up: a missed reminder whose wording was still true is
 // dropped rather than sent late. The response lists `skipped_steps` so the
 // operator can follow up by hand. All other timing types are computed
@@ -2334,14 +2379,37 @@ router.post('/sequences/enrollments/:id/recover', jwtOrApiKey, async (req, res) 
 
     // 3) Determine target step_number — see route comment for rationale.
     //    lastLog.id is also the watermark for "what did THIS recovery skip".
+    //    skip_reason is the condition-error discriminator: a hold row
+    //    re-targets its OWN step (nothing was dealt with); everything else
+    //    resumes at +1.
     const [[lastLog]] = await db.query(
-      `SELECT id, step_number FROM sequence_step_log
+      `SELECT id, step_number, step_id, skip_reason FROM sequence_step_log
         WHERE enrollment_id = ?
         ORDER BY id DESC LIMIT 1`,
       [id]
     );
+    const lastLogIsHeld = !!(lastLog && CONDITION_ERROR_REASONS.includes(lastLog.skip_reason));
+
+    // Opt-in exit for a held step whose condition is deterministically
+    // broken: log it 'skipped'/'held_step_skipped' (through the engine's own
+    // writer, so the drill-down and alert scans see an ordinary row) and
+    // resume from the next step. Refused when the last log row is not a
+    // hold — the flag must never skip a step that was never held.
+    const skipHeldStep = !!(req.body && req.body.skip_held_step);
+    let skippedHeldStepNumber = null;
+    if (skipHeldStep && !lastLogIsHeld) {
+      return res.status(409).json({
+        error: 'skip_held_step: no held step to skip',
+        message: 'The most recent log row for this enrollment is not a condition-error hold; a plain recover (without skip_held_step) is the right call here.',
+      });
+    }
+    if (skipHeldStep) {
+      await logStep(db, id, lastLog.step_id, lastLog.step_number, 'skipped', HELD_STEP_SKIPPED, null, null, null, 0);
+      skippedHeldStepNumber = lastLog.step_number;
+    }
+
     const targetStepNumber = lastLog && lastLog.step_number != null
-      ? lastLog.step_number + 1
+      ? (lastLogIsHeld && !skipHeldStep ? lastLog.step_number : lastLog.step_number + 1)
       : en.current_step;
 
     // Job watermark for the read-back in step 7: the walk's job is the first
@@ -2417,9 +2485,13 @@ router.post('/sequences/enrollments/:id/recover', jwtOrApiKey, async (req, res) 
         status:         'completed',
         step_number:    targetStepNumber,
         skipped_steps:  skippedSteps,
-        note: skippedSteps.length
-          ? `The send window had already passed for step(s) ${skippedSteps.join(', ')} and nothing later could be scheduled; marked enrollment completed.`
-          : `Nothing left to schedule from step ${targetStepNumber}; marked enrollment completed.`,
+        ...(skippedHeldStepNumber != null && { skipped_held_step: skippedHeldStepNumber }),
+        note: (skippedHeldStepNumber != null
+            ? `Held step ${skippedHeldStepNumber} skipped (held_step_skipped). `
+            : '')
+          + (skippedSteps.length
+            ? `The send window had already passed for step(s) ${skippedSteps.join(', ')} and nothing later could be scheduled; marked enrollment completed.`
+            : `Nothing left to schedule from step ${targetStepNumber}; marked enrollment completed.`),
       });
     }
 
@@ -2444,6 +2516,7 @@ router.post('/sequences/enrollments/:id/recover', jwtOrApiKey, async (req, res) 
     const afterData = typeof after.data === 'string' ? JSON.parse(after.data) : (after.data || {});
     const placedStepNumber = Number(afterData.stepNumber) || targetStepNumber;
 
+    const rerunHeld = lastLogIsHeld && !skipHeldStep && placedStepNumber === lastLog.step_number;
     return res.json({
       success:           true,
       enrollment_id:     id,
@@ -2451,7 +2524,14 @@ router.post('/sequences/enrollments/:id/recover', jwtOrApiKey, async (req, res) 
       step_number:       placedStepNumber,
       new_scheduled_at:  new Date(after.scheduled_time).toISOString(),
       skipped_steps:     skippedSteps,
-      note: "Step placed by its own timing rule, counted from now"
+      ...(skippedHeldStepNumber != null && { skipped_held_step: skippedHeldStepNumber }),
+      ...(rerunHeld && { held_step_rerun: true }),
+      note: (rerunHeld
+            ? "Held step re-placed — its condition re-evaluates at execution; if the condition is still broken it will hold and alert again. "
+            : skippedHeldStepNumber != null
+              ? `Held step ${skippedHeldStepNumber} skipped (held_step_skipped). `
+              : '')
+          + "Step placed by its own timing rule, counted from now"
           + (skippedSteps.length
               ? ` (step(s) ${skippedSteps.join(', ')} skipped — send window already passed)`
               : '')

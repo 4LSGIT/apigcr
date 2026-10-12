@@ -1134,6 +1134,7 @@ tests/schemaConventions.test.js
 tests/scriptGuard.setup.js
 tests/scriptGuardCoverage.test.js
 tests/sendingformBk.dbkqLink.test.js
+tests/sequenceEngine.conditions.test.js
 tests/sequences.editor.roundtrip.test.js
 tests/sequences.ensureDraft.test.js
 tests/sequences.recover.test.js
