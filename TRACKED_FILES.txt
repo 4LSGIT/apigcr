@@ -39,6 +39,7 @@ lib/domainEvents.js
 lib/errorMiddleware.js
 lib/escapeLike.js
 lib/firmConfig.js
+lib/hookSpool.js
 lib/ingestSampleProjection.js
 lib/internal_functions/README.md
 lib/internal_functions/ai.js
@@ -78,6 +79,7 @@ lib/internal_functions/variables.js
 lib/job_executor.js
 lib/legacyTrap.js
 lib/logMeta.js
+lib/maintenance.js
 lib/multipartBody.js
 lib/noteLimits.js
 lib/parseName.js
@@ -627,6 +629,7 @@ routes/internal.js
 routes/internal/dropbox.js
 routes/internal/email.js
 routes/internal/emailTest.js
+routes/internal/hookReplay.js
 routes/internal/mms.js
 routes/internal/phoneTest.js
 routes/internal/sequence.js
@@ -1016,10 +1019,14 @@ tests/helpers/u6aEventsDb.js
 tests/hookHmacRawBody.test.js
 tests/hookHmacTimestamped.test.js
 tests/hookMapper.test.js
+tests/hookReceiver.maintenance.test.js
 tests/hookReceiver.splitPhase.test.js
+tests/hookReplay.routes.test.js
 tests/hookService.duplicate.test.js
 tests/hookService.retryRecovery.test.js
 tests/hookService.splitPhase.test.js
+tests/hookSpool.test.js
+tests/hookSpoolReplay.mysql.test.js
 tests/hookTransforms.test.js
 tests/ingestRuleService.duplicate.test.js
 tests/ingestRuleService.transformFailure.test.js
@@ -1058,6 +1065,7 @@ tests/mailboxS3.mysql.test.js
 tests/mailboxS3.pane.test.js
 tests/mailboxS3.send.test.js
 tests/mailboxS3.transport.test.js
+tests/maintenanceGate.test.js
 tests/manageSelfService.policy.test.js
 tests/manualReadmeCoverage.test.js
 tests/mascotSkins.test.js
@@ -1112,6 +1120,7 @@ tests/sequences.routeOrder.test.js
 tests/smtpAdapter.deliveryInfo.test.js
 tests/sqlGuard.secretTables.test.js
 tests/ssnModifiers.test.js
+tests/startupInit.maintenance.test.js
 tests/su.stepup.test.js
 tests/systemAlertStatusFn.test.js
 tests/taskQueue.accel.test.js

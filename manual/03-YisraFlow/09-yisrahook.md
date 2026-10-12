@@ -54,7 +54,7 @@ Public endpoint, no `jwtOrApiKey` middleware. Auth is per-hook (configured on th
 { "status": "not_found" }                          // no hook with that slug, or inactive
 ```
 
-The receiver always returns 200 even on dispatch errors — the sender shouldn't retry on our internal failures (they should retry only on a non-200, which means our auth rejection or the slug not existing).
+The receiver always returns 200 even on dispatch errors — the sender shouldn't retry on our internal failures (they should retry only on a non-200, which means our auth rejection or the slug not existing). The one exception is maintenance mode — see [During maintenance](#during-maintenance-write-freeze) below.
 
 ### Pipeline
 
@@ -349,6 +349,20 @@ Capture mode lets you record one real incoming event without dispatching anythin
 
 **Truncation:** raw input is capped at 512 KB. If exceeded, the truncation flag is returned and the captured row's `raw_input` field shows the first 512 KB. The pipeline does not block on oversized payloads; it just stores a truncated copy.
 
+### During maintenance (write freeze)
+
+When the app runs with `MAINTENANCE_MODE=1` (a database move — `ref/INFRA_GCP.md` §9) every other route answers 503, but `POST /hooks/:slug` stays open so webhooks are not lost. It does **not** run the pipeline:
+
+1. The hook is looked up and the sender authenticated exactly as usual (a bad key is still a 401; an unknown slug with no catch-all is still a 404).
+2. The event — the same `{body, headers, query, method, meta}` object the pipeline would have received — is stored as a task on the paused Cloud Tasks queue `yc-hook-spool`. The sender gets the usual `200 {"status":"received"}`.
+3. If the event could **not** be stored, the sender gets `503` + `Retry-After: 60`. This is the only time the receiver asks a sender to retry on our failure: there is nowhere else to put the event.
+
+Nothing is written to the database during the window: no `hook_executions` row, no capture-mode flip (an armed hook stays armed), no deliveries.
+
+After the window the queue is resumed and each stored event is POSTed to `/internal/hook-replay` (internal key only), which runs the normal pipeline. In the Logs tab a replayed execution is told apart by its raw input: `meta.spooled: true`, `meta.spool_id`, `meta.replayed_at`, and `meta.received_at` holding the **original** arrival time (the row's `created_at` is the replay time). Each event runs once — a redelivered task finds its `spool_id` already present and does nothing.
+
+Things to expect after a window: workflows and sequences started by replayed events start at replay time, in roughly arrival order; anything that reads "now" inside a target sees the replay time, not the arrival time.
+
 ### Dry-run
 
 `POST /api/hooks/:id/test` (with `{ "dryRun": true, "input": { ... } }`) runs the full pipeline against an arbitrary input without inserting `hook_executions`, without writing `hook_delivery_logs`, and without firing any side effects. Returns the would-be transform output and would-be delivery preview for each target.
@@ -380,6 +394,7 @@ Both edit the same `hooks` / `hook_targets` / `credentials` rows. The standalone
 | Route | Purpose |
 |---|---|
 | `POST /hooks/:slug` | Public receiver |
+| `POST /internal/hook-replay` | Cloud Tasks push target — replays one event captured during maintenance (internal key only) |
 | `GET /api/hooks` | List hooks |
 | `GET /api/hooks/:id` | Hook + targets |
 | `POST /api/hooks` | Create |

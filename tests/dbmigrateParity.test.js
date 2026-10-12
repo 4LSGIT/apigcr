@@ -27,7 +27,7 @@
 
 const {
   parseTarget, diffRows, diffMaps, exitCodeFor, countSql, contentHashSql,
-  sectionHash, parseArgs, SECTION_KEYS, HARD_SETTINGS, INFO_SETTINGS,
+  sectionHash, parseArgs, SECTION_KEYS, HARD_SETTINGS, INFO_SETTINGS, fieldDiffText,
 } = require('../scripts/dbmigrate/parity');
 
 describe('parseTarget', () => {
@@ -117,6 +117,49 @@ describe('diffRows', () => {
     // without keys would be silently skipped by the structure loop.
     expect(Object.keys(SECTION_KEYS).sort()).toEqual(
       ['checks', 'columns', 'fks', 'indexes', 'tables', 'triggers', 'views']);
+  });
+});
+
+describe('fieldDiffText — how a differing field is reported', () => {
+  const CRLF = "BEGIN\r\n    IF NEW.x = 1 THEN\r\n        SET NEW.x = NULL;\r\n    END IF;\r\nEND";
+  const LF = CRLF.replace(/\r\n/g, '\n');
+
+  test('line endings only (the 2026-10-12 rehearsal): named as such, with the CR counts and the fix', () => {
+    const t = fieldDiffText(CRLF, LF);
+    expect(t).toMatch(/ONLY in line endings/);
+    expect(t).toContain('source 4, dest 0');
+    expect(t).toContain('--binary-mode');
+    expect(t).not.toContain('IF NEW.x');            // the body is NOT dumped
+    // either direction, and a lone CR counts too
+    expect(fieldDiffText(LF, CRLF)).toContain('source 0, dest 4');
+    expect(fieldDiffText('a\rb', 'a\nb')).toMatch(/ONLY in line endings/);
+  });
+
+  test('a real change is never mistaken for a line-ending change, even with CRLF present', () => {
+    const t = fieldDiffText(CRLF, LF.replace('SET NEW.x = NULL', 'SET NEW.x = 0'));
+    expect(t).not.toMatch(/ONLY in line endings/);
+    expect(t).toMatch(/source .* \| dest /);
+  });
+
+  test('long text: a window around the FIRST differing character, not both values whole', () => {
+    const a = 'a'.repeat(300) + 'X' + 'b'.repeat(500);
+    const b = 'a'.repeat(300) + 'Y' + 'b'.repeat(500);
+    const t = fieldDiffText(a, b);
+    expect(t).toContain('first difference at character 300');
+    expect(t).toContain('lengths 801 / 801');
+    expect(t).toContain('aX');
+    expect(t).toContain('aY');
+    expect(t.length).toBeLessThan(400);
+  });
+
+  test('long text where one side is a prefix of the other: the difference is at the shorter length', () => {
+    expect(fieldDiffText('q'.repeat(200), 'q'.repeat(250))).toContain('first difference at character 200 (lengths 200 / 250)');
+  });
+
+  test('short values and non-strings are shown whole, JSON-quoted (NULL vs empty stays visible)', () => {
+    expect(fieldDiffText('utf8mb4_bin', 'utf8mb4_general_ci')).toBe('source "utf8mb4_bin" | dest "utf8mb4_general_ci"');
+    expect(fieldDiffText(null, '')).toBe('source null | dest ""');
+    expect(fieldDiffText(1, '1')).toBe('source 1 | dest "1"');
   });
 });
 

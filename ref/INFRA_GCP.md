@@ -1,6 +1,6 @@
 # INFRA_GCP.md — Google Cloud setup for svpcac (app.4lsg.com)
 
-Captured from live state 2026-09-20; `mailbox-ingest` scheduler job added 2026-10-09. No open TODOs. Project `lsg-api-425223` (number `618099140949`), region `us-east1`.
+Captured from live state 2026-09-20; `mailbox-ingest` scheduler job added 2026-10-09; maintenance mode + the `yc-hook-spool` queue (§9) added 2026-10-12. No open TODOs. Project `lsg-api-425223` (number `618099140949`), region `us-east1`.
 
 **Why this file exists.** The deploy pipeline (`cloudbuild.yaml`) only ever runs
 `gcloud run services update --image=...` — every other piece of the system (env vars,
@@ -57,6 +57,7 @@ Front door: `app.4lsg.com` is a **Cloud Run domain mapping** (DNS CNAME →
 | Cloud Scheduler | `process-jobs`, us-east1, `* * * * *`, tz America/Cancun | `POST https://svpcac-<PROJECT_NUMBER>.us-east1.run.app/process-jobs` with header `x-api-key: <yck_ write key>` (value lives in the job config; view with `gcloud scheduler jobs describe`, mint/rotate in the app). Deliberately targets the run.app URL, not the custom domain — **the URL embeds the project number, so it changes on a project rebuild**. attemptDeadline 900 s; retries backoff 5 s→300 s. Tz is DST-less EST; irrelevant at every-minute but don't copy the pattern for daily jobs (FIRM_TZ is America/Detroit). |
 | Cloud Scheduler | `mailbox-ingest`, us-east1, `*/5 * * * *`, tz Etc/UTC (created 2026-10-09) | `POST https://svpcac-<PROJECT_NUMBER>.us-east1.run.app/mailbox-ingest` with header `x-api-key: <yck_ key>` — its OWN key (labelled "scheduler mailbox-ingest"), revocable without touching `process-jobs`. attemptDeadline 600 s; **no retries** (`--max-retry-attempts=0`): every tick is a retry, and the run's `GET_LOCK('mailbox_ingest:<db>')` would turn a retry into a skip. Run budget 240 s (`MAILBOX_INGEST_BUDGET_MS`) sits inside the deadline. Deliberately NOT folded into the `process-jobs` tick: own pause switch (`gcloud scheduler jobs pause mailbox-ingest`), an IMAP-appropriate cadence, and failure isolation (an IMAP stall can't hold `process-jobs` open). Emit kill switch is DB-side: `email_ingest_sources` row `mailbox-imap` `active=0`. |
 | Cloud Tasks | queue `yc-jobs`, us-east1 | Referenced by env `CLOUD_TASKS_LOCATION`/`CLOUD_TASKS_QUEUE`. |
+| Cloud Tasks | queue `yc-hook-spool`, us-east1 — **PAUSED by design** | The hook spool (`lib/hookSpool.js`): where `POST /hooks/:slug` parks webhooks while `MAINTENANCE_MODE=1`. Paused = capture, resumed = replay to `/internal/hook-replay`. max-concurrent-dispatches 1, **max-attempts -1 (unlimited)**, backoff 30 s→600 s, log sampling 1.0. Leave it paused between uses; a RUNNING state is only correct while draining after a maintenance window. Procedure: §9. |
 | GCS | bucket `uploads.4lsg.com` (US multi-region) | Served via CNAME `uploads.4lsg.com → c.storage.googleapis.com` (HTTP path). |
 | Domain mapping | `app.4lsg.com` → svpcac | DNS: CNAME `app` → `ghs.googlehosted.com.` (DNS-only record at the DNS host; NOT proxied through Cloudflare — Express/GFE headers visible). |
 | Secret Manager | **not used** | All config is plain env vars on the service (§5). `gcloud secrets list` prompts to enable the API — that's the tell. |
@@ -136,6 +137,10 @@ export command). Non-secret values inline.
   `FIRM_LOG=<hosted logo png URL>`
 - **GCP wiring:** `GCS_BUCKET=uploads.4lsg.com`, `CLOUD_TASKS_LOCATION=us-east1`,
   `CLOUD_TASKS_QUEUE=yc-jobs`
+- **Maintenance (all UNSET in prod; set only on a maintenance revision — §9):**
+  `MAINTENANCE_MODE=1` turns the gate on (`lib/maintenance.js`); optional
+  `MAINTENANCE_MESSAGE` (text on the 503 page/JSON), `MAINTENANCE_RETRY_AFTER`
+  (seconds, default 900), `CLOUD_TASKS_SPOOL_QUEUE` (default `yc-hook-spool`).
 - **App secrets:** `API_KEY`, `INTERNAL_API_KEY`, `JWT_SECRET`,
   `CREDENTIALS_ENCRYPTION_KEY`, `STREAK_ADMIN_PASSWORD`, `AITEST_KEY` (+`AITEST_ENABLED=1`)
 - **RingCentral:** `RINGCENTRAL_CLIENT_ID`, `RINGCENTRAL_CLIENT_SECRET`,
@@ -209,7 +214,21 @@ Assumes fresh project or region. `P=lsg-api-425223 R=us-east1` (adjust if new pr
      --headers=x-api-key=<its own yck_ key> \
      --attempt-deadline=600s --max-retry-attempts=0
    ```
-9. **Cloud Tasks:** `gcloud tasks queues create yc-jobs --location=$R`
+9. **Cloud Tasks:** `gcloud tasks queues create yc-jobs --location=$R`, and the hook
+   spool, created then immediately paused (it stays paused — §9):
+   ```
+   gcloud tasks queues create yc-hook-spool --location=$R \
+     --max-concurrent-dispatches=1 --max-dispatches-per-second=2 \
+     --max-attempts=-1 --min-backoff=30s --max-backoff=600s --max-doublings=5 \
+     --log-sampling-ratio=1.0
+   gcloud tasks queues pause yc-hook-spool --location=$R
+   gcloud tasks queues describe yc-hook-spool --location=$R \
+     --format='value(state,retryConfig.maxAttempts)'        # must print: PAUSED  -1
+   ```
+   `-1` = unlimited attempts, and it is load-bearing: Cloud Tasks **deletes** a task
+   when its attempts run out, whatever the status code, so a finite budget would let
+   any systematic replay failure empty the spool. If `describe` prints anything but
+   `-1`, fix it (`gcloud tasks queues update … --max-attempts=-1`) before relying on it.
 10. **GCS:** `gsutil mb -l US gs://uploads.4lsg.com` (domain-named bucket requires the
     domain be verified to the account) + grant the runtime SA object admin on it.
 11. **Domain mapping + DNS:**
@@ -266,3 +285,89 @@ echo "== domains";   gcloud beta run domain-mappings list --region=$R --project=
 Diff the output against this file during docs review; divergences get fixed here or
 filed in scratch `ns=docs`. The `== run yaml` section contains secret values — never
 commit the dump.
+
+## 9. Maintenance mode (write freeze)
+
+For work that needs the data to stand still (a database move). One env var on a
+revision; the code is inert without it. Design and rationale: `lib/maintenance.js`,
+`lib/hookSpool.js`, `routes/internal/hookReplay.js`.
+
+**What `MAINTENANCE_MODE=1` does.** Every route answers `503` + `Retry-After` (an HTML
+page for a browser navigation, JSON otherwise) — staff, portal, booking pages, API keys,
+both scheduler ticks, Cloud Tasks pushes, e-sign webhooks. The one door left open is
+`POST /hooks/:slug`: that receiver answers 200 even when its own pipeline fails, so
+closing it — or leaving it running against a frozen database — would lose RingCentral /
+Quo events, website leads and Calendly bookings silently. Instead it authenticates the
+event as usual and stores it as a task on `yc-hook-spool`. If the event cannot be stored
+it answers 503, so the sender retries. Boot also skips the custom-field reconcile (DDL).
+
+**What it does not do.** It cannot stop a writer that never passes through Express:
+anything holding MySQL credentials directly (Pabbly's MySQL steps, a local dev `.env`).
+Switch those off by hand. And run the maintenance revision on the **read-only DB user**
+(`user`/`password` = the `user_ro`/`password_ro` values) so a stray write anywhere in
+the app fails instead of landing in a database that is about to be left behind.
+
+**Enter.** First quiet the app's own callers — not required for safety (they would
+just collect 503s) but it keeps the scheduler from logging a failure a minute:
+```
+gcloud scheduler jobs pause process-jobs   --location=$R
+gcloud scheduler jobs pause mailbox-ingest --location=$R
+gcloud tasks queues pause yc-jobs          --location=$R
+gcloud tasks queues describe yc-hook-spool --location=$R \
+  --format='value(state,retryConfig.maxAttempts)'                    # must print: PAUSED  -1
+```
+Then one revision. `^@^` makes `@` the separator because values may contain commas —
+if a value contains `@`, pick another character that appears in none of them
+(`^#^…#…`):
+```
+gcloud run services update svpcac --region=$R \
+  --update-env-vars='^@^MAINTENANCE_MODE=1@user=<user_ro value>@password=<password_ro value>'
+```
+The boot log must show `[maintenance] MAINTENANCE_MODE=1` and
+`[hookSpool] ready — queue yc-hook-spool (us-east1) exists and is PAUSED`. A
+`not PAUSED` / `NOT FOUND` / `NOT CONFIGURED` line there means captured webhooks are
+not safe — fix it before relying on the window. Then prove it with a real hit: POST to
+a test hook, expect 200, and see the task with
+`gcloud tasks list --queue=yc-hook-spool --location=$R`.
+
+During the window the app cannot record alerts (read-only DB user), so a failed
+capture shows **only in the Cloud Run log** — search for `could NOT spool`. The sender
+got a 503 for each one and will retry.
+
+**Leave** — order matters: the app first, the queue second.
+```
+gcloud run services update svpcac --region=$R \
+  --remove-env-vars=MAINTENANCE_MODE \
+  --update-env-vars='^@^user=<app user>@password=<app password>'     # plus any new DB target
+# confirm the app answers normally, THEN:
+gcloud scheduler jobs resume process-jobs   --location=$R
+gcloud scheduler jobs resume mailbox-ingest --location=$R
+gcloud tasks queues resume yc-jobs          --location=$R
+gcloud tasks queues resume yc-hook-spool    --location=$R
+gcloud tasks list --queue=yc-hook-spool --location=$R                # drains to empty
+gcloud tasks queues pause yc-hook-spool --location=$R                # park it for next time
+```
+Resuming early is harmless but pointless: the gate 503s `/internal/hook-replay` too, so
+tasks just retry. **A queue that does not drain is the signal that something is wrong**
+— a task leaves it only when the replay route answers 2xx. Look at one with
+`gcloud tasks describe <task> --queue=yc-hook-spool --location=$R --response-view=full`
+(shows the stored event and the last attempt's status), fix the cause, and it goes
+through on its next retry (at most 10 minutes later).
+
+**Replay semantics.** One task = one captured event, replayed through the normal hook
+pipeline with its original `received_at`, plus `meta.spooled`, `meta.spool_id` and
+`meta.replayed_at` in `hook_executions.raw_input`. Redelivery is a no-op (keyed on
+`spool_id`). Events replay one at a time in roughly arrival order (Cloud Tasks does not
+guarantee order). A captured event whose hook was deleted in the meantime — with no
+`_catchall` hook — is dropped: a `spool_replay_dropped` system alert, and the full
+payload written to the Cloud Run log (search `DROPPED spooled event`). The tasks carry
+the internal API key, so rotating it twice between capture and replay makes every
+replay 401 (one rotation is covered by the previous-key slot); the tasks wait in the
+queue until the key they carry is valid again.
+
+**Limits.** An event over ~900 KB cannot be stored in one task → the sender gets 503
+for the whole window. An event between 512 KB and 900 KB is captured but cannot replay
+until the pipeline's oversized-payload handling is fixed (`executeHook` cuts the JSON
+text at 512 KB, which a JSON column rejects — the same event is dropped by the live
+receiver today); it stays in the queue, visibly. Largest hook payload on record: 24 KB.
+Tasks are kept 31 days.

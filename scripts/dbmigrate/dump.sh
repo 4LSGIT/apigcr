@@ -69,7 +69,14 @@ IMAGE="${MYSQL_IMAGE:-mysql:8.4}"
 MYSQLDUMP="${MYSQLDUMP:-docker run --rm -e MYSQL_PWD $IMAGE mysqldump}"
 MYSQL="${MYSQL:-docker run --rm -e MYSQL_PWD $IMAGE mysql}"
 
-conn=(-h "$SRC_HOST" -P "$SRC_PORT" -u "$SRC_USER")
+# --get-server-public-key: a caching_sha2_password account can only do its full
+# (first, uncached) login over a secure channel OR an RSA key exchange. Over
+# plain TCP with no TLS — a server with TLS off, or any connection through the
+# Cloud SQL Auth Proxy's local port — the client otherwise fails with
+#   ERROR 2061 … Authentication requires secure connection.
+# The flag is ignored when the channel is already secure or the account uses
+# another plugin, so it is safe to pass always.
+conn=(--get-server-public-key -h "$SRC_HOST" -P "$SRC_PORT" -u "$SRC_USER")
 sql() { $MYSQL "${conn[@]}" -N -B "$SRC_DB" -e "$1"; }
 
 # Shared by both dumps. --column-statistics=0: never ask the source for
@@ -113,7 +120,10 @@ else
 
   # ── 2. triggers only, DEFINER stripped ─────────────────────────────────────
   echo "[dump] writing $TRIG …" >&2
-  $MYSQLDUMP "${conn[@]}" "${common[@]}" --no-data --no-create-info --triggers --skip-routines "$SRC_DB" \
+  # --add-drop-trigger: each CREATE is preceded by DROP TRIGGER IF EXISTS, so
+  # the file can be applied again on its own (after a failed or text-mode
+  # apply) without first dropping the triggers by hand.
+  $MYSQLDUMP "${conn[@]}" "${common[@]}" --no-data --no-create-info --triggers --add-drop-trigger --skip-routines "$SRC_DB" \
     | sed -E 's/DEFINER=`[^`]+`@`[^`]+`//g' > "$TRIG"
 fi
 

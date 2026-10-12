@@ -25,6 +25,8 @@ const actionDispatchers = require('../lib/actionDispatchers');
 const internalFunctions = require('../lib/internal_functions'); // __validateParamsMapping
 const { listTransforms } = require('../services/hookTransforms');
 const { listOperators } = require('../services/hookFilter');
+const maintenance = require('../lib/maintenance');
+const hookSpool = require('../lib/hookSpool');
 
 
 // Rate limit the public receiver endpoint: 120 req/min per slug+IP
@@ -118,6 +120,15 @@ const CATCHALL_SLUG = '_catchall';
  * Receives external webhooks. Authentication is per-hook (not JWT).
  * Always returns 200 to the sender — errors are logged internally.
  *
+ * ONE EXCEPTION — MAINTENANCE_MODE=1 (lib/maintenance.js). The pipeline must
+ * not run (the database is write-frozen), and "200 no matter what" would then
+ * mean "acknowledged and lost". So after the usual lookup + authentication the
+ * event is CAPTURED to the hook spool (lib/hookSpool.js) and replayed later
+ * through /internal/hook-replay. The 200 body is unchanged when capture
+ * succeeds; if the event could NOT be stored — or the hook could not even be
+ * looked up — the answer is 503, because for once the honest reply to the
+ * sender is "send it again".
+ *
  * Capture-mode branch: when hook.capture_mode === 'capturing', we await the
  * pipeline synchronously so we can report {status:'captured',execution_id}
  * back to the sender. The guarded UPDATE inside executeHook is the race-free
@@ -182,6 +193,24 @@ router.post('/hooks/:slug', hookReceiveLimiter, async (req, res) => {
       },
     };
 
+    // Maintenance: capture, do not execute. Sits AFTER authentication (so the
+    // spool only ever holds events the hook would have accepted, and a
+    // timestamped-HMAC sender is judged now, not at replay) and BEFORE the
+    // capture-mode branch below, which writes to `hooks`.
+    if (maintenance.isOn()) {
+      const spoolId = hookSpool.newSpoolId();
+      input.meta.spooled = true;
+      input.meta.spool_id = spoolId;
+      try {
+        const stored = await hookSpool.put({ slug, input, spoolId });
+        console.log(`[hook] maintenance: spooled ${slug} as ${spoolId} (${stored.bytes} bytes)`);
+        return res.json({ status: 'received', slug });
+      } catch (err) {
+        console.error(`[hook] maintenance: could NOT spool ${slug} — answering 503 so the sender retries: ${err.message}`);
+        return maintenanceUnavailable(res);
+      }
+    }
+
     // Capture mode: synchronous so we can respond with the captured status.
     if (hook.capture_mode === 'capturing') {
       try {
@@ -227,10 +256,23 @@ router.post('/hooks/:slug', hookReceiveLimiter, async (req, res) => {
 
   } catch (err) {
     console.error(`[hook] Receiver error for ${slug}:`, err);
+    // In maintenance nothing was stored (the hook lookup itself failed), so a
+    // 200 here would be a silent drop — see the route header.
+    if (maintenance.isOn()) return maintenanceUnavailable(res);
     // Still return 200 to avoid sender retries on our errors
     res.status(200).json({ status: 'received', slug });
   }
 });
+
+// 503 for a hook event that could not be captured during maintenance. Short
+// Retry-After: unlike the gate's page-level 503, this is a transient storage
+// failure and the sender should come back soon.
+function maintenanceUnavailable(res) {
+  return res.status(503).set('Retry-After', '60').json({
+    status: 'error',
+    message: 'Temporarily unavailable — retry shortly',
+  });
+}
 
 
 // ─────────────────────────────────────────────────────────────

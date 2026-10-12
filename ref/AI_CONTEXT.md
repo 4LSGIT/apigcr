@@ -23,6 +23,34 @@
 gaps above); everything else from the September delta pass is folded into the
 body. Governing migrations in `ref/migrations/`.*
 
+- **Maintenance mode / hook spool (10-12):** `MAINTENANCE_MODE=1` on a revision
+  = write freeze. `lib/maintenance.js` gate (mounted in `server.js` after cors +
+  build stamp, BEFORE body parsers / static / the 5xx observer — order is tested)
+  503s everything except `POST /hooks/:slug`, which captures the authenticated
+  event to the PAUSED Cloud Tasks queue `yc-hook-spool` (`lib/hookSpool.js`)
+  instead of executing; replay is `POST /internal/hook-replay`
+  (`routes/internal/hookReplay.js`, internal key only, idempotent on
+  `raw_input.meta.spool_id`). Operator procedure `ref/INFRA_GCP.md` §9; hook-side
+  behaviour `manual/03-YisraFlow/09-yisrahook.md`. Invariants:
+  - **`hookSpool.put()` REJECTS on failure — the opposite of `lib/taskQueue.js`**
+    (which swallows). During a freeze the task is the only copy of the event;
+    the receiver turns a rejection into a 503 so the sender retries. It also
+    ignores the `cloud_tasks_enabled` kill switch.
+  - **A new MACHINE-facing entry point that acks-then-works (2xx regardless of
+    its own failure) needs its own capture path** or it loses events during a
+    freeze — today the hook receiver is the only such route. Everything else is
+    safe to 503: it retries (Gmail Apps Script, schedulers, Cloud Tasks) or is a
+    caller that reads the response. Landing-page form posts
+    (`routes/pageLanding.js`, "always 303") are the same shape with a PERSON on
+    the other end: pages are not served during a freeze and a stale tab's POST
+    gets the maintenance page.
+  - **The spool queue has unlimited attempts (`max-attempts -1`) on purpose.**
+    Cloud Tasks deletes a task when its attempts run out, on any status; here a
+    task must leave the queue only on a 2xx from the replay route. So that
+    route's 2xx means "this event is finished with" — never answer 2xx for
+    something that should be retried.
+  - The gate does not stop non-Express writers; a maintenance revision runs on
+    the read-only DB user as the hard lock.
 - **Comms hub read side is live (mailbox S2, 10-09):** `routes/api.mail.js`
   → `services/mailbox/mailReadService.js`; pane `public/comms.html` (the
   shell's Comms tab `tabComms` + sidebar badge — `commsBadgeSet`/`Refresh` in

@@ -69,6 +69,15 @@ app.use((req, res, next) => {
 });
 console.log(`app build: ${appBuild.build} (mtime ${appBuild.mtime})`);
 
+// Maintenance gate — inert unless MAINTENANCE_MODE=1. When on, everything gets
+// a 503 except POST /hooks/:slug, which still runs so webhooks can be captured
+// to the spool instead of lost. Position is load-bearing in both directions:
+// after cors + the build stamp (the 503 is readable cross-origin and carries
+// X-App-Build), before the body parsers, express.static and the 5xx observer
+// (a maintenance 503 is not an application error and must not be recorded as
+// one — into a database that is frozen). See lib/maintenance.js.
+app.use(require("./lib/maintenance").gate());
+
 // Capture raw body for webhook HMAC verification.
 // rawBodyBuf alongside rawBody for the same reason /webhooks keeps both: a
 // UTF-8 decode turns invalid byte sequences into U+FFFD, so re-encoding the

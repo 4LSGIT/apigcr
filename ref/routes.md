@@ -1,7 +1,7 @@
 # Routes
 
-_Generated 2026-10-11T22:08:23.357Z_  
-_737 routes total — DELETE: 61, GET: 306, PATCH: 50, POST: 282, PUT: 35, _ALL: 3_
+_Generated 2026-10-12T00:52:38.705Z_  
+_738 routes total — DELETE: 61, GET: 306, PATCH: 50, POST: 283, PUT: 35, _ALL: 3_
 
 ## Global middleware chain
 
@@ -754,6 +754,7 @@ _737 routes total — DELETE: 61, GET: 306, PATCH: 50, POST: 282, PUT: 35, _ALL:
 | POST | `/internal/email-test/send` | `jwtOrApiKey` | — |
 | POST | `/internal/email/send` | `jwtOrApiKey` | — |
 | GET | `/internal/hello` | — | — |
+| POST | `/internal/hook-replay` | `jwtOrApiKey` | — |
 | POST | `/internal/mms/send` | `jwtOrApiKey` | — |
 | GET | `/internal/phone-test/lines` | `jwtOrApiKey` | — |
 | POST | `/internal/phone-test/mms` | `jwtOrApiKey` | — |
@@ -1007,4 +1008,4 @@ _737 routes total — DELETE: 61, GET: 306, PATCH: 50, POST: 282, PUT: 35, _ALL:
 
 ---
 
-_737 routes total — DELETE: 61, GET: 306, PATCH: 50, POST: 282, PUT: 35, _ALL: 3_
+_738 routes total — DELETE: 61, GET: 306, PATCH: 50, POST: 283, PUT: 35, _ALL: 3_

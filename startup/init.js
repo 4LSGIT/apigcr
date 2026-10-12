@@ -27,8 +27,21 @@
 // sibling instance booting at the same moment just waits its turn on the
 // named lock (services/fieldDefReconciler.js).
 
+// Maintenance revisions (MAINTENANCE_MODE=1, lib/maintenance.js) boot
+// differently: the hook spool's Cloud Tasks channel is warmed (and its queue
+// state logged) because captured webhooks depend on it, and the custom-field
+// reconcile is SKIPPED — it is DDL, the database is meant to be frozen, and
+// such a revision is expected to hold the read-only DB user anyway.
+
 module.exports = async function init(db) {
   require('../lib/taskQueue').warmup();
+  if (require('../lib/maintenance').isOn()) {
+    console.warn('[maintenance] MAINTENANCE_MODE=1 — every route answers 503 except POST /hooks/:slug, which captures to the hook spool');
+    // warmup() never rejects by contract; the catch keeps a future regression
+    // from becoming an unhandledRejection alert aimed at a frozen database.
+    Promise.resolve(require('../lib/hookSpool').warmup()).catch(() => {});
+    return;
+  }
   require('../services/fieldDefReconciler').scheduleReconcile(db, { trigger: 'boot' });
 };
 

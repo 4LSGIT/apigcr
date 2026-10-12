@@ -127,6 +127,42 @@ function diffRows(srcRows, dstRows, keyCols) {
 }
 
 /**
+ * One line describing how a field differs, sized for a terminal.
+ *
+ * Two cases get special treatment because the 2026-10-12 rehearsal printed
+ * thirteen whole trigger bodies, twice each, for a difference nobody could
+ * see in them:
+ *   - LINE ENDINGS ONLY. Triggers written in phpMyAdmin carry CRLF; the mysql
+ *     command-line client turns CRLF into LF in every statement it sends
+ *     unless it runs with --binary-mode. Same behavior, different bytes — and
+ *     still a difference (the copy must be exact), so it is named, with the
+ *     fix, instead of dumped.
+ *   - LONG TEXT. Shows a window around the first differing character rather
+ *     than both values whole.
+ */
+const LONG_FIELD = 160;
+function fieldDiffText(src, dst) {
+  if (typeof src === "string" && typeof dst === "string" && src !== dst) {
+    const lf = (t) => t.replace(/\r\n?/g, "\n");
+    if (lf(src) === lf(dst)) {
+      const crs = (t) => (t.match(/\r/g) || []).length;
+      return `differs ONLY in line endings (CR characters: source ${crs(src)}, dest ${crs(dst)}). ` +
+        "Text applied through the mysql client loses its CRs unless the client runs with --binary-mode — re-apply it that way.";
+    }
+    if (src.length > LONG_FIELD || dst.length > LONG_FIELD) {
+      const n = Math.min(src.length, dst.length);
+      let i = 0;
+      while (i < n && src[i] === dst[i]) i++;
+      const from = Math.max(0, i - 40);
+      const win = (t) => JSON.stringify(t.slice(from, i + 60));
+      return `first difference at character ${i} (lengths ${src.length} / ${dst.length}): ` +
+        `source …${win(src)}… | dest …${win(dst)}…`;
+    }
+  }
+  return `source ${JSON.stringify(src)} | dest ${JSON.stringify(dst)}`;
+}
+
+/**
  * Compare two {name: value} maps (row counts, auto-increments, checksums).
  * Returns { equal, differing: [{name, src, dst}], onlySrc, onlyDst }.
  */
@@ -409,7 +445,7 @@ async function run(opts, { mysql = require("mysql2"), log = console.log } = {}) 
       for (const c of cap(diff.changed)) {
         if (typeof c === "string") { detail.push(c); continue; }
         for (const f of c.fields) {
-          detail.push(`${c.key} · ${f.col}: source ${JSON.stringify(f.src)} | dest ${JSON.stringify(f.dst)}`);
+          detail.push(`${c.key} · ${f.col}: ${fieldDiffText(f.src, f.dst)}`);
         }
       }
       // Hashes differ but the keyed diff is empty → only row ORDER differs,
@@ -547,6 +583,6 @@ if (require.main === module) {
 }
 
 module.exports = {
-  parseTarget, diffRows, diffMaps, exitCodeFor, countSql, contentHashSql, sectionHash, parseArgs,
+  parseTarget, diffRows, diffMaps, fieldDiffText, exitCodeFor, countSql, contentHashSql, sectionHash, parseArgs,
   SECTION_KEYS, HARD_SETTINGS, INFO_SETTINGS, run,
 };

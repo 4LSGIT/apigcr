@@ -15,11 +15,25 @@ host; it works between any two MySQL 8 servers.
    with the source's default charset/collation (`utf8mb4` / `utf8mb4_general_ci`).
 3. Apply `yc_triggers.sql` **logged in as the account that should own the
    triggers** (the app's account) — with no `DEFINER` clause MySQL stamps the
-   creating user.
+   creating user — and **with `mysql --binary-mode`**:
+   `mysql --binary-mode -h… -u<app account> <db> < yc_triggers.sql`.
+   Without that flag the client rewrites every CRLF in a statement to LF, and
+   triggers written in phpMyAdmin carry CRLF: they would work the same and
+   still fail parity (2026-10-12 rehearsal, 13 of 15 triggers). The file drops
+   each trigger before creating it, so it can be applied again.
 4. `parity.js` — rehearsal mode while the source is live; `--strict --checksum`
    after the write freeze, before any traffic moves.
 
 The app side is one env var: `INSTANCE_CONNECTION_NAME` (see `lib/dbTarget.js`).
+
+**Server settings come from `@@GLOBAL`, not from what the app sees.** The
+destination's `sql_mode` must be the source's *server* value. A query run
+through the app (or any mysql2 connection) shows one extra mode,
+`IGNORE_SPACE`: the driver asks for it on every connection (its default
+`IGNORE_SPACE` client flag), on any server. Copying that session value into
+the destination's server setting changes nothing for the app and changes
+parsing for every other client. `parity.js` compares `@@GLOBAL.sql_mode` and
+fails on the difference (it did, 2026-10-12).
 
 Host names, account names and the step-by-step cutover live in the private
 runbook (project doc `claude/DB_MIGRATION_RUNBOOK.md`), not in this public repo.
