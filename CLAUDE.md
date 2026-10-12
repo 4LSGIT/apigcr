@@ -16,7 +16,7 @@ production data — correctness beats speed.
 ## How we build
 
 Work runs in **arcs** (a feature/fix effort) cut into **slices** — each slice
-independently deployable and scope-bounded. Three execution models; Fred
+independently deployable and scope-bounded. Four execution models; Fred
 picks per task:
 
 1. **Direct** — focused, single-context tasks: the session executes itself.
@@ -29,6 +29,31 @@ picks per task:
    arc end-to-end; an independent session (usually Opus) reviews at
    checkpoints or at the end. The reviewer gets the spec + the actual diff
    and verifies from the code, not from the executor's summary.
+4. **Parallel local team** — model 2 without the shuttling: manager and
+   workers all run as local Claude Code sessions on this machine, messaging
+   each other directly (SendMessage); Fred opts in per arc (it buys
+   throughput at the cost of his attention — not the default) and still
+   makes all final calls, including every landing. Mechanics, proven
+   2026-10-13 (U9b P1–P3, three slices planned→landed→deployed in a day):
+   - One git worktree + branch per worker off the agreed base commit
+     (`git worktree add ../apigcr-pN -b <slice> <base>`; symlink
+     node_modules from the main checkout). Non-overlapping file lanes,
+     fixed in the boot prompt; a worker wanting another lane's file routes
+     the finding to its owner via the manager — never a drive-by edit.
+   - Workers commit on their branch (`--no-verify` — worktrees lack .env,
+     and the three generated files must stay untouched there), never push,
+     never merge. Report-before-shipping and divergence-stops-work rules
+     are unchanged from model 2.
+   - Manager verifies from COMMITTED SHAs in a detached worktree — never
+     in a worker's live tree. Bitten same day it was invented: a manager
+     spot-mutation `git checkout` in a worker's tree silently reverted the
+     worker's in-flight edit; count-asserted anchors caught it.
+   - Landing = manager squash-merges the branch onto main (hook regenerates
+     the generated files), on Fred's explicit go; workers then
+     `git reset --hard origin/main`.
+   - Suite TEST COUNTS are environment-conditional (same commit measured
+     ±3 tests across worktrees) — compare before/after figures within one
+     environment only, never across.
 
 Gates beyond Commands & gates below, every model:
 - Verification-first: ground claims about schema, rows, or behavior in the
@@ -57,6 +82,16 @@ scratch key reflects the close.**
 - **At discovery:** doc says X, code does Y → file it, don't work around it:
   `PUT /api/scratch/docs/<YYYYMMDD>_<slug>` with
   `{"v":"{\"file\":…,\"section\":…,\"says\":…,\"actually\":…}"}`. 30 seconds.
+- **Your own slice falsifies a doc claim → fix the doc in the same slice,**
+  not the debt queue. This includes design docs (`ref/*_DESIGN*.md` and
+  kin): they are living documents, not frozen records — edit the stale
+  claim in place, present tense, committed with the code change that
+  falsified it. No dated strike-throughs or "superseded" notes: git history
+  carries the dating. Change ONLY now-false claims; dated verification
+  records that are still accurate stay; if the doc has a "verified against
+  <date>" header, adjust it so it doesn't vouch for newer content. Filed
+  debt whose edit you ship: delete the scratch key when the fix lands (not
+  before — until then it's still honest debt).
 - **At arc close**, route each earned learning to its ONE home:
 
 | Learning | Home |
