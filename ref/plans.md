@@ -349,6 +349,8 @@ Active surfaces with known next steps.
   - **SU step-up asymmetry:** the hub's `POST /api/phone-lines/:id/sms` asks an SU for step-up (the mail-send rule); the staff `/internal/sms|mms/send` path does not (S-PH kept that path's behaviour and added only the grant check). Align one way or the other if it matters.
   - **Grants UI for non-SU managers:** phone-line Access lives on the SU-only Connections pane; a `can_manage` holder can use the API but has no screen (same gap the mailbox grants had).
 
+- **Inter-office chat (design v0, 2026-10-12)** → `ref/CHAT_DESIGN.md` (living doc; design-only, nothing built). Staff messaging anchored to cases/contacts/tasks, hosted as the comms hub's third tab; part of the clean-surface restart. Build gated on the Cloud SQL cutover settling; DM privacy (OQ1) and the pulse audit exemption (OQ4) await rulings.
+
 - **Custom fields: per-case-type scoping as data (if it gets common).** Since 2026-10-06 a case field meant for some types is a `show_when` on `case_type` (one Custom Fields section, mounted by every Case Details variant). `show_when` v1 is ONE condition, so a type-scoped field cannot also carry a second condition. If that bites, add a first-class `case_types` (JSON list) to `field_defs`, ANDed with `show_when`, rather than growing v1 into and/or trees.
 
 
