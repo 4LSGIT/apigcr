@@ -1,7 +1,7 @@
 # Routes
 
-_Generated 2026-10-12T00:52:38.705Z_  
-_738 routes total — DELETE: 61, GET: 306, PATCH: 50, POST: 283, PUT: 35, _ALL: 3_
+_Generated 2026-10-12T15:45:36.866Z_  
+_745 routes total — DELETE: 62, GET: 311, PATCH: 51, POST: 283, PUT: 35, _ALL: 3_
 
 ## Global middleware chain
 
@@ -455,12 +455,22 @@ _738 routes total — DELETE: 61, GET: 306, PATCH: 50, POST: 283, PUT: 35, _ALL:
 | GET | `/api/phone-ingest/suppressions/:id` | `jwtOrApiKey` | — |
 | PUT | `/api/phone-ingest/suppressions/:id` | `jwtOrApiKey` | — |
 | GET | `/api/phone-lines` | `jwtOrApiKey` | — |
+| GET | `/api/phone-lines/:id/calls` | `jwtOrApiKey`, `requireJwt` | — |
+| GET | `/api/phone-lines/:id/conversations` | `jwtOrApiKey`, `requireJwt` | — |
+| GET | `/api/phone-lines/:id/conversations/:party` | `jwtOrApiKey`, `requireJwt` | — |
+| GET | `/api/phone-lines/:id/grants` | `jwtOrApiKey`, `requireJwt` | — |
+| POST | `/api/phone-lines/:id/grants` | `jwtOrApiKey`, `requireJwt` | — |
+| DELETE | `/api/phone-lines/:id/grants/:grantId` | `jwtOrApiKey`, `requireJwt` | — |
+| PATCH | `/api/phone-lines/:id/grants/:grantId` | `jwtOrApiKey`, `requireJwt` | — |
+| POST | `/api/phone-lines/:id/sms` | `jwtOrApiKey`, `requireJwt` | — |
 | GET | `/api/phone-lines/admin` | `jwtOrApiKey`, `superuserCheck`, `elevationCheck`, `rateLimitMiddleware` | — |
 | POST | `/api/phone-lines/admin` | `jwtOrApiKey`, `superuserCheck`, `elevationCheck`, `rateLimitMiddleware` | — |
 | PUT | `/api/phone-lines/admin/:id` | `jwtOrApiKey`, `superuserCheck`, `elevationCheck`, `rateLimitMiddleware` | — |
 | PATCH | `/api/phone-lines/admin/:id/active` | `jwtOrApiKey`, `superuserCheck`, `elevationCheck`, `rateLimitMiddleware` | — |
 | PATCH | `/api/phone-lines/admin/:id/mms-capable` | `jwtOrApiKey`, `superuserCheck`, `elevationCheck`, `rateLimitMiddleware` | — |
 | POST | `/api/phone-lines/admin/:id/test-sms` | `jwtOrApiKey`, `superuserCheck`, `elevationCheck`, `rateLimitMiddleware` | — |
+| GET | `/api/phone-lines/readable` | `jwtOrApiKey`, `requireJwt` | — |
+| GET | `/api/phone-lines/sendable` | `jwtOrApiKey`, `requireJwt` | — |
 | GET | `/api/pipeline-admin/detectors` | `jwtOrApiKey` | — |
 | DELETE | `/api/pipeline-admin/requirements/:id` | `jwtOrApiKey` | — |
 | PUT | `/api/pipeline-admin/requirements/:id` | `jwtOrApiKey` | — |
@@ -756,9 +766,6 @@ _738 routes total — DELETE: 61, GET: 306, PATCH: 50, POST: 283, PUT: 35, _ALL:
 | GET | `/internal/hello` | — | — |
 | POST | `/internal/hook-replay` | `jwtOrApiKey` | — |
 | POST | `/internal/mms/send` | `jwtOrApiKey` | — |
-| GET | `/internal/phone-test/lines` | `jwtOrApiKey` | — |
-| POST | `/internal/phone-test/mms` | `jwtOrApiKey` | — |
-| POST | `/internal/phone-test/sms` | `jwtOrApiKey` | — |
 | POST | `/internal/sequence/enroll` | `jwtOrApiKey` | — |
 | POST | `/internal/sms/send` | `jwtOrApiKey` | — |
 
@@ -1008,4 +1015,4 @@ _738 routes total — DELETE: 61, GET: 306, PATCH: 50, POST: 283, PUT: 35, _ALL:
 
 ---
 
-_738 routes total — DELETE: 61, GET: 306, PATCH: 50, POST: 283, PUT: 35, _ALL: 3_
+_745 routes total — DELETE: 62, GET: 311, PATCH: 51, POST: 283, PUT: 35, _ALL: 3_

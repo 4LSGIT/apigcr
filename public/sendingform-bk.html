@@ -15,6 +15,7 @@
   <script src="https://cdn.quilljs.com/1.3.7/quill.min.js"></script>
   <script src="/js/videoInsert.js"></script>
   <script src="/js/assetpicker.js"></script>
+  <script src="/js/phoneSendable.js"></script>
   <style>
     .sf-form { max-width: 950px; margin: 0 auto; background: var(--surface); color: var(--text); padding: 20px; border-radius: 8px; box-shadow: var(--shadow); }
     .sf-contact-row { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 12px; }
@@ -522,6 +523,8 @@ async function initSendingForm() {
     buildDynamicGrids();
     setupToggles();
     setupButtons();
+    // S-PH: only the lines this user may text from (sends are grant-checked).
+    if (window.YCPhoneSendable) YCPhoneSendable.filterSelect(document.getElementById('smsFrom'), P.apiSend, { preferred: currentUser.default_phone });
     initQuill();
 
   } catch (err) {

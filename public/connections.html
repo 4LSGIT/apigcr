@@ -255,6 +255,23 @@
 
   /* "Loading..." inline label */
   .saving-hint { color: var(--text-muted); font-size: 11.5px; margin-left: 8px; font-style: italic; }
+
+  /* ── Phone line access (S-PH) — the mailboxAdmin.html grants editor ── */
+  .grants-box { margin-top: 16px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); padding: 10px 12px; }
+  .grants-box .list-header { margin-bottom: 8px; }
+  .grants-box .table-scroll { overflow-x: auto; }
+  .grants-box table.list { min-width: 0; }
+  .grants-box table.list tbody tr { cursor: default; }
+  .grants-box .flag-cell { text-align: center; width: 64px; }
+  .grants-box td.gb { color: var(--text-muted); white-space: nowrap; }
+  .grants-box .add-grant { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; margin-top: 10px; }
+  .grants-box .add-grant select {
+    min-width: 0; max-width: 100%; background: var(--surface-2); color: var(--text); border: 1px solid var(--border);
+    border-radius: 4px; padding: 5px 8px; font-size: 12px; font-family: inherit;
+  }
+  .grants-box .check { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; cursor: pointer; white-space: nowrap; }
+  .grants-box .yc-hint { display: block; font-size: var(--fs-xs); color: var(--text-muted); margin-top: 6px; line-height: 1.45; }
+  .badge.off { background: var(--surface-2); color: var(--text-muted); }
 </style>
 </head>
 <body>
@@ -480,6 +497,12 @@ const state = {
     // GET /admin response. Drives editor + list MMS-checkbox state so
     // we never display (or submit) an invariant the server will reject.
     providers: {},
+    // Access (S-PH): the line whose grants are open, its grants, and the
+    // user list for the Add row (GET /api/users, loaded on first open).
+    grantsFor: null,
+    grants: [],
+    grantsError: null,
+    users: null,
   },
 };
 
@@ -2209,6 +2232,7 @@ function renderPhoneList() {
       </thead>
       <tbody>${body}</tbody>
     </table>
+    <div id="phone-grants-host"></div>
   `;
 
   E('phone-new').addEventListener('click', () => openPhoneEditor(null));
@@ -2229,6 +2253,11 @@ function renderPhoneList() {
       e.stopPropagation();
       openPhoneTestSmsDialog(Number(tr.dataset.id), tr.dataset.from);
     });
+    const access = tr.querySelector('button[data-action=access]');
+    if (access) access.addEventListener('click', e => {
+      e.stopPropagation();
+      openPhoneGrants(Number(tr.dataset.id));
+    });
     const activeBox = tr.querySelector('input[data-toggle=active]');
     if (activeBox) activeBox.addEventListener('change', e => {
       e.stopPropagation();
@@ -2240,6 +2269,7 @@ function renderPhoneList() {
       togglePhoneMms(Number(tr.dataset.id), mmsBox.checked, mmsBox);
     });
   });
+  renderPhoneGrants();
 }
 
 function phoneListRow(r) {
@@ -2287,9 +2317,206 @@ function phoneListRow(r) {
       <td class="actions-cell">
         <button data-action="edit">Edit</button>
         <button data-action="test">Test SMS</button>
+        <button data-action="access" title="Who can read this line's texts and calls in Comms, and send from it">Access</button>
       </td>
     </tr>
   `;
+}
+
+// ── Access (S-PH) ────────────────────────────────────────────
+//
+// Who can READ this line's texts and calls in Comms → Phone, SEND from it
+// (the Comms phone tab, the contact Communicate tab, the sending forms) and
+// MANAGE its access — channel_grants('phone_line'), through
+// /api/phone-lines/:id/grants (routes/api.phoneComms.js; SU or can_manage).
+// The mailboxAdmin.html grants editor, line-shaped: flags save as they are
+// ticked; a grant keeps at least one; Remove deletes it. Superusers need no
+// grant; attorneys read every line without one (send still needs a grant);
+// automations never need one.
+
+function phoneGrantsError(msg) {
+  state.phone.grantsError = msg || null;
+  const el = E('phone-grants-msg');
+  if (el) el.innerHTML = msg ? `<div class="inline-error">${esc(msg)}</div>` : '';
+}
+
+function phoneUserLabel(u) {
+  return u ? (u.user_name || u.username || ('user ' + u.user)) : '';
+}
+
+async function openPhoneGrants(id) {
+  const row = state.phone.rows.find(r => Number(r.id) === Number(id));
+  if (!row) return;
+  state.phone.grantsFor = row;
+  state.phone.grants = [];
+  state.phone.grantsError = null;
+  renderPhoneGrants({ loading: true });
+  if (!state.phone.users) {
+    try {
+      const r = await P.apiSend('/api/users');
+      state.phone.users = (Array.isArray(r && r.users) ? r.users : []).filter(u => Number(u.user) > 0);
+    } catch (err) {
+      state.phone.users = null;
+      state.phone.grantsError = `Couldn't load users: ${err.message}`;
+    }
+  }
+  await loadPhoneGrants();
+  const host = E('phone-grants-host');
+  if (host && host.scrollIntoView) host.scrollIntoView({ block: 'nearest' });
+}
+
+function closePhoneGrants() {
+  state.phone.grantsFor = null;
+  state.phone.grants = [];
+  state.phone.grantsError = null;
+  renderPhoneGrants();
+}
+
+async function loadPhoneGrants() {
+  const line = state.phone.grantsFor;
+  if (!line) return;
+  try {
+    const r = await P.apiSend(`/api/phone-lines/${encodeURIComponent(line.id)}/grants`);
+    if (!state.phone.grantsFor || state.phone.grantsFor.id !== line.id) return;
+    state.phone.grants = Array.isArray(r && r.grants) ? r.grants : [];
+  } catch (err) {
+    state.phone.grants = [];
+    state.phone.grantsError = `Couldn't load access: ${err.message}`;
+  }
+  renderPhoneGrants();
+}
+
+function renderPhoneGrants(opts = {}) {
+  const host = E('phone-grants-host');
+  if (!host) return;
+  const line = state.phone.grantsFor;
+  if (!line) { host.innerHTML = ''; return; }
+  const fresh = state.phone.rows.find(r => Number(r.id) === Number(line.id));
+  if (fresh) state.phone.grantsFor = fresh;
+  const l = state.phone.grantsFor;
+  const pn = l.phone_number && l.phone_number.length === 10
+    ? `(${l.phone_number.slice(0,3)}) ${l.phone_number.slice(3,6)}-${l.phone_number.slice(6)}`
+    : (l.phone_number || '');
+  const grants = state.phone.grants;
+  const box = (g, f) => `<input type="checkbox" data-grant="${esc(g.id)}" data-flag="${f}"${g[f] ? ' checked' : ''} aria-label="${f.replace('can_', '')} for ${esc(phoneUserLabel(g))}">`;
+  const rows = opts.loading
+    ? '<tr class="empty-row"><td colspan="6">Loading…</td></tr>'
+    : grants.length
+      ? grants.map(g => `<tr>
+          <td>${esc(phoneUserLabel(g))}${g.user_auth === 'disabled' ? ' <span class="badge off">disabled</span>' : ''}</td>
+          <td class="flag-cell">${box(g, 'can_read')}</td>
+          <td class="flag-cell">${box(g, 'can_send')}</td>
+          <td class="flag-cell">${box(g, 'can_manage')}</td>
+          <td class="gb">${esc(g.granted_by_username || ('user ' + g.granted_by))}</td>
+          <td class="actions-cell"><button class="danger" type="button" data-rm="${esc(g.id)}">Remove</button></td>
+        </tr>`).join('')
+      : '<tr class="empty-row"><td colspan="6">No grants — only superusers (and, read-only, attorneys) can use this line.</td></tr>';
+  const taken = new Set(grants.map(g => Number(g.user)));
+  const choices = (state.phone.users || []).filter(u => !taken.has(Number(u.user)) && u.user_auth !== 'disabled');
+  const opts2 = choices.length
+    ? choices.map(u => `<option value="${esc(u.user)}">${esc(phoneUserLabel(u))}</option>`).join('')
+    : '<option value="">No one left to add</option>';
+  host.innerHTML = `
+    <div class="grants-box" id="phone-grants" data-line="${esc(l.id)}">
+      <div class="list-header">
+        <h2 id="phone-grants-title">Access — ${esc(l.display_name || pn)} ${l.display_name ? `<span style="color:var(--text-muted); font-weight:400;">${esc(pn)}</span>` : ''}${l.active ? '' : ' <span class="badge off">inactive</span>'}</h2>
+        <div class="right"><button class="btn" type="button" id="phone-grants-close">Close</button></div>
+      </div>
+      <div id="phone-grants-msg"></div>
+      <div class="table-scroll">
+        <table class="list">
+          <thead><tr><th>User</th><th class="flag-cell">Read</th><th class="flag-cell">Send</th><th class="flag-cell">Manage</th><th>Granted by</th><th></th></tr></thead>
+          <tbody id="phone-grants-tbody">${rows}</tbody>
+        </table>
+      </div>
+      <div class="add-grant">
+        <select id="phone-gr-user" aria-label="User to grant">${opts2}</select>
+        <label class="check"><input type="checkbox" id="phone-gr-read" checked> Read</label>
+        <label class="check"><input type="checkbox" id="phone-gr-send"> Send</label>
+        <label class="check"><input type="checkbox" id="phone-gr-manage"> Manage</label>
+        <button class="btn primary" type="button" id="phone-gr-add"${choices.length ? '' : ' disabled'}>Add</button>
+      </div>
+      <span class="yc-hint">Read = this line's texts and calls in Comms → Phone. Send = texting from it (Comms, the contact Communicate tab, the sending forms). Manage = granting others. Changes save as you tick; a grant keeps at least one box — use Remove to take access away. Superusers need no grant; attorneys read every line without one; automations are never checked.</span>
+    </div>`;
+  phoneGrantsError(state.phone.grantsError);
+  E('phone-grants-close').addEventListener('click', closePhoneGrants);
+  E('phone-gr-add').addEventListener('click', addPhoneGrant);
+  E('phone-grants-tbody').addEventListener('change', (e) => {
+    const input = e.target.closest('input[data-grant]');
+    if (input) togglePhoneGrantFlag(input);
+  });
+  E('phone-grants-tbody').addEventListener('click', (e) => {
+    const b = e.target.closest('button[data-rm]');
+    if (b) removePhoneGrant(b.dataset.rm);
+  });
+}
+
+async function togglePhoneGrantFlag(input) {
+  const line = state.phone.grantsFor;
+  const g = state.phone.grants.find(x => String(x.id) === input.dataset.grant);
+  if (!line || !g) return;
+  const flag = input.dataset.flag;
+  const next = { can_read: g.can_read, can_send: g.can_send, can_manage: g.can_manage, [flag]: input.checked };
+  if (!next.can_read && !next.can_send && !next.can_manage) {
+    input.checked = true;
+    phoneGrantsError('A grant keeps at least one box ticked — use Remove to take access away.');
+    return;
+  }
+  phoneGrantsError('');
+  input.disabled = true;
+  try {
+    const r = await P.apiSend(`/api/phone-lines/${encodeURIComponent(line.id)}/grants/${encodeURIComponent(g.id)}`, 'PATCH', { [flag]: input.checked });
+    Object.assign(g, (r && r.grant) || next);
+    toast('Access updated');
+  } catch (err) {
+    input.checked = !input.checked;
+    phoneGrantsError(err.message || 'Update failed');
+  } finally {
+    input.disabled = false;
+  }
+}
+
+async function addPhoneGrant() {
+  const line = state.phone.grantsFor;
+  if (!line) return;
+  const user = E('phone-gr-user').value;
+  if (!user) return;
+  const body = {
+    user: Number(user),
+    can_read: E('phone-gr-read').checked,
+    can_send: E('phone-gr-send').checked,
+    can_manage: E('phone-gr-manage').checked,
+  };
+  if (!body.can_read && !body.can_send && !body.can_manage) {
+    phoneGrantsError('Tick at least one of Read, Send, Manage.');
+    return;
+  }
+  phoneGrantsError('');
+  E('phone-gr-add').disabled = true;
+  try {
+    await P.apiSend(`/api/phone-lines/${encodeURIComponent(line.id)}/grants`, 'POST', body);
+    toast('Access granted');
+    await loadPhoneGrants();
+  } catch (err) {
+    phoneGrantsError(err.message || 'Grant failed');
+    const b = E('phone-gr-add');
+    if (b) b.disabled = false;
+  }
+}
+
+async function removePhoneGrant(grantId) {
+  const line = state.phone.grantsFor;
+  const g = state.phone.grants.find(x => String(x.id) === String(grantId));
+  if (!line || !g) return;
+  if (!confirm(`Remove ${phoneUserLabel(g)}'s access to the ${line.display_name || line.phone_number} line?`)) return;
+  phoneGrantsError('');
+  try {
+    await P.apiSend(`/api/phone-lines/${encodeURIComponent(line.id)}/grants/${encodeURIComponent(g.id)}`, 'DELETE');
+    toast('Access removed');
+    await loadPhoneGrants();
+  } catch (err) {
+    phoneGrantsError(err.message || 'Remove failed');
+  }
 }
 
 // ── Credentials cache (phone-tab copy) ───────────────────────

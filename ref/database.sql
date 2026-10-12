@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-10-12T07:40:21.811Z
+-- Generated: 2026-10-12T15:45:50.763Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:a1fa0f1439d739cc16c64cf5bacf15fa
+-- Fingerprint: sha256:3c3c446e9958c041adda751da7dcabdc
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -702,9 +702,9 @@ CREATE TABLE `channel_grants` (
   `can_read` tinyint(1) NOT NULL DEFAULT '0',
   `can_send` tinyint(1) NOT NULL DEFAULT '0',
   `can_manage` tinyint(1) NOT NULL DEFAULT '0' COMMENT 'grant others on this channel + edit its non-connection settings; never implies read/send',
-  `granted_by` tinyint NOT NULL COMMENT 'users.user who created the row; history of later flag edits lives in admin_audit_log (tool=mailboxes)',
+  `granted_by` tinyint NOT NULL COMMENT 'users.user who created the row; history of later flag edits lives in admin_audit_log (tool=mailboxes for mailbox rows, tool=phone_lines for phone_line rows)',
   `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='Channel access grants (D6). Enforced on INTERACTIVE routes only - never inside emailService/phoneService, so automation sends bypass. SU short-circuits in mailboxService. phone_line rows arrive with slice S-PH (no unenforced phone rows before then)';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='Channel access grants (D6). Enforced on INTERACTIVE routes only - never inside emailService/phoneService, so automation sends bypass. SU short-circuits in mailboxService; users.roles attorney READS every mailbox and every phone line without a row (send/manage still need one). phone_line rows since S-PH (2026-10-12): the Comms phone tab, the phone-line send route, and staff-JWT /internal/sms|mms/send';
 
 -- --------------------------------------------------------
 
@@ -2350,6 +2350,7 @@ CREATE TABLE `phone_event_log` (
   `from_number` varchar(32) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `to_number` varchar(32) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `other_party` varchar(32) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `line_number` varchar(32) COLLATE utf8mb4_general_ci GENERATED ALWAYS AS (if((`direction` = _utf8mb4'incoming'),`to_number`,`from_number`)) VIRTUAL COMMENT 'S-PH: the firm line this event belongs to (incoming → to_number, else from_number) - equal to raw_extra.line on every live row. Joins phone_lines.phone_number by plain equality; no match = an orphan (a number that is not a phone_lines row), invisible in the Comms phone tab. Indexed with processed_at (idx_phone_event_line). Code names this column directly (generated-column substitution for the base expression is collation-fragile) and forces the index on per-line walks',
   `body` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci,
   `suppressed` tinyint(1) NOT NULL DEFAULT '0',
   `suppressed_by` json DEFAULT NULL,
@@ -4438,7 +4439,8 @@ ALTER TABLE `phone_event_log`
   ADD PRIMARY KEY (`id`),
   ADD UNIQUE KEY `ux_phone_event_provider_ref` (`provider`,`provider_ref`),
   ADD KEY `idx_phone_event_other_party` (`other_party`),
-  ADD KEY `idx_phone_event_processed_at` (`processed_at`);
+  ADD KEY `idx_phone_event_processed_at` (`processed_at`),
+  ADD KEY `idx_phone_event_line` (`line_number`,`processed_at`);
 
 --
 -- Indexes for table `phone_ingest_executions`

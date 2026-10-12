@@ -229,7 +229,8 @@ tool `mailboxes`.
 **Where:** **Comms** in the sidebar (and on Home), with your unread count on
 it — shown once at least one mailbox is shared with you. It piloted under
 Admin → Comms. It shows the mail of every box you can read in one list; the
-**Phone** tab is a placeholder until the phone slice.
+**Phone** tab shows texts and calls on the firm's phone lines ([Phone lines —
+Comms](#phone-lines--comms), below).
 
 - **The list** is the Inbox of every box you can read, newest first, with
   the box shown when you can read more than one. Mail arrives with the
@@ -466,3 +467,59 @@ What that gives:
   have: its count shows on its own row, but the sidebar badge and **All
   mail** count Stuart's Inbox once and never add the address's slice on
   top.
+
+## Phone lines — Comms
+
+The **Phone** tab of Comms shows the texts and calls the phone system
+recorded on each firm phone line you have access to — RingCentral and Quo
+lines alike (design: `ref/MAILBOX_SYSTEM_DESIGN.md` §4.4, slice S-PH).
+
+**Where:** Comms → **Phone**. It loads the first time you open it.
+
+- **Lines.** On a wide screen the lines are listed on the left (with your
+  access: **R** read · **S** send · **M** manage); on a narrow one pick the
+  line in the bar. Your last line is remembered in this browser.
+- **Texts** lists the line's conversations — one per number, newest activity
+  first, the contact's name when the number belongs to a client on file
+  (**Open contact** opens their file). Opening one shows the texts as
+  bubbles: yours on the right, theirs on the left; **Load earlier** goes
+  back further.
+- **Calls** is the line's call log, newest first — direction, length, and
+  **Missed call** for an unanswered incoming call. Clicking a call opens the
+  text conversation with that number.
+- **Sending.** With **Send** on an active line, a conversation has a message
+  box at the bottom and the bar has **New text** (a US number, up to 1,000
+  characters, text only — no pictures here). What you send shows as
+  "waiting for the phone system to confirm" until the phone system reports
+  it back (seconds, usually); then it is an ordinary bubble. A short code
+  (e.g. a 5-digit verification sender) cannot be texted back. Superusers
+  confirm their password first ([elevation](README.md)).
+- **Not shown:** texts and calls the spam filters caught (suppressed), and
+  numbers on the phone system that are not set up as a line in Connections →
+  Phone Lines. To make such a number readable, add it there — leave it
+  **inactive** if it should never be texted from (an inactive line can be
+  read and granted, never sent from, and stays out of every "From" list).
+- No unread counts on phone yet.
+
+### Who can read and send — Connections → Phone Lines → Access
+
+Phone-line access works like mailbox access: click **Access** on a line in
+**Connections → Phone Lines** (superusers).
+
+| Flag | Means |
+|---|---|
+| **Read** | sees the line's texts and calls in Comms → Phone |
+| **Send** | can text from the line — in Comms, on a contact's **Communicate** tab, and in the case **Sending Form** |
+| **Manage** | can grant and revoke access on this line |
+
+- Ticks save immediately; a grant keeps at least one tick — **Remove** takes
+  access away. Every change is recorded in `admin_audit_log` under the tool
+  `phone_lines`; texts sent from Comms under `phone_send`.
+- **Superusers need no grant.** **Attorneys read every line without one** —
+  but sending still needs **Send**.
+- **Send is checked everywhere a person texts:** the Communicate tab and the
+  Sending Form only list the lines you may send from, and the server refuses
+  the others. At launch (2026-10-12) each person got Read + Send on their
+  own default line (Stuart → his line, Shoshana → hers, Rena → hers).
+- **Automations are never checked**: workflow, sequence, campaign and
+  reminder texts go out from any line, as before.

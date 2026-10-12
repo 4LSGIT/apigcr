@@ -49,7 +49,9 @@
  *     changes" → Save as view / Update the active one. Filter chips are
  *     pressed buttons; Inbox | All folders is one choice; a row a mailbox
  *     sent reads "To: <recipient>"; the Email tab carries the unread total.
- *   - Phone tab rendered and disabled; the empty hub explains itself.
+ *   - Phone tab (S-PH) enabled and LAZY: booting the Email tab asks nothing
+ *     of /api/phone-lines (the Phone tab loads on first open —
+ *     tests/phoneSPH.pane.test.js); the empty hub explains itself.
  *   - Phone widths: opening a message switches to the thread (stacked
  *     navigation, .show-thread), Back returns to the list.
  */
@@ -159,12 +161,12 @@ function standard(over = {}) {
 }
 
 describe('comms hub pane', () => {
-  test('boots: Phone tab disabled, mailboxes + views + list loaded, no bodies asked for', async () => {
+  test('boots: Phone tab enabled but not loaded, mailboxes + views + list loaded, no bodies asked for', async () => {
     const { doc, calls, errors } = await boot({ handler: standard() });
     expect(errors).toEqual([]);
     const phone = doc.getElementById('tab-phone');
-    expect(phone.disabled).toBe(true);
-    expect(phone.getAttribute('title')).toMatch(/phone slice/i);
+    expect(phone.disabled).toBe(false);
+    expect(doc.getElementById('phone').hidden).toBe(true);
     expect(calls.map((c) => c.url)).toEqual(['/api/mail/mailboxes', '/api/mail/views', '/api/mail/messages']);
     expect(doc.querySelectorAll('#msg-list .msg')).toHaveLength(2);
     expect(doc.querySelector('#msg-list .msg').classList.contains('unread')).toBe(true);

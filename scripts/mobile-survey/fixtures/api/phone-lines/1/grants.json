@@ -1,0 +1,34 @@
+{
+ "status": "success",
+ "line_id": 1,
+ "grants": [
+  {
+   "id": 7,
+   "user": 2,
+   "username": "sstaff",
+   "user_name": "Sam Staff",
+   "user_auth": "authorized",
+   "channel_type": "phone_line",
+   "channel_id": 1,
+   "can_read": true,
+   "can_send": true,
+   "can_manage": false,
+   "granted_by": 1,
+   "granted_by_username": "Alex Admin (an overlong granter name to wrap)"
+  },
+  {
+   "id": 8,
+   "user": 3,
+   "username": "pparalegal",
+   "user_name": "Bartholomew Maximilian Featherstonehaugh-Worthington III",
+   "user_auth": "authorized",
+   "channel_type": "phone_line",
+   "channel_id": 1,
+   "can_read": true,
+   "can_send": false,
+   "can_manage": true,
+   "granted_by": 1,
+   "granted_by_username": "Alex Admin"
+  }
+ ]
+}

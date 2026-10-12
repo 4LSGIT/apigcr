@@ -1,0 +1,28 @@
+{
+ "users": [
+  {
+   "user": 1,
+   "username": "aadmin",
+   "user_name": "Alex Admin",
+   "user_auth": "authorized - SU"
+  },
+  {
+   "user": 2,
+   "username": "sstaff",
+   "user_name": "Sam Staff",
+   "user_auth": "authorized"
+  },
+  {
+   "user": 3,
+   "username": "pparalegal",
+   "user_name": "Bartholomew Maximilian Featherstonehaugh-Worthington III",
+   "user_auth": "authorized"
+  },
+  {
+   "user": 4,
+   "username": "rreception",
+   "user_name": "Riley Reception",
+   "user_auth": "authorized"
+  }
+ ]
+}

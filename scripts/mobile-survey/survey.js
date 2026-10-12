@@ -163,6 +163,27 @@ async function walk(page, W, record) {
       await page.evaluate((t) => openMainTab(t), t); await sleep(1500);
       await record(`tab:${t}`, await measure(page, await frameOf(page, VISIBLE_TAB_FRAME)), await shot('tab_' + t));
     }
+
+    // Comms → Phone tab (S-PH): the texts list, one conversation (stacked at
+    // phone width), the call log, New text — through the pane's own top-level
+    // functions, with fixtures/api/phone-lines/* (overlong names, an unbroken
+    // URL in a text, a short code).
+    if (tabs.includes('tabComms')) {
+      await page.evaluate(() => openMainTab('tabComms')); await sleep(1500);
+      const cf = await frameOf(page, VISIBLE_TAB_FRAME);
+      const PHONE = [
+        ['phone-texts', "showTab('phone')"],
+        ['phone-thread', 'openConversation(ph.rows[0].other_party, ph.rows[0].contact)'],
+        ['phone-calls', "closePhoneThread(); setPhoneView('calls')"],
+        ['phone-new', "setPhoneView('msgs'); openNewText()"],
+      ];
+      for (const [key, js] of PHONE) {
+        if (!cf) { await record(`tab:tabComms:${key}`, await measure(page, null), await shot('comms_' + key)); continue; }
+        await cf.evaluate((js) => { try { return (0, eval)(js); } catch (e) { console.error(e); } }, js); await sleep(1500);
+        await record(`tab:tabComms:${key}`, await measure(page, cf), await shot('comms_' + key));
+      }
+      if (cf) await cf.evaluate(() => { closeNewText(); showTab('email'); });
+    }
   }
 
   if (ONLY.has('panels')) {
@@ -173,6 +194,12 @@ async function walk(page, W, record) {
       await page.evaluate((id) => document.querySelector(`[data-target="${id}"]`).click(), id); await sleep(2000);
       const fr = await frameOf(page, `document.querySelector('#${id} iframe')`);
       await record(`panel:${id}`, await measure(page, fr), await shot('panel_' + id));
+      // Connections → Phone Lines → Access (S-PH grants editor), fixtures/api/phone-lines/{admin,1/grants}
+      if (id === 'connectionsDiv' && fr) {
+        await fr.evaluate(() => { const t = document.querySelector('.tab[data-tab="phone"]'); if (t) t.click(); }); await sleep(800);
+        await fr.evaluate(() => { const b = document.querySelector('tr[data-id] button[data-action="access"]'); if (b) b.click(); }); await sleep(1500);
+        await record('panel:connectionsDiv:phone-access', await measure(page, fr), await shot('panel_connections_phone_access'));
+      }
     }
   }
 

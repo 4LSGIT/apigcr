@@ -253,9 +253,9 @@ describe('attorney READ bypass (users.roles, DB-sourced)', () => {
     expect((await call('GET', '/api/mail/messages/101', { t: tok(SS) })).status).toBe(404);
   });
 
-  test('phone lines get no role bypass before slice S-PH', async () => {
+  test('S-PH ruling: the attorney READ bypass covers phone lines too — read only', async () => {
     expect(await mbx.getAccess(W.db, SS, 'phone_line', 1))
-      .toEqual({ can_read: false, can_send: false, can_manage: false, su: false });
+      .toEqual({ can_read: true, can_send: false, can_manage: false, su: false, role: 'attorney' });
   });
 });
 

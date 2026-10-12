@@ -61,8 +61,8 @@ module.exports = async function init(db) {
 // # 3. After 1+ week of empty [LEGACY-RINGCENTRAL] traps in Cloud Run logs:
 // rm routes/ringcentral.js
 
-// # 4. Once you're confident nobody is calling /internal/phone-test/*:
-// rm routes/internal/phoneTest.js
+// # 4. DONE 2026-10-12 (mailbox-system slice S-PH): routes/internal/phoneTest.js
+// #    deleted — last called 2026-05-09, and any staff JWT could send from any line.
 
 // # 5. Drop startup/init.js and remove the require + invocation from your
 // #    server entry point.

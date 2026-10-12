@@ -179,9 +179,18 @@ async function resolveAccess(req, res, { write }) {
   return { id, access, via: 'manage' };
 }
 
-/** Body channel_type defaults to 'mailbox'; the service gates anything else. */
+/**
+ * The channel these routes write is PINNED to 'mailbox' (S-PH, 2026-10-12): a
+ * body may repeat it, never name another. Once phone_line grants became
+ * writable, honouring a body channel_type here would let a manager of
+ * mailbox N mint a grant on phone line N — the ids overlap and this route
+ * authorized the MAILBOX. Phone grants live under /api/phone-lines/:id/grants.
+ */
 function bodyChannelType(body) {
-  return body && body.channel_type !== undefined ? body.channel_type : 'mailbox';
+  if (body && body.channel_type !== undefined && body.channel_type !== 'mailbox') {
+    throw svc.httpError(400, "channel_type must be 'mailbox' here — phone-line grants live under /api/phone-lines/:id/grants");
+  }
+  return 'mailbox';
 }
 
 /** Audit-safe field diff. imap_secret is reported as set/clear, never a value. */
@@ -286,7 +295,7 @@ router.patch('/api/mailboxes/:id', jwtOrApiKey, requireJwt, async (req, res) => 
 
 
 // ─────────────────────────────────────────────────────────────
-// Grants (mailbox channel only in S0)
+// Grants (mailbox channel — pinned; phone lines: routes/api.phoneComms.js)
 // ─────────────────────────────────────────────────────────────
 
 // ─── GET /api/mailboxes/:id/grants ───

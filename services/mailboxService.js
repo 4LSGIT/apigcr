@@ -9,8 +9,8 @@
  * an HTTP `.status` (httpError) and a user-presentable `.message`.
  *
  * GRANT RESOLUTION IS THE SINGLE SOURCE OF TRUTH. Every later slice (S1 part
- * fetch, S2 inbox, S3 send, S-PH phone) asks getAccess / listReadable — never
- * channel_grants directly.
+ * fetch, S2 inbox, S3 send, S-PH phone) asks getAccess / listReadable /
+ * listSendable — never channel_grants directly.
  *
  *   - SU bypass: users.user_auth === 'authorized - SU' (the lib/auth.superuser
  *     string convention) short-circuits to full access. Read from the DB, not
@@ -19,27 +19,33 @@
  *     demoted SU loses the bypass immediately (fail-closed). Routes still
  *     demand step-up elevation before an SU-bypass WRITE (elevation can only
  *     be minted by a JWT-SU), so SU writes need both sources to agree.
- *   - Role bypass (S2): users.roles containing 'attorney' (READ_BYPASS_ROLES)
- *     grants READ on every mailbox without a grant row — design §1 "SU and SS
- *     see everything". READ ONLY: can_send / can_manage still come from the
- *     user's grant row, and `su` stays
+ *   - Role bypass (S2; phone lines since S-PH): users.roles containing
+ *     'attorney' (READ_BYPASS_ROLES) grants READ on every mailbox AND every
+ *     phone line without a grant row — design §1 "SU and SS see everything".
+ *     READ ONLY: can_send / can_manage still come from the user's grant row,
+ *     and `su` stays
  *     false, so a role reader is never treated as an SU by the routes (no
  *     SU projection, no SU-only diagnostics, no bypass writes). DB-sourced
  *     for the same reason as the SU check: a role removed in the Users pane
  *     takes effect on the next request. Rows carry `role` when it applied.
- *   - SEND (S3): the attorney bypass does NOT extend to can_send. Reading
- *     every box is a visibility right; sending AS an identity is an act, so
- *     it needs an explicit can_send grant. Only the SU bypass sends without
- *     a grant row.
- *     listSendable is the set the comms hub's identity picker offers.
+ *   - SEND (S3, S-PH): the attorney bypass does NOT extend to can_send, on
+ *     either channel. Reading is a visibility right; sending AS an identity
+ *     (a mailbox, a phone line) is an act, so it needs an explicit can_send
+ *     grant. Only the SU bypass sends without a grant row.
+ *     listSendable is the set the comms hub's identity picker (mail) and the
+ *     staff From pickers (phone: communicate / sending forms) offer.
  *   - Enforcement seat (D6): grant checks run on INTERACTIVE routes only —
  *     never inside emailService / phoneService — so workflow and automation
  *     sends are untouched. Nothing in this file is called from those services.
  *
  * CHANNEL GATE. channel_grants is channel-general (channel_type 'mailbox' |
- * 'phone_line', VARCHAR app-validated). Reads accept either type (phone rows
- * simply do not exist yet); grant WRITES accept 'mailbox' only until slice
- * S-PH wires phone enforcement — no unenforced phone rows (design §3).
+ * 'phone_line', VARCHAR app-validated). Reads and grant writes accept both
+ * since slice S-PH (phone enforcement shipped in the same deploy as the
+ * write vocabulary — no inert phone rows). The ONLY channel-specific seams in
+ * grant CRUD are the existence check (channelExists: mailboxes vs
+ * phone_lines) and the noun in error copy (CHANNEL_NOUNS). A ROUTE pins the
+ * channel it serves (a mailbox route never writes a phone_line grant — line
+ * and mailbox ids overlap); the service trusts the caller's channelType.
  *
  * IMAP SECRET IS WRITE-ONLY. imap_secret is encrypted with lib/credentialCrypto
  * (ENCv1, the email_credentials.smtp_pass pattern) on the way in and is never
@@ -112,8 +118,15 @@ const READ_BYPASS_ROLES = Object.freeze(['attorney']);
 
 // Read vocabulary (getAccess / listReadable / listGrants).
 const CHANNEL_TYPES = new Set(['mailbox', 'phone_line']);
-// Write vocabulary. phone_line joins with slice S-PH (enforcement + pane).
-const WRITABLE_CHANNEL_TYPES = new Set(['mailbox']);
+// Write vocabulary. phone_line joined with slice S-PH (enforcement + pane in
+// the same deploy).
+const WRITABLE_CHANNEL_TYPES = new Set(['mailbox', 'phone_line']);
+// The noun error copy uses per channel ("Grant not found on this phone line").
+const CHANNEL_NOUNS = Object.freeze({ mailbox: 'mailbox', phone_line: 'phone line' });
+
+// phone_lines projection for the hub and the From pickers. NEVER credential_id
+// or provider_id (connection plumbing — the SU admin route owns those).
+const LINE_COLS = 'pl.id, pl.phone_number, pl.display_name, pl.provider, pl.active, pl.mms_capable';
 
 const DEFAULT_INGEST_FOLDERS = Object.freeze({ INBOX: Object.freeze({ emit_to_rules: true }) });
 const DEFAULT_EMIT_SOURCE = 'mailbox-imap'; // services/mailbox/mailboxIngestService SOURCE_NAME
@@ -216,13 +229,12 @@ function assertReadChannel(channelType) {
 }
 
 function assertWritableChannel(channelType) {
-  if (channelType === 'phone_line') {
-    throw httpError(400, 'phone grants arrive with the phone slice (S-PH) — S0 writes mailbox grants only');
-  }
   if (!WRITABLE_CHANNEL_TYPES.has(channelType)) {
-    throw httpError(400, `channel_type must be one of: ${[...CHANNEL_TYPES].join(', ')}`);
+    throw httpError(400, `channel_type must be one of: ${[...WRITABLE_CHANNEL_TYPES].join(', ')}`);
   }
 }
+
+const nounOf = (channelType) => CHANNEL_NOUNS[channelType] || 'channel';
 
 function fullAccess() {
   return { can_read: true, can_send: true, can_manage: true, su: true };
@@ -265,8 +277,11 @@ async function roleBypass(db, userId) {
  * Effective access of one user on one channel.
  * @returns {{can_read:boolean, can_send:boolean, can_manage:boolean, su:boolean, role?:string}}
  *   `su` is true when the SU bypass (not a grant row) produced the access.
- *   `role` is present when the READ bypass applied (mailbox channel only):
- *   can_read is then true whatever the grant says; send/manage are the grant's.
+ *   `role` is present when the READ bypass applied (every channel — S-PH
+ *   ruled phone lines in, 2026-10-12): can_read is then true whatever the
+ *   grant says; send/manage are the grant's.
+ * Does NOT check that the channel exists: the bypasses answer for any id, so
+ * a route checks existence itself (mailboxExists / channelExists).
  */
 async function getAccess(db, userId, channelType, channelId) {
   assertReadChannel(channelType);
@@ -274,9 +289,7 @@ async function getAccess(db, userId, channelType, channelId) {
   if (await isSuperuser(db, userId)) return fullAccess();
   const uid = Number(userId);
   if (!Number.isInteger(uid) || uid < 0) return noAccess();
-  // Phone lines: no role bypass until slice S-PH decides it (no unenforced
-  // phone semantics before then).
-  const role = channelType === 'mailbox' ? await roleBypass(db, uid) : null;
+  const role = await roleBypass(db, uid);
   const [[g]] = await db.query(
     `SELECT can_read, can_send, can_manage FROM channel_grants
       WHERE user = ? AND channel_type = ? AND channel_id = ? LIMIT 1`,
@@ -297,10 +310,11 @@ async function getAccess(db, userId, channelType, channelId) {
  *                    manage from their grant rows; others: mailboxes with a
  *                    can_read grant. Inactive boxes included (their stored
  *                    mail stays readable); callers filter.
- *   'phone_line' → grant-shaped rows [{channel_id, can_read, can_send,
- *                    can_manage}] for can_read grants. Empty in S0 (no phone
- *                    rows can be written yet); SU enumeration of phone lines
- *                    is wired with slice S-PH.
+ *   'phone_line' → (S-PH) the same three branches over phone_lines:
+ *                    [{id, phone_number, display_name, provider, active,
+ *                    mms_capable, can_read, can_send, can_manage, role?}], id
+ *                    order. Inactive lines included (their stored events stay
+ *                    readable); never credential_id / provider_id.
  */
 async function listReadable(db, userId, channelType = 'mailbox') {
   assertReadChannel(channelType);
@@ -340,27 +354,68 @@ async function listReadable(db, userId, channelType = 'mailbox') {
     return rows.map(r => ({ ...shapeFlags(r), ...shapeGrantFlags(r) }));
   }
 
+  // 'phone_line' (S-PH) — the mailbox branches, line-shaped.
+  if (await isSuperuser(db, userId)) {
+    const [rows] = await db.query(`SELECT ${LINE_COLS} FROM phone_lines pl ORDER BY pl.id ASC`);
+    return rows.map(r => ({ ...shapeLine(r), can_read: true, can_send: true, can_manage: true }));
+  }
   if (!Number.isInteger(uid) || uid < 0) return [];
+  const role = await roleBypass(db, uid);
+  if (role) {
+    const [rows] = await db.query(
+      `SELECT ${LINE_COLS}, g.can_send, g.can_manage
+         FROM phone_lines pl
+         LEFT JOIN channel_grants g
+           ON g.channel_type = 'phone_line' AND g.channel_id = pl.id AND g.user = ?
+        ORDER BY pl.id ASC`,
+      [uid]
+    );
+    return rows.map(r => ({ ...shapeLine(r), ...shapeGrantFlags(r), can_read: true, role }));
+  }
   const [rows] = await db.query(
-    `SELECT channel_id, can_read, can_send, can_manage
-       FROM channel_grants
-      WHERE user = ? AND channel_type = ? AND can_read = 1
-      ORDER BY channel_id ASC`,
-    [uid, channelType]
+    `SELECT ${LINE_COLS}, g.can_read, g.can_send, g.can_manage
+       FROM channel_grants g
+       JOIN phone_lines pl ON pl.id = g.channel_id
+      WHERE g.user = ? AND g.channel_type = 'phone_line' AND g.can_read = 1
+      ORDER BY pl.id ASC`,
+    [uid]
   );
-  return rows.map(r => ({ channel_id: r.channel_id, ...shapeGrantFlags(r) }));
+  return rows.map(r => ({ ...shapeLine(r), ...shapeGrantFlags(r) }));
 }
 
 /**
- * What a user can SEND AS (S3): [{id, address, domain, display_name, color,
- * active, send_credential_id}], address order. SU: every mailbox (the S0 SU
- * bypass). Everyone else: mailboxes they hold a can_send grant on — NO role
- * bypass (header, SEND): an attorney without the grant gets nothing here.
- * Inactive boxes and boxes without a send credential are included; the
- * caller says why they cannot be used. send_credential_id is for the send
- * service — routes project it away for non-SU callers.
+ * What a user can SEND AS.
+ *   'mailbox' (S3) → [{id, address, domain, display_name, color, active,
+ *     send_credential_id}], address order. SU: every mailbox (the S0 SU
+ *     bypass). Everyone else: mailboxes they hold a can_send grant on — NO
+ *     role bypass (header, SEND): an attorney without the grant gets nothing
+ *     here. Inactive boxes and boxes without a send credential are included;
+ *     the caller says why they cannot be used. send_credential_id is for the
+ *     send service — routes project it away for non-SU callers.
+ *   'phone_line' (S-PH) → [{id, phone_number, display_name, provider,
+ *     active, mms_capable}], id order: SU every line, everyone else the lines
+ *     they hold a can_send grant on (no role bypass). Inactive lines are
+ *     included; the From pickers only ever list active ones anyway.
  */
-async function listSendable(db, userId) {
+async function listSendable(db, userId, channelType = 'mailbox') {
+  assertReadChannel(channelType);
+  if (channelType === 'phone_line') {
+    if (await isSuperuser(db, userId)) {
+      const [rows] = await db.query(`SELECT ${LINE_COLS} FROM phone_lines pl ORDER BY pl.id ASC`);
+      return rows.map(shapeLine);
+    }
+    const uid = Number(userId);
+    if (!Number.isInteger(uid) || uid < 0) return [];
+    const [rows] = await db.query(
+      `SELECT ${LINE_COLS}
+         FROM channel_grants g
+         JOIN phone_lines pl ON pl.id = g.channel_id
+        WHERE g.user = ? AND g.channel_type = 'phone_line' AND g.can_send = 1
+        ORDER BY pl.id ASC`,
+      [uid]
+    );
+    return rows.map(shapeLine);
+  }
   if (await isSuperuser(db, userId)) {
     const [rows] = await db.query(
       `SELECT m.id, m.address, m.domain, m.display_name, m.color, m.active, m.send_credential_id
@@ -400,6 +455,18 @@ function shapeFlags(r) {
 
 function shapeGrantFlags(r) {
   return { can_read: !!r.can_read, can_send: !!r.can_send, can_manage: !!r.can_manage };
+}
+
+/** A phone_lines row in the LINE_COLS projection (S-PH). */
+function shapeLine(r) {
+  return {
+    id: Number(r.id),
+    phone_number: r.phone_number,
+    display_name: r.display_name ?? null,
+    provider: r.provider,
+    active: !!Number(r.active),
+    mms_capable: !!Number(r.mms_capable),
+  };
 }
 
 /** Defense in depth: no shaped mailbox ever leaves with this key. */
@@ -496,6 +563,19 @@ async function getMailbox(db, mailboxId, { su = false } = {}) {
 async function mailboxExists(db, mailboxId) {
   const id = toId(mailboxId, 'mailbox id');
   const [[row]] = await db.query('SELECT id FROM mailboxes WHERE id = ? LIMIT 1', [id]);
+  return !!row;
+}
+
+/**
+ * Does the channel row exist (S-PH)? The one channel-specific read in grant
+ * CRUD. An INACTIVE row exists: an inactive mailbox's mail and an inactive
+ * line's events stay readable, so their grants stay writable.
+ */
+async function channelExists(db, channelType, channelId) {
+  assertReadChannel(channelType);
+  if (channelType === 'mailbox') return mailboxExists(db, channelId);
+  const id = toId(channelId, 'phone line id');
+  const [[row]] = await db.query('SELECT id FROM phone_lines WHERE id = ? LIMIT 1', [id]);
   return !!row;
 }
 
@@ -1013,7 +1093,7 @@ async function getGrant(db, grantId) {
 async function ownedGrant(db, grantId, channelType, channelId) {
   const g = await getGrant(db, grantId);
   if (!g || g.channel_type !== channelType || Number(g.channel_id) !== channelId) {
-    throw httpError(404, 'Grant not found on this mailbox');
+    throw httpError(404, `Grant not found on this ${nounOf(channelType)}`);
   }
   return g;
 }
@@ -1040,9 +1120,11 @@ function validateGrantBody(body, { partial }) {
 }
 
 /**
- * Create a grant. Writes channel_type 'mailbox' only (S0 gate). The target
- * user must exist and must not be user 0 (automations bypass grants, D6).
- * At least one flag must be true.
+ * Create a grant on a mailbox or (S-PH) a phone line. The channel row must
+ * exist (channelExists — inactive counts). The target user must exist and
+ * must not be user 0 (automations bypass grants, D6). At least one flag must
+ * be true. A written grant is effective on the next request: getAccess /
+ * listReadable read channel_grants directly (no cache).
  */
 async function createGrant(db, { channelType = 'mailbox', channelId, body, grantedBy }) {
   assertWritableChannel(channelType);
@@ -1058,7 +1140,10 @@ async function createGrant(db, { channelType = 'mailbox', channelId, body, grant
   }
   const granter = toUserId(grantedBy, 'granted_by');
 
-  if (!(await mailboxExists(db, cid))) throw httpError(404, 'Mailbox not found');
+  const noun = nounOf(channelType);
+  if (!(await channelExists(db, channelType, cid))) {
+    throw httpError(404, `${noun.charAt(0).toUpperCase()}${noun.slice(1)} not found`);
+  }
   const [[u]] = await db.query('SELECT user FROM users WHERE user = ? LIMIT 1', [uid]);
   if (!u) throw httpError(400, `user ${uid} does not exist`);
 
@@ -1072,7 +1157,7 @@ async function createGrant(db, { channelType = 'mailbox', channelId, body, grant
     );
   } catch (err) {
     if (err && err.code === 'ER_DUP_ENTRY') {
-      throw httpError(409, `user ${uid} already has a grant on this mailbox — edit it instead`);
+      throw httpError(409, `user ${uid} already has a grant on this ${noun} — edit it instead`);
     }
     throw err;
   }
@@ -1110,7 +1195,7 @@ async function deleteGrant(db, { channelType = 'mailbox', channelId, grantId }) 
     'DELETE FROM channel_grants WHERE id = ? AND channel_type = ? AND channel_id = ?',
     [before.id, channelType, cid]
   );
-  if (!result.affectedRows) throw httpError(404, 'Grant not found on this mailbox');
+  if (!result.affectedRows) throw httpError(404, `Grant not found on this ${nounOf(channelType)}`);
   return { removed: result.affectedRows, before };
 }
 
@@ -1126,6 +1211,7 @@ module.exports = {
   listMailboxesFor,
   getMailbox,
   mailboxExists,
+  channelExists,
   createMailbox,
   updateMailbox,
   // grants
@@ -1139,6 +1225,7 @@ module.exports = {
   validateIngestFolders,
   CHANNEL_TYPES,
   WRITABLE_CHANNEL_TYPES,
+  CHANNEL_NOUNS,
   MANAGER_EDITABLE_FIELDS,
   ALIAS_FORBIDDEN_FIELDS,
   DEFAULT_INGEST_FOLDERS,

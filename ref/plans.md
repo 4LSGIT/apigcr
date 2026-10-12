@@ -336,6 +336,14 @@ Active surfaces with known next steps.
   - **Budget query cost**: the per-transport COUNT walks every `email_log` row of its `source` (ref on `ux_email_log_source_message`; ~1.7k gmail rows at ship). Add `(source, processed_at)` if outbound volume grows ~10×.
   - **Alias slice cost** (S3-R): each readable alias box's summary count (every Comms open, every 5-min badge refresh, every mark-read) and view count walks ALL of its parent's rows through the label/LIKE/REGEXP slice predicate (EXPLAIN live 2026-10-12: ref on mailbox_id, 157 rows). Fine at hundreds/thousands; if the parent grows into the tens of thousands, a multi-valued index on `gmail_labels` (`CAST(gmail_labels AS CHAR(255) ARRAY)`) serves the label half, and the address half can move to a stored `mail_messages` address list or a per-alias membership table filled at ingest.
 
+- **Comms phone tab — after v1 (S-PH, 2026-10-12; design §4.4 "As built (S-PH)").** Left out of v1 on purpose:
+  - **Shell gate for phone-only users** (ruling 2026-10-12): the sidebar Comms entry and Home button show only when the user can read ≥ 1 mailbox or holds a mail `can_send` (`index.html` `commsBadgeSet` / `commsBadgeRefresh`, fed by `GET /api/mail/mailboxes`). A person whose only grant is on a PHONE line never sees Comms. Every phone user at launch already reads a mailbox. Fix with the phone unread/badge work below (same shell code): count readable lines (`GET /api/phone-lines/readable`) into the show decision.
+  - **Unread / badge counts** for texts and calls (per-user read state, like `mail_read_state`); the Phone tab shows no counts today.
+  - **MMS send** (lines with `mms_capable`), **per-line / per-user send budgets** (only the per-user 30 / 10 min limiter exists, per instance), **outgoing calls**, **recordings / transcripts** (the recordings arc), the **phonebook** add-in (S-PB).
+  - **Suppressed-events viewer** and an **orphan view** (events on numbers that are not `phone_lines` rows — 976 live rows at ship, 538 of them inbound calls to one RingCentral number; registering a number as an INACTIVE line makes it readable without making it sendable).
+  - **SU step-up asymmetry:** the hub's `POST /api/phone-lines/:id/sms` asks an SU for step-up (the mail-send rule); the staff `/internal/sms|mms/send` path does not (S-PH kept that path's behaviour and added only the grant check). Align one way or the other if it matters.
+  - **Grants UI for non-SU managers:** phone-line Access lives on the SU-only Connections pane; a `can_manage` holder can use the API but has no screen (same gap the mailbox grants had).
+
 - **Custom fields: per-case-type scoping as data (if it gets common).** Since 2026-10-06 a case field meant for some types is a `show_when` on `case_type` (one Custom Fields section, mounted by every Case Details variant). `show_when` v1 is ONE condition, so a type-scoped field cannot also carry a second condition. If that bites, add a first-class `case_types` (JSON list) to `field_defs`, ANDed with `show_when`, rather than growing v1 into and/or trees.
 
 
@@ -497,4 +505,4 @@ role-convention item were confirmed done and dropped).
 
 ---
 
-*Last updated: 2026-10-07*
+*Last updated: 2026-10-12*

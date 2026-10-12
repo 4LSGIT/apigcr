@@ -1,0 +1,33 @@
+{
+ "status": "success",
+ "line_id": 1,
+ "other_party": "5555550199",
+ "next_cursor": "1760000000000.20",
+ "contact": {
+  "contact_id": 9001,
+  "name": "Bartholomew Maximilian Featherstonehaugh-Worthington III"
+ },
+ "messages": [
+  {
+   "id": 21,
+   "direction": "outgoing",
+   "body": "Hi, this is the firm. Please send the last 6 months of paystubs and the bank statements we listed.",
+   "at": "2026-10-10T14:00:00.000Z",
+   "logged": true
+  },
+  {
+   "id": 22,
+   "direction": "incoming",
+   "body": "ok will do. here is the link the bank gave me https://statements.example-bank.test/download/a8f3c9e2d1b4a7f6e5c3b2a1d9e8f7c6b5a4d3e2f1/very/long/path/that/does/not/break",
+   "at": "2026-10-10T14:30:00.000Z",
+   "logged": true
+  },
+  {
+   "id": 40,
+   "direction": "incoming",
+   "body": "Thanks \u2014 I'll upload the paystubs tonight, the portal kept timing out on my phone earlier today when I tried\nSecond line of the same text.",
+   "at": "2026-10-12T14:05:00.000Z",
+   "logged": true
+  }
+ ]
+}

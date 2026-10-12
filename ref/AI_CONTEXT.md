@@ -184,6 +184,32 @@ body. Governing migrations in `ref/migrations/`.*
     runs throttled to one per 30 s for all staff, non-SU callers get counts
     only (`routes/mailboxIngest.js`); the scheduler's x-api-key tick is
     never throttled.
+- **Comms Phone tab + phone-line grants are live (mailbox S-PH, 10-12):**
+  `routes/api.phoneComms.js` → `services/phoneCommsService.js`, access via
+  `mailboxService` (one chokepoint, both channels); design
+  `ref/MAILBOX_SYSTEM_DESIGN.md` §4.4 "As built (S-PH)"; operators
+  `manual/08-Admin-Tools/08-mailboxes.md` "Phone lines — Comms". What a
+  session touching unrelated code needs to know:
+  - **`/internal/sms/send` and `/internal/mms/send` are grant-checked for
+    STAFF JWTs** (`can_send` on the `from` line, `staffSendGate`); API-key
+    callers stay grant-blind (D6). They are the live staff send path
+    (communicate.html, sendingform*.html — whose From lists go through
+    `public/js/phoneSendable.js`). A new staff SMS surface goes through the
+    same gate; a new automation path does not.
+  - **`phone_event_log.line_number`** (generated, `(line_number,
+    processed_at)` index) is THE line attribution (incoming → `to_number`,
+    else `from_number`). Name the COLUMN, not the IF() — generated-column
+    substitution is collation-fragile; per-line walks FORCE the index.
+    `phoneIngest*` never writes it (its INSERT names columns).
+  - **The attorney READ bypass covers phone lines**; send/manage never
+    bypass. **Grant routes pin their channel** — a mailbox route refuses a
+    `phone_line` body and vice versa (the ids overlap).
+  - **`jwt_api_audit_log` redacts URL secrets** (SEC-1: credential-shaped
+    param names, case-blind) in the route, the parsed query and the Referer
+    (`redactUrlParams`, `lib/auth.jwtOrApiKey.js`).
+  - `routes/internal/phoneTest.js` is gone. Migration
+    `2026-10-12_phone_sph.sql` goes BEFORE the backend (it seeds the
+    default-line grants the gate needs).
 - **CTA links are live end to end (10-07, arc S0–S4):** SU-minted bearer
   links (`4lsg.com/c/<token>`) whose option buttons run frozen plans of
   registry internal functions as user 0. Design (canonical, review-folded):

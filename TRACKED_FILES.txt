@@ -310,6 +310,7 @@ public/js/mascot/skins/roomba.js
 public/js/mascot/skins/snail.js
 public/js/mascot/skins/spider.js
 public/js/mascot/skins/ufo.js
+public/js/phoneSendable.js
 public/js/reportCharts.js
 public/js/vendor/purify-3.4.16.min.js
 public/js/versionGuard.js
@@ -501,6 +502,7 @@ ref/migrations/2026-10-11_cta_inline_bindings_comment.sql
 ref/migrations/2026-10-11_mailbox_s1g_allmail.sql
 ref/migrations/2026-10-11_mailbox_s2l_labels.sql
 ref/migrations/2026-10-12_mailbox_s3r_alias.sql
+ref/migrations/2026-10-12_phone_sph.sql
 ref/migrations/S1_notes_migration.sql
 ref/migrations/documents_s1.sql
 ref/migrations/documents_s2.sql
@@ -580,6 +582,7 @@ routes/api.mySignatures.js
 routes/api.oauth.js
 routes/api.pages.js
 routes/api.pdf.js
+routes/api.phoneComms.js
 routes/api.phoneIngest.js
 routes/api.phoneLines.js
 routes/api.pipeline.js
@@ -632,7 +635,6 @@ routes/internal/email.js
 routes/internal/emailTest.js
 routes/internal/hookReplay.js
 routes/internal/mms.js
-routes/internal/phoneTest.js
 routes/internal/sequence.js
 routes/internal/sms.js
 routes/logs.js
@@ -709,7 +711,14 @@ scripts/mobile-survey/fixtures/api/mail/threads/t1%40example-firm.test.json
 scripts/mobile-survey/fixtures/api/mail/views.json
 scripts/mobile-survey/fixtures/api/mail/views/counts.json
 scripts/mobile-survey/fixtures/api/mailboxes.json
+scripts/mobile-survey/fixtures/api/phone-lines/1/calls.json
+scripts/mobile-survey/fixtures/api/phone-lines/1/conversations.json
+scripts/mobile-survey/fixtures/api/phone-lines/1/conversations/5555550199.json
+scripts/mobile-survey/fixtures/api/phone-lines/1/grants.json
+scripts/mobile-survey/fixtures/api/phone-lines/admin.json
+scripts/mobile-survey/fixtures/api/phone-lines/readable.json
 scripts/mobile-survey/fixtures/api/tasks.json
+scripts/mobile-survey/fixtures/api/users.json
 scripts/mobile-survey/fixtures/firm-data.json
 scripts/mobile-survey/server.js
 scripts/mobile-survey/survey.js
@@ -809,6 +818,7 @@ services/pabblyService.js
 services/pageService.js
 services/pdfRenderService.js
 services/pdfService.js
+services/phoneCommsService.js
 services/phoneIngestExecutionsService.js
 services/phoneIngestMetaService.js
 services/phoneIngestRuleService.js
@@ -1015,6 +1025,7 @@ tests/helpers/mailRenderBrowser.js
 tests/helpers/mailboxS1World.js
 tests/helpers/mailboxS2World.js
 tests/helpers/mailboxS3World.js
+tests/helpers/phoneSPHWorld.js
 tests/helpers/renderSmoke.js
 tests/helpers/scriptGuard.js
 tests/helpers/u6aEventsDb.js
@@ -1084,6 +1095,9 @@ tests/paramsMappingBareScalar.test.js
 tests/paramsMappingCsvList.test.js
 tests/pdfRender.test.js
 tests/pdfRenderIntegration.test.js
+tests/phoneSPH.mysql.test.js
+tests/phoneSPH.pane.test.js
+tests/phoneSPH.routes.test.js
 tests/phoneingestservice.dedup.test.js
 tests/pipelineAdminService.test.js
 tests/pipelineBoard.test.js

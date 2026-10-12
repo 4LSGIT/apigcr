@@ -16,8 +16,10 @@
  *   - imap_secret is write-only: encrypted (ENCv1) at rest, never in any
  *     response, never in admin_audit_log, redacted from jwt_api_audit_log,
  *     and NEVER SELECTed (every executed SELECT is inspected).
- *   - the S0 channel gate: a phone_line grant write is a 400 on both the SU
- *     and the manager path, and writes no row.
+ *   - the channel pin (S-PH): the MAILBOX grant routes write mailbox grants
+ *     only — a body naming phone_line (or anything else) is a 400 on both the
+ *     SU and the manager path and writes no row (line and mailbox ids overlap;
+ *     phone grants live under /api/phone-lines/:id/grants).
  *   - SU bypass comes from the DB (users.user_auth), and SU-bypass WRITES need
  *     step-up elevation; reads do not.
  *   - a non-SU can_manage holder stays inside their box: other boxes 404,
@@ -485,8 +487,8 @@ describe('imap_secret is write-only', () => {
   });
 });
 
-describe('S0 channel gate', () => {
-  test('phone_line grant write is a 400 on the SU and the manager path, and writes nothing', async () => {
+describe('channel pin (S0 gate → S-PH)', () => {
+  test('a phone_line grant through a MAILBOX route is a 400 on the SU and the manager path, and writes nothing', async () => {
     const id = await seedMailbox();
     await seedGrant(id, { user: 5, can_manage: true });
     const before = W.T.channel_grants.length;
@@ -495,13 +497,25 @@ describe('S0 channel gate', () => {
       t: SU(), elev: ELEV(), body: { user: 22, can_read: true, channel_type: 'phone_line' },
     });
     expect(r.status).toBe(400);
-    expect(r.json.message).toMatch(/phone slice/);
+    expect(r.json.message).toMatch(/channel_type must be 'mailbox' here/);
 
     r = await call('POST', `/api/mailboxes/${id}/grants`, {
       t: tok(5), body: { user: 22, can_read: true, channel_type: 'phone_line' },
     });
     expect(r.status).toBe(400);
-    expect(r.json.message).toMatch(/phone slice/);
+    expect(r.json.message).toMatch(/channel_type must be 'mailbox' here/);
+
+    // PATCH / DELETE are pinned too: a phone_line body never reaches the service
+    const gid = W.T.channel_grants.find(g => g.user === 5).id;
+    r = await call('PATCH', `/api/mailboxes/${id}/grants/${gid}`, {
+      t: SU(), elev: ELEV(), body: { can_send: true, channel_type: 'phone_line' },
+    });
+    expect(r.status).toBe(400);
+    r = await call('DELETE', `/api/mailboxes/${id}/grants/${gid}`, {
+      t: SU(), elev: ELEV(), body: { channel_type: 'phone_line' },
+    });
+    expect(r.status).toBe(400);
+    expect(W.T.channel_grants.find(g => g.id === gid)).toBeTruthy();
 
     r = await call('POST', `/api/mailboxes/${id}/grants`, {
       t: SU(), elev: ELEV(), body: { user: 22, can_read: true, channel_type: 'fax' },
@@ -512,15 +526,16 @@ describe('S0 channel gate', () => {
     expect(W.T.channel_grants.every(g => g.channel_type === 'mailbox')).toBe(true);
   });
 
-  test('service: reads accept phone_line (and find nothing); writes refuse it', async () => {
+  test('service: the write vocabulary is mailbox + phone_line (S-PH); anything else is a 400', async () => {
     W = makeWorld();
+    expect([...svc.WRITABLE_CHANNEL_TYPES].sort()).toEqual(['mailbox', 'phone_line']);
     await expect(svc.createGrant(W.db, {
-      channelType: 'phone_line', channelId: 1, body: { user: 5, can_read: true }, grantedBy: 6,
+      channelType: 'sms', channelId: 1, body: { user: 5, can_read: true }, grantedBy: 6,
     })).rejects.toMatchObject({ status: 400 });
-    expect(await svc.listReadable(W.db, 5, 'phone_line')).toEqual([]);
     expect(await svc.getAccess(W.db, 5, 'phone_line', 1))
       .toEqual({ can_read: false, can_send: false, can_manage: false, su: false });
     await expect(svc.getAccess(W.db, 5, 'sms', 1)).rejects.toMatchObject({ status: 400 });
+    // phone_line grant CRUD itself is pinned in tests/phoneSPH.routes.test.js
   });
 });
 

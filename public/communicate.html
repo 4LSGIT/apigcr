@@ -10,6 +10,7 @@
   <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
   <script src="/js/videoInsert.js"></script>
   <script src="/js/assetpicker.js"></script>
+  <script src="/js/phoneSendable.js"></script>
   <link rel="stylesheet" href="/theme.css">
   <script src="/themeSync.js"></script>
   <style>
@@ -503,6 +504,11 @@ async function init() {
   // ── SMS sender change → MMS visibility ──
   smsSel.addEventListener('change', updateMmsVisibility);
   updateMmsVisibility();
+
+  // ── Only the lines this user may text FROM (S-PH: sends are grant-checked;
+  //    a line they cannot send from would only be refused). The Call tab's
+  //    list is untouched — logging a call is not a send. ──
+  if (window.YCPhoneSendable) YCPhoneSendable.filterSelect(smsSel, P.apiSend, { preferred: currentUser.default_phone });
 
   // ── Init Quill ──
   quill = new Quill('#quill-editor', {
