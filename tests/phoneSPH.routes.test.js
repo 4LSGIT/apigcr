@@ -253,6 +253,29 @@ describe('reads', () => {
     expect((await call('GET', '/api/phone-lines/1/conversations?cursor=abc', { t: T.su() })).status).toBe(400);
   });
 
+  test('conversations ?kind=sms: texts only — a number that only called has no row, `count` and `last` are its texts; any other kind is a 400', async () => {
+    const S = SPH_SEED(W);
+    const l1 = (await call('GET', '/api/phone-lines/1/conversations?kind=sms', { t: T.su() })).json.conversations;
+    // P2's call #3 is out of its count (2 → 1)
+    expect(l1.map((c) => [c.other_party, c.count, c.last_id])).toEqual([[S.P1, 3, 13], ['22395', 1, 9], [S.L3, 1, 7], [S.P2, 1, 4]]);
+    // line 6 is calls only → nothing
+    expect((await call('GET', '/api/phone-lines/6/conversations?kind=sms', { t: T.su() })).json).toMatchObject({ conversations: [], next_cursor: null });
+    // a text, then a newer call: unfiltered `last` is the call; texts-only `last` is the text, the count its texts
+    W.sms(S.L6, S.P1, 'outgoing', { body: 'call us back' });                  // 16
+    W.call(S.L6, S.P1, 'incoming');                                           // 17
+    const both = (await call('GET', '/api/phone-lines/6/conversations', { t: T.su() })).json.conversations;
+    expect(both[0]).toMatchObject({ other_party: S.P1, count: 3, last_id: 17, last: { kind: 'call' } });
+    const texts = (await call('GET', '/api/phone-lines/6/conversations?kind=sms', { t: T.su() })).json.conversations;
+    expect(texts).toEqual([expect.objectContaining({ other_party: S.P1, count: 1, last_id: 16, last: expect.objectContaining({ id: 16, kind: 'sms', snippet: 'call us back' }) })]);
+    // pages under the filter
+    const p1 = (await call('GET', '/api/phone-lines/1/conversations?kind=sms&limit=2', { t: T.su() })).json;
+    const p2 = (await call('GET', `/api/phone-lines/1/conversations?kind=sms&limit=2&cursor=${p1.next_cursor}`, { t: T.su() })).json;
+    expect([p1.conversations.map((c) => c.last_id), p2.conversations.map((c) => c.last_id), p2.next_cursor]).toEqual([[13, 9], [7, 4], null]);
+    for (const k of ['call', 'SMS', 'x']) {
+      expect([k, (await call('GET', `/api/phone-lines/1/conversations?kind=${k}`, { t: T.su() })).status]).toEqual([k, 400]);
+    }
+  });
+
   test('one conversation: newest page, oldest first; older pages by cursor; `at` prefers the provider ts', async () => {
     const S = SPH_SEED(W);
     const a = (await call('GET', `/api/phone-lines/1/conversations/${S.P1}?limit=2`, { t: T.su() })).json;
@@ -431,7 +454,7 @@ describe('All numbers — /api/phone-lines/all/*', () => {
   });
 
   test('conversations page by the last id; malformed cursors 400; humans only; "all" never reaches the /:id routes', async () => {
-    SPH_SEED(W);
+    const S = SPH_SEED(W);
     const a = await get('/api/phone-lines/all/conversations?limit=2', T.su());
     const b = await get(`/api/phone-lines/all/conversations?limit=2&cursor=${a.next_cursor}`, T.su());
     expect([a.conversations.map((c) => c.last_id), a.next_cursor, b.conversations.map((c) => c.last_id), b.next_cursor]).toEqual([[14, 13], '13', [11, 9], null]);
@@ -441,6 +464,17 @@ describe('All numbers — /api/phone-lines/all/*', () => {
     for (const u of ['/api/phone-lines/all/conversations', '/api/phone-lines/all/conversations/3135550001', '/api/phone-lines/all/calls']) {
       expect([u, (await call('GET', u, { apiKey: process.env.INTERNAL_API_KEY })).status]).toEqual([u, 403]);
     }
+    // ?kind=sms: texts only — P4 (calls only) drops out; P1 / P2 count their texts, line_ids the lines they TEXTED on.
+    // P2's newest event is a call (#11) but its newest text is #4: the second page (HAVING MAX(id) < 9) has it only
+    // because the filter holds on that page too
+    const t1 = await get('/api/phone-lines/all/conversations?kind=sms&limit=2', T.su());
+    const t2 = await get(`/api/phone-lines/all/conversations?kind=sms&limit=2&cursor=${t1.next_cursor}`, T.su());
+    expect([t1.conversations, t2.conversations].map((pg) => pg.map((c) => [c.other_party, c.count, c.last_id, c.line_ids, c.last.kind])))
+      .toEqual([[[S.P1, 3, 13, [1], 'sms'], ['22395', 1, 9, [1], 'sms']], [[S.P2, 1, 4, [1], 'sms']]]);
+    expect([t1.next_cursor, t2.next_cursor]).toEqual(['9', null]);
+    // a bad kind is a 400 even with nothing readable
+    expect((await call('GET', '/api/phone-lines/all/conversations?kind=call', { t: T.su() })).status).toBe(400);
+    expect((await call('GET', '/api/phone-lines/all/conversations?kind=call', { t: T.nobody() })).status).toBe(400);
     // a line literally numbered "all" does not exist: /:id with a non-integer is still a 400
     expect((await call('GET', '/api/phone-lines/allx/conversations', { t: T.su() })).status).toBe(400);
   });

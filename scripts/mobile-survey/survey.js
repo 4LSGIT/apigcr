@@ -176,13 +176,14 @@ async function walk(page, W, record) {
         ['phone-thread', 'openConversation(ph.rows[0].other_party, ph.rows[0].contact)'],
         // a number no contact holds: number-only title + Add to contact; an attachment-only text
         ['phone-thread-unknown', "openConversation('5555550198', null)"],
-        ['phone-calls', "closePhoneThread(); setPhoneView('calls')"],
-        ['phone-new', "setPhoneView('msgs'); openNewText()"],
+        ['phone-sms', "closePhoneThread(); setPhoneView('sms')"],
+        ['phone-calls', "setPhoneView('calls')"],
+        ['phone-new', "setPhoneView('all'); openNewText()"],
         // All numbers: tagged rows, a merged thread ("via <line>", From picker), merged calls, New text's From picker
         ['phone-all', "closeNewText(); selectLine('all')"],
         ['phone-all-thread', 'openConversation(ph.rows[0].other_party, ph.rows[0].contact)'],
         ['phone-all-calls', "closePhoneThread(); setPhoneView('calls')"],
-        ['phone-all-new', "setPhoneView('msgs'); openNewText()"],
+        ['phone-all-new', "setPhoneView('all'); openNewText()"],
       ];
       for (const [key, js] of PHONE) {
         if (!cf) { await record(`tab:tabComms:${key}`, await measure(page, null), await shot('comms_' + key)); continue; }

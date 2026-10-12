@@ -486,7 +486,8 @@ lines alike (design: `ref/MAILBOX_SYSTEM_DESIGN.md` §4.4, slice S-PH).
   line of their latest text, if you can send from it). **Calls** shows every
   line's calls, each tagged with its line. Texts between two of the firm's
   own lines are left out of this list — open that line to see them.
-- **Conversations** lists the line's conversations — one per number that
+- **Texts · All · Calls** — the toggle in the bar picks the list. **All**
+  (the default) lists the line's conversations — one per number that
   texted or called the line (or was texted or called from it), newest
   activity first, the contact's name when the number belongs to a client on
   file (**Open contact** opens their file). A row whose latest event was a
@@ -497,6 +498,9 @@ lines alike (design: `ref/MAILBOX_SYSTEM_DESIGN.md` §4.4, slice S-PH).
   on the right: direction and length, **Missed call** in red, "no answer"
   when nobody picked up), all in the order they happened; **Load earlier**
   goes back further.
+- **Texts** is the same list for texts only: a number that only ever called
+  is not in it, and each row shows its latest text. It filters the list, not
+  the conversation — opening a number still shows its calls among the texts.
 - **A number that is not a contact** shows as the number alone, with **Add
   to contact**: attach it to an existing contact or create a new contact
   with it (the same dialog as the Log's orphan rows). The start date is

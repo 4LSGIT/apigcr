@@ -39,6 +39,10 @@ const clone = (v) => structuredClone(v);
 const LINE_COLS = 'pl.id, pl.phone_number, pl.display_name, pl.provider, pl.active, pl.mms_capable';
 const LINE_SELECT = 'SELECT id, phone_number, display_name, provider, active, mms_capable FROM phone_lines';
 const GRANT_SELECT = 'SELECT g.id, g.user, u.username, u.user_name, u.user_auth, g.channel_type, g.channel_id, g.can_read, g.can_send, g.can_manage, g.granted_by, gb.username AS granted_by_username, g.created_at FROM channel_grants g LEFT JOIN users u ON u.user = g.user LEFT JOIN users gb ON gb.user = g.granted_by';
+// ?kind=sms (texts only) adds this before the GROUP BY of both conversation lists
+const SMS_ONLY = " AND event_type = 'sms'";
+const withKind = (group) => [group, group.replace(' GROUP BY other_party', `${SMS_ONLY} GROUP BY other_party`)];
+const groupTail = (sql, group) => withKind(group).flatMap((g) => [`${g} ORDER BY last_id DESC LIMIT ?`, `${g} HAVING MAX(id) < ? ORDER BY last_id DESC LIMIT ?`]).includes(sql);
 const CONVO_GROUP = "SELECT other_party, MAX(id) AS last_id, COUNT(*) AS n FROM phone_event_log FORCE INDEX (idx_phone_event_line) WHERE line_number = ? AND suppressed = 0 AND other_party IS NOT NULL GROUP BY other_party";
 const CONVO_LATEST = "SELECT id, event_type, direction, body, processed_at, line_number, JSON_UNQUOTE(JSON_EXTRACT(raw_extra, '$.ts')) AS ts, JSON_UNQUOTE(JSON_EXTRACT(raw_extra, '$.started_at')) AS started_at, JSON_UNQUOTE(JSON_EXTRACT(raw_extra, '$.ended_at')) AS ended_at, JSON_UNQUOTE(JSON_EXTRACT(raw_extra, '$.provider_status')) AS provider_status FROM phone_event_log WHERE id IN (?)";
 const MSGS = "SELECT id, event_type, direction, body, processed_at, log_id, JSON_UNQUOTE(JSON_EXTRACT(raw_extra, '$.ts')) AS ts, JSON_UNQUOTE(JSON_EXTRACT(raw_extra, '$.started_at')) AS started_at, JSON_UNQUOTE(JSON_EXTRACT(raw_extra, '$.ended_at')) AS ended_at, JSON_UNQUOTE(JSON_EXTRACT(raw_extra, '$.provider_status')) AS provider_status FROM phone_event_log WHERE line_number = ? AND other_party = ? AND suppressed = 0";
@@ -290,12 +294,14 @@ function makeWorld() {
       const l = T.phone_lines.find(x => x.phone_number === String(p[0]));
       return [l ? [lineCols(l)] : []];
     }
-    if (sql === `${CONVO_GROUP} ORDER BY last_id DESC LIMIT ?` || sql === `${CONVO_GROUP} HAVING MAX(id) < ? ORDER BY last_id DESC LIMIT ?`) {
+    if (groupTail(sql, CONVO_GROUP)) {
       const having = sql.includes('HAVING');
+      const smsOnly = sql.includes(SMS_ONLY);
       const groups = new Map();
       for (const e of T.phone_event_log) {
-        // texts AND calls (no event_type predicate since calls joined the list)
+        // texts AND calls (no event_type predicate since calls joined the list) — texts only under ?kind=sms
         if (lineOf(e) !== String(p[0]) || Number(e.suppressed) !== 0 || e.other_party == null) continue;
+        if (smsOnly && e.event_type !== 'sms') continue;
         const g = groups.get(e.other_party) || { other_party: e.other_party, last_id: 0, n: 0 };
         g.last_id = Math.max(g.last_id, e.id);
         g.n += 1;
@@ -336,14 +342,16 @@ function makeWorld() {
       }))];
     }
     // ── All numbers ──
-    if (sql === `${ALL_GROUP} ORDER BY last_id DESC LIMIT ?` || sql === `${ALL_GROUP} HAVING MAX(id) < ? ORDER BY last_id DESC LIMIT ?`) {
+    if (groupTail(sql, ALL_GROUP)) {
       const having = sql.includes('HAVING');
+      const smsOnly = sql.includes(SMS_ONLY);
       const lines = new Set(p[0].map(String));
       const firm = new Set(T.phone_lines.map(l => l.phone_number));
       const groups = new Map();
       for (const e of T.phone_event_log) {
         const ln = lineOf(e);
         if (ln == null || !lines.has(String(ln)) || Number(e.suppressed) !== 0 || e.other_party == null || firm.has(e.other_party)) continue;
+        if (smsOnly && e.event_type !== 'sms') continue;
         const g = groups.get(e.other_party) || { other_party: e.other_party, last_id: 0, n: 0, nums: new Set() };
         g.last_id = Math.max(g.last_id, e.id);
         g.n += 1;

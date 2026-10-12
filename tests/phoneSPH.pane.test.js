@@ -6,8 +6,9 @@
  * top-level window is its own parent, so window.apiSend IS the pane's
  * P.apiSend):
  *   - public/comms.html Phone tab: lazy boot on first open, the lines rail +
- *     picker, Conversations (texts AND calls per number; a call-last row
- *     previews the call) / Calls, "All numbers" (every readable line at once:
+ *     picker, the Texts | All | Calls toggle (All = texts AND calls per
+ *     number, a call-last row previews the call; Texts = the same list with
+ *     ?kind=sms, the thread never filtered; Calls = the call log), "All numbers" (every readable line at once:
  *     one row per number with its lines tagged, the thread merged with
  *     "via <line>", a From picker, the Calls view merged), a conversation as
  *     TEXT bubbles with its calls
@@ -167,7 +168,10 @@ describe('comms.html — Phone tab', () => {
     expect(rail[2].querySelector('.acc').textContent).toBe('R');
     expect(rail[3].querySelector('.sub').textContent).toBe('(248) 000-0007 · inactive');
     expect([...doc.getElementById('ph-line-sel').options].map((o) => o.value)).toEqual(['all', '1', '3', '7']);
-    expect(doc.getElementById('ph-v-msgs').textContent).toBe('Conversations');
+    // the toggle: Texts | All | Calls, All by default (no kind on the list read)
+    expect(['ph-v-sms', 'ph-v-all', 'ph-v-calls'].map((id) => [doc.getElementById(id).textContent, doc.getElementById(id).getAttribute('aria-pressed')]))
+      .toEqual([['Texts', 'false'], ['All', 'true'], ['Calls', 'false']]);
+    expect(phoneCalls(calls)[1].payload).toBeNull();
     expect(doc.querySelectorAll('#ph-list .msg')).toHaveLength(2);
     // re-opening the tab does not re-boot
     doc.getElementById('tab-email').click();
@@ -417,15 +421,66 @@ describe('comms.html — Phone tab', () => {
     const dom = new JSDOM(COMMS);
     DOMS.push(dom);
     const btns = [...dom.window.document.querySelectorAll('.seg button')];
-    expect(btns.map((b) => b.id)).toEqual(['f-inbox', 'f-sent', 'f-folders', 'ph-v-msgs', 'ph-v-calls']);
+    expect(btns.map((b) => b.id)).toEqual(['f-inbox', 'f-sent', 'f-folders', 'ph-v-sms', 'ph-v-all', 'ph-v-calls']);
     expect(btns.map((b) => b.getAttribute('data-label'))).toEqual(btns.map((b) => b.textContent.trim()));
     expect(COMMS).toMatch(/\.seg button\[data-label\]::after \{ content: attr\(data-label\); font-weight: 700; height: 0;/);
   });
 
-  test('an empty Conversations list says texts OR calls', async () => {
+  test('an empty All list says texts OR calls; an empty Texts list says texts', async () => {
     const env = await bootComms({ over: { 'GET /api/phone-lines/1/conversations': () => ({ conversations: [], next_cursor: null }) } });
     await openPhone(env);
     expect(env.doc.getElementById('ph-list').textContent).toBe('No texts or calls on this line.');
+    env.doc.getElementById('ph-v-sms').click();
+    await tick(env.window, 60);
+    expect(env.doc.getElementById('ph-list').textContent).toBe('No texts on this line.');
+  });
+
+  test('Texts: the conversation list with kind=sms on every page (Load more too); the opened thread is NOT filtered; All drops the kind', async () => {
+    const env = await bootComms({
+      over: {
+        'GET /api/phone-lines/1/conversations': (q) => (q && q.cursor
+          ? { conversations: [fresh(CONVOS[1])], next_cursor: null }
+          : { conversations: [fresh(CONVOS[0])], next_cursor: '13' }),
+      },
+    });
+    await openPhone(env);
+    const { doc, window, calls } = env;
+    const lists = () => calls.filter((c) => c.url === '/api/phone-lines/1/conversations').map((c) => c.payload);
+    doc.getElementById('ph-v-sms').click();
+    await tick(window, 60);
+    expect(['ph-v-sms', 'ph-v-all', 'ph-v-calls'].map((id) => doc.getElementById(id).getAttribute('aria-pressed'))).toEqual(['true', 'false', 'false']);
+    doc.getElementById('ph-more').click();
+    await tick(window, 60);
+    expect(lists()).toEqual([null, { kind: 'sms' }, { kind: 'sms', cursor: '13' }]);
+    expect([...doc.querySelectorAll('#ph-list .msg')].map((r) => r.dataset.party)).toEqual(['3135550001', '22395']);
+    doc.querySelector('#ph-list .msg[data-party="3135550001"]').click();
+    await tick(window, 60);
+    expect(calls.filter((c) => c.url === '/api/phone-lines/1/conversations/3135550001').map((c) => c.payload)).toEqual([null]);
+    doc.getElementById('ph-v-all').click();
+    await tick(window, 60);
+    expect(lists().slice(-1)).toEqual([null]);
+  });
+
+  test('New text from Calls lands the list on All; from Texts the list stays Texts', async () => {
+    const env = await bootComms();
+    await openPhone(env);
+    const { doc, window } = env;
+    const pressed = () => ['ph-v-sms', 'ph-v-all', 'ph-v-calls'].filter((id) => doc.getElementById(id).getAttribute('aria-pressed') === 'true');
+    const send = async (to) => {
+      doc.getElementById('ph-new').click();
+      doc.getElementById('ph-new-to').value = to;
+      doc.getElementById('ph-new-text').value = 'hi';
+      doc.getElementById('ph-new-send').click();
+      await tick(window, 60);
+    };
+    doc.getElementById('ph-v-calls').click();
+    await tick(window, 60);
+    await send('3135550007');
+    expect(pressed()).toEqual(['ph-v-all']);
+    doc.getElementById('ph-v-sms').click();
+    await tick(window, 60);
+    await send('3135550008');
+    expect(pressed()).toEqual(['ph-v-sms']);
   });
 
   test('a number with only calls opens a conversation of call boxes; the empty one says texts OR calls', async () => {
@@ -472,7 +527,7 @@ describe('comms.html — Phone tab', () => {
     await openPhone(env);
     const { doc, calls } = env;
     expect(doc.getElementById('ph-list').textContent).toMatch(/No phone lines are shared with you/);
-    expect(doc.getElementById('ph-v-calls').disabled).toBe(true);
+    expect(['ph-v-sms', 'ph-v-all', 'ph-v-calls'].map((id) => doc.getElementById(id).disabled)).toEqual([true, true, true]);
     expect(doc.getElementById('ph-new').hidden).toBe(true);
     expect(phoneCalls(calls).map((c) => c.url)).toEqual(['/api/phone-lines/readable']);
   });

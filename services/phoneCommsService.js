@@ -353,6 +353,13 @@ function convoCursor(query) {
   return Number(query.cursor);
 }
 
+/** ?kind= on the conversation lists: absent = texts AND calls; 'sms' = texts only (the pane's Texts view; MMS is event_type 'sms'). */
+function convoKind(query) {
+  if (query.kind === undefined || query.kind === null || query.kind === '') return '';
+  if (query.kind === 'sms') return " AND event_type = 'sms'";
+  throw httpError(400, "kind must be 'sms', or absent for texts and calls");
+}
+
 function keysetOf(query, params) {
   const cursor = parseCursor(query.cursor);
   if (!cursor) return '';
@@ -369,7 +376,8 @@ function keysetOf(query, params) {
  * Conversations on a line — one per other_party, texts AND calls (a number
  * that only ever called has one too; calls joined the list 2026-10-12, after
  * S-PH), newest activity first. `count` counts both. `last` is the newest
- * item, shaped by kind:
+ * item, shaped by kind. ?kind=sms keeps texts only (a number that only
+ * called has no row; `count` and `last` are its texts):
  *   {id, kind:'sms',  direction, snippet, at}
  *   {id, kind:'call', direction, at, duration_s, status, unanswered, missed}
  * COST: each page reads every row of the line through idx_phone_event_line
@@ -380,13 +388,14 @@ function keysetOf(query, params) {
 async function listConversations(db, line, query = {}) {
   const limit = pageLimit(query.limit);
   const before = convoCursor(query);
+  const kind = convoKind(query);
   const params = [line.phone_number];
   if (before != null) params.push(before);
   params.push(limit + 1);
   const [groups] = await db.query(
     `SELECT other_party, MAX(id) AS last_id, COUNT(*) AS n
        FROM phone_event_log FORCE INDEX (idx_phone_event_line)
-      WHERE line_number = ? AND suppressed = 0 AND other_party IS NOT NULL
+      WHERE line_number = ? AND suppressed = 0 AND other_party IS NOT NULL${kind}
       GROUP BY other_party
      ${before != null ? 'HAVING MAX(id) < ?' : ''}
       ORDER BY last_id DESC
@@ -513,11 +522,13 @@ const lineIdsOf = (csv, idOf) => [...new Set(String(csv || '').split(',').map(n 
 /**
  * All-numbers conversations: one per OUTSIDE number across the readable
  * lines, newest activity first; `line_ids` = the lines it used; `last`
- * carries its `line_id`. Paged by MAX(id) like the per-line list.
+ * carries its `line_id`. Paged by MAX(id) like the per-line list; ?kind=sms
+ * the same as the per-line list's.
  */
 async function listAllConversations(db, userId, query = {}) {
   const limit = pageLimit(query.limit);
   const before = convoCursor(query);
+  const kind = convoKind(query);
   const { numbers, idOf } = await readableScope(db, userId);
   if (!numbers.length) return { conversations: [], next_cursor: null };
   const params = [numbers];
@@ -528,7 +539,7 @@ async function listAllConversations(db, userId, query = {}) {
             GROUP_CONCAT(DISTINCT line_number ORDER BY line_number SEPARATOR ',') AS line_numbers
        FROM phone_event_log e
       WHERE line_number IN (?) AND suppressed = 0 AND other_party IS NOT NULL
-        AND NOT EXISTS (SELECT 1 FROM phone_lines pl WHERE pl.phone_number = e.other_party)
+        AND NOT EXISTS (SELECT 1 FROM phone_lines pl WHERE pl.phone_number = e.other_party)${kind}
       GROUP BY other_party
      ${before != null ? 'HAVING MAX(id) < ?' : ''}
       ORDER BY last_id DESC

@@ -182,9 +182,12 @@ maybe('S-PH phone reads on real MySQL', () => {
       }
       return out;
     };
+    // ?kind=sms (the Texts view): the same walk, texts only
+    const sms = (fn) => (db, ...a) => fn(db, ...a.slice(0, -1), { ...a[a.length - 1], kind: 'sms' });
     for (const [id, num] of Object.entries(lines)) {
       const line = { id: Number(id), phone_number: num };
       expect([id, 'convos', await pages(phone.listConversations, pool, line)]).toEqual([id, 'convos', await pages(phone.listConversations, W.db, line)]);
+      expect([id, 'texts', await pages(sms(phone.listConversations), pool, line)]).toEqual([id, 'texts', await pages(sms(phone.listConversations), W.db, line)]);
       expect([id, 'calls', await pages(phone.listCalls, pool, line)]).toEqual([id, 'calls', await pages(phone.listCalls, W.db, line)]);
       for (const party of [S.P1, S.P2, S.P3, S.P4, '22395', S.L1, S.L3]) {
         expect([id, party, await pages(phone.listMessages, pool, line, party)]).toEqual([id, party, await pages(phone.listMessages, W.db, line, party)]);
@@ -193,6 +196,7 @@ maybe('S-PH phone reads on real MySQL', () => {
     // All numbers: every readable line at once, per user (SU, attorney, grantee, nobody)
     for (const user of [6, 1, 22, 9]) {
       expect([user, 'all-convos', await pages(phone.listAllConversations, pool, user)]).toEqual([user, 'all-convos', await pages(phone.listAllConversations, W.db, user)]);
+      expect([user, 'all-texts', await pages(sms(phone.listAllConversations), pool, user)]).toEqual([user, 'all-texts', await pages(sms(phone.listAllConversations), W.db, user)]);
       expect([user, 'all-calls', await pages(phone.listAllCalls, pool, user)]).toEqual([user, 'all-calls', await pages(phone.listAllCalls, W.db, user)]);
       for (const party of [S.P1, S.P2, S.P3, S.P4, '22395', S.L1, S.L3]) {
         expect([user, party, await pages(phone.listAllMessages, pool, user, party)]).toEqual([user, party, await pages(phone.listAllMessages, W.db, user, party)]);

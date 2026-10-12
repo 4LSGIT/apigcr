@@ -531,7 +531,7 @@
     </section>
   </div>
 
-  <!-- ── Phone tab (S-PH): lines | conversations or calls | one conversation ── -->
+  <!-- ── Phone tab (S-PH): lines | conversations (texts / all) or calls | one conversation ── -->
   <div class="phone" id="phone" role="tabpanel" aria-labelledby="tab-phone" hidden>
     <aside class="rail" id="ph-rail" aria-label="Phone lines">
       <div class="ph">Lines</div>
@@ -543,8 +543,9 @@
       <div class="bar">
         <select id="ph-line-sel" aria-label="Phone line"></select>
         <span class="seg" role="group" aria-label="Show">
-          <button type="button" id="ph-v-msgs" aria-pressed="true" data-label="Conversations" title="Conversations — the texts and calls with each number, newest first">Conversations</button>
-          <button type="button" id="ph-v-calls" aria-pressed="false" data-label="Calls" title="The call log, newest first">Calls</button>
+          <button type="button" id="ph-v-sms" aria-pressed="false" data-label="Texts" title="Texts — the numbers you have texted with, newest first (opening one shows its calls too)">Texts</button>
+          <button type="button" id="ph-v-all" aria-pressed="true" data-label="All" title="All — the texts and calls with each number, newest first">All</button>
+          <button type="button" id="ph-v-calls" aria-pressed="false" data-label="Calls" title="The call log, every call, newest first">Calls</button>
         </span>
         <button class="btn icon" type="button" id="ph-refresh" title="Refresh" aria-label="Refresh"><i class="fa-solid fa-rotate" aria-hidden="true"></i></button>
         <button class="btn primary" type="button" id="ph-new" title="Text a number from this line" hidden><i class="fa-solid fa-pen" aria-hidden="true"></i> New text</button>
@@ -2586,8 +2587,10 @@ window.ycBecameVisible = () => {
 // Per-line texts and the call log, read from phone_event_log (both
 // providers) through /api/phone-lines/* (routes/api.phoneComms.js). The
 // lines are the ones the caller can READ (their grants; SU and attorneys
-// every line). Conversations = the texts AND calls with each number, grouped
-// by the other party, newest activity first; Calls = the call log. Sending (POST
+// every line). All = the texts AND calls with each number, grouped by the
+// other party, newest activity first; Texts = the same list over texts only
+// (?kind=sms — the toggle filters the LIST: an opened number still shows its
+// whole thread, calls too); Calls = the call log, flat. Sending (POST
 // /api/phone-lines/:id/sms) is offered only where the line grants can_send
 // and is active; the provider's webhook echo then lands the copy in
 // phone_event_log, so an open conversation is re-read a few times after a
@@ -2599,7 +2602,7 @@ const ph = {
   booted: false,
   lines: [],          // GET /api/phone-lines/readable
   lineId: null,       // a line id, or PH_ALL ("All numbers": every readable line at once)
-  view: 'msgs',       // 'msgs' | 'calls'
+  view: 'all',        // 'sms' | 'all' | 'calls'
   rows: [],           // conversations or calls of the line + view
   next: null,
   seq: 0,             // list request guard
@@ -2731,7 +2734,7 @@ function renderPhoneLines() {
   if (ph.lineId != null) sel.value = String(ph.lineId);
   sel.hidden = !ph.lines.length;
   E('ph-new').hidden = allOn ? !phSendable().length : !phCanSend(phLine());
-  E('ph-v-msgs').disabled = E('ph-v-calls').disabled = E('ph-refresh').disabled = !ph.lines.length;
+  E('ph-v-sms').disabled = E('ph-v-all').disabled = E('ph-v-calls').disabled = E('ph-refresh').disabled = !ph.lines.length;
 }
 
 function selectLine(id) {
@@ -2746,7 +2749,8 @@ function selectLine(id) {
 function setPhoneView(view) {
   if (view === ph.view) return;
   ph.view = view;
-  setPressed('ph-v-msgs', view === 'msgs');
+  setPressed('ph-v-sms', view === 'sms');
+  setPressed('ph-v-all', view === 'all');
   setPressed('ph-v-calls', view === 'calls');
   phoneLoad();
 }
@@ -2766,7 +2770,8 @@ async function phoneLoad({ append = false, silent = false } = {}) {
   if (!append && !silent) E('ph-status').textContent = 'Loading…';
   const path = ph.view === 'calls' ? 'calls' : 'conversations';
   try {
-    const params = append && ph.next ? { cursor: ph.next } : null;
+    const q = { ...(ph.view === 'sms' ? { kind: 'sms' } : {}), ...(append && ph.next ? { cursor: ph.next } : {}) };
+    const params = Object.keys(q).length ? q : null;
     const data = await api(`/api/phone-lines/${scope}/${path}`, 'GET', params);
     if (seq !== ph.seq) return;
     const rows = Array.isArray(data && (ph.view === 'calls' ? data.calls : data.conversations)) ? (ph.view === 'calls' ? data.calls : data.conversations) : [];
@@ -2843,7 +2848,8 @@ function renderPhoneList() {
   E('ph-status').textContent = n ? `${n}${ph.next ? '+' : ''} ${noun}${n === 1 ? '' : 's'}` : '';
   if (!n) {
     const where = phIsAll() ? 'your lines' : 'this line';
-    list.replaceChildren(h('li', { className: 'empty' }, ph.view === 'calls' ? `No calls on ${where}.` : `No texts or calls on ${where}.`));
+    list.replaceChildren(h('li', { className: 'empty' },
+      ph.view === 'calls' ? `No calls on ${where}.` : ph.view === 'sms' ? `No texts on ${where}.` : `No texts or calls on ${where}.`));
     return;
   }
   const items = ph.rows.map(ph.view === 'calls' ? callRow : convoRow);
@@ -2938,7 +2944,7 @@ async function phAddContact(party) {
   dlg(party, 'phone', () => {
     if (ph.lineId !== lineId) return;
     if (ph.party === party) openConversation(party, null, { silent: true });
-    if (ph.view === 'msgs') phoneLoad({ silent: true });
+    if (ph.view !== 'calls') phoneLoad({ silent: true });
   }, { earliest });
 }
 
@@ -3074,7 +3080,7 @@ function phWatchEcho(scope, party) {
   ph.timers = PH_RECHECK_MS.map((ms) => setTimeout(() => {
     if (ph.lineId !== scope) return;
     if (ph.party === party) openConversation(party, ph.thread && ph.thread.contact, { silent: true });
-    if (ph.view === 'msgs') phoneLoad({ silent: true });
+    if (ph.view !== 'calls') phoneLoad({ silent: true });
   }, ms));
 }
 
@@ -3147,7 +3153,7 @@ async function sendNewText() {
     E('ph-new-text').value = '';
     closeNewText();
     toast('Text sent');
-    if (ph.view !== 'msgs') setPhoneView('msgs');
+    if (ph.view === 'calls') setPhoneView('all');
     openConversation(party, null);
     phWatchEcho(ph.lineId, party);
   } catch (err) {
@@ -3170,7 +3176,8 @@ function wirePhone() {
   E('tab-team').addEventListener('click', () => showTab('team'));
   E('ph-line-sel').addEventListener('change', () => { const v = E('ph-line-sel').value; selectLine(v === PH_ALL ? PH_ALL : Number(v)); });
   E('ph-from-sel').addEventListener('change', () => { E('ph-from-sel').dataset.picked = '1'; });
-  E('ph-v-msgs').addEventListener('click', () => setPhoneView('msgs'));
+  E('ph-v-sms').addEventListener('click', () => setPhoneView('sms'));
+  E('ph-v-all').addEventListener('click', () => setPhoneView('all'));
   E('ph-v-calls').addEventListener('click', () => setPhoneView('calls'));
   E('ph-refresh').addEventListener('click', () => { phoneLoad(); if (ph.party) openConversation(ph.party, ph.thread && ph.thread.contact, { silent: true }); });
   E('ph-back').addEventListener('click', closePhoneThread);

@@ -9,7 +9,7 @@
  *                                                    others: can_read grants) — the pane's rail
  *   GET    /api/phone-lines/all/conversations        every READABLE line at once ("All numbers"):
  *                                                    one row per OUTSIDE number, newest first,
- *                                                    line_ids + last.line_id ?cursor=&limit=
+ *                                                    line_ids + last.line_id ?kind=&cursor=&limit=
  *   GET    /api/phone-lines/all/conversations/:party one number across the readable lines,
  *                                                    merged; items carry line_id ?cursor=&limit=
  *   GET    /api/phone-lines/all/calls                every readable line's call log, merged;
@@ -26,7 +26,7 @@
  *   DELETE /api/phone-lines/:id/grants/:grantId      SU or can_manage   ownership-scoped
  *   GET    /api/phone-lines/:id/conversations        can_read — conversations (texts AND calls) per
  *                                                    number, newest activity first
- *                                                    ?cursor=&limit=≤100
+ *                                                    ?kind=sms (texts only) &cursor=&limit=≤100
  *   GET    /api/phone-lines/:id/conversations/:party can_read — one conversation (its texts AND
  *                                                    calls, each item `kind` sms|call), newest
  *                                                    page returned oldest-first ?cursor=&limit=
