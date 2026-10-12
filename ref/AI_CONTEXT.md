@@ -130,7 +130,10 @@ body. Governing migrations in `ref/migrations/`.*
     polls). Off the reading surfaces (summary), in the From picker; its
     grants are per-address send permissions. `mailboxService.assertSinglePoller`
     refuses a second active, ingest-enabled box on one IMAP host + login.
-    Reply identity = the address the mail was sent to, before its box.
+    Reply identity = the address the mail came from / was sent to, before
+    its box — over an SU's explicit grant rows first (S3.2); "own" mail is
+    judged against that identity. Identities list real boxes first
+    (`send_only` flag; `mailReadService.sendOnlyIds` is the one rule).
   - **`/mailbox-ingest` is also the comms hub's Refresh** (10-12): staff-JWT
     runs throttled to one per 30 s for all staff, non-SU callers get counts
     only (`routes/mailboxIngest.js`); the scheduler's x-api-key tick is

@@ -424,7 +424,14 @@ What that gives:
 
 - The address appears under **From** for the people with Send on it, with
   its own name and signature from its sender row.
-- **Reply** to mail sent to that address starts from it automatically.
+- **Reply** to mail sent to that address starts from it automatically —
+  also mail one 4lsg.com address sent another: Stuart's note to it@,
+  answered as it@, goes back to Stuart (not to it@ itself). Answered as
+  stuart@, it is a follow-up to it@.
+- A superuser can send as every box; Comms picks the address from the Send
+  ticks they actually hold first.
+- **From** lists real mailboxes first, then the send-as addresses, so a new
+  email starts from a real mailbox.
 - It is never checked for mail and never shows in the mailbox list — its mail
   is in Stuart's box. The copy of what it sends lands there too (Google files
   it under Sent), already marked read for the sender.
@@ -435,4 +442,6 @@ What that gives:
   host and login another active box already checks is refused (it would
   store, log and fire rules twice).
 - Reading is not per address yet: to read mail sent to it@, a person needs
-  Read on Stuart's box (all of it).
+  Read on Stuart's box (all of it). Someone with only Send on it@ gets Comms
+  and can write new email as it@, but cannot see or answer the replies — give
+  alias Send only to people who already read Stuart's box.

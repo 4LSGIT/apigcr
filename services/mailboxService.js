@@ -721,13 +721,6 @@ function toDbAssignments(clean) {
 }
 
 /**
- * Create a mailbox (SU-only — the route gates). Required: address, imap_host,
- * imap_user. imap_secret optional (has_secret false until set). No `color` in
- * the body = a random PALETTE default, unused by the other boxes when one is
- * left (an explicit null = none).
- * @returns {{id:number, mailbox:object}} mailbox in the SU projection
- */
-/**
  * ONE poller per IMAP account (S3.1, 2026-10-12). A second active,
  * ingest-enabled box on the same host + login would store every message
  * twice and — emitting — log it and fire its rules twice. A SEND-ONLY
@@ -751,6 +744,13 @@ async function assertSinglePoller(db, id, row) {
   }
 }
 
+/**
+ * Create a mailbox (SU-only — the route gates). Required: address, imap_host,
+ * imap_user. imap_secret optional (has_secret false until set). No `color` in
+ * the body = a random PALETTE default, unused by the other boxes when one is
+ * left (an explicit null = none).
+ * @returns {{id:number, mailbox:object}} mailbox in the SU projection
+ */
 async function createMailbox(db, body) {
   const clean = validateMailboxBody(body, { partial: false });
   if (!has(clean, 'ingest_folders')) clean.ingest_folders = JSON.parse(JSON.stringify(DEFAULT_INGEST_FOLDERS));

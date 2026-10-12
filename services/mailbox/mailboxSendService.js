@@ -427,13 +427,20 @@ async function resolveIdentity(db, userId, mailboxId) {
 /**
  * The comms hub's identity picker: every mailbox the caller may send AS
  * (mailboxService.listSendable — SU all, else can_send grants, no role
- * bypass), each {id, address, display_name, color, active, sendable,
- * reason, reason_text, signature}. `signature` = its credential carries one
- * AND is the box's own address (a shared domain credential's signature is
- * nobody's). Never the credential itself.
+ * bypass), each {id, address, display_name, color, active, send_only,
+ * sendable, reason, reason_text, signature}. `signature` = its credential
+ * carries one AND is the box's own address (a shared domain credential's
+ * signature is nobody's). Never the credential itself.
+ *
+ * ORDER (S3.2): real boxes first, then SEND-ONLY identities (a Google alias —
+ * mailReadService.sendOnlyIds, design §4.2), each group by address. A new
+ * Compose takes the first sendable one, so with alias boxes a person with
+ * Send on billing@ (alias) and stuart@ (the box) composes as stuart@, not as
+ * whichever address sorts first.
  */
 async function listIdentities(db, userId) {
   const rows = await mbx.listSendable(db, userId);
+  const sendOnly = await read.sendOnlyIds(db, rows.map(r => r.id));
   const credIds = [...new Set(rows.map(r => r.send_credential_id).filter(v => v != null).map(Number))];
   const creds = new Map();
   if (credIds.length) {
@@ -454,13 +461,30 @@ async function listIdentities(db, userId) {
       display_name: r.display_name || null,
       color: mailboxColor.normalize(r.color),
       active: !!r.active,
+      send_only: sendOnly.has(Number(r.id)),
       sendable: !reason,
       reason,
       reason_text: reason ? REASON_TEXT[reason] : null,
       signature: !reason && !!Number(cred.has_sig) && sameAddr(cred.email, r.address),
     };
   });
+  // Stable: each group keeps listSendable's address order.
+  identities.sort((a, b) => Number(a.send_only) - Number(b.send_only));
   return { identities, max_recipients: MAX_RECIPIENTS };
+}
+
+/**
+ * The caller's EXPLICIT send grants among `sendable` (S3.2). An SU's bypass
+ * sends as every box, so the grant rows they hold say who they are; anyone
+ * else's sendable set IS their grant rows (listSendable), returned as is.
+ */
+const GRANTED_SEND_SQL = "SELECT channel_id FROM channel_grants WHERE user = ? AND channel_type = 'mailbox' AND can_send = 1";
+
+async function grantedIdentities(db, userId, sendable) {
+  if (!(await mbx.isSuperuser(db, userId))) return sendable;
+  const [rows] = await db.query(GRANTED_SEND_SQL, [Number(userId)]);
+  const ids = new Set(rows.map(r => Number(r.channel_id)));
+  return sendable.filter(i => ids.has(i.id));
 }
 
 
@@ -487,18 +511,27 @@ async function loadParent(db, userId, messageId, label = 'message id') {
 
 /**
  * Reply / reply-all defaults for message `messageId`:
- *   identity  q.mailbox_id when the caller can send as it; else — the address
- *             the mail was SENT TO wins (Fred, 2026-10-12; Gmail's "reply from
- *             the same address") — for the box's own mail the sendable box it
- *             came FROM, else the first sendable box in its To, then its Cc
- *             (header order); else the box the message sits in; else the
- *             first sendable one; else null (cannot reply). This is what makes
- *             a SEND-ONLY identity (a Google alias such as it@ whose mail
- *             lands in the account's own box — design §4.2) reply as itself.
- *   to        the sender — or, when the message is the box's OWN mail (its
- *             From is one of the caller's sendable boxes, or the stored row is
- *             a Sent copy: the \Sent label / a Sent folder — mail the account
- *             sent under another From, an alias or automations@), its To.
+ *   identity  q.mailbox_id when the caller can send as it; else the PICK: the
+ *             sendable box the mail came FROM, else the first one in its To,
+ *             then its Cc (header order) — the address the mail was sent to
+ *             (Fred, 2026-10-12; Gmail's "reply from the same address") —
+ *             else the box the message sits in. The pick runs first over the
+ *             caller's EXPLICIT send grants, then over everything they may
+ *             send as (S3.2: an SU's bypass sends as every box; the grant rows
+ *             they hold say who they are — for everyone else the two sets are
+ *             one). First hit wins; else the first granted, else the first
+ *             sendable one (real boxes come first — listIdentities); else null
+ *             (cannot reply). This is what makes a SEND-ONLY identity (a
+ *             Google alias such as it@ whose mail lands in the account's own
+ *             box — design §4.2) reply as itself.
+ *   to        OWN mail is judged against that identity (S3.2): its From IS
+ *             the identity → own; else the identity is in its To/Cc → NOT own
+ *             (answer the sender — internal "stuart@ → it@" mail is one copy in
+ *             the account's box, a Sent copy, yet it was sent TO it@); else
+ *             the S3 rule — its From is one of the caller's sendable boxes, or
+ *             the row is a Sent copy (the \Sent label / a Sent folder: mail
+ *             the account sent under another From, automations@). Own mail →
+ *             its To; otherwise → the sender.
  *   cc        (reply-all) the message's other To + Cc, minus the identity's
  *             own address and anything already in To.
  *   subject   "Re: …" (reSubject); quote: {header, text} as the send builds it.
@@ -515,21 +548,29 @@ async function replyDefaults(db, userId, messageId, q = {}) {
   const ccs = read.addressList(parent.cc_addrs);
   const want = q.mailbox_id !== undefined && q.mailbox_id !== null && q.mailbox_id !== '' ? toId(q.mailbox_id, 'mailbox_id') : null;
   const from = read.addressList(parent.from_addr)[0] || null;
-  const own = !!(from && mine.has(from.email)) || isSentCopy(parent);
-  /** The first sendable box among these addresses, in their order. */
-  const boxFor = (list) => {
-    for (const a of list) {
-      const hit = sendable.find(i => lower(i.address) === a.email);
-      if (hit) return hit;
-    }
-    return null;
+  const granted = await grantedIdentities(db, userId, sendable);
+  /** The pick (header) over one set of identities: From, To, Cc, the message's box. */
+  const pick = (set) => {
+    const boxFor = (list) => {
+      for (const a of list) {
+        const hit = set.find(i => lower(i.address) === a.email);
+        if (hit) return hit;
+      }
+      return null;
+    };
+    return (from ? boxFor([from]) : null)
+      || boxFor(tos) || boxFor(ccs)
+      || set.find(i => i.id === Number(parent.mailbox_id))
+      || null;
   };
   const identity = (want && sendable.find(i => i.id === want))
-    || (own && from ? boxFor([from]) : null)
-    || boxFor(tos) || boxFor(ccs)
-    || sendable.find(i => i.id === Number(parent.mailbox_id))
-    || sendable[0] || null;
+    || (granted !== sendable ? pick(granted) : null)
+    || pick(sendable)
+    || granted[0] || sendable[0] || null;
   const me = identity ? lower(identity.address) : null;
+  const toMe = !!me && [...tos, ...ccs].some(a => a.email === me);
+  const own = !!(from && me && from.email === me)
+    || (!toMe && (!!(from && mine.has(from.email)) || isSentCopy(parent)));
   const shape = (a) => ({ email: a.email, name: a.name || null });
   const to = (own ? tos : (from ? [from] : [])).map(shape);
   const taken = new Set(to.map(a => a.email));

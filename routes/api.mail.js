@@ -39,7 +39,8 @@
  *   S3 — compose / reply (services/mailbox/mailboxSendService.js):
  *   GET    /api/mail/identities               the mailboxes the caller may send AS (SU: all;
  *                                             else can_send grants — no attorney bypass),
- *                                             each {sendable, reason, signature}
+ *                                             each {send_only, sendable, reason, signature};
+ *                                             real boxes first, then send-only (S3.2)
  *   GET    /api/mail/messages/:id/reply       reply defaults ?all=1 (reply-all) &mailbox_id=
  *                                             → {mailbox_id, to, cc, subject, quote, over_cap}
  *   POST   /api/mail/send                     {mailbox_id, to:[…], cc?, bcc?, subject,

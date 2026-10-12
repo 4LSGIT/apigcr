@@ -452,11 +452,22 @@ const FULL_COLS = `m.id, m.mailbox_id, m.folder, m.gmail_labels, m.in_inbox, m.m
 const SEND_ONLY_SQL = 'SELECT id FROM mailboxes WHERE id IN (?) AND ingest_enabled = 0 AND imap_secret IS NULL';
 const CAN_SEND_SQL = "SELECT COUNT(*) AS n FROM channel_grants WHERE user = ? AND channel_type = 'mailbox' AND can_send = 1";
 
+/**
+ * Which of these mailbox ids are SEND-ONLY (above) — the ONE place the rule
+ * is read; mailboxSendService orders the From picker by it (S3.2). Only ids
+ * come back: the secret column is tested in SQL, never selected.
+ */
+async function sendOnlyIds(db, ids) {
+  const list = [...new Set((ids || []).map(Number))];
+  if (!list.length) return new Set();
+  const [rows] = await db.query(SEND_ONLY_SQL, [list]);
+  return new Set(rows.map(r => Number(r.id)));
+}
+
 async function summary(db, userId) {
   const scope = await readableScope(db, userId);
   if (scope.size) {
-    const [so] = await db.query(SEND_ONLY_SQL, [[...scope.keys()]]);
-    for (const r of so) scope.delete(Number(r.id));
+    for (const id of await sendOnlyIds(db, [...scope.keys()])) scope.delete(id);
   }
   const ids = [...scope.keys()];
   const counts = new Map();
@@ -1509,6 +1520,8 @@ module.exports = {
   cursorOf,
   FILTER_KEYS,
   SENT_WHERE,
+  SEND_ONLY_SQL,
+  sendOnlyIds,
   SENT_FOLDER_SQL_RE,
   SENT_LABEL,
   LIST_COLS,

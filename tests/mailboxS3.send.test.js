@@ -65,6 +65,13 @@
  *   - send-only boxes left on the reading surfaces / a paused box
  *     dropped with them                                               → send-only identities: reading surfaces
  *   - viewer.can_send from readable boxes only                       → send-only identities: reading surfaces
+ *
+ * S3.2 (executor, 2026-10-12), each mutation fails a test here:
+ *   - "own" back to the S3.1 rule (not judged against the identity)   → S3.2 internal "stuart@ → it@"
+ *   - the "identity is in To/Cc → not own" clause dropped              → S3.2 internal
+ *   - the SU's grant-rows pass dropped / run after the bypass set      → S3.2 (1b)
+ *   - identities left in address order (send-only not last); the
+ *     send-only lookup returning nothing                               → S3.2 From picker order
  */
 
 'use strict';
@@ -676,6 +683,74 @@ describe('send-only identities — a Google alias as its own box (S3.1)', () => 
     expect(budget.params[0]).toBe('outbound-gmail');
     expect(budget.params[1]).toEqual(expect.arrayContaining(['stuart@firm.test', 'automations@firm.test', 'it@firm.test']));
     expect(transport.appendSent).not.toHaveBeenCalled();
+  });
+
+  // S3.2 — internal mail between two addresses of ONE Google account is stored once, in the
+  // account's box, as a Sent copy (\Sent + the alias label): "own" must be judged against
+  // the identity that is replying.
+  function seedInternal() {
+    W.message(220, { mailbox_id: 2, folder: '[Gmail]/All Mail', gmail_labels: '["\\\\Sent", "IT"]', provider_id: 'abc220', message_id: 'x220@mail.gmail.com',
+      thread_key: 'x220@mail.gmail.com', subject: 'Printer', from_addr: 'Stuart S <stuart@firm.test>', to_addrs: 'it@firm.test', cc_addrs: 'jane@outside.test' });
+    W.message(221, { mailbox_id: 2, folder: '[Gmail]/All Mail', gmail_labels: '["\\\\Sent"]', provider_id: 'abc221', message_id: 'x221@mail.gmail.com',
+      thread_key: 'x221@mail.gmail.com', subject: 'Reminder', from_addr: 'Automations <automations@firm.test>', to_addrs: 'Client <client@outside.test>' });
+    W.message(222, { mailbox_id: 2, folder: '[Gmail]/All Mail', gmail_labels: '["\\\\Inbox"]', provider_id: 'abc222', message_id: 'x222@outside.test',
+      thread_key: 'x222@outside.test', subject: 'Hello', from_addr: 'Client <client@outside.test>', to_addrs: 'stuart@firm.test' });
+  }
+  const reply = async (id, t, all = false) => (await call('GET', `/api/mail/messages/${id}/reply${all ? '?all=1' : ''}`, { t })).json;
+  const emails = (list) => list.map((a) => a.email);
+
+  test('S3.2: internal "stuart@ → it@" answered AS it@ goes TO stuart@ (reply-all: the other To/Cc minus it@); answered as stuart@ it is a follow-up to it@', async () => {
+    seedAlias();
+    seedInternal();
+    W.user(12, { roles: 'staff' });
+    W.grant(12, 2, { read: 1, send: 0 });            // reads the account's box
+    W.grant(12, ALIAS, { read: 0, send: 1 });        // sends only as it@
+    let r = await reply(220, tok(12));
+    expect([r.mailbox_id, emails(r.to), r.cc]).toEqual([ALIAS, ['stuart@firm.test'], []]);
+    r = await reply(220, tok(12), true);
+    expect([r.mailbox_id, emails(r.to), emails(r.cc)]).toEqual([ALIAS, ['stuart@firm.test'], ['jane@outside.test']]);
+    // may send as stuart@ (and it@): the From is theirs — unchanged from S3.1
+    r = await reply(220, tok(SS));
+    expect([r.mailbox_id, emails(r.to)]).toEqual([2, ['it@firm.test']]);
+    W.user(10, { roles: 'staff' });
+    W.grant(10, 2, { read: 1, send: 1 });            // stuart@ only
+    r = await reply(220, tok(10));
+    expect([r.mailbox_id, emails(r.to)]).toEqual([2, ['it@firm.test']]);
+    // the S3 review rule stands: automations@ → client, answered from box 2, goes to its recipients
+    r = await reply(221, tok(10));
+    expect([r.mailbox_id, emails(r.to)]).toEqual([2, ['client@outside.test']]);
+  });
+
+  test('S3.2 (1b): an SU\'s explicit send grants say who they are; with none, the bypass picks as before', async () => {
+    seedAlias();
+    seedInternal();
+    const su = tok(SU, 'authorized - SU');
+    // no grant rows: today's pick (the From is a box the SU can send as)
+    let r = await reply(220, su);
+    expect([r.mailbox_id, emails(r.to)]).toEqual([2, ['it@firm.test']]);
+    // a Send grant row on the it@ alias (none on box 2)
+    W.grant(SU, ALIAS, { read: 0, send: 1 });
+    r = await reply(220, su);
+    expect([r.mailbox_id, emails(r.to)]).toEqual([ALIAS, ['stuart@firm.test']]);
+    r = await reply(222, su);                                  // client → stuart@: nothing granted matches → the bypass set
+    expect([r.mailbox_id, emails(r.to)]).toEqual([2, ['client@outside.test']]);
+    r = await call('GET', '/api/mail/messages/222/reply?mailbox_id=1', { t: su });   // an explicit choice still wins
+    expect(r.json.mailbox_id).toBe(1);
+  });
+
+  test('S3.2: the From picker lists real boxes first, then send-only identities — each by address — so a new Compose starts from a real box', async () => {
+    seedAlias();
+    W.cred(7, { email: 'abc@firm.test', provider: 'gmail', credential_id: 11, smtp_host: '', smtp_user: '' });
+    W.mailbox(8, { address: 'abc@firm.test', send_credential_id: 7, ingest_enabled: 0, imap_secret: null, imap_host: 'imap.gmail.com', imap_user: 'stuart@firm.test' });
+    W.grant(SS, 8, { read: 0, send: 1 });
+    let ids = (await call('GET', '/api/mail/identities', { t: tok(SU, 'authorized - SU') })).json.identities;
+    expect(ids.map((i) => [i.address, i.send_only])).toEqual([
+      ['billing@firm.test', false], ['nosend@firm.test', false], ['off@firm.test', false], ['pab@firm.test', false], ['stuart@firm.test', false],
+      ['abc@firm.test', true], ['it@firm.test', true],
+    ]);
+    ids = (await call('GET', '/api/mail/identities', { t: tok(SS) })).json.identities;
+    expect(ids.map((i) => i.address)).toEqual(['stuart@firm.test', 'abc@firm.test', 'it@firm.test']); // not abc@ first
+    expect(JSON.stringify(ids)).not.toMatch(/imap_secret|imap_/);
   });
 
   test('reading surfaces leave a send-only box out; the From picker has it; a send-only grant still gets Compose (viewer.can_send)', async () => {

@@ -92,6 +92,13 @@ function makeWorld() {
       return [rows.sort(byAddr)];
     }
 
+    // ── mailboxSendService.grantedIdentities (S3.2): an SU's explicit send grant rows ──
+    if (sql === "SELECT channel_id FROM channel_grants WHERE user = ? AND channel_type = 'mailbox' AND can_send = 1") {
+      rec();
+      return [T.channel_grants.filter(g => g.user === Number(p[0]) && g.channel_type === 'mailbox' && Number(g.can_send) === 1)
+        .map(g => ({ channel_id: g.channel_id }))];
+    }
+
     // ── mailboxSendService: identity, credential, parent ──
     if (sql === 'SELECT id, address, display_name, active, send_credential_id, ingest_enabled, ingest_folders FROM mailboxes WHERE id = ? LIMIT 1') {
       rec();

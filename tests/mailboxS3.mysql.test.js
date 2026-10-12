@@ -157,6 +157,23 @@ maybe('mailbox S3 on real MySQL', () => {
     expect((await mbx.listSendable(pool, READER))).toEqual([]);
   });
 
+  test('S3.1/S3.2 on the engine: a send-only box (Ingest off, no secret) is last in the From picker and off the summary; an SU\'s grant row picks the alias for internal mail', async () => {
+    await q(`INSERT INTO email_credentials (id, email, smtp_host, smtp_port, smtp_user, smtp_pass, smtp_secure, provider, credential_id, from_name, signature_html, signature_text)
+             VALUES (5, 'it@firm.test', '', 0, '', '', 0, 'gmail', 11, 'IT', NULL, NULL)`);
+    await q(`INSERT INTO mailboxes (id, address, domain, imap_host, imap_user, imap_secret, send_credential_id, ingest_enabled, ingest_folders, active)
+             VALUES (5, 'it@firm.test', 'firm.test', 'imap.gmail.com', 'stuart@firm.test', NULL, 5, 0, '{"INBOX":{"emit_to_rules":true}}', 1)`);
+    await q(`INSERT INTO mail_messages (id, mailbox_id, folder, uid, message_id, thread_key, gmail_labels, from_addr, to_addrs, subject, date, snippet, attachments, ingested_at)
+             VALUES (420, 2, '[Gmail]/All Mail', 420, 'x420@mail.gmail.com', 'x420@mail.gmail.com', ?, 'Stuart <stuart@firm.test>', 'it@firm.test', 'Printer', '2026-10-01 12:00:00', 's', '[]', '2026-10-02 00:00:00')`, [JSON.stringify(['\\Sent', 'IT'])]);
+    const ids = (await S.listIdentities(pool, SU)).identities;
+    expect(ids.map((i) => [i.id, i.send_only])).toEqual([[1, false], [4, false], [3, false], [2, false], [5, true]]);
+    expect((await read.summary(pool, SU)).mailboxes.map((m) => m.id)).not.toContain(5);
+    let r = await S.replyDefaults(pool, SU, 420);                 // no grant rows: the bypass pick (From stuart@)
+    expect([r.mailbox_id, r.to.map((a) => a.email)]).toEqual([2, ['it@firm.test']]);
+    await q("INSERT INTO channel_grants (user, channel_type, channel_id, can_read, can_send, can_manage, granted_by) VALUES (?, 'mailbox', 5, 0, 1, 0, 6)", [SU]);
+    r = await S.replyDefaults(pool, SU, 420);                     // a grant row on it@: who they are
+    expect([r.mailbox_id, r.to.map((a) => a.email)]).toEqual([5, ['stuart@firm.test']]);
+  });
+
   test('a send on the engine: the adapter\'s email_log row found, the seed job row, the budget count + ONE alert', async () => {
     mockSendMail.mockImplementation(async (o) => ({ messageId: o.messageId, response: '250 OK', accepted: [o.to], rejected: [] }));
     jest.spyOn(transport, 'appendSent').mockResolvedValue({ appended: true, folder: 'INBOX.Sent', uid: 3, reason: null });
