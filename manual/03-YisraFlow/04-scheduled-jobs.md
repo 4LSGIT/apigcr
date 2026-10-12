@@ -186,7 +186,7 @@ GET /scheduled-jobs/:id?history=true      adds a page of attempt history from jo
     ?history_offset=<n>                   default 0
     → response also carries history_total / history_limit / history_offset
 
-PATCH  /scheduled-jobs/:id                edit (only pending/failed)
+PATCH  /scheduled-jobs/:id                edit (pending/failed/cancelled; a sequence_step only while pending)
 DELETE /scheduled-jobs/:id                delete
 ```
 
@@ -249,6 +249,15 @@ These are scheduled by other engines and you generally don't create them by hand
 | `data.type='campaign_send'` | `campaignService.createCampaign()` | Send one campaign message to one contact |
 
 These appear in `scheduled_jobs` and are processed by `/process-jobs` alongside everything else. The Scheduled Jobs UI hides `workflow_resume` and `sequence_step` by default.
+
+What this screen will and won't do to the three engine types:
+
+- **Delete** refuses `workflow_resume` and `sequence_step`.
+- **Pause / resume** refuses all three.
+- **Edit and Retry** are the same call. Retry is a `PATCH` that sets `scheduled_time` to now, and setting `scheduled_time` on a failed or cancelled job puts it back to `pending`.
+  - `sequence_step`: allowed only while the job is `pending` (a reschedule). A failed or cancelled step job is refused, and its buttons are hidden — see [Sequences](03-sequences.md), "Operator controls on a live enrollment".
+  - `workflow_resume`: allowed. Retrying a failed resume job is the repair for an execution stranded at `delayed`; it goes back through the normal resume path, and does nothing if the execution has since finished or been cancelled. Do **not** retry a resume job for an execution that is live and already past that step — it rewinds the execution to the job's step and re-runs from there.
+  - `hook_retry`: allowed. It re-delivers that hook to that target, whether or not a later attempt already succeeded.
 
 ### Idempotency
 

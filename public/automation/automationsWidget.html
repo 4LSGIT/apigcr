@@ -961,7 +961,7 @@ function cseqFireNowBtnHtml(en, h) {
     <button type="button" class="cseq-fire-now-btn"
             data-job-id="${h.job_id}"
             data-scheduled-raw="${cseqEsc(h.scheduled_time || '')}"
-            title="Reschedule this step to fire on the next process-jobs tick"
+            title="Reschedule this step to run now"
             style="margin-left:8px;padding:2px 8px;font-size:10px;
                    background:var(--accent);color:var(--accent-text);border:none;border-radius:4px;cursor:pointer">
       <i class="fa-solid fa-play"></i> Fire Now
@@ -979,7 +979,7 @@ async function handleSequenceFireNow(enrollmentId, jobId, scheduledRaw) {
       <div style="text-align:left;font-size:13px;line-height:1.5">
         <p><b>Job:</b> #${cseqEsc(String(jobId))}</p>
         <p style="margin-top:6px"><b>Original scheduled:</b> ${cseqFmtDate(scheduledRaw)}</p>
-        <p style="margin-top:10px">This reschedules the job to <b>now</b>. The next <code>/process-jobs</code> tick (up to ~5 min away) will pick it up.</p>
+        <p style="margin-top:10px">This reschedules the job to <b>now</b>. It normally runs within a few seconds (a minute or so if the job runner is busy).</p>
         <p style="margin-top:8px;color:var(--text-muted);font-size:11px">The step's <code>fire_guard</code> and <code>condition</code> still apply — a step that fails its condition will skip, just as it would have at the original time.</p>
       </div>
     `,
@@ -997,14 +997,28 @@ async function handleSequenceFireNow(enrollmentId, jobId, scheduledRaw) {
 
   try {
     const resp = await api(`/sequences/enrollments/${enrollmentId}/fire-next`, 'POST');
-    cseqToast('success', `Job ${resp.job_id} → NOW. Will fire on next process-jobs tick.`);
-    // Refresh the list (scheduled_time changed) then re-open the detail modal.
+    // A timed dialog, awaited — not a toast. Re-opening the detail modal
+    // replaces whatever SweetAlert popup is showing, so the old toast (and,
+    // worse, the old ERROR toast) was gone ~250ms after it appeared.
+    await Swal.fire({
+      icon: 'success',
+      title: `Job ${resp.job_id} → now`,
+      text:  'It normally runs within a few seconds.',
+      timer: 1800, showConfirmButton: false,
+    });
+    // Refresh the list (scheduled_time changed) then re-open the detail
+    // modal — by now the step has often run.
     await loadSequences();
-    setTimeout(() => viewEnrollment(enrollmentId), 250);
+    viewEnrollment(enrollmentId);
   } catch (e) {
-    cseqToast('error', e.message || 'Fire-now failed');
-    // Re-open the detail modal so the user sees current state.
-    setTimeout(() => viewEnrollment(enrollmentId), 250);
+    // The server message says why (not active, no pending job, already
+    // executing) — a dialog the operator dismisses, then current state.
+    await Swal.fire({
+      icon: 'error',
+      title: 'Fire now failed',
+      text: e.message || 'Fire-now failed',
+    });
+    viewEnrollment(enrollmentId);
   }
 }
 

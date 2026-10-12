@@ -50,6 +50,18 @@ When something doesn't fire when you expected:
 
 **Step log** (`sequence_step_log`) — append-only log of every step execution. Captures `status` (`sent` / `skipped` / `failed`), `skip_reason`, the resolved `action_config_resolved`, output, error, scheduled-at vs executed-at.
 
+### Operator controls on a live enrollment
+
+Open an enrollment from the contact's Automations tab, or from Sequences → the template's Enrollments tab.
+
+| Control | Shown when | What it does |
+|---|---|---|
+| **Fire Now** | the enrollment is `active`, on the pending step's row | Reschedules that step's job to now (`POST /sequences/enrollments/:id/fire-next`). It normally runs within a few seconds. Not a force-send: the step's `fire_guard` and `condition` still apply. |
+| **Recover stuck enrollment** | the enrollment is `active` with no pending or running step | Puts the next step back on the schedule by its own timing rule (`POST /sequences/enrollments/:id/recover`). See "When something doesn't fire when you expected" above. |
+| **Cancel enrollment** | the enrollment is `active` | Cancels the enrollment and its pending job. A reason is required. |
+
+In **Scheduled Jobs** (with *Internal* ticked) a `sequence_step` job can be edited only while it is `pending` — moving its time is a reschedule. A failed or cancelled step job has no Edit or Retry there, and `PATCH /scheduled-jobs/:id` refuses it: retrying one re-runs the step outside its enrollment, which sends the same message twice after a Recover, or re-sends a run of steps if the enrollment has since moved on. Use **Recover stuck enrollment** instead.
+
 ### Six action types
 
 | Action type | Use |

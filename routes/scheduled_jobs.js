@@ -516,6 +516,7 @@ router.get("/scheduled-jobs", jwtOrApiKey, async (req, res) => {
 // ─────────────────────────────────────────────────────────────
 // PATCH /scheduled-jobs/:id — edit a job
 // Only pending/failed/cancelled jobs can be edited.
+// sequence_step rows: only while PENDING (see the guard below).
 // ─────────────────────────────────────────────────────────────
 router.patch("/scheduled-jobs/:id", jwtOrApiKey, async (req, res) => {
   const db  = req.db;
@@ -529,6 +530,37 @@ router.patch("/scheduled-jobs/:id", jwtOrApiKey, async (req, res) => {
     if (!['pending', 'failed', 'cancelled'].includes(job.status)) {
       return res.status(409).json({
         error: `Cannot edit a job with status '${job.status}'. Only pending, failed, or cancelled jobs can be edited.`
+      });
+    }
+
+    // Sequence steps: pending only. Editing scheduled_time on a failed or
+    // cancelled row resets it to 'pending' (below) — the jobs manager's
+    // Retry — and for a sequence step that re-runs the step OUTSIDE the
+    // engine's one-job-per-enrollment invariant. Traced 2026-10-12:
+    //   - enrollment not active → executeStep skips, leaving a junk
+    //     sequence_step_log row (step_number 0);
+    //   - enrollment active → the step's action runs again and the advance
+    //     rewrites current_step and queues step N+1 unless one is already
+    //     pending. After a Recover that is the same step sent twice
+    //     (scheduleStepJob only dedupes against pending/running rows); if
+    //     the enrollment had moved on, every step in between re-sends.
+    // The one shape where it happens to work — a never-recovered enrollment
+    // whose step job failed BEFORE its action ran — still sends the step
+    // now, whatever its timing rule says, and nothing on the job row tells
+    // the operator whether the enrollment has since been recovered. The
+    // repair for a stuck enrollment is POST
+    // /sequences/enrollments/:id/recover, which re-places the step by its
+    // own timing; a pending step is sent early with /fire-next. Same stance
+    // as DELETE (refuses engine jobs) and /active (never pauses them). workflow_resume and hook_retry are
+    // deliberately NOT covered: retrying a failed resume row is the repair
+    // for an execution stranded 'delayed' (POST /executions/:id/resume
+    // refuses a live execution), and a hook retry is an explicit re-delivery.
+    // Moving a PENDING step's time stays allowed — that is a reschedule.
+    if (job.type === 'sequence_step' && job.status !== 'pending') {
+      return res.status(409).json({
+        error: `Cannot edit or retry a ${job.status} sequence step job. `
+             + `To restart a stuck enrollment, open it and use "Recover stuck enrollment"; `
+             + `to send a pending step early, use Fire Now.`
       });
     }
 

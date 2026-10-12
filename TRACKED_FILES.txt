@@ -1109,6 +1109,7 @@ tests/reportSchemaDenylist.test.js
 tests/requirementService.test.js
 tests/scheduleResume.accel.test.js
 tests/scheduledJobs.doorbell.test.js
+tests/scheduledJobs.sequenceStepGuard.test.js
 tests/schemaCollationBin.test.js
 tests/schemaConventions.test.js
 tests/scriptGuard.setup.js

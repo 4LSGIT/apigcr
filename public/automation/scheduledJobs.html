@@ -516,6 +516,14 @@ function jobCardHTML(job) {
   // state — mirrors the server-side eligibility guard.
   const canToggleActive = ['one_time', 'recurring'].includes(job.type)
                        && ['pending', 'failed'].includes(job.status);
+  // Sequence step jobs: editable only while pending, never retried from here
+  // — mirrors the PATCH /scheduled-jobs/:id guard. Retrying one re-runs the
+  // step outside its enrollment (double sends); the enrollment's own
+  // "Recover stuck enrollment" and Fire Now are the tools.
+  const isSeqStep = job.type === 'sequence_step';
+  const canEdit   = isSeqStep ? job.status === 'pending'
+                              : ['pending', 'failed', 'cancelled'].includes(job.status);
+  const canRetry  = !isSeqStep && ['failed', 'cancelled'].includes(job.status);
   return `
     <div class="job-card"${isPaused ? ' style="opacity:0.62"' : ''}>
       <div class="job-status-dot ${dotClass}"></div>
@@ -536,8 +544,8 @@ function jobCardHTML(job) {
         ${canToggleActive ? (isPaused
           ? `<button class="btn btn-outline btn-sm" onclick="jobSetActive(${job.id}, true)" title="Resume"><i class="fa-solid fa-play"></i></button>`
           : `<button class="btn btn-outline btn-sm" onclick="jobSetActive(${job.id}, false)" title="Pause"><i class="fa-solid fa-pause"></i></button>`) : ''}
-        ${['pending','failed','cancelled'].includes(job.status) ? `<button class="btn btn-outline btn-sm" onclick="jobEdit(${job.id})"><i class="fa-solid fa-pencil"></i></button>` : ''}
-        ${['failed','cancelled'].includes(job.status) ? `<button class="btn btn-primary btn-sm" onclick="jobRetry(${job.id})" title="Reschedule now"><i class="fa-solid fa-rotate-right"></i></button>` : ''}
+        ${canEdit ? `<button class="btn btn-outline btn-sm" onclick="jobEdit(${job.id})"><i class="fa-solid fa-pencil"></i></button>` : ''}
+        ${canRetry ? `<button class="btn btn-primary btn-sm" onclick="jobRetry(${job.id})" title="Reschedule now"><i class="fa-solid fa-rotate-right"></i></button>` : ''}
         <button class="btn btn-sm" style="background:var(--danger-soft);color:var(--danger);border:none" onclick="jobDelete(${job.id})" title="Delete"><i class="fa-solid fa-trash"></i></button>
         <button class="btn btn-outline btn-sm" onclick="jobView(${job.id})"><i class="fa-solid fa-eye"></i></button>
       </div>
