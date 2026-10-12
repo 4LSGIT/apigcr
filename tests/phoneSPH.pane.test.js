@@ -7,7 +7,10 @@
  * P.apiSend):
  *   - public/comms.html Phone tab: lazy boot on first open, the lines rail +
  *     picker, Conversations (texts AND calls per number; a call-last row
- *     previews the call) / Calls, a conversation as TEXT bubbles with its calls
+ *     previews the call) / Calls, "All numbers" (every readable line at once:
+ *     one row per number with its lines tagged, the thread merged with
+ *     "via <line>", a From picker, the Calls view merged), a conversation as
+ *     TEXT bubbles with its calls
  *     as call boxes among them (ordered by when each happened), compose only
  *     where the line grants can_send (and is active, and the number is
  *     textable), send → POST /api/phone-lines/:id/sms + a pending bubble until
@@ -156,12 +159,14 @@ describe('comms.html — Phone tab', () => {
     expect(doc.getElementById('tab-phone').getAttribute('aria-selected')).toBe('true');
     expect(phoneCalls(calls).map((c) => c.url)).toEqual(['/api/phone-lines/readable', '/api/phone-lines/1/conversations']);
     const rail = [...doc.querySelectorAll('#ph-rail-lines .vitem')];
-    expect(rail.map((b) => b.dataset.line)).toEqual(['1', '3', '7']);
-    expect(rail[0].getAttribute('aria-current')).toBe('true');
-    expect(rail[0].querySelector('.acc').textContent).toBe('R·S');
-    expect(rail[1].querySelector('.acc').textContent).toBe('R');
-    expect(rail[2].querySelector('.sub').textContent).toBe('(248) 000-0007 · inactive');
-    expect([...doc.getElementById('ph-line-sel').options].map((o) => o.value)).toEqual(['1', '3', '7']);
+    expect(rail.map((b) => b.dataset.line)).toEqual(['all', '1', '3', '7']);
+    expect(rail[0].textContent).toBe('All numbers3 lines');
+    expect(rail[0].getAttribute('aria-current')).toBeNull();
+    expect(rail[1].getAttribute('aria-current')).toBe('true');
+    expect(rail[1].querySelector('.acc').textContent).toBe('R·S');
+    expect(rail[2].querySelector('.acc').textContent).toBe('R');
+    expect(rail[3].querySelector('.sub').textContent).toBe('(248) 000-0007 · inactive');
+    expect([...doc.getElementById('ph-line-sel').options].map((o) => o.value)).toEqual(['all', '1', '3', '7']);
     expect(doc.getElementById('ph-v-msgs').textContent).toBe('Conversations');
     expect(doc.querySelectorAll('#ph-list .msg')).toHaveLength(2);
     // re-opening the tab does not re-boot
@@ -513,6 +518,159 @@ describe('comms.html — Phone tab', () => {
     expect(b.hidden).toBe(false);
     b.click();
     expect(calls.find((c) => c.addFile)).toEqual({ addFile: ['Pat One', 'client', '501'] });
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// comms.html — All numbers
+// ─────────────────────────────────────────────────────────────────────────────
+
+const ALL_LINES = [
+  { id: 1, phone_number: '2485592400', display_name: 'Stuart', provider: 'ringcentral', active: true, mms_capable: true, can_read: true, can_send: true, can_manage: false },
+  { id: 3, phone_number: '2489655355', display_name: 'Rena', provider: 'quo', active: true, mms_capable: false, can_read: true, can_send: false, can_manage: false },
+  { id: 4, phone_number: '2486213656', display_name: 'rc2', provider: 'ringcentral', active: true, mms_capable: true, can_read: true, can_send: true, can_manage: false },
+];
+const ALL_CONVOS = [
+  { other_party: '3135550001', count: 4, last_id: 13, line_ids: [1, 3, 4], contact: { contact_id: 501, name: 'Pat One' }, last: { id: 13, kind: 'sms', direction: 'incoming', snippet: 'on rc2 now', at: '2026-10-08T16:00:00.000Z', line_id: 4 } },
+  { other_party: '3135550004', count: 1, last_id: 12, line_ids: [3], contact: null, last: { id: 12, kind: 'call', direction: 'incoming', at: '2026-10-08T15:00:00.000Z', duration_s: 20, status: 'no-answer', unanswered: true, missed: true, line_id: 3 } },
+];
+const ALL_THREAD = {
+  other_party: '3135550001', contact: { contact_id: 501, name: 'Pat One' }, line_ids: [1, 3, 4], next_cursor: null,
+  messages: [
+    { id: 1, kind: 'sms', direction: 'incoming', body: 'hello Rena', at: '2026-10-08T12:00:00.000Z', logged: true, line_id: 3 },
+    { id: 2, kind: 'sms', direction: 'outgoing', body: 'reply from Stuart', at: '2026-10-08T13:00:00.000Z', logged: true, line_id: 1 },
+    { id: 10, kind: 'call', direction: 'incoming', at: '2026-10-08T14:00:00.000Z', logged: false, duration_s: 65, status: 'Accepted', unanswered: false, missed: false, line_id: 3 },
+    { id: 13, kind: 'sms', direction: 'incoming', body: 'on rc2 now', at: '2026-10-08T16:00:00.000Z', logged: true, line_id: 4 },
+  ],
+};
+const ALL_CALLS = { calls: [
+  { id: 12, direction: 'incoming', other_party: '3135550004', at: '2026-10-08T15:00:00.000Z', duration_s: 20, status: 'no-answer', unanswered: true, missed: true, logged: false, contact: null, line_id: 3 },
+  { id: 10, direction: 'incoming', other_party: '3135550001', at: '2026-10-08T14:00:00.000Z', duration_s: 65, status: 'Accepted', unanswered: false, missed: false, logged: false, contact: { contact_id: 501, name: 'Pat One' }, line_id: 3 },
+], next_cursor: null };
+
+function allOver(extra = {}) {
+  return {
+    'GET /api/phone-lines/readable': () => ({ viewer: { su: false }, lines: fresh(ALL_LINES) }),
+    'GET /api/phone-lines/all/conversations': () => ({ all: true, conversations: fresh(ALL_CONVOS), next_cursor: null }),
+    'GET /api/phone-lines/all/conversations/3135550001': () => ({ all: true, ...fresh(ALL_THREAD) }),
+    'GET /api/phone-lines/all/calls': () => ({ all: true, ...fresh(ALL_CALLS) }),
+    ...extra,
+  };
+}
+async function openAll(env) {
+  await openPhone(env);
+  env.doc.querySelector('#ph-rail-lines .vitem[data-line="all"]').click();
+  await tick(env.window, 60);
+}
+
+describe('comms.html — All numbers', () => {
+  test('All numbers leads the rail and the picker; choosing it loads every line at once, tags each row with its lines, and is remembered', async () => {
+    const env = await bootComms({ over: allOver() });
+    await openPhone(env);
+    const { doc, window, calls, errors } = env;
+    expect(doc.querySelectorAll('#ph-list .ln-tags')).toHaveLength(0); // a single line's list carries no tags
+    await openAll(env);
+    expect(errors).toEqual([]);
+    expect(calls.map((c) => c.url)).toContain('/api/phone-lines/all/conversations');
+    expect(doc.querySelector('#ph-rail-lines .vitem[data-line="all"]').getAttribute('aria-current')).toBe('true');
+    expect(doc.getElementById('ph-line-sel').value).toBe('all');
+    expect(window.localStorage.getItem('yc-comms-phone-line')).toBe('all');
+    const rows = [...doc.querySelectorAll('#ph-list .msg')];
+    expect(rows.map((r) => [...r.querySelectorAll('.ln-tag')].map((t) => t.textContent))).toEqual([['Stuart', 'Rena', 'rc2'], ['Rena']]);
+    expect(rows[1].querySelector('.snippet').textContent).toBe('Missed call');
+    // the next boot opens All numbers again
+    const env2 = await bootComms({ over: allOver(), before: (w) => w.localStorage.setItem('yc-comms-phone-line', 'all') });
+    await openPhone(env2);
+    expect(phoneCalls(env2.calls).map((c) => c.url)).toEqual(['/api/phone-lines/readable', '/api/phone-lines/all/conversations']);
+  });
+
+  test('a merged conversation: every line\'s texts and calls, each "via <line>"; the head names the lines', async () => {
+    const env = await bootComms({ over: allOver() });
+    await openAll(env);
+    const { doc, window, calls } = env;
+    doc.querySelector('#ph-list .msg[data-party="3135550001"]').click();
+    await tick(window, 60);
+    expect(calls.map((c) => c.url)).toContain('/api/phone-lines/all/conversations/3135550001');
+    expect([...doc.querySelectorAll('#ph-body .bub .bt')].map((b) => b.textContent.split(' · via ')[1])).toEqual(['Rena', 'Stuart', 'Rena', 'rc2']);
+    expect(doc.getElementById('ph-title').textContent).toBe('Pat One(313) 555-0001 · Stuart, Rena, rc2');
+  });
+
+  test('From picker: only sendable lines; defaults to the line of the newest TEXT you can send from (not a newer call); your pick sticks; Send posts to THAT line', async () => {
+    let echoed = false;
+    const env = await bootComms({ over: allOver({
+      'GET /api/phone-lines/all/conversations/3135550001': () => {
+        const t = { all: true, ...fresh(ALL_THREAD) };
+        // the newest EVENT is a call on Stuart's line — the default still follows the newest text (rc2)
+        t.messages.push({ id: 14, kind: 'call', direction: 'outgoing', at: '2026-10-08T17:00:00.000Z', logged: false, duration_s: 30, status: 'Call connected', unanswered: false, missed: false, line_id: 1 });
+        if (echoed) t.messages.push({ id: 20, kind: 'sms', direction: 'outgoing', body: 'on rc2 please', at: new Date().toISOString(), logged: true, line_id: 4 });
+        return t;
+      },
+    }) });
+    await openAll(env);
+    const { doc, window, calls } = env;
+    window.PH_RECHECK_MS = [30];
+    doc.querySelector('#ph-list .msg[data-party="3135550001"]').click();
+    await tick(window, 60);
+    expect(doc.getElementById('ph-compose').hidden).toBe(false);
+    expect(doc.getElementById('ph-from').hidden).toBe(true);
+    expect(doc.getElementById('ph-from-pick').hidden).toBe(false);
+    const sel = doc.getElementById('ph-from-sel');
+    expect([...sel.options].map((o) => o.value)).toEqual(['1', '4']); // Rena's line is read-only
+    expect(sel.value).toBe('4');                                       // the newest text (13) came in on rc2
+    sel.value = '1';
+    sel.dispatchEvent(new window.Event('change'));
+    window.eval("openConversation('3135550001', null, { silent: true })");
+    await tick(window, 60);
+    expect(sel.value).toBe('1');                                       // a quiet re-read keeps your pick
+    sel.value = '4';                                                   // …and back: send from rc2 (not the first sendable line)
+    sel.dispatchEvent(new window.Event('change'));
+    doc.getElementById('ph-text').value = 'on rc2 please';
+    doc.getElementById('ph-send').click();
+    await tick(window, 20);
+    expect(calls.filter((c) => c.method === 'POST').map((c) => [c.url, c.payload])).toEqual([['/api/phone-lines/4/sms', { to: '3135550001', message: 'on rc2 please' }]]);
+    expect(doc.querySelector('#ph-body .bub.pending').textContent).toMatch(/Sent via rc2 — waiting/);
+    echoed = true;
+    await tick(window, 120);
+    expect(doc.querySelector('#ph-body .bub.pending')).toBeNull();
+  });
+
+  test('New text from All numbers picks its From line; the merged Calls view tags each call with its line', async () => {
+    const env = await bootComms({ over: allOver({ 'GET /api/phone-lines/all/conversations/3135550007': () => ({ all: true, other_party: '3135550007', contact: null, line_ids: [], messages: [], next_cursor: null }) }) });
+    await openAll(env);
+    const { doc, window, calls } = env;
+    doc.getElementById('ph-new').click();
+    expect(doc.getElementById('ph-new-from-row').hidden).toBe(false);
+    const sel = doc.getElementById('ph-new-from-sel');
+    expect([...sel.options].map((o) => o.value)).toEqual(['1', '4']);
+    sel.value = '4';
+    doc.getElementById('ph-new-to').value = '313-555-0007';
+    doc.getElementById('ph-new-text').value = 'hello';
+    doc.getElementById('ph-new-send').click();
+    await tick(window, 60);
+    expect(calls.filter((c) => c.method === 'POST').map((c) => c.url)).toEqual(['/api/phone-lines/4/sms']);
+    expect(calls.map((c) => c.url)).toContain('/api/phone-lines/all/conversations/3135550007');
+    doc.getElementById('ph-v-calls').click();
+    await tick(window, 60);
+    expect(calls.map((c) => c.url)).toContain('/api/phone-lines/all/calls');
+    expect([...doc.querySelectorAll('#ph-list .msg')].map((r) => r.querySelector('.ln-tag').textContent)).toEqual(['Rena', 'Rena']);
+  });
+
+  test('no line to send from: no compose (with the reason), no New text; one line only: no All numbers, a remembered "all" falls back', async () => {
+    const readOnly = ALL_LINES.map((l) => ({ ...l, can_send: false }));
+    const env = await bootComms({ over: allOver({ 'GET /api/phone-lines/readable': () => ({ viewer: { su: false }, lines: fresh(readOnly) }) }) });
+    await openAll(env);
+    const { doc, window } = env;
+    expect(doc.getElementById('ph-new').hidden).toBe(true);
+    doc.querySelector('#ph-list .msg[data-party="3135550001"]').click();
+    await tick(window, 60);
+    expect(doc.getElementById('ph-compose').hidden).toBe(true);
+    expect(doc.getElementById('ph-nosend').textContent).toMatch(/cannot send from any of your lines/);
+    const one = [ALL_LINES[0]];
+    const env2 = await bootComms({ over: allOver({ 'GET /api/phone-lines/readable': () => ({ viewer: { su: false }, lines: fresh(one) }) }), before: (w) => w.localStorage.setItem('yc-comms-phone-line', 'all') });
+    await openPhone(env2);
+    expect(env2.doc.querySelector('#ph-rail-lines .vitem[data-line="all"]')).toBeNull();
+    expect([...env2.doc.getElementById('ph-line-sel').options].map((o) => o.value)).toEqual(['1']);
+    expect(phoneCalls(env2.calls).map((c) => c.url)).toEqual(['/api/phone-lines/readable', '/api/phone-lines/1/conversations']);
   });
 });
 

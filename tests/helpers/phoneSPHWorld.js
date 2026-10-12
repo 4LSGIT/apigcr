@@ -40,9 +40,15 @@ const LINE_COLS = 'pl.id, pl.phone_number, pl.display_name, pl.provider, pl.acti
 const LINE_SELECT = 'SELECT id, phone_number, display_name, provider, active, mms_capable FROM phone_lines';
 const GRANT_SELECT = 'SELECT g.id, g.user, u.username, u.user_name, u.user_auth, g.channel_type, g.channel_id, g.can_read, g.can_send, g.can_manage, g.granted_by, gb.username AS granted_by_username, g.created_at FROM channel_grants g LEFT JOIN users u ON u.user = g.user LEFT JOIN users gb ON gb.user = g.granted_by';
 const CONVO_GROUP = "SELECT other_party, MAX(id) AS last_id, COUNT(*) AS n FROM phone_event_log FORCE INDEX (idx_phone_event_line) WHERE line_number = ? AND suppressed = 0 AND other_party IS NOT NULL GROUP BY other_party";
-const CONVO_LATEST = "SELECT id, event_type, direction, body, processed_at, JSON_UNQUOTE(JSON_EXTRACT(raw_extra, '$.ts')) AS ts, JSON_UNQUOTE(JSON_EXTRACT(raw_extra, '$.started_at')) AS started_at, JSON_UNQUOTE(JSON_EXTRACT(raw_extra, '$.ended_at')) AS ended_at, JSON_UNQUOTE(JSON_EXTRACT(raw_extra, '$.provider_status')) AS provider_status FROM phone_event_log WHERE id IN (?)";
+const CONVO_LATEST = "SELECT id, event_type, direction, body, processed_at, line_number, JSON_UNQUOTE(JSON_EXTRACT(raw_extra, '$.ts')) AS ts, JSON_UNQUOTE(JSON_EXTRACT(raw_extra, '$.started_at')) AS started_at, JSON_UNQUOTE(JSON_EXTRACT(raw_extra, '$.ended_at')) AS ended_at, JSON_UNQUOTE(JSON_EXTRACT(raw_extra, '$.provider_status')) AS provider_status FROM phone_event_log WHERE id IN (?)";
 const MSGS = "SELECT id, event_type, direction, body, processed_at, log_id, JSON_UNQUOTE(JSON_EXTRACT(raw_extra, '$.ts')) AS ts, JSON_UNQUOTE(JSON_EXTRACT(raw_extra, '$.started_at')) AS started_at, JSON_UNQUOTE(JSON_EXTRACT(raw_extra, '$.ended_at')) AS ended_at, JSON_UNQUOTE(JSON_EXTRACT(raw_extra, '$.provider_status')) AS provider_status FROM phone_event_log WHERE line_number = ? AND other_party = ? AND suppressed = 0";
 const CALLS = "SELECT id, direction, other_party, processed_at, log_id, JSON_UNQUOTE(JSON_EXTRACT(raw_extra, '$.started_at')) AS started_at, JSON_UNQUOTE(JSON_EXTRACT(raw_extra, '$.ended_at')) AS ended_at, JSON_UNQUOTE(JSON_EXTRACT(raw_extra, '$.provider_status')) AS provider_status FROM phone_event_log FORCE INDEX (idx_phone_event_line) WHERE line_number = ? AND event_type = 'call' AND suppressed = 0";
+const JSONS = "JSON_UNQUOTE(JSON_EXTRACT(raw_extra, '$.ts')) AS ts, JSON_UNQUOTE(JSON_EXTRACT(raw_extra, '$.started_at')) AS started_at, JSON_UNQUOTE(JSON_EXTRACT(raw_extra, '$.ended_at')) AS ended_at, JSON_UNQUOTE(JSON_EXTRACT(raw_extra, '$.provider_status')) AS provider_status";
+// All numbers (every readable line at once)
+const ALL_GROUP = "SELECT other_party, MAX(id) AS last_id, COUNT(*) AS n, GROUP_CONCAT(DISTINCT line_number ORDER BY line_number SEPARATOR ',') AS line_numbers FROM phone_event_log e WHERE line_number IN (?) AND suppressed = 0 AND other_party IS NOT NULL AND NOT EXISTS (SELECT 1 FROM phone_lines pl WHERE pl.phone_number = e.other_party) GROUP BY other_party";
+const ALL_MSGS = `SELECT id, event_type, direction, body, processed_at, log_id, line_number, ${JSONS} FROM phone_event_log WHERE other_party = ? AND line_number IN (?) AND suppressed = 0`;
+const ALL_USED = 'SELECT DISTINCT line_number FROM phone_event_log WHERE other_party = ? AND line_number IN (?) AND suppressed = 0';
+const ALL_CALLS = "SELECT id, direction, other_party, processed_at, log_id, line_number, JSON_UNQUOTE(JSON_EXTRACT(raw_extra, '$.started_at')) AS started_at, JSON_UNQUOTE(JSON_EXTRACT(raw_extra, '$.ended_at')) AS ended_at, JSON_UNQUOTE(JSON_EXTRACT(raw_extra, '$.provider_status')) AS provider_status FROM phone_event_log WHERE line_number IN (?) AND event_type = 'call' AND suppressed = 0";
 const KEYSET = ' AND (processed_at < ? OR (processed_at = ? AND id < ?))';
 const ORDER_TAIL = ' ORDER BY processed_at DESC, id DESC LIMIT ?';
 const CONTACTS = 'SELECT cp.phone, c.contact_id, c.contact_name FROM contact_phones cp JOIN contacts c ON c.contact_id = cp.contact_id WHERE cp.phone_active_uniq IN (?)';
@@ -303,7 +309,7 @@ function makeWorld() {
     if (sql === CONVO_LATEST) {
       const ids = new Set(p[0].map(Number));
       return [T.phone_event_log.filter(e => ids.has(e.id)).map(e => ({
-        id: e.id, event_type: e.event_type, direction: e.direction, body: e.body, processed_at: new Date(e.processed_at),
+        id: e.id, event_type: e.event_type, direction: e.direction, body: e.body, processed_at: new Date(e.processed_at), line_number: lineOf(e),
         ts: json(e, 'ts'), started_at: json(e, 'started_at'), ended_at: json(e, 'ended_at'), provider_status: json(e, 'provider_status'),
       }))];
     }
@@ -326,6 +332,56 @@ function makeWorld() {
       rows.sort(desc);
       return [rows.slice(0, Number(p[ks ? 4 : 1])).map(e => ({
         id: e.id, direction: e.direction, other_party: e.other_party, processed_at: new Date(e.processed_at), log_id: e.log_id,
+        started_at: json(e, 'started_at'), ended_at: json(e, 'ended_at'), provider_status: json(e, 'provider_status'),
+      }))];
+    }
+    // ── All numbers ──
+    if (sql === `${ALL_GROUP} ORDER BY last_id DESC LIMIT ?` || sql === `${ALL_GROUP} HAVING MAX(id) < ? ORDER BY last_id DESC LIMIT ?`) {
+      const having = sql.includes('HAVING');
+      const lines = new Set(p[0].map(String));
+      const firm = new Set(T.phone_lines.map(l => l.phone_number));
+      const groups = new Map();
+      for (const e of T.phone_event_log) {
+        const ln = lineOf(e);
+        if (ln == null || !lines.has(String(ln)) || Number(e.suppressed) !== 0 || e.other_party == null || firm.has(e.other_party)) continue;
+        const g = groups.get(e.other_party) || { other_party: e.other_party, last_id: 0, n: 0, nums: new Set() };
+        g.last_id = Math.max(g.last_id, e.id);
+        g.n += 1;
+        g.nums.add(String(ln));
+        groups.set(e.other_party, g);
+      }
+      let rows = [...groups.values()].map(({ nums, ...g }) => ({ ...g, line_numbers: [...nums].sort().join(',') }));
+      if (having) rows = rows.filter(g => g.last_id < Number(p[1]));
+      rows.sort((a, b) => b.last_id - a.last_id);
+      return [rows.slice(0, Number(p[having ? 2 : 1]))];
+    }
+    if (sql === `${ALL_MSGS}${ORDER_TAIL}` || sql === `${ALL_MSGS}${KEYSET}${ORDER_TAIL}`) {
+      const lines = new Set(p[1].map(String));
+      let rows = T.phone_event_log.filter(e => e.other_party === String(p[0]) && lineOf(e) != null && lines.has(String(lineOf(e))) && Number(e.suppressed) === 0);
+      const ks = sql.includes(KEYSET);
+      if (ks) rows = keyset(rows, p, 2);
+      rows.sort(desc);
+      return [rows.slice(0, Number(p[ks ? 5 : 2])).map(e => ({
+        id: e.id, event_type: e.event_type, direction: e.direction, body: e.body, processed_at: new Date(e.processed_at), log_id: e.log_id, line_number: lineOf(e),
+        ts: json(e, 'ts'), started_at: json(e, 'started_at'), ended_at: json(e, 'ended_at'), provider_status: json(e, 'provider_status'),
+      }))];
+    }
+    if (sql === ALL_USED) {
+      const lines = new Set(p[1].map(String));
+      const used = new Set();
+      for (const e of T.phone_event_log) {
+        if (e.other_party === String(p[0]) && lineOf(e) != null && lines.has(String(lineOf(e))) && Number(e.suppressed) === 0) used.add(String(lineOf(e)));
+      }
+      return [[...used].map(line_number => ({ line_number }))];
+    }
+    if (sql === `${ALL_CALLS}${ORDER_TAIL}` || sql === `${ALL_CALLS}${KEYSET}${ORDER_TAIL}`) {
+      const lines = new Set(p[0].map(String));
+      let rows = T.phone_event_log.filter(e => lineOf(e) != null && lines.has(String(lineOf(e))) && e.event_type === 'call' && Number(e.suppressed) === 0);
+      const ks = sql.includes(KEYSET);
+      if (ks) rows = keyset(rows, p, 1);
+      rows.sort(desc);
+      return [rows.slice(0, Number(p[ks ? 4 : 1])).map(e => ({
+        id: e.id, direction: e.direction, other_party: e.other_party, processed_at: new Date(e.processed_at), log_id: e.log_id, line_number: lineOf(e),
         started_at: json(e, 'started_at'), ended_at: json(e, 'ended_at'), provider_status: json(e, 'provider_status'),
       }))];
     }

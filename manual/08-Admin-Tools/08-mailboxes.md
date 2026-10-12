@@ -479,6 +479,13 @@ lines alike (design: `ref/MAILBOX_SYSTEM_DESIGN.md` §4.4, slice S-PH).
 - **Lines.** On a wide screen the lines are listed on the left (with your
   access: **R** read · **S** send · **M** manage); on a narrow one pick the
   line in the bar. Your last line is remembered in this browser.
+- **All numbers** (first in the list when you can read more than one line)
+  shows every line at once: one row per number, tagged with the lines it
+  used. Opening it shows its texts and calls on all of them together, each
+  marked "via" its line; a reply has a **From** picker (it starts on the
+  line of their latest text, if you can send from it). **Calls** shows every
+  line's calls, each tagged with its line. Texts between two of the firm's
+  own lines are left out of this list — open that line to see them.
 - **Conversations** lists the line's conversations — one per number that
   texted or called the line (or was texted or called from it), newest
   activity first, the contact's name when the number belongs to a client on
@@ -508,9 +515,10 @@ lines alike (design: `ref/MAILBOX_SYSTEM_DESIGN.md` §4.4, slice S-PH).
   it back (seconds, usually); then it is an ordinary bubble. A short code
   (e.g. a 5-digit verification sender) cannot be texted back. Superusers
   confirm their password first ([elevation](README.md)).
-- **Pictures and files (MMS)** are not stored yet: a text that came with
-  one shows **Attachment — not shown here yet** (and "Attachment" in the
-  list) — open it in the phone system's own app.
+- **Pictures and files (MMS)** are not shown yet: a text that came with
+  one and no words shows **Attachment — not shown here yet** (and
+  "Attachment" in the list); a text with words shows just its words — open
+  it in the phone system's own app to see the attachment.
 - **Not shown:** texts and calls the spam filters caught (suppressed), and
   numbers on the phone system that are not set up as a line in Connections →
   Phone Lines. To make such a number readable, add it there — leave it

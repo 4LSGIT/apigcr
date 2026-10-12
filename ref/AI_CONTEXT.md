@@ -206,7 +206,10 @@ body. Governing migrations in `ref/migrations/`.*
     (`GET …/conversations/:party`, items `kind: 'sms'|'call'`); a number that
     only called has one. Calls are ingested when they END, so the pane
     orders a thread by `at` (the call's start), not the server's
-    `processed_at` order.
+    `processed_at` order. **All numbers** (`GET /api/phone-lines/all/…`,
+    every READABLE line at once, items tagged `line_id`) is routed BEFORE
+    the `/:id` routes — keep it first; sending from it posts to the picked
+    line's own `/:id/sms`.
   - **The attorney READ bypass covers phone lines**; send/manage never
     bypass. **Grant routes pin their channel** — a mailbox route refuses a
     `phone_line` body and vice versa (the ids overlap).

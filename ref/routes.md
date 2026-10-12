@@ -1,7 +1,7 @@
 # Routes
 
-_Generated 2026-10-12T17:57:15.519Z_  
-_746 routes total — DELETE: 62, GET: 312, PATCH: 51, POST: 283, PUT: 35, _ALL: 3_
+_Generated 2026-10-12T18:48:05.567Z_  
+_749 routes total — DELETE: 62, GET: 315, PATCH: 51, POST: 283, PUT: 35, _ALL: 3_
 
 ## Global middleware chain
 
@@ -469,6 +469,9 @@ _746 routes total — DELETE: 62, GET: 312, PATCH: 51, POST: 283, PUT: 35, _ALL:
 | PATCH | `/api/phone-lines/admin/:id/active` | `jwtOrApiKey`, `superuserCheck`, `elevationCheck`, `rateLimitMiddleware` | — |
 | PATCH | `/api/phone-lines/admin/:id/mms-capable` | `jwtOrApiKey`, `superuserCheck`, `elevationCheck`, `rateLimitMiddleware` | — |
 | POST | `/api/phone-lines/admin/:id/test-sms` | `jwtOrApiKey`, `superuserCheck`, `elevationCheck`, `rateLimitMiddleware` | — |
+| GET | `/api/phone-lines/all/calls` | `jwtOrApiKey`, `requireJwt` | — |
+| GET | `/api/phone-lines/all/conversations` | `jwtOrApiKey`, `requireJwt` | — |
+| GET | `/api/phone-lines/all/conversations/:party` | `jwtOrApiKey`, `requireJwt` | — |
 | GET | `/api/phone-lines/first-seen` | `jwtOrApiKey`, `requireJwt` | — |
 | GET | `/api/phone-lines/readable` | `jwtOrApiKey`, `requireJwt` | — |
 | GET | `/api/phone-lines/sendable` | `jwtOrApiKey`, `requireJwt` | — |
@@ -1016,4 +1019,4 @@ _746 routes total — DELETE: 62, GET: 312, PATCH: 51, POST: 283, PUT: 35, _ALL:
 
 ---
 
-_746 routes total — DELETE: 62, GET: 312, PATCH: 51, POST: 283, PUT: 35, _ALL: 3_
+_749 routes total — DELETE: 62, GET: 315, PATCH: 51, POST: 283, PUT: 35, _ALL: 3_

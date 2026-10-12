@@ -1,0 +1,49 @@
+{
+ "status": "success",
+ "next_cursor": null,
+ "calls": [
+  {
+   "id": 50,
+   "direction": "incoming",
+   "other_party": "5555550199",
+   "at": "2026-10-12T15:00:00.000Z",
+   "duration_s": null,
+   "status": "no-answer",
+   "unanswered": true,
+   "missed": true,
+   "logged": true,
+   "contact": {
+    "contact_id": 9001,
+    "name": "Bartholomew Maximilian Featherstonehaugh-Worthington III"
+   },
+   "line_id": 1
+  },
+  {
+   "id": 49,
+   "direction": "outgoing",
+   "other_party": "5555550198",
+   "at": "2026-10-12T13:10:00.000Z",
+   "duration_s": 754,
+   "status": "Call connected",
+   "unanswered": false,
+   "missed": false,
+   "logged": true,
+   "contact": null,
+   "line_id": 2
+  },
+  {
+   "id": 48,
+   "direction": "incoming",
+   "other_party": null,
+   "at": "2026-10-11T13:10:00.000Z",
+   "duration_s": 12,
+   "status": "Accepted",
+   "unanswered": false,
+   "missed": false,
+   "logged": false,
+   "contact": null,
+   "line_id": 1
+  }
+ ],
+ "all": true
+}

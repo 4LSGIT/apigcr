@@ -87,7 +87,9 @@ thread by hand; the survey itself opens the list only), the comms Phone tab
 one conversation at `phone-lines/1/conversations/5555550199` — overlong names,
 an unbroken URL, a short code — and one with a number no contact holds at
 `…/conversations/5555550198` (Add to contact, an attachment-only text, a
-call) — surveyed as `tab:tabComms:phone-*`), the
+call), and All numbers at `phone-lines/all/{conversations,calls}` +
+`…/all/conversations/5555550199` (line tags, "via" bubbles, the From pickers)
+— surveyed as `tab:tabComms:phone-*`), the
 Connections phone-line Access editor (`phone-lines/admin`,
 `phone-lines/1/grants`, `users`; `panel:connectionsDiv:phone-access`) — enough to fill the tables
 that tend to overflow and to put every conditional Overview / Case Details box

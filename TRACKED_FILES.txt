@@ -717,6 +717,9 @@ scripts/mobile-survey/fixtures/api/phone-lines/1/conversations/5555550198.json
 scripts/mobile-survey/fixtures/api/phone-lines/1/conversations/5555550199.json
 scripts/mobile-survey/fixtures/api/phone-lines/1/grants.json
 scripts/mobile-survey/fixtures/api/phone-lines/admin.json
+scripts/mobile-survey/fixtures/api/phone-lines/all/calls.json
+scripts/mobile-survey/fixtures/api/phone-lines/all/conversations.json
+scripts/mobile-survey/fixtures/api/phone-lines/all/conversations/5555550199.json
 scripts/mobile-survey/fixtures/api/phone-lines/readable.json
 scripts/mobile-survey/fixtures/api/tasks.json
 scripts/mobile-survey/fixtures/api/users.json

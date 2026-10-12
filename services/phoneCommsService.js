@@ -294,6 +294,74 @@ async function contactsFor(db, phones) {
 
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Item shapes — one per kind, shared by the per-line reads and All numbers
+// ─────────────────────────────────────────────────────────────────────────────
+
+const LATEST_SQL =
+  `SELECT id, event_type, direction, body, processed_at, line_number,
+          JSON_UNQUOTE(JSON_EXTRACT(raw_extra, '$.ts')) AS ts,
+          JSON_UNQUOTE(JSON_EXTRACT(raw_extra, '$.started_at')) AS started_at,
+          JSON_UNQUOTE(JSON_EXTRACT(raw_extra, '$.ended_at')) AS ended_at,
+          JSON_UNQUOTE(JSON_EXTRACT(raw_extra, '$.provider_status')) AS provider_status
+     FROM phone_event_log
+    WHERE id IN (?)`;
+
+/** A conversation's newest item, for the list row. */
+function lastItem(r) {
+  return r.event_type === 'call'
+    ? { id: Number(r.id), kind: 'call', direction: r.direction, at: eventAt(r.started_at, r.processed_at), ...callFields(r) }
+    : { id: Number(r.id), kind: 'sms', direction: r.direction, snippet: snippet(r.body), at: eventAt(r.ts, r.processed_at) };
+}
+
+/** One item of a conversation thread. */
+function threadItem(r) {
+  return r.event_type === 'call'
+    ? {
+      id: Number(r.id),
+      kind: 'call',
+      direction: r.direction,
+      at: eventAt(r.started_at, r.processed_at),
+      logged: r.log_id != null,
+      ...callFields(r),
+    }
+    : {
+      id: Number(r.id),
+      kind: 'sms',
+      direction: r.direction,
+      body: r.body == null ? '' : String(r.body),
+      at: eventAt(r.ts, r.processed_at),
+      logged: r.log_id != null,
+    };
+}
+
+/** One row of a call log. */
+function callLogItem(r, names) {
+  return {
+    id: Number(r.id),
+    direction: r.direction,
+    other_party: r.other_party == null ? null : String(r.other_party),
+    at: eventAt(r.started_at, r.processed_at),
+    ...callFields(r),
+    logged: r.log_id != null,
+    contact: r.other_party == null ? null : (names.get(String(r.other_party)) || null),
+  };
+}
+
+function convoCursor(query) {
+  if (query.cursor === undefined || query.cursor === null || query.cursor === '') return null;
+  if (!CONVO_CURSOR_RE.test(String(query.cursor))) throw httpError(400, 'cursor is malformed — pass back next_cursor unchanged');
+  return Number(query.cursor);
+}
+
+function keysetOf(query, params) {
+  const cursor = parseCursor(query.cursor);
+  if (!cursor) return '';
+  params.push(sqlUtc(cursor.at), sqlUtc(cursor.at), cursor.id);
+  return ' AND (processed_at < ? OR (processed_at = ? AND id < ?))';
+}
+
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Reads
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -311,11 +379,7 @@ async function contactsFor(db, phones) {
  */
 async function listConversations(db, line, query = {}) {
   const limit = pageLimit(query.limit);
-  let before = null;
-  if (query.cursor !== undefined && query.cursor !== null && query.cursor !== '') {
-    if (!CONVO_CURSOR_RE.test(String(query.cursor))) throw httpError(400, 'cursor is malformed — pass back next_cursor unchanged');
-    before = Number(query.cursor);
-  }
+  const before = convoCursor(query);
   const params = [line.phone_number];
   if (before != null) params.push(before);
   params.push(limit + 1);
@@ -333,16 +397,7 @@ async function listConversations(db, line, query = {}) {
   const lastIds = page.map(g => Number(g.last_id));
   const latest = new Map();
   if (lastIds.length) {
-    const [rows] = await db.query(
-      `SELECT id, event_type, direction, body, processed_at,
-              JSON_UNQUOTE(JSON_EXTRACT(raw_extra, '$.ts')) AS ts,
-              JSON_UNQUOTE(JSON_EXTRACT(raw_extra, '$.started_at')) AS started_at,
-              JSON_UNQUOTE(JSON_EXTRACT(raw_extra, '$.ended_at')) AS ended_at,
-              JSON_UNQUOTE(JSON_EXTRACT(raw_extra, '$.provider_status')) AS provider_status
-         FROM phone_event_log
-        WHERE id IN (?)`,
-      [lastIds]
-    );
+    const [rows] = await db.query(LATEST_SQL, [lastIds]);
     for (const r of rows) latest.set(Number(r.id), r);
   }
   const names = await contactsFor(db, page.map(g => String(g.other_party)));
@@ -353,9 +408,7 @@ async function listConversations(db, line, query = {}) {
         other_party: String(g.other_party),
         count: Number(g.n),
         last_id: Number(g.last_id),
-        last: !r ? null : (r.event_type === 'call'
-          ? { id: Number(r.id), kind: 'call', direction: r.direction, at: eventAt(r.started_at, r.processed_at), ...callFields(r) }
-          : { id: Number(r.id), kind: 'sms', direction: r.direction, snippet: snippet(r.body), at: eventAt(r.ts, r.processed_at) }),
+        last: r ? lastItem(r) : null,
         contact: names.get(String(g.other_party)) || null,
       };
     }),
@@ -379,13 +432,8 @@ async function listConversations(db, line, query = {}) {
 async function listMessages(db, line, party, query = {}) {
   if (!PARTY_RE.test(String(party || ''))) throw httpError(400, 'conversation must be a phone number (digits)');
   const limit = pageLimit(query.limit);
-  const cursor = parseCursor(query.cursor);
   const params = [line.phone_number, String(party)];
-  let keyset = '';
-  if (cursor) {
-    keyset = ' AND (processed_at < ? OR (processed_at = ? AND id < ?))';
-    params.push(sqlUtc(cursor.at), sqlUtc(cursor.at), cursor.id);
-  }
+  const keyset = keysetOf(query, params);
   params.push(limit + 1);
   const [rows] = await db.query(
     `SELECT id, event_type, direction, body, processed_at, log_id,
@@ -404,23 +452,7 @@ async function listMessages(db, line, party, query = {}) {
   return {
     other_party: String(party),
     contact: names.get(String(party)) || null,
-    messages: page.map(r => (r.event_type === 'call'
-      ? {
-        id: Number(r.id),
-        kind: 'call',
-        direction: r.direction,
-        at: eventAt(r.started_at, r.processed_at),
-        logged: r.log_id != null,
-        ...callFields(r),
-      }
-      : {
-        id: Number(r.id),
-        kind: 'sms',
-        direction: r.direction,
-        body: r.body == null ? '' : String(r.body),
-        at: eventAt(r.ts, r.processed_at),
-        logged: r.log_id != null,
-      })).reverse(),
+    messages: page.map(threadItem).reverse(),
     next_cursor: rows.length > limit && page.length ? cursorOf(page[page.length - 1]) : null,
   };
 }
@@ -428,13 +460,8 @@ async function listMessages(db, line, party, query = {}) {
 /** The call log of a line, newest first. */
 async function listCalls(db, line, query = {}) {
   const limit = pageLimit(query.limit);
-  const cursor = parseCursor(query.cursor);
   const params = [line.phone_number];
-  let keyset = '';
-  if (cursor) {
-    keyset = ' AND (processed_at < ? OR (processed_at = ? AND id < ?))';
-    params.push(sqlUtc(cursor.at), sqlUtc(cursor.at), cursor.id);
-  }
+  const keyset = keysetOf(query, params);
   params.push(limit + 1);
   const [rows] = await db.query(
     `SELECT id, direction, other_party, processed_at, log_id,
@@ -450,15 +477,153 @@ async function listCalls(db, line, query = {}) {
   const page = rows.slice(0, limit);
   const names = await contactsFor(db, page.map(r => (r.other_party == null ? null : String(r.other_party))));
   return {
-    calls: page.map(r => ({
-      id: Number(r.id),
-      direction: r.direction,
-      other_party: r.other_party == null ? null : String(r.other_party),
-      at: eventAt(r.started_at, r.processed_at),
-      ...callFields(r),
-      logged: r.log_id != null,
-      contact: r.other_party == null ? null : (names.get(String(r.other_party)) || null),
-    })),
+    calls: page.map(r => callLogItem(r, names)),
+    next_cursor: rows.length > limit && page.length ? cursorOf(page[page.length - 1]) : null,
+  };
+}
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// All numbers — every line the caller can READ at once (Fred, 2026-10-12,
+// option B: one row per OUTSIDE number, its thread merged across lines)
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// SCOPE is mailboxService.listReadable('phone_line') — SU and attorneys every
+// line (inactive too), others their can_read grants; no readable line → empty
+// answers, never an error. Every item carries `line_id` (which line it was
+// on). The LIST leaves out numbers that are themselves firm lines (a text
+// between two firm lines is TWO rows, one per line — merged it would show
+// twice); those stay in each line's own view. The thread and the call log do
+// not filter them: a firm line's thread opened from All shows both copies,
+// each tagged with its line. Sending from All picks a line in the pane and
+// posts to that line's POST /api/phone-lines/:id/sms — no new send path.
+// COST: the list groups every row of every readable line on each page (live
+// 2026-10-12, SU: ≈10.5K rows) — ref/plans.md has the threshold note.
+
+/** The caller's readable lines: {numbers, idOf: Map(number → line id)}. */
+async function readableScope(db, userId) {
+  const lines = await mbx.listReadable(db, userId, 'phone_line');
+  const idOf = new Map();
+  for (const l of lines) if (l.phone_number) idOf.set(String(l.phone_number), Number(l.id));
+  return { numbers: [...idOf.keys()], idOf };
+}
+
+const lineIdsOf = (csv, idOf) => [...new Set(String(csv || '').split(',').map(n => idOf.get(n)).filter(Boolean))].sort((a, b) => a - b);
+
+/**
+ * All-numbers conversations: one per OUTSIDE number across the readable
+ * lines, newest activity first; `line_ids` = the lines it used; `last`
+ * carries its `line_id`. Paged by MAX(id) like the per-line list.
+ */
+async function listAllConversations(db, userId, query = {}) {
+  const limit = pageLimit(query.limit);
+  const before = convoCursor(query);
+  const { numbers, idOf } = await readableScope(db, userId);
+  if (!numbers.length) return { conversations: [], next_cursor: null };
+  const params = [numbers];
+  if (before != null) params.push(before);
+  params.push(limit + 1);
+  const [groups] = await db.query(
+    `SELECT other_party, MAX(id) AS last_id, COUNT(*) AS n,
+            GROUP_CONCAT(DISTINCT line_number ORDER BY line_number SEPARATOR ',') AS line_numbers
+       FROM phone_event_log e
+      WHERE line_number IN (?) AND suppressed = 0 AND other_party IS NOT NULL
+        AND NOT EXISTS (SELECT 1 FROM phone_lines pl WHERE pl.phone_number = e.other_party)
+      GROUP BY other_party
+     ${before != null ? 'HAVING MAX(id) < ?' : ''}
+      ORDER BY last_id DESC
+      LIMIT ?`,
+    params
+  );
+  const page = groups.slice(0, limit);
+  const lastIds = page.map(g => Number(g.last_id));
+  const latest = new Map();
+  if (lastIds.length) {
+    const [rows] = await db.query(LATEST_SQL, [lastIds]);
+    for (const r of rows) latest.set(Number(r.id), r);
+  }
+  const names = await contactsFor(db, page.map(g => String(g.other_party)));
+  return {
+    conversations: page.map((g) => {
+      const r = latest.get(Number(g.last_id));
+      return {
+        other_party: String(g.other_party),
+        count: Number(g.n),
+        last_id: Number(g.last_id),
+        line_ids: lineIdsOf(g.line_numbers, idOf),
+        last: r ? { ...lastItem(r), line_id: idOf.get(String(r.line_number)) || null } : null,
+        contact: names.get(String(g.other_party)) || null,
+      };
+    }),
+    next_cursor: groups.length > limit && page.length ? String(page[page.length - 1].last_id) : null,
+  };
+}
+
+/**
+ * One number across the readable lines: its texts and calls on every line,
+ * merged (same page / order / cursor contract as listMessages), each item
+ * with its `line_id`; `line_ids` = every readable line it ever used.
+ */
+async function listAllMessages(db, userId, party, query = {}) {
+  if (!PARTY_RE.test(String(party || ''))) throw httpError(400, 'conversation must be a phone number (digits)');
+  const limit = pageLimit(query.limit);
+  parseCursor(query.cursor); // a malformed cursor is a 400 even with nothing readable
+  const { numbers, idOf } = await readableScope(db, userId);
+  const names = await contactsFor(db, [String(party)]);
+  const empty = { other_party: String(party), contact: names.get(String(party)) || null, line_ids: [], messages: [], next_cursor: null };
+  if (!numbers.length) return empty;
+  const params = [String(party), numbers];
+  const keyset = keysetOf(query, params);
+  params.push(limit + 1);
+  const [rows] = await db.query(
+    `SELECT id, event_type, direction, body, processed_at, log_id, line_number,
+            JSON_UNQUOTE(JSON_EXTRACT(raw_extra, '$.ts')) AS ts,
+            JSON_UNQUOTE(JSON_EXTRACT(raw_extra, '$.started_at')) AS started_at,
+            JSON_UNQUOTE(JSON_EXTRACT(raw_extra, '$.ended_at')) AS ended_at,
+            JSON_UNQUOTE(JSON_EXTRACT(raw_extra, '$.provider_status')) AS provider_status
+       FROM phone_event_log
+      WHERE other_party = ? AND line_number IN (?) AND suppressed = 0${keyset}
+      ORDER BY processed_at DESC, id DESC
+      LIMIT ?`,
+    params
+  );
+  const [used] = await db.query(
+    `SELECT DISTINCT line_number FROM phone_event_log
+      WHERE other_party = ? AND line_number IN (?) AND suppressed = 0`,
+    [String(party), numbers]
+  );
+  const page = rows.slice(0, limit);
+  return {
+    ...empty,
+    line_ids: lineIdsOf(used.map(u => u.line_number).join(','), idOf),
+    messages: page.map(r => ({ ...threadItem(r), line_id: idOf.get(String(r.line_number)) || null })).reverse(),
+    next_cursor: rows.length > limit && page.length ? cursorOf(page[page.length - 1]) : null,
+  };
+}
+
+/** Every readable line's call log, merged, newest first; each row with its `line_id`. */
+async function listAllCalls(db, userId, query = {}) {
+  const limit = pageLimit(query.limit);
+  const { numbers, idOf } = await readableScope(db, userId);
+  if (!numbers.length) { parseCursor(query.cursor); return { calls: [], next_cursor: null }; }
+  const params = [numbers];
+  const keyset = keysetOf(query, params);
+  params.push(limit + 1);
+  const [rows] = await db.query(
+    `SELECT id, direction, other_party, processed_at, log_id, line_number,
+            JSON_UNQUOTE(JSON_EXTRACT(raw_extra, '$.started_at')) AS started_at,
+            JSON_UNQUOTE(JSON_EXTRACT(raw_extra, '$.ended_at')) AS ended_at,
+            JSON_UNQUOTE(JSON_EXTRACT(raw_extra, '$.provider_status')) AS provider_status
+       FROM phone_event_log
+      WHERE line_number IN (?) AND event_type = 'call' AND suppressed = 0${keyset}
+      ORDER BY processed_at DESC, id DESC
+      LIMIT ?`,
+    params
+  );
+  const page = rows.slice(0, limit);
+  const names = await contactsFor(db, page.map(r => (r.other_party == null ? null : String(r.other_party))));
+  return {
+    calls: page.map(r => ({ ...callLogItem(r, names), line_id: idOf.get(String(r.line_number)) || null })),
     next_cursor: rows.length > limit && page.length ? cursorOf(page[page.length - 1]) : null,
   };
 }
@@ -521,6 +686,9 @@ module.exports = {
   listConversations,
   listMessages,
   listCalls,
+  listAllConversations,
+  listAllMessages,
+  listAllCalls,
   firstSeen,
   sendSms,
   contactsFor,

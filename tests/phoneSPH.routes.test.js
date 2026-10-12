@@ -32,6 +32,11 @@
  *             SU needs step-up; inactive line 409; bad to / message 400;
  *             provider failure 502 + audit; rate limit; nothing reaches
  *             phoneService unless every gate passed.
+ *   all       All numbers (/api/phone-lines/all/*): every READABLE line at
+ *             once — one row per OUTSIDE number (firm-line parties left
+ *             out), its thread and the call log merged, every item tagged
+ *             with its line_id; the scope is the caller's (a grantee sees
+ *             only granted lines' events); routed ahead of /:id.
  *   /internal staff JWT needs can_send on `from`; API key stays grant-blind.
  *   grants    phone_line CRUD mirrors the mailbox block (elevation, manager
  *             scope, ownership, audit tool 'phone_lines', channel pinned);
@@ -359,6 +364,85 @@ describe('reads', () => {
     const r = await call('GET', '/api/phone-lines/7/conversations', { t: T.rena() });
     expect(r.status).toBe(200);
     expect(r.json.conversations.map((c) => c.other_party)).toEqual(['3135550099']);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+describe('All numbers — /api/phone-lines/all/*', () => {
+  const get = async (url, t) => (await call('GET', url, { t })).json;
+
+  test('conversations: one row per OUTSIDE number across every readable line, newest first; line_ids + last.line_id; firm-line parties and suppressed out', async () => {
+    const S = SPH_SEED(W);
+    const su = await get('/api/phone-lines/all/conversations', T.su());
+    expect(su.all).toBe(true);
+    expect(su.conversations.map((c) => [c.other_party, c.count, c.last_id, c.line_ids])).toEqual([
+      [S.P4, 1, 14, [6]], [S.P1, 4, 13, [1, 6]], [S.P2, 3, 11, [1, 6]], ['22395', 1, 9, [1]],
+    ]);
+    const p1 = su.conversations.find((c) => c.other_party === S.P1);
+    expect(p1).toMatchObject({ contact: { contact_id: 501, name: 'Pat One' }, last: { id: 13, kind: 'sms', snippet: 'P1 again', line_id: 1 } });
+    expect(su.conversations[0].last).toMatchObject({ id: 14, kind: 'call', line_id: 6 });
+    // the line-to-line text (#7 / #8: parties are firm lines) and the suppressed P3 are not rows
+    expect(su.conversations.some((c) => [S.L1, S.L3, S.P3].includes(c.other_party))).toBe(false);
+    // the attorney reads every line → the same list
+    expect((await get('/api/phone-lines/all/conversations', T.ss())).conversations).toEqual(su.conversations);
+  });
+
+  test('scope is the caller\'s: a line-6 grantee sees line 6 only; nobody gets an empty list without touching phone_event_log', async () => {
+    const S = SPH_SEED(W);
+    W.grant(NOBODY, 6, { can_read: 1 });
+    const g = await get('/api/phone-lines/all/conversations', T.nobody());
+    expect(g.conversations.map((c) => [c.other_party, c.count, c.line_ids])).toEqual([[S.P4, 1, [6]], [S.P2, 1, [6]], [S.P1, 1, [6]]]);
+    const t = await get(`/api/phone-lines/all/conversations/${S.P1}`, T.nobody());
+    expect([t.line_ids, t.messages.map((m) => [m.id, m.line_id])]).toEqual([[6], [[10, 6]]]);
+    expect((await get('/api/phone-lines/all/calls', T.nobody())).calls.map((c) => [c.id, c.line_id])).toEqual([[14, 6], [11, 6], [10, 6]]);
+    W.T.channel_grants = [];
+    const before = W.statements.length;
+    expect(await get('/api/phone-lines/all/conversations', T.nobody())).toMatchObject({ conversations: [], next_cursor: null });
+    expect(await get('/api/phone-lines/all/calls', T.nobody())).toMatchObject({ calls: [], next_cursor: null });
+    expect(await get(`/api/phone-lines/all/conversations/${S.P1}`, T.nobody())).toMatchObject({ messages: [], line_ids: [] });
+    expect(W.statements.slice(before).some((x) => /FROM phone_event_log/.test(x.sql))).toBe(false);
+  });
+
+  test('one number merged across lines: texts and calls from every readable line, oldest first, each with line_id; pages on (processed_at, id)', async () => {
+    const S = SPH_SEED(W);
+    const t = await get(`/api/phone-lines/all/conversations/${S.P1}`, T.su());
+    expect(t).toMatchObject({ all: true, other_party: S.P1, contact: { contact_id: 501, name: 'Pat One' }, line_ids: [1, 6], next_cursor: null });
+    expect(t.messages.map((m) => [m.id, m.kind, m.line_id])).toEqual([[1, 'sms', 1], [2, 'sms', 1], [10, 'call', 6], [13, 'sms', 1]]);
+    expect(t.messages[2]).toMatchObject({ missed: true, duration_s: 30 });
+    const a = await get(`/api/phone-lines/all/conversations/${S.P1}?limit=2`, T.su());
+    expect(a.messages.map((m) => m.id)).toEqual([10, 13]);
+    const b = await get(`/api/phone-lines/all/conversations/${S.P1}?limit=2&cursor=${a.next_cursor}`, T.su());
+    expect([b.messages.map((m) => m.id), b.next_cursor]).toEqual([[1, 2], null]);
+    // a firm line opened from All (e.g. from a call row): every readable line's copy, tagged
+    expect((await get(`/api/phone-lines/all/conversations/${S.L3}`, T.su())).messages.map((m) => [m.id, m.line_id])).toEqual([[7, 1]]);
+    expect((await call('GET', '/api/phone-lines/all/conversations/abc', { t: T.su() })).status).toBe(400);
+  });
+
+  test('calls: every readable line\'s call log merged, newest first, each with line_id (orphans out); pages', async () => {
+    SPH_SEED(W);
+    const c = await get('/api/phone-lines/all/calls', T.su());
+    expect(c.calls.map((x) => [x.id, x.line_id])).toEqual([[15, 1], [14, 6], [11, 6], [10, 6], [3, 1]]);
+    expect(c.calls.find((x) => x.id === 10)).toMatchObject({ missed: true, contact: { contact_id: 501, name: 'Pat One' } });
+    const a = await get('/api/phone-lines/all/calls?limit=2', T.su());
+    const b = await get(`/api/phone-lines/all/calls?limit=2&cursor=${a.next_cursor}`, T.su());
+    const z = await get(`/api/phone-lines/all/calls?limit=2&cursor=${b.next_cursor}`, T.su());
+    expect([a.calls, b.calls, z.calls].map((p) => p.map((x) => x.id))).toEqual([[15, 14], [11, 10], [3]]);
+    expect(z.next_cursor).toBeNull();
+  });
+
+  test('conversations page by the last id; malformed cursors 400; humans only; "all" never reaches the /:id routes', async () => {
+    SPH_SEED(W);
+    const a = await get('/api/phone-lines/all/conversations?limit=2', T.su());
+    const b = await get(`/api/phone-lines/all/conversations?limit=2&cursor=${a.next_cursor}`, T.su());
+    expect([a.conversations.map((c) => c.last_id), a.next_cursor, b.conversations.map((c) => c.last_id), b.next_cursor]).toEqual([[14, 13], '13', [11, 9], null]);
+    for (const u of ['/api/phone-lines/all/conversations?cursor=x', '/api/phone-lines/all/calls?cursor=x', '/api/phone-lines/all/conversations/3135550001?cursor=x']) {
+      expect([u, (await call('GET', u, { t: T.su() })).status]).toEqual([u, 400]);
+    }
+    for (const u of ['/api/phone-lines/all/conversations', '/api/phone-lines/all/conversations/3135550001', '/api/phone-lines/all/calls']) {
+      expect([u, (await call('GET', u, { apiKey: process.env.INTERNAL_API_KEY })).status]).toEqual([u, 403]);
+    }
+    // a line literally numbered "all" does not exist: /:id with a non-integer is still a 400
+    expect((await call('GET', '/api/phone-lines/allx/conversations', { t: T.su() })).status).toBe(400);
   });
 });
 

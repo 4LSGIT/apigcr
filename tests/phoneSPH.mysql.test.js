@@ -190,6 +190,16 @@ maybe('S-PH phone reads on real MySQL', () => {
         expect([id, party, await pages(phone.listMessages, pool, line, party)]).toEqual([id, party, await pages(phone.listMessages, W.db, line, party)]);
       }
     }
+    // All numbers: every readable line at once, per user (SU, attorney, grantee, nobody)
+    for (const user of [6, 1, 22, 9]) {
+      expect([user, 'all-convos', await pages(phone.listAllConversations, pool, user)]).toEqual([user, 'all-convos', await pages(phone.listAllConversations, W.db, user)]);
+      expect([user, 'all-calls', await pages(phone.listAllCalls, pool, user)]).toEqual([user, 'all-calls', await pages(phone.listAllCalls, W.db, user)]);
+      for (const party of [S.P1, S.P2, S.P3, S.P4, '22395', S.L1, S.L3]) {
+        expect([user, party, await pages(phone.listAllMessages, pool, user, party)]).toEqual([user, party, await pages(phone.listAllMessages, W.db, user, party)]);
+      }
+    }
+    const all = await phone.listAllConversations(pool, 6, {});
+    expect(all.conversations.map(c => [c.other_party, c.count, c.line_ids])).toEqual([[S.P4, 1, [6]], [S.P1, 4, [1, 6]], [S.P2, 3, [1, 6]], ['22395', 1, [1]]]);
     // spot-check the engine's own answers (the world could be wrong in step)
     const c1 = await phone.listConversations(pool, { id: 1, phone_number: S.L1 }, {});
     expect(c1.conversations.map(c => [c.other_party, c.count])).toEqual([[S.P1, 3], ['22395', 1], [S.L3, 1], [S.P2, 2]]);

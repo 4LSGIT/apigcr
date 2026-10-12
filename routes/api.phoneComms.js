@@ -7,6 +7,13 @@
  *   GET    /api/phone-lines/readable                 lines the caller can READ (SU: all;
  *                                                    attorney: all, send/manage from grants;
  *                                                    others: can_read grants) — the pane's rail
+ *   GET    /api/phone-lines/all/conversations        every READABLE line at once ("All numbers"):
+ *                                                    one row per OUTSIDE number, newest first,
+ *                                                    line_ids + last.line_id ?cursor=&limit=
+ *   GET    /api/phone-lines/all/conversations/:party one number across the readable lines,
+ *                                                    merged; items carry line_id ?cursor=&limit=
+ *   GET    /api/phone-lines/all/calls                every readable line's call log, merged;
+ *                                                    rows carry line_id ?cursor=&limit=
  *   GET    /api/phone-lines/first-seen?number=       firm-local day of the earliest text/call with
  *                                                    the number on any line the caller can READ
  *                                                    (the Add-to-contact start-date default)
@@ -217,6 +224,34 @@ router.get('/api/phone-lines/first-seen', jwtOrApiKey, requireJwt, async (req, r
     res.json({ status: 'success', ...(await phone.firstSeen(req.db, req.auth.userId, (req.query || {}).number)) });
   } catch (err) {
     sendError(res, 'GET /api/phone-lines/first-seen', err);
+  }
+});
+
+// ─── All numbers (GET /api/phone-lines/all/…) ───
+// REGISTERED BEFORE every /api/phone-lines/:id/… route below: Express takes
+// the first match, and as :id "all" would 400 in lineIdOf. Scope = the
+// caller's readable lines (resolved inside the service, not resolveRead).
+router.get('/api/phone-lines/all/conversations', jwtOrApiKey, requireJwt, async (req, res) => {
+  try {
+    res.json({ status: 'success', all: true, ...(await phone.listAllConversations(req.db, req.auth.userId, req.query || {})) });
+  } catch (err) {
+    sendError(res, 'GET /api/phone-lines/all/conversations', err);
+  }
+});
+
+router.get('/api/phone-lines/all/conversations/:party', jwtOrApiKey, requireJwt, async (req, res) => {
+  try {
+    res.json({ status: 'success', all: true, ...(await phone.listAllMessages(req.db, req.auth.userId, req.params.party, req.query || {})) });
+  } catch (err) {
+    sendError(res, 'GET /api/phone-lines/all/conversations/:party', err);
+  }
+});
+
+router.get('/api/phone-lines/all/calls', jwtOrApiKey, requireJwt, async (req, res) => {
+  try {
+    res.json({ status: 'success', all: true, ...(await phone.listAllCalls(req.db, req.auth.userId, req.query || {})) });
+  } catch (err) {
+    sendError(res, 'GET /api/phone-lines/all/calls', err);
   }
 });
 

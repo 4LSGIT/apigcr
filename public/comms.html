@@ -384,6 +384,17 @@
   .phone { flex: 1 1 auto; min-height: 0; display: grid; grid-template-columns: minmax(300px, 40%) 1fr; }
   .phone .vitem .nm .sub { display: block; font-size: 11px; font-weight: 400; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; }
   .phone .vitem.on .nm .sub { color: var(--accent-on-soft); }
+  /* All numbers: the rail's first item, then each row / bubble names its line */
+  .phone .vitem.all { border-bottom: 1px solid var(--border); }
+  .phone .ln-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 3px; min-width: 0; }
+  .phone .ln-tag { font-size: 10.5px; line-height: 16px; padding: 0 6px; border-radius: 9px; border: 1px solid var(--border); background: var(--surface-2); color: var(--text-2); white-space: nowrap; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+  .ph-from-pick { display: inline-flex; align-items: center; gap: 6px; min-width: 0; flex: 0 1 auto; font-size: 12px; color: var(--text-muted); }
+  .ph-from-pick select, .modal select#ph-new-from-sel {
+    min-width: 0; max-width: 100%; background: var(--surface-2); color: var(--text); border: 1px solid var(--border);
+    border-radius: 4px; padding: 4px 6px; font-size: 12px; font-family: inherit;
+  }
+  .modal select#ph-new-from-sel { width: 100%; padding: 7px 9px; font-size: 13px; }
+  #ph-new-from-row { margin-bottom: 10px; }
   @media (min-width: 1000px) {
     .phone { grid-template-columns: 210px minmax(300px, 36%) 1fr; }
     .phone .rail { display: flex; }
@@ -552,6 +563,7 @@
         <textarea id="ph-text" rows="3" maxlength="1000" placeholder="Text message" aria-label="Text message"></textarea>
         <div class="cf-actions">
           <span class="yc-hint" id="ph-from" style="margin-top:0"></span>
+          <label class="ph-from-pick" id="ph-from-pick" hidden>From <select id="ph-from-sel" aria-label="Send from"></select></label>
           <span class="cf-count" id="ph-count">0/1000</span>
           <button class="btn primary" type="button" id="ph-send"><i class="fa-solid fa-paper-plane" aria-hidden="true"></i> Send</button>
         </div>
@@ -566,6 +578,10 @@
   <div class="modal" role="dialog" aria-modal="true" aria-labelledby="ph-new-title">
     <h3 id="ph-new-title">New text</h3>
     <div class="modal-err" id="ph-new-msg" role="alert"></div>
+    <div id="ph-new-from-row" hidden>
+      <label class="yc-flabel" for="ph-new-from-sel">From</label>
+      <select id="ph-new-from-sel"></select>
+    </div>
     <label class="yc-flabel" for="ph-new-to">To</label>
     <input type="text" id="ph-new-to" inputmode="tel" maxlength="20" placeholder="(248) 555-1234" autocomplete="off">
     <label class="yc-flabel" for="ph-new-text" style="margin-top:10px">Message</label>
@@ -2572,7 +2588,7 @@ const PH_MAX = 1000; // the server's SMS_MAX_CHARS
 const ph = {
   booted: false,
   lines: [],          // GET /api/phone-lines/readable
-  lineId: null,
+  lineId: null,       // a line id, or PH_ALL ("All numbers": every readable line at once)
   view: 'msgs',       // 'msgs' | 'calls'
   rows: [],           // conversations or calls of the line + view
   next: null,
@@ -2589,11 +2605,22 @@ function fmtPhone(n) {
   const d = String(n == null ? '' : n);
   return /^\d{10}$/.test(d) ? `(${d.slice(0, 3)}) ${d.slice(3, 6)}-${d.slice(6)}` : (d || '(unknown number)');
 }
-const phLine = () => ph.lines.find((l) => l.id === ph.lineId) || null;
+// "All numbers" (Fred 2026-10-12, option B): every readable line at once —
+// one row per OUTSIDE number, its thread merged across lines with each item
+// tagged by its line, the Calls view merged; sending picks a From line.
+const PH_ALL = 'all';
+const phIsAll = () => ph.lineId === PH_ALL;
+const phLineById = (id) => ph.lines.find((l) => l.id === id) || null;
+const phLine = () => (phIsAll() ? null : phLineById(ph.lineId));
+/** The URL segment of the current scope: 'all', a line id, or null (nothing readable). */
+const phScope = () => (phIsAll() ? (ph.lines.length ? PH_ALL : null) : (phLine() ? phLine().id : null));
+const phLineShort = (id) => { const l = phLineById(id); return l ? (l.display_name || fmtPhone(l.phone_number)) : `line ${id}`; };
+const phLineTags = (ids) => h('div', { className: 'ln-tags' }, ...(ids || []).map((id) => h('span', { className: 'ln-tag', title: (phLineById(id) && fmtPhone(phLineById(id).phone_number)) || '' }, phLineShort(id))));
 const phLineName = (l) => l.display_name || fmtPhone(l.phone_number);
 const phLineFrom = (l) => (l.display_name ? `${l.display_name} · ${fmtPhone(l.phone_number)}` : fmtPhone(l.phone_number));
 const phWho = (party, contact) => (contact && contact.name) ? contact.name : fmtPhone(party);
 const phCanSend = (l) => !!(l && l.can_send && l.active);
+const phSendable = () => ph.lines.filter(phCanSend);
 const phTextable = (party) => /^\d{10}$/.test(String(party || ''));
 // A number a conversation can be opened for (the server's PARTY_RE): texted
 // or not — a short code or an odd number still has its calls and texts.
@@ -2622,7 +2649,12 @@ function bubbleTime(iso) {
     : fmt(d, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
 }
 function phRemember(id) { try { localStorage.setItem(PH_LINE_KEY, String(id)); } catch (_) { /* private mode */ } }
-function phRemembered() { try { return Number(localStorage.getItem(PH_LINE_KEY)) || null; } catch (_) { return null; } }
+function phRemembered() {
+  try {
+    const v = localStorage.getItem(PH_LINE_KEY);
+    return v === PH_ALL ? PH_ALL : (Number(v) || null);
+  } catch (_) { return null; }
+}
 
 /** Email | Phone. The panes stay in the DOM; only one shows. */
 function showTab(which) {
@@ -2651,8 +2683,12 @@ async function phoneBoot() {
     return;
   }
   const want = phRemembered();
-  const first = ph.lines.find((l) => l.id === want) || ph.lines.find((l) => l.active) || ph.lines[0] || null;
-  ph.lineId = first ? first.id : null;
+  if (want === PH_ALL && ph.lines.length > 1) {
+    ph.lineId = PH_ALL;
+  } else {
+    const first = ph.lines.find((l) => l.id === want) || ph.lines.find((l) => l.active) || ph.lines[0] || null;
+    ph.lineId = first ? first.id : null;
+  }
   renderPhoneLines();
   phoneLoad();
 }
@@ -2662,7 +2698,13 @@ function phLineLabelText(l) {
 }
 
 function renderPhoneLines() {
-  E('ph-rail-lines').replaceChildren(...ph.lines.map((l) => {
+  // "All numbers" leads the rail when there is more than one line to merge.
+  const allOn = phIsAll();
+  const all = ph.lines.length > 1 ? h('button', {
+    className: 'vitem all' + (allOn ? ' on' : ''), type: 'button', 'aria-current': allOn ? 'true' : null, dataset: { line: PH_ALL },
+    title: 'Every line you can read at once — one row per number', onclick: () => selectLine(PH_ALL),
+  }, h('span', { className: 'nm' }, 'All numbers', h('span', { className: 'sub' }, `${ph.lines.length} lines`))) : null;
+  E('ph-rail-lines').replaceChildren(...[all].filter(Boolean), ...ph.lines.map((l) => {
     const on = l.id === ph.lineId;
     return h('button', {
       className: 'vitem' + (on ? ' on' : ''), type: 'button', 'aria-current': on ? 'true' : null, dataset: { line: String(l.id) },
@@ -2675,10 +2717,11 @@ function renderPhoneLines() {
       h('span', { className: 'acc', title: 'Your access: R read · S send · M manage' }, accessLabel(l)));
   }));
   const sel = E('ph-line-sel');
-  sel.replaceChildren(...ph.lines.map((l) => h('option', { value: String(l.id) }, phLineLabelText(l))));
+  sel.replaceChildren(...(all ? [h('option', { value: PH_ALL }, 'All numbers')] : []),
+    ...ph.lines.map((l) => h('option', { value: String(l.id) }, phLineLabelText(l))));
   if (ph.lineId != null) sel.value = String(ph.lineId);
   sel.hidden = !ph.lines.length;
-  E('ph-new').hidden = !phCanSend(phLine());
+  E('ph-new').hidden = allOn ? !phSendable().length : !phCanSend(phLine());
   E('ph-v-msgs').disabled = E('ph-v-calls').disabled = E('ph-refresh').disabled = !ph.lines.length;
 }
 
@@ -2700,10 +2743,10 @@ function setPhoneView(view) {
 }
 
 async function phoneLoad({ append = false, silent = false } = {}) {
-  const line = phLine();
+  const scope = phScope();
   const seq = ++ph.seq;
   showError(E('ph-error'), '');
-  if (!line) {
+  if (scope == null) {
     ph.rows = [];
     ph.next = null;
     E('ph-status').textContent = '';
@@ -2715,7 +2758,7 @@ async function phoneLoad({ append = false, silent = false } = {}) {
   const path = ph.view === 'calls' ? 'calls' : 'conversations';
   try {
     const params = append && ph.next ? { cursor: ph.next } : null;
-    const data = await api(`/api/phone-lines/${line.id}/${path}`, 'GET', params);
+    const data = await api(`/api/phone-lines/${scope}/${path}`, 'GET', params);
     if (seq !== ph.seq) return;
     const rows = Array.isArray(data && (ph.view === 'calls' ? data.calls : data.conversations)) ? (ph.view === 'calls' ? data.calls : data.conversations) : [];
     ph.rows = append ? ph.rows.concat(rows) : rows;
@@ -2741,6 +2784,7 @@ function convoRow(c) {
       h('span', { className: 'date' }, listDate(last.at))),
     c.contact ? h('div', { className: 'r2' }, h('span', { className: 'kind' }, fmtPhone(c.other_party))) : null,
     convoSnippet(last, mine),
+    phIsAll() ? phLineTags(c.line_ids) : null,
   );
   return li;
 }
@@ -2755,10 +2799,11 @@ function convoSnippet(last, mine) {
 }
 
 // A text with no words is a picture / file message (MMS): live 2026-10-12 every
-// blank one carries an attachment in its raw webhook, which the phone ingest
-// does not keep yet — say so instead of drawing an empty bubble.
+// blank one has an attachment (its refs sit in the log row's log_data, not in
+// phone_event_log; nothing displays them yet — ref/plans.md) — say so instead
+// of drawing an empty bubble.
 const phBlank = (body) => !String(body == null ? '' : body).trim();
-const phAttachmentNote = () => h('span', { className: 'ph-att', title: 'A picture or file came with this text. The phone system has it; YisraCase does not store attachments yet.' },
+const phAttachmentNote = () => h('span', { className: 'ph-att', title: 'A picture or file came with this text. The phone system has it; YisraCase does not show attachments yet.' },
   icon('fa-paperclip'), 'Attachment — not shown here yet');
 
 function callRow(c) {
@@ -2778,7 +2823,8 @@ function callRow(c) {
     h('div', { className: 'r2' },
       h('span', { className: 'dir', 'aria-hidden': 'true' }, icon(dirIcon)),
       h('span', { className: 'kind' }, what),
-      c.contact ? h('span', { className: 'dir' }, fmtPhone(c.other_party)) : null));
+      c.contact ? h('span', { className: 'dir' }, fmtPhone(c.other_party)) : null),
+    phIsAll() ? phLineTags([c.line_id]) : null);
 }
 
 function renderPhoneList() {
@@ -2787,7 +2833,8 @@ function renderPhoneList() {
   const noun = ph.view === 'calls' ? 'call' : 'conversation';
   E('ph-status').textContent = n ? `${n}${ph.next ? '+' : ''} ${noun}${n === 1 ? '' : 's'}` : '';
   if (!n) {
-    list.replaceChildren(h('li', { className: 'empty' }, ph.view === 'calls' ? 'No calls on this line.' : 'No texts or calls on this line.'));
+    const where = phIsAll() ? 'your lines' : 'this line';
+    list.replaceChildren(h('li', { className: 'empty' }, ph.view === 'calls' ? `No calls on ${where}.` : `No texts or calls on ${where}.`));
     return;
   }
   const items = ph.rows.map(ph.view === 'calls' ? callRow : convoRow);
@@ -2801,15 +2848,16 @@ function renderPhoneList() {
 }
 
 async function openConversation(party, contact, { silent = false, older = false } = {}) {
-  const line = phLine();
-  if (!line) return;
+  const scope = phScope();
+  if (scope == null) return;
   const same = ph.party === party;
   ph.party = party;
   for (const li of E('ph-list').querySelectorAll('.msg[data-party]')) li.classList.toggle('selected', li.dataset.party === party);
   E('phone').classList.add('show-thread');
   E('ph-head').hidden = false;
-  paintHead(party, contact);
-  paintCompose(line, party);
+  const known = same && ph.thread && ph.thread.party === party ? ph.thread : null;
+  paintHead(party, contact, known && known.line_ids);
+  paintCompose(party);
   const seq = ++ph.tseq;
   if (!same && !silent) {
     ph.thread = null;
@@ -2817,7 +2865,7 @@ async function openConversation(party, contact, { silent = false, older = false 
   }
   try {
     const params = older && ph.thread && ph.thread.next ? { cursor: ph.thread.next } : null;
-    const data = await api(`/api/phone-lines/${line.id}/conversations/${encodeURIComponent(party)}`, 'GET', params);
+    const data = await api(`/api/phone-lines/${scope}/conversations/${encodeURIComponent(party)}`, 'GET', params);
     if (seq !== ph.tseq || ph.party !== party) return;
     const msgs = Array.isArray(data && data.messages) ? data.messages : [];
     const prev = same && ph.thread && ph.thread.party === party ? ph.thread : null;
@@ -2833,8 +2881,9 @@ async function openConversation(party, contact, { silent = false, older = false 
       messages = [...byId.values()].sort((a, b) => a.id - b.id);
       next = prev.next;
     }
-    ph.thread = { party, contact: (data && data.contact) || contact || null, messages, next };
-    paintHead(party, ph.thread.contact);
+    ph.thread = { party, contact: (data && data.contact) || contact || null, messages, next, line_ids: (data && data.line_ids) || null };
+    paintHead(party, ph.thread.contact, ph.thread.line_ids);
+    paintCompose(party);
     renderPhoneThread({ keepScroll: older, quiet: silent && !!prev });
   } catch (err) {
     if (seq !== ph.tseq) return;
@@ -2842,10 +2891,12 @@ async function openConversation(party, contact, { silent = false, older = false 
   }
 }
 
-/** Title (name over number, or the number alone) + Open contact / Add to contact. */
-function paintHead(party, contact) {
+/** Title (name over number, or the number alone; All numbers adds the lines) + Open contact / Add to contact. */
+function paintHead(party, contact, lineIds) {
   const named = !!(contact && contact.name);
-  E('ph-title').replaceChildren(...[phWho(party, contact), named ? h('span', { className: 'who-sub' }, fmtPhone(party)) : null].filter(Boolean));
+  const lines = phIsAll() && lineIds && lineIds.length ? lineIds.map(phLineShort).join(', ') : '';
+  const sub = [named ? fmtPhone(party) : '', lines].filter(Boolean).join(' · ');
+  E('ph-title').replaceChildren(...[phWho(party, contact), sub ? h('span', { className: 'who-sub' }, sub) : null].filter(Boolean));
   const known = !!(contact && contact.contact_id);
   const b = E('ph-contact');
   b.hidden = !known;
@@ -2882,14 +2933,20 @@ async function phAddContact(party) {
   }, { earliest });
 }
 
-function paintCompose(line, party) {
-  const can = phCanSend(line) && phTextable(party);
+function paintCompose(party) {
+  const all = phIsAll();
+  const line = phLine();
+  const can = phTextable(party) && (all ? phSendable().length > 0 : phCanSend(line));
   E('ph-compose').hidden = !can;
-  E('ph-from').textContent = can ? `From ${phLineFrom(line)}` : '';
+  E('ph-from').hidden = all;
+  E('ph-from').textContent = can && !all ? `From ${phLineFrom(line)}` : '';
+  E('ph-from-pick').hidden = !(can && all);
+  if (can && all) paintFromPicker(party);
   const note = E('ph-nosend');
   let why = '';
   if (!can && party) {
     if (!phTextable(party)) why = 'This number cannot be texted back from here (a short code or an unusual number).';
+    else if (all) why = 'You cannot send from any of your lines. Ask whoever manages one for send access.';
     else if (line && !line.active) why = 'This line is inactive — it cannot send.';
     else if (line && !line.can_send) why = 'You can read this line but not send from it. Ask whoever manages it for send access.';
   }
@@ -2898,8 +2955,35 @@ function paintCompose(line, party) {
   if (can) phCount();
 }
 
-function pendingFor(lineId, party) {
-  return ph.pending.filter((p) => p.lineId === lineId && p.party === party);
+/**
+ * All numbers: the compose box's From line. Defaults to the line of the
+ * newest TEXT with this number (else its newest event's line) when you may
+ * send from it, else your first sendable line; your own pick sticks for the
+ * open conversation (a quiet re-read does not reset it).
+ */
+function paintFromPicker(party) {
+  const sel = E('ph-from-sel');
+  const sendable = phSendable();
+  const keep = sel.dataset.party === party && sel.dataset.picked === '1' ? sel.value : null;
+  sel.replaceChildren(...sendable.map((l) => h('option', { value: String(l.id) }, phLineFrom(l))));
+  if (keep && sendable.some((l) => String(l.id) === keep)) { sel.value = keep; return; }
+  const items = ph.thread && ph.thread.party === party ? [...ph.thread.messages] : [];
+  const when = (m) => { const x = Date.parse(m.at); return Number.isNaN(x) ? 0 : x; };
+  items.sort((a, b) => when(b) - when(a) || b.id - a.id);
+  const ok = (id) => sendable.some((l) => l.id === id);
+  const text = items.find((m) => m.kind !== 'call' && ok(m.line_id));
+  const any = items.find((m) => ok(m.line_id));
+  sel.value = String((text || any || { line_id: sendable[0].id }).line_id);
+  sel.dataset.party = party;
+  sel.dataset.picked = '0';
+}
+
+/** The line a send from the open conversation goes from. */
+const phSendLine = () => (phIsAll() ? phLineById(Number(E('ph-from-sel').value)) : phLine());
+
+/** Texts sent from here to `party` not echoed yet — on this line, or on any line in All numbers. */
+function pendingFor(party) {
+  return ph.pending.filter((p) => p.party === party && (phIsAll() || p.lineId === ph.lineId));
 }
 
 function renderPhoneThread({ keepScroll = false, quiet = false } = {}) {
@@ -2912,7 +2996,7 @@ function renderPhoneThread({ keepScroll = false, quiet = false } = {}) {
   // A text sent from here shows as pending until its echo arrives: the same
   // text, outgoing, no earlier than a minute before it was sent.
   const echoed = (p) => t.messages.some((m) => m.direction === 'outgoing' && m.body === p.body && Date.parse(m.at) >= p.at - 60000);
-  ph.pending = ph.pending.filter((p) => !(p.lineId === ph.lineId && p.party === t.party && echoed(p)));
+  ph.pending = ph.pending.filter((p) => !(pendingFor(t.party).includes(p) && echoed(p)));
   const kids = [];
   if (t.next) {
     kids.push(h('div', { className: 'more' }, h('button', {
@@ -2920,7 +3004,7 @@ function renderPhoneThread({ keepScroll = false, quiet = false } = {}) {
       onclick: (e) => { e.target.disabled = true; openConversation(t.party, t.contact, { older: true }); },
     }, 'Load earlier')));
   }
-  if (!t.messages.length && !pendingFor(ph.lineId, t.party).length) {
+  if (!t.messages.length && !pendingFor(t.party).length) {
     kids.push(h('div', { className: 'empty' }, 'No texts or calls with this number yet.'));
   }
   // Texts and calls, by when they HAPPENED (`at`): a call is recorded when it
@@ -2928,11 +3012,11 @@ function renderPhoneThread({ keepScroll = false, quiet = false } = {}) {
   const when = (m) => { const x = Date.parse(m.at); return Number.isNaN(x) ? 0 : x; };
   for (const m of [...t.messages].sort((a, b) => when(a) - when(b) || a.id - b.id)) {
     kids.push(m.kind === 'call' ? callBubble(m) : h('div', { className: `bub ${m.direction === 'outgoing' ? 'out' : 'in'}`, dataset: { id: String(m.id) } },
-      phBlank(m.body) ? phAttachmentNote() : m.body, h('span', { className: 'bt' }, bubbleTime(m.at))));
+      phBlank(m.body) ? phAttachmentNote() : m.body, h('span', { className: 'bt' }, phBubbleTime(m))));
   }
-  for (const p of pendingFor(ph.lineId, t.party)) {
+  for (const p of pendingFor(t.party)) {
     kids.push(h('div', { className: 'bub out pending' }, p.body,
-      h('span', { className: 'bt' }, 'Sent — waiting for the phone system to confirm')));
+      h('span', { className: 'bt' }, `Sent${phIsAll() ? ` via ${phLineShort(p.lineId)}` : ''} — waiting for the phone system to confirm`)));
   }
   body.replaceChildren(h('div', { className: 'ph-thread' }, ...kids));
   // Earlier page: hold the reader's place. Quiet re-read: stay put unless the
@@ -2942,6 +3026,9 @@ function renderPhoneThread({ keepScroll = false, quiet = false } = {}) {
   else body.scrollTop = body.scrollHeight;
 }
 
+/** A bubble's time line; in All numbers, "· via <line>". */
+const phBubbleTime = (m) => `${bubbleTime(m.at)}${phIsAll() && m.line_id != null ? ` · via ${phLineShort(m.line_id)}` : ''}`;
+
 /** A call in the conversation: one small box — what happened, when. */
 function callBubble(m) {
   const quiet = m.missed || m.unanswered;
@@ -2950,7 +3037,7 @@ function callBubble(m) {
     dataset: { id: String(m.id), kind: 'call' },
   },
     h('span', { className: 'ct' }, icon(quiet ? 'fa-phone-slash' : 'fa-phone'), phCallLabel(m)),
-    h('span', { className: 'bt' }, bubbleTime(m.at)));
+    h('span', { className: 'bt' }, phBubbleTime(m)));
 }
 
 function closePhoneThread() {
@@ -2972,11 +3059,11 @@ function phCount() {
   c.classList.toggle('over', n > PH_MAX);
 }
 
-/** Re-read the open conversation (and the list) a few times: the copy arrives by webhook. */
-function phWatchEcho(lineId, party) {
+/** Re-read the open conversation (and the list) a few times: the copy arrives by webhook. `scope` = the view sent from (a line id or PH_ALL). */
+function phWatchEcho(scope, party) {
   for (const t of ph.timers) clearTimeout(t);
   ph.timers = PH_RECHECK_MS.map((ms) => setTimeout(() => {
-    if (ph.lineId !== lineId) return;
+    if (ph.lineId !== scope) return;
     if (ph.party === party) openConversation(party, ph.thread && ph.thread.contact, { silent: true });
     if (ph.view === 'msgs') phoneLoad({ silent: true });
   }, ms));
@@ -2987,10 +3074,10 @@ async function phSendTo(line, party, text) {
 }
 
 async function phoneSend() {
-  const line = phLine();
+  const line = phSendLine();
   const party = ph.party;
   const text = E('ph-text').value.trim();
-  if (!line || !party || !text || ph.sending) return;
+  if (!phCanSend(line) || !party || !text || ph.sending) return;
   if (text.length > PH_MAX) { toast(`That is ${text.length} characters — the limit is ${PH_MAX}`); return; }
   ph.sending = true;
   E('ph-send').disabled = true;
@@ -3001,7 +3088,7 @@ async function phoneSend() {
     phCount();
     renderPhoneThread();
     toast('Text sent');
-    phWatchEcho(line.id, party);
+    phWatchEcho(ph.lineId, party);
   } catch (err) {
     toast(`Not sent: ${err.message}`, 5000);
   } finally {
@@ -3010,12 +3097,18 @@ async function phoneSend() {
   }
 }
 
+/** New text's From line: the picker in All numbers, else the open line. */
+const phNewTextLine = () => (phIsAll() ? phLineById(Number(E('ph-new-from-sel').value)) : phLine());
+
 function openNewText() {
-  const line = phLine();
-  if (!phCanSend(line)) return;
+  const all = phIsAll();
+  const sendable = phSendable();
+  if (all ? !sendable.length : !phCanSend(phLine())) return;
   E('ph-new-msg').classList.remove('show');
   E('ph-new-msg').textContent = '';
-  E('ph-new-from').textContent = `From ${phLineFrom(line)}. Up to ${PH_MAX} characters.`;
+  E('ph-new-from-row').hidden = !all;
+  if (all) E('ph-new-from-sel').replaceChildren(...sendable.map((l) => h('option', { value: String(l.id) }, phLineFrom(l))));
+  E('ph-new-from').textContent = all ? `Up to ${PH_MAX} characters.` : `From ${phLineFrom(phLine())}. Up to ${PH_MAX} characters.`;
   E('ph-new-backdrop').classList.add('open');
   E('ph-new-to').focus();
 }
@@ -3027,7 +3120,7 @@ function newTextError(msg) {
 }
 
 async function sendNewText() {
-  const line = phLine();
+  const line = phNewTextLine();
   if (!phCanSend(line) || ph.sending) return;
   const digits = E('ph-new-to').value.replace(/[\s().+-]/g, '');
   const party = /^1\d{10}$/.test(digits) ? digits.slice(1) : digits;
@@ -3047,7 +3140,7 @@ async function sendNewText() {
     toast('Text sent');
     if (ph.view !== 'msgs') setPhoneView('msgs');
     openConversation(party, null);
-    phWatchEcho(line.id, party);
+    phWatchEcho(ph.lineId, party);
   } catch (err) {
     newTextError(`Not sent: ${err.message}`);
   } finally {
@@ -3065,7 +3158,8 @@ function phoneRefresh() {
 function wirePhone() {
   E('tab-email').addEventListener('click', () => showTab('email'));
   E('tab-phone').addEventListener('click', () => showTab('phone'));
-  E('ph-line-sel').addEventListener('change', () => selectLine(Number(E('ph-line-sel').value)));
+  E('ph-line-sel').addEventListener('change', () => { const v = E('ph-line-sel').value; selectLine(v === PH_ALL ? PH_ALL : Number(v)); });
+  E('ph-from-sel').addEventListener('change', () => { E('ph-from-sel').dataset.picked = '1'; });
   E('ph-v-msgs').addEventListener('click', () => setPhoneView('msgs'));
   E('ph-v-calls').addEventListener('click', () => setPhoneView('calls'));
   E('ph-refresh').addEventListener('click', () => { phoneLoad(); if (ph.party) openConversation(ph.party, ph.thread && ph.thread.contact, { silent: true }); });
