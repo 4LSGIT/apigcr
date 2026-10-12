@@ -69,6 +69,8 @@
   .tab .soon { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--text-muted); }
   .tab .tab-n { font-size: 11px; font-weight: 700; color: var(--accent-2); }
   .tab .tab-n:empty { display: none; }
+  /* Team tab: reserved — a "coming soon" placeholder until chat lands */
+  .team { flex: 1 1 auto; min-height: 0; overflow: auto; }
 
   /* ── Email tab: list | thread ─────────────────────────────── */
   .email { flex: 1 1 auto; min-height: 0; display: grid; grid-template-columns: minmax(300px, 40%) 1fr; }
@@ -467,6 +469,9 @@
     <button class="tab on" type="button" role="tab" aria-selected="true" aria-controls="email" id="tab-email"><i class="fa-solid fa-envelope"></i> Email <span class="tab-n" id="tab-email-n" title="Unread in your inboxes"></span></button>
     <button class="tab" type="button" role="tab" aria-selected="false" aria-controls="phone" id="tab-phone"
             title="Texts and calls on the firm's phone lines you have access to"><i class="fa-solid fa-phone"></i> Phone</button>
+    <!-- Reserved: key "team" (id tab-team, badge tab-team-n) is what deep links / &tab= will use — keep it stable. -->
+    <button class="tab" type="button" role="tab" aria-selected="false" aria-controls="team" id="tab-team"
+            title="Team chat — coming soon"><i class="fa-solid fa-comments"></i> Team <span class="tab-n" id="tab-team-n" title="Unread team messages"></span></button>
   </div>
 
   <div class="email" id="email" role="tabpanel" aria-labelledby="tab-email">
@@ -570,6 +575,11 @@
       </div>
       <div class="ph-note" id="ph-nosend" hidden></div>
     </section>
+  </div>
+
+  <!-- ── Team tab: reserved placeholder (no backend yet) ── -->
+  <div class="team" id="team" role="tabpanel" aria-labelledby="tab-team" hidden>
+    <div class="empty">Team chat is coming soon.</div>
   </div>
 </div>
 
@@ -2656,16 +2666,15 @@ function phRemembered() {
   } catch (_) { return null; }
 }
 
-/** Email | Phone. The panes stay in the DOM; only one shows. */
+/** Email | Phone | Team. The panes stay in the DOM; only one shows. */
 function showTab(which) {
-  const phone = which === 'phone';
-  E('tab-email').classList.toggle('on', !phone);
-  E('tab-phone').classList.toggle('on', phone);
-  E('tab-email').setAttribute('aria-selected', phone ? 'false' : 'true');
-  E('tab-phone').setAttribute('aria-selected', phone ? 'true' : 'false');
-  E('email').hidden = phone;
-  E('phone').hidden = !phone;
-  if (phone && !ph.booted) phoneBoot();
+  for (const k of ['email', 'phone', 'team']) {
+    const on = k === which;
+    E('tab-' + k).classList.toggle('on', on);
+    E('tab-' + k).setAttribute('aria-selected', on ? 'true' : 'false');
+    E(k).hidden = !on;
+  }
+  if (which === 'phone' && !ph.booted) phoneBoot();
 }
 const phoneShown = () => !E('phone').hidden;
 
@@ -3158,6 +3167,7 @@ function phoneRefresh() {
 function wirePhone() {
   E('tab-email').addEventListener('click', () => showTab('email'));
   E('tab-phone').addEventListener('click', () => showTab('phone'));
+  E('tab-team').addEventListener('click', () => showTab('team'));
   E('ph-line-sel').addEventListener('change', () => { const v = E('ph-line-sel').value; selectLine(v === PH_ALL ? PH_ALL : Number(v)); });
   E('ph-from-sel').addEventListener('change', () => { E('ph-from-sel').dataset.picked = '1'; });
   E('ph-v-msgs').addEventListener('click', () => setPhoneView('msgs'));

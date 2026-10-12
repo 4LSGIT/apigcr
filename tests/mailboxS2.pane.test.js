@@ -167,6 +167,22 @@ describe('comms hub pane', () => {
     const phone = doc.getElementById('tab-phone');
     expect(phone.disabled).toBe(false);
     expect(doc.getElementById('phone').hidden).toBe(true);
+    // Team: reserved placeholder after Phone, empty badge slot; the key is load-bearing for deep links
+    const team = doc.getElementById('tab-team');
+    expect(team.previousElementSibling).toBe(phone);
+    expect(team.querySelector('.fa-comments')).not.toBeNull();
+    expect(doc.getElementById('tab-team-n').textContent).toBe('');
+    expect(doc.getElementById('team').hidden).toBe(true);
+    team.click();
+    expect(team.getAttribute('aria-selected')).toBe('true');
+    expect(doc.getElementById('team').hidden).toBe(false);
+    expect(doc.getElementById('team').textContent).toMatch(/coming soon/i);
+    expect(doc.getElementById('team').closest('.hub')).not.toBeNull();
+    expect(doc.getElementById('email').hidden).toBe(true);
+    expect(doc.getElementById('phone').hidden).toBe(true);
+    doc.getElementById('tab-email').click();
+    expect(doc.getElementById('team').hidden).toBe(true);
+    expect(doc.getElementById('email').hidden).toBe(false);
     expect(calls.map((c) => c.url)).toEqual(['/api/mail/mailboxes', '/api/mail/views', '/api/mail/messages']);
     expect(doc.querySelectorAll('#msg-list .msg')).toHaveLength(2);
     expect(doc.querySelector('#msg-list .msg').classList.contains('unread')).toBe(true);
