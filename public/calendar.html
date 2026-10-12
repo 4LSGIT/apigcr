@@ -7,8 +7,10 @@
   <!-- SweetAlert2 BEFORE scripts.js — scripts.js touches Swal at load time
        (window.Toast = Swal.mixin). Same load order as contact/case. -->
   <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
-  <!-- Shared dialogs (newApptDialog + pickers). Runs IN this iframe so its
-       Swal stacks here and never replaces the shell modal hosting us. -->
+  <!-- Shared dialogs (newApptDialog / newEventDialog + pickers). Run IN this
+       iframe so their Swal stacks here, never in the shell — which hosts us
+       either in the Calendar tab's Grid frame (U9b-P1) or, via the Appts
+       tab's legacy Calendar button, in a shell Swal this must not replace. -->
   <!-- Diagnostics ring buffer. Loaded BEFORE scripts.js so it also catches
        errors thrown by scripts.js itself. See public/js/diag.js. -->
   <script src="/js/diag.js"></script>
@@ -21,9 +23,18 @@
   <link rel="stylesheet" href="/theme.css">
   <script src="/themeSync.js"></script>
   <style>
+    /* Fill whatever viewport hosts us — the Calendar tab's #calxGridFrame
+       (sized to the window by index.html's calxGridSize) or the legacy 600px
+       Swal iframe. Flex column: the bar takes its height, #calendar gets the
+       rest, and FullCalendar (height:'100%') scrolls inside it. */
+    html { height: 100%; }
     body {
       margin: 0;
       padding: 8px 10px;
+      box-sizing: border-box;
+      height: 100%;
+      display: flex;
+      flex-direction: column;
       font-family: var(--ui);
       background: var(--page-bg);
       font-size: 14px;
@@ -38,8 +49,24 @@
       margin-bottom: 6px;
       font-size: 0.9em;
     }
+    #calBar { flex: 0 0 auto; }
     #calBar label { cursor: pointer; user-select: none; white-space: nowrap; }
     #calBar input[type="checkbox"] { vertical-align: -2px; margin-right: 2px; }
+
+    /* Kind chips — same look and semantics as the calx List's .calx-chip set
+       (index.html #calxKinds): multi-select, "All" resets, emptying the set
+       re-lights All. Restated here because this pane cannot reach the shell's
+       id-scoped rules. */
+    .cal-chips { display: inline-flex; flex-wrap: wrap; gap: 4px; }
+    .cal-chip {
+      padding: 2px 10px; border-radius: 14px; border: 1px solid var(--border-strong);
+      background: var(--surface); color: var(--text-2); cursor: pointer;
+      font-size: 0.92em; font-weight: 500; user-select: none; white-space: nowrap;
+    }
+    .cal-chip:hover { background: var(--hover); }
+    .cal-chip.on {
+      background: var(--accent); border-color: var(--accent); color: var(--accent-text);
+    }
     .cal-swatch {
       display: inline-block;
       width: 10px; height: 10px;
@@ -52,8 +79,9 @@
     #calNote:empty { display: none; }
 
     /* ── FullCalendar overrides — keep the app's plain Arial/white/blue look ── */
-    #calendar { max-width: 100%; }
+    #calendar { max-width: 100%; flex: 1 1 auto; min-height: 0; }
     .fc { font-size: 0.88em; }
+    .fc .fc-list-event { cursor: pointer; }
     .fc .fc-toolbar-title { font-size: 1.15rem; }
     /* Phones: the three toolbar groups (nav, title, views) don't fit on one
        line, and squeezed together the title wrapped a word per line. Let the
@@ -90,15 +118,25 @@
 <div id="calBar">
   <span class="cal-group-label">Providers:</span>
   <span id="calProviders"><span style="color:var(--text-muted)">loading…</span></span>
-  <span class="cal-group-label">Show:</span>
-  <!-- The three swatch hexes below are NOT tokenisable. They are the legend for
-       colours the SERVER paints onto the feed — EVENT_COLOR / BLOCK_COLOR /
-       FREE_COLOR at routes/api.calendarFeed.js:81-83. Swapping them for theme
-       tokens would make the legend disagree with the calendar it describes.
-       They move only when the server constants move. Same for the per-provider
-       swatch at :132, which reads p.color straight off the feed. -->
-  <label><input type="checkbox" id="tglTaken" checked> Taken</label>
-  <label><input type="checkbox" id="tglEvents" checked> <span class="cal-swatch" style="background:#64748b"></span>Events</label>
+  <!-- The swatch hexes below are NOT tokenisable. They are the legend for
+       colours the SERVER paints onto the feed — EVENT_KIND_COLORS /
+       EVENT_COLOR / BLOCK_COLOR / FREE_COLOR in routes/api.calendarFeed.js.
+       Swapping them for theme tokens would make the legend disagree with the
+       calendar it describes. They move only when the server constants move.
+       Same for the per-provider swatch in renderProviderBar, which reads
+       p.color straight off the feed.
+       Chips: vocabulary and multi-select semantics mirror the calx List's
+       #calxKinds (index.html). Meetings = appts (every appt is kind 'meeting'
+       by table — caseEventService); the other four are events.kind. Meetings
+       has no swatch because appts are provider-coloured. -->
+  <span class="cal-chips" id="calKinds">
+    <span class="cal-chip on" data-kind="">All</span>
+    <span class="cal-chip" data-kind="meeting">Meetings</span>
+    <span class="cal-chip" data-kind="hearing"><span class="cal-swatch" style="background:#7c3aed"></span>Hearings</span>
+    <span class="cal-chip" data-kind="deadline"><span class="cal-swatch" style="background:#dc2626"></span>Deadlines</span>
+    <span class="cal-chip" data-kind="conference"><span class="cal-swatch" style="background:#0d9488"></span>Conferences</span>
+    <span class="cal-chip" data-kind="other"><span class="cal-swatch" style="background:#64748b"></span>Other</span>
+  </span>
   <label><input type="checkbox" id="tglBlocked" checked> <span class="cal-swatch" style="background:#9ca3af"></span>Blocked</label>
   <label><input type="checkbox" id="tglFree"> <span class="cal-swatch" style="background:#22c55e"></span>Free</label>
   <span id="calNote"></span>
@@ -126,10 +164,25 @@ function checkedProviderIds() {
     .map(cb => Number(cb.value));
 }
 
+const EVENT_KINDS = ['hearing', 'deadline', 'conference', 'other'];
+
+/** The kind chips currently on. Empty = all (the "All" chip) — same contract
+ *  as the calx List's calxSelectedKinds. */
+function calSelectedKinds() {
+  return Array.from(document.querySelectorAll('#calKinds .cal-chip.on'))
+    .map(c => c.dataset.kind).filter(Boolean);
+}
+
+/* The feed's show param only knows taken/events/blocked/free — kind slicing
+   WITHIN events is client-side (fetchFeed). Meetings = appts = 'taken'; any
+   event kind needs 'events'. Chips can never produce an empty token list
+   (every kind maps to taken or events), which matters: an empty show param
+   would fall back to the server default. */
 function showTokens() {
+  const kinds = calSelectedKinds();
   const t = [];
-  if (E('tglTaken').checked)   t.push('taken');
-  if (E('tglEvents').checked)  t.push('events');
+  if (!kinds.length || kinds.includes('meeting')) t.push('taken');
+  if (!kinds.length || kinds.some(k => EVENT_KINDS.includes(k))) t.push('events');
   if (E('tglBlocked').checked) t.push('blocked');
   if (E('tglFree').checked)    t.push('free');
   return t;
@@ -176,20 +229,65 @@ async function fetchFeed(fetchInfo, successCallback, failureCallback) {
     E('calNote').textContent = data.free_skipped
       ? 'Free shading is limited to views of 14 days or less.' : '';
 
-    successCallback(data.items || []);
+    // Kind slicing (chips) happens here, not on the server: the show param
+    // fetched the right TABLES, this picks the kinds within them. Blocks and
+    // free windows ride their own checkboxes, never the chips. An event
+    // without a kind (write-path stragglers) files under 'other'.
+    let items = data.items || [];
+    const kinds = calSelectedKinds();
+    if (kinds.length) {
+      items = items.filter(it => {
+        const xp = it.extendedProps || {};
+        if (xp.kind === 'appt')  return kinds.includes('meeting');
+        if (xp.kind === 'event') return kinds.includes(xp.event_kind || 'other');
+        return true;
+      });
+    }
+    successCallback(items);
   } catch (err) {
     console.error('[calendar] feed fetch failed:', err);
     if (seq === calState.seq) failureCallback(err);
   }
 }
 
-// ── Click an empty slot → prefilled newApptDialog ────────────
+// ── Click an empty slot → choose appointment or event, prefilled ───────────
+// Events outnumber appts ~2:1 on this calendar (deadlines dominate), so the
+// click offers both. The chooser Swal stacks in THIS iframe, like every other
+// popover here.
 // timeGrid slot click carries a time (dateStr 'YYYY-MM-DDTHH:mm:ss±hh:mm' →
 // slice 16). Month / all-day clicks are date-only: newApptDialog uses the
 // date part for the slot-picker day, and a date-only value is a no-op on the
 // hidden datetime-local (#naDate) — exactly the prefill we want.
+// newEventDialog's create prefill is date-shaped (defaultDate 'YYYY-MM-DD'),
+// so the event side always takes the date part only.
 function onDateClick(info) {
   const defaultDate = info.allDay ? info.dateStr : info.dateStr.slice(0, 16);
+  const when = info.allDay
+    ? info.date.toLocaleDateString()
+    : info.date.toLocaleDateString() + ' ' +
+      info.date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+
+  Swal.fire({
+    title: 'Add to calendar',
+    html: `<div class="cal-pop"><b>When:</b> ${esc(when)}</div>`,
+    showDenyButton:    true,
+    showCancelButton:  true,
+    confirmButtonText: 'New Appointment',
+    denyButtonText:    'New Event',
+    cancelButtonText:  'Cancel',
+  }).then((r) => {
+    if (r.isConfirmed) newApptFromSlot(defaultDate);
+    else if (r.isDenied) {
+      newEventDialog({
+        linkPick:    true,
+        defaultDate: defaultDate.slice(0, 10),
+        onSaved:     calRefetch,
+      });
+    }
+  });
+}
+
+function newApptFromSlot(defaultDate) {
   const checked = checkedProviderIds();
 
   newApptDialog({
@@ -219,7 +317,8 @@ function onDateClick(info) {
 }
 
 // ── Click an appt / event → detail popover (Swal IN THIS IFRAME, so the
-//    shell modal hosting the calendar stays open underneath) ──
+//    shell surface hosting us — the Grid tab frame, or the legacy Swal —
+//    stays put underneath) ──
 function fmtRange(ev) {
   if (ev.allDay) return ev.start.toLocaleDateString() + ' (all day)';
   const opts = { hour: 'numeric', minute: '2-digit' };
@@ -228,8 +327,9 @@ function fmtRange(ev) {
   return s;
 }
 
-// Deep-link helper: close the shell modal hosting this calendar, then open
-// the file tab — same `Swal.close(); addFile(...)` pattern as quick search.
+// Deep-link helper: close any shell modal hosting this calendar (the legacy
+// Appts-tab Swal; a harmless no-op from the Grid tab), then open the file
+// tab — same `Swal.close(); addFile(...)` pattern as quick search.
 function openFile(label, fileType, id) {
   try { P.Swal.close(); } catch (_) {}
   P.addFile(String(label), fileType, String(id));
@@ -293,11 +393,19 @@ function eventPopover(ev) {
              ${xp.event_location ? `<b>Location:</b> ${esc(xp.event_location)}<br>` : ''}
            </div>`,
     showCancelButton:  true,
-    showConfirmButton: !!open,
-    confirmButtonText: open ? open.button : 'OK',
+    showDenyButton:    !!open,
+    confirmButtonText: 'Open Event',
+    denyButtonText:    open ? open.button : undefined,
     cancelButtonText:  'Close',
   }).then((r) => {
-    if (r.isConfirmed && open) openFile(open.label, open.fileType, open.id);
+    if (r.isConfirmed) {
+      // eventform modal in the shell — the same editor the calx List's rows
+      // open (complete / reschedule / edit live there). Mirrors apptPopover's
+      // showAppt confirm.
+      P.showEvent(xp.event_id);
+    } else if (r.isDenied && open) {
+      openFile(open.label, open.fileType, open.id);
+    }
   });
 }
 
@@ -310,22 +418,44 @@ function providerNameOf(id) {
 }
 
 // ── Init ─────────────────────────────────────────────────────
+
+// The last view used, remembered per browser — the host's yc-calendar-view
+// pattern (try/catch reads: private mode / blocked storage boots the default).
+// First boot: phones open on the week AGENDA (listWeek) — at 1–6 appointments
+// a week a timeGrid day is mostly empty scroll, and a 7-column week at ~300px
+// is ~40px per day, too narrow to read or tap; desktop opens on the week grid
+// (Fred's call, U9b-P3 item 7c). Month/Week/Day still work on phones — the
+// narrow toolbar carries all four buttons; desktop's toolbar is unchanged.
+const CAL_VIEW_KEY = 'yc-calendar-grid-view';
+const CAL_VIEWS    = ['dayGridMonth', 'timeGridWeek', 'timeGridDay', 'listWeek'];
+
+function savedCalView() {
+  try {
+    const v = localStorage.getItem(CAL_VIEW_KEY);
+    return CAL_VIEWS.includes(v) ? v : null;
+  } catch (_) { return null; }
+}
+
 function init() {
-  // Phones open on Day: a 7-column week at ~300px is ~40px per day, too
-  // narrow to read or tap. The Month/Week/Day buttons still switch views.
   const narrow = !!(window.matchMedia && window.matchMedia('(max-width: 600px)').matches);
   const calendar = new FullCalendar.Calendar(E('calendar'), {
-    initialView: narrow ? 'timeGridDay' : 'timeGridWeek',
-    height: 560,            // shell modal iframe is 600px tall
+    initialView: savedCalView() || (narrow ? 'listWeek' : 'timeGridWeek'),
+    height: '100%',         // fill #calendar (flex: the viewport minus the bar)
     editable: false,
     selectable: false,
     nowIndicator: true,
     headerToolbar: {
       left:   'prev,next today',
       center: 'title',
-      right:  'dayGridMonth,timeGridWeek,timeGridDay',
+      right:  narrow ? 'dayGridMonth,timeGridWeek,timeGridDay,listWeek'
+                     : 'dayGridMonth,timeGridWeek,timeGridDay',
     },
     scrollTime: '08:00:00',
+    // Fires on render and every view/date change; re-writing the same view is
+    // harmless and keeps this the ONE persistence point.
+    datesSet: (arg) => {
+      try { localStorage.setItem(CAL_VIEW_KEY, arg.view.type); } catch (_) { /* private mode etc. */ }
+    },
     events: fetchFeed,      // re-invoked on every view/date-range change (datesSet)
     dateClick: onDateClick,
     eventClick: (info) => {
@@ -350,8 +480,26 @@ function init() {
   calState.calendar = calendar;
   calendar.render();
 
-  ['tglTaken', 'tglEvents', 'tglBlocked', 'tglFree'].forEach(id => {
+  ['tglBlocked', 'tglFree'].forEach(id => {
     E(id).addEventListener('change', () => calendar.refetchEvents());
+  });
+
+  // Kind chips — the calx List's #calxKinds click contract, verbatim:
+  // "All" clears the set; a kind chip toggles and un-lights All; emptying
+  // the set re-lights All. Every change refetches, like the checkboxes.
+  E('calKinds').addEventListener('click', (ev) => {
+    const chip = ev.target.closest('.cal-chip');
+    if (!chip) return;
+    const all = E('calKinds').querySelector('[data-kind=""]');
+    if (chip === all) {
+      E('calKinds').querySelectorAll('.cal-chip').forEach(c => c.classList.remove('on'));
+      all.classList.add('on');
+    } else {
+      all.classList.remove('on');
+      chip.classList.toggle('on');
+      if (!calSelectedKinds().length) all.classList.add('on');
+    }
+    calendar.refetchEvents();
   });
 }
 
@@ -367,15 +515,16 @@ function init() {
    message can say "an appointment changed"; only /api/calendar-feed knows what
    the grid should look like afterwards.
 
-   HOSTING (verified 2026-08-24): this page is framed ONLY by the shell's
-   tabApptsCal() Swal, not by a `.tab-main` div — so index.html's
-   pingBecameVisible(), which walks the iframes of the tab it just showed,
-   structurally cannot reach us. `window.ycBecameVisible` is defined anyway:
-   it is free, it is the house contract for a framed reader, and it is what
-   makes this correct on the day the calendar moves into a real tab. The path
-   that actually carries weight today is visibilitychange — the modal is open
-   or it does not exist, so the only way to be stale is a backgrounded browser
-   window, which is exactly the cross-window case this slice exists for.
+   HOSTING (updated U9b-P3; previous note predated U9b-P1): the primary host
+   is now the Calendar tab's #calxGridFrame — a DIRECT child of #tabCalendar —
+   so index.html's pingBecameVisible(), which walks the iframes of the tab it
+   just shows, DOES reach us: `window.ycBecameVisible` is load-bearing. It
+   fires on List→Grid toggles and on every re-open of the tab, which is how a
+   grid that went stale while hidden behind the List view (or another tab)
+   catches up. visibilitychange still covers the backgrounded-browser-window
+   case. The legacy host — the Appts tab's tabApptsCal() Swal — still exists;
+   framed there the modal is open or it does not exist, so visibilitychange
+   is the only stale path, as before.
 
    calState.seq makes a refetch safe against an in-flight feed fetch: fetchFeed
    takes a ticket at entry and drops its own response if a newer fetch has

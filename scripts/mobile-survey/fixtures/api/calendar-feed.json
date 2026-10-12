@@ -1,0 +1,58 @@
+{
+  "status": "success",
+  "providers": [
+    { "id": 1, "name": "Stuart Sandweiss", "color": "#2563eb" },
+    { "id": 6, "name": "Fred Ross", "color": "#16a34a" }
+  ],
+  "free_skipped": false,
+  "items": [
+    {
+      "id": "appt-1",
+      "title": "Pre-filing Meeting — Testy McTestface",
+      "start": "{{TODAY}}T10:00:00",
+      "end": "{{TODAY}}T11:00:00",
+      "color": "#2563eb",
+      "extendedProps": { "kind": "appt", "appt_id": 1, "contact_id": 1, "contact_name": "Testy McTestface", "provider": 1 }
+    },
+    {
+      "id": "event-1",
+      "title": "Confirmation Hearing",
+      "start": "{{TODAY+1}}T09:30:00",
+      "end": "{{TODAY+1}}T10:30:00",
+      "color": "#7c3aed",
+      "extendedProps": { "kind": "event", "event_id": 1, "event_type": "Confirmation Hearing", "event_kind": "hearing", "event_with": 1, "event_location": "Courtroom 1975, 211 W Fort St, Detroit", "link_type": "case", "link_id": "TESTCASE1", "link_label": "26-47542-mlo", "resolved_case_id": null }
+    },
+    {
+      "id": "event-2",
+      "title": "Docs Deadline — a deliberately long title that must wrap, not overflow, in a 320px month cell",
+      "start": "{{TODAY}}",
+      "allDay": true,
+      "color": "#dc2626",
+      "extendedProps": { "kind": "event", "event_id": 2, "event_type": "Docs Deadline", "event_kind": "deadline", "event_with": null, "event_location": null, "link_type": "case", "link_id": "TESTCASE1", "link_label": "26-47542-mlo", "resolved_case_id": null }
+    },
+    {
+      "id": "event-3",
+      "title": "Status Conference",
+      "start": "{{TODAY}}T14:00:00",
+      "end": "{{TODAY}}T15:00:00",
+      "color": "#0d9488",
+      "extendedProps": { "kind": "event", "event_id": 3, "event_type": "Status Conference", "event_kind": "conference", "event_with": null, "event_location": null, "link_type": "contact", "link_id": 1, "link_label": "Testy McTestface", "resolved_case_id": null }
+    },
+    {
+      "id": "event-4",
+      "title": "Order",
+      "start": "{{TODAY+1}}",
+      "allDay": true,
+      "color": "#64748b",
+      "extendedProps": { "kind": "event", "event_id": 4, "event_type": "Order", "event_kind": "other", "event_with": null, "event_location": null, "link_type": null, "link_id": null, "link_label": null, "resolved_case_id": null }
+    },
+    {
+      "id": "fb-1",
+      "start": "{{TODAY}}T12:00:00",
+      "end": "{{TODAY}}T13:00:00",
+      "display": "background",
+      "color": "#9ca3af",
+      "extendedProps": { "kind": "block", "label": "Lunch", "source": "firm_block" }
+    }
+  ]
+}

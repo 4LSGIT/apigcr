@@ -42,12 +42,21 @@ function readJson(file) {
   return JSON.parse(fs.readFileSync(file, 'utf8'));
 }
 
+/** '{{TODAY}}' / '{{TODAY+N}}' / '{{TODAY-N}}' in a fixture → the local civil
+ *  date N days out (YYYY-MM-DD), resolved at read time. Date-driven fixtures
+ *  (calendar-feed.json) stay inside the surveyed week forever instead of
+ *  rotting past it. Same en-CA idiom the panes themselves use. */
+function resolveDates(text) {
+  return text.replace(/\{\{TODAY([+-]\d+)?\}\}/g, (_, off) =>
+    new Date(Date.now() + (Number(off) || 0) * 86400000).toLocaleDateString('en-CA'));
+}
+
 function fixtureFor(urlPath) {
   // '/api/cases/TESTCASE1' -> fixtures/api/cases/TESTCASE1.json
   const rel = urlPath.replace(/^\/(api|admin)\//, '');
   if (!rel || rel.includes('..')) return null;
   const file = path.join(FIXTURES, 'api', rel + '.json');
-  return fs.existsSync(file) ? readJson(file) : null;
+  return fs.existsSync(file) ? JSON.parse(resolveDates(fs.readFileSync(file, 'utf8'))) : null;
 }
 
 /** Unsigned JWT-shaped token with a far-future exp. The shell only decodes

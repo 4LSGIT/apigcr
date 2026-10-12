@@ -26,10 +26,14 @@
  *   'appt'  — appts, appt_status='Scheduled', appt_with ∈ providers.
  *             title '<type> — <contact name>', colored by provider.
  *   'event' — events, event_status='Scheduled'. Timed rows render like appts
- *             (NULL event_length → 60 min) in a neutral color; all-day rows
- *             render as allDay:true entries (court deadlines stay visible,
- *             never background-styled). Provider filter: event_with ∈
- *             providers OR event_with IS NULL (null = firm-wide).
+ *             (NULL event_length → 60 min); all-day rows render as
+ *             allDay:true entries (court deadlines stay visible, never
+ *             background-styled). Colored by events.kind (EVENT_KIND_COLORS;
+ *             unmapped/other → EVENT_COLOR), and the kind itself rides along
+ *             as extendedProps.event_kind — named so because
+ *             extendedProps.kind is already the item discriminator above.
+ *             Provider filter: event_with ∈ providers OR event_with IS NULL
+ *             (null = firm-wide).
  *   'block' — firm_blocks (active; not provider-scoped) + availability_blocks
  *             (active, user ∈ providers) as display:'background' items.
  *   'free'  — only when requested: per-provider open WINDOWS derived from
@@ -81,6 +85,19 @@ const PROVIDER_PALETTE = [
 const EVENT_COLOR = '#64748b'; // neutral slate — distinct from the palette
 const BLOCK_COLOR = '#9ca3af'; // muted gray  (FullCalendar bg-opacity applies)
 const FREE_COLOR  = '#22c55e'; // green       (FullCalendar bg-opacity applies)
+
+// Per-kind event colors (events.kind). Chosen clear of the active provider
+// colors (ids 1/6/22 → blue/green/amber) and of the free/blocked background
+// hues. deadline red and conference teal DO sit in the provider palette
+// (indices 3 and 4) — unused by today's ids; a future collision is cosmetic,
+// same caveat as the palette's own. 'other'/unmapped falls through to
+// EVENT_COLOR. The legend swatches in public/calendar.html hardcode these
+// hexes — they move together.
+const EVENT_KIND_COLORS = {
+  hearing:    '#7c3aed', // violet
+  deadline:   '#dc2626', // red
+  conference: '#0d9488', // teal
+};
 
 function providerColor(id) {
   const n = PROVIDER_PALETTE.length;
@@ -239,7 +256,7 @@ router.get('/api/calendar-feed', jwtOrApiKey, async (req, res) => {
       // Resolved-case subquery mirrors eventService.RESOLVED_CASE_SUBQUERY
       // (not exported there) — equality only, dockets are opaque.
       const [evRows] = await db.query(
-        `SELECT e.event_id, e.event_type, e.event_title, e.event_all_day,
+        `SELECT e.event_id, e.event_type, e.kind, e.event_title, e.event_all_day,
                 e.event_length, e.event_link_type, e.event_link_id,
                 e.event_with, e.event_location,
                 DATE_FORMAT(e.event_date, '%Y-%m-%d') AS event_date,
@@ -276,6 +293,7 @@ router.get('/api/calendar-feed', jwtOrApiKey, async (req, res) => {
           kind: 'event',
           event_id:         r.event_id,
           event_type:       r.event_type,
+          event_kind:       r.kind || null,
           event_with:       r.event_with == null ? null : Number(r.event_with),
           event_location:   r.event_location,
           link_type:        r.event_link_type,
@@ -284,6 +302,7 @@ router.get('/api/calendar-feed', jwtOrApiKey, async (req, res) => {
           resolved_case_id: r.resolved_case_id || null,
         };
 
+        const evColor = EVENT_KIND_COLORS[r.kind] || EVENT_COLOR;
         const allDay = r.event_all_day === 1 || r.event_all_day === true || r.event_time == null;
         if (allDay) {
           items.push({
@@ -291,7 +310,7 @@ router.get('/api/calendar-feed', jwtOrApiKey, async (req, res) => {
             title:  r.event_title,
             start:  r.event_date,
             allDay: true,
-            color:  EVENT_COLOR,
+            color:  evColor,
             extendedProps: xp,
           });
         } else {
@@ -302,7 +321,7 @@ router.get('/api/calendar-feed', jwtOrApiKey, async (req, res) => {
             title: r.event_title,
             start: startStr,
             end:   addMinutesNaive(startStr, lenMin),
-            color: EVENT_COLOR,
+            color: evColor,
             extendedProps: xp,
           });
         }

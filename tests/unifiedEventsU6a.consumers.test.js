@@ -231,6 +231,31 @@ describe('routes/api.calendarFeed.js', () => {
     expect(evq.sql).toMatch(/WHERE e\.event_status = 'Scheduled' AND e\.superseded_by_event_id IS NULL AND \(e\.event_with IS NULL OR e\.event_with IN \(\?\)\)/);
     expect(evq.params).toEqual([[1], '2026-10-01', '2026-10-31']);
   });
+
+  test('U9b-P3: events carry events.kind as extendedProps.event_kind, colored per kind; a kindless straggler files as null + slate', async () => {
+    const live = seed()[0];                          // Scheduled hearing, no pointer
+    events = [
+      live,
+      { ...live, event_id: 4, kind: 'deadline', event_all_day: 1, event_time: null },
+      { ...live, event_id: 5, kind: null },
+    ];
+    const res = await fetch(`${base}/api/calendar-feed?from=2026-10-01&to=2026-10-31&show=events`);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    const by = Object.fromEntries(body.items.map((i) => [i.id, i]));
+
+    expect(by['event-1'].extendedProps.event_kind).toBe('hearing');
+    expect(by['event-1'].color).toBe('#7c3aed');
+    expect(by['event-4'].extendedProps.event_kind).toBe('deadline');
+    expect(by['event-4'].color).toBe('#dc2626');
+    expect(by['event-4'].allDay).toBe(true);         // deadlines stay foreground all-day entries
+    expect(by['event-5'].extendedProps.event_kind).toBe(null);
+    expect(by['event-5'].color).toBe('#64748b');     // EVENT_COLOR fallback
+
+    // The SELECT itself asks for e.kind — additive, nothing renamed.
+    const evq = calls.find((c) => /FROM events e/.test(c.sql));
+    expect(evq.sql).toMatch(/SELECT e\.event_id, e\.event_type, e\.kind,/);
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
