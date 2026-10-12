@@ -1333,6 +1333,34 @@
     #tabCalendar .calx-b-superseded { color: var(--text-muted); text-decoration: line-through; }
     #tabCalendar tbody tr { cursor: pointer; }
     #tabCalendar .calx-note { color: var(--text-muted); font-size: 0.85rem; margin-top: 8px; }
+
+    /* U9b-P1 — List | Grid. A joined two-button segment; the pressed half
+       takes the same accent fill as .calx-chip.on so the bar keeps one
+       "selected" look. */
+    #tabCalendar .calx-view { gap: 0; }
+    #tabCalendar .calx-view > button:first-child { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+    #tabCalendar .calx-view > button:last-child { border-top-left-radius: 0; border-bottom-left-radius: 0; margin-left: -1px; }
+    #tabCalendar .calx-view > button[aria-pressed="true"] {
+      background: var(--accent); border-color: var(--accent); color: var(--accent-text); font-weight: 600;
+    }
+    /* Phones: the row is a full line (style.css .yc-f-row); split it evenly. */
+    @media (max-width: 768px) { #tabCalendar .calx-view > button { flex: 1 1 0; } }
+
+    /* Grid mode: everything that only drives the LIST hides; the view toggle
+       and the New row stay. Id-scoped, so these outrank style.css's mobile
+       .yc-filters display rules on specificity, not load order. #calxLoad's
+       display is set inline by calxGet(), which only !important can beat. */
+    #tabCalendar.calx-grid #calxKinds,
+    #tabCalendar.calx-grid .calx-bar > .yc-f-panel,
+    #tabCalendar.calx-grid .calx-presets,
+    #tabCalendar.calx-grid .calx-bar > .yc-f-toggle,
+    #tabCalendar.calx-grid #calxButton,
+    #tabCalendar.calx-grid > #calxTable,
+    #tabCalendar.calx-grid > #calxFoot { display: none; }
+    #tabCalendar.calx-grid > #calxLoad { display: none !important; }
+    /* List mode: the grid frame is out of the layout entirely (it outranks
+       the shell's `.tab-main > iframe { display: block }`). */
+    #tabCalendar:not(.calx-grid) > #calxGridFrame { display: none; }
   </style>
 
   <div id="tabCalendar" class="tab-main">
@@ -1342,6 +1370,14 @@
          is data-nocount: calxSetRange() always fills it, so it is never "off
          default" in the count's sense — the preset row is how it's driven. -->
     <div class="calx-bar yc-filters">
+      <span class="calx-view yc-f-row" id="calxViewToggle" role="group" aria-label="Calendar view">
+        <button type="button" data-view="list" aria-pressed="true"><i class="fa-solid fa-list"></i> List</button>
+        <button type="button" data-view="grid" aria-pressed="false"><i class="fa-solid fa-table-cells"></i> Grid</button>
+      </span>
+      <span class="yc-f-row">
+        <button type="button" id="calxNewAppt" onclick="newApptDialog({ contactPick: true, casePick: true, onCreated: calxAfterCreate })"><i class="fa-solid fa-calendar-plus"></i> New Appointment</button>
+        <button type="button" id="calxNewEvent" onclick="newEventDialog({ linkPick: true, onSaved: calxAfterCreate })"><i class="fa-solid fa-flag"></i> New Event</button>
+      </span>
       <span class="calx-chips yc-f-row" id="calxKinds">
         <span class="calx-chip on" data-kind="">All</span>
         <span class="calx-chip" data-kind="meeting">Meetings</span>
@@ -1379,6 +1415,7 @@
       <button type="button" class="yc-f-toggle" onclick="ycFiltersToggle(this)" aria-expanded="false"><i class="fa-solid fa-sliders"></i><span class="yc-f-tl">Filters</span><span class="yc-f-count"></span></button>
       <button id="calxButton" class="yc-f-go">Refresh</button>
     </div>
+    <iframe id="calxGridFrame" title="Calendar grid"></iframe>
     <table id="calxTable" class="logTable">
       <tr>
         <th>When</th>
@@ -1420,19 +1457,56 @@
 
        LIVENESS: `event:*` and `appt:*` off the sync bus, same shape as the
        Cases/Contacts/Events tabs — stale flag when hidden, debounced refetch
-       when visible. This tab has no writers of its own, so it needs no echo
-       fence (the Appts tab's fence exists because apptUpdate refetches
-       itself). It DOES need the subscriber: completing a deadline happens in
-       eventform, in a Swal over this tab, and the badge has to move when it
-       does. The visibilitychange half registers its own listener rather than
-       adding a fourth line to the Cases block's handler — additive listeners
-       are free, and it keeps this feature to one contiguous edit.
+       when visible. "Visible" means the LIST is on screen: Grid mode counts as
+       hidden for the list, which catches up when List is chosen again. It
+       DOES need the subscriber: completing a deadline happens in eventform, in
+       a Swal over this tab, and the badge has to move when it does. The
+       visibilitychange half registers its own listener rather than adding a
+       fourth line to the Cases block's handler — additive listeners are free,
+       and it keeps this feature to one contiguous edit.
+
+       WRITERS (U9b-P1): the New Appointment / New Event buttons. Their
+       callback refetches the list, and the create's own bus announcement has
+       by then already queued a second refetch — the sniff dispatches locally
+       inside apiSend, before the dialog's Swal has even closed. So the
+       callback cancels that queued echo (calxAfterCreate) instead of fencing
+       by time window the way the Appts tab does. calxGet() also takes a
+       last-request-wins ticket: it clears the table before its await and
+       appends after, so two overlapping calls used to render every row twice.
+
+       GRID (U9b-P1): List | Grid on the bar. Grid hosts /calendar.html — the
+       FullCalendar pane, fed by /api/calendar-feed — in #calxGridFrame, and
+       never rebuilds it: the pane is its own bus reader and repaints itself.
+       What the shell owes it is the house "you were re-shown" ping
+       (pingBecameVisible) on List → Grid, because flipping `display` fires
+       nothing inside a frame. The frame loads on the first Grid open and then
+       stays alive across toggles — unless it finished loading while off
+       screen, in which case the next Grid show reboots it (calxWire says
+       why). It is a DIRECT child of the tab so openMainTab()'s lazy data-src
+       swap can load it: calxApplyView() arms data-src only in Grid mode,
+       which brings the grid up on every path that opens this tab — F5
+       restore's bare openMainTab included — and keeps List mode from loading
+       FullCalendar at all. The chosen mode persists per browser under
+       `yc-calendar-view`.
        ═══════════════════════════════════════════════════════════════════════ */
 
     let calxRows = null;          // null = never loaded (drives first-open)
     let calxStale = false;
     let calxDeb = null;
     let calxBusDeb = null;
+    let calxSeq = 0;              // calxGet's last-request-wins ticket
+
+    const CALX_VIEW_KEY = 'yc-calendar-view';
+    const CALX_GRID_SRC = '/calendar.html';
+    // calendar.html lays FullCalendar out at a fixed 560px (it was sized for
+    // the 600px Swal frame): below this the frame would scroll inside itself.
+    const CALX_GRID_MIN_H = 600;
+    let calxView = (() => {
+      try { return localStorage.getItem(CALX_VIEW_KEY) === 'grid' ? 'grid' : 'list'; }
+      catch (_) { return 'list'; }
+    })();
+    let calxResizeDeb = null;
+    let calxGridHiddenBoot = false;   // the pane finished loading while off screen
 
     const CALX_KIND_ICON = {
       hearing:    'fa-gavel',
@@ -1562,6 +1636,7 @@
      *   calendar window is a completely ordinary answer.
      */
     async function calxGet(silent = false) {
+      const seq = ++calxSeq;
       E('calxButton').disabled = true;
       E('calxLoad').style.display = 'block';
 
@@ -1588,6 +1663,9 @@
 
       try {
         const data = await apiSend('/api/calendar-range', 'GET', params);
+        // Superseded: a newer call cleared the table after we did and owns
+        // it now — and owns the spinner and the button, so leave those too.
+        if (seq !== calxSeq) return;
         calxRows = data.items || [];
         if (!calxRows.length) {
           const row = table.insertRow();
@@ -1632,6 +1710,7 @@
               : '');
         }
       } catch (err) {
+        if (seq !== calxSeq) return;
         if (silent) console.warn('[calendar] background refetch failed:', err);
         else Toast.fire({ icon: 'error', title: 'Error loading calendar', text: err.message });
       }
@@ -1680,10 +1759,25 @@
       });
       E('calxButton').addEventListener('click', () => calxGet());
       calxSetRange(30);                      // today → +30d, the default window
+      E('calxViewToggle').addEventListener('click', (ev) => {
+        const b = ev.target.closest('button[data-view]');
+        if (b) calxSetView(b.dataset.view);
+      });
+      calxApplyView();                       // the persisted mode; no fetch, no load
+      // calendar.html picks its view from its OWN width at boot (Day under
+      // 600px) and lays FullCalendar out once. Booted in a 0-wide frame — Grid
+      // then List before it finished, or the tab left mid-load — it comes back
+      // as a desktop Day view, or with zero-width columns. Flag it here;
+      // calxGridShow() reboots it the next time it is actually on screen.
+      E('calxGridFrame').addEventListener('load', () => {
+        const f = E('calxGridFrame');
+        calxGridHiddenBoot = !!f.src && !f.getBoundingClientRect().width;
+      });
     })();
 
+    /** Is the LIST on screen? Grid mode counts as hidden — see LIVENESS. */
     function calxTabVisible() {
-      return currentMainTabId() === 'tabCalendar' && !document.hidden;
+      return currentMainTabId() === 'tabCalendar' && !document.hidden && calxView === 'list';
     }
 
     /* One subscriber per source table. A completion in eventform, a reschedule
@@ -1700,16 +1794,93 @@
 
     document.addEventListener('visibilitychange', () => {
       if (document.hidden || !calxStale) return;
-      if (currentMainTabId() !== 'tabCalendar') return;
+      if (currentMainTabId() !== 'tabCalendar' || calxView !== 'list') return;
       calxStale = false;
       calxGet(true);
     });
 
     /** Sole opener for the Calendar tab. */
     function openCalendarTab() {
+      if (calxView === 'grid') {
+        // Tab first: the frame has to be on screen to load into a real
+        // viewport and to be measured. openMainTab() loads it (data-src) and
+        // pings it if it was already up.
+        openMainTab('tabCalendar');
+        calxGridShow();
+        return;
+      }
       if (calxRows === null) calxGet();
       else if (calxStale) { calxStale = false; calxGet(true); }
       openMainTab('tabCalendar');
+    }
+
+    /** Reflect calxView in the DOM: the mode class, the toggle, and the
+     *  frame's lazy-load arming (see GRID). Fetches and loads nothing. */
+    function calxApplyView() {
+      const grid = calxView === 'grid';
+      E('tabCalendar').classList.toggle('calx-grid', grid);
+      E('calxViewToggle').querySelectorAll('button[data-view]').forEach((b) => {
+        b.setAttribute('aria-pressed', String(b.dataset.view === calxView));
+      });
+      const f = E('calxGridFrame');
+      if (grid && !f.src) f.dataset.src = CALX_GRID_SRC;
+      else delete f.dataset.src;
+    }
+
+    /** The toggle. Only reachable with the tab on screen. */
+    function calxSetView(view) {
+      view = view === 'grid' ? 'grid' : 'list';
+      if (view === calxView) return;
+      calxView = view;
+      try { localStorage.setItem(CALX_VIEW_KEY, view); } catch (_) { /* private mode etc. */ }
+      calxApplyView();
+      if (view === 'grid') {
+        calxGridShow();
+        pingBecameVisible(E('tabCalendar'));   // a no-op until the pane has booted
+      } else if (calxRows === null) {
+        calxGet();
+      } else if (calxStale) {
+        calxStale = false;
+        calxGet(true);
+      }
+    }
+
+    /** Load the grid frame if it never was (or reboot it if it booted off
+     *  screen — see calxWire), then size it. */
+    function calxGridShow() {
+      const f = E('calxGridFrame');
+      if (!f.src || calxGridHiddenBoot) {
+        calxGridHiddenBoot = false;
+        f.src = CALX_GRID_SRC;               // setting src (even unchanged) navigates
+      }
+      delete f.dataset.src;
+      calxGridSize();
+    }
+
+    /* Fill the viewport below the bar (floored — see CALX_GRID_MIN_H). The
+       shell's `.tab-main > iframe` CSS height is the fallback on paths that
+       open the tab without this opener. */
+    function calxGridSize() {
+      const f = E('calxGridFrame');
+      const r = f.getBoundingClientRect();
+      if (!r.width) return;                  // not on screen
+      const below = Math.floor(window.innerHeight - (r.top + window.scrollY));
+      f.style.height = Math.max(below, CALX_GRID_MIN_H) + 'px';
+    }
+
+    window.addEventListener('resize', () => {
+      clearTimeout(calxResizeDeb);
+      calxResizeDeb = setTimeout(() => {
+        if (calxView === 'grid' && currentMainTabId() === 'tabCalendar') calxGridSize();
+      }, 100);
+    });
+
+    /* onCreated / onSaved for the New buttons — see WRITERS. Grid: nothing;
+       the pane hears the same announcement and repaints itself. */
+    function calxAfterCreate() {
+      if (calxView !== 'list') return;
+      clearTimeout(calxBusDeb);              // the queued echo of this same write
+      calxGet();
     }
   </script>
 
