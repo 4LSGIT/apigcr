@@ -7,6 +7,9 @@
  *   GET    /api/phone-lines/readable                 lines the caller can READ (SU: all;
  *                                                    attorney: all, send/manage from grants;
  *                                                    others: can_read grants) — the pane's rail
+ *   GET    /api/phone-lines/first-seen?number=       firm-local day of the earliest text/call with
+ *                                                    the number on any line the caller can READ
+ *                                                    (the Add-to-contact start-date default)
  *   GET    /api/phone-lines/sendable                 lines the caller can SEND from (SU: all;
  *                                                    others: can_send grants — no role bypass)
  *                                                    — the staff From pickers' filter
@@ -203,6 +206,17 @@ router.get('/api/phone-lines/readable', jwtOrApiKey, requireJwt, async (req, res
     res.json({ status: 'success', viewer: { su }, lines });
   } catch (err) {
     sendError(res, 'GET /api/phone-lines/readable', err);
+  }
+});
+
+// ─── GET /api/phone-lines/first-seen?number= ───
+// No path collision: nothing here or in api.phoneLines.js / api.sending.js
+// mounts GET /api/phone-lines/:id (one segment).
+router.get('/api/phone-lines/first-seen', jwtOrApiKey, requireJwt, async (req, res) => {
+  try {
+    res.json({ status: 'success', ...(await phone.firstSeen(req.db, req.auth.userId, (req.query || {}).number)) });
+  } catch (err) {
+    sendError(res, 'GET /api/phone-lines/first-seen', err);
   }
 });
 

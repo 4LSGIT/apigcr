@@ -46,6 +46,7 @@ const CALLS = "SELECT id, direction, other_party, processed_at, log_id, JSON_UNQ
 const KEYSET = ' AND (processed_at < ? OR (processed_at = ? AND id < ?))';
 const ORDER_TAIL = ' ORDER BY processed_at DESC, id DESC LIMIT ?';
 const CONTACTS = 'SELECT cp.phone, c.contact_id, c.contact_name FROM contact_phones cp JOIN contacts c ON c.contact_id = cp.contact_id WHERE cp.phone_active_uniq IN (?)';
+const FIRST_SEEN = 'SELECT MIN(processed_at) AS first_at FROM phone_event_log WHERE other_party = ? AND line_number IN (?) AND suppressed = 0';
 
 /** The attribution rule — the JS twin of phone_event_log.line_number. */
 function lineOf(e) {
@@ -327,6 +328,13 @@ function makeWorld() {
         id: e.id, direction: e.direction, other_party: e.other_party, processed_at: new Date(e.processed_at), log_id: e.log_id,
         started_at: json(e, 'started_at'), ended_at: json(e, 'ended_at'), provider_status: json(e, 'provider_status'),
       }))];
+    }
+    if (sql === FIRST_SEEN) {
+      const lines = new Set(p[1].map(String));
+      const at = T.phone_event_log
+        .filter(e => e.other_party === String(p[0]) && lines.has(String(lineOf(e))) && Number(e.suppressed) === 0)
+        .map(e => e.processed_at.getTime());
+      return [[{ first_at: at.length ? new Date(Math.min(...at)) : null }]];
     }
     if (sql === CONTACTS) {
       const want = new Set(p[0].map(String));

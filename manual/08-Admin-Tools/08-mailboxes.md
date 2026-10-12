@@ -490,6 +490,12 @@ lines alike (design: `ref/MAILBOX_SYSTEM_DESIGN.md` §4.4, slice S-PH).
   on the right: direction and length, **Missed call** in red, "no answer"
   when nobody picked up), all in the order they happened; **Load earlier**
   goes back further.
+- **A number that is not a contact** shows as the number alone, with **Add
+  to contact**: attach it to an existing contact or create a new contact
+  with it (the same dialog as the Log's orphan rows). The start date is
+  preset to the first text or call with that number on any line you can
+  read, or the Log's first row with it if that is older. Short codes are not
+  offered.
 - **Calls** is the line's call log, newest first — direction, length, and
   **Missed call** for an unanswered incoming call. Clicking a call opens the
   conversation with that number — its calls and texts — even when the
@@ -502,6 +508,9 @@ lines alike (design: `ref/MAILBOX_SYSTEM_DESIGN.md` §4.4, slice S-PH).
   it back (seconds, usually); then it is an ordinary bubble. A short code
   (e.g. a 5-digit verification sender) cannot be texted back. Superusers
   confirm their password first ([elevation](README.md)).
+- **Pictures and files (MMS)** are not stored yet: a text that came with
+  one shows **Attachment — not shown here yet** (and "Attachment" in the
+  list) — open it in the phone system's own app.
 - **Not shown:** texts and calls the spam filters caught (suppressed), and
   numbers on the phone system that are not set up as a line in Connections →
   Phone Lines. To make such a number readable, add it there — leave it

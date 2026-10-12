@@ -174,6 +174,8 @@ async function walk(page, W, record) {
       const PHONE = [
         ['phone-texts', "showTab('phone')"],
         ['phone-thread', 'openConversation(ph.rows[0].other_party, ph.rows[0].contact)'],
+        // a number no contact holds: number-only title + Add to contact; an attachment-only text
+        ['phone-thread-unknown', "openConversation('5555550198', null)"],
         ['phone-calls', "closePhoneThread(); setPhoneView('calls')"],
         ['phone-new', "setPhoneView('msgs'); openNewText()"],
       ];

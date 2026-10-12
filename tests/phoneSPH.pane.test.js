@@ -331,6 +331,92 @@ describe('comms.html — Phone tab', () => {
     expect(snips[3].querySelector('i')).toBeNull();
   });
 
+  test('a number no contact holds: the title is the number alone (never "null") + Add to contact → the shell dialog with the first-seen day; attaching re-reads and names it', async () => {
+    let attached = false;
+    const dialogs = [];
+    const unknown = { other_party: '3135489162', contact: null, next_cursor: null, messages: [{ id: 50, kind: 'sms', direction: 'incoming', body: 'loan offer', at: '2026-10-12T16:10:00.000Z', logged: false }] };
+    const env = await bootComms({
+      before: (w) => { w.OrphanAdoptDialog = (value, type, onDone, opts) => { dialogs.push({ value, type, opts }); attached = true; onDone({ action: 'attached', contact_id: 777 }); }; },
+      over: {
+        'GET /api/phone-lines/1/conversations': () => ({ conversations: [{ other_party: '3135489162', count: 1, last_id: 50, contact: null, last: { id: 50, kind: 'sms', direction: 'incoming', snippet: 'loan offer', at: '2026-10-12T16:10:00.000Z' } }], next_cursor: null }),
+        'GET /api/phone-lines/1/conversations/3135489162': () => (attached ? { ...fresh(unknown), contact: { contact_id: 777, name: 'Emily Northwood' } } : fresh(unknown)),
+        'GET /api/phone-lines/first-seen': (q) => ({ number: q.number, first_seen: '2026-06-19' }),
+      },
+    });
+    await openPhone(env);
+    const { doc, window, calls, errors } = env;
+    doc.querySelector('#ph-list .msg[data-party="3135489162"]').click();
+    await tick(window, 60);
+    expect(errors).toEqual([]);
+    expect(doc.getElementById('ph-title').textContent).toBe('(313) 548-9162');
+    expect(doc.getElementById('ph-contact').hidden).toBe(true);
+    const add = doc.getElementById('ph-addc');
+    expect(add.hidden).toBe(false);
+    add.click();
+    await tick(window, 80);
+    expect(calls.filter((c) => c.url === '/api/phone-lines/first-seen').map((c) => c.payload)).toEqual([{ number: '3135489162' }]);
+    expect(dialogs).toEqual([{ value: '3135489162', type: 'phone', opts: { earliest: '2026-06-19' } }]);
+    // the attach callback re-read the conversation: the name is the title now, and the add button is gone
+    expect(doc.getElementById('ph-title').textContent).toBe('Emily Northwood(313) 548-9162');
+    expect(doc.getElementById('ph-contact').hidden).toBe(false);
+    expect(add.hidden).toBe(true);
+  });
+
+  test('Add to contact: never for a known contact or a short code; a pane without the shell dialog says so', async () => {
+    const bare = (party) => () => ({ other_party: party, contact: null, next_cursor: null, messages: [] });
+    const env = await bootComms({ over: { 'GET /api/phone-lines/1/conversations/22395': bare('22395'), 'GET /api/phone-lines/1/conversations/3135550099': bare('3135550099') } });
+    await openPhone(env);
+    const { doc, window } = env;
+    doc.querySelector('#ph-list .msg[data-party="3135550001"]').click();
+    await tick(window, 60);
+    expect(doc.getElementById('ph-addc').hidden).toBe(true);
+    expect(doc.getElementById('ph-title').textContent).toBe('Pat One(313) 555-0001');
+    doc.querySelector('#ph-list .msg[data-party="22395"]').click();
+    await tick(window, 60);
+    expect(doc.getElementById('ph-addc').hidden).toBe(true);
+    expect(doc.getElementById('ph-title').textContent).toBe('22395');
+    // a number with no contact, but no OrphanAdoptDialog in this window
+    window.eval("openConversation('3135550099', null)");
+    await tick(window, 60);
+    doc.getElementById('ph-addc').click();
+    await tick(window, 40);
+    expect(doc.getElementById('toast').textContent).toMatch(/needs the app window/);
+  });
+
+  test('a text with no words (a picture / file message) says "Attachment" — in the bubble and in the list', async () => {
+    const env = await bootComms({
+      over: {
+        'GET /api/phone-lines/1/conversations': () => ({ conversations: [
+          { other_party: '3135550001', count: 2, last_id: 61, contact: null, last: { id: 61, kind: 'sms', direction: 'incoming', snippet: '', at: '2026-10-12T16:10:00.000Z' } },
+          { other_party: '3135550002', count: 1, last_id: 60, contact: null, last: { id: 60, kind: 'sms', direction: 'outgoing', snippet: '', at: '2026-10-12T16:00:00.000Z' } },
+        ], next_cursor: null }),
+        'GET /api/phone-lines/1/conversations/3135550001': () => ({ other_party: '3135550001', contact: null, next_cursor: null, messages: [
+          { id: 59, kind: 'sms', direction: 'incoming', body: 'see picture', at: '2026-10-12T16:09:00.000Z', logged: false },
+          { id: 61, kind: 'sms', direction: 'incoming', body: ' ', at: '2026-10-12T16:10:00.000Z', logged: false },
+        ] }),
+      },
+    });
+    await openPhone(env);
+    const { doc, window } = env;
+    expect([...doc.querySelectorAll('#ph-list .msg .snippet')].map((x) => x.textContent)).toEqual(['Attachment', 'You: Attachment']);
+    doc.querySelector('#ph-list .msg[data-party="3135550001"]').click();
+    await tick(window, 60);
+    const bubs = [...doc.querySelectorAll('#ph-body .bub')];
+    expect(bubs[0].querySelector('.ph-att')).toBeNull();
+    expect(bubs[1].querySelector('.ph-att').textContent).toBe('Attachment — not shown here yet');
+    expect(bubs[1].querySelector('.ph-att i').className).toBe('fa-solid fa-paperclip');
+    expect(bubs[1].querySelector('.att')).toBeNull(); // the Email tab's chip class — bordered, not ours
+  });
+
+  test('every segmented button carries data-label = its text (it reserves the bold width — a toggle never resizes the bar)', () => {
+    const dom = new JSDOM(COMMS);
+    DOMS.push(dom);
+    const btns = [...dom.window.document.querySelectorAll('.seg button')];
+    expect(btns.map((b) => b.id)).toEqual(['f-inbox', 'f-sent', 'f-folders', 'ph-v-msgs', 'ph-v-calls']);
+    expect(btns.map((b) => b.getAttribute('data-label'))).toEqual(btns.map((b) => b.textContent.trim()));
+    expect(COMMS).toMatch(/\.seg button\[data-label\]::after \{ content: attr\(data-label\); font-weight: 700; height: 0;/);
+  });
+
   test('an empty Conversations list says texts OR calls', async () => {
     const env = await bootComms({ over: { 'GET /api/phone-lines/1/conversations': () => ({ conversations: [], next_cursor: null }) } });
     await openPhone(env);

@@ -157,6 +157,11 @@ maybe('S-PH phone reads on real MySQL', () => {
         expect([user, line, await mbx.getAccess(pool, user, 'phone_line', line)]).toEqual([user, line, await mbx.getAccess(W.db, user, 'phone_line', line)]);
       }
     }
+    for (const user of [6, 1, 22, 9, 7]) {
+      for (const party of ['3135550001', '3135550002', '3135550004', '22395', '9999999999']) {
+        expect([user, party, await phone.firstSeen(pool, user, party)]).toEqual([user, party, await phone.firstSeen(W.db, user, party)]);
+      }
+    }
     for (const from of ['2485592400', '(248) 965-5355', '2484179800', '2480009999', 'x']) {
       for (const user of [6, 1, 22, 9]) {
         expect([from, user, await phone.staffSendGate(pool, user, from)]).toEqual([from, user, await phone.staffSendGate(W.db, user, from)]);

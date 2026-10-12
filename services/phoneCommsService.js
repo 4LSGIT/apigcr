@@ -65,6 +65,7 @@
 
 const mbx = require('./mailboxService');
 const phoneService = require('./phoneService');
+const { utcToLocal } = require('./timezoneService');
 
 const PAGE_DEFAULT = 50;
 const PAGE_MAX = 100;
@@ -463,6 +464,31 @@ async function listCalls(db, line, query = {}) {
 }
 
 
+/**
+ * The firm-local day ('YYYY-MM-DD') of the earliest event (text or call, not
+ * suppressed) with `party` on ANY line the caller can read — the "Add to
+ * contact" dialog's start-date default (the phone twin of mailReadService
+ * .firstSeen; scripts.js OrphanAdoptDialog takes the earlier of it and the
+ * log's own earliest row). Day from processed_at: a call's ingest instant is
+ * its end, at most minutes from its start. Null when there is none.
+ * idx_phone_event_other_party narrows; line_number IN filters.
+ */
+async function firstSeen(db, userId, party) {
+  if (!PARTY_RE.test(String(party || ''))) throw httpError(400, 'number must be a phone number (digits)');
+  const lines = await mbx.listReadable(db, userId, 'phone_line');
+  const numbers = lines.map(l => l.phone_number).filter(Boolean);
+  if (!numbers.length) return { number: String(party), first_seen: null };
+  const [[row]] = await db.query(
+    `SELECT MIN(processed_at) AS first_at
+       FROM phone_event_log
+      WHERE other_party = ? AND line_number IN (?) AND suppressed = 0`,
+    [String(party), numbers]
+  );
+  const d = toDate(row && row.first_at);
+  return { number: String(party), first_seen: d ? utcToLocal(d).toISODate() : null };
+}
+
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Send
 // ─────────────────────────────────────────────────────────────────────────────
@@ -495,6 +521,7 @@ module.exports = {
   listConversations,
   listMessages,
   listCalls,
+  firstSeen,
   sendSms,
   contactsFor,
   // helpers (routes + tests)

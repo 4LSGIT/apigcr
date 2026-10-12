@@ -310,6 +310,25 @@ describe('reads', () => {
     expect(c1[0]).toMatchObject({ other_party: null, contact: null });
   });
 
+  test('first-seen: the firm-local day of the earliest text or call with a number on the lines the caller READS; suppressed rows ignored', async () => {
+    const S = SPH_SEED(W);
+    // an older call from P1 on line 1 at 02:00 UTC = 22:00 the day before in Detroit, and an even older SUPPRESSED one
+    W.call(S.L1, S.P1, 'incoming', { processed_at: new Date('2026-09-15T02:00:00Z') });
+    W.call(S.L1, S.P1, 'incoming', { processed_at: new Date('2026-08-01T12:00:00Z'), suppressed: 1 });
+    const fs = async (t, n) => call('GET', `/api/phone-lines/first-seen?number=${n}`, { t });
+    expect((await fs(T.su(), S.P1)).json).toMatchObject({ number: S.P1, first_seen: '2026-09-14' });
+    // a grantee who reads only line 6 sees line 6's first (the missed call #10, 2026-10-01) — never line 1's
+    W.grant(NOBODY, 6, { can_read: 1 });
+    expect((await fs(T.nobody(), S.P1)).json.first_seen).toBe('2026-10-01');
+    // nothing on a readable line → null; no readable line at all → null without touching phone_event_log
+    expect((await fs(T.nobody(), S.L3)).json.first_seen).toBeNull();
+    const before = W.statements.length;
+    expect((await fs(T.rena(), S.P1)).json.first_seen).toBeNull();
+    expect(W.statements.slice(before).some((x) => /phone_event_log/.test(x.sql))).toBe(false);
+    expect((await fs(T.su(), 'abc')).status).toBe(400);
+    expect((await call('GET', `/api/phone-lines/first-seen?number=${S.P1}`, { apiKey: process.env.INTERNAL_API_KEY })).status).toBe(403);
+  });
+
   test('call log pages on (processed_at, id)', async () => {
     for (let i = 0; i < 5; i++) W.call('2485592400', `31355500${10 + i}`, 'incoming');
     const a = (await call('GET', '/api/phone-lines/1/calls?limit=2', { t: T.su() })).json;

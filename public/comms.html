@@ -98,6 +98,12 @@
   .seg button { border: 0; border-right: 1px solid var(--border); background: var(--surface); color: var(--text); padding: 0 10px; height: 26px; font: inherit; font-size: 12px; cursor: pointer; white-space: nowrap; }
   .seg button:last-child { border-right: 0; }
   .seg button[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent-on-soft); font-weight: 700; }
+  /* The pressed button is bold, which is wider: a button carrying data-label
+     (= its text) reserves its BOLD width in both states, so toggling never
+     resizes the control — in a wrapping .bar a few pixels moved the wrap
+     point and the whole bar jumped (Phone Conversations/Calls, 2026-10-12). */
+  .seg button[data-label] { display: inline-flex; flex-direction: column; align-items: center; justify-content: center; }
+  .seg button[data-label]::after { content: attr(data-label); font-weight: 700; height: 0; overflow: hidden; visibility: hidden; pointer-events: none; }
 
   /* ── Rail: views + mailboxes, desktop only (borrowed from the Comms mockup).
      The same state as the view menu + mailbox picker, which phones keep. ── */
@@ -399,6 +405,9 @@
   .bub.in { align-self: flex-start; background: var(--surface-2); color: var(--text); border-bottom-left-radius: 4px; }
   .bub.out { align-self: flex-end; background: var(--accent-soft); color: var(--accent-on-soft); border-color: var(--accent); border-bottom-right-radius: 4px; }
   .bub.pending { border-style: dashed; }
+  /* not .att — that is the Email tab's attachment chip */
+  .bub .ph-att { font-style: italic; opacity: 0.85; }
+  .bub .ph-att i { margin-right: 5px; }
   .bub .bt { display: block; margin-top: 3px; font-size: 10.5px; opacity: 0.8; white-space: normal; }
   /* A call in the conversation: a quiet box on the caller's side. The
      recordings arc fills it later (summary text, recording / transcript
@@ -478,9 +487,9 @@
       <div class="mb-panel" id="mb-panel" role="group" aria-label="Mailboxes in this list" hidden></div>
       <div class="fbar" role="group" aria-label="Filters">
         <span class="seg" role="group" aria-label="Folders">
-          <button type="button" id="f-inbox" aria-pressed="true" title="The Inbox of each mailbox">Inbox</button>
-          <button type="button" id="f-sent" aria-pressed="false" title="Mail the mailboxes sent (Google's Sent label, or a Sent folder)">Sent</button>
-          <button type="button" id="f-folders" aria-pressed="false" title="Include Sent and other ingested folders, not just the Inbox">All folders</button>
+          <button type="button" id="f-inbox" aria-pressed="true" data-label="Inbox" title="The Inbox of each mailbox">Inbox</button>
+          <button type="button" id="f-sent" aria-pressed="false" data-label="Sent" title="Mail the mailboxes sent (Google's Sent label, or a Sent folder)">Sent</button>
+          <button type="button" id="f-folders" aria-pressed="false" data-label="All folders" title="Include Sent and other ingested folders, not just the Inbox">All folders</button>
         </span>
         <button class="fchip" type="button" id="f-unread" aria-pressed="false">Unread</button>
         <button class="fchip" type="button" id="f-client" aria-pressed="false" title="Mail to or from a client — someone Primary or Secondary on a case: the sender, or one of the first five recipients. The firm's own addresses never count."><i class="fa-solid fa-user" aria-hidden="true"></i> Client mail</button>
@@ -518,8 +527,8 @@
       <div class="bar">
         <select id="ph-line-sel" aria-label="Phone line"></select>
         <span class="seg" role="group" aria-label="Show">
-          <button type="button" id="ph-v-msgs" aria-pressed="true" title="Conversations — the texts and calls with each number, newest first">Conversations</button>
-          <button type="button" id="ph-v-calls" aria-pressed="false" title="The call log, newest first">Calls</button>
+          <button type="button" id="ph-v-msgs" aria-pressed="true" data-label="Conversations" title="Conversations — the texts and calls with each number, newest first">Conversations</button>
+          <button type="button" id="ph-v-calls" aria-pressed="false" data-label="Calls" title="The call log, newest first">Calls</button>
         </span>
         <button class="btn icon" type="button" id="ph-refresh" title="Refresh" aria-label="Refresh"><i class="fa-solid fa-rotate" aria-hidden="true"></i></button>
         <button class="btn primary" type="button" id="ph-new" title="Text a number from this line" hidden><i class="fa-solid fa-pen" aria-hidden="true"></i> New text</button>
@@ -534,6 +543,7 @@
         <button class="btn icon back-btn" type="button" id="ph-back" title="Back to the list"><i class="fa-solid fa-arrow-left"></i></button>
         <h2 id="ph-title"></h2>
         <button class="btn small" type="button" id="ph-contact" hidden><i class="fa-solid fa-user" aria-hidden="true"></i> Open contact</button>
+        <button class="btn small" type="button" id="ph-addc" hidden title="Attach this number to a contact, or create a new contact with it"><i class="fa-solid fa-user-plus" aria-hidden="true"></i> Add to contact</button>
       </div>
       <div class="thread-body" id="ph-body">
         <div class="empty">Select a conversation to read it.</div>
@@ -2741,8 +2751,15 @@ function convoSnippet(last, mine) {
     return h('div', { className: 'snippet call' + (last.missed ? ' missed' : '') },
       icon(last.missed || last.unanswered ? 'fa-phone-slash' : 'fa-phone'), phCallLabel(last));
   }
-  return h('div', { className: 'snippet' }, `${mine ? 'You: ' : ''}${last.snippet || ''}`);
+  return h('div', { className: 'snippet' }, `${mine ? 'You: ' : ''}${phBlank(last.snippet) ? 'Attachment' : last.snippet}`);
 }
+
+// A text with no words is a picture / file message (MMS): live 2026-10-12 every
+// blank one carries an attachment in its raw webhook, which the phone ingest
+// does not keep yet — say so instead of drawing an empty bubble.
+const phBlank = (body) => !String(body == null ? '' : body).trim();
+const phAttachmentNote = () => h('span', { className: 'ph-att', title: 'A picture or file came with this text. The phone system has it; YisraCase does not store attachments yet.' },
+  icon('fa-paperclip'), 'Attachment — not shown here yet');
 
 function callRow(c) {
   const dirIcon = c.direction === 'incoming' ? 'fa-arrow-down' : 'fa-arrow-up';
@@ -2791,8 +2808,7 @@ async function openConversation(party, contact, { silent = false, older = false 
   for (const li of E('ph-list').querySelectorAll('.msg[data-party]')) li.classList.toggle('selected', li.dataset.party === party);
   E('phone').classList.add('show-thread');
   E('ph-head').hidden = false;
-  E('ph-title').replaceChildren(phWho(party, contact), contact && contact.name ? h('span', { className: 'who-sub' }, fmtPhone(party)) : null);
-  paintContactButton(contact);
+  paintHead(party, contact);
   paintCompose(line, party);
   const seq = ++ph.tseq;
   if (!same && !silent) {
@@ -2818,7 +2834,7 @@ async function openConversation(party, contact, { silent = false, older = false 
       next = prev.next;
     }
     ph.thread = { party, contact: (data && data.contact) || contact || null, messages, next };
-    if (ph.thread.contact) paintContactButton(ph.thread.contact);
+    paintHead(party, ph.thread.contact);
     renderPhoneThread({ keepScroll: older, quiet: silent && !!prev });
   } catch (err) {
     if (seq !== ph.tseq) return;
@@ -2826,10 +2842,44 @@ async function openConversation(party, contact, { silent = false, older = false 
   }
 }
 
-function paintContactButton(contact) {
+/** Title (name over number, or the number alone) + Open contact / Add to contact. */
+function paintHead(party, contact) {
+  const named = !!(contact && contact.name);
+  E('ph-title').replaceChildren(...[phWho(party, contact), named ? h('span', { className: 'who-sub' }, fmtPhone(party)) : null].filter(Boolean));
+  const known = !!(contact && contact.contact_id);
   const b = E('ph-contact');
-  b.hidden = !(contact && contact.contact_id);
-  b.onclick = contact && contact.contact_id ? () => openContact({ contact_id: contact.contact_id, name: contact.name }) : null;
+  b.hidden = !known;
+  b.onclick = known ? () => openContact({ contact_id: contact.contact_id, name: contact.name }) : null;
+  // A number no contact holds: attach it to one, or create one with it
+  // (contact_phones are US 10-digit — short codes are not offered).
+  const add = E('ph-addc');
+  add.hidden = known || !phTextable(party);
+  add.onclick = add.hidden ? null : () => phAddContact(party);
+}
+
+/**
+ * The shell's attach-or-create dialog (scripts.js OrphanAdoptDialog — the
+ * Email tab's "Add to a client" and the log's orphan rows use it): attach the
+ * number to an existing contact or create a new one with it. The start-date
+ * default is the earlier of the log's first row and this hub's first text or
+ * call with the number (GET /api/phone-lines/first-seen). Attaching re-reads
+ * the conversation and the list, so the name appears; Create new opens the
+ * new contact's file (the list shows the name on its next refresh).
+ */
+async function phAddContact(party) {
+  const dlg = P.OrphanAdoptDialog;
+  if (typeof dlg !== 'function') { toast('Adding to a contact needs the app window — open Comms from the menu'); return; }
+  const lineId = ph.lineId;
+  let earliest = null;
+  try {
+    const r = await api('/api/phone-lines/first-seen', 'GET', { number: party });
+    earliest = (r && r.first_seen) || null;
+  } catch (_) { /* the dialog falls back to the log's date, then today */ }
+  dlg(party, 'phone', () => {
+    if (ph.lineId !== lineId) return;
+    if (ph.party === party) openConversation(party, null, { silent: true });
+    if (ph.view === 'msgs') phoneLoad({ silent: true });
+  }, { earliest });
 }
 
 function paintCompose(line, party) {
@@ -2878,7 +2928,7 @@ function renderPhoneThread({ keepScroll = false, quiet = false } = {}) {
   const when = (m) => { const x = Date.parse(m.at); return Number.isNaN(x) ? 0 : x; };
   for (const m of [...t.messages].sort((a, b) => when(a) - when(b) || a.id - b.id)) {
     kids.push(m.kind === 'call' ? callBubble(m) : h('div', { className: `bub ${m.direction === 'outgoing' ? 'out' : 'in'}`, dataset: { id: String(m.id) } },
-      m.body, h('span', { className: 'bt' }, bubbleTime(m.at))));
+      phBlank(m.body) ? phAttachmentNote() : m.body, h('span', { className: 'bt' }, bubbleTime(m.at))));
   }
   for (const p of pendingFor(ph.lineId, t.party)) {
     kids.push(h('div', { className: 'bub out pending' }, p.body,

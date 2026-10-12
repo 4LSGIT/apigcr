@@ -1,0 +1,36 @@
+{
+ "status": "success",
+ "line_id": 1,
+ "other_party": "5555550198",
+ "next_cursor": null,
+ "contact": null,
+ "messages": [
+  {
+   "id": 36,
+   "kind": "call",
+   "direction": "incoming",
+   "at": "2026-10-11T17:40:00.000Z",
+   "logged": true,
+   "duration_s": 204,
+   "status": "Accepted",
+   "unanswered": false,
+   "missed": false
+  },
+  {
+   "id": 37,
+   "kind": "sms",
+   "direction": "incoming",
+   "body": " ",
+   "at": "2026-10-11T17:52:00.000Z",
+   "logged": true
+  },
+  {
+   "id": 38,
+   "kind": "sms",
+   "direction": "outgoing",
+   "body": "Reminder: your 341 meeting is Thursday at 10:00 by phone. Call in 5 minutes early.",
+   "at": "2026-10-11T18:00:00.000Z",
+   "logged": true
+  }
+ ]
+}
