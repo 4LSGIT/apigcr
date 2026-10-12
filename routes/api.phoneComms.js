@@ -16,8 +16,9 @@
  *   DELETE /api/phone-lines/:id/grants/:grantId      SU or can_manage   ownership-scoped
  *   GET    /api/phone-lines/:id/conversations        can_read — SMS conversations, newest first
  *                                                    ?cursor=&limit=≤100
- *   GET    /api/phone-lines/:id/conversations/:party can_read — one conversation, newest page
- *                                                    returned oldest-first ?cursor=&limit=
+ *   GET    /api/phone-lines/:id/conversations/:party can_read — one conversation (its texts AND
+ *                                                    calls, each item `kind` sms|call), newest
+ *                                                    page returned oldest-first ?cursor=&limit=
  *   GET    /api/phone-lines/:id/calls                can_read — the call log ?cursor=&limit=
  *   POST   /api/phone-lines/:id/sms                  can_send (SU: + step-up) {to, message}
  *

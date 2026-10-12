@@ -398,6 +398,13 @@
   .bub.out { align-self: flex-end; background: var(--accent-soft); color: var(--accent-on-soft); border-color: var(--accent); border-bottom-right-radius: 4px; }
   .bub.pending { border-style: dashed; }
   .bub .bt { display: block; margin-top: 3px; font-size: 10.5px; opacity: 0.8; white-space: normal; }
+  /* A call in the conversation: a quiet box on the caller's side. The
+     recordings arc fills it later (summary text, recording / transcript
+     buttons) — keep it a .bub so it inherits width and alignment. */
+  .bub.call.in, .bub.call.out { background: var(--surface); color: var(--text-2); border-color: var(--border); }
+  .bub.call .ct { display: flex; align-items: center; gap: 6px; font-weight: 600; white-space: normal; }
+  .bub.call .ct i { color: var(--text-muted); }
+  .bub.call.missed .ct, .bub.call.missed .ct i { color: var(--danger); }
   .ph-compose { flex: 0 0 auto; display: flex; flex-direction: column; gap: 6px; padding: 8px 10px; border-top: 1px solid var(--border); background: var(--surface); min-width: 0; }
   .ph-compose textarea#ph-text, .modal textarea#ph-new-text {
     width: 100%; min-width: 0; min-height: 64px; resize: vertical; background: var(--surface-2); color: var(--text);
@@ -2576,6 +2583,17 @@ const phLineFrom = (l) => (l.display_name ? `${l.display_name} · ${fmtPhone(l.p
 const phWho = (party, contact) => (contact && contact.name) ? contact.name : fmtPhone(party);
 const phCanSend = (l) => !!(l && l.can_send && l.active);
 const phTextable = (party) => /^\d{10}$/.test(String(party || ''));
+// A number a conversation can be opened for (the server's PARTY_RE): texted
+// or not — a short code or an odd number still has its calls and texts.
+const phPartyOk = (party) => /^\d{3,15}$/.test(String(party || ''));
+/** "Missed call" · "Incoming call · 3m 05s" · "Outgoing call · no answer" (noun=false drops "call"). */
+function phCallLabel(c, noun = true) {
+  if (c.missed) return 'Missed call';
+  const dir = c.direction === 'incoming' ? 'Incoming' : c.direction === 'outgoing' ? 'Outgoing' : '';
+  const what = dir ? `${dir}${noun ? ' call' : ''}` : 'Call';
+  if (c.unanswered) return `${what} · no answer`;
+  return `${what}${c.duration_s != null ? ` · ${phDuration(c.duration_s)}` : ''}`;
+}
 function phDuration(s) {
   if (s == null) return '';
   const m = Math.floor(s / 60);
@@ -2717,13 +2735,14 @@ function convoRow(c) {
 
 function callRow(c) {
   const dirIcon = c.direction === 'incoming' ? 'fa-arrow-down' : 'fa-arrow-up';
-  const what = c.missed ? 'Missed call' : `${c.direction === 'incoming' ? 'Incoming' : 'Outgoing'}${c.duration_s != null ? ` · ${phDuration(c.duration_s)}` : ''}`;
+  const what = phCallLabel(c, false);
+  const opens = phPartyOk(c.other_party);
   return h('li', {
     className: 'msg' + (c.missed ? ' missed' : ''), dataset: { call: String(c.id) },
-    tabindex: phTextable(c.other_party) ? '0' : null, role: phTextable(c.other_party) ? 'button' : null,
-    title: phTextable(c.other_party) ? 'Open the text conversation with this number' : null,
-    onclick: () => { if (phTextable(c.other_party)) openConversation(c.other_party, c.contact); },
-    onkeydown: (e) => { if (e.key === 'Enter' && phTextable(c.other_party)) openConversation(c.other_party, c.contact); },
+    tabindex: opens ? '0' : null, role: opens ? 'button' : null,
+    title: opens ? 'Open the conversation with this number — its texts and calls' : null,
+    onclick: () => { if (opens) openConversation(c.other_party, c.contact); },
+    onkeydown: (e) => { if (e.key === 'Enter' && opens) openConversation(c.other_party, c.contact); },
   },
     h('div', { className: 'r1' },
       h('span', { className: 'from', title: fmtPhone(c.other_party) }, c.other_party ? phWho(c.other_party, c.contact) : '(unknown number)'),
@@ -2841,10 +2860,13 @@ function renderPhoneThread({ keepScroll = false, quiet = false } = {}) {
     }, 'Load earlier')));
   }
   if (!t.messages.length && !pendingFor(ph.lineId, t.party).length) {
-    kids.push(h('div', { className: 'empty' }, 'No texts with this number yet.'));
+    kids.push(h('div', { className: 'empty' }, 'No texts or calls with this number yet.'));
   }
-  for (const m of t.messages) {
-    kids.push(h('div', { className: `bub ${m.direction === 'outgoing' ? 'out' : 'in'}`, dataset: { id: String(m.id) } },
+  // Texts and calls, by when they HAPPENED (`at`): a call is recorded when it
+  // ends, so the server's order can put it after texts sent while it ran.
+  const when = (m) => { const x = Date.parse(m.at); return Number.isNaN(x) ? 0 : x; };
+  for (const m of [...t.messages].sort((a, b) => when(a) - when(b) || a.id - b.id)) {
+    kids.push(m.kind === 'call' ? callBubble(m) : h('div', { className: `bub ${m.direction === 'outgoing' ? 'out' : 'in'}`, dataset: { id: String(m.id) } },
       m.body, h('span', { className: 'bt' }, bubbleTime(m.at))));
   }
   for (const p of pendingFor(ph.lineId, t.party)) {
@@ -2857,6 +2879,17 @@ function renderPhoneThread({ keepScroll = false, quiet = false } = {}) {
   if (keepScroll) body.scrollTop = prevTop + (body.scrollHeight - prevH);
   else if (quiet && !wasAtBottom) body.scrollTop = prevTop;
   else body.scrollTop = body.scrollHeight;
+}
+
+/** A call in the conversation: one small box — what happened, when. */
+function callBubble(m) {
+  const quiet = m.missed || m.unanswered;
+  return h('div', {
+    className: `bub call ${m.direction === 'outgoing' ? 'out' : 'in'}${m.missed ? ' missed' : ''}`,
+    dataset: { id: String(m.id), kind: 'call' },
+  },
+    h('span', { className: 'ct' }, icon(quiet ? 'fa-phone-slash' : 'fa-phone'), phCallLabel(m)),
+    h('span', { className: 'bt' }, bubbleTime(m.at)));
 }
 
 function closePhoneThread() {

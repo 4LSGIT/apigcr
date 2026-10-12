@@ -482,11 +482,16 @@ lines alike (design: `ref/MAILBOX_SYSTEM_DESIGN.md` §4.4, slice S-PH).
 - **Texts** lists the line's conversations — one per number, newest activity
   first, the contact's name when the number belongs to a client on file
   (**Open contact** opens their file). Opening one shows the texts as
-  bubbles: yours on the right, theirs on the left; **Load earlier** goes
-  back further.
+  bubbles — yours on the right, theirs on the left — with the **calls** with
+  that number among them as small call boxes (incoming on the left, outgoing
+  on the right: direction and length, **Missed call** in red, "no answer"
+  when nobody picked up), all in the order they happened; **Load earlier**
+  goes back further.
 - **Calls** is the line's call log, newest first — direction, length, and
   **Missed call** for an unanswered incoming call. Clicking a call opens the
-  text conversation with that number.
+  conversation with that number — its calls and texts — even when the
+  number only ever called. (Only Quo reports unanswered calls; a RingCentral
+  call nobody picked up still shows as answered.)
 - **Sending.** With **Send** on an active line, a conversation has a message
   box at the bottom and the bar has **New text** (a US number, up to 1,000
   characters, text only — no pictures here). What you send shows as

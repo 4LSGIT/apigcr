@@ -55,7 +55,10 @@
  * what ordering and cursors use. Each row also carries the provider's own
  * instant where it has one — raw_extra.ts (SMS) / started_at + ended_at
  * (calls) — and `at` prefers it (live: every SMS has ts, every call
- * started_at; they sit seconds before processed_at).
+ * started_at). An SMS lands seconds after its ts; a call is ingested when it
+ * ENDS (live 2026-10-12: 2–190 s after ended_at), so its processed_at trails
+ * its `at` by the call's length. A conversation mixes both (listMessages):
+ * the page boundary is processed_at, the PANE orders what it holds by `at`.
  */
 
 'use strict';
@@ -75,8 +78,10 @@ const CONVO_CURSOR_RE = /^\d{1,19}$/;
 // other_party as stored (live: 10 digits, 5-6 digit shortcodes, one 12-digit
 // international) — digits only.
 const PARTY_RE = /^\d{3,15}$/;
-// Call outcomes that read as "missed" (live: Quo 'no-answer'; RingCentral
-// reports 'Accepted' / 'Call connected' / '').
+// Call outcomes that mean nobody picked up — `unanswered`; on an INCOMING
+// call that is `missed` (live: Quo 'no-answer'; RingCentral reports only
+// 'Accepted' / 'Call connected' / '', so an unanswered RingCentral call
+// reads as answered — no signal to go on).
 const MISSED_STATUSES = new Set(['no-answer', 'missed']);
 
 function httpError(status, message, extra) {
@@ -169,6 +174,25 @@ function validateMessage(raw) {
     throw httpError(400, `message is ${message.length} characters — the limit is ${SMS_MAX_CHARS}`);
   }
   return message;
+}
+
+/**
+ * The call half of a row — the call log and a conversation's call items share
+ * it. Duration from the provider's started_at / ended_at (null when either is
+ * missing or they run backwards).
+ */
+function callFields(r) {
+  const start = toDate(jsonText(r.started_at));
+  const end = toDate(jsonText(r.ended_at));
+  const status = jsonText(r.provider_status);
+  const dur = start && end ? Math.round((end.getTime() - start.getTime()) / 1000) : null;
+  const unanswered = status != null && MISSED_STATUSES.has(status.toLowerCase());
+  return {
+    duration_s: dur != null && dur >= 0 ? dur : null,
+    status,
+    unanswered,
+    missed: r.direction === 'incoming' && unanswered,
+  };
 }
 
 function snippet(body) {
@@ -325,8 +349,17 @@ async function listConversations(db, line, query = {}) {
 }
 
 /**
- * One conversation's messages: the NEWEST page (or the page before `cursor`),
- * returned OLDEST FIRST for a chat view; next_cursor reaches further back.
+ * One conversation — the line's texts AND calls with one number, interleaved
+ * (calls joined the thread 2026-10-12, after S-PH): the NEWEST page (or the
+ * page before `cursor`), returned OLDEST FIRST by processed_at for a chat
+ * view; next_cursor reaches further back. Each item says what it is:
+ *   {id, kind:'sms',  direction, body, at, logged}
+ *   {id, kind:'call', direction, at, logged, duration_s, status, unanswered, missed}
+ * A call's `at` is its START and it is ingested at its END (see TIMES), so
+ * within a page a call can come after texts that were sent while it ran —
+ * the pane orders by `at`. The recordings arc hangs a call's recording /
+ * transcript / summary on its call item (raw_extra.recording_id is on every
+ * live call row).
  */
 async function listMessages(db, line, party, query = {}) {
   if (!PARTY_RE.test(String(party || ''))) throw httpError(400, 'conversation must be a phone number (digits)');
@@ -340,9 +373,13 @@ async function listMessages(db, line, party, query = {}) {
   }
   params.push(limit + 1);
   const [rows] = await db.query(
-    `SELECT id, direction, body, JSON_UNQUOTE(JSON_EXTRACT(raw_extra, '$.ts')) AS ts, processed_at, log_id
+    `SELECT id, event_type, direction, body, processed_at, log_id,
+            JSON_UNQUOTE(JSON_EXTRACT(raw_extra, '$.ts')) AS ts,
+            JSON_UNQUOTE(JSON_EXTRACT(raw_extra, '$.started_at')) AS started_at,
+            JSON_UNQUOTE(JSON_EXTRACT(raw_extra, '$.ended_at')) AS ended_at,
+            JSON_UNQUOTE(JSON_EXTRACT(raw_extra, '$.provider_status')) AS provider_status
        FROM phone_event_log
-      WHERE line_number = ? AND other_party = ? AND event_type = 'sms' AND suppressed = 0${keyset}
+      WHERE line_number = ? AND other_party = ? AND suppressed = 0${keyset}
       ORDER BY processed_at DESC, id DESC
       LIMIT ?`,
     params
@@ -352,13 +389,23 @@ async function listMessages(db, line, party, query = {}) {
   return {
     other_party: String(party),
     contact: names.get(String(party)) || null,
-    messages: page.map(r => ({
-      id: Number(r.id),
-      direction: r.direction,
-      body: r.body == null ? '' : String(r.body),
-      at: eventAt(r.ts, r.processed_at),
-      logged: r.log_id != null,
-    })).reverse(),
+    messages: page.map(r => (r.event_type === 'call'
+      ? {
+        id: Number(r.id),
+        kind: 'call',
+        direction: r.direction,
+        at: eventAt(r.started_at, r.processed_at),
+        logged: r.log_id != null,
+        ...callFields(r),
+      }
+      : {
+        id: Number(r.id),
+        kind: 'sms',
+        direction: r.direction,
+        body: r.body == null ? '' : String(r.body),
+        at: eventAt(r.ts, r.processed_at),
+        logged: r.log_id != null,
+      })).reverse(),
     next_cursor: rows.length > limit && page.length ? cursorOf(page[page.length - 1]) : null,
   };
 }
@@ -388,23 +435,15 @@ async function listCalls(db, line, query = {}) {
   const page = rows.slice(0, limit);
   const names = await contactsFor(db, page.map(r => (r.other_party == null ? null : String(r.other_party))));
   return {
-    calls: page.map((r) => {
-      const start = toDate(jsonText(r.started_at));
-      const end = toDate(jsonText(r.ended_at));
-      const status = jsonText(r.provider_status);
-      const dur = start && end ? Math.round((end.getTime() - start.getTime()) / 1000) : null;
-      return {
-        id: Number(r.id),
-        direction: r.direction,
-        other_party: r.other_party == null ? null : String(r.other_party),
-        at: eventAt(r.started_at, r.processed_at),
-        duration_s: dur != null && dur >= 0 ? dur : null,
-        status,
-        missed: r.direction === 'incoming' && status != null && MISSED_STATUSES.has(status.toLowerCase()),
-        logged: r.log_id != null,
-        contact: r.other_party == null ? null : (names.get(String(r.other_party)) || null),
-      };
-    }),
+    calls: page.map(r => ({
+      id: Number(r.id),
+      direction: r.direction,
+      other_party: r.other_party == null ? null : String(r.other_party),
+      at: eventAt(r.started_at, r.processed_at),
+      ...callFields(r),
+      logged: r.log_id != null,
+      contact: r.other_party == null ? null : (names.get(String(r.other_party)) || null),
+    })),
     next_cursor: rows.length > limit && page.length ? cursorOf(page[page.length - 1]) : null,
   };
 }

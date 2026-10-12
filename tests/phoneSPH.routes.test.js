@@ -21,9 +21,11 @@
  *             side of an incoming row is not that line's; a line-to-line text
  *             is on both lines, once each.
  *   reads     conversations grouped by party, newest activity first, paged by
- *             last id; one conversation oldest-first with an older cursor; the
- *             call log newest-first, missed / duration; names from the ACTIVE
- *             owner of a number only.
+ *             last id; one conversation oldest-first with an older cursor,
+ *             its texts AND calls interleaved (`kind`; calls shaped like the
+ *             call log's; suppressed calls out); the call log newest-first,
+ *             missed / unanswered / duration; names from the ACTIVE owner of
+ *             a number only.
  *   send      can_send only (attorney bypass and read-only grants refused);
  *             SU needs step-up; inactive line 409; bad to / message 400;
  *             provider failure 502 + audit; rate limit; nothing reaches
@@ -234,13 +236,48 @@ describe('reads', () => {
     expect((await call('GET', '/api/phone-lines/1/conversations/abc', { t: T.su() })).status).toBe(400);
   });
 
+  test('one conversation carries the CALLS with that number too: kind, duration, unanswered / missed; suppressed calls out', async () => {
+    const S = SPH_SEED(W);
+    W.call(S.L1, S.P2, 'incoming', { suppressed: 1 });                                       // 16 suppressed — never shown
+    W.call(S.L1, S.P2, 'outgoing', { raw_extra: JSON.stringify({ line: S.L1, started_at: '2026-10-01T12:20:00.000Z', ended_at: '2026-10-01T12:20:40.000Z', provider_status: 'no-answer' }) }); // 17
+    const t = (await call('GET', `/api/phone-lines/1/conversations/${S.P2}`, { t: T.su() })).json;
+    expect(t.messages.map((m) => [m.id, m.kind, m.direction])).toEqual([[3, 'call', 'incoming'], [4, 'sms', 'incoming'], [17, 'call', 'outgoing']]);
+    const row3 = W.T.phone_event_log.find((e) => e.id === 3);
+    expect(t.messages[0]).toEqual({
+      id: 3, kind: 'call', direction: 'incoming', at: JSON.parse(row3.raw_extra).started_at, logged: false,
+      duration_s: 85, status: 'completed', unanswered: false, missed: false,
+    });
+    const row4 = W.T.phone_event_log.find((e) => e.id === 4);
+    expect(t.messages[1]).toEqual({ id: 4, kind: 'sms', direction: 'incoming', body: 'P2 texts', at: JSON.parse(row4.raw_extra).ts, logged: false });
+    // nobody answered OUR call: unanswered, but only an incoming one is "missed"
+    expect(t.messages[2]).toMatchObject({ kind: 'call', status: 'no-answer', unanswered: true, missed: false, duration_s: 40, at: '2026-10-01T12:20:00.000Z' });
+    // line 6 ↔ P1 is one missed call; line 6 ↔ P4 one call with no direction and no times
+    const six = (await call('GET', `/api/phone-lines/6/conversations/${S.P1}`, { t: T.su() })).json.messages;
+    expect(six).toEqual([expect.objectContaining({ id: 10, kind: 'call', direction: 'incoming', missed: true, unanswered: true, duration_s: 30 })]);
+    const p4 = (await call('GET', `/api/phone-lines/6/conversations/${S.P4}`, { t: T.su() })).json.messages;
+    expect(p4).toEqual([expect.objectContaining({ id: 14, kind: 'call', direction: null, duration_s: null, status: null, unanswered: false, missed: false })]);
+    // the orphan call (#6, to a number that is no line) is in no conversation
+    for (const l of [1, 6]) {
+      expect((await call('GET', `/api/phone-lines/${l}/conversations/${S.P4}`, { t: T.su() })).json.messages.some((m) => m.id === 6)).toBe(false);
+    }
+  });
+
+  test('a mixed conversation pages on (processed_at, id) across texts and calls', async () => {
+    const S = SPH_SEED(W);
+    const a = (await call('GET', `/api/phone-lines/1/conversations/${S.P2}?limit=1`, { t: T.su() })).json;
+    expect(a.messages.map((m) => [m.id, m.kind])).toEqual([[4, 'sms']]);
+    const b = (await call('GET', `/api/phone-lines/1/conversations/${S.P2}?limit=1&cursor=${a.next_cursor}`, { t: T.su() })).json;
+    expect(b.messages.map((m) => [m.id, m.kind])).toEqual([[3, 'call']]);
+    expect(b.next_cursor).toBeNull();
+  });
+
   test('call log: newest first, SMS and suppressed excluded, duration, missed only for an unanswered INCOMING call', async () => {
     SPH_SEED(W);
     const c6 = (await call('GET', '/api/phone-lines/6/calls', { t: T.su() })).json.calls;
     const byId = Object.fromEntries(c6.map((c) => [c.id, c]));
-    expect(byId[10]).toMatchObject({ direction: 'incoming', missed: true, status: 'no-answer', duration_s: 30, contact: { contact_id: 501, name: 'Pat One' } });
-    expect(byId[11]).toMatchObject({ direction: 'outgoing', missed: false, duration_s: 125 });
-    expect(byId[14]).toMatchObject({ duration_s: null, status: null, missed: false });
+    expect(byId[10]).toMatchObject({ direction: 'incoming', missed: true, unanswered: true, status: 'no-answer', duration_s: 30, contact: { contact_id: 501, name: 'Pat One' } });
+    expect(byId[11]).toMatchObject({ direction: 'outgoing', missed: false, unanswered: false, duration_s: 125 });
+    expect(byId[14]).toMatchObject({ duration_s: null, status: null, unanswered: false, missed: false });
     const c1 = (await call('GET', '/api/phone-lines/1/calls', { t: T.su() })).json.calls;
     expect(c1.map((c) => c.id)).toEqual([15, 3]);
     expect(c1[0]).toMatchObject({ other_party: null, contact: null });

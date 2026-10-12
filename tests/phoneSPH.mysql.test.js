@@ -181,7 +181,7 @@ maybe('S-PH phone reads on real MySQL', () => {
       const line = { id: Number(id), phone_number: num };
       expect([id, 'convos', await pages(phone.listConversations, pool, line)]).toEqual([id, 'convos', await pages(phone.listConversations, W.db, line)]);
       expect([id, 'calls', await pages(phone.listCalls, pool, line)]).toEqual([id, 'calls', await pages(phone.listCalls, W.db, line)]);
-      for (const party of [S.P1, S.P2, S.P3, '22395', S.L1, S.L3]) {
+      for (const party of [S.P1, S.P2, S.P3, S.P4, '22395', S.L1, S.L3]) {
         expect([id, party, await pages(phone.listMessages, pool, line, party)]).toEqual([id, party, await pages(phone.listMessages, W.db, line, party)]);
       }
     }
@@ -190,6 +190,12 @@ maybe('S-PH phone reads on real MySQL', () => {
     expect(c1.conversations.map(c => [c.other_party, c.count])).toEqual([[S.P1, 3], ['22395', 1], [S.L3, 1], [S.P2, 1]]);
     expect(c1.conversations[0].contact).toEqual({ contact_id: 501, name: 'Pat One' });
     expect(c1.conversations.find(c => c.other_party === S.P2).contact).toBeNull();
+    // one conversation = its texts AND its calls (the call's fields from raw_extra)
+    const t2 = await phone.listMessages(pool, { id: 1, phone_number: S.L1 }, S.P2, {});
+    expect(t2.messages.map(m => [m.id, m.kind])).toEqual([[3, 'call'], [4, 'sms']]);
+    expect(t2.messages[0]).toMatchObject({ duration_s: 85, status: 'completed', unanswered: false, missed: false });
+    const t6 = await phone.listMessages(pool, { id: 6, phone_number: S.L6 }, S.P1, {});
+    expect(t6.messages).toEqual([expect.objectContaining({ id: 10, kind: 'call', missed: true, duration_s: 30 })]);
   });
 
   test('plans: the per-line walks use idx_phone_event_line (backward, no filesort); the contact probe uses uk_phone_active', async () => {

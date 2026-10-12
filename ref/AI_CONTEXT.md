@@ -201,6 +201,10 @@ body. Governing migrations in `ref/migrations/`.*
     else `from_number`). Name the COLUMN, not the IF() — generated-column
     substitution is collation-fragile; per-line walks FORCE the index.
     `phoneIngest*` never writes it (its INSERT names columns).
+  - **A phone conversation is texts AND calls** (`GET …/conversations/:party`,
+    items `kind: 'sms'|'call'`); the Texts LIST is still texts-only. Calls
+    are ingested when they END, so the pane orders a thread by `at` (the
+    call's start), not the server's `processed_at` order.
   - **The attorney READ bypass covers phone lines**; send/manage never
     bypass. **Grant routes pin their channel** — a mailbox route refuses a
     `phone_line` body and vice versa (the ids overlap).

@@ -6,7 +6,8 @@
  * top-level window is its own parent, so window.apiSend IS the pane's
  * P.apiSend):
  *   - public/comms.html Phone tab: lazy boot on first open, the lines rail +
- *     picker, Texts / Calls, a conversation as TEXT bubbles, compose only
+ *     picker, Texts / Calls, a conversation as TEXT bubbles with its calls
+ *     as call boxes among them (ordered by when each happened), compose only
  *     where the line grants can_send (and is active, and the number is
  *     textable), send → POST /api/phone-lines/:id/sms + a pending bubble until
  *     the webhook echo arrives, New text, stacked navigation on phones;
@@ -97,10 +98,25 @@ const MSGS = {
 };
 const CALLS = {
   calls: [
-    { id: 10, direction: 'incoming', other_party: '3135550001', at: '2026-10-08T15:00:00.000Z', duration_s: 30, status: 'no-answer', missed: true, logged: true, contact: { contact_id: 501, name: 'Pat One' } },
-    { id: 11, direction: 'outgoing', other_party: '3135550002', at: '2026-10-08T14:00:00.000Z', duration_s: 125, status: 'completed', missed: false, logged: true, contact: null },
+    { id: 10, direction: 'incoming', other_party: '3135550001', at: '2026-10-08T15:00:00.000Z', duration_s: 30, status: 'no-answer', unanswered: true, missed: true, logged: true, contact: { contact_id: 501, name: 'Pat One' } },
+    { id: 11, direction: 'outgoing', other_party: '3135550002', at: '2026-10-08T14:00:00.000Z', duration_s: 125, status: 'completed', unanswered: false, missed: false, logged: true, contact: null },
+    { id: 12, direction: 'outgoing', other_party: '22395', at: '2026-10-08T13:00:00.000Z', duration_s: 20, status: 'no-answer', unanswered: true, missed: false, logged: false, contact: null },
+    { id: 15, direction: 'incoming', other_party: null, at: '2026-10-08T12:00:00.000Z', duration_s: 60, status: 'Accepted', unanswered: false, missed: false, logged: false, contact: null },
   ],
   next_cursor: null,
+};
+// One conversation with calls in it, in the SERVER's order (processed_at): the
+// 15:10 call was recorded when it ENDED, after the 15:20 text sent during it.
+const MIXED = {
+  other_party: '3135550002', contact: null, next_cursor: null,
+  messages: [
+    { id: 30, kind: 'sms', direction: 'incoming', body: 'call me', at: '2026-10-08T15:00:00.000Z', logged: false },
+    { id: 31, kind: 'sms', direction: 'outgoing', body: 'calling now', at: '2026-10-08T15:20:00.000Z', logged: false },
+    { id: 32, kind: 'call', direction: 'outgoing', at: '2026-10-08T15:10:00.000Z', logged: false, duration_s: 1505, status: 'completed', unanswered: false, missed: false },
+    { id: 33, kind: 'call', direction: 'incoming', at: '2026-10-08T16:00:00.000Z', logged: false, duration_s: 30, status: 'no-answer', unanswered: true, missed: true },
+    { id: 34, kind: 'call', direction: 'outgoing', at: '2026-10-08T16:05:00.000Z', logged: false, duration_s: 40, status: 'no-answer', unanswered: true, missed: false },
+    { id: 35, kind: 'call', direction: null, at: '2026-10-08T16:10:00.000Z', logged: false, duration_s: null, status: null, unanswered: false, missed: false },
+  ],
 };
 
 function commsHandler(over = {}) {
@@ -243,7 +259,7 @@ describe('comms.html — Phone tab', () => {
     expect(doc.querySelector('#ph-body .bub.pending')).toBeNull();
   });
 
-  test('Calls: missed rows marked, durations; a call row opens the text conversation with that number', async () => {
+  test('Calls: missed rows marked, durations; a call row opens the conversation with that number — short codes too, never a number-less call', async () => {
     const env = await bootComms();
     await openPhone(env);
     const { doc, window, calls } = env;
@@ -254,9 +270,65 @@ describe('comms.html — Phone tab', () => {
     expect(rows[0].classList.contains('missed')).toBe(true);
     expect(rows[0].textContent).toMatch(/Missed call/);
     expect(rows[1].textContent).toMatch(/Outgoing · 2m 05s/);
+    expect(rows[2].textContent).toMatch(/Outgoing · no answer/);
+    expect(rows[2].classList.contains('missed')).toBe(false);
     rows[1].click();
     await tick(window, 60);
     expect(calls.map((c) => c.url)).toContain('/api/phone-lines/1/conversations/3135550002');
+    // a short code's calls live in its conversation too (it just can't be texted back)
+    rows[2].click();
+    await tick(window, 60);
+    expect(calls.map((c) => c.url)).toContain('/api/phone-lines/1/conversations/22395');
+    expect(doc.getElementById('ph-compose').hidden).toBe(true);
+    // a call with no other party opens nothing
+    expect(rows[3].getAttribute('role')).toBeNull();
+    const before = calls.length;
+    rows[3].click();
+    await tick(window, 40);
+    expect(calls.length).toBe(before);
+  });
+
+  test('a conversation shows its CALLS among the texts: one box each, on the caller\'s side, ordered by when it happened', async () => {
+    const env = await bootComms({ over: { 'GET /api/phone-lines/1/conversations/3135550002': () => fresh(MIXED) } });
+    await openPhone(env);
+    const { doc, window, errors } = env;
+    doc.getElementById('ph-v-calls').click();
+    await tick(window, 60);
+    doc.querySelector('#ph-list .msg[data-call="11"]').click();
+    await tick(window, 60);
+    expect(errors).toEqual([]);
+    const bubs = [...doc.querySelectorAll('#ph-body .bub')];
+    // by `at`: the 15:10 call sits between the 15:00 and 15:20 texts though the server sent it after both
+    expect(bubs.map((b) => b.dataset.id)).toEqual(['30', '32', '31', '33', '34', '35']);
+    expect(bubs.map((b) => b.className)).toEqual(['bub in', 'bub call out', 'bub out', 'bub call in missed', 'bub call out', 'bub call in']);
+    expect(bubs.filter((b) => b.dataset.kind === 'call').map((b) => b.querySelector('.ct').textContent))
+      .toEqual(['Outgoing call · 25m 05s', 'Missed call', 'Outgoing call · no answer', 'Call']);
+    expect(bubs.filter((b) => b.dataset.kind === 'call').map((b) => b.querySelector('.ct i').className))
+      .toEqual(['fa-solid fa-phone', 'fa-solid fa-phone-slash', 'fa-solid fa-phone-slash', 'fa-solid fa-phone']);
+    expect(bubs[1].querySelector('.bt').textContent).not.toBe('');
+    // a call box carries no text body of its own
+    expect(bubs[1].childNodes).toHaveLength(2);
+  });
+
+  test('a number with only calls opens a conversation of call boxes; the empty one says texts OR calls', async () => {
+    const onlyCalls = { other_party: '3135550002', contact: null, next_cursor: null, messages: [fresh(MIXED.messages[3])] };
+    const env = await bootComms({
+      over: {
+        'GET /api/phone-lines/1/conversations/3135550002': () => fresh(onlyCalls),
+        'GET /api/phone-lines/1/conversations/3135550001': () => ({ other_party: '3135550001', contact: null, next_cursor: null, messages: [] }),
+      },
+    });
+    await openPhone(env);
+    const { doc, window } = env;
+    doc.getElementById('ph-v-calls').click();
+    await tick(window, 60);
+    doc.querySelector('#ph-list .msg[data-call="11"]').click();
+    await tick(window, 60);
+    expect([...doc.querySelectorAll('#ph-body .bub')].map((b) => b.className)).toEqual(['bub call in missed']);
+    expect(doc.getElementById('ph-compose').hidden).toBe(false); // a 10-digit caller can be texted back
+    doc.querySelector('#ph-list .msg[data-call="10"]').click();
+    await tick(window, 60);
+    expect(doc.getElementById('ph-body').textContent).toMatch(/No texts or calls with this number yet/);
   });
 
   test('switching lines remembers the line, drops the open conversation; the remembered line boots next time', async () => {

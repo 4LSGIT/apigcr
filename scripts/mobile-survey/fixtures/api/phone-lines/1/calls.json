@@ -10,6 +10,7 @@
    "at": "2026-10-12T15:00:00.000Z",
    "duration_s": null,
    "status": "no-answer",
+   "unanswered": true,
    "missed": true,
    "logged": true,
    "contact": {
@@ -24,6 +25,7 @@
    "at": "2026-10-12T13:10:00.000Z",
    "duration_s": 754,
    "status": "Call connected",
+   "unanswered": false,
    "missed": false,
    "logged": true,
    "contact": null
@@ -35,6 +37,7 @@
    "at": "2026-10-11T13:10:00.000Z",
    "duration_s": 12,
    "status": "Accepted",
+   "unanswered": false,
    "missed": false,
    "logged": false,
    "contact": null

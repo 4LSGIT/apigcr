@@ -10,6 +10,7 @@
  "messages": [
   {
    "id": 21,
+   "kind": "sms",
    "direction": "outgoing",
    "body": "Hi, this is the firm. Please send the last 6 months of paystubs and the bank statements we listed.",
    "at": "2026-10-10T14:00:00.000Z",
@@ -17,17 +18,41 @@
   },
   {
    "id": 22,
+   "kind": "sms",
    "direction": "incoming",
    "body": "ok will do. here is the link the bank gave me https://statements.example-bank.test/download/a8f3c9e2d1b4a7f6e5c3b2a1d9e8f7c6b5a4d3e2f1/very/long/path/that/does/not/break",
    "at": "2026-10-10T14:30:00.000Z",
    "logged": true
   },
   {
+   "id": 23,
+   "kind": "call",
+   "direction": "outgoing",
+   "at": "2026-10-10T14:45:00.000Z",
+   "logged": true,
+   "duration_s": 754,
+   "status": "Call connected",
+   "unanswered": false,
+   "missed": false
+  },
+  {
    "id": 40,
+   "kind": "sms",
    "direction": "incoming",
    "body": "Thanks \u2014 I'll upload the paystubs tonight, the portal kept timing out on my phone earlier today when I tried\nSecond line of the same text.",
    "at": "2026-10-12T14:05:00.000Z",
    "logged": true
+  },
+  {
+   "id": 41,
+   "kind": "call",
+   "direction": "incoming",
+   "at": "2026-10-12T15:00:00.000Z",
+   "logged": true,
+   "duration_s": 31,
+   "status": "no-answer",
+   "unanswered": true,
+   "missed": true
   }
  ]
 }

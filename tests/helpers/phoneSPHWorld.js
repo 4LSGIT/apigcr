@@ -41,7 +41,7 @@ const LINE_SELECT = 'SELECT id, phone_number, display_name, provider, active, mm
 const GRANT_SELECT = 'SELECT g.id, g.user, u.username, u.user_name, u.user_auth, g.channel_type, g.channel_id, g.can_read, g.can_send, g.can_manage, g.granted_by, gb.username AS granted_by_username, g.created_at FROM channel_grants g LEFT JOIN users u ON u.user = g.user LEFT JOIN users gb ON gb.user = g.granted_by';
 const CONVO_GROUP = "SELECT other_party, MAX(id) AS last_id, COUNT(*) AS n FROM phone_event_log FORCE INDEX (idx_phone_event_line) WHERE line_number = ? AND event_type = 'sms' AND suppressed = 0 AND other_party IS NOT NULL GROUP BY other_party";
 const CONVO_LATEST = "SELECT id, direction, body, JSON_UNQUOTE(JSON_EXTRACT(raw_extra, '$.ts')) AS ts, processed_at FROM phone_event_log WHERE id IN (?)";
-const MSGS = "SELECT id, direction, body, JSON_UNQUOTE(JSON_EXTRACT(raw_extra, '$.ts')) AS ts, processed_at, log_id FROM phone_event_log WHERE line_number = ? AND other_party = ? AND event_type = 'sms' AND suppressed = 0";
+const MSGS = "SELECT id, event_type, direction, body, processed_at, log_id, JSON_UNQUOTE(JSON_EXTRACT(raw_extra, '$.ts')) AS ts, JSON_UNQUOTE(JSON_EXTRACT(raw_extra, '$.started_at')) AS started_at, JSON_UNQUOTE(JSON_EXTRACT(raw_extra, '$.ended_at')) AS ended_at, JSON_UNQUOTE(JSON_EXTRACT(raw_extra, '$.provider_status')) AS provider_status FROM phone_event_log WHERE line_number = ? AND other_party = ? AND suppressed = 0";
 const CALLS = "SELECT id, direction, other_party, processed_at, log_id, JSON_UNQUOTE(JSON_EXTRACT(raw_extra, '$.started_at')) AS started_at, JSON_UNQUOTE(JSON_EXTRACT(raw_extra, '$.ended_at')) AS ended_at, JSON_UNQUOTE(JSON_EXTRACT(raw_extra, '$.provider_status')) AS provider_status FROM phone_event_log FORCE INDEX (idx_phone_event_line) WHERE line_number = ? AND event_type = 'call' AND suppressed = 0";
 const KEYSET = ' AND (processed_at < ? OR (processed_at = ? AND id < ?))';
 const ORDER_TAIL = ' ORDER BY processed_at DESC, id DESC LIMIT ?';
@@ -305,13 +305,15 @@ function makeWorld() {
       }))];
     }
     if (sql === `${MSGS}${ORDER_TAIL}` || sql === `${MSGS}${KEYSET}${ORDER_TAIL}`) {
+      // texts AND calls (no event_type predicate since calls joined the thread)
       let rows = T.phone_event_log.filter(e => lineOf(e) === String(p[0]) && e.other_party === String(p[1]) &&
-        e.event_type === 'sms' && Number(e.suppressed) === 0);
+        Number(e.suppressed) === 0);
       const ks = sql.includes(KEYSET);
       if (ks) rows = keyset(rows, p, 2);
       rows.sort(desc);
       return [rows.slice(0, Number(p[ks ? 5 : 2])).map(e => ({
-        id: e.id, direction: e.direction, body: e.body, ts: json(e, 'ts'), processed_at: new Date(e.processed_at), log_id: e.log_id,
+        id: e.id, event_type: e.event_type, direction: e.direction, body: e.body, processed_at: new Date(e.processed_at), log_id: e.log_id,
+        ts: json(e, 'ts'), started_at: json(e, 'started_at'), ended_at: json(e, 'ended_at'), provider_status: json(e, 'provider_status'),
       }))];
     }
     if (sql === `${CALLS}${ORDER_TAIL}` || sql === `${CALLS}${KEYSET}${ORDER_TAIL}`) {
