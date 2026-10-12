@@ -259,4 +259,30 @@ const SENT_MATRIX = Object.freeze([
   [413, 1, 'INBOX', null, false],
 ]);
 
-module.exports = { makeWorld, SENT_MATRIX };
+/**
+ * The ALIAS SLICE edge matrix (S3-R; mailReadService ALIAS_WHERE /
+ * ALIAS_SENT_WHERE / ALIAS_INBOX_WHERE, alias it@firm.test with alias_label
+ * 'IT'; inAliasInbox = not the alias's own mail, i.e. its From is not it@):
+ * [id, from_addr, to_addrs, cc_addrs, gmail_labels, inSlice, inAliasInbox].
+ * ONE copy: tests/mailboxS3R.read.test.js exercises the rule through the fake
+ * world (CI), tests/mailboxS3R.mysql.test.js holds the ENGINE and
+ * sliceMatchJs (the JS twin the part route and loadVisible apply) to the same
+ * answers — so neither can drift unnoticed.
+ */
+const S3R_MATRIX = Object.freeze([
+  [501, 'a@o.test', 'it@firm.test', null, '["\\\\Inbox"]', true, true],                 // addressed (To)
+  [502, 'a@o.test', 'x@o.test', 'b@o.test, it@firm.test', '[]', true, true],            // addressed (Cc, list)
+  [503, 'IT <it@firm.test>', 'c@o.test', null, '["\\\\Sent", "IT"]', true, false],      // the alias's own send → Sent
+  [504, 'a@o.test', 'x@o.test', null, '["Trigger Label", "IT"]', true, true],           // label only (the Bcc catch)
+  [505, 'a@o.test', 'x@o.test', null, '["it"]', false, null],                           // label case matters (JSON compare)
+  [506, 'a@o.test', 'mit@firm.test', null, null, false, null],                          // superstring address
+  [507, 'a@o.test', 'it@firm.test.evil', null, '[]', false, null],                      // domain superstring
+  [508, '"it@firm.test" <evil@o.test>', 'x@o.test', null, '[]', false, null],           // the address quoted in a display NAME never matches
+  [509, 'a@o.test', 'IT@FIRM.TEST', null, null, true, true],                            // the address half is case-blind (general_ci)
+  [510, 'a@o.test', 'it@firm.test', null, '["\\\\SENT"]', true, true],                  // \SENT ≠ \Sent → still the Inbox
+  [511, null, 'it@firm.test', null, '[]', true, true],                                  // no From: the Inbox (the IS NULL arm — REGEXP on NULL is NULL)
+  [512, 'Automations <automations@firm.test>', 'it@firm.test', null, '["\\\\Sent", "IT"]', true, true], // the live digest: \Sent to Gmail, INCOMING to it@
+  [513, 'Firm IT <it@firm.test>', 'it@firm.test', null, '[]', true, false],             // the alias's own mail is its Sent, \Sent label or not
+]);
+
+module.exports = { makeWorld, SENT_MATRIX, S3R_MATRIX };

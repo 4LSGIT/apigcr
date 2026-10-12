@@ -672,13 +672,14 @@ describe('one poller per IMAP account (S3.1)', () => {
   const post = (body) => call('POST', '/api/mailboxes', { t: SU(), elev: ELEV(), body });
   const patch = (id, body) => call('PATCH', `/api/mailboxes/${id}`, { t: SU(), elev: ELEV(), body });
 
-  test('a second box polling the same host + login is a 409 (case-blind); a SEND-ONLY identity of that account is fine', async () => {
+  test('a second box polling the same host + login is a 409 (case-blind) that points at the send-as mode; a non-polling row of that account is fine', async () => {
     const real = await seedMailbox({ imap_host: 'imap.gmail.com', imap_user: 'stuart@4lsg.com', address: 'stuart@4lsg.com' });
     let r = await post({ address: 'it@4lsg.com', imap_host: 'IMAP.gmail.com', imap_user: 'Stuart@4lsg.com', imap_secret: SECRET });
     expect(r.status).toBe(409);
-    expect(r.json.message).toMatch(/already checked by mailbox #\d+ \(stuart@4lsg\.com\).*untick Ingest enabled/);
+    expect(r.json.message).toMatch(/already checked by mailbox #(\d+) \(stuart@4lsg\.com\).*send-as address of #\1 instead/);
     expect(W.T.mailboxes).toHaveLength(1);
-    // the send-as identity: Ingest off, no password
+    // a row naming the account that does not poll (Ingest off, no password) —
+    // since S3-R a plain paused box, not send-only (that is alias_of)
     r = await post({ address: 'it@4lsg.com', imap_host: 'imap.gmail.com', imap_user: 'stuart@4lsg.com', ingest_enabled: false });
     expect(r.status).toBe(201);
     const alias = r.json.id;
@@ -965,5 +966,126 @@ describe('S2 mailbox colour (mailboxes.color)', () => {
       expect(g.json.mailboxes.find(m => m.id === id).color).toBe('#0b7f86');
     }
     expect(svc.MANAGER_EDITABLE_FIELDS.has('color')).toBe(true);
+  });
+});
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// S3-R — alias boxes (mailboxes.alias_of): the create/PATCH rules and the
+// grant path. Send-only is DEFINED as alias_of (the read surfaces live in
+// tests/mailboxS3R.read.test.js; the flip itself in mailboxS3.send.test.js).
+//
+// Mutation-checked:
+//   - parent copy dropped (host/login from the body)   → "copies the parent's connection"
+//   - ALIAS_FORBIDDEN_FIELDS create gate dropped       → same test (imap_host accepted)
+//   - alias-of-alias allowed                           → "never an alias of an alias"
+//   - PATCH alias_of allowed / ingest re-enable allowed → "the linkage is immutable…"
+//   - a guard refusing can_read on alias boxes ADDED   → "grants on an alias box are
+//     ordinary grants" (the 2026-10-12 ruling: capability + validation ship together,
+//     so no refusal ever exists)
+// ─────────────────────────────────────────────────────────────────────────────
+describe('S3-R — alias boxes', () => {
+  async function seedParentAndAlias() {
+    const parent = await seedMailbox({ address: 'stuart@4lsg.com', imap_host: 'imap.gmail.com', imap_user: 'stuart@4lsg.com' });
+    const r = await call('POST', '/api/mailboxes', {
+      t: SU(), elev: ELEV(),
+      body: { address: 'it@4lsg.com', display_name: 'IT', alias_of: parent, alias_label: 'IT', send_credential_id: 3 },
+    });
+    expect(r.status).toBe(201);
+    return { parent, alias: r.json.id, created: r.json.mailbox };
+  }
+
+  test('create copies the parent\'s connection, forces ingest off, carries the linkage in the SU projection', async () => {
+    const { parent, created } = await seedParentAndAlias();
+    expect(created).toMatchObject({
+      address: 'it@4lsg.com', alias_of: parent, alias_label: 'IT', alias_of_address: 'stuart@4lsg.com',
+      imap_host: 'imap.gmail.com', imap_user: 'stuart@4lsg.com', has_secret: false,
+    });
+    expect(Number(created.ingest_enabled)).toBe(0);
+    assertSecretNeverSelected();
+  });
+
+  test('an alias create refuses connection / ingest fields, a label without a parent, a missing parent and an alias-of-alias', async () => {
+    const { parent, alias } = await seedParentAndAlias();
+    const mk = (body) => call('POST', '/api/mailboxes', { t: SU(), elev: ELEV(), body });
+    let r = await mk({ address: 'a@4lsg.com', alias_of: parent, imap_host: 'evil.test' });
+    expect([r.status, r.json.message]).toEqual([400, expect.stringMatching(/not set on an alias box/)]);
+    r = await mk({ address: 'a@4lsg.com', alias_of: parent, ingest_enabled: true });
+    expect(r.status).toBe(400);
+    r = await mk({ address: 'a@4lsg.com', alias_label: 'X' });
+    expect([r.status, r.json.message]).toEqual([400, expect.stringMatching(/goes with alias_of/)]);
+    r = await mk({ address: 'a@4lsg.com', alias_of: 424242 });
+    expect([r.status, r.json.message]).toEqual([400, expect.stringMatching(/not a mailbox/)]);
+    r = await mk({ address: 'a@4lsg.com', alias_of: alias });
+    expect([r.status, r.json.message]).toEqual([400, expect.stringMatching(/itself an alias/)]);
+  });
+
+  test('PATCH: connection / ingest / emit refused on an alias; alias_label SU-editable there (user labels only), refused elsewhere and for managers', async () => {
+    const { parent, alias } = await seedParentAndAlias();
+    const patch = (id, body, t = SU()) => call('PATCH', `/api/mailboxes/${id}`, { t, elev: t === SU() ? ELEV() : undefined, body });
+    let r;
+    for (const body of [{ ingest_enabled: true }, { imap_secret: 'pw' }, { imap_host: 'evil.test', imap_secret: 'pw' },
+      { emit_source_name: 'gmail-firm', emit_id_kind: 'rfc' }]) {
+      r = await patch(alias, body);
+      expect([JSON.stringify(body), r.status]).toEqual([JSON.stringify(body), 400]);
+    }
+    r = await patch(alias, { alias_label: 'IT desk' });
+    expect([r.status, r.json.mailbox.alias_label]).toEqual([200, 'IT desk']);
+    // a Gmail SYSTEM label would hand the alias the parent's whole folder
+    for (const label of ['\\Inbox', '\\Sent', ' \\Important']) {
+      r = await patch(alias, { alias_label: label });
+      expect([label, r.status, r.json.message]).toEqual([label, 400, expect.stringMatching(/system label/)]);
+    }
+    r = await call('POST', '/api/mailboxes', { t: SU(), elev: ELEV(), body: { address: 'x@4lsg.com', alias_of: parent, alias_label: '\\Inbox' } });
+    expect(r.status).toBe(400);
+    expect(W.T.mailboxes.find((b) => b.id === alias).alias_label).toBe('IT desk');
+    r = await patch(parent, { alias_label: 'X' });
+    expect([r.status, r.json.message]).toEqual([400, expect.stringMatching(/belongs to an alias box/)]);
+    // alias_label is not a manager field: a can_manage holder gets the 403 scope gate
+    await seedGrant(alias, { user: 5, can_manage: true });
+    r = await patch(alias, { alias_label: 'nope' }, tok(5));
+    expect(r.status).toBe(403);
+    // …while display_name / color stay theirs
+    r = await patch(alias, { display_name: 'IT desk' }, tok(5));
+    expect(r.status).toBe(200);
+    assertSecretNeverSelected();
+  });
+
+  test('re-parent (SU): alias_of re-points to another real box and re-copies its connection; never cleared, never self / an alias / missing, never on a full box, never a manager\'s', async () => {
+    const { parent, alias } = await seedParentAndAlias();
+    const other = await seedMailbox({ address: 'billing@4lsg.com', imap_host: 'imap.migadu.com', imap_port: 993, imap_user: 'billing@4lsg.com' });
+    const patch = (id, body, t = SU()) => call('PATCH', `/api/mailboxes/${id}`, { t, elev: t === SU() ? ELEV() : undefined, body });
+    let r = await patch(alias, { alias_of: other });
+    expect(r.status).toBe(200);
+    expect(r.json.mailbox).toMatchObject({ alias_of: other, alias_of_address: 'billing@4lsg.com', imap_host: 'imap.migadu.com', imap_user: 'billing@4lsg.com', has_secret: false });
+    expect(Number(r.json.mailbox.ingest_enabled)).toBe(0);
+    for (const [body, re] of [
+      [{ alias_of: null }, /cannot be cleared/],
+      [{ alias_of: '' }, /cannot be cleared/],
+      [{ alias_of: alias }, /alias of itself/],
+      [{ alias_of: 424242 }, /not a mailbox/],
+    ]) {
+      r = await patch(alias, body);
+      expect([JSON.stringify(body), r.status, r.json.message]).toEqual([JSON.stringify(body), 400, expect.stringMatching(re)]);
+    }
+    const second = (await call('POST', '/api/mailboxes', { t: SU(), elev: ELEV(), body: { address: 'rena@4lsg.com', alias_of: parent } })).json.id;
+    r = await patch(alias, { alias_of: second });
+    expect([r.status, r.json.message]).toEqual([400, expect.stringMatching(/itself an alias/)]);
+    r = await patch(parent, { alias_of: other });                       // a full box never becomes an alias
+    expect([r.status, r.json.message]).toEqual([400, expect.stringMatching(/belongs to an alias box/)]);
+    await seedGrant(alias, { user: 5, can_manage: true });
+    expect((await patch(alias, { alias_of: parent }, tok(5))).status).toBe(403);
+    expect(W.T.mailboxes.find((b) => b.id === alias).alias_of).toBe(other);
+    expect(W.T.mailboxes.find((b) => b.id === parent).alias_of ?? null).toBeNull();
+    assertSecretNeverSelected();
+  });
+
+  test('grants on an alias box are ordinary grants — can_read accepted and editable (no refusal window, ruling 2026-10-12)', async () => {
+    const { alias } = await seedParentAndAlias();
+    const gid = await seedGrant(alias, { user: 22, can_read: true });
+    const r = await call('PATCH', `/api/mailboxes/${alias}/grants/${gid}`, { t: SU(), elev: ELEV(), body: { can_manage: true } });
+    expect(r.status).toBe(200);
+    expect(r.json.grant).toMatchObject({ can_read: true, can_manage: true });
+    expect((await svc.getAccess(W.db, 22, 'mailbox', alias)).can_read).toBe(true);
   });
 });

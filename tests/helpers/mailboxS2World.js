@@ -29,6 +29,14 @@
  *     can only agree if the service builds them from the same fragments.
  *   - `NOW() - INTERVAL ? MINUTE` is evaluated against Date.now(); rows'
  *     ingested_at defaults to their `date` (old mail — outside any grace).
+ *   - ALIAS SLICES (S3-R): the alias list branch, the scope DISJUNCTION
+ *     (thread / related / first-seen / bulk mark-read), the per-slice
+ *     summary / mark-all / view-count statements and the slice fragments
+ *     (ALIAS_FRAG / ALIAS_SENT_FRAG / ALIAS_INBOX_FRAG) are parsed like
+ *     everything else — exact texts, params in order; the label MEMBER OF is
+ *     exact and case-sensitive, the address REGEXPs case-blind (ICU), a NULL
+ *     From matching nothing (REGEXP on NULL), mirroring the engine
+ *     (tests/mailboxS3R.mysql.test.js holds it to that).
  *   - mail_messages.in_inbox (S2-L) is the generated column's expression in JS:
  *     folder INBOX (case-blind) OR the gmail_labels array holds exactly
  *     "\Inbox" (case-sensitive, like JSON MEMBER OF) — the engine's edge
@@ -53,6 +61,7 @@ const FULL_COLS = 'm.id, m.mailbox_id, m.folder, m.gmail_labels, m.in_inbox, m.m
 const JOINS = 'LEFT JOIN mail_read_state rs ON rs.user = ? AND rs.message_fk = m.id ' +
   'LEFT JOIN log l ON l.log_id = m.log_id ' +
   "LEFT JOIN cases c ON l.log_about_type = 'case' AND c.case_id = l.log_about_id";
+const ALIAS_LIST_COLS = LIST_COLS.replace('m.mailbox_id', '? AS mailbox_id');
 
 /** MySQL LIKE (default '\' escape, case-insensitive) → RegExp. */
 function likeToRegExp(pattern) {
@@ -92,6 +101,15 @@ const FILES_FRAG = norm(`0 < (SELECT COUNT(*) FROM JSON_TABLE(m.attachments, '$[
   AND (LOCATE(CONCAT('cid:', REGEXP_REPLACE(a.cid, '^<|>$', '')), COALESCE(m.body_html, '')) > 0
   OR LOCATE(CONCAT('cid:', REPLACE(REGEXP_REPLACE(a.cid, '^<|>$', ''), '@', '%40')), COALESCE(m.body_html, '')) > 0)))`);
 const ADDR_TOKEN_RE = /[^\s<>,;:"()]+@[^\s<>,;:"()]+/g;
+
+// mailReadService's ALIAS SLICE fragments (S3-R), verbatim (normalized).
+const ALIAS_FRAG = norm(`(? MEMBER OF (m.gmail_labels)
+  OR ((m.from_addr LIKE ? OR m.to_addrs LIKE ? OR m.cc_addrs LIKE ?)
+  AND CONCAT_WS(',', m.from_addr, m.to_addrs, m.cc_addrs) REGEXP ?))`);
+const ALIAS_SENT_FRAG = 'm.from_addr REGEXP ?';
+const ALIAS_INBOX_FRAG = '(m.from_addr IS NULL OR NOT (m.from_addr REGEXP ?))';
+/** ALIAS_SENT_FRAG row by row: the From alone against the pinned pattern; NULL From never matches. */
+const fromHit = (m, re) => m.from_addr != null && re.test(String(m.from_addr));
 
 /** 'YYYY-MM-DD HH:MM:SS' (UTC, as the service binds) | Date → epoch ms. */
 function ms(v) {
@@ -228,6 +246,15 @@ function makeWorld() {
   const logRow = (id) => (id == null ? null : T.log.find(l => l.log_id === Number(id)) || null);
   const isRead = (user, mid) => T.mail_read_state.some(r => r.user === Number(user) && r.message_fk === Number(mid));
 
+  /** ALIAS_FRAG, row by row: the label exact (JSON MEMBER OF), else the LIKEs AND the pinning REGEXP. */
+  function aliasHit(m, label, l1, l2, l3, re) {
+    const l = parseJsonCol(m.gmail_labels);
+    const labels = Array.isArray(l) ? l : (l == null ? null : [l]);
+    if (label != null && labels && labels.some(x => x === label)) return true;
+    return (like(m.from_addr, l1) || like(m.to_addrs, l2) || like(m.cc_addrs, l3))
+      && re.test([m.from_addr, m.to_addrs, m.cc_addrs].filter(v => v != null).join(','));
+  }
+
   /** CLIENT_FRAG, row by row: SUBSTRING_INDEX sender + the first N address tokens of "To,Cc". */
   function isClientMail(m, types, firm) {
     const cands = [];
@@ -284,6 +311,13 @@ function makeWorld() {
     '^\\(SELECT ' + esc(LIST_COLS) + ' FROM mail_messages m FORCE INDEX \\((idx_mail_messages_mailbox_date|idx_mail_messages_mailbox_inbox_date)\\) ' + esc(JOINS) +
     ' WHERE m\\.mailbox_id = \\?(.*?) ORDER BY m\\.date DESC, m\\.id DESC LIMIT \\?\\)$'
   );
+  // S3-R alias branch: the ALIAS id bound into the projection, the parent
+  // walked on (mailbox_id, date) — never the Inbox index (slice rows are
+  // archived; the slice's own Inbox rule rides the predicates).
+  const BRANCH2_RE = new RegExp(
+    '^\\(SELECT ' + esc(ALIAS_LIST_COLS) + ' FROM mail_messages m FORCE INDEX \\(idx_mail_messages_mailbox_date\\) ' + esc(JOINS) +
+    ' WHERE m\\.mailbox_id = \\?(.*?) ORDER BY m\\.date DESC, m\\.id DESC LIMIT \\?\\)$'
+  );
   function esc(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
 
   /** Split `s` on ' AND ' at paren depth 0. */
@@ -298,6 +332,50 @@ function makeWorld() {
     }
     if (cur) out.push(cur);
     return out.map(x => x.trim()).filter(Boolean);
+  }
+
+  /** Split `s` on ' OR ' at paren depth 0. */
+  function splitOr(s) {
+    const out = []; let depth = 0; let cur = '';
+    for (let i = 0; i < s.length; i++) {
+      const c = s[i];
+      if (c === '(') depth++;
+      else if (c === ')') depth--;
+      if (depth === 0 && s.startsWith(' OR ', i)) { out.push(cur); cur = ''; i += 3; continue; }
+      cur += c;
+    }
+    if (cur) out.push(cur);
+    return out.map(x => x.trim()).filter(Boolean);
+  }
+
+  /**
+   * The S3-R scope DISJUNCTION (mailReadService.scopeDisjunction): the plain
+   * pre-S3-R 'm.mailbox_id IN (?)', or '(term OR term …)' where a term is
+   * 'm.mailbox_id IN (?)' or '(m.mailbox_id = ? AND <ALIAS_FRAG>)'. Returns
+   * a row test + the param cursor. Unknown shape → throw.
+   */
+  function parseDisj(textIn, p, piIn) {
+    let pi = piIn;
+    const t = norm(textIn);
+    if (t === 'm.mailbox_id IN (?)') {
+      const ids = new Set(p[pi++].map(Number));
+      return { test: (m) => ids.has(Number(m.mailbox_id)), pi };
+    }
+    if (!t.startsWith('(') || !t.endsWith(')')) throw new Error(`mailboxS2World: unparsed scope disjunction: ${t.slice(0, 160)}`);
+    const tests = [];
+    for (const term of splitOr(t.slice(1, -1).trim())) {
+      if (term === 'm.mailbox_id IN (?)') {
+        const ids = new Set(p[pi++].map(Number));
+        tests.push((m) => ids.has(Number(m.mailbox_id)));
+        continue;
+      }
+      const mm = /^\(m\.mailbox_id = \? AND (.+)\)$/.exec(term);
+      if (!mm || norm(mm[1]) !== ALIAS_FRAG) throw new Error(`mailboxS2World: unparsed scope term: ${term.slice(0, 160)}`);
+      const parent = Number(p[pi++]);
+      const label = p[pi++]; const l1 = p[pi++]; const l2 = p[pi++]; const l3 = p[pi++]; const re = icu(p[pi++]);
+      tests.push((m) => Number(m.mailbox_id) === parent && aliasHit(m, label, l1, l2, l3, re));
+    }
+    return { test: (m) => tests.some(f => f(m)), pi };
   }
 
   /**
@@ -325,6 +403,19 @@ function makeWorld() {
         preds.push(j => isClientMail(j.m, types, firm));
       }
       else if (frag === FILES_FRAG) preds.push(j => hasFiles(j.m));
+      // S3-R: the alias slice + its Sent / Inbox split by From (see ALIAS_FRAG)
+      else if (frag === ALIAS_FRAG) {
+        const label = p[pi++]; const l1 = p[pi++]; const l2 = p[pi++]; const l3 = p[pi++]; const re = icu(p[pi++]);
+        preds.push(j => aliasHit(j.m, label, l1, l2, l3, re));
+      }
+      else if (frag === ALIAS_SENT_FRAG) {
+        const re = icu(p[pi++]);
+        preds.push(j => fromHit(j.m, re));
+      }
+      else if (frag === ALIAS_INBOX_FRAG) {
+        const re = icu(p[pi++]);
+        preds.push(j => !fromHit(j.m, re));
+      }
       // S3's Sent scope (mailReadService SENT_WHERE): the bound label is an
       // exact JSON MEMBER OF match (case-sensitive), the folder REGEXP is
       // case-blind (general_ci) — tests/mailboxS3.mysql.test.js holds the
@@ -354,13 +445,25 @@ function makeWorld() {
     let pi = 0;
     const all = [];
     for (const b of branches) {
-      const bm = BRANCH_RE.exec(b);
-      if (!bm) throw new Error(`mailboxS2World: unparsed list branch: ${b.slice(0, 300)}`);
-      // The Inbox walk and the Inbox predicate go together (S2-L): the
-      // (mailbox_id, in_inbox, date) index only orders the Inbox rows.
-      const inboxScoped = splitAnd(String(bm[2] || '').replace(/^ AND /, '')).includes('m.in_inbox = 1');
-      if ((bm[1] === 'idx_mail_messages_mailbox_inbox_date') !== inboxScoped) {
-        throw new Error(`mailboxS2World: FORCE INDEX (${bm[1]}) with${inboxScoped ? '' : 'out'} the Inbox predicate`);
+      let bm = BRANCH_RE.exec(b);
+      let presented = null;
+      if (bm) {
+        // The Inbox walk and the Inbox predicate go together (S2-L): the
+        // (mailbox_id, in_inbox, date) index only orders the Inbox rows.
+        const inboxScoped = splitAnd(String(bm[2] || '').replace(/^ AND /, '')).includes('m.in_inbox = 1');
+        if ((bm[1] === 'idx_mail_messages_mailbox_inbox_date') !== inboxScoped) {
+          throw new Error(`mailboxS2World: FORCE INDEX (${bm[1]}) with${inboxScoped ? '' : 'out'} the Inbox predicate`);
+        }
+      } else {
+        bm = BRANCH2_RE.exec(b);
+        if (!bm) throw new Error(`mailboxS2World: unparsed list branch: ${b.slice(0, 300)}`);
+        const frags = splitAnd(String(bm[1] || '').replace(/^ AND /, ''));
+        // An alias branch IS the slice: its first predicate is the slice
+        // itself, and the generated-column Inbox never applies to it.
+        if (frags[0] !== ALIAS_FRAG) throw new Error('mailboxS2World: alias branch without a leading slice predicate');
+        if (frags.includes('m.in_inbox = 1')) throw new Error('mailboxS2World: alias branch scoped by in_inbox');
+        bm = [bm[0], 'idx_mail_messages_mailbox_date', bm[1]];
+        presented = Number(p[pi++]);
       }
       const user = p[pi++];
       const mailboxId = p[pi++];
@@ -374,7 +477,7 @@ function makeWorld() {
         .filter(j => preds.every(f => f(j)))
         .sort((a, bb) => cmpDesc(a.m, bb.m))
         .slice(0, lim)
-        .map(j => project(j, listCols));
+        .map(j => (presented == null ? project(j, listCols) : { ...project(j, listCols), mailbox_id: presented }));
       all.push(...rows);
     }
     const outer = Number(p[pi++]);
@@ -400,13 +503,14 @@ function makeWorld() {
       return [g ? [{ can_read: g.can_read, can_send: g.can_send, can_manage: g.can_manage }] : []];
     }
     const byAddr = (a, b) => String(a.address).localeCompare(String(b.address));
-    if (sql === 'SELECT m.id, m.address, m.domain, m.display_name, m.color, m.active FROM mailboxes m ORDER BY m.address ASC') {
-      return [[...T.mailboxes].sort(byAddr).map(b => ({ id: b.id, address: b.address, domain: b.domain, display_name: b.display_name, color: b.color, active: b.active }))];
+    const aliasCols = (b) => ({ alias_of: b.alias_of ?? null, alias_label: b.alias_label ?? null });
+    if (sql === 'SELECT m.id, m.address, m.domain, m.display_name, m.color, m.active, m.alias_of, m.alias_label FROM mailboxes m ORDER BY m.address ASC') {
+      return [[...T.mailboxes].sort(byAddr).map(b => ({ id: b.id, address: b.address, domain: b.domain, display_name: b.display_name, color: b.color, active: b.active, ...aliasCols(b) }))];
     }
-    if (sql === "SELECT m.id, m.address, m.domain, m.display_name, m.color, m.active, g.can_send, g.can_manage FROM mailboxes m LEFT JOIN channel_grants g ON g.channel_type = 'mailbox' AND g.channel_id = m.id AND g.user = ? ORDER BY m.address ASC") {
+    if (sql === "SELECT m.id, m.address, m.domain, m.display_name, m.color, m.active, m.alias_of, m.alias_label, g.can_send, g.can_manage FROM mailboxes m LEFT JOIN channel_grants g ON g.channel_type = 'mailbox' AND g.channel_id = m.id AND g.user = ? ORDER BY m.address ASC") {
       return [[...T.mailboxes].sort(byAddr).map(b => {
         const g = T.channel_grants.find(x => x.channel_type === 'mailbox' && x.channel_id === b.id && x.user === Number(p[0]));
-        return { id: b.id, address: b.address, domain: b.domain, display_name: b.display_name, color: b.color, active: b.active, can_send: g ? g.can_send : null, can_manage: g ? g.can_manage : null };
+        return { id: b.id, address: b.address, domain: b.domain, display_name: b.display_name, color: b.color, active: b.active, ...aliasCols(b), can_send: g ? g.can_send : null, can_manage: g ? g.can_manage : null };
       })];
     }
     // listMailboxesFor (GET /api/mailboxes), the READ-bypass branch: public projection.
@@ -420,21 +524,20 @@ function makeWorld() {
         };
       })];
     }
-    if (sql === "SELECT m.id, m.address, m.domain, m.display_name, m.color, m.active, g.can_read, g.can_send, g.can_manage FROM channel_grants g JOIN mailboxes m ON m.id = g.channel_id WHERE g.user = ? AND g.channel_type = 'mailbox' AND g.can_read = 1 ORDER BY m.address ASC") {
+    if (sql === "SELECT m.id, m.address, m.domain, m.display_name, m.color, m.active, m.alias_of, m.alias_label, g.can_read, g.can_send, g.can_manage FROM channel_grants g JOIN mailboxes m ON m.id = g.channel_id WHERE g.user = ? AND g.channel_type = 'mailbox' AND g.can_read = 1 ORDER BY m.address ASC") {
       const rows = [];
       for (const g of T.channel_grants) {
         if (g.user !== Number(p[0]) || g.channel_type !== 'mailbox' || Number(g.can_read) !== 1) continue;
         const b = mailboxRow(g.channel_id);
-        if (b) rows.push({ id: b.id, address: b.address, domain: b.domain, display_name: b.display_name, color: b.color, active: b.active, can_read: g.can_read, can_send: g.can_send, can_manage: g.can_manage });
+        if (b) rows.push({ id: b.id, address: b.address, domain: b.domain, display_name: b.display_name, color: b.color, active: b.active, ...aliasCols(b), can_read: g.can_read, can_send: g.can_send, can_manage: g.can_manage });
       }
       return [rows.sort(byAddr)];
     }
 
-    // ── mailReadService: summary — send-only boxes (S3.1: Ingest off AND no IMAP
-    // login; a seeded box without these fields is the DB default, ingest on) ──
-    if (sql === 'SELECT id FROM mailboxes WHERE id IN (?) AND ingest_enabled = 0 AND imap_secret IS NULL') {
+    // ── mailReadService: send-only = ALIAS boxes (S3-R; the From picker's flag) ──
+    if (sql === 'SELECT id FROM mailboxes WHERE id IN (?) AND alias_of IS NOT NULL') {
       const ids = new Set(p[0].map(Number));
-      return [T.mailboxes.filter(b => ids.has(Number(b.id)) && Number(b.ingest_enabled ?? 1) === 0 && b.imap_secret == null).map(b => ({ id: b.id }))];
+      return [T.mailboxes.filter(b => ids.has(Number(b.id)) && b.alias_of != null).map(b => ({ id: b.id }))];
     }
     if (sql === "SELECT COUNT(*) AS n FROM channel_grants WHERE user = ? AND channel_type = 'mailbox' AND can_send = 1") {
       return [[{ n: T.channel_grants.filter(g => g.user === Number(p[0]) && g.channel_type === 'mailbox' && Number(g.can_send) === 1).length }]];
@@ -454,16 +557,29 @@ function makeWorld() {
       // MySQL returns COUNT as a number, SUM as a DECIMAL string.
       return [[...by.values()].map(r => ({ mailbox_id: r.mailbox_id, total: r.total, unread: String(r.unread) }))];
     }
+    // S3-R: one count per readable ALIAS box — its slice's Inbox (no rows → SUM NULL, as the engine).
+    if (sql === `SELECT COUNT(*) AS total, SUM(rs.message_fk IS NULL) AS unread FROM mail_messages m LEFT JOIN mail_read_state rs ON rs.user = ? AND rs.message_fk = m.id WHERE m.mailbox_id = ? AND ${ALIAS_FRAG} AND ${ALIAS_INBOX_FRAG}`) {
+      const user = p[0]; const parent = Number(p[1]);
+      const label = p[2]; const l1 = p[3]; const l2 = p[4]; const l3 = p[5]; const re = icu(p[6]); const own = icu(p[7]);
+      const rows = T.mail_messages.filter(x => x.mailbox_id === parent
+        && aliasHit(x, label, l1, l2, l3, re)
+        && !fromHit(x, own));
+      const unread = rows.filter(x => !isRead(user, x.id)).length;
+      return [[{ total: rows.length, unread: rows.length ? String(unread) : null }]];
+    }
 
     // ── list ──
-    if (sql.startsWith('(SELECT ' + LIST_COLS)) return runList(sql, p);
+    if (sql.startsWith('(SELECT ' + LIST_COLS) || sql.startsWith('(SELECT ' + ALIAS_LIST_COLS)) return runList(sql, p);
 
     // ── thread / single ──
-    if (sql === `SELECT ${FULL_COLS} FROM mail_messages m ${JOINS} WHERE m.thread_key = ? AND m.mailbox_id IN (?) ORDER BY m.date DESC, m.id DESC LIMIT ?`) {
-      const ids = new Set(p[2].map(Number));
+    const THREAD_HEAD = `SELECT ${FULL_COLS} FROM mail_messages m ${JOINS} WHERE m.thread_key = ? AND `;
+    const THREAD_TAIL = ' ORDER BY m.date DESC, m.id DESC LIMIT ?';
+    if (sql.startsWith(THREAD_HEAD) && sql.endsWith(THREAD_TAIL)) {
+      const d = parseDisj(sql.slice(THREAD_HEAD.length, sql.length - THREAD_TAIL.length), p, 2);
+      if (d.pi !== p.length - 1) throw new Error('mailboxS2World: thread params mismatch');
       return [T.mail_messages
-        .filter(x => ci(x.thread_key, p[1]) && ids.has(x.mailbox_id))
-        .sort(cmpDesc).slice(0, Number(p[3]))
+        .filter(x => ci(x.thread_key, p[1]) && d.test(x))
+        .sort(cmpDesc).slice(0, Number(p[d.pi]))
         .map(x => project(joined(x, p[0]), fullCols))];
     }
     // listMessages: the page's bodies, for the inline-vs-attached count only
@@ -475,9 +591,9 @@ function makeWorld() {
       const x = T.mail_messages.find(r => r.id === Number(p[1]));
       return [x ? [project(joined(x, p[0]), fullCols)] : []];
     }
-    if (sql === 'SELECT id, mailbox_id FROM mail_messages WHERE id = ? LIMIT 1') {
+    if (sql === 'SELECT id, mailbox_id, from_addr, to_addrs, cc_addrs, gmail_labels FROM mail_messages WHERE id = ? LIMIT 1') {
       const x = T.mail_messages.find(r => r.id === Number(p[0]));
-      return [x ? [{ id: x.id, mailbox_id: x.mailbox_id }] : []];
+      return [x ? [{ id: x.id, mailbox_id: x.mailbox_id, from_addr: x.from_addr, to_addrs: x.to_addrs, cc_addrs: x.cc_addrs, gmail_labels: parseJsonCol(x.gmail_labels) }] : []];
     }
 
     // ── read state ──
@@ -499,10 +615,14 @@ function makeWorld() {
       }
       return [{ affectedRows: n }];
     };
-    if (sql === 'INSERT INTO mail_read_state (user, message_fk, read_at) SELECT ?, m.id, UTC_TIMESTAMP() FROM mail_messages m LEFT JOIN mail_read_state rs ON rs.user = ? AND rs.message_fk = m.id WHERE m.id IN (?) AND m.mailbox_id IN (?) AND rs.message_fk IS NULL ON DUPLICATE KEY UPDATE read_at = mail_read_state.read_at') {
+    const IDS_HEAD = 'INSERT INTO mail_read_state (user, message_fk, read_at) SELECT ?, m.id, UTC_TIMESTAMP() FROM mail_messages m LEFT JOIN mail_read_state rs ON rs.user = ? AND rs.message_fk = m.id WHERE m.id IN (?) AND ';
+    const IDS_TAIL = ' AND rs.message_fk IS NULL ON DUPLICATE KEY UPDATE read_at = mail_read_state.read_at';
+    if (sql.startsWith(IDS_HEAD) && sql.endsWith(IDS_TAIL)) {
       if (p[0] !== p[1]) throw new Error('mailboxS2World: bulk read user params differ');
-      const ids = new Set(p[2].map(Number)); const mbs = new Set(p[3].map(Number));
-      return bulk(T.mail_messages.filter(x => ids.has(x.id) && mbs.has(x.mailbox_id)), p[0]);
+      const ids = new Set(p[2].map(Number));
+      const d = parseDisj(sql.slice(IDS_HEAD.length, sql.length - IDS_TAIL.length), p, 3);
+      if (d.pi !== p.length) throw new Error('mailboxS2World: bulk read params mismatch');
+      return bulk(T.mail_messages.filter(x => ids.has(x.id) && d.test(x)), p[0]);
     }
     const ALL_HEAD = `INSERT INTO mail_read_state (user, message_fk, read_at) SELECT ?, m.id, UTC_TIMESTAMP() FROM mail_messages m ${JOINS} WHERE m.mailbox_id IN (?) AND rs.message_fk IS NULL`;
     const ALL_TAIL = ' ON DUPLICATE KEY UPDATE read_at = mail_read_state.read_at';
@@ -514,8 +634,21 @@ function makeWorld() {
       const rows = T.mail_messages.filter(x => mbs.has(x.mailbox_id)).filter(x => { const j = joined(x, p[0]); return j.unread === 1 && preds.every(f => f(j)); });
       return bulk(rows, p[0]);
     }
+    // S3-R: mark-all's per-ALIAS statement — the parent's rows, the slice +
+    // the slice's own Inbox as scope predicates (parsePreds).
+    const ALL_HEAD2 = `INSERT INTO mail_read_state (user, message_fk, read_at) SELECT ?, m.id, UTC_TIMESTAMP() FROM mail_messages m ${JOINS} WHERE m.mailbox_id = ? AND rs.message_fk IS NULL`;
+    if (sql.startsWith(ALL_HEAD2) && sql.endsWith(ALL_TAIL)) {
+      if (p[0] !== p[1]) throw new Error('mailboxS2World: bulk read user params differ');
+      const parent = Number(p[2]);
+      const { preds, pi } = parsePreds(sql.slice(ALL_HEAD2.length, sql.length - ALL_TAIL.length), p, 3);
+      if (pi !== p.length) throw new Error(`mailboxS2World: bulk-all alias params mismatch (${pi} used of ${p.length})`);
+      const frags = splitAnd(sql.slice(ALL_HEAD2.length, sql.length - ALL_TAIL.length).replace(/^ AND /, ''));
+      if (frags[0] !== ALIAS_FRAG) throw new Error('mailboxS2World: alias mark-all without a leading slice predicate');
+      const rows = T.mail_messages.filter(x => x.mailbox_id === parent).filter(x => { const j = joined(x, p[0]); return j.unread === 1 && preds.every(f => f(j)); });
+      return bulk(rows, p[0]);
+    }
 
-    // viewCounts: one COUNT per view, the list's scope predicates
+    // viewCounts: one COUNT per view's direct boxes + one per alias slice
     const COUNT_HEAD = `SELECT COUNT(*) AS n FROM mail_messages m ${JOINS} WHERE m.mailbox_id IN (?)`;
     if (sql.startsWith(COUNT_HEAD)) {
       const mbs = new Set(p[1].map(Number));
@@ -523,6 +656,15 @@ function makeWorld() {
       if (pi !== p.length) throw new Error(`mailboxS2World: view-count params mismatch (${pi} used of ${p.length})`);
       // COUNT(*) comes back as a number (mysql2)
       return [[{ n: T.mail_messages.filter(x => mbs.has(x.mailbox_id)).filter(x => { const j = joined(x, p[0]); return preds.every(f => f(j)); }).length }]];
+    }
+    const COUNT_HEAD2 = `SELECT COUNT(*) AS n FROM mail_messages m ${JOINS} WHERE m.mailbox_id = ?`;
+    if (sql.startsWith(COUNT_HEAD2)) {
+      const parent = Number(p[1]);
+      const { preds, pi } = parsePreds(sql.slice(COUNT_HEAD2.length), p, 2);
+      if (pi !== p.length) throw new Error(`mailboxS2World: alias view-count params mismatch (${pi} used of ${p.length})`);
+      const frags = splitAnd(sql.slice(COUNT_HEAD2.length).replace(/^ AND /, ''));
+      if (frags[0] !== ALIAS_FRAG) throw new Error('mailboxS2World: alias view-count without a leading slice predicate');
+      return [[{ n: T.mail_messages.filter(x => x.mailbox_id === parent).filter(x => { const j = joined(x, p[0]); return preds.every(f => f(j)); }).length }]];
     }
 
     // ── views ──
@@ -654,9 +796,12 @@ function makeWorld() {
       const x = T.mail_messages.find(r => r.id === Number(p[0]));
       return [x ? [{ thread_key: x.thread_key }] : []];
     }
-    if (sql === 'SELECT from_addr, to_addrs, cc_addrs FROM mail_messages WHERE thread_key = ? AND mailbox_id IN (?) ORDER BY date DESC, id DESC LIMIT ?') {
-      const ids = new Set(p[1].map(Number));
-      return [T.mail_messages.filter(x => ci(x.thread_key, p[0]) && ids.has(x.mailbox_id)).sort(cmpDesc).slice(0, Number(p[2]))
+    const REL_HEAD = 'SELECT m.from_addr, m.to_addrs, m.cc_addrs FROM mail_messages m WHERE m.thread_key = ? AND ';
+    const REL_TAIL = ' ORDER BY m.date DESC, m.id DESC LIMIT ?';
+    if (sql.startsWith(REL_HEAD) && sql.endsWith(REL_TAIL)) {
+      const d = parseDisj(sql.slice(REL_HEAD.length, sql.length - REL_TAIL.length), p, 1);
+      if (d.pi !== p.length - 1) throw new Error('mailboxS2World: related params mismatch');
+      return [T.mail_messages.filter(x => ci(x.thread_key, p[0]) && d.test(x)).sort(cmpDesc).slice(0, Number(p[d.pi]))
         .map(x => ({ from_addr: x.from_addr, to_addrs: x.to_addrs, cc_addrs: x.cc_addrs }))];
     }
     if (sql === 'SELECT from_addr, to_addrs, cc_addrs FROM mail_messages WHERE id = ? LIMIT 1') {
@@ -664,11 +809,15 @@ function makeWorld() {
       return [x ? [{ from_addr: x.from_addr, to_addrs: x.to_addrs, cc_addrs: x.cc_addrs }] : []];
     }
     if (sql === 'SELECT address FROM mailboxes') return [T.mailboxes.map(b => ({ address: b.address }))];
-    // firstSeen: LIKE narrows, the REGEXP pins the address between delimiters
-    if (sql === "SELECT MIN(date) AS first_date FROM mail_messages WHERE mailbox_id IN (?) AND (from_addr LIKE ? OR to_addrs LIKE ? OR cc_addrs LIKE ?) AND CONCAT_WS(',', from_addr, to_addrs, cc_addrs) REGEXP ?") {
-      const ids = new Set(p[0].map(Number)); const re = icu(p[4]);
-      const hits = T.mail_messages.filter(x => ids.has(x.mailbox_id)
-        && (like(x.from_addr, p[1]) || like(x.to_addrs, p[2]) || like(x.cc_addrs, p[3]))
+    // firstSeen: the scope disjunction, then LIKE narrows and the REGEXP pins
+    const FS_HEAD = 'SELECT MIN(m.date) AS first_date FROM mail_messages m WHERE ';
+    const FS_TAIL = " AND (m.from_addr LIKE ? OR m.to_addrs LIKE ? OR m.cc_addrs LIKE ?) AND CONCAT_WS(',', m.from_addr, m.to_addrs, m.cc_addrs) REGEXP ?";
+    if (sql.startsWith(FS_HEAD) && sql.endsWith(FS_TAIL)) {
+      const d = parseDisj(sql.slice(FS_HEAD.length, sql.length - FS_TAIL.length), p, 0);
+      if (d.pi !== p.length - 4) throw new Error('mailboxS2World: first-seen params mismatch');
+      const re = icu(p[d.pi + 3]);
+      const hits = T.mail_messages.filter(x => d.test(x)
+        && (like(x.from_addr, p[d.pi]) || like(x.to_addrs, p[d.pi + 1]) || like(x.cc_addrs, p[d.pi + 2]))
         && re.test([x.from_addr, x.to_addrs, x.cc_addrs].filter(v => v != null).join(','))
         && x.date != null);
       const min = hits.reduce((acc, x) => (acc == null || ms(x.date) < acc ? ms(x.date) : acc), null);

@@ -226,6 +226,12 @@
         email-ingest rules pipeline (court mail, case linking). INBOX emits by default. Sent-folder names
         differ by host (Gmail: <code>[Gmail]/Sent Mail</code>) — add it under the server's exact name.
       </p>
+      <p>
+        <b>Send-as addresses:</b> a Google alias (it@…, rena@…) is its own mailbox row created as a
+        <i>send-as address of</i> the account's box. It has no login and never polls — its mail lands in
+        the account's box — and a <i>Read</i> grant on it shows exactly that slice: mail addressed to it,
+        plus mail the account's Gmail filter files under its label.
+      </p>
     </div>
   </details>
 
@@ -313,7 +319,31 @@
         </div>
       </div>
 
-      <div class="form-section">
+      <div class="form-section" id="mb-type-section">
+        <h4>Type</h4>
+        <label class="check"><input type="radio" name="mb-type" id="mb-type-full" checked> Full mailbox (its own IMAP login)</label><br>
+        <label class="check" style="margin-top:6px"><input type="radio" name="mb-type" id="mb-type-alias"> Send-as address of an existing box</label>
+        <span class="yc-hint">A send-as address has no login of its own — its mail lands in the account's box. Readers of this row see that box's slice: mail addressed to it, or filed under its Gmail label.</span>
+      </div>
+
+      <div class="form-section" id="mb-alias-section" hidden>
+        <h4>Send-as</h4>
+        <div class="yc-hint" id="mb-alias-linkage" hidden style="margin-bottom:8px"></div>
+        <div class="fgrid">
+          <div class="fld" id="mb-parent-fld">
+            <label class="yc-flabel" for="mb-parent">Of mailbox <span class="req">*</span></label>
+            <select id="mb-parent"></select>
+            <span class="yc-hint">The account whose box receives this address's mail. Pick another box later to re-point the address — its connection follows.</span>
+          </div>
+          <div class="fld">
+            <label class="yc-flabel" for="mb-alias-label">Gmail label</label>
+            <input type="text" id="mb-alias-label" maxlength="255" spellcheck="false" placeholder="IT">
+            <span class="yc-hint">The label the account's Gmail filter puts on this address's mail — exact spelling, case matters. It catches Bcc and list mail the address match misses. One of the account's own labels, never a system one (\Inbox, \Sent …).</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="form-section" id="mb-conn-section">
         <h4>Connection (IMAP)</h4>
         <div class="fgrid">
           <div class="fld">
@@ -352,7 +382,7 @@
         </div>
       </div>
 
-      <div class="form-section">
+      <div class="form-section" id="mb-ingest-section">
         <h4>Ingest</h4>
         <label class="check"><input type="checkbox" id="mb-ingest"> Ingest enabled</label>
         <div style="margin-top:10px">
@@ -487,12 +517,15 @@ function renderList() {
   E('mb-tbody').innerHTML = rows.map((r) => {
     const folders = r.ingest_folders && typeof r.ingest_folders === 'object' ? Object.keys(r.ingest_folders) : [];
     const emitting = folders.filter((f) => r.ingest_folders[f] && r.ingest_folders[f].emit_to_rules);
-    const imap = r.imap_host
-      ? `<span class="mono">${esc(r.imap_host)}:${esc(r.imap_port)}</span><span class="sub">${esc(r.imap_user)}</span>`
-      : '<span class="muted">—</span>';
-    const secret = state.su
-      ? (r.has_secret ? '<span class="badge ok">set</span>' : '<span class="badge warn">missing</span>')
-      : '<span class="muted">—</span>';
+    const alias = r.alias_of != null;
+    const imap = alias
+      ? `<span class="badge">send-as</span><span class="sub">of ${esc(r.alias_of_address || ('mailbox ' + r.alias_of))}${r.alias_label ? ` · label ${esc(r.alias_label)}` : ''}</span>`
+      : (r.imap_host
+        ? `<span class="mono">${esc(r.imap_host)}:${esc(r.imap_port)}</span><span class="sub">${esc(r.imap_user)}</span>`
+        : '<span class="muted">—</span>');
+    const secret = !state.su || alias
+      ? '<span class="muted">—</span>'
+      : (r.has_secret ? '<span class="badge ok">set</span>' : '<span class="badge warn">missing</span>');
     const sends = r.send_credential_id
       ? esc(r.send_credential_email || ('credential ' + r.send_credential_id))
       : '<span class="muted">read-only</span>';
@@ -502,7 +535,7 @@ function renderList() {
     const emitAs = r.emit_source_name
       ? ` · emits as ${esc(r.emit_source_name)}${r.emit_id_kind === 'provider' ? ' (provider id)' : ''}`
       : '';
-    const ingest = !state.su ? '<span class="muted">—</span>'
+    const ingest = !state.su || alias ? '<span class="muted">—</span>'
       : (r.ingest_enabled ? 'on' : '<span class="muted">off</span>') +
         `<span class="sub">${esc(folders.join(', ') || 'no folders')}${emitting.length ? ` · rules: ${esc(emitting.join(', '))}` : ''}` +
         `${noHistory.length ? ` · no history: ${esc(noHistory.join(', '))}` : ''}${emitAs}</span>`;
@@ -510,7 +543,8 @@ function renderList() {
     const sel = state.grantsFor && state.grantsFor.id === r.id ? ' class="selected"' : '';
     const canManage = state.su || (r.access && r.access.can_manage);
     const phoneBits = [];
-    if (state.su) phoneBits.push(r.has_secret ? 'secret set' : 'no secret');
+    if (alias) phoneBits.push(`send-as of ${r.alias_of_address || ('mailbox ' + r.alias_of)}`);
+    else if (state.su) phoneBits.push(r.has_secret ? 'secret set' : 'no secret');
     if (r.grant_count != null) phoneBits.push(`${r.grant_count} grant${Number(r.grant_count) === 1 ? '' : 's'}`);
     const swatch = canManage
       ? `<input type="color" class="swatch" data-act="color" value="${esc(r.color || NONE_SWATCH)}" aria-label="Colour for ${esc(r.address)}" title="${r.color ? 'Comms hub colour — click to change' : 'No colour yet — click to pick one'}">`
@@ -597,6 +631,37 @@ function readFolders() {
   return out;
 }
 
+/** Is the open form in send-as (alias) mode? Create: the radio; edit: the row. */
+function aliasMode() {
+  const row = state.editing;
+  if (row) return row.alias_of != null;
+  return E('mb-type-alias').checked;
+}
+
+function renderParentOptions(selected) {
+  const parents = state.rows.filter((r) => r.alias_of == null);
+  E('mb-parent').innerHTML = ['<option value="">— choose a box —</option>']
+    .concat(parents.map((r) => `<option value="${esc(r.id)}">${esc(r.address)}</option>`)).join('');
+  E('mb-parent').value = selected ? String(selected) : '';
+}
+
+/** Show / hide the connection + ingest + send-as pieces for the current mode. */
+function syncTypeSections() {
+  const row = state.editing;
+  const alias = aliasMode();
+  E('mb-type-section').hidden = !!row;                       // the type is set at creation
+  E('mb-alias-section').hidden = !alias;
+  E('mb-conn-section').hidden = alias;
+  E('mb-ingest-section').hidden = alias;
+  const link = E('mb-alias-linkage');
+  link.hidden = !(row && alias);
+  if (row && alias) {
+    // Re-pointing is a PATCH of alias_of (mailboxes are never deleted and the
+    // address is unique, so "delete + recreate" is no path at all).
+    link.textContent = `Send-as address of ${row.alias_of_address || ('mailbox ' + row.alias_of)}. Choosing another box re-points it — its readers then see that box's slice.`;
+  }
+}
+
 async function openForm(row) {
   if (!state.refsLoaded) await loadRefs();
   state.editing = row || null;
@@ -623,6 +688,11 @@ async function openForm(row) {
   renderFolders(row ? row.ingest_folders : DEFAULT_FOLDERS);
   E('mb-active-section').hidden = !row;
   E('mb-active').checked = row ? !!row.active : true;
+  E('mb-type-full').checked = !(row && row.alias_of != null);
+  E('mb-type-alias').checked = !!(row && row.alias_of != null);
+  renderParentOptions(row && row.alias_of != null ? row.alias_of : null);
+  E('mb-alias-label').value = row && row.alias_label ? row.alias_label : '';
+  syncTypeSections();
   E('mb-backdrop').classList.add('open');
   E('mb-address').focus();
 }
@@ -681,6 +751,7 @@ function canon(v) {
 /** Build the request body. Create: every field. Edit: only what changed. */
 function buildBody() {
   const row = state.editing;
+  if (aliasMode()) return buildAliasBody();
   const folders = readFolders();
   const portRaw = E('mb-port').value.trim();
   const fields = {
@@ -727,6 +798,46 @@ function buildBody() {
   return body;
 }
 
+/**
+ * The send-as (alias) body. Create: address + alias_of (+ display/colour/
+ * label/sender). Edit: only what changed — the connection and ingest fields
+ * never exist on an alias (the server refuses them).
+ */
+function buildAliasBody() {
+  const row = state.editing;
+  const fields = {
+    address: E('mb-address').value.trim(),
+    display_name: E('mb-display').value.trim(),
+    color: state.colorNone ? null : E('mb-color').value.toLowerCase(),
+    alias_label: E('mb-alias-label').value.trim() || null,
+    send_credential_id: E('mb-cred').value === '' ? null : Number(E('mb-cred').value),
+  };
+  if (!row) {
+    const body = { ...fields };
+    body.alias_of = E('mb-parent').value === '' ? null : Number(E('mb-parent').value);
+    if (body.alias_label == null) delete body.alias_label;
+    return body;
+  }
+  fields.active = E('mb-active').checked;
+  if (E('mb-parent').value !== '') fields.alias_of = Number(E('mb-parent').value); // re-point (never cleared)
+  const was = {
+    address: row.address || '',
+    display_name: row.display_name || '',
+    color: row.color ? String(row.color).toLowerCase() : null,
+    alias_label: row.alias_label || null,
+    send_credential_id: row.send_credential_id == null ? null : Number(row.send_credential_id),
+    active: !!row.active,
+    alias_of: Number(row.alias_of),
+  };
+  const body = {};
+  for (const [k, v] of Object.entries(fields)) {
+    const cur = k === 'address' ? String(v).toLowerCase() : v;
+    const old = k === 'address' ? String(was.address).toLowerCase() : was[k];
+    if (canon(cur) !== canon(old)) body[k] = v;
+  }
+  return body;
+}
+
 async function saveForm() {
   showFormError('');
   let body;
@@ -737,9 +848,11 @@ async function saveForm() {
     return;
   }
   const row = state.editing;
+  const alias = aliasMode();
   if (!body.address && !row) return showFormError('Address is required.');
-  if (!row && (!body.imap_host || !body.imap_user)) return showFormError('Host and login are required.');
-  if (row && hostOrPortChanged() && !Object.prototype.hasOwnProperty.call(body, 'imap_secret')) {
+  if (alias && !row && !body.alias_of) return showFormError('Pick the box this address belongs to.');
+  if (!alias && !row && (!body.imap_host || !body.imap_user)) return showFormError('Host and login are required.');
+  if (!alias && row && hostOrPortChanged() && !Object.prototype.hasOwnProperty.call(body, 'imap_secret')) {
     return showFormError('Changing the host or port requires re-entering the secret (or ticking Clear the stored secret).');
   }
   if (row && !Object.keys(body).length) { closeForm(); toast('No changes'); return; }
@@ -920,6 +1033,8 @@ function init() {
     const row = state.rows.find((r) => String(r.id) === tr.dataset.id);
     if (row) saveColor(row, input);
   });
+  E('mb-type-full').addEventListener('change', syncTypeSections);
+  E('mb-type-alias').addEventListener('change', syncTypeSections);
   E('mb-color').addEventListener('input', () => { state.colorNone = false; syncColorPreview(); });
   E('mb-color-random').addEventListener('click', () => {
     const others = state.rows.filter((r) => !state.editing || r.id !== state.editing.id).map((r) => r.color).filter(Boolean);

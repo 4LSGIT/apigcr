@@ -39,7 +39,9 @@
  * finds no Sent folder is a WARNING in the response — the mail was sent; the
  * send is never reported as failed for it.
  *
- * ── READ STATE FOR THE SENDER (carry #3) ─────────────────────────────────────
+ * ── READ STATE FOR THE SENDER (carry #3; S3-R: an alias sender's probe also
+ *    walks the alias's PARENT box — the copy lives there — and the grant-
+ *    scoped markRead admits it through the alias slice) ──────────────────────
  * The sent copy does not exist at send time: it arrives with a later ingest
  * tick (All Mail on Gmail; a polled Sent folder after APPEND). So the send
  * SCHEDULES the seed — a one_time scheduled_jobs row ('mail_sent_read_seed',
@@ -499,13 +501,20 @@ function isSentCopy(row) {
   return read.placeOf(row).sent || new RegExp(read.SENT_FOLDER_SQL_RE, 'i').test(String(row.folder || ''));
 }
 
-/** A stored message the caller can READ (any of its mailboxes), else 404 — like the thread routes. */
+/**
+ * A stored message the caller can READ, else 404 — its mailbox readable, or
+ * (S3-R) a readable alias slice of that box admits it (mailReadService
+ * ACCESS / ALIAS SLICE: the row carries From/To/Cc + gmail_labels, which is
+ * what the slice test reads). Like the thread routes.
+ */
 async function loadParent(db, userId, messageId, label = 'message id') {
   const id = toId(messageId, label);
   const [[row]] = await db.query(`SELECT ${PARENT_COLS} FROM mail_messages WHERE id = ? LIMIT 1`, [id]);
   if (!row) throw httpError(404, 'Message not found');
   const access = await mbx.getAccess(db, userId, 'mailbox', row.mailbox_id);
-  if (!access.can_read) throw httpError(404, 'Message not found');
+  if (!access.can_read && !(await read.messageAliasEntry(db, userId, row))) {
+    throw httpError(404, 'Message not found');
+  }
   return row;
 }
 
@@ -907,7 +916,12 @@ async function seedSentReadState(db, data, { final = false } = {}) {
   const pid = data.provider_id && GMAIL_ID_RE.test(String(data.provider_id)) ? String(data.provider_id) : null;
   const mid = cleanMid(data.message_id);
   if (!pid && !mid) return { seeded: 0, skipped: 'no message key in the job data' };
-  const scope = (await mbx.listReadable(db, user, 'mailbox')).map(r => Number(r.id));
+  // S3-R: a send AS an alias lands its copy in the PARENT box's rows — probe
+  // the parents of readable alias boxes too; markRead (the disjunction) is
+  // the grant seat and marks only what the caller's slices actually admit
+  // (the copy carries the alias in From, so it does).
+  const readable = await mbx.listReadable(db, user, 'mailbox');
+  const scope = [...new Set(readable.map(r => Number(r.alias_of != null ? r.alias_of : r.id)))];
   if (!scope.length) return { seeded: 0, skipped: 'the sender can read no mailbox' };
 
   const ids = new Set();

@@ -28,11 +28,39 @@
  * ── ACCESS (D6) ──────────────────────────────────────────────────────────────
  * Every read is scoped by mailboxService — listReadable for set queries,
  * getAccess for one message — never by channel_grants directly. A message is
- * visible iff its mailbox is readable (grant ∪ SU ∪ the attorney READ bypass).
- * A message that exists but is not readable answers exactly like one that
- * does not exist (404) — no existence oracle on ids or thread keys. A saved
- * view NEVER grants: its mailbox_ids are intersected with the readable set at
- * read time, and rejected at write time when not readable.
+ * visible iff its mailbox is readable (grant ∪ SU ∪ the attorney READ
+ * bypass), OR (S3-R) it falls in the slice of a readable ALIAS box of its
+ * mailbox (ALIAS SLICE below; the extension lives HERE, beside the
+ * getAccess calls — getAccess itself stays pure per-mailbox grant
+ * resolution). A message that exists but is not readable answers exactly
+ * like one that does not exist (404) — no existence oracle on ids or thread
+ * keys. A saved view NEVER grants: its mailbox_ids are intersected with the
+ * readable set at read time, and rejected at write time when not readable.
+ *
+ * ── ALIAS SLICE (S3-R) ───────────────────────────────────────────────────────
+ * A mailbox row with alias_of (a send-as address of the parent account —
+ * mailboxService header, ALIAS BOXES) stores nothing itself; a can_read
+ * grant on it reads the alias's SLICE of the PARENT box: rows the Gmail
+ * filter labelled for it (alias_label — a bound MEMBER OF, the SENT_WHERE
+ * precedent; catches Bcc and list mail) or carrying the alias address in
+ * From/To/Cc (the firstSeen pattern: LIKE narrows, a REGEXP pins the address
+ * between delimiters). in_inbox NEVER applies to a slice — live, the Gmail
+ * filters label-and-archive, so every it@ row has in_inbox 0. Within the
+ * slice the alias's OWN mail — its address is the From — is its Sent and
+ * everything else its Inbox (ALIAS_SENT_WHERE / ALIAS_INBOX_WHERE /
+ * placeInSlice; review 2026-10-12). Not the \Sent label: every send-as
+ * address of the account is \Sent to Gmail, so the automations@ → it@
+ * digests (and stuart@ → it@ notes) are \Sent copies that are INCOMING mail
+ * to it@ — the S3.2 "own mail is judged against the identity" rule, applied
+ * to placement. Rows served through a slice are RE-TAGGED with the
+ * alias box's id (the list SELECTs it; getThread retags in JS), so the
+ * pane's box chip, colour and part-fetch URL resolve against the box the
+ * caller actually reads; the DB rows keep the parent id, and case-link /
+ * log stamps ride those real ids. An alias whose PARENT is in the same
+ * query scope contributes no branch of its own (branchPlan — the parent
+ * branch already lists every slice row; a second branch would duplicate
+ * them), and two slices of one parent can overlap, so the list de-dupes by
+ * row id after the merge.
  *
  * ── BODIES ───────────────────────────────────────────────────────────────────
  * body_html / body_text leave this module ONLY from getThread / getMessage —
@@ -419,6 +447,9 @@ const JOINS = `
   LEFT JOIN cases c ON l.log_about_type = 'case' AND c.case_id = l.log_about_id`;
 
 // NEVER add body_text / body_html here: this is the list projection.
+// ALIAS_LIST_COLS is the same projection with the ALIAS id bound in place of
+// the row's own mailbox_id (ALIAS SLICE re-tag); built by replacement so the
+// two can never drift.
 const LIST_COLS = `m.id, m.mailbox_id, m.folder, m.gmail_labels, m.in_inbox, m.thread_key, m.from_addr, m.to_addrs, m.cc_addrs,
   m.subject, m.date, m.snippet, m.attachments, m.log_id,
   (rs.message_fk IS NULL) AS unread,
@@ -429,6 +460,8 @@ const FULL_COLS = `m.id, m.mailbox_id, m.folder, m.gmail_labels, m.in_inbox, m.m
   m.attachments, m.flags, m.log_id,
   (rs.message_fk IS NULL) AS unread,
   c.case_id AS case_id, c.case_number AS case_number, c.case_number_full AS case_number_full`;
+
+const ALIAS_LIST_COLS = LIST_COLS.replace('m.mailbox_id', '? AS mailbox_id');
 
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -441,15 +474,19 @@ const FULL_COLS = `m.id, m.mailbox_id, m.folder, m.gmail_labels, m.in_inbox, m.m
  * above): the hub's default scope, and a Sent copy is mail the mailbox itself
  * sent.
  *
- * SEND-ONLY boxes (S3.1, 2026-10-12) are left out: Ingest off AND no IMAP
- * login (SEND_ONLY_SQL) = an identity row, e.g. a Google alias (it@4lsg.com)
- * whose mail lands in the account's own box. It stores nothing, so it has no
- * place on the reading surfaces; it appears in the From picker
- * (GET /api/mail/identities). A paused box keeps its login and stays listed.
- * `viewer.can_send` tells the pane whether to offer Compose / Reply at all —
- * a send-only grant has no readable box to carry can_send.
+ * SEND-ONLY boxes are ALIAS boxes (S3-R: alias_of IS NOT NULL is the ONE
+ * definition — the S3.1 "Ingest off AND no secret" inference is dead; a
+ * plain box with ingest off and no password is just a readable empty box).
+ * An alias stores nothing itself, but since S3-R it DOES sit on the reading
+ * surfaces: its row in this summary carries its SLICE of the parent box
+ * (ALIAS SLICE, header) — inbox_unread here is what feeds the shell's
+ * sidebar badge, so an alias reader's badge counts their slice. It also
+ * appears in the From picker (GET /api/mail/identities, ordered after real
+ * boxes — S3.2). `viewer.can_send` tells the pane whether to offer
+ * Compose / Reply at all — a send-only grant alone has no readable box to
+ * carry can_send.
  */
-const SEND_ONLY_SQL = 'SELECT id FROM mailboxes WHERE id IN (?) AND ingest_enabled = 0 AND imap_secret IS NULL';
+const SEND_ONLY_SQL = 'SELECT id FROM mailboxes WHERE id IN (?) AND alias_of IS NOT NULL';
 const CAN_SEND_SQL = "SELECT COUNT(*) AS n FROM channel_grants WHERE user = ? AND channel_type = 'mailbox' AND can_send = 1";
 
 /**
@@ -466,21 +503,33 @@ async function sendOnlyIds(db, ids) {
 
 async function summary(db, userId) {
   const scope = await readableScope(db, userId);
-  if (scope.size) {
-    for (const id of await sendOnlyIds(db, [...scope.keys()])) scope.delete(id);
-  }
   const ids = [...scope.keys()];
+  const direct = ids.filter(id => scope.get(id).alias_of == null);
+  const aliases = ids.filter(id => scope.get(id).alias_of != null).map(id => scope.get(id));
   const counts = new Map();
-  if (ids.length) {
+  if (direct.length) {
     const [rows] = await db.query(
       `SELECT m.mailbox_id, COUNT(*) AS total, SUM(rs.message_fk IS NULL) AS unread
          FROM mail_messages m
          LEFT JOIN mail_read_state rs ON rs.user = ? AND rs.message_fk = m.id
         WHERE m.mailbox_id IN (?) AND m.in_inbox = 1
         GROUP BY m.mailbox_id`,
-      [Number(userId), ids]
+      [Number(userId), direct]
     );
     for (const r of rows) counts.set(Number(r.mailbox_id), { total: Number(r.total) || 0, unread: Number(r.unread) || 0 });
+  }
+  // S3-R: an alias box's Inbox is its SLICE of the parent (ALIAS SLICE,
+  // header) — one count per alias (a handful of rows; the parent walk is
+  // the few-hundred-row box the direct query reads anyway).
+  for (const e of aliases) {
+    const [[r]] = await db.query(
+      `SELECT COUNT(*) AS total, SUM(rs.message_fk IS NULL) AS unread
+         FROM mail_messages m
+         LEFT JOIN mail_read_state rs ON rs.user = ? AND rs.message_fk = m.id
+        WHERE m.mailbox_id = ? AND ${ALIAS_WHERE} AND ${ALIAS_INBOX_WHERE}`,
+      [Number(userId), Number(e.alias_of), ...aliasSliceParams(e), aliasAddrRe(e)]
+    );
+    counts.set(Number(e.id), { total: Number(r && r.total) || 0, unread: Number(r && r.unread) || 0 });
   }
   const viewer = { su: await mbx.isSuperuser(db, userId), role: null, can_send: false };
   if (viewer.su) viewer.can_send = true;
@@ -499,6 +548,7 @@ async function summary(db, userId) {
       active: !!r.active,
       can_send: !!r.can_send,
       can_manage: !!r.can_manage,
+      alias_of: r.alias_of == null ? null : Number(r.alias_of),
       inbox_total: c.total,
       inbox_unread: c.unread,
     };
@@ -614,6 +664,157 @@ const FILES_WHERE = `0 < (SELECT COUNT(*) FROM JSON_TABLE(m.attachments, '$[*]' 
 const SENT_FOLDER_SQL_RE = '(^|[./])(sent|sent items|sent messages|sent mail)$';
 const SENT_WHERE = '(? MEMBER OF (m.gmail_labels) OR m.folder REGEXP ?)';
 
+/*
+ * ALIAS SLICE (header). The label is a BOUND parameter (JSON MEMBER OF is an
+ * exact, case-sensitive compare — the SENT_WHERE precedent; a NULL label
+ * makes that half NULL and the address half decides). The address test is
+ * firstSeen's: the LIKEs narrow on an index-free walk the branch already
+ * pays for, the REGEXP pins the address between list delimiters so
+ * mjane@x never counts for jane@x. ALIAS_SENT_WHERE / ALIAS_INBOX_WHERE
+ * split a slice by its From: the same pinned pattern over from_addr alone
+ * (the first From, display form) — the alias's own mail is its Sent,
+ * everything else its Inbox, label or no label (a SiteGround parent's Sent
+ * folder copies and pre-S2-L rows included). The IS NULL arm keeps a
+ * From-less row in the Inbox (REGEXP on NULL is NULL, and NOT NULL drops it).
+ */
+const ALIAS_WHERE = `(? MEMBER OF (m.gmail_labels)
+     OR ((m.from_addr LIKE ? OR m.to_addrs LIKE ? OR m.cc_addrs LIKE ?)
+       AND CONCAT_WS(',', m.from_addr, m.to_addrs, m.cc_addrs) REGEXP ?))`;
+const ALIAS_SENT_WHERE = 'm.from_addr REGEXP ?';
+const ALIAS_INBOX_WHERE = '(m.from_addr IS NULL OR NOT (m.from_addr REGEXP ?))';
+
+/** The alias address pinned between list delimiters (ICU, case-blind on the general_ci columns). */
+function aliasAddrRe(entry) {
+  return `(^|[<,[:space:]])${escapeRe(String(entry.address || '').toLowerCase())}($|[>,[:space:]])`;
+}
+
+/** ALIAS_WHERE's params for one alias scope entry ({address, alias_label}). */
+function aliasSliceParams(entry) {
+  const a = String(entry.address || '').toLowerCase();
+  const like = `%${escapeLike(a)}%`;
+  return [entry.alias_label == null ? null : String(entry.alias_label), like, like, like, aliasAddrRe(entry)];
+}
+
+/** JS twin of aliasAddrRe (the SQL's [:space:] class is \s here). */
+function aliasAddrJs(entry) {
+  return new RegExp(`(^|[<,\\s])${escapeRe(String(entry.address || '').toLowerCase())}($|[>,\\s])`, 'i');
+}
+
+/**
+ * Does `row` fall in `entry`'s slice? The JS twin of ALIAS_WHERE, kept to the
+ * SAME rule, not an approximation: the label exact and case-sensitive (JSON
+ * MEMBER OF), the address as the SQL's pinned REGEXP over the joined
+ * From/To/Cc (case-blind, between list delimiters — so neither a superstring
+ * address nor an address quoted inside a display name ever matches; a
+ * tokenizer like emailsIn WOULD match the quoted-name spoof). Row needs
+ * from_addr, to_addrs, cc_addrs, gmail_labels.
+ * Engine = this twin: tests/mailboxS3R.mysql.test.js (S3R_MATRIX).
+ */
+function sliceMatchJs(entry, row) {
+  const labels = labelsOf(row.gmail_labels);
+  if (entry.alias_label != null && labels && labels.includes(String(entry.alias_label))) return true;
+  if (!String(entry.address || '')) return false;
+  return aliasAddrJs(entry).test([row.from_addr, row.to_addrs, row.cc_addrs].filter(v => v != null).join(','));
+}
+
+/**
+ * Where a SLICE row sits, for the API (ALIAS SLICE, header): the alias's own
+ * mail (its address is the From — ALIAS_SENT_WHERE's JS twin) = Sent,
+ * everything else = the alias's Inbox. in_inbox (the generated column) never
+ * applies — the Gmail filters label-and-archive. place: 'Sent' | null
+ * (a slice has no 'Archived').
+ */
+function placeInSlice(entry, r) {
+  const sent = r.from_addr != null && aliasAddrJs(entry).test(String(r.from_addr));
+  return { in_inbox: !sent, sent, place: sent ? 'Sent' : null };
+}
+
+/** The first alias entry in `scope` (id order) whose parent is the row's mailbox and whose slice admits it, or null. */
+function aliasFor(scope, row) {
+  const entries = [...scope.values()]
+    .filter(e => e.alias_of != null && Number(e.alias_of) === Number(row.mailbox_id))
+    .sort((a, b) => Number(a.id) - Number(b.id));
+  return entries.find(e => sliceMatchJs(e, row)) || null;
+}
+
+/**
+ * The async form over the caller's readable scope — the shared half of the
+ * ACCESS extension (header): when getAccess denies the row's own mailbox,
+ * this says whether a readable alias slice admits it (and which). Used by
+ * loadVisible here, mailboxSendService.loadParent and the part route.
+ */
+async function messageAliasEntry(db, userId, row) {
+  const scope = await readableScope(db, userId);
+  return aliasFor(scope, row);
+}
+
+/**
+ * Query plan over `scope` for the requested `ids` (already intersected with
+ * the readable set): which boxes are walked DIRECTLY and which as an alias
+ * SLICE of their parent. An alias whose parent is itself in `ids` is dropped
+ * — the parent branch already carries every slice row; a second branch would
+ * list them twice (ALIAS SLICE, header).
+ */
+function branchPlan(scope, ids) {
+  const want = new Set(ids.map(Number));
+  const direct = [];
+  const aliases = [];
+  for (const id of ids) {
+    const r = scope.get(Number(id));
+    if (!r) continue;
+    if (r.alias_of == null) direct.push(Number(id));
+    else if (!want.has(Number(r.alias_of))) aliases.push(r);
+  }
+  return { direct, aliases };
+}
+
+/**
+ * ONE WHERE fragment accepting a row readable through `plan`: its mailbox is
+ * walked directly, or it sits in an alias's parent AND falls in that slice.
+ * With no aliases in the plan this is exactly `m.mailbox_id IN (?)` — the
+ * pre-S3-R text, so the thread / related / first-seen / bulk-mark statements
+ * are byte-identical until an alias is actually in scope. Null when the plan
+ * is empty.
+ */
+function scopeDisjunction(plan) {
+  if (!plan.aliases.length) {
+    return plan.direct.length ? { sql: 'm.mailbox_id IN (?)', params: [plan.direct] } : null;
+  }
+  const parts = [];
+  const params = [];
+  if (plan.direct.length) { parts.push('m.mailbox_id IN (?)'); params.push(plan.direct); }
+  for (const e of plan.aliases) {
+    parts.push(`(m.mailbox_id = ? AND ${ALIAS_WHERE})`);
+    params.push(Number(e.alias_of), ...aliasSliceParams(e));
+  }
+  return { sql: `(${parts.join(' OR ')})`, params };
+}
+
+/**
+ * Rows fetched through an alias disjunct carry the PARENT's mailbox_id —
+ * re-tag them with the alias box's own id (ALIAS SLICE, header). A row whose
+ * mailbox is read directly keeps its real id; with several readable aliases
+ * of one parent the first (id order) whose slice admits the row wins.
+ */
+function retagAlias(plan, rows) {
+  if (!plan.aliases.length) return rows;
+  const direct = new Set(plan.direct.map(Number));
+  for (const r of rows) {
+    if (direct.has(Number(r.mailbox_id))) continue;
+    const e = firstAliasOf(plan, r.mailbox_id, r);
+    if (e) r.mailbox_id = Number(e.id);
+  }
+  return rows;
+}
+
+/** The lowest-id alias in `plan` of parent `parentId` whose slice admits `row` (the ONE tie rule — list and thread agree). */
+function firstAliasOf(plan, parentId, row) {
+  return plan.aliases
+    .filter(e => Number(e.alias_of) === Number(parentId))
+    .sort((a, b) => Number(a.id) - Number(b.id))
+    .find(e => sliceMatchJs(e, row)) || null;
+}
+
 /**
  * The list's predicates beyond the mailbox, as exact SQL fragments + params
  * (tests/helpers/mailboxS2World.js parses these texts — keep them verbatim).
@@ -621,11 +822,17 @@ const SENT_WHERE = '(? MEMBER OF (m.gmail_labels) OR m.folder REGEXP ?)';
  * "Mark all read" clears exactly what the list shows, every page of it.
  * Needs JOINS in the statement (rs / c are referenced).
  */
-function scopeWhere(filters, cursor) {
+function scopeWhere(filters, cursor, entry = null) {
   const where = [];
   const params = [];
-  if (filters.sent_only) { where.push(SENT_WHERE); params.push(SENT_LABEL, SENT_FOLDER_SQL_RE); } // SENT SCOPE (header)
-  else if (!filters.all_folders) where.push('m.in_inbox = 1'); // INBOX / SENT (header)
+  if (entry) { where.push(ALIAS_WHERE); params.push(...aliasSliceParams(entry)); } // ALIAS SLICE (header)
+  if (filters.sent_only) {
+    if (entry) { where.push(ALIAS_SENT_WHERE); params.push(aliasAddrRe(entry)); } // the Sent WITHIN a slice: its own mail
+    else { where.push(SENT_WHERE); params.push(SENT_LABEL, SENT_FOLDER_SQL_RE); } // SENT SCOPE (header)
+  } else if (!filters.all_folders) {
+    if (entry) { where.push(ALIAS_INBOX_WHERE); params.push(aliasAddrRe(entry)); } // the Inbox WITHIN a slice
+    else where.push('m.in_inbox = 1'); // INBOX / SENT (header)
+  }
   if (cursor && cursor.date) {
     where.push('(m.date < ? OR (m.date = ? AND m.id < ?) OR m.date IS NULL)');
     params.push(sqlUtc(cursor.date), sqlUtc(cursor.date), cursor.id);
@@ -682,7 +889,10 @@ async function listMessages(db, userId, query = {}) {
   const ids = (wanted ? wanted.filter(id => scope.has(id)) : [...scope.keys()]).sort((a, b) => a - b);
   if (!ids.length) return { messages: [], next_cursor: null, scope_ids: [], view_id: view ? view.id : null };
 
-  // Per-branch WHERE beyond the mailbox (identical for every branch).
+  const plan = branchPlan(scope, ids);
+
+  // Per-branch WHERE beyond the mailbox (identical for every DIRECT branch;
+  // an alias branch carries its own slice predicates — ALIAS SLICE, header).
   const { extra, params: wParams } = scopeWhere(filters, cursor);
 
   const branches = [];
@@ -695,7 +905,7 @@ async function listMessages(db, userId, query = {}) {
   // All Mail box's archived and sent mail costs nothing; All folders walks
   // (mailbox_id, date).
   const index = filters.all_folders || filters.sent_only ? 'idx_mail_messages_mailbox_date' : 'idx_mail_messages_mailbox_inbox_date';
-  for (const id of ids) {
+  for (const id of plan.direct) {
     branches.push(
       `(SELECT ${LIST_COLS} FROM mail_messages m FORCE INDEX (${index})${JOINS}
          WHERE m.mailbox_id = ?${extra}
@@ -703,13 +913,42 @@ async function listMessages(db, userId, query = {}) {
     );
     params.push(uid, id, ...wParams, limit + 1);
   }
+  // An ALIAS branch walks the PARENT on (mailbox_id, date) and filters to
+  // the slice — in_inbox never orders a slice (its rows are archived), and
+  // the list SELECTs the ALIAS id as mailbox_id (re-tag — ALIAS SLICE,
+  // header) so the pane's chip, colour and part URL resolve.
+  for (const e of plan.aliases) {
+    const w = scopeWhere(filters, cursor, e);
+    branches.push(
+      `(SELECT ${ALIAS_LIST_COLS} FROM mail_messages m FORCE INDEX (idx_mail_messages_mailbox_date)${JOINS}
+         WHERE m.mailbox_id = ?${w.extra}
+         ORDER BY m.date DESC, m.id DESC LIMIT ?)`
+    );
+    params.push(Number(e.id), uid, Number(e.alias_of), ...w.params, limit + 1);
+  }
   params.push(limit + 1);
   const [rows] = await db.query(
     `${branches.join(' UNION ALL ')} ORDER BY \`date\` DESC, id DESC LIMIT ?`,
     params
   );
 
-  const page = rows.slice(0, limit);
+  // Two alias slices of one parent can admit the same row (labelled for one,
+  // addressed to the other): ONE copy stays, tagged with the lowest alias id
+  // that admits it (firstAliasOf — the thread's rule). The UNION's order
+  // between the copies is undefined (they tie on date, id), so the tag is
+  // decided here, not by which copy came first.
+  let uniq = rows;
+  if (plan.aliases.length > 1) {
+    const aliasById = new Map(plan.aliases.map(e => [Number(e.id), e]));
+    const seenIds = new Set();
+    uniq = rows.filter(r => { const k = Number(r.id); if (seenIds.has(k)) return false; seenIds.add(k); return true; });
+    for (const r of uniq) {
+      const e = aliasById.get(Number(r.mailbox_id));
+      const first = e ? firstAliasOf(plan, e.alias_of, r) : null;
+      if (first) r.mailbox_id = Number(first.id);
+    }
+  }
+  const page = uniq.slice(0, limit);
   // Whether a cid part is inline depends on the HTML body, which the list
   // projection never carries: read it server-side for just the rows on this
   // (already grant-scoped) page that HAVE a cid part — used for the count,
@@ -728,7 +967,7 @@ async function listMessages(db, userId, query = {}) {
       mailbox_id: Number(r.mailbox_id),
       mailbox_address: mb.address || null,
       folder: r.folder,
-      ...placeOf(r),
+      ...(mb.alias_of != null ? placeInSlice(mb, r) : placeOf(r)),
       thread_key: r.thread_key || null,
       from_addr: r.from_addr || null,
       to_addrs: r.to_addrs || null,
@@ -744,6 +983,8 @@ async function listMessages(db, userId, query = {}) {
   });
   return {
     messages,
+    // has-more from the RAW merge (a de-duped short page may still have more
+    // behind it); the cursor from the last row actually shown.
     next_cursor: rows.length > limit && page.length ? cursorOf(page[page.length - 1]) : null,
     scope_ids: ids,
     view_id: view ? view.id : null,
@@ -762,7 +1003,7 @@ function shapeFull(r, scope) {
     mailbox_id: Number(r.mailbox_id),
     mailbox_address: mb.address || null,
     folder: r.folder,
-    ...placeOf(r),
+    ...(mb.alias_of != null ? placeInSlice(mb, r) : placeOf(r)),
     message_id: r.message_id || null,
     thread_key: r.thread_key || null,
     from_addr: r.from_addr || null,
@@ -822,13 +1063,17 @@ async function getThread(db, userId, threadKey) {
   if (!key || key.length > 512) throw httpError(400, 'thread key must be 1-512 characters');
   const scope = await readableScope(db, userId);
   if (!scope.size) throw httpError(404, 'Thread not found');
+  const plan = branchPlan(scope, [...scope.keys()]);
+  const disj = scopeDisjunction(plan);
+  if (!disj) throw httpError(404, 'Thread not found');
   const [rows] = await db.query(
     `SELECT ${FULL_COLS} FROM mail_messages m${JOINS}
-      WHERE m.thread_key = ? AND m.mailbox_id IN (?)
+      WHERE m.thread_key = ? AND ${disj.sql}
       ORDER BY m.date DESC, m.id DESC LIMIT ?`,
-    [Number(userId), key, [...scope.keys()], THREAD_MAX + 1]
+    [Number(userId), key, ...disj.params, THREAD_MAX + 1]
   );
   if (!rows.length) throw httpError(404, 'Thread not found');
+  retagAlias(plan, rows); // slice rows present as the alias box (ALIAS SLICE)
   // Back to oldest-first (date, id) — the order collapse() picks primaries in.
   const list = rows.slice(0, THREAD_MAX).reverse().map(r => shapeFull(r, scope));
   const messages = await markTrust(db, userId, collapse(list));
@@ -840,14 +1085,22 @@ async function getThread(db, userId, threadKey) {
   };
 }
 
-/** Message row (any columns) if the caller can read its mailbox, else 404. */
+/**
+ * Message row if the caller can read it — its mailbox readable, or (S3-R) a
+ * readable alias slice admits it (ACCESS, header) — else 404 either way (no
+ * oracle). `via_alias` = the admitting alias entry when only a slice did.
+ */
 async function loadVisible(db, userId, messageId) {
   const id = toId(messageId, 'message id');
-  const [[row]] = await db.query('SELECT id, mailbox_id FROM mail_messages WHERE id = ? LIMIT 1', [id]);
+  const [[row]] = await db.query(
+    'SELECT id, mailbox_id, from_addr, to_addrs, cc_addrs, gmail_labels FROM mail_messages WHERE id = ? LIMIT 1', [id]
+  );
   if (!row) throw httpError(404, 'Message not found');
   const access = await mbx.getAccess(db, userId, 'mailbox', row.mailbox_id);
-  if (!access.can_read) throw httpError(404, 'Message not found');
-  return { id, mailbox_id: Number(row.mailbox_id) };
+  if (access.can_read) return { id, mailbox_id: Number(row.mailbox_id), via_alias: null };
+  const e = await messageAliasEntry(db, userId, row);
+  if (e) return { id, mailbox_id: Number(row.mailbox_id), via_alias: e };
+  throw httpError(404, 'Message not found');
 }
 
 /** One message with bodies (threadless mail, or a direct open). */
@@ -859,6 +1112,7 @@ async function getMessage(db, userId, messageId) {
     [Number(userId), v.id]
   );
   if (!row) throw httpError(404, 'Message not found');
+  if (v.via_alias) row.mailbox_id = Number(v.via_alias.id); // re-tag (ALIAS SLICE)
   const m = shapeFull(row, scope);
   return {
     thread_key: m.thread_key,
@@ -951,13 +1205,14 @@ async function untrustImageSender(db, userId, address) {
 async function related(db, userId, messageId) {
   const v = await loadVisible(db, userId, messageId);
   const scope = await readableScope(db, userId);
+  const disj = scopeDisjunction(branchPlan(scope, [...scope.keys()]));
   const [[anchor]] = await db.query('SELECT thread_key FROM mail_messages WHERE id = ? LIMIT 1', [v.id]);
-  const [rows] = anchor && anchor.thread_key
+  const [rows] = anchor && anchor.thread_key && disj
     ? await db.query(
-      `SELECT from_addr, to_addrs, cc_addrs FROM mail_messages
-        WHERE thread_key = ? AND mailbox_id IN (?)
-        ORDER BY date DESC, id DESC LIMIT ?`,
-      [anchor.thread_key, [...scope.keys()], THREAD_MAX])
+      `SELECT m.from_addr, m.to_addrs, m.cc_addrs FROM mail_messages m
+        WHERE m.thread_key = ? AND ${disj.sql}
+        ORDER BY m.date DESC, m.id DESC LIMIT ?`,
+      [anchor.thread_key, ...disj.params, THREAD_MAX])
     : await db.query('SELECT from_addr, to_addrs, cc_addrs FROM mail_messages WHERE id = ? LIMIT 1', [v.id]);
 
   const [boxes] = await db.query('SELECT address FROM mailboxes');
@@ -1049,12 +1304,14 @@ async function firstSeen(db, userId, address) {
   const a = cleanSender(address);
   const scope = await readableScope(db, userId);
   if (!scope.size) return { address: a, first_seen: null };
+  const disj = scopeDisjunction(branchPlan(scope, [...scope.keys()]));
+  if (!disj) return { address: a, first_seen: null };
   const like = `%${escapeLike(a)}%`;
   const [[row]] = await db.query(
-    `SELECT MIN(date) AS first_date FROM mail_messages
-      WHERE mailbox_id IN (?) AND (from_addr LIKE ? OR to_addrs LIKE ? OR cc_addrs LIKE ?)
-        AND CONCAT_WS(',', from_addr, to_addrs, cc_addrs) REGEXP ?`,
-    [[...scope.keys()], like, like, like, `(^|[<,[:space:]])${escapeRe(a)}($|[>,[:space:]])`]
+    `SELECT MIN(m.date) AS first_date FROM mail_messages m
+      WHERE ${disj.sql} AND (m.from_addr LIKE ? OR m.to_addrs LIKE ? OR m.cc_addrs LIKE ?)
+        AND CONCAT_WS(',', m.from_addr, m.to_addrs, m.cc_addrs) REGEXP ?`,
+    [...disj.params, like, like, like, `(^|[<,[:space:]])${escapeRe(a)}($|[>,[:space:]])`]
   );
   const d = toDate(row && row.first_date);
   return { address: a, first_seen: d ? utcToLocal(d).toISODate() : null };
@@ -1109,28 +1366,47 @@ async function markRead(db, userId, body) {
     let ids = [...scope.keys()];
     if (wanted) ids = ids.filter(id => wanted.includes(id));
     if (!ids.length) return { marked: 0 };
-    const { extra, params } = scopeWhere(filters, null);
-    const [r] = await db.query(
-      `INSERT INTO mail_read_state (user, message_fk, read_at)
-       SELECT ?, m.id, UTC_TIMESTAMP() FROM mail_messages m${JOINS}
-        WHERE m.mailbox_id IN (?) AND rs.message_fk IS NULL${extra}
-       ON DUPLICATE KEY UPDATE read_at = mail_read_state.read_at`,
-      [uid, uid, ids, ...params]
-    );
-    return { marked: Number(r && r.affectedRows) || 0 };
+    const plan = branchPlan(scope, ids);
+    let marked = 0;
+    if (plan.direct.length) {
+      const { extra, params } = scopeWhere(filters, null);
+      const [r] = await db.query(
+        `INSERT INTO mail_read_state (user, message_fk, read_at)
+         SELECT ?, m.id, UTC_TIMESTAMP() FROM mail_messages m${JOINS}
+          WHERE m.mailbox_id IN (?) AND rs.message_fk IS NULL${extra}
+         ON DUPLICATE KEY UPDATE read_at = mail_read_state.read_at`,
+        [uid, uid, plan.direct, ...params]
+      );
+      marked += Number(r && r.affectedRows) || 0;
+    }
+    // One statement per alias slice (ALIAS SLICE, header); the anti-join
+    // keeps overlapping slices from counting a row twice.
+    for (const e of plan.aliases) {
+      const w = scopeWhere(filters, null, e);
+      const [r] = await db.query(
+        `INSERT INTO mail_read_state (user, message_fk, read_at)
+         SELECT ?, m.id, UTC_TIMESTAMP() FROM mail_messages m${JOINS}
+          WHERE m.mailbox_id = ? AND rs.message_fk IS NULL${w.extra}
+         ON DUPLICATE KEY UPDATE read_at = mail_read_state.read_at`,
+        [uid, uid, Number(e.alias_of), ...w.params]
+      );
+      marked += Number(r && r.affectedRows) || 0;
+    }
+    return { marked };
   }
   if (has(body, 'mailbox_ids') || has(body, 'filters')) throw httpError(400, 'mailbox_ids / filters go with all: true');
   if (!Array.isArray(body.ids) || !body.ids.length) throw httpError(400, 'ids must be a non-empty array');
   const want = idList(body.ids, 'ids', BULK_READ_MAX);
-  const ids = [...(await readableScope(db, uid)).keys()];
-  if (!ids.length) return { marked: 0 };
+  const scope = await readableScope(db, uid);
+  const disj = scopeDisjunction(branchPlan(scope, [...scope.keys()]));
+  if (!disj) return { marked: 0 };
   const [r] = await db.query(
     `INSERT INTO mail_read_state (user, message_fk, read_at)
      SELECT ?, m.id, UTC_TIMESTAMP() FROM mail_messages m
        LEFT JOIN mail_read_state rs ON rs.user = ? AND rs.message_fk = m.id
-      WHERE m.id IN (?) AND m.mailbox_id IN (?) AND rs.message_fk IS NULL
+      WHERE m.id IN (?) AND ${disj.sql} AND rs.message_fk IS NULL
      ON DUPLICATE KEY UPDATE read_at = mail_read_state.read_at`,
-    [uid, uid, want, ids]
+    [uid, uid, want, ...disj.params]
   );
   return { marked: Number(r && r.affectedRows) || 0 };
 }
@@ -1188,22 +1464,40 @@ async function viewCounts(db, userId) {
   const views = await listViews(db, uid);
   const counts = {};
   if (!views.length) return { counts };
-  const readable = [...(await readableScope(db, uid)).keys()].sort((a, b) => a - b);
+  const scope = await readableScope(db, uid);
+  const readable = [...scope.keys()].sort((a, b) => a - b);
   for (const v of views) {
     const ids = v.mailbox_ids ? readable.filter(id => v.mailbox_ids.includes(id)) : readable;
     if (!ids.length) { counts[v.id] = 0; continue; }
-    let where;
+    let f;
     try {
-      const f = readFilters(v.filters || {});
+      f = readFilters(v.filters || {});
       // A Sent view counts nothing: sent mail is nobody's unread (S3).
       if (f.sent_only) continue;
-      where = scopeWhere(checkFilters({ ...f, unread_only: true, all_folders: false }), null);
+      f = checkFilters({ ...f, unread_only: true, all_folders: false });
     } catch (_) { continue; }
-    const [[row]] = await db.query(
-      `SELECT COUNT(*) AS n FROM mail_messages m${JOINS} WHERE m.mailbox_id IN (?)${where.extra}`,
-      [uid, ids, ...where.params]
-    );
-    counts[v.id] = Number(row && row.n) || 0;
+    // Direct boxes in one COUNT + one per alias slice (ALIAS SLICE, header;
+    // a view combining two slices of one parent can count an overlapping
+    // unread row once per slice — a view count, not a read-state write).
+    const plan = branchPlan(scope, ids);
+    let n = 0;
+    if (plan.direct.length) {
+      const where = scopeWhere(f, null);
+      const [[row]] = await db.query(
+        `SELECT COUNT(*) AS n FROM mail_messages m${JOINS} WHERE m.mailbox_id IN (?)${where.extra}`,
+        [uid, plan.direct, ...where.params]
+      );
+      n += Number(row && row.n) || 0;
+    }
+    for (const e of plan.aliases) {
+      const w = scopeWhere(f, null, e);
+      const [[row]] = await db.query(
+        `SELECT COUNT(*) AS n FROM mail_messages m${JOINS} WHERE m.mailbox_id = ?${w.extra}`,
+        [uid, Number(e.alias_of), ...w.params]
+      );
+      n += Number(row && row.n) || 0;
+    }
+    counts[v.id] = n;
   }
   return { counts };
 }
@@ -1520,6 +1814,17 @@ module.exports = {
   cursorOf,
   FILTER_KEYS,
   SENT_WHERE,
+  ALIAS_WHERE,
+  ALIAS_SENT_WHERE,
+  ALIAS_INBOX_WHERE,
+  aliasAddrRe,
+  aliasSliceParams,
+  sliceMatchJs,
+  placeInSlice,
+  aliasFor,
+  messageAliasEntry,
+  branchPlan,
+  scopeDisjunction,
   SEND_ONLY_SQL,
   sendOnlyIds,
   SENT_FOLDER_SQL_RE,

@@ -16,7 +16,10 @@
  *   DELETE /api/mailboxes/:id/grants/:grantId  SU or can_manage   ownership-scoped
  *   GET    /api/mailboxes/:id/messages/:mid/parts/:part
  *                                              SU or can_read — streams one stored
- *                                              message's attachment from IMAP (S1, D1)
+ *                                              message's attachment from IMAP (S1, D1);
+ *                                              :id may be an ALIAS box (S3-R): the row
+ *                                              and connection are the parent's, the
+ *                                              grant and slice test are the alias's
  *   GET    /api/mailboxes/:id/folders          SU only — the server's folder list
  *                                              with STATUS counts + provider_id_kind,
  *                                              checked against ingest_folders (S1-G)
@@ -74,6 +77,7 @@ const {
 } = require('../lib/auth.superuser');
 const { pipeline } = require('stream');
 const svc = require('../services/mailboxService');
+const { sliceMatchJs } = require('../services/mailbox/mailReadService');
 const imapTransport = require('../services/mailbox/imapTransport');
 const {
   loadConnectionRow, previewEmission, folderConfig, snapshotLabels,
@@ -423,6 +427,14 @@ function parseJsonCol(v) {
 // message: the stored UID is stale until the next ingest re-keys it, and
 // serving "whatever is at that UID now" could hand over another client's
 // document.
+//
+// ALIAS BOXES (S3-R): the hub serves a slice row under the ALIAS box's id
+// (mailReadService re-tag), so :id here may be an alias — can_read is the
+// alias grant, the message row and the IMAP connection are the PARENT's
+// ("ride the parent row ids"), and a parent row OUTSIDE the alias's slice is
+// a 404 like any other unreadable message (sliceMatchJs, the same test the
+// read service applies). A parent-id URL from a caller who reads only the
+// alias stays 404: the hub never hands such a caller a parent-id URL.
 router.get('/api/mailboxes/:id/messages/:mid/parts/:part', jwtOrApiKey, requireJwt, async (req, res) => {
   const { id: idRaw, mid: midRaw, part } = req.params;
   if (!/^\d+$/.test(String(idRaw)) || Number(idRaw) <= 0 ||
@@ -445,18 +457,30 @@ router.get('/api/mailboxes/:id/messages/:mid/parts/:part', jwtOrApiKey, requireJ
       return res.status(403).json({ status: 'error', message: 'Read permission required on this mailbox' });
     }
 
+    // S3-R: an alias box's rows live in its parent (header). The box row
+    // read here is public-shape data the caller already holds read on.
+    const [[box]] = await req.db.query(
+      'SELECT id, address, alias_of, alias_label FROM mailboxes WHERE id = ? LIMIT 1', [id]
+    );
+    if (!box) return res.status(404).json({ status: 'error', message: 'Mailbox not found' });
+    const alias = box.alias_of != null;
+    const storeId = alias ? Number(box.alias_of) : id;
+
     const [[msg]] = await req.db.query(
-      `SELECT id, folder, uid, message_id, attachments
+      `SELECT id, folder, uid, message_id, attachments, from_addr, to_addrs, cc_addrs, gmail_labels
          FROM mail_messages WHERE id = ? AND mailbox_id = ? LIMIT 1`,
-      [mid, id]
+      [mid, storeId]
     );
     if (!msg) return res.status(404).json({ status: 'error', message: 'Message not found' });
+    if (alias && !sliceMatchJs(box, { ...msg, mailbox_id: storeId })) {
+      return res.status(404).json({ status: 'error', message: 'Message not found' });
+    }
 
     const atts = parseJsonCol(msg.attachments);
     const att = Array.isArray(atts) ? atts.find(a => a && String(a.part) === String(part)) : null;
     if (!att) return res.status(404).json({ status: 'error', message: 'Attachment not found on this message' });
 
-    const row = await loadConnectionRow(req.db, id);
+    const row = await loadConnectionRow(req.db, storeId);
     if (!row) return res.status(404).json({ status: 'error', message: 'Mailbox not found' });
     const cursor = (parseJsonCol(row.ingest_state) || {})[msg.folder];
     if (msg.uid == null || !cursor || cursor.uidvalidity == null) {

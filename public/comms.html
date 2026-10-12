@@ -754,6 +754,18 @@ async function loadViewCounts() {
 }
 
 /**
+ * Inbox unread over a set of boxes, counted the way the list scopes them
+ * (mailReadService.branchPlan): an ALIAS box (S3-R, alias_of) whose parent is
+ * in the same set adds nothing — the parent's Inbox already is that list, and
+ * the slice's archived rows are not in it. Summing both double-counts mail
+ * addressed to the alias and leaves a badge "Mark all read" cannot clear.
+ */
+function unreadOf(boxes) {
+  const ids = new Set(boxes.map((m) => m.id));
+  return boxes.reduce((n, m) => n + (m.alias_of != null && ids.has(m.alias_of) ? 0 : (m.inbox_unread || 0)), 0);
+}
+
+/**
  * The mailbox picker: a button summarizing the combination + an in-flow panel
  * of checkboxes (one per readable box, with its colour and Inbox unread).
  * Any set can be combined; "All" (or unticking the last box) = every box.
@@ -765,13 +777,13 @@ function renderMailboxPicker() {
   if (!multiBox()) { panel.hidden = true; btn.setAttribute('aria-expanded', 'false'); }
   const sel = selectedIds();
   const shown = sel || state.mailboxes.map((m) => m.id);
-  const unread = state.mailboxes.filter((m) => shown.includes(m.id)).reduce((n, m) => n + (m.inbox_unread || 0), 0);
+  const unread = unreadOf(state.mailboxes.filter((m) => shown.includes(m.id)));
   E('mb-dots').replaceChildren(...shown.slice(0, 4).map(boxDot));
   const label = !sel ? 'All mailboxes'
     : sel.length === 1 ? boxLabel(boxById(sel[0]))
     : sel.length ? `${sel.length} mailboxes` : 'No shared mailboxes';
   E('mb-label').textContent = label + (unread ? ` (${unread})` : '');
-  const total = state.mailboxes.reduce((n, m) => n + (m.inbox_unread || 0), 0);
+  const total = unreadOf(state.mailboxes);
   E('tab-email-n').textContent = total ? String(total) : '';
   // The shell's sidebar Comms badge (index.html commsBadgeSet): this page
   // just counted it, so hand it over rather than make the shell fetch again.
@@ -852,7 +864,7 @@ function railDirty() {
 }
 /** Unread for a rail / menu entry: null = All mail (the summary), else the server's count for that view. */
 function viewUnread(v) {
-  if (!v) return state.mailboxes.reduce((n, m) => n + (m.inbox_unread || 0), 0);
+  if (!v) return unreadOf(state.mailboxes);
   const n = state.viewCounts[v.id];
   return Number.isFinite(n) ? n : null;
 }

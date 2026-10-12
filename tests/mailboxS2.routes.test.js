@@ -1050,7 +1050,7 @@ describe('first-seen: the add-to-client start-date default', () => {
     W.statements.length = 0;
     const r = await call('GET', '/api/mail/first-seen?address=JANE%40client.test', { t: tok(READER) });
     expect(r.json).toEqual({ status: 'success', address: 'jane@client.test', first_seen: '2026-02-28' });
-    const q = W.statements.find((x) => x.sql.startsWith('SELECT MIN(date)'));
+    const q = W.statements.find((x) => x.sql.startsWith('SELECT MIN(m.date)'));
     expect(q.params[0]).toEqual([1]);                                       // the reader's scope only
     expect(q.params.slice(1, 4)).toEqual(['%jane@client.test%', '%jane@client.test%', '%jane@client.test%']);
     expect((await call('GET', '/api/mail/first-seen?address=jane@client.test', { t: tok(SU) })).json.first_seen).toBe('2026-01-05');
@@ -1059,7 +1059,7 @@ describe('first-seen: the add-to-client start-date default', () => {
   test('LIKE metacharacters are escaped; none seen → null; no readable mailbox → null without a mail query; junk → 400', async () => {
     W.statements.length = 0;
     expect((await call('GET', '/api/mail/first-seen?address=a_b%25c@x.test', { t: tok(READER) })).json.first_seen).toBeNull();
-    expect(W.statements.find((x) => x.sql.startsWith('SELECT MIN(date)')).params[1]).toBe('%a\\_b\\%c@x.test%');
+    expect(W.statements.find((x) => x.sql.startsWith('SELECT MIN(m.date)')).params[1]).toBe('%a\\_b\\%c@x.test%');
     W.statements.length = 0;
     expect((await call('GET', '/api/mail/first-seen?address=x@y.test', { t: tok(NOBODY) })).json).toEqual({ status: 'success', address: 'x@y.test', first_seen: null });
     expect(W.statements.some((x) => /mail_messages/.test(x.sql))).toBe(false);

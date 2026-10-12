@@ -153,15 +153,33 @@ body. Governing migrations in `ref/migrations/`.*
     defaults 1500 / 300 per sending account, counted from `email_log`); alert
     kinds `mailbox_send_budget` (error) / `mailbox_send_append_failed`
     (warning); `admin_audit_log` tool `mail_send`.
-  - **Send-only boxes** (S3.1, 10-12): a mailbox row with Ingest off AND no
-    IMAP secret is a SEND identity (a Google alias of an account another box
-    polls). Off the reading surfaces (summary), in the From picker; its
-    grants are per-address send permissions. `mailboxService.assertSinglePoller`
-    refuses a second active, ingest-enabled box on one IMAP host + login.
-    Reply identity = the address the mail came from / was sent to, before
-    its box — over an SU's explicit grant rows first (S3.2); "own" mail is
-    judged against that identity. Identities list real boxes first
+  - **Alias (send-only) boxes** (S3.1 + S3-R, 10-12): a mailbox row with
+    `alias_of` is a send-as ALIAS of that parent box — THE send-only
+    definition (`mailReadService.SEND_ONLY_SQL`; the old Ingest-off+no-secret
+    inference is dead). Created in the pane's "send-as address" mode:
+    connection copied from the parent, ingest forced off, `alias_of`
+    SU-re-pointable (connection re-copied; never cleared, never on a full
+    box), `alias_label` (the Gmail filter label, user labels only)
+    SU-editable; connection/ingest/emit fields refused on alias rows.
+    `mailboxService.assertSinglePoller` still refuses a second active,
+    ingest-enabled box on one IMAP host + login. A `can_read` grant on an
+    alias reads its SLICE of the parent (`mailReadService` ALIAS SLICE:
+    labelled `alias_label` OR the address pinned in From/To/Cc; From = the
+    alias = the slice's Sent, everything else its Inbox — `in_inbox` never
+    applies, and neither does `\Sent`: internal mail TO the alias is \Sent
+    to Gmail); slice rows PRESENT as the alias box (list binds the alias
+    id, thread re-tags, part route accepts the alias id and streams through
+    the PARENT's connection), the summary row carries the slice's Inbox
+    counts (the sidebar badge counts them — except next to a readable
+    parent: the totals skip an alias whose parent is in the set, as the
+    list does), and the sent-copy read seed probes the alias's parent.
+    Engine twin `tests/mailboxS3R.mysql.test.js` holds `sliceMatchJs` (the
+    JS twin loadVisible + the part route apply) to the SQL. Reply identity = the address the mail came from / was sent to,
+    before its box — over an SU's explicit grant rows first (S3.2); "own"
+    mail is judged against that identity. Identities list real boxes first
     (`send_only` flag; `mailReadService.sendOnlyIds` is the one rule).
+    Design §4.2 "Per-address READING"; migration
+    `ref/migrations/2026-10-12_mailbox_s3r_alias.sql`.
   - **`/mailbox-ingest` is also the comms hub's Refresh** (10-12): staff-JWT
     runs throttled to one per 30 s for all staff, non-SU callers get counts
     only (`routes/mailboxIngest.js`); the scheduler's x-api-key tick is

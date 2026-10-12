@@ -2597,7 +2597,11 @@
         if (!user?.user) return;
         const r = await apiSend('/api/mail/mailboxes', 'GET');
         const boxes = Array.isArray(r && r.mailboxes) ? r.mailboxes : [];
-        commsBadgeSet(boxes.reduce((n, m) => n + (Number(m.inbox_unread) || 0), 0), boxes.length, !!(r && r.viewer && r.viewer.can_send));
+        // An alias box (S3-R) whose parent is also readable adds nothing — the
+        // hub's All mail is the parent's Inbox (comms.html unreadOf, same rule).
+        const ids = new Set(boxes.map((m) => Number(m.id)));
+        const total = boxes.reduce((n, m) => n + (m.alias_of != null && ids.has(Number(m.alias_of)) ? 0 : (Number(m.inbox_unread) || 0)), 0);
+        commsBadgeSet(total, boxes.length, !!(r && r.viewer && r.viewer.can_send));
       } catch (_) { commsBadgeSet(0, null); } // decoration — never let it break the shell
     }
     window.commsBadgeSet = commsBadgeSet;

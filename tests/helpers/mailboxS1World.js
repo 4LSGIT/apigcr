@@ -215,9 +215,16 @@ function makeWorld() {
         body_text: r.body_text ?? null, body_html: r.body_html ?? null, log_id: r.log_id ?? null,
       }))];
     }
-    if (sql === 'SELECT id, folder, uid, message_id, attachments FROM mail_messages WHERE id = ? AND mailbox_id = ? LIMIT 1') {
+    // S3-R: the part route resolves the box first (:id may be an alias) and
+    // reads the row with the slice-test columns.
+    if (sql === 'SELECT id, address, alias_of, alias_label FROM mailboxes WHERE id = ? LIMIT 1') {
+      return [T.mailboxes.filter(b => b.id === Number(p[0]))
+        .map(b => ({ id: b.id, address: b.address, alias_of: b.alias_of ?? null, alias_label: b.alias_label ?? null }))];
+    }
+    if (sql === 'SELECT id, folder, uid, message_id, attachments, from_addr, to_addrs, cc_addrs, gmail_labels FROM mail_messages WHERE id = ? AND mailbox_id = ? LIMIT 1') {
       return [T.mail_messages.filter(r => r.id === Number(p[0]) && r.mailbox_id === Number(p[1]))
-        .map(r => parseRow({ id: r.id, folder: r.folder, uid: r.uid, message_id: r.message_id, attachments: r.attachments }))];
+        .map(r => parseRow({ id: r.id, folder: r.folder, uid: r.uid, message_id: r.message_id, attachments: r.attachments,
+          from_addr: r.from_addr ?? null, to_addrs: r.to_addrs ?? null, cc_addrs: r.cc_addrs ?? null, gmail_labels: r.gmail_labels ?? null }))];
     }
 
     // ── re-key transaction statements ──

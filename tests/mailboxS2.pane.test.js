@@ -1059,3 +1059,37 @@ describe('comms hub pane', () => {
     expect(css).toMatch(/\.email\.show-thread \.list-col \{ display: none; \}/);
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// S3-R review (2026-10-12): an ALIAS box whose parent the reader also reads is
+// a narrower view of mail they already have. The totals (tab, rail "All mail",
+// the shell's sidebar badge, the picker) count it the way the list scopes it
+// (mailReadService.branchPlan): not at all next to its parent — else mail
+// addressed to the alias counts twice and its archived slice rows leave a
+// badge "Mark all read" on All mail can never clear. Alone (no parent in the
+// set) it counts in full.
+// Mutation-checked: unreadOf reverted to a plain sum → this test fails.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('alias boxes in the totals (S3-R)', () => {
+  test('an alias next to its readable parent adds nothing to the tab, All mail, the badge or the picker; alone it counts', async () => {
+    const boxes = [
+      { id: 2, address: 'stuart@firm.test', display_name: null, color: '#2f6fd1', active: true, can_send: true, can_manage: false, alias_of: null, inbox_total: 4, inbox_unread: 2 },
+      { id: 7, address: 'it@firm.test', display_name: null, color: '#fff3bf', active: true, can_send: true, can_manage: false, alias_of: 2, inbox_total: 9, inbox_unread: 5 },
+      { id: 8, address: 'rena@other.test', display_name: null, color: null, active: true, can_send: false, can_manage: false, alias_of: 99, inbox_total: 1, inbox_unread: 1 },
+    ];
+    const badge = [];
+    const { window, doc, errors } = await boot({
+      handler: standard({ 'GET /api/mail/mailboxes': () => ({ mailboxes: fresh(boxes), viewer: { su: true, role: null, can_send: true } }) }),
+      before: (w) => { w.commsBadgeSet = (n) => badge.push(n); },
+    });
+    expect(errors).toEqual([]);
+    expect(doc.getElementById('tab-email-n').textContent).toBe('3');              // 2 (parent) + 1 (alias of a box this reader does not read) — never it@'s 5
+    expect(badge[badge.length - 1]).toBe(3);
+    expect(doc.querySelector('#rail-views .vitem').textContent).toMatch(/All mail\s*3$/);
+    expect(doc.getElementById('mb-label').textContent).toBe('All mailboxes (3)');
+    // the alias alone (its parent unticked) is its own list: it counts in full
+    for (const id of [2, 8]) doc.querySelector(`#rail-boxes .bitem[data-id="${id}"]`).click();
+    await tick(window);
+    expect(doc.getElementById('mb-label').textContent).toMatch(/\(5\)$/);
+  });
+});

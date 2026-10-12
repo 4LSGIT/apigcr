@@ -125,6 +125,16 @@ describe('the badge and the active item, run for real', () => {
     expect([t.shown('sbComms'), t.shown('sbCommsBadge')]).toEqual([true, false]);
   });
 
+  test('S3-R: an alias box next to its readable parent adds nothing to the badge (the hub\'s All mail is the parent\'s Inbox); alone it counts', async () => {
+    const t = boot({ api: () => ({ mailboxes: [
+      { id: 2, alias_of: null, inbox_unread: 2 },
+      { id: 7, alias_of: 2, inbox_unread: 5 },     // it@ — a slice of box 2, which this reader reads
+      { id: 8, alias_of: 99, inbox_unread: 1 },    // an alias of a box this reader does not read
+    ] }) });
+    await t.w.commsBadgeRefresh();
+    expect(t.badge().textContent).toBe('3');
+  });
+
   test('no mailbox shared → no entry anywhere; a failed fetch → the entry (the hub explains itself), no badge', async () => {
     const none = boot({ api: () => ({ mailboxes: [] }) });
     await none.w.commsBadgeRefresh();

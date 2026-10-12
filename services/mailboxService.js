@@ -68,6 +68,23 @@
  * is unique per account, not across accounts — two accounts under one
  * source would log the same email twice).
  *
+ * ALIAS BOXES (S3-R). `alias_of` (NOT NULL = a send-as alias of that parent
+ * box) is the ONE definition of SEND-ONLY — mailReadService.SEND_ONLY_SQL
+ * reads it; the old "ingest off AND no secret" inference is dead. An alias is
+ * created through its own create path: address (+ display_name / color /
+ * alias_label / send_credential_id) with host/login COPIED from the parent,
+ * ingest forced off, no secret — and its connection, ingest and emit fields
+ * can never be set afterwards (its mail lives in the parent; an ingest-on
+ * alias would double-poll the account). alias_of: SU may RE-PARENT an alias
+ * (PATCH it to another real box — the connection is re-copied from the new
+ * parent; review 2026-10-12: mailboxes are never deleted and address is
+ * UNIQUE, so "delete + recreate" was no path at all), but never clear it,
+ * and a full box never becomes an alias. alias_label is the Gmail label whose
+ * filter files the alias's mail in the parent (the slice's label half —
+ * mailReadService ALIAS SLICE); SU-editable, alias rows only, a USER label —
+ * a system label (\Inbox, \Sent …) would hand the alias the parent's whole
+ * folder. Never an alias of an alias.
+ *
  * COLOUR (S2). `color` is the box's comms-hub colour ('#rrggbb', NULL = none):
  * cosmetic, never an access or routing input, so it sits with display_name in
  * MANAGER_EDITABLE_FIELDS. A create without one gets a random default from
@@ -109,9 +126,15 @@ const SMTP_PORTS = Object.freeze([25, 465, 587, 2525]); // never an IMAP port (v
 const MAILBOX_FIELDS = new Set([
   'address', 'display_name', 'color', 'imap_host', 'imap_port', 'imap_user', 'imap_secret',
   'send_credential_id', 'ingest_enabled', 'ingest_folders', 'active',
+  'alias_of', 'alias_label',
   ...EMIT_FIELDS,
 ]);
 const MAILBOX_REQUIRED_ON_CREATE = ['address', 'imap_host', 'imap_user'];
+// Fields an ALIAS box never carries of its own (S3-R): connection is copied
+// from the parent at creation, ingest stays off, emission belongs to the
+// polling parent. Refused on an alias create body and on every alias PATCH.
+const ALIAS_FORBIDDEN_FIELDS = ['imap_host', 'imap_port', 'imap_user', 'imap_secret',
+  'ingest_enabled', 'ingest_folders', ...EMIT_FIELDS];
 // What a non-SU can_manage holder may PATCH (see MANAGER SCOPE above).
 const MANAGER_EDITABLE_FIELDS = new Set(['display_name', 'color']);
 
@@ -129,6 +152,7 @@ const SU_MAILBOX_SELECT = `
   m.id, m.address, m.domain, m.display_name, m.color, m.imap_host, m.imap_port, m.imap_user,
   (m.imap_secret IS NOT NULL AND m.imap_secret <> '') AS has_secret,
   m.send_credential_id, ec.email AS send_credential_email,
+  m.alias_of, m.alias_label, al.address AS alias_of_address,
   m.ingest_enabled, m.ingest_folders, m.ingest_state, m.active,
   m.emit_source_name, m.emit_id_kind,
   m.created_at, m.updated_at,
@@ -285,7 +309,7 @@ async function listReadable(db, userId, channelType = 'mailbox') {
   if (channelType === 'mailbox') {
     if (await isSuperuser(db, userId)) {
       const [rows] = await db.query(
-        `SELECT m.id, m.address, m.domain, m.display_name, m.color, m.active
+        `SELECT m.id, m.address, m.domain, m.display_name, m.color, m.active, m.alias_of, m.alias_label
            FROM mailboxes m ORDER BY m.address ASC`
       );
       return rows.map(r => ({ ...shapeFlags(r), can_read: true, can_send: true, can_manage: true }));
@@ -294,7 +318,7 @@ async function listReadable(db, userId, channelType = 'mailbox') {
     const role = await roleBypass(db, uid);
     if (role) {
       const [rows] = await db.query(
-        `SELECT m.id, m.address, m.domain, m.display_name, m.color, m.active,
+        `SELECT m.id, m.address, m.domain, m.display_name, m.color, m.active, m.alias_of, m.alias_label,
                 g.can_send, g.can_manage
            FROM mailboxes m
            LEFT JOIN channel_grants g
@@ -305,7 +329,7 @@ async function listReadable(db, userId, channelType = 'mailbox') {
       return rows.map(r => ({ ...shapeFlags(r), ...shapeGrantFlags(r), can_read: true, role }));
     }
     const [rows] = await db.query(
-      `SELECT m.id, m.address, m.domain, m.display_name, m.color, m.active,
+      `SELECT m.id, m.address, m.domain, m.display_name, m.color, m.active, m.alias_of, m.alias_label,
               g.can_read, g.can_send, g.can_manage
          FROM channel_grants g
          JOIN mailboxes m ON m.id = g.channel_id
@@ -368,6 +392,7 @@ function shapeFlags(r) {
   if (has(out, 'ingest_enabled')) out.ingest_enabled = !!out.ingest_enabled;
   if (has(out, 'has_secret')) out.has_secret = !!Number(out.has_secret);
   if (has(out, 'grant_count')) out.grant_count = Number(out.grant_count);
+  if (has(out, 'alias_of')) out.alias_of = out.alias_of == null ? null : Number(out.alias_of);
   if (has(out, 'ingest_folders')) out.ingest_folders = parseJson(out.ingest_folders);
   if (has(out, 'ingest_state')) out.ingest_state = parseJson(out.ingest_state);
   return out;
@@ -401,6 +426,7 @@ async function listMailboxesFor(db, userId) {
       `SELECT ${SU_MAILBOX_SELECT}
          FROM mailboxes m
          LEFT JOIN email_credentials ec ON ec.id = m.send_credential_id
+         LEFT JOIN mailboxes al ON al.id = m.alias_of
         ORDER BY m.address ASC`
     );
     return { su: true, mailboxes: rows.map(r => stripSecret({ ...shapeFlags(r), access: fullAccess() })) };
@@ -460,6 +486,7 @@ async function getMailbox(db, mailboxId, { su = false } = {}) {
         `SELECT ${SU_MAILBOX_SELECT}
            FROM mailboxes m
            LEFT JOIN email_credentials ec ON ec.id = m.send_credential_id
+           LEFT JOIN mailboxes al ON al.id = m.alias_of
           WHERE m.id = ? LIMIT 1`, [id])
     : await db.query(`SELECT ${PUBLIC_MAILBOX_SELECT} FROM mailboxes m WHERE m.id = ? LIMIT 1`, [id]);
   if (!row) throw httpError(404, 'Mailbox not found');
@@ -539,8 +566,26 @@ function validateMailboxBody(body, { partial }) {
     if (k === 'domain') throw httpError(400, 'domain is derived from address — send address instead');
     if (!MAILBOX_FIELDS.has(k)) throw httpError(400, `unknown field "${k}"`);
   }
+  // ── Alias boxes (S3-R, header: ALIAS BOXES) ──
+  // On an alias create the connection/ingest/emit fields are COPIED or
+  // forced, never accepted, and only the address is required. A PATCH may
+  // re-point alias_of (updateMailbox checks the row is an alias), never clear it.
+  if (partial && has(body, 'alias_of') && (body.alias_of === null || body.alias_of === '')) {
+    throw httpError(400, 'alias_of cannot be cleared — an alias box stays an alias (point it at another box instead)');
+  }
+  const aliasMode = !partial && has(body, 'alias_of') && body.alias_of !== null && body.alias_of !== '';
   if (!partial) {
-    for (const f of MAILBOX_REQUIRED_ON_CREATE) {
+    if (has(body, 'alias_label') && !aliasMode) {
+      throw httpError(400, 'alias_label goes with alias_of — it names the Gmail label that files an alias box\'s mail');
+    }
+    if (aliasMode) {
+      const present = ALIAS_FORBIDDEN_FIELDS.filter(f => has(body, f));
+      if (present.length) {
+        throw httpError(400, `${present.join(', ')} ${present.length === 1 ? 'is' : 'are'} not set on an alias box — ` +
+          'its connection is copied from the parent and it never polls (its mail lives in the parent box)');
+      }
+    }
+    for (const f of (aliasMode ? ['address'] : MAILBOX_REQUIRED_ON_CREATE)) {
       if (body[f] === undefined || body[f] === null || String(body[f]).trim() === '') {
         throw httpError(400, `${f} is required`);
       }
@@ -548,6 +593,24 @@ function validateMailboxBody(body, { partial }) {
   }
 
   const clean = {};
+
+  if (has(body, 'alias_of')) {
+    clean.alias_of = (aliasMode || partial) ? toId(body.alias_of, 'alias_of') : null;
+  }
+  if (has(body, 'alias_label')) {
+    const v = body.alias_label;
+    if (v === null || v === '') clean.alias_label = null;
+    else if (typeof v !== 'string') throw httpError(400, 'alias_label must be a string');
+    else {
+      const t = v.trim();
+      if (!t || t.length > 255) throw httpError(400, 'alias_label must be 1-255 characters');
+      if (t.startsWith('\\')) {
+        throw httpError(400, 'alias_label must be one of the account\'s own labels (IT, Rena …) — a Gmail system label ' +
+          '(\\Inbox, \\Sent …) would show this alias\'s readers the whole of that folder');
+      }
+      clean.alias_label = t;
+    }
+  }
 
   if (has(body, 'address')) {
     if (typeof body.address !== 'string') throw httpError(400, 'address must be a string');
@@ -739,9 +802,31 @@ async function assertSinglePoller(db, id, row) {
   );
   if (dup) {
     throw httpError(409, `${row.imap_user} on ${row.imap_host} is already checked by mailbox #${dup.id} (${dup.address}) — ` +
-      'a second box polling it would store, log and fire rules twice. For a send-as address of that account, untick ' +
-      'Ingest enabled and leave the password empty.');
+      'a second box polling it would store, log and fire rules twice. For a send-as address of that account, create it ' +
+      `as a send-as address of #${dup.id} instead (Add → Send-as address of an existing box).`);
   }
+}
+
+/**
+ * The parent an alias points at (S3-R, header: ALIAS BOXES) — it must exist
+ * and be a real box (never an alias, never the alias itself) — and the
+ * connection the alias copies from it: {imap_host, imap_port, imap_user}.
+ */
+async function aliasParentConnection(db, parentId, selfId = null) {
+  if (selfId != null && Number(parentId) === Number(selfId)) throw httpError(400, 'a mailbox cannot be an alias of itself');
+  const [[parent]] = await db.query(
+    'SELECT id, address, imap_host, imap_port, imap_user, alias_of FROM mailboxes WHERE id = ? LIMIT 1',
+    [parentId]
+  );
+  if (!parent) throw httpError(400, `alias_of ${parentId} is not a mailbox`);
+  if (parent.alias_of != null) {
+    throw httpError(400, `${parent.address} is itself an alias box — point alias_of at the real box (#${parent.alias_of})`);
+  }
+  return {
+    imap_host: String(parent.imap_host).toLowerCase(),
+    imap_port: Number(parent.imap_port),
+    imap_user: parent.imap_user,
+  };
 }
 
 /**
@@ -753,6 +838,12 @@ async function assertSinglePoller(db, id, row) {
  */
 async function createMailbox(db, body) {
   const clean = validateMailboxBody(body, { partial: false });
+  // S3-R: an alias box copies its connection from the parent and never polls
+  // (header, ALIAS BOXES). assertSinglePoller passes trivially (ingest 0).
+  if (clean.alias_of != null) {
+    Object.assign(clean, await aliasParentConnection(db, clean.alias_of));
+    clean.ingest_enabled = 0;
+  }
   if (!has(clean, 'ingest_folders')) clean.ingest_folders = JSON.parse(JSON.stringify(DEFAULT_INGEST_FOLDERS));
   if (!has(clean, 'color')) {
     const [used] = await db.query('SELECT color FROM mailboxes WHERE color IS NOT NULL');
@@ -805,9 +896,22 @@ async function updateMailbox(db, mailboxId, body, { su = false } = {}) {
 
   // Current row — explicit columns, never imap_secret.
   const [[cur]] = await db.query(
-    'SELECT id, address, imap_host, imap_port FROM mailboxes WHERE id = ? LIMIT 1', [id]
+    'SELECT id, address, imap_host, imap_port, alias_of FROM mailboxes WHERE id = ? LIMIT 1', [id]
   );
   if (!cur) throw httpError(404, 'Mailbox not found');
+
+  // S3-R: an alias box's connection/ingest/emit fields are never its own
+  // (header, ALIAS BOXES); alias_label belongs to alias rows only.
+  if (cur.alias_of != null) {
+    const bad = ALIAS_FORBIDDEN_FIELDS.filter(f => has(clean, f));
+    if (bad.length) {
+      throw httpError(400, `${bad.join(', ')} ${bad.length === 1 ? 'is' : 'are'} not set on an alias box — ` +
+        'its connection is copied from the parent and it never polls (its mail lives in the parent box)');
+    }
+  } else if (has(clean, 'alias_label') || has(clean, 'alias_of')) {
+    throw httpError(400, `${has(clean, 'alias_of') ? 'alias_of' : 'alias_label'} belongs to an alias box ` +
+      '(one created as a send-as address of another box) — a full mailbox never becomes one');
+  }
 
   // Credential-redirect guard: a new host/port must come with the secret it
   // will be sent to (or an explicit clear) in the same write.
@@ -828,6 +932,12 @@ async function updateMailbox(db, mailboxId, body, { su = false } = {}) {
     for (const k of POLL_KEYS) if (has(clean, k)) after[k] = clean[k];
     await assertSinglePoller(db, id, after);
   }
+
+  // Re-parent (SU — alias_of is not a manager field): the connection follows
+  // the new parent. After the redirect guard on purpose: these host/login
+  // columns are copied plumbing on a row with no secret, never a credential
+  // destination (ALIAS_FORBIDDEN_FIELDS above refused them from the body).
+  if (has(clean, 'alias_of')) Object.assign(clean, await aliasParentConnection(db, clean.alias_of, id));
 
   const before = await getMailbox(db, id, { su });
   const { cols, vals } = toDbAssignments(clean);
@@ -1030,6 +1140,7 @@ module.exports = {
   CHANNEL_TYPES,
   WRITABLE_CHANNEL_TYPES,
   MANAGER_EDITABLE_FIELDS,
+  ALIAS_FORBIDDEN_FIELDS,
   DEFAULT_INGEST_FOLDERS,
   DEFAULT_EMIT_SOURCE,
   EMIT_ID_KINDS,

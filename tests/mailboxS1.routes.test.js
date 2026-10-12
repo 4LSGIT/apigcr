@@ -215,3 +215,48 @@ describe('ALL /mailbox-ingest', () => {
     expect((await call('POST', '/mailbox-ingest', { t: tok(6, 'authorized - SU') })).json).toEqual(full);            // an SU sees the details
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// S3-R — the part fetch through an ALIAS box: :id is the alias (the hub's
+// re-tagged mailbox_id), can_read is the alias grant, the message row and the
+// IMAP connection are the PARENT's, and a parent row outside the slice is a
+// 404 like any other unreadable message.
+//
+// Mutation-checked: the slice test dropped in the route (sliceMatchJs call)
+// → "a parent row OUTSIDE the slice"; the connection loaded from the alias
+// instead of the parent → "streams through the PARENT's connection" (the
+// alias row has no secret, loadConnectionRow would come back secret-less and
+// the route would 404/502 instead of streaming).
+// ─────────────────────────────────────────────────────────────────────────────
+describe('GET …/parts/:part through an alias box (S3-R)', () => {
+  let ALIAS;
+  beforeEach(() => {
+    ALIAS = W.addMailbox({
+      address: 'it@example.test', alias_of: MB, alias_label: 'IT',
+      ingest_enabled: 0, imap_secret: null, imap_host: 'imap.example.test', imap_user: `box${MB}@example.test`,
+    });
+    // 31 (seeded above) is To stuart — give it the label so it falls in the slice
+    Object.assign(W.T.mail_messages.find((m) => m.id === 31), { gmail_labels: '["IT"]', to_addrs: 'someone@x.test' });
+    W.T.mail_messages.push({
+      id: 32, mailbox_id: MB, folder: 'INBOX', uid: 8, message_id: 'm8@x', log_id: null, gmail_labels: '["\\\\Inbox"]',
+      to_addrs: 'other@x.test', attachments: JSON.stringify([{ part: '2', filename: 'x.pdf', size: 1, mime: 'application/pdf' }]),
+    });
+    W.T.channel_grants.push({ user: 7, channel_type: 'mailbox', channel_id: ALIAS, can_read: 1, can_send: 0, can_manage: 0 });
+  });
+
+  test('an alias reader streams a slice row\'s bytes through the PARENT\'s connection', async () => {
+    const r = await call('GET', partUrl(ALIAS, 31, '2'), { t: tok(7) });
+    expect(r.status).toBe(200);
+    expect(r.body.toString()).toBe('%PDF-bytes');
+    const [conn] = transport.fetchPart.mock.calls[0];
+    expect([conn.id, !!conn.imap_secret]).toEqual([MB, true]);       // the parent row, secret and cursor included
+  });
+
+  test('a parent row OUTSIDE the slice is a 404 through the alias URL; the parent-id URL stays closed to an alias-only reader', async () => {
+    expect((await call('GET', partUrl(ALIAS, 32, '2'), { t: tok(7) })).status).toBe(404);
+    expect((await call('GET', partUrl(MB, 31, '2'), { t: tok(7) })).status).toBe(404);
+    expect(transport.fetchPart).not.toHaveBeenCalled();
+    // the SU reads through either id
+    expect((await call('GET', partUrl(ALIAS, 31, '2'), { t: tok(6, 'authorized - SU') })).status).toBe(200);
+  });
+});

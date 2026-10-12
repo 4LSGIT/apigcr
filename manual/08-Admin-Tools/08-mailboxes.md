@@ -414,11 +414,17 @@ send as one of those addresses, give that address its **own box** — a
 
 1. Connections → Email Senders: the address must already be a Google sender
    there (it@4lsg.com, billing@4lsg.com … are).
-2. Admin → Mailboxes → **Add**: Address = that address (e.g. it@4lsg.com);
-   Host `imap.gmail.com`, Login `stuart@4lsg.com`; **no password**; untick
-   **Ingest enabled**; Send credential = that address's sender.
-3. **Access** → give **Send** to whoever may send as it — per address
-   (Read on it means nothing: its mail is read in Stuart's box).
+2. Admin → Mailboxes → **Add** → pick **Send-as address of an existing
+   box**: Address = that address (e.g. it@4lsg.com); **Of mailbox** =
+   Stuart's box; **Gmail label** = the label the account's Gmail filter puts
+   on this address's mail (exact spelling — `IT`, `Rena` …; one of the
+   account's own labels — a system label such as `\Inbox` is refused); Send
+   credential = that address's sender. The connection is copied from
+   Stuart's box automatically; there is no password and no ingest to
+   configure (the box never checks mail — it couldn't, two boxes may never
+   both check one account).
+3. **Access** → give **Send** to whoever may send as it, and **Read** to
+   whoever should read its mail — both per address.
 
 What that gives:
 
@@ -432,16 +438,31 @@ What that gives:
   ticks they actually hold first.
 - **From** lists real mailboxes first, then the send-as addresses, so a new
   email starts from a real mailbox.
-- It is never checked for mail and never shows in the mailbox list — its mail
-  is in Stuart's box. The copy of what it sends lands there too (Google files
-  it under Sent), already marked read for the sender.
+- It is never checked for mail — its mail is in Stuart's box. The copy of
+  what it sends lands there too (Google files it under Sent), already marked
+  read for the sender. In Admin → Mailboxes it shows as a **send-as** row
+  naming its box and label; its own row carries no password or ingest. To
+  point it at a different box, **Edit** it and choose another **Of
+  mailbox** (its connection follows; mailboxes are never deleted, so this is
+  the only way).
 - It counts toward the same Google daily limit as every other 4lsg.com
   address.
-- A box with no password and Ingest off is what makes it send-only. Two boxes
-  can never both check one account: ticking **Ingest enabled** on a box whose
-  host and login another active box already checks is refused (it would
-  store, log and fire rules twice).
-- Reading is not per address yet: to read mail sent to it@, a person needs
-  Read on Stuart's box (all of it). Someone with only Send on it@ gets Comms
-  and can write new email as it@, but cannot see or answer the replies — give
-  alias Send only to people who already read Stuart's box.
+- Being created as a send-as address is what makes it send-only — a plain
+  box that merely has Ingest off and no password is just a paused box.
+- **Reading IS per address**: **Read** on the send-as box shows, in Comms,
+  exactly that address's slice of Stuart's box — mail addressed to it (From,
+  To or Cc), plus mail the account's Gmail filter filed under its label
+  (that is how Bcc'd and mailing-list mail is caught, so keep the filter and
+  the box's **Gmail label** in step). The slice appears as its own mailbox
+  in Comms — its own colour, its own unread count on the sidebar badge, its
+  own **Sent** (mail *from* the address) and **Inbox** (everything else —
+  including the firm's own mail *to* it, such as the automations@ digests,
+  which Google files as sent mail of the account) — and attachments open
+  from it like any other mail. Nothing else of Stuart's box is visible
+  through it. Someone with Send but not Read still gets Comms and can write
+  as the address, but sees no list.
+- Someone who reads Stuart's box as well (an attorney, a superuser) sees the
+  send-as address in Comms too, as a narrower view of mail they already
+  have: its count shows on its own row, but the sidebar badge and **All
+  mail** count Stuart's Inbox once and never add the address's slice on
+  top.
