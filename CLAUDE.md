@@ -51,6 +51,10 @@ picks per task:
    - Landing = manager squash-merges the branch onto main (hook regenerates
      the generated files), on Fred's explicit go; workers then
      `git reset --hard origin/main`.
+   - Drawback: every session shares ONE machine. Workers running headless-
+     browser gates at once (mobile survey, mockup screenshots) crashed it
+     (2026-10-13). The manager serializes browser-heavy runs across workers
+     and checks free disk before a long one.
    - Suite TEST COUNTS are environment-conditional (same commit measured
      ±3 tests across worktrees) — compare before/after figures within one
      environment only, never across.

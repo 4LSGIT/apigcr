@@ -294,7 +294,7 @@ Both limited to SU and SS (Q7 — may widen later), reason required, audited (§
 | `comms_transcripts` | `segments`, `full_text`, `summary`, `summary_text` set NULL; `state='purged'` |
 | `comms_media` | `state='purged'`, `purged_at/by/reason`; `object_name` kept so the tombstone says what was removed |
 | `ai_calls` (rows in `ai_call_ids`) | `request_excerpt`, `response` set NULL |
-| STT vendor | Nothing left: AssemblyAI's copy is deleted right after fetch; Google returns results on the job's operation with no separate transcript store (confirm retention of the operation result in S0) |
+| STT vendor | Nothing left: AssemblyAI's copy is deleted right after fetch, and the account's data TTL (30 days, set 2026-10-14; may drop to 7 later) removes anything a failed delete leaves; Google returns results on the job's operation with no separate transcript store (confirm retention of the operation result in S0) |
 | Anthropic API | Standard API retention is ~30 days (ZDR is gated opt-in; the newest models are excluded from it) — a purge is complete at Anthropic ~30 days after the last summary attempt. Not trained on without opt-in |
 | Cloud SQL backups | Not editable; the content ages out with backup retention (instance setting — F5: the current value stands; record it here during S1) |
 | RingCentral / Quo originals | RC deletes at 90 days; Quo — delete in the Quo app if needed. Purge reports this, it doesn't do it |
