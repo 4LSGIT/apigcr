@@ -54,6 +54,12 @@ picks per task:
    - Suite TEST COUNTS are environment-conditional (same commit measured
      ±3 tests across worktrees) — compare before/after figures within one
      environment only, never across.
+   - This structure is crash-proof by construction — proven when a machine
+     reset killed a worker session mid-sweep (2026-10-13): worktrees held
+     the edits, scratch held the state, and the delete-debt-keys-only-at-
+     landing rule left a legible ledger; a replacement rebuilt the
+     disposition from the diff alone. Keep it that way: no state that
+     exists only in a session's context.
 
 Gates beyond Commands & gates below, every model:
 - Verification-first: ground claims about schema, rows, or behavior in the

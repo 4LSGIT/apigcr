@@ -423,6 +423,19 @@ Active surfaces with known next steps.
 
 ## Hygiene
 
+- **Migrate the case-merge span onto `withTransaction` (docs review #2, 2026-10-13).**
+  `services/caseService.js` case-merge (~:2187) is the one transaction span on a raw
+  `getConnection()` with manual begin/commit/rollback — the sole exception to the
+  CLAUDE.md doctrine. Fred's ruling: leave it working for now, migrate "at some point
+  or another" — bundle with the next caseService slice, never standalone. While in
+  there: `routes/unplacehold.js:20` calls `db.getConnection((err, c) => …)` callback-
+  style on the promise pool — the callback never fires, dead logger, delete it.
+
+- **AI_CONTEXT coverage arc (filed 2026-09-14, ruled 2026-10-13).** AI_CONTEXT has
+  zero sections for: e-sign, portal, YisraForms/form templates, reports (+ the rest of
+  the 09-14 census in the old debt item). Own arc, one register-density section per
+  slice (what + invariants + pointers, built from a verified code read), e-sign first.
+
 - **SweetAlert2 cross-frame inline-onclick audit.** `Swal` popups render in the parent window's DOM, so inline `onclick="…"` attributes inside a Swal `html:` template literal resolve against parent scope and fail with `ReferenceError` for any iframe-defined function. Three instances of this bug in image-library delete buttons (`campaign.html`, `communicate.html`, `sendingform.html`) fixed in May 2026 — but the pattern is easy to repeat. Sweep all iframes (`case.html`, `contact.html`, `automationManager.html`, etc.) for `onclick=` inside any Swal `html:` block; replace with `class` + `data-*` attributes bound inside `didOpen`.
 
 - **`rc_messages_log` table rename.** Quo also logs there despite the `rc_` prefix. Rename to `sms_messages_log` (or similar) when there's a quiet window — touches every SMS-related call site, so bundle with another sweep, don't do it standalone.
