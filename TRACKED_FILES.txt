@@ -504,6 +504,7 @@ ref/migrations/2026-10-11_mailbox_s1g_allmail.sql
 ref/migrations/2026-10-11_mailbox_s2l_labels.sql
 ref/migrations/2026-10-12_mailbox_s3r_alias.sql
 ref/migrations/2026-10-12_phone_sph.sql
+ref/migrations/2026-10-13_docs_review_comments.sql
 ref/migrations/S1_notes_migration.sql
 ref/migrations/documents_s1.sql
 ref/migrations/documents_s2.sql

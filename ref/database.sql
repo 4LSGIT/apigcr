@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-10-12T15:45:50.763Z
+-- Generated: 2026-10-13T00:55:54.375Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:3c3c446e9958c041adda751da7dcabdc
+-- Fingerprint: sha256:c44b1f2d9ce8438c33f6772b89f90620
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -1245,7 +1245,7 @@ DROP TABLE IF EXISTS `court_ai_log`;
 CREATE TABLE `court_ai_log` (
   `id` int NOT NULL,
   `created_at` datetime DEFAULT CURRENT_TIMESTAMP,
-  `message_id` varchar(190) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL COMMENT 'Collation differs from email_log.message_id — joins need explicit COLLATE utf8mb4_general_ci on this side',
+  `message_id` varchar(190) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL COMMENT 'utf8mb4_general_ci — SAME as email_log.message_id since the 2026-10-05 verification (this column was utf8mb4_unicode_ci once). The explicit COLLATE utf8mb4_general_ci clauses on the court-side joins (routes/courtReview.js, services/courtRerun.js, lib/internal_functions/court.js) are no-ops kept as insurance against re-divergence',
   `ai_call_id` int DEFAULT NULL,
   `dry_run` tinyint(1) NOT NULL DEFAULT '1',
   `classification` varchar(64) COLLATE utf8mb4_general_ci DEFAULT NULL,
@@ -1362,7 +1362,7 @@ CREATE TABLE `cta_links` (
   `name` varchar(120) COLLATE utf8mb4_general_ci NOT NULL COMMENT 'internal label (SU list); never shown publicly',
   `prompt` text COLLATE utf8mb4_general_ci NOT NULL COMMENT 'shown to the recipient; ESCAPED text — context_html is the only raw-HTML slot',
   `context_html` mediumtext COLLATE utf8mb4_general_ci COMMENT 'TRUSTED HTML, same contract as decision_requests.context_html',
-  `options` json NOT NULL COMMENT '[{value,label,plan:[{fn,params}],confirm_text?,result_template?,inputs?}] 1-10; value "respond" reserved; params frozen literals (no {{...}}, no _-prefixed keys) EXCEPT a whole top-level value "[[input:name]]" binding a declared input into a param its function opens via __meta.ctaInputParams. inputs (CTA_DESIGN §12): [{name,label,hint?,type,required,maxlen,choices?,pattern?,default?}] <=10, type text|phone|email|number|enum|date|html, maxlen <=1000, hint <=200, default stored normalized',
+  `options` json NOT NULL COMMENT '[{value,label,plan:[{fn,params}],confirm_text?,result_template?,inputs?}] 1-10; value "respond" reserved; params frozen literals (no {{...}}, no _-prefixed keys) EXCEPT "[[input:name]]" binding a declared input into a param its function opens via __meta.ctaInputParams: as the whole top-level value, or inline in the text of a content (never recipient) param. inputs (CTA_DESIGN §12): [{name,label,hint?,type,required,maxlen,choices?,choice_labels?,display?,pattern?,default?}] <=10, type text|phone|email|number|enum|date|html, maxlen <=1000, hint <=200, default stored normalized; enum only: choice_labels parallel to choices (page text, the value stays the choice), display select|radio (select not stored)',
   `mode` enum('once','repeatable') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'once' COMMENT 'app-validated too (relaxed sql_mode)',
   `max_uses` int unsigned DEFAULT NULL COMMENT 'repeatable only; NULL = until expiry',
   `uses_count` int unsigned NOT NULL DEFAULT '0' COMMENT 'once: 0|1 (the claim sets 1); repeatable: guarded increment; reset to 0 by re-enable from used (else the timeout claim is dead)',
@@ -1680,7 +1680,7 @@ CREATE TABLE `email_log` (
   `body` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci,
   `attachments` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci,
   `delivery_info` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci COMMENT 'Outbound SMTP only: JSON of what the transport said at handoff — {response, accepted, rejected, envelope}, or {error, responseCode, response, command} on the FAILED path. A row WITHOUT this proves nothing about delivery: it means the relay returned 250 and no more. response holds the relay queue id, the only handle that traces the message further. rejected can be non-empty on a RESOLVED send (nodemailer does not throw if one recipient was accepted). NULL for inbound/ingest rows and non-SMTP adapters.',
-  `processed_at` datetime NOT NULL
+  `processed_at` datetime NOT NULL COMMENT 'MIXED wall clock BY WRITER (found 2026-10-09): ingest rows (services/emailIngestService.js — gmail-firm, mailbox-imap, siteground...) write Eastern via CONVERT_TZ(NOW(), @@session.time_zone, EST5EDT); outbound-* rows (services/adapters/email/gmail|smtp|pabbly.js) write NOW() = pool UTC. Cross-source time arithmetic is off by 4-5 h — compare within one source, or normalize per source first'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- --------------------------------------------------------
@@ -1784,7 +1784,7 @@ CREATE TABLE `field_defs` (
   `field_type` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL COMMENT 'text | number | date | select | multiselect | boolean (v1 set; app-validated). Drives the S3 virtual column type (design doc §2 type map).',
   `options` json DEFAULT NULL COMMENT 'select/multiselect ONLY (NULL otherwise): [{"value","label"}]. value is the STORED form — byte-sensitive under MEMBER OF, so values are not labels. Unique case-insensitively.',
   `validation` json DEFAULT NULL COMMENT 'v1 keys: required, max_len, pattern (text), min, max (number). Enforced at write time from S2; S1 only stores it.',
-  `show_when` json DEFAULT NULL COMMENT 'Conditional display. STORED, NOT EVALUATED until S4 — an object, otherwise uninterpreted.',
+  `show_when` json DEFAULT NULL COMMENT 'Conditional display, evaluated CLIENT-SIDE since S4 (2026-09-25): public/js/yc-custom-fields.js parseShowWhen/evalShowWhen; authored in the caseconfig fields builder. v1 vocabulary: ONE condition object {field, op, value?} — op eq|ne (scalar value) | in (non-empty scalar array) | not_empty|empty (no value). Any other shape VOIDS the condition (field always shown, stored value left untouched, console warning). NULL = always shown',
   `indexed` tinyint(1) NOT NULL DEFAULT '0' COMMENT 'Promotion flag for the S3 reconciler (secondary index on the virtual column). Not writable through the v1 API.',
   `sort_order` smallint NOT NULL DEFAULT '0',
   `active` tinyint(1) NOT NULL DEFAULT '1' COMMENT 'active=0 is RETIREMENT — there is no hard delete. Values already stored under the key persist in the JSON by design.',
@@ -2021,8 +2021,8 @@ CREATE TABLE `inbox_views` (
   `id` int unsigned NOT NULL,
   `user` tinyint NOT NULL COMMENT 'users.user (FK by convention)',
   `name` varchar(64) COLLATE utf8mb4_general_ci NOT NULL,
-  `mailbox_ids` json DEFAULT NULL COMMENT '[mailboxes.id, ...]. A view never grants access: every id is re-checked against channel_grants at read time (S2)',
-  `filters` json DEFAULT NULL COMMENT 'unread-only, has-case, from-domain, etc. - vocabulary defined by S2',
+  `mailbox_ids` json DEFAULT NULL COMMENT '[mailboxes.id, ...]; NULL or [] = all boxes the viewer can read. A view never grants access: every id must be readable at write time and is re-checked / intersected against channel_grants at every read (S2)',
+  `filters` json DEFAULT NULL COMMENT 'Saved-view filter vocabulary = services/mailbox/mailReadService.js FILTER_KEYS (S2, grown since: unread_only/has_case/no_case/client_only/has_files/all_folders/sent_only booleans + from_domain + q). Unknown keys are REFUSED on write and ignored on read; the stored shape keeps only narrowing entries',
   `is_default` tinyint(1) NOT NULL DEFAULT '0',
   `sort_order` int NOT NULL DEFAULT '0'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='Per-user saved mixed-inbox views (S2). Created in S0, read by nothing until S2';
@@ -2119,7 +2119,7 @@ DROP TABLE IF EXISTS `log`;
 CREATE TABLE `log` (
   `log_id` int NOT NULL,
   `log_type` enum('email','sms','call','other','form','status','note','court email','docs','appt','update','task','event','esign') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
-  `log_date` datetime NOT NULL,
+  `log_date` datetime NOT NULL COMMENT 'Firm-local wall clock written under THREE spellings that are today the same offset (found 2026-09-25): logService.createLogEntry CONVERT_TZ(..., EST5EDT), the after_contact_update DB trigger CONVERT_TZ(..., America/New_York), and the firm zone America/Detroit (FIRM_TIMEZONE env). A future zone change touches all three literals, in two languages. CONVERT_TZ with named zones returns NULL on a MySQL without tz tables loaded and this column is NOT NULL — a real-engine clone needs mysql_tzinfo_to_sql first',
   `log_link` varchar(30) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `log_link_type` enum('contact','case','appt','bill','phone','email','task','event') COLLATE utf8mb4_general_ci DEFAULT NULL,
   `log_link_id` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
@@ -2220,7 +2220,7 @@ CREATE TABLE `mailboxes` (
   `alias_of` int unsigned DEFAULT NULL COMMENT 'S3-R: parent mailboxes.id (FK by convention). NOT NULL = this row is a send-as ALIAS of that box - the ONE definition of SEND-ONLY (mailReadService.SEND_ONLY_SQL). An alias never polls (ingest stays off, no secret; host/login copied from the parent) and a can_read grant on it reads the alias SLICE of the parent: rows labelled alias_label or carrying the address in From/To/Cc; within it From = the alias is Sent, the rest Inbox. SU may re-point it to another real box (PATCH; host/login re-copied) - never cleared, never set on a full box, never an alias of an alias',
   `alias_label` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'S3-R: the Gmail label whose filter files this ALIAS box''s mail in the parent (exact spelling, case-sensitive in JSON MEMBER OF - live: IT / Rena / Shoshana). Catches Bcc and list mail the From/To/Cc half of the slice misses. NULL = address matching only. A USER label: a system label (backslash-led, e.g. Inbox) is refused. Meaningful on alias rows (alias_of) only; SU-editable',
   `ingest_enabled` tinyint(1) NOT NULL DEFAULT '1',
-  `ingest_folders` json DEFAULT NULL COMMENT 'per-folder CONFIG: {"<folder>": {"emit_to_rules": bool, "backfill"?: false}} - which folders the worker polls, which emit into the rules pipeline (§4.1), and (S1-G) backfill:false = store only mail arriving after first sight (no history; decided at first sight; a later re-key stores only above the highest re-mapped UID). Everything polled is stored to mail_messages regardless - except Draft-flagged messages, never stored nor emitted (DRAFT GUARD, §4.1). mailboxService always writes it (backfill only when false); v1 default {"INBOX":{"emit_to_rules":true}} (Sent is opt-in, emit_to_rules false - host Sent names vary). Gmail: [Gmail]/All Mail as the ONLY folder (one copy of inbound, sent and labelled mail; sent mail emits too) - never All Mail alongside other folders (every labelled message stored twice)',
+  `ingest_folders` json DEFAULT NULL COMMENT 'per-folder CONFIG: {"<folder>": {"emit_to_rules": bool, "backfill"?: false}} - which folders the worker polls, which emit into the rules pipeline (§4.1), and (S1-G) backfill:false = store only mail arriving after first sight (no history; decided at first sight; a later re-key stores only above the highest re-mapped UID). Everything polled is stored to mail_messages regardless - except drafts, never stored nor emitted (DRAFT GUARD, §4.1: the IMAP Draft flag OR the Gmail Draft label - Gmail does not flag drafts in All Mail; label patch 2026-10-11). mailboxService always writes it (backfill only when false); v1 default {"INBOX":{"emit_to_rules":true}} (Sent is opt-in, emit_to_rules false - host Sent names vary). Gmail: [Gmail]/All Mail as the ONLY folder (one copy of inbound, sent and labelled mail; sent mail emits too) - never All Mail alongside other folders (every labelled message stored twice)',
   `ingest_state` json DEFAULT NULL COMMENT 'per-folder CURSOR, written only by the ingest worker (services/mailbox/mailboxIngestService.js): {"<folder>": {uidvalidity, last_uid = new-mail cursor, backfill_uid = backlog still to store below it (absent = done), backfill_floor_uid = re-key of a backfill:false folder stores only above this, backfill_emit_after = ISO emit horizon set by a re-key (null = store-only), backfill_skipped_below / backfill_skipped_at = backfill:false baseline, checked_at, errors, backfill_errors, last_error, last_error_at, rekeyed_at, backfill_done_at, no_provider_id_total / last_no_provider_id_at / last_no_provider_id_uid = provider-keyed mail stored but not emitted, drafts_skipped_total = Draft-flagged messages passed over (never stored)}}. First poll baselines at UIDNEXT: existing mail is stored (or skipped), never emitted. UIDVALIDITY change = re-key, never blanket purge (§4.1). A folder dropped from ingest_folders keeps its key here as a breadcrumb. NULL = never ingested',
   `emit_source_name` varchar(64) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'emission override (S1-G): email_ingest_sources.name the worker emits this mailbox under. NULL (with emit_id_kind NULL) = mailbox-imap. SU PATCH only, set as a pair, must be an ACTIVE source row; decides the email_log dedupe space — see services/mailbox/mailboxIngestService.js EMISSION IDENTITY',
   `emit_id_kind` varchar(12) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'emission override (S1-G): rfc | provider (app-validated). The (source, message_id) key: rfc = RFC Message-ID, provider = mail_messages.provider_id. A provider mailbox NEVER falls back to the RFC id - a message without provider_id is stored, counted, alerted, never emitted. provider never under mailbox-imap; one provider mailbox per source',

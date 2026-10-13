@@ -8,9 +8,9 @@ S5 login tier (§7). §12 inputs: S1i backend + S2i pane shipped 2026-10-08;
 **S3i** (2026-10-11: inline bindings — Ruling 5 revisited — and enum
 radio/choice labels, §12) deployed 2026-10-11 as `1486966`; CTA #11 is the
 first live input-bearing link. Its COMMENT-only migration
-(`2026-10-11_cta_inline_bindings_comment.sql`) is **NOT yet applied on live**
-— `cta_links.options` COMMENT is still the 10-08 text (verified 2026-10-13;
-comment-only, so order vs. the deploy never mattered — just run it). Manager
+(`2026-10-11_cta_inline_bindings_comment.sql`) applied on live 2026-10-13
+(`cta_links.options` COMMENT carries the inline-binding + choice_labels/
+display text — verified against information_schema post-apply). Manager
 UI: `public/ctaManager.html` (Admin → CTA Links,
 frontend-only slice over §5.3 — list/detail/PATCH/mint+dry_run), plus the
 send slice 2026-10-08 (`POST /api/cta/:id/send` + the pane's Send… dialog).
