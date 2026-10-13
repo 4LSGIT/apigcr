@@ -46,6 +46,7 @@ Of the 91: **6** are `uiHidden` (internal plumbing — `court_extract`, `decisio
 | Category | Functions |
 |---|---|
 | control (workflow only) | `set_next`, `evaluate_condition` |
+| composition | `start_workflow`, `cancel_workflow_execution`, `create_cta` |
 | variables | `noop`, `set_var`, `format_string` |
 | timing (workflow only) | `schedule_resume`, `wait_for`, `wait_until_time` |
 | communication | `send_sms`, `send_email`, `send_mms` |
@@ -60,7 +61,7 @@ Of the 91: **6** are `uiHidden` (internal plumbing — `court_extract`, `decisio
 | log | `create_log`, `phone_log` |
 | sequences | `cancel_sequences`, `enroll_sequence` |
 | connections | `refresh_expiring_oauth_credentials`, `rc_renew_subscriptions`, `gcontacts_sync_pending` |
-| system | `run_error_sweep`, `court_review_retry`, `court_activity_summary`, `generate_firm_blocks` |
+| system | `run_error_sweep`, `court_review_retry`, `court_activity_summary`, `generate_firm_blocks`, `cta_expiry_sweep` |
 | general | `query_db` |
 | ai | `query_ai` |
 | dev | `set_test_var` |
@@ -69,12 +70,13 @@ Of the 91: **6** are `uiHidden` (internal plumbing — `court_extract`, `decisio
 
 ### The recurring-jobs roster
 
-Sixteen of these functions run on a schedule, unattended. When one fails
+Seventeen of these functions run on a schedule, unattended. When one fails
 overnight this is the table you want — what it does, when it runs, and where its
 entry is. Cron times are UTC.
 
 | Function | Cron (UTC) | What it does |
 |---|---|---|
+| `cta_expiry_sweep` | `*/5 * * * *` | Expires lapsed CTA links; fires their timeout plans |
 | `documents_sync` | `*/10 * * * *` | One bounded increment of the Dropbox→documents sync |
 | `run_error_sweep` | `*/15 * * * *` | Retries and ages out failed jobs |
 | `documents_refresh_case_cache` | `0 */4 * * *` | Rebuilds the case-folder cache |
@@ -1577,7 +1579,7 @@ request and applies any status the webhook missed — it is the safety net
 for a dropped callback, so a signed envelope still files itself.
 `dry_run: true` reports what would change without touching anything.
 
-### Composition (workflow only)
+### Composition
 
 #### `start_workflow` *(workflow only)*
 

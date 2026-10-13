@@ -347,7 +347,7 @@ Capture mode lets you record one real incoming event without dispatching anythin
 
 **Dry-run never triggers capture.** The `!dryRun` guard is explicit.
 
-**Truncation:** raw input is capped at 512 KB. If exceeded, the truncation flag is returned and the captured row's `raw_input` field shows the first 512 KB. The pipeline does not block on oversized payloads; it just stores a truncated copy.
+**Truncation (known defect):** raw input is nominally capped at 512 KB, but the cap slices the JSON *string* at 512 KB — no longer valid JSON — and `raw_input` / `captured_sample` are JSON columns, so the INSERT/UPDATE fails (ERROR 3140). The receiver catches it and still answers 200: an event over 512 KB is **dropped silently, with no execution row**. Never hit in production (max observed `raw_input` is ~24 KB over 31k rows, 2026-10-12), but don't trust the old "stores the first 512 KB" behavior — it never happens. Fix options are queued in `ref/plans.md`.
 
 ### During maintenance (write freeze)
 

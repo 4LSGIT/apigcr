@@ -22,9 +22,9 @@ For oauth2, the system stores access_token + refresh_token + expiries + flow sta
 
 ### `email_credentials` — SMTP senders
 
-Per-sender SMTP config (`host`/`port`/`user`/`pass`/`secure`/`from_name`) plus `provider` enum (`smtp` | `pabbly`). Pabbly senders bypass SMTP entirely — they route through Pabbly's webhook, configured at pabbly.com. The row exists here only for routing in `services/emailService.sendEmail`.
+Per-sender config (`host`/`port`/`user`/`pass`/`secure`/`from_name`) plus `provider` (`smtp` | `pabbly` | `gmail` — the `services/emailService` ADAPTERS map). Pabbly senders bypass SMTP entirely — they route through Pabbly's webhook, configured at pabbly.com. Gmail senders send through the Gmail API on an OAuth2 `credentials` row (`credential_id`); many rows — one per verified Send-as alias — can share one credential, and most live rows are gmail. The row exists here for routing in `services/emailService.sendEmail`.
 
-`smtp_pass` is currently plaintext (deferred encryption). Don't add encryption logic at the read sites without a coordinated migration.
+`smtp_pass` is ENCv1-encrypted: the API encrypts on write, and the SMTP adapter refuses a non-encrypted value outright (`services/adapters/email/smtp.js`). Gmail rows don't use it. The comms hub's "Google senders" (03-YisraFlow sending chapter) are these `provider='gmail'` rows.
 
 ## Architecture
 

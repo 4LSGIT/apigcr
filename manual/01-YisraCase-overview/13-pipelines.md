@@ -268,8 +268,12 @@ Live rules and workflows — check the Triggers manager for the current list:
 - Intake form submitted → `intake_complete` (only from `lead` / no history).
 - Retainer signed → `retained` (only from intake / no history) — the hand-off.
 - Document request sent → `docs` (only from `retained`).
-- Consultation booked / attended / no-show → `consult_booked` / `consult_held` / `no_show`
-  (currently inside the appointment code rather than rules).
+- Consultation booked / attended → `consult_booked` / `consult_held` (trigger
+  rules on `appt.created` / `appt.attended`).
+- Consultation no-show → `no_show` (inside the appointment code, not a rule) —
+  only from the pre-consult stages (`lead` / `consult_booked` /
+  `intake_complete` / no history); a no-show on a mid-pipeline case skips
+  silently, so `no_show` there stays a manual move.
 - Every advance is also written to the case's activity log by a rule.
 
 ---

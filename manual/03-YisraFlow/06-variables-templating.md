@@ -114,6 +114,16 @@ Pipe one or more modifiers after the field reference:
 | `cap` | `{{contacts.contact_fname\|cap}}` | `Stuart` |
 | `default:VALUE` | `{{contacts.contact_pname\|default:Sir/Madam}}` | `Sir/Madam` |
 
+**One syntax, multiple engines (private copies).** These formatters exist as
+independent copies: `services/resolverService.js` (this layer) and
+`lib/unplacehold.js` (the legacy `/unplacehold` document endpoint) each carry
+their own `phone`, `email_mask`, `ssn_mask`/`ssn_last4`, `upper`, …, and a
+third copy of SSN masking lives in `esignPrefillService.ssnMasked`. The two
+chains **disagree on an empty source value**: the resolver treats it as
+unresolved and leaves the raw placeholder standing, while unplacehold
+resolves it to an empty string. Generic, pre-existing, pinned (not fixed) by
+`tests/ssnModifiers.test.js`; unification is queued in `ref/plans.md`.
+
 **Date format tokens** (moment.js style):
 - `YYYY` 4-digit year, `YY` 2-digit
 - `MMMM` January, `MMM` Jan, `MM` 01, `M` 1
