@@ -354,7 +354,7 @@ Active surfaces with known next steps.
 - **Custom fields: per-case-type scoping as data (if it gets common).** Since 2026-10-06 a case field meant for some types is a `show_when` on `case_type` (one Custom Fields section, mounted by every Case Details variant). `show_when` v1 is ONE condition, so a type-scoped field cannot also carry a second condition. If that bites, add a first-class `case_types` (JSON list) to `field_defs`, ANDed with `show_when`, rather than growing v1 into and/or trees.
 
 
-- **SMS auth-only migration (active now, not really "future").** `quoService.js` and `ringcentralService.js` move from `app_settings.quo_api_key` / `app_settings.rc_token` + parallel OAuth state to `buildHeadersForCredential(db, credential_id, url)`. Quo first (smaller blast radius), RC after. Cleanup deletes `loadToken`, `refreshAccessToken`, the boot-time load, and the `routes/internal/mms.js` `loadToken` middleware. The same pattern applies to email (`emailService.js`) once SMS is done — `email_credentials.smtp_pass` plaintext column also goes away as part of email's migration to Connections.
+- **SMS auth-only migration (active now, not really "future").** `quoService.js` and `ringcentralService.js` move from `app_settings.quo_api_key` / `app_settings.rc_token` + parallel OAuth state to `buildHeadersForCredential(db, credential_id, url)`. Quo first (smaller blast radius), RC after. Cleanup deletes `loadToken`, `refreshAccessToken`, the boot-time load, and the `routes/internal/mms.js` `loadToken` middleware. The same pattern applies to email (`emailService.js`) once SMS is done — `email_credentials.smtp_pass` (ENCv1-encrypted since 2026-10-08) also goes away as part of email's migration to Connections.
 
 ---
 
@@ -366,7 +366,7 @@ Active surfaces with known next steps.
 
 - **`// TODO: REMOVE` markers** scattered across the codebase — clean sweep at the same time.
 
-- **`email_credentials.smtp_pass` plaintext** — replace with Connections `basic`-type credential row. Either as part of email's auth migration (above), or as its own pass.
+- **`email_credentials.smtp_pass` → Connections** — the column is ENCv1-encrypted (2026-10-08: API encrypts on write, SMTP adapter refuses non-encrypted values, backfill run); what remains is replacing it with a Connections `basic`-type credential row. Either as part of email's auth migration (above), or as its own pass.
 
 - **JWT storage decision + liveHost's last token read (2026-10-05).** The
   token-binding cleanup (apiSend/uploadWithProgress as the only transports,
@@ -434,6 +434,13 @@ Active surfaces with known next steps.
   - **Checkbox/radio option labels** ("Active", "Notify assigner…", "All-day event", "SMS") vary: 13px `--text-2`, 0.9em, inherited. The next "one look" layer.
   - **yc-forms sizes are rem-based** — `.yc-label` 0.92rem (14.72px), `.yc-sublabel` 0.8rem (12.8px) against the app's 14/12px tokens. Converge when yc-forms is next touched; check that every page loading it also loads `theme.css` first.
   - **The mobile survey asserts overflow only.** The label/hint uniformity checks were session-scratch Playwright scripts; a `--looks` mode in `scripts/mobile-survey/` would make them a gate.
+  - **Hoist `.yc-flabel`/`.yc-hint` into theme.css.** The theme.css-only Admin panes load neither style.css nor scripts.js, so each needs a local copy (ctaManager.html has one with the §12 values; toolManager.html styles `.field label` its own way — uppercase 11px muted). One theme.css definition would collapse the four must-move-together places (AI_CONTEXT §12) to one and retire toolManager's divergence (docs review, 2026-10-13).
+
+- **Unify the placeholder modifier chains (docs review, 2026-10-13).** `services/resolverService.js` and `lib/unplacehold.js` carry independent private copies of every formatter (phone, email_mask, ssn_mask/ssn_last4, …) and disagree on empty source values (resolver leaves the raw placeholder; unplacehold resolves to `''`); a third copy of SSN masking lives in `esignPrefillService.ssnMasked`. Pinned by `tests/ssnModifiers.test.js`. Unify into one lib, or at least a shared formatter table — manual/03-YisraFlow/06-variables-templating.md documents the divergence meanwhile.
+
+- **Shared home for the transient-DB-error predicate (docs review, 2026-10-13).** `startup/db.js` `isTransient()`/`TRANSIENT` and `services/fieldDefReconciler.js` carry byte-identical copies. Not importable today: `startup/db.js` module.exports IS the live pool, so requiring it from the reconciler would open a real pool in every test and break its dependency injection. Fix = a `lib/` home for the predicate, which means touching the db layer. Sibling of the SSN-masking three-copies debt (above).
+
+- **Hook raw-input >512 KB is dropped silently (found 2026-10-12, maintenance/hook-spool slice).** `hookService.executeHook` slices the raw-input JSON *string* at 512 KB; `hook_executions.raw_input`/`hooks.captured_sample` are JSON columns, so the write fails (ERROR 3140), the receiver still answers 200, and the event vanishes with no execution row. Never hit in prod (max 24 KB over 31k rows). Fix: store a valid JSON stub (`{truncated:true, bytes:N, head:'…'}`) or reject >512 KB with a 413. Also touches the maintenance spool: a spooled event of 512–900 KB would 500 on replay until the queue's max attempts. Manual (09-yisrahook.md Truncation) documents the defect meanwhile.
 
 - **Deadline dialogs live twice (U9b-P2, 2026-10-13).** `public/scripts.js` `eventCompleteDeadline` / `eventCancelDeadline` / `eventPatchStatus` (the Calendar list's quick actions) are copies of `eventform.html`'s `efCompleteDeadline` / `efCancelDeadline` / `efPatchStatus` — the pane's copies can't be reached from the shell. Move eventform onto the scripts.js twins (its action bar then branches exactly as the Calendar list does) and delete its copies.
 

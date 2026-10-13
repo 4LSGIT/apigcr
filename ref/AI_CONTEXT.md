@@ -2,7 +2,7 @@
 # Last updated: 2026-09-14 — compressed to skeleton form (~900 lines from ~3,100); §0 deltas folded into body; per-column facts moved to schema COMMENTs in ref/database.sql
 
 <!-- ================= CURRENCY ================= -->
-<!-- Reviewed-through: 8f6f5c3 (docs review #1, 2026-09-14). This doc is a   -->
+<!-- Reviewed-through: 9821110 (docs review #2, 2026-10-13). This doc is a   -->
 <!-- SKELETON: what each subsystem is + the non-guessable invariants +       -->
 <!-- pointers. Depth lives in manual/, schema truth in ref/database.sql      -->
 <!-- (read its COMMENTs), route truth in ref/routes.md, working rules in     -->
@@ -10,8 +10,10 @@
 <!-- KNOWN MISSING SECTIONS (debt: docs/20260914_coverage_gaps): e-sign,     -->
 <!-- portal, YisraForms/templates, reports, pipeline engine, document sync,  -->
 <!-- booking landings. manual/ is authoritative for those meanwhile.        -->
-<!-- CONSCIOUS DEFERRALS (review #1): the seven sections above --            -->
-<!-- large, one arc of their own. Tools (29) is fully filed.                 -->
+<!-- CONSCIOUS DEFERRALS (review #2): the seven sections above --            -->
+<!-- large, one arc of their own; U9b calendar-tab doc deltas stay with the  -->
+<!-- U9b arc (its manual chapter + bus-design E12 supersession).             -->
+<!-- Tools (29) is fully filed.                                              -->
 <!-- Doc-debt queue: scratch ns=docs. File doc≠code divergences there at    -->
 <!-- discovery; the weekly docs review (DOCS_REVIEW.md) drains it and       -->
 <!-- updates this block.                                                     -->
@@ -340,6 +342,12 @@ body. Governing migrations in `ref/migrations/`.*
 - **FIL1 trustee validation (09-06):** internal fn `validate_case_trustee`
   (`lib/internal_functions/trustee.js`) on 341-notice ingest, gated by
   app_setting `trustee_validation_live` ('0' = dry-run, writes nothing).
+  10-04: `courtExecutor.landTrusteeColumn` lands `create_appointment.trustee`
+  on `cases.case_trustee` + its `_contact_id` twin, on create AND on
+  `appt_exists` replay; ingest rule 17's match is broadened to
+  OR(`meeting_*` classification, applied_types contains `create_appointment`,
+  applied_fields contains `case_trustee`); sequence template 19 v2 runs a
+  `validate_case_trustee` self-heal step before the missing-link alert.
 - **Manage self-service policy (09-06):** `/m/<token>` links reach clients;
   `manage_allow_reschedule` / `manage_allow_rebook` / `manage_allow_cancel`
   app_settings read by `loadManageSettings` (routes/manage.js). Reschedule +
@@ -705,10 +713,15 @@ single line was tried and rejected 2026-10-06). Gate:
 **Field labels (all widths):** one look — bold, `--text`, `--fs-sm`
 (matches yc-forms' `.yc-label`); group headings ("Docket (optional)",
 "Reminder (optional)") one step up: bold `--fs` with a rule above; no
-trailing colons. Set in three places that must move together: style.css
+trailing colons. Set in four places that must move together: style.css
 `.input-label` (carries the note), scripts.js dialog CSS (`.ncf-`/`.na-`/
 `.ne-`/`.cad-`/`.oad-` labels + `.yc-flabel` for inline labels), tasks.html
-`.tk-dlg-grid`.
+`.tk-dlg-grid`, and pane-local copies on theme.css-only Admin panes
+(ctaManager.html declares `.yc-flabel`/`.yc-hint` with these values —
+style.css and scripts.js don't load there). Known divergence:
+toolManager.html styles labels as `.field label` (uppercase 11px
+`--text-muted`) — a different look. Hoisting `.yc-flabel`/`.yc-hint` into
+theme.css would collapse this to one definition (plans.md).
 
 **Hints (help text under a field, a dialog's explanatory note):** one look —
 `--fs-xs`, `--text-muted`, weight 400 (≈ yc-forms' `.yc-sublabel`). Use the
@@ -877,8 +890,12 @@ server-side assembly via `POST /api/compose-docs-message`, Docs Needed →
 ## 21. CONNECTIONS — CREDENTIAL MANAGEMENT
 
 Admin-only UI `connections.html`; manual chapters 14/15 in 03-YisraFlow.
-Two tables: `credentials` (5 types) and `email_credentials` (smtp_pass
-still plaintext — migration planned, plans.md).
+Two tables: `credentials` (5 types) and `email_credentials` (smtp_pass is
+ENCv1-encrypted at POST/PUT in routes/api.emailCredentials.js; decrypted
+only in the SMTP adapter + /reveal, and the adapter hard-fails on a
+non-encrypted value; one-time backfill scripts/encrypt-smtp-passwords.js
+has run — folding email_credentials into Connections proper stays on
+plans.md).
 
 **Encryption:** AES-256-GCM, wire format `ENCv1:` + base64(iv||tag||ct);
 `isEncrypted` is a literal prefix check — the old length/charset heuristic
@@ -927,9 +944,19 @@ allowlist, OUTFILE reject, per-query MAX_EXECUTION_TIME (default 30s / max
 against `rw_scratch`. Live namespaces: `fred` (manager session state),
 `docs` (doc-debt queue — see currency header).
 
+**IT alert:** `POST /api/alert/it` `{subject<=200, message<=10000 (plain
+text), severity: info|warn|critical}` — same key/header. No `channel` param
+(a 400): delivery DERIVES from severity — info/warn email IT, critical also
+SMS. Reuses the `email_it`/`alert_from_email`/`alert_critical_sms_to`/
+`sms_staff_from` settings; 10/hr per key; audits to `admin_audit_log`
+tool=it_alert. Synchronous — a send that throws is a 502, but
+`sent.email:true` only means the relay took the handoff; confirm real
+delivery via `email_log.delivery_info`. Usage rules: CLAUDE.md "AI session
+data access".
+
 Targeted queries over table dumps — tokens cost. Files:
-`routes/api.readonly.js`, `routes/api.scratch.js`, `lib/sqlGuard.js`,
-`startup/dbReadonly.js`.
+`routes/api.readonly.js`, `routes/api.scratch.js`, `routes/api.alertIt.js`,
+`lib/sqlGuard.js`, `startup/dbReadonly.js`.
 
 ## 23. EVENTS SUBSYSTEM
 
@@ -1164,8 +1191,10 @@ log no.
 `email_log`, `email_ingest_sources`, `email_ingest_rules`,
 `email_ingest_rule_actions`, `email_ingest_log_suppressions`,
 `email_ingest_executions`. The `email_router_*` tables are DEAD (tear-out
-pending). Collation landmine: `court_ai_log.message_id` joins against
-`email_log.message_id` need explicit `COLLATE` (§15 / CLAUDE.md).
+pending). Collation: `court_ai_log.message_id` and `email_log.message_id`
+are both `utf8mb4_general_ci` live (verified 2026-10-05) — the explicit
+`COLLATE` clauses on the court-side joins are no-ops kept as insurance
+against re-divergence (CLAUDE.md).
 
 ## ═══════════════════════════════════════════════════════════════
 ## 28. PHONE / SMS INGEST

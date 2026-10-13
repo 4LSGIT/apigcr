@@ -162,8 +162,8 @@ These five are the ones that have actually bitten:
 The rest, in no particular order:
 
 - Dockets: `case_number` / `case_number_full` are opaque free text server-side. Docket-shape parsing is BK-specific and lives client-side ONLY. The server stores opaque strings and collision-checks by equality — never parse or validate docket shape server-side.
-- Collation: `documents.external_id` and `case_folder_cache.folder_external_id` are `utf8mb4_bin` (case-sensitive Dropbox IDs — load-bearing). `court_ai_log.message_id` vs `email_log.message_id` differ; joins need explicit `COLLATE utf8mb4_general_ci` on the court side.
-- Timezone: `FIRM_TZ=America/Detroit`; the DB pool runs UTC; `appt_date` is firm-local naive. Use `CONVERT_TZ`/`DATE_FORMAT`; Luxon server-side.
+- Collation: `documents.external_id` and `case_folder_cache.folder_external_id` are `utf8mb4_bin` (case-sensitive Dropbox IDs — load-bearing). `court_ai_log.message_id` and `email_log.message_id` are both `utf8mb4_general_ci` (verified live 2026-10-05); the explicit `COLLATE` clauses on the court-side joins are no-ops kept as insurance against re-divergence.
+- Timezone: the firm zone is `America/Detroit` — env var `FIRM_TIMEZONE` (`FIRM_TZ` is the JS identifier it's read into, six module-scope captures); the DB pool runs UTC; `appt_date` is firm-local naive. Use `CONVERT_TZ`/`DATE_FORMAT`; Luxon server-side.
 - Contact phone/email `start_date` NULL means "since forever". Never `COALESCE(?, CURDATE())` on insert.
 - Contacts: `contact_kind` ('person'|'org') is the entity axis; `contact_type` is a dirty free-text role label — never overload it. Org EIN lives in `contact_ssn` (inherits masking + resolver block by design).
 - Portal visibility requires `case_relate_type IN ('Primary','Secondary')` — never demote a portal user to 'Other'.
@@ -188,5 +188,5 @@ The rest, in no particular order:
 
 ## Two one-way doors
 
-- Never commit API keys (`yci_`/`ycro_`/`yck_`/`ycp_` prefixes) or secrets — including unprefixed ones (ingest keys, hook keys, webhook URLs). Reference copies of code deployed elsewhere (`ref/gas.js`) read secrets from that host's secret store (Apps Script Script Properties), never a CONFIG literal, so repo == deployed stays safe to round-trip. The gmail-firm ingest key sat in `ref/gas.js` in this public repo from 2026-06-03 to its 2026-10 rotation.
+- Never commit API keys (`yci_`/`ycro_`/`yck_` prefixes — the only three that exist; portal tokens are unprefixed JWTs) or secrets — including unprefixed ones (ingest keys, hook keys, webhook URLs). Reference copies of code deployed elsewhere (`ref/gas.js`) read secrets from that host's secret store (Apps Script Script Properties), never a CONFIG literal, so repo == deployed stays safe to round-trip. The gmail-firm ingest key sat in `ref/gas.js` in this public repo from 2026-06-03 to its 2026-10 rotation.
 - Never reverse the SQL → backend → frontend deploy order. It is the only mistake here that takes production down rather than merely breaking a build.

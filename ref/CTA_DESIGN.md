@@ -6,8 +6,12 @@
 reviewed, see §11). Open: watch gate (first organic spam hit end-to-end),
 S5 login tier (§7). §12 inputs: S1i backend + S2i pane shipped 2026-10-08;
 **S3i** (2026-10-11: inline bindings — Ruling 5 revisited — and enum
-radio/choice labels, §12) is written, tested and independently reviewed
-(approve with changes, folded — §12 Slices), **pending deploy**. Manager UI: `public/ctaManager.html` (Admin → CTA Links,
+radio/choice labels, §12) deployed 2026-10-11 as `1486966`; CTA #11 is the
+first live input-bearing link. Its COMMENT-only migration
+(`2026-10-11_cta_inline_bindings_comment.sql`) is **NOT yet applied on live**
+— `cta_links.options` COMMENT is still the 10-08 text (verified 2026-10-13;
+comment-only, so order vs. the deploy never mattered — just run it). Manager
+UI: `public/ctaManager.html` (Admin → CTA Links,
 frontend-only slice over §5.3 — list/detail/PATCH/mint+dry_run), plus the
 send slice 2026-10-08 (`POST /api/cta/:id/send` + the pane's Send… dialog).
 **This file (`ref/CTA_DESIGN.md`) is canonical**; the project doc
@@ -695,14 +699,16 @@ Only a declared `type: 'html'` input passes raw — behind the acknowledgment.
 
 ### Surfaces
 
-- HTML pages: fields render above the option buttons (labels escaped,
+- HTML pages: an option with inputs renders on the landing page as a LINK to
+  its confirm page (like a `confirm_text` option); the fields live on the
+  confirm page, above the confirm button (labels escaped,
   type-appropriate controls, enum as a select — or, with `display:'radio'`,
   a `<fieldset>` of radio buttons with the label as its `<legend>`; an
   optional radio group with no default gets a "(none)" row, the dropdown's
   blank — the SU's
   `hint` then the required/maxlen line under each control, both in
   `aria-describedby`); the confirm page echoes entered values escaped (a
-  rejected POST keeps the picked radio).
+  rejected POST re-renders it keeping the picked radio).
 - JSON: the descriptor exposes **declarations** (name, label, hint, type,
   required, choices, choice_labels, display, maxlen, default) per option so
   agents can fill them — never plans, never bindings; respond accepts

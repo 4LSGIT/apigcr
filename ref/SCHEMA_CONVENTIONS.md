@@ -4,8 +4,8 @@
 this directory, and the schema they dump into [`database.sql`](database.sql).
 **Enforced by:** [`tests/schemaConventions.test.js`](../tests/schemaConventions.test.js).
 
-Two things about this database bite people who write migrations. Neither is
-obvious from reading a `CREATE TABLE`, and both fail silently.
+Three things bite people who write (or run) migrations here. None is obvious
+from reading a `CREATE TABLE`, and all fail silently or half-silently.
 
 ## Never write `DEFAULT CHARSET` without `COLLATE`
 
@@ -56,3 +56,15 @@ accepted rather than rejected. Size columns to match what writes into them
 and validate at the door in application code — the database will not do it
 for you. Do not enable strict mode without first giving affected columns real
 defaults; it would break case creation and `listCases`.
+
+## Guarded `SET @sql / PREPARE / EXECUTE` groups don't survive the SU console
+
+A guarded group (the idempotency pattern for `ADD COLUMN` — MySQL has no
+`IF NOT EXISTS` there) must run on ONE connection, i.e. from a mysql client
+session. The SU DB console cannot guarantee that: its pool runs with
+`multipleStatements` off, so a multi-statement paste is rejected, and
+`/admin/db/batch` sends each statement through the POOL separately — `@sql`
+may not survive to `PREPARE`. Through the console, run the plain fallback
+ALTERs a migration quotes under each group instead (a re-run fails harmlessly
+with `ER_DUP_FIELDNAME` / `ER_DUP_KEYNAME`). Every guarded migration should
+quote those fallbacks — see `ref/migrations/2026-10-09_mailbox_s1g.sql`.

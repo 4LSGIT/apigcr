@@ -55,10 +55,14 @@
 --
 -- ── IDEMPOTENT ──────────────────────────────────────────────────────────────
 -- A: guarded on information_schema (MySQL has no ADD COLUMN IF NOT EXISTS) —
---    each SET/PREPARE/EXECUTE/DEALLOCATE group must run on ONE connection:
---    paste the group as a single block. If the console splits statements, run
---    the plain fallbacks quoted under each group instead (harmless
---    ER_DUP_FIELDNAME / ER_DUP_KEYNAME on a re-run).
+--    each SET/PREPARE/EXECUTE/DEALLOCATE group must run on ONE connection,
+--    i.e. from a mysql client session. The SU DB console CANNOT guarantee
+--    that: its pool runs with multipleStatements off and /admin/db/batch
+--    sends each statement through the pool separately, so @sql may not
+--    survive to PREPARE. From the console, run the plain fallbacks quoted
+--    under each group instead (harmless ER_DUP_FIELDNAME / ER_DUP_KEYNAME
+--    on a re-run). Same note in 2026-10-09_mailbox_s1g.sql and
+--    ref/SCHEMA_CONVENTIONS.md.
 -- B/B2: a re-run re-applies the same COMMENTs (comment-only MODIFYs restating
 --    the S0 types exactly — no data change, no rebuild).
 -- C: INSERT … WHERE NOT EXISTS — a re-run inserts nothing and never rotates
