@@ -515,27 +515,54 @@ the proxy when it is not already listening, from three places: `npm run dev` (th
 without that line, CI and Cloud Run are untouched. The proxy is left running on
 purpose — the next commit finds it there in about a millisecond.
 
+**Listening is not working.** The proxy opens its port before it has talked to Google.
+With expired credentials, or an account without the role, it starts, reports "ready
+for new connections", accepts every connection and drops it without a byte — which a
+MySQL client reports as `PROTOCOL_CONNECTION_LOST` / "The server closed the
+connection", with no hint of the cause. And **a running proxy keeps the credentials it
+started with**: signing in again does nothing until it is restarted. So the script
+checks that a database actually answers through the port (the MySQL server speaks
+first; one byte proves credentials, role, instance name and network together):
+
+- a proxy it starts is always checked; one that does not connect is stopped again and
+  the reason is read out of its log, with the command that fixes it;
+- when a connection through an already-running proxy fails (`db:ref`, the hook), or
+  on `npm run dev` / `npm run db:proxy`, the running one is checked too. A dead proxy
+  that was started from here is replaced — that is what picks up fresh credentials.
+  One started by hand is left alone and named as the problem: stop it yourself.
+
 | | |
 |---|---|
-| `npm run db:proxy` | Start it now, or report that it is already listening. |
+| `npm run db:proxy` | Start it, or check that the running one really reaches the database; replaces a dead one. |
 | `npm run db:proxy:stop` | Stop the one started from here. |
 | its output | `yc-sql-proxy.log` in the system temp dir; the path is printed when it starts. |
 
-**When it does not work.**
+**When it does not work, the message says which of these it is:**
 
 - `"cloud-sql-proxy" is not installed` → step 1.
-- The proxy exits at once, or connections fail with a credentials / `invalid_grant` /
-  reauthentication message in the log → step 2 again. Application-default
-  credentials expire.
-- `403` / `NOT_AUTHORIZED` in the log → step 3.
-- The pre-commit hook prints `Cloud SQL proxy not running: …` and `skipped`, and the
-  commit goes through anyway — by design (a commit made offline must not be blocked).
-  That commit did not refresh `ref/database.sql`; `npm run db:ref` once the proxy is
-  back does. `npm run dev` stops instead: the app is useless without a database.
-- Port 3306 held by something else (a local MySQL): the script sees a listener and
-  assumes it is the proxy, so the login then fails against the wrong server. Stop the
-  other one — the port is fixed because `startup/db.js` and `scripts/dump-schema.js`
-  pass `host` and no port.
+- `Google credentials are missing or have expired` (the proxy logged `invalid_grant`,
+  a reauthentication error, or `could not find default credentials`) → step 2 again,
+  then rerun. Application-default credentials expire; expect this every so often.
+- `The Google account you signed in with … may not connect to Cloud SQL` (the proxy
+  logged `403` / `NOT_AUTHORIZED`) → step 3. Check which account step 2 signed in:
+  it is the browser's choice, not `gcloud config`'s.
+- `refused the API call for lack of a quota project` →
+  `gcloud auth application-default set-quota-project lsg-api-425223`. (Sign-in
+  warns `Cannot find a quota project to add to ADC` when gcloud has no default
+  project on that machine; `gcloud config set project lsg-api-425223` before
+  signing in avoids it.)
+- `Google does not know the instance` → the `DEV_SQL_PROXY_INSTANCE` line.
+- `something is listening on 127.0.0.1:3306 but no database answers through it, and
+  it was not started from here` → a hand-started proxy with stale credentials, or a
+  local MySQL on the port. Stop it — the port is fixed because `startup/db.js` and
+  `scripts/dump-schema.js` pass `host` and no port.
+- An ordinary MySQL error (`ER_ACCESS_DENIED_ERROR` …) means the tunnel is fine and
+  the database login in `.env` is not.
+
+In the pre-commit hook any of these prints `skipped: …` and **the commit goes through
+anyway** — by design (a commit made offline must not be blocked). That commit did not
+refresh `ref/database.sql`; `npm run db:ref` once the proxy works does. `npm run dev`
+stops instead: the app is useless without a database.
 
 **This is the production database.** A local `npm run dev` reads and writes live
 client data; there is no staging copy. A local process that keeps writing during a

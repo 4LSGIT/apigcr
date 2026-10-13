@@ -15,6 +15,7 @@ are kept privately — see "Where the rest lives" at the end.
 |---|---|
 | Cut over | Tuesday 2026-10-13, 02:49–03:14 Detroit (06:49–07:14 UTC) |
 | Write freeze | about 26 minutes: last write on the old server 06:48:48 UTC, first on the new one 07:14:32 UTC. Staff and clients saw a maintenance page (503 + `Retry-After`). |
+| Stages (UTC, from the script's own state file) | freeze 06:49:01 → 06:52:17 · copy → 07:12:47 (20½ min: dump, upload, import, triggers) · verify → 07:13:44 · flip → 07:14:44 · resume → 07:16:18. |
 | Webhooks lost | none. One arrived during the freeze (the deliberate test); it was captured and replayed once, by Cloud Tasks itself, about a minute after the switch. |
 | Data | 153 tables, 15 triggers, about 0.9 GB. Traffic moves only after a strict comparison of the two servers, down to a content hash of every row, has passed; the script enforces it. |
 | Alerts in the hours after | none |
@@ -188,6 +189,10 @@ Private, because they carry host names, addresses and account names:
 - the operator script as it was run (`yc.sh`, about 1,270 lines of bash),
 - the runbook, with the rehearsal log and the cutover log,
 - the harness rebuild notes, with every stand-in file.
+
+Two copies: the Claude project docs (`claude/DB_MIGRATION_yc.sh`,
+`claude/DB_MIGRATION_RUNBOOK.md`, `claude/DB_MIGRATION_HARNESS.md`), and the
+developer machine's git-ignored `local/db-migration-2026-10/`.
 
 In this repo: `scripts/dbmigrate/` (dump and comparison), `lib/dbTarget.js`,
 `lib/maintenance.js`, `lib/hookSpool.js`, `routes/internal/hookReplay.js`, and the

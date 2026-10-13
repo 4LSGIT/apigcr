@@ -125,6 +125,14 @@ async function existingFingerprint() {
   }
 }
 
+// A failure whose cause is already known and printable (ensure-sql-proxy's
+// `reason`), as opposed to whatever the MySQL client made of it.
+function proxyDown(reason) {
+  const err = new Error("the Cloud SQL proxy is not working");
+  err.proxyReason = reason;
+  return err;
+}
+
 (async () => {
   let pool;
   let proxy = null;
@@ -137,19 +145,42 @@ async function existingFingerprint() {
     // keeps the pre-commit schema check from silently skipping.
     proxy = await ensureSqlProxy();
     if (proxy.status === "started") say(`started the Cloud SQL proxy (log: ${proxy.logFile})`);
-    else if (proxy.status === "failed") warn(`Cloud SQL proxy not running: ${proxy.reason}`);
     else if (proxy.status === "disabled" && proxy.reason) warn(proxy.reason);
     if (proxy.status !== "disabled") mark("proxy");
+    if (proxy.status === "failed") throw proxyDown(proxy.reason);
 
     // ONE pool, opened lazily. Because schemaFingerprint runs its queries in
     // series, the pool only ever opens a single connection for the check — so
     // this costs exactly one handshake, same as a bare connection would. If a
     // dump follows, the same pool ramps to 8 on demand instead of paying for a
     // second warm-up.
-    status.write("connecting…");
-    pool = mysql.createPool({ ...dbConfig(), connectionLimit: 8, waitForConnections: true })
-                .promise();
-    await pool.query("SELECT 1");
+    const connect = async () => {
+      status.write("connecting…");
+      pool = mysql.createPool({ ...dbConfig(), connectionLimit: 8, waitForConnections: true })
+                  .promise();
+      await pool.query("SELECT 1");
+    };
+    try {
+      await connect();
+    } catch (err) {
+      // A proxy that is LISTENING is not necessarily CONNECTING: with expired
+      // Google credentials it accepts the connection and drops it, which
+      // arrives here as PROTOCOL_CONNECTION_LOST and explains nothing. So ask
+      // for the real check. It replaces a dead proxy that was started from
+      // here (the only way one picks up fresh credentials), and then one more
+      // try is fair. Anything else is reported with the reason, not the symptom.
+      if (proxy.status !== "running" && proxy.status !== "started") throw err;
+      await pool.end().catch(() => {});
+      pool = null;
+      status.write("checking the Cloud SQL proxy…");
+      const again = await ensureSqlProxy({ verify: true });
+      mark("proxy recheck");
+      if (again.status === "failed") throw proxyDown(again.reason);
+      if (again.status !== "started") throw err;   // the tunnel works: this is the login or the server
+      warn(`restarted the Cloud SQL proxy: the old one had stopped connecting (log: ${again.logFile})`);
+      proxy = again;
+      await connect();
+    }
     mark("connect");
 
     status.write("checking schema…");
@@ -195,11 +226,8 @@ async function existingFingerprint() {
     printTiming();
     return 0;
   } catch (err) {
-    warn(`skipped: ${err.code || err.name} — ${err.message}`);
-    if (proxy && (proxy.status === "running" || proxy.status === "started")) {
-      warn(`the connection goes through the local Cloud SQL proxy — its log: ${proxy.logFile} ` +
-           `(expired credentials: gcloud auth application-default login)`);
-    }
+    if (err.proxyReason) warn(`skipped: the Cloud SQL proxy is not working. ${err.proxyReason}`);
+    else warn(`skipped: ${err.code || err.name} — ${err.message}`);
     printTiming();
     return STRICT || CHECK ? 2 : 0;
   } finally {
