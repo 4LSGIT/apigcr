@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-10-13T15:34:53.202Z
+-- Generated: 2026-10-13T16:31:06.202Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:bf0df91493be84a817ff03b6f11ec2a2
+-- Fingerprint: sha256:f10c651cd3b8c2efbdf9f7356f63637a
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -1250,6 +1250,19 @@ CREATE TABLE `court_ai_log` (
   `review_reason` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `raw_response` mediumtext CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `court_email_hashes`
+--
+
+DROP TABLE IF EXISTS `court_email_hashes`;
+CREATE TABLE `court_email_hashes` (
+  `content_hash` char(64) COLLATE utf8mb4_general_ci NOT NULL COMMENT 'sha256 hex (lowercase) of normWs(subject) + LF + normWs(body) - see lib/internal_functions/court.js CONTENT DEDUPE',
+  `message_id` varchar(255) COLLATE utf8mb4_general_ci NOT NULL COMMENT 'the OWNER: first message_id that reached court_extract with this content. Same id later = re-extract (proceeds); different id = duplicate delivery (skipped, court_ai_log duplicate_of:<owner>)',
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT 'UTC (the pool runs UTC) - first sighting'
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='court_extract content dedupe: one row per distinct court-email content hash, owned by the first message_id. No time window - ECF bodies embed the entered-on timestamp, so an identical hash means identical input.';
 
 -- --------------------------------------------------------
 
@@ -4070,6 +4083,12 @@ ALTER TABLE `court_ai_log`
   ADD KEY `idx_court_ai_log_message_id` (`message_id`),
   ADD KEY `idx_court_ai_log_outcome` (`outcome`),
   ADD KEY `idx_court_ai_log_created_at` (`created_at`);
+
+--
+-- Indexes for table `court_email_hashes`
+--
+ALTER TABLE `court_email_hashes`
+  ADD PRIMARY KEY (`content_hash`);
 
 --
 -- Indexes for table `court_emails`

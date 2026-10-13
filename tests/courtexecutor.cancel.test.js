@@ -21,7 +21,15 @@
  *   REPLAY        — only non-Scheduled matches → quiet 'cancel_already_done'
  *                   skip, NO review noise, outcome 'none' when nothing else
  *                   applied.
- *   NO MATCH      — nothing matched at all → 'cancel_no_match' review (queued).
+ *   NOTHING TRACKED — nothing matched and the case has NO Scheduled event
+ *                   (an empty pool, or only Canceled / Completed rows) →
+ *                   quiet 'cancel_nothing_tracked' skip, NO review: nothing
+ *                   exists a reviewer could cancel (adversary proceedings —
+ *                   log 783/786). event_ids lists the dead pool; omitted when
+ *                   the pool is empty. A show-cause cancel still clears
+ *                   cases.show_cause first.
+ *   NO MATCH      — a Scheduled event exists but none matched →
+ *                   'cancel_no_match' review (queued).
  *   AMBIGUOUS     — 2+ Scheduled matches → cancel NOTHING, 'cancel_ambiguous'
  *                   review. (The 26-44274 same-slot Confirmation+OSC pair is
  *                   the standing false-positive proof.)
@@ -190,12 +198,49 @@ describe('cancel_event dispatch', () => {
     expect(res.outcome).toBe('executed'); // the column write IS an applied action
   });
 
-  test('no match at all → cancel_no_match review, queued', async () => {
+  test('empty pool (case has no events at all) → quiet cancel_nothing_tracked, NO review', async () => {
     const db = makeDb({ events: [], showCause: null });
     const res = await executeCourtActions(db, { ...cancelPayload(FIELDS), dryRun: false });
     expect(eventService.cancelEvent).not.toHaveBeenCalled();
+    const sk = res.skipped.find(s => s.type === 'cancel_event');
+    expect(sk).toEqual({ action_index: 0, type: 'cancel_event', reason: 'cancel_nothing_tracked' });
+    expect(res.review_reason).toBeNull();
+    expect(res.outcome).toBe('none');
+  });
+
+  test('empty pool still clears a stale show_cause column (the accepted-risk backstop)', async () => {
+    const db = makeDb({ events: [], showCause: '2026-08-20 09:30:00' });
+    const res = await executeCourtActions(db, { ...cancelPayload(FIELDS), dryRun: false });
+    expect(res.applied.find(a => a.field === 'show_cause').new_value).toBeNull();
+    expect(res.skipped.find(s => s.type === 'cancel_event').reason).toBe('cancel_nothing_tracked');
+    expect(res.review_reason).toBeNull();
+    expect(res.outcome).toBe('executed');
+  });
+
+  test('Scheduled event in the pool, nothing matches → cancel_no_match review, queued', async () => {
+    const other = { ...SC_EVENT, event_id: 904, event_type: 'Hearing', event_title: 'Hearing on Motion for Relief from Stay' };
+    const db = makeDb({ events: [other], showCause: null });
+    const res = await executeCourtActions(db, { ...cancelPayload(FIELDS), dryRun: false });
+    expect(eventService.cancelEvent).not.toHaveBeenCalled();
+    expect(res.skipped.find(s => s.type === 'cancel_event').reason).toBe('cancel_no_match');
     expect(res.outcome).toBe('queued');
     expect(res.review_reason).toMatch(/cancel_no_match/);
+  });
+
+  test('pool with no Scheduled event (Canceled + Completed, none matching) → quiet cancel_nothing_tracked + event_ids', async () => {
+    // 25-04092 today: Canceled Status Conference rows and nothing Scheduled.
+    const canceled  = { ...SC_EVENT, event_id: 905, event_type: 'Status Conference',
+      event_title: 'Telephonic Status Conference', event_status: 'Canceled' };
+    const completed = { ...SC_EVENT, event_id: 906, event_type: 'Hearing',
+      event_title: 'Hearing on Motion to Extend Time', event_status: 'Completed' };
+    const db = makeDb({ events: [canceled, completed], showCause: null });
+    const res = await executeCourtActions(db, { ...cancelPayload(FIELDS), dryRun: false });
+    expect(eventService.cancelEvent).not.toHaveBeenCalled();
+    const sk = res.skipped.find(s => s.type === 'cancel_event');
+    expect(sk).toEqual({ action_index: 0, type: 'cancel_event', reason: 'cancel_nothing_tracked',
+      event_ids: [905, 906] });
+    expect(res.review_reason).toBeNull();
+    expect(res.outcome).toBe('none');
   });
 
   test('2+ Scheduled matches → cancel NOTHING, cancel_ambiguous review', async () => {

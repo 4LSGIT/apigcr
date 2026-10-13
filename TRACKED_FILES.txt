@@ -506,6 +506,7 @@ ref/migrations/2026-10-11_mailbox_s1g_allmail.sql
 ref/migrations/2026-10-11_mailbox_s2l_labels.sql
 ref/migrations/2026-10-12_mailbox_s3r_alias.sql
 ref/migrations/2026-10-12_phone_sph.sql
+ref/migrations/2026-10-13_court_email_hashes.sql
 ref/migrations/2026-10-13_custom_fields_s5b_drop_clio_columns.sql
 ref/migrations/2026-10-13_default_task_assignee.sql
 ref/migrations/2026-10-13_docs_review_comments.sql
@@ -918,6 +919,8 @@ tests/contactScalarValueDemote.test.js
 tests/contactTransferShapes.test.js
 tests/contactUi.sync.test.js
 tests/control.flow.test.js
+tests/courtExtract.dedupe.mysql.test.js
+tests/courtExtract.dedupe.test.js
 tests/courtResolve.test.js
 tests/courtexecutor.cancel.test.js
 tests/courtexecutor.convert.test.js

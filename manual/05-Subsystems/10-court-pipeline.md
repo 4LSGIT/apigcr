@@ -128,6 +128,35 @@ queue. `outcome='none'` with `dry_run=0` *also* trips the processed-marker, so a
 later live re-run short-circuits as `already_processed` — which is what makes
 dismiss terminal for live execution.
 
+#### Duplicate deliveries never reach the AI
+
+The inbox often receives one court email under two or more Gmail message ids,
+seconds to days apart. Before the AI call, `court_extract` claims the email's
+content in `court_email_hashes` (sha256 of the whitespace-normalized subject +
+body). The first message id to claim a hash owns it:
+
+- **a different message id with the same content** is a duplicate: no AI call,
+  one `court_ai_log` row on the copy's own id — `outcome='none'`,
+  `review_reason='duplicate_of:<owner id>'`. No card; the weekly digest lists
+  it under Ignored. Live, that row also trips the processed-marker for the copy;
+- **the same message id again** is a Re-extract of the original and runs
+  normally.
+
+`-test-` replays skip the check entirely. Any dedupe error fails open — the
+email is processed as before. No time window: ECF bodies carry the
+entered-on timestamp, so identical content means identical input.
+
+#### A cancellation with nothing Scheduled is quiet
+
+`cancel_event` matches against every event on the case (any status). When
+nothing matches and the case has **no Scheduled event** — no events at all, or
+only Canceled / Completed ones; adversary proceedings are rarely calendared —
+there is nothing a reviewer could cancel, so it skips as
+`cancel_nothing_tracked` with no review (the skip lists the dead pool's
+`event_ids`). A show-cause dissolution still clears `cases.show_cause` first.
+When a Scheduled event exists but none match, it still queues as
+`cancel_no_match`.
+
 #### Entity defaults
 
 Verified against live data:

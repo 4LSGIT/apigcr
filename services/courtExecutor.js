@@ -1254,9 +1254,28 @@ async function executeCourtActions(db, { payload, subject, body, dryRun, preview
         // already canceled it. Converged; quiet skip, NO review.
         skipped.push({ action_index: i, type, reason: 'cancel_already_done',
           event_ids: matches.map((m) => m.event_id) });
+      } else if (!candidates.some((m) => m.event_status === 'Scheduled')) {
+        // Nothing matched AND the case has no Scheduled event at all — either
+        // no events, or only Canceled / Completed / Rescheduled ones. Typical
+        // of adversary proceedings the firm rarely calendars (25-04092:
+        // court_ai_log 783/786, 2026-09-02, queued cancel_no_match cards whose
+        // only possible resolution was Dismiss; that case now holds two
+        // Canceled rows and nothing Scheduled). There is nothing a reviewer
+        // could cancel: quiet skip, NO review. event_ids lists the dead pool
+        // for the audit trail (omitted when the pool is empty).
+        // ACCEPTED RISK: a create_event that failed, followed later by its
+        // dissolution, now goes quiet too. Acceptable because a show-cause
+        // dissolution has already converged cases.show_cause above
+        // (clearShowCauseColumn runs before matching, regardless of what the
+        // pool holds), and the failed create logged its own failure when it
+        // happened (a dispatch throw → outcome 'error' row; a dateless
+        // create → event_missing_date review).
+        skipped.push({ action_index: i, type, reason: 'cancel_nothing_tracked',
+          ...(candidates.length ? { event_ids: candidates.map((m) => m.event_id) } : {}) });
       } else if (scheduled.length === 0) {
-        // Nothing matched at all — the OSC event was never created (or lives
-        // under a shape the matcher can't see). A human should look.
+        // A Scheduled event exists but none matched — the target was never
+        // created, or it lives under a shape the matcher can't see, or the
+        // matcher missed a live row a human could still cancel. Look.
         reviewReasons.push('cancel_no_match');
         skipped.push({ action_index: i, type, reason: 'cancel_no_match' });
       } else {
@@ -1843,10 +1862,57 @@ async function logExtractFailure(db, { messageId, dryRun, error, aiCallId } = {}
 }
 
 
+// ─────────────────────────────────────────────────────────────────────────
+// logDuplicateContent  (court_extract content dedupe, 2026-10-13)
+// ─────────────────────────────────────────────────────────────────────────
+
+/**
+ * Record a court_ai_log row for a court email that court_extract SKIPPED as a
+ * duplicate delivery — identical content already claimed by another
+ * message_id (lib/internal_functions/court.js, CONTENT DEDUPE). No AI call was
+ * made, so there is no payload: outcome 'none', review_reason
+ * 'duplicate_of:<owning message_id>', null actions.
+ *
+ * Why 'none': it never enters the review queue (a duplicate needs no human).
+ * Live (dry_run=0) it is a CLOSING row under routes/courtReview.js's openness
+ * rule for THIS message_id only — the owner's rows carry a different
+ * message_id and are untouched — and it trips executeCourtActions STEP 1, so
+ * if this message ever reaches the executor (a later re-run whose hash check
+ * failed open) it short-circuits as already_processed instead of re-applying.
+ * The weekly digest lists it under Ignored, with the review_reason as its note.
+ *
+ * @param {object} db
+ * @param {object} opts
+ * @param {string}  opts.messageId    the duplicate's own message_id
+ * @param {boolean} opts.dryRun       the effective flag court_extract read
+ * @param {string}  opts.duplicateOf  the message_id that owns the content
+ * @returns {Promise<{outcome:'none', court_ai_log_id:number, review_reason:string}>}
+ */
+async function logDuplicateContent(db, { messageId, dryRun, duplicateOf } = {}) {
+  const reason = ('duplicate_of:' + (duplicateOf == null ? 'unknown' : String(duplicateOf))).slice(0, 255);
+  const courtLogId = await insertCourtAiLog(db, {
+    message_id:       messageId || null,
+    ai_call_id:       null,
+    dry_run:          !!dryRun,
+    classification:   null,
+    case_number:      null,
+    resolved_case_id: null,
+    case_name:        null,
+    actions_json:     null,
+    citations_json:   null,
+    outcome:          'none',
+    review_reason:    reason,
+    raw_response:     null,
+  });
+  return { outcome: 'none', court_ai_log_id: courtLogId, review_reason: reason };
+}
+
+
 module.exports = {
   executeCourtActions,
   revertCourtActions,
   logExtractFailure,
+  logDuplicateContent,
   CASE_FIELD_POLICY,
   CASE_DATE_FIELDS,
   // exported for tests. titlesMatch / _titleCore / titlesSimilarLoose /

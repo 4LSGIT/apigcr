@@ -25,6 +25,20 @@
 gaps above); everything else from the September delta pass is folded into the
 body. Governing migrations in `ref/migrations/`.*
 
+- **Court NEF dedupe + quiet empty-pool cancel (10-13):** `court_extract`
+  claims sha256(normWs(subject)+'\n'+normWs(body)) in `court_email_hashes`
+  BEFORE the AI call; a different message_id with an owned hash = duplicate
+  delivery → no AI call, `court_ai_log` outcome 'none' /
+  `duplicate_of:<owner>` on the copy's id; the same id = Re-extract, proceeds.
+  `-test-` ids bypass; errors fail open; no time window. Covers
+  `court_extract` ONLY — under the §27 cross-source double-fire it skips the
+  second copy when the texts normalize equal; every other Layer-3 rule still
+  fires twice. Executor `cancel_event` with no match and NO Scheduled event
+  on the case (empty pool or only dead rows) skips `cancel_nothing_tracked`
+  (+ dead-pool `event_ids`), no review; no match with a Scheduled event
+  present still queues `cancel_no_match`. Manual:
+  `manual/05-Subsystems/10-court-pipeline.md`.
+
 - **Comms S2P (10-13):** `mail_sends` is the hub-send ATTRIBUTION source (one
   row per send, best-effort post-dispatch; thread reads join it by
   `message_id` / `provider_id`, latest `sent_at` wins) and carries the
