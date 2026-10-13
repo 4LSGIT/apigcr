@@ -14,7 +14,8 @@
 //
 // Exit 1 when a target is missed. Also captures the S2P screenshot set
 // (list · opened thread with the ⋯ menu · the filters sheet · the Task modal
-// · a reply with the Case field) at 1440 light AND dark; the 375/320 set
+// · a reply with the Case field · the case picker over New message) at
+// 1440 light AND dark, and GATES that picker being topmost; the 375/320 set
 // rides the main survey (node scripts/mobile-survey/survey.js).
 //
 //   node scripts/mobile-survey/commsDensity.js [--out DIR]
@@ -163,6 +164,27 @@ async function openComms(browser, { w, h, theme }) {
       await frame.evaluate(() => { closeTaskModal(); return openReply(state.thread.messages.find((m) => m.id === 301), false); });
       await sleep(1000);
       await shot('reply_case');
+
+      // STACKING gate (live defect 2026-10-13): the case picker opened from
+      // the New message modal's Case field rendered BEHIND the composer (two
+      // .modal-backdrop at one z-index; the later DOM node wins). Replies are
+      // inline, so the reply_case shot above never saw it. Assert the real
+      // engine's hit test: the picker's own box is topmost where it is drawn.
+      await frame.evaluate(() => { const c = state.composer; if (c) closeComposer(c, { keepDraft: false }); return openCompose(); });
+      await sleep(600);
+      const stack = await frame.evaluate(() => {
+        const pick = document.querySelector('#compose-slot .case-row button.linkish');
+        if (!pick) return { err: 'no Pick a case… button in the New message composer' };
+        pick.click();
+        const bd = document.getElementById('case-backdrop');
+        const r = bd.querySelector('.modal').getBoundingClientRect();
+        const hit = document.elementFromPoint(r.left + r.width / 2, r.top + Math.min(r.height / 2, 40));
+        return { open: bd.classList.contains('open'), composerOpen: document.getElementById('compose-backdrop').classList.contains('open'), onTop: !!(hit && hit.closest('#case-backdrop')) };
+      });
+      await sleep(200);
+      await shot('new_case_picker');
+      if (stack.err || !stack.open || !stack.composerOpen || !stack.onTop) { failed++; console.error(`1440 ${theme} CASE PICKER NOT ON TOP of the New message modal:`, JSON.stringify(stack)); }
+      else console.log(`1440 ${theme} case picker over New message: on top`);
       await page.close();
     }
   } finally {

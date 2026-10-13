@@ -339,6 +339,11 @@
     z-index: 100; padding: 24px 16px; overflow: auto;
   }
   .modal-backdrop.open { display: flex; }
+  /* The case picker opens ON TOP of the New message modal (its Case field's
+     "Pick a case…"). Same z-index + #compose-backdrop later in the DOM put
+     the composer over the picker (live 2026-10-13); the picker must outrank
+     any modal it can be opened from. Gate: scripts/mobile-survey/commsDensity.js. */
+  #case-backdrop { z-index: 110; }
   .modal { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; width: 100%; max-width: 520px; padding: 16px 18px; }
   .modal h3 { margin: 0 0 12px; font-size: 15px; font-weight: 600; }
   .modal input[type="text"], .modal input[type="search"] {
@@ -697,7 +702,7 @@
     <h3 id="case-title">Link to a case</h3>
     <div class="modal-err" id="case-msg" role="alert"></div>
     <div id="case-sugg-wrap" hidden>
-      <span class="yc-flabel">From this conversation</span>
+      <span class="yc-flabel" id="case-sugg-label">From this conversation</span>
       <ul class="pick-list" id="case-sugg"></ul>
       <span class="yc-flabel">Or search</span>
     </div>
@@ -2091,7 +2096,16 @@ function openCasePicker(picker, { title, hint }) {
   E('case-q').value = '';
   E('case-results').replaceChildren();
   E('case-hint').textContent = hint;
-  const sugg = caseSuggestions(picker.m);
+  // A NEW message belongs to no conversation: never offer the cases of the
+  // thread that happens to be open behind it (one click from the wrong case's
+  // log — live 2026-10-13). It offers the composer's own suggestions, the
+  // picked recipients' cases (the Case field's chips), and says so.
+  const newMsg = picker.mode === 'compose' && !!picker.composer && picker.composer.kind === 'new';
+  const seen = new Set();
+  const sugg = newMsg
+    ? (picker.composer.caseSugg || []).filter((x) => x && x.case_id && !seen.has(x.case_id) && seen.add(x.case_id))
+    : caseSuggestions(picker.m);
+  E('case-sugg-label').textContent = newMsg ? 'From your recipients' : 'From this conversation';
   E('case-sugg-wrap').hidden = !sugg.length;
   E('case-sugg').replaceChildren(...sugg.map((c) => h('li', {
     className: 'sugg', tabindex: '0', onclick: () => pickCase(c), onkeydown: (e) => { if (e.key === 'Enter') pickCase(c); },
@@ -2640,7 +2654,7 @@ function paintCase(c) {
       className: 'linkish', type: 'button',
       onclick: () => openCasePicker({ mode: 'compose', m: c.parentId && state.thread ? (state.thread.messages.find((x) => x.id === c.parentId || (x.copies || []).some((cp) => cp.id === c.parentId)) || null) : null, composer: c }, {
         title: 'Link the sent mail to a case',
-        hint: 'The copy of what you send is put on this case\'s log once the mail sync stores it.',
+        hint: 'What you send goes on this case\'s log. It can take a few minutes to show there.',
       }),
     }, 'Pick a case…'));
 }

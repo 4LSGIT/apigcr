@@ -410,8 +410,10 @@ anyone who may send from at least one box.
   one).
 - **Case** (optional) puts what you send on a case's log. A reply starts
   with the email's own case; otherwise it is empty, with one-click
-  suggestions — the conversation's client cases, and the cases of contacts
-  you pick as recipients — plus **Pick a case…** to search. It never picks
+  suggestions — the cases of contacts you pick as recipients, and on a
+  reply the conversation's client cases too (a new message belongs to no
+  conversation, so it never offers the cases of the email open behind it)
+  — plus **Pick a case…** to search. It never picks
   one for you, and **Remove** sends without a link. An unknown case stops
   the send before anything goes out. The sent copy joins the case's log once
   the mail sync stores it (its log-status line shows *Linking to …* until

@@ -24,6 +24,7 @@
  *   - task title/desc caps not enforced client-side            → cap test
  *   - the Task POST missing source 'comms' / the link          → task tests
  *   - the Case suggestion auto-picking / case_id not sent      → composer tests
+ *   - New message's picker offering the open thread's cases     → the picker-source test (hotfix 2026-10-13)
  *   - parseSearch keeping the from: token inside q             → from: tests
  */
 
@@ -413,6 +414,45 @@ describe('G — the composer\'s Case field', () => {
     const sent = calls.find((c) => c.url === '/api/mail/send');
     expect(sent.payload.case_id).toBeUndefined();
     // …and picking a chip would have sent it:
+  });
+
+  test('New message\'s case picker never offers the open thread\'s cases — only the picked recipients\'', async () => {
+    // Live 2026-10-13: with a thread open, New message → "Pick a case…" listed
+    // THAT thread's related cases as "From this conversation" — one click from
+    // putting the new mail on the wrong case's log. (The picker also rendered
+    // UNDER the composer: CSS, gated in real Chromium by commsDensity.js.)
+    const { window, doc } = await boot({
+      handler: standard({
+        'GET /api/mail/messages/11/related': () => ({ contacts: [{ contact_id: 600, name: 'Roe, Other', kind: 'person', emails: ['other@client.test'], role: 'from',
+          cases: [{ case_id: 'CaseT9', case_number: '26-99999', case_stage: 'Open' }] }], unmatched: [] }),
+        'GET /api/contacts': () => ({ contacts: [{ contact_id: 500, contact_name: 'Doe, Jane', contact_email: 'jane@client.test',
+          cases: [{ case_id: 'CaseA1', case_number: '26-11111' }] }] }),
+      }),
+    });
+    await openThread(window, doc); // the thread behind: its related contact carries CaseT9
+    const pickerSuggs = () => (doc.getElementById('case-sugg-wrap').hidden ? [] : [...doc.querySelectorAll('#case-sugg li .l1')].map((li) => li.textContent));
+    // control: the reply-side picker DOES offer the conversation's case
+    [...logline(doc).querySelectorAll('button')].find((b) => b.textContent === 'Link to case').click();
+    expect(pickerSuggs().join(' ')).toContain('26-99999');
+    expect(doc.getElementById('case-sugg-label').textContent).toBe('From this conversation');
+    window.closeCaseLink();
+    doc.getElementById('compose-btn').click();
+    await tick(window, 60);
+    const pick = () => [...doc.querySelectorAll('.composer .case-row button.linkish')].find((b) => /Pick a case/.test(b.textContent));
+    pick().click();
+    expect(doc.getElementById('case-backdrop').classList.contains('open')).toBe(true);
+    expect(pickerSuggs()).toEqual([]); // no recipients yet → nothing offered, and never CaseT9
+    window.closeCaseLink();
+    const toInput = doc.querySelector('.composer .cf-row[data-field="to"] input');
+    toInput.focus(); // as a person does — focus was left in the closed picker's search box
+    toInput.value = 'jane'; toInput.dispatchEvent(new window.Event('input'));
+    await tick(window, 320);
+    doc.querySelector('.composer .sugg-list li').click();
+    pick().click();
+    const offered = pickerSuggs().join(' ');
+    expect(offered).toContain('26-11111'); // the recipient's case
+    expect(offered).not.toContain('26-99999'); // never the thread behind
+    expect(doc.getElementById('case-sugg-label').textContent).toBe('From your recipients');
   });
 
   test('picking a suggestion chip sends that case', async () => {
