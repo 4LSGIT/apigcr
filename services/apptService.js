@@ -1964,6 +1964,87 @@ async function markNoShow(db, { appt_id, note = '', enroll = false, actingUserId
 
 
 // ─────────────────────────────────────────────────────────────
+// FOLLOW-UP TASK (cancelAppt / rescheduleLater)
+//
+// Assignee: the acting user when there is one (a staff click — unchanged).
+// A caller with NO user — an internal/API-key automation such as the Calendly
+// cancel workflow (wf50), whose req.auth carries no userId — falls back to
+// app_setting `default_task_assignee` (a users.user id). Before this, those
+// callers passed to:0, createTask threw "requires to", and the catch swallowed
+// it into a console line: the task silently never existed (found 2026-10-13).
+// task_from stays the acting user, so automation tasks keep task_from 0 (the
+// automations-user convention every other machine task uses).
+//
+// Never throws — the follow-up is an add-on to a status write that has already
+// happened. A missing/invalid setting raises an error-severity alert (config
+// fault, non-transient); any other createTask failure raises a warning.
+// ─────────────────────────────────────────────────────────────
+
+const FOLLOW_UP_NOTE_MAX = 500;   // keeps desc well under createTask's 1000 cap
+
+/**
+ * Resolve the follow-up task assignee: acting user if > 0, else the
+ * `default_task_assignee` app setting, else null.
+ * @returns {Promise<number|null>}
+ */
+async function resolveFollowUpAssignee(db, actingUserId) {
+  const acting = Number(actingUserId);
+  if (Number.isInteger(acting) && acting > 0) return acting;
+  const { default_task_assignee: raw } = await getSettings(db, ['default_task_assignee']);
+  const id = parseInt(String(raw ?? '').trim(), 10);
+  return (Number.isInteger(id) && id > 0) ? id : null;
+}
+
+/**
+ * Create the optional follow-up task for a cancel / reschedule-later.
+ * @returns {Promise<number|null>} task id, or null when none was created
+ */
+async function createFollowUpTask(db, { appt, actingUserId, title, outcome, note }) {
+  let assignee = null;
+  try {
+    assignee = await resolveFollowUpAssignee(db, actingUserId);
+    if (!assignee) {
+      alert(db, {
+        source: 'app', kind: 'appt_followup_no_assignee', severity: 'error',
+        group_key: 'appt_followup_no_assignee',
+        title: 'Appointment follow-up task not created — no assignee',
+        message: `appt=${appt.appt_id}: "${title}" was requested by a caller with no user, ` +
+                 `and app_setting default_task_assignee is unset or not a user id.`,
+        ref_table: 'appts', ref_id: appt.appt_id,
+      });
+      return null;
+    }
+
+    const when    = friendlyApptDateTime(appt.appt_date);
+    const what    = (appt.appt_type || 'Appointment').trim();
+    const cleaned = String(note || '').trim();
+    const desc    = `${what}${when ? ` on ${when}` : ''} was ${outcome}.` +
+                    (cleaned ? `\nNote: ${cleaned.slice(0, FOLLOW_UP_NOTE_MAX)}` : '');
+
+    const result = await taskService.createTask(db, {
+      from:      actingUserId,
+      to:        assignee,
+      title,
+      desc,
+      link_type: 'contact',
+      link_id:   appt.appt_client_id
+    });
+    return result.task_id;
+  } catch (err) {
+    console.error('[APPT SERVICE] Create task failed:', err.message);
+    alert(db, {
+      source: 'app', kind: 'appt_followup_task_failed', severity: 'warning',
+      group_key: 'appt_followup_task_failed',
+      title: 'Appointment follow-up task failed',
+      message: `appt=${appt.appt_id} assignee=${assignee}: ${err.message}`,
+      ref_table: 'appts', ref_id: appt.appt_id,
+    });
+    return null;
+  }
+}
+
+
+// ─────────────────────────────────────────────────────────────
 // cancelAppt
 // ─────────────────────────────────────────────────────────────
 
@@ -2022,21 +2103,15 @@ async function cancelAppt(db, {
     console.error('[APPT SERVICE] Sequence engine error:', err.message);
   }
 
-  // 4) Optional: follow-up task
+  // 4) Optional: follow-up task (assignee rules: createFollowUpTask header)
   let taskId = null;
   if (create_task) {
-    try {
-      const result = await taskService.createTask(db, {
-        from:      actingUserId,
-        to:        actingUserId,
-        title:     'Appointment Cancellation Follow-up',
-        link_type: 'contact',
-        link_id:   appt.appt_client_id
-      });
-      taskId = result.task_id;
-    } catch (err) {
-      console.error('[APPT SERVICE] Create task failed:', err.message);
-    }
+    taskId = await createFollowUpTask(db, {
+      appt, actingUserId,
+      title:   'Appointment Cancellation Follow-up',
+      outcome: 'canceled',
+      note,
+    });
   }
 
   // 5) Log entry
@@ -2315,22 +2390,15 @@ async function rescheduleLater(db, {
     deleteApptProviderCalendarEvent(db, appt.appt_gcal_user, appt.appt_with, 'rescheduleLater');
   }
 
-  // 3) Optional task
+  // 3) Optional task (assignee rules: createFollowUpTask header)
   let taskId = null;
   if (create_task) {
-    try {
-      const result = await taskService.createTask(db, {
-        from:      actingUserId,
-        to:        actingUserId,      // TODO: use default_task_assignee from app_settings
-        title:     'Appointment Reschedule Follow-up',
-        desc:      'This appointment was marked rescheduled without scheduling another appointment.',
-        link_type: 'contact',
-        link_id:   appt.appt_client_id
-      });
-      taskId = result.task_id;
-    } catch (err) {
-      console.error('[APPT SERVICE] Create task failed:', err.message);
-    }
+    taskId = await createFollowUpTask(db, {
+      appt, actingUserId,
+      title:   'Appointment Reschedule Follow-up',
+      outcome: 'marked rescheduled without a new appointment',
+      note,
+    });
   }
 
   // 4) Log
@@ -2367,6 +2435,7 @@ module.exports = {
   cancelAppt,
   rescheduleAppt,
   rescheduleLater,
+  resolveFollowUpAssignee,
   cancelApptAutomation,
   insertApptLog,
   fetchApptWithContact,

@@ -110,7 +110,7 @@ Contact (optional attendee) ──────↗
 - Log entry written
 - Google Calendar event is deleted
 - Any active reminder sequences tied to this appointment are canceled
-- Optionally creates a follow-up task and/or sends a cancellation confirmation to the client
+- Optionally creates a follow-up task and/or sends a cancellation confirmation to the client. The task goes to whoever canceled; when an automation cancels with no staff member behind it (a Calendly cancellation, for example), it goes to the user in the **Default Task Assignee** setting (`default_task_assignee`, Settings → firm settings, Automations section). If that setting is empty, no task is created and IT gets an alert.
 
 ### Rescheduled — two modes
 
@@ -124,7 +124,7 @@ Contact (optional attendee) ──────↗
 **Reschedule Later** — you need to call the client back to find a new time:
 - The existing appointment is marked Rescheduled and the calendar event is removed
 - No new appointment is created
-- Optionally creates a follow-up task assigned to a staff member as a reminder to complete the rescheduling
+- Optionally creates a follow-up task as a reminder to complete the rescheduling — assigned the same way as the cancellation follow-up above
 
 ---
 

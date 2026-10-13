@@ -672,6 +672,11 @@ comms/task → log → non-blocking GCal:
 - `markNoShow`: enroll no_show sequence unless already enrolled.
 - `markAttended` / `cancelAppt` / `rescheduleAppt` (old → 'Rescheduled',
   new appt runs full createAppt chain) / `rescheduleLater`.
+- Follow-up task (`cancelAppt` / `rescheduleLater`, `create_task`):
+  `createFollowUpTask` assigns to the acting user, else app_setting
+  `default_task_assignee` (API-key callers such as wf50 carry no userId);
+  neither → no task + `appt_followup_no_assignee` alert. task_from stays the
+  acting user (0 for automations). Never throws.
 Status values are Title Case with spaces ('No Show', 'Canceled' one L).
 `appt_end` is GENERATED.
 
