@@ -631,7 +631,9 @@ function fireViewHook(db, { appt_view_id, event, appt_id, contact_id,
 // When a CLIENT (public booking widget or the /m/ manage page) creates,
 // reschedules, rebooks, or cancels an appointment, fire an internal FYI SMS
 // to the staff listed in app_setting `office_alerts_to` (comma-separated
-// users.user ids). Staff / court / internal / system actions send nothing.
+// users.user ids). Staff / court / internal / system actions send nothing
+// here. (A cancel with no acting user DOES text the provider — that is
+// notifyProviderOfUnattendedCancel, below.)
 //
 // This is NOT a hook (hooks are view-gated and fire for ~0 appts in prod) and
 // NOT a task (FYI only). Standalone, fire-and-forget, never blocks the write.
@@ -785,6 +787,69 @@ function notifyStaffOfClientAction(db, { event, source, apptId, oldStart = null,
     group_key: 'office_alert',
     title: 'Office staff appt alert failed',
     message: `event=${event} appt=${apptId}: ${err.message}`,
+  }));
+}
+
+
+// ─────────────────────────────────────────────────────────────
+// PROVIDER CANCEL NOTICE — cancels no person made
+//
+// When NO user did the cancel — an internal/API-key automation: the Calendly
+// cancel workflow (wf50), cancel_case_appts' terminal-stage cascade, any
+// future automation — text the appt's provider (appt_with) so they learn their
+// slot opened up. Fred's ruling 2026-10-13 (option a):
+//   - acting user > 0 → silent (a person did it on purpose; staff policy above)
+//   - source 'client' → silent here; notifyStaffOfClientAction already texts
+//     the provider (roster ∪ provider), so a client cancel never double-texts
+//
+// Delivery mirrors the office alert: sms_default_from sender, users.phone,
+// NOT gated on allow_sms (the provider owns the appt — an ops notice, not
+// reminder spam). appt_with 0/null, no phone, or no sender → skip with a warn.
+// Fire-and-forget; never blocks the cancel. A send failure → warning alert.
+// ─────────────────────────────────────────────────────────────
+
+const PROVIDER_NOTE_MAX = 200;    // keeps the text to a couple of segments
+
+/**
+ * @param {object} db
+ * @param {object} opts
+ * @param {object} opts.appt          - fetchApptWithContact row (pre-cancel)
+ * @param {number} opts.actingUserId
+ * @param {string} opts.source
+ * @param {string} [opts.note]        - the cancel note (e.g. "Canceled via Calendly by invitee - reason: …")
+ */
+function notifyProviderOfUnattendedCancel(db, { appt, actingUserId, source, note = '' }) {
+  const acting = Number(actingUserId);
+  if (Number.isInteger(acting) && acting > 0) return;   // a person did it
+  if (source === 'client') return;                       // notifyStaffOfClientAction covers it
+  const providerUid = Number(appt.appt_with);
+  if (!Number.isInteger(providerUid) || providerUid <= 0) return;
+
+  (async () => {
+    const { sms_default_from: smsFrom } = await getSettings(db, ['sms_default_from']);
+    if (!smsFrom) {
+      console.warn('[APPT SERVICE] provider cancel notice skipped: sms_default_from unset');
+      return;
+    }
+    const [[user]] = await db.query('SELECT phone FROM users WHERE user = ? LIMIT 1', [providerUid]);
+    if (!user || !user.phone) {
+      console.warn(`[APPT SERVICE] provider cancel notice: user ${providerUid} has no phone — skipped`);
+      return;
+    }
+
+    const client  = (appt.contact_name || '').trim() || `contact for appt ${appt.appt_id}`;
+    const type    = (appt.appt_type || 'appointment').trim();
+    const when    = friendlyApptDateTime(appt.appt_date);
+    const cleaned = String(note || '').trim();
+    const body    = `Appt canceled: ${client}, ${type}${when ? ` ${when}` : ''}.` +
+                    (cleaned ? ` ${cleaned.slice(0, PROVIDER_NOTE_MAX)}` : '');
+
+    await smsService.sendSms(db, smsFrom, user.phone, body);
+  })().catch(err => alert(db, {
+    source: 'app', kind: 'provider_cancel_notice_failed', severity: 'warning',
+    group_key: 'provider_cancel_notice',
+    title: 'Provider cancel notice failed',
+    message: `appt=${appt.appt_id} provider=${appt.appt_with}: ${err.message}`,
   }));
 }
 
@@ -2159,6 +2224,10 @@ async function cancelAppt(db, {
     apptId: appt_id,
   });
 
+  // 7d) Provider notice — cancels no person made (automations). Silent for
+  //     staff clicks and for 'client' (7c already texts the provider).
+  notifyProviderOfUnattendedCancel(db, { appt, actingUserId, source, note });
+
   // 8) GCal delete
   if (cancel_gcal && appt.appt_gcal) {
     deleteApptCalendarEvent(db, appt.appt_gcal, 'cancel');
@@ -2445,6 +2514,7 @@ module.exports = {
   applyApptLinkPatch,
   _singletonPriorAppts,
   notifyStaffOfClientAction,
+  notifyProviderOfUnattendedCancel,
   friendlyApptDateTime,
   // U4 test helper (repo `_`-prefix convention, as caseEventService does).
   // tests/calendarEvents.registry.test.js builds one envelope per source and

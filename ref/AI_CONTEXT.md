@@ -691,6 +691,10 @@ comms/task → log → non-blocking GCal:
   `default_task_assignee` (API-key callers such as wf50 carry no userId);
   neither → no task + `appt_followup_no_assignee` alert. task_from stays the
   acting user (0 for automations). Never throws.
+- Provider cancel notice (`notifyProviderOfUnattendedCancel`): a `cancelAppt`
+  with no acting user and source ≠ 'client' texts appt_with (users.phone,
+  sms_default_from; not allow_sms-gated). Staff clicks silent; client cancels
+  ride `notifyStaffOfClientAction` (roster ∪ provider) — never both.
 Status values are Title Case with spaces ('No Show', 'Canceled' one L).
 `appt_end` is GENERATED.
 

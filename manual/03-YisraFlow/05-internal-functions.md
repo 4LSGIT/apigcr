@@ -863,7 +863,7 @@ Note `date` is a single-day filter that takes precedence over `from`/`to`. There
 
 #### `cancel_case_appointments`
 
-Cancel every future Scheduled appointment on a case (terminal-stage cascade: dismissed/closed). ALWAYS silent — no client SMS/email, by construction. Each cancel runs apptService.cancelAppt's full side-effect chain (automation cancel, no_show sequence cancel, GCal delete, log row). Per-appt failures are isolated and reported in output, never thrown. "Future" = appt_date >= firm-local now unless `from` overrides it.
+Cancel every future Scheduled appointment on a case (terminal-stage cascade: dismissed/closed). ALWAYS silent to the client — no client SMS/email, by construction. Each cancel runs apptService.cancelAppt's full side-effect chain (automation cancel, no_show sequence cancel, GCal delete, log row); with acting_user_id 0 (the default) that chain also texts each appointment's provider (appt_with) that it was canceled. Per-appt failures are isolated and reported in output, never thrown. "Future" = appt_date >= firm-local now unless `from` overrides it.
 
 | Param | Type | Required | Description |
 |---|---|---|---|

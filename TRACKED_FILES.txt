@@ -511,6 +511,7 @@ ref/migrations/2026-10-13_custom_fields_s5b_drop_clio_columns.sql
 ref/migrations/2026-10-13_default_task_assignee.sql
 ref/migrations/2026-10-13_docs_review_comments.sql
 ref/migrations/2026-10-13_mail_sends.sql
+ref/migrations/2026-10-13_wf50_end_after_cancel.console.js
 ref/migrations/S1_notes_migration.sql
 ref/migrations/documents_s1.sql
 ref/migrations/documents_s2.sql
@@ -889,6 +890,7 @@ tests/apikeys.k1.test.js
 tests/applyFeSetting.test.js
 tests/apptService.followUpTask.test.js
 tests/apptService.lineage.test.js
+tests/apptService.providerCancelNotice.test.js
 tests/apptService.typeKey.test.js
 tests/apptTypeKey.patch.test.js
 tests/apptsSearch.picker.test.js
