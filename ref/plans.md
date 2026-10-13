@@ -438,9 +438,10 @@ Active surfaces with known next steps.
   (connector, router, NAT, static IP; `INFRA_GCP.md` §1), ≈ $7–8/mo. Detach
   the connector on a no-traffic tagged revision first and prove a database
   read through it — the socket has never run here without the connector.
-  (5) Decide whether to restore a server-side SELECT time limit: the old host
-  enforced `max_execution_time` = 30 s, Cloud SQL has none (`INFRA_GCP.md` §7).
-  It is one database flag — and `--database-flags` replaces the whole set.
+  (5) No server-wide SELECT time limit exists, the old host had none either,
+  and none is wanted as an instance flag: it would interrupt dumps and exports
+  (`INFRA_GCP.md` §7). Only if runaway app queries ever become a problem: set
+  `max_execution_time` per session in `startup/db.js`'s pool.
   (6) The 30 s pool idle recycling in `startup/db.js` was sized for the old
   host's 60 s `wait_timeout`; harmless, revisit only if connection churn ever
   shows up in a profile.

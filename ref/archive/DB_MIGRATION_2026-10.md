@@ -176,11 +176,17 @@ Worth reusing for any hand-run production operation.
 
 ## What changed for the app
 
-Recorded where it now matters, in `ref/INFRA_GCP.md` §7: no server-side 30-second
-limit on SELECTs any more; idle connections live 8 hours instead of 60 seconds;
-no phpMyAdmin; a cold buffer pool after any restart; flags and authorized
-networks that replace their whole list when changed. Local development goes
-through the Cloud SQL Auth Proxy (§10).
+Recorded where it now matters, in `ref/INFRA_GCP.md` §7: idle connections live
+8 hours instead of 60 seconds; no phpMyAdmin; a cold buffer pool after any
+restart; flags and authorized networks that replace their whole list when
+changed. Local development goes through the Cloud SQL Auth Proxy (§10).
+
+One thing did NOT change, though this record first said it had: neither server
+limits how long a SELECT may run. The 30-second figure attributed to the old host
+was read through the app's read-only API, which sets that limit on its own
+connections — the same session-for-server mistake as `sql_mode` above. It was
+caught when a plan to "restore" the limit was checked against the dump, which had
+run multi-minute SELECTs on the old host without being interrupted.
 
 ## Where the rest lives
 

@@ -320,10 +320,18 @@ Assumes fresh project or region. `P=lsg-api-425223 R=us-east1` (adjust if new pr
 - **The database's default collation is `utf8mb4_general_ci`**, not the 8.4 default.
   Existing tables name their collation; a new table created without one inherits the
   database default, and a mismatch surfaces later as "Illegal mix of collations".
-- **No server-side query time limit.** `max_execution_time` is 0 (the previous host
-  enforced 30 s on every SELECT). The read-only API and reports set their own
-  per-query limit; nothing else has one, so a runaway SELECT runs until its
-  connection closes.
+- **No server-wide query time limit, and none wanted as an instance flag.**
+  `max_execution_time` is 0. The previous host had none either: its dump ran
+  multi-minute SELECTs as the app's account, uninterrupted. The read-only API and
+  reports set their own per-session limit; nothing else has one, so a runaway SELECT
+  runs until its connection closes. A server-wide limit is the wrong cure: it also
+  interrupts `mysqldump` and SQL exports in the middle of a table (error 3024;
+  reproduced on a local server). If the app ever needs a ceiling, set it per session
+  in the pool (`startup/db.js`).
+- **Read server settings from a mysql client with `@@GLOBAL`, never through the app.**
+  The app's connections carry session values of their own, and twice one was taken for
+  the server's: `IGNORE_SPACE` in `sql_mode` (the mysql2 driver adds it), and a 30 s
+  `max_execution_time` (the read-only API sets it on its own connections).
 - **`wait_timeout` is 28800 s** (the previous host: 60 s). The pool's 30 s idle
   recycling in `startup/db.js` was sized for the old value and is merely conservative
   now.
