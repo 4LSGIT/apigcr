@@ -3365,8 +3365,13 @@ function convoRow(c) {
 /** The list row's preview: the last text, or what the last call was. */
 function convoSnippet(last, mine) {
   if (last.kind === 'call') {
+    // the phone icon says "a call"; beside it the Log's direction icon, as on the Calls rows
+    const inbound = last.direction === 'incoming';
     return h('div', { className: 'snippet call' + (last.missed ? ' missed' : '') },
-      icon(last.missed || last.unanswered ? 'fa-phone-slash' : 'fa-phone'), phCallLabel(last));
+      icon(last.missed || last.unanswered ? 'fa-phone-slash' : 'fa-phone'),
+      h('span', { className: 'dir', 'aria-hidden': 'true', title: inbound ? 'Incoming' : 'Outgoing' },
+        icon(inbound ? 'fa-arrow-right-to-bracket' : 'fa-arrow-right-from-bracket')),
+      phCallLabel(last));
   }
   return h('div', { className: 'snippet' }, `${mine ? 'You: ' : ''}${phBlank(last.snippet) ? 'Attachment' : last.snippet}`);
 }

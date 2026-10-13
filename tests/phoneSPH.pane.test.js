@@ -342,6 +342,10 @@ describe('comms.html — Phone tab', () => {
     expect(snips.map((x) => x.textContent)).toEqual(['Missed call', 'Outgoing call · no answer', 'Incoming call · 3m 05s', 'You: see you then']);
     expect(snips.map((x) => x.className)).toEqual(['snippet call missed', 'snippet call', 'snippet call', 'snippet']);
     expect(snips.slice(0, 3).map((x) => x.querySelector('i').className)).toEqual(['fa-solid fa-phone-slash', 'fa-solid fa-phone-slash', 'fa-solid fa-phone']);
+    // beside the phone icon: the Log's direction icon + tooltip, as on the Calls rows
+    expect(snips.slice(0, 3).map((x) => [x.querySelector('.dir i').className, x.querySelector('.dir').title])).toEqual([
+      ['fa-solid fa-arrow-right-to-bracket', 'Incoming'], ['fa-solid fa-arrow-right-from-bracket', 'Outgoing'], ['fa-solid fa-arrow-right-to-bracket', 'Incoming'],
+    ]);
     expect(snips[3].querySelector('i')).toBeNull();
   });
 
