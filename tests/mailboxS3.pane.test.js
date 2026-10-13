@@ -171,7 +171,7 @@ describe('compose (S3)', () => {
     const { window, doc } = await boot({ mailboxes: ro, before: (w) => { w.commsBadgeSet = (...args) => badge.push(args); },
       handler: standard({ 'GET /api/mail/mailboxes': () => ({ mailboxes: fresh(ro), viewer: { su: false, role: null, can_send: true }, inbox_unread_distinct: 3 }) }) }); // S2P: the badge is the server's distinct count
     expect([doc.getElementById('compose-btn').hidden, doc.getElementById('rail-compose').hidden]).toEqual([false, false]);
-    expect(badge[badge.length - 1]).toEqual([3, 2, true]);          // the shell keeps its Comms entry for a send-only person too
+    expect(badge[badge.length - 1]).toEqual([3]);                   // the count only — the shell's Comms entry is always shown
     expect(window.eval('state.me.can_send')).toBe(true);
     expect(window.eval('state.viewer')).toBeNull();           // the attachment viewer's key, untouched by the summary
     doc.querySelector('#msg-list .msg').click();

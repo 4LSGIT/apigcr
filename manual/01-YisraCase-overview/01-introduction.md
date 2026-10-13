@@ -59,7 +59,7 @@ YisraCase is organized into tabs down the left sidebar, in this order:
 | **Calendar** | Appointments *and* events in one list over a date window — see [Calendar tab](../05-Subsystems/12-calendar-tab.md) |
 | **Events** | Dated obligations and milestones, distinct from appointments — see [Events](08-events.md) |
 | **Tasks** | Your personal task queue |
-| **Comms** | The firm's email in one place — every mailbox shared with you, with your unread count on the tab. Shown once at least one mailbox is shared with you — see [Mailboxes and Comms](../08-Admin-Tools/08-mailboxes.md) |
+| **Comms** | The firm's email and phone lines in one place — every mailbox and line shared with you, with your unread count on the tab. Nothing shared yet? Comms says so and who to ask — see [Mailboxes and Comms](../08-Admin-Tools/08-mailboxes.md) |
 | **Log** | The activity log across records — see [Activity log](06-activity-log.md) |
 | **Bills** | Billing records *(placeholder; full feature in progress)* |
 | **Pipeline Board** | Where every case sits by stage and lane — see [Pipelines](13-pipelines.md) |

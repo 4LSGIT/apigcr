@@ -828,8 +828,8 @@ describe('comms hub pane', () => {
 
   test('the shell\'s sidebar badge gets the unread total from the pane (no second fetch)', async () => {
     const got = [];
-    const { window } = await boot({ handler: standard(), before: (w) => { w.commsBadgeSet = (n, boxes) => got.push([n, boxes]); } });
-    expect(got[got.length - 1]).toEqual([3, 2]);
+    const { window } = await boot({ handler: standard(), before: (w) => { w.commsBadgeSet = (...args) => got.push(args); } });
+    expect(got[got.length - 1]).toEqual([3]);
     expect(window.document.getElementById('tab-email-n').textContent).toBe('3');
   });
 

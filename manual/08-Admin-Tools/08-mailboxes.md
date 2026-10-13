@@ -227,7 +227,8 @@ tool `mailboxes`.
 ## Reading mail — Comms
 
 **Where:** **Comms** in the sidebar (and on Home), with your unread count on
-it — shown once at least one mailbox is shared with you. It piloted under
+it. Everyone sees it; with nothing shared, the Email and Phone tabs each say
+so and who to ask. It piloted under
 Admin → Comms. It shows the mail of every box you can read in one list; the
 **Phone** tab shows texts and calls on the firm's phone lines ([Phone lines —
 Comms](#phone-lines--comms), below).

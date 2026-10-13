@@ -1051,7 +1051,7 @@ function renderMailboxPicker() {
   E('tab-email-n').textContent = total ? String(total) : '';
   // The shell's sidebar Comms badge (index.html commsBadgeSet): this page
   // just counted it, so hand it over rather than make the shell fetch again.
-  try { if (typeof P.commsBadgeSet === 'function') P.commsBadgeSet(total, state.mailboxes.length, !!(state.me && state.me.can_send)); } catch (_) { /* decoration */ }
+  try { if (typeof P.commsBadgeSet === 'function') P.commsBadgeSet(total); } catch (_) { /* decoration */ }
   // Compose shows when the summary says the person may send as any box
   // (viewer.can_send — a send-only identity included, S3.1) or a box they
   // read lets them send (canSendAny). The identity list itself loads when a

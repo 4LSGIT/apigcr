@@ -572,13 +572,14 @@
       <i class="fa-solid fa-list"></i><span>Tasks</span>
       <span class="sb-badge" id="sbTasksBadge" style="display:none" title="Your overdue + due-today tasks">0</span>
     </div>
-    <!-- Comms hub (mailbox arc S2): every mailbox you can read, in one place.
-         Hidden until GET /api/mail/mailboxes says you can read at least one
-         (grant, SU, or the attorney read bypass) or may send as one
-         (viewer.can_send — a send-only identity, S3.1) — commsBadgeSet below; the
-         badge is your INBOX unread over those boxes. Took Settings' place in
-         the sidebar 2026-10-11 (Settings: More Features, or "Hi, <name>!"). -->
-    <div class="sb-item" id="sbComms" data-tab="tabComms" onclick="openMainTab('tabComms')" style="display:none" title="Comms">
+    <!-- Comms hub (mailbox arc S2): every mailbox and phone line you can read,
+         in one place. Shown to everyone, like every other tab: the hub's Email
+         and Phone tabs each say so when nothing is shared with you. (It used
+         to wait for GET /api/mail/mailboxes, so it popped in last and hid
+         from phone-only readers.) The badge is your INBOX unread over your
+         boxes — commsBadgeSet below. Took Settings' place in the sidebar
+         2026-10-11 (Settings: More Features, or "Hi, <name>!"). -->
+    <div class="sb-item" id="sbComms" data-tab="tabComms" onclick="openMainTab('tabComms')" title="Comms">
       <i class="fa-solid fa-comments"></i><span>Comms</span>
       <span class="sb-badge" id="sbCommsBadge" style="display:none" title="Unread in the inboxes you can read">0</span>
     </div>
@@ -672,8 +673,8 @@
       <i class="fa-solid fa-grip fa-2xl"></i><br /><br />More Features
     </button>
     <!-- Comms took Settings' Home slot with its sidebar one (2026-10-11);
-         shown with sbComms, by commsBadgeSet. -->
-    <button id="homeComms" class="home-btn" onclick="openMainTab('tabComms')" style="display:none">
+         always shown, like sbComms. -->
+    <button id="homeComms" class="home-btn" onclick="openMainTab('tabComms')">
       <i class="fa-solid fa-comments fa-2xl"></i><br /><br />Comms
     </button>
     <!-- Quick search — only shown on narrow viewports where the header search is hidden -->
@@ -2817,31 +2818,23 @@
     window.tasksBadgeRefresh = tasksBadgeRefresh;
 
     /**
-     * Comms entry + badge (sidebar Comms item, Home's Comms button). Shown
-     * once the user can read at least one mailbox or may send as one
-     * (`canSend` = the summary's viewer.can_send: a send-only identity such
-     * as a Google alias has no readable box, S3.1); badge = INBOX unread over
-     * those boxes — the same numbers the hub's summary shows
-     * (GET /api/mail/mailboxes). Set from three places:
+     * Sidebar Comms badge = INBOX unread over the boxes you can read — the
+     * same number the hub's summary shows (GET /api/mail/mailboxes). The
+     * entries themselves (sbComms, homeComms) are always shown: the hub
+     * explains an empty Email or Phone tab itself. Set from three places:
      *   - boot (loadUserContext) and every 5 minutes while this page is
      *     visible: mail arrives on the ingest worker's ~5-minute poll and
      *     nothing pokes the shell when it does;
      *   - comms.html, through window.commsBadgeSet, each time it recounts
      *     (open / mark read / refresh) — it already has the numbers.
-     * boxes === null (the fetch failed) shows the entry without a badge: the
-     * hub explains its own errors, and hiding the door would hide that too.
+     * A failed fetch clears the badge; the hub explains its own errors.
      */
-    function commsBadgeSet(total, boxes, canSend) {
-      const show = boxes == null || boxes > 0 || !!canSend;
-      for (const id of ['sbComms', 'homeComms']) {
-        const el = E(id);
-        if (el) el.style.display = show ? '' : 'none';
-      }
+    function commsBadgeSet(total) {
       const b = E('sbCommsBadge');
       if (b) {
         const n = Number(total) || 0;
         b.textContent = n;
-        b.style.display = show && n ? '' : 'none';
+        b.style.display = n ? '' : 'none';
       }
     }
     async function commsBadgeRefresh() {
@@ -2853,8 +2846,8 @@
         // hub's All mail is the parent's Inbox (comms.html unreadOf, same rule).
         const ids = new Set(boxes.map((m) => Number(m.id)));
         const total = boxes.reduce((n, m) => n + (m.alias_of != null && ids.has(Number(m.alias_of)) ? 0 : (Number(m.inbox_unread) || 0)), 0);
-        commsBadgeSet(total, boxes.length, !!(r && r.viewer && r.viewer.can_send));
-      } catch (_) { commsBadgeSet(0, null); } // decoration — never let it break the shell
+        commsBadgeSet(total);
+      } catch (_) { commsBadgeSet(0); } // decoration — never let it break the shell
     }
     window.commsBadgeSet = commsBadgeSet;
     window.commsBadgeRefresh = commsBadgeRefresh;
@@ -4876,7 +4869,7 @@ async function initAuth() {
       applyCustomTab(user.user_custom_tab || null);
 
       tasksBadgeRefresh();   // sidebar Tasks badge (fire-and-forget)
-      commsBadgeRefresh();   // sidebar Comms entry + unread badge (fire-and-forget)
+      commsBadgeRefresh();   // sidebar Comms unread badge (fire-and-forget)
 
       // ?open= is either a main tab id, or `file:<n>` pointing into ?files=.
       // Everything else is rejected: E('file:0') is null, E('whatever-a-user-typed')

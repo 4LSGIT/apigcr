@@ -43,8 +43,8 @@ const noComments = (s) => s.replace(/<!--[\s\S]*?-->/g, '');
 describe('wiring: Comms is a sidebar tab, Settings lives in More Features', () => {
   const sidebar = noComments(between('<nav id="appSidebar"', '</nav>'));
 
-  test('sidebar: a Comms item (hidden until mailboxes are known) opening tabComms, with its badge; no Settings item', () => {
-    expect(sidebar).toMatch(/<div class="sb-item" id="sbComms" data-tab="tabComms" onclick="openMainTab\('tabComms'\)" style="display:none" title="Comms">/);
+  test('sidebar: a Comms item (always shown — no wait on a fetch) opening tabComms, with its badge; no Settings item', () => {
+    expect(sidebar).toMatch(/<div class="sb-item" id="sbComms" data-tab="tabComms" onclick="openMainTab\('tabComms'\)" title="Comms">/);
     expect(sidebar).toMatch(/<span class="sb-badge" id="sbCommsBadge" style="display:none"/);
     expect(sidebar).not.toMatch(/data-tab="tabSettings"/);
     // Comms sits in Records, between Tasks and Log
@@ -61,9 +61,9 @@ describe('wiring: Comms is a sidebar tab, Settings lives in More Features', () =
     expect(admin).toMatch(/data-target="mailboxesDiv"/);
   });
 
-  test('Home: Comms took Settings\' button (hidden with the sidebar item); Settings is still one click from the greeting', () => {
+  test('Home: Comms took Settings\' button (always shown, like the sidebar item); Settings is still one click from the greeting', () => {
     const home = noComments(between('<div id="tabHome"', '<div class="home-search">'));
-    expect(home).toMatch(/<button id="homeComms" class="home-btn" onclick="openMainTab\('tabComms'\)" style="display:none">/);
+    expect(home).toMatch(/<button id="homeComms" class="home-btn" onclick="openMainTab\('tabComms'\)">/);
     expect(home).not.toMatch(/tabSettings/);
     expect(HTML).toMatch(/<span class="hdr-greeting" onclick="openMainTab\('tabSettings'\)"/);
     expect(HTML).toMatch(/<div id="tabSettings" class="tab-main">/);
@@ -87,7 +87,7 @@ describe('wiring: Comms is a sidebar tab, Settings lives in More Features', () =
 });
 
 describe('the badge and the active item, run for real', () => {
-  const BADGE_SRC = between('    function commsBadgeSet(total, boxes, canSend) {', '    }, 5 * 60 * 1000);');
+  const BADGE_SRC = between('    function commsBadgeSet(total) {', '    }, 5 * 60 * 1000);');
   const ACTIVE_SRC = (() => {
     const a = HTML.indexOf('    function updateSidebarActive(tabName) {');
     const b = HTML.indexOf('\n    }\n', a);
@@ -99,10 +99,10 @@ describe('the badge and the active item, run for real', () => {
     const dom = new JSDOM(`<!DOCTYPE html><body>
       <nav id="appSidebar">
         <div class="sb-item" id="sbOpenFiles"></div><div id="tabOpenFiles"></div>
-        <div class="sb-item" id="sbComms" data-tab="tabComms" style="display:none"><span class="sb-badge" id="sbCommsBadge" style="display:none">0</span></div>
+        <div class="sb-item" id="sbComms" data-tab="tabComms"><span class="sb-badge" id="sbCommsBadge" style="display:none">0</span></div>
         <div class="sb-item" id="sbMore" data-tab="tabMore" data-tab-also="tabSettings"></div>
       </nav>
-      <button id="homeComms" style="display:none"></button></body>`, { runScripts: 'outside-only' });
+      <button id="homeComms"></button></body>`, { runScripts: 'outside-only' });
     const w = dom.window;
     const calls = [];
     const intervals = [];
@@ -115,13 +115,13 @@ describe('the badge and the active item, run for real', () => {
   }
   const tick = () => new Promise((r) => setTimeout(r, 0));
 
-  test('readable mailboxes → the entry + Home button show, badge = INBOX unread over them', async () => {
+  test('readable mailboxes → badge = INBOX unread over them; the entry + Home button stay shown', async () => {
     const t = boot({ api: () => ({ mailboxes: [{ inbox_unread: 3 }, { inbox_unread: '4' }, {}] }) });
     await t.w.commsBadgeRefresh();
     expect(t.calls).toEqual([['GET', '/api/mail/mailboxes']]);
     expect([t.shown('sbComms'), t.shown('homeComms'), t.shown('sbCommsBadge'), t.badge().textContent]).toEqual([true, true, true, '7']);
     // all read: entry stays, badge goes
-    t.w.commsBadgeSet(0, 3);
+    t.w.commsBadgeSet(0);
     expect([t.shown('sbComms'), t.shown('sbCommsBadge')]).toEqual([true, false]);
   });
 
@@ -135,22 +135,15 @@ describe('the badge and the active item, run for real', () => {
     expect(t.badge().textContent).toBe('3');
   });
 
-  test('no mailbox shared → no entry anywhere; a failed fetch → the entry (the hub explains itself), no badge', async () => {
-    const none = boot({ api: () => ({ mailboxes: [] }) });
+  test('no mailbox shared → the entries stay (the hub says nothing is shared), no badge; a failed fetch clears a stale badge', async () => {
+    const none = boot({ api: () => ({ mailboxes: [], viewer: { su: false, role: null, can_send: false } }) });
     await none.w.commsBadgeRefresh();
-    expect([none.shown('sbComms'), none.shown('homeComms'), none.shown('sbCommsBadge')]).toEqual([false, false, false]);
+    expect([none.shown('sbComms'), none.shown('homeComms'), none.shown('sbCommsBadge')]).toEqual([true, true, false]);
     const down = boot({ api: () => { throw new Error('502'); } });
-    down.w.commsBadgeSet(5, 1);
+    down.w.commsBadgeSet(5);
+    expect(down.shown('sbCommsBadge')).toBe(true);
     await down.w.commsBadgeRefresh();
     expect([down.shown('sbComms'), down.shown('homeComms'), down.shown('sbCommsBadge')]).toEqual([true, true, false]);
-  });
-
-  test('nothing to read but a box to send as (a send-only identity, S3.1) → the entry shows, no badge', async () => {
-    const t = boot({ api: () => ({ mailboxes: [], viewer: { su: false, role: null, can_send: true } }) });
-    await t.w.commsBadgeRefresh();
-    expect([t.shown('sbComms'), t.shown('homeComms'), t.shown('sbCommsBadge')]).toEqual([true, true, false]);
-    t.w.commsBadgeSet(0, 0, false);
-    expect(t.shown('sbComms')).toBe(false);
   });
 
   test('signed out → no fetch; the 5-minute refresh runs only while the page is visible', async () => {
