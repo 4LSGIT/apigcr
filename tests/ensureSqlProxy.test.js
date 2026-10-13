@@ -11,9 +11,9 @@
 // with a stale token and with no credentials, 2026-10-13) — see REAL below.
 //
 // The stand-in takes its orders from a control file next to it, not from
-// environment variables: jest gives each test file its own copy of
-// process.env, and a child spawned by the module under test inherits the REAL
-// one — a variable set here would never reach it.
+// environment variables: the module under test chooses the child's
+// environment (it drops GOOGLE_APPLICATION_CREDENTIALS), so the environment is
+// something under test here, not a channel for orders.
 
 "use strict";
 
@@ -68,6 +68,7 @@ function files() {
     pidFile: path.join(dir, `proxy-${seq}.pid`),
     selfPid: path.join(dir, `self-${seq}.pid`),
     argsFile: path.join(dir, `args-${seq}.json`),
+    envFile: path.join(dir, `env-${seq}.json`),
   };
 }
 
@@ -86,6 +87,7 @@ beforeAll(() => {
   //   slowExit  ms to keep the port open after SIGTERM (a proxy that takes a
   //             moment to shut down)
   //   argsFile, selfPid   where to record argv / the pid
+//   envFile   where to record the credential-related environment it got
   fs.writeFileSync(fakeBin, `#!/usr/bin/env node
 const fs = require("fs"); const net = require("net"); const path = require("path");
 const args = process.argv.slice(2);
@@ -93,6 +95,7 @@ let ctl = {};
 try { ctl = JSON.parse(fs.readFileSync(path.join(__dirname, "control.json"), "utf8")); } catch (_) {}
 if (ctl.argsFile) fs.writeFileSync(ctl.argsFile, JSON.stringify(args));
 if (ctl.selfPid) fs.writeFileSync(ctl.selfPid, String(process.pid));
+if (ctl.envFile) fs.writeFileSync(ctl.envFile, JSON.stringify({ sa: process.env.GOOGLE_APPLICATION_CREDENTIALS, marker: process.env.YC_PROXY_TEST_MARKER }));
 const mode = ctl.mode || "listen";
 if (ctl.slowExit) process.on("SIGTERM", () => setTimeout(() => process.exit(0), ctl.slowExit));
 if (mode === "exit") { console.error(${JSON.stringify(REAL.NO_ADC)}); process.exit(1); }
@@ -207,6 +210,25 @@ describe("ensureSqlProxy — against a real child process", () => {
     // a second call finds it and starts nothing new
     const again = await ensureSqlProxy({ env: LOCAL_ENV, port, bin: fakeBin, logFile: f.logFile, pidFile: f.pidFile });
     expect(again.status).toBe("running");
+  });
+
+  test("connects as the developer: .env's GOOGLE_APPLICATION_CREDENTIALS is not passed on, the rest of the environment is", async () => {
+    const f = files(); const port = await freePort();
+    control({ envFile: f.envFile });
+    const saved = { sa: process.env.GOOGLE_APPLICATION_CREDENTIALS, marker: process.env.YC_PROXY_TEST_MARKER };
+    process.env.GOOGLE_APPLICATION_CREDENTIALS = path.join(dir, "some-service-account.json");
+    process.env.YC_PROXY_TEST_MARKER = "kept";
+    try {
+      const r = await ensureSqlProxy({ env: LOCAL_ENV, port, bin: fakeBin, logFile: f.logFile, pidFile: f.pidFile });
+      if (r.pid) started.push(r.pid);
+      expect(r.status).toBe("started");
+      expect(JSON.parse(fs.readFileSync(f.envFile, "utf8"))).toEqual({ marker: "kept" });
+      expect(process.env.GOOGLE_APPLICATION_CREDENTIALS).toBe(path.join(dir, "some-service-account.json")); // the caller's own env untouched
+    } finally {
+      for (const [k, v] of [["GOOGLE_APPLICATION_CREDENTIALS", saved.sa], ["YC_PROXY_TEST_MARKER", saved.marker]]) {
+        if (v === undefined) delete process.env[k]; else process.env[k] = v;
+      }
+    }
   });
 
   test("the started proxy outlives the process that started it", async () => {

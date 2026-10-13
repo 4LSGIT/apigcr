@@ -49,6 +49,15 @@
 //       proxy started from here that no longer connects is then replaced, which
 //       is what picks up fresh credentials.
 //
+// WHOSE CREDENTIALS: THE DEVELOPER'S, NEVER .env's SERVICE-ACCOUNT KEY
+//   Google's auth library prefers GOOGLE_APPLICATION_CREDENTIALS over the
+//   developer's application-default login, and a local .env may set it (a
+//   service-account key for the app's own Google calls, e.g. storage). Callers
+//   load .env before calling here, so the proxy would inherit it and connect
+//   as that account, which typically lacks Cloud SQL Client: a 403 that names
+//   no account, while signing in again changes nothing (bit 2026-10-13). The
+//   proxy is started without that variable.
+//
 // WHY PORT 3306 AND NOTHING ELSE
 //   startup/db.js and scripts/dump-schema.js pass `host` and no port, so they
 //   always connect to 3306. A proxy on any other port would be one nothing
@@ -264,7 +273,9 @@ async function ensureSqlProxy(opts = {}) {
   let child; let spawnError = null; let exited = null;
   try {
     fs.writeSync(fd, `\n${START_MARK} ${new Date().toISOString()} starting ${bin} for ${d.instance} on port ${port}\n`);
-    child = cp.spawn(bin, [d.instance, "--port", String(port)], { detached: true, stdio: ["ignore", fd, fd] });
+    // The developer's login, not .env's service-account key: see the header.
+    const { GOOGLE_APPLICATION_CREDENTIALS: _sa, ...childEnv } = process.env;
+    child = cp.spawn(bin, [d.instance, "--port", String(port)], { detached: true, stdio: ["ignore", fd, fd], env: childEnv });
     child.on("error", (err) => { spawnError = err; });
     child.on("exit", (code, signal) => { exited = { code, signal }; });
   } catch (err) {

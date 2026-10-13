@@ -484,7 +484,11 @@ internet, nothing to update when the laptop changes networks.
    that name.
 2. Give the proxy credentials: `gcloud auth application-default login` (browser; signs
    in as you). This is separate from `gcloud auth login` — the proxy reads the
-   application-default credentials, not the CLI's.
+   application-default credentials, not the CLI's. A `GOOGLE_APPLICATION_CREDENTIALS`
+   line in `.env` (a service-account key for the app's own Google calls) would
+   otherwise outrank that login; `ensure-sql-proxy.js` starts the proxy without it,
+   so the tunnel is always yours. A proxy started by hand from a shell that has it
+   set connects as the service account instead.
 3. The Google account needs **`roles/cloudsql.client`** on the project. A project
    Owner already has it. Anyone else, granted once by an Owner:
    ```
