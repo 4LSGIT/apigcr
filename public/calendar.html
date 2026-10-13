@@ -8,9 +8,9 @@
        (window.Toast = Swal.mixin). Same load order as contact/case. -->
   <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
   <!-- Shared dialogs (newApptDialog / newEventDialog + pickers). Run IN this
-       iframe so their Swal stacks here, never in the shell — which hosts us
-       either in the Calendar tab's Grid frame (U9b-P1) or, via the Appts
-       tab's legacy Calendar button, in a shell Swal this must not replace. -->
+       iframe — hosted in the Calendar tab's Grid frame (U9b-P1) — so their
+       Swal stacks over the calendar instead of colliding with shell-level
+       modals. -->
   <!-- Diagnostics ring buffer. Loaded BEFORE scripts.js so it also catches
        errors thrown by scripts.js itself. See public/js/diag.js. -->
   <script src="/js/diag.js"></script>
@@ -23,10 +23,10 @@
   <link rel="stylesheet" href="/theme.css">
   <script src="/themeSync.js"></script>
   <style>
-    /* Fill whatever viewport hosts us — the Calendar tab's #calxGridFrame
-       (sized to the window by index.html's calxGridSize) or the legacy 600px
-       Swal iframe. Flex column: the bar takes its height, #calendar gets the
-       rest, and FullCalendar (height:'100%') scrolls inside it. */
+    /* Fill the host viewport — the Calendar tab's #calxGridFrame, sized to
+       the window by index.html's calxGridSize. Flex column: the bar takes its
+       height, #calendar gets the rest, and FullCalendar (height:'100%')
+       scrolls inside it. */
     html { height: 100%; }
     body {
       margin: 0;
@@ -317,8 +317,7 @@ function newApptFromSlot(defaultDate) {
 }
 
 // ── Click an appt / event → detail popover (Swal IN THIS IFRAME, so the
-//    shell surface hosting us — the Grid tab frame, or the legacy Swal —
-//    stays put underneath) ──
+//    Grid tab frame hosting us stays put underneath) ──
 function fmtRange(ev) {
   if (ev.allDay) return ev.start.toLocaleDateString() + ' (all day)';
   const opts = { hour: 'numeric', minute: '2-digit' };
@@ -327,11 +326,11 @@ function fmtRange(ev) {
   return s;
 }
 
-// Deep-link helper: close any shell modal hosting this calendar (the legacy
-// Appts-tab Swal; a harmless no-op from the Grid tab), then open the file
-// tab — same `Swal.close(); addFile(...)` pattern as quick search.
+// Deep-link helper — open the file tab, same addFile(...) pattern as quick
+// search. (It used to P.Swal.close() the legacy Appts-tab Swal hosting this
+// calendar first; that host was retired in U9b item 8, and no shell modal can
+// be open above a frame the user just clicked in.)
 function openFile(label, fileType, id) {
-  try { P.Swal.close(); } catch (_) {}
   P.addFile(String(label), fileType, String(id));
 }
 
@@ -522,9 +521,9 @@ function init() {
    fires on List→Grid toggles and on every re-open of the tab, which is how a
    grid that went stale while hidden behind the List view (or another tab)
    catches up. visibilitychange still covers the backgrounded-browser-window
-   case. The legacy host — the Appts tab's tabApptsCal() Swal — still exists;
-   framed there the modal is open or it does not exist, so visibilitychange
-   is the only stale path, as before.
+   case. The legacy host — the Appts tab's tabApptsCal() 600px Swal — was
+   retired in U9b item 8 (that button now opens this tab in Grid mode), so
+   #calxGridFrame is the ONLY host.
 
    calState.seq makes a refetch safe against an in-flight feed fetch: fetchFeed
    takes a ticket at entry and drops its own response if a newer fetch has

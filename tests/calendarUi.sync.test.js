@@ -385,11 +385,13 @@ describe('U9b-P3 — grid upgrades', () => {
     expect(opened).toEqual([42]);
   });
 
-  test('the deep links moved to the deny button and still work', async () => {
+  test('the deep links moved to the deny button and still work — and openFile no longer closes a shell modal', async () => {
     const { window } = await boot();
     window.Swal.fire = async (c) => ({ isConfirmed: false, isDenied: !!c.showDenyButton });
     const files = [];
     window.addFile = (...a) => files.push(a);
+    const closes = [];
+    window.Swal.close = () => closes.push(1);
 
     window.eventPopover({
       title: 'Hearing', allDay: true, start: new Date(2026, 9, 14),
@@ -398,6 +400,9 @@ describe('U9b-P3 — grid upgrades', () => {
     });
     await tick(window, 10);
     expect(files).toEqual([['26-47542', 'case', 'ayx7GJ7j']]);
+    // U9b cleanup: the legacy Swal host is retired (item 8) — the deep link
+    // must not reach for a shell modal that cannot exist.
+    expect(closes).toEqual([]);
   });
 
   test('7c: a valid remembered view wins the boot; junk or nothing falls back to the first-boot defaults', async () => {

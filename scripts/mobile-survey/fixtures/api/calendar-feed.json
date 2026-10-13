@@ -1,8 +1,8 @@
 {
   "status": "success",
   "providers": [
-    { "id": 1, "name": "Stuart Sandweiss", "color": "#2563eb" },
-    { "id": 6, "name": "Fred Ross", "color": "#16a34a" }
+    { "id": 1, "name": "Alex Admin", "color": "#2563eb" },
+    { "id": 2, "name": "Sam Staff", "color": "#d97706" }
   ],
   "free_skipped": false,
   "items": [
