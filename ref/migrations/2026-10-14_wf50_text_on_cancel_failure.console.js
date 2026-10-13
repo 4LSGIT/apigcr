@@ -24,18 +24,28 @@
  *   8 SMS Stuart               unchanged; now reached on no-match OR failure
  * Base and draft are both asserted; a draft that fails its check is discarded
  * before anything publishes. Validated against lib/versionDiff
- * validateWorkflowDraft: no errors/warnings.
+ * validateWorkflowDraft: no errors/warnings. Config comparisons are
+ * key-order-insensitive (`canon`) — MySQL JSON re-orders keys on write; the
+ * first run (2026-10-14) tripped on exactly that, discarded the draft (v4,
+ * retired) and published nothing. A re-run forks a fresh draft (v5) from v3.
  *
  * On the failure path Stuart gets step 4's text ("Calendly cancellation: X
  * canceled …"), same as v2 did; the failed step 6 shows on the execution.
  *
  * ORDER: any time — independent of the backend deploy.
  * ROLLBACK: republish v3 from the workflow editor's version history.
- * SUCCESS: one console line starting "GO — wf50 v3 → v4 published".
+ * SUCCESS: one console line starting "GO — wf50 v3 → v" (v5 after the
+ * discarded first run).
  */
 await (async () => {
   const WF = 50;
   const cfgOf = (s) => (typeof s.config === 'string' ? JSON.parse(s.config) : s.config);
+  // Key-order-insensitive compare. MySQL's JSON type re-orders object keys on
+  // write (shorter keys first), so a JSON.stringify comparison of a value we
+  // sent against the stored copy fails even when the content is identical —
+  // the first run of this script (2026-10-14) discarded a correct draft on it.
+  const canon = (v) => JSON.stringify(v, (_k, x) => (x && typeof x === 'object' && !Array.isArray(x))
+    ? Object.keys(x).sort().reduce((o, k) => { o[k] = x[k]; return o; }, {}) : x);
   const fail = (msg) => { console.error('NO-GO — ' + msg); throw new Error(msg); };
   const LABELS_V3 = ['Normalize cancel payload', 'Is this a cancellation?', 'Find the appointment',
                      'Build cancel body + SMS', 'Appointment found?', 'Cancel the appointment',
@@ -83,9 +93,9 @@ await (async () => {
   if (!(d.steps[5].type === 'webhook' && d6.url === s6.url && d6.body === '{{cancelBody}}' && d6.method === s6.method
         && Number(d6.credential_id) === Number(s6.credential_id) && d6.set_vars?.cancelStatus === '{{this.status}}'))
     problems.push('step 6 config: ' + JSON.stringify(d6));
-  if (!(d7.function_name === 'evaluate_condition' && JSON.stringify(d7.params) === JSON.stringify(STEP7_PARAMS)))
+  if (!(d7.function_name === 'evaluate_condition' && canon(d7.params) === canon(STEP7_PARAMS)))
     problems.push('step 7 config: ' + JSON.stringify(d7));
-  if (JSON.stringify(d8) !== JSON.stringify(s8)) problems.push('step 8 changed: ' + JSON.stringify(d8));
+  if (canon(d8) !== canon(s8)) problems.push('step 8 changed: ' + JSON.stringify(d8));
   if (problems.length) {
     await apiSend(`/workflows/${WF}/discard-draft`, 'POST', {});
     fail('draft check failed, draft discarded: ' + problems.join(' | '));
