@@ -2821,7 +2821,9 @@ const phAttachmentNote = () => h('span', { className: 'ph-att', title: 'A pictur
   icon('fa-paperclip'), 'Attachment — not shown here yet');
 
 function callRow(c) {
-  const dirIcon = c.direction === 'incoming' ? 'fa-arrow-down' : 'fa-arrow-up';
+  // the Log's direction icons (index.html / case.html / contact.html)
+  const inbound = c.direction === 'incoming';
+  const dirIcon = inbound ? 'fa-arrow-right-to-bracket' : 'fa-arrow-right-from-bracket';
   const what = phCallLabel(c, false);
   const opens = phPartyOk(c.other_party);
   return h('li', {
@@ -2835,7 +2837,7 @@ function callRow(c) {
       h('span', { className: 'from', title: fmtPhone(c.other_party) }, c.other_party ? phWho(c.other_party, c.contact) : '(unknown number)'),
       h('span', { className: 'date' }, listDate(c.at))),
     h('div', { className: 'r2' },
-      h('span', { className: 'dir', 'aria-hidden': 'true' }, icon(dirIcon)),
+      h('span', { className: 'dir', 'aria-hidden': 'true', title: inbound ? 'Incoming' : 'Outgoing' }, icon(dirIcon)),
       h('span', { className: 'kind' }, what),
       c.contact ? h('span', { className: 'dir' }, fmtPhone(c.other_party)) : null),
     phIsAll() ? phLineTags([c.line_id]) : null);

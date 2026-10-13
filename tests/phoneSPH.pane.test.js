@@ -283,6 +283,11 @@ describe('comms.html — Phone tab', () => {
     expect(rows[1].textContent).toMatch(/Outgoing · 2m 05s/);
     expect(rows[2].textContent).toMatch(/Outgoing · no answer/);
     expect(rows[2].classList.contains('missed')).toBe(false);
+    // direction: the Log's icons (in = to-bracket, out = from-bracket), with a tooltip
+    expect(rows.map((r) => [r.querySelector('.r2 .dir i').className, r.querySelector('.r2 .dir').title])).toEqual([
+      ['fa-solid fa-arrow-right-to-bracket', 'Incoming'], ['fa-solid fa-arrow-right-from-bracket', 'Outgoing'],
+      ['fa-solid fa-arrow-right-from-bracket', 'Outgoing'], ['fa-solid fa-arrow-right-to-bracket', 'Incoming'],
+    ]);
     rows[1].click();
     await tick(window, 60);
     expect(calls.map((c) => c.url)).toContain('/api/phone-lines/1/conversations/3135550002');
