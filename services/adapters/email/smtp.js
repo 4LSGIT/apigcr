@@ -9,9 +9,11 @@
 //
 // Behavior preserved from the pre-refactor monolith:
 //   - No transporter pooling/caching — new transporter per call.
-//   - `from_name` is intentionally ignored; the bare `from` email is
-//     passed to nodemailer. (Old code did this; changing would be a
-//     behavior change outside this slice's scope.)
+//   - `from_name`, when set on the emailRow, builds From as
+//     `"<from_name>" <from>`; only a row WITHOUT from_name sends the bare
+//     address. The comms hub relies on this: mailboxSendService passes
+//     from_name=null for a box sending through a shared credential
+//     precisely to get the bare address.
 //   - On send failure, log a FAILED-<ts> row to email_log BEFORE rethrowing.
 //
 // Hub-only options (mailbox S3, emailService HUB-ONLY OPTIONS): cc, bcc,

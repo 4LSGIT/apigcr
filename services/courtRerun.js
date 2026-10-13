@@ -39,9 +39,10 @@ async function isLive(db) {
 
 /**
  * Re-fetch trusted subject/body/from_email from email_log by message_id (latest
- * row). COLLATE: email_log.message_id is utf8mb4_general_ci while
- * court_ai_log.message_id is utf8mb4_unicode_ci — force a collation on the
- * cross-column compare or MySQL errors ER_CANT_AGGREGATE_2COLLATIONS.
+ * row). COLLATE: both message_id columns are utf8mb4_general_ci live
+ * (verified 2026-10-05; court_ai_log was utf8mb4_unicode_ci once), so the
+ * clause is a no-op kept as cheap insurance against the columns diverging
+ * again (divergence errors ER_CANT_AGGREGATE_2COLLATIONS).
  */
 async function fetchEmail(db, messageId) {
   const blank = { subject: '', body: '', from_email: '' };

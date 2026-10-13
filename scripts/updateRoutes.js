@@ -11,6 +11,12 @@
 // once this runs from .githooks/pre-commit. Comparison therefore ignores that
 // line — same reasoning as the fingerprint check in scripts/dump-schema.js,
 // just cheaper: this script needs no DB, so there is nothing to fingerprint.
+//
+// ENV MATTERS: routes are discovered by REQUIRING the route modules, and some
+// register conditionally on env — routes/_aitest.js registers nothing unless
+// AITEST_ENABLED=1 (+AITEST_KEY). dotenv below loads the checkout's .env, so
+// the main checkout regenerates the full table; a worktree WITHOUT .env drops
+// the /_aitest rows — that diff is environmental, not drift.
 require('dotenv').config();
 
 const express = require('express');

@@ -110,14 +110,14 @@ module.exports = promisePool;
 //
 // 2. DELETE THESE FILES:
 //      startup/dbReadonly.js            (this file)
-//      startup/dbScratch.js             (if scratch subsystem was added)
 //      lib/auth.readonly.js
 //      lib/sqlGuard.js                  (UNLESS admin.dbConsole.js was
 //                                         refactored to import from it —
 //                                         check first with `grep -r sqlGuard`)
 //      routes/api.readonly.js
 //      routes/api.readonlyKeys.js
-//      routes/api.scratch.js            (if scratch subsystem was added)
+//      routes/api.scratch.js            (scratch has no pool file of its own —
+//                                         writes ride the main pool via req.db)
 //      routes/api.alertIt.js            (IT alert endpoint — rides this auth)
 //      public/readonlyKeys.html
 //

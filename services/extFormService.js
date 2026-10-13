@@ -45,8 +45,8 @@ const has = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
 // ENTROPY — load-bearing, corrected 2026-08-12 (X2.1, §9 co-review F1). The
 // bearer credential is **40 bits**, not the 48 an earlier comment here
 // claimed: lib/caseId.js mints 8 chars of Crockford Base32 (32 symbols) via
-// generateCaseId(), called by routes/api.intake.js:611 and
-// api.intake.petition.js:428. The ~1k legacy mixed-case base64url ids are
+// generateCaseId(), whose only caller is caseService.createCase — the single
+// INSERT INTO cases. The ~1k legacy mixed-case base64url ids are
 // ~42 bits AS THE DB SEES THEM — cases.case_id is utf8mb4_general_ci, so the
 // collation folds case. caseId.js's "40 bits is ample" reasons about
 // COLLISION (a birthday bound); this route depends on the different property

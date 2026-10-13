@@ -2229,10 +2229,12 @@ async function createContact(db, {
   tags   = '',
   notes  = '',
   // Phase 1 (dialog rationalization): optional start_date overrides for the
-  // primary phone/email child rows. 'YYYY-MM-DD' or null. When null, the
-  // INSERTs fall back to CURDATE() via COALESCE — behavior unchanged. Used by
-  // the orphan-adopt create-new branch to backdate ownership to the value's
-  // earliest-seen log date. Validated upstream in the intake route.
+  // primary phone/email child rows. 'YYYY-MM-DD' or null. Both go through
+  // contactPhoneService/contactEmailService.resolveStartDate: null requested
+  // → NULL ("since forever") when the value was never held before, else
+  // MAX(end_date)+1 — never a CURDATE() fallback. Used by the orphan-adopt
+  // create-new branch to backdate ownership to the value's earliest-seen log
+  // date. Validated upstream in the intake route.
   phone_start_date = null,
   email_start_date = null,
   // Everything the list above doesn't name. Collected ONLY so the S6 block

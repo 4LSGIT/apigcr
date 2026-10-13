@@ -994,6 +994,13 @@ async function createLogEntry(db, {
   }
 
   // Mailbox S2: optional event time (UTC instant → EST5EDT, like NOW() below).
+  // TZ SPELLINGS (2026-10-13): log_date's wall clock is written under three
+  // names that are today the same offset — 'EST5EDT' here, 'America/New_York'
+  // in the after_contact_update DB trigger, and the firm zone America/Detroit
+  // (FIRM_TIMEZONE env). Deliberate only by coincidence: a future zone change
+  // touches all three literals, in two languages. CONVERT_TZ with named zones
+  // returns NULL on a MySQL without tz tables loaded (log_date is NOT NULL) —
+  // a real-engine clone needs mysql_tzinfo_to_sql first.
   let logDateExpr = `CONVERT_TZ(NOW(), @@session.time_zone, 'EST5EDT')`;
   const logDateParams = [];
   if (date != null && date !== '') {

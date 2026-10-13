@@ -65,9 +65,10 @@ const OPEN_QUEUE_WHERE = `
        AND c3.outcome = 'queued'
   )`;
 
-// email_log.message_id is utf8mb4_general_ci, court_ai_log is utf8mb4_unicode_ci
-// — force a collation on the cross-table compare. Correlated subquery (not a
-// JOIN) so a duplicate email_log row can't fan out the queue.
+// Both message_id columns are utf8mb4_general_ci live (verified 2026-10-05;
+// court_ai_log was utf8mb4_unicode_ci once) — the COLLATE is a no-op kept as
+// cheap insurance against the columns diverging again. Correlated subquery
+// (not a JOIN) so a duplicate email_log row can't fan out the queue.
 const EMAIL_SUBJECT_SUBQ = `
   (SELECT el.subject FROM email_log el
     WHERE el.message_id = cal.message_id COLLATE utf8mb4_general_ci
