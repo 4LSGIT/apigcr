@@ -433,11 +433,10 @@ Active surfaces with known next steps.
   closes (about 2026-11-12): delete the cutover copies of client data — the
   dump directory and saved service settings in Cloud Shell's home, and
   anything left in the migration bucket — then drop the old SiteGround
-  database. (4) Only after (3), and after checking that no other outside
-  service allowlists the app's egress address: remove the NAT chain
-  (connector, router, NAT, static IP; `INFRA_GCP.md` §1), ≈ $7–8/mo. Detach
-  the connector on a no-traffic tagged revision first and prove a database
-  read through it — the socket has never run here without the connector.
+  database. (4) DONE: the NAT chain (connector, NAT, router, static address,
+  subnet) is deleted; the app has no fixed egress address (`INFRA_GCP.md` §1).
+  It was not tied to (3) after all: once staff had worked on Cloud SQL, going
+  back to the old database was no longer an option the chain could serve.
   (5) No server-wide SELECT time limit exists, the old host had none either,
   and none is wanted as an instance flag: it would interrupt dumps and exports
   (`INFRA_GCP.md` §7). Only if runaway app queries ever become a problem: set
