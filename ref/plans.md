@@ -429,14 +429,19 @@ Active surfaces with known next steps.
   `ref/archive/DB_MIGRATION_2026-10.md`; current setup: `ref/INFRA_GCP.md`.
   (1) Now: raise the GCP budget alert (Cloud SQL alone is ≈ $53/mo; the alert
   was set for a ≈ $8 bill). (2) After a week or two of clean running: buy the
-  1-year committed-use discount (≈ $53 → ≈ $40). (3) When the rollback window
-  closes (about 2026-11-12): delete the cutover copies of client data — the
-  dump directory and saved service settings in Cloud Shell's home, and
-  anything left in the migration bucket — then drop the old SiteGround
-  database. (4) DONE: the NAT chain (connector, NAT, router, static address,
-  subnet) is deleted; the app has no fixed egress address (`INFRA_GCP.md` §1).
-  It was not tied to (3) after all: once staff had worked on Cloud SQL, going
-  back to the old database was no longer an option the chain could serve.
+  1-year committed-use discount (≈ $53 → ≈ $40). (3) Now — there is no
+  rollback window any more: staff have worked on Cloud SQL since 2026-10-13,
+  and the old revisions name a connector that no longer exists. Delete the
+  cutover copies of client data (the dumps, the parity output and the saved
+  service settings in Cloud Shell's home; the object in the migration bucket).
+  Empty SiteGround's Remote MySQL list: it still admits the released NAT
+  address, which Google can now hand to anyone. Then check that nothing has
+  written to the old SiteGround database since the freeze (newest rows in the
+  busy tables, against 2026-10-13 06:48:48 UTC) — a newer row is a writer still
+  pointed at the old host — and drop it. Cloud SQL's own backups and 7 days of
+  point-in-time recovery are the safety net from here. (4) DONE: the NAT chain
+  (connector, NAT, router, static address, subnet) is deleted; the app has no
+  fixed egress address (`INFRA_GCP.md` §1).
   (5) No server-wide SELECT time limit exists, the old host had none either,
   and none is wanted as an instance flag: it would interrupt dumps and exports
   (`INFRA_GCP.md` §7). Only if runaway app queries ever become a problem: set

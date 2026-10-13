@@ -188,6 +188,27 @@ connections — the same session-for-server mistake as `sql_mode` above. It was
 caught when a plan to "restore" the limit was checked against the dump, which had
 run multi-minute SELECTs on the old host without being interrupted.
 
+## Afterwards (the same day)
+
+- **The NAT chain went too.** The VPC connector, Cloud NAT, router, static address
+  and subnet existed only so SiteGround could allowlist the app. They were removed
+  on 2026-10-13 (detached 21:58, deleted 22:06 UTC) with a second staged script:
+  check, then a revision without the connector proven on a test address before any
+  traffic moved, then the delete. Afterwards the job poller, a mail poll and
+  Documents Sync all ran without errors. The Google bill is now ≈ $54 a month,
+  almost all Cloud SQL (≈ $40 with a 1-year commitment). The approval was for a
+  total under SiteGround's $45 plan once email has left it too; that holds with
+  the commitment.
+- **Its first run was refused by gcloud itself.** Clearing a connector whose
+  egress is `all-traffic` needs a confirmation prompt, and with prompts disabled
+  gcloud refuses after reading the service, before sending anything. The harness's
+  stand-in had not modelled that check, and the argument-parse check stops before
+  it. Fix and lesson: `ref/INFRA_GCP.md` §7, and the method line in `CLAUDE.md` →
+  Deploy (run every changing command through the real CLI against a stub API).
+- **The old database is no longer a fallback.** From that evening rollback was not
+  possible: staff had written to Cloud SQL, and the old revisions named the deleted
+  connector. Remaining cleanup: `ref/plans.md` → Operational.
+
 ## Where the rest lives
 
 Private, because they carry host names, addresses and account names:
