@@ -692,9 +692,11 @@ comms/task → log → non-blocking GCal:
   neither → no task + `appt_followup_no_assignee` alert. task_from stays the
   acting user (0 for automations). Never throws.
 - Provider cancel notice (`notifyProviderOfUnattendedCancel`): a `cancelAppt`
-  with no acting user and source ≠ 'client' texts appt_with (users.phone,
-  sms_default_from; not allow_sms-gated). Staff clicks silent; client cancels
-  ride `notifyStaffOfClientAction` (roster ∪ provider) — never both.
+  with no acting user and source ≠ 'client' texts appt_with (users.phone;
+  not allow_sms-gated). Staff clicks silent; client cancels ride
+  `notifyStaffOfClientAction` (roster ∪ provider) — never both. Both send from
+  sms_staff_from → sms_default_from: sms_default_from alone is the provider's
+  own line in prod (self-text).
 Status values are Title Case with spaces ('No Show', 'Canceled' one L).
 `appt_end` is GENERATED.
 

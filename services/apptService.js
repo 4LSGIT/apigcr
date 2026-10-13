@@ -655,7 +655,21 @@ function fireViewHook(db, { appt_view_id, event, appt_id, contact_id,
 // ops duty), distinct from allow_sms which governs a user's own task-reminder
 // spam. Empty/unset office_alerts_to ⇒ no roster recipients ⇒ feature OFF (the
 // roster is the master switch; an empty roster suppresses the provider text too).
+//
+// Sender: sms_staff_from, falling back to sms_default_from — the staff-SMS rule
+// every internal text follows (taskService.getSmsFrom, alerting, decisions,
+// alert-IT). sms_default_from is the CLIENT-facing line, and in production it
+// is the provider's own number (2485592400 = Stuart): until 2026-10-14 this
+// alert read sms_default_from alone, so the provider copy went from Stuart's
+// line to Stuart's line. The provider cancel notice below uses the same rule.
 // ─────────────────────────────────────────────────────────────
+
+const STAFF_SMS_FROM_KEYS = ['sms_staff_from', 'sms_default_from'];
+
+/** Staff-SMS sender from a getSettings() result: sms_staff_from → sms_default_from. */
+function staffSmsFrom(settings) {
+  return (settings?.sms_staff_from || '').trim() || (settings?.sms_default_from || '').trim() || null;
+}
 
 /**
  * Friendly firm-local datetime for an ops SMS, e.g. "Mon Jun 15, 2:30 PM".
@@ -690,12 +704,12 @@ function friendlyApptDateTime(dt) {
 function notifyStaffOfClientAction(db, { event, source, apptId, oldStart = null, oldApptId = null }) {
   if (source !== 'client') return;            // staff/court/internal/system → silent
   (async () => {
-    const settings = await getSettings(db, ['office_alerts_to', 'sms_default_from']);
+    const settings = await getSettings(db, ['office_alerts_to', ...STAFF_SMS_FROM_KEYS]);
     const rawList  = (settings.office_alerts_to || '').trim();
     if (!rawList) return;                       // empty recipients = feature OFF
-    const smsFrom = settings.sms_default_from;
+    const smsFrom = staffSmsFrom(settings);
     if (!smsFrom) {
-      console.warn('[APPT SERVICE] office alert skipped: sms_default_from unset');
+      console.warn('[APPT SERVICE] office alert skipped: sms_staff_from / sms_default_from unset');
       return;
     }
 
@@ -802,8 +816,8 @@ function notifyStaffOfClientAction(db, { event, source, apptId, oldStart = null,
 //   - source 'client' → silent here; notifyStaffOfClientAction already texts
 //     the provider (roster ∪ provider), so a client cancel never double-texts
 //
-// Delivery mirrors the office alert: sms_default_from sender, users.phone,
-// NOT gated on allow_sms (the provider owns the appt — an ops notice, not
+// Delivery mirrors the office alert: staff sender (sms_staff_from →
+// sms_default_from), users.phone, NOT gated on allow_sms (the provider owns the appt — an ops notice, not
 // reminder spam). appt_with 0/null, no phone, or no sender → skip with a warn.
 // Fire-and-forget; never blocks the cancel. A send failure → warning alert.
 // ─────────────────────────────────────────────────────────────
@@ -826,9 +840,9 @@ function notifyProviderOfUnattendedCancel(db, { appt, actingUserId, source, note
   if (!Number.isInteger(providerUid) || providerUid <= 0) return;
 
   (async () => {
-    const { sms_default_from: smsFrom } = await getSettings(db, ['sms_default_from']);
+    const smsFrom = staffSmsFrom(await getSettings(db, STAFF_SMS_FROM_KEYS));
     if (!smsFrom) {
-      console.warn('[APPT SERVICE] provider cancel notice skipped: sms_default_from unset');
+      console.warn('[APPT SERVICE] provider cancel notice skipped: sms_staff_from / sms_default_from unset');
       return;
     }
     const [[user]] = await db.query('SELECT phone FROM users WHERE user = ? LIMIT 1', [providerUid]);

@@ -74,8 +74,12 @@ afterAll(() => calendarTypeService.invalidate());
 // Stubs
 // ─────────────────────────────────────────────────────────────────────────────
 
-const FROM      = '2486213656';
-const SS_PHONE  = '2485592400';
+// Production shape (verified 2026-10-14 from rc_messages_log): sms_default_from
+// is Stuart's own line, sms_staff_from the firm's outbound staff line.
+const DEFAULT_LINE = '2485592400';
+const STAFF_LINE   = '2486213656';
+const FROM         = STAFF_LINE;
+const SS_PHONE     = '2485592400';
 const RG_PHONE  = '2489655355';
 
 function apptRow(overrides = {}) {
@@ -162,7 +166,8 @@ function setSetting(k, v) { settingsState[k] = v; }
 beforeEach(() => {
   jest.clearAllMocks();
   for (const k of Object.keys(settingsState)) delete settingsState[k];
-  setSetting('sms_default_from', FROM);
+  setSetting('sms_default_from', DEFAULT_LINE);
+  setSetting('sms_staff_from',   STAFF_LINE);
 });
 
 const providerLookups = (db) => db.calls.filter((c) => /^SELECT phone FROM users WHERE user = \?/i.test(c.sql));
@@ -235,6 +240,9 @@ describe('cancelAppt → provider notice', () => {
     const toProvider = smsService.sendSms.mock.calls.filter((c) => c[2] === SS_PHONE);
     expect(toProvider).toHaveLength(1);
     expect(toProvider[0][3]).toMatch(/^Client cancel: /);   // the office alert, not this notice
+    // The office alert also sends from the staff line — before 2026-10-14 it
+    // read sms_default_from alone and texted Stuart from his own number.
+    expect(toProvider[0][1]).toBe(STAFF_LINE);
     expect(providerLookups(db)).toEqual([]);
     expect(db.unmatched).toEqual([]);
   });
@@ -266,8 +274,26 @@ describe('cancelAppt → provider notice', () => {
     expect(db.unmatched).toEqual([]);
   });
 
-  test('sms_default_from unset → skipped before any lookup', async () => {
+  test('sms_staff_from unset → falls back to sms_default_from', async () => {
+    delete settingsState.sms_staff_from;
+    const db = makeDb();
+    await cancel(db, { actingUserId: 0, source: 'system' });
+    expect(smsService.sendSms).toHaveBeenCalledTimes(1);
+    expect(smsService.sendSms.mock.calls[0][1]).toBe(DEFAULT_LINE);
+    expect(db.unmatched).toEqual([]);
+  });
+
+  test('blank sms_staff_from is treated as unset', async () => {
+    setSetting('sms_staff_from', '   ');
+    const db = makeDb();
+    await cancel(db, { actingUserId: 0, source: 'system' });
+    expect(smsService.sendSms.mock.calls[0][1]).toBe(DEFAULT_LINE);
+    expect(db.unmatched).toEqual([]);
+  });
+
+  test('both sender settings unset → skipped before any lookup', async () => {
     delete settingsState.sms_default_from;
+    delete settingsState.sms_staff_from;
     const db = makeDb();
     await cancel(db, { actingUserId: 0, source: 'system' });
     expect(smsService.sendSms).not.toHaveBeenCalled();
