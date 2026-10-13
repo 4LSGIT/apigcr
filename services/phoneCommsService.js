@@ -435,8 +435,9 @@ async function listConversations(db, line, query = {}) {
  * A call's `at` is its START and it is ingested at its END (see TIMES), so
  * within a page a call can come after texts that were sent while it ran —
  * the pane orders by `at`. The recordings arc hangs a call's recording /
- * transcript / summary on its call item (raw_extra.recording_id is on every
- * live call row).
+ * transcript / summary on its call item (ref/COMMS_ARCHIVE_DESIGN.md: RC rows
+ * carry raw_extra.recording_id; Quo rows leave it empty and resolve through
+ * provider_ref).
  */
 async function listMessages(db, line, party, query = {}) {
   if (!PARTY_RE.test(String(party || ''))) throw httpError(400, 'conversation must be a phone number (digits)');
