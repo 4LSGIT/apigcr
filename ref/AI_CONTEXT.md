@@ -281,7 +281,7 @@ body. Governing migrations in `ref/migrations/`.*
     never user passwords; workflow mints (`create_cta`) are exempt from the
     active-SU click check via `mint_source='workflow'` and refuse password
     protection and `dry_run`.
-- **Custom fields are live end to end (09-25, arc S0–S4 + CFG-1):** admin-defined
+- **Custom fields are live end to end (arc S0–S6 + CFG-1, 09-24 → 10-13):** admin-defined
   fields on cases and contacts. `field_defs` is the registry; values live in
   one JSON column per entity (`cases.custom`, `contacts.custom`); a reconciler
   keeps one typed **VIRTUAL generated column named exactly the `field_key`**
@@ -301,7 +301,14 @@ body. Governing migrations in `ref/migrations/`.*
     `lib/ services/ routes/` for it, comments included.
   - **The only writers** are `caseService.updateCase` / `contactService.updateContact`;
     `fieldDefService.splitCustomFields` + `customAssignment` compose one
-    `JSON_SET`/`JSON_REMOVE` into the same UPDATE as the core columns.
+    `JSON_SET`/`JSON_REMOVE` into the same UPDATE as the core columns. At
+    creation the only thing written is a def's `default_value` (S6), stamped
+    once by the create chokepoints below; a `cf_` key in a create payload is a
+    400 — values go through PATCH.
+  - **One INSERT per table:** `caseService.createCase` is the ONLY
+    `INSERT INTO cases` and `contactService.createContact` the only
+    `INSERT INTO contacts` — both pinned by a filesystem-grep test, so a new
+    create path calls them rather than writing its own INSERT.
   - **`validation.required` is enforced ONLY by the renderer**
     (`public/js/yc-custom-fields.js`), never the chokepoint — a partial PATCH
     that omits a required key must succeed.
@@ -313,8 +320,11 @@ body. Governing migrations in `ref/migrations/`.*
     `updateContact`'s transaction, shaped like `after_contact_update`'s.
     Cases write none — `updateCase` logs no core-column edit either, and there
     is no `after_case_update` trigger (`ref/plans.md`).
-  - Registry is EMPTY in prod as of 09-25: the mechanism ships, S5 creates the
-    first fields.
+  - **The Clio ids are custom fields:** `cf_clio_matter` (case) and
+    `cf_clio_id` (contact), migrated 09-25 (S5-A). The old columns
+    `cases.clio_matter`, `cases.case_clio_id` and `contacts.contact_clio_id`
+    were DROPPED 10-13 (S5-B) — read and write the Clio ids only by the `cf_`
+    keys.
 - **SSN is an ordinary column (09-24):** `contacts.contact_ssn` stopped being
   special. Removed: `resolverService.BLOCKED_COLUMNS.contacts`, the
   `contact_ssn` / `contact_dob` entries in `lib/reportSchema/manifest.js`
@@ -802,6 +812,10 @@ in ref/database.sql. The rest:
    the new primary is a DIFFERENT row, and demote runs before inserts or
    `uk_one_active_primary` fires.
 10. Cloud Run filesystem is case-sensitive — iframe `src=` casing matters.
+11. `ALTER TABLE … DROP COLUMN` succeeds while a DB trigger still names the
+    column — then EVERY UPDATE of that table fails `1054 Unknown column … in
+    'OLD'`. A zero-row UPDATE does not show it; a one-row no-op does. Rebuild
+    the trigger first (`ref/migrations/2026-10-13_custom_fields_s5b_drop_clio_columns.sql`).
 
 ## 16. YISRAHOOK — WEBHOOK RECEIVER & AUTOMATION ROUTER
 
@@ -953,7 +967,11 @@ be SELECT/SHOW/DESCRIBE/DESC/EXPLAIN (comments stripped first). `WITH`
 rejected deliberately (MySQL 8 allows WITH…UPDATE) — use subqueries.
 Defense stack: SELECT-only DB grant, no multi-statements, keyword
 allowlist, OUTFILE reject, per-query MAX_EXECUTION_TIME (default 30s / max
-120s), row cap (default 5000 / max 20000, payload-truncating).
+120s), row cap (default 5000 / max 20000, payload-truncating). The grant is
+SELECT-only (`yc_ro@%` on Cloud SQL), so `information_schema.TRIGGERS`,
+`ROUTINES` and `EVENTS` come back EMPTY to it — MySQL hides objects you hold
+no privilege on. An empty answer there is not "none exist": ask Fred to run
+the query in the SU db console, which connects as the app user.
 
 **Scratch:** `PUT /api/scratch/:ns/:k` `{v, meta?}` — `v` STRING-ONLY
 (JSON.stringify objects yourself; meta may be JSON), MEDIUMTEXT ceiling.
