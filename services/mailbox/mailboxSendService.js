@@ -92,6 +92,8 @@ const emailService = require('../emailService');
 const gmailAdapter = require('../adapters/email/gmail');
 const transport = require('./imapTransport');
 const { loadConnectionRow, folderConfig, htmlToText } = require('./mailboxIngestService');
+const logService = require('../logService');
+const { inferDirection, firmDomains } = require('../emailIngestService');
 const read = require('./mailReadService');
 const { getSetting } = require('../settingsService');
 const { utcToLocal } = require('../timezoneService');
@@ -114,11 +116,21 @@ const SEED_JOB_TYPE = 'mail_sent_read_seed';
 const SEED_FIRST_DELAY_MS = 6 * 60_000;  // one ~5-min ingest tick + margin
 const SEED_MAX_ATTEMPTS = 4;             // +6, +11, +21, +41 min
 const SEED_BACKOFF_S = 300;
+// S2P §G: the sent copy's case link. Same first delay as the seed; MORE
+// attempts, because a 409 is expected until the copy clears the 10-minute
+// store-only grace (caseLink STORE_ONLY_GRACE_MIN): tries at +6, +11, +21,
+// +41, +81, +161 min — attempt 3 (+21) is the first past a typical
+// store-at-~6-min + 10-min grace, and the tail absorbs a slow scheduler.
+const LINK_JOB_TYPE = 'mail_sent_case_link';
+const LINK_FIRST_DELAY_MS = 6 * 60_000;
+const LINK_MAX_ATTEMPTS = 6;
+const LINK_BACKOFF_S = 300;
 const LOG_ID_TRIES = 5;
 const LOG_ID_WAIT_MS = 60;
+const CASE_ID_RE = /^[A-Za-z0-9_-]{1,20}$/; // mailReadService.caseLink's rule
 const BODY_KEYS = Object.freeze([
   'mailbox_id', 'to', 'cc', 'bcc', 'subject', 'body_text', 'body_html',
-  'in_reply_to_message_fk', 'quote_original', 'signature',
+  'in_reply_to_message_fk', 'quote_original', 'signature', 'case_id',
 ]);
 
 const EMAIL_RE = /^[^\s@<>()[\]\\,;:"]+@[^\s@<>()[\]\\,;:"]+\.[^\s@<>()[\]\\,;:"]+$/;
@@ -369,6 +381,16 @@ function validateSendBody(body) {
     ? null : toId(body.in_reply_to_message_fk, 'in_reply_to_message_fk');
   out.quote_original = has(body, 'quote_original') ? toBool(body.quote_original, 'quote_original') : true;
   out.signature = has(body, 'signature') ? toBool(body.signature, 'signature') : false;
+  // S2P §G: the composer's optional Case field. Shape-checked here; existence
+  // is checked against `cases` BEFORE dispatch (sendFromMailbox) — an unknown
+  // case is a 400 and nothing leaves.
+  if (body.case_id === undefined || body.case_id === null || body.case_id === '') {
+    out.case_id = null;
+  } else {
+    const c = typeof body.case_id === 'string' ? body.case_id.trim() : (typeof body.case_id === 'number' ? String(body.case_id) : '');
+    if (!CASE_ID_RE.test(c)) throw httpError(400, 'case_id must be a case id');
+    out.case_id = c;
+  }
   if (!out.in_reply_to_message_fk && !out.subject) throw httpError(400, 'subject is required');
   return out;
 }
@@ -740,6 +762,17 @@ async function sendFromMailbox(db, userId, mailboxId, bodyIn) {
   }
   const subject = body.subject || (parent ? reSubject(parent.subject) : '');
 
+  // S2P §G: the Case field is validated BEFORE dispatch — an unknown case is
+  // a 400 and nothing leaves (caseLink's own rule, run early).
+  let caseRow = null;
+  if (body.case_id) {
+    const [[cs]] = await db.query(
+      'SELECT case_id, case_number, case_number_full FROM cases WHERE case_id = ? LIMIT 1', [body.case_id]
+    );
+    if (!cs) throw httpError(400, `case_id "${body.case_id}" is not a case`);
+    caseRow = cs;
+  }
+
   await checkBudget(db, cred, mailbox);
 
   // ── bodies ──
@@ -878,6 +911,127 @@ async function sendFromMailbox(db, userId, mailboxId, bodyIn) {
     }
   }
 
+  // ── S2P: attribution + the Case field (still the best-effort tail) ──
+  // One mail_sends row per successful dispatch (design OQ4). The Case field's
+  // link rides it: `caseLink` when a copy of the send will be stored (exactly
+  // the seed's condition — a key we can find the copy by), a send-time log
+  // row when no copy will EVER be stored (an SMTP send whose APPEND did not
+  // land in a polled folder — the worker will never see it, so nothing can
+  // collide with the row; §G.3 double-log hazard is the stored-copy case).
+  const caseLink = { state: null, job_id: null };
+  const sendRow = {
+    mailbox_id: Number(mailbox.id),
+    user: Number(userId),
+    message_id: rfcId,
+    provider_id: seedKey && seedKey.provider_id ? seedKey.provider_id : (providerMessageId && GMAIL_ID_RE.test(providerMessageId) ? providerMessageId : null),
+    email_log_id: emailLogId,
+    case_id: caseRow ? caseRow.case_id : null,
+    case_link_state: null,
+    case_log_id: null,
+    sent_at: sentAt,
+  };
+  const noCopyEver = cred.provider === 'smtp' && !(append.appended && folderPolled(mailbox, append.folder));
+  if (caseRow) {
+    if (seedKey) {
+      sendRow.case_link_state = 'pending';
+    } else if (noCopyEver) {
+      try {
+        const toList = body.to.map(r => r.email).join(', ');
+        let message = bodies.text || '';
+        if (message.length > 50_000) message = message.slice(0, 50_000) + '…[truncated]'; // caseLink's LOG_MESSAGE_SOFT_CAP
+        const direction = inferDirection(mailbox.address, firmDomains());
+        const r = await logService.createLogEntry(db, {
+          type: 'email',
+          link_type: 'email',
+          link_id: body.to[0].email,
+          about_type: 'case',
+          about_id: caseRow.case_id,
+          by: Number(userId),
+          data: { From: mailbox.address, To: toList, Subject: subject, Message: message },
+          extra: {
+            source: 'mailbox-hub-send',
+            mailbox_id: Number(mailbox.id),
+            email_log_id: emailLogId,
+            message_id: rfcId,
+          },
+          from: mailbox.address,
+          to: toList,
+          subject,
+          message,
+          direction,
+          // dated now (the send), never the copy's later ingest
+        });
+        sendRow.case_link_state = 'linked';
+        sendRow.case_log_id = Number(r.log_id);
+      } catch (err) {
+        sendRow.case_link_state = 'failed';
+        console.warn(`[mailSend] mailbox ${mailbox.id}: send-time case log failed:`, err && err.message);
+      }
+    } else {
+      // A copy may be stored but no key can ever find it (a Gmail send whose
+      // adapter returned no id): a send-time log row risks the §G.3 double
+      // log, so this fails loudly instead.
+      sendRow.case_link_state = 'failed';
+    }
+  }
+  let sendRowId = null;
+  try {
+    const [r] = await db.query(
+      `INSERT INTO mail_sends (mailbox_id, user, message_id, provider_id, email_log_id, case_id, case_link_state, case_log_id, sent_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [sendRow.mailbox_id, sendRow.user, sendRow.message_id, sendRow.provider_id, sendRow.email_log_id,
+        sendRow.case_id, sendRow.case_link_state, sendRow.case_log_id, sendRow.sent_at]
+    );
+    sendRowId = r && r.insertId ? Number(r.insertId) : null;
+  } catch (err) {
+    // Never fails the send — the mail went out. ONE alert per send (dedup by
+    // the email_log id). Severity follows what was actually lost (review D3):
+    // attribution alone is a warning; a case link the sender ASKED for that
+    // will now never be made (pending had no row to hang the job on) is an
+    // ERROR — a requested log entry is missing, same as the job's give-up.
+    // In the no-copy branch the log row was already written at send, so only
+    // the attribution is lost there.
+    console.warn(`[mailSend] mailbox ${mailbox.id}: mail_sends insert failed:`, err && err.message);
+    sendAlert(db, {
+      kind: 'mail_send_attribution_failed',
+      group_key: `app:mail_send_attribution_failed:${mailbox.id}`,
+      dedup_key: `mail_send_attribution_failed:${emailLogId != null ? `log${emailLogId}` : `mid:${rfcId || providerMessageId || 'none'}`}`,
+      severity: caseRow && sendRow.case_link_state !== 'linked' ? 'error' : 'warning',
+      title: `Send attribution not recorded: ${mailbox.address}`,
+      message: `A comms-hub send went out but its mail_sends row could not be written: ${oneLine(err && err.message).slice(0, 300)}.` +
+        (caseRow ? (sendRow.case_link_state === 'linked'
+          ? ` Its case ${caseRow.case_id} log entry was written at send (log ${sendRow.case_log_id}).`
+          : ` The sender asked to link it to case ${caseRow.case_id} — that link was NOT scheduled.`) : ''),
+      context: { mailbox_id: Number(mailbox.id), email_log_id: emailLogId, case_id: caseRow ? caseRow.case_id : null },
+      ref_table: 'mailboxes',
+      ref_id: Number(mailbox.id),
+    });
+  }
+  if (caseRow && sendRowId != null) {
+    if (sendRow.case_link_state === 'pending') {
+      try {
+        caseLink.job_id = await scheduleCaseLink(db, {
+          send_id: sendRowId, user: Number(userId), mailbox_id: Number(mailbox.id),
+          case_id: caseRow.case_id, sent_at: sentAt.toISOString(),
+          provider_id: seedKey.provider_id || null, message_id: seedKey.message_id || null,
+        });
+      } catch (err) {
+        console.warn(`[mailSend] mailbox ${mailbox.id}: case-link job not scheduled:`, err && err.message);
+        try { await db.query("UPDATE mail_sends SET case_link_state = 'failed' WHERE id = ?", [sendRowId]); } catch (_) { /* best-effort */ }
+        sendRow.case_link_state = 'failed';
+      }
+    }
+    if (sendRow.case_link_state === 'failed') {
+      caseLinkFailedAlert(db, {
+        sendRowId, mailbox, caseId: caseRow.case_id,
+        why: seedKey ? 'the link job could not be scheduled'
+          : (noCopyEver ? 'the send-time log entry could not be written'
+            : 'the provider returned no message id, so the stored copy can never be found'),
+      });
+    }
+  }
+  caseLink.state = sendRow.case_link_state;
+
   const recipients = body.to.length + body.cc.length + body.bcc.length;
   console.log(`[mailSend] user ${userId} sent as mailbox ${mailbox.id} (${cred.provider}) to ${recipients} recipient(s)` +
     `${parent ? ` replying to message ${parent.id}` : ''}; email_log ${emailLogId ?? 'not found'}`);
@@ -893,8 +1047,41 @@ async function sendFromMailbox(db, userId, mailboxId, bodyIn) {
     recipients,
     append,
     read_seed: readSeed,
+    send_row_id: sendRowId,
+    case_link: caseLink,
     warnings,
   };
+}
+
+/** ONE error alert when a case link the sender asked for will not happen (dedup per send row). */
+function caseLinkFailedAlert(db, { sendRowId, mailbox, caseId, why }) {
+  sendAlert(db, {
+    kind: 'mail_sent_case_link_failed',
+    group_key: `app:mail_sent_case_link_failed:${mailbox.id}`,
+    dedup_key: `mail_sent_case_link_failed:${sendRowId}`,
+    severity: 'error',
+    title: `Sent mail not linked to case ${caseId}`,
+    message: `A comms-hub send from ${mailbox.address} was asked onto the log of case ${caseId}, but ${why}. ` +
+      'The mail went out; the case log entry is missing — link the stored copy by hand from the hub (Link to case).',
+    context: { mailbox_id: Number(mailbox.id), mail_sends_id: sendRowId, case_id: caseId },
+    ref_table: 'mail_sends',
+    ref_id: sendRowId,
+  });
+}
+
+async function scheduleCaseLink(db, data) {
+  const [r] = await db.query(
+    `INSERT INTO scheduled_jobs (type, scheduled_time, status, name, data, max_attempts, backoff_seconds)
+     VALUES ('one_time', ?, 'pending', ?, ?, ?, ?)`,
+    [
+      new Date(Date.now() + LINK_FIRST_DELAY_MS),
+      `Mail sent — case link to ${data.case_id} (mail_sends #${data.send_id})`,
+      JSON.stringify({ type: LINK_JOB_TYPE, ...data }),
+      LINK_MAX_ATTEMPTS,
+      LINK_BACKOFF_S,
+    ]
+  );
+  return r && r.insertId ? Number(r.insertId) : null;
 }
 
 
@@ -947,11 +1134,105 @@ async function seedSentReadState(db, data, { final = false } = {}) {
 }
 
 
+// ─────────────────────────────────────────────────────────────────────────────
+// The deferred case link (S2P §G — lib/job_executor, type 'mail_sent_case_link')
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Link the stored copy of a hub send to the case its sender asked for. The
+ * copy is found the way seedSentReadState finds it (the same keys, the same
+ * sender-readable scope with alias parents), then mailReadService.caseLink
+ * runs AS THE SENDER — the grant seat is unchanged; this job holds no power a
+ * fresh click of "Link to case" would not.
+ *
+ * Outcomes:
+ *   - copy not stored yet, or caseLink 409 (emission pending / store-only
+ *     grace)                         → throw: the job retries on its backoff;
+ *   - caseLink 403/404 (the sender's grant was revoked between send and run;
+ *     the service answers 404 where the spec sketch said 403 — same meaning,
+ *     no oracle)                     → FINAL failure, never retried;
+ *   - the final attempt without success → case_link_state='failed' + ONE
+ *     `error` alert (a log entry the user asked for is missing);
+ *   - success → case_link_state='linked' + case_log_id.
+ */
+async function linkSentCase(db, data, { final = false } = {}) {
+  const sendId = Number(data && data.send_id);
+  const user = Number(data && data.user);
+  if (!Number.isInteger(sendId) || sendId <= 0) return { linked: false, skipped: 'no send row in the job data' };
+  const [[row]] = await db.query(
+    'SELECT id, mailbox_id, case_id, case_link_state FROM mail_sends WHERE id = ? LIMIT 1', [sendId]
+  );
+  if (!row) return { linked: false, skipped: 'the mail_sends row is gone' };
+  if (row.case_link_state !== 'pending') return { linked: false, skipped: `state is ${row.case_link_state || 'null'} — nothing to do` };
+
+  const giveUp = async (why) => {
+    await db.query("UPDATE mail_sends SET case_link_state = 'failed' WHERE id = ?", [sendId]).catch(() => {});
+    const [[mb]] = await db.query('SELECT id, address FROM mailboxes WHERE id = ? LIMIT 1', [Number(row.mailbox_id)]).catch(() => [[null]]);
+    caseLinkFailedAlert(db, {
+      sendRowId: sendId,
+      mailbox: mb || { id: Number(row.mailbox_id), address: `mailbox #${row.mailbox_id}` },
+      caseId: row.case_id,
+      why,
+    });
+    return { linked: false, gave_up: true, reason: why };
+  };
+
+  if (!Number.isInteger(user) || user < 0) return giveUp('the job data names no sender');
+  const pid = data.provider_id && GMAIL_ID_RE.test(String(data.provider_id)) ? String(data.provider_id) : null;
+  const mid = cleanMid(data.message_id);
+  if (!pid && !mid) return giveUp('the job data carries no message key');
+
+  // The seed's probe: sender-readable boxes, alias parents included.
+  const readable = await mbx.listReadable(db, user, 'mailbox');
+  const scope = [...new Set(readable.map(r => Number(r.alias_of != null ? r.alias_of : r.id)))];
+  if (!scope.length) return giveUp('the sender can no longer read any mailbox');
+
+  const ids = new Set();
+  if (pid) {
+    const t = Date.parse(data.sent_at);
+    const since = new Date((Number.isFinite(t) ? t : Date.now()) - 24 * 3600_000);
+    const [rows] = await db.query(
+      'SELECT id FROM mail_messages WHERE mailbox_id IN (?) AND date >= ? AND provider_id = ?',
+      [scope, since, pid]
+    );
+    for (const r of rows) ids.add(Number(r.id));
+  }
+  if (mid) {
+    const [rows] = await db.query('SELECT id FROM mail_messages WHERE message_id = ? AND mailbox_id IN (?)', [mid, scope]);
+    for (const r of rows) ids.add(Number(r.id));
+  }
+  if (!ids.size) {
+    if (final) return giveUp('the sent copy was never stored');
+    throw new Error('the sent copy is not stored yet — will retry');
+  }
+  const copyId = Math.min(...ids); // one copy carries the link; deterministic
+  let out;
+  try {
+    out = await read.caseLink(db, user, copyId, { case_id: row.case_id });
+  } catch (err) {
+    const status = Number(err && err.status);
+    if (status === 403 || status === 404) {
+      // final, never retried — the probe already found the copy, so this is
+      // revoked access, or the message / case deleted between send and link
+      return giveUp('the sender\'s access was revoked — or the message or case is gone — between send and link');
+    }
+    if (final) return giveUp(`linking kept failing (${oneLine(err && err.message).slice(0, 200)})`);
+    throw err; // 409 (emission pending / store-only grace) and transients retry
+  }
+  await db.query(
+    "UPDATE mail_sends SET case_link_state = 'linked', case_log_id = ? WHERE id = ?",
+    [Number(out.log_id), sendId]
+  );
+  return { linked: true, log_id: Number(out.log_id), message_fk: copyId };
+}
+
+
 module.exports = {
   listIdentities,
   replyDefaults,
   sendFromMailbox,
   seedSentReadState,
+  linkSentCase,
   // exported for tests
   validateSendBody,
   resolveIdentity,
@@ -975,5 +1256,9 @@ module.exports = {
   SEED_MAX_ATTEMPTS,
   SEED_BACKOFF_S,
   SEED_FIRST_DELAY_MS,
+  LINK_JOB_TYPE,
+  LINK_MAX_ATTEMPTS,
+  LINK_BACKOFF_S,
+  LINK_FIRST_DELAY_MS,
   REASON_TEXT,
 };

@@ -426,7 +426,7 @@ describe('comms.html — Phone tab', () => {
     const dom = new JSDOM(COMMS);
     DOMS.push(dom);
     const btns = [...dom.window.document.querySelectorAll('.seg button')];
-    expect(btns.map((b) => b.id)).toEqual(['f-inbox', 'f-sent', 'f-folders', 'ph-v-sms', 'ph-v-all', 'ph-v-calls']);
+    expect(btns.map((b) => b.id)).toEqual(['f-inbox', 'f-sent', 'f-folders', 'f-case-any', 'f-case-on', 'f-case-off', 'ph-v-sms', 'ph-v-all', 'ph-v-calls']); // + S2P's case three-way (D.5)
     expect(btns.map((b) => b.getAttribute('data-label'))).toEqual(btns.map((b) => b.textContent.trim()));
     expect(COMMS).toMatch(/\.seg button\[data-label\]::after \{ content: attr\(data-label\); font-weight: 700; height: 0;/);
   });

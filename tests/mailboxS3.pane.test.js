@@ -169,14 +169,14 @@ describe('compose (S3)', () => {
     const ro = MB.map((m) => ({ ...m, can_send: false }));
     const badge = [];
     const { window, doc } = await boot({ mailboxes: ro, before: (w) => { w.commsBadgeSet = (...args) => badge.push(args); },
-      handler: standard({ 'GET /api/mail/mailboxes': () => ({ mailboxes: fresh(ro), viewer: { su: false, role: null, can_send: true } }) }) });
+      handler: standard({ 'GET /api/mail/mailboxes': () => ({ mailboxes: fresh(ro), viewer: { su: false, role: null, can_send: true }, inbox_unread_distinct: 3 }) }) }); // S2P: the badge is the server's distinct count
     expect([doc.getElementById('compose-btn').hidden, doc.getElementById('rail-compose').hidden]).toEqual([false, false]);
     expect(badge[badge.length - 1]).toEqual([3, 2, true]);          // the shell keeps its Comms entry for a send-only person too
     expect(window.eval('state.me.can_send')).toBe(true);
     expect(window.eval('state.viewer')).toBeNull();           // the attachment viewer's key, untouched by the summary
     doc.querySelector('#msg-list .msg').click();
     await tick(window, 80);
-    expect(doc.querySelector('.mactions .reply-btn')).not.toBeNull();
+    expect(doc.querySelector('.mhead .reply-btn')).not.toBeNull();
   });
 
   test('From: the server\'s identities — the sendable one pressed, the read-only one disabled with its reason', async () => {
@@ -372,7 +372,7 @@ describe('reply (S3)', () => {
   test('Reply: the server\'s defaults in a box at the END of the conversation; the quote is text; the payload threads', async () => {
     const { window, doc, calls } = await boot({ handler: standard() });
     await openThread(window, doc);
-    doc.querySelector('.mactions .reply-btn').click();
+    doc.querySelector('.mhead .reply-btn').click();
     await tick(window, 60);
     expect(calls.find((c) => c.url === '/api/mail/messages/11/reply').payload).toEqual({ all: 0 });
     const box = doc.querySelector('#thread-body .reply-box');
@@ -396,17 +396,17 @@ describe('reply (S3)', () => {
   test('Reply ↔ Reply all on the same message keeps what was written (open box and closed draft)', async () => {
     const { window, doc } = await boot({ handler: standard() });
     await openThread(window, doc);
-    doc.querySelector('.mactions .reply-btn').click();
+    doc.querySelector('.mhead .reply-btn').click();
     await tick(window, 60);
     let body = doc.querySelector('.reply-box .cf-body'); body.value = 'Three careful paragraphs'; body.dispatchEvent(new window.Event('input'));
-    doc.querySelector('.mactions .reply-all-btn').click();                 // open box → Reply all
+    doc.querySelector('.mhead .reply-all-btn').click();                 // open box → Reply all
     await tick(window, 60);
     expect(doc.querySelectorAll('#thread-body .reply-box')).toHaveLength(1);
     expect(doc.querySelector('.reply-box .cf-title').textContent).toBe('Reply all');
     expect(doc.querySelector('.reply-box .cf-body').value).toBe('Three careful paragraphs');
     expect(chips(doc, 'cc')).toEqual(['jane@outside.test']);              // the recipients are the new mode's
     doc.querySelector('.reply-box .cf-head .btn.icon').click();           // close → a draft
-    doc.querySelector('.mactions .reply-btn').click();                    // closed draft → Reply
+    doc.querySelector('.mhead .reply-btn').click();                    // closed draft → Reply
     await tick(window, 60);
     expect(doc.querySelector('.reply-box .cf-title').textContent).toBe('Reply');
     expect(doc.querySelector('.reply-box .cf-body').value).toBe('Three careful paragraphs');
@@ -419,7 +419,7 @@ describe('reply (S3)', () => {
       'POST /api/mail/send': () => new Promise((_, rej) => { fail = () => rej(new Error('The message was not sent: relay down')); }),
     }) });
     await openThread(window, doc);
-    doc.querySelector('.mactions .reply-btn').click();
+    doc.querySelector('.mhead .reply-btn').click();
     await tick(window, 60);
     const body = doc.querySelector('.reply-box .cf-body'); body.value = 'Thanks'; body.dispatchEvent(new window.Event('input'));
     doc.querySelector('.reply-box .send-btn').click();
@@ -437,7 +437,7 @@ describe('reply (S3)', () => {
   test('Reply all: all=1 and the Cc row shows the server\'s Cc', async () => {
     const { window, doc, calls } = await boot({ handler: standard() });
     await openThread(window, doc);
-    doc.querySelector('.mactions .reply-all-btn').click();
+    doc.querySelector('.mhead .reply-all-btn').click();
     await tick(window, 60);
     expect(calls.find((c) => c.url === '/api/mail/messages/11/reply').payload).toEqual({ all: 1 });
     expect(chips(doc, 'cc')).toEqual(['jane@outside.test']);
@@ -447,7 +447,7 @@ describe('reply (S3)', () => {
   test('no Reply buttons when no readable box can send', async () => {
     const { window, doc } = await boot({ handler: standard(), mailboxes: MB.map((m) => ({ ...m, can_send: false })) });
     await openThread(window, doc);
-    expect(doc.querySelector('.mactions .reply-btn')).toBeNull();
+    expect(doc.querySelector('.mhead .reply-btn')).toBeNull();
   });
 
   test('the reply box survives a re-render of its conversation; after sending, the conversation is re-read until the copy arrives', async () => {
@@ -455,7 +455,7 @@ describe('reply (S3)', () => {
     const { window, doc, calls } = await boot({ handler: standard({ 'GET /api/mail/threads/root%40x.test': () => fresh(thread) }) });
     window.COMPOSE_LIMITS.watchEveryMs = 30;
     await openThread(window, doc);
-    doc.querySelector('.mactions .reply-btn').click();
+    doc.querySelector('.mhead .reply-btn').click();
     await tick(window, 60);
     doc.querySelector('#msg-list .msg').click();                       // re-open the same conversation
     await tick(window, 80);

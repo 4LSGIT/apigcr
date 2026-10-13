@@ -151,7 +151,12 @@ describe('humans only', () => {
 // ─────────────────────────────────────────────────────────────────────────────
 describe('grant matrix — the list, the summary, single messages', () => {
   test('SU reads every mailbox; a grant reader only theirs; INBOX by default', async () => {
-    expect(ids(await call('GET', '/api/mail/messages', { t: tok(SU) }))).toEqual([202, 201, 104, 103, 102, 101]);
+    // S2P: 201 is a copy of 102 (same Message-ID) — one row for the SU, at the
+    // copies' first page position, both copies listed; primary = the better
+    // log_status (box 1 emits → 'history' beats box 2's 'store_only').
+    const su = await call('GET', '/api/mail/messages', { t: tok(SU) });
+    expect(ids(su)).toEqual([202, 102, 104, 103, 101]);
+    expect(su.json.messages[1].copies.map((c) => c.id).sort()).toEqual([102, 201]);
     expect(ids(await call('GET', '/api/mail/messages', { t: tok(READER) }))).toEqual([104, 103, 102, 101]);
   });
 
@@ -198,7 +203,11 @@ describe('grant matrix — the list, the summary, single messages', () => {
     const r = await call('GET', '/api/mail/mailboxes', { t: tok(SU) });
     expect(r.json.viewer).toEqual({ su: true, role: null, can_send: true });
     expect(r.json.mailboxes.map((m) => [m.id, m.inbox_total, m.inbox_unread])).toEqual([[1, 4, 3], [2, 2, 2]]);
-    expect(W.statements.filter((s) => /FROM mail_messages/.test(s.sql))).toHaveLength(1);
+    // S2P: the grouped per-box count + ONE distinct-emails count (the badge
+    // counts emails, not copies) — still never one query per mailbox.
+    expect(W.statements.filter((s) => /FROM mail_messages/.test(s.sql))).toHaveLength(2);
+    // 201 is a copy of 102: 5 unread rows, 4 unread EMAILS (101..104; 102=201).
+    expect(r.json.inbox_unread_distinct).toBe(4);
   });
 
   test('summary carries each box\'s stored colour on every access path (grant, SU, attorney); junk reads as none', async () => {
@@ -214,7 +223,7 @@ describe('grant matrix — the list, the summary, single messages', () => {
 // ─────────────────────────────────────────────────────────────────────────────
 describe('attorney READ bypass (users.roles, DB-sourced)', () => {
   test('an attorney reads every mailbox without a grant row', async () => {
-    expect(ids(await call('GET', '/api/mail/messages', { t: tok(SS) }))).toEqual([202, 201, 104, 103, 102, 101]);
+    expect(ids(await call('GET', '/api/mail/messages', { t: tok(SS) }))).toEqual([202, 102, 104, 103, 101]); // 201 = a copy of 102 (S2P merge)
     const sum = await call('GET', '/api/mail/mailboxes', { t: tok(SS) });
     expect(sum.json.viewer).toEqual({ su: false, role: 'attorney', can_send: false }); // reading every box is not a send right (S3)
     expect(sum.json.mailboxes.map((m) => m.id)).toEqual([1, 2]);
@@ -271,9 +280,9 @@ describe('the list carries no bodies', () => {
     expect(listSql[0].sql).not.toMatch(/body_html|body_text/);
     expect(listSql[0].sql).not.toMatch(/\bOFFSET\b/i);
     expect(Object.keys(r.json.messages[0]).sort()).toEqual([
-      'attachment_count', 'case', 'cc_addrs', 'date', 'folder', 'from_addr', 'id', 'in_inbox', 'log_id', 'mailbox_address',
-      'mailbox_id', 'place', 'sent', 'snippet', 'subject', 'thread_key', 'to_addrs', 'unread',
-    ]);
+      'attachment_count', 'case', 'cc_addrs', 'copies', 'date', 'folder', 'from_addr', 'id', 'in_inbox', 'log_id',
+      'log_status', 'mailbox_address', 'mailbox_id', 'message_id', 'place', 'sent', 'snippet', 'subject', 'thread_key', 'to_addrs', 'unread',
+    ]); // S2P added message_id (the merge key), copies and log_status
     expect(r.text).not.toMatch(/gmail_labels/); // the snapshot itself stays server-side (S2-L)
   });
 

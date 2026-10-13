@@ -505,6 +505,7 @@ ref/migrations/2026-10-11_mailbox_s2l_labels.sql
 ref/migrations/2026-10-12_mailbox_s3r_alias.sql
 ref/migrations/2026-10-12_phone_sph.sql
 ref/migrations/2026-10-13_docs_review_comments.sql
+ref/migrations/2026-10-13_mail_sends.sql
 ref/migrations/S1_notes_migration.sql
 ref/migrations/documents_s1.sql
 ref/migrations/documents_s2.sql
@@ -695,6 +696,7 @@ scripts/esign_zoho_smoke.js
 scripts/genTypeKeyBackfill.js
 scripts/gen_signatures.js
 scripts/mobile-survey/README.md
+scripts/mobile-survey/commsDensity.js
 scripts/mobile-survey/fixtures/api/calendar-feed.json
 scripts/mobile-survey/fixtures/api/calendar-range.json
 scripts/mobile-survey/fixtures/api/cases/TESTCASE1.json
@@ -1081,6 +1083,10 @@ tests/mailboxS2.renderBrowser.test.js
 tests/mailboxS2.routes.test.js
 tests/mailboxS2L.labels.test.js
 tests/mailboxS2L.mysql.test.js
+tests/mailboxS2P.mysql.test.js
+tests/mailboxS2P.pane.test.js
+tests/mailboxS2P.read.test.js
+tests/mailboxS2P.send.test.js
 tests/mailboxS3.adapters.test.js
 tests/mailboxS3.dovecot.test.js
 tests/mailboxS3.mysql.test.js

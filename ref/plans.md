@@ -336,6 +336,10 @@ Active surfaces with known next steps.
   - **Budget query cost**: the per-transport COUNT walks every `email_log` row of its `source` (ref on `ux_email_log_source_message`; ~1.7k gmail rows at ship). Add `(source, processed_at)` if outbound volume grows ~10×.
   - **Alias slice cost** (S3-R): each readable alias box's summary count (every Comms open, every 5-min badge refresh, every mark-read) and view count walks ALL of its parent's rows through the label/LIKE/REGEXP slice predicate (EXPLAIN live 2026-10-12: ref on mailbox_id, 157 rows). Fine at hundreds/thousands; if the parent grows into the tens of thousands, a multi-valued index on `gmail_labels` (`CAST(gmail_labels AS CHAR(255) ARRAY)`) serves the label half, and the address half can move to a stored `mail_messages` address list or a per-alias membership table filled at ingest.
 
+- **Comms polish — after S2P (2026-10-13; design §4.4 "As built (S2P)").** Left out on purpose:
+  - **Task → email deep link**: the task created from an email (§E) does not link back to the message; needs a task link type or a URL scheme into the hub (and the hub's side: open-by-message-id deep link). Decide with the chat/deep-link work.
+  - **Shared-inbox assignment / "done"** — design doc FIRST (coordinate with phone read state: both are "conversation state", per-user vs per-box semantics must be decided together). OQ4's attribution (mail_sends) is built; assignment is not.
+  - **A.4 retirement item — the one-time bridge UPDATE**: 57 live mailbox-2 rows (2026-10-13) are on the log through the Apps Script source but carry no `mail_messages.log_id` stamp, so `has_case`/`no_case` filters and viewCounts miss them while the S2P log-status line shows them bridged. At the Apps Script retirement (parity window close, ~2026-10-25), run the one-time stamp backfill (`UPDATE mail_messages m JOIN email_ingest_executions e ... SET m.log_id = e.log_id WHERE m.log_id IS NULL` keyed the priorLogId way) — then the filters agree with the display. Window rule forbade it in S2P.
 - **Comms phone tab — after v1 (S-PH, 2026-10-12; design §4.4 "As built (S-PH)").** Left out of v1 on purpose:
   - **Shell gate for phone-only users** (ruling 2026-10-12): the sidebar Comms entry and Home button show only when the user can read ≥ 1 mailbox or holds a mail `can_send` (`index.html` `commsBadgeSet` / `commsBadgeRefresh`, fed by `GET /api/mail/mailboxes`). A person whose only grant is on a PHONE line never sees Comms. Every phone user at launch already reads a mailbox. Fix with the phone unread/badge work below (same shell code): count readable lines (`GET /api/phone-lines/readable`) into the show decision.
   - **Unread / badge counts** for texts and calls (per-user read state, like `mail_read_state`); the Phone tab shows no counts today.
@@ -536,4 +540,4 @@ role-convention item were confirmed done and dropped).
 
 ---
 
-*Last updated: 2026-10-12*
+*Last updated: 2026-10-13*

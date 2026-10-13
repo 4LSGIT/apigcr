@@ -171,6 +171,23 @@ async function walk(page, W, record) {
     if (tabs.includes('tabComms')) {
       await page.evaluate(() => openMainTab('tabComms')); await sleep(1500);
       const cf = await frameOf(page, VISIBLE_TAB_FRAME);
+      // Comms → Email tab (S2P): the filters sheet (behind "Filters (n)" at
+      // phone width), an opened thread with its ⋯ menu open (one-line header,
+      // log-status line, merged-copy chips), the Task modal, and a reply with
+      // the Case field — fixtures/api/mail/* (merged copies, log_status,
+      // sent_by + a pending case link, sync warnings).
+      const EMAIL = [
+        ['email-filters', "E('fbar-btn').click()"],
+        ['email-thread-menu', "E('fbar-btn').click(); openMessage(state.messages[0]).then(() => document.querySelector('.mcard .menu-btn').click())"],
+        ['email-task', 'closeMenu(); openTaskModal(state.thread.messages.find((m) => m.id === 301))'],
+        ['email-reply-case', 'closeTaskModal(); openReply(state.thread.messages.find((m) => m.id === 301), false)'],
+      ];
+      for (const [key, js] of EMAIL) {
+        if (!cf) { await record(`tab:tabComms:${key}`, await measure(page, null), await shot('comms_' + key)); continue; }
+        await cf.evaluate((js) => { try { return (0, eval)(js); } catch (e) { console.error(e); } }, js); await sleep(1500);
+        await record(`tab:tabComms:${key}`, await measure(page, cf), await shot('comms_' + key));
+      }
+      if (cf) await cf.evaluate(() => { if (state.composer) closeComposer(state.composer, { keepDraft: false }); closeThread(); });
       const PHONE = [
         ['phone-texts', "showTab('phone')"],
         ['phone-thread', 'openConversation(ph.rows[0].other_party, ph.rows[0].contact)'],

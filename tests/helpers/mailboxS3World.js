@@ -202,6 +202,37 @@ function makeWorld() {
       return [[out]];
     }
 
+    // ── S2P: mail_sends (attribution + the Case field's link state) ──
+    if (sql === 'INSERT INTO mail_sends (mailbox_id, user, message_id, provider_id, email_log_id, case_id, case_link_state, case_log_id, sent_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)') {
+      rec();
+      const id = T.mail_sends.reduce((n, s) => Math.max(n, s.id), 0) + 1;
+      T.mail_sends.push({ id, mailbox_id: Number(p[0]), user: Number(p[1]), message_id: p[2], provider_id: p[3],
+        email_log_id: p[4], case_id: p[5], case_link_state: p[6], case_log_id: p[7], sent_at: p[8] instanceof Date ? p[8] : new Date(p[8]) });
+      return [{ affectedRows: 1, insertId: id }];
+    }
+    if (sql === 'SELECT id, mailbox_id, case_id, case_link_state FROM mail_sends WHERE id = ? LIMIT 1') {
+      rec();
+      const s = T.mail_sends.find(x => x.id === Number(p[0]));
+      return [s ? [{ id: s.id, mailbox_id: s.mailbox_id, case_id: s.case_id, case_link_state: s.case_link_state }] : []];
+    }
+    if (sql === "UPDATE mail_sends SET case_link_state = 'failed' WHERE id = ?") {
+      rec();
+      const s = T.mail_sends.find(x => x.id === Number(p[0]));
+      if (s) s.case_link_state = 'failed';
+      return [{ affectedRows: s ? 1 : 0 }];
+    }
+    if (sql === "UPDATE mail_sends SET case_link_state = 'linked', case_log_id = ? WHERE id = ?") {
+      rec();
+      const s = T.mail_sends.find(x => x.id === Number(p[1]));
+      if (s) { s.case_link_state = 'linked'; s.case_log_id = Number(p[0]); }
+      return [{ affectedRows: s ? 1 : 0 }];
+    }
+    if (sql === 'SELECT id, address FROM mailboxes WHERE id = ? LIMIT 1') {
+      rec();
+      const b = mailboxRow(p[0]);
+      return [b ? [{ id: b.id, address: b.address }] : []];
+    }
+
     // ── the read-state seed job ──
     if (sql === "INSERT INTO scheduled_jobs (type, scheduled_time, status, name, data, max_attempts, backoff_seconds) VALUES ('one_time', ?, 'pending', ?, ?, ?, ?)") {
       rec();

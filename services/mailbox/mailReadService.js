@@ -449,19 +449,300 @@ const JOINS = `
 // NEVER add body_text / body_html here: this is the list projection.
 // ALIAS_LIST_COLS is the same projection with the ALIAS id bound in place of
 // the row's own mailbox_id (ALIAS SLICE re-tag); built by replacement so the
-// two can never drift.
-const LIST_COLS = `m.id, m.mailbox_id, m.folder, m.gmail_labels, m.in_inbox, m.thread_key, m.from_addr, m.to_addrs, m.cc_addrs,
+// two can never drift. m.message_id (S2P) is the copy-merge key — an indexed
+// column, the walk is unchanged; log_live says the stamped log row still
+// exists (a stamp whose row was deleted is no longer "logged").
+const LIST_COLS = `m.id, m.mailbox_id, m.folder, m.gmail_labels, m.in_inbox, m.message_id, m.thread_key, m.from_addr, m.to_addrs, m.cc_addrs,
   m.subject, m.date, m.snippet, m.attachments, m.log_id,
-  (rs.message_fk IS NULL) AS unread,
+  (rs.message_fk IS NULL) AS unread, (l.log_id IS NOT NULL) AS log_live,
   c.case_id AS case_id, c.case_number AS case_number, c.case_number_full AS case_number_full`;
 
-const FULL_COLS = `m.id, m.mailbox_id, m.folder, m.gmail_labels, m.in_inbox, m.message_id, m.in_reply_to, m.thread_key,
+const FULL_COLS = `m.id, m.mailbox_id, m.folder, m.uid, m.gmail_labels, m.in_inbox, m.message_id, m.in_reply_to, m.thread_key, m.provider_id,
   m.from_addr, m.to_addrs, m.cc_addrs, m.subject, m.date, m.snippet, m.body_text, m.body_html,
   m.attachments, m.flags, m.log_id,
-  (rs.message_fk IS NULL) AS unread,
+  (rs.message_fk IS NULL) AS unread, (l.log_id IS NOT NULL) AS log_live,
   c.case_id AS case_id, c.case_number AS case_number, c.case_number_full AS case_number_full`;
 
 const ALIAS_LIST_COLS = LIST_COLS.replace('m.mailbox_id', '? AS mailbox_id');
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Log status (S2P) — the two-tier record, made visible per message
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// Every thread / message response (and every list row, for its case chip and
+// merged-copy primary) carries log_status:
+//   { state, case?: {case_id, case_number}, log_id?, via?: 'stamped'|'copy'|'source' }
+//
+// Resolution order per copy (design: S2P worker prompt §A):
+//   1. a LIVE log row — the row's own stamp ('stamped'), a copy's stamp
+//      ('copy'), or another source's email_ingest_executions row ('source' —
+//      the same keys caseLink's priorLogId reads, READ-ONLY here);
+//      state = 'case' when that log row's about-link is a case, else 'logged'.
+//   2. 'pending'  — the worker may still emit it (emissionPending, unchanged).
+//   3. the execution VERDICT — 'firm_to_firm' / 'suppressed' /
+//      'pipeline_error' (EXEC_STATE); a 'duplicate' or 'logged' row without a
+//      live log row falls through. Several verdict rows → the latest (max id).
+//   4. folderEmits ? 'history' : 'store_only'.
+//
+// Batched: ONE store-wide twin query (copies + their stamps + provider ids),
+// ONE executions query (all keys), ONE mailbox-config fetch — never a
+// per-message loop. The keyset branches are untouched; this runs on the cut
+// page / the fetched thread only. NO WRITES — only caseLink writes.
+//
+// A.4 (known, deliberate): the has_case / no_case FILTERS and viewCounts
+// still read the stamped log_id only — an unbridged message can show a case
+// chip here and still match "Not on a case". The one-time bridge UPDATE is a
+// retirement-checklist item, not this slice's (window rule).
+
+const EXEC_STATE = Object.freeze({
+  skipped_firm_to_firm: 'firm_to_firm',
+  skipped_suppression: 'suppressed',
+  error: 'pipeline_error',
+  validation_failed: 'pipeline_error',
+  auth_failed: 'pipeline_error',
+});
+
+/** Merged-copy display precedence (A.3): lower index wins. */
+const LOG_STATUS_RANK = Object.freeze([
+  'case', 'logged', 'pending', 'firm_to_firm', 'suppressed', 'pipeline_error', 'history', 'store_only',
+]);
+const statusRank = (s) => {
+  const i = LOG_STATUS_RANK.indexOf(s && s.state);
+  return i === -1 ? LOG_STATUS_RANK.length : i;
+};
+
+const TWIN_COLS = `m.id, m.mailbox_id, m.folder, m.uid, m.message_id, m.provider_id, m.log_id,
+  (l.log_id IS NOT NULL) AS log_live,
+  c.case_id AS case_id, c.case_number AS case_number, c.case_number_full AS case_number_full`;
+
+/**
+ * Batch log-status resolution for RAW db rows (REAL storage mailbox ids —
+ * compute before any alias re-tag, or map the alias back to its parent).
+ * Rows carry: id, mailbox_id, folder, message_id, log_id, log_live, case_*;
+ * uid / provider_id ride the twin fetch when the row itself lacks them.
+ * @returns {Map<number, object>} row id → log_status
+ */
+async function logStatusFor(db, rows) {
+  const out = new Map();
+  if (!rows.length) return out;
+  const mids = [...new Set(rows.map(r => r.message_id).filter(Boolean).map(String))];
+  const ids = rows.map(r => Number(r.id));
+
+  // 1. Twins: every stored copy of these emails (store-wide — a stamp or a
+  //    provider id in an unreadable box still bridges), plus the rows
+  //    themselves (uid / provider_id for the rows the list projection trims).
+  const twinWhere = mids.length ? 'm.id IN (?) OR m.message_id IN (?)' : 'm.id IN (?)';
+  const twinParams = mids.length ? [ids, mids] : [ids];
+  const [twins] = await db.query(
+    `SELECT ${TWIN_COLS} FROM mail_messages m
+       LEFT JOIN log l ON l.log_id = m.log_id
+       LEFT JOIN cases c ON l.log_about_type = 'case' AND c.case_id = l.log_about_id
+      WHERE ${twinWhere}`,
+    twinParams
+  );
+  const twinById = new Map(twins.map(t => [Number(t.id), t]));
+  const twinsByMid = new Map();
+  for (const t of twins) {
+    if (!t.message_id) continue;
+    const k = String(t.message_id).toLowerCase();
+    if (!twinsByMid.has(k)) twinsByMid.set(k, []);
+    twinsByMid.get(k).push(t);
+  }
+
+  // 2. Executions, by every key an email answers to: the RFC id bare and
+  //    bracketed, and every provider id its copies hold (priorLogId's keys).
+  const keys = new Set();
+  for (const mid of mids) { keys.add(mid); keys.add(`<${mid}>`); }
+  for (const t of twins) if (t.provider_id) keys.add(String(t.provider_id));
+  for (const r of rows) if (r.provider_id) keys.add(String(r.provider_id));
+  let execs = [];
+  if (keys.size) {
+    const [erows] = await db.query(
+      `SELECT e.id, e.message_id, e.status, e.log_id,
+              (l.log_id IS NOT NULL) AS log_live,
+              c.case_id AS case_id, c.case_number AS case_number, c.case_number_full AS case_number_full
+         FROM email_ingest_executions e
+         LEFT JOIN log l ON l.log_id = e.log_id
+         LEFT JOIN cases c ON l.log_about_type = 'case' AND c.case_id = l.log_about_id
+        WHERE e.message_id IN (?)
+        ORDER BY e.id ASC`,
+      [[...keys]]
+    );
+    execs = erows;
+  }
+  const execsByKey = new Map();
+  for (const e of execs) {
+    const k = String(e.message_id).toLowerCase();
+    if (!execsByKey.has(k)) execsByKey.set(k, []);
+    execsByKey.get(k).push(e);
+  }
+
+  // 3. Mailbox config (pending / history / store_only need the cursor).
+  const mbIds = [...new Set(rows.map(r => Number(r.mailbox_id)))];
+  const [mbs] = await db.query(
+    'SELECT id, ingest_enabled, ingest_folders, ingest_state FROM mailboxes WHERE id IN (?)', [mbIds]
+  );
+  const mbById = new Map(mbs.map(b => [Number(b.id), b]));
+
+  for (const r of rows) {
+    const self = twinById.get(Number(r.id)) || r;
+    const mid = r.message_id ? String(r.message_id).toLowerCase() : null;
+    const myTwins = mid ? (twinsByMid.get(mid) || []) : [self];
+    // Every key THIS email answers to (its own copies' provider ids only).
+    const myKeys = [];
+    if (mid) myKeys.push(mid, `<${mid}>`);
+    for (const t of myTwins) if (t.provider_id) myKeys.push(String(t.provider_id).toLowerCase());
+    if (self.provider_id) myKeys.push(String(self.provider_id).toLowerCase());
+    const myExecs = [...new Set(myKeys)].flatMap(k => execsByKey.get(k) || []).sort((a, b) => a.id - b.id);
+
+    // 1. a live log row: own stamp, a copy's stamp, another source's row
+    let st = null;
+    if (r.log_id != null && Number(r.log_live)) {
+      st = { state: r.case_id != null ? 'case' : 'logged', log_id: Number(r.log_id), via: 'stamped', case: caseOf(r) };
+    }
+    if (!st) {
+      const cp = myTwins.find(t => Number(t.id) !== Number(r.id) && t.log_id != null && Number(t.log_live));
+      if (cp) st = { state: cp.case_id != null ? 'case' : 'logged', log_id: Number(cp.log_id), via: 'copy', case: caseOf(cp) };
+    }
+    if (!st) {
+      const ex = myExecs.find(e => e.log_id != null && Number(e.log_live));
+      if (ex) st = { state: ex.case_id != null ? 'case' : 'logged', log_id: Number(ex.log_id), via: 'source', case: caseOf(ex) };
+    }
+    // 2. pending — the worker may still emit it
+    const mb = mbById.get(Number(r.mailbox_id));
+    if (!st && mb && emissionPending(mb, { folder: r.folder, uid: self.uid !== undefined ? self.uid : null })) {
+      st = { state: 'pending' };
+    }
+    // 3. the execution verdict (latest mapped row wins; duplicates fall through)
+    if (!st) {
+      const verdicts = myExecs.filter(e => EXEC_STATE[e.status]);
+      if (verdicts.length) st = { state: EXEC_STATE[verdicts[verdicts.length - 1].status] };
+    }
+    // 4. history / store_only
+    if (!st) st = { state: mb && folderEmits(mb, r.folder) ? 'history' : 'store_only' };
+    if (!st.case) delete st.case;
+    out.set(Number(r.id), st);
+  }
+  return out;
+}
+
+/**
+ * Sent-by attribution + the Case field's link state (S2P, mail_sends — F/G).
+ * One query per thread: rows matched by the send's own keys (message_id or
+ * provider_id — the read-seed job's keys); several rows on one message → the
+ * latest sent_at wins (ties: higher id). READ-only; visible to any reader.
+ * @returns {Map<string, object>} key (lowercased mid / provider id) → send row
+ */
+async function sentByFor(db, rows) {
+  const out = new Map();
+  const mids = [...new Set(rows.map(r => r.message_id).filter(Boolean).map(String))];
+  const pids = [...new Set(rows.map(r => r.provider_id).filter(Boolean).map(String))];
+  if (!mids.length && !pids.length) return out;
+  const conds = [];
+  const params = [];
+  if (mids.length) { conds.push('s.message_id IN (?)'); params.push(mids); }
+  if (pids.length) { conds.push('s.provider_id IN (?)'); params.push(pids); }
+  const [sends] = await db.query(
+    `SELECT s.id, s.user, s.message_id, s.provider_id, s.case_id, s.case_link_state, s.case_log_id, s.sent_at,
+            u.user_name, c.case_number, c.case_number_full
+       FROM mail_sends s
+       LEFT JOIN users u ON u.user = s.user
+       LEFT JOIN cases c ON c.case_id = s.case_id
+      WHERE ${conds.join(' OR ')}`,
+    params
+  );
+  const better = (a, b) => {
+    if (!a) return b;
+    const at = toDate(a.sent_at); const bt = toDate(b.sent_at);
+    const am = at ? at.getTime() : 0; const bm = bt ? bt.getTime() : 0;
+    return bm > am || (bm === am && Number(b.id) > Number(a.id)) ? b : a;
+  };
+  for (const s of sends) {
+    for (const k of [s.message_id, s.provider_id]) {
+      if (!k) continue;
+      const key = String(k).toLowerCase();
+      out.set(key, better(out.get(key), s));
+    }
+  }
+  return out;
+}
+
+/** Attach sent_by (+ sent_link while a Case-field link is in flight / failed) to shaped messages. */
+function attachSentBy(messages, sendMap) {
+  for (const m of messages) {
+    const keys = [m.message_id, m.provider_id].filter(Boolean).map(k => String(k).toLowerCase());
+    let s = null;
+    for (const k of keys) { const hit = sendMap.get(k); if (hit && (!s || hit === s || Number(hit.id) > Number(s.id))) s = hit; }
+    if (!s) continue;
+    m.sent_by = { user: Number(s.user), name: s.user_name || null };
+    if (s.case_id != null && s.case_link_state) {
+      m.sent_link = {
+        state: String(s.case_link_state),
+        case: { case_id: s.case_id, case_number: s.case_number_full || s.case_number || null },
+      };
+    }
+  }
+  return messages;
+}
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Sync freshness (S2P §C) — derived from the worker's cursors, read-only
+// ─────────────────────────────────────────────────────────────────────────────
+
+const SYNC_STALE_MIN = 15; // three missed 5-minute ticks
+
+/**
+ * One box's sync line from its ingest config + cursor state. ONLY folders
+ * listed in ingest_folders count — live box 2 still holds INBOX / Sent Mail
+ * cursor entries that are no longer polled and must be ignored. The worker's
+ * keys (checked_at / last_error / last_error_at — mailboxIngestService
+ * "Per-folder state bookkeeping") are read, never written.
+ *   checked_at  the OLDEST checked_at across polled folders (null = never)
+ *   stale       no successful check for SYNC_STALE_MIN minutes
+ *   failing     a failure newer than the folder's last good check
+ *   error_at    the newest such failure's time
+ *   error       its text — SU only (the caller passes su)
+ * Returns null for a box that polls nothing (ingest off / no folders).
+ */
+function syncOf(mb, { su = false, now = Date.now() } = {}) {
+  if (!mb || !Number(mb.ingest_enabled)) return null;
+  const folders = folderConfig(mb.ingest_folders).map(([name]) => name);
+  if (!folders.length) return null;
+  const states = parseJson(mb.ingest_state) || {};
+  const stateOf = (f) => {
+    const k = Object.keys(states).find(x => x.toLowerCase() === String(f).toLowerCase());
+    return k ? states[k] : null;
+  };
+  let oldest = null;   // oldest checked_at across polled folders (null = a folder never checked)
+  let neverChecked = false;
+  let failing = false;
+  let errorAt = null;
+  let errorText = null;
+  for (const f of folders) {
+    const st = stateOf(f);
+    const checked = st && st.checked_at ? toDate(st.checked_at) : null;
+    if (!checked) neverChecked = true;
+    else if (!oldest || checked.getTime() < oldest.getTime()) oldest = checked;
+    const errAt = st && st.last_error_at ? toDate(st.last_error_at) : null;
+    if (errAt && (!checked || errAt.getTime() > checked.getTime())) {
+      failing = true;
+      if (!errorAt || errAt.getTime() > errorAt.getTime()) { errorAt = errAt; errorText = st.last_error || null; }
+    }
+  }
+  const checkedAt = neverChecked ? null : oldest;
+  const out = {
+    checked_at: checkedAt,
+    stale: !checkedAt || now - checkedAt.getTime() > SYNC_STALE_MIN * 60_000,
+    failing,
+  };
+  if (failing) {
+    out.error_at = errorAt;
+    if (su) out.error = errorText;
+  }
+  return out;
+}
 
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -501,6 +782,13 @@ async function sendOnlyIds(db, ids) {
   return new Set(rows.map(r => Number(r.id)));
 }
 
+// The distinct-unread expression (S2P §B): one email counted once however
+// many readable copies are unread — the merge key is the list's (message_id,
+// case-blind), a NULL Message-ID row counting as itself. 70 ms on live RO
+// over the full Inbox set (measured 2026-10-13; the <50 ms gate is on the
+// query itself — the RO round-trip floor is ~70 ms).
+const DISTINCT_EMAILS = "COUNT(DISTINCT COALESCE(LOWER(m.message_id), CONCAT('id:', m.id)))";
+
 async function summary(db, userId) {
   const scope = await readableScope(db, userId);
   const ids = [...scope.keys()];
@@ -537,6 +825,45 @@ async function summary(db, userId) {
     const [[g]] = await db.query(CAN_SEND_SQL, [Number(userId)]);
     viewer.can_send = Number(g && g.n) > 0;
   }
+
+  // S2P §B: the badge counts EMAILS, not copies — distinct over the merge key.
+  // The alias rule is unreadOf's: an alias whose parent is in the same set
+  // contributes nothing (branchPlan drops it); other slices count their own
+  // Inbox distinct and the sums add (slice rows live in the parent box, so
+  // they cannot collide with a direct box's rows).
+  let unreadDistinct = 0;
+  const plan = ids.length ? branchPlan(scope, ids) : { direct: [], aliases: [] };
+  if (plan.direct.length) {
+    const [[row]] = await db.query(
+      `SELECT ${DISTINCT_EMAILS} AS n FROM mail_messages m
+         LEFT JOIN mail_read_state rs ON rs.user = ? AND rs.message_fk = m.id
+        WHERE m.mailbox_id IN (?) AND m.in_inbox = 1 AND rs.message_fk IS NULL`,
+      [Number(userId), plan.direct]
+    );
+    unreadDistinct += Number(row && row.n) || 0;
+  }
+  for (const e of plan.aliases) {
+    const [[row]] = await db.query(
+      `SELECT ${DISTINCT_EMAILS} AS n FROM mail_messages m
+         LEFT JOIN mail_read_state rs ON rs.user = ? AND rs.message_fk = m.id
+        WHERE m.mailbox_id = ? AND ${ALIAS_WHERE} AND ${ALIAS_INBOX_WHERE} AND rs.message_fk IS NULL`,
+      [Number(userId), Number(e.alias_of), ...aliasSliceParams(e), aliasAddrRe(e)]
+    );
+    unreadDistinct += Number(row && row.n) || 0;
+  }
+
+  // S2P §C: sync freshness, from the worker's own cursors (read-only). One
+  // config fetch for the readable boxes + alias parents; an alias reports its
+  // parent's sync (its mail lives there).
+  const syncIds = [...new Set([...direct, ...aliases.map(e => Number(e.alias_of))])];
+  const syncById = new Map();
+  if (syncIds.length) {
+    const [cfg] = await db.query(
+      'SELECT id, ingest_enabled, ingest_folders, ingest_state FROM mailboxes WHERE id IN (?)', [syncIds]
+    );
+    for (const b of cfg) syncById.set(Number(b.id), syncOf(b, { su: viewer.su }));
+  }
+
   const mailboxes = [...scope.values()].map(r => {
     if (r.role) viewer.role = r.role;
     const c = counts.get(Number(r.id)) || { total: 0, unread: 0 };
@@ -551,9 +878,10 @@ async function summary(db, userId) {
       alias_of: r.alias_of == null ? null : Number(r.alias_of),
       inbox_total: c.total,
       inbox_unread: c.unread,
+      sync: syncById.get(Number(r.alias_of != null ? r.alias_of : r.id)) || null,
     };
   });
-  return { viewer, mailboxes };
+  return { viewer, mailboxes, inbox_unread_distinct: unreadDistinct };
 }
 
 
@@ -959,15 +1287,23 @@ async function listMessages(db, userId, query = {}) {
     const [hrows] = await db.query('SELECT id, body_html FROM mail_messages WHERE id IN (?)', [needHtml]);
     for (const h of hrows) htmlFor.set(Number(h.id), h.body_html);
   }
-  const messages = page.map(r => {
+  // S2P: log status for the CUT page, batched (never per row). An alias-
+  // tagged row's status resolves against its STORAGE box (the parent).
+  const statuses = await logStatusFor(db, page.map(r => {
+    const mb = scope.get(Number(r.mailbox_id)) || {};
+    return { ...r, mailbox_id: mb.alias_of != null ? Number(mb.alias_of) : Number(r.mailbox_id) };
+  }));
+  const shaped = page.map(r => {
     const mb = scope.get(Number(r.mailbox_id)) || {};
     const parts = markInline(attachmentParts(r.attachments), htmlFor.get(Number(r.id)));
+    const st = statuses.get(Number(r.id)) || { state: 'store_only' };
     return {
       id: Number(r.id),
       mailbox_id: Number(r.mailbox_id),
       mailbox_address: mb.address || null,
       folder: r.folder,
       ...(mb.alias_of != null ? placeInSlice(mb, r) : placeOf(r)),
+      message_id: r.message_id || null,
       thread_key: r.thread_key || null,
       from_addr: r.from_addr || null,
       to_addrs: r.to_addrs || null,
@@ -978,17 +1314,56 @@ async function listMessages(db, userId, query = {}) {
       unread: !!Number(r.unread),
       attachment_count: parts.filter(p => !p.inline).length,
       log_id: r.log_id == null ? null : Number(r.log_id),
-      case: caseOf(r),
+      log_status: st,
+      // The chip follows the FULL resolution (a bridged case shows); the
+      // has_case / no_case filters still read the stamp alone (A.4, known).
+      case: st.state === 'case' ? st.case : null,
     };
   });
+  // ONE ROW PER EMAIL (S2P §B): copies (same Message-ID, case-blind) collapse
+  // AFTER the raw page cut — the cursor stays the last RAW row's (date, id),
+  // so no email is dropped or doubled at a page boundary; a copy whose twin
+  // sits on the next page folds into the shown row client-side on append.
+  const messages = mergeCopies(shaped);
   return {
     messages,
     // has-more from the RAW merge (a de-duped short page may still have more
-    // behind it); the cursor from the last row actually shown.
+    // behind it); the cursor from the last RAW row of the cut page.
     next_cursor: rows.length > limit && page.length ? cursorOf(page[page.length - 1]) : null,
     scope_ids: ids,
     view_id: view ? view.id : null,
   };
+}
+
+/**
+ * Collapse shaped LIST rows into one entry per email (S2P §B): key = the
+ * Message-ID (case-blind), a row without one standing alone. The PRIMARY copy
+ * is the one whose log_status wins (A.3 precedence — LOG_STATUS_RANK; ties:
+ * first in page order, i.e. newest); its stripe / mailbox / status drive the
+ * row. Unread when ANY copy is unread; a chip per copy rides `copies`.
+ */
+function mergeCopies(shaped) {
+  const groups = new Map();
+  for (const m of shaped) {
+    const key = m.message_id ? `mid:${String(m.message_id).toLowerCase()}` : `id:${m.id}`;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(m);
+  }
+  const out = [];
+  for (const copies of groups.values()) {
+    let primary = copies[0];
+    for (const c of copies) if (statusRank(c.log_status) < statusRank(primary.log_status)) primary = c;
+    out.push({
+      ...primary,
+      unread: copies.some(c => c.unread),
+      case: primary.case || (copies.find(c => c.case) || {}).case || null,
+      copies: copies.map(c => ({
+        id: c.id, mailbox_id: c.mailbox_id, mailbox_address: c.mailbox_address,
+        folder: c.folder, place: c.place, unread: c.unread,
+      })),
+    });
+  }
+  return out;
 }
 
 
@@ -1036,11 +1411,22 @@ function collapse(list) {
   }
   const out = [];
   for (const copies of groups.values()) {
-    const primary = copies.find(c => c.log_id != null) || copies[0];
+    // S2P (A.3): when copies carry log_status, the WINNING status picks the
+    // primary (case > logged > pending > the skip verdicts > history >
+    // store_only; ties keep order). Without one (plain shapes in old tests),
+    // the pre-S2P rule holds: a stamped copy, else the first.
+    let primary = copies[0];
+    if (copies.some(c => c.log_status)) {
+      for (const c of copies) if (statusRank(c.log_status) < statusRank(primary.log_status)) primary = c;
+    } else {
+      primary = copies.find(c => c.log_id != null) || copies[0];
+    }
     out.push({
       ...primary,
       unread: copies.some(c => c.unread),
       case: primary.case || (copies.find(c => c.case) || {}).case || null,
+      sent_by: primary.sent_by || (copies.find(c => c.sent_by) || {}).sent_by || undefined,
+      sent_link: primary.sent_link || (copies.find(c => c.sent_link) || {}).sent_link || undefined,
       copies: copies.map(c => ({ id: c.id, mailbox_id: c.mailbox_id, mailbox_address: c.mailbox_address, folder: c.folder, place: c.place, unread: c.unread })),
     });
   }
@@ -1073,9 +1459,20 @@ async function getThread(db, userId, threadKey) {
     [Number(userId), key, ...disj.params, THREAD_MAX + 1]
   );
   if (!rows.length) throw httpError(404, 'Thread not found');
-  retagAlias(plan, rows); // slice rows present as the alias box (ALIAS SLICE)
+  const window = rows.slice(0, THREAD_MAX);
+  // S2P: log status + sent-by from the RAW rows (REAL storage mailbox ids,
+  // uid / provider_id — all before the alias re-tag). Batched per thread.
+  const statuses = await logStatusFor(db, window);
+  const sendMap = await sentByFor(db, window);
+  retagAlias(plan, window); // slice rows present as the alias box (ALIAS SLICE)
   // Back to oldest-first (date, id) — the order collapse() picks primaries in.
-  const list = rows.slice(0, THREAD_MAX).reverse().map(r => shapeFull(r, scope));
+  const list = window.reverse().map(r => {
+    const m = shapeFull(r, scope);
+    m.provider_id = r.provider_id || null;
+    m.log_status = statuses.get(m.id) || { state: 'store_only' };
+    return m;
+  });
+  attachSentBy(list, sendMap); // before collapse, so any copy's match survives the merge
   const messages = await markTrust(db, userId, collapse(list));
   return {
     thread_key: key,
@@ -1112,8 +1509,13 @@ async function getMessage(db, userId, messageId) {
     [Number(userId), v.id]
   );
   if (!row) throw httpError(404, 'Message not found');
+  const statuses = await logStatusFor(db, [row]); // before the re-tag (real box)
+  const sendMap = await sentByFor(db, [row]);
   if (v.via_alias) row.mailbox_id = Number(v.via_alias.id); // re-tag (ALIAS SLICE)
   const m = shapeFull(row, scope);
+  m.provider_id = row.provider_id || null;
+  m.log_status = statuses.get(m.id) || { state: 'store_only' };
+  attachSentBy([m], sendMap);
   return {
     thread_key: m.thread_key,
     subject: m.subject,
@@ -1833,4 +2235,15 @@ module.exports = {
   PAGE_MAX,
   THREAD_MAX,
   BULK_READ_MAX,
+  // S2P
+  logStatusFor,
+  sentByFor,
+  attachSentBy,
+  mergeCopies,
+  collapse,
+  statusRank,
+  LOG_STATUS_RANK,
+  EXEC_STATE,
+  syncOf,
+  SYNC_STALE_MIN,
 };

@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-10-13T00:55:54.375Z
+-- Generated: 2026-10-13T05:38:10.672Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:c44b1f2d9ce8438c33f6772b89f90620
+-- Fingerprint: sha256:2402cdbe6aee5fb4c097db725bec74f2
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -2198,6 +2198,26 @@ CREATE TABLE `mail_read_state` (
   `message_fk` bigint unsigned NOT NULL COMMENT 'mail_messages.id (FK by convention); delete with the message on prune / orphan purge',
   `read_at` datetime NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='PER-USER read state (§4.3): IMAP \\Seen is per-mailbox and cannot represent many users. Row present = read';
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `mail_sends`
+--
+
+DROP TABLE IF EXISTS `mail_sends`;
+CREATE TABLE `mail_sends` (
+  `id` int unsigned NOT NULL,
+  `mailbox_id` int unsigned NOT NULL COMMENT 'mailboxes.id (FK by convention) - the box sent AS (an alias box keeps its own id; the copy lands in the parent)',
+  `user` tinyint NOT NULL COMMENT 'users.user (FK by convention) - who clicked Send; the hub is interactive-only, never 0/automation',
+  `message_id` varchar(512) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'RFC Message-ID, brackets stripped as in mail_messages.message_id; NULL for a Gmail send (Gmail rewrites it - provider_id is the key there)',
+  `provider_id` varchar(64) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'Gmail hex id (lowercase X-GM-MSGID), as mail_messages.provider_id; NULL for SMTP sends',
+  `email_log_id` int DEFAULT NULL COMMENT 'email_log.id of the adapter''s outbound-* row (best-effort lookup; NULL if the fire-and-forget row was not found)',
+  `case_id` varchar(20) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'cases.case_id the sender asked to link the sent copy to (composer Case field); NULL = none asked',
+  `case_link_state` varchar(12) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'app-validated: NULL (no case asked) | pending (mail_sent_case_link job will link the stored copy) | linked (case_log_id set) | failed (job gave up; error alert raised)',
+  `case_log_id` int DEFAULT NULL COMMENT 'log.log_id the sent copy was linked to (via mailReadService.caseLink, or created at send when no copy will ever be stored)',
+  `sent_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT 'UTC (the pool runs UTC) - when the dispatch succeeded'
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='S2P: one row per comms-hub send - attribution (Sent by X via YisraCase, design OQ4) + the Case field''s link state. Written post-dispatch, best-effort (a failed insert never fails the send); read by thread/message responses (sent_by).';
 
 -- --------------------------------------------------------
 
@@ -4406,6 +4426,15 @@ ALTER TABLE `mail_read_state`
   ADD KEY `idx_mail_read_state_message` (`message_fk`);
 
 --
+-- Indexes for table `mail_sends`
+--
+ALTER TABLE `mail_sends`
+  ADD PRIMARY KEY (`id`),
+  ADD KEY `idx_mail_sends_message_id` (`message_id`(191)),
+  ADD KEY `idx_mail_sends_provider_id` (`provider_id`),
+  ADD KEY `idx_mail_sends_user_sent` (`user`,`sent_at`);
+
+--
 -- Indexes for table `mailboxes`
 --
 ALTER TABLE `mailboxes`
@@ -5339,6 +5368,12 @@ ALTER TABLE `mail_image_senders`
 --
 ALTER TABLE `mail_messages`
   MODIFY `id` bigint unsigned NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `mail_sends`
+--
+ALTER TABLE `mail_sends`
+  MODIFY `id` int unsigned NOT NULL AUTO_INCREMENT;
 
 --
 -- AUTO_INCREMENT for table `mailboxes`

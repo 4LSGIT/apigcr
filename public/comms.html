@@ -77,27 +77,31 @@
   .list-col { display: flex; flex-direction: column; min-width: 0; min-height: 0; border-right: 1px solid var(--border); }
   .thread-col { display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--surface); }
 
-  .bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 8px 10px; border-bottom: 1px solid var(--border); background: var(--surface); }
+  .bar { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; padding: 6px 8px; border-bottom: 1px solid var(--border); background: var(--surface); }
   .bar select, .bar input[type="search"], .bar input[type="text"] {
     min-width: 0; background: var(--surface-2); color: var(--text); border: 1px solid var(--border);
     border-radius: 4px; padding: 6px 8px; font-size: 12px; font-family: inherit;
   }
   .bar select { max-width: 100%; flex: 1 1 120px; }
   .bar input[type="search"] { flex: 1 1 140px; }
-  .bar input.domain { flex: 0 1 130px; }
   /* the list's top bar: picker row, then search row (.brk forces the wrap; gone with the rail) */
   .bar .brk { flex-basis: 100%; height: 0; }
 
-  /* ── Filter chips (borrowed from the Comms mockup): pressed = on ── */
-  .fbar { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 0 10px 8px; border-bottom: 1px solid var(--border); background: var(--surface); }
+  /* ── Filter chips (borrowed from the Comms mockup): pressed = on ──
+     S2P density (D): ONE compact row. The case three-way made the bar wrap
+     to 2–3 rows at desktop list widths, pushing the first message down —
+     so above the phone breakpoint the bar scrolls sideways instead of
+     wrapping (a scroll box, nothing hidden); ≤768px it is the in-flow panel
+     behind "Filters (n)" and wraps freely. */
+  .fbar { display: flex; flex-wrap: nowrap; overflow-x: auto; gap: 4px; align-items: center; padding: 0 8px 6px; border-bottom: 1px solid var(--border); background: var(--surface); }
   .fchip {
-    height: 26px; padding: 0 10px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface); color: var(--text);
-    font: inherit; font-size: 12px; cursor: pointer; display: inline-flex; align-items: center; gap: 5px; white-space: nowrap;
+    height: 22px; padding: 0 8px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface); color: var(--text);
+    font: inherit; font-size: 11px; cursor: pointer; display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; flex: 0 0 auto;
   }
   .fchip:hover, .seg button:hover { background: var(--hover); }
   .fchip[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); color: var(--accent-on-soft); font-weight: 700; }
   .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; flex: 0 0 auto; }
-  .seg button { border: 0; border-right: 1px solid var(--border); background: var(--surface); color: var(--text); padding: 0 10px; height: 26px; font: inherit; font-size: 12px; cursor: pointer; white-space: nowrap; }
+  .seg button { border: 0; border-right: 1px solid var(--border); background: var(--surface); color: var(--text); padding: 0 8px; height: 22px; font: inherit; font-size: 11px; cursor: pointer; white-space: nowrap; }
   .seg button:last-child { border-right: 0; }
   .seg button[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent-on-soft); font-weight: 700; }
   /* The pressed button is bold, which is wider: a button carrying data-label
@@ -140,7 +144,14 @@
     .email.rail-off #rail-show { display: inline-flex; }
   }
   .check { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; cursor: pointer; white-space: nowrap; }
-  .status-line { font-size: 11px; color: var(--text-muted); padding: 5px 10px; min-height: 22px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .status-line { font-size: 10.5px; color: var(--text-muted); padding: 3px 8px; min-height: 18px; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+  /* S2P: sync freshness on the status line — a quiet "Checked 3 min ago",
+     and a warning chip per stale / failing box in the current scope. */
+  .sync-warn { background: var(--warn-soft); color: var(--warn-on-soft); border-color: var(--warn); max-width: 100%; }
+  /* The mobile "Filters (n)" disclosure (D.5): ≤768px the chips live behind
+     it (rules in the phone media block below); search, the view menu and the
+     mailbox picker stay in the bar. */
+  #fbar-btn { display: none; }
 
   .msg-list { list-style: none; margin: 0; padding: 0; overflow-y: auto; flex: 1 1 auto; min-height: 0; }
   .msg {
@@ -211,15 +222,15 @@
     border-radius: 4px; padding: 8px 10px; font-size: 12px; margin: 8px 10px; word-break: break-word;
   }
 
-  /* ── Thread ────────────────────────────────────────────────── */
-  .thread-head { display: flex; align-items: flex-start; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--border); }
-  .thread-head h2 { margin: 0; font-size: 15px; font-weight: 700; flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+  /* ── Thread (S2P density: the email starts HIGH — §D targets) ── */
+  .thread-head { display: flex; align-items: flex-start; gap: 8px; padding: 6px 10px; border-bottom: 1px solid var(--border); }
+  .thread-head h2 { margin: 0; font-size: 13px; font-weight: 700; line-height: 1.3; flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
   .back-btn { display: none; }
-  .thread-body { overflow-y: auto; flex: 1 1 auto; min-height: 0; padding: 8px 10px 20px; }
-  .thread-note { font-size: 11px; color: var(--text-muted); margin: 0 2px 8px; }
-  .mcard { border: 1px solid var(--border); border-radius: 6px; background: var(--page-bg); margin-bottom: 8px; min-width: 0; }
+  .thread-body { overflow-y: auto; flex: 1 1 auto; min-height: 0; padding: 6px 8px 20px; }
+  .thread-note { font-size: 10.5px; color: var(--text-muted); margin: 0 2px 5px; }
+  .mcard { border: 1px solid var(--border); border-radius: 6px; background: var(--page-bg); margin-bottom: 6px; min-width: 0; }
   .mcard.anchor { border-color: var(--accent); }
-  .mhead { padding: 8px 10px; cursor: pointer; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+  .mhead { padding: 5px 10px; cursor: pointer; display: flex; flex-direction: column; gap: 1px; min-width: 0; }
   .mhead .r1 { display: flex; flex-wrap: wrap; gap: 2px 8px; align-items: baseline; min-width: 0; }
   /* the sender takes the line on a phone; pill / clip / date wrap under it */
   .mhead .mfrom { font-weight: 700; flex: 1 1 14em; min-width: 0; overflow-wrap: anywhere; }
@@ -239,23 +250,56 @@
   .mhead .msnip { font-size: 12px; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .mcard:not(.collapsed) .msnip { display: none; }
   .mcard.collapsed .mexp { display: none; }
+  /* S2P (D.1): the header is ONE line — pill · sender · clip · date · Reply ·
+     Reply all · ⋯ — wrapping only when it must; addresses and copies sit
+     behind the details chevron. */
+  .mhead .hbtns { display: inline-flex; gap: 4px; flex: 0 0 auto; align-items: center; }
+  .mhead .hbtns .btn { padding: 2px 7px; font-size: 11px; }
+  /* Task is in the ⋯ menu everywhere; it ALSO gets a visible button where the
+     one-line header has room (E). Below 1366px the header buttons go
+     icon-only (title + aria-label carry the names) so the line never wraps. */
+  .mhead .task-btn { display: none; }
+  @media (min-width: 1000px) { .mhead .task-btn { display: inline-flex; } }
+  @media (max-width: 1366px) { .mhead .hb-label { display: none; } }
+  .mdet-btn { border: 0; background: none; color: var(--text-muted); cursor: pointer; padding: 0 4px; font: inherit; font-size: 11px; flex: 0 0 auto; }
+  .mdet-btn:hover { color: var(--text); }
+  .mdet { padding: 0 10px 6px; display: flex; flex-direction: column; gap: 2px; }
+  .mdet[hidden] { display: none; }
+  /* The log-status line (A.2): one line under the header carrying the case
+     action — it replaced the case chip + Link/Change buttons. */
+  .logline { display: flex; flex-wrap: wrap; gap: 3px 7px; align-items: center; padding: 0 10px 4px; font-size: 11px; color: var(--text-muted); min-width: 0; }
+  .logline .chip.case { max-width: 220px; }
+  .logline .linkish { flex: 0 0 auto; }
+  /* The ⋯ menu: real buttons, Escape closes, one open at a time (D.1). */
+  .mmenu-wrap { position: relative; display: inline-flex; flex: 0 0 auto; }
+  .mmenu {
+    position: absolute; right: 0; top: calc(100% + 2px); z-index: 30; min-width: 180px; max-width: calc(100vw - 32px);
+    background: var(--surface); border: 1px solid var(--border); border-radius: 6px; box-shadow: var(--shadow);
+    display: flex; flex-direction: column; padding: 4px;
+  }
+  .mmenu button { border: 0; background: none; color: var(--text); font: inherit; font-size: 12px; text-align: left; padding: 7px 9px; border-radius: 4px; cursor: pointer; white-space: normal; overflow-wrap: anywhere; }
+  .mmenu button:hover, .mmenu button:focus-visible { background: var(--hover); }
   .mactions { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 10px 8px; }
   .notice {
-    margin: 0 10px 8px; padding: 6px 9px; border-radius: 4px; font-size: 12px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+    margin: 0 10px 5px; padding: 3px 8px; border-radius: 4px; font-size: 11.5px; display: flex; gap: 6px; align-items: center; flex-wrap: wrap;
     background: var(--warn-soft); border: 1px solid var(--warn); color: var(--warn-on-soft);
   }
-  .atts { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 10px 8px; }
-  /* One file = one joined group: name (views a PDF / image, else downloads),
-     then View · Download · Save to case. */
+  .notice .btn.small { padding: 1px 7px; font-size: 11px; }
+  /* S2P (D.4): ONE wrapping row of COMPACT chips. The pre-S2P chips stacked
+     at 1440 because name + size + three buttons made each ~500px wide — two
+     chips plus the gap overran the thread column. Tighter paddings, a 150px
+     name budget (the full name stays in the title) and 11px buttons keep two
+     ordinary chips on one line. */
+  .atts { display: flex; flex-wrap: wrap; gap: 4px; padding: 0 10px 6px; }
   .att { display: inline-flex; align-items: stretch; max-width: 100%; min-width: 0; border: 1px solid var(--border); border-radius: 4px; background: var(--surface-2); }
-  .att > .btn { border: none; border-radius: 0; background: transparent; }
+  .att > .btn { border: none; border-radius: 0; background: transparent; padding: 2px 6px; font-size: 11px; }
   .att > .btn:hover { background: var(--hover); }
   .att > .btn + .btn { border-left: 1px solid var(--border); }
   .att .att-name { min-width: 0; }
-  .att .nm { overflow: hidden; text-overflow: ellipsis; max-width: 220px; }
+  .att .nm { overflow: hidden; text-overflow: ellipsis; max-width: 120px; }
 
   /* ── Related: the client's file, straight from the mail ── */
-  .related { display: flex; flex-wrap: wrap; gap: 4px 6px; align-items: center; padding: 6px 12px; border-bottom: 1px solid var(--border); font-size: 11.5px; min-width: 0; }
+  .related { display: flex; flex-wrap: wrap; gap: 3px 6px; align-items: center; padding: 4px 10px; border-bottom: 1px solid var(--border); font-size: 11px; min-width: 0; }
   .related .lbl { color: var(--text-muted); font-weight: 600; }
   .related .who { display: inline-flex; flex-wrap: wrap; gap: 4px; align-items: center; min-width: 0; margin-right: 6px; }
   .related .chip { max-width: 100%; }
@@ -298,6 +342,13 @@
     border-radius: 4px; padding: 7px 9px; font-size: 13px; font-family: inherit;
   }
   .modal-actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+  /* S2P (E): the Task modal's own controls (date / select / textarea) — the
+     modal rule above covers text inputs only. 0,2,1 like `.modal input`. */
+  .modal .task-field {
+    width: 100%; min-width: 0; background: var(--surface-2); color: var(--text); border: 1px solid var(--border);
+    border-radius: 4px; padding: 7px 9px; font-size: 13px; font-family: inherit; line-height: 1.45;
+  }
+  textarea.task-field { resize: vertical; }
   .modal-err {
     display: none; background: var(--danger-soft); border: 1px solid var(--danger);
     color: var(--danger-on-soft); border-radius: 4px; padding: 8px 10px; font-size: 12px; margin-bottom: 10px; word-break: break-word;
@@ -317,7 +368,7 @@
     padding: 8px 16px; border-radius: 6px; font-size: 12px; max-width: calc(100% - 32px);
     opacity: 0; pointer-events: none; transition: opacity 0.15s, transform 0.15s; z-index: 200;
   }
-  .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+  .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); pointer-events: auto; }
 
   /* ── Compose / reply (S3) ──────────────────────────────────────
      One composer, two homes: the New message modal and a reply box at the
@@ -438,7 +489,19 @@
 
   /* ── Phone (≤768px, the shell's one breakpoint): stacked navigation ── */
   @media (max-width: 768px) {
-    .tabs { padding: 6px 8px 0; }
+    .tabs { padding: 4px 8px 0; }
+    .tab { padding: 5px 10px; }
+    #fbar-btn { display: inline-flex; }
+    .fbar[data-collapsed="true"] { display: none; }
+    .fbar { flex-wrap: wrap; overflow-x: visible; } /* the in-flow panel wraps (D.5) */
+    /* S2P density: the list starts high on a phone — Compose is its icon
+       (title + aria-label carry the name), the bar is two tight rows, the
+       status line one scrollable row (a scroll box, nothing hidden). */
+    .cb-label { display: none; }
+    .bar { padding: 5px 8px; gap: 4px; }
+    .bar select, .bar input[type="search"], .bar input[type="text"], .bar .btn { padding-top: 5px; padding-bottom: 5px; }
+    .status-line { flex-wrap: nowrap; overflow-x: auto; }
+    .status-line > * { flex: 0 0 auto; }
     .email { grid-template-columns: 1fr; }
     .list-col { border-right: none; }
     .email:not(.show-thread) .thread-col { display: none; }
@@ -448,8 +511,6 @@
     .phone.show-thread .list-col { display: none; }
     .bub { max-width: 92%; }
     .back-btn { display: inline-flex; }
-    .bar { padding: 6px 8px; }
-    .bar input.domain { flex: 1 1 120px; }
     .chip { max-width: 120px; }
     .att .nm { max-width: 110px; }
     .modal.viewer { height: calc(100vh - 24px); padding: 8px; }
@@ -494,26 +555,30 @@
         <select id="view-sel" aria-label="Saved view"></select>
         <button class="btn mb-btn" type="button" id="mb-btn" aria-expanded="false" aria-controls="mb-panel" title="Choose which mailboxes this list combines" hidden><span class="mb-dots" id="mb-dots"></span><span id="mb-label">All mailboxes</span><i class="fa-solid fa-chevron-down" aria-hidden="true"></i></button>
         <span class="brk" aria-hidden="true"></span>
-        <input type="search" id="f-q" placeholder="From or subject" aria-label="Search from or subject" maxlength="200">
-        <input type="text" class="domain" id="f-domain" placeholder="from domain" aria-label="Sender domain" maxlength="128" spellcheck="false">
+        <input type="search" id="f-q" placeholder="From or subject — from:court.gov for a domain" aria-label="Search from or subject; from:domain filters the sender domain" maxlength="200">
+        <button class="btn" type="button" id="fbar-btn" aria-expanded="true" aria-controls="fbar" title="Show or hide the filters"><i class="fa-solid fa-filter" aria-hidden="true"></i> <span id="fbar-n">Filters</span></button>
         <button class="btn icon" type="button" id="refresh-btn" title="Refresh — and check the mail servers now (they are checked every 5 minutes anyway)" aria-label="Refresh"><i class="fa-solid fa-rotate" aria-hidden="true"></i></button>
         <button class="btn icon" type="button" id="views-btn" title="Saved views"><i class="fa-solid fa-bookmark"></i></button>
-        <button class="btn primary" type="button" id="compose-btn" title="Write a new email from one of your mailboxes" hidden><i class="fa-solid fa-pen" aria-hidden="true"></i> Compose</button>
+        <button class="btn primary" type="button" id="compose-btn" title="Write a new email from one of your mailboxes" aria-label="Compose" hidden><i class="fa-solid fa-pen" aria-hidden="true"></i><span class="cb-label"> Compose</span></button>
       </div>
       <div class="mb-panel" id="mb-panel" role="group" aria-label="Mailboxes in this list" hidden></div>
-      <div class="fbar" role="group" aria-label="Filters">
+      <div class="fbar" id="fbar" role="group" aria-label="Filters">
         <span class="seg" role="group" aria-label="Folders">
           <button type="button" id="f-inbox" aria-pressed="true" data-label="Inbox" title="The Inbox of each mailbox">Inbox</button>
           <button type="button" id="f-sent" aria-pressed="false" data-label="Sent" title="Mail the mailboxes sent (Google's Sent label, or a Sent folder)">Sent</button>
           <button type="button" id="f-folders" aria-pressed="false" data-label="All folders" title="Include Sent and other ingested folders, not just the Inbox">All folders</button>
         </span>
+        <!-- S2P (D.5): the case filter is a three-way switch -->
+        <span class="seg" role="group" aria-label="Case filter">
+          <button type="button" id="f-case-any" aria-pressed="true" data-label="Any" title="On a case or not — no case filter">Any</button>
+          <button type="button" id="f-case-on" aria-pressed="false" data-label="On a case" title="On a case's log">On a case</button>
+          <button type="button" id="f-case-off" aria-pressed="false" data-label="Not on a case" title="Not on any case's log yet">Not on a case</button>
+        </span>
         <button class="fchip" type="button" id="f-unread" aria-pressed="false">Unread</button>
         <button class="fchip" type="button" id="f-client" aria-pressed="false" title="Mail to or from a client — someone Primary or Secondary on a case: the sender, or one of the first five recipients. The firm's own addresses never count."><i class="fa-solid fa-user" aria-hidden="true"></i> Client mail</button>
         <button class="fchip" type="button" id="f-files" aria-pressed="false" title="Has attachments (images drawn inside the message do not count)"><i class="fa-solid fa-paperclip" aria-hidden="true"></i> Has files</button>
-        <button class="fchip" type="button" id="f-hascase" aria-pressed="false" title="On a case's log">On a case</button>
-        <button class="fchip" type="button" id="f-nocase" aria-pressed="false" title="Not on any case's log yet">Not on a case</button>
       </div>
-      <div class="status-line"><span id="status"></span><button class="btn small" type="button" id="readall-btn" hidden>Mark all read</button></div>
+      <div class="status-line"><span id="status"></span><span id="sync-line" style="display:inline-flex;gap:6px;flex-wrap:wrap;align-items:center;min-width:0"></span><button class="btn small" type="button" id="readall-btn" hidden>Mark all read</button></div>
       <div id="list-error"></div>
       <ul class="msg-list" id="msg-list" aria-live="polite"></ul>
     </section>
@@ -639,6 +704,33 @@
   </div>
 </div>
 
+<!-- ── Task from email (S2P §E) — POST /api/tasks, source 'comms' ── -->
+<div class="modal-backdrop" id="task-backdrop">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="task-title-h">
+    <h3 id="task-title-h">Task from this email</h3>
+    <div class="modal-err" id="task-msg" role="alert"></div>
+    <label class="yc-flabel" for="task-title">Title</label>
+    <input type="text" id="task-title" maxlength="100" autocomplete="off">
+    <span class="yc-hint" id="task-title-n">0/100</span>
+    <label class="yc-flabel" for="task-to" style="margin-top:10px">Assign to</label>
+    <select id="task-to" class="task-field"></select>
+    <label class="yc-flabel" for="task-due" style="margin-top:10px">Due</label>
+    <div class="view-row" style="margin-bottom:0">
+      <input type="date" id="task-due" class="task-field" style="flex:1 1 140px;width:auto">
+      <button class="btn small" type="button" id="task-due-plus" title="Move the due date one business day out">+1 business day</button>
+    </div>
+    <span class="yc-flabel" style="margin-top:10px">Link</span>
+    <div class="chips" id="task-links"></div>
+    <label class="yc-flabel" for="task-desc" style="margin-top:10px">Description</label>
+    <textarea id="task-desc" class="task-field" rows="5" maxlength="1000"></textarea>
+    <span class="yc-hint" id="task-desc-n">0/1000</span>
+    <div class="modal-actions">
+      <button class="btn" type="button" id="task-cancel">Cancel</button>
+      <button class="btn primary" type="button" id="task-save">Create task</button>
+    </div>
+  </div>
+</div>
+
 <!-- ── Attachment viewer ── -->
 <div class="modal-backdrop" id="viewer-backdrop">
   <div class="modal viewer" role="dialog" aria-modal="true" aria-labelledby="viewer-title">
@@ -705,6 +797,7 @@ function viewKind(a) {
 
 const state = {
   mailboxes: [],        // GET /api/mail/mailboxes
+  unreadDistinct: 0,    // S2P: Inbox unread EMAILS (copies merged) — the badge
   me: { su: false, role: null, can_send: false }, // GET /api/mail/mailboxes .viewer (was state.viewer — that key is the attachment viewer's)
   views: [],            // GET /api/mail/views
   viewCounts: {},       // GET /api/mail/views/counts: view id → Inbox unread under its filters
@@ -723,6 +816,8 @@ const state = {
   related: [],          // GET …/related contacts for the open conversation
   unmatched: [],        // …and its outside addresses no contact holds (add to client)
   addsOpen: false,      // every unmatched chip shown, not just the first ADDS_SHOWN
+  relOpen: false,       // S2P (D.3): the related strip expanded from its one-line form
+  task: null,           // S2P (E): the open Task modal's { m, link } (link: {type,id,label}|null)
   viewer: null,         // { url, m, a, kind, tabbed }
   // S3 — compose / reply
   identities: null,     // GET /api/mail/identities (loaded when a composer first opens)
@@ -754,9 +849,12 @@ function h(tag, attrs, ...kids) {
 const icon = (cls) => h('i', { className: `fa-solid ${cls}`, 'aria-hidden': 'true' });
 
 let toastTimer = null;
-function toast(msg, ms = 2400) {
+/** action (optional): { label, onclick } — one linkish button after the text (S2P: "Open tasks"). */
+function toast(msg, ms = 2400, action = null) {
   const t = E('toast');
-  t.textContent = msg;
+  t.replaceChildren(document.createTextNode(msg), action ? h('button', {
+    className: 'linkish', type: 'button', style: 'margin-left:8px', onclick: action.onclick,
+  }, action.label) : '');
   t.classList.add('show');
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => t.classList.remove('show'), ms);
@@ -834,6 +932,15 @@ function bytes(n) {
 const multiBox = () => state.mailboxes.length > 1;
 const boxLabel = (m) => m.display_name ? `${m.display_name} — ${m.address}` : m.address;
 const boxById = (id) => state.mailboxes.find((m) => m.id === Number(id)) || null;
+/** A list chip's label (D.6): the display name, else the local part with '@' — never the truncated full address. */
+function boxChipLabel(id) {
+  const m = boxById(id);
+  if (!m) return `box ${id}`;
+  return m.display_name || `${String(m.address).split('@')[0]}@`;
+}
+/** Merged-copy display precedence (server LOG_STATUS_RANK — A.3); used when folding an appended page. */
+const LOG_RANK = ['case', 'logged', 'pending', 'firm_to_firm', 'suppressed', 'pipeline_error', 'history', 'store_only'];
+const logRank = (st) => { const i = LOG_RANK.indexOf(st && st.state); return i === -1 ? LOG_RANK.length : i; };
 /**
  * Paint `el` in mailbox `id`'s stored colour (see the CSS note): both theme
  * values are set every time — never left to inherit a parent row's box — and
@@ -870,8 +977,10 @@ function selectedIds() {
 async function loadSummary() {
   const data = await api('/api/mail/mailboxes', 'GET');
   state.mailboxes = Array.isArray(data && data.mailboxes) ? data.mailboxes : [];
+  state.unreadDistinct = Number(data && data.inbox_unread_distinct) || 0;
   state.me = (data && data.viewer) || state.me;
   renderMailboxPicker();
+  renderSync();
   loadViewCounts(); // read state moved: the views' counts with it
 }
 
@@ -932,7 +1041,9 @@ function renderMailboxPicker() {
     : sel.length === 1 ? boxLabel(boxById(sel[0]))
     : sel.length ? `${sel.length} mailboxes` : 'No shared mailboxes';
   E('mb-label').textContent = label + (unread ? ` (${unread})` : '');
-  const total = unreadOf(state.mailboxes);
+  // S2P (§B): the tab + sidebar badge count EMAILS, not copies — the server's
+  // distinct count over every readable box (per-box rows keep their own sums).
+  const total = state.unreadDistinct;
   E('tab-email-n').textContent = total ? String(total) : '';
   // The shell's sidebar Comms badge (index.html commsBadgeSet): this page
   // just counted it, so hand it over rather than make the shell fetch again.
@@ -1059,7 +1170,8 @@ function renderRail() {
       h('span', { className: 'tickbox', 'aria-hidden': 'true' }, icon('fa-check')),
       boxDot(m.id),
       h('span', { className: 'nm' }, `${m.display_name || m.address}${m.active ? '' : ' (inactive)'}`, m.display_name ? h('span', { className: 'sub' }, m.address) : null),
-      h('span', { className: 'acc', title: 'Your access: R read · S send · M manage' }, accessLabel(m)),
+      // D.6: the R·S·M badge is gone — a tag only where the caller cannot send
+      m.can_send ? null : h('span', { className: 'acc', title: 'You can read this mailbox but not send from it' }, 'read-only'),
       m.inbox_unread ? h('span', { className: 'cnt' }, String(m.inbox_unread)) : null);
   }));
 }
@@ -1081,36 +1193,63 @@ async function updateActiveView() {
  * (the server intersects), so a view whose boxes were all revoked shows
  * nothing rather than falling back to everything.
  */
+/** The case three-way (D.5): exactly one of Any / On a case / Not on a case. */
+function setCaseSeg(which) {
+  setPressed('f-case-any', which === 'any');
+  setPressed('f-case-on', which === 'on');
+  setPressed('f-case-off', which === 'off');
+}
+function caseSegNow() { return pressed('f-case-on') ? 'on' : (pressed('f-case-off') ? 'off' : 'any'); }
+
+/**
+ * The search box carries the domain filter as a `from:` token (D.5 — the
+ * separate input is gone; the API is unchanged): "order from:court.gov" →
+ * q "order" + from_domain "court.gov". The LAST from: token wins; a bare
+ * "from:" is dropped.
+ */
+function parseSearch(raw) {
+  let domain = null;
+  const q = String(raw || '').replace(/(^|\s)from:(\S*)/gi, (_, sp, d) => { if (d) domain = d.replace(/^@/, ''); return sp; })
+    .replace(/\s+/g, ' ').trim();
+  return { q, from_domain: domain };
+}
+const searchText = (f) => [f.q || '', f.from_domain ? `from:${f.from_domain}` : ''].filter(Boolean).join(' ');
+
 function applyView(v) {
   state.viewId = v ? v.id : null;
   state.boxSel = v && Array.isArray(v.mailbox_ids) && v.mailbox_ids.length ? new Set(v.mailbox_ids.map(Number)) : null;
   const f = (v && v.filters) || {};
-  E('f-q').value = f.q || '';
-  E('f-domain').value = f.from_domain || '';
+  E('f-q').value = searchText(f); // a saved from_domain shows as from:x
   setPressed('f-unread', !!f.unread_only);
   setPressed('f-client', !!f.client_only);
   setPressed('f-files', !!f.has_files);
-  setPressed('f-hascase', !!f.has_case);
-  setPressed('f-nocase', !!f.no_case);
+  setCaseSeg(f.has_case ? 'on' : (f.no_case ? 'off' : 'any'));
   setScope(f.sent_only ? 'sent' : (f.all_folders ? 'all' : 'inbox'));
   renderViewSelect();
   renderMailboxPicker();
+  renderFbarBtn();
 }
 
 function currentFilters() {
   const f = {};
-  const q = E('f-q').value.trim();
-  const d = E('f-domain').value.trim().replace(/^@/, '');
-  if (q) f.q = q;
-  if (d) f.from_domain = d;
+  const s = parseSearch(E('f-q').value);
+  if (s.q) f.q = s.q;
+  if (s.from_domain) f.from_domain = s.from_domain;
   if (pressed('f-unread')) f.unread_only = true;
   if (pressed('f-client')) f.client_only = true;
   if (pressed('f-files')) f.has_files = true;
-  if (pressed('f-hascase')) f.has_case = true;
-  else if (pressed('f-nocase')) f.no_case = true;
+  if (pressed('f-case-on')) f.has_case = true;
+  else if (pressed('f-case-off')) f.no_case = true;
   if (pressed('f-folders')) f.all_folders = true;
   else if (pressed('f-sent')) f.sent_only = true;
   return f;
+}
+
+/** "Filters (n)" (D.5, ≤768px): n = what narrows beyond the scope segment. */
+function renderFbarBtn() {
+  const f = currentFilters();
+  const n = ['unread_only', 'client_only', 'has_files', 'has_case', 'no_case'].filter((k) => f[k]).length;
+  E('fbar-n').textContent = n ? `Filters (${n})` : 'Filters';
 }
 
 // ── List ────────────────────────────────────────────────────
@@ -1150,7 +1289,24 @@ async function loadList({ append = false, silent = false } = {}) {
     const data = await api('/api/mail/messages', 'GET', listParams(append ? state.nextCursor : null));
     if (seq !== state.seq) return;
     const rows = Array.isArray(data && data.messages) ? data.messages : [];
-    state.messages = append ? state.messages.concat(rows) : rows;
+    // S2P (§B): copies split across a page boundary FOLD into the row already
+    // shown — never a second row. The server merges within a page; a later
+    // page's copy of a shown email lands here.
+    if (append) {
+      const byMid = new Map(state.messages.filter((m) => m.message_id).map((m) => [String(m.message_id).toLowerCase(), m]));
+      const fresh = [];
+      for (const r of rows) {
+        const ex = r.message_id ? byMid.get(String(r.message_id).toLowerCase()) : null;
+        if (!ex) { fresh.push(r); if (r.message_id) byMid.set(String(r.message_id).toLowerCase(), r); continue; }
+        for (const c of (r.copies || [])) if (!(ex.copies || []).some((x) => x.id === c.id)) (ex.copies = ex.copies || []).push(c);
+        ex.unread = ex.unread || r.unread;
+        if (logRank(r.log_status) < logRank(ex.log_status)) { ex.log_status = r.log_status; ex.case = r.case || ex.case; }
+        if (!ex.case && r.case) ex.case = r.case;
+      }
+      state.messages = state.messages.concat(fresh);
+    } else {
+      state.messages = rows;
+    }
     state.nextCursor = (data && data.next_cursor) || null;
     renderList();
   } catch (err) {
@@ -1171,12 +1327,20 @@ function caseChip(c) {
 
 function msgRow(m) {
   const chips = h('span', { className: 'chips' });
-  if (multiBox() && m.mailbox_address) chips.append(paint(h('span', { className: 'chip box', title: m.mailbox_address }, boxDot(m.mailbox_id), m.mailbox_address), m.mailbox_id));
+  // S2P (§B): one row per EMAIL — a box chip per copy, labelled (D.6: the
+  // display name, else the local part), the stripe in the PRIMARY copy's
+  // colour (m.mailbox_id is the primary's).
+  if (multiBox()) {
+    for (const c of (m.copies && m.copies.length ? m.copies : [m])) {
+      if (!c.mailbox_address) continue;
+      chips.append(paint(h('span', { className: 'chip box', title: c.mailbox_address }, boxDot(c.mailbox_id), boxChipLabel(c.mailbox_id)), c.mailbox_id));
+    }
+  }
   // Where it sits, when not the Inbox — the server's `place`: the folder name,
   // or for a Gmail copy 'Sent' / 'Archived' (mailReadService.placeOf).
   if (m.place) chips.append(h('span', { className: 'chip folder' }, m.place));
   if (m.case) chips.append(caseChip(m.case));
-  else if (m.log_id) chips.append(h('span', { className: 'chip', title: 'On the firm log' }, icon('fa-box-archive'), 'Logged'));
+  else if (m.log_status && m.log_status.state === 'logged') chips.append(h('span', { className: 'chip', title: 'On the firm log' }, icon('fa-box-archive'), 'Logged'));
   if (m.attachment_count) chips.append(h('span', { className: 'chip', title: `${m.attachment_count} attachment(s)` }, icon('fa-paperclip'), String(m.attachment_count)));
   const li = h('li', {
     className: 'msg' + (m.unread ? ' unread' : '') + (state.selectedId === m.id ? ' selected' : '') + (multiBox() ? ' boxed' : ''),
@@ -1200,6 +1364,7 @@ function renderList() {
     ? `${state.messages.length}${state.nextCursor ? '+' : ''} message${state.messages.length === 1 ? '' : 's'}${unread ? ` · ${unread} unread shown` : ''}`
     : '';
   E('readall-btn').hidden = !state.mailboxes.some((m) => m.inbox_unread);
+  renderSync(); // the scope may have changed with the list
   if (!state.messages.length) {
     const msg = !state.mailboxes.length
       ? 'No mailboxes are shared with you yet. Ask whoever manages a mailbox to grant you read access.'
@@ -1234,6 +1399,44 @@ function refreshCountsSoon() {
   summaryTimer = setTimeout(() => { loadSummary().then(renderList).catch(() => {}); }, 400);
 }
 
+// ── Sync freshness (S2P §C) ─────────────────────────────────
+// "Checked 3 min ago" = the OLDEST successful check across the boxes in the
+// current scope; a stale or failing box gets a warning chip. The server
+// derives it from the polled folders only (summary .sync); SU also gets the
+// error text (sync.error) — it rides the chip's title.
+function syncAgo(d) {
+  const mins = Math.floor((Date.now() - d.getTime()) / 60000);
+  if (mins < 1) return 'Checked just now';
+  if (mins < 60) return `Checked ${mins} min ago`;
+  const h = Math.floor(mins / 60);
+  return `Checked ${h} hour${h === 1 ? '' : 's'} ago`;
+}
+function renderSync() {
+  const box = E('sync-line');
+  if (!box) return;
+  const sel = selectedIds();
+  const scope = state.mailboxes.filter((m) => !sel || sel.includes(m.id));
+  const synced = scope.filter((m) => m.sync);
+  const kids = [];
+  let oldest = null;
+  for (const m of synced) {
+    const d = m.sync.checked_at ? new Date(m.sync.checked_at) : null;
+    if (d && !Number.isNaN(d.getTime()) && (!oldest || d < oldest)) oldest = d;
+  }
+  if (oldest) kids.push(h('span', { title: 'The oldest last successful mail-server check among these mailboxes' }, syncAgo(oldest)));
+  for (const m of synced) {
+    if (!m.sync.stale && !m.sync.failing) continue;
+    const d = m.sync.checked_at ? new Date(m.sync.checked_at) : null;
+    const when = d && !Number.isNaN(d.getTime()) ? listDate(d.toISOString()) : 'never';
+    const label = boxChipLabel(m.id);
+    kids.push(h('span', {
+      className: 'chip sync-warn',
+      title: m.sync.error ? `${m.address}: ${m.sync.error}` : `${m.address} — ${m.sync.failing ? 'its mail checks are failing' : 'not checked recently'}`,
+    }, icon('fa-triangle-exclamation'), `${label} — not checked since ${when}`));
+  }
+  box.replaceChildren(...kids);
+}
+
 // ── Thread ──────────────────────────────────────────────────
 async function openMessage(m) {
   // A reply box belongs to its conversation: opening another one closes it
@@ -1251,6 +1454,7 @@ async function openMessage(m) {
   state.related = [];
   state.unmatched = [];
   state.addsOpen = false;
+  state.relOpen = false; // D.3: the strip opens one-line again per conversation
   renderRelated();
   try {
     const url = m.thread_key
@@ -1354,6 +1558,30 @@ function renderRelated() {
   const adds = state.unmatched || [];
   box.hidden = !list.length && !adds.length;
   if (box.hidden) { box.replaceChildren(); return; }
+  // D.3: ONE line until expanded — the first contact, their first case, and
+  // how much more there is; expanding shows the full strip (chips, cases,
+  // Add to a client) exactly as before.
+  if (!state.relOpen) {
+    const first = list[0] || null;
+    const firstCase = first && first.cases && first.cases[0] ? (first.cases[0].case_number || first.cases[0].case_id) : null;
+    const total = list.reduce((n, c) => n + 1 + (c.cases || []).length, 0) + adds.length;
+    const shown = first ? 1 + (firstCase ? 1 : 0) : 0;
+    const rest = Math.max(0, total - shown);
+    box.replaceChildren(...[
+      h('span', { className: 'lbl' }, 'In this conversation:'),
+      first ? h('span', {
+        className: 'chip person', role: 'button', tabindex: '0', title: `Open ${first.name || 'contact'}`,
+        onclick: () => openContact(first), onkeydown: (e) => { if (e.key === 'Enter') openContact(first); },
+      }, icon(first.kind === 'org' ? 'fa-building' : 'fa-user'), first.name || (first.emails || [])[0] || `contact ${first.contact_id}`) : null,
+      first && first.cases && first.cases[0] ? relatedCaseChip(first.cases[0]) : null,
+      !first && adds.length ? h('span', { className: 'lbl' }, `${adds.length} address${adds.length === 1 ? '' : 'es'} not on file`) : null,
+      rest || adds.length ? h('button', {
+        className: 'linkish rel-more', type: 'button', title: 'Show everyone in this conversation, their cases, and the add-to-client chips',
+        onclick: () => { state.relOpen = true; renderRelated(); },
+      }, `${rest ? `+${rest} ` : ''}▸`) : null,
+    ].filter(Boolean));
+    return;
+  }
   const kids = [];
   if (list.length) {
     kids.push(h('span', { className: 'lbl' }, 'In this conversation:'), ...list.map((c) => h('span', { className: 'who' },
@@ -1528,37 +1756,158 @@ function renderThread() {
   if (a && a.scrollIntoView) a.scrollIntoView({ block: 'nearest' });
 }
 
+/*
+ * MESSAGE CARD (S2P D.1): the header is ONE line — read pill · sender name ·
+ * clip · date · Reply · Reply all · ⋯ — with the full addresses and the
+ * mailbox copies behind a details chevron, and the log-status line (A.2)
+ * under it. The ⋯ menu holds the per-message actions that used to be a
+ * button row (Mark read/unread, Plain text/Formatted, Taller, Task, Always
+ * show images); it is keyboard-operable, Escape closes it, one open at a
+ * time. Task also gets its own visible button at ≥1000px (CSS).
+ */
+let openMenu = null; // the ONE open ⋯ menu: { el, btn, close }
+function closeMenu() {
+  if (!openMenu) return;
+  openMenu.el.remove();
+  openMenu.btn.setAttribute('aria-expanded', 'false');
+  openMenu = null;
+}
+function showMenu(btn, items) {
+  const was = openMenu && openMenu.btn === btn;
+  closeMenu();
+  if (was) return; // the same button toggles it off
+  const menu = h('div', { className: 'mmenu', role: 'menu' },
+    ...items.filter(Boolean).map(([label, title, fn]) => h('button', {
+      type: 'button', role: 'menuitem', title: title || null,
+      onclick: () => { closeMenu(); fn(); },
+    }, label)));
+  btn.parentElement.append(menu);
+  btn.setAttribute('aria-expanded', 'true');
+  openMenu = { el: menu, btn };
+  const first = menu.querySelector('button');
+  if (first) first.focus();
+}
+
+/** The ⋯ menu's items for one message (rebuilt on every open — labels track state). */
+function cardMenuItems(m, card) {
+  const rs = state.render.get(m.id) || {};
+  const hasHtml = hasHtmlBody(m);
+  return [
+    [m.unread ? 'Mark read' : 'Mark unread', 'Read state is yours alone', () => (m.unread ? markRead(m) : markUnread(m))],
+    hasHtml ? [rs.mode === 'text' ? 'Formatted' : 'Plain text', 'How the message body is shown', () => { rs.mode = rs.mode === 'text' ? 'html' : 'text'; refill(card, m); }] : null,
+    ['Taller', 'Give the message more height', () => {
+      rs.tall = !rs.tall;
+      const fr = card.querySelector('.mail-frame');
+      if (fr) fr.classList.toggle('tall', rs.tall);
+    }],
+    ['Task…', 'Create a task from this email', () => openTaskModal(m)],
+    hasHtml && m.from_email && !m.images_trusted
+      ? ['Always show images from this sender', `Always show images in mail from ${m.from_email} (just for you)`, () => trustSender(m)] : null,
+    hasHtml && m.from_email && m.images_trusted
+      ? ['Stop always showing images', `Images from ${m.from_email} go back to hidden-by-default`, () => untrustSender(m)] : null,
+  ];
+}
+
+/** The log-status line (A.2 + F.3 + G): where this email stands with the log, and who sent it. */
+function logLine(m) {
+  const st = m.log_status || { state: 'store_only' };
+  const line = h('div', { className: 'logline' });
+  const link = (label) => h('button', { className: 'linkish', type: 'button', onclick: () => openCaseLink(m) }, label || 'Link to case');
+  if (st.state === 'case' && st.case) {
+    line.append('On the log of', caseChip(st.case), link('Change'));
+  } else if (st.state === 'logged') {
+    line.append('On the firm log, not on a case.', link());
+  } else if (st.state === 'pending') {
+    line.append(h('span', { title: 'The mail sync has stored it and its log entry is on the way' }, 'Still syncing; its log entry is on the way.'));
+  } else if (st.state === 'firm_to_firm') {
+    line.append('Not on the log: mail between firm addresses is skipped.', link());
+  } else if (st.state === 'suppressed') {
+    line.append('Not on the log: a suppression rule skipped it.', link());
+  } else if (st.state === 'pipeline_error') {
+    line.append('Not on the log: the mail rules failed on it.', link());
+  } else if (st.state === 'history') {
+    line.append('Older mail, stored before YisraCase read this mailbox.', link());
+  } else {
+    line.append('Not on the log: this mailbox only stores mail.', link());
+  }
+  // G: a hub send's Case field, while its link is in flight or gave up
+  if (m.sent_link && m.sent_link.state === 'pending' && st.state !== 'case') {
+    line.append(h('span', { title: 'The sent copy is linked once the mail sync stores it' }, `Linking to ${m.sent_link.case.case_number || m.sent_link.case.case_id}…`));
+  } else if (m.sent_link && m.sent_link.state === 'failed' && st.state !== 'case') {
+    line.append(h('span', { className: 'chip sync-warn', title: 'The automatic link gave up — IT was alerted; Link to case does it by hand' },
+      `Linking to ${m.sent_link.case.case_number || m.sent_link.case.case_id} failed`));
+  }
+  // F: shared-box attribution
+  if (m.sent_by && m.sent_by.name) line.append(`· Sent by ${m.sent_by.name} via YisraCase`);
+  return line;
+}
+
 function messageCard(m, { expanded, anchor }) {
   const card = h('div', { className: 'mcard' + (expanded ? '' : ' collapsed') + (anchor ? ' anchor' : ''), dataset: { id: String(m.id) } });
   const files = attachedFiles(m);
+  const menuBtn = h('button', {
+    className: 'btn small menu-btn', type: 'button', 'aria-haspopup': 'menu', 'aria-expanded': 'false',
+    title: 'More actions', 'aria-label': 'More actions for this message',
+    onclick: (e) => { e.stopPropagation(); showMenu(menuBtn, cardMenuItems(m, card)); },
+  }, icon('fa-ellipsis'));
+  const hbtns = h('span', { className: 'hbtns' },
+    ...(canSendAny() ? [
+      h('button', { className: 'btn small reply-btn', type: 'button', title: 'Reply to the sender', 'aria-label': 'Reply', onclick: (e) => { e.stopPropagation(); openReply(m, false); } }, icon('fa-reply'), h('span', { className: 'hb-label' }, ' Reply')),
+      h('button', { className: 'btn small reply-all-btn', type: 'button', title: 'Reply to the sender and everyone else on it', 'aria-label': 'Reply all', onclick: (e) => { e.stopPropagation(); openReply(m, true); } }, icon('fa-reply-all'), h('span', { className: 'hb-label' }, ' Reply all')),
+    ] : []),
+    h('button', { className: 'btn small task-btn', type: 'button', title: 'Create a task from this email', 'aria-label': 'Task', onclick: (e) => { e.stopPropagation(); openTaskModal(m); } }, icon('fa-list-check'), h('span', { className: 'hb-label' }, ' Task')),
+    h('span', { className: 'mmenu-wrap' }, menuBtn));
+  const det = h('div', { className: 'mdet mexp', hidden: true },
+    h('div', { className: 'mmeta' }, `From: ${m.from_addr || '(no sender)'}`),
+    m.to_addrs ? h('div', { className: 'mmeta' }, `To: ${m.to_addrs}`) : null,
+    m.cc_addrs ? h('div', { className: 'mmeta' }, `Cc: ${m.cc_addrs}`) : null,
+    h('div', { className: 'mmeta' }, (m.copies || [m]).map((c) => h('span', { className: 'cp' }, boxDot(c.mailbox_id),
+      `${c.mailbox_address || ''}${c.place ? ` / ${c.place}` : ''}`))));
+  const detBtn = h('button', {
+    className: 'mdet-btn', type: 'button', 'aria-expanded': 'false',
+    title: 'Show the full addresses and which mailboxes hold this message',
+    onclick: (e) => { e.stopPropagation(); det.hidden = !det.hidden; detBtn.setAttribute('aria-expanded', det.hidden ? 'false' : 'true'); detBtn.replaceChildren(icon(det.hidden ? 'fa-chevron-down' : 'fa-chevron-up')); },
+  }, icon('fa-chevron-down'));
   const head = h('div', { className: 'mhead', role: 'button', tabindex: '0', title: 'Show / hide this message' },
     h('div', { className: 'r1' },
-      h('span', { className: 'mfrom' }, m.from_addr || '(no sender)'),
       h('span', { className: 'mstate' }),
+      h('span', { className: 'mfrom', title: m.from_addr || '' }, personName(m.from_addr)),
       files.length ? h('span', { className: 'mclip', title: `${files.length} attachment${files.length === 1 ? '' : 's'}` }, icon('fa-paperclip'), ` ${files.length}`) : null,
-      h('span', { className: 'mdate' }, fullDate(m.date))),
-    h('div', { className: 'mmeta mexp' }, m.to_addrs ? `To: ${m.to_addrs}` : '', m.cc_addrs ? ` · Cc: ${m.cc_addrs}` : ''),
-    h('div', { className: 'mmeta mexp' }, (m.copies || [m]).map((c) => h('span', { className: 'cp' }, boxDot(c.mailbox_id),
-      `${c.mailbox_address || ''}${c.place ? ` / ${c.place}` : ''}`))),
+      h('span', { className: 'mdate' }, fullDate(m.date)),
+      h('span', { className: 'mexp', style: 'display:inline-flex;gap:4px;align-items:center' }, hbtns, detBtn)),
     h('div', { className: 'msnip' }, m.snippet || ''),
   );
-  const toggle = () => {
+  const toggle = (e) => {
+    if (e && e.target && e.target.closest('button')) return; // the header's own buttons never collapse it
     const willOpen = card.classList.contains('collapsed');
     card.classList.toggle('collapsed');
     if (willOpen && !card.querySelector('.mail-frame')) fillCard(card, m);
   };
   head.addEventListener('click', toggle);
-  head.addEventListener('keydown', (e) => { if (e.key === 'Enter') toggle(); });
-  card.append(head, h('div', { className: 'mexp mslot' }));
+  head.addEventListener('keydown', (e) => { if (e.key === 'Enter') toggle(e); });
+  card.append(head, h('div', { className: 'mexp logline-slot' }), det, h('div', { className: 'mexp mslot' }));
+  paintLogLine(m, card);
   if (expanded) fillCard(card, m);
   paintCardState(m, card);
   return card;
+}
+
+/** (Re)draw the card's log-status line — case-link and trust actions re-read it. */
+function paintLogLine(m, cardIn) {
+  const card = cardIn || E('thread-body').querySelector(`.mcard[data-id="${m.id}"]`);
+  const slot = card && card.querySelector('.logline-slot');
+  if (slot) slot.replaceChildren(logLine(m));
 }
 
 /** Files to list: every part except images the body draws (server `inline`). */
 function attachedFiles(m) {
   return (m.attachments || []).filter((a) => !a.inline);
 }
+
+/** The ONE body read outside the renderer hand-off: "is there an HTML part"
+ *  (the Formatted/Plain toggle and the images menu need to know — the body
+ *  itself still only ever reaches R.createFrame). */
+const hasHtmlBody = (m) => m.body_html != null && String(m.body_html).trim() !== '';
 
 /** The card's read-state pill, border and Mark read / Mark unread button. */
 function paintCardState(m, cardIn) {
@@ -1571,8 +1920,8 @@ function paintCardState(m, cardIn) {
   pill.title = m.unread ? 'You have not read this yet' : (isNew ? 'Unread when you opened this conversation' : '');
   card.classList.toggle('is-unread', !!m.unread);
   card.classList.toggle('is-new', !m.unread && isNew);
-  const btn = card.querySelector('.read-toggle');
-  if (btn) btn.replaceChildren(icon(m.unread ? 'fa-envelope-open' : 'fa-envelope'), m.unread ? 'Mark read' : 'Mark unread');
+  // (the Mark read/unread action lives in the ⋯ menu since S2P — its label is
+  // built fresh on every open, so there is nothing to repaint here)
 }
 
 /** Actions, notice, attachments and the sandboxed body for one card. */
@@ -1580,7 +1929,7 @@ function fillCard(card, m) {
   const slot = card.querySelector('.mslot');
   const rs = state.render.get(m.id) || { allowRemote: false, mode: 'html', cidMap: null, tall: false };
   state.render.set(m.id, rs);
-  const hasHtml = m.body_html != null && String(m.body_html).trim() !== '';
+  const hasHtml = hasHtmlBody(m);
   // A trusted sender's mail opens as if "Show images" had been clicked: remote
   // images on this render, inline ones fetched right after (once per card).
   if (m.images_trusted && !rs.autoTried) {
@@ -1594,41 +1943,24 @@ function fillCard(card, m) {
   });
   if (rs.tall) built.frame.classList.add('tall');
 
-  const actions = h('div', { className: 'mactions' });
-  actions.append(h('button', {
-    className: 'btn small read-toggle', type: 'button',
-    onclick: () => (m.unread ? markRead(m) : markUnread(m)),
-  }, icon(m.unread ? 'fa-envelope-open' : 'fa-envelope'), m.unread ? 'Mark read' : 'Mark unread'));
-  if (canSendAny()) {
-    actions.append(
-      h('button', { className: 'btn small reply-btn', type: 'button', title: 'Reply to the sender', onclick: () => openReply(m, false) }, icon('fa-reply'), 'Reply'),
-      h('button', { className: 'btn small reply-all-btn', type: 'button', title: 'Reply to the sender and everyone else on it', onclick: () => openReply(m, true) }, icon('fa-reply-all'), 'Reply all'));
-  }
-  if (hasHtml) {
-    actions.append(h('button', {
-      className: 'btn small', type: 'button',
-      onclick: () => { rs.mode = rs.mode === 'text' ? 'html' : 'text'; refill(card, m); },
-    }, icon(rs.mode === 'text' ? 'fa-code' : 'fa-align-left'), rs.mode === 'text' ? 'Formatted' : 'Plain text'));
-  }
-  actions.append(h('button', {
-    className: 'btn small', type: 'button',
-    onclick: () => { rs.tall = !rs.tall; built.frame.classList.toggle('tall', rs.tall); },
-  }, icon('fa-up-down'), 'Taller'));
-  actions.append(m.case
-    ? h('span', { className: 'chips' }, caseChip(m.case), h('button', { className: 'btn small', type: 'button', onclick: () => openCaseLink(m) }, 'Change case'))
-    : h('button', { className: 'btn small', type: 'button', onclick: () => openCaseLink(m) }, icon('fa-link'), 'Link to case'));
-
-  const kids = [actions];
+  // S2P D.1: the per-message actions moved to the header (Reply / Reply all /
+  // ⋯ menu) and the log-status line (case link) — no button row here.
+  const kids = [];
+  // D.2: the images notice is ONE line; the sender's address rides the title.
   const nBlocked = built.blocked.remote + built.blocked.inline;
   if (built.mode === 'html' && nBlocked && !rs.allowRemote) {
     kids.push(h('div', { className: 'notice' },
       icon('fa-eye-slash'),
-      `Images hidden to protect your privacy (${built.blocked.remote} remote${built.blocked.inline ? `, ${built.blocked.inline} inline` : ''}). Remote images tell the sender you opened this.`,
-      h('button', { className: 'btn small', type: 'button', onclick: (e) => showImages(card, m, e.target) }, 'Show images'),
+      `${nBlocked} image${nBlocked === 1 ? '' : 's'} hidden`,
+      h('button', {
+        className: 'btn small', type: 'button',
+        title: 'Show the images this once — remote images tell the sender you opened this',
+        onclick: (e) => showImages(card, m, e.target),
+      }, 'Show'),
       m.from_email ? h('button', {
         className: 'btn small trust-btn', type: 'button', title: `Always show images in mail from ${m.from_email} (just for you)`,
         onclick: () => trustSender(m),
-      }, `Always show from ${m.from_email}`) : null));
+      }, 'Always for this sender') : null));
   } else if (built.mode === 'html' && m.images_trusted && m.from_email) {
     kids.push(h('div', { className: 'trustline' }, icon('fa-eye'), `Images shown: you trust ${m.from_email}.`,
       h('button', { className: 'linkish untrust-btn', type: 'button', onclick: () => untrustSender(m) }, 'Stop')));
@@ -1643,7 +1975,8 @@ function fillCard(card, m) {
           className: 'btn small att-name', type: 'button', title: `${vk ? 'View' : 'Download'} ${nm}${a.mime ? ` · ${a.mime}` : ''}`,
           onclick: (e) => (vk ? viewAttachment(m, a) : downloadPart(m, a, e.currentTarget)),
         }, icon('fa-paperclip'), h('span', { className: 'nm' }, nm), h('span', { className: 'muted' }, bytes(a.size))),
-        vk ? h('button', { className: 'btn small att-view', type: 'button', title: `View ${nm}`, 'aria-label': `View ${nm}`, onclick: () => viewAttachment(m, a) }, icon('fa-eye')) : null,
+        // S2P (D.4): no separate View button — the NAME opens the viewer for a
+        // viewable file (its title says so); the chips stay one row wide.
         h('button', { className: 'btn small att-dl', type: 'button', title: `Download ${nm}`, 'aria-label': `Download ${nm}`, onclick: (e) => downloadPart(m, a, e.currentTarget) }, icon('fa-download')),
         h('button', { className: 'btn small att-save', type: 'button', title: `Save ${nm} to a case's Dropbox folder`, 'aria-label': `Save ${nm} to a case`, onclick: () => openSavePicker(m, a) }, icon('fa-folder-plus')));
     })));
@@ -1765,9 +2098,10 @@ function openCasePicker(picker, { title, hint }) {
   E('case-q').focus();
 }
 function openCaseLink(m) {
+  const logged = m.log_status ? ['case', 'logged'].includes(m.log_status.state) : !!m.log_id;
   openCasePicker({ mode: 'link', m }, {
     title: 'Link to a case',
-    hint: m.log_id
+    hint: logged
       ? 'The email is already on the firm log; this links that entry to the case.'
       : 'This email is not on the log yet — linking adds it to the log of the case you pick.',
   });
@@ -1783,6 +2117,16 @@ function pickCase(c) {
   const p = state.picker;
   if (!p) return;
   if (p.mode === 'save') { closeCaseLink(); saveToCase(p.m, p.a, c); return; }
+  if (p.mode === 'compose') { // S2P §G: the composer's Case field
+    const cmp = p.composer;
+    closeCaseLink();
+    if (cmp && state.composer === cmp) {
+      cmp.caseSel = { case_id: c.case_id, case_number: c.case_number_full || c.case_number || null };
+      touch(cmp);
+      paintCase(cmp);
+    }
+    return;
+  }
   linkCase(c);
 }
 function closeCaseLink() {
@@ -1818,17 +2162,147 @@ async function linkCase(c) {
     const linked = out.case || { case_id: c.case_id, case_number: c.case_number_full || c.case_number };
     m.case = linked;
     m.log_id = out.log_id;
+    m.log_status = { state: 'case', case: linked, log_id: out.log_id, via: 'stamped' };
     const ids = new Set((m.copies || [m]).map((x) => x.id));
-    for (const row of state.messages) if (ids.has(row.id)) { row.case = linked; row.log_id = out.log_id; }
+    for (const row of state.messages) if (ids.has(row.id) || (m.message_id && row.message_id && String(row.message_id).toLowerCase() === String(m.message_id).toLowerCase())) {
+      row.case = linked;
+      row.log_id = out.log_id;
+      row.log_status = m.log_status;
+    }
     closeCaseLink();
     renderList();
-    const card = document.querySelector(`.mcard[data-id="${m.id}"]`);
-    if (card) refill(card, m);
+    paintLogLine(m);
     toast(out.log_created ? `Logged and linked to ${linked.case_number || linked.case_id}` : `Linked to ${linked.case_number || linked.case_id}`);
   } catch (err) {
     const box = E('case-msg');
     box.textContent = err.message || 'Linking failed';
     box.classList.add('show');
+  }
+}
+
+// ── Task from email (S2P §E) ────────────────────────────────
+/*
+ * A "Task" action on every message (⋯ menu everywhere; its own button where
+ * the header has room). POST /api/tasks with source 'comms' — the route and
+ * taskService are reused as-is; createTask THROWS over 100 title / 1000 desc
+ * characters (relaxed sql_mode truncates silently), so both are counted and
+ * clamped here. Link = case or contact only (no email link type exists, and
+ * none is added); the deep link back to the email is a ref/plans.md entry.
+ */
+const TASK_TITLE_MAX = 100;
+const TASK_DESC_MAX = 1000;
+
+function firmToday() {
+  // 'YYYY-MM-DD' in the firm's timezone (en-CA formats exactly that).
+  try { return new Intl.DateTimeFormat('en-CA', { timeZone: firmTz() }).format(new Date()); }
+  catch (_) { return new Date().toISOString().slice(0, 10); }
+}
+/** The next business day after `iso` (Sat/Sun skipped; holidays are not known here). */
+function nextBusinessDay(iso) {
+  const d = new Date(`${iso}T12:00:00Z`);
+  do { d.setUTCDate(d.getUTCDate() + 1); } while ([0, 6].includes(d.getUTCDay()));
+  return d.toISOString().slice(0, 10);
+}
+
+function taskCounts() {
+  E('task-title-n').textContent = `${E('task-title').value.length}/${TASK_TITLE_MAX}`;
+  E('task-desc-n').textContent = `${E('task-desc').value.length}/${TASK_DESC_MAX}`;
+}
+
+/** The link chips: the message's case (default), related client cases, related contacts, none. */
+function taskLinkChoices(m) {
+  const out = [];
+  const seen = new Set();
+  const addCase = (c) => {
+    if (!c || !c.case_id || seen.has(`case:${c.case_id}`)) return;
+    seen.add(`case:${c.case_id}`);
+    out.push({ type: 'case', id: String(c.case_id), label: c.case_number || c.case_id, icon: 'fa-briefcase' });
+  };
+  const msgCase = m.log_status && m.log_status.state === 'case' ? m.log_status.case : m.case;
+  addCase(msgCase);
+  for (const p of state.related || []) for (const c of (p.cases || [])) addCase(c);
+  for (const p of state.related || []) {
+    if (seen.has(`contact:${p.contact_id}`)) continue;
+    seen.add(`contact:${p.contact_id}`);
+    out.push({ type: 'contact', id: String(p.contact_id), label: p.name || `contact ${p.contact_id}`, icon: p.kind === 'org' ? 'fa-building' : 'fa-user' });
+  }
+  return out;
+}
+
+function paintTaskLinks() {
+  const t = state.task;
+  if (!t) return;
+  const chip = (choice) => {
+    const on = choice === null ? !t.link : !!(t.link && t.link.type === choice.type && t.link.id === choice.id);
+    return h('button', {
+      className: 'fchip', type: 'button', 'aria-pressed': on ? 'true' : 'false',
+      title: choice === null ? 'No link — a standalone task' : `Link the task to ${choice.label}`,
+      onclick: () => { t.link = choice; paintTaskLinks(); },
+    }, choice === null ? 'None' : [icon(choice.icon), ` ${choice.label}`]);
+  };
+  E('task-links').replaceChildren(...t.choices.map(chip), chip(null));
+}
+
+function openTaskModal(m) {
+  closeMenu();
+  const subject = m.subject || '(no subject)';
+  const choices = taskLinkChoices(m);
+  // Default link = the MESSAGE's case (E); without one, nothing is auto-picked
+  // — the related cases / contacts are one-click chips, "None" stays allowed.
+  const msgCase = m.log_status && m.log_status.state === 'case' ? m.log_status.case : m.case;
+  const def = msgCase ? choices.find((c) => c.type === 'case' && c.id === String(msgCase.case_id)) || null : null;
+  state.task = { m, choices, link: def };
+  E('task-msg').classList.remove('show');
+  E('task-title').value = `Follow up: ${subject}`.slice(0, TASK_TITLE_MAX);
+  const me = Number(P.firmData && P.firmData.currentUser && P.firmData.currentUser.user);
+  const users = ((P.firmData && P.firmData.users) || []).slice().sort((a, b) => a.user - b.user);
+  E('task-to').replaceChildren(...users.map((u) => h('option', { value: String(u.user) }, u.user_name || `User #${u.user}`)));
+  if (users.some((u) => Number(u.user) === me)) E('task-to').value = String(me);
+  E('task-due').value = firmToday();
+  // Description: who/when/subject + the first lines of the text body, capped.
+  const head = `Email from ${personName(m.from_addr)} on ${fullDate(m.date)}: ${subject}`;
+  const body = String(m.body_text || '').replace(/\r\n?/g, '\n').trim();
+  let desc = head;
+  if (body) desc = `${head}\n\n${body}`;
+  E('task-desc').value = desc.slice(0, TASK_DESC_MAX);
+  taskCounts();
+  paintTaskLinks();
+  E('task-backdrop').classList.add('open');
+  E('task-title').focus();
+}
+function closeTaskModal() {
+  E('task-backdrop').classList.remove('open');
+  state.task = null;
+}
+function taskError(msg) {
+  const b = E('task-msg');
+  b.textContent = msg || '';
+  b.classList.toggle('show', !!msg);
+}
+async function saveTask() {
+  const t = state.task;
+  if (!t) return;
+  const title = E('task-title').value.trim();
+  if (!title) { taskError('Give the task a title.'); return; }
+  if (title.length > TASK_TITLE_MAX) { taskError(`The title is ${title.length} characters — the limit is ${TASK_TITLE_MAX}.`); return; }
+  const desc = E('task-desc').value;
+  if (desc.length > TASK_DESC_MAX) { taskError(`The description is ${desc.length} characters — the limit is ${TASK_DESC_MAX}.`); return; }
+  const to = Number(E('task-to').value);
+  if (!to) { taskError('Pick who the task is for.'); return; }
+  const body = { to, title, desc, due: E('task-due').value || null, source: 'comms' };
+  if (t.link) { body.link_type = t.link.type; body.link_id = t.link.id; }
+  E('task-save').disabled = true;
+  try {
+    await api('/api/tasks', 'POST', body);
+    closeTaskModal();
+    toast('Task created', 5000, {
+      label: 'Open tasks',
+      onclick: () => { try { P.openTasksTab(); } catch (_) { toast('Open the Tasks tab from the sidebar'); } },
+    });
+  } catch (err) {
+    taskError(`Couldn't create the task: ${err.message}`);
+  } finally {
+    E('task-save').disabled = false;
   }
 }
 
@@ -2030,11 +2504,12 @@ function identityDot(i) {
   return el;
 }
 
-/** The cases a contact search row carries (JSON_ARRAYAGG: a string or an array; a no-case row is all nulls). */
-function contactCases(v) {
+/** The case rows a contact search row carries (JSON_ARRAYAGG: a string or an array; a no-case row is all nulls). */
+function contactCaseRefs(v) {
   let list = v;
   if (typeof list === 'string') { try { list = JSON.parse(list); } catch (_) { list = []; } }
-  return (Array.isArray(list) ? list : []).filter((c) => c && c.case_id).map((c) => String(c.case_number || c.case_id));
+  return (Array.isArray(list) ? list : []).filter((c) => c && c.case_id)
+    .map((c) => ({ case_id: String(c.case_id), case_number: c.case_number ? String(c.case_number) : null }));
 }
 
 const totalRecipients = (c) => c.to.length + c.cc.length + c.bcc.length;
@@ -2050,7 +2525,7 @@ function makeComposer(opts) {
   const saved = state.drafts.get(key);
   const d = opts.defaults || {};
   const firstSendable = sendableIdentities()[0] || null;
-  const c = saved ? { ...saved, to: [...saved.to], cc: [...saved.cc], bcc: [...saved.bcc] } : {
+  const c = saved ? { ...saved, to: [...saved.to], cc: [...saved.cc], bcc: [...saved.bcc], caseSugg: [...(saved.caseSugg || [])] } : {
     kind: opts.kind, key,
     parentId: opts.parentId || null, threadKey: opts.threadKey || null, convo: opts.convo || null, all: !!opts.all,
     identityId: d.mailbox_id != null ? d.mailbox_id : (firstSendable ? firstSendable.id : null),
@@ -2060,6 +2535,11 @@ function makeComposer(opts) {
     showCc: !!(d.cc && d.cc.length), showBcc: false,
     subject: d.subject || '', body: '',
     quote: d.quote || null, includeQuote: true,
+    // S2P §G: the optional Case field. A reply DEFAULTS to the replied-to
+    // message's case; otherwise empty with one-click suggestions — never
+    // auto-picked among several.
+    caseSel: opts.caseDefault ? { case_id: opts.caseDefault.case_id, case_number: opts.caseDefault.case_number || null } : null,
+    caseSugg: (opts.caseSugg || []).map((x) => ({ case_id: x.case_id, case_number: x.case_number || null })),
     signature: null, dirty: false,
   };
   if (c.signature === null) { const i = identityById(c.identityId); c.signature = !!(i && i.signature); }
@@ -2099,10 +2579,13 @@ function buildComposer(c) {
   ui.sigBox.addEventListener('change', () => { c.signature = ui.sigBox.checked; touch(c); });
   ui.sigLabel = h('label', { className: 'check sig-label', title: 'The mailbox\'s own signature (Connections → Email Senders), added below your text' }, ui.sigBox, 'Add signature');
 
+  ui.caseField = h('div', { className: 'cf-field chips', style: 'display:flex;flex-wrap:wrap;gap:4px;align-items:center;padding-top:4px' });
   const kids = [ui.err,
     h('div', { className: 'cf-row' }, h('span', { className: 'cf-lbl' }, 'From'), h('div', { className: 'cf-field' }, ui.idents, ui.identNote)),
     ui.rows.to.row, ui.rows.cc.row, ui.rows.bcc.row,
     h('div', { className: 'cf-row' }, h('span', { className: 'cf-lbl' }, 'Subject'), h('div', { className: 'cf-field' }, ui.subject)),
+    // S2P §G: the optional Case field — the sent copy reaches that case's log.
+    h('div', { className: 'cf-row case-row' }, h('span', { className: 'cf-lbl' }, 'Case'), ui.caseField),
     ui.body, ui.sigLabel];
   if (c.kind === 'reply' && c.quote) {
     ui.quoteBox = h('input', { type: 'checkbox', className: 'quote-box' });
@@ -2123,6 +2606,39 @@ function buildComposer(c) {
   paintIdentities(c);
   paintRows(c);
   paintCount(c);
+  paintCase(c);
+}
+
+/**
+ * The Case field (S2P §G): the picked case as a removable chip, else
+ * one-click suggestion chips (the reply's conversation cases; cases carried
+ * by picked recipients) + "Pick a case…" into the shared case picker. The
+ * send body gains case_id; the server validates it BEFORE dispatch.
+ */
+function paintCase(c) {
+  const f = c.ui && c.ui.caseField;
+  if (!f) return;
+  if (c.caseSel) {
+    f.replaceChildren(
+      h('span', { className: 'chip case', title: 'The sent copy goes on this case\'s log' }, icon('fa-briefcase'), c.caseSel.case_number || c.caseSel.case_id),
+      h('button', { className: 'linkish', type: 'button', title: 'Send without a case link', onclick: () => { c.caseSel = null; touch(c); paintCase(c); } }, 'Remove'));
+    return;
+  }
+  const seen = new Set();
+  const suggs = (c.caseSugg || []).filter((x) => x && x.case_id && !seen.has(x.case_id) && seen.add(x.case_id)).slice(0, 5);
+  f.replaceChildren(
+    h('span', { className: 'yc-hint', style: 'margin-top:0' }, 'None — '),
+    ...suggs.map((x) => h('button', {
+      className: 'fchip', type: 'button', title: `Put the sent copy on ${x.case_number || x.case_id}'s log`,
+      onclick: () => { c.caseSel = { ...x }; touch(c); paintCase(c); },
+    }, icon('fa-briefcase'), ` ${x.case_number || x.case_id}`)),
+    h('button', {
+      className: 'linkish', type: 'button',
+      onclick: () => openCasePicker({ mode: 'compose', m: c.parentId && state.thread ? (state.thread.messages.find((x) => x.id === c.parentId || (x.copies || []).some((cp) => cp.id === c.parentId)) || null) : null, composer: c }, {
+        title: 'Link the sent mail to a case',
+        hint: 'The copy of what you send is put on this case\'s log once the mail sync stores it.',
+      }),
+    }, 'Pick a case…'));
 }
 
 function composerError(c, msg) {
@@ -2267,9 +2783,11 @@ async function suggest(c, f) {
   if (seq !== f.seq || f.input.value.trim() !== q) return;
   const items = rows.map((r) => {
     const email = String(r.contact_email || '').trim();
-    const cases = contactCases(r.cases);
+    const caseRefs = contactCaseRefs(r.cases);
+    const cases = caseRefs.map((c) => c.case_number || c.case_id);
     return {
       email, name: r.contact_name ? String(r.contact_name) : null, ok: EMAIL_OK.test(email),
+      caseRefs, // §G: a picked contact's cases become Case-field suggestions
       meta: [email || 'no email on file', cases.length ? (cases.length > 1 ? `${cases[0]} +${cases.length - 1}` : cases[0]) : ''].filter(Boolean).join(' · '),
     };
   });
@@ -2305,6 +2823,12 @@ function moveActive(f, step) {
 function pickSuggestion(c, f, it) {
   if (!it || !it.ok) return;
   if (addRecipient(c, f.field, { email: it.email, name: it.name || null })) f.input.value = '';
+  // §G: the picked contact's cases join the Case field's one-click
+  // suggestions (never auto-picked).
+  for (const ref of (it.caseRefs || [])) {
+    if (!c.caseSugg.some((x) => x.case_id === ref.case_id)) c.caseSugg.push({ ...ref });
+  }
+  if (!c.caseSel) paintCase(c);
   hideSuggest(f);
   f.input.focus();
 }
@@ -2394,7 +2918,14 @@ async function openReply(m, all) {
     if (!defaults || defaults.mailbox_id == null) { toast('None of your mailboxes can send right now'); return; }
   }
   if (!state.thread || state.thread !== t) return; // the reader moved on meanwhile
-  const c = makeComposer({ kind: 'reply', parentId: m.id, threadKey: t.key || null, convo: convoOf(t.key, t.anchorId), all: !!all, defaults });
+  // §G: a reply defaults its Case field to the replied-to message's case; the
+  // conversation's client cases ride along as one-click suggestions.
+  const mCase = m.log_status && m.log_status.state === 'case' ? m.log_status.case : m.case;
+  const c = makeComposer({
+    kind: 'reply', parentId: m.id, threadKey: t.key || null, convo: convoOf(t.key, t.anchorId), all: !!all, defaults,
+    caseDefault: mCase || null,
+    caseSugg: caseSuggestions(m).map((x) => ({ case_id: x.case_id, case_number: x.case_number || null })),
+  });
   if (carry) { c.body = carry; c.ui.body.value = carry; c.dirty = true; }
   if (defaults && defaults.over_cap) composerError(c, `Reply all would go to more than ${state.maxRecipients} people — remove some before sending.`);
   mountComposer(c); // closes the open one, its text kept (refused while that one is still sending)
@@ -2415,6 +2946,7 @@ async function sendComposer(c) {
   if (c.cc.length) payload.cc = c.cc.map(out1);
   if (c.bcc.length) payload.bcc = c.bcc.map(out1);
   if (ident.signature) payload.signature = !!c.signature;
+  if (c.caseSel && c.caseSel.case_id) payload.case_id = c.caseSel.case_id; // §G: the sent copy reaches this case's log
   if (c.kind === 'reply') { payload.in_reply_to_message_fk = c.parentId; payload.quote_original = !!(c.quote && c.includeQuote); }
   c.sending = true;
   c.ui.send.disabled = true;
@@ -2424,7 +2956,13 @@ async function sendComposer(c) {
     c.sending = false; // sent: now it may close (closeComposer refuses one in flight)
     closeComposer(c, { keepDraft: false });
     const warn = ((out && out.warnings) || []).map((w) => w.message).filter(Boolean).join(' ');
-    toast(`Sent from ${(out && out.from) || ident.address}. ${warn || 'It shows in the list after the mailbox\'s next check (about 5 minutes).'}`, 6000);
+    const cl = out && out.case_link;
+    const linkNote = payload.case_id
+      ? (cl && cl.state === 'failed' ? ' The case link could not be arranged — link the copy by hand (IT was alerted).'
+        : cl && cl.state === 'linked' ? ' It is on the case\'s log.'
+        : ' It goes on the case\'s log once the copy is stored.')
+      : '';
+    toast(`Sent from ${(out && out.from) || ident.address}.${linkNote} ${warn || 'It shows in the list after the mailbox\'s next check (about 5 minutes).'}`, 6000);
     if (c.kind === 'reply' && c.threadKey) watchForSent(c.threadKey);
   } catch (err) {
     const msg = (err && err.message) || 'Sending failed — nothing was sent.';
@@ -2473,13 +3011,23 @@ function stopSentWatch() {
 async function init() {
   wirePhone();
   let qTimer = null;
-  const debounced = () => { clearTimeout(qTimer); qTimer = setTimeout(() => loadList(), 350); };
+  const debounced = () => { clearTimeout(qTimer); qTimer = setTimeout(() => { renderFbarBtn(); loadList(); }, 350); };
   E('f-q').addEventListener('input', debounced);
-  E('f-domain').addEventListener('change', () => loadList());
-  for (const id of ['f-unread', 'f-client', 'f-files']) E(id).addEventListener('click', () => { setPressed(id, !pressed(id)); loadList(); });
-  // On a case / Not on a case: one, the other, or neither
-  E('f-hascase').addEventListener('click', () => { const on = !pressed('f-hascase'); setPressed('f-hascase', on); if (on) setPressed('f-nocase', false); loadList(); });
-  E('f-nocase').addEventListener('click', () => { const on = !pressed('f-nocase'); setPressed('f-nocase', on); if (on) setPressed('f-hascase', false); loadList(); });
+  for (const id of ['f-unread', 'f-client', 'f-files']) E(id).addEventListener('click', () => { setPressed(id, !pressed(id)); renderFbarBtn(); loadList(); });
+  // The case filter is a three-way switch (D.5): Any / On a case / Not on a case
+  E('f-case-any').addEventListener('click', () => { if (caseSegNow() !== 'any') { setCaseSeg('any'); renderFbarBtn(); loadList(); } });
+  E('f-case-on').addEventListener('click', () => { if (caseSegNow() !== 'on') { setCaseSeg('on'); renderFbarBtn(); loadList(); } });
+  E('f-case-off').addEventListener('click', () => { if (caseSegNow() !== 'off') { setCaseSeg('off'); renderFbarBtn(); loadList(); } });
+  // ≤768px the chips live behind "Filters (n)" (CSS shows the button there);
+  // it starts closed so the list starts high on a phone.
+  E('fbar').dataset.collapsed = 'true';
+  E('fbar-btn').setAttribute('aria-expanded', 'false');
+  E('fbar-btn').addEventListener('click', () => {
+    const open = E('fbar').dataset.collapsed === 'true';
+    E('fbar').dataset.collapsed = open ? 'false' : 'true';
+    E('fbar-btn').setAttribute('aria-expanded', open ? 'true' : 'false');
+  });
+  renderFbarBtn();
   E('f-inbox').addEventListener('click', () => { if (scopeNow() !== 'inbox') { setScope('inbox'); loadList(); } });
   E('f-sent').addEventListener('click', () => { if (scopeNow() !== 'sent') { setScope('sent'); loadList(); } });
   E('f-folders').addEventListener('click', () => { if (scopeNow() !== 'all') { setScope('all'); loadList(); } });
@@ -2511,6 +3059,15 @@ async function init() {
   E('views-backdrop').addEventListener('click', (e) => { if (e.target === E('views-backdrop')) closeViews(); });
   E('case-q').addEventListener('input', () => { clearTimeout(caseTimer); caseTimer = setTimeout(searchCases, 250); });
   E('case-cancel').addEventListener('click', closeCaseLink);
+  // Task from email (S2P §E)
+  E('task-cancel').addEventListener('click', closeTaskModal);
+  E('task-save').addEventListener('click', saveTask);
+  E('task-due-plus').addEventListener('click', () => { E('task-due').value = nextBusinessDay(E('task-due').value || firmToday()); });
+  E('task-title').addEventListener('input', taskCounts);
+  E('task-desc').addEventListener('input', taskCounts);
+  E('task-backdrop').addEventListener('click', (e) => { if (e.target === E('task-backdrop')) closeTaskModal(); });
+  // The ⋯ menus: a click anywhere else, or Escape, closes the open one.
+  document.addEventListener('click', (e) => { if (openMenu && !e.target.closest('.mmenu-wrap')) closeMenu(); });
   E('viewer-close').addEventListener('click', closeViewer);
   E('viewer-tab').addEventListener('click', viewerNewTab);
   E('viewer-dl').addEventListener('click', () => { const v = state.viewer; if (v) downloadPart(v.m, v.a); });
@@ -2519,7 +3076,9 @@ async function init() {
   E('case-backdrop').addEventListener('click', (e) => { if (e.target === E('case-backdrop')) closeCaseLink(); });
   document.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape') return;
-    if (E('ph-new-backdrop').classList.contains('open')) closeNewText();
+    if (openMenu) closeMenu(); // the ⋯ menu first (D.1: keyboard-operable)
+    else if (E('ph-new-backdrop').classList.contains('open')) closeNewText();
+    else if (E('task-backdrop').classList.contains('open')) closeTaskModal();
     else if (E('viewer-backdrop').classList.contains('open')) closeViewer();
     else if (E('case-backdrop').classList.contains('open')) closeCaseLink();
     else if (E('views-backdrop').classList.contains('open')) closeViews();
@@ -2577,7 +3136,7 @@ async function refreshNow() {
 // pingBecameVisible). Refresh the list and counts quietly; an open thread stays.
 window.ycBecameVisible = () => {
   if (E('case-backdrop').classList.contains('open') || E('views-backdrop').classList.contains('open') || E('viewer-backdrop').classList.contains('open')
-      || E('compose-backdrop').classList.contains('open') || E('ph-new-backdrop').classList.contains('open')) return;
+      || E('compose-backdrop').classList.contains('open') || E('ph-new-backdrop').classList.contains('open') || E('task-backdrop').classList.contains('open')) return;
   if (phoneShown()) { phoneRefresh(); return; }
   loadSummary().catch(() => {});
   loadList({ silent: true });

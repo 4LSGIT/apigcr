@@ -135,9 +135,14 @@ maybe('mailbox S2 on real MySQL', () => {
   afterEach(() => jest.restoreAllMocks());
 
   test('grant matrix + attorney READ bypass', async () => {
-    expect(ids(await call('GET', '/api/mail/messages', { t: tok(SU) }))).toEqual([104, 103, 201, 102, 101, 202, 105]);
+    // S2P: 201 is a copy of 102 — ONE row at the copies' first position; the
+    // primary is the better log_status (box 1 emits → 'history' beats box 2's
+    // 'store_only'), so the row shows id 102.
+    const su = await call('GET', '/api/mail/messages', { t: tok(SU) });
+    expect(ids(su)).toEqual([104, 103, 102, 101, 202, 105]);
+    expect(su.json.messages[2].copies.map((c) => c.id).sort()).toEqual([102, 201]);
     expect(ids(await call('GET', '/api/mail/messages', { t: tok(READER) }))).toEqual([104, 103, 102, 101, 105]);
-    expect(ids(await call('GET', '/api/mail/messages', { t: tok(SS) }))).toEqual([104, 103, 201, 102, 101, 202, 105]);
+    expect(ids(await call('GET', '/api/mail/messages', { t: tok(SS) }))).toEqual([104, 103, 102, 101, 202, 105]);
     const none = await call('GET', '/api/mail/messages', { t: tok(NOBODY) });
     expect([none.status, none.json.messages]).toEqual([200, []]);
     expect((await call('GET', '/api/mail/messages/202', { t: tok(READER) })).status).toBe(404);
@@ -147,16 +152,22 @@ maybe('mailbox S2 on real MySQL', () => {
     expect(sum.json.mailboxes.map((m) => [m.id, m.inbox_total, m.inbox_unread])).toEqual([[1, 5, 5], [2, 2, 2]]);
   });
 
-  test('keyset walk = the engine\'s own full ORDER BY, every row once (ties, NULL tail)', async () => {
+  test('keyset walk = the engine\'s own full ORDER BY, every RAW row once via copies (ties, NULL tail); merged rows in first-appearance order', async () => {
     const ref = (await q("SELECT id FROM mail_messages WHERE folder = 'INBOX' ORDER BY date DESC, id DESC")).map((r) => r.id);
     const seen = [];
+    const copies = [];
     let cursor = null;
     do {
       const r = await call('GET', `/api/mail/messages?limit=2${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`, { t: tok(SU) });
       seen.push(...ids(r));
+      for (const m of r.json.messages) copies.push(...m.copies.map((c) => c.id));
       cursor = r.json.next_cursor;
     } while (cursor);
-    expect(seen).toEqual(ref);
+    // S2P: the cursor is the last RAW row's (date, id), so the walk still
+    // covers every stored row exactly once — the copies prove it; the page
+    // rows are one-per-email ({201,102} collapses to its primary, 102).
+    expect(copies.sort((a, b) => a - b)).toEqual([...ref].sort((a, b) => a - b));
+    expect(seen).toEqual([104, 103, 102, 101, 202, 105]);
   });
 
   test('LIKE: the escaped pattern matches the literal "50%_" only', async () => {
@@ -208,7 +219,11 @@ maybe('mailbox S2 on real MySQL', () => {
     expect((await q('SELECT log_id FROM mail_messages WHERE id = 104'))[0].log_id).toBeNull();
 
     const list = await call('GET', '/api/mail/messages?has_case=1', { t: tok(SU) });
-    expect(ids(list)).toEqual([201, 102, 202]);
+    // S2P: 201 + 102 are one email — one row (both stamped to CaseA1 now;
+    // the tie keeps page order, so the first-appearing copy 201 presents).
+    expect(ids(list)).toEqual([201, 202]);
+    expect(list.json.messages[0].copies.map((c) => c.id).sort()).toEqual([102, 201]);
+    expect(list.json.messages[0].log_status).toMatchObject({ state: 'case', via: 'stamped' });
   });
 
   test('review follow-up on the engine: prior-log lookup, store-only grace, date clamp', async () => {

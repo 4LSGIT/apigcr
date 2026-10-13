@@ -233,10 +233,18 @@ Admin → Comms. It shows the mail of every box you can read in one list; the
 Comms](#phone-lines--comms), below).
 
 - **The list** is the Inbox of every box you can read, newest first, with
-  the box shown when you can read more than one. Mail arrives with the
+  the box shown when you can read more than one. **One row per email:** the
+  same email stored in two of your boxes shows once, with a small tag for
+  each box it sits in (the box's display name, or the part before the @),
+  and the unread counts on the tab and the sidebar count emails the same
+  way. Mail arrives with the
   5-minute check; **Refresh** (the circular arrow) re-reads the list and also
   checks the mail servers right away (at most once every 30 seconds for the
-  whole office), so new mail shows within moments. For the Google mailbox the
+  whole office), so new mail shows within moments. The grey line above the
+  list says when the servers were last checked ("Checked 3 min ago" — the
+  oldest among the boxes shown); a box that has not been checked for a
+  while, or whose checks are failing, gets a small warning tag there (IT
+  sees the error itself in the tag's tooltip). For the Google mailbox the
   Inbox comes from Google's labels (above); an email that is not in the Inbox
   carries a small tag saying where it is — **Sent**, **Archived**, or the
   folder name. Each mailbox has its own
@@ -244,17 +252,20 @@ Comms](#phone-lines--comms), below).
   tag), the same for everyone — chosen in Admin → Mailboxes (Colour, above).
   Narrow it with the **mailbox picker** (tick
   any combination of boxes — say shoshana@ and billing@ together), the
-  search (sender or subject — not the message text), a sender domain, and
+  search (sender or subject — not the message text; type **from:court.gov**
+  in it to keep one sender domain), and
   the filter buttons (a pressed button is on): **Inbox** / **Sent** / **All
   folders** (one at a time — **Sent** is the mail the boxes sent: Google's
   Sent label, or a polled Sent folder; **All folders** is everything; a
   message a mailbox sent shows who it went to, "To: …"),
-  **Unread**, **Client mail**, **Has files**, **On a case** / **Not on a
-  case** (one or the other).
+  **Any** / **On a case** / **Not on a case** (one at a time),
+  **Unread**, **Client mail**, **Has files**. On a phone the filters sit
+  behind a **Filters** button (it shows how many are on); search and the
+  menus stay put.
 - **On a wide screen** your saved views and the mailboxes sit in a column
   on the left instead of the two menus: click a view (or **All mail** — every
   box, no filters) to show it; tick mailboxes to combine them. Each box shows
-  your unread count and your access (R read · S send · M manage); each view
+  your unread count, and a **read-only** tag when you cannot send as it; each view
   shows how many unread Inbox messages it holds under its own filters (the
   same count appears in the view menu; a view of **Sent** shows none — sent
   mail is never unread). When the screen no longer matches
@@ -280,37 +291,64 @@ Comms](#phone-lines--comms), below).
   conversation marks it read for you, not for the other people on the box. In
   the conversation, messages that were unread when you opened it keep a
   **New** tag (and a blue left edge), so you can still see what arrived since
-  you last looked; **Mark unread** / **Mark read** on a message switches it
-  (the tag then says **Unread**).
+  you last looked; **Mark unread** / **Mark read** in a message's **⋯** menu
+  switches it (the tag then says **Unread**).
   YisraCase never marks anything read on the mail server, so Outlook and
   webmail are unaffected. **Mark all read** clears exactly what the list
   shows — the ticked boxes and the filters on screen, including pages not
   loaded yet — after asking you to confirm (there is no undo).
 - **Conversations** gather every message with the same thread across all the
   boxes you can read. The same email in two boxes appears once. A very long
-  conversation shows its latest 100 messages.
-- **Images are hidden** until you click **Show images**: a remote image tells
+  conversation shows its latest 100 messages. Each message's header is one
+  line — who, when, a paperclip count, **Reply** / **Reply all** and the
+  **⋯** menu (Mark read / unread, Plain text / Formatted, Taller, **Task**,
+  and Always show images where it applies); the small chevron beside them
+  opens the full addresses and which of your boxes hold the message.
+- **Under the header, one line says where the email stands with the log** —
+  and it is where you act on that:
+  - *On the log of 26-41823 · Change* — it is on that case's log;
+  - *On the firm log, not on a case · Link to case*;
+  - *Still syncing; its log entry is on the way* — the 5-minute sync has it
+    and the log entry follows;
+  - *Not on the log: mail between firm addresses is skipped / a suppression
+    rule skipped it / the mail rules failed on it / this mailbox only stores
+    mail*, or *Older mail, stored before YisraCase read this mailbox* — each
+    with **Link to case** to put it on a case now.
+  When a colleague sent the email from YisraCase, the same line says
+  **· Sent by <name> via YisraCase** — on a shared box you can finally see
+  who replied. A reply sent with a **Case** picked (below) shows *Linking to
+  26-41823…* until its copy arrives, and says so if the link failed.
+- **Images are hidden** until you click **Show**: a remote image tells
   the sender that you opened the message. Message content is displayed
   boxed off from YisraCase — scripts and forms in an email never run, and
-  links open in a new tab. **Always show from <sender>** remembers that
+  links open in a new tab. **Always for this sender** remembers that
   sender for you (only you): their mail then opens with images shown, and
   **Stop** on that line hides them again. It trusts the exact address, not
   the whole domain; a fake From line borrowing that address could learn you
   opened it, nothing more.
 - **Attachments** show as a paperclip and count on the message in the list
-  and on its header in the conversation, and as a row of buttons under it.
-  Clicking the name of a PDF or a picture opens it in a viewer (**New tab**
-  there opens a PDF full size; some phones cannot show a PDF inside a page,
-  so use New tab or Download); anything else downloads. The eye button views,
+  and on its header in the conversation, and as one row of compact chips
+  under it. Clicking the name of a PDF or a picture opens it in a viewer
+  (**New tab** there opens a PDF full size; some phones cannot show a PDF
+  inside a page, so use New tab or Download); clicking any other file's name
+  downloads it. On every chip
   the arrow downloads, and the folder button **saves it to a case**: pick the
   case — the email's own case and the cases of the clients in the
   conversation are offered first, or search — and it goes into that case's
   Dropbox folder and onto its Documents tab, exactly like an upload from the
   case. Every file comes from the mail server when you click it (see
   Attachments above). Only an image drawn inside the message itself (a
-  signature logo) is not listed — it appears when you click **Show images**.
-- **In this conversation** (under the subject) lists the people in the
-  conversation who are contacts in YisraCase — sender first — with the cases
+  signature logo) is not listed — it appears when you click **Show**.
+- **Task** (in the ⋯ menu, and its own button on a wide screen) turns the
+  email into a task: the title and description start from the email, the
+  task is yours unless you assign it, due today (**+1 business day** moves
+  it past a weekend), and **Link** offers the email's case, the
+  conversation's client cases and contacts, or none. **Open tasks** on the
+  confirmation jumps to the Tasks tab. The task does not link back to the
+  email yet.
+- **In this conversation** (under the subject) starts as one line — the
+  first person and their case, with **+N ▸** to open the full strip: every
+  contact in the conversation — sender first — with the cases
   they are a client on, open ones first. Click a name to open the contact,
   a case to open the case. The firm's own addresses are never listed, and an
   attorney or trustee shows as a name without their cases.
@@ -369,6 +407,17 @@ anyone who may send from at least one box.
 - **Subject** is "Re: …" on a reply. Changing it is allowed; YisraCase still
   keeps the reply in the original conversation (Gmail may show it as a new
   one).
+- **Case** (optional) puts what you send on a case's log. A reply starts
+  with the email's own case; otherwise it is empty, with one-click
+  suggestions — the conversation's client cases, and the cases of contacts
+  you pick as recipients — plus **Pick a case…** to search. It never picks
+  one for you, and **Remove** sends without a link. An unknown case stops
+  the send before anything goes out. The sent copy joins the case's log once
+  the mail sync stores it (its log-status line shows *Linking to …* until
+  then); for a SiteGround box whose Sent folder is not polled, the log entry
+  is written at send time instead. If the link cannot be made, IT is
+  alerted and the line on the sent copy says it failed — **Link to case**
+  still works by hand.
 - **The message** is plain text — a blank line starts a new paragraph.
   **Add signature** (ticked when the box has a signature of its own —
   Connections → Email Senders) adds it under your text. A reply quotes the

@@ -73,6 +73,15 @@ const DOMS = [];
 afterEach(() => { DOMS.splice(0).forEach((d) => { try { d.window.close(); } catch (_) { /* noop */ } }); });
 const tick = (w, ms = 40) => new Promise((r) => w.setTimeout(r, ms));
 
+// S2P (D.1): the per-message actions live in the card's ⋯ menu.
+const openMenuOf = (card) => { card.querySelector('.menu-btn').click(); return [...card.querySelectorAll('.mmenu button')]; };
+const menuLabels = (card) => { const l = openMenuOf(card).map((b) => b.textContent.trim()); card.querySelector('.menu-btn').click(); return l; };
+const menuClick = (card, label) => {
+  const b = openMenuOf(card).find((x) => x.textContent.trim().startsWith(label));
+  if (!b) throw new Error(`menu item not found: ${label}`);
+  b.click();
+};
+
 const EVIL = '<img src=x onerror="window.top.__pwned=1">';
 const MB = [
   { id: 1, address: 'billing@firm.test', display_name: 'Billing', color: '#2f6fd1', active: true, can_send: true, can_manage: false, inbox_total: 3, inbox_unread: 2 },
@@ -148,7 +157,7 @@ const fresh = (v) => JSON.parse(JSON.stringify(v));
 function standard(over = {}) {
   return (url, method, payload, opts) => {
     if (over[`${method} ${url}`]) return over[`${method} ${url}`](payload, opts);
-    if (url === '/api/mail/mailboxes') return { mailboxes: fresh(MB), viewer: { su: true, role: null } };
+    if (url === '/api/mail/mailboxes') return { mailboxes: fresh(MB), viewer: { su: true, role: null }, inbox_unread_distinct: 3 }; // S2P: the badge counts emails (the server's distinct)
     if (url === '/api/mail/views') return { views: [] };
     if (url === '/api/mail/views/counts') return { counts: {} };
     if (url === '/api/mail/messages' && method === 'GET') return { messages: fresh(ROWS), next_cursor: null };
@@ -213,13 +222,20 @@ describe('comms hub pane', () => {
     expect(f.srcdoc).toMatch(/^<!DOCTYPE html><html><head><meta http-equiv="Content-Security-Policy"/);
     expect(f.srcdoc).toContain('<p>Hello</p>');
     expect(f.srcdoc).not.toMatch(/<script|onerror|track\.test/);
-    // the hostile header and filename stay text in the PARENT document
-    expect(doc.querySelector('.mfrom').textContent).toBe(`Evil ${EVIL} <evil@x.test>`);
+    // the hostile header and filename stay text in the PARENT document — the
+    // one-line header (S2P D.1) shows the display NAME; the full address sits
+    // in its title and, as text, in the details block behind the chevron
+    expect(doc.querySelector('.mfrom').textContent).toBe(`Evil ${EVIL}`);
+    expect(doc.querySelector('.mfrom').getAttribute('title')).toBe(`Evil ${EVIL} <evil@x.test>`);
+    doc.querySelector('.mdet-btn').click();
+    const det = doc.querySelector('.mdet');
+    expect(det.hidden).toBe(false);
+    expect(det.textContent).toContain(`From: Evil ${EVIL} <evil@x.test>`);
     expect(doc.querySelector('.att .nm').textContent).toBe(`bill ${EVIL}.pdf`);
     expect([...doc.querySelectorAll('img')]).toEqual([]);
     expect(window.__pwned).toBeUndefined();
-    // privacy notice offers to load the hidden image; the inline (cid) part is not listed as a file
-    expect(doc.querySelector('.notice').textContent).toMatch(/Images hidden.*2 remote/); // the tracker + the relative src
+    // the ONE-LINE privacy notice (D.2) offers Show; the inline (cid) part is not listed as a file
+    expect(doc.querySelector('.notice').textContent).toMatch(/^\s*3 images hiddenShow\s*$/); // 2 remote + 1 inline, one line (no from_email here → no trust button)
     expect(doc.querySelectorAll('.att')).toHaveLength(2);
     // the row lost its unread marker
     expect(doc.querySelector('#msg-list .msg').classList.contains('unread')).toBe(false);
@@ -301,18 +317,20 @@ describe('comms hub pane', () => {
     await tick(window, 80);
     const card = doc.querySelector('.mcard[data-id="11"]');
     const state = () => [card.querySelector('.mstate').textContent, card.querySelector('.mstate').classList.contains('unread'),
-      card.classList.contains('is-unread'), card.classList.contains('is-new'), card.querySelector('.read-toggle').textContent.trim()];
+      card.classList.contains('is-unread'), card.classList.contains('is-new')];
     // it WAS unread as the conversation opened: marked read on open, still flagged New
-    expect(state()).toEqual(['New', false, false, true, 'Mark unread']);
-    card.querySelector('.read-toggle').click();
+    expect(state()).toEqual(['New', false, false, true]);
+    expect(menuLabels(card)[0]).toBe('Mark unread'); // the ⋯ menu's label tracks the state (S2P)
+    menuClick(card, 'Mark unread');
     await tick(window, 40);
     expect(calls.some((c) => c.url === '/api/mail/messages/11/read' && c.method === 'DELETE')).toBe(true);
-    expect(state()).toEqual(['Unread', true, true, false, 'Mark read']);
+    expect(state()).toEqual(['Unread', true, true, false]);
     expect([row().classList.contains('unread'), row().querySelector('.sr-state').textContent]).toEqual([true, 'Unread. ']);
-    card.querySelector('.read-toggle').click();
+    menuClick(card, 'Mark read');
     await tick(window, 40);
     expect(calls.filter((c) => c.url === '/api/mail/read').pop().payload).toEqual({ ids: [11] });
-    expect(state()).toEqual(['New', false, false, true, 'Mark unread']);
+    expect(state()).toEqual(['New', false, false, true]);
+    expect(menuLabels(card)[0]).toBe('Mark unread');
     expect(row().classList.contains('unread')).toBe(false);
   });
 
@@ -337,7 +355,7 @@ describe('comms hub pane', () => {
     doc.querySelectorAll('#msg-list .msg')[1].click();
     await tick(window, 80);
     const card = doc.querySelector('.mcard');
-    expect([card.querySelector('.mstate').textContent, card.classList.contains('is-new'), card.querySelector('.read-toggle').textContent.trim()])
+    expect([card.querySelector('.mstate').textContent, card.classList.contains('is-new'), menuLabels(card)[0]])
       .toEqual(['', false, 'Mark unread']);
   });
 
@@ -361,11 +379,11 @@ describe('comms hub pane', () => {
     doc.querySelector('#msg-list .msg[data-id="11"]').click();
     await tick(window, 80);
     expect(calls.filter((c) => c.url === '/api/mail/read').pop().payload).toEqual({ ids: [11] });
-    const btn = doc.querySelector('.mcard .read-toggle');
-    btn.click(); // Mark unread → the opened copy (11), not the card's id (31)
+    const card = doc.querySelector('.mcard');
+    menuClick(card, 'Mark unread'); // → the opened copy (11), not the card's id (31)
     await tick(window, 40);
     expect(calls.some((c) => c.url === '/api/mail/messages/11/read' && c.method === 'DELETE')).toBe(true);
-    btn.click(); // Mark read → that same copy
+    menuClick(card, 'Mark read'); // → that same copy
     await tick(window, 40);
     expect(calls.filter((c) => c.url === '/api/mail/read').pop().payload).toEqual({ ids: [11] });
     expect(doc.querySelector('#msg-list .msg[data-id="11"]').classList.contains('unread')).toBe(false);
@@ -396,8 +414,12 @@ describe('comms hub pane', () => {
     const { window, doc } = await boot({ handler: standard({ 'GET /api/mail/threads/root%40x.test': () => fresh(thread) }) });
     doc.querySelector('#msg-list .msg').click();
     await tick(window, 80);
-    const rows = [...doc.querySelectorAll('.att')].map((r) => [r.dataset.part, !!r.querySelector('.att-view'), !!r.querySelector('.att-dl'), !!r.querySelector('.att-save')]);
-    expect(rows).toEqual([['2', true, true, true], ['3', false, true, true], ['4', true, true, true], ['5', false, true, true], ['6', false, true, true]]);
+    // S2P (D.4): no standalone View button — the NAME is the viewer for a
+    // viewable file (its title says View vs Download); Download and Save stay
+    // directly reachable on every chip.
+    const rows = [...doc.querySelectorAll('.att')].map((r) => [r.dataset.part,
+      r.querySelector('.att-name').title.startsWith('View'), !!r.querySelector('.att-view'), !!r.querySelector('.att-dl'), !!r.querySelector('.att-save')]);
+    expect(rows).toEqual([['2', true, false, true, true], ['3', false, false, true, true], ['4', true, false, true, true], ['5', false, false, true, true], ['6', false, false, true, true]]);
   });
 
   test('viewer: the blob is re-typed by the page (never trusted), PDFs get an iframe + New tab, images an <img>; closing revokes', async () => {
@@ -429,10 +451,10 @@ describe('comms hub pane', () => {
     expect(opened).toEqual([['blob:https://app.4lsg.com/1', '_blank', 'noopener']]);
     doc.getElementById('viewer-close').click();
     expect(revoked).toEqual([]);                                   // a tab is reading it: revoked later, not now
-    doc.querySelector('.att[data-part="4"] .att-view').click();
+    doc.querySelector('.att[data-part="4"] .att-name').click();
     await tick(window, 40);
     expect(made[1].type).toBe('application/pdf');
-    doc.querySelector('.att[data-part="7"] .att-view').click();    // opening another closes (and revokes) the first
+    doc.querySelector('.att[data-part="7"] .att-name').click();    // opening another closes (and revokes) the first
     await tick(window, 40);
     expect(revoked).toEqual(['blob:https://app.4lsg.com/2']);
     expect([made[2].type, doc.querySelector('#viewer-body img').getAttribute('src'), doc.getElementById('viewer-tab').hidden]).toEqual(['image/jpeg', 'blob:https://app.4lsg.com/3', true]);
@@ -492,7 +514,8 @@ describe('comms hub pane', () => {
     doc.querySelector('#msg-list .msg').click();
     await tick(window, 80);
     const trust = doc.querySelector('.notice .trust-btn');
-    expect(trust.textContent).toBe('Always show from evil@x.test');
+    expect(trust.textContent).toBe('Always for this sender'); // D.2: one line — the address rides the title
+    expect(trust.title).toContain('evil@x.test');
     trust.click();
     await tick(window, 80);
     expect(calls.find((c) => c.url === '/api/mail/image-senders' && c.method === 'POST').payload).toEqual({ address: 'evil@x.test' });
@@ -536,12 +559,15 @@ describe('comms hub pane', () => {
     await tick(window, 80);
     expect(calls.some((c) => c.url === '/api/mail/messages/11/related')).toBe(true);
     const strip = doc.getElementById('thread-related');
-    expect([strip.hidden, strip.textContent]).toEqual([false, 'In this conversation:Doe, Jane26-22222 · OpenAcme Trustee LLCAdd to a client:new@person.test']);
+    // S2P (D.3): ONE line first — the first contact, their first case, how much more
+    expect([strip.hidden, strip.textContent]).toEqual([false, 'In this conversation:Doe, Jane26-22222 · Open+2 ▸']);
+    strip.querySelector('.rel-more').click();
+    expect(strip.textContent).toBe('In this conversation:Doe, Jane26-22222 · OpenAcme Trustee LLCAdd to a client:new@person.test');
     strip.querySelector('.chip.person').click();
     strip.querySelector('.chip.case').click();
     expect(calls.filter((c) => c.addFile).map((c) => c.addFile)).toEqual([['Doe, Jane', 'client', '500'], ['26-22222', 'case', 'CaseB2']]);
-    // the link-to-case picker offers the same cases first
-    [...doc.querySelectorAll('.mactions button')].find((b) => /Link to case/.test(b.textContent)).click();
+    // the link-to-case picker (now on the log-status line — A.2) offers the same cases first
+    [...doc.querySelectorAll('.logline button')].find((b) => /Link to case/.test(b.textContent)).click();
     expect([...doc.querySelectorAll('#case-sugg li .l1')].map((x) => x.textContent)).toEqual(['26-22222Open']);
     // another conversation: the previous one's people never linger while its own load
     doc.querySelectorAll('#msg-list .msg')[1].click();
@@ -568,7 +594,10 @@ describe('comms hub pane', () => {
     doc.querySelector('#msg-list .msg').click();
     await tick(window, 80);
     const strip = doc.getElementById('thread-related');
-    expect([strip.hidden, strip.textContent]).toEqual([false, 'Add to a client:Smith, Anndee@new.testBob+1 more']);
+    // one-line first (D.3) — no contacts, so it counts the unfiled addresses
+    expect([strip.hidden, strip.textContent]).toEqual([false, 'In this conversation:4 addresses not on file+4 ▸']);
+    strip.querySelector('.rel-more').click();
+    expect(strip.textContent).toBe('Add to a client:Smith, Anndee@new.testBob+1 more');
     expect([...strip.querySelectorAll('.chip.add')].map((c) => c.title)).toEqual([
       'Add ann@new.test to a client — an existing contact or a new one', 'Add dee@new.test to a client — an existing contact or a new one',
       'Add bob@new.test to a client — an existing contact or a new one']);
@@ -609,6 +638,7 @@ describe('comms hub pane', () => {
     });
     doc.querySelector('#msg-list .msg').click();
     await tick(window, 80);
+    doc.querySelector('#thread-related .rel-more').click(); // expand the one-line strip (D.3)
     doc.querySelector('#thread-related .chip.add').click();
     await tick(window, 20);
     expect(doc.getElementById('toast').textContent).toMatch(/needs the app window/);
@@ -624,20 +654,20 @@ describe('comms hub pane', () => {
         'POST /api/mail/read': () => ({ marked: 0 }),
       }),
     });
-    expect(['f-client', 'f-files', 'f-hascase', 'f-nocase'].map((id) => on(doc, id))).toEqual([true, false, false, true]);
+    expect(['f-client', 'f-files', 'f-case-on', 'f-case-off'].map((id) => on(doc, id))).toEqual([true, false, false, true]);
     expect(calls.find((c) => c.url === '/api/mail/messages').payload).toMatchObject({ client_only: 1, has_files: 0, has_case: 0, no_case: 1 });
     doc.getElementById('f-files').click();
     await tick(window);
     expect(calls.filter((c) => c.url === '/api/mail/messages').pop().payload).toMatchObject({ client_only: 1, has_files: 1, has_case: 0, no_case: 1 });
-    // On a case / Not on a case are exclusive: pressing one releases the other
-    doc.getElementById('f-hascase').click();
+    // S2P (D.5): the case filter is a THREE-WAY switch — exactly one pressed
+    doc.getElementById('f-case-on').click();
     await tick(window);
-    expect([on(doc, 'f-hascase'), on(doc, 'f-nocase')]).toEqual([true, false]);
+    expect([on(doc, 'f-case-on'), on(doc, 'f-case-off'), on(doc, 'f-case-any')]).toEqual([true, false, false]);
     expect(calls.filter((c) => c.url === '/api/mail/messages').pop().payload).toMatchObject({ has_case: 1, no_case: 0 });
-    doc.getElementById('f-hascase').click();               // …and pressing it again is "any"
+    doc.getElementById('f-case-any').click();              // …and Any clears it
     await tick(window);
     expect(calls.filter((c) => c.url === '/api/mail/messages').pop().payload).toMatchObject({ has_case: 0, no_case: 0 });
-    doc.getElementById('f-nocase').click();
+    doc.getElementById('f-case-off').click();
     await tick(window);
     doc.getElementById('views-btn').click();
     expect(doc.querySelector('#vw-list .vw-sum').textContent).toBe('All mailboxes— client mail, not on a case');
@@ -651,10 +681,11 @@ describe('comms hub pane', () => {
     doc.getElementById('readall-btn').click();
     await tick(window, 40);
     expect(calls.find((c) => c.url === '/api/mail/read').payload).toEqual({ all: true, filters: { client_only: true, has_files: true, no_case: true } });
-    // a view without them clears the controls
+    // a view without them clears the controls (the case switch back to Any)
     doc.getElementById('view-sel').value = '';
     doc.getElementById('view-sel').dispatchEvent(new window.Event('change'));
-    expect(['f-client', 'f-files', 'f-hascase', 'f-nocase'].map((id) => on(doc, id))).toEqual([false, false, false, false]);
+    expect(['f-client', 'f-files', 'f-case-on', 'f-case-off'].map((id) => on(doc, id))).toEqual([false, false, false, false]);
+    expect(on(doc, 'f-case-any')).toBe(true);
   });
 
   test('rail: views and mailboxes as lists over the SAME state as the menus — server counts per view, Unsaved changes → Save / Update', async () => {
@@ -664,7 +695,7 @@ describe('comms hub pane', () => {
     ];
     const { window, doc, calls, errors } = await boot({
       handler: standard({
-        'GET /api/mail/mailboxes': () => ({ mailboxes: [{ ...fresh(MB[0]), can_manage: true }, fresh(MB[1])], viewer: { su: false, role: null } }),
+        'GET /api/mail/mailboxes': () => ({ mailboxes: [{ ...fresh(MB[0]), can_manage: true }, fresh(MB[1])], viewer: { su: false, role: null }, inbox_unread_distinct: 3 }),
         'GET /api/mail/views': () => ({ views: fresh(views) }),
         'GET /api/mail/views/counts': () => ({ counts: { 4: 2, 5: 7 } }),
         'PATCH /api/mail/views/5': (p) => { views = views.map((v) => (v.id === 5 ? { ...v, ...p } : v)); return { view: views[1] }; },
@@ -679,9 +710,10 @@ describe('comms hub pane', () => {
     expect(vitems().map((b) => b.classList.contains('on'))).toEqual([false, false, true]); // the default view is active
     expect(doc.getElementById('rail-dirty').textContent).toBe('');
     expect(doc.getElementById('tab-email-n').textContent).toBe('3');
-    // one row per readable box: ticked, its colour, name + address, access, unread
-    expect(bitems().map((b) => [b.getAttribute('aria-pressed'), b.querySelector('.nm').textContent, b.querySelector('.acc').textContent, (b.querySelector('.cnt') || {}).textContent]))
-      .toEqual([['true', 'Billingbilling@firm.test', 'R·S·M', '2'], ['true', 'intake@firm.test', 'R', '1']]);
+    // one row per readable box: ticked, its colour, name + address, unread —
+    // D.6: the R·S·M badge is gone; only a box the caller cannot SEND from is tagged
+    expect(bitems().map((b) => [b.getAttribute('aria-pressed'), b.querySelector('.nm').textContent, (b.querySelector('.acc') || {}).textContent || null, (b.querySelector('.cnt') || {}).textContent]))
+      .toEqual([['true', 'Billingbilling@firm.test', null, '2'], ['true', 'intake@firm.test', 'read-only', '1']]);
     expect(bitems()[1].querySelector('.mdot').style.getPropertyValue('--mbc-l')).toBe(MC.variants('#fff3bf').light);
     // untick a box: the list narrows (same as the picker), the picker agrees, the view is now "unsaved"
     bitems()[1].click();
@@ -856,7 +888,7 @@ describe('comms hub pane', () => {
     const { window, doc, calls } = await boot({ handler: standard({ 'DELETE /api/mail/messages/11/read': () => ({ id: 11, unread: true }) }) });
     doc.querySelector('#msg-list .msg').click();
     await tick(window, 80);
-    [...doc.querySelectorAll('.mactions button')].find((b) => /Mark unread/.test(b.textContent)).click();
+    menuClick(doc.querySelector('.mcard'), 'Mark unread');
     await tick(window, 40);
     expect(calls.some((c) => c.url === '/api/mail/messages/11/read' && c.method === 'DELETE')).toBe(true);
     expect(doc.querySelector('#msg-list .msg').classList.contains('unread')).toBe(true);
@@ -871,7 +903,8 @@ describe('comms hub pane', () => {
     });
     doc.querySelector('#msg-list .msg').click();
     await tick(window, 80);
-    [...doc.querySelectorAll('.mactions button')].find((b) => /Link to case/.test(b.textContent)).click();
+    // S2P (A.2): the case action rides the log-status line under the header
+    [...doc.querySelectorAll('.logline button')].find((b) => /Link to case/.test(b.textContent)).click();
     expect(doc.getElementById('case-backdrop').classList.contains('open')).toBe(true);
     const q = doc.getElementById('case-q');
     q.value = '26-111';
@@ -883,7 +916,8 @@ describe('comms hub pane', () => {
     expect(calls.find((c) => c.url === '/api/mail/messages/11/case-link')).toMatchObject({ method: 'POST', payload: { case_id: 'CaseA1' } });
     expect(doc.getElementById('case-backdrop').classList.contains('open')).toBe(false);
     expect(doc.querySelector('#msg-list .msg .chip.case').textContent).toContain('26-11111-tjt');
-    expect(doc.querySelector('.mactions .chip.case').textContent).toContain('26-11111-tjt');
+    expect(doc.querySelector('.logline .chip.case').textContent).toContain('26-11111-tjt');
+    expect([...doc.querySelectorAll('.logline button')].some((b) => /Change/.test(b.textContent))).toBe(true);
   });
 
   test('default view applied on boot; toggles ride every list call; Save view sends the current filters', async () => {
@@ -898,7 +932,7 @@ describe('comms hub pane', () => {
     expect(first.payload).toEqual({ mailbox_ids: '1', unread_only: 1, q: 'plan', client_only: 0, has_files: 0, has_case: 0, no_case: 0, all_folders: 0, from_domain: '' });
     expect(on(doc, 'f-unread')).toBe(true);
     expect(doc.getElementById('mb-label').textContent).toBe('Billing — billing@firm.test (2)');
-    doc.getElementById('f-hascase').click();
+    doc.getElementById('f-case-on').click(); // D.5: the three-way case switch
     await tick(window);
     expect(calls.filter((c) => c.url === '/api/mail/messages').pop().payload).toMatchObject({ mailbox_ids: '1', unread_only: 1, has_case: 1 });
     doc.getElementById('views-btn').click();
@@ -1026,9 +1060,11 @@ describe('comms hub pane', () => {
     doc.getElementById('mb-btn').click();
     const b2 = doc.querySelector('#mb-panel input[data-id="2"]');
     b2.checked = false; b2.dispatchEvent(new window.Event('change'));
-    const dom = doc.getElementById('f-domain');
-    dom.value = 'court.test'; dom.dispatchEvent(new window.Event('change'));
-    await tick(window);
+    // D.5: the domain filter rides the search box as a from: token
+    const q = doc.getElementById('f-q');
+    q.value = 'from:court.test'; q.dispatchEvent(new window.Event('input'));
+    await tick(window, 400); // the search box debounces
+
     const asked = [];
     window.confirm = (m) => { asked.push(m); return false; };
     doc.getElementById('readall-btn').click();
@@ -1097,11 +1133,15 @@ describe('alias boxes in the totals (S3-R)', () => {
     ];
     const badge = [];
     const { window, doc, errors } = await boot({
-      handler: standard({ 'GET /api/mail/mailboxes': () => ({ mailboxes: fresh(boxes), viewer: { su: true, role: null, can_send: true } }) }),
+      // S2P: the tab + sidebar badge is the SERVER's distinct-emails count
+      // (inbox_unread_distinct — the alias rule lives in summary() now); the
+      // rail's "All mail" row and the picker labels keep the client-side
+      // per-set sums with the same alias rule (unreadOf).
+      handler: standard({ 'GET /api/mail/mailboxes': () => ({ mailboxes: fresh(boxes), viewer: { su: true, role: null, can_send: true }, inbox_unread_distinct: 3 }) }),
       before: (w) => { w.commsBadgeSet = (n) => badge.push(n); },
     });
     expect(errors).toEqual([]);
-    expect(doc.getElementById('tab-email-n').textContent).toBe('3');              // 2 (parent) + 1 (alias of a box this reader does not read) — never it@'s 5
+    expect(doc.getElementById('tab-email-n').textContent).toBe('3');              // the server's count — never it@'s 5 summed in
     expect(badge[badge.length - 1]).toBe(3);
     expect(doc.querySelector('#rail-views .vitem').textContent).toMatch(/All mail\s*3$/);
     expect(doc.getElementById('mb-label').textContent).toBe('All mailboxes (3)');

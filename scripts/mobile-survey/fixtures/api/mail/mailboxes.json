@@ -1,8 +1,11 @@
 {
   "status": "success",
-  "viewer": { "su": true, "role": null },
+  "viewer": { "su": true, "role": null, "can_send": true },
+  "inbox_unread_distinct": 89,
   "mailboxes": [
-    { "id": 1, "address": "billing@example-firm.test", "display_name": "Billing", "color": "#2f6fd1", "active": true, "can_send": true, "can_manage": true, "inbox_total": 41, "inbox_unread": 3 },
-    { "id": 2, "address": "a-very-long-intake-address-for-overflow@another-long-domain-name.test", "display_name": "Intake (shared) — a long display name to wrap", "color": "#fff3bf", "active": true, "can_send": false, "can_manage": false, "inbox_total": 1200, "inbox_unread": 87 }
+    { "id": 1, "address": "billing@example-firm.test", "display_name": "Billing", "color": "#2f6fd1", "active": true, "can_send": true, "can_manage": true, "alias_of": null, "inbox_total": 41, "inbox_unread": 3,
+      "sync": { "checked_at": "2026-10-08T14:30:00.000Z", "stale": false, "failing": false } },
+    { "id": 2, "address": "a-very-long-intake-address-for-overflow@another-long-domain-name.test", "display_name": "Intake (shared) — a long display name to wrap", "color": "#fff3bf", "active": true, "can_send": false, "can_manage": false, "alias_of": null, "inbox_total": 1200, "inbox_unread": 87,
+      "sync": { "checked_at": "2026-10-07T09:00:00.000Z", "stale": true, "failing": true, "error_at": "2026-10-08T11:15:00.000Z", "error": "LOGIN failed: authentication rejected by the IMAP server (a deliberately long error for the chip title)" } }
   ]
 }

@@ -51,12 +51,16 @@ const norm = (sql) => String(sql).replace(/\s+/g, ' ').trim();
 const ci = (a, b) => a != null && b != null && String(a).toLowerCase() === String(b).toLowerCase();
 const clone = (v) => structuredClone(v);
 
-const LIST_COLS = 'm.id, m.mailbox_id, m.folder, m.gmail_labels, m.in_inbox, m.thread_key, m.from_addr, m.to_addrs, m.cc_addrs, ' +
-  'm.subject, m.date, m.snippet, m.attachments, m.log_id, (rs.message_fk IS NULL) AS unread, ' +
+const LIST_COLS = 'm.id, m.mailbox_id, m.folder, m.gmail_labels, m.in_inbox, m.message_id, m.thread_key, m.from_addr, m.to_addrs, m.cc_addrs, ' +
+  'm.subject, m.date, m.snippet, m.attachments, m.log_id, (rs.message_fk IS NULL) AS unread, (l.log_id IS NOT NULL) AS log_live, ' +
   'c.case_id AS case_id, c.case_number AS case_number, c.case_number_full AS case_number_full';
-const FULL_COLS = 'm.id, m.mailbox_id, m.folder, m.gmail_labels, m.in_inbox, m.message_id, m.in_reply_to, m.thread_key, ' +
+const FULL_COLS = 'm.id, m.mailbox_id, m.folder, m.uid, m.gmail_labels, m.in_inbox, m.message_id, m.in_reply_to, m.thread_key, m.provider_id, ' +
   'm.from_addr, m.to_addrs, m.cc_addrs, m.subject, m.date, m.snippet, m.body_text, m.body_html, ' +
-  'm.attachments, m.flags, m.log_id, (rs.message_fk IS NULL) AS unread, ' +
+  'm.attachments, m.flags, m.log_id, (rs.message_fk IS NULL) AS unread, (l.log_id IS NOT NULL) AS log_live, ' +
+  'c.case_id AS case_id, c.case_number AS case_number, c.case_number_full AS case_number_full';
+// S2P: the log-status twin fetch (store-wide copies of the page's emails)
+const TWIN_COLS = 'm.id, m.mailbox_id, m.folder, m.uid, m.message_id, m.provider_id, m.log_id, ' +
+  '(l.log_id IS NOT NULL) AS log_live, ' +
   'c.case_id AS case_id, c.case_number AS case_number, c.case_number_full AS case_number_full';
 const JOINS = 'LEFT JOIN mail_read_state rs ON rs.user = ? AND rs.message_fk = m.id ' +
   'LEFT JOIN log l ON l.log_id = m.log_id ' +
@@ -159,8 +163,9 @@ function makeWorld() {
     contacts: [],
     contact_emails: [],
     case_relate: [],
+    mail_sends: [],
   };
-  const seq = { channel_grants: 0, inbox_views: 0, log: 0, email_ingest_executions: 0, mail_image_senders: 0, contact_emails: 0, case_relate: 0 };
+  const seq = { channel_grants: 0, inbox_views: 0, log: 0, email_ingest_executions: 0, mail_image_senders: 0, contact_emails: 0, case_relate: 0, mail_sends: 0 };
   const statements = [];
   let snapshot = null;
 
@@ -232,6 +237,14 @@ function makeWorld() {
       T.email_ingest_executions.push(row);
       return row.id;
     },
+    /** A mail_sends row (S2P hub-send attribution). */
+    send(over = {}) {
+      const row = { id: ++seq.mail_sends, mailbox_id: 1, user: 6, message_id: null, provider_id: null,
+        email_log_id: null, case_id: null, case_link_state: null, case_log_id: null,
+        sent_at: new Date('2026-10-12T12:00:00Z'), ...over };
+      T.mail_sends.push(row);
+      return row.id;
+    },
     read(user, message_fk) {
       T.mail_read_state.push({ user, message_fk, read_at: new Date() });
     },
@@ -290,10 +303,11 @@ function makeWorld() {
   }
 
   function project(j, cols) {
-    const { m, unread, c } = j;
+    const { m, unread, l, c } = j;
     const out = {};
     for (const col of cols) {
       if (col === 'unread') out.unread = unread;
+      else if (col === 'log_live') out.log_live = l ? 1 : 0;
       else if (col === 'case_id') out.case_id = c ? c.case_id : null;
       else if (col === 'case_number') out.case_number = c ? c.case_number : null;
       else if (col === 'case_number_full') out.case_number_full = c ? c.case_number_full : null;
@@ -303,8 +317,9 @@ function makeWorld() {
     }
     return out;
   }
-  const listCols = ['id', 'mailbox_id', 'folder', 'gmail_labels', 'in_inbox', 'thread_key', 'from_addr', 'to_addrs', 'cc_addrs', 'subject', 'date', 'snippet', 'attachments', 'log_id', 'unread', 'case_id', 'case_number', 'case_number_full'];
-  const fullCols = ['id', 'mailbox_id', 'folder', 'gmail_labels', 'in_inbox', 'message_id', 'in_reply_to', 'thread_key', 'from_addr', 'to_addrs', 'cc_addrs', 'subject', 'date', 'snippet', 'body_text', 'body_html', 'attachments', 'flags', 'log_id', 'unread', 'case_id', 'case_number', 'case_number_full'];
+  const listCols = ['id', 'mailbox_id', 'folder', 'gmail_labels', 'in_inbox', 'message_id', 'thread_key', 'from_addr', 'to_addrs', 'cc_addrs', 'subject', 'date', 'snippet', 'attachments', 'log_id', 'unread', 'log_live', 'case_id', 'case_number', 'case_number_full'];
+  const fullCols = ['id', 'mailbox_id', 'folder', 'uid', 'gmail_labels', 'in_inbox', 'message_id', 'in_reply_to', 'thread_key', 'provider_id', 'from_addr', 'to_addrs', 'cc_addrs', 'subject', 'date', 'snippet', 'body_text', 'body_html', 'attachments', 'flags', 'log_id', 'unread', 'log_live', 'case_id', 'case_number', 'case_number_full'];
+  const twinCols = ['id', 'mailbox_id', 'folder', 'uid', 'message_id', 'provider_id', 'log_id', 'log_live', 'case_id', 'case_number', 'case_number_full'];
 
   // ── the list: parse the UNION ALL ──
   const BRANCH_RE = new RegExp(
@@ -594,6 +609,75 @@ function makeWorld() {
     if (sql === 'SELECT id, mailbox_id, from_addr, to_addrs, cc_addrs, gmail_labels FROM mail_messages WHERE id = ? LIMIT 1') {
       const x = T.mail_messages.find(r => r.id === Number(p[0]));
       return [x ? [{ id: x.id, mailbox_id: x.mailbox_id, from_addr: x.from_addr, to_addrs: x.to_addrs, cc_addrs: x.cc_addrs, gmail_labels: parseJsonCol(x.gmail_labels) }] : []];
+    }
+
+    // ── S2P: log status (batched) ──
+    const TWIN_HEAD = `SELECT ${TWIN_COLS} FROM mail_messages m LEFT JOIN log l ON l.log_id = m.log_id ` +
+      "LEFT JOIN cases c ON l.log_about_type = 'case' AND c.case_id = l.log_about_id WHERE ";
+    if (sql === `${TWIN_HEAD}m.id IN (?) OR m.message_id IN (?)` || sql === `${TWIN_HEAD}m.id IN (?)`) {
+      const ids = new Set(p[0].map(Number));
+      const mids = p[1] ? new Set(p[1].map(x => String(x).toLowerCase())) : new Set();
+      return [T.mail_messages
+        .filter(x => ids.has(x.id) || (x.message_id != null && mids.has(String(x.message_id).toLowerCase())))
+        .map(x => project(joined(x, -1), twinCols))];
+    }
+    if (sql === 'SELECT e.id, e.message_id, e.status, e.log_id, (l.log_id IS NOT NULL) AS log_live, '
+      + 'c.case_id AS case_id, c.case_number AS case_number, c.case_number_full AS case_number_full '
+      + 'FROM email_ingest_executions e LEFT JOIN log l ON l.log_id = e.log_id '
+      + "LEFT JOIN cases c ON l.log_about_type = 'case' AND c.case_id = l.log_about_id "
+      + 'WHERE e.message_id IN (?) ORDER BY e.id ASC') {
+      const keys = new Set(p[0].map(k => String(k).toLowerCase()));
+      return [T.email_ingest_executions
+        .filter(e => e.message_id != null && keys.has(String(e.message_id).toLowerCase()))
+        .sort((a, b) => a.id - b.id)
+        .map(e => {
+          const l = logRow(e.log_id);
+          const c = l && l.log_about_type === 'case' ? T.cases.find(x => ci(x.case_id, l.log_about_id)) || null : null;
+          return { id: e.id, message_id: e.message_id, status: e.status, log_id: e.log_id, log_live: l ? 1 : 0,
+            case_id: c ? c.case_id : null, case_number: c ? c.case_number : null, case_number_full: c ? c.case_number_full : null };
+        })];
+    }
+    if (sql === 'SELECT id, ingest_enabled, ingest_folders, ingest_state FROM mailboxes WHERE id IN (?)') {
+      const ids = new Set(p[0].map(Number));
+      return [T.mailboxes.filter(b => ids.has(Number(b.id)))
+        .map(b => ({ id: b.id, ingest_enabled: b.ingest_enabled !== undefined ? b.ingest_enabled : 1,
+          ingest_folders: parseJsonCol(b.ingest_folders), ingest_state: parseJsonCol(b.ingest_state) }))];
+    }
+
+    // ── S2P: sent-by attribution (mail_sends) ──
+    const SENDS_HEAD = 'SELECT s.id, s.user, s.message_id, s.provider_id, s.case_id, s.case_link_state, s.case_log_id, s.sent_at, '
+      + 'u.user_name, c.case_number, c.case_number_full FROM mail_sends s '
+      + 'LEFT JOIN users u ON u.user = s.user LEFT JOIN cases c ON c.case_id = s.case_id WHERE ';
+    if (sql.startsWith(SENDS_HEAD)) {
+      const conds = sql.slice(SENDS_HEAD.length).split(' OR ');
+      let pi = 0;
+      const tests = [];
+      for (const cond of conds) {
+        if (cond === 's.message_id IN (?)') { const mids = new Set(p[pi++].map(x => String(x).toLowerCase())); tests.push(s => s.message_id != null && mids.has(String(s.message_id).toLowerCase())); }
+        else if (cond === 's.provider_id IN (?)') { const pids = new Set(p[pi++].map(x => String(x).toLowerCase())); tests.push(s => s.provider_id != null && pids.has(String(s.provider_id).toLowerCase())); }
+        else throw new Error(`mailboxS2World: unknown mail_sends condition: ${cond}`);
+      }
+      return [(T.mail_sends || []).filter(s => tests.some(f => f(s))).map(s => {
+        const u = userRow(s.user);
+        const c = T.cases.find(x => ci(x.case_id, s.case_id)) || null;
+        return { id: s.id, user: s.user, message_id: s.message_id, provider_id: s.provider_id, case_id: s.case_id,
+          case_link_state: s.case_link_state, case_log_id: s.case_log_id, sent_at: s.sent_at ? new Date(s.sent_at) : null,
+          user_name: u ? u.user_name : null, case_number: c ? c.case_number : null, case_number_full: c ? c.case_number_full : null };
+      })];
+    }
+
+    // ── S2P: distinct-unread badge count (emails, not copies) ──
+    const DISTINCT = "COUNT(DISTINCT COALESCE(LOWER(m.message_id), CONCAT('id:', m.id)))";
+    const distinctOf = (rows) => new Set(rows.map(x => x.message_id != null ? String(x.message_id).toLowerCase() : `id:${x.id}`)).size;
+    if (sql === `SELECT ${DISTINCT} AS n FROM mail_messages m LEFT JOIN mail_read_state rs ON rs.user = ? AND rs.message_fk = m.id WHERE m.mailbox_id IN (?) AND m.in_inbox = 1 AND rs.message_fk IS NULL`) {
+      const ids = new Set(p[1].map(Number));
+      return [[{ n: distinctOf(T.mail_messages.filter(x => ids.has(x.mailbox_id) && inInbox(x) === 1 && !isRead(p[0], x.id))) }]];
+    }
+    if (sql === `SELECT ${DISTINCT} AS n FROM mail_messages m LEFT JOIN mail_read_state rs ON rs.user = ? AND rs.message_fk = m.id WHERE m.mailbox_id = ? AND ${ALIAS_FRAG} AND ${ALIAS_INBOX_FRAG} AND rs.message_fk IS NULL`) {
+      const user = p[0]; const parent = Number(p[1]);
+      const label = p[2]; const l1 = p[3]; const l2 = p[4]; const l3 = p[5]; const re = icu(p[6]); const own = icu(p[7]);
+      return [[{ n: distinctOf(T.mail_messages.filter(x => x.mailbox_id === parent
+        && aliasHit(x, label, l1, l2, l3, re) && !fromHit(x, own) && !isRead(user, x.id))) }]];
     }
 
     // ── read state ──

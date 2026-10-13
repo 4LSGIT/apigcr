@@ -25,6 +25,20 @@
 gaps above); everything else from the September delta pass is folded into the
 body. Governing migrations in `ref/migrations/`.*
 
+- **Comms S2P (10-13):** `mail_sends` is the hub-send ATTRIBUTION source (one
+  row per send, best-effort post-dispatch; thread reads join it by
+  `message_id` / `provider_id`, latest `sent_at` wins) and carries the
+  composer Case field's state (`case_link_state`: pending/linked/failed).
+  `log_status` resolution (mailReadService.logStatusFor) is READ-ONLY — it
+  reuses priorLogId's bridge keys for display; only `caseLink` writes stamps
+  or log rows. New one-time job type **`mail_sent_case_link`**
+  (lib/job_executor → mailboxSendService.linkSentCase): find-copy-first (the
+  read-seed's probe), then `caseLink` AS THE SENDER; 409/not-stored retry,
+  403/404 and the final attempt are terminal (ONE `error` alert). The list
+  merges copies per email AFTER the raw page cut — the keyset cursor stays
+  the last RAW row's `(date, id)`. Design: `ref/MAILBOX_SYSTEM_DESIGN.md`
+  §4.4 "As built (S2P)"; operators: `manual/08-Admin-Tools/08-mailboxes.md`.
+
 - **Maintenance mode / hook spool (10-12):** `MAINTENANCE_MODE=1` on a revision
   = write freeze. `lib/maintenance.js` gate (mounted in `server.js` after cors +
   build stamp, BEFORE body parsers / static / the 5xx observer — order is tested)
