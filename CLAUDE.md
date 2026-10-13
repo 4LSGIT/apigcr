@@ -78,6 +78,11 @@ Gates beyond Commands & gates below, every model:
   printed draft-diff is not a check. wf27 v6 (2026-09-22): a "PUT 1–31,
   POST-append 32–39" script run against a 39-step base shipped a duplicated
   block → runaway loop, 480 tasks + emails.
+  Compare stored config/params key-order-insensitively (sort keys, then
+  stringify): MySQL JSON re-orders object keys on write, so `JSON.stringify`
+  of what you sent never equals what you read back. wf50 (2026-10-14): a
+  correct draft failed its check on key order alone and was discarded. A
+  dry-run harness must store JSON the way MySQL does, or it can't catch this.
 
 ## Living documentation — the standing rule
 
