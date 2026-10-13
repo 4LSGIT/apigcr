@@ -54,13 +54,36 @@
   tbody tr { cursor: pointer; }
   tbody tr:hover td { background: var(--page-bg); }
   tbody tr.sel td { background: var(--page-bg); box-shadow: inset 2px 0 0 var(--accent); }
+  th[data-sort] { cursor: pointer; user-select: none; white-space: nowrap; }
+  th[data-sort]:hover { color: var(--text); }
   .ns-cell { color: var(--text-muted); }
-  .big { color: var(--warn-text); }
+  /* An unbroken key must wrap, not widen the table: Size/Age (and their sort
+     headers) would scroll off at phone width. */
+  td.mono { word-break: break-all; }
+  /* --warn, not --warn-text: --warn-text is the near-black label that sits ON
+     --warn-fill, and is the same in both themes — unreadable on dark --surface. */
+  .big, td.num.stale { color: var(--warn); }
 
-  pre.value {
+  .value {
     margin: 0; padding: 10px; border-radius: 4px; overflow: auto;
     max-height: 52vh; background: var(--page-bg); border: 1px solid var(--border);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
     font-size: 12px; line-height: 1.55; white-space: pre-wrap; word-break: break-word;
+  }
+  .value.meta-box { max-height: 20vh; margin-bottom: 8px; }
+  /* Pretty view is built from blocks; whitespace in the markup must not show. */
+  .value.pretty { white-space: normal; }
+  .j-ent { padding-left: 2ch; }
+  .j-key { font-weight: 700; color: var(--text); }
+  .j-p, .j-null { color: var(--text-muted); }
+  .j-str { color: var(--ok); white-space: pre-wrap; }
+  .j-num { color: var(--info); }
+  .j-bool { color: var(--cat-purple); }
+  /* Multi-line string: real line breaks, set off as a block under its key. */
+  .j-ml { display: block; margin: 2px 0 4px; padding-left: 8px; border-left: 2px solid var(--border); }
+  .j-tag {
+    font-size: 10px; color: var(--text-muted); border: 1px solid var(--border);
+    border-radius: 3px; padding: 0 4px; margin-right: 4px;
   }
   .stat { display: inline-block; margin-right: 14px; }
   .stat b { font-variant-numeric: tabular-nums; }
@@ -85,7 +108,7 @@
     <div class="list-wrap">
       <table>
         <thead>
-          <tr><th>Key</th><th class="num">Size</th><th class="num">Age</th></tr>
+          <tr><th data-sort="key">Key</th><th class="num" data-sort="len">Size</th><th class="num" data-sort="age">Age</th></tr>
         </thead>
         <tbody id="tbody">
           <tr><td colspan="3" class="muted" style="text-align:center;padding:20px;">Loading&hellip;</td></tr>
@@ -97,11 +120,13 @@
   <div class="right panel">
     <div class="row" style="margin-bottom:8px;">
       <strong id="selKey" class="mono" style="flex:1 1 auto;min-width:0;word-break:break-all;">Nothing selected</strong>
-      <button class="ghost" id="copy" type="button" disabled>Copy</button>
+      <button class="ghost" id="fmt" type="button" disabled>Show raw</button>
+      <button class="ghost" id="copy" type="button" title="Copies the value exactly as stored" disabled>Copy</button>
       <button class="danger" id="del" type="button" disabled>Delete</button>
     </div>
     <p class="muted" id="selMeta"></p>
-    <pre class="value" id="value">Pick a key on the left to read its value.</pre>
+    <div class="value meta-box" id="metaBox" hidden></div>
+    <div class="value" id="value">Pick a key on the left to read its value.</div>
   </div>
 </div>
 
@@ -116,6 +141,11 @@
 
   let KEYS = [];
   let sel = null;
+  let cur = null;          // the open entry, as the server returned it
+  let raw = false;         // value pane: false = pretty, true = exactly as stored
+  let sortCol = "key", sortDir = 1;
+
+  const STALE_DAYS = 14;   // not updated in this long = worth a look in the docs-review sweep
 
   const esc = s => String(s ?? "").replace(/[&<>"]/g, c =>
     ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;" }[c]));
@@ -130,6 +160,9 @@
     document.getElementById("q").addEventListener("input", render);
     document.getElementById("nsPick").addEventListener("change", render);
     document.getElementById("copy").addEventListener("click", copyValue);
+    document.getElementById("fmt").addEventListener("click", () => { raw = !raw; showValue(); });
+    document.querySelectorAll("th[data-sort]").forEach(th =>
+      th.addEventListener("click", () => setSort(th.dataset.sort)));
     document.getElementById("del").addEventListener("click", delSelected);
     load();
   }
@@ -162,12 +195,37 @@
   function visible() {
     const q = document.getElementById("q").value.trim().toLowerCase();
     const ns = document.getElementById("nsPick").value;
-    return KEYS.filter(r =>
+    const rows = KEYS.filter(r =>
       (!ns || r.ns === ns) &&
       (!q || (r.ns + "/" + r.k).toLowerCase().includes(q)));
+    const name = r => r.ns + "/" + r.k;
+    const cmp = {
+      key: (a, b) => name(a).localeCompare(name(b)),
+      len: (a, b) => (Number(a.len) || 0) - (Number(b.len) || 0),
+      // age = time since updated_at; age_days alone ties every key touched the same day
+      age: (a, b) => String(b.updated_at).localeCompare(String(a.updated_at)),
+    }[sortCol];
+    return rows.sort((a, b) => sortDir * cmp(a, b) || name(a).localeCompare(name(b)));
+  }
+
+  /** Key sorts A→Z first; Size and Age sort biggest / oldest first. */
+  function setSort(col) {
+    if (sortCol === col) sortDir = -sortDir;
+    else { sortCol = col; sortDir = col === "key" ? 1 : -1; }
+    render();
+  }
+
+  function paintSortHeaders() {
+    document.querySelectorAll("th[data-sort]").forEach(th => {
+      const on = th.dataset.sort === sortCol;
+      const label = { key: "Key", len: "Size", age: "Age" }[th.dataset.sort];
+      th.textContent = label + (on ? (sortDir === 1 ? " ▲" : " ▼") : "");
+      th.setAttribute("aria-sort", on ? (sortDir === 1 ? "ascending" : "descending") : "none");
+    });
   }
 
   function render() {
+    paintSortHeaders();
     const rows = visible();
     const tbody = document.getElementById("tbody");
     if (!rows.length) {
@@ -180,7 +238,7 @@
       return `<tr data-id="${esc(id)}" class="${sel === id ? "sel" : ""}">
         <td class="mono"><span class="ns-cell">${esc(r.ns)}/</span>${esc(r.k)}</td>
         <td class="num${big}">${kb(r.len)}</td>
-        <td class="num muted">${r.age_days}d</td>
+        <td class="num${r.age_days >= STALE_DAYS ? " stale" : " muted"}"${r.age_days >= STALE_DAYS ? ` title="Not updated in ${STALE_DAYS}+ days"` : ""}>${r.age_days}d</td>
       </tr>`;
     }).join("");
 
@@ -195,8 +253,12 @@
     const [ns, ...rest] = id.split("/");
     const k = rest.join("/");
     document.getElementById("selKey").textContent = id;
+    cur = null;
+    document.getElementById("metaBox").hidden = true;
+    document.getElementById("value").className = "value";
     document.getElementById("value").textContent = "Loading…";
     document.getElementById("copy").disabled = true;
+    document.getElementById("fmt").disabled = true;
     document.getElementById("del").disabled = true;
     try {
       const data = await P.apiSend(
@@ -204,8 +266,10 @@
       const e = data.entry;
       document.getElementById("selMeta").textContent =
         `${kb(e.len)} · updated ${new Date(e.updated_at).toLocaleString()} · created ${new Date(e.created_at).toLocaleString()}`;
-      document.getElementById("value").textContent = pretty(e.v);
+      cur = e;
+      showValue();
       document.getElementById("copy").disabled = false;
+      document.getElementById("fmt").disabled = false;
       document.getElementById("del").disabled = false;
     } catch (err) {
       document.getElementById("selMeta").textContent = "";
@@ -213,24 +277,88 @@
     }
   }
 
-  /** Most values are JSON, some are plain prose, some are JSON-in-a-string. */
-  function pretty(v) {
-    if (v == null) return "(null)";
+  /** Most values are JSON, some are plain prose, some are JSON-in-a-string.
+   *  Returns the parsed value, or the (unwrapped) string when it isn't JSON. */
+  function decode(v) {
     let s = String(v);
     for (let i = 0; i < 2; i++) {
       try {
         const parsed = JSON.parse(s);
         if (typeof parsed === "string") { s = parsed; continue; }
-        return JSON.stringify(parsed, null, 2);
+        return parsed;
       } catch (e) { return s; }
     }
     return s;
   }
 
+  /** A string field that itself holds a JSON object/array (the `v` is
+   *  string-only convention nests these). undefined when it doesn't. */
+  function asJson(s) {
+    if (!/^\s*[\[{]/.test(s)) return undefined;
+    try {
+      const p = JSON.parse(s);
+      return p && typeof p === "object" ? p : undefined;
+    } catch (e) { return undefined; }
+  }
+
+  /** Reading view, not JSON: bold keys, typed colours, real line breaks in
+   *  strings, nested JSON strings decoded (tagged). Raw view / Copy give the
+   *  exact stored bytes. Every leaf goes through esc(). */
+  function fmt(x) {
+    if (x === null) return `<span class="j-null">null</span>`;
+    if (Array.isArray(x)) {
+      if (!x.length) return `<span class="j-p">[]</span>`;
+      return `<span class="j-p">[</span>` +
+        x.map(it => `<div class="j-ent">${fmt(it)}</div>`).join("") +
+        `<span class="j-p">]</span>`;
+    }
+    if (typeof x === "object") {
+      const ks = Object.keys(x);
+      if (!ks.length) return `<span class="j-p">{}</span>`;
+      return `<span class="j-p">{</span>` +
+        ks.map(k => `<div class="j-ent"><span class="j-key">${esc(k)}</span><span class="j-p">: </span>${fmt(x[k])}</div>`).join("") +
+        `<span class="j-p">}</span>`;
+    }
+    if (typeof x === "string") {
+      const inner = asJson(x);
+      if (inner !== undefined) {
+        return `<span class="j-tag" title="Stored as a JSON string; shown decoded">json</span>${fmt(inner)}`;
+      }
+      if (x.includes("\n")) return `<span class="j-str j-ml">${esc(x)}</span>`;
+      return `<span class="j-str">"${esc(x)}"</span>`;
+    }
+    if (typeof x === "number") return `<span class="j-num">${esc(x)}</span>`;
+    if (typeof x === "boolean") return `<span class="j-bool">${x}</span>`;
+    return esc(x);
+  }
+
+  function showValue() {
+    const box = document.getElementById("value");
+    const metaBox = document.getElementById("metaBox");
+    document.getElementById("fmt").textContent = raw ? "Show pretty" : "Show raw";
+    if (!cur) return;
+
+    // mysql2 hands JSON columns back parsed; tolerate a string too.
+    const meta = cur.meta == null ? null : (typeof cur.meta === "string" ? decode(cur.meta) : cur.meta);
+    metaBox.hidden = meta == null;
+    if (meta != null) {
+      metaBox.className = "value meta-box" + (raw ? "" : " pretty");
+      if (raw) metaBox.textContent = "meta: " + JSON.stringify(meta);
+      else metaBox.innerHTML = `<span class="j-key">meta</span><span class="j-p">: </span>${fmt(meta)}`;
+    }
+
+    if (cur.v == null) { box.className = "value"; box.textContent = "(null)"; return; }
+    if (raw) { box.className = "value"; box.textContent = String(cur.v); return; }
+    const d = decode(cur.v);
+    if (typeof d === "string") { box.className = "value"; box.textContent = d; return; }  // prose
+    box.className = "value pretty";
+    box.innerHTML = fmt(d);
+  }
+
   async function copyValue() {
     const btn = document.getElementById("copy");
     try {
-      await navigator.clipboard.writeText(document.getElementById("value").textContent);
+      await navigator.clipboard.writeText(cur?.v == null ? "" : String(cur.v));
       btn.textContent = "Copied";
     } catch (e) {
       btn.textContent = "Select manually";
@@ -251,10 +379,14 @@
       await P.apiSend(
         `/api/admin/scratch/${encodeURIComponent(ns)}/${encodeURIComponent(k)}`, "DELETE");
       sel = null;
+      cur = null;
       document.getElementById("selKey").textContent = "Nothing selected";
       document.getElementById("selMeta").textContent = "";
+      document.getElementById("metaBox").hidden = true;
+      document.getElementById("value").className = "value";
       document.getElementById("value").textContent = "Deleted.";
       document.getElementById("copy").disabled = true;
+      document.getElementById("fmt").disabled = true;
       await load();
     } catch (err) {
       document.getElementById("value").innerHTML = `<span class="err">Delete failed: ${esc(err.message)}</span>`;

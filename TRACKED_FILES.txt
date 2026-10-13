@@ -699,6 +699,8 @@ scripts/genTypeKeyBackfill.js
 scripts/gen_signatures.js
 scripts/mobile-survey/README.md
 scripts/mobile-survey/commsDensity.js
+scripts/mobile-survey/fixtures/api/admin/scratch.json
+scripts/mobile-survey/fixtures/api/admin/scratch/fred/demo_state.json
 scripts/mobile-survey/fixtures/api/calendar-feed.json
 scripts/mobile-survey/fixtures/api/calendar-range.json
 scripts/mobile-survey/fixtures/api/cases/TESTCASE1.json

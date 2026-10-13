@@ -1,0 +1,10 @@
+{
+  "status": "success",
+  "totals": { "keys": 4, "namespaces": 2, "bytes": 26510 },
+  "keys": [
+    { "ns": "docs", "k": "20260901_a_deliberately_long_debt_key_that_has_no_natural_breaks_in_it", "len": 410, "meta": null, "created_at": "2026-09-01T10:00:00.000Z", "updated_at": "2026-09-01T10:00:00.000Z", "age_days": 40 },
+    { "ns": "docs", "k": "review_20261006", "len": 1800, "meta": null, "created_at": "2026-10-06T10:00:00.000Z", "updated_at": "2026-10-06T10:00:00.000Z", "age_days": 7 },
+    { "ns": "fred", "k": "demo_state", "len": 374, "meta": { "by": "manager" }, "created_at": "2026-10-10T10:00:00.000Z", "updated_at": "2026-10-13T09:00:00.000Z", "age_days": 0 },
+    { "ns": "fred", "k": "big_findings", "len": 23480, "meta": null, "created_at": "2026-10-02T10:00:00.000Z", "updated_at": "2026-10-09T10:00:00.000Z", "age_days": 4 }
+  ]
+}

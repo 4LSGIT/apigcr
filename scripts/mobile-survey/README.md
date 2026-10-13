@@ -94,7 +94,10 @@ call), and All numbers at `phone-lines/all/{conversations,calls}` +
 `tab:tabCalendar:list`; Grid is `tab:tabCalendar:grid`, against an empty
 `calendar-feed`), the
 Connections phone-line Access editor (`phone-lines/admin`,
-`phone-lines/1/grants`, `users`; `panel:connectionsDiv:phone-access`) — enough to fill the tables
+`phone-lines/1/grants`, `users`; `panel:connectionsDiv:phone-access`), the
+Scratch Browser list (`admin/scratch` — an unbroken overlong key, a stale and
+an oversized row; plus `admin/scratch/fred/demo_state` for opening a value by
+hand) — enough to fill the tables
 that tend to overflow and to put every conditional Overview / Case Details box
 on screen. The mock ignores
 query strings, so `field-defs` answers for contacts too (a case def on the
