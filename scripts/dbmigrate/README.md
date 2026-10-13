@@ -1,7 +1,9 @@
 # scripts/dbmigrate — moving the database to another MySQL server
 
-Tooling for the SiteGround → Cloud SQL move. Nothing here is specific to either
-host; it works between any two MySQL 8 servers.
+Tooling written for the SiteGround → Cloud SQL move, which ran 2026-10-13
+(`ref/archive/DB_MIGRATION_2026-10.md`). Nothing here is specific to either
+host; it works between any two MySQL 8 servers, and is kept for the next move
+(a new region, a new project, a per-tenant database).
 
 | File | What it does |
 |---|---|
@@ -10,7 +12,10 @@ host; it works between any two MySQL 8 servers.
 
 ## Order
 
-1. `dump.sh` against the source.
+1. `dump.sh` against the source. Across a slow link, compress the
+   connection by overriding the dump command (44 minutes → 13 on the 2026-10-12
+   rehearsal, same output file):
+   `MYSQLDUMP="docker run --rm -e MYSQL_PWD mysql:8.4 mysqldump --get-server-public-key --compression-algorithms=zstd,zlib"`.
 2. Import `yc_data.sql.gz` into an empty database on the destination created
    with the source's default charset/collation (`utf8mb4` / `utf8mb4_general_ci`).
 3. Apply `yc_triggers.sql` **logged in as the account that should own the
@@ -35,8 +40,11 @@ the destination's server setting changes nothing for the app and changes
 parsing for every other client. `parity.js` compares `@@GLOBAL.sql_mode` and
 fails on the difference (it did, 2026-10-12).
 
-Host names, account names and the step-by-step cutover live in the private
-runbook (project doc `claude/DB_MIGRATION_RUNBOOK.md`), not in this public repo.
+Host names, account names, the step-by-step cutover and the operator script
+that drove it live in the private runbook (project doc
+`claude/DB_MIGRATION_RUNBOOK.md`, with `claude/DB_MIGRATION_yc.sh`), not in this
+public repo. What was done and why it went smoothly:
+`ref/archive/DB_MIGRATION_2026-10.md`.
 
 ## Why these and not the obvious tools
 
@@ -51,4 +59,5 @@ runbook (project doc `claude/DB_MIGRATION_RUNBOOK.md`), not in this public repo.
 
 Both were exercised end to end against two local MySQL 8.0 servers loaded from
 `ref/database.sql` (153 tables, 15 triggers), with negative controls for every
-check. The production servers are 8.4 — the rehearsal is where that gets proven.
+check, then on the production pair (8.4.6 → 8.4.11) in the rehearsal and the
+cutover: the content hash is stable across those versions.

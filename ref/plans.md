@@ -236,10 +236,12 @@ settings/config split (defines what provisioning seeds — audit §B4's 48
 firm-config keys are the raw inventory; no single registry enumerates the
 settings surface today, which is itself a finding), access-control arc
 (roles/membership = the auth half of invariant 1-2; scoped keys = webhook/RO
-tenant binding). Infra intents, **gated on funding approval**: Cloud Run
-`min_instances=1` and the Cloud SQL migration; the pool connection budget
-(per-pool limit × max resident pools per instance × max instances) is sized
-after that move, LRU machinery deferred until the budget shows it's needed.
+tenant binding). Infra intent, **gated on funding approval**: Cloud Run
+`min_instances=1`. The Cloud SQL migration is done (2026-10-13,
+`ref/archive/DB_MIGRATION_2026-10.md`), so the pool connection budget
+(per-pool limit × max resident pools per instance × max instances) can now be
+sized against the instance's real `max_connections` (4030); LRU machinery
+deferred until the budget shows it's needed.
 
 ### Open decisions (audit §3; answer before the affected slice)
 
@@ -249,14 +251,17 @@ after that move, LRU machinery deferred until the budget shows it's needed.
    2026-09-08); per-trigger saved sql_mode is heterogeneous (3 variants) —
    harmless, but provisioning stamps the session mode at creation. Ruling:
    strip DEFINER on every dump/import; the migration account becomes definer
-   everywhere and is permanent. **⚠ Cloud SQL migration gotcha, independent of
-   tenancy: importing a SiteGround dump with DEFINER clauses intact breaks
-   (`sgkmtgfarbwxw@localhost` won't exist there) — strip them.** Still patch
-   `lib/schemaDump.js` to record DEFINER + per-trigger sql_mode.
-2. Stored routines (§3-2; dump has none — confirm with SHOW PROCEDURE/FUNCTION
-   STATUS from phpMyAdmin). 3. Shared MySQL server vs instance-per-tenant
-   (§3-3; decides GET_LOCK + JSON_OVERLAPS-probe severity). 4. sql_mode
-   provenance (§3-4).
+   everywhere and is permanent. **Applied 2026-10-13 by the Cloud SQL move:**
+   `scripts/dbmigrate/dump.sh` strips DEFINER and all 15 triggers are now owned
+   by the app's account (the definers above no longer exist anywhere). Still
+   patch `lib/schemaDump.js` to record DEFINER + per-trigger sql_mode.
+2. **RESOLVED 2026-10-12** — stored routines (§3-2): one unused function
+   existed on the old server and was dropped before the Cloud SQL move; there
+   are none now, and no events (`scripts/dbmigrate/parity.js` compares the
+   count; `dump.sh` does not carry routines). 3. Shared MySQL server vs
+   instance-per-tenant (§3-3; decides GET_LOCK + JSON_OVERLAPS-probe
+   severity). 4. **RESOLVED 2026-10-13** — sql_mode provenance (§3-4): an
+   explicit Cloud SQL database flag, per instance (`ref/INFRA_GCP.md` §7).
 5. **RESOLVED 2026-10-05** (registrar records): no proxy in front of either
    host — both are direct Cloud Run domain mappings; Host arrives via Google's
    front end. `x-original-host` applies only to any Worker-fronted landing
@@ -418,6 +423,26 @@ Active surfaces with known next steps.
   is a behaviour change, not a cleanup. Do these as their own slice.
 
 - **Case field edits reach no log at all.** Found while ruling the custom-fields S4 log question (2026-09-25) and confirmed: `caseService.updateCase` writes no log row, and there is no `after_case_update` trigger — `cases` carries only `trg_cases_ct_compat_ins/upd`, which are case-type compatibility, not logging. So changing `case_status`, `case_stage`, `case_rec`, a date or anything else on a case leaves no trace in the case's log, while the equivalent edit on a contact does (the `after_contact_update` trigger covers 17 named columns). The only `type:'update'` row a case ever gets is the `mergeCases` snapshot. S4 deliberately did NOT half-close this — writing cf_ log rows on cases would have made admin-defined fields better-logged than every built-in column. Closing it properly means an app-side write in `updateCase`, which every case writer then inherits (`routes/api.cases.js`, `courtReview`, `update_case`, the inline Overview `onchange` handlers in `case.html`), so it is its own slice with its own volume question — a busy case would gain a log row per keystroke-ish save. Decide extend-vs-accept deliberately; don't let it ride into an unrelated change.
+
+- **After the Cloud SQL move (2026-10-13) — cleanup, in this order.** Record:
+  `ref/archive/DB_MIGRATION_2026-10.md`; current setup: `ref/INFRA_GCP.md`.
+  (1) Now: raise the GCP budget alert (Cloud SQL alone is ≈ $53/mo; the alert
+  was set for a ≈ $8 bill). (2) After a week or two of clean running: buy the
+  1-year committed-use discount (≈ $53 → ≈ $40). (3) When the rollback window
+  closes (about 2026-11-12): delete the cutover copies of client data — the
+  dump directory and saved service settings in Cloud Shell's home, and
+  anything left in the migration bucket — then drop the old SiteGround
+  database. (4) Only after (3), and after checking that no other outside
+  service allowlists the app's egress address: remove the NAT chain
+  (connector, router, NAT, static IP; `INFRA_GCP.md` §1), ≈ $7–8/mo. Detach
+  the connector on a no-traffic tagged revision first and prove a database
+  read through it — the socket has never run here without the connector.
+  (5) Decide whether to restore a server-side SELECT time limit: the old host
+  enforced `max_execution_time` = 30 s, Cloud SQL has none (`INFRA_GCP.md` §7).
+  It is one database flag — and `--database-flags` replaces the whole set.
+  (6) The 30 s pool idle recycling in `startup/db.js` was sized for the old
+  host's 60 s `wait_timeout`; harmless, revisit only if connection churn ever
+  shows up in a profile.
 
 - **Cloud Scheduler interval.** Currently 5 minutes (set conservatively at launch). Drop to ~30 seconds when comfortable. Pure GCP config change, no code.
 

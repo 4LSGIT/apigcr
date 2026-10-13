@@ -427,6 +427,10 @@ Scheduler ~5 min) → per-type handlers in `job_executor.js` / engine modules.
 Schema truth: `ref/database.sql` (auto-generated; **read the COMMENTs** — 
 landmines are annotated in-schema). Style: `ref/SCHEMA_CONVENTIONS.md`.
 Connection: mysql2 pool as `req.db`; `req.db.query(sql, params)` directly.
+Server: Cloud SQL for MySQL 8.4; production connects over the `/cloudsql`
+socket (`lib/dbTarget.js`), a developer machine through the Auth Proxy.
+Instance facts, the load-bearing flags (`sql_mode` is an explicit flag, not a
+default) and local setup: `ref/INFRA_GCP.md` §2, §7, §10.
 
 **Timezone:** human-entered times firm-local (America/Detroit), machine times
 UTC. `appt_date` firm-local naive + `appt_date_utc` computed;
@@ -1039,7 +1043,7 @@ auto-drop when poster/GIF absent. Depth: manual 11-YisraVideo.
 ## 25. SCHEMA REF AUTO-GENERATION
 
 `ref/database.sql` regenerates itself: the pre-commit hook runs
-`scripts/dump-schema.js` SYNCHRONOUSLY by default (~4s per commit; the
+`scripts/dump-schema.js` SYNCHRONOUSLY by default (the
 schema change lands in the SAME commit — the old detached default missed
 `court_item_*` by 14 seconds). `SCHEMA_DUMP_ASYNC=1` backgrounds it for one
 commit; `SKIP_SCHEMA_DUMP=1` skips it (`SCHEMA_DUMP_SYNC=1` still forces
@@ -1048,9 +1052,12 @@ fingerprint (7 information_schema queries + a `database()` probe, volatile
 fields excluded) gates the full dump — no diff churn. Commands:
 `npm run db:ref` (`--force`, `--check`, `--timing`). DB failure warns and
 exits 0. The hook does NOT touch `ref/routes.md` — regenerate that by hand
-(`node scripts/updateRoutes.js`). Known: ~4s connection open from
-residential IPs (SiteGround reverse-DNS) — Cloud Run unaffected; don't
-"fix" pool timeouts for it. **Schema COMMENTs are the annotation channel**
+(`node scripts/updateRoutes.js`). A laptop reaches the DB through the Cloud
+SQL Auth Proxy, which `dump-schema.js` (and `npm run dev`) start on demand
+via `scripts/ensure-sql-proxy.js` — opt-in by `DEV_SQL_PROXY_INSTANCE` in
+`.env`, inert on Cloud Run and CI; proxy down = the hook warns, skips the
+schema step and the commit goes through (`ref/INFRA_GCP.md` §10).
+**Schema COMMENTs are the annotation channel**
 — landmine notes go into the live DB via migration and flow into the dump
 (see 2026-09-14_schema_comment_backfill.sql).
 

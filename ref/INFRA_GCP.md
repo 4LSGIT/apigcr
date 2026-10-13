@@ -1,6 +1,6 @@
 # INFRA_GCP.md — Google Cloud setup for svpcac (app.4lsg.com)
 
-Captured from live state 2026-09-20; `mailbox-ingest` scheduler job added 2026-10-09; maintenance mode + the `yc-hook-spool` queue (§9) added 2026-10-12. No open TODOs. Project `lsg-api-425223` (number `618099140949`), region `us-east1`.
+Captured from live state 2026-09-20; `mailbox-ingest` scheduler job added 2026-10-09; maintenance mode + the `yc-hook-spool` queue (§9) added 2026-10-12; the database moved to Cloud SQL 2026-10-13 (§1, §2, §5–§7; local development §10). One open item: the NAT chain's removal (§1, `ref/plans.md` → Operational). Project `lsg-api-425223` (number `618099140949`), region `us-east1`.
 
 **Why this file exists.** The deploy pipeline (`cloudbuild.yaml`) only ever runs
 `gcloud run services update --image=...` — every other piece of the system (env vars,
@@ -9,7 +9,9 @@ state that was configured once in the console or CLI and lives nowhere in git. T
 is the rebuild runbook and drift reference for that state.
 
 **Redaction rule.** This repo is fetched unauthenticated, so: secret env vars appear as
-NAMES only, and the NAT egress IP / DB coordinates are deliberately not written here.
+NAMES only, and the NAT egress IP / DB coordinates (database name, account names, the
+instance's IP) are deliberately not written here. Resource names — the service, the
+Cloud SQL instance, the queues — are not secrets: every one is IAM-gated.
 Values live in the live service config (console → Cloud Run → svpcac → revision → variables)
 — keep a private export current with:
 `gcloud run services describe svpcac --region=us-east1 --format=export > svpcac.export.yaml`
@@ -28,28 +30,43 @@ services update svpcac --image=...:$COMMIT_SHA`. Push-to-live ≈ 2 min.
 Cloud Run egress is forced through **Serverless VPC Access connector `svpcac`** → Cloud
 Router `crouter` → **Cloud NAT `nat4lsg`** using the reserved static IP **`api-4lsg-ip`**.
 
-**WHY THE NAT EXISTS:** the MySQL database is SiteGround-hosted remote MySQL, which only
-accepts connections from allowlisted IPs. The static NAT IP is that allowlisted address.
-This chain (2× e2-micro connector VMs + NAT IP + NAT gateway ≈ $7–8/mo) is essentially
-the *entire* steady-state GCP bill. If the DB ever moves somewhere that doesn't need IP
-allowlisting, delete the connector + router + NAT + address and remove
-`--vpc-connector`/`--vpc-egress` from the service.
+**Database:** Cloud SQL for MySQL 8.4, instance **`yc-mysql`** (same project and
+region). Cloud Run reaches it over the Unix socket `/cloudsql/<connection name>`, which
+Cloud Run mounts on a revision deployed with `--add-cloudsql-instances`; the connection
+is IAM-authorized and encrypted by Google's connector and needs neither an IP
+allowlist nor the VPC connector and NAT below. The app picks the socket when `INSTANCE_CONNECTION_NAME`
+is set (`lib/dbTarget.js`). A developer machine uses the Cloud SQL Auth Proxy (§10).
+How the database got here from SiteGround: `ref/archive/DB_MIGRATION_2026-10.md`.
+
+**WHY THE NAT STILL EXISTS:** it was built because the previous database host
+(SiteGround remote MySQL) only accepted allowlisted IPs, and the static NAT IP was that
+address. The database no longer needs it. The chain (2× e2-micro connector VMs + NAT
+IP + NAT gateway ≈ $7–8/mo) stays while the SiteGround copy is the rollback fallback;
+once that copy is dropped, and after checking that no other outside service allowlists
+the address, delete the connector + router + NAT + address and clear the connector
+from the service (`gcloud run services update svpcac --region=us-east1
+--clear-vpc-connector`). The socket has only ever run here WITH the connector
+attached, so make that change as a `--no-traffic --tag=…` revision first, and move
+traffic only once its boot log is free of connection errors and a request through the
+tagged URL has read the database. Tracked in `ref/plans.md` → Operational.
 
 Front door: `app.4lsg.com` is a **Cloud Run domain mapping** (DNS CNAME →
 `ghs.googlehosted.com`). Uploads: GCS bucket `uploads.4lsg.com` served via DNS CNAME →
 `c.storage.googleapis.com`.
 
-## 2. Inventory (as of 2026-09-20)
+## 2. Inventory (as of 2026-09-20; Cloud SQL rows 2026-10-13)
 
 | Resource | Name / value | Notes |
 |---|---|---|
 | Cloud Run service | `svpcac`, us-east1 | 1 vCPU / 1 Gi, maxScale 6, **minScale unset (0 → cold starts)**, concurrency 80, timeout 900 s, port 8080 (http1), startup-cpu-boost on, default TCP startup probe, ingress all. Container name `apigcr-1`. |
-| Runtime/deploy SA | `618099140949-compute@developer.gserviceaccount.com` | Default compute SA does everything: runtime, build, deploy. |
-| VPC connector | `svpcac`, network `default`, subnet `vpc28` | e2-micro, min 2 / max 10 instances. This is the "Compute Engine" line on the bill (mostly free-tier-discounted). |
+| Runtime/deploy SA | `618099140949-compute@developer.gserviceaccount.com` | Default compute SA does everything: runtime, build, deploy. Holds `roles/cloudsql.client` — the socket does not connect without it. |
+| Cloud SQL | instance `yc-mysql`, us-east1 (zonal), MySQL 8.4, Enterprise edition | Tier `db-custom-1-3840` (1 vCPU, 3.75 GB → InnoDB buffer pool ≈ 1.4 GB, which holds the whole ~0.9 GB database; the shared-core `db-g1-small` was measured and rejected — its 640 MB pool could not). 20 GB SSD, auto-increase. Daily backup 08:00 UTC, 7 kept; binary log on, 7 days of point-in-time recovery. Maintenance window Sunday 09:00 UTC. **Deletion protection on** (the backups live with the instance). Four database flags — §7. Connection name `lsg-api-425223:us-east1:yc-mysql`. Has a public IP with ONE authorized network (the Pabbly connector's address); everything else connects by IAM. Accounts: an app account (all privileges on the one database), a read-only account (SELECT only — the `user_ro` pool), one for Pabbly bound to its address, and root. Names and passwords are in the private runbook / the service config, not here. |
+| GCS (migration) | bucket `lsg-yc-migration`, us-east1 | Uniform access, public access prevented. Staging for `gcloud sql import` only; the Cloud SQL service account has objectViewer on it. Holds nothing in steady state — an object left here is a full copy of client data. |
+| VPC connector | `svpcac`, network `default`, subnet `vpc28` | e2-micro, min 2 / max 10 instances. This is the "Compute Engine" line on the bill (mostly free-tier-discounted). Carries the app's outbound traffic to the NAT (`--vpc-egress=all-traffic`). The database connection does not depend on it (Cloud SQL socket). |
 | Subnet | `vpc28`, us-east1, `10.124.0.0/28` | Connector-dedicated /28 on network `default`. |
 | Cloud Router | `crouter`, network `default`, us-east1 | |
 | Cloud NAT | `nat4lsg` on `crouter` | MANUAL_ONLY IPs = `api-4lsg-ip`; NATs **only subnet `vpc28`** (primary range). Defaults otherwise: endpoint-independent mapping off, dynamic port allocation, no NAT logging, tcp-time-wait 120 s. |
-| Static IP | `api-4lsg-ip`, us-east1, EXTERNAL, IN_USE | The SiteGround-allowlisted egress IP. Value: console → VPC network → IP addresses. |
+| Static IP | `api-4lsg-ip`, us-east1, EXTERNAL, IN_USE | The app's fixed egress IP — the address the previous database host (SiteGround) allowlisted. The database no longer needs it; whether any other outside service allowlists it is the check to make before the NAT chain is removed (§1). Value: console → VPC network → IP addresses. |
 | AR repo (app) | `us-east1/cloud-run-source-deploy` | Docker. **Cleanup policy since 2026-09-20** (see §4). Holds `apigcr/svpcac` images incl. the `:cache` tag. |
 | AR repo (base) | `us-east1/svpcac-base` | Holds `base:1` (node:24-slim + chromium + fonts, ~330 MB). **Deliberately NO cleanup policy** — see Dockerfile.base header. |
 | AR legacy | `gcr.io` (us, ~113 MB), `cloud-run-source-deploy` (us-central1, ~147 MB, 2024) | Unused, ≈$0.03/mo. Delete if confirmed unreferenced, or ignore. |
@@ -63,9 +80,12 @@ Front door: `app.4lsg.com` is a **Cloud Run domain mapping** (DNS CNAME →
 | Secret Manager | **not used** | All config is plain env vars on the service (§5). `gcloud secrets list` prompts to enable the API — that's the tell. |
 | Other SAs | `firebase-adminsdk-kg83l@…`, `local-fred@…` (Fred's local dev), appspot default | A `runapps` firebase-hosting integration (2024-07) is still annotated on the service — legacy, not in the serving path. |
 
-**Steady-state bill (post-cleanup, ~monthly):** NAT IP $3.72 + NAT gateway $2.08 +
-connector VMs ~$1–2 net of free tier + NAT data processing ~$0.20 + AR ~$0.10–0.50
-≈ **$7–8/mo**. Anything materially above that = something regressed (check AR size first).
+**Steady-state bill (~monthly):** Cloud SQL ≈ **$53** on demand (1 vCPU $30.15 +
+3.75 GB $19.16 + 20 GB SSD $3.40, list prices 2026-10-12; ≈ $40 under a 1-year
+commitment) + the NAT chain ≈ $7–8 (NAT IP $3.72 + NAT gateway $2.08 + connector VMs
+~$1–2 net of free tier + NAT data processing ~$0.20) + AR ~$0.10–0.50 ≈ **$60/mo**.
+Anything materially above that = something regressed (check AR size first; then
+whether the Cloud SQL disk auto-grew).
 
 ## 3. Build pipeline (source of truth: `cloudbuild.yaml`, `Dockerfile`, `Dockerfile.base`)
 
@@ -123,12 +143,16 @@ shows multi-GiB growth again, the policy broke or was removed.
 Secret values: NAMES only here; live values on the service revision (see header for the
 export command). Non-secret values inline.
 
-- **DB (SiteGround remote MySQL, reached via the NAT IP):** `host`, `database`, `user`,
-  `password`, `user_ro`, `password_ro` (lowercase names are historical; keep them).
-  Optional, UNSET in prod today: `INSTANCE_CONNECTION_NAME` (`PROJECT:REGION:INSTANCE`) —
-  when set, both pools connect over the Cloud SQL Unix socket `/cloudsql/<name>` and
-  ignore `host` (needs `--add-cloudsql-instances` on the revision); `INSTANCE_CONNECTION_NAME_RO`
-  overrides it for the readonly pool only. See `lib/dbTarget.js`.
+- **DB (Cloud SQL over the socket):** `INSTANCE_CONNECTION_NAME`
+  (`PROJECT:REGION:INSTANCE`), `database`, `user`, `password`, `user_ro`, `password_ro`
+  (lowercase names are historical; keep them). With `INSTANCE_CONNECTION_NAME` set, both
+  pools connect over `/cloudsql/<name>` — which exists only on a revision deployed with
+  `--add-cloudsql-instances=<name>`; the flag and the variable go together, and
+  `cloudbuild.yaml`'s image-only update carries both forward. **`host` is UNSET in
+  prod**: it is the TCP fallback, read only when `INSTANCE_CONNECTION_NAME` is absent
+  (that is how a developer machine connects, §10). Optional and unset:
+  `INSTANCE_CONNECTION_NAME_RO` overrides the target for the readonly pool only.
+  See `lib/dbTarget.js`.
 - **App identity:** `ENVIRONMENT=production`, `APP_URL=https://app.4lsg.com`,
   `FIRM_TIMEZONE=America/Detroit`, `EMAIL_DOMAIN=@4lsg.com`,
   `EMAIL_DOMAINS=@4lsg.com,@metrodetroitbankruptcylaw.com`, `IT_EMAIL=it@4lsg.com`,
@@ -157,7 +181,7 @@ Assumes fresh project or region. `P=lsg-api-425223 R=us-east1` (adjust if new pr
 1. **APIs:** `gcloud services enable run.googleapis.com cloudbuild.googleapis.com
    artifactregistry.googleapis.com vpcaccess.googleapis.com compute.googleapis.com
    cloudscheduler.googleapis.com cloudtasks.googleapis.com storage.googleapis.com
-   iam.googleapis.com logging.googleapis.com`
+   iam.googleapis.com logging.googleapis.com sqladmin.googleapis.com`
 2. **Subnet** (connector-dedicated /28 on `default`):
    `gcloud compute networks subnets create vpc28 --network=default --region=$R --range=10.124.0.0/28`
 3. **Static IP + router + NAT:**
@@ -168,15 +192,45 @@ Assumes fresh project or region. `P=lsg-api-425223 R=us-east1` (adjust if new pr
      --nat-external-ip-pool=api-4lsg-ip \
      --nat-custom-subnet-ip-ranges=vpc28   # confirmed: only vpc28, primary range
    ```
-   ⚠ **The new reserved IP is a NEW address.** Update the SiteGround remote-MySQL
-   allowlist (Site Tools → MySQL → Remote MySQL) with it — the app cannot reach the DB
-   until this is done. Check for any other services allowlisting the old IP.
+   ⚠ **The new reserved IP is a NEW address.** The database does not care (it is
+   reached over the Cloud SQL socket), but any outside service that allowlists the old
+   address must be given the new one. Steps 2–4 exist only to give the app a fixed
+   egress address: if nothing needs one, skip them and leave `--vpc-connector` /
+   `--vpc-egress` off the service in step 7.
 4. **Connector:**
    ```
    gcloud compute networks vpc-access connectors create svpcac --region=$R \
      --subnet=vpc28 --subnet-project=$P \
      --machine-type=e2-micro --min-instances=2 --max-instances=10
    ```
+4a. **Cloud SQL** (the database; step 7 points the service at it). Restoring into a
+   NEW instance from a backup of the old one replaces the create-and-load below —
+   console → SQL → Backups → Restore.
+   ```
+   gcloud sql instances create yc-mysql --region=$R \
+     --database-version=MYSQL_8_4 --edition=enterprise --tier=db-custom-1-3840 \
+     --availability-type=zonal --storage-type=SSD --storage-size=20GB --storage-auto-increase \
+     --backup-start-time=08:00 --enable-bin-log --retained-backups-count=7 --retained-transaction-log-days=7 \
+     --maintenance-window-day=SUN --maintenance-window-hour=9 --deletion-protection \
+     --database-flags='^~^sql_mode=NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION~lower_case_table_names=0~log_bin_trust_function_creators=on~default_time_zone=+00:00'
+   gcloud sql databases create <database> --instance=yc-mysql \
+     --charset=utf8mb4 --collation=utf8mb4_general_ci
+   gcloud projects add-iam-policy-binding $P --role=roles/cloudsql.client \
+     --member=serviceAccount:<PROJECT_NUMBER>-compute@developer.gserviceaccount.com
+   ```
+   `^~^` makes `~` the separator, because `sql_mode` contains commas. The flags and
+   the database's default collation are load-bearing — §7. 20 GB rather than the 10 GB
+   minimum because disk throughput scales with size.
+   **Accounts:** set a generated root password (`gcloud sql users set-password root
+   --host=% --instance=yc-mysql --password=…`), then create the app and read-only
+   accounts with SQL as root through the Auth Proxy (§10): `CREATE USER` + `GRANT ALL
+   PRIVILEGES ON <database>.*` for the app account, `GRANT SELECT ON <database>.*`
+   for the read-only one. **Not `gcloud sql users create`** — it makes an account with
+   near-superuser rights on every database. Generate the passwords (alphanumeric:
+   dotenv cuts a value at `#`); never type one into a prompt.
+   **Data:** `scripts/dbmigrate/` — `dump.sh` from the source, `gcloud sql import sql`
+   for the data file, the trigger file applied as the app account, then `parity.js`.
+   Order and reasons in its README.
 5. **Artifact Registry + base image:** create both repos and apply the cleanup policy
    (§4) to `cloud-run-source-deploy` only; build and push `svpcac-base/base:1` per the
    commands in the `Dockerfile.base` header.
@@ -193,9 +247,13 @@ Assumes fresh project or region. `P=lsg-api-425223 R=us-east1` (adjust if new pr
      --vpc-connector=svpcac --vpc-egress=all-traffic \
      --cpu=1 --memory=1Gi --max-instances=6 --concurrency=80 --timeout=900 \
      --port=8080 --cpu-boost \
+     --add-cloudsql-instances=$P:$R:yc-mysql \
      --set-env-vars/--set-secrets ...   # fastest: edit the private svpcac.export.yaml
                                         # and `gcloud run services replace` it
    ```
+   The export carries the Cloud SQL attachment too (annotation
+   `run.googleapis.com/cloudsql-instances`); if the project or instance name changed,
+   fix it there and in `INSTANCE_CONNECTION_NAME` together.
 8. **Scheduler** (after the service exists — the URI embeds the NEW project number;
    mint a fresh `yck_` write key PER JOB in the app first):
    ```
@@ -235,15 +293,50 @@ Assumes fresh project or region. `P=lsg-api-425223 R=us-east1` (adjust if new pr
     `gcloud beta run domain-mappings create --service=svpcac --domain=app.4lsg.com --region=$R`,
     then at the DNS host: CNAME `app` → `ghs.googlehosted.com.` (DNS-only), CNAME
     `uploads` → `c.storage.googleapis.com.`
-12. **Smoke:** app loads over `https://app.4lsg.com`; DB queries succeed (proves NAT +
-    allowlist); an outbound-IP check from inside the app equals the reserved IP;
+12. **Smoke:** app loads over `https://app.4lsg.com`; DB queries succeed (with
+    `INSTANCE_CONNECTION_NAME` set there is no fallback to `host`, so a working query
+    proves the Cloud SQL attachment + the `cloudsql.client` role); if the NAT chain
+    was built, an outbound-IP check from inside the app equals the reserved IP;
     scheduler tick processes a job; a `mailbox-ingest` tick advances
     `mailboxes.ingest_state.<folder>.checked_at`; a test push deploys end-to-end.
 
 ## 7. Gotchas
 
-- **NAT IP is load-bearing state.** Recreating/releasing `api-4lsg-ip` = DB outage until
-  the SiteGround allowlist is updated. Never fix by switching NAT to AUTO_ONLY.
+- **The NAT IP is no longer load-bearing for the database** (Cloud SQL socket). It is
+  still the app's fixed egress address: before releasing `api-4lsg-ip` or switching the
+  NAT to AUTO_ONLY, confirm no outside service allowlists it (§1).
+- **Cloud SQL: `--database-flags` REPLACES the whole set.** Changing or adding one flag
+  means restating all of them, or the others silently reset to defaults:
+  `sql_mode=NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION`,
+  `lower_case_table_names=0`, `log_bin_trust_function_creators=on`,
+  `default_time_zone=+00:00`. Same for `--authorized-networks`: it replaces the list.
+  Some flag changes restart the instance.
+- **`sql_mode` is an explicit choice, not a default.** MySQL 8.4's default is strict +
+  `ONLY_FULL_GROUP_BY`; the app relies on both being absent, so an instance created
+  without the flag breaks case listing and case inserts on day one. Check the server
+  value with `SELECT @@GLOBAL.sql_mode` from a mysql client — a query run through the
+  app shows one extra mode, `IGNORE_SPACE`, which the mysql2 driver requests per
+  connection and which must NOT be copied into the flag.
+- **The database's default collation is `utf8mb4_general_ci`**, not the 8.4 default.
+  Existing tables name their collation; a new table created without one inherits the
+  database default, and a mismatch surfaces later as "Illegal mix of collations".
+- **No server-side query time limit.** `max_execution_time` is 0 (the previous host
+  enforced 30 s on every SELECT). The read-only API and reports set their own
+  per-query limit; nothing else has one, so a runaway SELECT runs until its
+  connection closes.
+- **`wait_timeout` is 28800 s** (the previous host: 60 s). The pool's 30 s idle
+  recycling in `startup/db.js` was sized for the old value and is merely conservative
+  now.
+- **After any instance restart the buffer pool is cold** (weekly maintenance window, a
+  tier or flag change): first-touch scans of the big log tables take seconds for a
+  few minutes. Not a fault.
+- **No phpMyAdmin.** Ad-hoc SQL: Cloud SQL Studio in the console, or a local client
+  through the Auth Proxy (§10). An 8.4 `mysql` client on the proxy's plain-TCP port
+  needs `--get-server-public-key` (otherwise `ERROR 2061 … requires secure
+  connection`); the Node driver does that exchange by itself.
+- **Triggers are owned by the app account** (no host-specific DEFINER). Create new
+  ones logged in as that account, or name it in the DEFINER clause: a trigger whose
+  definer does not exist fails every write to its table.
 - **Deploys don't carry config.** `cloudbuild.yaml` updates `--image` only. Env/scaling
   changes made in console persist silently and exist nowhere else — that's what the
   private `svpcac.export.yaml` snapshot is for. Re-export after intentional changes.
@@ -257,8 +350,6 @@ Assumes fresh project or region. `P=lsg-api-425223 R=us-east1` (adjust if new pr
 - Scheduler tz `America/Cancun` ≠ `FIRM_TZ` (Detroit observes DST, Cancun doesn't).
   Harmless at `* * * * *`; wrong template for anything daily. `mailbox-ingest` uses
   `Etc/UTC` — the pattern to copy for new cadence jobs.
-- July-2026 billing showed a $0.01 Cloud SQL snapshot; no Cloud SQL instance exists now
-  (`sqladmin` API is enabled but idle).
 
 ## 8. Re-capture (drift check — safe to run any time, no prompts)
 
@@ -279,12 +370,17 @@ echo "== scheduler"; gcloud scheduler jobs list --location=$R --project=$P; \
                        gcloud scheduler jobs describe $j --location=$R --project=$P; done
 echo "== tasks";     gcloud tasks queues list --location=$R --project=$P
 echo "== domains";   gcloud beta run domain-mappings list --region=$R --project=$P
+echo "== sql";       gcloud sql instances describe yc-mysql --project=$P \
+                       --format='yaml(databaseVersion,region,gceZone,state,connectionName,settings.tier,settings.edition,settings.availabilityType,settings.dataDiskSizeGb,settings.dataDiskType,settings.storageAutoResize,settings.databaseFlags,settings.backupConfiguration,settings.maintenanceWindow,settings.deletionProtectionEnabled,settings.ipConfiguration.authorizedNetworks)'; \
+                     gcloud sql users list --instance=yc-mysql --project=$P; \
+                     gcloud storage ls gs://lsg-yc-migration/
 } 2>&1 | tee /tmp/infra_dump.txt
 ```
 
 Diff the output against this file during docs review; divergences get fixed here or
-filed in scratch `ns=docs`. The `== run yaml` section contains secret values — never
-commit the dump.
+filed in scratch `ns=docs`. The `== run yaml` section contains secret values, and the
+`== sql` section the instance's address, an allowlisted address and the account names
+— never commit the dump. `gcloud storage ls` should print nothing (§2).
 
 ## 9. Maintenance mode (write freeze)
 
@@ -318,7 +414,9 @@ gcloud tasks queues describe yc-hook-spool --location=$R \
 ```
 Then one revision. `^@^` makes `@` the separator because values may contain commas —
 if a value contains `@`, pick another character that appears in none of them
-(`^#^…#…`):
+(`^#^…#…`). The alternative that avoids the separator question: write the complete
+variable set to a JSON file and deploy with `--env-vars-file`. That flag REPLACES every
+variable on the revision, so the file must hold all of them, each value a string.
 ```
 gcloud run services update svpcac --region=$R \
   --update-env-vars='^@^MAINTENANCE_MODE=1@user=<user_ro value>@password=<password_ro value>'
@@ -371,3 +469,79 @@ until the pipeline's oversized-payload handling is fixed (`executeHook` cuts the
 text at 512 KB, which a JSON column rejects — the same event is dropped by the live
 receiver today); it stays in the queue, visibly. Largest hook payload on record: 24 KB.
 Tasks are kept 31 days.
+
+## 10. Local development against Cloud SQL
+
+A developer machine has no `/cloudsql` socket. It connects through the **Cloud SQL Auth
+Proxy**: a local process that listens on `127.0.0.1:3306` and tunnels to the instance
+using the developer's own Google login. No IP allowlist, no database port open to the
+internet, nothing to update when the laptop changes networks.
+
+**One-time setup (new machine or new developer).**
+
+1. Install the proxy: `brew install cloud-sql-proxy` (macOS). Other systems: one
+   binary from the `GoogleCloudPlatform/cloud-sql-proxy` releases page, on `PATH` under
+   that name.
+2. Give the proxy credentials: `gcloud auth application-default login` (browser; signs
+   in as you). This is separate from `gcloud auth login` — the proxy reads the
+   application-default credentials, not the CLI's.
+3. The Google account needs **`roles/cloudsql.client`** on the project. A project
+   Owner already has it. Anyone else, granted once by an Owner:
+   ```
+   gcloud projects add-iam-policy-binding lsg-api-425223 \
+     --member=user:<their Google account> --role=roles/cloudsql.client
+   ```
+   That role only lets the proxy open the tunnel. Logging in to MySQL still takes a
+   database account and its password.
+4. `.env` (never committed):
+   ```
+   host=127.0.0.1
+   DEV_SQL_PROXY_INSTANCE=lsg-api-425223:us-east1:yc-mysql
+   database=…
+   user=…
+   password=…
+   user_ro=…
+   password_ro=…
+   ```
+   Do **not** put `INSTANCE_CONNECTION_NAME` in a local `.env`: it means "use the
+   `/cloudsql` socket", which exists only on Cloud Run.
+5. `git config core.hooksPath .githooks` (the pre-commit hook; `CLAUDE.md` →
+   Commands & gates).
+
+**Day to day there is nothing to start by hand.** `scripts/ensure-sql-proxy.js` starts
+the proxy when it is not already listening, from three places: `npm run dev` (the
+`predev` script), `npm run db:ref` / `db:ref:check`, and the pre-commit hook (both via
+`scripts/dump-schema.js`). It is opt-in through `DEV_SQL_PROXY_INSTANCE`: a machine
+without that line, CI and Cloud Run are untouched. The proxy is left running on
+purpose — the next commit finds it there in about a millisecond.
+
+| | |
+|---|---|
+| `npm run db:proxy` | Start it now, or report that it is already listening. |
+| `npm run db:proxy:stop` | Stop the one started from here. |
+| its output | `yc-sql-proxy.log` in the system temp dir; the path is printed when it starts. |
+
+**When it does not work.**
+
+- `"cloud-sql-proxy" is not installed` → step 1.
+- The proxy exits at once, or connections fail with a credentials / `invalid_grant` /
+  reauthentication message in the log → step 2 again. Application-default
+  credentials expire.
+- `403` / `NOT_AUTHORIZED` in the log → step 3.
+- The pre-commit hook prints `Cloud SQL proxy not running: …` and `skipped`, and the
+  commit goes through anyway — by design (a commit made offline must not be blocked).
+  That commit did not refresh `ref/database.sql`; `npm run db:ref` once the proxy is
+  back does. `npm run dev` stops instead: the app is useless without a database.
+- Port 3306 held by something else (a local MySQL): the script sees a listener and
+  assumes it is the proxy, so the login then fails against the wrong server. Stop the
+  other one — the port is fixed because `startup/db.js` and `scripts/dump-schema.js`
+  pass `host` and no port.
+
+**This is the production database.** A local `npm run dev` reads and writes live
+client data; there is no staging copy. A local process that keeps writing during a
+maintenance window (§9) is exactly the writer maintenance mode cannot stop — stop it,
+or run `npm run db:proxy:stop`, first.
+
+**Ad-hoc SQL as root or with a mysql client:** run a second proxy on another port —
+`cloud-sql-proxy lsg-api-425223:us-east1:yc-mysql --port 3307` — then
+`mysql --get-server-public-key -h127.0.0.1 -P3307 -u<account> -p`.

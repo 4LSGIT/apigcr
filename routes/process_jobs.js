@@ -542,7 +542,8 @@ async function runJobPass(db, { jobId = null, batchSize = 10 } = {}) {
       // timeout. withTransaction checks a connection OUT of the pool and holds
       // it for the whole callback. A long job therefore left that connection
       // idle for its entire runtime while all its own work went to the pool —
-      // and SiteGround closes an idle connection after 60s. The callback then
+      // and the server then in use closed an idle connection after 60s (Cloud
+      // SQL allows 28800s; the hazard is the same, only rarer). The callback then
       // resumed onto a dead socket and died on the COMMIT-side writes with
       //     Can't add new command when connection is in closed state
       //

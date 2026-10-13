@@ -62,8 +62,9 @@ const pool = mysql.createPool({
   keepAliveInitialDelay: 10_000,
 
   // maxIdle MUST be < connectionLimit or mysql2 never arms its idle recycler
-  // and idleTimeout is inert — see the long note in startup/db.js. SiteGround
-  // runs wait_timeout = 60s, so idleTimeout has to sit well under that.
+  // and idleTimeout is inert — see the long note in startup/db.js. Sized for
+  // a 60s server wait_timeout (the previous host); kept on Cloud SQL, where it
+  // is merely conservative.
   maxIdle: 2,
   idleTimeout: 30_000,
 });

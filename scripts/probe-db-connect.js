@@ -1,6 +1,12 @@
 // Measures where connection setup time goes: the network, or the server.
 //
-// FINDING (2026-08-06) — this DB stalls ~4s before its handshake greeting:
+// STATUS: the finding below is about the PREVIOUS database host. Since
+// 2026-10-13 the database is Cloud SQL (skip_name_resolve = ON), reached from a
+// laptop through the Cloud SQL Auth Proxy on 127.0.0.1 (ref/INFRA_GCP.md §10),
+// so this stall is gone. The tool is kept: the tcp-vs-greeting split diagnoses
+// any slow connect, against whatever `host` is in .env.
+//
+// FINDING (2026-08-06) — that DB stalled ~4s before its handshake greeting:
 //   tcp        13 ms   <- network is fine
 //   greeting 3964 ms   <- server stalls here
 //
@@ -10,9 +16,8 @@
 // egress IPs have valid PTR records, so it resolves instantly (confirmed:
 // admin_audit_log shows ~77ms avg over 1351 db_console calls).
 //
-// Host is giowm1139.siteground.biz (SiteGround shared, MySQL 8.4.6), so
-// skip_name_resolve is not ours to change. scripts/dump-schema.js works around
-// it by running in the background from .githooks/pre-commit.
+// The host was SiteGround shared MySQL 8.4.6, so skip_name_resolve was not
+// ours to change.
 //
 // Re-run if connect times change: node scripts/probe-db-connect.js
 //   tcp fast, greeting slow -> server-side stall (reverse DNS again?)

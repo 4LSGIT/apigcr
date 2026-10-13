@@ -2,9 +2,14 @@
 const mysql = require("mysql2");
 
 // ── Idle-connection policy ────────────────────────────────────────────────
-// SiteGround MySQL runs wait_timeout = interactive_timeout = 60s (verified
-// 2026-08-26: SELECT @@GLOBAL.wait_timeout → 60). The server closes ANY
-// pooled socket that sits idle for 60s. Two facts drive the numbers below:
+// Sized for the server this pool ran against until 2026-10-13: SiteGround
+// MySQL, wait_timeout = interactive_timeout = 60s (verified 2026-08-26), which
+// closed ANY pooled socket that sat idle for 60s. The database is now Cloud SQL,
+// wait_timeout 28800s (verified 2026-10-13), so 60s is no longer the bound —
+// but the policy is kept: it costs one cheap socket handshake after 30s of
+// quiet, and a server restart (weekly maintenance window, any flag change)
+// kills every pooled socket whatever wait_timeout says. Two facts drive the
+// numbers below:
 //
 //  1. enableKeepAlive does NOT protect against this. wait_timeout counts time
 //     since the last *MySQL protocol command* on the connection; TCP keepalive
@@ -26,7 +31,8 @@ const mysql = require("mysql2");
 // tearing it down. Observed 2026-08-25 22:11:09 UTC on GET /executions.
 //
 // Cost of the fix: after ~30s of quiet the pool drains to zero, so the first
-// request of a burst pays one TCP + handshake to SiteGround. That is strictly
+// request of a burst pays one connection handshake (a public-internet TCP
+// round trip then; a local Unix socket on Cloud Run now). That is strictly
 // cheaper than a 500.
 //
 // Cloud Run caveat: with request-only CPU allocation, JS timers stall while an
@@ -38,13 +44,11 @@ const mysql = require("mysql2");
 // traffic — which is where the observed failure occurred.
 const CONNECTION_LIMIT = 10;
 const MAX_IDLE         = 8;       // MUST be < CONNECTION_LIMIT — arms the sweeper
-const IDLE_TIMEOUT_MS  = 30_000;  // MUST be well under server wait_timeout (60s)
+const IDLE_TIMEOUT_MS  = 30_000;  // MUST be well under server wait_timeout (sized for 60s; see above)
 
-// Connection target: Cloud SQL Unix socket when INSTANCE_CONNECTION_NAME is set,
-// host TCP otherwise (today's SiteGround behavior, unchanged). See lib/dbTarget.js.
-// The idle-connection policy above was sized for SiteGround's 60s wait_timeout;
-// it stays as-is on Cloud SQL (default wait_timeout 28800s), where the sweeper
-// is merely conservative — recycling an idle socket early costs one handshake.
+// Connection target: Cloud SQL Unix socket when INSTANCE_CONNECTION_NAME is set
+// (production), host TCP otherwise (a developer machine, through the Cloud SQL
+// Auth Proxy on 127.0.0.1 — ref/INFRA_GCP.md §10). See lib/dbTarget.js.
 const target = require("../lib/dbTarget").dbTarget({
   instance: process.env.INSTANCE_CONNECTION_NAME,
   host: process.env.host,
@@ -115,7 +119,7 @@ const TRANSIENT = new Set([
  * retry above silently does not apply. Observed 2026-08-26 killing a
  * documents_sync job after 132s: the first workload in this app that leaves
  * the pool idle across long external API calls, which is exactly the shape
- * that walks into SiteGround's 60s wait_timeout.
+ * that walked into the 60s wait_timeout of the server it ran against then.
  *
  * RETRYING THIS IS UNAMBIGUOUSLY SAFE — safer than the codeless-socket cases
  * already in the set. _addCommandClosedState fires when the connection is

@@ -4,14 +4,18 @@
 #
 # 1. Refresh ref/database.sql if the live schema changed. Runs INLINE (blocking)
 #    so the fingerprint is checked against the live DB on every commit and any
-#    drift is staged into THIS commit, not the next one. Costs ~4s per commit:
-#    that is the connection handshake plus the fingerprint queries, paid whether
-#    or not the schema moved. The full dump only runs when the fingerprint
-#    actually differs.
+#    drift is staged into THIS commit, not the next one. Costs one connection
+#    plus the fingerprint queries per commit, paid whether or not the schema
+#    moved (see it with: node scripts/dump-schema.js --timing). The full dump
+#    only runs when the fingerprint actually differs.
+#    The connection goes through the local Cloud SQL Auth Proxy, which
+#    dump-schema.js starts if it is not running (scripts/ensure-sql-proxy.js;
+#    one-time setup: ref/INFRA_GCP.md §10). Proxy missing or credentials
+#    expired: it says so, the schema step is skipped, the commit goes through.
 # 2. Refresh ref/routes.md. Runs CONCURRENTLY with step 1: it needs no DB
 #    (it just requires every routes/*.js into a throwaway express app and walks
-#    the stack), takes ~0.3s, and is pure CPU — so it overlaps the ~4s the schema
-#    check spends on its connection handshake and costs no extra commit
+#    the stack), takes ~0.3s, and is pure CPU — so it overlaps the time the
+#    schema check spends waiting on the database and costs no extra commit
 #    latency. It rewrites the file only when the route table really changed.
 # 3. Refresh TRACKED_FILES.txt (local, instant, always synchronous).
 #

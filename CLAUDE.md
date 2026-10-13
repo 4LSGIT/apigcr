@@ -146,14 +146,16 @@ Mechanics: AI_CONTEXT §22 (`v` is string-only — stringify JSON yourself).
   clock — one such file put the whole run at 70s before it did. See the header of `tests/mascotSkins.test.js`.
 - `node --check <file>` on every modified JS file, including inline `<script>` blocks extracted from HTML.
 - `npm run db:ref:check` — schema-drift check against the live DB.
+- Local DB access goes through the Cloud SQL Auth Proxy. `npm run dev`, `npm run db:ref[:check]` and the pre-commit hook start it on demand (`scripts/ensure-sql-proxy.js`; opt-in via `DEV_SQL_PROXY_INSTANCE` in `.env`, inert everywhere else); `npm run db:proxy` / `db:proxy:stop` by hand. New-machine setup and troubleshooting: `ref/INFRA_GCP.md` §10.
 - UI changes: `node scripts/mobile-survey/survey.js --widths 320,375,414` — boots the real shell on a mock API and fails on any horizontal overflow at phone width (every tab, panel, case/contact tab, dialog); screenshots for the eye check. `scripts/mobile-survey/README.md`.
-- Pre-commit hook (`.githooks/pre-commit`, enable once via `git config core.hooksPath .githooks`) regenerates and stages THREE files on every commit: `ref/database.sql` (from the live schema, ~4s), `ref/routes.md` (from `routes/*.js`, no DB) and `TRACKED_FILES.txt` (`git ls-files`). `SCHEMA_DUMP_ASYNC=1` backgrounds the schema step for one commit; `SKIP_SCHEMA_DUMP=1` / `SKIP_ROUTES_DUMP=1` skip a step.
+- Pre-commit hook (`.githooks/pre-commit`, enable once via `git config core.hooksPath .githooks`) regenerates and stages THREE files on every commit: `ref/database.sql` (from the live schema; skipped with a warning, commit still goes through, when the DB or the proxy is unreachable), `ref/routes.md` (from `routes/*.js`, no DB) and `TRACKED_FILES.txt` (`git ls-files`). `SCHEMA_DUMP_ASYNC=1` backgrounds the schema step for one commit; `SKIP_SCHEMA_DUMP=1` / `SKIP_ROUTES_DUMP=1` skip a step.
 - **Never edit those three files — not by hand, not by script, not in a patch or diff you hand Fred.** Their contents carry timestamps and totals that drift between your checkout and his, so a hunk on them makes the whole patch fail to apply (`patch failed: ref/routes.md:1`). Leave them out; the commit regenerates them. A new table only reaches `ref/database.sql` once its migration has run on the live DB — that's expected, not a gap to fill by hand.
 
 ## Deploy
 
 - Order is absolute: **SQL migration → backend deploy → frontend deploy.** Never reverse.
 - Push to `main` triggers Cloud Build. Commits not touching `package*.json` reuse the npm layer cache.
+- **Hand-run production operations** (anything Fred types into Cloud Shell: a data move, a freeze, an infra rebuild) ship as ONE uploaded script with short, re-runnable stage commands — never pasted blocks, no prompts, a time limit on every external call, one unmistakable GO / NO-GO line per stage that names the next command — and every command is dry-run with its exact text against the real app on a local harness before Fred sees it. Worked example and the reasons: `ref/archive/DB_MIGRATION_2026-10.md`. Write freeze: `ref/INFRA_GCP.md` §9.
 
 ## Load-bearing invariants (silent-breakage list)
 
@@ -163,7 +165,7 @@ These five are the ones that have actually bitten:
 - **Post-commit side effects** (GCal sync, SMS, sequence enrollment) are fire-and-forget with `.catch()` — the UI reports success even when they fail. Verify outcomes via DB queries, not UI behavior.
 - **Trigger rules:** the UI DELETE+REINSERTs action rows on every save — SQL patches keyed on action `id` silently no-op. Fix trigger actions through the UI.
 - **Transactions:** everything goes through `withTransaction(fn, opts)`. `retries:1` only for pure-DB spans; any external side effect (SMS, email, webhook, GCal) in-span requires `retries:0` — or move it post-commit. Verify where commit actually lands before asserting retry semantics.
-- **SQL mode is relaxed** — no `STRICT_TRANS_TABLES`, `ONLY_FULL_GROUP_BY`, or `NO_BACKSLASH_ESCAPES`. Never enable strict mode: `cases` has NOT-NULL columns without defaults and `listCases` relies on relaxed GROUP BY. Escape LIKE wildcards (`%`, `_`, `\`) in user search input. Enum-ish varchar columns are app-validated, not DB-enforced.
+- **SQL mode is relaxed** — no `STRICT_TRANS_TABLES`, `ONLY_FULL_GROUP_BY`, or `NO_BACKSLASH_ESCAPES`. It is an explicit Cloud SQL database flag, not a server default (`ref/INFRA_GCP.md` §7). Never enable strict mode: `cases` has NOT-NULL columns without defaults and `listCases` relies on relaxed GROUP BY. Escape LIKE wildcards (`%`, `_`, `\`) in user search input. Enum-ish varchar columns are app-validated, not DB-enforced.
 
 The rest, in no particular order:
 

@@ -388,6 +388,7 @@ ref/archive/2026-09-04_dbkq_cutover_runbook.md
 ref/archive/2026-09-04_dbkq_workflow_spec.md
 ref/archive/AUTOMATION_VERSIONING_AUDIT.md
 ref/archive/AUTOMATION_VERSIONING_PLAN_V2_DELTA.md
+ref/archive/DB_MIGRATION_2026-10.md
 ref/archive/DENSITY-ARC-CHARTER.md
 ref/archive/DENSITY-ARC-PLAN-v2.md
 ref/archive/Edit-r4b-stranded-detector.md
@@ -691,6 +692,7 @@ scripts/dbmigrate/dump.sh
 scripts/dbmigrate/parity.js
 scripts/dump-schema.js
 scripts/encrypt-smtp-passwords.js
+scripts/ensure-sql-proxy.js
 scripts/esign_e2e_check.js
 scripts/esign_zoho_smoke.js
 scripts/genTypeKeyBackfill.js
@@ -953,6 +955,7 @@ tests/dropboxService.normalizePath.test.js
 tests/dropboxService.retry.test.js
 tests/emailservice.normalizebodies.test.js
 tests/emitStageAged.test.js
+tests/ensureSqlProxy.test.js
 tests/escapeLike.test.js
 tests/esignActionsUi.test.js
 tests/esignAlert.test.js

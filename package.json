@@ -5,10 +5,13 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
+    "predev": "node scripts/ensure-sql-proxy.js",
     "dev": "nodemon server.js",
     "test": "jest",
     "db:ref": "node scripts/dump-schema.js",
-    "db:ref:check": "node scripts/dump-schema.js --check"
+    "db:ref:check": "node scripts/dump-schema.js --check",
+    "db:proxy": "node scripts/ensure-sql-proxy.js",
+    "db:proxy:stop": "node scripts/ensure-sql-proxy.js --stop"
   },
   "engines": {
     "node": "24.x"

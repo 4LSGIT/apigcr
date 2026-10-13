@@ -4,13 +4,17 @@
 // Regenerates ref/database.sql from the live DB — but only when the schema
 // actually changed.
 //
-// Cost model, measured against this DB from a laptop:
-//   opening a connection  ~4000 ms   ← dominates everything
-//   round trip per query   ~160 ms   ← a 0-row query still costs this
+// Cost model, measured from a laptop against the PREVIOUS database host
+// (2026-08; since 2026-10-13 a laptop reaches Cloud SQL through the local Auth
+// Proxy, which this script starts if needed — scripts/ensure-sql-proxy.js.
+// Re-measure with --timing):
+//   opening a connection  ~4000 ms   ← dominated everything
+//   round trip per query   ~160 ms   ← a 0-row query still cost this
 //   SHOW CREATE TABLE ×118 ~2400 ms  (8 concurrent, once connected)
 //
-// Both numbers say the same thing: minimise connections first, round trips
-// second. So the common "did anything change?" path runs its queries in series
+// The design those numbers produced still holds for any database a network
+// hop away: minimise connections first, round trips second. So the common
+// "did anything change?" path runs its queries in series
 // over a single pooled connection — one handshake — and the pool only ramps to
 // 8 if a full dump is actually needed.
 //
@@ -31,7 +35,7 @@
 //
 // Exit codes: 0 = fine (unchanged / written), 1 = drift detected under --check,
 // 2 = error. Without --strict a DB failure warns and exits 0, so a commit made
-// offline still goes through.
+// offline (or with the Cloud SQL proxy down) still goes through.
 
 const fs    = require("fs/promises");
 const path  = require("path");
@@ -42,6 +46,7 @@ const mysql = require("mysql2");
 require("dotenv").config({ path: path.join(__dirname, "..", ".env") });
 
 const { buildSchemaDump, schemaFingerprint, FINGERPRINT_RE } = require("../lib/schemaDump");
+const { ensureSqlProxy } = require("./ensure-sql-proxy");
 
 const argv   = process.argv.slice(2);
 const has    = (f) => argv.includes(f);
@@ -122,8 +127,19 @@ async function existingFingerprint() {
 
 (async () => {
   let pool;
+  let proxy = null;
   try {
     mark("require");
+
+    // Local development: start the Cloud SQL Auth Proxy if this machine is set
+    // up for one and it is not running (scripts/ensure-sql-proxy.js — a no-op
+    // unless .env opts in, ~1 ms when the proxy is already up). This is what
+    // keeps the pre-commit schema check from silently skipping.
+    proxy = await ensureSqlProxy();
+    if (proxy.status === "started") say(`started the Cloud SQL proxy (log: ${proxy.logFile})`);
+    else if (proxy.status === "failed") warn(`Cloud SQL proxy not running: ${proxy.reason}`);
+    else if (proxy.status === "disabled" && proxy.reason) warn(proxy.reason);
+    if (proxy.status !== "disabled") mark("proxy");
 
     // ONE pool, opened lazily. Because schemaFingerprint runs its queries in
     // series, the pool only ever opens a single connection for the check — so
@@ -180,6 +196,10 @@ async function existingFingerprint() {
     return 0;
   } catch (err) {
     warn(`skipped: ${err.code || err.name} — ${err.message}`);
+    if (proxy && (proxy.status === "running" || proxy.status === "started")) {
+      warn(`the connection goes through the local Cloud SQL proxy — its log: ${proxy.logFile} ` +
+           `(expired credentials: gcloud auth application-default login)`);
+    }
     printTiming();
     return STRICT || CHECK ? 2 : 0;
   } finally {

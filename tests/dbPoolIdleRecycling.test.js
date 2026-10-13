@@ -47,8 +47,11 @@
 const appPool = require('../startup/db');
 const roPool = require('../startup/dbReadonly');
 
-// Server-side ceiling these pools must stay under. Re-verify with:
-//   SELECT @@GLOBAL.wait_timeout;
+// Server-side ceiling these pools are sized to stay under: the 60s
+// wait_timeout of the host this guard was written against. Cloud SQL (the
+// database since 2026-10-13) allows 28800s — SELECT @@GLOBAL.wait_timeout — so
+// 60s is now the DESIGN bound, deliberately kept (see startup/db.js), not the
+// live server's value.
 const SERVER_WAIT_TIMEOUT_MS = 60_000;
 const MAX_ALLOWED_IDLE_TIMEOUT_MS = 45_000;
 

@@ -7,6 +7,9 @@ Reference material that lives next to the code. Three tiers:
   hook). **Never hand-edit.**
 - `routes.md` — auto-generated route inventory (`node scripts/updateRoutes.js`).
 - `SCHEMA_CONVENTIONS.md`, `plans.md`, `SETUP_cloud_tasks.md` — living reference.
+- `INFRA_GCP.md` — the Google Cloud setup that lives nowhere in git (service
+  config, Cloud SQL, NAT chain, schedulers, queues), its rebuild runbook, the
+  maintenance-mode procedure, and new-machine setup for local development.
 - `AI_CONTEXT.md` — deep context for AI sessions. Read its CURRENCY header
   first: §0 carries the newest deltas and OVERRIDES the body sections where
   they conflict, so a section found by grep alone can be out of date.
