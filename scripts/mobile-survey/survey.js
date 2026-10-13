@@ -250,7 +250,6 @@ async function walk(page, W, record) {
       ['new-appt', 'newApptDialog({ contactPick: true, casePick: true })'],
       ['new-event', 'newEventDialog({ linkPick: true })'],
       ['reschedule', "apptUpdate(7000, 'Reschedule', '2026-10-07T10:00')"],
-      ['appt-calendar', 'tabApptsCal()'],
       ['show-appt', 'showAppt(7000)'],
       // the Calendar list's deadline quick actions (scripts.js, U9b-P2)
       ['deadline-complete', 'eventCompleteDeadline(8000)'],

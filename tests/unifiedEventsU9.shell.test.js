@@ -451,3 +451,34 @@ describe('U9b-P2 — F5 restore goes through each tab\'s opener', () => {
     expect(SHELL).not.toContain("logs?'':tabLogGet(0)");
   });
 });
+
+describe('U9b item 8 — the Appointments tab\'s Calendar button opens the Grid tab', () => {
+  test('the button routes to calxOpenGrid, and the 600px Swal is gone', () => {
+    expect(DOC.getElementById('tabApptsCal').getAttribute('onclick')).toBe('calxOpenGrid()');
+    // the legacy path, by name and by shape — a calendar frame inside a Swal
+    expect(HTML).not.toMatch(/function tabApptsCal\b/);
+    expect(HTML).not.toMatch(/<iframe src="\/calendar\.html"/);
+    const survey = fs.readFileSync(path.join(ROOT, 'scripts/mobile-survey/survey.js'), 'utf8');
+    expect(survey).not.toContain('tabApptsCal');
+  });
+
+  test('calxOpenGrid sets the mode directly, then opens the tab — never calxSetView', () => {
+    // calxSetView is the ON-SCREEN toggle: called from another tab it loads
+    // the frame 0-wide. The opener must run LAST, after the DOM reflects Grid,
+    // so openMainTab()'s data-src swap loads the frame on screen.
+    const calls = [];
+    const ctx = vm.createContext({
+      CALX_VIEW_KEY: 'yc-calendar-view',
+      localStorage: { setItem: (k, v) => calls.push(['setItem', k, v]) },
+      calxApplyView: () => calls.push(['calxApplyView', ctx.calxView]),
+      openCalendarTab: () => calls.push(['openCalendarTab', ctx.calxView]),
+      calxSetView: () => calls.push(['calxSetView']),
+    });
+    vm.runInContext('var calxView = "list";\n' + fnSrc(CALX, 'calxOpenGrid') + '\ncalxOpenGrid();', ctx);
+    expect(calls).toEqual([
+      ['setItem', 'yc-calendar-view', 'grid'],
+      ['calxApplyView', 'grid'],
+      ['openCalendarTab', 'grid'],
+    ]);
+  });
+});

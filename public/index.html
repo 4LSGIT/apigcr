@@ -1164,7 +1164,7 @@
     <h1><i class="fa-solid fa-calendar-days"></i> Appointments <i class="fa-solid fa-calendar-days"></i></h1>
     <div class="yc-filters">
       <span class="yc-f-row">
-      <button id="tabApptsCal" onclick="tabApptsCal()">Calendar</button>
+      <button id="tabApptsCal" onclick="calxOpenGrid()">Calendar</button>
       <button id="tabApptsNew" onclick="newApptDialog({ contactPick: true, casePick: true, onCreated: () => tabApptsGet(0) })"><i class="fa-solid fa-calendar-plus"></i> New Appointment</button>
       </span>
       <div class="yc-f-panel">
@@ -1493,7 +1493,8 @@
        which brings the grid up on every path that opens this tab — a bare
        openMainTab included — and keeps List mode from loading
        FullCalendar at all. The chosen mode persists per browser under
-       `yc-calendar-view`.
+       `yc-calendar-view`. The Appointments tab's Calendar button lands here
+       too (calxOpenGrid) — it used to open the same pane in a 600px Swal.
 
        QUICK ACTIONS (U9b-P2): an Actions cell per row, the old tabs' buttons
        for the row's own kind, through the SHARED helpers rather than private
@@ -1518,9 +1519,13 @@
 
     const CALX_VIEW_KEY = 'yc-calendar-view';
     const CALX_GRID_SRC = '/calendar.html';
-    // calendar.html lays FullCalendar out at a fixed 560px (it was sized for
-    // the 600px Swal frame): below this the frame would scroll inside itself.
-    const CALX_GRID_MIN_H = 600;
+    // calendar.html fills whatever height it is given (its bar, then
+    // FullCalendar at 100% of the rest, scrolling inside itself), so the frame
+    // is sized to the viewport below the bar. This floor only bites on short
+    // viewports — a landscape phone, a 568px SE — where filling exactly would
+    // leave a ~120–220px sliver of calendar; there the page scrolls instead.
+    // Every portrait phone from 667px up fills exactly with no page scroll.
+    const CALX_GRID_MIN_H = 400;
     let calxView = (() => {
       try { return localStorage.getItem(CALX_VIEW_KEY) === 'grid' ? 'grid' : 'list'; }
       catch (_) { return 'list'; }
@@ -1902,6 +1907,19 @@
       else delete f.dataset.src;
     }
 
+    /** Open the tab in Grid mode from ANOTHER tab (the Appointments tab's
+     *  Calendar button). Not calxSetView(): that is the on-screen toggle — it
+     *  loads and pings the frame where it stands, and from another tab the
+     *  frame is 0-wide, so the pane would boot blind and need a reboot (see
+     *  calxWire). Set the mode, then let the opener show the tab FIRST and
+     *  load or ping the frame on screen. */
+    function calxOpenGrid() {
+      calxView = 'grid';
+      try { localStorage.setItem(CALX_VIEW_KEY, 'grid'); } catch (_) { /* private mode etc. */ }
+      calxApplyView();
+      openCalendarTab();
+    }
+
     /** The toggle. Only reachable with the tab on screen. */
     function calxSetView(view) {
       view = view === 'grid' ? 'grid' : 'list';
@@ -1960,18 +1978,6 @@
   </script>
 
   <script>
-    function tabApptsCal() {
-      Swal.fire({
-        title: `Calendar`,
-        html: `<iframe src="/calendar.html" width="100%" height="600" style="border:none;"></iframe>`,
-        width: swalWide("75%"),
-        heightAuto: true,
-        showConfirmButton: false,
-        showCloseButton: true,
-      });
-    }
-
-
     /* ── RETIRED (Slice 3): the appt-updated / event-updated postMessage system.
        Two `message` listeners lived here. Each walked THIS document's iframes
        calling refreshAppts()/refreshEvents() on whichever ones exported them —

@@ -105,8 +105,9 @@ YisraCase works at phone width; a few things look different:
 - Wide tables scroll sideways inside their own box — swipe the table, not the
   page.
 - Forms and dialogs put each label above its field.
-- The appointment calendar (Appointments → **Calendar**) opens on Day view;
-  the Month / Week / Day buttons still switch.
+- The calendar grid (Calendar → **Grid**, or Appointments → **Calendar**)
+  opens on the week agenda the first time; the Month / Week / Day / List
+  buttons still switch, and the view you last used is remembered.
 - The builders and editors under **More Features** (workflows, sequences,
   forms and the like) are laid out for a desktop screen. They open on a phone,
   but expect a lot of scrolling.
