@@ -315,6 +315,9 @@ The server enforces these; the screen just helps you meet them.
 | `public/js/yc-custom-fields.js` | S4: THE renderer. The Custom Fields section on both records — typed inputs, `show_when` v1, the `required` gate, the changed-keys-only save. Also CommonJS, so its pure halves are unit-testable. |
 | `public/forms/casedetails-bk.html` + `public/forms/casedetails.html` / `public/forms/contact-form.html` | Mount points, all `customFieldsSection`: on cases under the Case Details form (both variants — moved off the case Overview 2026-10-06; the form's Save also commits it), on contacts between the form and Roles. None rides an aggregate form save. |
 | `lib/reportSchema/customFieldsAppendix.js` | S4: the registry-driven appendix to the (hand-maintained) report manifest, merged into the report author's prompt per request via `aiService`'s `systemAppend`. |
+| `scripts/customFieldsS5Seed.js` / `ref/migrations/2026-09-25_clio_pilot_backfill.sql` / `scripts/customFieldsS5Wf37Repoint.js` | S5-A: the two pilot defs, the backfill (+ its four verification queries), the asserted wf37 repoint. Kept as the worked example of a column retirement. |
+| `scripts/customFieldsS5bDrop.js` / `ref/migrations/2026-10-13_custom_fields_s5b_drop_clio_columns.sql` | S5-B: the drops — trigger rebuild first, one connection, CHECK then `--apply`; the migration file is the record of what it runs (and the rollback). |
+| `tests/customFields.s5.test.js` / `tests/customFields.s5b.test.js` | S5: the pilot defs, the gone columns on every write path, the repointed reads, the backfill round trip, the wf37 script; S5-B's bodies against `ref/database.sql` and every branch of the drop script. |
 | `ref/migrations/2026-09-25_field_defs_default_value.sql` | S6: `field_defs.default_value`. Plain nullable JSON, `ALGORITHM=INSTANT`; the COMMENT carries the semantics. |
 | `ref/migrations/2026-09-25_field_defs_default_value_comment.sql` | S6-B: the COMMENT names the chokepoints after the extraction (comment only). |
 | `services/caseService.js` | S6-B: `createCase` — **the only `INSERT INTO cases`**. Mints the id, retries on collision, gates the columns, stamps the defaults, reads the cf_ columns back for the envelope. Plus `NOW_FIRM`, the firm-local-now sentinel. |
@@ -506,10 +509,11 @@ them work, and S4 only proves and pins them.
 ### Retiring a column into a custom field (S5)
 
 The pilot migration, and the **template for retiring any surplus column**.
-Done once for real on 2026-09-25: `cases.clio_matter` (240 values) and
-`contacts.contact_clio_id` (245) became `cf_clio_matter` and `cf_clio_id`;
-`cases.case_clio_id` (0 values) was dropped outright. The design doc's §7 S5
-row is the ruling; this is the procedure.
+Done once for real: on 2026-09-25 `cases.clio_matter` (240 values) and
+`contacts.contact_clio_id` (245) became `cf_clio_matter` and `cf_clio_id`
+(Phase A), and on 2026-10-13 all three columns, `cases.case_clio_id` (0
+values) included, were dropped (Phase B). The design doc's §7 S5 rows are the
+ruling; this is the procedure.
 
 The names could NOT be kept: `field_key` must match `^cf_`, and the registry
 refuses a key that collides with a real column. So every consumer moves too,
@@ -561,20 +565,39 @@ which is why the census comes first.
 
 **Phase B — drop. This one is one-way.**
 
-8. **Rebuild any DB trigger that names the column, in the same migration and
-   BEFORE the drop.** `ALTER TABLE … DROP COLUMN` succeeds happily while a
-   trigger still references the column, and then *every* write to that table
-   fails with `ERROR 1054 Unknown column 'x' in 'OLD'`. Verified on 8.4.11:
-   dropping `contact_clio_id` with `after_contact_update` untouched broke
-   every contact update; rebuilding the trigger first, then dropping, works.
-9. **Drop the column**, then remove the freeze (unknown-column rejection now
-   covers it), the fn ALLOWED-list entries, the report-manifest entry, and
-   whatever the census marked clean-up-later.
-10. `node scripts/dump-schema.js` and `npm run db:ref:check`.
+8. **Re-run the census** — the soak gives new consumers time to appear — and
+   check nothing would be lost: no row may hold an old-column value its cf_
+   field lacks. Sweep the schema itself too: triggers, views, generated
+   columns, routines, events.
+9. **Rebuild any DB trigger that names the column BEFORE the drop.**
+   `ALTER TABLE … DROP COLUMN` succeeds happily while a trigger still
+   references the column, and then *every* UPDATE of that table fails with
+   `ERROR 1054 Unknown column 'x' in 'OLD'` — a no-op UPDATE of one row
+   included, while a zero-row UPDATE does not fail (so it is no smoke test).
+   Rebuild it minus the dead lines, under `LOCK TABLES <table> WRITE` so no
+   write lands between DROP and CREATE TRIGGER, as the trigger's own DEFINER
+   and with its own SQL_MODE in the session.
+10. **Drop the column.** Steps 9–10 run on ONE connection holding
+    `lock_wait_timeout = 5` — a metadata lock queued behind a long
+    transaction would otherwise stall every query on the table for up to a
+    year — which is why they are a script and not SU-console statements (the
+    console spreads a batch across pooled connections, so no session setting
+    reaches the statement it is for). `scripts/customFieldsS5bDrop.js` is the
+    worked example: CHECK first, read-only; `--apply` asserts the live state,
+    writes, verifies the end state, and smoke-tests a real UPDATE of each
+    table inside a transaction it rolls back.
+11. **Then deploy the code** that removes the freeze, the fn ALLOWED-list
+    entries, the report-manifest entry, and whatever the census marked
+    clean-up-later. This order is not optional: with the freeze gone and the
+    column still there, the service would accept writes to it again.
+12. The pre-commit hook regenerates `ref/database.sql` from the live schema.
 
-On `contacts`, a column drop is a **table rebuild** — its FULLTEXT index on
-`contact_name` rules out the metadata-only path. At ~1,100 rows that is
+On `contacts`, a column drop is a **table rebuild** (`ALGORITHM=COPY`) — its
+FULLTEXT index rules out INSTANT and INPLACE. At ~1,100 rows that is
 sub-second, but it takes the table's metadata lock, so pick a quiet minute.
+On `cases`, leave `ALGORITHM` out: MySQL drops INSTANT while the table has
+row versions to spend and falls back to a rebuild on its own when it does
+not.
 
 ### Defaults — the create-time stamp (S6)
 

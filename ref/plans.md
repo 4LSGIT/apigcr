@@ -66,7 +66,7 @@ go-to-market (legal first). Principles, not commitments.
   the "multiple ways to cause things" confusion.
 - **Tenant-defined fields:** JSON column + field-definitions table + indexed
   generated columns for hot fields. Never EAV. Design ratified 2026-09-22
-  → `ref/CUSTOM_FIELDS_DESIGN.md` (living doc; v2 pilot S0–S6 built, S5-B gated on a soak).
+  → `ref/CUSTOM_FIELDS_DESIGN.md` (living doc; v2 pilot S0–S6 shipped, S5-B's column drops included).
 - **Billing (unbuilt): agnostic core** — billables → invoices → payments,
   processor drivers. Flag: trust accounting (IOLTA) is the one genuinely
   non-generic legal requirement — table stakes for the legal vertical,

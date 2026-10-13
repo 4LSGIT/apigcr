@@ -1,24 +1,25 @@
 // tests/customFields.s5.test.js
 //
 /**
- * Custom-fields arc S5-A — the PILOT MIGRATION (ref/CUSTOM_FIELDS_DESIGN.md
+ * Custom-fields arc S5 — the PILOT MIGRATION (ref/CUSTOM_FIELDS_DESIGN.md
  * §7 S5). S0–S4 built the machine on an empty registry; S5 is the first time
  * real production data moves into it, and the first time a real column is
  * retired. The proof obligations:
  *
- *   1. WRITE FREEZE. `cases.clio_matter` and `contacts.contact_clio_id` still
- *      EXIST and still READ through the soak, but no write may reach them
- *      again — one write to the old column and one to the cf_ key and there
- *      is no way to tell which is current. Both chokepoints must reject them
- *      with an error that NAMES THE cf_ KEY (a bare "blocked column" would
- *      send the caller looking for a permission problem), as a 400, however
- *      the key is cased, and whatever else is in the payload. The cf_ keys
- *      themselves must go through untouched — the freeze must not be a
- *      blanket refusal of anything Clio-shaped.
+ *   1. THE COLUMNS ARE GONE (S5-B). `cases.clio_matter`, `cases.case_clio_id`
+ *      and `contacts.contact_clio_id` were dropped 2026-10-13, and the S5-A
+ *      write freeze that guarded them through the soak went with them. A
+ *      write to an old name is refused by the ordinary gate on each side —
+ *      the unknown-column 400 on cases, the ALLOWED list on contacts, and
+ *      update_case's own list for automations — with nothing written. The
+ *      cf_ keys themselves go through untouched. And the DEPLOY ORDER test
+ *      pins why the drop runs before this code ships: with a column still
+ *      present, nothing would stop a write to it any more.
+ *      (The drop itself: tests/customFields.s5b.test.js.)
  *
  *   2. REPOINTED READS. The consumers the census found must name the cf_ key
- *      and not the frozen column: lookup_contact's SELECT list, the trigger
- *      builder's event-field catalog, the report manifest's note. And
+ *      and not the old column: lookup_contact's SELECT list, the trigger
+ *      builder's event-field catalog, the report manifest. And
  *      lookup_contact must SURVIVE the cf_ column being absent — it is a
  *      VIRTUAL column the reconciler owns, so a not-yet-created or
  *      deactivated def must not take every automation's contact read down
@@ -83,13 +84,12 @@ const DEFS = () => [
   def({ entity: 'contact', field_key: 'cf_clio_id',     field_type: 'text', label: 'Clio Contact ID' }),
 ];
 
-// The frozen columns are still REAL columns on both tables — the freeze is an
-// app rule, not their absence. A world that omitted them would pass the
-// rejection tests for the wrong reason (unknown column, not frozen column).
+// The tables as they stand after S5-B: the three Clio columns are gone. (A
+// world that still had them is built per test — see DEPLOY ORDER.)
 const COLUMNS = {
-  cases:    ['case_id', 'case_stage', 'case_notes', 'clio_matter', 'case_clio_id', 'custom'],
+  cases:    ['case_id', 'case_stage', 'case_notes', 'custom'],
   contacts: ['contact_id', 'contact_kind', 'contact_fname', 'contact_lname', 'contact_name',
-             'contact_notes', 'contact_clio_id', 'contact_updated', 'custom'],
+             'contact_notes', 'contact_updated', 'custom'],
 };
 
 const norm  = sql => String(sql).replace(/\s+/g, ' ').trim();
@@ -110,7 +110,7 @@ function virtualize(row, defs, entity) {
   return out;
 }
 
-function world({ defs = DEFS(), cases = {}, contacts = {} } = {}) {
+function world({ defs = DEFS(), cases = {}, contacts = {}, columns = COLUMNS } = {}) {
   const state = { defs: clone(defs), cases: clone(cases), contacts: clone(contacts),
                   sql: [], updates: [] };
   const query = async (sql, params = []) => {
@@ -120,7 +120,7 @@ function world({ defs = DEFS(), cases = {}, contacts = {} } = {}) {
       return [state.defs.filter(d => d.entity === params[0]).map(clone)];
     }
     if (/^SELECT COLUMN_NAME FROM information_schema.COLUMNS/.test(s)) {
-      return [(COLUMNS[params[0]] || []).map(c => ({ COLUMN_NAME: c }))];
+      return [(columns[params[0]] || []).map(c => ({ COLUMN_NAME: c }))];
     }
     throw new Error('world: unscripted query — ' + s);
   };
@@ -172,91 +172,88 @@ describe('S5 — the two pilot definitions', () => {
 });
 
 // ═════════════════════════════════════════════════════════════
-// 2. The write freeze
+// 2. The columns are gone (S5-B) — and so is the freeze that guarded them
+//
+// S5-A froze the two live columns at both chokepoints for the soak; S5-B
+// dropped all three (scripts/customFieldsS5bDrop.js) and deleted the freeze.
+// What rejects a write to an old name now is the ordinary gate on each side:
+// on cases the S2 unknown-column check (information_schema no longer lists
+// the column), on contacts the ALLOWED list; for automations, update_case's
+// own ALLOWED list in front of both.
 // ═════════════════════════════════════════════════════════════
 
-describe('S5 — write freeze on cases.clio_matter', () => {
-  const db = () => world({ cases: { C1: { case_id: 'C1', clio_matter: 'old', custom: {} } } });
+describe('S5-B — cases: a write to a dropped column is an unknown column', () => {
+  const db = () => world({ cases: { C1: { case_id: 'C1', custom: {} } } });
 
-  test('rejects clio_matter with a 400 that names cf_clio_matter', async () => {
-    await expect(caseService.updateCase(db(), 'C1', { clio_matter: '999' }))
-      .rejects.toMatchObject({
-        status: 400,
-        message: expect.stringContaining('"clio_matter" is retired — write "cf_clio_matter" instead'),
-      });
-  });
-
-  test('rejects it however it is cased — MySQL column names are case-insensitive', async () => {
-    for (const k of ['CLIO_MATTER', 'Clio_Matter']) {
+  test('clio_matter and case_clio_id are 400s that name the column, however cased', async () => {
+    for (const k of ['clio_matter', 'CLIO_MATTER', 'case_clio_id']) {
       await expect(caseService.updateCase(db(), 'C1', { [k]: '999' }))
-        .rejects.toMatchObject({ status: 400, message: expect.stringContaining('cf_clio_matter') });
+        .rejects.toMatchObject({ status: 400, message: expect.stringContaining(`unknown column(s): ${k}`) });
     }
   });
 
-  test('rejects the whole patch, not just the frozen key', async () => {
-    // A partial apply would be the worst outcome: the caller sees an error and
-    // half their edit landed.
+  test('the whole patch is refused, not just the dead key', async () => {
     const w = db();
     await expect(caseService.updateCase(w, 'C1', { case_stage: 'filed', clio_matter: '999' }))
       .rejects.toMatchObject({ status: 400 });
     expect(w.state.updates).toHaveLength(0);
   });
 
-  test('MUTATION CHECK — without the freeze the write would sail through', async () => {
-    // Break the code, watch the test fail: this asserts the freeze is what
-    // rejects it, not the S2 unknown-column gate. `clio_matter` IS a real
-    // writable column in this world, so if the freeze were deleted the patch
-    // would be accepted.
-    const cols = await fieldDefs.writableColumns(db(), 'case');
-    expect(cols.has('clio_matter')).toBe(true);
-    const src = read('services/caseService.js');
-    expect(src).toContain("const FROZEN = new Map([['clio_matter', 'cf_clio_matter']]);");
+  test('the S5-A freeze is gone from both services', () => {
+    expect(read('services/caseService.js')).not.toMatch(/FROZEN\s*=\s*new Map/);
+    expect(read('services/contactService.js')).not.toMatch(/FROZEN_COLUMNS\s*=\s*new Map/);
   });
 
-  test('case_clio_id is NOT frozen — it is dead (0 rows) and simply dropped in S5-B', async () => {
-    // Freezing it would be noise: nothing to diverge from.
-    await expect(caseService.updateCase(db(), 'C1', { case_clio_id: 'x' }))
-      .rejects.not.toMatchObject({ message: expect.stringContaining('is retired') });
+  test('DEPLOY ORDER — while a column still exists, nothing stops a write to it any more', async () => {
+    // Why the migration runs BEFORE this code deploys (ref/migrations/
+    // 2026-10-13_custom_fields_s5b_drop_clio_columns.sql, header). In a world
+    // that still has the column, the write clears every gate and reaches the
+    // row read — the S5-A freeze would have stopped it with a 400.
+    const stale = world({ columns: { ...COLUMNS, cases: [...COLUMNS.cases, 'clio_matter'] } });
+    await expect(caseService.updateCase(stale, 'C1', { clio_matter: '999' }))
+      .rejects.toThrow(/unscripted query — SELECT \* FROM cases/);
   });
 });
 
-describe('S5 — write freeze on contacts.contact_clio_id', () => {
-  const db = () => world({
-    contacts: { 7: { contact_id: 7, contact_kind: 'person', contact_clio_id: 'old', custom: {} } },
-  });
+describe('S5-B — contacts: contact_clio_id is off the ALLOWED list', () => {
+  const db = () => world({ contacts: { 7: { contact_id: 7, contact_kind: 'person', custom: {} } } });
 
-  test('rejects contact_clio_id with a 400 that names cf_clio_id', async () => {
+  test('a write to it is refused by the ALLOWED list, aggregates or not', async () => {
     await expect(contactService.updateContact(db(), 7, { contact_clio_id: '555' }))
-      .rejects.toMatchObject({
-        status: 400,
-        message: expect.stringContaining('"contact_clio_id" is retired — write "cf_clio_id" instead'),
-      });
+      .rejects.toThrow(/blocked columns: contact_clio_id/);
+    await expect(contactService.updateContact(db(), 7, {
+      contact_clio_id: '555', phones: [{ phone: '2485551212' }],
+    })).rejects.toThrow(/blocked columns: contact_clio_id/);
   });
 
-  test('rejects it however it is cased', async () => {
-    for (const k of ['CONTACT_CLIO_ID', 'Contact_Clio_Id']) {
-      await expect(contactService.updateContact(db(), 7, { [k]: '555' }))
-        .rejects.toMatchObject({ status: 400, message: expect.stringContaining('cf_clio_id') });
+  test('MUTATION CHECK — the ALLOWED list itself no longer names it', () => {
+    // Put it back on the list and the write above would reach the UPDATE.
+    const src = read('services/contactService.js');
+    const allowed = src.match(/const ALLOWED = new Set\(\[([\s\S]*?)\]\);/);
+    expect(allowed).not.toBeNull();
+    expect(allowed[1]).not.toContain('contact_clio_id');
+    expect(allowed[1]).toContain('contact_notes');
+  });
+});
+
+describe('S5-B — update_case refuses the dropped columns before the service', () => {
+  const fns = require('../lib/internal_functions');
+
+  test('clio_matter / case_clio_id are blocked by the fn\'s own ALLOWED list', async () => {
+    const db = { query: async () => { throw new Error('must not reach the database'); } };
+    for (const k of ['clio_matter', 'case_clio_id']) {
+      await expect(fns.update_case({ case_id: 'C1', fields: { [k]: 'x' } }, db))
+        .rejects.toThrow(new RegExp(`update_case: blocked columns: ${k}`));
     }
   });
 
-  test('fires even when the payload also carries aggregates', async () => {
-    // The ALLOWED check runs on scalarFields, AFTER the aggregate strip. The
-    // freeze runs on coreFields, BEFORE it — so an aggregate in the payload
-    // cannot route a frozen key around it.
-    await expect(contactService.updateContact(db(), 7, {
-      contact_clio_id: '555', phones: [{ phone: '2485551212' }],
-    })).rejects.toMatchObject({ status: 400, message: expect.stringContaining('cf_clio_id') });
-  });
-
-  test('MUTATION CHECK — the key is still on the ALLOWED list, so only the freeze stops it', () => {
-    const src = read('services/contactService.js');
-    expect(src).toMatch(/ALLOWED = new Set\(\[[\s\S]*'contact_clio_id'/);
-    expect(src).toContain("const FROZEN_COLUMNS = new Map([['contact_clio_id', 'cf_clio_id']]);");
+  test('its description sends Clio writes to the custom field', () => {
+    expect(fns.update_case.__meta.description).toContain('cf_clio_matter');
+    expect(fns.update_case.__meta.description).not.toMatch(/judge\/trustee, clio/);
   });
 });
 
-describe('S5 — the freeze is not a blanket refusal', () => {
+describe('S5 — the cf_ keys keep working', () => {
   test('the cf_ keys themselves reach splitCustomFields and validate', async () => {
     const dbC = world();
     await expect(fieldDefs.splitCustomFields(dbC, 'case', { cf_clio_matter: '12345' }))
@@ -278,7 +275,7 @@ describe('S5 — the freeze is not a blanket refusal', () => {
 // 3. Repointed reads
 // ═════════════════════════════════════════════════════════════
 
-describe('S5 — consumers repointed off the frozen columns', () => {
+describe('S5 — consumers repointed off the old columns', () => {
   test('lookup_contact selects cf_clio_id and no longer selects contact_clio_id', () => {
     const src = read('lib/internal_functions/contacts.js');
     expect(src).toContain('cf_clio_id FROM contacts WHERE contact_id = ?');
@@ -291,17 +288,20 @@ describe('S5 — consumers repointed off the frozen columns', () => {
     expect(coreCols[1].split(', ')).not.toContain('contact_clio_id');
   });
 
-  test('the trigger event-field catalog offers data.cf_clio_id, not the frozen path', () => {
+  test('the trigger event-field catalog offers data.cf_clio_id, not the old path', () => {
     const src = read('services/triggerService.js');
     expect(src).toContain("path: 'data.cf_clio_id'");
     expect(src).not.toContain('data.contact_clio_id');
   });
 
-  test('the report manifest marks clio_matter retired and points at the cf_ key', () => {
+  test('the report manifest no longer lists the dropped columns (cf_clio_matter reaches the author via the appendix)', () => {
     const { TABLES } = require('../lib/reportSchema/manifest');
-    const note = TABLES.cases.columns.clio_matter.note;
-    expect(note).toMatch(/RETIRED/);
-    expect(note).toContain('cf_clio_matter');
+    expect(TABLES.cases.columns.clio_matter).toBeUndefined();
+    expect(TABLES.cases.columns.case_clio_id).toBeUndefined();
+    expect(TABLES.contacts.columns.contact_clio_id).toBeUndefined();
+    // Nor does the "deliberately omitted" note, which says the columns it
+    // names still exist on the table.
+    expect(read('lib/reportSchema/manifest.js')).not.toMatch(/(^|[^a-z_])(clio_matter|case_clio_id|contact_clio_id)([^a-z_]|$)/m);
   });
 
   test('wf37\'s repoint script asserts its base before writing and its draft before publishing', () => {

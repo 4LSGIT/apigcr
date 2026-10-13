@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-10-13T05:38:10.672Z
+-- Generated: 2026-10-13T15:34:53.202Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:2402cdbe6aee5fb4c097db725bec74f2
+-- Fingerprint: sha256:bf0df91493be84a817ff03b6f11ec2a2
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -23,16 +23,16 @@ SET FOREIGN_KEY_CHECKS = 0;
 DROP TABLE IF EXISTS `admin_audit_log`;
 CREATE TABLE `admin_audit_log` (
   `id` bigint NOT NULL,
-  `tool` varchar(32) COLLATE utf8mb4_general_ci NOT NULL COMMENT 'db_console, api_tester, ...',
+  `tool` varchar(32) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL COMMENT 'db_console, api_tester, ...',
   `user_id` int DEFAULT NULL,
-  `username` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `route` varchar(255) COLLATE utf8mb4_general_ci NOT NULL,
-  `method` varchar(10) COLLATE utf8mb4_general_ci NOT NULL,
-  `status` varchar(40) COLLATE utf8mb4_general_ci NOT NULL COMMENT 'success/error/rejected_not_su/rejected_rate_limit/...',
-  `error_message` text COLLATE utf8mb4_general_ci,
+  `username` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `route` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `method` varchar(10) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `status` varchar(40) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL COMMENT 'success/error/rejected_not_su/rejected_rate_limit/...',
+  `error_message` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci,
   `duration_ms` int DEFAULT NULL,
-  `ip_address` varchar(45) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `user_agent` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `ip_address` varchar(45) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `user_agent` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `details` json DEFAULT NULL COMMENT 'tool-specific fields (query_text/read_only_mode/row_count for db_console)',
   `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
@@ -47,8 +47,8 @@ DROP TABLE IF EXISTS `admin_saved_queries`;
 CREATE TABLE `admin_saved_queries` (
   `id` int NOT NULL,
   `user_id` int NOT NULL,
-  `name` varchar(120) COLLATE utf8mb4_general_ci NOT NULL,
-  `query_text` mediumtext COLLATE utf8mb4_general_ci NOT NULL,
+  `name` varchar(120) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `query_text` mediumtext CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
@@ -63,20 +63,20 @@ DROP TABLE IF EXISTS `ai_calls`;
 CREATE TABLE `ai_calls` (
   `id` int NOT NULL,
   `created_at` datetime DEFAULT CURRENT_TIMESTAMP,
-  `prompt_key` varchar(64) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `prompt_version` varchar(32) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `model` varchar(64) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `mode` enum('sync','async') COLLATE utf8mb4_general_ci DEFAULT 'sync',
-  `output_type` enum('text','json','html') COLLATE utf8mb4_general_ci DEFAULT 'text',
-  `consumer_ref` varchar(128) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `status` enum('ok','error','timeout') COLLATE utf8mb4_general_ci NOT NULL,
-  `error` text COLLATE utf8mb4_general_ci,
+  `prompt_key` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `prompt_version` varchar(32) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `model` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `mode` enum('sync','async') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT 'sync',
+  `output_type` enum('text','json','html') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT 'text',
+  `consumer_ref` varchar(128) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `status` enum('ok','error','timeout') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `error` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci,
   `input_tokens` int DEFAULT NULL,
   `output_tokens` int DEFAULT NULL,
   `cost_cents` decimal(10,4) DEFAULT NULL,
   `latency_ms` int DEFAULT NULL,
-  `request_excerpt` text COLLATE utf8mb4_general_ci,
-  `response` mediumtext COLLATE utf8mb4_general_ci
+  `request_excerpt` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci,
+  `response` mediumtext CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- --------------------------------------------------------
@@ -89,14 +89,14 @@ DROP TABLE IF EXISTS `ai_change_log`;
 CREATE TABLE `ai_change_log` (
   `id` int NOT NULL,
   `created_at` datetime DEFAULT CURRENT_TIMESTAMP,
-  `source_message_id` varchar(190) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `source_message_id` varchar(190) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `ai_call_id` int DEFAULT NULL,
   `court_ai_log_id` int DEFAULT NULL,
-  `entity_type` enum('case','appt','event','workflow') COLLATE utf8mb4_general_ci NOT NULL,
-  `entity_id` varchar(40) COLLATE utf8mb4_general_ci NOT NULL,
-  `field` varchar(64) COLLATE utf8mb4_general_ci NOT NULL,
-  `old_value` text COLLATE utf8mb4_general_ci,
-  `new_value` text COLLATE utf8mb4_general_ci,
+  `entity_type` enum('case','appt','event','workflow') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `entity_id` varchar(40) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `field` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `old_value` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci,
+  `new_value` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci,
   `dry_run` tinyint(1) NOT NULL DEFAULT '0',
   `undone_at` datetime DEFAULT NULL,
   `undone_by` int DEFAULT NULL
@@ -111,10 +111,10 @@ CREATE TABLE `ai_change_log` (
 DROP TABLE IF EXISTS `ai_match_sets`;
 CREATE TABLE `ai_match_sets` (
   `id` int unsigned NOT NULL,
-  `set_key` varchar(60) COLLATE utf8mb4_general_ci NOT NULL,
-  `label` varchar(120) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `description` text COLLATE utf8mb4_general_ci,
-  `prompt_preamble` text COLLATE utf8mb4_general_ci,
+  `set_key` varchar(60) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `label` varchar(120) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `description` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci,
+  `prompt_preamble` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci,
   `version` int unsigned NOT NULL DEFAULT '1',
   `active` tinyint(1) NOT NULL DEFAULT '1',
   `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -131,11 +131,11 @@ DROP TABLE IF EXISTS `ai_match_types`;
 CREATE TABLE `ai_match_types` (
   `id` int unsigned NOT NULL,
   `set_id` int unsigned NOT NULL,
-  `type_key` varchar(60) COLLATE utf8mb4_general_ci NOT NULL,
-  `label` varchar(120) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `disposition` enum('act','ignore','out_of_scope') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'ignore',
-  `item_type` varchar(60) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `verb` enum('scheduled','rescheduled','cancelled','occurred','status_changed') COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `type_key` varchar(60) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `label` varchar(120) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `disposition` enum('act','ignore','out_of_scope') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'ignore',
+  `item_type` varchar(60) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `verb` enum('scheduled','rescheduled','cancelled','occurred','status_changed') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `subject_match` json DEFAULT NULL,
   `recognition_hints` json DEFAULT NULL,
   `fields` json DEFAULT NULL,
@@ -143,7 +143,7 @@ CREATE TABLE `ai_match_types` (
   `workflow_id` int DEFAULT NULL,
   `sort_order` int NOT NULL DEFAULT '0',
   `active` tinyint(1) NOT NULL DEFAULT '1',
-  `notes` text COLLATE utf8mb4_general_ci,
+  `notes` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci,
   `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
@@ -156,7 +156,7 @@ CREATE TABLE `ai_match_types` (
 
 DROP TABLE IF EXISTS `alert_state`;
 CREATE TABLE `alert_state` (
-  `group_key` varchar(200) COLLATE utf8mb4_general_ci NOT NULL,
+  `group_key` varchar(200) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `first_seen` datetime NOT NULL,
   `last_seen` datetime NOT NULL,
   `last_alerted_at` datetime DEFAULT NULL,
@@ -172,9 +172,9 @@ CREATE TABLE `alert_state` (
 DROP TABLE IF EXISTS `api_keys`;
 CREATE TABLE `api_keys` (
   `id` int NOT NULL,
-  `label` varchar(100) COLLATE utf8mb4_general_ci NOT NULL,
-  `key_hash` char(64) COLLATE utf8mb4_general_ci NOT NULL,
-  `key_prefix` varchar(12) COLLATE utf8mb4_general_ci NOT NULL,
+  `label` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `key_hash` char(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `key_prefix` varchar(12) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `created_by` int DEFAULT NULL,
   `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `last_used_at` timestamp NULL DEFAULT NULL,
@@ -190,15 +190,15 @@ CREATE TABLE `api_keys` (
 DROP TABLE IF EXISTS `api_saved_requests`;
 CREATE TABLE `api_saved_requests` (
   `id` int NOT NULL,
-  `name` varchar(255) COLLATE utf8mb4_general_ci NOT NULL,
-  `method` varchar(32) COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'GET',
-  `url` text COLLATE utf8mb4_general_ci NOT NULL,
+  `name` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `method` varchar(32) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'GET',
+  `url` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `headers` json DEFAULT NULL COMMENT '{"Header-Name":"value", ...}',
-  `body` mediumtext COLLATE utf8mb4_general_ci COMMENT 'raw body string (JSON or otherwise)',
-  `content_type` varchar(100) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `body` mediumtext CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci COMMENT 'raw body string (JSON or otherwise)',
+  `content_type` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `credential_id` int DEFAULT NULL COMMENT 'FK-by-convention to credentials.id; resolved at send time',
   `follow_redirects` tinyint(1) NOT NULL DEFAULT '1',
-  `notes` text COLLATE utf8mb4_general_ci,
+  `notes` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci,
   `sort_order` int NOT NULL DEFAULT '0',
   `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
@@ -216,10 +216,10 @@ CREATE TABLE `app_settings` (
   `value` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci,
   `is_secret` tinyint(1) NOT NULL DEFAULT '0' COMMENT 'never returned by any settings API',
   `is_editable` tinyint(1) NOT NULL DEFAULT '0' COMMENT 'exposed in settings.html',
-  `category` varchar(50) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `label` varchar(100) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `description` varchar(500) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `type` varchar(20) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `category` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `label` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `description` varchar(500) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `type` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `sort_order` int DEFAULT NULL,
   `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
@@ -251,8 +251,8 @@ CREATE TABLE `appts` (
   `appt_create_date` datetime DEFAULT NULL,
   `appt_with` tinyint DEFAULT '1',
   `appt_end` datetime GENERATED ALWAYS AS ((`appt_date` + interval `appt_length` minute)) STORED,
-  `appt_gcal_user` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'provider-calendar event id',
-  `appt_source` varchar(60) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'booking view source_tag',
+  `appt_gcal_user` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'provider-calendar event id',
+  `appt_source` varchar(60) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'booking view source_tag',
   `appt_manage_token` char(32) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin DEFAULT NULL COMMENT 'client manage-link token (/m/<t>); 22-char base62 via lib/token, legacy 32-hex; _bin: case-sensitive bearer',
   `appt_view_id` int unsigned DEFAULT NULL COMMENT 'booking_views.id this appt was booked/rebooked through',
   `rescheduled_from_appt_id` int DEFAULT NULL COMMENT 'E0a atom: the appt this row replaced (reschedule or manage-page rebook). NULL = original booking, or pre-2026-08-27 row (not backfilled). No FK by convention (appts carries none).'
@@ -270,7 +270,7 @@ CREATE TABLE `availability_blocks` (
   `user` tinyint NOT NULL,
   `block_start` datetime NOT NULL,
   `block_end` datetime NOT NULL,
-  `reason` varchar(120) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `reason` varchar(120) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `active` tinyint(1) NOT NULL DEFAULT '1',
   `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
@@ -284,35 +284,35 @@ CREATE TABLE `availability_blocks` (
 DROP TABLE IF EXISTS `booking_views`;
 CREATE TABLE `booking_views` (
   `id` int unsigned NOT NULL,
-  `slug` varchar(100) COLLATE utf8mb4_general_ci NOT NULL,
+  `slug` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `active` tinyint(1) NOT NULL DEFAULT '1',
-  `provider_mode` enum('fixed_one','client_choice','any_auto') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'client_choice',
+  `provider_mode` enum('fixed_one','client_choice','any_auto') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'client_choice',
   `provider_ids` json NOT NULL,
-  `appt_type` varchar(60) COLLATE utf8mb4_general_ci NOT NULL,
+  `appt_type` varchar(60) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `type_key` varchar(40) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `appt_length` smallint NOT NULL,
-  `platform` enum('telephone','Zoom','in-person') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'telephone',
+  `platform` enum('telephone','Zoom','in-person') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'telephone',
   `buffer_min` smallint NOT NULL DEFAULT '0',
   `min_notice_min` smallint NOT NULL DEFAULT '120',
   `horizon_days` smallint NOT NULL DEFAULT '30',
   `granularity_min` smallint NOT NULL DEFAULT '15',
-  `identity_mode` enum('public','prefill') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'public',
-  `source_tag` varchar(60) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `identity_mode` enum('public','prefill') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'public',
+  `source_tag` varchar(60) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `collect_note` tinyint(1) NOT NULL DEFAULT '0',
-  `confirm_template` text COLLATE utf8mb4_general_ci,
+  `confirm_template` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci,
   `confirm_sms` tinyint(1) NOT NULL DEFAULT '0',
   `confirm_email` tinyint(1) NOT NULL DEFAULT '0',
   `hook_id` int DEFAULT NULL,
-  `title` varchar(200) COLLATE utf8mb4_general_ci NOT NULL,
-  `subtitle` varchar(500) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `accent_color` varchar(20) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `logo_url` varchar(500) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `logo_link_url` varchar(500) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `thankyou_html` text COLLATE utf8mb4_general_ci,
+  `title` varchar(200) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `subtitle` varchar(500) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `accent_color` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `logo_url` varchar(500) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `logo_link_url` varchar(500) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `thankyou_html` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci,
   `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` datetime DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
   `page_windows` json DEFAULT NULL,
-  `footer_html` text COLLATE utf8mb4_general_ci
+  `footer_html` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- --------------------------------------------------------
@@ -340,9 +340,9 @@ DROP TABLE IF EXISTS `calendar_item_types`;
 CREATE TABLE `calendar_item_types` (
   `type_key` varchar(40) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `label` varchar(80) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
-  `kind` enum('hearing','meeting','deadline','conference','other') COLLATE utf8mb4_general_ci NOT NULL COMMENT 'byte-identical to events.kind (E0a). meeting → appts, else → events (v0.5 §3.3.2).',
+  `kind` enum('hearing','meeting','deadline','conference','other') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL COMMENT 'byte-identical to events.kind (E0a). meeting → appts, else → events (v0.5 §3.3.2).',
   `singleton` tinyint(1) NOT NULL DEFAULT '0' COMMENT 'U2: data only. Enforced by the U6 write API behind unified_singleton_enabled.',
-  `blocks_default` enum('attendee','firm','none') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'attendee' COMMENT 'U2: data only (was court_item_policy.blocks). Read at U6/U7.',
+  `blocks_default` enum('attendee','firm','none') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'attendee' COMMENT 'U2: data only (was court_item_policy.blocks). Read at U6/U7.',
   `client_attends` tinyint(1) NOT NULL DEFAULT '0' COMMENT 'U2: data only (was court_item_policy.attendance). Read at U6/U7.',
   `default_length` smallint DEFAULT NULL COMMENT 'minutes; court_v2 schema_gaps duration lands here (U7)',
   `approaching_offsets` json DEFAULT NULL COMMENT 'U8/A6: days-before offsets that emit calendar.approaching, e.g. [7,1]. NULL/[] = none. Distinct ints 0..365.',
@@ -397,8 +397,8 @@ CREATE TABLE `campaign_results` (
   `result_id` int NOT NULL,
   `campaign_id` int NOT NULL,
   `contact_id` int NOT NULL,
-  `status` enum('sent','failed','skipped') COLLATE utf8mb4_general_ci NOT NULL,
-  `error` text COLLATE utf8mb4_general_ci,
+  `status` enum('sent','failed','skipped') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `error` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci,
   `sent_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `result_meta` json DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
@@ -412,14 +412,14 @@ CREATE TABLE `campaign_results` (
 DROP TABLE IF EXISTS `campaigns`;
 CREATE TABLE `campaigns` (
   `campaign_id` int NOT NULL,
-  `type` enum('sms','email') COLLATE utf8mb4_general_ci NOT NULL,
-  `sender` varchar(255) COLLATE utf8mb4_general_ci NOT NULL,
-  `subject` text COLLATE utf8mb4_general_ci,
-  `body` mediumtext COLLATE utf8mb4_general_ci NOT NULL,
-  `attachment_url` varchar(500) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `type` enum('sms','email') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `sender` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `subject` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci,
+  `body` mediumtext CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `attachment_url` varchar(500) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `include_signature` tinyint(1) NOT NULL DEFAULT '0',
   `created` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
-  `status` enum('draft','scheduled','sending','sent','failed','partial_fail','canceled') COLLATE utf8mb4_general_ci DEFAULT 'draft',
+  `status` enum('draft','scheduled','sending','sent','failed','partial_fail','canceled') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT 'draft',
   `scheduled_time` datetime DEFAULT NULL,
   `created_by` tinyint unsigned DEFAULT NULL,
   `result_summary` json DEFAULT NULL,
@@ -435,11 +435,11 @@ CREATE TABLE `campaigns` (
 
 DROP TABLE IF EXISTS `case_folder_cache`;
 CREATE TABLE `case_folder_cache` (
-  `case_id` varchar(20) COLLATE utf8mb4_general_ci NOT NULL,
+  `case_id` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `folder_external_id` varchar(191) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin DEFAULT NULL COMMENT 'utf8mb4_bin ON PURPOSE — case-sensitive Dropbox folder id; pairs with documents.external_id',
-  `path_lower` text COLLATE utf8mb4_general_ci,
-  `path_display` text COLLATE utf8mb4_general_ci,
-  `resolve_error` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `path_lower` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci,
+  `path_display` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci,
+  `resolve_error` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `resolved_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `relink_dismissed_at` datetime DEFAULT NULL,
   `relink_dismissed_by` tinyint DEFAULT NULL
@@ -502,10 +502,10 @@ DELIMITER ;
 DROP TABLE IF EXISTS `case_requirement_overrides`;
 CREATE TABLE `case_requirement_overrides` (
   `id` int unsigned NOT NULL,
-  `case_id` varchar(20) COLLATE utf8mb4_general_ci NOT NULL,
-  `requirement_key` varchar(60) COLLATE utf8mb4_general_ci NOT NULL,
-  `status` enum('na','done') COLLATE utf8mb4_general_ci NOT NULL,
-  `note` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `case_id` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `requirement_key` varchar(60) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `status` enum('na','done') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `note` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `set_by` int NOT NULL,
   `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
@@ -535,16 +535,16 @@ CREATE TABLE `case_stage_aged_emitted` (
 DROP TABLE IF EXISTS `case_stage_log`;
 CREATE TABLE `case_stage_log` (
   `id` bigint unsigned NOT NULL,
-  `case_id` varchar(20) COLLATE utf8mb4_general_ci NOT NULL,
+  `case_id` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `template_id` int unsigned DEFAULT NULL,
   `stage_id` int unsigned DEFAULT NULL,
-  `stage_key` varchar(50) COLLATE utf8mb4_general_ci NOT NULL,
-  `case_stage` enum('Open','Pending','Filed','Concluded','Closed') COLLATE utf8mb4_general_ci NOT NULL,
-  `status_label` varchar(100) COLLATE utf8mb4_general_ci NOT NULL DEFAULT '',
+  `stage_key` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `case_stage` enum('Open','Pending','Filed','Concluded','Closed') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `status_label` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT '',
   `entered_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `entered_by` tinyint DEFAULT NULL,
-  `source` enum('manual','system','import') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'manual',
-  `note` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL
+  `source` enum('manual','system','import') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'manual',
+  `note` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- --------------------------------------------------------
@@ -558,14 +558,14 @@ CREATE TABLE `cases` (
   `case_id` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `case_number` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'OPAQUE free text server-side; docket-shape parsing is client-only (BK-specific). Collision check = equality',
   `case_number_full` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `case_caption` varchar(150) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `case_our_role` varchar(40) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `case_type` varchar(40) COLLATE utf8mb4_general_ci NOT NULL,
-  `case_subtype` varchar(40) COLLATE utf8mb4_general_ci NOT NULL DEFAULT '',
-  `pipeline_phase` enum('intake','case') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'intake' COMMENT 'T8 lifecycle axis: intake funnel vs post-retainer case. Written by pipelineService.advanceStage from the entered stage template role.',
+  `case_caption` varchar(150) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `case_our_role` varchar(40) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `case_type` varchar(40) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `case_subtype` varchar(40) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT '',
+  `pipeline_phase` enum('intake','case') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'intake' COMMENT 'T8 lifecycle axis: intake funnel vs post-retainer case. Written by pipelineService.advanceStage from the entered stage template role.',
   `case_stage` enum('Open','Pending','Filed','Concluded','Closed') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'Open',
   `case_status` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
-  `case_rec` varchar(128) COLLATE utf8mb4_general_ci NOT NULL,
+  `case_rec` varchar(128) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `case_open_date` date DEFAULT NULL,
   `case_file_date` date DEFAULT NULL,
   `case_close_date` date DEFAULT NULL,
@@ -596,49 +596,47 @@ CREATE TABLE `cases` (
   `case_ISSN_form` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `case_form` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `case_341_form` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
-  `case_source` varchar(40) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `case_source` varchar(40) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `case_source_ref` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `case_dropbox` varchar(512) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `case_primary_reason` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `case_judge` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL COMMENT 'Free text, AUTHORITATIVE. case_judge_contact_id fills on match / NULLs on miss; resolution never blocks a write',
   `case_judge_contact_id` int unsigned DEFAULT NULL,
-  `case_trustee` varchar(100) COLLATE utf8mb4_general_ci NOT NULL COMMENT 'Free text, AUTHORITATIVE. Twin: case_trustee_contact_id. Canonical vocab = trustee roster (contacts with Trustee role; lib/trusteeRoster)',
+  `case_trustee` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL COMMENT 'Free text, AUTHORITATIVE. Twin: case_trustee_contact_id. Canonical vocab = trustee roster (contacts with Trustee role; lib/trusteeRoster)',
   `case_trustee_contact_id` int unsigned DEFAULT NULL,
-  `case_341_link` varchar(255) COLLATE utf8mb4_general_ci NOT NULL DEFAULT '',
+  `case_341_link` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT '',
   `case_chapter` char(2) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `case_341_current` datetime DEFAULT NULL,
   `case_341_initial` date DEFAULT NULL,
   `case_objection` date DEFAULT NULL,
   `case_180` date DEFAULT NULL,
   `case_preference` date DEFAULT NULL,
-  `clio_matter` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `341_appt_id` int NOT NULL,
   `341_status` enum('Continued','Completed') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `341_docs` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `341_amend` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `341_notes` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
-  `case_clio_id` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `case_notes` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `case_alerts` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
-  `bk_fee_application` varchar(100) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `bk_fee_order_proposed` varchar(100) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `bk_fee_order_issued` varchar(100) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `bk_fee_amounts` text COLLATE utf8mb4_general_ci,
-  `bk_fee_dates_due` text COLLATE utf8mb4_general_ci,
-  `bk_fee_due` varchar(100) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `bk_funding_app` varchar(100) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `bk_clio_pay_schedule` varchar(100) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `bk_reaffirmation` varchar(100) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `bk_ch13_plan_filed` varchar(100) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `bk_ch13_plan_cos` varchar(100) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `bk_dismissal_notice` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `bk_fee_application` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `bk_fee_order_proposed` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `bk_fee_order_issued` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `bk_fee_amounts` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci,
+  `bk_fee_dates_due` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci,
+  `bk_fee_due` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `bk_funding_app` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `bk_clio_pay_schedule` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `bk_reaffirmation` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `bk_ch13_plan_filed` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `bk_ch13_plan_cos` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `bk_dismissal_notice` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `bk_confirmation_hearing` date DEFAULT NULL,
   `bk_confirmation_exp_discharge` date DEFAULT NULL,
-  `bk_confirmation_cert` varchar(100) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `bk_confirmation_cert` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `bk_2nd_course_due` date DEFAULT NULL,
-  `bk_outcome` varchar(100) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `bk_followup_email` varchar(100) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `bk_7steps_course` varchar(100) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `bk_outcome` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `bk_followup_email` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `bk_7steps_course` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `custom` json NOT NULL DEFAULT (json_object()) COMMENT 'Custom-field values (ref/CUSTOM_FIELDS_DESIGN.md). Keys are field_defs.field_key (cf_*, entity=case). Written ONLY by caseService.updateCase: per-key JSON_SET/JSON_REMOVE in the same UPDATE as core columns, never read-modify-write. NEVER read or compare custom->>''$.k'' in SQL (the S3 virtual column is the only comparison surface). Never store JSON null (clear = JSON_REMOVE). Excluded by name from event envelopes, resolver and reports.',
   `cf_clio_matter` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci GENERATED ALWAYS AS (json_value(`custom`, _utf8mb4'$.cf_clio_matter' returning char(255) character set utf8mb4)) VIRTUAL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
@@ -697,7 +695,7 @@ DROP TABLE IF EXISTS `channel_grants`;
 CREATE TABLE `channel_grants` (
   `id` int unsigned NOT NULL,
   `user` tinyint NOT NULL COMMENT 'users.user (FK by convention); never 0 - automation bypasses grants (D6)',
-  `channel_type` varchar(16) COLLATE utf8mb4_general_ci NOT NULL COMMENT 'mailbox | phone_line - app-validated vocabulary, VARCHAR not ENUM so a new channel needs no ALTER',
+  `channel_type` varchar(16) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL COMMENT 'mailbox | phone_line - app-validated vocabulary, VARCHAR not ENUM so a new channel needs no ALTER',
   `channel_id` int unsigned NOT NULL COMMENT 'mailboxes.id when mailbox; phone_lines.id when phone_line (FK by convention)',
   `can_read` tinyint(1) NOT NULL DEFAULT '0',
   `can_send` tinyint(1) NOT NULL DEFAULT '0',
@@ -716,10 +714,10 @@ DROP TABLE IF EXISTS `checkitems`;
 CREATE TABLE `checkitems` (
   `id` int NOT NULL,
   `checklist_id` int NOT NULL,
-  `name` varchar(255) COLLATE utf8mb4_general_ci NOT NULL,
-  `status` enum('incomplete','complete') COLLATE utf8mb4_general_ci DEFAULT 'incomplete',
+  `name` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `status` enum('incomplete','complete') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT 'incomplete',
   `position` int DEFAULT NULL,
-  `tag` varchar(50) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `tag` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `created_date` datetime DEFAULT CURRENT_TIMESTAMP,
   `updated_date` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
@@ -787,16 +785,16 @@ DELIMITER ;
 DROP TABLE IF EXISTS `checklists`;
 CREATE TABLE `checklists` (
   `id` int NOT NULL,
-  `title` varchar(255) COLLATE utf8mb4_general_ci NOT NULL,
+  `title` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `kind` enum('checklist','note') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'checklist',
   `body` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci,
-  `status` enum('incomplete','complete') COLLATE utf8mb4_general_ci DEFAULT 'incomplete',
+  `status` enum('incomplete','complete') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT 'incomplete',
   `created_date` datetime DEFAULT CURRENT_TIMESTAMP,
   `updated_date` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   `created_by` tinyint NOT NULL,
-  `link` varchar(20) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `link` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `link_type` enum('contact','case','bill','appt','task','user','event') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `tag` varchar(50) COLLATE utf8mb4_general_ci DEFAULT NULL
+  `tag` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- --------------------------------------------------------
@@ -906,12 +904,12 @@ CREATE TABLE `contact_phones` (
 
 DROP TABLE IF EXISTS `contact_relation_types`;
 CREATE TABLE `contact_relation_types` (
-  `type_code` varchar(40) COLLATE utf8mb4_general_ci NOT NULL,
-  `forward_label` varchar(60) COLLATE utf8mb4_general_ci NOT NULL,
-  `reverse_label` varchar(60) COLLATE utf8mb4_general_ci NOT NULL,
+  `type_code` varchar(40) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `forward_label` varchar(60) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `reverse_label` varchar(60) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `is_symmetric` tinyint(1) NOT NULL DEFAULT '0',
-  `allowed_statuses` varchar(255) COLLATE utf8mb4_general_ci NOT NULL DEFAULT '',
-  `allowed_end_reasons` varchar(255) COLLATE utf8mb4_general_ci NOT NULL DEFAULT '',
+  `allowed_statuses` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT '',
+  `allowed_end_reasons` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT '',
   `sort_order` smallint NOT NULL DEFAULT '0',
   `active` tinyint(1) NOT NULL DEFAULT '1'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
@@ -927,13 +925,13 @@ CREATE TABLE `contact_relations` (
   `id` int unsigned NOT NULL,
   `contact_a_id` int unsigned NOT NULL,
   `contact_b_id` int unsigned NOT NULL,
-  `type_code` varchar(40) COLLATE utf8mb4_general_ci NOT NULL,
+  `type_code` varchar(40) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `active` tinyint(1) NOT NULL DEFAULT '1',
-  `status` varchar(40) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `status` varchar(40) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `start_date` date DEFAULT NULL,
   `end_date` date DEFAULT NULL,
-  `end_reason` varchar(40) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `notes` varchar(500) COLLATE utf8mb4_general_ci NOT NULL DEFAULT '',
+  `end_reason` varchar(40) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `notes` varchar(500) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT '',
   `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `created_by` int NOT NULL DEFAULT '0',
   `updated_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -948,8 +946,8 @@ CREATE TABLE `contact_relations` (
 
 DROP TABLE IF EXISTS `contact_role_types`;
 CREATE TABLE `contact_role_types` (
-  `role_code` varchar(40) COLLATE utf8mb4_general_ci NOT NULL,
-  `label` varchar(60) COLLATE utf8mb4_general_ci NOT NULL,
+  `role_code` varchar(40) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `label` varchar(60) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `attrs_schema` json DEFAULT NULL,
   `sort_order` smallint NOT NULL DEFAULT '0',
   `active` tinyint(1) NOT NULL DEFAULT '1',
@@ -966,7 +964,7 @@ DROP TABLE IF EXISTS `contact_roles`;
 CREATE TABLE `contact_roles` (
   `id` int unsigned NOT NULL,
   `contact_id` int unsigned NOT NULL,
-  `role` varchar(40) COLLATE utf8mb4_general_ci NOT NULL,
+  `role` varchar(40) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `attrs` json DEFAULT NULL,
   `active` tinyint(1) NOT NULL DEFAULT '1',
   `sort_order` smallint NOT NULL DEFAULT '0',
@@ -983,7 +981,7 @@ DROP TABLE IF EXISTS `contacts`;
 CREATE TABLE `contacts` (
   `contact_id` int unsigned NOT NULL,
   `contact_kind` varchar(12) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'person' COMMENT 'ENTITY axis: person|org. contact_type is a dirty free-text role label — never overload it; roles live in contact_roles',
-  `contact_org_name` varchar(120) COLLATE utf8mb4_general_ci NOT NULL DEFAULT '',
+  `contact_org_name` varchar(120) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT '',
   `contact_type` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `contact_name` varchar(120) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `contact_lfm_name` varchar(120) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
@@ -1003,9 +1001,8 @@ CREATE TABLE `contacts` (
   `contact_marital_status` enum('Single','Married','Separated','Divorced','Widowed') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `contact_tags` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `contact_notes` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
-  `contact_clio_id` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
-  `contact_google_resource_name` varchar(64) COLLATE utf8mb4_general_ci NOT NULL DEFAULT '',
-  `contact_google_etag` varchar(160) COLLATE utf8mb4_general_ci NOT NULL DEFAULT '',
+  `contact_google_resource_name` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT '',
+  `contact_google_etag` varchar(160) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT '',
   `contact_google_synced_at` datetime DEFAULT NULL,
   `contact_phone2` varchar(10) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `contact_email2` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
@@ -1114,12 +1111,6 @@ CREATE TRIGGER `after_contact_update` AFTER UPDATE ON `contacts` FOR EACH ROW BE
         SET log_data = JSON_SET(log_data,
             '$.previous_contact_notes', OLD.contact_notes,
             '$.new_contact_notes', NEW.contact_notes);
-    END IF;
-
-    IF OLD.contact_clio_id != NEW.contact_clio_id THEN
-        SET log_data = JSON_SET(log_data,
-            '$.previous_contact_clio_id', OLD.contact_clio_id,
-            '$.new_contact_clio_id', NEW.contact_clio_id);
     END IF;
 
     IF OLD.contact_phone2 != NEW.contact_phone2 THEN
@@ -1248,16 +1239,16 @@ CREATE TABLE `court_ai_log` (
   `message_id` varchar(190) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL COMMENT 'utf8mb4_general_ci — SAME as email_log.message_id since the 2026-10-05 verification (this column was utf8mb4_unicode_ci once). The explicit COLLATE utf8mb4_general_ci clauses on the court-side joins (routes/courtReview.js, services/courtRerun.js, lib/internal_functions/court.js) are no-ops kept as insurance against re-divergence',
   `ai_call_id` int DEFAULT NULL,
   `dry_run` tinyint(1) NOT NULL DEFAULT '1',
-  `classification` varchar(64) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `case_number` varchar(40) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `resolved_case_id` varchar(20) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `case_name` varchar(120) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `classification` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `case_number` varchar(40) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `resolved_case_id` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `case_name` varchar(120) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `actions_json` json DEFAULT NULL,
   `citations_json` json DEFAULT NULL,
   `skipped_json` json DEFAULT NULL,
-  `outcome` enum('executed','queued','none','error') COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `review_reason` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `raw_response` mediumtext COLLATE utf8mb4_general_ci
+  `outcome` enum('executed','queued','none','error') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `review_reason` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `raw_response` mediumtext CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- --------------------------------------------------------
@@ -1293,10 +1284,10 @@ CREATE TABLE `court_emails2` (
 DROP TABLE IF EXISTS `court_item_policy`;
 CREATE TABLE `court_item_policy` (
   `type_id` int unsigned NOT NULL,
-  `storage` enum('appt','event','none') COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `attendance` enum('none','ss','ss_client','client','staff') COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `blocks` enum('none','ss','firm') COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `calendar` enum('ss','firm','none') COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `storage` enum('appt','event','none') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `attendance` enum('none','ss','ss_client','client','staff') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `blocks` enum('none','ss','firm') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `calendar` enum('ss','firm','none') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
@@ -1309,21 +1300,21 @@ CREATE TABLE `court_item_policy` (
 DROP TABLE IF EXISTS `credentials`;
 CREATE TABLE `credentials` (
   `id` int NOT NULL,
-  `name` varchar(255) COLLATE utf8mb4_general_ci NOT NULL,
-  `type` enum('internal','bearer','api_key','basic','oauth2') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'internal',
+  `name` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `type` enum('internal','bearer','api_key','basic','oauth2') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'internal',
   `config` json DEFAULT NULL,
   `allowed_urls` json DEFAULT NULL,
   `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  `access_token` text COLLATE utf8mb4_general_ci,
-  `refresh_token` text COLLATE utf8mb4_general_ci,
+  `access_token` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci,
+  `refresh_token` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci,
   `access_token_expires_at` datetime DEFAULT NULL,
   `refresh_token_expires_at` datetime DEFAULT NULL,
   `last_refreshed_at` datetime DEFAULT NULL,
-  `oauth_status` enum('pending_auth','connected','refresh_failed','revoked') COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `oauth_state` varchar(64) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `oauth_pkce_verifier` varchar(128) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `oauth_last_error` text COLLATE utf8mb4_general_ci,
+  `oauth_status` enum('pending_auth','connected','refresh_failed','revoked') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `oauth_state` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `oauth_pkce_verifier` varchar(128) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `oauth_last_error` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci,
   `oauth_last_error_at` datetime DEFAULT NULL,
   `refresh_failure_count` tinyint unsigned NOT NULL DEFAULT '0',
   `verbose` tinyint(1) NOT NULL DEFAULT '0'
@@ -1339,12 +1330,12 @@ DROP TABLE IF EXISTS `cta_executions`;
 CREATE TABLE `cta_executions` (
   `id` bigint unsigned NOT NULL,
   `cta_id` bigint unsigned NOT NULL,
-  `option_value` varchar(64) COLLATE utf8mb4_general_ci NOT NULL,
-  `status` enum('running','success','failed') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'running' COMMENT 'inserted running (same transaction as the claim) BEFORE step 1; running older than 15 min = crashed plan (sweep warns)',
+  `option_value` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `status` enum('running','success','failed') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'running' COMMENT 'inserted running (same transaction as the claim) BEFORE step 1; running older than 15 min = crashed plan (sweep warns)',
   `plan_result` json DEFAULT NULL COMMENT 'per-step [{fn, ok, output|error, ms}], outputs truncated ~2k/step; readable via RO keys - redact accordingly',
-  `responded_via` enum('link','app','api','timeout') COLLATE utf8mb4_general_ci NOT NULL,
+  `responded_via` enum('link','app','api','timeout') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `responder_user_id` int DEFAULT NULL,
-  `responder_ip` varchar(45) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `responder_ip` varchar(45) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `executed_at` datetime DEFAULT CURRENT_TIMESTAMP,
   `inputs` json DEFAULT NULL COMMENT 'clicker inputs (CTA_DESIGN §12) as the plan ran with them: {name: normalized value}, defaults applied, omitted optionals absent; NULL = option declares no inputs. SU-only like plan_result - readable via RO keys, redact accordingly'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='One row per CTA plan run. Never add to QUERY_DB_ALLOWED_TABLES / WRITE_POLICY (R3)';
@@ -1359,26 +1350,26 @@ DROP TABLE IF EXISTS `cta_links`;
 CREATE TABLE `cta_links` (
   `id` bigint unsigned NOT NULL,
   `token` varchar(32) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL COMMENT 'CTA bearer (/c/<t>); 22-char base62 via lib/token; _bin: case-sensitive',
-  `name` varchar(120) COLLATE utf8mb4_general_ci NOT NULL COMMENT 'internal label (SU list); never shown publicly',
-  `prompt` text COLLATE utf8mb4_general_ci NOT NULL COMMENT 'shown to the recipient; ESCAPED text — context_html is the only raw-HTML slot',
-  `context_html` mediumtext COLLATE utf8mb4_general_ci COMMENT 'TRUSTED HTML, same contract as decision_requests.context_html',
+  `name` varchar(120) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL COMMENT 'internal label (SU list); never shown publicly',
+  `prompt` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL COMMENT 'shown to the recipient; ESCAPED text — context_html is the only raw-HTML slot',
+  `context_html` mediumtext CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci COMMENT 'TRUSTED HTML, same contract as decision_requests.context_html',
   `options` json NOT NULL COMMENT '[{value,label,plan:[{fn,params}],confirm_text?,result_template?,inputs?}] 1-10; value "respond" reserved; params frozen literals (no {{...}}, no _-prefixed keys) EXCEPT "[[input:name]]" binding a declared input into a param its function opens via __meta.ctaInputParams: as the whole top-level value, or inline in the text of a content (never recipient) param. inputs (CTA_DESIGN §12): [{name,label,hint?,type,required,maxlen,choices?,choice_labels?,display?,pattern?,default?}] <=10, type text|phone|email|number|enum|date|html, maxlen <=1000, hint <=200, default stored normalized; enum only: choice_labels parallel to choices (page text, the value stays the choice), display select|radio (select not stored)',
-  `mode` enum('once','repeatable') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'once' COMMENT 'app-validated too (relaxed sql_mode)',
+  `mode` enum('once','repeatable') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'once' COMMENT 'app-validated too (relaxed sql_mode)',
   `max_uses` int unsigned DEFAULT NULL COMMENT 'repeatable only; NULL = until expiry',
   `uses_count` int unsigned NOT NULL DEFAULT '0' COMMENT 'once: 0|1 (the claim sets 1); repeatable: guarded increment; reset to 0 by re-enable from used (else the timeout claim is dead)',
   `expires_at` datetime NOT NULL COMMENT 'UTC; always set, <=365d out. expired is DERIVED from this, never stored in status',
-  `timeout_option` varchar(64) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'once only: option value auto-run at expiry if unused (cta_expiry_sweep claims first)',
-  `protection` enum('none','password') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'none',
-  `password_hash` varchar(100) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'bcrypt, BCRYPT_ROUNDS=12; never a user password',
+  `timeout_option` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'once only: option value auto-run at expiry if unused (cta_expiry_sweep claims first)',
+  `protection` enum('none','password') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'none',
+  `password_hash` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'bcrypt, BCRYPT_ROUNDS=12; never a user password',
   `failed_attempts` int unsigned NOT NULL DEFAULT '0' COMMENT 'cumulative wrong passwords; alerts at 20 (warning) / 100 (error); never auto-disables',
   `return_plan_result` tinyint NOT NULL DEFAULT '0' COMMENT 'JSON respond surface may include raw plan_result (agent mints)',
   `attributed_user_id` int DEFAULT NULL COMMENT 'log attribution for link/password responses (assertion by mint, not authentication); never used by timeout executions',
-  `status` enum('active','used','disabled','cancelled') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'active' COMMENT 'used = once claimed; disabled = PATCH, reversible; cancelled = permanent (R8). expired/exhausted are derived, never stored',
-  `mint_source` enum('su','workflow') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'su' COMMENT 'su: click-time check that minted_by is still an active SU (B1); workflow: no SU check',
+  `status` enum('active','used','disabled','cancelled') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'active' COMMENT 'used = once claimed; disabled = PATCH, reversible; cancelled = permanent (R8). expired/exhausted are derived, never stored',
+  `mint_source` enum('su','workflow') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'su' COMMENT 'su: click-time check that minted_by is still an active SU (B1); workflow: no SU check',
   `source_execution_id` bigint unsigned DEFAULT NULL COMMENT 'workflow mints: the minting execution',
   `minted_by` int NOT NULL COMMENT 'users.user of the minting SU; 0 for workflow mints',
-  `link_type` varchar(20) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'logService ABOUT_TYPES value set (log_link_type family), app-validated',
-  `link_id` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'normalized like log about-links (phone 10 digits, email lowercased)',
+  `link_type` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'logService ABOUT_TYPES value set (log_link_type family), app-validated',
+  `link_id` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'normalized like log about-links (phone 10 digits, email lowercased)',
   `created_at` datetime DEFAULT CURRENT_TIMESTAMP,
   `updated_at` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='CTA links (ref/CTA_DESIGN.md). Never add to QUERY_DB_ALLOWED_TABLES / WRITE_POLICY (R3)';
@@ -1396,21 +1387,21 @@ CREATE TABLE `decision_requests` (
   `workflow_execution_id` bigint NOT NULL,
   `step_number` int NOT NULL,
   `resume_step` int NOT NULL,
-  `recipient_kind` enum('user','contact','raw') COLLATE utf8mb4_general_ci NOT NULL,
+  `recipient_kind` enum('user','contact','raw') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `recipient_user_id` int DEFAULT NULL,
   `recipient_contact_id` int DEFAULT NULL,
-  `recipient_email` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `recipient_phone` varchar(20) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `question` text COLLATE utf8mb4_general_ci NOT NULL,
-  `context_html` mediumtext COLLATE utf8mb4_general_ci,
+  `recipient_email` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `recipient_phone` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `question` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `context_html` mediumtext CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci,
   `options` json NOT NULL,
-  `result_var` varchar(64) COLLATE utf8mb4_general_ci NOT NULL,
-  `timeout_value` varchar(255) COLLATE utf8mb4_general_ci NOT NULL,
+  `result_var` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `timeout_value` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `expires_at` datetime NOT NULL,
-  `status` enum('pending','responded','timed_out','cancelled') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'pending',
-  `response_value` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `status` enum('pending','responded','timed_out','cancelled') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'pending',
+  `response_value` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `responded_at` datetime DEFAULT NULL,
-  `responded_via` varchar(20) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `responded_via` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `paired_task_id` bigint DEFAULT NULL,
   `created_at` datetime DEFAULT CURRENT_TIMESTAMP,
   `updated_at` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
@@ -1438,9 +1429,9 @@ DROP TABLE IF EXISTS `document_links`;
 CREATE TABLE `document_links` (
   `id` bigint unsigned NOT NULL,
   `document_id` bigint unsigned NOT NULL,
-  `link_type` varchar(32) COLLATE utf8mb4_general_ci NOT NULL,
-  `link_id` varchar(64) COLLATE utf8mb4_general_ci NOT NULL,
-  `relation` varchar(32) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `link_type` varchar(32) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `link_id` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `relation` varchar(32) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `created_by` int DEFAULT NULL,
   `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
@@ -1454,14 +1445,14 @@ CREATE TABLE `document_links` (
 DROP TABLE IF EXISTS `document_sync_roots`;
 CREATE TABLE `document_sync_roots` (
   `id` int unsigned NOT NULL,
-  `path` varchar(512) COLLATE utf8mb4_general_ci NOT NULL,
-  `note` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `path` varchar(512) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `note` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `enabled` tinyint(1) NOT NULL DEFAULT '1',
   `syncing_since` datetime DEFAULT NULL,
-  `sync_cursor` text COLLATE utf8mb4_general_ci,
+  `sync_cursor` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci,
   `backfill_done` tinyint(1) NOT NULL DEFAULT '0',
   `last_sync_at` datetime DEFAULT NULL,
-  `last_error` text COLLATE utf8mb4_general_ci,
+  `last_error` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci,
   `stats` json DEFAULT NULL,
   `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
@@ -1475,24 +1466,24 @@ CREATE TABLE `document_sync_roots` (
 DROP TABLE IF EXISTS `documents`;
 CREATE TABLE `documents` (
   `id` bigint unsigned NOT NULL,
-  `source` varchar(20) COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'dropbox',
+  `source` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'dropbox',
   `external_id` varchar(191) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL COMMENT 'utf8mb4_bin ON PURPOSE — Dropbox ids are case-sensitive; never normalize this collation',
-  `name` varchar(512) COLLATE utf8mb4_general_ci NOT NULL,
-  `path` text COLLATE utf8mb4_general_ci,
-  `path_lower` text COLLATE utf8mb4_general_ci,
-  `path_hash` char(40) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `ext` varchar(20) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `mime` varchar(128) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `name` varchar(512) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `path` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci,
+  `path_lower` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci,
+  `path_hash` char(40) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `ext` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `mime` varchar(128) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `size` bigint unsigned DEFAULT NULL,
-  `content_hash` char(64) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `rev` varchar(64) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `content_hash` char(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `rev` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `server_modified` datetime DEFAULT NULL,
-  `shared_link` varchar(512) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `title` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `doc_type` varchar(64) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `tags` varchar(512) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `shared_link` varchar(512) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `title` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `doc_type` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `tags` varchar(512) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `ai_meta` json DEFAULT NULL,
-  `status` enum('active','deleted','missing') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'active',
+  `status` enum('active','deleted','missing') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'active',
   `pending_delete_at` datetime DEFAULT NULL,
   `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
@@ -1507,15 +1498,15 @@ CREATE TABLE `documents` (
 DROP TABLE IF EXISTS `domain_event_queue`;
 CREATE TABLE `domain_event_queue` (
   `id` bigint unsigned NOT NULL,
-  `event_type` varchar(64) COLLATE utf8mb4_general_ci NOT NULL,
+  `event_type` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `root_id` bigint unsigned DEFAULT NULL,
   `envelope` json NOT NULL,
-  `status` enum('pending','running','done','error') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'pending',
+  `status` enum('pending','running','done','error') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'pending',
   `dispatches` int unsigned NOT NULL DEFAULT '0',
   `attempts` int unsigned NOT NULL DEFAULT '0',
   `claimed_at` datetime DEFAULT NULL,
   `completed_at` datetime DEFAULT NULL,
-  `error_message` text COLLATE utf8mb4_general_ci,
+  `error_message` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci,
   `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='Scheduling AUTHORITY for split-phase trigger dispatch; the Cloud Task is only a doorbell';
 
@@ -1528,17 +1519,17 @@ CREATE TABLE `domain_event_queue` (
 DROP TABLE IF EXISTS `email_credentials`;
 CREATE TABLE `email_credentials` (
   `id` int unsigned NOT NULL,
-  `email` varchar(255) COLLATE utf8mb4_general_ci NOT NULL,
-  `smtp_host` varchar(255) COLLATE utf8mb4_general_ci NOT NULL,
+  `email` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `smtp_host` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `smtp_port` int NOT NULL,
-  `smtp_user` varchar(255) COLLATE utf8mb4_general_ci NOT NULL,
-  `smtp_pass` varchar(255) COLLATE utf8mb4_general_ci NOT NULL,
+  `smtp_user` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `smtp_pass` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `smtp_secure` tinyint(1) NOT NULL DEFAULT '1',
   `provider` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'smtp',
   `credential_id` int DEFAULT NULL,
-  `from_name` varchar(64) COLLATE utf8mb4_general_ci NOT NULL,
-  `signature_html` mediumtext COLLATE utf8mb4_general_ci,
-  `signature_text` text COLLATE utf8mb4_general_ci,
+  `from_name` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `signature_html` mediumtext CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci,
+  `signature_text` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci,
   `owner_user` tinyint DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
@@ -1551,15 +1542,15 @@ CREATE TABLE `email_credentials` (
 DROP TABLE IF EXISTS `email_credentials_backup_20260513`;
 CREATE TABLE `email_credentials_backup_20260513` (
   `id` int unsigned NOT NULL,
-  `email` varchar(255) COLLATE utf8mb4_general_ci NOT NULL,
-  `smtp_host` varchar(255) COLLATE utf8mb4_general_ci NOT NULL,
+  `email` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `smtp_host` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `smtp_port` int NOT NULL,
-  `smtp_user` varchar(255) COLLATE utf8mb4_general_ci NOT NULL,
-  `smtp_pass` varchar(255) COLLATE utf8mb4_general_ci NOT NULL,
+  `smtp_user` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `smtp_pass` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `smtp_secure` tinyint(1) NOT NULL DEFAULT '1',
   `provider` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'smtp',
   `credential_id` int DEFAULT NULL,
-  `from_name` varchar(64) COLLATE utf8mb4_general_ci NOT NULL
+  `from_name` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- --------------------------------------------------------
@@ -1572,14 +1563,14 @@ DROP TABLE IF EXISTS `email_ingest_executions`;
 CREATE TABLE `email_ingest_executions` (
   `id` bigint unsigned NOT NULL,
   `source_id` int unsigned DEFAULT NULL,
-  `message_id` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `status` enum('logged','duplicate','skipped_firm_to_firm','skipped_suppression','auth_failed','validation_failed','error') COLLATE utf8mb4_general_ci NOT NULL,
+  `message_id` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `status` enum('logged','duplicate','skipped_firm_to_firm','skipped_suppression','auth_failed','validation_failed','error') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `log_id` int unsigned DEFAULT NULL,
   `email_log_id` int unsigned DEFAULT NULL,
-  `error` text COLLATE utf8mb4_general_ci,
+  `error` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci,
   `metadata` json DEFAULT NULL,
   `raw_input` json DEFAULT NULL,
-  `remote_ip` varchar(45) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `remote_ip` varchar(45) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `action_failure_count` int unsigned GENERATED ALWAYS AS (coalesce(json_length(json_search(json_extract(`metadata`,_utf8mb4'$.action_outcomes[*].status'),_utf8mb4'all',_utf8mb4'failed')),0)) VIRTUAL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
@@ -1593,10 +1584,10 @@ CREATE TABLE `email_ingest_executions` (
 DROP TABLE IF EXISTS `email_ingest_log_suppressions`;
 CREATE TABLE `email_ingest_log_suppressions` (
   `id` int unsigned NOT NULL,
-  `name` varchar(255) COLLATE utf8mb4_general_ci NOT NULL,
-  `description` text COLLATE utf8mb4_general_ci,
+  `name` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `description` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci,
   `active` tinyint(1) NOT NULL DEFAULT '1',
-  `match_mode` enum('conditions','code') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'conditions',
+  `match_mode` enum('conditions','code') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'conditions',
   `match_config` json DEFAULT NULL,
   `match_count` int NOT NULL DEFAULT '0',
   `last_matched_at` datetime DEFAULT NULL,
@@ -1615,10 +1606,10 @@ DROP TABLE IF EXISTS `email_ingest_rule_actions`;
 CREATE TABLE `email_ingest_rule_actions` (
   `id` int unsigned NOT NULL,
   `rule_id` int unsigned NOT NULL,
-  `name` varchar(100) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `name` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `position` int NOT NULL DEFAULT '0',
   `active` tinyint(1) NOT NULL DEFAULT '1',
-  `action_type` enum('workflow','sequence','hook','internal_function','http') COLLATE utf8mb4_general_ci NOT NULL,
+  `action_type` enum('workflow','sequence','hook','internal_function','http') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `config` json NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
@@ -1631,13 +1622,13 @@ CREATE TABLE `email_ingest_rule_actions` (
 DROP TABLE IF EXISTS `email_ingest_rules`;
 CREATE TABLE `email_ingest_rules` (
   `id` int unsigned NOT NULL,
-  `name` varchar(255) COLLATE utf8mb4_general_ci NOT NULL,
-  `description` text COLLATE utf8mb4_general_ci,
+  `name` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `description` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci,
   `active` tinyint(1) NOT NULL DEFAULT '1',
   `position` int NOT NULL DEFAULT '0',
-  `match_mode` enum('conditions','code') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'conditions',
+  `match_mode` enum('conditions','code') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'conditions',
   `match_config` json DEFAULT NULL,
-  `transform_mode` enum('passthrough','mapper','code') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'passthrough',
+  `transform_mode` enum('passthrough','mapper','code') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'passthrough',
   `transform_config` json DEFAULT NULL,
   `match_count` int NOT NULL DEFAULT '0',
   `last_matched_at` datetime DEFAULT NULL,
@@ -1655,10 +1646,10 @@ CREATE TABLE `email_ingest_rules` (
 DROP TABLE IF EXISTS `email_ingest_sources`;
 CREATE TABLE `email_ingest_sources` (
   `id` int unsigned NOT NULL,
-  `name` varchar(64) COLLATE utf8mb4_general_ci NOT NULL,
-  `api_key` varchar(255) COLLATE utf8mb4_general_ci NOT NULL,
+  `name` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `api_key` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `active` tinyint(1) NOT NULL DEFAULT '1',
-  `description` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `description` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `last_used_at` datetime DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
@@ -1672,7 +1663,7 @@ CREATE TABLE `email_ingest_sources` (
 DROP TABLE IF EXISTS `email_log`;
 CREATE TABLE `email_log` (
   `id` int NOT NULL,
-  `source` varchar(64) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `source` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `message_id` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `from_email` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `to_email` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
@@ -1692,29 +1683,29 @@ CREATE TABLE `email_log` (
 DROP TABLE IF EXISTS `events`;
 CREATE TABLE `events` (
   `event_id` int unsigned NOT NULL,
-  `event_type` varchar(60) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `kind` enum('hearing','meeting','deadline','conference','other') COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'E0a atom: what the event IS, independent of event_type free text. NULL = unclassified. Populated by E0b (judgment-gated), not here.',
+  `event_type` varchar(60) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `kind` enum('hearing','meeting','deadline','conference','other') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'E0a atom: what the event IS, independent of event_type free text. NULL = unclassified. Populated by E0b (judgment-gated), not here.',
   `type_key` varchar(40) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'U2: calendar_item_types.type_key (by value, no FK). NULL = unresolved/raw passthrough or pre-backfill.',
-  `event_link_type` enum('case','contact','case_number') COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `event_link_id` varchar(20) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `event_title` varchar(200) COLLATE utf8mb4_general_ci NOT NULL,
+  `event_link_type` enum('case','contact','case_number') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `event_link_id` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `event_title` varchar(200) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `event_date` date NOT NULL,
   `event_time` time DEFAULT NULL,
   `event_all_day` tinyint(1) NOT NULL DEFAULT '0',
   `event_length` int DEFAULT NULL,
-  `event_location` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `event_link` varchar(500) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `event_note` text COLLATE utf8mb4_general_ci,
+  `event_location` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `event_link` varchar(500) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `event_note` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci,
   `event_status` enum('Scheduled','Completed','Canceled','Rescheduled') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'Scheduled' COMMENT 'U6c: Rescheduled = superseded by a successor row (paired with superseded_by_event_id + supersede_reason=''rescheduled''). Mirrors appt_status.Rescheduled. Canceled still means court-cancelled ONLY.',
-  `event_resolution` enum('held','met','missed','moot','cancelled') COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'U3: HOW the event ended, per v0.5 §3.7. NULL = not recorded; the read layer falls back to met (deadline) / held (else) on Completed and cancelled on Canceled. No writer until U6.',
-  `event_gcal` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `event_calendar_id` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `event_resolution` enum('held','met','missed','moot','cancelled') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'U3: HOW the event ended, per v0.5 §3.7. NULL = not recorded; the read layer falls back to met (deadline) / held (else) on Completed and cancelled on Canceled. No writer until U6.',
+  `event_gcal` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `event_calendar_id` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `event_create_date` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `event_created_by` tinyint DEFAULT NULL,
   `event_updated_at` datetime DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
   `event_with` tinyint DEFAULT NULL COMMENT 'provider scope: users.user; NULL = firm-wide block',
   `superseded_by_event_id` int unsigned DEFAULT NULL COMMENT 'E0a atom: the event that replaced this one. NULL = this row is not superseded. No FK by convention (events carries none).',
-  `supersede_reason` enum('rescheduled','duplicate') COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'E0a atom: why this row was superseded. rescheduled = the court moved it; duplicate = tombstoned dedup artifact. NULL iff superseded_by_event_id IS NULL.'
+  `supersede_reason` enum('rescheduled','duplicate') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'E0a atom: why this row was superseded. rescheduled = the court moved it; duplicate = tombstoned dedup artifact. NULL iff superseded_by_event_id IS NULL.'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- --------------------------------------------------------
@@ -1729,7 +1720,7 @@ CREATE TABLE `feature_request_comments` (
   `request_id` int unsigned NOT NULL,
   `user_id` int NOT NULL,
   `parent_comment_id` int unsigned DEFAULT NULL,
-  `comment` text COLLATE utf8mb4_general_ci NOT NULL,
+  `comment` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `is_admin` tinyint(1) NOT NULL DEFAULT '0',
   `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
@@ -1757,11 +1748,11 @@ CREATE TABLE `feature_request_votes` (
 DROP TABLE IF EXISTS `feature_requests`;
 CREATE TABLE `feature_requests` (
   `id` int unsigned NOT NULL,
-  `title` varchar(120) COLLATE utf8mb4_general_ci NOT NULL,
-  `description` text COLLATE utf8mb4_general_ci NOT NULL,
-  `type` enum('bug','feature') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'feature',
-  `stage` enum('considering','planning','working_on_it','implemented','future_thought','rejected') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'considering',
-  `status_note` varchar(64) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `title` varchar(120) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `description` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `type` enum('bug','feature') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'feature',
+  `stage` enum('considering','planning','working_on_it','implemented','future_thought','rejected') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'considering',
+  `status_note` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `progress` tinyint unsigned NOT NULL DEFAULT '0',
   `is_public` tinyint(1) NOT NULL DEFAULT '1',
   `submitted_by` int NOT NULL,
@@ -1804,8 +1795,8 @@ CREATE TABLE `firm_blocks` (
   `block_id` int unsigned NOT NULL,
   `block_start` datetime NOT NULL,
   `block_end` datetime NOT NULL,
-  `label` varchar(120) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `source` enum('shabbos','yom_tov','manual') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'manual',
+  `label` varchar(120) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `source` enum('shabbos','yom_tov','manual') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'manual',
   `generated_for` date DEFAULT NULL,
   `active` tinyint(1) NOT NULL DEFAULT '1',
   `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -1821,10 +1812,10 @@ CREATE TABLE `firm_blocks` (
 DROP TABLE IF EXISTS `form_submissions`;
 CREATE TABLE `form_submissions` (
   `id` bigint unsigned NOT NULL,
-  `form_key` varchar(50) COLLATE utf8mb4_general_ci NOT NULL,
-  `link_type` varchar(20) COLLATE utf8mb4_general_ci NOT NULL,
-  `link_id` varchar(20) COLLATE utf8mb4_general_ci NOT NULL,
-  `status` enum('draft','submitted') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'draft',
+  `form_key` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `link_type` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `link_id` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `status` enum('draft','submitted') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'draft',
   `version` int unsigned NOT NULL DEFAULT '0',
   `schema_version` int unsigned NOT NULL DEFAULT '1',
   `data` json NOT NULL,
@@ -1833,7 +1824,7 @@ CREATE TABLE `form_submissions` (
   `linked_at` datetime DEFAULT NULL,
   `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  `draft_key` varchar(100) COLLATE utf8mb4_general_ci GENERATED ALWAYS AS ((case when (`status` = _utf8mb4'draft') then concat(`form_key`,_utf8mb4':',`link_type`,_utf8mb4':',`link_id`) else NULL end)) STORED
+  `draft_key` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci GENERATED ALWAYS AS ((case when (`status` = _utf8mb4'draft') then concat(`form_key`,_utf8mb4':',`link_type`,_utf8mb4':',`link_id`) else NULL end)) STORED
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- --------------------------------------------------------
@@ -1861,9 +1852,9 @@ CREATE TABLE `form_template_versions` (
 DROP TABLE IF EXISTS `form_templates`;
 CREATE TABLE `form_templates` (
   `id` int unsigned NOT NULL,
-  `form_key` varchar(50) COLLATE utf8mb4_general_ci NOT NULL,
-  `title` varchar(150) COLLATE utf8mb4_general_ci NOT NULL,
-  `link_type` varchar(20) COLLATE utf8mb4_general_ci NOT NULL,
+  `form_key` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `title` varchar(150) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `link_type` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `schema_version` int unsigned NOT NULL DEFAULT '1',
   `definition` json DEFAULT NULL,
   `draft_definition` json NOT NULL,
@@ -1871,7 +1862,7 @@ CREATE TABLE `form_templates` (
   `updated_by` int unsigned DEFAULT NULL,
   `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  `visibility` enum('internal','portal','public') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'internal'
+  `visibility` enum('internal','portal','public') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'internal'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- --------------------------------------------------------
@@ -1901,13 +1892,13 @@ CREATE TABLE `hook_delivery_logs` (
   `id` bigint NOT NULL,
   `execution_id` bigint NOT NULL,
   `target_id` int NOT NULL,
-  `request_url` varchar(2048) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `request_method` varchar(10) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `request_url` varchar(2048) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `request_method` varchar(10) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `request_body` json DEFAULT NULL,
   `response_status` int DEFAULT NULL,
-  `response_body` text COLLATE utf8mb4_general_ci,
+  `response_body` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci,
   `status` enum('success','failed','queued','captured') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'failed',
-  `error` text COLLATE utf8mb4_general_ci,
+  `error` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci,
   `attempts` int NOT NULL DEFAULT '1',
   `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
@@ -1922,12 +1913,12 @@ DROP TABLE IF EXISTS `hook_executions`;
 CREATE TABLE `hook_executions` (
   `id` bigint NOT NULL,
   `hook_id` int NOT NULL,
-  `slug` varchar(100) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `slug` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `raw_input` json DEFAULT NULL,
   `filter_passed` tinyint(1) DEFAULT NULL,
   `transform_output` json DEFAULT NULL,
-  `status` enum('received','filtered','processing','delivered','partial','failed','captured') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'received',
-  `error` text COLLATE utf8mb4_general_ci,
+  `status` enum('received','filtered','processing','delivered','partial','failed','captured') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'received',
+  `error` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci,
   `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
@@ -1942,17 +1933,17 @@ CREATE TABLE `hook_targets` (
   `id` int NOT NULL,
   `hook_id` int NOT NULL,
   `target_type` enum('http','workflow','sequence','internal_function') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'http',
-  `name` varchar(255) COLLATE utf8mb4_general_ci NOT NULL,
+  `name` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `position` int NOT NULL DEFAULT '0',
-  `method` enum('GET','POST','PUT','PATCH','DELETE') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'POST',
+  `method` enum('GET','POST','PUT','PATCH','DELETE') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'POST',
   `url` varchar(2048) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `headers` json DEFAULT NULL,
   `credential_id` int DEFAULT NULL,
-  `body_mode` enum('transform_output','template') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'transform_output',
-  `body_template` text COLLATE utf8mb4_general_ci,
+  `body_mode` enum('transform_output','template') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'transform_output',
+  `body_template` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci,
   `config` json DEFAULT NULL,
   `conditions` json DEFAULT NULL,
-  `transform_mode` enum('passthrough','mapper','code') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'passthrough',
+  `transform_mode` enum('passthrough','mapper','code') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'passthrough',
   `transform_config` json DEFAULT NULL,
   `active` tinyint(1) NOT NULL DEFAULT '1'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
@@ -1966,21 +1957,21 @@ CREATE TABLE `hook_targets` (
 DROP TABLE IF EXISTS `hooks`;
 CREATE TABLE `hooks` (
   `id` int NOT NULL,
-  `slug` varchar(100) COLLATE utf8mb4_general_ci NOT NULL,
-  `name` varchar(255) COLLATE utf8mb4_general_ci NOT NULL,
-  `description` text COLLATE utf8mb4_general_ci,
-  `auth_type` enum('none','api_key','hmac') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'none',
+  `slug` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `name` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `description` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci,
+  `auth_type` enum('none','api_key','hmac') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'none',
   `auth_config` json DEFAULT NULL,
-  `filter_mode` enum('none','conditions','code') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'none',
+  `filter_mode` enum('none','conditions','code') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'none',
   `filter_config` json DEFAULT NULL,
-  `transform_mode` enum('passthrough','mapper','code') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'passthrough',
+  `transform_mode` enum('passthrough','mapper','code') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'passthrough',
   `transform_config` json DEFAULT NULL,
   `active` tinyint(1) NOT NULL DEFAULT '1',
   `version` int NOT NULL DEFAULT '1',
   `last_modified_by` int DEFAULT NULL,
   `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  `capture_mode` enum('off','capturing') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'off',
+  `capture_mode` enum('off','capturing') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'off',
   `captured_sample` json DEFAULT NULL,
   `captured_at` datetime DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
@@ -1994,17 +1985,17 @@ CREATE TABLE `hooks` (
 DROP TABLE IF EXISTS `image_library`;
 CREATE TABLE `image_library` (
   `id` int unsigned NOT NULL,
-  `url` varchar(500) COLLATE utf8mb4_general_ci NOT NULL,
-  `filename` varchar(255) COLLATE utf8mb4_general_ci NOT NULL,
-  `original_name` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `title` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `tags` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `collection` varchar(64) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `mime` varchar(128) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `url` varchar(500) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `filename` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `original_name` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `title` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `tags` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `collection` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `mime` varchar(128) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `size` bigint unsigned DEFAULT NULL,
   `width` smallint unsigned DEFAULT NULL,
   `height` smallint unsigned DEFAULT NULL,
-  `visibility` enum('public','private') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'public',
+  `visibility` enum('public','private') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'public',
   `uploaded_by` tinyint unsigned DEFAULT NULL,
   `created_at` datetime DEFAULT CURRENT_TIMESTAMP,
   `deleted_at` datetime DEFAULT NULL
@@ -2020,7 +2011,7 @@ DROP TABLE IF EXISTS `inbox_views`;
 CREATE TABLE `inbox_views` (
   `id` int unsigned NOT NULL,
   `user` tinyint NOT NULL COMMENT 'users.user (FK by convention)',
-  `name` varchar(64) COLLATE utf8mb4_general_ci NOT NULL,
+  `name` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `mailbox_ids` json DEFAULT NULL COMMENT '[mailboxes.id, ...]; NULL or [] = all boxes the viewer can read. A view never grants access: every id must be readable at write time and is re-checked / intersected against channel_grants at every read (S2)',
   `filters` json DEFAULT NULL COMMENT 'Saved-view filter vocabulary = services/mailbox/mailReadService.js FILTER_KEYS (S2, grown since: unread_only/has_case/no_case/client_only/has_files/all_folders/sent_only booleans + from_domain + q). Unknown keys are REFUSED on write and ignored on read; the stored shape keeps only narrowing entries',
   `is_default` tinyint(1) NOT NULL DEFAULT '0',
@@ -2037,15 +2028,15 @@ DROP TABLE IF EXISTS `issue_reports`;
 CREATE TABLE `issue_reports` (
   `id` bigint NOT NULL,
   `user_id` int DEFAULT NULL,
-  `user_name` varchar(64) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `kind` enum('problem','idea','question') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'problem',
-  `note` text COLLATE utf8mb4_general_ci NOT NULL,
-  `page_url` varchar(1000) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `user_name` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `kind` enum('problem','idea','question') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'problem',
+  `note` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `page_url` varchar(1000) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `context` json DEFAULT NULL,
   `emailed_at` datetime DEFAULT NULL,
-  `email_error` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `email_error` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `resolved_at` datetime DEFAULT NULL,
-  `resolved_by` varchar(64) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `resolved_by` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
@@ -2060,9 +2051,9 @@ CREATE TABLE `job_results` (
   `id` bigint NOT NULL,
   `job_id` bigint NOT NULL,
   `attempt` int NOT NULL,
-  `status` enum('success','failed') COLLATE utf8mb4_general_ci NOT NULL,
+  `status` enum('success','failed') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `output_data` json DEFAULT NULL,
-  `error_message` text COLLATE utf8mb4_general_ci,
+  `error_message` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci,
   `duration_ms` int DEFAULT '0',
   `executed_at` datetime DEFAULT CURRENT_TIMESTAMP,
   `execution_number` int NOT NULL
@@ -2077,16 +2068,16 @@ CREATE TABLE `job_results` (
 DROP TABLE IF EXISTS `jwt_api_audit_log`;
 CREATE TABLE `jwt_api_audit_log` (
   `id` bigint NOT NULL,
-  `route` varchar(255) COLLATE utf8mb4_general_ci NOT NULL,
-  `method` varchar(10) COLLATE utf8mb4_general_ci NOT NULL,
+  `route` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `method` varchar(10) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `headers` json DEFAULT NULL,
   `query_params` json DEFAULT NULL,
   `body` json DEFAULT NULL,
-  `ip_address` varchar(45) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `user_agent` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `auth_type` varchar(20) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `username` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `auth_status` varchar(20) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `ip_address` varchar(45) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `user_agent` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `auth_type` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `username` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `auth_status` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
@@ -2100,10 +2091,10 @@ DROP TABLE IF EXISTS `legacy_route_log`;
 CREATE TABLE `legacy_route_log` (
   `id` bigint NOT NULL,
   `ts` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  `route` varchar(64) COLLATE utf8mb4_general_ci NOT NULL,
-  `method` varchar(8) COLLATE utf8mb4_general_ci NOT NULL,
-  `ip` varchar(64) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `user_agent` text COLLATE utf8mb4_general_ci,
+  `route` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `method` varchar(8) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `ip` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `user_agent` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci,
   `query_json` json DEFAULT NULL,
   `body_json` json DEFAULT NULL,
   `headers_json` json DEFAULT NULL
@@ -2121,10 +2112,10 @@ CREATE TABLE `log` (
   `log_type` enum('email','sms','call','other','form','status','note','court email','docs','appt','update','task','event','esign') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `log_date` datetime NOT NULL COMMENT 'Firm-local wall clock written under THREE spellings that are today the same offset (found 2026-09-25): logService.createLogEntry CONVERT_TZ(..., EST5EDT), the after_contact_update DB trigger CONVERT_TZ(..., America/New_York), and the firm zone America/Detroit (FIRM_TIMEZONE env). A future zone change touches all three literals, in two languages. CONVERT_TZ with named zones returns NULL on a MySQL without tz tables loaded and this column is NOT NULL — a real-engine clone needs mysql_tzinfo_to_sql first',
   `log_link` varchar(30) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
-  `log_link_type` enum('contact','case','appt','bill','phone','email','task','event') COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `log_link_type` enum('contact','case','appt','bill','phone','email','task','event') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `log_link_id` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `log_about_type` enum('contact','case','appt','bill','phone','email','task','event') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `log_about_id` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `log_about_id` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `log_by` tinyint unsigned NOT NULL,
   `log_data` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `log_extra` json DEFAULT NULL,
@@ -2147,7 +2138,7 @@ DROP TABLE IF EXISTS `mail_image_senders`;
 CREATE TABLE `mail_image_senders` (
   `id` int unsigned NOT NULL,
   `user` tinyint NOT NULL COMMENT 'users.user (FK by convention) - whose trust this is; every query carries user = caller',
-  `address` varchar(255) COLLATE utf8mb4_general_ci NOT NULL COMMENT 'sender address as the hub parses From (the <angle> part), lowercased at write; app-validated',
+  `address` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL COMMENT 'sender address as the hub parses From (the <angle> part), lowercased at write; app-validated',
   `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='Comms hub: per-user "always show images from" senders (S2). Remote images are blocked by default (read receipts); a row here makes this user''s view of mail From this address load them. Never a grant, never firm-wide.';
 
@@ -2161,27 +2152,27 @@ DROP TABLE IF EXISTS `mail_messages`;
 CREATE TABLE `mail_messages` (
   `id` bigint unsigned NOT NULL,
   `mailbox_id` int unsigned NOT NULL COMMENT 'mailboxes.id (FK by convention)',
-  `folder` varchar(128) COLLATE utf8mb4_general_ci NOT NULL,
+  `folder` varchar(128) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `uid` int unsigned DEFAULT NULL COMMENT 'IMAP UID within (mailbox, folder, UIDVALIDITY). NULLABLE on purpose: UIDVALIDITY re-key parks rows at NULL, then sets finals (§4.1) - UNIQUE allows many NULLs. Never make NOT NULL',
-  `message_id` varchar(512) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'Message-ID header (brackets stripped). Secondary dedupe + re-key match key for rows WITHOUT provider_id; the emit key under the default emission (mailbox-imap)',
-  `provider_id` varchar(64) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'provider-native message id: Gmail = lowercase hex X-GM-MSGID (the id Gmail web/API/Apps Script use, = gmail-firm email_log.message_id); NULL for hosts without one. Identity for secondary dedupe + re-key where present; the emit key when mailboxes.emit_id_kind = provider (S1-G)',
+  `message_id` varchar(512) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'Message-ID header (brackets stripped). Secondary dedupe + re-key match key for rows WITHOUT provider_id; the emit key under the default emission (mailbox-imap)',
+  `provider_id` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'provider-native message id: Gmail = lowercase hex X-GM-MSGID (the id Gmail web/API/Apps Script use, = gmail-firm email_log.message_id); NULL for hosts without one. Identity for secondary dedupe + re-key where present; the emit key when mailboxes.emit_id_kind = provider (S1-G)',
   `gmail_labels` json DEFAULT NULL COMMENT 'Gmail labels at ingest (S2-L): the X-GM-LABELS list fetched with the message - system labels keep their leading backslash (Inbox, Sent, Important...), user labels as named; [] = none (archived). NULL = not Gmail (no X-GM-EXT-1) or stored before S2-L. A SNAPSHOT: archiving/relabelling in Gmail later is not seen until POST /api/mailboxes/:id/labels/snapshot re-fetches it (sync is S4). Never read by ingest or emission; the hub reads it through in_inbox',
   `in_inbox` tinyint unsigned GENERATED ALWAYS AS (((`folder` = _utf8mb4'INBOX') or (0 <> coalesce(concat(convert(char(92) using utf8mb4),_utf8mb4'Inbox') member of (`gmail_labels`),0)))) VIRTUAL NOT NULL COMMENT 'GENERATED (S2-L): 1 = in the Inbox for the comms hub - folder INBOX, OR the gmail_labels snapshot holds the Inbox system label (backslash + Inbox; CHAR(92) keeps the DDL free of escapes). The ONE definition of Inbox for the hub list, unread and view counts and mark-all (services/mailbox/mailReadService.js); indexed with mailbox_id + date',
-  `in_reply_to` varchar(512) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `in_reply_to` varchar(512) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `thread_key` varchar(512) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'thread root, written by the worker: the first References id, else In-Reply-To, else the message''s own Message-ID (brackets stripped) - the whole rule (OQ1, answered in S2: no subject/participants fallback). The hub groups a thread by it across every readable mailbox',
-  `from_addr` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'first From: address in display form - Name <a@b> (name quoted when it has specials) or bare a@b; emails lowercased',
-  `to_addrs` text COLLATE utf8mb4_general_ci COMMENT 'To: list, comma-separated display forms (see from_addr); NULL when empty',
-  `cc_addrs` text COLLATE utf8mb4_general_ci COMMENT 'Cc: list, comma-separated display forms (see from_addr); NULL when empty',
-  `subject` text COLLATE utf8mb4_general_ci,
+  `from_addr` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'first From: address in display form - Name <a@b> (name quoted when it has specials) or bare a@b; emails lowercased',
+  `to_addrs` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci COMMENT 'To: list, comma-separated display forms (see from_addr); NULL when empty',
+  `cc_addrs` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci COMMENT 'Cc: list, comma-separated display forms (see from_addr); NULL when empty',
+  `subject` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci,
   `date` datetime DEFAULT NULL COMMENT 'Date header, stored UTC (DB pool runs UTC); IMAP INTERNALDATE when the header is missing or outside 1970-2100',
-  `snippet` varchar(512) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `body_text` mediumtext COLLATE utf8mb4_general_ci COMMENT 'inline per D1',
-  `body_html` mediumtext COLLATE utf8mb4_general_ci COMMENT 'inline per D1; untrusted mail HTML - sanitize/sandbox at render (S2)',
+  `snippet` varchar(512) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `body_text` mediumtext CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci COMMENT 'inline per D1',
+  `body_html` mediumtext CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci COMMENT 'inline per D1; untrusted mail HTML - sanitize/sandbox at render (S2)',
   `attachments` json DEFAULT NULL COMMENT '[{part, filename, size, mime, cid?}] - STRUCTURE ONLY, no bytes (D1); every non-body leaf incl. inline images (cid) and attached messages; size = the server''s ENCODED size. Parts stream on demand via GET /api/mailboxes/:id/messages/:mid/parts/:part, grant-checked',
-  `raw_ref` varchar(512) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'reserved for the GCS archival slice (S6): raw .eml pointer. NULL in v1',
-  `gcs_ref` varchar(512) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'reserved for the GCS archival slice (S6): attachments pointer. NULL in v1',
+  `raw_ref` varchar(512) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'reserved for the GCS archival slice (S6): raw .eml pointer. NULL in v1',
+  `gcs_ref` varchar(512) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'reserved for the GCS archival slice (S6): attachments pointer. NULL in v1',
   `size` int unsigned DEFAULT NULL,
-  `flags` set('seen','answered','flagged','draft') COLLATE utf8mb4_general_ci NOT NULL DEFAULT '' COMMENT 'SERVER flags (mailbox-level), mirrored read-mostly. Per-user read state lives in mail_read_state, NOT here; v1 never writes \\Seen back (§4.3)',
+  `flags` set('seen','answered','flagged','draft') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT '' COMMENT 'SERVER flags (mailbox-level), mirrored read-mostly. Per-user read state lives in mail_read_state, NOT here; v1 never writes \\Seen back (§4.3)',
   `log_id` int DEFAULT NULL COMMENT 'log.log_id bridge to the curated log tier / case linking (FK by convention); NULL = not emitted or not logged',
   `ingested_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT 'when the S1 worker stored the row (UTC). The OQ2 2-year pruning axis: `date` is the sender-supplied header and can be absent or lie'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='Tier-1 mailbox store (D1): every message in every ingested folder, grant-controlled. 2-year full-body mirror window (OQ2); the provider + future GCS archive are the long-term record; pruning lands by S4';
@@ -2210,11 +2201,11 @@ CREATE TABLE `mail_sends` (
   `id` int unsigned NOT NULL,
   `mailbox_id` int unsigned NOT NULL COMMENT 'mailboxes.id (FK by convention) - the box sent AS (an alias box keeps its own id; the copy lands in the parent)',
   `user` tinyint NOT NULL COMMENT 'users.user (FK by convention) - who clicked Send; the hub is interactive-only, never 0/automation',
-  `message_id` varchar(512) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'RFC Message-ID, brackets stripped as in mail_messages.message_id; NULL for a Gmail send (Gmail rewrites it - provider_id is the key there)',
-  `provider_id` varchar(64) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'Gmail hex id (lowercase X-GM-MSGID), as mail_messages.provider_id; NULL for SMTP sends',
+  `message_id` varchar(512) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'RFC Message-ID, brackets stripped as in mail_messages.message_id; NULL for a Gmail send (Gmail rewrites it - provider_id is the key there)',
+  `provider_id` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'Gmail hex id (lowercase X-GM-MSGID), as mail_messages.provider_id; NULL for SMTP sends',
   `email_log_id` int DEFAULT NULL COMMENT 'email_log.id of the adapter''s outbound-* row (best-effort lookup; NULL if the fire-and-forget row was not found)',
-  `case_id` varchar(20) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'cases.case_id the sender asked to link the sent copy to (composer Case field); NULL = none asked',
-  `case_link_state` varchar(12) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'app-validated: NULL (no case asked) | pending (mail_sent_case_link job will link the stored copy) | linked (case_log_id set) | failed (job gave up; error alert raised)',
+  `case_id` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'cases.case_id the sender asked to link the sent copy to (composer Case field); NULL = none asked',
+  `case_link_state` varchar(12) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'app-validated: NULL (no case asked) | pending (mail_sent_case_link job will link the stored copy) | linked (case_log_id set) | failed (job gave up; error alert raised)',
   `case_log_id` int DEFAULT NULL COMMENT 'log.log_id the sent copy was linked to (via mailReadService.caseLink, or created at send when no copy will ever be stored)',
   `sent_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT 'UTC (the pool runs UTC) - when the dispatch succeeded'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='S2P: one row per comms-hub send - attribution (Sent by X via YisraCase, design OQ4) + the Case field''s link state. Written post-dispatch, best-effort (a failed insert never fails the send); read by thread/message responses (sent_by).';
@@ -2228,22 +2219,22 @@ CREATE TABLE `mail_sends` (
 DROP TABLE IF EXISTS `mailboxes`;
 CREATE TABLE `mailboxes` (
   `id` int unsigned NOT NULL,
-  `address` varchar(255) COLLATE utf8mb4_general_ci NOT NULL COMMENT 'mailbox email address, lowercased at write; unique (general_ci = case-insensitive)',
-  `domain` varchar(128) COLLATE utf8mb4_general_ci NOT NULL COMMENT 'derived from address at write (part after @) by mailboxService; never client-supplied',
-  `display_name` varchar(128) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `color` varchar(7) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'comms hub colour (S2): #rrggbb lowercase, app-validated; NULL = none chosen (neutral). Set at create (pick, else a random unused public/js/mailboxColor.js PALETTE entry) and editable by SU or the box''s can_manage holders. Cosmetic only - drawn as given where it clears 3:1 on the theme, else a lighter/darker shade of the same hue',
-  `imap_host` varchar(255) COLLATE utf8mb4_general_ci NOT NULL COMMENT 'row data, never a code constant (D2); changing host/port requires re-entering imap_secret in the same write (credential-redirect guard)',
+  `address` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL COMMENT 'mailbox email address, lowercased at write; unique (general_ci = case-insensitive)',
+  `domain` varchar(128) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL COMMENT 'derived from address at write (part after @) by mailboxService; never client-supplied',
+  `display_name` varchar(128) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `color` varchar(7) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'comms hub colour (S2): #rrggbb lowercase, app-validated; NULL = none chosen (neutral). Set at create (pick, else a random unused public/js/mailboxColor.js PALETTE entry) and editable by SU or the box''s can_manage holders. Cosmetic only - drawn as given where it clears 3:1 on the theme, else a lighter/darker shade of the same hue',
+  `imap_host` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL COMMENT 'row data, never a code constant (D2); changing host/port requires re-entering imap_secret in the same write (credential-redirect guard)',
   `imap_port` int NOT NULL DEFAULT '993',
-  `imap_user` varchar(255) COLLATE utf8mb4_general_ci NOT NULL,
-  `imap_secret` text COLLATE utf8mb4_general_ci COMMENT 'ENCv1 ciphertext via lib/credentialCrypto (same pattern as email_credentials.smtp_pass); identity creds or mailbox password per D3 - transport-agnostic. WRITE-ONLY: no API response carries it in any shape (has_secret boolean instead). NULL = not set',
+  `imap_user` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `imap_secret` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci COMMENT 'ENCv1 ciphertext via lib/credentialCrypto (same pattern as email_credentials.smtp_pass); identity creds or mailbox password per D3 - transport-agnostic. WRITE-ONLY: no API response carries it in any shape (has_secret boolean instead). NULL = not set',
   `send_credential_id` int unsigned DEFAULT NULL COMMENT 'email_credentials.id (FK by convention); NULL = read-only mailbox. Grant checks for sending live on interactive routes only, never in emailService (D6)',
   `alias_of` int unsigned DEFAULT NULL COMMENT 'S3-R: parent mailboxes.id (FK by convention). NOT NULL = this row is a send-as ALIAS of that box - the ONE definition of SEND-ONLY (mailReadService.SEND_ONLY_SQL). An alias never polls (ingest stays off, no secret; host/login copied from the parent) and a can_read grant on it reads the alias SLICE of the parent: rows labelled alias_label or carrying the address in From/To/Cc; within it From = the alias is Sent, the rest Inbox. SU may re-point it to another real box (PATCH; host/login re-copied) - never cleared, never set on a full box, never an alias of an alias',
-  `alias_label` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'S3-R: the Gmail label whose filter files this ALIAS box''s mail in the parent (exact spelling, case-sensitive in JSON MEMBER OF - live: IT / Rena / Shoshana). Catches Bcc and list mail the From/To/Cc half of the slice misses. NULL = address matching only. A USER label: a system label (backslash-led, e.g. Inbox) is refused. Meaningful on alias rows (alias_of) only; SU-editable',
+  `alias_label` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'S3-R: the Gmail label whose filter files this ALIAS box''s mail in the parent (exact spelling, case-sensitive in JSON MEMBER OF - live: IT / Rena / Shoshana). Catches Bcc and list mail the From/To/Cc half of the slice misses. NULL = address matching only. A USER label: a system label (backslash-led, e.g. Inbox) is refused. Meaningful on alias rows (alias_of) only; SU-editable',
   `ingest_enabled` tinyint(1) NOT NULL DEFAULT '1',
   `ingest_folders` json DEFAULT NULL COMMENT 'per-folder CONFIG: {"<folder>": {"emit_to_rules": bool, "backfill"?: false}} - which folders the worker polls, which emit into the rules pipeline (§4.1), and (S1-G) backfill:false = store only mail arriving after first sight (no history; decided at first sight; a later re-key stores only above the highest re-mapped UID). Everything polled is stored to mail_messages regardless - except drafts, never stored nor emitted (DRAFT GUARD, §4.1: the IMAP Draft flag OR the Gmail Draft label - Gmail does not flag drafts in All Mail; label patch 2026-10-11). mailboxService always writes it (backfill only when false); v1 default {"INBOX":{"emit_to_rules":true}} (Sent is opt-in, emit_to_rules false - host Sent names vary). Gmail: [Gmail]/All Mail as the ONLY folder (one copy of inbound, sent and labelled mail; sent mail emits too) - never All Mail alongside other folders (every labelled message stored twice)',
   `ingest_state` json DEFAULT NULL COMMENT 'per-folder CURSOR, written only by the ingest worker (services/mailbox/mailboxIngestService.js): {"<folder>": {uidvalidity, last_uid = new-mail cursor, backfill_uid = backlog still to store below it (absent = done), backfill_floor_uid = re-key of a backfill:false folder stores only above this, backfill_emit_after = ISO emit horizon set by a re-key (null = store-only), backfill_skipped_below / backfill_skipped_at = backfill:false baseline, checked_at, errors, backfill_errors, last_error, last_error_at, rekeyed_at, backfill_done_at, no_provider_id_total / last_no_provider_id_at / last_no_provider_id_uid = provider-keyed mail stored but not emitted, drafts_skipped_total = Draft-flagged messages passed over (never stored)}}. First poll baselines at UIDNEXT: existing mail is stored (or skipped), never emitted. UIDVALIDITY change = re-key, never blanket purge (§4.1). A folder dropped from ingest_folders keeps its key here as a breadcrumb. NULL = never ingested',
-  `emit_source_name` varchar(64) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'emission override (S1-G): email_ingest_sources.name the worker emits this mailbox under. NULL (with emit_id_kind NULL) = mailbox-imap. SU PATCH only, set as a pair, must be an ACTIVE source row; decides the email_log dedupe space — see services/mailbox/mailboxIngestService.js EMISSION IDENTITY',
-  `emit_id_kind` varchar(12) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'emission override (S1-G): rfc | provider (app-validated). The (source, message_id) key: rfc = RFC Message-ID, provider = mail_messages.provider_id. A provider mailbox NEVER falls back to the RFC id - a message without provider_id is stored, counted, alerted, never emitted. provider never under mailbox-imap; one provider mailbox per source',
+  `emit_source_name` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'emission override (S1-G): email_ingest_sources.name the worker emits this mailbox under. NULL (with emit_id_kind NULL) = mailbox-imap. SU PATCH only, set as a pair, must be an ACTIVE source row; decides the email_log dedupe space — see services/mailbox/mailboxIngestService.js EMISSION IDENTITY',
+  `emit_id_kind` varchar(12) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'emission override (S1-G): rfc | provider (app-validated). The (source, message_id) key: rfc = RFC Message-ID, provider = mail_messages.provider_id. A provider mailbox NEVER falls back to the RFC id - a message without provider_id is stored, counted, alerted, never emitted. provider never under mailbox-imap; one provider mailbox per source',
   `active` tinyint(1) NOT NULL DEFAULT '1' COMMENT 'no hard delete - mail_messages rows reference mailboxes forever; 0 = deactivated',
   `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
@@ -2257,27 +2248,27 @@ CREATE TABLE `mailboxes` (
 
 DROP TABLE IF EXISTS `master_contacts___leads_list___phil_tirone`;
 CREATE TABLE `master_contacts___leads_list___phil_tirone` (
-  `COL 1` varchar(5) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `COL 2` varchar(28) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `COL 3` varchar(11) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `COL 4` varchar(26) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `COL 5` varchar(14) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `COL 6` varchar(15) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `COL 7` varchar(17) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `COL 8` varchar(38) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `COL 9` varchar(8) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `COL 10` varchar(3) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `COL 11` varchar(8) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `COL 12` varchar(14) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `COL 13` varchar(14) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `COL 14` varchar(4) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `COL 15` varchar(5) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `COL 16` varchar(7) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `COL 17` varchar(4) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `COL 18` varchar(25) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `COL 19` varchar(63) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `COL 20` varchar(9) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `COL 21` varchar(5) COLLATE utf8mb4_general_ci DEFAULT NULL
+  `COL 1` varchar(5) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `COL 2` varchar(28) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `COL 3` varchar(11) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `COL 4` varchar(26) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `COL 5` varchar(14) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `COL 6` varchar(15) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `COL 7` varchar(17) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `COL 8` varchar(38) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `COL 9` varchar(8) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `COL 10` varchar(3) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `COL 11` varchar(8) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `COL 12` varchar(14) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `COL 13` varchar(14) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `COL 14` varchar(4) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `COL 15` varchar(5) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `COL 16` varchar(7) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `COL 17` varchar(4) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `COL 18` varchar(25) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `COL 19` varchar(63) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `COL 20` varchar(9) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `COL 21` varchar(5) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- --------------------------------------------------------
@@ -2311,14 +2302,14 @@ CREATE TABLE `mytable` (
 DROP TABLE IF EXISTS `pages`;
 CREATE TABLE `pages` (
   `id` int unsigned NOT NULL,
-  `slug` varchar(100) COLLATE utf8mb4_general_ci NOT NULL,
-  `host` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `path` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `html` mediumtext COLLATE utf8mb4_general_ci NOT NULL,
-  `status` enum('draft','live') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'draft',
-  `hook_slug` varchar(100) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `thankyou_url` varchar(500) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `meta_title` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `slug` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `host` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `path` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `html` mediumtext CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `status` enum('draft','live') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'draft',
+  `hook_slug` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `thankyou_url` varchar(500) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `meta_title` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
@@ -2347,9 +2338,9 @@ CREATE TABLE `payment_failed` (
 DROP TABLE IF EXISTS `phase_c_backup_20260526`;
 CREATE TABLE `phase_c_backup_20260526` (
   `log_id` int NOT NULL,
-  `orig_log_link_type` varchar(50) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `orig_log_link_id` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `orig_log_link` varchar(30) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `orig_log_link_type` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `orig_log_link_id` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `orig_log_link` varchar(30) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `backed_up_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
@@ -2370,7 +2361,7 @@ CREATE TABLE `phone_event_log` (
   `from_number` varchar(32) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `to_number` varchar(32) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `other_party` varchar(32) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `line_number` varchar(32) COLLATE utf8mb4_general_ci GENERATED ALWAYS AS (if((`direction` = _utf8mb4'incoming'),`to_number`,`from_number`)) VIRTUAL COMMENT 'S-PH: the firm line this event belongs to (incoming → to_number, else from_number) - equal to raw_extra.line on every live row. Joins phone_lines.phone_number by plain equality; no match = an orphan (a number that is not a phone_lines row), invisible in the Comms phone tab. Indexed with processed_at (idx_phone_event_line). Code names this column directly (generated-column substitution for the base expression is collation-fragile) and forces the index on per-line walks',
+  `line_number` varchar(32) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci GENERATED ALWAYS AS (if((`direction` = _utf8mb4'incoming'),`to_number`,`from_number`)) VIRTUAL COMMENT 'S-PH: the firm line this event belongs to (incoming → to_number, else from_number) - equal to raw_extra.line on every live row. Joins phone_lines.phone_number by plain equality; no match = an orphan (a number that is not a phone_lines row), invisible in the Comms phone tab. Indexed with processed_at (idx_phone_event_line). Code names this column directly (generated-column substitution for the base expression is collation-fragile) and forces the index on per-line walks',
   `body` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci,
   `suppressed` tinyint(1) NOT NULL DEFAULT '0',
   `suppressed_by` json DEFAULT NULL,
@@ -2389,7 +2380,7 @@ DROP TABLE IF EXISTS `phone_ingest_executions`;
 CREATE TABLE `phone_ingest_executions` (
   `id` bigint unsigned NOT NULL,
   `event_log_id` int unsigned DEFAULT NULL,
-  `status` enum('logged','suppressed','error','duplicate') COLLATE utf8mb4_general_ci NOT NULL,
+  `status` enum('logged','suppressed','error','duplicate') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `log_id` int DEFAULT NULL,
   `error` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci,
   `metadata` json DEFAULT NULL,
@@ -2408,7 +2399,7 @@ DROP TABLE IF EXISTS `phone_ingest_rule_actions`;
 CREATE TABLE `phone_ingest_rule_actions` (
   `id` int unsigned NOT NULL,
   `rule_id` int unsigned NOT NULL,
-  `name` varchar(100) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `name` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `position` int NOT NULL DEFAULT '0',
   `active` tinyint(1) NOT NULL DEFAULT '1',
   `action_type` enum('workflow','sequence','hook','internal_function','http') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
@@ -2448,11 +2439,11 @@ CREATE TABLE `phone_ingest_rules` (
 DROP TABLE IF EXISTS `phone_lines`;
 CREATE TABLE `phone_lines` (
   `id` tinyint unsigned NOT NULL,
-  `phone_number` char(10) COLLATE utf8mb4_general_ci NOT NULL,
+  `phone_number` char(10) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `provider` enum('ringcentral','quo') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
-  `display_name` varchar(50) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `display_name` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `active` tinyint(1) NOT NULL DEFAULT '1',
-  `provider_id` varchar(50) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `provider_id` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `credential_id` int NOT NULL,
   `mms_capable` tinyint(1) NOT NULL DEFAULT '0'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
@@ -2488,17 +2479,17 @@ DROP TABLE IF EXISTS `pipeline_stage_requirements`;
 CREATE TABLE `pipeline_stage_requirements` (
   `id` int unsigned NOT NULL,
   `stage_id` int unsigned NOT NULL,
-  `requirement_key` varchar(60) COLLATE utf8mb4_general_ci NOT NULL,
-  `internal_label` varchar(120) COLLATE utf8mb4_general_ci NOT NULL,
-  `client_label` varchar(120) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `requirement_key` varchar(60) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `internal_label` varchar(120) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `client_label` varchar(120) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `client_visible` tinyint(1) NOT NULL DEFAULT '1',
   `required` tinyint(1) NOT NULL DEFAULT '1',
-  `owner` enum('client','staff','system') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'client',
-  `kind` enum('task','event') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'task',
-  `hint` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `effort` varchar(30) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `group_label` varchar(60) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `detector` varchar(30) COLLATE utf8mb4_general_ci NOT NULL,
+  `owner` enum('client','staff','system') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'client',
+  `kind` enum('task','event') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'task',
+  `hint` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `effort` varchar(30) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `group_label` varchar(60) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `detector` varchar(30) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `detector_config` json DEFAULT NULL,
   `sort_order` int NOT NULL DEFAULT '0',
   `active` tinyint(1) NOT NULL DEFAULT '1',
@@ -2517,14 +2508,14 @@ CREATE TABLE `pipeline_stages` (
   `id` int unsigned NOT NULL,
   `template_id` int unsigned NOT NULL,
   `stage_number` int NOT NULL,
-  `stage_key` varchar(50) COLLATE utf8mb4_general_ci NOT NULL,
-  `internal_label` varchar(100) COLLATE utf8mb4_general_ci NOT NULL,
-  `client_label` varchar(100) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `case_stage` enum('Open','Pending','Filed','Concluded','Closed') COLLATE utf8mb4_general_ci NOT NULL,
+  `stage_key` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `internal_label` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `client_label` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `case_stage` enum('Open','Pending','Filed','Concluded','Closed') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `client_visible` tinyint(1) NOT NULL DEFAULT '1',
   `is_terminal` tinyint(1) NOT NULL DEFAULT '0',
-  `lane` enum('main','offramp') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'main' COMMENT 'R1 projection axis: main = happy path (feeds getPipeline.upcoming); offramp = reachable from anywhere, never projected as next. Position/history are lane-agnostic.',
-  `default_rec` varchar(128) COLLATE utf8mb4_general_ci NOT NULL DEFAULT '',
+  `lane` enum('main','offramp') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'main' COMMENT 'R1 projection axis: main = happy path (feeds getPipeline.upcoming); offramp = reachable from anywhere, never projected as next. Position/history are lane-agnostic.',
+  `default_rec` varchar(128) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT '',
   `config` json DEFAULT NULL,
   `active` tinyint(1) NOT NULL DEFAULT '1',
   `created_at` datetime DEFAULT CURRENT_TIMESTAMP,
@@ -2540,12 +2531,12 @@ CREATE TABLE `pipeline_stages` (
 DROP TABLE IF EXISTS `pipeline_templates`;
 CREATE TABLE `pipeline_templates` (
   `id` int unsigned NOT NULL,
-  `name` varchar(100) COLLATE utf8mb4_general_ci NOT NULL,
-  `case_type` varchar(40) COLLATE utf8mb4_general_ci NOT NULL DEFAULT '',
-  `case_subtype` varchar(40) COLLATE utf8mb4_general_ci NOT NULL DEFAULT '',
-  `role` enum('intake','case') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'case',
+  `name` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `case_type` varchar(40) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT '',
+  `case_subtype` varchar(40) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT '',
+  `role` enum('intake','case') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'case',
   `is_default` tinyint(1) NOT NULL DEFAULT '0',
-  `description` text COLLATE utf8mb4_general_ci,
+  `description` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci,
   `active` tinyint(1) NOT NULL DEFAULT '1',
   `created_at` datetime DEFAULT CURRENT_TIMESTAMP,
   `updated_at` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
@@ -2561,13 +2552,13 @@ DROP TABLE IF EXISTS `portal_access_log`;
 CREATE TABLE `portal_access_log` (
   `id` int unsigned NOT NULL,
   `contact_id` int unsigned DEFAULT NULL,
-  `case_id` varchar(8) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `route` varchar(255) COLLATE utf8mb4_general_ci NOT NULL,
-  `method` varchar(8) COLLATE utf8mb4_general_ci NOT NULL DEFAULT '',
+  `case_id` varchar(8) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `route` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `method` varchar(8) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT '',
   `status` smallint DEFAULT NULL,
-  `event` varchar(32) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `event` varchar(32) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `meta` json DEFAULT NULL,
-  `ip` varchar(45) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `ip` varchar(45) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
@@ -2580,15 +2571,15 @@ CREATE TABLE `portal_access_log` (
 DROP TABLE IF EXISTS `portal_cards`;
 CREATE TABLE `portal_cards` (
   `id` int unsigned NOT NULL,
-  `card_key` varchar(50) COLLATE utf8mb4_general_ci NOT NULL,
-  `title` varchar(100) COLLATE utf8mb4_general_ci NOT NULL,
-  `body_type` enum('template','coded') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'template',
-  `body_template` text COLLATE utf8mb4_general_ci,
-  `coded_key` varchar(50) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `link_url` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `link_label` varchar(50) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `card_key` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `title` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `body_type` enum('template','coded') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'template',
+  `body_template` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci,
+  `coded_key` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `link_url` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `link_label` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `conditions` json DEFAULT NULL,
-  `placement` varchar(20) COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'case',
+  `placement` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'case',
   `sort` int NOT NULL DEFAULT '0',
   `active` tinyint(1) NOT NULL DEFAULT '1',
   `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -2605,13 +2596,13 @@ DROP TABLE IF EXISTS `portal_login_pins`;
 CREATE TABLE `portal_login_pins` (
   `id` int unsigned NOT NULL,
   `contact_id` int unsigned NOT NULL,
-  `channel` enum('sms','email') COLLATE utf8mb4_general_ci NOT NULL,
-  `destination` varchar(100) COLLATE utf8mb4_general_ci NOT NULL,
-  `pin_hash` char(64) COLLATE utf8mb4_general_ci NOT NULL,
+  `channel` enum('sms','email') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `destination` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `pin_hash` char(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `expires_at` datetime NOT NULL,
   `attempts` tinyint unsigned NOT NULL DEFAULT '0',
   `consumed_at` datetime DEFAULT NULL,
-  `ip` varchar(45) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `ip` varchar(45) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
@@ -2631,7 +2622,7 @@ CREATE TABLE `query_log` (
   `query` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci,
   `ip_address` varchar(45) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `user_agent` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci,
-  `auth_type` enum('jwt','api key','password','unknown') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'unknown'
+  `auth_type` enum('jwt','api key','password','unknown') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'unknown'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- --------------------------------------------------------
@@ -2643,15 +2634,15 @@ CREATE TABLE `query_log` (
 DROP TABLE IF EXISTS `rc_messages_log`;
 CREATE TABLE `rc_messages_log` (
   `id` int NOT NULL,
-  `type` enum('sms','mms') COLLATE utf8mb4_general_ci NOT NULL,
-  `from_number` varchar(20) COLLATE utf8mb4_general_ci NOT NULL,
-  `to_number` varchar(20) COLLATE utf8mb4_general_ci NOT NULL,
-  `message` text COLLATE utf8mb4_general_ci,
-  `attachment_filename` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `attachment_url` text COLLATE utf8mb4_general_ci,
-  `status` enum('success','error') COLLATE utf8mb4_general_ci NOT NULL,
+  `type` enum('sms','mms') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `from_number` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `to_number` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `message` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci,
+  `attachment_filename` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `attachment_url` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci,
+  `status` enum('success','error') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `rc_response` json DEFAULT NULL,
-  `error_message` text COLLATE utf8mb4_general_ci,
+  `error_message` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci,
   `timestamp` timestamp NULL DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
@@ -2664,14 +2655,14 @@ CREATE TABLE `rc_messages_log` (
 DROP TABLE IF EXISTS `rc_sms_log`;
 CREATE TABLE `rc_sms_log` (
   `id` bigint unsigned NOT NULL,
-  `from_number` varchar(20) COLLATE utf8mb4_general_ci NOT NULL,
-  `to_number` varchar(20) COLLATE utf8mb4_general_ci NOT NULL,
-  `message` text COLLATE utf8mb4_general_ci NOT NULL,
-  `status` enum('success','failed') COLLATE utf8mb4_general_ci NOT NULL,
-  `error` text COLLATE utf8mb4_general_ci,
+  `from_number` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `to_number` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `message` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `status` enum('success','failed') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `error` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci,
   `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
-  `rc_id` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `sent_by` varchar(50) COLLATE utf8mb4_general_ci NOT NULL
+  `rc_id` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `sent_by` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- --------------------------------------------------------
@@ -2683,16 +2674,16 @@ CREATE TABLE `rc_sms_log` (
 DROP TABLE IF EXISTS `readonly_api_keys`;
 CREATE TABLE `readonly_api_keys` (
   `id` int NOT NULL,
-  `key_hash` char(64) COLLATE utf8mb4_general_ci NOT NULL,
-  `key_prefix` varchar(16) COLLATE utf8mb4_general_ci NOT NULL,
-  `label` varchar(255) COLLATE utf8mb4_general_ci NOT NULL,
+  `key_hash` char(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `key_prefix` varchar(16) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `label` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `created_by` int NOT NULL,
   `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `expires_at` datetime NOT NULL,
   `revoked_at` datetime DEFAULT NULL,
   `last_used_at` datetime DEFAULT NULL,
   `use_count` int NOT NULL DEFAULT '0',
-  `ip_allowlist` text COLLATE utf8mb4_general_ci
+  `ip_allowlist` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- --------------------------------------------------------
@@ -2706,14 +2697,14 @@ CREATE TABLE `readonly_query_log` (
   `id` bigint NOT NULL,
   `api_key_id` int NOT NULL,
   `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  `ip` varchar(45) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `user_agent` varchar(512) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `sql_text` mediumtext COLLATE utf8mb4_general_ci NOT NULL,
+  `ip` varchar(45) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `user_agent` varchar(512) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `sql_text` mediumtext CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `params_json` json DEFAULT NULL,
   `row_count` int DEFAULT NULL,
   `duration_ms` int DEFAULT NULL,
-  `status` varchar(40) COLLATE utf8mb4_general_ci NOT NULL,
-  `error_text` text COLLATE utf8mb4_general_ci
+  `status` varchar(40) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `error_text` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- --------------------------------------------------------
@@ -2725,9 +2716,9 @@ CREATE TABLE `readonly_query_log` (
 DROP TABLE IF EXISTS `redirects`;
 CREATE TABLE `redirects` (
   `id` int unsigned NOT NULL,
-  `slug` varchar(64) COLLATE utf8mb4_general_ci NOT NULL,
-  `target_url` text COLLATE utf8mb4_general_ci NOT NULL,
-  `label` varchar(200) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `slug` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `target_url` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `label` varchar(200) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `active` tinyint(1) NOT NULL DEFAULT '1',
   `hit_count` int unsigned NOT NULL DEFAULT '0',
   `expires_at` datetime DEFAULT NULL,
@@ -2747,21 +2738,21 @@ CREATE TABLE `report_definition_versions` (
   `id` int unsigned NOT NULL,
   `report_id` int unsigned NOT NULL,
   `version_no` int unsigned NOT NULL,
-  `report_key` varchar(60) COLLATE utf8mb4_general_ci NOT NULL DEFAULT '',
-  `title` varchar(150) COLLATE utf8mb4_general_ci NOT NULL DEFAULT '',
-  `description` text COLLATE utf8mb4_general_ci,
-  `category` varchar(40) COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'General',
-  `kind` enum('report','view') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'report',
-  `visibility` enum('private','shared') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'shared',
-  `sql_text` text COLLATE utf8mb4_general_ci NOT NULL,
+  `report_key` varchar(60) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT '',
+  `title` varchar(150) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT '',
+  `description` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci,
+  `category` varchar(40) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'General',
+  `kind` enum('report','view') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'report',
+  `visibility` enum('private','shared') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'shared',
+  `sql_text` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `params` json DEFAULT NULL,
   `columns_meta` json DEFAULT NULL,
   `viz` json DEFAULT NULL,
   `caveats` json DEFAULT NULL,
   `row_limit` int unsigned NOT NULL DEFAULT '1000',
   `is_active` tinyint(1) NOT NULL DEFAULT '1',
-  `source` varchar(16) COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'manual',
-  `change_note` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `source` varchar(16) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'manual',
+  `change_note` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `snapshot_by` int DEFAULT NULL,
   `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
@@ -2775,13 +2766,13 @@ CREATE TABLE `report_definition_versions` (
 DROP TABLE IF EXISTS `report_definitions`;
 CREATE TABLE `report_definitions` (
   `id` int unsigned NOT NULL,
-  `report_key` varchar(60) COLLATE utf8mb4_general_ci NOT NULL,
-  `title` varchar(150) COLLATE utf8mb4_general_ci NOT NULL,
-  `description` text COLLATE utf8mb4_general_ci,
-  `category` varchar(40) COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'General',
-  `kind` enum('report','view') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'report',
-  `visibility` enum('private','shared') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'shared',
-  `sql_text` text COLLATE utf8mb4_general_ci NOT NULL,
+  `report_key` varchar(60) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `title` varchar(150) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `description` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci,
+  `category` varchar(40) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'General',
+  `kind` enum('report','view') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'report',
+  `visibility` enum('private','shared') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'shared',
+  `sql_text` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `params` json DEFAULT NULL,
   `columns_meta` json DEFAULT NULL,
   `viz` json DEFAULT NULL,
@@ -2790,7 +2781,7 @@ CREATE TABLE `report_definitions` (
   `is_active` tinyint(1) NOT NULL DEFAULT '1',
   `created_by` int DEFAULT NULL,
   `updated_by` int DEFAULT NULL,
-  `source` varchar(16) COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'manual',
+  `source` varchar(16) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'manual',
   `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   `is_locked` tinyint(1) NOT NULL DEFAULT '0'
@@ -2806,14 +2797,14 @@ DROP TABLE IF EXISTS `report_runs`;
 CREATE TABLE `report_runs` (
   `id` bigint unsigned NOT NULL,
   `report_id` int unsigned DEFAULT NULL,
-  `report_key` varchar(60) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `report_key` varchar(60) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `run_by` int DEFAULT NULL,
   `params_json` json DEFAULT NULL,
-  `sql_text` text COLLATE utf8mb4_general_ci,
+  `sql_text` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci,
   `row_count` int DEFAULT NULL,
   `duration_ms` int DEFAULT NULL,
-  `status` varchar(40) COLLATE utf8mb4_general_ci NOT NULL,
-  `error_text` text COLLATE utf8mb4_general_ci,
+  `status` varchar(40) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `error_text` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci,
   `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
@@ -2839,9 +2830,9 @@ CREATE TABLE `ringcentral_temp` (
 DROP TABLE IF EXISTS `rw_scratch`;
 CREATE TABLE `rw_scratch` (
   `id` bigint NOT NULL,
-  `ns` varchar(64) COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'default',
-  `k` varchar(64) COLLATE utf8mb4_general_ci NOT NULL,
-  `v` mediumtext COLLATE utf8mb4_general_ci,
+  `ns` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'default',
+  `k` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `v` mediumtext CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci,
   `meta` json DEFAULT NULL,
   `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
@@ -2856,14 +2847,14 @@ CREATE TABLE `rw_scratch` (
 DROP TABLE IF EXISTS `scheduled_jobs`;
 CREATE TABLE `scheduled_jobs` (
   `id` bigint NOT NULL,
-  `type` enum('one_time','recurring','workflow_resume','sequence_step','hook_retry') COLLATE utf8mb4_general_ci NOT NULL,
+  `type` enum('one_time','recurring','workflow_resume','sequence_step','hook_retry') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `scheduled_time` datetime NOT NULL,
-  `status` enum('pending','running','completed','failed','cancelled') COLLATE utf8mb4_general_ci DEFAULT 'pending',
+  `status` enum('pending','running','completed','failed','cancelled') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT 'pending',
   `active` tinyint(1) NOT NULL DEFAULT '1',
-  `name` varchar(200) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `description` text COLLATE utf8mb4_general_ci,
+  `name` varchar(200) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `description` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci,
   `data` json NOT NULL,
-  `recurrence_rule` varchar(100) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `recurrence_rule` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `workflow_execution_id` bigint DEFAULT NULL,
   `sequence_enrollment_id` bigint unsigned DEFAULT NULL,
   `attempts` int DEFAULT '0',
@@ -2874,7 +2865,7 @@ CREATE TABLE `scheduled_jobs` (
   `created_at` datetime DEFAULT CURRENT_TIMESTAMP,
   `updated_at` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   `execution_count` int NOT NULL DEFAULT '0',
-  `idempotency_key` varchar(100) COLLATE utf8mb4_general_ci DEFAULT NULL
+  `idempotency_key` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- --------------------------------------------------------
@@ -2955,10 +2946,10 @@ CREATE TABLE `sequence_enrollments` (
   `appt_id` int DEFAULT NULL,
   `signing_request_id` int unsigned DEFAULT NULL,
   `trigger_data` json DEFAULT NULL,
-  `status` enum('active','completed','cancelled') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'active',
+  `status` enum('active','completed','cancelled') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'active',
   `current_step` int unsigned DEFAULT '1',
   `total_steps` int unsigned NOT NULL DEFAULT '0',
-  `cancel_reason` varchar(200) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `cancel_reason` varchar(200) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `enrolled_at` datetime DEFAULT CURRENT_TIMESTAMP,
   `completed_at` datetime DEFAULT NULL,
   `updated_at` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -2977,11 +2968,11 @@ CREATE TABLE `sequence_step_log` (
   `enrollment_id` bigint unsigned NOT NULL,
   `step_id` int unsigned NOT NULL,
   `step_number` int NOT NULL,
-  `status` enum('sent','skipped','failed') COLLATE utf8mb4_general_ci NOT NULL,
-  `skip_reason` varchar(200) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `status` enum('sent','skipped','failed') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `skip_reason` varchar(200) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `action_config_resolved` json DEFAULT NULL,
   `output_data` json DEFAULT NULL,
-  `error_message` text COLLATE utf8mb4_general_ci,
+  `error_message` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci,
   `duration_ms` int DEFAULT '0',
   `scheduled_at` datetime DEFAULT NULL,
   `executed_at` datetime DEFAULT CURRENT_TIMESTAMP
@@ -3017,9 +3008,9 @@ CREATE TABLE `sequence_steps` (
 
 DROP TABLE IF EXISTS `sequence_template_types`;
 CREATE TABLE `sequence_template_types` (
-  `type` varchar(50) COLLATE utf8mb4_general_ci NOT NULL,
+  `type` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `priority_fields` json NOT NULL,
-  `description` text COLLATE utf8mb4_general_ci,
+  `description` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci,
   `active` tinyint(1) NOT NULL DEFAULT '1',
   `created_at` datetime DEFAULT CURRENT_TIMESTAMP,
   `updated_at` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
@@ -3035,13 +3026,13 @@ DROP TABLE IF EXISTS `sequence_template_versions`;
 CREATE TABLE `sequence_template_versions` (
   `template_id` int unsigned NOT NULL,
   `version` int NOT NULL,
-  `name` varchar(100) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `type` varchar(50) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `name` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `type` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `template_condition` json DEFAULT NULL,
-  `description` text COLLATE utf8mb4_general_ci,
+  `description` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci,
   `test_input` json DEFAULT NULL,
   `published_at` datetime DEFAULT NULL,
-  `published_by` varchar(100) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `published_by` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `retired_at` datetime DEFAULT NULL,
   `created_at` datetime DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
@@ -3055,16 +3046,16 @@ CREATE TABLE `sequence_template_versions` (
 DROP TABLE IF EXISTS `sequence_templates`;
 CREATE TABLE `sequence_templates` (
   `id` int unsigned NOT NULL,
-  `name` varchar(100) COLLATE utf8mb4_general_ci NOT NULL,
-  `type` varchar(50) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `name` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `type` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `filters` json DEFAULT NULL,
   `condition` json DEFAULT NULL,
-  `description` text COLLATE utf8mb4_general_ci,
+  `description` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci,
   `active` tinyint(1) NOT NULL DEFAULT '1',
   `created_at` datetime DEFAULT CURRENT_TIMESTAMP,
   `updated_at` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   `test_input` json DEFAULT NULL,
-  `capture_mode` enum('off','capturing') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'off',
+  `capture_mode` enum('off','capturing') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'off',
   `captured_input` json DEFAULT NULL,
   `captured_at` datetime DEFAULT NULL,
   `current_version` int NOT NULL DEFAULT '0',
@@ -3176,10 +3167,10 @@ CREATE TABLE `signing_requests` (
 DROP TABLE IF EXISTS `streak_boards`;
 CREATE TABLE `streak_boards` (
   `id` int unsigned NOT NULL,
-  `slug` varchar(64) COLLATE utf8mb4_general_ci NOT NULL COMMENT 'url key: /streak?b=<slug>',
-  `title` varchar(160) COLLATE utf8mb4_general_ci NOT NULL,
-  `description` varchar(500) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `tz` varchar(64) COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'America/Detroit' COMMENT 'IANA tz that defines when a day rolls over',
+  `slug` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL COMMENT 'url key: /streak?b=<slug>',
+  `title` varchar(160) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `description` varchar(500) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `tz` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'America/Detroit' COMMENT 'IANA tz that defines when a day rolls over',
   `members` json NOT NULL COMMENT '[{"u":"fred","name":"Fred","h":"<bcrypt>"}]',
   `archived` tinyint(1) NOT NULL DEFAULT '0',
   `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -3195,10 +3186,10 @@ DROP TABLE IF EXISTS `streak_checkins`;
 CREATE TABLE `streak_checkins` (
   `id` int unsigned NOT NULL,
   `board_id` int unsigned NOT NULL,
-  `username` varchar(32) COLLATE utf8mb4_general_ci NOT NULL COMMENT 'matches streak_boards.members[].u — deliberately not an FK',
+  `username` varchar(32) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL COMMENT 'matches streak_boards.members[].u — deliberately not an FK',
   `checkin_date` date NOT NULL COMMENT 'the day being credited (board-local)',
   `logged_date` date NOT NULL COMMENT 'board-local day the row was actually created; logged_date > checkin_date === ticked late',
-  `note` varchar(280) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `note` varchar(280) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT 'audit only — no logic reads this'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
@@ -3226,20 +3217,20 @@ CREATE TABLE `streak_messages` (
 DROP TABLE IF EXISTS `system_alerts`;
 CREATE TABLE `system_alerts` (
   `id` bigint unsigned NOT NULL,
-  `source` varchar(50) COLLATE utf8mb4_general_ci NOT NULL,
-  `kind` varchar(100) COLLATE utf8mb4_general_ci NOT NULL,
-  `group_key` varchar(200) COLLATE utf8mb4_general_ci NOT NULL,
-  `severity` enum('info','warning','error','critical') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'error',
-  `title` varchar(500) COLLATE utf8mb4_general_ci NOT NULL,
-  `message` text COLLATE utf8mb4_general_ci,
+  `source` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `kind` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `group_key` varchar(200) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `severity` enum('info','warning','error','critical') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'error',
+  `title` varchar(500) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `message` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci,
   `context` json DEFAULT NULL,
-  `ref_table` varchar(100) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `ref_table` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `ref_id` bigint DEFAULT NULL,
-  `dedup_key` varchar(200) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `dedup_key` varchar(200) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `digested_at` datetime DEFAULT NULL,
   `resolved_at` datetime DEFAULT NULL,
   `acked_at` datetime DEFAULT NULL,
-  `acked_by` varchar(100) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `acked_by` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
@@ -3252,20 +3243,20 @@ CREATE TABLE `system_alerts` (
 DROP TABLE IF EXISTS `tasks`;
 CREATE TABLE `tasks` (
   `task_id` int unsigned NOT NULL,
-  `task_status` enum('Pending','Due Today','Overdue','Completed','Canceled','Deleted') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'Pending',
+  `task_status` enum('Pending','Due Today','Overdue','Completed','Canceled','Deleted') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'Pending',
   `task_from` tinyint unsigned NOT NULL,
   `task_to` tinyint unsigned NOT NULL,
   `task_date` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `task_start` date DEFAULT NULL,
   `task_due` date DEFAULT NULL,
   `task_link` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
-  `task_link_type` enum('contact','case','appt','bill','event') COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `task_link_type` enum('contact','case','appt','bill','event') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `task_link_id` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `task_title` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `task_desc` varchar(1000) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `task_notification` tinyint(1) NOT NULL DEFAULT '0' COMMENT 'notify task assigner upon completion?',
-  `task_source` varchar(50) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `task_dedupe_key` varchar(64) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `task_source` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `task_dedupe_key` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `task_last_update` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `task_due_job_id` bigint DEFAULT NULL,
   `task_start_job_id` bigint DEFAULT NULL,
@@ -3301,10 +3292,10 @@ DELIMITER ;
 DROP TABLE IF EXISTS `temp_contacts`;
 CREATE TABLE `temp_contacts` (
   `tc_id` int NOT NULL,
-  `tc_fname` varchar(64) COLLATE utf8mb4_general_ci NOT NULL,
-  `tc_lname` varchar(64) COLLATE utf8mb4_general_ci NOT NULL,
-  `tc_phone` varchar(64) COLLATE utf8mb4_general_ci NOT NULL,
-  `tc_email` varchar(64) COLLATE utf8mb4_general_ci NOT NULL
+  `tc_fname` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `tc_lname` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `tc_phone` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `tc_email` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- --------------------------------------------------------
@@ -3431,8 +3422,8 @@ DROP TABLE IF EXISTS `tool_versions`;
 CREATE TABLE `tool_versions` (
   `id` int NOT NULL,
   `tool_id` int NOT NULL,
-  `html` mediumtext COLLATE utf8mb4_general_ci NOT NULL,
-  `saved_by` varchar(100) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `html` mediumtext CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `saved_by` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `saved_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
@@ -3445,11 +3436,11 @@ CREATE TABLE `tool_versions` (
 DROP TABLE IF EXISTS `tools`;
 CREATE TABLE `tools` (
   `id` int NOT NULL,
-  `tool_key` varchar(80) COLLATE utf8mb4_general_ci NOT NULL,
-  `title` varchar(200) COLLATE utf8mb4_general_ci NOT NULL DEFAULT '',
-  `status` enum('draft','live') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'draft',
-  `html` mediumtext COLLATE utf8mb4_general_ci NOT NULL,
-  `updated_by` varchar(100) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `tool_key` varchar(80) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `title` varchar(200) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT '',
+  `status` enum('draft','live') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'draft',
+  `html` mediumtext CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `updated_by` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
@@ -3465,7 +3456,7 @@ CREATE TABLE `trigger_execution_rules` (
   `id` bigint unsigned NOT NULL,
   `execution_id` bigint unsigned NOT NULL,
   `rule_id` int unsigned NOT NULL,
-  `rule_name` varchar(255) COLLATE utf8mb4_general_ci NOT NULL,
+  `rule_name` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `action_count` int NOT NULL DEFAULT '0',
   `failed_count` int NOT NULL DEFAULT '0',
   `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -3480,15 +3471,15 @@ CREATE TABLE `trigger_execution_rules` (
 DROP TABLE IF EXISTS `trigger_executions`;
 CREATE TABLE `trigger_executions` (
   `id` bigint unsigned NOT NULL,
-  `event_type` varchar(64) COLLATE utf8mb4_general_ci NOT NULL,
+  `event_type` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `contact_id` int DEFAULT NULL,
-  `case_id` varchar(50) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `case_id` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `depth` tinyint NOT NULL DEFAULT '0',
-  `status` enum('matched','partial','no_match','no_rules','depth_capped','error') COLLATE utf8mb4_general_ci NOT NULL,
+  `status` enum('matched','partial','no_match','no_rules','depth_capped','error') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `rules_matched` int NOT NULL DEFAULT '0',
   `outcomes` json DEFAULT NULL,
   `envelope` json DEFAULT NULL,
-  `error` text COLLATE utf8mb4_general_ci,
+  `error` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci,
   `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
@@ -3502,10 +3493,10 @@ DROP TABLE IF EXISTS `trigger_rule_actions`;
 CREATE TABLE `trigger_rule_actions` (
   `id` int unsigned NOT NULL,
   `rule_id` int unsigned NOT NULL,
-  `name` varchar(100) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `name` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `position` int NOT NULL DEFAULT '0',
   `active` tinyint(1) NOT NULL DEFAULT '1',
-  `action_type` enum('workflow','sequence','internal_function','http','hook') COLLATE utf8mb4_general_ci NOT NULL,
+  `action_type` enum('workflow','sequence','internal_function','http','hook') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `config` json NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
@@ -3518,15 +3509,15 @@ CREATE TABLE `trigger_rule_actions` (
 DROP TABLE IF EXISTS `trigger_rules`;
 CREATE TABLE `trigger_rules` (
   `id` int unsigned NOT NULL,
-  `event_type` varchar(64) COLLATE utf8mb4_general_ci NOT NULL,
-  `name` varchar(255) COLLATE utf8mb4_general_ci NOT NULL,
-  `description` text COLLATE utf8mb4_general_ci,
+  `event_type` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `name` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `description` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci,
   `active` tinyint(1) NOT NULL DEFAULT '1',
   `position` int NOT NULL DEFAULT '0',
   `min_interval_s` int NOT NULL DEFAULT '0',
-  `match_mode` enum('conditions','code') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'conditions',
+  `match_mode` enum('conditions','code') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'conditions',
   `match_config` json DEFAULT NULL,
-  `transform_mode` enum('passthrough','mapper','code') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'passthrough',
+  `transform_mode` enum('passthrough','mapper','code') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'passthrough',
   `transform_config` json DEFAULT NULL,
   `match_count` int NOT NULL DEFAULT '0',
   `last_matched_at` datetime DEFAULT NULL,
@@ -3567,7 +3558,7 @@ DROP TABLE IF EXISTS `users`;
 CREATE TABLE `users` (
   `username` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `user_type` tinyint(1) NOT NULL DEFAULT '1',
-  `user_real_name` varchar(64) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `user_real_name` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `user_name` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `user_fname` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `user_lname` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
@@ -3575,21 +3566,21 @@ CREATE TABLE `users` (
   `user_auth` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `user` tinyint NOT NULL,
   `email` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `default_phone` char(10) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `default_email` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `default_phone` char(10) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `default_email` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `phone` char(10) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `allow_sms` tinyint(1) NOT NULL DEFAULT '0',
   `password` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `ringcentral` tinyint(1) NOT NULL,
   `task_remind_freq` set('Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `password_hash` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `password_hash` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `reset_token` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin DEFAULT NULL COMMENT 'password-reset bearer; 22-char base62 via lib/token, legacy 64-hex; _bin: case-sensitive',
   `reset_expires` datetime DEFAULT NULL,
   `user_custom_tab` json NOT NULL,
   `does_appts` tinyint(1) NOT NULL DEFAULT '0',
   `freebusy_calendar_ids` json DEFAULT NULL,
-  `user_gcal_id` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'provider secondary calendar id (firm Google account)',
-  `roles` set('it','admin','staff','attorney','automation','form_dev') COLLATE utf8mb4_general_ci NOT NULL DEFAULT '',
+  `user_gcal_id` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'provider secondary calendar id (firm Google account)',
+  `roles` set('it','admin','staff','attorney','automation','form_dev') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT '',
   CONSTRAINT `chk_does_appts_requires_phone` CHECK (((`does_appts` = 0) or (`default_phone` is not null)))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
@@ -3601,7 +3592,7 @@ CREATE TABLE `users` (
 
 DROP TABLE IF EXISTS `video_slug_aliases`;
 CREATE TABLE `video_slug_aliases` (
-  `slug` varchar(64) COLLATE utf8mb4_general_ci NOT NULL,
+  `slug` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `video_id` int NOT NULL,
   `archived_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
@@ -3618,8 +3609,8 @@ CREATE TABLE `video_views` (
   `video_id` int NOT NULL,
   `contact_id` int DEFAULT NULL,
   `case_id` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `ip_hash` char(64) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `user_agent` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `ip_hash` char(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `user_agent` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `opened_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
   `played_at` timestamp NULL DEFAULT NULL,
   `watch_seconds` int NOT NULL DEFAULT '0',
@@ -3636,17 +3627,17 @@ CREATE TABLE `video_views` (
 DROP TABLE IF EXISTS `videos`;
 CREATE TABLE `videos` (
   `id` int NOT NULL,
-  `slug` varchar(64) COLLATE utf8mb4_general_ci NOT NULL,
-  `title` varchar(255) COLLATE utf8mb4_general_ci NOT NULL,
-  `description` text COLLATE utf8mb4_general_ci,
-  `gcs_video_url` varchar(1024) COLLATE utf8mb4_general_ci NOT NULL,
-  `gcs_poster_url` varchar(1024) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `gcs_gif_url` varchar(1024) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `slug` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `title` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `description` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci,
+  `gcs_video_url` varchar(1024) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `gcs_poster_url` varchar(1024) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `gcs_gif_url` varchar(1024) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `duration_seconds` int DEFAULT NULL,
   `tags` json DEFAULT NULL,
   `related_video_ids` json DEFAULT NULL,
   `actions` json DEFAULT NULL,
-  `access_level` enum('public','contact_only') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'public',
+  `access_level` enum('public','contact_only') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'public',
   `is_published` tinyint(1) NOT NULL DEFAULT '0',
   `view_count` int NOT NULL DEFAULT '0',
   `analytics_reset_at` timestamp NULL DEFAULT NULL,
@@ -3666,10 +3657,10 @@ CREATE TABLE `workflow_execution_steps` (
   `workflow_execution_id` bigint NOT NULL,
   `step_number` int NOT NULL,
   `step_id` int NOT NULL,
-  `status` enum('success','failed','skipped','delayed') COLLATE utf8mb4_general_ci NOT NULL,
+  `status` enum('success','failed','skipped','delayed') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `output_data` json DEFAULT NULL,
   `resolved_config` json DEFAULT NULL,
-  `error_message` text COLLATE utf8mb4_general_ci,
+  `error_message` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci,
   `attempts` int DEFAULT '0',
   `duration_ms` int DEFAULT '0',
   `executed_at` datetime DEFAULT CURRENT_TIMESTAMP
@@ -3686,7 +3677,7 @@ CREATE TABLE `workflow_executions` (
   `id` bigint NOT NULL,
   `workflow_id` int NOT NULL,
   `contact_id` int DEFAULT NULL,
-  `status` enum('pending','active','processing','delayed','completed','completed_with_errors','failed','cancelled','held') COLLATE utf8mb4_general_ci DEFAULT 'pending',
+  `status` enum('pending','active','processing','delayed','completed','completed_with_errors','failed','cancelled','held') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT 'pending',
   `init_data` json DEFAULT NULL,
   `variables` json DEFAULT NULL,
   `current_step_number` int DEFAULT '1',
@@ -3694,7 +3685,7 @@ CREATE TABLE `workflow_executions` (
   `created_at` datetime DEFAULT CURRENT_TIMESTAMP,
   `updated_at` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   `completed_at` datetime DEFAULT NULL,
-  `cancel_reason` varchar(500) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `cancel_reason` varchar(500) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `workflow_version` int NOT NULL DEFAULT '0'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
@@ -3709,9 +3700,9 @@ CREATE TABLE `workflow_steps` (
   `id` int NOT NULL,
   `workflow_id` int NOT NULL,
   `step_number` int NOT NULL,
-  `type` enum('webhook','internal_function','custom_code') COLLATE utf8mb4_general_ci NOT NULL,
-  `label` varchar(100) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `note` text COLLATE utf8mb4_general_ci,
+  `type` enum('webhook','internal_function','custom_code') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `label` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `note` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci,
   `config` json NOT NULL,
   `error_policy` json DEFAULT NULL,
   `created_at` datetime DEFAULT CURRENT_TIMESTAMP,
@@ -3729,11 +3720,11 @@ DROP TABLE IF EXISTS `workflow_versions`;
 CREATE TABLE `workflow_versions` (
   `workflow_id` int NOT NULL,
   `version` int NOT NULL,
-  `name` varchar(100) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `description` text COLLATE utf8mb4_general_ci,
+  `name` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `description` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci,
   `test_input` json DEFAULT NULL,
   `published_at` datetime DEFAULT NULL,
-  `published_by` varchar(100) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `published_by` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `retired_at` datetime DEFAULT NULL,
   `created_at` datetime DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
@@ -3748,13 +3739,13 @@ DROP TABLE IF EXISTS `workflows`;
 CREATE TABLE `workflows` (
   `id` int NOT NULL,
   `active` tinyint(1) NOT NULL DEFAULT '1',
-  `name` varchar(100) COLLATE utf8mb4_general_ci NOT NULL,
-  `description` text COLLATE utf8mb4_general_ci,
+  `name` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `description` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci,
   `created_at` datetime DEFAULT CURRENT_TIMESTAMP,
   `updated_at` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  `default_contact_id_from` varchar(100) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `default_contact_id_from` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `test_input` json DEFAULT NULL,
-  `capture_mode` enum('off','capturing','intercept') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'off',
+  `capture_mode` enum('off','capturing','intercept') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'off',
   `captured_input` json DEFAULT NULL,
   `captured_at` datetime DEFAULT NULL,
   `current_version` int NOT NULL DEFAULT '0',

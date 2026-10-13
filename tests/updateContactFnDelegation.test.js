@@ -34,10 +34,9 @@
  *   - wf37 step 28 writes the contact's Clio id through this function and
  *     step 8 reads it back (the only automation caller of update_contact as
  *     of 2026-09-24). Pinned by shape. Custom fields S5-A repointed both
- *     steps onto `cf_clio_id`: the `contact_clio_id` column is FROZEN at the
- *     chokepoint from 2026-09-25 and dropped in S5-B, so the pin now covers
- *     BOTH halves — the cf_ write lands, and the old column's write is
- *     refused with an error naming the cf_ key.
+ *     steps onto `cf_clio_id`, and S5-B dropped the `contact_clio_id`
+ *     column, so the pin covers BOTH halves — the cf_ write lands, and the
+ *     old name's write is refused before any UPDATE.
  *
  * ── STUB CONVENTION ────────────────────────────────────────────────────────
  *
@@ -330,9 +329,9 @@ describe('update_contact — service-side guards still fire through the fn', () 
 describe('update_contact — wf37 step 28 shape (S5: the Clio id is a custom field)', () => {
   // Custom fields S5-A (2026-09-25) moved the Clio id out of the
   // `contact_clio_id` column and into the registry as `cf_clio_id`; wf37 step
-  // 28 was repointed with it and step 8 now reads the cf_ column back. The
-  // column still exists and still reads through the soak, but it is FROZEN —
-  // see ref/CUSTOM_FIELDS_DESIGN.md §7 S5 and tests/customFields.s5.test.js.
+  // 28 was repointed with it and step 8 now reads the cf_ column back. S5-B
+  // (2026-10-13) dropped the column — see ref/CUSTOM_FIELDS_DESIGN.md §7 S5
+  // and tests/customFields.s5.test.js.
   const CLIO_DEF = {
     id: 2, entity: 'contact', field_key: 'cf_clio_id', label: 'Clio Contact ID',
     field_type: 'text', options: null, validation: null, show_when: null,
@@ -357,14 +356,14 @@ describe('update_contact — wf37 step 28 shape (S5: the Clio id is a custom fie
     )).toHaveLength(0);
   });
 
-  test('{contact_clio_id} is now REFUSED, with an error naming the cf_ key', async () => {
-    // The freeze, from the automation's side: the old shape must fail loudly
-    // rather than write a column nothing reads any more.
+  test('{contact_clio_id} is REFUSED — the column is gone and off the ALLOWED list', async () => {
+    // From the automation's side: the old shape must fail loudly, before
+    // any UPDATE, rather than reach a column that no longer exists.
     const db = stubDb({ row: PERSON, defs: [CLIO_DEF] });
 
     await expect(fns.update_contact(
       { contact_id: CID, fields: { contact_clio_id: 'clio-88213' } }, db)
-    ).rejects.toThrow(/"contact_clio_id" is retired — write "cf_clio_id" instead/);
+    ).rejects.toThrow(/blocked columns: contact_clio_id/);
 
     expect(db.updates).toHaveLength(0);
   });
