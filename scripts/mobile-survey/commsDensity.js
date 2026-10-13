@@ -104,12 +104,42 @@ async function openComms(browser, { w, h, theme }) {
       const { page, frame } = await openComms(browser, { ...t, theme: 'light' });
       const rowTop = await topOf(page, frame, '#msg-list .msg');
       await page.screenshot({ path: path.join(OUT, `density_${t.w}_list.png`) });
+
+      // VERTICAL-CLIP gate (live defect 2026-10-13): with a LONG list, flex
+      // shrink squashed the filter bar (overflow-x≠visible zeroes a flex
+      // child's min-height floor) — chips rendered at half height, tops cut.
+      // The overflow survey is horizontal-only and the density targets only
+      // reward a shorter bar, so this asserts it directly: under 60 rows,
+      // every child of the bar rows sits fully INSIDE its container.
+      const clip = await frame.evaluate(() => {
+        const base = state.messages.slice();
+        const long = [];
+        for (let i = 0; i < 15 && base.length; i++) {
+          for (const m of base) long.push({ ...m, id: m.id + 1000 * (i + 1), message_id: `${m.message_id || 'x'}-${i}`, copies: (m.copies || []).map((c) => ({ ...c, id: m.id + 1000 * (i + 1) })) });
+        }
+        state.messages = long;
+        renderList();
+        const out = [];
+        for (const el of [document.getElementById('fbar'), document.querySelector('.list-col .status-line'), document.querySelector('.list-col .bar')]) {
+          if (!el || !el.offsetParent) continue;
+          const r = el.getBoundingClientRect();
+          const kids = [...el.children].filter((k) => k.getBoundingClientRect().height > 0);
+          const clipped = kids.filter((k) => { const kr = k.getBoundingClientRect(); return kr.top < r.top - 0.5 || kr.bottom > r.bottom + 0.5; }).length;
+          out.push({ el: el.id || el.className.split(' ')[0], h: Math.round(r.height), maxChild: Math.round(Math.max(0, ...kids.map((k) => k.getBoundingClientRect().height))), clipped });
+        }
+        state.messages = base;
+        renderList();
+        return out;
+      });
+      const clippedRows = clip.filter((c) => c.clipped > 0 || c.h + 0.5 < c.maxChild);
+      if (clippedRows.length) { failed++; console.error(`${t.w}x${t.h} VERTICAL CLIP under a long list:`, JSON.stringify(clippedRows)); }
+
       await frame.evaluate(() => openMessage(state.messages[0]));
       await sleep(1200);
       const bodyTop = await topOf(page, frame, '.mcard:not(.collapsed) .mail-frame');
-      const ok = rowTop != null && bodyTop != null && rowTop <= t.rowTop && bodyTop <= t.bodyTop;
-      if (!ok) failed++;
-      rows.push({ viewport: `${t.w}x${t.h}`, rowTop, rowTarget: t.rowTop, bodyTop, bodyTarget: t.bodyTop, ok });
+      const ok = rowTop != null && bodyTop != null && rowTop <= t.rowTop && bodyTop <= t.bodyTop && !clippedRows.length;
+      if (!ok && !clippedRows.length) failed++;
+      rows.push({ viewport: `${t.w}x${t.h}`, rowTop, rowTarget: t.rowTop, bodyTop, bodyTarget: t.bodyTop, clip: clippedRows.length ? 'CLIPPED' : 'ok', ok });
       await page.screenshot({ path: path.join(OUT, `density_${t.w}_thread.png`) });
       await page.close();
     }

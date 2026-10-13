@@ -93,7 +93,11 @@
      so above the phone breakpoint the bar scrolls sideways instead of
      wrapping (a scroll box, nothing hidden); ≤768px it is the in-flow panel
      behind "Filters (n)" and wraps freely. */
-  .fbar { display: flex; flex-wrap: nowrap; overflow-x: auto; gap: 4px; align-items: center; padding: 0 8px 6px; border-bottom: 1px solid var(--border); background: var(--surface); }
+  /* flex: 0 0 auto is LOAD-BEARING: overflow-x≠visible zeroes a flex child's
+     implicit min-height floor, so without it the column's flex-shrink SQUASHES
+     this bar vertically once the message list is long (clipped chips at
+     ~1600px, live 2026-10-13 — commsDensity.js asserts the no-clip now). */
+  .fbar { display: flex; flex: 0 0 auto; flex-wrap: nowrap; overflow-x: auto; gap: 4px; align-items: center; padding: 0 8px 6px; border-bottom: 1px solid var(--border); background: var(--surface); }
   .fchip {
     height: 22px; padding: 0 8px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface); color: var(--text);
     font: inherit; font-size: 11px; cursor: pointer; display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; flex: 0 0 auto;
@@ -144,7 +148,7 @@
     .email.rail-off #rail-show { display: inline-flex; }
   }
   .check { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; cursor: pointer; white-space: nowrap; }
-  .status-line { font-size: 10.5px; color: var(--text-muted); padding: 3px 8px; min-height: 18px; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+  .status-line { font-size: 10.5px; color: var(--text-muted); padding: 3px 8px; min-height: 18px; display: flex; flex: 0 0 auto; gap: 6px; align-items: center; flex-wrap: wrap; }
   /* S2P: sync freshness on the status line — a quiet "Checked 3 min ago",
      and a warning chip per stale / failing box in the current scope. */
   .sync-warn { background: var(--warn-soft); color: var(--warn-on-soft); border-color: var(--warn); max-width: 100%; }
