@@ -1,6 +1,6 @@
 # INFRA_GCP.md — Google Cloud setup for svpcac (app.4lsg.com)
 
-Captured from live state 2026-09-20; `mailbox-ingest` scheduler job added 2026-10-09; maintenance mode + the `yc-hook-spool` queue (§9) added 2026-10-12; the database moved to Cloud SQL 2026-10-13 (§1, §2, §5–§7; local development §10) and the VPC connector / NAT / static-address chain was removed in 2026-10 (§1). No open TODOs. Project `lsg-api-425223` (number `618099140949`), region `us-east1`.
+Captured from live state 2026-09-20; `mailbox-ingest` scheduler job added 2026-10-09; maintenance mode + the `yc-hook-spool` queue (§9) added 2026-10-12; the database moved to Cloud SQL 2026-10-13 (§1, §2, §5–§7; local development §10) and the VPC connector / NAT / static-address chain was removed in 2026-10 (§1); the comms archive bucket, its grants and `COMMS_ARCHIVE_BUCKET` added 2026-10 (§2, §5, §6 step 10a, §7). No open TODOs. Project `lsg-api-425223` (number `618099140949`), region `us-east1`.
 
 **Why this file exists.** The deploy pipeline (`cloudbuild.yaml`) only ever runs
 `gcloud run services update --image=...` — every other piece of the system (env vars,
@@ -47,12 +47,12 @@ Front door: `app.4lsg.com` is a **Cloud Run domain mapping** (DNS CNAME →
 `ghs.googlehosted.com`). Uploads: GCS bucket `uploads.4lsg.com` served via DNS CNAME →
 `c.storage.googleapis.com`.
 
-## 2. Inventory (as of 2026-09-20; Cloud SQL rows and the NAT chain's removal 2026-10)
+## 2. Inventory (as of 2026-09-20; Cloud SQL rows, the NAT chain's removal and the comms archive 2026-10)
 
 | Resource | Name / value | Notes |
 |---|---|---|
 | Cloud Run service | `svpcac`, us-east1 | 1 vCPU / 1 Gi, maxScale 6, **minScale unset (0 → cold starts)**, concurrency 80, timeout 900 s, port 8080 (http1), startup-cpu-boost on, default TCP startup probe, ingress all. Container name `apigcr-1`. No VPC connector: egress is direct (§1). Cloud SQL instance attached (annotation `run.googleapis.com/cloudsql-instances`). |
-| Runtime/deploy SA | `618099140949-compute@developer.gserviceaccount.com` | Default compute SA does everything: runtime, build, deploy. Holds `roles/cloudsql.client` — the socket does not connect without it. |
+| Runtime/deploy SA | `618099140949-compute@developer.gserviceaccount.com` | Default compute SA does everything: runtime, build, deploy. Holds `roles/cloudsql.client` — the socket does not connect without it. Also `roles/iam.serviceAccountTokenCreator` **on itself** (V4 signed URLs with no key file, through the IAM Credentials API — `iamcredentials.googleapis.com` must stay enabled) and `roles/storage.objectUser` on the comms archive bucket (below). |
 | Cloud SQL | instance `yc-mysql`, us-east1 (zonal), MySQL 8.4, Enterprise edition | Tier `db-custom-1-3840` (1 vCPU, 3.75 GB → InnoDB buffer pool ≈ 1.4 GB, which holds the whole ~0.9 GB database; the shared-core `db-g1-small` was measured and rejected — its 640 MB pool could not). 20 GB SSD, auto-increase. Daily backup 08:00 UTC, 7 kept; binary log on, 7 days of point-in-time recovery. Maintenance window Sunday 09:00 UTC. **Deletion protection on** (the backups live with the instance). Four database flags — §7. Connection name `lsg-api-425223:us-east1:yc-mysql`. Has a public IP with ONE authorized network (the Pabbly connector's address); everything else connects by IAM. Accounts: an app account (all privileges on the one database), a read-only account (SELECT only — the `user_ro` pool), one for Pabbly bound to its address, and root. Names and passwords are in the private runbook / the service config, not here. |
 | GCS (migration) | bucket `lsg-yc-migration`, us-east1 | Uniform access, public access prevented. Staging for `gcloud sql import` only; the Cloud SQL service account has objectViewer on it. Holds nothing in steady state — an object left here is a full copy of client data. |
 | AR repo (app) | `us-east1/cloud-run-source-deploy` | Docker. **Cleanup policy since 2026-09-20** (see §4). Holds `apigcr/svpcac` images incl. the `:cache` tag. |
@@ -64,6 +64,7 @@ Front door: `app.4lsg.com` is a **Cloud Run domain mapping** (DNS CNAME →
 | Cloud Tasks | queue `yc-jobs`, us-east1 | Referenced by env `CLOUD_TASKS_LOCATION`/`CLOUD_TASKS_QUEUE`. |
 | Cloud Tasks | queue `yc-hook-spool`, us-east1 — **PAUSED by design** | The hook spool (`lib/hookSpool.js`): where `POST /hooks/:slug` parks webhooks while `MAINTENANCE_MODE=1`. Paused = capture, resumed = replay to `/internal/hook-replay`. max-concurrent-dispatches 1, **max-attempts -1 (unlimited)**, backoff 30 s→600 s, log sampling 1.0. Leave it paused between uses; a RUNNING state is only correct while draining after a maintenance window. Procedure: §9. |
 | GCS | bucket `uploads.4lsg.com` (US multi-region) | Served via CNAME `uploads.4lsg.com → c.storage.googleapis.com` (HTTP path). |
+| GCS (comms archive) | bucket `lsg-yc-comms-archive`, us-east1 | Call recordings, MMS files, later email (`ref/COMMS_ARCHIVE_DESIGN.md` §4). Default class **Archive**, uniform access, public access prevention **enforced**, soft delete **30 days**. Deliberately NO retention policy, NO Bucket Lock, NO lifecycle rule, versioning off, Google-managed key: "keep ten years" is the absence of deletion, not a rule. The only bucket-level grant is the runtime SA's `roles/storage.objectUser` (create/get/list/delete/update/restore objects): create, get and list for the archive sweep (its pre-flight checks all three), delete for SU purge (`ref/COMMS_ARCHIVE_DESIGN.md` §8). The app serves its bytes only through 5-minute V4 signed URLs (design P5). Holds one non-client object on purpose: `_s0/probe.txt` (the signing check reads it; delete detection and any unregistered-object check skip `_s0/`). Created and checked by `scripts/commsArchive/s0_infra.sh`. |
 | Domain mapping | `app.4lsg.com` → svpcac | DNS: CNAME `app` → `ghs.googlehosted.com.` (DNS-only record at the DNS host; NOT proxied through Cloudflare — Express/GFE headers visible). |
 | Secret Manager | **not used** | All config is plain env vars on the service (§5). `gcloud secrets list` prompts to enable the API — that's the tell. |
 | Other SAs | `firebase-adminsdk-kg83l@…`, `local-fred@…` (Fred's local dev), appspot default | A `runapps` firebase-hosting integration (2024-07) is still annotated on the service — legacy, not in the serving path. |
@@ -149,7 +150,8 @@ export command). Non-secret values inline.
   `FIRM_EMAIL=office@4lsg.com`, `FIRM_URL=https://legalsolutions.group`,
   `FIRM_LOG=<hosted logo png URL>`
 - **GCP wiring:** `GCS_BUCKET=uploads.4lsg.com`, `CLOUD_TASKS_LOCATION=us-east1`,
-  `CLOUD_TASKS_QUEUE=yc-jobs`
+  `CLOUD_TASKS_QUEUE=yc-jobs`, `COMMS_ARCHIVE_BUCKET=lsg-yc-comms-archive` (firmConfig
+  `comms_archive_bucket`)
 - **Maintenance (all UNSET in prod; set only on a maintenance revision — §9):**
   `MAINTENANCE_MODE=1` turns the gate on (`lib/maintenance.js`); optional
   `MAINTENANCE_MESSAGE` (text on the 503 page/JSON), `MAINTENANCE_RETRY_AFTER`
@@ -170,7 +172,7 @@ Assumes fresh project or region. `P=lsg-api-425223 R=us-east1` (adjust if new pr
 1. **APIs:** `gcloud services enable run.googleapis.com cloudbuild.googleapis.com
    artifactregistry.googleapis.com vpcaccess.googleapis.com compute.googleapis.com
    cloudscheduler.googleapis.com cloudtasks.googleapis.com storage.googleapis.com
-   iam.googleapis.com logging.googleapis.com sqladmin.googleapis.com`
+   iam.googleapis.com logging.googleapis.com sqladmin.googleapis.com iamcredentials.googleapis.com`
 2. **(Steps 2–4: only if the app must have a FIXED egress address.** It has none
    today and needs none — §1. Skip to 4a unless some outside service has to allowlist
    the app by IP. The address reserved here is a new one.) **Subnet**
@@ -280,6 +282,23 @@ Assumes fresh project or region. `P=lsg-api-425223 R=us-east1` (adjust if new pr
    `-1`, fix it (`gcloud tasks queues update … --max-attempts=-1`) before relying on it.
 10. **GCS:** `gsutil mb -l US gs://uploads.4lsg.com` (domain-named bucket requires the
     domain be verified to the account) + grant the runtime SA object admin on it.
+10a. **Comms archive:** `scripts/commsArchive/s0_infra.sh` is the runbook — upload it to Cloud
+    Shell and run `precheck`, `bucket`, `iam`, `env`, `verify` in turn (each ends with one GO /
+    NO-GO line naming the next; reruns are safe; `rollback` refuses once the bucket holds
+    archive objects). What it does, if done by hand:
+    ```
+    gcloud storage buckets create gs://lsg-yc-comms-archive --location=$R --default-storage-class=ARCHIVE \
+      --uniform-bucket-level-access --public-access-prevention --soft-delete-duration=30d
+    gcloud storage buckets add-iam-policy-binding gs://lsg-yc-comms-archive \
+      --member=serviceAccount:<PROJECT_NUMBER>-compute@developer.gserviceaccount.com --role=roles/storage.objectUser
+    gcloud iam service-accounts add-iam-policy-binding <PROJECT_NUMBER>-compute@developer.gserviceaccount.com \
+      --member=serviceAccount:<PROJECT_NUMBER>-compute@developer.gserviceaccount.com \
+      --role=roles/iam.serviceAccountTokenCreator --condition=None
+    gcloud services enable iamcredentials.googleapis.com
+    ```
+    plus `COMMS_ARCHIVE_BUCKET` on the service (a `--no-traffic --tag` revision, proven, then
+    `update-traffic --to-latest`). The `--soft-delete-duration` is not optional: a new bucket
+    gets 7 days by default.
 11. **Domain mapping + DNS:**
     `gcloud beta run domain-mappings create --service=svpcac --domain=app.4lsg.com --region=$R`,
     then at the DNS host: CNAME `app` → `ghs.googlehosted.com.` (DNS-only), CNAME
@@ -354,6 +373,22 @@ Assumes fresh project or region. `P=lsg-api-425223 R=us-east1` (adjust if new pr
   convention (bump, don't overwrite).
 - Old triggers `3a276457` (buildpack) and `8934804e` (docker) exist disabled — re-enabling
   the buildpack one would bypass the Dockerfile/base-image pipeline entirely.
+- **An env-only `gcloud run services update` pins the image to a digest.** gcloud swaps the
+  image tag for the current revision's `…@sha256:` digest on every update that does not
+  pass `--image`. Harmless (the next Cloud Build deploy sets a tag again), but a revision
+  diff shows it.
+- **A `--no-traffic` revision pins traffic.** The service stops following LATEST and holds
+  100% on the old revision until `update-traffic --to-latest`; a Cloud Build deploy in
+  between gets no traffic. `s0_infra.sh env` refuses to start, and refuses to move traffic,
+  while a build runs.
+- **Comms archive deletes are soft for 30 days, and Archive class bills 365 days.** A
+  deleted object stays restorable for 30 days (`gcloud storage restore`) and cannot be
+  destroyed sooner except by setting soft delete to 0 first (the policy at deletion time
+  applies). Deleting an object younger than 365 days bills the early-deletion remainder:
+  cents, expected on purge.
+- **`gcloud storage sign-url` probes the URL it signs** (one extra request to
+  `<bucket>.storage.googleapis.com`), so it needs network to storage, not just to the IAM
+  Credentials API.
 - Scheduler tz `America/Cancun` ≠ `FIRM_TZ` (Detroit observes DST, Cancun doesn't).
   Harmless at `* * * * *`; wrong template for anything daily. `mailbox-ingest` uses
   `Etc/UTC` — the pattern to copy for new cadence jobs.
@@ -380,11 +415,16 @@ echo "== sql";       gcloud sql instances describe yc-mysql --project=$P \
                        --format='yaml(databaseVersion,region,gceZone,state,connectionName,settings.tier,settings.edition,settings.availabilityType,settings.dataDiskSizeGb,settings.dataDiskType,settings.storageAutoResize,settings.databaseFlags,settings.backupConfiguration,settings.maintenanceWindow,settings.deletionProtectionEnabled,settings.ipConfiguration.authorizedNetworks)'; \
                      gcloud sql users list --instance=yc-mysql --project=$P; \
                      gcloud storage ls gs://lsg-yc-migration/
+echo "== comms archive"; gcloud storage buckets describe gs://lsg-yc-comms-archive --raw --project=$P \
+                       --format='json(location,storageClass,iamConfiguration,softDeletePolicy,retentionPolicy,lifecycle,versioning,encryption)'; \
+                     gcloud storage buckets get-iam-policy gs://lsg-yc-comms-archive --project=$P; \
+                     gcloud iam service-accounts get-iam-policy $(gcloud projects describe $P --format='value(projectNumber)')-compute@developer.gserviceaccount.com
 } 2>&1 | tee /tmp/infra_dump.txt
 ```
 
 Diff the output against this file during docs review; divergences get fixed here or
-filed in scratch `ns=docs`. The `== run yaml` section contains secret values, and the
+filed in scratch `ns=docs`. `bash s0_infra.sh status` answers the same for the comms archive
+in one read-only pass. The `== run yaml` section contains secret values, and the
 `== sql` section the instance's address, an allowlisted address and the account names
 — never commit the dump. `gcloud storage ls` should print nothing (§2).
 

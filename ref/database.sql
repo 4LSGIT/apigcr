@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-10-13T16:31:06.202Z
+-- Generated: 2026-10-14T06:31:25.878Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:f10c651cd3b8c2efbdf9f7356f63637a
+-- Fingerprint: sha256:ecba5f496e0090202a4146eb552a531c
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -810,6 +810,43 @@ CREATE TABLE `checklists1` (
   `checklist_link` varchar(10) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `checklist_status` enum('complete','incomplete') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'incomplete'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `comms_media`
+--
+
+DROP TABLE IF EXISTS `comms_media`;
+CREATE TABLE `comms_media` (
+  `id` bigint unsigned NOT NULL,
+  `channel` varchar(8) COLLATE utf8mb4_general_ci NOT NULL COMMENT 'phone | mail — app-validated',
+  `kind` varchar(20) COLLATE utf8mb4_general_ci NOT NULL COMMENT 'call_recording | mms_file | stt_raw | mail_raw | mail_attachment — app-validated',
+  `source_table` varchar(32) COLLATE utf8mb4_general_ci NOT NULL COMMENT 'phone_event_log | mail_messages | comms_media (stt_raw)',
+  `source_id` bigint unsigned NOT NULL COMMENT 'id in source_table',
+  `part` varchar(64) COLLATE utf8mb4_general_ci NOT NULL DEFAULT '' COMMENT 'provider recording / attachment id; '''' = placeholder before the provider lists any. Discovery tests existence on (source_table, source_id, kind) REGARDLESS of part — a recovered placeholder changes its part, so the unique key alone would re-insert it',
+  `provider` varchar(16) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'ringcentral | quo — phone_event_log.provider',
+  `channel_id` int unsigned DEFAULT NULL COMMENT 'phone_lines.id / mailboxes.id — the grant anchor (mailboxService.getAccess). NULL = the source line is not a phone_lines row (orphan)',
+  `party` varchar(20) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'other party (10-digit) for phone — the log-style read-time anchor',
+  `object_name` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'name inside comms_archive_bucket (ids only, design §4); NULL until archived',
+  `mime` varchar(128) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'content-type as stored (allowlisted at fetch)',
+  `bytes` bigint unsigned DEFAULT NULL,
+  `sha256` char(64) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'hex sha256 of the stored bytes, computed in flight (or by re-hash on adopt)',
+  `duration_s` int unsigned DEFAULT NULL COMMENT 'media duration; NULL until known (S1a does not fetch it)',
+  `audio_channels` tinyint unsigned DEFAULT NULL,
+  `captured_at` datetime DEFAULT NULL COMMENT 'provider time of the call/message, UTC wall clock (pool convention). Phone calls: raw_extra.started_at, else phone_event_log.processed_at when started_at is blank (tsi: rows). The cliff clock',
+  `state` varchar(16) COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'pending' COMMENT 'pending | archived | none | gone | failed | purged — app-validated (design §5)',
+  `restricted` tinyint(1) NOT NULL DEFAULT '0' COMMENT '1 = SU/SS-only visibility (Restrict, design §8)',
+  `attempts` int unsigned NOT NULL DEFAULT '0' COMMENT 'provider-side attempts only — our-side failures (bucket, auth, no line) never charge it',
+  `next_attempt_at` datetime DEFAULT NULL COMMENT 'UTC; NULL = due now. Also the sweep''s per-row lease: a claim sets it ahead, so a crashed tick''s rows come back when it passes',
+  `last_error` varchar(1000) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `archived_at` datetime DEFAULT NULL,
+  `purged_at` datetime DEFAULT NULL,
+  `purged_by` tinyint DEFAULT NULL COMMENT 'users.user',
+  `purge_reason` varchar(500) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='Comms archive registry (ref/COMMS_ARCHIVE_DESIGN.md). One row per archived file. Never deleted — purge clears content and stamps purged_*';
 
 -- --------------------------------------------------------
 
@@ -3994,6 +4031,16 @@ ALTER TABLE `checklists1`
   ADD PRIMARY KEY (`checklist_id`);
 
 --
+-- Indexes for table `comms_media`
+--
+ALTER TABLE `comms_media`
+  ADD PRIMARY KEY (`id`),
+  ADD UNIQUE KEY `uq_comms_media_source` (`source_table`,`source_id`,`kind`,`part`),
+  ADD KEY `idx_comms_media_work` (`state`,`next_attempt_at`),
+  ADD KEY `idx_comms_media_party` (`party`,`captured_at`),
+  ADD KEY `idx_comms_media_channel` (`channel`,`channel_id`,`captured_at`);
+
+--
 -- Indexes for table `contact_addresses`
 --
 ALTER TABLE `contact_addresses`
@@ -5090,6 +5137,12 @@ ALTER TABLE `checklists`
 --
 ALTER TABLE `checklists1`
   MODIFY `checklist_id` int unsigned NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `comms_media`
+--
+ALTER TABLE `comms_media`
+  MODIFY `id` bigint unsigned NOT NULL AUTO_INCREMENT;
 
 --
 -- AUTO_INCREMENT for table `contact_addresses`

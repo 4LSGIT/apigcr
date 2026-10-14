@@ -3,7 +3,7 @@
 Status: v3 — 2026-10-13. Nothing built. v1 was independently reviewed the same day (claims re-verified against the code, the live DB and vendor pages); v2 carried the review's amendments; v3 folds in Fred's answers (Q1–Q4, Q6–Q7, F1–F6, F8 → §0 and their sections; F2 = AssemblyAI, P7). Still open: Q5 (SS) and F7 (revoke at arc close). An execution manager runs the slices in §12.
 Scope: a private, long-retention archive for communication media — call recordings and MMS files now, email raw + attachments later (mailbox S6) — plus the derived text for calls: transcripts and AI summaries. Covers capture, storage, access, purge, the pipeline, and where the results surface (Comms hub, case/contact views, Documents tab, search).
 Related: `claude/RECORDINGS_OPTION_A_REVIEW.md` (claude.ai Project — the Option A review: SS-facing summary, vendor comparison, cost model; this doc supersedes its §2 design notes), `ref/MAILBOX_SYSTEM_DESIGN.md` (D1, D6, §4.4 S-PH, S6), `ref/plans.md` (phone-tab follow-ups), `ref/AUDIT_TENANCY.md` (open decision 15: GCS per tenant), `ref/INFRA_GCP.md`, AI_CONTEXT §28 (phone ingest). Arc state: scratch `fred/recordings_arc`.
-Verified against: `main` @ `0b9d788`, the live DB, and the RingCentral / Quo APIs on 2026-10-13; §2 figures and §11 vendor pricing re-measured at the same day's review.
+Verified against: `main` @ `0b9d788`, the live DB, and the RingCentral / Quo APIs on 2026-10-13; §2 figures and §11 vendor pricing re-measured at the same day's review. §4's IAM permission set: Google's published role reference, 2026-10-14.
 
 ## 0. Decisions
 
@@ -103,8 +103,8 @@ Boundaries:
 - **Soft delete 30 days** (allowed 7–90; 0 disables). A soft-deleted object cannot be permanently removed before its window ends; the policy in force at deletion time applies to it.
 - **No retention policy, no Bucket Lock, no lifecycle delete rule, versioning off.** "10 years" (R1) is the absence of deletion, not a rule that forbids it (P3).
 - Encryption: Google-managed. CMEK not proposed.
-- IAM: runtime SA `618099140949-compute@developer.gserviceaccount.com` — object create / read / delete on this bucket; `roles/iam.serviceAccountTokenCreator` on itself for V4 signing (P5). If GCP STT is chosen, the Speech service agent gets object read on the bucket.
-- Infra changes are a Cloud Shell script under the house rules (one uploaded script, stage commands, time limit on every external call, GO / NO-GO line per stage, dry-run first), and land in `ref/INFRA_GCP.md`.
+- IAM: runtime SA `618099140949-compute@developer.gserviceaccount.com` — `roles/storage.objectUser` on this bucket only: `storage.objects.create`, `get`, `list`, `delete`, `update`, `move`, `restore` (plus multipart uploads) — the narrowest predefined role with create + get + list + delete; `objectAdmin` adds only object IAM and `setRetention`. The archive sweep's pre-flight requires create, get and list (list for stat-first by prefix); purge needs delete. `roles/iam.serviceAccountTokenCreator` on itself, and the IAM Credentials API, for V4 signing (P5). If GCP STT is chosen, the Speech service agent gets object read on the bucket.
+- Infra: `scripts/commsArchive/s0_infra.sh` (Cloud Shell; stages `precheck`, `bucket`, `iam`, `env`, `verify`, `status`, `rollback`; dry-run harness in `s0_harness/`). Result in `ref/INFRA_GCP.md`.
 
 **Object names carry ids only** — no names, numbers or dates beyond year/month — so a leaked listing reveals nothing:
 
@@ -114,6 +114,7 @@ Boundaries:
 | MMS file | `phone/mms/<yyyy>/<mm>/<phone_event_log.id>-<part>.<ext>` |
 | STT vendor output | `phone/stt/<yyyy>/<mm>/<comms_media.id>.<vendor>.json` |
 | Email raw / attachment (mailbox S6) | `mail/eml/…`, `mail/att/…` — the mailbox arc picks the shape |
+| S0 probe (not client data) | `_s0/probe.txt` — permanent; the post-S1a signing check reads it. Delete detection and any "unregistered object" check skip the `_s0/` prefix |
 
 `<part>` is the provider's recording / attachment id. Tenancy: a `<tenant>/` prefix or a bucket per tenant is AUDIT_TENANCY open decision 15; names above leave room for either.
 
