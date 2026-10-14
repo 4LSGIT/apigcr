@@ -362,6 +362,7 @@ public/videoManager.html
 ref/2026-09-04_dbkq_coverage.md
 ref/2026-09-04_dbkq_definition.v1.json
 ref/2026-09-06_dbkq_definition.v1.2.json
+ref/ACCESS_CONTROL_DESIGN.md
 ref/AI_CONTEXT.md
 ref/AUDIT_TENANCY.md
 ref/CHAT_DESIGN.md
