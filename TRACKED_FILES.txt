@@ -24,6 +24,7 @@ lib/auth.readonly.js
 lib/auth.requireAuth.js
 lib/auth.superuser.js
 lib/blankDateToNull.js
+lib/capabilities.js
 lib/caseId.js
 lib/caseRoleResolver.js
 lib/checklistStatus.js
@@ -903,6 +904,7 @@ tests/calendarEvents.registry.test.js
 tests/calendarTypeService.test.js
 tests/calendarUi.sync.test.js
 tests/campaignCaseTypeFilter.test.js
+tests/capabilities.test.js
 tests/captureBeforePublish.test.js
 tests/caseEventService.test.js
 tests/caseId.test.js
