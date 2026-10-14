@@ -707,6 +707,7 @@ scripts/accessB1KeyScopes.js
 scripts/accessB4SecretsAtRest.js
 scripts/accessSec3SensitiveTier.js
 scripts/add-path-headers.js
+scripts/b2SchedulerKeySwap.sh
 scripts/backfill-password-hashes.js
 scripts/backfillAppts.js
 scripts/backfillCampaignContacts.js
