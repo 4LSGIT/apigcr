@@ -43,6 +43,7 @@
 const express = require("express");
 const router = express.Router();
 const jwtOrApiKey = require("../lib/auth.jwtOrApiKey");
+const { isSuperuser } = require("../lib/auth.superuser");
 const svc = require("../services/reportService");
 const authorSvc = require("../services/reportAuthorService");
 const manifest = require("../lib/reportSchema/manifest");
@@ -82,12 +83,12 @@ function requireUser(req, res, next) {
  * Build the service actor for a write. Only ever called behind requireUser,
  * so req.auth is a JWT with a userId — which may be a STRING (auth.login
  * signs sub: user.user; string subs are observed in the wild), and the
- * service's normalizeActor parses it. user_auth === "authorized - SU" is the
+ * service's normalizeActor parses it. SU (auth.superuser.isSuperuser) is the
  * lock-bypass flag.
  */
 function actorOf(req) {
   if (!req.auth || req.auth.type !== "jwt") return svc.SYSTEM_ACTOR; // unreachable behind requireUser
-  return svc.normalizeActor(req.auth.userId, req.auth.user_auth === "authorized - SU");
+  return svc.normalizeActor(req.auth.userId, isSuperuser(req.auth));
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

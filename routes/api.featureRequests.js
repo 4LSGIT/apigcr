@@ -15,12 +15,15 @@
 const express      = require('express');
 const router       = express.Router();
 const jwtOrApiKey  = require('../lib/auth.jwtOrApiKey');
+const { isSuperuser } = require('../lib/auth.superuser');
 const { cfg }      = require('../lib/firmConfig');
 const emailService = require('../services/emailService');
 
 // ── constants ─────────────────────────────────────────────────────────────────
 
-const ADMIN_AUTH  = ['authorized - SU', 'authorized - admin'];
+// A2 (ref/ACCESS_CONTROL_DESIGN.md §6): the 'authorized - admin' phantom
+// tier is gone (zero holders, unassignable). Behavior-preserving: SU only.
+// If a real admin-tier need appears this becomes can(req.auth, <capability>).
 // Read per call (not module-load consts) so live edits of the
 // email_automations / email_it settings apply without a redeploy.
 const FROM_ADDR   = () => cfg('email_automations') || 'automations@4lsg.com';
@@ -38,7 +41,7 @@ const STAGE_LABELS = {
 // ── helpers ───────────────────────────────────────────────────────────────────
 
 function isAdmin(req) {
-  return ADMIN_AUTH.includes(req.auth?.user_auth);
+  return isSuperuser(req.auth);
 }
 
 function requireAdmin(req, res, next) {

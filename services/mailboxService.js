@@ -109,8 +109,9 @@
 
 const { encrypt } = require('../lib/credentialCrypto');
 const mailboxColor = require('../public/js/mailboxColor');
+const { rowIsSuperuser } = require('../lib/auth.superuser');
 
-const SU_AUTH = 'authorized - SU'; // lib/auth.superuser.js convention
+const SU_AUTH = 'authorized - SU'; // legacy marker (A2b removes); still exported
 
 // users.roles values whose holders READ every mailbox without a grant (S2;
 // design §1 "SU and SS see everything" — SS holds 'attorney'). READ ONLY.
@@ -249,12 +250,13 @@ function noAccess() {
 // Identity + grant resolution
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** True iff users.user_auth for this user is the SU marker (DB, not JWT). */
+/** True iff this user is SU per the users table (DB, not JWT) — roles SET
+ *  `su` member, or the legacy user_auth marker until A2b. */
 async function isSuperuser(db, userId) {
   const n = Number(userId);
   if (!Number.isInteger(n) || n < 0) return false;
-  const [[row]] = await db.query('SELECT user_auth FROM users WHERE user = ? LIMIT 1', [n]);
-  return !!row && row.user_auth === SU_AUTH;
+  const [[row]] = await db.query('SELECT user_auth, roles FROM users WHERE user = ? LIMIT 1', [n]);
+  return rowIsSuperuser(row);
 }
 
 /**

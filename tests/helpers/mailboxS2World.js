@@ -507,6 +507,10 @@ function makeWorld() {
     let m;
 
     // ── mailboxService ──
+    // A2: mailboxService.isSuperuser reads BOTH user_auth and roles (su member).
+    if (sql === 'SELECT user_auth, roles FROM users WHERE user = ? LIMIT 1') {
+      const u = userRow(p[0]); return [u ? [{ user_auth: u.user_auth, roles: u.roles == null ? '' : String(u.roles) }] : []];
+    }
     if (sql === 'SELECT user_auth FROM users WHERE user = ? LIMIT 1') {
       const u = userRow(p[0]); return [u ? [{ user_auth: u.user_auth }] : []];
     }

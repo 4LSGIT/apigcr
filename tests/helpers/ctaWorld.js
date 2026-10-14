@@ -336,6 +336,11 @@ function makeCtaWorld() {
         .map((e) => ({ id: e.id, cta_id: e.cta_id, option_value: e.option_value, executed_at: e.executed_at }));
       return [rows];
     }
+    // A2: ctaService.isActiveSuperuser reads BOTH user_auth and roles.
+    if (/^SELECT user_auth, roles FROM users WHERE `user` = \?$/i.test(s)) {
+      const u = W.users.get(Number(params[0]));
+      return [u ? [{ user_auth: u.user_auth, roles: u.roles == null ? '' : String(u.roles) }] : []];
+    }
     if (/^SELECT user_auth FROM users WHERE `user` = \?$/i.test(s)) {
       const u = W.users.get(Number(params[0]));
       return [u ? [{ user_auth: u.user_auth }] : []];

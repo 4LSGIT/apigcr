@@ -515,6 +515,7 @@ ref/migrations/2026-10-13_default_task_assignee.sql
 ref/migrations/2026-10-13_docs_review_comments.sql
 ref/migrations/2026-10-13_mail_sends.sql
 ref/migrations/2026-10-13_wf50_end_after_cancel.console.js
+ref/migrations/2026-10-14_access_a2_su_role.sql
 ref/migrations/2026-10-14_comms_media.sql
 ref/migrations/2026-10-14_wf50_text_on_cancel_failure.console.js
 ref/migrations/S1_notes_migration.sql
@@ -677,6 +678,7 @@ routes/unplacehold.js
 routes/videoLanding.js
 routes/workflows.js
 scripts/Courtapprovetest.js
+scripts/accessA2SuRole.js
 scripts/add-path-headers.js
 scripts/backfill-password-hashes.js
 scripts/backfillAppts.js
@@ -893,6 +895,7 @@ services/workflowExecutionService.js
 startup/db.js
 startup/dbReadonly.js
 startup/init.js
+tests/accessA2SuRole.test.js
 tests/adminapikeys.k2.test.js
 tests/aiMatchTypes.registry.test.js
 tests/aiService.attachments.test.js

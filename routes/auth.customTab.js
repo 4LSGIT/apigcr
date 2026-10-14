@@ -51,6 +51,7 @@
 const express = require("express");
 const router = express.Router();
 const jwtOrApiKey = require("../lib/auth.jwtOrApiKey");
+const { isSuperuser } = require("../lib/auth.superuser");
 
 const MAX_TITLE = 40;
 const MAX_SRC = 300;
@@ -68,9 +69,9 @@ const SAFE_PATH = /^\/(?!\/)[^\s:\\]*$/;
 // SU may also point at an absolute http(s) URL.
 const ABSOLUTE_URL = /^https?:\/\/[^\s"'<>\\]+$/i;
 
-/** Same SU test as routes/api.reports.js — user_auth on the JWT. */
+/** Same SU test as routes/api.reports.js — auth.superuser.isSuperuser. */
 function isSU(req) {
-  return !!(req.auth && req.auth.type === "jwt" && req.auth.user_auth === "authorized - SU");
+  return isSuperuser(req.auth);
 }
 
 function fail(res, status, message, detail) {

@@ -184,18 +184,43 @@ gratuitous churn). `'authorized - SU'` and the phantom
   roles from the DB at decision time, not from the 24h JWT claim.
   Convenience/visibility checks may trust the claim.
 
-### 2.4 SU migration (the one breaking move)
-1. Migration: `ALTER` the SET to add `su`; `UPDATE users SET roles =
-   CONCAT_WS(',', NULLIF(roles,''), 'su') WHERE user_auth='authorized - SU'`;
-   then `UPDATE users SET user_auth='authorized' WHERE ...SU`. (9 rows; cheap.)
+### 2.4 SU migration — split A2 / A2b (structural ruling, 2026-10-14)
+
+Executed as TWO slices, because 11 `public/` files gate SU UI on the
+literal `user_auth` string (via `firmData.currentUser`) — collapsing the
+string before they migrate would hide SU tools from its holder. And with
+dual-accept live, **no `JWT_VERSION` bump / forced logout is needed**:
+A2b trailing ≥24h lets every pre-A2 token expire naturally.
+
+- **A2 (backend, zero behavior change):** stage-1 migration (SET += `su`,
+  grant to the legacy holder), `isSuperuser` → su-role with the legacy
+  string dual-accepted, `rowIsSuperuser` for the DB-row sites (disabled
+  users are never SU — the off switch is explicit now that SU survives in
+  `roles`), straggler reroutes (incl. `lib/auth.formDev.js`), phantom
+  admin tier removal.
+- **A2b (≥24h later):** the 11 frontend files → roles-based (overlaps A3's
+  users.html work), stage-3 `user_auth` collapse, legacy-string branch
+  removal (`auth.superuser` ×2, `capabilities.js`, mailboxService
+  `SU_AUTH`), `ALLOWED_AUTH` shrink, `services/commsArchiveAdmin.js`
+  follow-up, stale SU-string prose (mailboxService header,
+  api.mailboxes audit reason, admin.users/admin.dbConsole/api.checklists
+  comments), `internal_functions/users.js` + reportSchema manifest notes.
+Mechanics (A2 ships 1–3; A2b ships 4–5; the roles-UI half of 5 is A3):
+1. Stage-1 migration: `ALTER` the SET to add `su` (append-only, INPLACE);
+   `UPDATE users SET roles = CONCAT_WS(',', NULLIF(roles,''), 'su')
+   WHERE user_auth='authorized - SU'` — `scripts/accessA2SuRole.js`.
 2. `isSuperuser(auth)` — the declared chokepoint — becomes a roles check
-   (`roles.includes('su')`), **accepting the legacy string for one deploy
-   window**, then the string branch is deleted.
-3. Point the stragglers (§1f rows 4–6) at `isSuperuser`/`can()`.
-4. `JWT_VERSION` bump at cutover = global logout (9 users; the 24h-stale-
-   claim window never mixes old/new semantics).
-5. admin.users: `ALLOWED_AUTH` shrinks to `['authorized','disabled']`;
-   PATCH whitelist gains `roles` (validated against the SET members,
+   (`roles.includes('su')`), accepting the legacy string until A2b deletes
+   the branch. `rowIsSuperuser(row)` serves the DB-row sites and requires
+   `user_auth` to start with 'authorized' — disabling a user strips SU
+   effect immediately, as the string regime did implicitly.
+3. Point the stragglers (§1f rows 4–6, plus `lib/auth.formDev.js`) at
+   `isSuperuser`/`can()`.
+4. Stage-3 collapse (`'authorized - SU'` → `'authorized'`) + string-branch
+   deletion, in A2b. No `JWT_VERSION` bump: pre-A2 tokens expire naturally
+   within 24h, so A2b trailing ≥24h never mixes semantics.
+5. admin.users: `ALLOWED_AUTH` shrinks to `['authorized','disabled']` (A2b);
+   PATCH whitelist gains `roles` (A3; validated against the SET members,
    `su` assignable only by an SU caller — no self-service root).
 
 ### 2.5 Membership management
@@ -329,7 +354,7 @@ Direction only, so Phase A's shapes don't foreclose it:
 | Interim | Where | Target |
 |---|---|---|
 | comms-archive R9 Restrict/Purge/no_transcribe allow-list | app_settings (their S1 decides the key) | `archives.purge` capability (role `admin`/`su`, DB-read freshness) |
-| ADMIN_AUTH phantom checks | issueReports/featureRequests | `can('firm.settings')` or demote to staff — per-route call at A2 |
+| ADMIN_AUTH phantom checks | issueReports/featureRequests | A2 chose a third option: SU-only via `isSuperuser` (strictly behavior-preserving; today equal to `can('firm.settings')` since the only `it`/`admin` holder is the SU). **Ratified 2026-10-14** — flip to `can('firm.settings')` later if admin-tier demand appears |
 | ui-custom per-role firm defaults | DDL sentinel `role=''`, writes rejected | role step in resolution order (contract §3.4) |
 
 ---
@@ -338,9 +363,14 @@ Direction only, so Phase A's shapes don't foreclose it:
 
 - **A1** `lib/capabilities.js` registry + `can()` + `requireAuth({can})` +
   snapshot tests (eligible-set pattern). No route behavior change.
-- **A2** SU migration: SET member `su`, data migration, isSuperuser →
-  roles (dual-accept window), straggler sites, ALLOWED_AUTH shrink,
-  JWT_VERSION bump, phantom-tier removal. The one coordinated deploy.
+- **A2** SU migration, backend half: SET member `su`, stage-1 data
+  migration, isSuperuser → roles (dual-accept), rowIsSuperuser, straggler
+  sites, phantom-tier removal. Zero behavior change, no logout.
+- **A2b** (≥24h after A2 deploys) SU migration, cutover half: the 11
+  frontend string-gates → roles, stage-3 user_auth collapse, legacy-string
+  branch deletion, ALLOWED_AUTH shrink, commsArchiveAdmin follow-up, stale
+  prose sweep. May merge with A3 (users.html overlap). §2.4 has the split
+  rationale.
 - **A3** Roles UI in admin users pane (PATCH whitelist + validation +
   su-only-grants-su) — unblocks real membership management.
 - **A4** `firm.settings` gate on app-settings writes (**coordinate:

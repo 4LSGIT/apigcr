@@ -92,7 +92,7 @@ function makeDb({ undigested = [], suRows = [], failCtaInsert = false,
 
       // ── Phase B inputs ──────────────────────────────────────────────────
       if (/FROM system_alerts a\s+LEFT JOIN alert_state/i.test(sql)) return [undigested];
-      if (/SELECT `user`, user_auth FROM users/i.test(sql)) return [suRows];
+      if (/SELECT `user`, user_auth, roles FROM users/i.test(sql)) return [suRows];
 
       // ── alert() critical path ───────────────────────────────────────────
       if (/SELECT last_alerted_at FROM alert_state/i.test(sql)) {

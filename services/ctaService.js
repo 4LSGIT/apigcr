@@ -1852,9 +1852,9 @@ async function listExecutions(db, id, { limit = EXEC_LIST_DEFAULT } = {}, { now 
 
 /** B1: su mints refuse once minted_by is no longer an active SU. */
 async function isActiveSuperuser(db, userId) {
-  const { isSuperuser } = require('../lib/auth.superuser'); // single source of truth for "SU"
-  const [[u]] = await db.query('SELECT user_auth FROM users WHERE `user` = ?', [userId]);
-  return !!u && isSuperuser({ type: 'jwt', user_auth: u.user_auth });
+  const { rowIsSuperuser } = require('../lib/auth.superuser'); // single source of truth for "SU"
+  const [[u]] = await db.query('SELECT user_auth, roles FROM users WHERE `user` = ?', [userId]);
+  return rowIsSuperuser(u);
 }
 
 async function minterAllowed(db, row) {
@@ -2415,6 +2415,8 @@ function isStaleRunning(exec, now = new Date()) {
 }
 
 module.exports = {
+  // A2 test hook — the B1 kill-switch predicate (tests/accessA2SuRole.test.js)
+  isActiveSuperuser,
   // surfaces
   mintCta,
   validateMint,

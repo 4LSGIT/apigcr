@@ -135,6 +135,10 @@ function makeWorld() {
       if (b) b.ingest_state = p[0];
       return [{ affectedRows: b ? 1 : 0 }];
     }
+    // A2: mailboxService.isSuperuser reads BOTH user_auth and roles (su member).
+    if (sql === 'SELECT user_auth, roles FROM users WHERE user = ? LIMIT 1') {
+      return [T.users.filter(u => u.user === Number(p[0])).map(u => ({ user_auth: u.user_auth, roles: u.roles == null ? '' : String(u.roles) }))];
+    }
     if (sql === 'SELECT user_auth FROM users WHERE user = ? LIMIT 1') {
       return [T.users.filter(u => u.user === Number(p[0])).map(clone)];
     }
