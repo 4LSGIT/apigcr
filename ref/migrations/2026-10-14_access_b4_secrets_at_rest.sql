@@ -1,0 +1,38 @@
+-- Access-control B4 — secret values encrypted at rest (ref/ACCESS_CONTROL_DESIGN.md §5.5).
+--
+-- ┌──────────────────────────────────────────────────────────────────────────┐
+-- │ DEPLOY ORDER — REVERSED FROM B1/A5: CODE FIRST, THEN THE DATA.           │
+-- │   1. land + deploy B4 (dual-read: ENCv1 decrypted, plaintext passes)     │
+-- │   2. node scripts/accessB4SecretsAtRest.js        (CHECK)                │
+-- │   3. node scripts/accessB4SecretsAtRest.js --apply                       │
+-- │ Running the data step first breaks every api_key credential and every   │
+-- │ authenticated hook on the pre-B4 code.                                   │
+-- └──────────────────────────────────────────────────────────────────────────┘
+--
+-- NO SQL TO PASTE: the values are AES-256-GCM-encrypted (lib/credentialCrypto,
+-- ENCv1, key CREDENTIALS_ENCRYPTION_KEY) in Node, so this migration is the
+-- script, not statements. The script first proves the local key decrypts an
+-- existing production ciphertext (an oauth2 client_secret) and stops if not.
+-- It rewrites each row compare-and-swap and verifies it through the real
+-- read paths (credentialInjection.buildAuthHeaders, hookService
+-- .authenticateRequest). No DDL; no column changes.
+--
+-- Rows (verified live 2026-10-14 via readonly SQL):
+--   Stage A  credentials.config $.key    ids 10 (Quo), 12 (Claude), 14 (Assembly AI) — api_key
+--            (oauth2 $.client_secret on 7, 8, 9, 11, 13 already ENCv1 — asserted)
+--   Stage B  hooks.auth_config  $.key    ids 5, 21, 22, 23, 36, 38           — api_key
+--                               $.secret ids 32, 40 (Calendly, timestamped) — hmac
+--
+-- Shape after the run, per row (illustrative):
+--   credentials.config  {"key": "ENCv1:…", "header": "Authorization"}
+--   hooks.auth_config   {"secret": "ENCv1:…", "header": "Calendly-Webhook-Signature",
+--                        "scheme": "timestamped", "algorithm": "sha256", "tolerance_seconds": 300}
+--
+-- Session check afterwards (readonly SQL; expect 0 and 0):
+--   SELECT COUNT(*) FROM credentials WHERE type IN ('api_key','bearer','basic')
+--     AND COALESCE(JSON_UNQUOTE(JSON_EXTRACT(config,'$.key')),
+--                  JSON_UNQUOTE(JSON_EXTRACT(config,'$.token')),
+--                  JSON_UNQUOTE(JSON_EXTRACT(config,'$.password'))) NOT LIKE 'ENCv1:%';
+--   SELECT COUNT(*) FROM hooks WHERE auth_type IN ('api_key','hmac')
+--     AND COALESCE(JSON_UNQUOTE(JSON_EXTRACT(auth_config,'$.key')),
+--                  JSON_UNQUOTE(JSON_EXTRACT(auth_config,'$.secret'))) NOT LIKE 'ENCv1:%';

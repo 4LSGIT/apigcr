@@ -281,7 +281,8 @@ function maintenanceUnavailable(res) {
 
 router.get('/api/hooks', jwtOrApiKey, async (req, res) => {
   try {
-    const hooks = await hookService.listHooks(req.db);
+    // Secrets decrypted for the editor's display (B4 ruling H1).
+    const hooks = (await hookService.listHooks(req.db)).map(hookService.withReadableAuth);
     res.json({ status: 'success', hooks });
   } catch (err) {
     console.error('[hook] list error:', err);
@@ -390,7 +391,8 @@ router.get('/api/hooks/:id', jwtOrApiKey, async (req, res) => {
   try {
     const hook = await hookService.getHookById(req.db, req.params.id);
     if (!hook) return res.status(404).json({ status: 'error', message: 'Hook not found' });
-    res.json({ status: 'success', hook });
+    // Secrets decrypted for the editor's display (B4 ruling H1).
+    res.json({ status: 'success', hook: hookService.withReadableAuth(hook) });
   } catch (err) {
     console.error('[hook] get error:', err);
     res.status(500).json({ status: 'error', message: err.message });

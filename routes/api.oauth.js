@@ -27,6 +27,7 @@ const router = express.Router();
 const { superuserOnlyFor, auditAdminAction } = require('../lib/auth.superuser');
 const oauthService = require('../services/oauthService');
 const credentialCrypto = require('../lib/credentialCrypto');
+const { readSecret } = require('../lib/secretAtRest');
 
 const TOOL = 'connections';
 
@@ -492,14 +493,17 @@ router.get('/api/credentials/:id/reveal', superuserOnlyFor(TOOL), async (req, re
             client_secret: config.client_secret ? credentialCrypto.decrypt(config.client_secret) : null,
           };
           break;
+        // Static secrets are encrypted at rest since access-control B4
+        // (lib/secretAtRest); readSecret also passes a pre-migration
+        // plaintext value through unchanged.
         case 'bearer':
-          revealed = { token: config.token ?? null };
+          revealed = { token: config.token != null ? readSecret(config.token) : null };
           break;
         case 'api_key':
-          revealed = { key: config.key ?? null, header: config.header ?? null };
+          revealed = { key: config.key != null ? readSecret(config.key) : null, header: config.header ?? null };
           break;
         case 'basic':
-          revealed = { username: config.username ?? null, password: config.password ?? null };
+          revealed = { username: config.username ?? null, password: config.password != null ? readSecret(config.password) : null };
           break;
         case 'internal':
           revealed = {};

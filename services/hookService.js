@@ -32,6 +32,41 @@ const { executeMapper, resolveBodyTemplate } = require('./hookMapper');
 // applies one directly. An unused destructured import of applyChain sat on this
 // line until MTH-2 and was removed — zero call sites in this file.
 const credentialInjection = require('../lib/credentialInjection');
+const { HOOK_SECRET_FIELDS, fieldsFor, encryptFields, decryptFields, parseJsonColumn } = require('../lib/secretAtRest');
+
+// ── hooks.auth_config secrets at rest (access-control B4) ──────────────────
+// auth_config.key (api_key) and auth_config.secret (hmac) are stored ENCv1-
+// encrypted; header / scheme / algorithm / tolerance_seconds stay readable.
+// Decrypted ONLY in authenticateRequest (the inbound verify) and by the two
+// editor display routes (GET /api/hooks, GET /api/hooks/:id — design ruling
+// H1: the management API's exposure is unchanged by B4; gating it is
+// follow-up B5) via withReadableAuth. getHookById / listHooks themselves
+// return the STORED (encrypted) row: duplicateHook reads through getHookById
+// and must copy ciphertext, never plaintext.
+// Writes (createHook / updateHook) encrypt BOTH field names whatever the
+// auth_type, so a body that omits auth_type can never store a plaintext.
+// duplicateHook copies the ciphertext verbatim — same key, still verifies.
+const HOOK_SECRET_WRITE_FIELDS = Object.freeze(['key', 'secret']);
+
+/** A value bound for hooks.auth_config (object, JSON string or null) → its encrypted JSON string. */
+function encryptHookAuthConfig(value) {
+  if (value == null) return value;
+  const obj = parseJsonColumn(value);
+  if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return value;   // not ours to reshape
+  return JSON.stringify(encryptFields(obj, HOOK_SECRET_WRITE_FIELDS));
+}
+
+/** A hooks row with its auth_config secrets decrypted for display (bad ciphertext left as-is, logged). */
+function withReadableAuth(row) {
+  if (!row || row.auth_config == null) return row;
+  try {
+    const obj = parseJsonColumn(row.auth_config);
+    return { ...row, auth_config: decryptFields(obj, HOOK_SECRET_WRITE_FIELDS) };
+  } catch (err) {
+    console.error(`[hook] auth_config secret for hook ${row.id} did not decrypt — ${err.message}`);
+    return row;
+  }
+}
 const actionDispatchers = require('../lib/actionDispatchers');
 
 // Slice 2.2: the four per-target delivery functions (http / workflow /
@@ -88,10 +123,19 @@ async function getHookBySlug(db, slug) {
  */
 function authenticateRequest(hook, req) {
   const authType = hook.auth_type;
-  const config = typeof hook.auth_config === 'string'
-    ? JSON.parse(hook.auth_config) : hook.auth_config;
-
   if (authType === 'none') return { valid: true };
+
+  // Decrypt the stored secret (B4) — dual-read: a pre-migration plaintext
+  // value passes through. A value that won't decrypt is refused, never
+  // treated as "no secret".
+  let config;
+  try {
+    const raw = typeof hook.auth_config === 'string' ? JSON.parse(hook.auth_config) : hook.auth_config;
+    config = decryptFields(raw, fieldsFor(HOOK_SECRET_FIELDS, authType));
+  } catch (err) {
+    console.error(`[hook] ${hook.slug || hook.id}: auth secret did not decrypt — ${err.message}`);
+    return { valid: false, error: 'Hook authentication is misconfigured' };
+  }
 
   if (authType === 'api_key') {
     const headerName = (config?.header || 'x-hook-key').toLowerCase();
@@ -1107,6 +1151,7 @@ async function getHookById(db, id) {
 }
 
 async function createHook(db, data) {
+  if (data.auth_config !== undefined) data = { ...data, auth_config: encryptHookAuthConfig(data.auth_config) };
   // Auto-generate slug if not provided
   if (!data.slug) {
     data.slug = require('crypto').randomUUID().slice(0, 8);
@@ -1116,6 +1161,7 @@ async function createHook(db, data) {
 }
 
 async function updateHook(db, id, data) {
+  if (data.auth_config !== undefined) data = { ...data, auth_config: encryptHookAuthConfig(data.auth_config) };
   // Auto-increment version on every update
   await db.query(`UPDATE hooks SET ?, version = version + 1 WHERE id = ?`, [data, id]);
 }
@@ -1281,6 +1327,8 @@ module.exports = {
   // CRUD — Hooks
   listHooks,
   getHookById,
+  withReadableAuth,
+  encryptHookAuthConfig,
   getHookBySlug,
   createHook,
   updateHook,

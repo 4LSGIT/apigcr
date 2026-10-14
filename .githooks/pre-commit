@@ -2,6 +2,14 @@
 # .githooks/pre-commit — tracked in the repo. Enable once with:
 #   git config core.hooksPath .githooks
 #
+# 0. SECRET SCAN (access-control B4, scripts/secret-scan.js) — FIRST, and the
+#    only step that can refuse the commit. Scans the lines the STAGED DIFF adds
+#    (never the tree) for YisraCase keys in their real minted shapes (yci_/
+#    yck_/ycro_ + a long hex or base62 body) and common provider secrets.
+#    Test fixtures are words ('yck_not_a_real_key') and pass; a fixture that
+#    must look real carries "secret-scan: allow" on its line. A refusal names
+#    file:line and the way out. Runs before the regen steps, so a refused
+#    commit leaves the generated files untouched.
 # 1. Refresh ref/database.sql if the live schema changed. Runs INLINE (blocking)
 #    so the fingerprint is checked against the live DB on every commit and any
 #    drift is staged into THIS commit, not the next one. Costs one connection
@@ -24,10 +32,18 @@
 # court_item_* tables missed commit 0ddfea7 by 14 seconds. Flip SCHEMA_DUMP_MODE
 # back to "async" below to restore the old behaviour.
 #
+# Skip the secret scan (warns):     SKIP_SECRET_SCAN=1 git commit -m "..."
 # Skip the schema step:             SKIP_SCHEMA_DUMP=1 git commit -m "..."
 # Skip the routes step:             SKIP_ROUTES_DUMP=1 git commit -m "..."
 # Background it for one commit:     SCHEMA_DUMP_ASYNC=1 git commit -m "..."
 #   ^ use when the DB is slow or unreachable and you just want to commit.
+
+# 0. Secret scan. SKIP_SECRET_SCAN is honoured (with a warning) inside the script.
+if command -v node >/dev/null 2>&1 && [ -f scripts/secret-scan.js ]; then
+  node scripts/secret-scan.js || exit 1
+else
+  echo "pre-commit: node or scripts/secret-scan.js missing — secret scan NOT run." >&2
+fi
 
 # "sync" = block on the check every commit; "async" = old background behaviour.
 SCHEMA_DUMP_MODE="sync"

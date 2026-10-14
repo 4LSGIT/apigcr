@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-10-14T13:50:59.093Z
+-- Generated: 2026-10-14T14:02:11.734Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:fc52aff9253488aa2ae12e951064a681
+-- Fingerprint: sha256:c32470771cfef52902a5dfdeea6dabae
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -3400,20 +3400,6 @@ CREATE TABLE `temp_seq` (
 -- --------------------------------------------------------
 
 --
--- Table structure for table `tempusers`
---
-
-DROP TABLE IF EXISTS `tempusers`;
-CREATE TABLE `tempusers` (
-  `id` int unsigned NOT NULL,
-  `user_name` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
-  `user_password` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
-  `user_auth` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
-
--- --------------------------------------------------------
-
---
 -- Table structure for table `test`
 --
 
@@ -4901,12 +4887,6 @@ ALTER TABLE `temp_seq`
   ADD PRIMARY KEY (`seq_id`);
 
 --
--- Indexes for table `tempusers`
---
-ALTER TABLE `tempusers`
-  ADD PRIMARY KEY (`id`);
-
---
 -- Indexes for table `test`
 --
 ALTER TABLE `test`
@@ -5752,12 +5732,6 @@ ALTER TABLE `temp_contacts`
 --
 ALTER TABLE `temp_seq`
   MODIFY `seq_id` int unsigned NOT NULL AUTO_INCREMENT;
-
---
--- AUTO_INCREMENT for table `tempusers`
---
-ALTER TABLE `tempusers`
-  MODIFY `id` int unsigned NOT NULL AUTO_INCREMENT;
 
 --
 -- AUTO_INCREMENT for table `test`

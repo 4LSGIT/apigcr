@@ -421,18 +421,34 @@ deliberate-choice pattern).
 
 ### 5.5 Secrets (the Phase B half of §4)
 
-- `hooks.auth_config` (8 inbound keys incl. Calendly HMAC):
-  **SECRET_TABLES += hooks** — sessions have no routine need to read hook
-  rows; the SU console remains the path.
-- `credentials.config` (2 static api_keys): **encrypt at rest** via the
-  existing lib/credentialCrypto (the mailbox arc already set the
-  precedent with `encrypt()`); sessions keep querying the table
-  (allowed_urls etc.) without seeing secret material.
+- **Secret VALUES encrypted at rest** (B4), not tables hidden: only the
+  named JSON fields are ENCv1 (lib/credentialCrypto); every other key
+  stays queryable. `lib/secretAtRest.js` names the fields:
+  - `hooks.auth_config` (8 hooks: 6 api_key `$.key`, 2 Calendly hmac
+    `$.secret`). Decrypted only in hookService.authenticateRequest (the
+    inbound verify) and the two editor display routes. SECRET_TABLES +=
+    hooks was the earlier plan; readonly_query_log falsified its premise
+    on 2026-10-14 — 294 session queries read hook metadata (52 in the
+    prior 30 days), only 20 even named auth_config.
+  - `credentials.config` (3 static api_keys live 2026-10-14 — Quo,
+    Claude, Assembly AI — not 2; plus bearer `$.token` / basic
+    `$.password` when they exist; oauth2 `$.client_secret` already was).
+    Decrypted only in credentialInjection.buildAuthHeaders and the SU
+    `/api/credentials/:id/reveal`.
+  - Dual-read (an ENCv1 value decrypts, plaintext passes) so the code
+    deploys FIRST and `scripts/accessB4SecretsAtRest.js` migrates the
+    rows after. Writes encrypt idempotently (credentials POST/PUT,
+    hookService create/update; duplicateHook copies ciphertext).
+  - The management API still returns decrypted hook secrets to any staff
+    JWT (ruling H1: display parity); gating `/api/hooks` behind
+    `automations.manage` is follow-up B5.
 - SU-console secret writes landing in RO-readable
-  `admin_audit_log.details.query_text`: adopt the **pre-commit secret
-  scan** (yci_/ycro_/yck_ prefixes + common secret shapes) and document
-  the in-SQL-generation path for setting secrets; audit-row redaction
-  stays the reactive backstop.
+  `admin_audit_log.details.query_text`: the **pre-commit secret scan**
+  (`.githooks/pre-commit` → `scripts/secret-scan.js`) refuses staged
+  lines adding a yci_/ycro_/yck_ key in its real minted shape or a
+  common provider secret; documenting the in-SQL-generation path for
+  setting secrets is still open; audit-row redaction stays the reactive
+  backstop.
 - Hygiene outcomes (ruled 2026-10-14): H1 DONE (table dropped by Fred).
   H2 RULED KEEP — the gpt RO key is intentional, not an error; struck
   from the debt list. H4: `tempusers` is dead (zero code references;
@@ -450,9 +466,14 @@ deliberate-choice pattern).
   INFRA_GCP §10 runbook pattern); capability scopes in the api-keys admin
   UI; retire Q3 per scoped key.
 - **B3** base62 mint format + UI copy ("session key" rename lands here).
-- **B4** Secrets: SECRET_TABLES += hooks; credentials.config
-  encrypt-at-rest; pre-commit secret scan. (Hygiene sitting rides
-  whenever Fred has 10 minutes.)
+- **B4** Secrets: hooks.auth_config + credentials.config secret values
+  encrypted at rest (code first, then the data script — §5.5);
+  pre-commit secret scan. (Hygiene sitting rides whenever Fred has 10
+  minutes.)
+- **B5** `/api/hooks` management routes behind
+  `requireAuth({ can: 'automations.manage', allowApiKey: true })`
+  (the receiver `/hooks/:slug` untouched). Needs an admin_surface_coord
+  entry and Fred's go.
 
 ---
 

@@ -29,6 +29,7 @@ const jwtOrApiKey = require('../lib/auth.jwtOrApiKey');
 const { superuserOnlyFor, auditAdminAction } = require('../lib/auth.superuser');
 const credentialCrypto = require('../lib/credentialCrypto');
 const credentialService = require('../services/credentialService');
+const { CREDENTIAL_SECRET_FIELDS, fieldsFor, encryptFields } = require('../lib/secretAtRest');
 
 // Tool name for admin-audit-log entries on credential CRUD (Slice 3 of
 // the Connections refactor). Same value as routes/api.oauth.js and
@@ -56,9 +57,11 @@ const SECRET_FIELDS_BY_TYPE = {
 //   - GET single, POST, PUT, DELETE, and the OAuth/reveal endpoints (in
 //     routes/api.oauth.js) are admin-only via superuserOnlyFor('connections').
 //
-// Encryption-on-write for oauth2 client_secret: when type='oauth2' on POST,
-// or when the resulting type is oauth2 on PUT, any non-empty plaintext
-// client_secret in `config` is encrypted before being persisted. The
+// Encryption-on-write: every secret value in `config` is encrypted before
+// being persisted — oauth2 client_secret, and since access-control B4 the
+// static types' api_key.key / bearer.token / basic.password
+// (lib/secretAtRest CREDENTIAL_SECRET_FIELDS, keyed on the RESULTING type).
+// Any non-empty plaintext value is encrypted. The
 // isEncrypted() heuristic makes the route idempotent — if the admin saves
 // a form that re-submits an already-encrypted value (because they didn't
 // edit the secret field), we don't double-encrypt.
@@ -185,8 +188,8 @@ router.post('/api/credentials', superuserOnlyFor(CONN_TOOL), async function crea
     }
 
     let effectiveConfig = config;
-    if (type === 'oauth2' && config && typeof config === 'object') {
-      effectiveConfig = encryptOauth2ClientSecret({ ...config });
+    if (config && typeof config === 'object') {
+      effectiveConfig = encryptFields(config, fieldsFor(CREDENTIAL_SECRET_FIELDS, type));
     }
 
     const data = { name, type };
@@ -329,6 +332,10 @@ router.put('/api/credentials/:id', superuserOnlyFor(CONN_TOOL), async function u
         // cs === undefined: not present in merged config (e.g. type
         // change with no secret in incoming) — leave alone.
       }
+
+      // Every type's secret fields (B4) — idempotent, so the oauth2 value
+      // encrypted just above and an untouched stored ciphertext both pass.
+      effectiveConfig = encryptFields(effectiveConfig, fieldsFor(CREDENTIAL_SECRET_FIELDS, newType));
 
       data.config = effectiveConfig === null ? null : JSON.stringify(effectiveConfig);
       fieldsChanged.push('config');
