@@ -483,7 +483,7 @@ describe('imap_secret is write-only', () => {
     const log = JSON.stringify(W.T.jwt_api_audit_log);
     expect(log).not.toContain(SECRET);
     expect(log).not.toContain('Second-1');
-    expect(W.T.jwt_api_audit_log.some(l => JSON.parse(l.body).imap_secret === '[REDACTED]')).toBe(true);
+    expect(W.T.jwt_api_audit_log.some(l => JSON.parse(l.body).imap_secret === '[secret]')).toBe(true);   // SEC-2 shape
   });
 });
 

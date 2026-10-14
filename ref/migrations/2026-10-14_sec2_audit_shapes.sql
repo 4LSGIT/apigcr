@@ -1,0 +1,33 @@
+-- SEC-2 — jwt_api_audit_log stores value SHAPES, never values.
+--
+-- ┌──────────────────────────────────────────────────────────────────────────┐
+-- │ DEPLOY ORDER — CODE FIRST, THEN THE DATA (same as B4):                   │
+-- │   1. land + deploy SEC-2 (new rows are born shaped)                      │
+-- │   2. node scripts/sec2ScrubAuditShapes.js           (CHECK — read-only)  │
+-- │   3. node scripts/sec2ScrubAuditShapes.js --apply                        │
+-- │ Scrubbing first leaves the old code writing raw rows behind the scrub.  │
+-- │ Either order is safe for the app; only code-first leaves no residue.     │
+-- └──────────────────────────────────────────────────────────────────────────┘
+--
+-- NO SQL TO PASTE: the shapes come from lib/auditShape.shapeTop in Node (the
+-- same function the logger calls), so this migration is the script. No DDL;
+-- no column changes; only body and query_params are rewritten.
+--
+-- Shape, per key, one level (keys kept, values never):
+--   "Jane" → "[str 4]"   42 → "[num]"   true → "[bool]"   null → "[null]"
+--   [1,2,3] → "[arr 3]"  {a:1,b:2} → "[obj 2]"   credential-named key → "[secret]"
+--   e.g. {"to":"[str 12]","message":"[str 240]","ids":"[arr 3]","password":"[secret]"}
+--
+-- Volume (manager's figure, 2026-10-14): ~134K rows, ~126 MB. The script
+-- walks id batches of 2000, ONE UPDATE … CASE id per batch (atomic, PK record
+-- locks only — the live logger's INSERTs are not blocked), verifies each
+-- batch by re-reading it, prints progress every 10 batches, and ends on one
+-- GO / NO-GO line. A 134K-row run on the local MySQL 8.4 twin: 3.5 s apply,
+-- 0.3 s re-run. Re-runnable: rows already in shape form are skipped; a
+-- failed batch names its --from-id to resume from.
+--
+-- Note: a pre-SEC-2 "[REDACTED]" value is NOT shape form; it becomes
+-- "[str 10]" (or "[secret]" under a credential-named key).
+--
+-- jwt_api_audit_log stays in lib/sqlGuard SECRET_TABLES after the scrub;
+-- re-opening it to session keys is a separate, deliberate decision.

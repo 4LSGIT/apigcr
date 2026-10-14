@@ -378,4 +378,4 @@ List endpoints accept `?page=N` and `?limit=N` (default usually 30, max 100 or 2
 
 ### Audit log
 
-Every authenticated request is logged in `jwt_api_audit_log` with the user/api-key, route, method, status, and a sanitized snapshot of body/query (Bearer tokens are redacted in the snapshot). Useful for "who did what" debugging.
+Every authenticated request is logged in `jwt_api_audit_log` with the user/api-key, route, method, status, and the *shape* of the body/query — each key with its value's type and length (`"[str 11]"`, `"[arr 3]"`, `"[secret]"` for credential-named keys), never the value itself. Auth headers are stripped, and credentials and the search term `q` are redacted from the stored URL. Useful for "who did what" debugging.

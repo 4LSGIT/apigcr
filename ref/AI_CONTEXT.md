@@ -243,11 +243,14 @@ body. Governing migrations in `ref/migrations/`.*
   - **The attorney READ bypass covers phone lines**; send/manage never
     bypass. **Grant routes pin their channel** — a mailbox route refuses a
     `phone_line` body and vice versa (the ids overlap).
-  - **`jwt_api_audit_log` redacts URL secrets** (SEC-1: credential-shaped
-    param names, case-blind) in the route, the parsed query and the Referer
-    (`redactUrlParams`, `lib/auth.jwtOrApiKey.js`) — and, by a separate rule
-    (access-control B2), the search term `q` (exact name) in the route, the
-    parsed query, the Referer and a body (`redactSearchParams`).
+  - **`jwt_api_audit_log` stores no request VALUES** (SEC-2): `body` and
+    `query_params` are per-key SHAPES — `{"to":"[str 11]","ids":"[arr 3]",
+    "password":"[secret]"}`, one level, keys kept, values never
+    (`lib/auditShape.js` `shapeTop`; history rewritten by
+    `scripts/sec2ScrubAuditShapes.js`). The two URL strings — route and
+    Referer — keep their diagnostic shape with credential-named params
+    (SEC-1, `redactUrlParams`) and the search term `q` (B2,
+    `redactSearchParams`) redacted. The table is in `SECRET_TABLES`.
   - `routes/internal/phoneTest.js` is gone. Migration
     `2026-10-12_phone_sph.sql` goes BEFORE the backend (it seeds the
     default-line grants the gate needs).

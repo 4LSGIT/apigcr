@@ -5,7 +5,8 @@
  * addendum (lib/auth.jwtOrApiKey.js redactSearchParams + logJwtApiAttempt).
  * A SEPARATE rule from SEC-1's credential list (tests/refererRedaction.test.js
  * is that one's pattern, mirrored here): `q` is not a credential, it is what
- * someone typed into a search box — and the table is session-key readable.
+ * someone typed into a search box. (The table left the session-key surface
+ * at the B2 landing — lib/sqlGuard SECRET_TABLES.)
  *
  * Contracts pinned here:
  *   redactSearchParams: the VALUE of `q` → "[REDACTED]" (name kept), exact
@@ -14,7 +15,9 @@
  *     non-strings untouched; the credential regex is NOT widened (`q` is not
  *     in redactUrlParams' set).
  *   logJwtApiAttempt: a search term planted in the URL, the parsed query and a
- *     POST body {q} reaches no INSERT param; look-alike names keep their values.
+ *     POST body {q} reaches no INSERT param; look-alike names keep their values
+ *     in the URL strings (the parsed query and body are SEC-2 shapes —
+ *     tests/auditShape.test.js).
  *
  * Run:
  *   npx jest tests/searchRedaction.test.js
@@ -82,12 +85,12 @@ test("audit write: the term reaches no column — URL, parsed query, referer", a
   await logJwtApiAttempt(req, "jwt", "alice", "authorized");
   const [route, , headersJson, queryJson] = captured.params;
   expect(route).toBe("/api/mail/messages?q=[REDACTED]&quality=high&limit=50");
-  expect(JSON.parse(queryJson)).toEqual({ q: "[REDACTED]", quality: "high", limit: "50" });
+  expect(JSON.parse(queryJson)).toEqual({ q: "[str 22]", quality: "[str 4]", limit: "[str 2]" });   // SEC-2 shapes
   expect(JSON.parse(headersJson).referer).toBe("https://app.4lsg.com/comms?q=[REDACTED]");
   for (const p of captured.params) expect(String(p)).not.toContain(TERM);
 });
 
-test("audit write: a POST body {q} (comms S6 search) is redacted; other body keys kept", async () => {
+test("audit write: a POST body {q} (comms S6 search) keeps its keys, never its values (SEC-2 shapes)", async () => {
   const { logJwtApiAttempt } = require("../lib/auth.jwtOrApiKey");
   const { req, captured } = capturingReq({
     originalUrl: "/api/comms-archive/search",
@@ -96,7 +99,7 @@ test("audit write: a POST body {q} (comms S6 search) is redacted; other body key
   });
   await logJwtApiAttempt(req, "jwt", "alice", "authorized");
   const body = JSON.parse(captured.params[4]);
-  expect(body).toEqual({ q: "[REDACTED]", line_id: 4, cursor: "abc", limit: 20, quick: "yes" });
+  expect(body).toEqual({ q: "[str 22]", line_id: "[num]", cursor: "[str 3]", limit: "[num]", quick: "[str 3]" });
   for (const p of captured.params) expect(String(p)).not.toContain(TERM);
 });
 
@@ -108,5 +111,5 @@ test("credentials and search terms together: both rules apply", async () => {
   });
   await logJwtApiAttempt(req, "jwt", "alice", "authorized");
   expect(captured.params[0]).toBe("/api/x?pass=[REDACTED]&q=[REDACTED]");
-  expect(JSON.parse(captured.params[3])).toEqual({ pass: "[REDACTED]", q: "[REDACTED]" });
+  expect(JSON.parse(captured.params[3])).toEqual({ pass: "[secret]", q: "[str 22]" });   // SEC-2 shapes
 });

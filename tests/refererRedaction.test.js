@@ -9,8 +9,8 @@
  *     multiple params handled, fragment-safe, non-URL-ish strings and
  *     non-strings untouched, benign paths like /password-reset survive.
  *   logJwtApiAttempt: headers.referer and the route (originalUrl) land
- *     redacted; parsed query params matching the name set land redacted
- *     (case-insensitively); a secret planted in any of the three never
+ *     redacted; the parsed query lands as SEC-2 shapes (a credential-named
+ *     key is "[secret]"); a secret planted in any of the three never
  *     reaches the INSERT params. Breaking the redactor (e.g. deleting the
  *     referer line or the redactUrlParams call on originalUrl) makes the
  *     "secret appears nowhere" assertions fail — that is the mutation bite.
@@ -116,8 +116,9 @@ test("audit write redacts referer, originalUrl and parsed query — secret reach
     "https://app.4lsg.com/?user=alice&pass=[REDACTED]&qp=ab"
   );
 
-  // parsed query — case-insensitive name match
-  expect(JSON.parse(queryJson)).toEqual({ from: "2026-01-01", PASS: "[REDACTED]" });
+  // parsed query — stored as value SHAPES since SEC-2 (lib/auditShape);
+  // a credential-named key carries no length at all
+  expect(JSON.parse(queryJson)).toEqual({ from: "[str 10]", PASS: "[secret]" });
 
   // mutation bite: bypass ANY of the three redaction sites and this fails
   for (const p of captured.params) {
@@ -141,5 +142,5 @@ test("audit write without referer or query secrets is unchanged in shape", async
   expect(route).toBe("/api/cases?status=open");
   expect(method).toBe("GET");
   expect(JSON.parse(headersJson)).toEqual({ "user-agent": "jest" });
-  expect(JSON.parse(queryJson)).toEqual({ status: "open" });
+  expect(JSON.parse(queryJson)).toEqual({ status: "[str 4]" });   // SEC-2 shapes
 });

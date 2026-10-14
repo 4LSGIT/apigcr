@@ -689,7 +689,7 @@ describe('jwt_api_audit_log redaction (ruling 5)', () => {
     const row = W.T.jwt_api_audit_log.pop();
     expect(row.headers.referer).toBe('https://app.4lsg.com/?user=Ssandweiss&pass=[REDACTED]&files=c1');
     expect(row.route).toBe('/api/phone-lines/readable?token=[REDACTED]&x=1');
-    expect(row.query).toEqual({ token: '[REDACTED]', x: '1' });
+    expect(row.query).toEqual({ token: '[secret]', x: '[str 1]' });   // SEC-2 shapes
     expect(JSON.stringify(row)).not.toMatch(/Hunter2|abc123/);
   });
 

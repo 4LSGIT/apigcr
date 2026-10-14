@@ -60,6 +60,7 @@ Read this before drawing conclusions from those numbers.
 | "No rows since I revoked it, so they stopped calling" | **No.** Rejected calls are invisible here — an unrecognized or revoked key never resolves to a label, so nothing is logged. Absence is not evidence |
 | "This key made these calls" | Only if its label is unique. Two live keys sharing a label are **not** separable; the screen says so when it detects it |
 | "I reused the label 'Pabbly', so it's ambiguous" | Reuse over *time* is fine — rows are bounded by each key's creation |
+| "The body column shows what they sent" | Only its **keys** and each value's type/length (`"to":"[str 11]"`). Values are never stored, so you can see *that* a call carried a `message`, not what it said |
 
 The cause is structural: there is no `api_key_id` column on
 `jwt_api_audit_log`. `lib/auth.jwtOrApiKey` writes the key's **label** into
