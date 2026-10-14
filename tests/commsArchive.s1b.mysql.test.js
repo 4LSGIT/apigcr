@@ -36,8 +36,11 @@ const { Readable } = require('stream');
 const URL_  = process.env.YC_TEST_MYSQL_URL;
 const maybe = URL_ ? describe : describe.skip;
 const PROD_SQL_MODE = 'IGNORE_SPACE,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION';
+// Every table the code under test touches is built HERE, never borrowed from another suite: with
+// voicemail capture on (M3b) the media sweep reads job_results, which only the S1c suite used to
+// create — run after it the suite passed, run before it the sweep threw (2026-10-14).
 const TABLES = ['phone_lines', 'phone_event_log', 'log', 'users', 'system_alerts', 'alert_state',
-  'app_settings', 'scheduled_jobs', 'admin_audit_log', 'jwt_api_audit_log'];
+  'app_settings', 'scheduled_jobs', 'admin_audit_log', 'jwt_api_audit_log', 'job_results'];
 
 const sha = (b) => crypto.createHash('sha256').update(b).digest('hex');
 const daysAgo = (n) => new Date(Date.now() - n * 86400_000);

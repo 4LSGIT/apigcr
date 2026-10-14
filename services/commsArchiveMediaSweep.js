@@ -346,6 +346,10 @@ async function _rcTranscriptRow(db, rec, voicemailId, acc, out) {
     return;
   }
   for (const a of tr) {
+    // The existence check counts ONLY an RC vendor transcript child (provider
+    // 'ringcentral', part = RC's numeric attachment id). Other stt_raw children
+    // of the same voicemail — Quo's (part 'quo'), S2's (part 'assemblyai…') —
+    // must never block RC's own transcript from being discovered.
     const [ins] = await db.query(
       `INSERT IGNORE INTO comms_media
          (channel, kind, source_table, source_id, part, provider, channel_id, party, captured_at, restricted, state)
@@ -353,7 +357,8 @@ async function _rcTranscriptRow(db, rec, voicemailId, acc, out) {
          FROM comms_media
         WHERE id = ? AND state <> 'purged'
           AND NOT EXISTS (SELECT 1 FROM comms_media s
-                           WHERE s.source_table = 'comms_media' AND s.source_id = ? AND s.kind = 'stt_raw')`,
+                           WHERE s.source_table = 'comms_media' AND s.source_id = ? AND s.kind = 'stt_raw'
+                             AND s.provider = 'ringcentral' AND s.part REGEXP '^[0-9]+$')`,
       [String(a.id), voicemailId, voicemailId],
     );
     out.discovered_vm_transcripts = (out.discovered_vm_transcripts || 0) + (ins.affectedRows || 0);
@@ -564,18 +569,28 @@ async function _tick(db, opts, out, acc, startedAt) {
   const lock = await common.acquireLock(db, LOCK_EXPR);
   if (!lock) { out.skipped = 'locked'; return; }
 
-  // The RC voicemail listing: due decided at the START (review L1) — the top
-  // of the hour, OR the last completed listing is stale (a skipped :00 — a
-  // late start behind the cliff sweep, a long row loop, a held lock, a failed
-  // pre-flight — catches up on the next tick instead of silently waiting).
-  let vmHistory = null;
-  if (limits.captureVoicemails) {
-    vmHistory = await _rcVmListingHistory(db);
-    const staleMs = vmHistory.last ? Date.now() - vmHistory.last.getTime() : Infinity;
-    out.rc_vm_due = limits.rcVmMinuteDue() || staleMs > limits.rcVmStaleMin * 60_000;
-  }
-
+  // EVERYTHING after the lock runs inside this try, so its finally releases
+  // the lock however the tick ends (a throw outside it leaked the lock and
+  // stalled every later tick — found 2026-10-14).
   try {
+    // The RC voicemail listing: due decided at the START (review L1) — the
+    // top of the hour, OR the last completed listing is stale (a skipped :00
+    // — a late start behind the cliff sweep, a long row loop, a held lock, a
+    // failed pre-flight — catches up on the next tick instead of silently
+    // waiting). If the history can't be read, the top-of-the-hour rule alone
+    // decides; the tick is not failed for it.
+    if (limits.captureVoicemails) {
+      let staleMs = Infinity;
+      try {
+        const vmHistory = await _rcVmListingHistory(db);
+        staleMs = vmHistory.last ? Date.now() - vmHistory.last.getTime() : Infinity;
+        out.rc_vm_due = limits.rcVmMinuteDue() || staleMs > limits.rcVmStaleMin * 60_000;
+      } catch (err) {
+        console.error('[COMMS ARCHIVE] rc voicemail listing history unreadable:', err.message);
+        out.rc_vm_due = limits.rcVmMinuteDue();
+      }
+    }
+
     // ── Our-side pre-flight, before ANY claim ─────────────────────────────
     try {
       await archive.checkBucket({ timeoutMs: Math.min(io(), 30_000) });

@@ -514,4 +514,34 @@ maybe('comms archive S1c (voicemails) on real MySQL', () => {
     expect(al.length).toBe(1);
     expect(al[0].title).toMatch(/Quo forbids voicemails on line 2489655355 \(Rena\)/);
   });
+
+  test('LOCK an unreadable listing history never fails the tick nor leaks the media lock', async () => {
+    media.limits.rcVmMinuteDue = () => false;
+    await q('RENAME TABLE job_results TO job_results_off');
+    let out;
+    try { out = await run(); } finally { await q('RENAME TABLE job_results_off TO job_results'); }
+    expect(out.rc_vm_due).toBe(false);                                          // the top-of-hour rule alone decided
+    const [[free]] = await pool.query("SELECT IS_FREE_LOCK(CONCAT('comms_archive_media:', DATABASE())) AS f");
+    expect(Number(free.f)).toBe(1);
+    const again = await run();                                                    // the next tick is not 'locked'
+    expect(again.skipped).toBeUndefined();
+  });
+
+  test('STT another vendor\'s stt_raw child (S2 \'assemblyai\') never blocks RC\'s own transcript', async () => {
+    rcF.pages[1] = [vm('9999999999019')];
+    await run(); await run();
+    const v = (await rows()).find(r => r.kind === 'voicemail');
+    expect(v.state).toBe('archived');
+    await q(`INSERT INTO comms_media (channel, kind, source_table, source_id, part, provider, captured_at, state)
+             VALUES ('phone', 'stt_raw', 'comms_media', ?, 'assemblyai', 'assemblyai', '2024-09-15 19:33:18', 'archived'),
+                    ('phone', 'stt_raw', 'comms_media', ?, 'assemblyai-mc', 'ringcentral', '2024-09-15 19:33:18', 'archived')`, [v.id, v.id]);
+    rcF.pages[1] = [vm('9999999999019', { transcription: 'Completed', extraAtt: [{ id: 9999999999020, type: 'AudioTranscription' }] })];
+    await run();
+    const rc = (await rows()).filter(r => r.kind === 'stt_raw' && r.part === '9999999999020');
+    expect(rc).toHaveLength(1);
+    expect(rc[0]).toMatchObject({ provider: 'ringcentral', source_id: v.id, state: 'pending' });
+    // …and still only ONE RC transcript child, however often it is re-listed
+    await run();
+    expect((await rows()).filter(r => r.kind === 'stt_raw' && /^\d+$/.test(r.part))).toHaveLength(1);
+  });
 });
