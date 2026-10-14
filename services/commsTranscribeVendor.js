@@ -57,6 +57,15 @@ const VARIANTS = Object.freeze({
   multichannel: { part: 'assemblyai-mc', model: `${MODEL}+multichannel` },
 });
 
+/**
+ * The stt_model a job is recorded under: the variant's model, plus `+max<N>` for a diarize job sent
+ * with a speaker cap (so a later redo can tell hinted rows apart). Readers key on /\+multichannel$/ only.
+ */
+function modelLabel(variant, maxSpeakers = 0) {
+  if (!VARIANTS[variant]) throw new Error(`modelLabel: unknown variant ${variant}`);
+  return VARIANTS[variant].model + (variant === 'diarize' && maxSpeakers > 0 ? `+max${maxSpeakers}` : '');
+}
+
 function _ms(v, dflt) {
   const n = Number(v);
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : dflt;
@@ -113,16 +122,20 @@ async function _call(db, credId, method, url, body, timeoutMs) {
 /**
  * Submit one transcription job. `variant` ∈ VARIANTS.
  * keyterms: string[] (sent only when non-empty — it is a paid add-on).
+ * maxSpeakers: diarize only — speaker_options.max_speakers_expected when > 0.
  */
-async function submit(db, { credId, audioUrl, variant, keyterms = [], languageDetection = true, timeoutMs }) {
+async function submit(db, { credId, audioUrl, variant, keyterms = [], languageDetection = true, maxSpeakers = 0, timeoutMs }) {
   if (!VARIANTS[variant]) throw new Error(`submit: unknown variant ${variant}`);
   const body = {
     audio_url: audioUrl,
     speech_models: [MODEL],
     language_detection: !!languageDetection,
   };
-  if (variant === 'diarize') body.speaker_labels = true;
-  else body.multichannel = true;
+  if (variant === 'diarize') {
+    body.speaker_labels = true;
+    // A hard cap: extra voices merge into existing labels. Never on multichannel (the limits apply PER CHANNEL there).
+    if (maxSpeakers > 0) body.speaker_options = { max_speakers_expected: maxSpeakers };
+  } else body.multichannel = true;
   if (Array.isArray(keyterms) && keyterms.length) body.keyterms_prompt = keyterms;
   return _call(db, credId, 'POST', `${API}/transcript`, body, timeoutMs);
 }
@@ -249,6 +262,6 @@ function classifyJobError(text) {
 
 module.exports = {
   API, MODEL, VARIANTS, RATE_CENTS_PER_H,
-  checkAuth, submit, getTranscript, deleteTranscript, listTranscripts,
+  checkAuth, submit, getTranscript, deleteTranscript, listTranscripts, modelLabel,
   segmentsFromVendorJson, fullTextOf, stripSignedUrl, costCents, classifyJobError, redactUrls, validJobId,
 };

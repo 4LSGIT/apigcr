@@ -39,6 +39,21 @@ describe('HTTP through the real credential injection', () => {
     });
   });
 
+  test('submit: the speaker cap rides a diarize job only, as speaker_options; 0 sends none; modelLabel tags it', async () => {
+    await v.submit(dbWith(CRED), { credId: 14, audioUrl: 'https://x/y', variant: 'diarize', maxSpeakers: 2 });
+    await v.submit(dbWith(CRED), { credId: 14, audioUrl: 'https://x/y', variant: 'diarize', maxSpeakers: 0 });
+    await v.submit(dbWith(CRED), { credId: 14, audioUrl: 'https://x/y', variant: 'multichannel', maxSpeakers: 2 });
+    const [a, b, c] = seen.map(x => JSON.parse(x.init.body));
+    expect(a).toMatchObject({ speaker_labels: true, speaker_options: { max_speakers_expected: 2 } });
+    expect(a.speakers_expected).toBeUndefined();
+    expect(b.speaker_options).toBeUndefined();
+    expect(c.speaker_options).toBeUndefined();
+    expect(v.modelLabel('diarize', 2)).toBe('universal-3-5-pro+diarize+max2');
+    expect(v.modelLabel('diarize', 0)).toBe('universal-3-5-pro+diarize');
+    expect(v.modelLabel('multichannel', 2)).toBe('universal-3-5-pro+multichannel');
+    expect(() => v.modelLabel('stereo', 2)).toThrow(/variant/);
+  });
+
   test('submit multichannel + keyterms + English only', async () => {
     await v.submit(dbWith(CRED), { credId: 14, audioUrl: 'https://x/y', variant: 'multichannel', keyterms: ['Chapter 13', 'trustee'], languageDetection: false });
     const b = JSON.parse(seen[0].init.body);

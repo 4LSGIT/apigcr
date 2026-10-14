@@ -85,6 +85,8 @@
  *           no submissions (error alert). Each such POST may be a real,
  *           billed job; the monthly cap would be the only other bound.
  *        i. a 1-hour V4 signed URL (one per POST) → ledger row written ahead
+ *           (a diarize job carries the speaker cap comms_stt_max_speakers as
+ *           speaker_options; its stt_model is tagged +max<N>)
  *           → POST /v2/transcript → 'transcribing' straight after the MAIN
  *           answer → the sample variant's POST. A POST that comes back
  *           unreadable or without an answer (incl. 502/503/504) STOPS every
@@ -145,7 +147,9 @@ const KEYS = Object.freeze({
   stereo: 'comms_stt_quo_stereo',
   keyterms: 'comms_stt_keyterms',
   lang: 'comms_stt_language_detection',
+  maxSpeakers: 'comms_stt_max_speakers',
 });
+const MAX_SPEAKERS_LIMIT = 10;
 const MODES = new Set(['off', 'sample', 'on']);
 const KINDS = ['call_recording', 'voicemail'];
 const JOB_FAILED = ['error', 'lost', 'drift', 'unknown'];
@@ -220,6 +224,9 @@ async function readConfig(db) {
   let capCents = int(KEYS.cap);
   if (capCents == null) { capCents = 0; if (mode !== 'off') notes.push(`${KEYS.cap} is missing or not a number — treated as 0: nothing is submitted`); }
 
+  // The diarize speaker cap: 0 = none (the vendor's default), 1–10 = max_speakers_expected. Anything else stops the tick.
+  const maxSpeakers = int(KEYS.maxSpeakers);
+  if (maxSpeakers == null || maxSpeakers > MAX_SPEAKERS_LIMIT) problems.push(`${KEYS.maxSpeakers} is missing or not a whole number 0–${MAX_SPEAKERS_LIMIT}`);
   const stereo = raw[KEYS.stereo] === 'multichannel' ? 'multichannel' : 'diarize';
   let keyterms = [];
   if (raw[KEYS.keyterms] != null && String(raw[KEYS.keyterms]).trim() !== '') {
@@ -232,7 +239,7 @@ async function readConfig(db) {
     }
   }
   const languageDetection = raw[KEYS.lang] === '1';
-  return { mode, credId, minS, maxMin, capCents, stereo, keyterms, languageDetection, problems, notes };
+  return { mode, credId, minS, maxMin, capCents, stereo, keyterms, languageDetection, maxSpeakers, problems, notes };
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -661,7 +668,7 @@ async function _postJob(ctx, row, { role, variant, estCents }) {
   });
   const r = await vendor.submit(db, {
     credId: cfg.credId, audioUrl: url, keyterms: cfg.keyterms, languageDetection: cfg.languageDetection,
-    timeoutMs: limits.vendorTimeoutMs, variant,
+    maxSpeakers: cfg.maxSpeakers, timeoutMs: limits.vendorTimeoutMs, variant,
   });
   return _postOutcome(ctx, row, r, { role, variant, ledgerId });
 }
@@ -1064,7 +1071,7 @@ async function _submitOne(ctx, row) {
             submitted_at = UTC_TIMESTAMP(), attempts = GREATEST(attempts, 1) - 1,
             next_attempt_at = UTC_TIMESTAMP() + INTERVAL 1 MINUTE, last_error = NULL
       WHERE id = ? AND state = 'pending'`,
-    [vendor.VARIANTS[main].model, o.jobRef, row.id]);
+    [vendor.modelLabel(main, cfg.maxSpeakers), o.jobRef, row.id]);
   if (u.affectedRows !== 1) { out.fenced++; return ctx.vendorStopped; }   // purged while submitting: the ledger owes the delete
   out.submitted++;
 

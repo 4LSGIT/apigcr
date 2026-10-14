@@ -162,6 +162,7 @@ maybe('comms archive S2 transcription on real MySQL', () => {
       const r = await migrate.run(conn, { apply: true, say: () => {} });
       if (!r.ok) throw new Error(`migration: ${r.line}`);
     } finally { conn.release(); }
+    for (const s of schema.migrationStatements('2026-10-15_comms_s2c_max_speakers.sql')) await pool.query(s);   // S2c-1's setting row
     // S0's sample table, as committed on comms-eval (bbefcc0), ref/migrations/2026-10-14_comms_eval.sql §1.
     await pool.query(`CREATE TABLE IF NOT EXISTS comms_eval_items (
       media_id BIGINT UNSIGNED NOT NULL, stratum VARCHAR(4) NOT NULL, seed VARCHAR(32) NOT NULL,
@@ -183,7 +184,7 @@ maybe('comms archive S2 transcription on real MySQL', () => {
     }
     for (const [k, v] of [['comms_transcribe_mode', 'on'], ['comms_stt_credential_id', '14'], ['comms_min_transcribe_s', '15'],
       ['comms_stt_max_min_per_call', '300'], ['comms_ai_monthly_cap_cents', '7500'], ['comms_stt_quo_stereo', 'diarize'],
-      ['comms_stt_keyterms', '[]'], ['comms_stt_language_detection', '1']]) await set(k, v);
+      ['comms_stt_keyterms', '[]'], ['comms_stt_language_detection', '1'], ['comms_stt_max_speakers', '2']]) await set(k, v);
     await pool.query(`UPDATE credentials SET allowed_urls = '["https://api.assemblyai.com/*"]' WHERE id = 14`);
     process.env.COMMS_ARCHIVE_BUCKET = 'lsg-yc-comms-archive-test';
     gcs = fakeStorage();
@@ -209,10 +210,11 @@ maybe('comms archive S2 transcription on real MySQL', () => {
     expect(audioSign.expires - Date.now()).toBeLessThanOrEqual(60 * 60e3 + 1000);
     const [post] = aai.posts();
     expect(post.auth).toBe('aai_test_key');
-    expect(post.body).toEqual({ audio_url: audioSign.url, speech_models: ['universal-3-5-pro'], language_detection: true, speaker_labels: true });
+    expect(post.body).toEqual({ audio_url: audioSign.url, speech_models: ['universal-3-5-pro'], language_detection: true, speaker_labels: true,
+      speaker_options: { max_speakers_expected: 2 } });
     expect(aai.jobs.get('tx-1')).toMatchObject({ fetched: 200, fetchedBytes: 8192 });
     let t = await tr(id);
-    expect(t).toMatchObject({ state: 'transcribing', stt_job_ref: 'tx-1', stt_model: 'universal-3-5-pro+diarize', attempts: 0, est_audio_s: 20, phone_event_id: expect.any(Number) });
+    expect(t).toMatchObject({ state: 'transcribing', stt_job_ref: 'tx-1', stt_model: 'universal-3-5-pro+diarize+max2', attempts: 0, est_audio_s: 20, phone_event_id: expect.any(Number) });
     expect(Number(t.stt_cost_cents)).toBeCloseTo(20.088 / 3600 * 23, 4);     // the estimate, from the ledger
     expect(await jobs(id)).toEqual([expect.objectContaining({ role: 'main', variant: 'diarize', job_ref: 'tx-1', state: 'submitted', cost_cents: null, deleted_at: null })]);
     expect((await q('SELECT audio_channels FROM comms_media WHERE id = ?', [id]))[0].audio_channels).toBe(1);
@@ -361,7 +363,7 @@ maybe('comms archive S2 transcription on real MySQL', () => {
     expect(posts.length).toBe(3);                       // quo ×2 + tiny ×1
     expect(posts.filter(p => p.body.multichannel).length).toBe(1);
     const tq = await tr(quo);
-    expect(tq).toMatchObject({ state: 'transcribing', stt_model: 'universal-3-5-pro+diarize', alt_job_ref: expect.stringMatching(/^tx-/) });
+    expect(tq).toMatchObject({ state: 'transcribing', stt_model: 'universal-3-5-pro+diarize+max2', alt_job_ref: expect.stringMatching(/^tx-/) });
     expect(Number(tq.stt_cost_cents)).toBeCloseTo(37.068 / 3600 * (23 + 42), 3);   // both variants reserved (exact Xing-less CBR estimate)
     // the variant still processing holds the row
     aai.complete(tq.stt_job_ref);
@@ -388,6 +390,60 @@ maybe('comms archive S2 transcription on real MySQL', () => {
     expect(aai.posts().length - before).toBeGreaterThanOrEqual(1);
     expect((await tr(quo2)).alt_job_ref).toBeNull();
     expect(aai.posts().slice(before).filter(p => p.body.multichannel).length).toBe(0);
+  });
+
+  test('V1b S2c-1: the speaker cap rides diarize jobs only (mono + the sample variant), tags stt_model; multichannel never', async () => {
+    await set('comms_transcribe_mode', 'sample');
+    const quo = await media({ provider: 'quo', fixture: 'quo_cbr_js_64k.mp3' });
+    const mono = await media();
+    await q("INSERT INTO comms_eval_items (media_id, stratum, seed, added_by) VALUES (?, 'S6', 'seed', 1), (?, 'S1', 'seed', 1)", [quo, mono]);
+    await run();
+    const posts = aai.posts();
+    expect(posts.length).toBe(3);                       // quo diarize + quo multichannel (sample) + mono diarize
+    const dia = posts.filter(p => p.body.speaker_labels), mc = posts.filter(p => p.body.multichannel);
+    expect(dia.length).toBe(2);
+    for (const p of dia) expect(p.body.speaker_options).toEqual({ max_speakers_expected: 2 });
+    expect(mc.length).toBe(1);
+    expect(mc[0].body.speaker_options).toBeUndefined();
+    expect(mc[0].body.speaker_labels).toBeUndefined();
+    expect((await tr(mono)).stt_model).toBe('universal-3-5-pro+diarize+max2');
+    // the knob flipped: the multichannel MAIN job carries no cap and no tag
+    await set('comms_transcribe_mode', 'on');
+    await set('comms_stt_quo_stereo', 'multichannel');
+    const quo2 = await media({ provider: 'quo', fixture: 'quo_cbr_js_64k.mp3' });
+    const before = aai.posts().length;
+    await run();
+    const p2 = aai.posts().slice(before);
+    expect(p2.map(p => [!!p.body.multichannel, p.body.speaker_options])).toEqual([[true, undefined]]);
+    expect((await tr(quo2)).stt_model).toBe('universal-3-5-pro+multichannel');
+  });
+
+  test('V1c S2c-1: comms_stt_max_speakers 0 = no cap; missing or garbage = no submit, error alert', async () => {
+    await set('comms_stt_max_speakers', '0');
+    const a = await media();
+    await run();
+    expect(aai.posts()[0].body).toMatchObject({ speaker_labels: true });
+    expect(aai.posts()[0].body.speaker_options).toBeUndefined();
+    expect((await tr(a)).stt_model).toBe('universal-3-5-pro+diarize');
+    const b = await media();
+    for (const bad of ['two', '11', '2.5', '-1', '']) {
+      await set('comms_stt_max_speakers', bad);
+      expect(await run()).toMatchObject({ stop: 'config', submitted: 0 });
+    }
+    await q("DELETE FROM app_settings WHERE `key` = 'comms_stt_max_speakers'");
+    expect(await run()).toMatchObject({ stop: 'config', submitted: 0 });
+    expect(aai.posts().length).toBe(1);
+    expect(await tr(b)).toBeUndefined();               // the tick stopped before discovery
+    const al = (await alerts()).filter(x => x.group_key === 'comms_transcribe_config');
+    expect(al.map(x => x.severity)).toContain('error');
+    expect(al.map(x => x.message).join('\n')).toMatch(/comms_stt_max_speakers/);
+    for (const s of schema.migrationStatements('2026-10-15_comms_s2c_max_speakers.sql')) await pool.query(s);   // the seed again: '2'
+    expect(await run()).toMatchObject({ submitted: 1 });
+    expect(aai.posts()[1].body.speaker_options).toEqual({ max_speakers_expected: 2 });
+    await set('comms_stt_max_speakers', '10');
+    await media();
+    await run();
+    expect(aai.posts()[2].body.speaker_options).toEqual({ max_speakers_expected: 10 });
   });
 
   test('V2 the stereo knob flips the canonical variant; variantSegments follows it', async () => {

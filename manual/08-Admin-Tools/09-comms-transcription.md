@@ -63,6 +63,7 @@ A missing or non-numeric cap counts as 0: nothing is sent.
 |---|---|---|
 | `comms_stt_credential_id` | 14 | The AssemblyAI credential (Connections). |
 | `comms_stt_quo_stereo` | `diarize` | How a two-channel recording is transcribed in `on`. `diarize`: one mixed track with speaker labels (cheaper). `multichannel`: one transcript per channel, billed per channel. |
+| `comms_stt_max_speakers` | `2` | The most speakers a mixed (one-track) transcript may have — mono calls, voicemails, and stereo calls in `diarize`. Extra voices are merged into existing speakers; without it AssemblyAI sometimes splits a two-person call into many "speakers". `0` = no limit. Anything other than a whole number 0–10 stops transcription (alert `comms_transcribe_config`). Not used for `multichannel`. |
 | `comms_stt_keyterms` | `[]` | JSON list of names or phrases to help recognition, up to 6 words each. Leave empty unless needed: it adds $0.05 per audio hour. |
 | `comms_stt_language_detection` | `1` | `1` means AssemblyAI detects the language. Anything else means English only. |
 
