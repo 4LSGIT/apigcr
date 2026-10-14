@@ -19,6 +19,10 @@
  *                  name and entry shape so casedetails-bk's dropdown and
  *                  forms optionsFrom sources (firmData.settings.trustees)
  *                  need no change.
+ *   denied       — launcher item keys denied to this user (access-control A5,
+ *                  services/entitlementService.deniedFor): firm ∪ the user's
+ *                  roles ∪ the user, undeniables stripped; [] when none. ONE
+ *                  query. Visibility-only — ui-custom's launcher hides them.
  *
  * This replaces the need for separate calls to:
  *   GET /api/phone-lines
@@ -33,6 +37,7 @@ const express     = require('express');
 const router      = express.Router();
 const jwtOrApiKey = require('../lib/auth.jwtOrApiKey');
 const { loadTrusteeRoster } = require('../lib/trusteeRoster');
+const { deniedFor } = require('../services/entitlementService');
 
 // Fields to strip from the current user response
 const USER_STRIP = ['password', 'password_hash', 'reset_token', 'reset_expires'];
@@ -54,7 +59,8 @@ router.get('/api/firm-data', jwtOrApiKey, async (req, res) => {
       [emails],
       [users],
       [settingsRows],
-      trustees
+      trustees,
+      denied
     ] = await Promise.all([
       req.db.query('SELECT * FROM users WHERE user = ?', [userId]),
       req.db.query(
@@ -92,6 +98,12 @@ router.get('/api/firm-data', jwtOrApiKey, async (req, res) => {
       loadTrusteeRoster(req.db).catch(err => {
         console.error('GET /api/firm-data: trustee roster load failed:', err.message);
         return [];
+      }),
+      // Entitlement denies (A5). Fail-SOFT to [] for the same reason: a deny
+      // only hides a launcher tile, and a dead shell is worse than a shown one.
+      deniedFor(req.db, userId).catch(err => {
+        console.error('GET /api/firm-data: entitlement denies load failed:', err.message);
+        return [];
       })
     ]);
 
@@ -122,6 +134,7 @@ router.get('/api/firm-data', jwtOrApiKey, async (req, res) => {
       emailFrom: emails,
       users,
       settings,
+      denied,
       firmTimezone: process.env.FIRM_TIMEZONE || 'America/Detroit'
     });
   } catch (err) {

@@ -518,6 +518,7 @@ ref/migrations/2026-10-13_mail_sends.sql
 ref/migrations/2026-10-13_wf50_end_after_cancel.console.js
 ref/migrations/2026-10-14_access_a2_su_role.sql
 ref/migrations/2026-10-14_access_a2b_user_auth_collapse.sql
+ref/migrations/2026-10-14_access_a5_entitlement_denies.sql
 ref/migrations/2026-10-14_comms_media.sql
 ref/migrations/2026-10-14_comms_s1b.sql
 ref/migrations/2026-10-14_wf50_text_on_cancel_failure.console.js
@@ -577,6 +578,7 @@ routes/api.documents.js
 routes/api.dropbox.js
 routes/api.emailCredentials.js
 routes/api.emailIngest.js
+routes/api.entitlements.js
 routes/api.esign.actions.js
 routes/api.esign.js
 routes/api.esign.templates.js
@@ -684,6 +686,7 @@ routes/workflows.js
 scripts/Courtapprovetest.js
 scripts/accessA2SuRole.js
 scripts/accessA2bCollapse.js
+scripts/accessA5Entitlements.js
 scripts/add-path-headers.js
 scripts/backfill-password-hashes.js
 scripts/backfillAppts.js
@@ -831,6 +834,7 @@ services/emailIngestService.js
 services/emailIngestSuppressionService.js
 services/emailIngestValidator.js
 services/emailService.js
+services/entitlementService.js
 services/esign/index.js
 services/esign/pdfFill.js
 services/esign/placements.js
@@ -1009,6 +1013,8 @@ tests/dropboxService.retry.test.js
 tests/emailservice.normalizebodies.test.js
 tests/emitStageAged.test.js
 tests/ensureSqlProxy.test.js
+tests/entitlements.mysql.test.js
+tests/entitlements.test.js
 tests/escapeLike.test.js
 tests/esignActionsUi.test.js
 tests/esignAlert.test.js

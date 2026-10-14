@@ -58,9 +58,8 @@ const MIN_PASSWORD_LEN = 4; // matches auth.password.js / auth.login.js conventi
 
 const ALLOWED_AUTH = ['authorized', 'disabled'];
 
-// users.roles SET members, in column order (ref/database.sql). Append-only,
-// like the SET itself; writes are normalized to this order.
-const ROLE_MEMBERS = ['it', 'admin', 'staff', 'attorney', 'automation', 'form_dev', 'su'];
+// users.roles SET members (lib/capabilities); writes are normalized to this order.
+const { ROLE_MEMBERS } = require('../lib/capabilities');
 const DEFAULT_ROLES = 'staff';
 
 // Fields an SU may edit via PATCH. user_custom_tab / task_remind_freq /

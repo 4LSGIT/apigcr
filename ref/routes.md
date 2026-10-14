@@ -1,7 +1,7 @@
 # Routes
 
-_Generated 2026-10-14T07:16:15.598Z_  
-_752 routes total — DELETE: 62, GET: 315, PATCH: 51, POST: 286, PUT: 35, _ALL: 3_
+_Generated 2026-10-14T12:35:49.764Z_  
+_755 routes total — DELETE: 63, GET: 316, PATCH: 51, POST: 287, PUT: 35, _ALL: 3_
 
 ## Global middleware chain
 
@@ -274,6 +274,9 @@ _752 routes total — DELETE: 62, GET: 315, PATCH: 51, POST: 286, PUT: 35, _ALL:
 | GET | `/api/email-ingest/suppressions/:id` | `jwtOrApiKey` | — |
 | PUT | `/api/email-ingest/suppressions/:id` | `jwtOrApiKey` | — |
 | POST | `/api/email/ingest` | `<anonymous>` | — |
+| GET | `/api/entitlements` | `staffAuth` | — |
+| POST | `/api/entitlements` | `staffAuth` | — |
+| DELETE | `/api/entitlements/:id` | `staffAuth` | — |
 | GET | `/api/esign` | `jwtOrApiKey` | — |
 | GET | `/api/esign/:id(\d+)` | `jwtOrApiKey` | — |
 | GET | `/api/esign/:id(\d+)/source` | `jwtOrApiKey` | — |
@@ -1022,4 +1025,4 @@ _752 routes total — DELETE: 62, GET: 315, PATCH: 51, POST: 286, PUT: 35, _ALL:
 
 ---
 
-_752 routes total — DELETE: 62, GET: 315, PATCH: 51, POST: 286, PUT: 35, _ALL: 3_
+_755 routes total — DELETE: 63, GET: 316, PATCH: 51, POST: 287, PUT: 35, _ALL: 3_

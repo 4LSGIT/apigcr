@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-10-14T06:42:56.910Z
+-- Generated: 2026-10-14T12:35:56.425Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:bc0456edf6a4495c28521fc7a3d38853
+-- Fingerprint: sha256:d577a6e0d984467de69ace904b42eb4b
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -1723,6 +1723,22 @@ CREATE TABLE `email_log` (
   `delivery_info` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci COMMENT 'Outbound SMTP only: JSON of what the transport said at handoff — {response, accepted, rejected, envelope}, or {error, responseCode, response, command} on the FAILED path. A row WITHOUT this proves nothing about delivery: it means the relay returned 250 and no more. response holds the relay queue id, the only handle that traces the message further. rejected can be non-empty on a RESOLVED send (nodemailer does not throw if one recipient was accepted). NULL for inbound/ingest rows and non-SMTP adapters.',
   `processed_at` datetime NOT NULL COMMENT 'MIXED wall clock BY WRITER (found 2026-10-09): ingest rows (services/emailIngestService.js — gmail-firm, mailbox-imap, siteground...) write Eastern via CONVERT_TZ(NOW(), @@session.time_zone, EST5EDT); outbound-* rows (services/adapters/email/gmail|smtp|pabbly.js) write NOW() = pool UTC. Cross-source time arithmetic is off by 4-5 h — compare within one source, or normalize per source first'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `entitlement_denies`
+--
+
+DROP TABLE IF EXISTS `entitlement_denies`;
+CREATE TABLE `entitlement_denies` (
+  `id` int unsigned NOT NULL,
+  `scope` enum('firm','role','user') COLLATE utf8mb4_general_ci NOT NULL COMMENT 'firm = everyone; role = holders of scope_ref; user = users.user scope_ref',
+  `scope_ref` varchar(64) COLLATE utf8mb4_general_ci NOT NULL DEFAULT '' COMMENT 'empty string = firm (sentinel; NOT NULL so the UNIQUE holds); role = a users.roles SET member; user = users.user as digits',
+  `item_key` varchar(64) COLLATE utf8mb4_general_ci NOT NULL COMMENT 'public/js/featureRegistry.js key — validated at write; moreSettings/helpSupport refused (undeniable)',
+  `created_by` tinyint NOT NULL COMMENT 'users.user of the writer; 0 = an x-api-key caller',
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='Launcher entitlement DENIES (access-control A5). Deny-only: absent = allowed; any matching row denies. Visibility-only in v2 — no route enforcement.';
 
 -- --------------------------------------------------------
 
@@ -4294,6 +4310,13 @@ ALTER TABLE `email_log`
   ADD KEY `idx_email_log_message_id` (`message_id`);
 
 --
+-- Indexes for table `entitlement_denies`
+--
+ALTER TABLE `entitlement_denies`
+  ADD PRIMARY KEY (`id`),
+  ADD UNIQUE KEY `uq_entitlement_denies_scope_item` (`scope`,`scope_ref`,`item_key`);
+
+--
 -- Indexes for table `events`
 --
 ALTER TABLE `events`
@@ -5293,6 +5316,12 @@ ALTER TABLE `email_ingest_sources`
 --
 ALTER TABLE `email_log`
   MODIFY `id` int NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `entitlement_denies`
+--
+ALTER TABLE `entitlement_denies`
+  MODIFY `id` int unsigned NOT NULL AUTO_INCREMENT;
 
 --
 -- AUTO_INCREMENT for table `events`

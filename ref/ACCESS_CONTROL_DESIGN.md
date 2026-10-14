@@ -238,11 +238,16 @@ seam for later; `moreSettings` and `helpSupport` never deniable
 (registry keys per public/js/featureRegistry.js — ui-custom S1 prefixes
 grid items more*/admin*; Settings moved into the More grid 2026-10-11).
 
-- Storage: new table `entitlement_denies (id, scope ENUM('firm','role','user'),
-  scope_ref varchar — NULL for firm / role name / users.user, item_key
-  varchar, created_by, created_at)`. **Deny-only rows** — "deny wins" and
-  "default allow" fall out of the storage shape; no allow/deny precedence
-  logic to get wrong.
+- Storage: table `entitlement_denies (id, scope ENUM('firm','role','user'),
+  scope_ref varchar NOT NULL — '' for firm / role name / users.user as
+  digits, item_key varchar, created_by, created_at)`, UNIQUE (scope,
+  scope_ref, item_key). Firm is the `''` sentinel, not NULL: a UNIQUE index
+  treats NULLs as distinct, so a nullable firm scope would store one firm
+  deny twice — and ui_config spells "unscoped" the same way (its role column
+  sentinel `''`, §6). **Deny-only rows** — "deny wins" and "default allow"
+  fall out of the storage shape; no allow/deny precedence logic to get
+  wrong. Built in A5: `scripts/accessA5Entitlements.js`,
+  `services/entitlementService.js`, `routes/api.entitlements.js`.
 - Resolution (server): denied(user) = denies(firm) ∪ denies(user's roles)
   ∪ denies(user), minus the undeniable set (`moreSettings`, `helpSupport` —
   enforced at write AND at resolve, belt-and-braces). Delivered to the
