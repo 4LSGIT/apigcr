@@ -353,6 +353,8 @@
     ::-webkit-scrollbar { width: 4px; height: 4px; }
     ::-webkit-scrollbar-track { background: transparent; }
     ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+    /* B5: shown instead of the editor when the viewer lacks automations.manage. */
+    .hooks-denied { padding: 40px 16px; text-align: center; color: var(--text-muted); }
   </style>
 </head>
 <body>
@@ -861,6 +863,10 @@ window.togglePanelLeft = togglePanelLeft;
   // call setTopbarButtons in that case.
   function updateTopbarButtons() {
     if (!subPageActive) return;
+    if (!mayManageHooks()) {
+      P.setTopbarButtons({ refresh: false, new: false, save: false, delete: false });
+      return;
+    }
     const editorOpen = E('hook-editor-wrap')?.style.display === 'flex';
     P.setTopbarButtons({
       refresh: true,
@@ -3121,8 +3127,26 @@ async function runLiveTest() {
   // Called once, after waitForShell resolves. Sets up initial data
   // and declares topbar button state. onShow fires on every subsequent
   // tab-activation; init runs only once.
+  // Mirror of the server gate (routes/api.hooks.js — automations.manage,
+  // access-control B5: roles admin / it / su). Cosmetic: the server
+  // enforces; this replaces a page of 403s with one honest sentence.
+  // currentUser.roles is the users.roles SET as a csv string.
+  function mayManageHooks() {
+    try {
+      const roles = String(P.firmData?.currentUser?.roles || '').split(',');
+      return roles.includes('su') || roles.includes('it') || roles.includes('admin');
+    } catch (_) { return false; }
+  }
+
   function init() {
     subPageActive = true; // if we're loading, the shell put us on-screen
+
+    if (!mayManageHooks()) {
+      document.body.innerHTML =
+        '<div class="hooks-denied">Managing hooks requires the admin, IT or super-user role.</div>';
+      updateTopbarButtons();
+      return;
+    }
 
     // Initial topbar state — refresh + new always available on the
     // hooks tab; save/delete hidden until an editor opens.

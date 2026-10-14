@@ -1153,6 +1153,7 @@ tests/hookService.splitPhase.test.js
 tests/hookSpool.test.js
 tests/hookSpoolReplay.mysql.test.js
 tests/hookTransforms.test.js
+tests/hooksGate.test.js
 tests/ingestRuleService.duplicate.test.js
 tests/ingestRuleService.transformFailure.test.js
 tests/ingestService.evaluatorFailure.test.js

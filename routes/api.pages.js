@@ -11,7 +11,12 @@
  *                                          hook_slug?, thankyou_url?, meta_title? }
  *   PATCH  /api/pages/:id              — partial update
  *   DELETE /api/pages/:id              — delete
- *   POST   /api/pages/:id/create-hook  — bootstrap a YisraHook for this page
+ *   POST   /api/pages/:id/create-hook  — bootstrap a YisraHook for this page.
+ *                                          Gated like /api/hooks management
+ *                                          (access-control B5): requireAuth
+ *                                          automations.manage — admin / it / su;
+ *                                          x-api-key passes. The page CRUD above
+ *                                          stays on jwtOrApiKey.
  *
  * create-hook produces a hook record identical in shape to what
  * public/automation/hooks.html produces (verified against hooks.html
@@ -41,6 +46,7 @@
 const express = require('express');
 const router = express.Router();
 const jwtOrApiKey = require('../lib/auth.jwtOrApiKey');
+const requireAuth = require('../lib/auth.requireAuth');
 const pageService = require('../services/pageService');
 const hookService = require('../services/hookService');
 
@@ -115,7 +121,11 @@ router.delete('/api/pages/:id', jwtOrApiKey, async (req, res) => {
 });
 
 // CREATE-HOOK bootstrap
-router.post('/api/pages/:id/create-hook', jwtOrApiKey, async (req, res) => {
+// Creating a hook is hook management (B5): the same gate as routes/api.hooks.js,
+// so a staff member can't create a hook they then can't see or edit.
+const manageHooks = requireAuth({ audience: 'staff', can: 'automations.manage', allowApiKey: true });
+
+router.post('/api/pages/:id/create-hook', manageHooks, async (req, res) => {
   try {
     const page = await pageService.getPage(req.db, req.params.id);
     if (!page) return res.status(404).json(errBody('Page not found'));

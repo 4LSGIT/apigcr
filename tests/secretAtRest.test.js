@@ -333,7 +333,8 @@ describe('hook writes, duplicate and display', () => {
     app.use(express.json());
     app.use((req, res, next) => { req.db = hookDb(rows); next(); });
     app.use(router);
-    const token = jwt.sign({ sub: 6, username: 'IT', user_auth: 'authorized', roles: [], aud: 'staff' }, process.env.JWT_SECRET);
+    // An automations.manage holder (B5 gates the editor routes / redacts the list for others).
+    const token = jwt.sign({ sub: 6, username: 'IT', user_auth: 'authorized', roles: ['admin'], aud: 'staff' }, process.env.JWT_SECRET);
     const get = (p) => new Promise((resolve, reject) => {
       const server = app.listen(0, () => {
         http.get({ port: server.address().port, path: p, headers: { authorization: 'Bearer ' + token } }, (res) => {

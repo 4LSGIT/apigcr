@@ -1,6 +1,6 @@
 # Routes
 
-_Generated 2026-10-14T13:50:52.892Z_  
+_Generated 2026-10-14T14:44:15.986Z_  
 _762 routes total — DELETE: 63, GET: 320, PATCH: 51, POST: 289, PUT: 36, _ALL: 3_
 
 ## Global middleware chain
@@ -369,24 +369,24 @@ _762 routes total — DELETE: 63, GET: 320, PATCH: 51, POST: 289, PUT: 36, _ALL:
 | POST | `/api/gcontacts/push/:contactId` | `jwtOrApiKey` | — |
 | POST | `/api/gcontacts/sync-pending` | `jwtOrApiKey` | — |
 | GET | `/api/hooks` | `jwtOrApiKey` | — |
-| POST | `/api/hooks` | `jwtOrApiKey` | — |
-| GET | `/api/hooks/:hookId/executions` | `jwtOrApiKey` | — |
-| GET | `/api/hooks/:hookId/targets` | `jwtOrApiKey` | — |
-| POST | `/api/hooks/:hookId/targets` | `jwtOrApiKey` | — |
-| DELETE | `/api/hooks/:id` | `jwtOrApiKey` | — |
-| GET | `/api/hooks/:id` | `jwtOrApiKey` | — |
-| PUT | `/api/hooks/:id` | `jwtOrApiKey` | — |
-| POST | `/api/hooks/:id/capture/start` | `jwtOrApiKey` | — |
-| POST | `/api/hooks/:id/capture/stop` | `jwtOrApiKey` | — |
-| POST | `/api/hooks/:id/duplicate` | `jwtOrApiKey` | — |
-| POST | `/api/hooks/:id/live-test` | `jwtOrApiKey` | — |
-| POST | `/api/hooks/:id/test` | `jwtOrApiKey` | — |
+| POST | `/api/hooks` | `staffAuth` | — |
+| GET | `/api/hooks/:hookId/executions` | `staffAuth` | — |
+| GET | `/api/hooks/:hookId/targets` | `staffAuth` | — |
+| POST | `/api/hooks/:hookId/targets` | `staffAuth` | — |
+| DELETE | `/api/hooks/:id` | `staffAuth` | — |
+| GET | `/api/hooks/:id` | `staffAuth` | — |
+| PUT | `/api/hooks/:id` | `staffAuth` | — |
+| POST | `/api/hooks/:id/capture/start` | `staffAuth` | — |
+| POST | `/api/hooks/:id/capture/stop` | `staffAuth` | — |
+| POST | `/api/hooks/:id/duplicate` | `staffAuth` | — |
+| POST | `/api/hooks/:id/live-test` | `staffAuth` | — |
+| POST | `/api/hooks/:id/test` | `staffAuth` | — |
 | GET | `/api/hooks/executions` | `jwtOrApiKey` | — |
-| GET | `/api/hooks/executions/:id` | `jwtOrApiKey` | — |
-| GET | `/api/hooks/meta` | `jwtOrApiKey` | — |
-| DELETE | `/api/hooks/targets/:id` | `jwtOrApiKey` | — |
-| PUT | `/api/hooks/targets/:id` | `jwtOrApiKey` | — |
-| POST | `/api/hooks/test-transform` | `jwtOrApiKey` | — |
+| GET | `/api/hooks/executions/:id` | `staffAuth` | — |
+| GET | `/api/hooks/meta` | `staffAuth` | — |
+| DELETE | `/api/hooks/targets/:id` | `staffAuth` | — |
+| PUT | `/api/hooks/targets/:id` | `staffAuth` | — |
+| POST | `/api/hooks/test-transform` | `staffAuth` | — |
 | POST | `/api/intake/case` | `jwtOrApiKey` | — |
 | POST | `/api/intake/contact` | `jwtOrApiKey` | — |
 | POST | `/api/intake/petition` | `jwtOrApiKey` | — |
@@ -445,7 +445,7 @@ _762 routes total — DELETE: 63, GET: 320, PATCH: 51, POST: 289, PUT: 36, _ALL:
 | DELETE | `/api/pages/:id` | `jwtOrApiKey` | — |
 | GET | `/api/pages/:id` | `jwtOrApiKey` | — |
 | PATCH | `/api/pages/:id` | `jwtOrApiKey` | — |
-| POST | `/api/pages/:id/create-hook` | `jwtOrApiKey` | — |
+| POST | `/api/pages/:id/create-hook` | `staffAuth` | — |
 | POST | `/api/pdf/parse` | `jwtOrApiKey`, `multerMiddleware` | — |
 | GET | `/api/phone-ingest/executions` | `jwtOrApiKey` | — |
 | GET | `/api/phone-ingest/executions/:id` | `jwtOrApiKey` | — |

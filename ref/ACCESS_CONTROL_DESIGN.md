@@ -472,8 +472,15 @@ deliberate-choice pattern).
   minutes.)
 - **B5** `/api/hooks` management routes behind
   `requireAuth({ can: 'automations.manage', allowApiKey: true })`
-  (the receiver `/hooks/:slug` untouched). Needs an admin_surface_coord
-  entry and Fred's go.
+  (the receiver `/hooks/:slug` untouched) — 17 routes. Two reads stay
+  on jwtOrApiKey by ruling (2026-10-14): the LIST, because the booking-
+  views picker reads it (a 403 would empty the picker and the next save
+  would clear a view's hook) — non-holders get rows without
+  auth_config / filter_config / transform_config / captured_sample; and
+  the GLOBAL executions feed of the Automation Activity tab (explicit
+  columns, no payloads). The per-hook execution routes are gated.
+  automations.manage gates only hooks for now; workflows / sequences /
+  triggers management joining it is a later conversation.
 
 ---
 

@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-10-14T14:02:11.734Z
+-- Generated: 2026-10-14T14:44:22.533Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:c32470771cfef52902a5dfdeea6dabae
+-- Fingerprint: sha256:e33acf810a6fb83ded80262b63ebf52f
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -856,20 +856,20 @@ DROP TABLE IF EXISTS `comms_media`;
 CREATE TABLE `comms_media` (
   `id` bigint unsigned NOT NULL,
   `channel` varchar(8) COLLATE utf8mb4_general_ci NOT NULL COMMENT 'phone | mail — app-validated',
-  `kind` varchar(20) COLLATE utf8mb4_general_ci NOT NULL COMMENT 'call_recording | mms_file | stt_raw | mail_raw | mail_attachment — app-validated',
-  `source_table` varchar(32) COLLATE utf8mb4_general_ci NOT NULL COMMENT 'phone_event_log | mail_messages | comms_media (stt_raw)',
+  `kind` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL COMMENT 'call_recording | voicemail | mms_file | stt_raw | mail_raw | mail_attachment — app-validated',
+  `source_table` varchar(32) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL COMMENT 'phone_event_log (calls, MMS, Quo voicemails) | rc_message (RC voicemails: source_id = the RC message id — no call row) | comms_media (stt_raw: source_id = the parent row) | mail_messages',
   `source_id` bigint unsigned NOT NULL COMMENT 'id in source_table',
-  `part` varchar(64) COLLATE utf8mb4_general_ci NOT NULL DEFAULT '' COMMENT 'provider recording / attachment id; '''' = placeholder before the provider lists any. Discovery tests existence on (source_table, source_id, kind) REGARDLESS of part — a recovered placeholder changes its part, so the unique key alone would re-insert it',
+  `part` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT '' COMMENT 'provider recording / attachment id; '''' = placeholder before the provider lists any. Discovery tests existence on (source_table, source_id, kind) REGARDLESS of part — a recovered placeholder changes its part, so the unique key alone would re-insert it. stt_raw: the transcript''s source — ''quo'', the RC AudioTranscription attachment id, ''assemblyai'' (diarized; S2) or ''assemblyai-mc'' (multichannel; S2)',
   `provider` varchar(16) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'ringcentral | quo — phone_event_log.provider',
-  `channel_id` int unsigned DEFAULT NULL COMMENT 'phone_lines.id / mailboxes.id — the grant anchor (mailboxService.getAccess). NULL = the source line is not a phone_lines row (orphan)',
+  `channel_id` int unsigned DEFAULT NULL COMMENT 'phone_lines.id / mailboxes.id — the grant anchor (mailboxService.getAccess). NULL = the source line is not a phone_lines row (orphan), or an RC voicemail left with no to-number (who may see it: S4)',
   `party` varchar(20) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'other party (10-digit) for phone — the log-style read-time anchor',
   `object_name` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'name inside comms_archive_bucket (ids only, design §4); NULL until archived',
   `mime` varchar(128) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'content-type as stored (allowlisted at fetch)',
   `bytes` bigint unsigned DEFAULT NULL,
   `sha256` char(64) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'hex sha256 of the stored bytes, computed in flight (or by re-hash on adopt)',
-  `duration_s` int unsigned DEFAULT NULL COMMENT 'media duration; NULL until known (S1a does not fetch it)',
-  `audio_channels` tinyint unsigned DEFAULT NULL,
-  `captured_at` datetime DEFAULT NULL COMMENT 'provider time of the call/message, UTC wall clock (pool convention). Phone calls: raw_extra.started_at, else phone_event_log.processed_at when started_at is blank (tsi: rows). The cliff clock',
+  `duration_s` int unsigned DEFAULT NULL COMMENT 'measured media length in seconds: the STT vendor''s audio_duration, written by the transcribe sweep (S2); NULL until transcribed',
+  `audio_channels` tinyint unsigned DEFAULT NULL COMMENT 'channel count read from the archived file''s header by the transcribe sweep (S2); NULL until read',
+  `captured_at` datetime DEFAULT NULL COMMENT 'provider time of the call/message, UTC wall clock (pool convention). Phone calls: raw_extra.started_at, else phone_event_log.processed_at when started_at is blank (tsi: rows). RC voicemails: the message creationTime. stt_raw: the parent''s. The cliff clock',
   `state` varchar(16) COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'pending' COMMENT 'pending | archived | none | gone | failed | purged — app-validated (design §5)',
   `restricted` tinyint(1) NOT NULL DEFAULT '0' COMMENT '1 = SU/SS-only visibility (Restrict, design §8)',
   `attempts` int unsigned NOT NULL DEFAULT '0' COMMENT 'provider-side attempts only — our-side failures (bucket, auth, no line) never charge it',
@@ -882,6 +882,88 @@ CREATE TABLE `comms_media` (
   `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='Comms archive registry (ref/COMMS_ARCHIVE_DESIGN.md). One row per archived file. Never deleted — purge clears content and stamps purged_*';
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `comms_no_transcribe`
+--
+
+DROP TABLE IF EXISTS `comms_no_transcribe`;
+CREATE TABLE `comms_no_transcribe` (
+  `id` int unsigned NOT NULL,
+  `phone` char(10) COLLATE utf8mb4_general_ci NOT NULL COMMENT '10 digits — matched against the last 10 digits of comms_media.party',
+  `note` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `created_by` tinyint DEFAULT NULL COMMENT 'users.user',
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='Numbers whose calls are archived but never transcribed or summarised (P6). SU / SS maintain it (R9); adding a number later does not touch existing transcripts — Restrict or Purge does';
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `comms_stt_jobs`
+--
+
+DROP TABLE IF EXISTS `comms_stt_jobs`;
+CREATE TABLE `comms_stt_jobs` (
+  `id` bigint unsigned NOT NULL,
+  `transcript_id` bigint unsigned NOT NULL COMMENT 'comms_transcripts.id the job was submitted for',
+  `media_id` bigint unsigned NOT NULL COMMENT 'comms_media.id (denormalised)',
+  `vendor` varchar(16) COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'assemblyai',
+  `role` varchar(8) COLLATE utf8mb4_general_ci NOT NULL COMMENT 'main (the transcript row''s variant) | alt (the sample-mode variant)',
+  `variant` varchar(16) COLLATE utf8mb4_general_ci NOT NULL COMMENT 'diarize | multichannel',
+  `job_ref` varchar(191) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'the vendor''s job id. NULL = no id came back: the vendor MAY hold a job we never got an id for (state unknown — searched for by url_sha256)',
+  `state` varchar(16) COLLATE utf8mb4_general_ci NOT NULL COMMENT 'unknown | submitted | completed | error | lost | drift | orphan | refused — app-validated. WRITE-AHEAD: every row is inserted as unknown BEFORE its POST and resolved from the answer, so a process death mid-POST still leaves the spend and the search. drift = a 2xx we could not read; lost = the vendor 404ed it; orphan = an unknown found again in the vendor list; refused = the vendor definitely took nothing (a 4xx, 500) — est 0',
+  `post_status` smallint DEFAULT NULL COMMENT 'HTTP status the POST answered; 0 = no answer (timeout / network); NULL = written ahead, no answer recorded (the process ended mid-POST)',
+  `url_sha256` char(64) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'sha256 of the signed audio_url sent (one URL per POST, so unique per job) — never the URL (a bearer link); kept while the vendor may hold a job we cannot name',
+  `est_cents` decimal(10,4) NOT NULL COMMENT 'estimated cost at submit — counted until the billed cost is known',
+  `cost_cents` decimal(10,4) DEFAULT NULL COMMENT 'billed cost (vendor audio_duration × the price card) once completed',
+  `submitted_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT 'UTC; the monthly cap sums every job by this',
+  `finished_at` datetime DEFAULT NULL,
+  `deleted_at` datetime DEFAULT NULL COMMENT 'UTC; the vendor CONFIRMED the delete (2xx or 404). NULL with a job_ref and no live use = a delete still owed — retried with backoff; the vendor''s 30-day TTL is the backstop',
+  `delete_attempts` smallint unsigned NOT NULL DEFAULT '0',
+  `delete_after` datetime DEFAULT NULL COMMENT 'UTC; next delete (or orphan search) not before this',
+  `last_error` varchar(500) COLLATE utf8mb4_general_ci DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='Every STT vendor job ever submitted (comms archive S2): the spend ledger behind the monthly cap and the per-job owed-delete list. Ids and money only — never content; purge leaves it';
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `comms_transcripts`
+--
+
+DROP TABLE IF EXISTS `comms_transcripts`;
+CREATE TABLE `comms_transcripts` (
+  `id` bigint unsigned NOT NULL,
+  `media_id` bigint unsigned NOT NULL COMMENT 'comms_media.id — a call_recording or voicemail. Visibility is the PARENT''s: every reader JOINs comms_media (restricted, channel_id) — Restrict hides derived text (R9); nothing is copied here',
+  `phone_event_id` bigint unsigned DEFAULT NULL COMMENT 'phone_event_log.id — denormalised for joins; NULL for an RC voicemail (source_table rc_message: no call row)',
+  `state` varchar(16) COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'pending' COMMENT 'pending | transcribing | transcribed | summarized | skipped | failed | purged — app-validated (design §5)',
+  `skip_reason` varchar(32) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'short | no_transcribe | over_cap | policy',
+  `stt_vendor` varchar(16) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'assemblyai',
+  `stt_model` varchar(48) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'model + variant of the canonical transcript, e.g. universal-3-5-pro+diarize',
+  `stt_job_ref` varchar(191) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'vendor transcript id (canonical variant)',
+  `alt_job_ref` varchar(191) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'sample mode only: vendor id of the other Quo-stereo variant — stored as an stt_raw child (part assemblyai-mc or assemblyai), never in this row',
+  `language` varchar(16) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `speakers` tinyint unsigned DEFAULT NULL,
+  `segments` json DEFAULT NULL COMMENT '[{s:speaker,a:start_s,b:end_s,t:text}] — s is A, B… (diarized) or ch1, ch2… (multichannel)',
+  `full_text` mediumtext COLLATE utf8mb4_general_ci,
+  `summary` json DEFAULT NULL COMMENT 'schema in COMMS_ARCHIVE_DESIGN §6.4',
+  `summary_text` text COLLATE utf8mb4_general_ci,
+  `summary_model` varchar(48) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `ai_call_ids` json DEFAULT NULL COMMENT 'ai_calls.id of every summary attempt — purge clears their request_excerpt/response',
+  `grounding_dropped` smallint unsigned DEFAULT NULL,
+  `est_audio_s` int unsigned DEFAULT NULL COMMENT 'audio length estimated from the archived file''s header before submit (the P6 gate and the caps); comms_media.duration_s holds the vendor''s measured length',
+  `stt_cost_cents` decimal(10,4) DEFAULT NULL COMMENT 'total STT spend for this row: every vendor job ever submitted for it (comms_stt_jobs — resubmits and the sample variant included), the billed cost once a job completed, its estimate otherwise. Kept in step with the ledger; never cleared — cost is not content, purge leaves it',
+  `llm_cost_cents` decimal(10,4) DEFAULT NULL,
+  `cap_released_by` tinyint DEFAULT NULL COMMENT 'users.user who released an over_cap skip (SU console — design §6.5)',
+  `attempts` int unsigned NOT NULL DEFAULT '0' COMMENT 'vendor-side failures only — our-side failures (storage, signing, auth, cap) never charge it',
+  `next_attempt_at` datetime DEFAULT NULL COMMENT 'UTC; NULL = due now. Also the per-row lease and the poll schedule',
+  `last_error` varchar(1000) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `submitted_at` datetime DEFAULT NULL COMMENT 'UTC; the current vendor job was submitted',
+  `transcribed_at` datetime DEFAULT NULL COMMENT 'UTC; month-to-date STT cost (the monthly cap) sums on it',
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='Transcript + AI summary per archived call recording / voicemail (ref/COMMS_ARCHIVE_DESIGN.md §5). Never broader than its comms_media row: readers JOIN it';
 
 -- --------------------------------------------------------
 
@@ -4073,6 +4155,34 @@ ALTER TABLE `comms_media`
   ADD KEY `idx_comms_media_channel` (`channel`,`channel_id`,`captured_at`);
 
 --
+-- Indexes for table `comms_no_transcribe`
+--
+ALTER TABLE `comms_no_transcribe`
+  ADD PRIMARY KEY (`id`),
+  ADD UNIQUE KEY `uq_comms_no_transcribe_phone` (`phone`);
+
+--
+-- Indexes for table `comms_stt_jobs`
+--
+ALTER TABLE `comms_stt_jobs`
+  ADD PRIMARY KEY (`id`),
+  ADD UNIQUE KEY `uq_comms_stt_jobs_ref` (`vendor`,`job_ref`),
+  ADD KEY `idx_comms_stt_jobs_transcript` (`transcript_id`),
+  ADD KEY `idx_comms_stt_jobs_month` (`submitted_at`),
+  ADD KEY `idx_comms_stt_jobs_owed` (`deleted_at`,`delete_after`);
+
+--
+-- Indexes for table `comms_transcripts`
+--
+ALTER TABLE `comms_transcripts`
+  ADD PRIMARY KEY (`id`),
+  ADD UNIQUE KEY `uq_comms_transcripts_media` (`media_id`),
+  ADD KEY `idx_comms_transcripts_event` (`phone_event_id`),
+  ADD KEY `idx_comms_transcripts_work` (`state`,`next_attempt_at`),
+  ADD KEY `idx_comms_transcripts_month` (`transcribed_at`),
+  ADD FULLTEXT KEY `ft_comms_transcripts` (`full_text`,`summary_text`);
+
+--
 -- Indexes for table `contact_addresses`
 --
 ALTER TABLE `contact_addresses`
@@ -5173,6 +5283,24 @@ ALTER TABLE `comms_eval_reviews`
 -- AUTO_INCREMENT for table `comms_media`
 --
 ALTER TABLE `comms_media`
+  MODIFY `id` bigint unsigned NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `comms_no_transcribe`
+--
+ALTER TABLE `comms_no_transcribe`
+  MODIFY `id` int unsigned NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `comms_stt_jobs`
+--
+ALTER TABLE `comms_stt_jobs`
+  MODIFY `id` bigint unsigned NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `comms_transcripts`
+--
+ALTER TABLE `comms_transcripts`
   MODIFY `id` bigint unsigned NOT NULL AUTO_INCREMENT;
 
 --

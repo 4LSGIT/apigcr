@@ -4,8 +4,20 @@
  * Hook Routes
  * routes/api.hooks.js
  *
- * POST /hooks/:slug         — public receiver endpoint (auth per-hook config)
- * GET/POST/PUT/DELETE /api/hooks/*      — management CRUD (JWT protected)
+ * POST /hooks/:slug         — public receiver endpoint (auth per-hook config;
+ *                             no session auth — untouched by the gate below)
+ * GET/POST/PUT/DELETE /api/hooks/*      — management (access-control B5):
+ *   requireAuth({ audience:'staff', can:'automations.manage', allowApiKey:true })
+ *   — roles admin / it / su; x-api-key callers pass (machine trust until B2).
+ *   Two reads stay on jwtOrApiKey for every staff user, by ruling:
+ *     GET /api/hooks            the list — other pages' pickers (booking views)
+ *                               read it. Non-holders get each row WITHOUT
+ *                               auth_config / filter_config / transform_config
+ *                               / captured_sample (the keys are absent, not
+ *                               null); holders get full rows, secrets decrypted
+ *                               for the editor (B4 ruling H1).
+ *     GET /api/hooks/executions the global feed of the Automation Activity tab —
+ *                               explicit columns, no payloads, no configs.
  *
  * Credential CRUD used to live here too (credentials began as hook-target
  * auth). It moved to routes/api.credentials.js once Connections made
@@ -20,6 +32,8 @@ const express = require('express');
 const router = express.Router();
 const rateLimit = require('express-rate-limit');
 const jwtOrApiKey = require('../lib/auth.jwtOrApiKey');
+const requireAuth = require('../lib/auth.requireAuth');
+const { can } = require('../lib/capabilities');
 const hookService = require('../services/hookService');
 const actionDispatchers = require('../lib/actionDispatchers');
 const internalFunctions = require('../lib/internal_functions'); // __validateParamsMapping
@@ -279,10 +293,25 @@ function maintenanceUnavailable(res) {
 // MANAGEMENT API — Hooks
 // ─────────────────────────────────────────────────────────────
 
+// The management gate (B5) — every /api/hooks route below except the list
+// and the global executions feed (see the header).
+const manageHooks = requireAuth({ audience: 'staff', can: 'automations.manage', allowApiKey: true });
+
+// Row keys a non-holder never receives from the list: the per-hook secret,
+// the filter/transform logic, and the captured raw payload.
+const LIST_HOLDER_ONLY_KEYS = ['auth_config', 'filter_config', 'transform_config', 'captured_sample'];
+
 router.get('/api/hooks', jwtOrApiKey, async (req, res) => {
   try {
-    // Secrets decrypted for the editor's display (B4 ruling H1).
-    const hooks = (await hookService.listHooks(req.db)).map(hookService.withReadableAuth);
+    const rows = await hookService.listHooks(req.db);
+    const hooks = can(req.auth, 'automations.manage')
+      // Secrets decrypted for the editor's display (B4 ruling H1).
+      ? rows.map(hookService.withReadableAuth)
+      : rows.map((r) => {
+          const out = { ...r };
+          for (const k of LIST_HOLDER_ONLY_KEYS) delete out[k];
+          return out;
+        });
     res.json({ status: 'success', hooks });
   } catch (err) {
     console.error('[hook] list error:', err);
@@ -290,7 +319,7 @@ router.get('/api/hooks', jwtOrApiKey, async (req, res) => {
   }
 });
 
-router.get('/api/hooks/meta', jwtOrApiKey, async (req, res) => {
+router.get('/api/hooks/meta', manageHooks, async (req, res) => {
   // Return available transforms, operators, and target types for the UI
   res.json({
     status: 'success',
@@ -387,7 +416,7 @@ router.get('/api/hooks/executions', jwtOrApiKey, async (req, res) => {
   }
 });
 
-router.get('/api/hooks/:id', jwtOrApiKey, async (req, res) => {
+router.get('/api/hooks/:id', manageHooks, async (req, res) => {
   try {
     const hook = await hookService.getHookById(req.db, req.params.id);
     if (!hook) return res.status(404).json({ status: 'error', message: 'Hook not found' });
@@ -399,7 +428,7 @@ router.get('/api/hooks/:id', jwtOrApiKey, async (req, res) => {
   }
 });
 
-router.post('/api/hooks', jwtOrApiKey, async (req, res) => {
+router.post('/api/hooks', manageHooks, async (req, res) => {
   try {
     const { slug, name, description, auth_type, auth_config,
             filter_mode, filter_config, transform_mode, transform_config } = req.body;
@@ -428,7 +457,7 @@ router.post('/api/hooks', jwtOrApiKey, async (req, res) => {
   }
 });
 
-router.put('/api/hooks/:id', jwtOrApiKey, async (req, res) => {
+router.put('/api/hooks/:id', manageHooks, async (req, res) => {
   try {
     const data = {};
     const allowed = ['slug', 'name', 'description', 'auth_type', 'auth_config',
@@ -458,7 +487,7 @@ router.put('/api/hooks/:id', jwtOrApiKey, async (req, res) => {
 // Deep-copy a hook + its targets. The copy gets a fresh random slug, is
 // created INACTIVE, and copies auth verbatim — see hookService.duplicateHook.
 // Body is ignored.
-router.post('/api/hooks/:id/duplicate', jwtOrApiKey, async (req, res) => {
+router.post('/api/hooks/:id/duplicate', manageHooks, async (req, res) => {
   try {
     const hook = await hookService.duplicateHook(req.db, req.params.id, req.auth.userId);
     if (!hook) return res.status(404).json({ status: 'error', message: 'Hook not found' });
@@ -469,7 +498,7 @@ router.post('/api/hooks/:id/duplicate', jwtOrApiKey, async (req, res) => {
   }
 });
 
-router.delete('/api/hooks/:id', jwtOrApiKey, async (req, res) => {
+router.delete('/api/hooks/:id', manageHooks, async (req, res) => {
   try {
     await hookService.deleteHook(req.db, req.params.id);
     res.json({ status: 'success' });
@@ -591,7 +620,7 @@ if (type === 'sequence') {
   return null;
 }
 
-router.get('/api/hooks/:hookId/targets', jwtOrApiKey, async (req, res) => {
+router.get('/api/hooks/:hookId/targets', manageHooks, async (req, res) => {
   try {
     const hook = await hookService.getHookById(req.db, req.params.hookId);
     if (!hook) return res.status(404).json({ status: 'error', message: 'Hook not found' });
@@ -602,7 +631,7 @@ router.get('/api/hooks/:hookId/targets', jwtOrApiKey, async (req, res) => {
   }
 });
 
-router.post('/api/hooks/:hookId/targets', jwtOrApiKey, async (req, res) => {
+router.post('/api/hooks/:hookId/targets', manageHooks, async (req, res) => {
   try {
     const validationError = validateTargetPayload(req.body, { isUpdate: false });
     if (validationError) {
@@ -646,7 +675,7 @@ router.post('/api/hooks/:hookId/targets', jwtOrApiKey, async (req, res) => {
   }
 });
 
-router.put('/api/hooks/targets/:id', jwtOrApiKey, async (req, res) => {
+router.put('/api/hooks/targets/:id', manageHooks, async (req, res) => {
   try {
     const validationError = validateTargetPayload(req.body, { isUpdate: true });
     if (validationError) {
@@ -681,7 +710,7 @@ router.put('/api/hooks/targets/:id', jwtOrApiKey, async (req, res) => {
   }
 });
 
-router.delete('/api/hooks/targets/:id', jwtOrApiKey, async (req, res) => {
+router.delete('/api/hooks/targets/:id', manageHooks, async (req, res) => {
   try {
     await hookService.deleteTarget(req.db, req.params.id);
     res.json({ status: 'success' });
@@ -700,7 +729,7 @@ router.delete('/api/hooks/targets/:id', jwtOrApiKey, async (req, res) => {
  * POST /api/hooks/:id/test
  * Dry-run test: runs the full pipeline without delivery.
  */
-router.post('/api/hooks/:id/test', jwtOrApiKey, async (req, res) => {
+router.post('/api/hooks/:id/test', manageHooks, async (req, res) => {
   try {
     const hook = await hookService.getHookById(req.db, req.params.id);
     if (!hook) return res.status(404).json({ status: 'error', message: 'Hook not found' });
@@ -731,7 +760,7 @@ router.post('/api/hooks/:id/test', jwtOrApiKey, async (req, res) => {
  * round-trips cleanly (no double-wrap). JWT-protected; bypasses per-hook
  * auth and rate limiting (management-side test, not an external webhook).
  */
-router.post('/api/hooks/:id/live-test', jwtOrApiKey, async (req, res) => {
+router.post('/api/hooks/:id/live-test', manageHooks, async (req, res) => {
   try {
     const hook = await hookService.getHookById(req.db, req.params.id);
     if (!hook) return res.status(404).json({ status: 'error', message: 'Hook not found' });
@@ -814,7 +843,7 @@ router.post('/api/hooks/:id/live-test', jwtOrApiKey, async (req, res) => {
 //   {output, errors}, resolved_params? } }
 // ─────────────────────────────────────────────────────────────
 
-router.post('/api/hooks/test-transform', jwtOrApiKey, async (req, res) => {
+router.post('/api/hooks/test-transform', manageHooks, async (req, res) => {
   try {
     const body = req.body || {};
     const { transform_mode, transform_config, pre_transform, params_mapping, slug } = body;
@@ -880,7 +909,7 @@ router.post('/api/hooks/test-transform', jwtOrApiKey, async (req, res) => {
 // new capture replaces it.
 // ─────────────────────────────────────────────────────────────
 
-router.post('/api/hooks/:id/capture/start', jwtOrApiKey, async (req, res) => {
+router.post('/api/hooks/:id/capture/start', manageHooks, async (req, res) => {
   try {
     const [result] = await req.db.query(
       `UPDATE hooks SET capture_mode = 'capturing' WHERE id = ?`,
@@ -896,7 +925,7 @@ router.post('/api/hooks/:id/capture/start', jwtOrApiKey, async (req, res) => {
   }
 });
 
-router.post('/api/hooks/:id/capture/stop', jwtOrApiKey, async (req, res) => {
+router.post('/api/hooks/:id/capture/stop', manageHooks, async (req, res) => {
   try {
     const [result] = await req.db.query(
       `UPDATE hooks SET capture_mode = 'off' WHERE id = ?`,
@@ -916,7 +945,7 @@ router.post('/api/hooks/:id/capture/stop', jwtOrApiKey, async (req, res) => {
 // MANAGEMENT API — Executions / Logs
 // ─────────────────────────────────────────────────────────────
 
-router.get('/api/hooks/:hookId/executions', jwtOrApiKey, async (req, res) => {
+router.get('/api/hooks/:hookId/executions', manageHooks, async (req, res) => {
   try {
     const { limit = 50, offset = 0 } = req.query;
     const result = await hookService.listExecutions(req.db, req.params.hookId, { limit, offset });
@@ -927,7 +956,7 @@ router.get('/api/hooks/:hookId/executions', jwtOrApiKey, async (req, res) => {
   }
 });
 
-router.get('/api/hooks/executions/:id', jwtOrApiKey, async (req, res) => {
+router.get('/api/hooks/executions/:id', manageHooks, async (req, res) => {
   try {
     const execution = await hookService.getExecution(req.db, req.params.id);
     if (!execution) return res.status(404).json({ status: 'error', message: 'Execution not found' });
