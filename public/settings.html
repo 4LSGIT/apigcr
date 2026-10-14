@@ -1236,7 +1236,7 @@ function ctabCurrent() {
 
 async function ctabInit() {
   const u = window.top.firmData?.currentUser || window.top.user || {};
-  ctabIsSU = String(u.user_auth || '').indexOf('SU') !== -1;
+  ctabIsSU = String(u.roles || '').split(',').includes('su');
 
   const cur = ctabCurrent();
   E('ctabHint').textContent = cur && cur.src ? (cur.title || 'Custom Tab') : 'not set up';

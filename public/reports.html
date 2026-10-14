@@ -367,7 +367,7 @@ function init() {
   // the server's rules; the server is the real check either way.
   try {
     const u = P.user || {};
-    isSU = String(u.user_auth || "").indexOf("SU") !== -1;
+    isSU = String(u.roles || "").split(",").includes("su");
     const n = Number(u.user);
     myId = Number.isInteger(n) && n >= 1 ? n : null;
   } catch (_) { isSU = false; myId = null; }
