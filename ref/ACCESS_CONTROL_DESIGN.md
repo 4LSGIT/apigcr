@@ -467,6 +467,52 @@ deliberate-choice pattern).
   H3 (Ssandweiss referer rotation/scrub) status unknown to this arc —
   confirm or strike at close.
 
+### 5.7 Sensitive-read tier + content tables (DRAFT — awaiting Fred, 2026-10-14)
+
+Prompted by the jwt_api_audit_log deny (B2 landing) and two findings routed
+here the same day: ai_calls stores `request_excerpt` + full `response` for
+every AI consumer (client content routes around comms_transcripts' deny;
+COMM_ARC_MAN ruled `logContent:false` for their S3 — defense in depth,
+kept), and Fred wants audit/diagnostic questions to stop routing through
+him and the SU console.
+
+**Two-tier deny in lib/sqlGuard:**
+- `SECRET_TABLES` (absolute — no key ever reads them): `app_settings`,
+  `email_ingest_sources`. These hold live credentials; row-level
+  (`is_secret`) splits are not expressible in a statement-regex guard, so
+  the whole store stays SU-console-only.
+- `SENSITIVE_TABLES` (new — readable ONLY under the new scope):
+  `jwt_api_audit_log`, `ai_calls`, `comms_transcripts`,
+  `comms_no_transcribe`, `admin_audit_log`, `readonly_query_log`.
+  Content tables: client communications, AI prompts/replies, console
+  query texts, other sessions' SQL.
+- **`ai_spend` VIEW** (new, ordinary-readable): id, created_at,
+  prompt_key, prompt_version, model, mode, output_type, consumer_ref,
+  status, input_tokens, output_tokens, cost_cents, latency_ms — spend
+  monitoring keeps working for every ordinary session; only `error`,
+  `request_excerpt`, `response` leave the ordinary surface. (The view name
+  deliberately does not contain "ai_calls": the guard's \b-regex would not
+  match it anyway, but names should not rely on regex subtleties.)
+
+**The `sql.ro.sensitive` scope** (rides the B1 scopes machinery):
+- Never in DEFAULT_SCOPES; mintable only via the SU session-keys pane
+  (already SU-gated) with its own explicit warning + confirm.
+- Keys carrying it are mint-time capped at a SHORT expiry (24h max;
+  default 4h) — the mint rejects longer.
+- /api/readonly/sql: a key with the scope passes SENSITIVE_TABLES;
+  SECRET_TABLES still refuse. Everything else unchanged.
+- Audit: readonly_query_log already captures every query + key id; rows
+  from sensitive-scoped keys are flagged. HONEST LIMITATION, Fred to
+  accept or reject: a sensitive key can read readonly_query_log /
+  admin_audit_log (they are in SENSITIVE, which it holds) — perfect
+  "can't read its own audit" isolation would need a third tier; at one
+  SU minting short-lived keys for his own diagnostic sessions, that tier
+  is not obviously worth its complexity.
+
+**Slices:** SEC-3 = ai_spend view (migration) + the two-tier guard split +
+SENSITIVE_TABLES + scope enforcement + mint cap + pane warning + tests.
+Small; after SEC-2 lands (sqlGuard + readonlyKeys files overlap).
+
 ### 5.6 Slice plan — Phase B (post-ratification)
 
 - **B1** `scopes` column (both tables, one migration) + `keyAllows()` +
