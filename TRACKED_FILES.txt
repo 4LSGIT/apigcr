@@ -835,6 +835,7 @@ services/caseService.js
 services/commsArchiveAdmin.js
 services/commsArchiveCommon.js
 services/commsArchiveMediaSweep.js
+services/commsArchiveSearch.js
 services/commsArchiveService.js
 services/commsArchiveSweep.js
 services/commsArchiveVerify.js
@@ -994,8 +995,10 @@ tests/commsArchive.s1b.mysql.test.js
 tests/commsArchive.s1c.mysql.test.js
 tests/commsArchive.s4.mysql.test.js
 tests/commsArchive.s4.pane.test.js
+tests/commsArchive.s6.mysql.test.js
 tests/commsArchive.sweep.mysql.test.js
 tests/commsArchiveCommon.rowOps.mysql.test.js
+tests/commsArchiveSearch.test.js
 tests/commsArchiveService.s2.test.js
 tests/commsArchiveService.test.js
 tests/commsEval.mysql.test.js

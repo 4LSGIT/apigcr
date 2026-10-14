@@ -23,6 +23,10 @@
  *        comms_transcripts (S2) when present; for a voicemail, else the phone
  *        provider's own transcript (stt_raw, read server-side). Audited
  *        'view_transcript'. Rendered by the pane with textContent only.
+ *   POST /api/comms-archive/search {q, line_id, cursor, limit} → S6: the transcripts the caller may read,
+ *        newest first, one snippet each (services/commsArchiveSearch.js);
+ *        audited 'search' with counts + media ids, NEVER the query text;
+ *        per user ≤ SEARCH_PER_WINDOW per 10 min (429).
  *   GET  /api/comms-archive/health                → SU status read (F4) —
  *        superuserOnlyFor('comms_archive_health'): SU + step-up.
  *   EVERY content denial is the same 404 as a missing item (no existence
@@ -68,6 +72,7 @@ const { makeLimiter } = require('../lib/rateLimiter');
 const admin = require('../services/commsArchiveAdmin');
 const archive = require('../services/commsArchiveService');
 const { VENDOR_SQL, READABLE_STATES } = require('../services/commsArchiveView');
+const searchSvc = require('../services/commsArchiveSearch');
 
 const TOOL = 'comms_archive';
 const MAX_REASON = 500;
@@ -77,6 +82,9 @@ let purgeLimited = makeLimiter(HOUR_MS, PURGE_PER_HOUR);
 const MINT_WINDOW_MS = 10 * 60 * 1000;
 const MINT_PER_WINDOW = 120;
 let mintLimited = makeLimiter(MINT_WINDOW_MS, MINT_PER_WINDOW);
+const SEARCH_WINDOW_MS = 10 * 60 * 1000;
+const SEARCH_PER_WINDOW = 60;
+let searchLimited = makeLimiter(SEARCH_WINDOW_MS, SEARCH_PER_WINDOW);
 const FAILED_PW_WINDOW_MS = 15 * 60 * 1000;
 const FAILED_PW_MAX = 5;
 let failedPw = new Map();   // user id → [{at}] failures + checks in flight (per instance, like every lib/rateLimiter consumer)
@@ -116,7 +124,10 @@ function reqMeta(req, tool) {
 
 async function audit(req, status, details, errorMessage = null) {
   try {
-    await auditAdminAction(req.db, { ...reqMeta(req, TOOL), status, details, errorMessage });
+    const meta = reqMeta(req, TOOL);
+    // A search's words never reach the audit row — not even inside the route.
+    if (details && details.action === 'search') meta.route = String(meta.route || '').split('?')[0];
+    await auditAdminAction(req.db, { ...meta, status, details, errorMessage });
   } catch (err) {
     console.error('[commsArchive] audit log failed:', err.message);
   }
@@ -457,10 +468,57 @@ router.get('/api/comms-archive/health', ...superuserOnlyFor('comms_archive_healt
   }
 });
 
+// ─── POST /api/comms-archive/search {q, line_id, cursor, limit} ─── S6 (design §9 S6)
+// The transcripts the caller may read, newest first, one snippet each
+// (services/commsArchiveSearch.js). A POST, not a GET, so the words never sit
+// in a URL (Cloud Run request logs, Referer). Audited as action 'search' with
+// the COUNTS and the media ids returned — never the query text, not even
+// hashed: the words can be client data, and admin_audit_log is readable by
+// RO-SQL keys (manager ruling Q1). Rejects likewise. jwtOrApiKey's own
+// jwt_api_audit_log row redacts `q` at write (access B2), and that table is
+// denied to the RO SQL endpoint.
+router.post('/api/comms-archive/search', jwtOrApiKey, async (req, res) => {
+  const details = { action: 'search' };
+  if (!req.auth || req.auth.type !== 'jwt' || req.auth.userId == null) {
+    await audit(req, 'rejected_not_jwt', details);
+    return res.status(403).json({ status: 'error', message: 'Archive content requires a signed-in user' });
+  }
+  if (searchLimited(`u${req.auth.userId}`)) {
+    await audit(req, 'rejected_rate_limited', details);
+    return res.status(429).json({ status: 'error', message: 'Too many searches — wait a few minutes' });
+  }
+  const query = req.body && typeof req.body === 'object' ? req.body : {};
+  let lineId = null;
+  if (query.line_id != null && query.line_id !== '' && query.line_id !== 'all') {
+    if (!/^\d{1,9}$/.test(String(query.line_id)) || Number(query.line_id) <= 0) {
+      await audit(req, 'rejected_bad_request', details, 'bad line_id');
+      return res.status(400).json({ status: 'error', message: "line_id must be a phone line id or 'all'" });
+    }
+    lineId = Number(query.line_id);
+  }
+  try {
+    const out = await searchSvc.search(req.db, req.auth, {
+      q: typeof query.q === 'string' ? query.q : '', lineId, cursor: query.cursor, limit: query.limit,
+    });
+    await audit(req, 'success', { ...details, terms: out.terms.length, results: out.results.length, media_ids: out.results.map(r => r.media_id) });
+    return res.json({ status: 'success', ...out });
+  } catch (err) {
+    const status = Number.isInteger(err && err.status) ? err.status : 500;
+    if (status >= 500) console.error('[commsArchive] search error:', err.code || '', err.message);
+    const terms = err && err.tok ? err.tok.terms.length : undefined;
+    await audit(req, status === 404 ? 'rejected_no_grant' : status === 400 ? 'rejected_bad_request' : 'failed',
+      terms === undefined ? details : { ...details, terms }, status >= 500 ? 'search failed' : String(err.message || '').slice(0, 200));
+    const body = { status: 'error', message: status < 500 ? err.message : 'Archive search failed' };
+    if (err && err.tok) Object.assign(body, { terms: err.tok.terms, ignored: err.tok.ignored });
+    return res.status(status).json(body);
+  }
+});
+
 /** Test hook: a fresh purge limiter (optionally with another per-hour max). */
 router._resetPurgeLimit = (max = PURGE_PER_HOUR) => { purgeLimited = makeLimiter(HOUR_MS, max); };
 /** Test hooks (S4): fresh mint limiter / password-failure counter. */
 router._resetMintLimit = (max = MINT_PER_WINDOW) => { mintLimited = makeLimiter(MINT_WINDOW_MS, max); };
+router._resetSearchLimit = (max = SEARCH_PER_WINDOW) => { searchLimited = makeLimiter(SEARCH_WINDOW_MS, max); };
 router._resetPasswordFailures = () => { failedPw = new Map(); };
 
 module.exports = router;

@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-10-14T14:44:22.533Z
+-- Generated: 2026-10-14T16:54:07.515Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:e33acf810a6fb83ded80262b63ebf52f
+-- Fingerprint: sha256:b40329de6cdb0a4dc91230d40f812a89
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -925,6 +925,28 @@ CREATE TABLE `comms_stt_jobs` (
   `delete_after` datetime DEFAULT NULL COMMENT 'UTC; next delete (or orphan search) not before this',
   `last_error` varchar(500) COLLATE utf8mb4_general_ci DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='Every STT vendor job ever submitted (comms archive S2): the spend ledger behind the monthly cap and the per-job owed-delete list. Ids and money only — never content; purge leaves it';
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `comms_summaries`
+--
+
+DROP TABLE IF EXISTS `comms_summaries`;
+CREATE TABLE `comms_summaries` (
+  `id` bigint unsigned NOT NULL,
+  `transcript_id` bigint unsigned NOT NULL COMMENT 'comms_transcripts.id — the summary itself is written there (summary, summary_text, …); this row is only the work queue',
+  `state` varchar(16) COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'pending' COMMENT 'pending | calling | done | skipped | failed — app-validated. calling = a model call in flight (written AHEAD of it, so the monthly cap counts est_cents even if the process dies mid-call)',
+  `skip_reason` varchar(32) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'restricted (back to pending once unrestricted) | short | empty | refused | purged',
+  `model` varchar(48) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'the model of the latest call',
+  `effort` varchar(8) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `est_cents` decimal(10,4) DEFAULT NULL COMMENT 'estimated cost of the call in flight; the cap counts it while state = calling (ai_calls holds the billed cost)',
+  `attempts` int unsigned NOT NULL DEFAULT '0' COMMENT 'failed calls (timeout, 5xx, unusable output) — our-side stops (cap, credential, configuration) never charge it',
+  `next_attempt_at` datetime DEFAULT NULL COMMENT 'UTC; NULL = due now. Also the per-row lease',
+  `last_error` varchar(500) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'codes and reasons only — NEVER model output or transcript text',
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='AI summary work queue, one row per transcript (comms archive S3). No content — that is on comms_transcripts';
 
 -- --------------------------------------------------------
 
@@ -4172,6 +4194,14 @@ ALTER TABLE `comms_stt_jobs`
   ADD KEY `idx_comms_stt_jobs_owed` (`deleted_at`,`delete_after`);
 
 --
+-- Indexes for table `comms_summaries`
+--
+ALTER TABLE `comms_summaries`
+  ADD PRIMARY KEY (`id`),
+  ADD UNIQUE KEY `uq_comms_summaries_transcript` (`transcript_id`),
+  ADD KEY `idx_comms_summaries_work` (`state`,`next_attempt_at`);
+
+--
 -- Indexes for table `comms_transcripts`
 --
 ALTER TABLE `comms_transcripts`
@@ -5295,6 +5325,12 @@ ALTER TABLE `comms_no_transcribe`
 -- AUTO_INCREMENT for table `comms_stt_jobs`
 --
 ALTER TABLE `comms_stt_jobs`
+  MODIFY `id` bigint unsigned NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `comms_summaries`
+--
+ALTER TABLE `comms_summaries`
   MODIFY `id` bigint unsigned NOT NULL AUTO_INCREMENT;
 
 --

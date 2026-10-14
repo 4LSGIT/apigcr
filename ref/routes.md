@@ -1,7 +1,7 @@
 # Routes
 
-_Generated 2026-10-14T15:17:09.869Z_  
-_765 routes total — DELETE: 63, GET: 323, PATCH: 51, POST: 289, PUT: 36, _ALL: 3_
+_Generated 2026-10-14T16:54:00.076Z_  
+_766 routes total — DELETE: 63, GET: 323, PATCH: 51, POST: 290, PUT: 36, _ALL: 3_
 
 ## Global middleware chain
 
@@ -151,6 +151,7 @@ _765 routes total — DELETE: 63, GET: 323, PATCH: 51, POST: 289, PUT: 36, _ALL:
 | GET | `/api/comms-archive/media/:id/transcript` | `jwtOrApiKey` | — |
 | POST | `/api/comms-archive/media/:id/unrestrict` | `jwtOrApiKey` | — |
 | GET | `/api/comms-archive/media/:id/url` | `jwtOrApiKey` | — |
+| POST | `/api/comms-archive/search` | `jwtOrApiKey` | — |
 | GET | `/api/comms-eval/items` | `jwtOrApiKey` | — |
 | GET | `/api/comms-eval/items/:id/audio` | `jwtOrApiKey` | — |
 | GET | `/api/comms-eval/items/:id/review` | `jwtOrApiKey` | — |
@@ -1035,4 +1036,4 @@ _765 routes total — DELETE: 63, GET: 323, PATCH: 51, POST: 289, PUT: 36, _ALL:
 
 ---
 
-_765 routes total — DELETE: 63, GET: 323, PATCH: 51, POST: 289, PUT: 36, _ALL: 3_
+_766 routes total — DELETE: 63, GET: 323, PATCH: 51, POST: 290, PUT: 36, _ALL: 3_
