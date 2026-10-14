@@ -475,6 +475,72 @@ maybe('comms archive S4 on real MySQL', () => {
     expect([m.get(a).voicemail.media_id, m.get(b).voicemail.media_id]).toEqual([rc, own]);
   });
 
+  test('V10 paging never shows one voicemail on two calls (review N-A1): page 1 = B with it, page 2 = A without', async () => {
+    await q('TRUNCATE TABLE comms_media');
+    await q('TRUNCATE TABLE phone_event_log');
+    const t = T0 + 10 * 86_400_000;
+    const a = await ev({ at: t, dur: 30 });
+    const b = await ev({ at: t + 4 * 60_000, dur: 30 });
+    const vm = await media({ kind: 'voicemail', source_table: 'rc_message', source_id: 21, part: '21', captured: t + 5 * 60_000 });
+    const p1 = (await get(`/api/phone-lines/1/conversations/${P}?limit=1`, { t: T.su() })).json;
+    expect(p1.messages.map(m => [m.id, m.voicemail && m.voicemail.media_id])).toEqual([[b, vm]]);
+    const p2 = (await get(`/api/phone-lines/1/conversations/${P}?limit=1&cursor=${encodeURIComponent(p1.next_cursor)}`, { t: T.su() })).json;
+    expect(p2.messages.map(m => [m.id, m.voicemail])).toEqual([[a, undefined]]);
+    const all2 = (await get(`/api/phone-lines/all/conversations/${P}?limit=1&cursor=${encodeURIComponent(p1.next_cursor)}`, { t: T.su() })).json;
+    expect(all2.messages.map(m => [m.id, m.voicemail])).toEqual([[a, undefined]]);
+  });
+
+  test('V11 a line-less RC voicemail never lands on a Quo call (review N-A2); it takes the RingCentral call in its window', async () => {
+    await q('TRUNCATE TABLE comms_media');
+    await q('TRUNCATE TABLE phone_event_log');
+    const t = T0 + 11 * 86_400_000;
+    const quo = await ev({ at: t + 3 * 60_000, dur: 20, line: L6, provider: 'quo', status: 'no-answer' });
+    const vm = await media({ kind: 'voicemail', source_table: 'rc_message', source_id: 22, part: '22', channel_id: null, captured: t + 4 * 60_000 });
+    expect(byId((await get(`/api/phone-lines/6/conversations/${P}`, { t: T.su() })).json.messages).get(quo).voicemail).toBeUndefined();
+    const rc = await ev({ at: t, dur: 20 });                                   // an RC call earlier in the window
+    expect(byId((await thread(T.su)).messages).get(rc).voicemail.media_id).toBe(vm);
+    expect(byId((await get(`/api/phone-lines/6/conversations/${P}`, { t: T.su() })).json.messages).get(quo).voicemail).toBeUndefined();
+  });
+
+  test('V13 the window widens until no other voicemail competes: a page holding only C still gets C\'s early-stamped voicemail', async () => {
+    await q('TRUNCATE TABLE comms_media');
+    await q('TRUNCATE TABLE phone_event_log');
+    const t = T0 + 13 * 86_400_000;
+    const b = await ev({ at: t + 40 * 60_000, dur: 30 });
+    const c = await ev({ at: t + 60 * 60_000, dur: 30 });
+    const vb = await media({ kind: 'voicemail', source_table: 'rc_message', source_id: 24, part: '24', captured: t + 41 * 60_000 });
+    const vc = await media({ kind: 'voicemail', source_table: 'rc_message', source_id: 25, part: '25', captured: t + 58 * 60_000 });  // 2 min before C
+    const p1 = (await get(`/api/phone-lines/1/conversations/${P}?limit=1`, { t: T.su() })).json;
+    expect(p1.messages.map(m => [m.id, m.voicemail && m.voicemail.media_id])).toEqual([[c, vc]]);
+    const p2 = (await get(`/api/phone-lines/1/conversations/${P}?limit=1&cursor=${encodeURIComponent(p1.next_cursor)}`, { t: T.su() })).json;
+    expect(p2.messages.map(m => [m.id, m.voicemail && m.voicemail.media_id])).toEqual([[b, vb]]);
+  });
+
+  test('V14 a suppressed call (spam, never shown) does not take a voicemail from the visible call before it', async () => {
+    await q('TRUNCATE TABLE comms_media');
+    await q('TRUNCATE TABLE phone_event_log');
+    const t = T0 + 14 * 86_400_000;
+    const a = await ev({ at: t, dur: 20 });
+    const spam = await ev({ at: t + 2 * 60_000, dur: 20 });
+    await q('UPDATE phone_event_log SET suppressed = 1 WHERE id = ?', [spam]);
+    const vm = await media({ kind: 'voicemail', source_table: 'rc_message', source_id: 26, part: '26', captured: t + 3 * 60_000 });
+    expect(byId((await thread(T.su)).messages).get(a).voicemail.media_id).toBe(vm);
+  });
+
+  test('V12 a Quo call\'s OWN voicemail keeps an RC voicemail off it even when the viewer cannot see it (restricted)', async () => {
+    await q('TRUNCATE TABLE comms_media');
+    await q('TRUNCATE TABLE phone_event_log');
+    const t = T0 + 12 * 86_400_000;
+    const a = await ev({ at: t, dur: 20, line: L6, provider: 'quo', status: 'no-answer' });
+    const b = await ev({ at: t + 3 * 60_000, dur: 20, line: L6, provider: 'quo', status: 'no-answer' });
+    const own = await media({ kind: 'voicemail', source_id: b, part: 'VMr', provider: 'quo', channel_id: 6, restricted: 1 });
+    const rc = await media({ kind: 'voicemail', source_table: 'rc_message', source_id: 23, part: '23', channel_id: 6, captured: t + 4 * 60_000 });
+    const att = byId((await get(`/api/phone-lines/6/conversations/${P}`, { t: T.att() })).json.messages);
+    expect([att.get(a).voicemail && att.get(a).voicemail.media_id, att.get(b).voicemail]).toEqual([rc, undefined]);
+    const su = byId((await get(`/api/phone-lines/6/conversations/${P}`, { t: T.su() })).json.messages);
+    expect([su.get(a).voicemail.media_id, su.get(b).voicemail.media_id]).toEqual([rc, own]);
+  });
+
   // ── X — transcripts ─────────────────────────────────────────────────────
   const tx = (id, who) => get(`/api/comms-archive/media/${id}/transcript`, { t: who() });
 

@@ -32,9 +32,10 @@
  * a candidate; one voicemail attaches to ONE call — the latest that started
  * at or before it (else, within the 5-minute lead, the earliest after it) —
  * and the assignment is made over every archived / purged voicemail BEFORE
- * visibility, so it never depends on the viewer. A voicemail with NO line
- * (channel_id NULL) matches on party + window alone and is shown only to the
- * SU / attorney bypass.
+ * visibility, so it never depends on the viewer — and from the party's calls
+ * in the DATABASE, not the page, so it never depends on paging either. A
+ * voicemail with NO line (channel_id NULL) matches RingCentral calls on party
+ * + window alone and is shown only to the SU / attorney bypass.
  *
  * TRANSCRIPTS. Restriction lives ONLY on comms_media (S2 keeps no restricted
  * column on comms_transcripts): transcripts are looked up only for media rows
@@ -131,42 +132,111 @@ const sqlUtc = (ms) => new Date(ms).toISOString().slice(0, 19).replace('T', ' ')
 const callStart = (m) => { const t = Date.parse(m.at); return Number.isNaN(t) ? null : t; };
 const callEnd = (m) => { const s = callStart(m); return s == null ? null : s + (Number(m.duration_s) > 0 ? Number(m.duration_s) * 1000 : 0); };
 
+/** A raw_extra / DATETIME instant → ms, the phoneCommsService way (a zone-less string is UTC). */
+function dbMs(v) {
+  if (v == null) return null;
+  if (v instanceof Date) return Number.isNaN(v.getTime()) ? null : v.getTime();
+  const s = String(v);
+  if (s === '' || s === 'null') return null;
+  const t = Date.parse(/[zZ]|[+-]\d\d:?\d\d$/.test(s) ? s : `${s.replace(' ', 'T')}Z`);
+  return Number.isNaN(t) ? null : t;
+}
+
 /**
- * RC voicemails for this page's incoming calls → Map(call item id → vm row).
- * The ASSIGNMENT never depends on the viewer (review A1): every archived or
- * purged voicemail takes part, whatever its restriction or line; who may SEE
- * the one a call got is decided afterwards. One voicemail → one call, one call
- * → one voicemail, voicemails in time order. A call is a candidate when it is
- * incoming, on the voicemail's line (any line for a line-less one), has no
- * voicemail of its own, and the voicemail falls in [start − 5 min, end + 30
- * min]. Of the candidates, the LATEST that started at or before the voicemail
- * wins (back-to-back calls each keep their own); the 5-minute lead is only a
- * fallback for a voicemail stamped a little before its call (the earliest such
- * call).
+ * A call row's [start, end] exactly as the thread item shows it: `at` is
+ * raw_extra.started_at (else processed_at), the length is started_at →
+ * ended_at when both are there and in order (phoneCommsService.callFields).
  */
-async function matchRcVoicemails(db, party, calls, lineOf, taken) {
+function callSpan(r) {
+  const s0 = dbMs(r.started_at);
+  const e0 = dbMs(r.ended_at);
+  const start = s0 != null ? s0 : dbMs(r.processed_at);
+  const end = s0 != null && e0 != null && e0 >= s0 ? start + Math.round((e0 - s0) / 1000) * 1000 : start;
+  return { start, end };
+}
+
+const CHAIN_PASSES = 6;
+const LAG_MS = 10 * 60 * 1000;            // ingest lands after a call ends — slack on the processed_at bound
+const LONG_CALL_MS = 12 * 60 * 60 * 1000;  // longest live call ~4 h; generous
+const MIN = 60 * 1000;
+
+/**
+ * RC voicemails → the call each belongs to, for the incoming calls of this
+ * page: Map(call id → vm row). DECIDED FROM THE DATABASE, NOT THE PAGE
+ * (review N-A1): a page is a slice, and a page-local choice let one
+ * voicemail attach to a call on page 1 and another on page 2 (the pane merges
+ * pages — it showed twice). Every call of the party a voicemail could belong
+ * to is read from phone_event_log, the window widened until it stops growing
+ * (a voicemail's choice depends on the earlier ones that took calls), so every
+ * page — and the All-numbers view — computes the same assignment.
+ *
+ * The rule (review A1, unchanged): only archived / purged voicemails, BEFORE
+ * any visibility; one voicemail → one call, one call → one voicemail,
+ * voicemails in time order. A candidate is an INCOMING, non-suppressed call
+ * of the party with no Quo voicemail of its own (archived / purged), the
+ * voicemail inside [start − 5 min, end + 30 min], on the voicemail's line —
+ * or, for a line-less one, a RingCentral call (review N-A2: an RC voicemail
+ * never lands on a Quo call). The latest that started at or before it wins;
+ * else (the 5-minute lead) the earliest after it.
+ */
+async function matchRcVoicemails(db, party, pageCalls) {
   const out = new Map();
-  const cands = calls.filter(c => c.direction === 'incoming' && callStart(c) != null && !taken.has(c.id));
-  if (!cands.length || !party) return out;
-  const lo = Math.min(...cands.map(callStart)) - VM_BEFORE_MS;
-  const hi = Math.max(...cands.map(callEnd)) + VM_AFTER_MS;
-  const [vms] = await db.query(
-    `SELECT ${MEDIA_COLS}
-       FROM comms_media m LEFT JOIN users u ON u.user = m.purged_by
-      WHERE m.party = ? AND m.captured_at BETWEEN ? AND ?
-        AND m.kind = 'voicemail' AND m.source_table = 'rc_message' AND m.state IN ('archived', 'purged')
-      ORDER BY m.captured_at, m.id`,
-    [String(party), sqlUtc(lo), sqlUtc(hi)]);
+  const spans = pageCalls.filter(c => c.direction === 'incoming' && callStart(c) != null);
+  if (!spans.length || !party) return out;
+  let lo = Math.min(...spans.map(callStart)) - VM_BEFORE_MS;
+  let hi = Math.max(...spans.map(callEnd)) + VM_AFTER_MS;
+  let vms = [];
+  let calls = [];
+  for (let pass = 0; pass < CHAIN_PASSES; pass++) {
+    [vms] = await db.query(
+      `SELECT ${MEDIA_COLS}
+         FROM comms_media m LEFT JOIN users u ON u.user = m.purged_by
+        WHERE m.party = ? AND m.captured_at BETWEEN ? AND ?
+          AND m.kind = 'voicemail' AND m.source_table = 'rc_message' AND m.state IN ('archived', 'purged')
+        ORDER BY m.captured_at, m.id`,
+      [String(party), sqlUtc(lo), sqlUtc(hi)]);
+    if (!vms.length) return out;
+    const ats = vms.map(v => new Date(v.captured_at).getTime());
+    const vLo = Math.min(...ats);
+    const vHi = Math.max(...ats);
+    // processed_at ≥ end ≥ at − 30 min; start ≤ at + 5 min, and processed_at
+    // trails start by the call's length plus the ingest lag.
+    const [rows] = await db.query(
+      `SELECT e.id, e.provider, pl.id AS line_id, e.processed_at,
+              JSON_UNQUOTE(JSON_EXTRACT(e.raw_extra, '$.started_at')) AS started_at,
+              JSON_UNQUOTE(JSON_EXTRACT(e.raw_extra, '$.ended_at')) AS ended_at
+         FROM phone_event_log e JOIN phone_lines pl ON pl.phone_number = e.line_number
+        WHERE e.other_party = ? AND e.event_type = 'call' AND e.direction = 'incoming' AND e.suppressed = 0
+          AND e.processed_at BETWEEN ? AND ?`,
+      [String(party), sqlUtc(vLo - VM_AFTER_MS - LAG_MS), sqlUtc(vHi + VM_BEFORE_MS + LONG_CALL_MS + LAG_MS)]);
+    calls = rows.map(r => ({ id: Number(r.id), provider: r.provider, line: Number(r.line_id), ...callSpan(r) }))
+      .filter(c => c.start != null && ats.some(at => at >= c.start - VM_BEFORE_MS && at <= c.end + VM_AFTER_MS));
+    if (!calls.length) return out;
+    // Earlier / later voicemails that compete for these calls widen the window.
+    const nlo = Math.min(lo, ...calls.map(c => c.start - VM_BEFORE_MS));
+    const nhi = Math.max(hi, ...calls.map(c => c.end + VM_AFTER_MS));
+    if (nlo === lo && nhi === hi) break;
+    lo = nlo;
+    hi = nhi;
+  }
+  // A call with a Quo voicemail of its own is not a candidate (whoever looks).
+  const [own] = await db.query(
+    `SELECT source_id FROM comms_media
+      WHERE source_table = 'phone_event_log' AND source_id IN (?) AND kind = 'voicemail' AND state IN ('archived', 'purged')`,
+    [calls.map(c => c.id)]);
+  const taken = new Set(own.map(r => Number(r.source_id)));
+  const byCall = new Map();
   for (const vm of vms) {
     const at = new Date(vm.captured_at).getTime();
-    const fits = cands.filter(c => !out.has(c.id)
-      && (vm.channel_id == null || Number(vm.channel_id) === lineOf(c))
-      && at >= callStart(c) - VM_BEFORE_MS && at <= callEnd(c) + VM_AFTER_MS);
+    const fits = calls.filter(c => !taken.has(c.id) && !byCall.has(c.id)
+      && (vm.channel_id == null ? c.provider === 'ringcentral' : Number(vm.channel_id) === c.line)
+      && at >= c.start - VM_BEFORE_MS && at <= c.end + VM_AFTER_MS);
     let best = null;
-    for (const c of fits) if (callStart(c) <= at && (!best || callStart(c) > callStart(best))) best = c;
-    if (!best) for (const c of fits) if (!best || callStart(c) < callStart(best)) best = c;
-    if (best) out.set(best.id, vm);
+    for (const c of fits) if (c.start <= at && (!best || c.start > best.start)) best = c;
+    if (!best) for (const c of fits) if (!best || c.start < best.start) best = c;
+    if (best) byCall.set(best.id, vm);
   }
+  for (const c of spans) if (byCall.has(Number(c.id))) out.set(c.id, byCall.get(Number(c.id)));
   return out;
 }
 
@@ -208,7 +278,7 @@ async function decorate(db, auth, out, { lineId = null } = {}) {
     if (v) ownVm.set(m.id, v);
   }
   const calls = items.filter(m => m.kind === 'call');
-  const rcVm = await matchRcVoicemails(db, out.other_party, calls, lineOf, new Set(ownVm.keys()));
+  const rcVm = await matchRcVoicemails(db, out.other_party, calls);
   let bypass = null;
   const lineless = async () => { if (bypass == null) bypass = await admin.hasLineBypass(db, auth); return bypass; };
 
