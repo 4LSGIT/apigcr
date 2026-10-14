@@ -62,6 +62,137 @@
   <script src="/js/diag.js"></script>
   <script src="/js/yc-sync.js"></script>
   <script src="/js/ycPager.js"></script>
+  <!-- Launcher registry + renderer (ui-custom S1). featureRegistry.js is pure
+       data: every launcher button on Home, the sidebar's sections, More
+       Features and Admin, and each surface's default arrangement. The block
+       below turns it into markup. Each surface has a one-line mount at the
+       spot its markup used to be written by hand; the mount runs synchronously
+       while the page parses, inserts the markup in its own place and removes
+       itself, so the finished DOM is the same as the hand-written one and
+       every id (sbAdmin, sbCustom, tabCustomButton, …) exists before
+       initAuth() runs. -->
+  <script src="/js/featureRegistry.js"></script>
+  <script id="ycLauncher">
+    window.ycLauncher = (function () {
+      'use strict';
+
+      function escText(s) {
+        return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      }
+      function escAttr(s) { return escText(s).replace(/"/g, '&quot;'); }
+      // ' name="value"'; a bare ' name' for true; nothing for null/undefined/false.
+      function attr(name, value) {
+        if (value == null || value === false) return '';
+        if (value === true) return ' ' + name;
+        return ' ' + name + '="' + escAttr(value) + '"';
+      }
+      function labelOf(it, surface) {
+        return it.surfaceLabels && it.surfaceLabels[surface] != null ? it.surfaceLabels[surface] : it.label;
+      }
+      function idOf(it, surface) { return it.domIds ? it.domIds[surface] : null; }
+      function icon(it, extra) {
+        return '<i class="fa-solid fa-' + escAttr(it.icon) + (extra || '') + '"></i>';
+      }
+      function warn(msg) {
+        if (typeof console !== 'undefined' && console.error) console.error('[ycLauncher] ' + msg);
+      }
+
+      // Per-surface rules. The attribute ORDER and the whitespace reproduce
+      // the hand-written markup these surfaces had, so the result can be
+      // diffed against it (and existing selectors keep matching).
+      function grid(surface) {
+        return {
+          indent: '\n  ',
+          brk: '<br><br>',
+          item: function (it) {
+            var style = (it.defaultHidden ? 'display:none' + (it.styleVars ? '; ' : '') : '') + (it.styleVars || '');
+            return '<button class="big-button"' +
+              attr('data-placeholder', !!it.placeholder) +
+              attr('data-target', it.target) +
+              attr('data-exclusive-group', it.group) +
+              attr('onclick', it.onclick) +
+              attr('data-hover-anim', it.hoverAnim) +
+              attr('style', style || null) +
+              attr('title', it.title) + '>' +
+              icon(it, ' fa-2xl') + '<br><br>' + escText(labelOf(it, surface)) + '</button>';
+          },
+        };
+      }
+      var RULES = {
+        home: {
+          indent: '\n    ',
+          brk: '<div style="height: 5px"></div>',
+          item: function (it) {
+            return '<button' + attr('id', idOf(it, 'home')) + ' class="home-btn"' +
+              attr('onclick', it.onclick) +
+              attr('style', it.defaultHidden ? 'display:none' : null) + '>' +
+              '\n      ' + icon(it, ' fa-2xl') + '<br /><br />' + escText(labelOf(it, 'home')) +
+              '\n    </button>';
+          },
+        },
+        sidebar: {
+          indent: '\n    ',
+          label: function (text) { return '<div class="sb-section-label">' + escText(text) + '</div>'; },
+          item: function (it) {
+            var label = labelOf(it, 'sidebar');
+            return '<div class="sb-item"' + attr('id', idOf(it, 'sidebar')) +
+              attr('data-tab', it.tab) +
+              attr('data-tab-also', it.tabAlso) +
+              attr('onclick', it.onclick) +
+              attr('style', it.defaultHidden ? 'display:none' : null) +
+              attr('title', it.title != null ? it.title : label) + '>' +
+              '\n      ' + icon(it) + '<span>' + escText(label) + '</span>' +
+              (it.badge
+                ? '\n      <span class="sb-badge"' + attr('id', it.badge.id) + ' style="display:none"' +
+                  attr('title', it.badge.title) + '>0</span>'
+                : '') +
+              '\n    </div>';
+          },
+        },
+        more: grid('more'),
+        admin: grid('admin'),
+      };
+
+      // Pure: (surface, layout, registry) -> HTML string. layout/registry
+      // default to the shipped DEFAULT_LAYOUTS / FEATURE_REGISTRY. An entry
+      // naming an unknown item, or one the surface cannot draw, is skipped
+      // with a console error rather than blanking the whole surface.
+      function build(surface, layout, registry) {
+        var rules = RULES[surface];
+        if (!rules) throw new Error('ycLauncher: unknown surface "' + surface + '"');
+        layout = layout || (window.DEFAULT_LAYOUTS || {})[surface] || [];
+        registry = registry || window.FEATURE_REGISTRY || {};
+        var out = '';
+        for (var i = 0; i < layout.length; i++) {
+          var e = layout[i] || {};
+          if (e.item != null) {
+            var it = Object.prototype.hasOwnProperty.call(registry, e.item) ? registry[e.item] : null;
+            if (!it) { warn(surface + ': no registry item "' + e.item + '"'); continue; }
+            out += rules.indent + rules.item(it);
+          } else if (e.break && rules.brk) {
+            out += rules.indent + rules.brk;
+          } else if (e.label != null && rules.label) {
+            out += rules.indent + rules.label(e.label);
+          } else {
+            warn(surface + ': cannot render layout entry ' + i);
+          }
+        }
+        return out;
+      }
+
+      // Called from a one-line inline script at the surface's spot in the
+      // page: insert the markup right there, then remove the calling script
+      // so the DOM is exactly what the hand-written markup produced.
+      function mount(surface) {
+        var s = document.currentScript;
+        if (!s) throw new Error('ycLauncher.mount("' + surface + '") must run from an inline script while the page parses');
+        s.insertAdjacentHTML('beforebegin', build(surface));
+        s.parentNode.removeChild(s);
+      }
+
+      return { build: build, mount: mount };
+    })();
+  </script>
   <script src="/scripts.js"></script>
   <!-- Stale-tab guard: force-reloads this page when the server is running a newer
        build than the one this tab booted on. Started at the bottom of the boot
@@ -547,78 +678,10 @@
       <!-- file buttons get appended here by addFile() -->
     </div>
 
-    <div class="sb-section-label">Records</div>
-    <div class="sb-item" data-tab="tabCases" onclick="openCasesTab()" title="Cases">
-      <i class="fa-solid fa-landmark"></i><span>Cases</span>
-    </div>
-    <div class="sb-item" data-tab="tabContacts" onclick="openContactsTab()" title="Contacts">
-      <i class="fa-solid fa-users"></i><span>Contacts</span>
-    </div>
-    <div class="sb-item" data-tab="tabAppts" onclick="openApptsTab()" title="Appointments">
-      <i class="fa-solid fa-calendar-days"></i><span>Appointments</span>
-    </div>
-    <!-- Unified Events U9. ONE list over both tables — the appointment and the
-         hearing and the deadline, in one window, in one vocabulary. It sits
-         between the two lists it unifies rather than replacing them: this
-         release ships all three side by side so the new one can be checked
-         against the old two. Retiring them is U9b. -->
-    <div class="sb-item" data-tab="tabCalendar" onclick="openCalendarTab()" title="Calendar">
-      <i class="fa-solid fa-calendar-week"></i><span>Calendar</span>
-    </div>
-    <div class="sb-item" data-tab="tabEvents" onclick="openEventsTab()" title="Events">
-      <i class="fa-solid fa-flag"></i><span>Events</span>
-    </div>
-    <div class="sb-item" data-tab="tabTasks" onclick="openMainTab('tabTasks')" title="Tasks">
-      <i class="fa-solid fa-list"></i><span>Tasks</span>
-      <span class="sb-badge" id="sbTasksBadge" style="display:none" title="Your overdue + due-today tasks">0</span>
-    </div>
-    <!-- Comms hub (mailbox arc S2): every mailbox and phone line you can read,
-         in one place. Shown to everyone, like every other tab: the hub's Email
-         and Phone tabs each say so when nothing is shared with you. (It used
-         to wait for GET /api/mail/mailboxes, so it popped in last and hid
-         from phone-only readers.) The badge is your INBOX unread over your
-         boxes — commsBadgeSet below. Took Settings' place in the sidebar
-         2026-10-11 (Settings: More Features, or "Hi, <name>!"). -->
-    <div class="sb-item" id="sbComms" data-tab="tabComms" onclick="openMainTab('tabComms')" title="Comms">
-      <i class="fa-solid fa-comments"></i><span>Comms</span>
-      <span class="sb-badge" id="sbCommsBadge" style="display:none" title="Unread in the inboxes you can read">0</span>
-    </div>
-    <div class="sb-item" data-tab="tabLogs" onclick="openLogsTab()" title="Log">
-      <i class="fa-solid fa-box-archive"></i><span>Log</span>
-    </div>
-    <div class="sb-item" data-tab="tabBills" onclick="openMainTab('tabBills')" title="Bills">
-      <i class="fa-solid fa-file-invoice-dollar"></i><span>Bills</span>
-    </div>
-
-    <div class="sb-section-label">Actions</div>
-    <div class="sb-item" data-tab="tabPipeline" onclick="openMainTab('tabPipeline')" title="Pipeline Board">
-      <i class="fa-solid fa-table-columns"></i><span>Pipeline Board</span>
-    </div>
-    <div class="sb-item" onclick="newContact()" title="New Client">
-      <i class="fa-solid fa-user-plus"></i><span>New Client</span>
-    </div>
-    <div class="sb-item" id="sbCustom" data-tab="tabCustom" onclick="openMainTab('tabCustom')" title="Custom">
-      <i class="fa-solid fa-clock"></i><span>Custom Tab</span>
-    </div>
-
-    <div class="sb-section-label">Settings</div>
-    <div class="sb-item" id="sbAdmin" data-tab="tabAdmin" onclick="openMainTab('tabAdmin')" style="display:none" title="Admin">
-      <i class="fa-solid fa-mug-hot"></i><span>Admin</span>
-    </div>
-    <!-- data-tab-also: Settings lives in More Features now (its tile opens
-         tabSettings), so More Features is the item lit while you are there. -->
-    <div class="sb-item" data-tab="tabMore" data-tab-also="tabSettings" onclick="openMainTab('tabMore')" title="More Features">
-      <i class="fa-solid fa-grip"></i><span>More Features</span>
-    </div>
-
-    <!-- Help & Support. Deliberately has NO data-tab: it opens a dialog, it
-         does not navigate, so updateSidebarActive() must never give it the
-         active highlight and steal it from the view you are actually on.
-         Being a .sb-item is enough for the skinny-mode tooltip to pick it up.
-         Implementation: the reportIssue() block near the bottom of this file. -->
-    <div class="sb-item" onclick="reportIssue()" title="Help &amp; Support">
-      <i class="fa-solid fa-life-ring"></i><span>Help &amp; Support</span>
-    </div>
+    <!-- Records / Actions / Settings: rendered from FEATURE_REGISTRY +
+         DEFAULT_LAYOUTS.sidebar (public/js/featureRegistry.js) by the
+         ycLauncher block in the head. -->
+    <script>ycLauncher.mount('sidebar')</script>
 
     <div class="sb-spacer"></div>
     <!-- Stamped by versionGuard.js from the /api/version deploy time it already
@@ -636,47 +699,9 @@
   </nav>
 
   <div id="tabHome" class="tab-main"><br><br>
-    <button class="home-btn" onclick="openCasesTab()">
-      <i class="fa-solid fa-landmark fa-2xl"></i><br /><br />Cases
-    </button>
-    <button class="home-btn" onclick="openContactsTab()">
-      <i class="fa-solid fa-users fa-2xl"></i><br /><br />Contacts
-    </button>
-    <button class="home-btn" onclick="openApptsTab()">
-      <i class="fa-solid fa-calendar-days fa-2xl"></i><br /><br />Appointments
-    </button>
-    <div style="height: 5px"></div>
-    <button class="home-btn" onclick="openMainTab('tabBills')">
-      <i class="fa-solid fa-file-invoice-dollar fa-2xl"></i><br /><br />Billing
-    </button>
-    <button class="home-btn" onclick="openMainTab('tabPipeline')">
-      <i class="fa-solid fa-table-columns fa-2xl"></i><br /><br />Pipeline Board
-    </button>
-    <button class="home-btn" onclick="openEventsTab()">
-      <i class="fa-solid fa-flag fa-2xl"></i><br /><br />Events
-    </button>
-    <div style="height: 5px"></div>
-    <button class="home-btn" onclick="openMainTab('tabTasks')">
-      <i class="fa-solid fa-list fa-2xl"></i><br /><br />Tasks
-    </button>
-    <button class="home-btn" onclick="newContact()">
-      <i class="fa-solid fa-user-plus fa-2xl"></i><br /><br />New Client
-    </button>
-    <button class="home-btn" onclick="openLogsTab()">
-      <i class="fa-solid fa-box-archive fa-2xl"></i><br /><br />Log
-    </button>
-    <div style="height: 5px"></div>
-    <button id="tabCustomButton" class="home-btn" onclick="openMainTab('tabCustom')">
-      <i class="fa-solid fa-clock fa-2xl"></i><br /><br />Custom Tab
-    </button>
-    <button class="home-btn" onclick="openMainTab('tabMore')">
-      <i class="fa-solid fa-grip fa-2xl"></i><br /><br />More Features
-    </button>
-    <!-- Comms took Settings' Home slot with its sidebar one (2026-10-11);
-         always shown, like sbComms. -->
-    <button id="homeComms" class="home-btn" onclick="openMainTab('tabComms')">
-      <i class="fa-solid fa-comments fa-2xl"></i><br /><br />Comms
-    </button>
+    <!-- The tiles: rendered from FEATURE_REGISTRY + DEFAULT_LAYOUTS.home
+         (public/js/featureRegistry.js). -->
+    <script>ycLauncher.mount('home')</script>
     <!-- Quick search — only shown on narrow viewports where the header search is hidden -->
     <div class="home-search">
       <input id="qpInputHome" placeholder="Name, Phone, Case # or ID"
@@ -3081,84 +3106,12 @@
 
 <div id="tabMore" class="tab-main">
   <h1><i class="fa-solid fa-grip"></i> More Features <i class="fa-solid fa-grip"></i></h1>
-  <!-- data-hover-anim: Font Awesome animation class(es) played on the icon while
-       the pointer is over the button (see the hover-animation script below).
-       Tune speed/axis per button with inline --fa-* custom properties.
-
-       Layout rule: 4 buttons per row, and every row full. 24 buttons = six full
-       rows. Keep new buttons inside the row they belong to rather than
-       appending to the end.
-
-       Row 5's fourth tile was the cat, a toy holding that slot square until a
-       real feature wanted it. Settings did (2026-10-11, when Comms took its
-       sidebar and Home places): Settings joined row 1 beside Theme, and Get
-       Clio Code moved down into the cat's slot. Casey is still summoned by
-       long-pressing the header logo. The grid has NO free slot now — the
-       next tile starts a seventh row or replaces something; ask first.
-       (data-placeholder, which ensureStrip() skips so a tile that opens
-       nothing never reaches the pill strip, is unused; keep the mechanism for
-       the next gap in the grid.)
-
-       Rows went 3-wide to 4-wide with the Theme tile. One theme per row no
-       longer divides evenly across 22 features, so a row is now a task rather
-       than a subsystem: what the client fills in, what you keep, how a case is
-       shaped, when things happen, and what goes out. The help row leads
-       because it is the row you want when you do not know where to look. -->
-
-  <!-- Where you get help, and how the app works for you: how it works, your
-       settings and your theme, and what you want next. Settings opens its own
-       main tab (tabSettings) — it is not a panel here; the sidebar's More
-       Features item stays lit while you are on it (data-tab-also). -->
-  <button class="big-button" data-target="manualsDiv"         data-exclusive-group="more" data-hover-anim="fa-flip" style="--fa-animation-duration:1.4s"><i class="fa-solid fa-book fa-2xl"></i><br><br>Manuals</button>
-  <button class="big-button" onclick="openMainTab('tabSettings')" data-hover-anim="fa-spin" style="--fa-animation-duration:3s"><i class="fa-solid fa-gear fa-2xl"></i><br><br>Settings</button>
-  <button class="big-button" data-target="themeCustomDiv" data-exclusive-group="more" data-hover-anim="fa-spin" style="--fa-animation-duration:2.4s"><i class="fa-solid fa-palette fa-2xl"></i><br><br>Theme</button>
-  <button class="big-button" data-target="featureRequestsDiv" data-exclusive-group="more" data-hover-anim="fa-beat-fade" style="--fa-beat-fade-scale:1.15; --fa-animation-duration:1.1s"><i class="fa-solid fa-lightbulb fa-2xl"></i><br><br>Feature Requests</button>
-  <br><br>
-  <!-- What the client fills in: the form, what comes back from it, and the door
-       they walk through to get to it. Simple Forms and Form Builder are two
-       surfaces over the SAME form_templates records — the simple one hands off
-       to the full one for tabs / repeaters / code. -->
-  <button class="big-button" data-target="formSimpleDiv" data-exclusive-group="more" data-hover-anim="fa-bounce" style="--fa-animation-duration:1.3s"><i class="fa-solid fa-wand-magic-sparkles fa-2xl"></i><br><br>Simple Forms</button>
-  <button class="big-button" data-target="formBuilderDiv" data-exclusive-group="more" data-hover-anim="fa-bounce" style="--fa-animation-duration:1.4s"><i class="fa-solid fa-pen-to-square fa-2xl"></i><br><br>Form Builder</button>
-  <button class="big-button" data-target="formInboxDiv" data-exclusive-group="more" data-hover-anim="fa-bounce" style="--fa-animation-duration:1.5s"><i class="fa-solid fa-inbox fa-2xl"></i><br><br>Form Inbox</button>
-  <button class="big-button" data-target="portalManagerDiv" data-exclusive-group="more" data-hover-anim="fa-flip" style="--fa-animation-duration:1.6s"><i class="fa-solid fa-door-open fa-2xl"></i><br><br>Portal Manager</button>
-  <br><br>
-  <!-- The file you keep: get it signed, then the files everything else pulls
-       from. Signatures sits here rather than with the forms row above because
-       this row is "the file you keep", not "the thing the client fills in". -->
-  <button class="big-button" data-target="esignDashboardDiv" data-exclusive-group="more" data-hover-anim="fa-flip" style="--fa-animation-duration:1.6s; --fa-animation-direction:reverse"><i class="fa-solid fa-file-signature fa-2xl"></i><br><br>Signatures</button>
-  <button class="big-button" data-target="assetManagerDiv"    data-exclusive-group="more" data-hover-anim="fa-beat-fade" style="--fa-beat-fade-opacity:0.5; --fa-animation-duration:2s"><i class="fa-solid fa-photo-film fa-2xl"></i><br><br>Asset Manager</button>
-  <button class="big-button" data-target="videoManagerDiv"    data-exclusive-group="more" data-hover-anim="fa-beat" style="--fa-beat-scale:1.15; --fa-animation-duration:0.9s"><i class="fa-solid fa-video fa-2xl"></i><br><br>Video Manager</button>
-  <!-- Documents (S3). This tile REPLACES row 3's data-placeholder rather than
-       starting a seventh row — the placeholders exist for exactly this, see
-       the layout note above. It belongs in "the file you keep": the registry
-       over the firm's Dropbox estate, searchable and linkable to cases. -->
-  <button class="big-button" data-target="documentsDiv"       data-exclusive-group="more" data-hover-anim="fa-flip" style="--fa-animation-duration:1.8s"><i class="fa-solid fa-folder-open fa-2xl"></i><br><br>Documents</button>
-  <br><br>
-  <!-- How a case is shaped: its fields, the steps on it, what runs on it by
-       itself, and the saved views you read it back through. -->
-  <button class="big-button" data-target="caseConfigDiv" data-exclusive-group="more" data-hover-anim="fa-fade" style="--fa-animation-duration:1.4s"><i class="fa-solid fa-sliders fa-2xl"></i><br><br>YisraCase Config</button>
-  <button class="big-button" data-target="checklistsDiv" data-exclusive-group="more" data-hover-anim="fa-shake" style="--fa-animation-duration:0.8s"><i class="fa-solid fa-list-check fa-2xl"></i><br><br>Notes &amp; Lists</button>
-  <button class="big-button" data-target="automationsDiv"     data-exclusive-group="more" data-hover-anim="fa-shake" style="--fa-animation-duration:1.2s"><i class="fa-solid fa-robot fa-2xl"></i><br><br>Automations</button>
-  <button class="big-button" data-target="viewsDiv" data-exclusive-group="more" data-hover-anim="fa-beat" style="--fa-beat-scale:1.12; --fa-animation-duration:1.2s"><i class="fa-solid fa-table-list fa-2xl"></i><br><br>Views</button>
-  <br><br>
-  <!-- When things happen: what can be booked, when, and the court email as it
-       will go out — and the Clio sign-in code, the loosest fit on the grid,
-       parked in the cat's old slot when Settings took its row-1 place. -->
-  <button class="big-button" data-target="availabilityDiv" data-exclusive-group="more" data-hover-anim="fa-fade" style="--fa-animation-duration:1.6s"><i class="fa-solid fa-calendar fa-2xl"></i><br><br>Availability Manager</button>
-  <button class="big-button" data-target="bookingDiv" data-exclusive-group="more" data-hover-anim="fa-flip" style="--fa-animation-duration:2s; --fa-flip-y:0; --fa-flip-x:1"><i class="fa-solid fa-calendar-week fa-2xl"></i><br><br>Booking Manager</button>
-  <button class="big-button" data-target="courtPreviewDiv" data-exclusive-group="more" data-hover-anim="fa-shake" style="--fa-animation-duration:0.6s"><i class="fa-solid fa-gavel fa-2xl"></i><br><br>Court Preview</button>
-  <button class="big-button" onclick="showClioCode()" data-hover-anim="fa-spin-pulse" style="--fa-animation-duration:1.6s"><i class="fa-solid fa-c fa-2xl"></i><br><br>Get Clio Code</button>
-  <br><br>
-  <!-- What goes out, and what comes back as numbers: the message, the page it
-       lands on, the links that get there, and the reporting over all of it.
-       Reports is the loosest fit on the grid — it reads everything, not just
-       outreach — but it belongs with "look at the result" more than with any
-       other row here. -->
-  <button class="big-button" data-target="campaignsDiv" data-exclusive-group="more" data-hover-anim="fa-shake" style="--fa-animation-duration:0.9s"><i class="fa-solid fa-envelopes-bulk fa-2xl"></i><br><br>Campaigns</button>
-  <button class="big-button" data-target="redirectsDiv"    data-exclusive-group="more" data-hover-anim="fa-spin" style="--fa-animation-duration:2.5s"><i class="fa-solid fa-signs-post fa-2xl"></i><br><br>Redirects Manager</button>
-  <button class="big-button" data-target="landingPagesDiv" data-exclusive-group="more" data-hover-anim="fa-bounce" style="--fa-animation-duration:1.4s"><i class="fa-solid fa-sitemap fa-2xl"></i><br><br>Landing Pages</button>
-  <button class="big-button" data-target="reportsDiv" data-exclusive-group="more" data-hover-anim="fa-beat" style="--fa-beat-scale:1.12; --fa-animation-duration:1.3s"><i class="fa-solid fa-chart-column fa-2xl"></i><br><br>Reports</button>
+  <!-- The grid: rendered from FEATURE_REGISTRY + DEFAULT_LAYOUTS.more
+       (public/js/featureRegistry.js) — the layout rule and the row notes live
+       there. The tiles and the row breaks must stay DIRECT children of this
+       div, ahead of the panels: ensureStrip(), exitDrillMode() and the
+       drill-in and phone CSS all select them with ">". -->
+  <script>ycLauncher.mount('more')</script>
   <!-- Casey's way back in, now that its tile went to Settings: a small paw
        under the grid, not a tile (the rows stay full, the pill strip never
        sees it, drill-in hides it). toggleMascot() is the old tile's handler:
@@ -3539,43 +3492,10 @@
   
 <div id="tabAdmin" class="tab-main" data-all-icons='<i class="fa-solid fa-arrow-left"></i><i class="fa-solid fa-mug-hot"></i>'>
   <h1><i class="fa-solid fa-mug-hot"></i> Admin <i class="fa-solid fa-mug-hot"></i></h1>
-  <!-- data-hover-anim: see the More Features grid / hover-animation script below. -->
-
-  <!-- Layout rule: 3 buttons per row, and every row full. 12 tiles = four full
-       rows, grouped by what the row is for. Keep new buttons inside the row
-       they belong to rather than appending to the end; every row is full, so
-       the next tile starts a fifth row — see the same note on the More
-       Features grid above. Row 5 (comms admin: mailboxes, 2026-10-08) is that
-       row, short by design until the comms hub's phone/phonebook admin tiles
-       join it (ref/MAILBOX_SYSTEM_DESIGN.md §5). The hub itself piloted here
-       and moved to the sidebar (tabComms) on 2026-10-11. -->
-
-  <!-- Who gets in: the two key registries, and CTA links — the bearer grants
-       (/c/<token>) you mint to let a recipient run one pre-authorized plan. -->
-  <button class="big-button" data-target="readonlyKeysDiv" data-exclusive-group="admin" data-hover-anim="fa-fade" style="--fa-animation-duration:1.2s"><i class="fa-solid fa-eye fa-2xl"></i><br><br>Readonly Keys (SU)</button>
-  <button class="big-button" data-target="apiKeysDiv" data-exclusive-group="admin" data-hover-anim="fa-flip" style="--fa-animation-duration:1.8s; --fa-flip-y:0; --fa-flip-x:1"><i class="fa-solid fa-key fa-2xl"></i><br><br>API Keys (SU)</button>
-  <button class="big-button" data-target="ctaLinksDiv" data-exclusive-group="admin" data-hover-anim="fa-beat" style="--fa-beat-scale:1.15; --fa-animation-duration:0.9s"><i class="fa-solid fa-hand-pointer fa-2xl"></i><br><br>CTA Links (SU)</button>
-  <br><br>
-  <!-- Reading and poking the live system: the rows, the outbound
-       credentials, and the endpoints that serve them. -->
-  <button class="big-button" data-target="dbConsoleDiv" data-exclusive-group="admin" data-hover-anim="fa-beat-fade" style="--fa-beat-fade-opacity:0.55; --fa-animation-duration:1.4s"><i class="fa-solid fa-database fa-2xl"></i><br><br>DB Console (SU)</button>
-  <button class="big-button" data-target="connectionsDiv" data-exclusive-group="admin" data-hover-anim="fa-bounce" style="--fa-animation-duration:1.2s"><i class="fa-solid fa-plug fa-2xl"></i><br><br>Connections (SU)</button>
-  <button class="big-button" data-target="apiTesterDiv" data-exclusive-group="admin" data-hover-anim="fa-shake" style="--fa-animation-duration:0.7s"><i class="fa-solid fa-vial fa-2xl"></i><br><br>API Tester (SU)</button>
-  <br><br>
-  <!-- Things you run rather than read, plus the cross-session notes. -->
-  <button class="big-button" data-target="toolsDiv" data-exclusive-group="admin" data-hover-anim="fa-beat" style="--fa-beat-scale:1.2; --fa-animation-duration:1.1s"><i class="fa-solid fa-screwdriver-wrench fa-2xl"></i><br><br>Tools (SU)</button>
-  <button class="big-button" onclick="etchSwal()" data-hover-anim="fa-shake" style="--fa-animation-duration:1.5s"><i class="fa-solid fa-pen-ruler fa-2xl"></i><br><br>Etch</button>
-  <button class="big-button" data-target="scratchBrowserDiv" data-exclusive-group="admin" data-hover-anim="fa-fade" style="--fa-animation-duration:1.6s"><i class="fa-solid fa-box-archive fa-2xl"></i><br><br>Scratch (SU)</button>
-  <br><br>
-  <!-- Who is using it and what they are telling you: accounts, the alerts the
-       system raises on its own, and the ones staff raise by hand. -->
-  <button class="big-button" data-target="usersDiv" data-exclusive-group="admin" data-hover-anim="fa-spin" style="--fa-animation-duration:3s"><i class="fa-solid fa-users-gear fa-2xl"></i><br><br>Users (SU)</button>
-  <button class="big-button" data-target="systemAlertsDiv" data-exclusive-group="admin" data-hover-anim="fa-beat" style="--fa-beat-scale:1.25; --fa-animation-duration:0.7s"><i class="fa-solid fa-triangle-exclamation fa-2xl"></i><br><br>System Alerts (SU)</button>
-  <button class="big-button" data-target="issueReportsDiv" data-exclusive-group="admin" data-hover-anim="fa-spin" style="--fa-animation-duration:3s"><i class="fa-solid fa-life-ring fa-2xl"></i><br><br>Support Inbox</button>
-  <br><br>
-  <!-- Comms admin: mailboxes and who may read / send / manage each one. The
-       hub where granted staff read them is the sidebar's Comms tab. -->
-  <button class="big-button" data-target="mailboxesDiv" data-exclusive-group="admin" data-hover-anim="fa-bounce" style="--fa-animation-duration:1.2s"><i class="fa-solid fa-envelope-open-text fa-2xl"></i><br><br>Mailboxes (SU)</button>
+  <!-- The grid: rendered from FEATURE_REGISTRY + DEFAULT_LAYOUTS.admin
+       (public/js/featureRegistry.js) — layout rule and row notes live there;
+       same direct-child rule as the More Features grid. -->
+  <script>ycLauncher.mount('admin')</script>
 
   <div id="sequencesDiv" style="display:none"></div>
   <div id="readonlyKeysDiv" style="display:none; margin-top:10px;">

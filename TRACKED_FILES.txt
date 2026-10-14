@@ -296,6 +296,7 @@ public/index.html
 public/issueReports.html
 public/js/assetpicker.js
 public/js/diag.js
+public/js/featureRegistry.js
 public/js/mailRender.js
 public/js/mailboxColor.js
 public/js/mascot/engine.js
@@ -1028,6 +1029,7 @@ tests/executionVersionStamp.test.js
 tests/extforms.d1drafts.test.js
 tests/extforms.x2.test.js
 tests/f_route.x21.test.js
+tests/featureRegistry.test.js
 tests/fieldDefs.cfg1.test.js
 tests/fieldDefs.s1.test.js
 tests/filePlacementService.test.js
@@ -1082,6 +1084,7 @@ tests/helpers/mailboxS3World.js
 tests/helpers/phoneSPHWorld.js
 tests/helpers/renderSmoke.js
 tests/helpers/scriptGuard.js
+tests/helpers/shellHtml.js
 tests/helpers/u6aEventsDb.js
 tests/hookHmacRawBody.test.js
 tests/hookHmacTimestamped.test.js

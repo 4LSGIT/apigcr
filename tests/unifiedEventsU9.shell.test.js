@@ -40,7 +40,12 @@ const { execFileSync } = require('child_process');
 const os   = require('os');
 
 const ROOT = path.join(__dirname, '..');
-const HTML = fs.readFileSync(path.join(ROOT, 'public/index.html'), 'utf8');
+// RAW = the file (the syntax check covers every block in it, the launcher
+// mounts included); HTML = the page as the parser sees it, launcher markup
+// expanded from public/js/featureRegistry.js (ui-custom S1 —
+// tests/helpers/shellHtml.js), for the wiring checks.
+const RAW  = fs.readFileSync(path.join(ROOT, 'public/index.html'), 'utf8');
+const HTML = require('./helpers/shellHtml').expandedShellHtml();
 
 /**
  * Inline <script> bodies, in document order.
@@ -60,7 +65,7 @@ function inlineScripts(html) {
 const isRealScript = (body) => !/^[\s\S]{0,400}?-->/.test(body);
 
 describe('index.html — every inline script block parses', () => {
-  const blocks = inlineScripts(HTML).filter(isRealScript);
+  const blocks = inlineScripts(RAW).filter(isRealScript);
 
   test('there are blocks to check, and the filter did not eat them all', () => {
     expect(blocks.length).toBeGreaterThan(5);

@@ -29,7 +29,10 @@ const fs = require('fs');
 const path = require('path');
 const { JSDOM } = require('jsdom');
 
-const HTML = fs.readFileSync(path.join(__dirname, '..', 'public/index.html'), 'utf8');
+// The shell as the parser sees it: the launcher markup (sidebar items, Home
+// tiles, the More/Admin grids) is rendered from public/js/featureRegistry.js
+// at parse time since ui-custom S1 — see tests/helpers/shellHtml.js.
+const HTML = require('./helpers/shellHtml').expandedShellHtml();
 
 /** The source text between two exact markers (inclusive of the first). */
 function between(start, end) {

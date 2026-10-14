@@ -233,7 +233,8 @@ describe('"YisraCase Config" rename (labels only — ids and targets unchanged)'
   });
 
   test('index.html More button label changed, target untouched', () => {
-    const idx = fs.readFileSync(path.join(ROOT, 'public/index.html'), 'utf8');
+    // The grid renders from public/js/featureRegistry.js (ui-custom S1).
+    const idx = require('./helpers/shellHtml').expandedShellHtml();
     expect(idx).toMatch(/data-target="caseConfigDiv"[^>]*>[\s\S]*?YisraCase Config<\/button>/);
     expect(idx).toMatch(/id="caseConfigDiv"/);
   });
