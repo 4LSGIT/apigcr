@@ -72,7 +72,9 @@ const archive = require('./commsArchiveService');
 const common = require('./commsArchiveCommon');
 
 const SOURCE = 'phone_event_log';
-const LOCK_EXPR = "CONCAT('comms_archive_media:', DATABASE())";
+// GET_LOCK names are limited to 64 characters: a database name over 32 characters is hashed
+// (production's is 14 — its lock name is unchanged). Kept byte-identical to commsArchiveAdmin.SWEEP_LOCKS.
+const LOCK_EXPR = "CONCAT('comms_archive_media:', IF(CHAR_LENGTH(DATABASE()) > 32, LEFT(SHA2(DATABASE(), 256), 32), DATABASE()))";
 const ENABLED_KEY = 'comms_archive_enabled';
 
 /** Knobs, read at call time (tests shrink them). */

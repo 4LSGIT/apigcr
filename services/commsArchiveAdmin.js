@@ -62,8 +62,10 @@ const REVIEWERS_KEY = 'comms_eval_reviewers';
 /** Knobs (tests shrink them). lockWaitS: how long purge waits for a mid-tick sweep. */
 const limits = { lockWaitS: 5 };
 const SWEEP_LOCKS = Object.freeze({
-  cliff: "CONCAT('comms_archive_sweep:', DATABASE())",
-  media: "CONCAT('comms_archive_media:', DATABASE())",
+  // Byte-identical to the sweeps' LOCK_EXPR (purge holds THEIR lock); a database name over
+  // 32 characters is hashed to stay inside GET_LOCK's 64 (production's 14 are unchanged).
+  cliff: "CONCAT('comms_archive_sweep:', IF(CHAR_LENGTH(DATABASE()) > 32, LEFT(SHA2(DATABASE(), 256), 32), DATABASE()))",
+  media: "CONCAT('comms_archive_media:', IF(CHAR_LENGTH(DATABASE()) > 32, LEFT(SHA2(DATABASE(), 256), 32), DATABASE()))",
 });
 
 function httpError(status, message) {

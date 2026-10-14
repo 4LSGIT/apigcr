@@ -1000,6 +1000,7 @@ tests/caseUi.sync.test.js
 tests/caseUi.timeline.test.js
 tests/checklistView.autoGrow.test.js
 tests/checklists.s1notes.test.js
+tests/commsArchive.lockNames.mysql.test.js
 tests/commsArchive.s1b.mysql.test.js
 tests/commsArchive.s1c.mysql.test.js
 tests/commsArchive.s4.mysql.test.js
@@ -1016,6 +1017,7 @@ tests/commsShell.test.js
 tests/commsSummarize.audit.mysql.test.js
 tests/commsSummarize.mysql.test.js
 tests/commsSummaryGround.test.js
+tests/commsSummaryPrompt.test.js
 tests/commsTranscribe.migration.mysql.test.js
 tests/commsTranscribe.mysql.test.js
 tests/commsTranscribeAudio.test.js

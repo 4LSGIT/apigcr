@@ -14,11 +14,27 @@
  * closed (call_type, by, role); flags keep only the known ones.
  *
  * GROUNDING: every evidence item (commitments, dates, documents_requested,
- * amounts, case_refs) must carry a `quote` of at least MIN_QUOTE_WORDS words
- * that occurs in the transcript ON WORD BOUNDARIES after normalising both
- * (NFKC, casefold, zero-width characters removed, every non-letter /
- * non-digit run → one space — so "W-2, and" and "W-2 — and" match, "pay 50"
- * does not match "pay 500"). An item's own claim must be inside its own quote:
+ * amounts, case_refs) must carry a `quote` that occurs in the transcript ON
+ * WORD BOUNDARIES after normalising both: NFKC, casefold, zero-width
+ * characters removed, thousands commas dropped ("$1,200.50" = "1200.50"),
+ * ordinal suffixes dropped ("3rd" = "3"), then split into tokens — a NUMBER
+ * keeps its inner . / : - ("3/15", "1200.50", "10:30" are one token each),
+ * everything else breaks on any non-letter / non-digit ("W-2, and" = "W-2 —
+ * and" = "w 2 and"). So "$50" never grounds in "$50,000", "$1,200" not in
+ * "$1,200.50", "3" not in "3/15", "pay 50" not in "pay 500".
+ *
+ * Quote length: documents_requested needs ≥ MIN_QUOTE_WORDS (3) words. A
+ * date / amount / case ref may quote 1–2 words — its claim-in-quote check ties
+ * it — but a claim that is a BARE number (only digits once normalised: no
+ * currency word, month or case-number shape) needs a quote of ≥ 2 words unless
+ * the quote itself carries a currency sign ("$50,000" stands alone), so a lone
+ * "50" from "I'm 50 years old" cannot ground "$50". A commitment needs 3
+ * words, unless its quote is a WHOLE segment ("Yes.", "Will do."): then EVERY
+ * occurrence is tried and the first that is a whole segment is taken (t and
+ * the speaker are that segment's), and that speaker's role from parties[]
+ * must agree with `by` (firm ↔ firm; other ↔ client / other) — a speaker with
+ * no role given cannot contradict it. An item's own claim must be inside its
+ * own quote:
  * date_text, amount_text and case_refs[].text, normalised the same way, must
  * occur as whole words in the item's quote ("$50,000" quoting "the" fails). A
  * commitment's quote may span segments only of ONE speaker (a splice across a
@@ -57,12 +73,14 @@ const MIN_QUOTE_WORDS = 3;
  * words, so a whole-word match is a ' '-padded substring test.
  */
 function normalise(s) {
-  return String(s == null ? '' : s)
+  const t = String(s == null ? '' : s)
     .normalize('NFKC')
     .toLowerCase()
     .replace(/[​-‍⁠﻿­]/g, '')
-    .replace(/[^\p{L}\p{N}]+/gu, ' ')
-    .trim();
+    .replace(/(\d),(?=\d{3}(?!\d))/g, '$1')                   // thousands separators: 1,200,000 → 1200000
+    .replace(/(\d)(?:st|nd|rd|th)(?![\p{L}\p{N}])/gu, '$1');   // ordinals: 3rd → 3
+  // A number keeps its inner . / : - (3/15, 1200.50, 10:30); anything else breaks on non-letters / non-digits.
+  return (t.match(/\d+(?:[.\/:\-]\d+)*|[\p{L}\p{N}]+/gu) || []).join(' ');
 }
 
 const words = (n) => (n ? n.split(' ').length : 0);
@@ -111,6 +129,28 @@ function timeAt(hay, at) {
   return Number.isFinite(a) ? a : null;
 }
 
+/** Every occurrence of `q` (on word boundaries); the first that is a whole segment whose test passes → its offset, else -1. */
+function wholeSegmentHit(hay, q, accept) {
+  const padded = ` ${hay.text} `;
+  for (let i = padded.indexOf(` ${q} `); i >= 0; i = padded.indexOf(` ${q} `, i + 1)) {
+    if (wholeSegment(hay, i, q) && accept(segAt(hay, i))) return i;
+  }
+  return -1;
+}
+
+/** A commitment's `by` against its speaker's role (parties[]): firm ↔ firm, other ↔ client / other. No role → no objection. */
+function roleAgrees(roles, speaker, by) {
+  const role = roles.get(speaker);
+  if (!role) return true;
+  return by === 'firm' ? role === 'firm' : role !== 'firm';
+}
+
+/** Is the hit at `at` exactly one whole (normalised) segment? */
+function wholeSegment(hay, at, q) {
+  const k = segAt(hay, at);
+  return k >= 0 && hay.starts[k] === at && normalise(hay.segs[k].t) === q;
+}
+
 /** Does the span [at, at+len) stay within ONE speaker's segments? (no segments → nothing to check) */
 function oneSpeaker(hay, at, len) {
   const k1 = segAt(hay, at);
@@ -128,7 +168,7 @@ const fail = (why) => ({ ok: false, why });
  * a non-array (when present) fails the summary.
  * spec: { fields: {name: 'by'|'what'|'text'}, claim: <field that must sit inside the quote>, t: bool, oneSpeaker: bool }
  */
-function evidence(list, spec, hay, counter) {
+function evidence(list, spec, hay, counter, roles = new Map()) {
   if (list === undefined || list === null) return [];
   if (!Array.isArray(list)) return null;
   const out = [];
@@ -144,8 +184,19 @@ function evidence(list, spec, hay, counter) {
     }
     if (!okItem || !isStr(it.quote, MAX.quote)) { counter.n++; continue; }
     const q = normalise(it.quote);
-    const at = words(q) >= MIN_QUOTE_WORDS ? wordIndex(hay.text, q) : -1;
+    let at = wordIndex(hay.text, q);
     if (at < 0) { counter.n++; continue; }
+    if (spec.claim) {
+      // A bare number binds nothing on its own: it needs a quote of 2+ words, or a currency sign IN the quote.
+      const bare = /^\d+( \d+)*$/.test(normalise(clean[spec.claim])) && !/[$€£]/.test(it.quote);
+      if (words(q) < (bare ? 2 : 1)) { counter.n++; continue; }
+    } else if (words(q) < MIN_QUOTE_WORDS) {
+      // Only a commitment may be short — as a WHOLE segment, at the first occurrence that is one,
+      // spoken by someone whose role agrees with `by`.
+      if (!spec.oneSpeaker) { counter.n++; continue; }
+      at = wholeSegmentHit(hay, q, (k) => roleAgrees(roles, hay.segs[k].s, clean.by));
+      if (at < 0) { counter.n++; continue; }
+    }
     if (spec.claim && wordIndex(q, normalise(clean[spec.claim])) < 0) { counter.n++; continue; }
     if (spec.oneSpeaker && !oneSpeaker(hay, at, q.length)) { counter.n++; continue; }
     clean.quote = it.quote.trim();
@@ -183,7 +234,8 @@ function validate(json, { segments = [], fullText = '', kind = 'call_recording',
     }
   }
 
-  const commitments = evidence(json.commitments, { fields: { by: 'by', what: 'what' }, t: true, oneSpeaker: true }, hay, counter);
+  const roles = new Map(parties.map(p => [p.speaker, p.role]));
+  const commitments = evidence(json.commitments, { fields: { by: 'by', what: 'what' }, t: true, oneSpeaker: true }, hay, counter, roles);
   const dates = evidence(json.dates, { fields: { what: 'what', date_text: 'text' }, claim: 'date_text', t: true }, hay, counter);
   const documents = evidence(json.documents_requested, { fields: { what: 'what' }, t: true }, hay, counter);
   const amounts = evidence(json.amounts, { fields: { what: 'what', amount_text: 'text' }, claim: 'amount_text', t: true }, hay, counter);

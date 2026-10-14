@@ -18,11 +18,16 @@
  *   case — input + max_tokens of output at the model's price; the cap counts it
  *   until ai_calls holds the billed cost) → done | skipped (restricted / short /
  *   empty / refused / purged) | failed. rowOps bound to comms_summaries,
- *   claimStates pending + calling. A 'calling' row reclaimed after its lease is
- *   a call that never reported back (the process ended mid-call): BEFORE
- *   anything else its est_cents is charged as a synthetic ai_calls row
- *   ('lost_in_flight', no content), so the spend outlives the lease; and a
- *   claim past maxAttempts fails the row without another call.
+ *   claimStates pending + calling. The 'calling' write is the LAST step before
+ *   the call: one conditional UPDATE that also requires the transcript still
+ *   'transcribed' and its item not restricted (no gap between the last look
+ *   and the write; nothing is reserved for a call that never starts). A
+ *   'calling' row reclaimed after its lease is a call that did not report
+ *   back: if aiService logged NO ai_calls row for it since that lease began
+ *   (lease start = the old next_attempt_at − leaseMin), its est_cents is
+ *   charged as a synthetic row ('lost_in_flight', no content) — so the spend
+ *   outlives the lease without double-charging a call whose real row exists.
+ *   A claim past maxAttempts fails the row without another call.
  *
  * ── MONEY (every path charges; never 0 for a call that may have run) ──────
  *   completed → ai_calls' billed cost. timeout → the logged row is charged the
@@ -76,7 +81,9 @@
 const common = require('./commsArchiveCommon');
 const ground = require('./commsSummaryGround');
 
-const LOCK_EXPR = "CONCAT('comms_archive_summarize:', DATABASE())";
+// GET_LOCK names are limited to 64 characters: a database name over 32 characters is hashed
+// (production's is 14 — its lock name is unchanged).
+const LOCK_EXPR = "CONCAT('comms_archive_summarize:', IF(CHAR_LENGTH(DATABASE()) > 32, LEFT(SHA2(DATABASE(), 256), 32), DATABASE()))";
 const KEYS = Object.freeze({
   mode: 'comms_summarize_mode',
   model: 'comms_summary_model',
@@ -89,6 +96,8 @@ const MODELS = new Set(['claude-sonnet-5-5', 'claude-haiku-5-5']);
 const EFFORTS = new Set(['low', 'medium', 'high']);
 const KINDS = ['call_recording', 'voicemail'];
 const PROMPT_KEY = 'comms_summary';
+/** The error codes of ai_calls rows THIS sweep writes (never a real call's record). */
+const SYNTHETIC_CODES = ['lost_in_flight', 'timeout_charged'];
 
 /** Knobs, read at call time (tests shrink them). */
 const limits = {
@@ -175,6 +184,7 @@ async function _nextDue(db, { sample, seen }) {
   if (seen.length) { extra += ' AND s.id NOT IN (?)'; params.push(seen); }
   const [[row]] = await db.query(
     `SELECT s.id, s.transcript_id, s.state AS s_state, s.attempts, s.created_at, s.est_cents, s.model AS s_model,
+            s.next_attempt_at AS s_next,
             t.state AS t_state, t.segments, t.full_text, t.media_id,
             m.kind, m.restricted, m.duration_s, m.captured_at, m.party, m.source_table, m.source_id,
             e.direction
@@ -293,11 +303,28 @@ async function _summarizeOne(ctx, row) {
   if (!(await ops.claim(db, row.id))) return null;
   const attemptsNow = Number(row.attempts) + 1;
   if (row.s_state === 'calling') {
-    // A call that never reported back: its reservation becomes spend that outlives the lease.
-    await _chargeSynthetic(db, row.transcript_id, row.s_model, row.est_cents, 'lost_in_flight');
+    // A call that did not report back. Logged by aiService since its lease began? Then that row IS its
+    // spend (a crash after the call). Otherwise the reservation becomes spend that outlives the lease.
+    // Only a REAL row aiService logged inside this lease counts — never our own synthetic charges
+    // (a previous lost call's row lands inside the next lease). No lease start known (an operator
+    // cleared next_attempt_at) → charge: the safe direction.
+    let seenN = 0;
+    if (row.s_next) {
+      const leaseStart = new Date(new Date(row.s_next).getTime() - limits.leaseMin * 60_000);
+      const [[seen]] = await db.query(
+        `SELECT COUNT(*) AS n FROM ai_calls
+          WHERE consumer_ref = ? AND created_at >= ? AND (error IS NULL OR error NOT IN (?))`,
+        [consumerRef(row.transcript_id), leaseStart, SYNTHETIC_CODES]);
+      seenN = Number(seen.n);
+    }
+    if (seenN === 0) {
+      await _chargeSynthetic(db, row.transcript_id, row.s_model, row.est_cents, 'lost_in_flight');
+      out.lost_in_flight = (out.lost_in_flight || 0) + 1;
+    } else {
+      out.recovered_in_flight = (out.recovered_in_flight || 0) + 1;
+    }
     await db.query("UPDATE comms_summaries SET est_cents = NULL WHERE id = ?", [row.id]);
     await _syncLlm(db, row.transcript_id);
-    out.lost_in_flight = (out.lost_in_flight || 0) + 1;
   }
   if (attemptsNow > limits.maxAttempts) {
     await _fail(db, row, 'attempts_exhausted');
@@ -331,24 +358,27 @@ async function _summarizeOne(ctx, row) {
     return 'stop';
   }
 
-  // Written ahead: the cap counts the call from here, whatever happens to the process.
-  await db.query(
-    `UPDATE comms_summaries SET state = 'calling', est_cents = ?, model = ?, effort = ?
-      WHERE id = ? AND state IN ('pending', 'calling')`,
-    [Math.round(est.cents * 10_000) / 10_000, cfg.model, cfg.effort, row.id]);
-
   const context = await _context(db, row);
 
-  // The last look before anything leaves: still transcribed, still not restricted.
-  const [[chk]] = await db.query(
-    `SELECT t.state, m.restricted FROM comms_transcripts t JOIN comms_media m ON m.id = t.media_id WHERE t.id = ?`,
-    [row.transcript_id]);
-  if (!chk || chk.state !== 'transcribed') {
-    if (chk && chk.state === 'purged') await _clearAiCalls(db, row.transcript_id);
-    await _skip(db, row, chk && chk.state === 'purged' ? 'purged' : 'not_transcribed');
+  // The LAST step before the call, in ONE statement: written ahead (the cap counts the call from
+  // here, whatever happens to the process) only while the transcript is still 'transcribed' and
+  // its item still not restricted — the last look and the write cannot be split.
+  const [wa] = await db.query(
+    `UPDATE comms_summaries s
+       JOIN comms_transcripts t ON t.id = s.transcript_id
+       JOIN comms_media m ON m.id = t.media_id
+        SET s.state = 'calling', s.est_cents = ?, s.model = ?, s.effort = ?
+      WHERE s.id = ? AND s.state IN ('pending', 'calling') AND t.state = 'transcribed' AND m.restricted = 0`,
+    [Math.round(est.cents * 10_000) / 10_000, cfg.model, cfg.effort, row.id]);
+  if (wa.affectedRows !== 1) {
+    const [[chk]] = await db.query(
+      `SELECT t.state, m.restricted FROM comms_transcripts t JOIN comms_media m ON m.id = t.media_id WHERE t.id = ?`,
+      [row.transcript_id]);
+    if (chk && chk.state === 'purged') { await _clearAiCalls(db, row.transcript_id); await _skip(db, row, 'purged'); return null; }
+    if (chk && chk.state === 'transcribed' && Number(chk.restricted) === 1) { await _skip(db, row, 'restricted'); out.skipped_restricted++; return null; }
+    await _skip(db, row, 'not_transcribed');
     return null;
   }
-  if (Number(chk.restricted) === 1) { await _skip(db, row, 'restricted'); out.skipped_restricted++; return null; }
 
   const ai = require('./aiService'); // lazy require (convention)
   const r = await ai.call(db, {

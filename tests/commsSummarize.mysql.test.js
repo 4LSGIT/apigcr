@@ -392,10 +392,111 @@ maybe('comms archive S3 summaries on real MySQL', () => {
     await run();                                                          // creates the queue row (summarized)
     await q("UPDATE comms_transcripts SET state = 'transcribed', summary = NULL, summary_text = NULL WHERE id = ?", [tid]);
     await q("UPDATE comms_summaries SET state = 'calling', attempts = 3, est_cents = 1, next_attempt_at = NULL WHERE transcript_id = ?", [tid]);
+    await q('DELETE FROM ai_calls WHERE consumer_ref = ?', [`comms_transcript:${tid}`]);   // the lost call was never logged
     const before = api.bodies.length;
     expect(await run()).toMatchObject({ calls: 0, failed: 1, lost_in_flight: 1 });
     expect(api.bodies.length).toBe(before);
     expect(await qrow(tid)).toMatchObject({ state: 'failed', last_error: 'attempts_exhausted' });
+  });
+
+  test('E6c a crash AFTER the call was logged: on reclaim its real ai_calls row is the spend — no synthetic double charge', async () => {
+    const { tid } = await item();
+    let broke = false;
+    const db = {
+      getConnection: () => pool.getConnection(),
+      async query(sql, p) {
+        if (!broke && /SET ai_call_ids/.test(sql)) { broke = true; throw new Error('process died after the call'); }
+        return pool.query(sql, p);
+      },
+    };
+    await expect(run(db)).rejects.toThrow(/after the call/);
+    await pool.query(`SELECT RELEASE_LOCK(${sweep.LOCK_EXPR})`).catch(() => {});
+    expect((await qrow(tid)).state).toBe('calling');
+    await q('UPDATE comms_summaries SET next_attempt_at = UTC_TIMESTAMP() WHERE transcript_id = ?', [tid]);   // the lease has run out
+    const r = await run();
+    expect(r).toMatchObject({ recovered_in_flight: 1, summarized: 1 });
+    expect(r.lost_in_flight).toBeUndefined();
+    const cs = await calls(tid);
+    expect(cs.map(c => c.error)).toEqual([null, null]);                    // two real calls, no synthetic row
+    expect(Number((await tr(tid)).llm_cost_cents)).toBeCloseTo(2 * ai.computeCostCents(900, 400, 'claude-sonnet-5-5'), 4);
+  });
+
+  test('E6d a failure BEFORE the write-ahead (the context lookup) reserves and charges nothing', async () => {
+    const { tid } = await item();
+    const db = {
+      getConnection: () => pool.getConnection(),
+      async query(sql, p) {
+        if (/FROM contact_phones/.test(sql)) throw new Error('lookup failed');
+        return pool.query(sql, p);
+      },
+    };
+    await expect(run(db)).rejects.toThrow(/lookup failed/);
+    await pool.query(`SELECT RELEASE_LOCK(${sweep.LOCK_EXPR})`).catch(() => {});
+    expect(await qrow(tid)).toMatchObject({ state: 'pending', est_cents: null });
+    expect(await tx.monthToDateCents(pool)).toBe(0);
+    expect(api.bodies.length).toBe(0);
+    await due();
+    expect(await run()).toMatchObject({ summarized: 1 });
+    expect((await run()).lost_in_flight).toBeUndefined();
+  });
+
+  // Round 3: the reclaim's "seen" query. A lease is [next_attempt_at − leaseMin, next_attempt_at]; only a REAL row in it counts.
+  const reclaimable = async (tid, { nextAgoMin = 1, callAgoMin, code } = {}) => {
+    await run();                                                          // one real call, logged
+    await q("UPDATE comms_transcripts SET state = 'transcribed', summary = NULL, summary_text = NULL WHERE id = ?", [tid]);
+    await q(`UPDATE comms_summaries SET state = 'calling', attempts = 1, est_cents = 1,
+               next_attempt_at = ${nextAgoMin === null ? 'NULL' : 'UTC_TIMESTAMP() - INTERVAL ? MINUTE'} WHERE transcript_id = ?`,
+      nextAgoMin === null ? [tid] : [nextAgoMin, tid]);
+    await q(`UPDATE ai_calls SET created_at = UTC_TIMESTAMP() - INTERVAL ? MINUTE${code ? ", status = 'error', error = ?" : ''} WHERE consumer_ref = ?`,
+      code ? [callAgoMin, code, `comms_transcript:${tid}`] : [callAgoMin, `comms_transcript:${tid}`]);
+  };
+
+  test('E6e two lost calls in a row are two charges: the first one\'s synthetic row inside the second lease is not "seen"', async () => {
+    const { tid } = await item();
+    const expire = () => q('UPDATE comms_summaries SET next_attempt_at = UTC_TIMESTAMP() WHERE transcript_id = ?', [tid]);
+    const spy = jest.spyOn(ai, 'call').mockImplementation(async () => { throw new Error('process died'); });
+    try {
+      await expect(run()).rejects.toThrow(/process died/);
+      await pool.query(`SELECT RELEASE_LOCK(${sweep.LOCK_EXPR})`).catch(() => {});
+      await expire();
+      await expect(run()).rejects.toThrow(/process died/);               // charges lost #1 inside its own new lease, then dies again
+      await pool.query(`SELECT RELEASE_LOCK(${sweep.LOCK_EXPR})`).catch(() => {});
+    } finally { spy.mockRestore(); }
+    await expire();
+    expect(await run()).toMatchObject({ lost_in_flight: 1, summarized: 1 });
+    expect((await calls(tid)).map(c => [c.status, c.error])).toEqual([['error', 'lost_in_flight'], ['error', 'lost_in_flight'], ['ok', null]]);
+  });
+
+  test.each(['lost_in_flight', 'timeout_charged'])('E6f a synthetic %s row inside the lease is not a real call: still charged', async (code) => {
+    const { tid } = await item();
+    await reclaimable(tid, { nextAgoMin: 1, callAgoMin: 5, code });
+    const r = await run();
+    expect(r).toMatchObject({ lost_in_flight: 1, summarized: 1 });
+    expect(r.recovered_in_flight).toBeUndefined();
+  });
+
+  test('E6g an OLDER real call, outside the lease, does not hide a lost one (aged together: lease ended 1 min ago, call 40 min ago)', async () => {
+    const { tid } = await item();
+    await reclaimable(tid, { nextAgoMin: 1, callAgoMin: 40 });
+    const r = await run();
+    expect(r).toMatchObject({ lost_in_flight: 1, summarized: 1 });
+    expect(r.recovered_in_flight).toBeUndefined();
+  });
+
+  test('E6h a real call INSIDE the lease (10 min before its end, after its start) is the spend: recovered, no charge', async () => {
+    const { tid } = await item();
+    await reclaimable(tid, { nextAgoMin: 1, callAgoMin: 10 });
+    const r = await run();
+    expect(r).toMatchObject({ recovered_in_flight: 1, summarized: 1 });
+    expect(r.lost_in_flight).toBeUndefined();
+  });
+
+  test('E6i a calling row with NO next_attempt_at (an operator "retry now") is charged, even beside a fresh real call', async () => {
+    const { tid } = await item();
+    await reclaimable(tid, { nextAgoMin: null, callAgoMin: 0 });
+    const r = await run();
+    expect(r).toMatchObject({ lost_in_flight: 1, summarized: 1 });
+    expect(r.recovered_in_flight).toBeUndefined();
   });
 
   test('E7 the last look before the call: restricted or purged in between → nothing sent', async () => {

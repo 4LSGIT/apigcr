@@ -166,6 +166,54 @@ describe('the review\'s hardening cases (2026-10-15)', () => {
   });
 });
 
+describe('round 2 (2026-10-15): number tokens, ordinals, short quotes', () => {
+  const SEG3 = [
+    { s: 'A', a: 0, b: 6, t: 'The balance is $50,000 and the fee is $1,200.50 today.' },
+    { s: 'B', a: 6, b: 10, t: 'My hearing is 3/15 at 10:30, or March 3rd?' },
+    { s: 'A', a: 10, b: 12, t: 'Yes.' },
+    { s: 'B', a: 12, b: 14, t: 'Will do.' },
+    { s: 'A', a: 14, b: 18, t: 'Case 26-40001 is open. Pay 500 a month.' },
+  ];
+  const v3 = (o) => g.validate({ call_type: 'client', summary: 'x', ...o }, { segments: SEG3, fullText: SEG3.map(x => x.t).join('\n') });
+
+  test('normalise keeps a number whole: thousands commas dropped, inner . / : - kept, ordinals stripped', () => {
+    expect(g.normalise('$1,200,000.50')).toBe('1200000.50');
+    expect(g.normalise('3/15 at 10:30')).toBe('3/15 at 10:30');
+    expect(g.normalise('March 3rd, the 21st')).toBe('march 3 the 21');
+    expect(g.normalise('3,4 and W-2')).toBe('3 4 and w 2');
+    expect(g.normalise('26-40001-mar')).toBe('26-40001 mar');
+  });
+
+  test.each([
+    ['"$50" against "$50,000"', { amounts: [{ what: 'x', amount_text: '$50', quote: 'balance is $50,000' }] }],
+    ['"$50" quoting "$50,000"', { amounts: [{ what: 'x', amount_text: '$50', quote: '$50,000' }] }],
+    ['"$1,200" against "$1,200.50"', { amounts: [{ what: 'fee', amount_text: '$1,200', quote: 'the fee is $1,200.50' }] }],
+    ['date "3" against "3/15"', { dates: [{ what: 'hearing', date_text: '3', quote: 'My hearing is 3/15' }] }],
+    ['"Pay 50" against "Pay 500"', { amounts: [{ what: 'plan', amount_text: '50', quote: 'Pay 50' }] }],
+  ])('dropped: %s', (_n, o) => {
+    expect(v3(o).dropped).toBe(1);
+  });
+
+  test.each([
+    ['"$1200.50" against "$1,200.50"', { amounts: [{ what: 'fee', amount_text: '$1200.50', quote: '$1,200.50' }] }, 'amounts'],
+    ['"March 3" against "March 3rd"', { dates: [{ what: 'hearing', date_text: 'March 3', quote: 'March 3rd' }] }, 'dates'],
+    ['a 1-word amount quote', { amounts: [{ what: 'balance', amount_text: '$50,000', quote: '$50,000' }] }, 'amounts'],
+    ['a 2-word case ref', { case_refs: [{ text: '26-40001', quote: 'Case 26-40001' }] }, 'case_refs'],
+    ['a whole-segment commitment "Will do."', { commitments: [{ by: 'other', what: 'agrees', quote: 'Will do.' }] }, 'commitments'],
+    ['a whole-segment commitment "Yes."', { commitments: [{ by: 'firm', what: 'agrees', quote: 'Yes' }] }, 'commitments'],
+  ])('kept: %s', (_n, o, key) => {
+    const r = v3(o);
+    expect(r.dropped).toBe(0);
+    expect(r.summary[key].length).toBe(1);
+  });
+
+  test('a short commitment that is NOT a whole segment, or a short document request, is dropped', () => {
+    expect(v3({ commitments: [{ by: 'other', what: 'x', quote: 'March 3' }] }).dropped).toBe(1);   // 2 words, part of a segment
+    expect(v3({ commitments: [{ by: 'other', what: 'x', quote: 'My hearing' }] }).dropped).toBe(1); // 2 words at a segment's START, not the whole segment
+    expect(v3({ documents_requested: [{ what: 'x', quote: 'Yes' }] }).dropped).toBe(1);             // whole segment, but not a commitment
+  });
+});
+
 describe('wrong SHAPE fails the summary (the caller charges an attempt)', () => {
   test.each([
     ['not an object', 'text'],
@@ -200,5 +248,51 @@ describe('transcriptText', () => {
     expect(g.transcriptText([{ s: 'A', a: 65.9, t: 'hi' }, { s: 'ch2', a: 3725, t: 'bye' }]))
       .toBe('[01:05] A: hi\n[1:02:05] ch2: bye');
     expect(g.transcriptText([], 'plain')).toBe('plain');
+  });
+});
+
+describe('round 3 (2026-10-14): bare numbers, short commitments at their whole-segment occurrence', () => {
+  const g = require('../services/commsSummaryGround');
+  const SEG4 = [
+    { s: 'A', a: 0, b: 5, t: "I'm 50 years old and I have 3 kids." },
+    { s: 'B', a: 5, b: 9, t: 'So yes, I can send it.' },
+    { s: 'B', a: 9, b: 10, t: 'Yes.' },
+    { s: 'A', a: 10, b: 11, t: 'Will do.' },
+    { s: 'C', a: 11, b: 12, t: 'Sure.' },
+  ];
+  const PARTIES = [{ speaker: 'A', role: 'firm', name: null }, { speaker: 'B', role: 'client', name: null }];
+  const v4 = (o) => g.validate({ call_type: 'client', summary: 'x', parties: PARTIES, ...o }, { segments: SEG4, fullText: SEG4.map(x => x.t).join('\n') });
+
+  test('a bare number with a 1-word quote grounds nothing: "$50" from "50", date "3" from "3"', () => {
+    expect(v4({ amounts: [{ what: 'settlement', amount_text: '$50', quote: '50' }] }).dropped).toBe(1);
+    expect(v4({ dates: [{ what: 'hearing', date_text: '3', quote: '3' }] }).dropped).toBe(1);
+  });
+
+  test('the same bare number with a 2-word quote is kept (the quote binds it)', () => {
+    const r = v4({ amounts: [{ what: 'age', amount_text: '50', quote: '50 years' }] });
+    expect(r.dropped).toBe(0);
+    expect(r.summary.amounts[0].t).toBe(0);
+  });
+
+  test('a short commitment skips a mid-segment "yes" and is kept at the later whole-segment "Yes." (its t, its speaker)', () => {
+    const r = v4({ commitments: [{ by: 'other', what: 'sends it', quote: 'Yes' }] });
+    expect(r.dropped).toBe(0);
+    expect(r.summary.commitments[0].t).toBe(9);
+  });
+
+  test('a firm "Will do." for a by:other commitment is dropped; for by:firm it is kept', () => {
+    expect(v4({ commitments: [{ by: 'other', what: 'x', quote: 'Will do.' }] }).dropped).toBe(1);
+    const r = v4({ commitments: [{ by: 'firm', what: 'x', quote: 'Will do.' }] });
+    expect(r.dropped).toBe(0);
+    expect(r.summary.commitments[0].t).toBe(10);
+  });
+
+  test('a client "Yes." for a by:firm commitment is dropped', () => {
+    expect(v4({ commitments: [{ by: 'firm', what: 'x', quote: 'Yes' }] }).dropped).toBe(1);
+  });
+
+  test('a speaker with no role in parties[] cannot contradict `by`', () => {
+    expect(v4({ commitments: [{ by: 'firm', what: 'x', quote: 'Sure.' }] }).dropped).toBe(0);
+    expect(v4({ commitments: [{ by: 'other', what: 'x', quote: 'Sure.' }] }).dropped).toBe(0);
   });
 });

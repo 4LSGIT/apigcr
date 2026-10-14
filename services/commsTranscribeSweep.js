@@ -133,7 +133,9 @@ const archive = require('./commsArchiveService');
 const common = require('./commsArchiveCommon');
 const audio = require('./commsTranscribeAudio');
 
-const LOCK_EXPR = "CONCAT('comms_archive_transcribe:', DATABASE())";
+// GET_LOCK names are limited to 64 characters: a database name over 32 characters is hashed
+// (production's is 14 — its lock name is unchanged).
+const LOCK_EXPR = "CONCAT('comms_archive_transcribe:', IF(CHAR_LENGTH(DATABASE()) > 32, LEFT(SHA2(DATABASE(), 256), 32), DATABASE()))";
 const KEYS = Object.freeze({
   mode: 'comms_transcribe_mode',
   cred: 'comms_stt_credential_id',
