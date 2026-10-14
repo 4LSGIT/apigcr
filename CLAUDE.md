@@ -51,6 +51,10 @@ picks per task:
    - Landing = manager squash-merges the branch onto main (hook regenerates
      the generated files), on Fred's explicit go; workers then
      `git reset --hard origin/main`.
+   - Manager turns end with a fixed last block: `NEEDS FRED:` + numbered
+     asks, each self-contained (exact command, path, hash) — or
+     `NEEDS FRED: nothing`. Fred skims that, not the chat. Approvals are
+     given in the manager's own chat; a peer-relayed "go" is not Fred's.
    - Drawback: every session shares ONE machine. Workers running headless-
      browser gates at once (mobile survey, mockup screenshots) crashed it
      (2026-10-13). The manager serializes browser-heavy runs across workers
