@@ -424,7 +424,7 @@ async function _tick(db, opts, out, acc, startedAt) {
           // ── Quo recording: list, then (per row) the item's signed URL ──
           if (!await slot('quo')) { await ops.refund(db, row.id, null); continue; }
           const r = await quo.listCallRecordings(db, { credentialId: row.credential_id, callId: row.provider_ref, timeoutMs: Math.min(io(), 30_000) });
-          const stopped = await _apiStatus(db, row, r, attemptsNow, 'quo', 'call-recordings', stopProvider, count);
+          const stopped = await _apiStatus(db, row, r, attemptsNow, 'quo', 'call-recordings', stopProvider, count, out);
           if (stopped) continue;
           const data = r.json && r.json.data;
           if (!Array.isArray(data)) { await drift(row, `call-recordings: \`data\` is ${r.json === undefined ? 'unparseable' : (data === undefined ? 'missing' : typeof data)}`); continue; }
@@ -508,7 +508,7 @@ async function _tick(db, opts, out, acc, startedAt) {
           if (!ord) { await drift(row, `quo mms part ${JSON.stringify(row.part)}`); continue; }
           if (!await slot('quo')) { await ops.refund(db, row.id, null); continue; }
           const r = await quo.getMessage(db, { credentialId: row.credential_id, messageId: row.provider_ref, timeoutMs: Math.min(io(), 30_000) });
-          const stopped = await _apiStatus(db, row, r, attemptsNow, 'quo', 'messages', stopProvider, count);
+          const stopped = await _apiStatus(db, row, r, attemptsNow, 'quo', 'messages', stopProvider, count, out);
           if (stopped) continue;
           const media = r.json && r.json.data && r.json.data.media;
           if (!Array.isArray(media)) { await drift(row, `messages: media is ${r.json === undefined ? 'unparseable' : (media === undefined ? 'missing' : typeof media)}`); continue; }
@@ -559,7 +559,8 @@ async function _tick(db, opts, out, acc, startedAt) {
           if (res.status === 429) { await ops.refund(db, row.id, 'rc 429'); stopProvider('ringcentral', 'rate_limited'); continue; }
           if (res.status === 401 || res.status === 403) {
             await ops.refund(db, row.id, `rc ${res.status}`);
-            await _noAuthAlert(db, 'ringcentral', row.credential_id);
+            await _noAuthAlert(db, 'ringcentral', row.credential_id,
+              _authDetail(out, 'ringcentral', '/restapi/v1.0/account/~/extension/~/message-store/{id}/content/{id}', res));
             stopProvider('ringcentral', 'no_auth');
             continue;
           }
@@ -640,7 +641,7 @@ async function _tick(db, opts, out, acc, startedAt) {
  * 401/403 → refund + no_auth; anything else → provider transient. Returns
  * true when the row was handled (caller continues).
  */
-async function _apiStatus(db, row, r, attemptsNow, provider, label, stopProvider, count) {
+async function _apiStatus(db, row, r, attemptsNow, provider, label, stopProvider, count, out) {
   if (r.status === 200) return false;
   if (r.status === 429) {
     await ops.refund(db, row.id, `${provider} 429`);
@@ -649,7 +650,7 @@ async function _apiStatus(db, row, r, attemptsNow, provider, label, stopProvider
   }
   if (r.status === 401 || r.status === 403) {
     await ops.refund(db, row.id, `${provider} ${r.status}`);
-    await _noAuthAlert(db, provider, row.credential_id);
+    await _noAuthAlert(db, provider, row.credential_id, _authDetail(out, provider, `/v1/${label}`, r));
     stopProvider(provider, 'no_auth');
     return true;
   }
@@ -657,12 +658,31 @@ async function _apiStatus(db, row, r, attemptsNow, provider, label, stopProvider
   return true;
 }
 
-async function _noAuthAlert(db, provider, credentialId) {
+/**
+ * What the provider said when it refused us (401/403): the endpoint as a PATH
+ * TEMPLATE (no ids), the status and the provider's error text (≤ 300 chars,
+ * as the adapter captured it). Never the key or any header. Recorded on the
+ * tick output (out.quo_auth_error / out.rc_auth_error) for job_results, and
+ * returned for the alert.
+ */
+function _authDetail(out, provider, endpoint, res) {
+  const detail = {
+    endpoint,
+    status: res && res.status != null ? res.status : null,
+    errorText: clamp(res && res.errorText != null ? String(res.errorText) : '', 300),
+  };
+  if (out) out[provider === 'quo' ? 'quo_auth_error' : 'rc_auth_error'] = detail;
+  return detail;
+}
+
+async function _noAuthAlert(db, provider, credentialId, detail = null) {
   await ops.escalatingAlert(db, `comms_archive_no_auth:${credentialId}`, 'comms_archive_no_auth',
     `Comms archive: ${provider} credential ${credentialId} not usable — its archiving paused`,
-    `The credential produced no Authorization, or the provider answered 401/403. No attempt was ` +
-    `charged; every tick retries.`,
-    { credential_id: credentialId, provider });
+    (detail
+      ? `${provider} answered ${detail.status} on ${detail.endpoint}: ${detail.errorText || '(no body)'}\n\n`
+      : 'The credential produced no Authorization (disconnected, refresh failed, or URL outside its allowed_urls).\n\n') +
+    `No attempt was charged; every tick retries.`,
+    { credential_id: credentialId, provider, ...(detail ? { endpoint: detail.endpoint, status: detail.status, error_text: detail.errorText } : {}) });
 }
 
 /** One grouped alert per kind per day — never one per row. Never throws. */

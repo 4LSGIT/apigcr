@@ -366,6 +366,29 @@ maybe('comms archive S1b on real MySQL', () => {
     expect((await rows()).filter(r => r.state === 'pending').every(r => r.attempts === 0)).toBe(true);
   });
 
+  test('AUTH a provider 401/403 records WHAT was refused: endpoint template, status, error text — never the key', async () => {
+    const cid = await call();
+    quoF.recs[`AC${cid}`] = { status: 403, json: null, errorText: '{"message":"Forbidden","code":"0300403","docs":"https://quo.com/docs"}' };
+    const out = await runMedia();
+    expect(out.stopped.quo).toBe('no_auth');
+    expect(out.quo_auth_error).toEqual({ endpoint: '/v1/call-recordings', status: 403,
+      errorText: '{"message":"Forbidden","code":"0300403","docs":"https://quo.com/docs"}' });
+    const [a] = await q("SELECT message, context FROM system_alerts WHERE group_key = 'comms_archive_no_auth:10'");
+    const ctx = typeof a.context === 'string' ? JSON.parse(a.context) : a.context;
+    expect(ctx).toMatchObject({ credential_id: 10, provider: 'quo', endpoint: '/v1/call-recordings', status: 403 });
+    expect(ctx.error_text).toMatch(/0300403/);
+    expect(a.message).toMatch(/quo answered 403 on \/v1\/call-recordings: \{"message":"Forbidden"/);
+    expect(JSON.stringify(a)).not.toMatch(/AC\d+|Authorization|Bearer/);       // a template, no ids, no header
+    // RC, for symmetry
+    await sms({ logData: { attachments: [{ id: '4011' }] } });
+    rcF.att['4011'] = { status: 401, body: null, rate: {}, errorText: '{"errorCode":"OAU-149","message":"Invalid token"}' };
+    const out2 = await runMedia();
+    expect(out2.rc_auth_error).toEqual({ endpoint: '/restapi/v1.0/account/~/extension/~/message-store/{id}/content/{id}', status: 401,
+      errorText: '{"errorCode":"OAU-149","message":"Invalid token"}' });
+    const [b] = await q("SELECT context FROM system_alerts WHERE group_key = 'comms_archive_no_auth:9'");
+    expect((typeof b.context === 'string' ? JSON.parse(b.context) : b.context).error_text).toMatch(/OAU-149/);
+  });
+
   // ── T — the no-cliff terminal rule ──────────────────────────────────────
   test('T1 no-cliff kinds: stuck → failed after the plateau; no_line → failed 30 d after created', async () => {
     Object.assign(media.limits, { maxAttempts: 1, noCliffDays: 0.004 });   // plateau = 1 step of 6 h
