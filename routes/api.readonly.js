@@ -17,12 +17,21 @@
 //   5. Per-session MAX_EXECUTION_TIME — kills runaway SELECTs.
 //   6. Row cap in the response payload — prevents accidental dump of
 //      huge result sets to the caller.
+//   7. Table tiers (lib/sqlGuard, access SEC-3): SECRET_TABLES refuse every
+//      key; SENSITIVE_TABLES refuse a key without `sql.ro.sensitive` (403
+//      naming the scope). Every readonly_query_log row records whether the
+//      key held that scope (`sensitive_key`).
 
 const express = require("express");
 const router  = express.Router();
 const roPool  = require("../startup/dbReadonly");
 const { readonlyApiKeyAuth, requireKeyScope } = require("../lib/auth.readonly");
-const { isReadOnlyQuery, hasFileExfilClause, matchedSecretTable } = require("../lib/sqlGuard");
+const { isReadOnlyQuery, hasFileExfilClause, deniedTable } = require("../lib/sqlGuard");
+const { keyAllows } = require("../lib/capabilities");
+
+const SENSITIVE_SCOPE = "sql.ro.sensitive";
+// Explicit scope: a legacy NULL-scopes key does not hold it (lib/capabilities).
+const holdsSensitive = (req) => keyAllows(req.auth, SENSITIVE_SCOPE);
 
 const DEFAULT_MAX_ROWS  = 5000;
 const HARD_MAX_ROWS     = 20000;
@@ -44,8 +53,8 @@ function logQuery(req, fields) {
   const sql = `
     INSERT INTO readonly_query_log
       (api_key_id, ip, user_agent, sql_text, params_json,
-       row_count, duration_ms, status, error_text)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+       row_count, duration_ms, status, sensitive_key, error_text)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `;
   const params = [
     req.auth?.keyId ?? null,
@@ -56,6 +65,7 @@ function logQuery(req, fields) {
     fields.row_count ?? null,
     fields.duration_ms ?? null,
     fields.status,
+    holdsSensitive(req) ? 1 : 0,
     fields.error_text ?? null,
   ];
   req.db.query(sql, params)
@@ -90,16 +100,27 @@ router.post("/api/readonly/sql", readonlyApiKeyAuth, requireKeyScope("sql.ro"), 
     });
     return res.status(400).json({ error: "INTO OUTFILE / INTO DUMPFILE not allowed" });
   }
-  // Secret-bearing tables (app_settings, email_ingest_sources); see
-  // lib/sqlGuard.js SECRET_TABLES. RO keys must not escalate to
-  // internal-API or ingest authority.
-  const secretHit = matchedSecretTable(sql);
-  if (secretHit) {
+  // Withheld tables (lib/sqlGuard): SECRET (credentials — no key, ever; RO
+  // keys must not escalate to internal-API or ingest authority) and
+  // SENSITIVE (content — only under sql.ro.sensitive).
+  const denied = deniedTable(sql, { sensitive: holdsSensitive(req) });
+  if (denied && denied.tier === "secret") {
     logQuery(req, {
       sql_text: sql, params_json: params,
       status: "rejected_secret_table", duration_ms: Date.now() - started,
     });
-    return res.status(400).json({ error: `${secretHit} is not readable through this endpoint (use the SU db console)` });
+    return res.status(400).json({ error: `${denied.table} is not readable through this endpoint (use the SU db console)` });
+  }
+  if (denied) {
+    logQuery(req, {
+      sql_text: sql, params_json: params,
+      status: "rejected_sensitive_table", duration_ms: Date.now() - started,
+    });
+    return res.status(403).json({
+      error: `${denied.table} needs the '${SENSITIVE_SCOPE}' scope — a short-lived sensitive session key (Admin → Session Keys)`,
+      missingScope: SENSITIVE_SCOPE,
+      table: denied.table,
+    });
   }
 
   const rowCap  = clamp(maxRows,  1, HARD_MAX_ROWS,    DEFAULT_MAX_ROWS);

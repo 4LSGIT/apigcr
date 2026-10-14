@@ -103,6 +103,13 @@
     temp.* scopes call an external provider (Clio, Dropbox, RingCentral, Zoho Sign) with the firm's
     credentials — grant one only for the task at hand.
   </div>
+  <!-- SEC-3: the sensitive scope sits apart (filled from the server's sensitive_scope). -->
+  <div class="scope-row" id="sensitivePicker" style="display:none;"></div>
+  <div class="warn-text" id="sensitiveWarn" style="display:none;margin-top:4px;">
+    The sensitive scope lets the key read call transcripts, AI prompts and replies, and every
+    audit log — including other sessions' SQL. Short-lived by rule: at most
+    <span id="sensMaxH">24</span>h, default <span id="sensDefH">4</span>h.
+  </div>
   <div id="newKeyArea"></div>
 </div>
 
@@ -179,13 +186,57 @@
   // (routes/api.readonlyKeys GET: scope_vocabulary + default_scopes, i.e.
   // lib/capabilities KEY_SCOPES), so the page carries no copy of its own.
   let pickerBuilt = false;
-  function buildPicker(vocab, defaults) {
+  let sensitive = null;   // { name, max_ttl_minutes, default_ttl_minutes } from the server
+  function buildPicker(vocab, defaults, sens) {
     if (pickerBuilt || !Array.isArray(vocab)) return;
     pickerBuilt = true;
+    sensitive = sens && sens.name ? sens : null;
+    const box = (v, cls) =>
+      `<label title="${esc(v.desc)}"><input type="checkbox" class="${cls}" value="${esc(v.name)}"${
+        (defaults || []).includes(v.name) ? " checked" : ""}> ${esc(v.name)}</label>`;
     const row = document.getElementById("scopePicker");
-    row.insertAdjacentHTML("beforeend", vocab.map(v =>
-      `<label title="${esc(v.desc)}"><input type="checkbox" class="scope-box" value="${esc(v.name)}"${
-        (defaults || []).includes(v.name) ? " checked" : ""}> ${esc(v.name)}</label>`).join(""));
+    row.insertAdjacentHTML("beforeend", vocab.filter(v => !sensitive || v.name !== sensitive.name)
+      .map(v => box(v, "scope-box")).join(""));
+    // The sensitive scope: its own row, its own warning, a confirm to tick it.
+    const sv = sensitive && vocab.find(v => v.name === sensitive.name);
+    if (sv) {
+      const srow = document.getElementById("sensitivePicker");
+      srow.innerHTML = `<span class="muted">Sensitive:</span>` + box(sv, "scope-box sensitive-box");
+      srow.style.display = "";   // .scope-row's flex
+      document.getElementById("sensitiveWarn").style.display = "";
+      document.getElementById("sensMaxH").textContent = sensitive.max_ttl_minutes / 60;
+      document.getElementById("sensDefH").textContent = sensitive.default_ttl_minutes / 60;
+      srow.querySelector(".sensitive-box").addEventListener("change", onSensitiveChange);
+    }
+  }
+  const ttlHintHtml = () => document.getElementById("ttlHint").dataset.orig;
+  function sensitivePicked() {
+    const b = document.querySelector(".sensitive-box");
+    return !!(b && b.checked);
+  }
+  // Ticking the sensitive scope: confirm, make sure sql.ro rides with it, and
+  // cap the TTL field (max attribute, an over-cap value pulled down, the hint
+  // rewritten). Unticking restores the ordinary field.
+  function onSensitiveChange(e) {
+    const ttlEl = document.getElementById("newTtl");
+    const hint  = document.getElementById("ttlHint");
+    if (hint.dataset.orig === undefined) hint.dataset.orig = hint.innerHTML;
+    if (e.target.checked) {
+      if (!confirm(`Grant ${sensitive.name}? This key will read call transcripts, AI prompts/replies and the audit logs. It lives at most ${sensitive.max_ttl_minutes / 60}h.`)) {
+        e.target.checked = false;
+        return;
+      }
+      const ro = document.querySelector('.scope-box[value="sql.ro"]');
+      if (ro) ro.checked = true;
+      ttlEl.max = String(sensitive.max_ttl_minutes);
+      if (ttlEl.value && parseInt(ttlEl.value, 10) > sensitive.max_ttl_minutes) ttlEl.value = String(sensitive.max_ttl_minutes);
+      hint.textContent = `Sensitive key: default ${sensitive.default_ttl_minutes} min (${sensitive.default_ttl_minutes / 60}h). Max ${sensitive.max_ttl_minutes} min (${sensitive.max_ttl_minutes / 60}h).`;
+      hint.classList.add("warn-text");
+    } else {
+      ttlEl.removeAttribute("max");
+      hint.innerHTML = ttlHintHtml();
+      hint.classList.remove("warn-text");
+    }
   }
   function pickedScopes() {
     return [...document.querySelectorAll(".scope-box")].filter(b => b.checked).map(b => b.value);
@@ -208,7 +259,7 @@
       const activeOnly = document.getElementById("activeOnly").checked ? 1 : 0;
       const data = await P.apiSend(`/api/readonly-keys?activeOnly=${activeOnly}`, "GET");
 
-      buildPicker(data.scope_vocabulary, data.default_scopes);
+      buildPicker(data.scope_vocabulary, data.default_scopes, data.sensitive_scope);
 
       if (data.max_ttl_days) {
         document.getElementById("maxDays").textContent = data.max_ttl_days;
@@ -252,6 +303,9 @@
     if (!label) { alert("Label required"); return; }
     const scopes = pickedScopes();
     if (pickerBuilt && !scopes.length) { alert("Pick at least one scope — a key with none can do nothing."); return; }
+    if (sensitivePicked() && ttl && parseInt(ttl, 10) > sensitive.max_ttl_minutes) {
+      alert(`A ${sensitive.name} key lives at most ${sensitive.max_ttl_minutes} minutes.`); return;
+    }
 
     try {
       const body = { label };

@@ -28,6 +28,12 @@
 // capability grammar); an unknown scope is a 400, never a silent drop. Keys
 // minted before B1 have scopes NULL = the legacy full surface, untouched.
 //
+// SENSITIVE (SEC-3, ACCESS_CONTROL_DESIGN §5.7): a key whose scopes include
+// sql.ro.sensitive (reads lib/sqlGuard SENSITIVE_TABLES) is mint-time capped —
+// ttlMinutes over SENSITIVE_MAX_TTL_MIN (24h) is a 400, not a silent clamp;
+// unspecified → SENSITIVE_DEFAULT_TTL_MIN (4h). It must carry sql.ro too (the
+// endpoint's surface gate) — a 400 otherwise, never an implicit add.
+//
 // Audit: key create/revoke goes to admin_audit_log via auditAdminAction
 // under tool='readonlyKeys'. Plaintext key is NEVER logged anywhere.
 // Plaintext is returned ONCE on create and never again.
@@ -44,6 +50,10 @@ const DEFAULT_SCOPES = Object.freeze(["sql.ro", "scratch", "alert"]);
 const MAX_TTL_DAYS    = parseInt(process.env.READONLY_KEY_MAX_TTL_DAYS, 10) || 3;
 const MAX_TTL_MINUTES = MAX_TTL_DAYS * 24 * 60;
 const DEFAULT_TTL_MIN = 1440;  // 1 day
+
+const SENSITIVE_SCOPE           = "sql.ro.sensitive";
+const SENSITIVE_MAX_TTL_MIN     = 1440;  // 24h — not env-tunable
+const SENSITIVE_DEFAULT_TTL_MIN = 240;   // 4h
 
 const ipOf = (req) =>
   req.headers["x-forwarded-for"]?.split(",").shift() || req.socket?.remoteAddress;
@@ -79,9 +89,20 @@ router.post("/api/readonly-keys", ...superuserOnlyFor("readonlyKeys"), async (re
   const trimmedLabel = label.trim().slice(0, 255);
 
   const requested = parseInt(ttlMinutes, 10);
-  const ttl = Number.isFinite(requested) && requested > 0
-    ? Math.min(requested, MAX_TTL_MINUTES)
-    : DEFAULT_TTL_MIN;
+  const given = Number.isFinite(requested) && requested > 0;
+  const sensitive = scopes.includes(SENSITIVE_SCOPE);
+  if (sensitive && !scopes.includes("sql.ro")) {
+    return res.status(400).json({ error: `${SENSITIVE_SCOPE} needs sql.ro too — it widens the SQL surface, it does not grant it` });
+  }
+  if (sensitive && given && requested > SENSITIVE_MAX_TTL_MIN) {
+    return res.status(400).json({
+      error: `a ${SENSITIVE_SCOPE} key lives at most ${SENSITIVE_MAX_TTL_MIN} minutes (24h); asked for ${requested}`,
+      maxTtlMinutes: SENSITIVE_MAX_TTL_MIN,
+    });
+  }
+  const ttl = sensitive
+    ? (given ? requested : SENSITIVE_DEFAULT_TTL_MIN)
+    : (given ? Math.min(requested, MAX_TTL_MINUTES) : DEFAULT_TTL_MIN);
 
   // Must precede the key — the key carries this value as its suffix and the two have
   // to agree. Note ttl here is the *clamped* value, so an over-long request can't mint
@@ -166,6 +187,9 @@ router.get("/api/readonly-keys", ...superuserOnlyFor("readonlyKeys"), async (req
       // so the page never carries its own copy of either.
       scope_vocabulary: Object.entries(KEY_SCOPES).map(([name, v]) => ({ name, desc: v.desc })),
       default_scopes: DEFAULT_SCOPES,
+      // SEC-3: the sensitive scope and its mint cap, so the page renders the
+      // box apart and caps the TTL field from the server's numbers.
+      sensitive_scope: { name: SENSITIVE_SCOPE, max_ttl_minutes: SENSITIVE_MAX_TTL_MIN, default_ttl_minutes: SENSITIVE_DEFAULT_TTL_MIN },
     });
   } catch (err) {
     console.error("GET /api/readonly-keys error:", err);
@@ -240,3 +264,5 @@ router.get("/api/readonly-keys/:id/log", ...superuserOnlyFor("readonlyKeys"), as
 
 module.exports = router;
 module.exports.DEFAULT_SCOPES = DEFAULT_SCOPES;
+module.exports.SENSITIVE_MAX_TTL_MIN = SENSITIVE_MAX_TTL_MIN;
+module.exports.SENSITIVE_DEFAULT_TTL_MIN = SENSITIVE_DEFAULT_TTL_MIN;

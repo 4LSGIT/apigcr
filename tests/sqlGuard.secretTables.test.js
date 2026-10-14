@@ -1,18 +1,22 @@
 // tests/sqlGuard.secretTables.test.js
 //
-// touchesSecretTable guards the PUBLIC readonly endpoint
-// (routes/api.readonly.js) against reading app_settings (is_secret
-// credentials: internal_api_key and friends) and email_ingest_sources
-// (plaintext ingest bearer keys). The RO MySQL grant is schema-wide, so
-// this app-level deny is the only exclusion layer. The SU dbConsole
-// deliberately does NOT use it.
+// touchesSecretTable / matchedSecretTable answer for an ORDINARY session key
+// at the PUBLIC readonly endpoint (routes/api.readonly.js): app_settings
+// (is_secret credentials: internal_api_key and friends) and
+// email_ingest_sources (plaintext ingest bearer keys) — SECRET, no key ever —
+// plus SEC-3's SENSITIVE_TABLES (content; a sql.ro.sensitive key reads them —
+// tests/sensitiveTier.test.js has the two-tier matrix). The RO MySQL grant is
+// schema-wide, so this app-level deny is the only exclusion layer. The SU
+// dbConsole deliberately does NOT use it.
 
-const { touchesSecretTable, matchedSecretTable, SECRET_TABLES } = require("../lib/sqlGuard");
+const { touchesSecretTable, matchedSecretTable, SECRET_TABLES, SENSITIVE_TABLES } = require("../lib/sqlGuard");
 
 describe("sqlGuard.touchesSecretTable", () => {
   test("registry holds exactly the reviewed set", () => {
     // Adding a table here is an access decision — review the consumers.
-    expect(SECRET_TABLES).toEqual(["app_settings", "email_ingest_sources", "comms_transcripts", "comms_no_transcribe", "jwt_api_audit_log"]);
+    // SEC-3 split the old list in two (ACCESS_CONTROL_DESIGN §5.7).
+    expect(SECRET_TABLES).toEqual(["app_settings", "email_ingest_sources"]);
+    expect(SENSITIVE_TABLES).toEqual(["jwt_api_audit_log", "ai_calls", "comms_transcripts", "comms_no_transcribe", "admin_audit_log", "readonly_query_log"]);
   });
 
   test.each([
@@ -30,8 +34,7 @@ describe("sqlGuard.touchesSecretTable", () => {
     ["SELECT m.id, t.segments FROM comms_media m JOIN `comms_transcripts` t ON t.media_id = m.id"],
     ["SELECT COUNT(*) FROM comms_transcripts"],
     ["select phone from COMMS_NO_TRANSCRIBE"],
-    // access B2 landing: the gateway audit log stores full bodies (incl.
-    // SU-console write statements) — denied until SEC-2 shapes + scrub.
+    // access B2 landing → SEC-3 sensitive tier: the gateway audit log.
     ["SELECT body FROM jwt_api_audit_log WHERE id = 1"],
     ["SELECT a.route FROM `jwt_api_audit_log` a LIMIT 5"],
     ["SELECT COUNT(*) FROM JWT_API_AUDIT_LOG"],

@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-10-14T16:54:07.515Z
+-- Generated: 2026-10-14T17:30:02.807Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:b40329de6cdb0a4dc91230d40f812a89
+-- Fingerprint: sha256:7364ad9117a1d46ed74dfcdb5b1aeca0
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -2890,6 +2890,7 @@ CREATE TABLE `readonly_query_log` (
   `row_count` int DEFAULT NULL,
   `duration_ms` int DEFAULT NULL,
   `status` varchar(40) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `sensitive_key` tinyint(1) NOT NULL DEFAULT '0' COMMENT '1 = the session key held sql.ro.sensitive (access SEC-3)',
   `error_text` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
@@ -3923,6 +3924,15 @@ CREATE TABLE `workflows` (
   `current_version` int NOT NULL DEFAULT '0',
   `draft_version` int DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Structure for view `ai_spend`
+--
+
+DROP VIEW IF EXISTS `ai_spend`;
+CREATE VIEW `ai_spend` AS select `ai_calls`.`id` AS `id`,`ai_calls`.`created_at` AS `created_at`,`ai_calls`.`prompt_key` AS `prompt_key`,`ai_calls`.`prompt_version` AS `prompt_version`,`ai_calls`.`model` AS `model`,`ai_calls`.`mode` AS `mode`,`ai_calls`.`output_type` AS `output_type`,`ai_calls`.`consumer_ref` AS `consumer_ref`,`ai_calls`.`status` AS `status`,`ai_calls`.`input_tokens` AS `input_tokens`,`ai_calls`.`output_tokens` AS `output_tokens`,`ai_calls`.`cost_cents` AS `cost_cents`,`ai_calls`.`latency_ms` AS `latency_ms` from `ai_calls`;
 
 --
 -- Indexes for dumped tables

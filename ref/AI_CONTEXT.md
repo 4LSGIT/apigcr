@@ -250,7 +250,8 @@ body. Governing migrations in `ref/migrations/`.*
     `scripts/sec2ScrubAuditShapes.js`). The two URL strings — route and
     Referer — keep their diagnostic shape with credential-named params
     (SEC-1, `redactUrlParams`) and the search term `q` (B2,
-    `redactSearchParams`) redacted. The table is in `SECRET_TABLES`.
+    `redactSearchParams`) redacted. The table is in `SENSITIVE_TABLES`
+    (SEC-3: readable only by a `sql.ro.sensitive` session key).
   - `routes/internal/phoneTest.js` is gone. Migration
     `2026-10-12_phone_sph.sql` goes BEFORE the backend (it seeds the
     default-line grants the gate needs).
@@ -1000,12 +1001,28 @@ A **session key** (the concept's name since access-control B3; formerly
 SU-managed, max TTL 3 days, shown once. Every call logs to `readonly_query_log` (full SQL + params).
 
 **Scopes (access-control B1):** a key reaches only the surfaces in its
-`readonly_api_keys.scopes` — `sql.ro`, `scratch`, `alert`, `temp.clio`,
-`temp.dropbox`, `temp.ringcentral`, `temp.zohosign` (vocabulary
-`lib/capabilities.js` KEY_SCOPES; each route mounts `requireKeyScope`). NULL
-(every key minted before B1) = all of them. New mints default to
-`sql.ro`+`scratch`+`alert` — a `temp.*` proxy must be named at mint. A miss
-is a 403 whose body names `missingScope`.
+`readonly_api_keys.scopes` — `sql.ro`, `sql.ro.sensitive`, `scratch`,
+`alert`, `temp.clio`, `temp.dropbox`, `temp.ringcentral`, `temp.zohosign`
+(vocabulary `lib/capabilities.js` KEY_SCOPES; each route mounts
+`requireKeyScope`). NULL (every key minted before B1) = all of them EXCEPT an
+`explicit` scope — today `sql.ro.sensitive`, which a legacy key never holds.
+New mints default to `sql.ro`+`scratch`+`alert` — a `temp.*` proxy must be
+named at mint. A miss is a 403 whose body names `missingScope`.
+
+**Table tiers (SEC-3, ACCESS_CONTROL_DESIGN §5.7, `lib/sqlGuard.js`):**
+`SECRET_TABLES` (`app_settings`, `email_ingest_sources`) — refused to every
+key (400). `SENSITIVE_TABLES` (`jwt_api_audit_log`, `ai_calls`,
+`comms_transcripts`, `comms_no_transcribe`, `admin_audit_log`,
+`readonly_query_log`) — a 403 naming `sql.ro.sensitive` unless the key holds
+it. The `ai_spend` VIEW (ai_calls minus `error` / `request_excerpt` /
+`response`; not in `ref/database.sql` — schemaDump dumps base tables only, its
+definition is `ref/migrations/2026-10-14_access_sec3_sensitive_tier.sql`) is
+the ordinary key's spend monitor. A `sql.ro.sensitive` mint needs `sql.ro`
+too and is TTL-capped (24h max, default 4h — a longer ask is a 400);
+`readonly_query_log.sensitive_key` = 1 on every row such a key writes.
+Matching is a bare-word regex over the whole statement, so a sensitive name
+inside a string literal (an information_schema size query naming
+`ai_calls`) is refused too.
 
 **`POST /api/readonly/sql`** `{sql, params?, maxRows?, timeoutMs?}` →
 `{ok, rows, fields, rowCount, truncated, durationMs}`. First keyword must

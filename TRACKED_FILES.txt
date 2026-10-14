@@ -529,6 +529,7 @@ ref/migrations/2026-10-14_access_a2b_user_auth_collapse.sql
 ref/migrations/2026-10-14_access_a5_entitlement_denies.sql
 ref/migrations/2026-10-14_access_b1_key_scopes.sql
 ref/migrations/2026-10-14_access_b4_secrets_at_rest.sql
+ref/migrations/2026-10-14_access_sec3_sensitive_tier.sql
 ref/migrations/2026-10-14_comms_eval.sql
 ref/migrations/2026-10-14_comms_media.sql
 ref/migrations/2026-10-14_comms_s1b.sql
@@ -704,6 +705,7 @@ scripts/accessA2bCollapse.js
 scripts/accessA5Entitlements.js
 scripts/accessB1KeyScopes.js
 scripts/accessB4SecretsAtRest.js
+scripts/accessSec3SensitiveTier.js
 scripts/add-path-headers.js
 scripts/backfill-password-hashes.js
 scripts/backfillAppts.js
@@ -1293,6 +1295,8 @@ tests/secretAtRest.test.js
 tests/secretScan.test.js
 tests/secretsAtRest.mysql.test.js
 tests/sendingformBk.dbkqLink.test.js
+tests/sensitiveTier.mysql.test.js
+tests/sensitiveTier.test.js
 tests/sequenceEngine.conditions.test.js
 tests/sequences.editor.roundtrip.test.js
 tests/sequences.ensureDraft.test.js

@@ -375,8 +375,9 @@ admin/mint UIs set scopes on new keys and can retrofit old ones.
 
 Scope grammar, one flat namespace, three families:
 
-- **Surface scopes** (session keys): `sql.ro`, `scratch`, `alert`,
-  `temp.clio`, `temp.dropbox`, `temp.ringcentral`, `temp.zohosign`. Each
+- **Surface scopes** (session keys): `sql.ro`, `sql.ro.sensitive` (§5.7),
+  `scratch`, `alert`, `temp.clio`, `temp.dropbox`, `temp.ringcentral`,
+  `temp.zohosign`. Each
   auth.readonly-mounted route declares its surface; `keyAllows(auth,
   scope)` enforces. New session-key mints default to
   `["sql.ro","scratch","alert"]` — the documented trio; `temp.*` becomes

@@ -7,6 +7,10 @@
    "desc": "POST /api/readonly/sql — read-only SQL"
   },
   {
+   "name": "sql.ro.sensitive",
+   "desc": "read-only SQL may also read the sensitive tables (audit logs, AI calls, call transcripts); TTL-capped at mint"
+  },
+  {
    "name": "scratch",
    "desc": "PUT/DELETE /api/scratch — cross-session notes"
   },
@@ -36,6 +40,11 @@
   "scratch",
   "alert"
  ],
+ "sensitive_scope": {
+  "name": "sql.ro.sensitive",
+  "max_ttl_minutes": 1440,
+  "default_ttl_minutes": 240
+ },
  "keys": [
   {
    "id": 75,
@@ -65,6 +74,23 @@
    "created_by": 6,
    "created_by_username": "IT",
    "created_at": "{{TODAY}}T07:00:00Z",
+   "expires_at": "2099-01-01T00:00:00Z",
+   "revoked_at": null,
+   "last_used_at": null,
+   "use_count": 0,
+   "ip_allowlist": null
+  },
+  {
+   "id": 93,
+   "key_prefix": "ycro_S3nsT1v",
+   "label": "Fred diagnostic — transcript audit (sensitive)",
+   "scopes": [
+    "sql.ro",
+    "sql.ro.sensitive"
+   ],
+   "created_by": 6,
+   "created_by_username": "IT",
+   "created_at": "{{TODAY}}T09:30:00Z",
    "expires_at": "2099-01-01T00:00:00Z",
    "revoked_at": null,
    "last_used_at": null,

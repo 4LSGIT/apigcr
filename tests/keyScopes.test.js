@@ -56,7 +56,7 @@ const flush = () => new Promise(r => setImmediate(r));
 describe('KEY_SCOPES vocabulary', () => {
   test('the surface family is exactly the reviewed snapshot', () => {
     expect(Object.keys(KEY_SCOPES)).toEqual([
-      'sql.ro', 'scratch', 'alert', 'temp.clio', 'temp.dropbox', 'temp.ringcentral', 'temp.zohosign',
+      'sql.ro', 'sql.ro.sensitive', 'scratch', 'alert', 'temp.clio', 'temp.dropbox', 'temp.ringcentral', 'temp.zohosign',
     ]);
     expect(Object.isFrozen(KEY_SCOPES)).toBe(true);
     for (const v of Object.values(KEY_SCOPES)) expect(v.desc).toMatch(/\S/);
@@ -95,11 +95,15 @@ describe('KEY_SCOPES vocabulary', () => {
 });
 
 describe('keyAllows', () => {
-  test('scopes NULL / absent → legacy full surface', () => {
+  test('scopes NULL / absent → legacy full surface — minus the explicit scopes', () => {
     for (const s of Object.keys(KEY_SCOPES)) {
-      expect(keyAllows({ type: 'readonly_apikey', scopes: null }, s)).toBe(true);
-      expect(keyAllows({ type: 'readonly_apikey' }, s)).toBe(true);
+      const want = !KEY_SCOPES[s].explicit;
+      expect([s, keyAllows({ type: 'readonly_apikey', scopes: null }, s)]).toEqual([s, want]);
+      expect([s, keyAllows({ type: 'readonly_apikey' }, s)]).toEqual([s, want]);
     }
+    // SEC-3: the one explicit scope today — a legacy key never gained the sensitive tables
+    expect(Object.keys(KEY_SCOPES).filter(s => KEY_SCOPES[s].explicit)).toEqual(['sql.ro.sensitive']);
+    expect(keyAllows({ scopes: ['sql.ro', 'sql.ro.sensitive'] }, 'sql.ro.sensitive')).toBe(true);
   });
 
   test('scoped: membership only', () => {

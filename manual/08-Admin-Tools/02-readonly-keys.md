@@ -16,6 +16,7 @@ A key reaches only the surfaces in its **scopes**:
 | Scope | Lets the key call |
 |---|---|
 | `sql.ro` | `POST /api/readonly/sql` — read-only SQL (below) |
+| `sql.ro.sensitive` | the same SQL may also read the **sensitive tables** (below) — short-lived keys only |
 | `scratch` | `PUT` / `DELETE /api/scratch/…` — cross-session notes |
 | `alert` | `POST /api/alert/it` — page IT |
 | `temp.clio`, `temp.dropbox`, `temp.ringcentral`, `temp.zohosign` | the `/api/temp/<provider>/…` proxies — calls to that provider **with the firm's credentials** |
@@ -24,9 +25,10 @@ A new key gets `sql.ro`, `scratch` and `alert` — the boxes ticked by default
 on the create form. The `temp.*` proxies are never granted by default: tick
 the one the task needs (the form warns that they act with the firm's
 credentials). An unknown scope is refused, not dropped. Keys issued
-before scopes existed carry none recorded and keep reaching every surface.
-A key that calls something outside its scopes gets a 403 that names the
-missing scope.
+before scopes existed carry none recorded and keep reaching every surface —
+except the sensitive tables, which only a key minted with `sql.ro.sensitive`
+reads. A key that calls something outside its scopes gets a 403 that names
+the missing scope.
 
 The SQL surface, `POST /api/readonly/sql` with the key in the
 `X-Readonly-Api-Key` header, body `{ sql, params?, maxRows?, timeoutMs? }`,
@@ -41,6 +43,16 @@ It is safe by construction, in layers:
 5. A per-statement execution-time limit kills runaway queries.
 6. Results are row-capped (default 5,000, max 20,000) so a key can't dump the
    whole DB in one call. Timeout defaults to 30s (max 120s).
+7. Some tables are withheld:
+
+| Tables | Who can read them |
+|---|---|
+| `app_settings`, `email_ingest_sources` — live credentials | **no key, ever** (400). Use the [DB Console](01-db-console.md). |
+| `jwt_api_audit_log`, `ai_calls`, `comms_transcripts`, `comms_no_transcribe`, `admin_audit_log`, `readonly_query_log` — client communications, AI prompts and replies, audit trails, other sessions' SQL | only a key holding `sql.ro.sensitive`; any other key gets a 403 naming that scope |
+| `ai_spend` — `ai_calls` without its error / prompt / reply text | every key: use it for AI spend and volume questions |
+
+A table name is matched anywhere in the statement, even inside a quoted
+string, so a size query that merely *lists* `ai_calls` is refused too.
 
 ## Issuing a key
 
@@ -50,6 +62,10 @@ It is safe by construction, in layers:
    long.
 3. Optionally set an **IP allowlist** to restrict where it can be used from.
 4. Tick its **scopes** — at least one; the default three are pre-ticked.
+   The **Sensitive** box sits on its own line: ticking it asks you to
+   confirm, ticks `sql.ro` with it, and caps the TTL — a sensitive key lives
+   **at most 24 hours (default 4)**, and a longer TTL is refused rather than
+   shortened. Grant it for the one diagnostic session that needs it.
 5. Create. **The key's plaintext is shown exactly once, right now.** Copy it
    immediately — it is never displayed again and is never stored or logged in
    plaintext anywhere (only a hash is kept).
@@ -97,6 +113,9 @@ Keys issued before this format existed have no stamp and keep working normally.
 
 - SU-only, humans-only.
 - Key create and revoke are audited to `admin_audit_log` (`tool='readonlyKeys'`).
+- Every query a `sql.ro.sensitive` key runs is flagged in its usage log
+  (`readonly_query_log.sensitive_key = 1`). Such a key can read the logs
+  themselves — a known, accepted limit; keep these keys short-lived.
 - Plaintext keys never hit the logs — only the one-time create response.
 
 ## Related
