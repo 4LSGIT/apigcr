@@ -5,10 +5,16 @@
  * Auto-mounts (routes/). UI: public/apikeys.html.
  *
  *   GET  /api/api-keys                  — external keys list + internal-key status
- *   POST /api/api-keys      {label, scopes?} — mint external key; raw returned ONCE.
+ *   POST /api/api-keys      {label, scopes?, ttlMinutes?} — mint external key;
+ *                                         raw returned ONCE.
  *                                         scopes (access-control B2): route:/<path>
  *                                         and capability names; omitted = NULL =
- *                                         the legacy full surface
+ *                                         the legacy full surface.
+ *                                         ttlMinutes (B6): optional expiry, the
+ *                                         session-key mint's input shape; omitted
+ *                                         = NULL = never expires
+ *   (the GET also serves scope_vocabulary — capabilities + route families from
+ *    the live router, lib/routeFamilies — so the page carries no copy)
  *   POST /api/api-keys/:id/revoke       — revoke external key (immediate on this
  *                                         instance; ≤60s on others via cache TTL)
  *   POST /api/api-keys/rotate-internal  — rotate the app-to-self key
@@ -56,6 +62,8 @@ const router = express.Router();
 const { superuserOnlyFor, auditAdminAction } = require('../lib/auth.superuser');
 const apiKeys = require('../lib/apiKeys');
 const firmConfig = require('../lib/firmConfig');
+const { CAPABILITIES } = require('../lib/capabilities');
+const { routeFamilies } = require('../lib/routeFamilies');
 
 const TOOL = 'api_keys';
 const MAX_LABEL_LEN = 100;
@@ -207,6 +215,12 @@ router.get('/api/api-keys', ...superuserOnlyFor(TOOL), async (req, res) => {
         last_rotated_at: cur && Number(cur.is_set) ? cur.updated_at : null,
         has_previous: !!(bySlot['internal_api_key_prev'] && Number(bySlot['internal_api_key_prev'].is_set)),
       },
+      // The scope picker's source (B6): capability names + descriptions and the
+      // route families this instance serves. A menu only — the POST validates.
+      scope_vocabulary: {
+        capabilities: Object.entries(CAPABILITIES).map(([name, v]) => ({ name, desc: v.desc })),
+        route_families: routeFamilies(req.app),
+      },
     });
   } catch (err) {
     console.error('GET /api/api-keys error:', err);
@@ -226,14 +240,16 @@ router.post('/api/api-keys', ...superuserOnlyFor(TOOL), async (req, res) => {
   try {
     // scopes (B2): optional; route:/<path> and capability names only.
     // Omitted = NULL = the legacy full surface.
-    const out = await apiKeys.createKey(req.db, label, req.auth.userId, req.body?.scopes);
+    // ttlMinutes (B6): optional; omitted = NULL = never expires.
+    const out = await apiKeys.createKey(req.db, label, req.auth.userId, req.body?.scopes, req.body?.ttlMinutes);
+    const expiresAt = out.expires_at ? out.expires_at.toISOString() : null;
     await auditAdminAction(req.db, {
       ...reqMeta(req),
       status: 'created',
-      details: { key_id: out.id, label: out.label, key_prefix: out.key_prefix, scopes: out.scopes },
+      details: { key_id: out.id, label: out.label, key_prefix: out.key_prefix, scopes: out.scopes, expires_at: expiresAt },
     });
     // The ONLY time the raw key ever leaves the server.
-    res.json({ status: 'success', key: out.raw, id: out.id, label: out.label, key_prefix: out.key_prefix, scopes: out.scopes });
+    res.json({ status: 'success', key: out.raw, id: out.id, label: out.label, key_prefix: out.key_prefix, scopes: out.scopes, expires_at: expiresAt });
   } catch (err) {
     if (err && err.status === 400) {
       return res.status(400).json({ status: 'error', message: err.message });

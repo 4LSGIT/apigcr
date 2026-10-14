@@ -242,7 +242,7 @@ describe('machine key mints', () => {
     let db = mintDb();
     const out = await apiKeys.createKey(db, 'sched', 6, ['route:/process-jobs', 'firm.settings', 'route:/process-jobs']);
     expect(out.scopes).toEqual(['route:/process-jobs', 'firm.settings']);
-    expect(insertOf(db).sql).toMatch(/created_by, scopes\)/);
+    expect(insertOf(db).sql).toMatch(/created_by, scopes, expires_at\)/);   // B6 added expires_at
     expect(JSON.parse(insertOf(db).params[4])).toEqual(['route:/process-jobs', 'firm.settings']);
     db = mintDb();
     expect((await apiKeys.createKey(db, 'legacy', 6)).scopes).toBeNull();
@@ -293,13 +293,16 @@ describe('machine key mints', () => {
     const r = await suCall('GET', '/api/api-keys');
     expect(r.status).toBe(200);
     expect(r.body.keys.map(k => k.scopes)).toEqual([['route:/process-jobs'], null]);
-    expect(r.db.calls.find(c => /FROM api_keys ORDER BY/.test(c.sql)).sql).toMatch(/revoked_at, scopes/);
+    expect(r.db.calls.find(c => /FROM api_keys ORDER BY/.test(c.sql)).sql).toMatch(/revoked_at, expires_at, scopes/);   // B6 added expires_at
   });
 });
 
 // ── the pane ────────────────────────────────────────────────────────────────
 
-describe('apikeys.html scopes box', () => {
+// B6 replaced the free-text box with a picker (tests/keyExpiryPicker.test.js has
+// its full matrix). What stays pinned HERE is B2's wire format: body.scopes =
+// ["route:/<path>", "<capability>", …], omitted when nothing is picked.
+describe('apikeys.html scopes (B2 wire format, via the B6 picker)', () => {
   function boot(keys = []) {
     const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'apikeys.html'), 'utf8');
     const sent = [];
@@ -307,7 +310,10 @@ describe('apikeys.html scopes box', () => {
       w.alert = (m) => sent.push({ alert: m });
       w.apiSend = async (url, method, body) => {
         sent.push({ url, method, body });
-        if (url === '/api/api-keys' && method === 'GET') return { status: 'success', keys, internal: { rotated: true, has_previous: false } };
+        if (url === '/api/api-keys' && method === 'GET') {
+          return { status: 'success', keys, internal: { rotated: true, has_previous: false },
+            scope_vocabulary: { capabilities: [{ name: 'firm.settings', desc: 'd' }], route_families: ['/mailbox-ingest', '/process-jobs'] } };
+        }
         if (url === '/api/api-keys' && method === 'POST') return { status: 'success', key: 'yck_x', id: 31, label: body.label, scopes: body.scopes || null };
         return { status: 'success', log: [] };
       };
@@ -316,26 +322,30 @@ describe('apikeys.html scopes box', () => {
   }
   const tick = () => new Promise(r => setTimeout(r, 0));
 
-  test('one scope per line is sent; the receipt shows them', async () => {
+  test('picked scopes are sent as route:/… + capability names; the receipt shows them', async () => {
     const { w, sent } = boot();
     await tick(); await tick();
     w.document.getElementById('newLabel').value = 'scheduler';
-    w.document.getElementById('newScopes').value = 'route:/process-jobs\n\n  firm.settings  \n';
+    w.document.getElementById('routeFamily').value = '/process-jobs';
+    w.addRouteFamily();
+    w.document.querySelector('.cap-box[value="firm.settings"]').checked = true;
     await w.createKey();
     expect(sent.find(s => s.method === 'POST').body).toEqual({ label: 'scheduler', scopes: ['route:/process-jobs', 'firm.settings'] });
     expect(w.document.getElementById('newKeyArea').textContent).toMatch(/Scopes: route:\/process-jobs, firm\.settings/);
   });
 
-  test('a malformed line stops the request', async () => {
+  test('a malformed free-text route is refused before it can be sent', async () => {
     const { w, sent } = boot();
     await tick(); await tick();
-    w.document.getElementById('newLabel').value = 'x';
-    for (const line of ['/process-jobs', 'route:/a/../b', 'route://x', 'Firm.Settings', 'route:']) {
-      w.document.getElementById('newScopes').value = line;
-      await w.createKey();
+    for (const line of ['process-jobs', 'route:/a/../b', '//x', '/a b', 'route:/x?y']) {
+      w.document.getElementById('routeCustom').value = line;
+      w.addRouteCustom();
     }
-    expect(sent.some(s => s.method === 'POST')).toBe(false);
-    expect(sent.filter(s => s.alert && /Not a scope/.test(s.alert))).toHaveLength(5);
+    expect(sent.filter(s => s.alert && /Not a route/.test(s.alert))).toHaveLength(5);
+    expect(w.document.getElementById('routeChips').textContent).toBe('');
+    w.document.getElementById('newLabel').value = 'x';
+    await w.createKey();
+    expect(sent.find(s => s.method === 'POST').body).toEqual({ label: 'x' });
   });
 
   test('empty box → no scopes key in the request (unscoped)', async () => {

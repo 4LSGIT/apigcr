@@ -66,13 +66,26 @@
     background: var(--page-bg); padding: 8px; border-radius: 4px; margin: 6px 0;
   }
   .warn-text { color: var(--warn); font-size: 11px; }
-  /* Scopes input (access-control B2). Full width so it never widens the page at phone width. */
-  #newScopes {
-    display: block; width: 100%; margin-top: 8px; min-height: 52px;
+  /* Scope picker (access-control B6) — built from the GET's scope_vocabulary.
+     Controls shrink (min-width:0) so nothing widens the page at phone width. */
+  .scope-row { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; margin-top: 8px; }
+  .scope-row label { display: inline-flex; gap: 4px; align-items: center; cursor: pointer; }
+  .scope-row label code { font-size: 11px; }
+  select {
     background: var(--page-bg); color: var(--text); border: 1px solid var(--border);
-    padding: 6px 8px; border-radius: 4px; font-size: 12px; resize: vertical;
-    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    padding: 6px 8px; border-radius: 4px; font-size: 12px; font-family: inherit;
   }
+  .pick-row { display: flex; gap: 8px; align-items: center; margin-top: 6px; }
+  .pick-row select, .pick-row input { flex: 1 1 auto; min-width: 0; }
+  #routeCustom { font-family: ui-monospace, "SF Mono", Menlo, monospace; }
+  .chip {
+    display: inline-flex; align-items: center; gap: 4px; max-width: 100%;
+    background: var(--surface-2); border: 1px solid var(--border); border-radius: 12px;
+    padding: 2px 4px 2px 8px; font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 11px; word-break: break-all;
+  }
+  .chip button { background: transparent; color: var(--text-muted); padding: 0 4px; font-size: 13px; line-height: 1; }
+  .badge.expired { background: var(--warn-soft, var(--surface-2)); color: var(--warn); }
   .scope-cell { font-size: 11px; white-space: nowrap; }
   .note { color: var(--text-muted); font-size: 11px; margin: 6px 0 0; line-height: 1.5; }
 
@@ -135,12 +148,25 @@
   <div class="row">
     <input id="newLabel" placeholder="Label (e.g. 'Pabbly')" style="flex:1;min-width:200px;" maxlength="100">
   </div>
-  <textarea id="newScopes" rows="2" spellcheck="false"
-    placeholder="Scopes — optional, one per line: route:/process-jobs  or a capability name (firm.settings)"></textarea>
+  <div class="scope-row" id="capPicker"><span class="muted">Capabilities:</span></div>
+  <div class="pick-row">
+    <select id="routeFamily" aria-label="Route family"><option value="">Route family…</option></select>
+    <button class="ghost" onclick="addRouteFamily()">Add</button>
+  </div>
+  <div class="pick-row">
+    <input id="routeCustom" spellcheck="false" aria-label="Narrower route"
+           placeholder="Narrower route, e.g. /process-jobs/run">
+    <button class="ghost" onclick="addRouteCustom()">Add</button>
+  </div>
+  <div class="scope-row" id="routeChips"></div>
   <div class="muted" style="margin-top:4px;">
-    Empty = unscoped: the key reaches every route and every capability, as keys always have.
-    A scoped key reaches only the <code>route:/</code> paths it lists (and paths below them),
+    Nothing picked = unscoped: the key reaches every route and every capability, as keys always have.
+    A scoped key reaches only the routes it lists (and paths below them),
     and only the capability-gated routes whose capability it names.
+  </div>
+  <div class="pick-row">
+    <input id="newExpiryDays" type="number" min="1" step="1" inputmode="numeric"
+           aria-label="Expires in days" placeholder="Expires in days — blank = never">
   </div>
   <div class="row" style="margin-top:8px;"><button onclick="createKey()">Create</button></div>
   <div id="newKeyArea"></div>
@@ -160,11 +186,11 @@
     <thead>
       <tr>
         <th>ID</th><th>Prefix</th><th>Label</th><th>Scopes</th><th>Created</th>
-        <th>Last used</th><th>Status</th><th></th>
+        <th>Expires</th><th>Last used</th><th>Status</th><th></th>
       </tr>
     </thead>
     <tbody id="keysTbody">
-      <tr><td colspan="8" class="muted" style="text-align:center;padding:20px;">Loading…</td></tr>
+      <tr><td colspan="9" class="muted" style="text-align:center;padding:20px;">Loading…</td></tr>
     </tbody>
   </table>
   </div>
@@ -249,9 +275,10 @@
 
   async function load() {
     const tbody = document.getElementById("keysTbody");
-    tbody.innerHTML = `<tr><td colspan="8" class="muted" style="text-align:center;padding:20px;">Loading…</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="9" class="muted" style="text-align:center;padding:20px;">Loading…</td></tr>`;
     try {
       const data = await P.apiSend("/api/api-keys", "GET");
+      buildPicker(data.scope_vocabulary);
 
       // internal status
       const st = document.getElementById("internalStatus");
@@ -264,20 +291,23 @@
       document.getElementById("rotateBtn").disabled = false;
 
       if (!data.keys || !data.keys.length) {
-        tbody.innerHTML = `<tr><td colspan="8" class="muted" style="text-align:center;padding:20px;">No external keys yet.</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="9" class="muted" style="text-align:center;padding:20px;">No external keys yet.</td></tr>`;
         return;
       }
       tbody.innerHTML = data.keys.map(row => {
         const revoked = !!row.revoked_at;
+        const expired = !revoked && !!row.expires_at && new Date(row.expires_at).getTime() <= Date.now();
+        const status = revoked ? "revoked" : expired ? "expired" : "active";
         return `
-          <tr class="${revoked ? "revoked" : ""}">
+          <tr class="${revoked || expired ? "revoked" : ""}">
             <td>${row.id}</td>
             <td><code>${esc(row.key_prefix)}…</code></td>
             <td>${esc(row.label)}</td>
             <td class="scope-cell">${row.scopes == null ? '<span class="muted">all (unscoped)</span>' : esc((Array.isArray(row.scopes) ? row.scopes : []).join(", "))}</td>
             <td>${fmtDate(row.created_at)}</td>
+            <td class="expires-cell">${fmtDate(row.expires_at)}</td>
             <td>${fmtDate(row.last_used_at)}</td>
-            <td><span class="badge ${revoked ? "revoked" : "active"}">${revoked ? "revoked" : "active"}</span></td>
+            <td><span class="badge ${status}">${status}</span></td>
             <td>
               <button class="ghost" style="font-size:11px;padding:2px 6px;" onclick="viewLog(${row.id}, '${esc(row.label).replace(/'/g, "\\'")}')">log</button>
               ${revoked ? "" : `<button class="danger" style="font-size:11px;padding:2px 6px;" onclick="revokeKey(${row.id}, '${esc(row.label).replace(/'/g, "\\'")}')">revoke</button>`}
@@ -286,32 +316,85 @@
         `;
       }).join("");
     } catch (err) {
-      tbody.innerHTML = `<tr><td colspan="8" style="color:var(--danger);padding:20px;">Error: ${esc(err.message)}</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="9" style="color:var(--danger);padding:20px;">Error: ${esc(err.message)}</td></tr>`;
     }
   }
 
-  // Client-side shape check for the scopes box (B2). The server is the judge
-  // (lib/apiKeys machineKeyScopes: exact capability names, the route grammar);
-  // this only catches typos before a round trip.
-  const ROUTE_SCOPE = /^route:\/[A-Za-z0-9._~-][A-Za-z0-9._~\/-]*$/;
-  const CAPABILITY_SHAPE = /^[a-z_]+\.[a-z_]+$/;
-  function readScopes() {
-    const lines = document.getElementById("newScopes").value.split("\n").map(l => l.trim()).filter(Boolean);
-    const bad = lines.filter(l => !(ROUTE_SCOPE.test(l) && !l.includes("..") && !l.includes("//")) && !CAPABILITY_SHAPE.test(l));
-    return { lines, bad };
+  // Scope picker (B6) — built once from the GET's scope_vocabulary
+  // (lib/capabilities CAPABILITIES + lib/routeFamilies over the live router),
+  // so the page carries no copy. Capabilities are checkboxes; routes are chips
+  // added from the family list or the free-text row. The wire format is B2's:
+  // body.scopes = ["route:/<path>", "<capability>", …]. The server is the
+  // judge (lib/apiKeys machineKeyScopes); the free-text check below only
+  // catches typos before a round trip.
+  const ROUTE_PATH = /^\/[A-Za-z0-9._~-][A-Za-z0-9._~\/-]*$/;
+  let pickerBuilt = false;
+  const routeScopes = [];   // paths, in the order added
+  function buildPicker(vocab) {
+    if (pickerBuilt || !vocab) return;
+    pickerBuilt = true;
+    document.getElementById("capPicker").insertAdjacentHTML("beforeend", (vocab.capabilities || []).map(c =>
+      `<label title="${esc(c.desc)}"><input type="checkbox" class="cap-box" value="${esc(c.name)}"> <code>${esc(c.name)}</code></label>`).join(""));
+    document.getElementById("routeFamily").insertAdjacentHTML("beforeend", (vocab.route_families || []).map(f =>
+      `<option value="${esc(f)}">${esc(f)}</option>`).join(""));
+  }
+  function renderChips() {
+    document.getElementById("routeChips").innerHTML = routeScopes.map((p, i) =>
+      `<span class="chip">route:${esc(p)}<button title="Remove" onclick="removeRoute(${i})">×</button></span>`).join("");
+  }
+  function addRoute(p) {
+    if (!routeScopes.includes(p)) routeScopes.push(p);
+    renderChips();
+  }
+  function removeRoute(i) { routeScopes.splice(i, 1); renderChips(); }
+  function addRouteFamily() {
+    const sel = document.getElementById("routeFamily");
+    if (sel.value) addRoute(sel.value);
+    sel.value = "";
+  }
+  function addRouteCustom() {
+    const el = document.getElementById("routeCustom");
+    const v = el.value.trim().replace(/^route:/, "");
+    if (!v) return;
+    if (!ROUTE_PATH.test(v) || v.includes("..") || v.includes("//")) {
+      alert("Not a route: " + v + "\nA path like /process-jobs or /api/cases/import — letters, digits and . _ ~ - / only.");
+      return;
+    }
+    addRoute(v);
+    el.value = "";
+  }
+  function pickedScopes() {
+    const caps = [...document.querySelectorAll(".cap-box")].filter(b => b.checked).map(b => b.value);
+    return [...routeScopes.map(p => "route:" + p), ...caps];
+  }
+  // Expiry: whole days in the field, minutes on the wire (ttlMinutes — the
+  // session-key mint's shape). Blank = never.
+  function readExpiry() {
+    const raw = document.getElementById("newExpiryDays").value.trim();
+    if (!raw) return { ok: true, minutes: null };
+    const d = Number(raw);
+    if (!Number.isInteger(d) || d < 1) return { ok: false };
+    return { ok: true, minutes: d * 1440 };
+  }
+  function resetCreateForm() {
+    document.getElementById("newLabel").value = "";
+    document.getElementById("newExpiryDays").value = "";
+    document.getElementById("routeCustom").value = "";
+    document.querySelectorAll(".cap-box").forEach(b => { b.checked = false; });
+    routeScopes.length = 0;
+    renderChips();
   }
 
   async function createKey() {
     const label = document.getElementById("newLabel").value.trim();
     if (!label) { alert("Label required"); return; }
-    const { lines, bad } = readScopes();
-    if (bad.length) {
-      alert("Not a scope: " + bad.join(", ") + "\nUse route:/<path> or a capability name such as firm.settings.");
-      return;
-    }
+    const exp = readExpiry();
+    if (!exp.ok) { alert("Expiry must be a whole number of days (or blank for never)."); return; }
     try {
       const body = { label };
-      if (lines.length) body.scopes = lines;
+      const scopes = pickedScopes();
+      if (scopes.length) body.scopes = scopes;
+      if (exp.minutes != null) body.ttlMinutes = exp.minutes;
       const data = await P.apiSend("/api/api-keys", "POST", body);
       const area = document.getElementById("newKeyArea");
       area.innerHTML = `
@@ -321,12 +404,11 @@
           <div class="row">
             <button onclick="copyKey()">Copy</button>
             <button class="ghost" onclick="document.getElementById('newKeyArea').innerHTML=''">Dismiss</button>
-            <span class="warn-text">Label: ${esc(data.label)} · id ${data.id} · Scopes: ${data.scopes ? esc(data.scopes.join(", ")) : "all (unscoped)"}</span>
+            <span class="warn-text">Label: ${esc(data.label)} · id ${data.id} · Scopes: ${data.scopes ? esc(data.scopes.join(", ")) : "all (unscoped)"} · Expires: ${data.expires_at ? fmtDate(data.expires_at) : "never"}</span>
           </div>
         </div>
       `;
-      document.getElementById("newLabel").value = "";
-      document.getElementById("newScopes").value = "";
+      resetCreateForm();
       load();
     } catch (err) {
       alert("Create failed: " + err.message);

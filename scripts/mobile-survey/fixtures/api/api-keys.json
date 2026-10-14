@@ -7,6 +7,21 @@
  },
  "keys": [
   {
+   "id": 40,
+   "label": "Vendor trial — document intake adapter (90-day pilot)",
+   "key_prefix": "yck_Tr1aLk3y",
+   "created_by": 6,
+   "created_at": "{{TODAY}}T08:00:00Z",
+   "last_used_at": null,
+   "revoked_at": null,
+   "expires_at": "{{TODAY+90}}T08:00:00Z",
+   "scopes": [
+    "route:/api/documents",
+    "route:/api/cases/import",
+    "automations.manage"
+   ]
+  },
+  {
    "id": 30,
    "label": "Cloud Scheduler — process-jobs (every minute)",
    "key_prefix": "yck_Ab3dE9xQ",
@@ -16,7 +31,8 @@
    "revoked_at": null,
    "scopes": [
     "route:/process-jobs"
-   ]
+   ],
+   "expires_at": null
   },
   {
    "id": 31,
@@ -30,7 +46,8 @@
     "route:/mailbox-ingest",
     "firm.settings",
     "automations.manage"
-   ]
+   ],
+   "expires_at": "{{TODAY+30}}T07:00:00Z"
   },
   {
    "id": 2,
@@ -40,7 +57,198 @@
    "created_at": "{{TODAY-90}}T07:00:00Z",
    "last_used_at": "{{TODAY-1}}T12:00:00Z",
    "revoked_at": null,
-   "scopes": null
+   "scopes": null,
+   "expires_at": null
+  },
+  {
+   "id": 5,
+   "label": "migration script (lapsed)",
+   "key_prefix": "yck_Lap5edXy",
+   "created_by": 6,
+   "created_at": "{{TODAY-40}}T08:00:00Z",
+   "last_used_at": "{{TODAY-31}}T08:00:00Z",
+   "revoked_at": null,
+   "expires_at": "{{TODAY-30}}T08:00:00Z",
+   "scopes": [
+    "route:/process-jobs"
+   ]
   }
- ]
+ ],
+ "scope_vocabulary": {
+  "capabilities": [
+   {
+    "name": "firm.settings",
+    "desc": "Edit firm-level configuration (app settings, entitlements) — the admin capability"
+   },
+   {
+    "name": "users.manage",
+    "desc": "Manage staff users (create, disable, grant roles)"
+   },
+   {
+    "name": "automations.manage",
+    "desc": "Manage workflows, sequences and trigger rules"
+   },
+   {
+    "name": "archives.purge",
+    "desc": "Restrict / purge archived communications"
+   },
+   {
+    "name": "comms.read_all",
+    "desc": "Read every mailbox and phone line without a channel grant (read-only, never manage)"
+   },
+   {
+    "name": "templates.code",
+    "desc": "Author template code"
+   },
+   {
+    "name": "tools.author",
+    "desc": "Author tools — root within the tenant"
+   }
+  ],
+  "route_families": [
+   "/_aitest",
+   "/admin",
+   "/api/admin",
+   "/api/ai",
+   "/api/alert",
+   "/api/api-keys",
+   "/api/app-settings",
+   "/api/appts",
+   "/api/assets",
+   "/api/auth",
+   "/api/availability",
+   "/api/availability-blocks",
+   "/api/book",
+   "/api/booking-views",
+   "/api/calendar-feed",
+   "/api/calendar-range",
+   "/api/calendar-types",
+   "/api/calendar-types-admin",
+   "/api/campaigns",
+   "/api/case-events",
+   "/api/cases",
+   "/api/cause_error",
+   "/api/comms-archive",
+   "/api/comms-eval",
+   "/api/compose-docs-message",
+   "/api/contact-addresses",
+   "/api/contact-emails",
+   "/api/contact-lookup",
+   "/api/contact-phones",
+   "/api/contact-relations",
+   "/api/contact-role-types",
+   "/api/contacts",
+   "/api/court",
+   "/api/court-preview",
+   "/api/court-review",
+   "/api/credentials",
+   "/api/cta",
+   "/api/documents",
+   "/api/dropbox",
+   "/api/email",
+   "/api/email-credentials",
+   "/api/email-from",
+   "/api/email-ingest",
+   "/api/entitlements",
+   "/api/esign",
+   "/api/events",
+   "/api/ext",
+   "/api/feature-requests",
+   "/api/field-defs",
+   "/api/firm-blocks",
+   "/api/firm-data",
+   "/api/form-templates",
+   "/api/forms",
+   "/api/gcal",
+   "/api/gcontacts",
+   "/api/hooks",
+   "/api/intake",
+   "/api/issue-reports",
+   "/api/judges",
+   "/api/log",
+   "/api/m",
+   "/api/mail",
+   "/api/mailboxes",
+   "/api/manage-config",
+   "/api/me",
+   "/api/pages",
+   "/api/pdf",
+   "/api/phone-ingest",
+   "/api/phone-lines",
+   "/api/pipeline-admin",
+   "/api/pipeline-board",
+   "/api/portal",
+   "/api/portal-access-admin",
+   "/api/portal-cards-admin",
+   "/api/public",
+   "/api/readonly",
+   "/api/readonly-keys",
+   "/api/redirects",
+   "/api/relation-types",
+   "/api/reports",
+   "/api/scratch",
+   "/api/search",
+   "/api/sequence-types",
+   "/api/streak",
+   "/api/system-status",
+   "/api/tasks",
+   "/api/temp",
+   "/api/tools",
+   "/api/triggers",
+   "/api/trustees",
+   "/api/user-availability",
+   "/api/users",
+   "/api/v",
+   "/api/version",
+   "/api/videos",
+   "/appt",
+   "/auth",
+   "/badge",
+   "/book",
+   "/c",
+   "/checkitems",
+   "/checklists",
+   "/clio-code",
+   "/d",
+   "/date",
+   "/db",
+   "/db-jwt",
+   "/db64",
+   "/docs",
+   "/dropbox",
+   "/executions",
+   "/f",
+   "/hooks",
+   "/internal",
+   "/isWorkday",
+   "/logEmail",
+   "/login",
+   "/m",
+   "/mailbox-ingest",
+   "/manual",
+   "/myip",
+   "/newpath",
+   "/nextBusinessDay",
+   "/p",
+   "/parseName",
+   "/prevBusinessDay",
+   "/process-domain-event",
+   "/process-job",
+   "/process-jobs",
+   "/r",
+   "/resolve",
+   "/ringcentral",
+   "/scheduled-jobs",
+   "/sequences",
+   "/t",
+   "/test-advance",
+   "/test-alert",
+   "/test-alert-bom",
+   "/tool",
+   "/unplacehold",
+   "/v",
+   "/webhooks",
+   "/workflows"
+  ]
+ }
 }

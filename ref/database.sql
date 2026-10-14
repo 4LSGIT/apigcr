@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-10-14T17:30:02.807Z
+-- Generated: 2026-10-14T21:10:54.700Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:7364ad9117a1d46ed74dfcdb5b1aeca0
+-- Fingerprint: sha256:7b114626abcc6b73a2b0de9a4253d38b
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -179,6 +179,7 @@ CREATE TABLE `api_keys` (
   `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `last_used_at` timestamp NULL DEFAULT NULL,
   `revoked_at` timestamp NULL DEFAULT NULL,
+  `expires_at` datetime DEFAULT NULL COMMENT 'NULL = non-expiring (legacy and infrastructure keys); checked at lookup',
   `scopes` json DEFAULT NULL COMMENT 'Key scopes (access-control B1): NULL = legacy full surface; else a JSON array of scope strings — surface (sql.ro, scratch, alert, temp.*), route:/<path>, or a capability name. Vocabulary: lib/capabilities.js KEY_SCOPES.'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 

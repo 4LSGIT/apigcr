@@ -1425,7 +1425,15 @@ mints default sql.ro+scratch+alert; new bodies are 22-char base62 (old
 Machine (yck_) keys: route:/<path> prefix scopes enforced in jwtOrApiKey
 (403 forbidden_scope, audited under the key label) + capability scopes on
 requireAuth({can}) routes; the two Cloud Scheduler keys are route-scoped.
-Table tiers + sql.ro.sensitive: §22.
+Optional `api_keys.expires_at` (B6; NULL = never — every pre-B6 key and the
+infrastructure keys): an expired key is refused exactly like a revoked one
+(lookup → null → the JWT fall-through), and the 60s lookup cache re-checks
+the cached row's expiry on every hit, so only REVOCATION keeps the ≤60s
+cross-instance lag. Mint input `ttlMinutes` (the session-key mint's shape;
+1 min–5 years, junk = 400, never a silent "never"). The api-keys pane's scope
+picker is served by the GET (`scope_vocabulary`: CAPABILITIES + route
+families walked from the live router, lib/routeFamilies); the POST stays the
+judge. Table tiers + sql.ro.sensitive: §22.
 
 **Audit log.** jwt_api_audit_log stores SHAPES, never content
 (lib/auditShape; credential-named keys → [secret] with no length); URL/

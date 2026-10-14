@@ -52,7 +52,8 @@ d('key scopes on real MySQL', () => {
       id int NOT NULL AUTO_INCREMENT PRIMARY KEY, label varchar(100) NOT NULL,
       key_hash char(64) NOT NULL UNIQUE, key_prefix varchar(12) NOT NULL, created_by int DEFAULT NULL,
       created_at timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP, last_used_at timestamp NULL DEFAULT NULL,
-      revoked_at timestamp NULL DEFAULT NULL
+      revoked_at timestamp NULL DEFAULT NULL,
+      expires_at datetime NULL DEFAULT NULL  -- B6 (lib/apiKeys.lookup SELECTs it)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci`);
     await q(`CREATE TABLE admin_audit_log (
       id bigint NOT NULL AUTO_INCREMENT PRIMARY KEY, tool varchar(32) NOT NULL, user_id int DEFAULT NULL,

@@ -21,11 +21,26 @@ The raw key is shown **once**, at creation. We store only a hash — there is no
 Give it a label naming the system that will use it. The label is what usage
 attribution keys off, so "Pabbly" is useful and "test2" is not.
 
+**Expiry (optional).** Type a number of days in *Expires in days* and the key
+stops working at that moment — refused exactly like a revoked key, on every
+instance at once. Leave it blank and the key never expires, which is what
+every key minted before this field existed does, and what the infrastructure
+keys (the Cloud Scheduler jobs) should keep doing. Use it for a vendor trial or
+a one-off migration script: the key retires itself if nobody remembers to. The
+list shows each key's expiry (— for never) and marks a lapsed one **expired**.
+An expiry is set at mint; to change it, mint a new key and revoke the old.
+
 ### Scopes — what a key may reach
 
-Leave the **Scopes** box empty and the key is *unscoped*: it reaches every
-route and every capability-gated action, as keys always have. Put one scope
-per line and the key reaches only those:
+Pick nothing and the key is *unscoped*: it reaches every route and every
+capability-gated action, as keys always have. Pick scopes and the key
+reaches only those:
+
+- **Capabilities** — tick the boxes (hover one for what it gates).
+- **Routes** — choose a *route family* (every top-level path the app serves,
+  e.g. `/process-jobs` or `/api/cases`) and **Add**; for something narrower,
+  type the path in the row below it (e.g. `/api/cases/import`) and **Add**.
+  Each route shows as a removable chip.
 
 | Scope | Lets the key |
 |---|---|
