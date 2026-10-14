@@ -235,6 +235,32 @@ async function fetchMessageAttachment(db, { credentialId, messageId, attachmentI
   return _fetchBinary(db, credentialId, url, timeoutMs);
 }
 
+/**
+ * List the extension's VOICEMAILS (S1c) — message-store, LIGHT rate group
+ * (probed 2026-10-14: x-rate-limit-group light). Newest first, paged.
+ * Returns { status, json, rate, errorText }; never throws on a status
+ * (NO_AUTH before sending). The sweep validates the shape.
+ */
+async function listVoicemails(db, { credentialId, dateFrom, page = 1, perPage = 100, timeoutMs }) {
+  const q = new URLSearchParams({
+    messageType: 'VoiceMail',
+    dateFrom: (dateFrom instanceof Date ? dateFrom : new Date(dateFrom)).toISOString(),
+    perPage: String(perPage),
+    page: String(page),
+  });
+  const url = `${RC_PLATFORM}/restapi/v1.0/account/~/extension/~/message-store?${q}`;
+  const headers = await _authHeaders(db, credentialId, url);
+  const res = await fetch(url, { headers, signal: AbortSignal.timeout(_ms(timeoutMs, CALL_LOG_TIMEOUT_MS)) });
+  const rate = _rateInfo(res);
+  let text = '';
+  try { text = await res.text(); } catch (_) { /* body gone */ }
+  let json = null;
+  if (res.status === 200) {
+    try { json = JSON.parse(text); } catch (_) { json = undefined; }   // undefined = unparseable 200
+  }
+  return { status: res.status, json, rate, errorText: res.status === 200 ? null : text.slice(0, 300) };
+}
+
 async function _fetchBinary(db, credentialId, url, timeoutMs) {
   const headers = await _authHeaders(db, credentialId, url);
   const res = await fetch(url, {
@@ -323,4 +349,5 @@ module.exports = {
   fetchRecordingContent,
   fetchMessageAttachment,
   findSessionRecordings,
+  listVoicemails,
 };

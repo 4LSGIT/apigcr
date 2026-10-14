@@ -123,6 +123,18 @@ async function listCallRecordings(db, { credentialId, callId, timeoutMs }) {
   return _quoGet(db, credentialId, `${QUO_API}/call-recordings/${encodeURIComponent(callId)}`, timeoutMs);
 }
 
+/**
+ * GET /v1/call-voicemails/{callId} (S1c) → documented { data: { id ^VM,
+ * status completed|in-progress, recordingUrl, duration, transcript } }. What a
+ * call WITHOUT a voicemail returns is undocumented (404 assumed — the sweep
+ * holds 404s for 7 days before `none`, and alarms until the first archive).
+ * The `transcript` is Quo's own: kept as a SECONDARY record (kind stt_raw,
+ * R10 / C1) beside the archived audio — S2's transcript stays canonical.
+ */
+async function getCallVoicemail(db, { credentialId, callId, timeoutMs }) {
+  return _quoGet(db, credentialId, `${QUO_API}/call-voicemails/${encodeURIComponent(callId)}`, timeoutMs);
+}
+
 /** GET /v1/messages/{id} → documented { data: { …, media: [{url, type}] } }; the media URLs are fresh. */
 async function getMessage(db, { credentialId, messageId, timeoutMs }) {
   return _quoGet(db, credentialId, `${QUO_API}/messages/${encodeURIComponent(messageId)}`, timeoutMs);
@@ -189,6 +201,7 @@ module.exports = {
   sendSms,
   checkArchiveAuth,
   listCallRecordings,
+  getCallVoicemail,
   getMessage,
   fetchSigned,
 };

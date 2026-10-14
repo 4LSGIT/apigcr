@@ -7,6 +7,22 @@
  *   - Quo call recordings     (kind call_recording, provider quo)
  *   - RingCentral MMS files   (kind mms_file, provider ringcentral)
  *   - Quo MMS files           (kind mms_file, provider quo)
+ *   - voicemails (S1c, R10)   (kind voicemail): RingCentral's from the
+ *     extension's message-store (source_table 'rc_message', source_id = the
+ *     RC message id — most predate phone ingest, so there is no call row),
+ *     Quo's per call from /v1/call-voicemails (source_table phone_event_log).
+ *     A Quo 404 is HELD (not-yet, re-checked every 24 h) for 7 days on the
+ *     call clock before `none` — "404 = no voicemail" is undocumented — and a
+ *     sanity alarm warns daily until the first Quo voicemail is archived.
+ *   - VENDOR voicemail transcripts (kind stt_raw, R10 / C1): Quo's
+ *     `transcript` (written straight after its voicemail's audio) and RC's
+ *     AudioTranscription attachment (when vmTranscriptionStatus is
+ *     Completed — its own pending row, fetched like an MMS file), each as a
+ *     JSON object phone/stt/<yyyy>/<mm>/<voicemail id>.<vendor>.json and a
+ *     comms_media row (source_table 'comms_media', source_id = the
+ *     voicemail's id, restricted inherited). SECONDARY: S2's AssemblyAI
+ *     transcript stays canonical. A transcript problem NEVER parks or
+ *     charges the voicemail — at most it is drift, alerted.
  * ref/COMMS_ARCHIVE_DESIGN.md §6.1. Same kill switch (comms_archive_enabled),
  * its own lock CONCAT('comms_archive_media:', DATABASE()), its own budgets, so
  * it can never compete with the cliff sweep.
@@ -80,6 +96,18 @@ const limits = {
   notYetBackoffMin: 30,        // Quo recording still processing
   notYetAlertHours: 24,        // a call this old still "not yet" → alert (S1)
   forbiddenRecheckMin: 1440,   // a Quo 403 (resource-level) parks its row this long
+  rcLightPerTick: 3,           // RC voicemail listing pages per listing (Light group)
+  rcVmPageTimeoutMs: 10_000,
+  vmEpoch: '2016-01-01T00:00:00.000Z',
+  /** The top-of-the-hour half of "is the RC voicemail listing due?" (UTC minute 0-1; tests override). */
+  rcVmMinuteDue: () => new Date().getUTCMinutes() <= 1,
+  rcVmStaleMin: 90,            // …or the last COMPLETED listing is older than this
+  rcVmAlarmHours: 6,           // no completed listing this long → alarm (warning → error)
+  rcVmHistoryRows: 240,        // job_results rows read back (~8 h of 2-min ticks)
+  quoVmSanityErrorHours: 48,   // the sanity alarm escalates to error after this long
+  quoVm404HoldDays: 7,         // a Quo voicemail 404 is held this long (call clock) before none
+  quoVm404RecheckMin: 1440,
+  captureVoicemails: true,     // S1c; the suites for the other kinds turn it off to keep their scope
   driftBackoffMin: 120,
   noneAfterHours: 24,
   noLineBackoffMin: 360,
@@ -135,6 +163,248 @@ async function discoverQuoCalls(db) {
     [SOURCE, SOURCE, limits.discoverLimit],
   );
   return r.affectedRows || 0;
+}
+
+/** Quo voicemail placeholders: every Quo call we know (answered calls may route to voicemail too). */
+async function discoverQuoVoicemails(db) {
+  const [r] = await db.query(
+    `INSERT IGNORE INTO comms_media
+       (channel, kind, source_table, source_id, part, provider, channel_id, party, captured_at, state)
+     SELECT 'phone', 'voicemail', ?, e.id, '', 'quo', pl.id, LEFT(e.other_party, 20),
+            ${CALL_CLOCK}, 'pending'
+       FROM phone_event_log e
+       LEFT JOIN phone_lines pl ON pl.phone_number = e.line_number
+      WHERE e.provider = 'quo' AND e.event_type = 'call' AND e.suppressed = 0
+        AND JSON_VALUE(e.raw_extra, '$.provider_status') IN ('completed', 'no-answer')
+        AND NOT EXISTS (SELECT 1 FROM comms_media m
+                         WHERE m.source_table = ? AND m.source_id = e.id AND m.kind = 'voicemail')
+      ORDER BY ${CALL_CLOCK} ASC, e.id ASC
+      LIMIT ?`,
+    [SOURCE, SOURCE, limits.discoverLimit],
+  );
+  return r.affectedRows || 0;
+}
+
+/** RC credentials in use (data: phone_lines), for the voicemail listing. */
+async function _rcCredentials(db) {
+  const [rows] = await db.query(
+    `SELECT DISTINCT credential_id FROM phone_lines WHERE provider = 'ringcentral' ORDER BY credential_id`);
+  return rows.map(r => r.credential_id);
+}
+
+const _ten = (n) => {
+  const d = String(n || '').replace(/\D/g, '');
+  return d.length === 11 && d.startsWith('1') ? d.slice(1) : (d.length === 10 ? d : null);
+};
+
+/**
+ * RC voicemail discovery (S1c) — STATELESS: the extension message-store is
+ * listed in FULL from a fixed epoch (2016-01-01) at most once an hour (on a
+ * tick whose UTC minute is 0–1), after the row work, ≤ rcLightPerTick pages
+ * (more = drift: > 300 voicemails ever is loud, not silent), each page call
+ * capped at rcVmPageTimeoutMs. No watermark: a record skipped or drifted this
+ * hour is simply listed — and alerted — again next hour.
+ * Rows: one per AudioRecording attachment of an Alive or Deleted (still in
+ * RC's trash, retrievable) voicemail; Purged is skipped. A voicemail OUR
+ * registry has purged is never touched again (no transcript child either).
+ * Anything off the probed shape is drift — alerted, never "no voicemail".
+ * 401/403 is the credential's: the no_auth alert, not drift.
+ * ASSUMPTION (verified 2026-10-14 via the temp route): the account has ONE
+ * active User extension (55880693); the other extensions (Department 1,
+ * Voicemail 2) are NotActivated, plus the company extension — so `~`, the
+ * authenticated extension, covers every voicemail today.
+ */
+async function _discoverRcVoicemails(db, rc, { hardDeadline, acc, out }) {
+  const creds = await _rcCredentials(db);
+  const dateFrom = new Date(limits.vmEpoch);
+  const [lines] = await db.query(`SELECT id, phone_number FROM phone_lines`);
+  const lineByNumber = new Map(lines.map(l => [String(l.phone_number), l.id]));
+  // Its OWN alert group (review L2): listing trouble must not eat the day's
+  // shape-drift alert for per-row drift.
+  const driftAll = (what) => { acc.listingDrift.push(what); out.drift++; };
+  let complete = true;
+  const stop = (what) => { driftAll(what); complete = false; };
+  for (const credentialId of creds) {
+    if (!await rc.checkArchiveAuth(db, credentialId)) { await _noAuthAlert(db, 'ringcentral', credentialId); continue; }
+    for (let page = 1; ; page++) {
+      if (Date.now() + limits.rcVmPageTimeoutMs >= hardDeadline) { stop('voicemail listing cut short by the tick deadline'); return false; }
+      out.rc_light_used++;
+      const r = await rc.listVoicemails(db, { credentialId, dateFrom, page, timeoutMs: limits.rcVmPageTimeoutMs });
+      if (r.status === 401 || r.status === 403) {
+        await _noAuthAlert(db, 'ringcentral', credentialId,
+          _authDetail(out, 'ringcentral', '/restapi/v1.0/account/~/extension/~/message-store?messageType=VoiceMail', r));
+        complete = false;
+        break;
+      }
+      if (r.status !== 200) {
+        // A 429 stays quiet for the tick; the staleness alarm is its backstop.
+        if (r.status !== 429) driftAll(`voicemail listing ${r.status}`);
+        return false;
+      }
+      const recs = r.json && r.json.records;
+      const paging = r.json && r.json.paging;
+      if (!Array.isArray(recs) || !paging || typeof paging !== 'object') {
+        stop(`voicemail listing: records/paging ${r.json === undefined ? 'unparseable' : 'missing'}`);
+        return false;
+      }
+      for (const rec of recs) {
+        const msgId = rec && rec.id != null ? String(rec.id) : '';
+        const created = rec && rec.creationTime ? new Date(rec.creationTime) : null;
+        if (!/^\d+$/.test(msgId) || !created || Number.isNaN(created.getTime()) || !Array.isArray(rec.attachments)) {
+          driftAll(`voicemail record without id / creationTime / attachments (${clamp(msgId, 20)})`);
+          continue;
+        }
+        if (rec.availability === 'Purged') continue;
+        if (rec.availability !== 'Alive' && rec.availability !== 'Deleted') {
+          driftAll(`voicemail ${msgId}: unknown availability ${JSON.stringify(rec.availability)}`);
+          continue;
+        }
+        const [[have]] = await db.query(
+          `SELECT id, state FROM comms_media WHERE source_table = 'rc_message' AND source_id = ? AND kind = 'voicemail' ORDER BY id LIMIT 1`, [msgId]);
+        if (have) {
+          // Purged here = purged for good: never a late transcript under it (review M1).
+          if (have.state !== 'purged') await _rcTranscriptRow(db, rec, have.id, acc, out);
+          continue;
+        }
+        const audio = rec.attachments.filter(a => a && a.type === 'AudioRecording');
+        if (!audio.length || audio.some(a => a.id == null || !/^\d+$/.test(String(a.id)))) {
+          driftAll(`voicemail ${msgId}: no AudioRecording with an id`);
+          continue;
+        }
+        // The line is the number the voicemail was LEFT ON (to[]), mapped to
+        // phone_lines whatever that line's provider is TODAY: a 2021 RC
+        // voicemail to 2484179800 (a Quo line since) anchors to that Quo line.
+        // Correct under R6 — access follows the line, not the provider. Do
+        // not "fix" this to a provider match. No to-number → channel_id NULL
+        // (S4 decides visibility; §7).
+        const toNum = (Array.isArray(rec.to) ? rec.to : []).map(t => _ten(t && t.phoneNumber)).find(Boolean) || null;
+        const channelId = toNum && lineByNumber.has(toNum) ? lineByNumber.get(toNum) : null;
+        const party = _ten(rec.from && rec.from.phoneNumber);
+        for (const a of audio) {
+          const [ins] = await db.query(
+            `INSERT IGNORE INTO comms_media
+               (channel, kind, source_table, source_id, part, provider, channel_id, party, captured_at, state)
+             VALUES ('phone', 'voicemail', 'rc_message', ?, ?, 'ringcentral', ?, ?, ?, 'pending')`,
+            [msgId, String(a.id), channelId, party, created],
+          );
+          out.discovered_rc_vm += ins.affectedRows || 0;
+        }
+        const [[mine]] = await db.query(
+          `SELECT id FROM comms_media WHERE source_table = 'rc_message' AND source_id = ? AND kind = 'voicemail' ORDER BY id LIMIT 1`, [msgId]);
+        if (mine) await _rcTranscriptRow(db, rec, mine.id, acc, out);
+      }
+      const totalPages = Number(paging.totalPages) || 1;
+      if (page >= totalPages) break;
+      if (page >= limits.rcLightPerTick) {
+        stop(`voicemail listing has ${totalPages} pages since ${limits.vmEpoch.slice(0, 10)}; only ${limits.rcLightPerTick} read per listing`);
+        return false;
+      }
+    }
+  }
+  return complete;
+}
+
+/**
+ * When did a tick last COMPLETE the RC voicemail listing (review L1)? Read
+ * back from job_results — the tick's own output (out.rc_vm_listing =
+ * 'complete') as process_jobs records it — over the newest rcVmHistoryRows
+ * rows of the media-sweep job (idx_job, backward scan; no new state). Hand
+ * runs record no job_results and simply don't count.
+ * → { last: Date|null, oldest: Date|null } (oldest = the window's start).
+ */
+async function _rcVmListingHistory(db) {
+  const [[job]] = await db.query(
+    `SELECT id FROM scheduled_jobs WHERE idempotency_key = 'comms_archive_media_sweep' LIMIT 1`);
+  if (!job) return { last: null, oldest: null };
+  const [rows] = await db.query(
+    `SELECT executed_at,
+            JSON_VALUE(output_data, '$.output.rc_vm_listing') = 'complete' AS done
+       FROM job_results WHERE job_id = ? ORDER BY id DESC LIMIT ?`,
+    [job.id, limits.rcVmHistoryRows]);
+  const hit = rows.find(r => Number(r.done) === 1);
+  return {
+    last: hit ? new Date(hit.executed_at) : null,
+    oldest: rows.length ? new Date(rows[rows.length - 1].executed_at) : null,
+  };
+}
+
+/**
+ * RC vendor transcript (R10): a voicemail whose vmTranscriptionStatus is
+ * 'Completed' carries an attachment of type AudioTranscription (RC Message
+ * Store API: message attachments, type AudioTranscription, text/plain — the
+ * six live voicemails all say NotAvailable, so this path is built from the
+ * documented shape). One pending stt_raw row per such attachment, child of
+ * the voicemail row; idempotent. An odd shape is drift — never a voicemail
+ * park.
+ */
+async function _rcTranscriptRow(db, rec, voicemailId, acc, out) {
+  if (rec.vmTranscriptionStatus !== 'Completed') return;
+  const tr = rec.attachments.filter(a => a && a.type === 'AudioTranscription');
+  if (!tr.length || tr.some(a => a.id == null || !/^\d+$/.test(String(a.id)))) {
+    acc.drift.push({ id: voicemailId, lane: 'ringcentral:stt_raw', what: `voicemail ${rec.id}: transcription Completed but no AudioTranscription attachment with an id` });
+    out.drift++;
+    return;
+  }
+  for (const a of tr) {
+    const [ins] = await db.query(
+      `INSERT IGNORE INTO comms_media
+         (channel, kind, source_table, source_id, part, provider, channel_id, party, captured_at, restricted, state)
+       SELECT channel, 'stt_raw', 'comms_media', id, ?, 'ringcentral', channel_id, party, captured_at, restricted, 'pending'
+         FROM comms_media
+        WHERE id = ? AND state <> 'purged'
+          AND NOT EXISTS (SELECT 1 FROM comms_media s
+                           WHERE s.source_table = 'comms_media' AND s.source_id = ? AND s.kind = 'stt_raw')`,
+      [String(a.id), voicemailId, voicemailId],
+    );
+    out.discovered_vm_transcripts = (out.discovered_vm_transcripts || 0) + (ins.affectedRows || 0);
+  }
+}
+
+/**
+ * Write a vendor transcript JSON next to its (already archived) voicemail
+ * and register it as an archived stt_raw row. Never throws: a failure is
+ * drift (alerted), the voicemail is untouched.
+ */
+async function _storeVendorTranscript(db, vm, { vendor, payload }, acc, out, timeoutMs) {
+  try {
+    // Never under a purged voicemail - not even the object (review M1).
+    const [[p]] = await db.query('SELECT state FROM comms_media WHERE id = ?', [vm.id]);
+    if (!p || p.state === 'purged') return;
+    const buf = Buffer.from(JSON.stringify(payload));
+    const objectName = archive.sttPrefix({ capturedAt: vm.captured_at, parentId: vm.id }) + `${vendor}.json`;
+    let put;
+    try {
+      put = await archive.putStream(require('stream').Readable.from([buf]), {
+        objectName, mime: 'application/json', expectedBytes: buf.length, timeoutMs,
+      });
+    } catch (err) {
+      if (err.code !== 'EXISTS') throw err;
+      put = await archive.rehash(objectName, { timeoutMs });
+    }
+    const [ins] = await db.query(
+      `INSERT IGNORE INTO comms_media
+         (channel, kind, source_table, source_id, part, provider, channel_id, party, captured_at, restricted,
+          state, object_name, mime, bytes, sha256, archived_at)
+       SELECT channel, 'stt_raw', 'comms_media', id, ?, provider, channel_id, party, captured_at, restricted,
+              'archived', ?, 'application/json', ?, ?, UTC_TIMESTAMP()
+         FROM comms_media WHERE id = ? AND state <> 'purged'`,
+      [vendor, objectName, put.bytes, put.sha256, vm.id],
+    );
+    out.vm_transcripts = (out.vm_transcripts || 0) + (ins.affectedRows || 0);
+  } catch (err) {
+    // The voicemail stays archived either way. Our storage failing is a
+    // storage alert (escalating); anything else is drift.
+    if (err && err.ourSide) {
+      out.transcript_storage_errors = (out.transcript_storage_errors || 0) + 1;
+      await ops.escalatingAlert(db, 'comms_archive_storage', 'comms_archive_storage',
+        'Comms archive: a vendor transcript could not be stored',
+        `${err.message}\n\nIts voicemail (comms_media ${vm.id}) is archived; only the secondary transcript is missing.`,
+        { error: clamp(err.message, 300), media_id: vm.id });
+      return;
+    }
+    acc.drift.push({ id: vm.id, lane: `${vendor}:stt_raw`, what: `vendor transcript not stored: ${clamp(err && err.message, 150)}` });
+    out.drift++;
+  }
 }
 
 /**
@@ -214,20 +484,26 @@ async function discoverMms(db) {
 
 async function _nextDue(db, skipIds, skipProviders) {
   const conds = [];
-  const params = [SOURCE];
+  const params = [];
   if (skipIds.length) { conds.push('AND m.id NOT IN (?)'); params.push(skipIds); }
   if (skipProviders.size) { conds.push('AND m.provider NOT IN (?)'); params.push([...skipProviders]); }
   const [[row]] = await db.query(
-    `SELECT m.id, m.kind, m.provider, m.source_id, m.part, m.captured_at, m.created_at,
-            m.attempts, m.channel_id,
+    `SELECT m.id, m.kind, m.provider, m.source_table, m.source_id, m.part, m.captured_at, m.created_at,
+            m.attempts, m.channel_id, m.restricted,
             e.provider_ref, e.line_number,
-            pl.id AS line_id, pl.credential_id, pl.display_name AS line_name
+            pl.id AS line_id, pl.credential_id, pl.display_name AS line_name,
+            p.source_id AS parent_source_id, p.state AS parent_state
        FROM comms_media m
-       JOIN phone_event_log e ON e.id = m.source_id
+       LEFT JOIN phone_event_log e ON m.source_table = 'phone_event_log' AND e.id = m.source_id
        LEFT JOIN phone_lines pl ON pl.phone_number = e.line_number
-      WHERE m.state = 'pending' AND m.source_table = ?
-        AND ((m.kind = 'call_recording' AND m.provider = 'quo')
-             OR (m.kind = 'mms_file' AND m.provider IN ('ringcentral', 'quo')))
+       LEFT JOIN comms_media p ON m.source_table = 'comms_media' AND p.id = m.source_id
+      WHERE m.state = 'pending'
+        AND ((m.source_table = 'phone_event_log'
+              AND ((m.kind = 'call_recording' AND m.provider = 'quo')
+                   OR (m.kind = 'mms_file' AND m.provider IN ('ringcentral', 'quo'))
+                   OR (m.kind = 'voicemail' AND m.provider = 'quo' AND ${limits.captureVoicemails ? 1 : 0})))
+             OR (m.source_table = 'rc_message' AND m.kind = 'voicemail' AND m.provider = 'ringcentral')
+             OR (m.source_table = 'comms_media' AND m.kind = 'stt_raw' AND m.provider = 'ringcentral'))
         AND (m.next_attempt_at IS NULL OR m.next_attempt_at <= UTC_TIMESTAMP())
         ${conds.join(' ')}
       ORDER BY m.captured_at ASC, m.id ASC
@@ -237,10 +513,7 @@ async function _nextDue(db, skipIds, skipProviders) {
   return row || null;
 }
 
-function _prefixFor(row) {
-  const args = { capturedAt: row.captured_at, sourceId: row.source_id, part: row.part };
-  return row.kind === 'mms_file' ? archive.mmsPrefix(args) : archive.recordingPrefix(args);
-}
+const _prefixFor = (row) => archive.prefixFor(row);
 
 /** Key a drift / stop by provider + kind so one provider's trouble never stops another. */
 const _lane = (row) => `${row.provider}:${row.kind}`;
@@ -259,14 +532,19 @@ async function runMediaSweep(db, opts = {}) {
     enabled: false, discovered_calls: 0, discovered_mms: 0,
     archived: 0, adopted: 0, resolved: 0, split: 0, none: 0, gone: 0, failed: 0, stuck: 0,
     retried: 0, not_yet: 0, drift: 0, no_line: 0, rc_used: 0, quo_used: 0,
+    discovered_vm: 0, discovered_rc_vm: 0, vm_held404: 0, rc_light_used: 0,
     stopped: {}, stop: null,
   };
-  const acc = { goneIds: [], failedIds: [], stuckIds: [], drift: [], notYetOld: [], noLine: new Map(), quoForbidden: new Map() };
+  const acc = { goneIds: [], failedIds: [], stuckIds: [], drift: [], listingDrift: [], notYetOld: [], noLine: new Map(), quoForbidden: new Map() };
   try {
     await _tick(db, opts, out, acc, startedAt);
   } finally {
     await _rowAlerts(db, acc);
     await _quoForbiddenAlerts(db, acc, out);
+    if (out.enabled && out.skipped !== 'locked' && limits.captureVoicemails) {
+      await _quoVoicemailSanity(db);
+      await _rcVmListingStaleness(db, out);
+    }
     out.elapsed_ms = Date.now() - startedAt;
   }
   return out;
@@ -285,6 +563,17 @@ async function _tick(db, opts, out, acc, startedAt) {
 
   const lock = await common.acquireLock(db, LOCK_EXPR);
   if (!lock) { out.skipped = 'locked'; return; }
+
+  // The RC voicemail listing: due decided at the START (review L1) — the top
+  // of the hour, OR the last completed listing is stale (a skipped :00 — a
+  // late start behind the cliff sweep, a long row loop, a held lock, a failed
+  // pre-flight — catches up on the next tick instead of silently waiting).
+  let vmHistory = null;
+  if (limits.captureVoicemails) {
+    vmHistory = await _rcVmListingHistory(db);
+    const staleMs = vmHistory.last ? Date.now() - vmHistory.last.getTime() : Infinity;
+    out.rc_vm_due = limits.rcVmMinuteDue() || staleMs > limits.rcVmStaleMin * 60_000;
+  }
 
   try {
     // ── Our-side pre-flight, before ANY claim ─────────────────────────────
@@ -357,6 +646,8 @@ async function _tick(db, opts, out, acc, startedAt) {
       out.drift++;
     };
 
+    if (limits.captureVoicemails) out.discovered_vm = await discoverQuoVoicemails(db);
+
     for (;;) {
       if (Date.now() >= deadline) { out.stop = out.stop || 'deadline'; break; }
       if (out.stop) break;
@@ -364,6 +655,21 @@ async function _tick(db, opts, out, acc, startedAt) {
       if (!row) { out.stop = 'drained'; break; }
       skipIds.push(row.id);
 
+      // RC voicemails (rc_message) carry no call row: they are fetched with the
+      // RC credential that listed them — the ONE RC credential in phone_lines
+      // (data). More than one would make that ambiguous: park + alert, never
+      // guess (a schema slot for it is the fix if the firm ever adds one).
+      if (row.source_table === 'rc_message' || (row.kind === 'stt_raw' && row.provider === 'ringcentral')) {
+        const creds = await _rcCredentials(db);
+        if (creds.length !== 1) {
+          await ops.park(db, row.id, limits.driftBackoffMin, `rc voicemail: ${creds.length} RC credentials — ambiguous`);
+          acc.drift.push({ id: row.id, lane: _lane(row), what: `${creds.length} RC credentials in phone_lines — which one owns this voicemail is ambiguous` });
+          out.drift++;
+          continue;
+        }
+        row.credential_id = creds[0];
+        row.line_id = row.channel_id;            // may be NULL (no to-number) — never no_line
+      } else
       // Line → credential (data). No phone_lines row → no_line, uncharged.
       if (!row.line_id || !row.credential_id) {
         const t = ops.terminalReason(row, { noLine: true });
@@ -383,7 +689,7 @@ async function _tick(db, opts, out, acc, startedAt) {
         out.no_line++;
         continue;
       }
-      if (row.channel_id == null) {
+      if (row.channel_id == null && row.line_id != null) {
         await db.query('UPDATE comms_media SET channel_id = ? WHERE id = ? AND channel_id IS NULL', [row.line_id, row.id]);
       }
 
@@ -421,8 +727,128 @@ async function _tick(db, opts, out, acc, startedAt) {
         let res = null;      // { status, contentType, contentLength, body, host? }
         let store = null;    // { mime, ext, note }
         let fetchDeadline = 0;
+        let vendorTranscript = null;   // Quo voicemail: { vendor, payload } to store after the audio
 
-        if (row.provider === 'quo' && row.kind === 'call_recording') {
+        if (row.kind === 'voicemail' && row.provider === 'quo') {
+          // ── Quo voicemail (S1c): one per call ────────────────────────────
+          if (!await slot('quo')) { await ops.refund(db, row.id, null); continue; }
+          const r = await quo.getCallVoicemail(db, { credentialId: row.credential_id, callId: row.provider_ref, timeoutMs: Math.min(io(), 30_000) });
+          if (r.status === 404) {
+            // Undocumented: probably "no voicemail". HELD - its own uncharged
+            // park, re-checked daily - then none. Not part of the quo_not_yet
+            // alert (the sanity alarm covers the 404 reading).
+            // The hold counts from the LATER of the call and the row's creation
+            // (~ the first check): a wrong 404 reading is caught before anything
+            // goes terminal, even for calls already old at go-live (review M2).
+            const holdStart = new Date(Math.max(new Date(row.captured_at).getTime(), new Date(row.created_at).getTime()));
+            const holdEnd = new Date(holdStart.getTime() + limits.quoVm404HoldDays * 86400_000);
+            if (Date.now() >= holdEnd.getTime()) {
+              await db.query(
+                `UPDATE comms_media SET state = 'none', attempts = GREATEST(attempts, 1) - 1, next_attempt_at = NULL, last_error = ?
+                  WHERE id = ? AND state = 'pending'`,
+                [`quo voicemail: 404 held ${limits.quoVm404HoldDays} days (since ${holdStart.toISOString().slice(0, 10)}) - none`, row.id]);
+              out.none++;
+            } else {
+              await ops.park(db, row.id, limits.quoVm404RecheckMin,
+                `quo voicemail: 404 held since ${holdStart.toISOString().slice(0, 10)}, until ${holdEnd.toISOString().slice(0, 10)}`);
+              out.vm_held404++;
+            }
+            continue;
+          }
+          // A 403 here parks THIS voicemail row (per-line alert), a 401 stops Quo — the same rule as recordings / MMS.
+          if (await _apiStatus(db, row, r, attemptsNow, 'quo', 'call-voicemails', stopProvider, count, out, acc)) continue;
+          const d = r.json && r.json.data;
+          if (!d || typeof d !== 'object' || Array.isArray(d)) { await drift(row, `call-voicemails: \`data\` is ${r.json === undefined ? 'unparseable' : (d === undefined ? 'missing' : (Array.isArray(d) ? 'an array' : typeof d))}`); continue; }
+          if (typeof d.id !== 'string' || !/^VM/.test(d.id)) { await drift(row, `call-voicemails: id ${JSON.stringify(d.id)} is not a VM id`); continue; }
+          if (d.status === 'in-progress') {
+            const t = ops.terminalReason(row, { uncharged: true });
+            if (t) { await ops.fail(db, row.id, `quo voicemail still in-progress — ${t}`); count('failed', row.id); continue; }
+            await ops.park(db, row.id, limits.notYetBackoffMin, 'voicemail in-progress');
+            out.not_yet++;
+            if (ageHours(row.captured_at) >= limits.notYetAlertHours) acc.notYetOld.push({ id: row.id, status: 'voicemail in-progress' });
+            continue;
+          }
+          if (d.status !== 'completed') { await drift(row, `call-voicemails: unknown status ${JSON.stringify(d.status)}`); continue; }
+          if (typeof d.recordingUrl !== 'string' || !d.recordingUrl) { count(await ops.transient(db, row, attemptsNow, 'quo: completed voicemail without a recordingUrl'), row.id); continue; }
+          // R10: Quo's own transcript, kept as a secondary stt_raw record once
+          // the audio is archived (below). Odd shape → drift log only.
+          if (typeof d.transcript === 'string' && d.transcript.trim()) {
+            vendorTranscript = { vendor: 'quo', payload: { vendor: 'quo', voicemail_id: d.id, transcript: d.transcript, fetched_at: new Date().toISOString() } };
+          } else if (d.transcript != null && typeof d.transcript !== 'string') {
+            acc.drift.push({ id: row.id, lane: 'quo:stt_raw', what: `call-voicemails: transcript is ${typeof d.transcript}` });
+            out.drift++;
+          }
+          if (!row.part) {
+            await db.query(`UPDATE comms_media SET part = ? WHERE id = ? AND state = 'pending' AND part = ''`, [clamp(d.id, 64), row.id]);
+            row.part = clamp(d.id, 64);
+          } else if (row.part !== d.id) {
+            await drift(row, `call-voicemails: id ${d.id} differs from the stored ${row.part}`);
+            continue;
+          }
+          const ms = io();
+          fetchDeadline = Date.now() + ms;
+          try { res = await quo.fetchSigned(d.recordingUrl, { timeoutMs: ms }); }
+          catch (err) { if (err.code === 'BAD_URL') { await drift(row, `voicemail url ${err.message}`); continue; } throw err; }
+          if (res.status === 200) {
+            const c = archive.classifyMedia(res.contentType, null);
+            if (c.error) { res.body && res.body.destroy(); count(await ops.transient(db, row, attemptsNow, `download ${res.host}: ${c.error}`), row.id); continue; }
+            store = c;
+          }
+        } else if (row.kind === 'stt_raw') {
+          // ── RC vendor transcript (R10): the AudioTranscription attachment ─
+          if (row.parent_state === 'purged') {
+            // Its voicemail was purged after this row was made: purged with it.
+            await db.query(`UPDATE comms_media SET state = 'purged', purged_at = UTC_TIMESTAMP(), purge_reason = 'parent purged', next_attempt_at = NULL
+                              WHERE id = ? AND state = 'pending'`, [row.id]);
+            continue;
+          }
+          if (!/^\d+$/.test(row.part || '') || !row.parent_source_id) { await drift(row, `rc transcript attachment ${JSON.stringify(row.part)}`); continue; }
+          if (!await slot('ringcentral')) { await ops.refund(db, row.id, null); continue; }
+          const ms = io();
+          fetchDeadline = Date.now() + ms;
+          const t = await rc.fetchMessageAttachment(db, { credentialId: row.credential_id, messageId: String(row.parent_source_id), attachmentId: row.part, timeoutMs: ms });
+          if (t.status === 429) { await ops.refund(db, row.id, 'rc 429'); stopProvider('ringcentral', 'rate_limited'); continue; }
+          if (t.status === 401 || t.status === 403) {
+            await ops.refund(db, row.id, `rc ${t.status}`);
+            await _noAuthAlert(db, 'ringcentral', row.credential_id,
+              _authDetail(out, 'ringcentral', '/restapi/v1.0/account/~/extension/~/message-store/{id}/content/{id} (voicemail transcript)', t));
+            stopProvider('ringcentral', 'no_auth');
+            continue;
+          }
+          if (t.status !== 200) { count(await ops.transient(db, row, attemptsNow, `transcript content ${t.status}`), row.id); continue; }
+          if (!/^text\//i.test(String(t.contentType || ''))) { t.body && t.body.destroy(); await drift(row, `rc transcript content-type ${clamp(t.contentType, 60)}`); continue; }
+          const chunks = [];
+          let n = 0;
+          for await (const c of t.body) { n += c.length; if (n > 1_000_000) break; chunks.push(c); }
+          if (n > 1_000_000) { t.body.destroy(); await drift(row, 'rc transcript over 1 MB'); continue; }
+          const buf = Buffer.from(JSON.stringify({
+            vendor: 'ringcentral', message_id: String(row.parent_source_id), attachment_id: row.part,
+            transcript: Buffer.concat(chunks).toString('utf8'), fetched_at: new Date().toISOString(),
+          }));
+          res = { status: 200, host: 'media.ringcentral.com', contentType: 'application/json', contentLength: buf.length, body: require('stream').Readable.from([buf]) };
+          store = { mime: 'application/json', ext: 'ringcentral.json', note: null };
+        } else if (row.kind === 'voicemail') {
+          // ── RC voicemail (S1c): message-store content (Medium) ──────────
+          if (!/^\d+$/.test(row.part || '')) { await drift(row, `rc voicemail attachment id ${JSON.stringify(row.part)}`); continue; }
+          if (!await slot('ringcentral')) { await ops.refund(db, row.id, null); continue; }
+          const ms = io();
+          fetchDeadline = Date.now() + ms;
+          res = await rc.fetchMessageAttachment(db, { credentialId: row.credential_id, messageId: String(row.source_id), attachmentId: row.part, timeoutMs: ms });
+          res.host = 'media.ringcentral.com';
+          if (res.status === 429) { await ops.refund(db, row.id, 'rc 429'); stopProvider('ringcentral', 'rate_limited'); continue; }
+          if (res.status === 401 || res.status === 403) {
+            await ops.refund(db, row.id, `rc ${res.status}`);
+            await _noAuthAlert(db, 'ringcentral', row.credential_id,
+              _authDetail(out, 'ringcentral', '/restapi/v1.0/account/~/extension/~/message-store/{id}/content/{id} (voicemail)', res));
+            stopProvider('ringcentral', 'no_auth');
+            continue;
+          }
+          if (res.status === 200) {
+            const c = archive.classifyMedia(res.contentType, null);
+            if (c.error) { res.body && res.body.destroy(); count(await ops.transient(db, row, attemptsNow, `content: ${c.error}`), row.id); continue; }
+            store = c;
+          }
+        } else if (row.provider === 'quo' && row.kind === 'call_recording') {
           // ── Quo recording: list, then (per row) the item's signed URL ──
           if (!await slot('quo')) { await ops.refund(db, row.id, null); continue; }
           const r = await quo.listCallRecordings(db, { credentialId: row.credential_id, callId: row.provider_ref, timeoutMs: Math.min(io(), 30_000) });
@@ -602,6 +1028,7 @@ async function _tick(db, opts, out, acc, startedAt) {
             if (!h.bytes) { await ops.anomaly(db, row, `0-byte object ${objectName}`); continue; }
             await ops.markArchived(db, row.id, { objectName, mime: store.mime, bytes: h.bytes, sha256: h.sha256, note: store.note });
             out.adopted++;
+            if (vendorTranscript) await _storeVendorTranscript(db, row, vendorTranscript, acc, out, io());
             continue;
           }
           if (err.code === 'LENGTH_MISMATCH' || err.code === 'SOURCE' || err.code === 'EMPTY') {
@@ -612,6 +1039,7 @@ async function _tick(db, opts, out, acc, startedAt) {
         }
         await ops.markArchived(db, row.id, { objectName, mime: store.mime, bytes: put.bytes, sha256: put.sha256, note: store.note });
         out.archived++;
+        if (vendorTranscript) await _storeVendorTranscript(db, row, vendorTranscript, acc, out, io());
       } catch (err) {
         if (err && err.ourSide) {
           await ops.refund(db, row.id, err.message);
@@ -631,6 +1059,23 @@ async function _tick(db, opts, out, acc, startedAt) {
         }
         // Network / timeout talking to the provider → provider-side transient.
         count(await ops.transient(db, row, attemptsNow, `network: ${err && err.message}`), row.id);
+      }
+    }
+    // -- RC voicemail listing: hourly, stateless, AFTER the row work --
+    // Fenced: a listing failure (network, timeout) is drift for the hour; it
+    // never stops the rest of the tick.
+    if (limits.captureVoicemails && out.rc_vm_due) {
+      out.rc_vm_listed = true;
+      try {
+        const ok = await _discoverRcVoicemails(db, rc, { hardDeadline, acc, out });
+        out.rc_vm_listing = ok ? 'complete' : 'incomplete';
+      } catch (err) {
+        out.rc_vm_listing = 'incomplete';
+        if (err && err.code === 'NO_AUTH') await _noAuthAlert(db, 'ringcentral', '(voicemail listing)');
+        else {
+          acc.listingDrift.push(`voicemail listing failed: ${clamp(err && err.message, 150)}`);
+          out.drift++;
+        }
       }
     }
   } finally {
@@ -746,6 +1191,68 @@ function _authDetail(out, provider, endpoint, res) {
   return detail;
 }
 
+/**
+ * The Quo voicemail SANITY ALARM (S1c): until the first Quo voicemail is
+ * archived, one warning a day with the counts — so a wrong "404 = no
+ * voicemail" reading cannot pass silently. Quiet for good after the first.
+ */
+async function _quoVoicemailSanity(db) {
+  try {
+    const [[c]] = await db.query(
+      `SELECT COUNT(*) AS total,
+              SUM(state = 'archived') AS found,
+              SUM(state = 'none') AS none_n,
+              SUM(state = 'pending' AND last_error LIKE 'quo voicemail: 404 held since %') AS held,
+              SUM(state <> 'pending' OR last_error IS NOT NULL) AS checked
+         FROM comms_media WHERE provider = 'quo' AND kind = 'voicemail'`);
+    if (!c || !Number(c.total) || Number(c.found) > 0 || !Number(c.checked)) return;
+    // Warning first; ERROR once the condition has persisted quoVmSanityErrorHours
+    // (warnings never email on their own — a warning-only alarm is invisible).
+    const [[first]] = await db.query(
+      `SELECT MIN(created_at) AS t FROM system_alerts WHERE group_key = 'comms_archive_quo_vm_sanity'`);
+    const persistedH = first && first.t ? (Date.now() - new Date(first.t).getTime()) / 3_600_000 : 0;
+    const severity = persistedH >= limits.quoVmSanityErrorHours ? 'error' : 'warning';
+    await alert(db, {
+      kind: 'comms_archive_quo_vm_sanity', group_key: 'comms_archive_quo_vm_sanity', severity,
+      title: 'Comms archive: no Quo voicemail archived yet',
+      message: `Quo voicemails: ${Number(c.checked)} call(s) checked, ${Number(c.held) || 0} held on a 404, ` +
+        `${Number(c.none_n) || 0} none, 0 found. If staff lines take voicemails, the reading of Quo's ` +
+        `undocumented 404 ("no voicemail") is wrong — look before the 7-day holds turn to none. ` +
+        `This goes quiet once the first Quo voicemail is archived.`,
+      context: { checked: Number(c.checked), held404: Number(c.held) || 0, none: Number(c.none_n) || 0, found: 0 },
+      dedup_key: `comms_archive_quo_vm_sanity:${severity}:${utcDate()}`,
+    });
+  } catch (err) {
+    console.error('[COMMS ARCHIVE] quo voicemail sanity failed:', err.message);
+  }
+}
+
+/**
+ * The listing STALENESS alarm (review L1): no completed RC voicemail listing
+ * in rcVmAlarmHours — warning, error on repeat. Backstop for every quiet
+ * miss (a 429 on the listing, skipped hours, a listing that keeps failing).
+ * "Never completed" counts once the job's own history spans the window.
+ */
+async function _rcVmListingStaleness(db, out) {
+  try {
+    if (out.rc_vm_listing === 'complete') return;
+    const h = await _rcVmListingHistory(db);
+    const windowMs = limits.rcVmAlarmHours * 3_600_000;
+    const stale = h.last
+      ? Date.now() - h.last.getTime() > windowMs
+      : !!(h.oldest && Date.now() - h.oldest.getTime() > windowMs);
+    if (!stale) return;
+    await ops.escalatingAlert(db, 'comms_archive_rc_vm_listing_stale', 'comms_archive_rc_vm_listing_stale',
+      `Comms archive: no completed RingCentral voicemail listing in ${limits.rcVmAlarmHours} h`,
+      `Last completed listing: ${h.last ? h.last.toISOString() : 'never (in the recent job history)'}. ` +
+      `New RC voicemails are not being discovered. Check comms_archive_media_sweep's job_results ` +
+      `(rc_vm_listing, drift) and the RC credential.`,
+      { last_complete: h.last ? h.last.toISOString() : null });
+  } catch (err) {
+    console.error('[COMMS ARCHIVE] rc voicemail listing staleness check failed:', err.message);
+  }
+}
+
 async function _noAuthAlert(db, provider, credentialId, detail = null) {
   await ops.escalatingAlert(db, `comms_archive_no_auth:${credentialId}`, 'comms_archive_no_auth',
     `Comms archive: ${provider} credential ${credentialId} not usable — its archiving paused`,
@@ -757,9 +1264,19 @@ async function _noAuthAlert(db, provider, credentialId, detail = null) {
 }
 
 /** One grouped alert per kind per day — never one per row. Never throws. */
-async function _rowAlerts(db, { goneIds, failedIds, stuckIds, drift, notYetOld, noLine }) {
+async function _rowAlerts(db, { goneIds, failedIds, stuckIds, drift, listingDrift, notYetOld, noLine }) {
   try {
     const day = utcDate();
+    if (listingDrift && listingDrift.length) {
+      await alert(db, {
+        kind: 'comms_archive_rc_vm_listing_drift', group_key: 'comms_archive_rc_vm_listing_drift', severity: 'error',
+        title: 'Comms archive: the RingCentral voicemail listing did not match its probed shape',
+        message: `Nothing is marked "no voicemail" on this evidence; the next listing re-reads everything. ` +
+          listingDrift.slice(0, 20).join('; '),
+        context: { items: listingDrift.slice(0, 100) },
+        dedup_key: `comms_archive_rc_vm_listing_drift:${day}`,
+      });
+    }
     if (notYetOld.length) {
       await ops.escalatingAlert(db, 'comms_archive_quo_not_yet', 'comms_archive_quo_not_yet',
         `Comms archive: ${notYetOld.length} Quo recording(s) still not ready ${limits.notYetAlertHours} h+ after the call`,
@@ -822,4 +1339,4 @@ async function _rowAlerts(db, { goneIds, failedIds, stuckIds, drift, notYetOld, 
   }
 }
 
-module.exports = { runMediaSweep, discoverQuoCalls, discoverMms, unknownQuoCallStatuses, quoMediaId, limits, LOCK_EXPR, QUO_REC_STATUS };
+module.exports = { runMediaSweep, discoverQuoCalls, discoverMms, discoverQuoVoicemails, unknownQuoCallStatuses, quoMediaId, limits, LOCK_EXPR, QUO_REC_STATUS };

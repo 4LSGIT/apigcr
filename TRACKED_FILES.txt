@@ -954,6 +954,7 @@ tests/caseUi.timeline.test.js
 tests/checklistView.autoGrow.test.js
 tests/checklists.s1notes.test.js
 tests/commsArchive.s1b.mysql.test.js
+tests/commsArchive.s1c.mysql.test.js
 tests/commsArchive.sweep.mysql.test.js
 tests/commsArchiveService.test.js
 tests/commsShell.test.js

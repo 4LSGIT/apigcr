@@ -219,6 +219,31 @@ function recordingPrefix(args) { return _prefix('rec', args, 'recordingPrefix');
 /** Same shape for an MMS file (design §4): phone/mms/<yyyy>/<mm>/<id>-<part>. */
 function mmsPrefix(args) { return _prefix('mms', args, 'mmsPrefix'); }
 
+/**
+ * A voicemail (S1c): phone/vm/<yyyy>/<mm>/<source_id>-<part>. RC: the RC
+ * message id + attachment id (both digits); Quo: phone_event_log.id + the VM
+ * id ('VM…') — the part's shape keeps the two sources' names disjoint.
+ */
+function vmPrefix(args) { return _prefix('vm', args, 'vmPrefix'); }
+
+/**
+ * A vendor transcript (kind stt_raw, design §4): phone/stt/<yyyy>/<mm>/
+ * <voicemail comms_media.id>.<vendor>.json — the prefix ends at the dot
+ * after the parent id; the full name appends `<vendor>.json`.
+ */
+function sttPrefix({ capturedAt, parentId }) {
+  return _prefix('stt', { capturedAt, sourceId: parentId, part: 'x' }, 'sttPrefix').replace(/-x\.$/, '.');
+}
+
+/** The prefix for any comms_media row's kind. */
+function prefixFor(row) {
+  const args = { capturedAt: row.captured_at, sourceId: row.source_id, part: row.part };
+  if (row.kind === 'mms_file') return mmsPrefix(args);
+  if (row.kind === 'voicemail') return vmPrefix(args);
+  if (row.kind === 'stt_raw') return sttPrefix({ capturedAt: row.captured_at, parentId: row.source_id });
+  return recordingPrefix(args);
+}
+
 function _baseMime(mime) {
   return String(mime || '').split(';')[0].trim().toLowerCase();
 }
@@ -468,6 +493,9 @@ module.exports = {
   bucketName,
   recordingPrefix,
   mmsPrefix,
+  vmPrefix,
+  sttPrefix,
+  prefixFor,
   extForMime,
   canonicalAudioMime,
   classifyMedia,

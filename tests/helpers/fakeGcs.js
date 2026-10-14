@@ -7,7 +7,7 @@
 //     existing name with a 412 at finalize;
 //   - an upload whose source errors (pipeline destroys the stream) is never
 //     finalized — no object appears, exactly like an aborted GCS upload.
-// Failure injection: fail.list / fail.put / fail.read / fail.sign / fail.perms / fail.exists / fail.delete
+// Failure injection: fail.list / fail.put / fail.read / fail.sign / fail.perms / fail.exists / fail.delete (fail.deleteNames = Set: only those)
 // = {code} (the call rejects); fail.putMid = {code} errors the upload on its
 // FIRST chunk while the source is still flowing (how the real library fails a
 // 403 / socket reset); fail.stall = true makes an upload accept nothing and
@@ -60,6 +60,7 @@ function fakeStorage() {
             },
             final(cb) {
               if (fail.put) return cb(err(fail.put));
+              if (fail.putPrefix && name.startsWith(fail.putPrefix)) return cb(err({ code: 403 }));
               const pre = opts.preconditionOpts && opts.preconditionOpts.ifGenerationMatch;
               if (pre === 0 && objects.has(name)) return cb(err({ code: 412, message: 'conditionNotMet' }));
               const o = { buf: Buffer.concat(chunks), contentType: opts.metadata && opts.metadata.contentType, generation: String(++gen) };
@@ -85,6 +86,7 @@ function fakeStorage() {
         },
         async delete(o = {}) {
           if (fail.delete) throw err(fail.delete);
+          if (fail.deleteNames && fail.deleteNames.has(name)) throw err({ code: 503 });
           calls.deleted = calls.deleted || [];
           calls.deleted.push(name);
           if (!objects.has(name) && !o.ignoreNotFound) throw err({ code: 404 });

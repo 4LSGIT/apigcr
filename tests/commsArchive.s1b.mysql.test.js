@@ -91,6 +91,7 @@ maybe('comms archive S1b on real MySQL', () => {
   function makeRc() {
     const f = { auth: true, calls: [], att: {},
       async checkArchiveAuth() { return f.auth; },
+      async listVoicemails() { return { status: 200, json: { records: [], paging: { page: 1, totalPages: 1 } }, rate: {} }; },
       async fetchMessageAttachment(_db, { messageId, attachmentId }) {
         f.calls.push([messageId, attachmentId]);
         const r = f.att[attachmentId];
@@ -102,6 +103,7 @@ maybe('comms archive S1b on real MySQL', () => {
   function makeQuo() {
     const f = { auth: true, calls: [], recs: {}, msgs: {}, urls: {},
       async checkArchiveAuth() { return f.auth; },
+      async getCallVoicemail(_db, { callId }) { f.calls.push(['vm', callId]); return { status: 404, json: null }; },
       async listCallRecordings(_db, { callId }) {
         f.calls.push(['rec', callId]);
         const r = f.recs[callId];
@@ -149,7 +151,8 @@ maybe('comms archive S1b on real MySQL', () => {
   });
 
   beforeEach(async () => {
-    Object.assign(media.limits, ORIG.media, { sleep: async () => {}, rcMediumSpacingMs: 0, quoSpacingMs: 0 });
+    // Voicemail capture (S1c) has its own suite; off here so this one keeps its scope.
+    Object.assign(media.limits, ORIG.media, { sleep: async () => {}, rcMediumSpacingMs: 0, quoSpacingMs: 0, captureVoicemails: false });
     Object.assign(admin.limits, ORIG.admin, { lockWaitS: 0 });
     Object.assign(verify.limits, ORIG.verify);
     router._resetPurgeLimit();
@@ -446,6 +449,20 @@ maybe('comms archive S1b on real MySQL', () => {
     expect(g.filter(x => x.startsWith('comms_archive_no_auth'))).toEqual([]);
   });
 
+  test('M3b with voicemail capture ON, voicemails share the RC Medium and Quo budgets (review A8)', async () => {
+    Object.assign(media.limits, { captureVoicemails: true, rcVmListingDue: () => false, rcMediumPerTick: 1, quoPerTick: 1 });
+    await sms({ logData: { attachments: [{ id: '901' }] }, ageDays: 3 });                 // RC MMS (newer)
+    await q(`INSERT INTO comms_media (channel, kind, source_table, source_id, part, provider, captured_at, state)
+             VALUES ('phone', 'voicemail', 'rc_message', 1427551891019, '1427551891019', 'ringcentral', '2020-10-16 03:48:41', 'pending')`);
+    rcF.fetchMessageAttachment = async (_db, { attachmentId }) => { rcF.calls.push(['x', attachmentId]); return file(Buffer.from('vm'), 'audio/mpeg'); };
+    await call({ ageDays: 4 });                                                            // a Quo call: recording + voicemail
+    const out = await runMedia();
+    expect(out.rc_used).toBe(1);                                                          // ONE Medium call for MMS + voicemail
+    expect(out.quo_used).toBe(1);                                                         // ONE Quo call for recording + voicemail
+    expect(rcF.calls.map(c => c[1])).toEqual(['1427551891019']);                          // the older (voicemail) went first
+    expect(out.stopped).toMatchObject({ ringcentral: 'budget', quo: 'budget' });
+  });
+
   // ── T — the no-cliff terminal rule ──────────────────────────────────────
   test('T1 no-cliff kinds: stuck → failed after the plateau; no_line → failed 30 d after created', async () => {
     Object.assign(media.limits, { maxAttempts: 1, noCliffDays: 0.004 });   // plateau = 1 step of 6 h
@@ -462,7 +479,7 @@ maybe('comms archive S1b on real MySQL', () => {
 
     // no_line (the group-MMS line shape): pending uncharged, then failed by created_at age
     for (const t of ['comms_media', 'phone_event_log', 'log', 'system_alerts']) await q(`TRUNCATE TABLE \`${t}\``);
-    Object.assign(media.limits, ORIG.media, { sleep: async () => {}, rcMediumSpacingMs: 0, quoSpacingMs: 0 });
+    Object.assign(media.limits, ORIG.media, { sleep: async () => {}, rcMediumSpacingMs: 0, quoSpacingMs: 0, captureVoicemails: false });
     await sms({ provider: 'quo', line: '1248559240012489654574', logData: { attachments: [{ url: 'https://share.quo.com/g' }] } });
     out = await runMedia();
     expect(out.no_line).toBe(1);

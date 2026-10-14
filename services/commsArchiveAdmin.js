@@ -88,11 +88,19 @@ async function _row(db, id) {
   return row || null;
 }
 
-/** Restrict / unrestrict: flips the flag (any state). Reversible. */
+/**
+ * Restrict / unrestrict: flips the flag (any state). Reversible. Cascades to
+ * the item's derived children (stt_raw rows whose source is this row — a
+ * voicemail's vendor transcript), so derived text is never broader than its
+ * audio.
+ */
 async function setRestricted(db, id, on) {
   const row = await _row(db, id);
   if (!row) throw httpError(404, 'Archive item not found');
-  await db.query('UPDATE comms_media SET restricted = ? WHERE id = ?', [on ? 1 : 0, id]);
+  await db.query(
+    `UPDATE comms_media SET restricted = ?
+      WHERE id = ? OR (source_table = 'comms_media' AND source_id = ?)`,
+    [on ? 1 : 0, id, id]);
   return { id: row.id, state: row.state, restricted: on ? 1 : 0 };
 }
 
@@ -104,9 +112,7 @@ function _laneLock(row) {
 async function _objectsOf(row) {
   if (row.object_name) return [row.object_name];
   if (!row.part || !row.captured_at) return [];
-  const args = { capturedAt: row.captured_at, sourceId: row.source_id, part: row.part };
-  const prefix = row.kind === 'mms_file' ? archive.mmsPrefix(args) : archive.recordingPrefix(args);
-  return (await archive.findByPrefix(prefix)).map(f => f.name);
+  return (await archive.findByPrefix(archive.prefixFor(row))).map(f => f.name);
 }
 
 /**
@@ -114,6 +120,30 @@ async function _objectsOf(row) {
  * report. S2/S3 append theirs here.
  */
 const PURGE_PARTS = [
+  {
+    // Derived children first (stt_raw: a voicemail's vendor transcript —
+    // R10): their objects are deleted and the child rows tombstoned with the
+    // same who/why, so no derived text outlives its audio.
+    name: 'derived_children',
+    async run(db, row, ctx) {
+      const [kids] = await db.query(
+        `SELECT id, kind, provider, source_id, part, captured_at, state, object_name
+           FROM comms_media
+          WHERE source_table = 'comms_media' AND source_id = ? AND state <> 'purged'`, [row.id]);
+      let deleted = 0;
+      for (const k of kids) {
+        const names = await _objectsOf(k);
+        for (const n of names) await archive.deleteObject(n);
+        deleted += names.length;
+        await db.query(
+          `UPDATE comms_media
+              SET state = 'purged', purged_at = UTC_TIMESTAMP(), purged_by = ?, purge_reason = ?, next_attempt_at = NULL
+            WHERE id = ? AND state <> 'purged'`,
+          [ctx.userId, common.clamp(`with #${row.id}: ${ctx.reason}`, 500), k.id]);
+      }
+      return { rows: kids.length, deleted };
+    },
+  },
   {
     name: 'bucket_objects',
     async run(db, row) {
@@ -141,9 +171,15 @@ async function purge(db, id, { userId, reason }) {
     const parts = {};
     for (const p of PURGE_PARTS) {
       try {
-        parts[p.name] = await p.run(db, row);
+        parts[p.name] = await p.run(db, row, { userId, reason });
       } catch (err) {
-        const e = httpError(502, `Purge step ${p.name} failed — nothing marked purged; retry`);
+        // Say exactly what is already done: earlier steps (derived children)
+        // are purged for good; the item itself is not marked purged yet.
+        const done = Object.entries(parts)
+          .filter(([, v]) => v && ((v.rows || 0) > 0 || (v.deleted || 0) > 0))
+          .map(([k, v]) => `${k}${v.rows != null ? ` (${v.rows} row(s))` : ''}`).join(', ');
+        const e = httpError(502, `Purge step ${p.name} failed — ` +
+          (done ? `already purged: ${done}; ` : '') + 'the item itself is NOT marked purged; retry');
         e.cause = err;
         throw e;
       }

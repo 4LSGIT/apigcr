@@ -412,3 +412,40 @@ describe('S1b review S5 — signed-download redirects', () => {
     await expect(quo.fetchSigned('https://share.quo.com/loop')).rejects.toThrow(/too many redirects/);
   });
 });
+
+describe('S1c adapters — voicemails', () => {
+  const realFetch = global.fetch;
+  afterEach(() => { global.fetch = realFetch; });
+  const quo = require('../services/adapters/phone/quo');
+  const resp = (status, body, headers = {}) => new Response(body, { status, headers });
+
+  test('RC listVoicemails: platform message-store, messageType=VoiceMail, dateFrom/page, unparseable 200 = undefined', async () => {
+    buildHeadersForCredential.mockResolvedValue({ Authorization: 'Bearer t' });
+    let url;
+    global.fetch = jest.fn(async (u) => { url = u; return resp(200, JSON.stringify({ records: [], paging: { page: 2, totalPages: 2 } }), { 'x-rate-limit-group': 'light' }); });
+    const r = await rc.listVoicemails({}, { credentialId: 9, dateFrom: new Date('2016-01-01T00:00:00Z'), page: 2 });
+    const u = new URL(url);
+    expect(u.origin + u.pathname).toBe('https://platform.ringcentral.com/restapi/v1.0/account/~/extension/~/message-store');
+    expect(Object.fromEntries(u.searchParams)).toEqual({ messageType: 'VoiceMail', dateFrom: '2016-01-01T00:00:00.000Z', perPage: '100', page: '2' });
+    expect(r).toMatchObject({ status: 200, json: { records: [] }, rate: { group: 'light' } });
+    global.fetch = jest.fn(async () => resp(200, 'not json'));
+    expect((await rc.listVoicemails({}, { credentialId: 9, dateFrom: new Date() })).json).toBeUndefined();
+  });
+
+  test('Quo getCallVoicemail: /v1/call-voicemails/<callId> with the credential header', async () => {
+    buildHeadersForCredential.mockResolvedValue({ Authorization: 'quo-key' });
+    let seen;
+    global.fetch = jest.fn(async (u, init) => { seen = [u, init.headers.Authorization]; return resp(404, '{"code":"1200404"}'); });
+    const r = await quo.getCallVoicemail({}, { credentialId: 10, callId: 'AC77' });
+    expect(seen).toEqual(['https://api.openphone.com/v1/call-voicemails/AC77', 'quo-key']);
+    expect(r).toMatchObject({ status: 404, json: null });
+  });
+
+  test('vmPrefix / sttPrefix / prefixFor by kind', () => {
+    expect(archive.vmPrefix({ capturedAt: '2024-09-15T19:33:18Z', sourceId: '2441801165019', part: '2441801165019' }))
+      .toBe('phone/vm/2024/09/2441801165019-2441801165019.');
+    expect(archive.sttPrefix({ capturedAt: '2026-10-14T00:00:00Z', parentId: 42 })).toBe('phone/stt/2026/10/42.');
+    expect(archive.prefixFor({ kind: 'voicemail', captured_at: '2026-01-02T00:00:00Z', source_id: 5, part: 'VMx' })).toBe('phone/vm/2026/01/5-VMx.');
+    expect(archive.prefixFor({ kind: 'stt_raw', captured_at: '2026-01-02T00:00:00Z', source_id: 5, part: 'quo' })).toBe('phone/stt/2026/01/5.');
+  });
+});
