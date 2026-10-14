@@ -524,6 +524,10 @@ Small; after SEC-2 lands (sqlGuard + readonlyKeys files overlap).
   INFRA_GCP §10 runbook pattern); capability scopes in the api-keys admin
   UI; retire Q3 per scoped key.
 - **B3** base62 mint format + UI copy ("session key" rename lands here).
+- **B6** (shipped 2026-10-15, post-close addendum): machine-key scope
+  picker (server-fed; live router walk for route families, bare /api
+  never offered) + optional api_keys.expires_at (NULL = never; cache
+  re-checks expiry every hit; mint-only, junk TTL refused).
 - **B4** Secrets: hooks.auth_config + credentials.config secret values
   encrypted at rest (code first, then the data script — §5.5);
   pre-commit secret scan. (Hygiene sitting rides whenever Fred has 10
