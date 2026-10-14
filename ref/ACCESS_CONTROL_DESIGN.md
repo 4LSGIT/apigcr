@@ -234,7 +234,9 @@ behavior for form_dev/attorney and is acceptable at this user count.
 ### 2.6 Entitlements (S3b — owned here, as transferred)
 Ratified constraints honored: firm/role/user levels; **deny wins**; server
 resolves a denied set; **visibility-only in v2** with a route-enforcement
-seam for later; `settings` and `helpSupport` never deniable.
+seam for later; `moreSettings` and `helpSupport` never deniable
+(registry keys per public/js/featureRegistry.js — ui-custom S1 prefixes
+grid items more*/admin*; Settings moved into the More grid 2026-10-11).
 
 - Storage: new table `entitlement_denies (id, scope ENUM('firm','role','user'),
   scope_ref varchar — NULL for firm / role name / users.user, item_key
@@ -242,7 +244,7 @@ seam for later; `settings` and `helpSupport` never deniable.
   "default allow" fall out of the storage shape; no allow/deny precedence
   logic to get wrong.
 - Resolution (server): denied(user) = denies(firm) ∪ denies(user's roles)
-  ∪ denies(user), minus the undeniable set (`settings`, `helpSupport` —
+  ∪ denies(user), minus the undeniable set (`moreSettings`, `helpSupport` —
   enforced at write AND at resolve, belt-and-braces). Delivered to the
   shell as `denied: [item_key...]` in the firmData/ui-config payload the
   launcher already fetches.
@@ -254,6 +256,7 @@ seam for later; `settings` and `helpSupport` never deniable.
   route-family prefix list; a v3 middleware maps denied item → 403 on its
   route family. v2 ships the column-less version (visibility only); no
   route behavior changes.
+- Registry-external chrome: the shell header greeting (index.html, .hdr-greeting) opens tabSettings directly — not a registry item, so a tile deny would not hide it. Irrelevant while Settings is undeniable; the resolver slice records it as the one launcher route outside the registry.
 - Admin surface: entitlement editing = `firm.settings` capability, inside
   the ONE firm-config surface (§3).
 
@@ -298,7 +301,7 @@ never accept the new enum beyond `startsWith('authorized')`.
 4. **Launcher resolution order: registry → firm → role → user.** The role
    step is additive later (ui-custom S3 ships firm+user with the role
    column sentinel-reserved); entitlement denies overlay the result and
-   deny wins; `settings`/`helpSupport` undeniable.
+   deny wins; `moreSettings`/`helpSupport` undeniable.
 5. Entitlement storage/resolve is owned by THIS arc (§2.6); ui-custom
    consumes `denied[]`; settings arc consumes the gate (§3.2–3).
 6. Machine callers (x-api-key) bypass role gates in v2 (status quo,
