@@ -14,7 +14,7 @@ app at **More → Manuals**.
 | 5 | [Subsystems](05-Subsystems/) | Smaller self-contained **staff** tools behind the More menu — reports, views, documents, checklists, and the rest. |
 | 6 | [Client-Facing](06-Client-Facing/) | Everything a **client** touches — the portal, booking pages, manage links, document requests, landing pages. |
 | 7 | [E-Signature](07-ESign/) | Templates, placements, sending, tracking and filing signed documents. |
-| 8 | [Admin Tools](08-Admin-Tools/) | Super-user only: DB console, readonly keys, API tester, system alerts, API keys. |
+| 8 | [Admin Tools](08-Admin-Tools/) | Super-user only: DB console, session keys, API tester, system alerts, API keys. |
 
 ## How to read it
 

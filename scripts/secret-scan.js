@@ -9,8 +9,11 @@
  * WHAT IT REFUSES
  *   App keys — the real minted shapes only:
  *     yci_ / yck_ / ycro_  + ≥32 hex chars          (today's format: 64 hex)
- *     yci_ / yck_ / ycro_  + ≥22 base62 chars with a digit, an upper- and a
- *                            lower-case letter       (the B3 format)
+ *     yci_ / yck_ / ycro_  + EXACTLY 22 base62 chars, then no further
+ *                            alphanumeric            (the B3 format; ycro_'s
+ *                            "_<stamp>" suffix may follow). No character-class
+ *                            requirement: a random 22-char body sometimes lacks
+ *                            a digit or a case, and the prefix is the signal.
  *   Common provider secrets: private-key blocks, AWS access key ids, Anthropic
  *   (sk-ant-…) and OpenAI (sk-…/sk-proj-…) keys, Google API keys (AIza…),
  *   GitHub tokens (ghp_/gho_/ghu_/ghs_/ghr_, github_pat_), Slack tokens
@@ -18,8 +21,8 @@
  *
  * FIXTURE DISCRIMINATION (deliberate): tests mint key-SHAPED strings —
  * 'yck_not_a_real_key', 'yci_test_internal', 'ycro_legacy'. Those are words
- * (underscores, no long hex/base62 run), so the BODY-SHAPE rule above passes
- * them. A fixture that genuinely needs a realistic-looking key opts out per
+ * (underscores break the run; never 22 alphanumerics then a stop, never 32+
+ * hex), so the BODY-SHAPE rules above pass them. A fixture that genuinely needs a realistic-looking key opts out per
  * line with the marker  secret-scan: allow  (in a comment on that line).
  *
  * OVERRIDE: SKIP_SECRET_SCAN=1 git commit … — warns and skips the whole scan.
@@ -45,7 +48,7 @@ const SKIP_FILES = [
 
 const RULES = [
   { name: 'YisraCase key (hex body)', re: /\b(?:yci|yck|ycro)_[0-9a-f]{32,}/ },
-  { name: 'YisraCase key (base62 body)', re: /\b(?:yci|yck|ycro)_(?=[A-Za-z0-9]*[0-9])(?=[A-Za-z0-9]*[A-Z])(?=[A-Za-z0-9]*[a-z])[A-Za-z0-9]{22,}\b/ },
+  { name: 'YisraCase key (base62 body)', re: /\b(?:yci|yck|ycro)_[A-Za-z0-9]{22}(?![A-Za-z0-9])/ },
   { name: 'private key block', re: /-----BEGIN (?:[A-Z]+ )?PRIVATE KEY-----/ },
   { name: 'AWS access key id', re: /\b(?:AKIA|ASIA)[0-9A-Z]{16}\b/ },
   { name: 'Anthropic API key', re: /\bsk-ant-[A-Za-z0-9_-]{20,}/ },

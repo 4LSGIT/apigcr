@@ -984,8 +984,11 @@ URI must exactly match `${APP_URL}/auth/oauth/callback`.
 
 ## 22. AI SESSION DB ACCESS (READONLY + SCRATCH)
 
-Header `X-Readonly-Api-Key: ycro_<64hex>` (SU-managed, max TTL 3 days,
-shown once). Every call logs to `readonly_query_log` (full SQL + params).
+A **session key** (the concept's name since access-control B3; formerly
+"readonly key" — prefix, header, table and routes unchanged): header
+`X-Readonly-Api-Key: ycro_<22 base62>_<expiry stamp>` (keys minted before B3:
+64 hex; identity is only `ycro_<body>`, the stamp an editable note) —
+SU-managed, max TTL 3 days, shown once. Every call logs to `readonly_query_log` (full SQL + params).
 
 **Scopes (access-control B1):** a key reaches only the surfaces in its
 `readonly_api_keys.scopes` — `sql.ro`, `scratch`, `alert`, `temp.clio`,

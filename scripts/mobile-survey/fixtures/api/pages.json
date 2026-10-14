@@ -1,0 +1,15 @@
+{
+ "status": "success",
+ "pages": [
+  {
+   "id": 4,
+   "slug": "spring-bankruptcy-consult",
+   "host": null,
+   "path": null,
+   "status": "draft",
+   "hook_slug": null,
+   "meta_title": "Spring consult",
+   "updated_at": "{{TODAY}}T07:00:00Z"
+  }
+ ]
+}

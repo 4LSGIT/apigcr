@@ -269,7 +269,7 @@ window.FEATURE_REGISTRY = {
 
   // ── Admin grid ────────────────────────────────────────────────────────
   adminReadonlyKeys: {
-    label: 'Readonly Keys (SU)', icon: 'eye', target: 'readonlyKeysDiv', group: 'admin',
+    label: 'Session Keys (SU)', icon: 'eye', target: 'readonlyKeysDiv', group: 'admin',
     hoverAnim: 'fa-fade', styleVars: '--fa-animation-duration:1.2s',
   },
   adminApiKeys: {

@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Readonly Keys</title>
+<title>Session Keys</title>
 <link rel="stylesheet" href="/theme.css">
 <script src="/themeSync.js"></script>
 <style>
@@ -76,13 +76,21 @@
   .status-rejected_file_exfil,
   .status-rejected_empty { color: var(--danger); }
   details { margin-top: 8px; }
+  /* Scopes picker (B3). Wraps at phone width; each choice keeps its box and text together. */
+  .scope-row { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; margin-top: 8px; }
+  .scope-row label { display: inline-flex; gap: 4px; align-items: center; cursor: pointer; white-space: nowrap; }
+  .scope-cell { font-size: 11px; white-space: nowrap; }
   summary { cursor: pointer; color: var(--text-muted); font-size: 11px; }
 </style>
 </head>
 <body>
 
 <div class="panel">
-  <h2>Create new key</h2>
+  <h2>Create a session key</h2>
+  <div class="muted" style="margin-bottom:8px;">
+    A session key lets a script or an AI session reach only the surfaces in its scopes.
+    The key starts <code>ycro_</code>; it is shown once, here, and never stored.
+  </div>
   <div class="row">
     <input id="newLabel" placeholder="Label (e.g. 'Claude debug 2026-05-24')" style="flex:1;min-width:200px;">
     <input id="newTtl"   placeholder="TTL minutes" type="number" min="1" style="width:120px;">
@@ -90,12 +98,17 @@
     <button onclick="createKey()">Create</button>
     <span class="muted" id="ttlHint">Default 1440 min (1 day). Max <span id="maxDays">3</span> days.</span>
   </div>
+  <div class="scope-row" id="scopePicker"><span class="muted">Scopes:</span></div>
+  <div class="warn-text" id="tempWarn" style="margin-top:4px;">
+    temp.* scopes call an external provider (Clio, Dropbox, RingCentral, Zoho Sign) with the firm's
+    credentials — grant one only for the task at hand.
+  </div>
   <div id="newKeyArea"></div>
 </div>
 
 <div class="panel">
   <h2>
-    Existing keys
+    Existing session keys
     <button class="ghost" style="float:right;font-size:11px;padding:3px 8px;" onclick="loadKeys()">Refresh</button>
     <label style="float:right;font-size:11px;margin-right:8px;color:var(--text-muted);">
       <input type="checkbox" id="activeOnly" onchange="loadKeys()" checked> active only
@@ -106,13 +119,13 @@
   <table>
     <thead>
       <tr>
-        <th>ID</th><th>Prefix</th><th>Label</th><th>Created by</th>
+        <th>ID</th><th>Prefix</th><th>Label</th><th>Scopes</th><th>Created by</th>
         <th>Created</th><th>Expires</th><th>Last used</th><th>Use #</th>
         <th>Status</th><th></th>
       </tr>
     </thead>
     <tbody id="keysTbody">
-      <tr><td colspan="10" class="muted" style="text-align:center;padding:20px;">Loading…</td></tr>
+      <tr><td colspan="11" class="muted" style="text-align:center;padding:20px;">Loading…</td></tr>
     </tbody>
   </table>
   </div>
@@ -162,6 +175,26 @@
     return d.toLocaleString();
   }
 
+  // Scopes picker — built from the server's vocabulary on first load
+  // (routes/api.readonlyKeys GET: scope_vocabulary + default_scopes, i.e.
+  // lib/capabilities KEY_SCOPES), so the page carries no copy of its own.
+  let pickerBuilt = false;
+  function buildPicker(vocab, defaults) {
+    if (pickerBuilt || !Array.isArray(vocab)) return;
+    pickerBuilt = true;
+    const row = document.getElementById("scopePicker");
+    row.insertAdjacentHTML("beforeend", vocab.map(v =>
+      `<label title="${esc(v.desc)}"><input type="checkbox" class="scope-box" value="${esc(v.name)}"${
+        (defaults || []).includes(v.name) ? " checked" : ""}> ${esc(v.name)}</label>`).join(""));
+  }
+  function pickedScopes() {
+    return [...document.querySelectorAll(".scope-box")].filter(b => b.checked).map(b => b.value);
+  }
+  function scopesCell(scopes) {
+    if (scopes == null) return '<span class="muted">all (legacy)</span>';
+    return esc((Array.isArray(scopes) ? scopes : []).join(", ") || "none");
+  }
+
   function keyStatus(row) {
     if (row.revoked_at) return { cls: "revoked", label: "revoked" };
     if (new Date(row.expires_at).getTime() < Date.now()) return { cls: "expired", label: "expired" };
@@ -170,17 +203,19 @@
 
   async function loadKeys() {
     const tbody = document.getElementById("keysTbody");
-    tbody.innerHTML = `<tr><td colspan="10" class="muted" style="text-align:center;padding:20px;">Loading…</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="11" class="muted" style="text-align:center;padding:20px;">Loading…</td></tr>`;
     try {
       const activeOnly = document.getElementById("activeOnly").checked ? 1 : 0;
       const data = await P.apiSend(`/api/readonly-keys?activeOnly=${activeOnly}`, "GET");
+
+      buildPicker(data.scope_vocabulary, data.default_scopes);
 
       if (data.max_ttl_days) {
         document.getElementById("maxDays").textContent = data.max_ttl_days;
       }
 
       if (!data.keys || !data.keys.length) {
-        tbody.innerHTML = `<tr><td colspan="10" class="muted" style="text-align:center;padding:20px;">No keys.</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="11" class="muted" style="text-align:center;padding:20px;">No keys.</td></tr>`;
         return;
       }
       tbody.innerHTML = data.keys.map(row => {
@@ -191,6 +226,7 @@
             <td>${row.id}</td>
             <td><code>${esc(row.key_prefix)}…</code></td>
             <td>${esc(row.label)}</td>
+            <td class="scope-cell">${scopesCell(row.scopes)}</td>
             <td>${esc(row.created_by_username || row.created_by)}</td>
             <td>${fmtDate(row.created_at)}</td>
             <td>${fmtDate(row.expires_at)}</td>
@@ -205,7 +241,7 @@
         `;
       }).join("");
     } catch (err) {
-      tbody.innerHTML = `<tr><td colspan="10" style="color:var(--danger);padding:20px;">Error: ${esc(err.message)}</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="11" style="color:var(--danger);padding:20px;">Error: ${esc(err.message)}</td></tr>`;
     }
   }
 
@@ -214,9 +250,12 @@
     const ttl   = document.getElementById("newTtl").value.trim();
     const ipAllow = document.getElementById("newIpAllow").value.trim();
     if (!label) { alert("Label required"); return; }
+    const scopes = pickedScopes();
+    if (pickerBuilt && !scopes.length) { alert("Pick at least one scope — a key with none can do nothing."); return; }
 
     try {
       const body = { label };
+      if (pickerBuilt) body.scopes = scopes;
       if (ttl) body.ttlMinutes = parseInt(ttl, 10);
       if (ipAllow) body.ipAllowlist = ipAllow;
       const data = await P.apiSend("/api/readonly-keys", "POST", body);
@@ -225,13 +264,13 @@
       const area = document.getElementById("newKeyArea");
       area.innerHTML = `
         <div class="key-display">
-          <div style="font-weight:600;margin-bottom:4px;">Key created — copy this now, it won't be shown again.</div>
+          <div style="font-weight:600;margin-bottom:4px;">Session key created — copy this now, it won't be shown again.</div>
           <div class="key-value" id="rawKeyValue">${esc(data.key)}</div>
           <div class="row">
             <button onclick="copyKey()">Copy</button>
             <button class="ghost" onclick="document.getElementById('newKeyArea').innerHTML=''">Dismiss</button>
             <span class="warn-text">
-              Label: ${esc(data.label)} · Expires: ${fmtDate(data.expiresAt)} · TTL ${data.ttlMinutes} min
+              Label: ${esc(data.label)} · Scopes: ${esc((data.scopes || []).join(", "))} · Expires: ${fmtDate(data.expiresAt)} · TTL ${data.ttlMinutes} min
             </span>
           </div>
         </div>
@@ -255,7 +294,7 @@
   }
 
   async function revokeKey(id) {
-    if (!confirm(`Revoke key #${id}? This is immediate and cannot be undone.`)) return;
+    if (!confirm(`Revoke session key #${id}? This is immediate and cannot be undone.`)) return;
     try {
       await P.apiSend(`/api/readonly-keys/${id}`, "DELETE");
       loadKeys();

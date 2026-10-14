@@ -94,5 +94,5 @@ A missing or non-numeric cap counts as 0: nothing is sent.
   timed out and AssemblyAI's copy was never found, nothing has an id to delete
   it by, and AssemblyAI's 30-day limit removes it. Spending records are kept:
   they hold no call content.
-- Transcripts can't be read through the read-only SQL keys (Admin → Readonly Keys);
+- Transcripts can't be read through the read-only SQL path session keys use (Admin → Session Keys);
   they appear only through the app's access-checked screens.

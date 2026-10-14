@@ -9,8 +9,9 @@
 - **The internal key** — the app's credential for calling itself. One button:
   rotate.
 
-> Not to be confused with [Readonly Keys](02-readonly-keys.md), which are
-> short-lived SQL-read credentials. These are full API credentials.
+> Not to be confused with [Session Keys](02-readonly-keys.md), which are
+> short-lived, scoped credentials for scripts and AI sessions. These are full
+> API credentials.
 
 ### Minting a key
 

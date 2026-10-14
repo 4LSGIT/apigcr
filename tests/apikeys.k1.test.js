@@ -66,11 +66,11 @@ test('hashKey is deterministic sha256 hex', () => {
   expect(h).toHaveLength(64);
 });
 
-test('generateKey: yck_ prefix + 64 hex, unique', () => {
+test('generateKey: yck_ prefix + 22 base62 (B3), unique', () => {
   const apiKeys = require('../lib/apiKeys');
   const k1 = apiKeys.generateKey();
   const k2 = apiKeys.generateKey();
-  expect(k1).toMatch(/^yck_[0-9a-f]{64}$/);
+  expect(k1).toMatch(/^yck_[0-9A-Za-z]{22}$/);
   expect(k1).not.toBe(k2);
 });
 
@@ -143,7 +143,7 @@ test('createKey stores hash+prefix, returns raw once', async () => {
   const apiKeys = require('../lib/apiKeys');
   const db = fakeDb();
   const out = await apiKeys.createKey(db, 'pabbly', 42);
-  expect(out.raw).toMatch(/^yck_[0-9a-f]{64}$/);
+  expect(out.raw).toMatch(/^yck_[0-9A-Za-z]{22}$/);
   expect(out.id).toBe(77);
   const [label, hash, prefix, by] = db.inserts[0];
   expect(label).toBe('pabbly');

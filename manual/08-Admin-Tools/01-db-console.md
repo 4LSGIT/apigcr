@@ -79,6 +79,6 @@ off restores whatever you had set.
 ## For routine, safer reads
 
 If you just need to read data (or hand read access to a script or an AI tool),
-prefer a **[readonly key](02-readonly-keys.md)** against `/api/readonly/sql` —
+prefer a **[session key](02-readonly-keys.md)** against `/api/readonly/sql` —
 that path runs as a SELECT-only database user and can't write at all, by
 construction.

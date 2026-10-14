@@ -472,6 +472,17 @@ async function openEditor(id) {
   E('f-slug').focus();
 }
 
+// Mirror of the server gate on POST /api/pages/:id/create-hook (access-control
+// B5: the automations.manage capability — roles su / it / admin). Cosmetic:
+// the server enforces; this hides a button that would only answer 403.
+// currentUser.roles is the users.roles SET as a csv string.
+function mayManageHooks() {
+  try {
+    const roles = String(window.top.firmData?.currentUser?.roles || '').split(',');
+    return roles.includes('su') || roles.includes('it') || roles.includes('admin');
+  } catch (_) { return false; }
+}
+
 function renderHookRow(page) {
   const row = E('hook-row');
   if (!page) {
@@ -484,6 +495,11 @@ function renderHookRow(page) {
       <span class="muted">Submissions are forwarded to this hook. Configure its targets in
         <b>More Features &rarr; Automations &rarr; Hooks</b>.</span>
     `;
+    return;
+  }
+  if (!mayManageHooks()) {
+    row.innerHTML = `<span class="muted">No hook yet — submissions will be logged to console and discarded.
+      Creating one needs the admin, IT or super-user role.</span>`;
     return;
   }
   row.innerHTML = `

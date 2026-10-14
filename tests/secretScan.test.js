@@ -44,10 +44,21 @@ describe('real secrets are refused', () => {
     expect(rulesHit(`yck_${hex(32)}`)).toEqual(['YisraCase key (hex body)']);   // the floor
   });
 
-  test('YisraCase keys in the B3 base62 shape', () => {
-    let body;
-    do { body = base62(22); } while (!(/[0-9]/.test(body) && /[A-Z]/.test(body) && /[a-z]/.test(body)));
-    expect(rulesHit(`key=yck_${body}`)).toEqual(['YisraCase key (base62 body)']);
+  test('B3 mint shape: 1000 REAL mints per prefix all trip (yci_, yck_, ycro_ + stamp)', () => {
+    const { generateKey, randomBase62 } = require('../lib/apiKeys');
+    const missed = [];
+    for (let i = 0; i < 1000; i++) {
+      for (const k of [generateKey('yci_'), generateKey('yck_'), `ycro_${randomBase62(22)}_20261231T0000Z`]) {
+        if (!rulesHit(`x = '${k}';`).includes('YisraCase key (base62 body)')) missed.push(k);
+      }
+    }
+    expect(missed).toEqual([]);
+  });
+
+  test('B3 shape with no class requirement: one-case and digit-less bodies still trip', () => {
+    for (const body of ['A'.repeat(22), 'abcdefghijklmnopqrstuv', '0123456789012345678901', 'ABCDEFGHIJabcdefghijKL']) {
+      expect(rulesHit(`yck_${body}`)).toEqual(['YisraCase key (base62 body)']);
+    }
   });
 
   test('every provider rule fires on a realistic sample', () => {
@@ -83,7 +94,8 @@ describe('fixtures pass', () => {
 
   test('named fixture words, and near-misses', () => {
     for (const w of ['yck_not_a_real_key', 'yci_test_internal_key', 'ycro_legacy', 'ycro_scoped_20991231T0000Z',
-                     'yci_SUPER_SECRET', `yck_${hex(30)}`, 'yck_alllowercaseletterslong', 'yck_ALLUPPERCASE1234567890']) {
+                     'yci_SUPER_SECRET', `yck_${hex(30)}`, 'yck_alllowercaseletterslong',
+                     'yck_' + 'A'.repeat(21), 'yck_' + 'A'.repeat(23)]) {   // 21 / 23 alnum: not the 22-char mint
       expect({ w, hits: scanLine(w) }).toEqual({ w, hits: [] });
     }
   });

@@ -86,7 +86,7 @@ they live behind **More Features**, and the section READMEs refer to that as
 - **Client-facing managers** — Portal Manager, Booking Manager, Availability
   Manager, Landing Pages. Covered in [06-Client-Facing](../06-Client-Facing/).
 - **Super-user tools**, marked **(SU)** and invisible to everyone else — DB
-  Console, Readonly Keys, API Tester, API Keys, System Alerts, Connections,
+  Console, Session Keys, API Tester, API Keys, System Alerts, Connections,
   Users. Covered in [08-Admin-Tools](../08-Admin-Tools/) and
   [04-Integrations](../04-Integrations/).
 

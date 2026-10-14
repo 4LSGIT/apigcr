@@ -256,6 +256,11 @@ async function walk(page, W, record) {
         await fr.evaluate(() => openForm(3)); await sleep(1000);
         await record('panel:usersDiv:edit-form', await measure(page, fr), await shot('panel_users_edit_form'));
       }
+      // Landing Pages → editor (the hook row: create-hook button / role sentence, B3), fixtures/api/pages*
+      if (id === 'landingPagesDiv' && fr) {
+        await fr.evaluate(() => openEditor(4)); await sleep(1000);
+        await record('panel:landingPagesDiv:editor', await measure(page, fr), await shot('panel_landing_editor'));
+      }
     }
   }
 

@@ -54,7 +54,7 @@ test('first rotation: env key is displaced into the previous slot', async () => 
   const out = await _rotateInternal(db);
   expect(out.hadPrevious).toBe(true);
   const [next, displaced] = db.updates[0];
-  expect(next).toMatch(/^yci_[0-9a-f]{64}$/);
+  expect(next).toMatch(/^yci_[0-9A-Za-z]{22}$/);
   expect(displaced).toBe('env-legacy-key');
 });
 
@@ -65,7 +65,7 @@ test('subsequent rotation: DB current becomes previous', async () => {
   await _rotateInternal(db);
   const [next, displaced] = db.updates[0];
   expect(displaced).toBe('yci_' + 'a'.repeat(64));
-  expect(next).toMatch(/^yci_[0-9a-f]{64}$/);
+  expect(next).toMatch(/^yci_[0-9A-Za-z]{22}$/);
   expect(next).not.toBe(displaced);
 });
 

@@ -777,6 +777,8 @@ scripts/mobile-survey/fixtures/api/mail/threads/t1%40example-firm.test.json
 scripts/mobile-survey/fixtures/api/mail/views.json
 scripts/mobile-survey/fixtures/api/mail/views/counts.json
 scripts/mobile-survey/fixtures/api/mailboxes.json
+scripts/mobile-survey/fixtures/api/pages.json
+scripts/mobile-survey/fixtures/api/pages/4.json
 scripts/mobile-survey/fixtures/api/phone-lines/1/calls.json
 scripts/mobile-survey/fixtures/api/phone-lines/1/conversations.json
 scripts/mobile-survey/fixtures/api/phone-lines/1/conversations/5555550198.json
@@ -787,6 +789,7 @@ scripts/mobile-survey/fixtures/api/phone-lines/all/calls.json
 scripts/mobile-survey/fixtures/api/phone-lines/all/conversations.json
 scripts/mobile-survey/fixtures/api/phone-lines/all/conversations/5555550199.json
 scripts/mobile-survey/fixtures/api/phone-lines/readable.json
+scripts/mobile-survey/fixtures/api/readonly-keys.json
 scripts/mobile-survey/fixtures/api/tasks.json
 scripts/mobile-survey/fixtures/api/users.json
 scripts/mobile-survey/fixtures/firm-data.json
@@ -1173,6 +1176,7 @@ tests/internalFn.cancelCaseAppts.test.js
 tests/internalFn.enrollSkipIfEnrolled.test.js
 tests/internal_functions.meta.test.js
 tests/jest.setup.js
+tests/keyFormat.test.js
 tests/keyScopes.mysql.test.js
 tests/keyScopes.test.js
 tests/likeEscapeSites.test.js
@@ -1273,6 +1277,7 @@ tests/sequences.editor.roundtrip.test.js
 tests/sequences.ensureDraft.test.js
 tests/sequences.recover.test.js
 tests/sequences.routeOrder.test.js
+tests/sessionKeysUi.test.js
 tests/smtpAdapter.deliveryInfo.test.js
 tests/sqlGuard.secretTables.test.js
 tests/ssnModifiers.test.js

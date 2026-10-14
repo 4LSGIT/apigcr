@@ -1,12 +1,21 @@
 // routes/api.readonlyKeys.js
 //
-// Super-user-only management of readonly API keys. All endpoints gated
-// via superuserOnlyFor("readonlyKeys") — JWT-authed humans only, no
-// API-key bypass.
+// Super-user-only management of SESSION KEYS — the ycro_-prefixed keys an
+// AI session or script uses (ACCESS_CONTROL_DESIGN §5.3: "readonly key" was
+// a misnomer — they reach read-only SQL, scratch, IT alerts and, by grant,
+// the temp.* provider proxies). The prefix, the table (readonly_api_keys),
+// the routes and the tool tag keep their old names; only the concept and the
+// UI copy changed. All endpoints gated via superuserOnlyFor("readonlyKeys") —
+// JWT-authed humans only, no API-key bypass.
+//
+// FORMAT (B3): "ycro_" + 22 base62 chars (lib/apiKeys randomBase62, ~131
+// bits) + "_" + an expiry stamp. Keys minted before B3 carry 64 hex chars and
+// keep working: identity is the hash of whatever was minted.
 //
 // Endpoints:
 //   POST   /api/readonly-keys          body { label, ttlMinutes?, ipAllowlist?, scopes? }
-//   GET    /api/readonly-keys          ?activeOnly=1
+//   GET    /api/readonly-keys          ?activeOnly=1 — also returns the scope
+//                                      vocabulary + the mint default (the UI picker)
 //   DELETE /api/readonly-keys/:id      revoke (sets revoked_at)
 //   GET    /api/readonly-keys/:id/log  ?limit=N&offset=N
 //
@@ -24,11 +33,11 @@
 // Plaintext is returned ONCE on create and never again.
 
 const express = require("express");
-const crypto  = require("crypto");
 const router  = express.Router();
 const { superuserOnlyFor, auditAdminAction } = require("../lib/auth.superuser");
 const { hashKey } = require("../lib/auth.readonly");
-const { normalizeKeyScopes } = require("../lib/capabilities");
+const { normalizeKeyScopes, KEY_SCOPES } = require("../lib/capabilities");
+const { randomBase62, KEY_BODY_LEN } = require("../lib/apiKeys");
 
 const DEFAULT_SCOPES = Object.freeze(["sql.ro", "scratch", "alert"]);
 
@@ -44,7 +53,7 @@ const ipOf = (req) =>
 // context — can tell whether it's dead without spending a request to find out.
 //
 // The stamp sits AFTER the second underscore, outside the key's hashed identity
-// (only "ycro_<hex>" is hashed — see canonicalKey in lib/auth.readonly). So the whole
+// (only "ycro_<body>" is hashed — see canonicalKey in lib/auth.readonly). So the whole
 // suffix is advisory and freely editable: a holder may rewrite the stamp, replace it
 // with a human note, or drop it entirely and the key still authenticates. Forging the
 // stamp later grants nothing — expiry is always enforced from the DB's expires_at, so
@@ -79,7 +88,10 @@ router.post("/api/readonly-keys", ...superuserOnlyFor("readonlyKeys"), async (re
   // a key advertising an expiry the DB won't honor.
   const expiresAt = new Date(Date.now() + ttl * 60_000);
 
-  const raw       = "ycro_" + crypto.randomBytes(32).toString("hex")
+  // Body: 22 base62 chars (B3; lib/apiKeys). It has no underscore, so
+  // canonicalKey still cuts "ycro_<body>" off at the second underscore and the
+  // stamp stays an advisory suffix.
+  const raw       = "ycro_" + randomBase62(KEY_BODY_LEN)
                             + "_" + stampExpiry(expiresAt);
   const keyHash   = hashKey(raw);
   const keyPrefix = raw.slice(0, 12);
@@ -148,7 +160,13 @@ router.get("/api/readonly-keys", ...superuserOnlyFor("readonlyKeys"), async (req
         ORDER BY k.id DESC
         LIMIT 200`
     );
-    res.json({ ok: true, keys: rows, max_ttl_days: MAX_TTL_DAYS });
+    res.json({
+      ok: true, keys: rows, max_ttl_days: MAX_TTL_DAYS,
+      // The picker's source (B3): the surface vocabulary and the default trio,
+      // so the page never carries its own copy of either.
+      scope_vocabulary: Object.entries(KEY_SCOPES).map(([name, v]) => ({ name, desc: v.desc })),
+      default_scopes: DEFAULT_SCOPES,
+    });
   } catch (err) {
     console.error("GET /api/readonly-keys error:", err);
     res.status(500).json({ error: err.message });
