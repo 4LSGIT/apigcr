@@ -340,21 +340,117 @@ pre-commit secret scan; key-format shortening; RO-key scope honesty.
 
 ---
 
-## 5. Phase B — scoped keys (outline; trails Phase A ratification)
+## 5. Phase B — scoped keys (DRAFT — awaiting Fred's ratification, 2026-10-14)
 
-Direction only, so Phase A's shapes don't foreclose it:
-- **One vocabulary:** keys get capability/scope sets from the SAME
-  registry grammar as roles (plus route-family scopes for machine keys:
-  Cloud Scheduler's two keys → `/process-jobs`, `/mailbox-ingest` only).
-  `api_keys` + `readonly_api_keys` each gain a nullable `scopes` column;
-  NULL = legacy full surface (current behavior), so rollout is per-key.
-- **RO-key misnomer:** rename concept to "session key" (readonly SQL +
-  scratch + IT alerts is already its real grant); optional per-key
-  upgrades = named allowances (e.g. `task.create`) checked by the route.
-- **Format:** ycro_/yck_ body → 22-char base62 rides this (keys stored
-  hashed; RO advisory suffix already parse-tolerant).
-- Per-tenant RO users / grants model = plans.md open decision 6; decide
-  here, not in the tenancy arc.
+Supersedes the pre-Phase-A outline. Grounded live 2026-10-14 (RO queries +
+source). No code until ratified.
+
+### 5.1 Verified key reality
+
+- Three prefixes exist; `ycp_` does not (portal = unprefixed JWT, aud
+  `contact`). `yci_` = the app's own self-credential (firmConfig dual-slot,
+  rotation-safe). `yck_` = `api_keys` (7 rows live 2026-10-14: Pabbly, the
+  two Cloud Scheduler keys, fil2-session, an idle `temp` — and 2 revoked);
+  a yck_ key has the FULL jwtOrApiKey surface and bypasses role/capability
+  gates (Q3). `ycro_` = `readonly_api_keys`; identity = sha256 of the first
+  two `_`-segments, suffix advisory (expiry stamp).
+- **The "readonly" key's real surface** (routes mounting
+  `lib/auth.readonly`): readonly SQL, scratch WRITES, IT alerts, **and the
+  four `api.temp.*` provider proxies (clio / dropbox / ringcentral /
+  zohosign) — credentialed calls to external providers.** Wider than the
+  documented trio; the misnomer is worse than Phase A's framing knew. The
+  temp routes are individually slated for deletion at their arcs' closes
+  (comms F7 covers ringcentral), but the CLASS must be scope-gated: any
+  future temp route must not ride in silently.
+- Live long-expiry session keys: id 45 `gpt` (idle since 2026-06, revoke —
+  hygiene H2, STILL OPEN), id 69 `long`, id 75 `claude long key` (both to
+  2028, active).
+
+### 5.2 One scopes vocabulary (the design)
+
+Both key tables gain a nullable `scopes` column (JSON array of strings).
+**NULL = legacy full surface** — rollout is per-key, no flag day; the
+admin/mint UIs set scopes on new keys and can retrofit old ones.
+
+Scope grammar, one flat namespace, three families:
+
+- **Surface scopes** (session keys): `sql.ro`, `scratch`, `alert`,
+  `temp.clio`, `temp.dropbox`, `temp.ringcentral`, `temp.zohosign`. Each
+  auth.readonly-mounted route declares its surface; `keyAllows(auth,
+  scope)` enforces. New session-key mints default to
+  `["sql.ro","scratch","alert"]` — the documented trio; `temp.*` becomes
+  an explicit grant.
+- **Route scopes** (machine keys): `route:/process-jobs`,
+  `route:/mailbox-ingest` — path-prefix match applied in jwtOrApiKey when
+  the key row carries scopes. The two Cloud Scheduler keys get exactly
+  their one route each.
+- **Capability scopes** (machine keys): the §2.3 registry names. A scoped
+  yck_ key no longer blanket-passes `can()` / requireAuth's allowApiKey
+  path — it passes only the capabilities it carries. **This is how the Q3
+  machine-trust bypass retires**: per key, as each key gets scoped, with
+  NULL keys keeping today's behavior until touched.
+- Session-key "upgrades" (e.g. let a Claude session create one task) =
+  capability-style named allowances in the same column, validated against
+  a closed list exactly like `item_key` (unknown scope at mint = fail
+  loud, not fail open).
+
+Enforcement seam: `lib/apiKeys.lookup` / auth.readonly attach the key's
+scopes to `req.auth`; one shared `keyAllows()` beside `can()` in
+lib/capabilities.js. Snapshot-test the scope vocabulary (the
+deliberate-choice pattern).
+
+### 5.3 Naming + format
+
+- `ycro_` is renamed CONCEPTUALLY to **session key** (docs, CLAUDE.md, UI
+  copy at ship time). The prefix string stays — hashes and muscle memory
+  are stable; the prefix was never the semantics.
+- New mints (both families): body → **22-char base62** (~131 bits); stored
+  hash unchanged in shape; old keys keep working (hash of whatever was
+  minted). The advisory-suffix mechanics survive as-is.
+
+### 5.4 Tenancy (plans.md open decision 6 — decided here)
+
+- Per-tenant genuinely-read-only MySQL users for `/api/readonly/sql`
+  remain a **prerequisite for the first paying tenant** (tenancy invariant
+  9); single-tenant ships nothing.
+- Session/machine keys live in the tenant DB, so they are tenant-bound by
+  construction once resolution is per-host; the known cross-tenant
+  acceptance holes are the `yci_` firmConfig check and the process-global
+  key cache, both already owned by tenancy P0-4f/P0-5 (AUDIT_TENANCY),
+  not by this arc.
+
+### 5.5 Secrets (the Phase B half of §4)
+
+- `hooks.auth_config` (8 inbound keys incl. Calendly HMAC):
+  **SECRET_TABLES += hooks** — sessions have no routine need to read hook
+  rows; the SU console remains the path.
+- `credentials.config` (2 static api_keys): **encrypt at rest** via the
+  existing lib/credentialCrypto (the mailbox arc already set the
+  precedent with `encrypt()`); sessions keep querying the table
+  (allowed_urls etc.) without seeing secret material.
+- SU-console secret writes landing in RO-readable
+  `admin_audit_log.details.query_text`: adopt the **pre-commit secret
+  scan** (yci_/ycro_/yck_ prefixes + common secret shapes) and document
+  the in-SQL-generation path for setting secrets; audit-row redaction
+  stays the reactive backstop.
+- Hygiene re-verified STILL OPEN today: H1 `email_credentials_backup_20260513`
+  (exists, 7 SMTP passwords), H2 key 45, H4 `tempusers` (2 plaintext
+  rows). One SU-console sitting, not slices. H3 (Ssandweiss referer
+  rotation/scrub) status unknown to this arc — confirm or strike at close.
+
+### 5.6 Slice plan — Phase B (post-ratification)
+
+- **B1** `scopes` column (both tables, one migration) + `keyAllows()` +
+  surface enforcement on every auth.readonly route; new-mint defaults.
+  NULL=legacy throughout. Unblocks everything else.
+- **B2** Machine-key scoping: route scopes on the two scheduler keys
+  (mint fresh scoped keys, swap in the job configs, revoke old — the
+  INFRA_GCP §10 runbook pattern); capability scopes in the api-keys admin
+  UI; retire Q3 per scoped key.
+- **B3** base62 mint format + UI copy ("session key" rename lands here).
+- **B4** Secrets: SECRET_TABLES += hooks; credentials.config
+  encrypt-at-rest; pre-commit secret scan. (Hygiene sitting rides
+  whenever Fred has 10 minutes.)
 
 ---
 
