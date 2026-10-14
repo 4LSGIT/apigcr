@@ -1,0 +1,46 @@
+{
+ "status": "success",
+ "internal": {
+  "rotated": true,
+  "last_rotated_at": "{{TODAY-3}}T10:00:00Z",
+  "has_previous": true
+ },
+ "keys": [
+  {
+   "id": 30,
+   "label": "Cloud Scheduler — process-jobs (every minute)",
+   "key_prefix": "yck_Ab3dE9xQ",
+   "created_by": 6,
+   "created_at": "{{TODAY}}T07:00:00Z",
+   "last_used_at": "{{TODAY}}T07:59:00Z",
+   "revoked_at": null,
+   "scopes": [
+    "route:/process-jobs"
+   ]
+  },
+  {
+   "id": 31,
+   "label": "settings bot",
+   "key_prefix": "yck_Zq81LmnP",
+   "created_by": 6,
+   "created_at": "{{TODAY}}T07:00:00Z",
+   "last_used_at": null,
+   "revoked_at": null,
+   "scopes": [
+    "route:/mailbox-ingest",
+    "firm.settings",
+    "automations.manage"
+   ]
+  },
+  {
+   "id": 2,
+   "label": "Pabbly",
+   "key_prefix": "yck_0a1b2c3d",
+   "created_by": 6,
+   "created_at": "{{TODAY-90}}T07:00:00Z",
+   "last_used_at": "{{TODAY-1}}T12:00:00Z",
+   "revoked_at": null,
+   "scopes": null
+  }
+ ]
+}

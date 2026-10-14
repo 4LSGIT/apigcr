@@ -750,6 +750,7 @@ scripts/mobile-survey/commsDensity.js
 scripts/mobile-survey/fixtures/api/admin/scratch.json
 scripts/mobile-survey/fixtures/api/admin/scratch/fred/demo_state.json
 scripts/mobile-survey/fixtures/api/admin/users.json
+scripts/mobile-survey/fixtures/api/api-keys.json
 scripts/mobile-survey/fixtures/api/calendar-feed.json
 scripts/mobile-survey/fixtures/api/calendar-range.json
 scripts/mobile-survey/fixtures/api/cases/TESTCASE1.json
@@ -1184,6 +1185,7 @@ tests/logService.setLogAbout.test.js
 tests/logService.updateLogLink.test.js
 tests/logservice.buildcaselogwhere.test.js
 tests/logservice.buildcontactlogwhere.test.js
+tests/machineKeyScopes.test.js
 tests/mailboxGmailParity.console.test.js
 tests/mailboxS0.test.js
 tests/mailboxS1.ingest.test.js
@@ -1268,6 +1270,7 @@ tests/schemaCollationBin.test.js
 tests/schemaConventions.test.js
 tests/scriptGuard.setup.js
 tests/scriptGuardCoverage.test.js
+tests/searchRedaction.test.js
 tests/secretAtRest.test.js
 tests/secretScan.test.js
 tests/secretsAtRest.mysql.test.js

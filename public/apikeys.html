@@ -66,6 +66,14 @@
     background: var(--page-bg); padding: 8px; border-radius: 4px; margin: 6px 0;
   }
   .warn-text { color: var(--warn); font-size: 11px; }
+  /* Scopes input (access-control B2). Full width so it never widens the page at phone width. */
+  #newScopes {
+    display: block; width: 100%; margin-top: 8px; min-height: 52px;
+    background: var(--page-bg); color: var(--text); border: 1px solid var(--border);
+    padding: 6px 8px; border-radius: 4px; font-size: 12px; resize: vertical;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  }
+  .scope-cell { font-size: 11px; white-space: nowrap; }
   .note { color: var(--text-muted); font-size: 11px; margin: 6px 0 0; line-height: 1.5; }
 
   /* ── usage log ────────────────────────────────────────────── */
@@ -126,8 +134,15 @@
   <h2>Create external key</h2>
   <div class="row">
     <input id="newLabel" placeholder="Label (e.g. 'Pabbly')" style="flex:1;min-width:200px;" maxlength="100">
-    <button onclick="createKey()">Create</button>
   </div>
+  <textarea id="newScopes" rows="2" spellcheck="false"
+    placeholder="Scopes — optional, one per line: route:/process-jobs  or a capability name (firm.settings)"></textarea>
+  <div class="muted" style="margin-top:4px;">
+    Empty = unscoped: the key reaches every route and every capability, as keys always have.
+    A scoped key reaches only the <code>route:/</code> paths it lists (and paths below them),
+    and only the capability-gated routes whose capability it names.
+  </div>
+  <div class="row" style="margin-top:8px;"><button onclick="createKey()">Create</button></div>
   <div id="newKeyArea"></div>
 </div>
 
@@ -144,12 +159,12 @@
   <table>
     <thead>
       <tr>
-        <th>ID</th><th>Prefix</th><th>Label</th><th>Created</th>
+        <th>ID</th><th>Prefix</th><th>Label</th><th>Scopes</th><th>Created</th>
         <th>Last used</th><th>Status</th><th></th>
       </tr>
     </thead>
     <tbody id="keysTbody">
-      <tr><td colspan="7" class="muted" style="text-align:center;padding:20px;">Loading…</td></tr>
+      <tr><td colspan="8" class="muted" style="text-align:center;padding:20px;">Loading…</td></tr>
     </tbody>
   </table>
   </div>
@@ -234,7 +249,7 @@
 
   async function load() {
     const tbody = document.getElementById("keysTbody");
-    tbody.innerHTML = `<tr><td colspan="7" class="muted" style="text-align:center;padding:20px;">Loading…</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="8" class="muted" style="text-align:center;padding:20px;">Loading…</td></tr>`;
     try {
       const data = await P.apiSend("/api/api-keys", "GET");
 
@@ -249,7 +264,7 @@
       document.getElementById("rotateBtn").disabled = false;
 
       if (!data.keys || !data.keys.length) {
-        tbody.innerHTML = `<tr><td colspan="7" class="muted" style="text-align:center;padding:20px;">No external keys yet.</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="8" class="muted" style="text-align:center;padding:20px;">No external keys yet.</td></tr>`;
         return;
       }
       tbody.innerHTML = data.keys.map(row => {
@@ -259,6 +274,7 @@
             <td>${row.id}</td>
             <td><code>${esc(row.key_prefix)}…</code></td>
             <td>${esc(row.label)}</td>
+            <td class="scope-cell">${row.scopes == null ? '<span class="muted">all (unscoped)</span>' : esc((Array.isArray(row.scopes) ? row.scopes : []).join(", "))}</td>
             <td>${fmtDate(row.created_at)}</td>
             <td>${fmtDate(row.last_used_at)}</td>
             <td><span class="badge ${revoked ? "revoked" : "active"}">${revoked ? "revoked" : "active"}</span></td>
@@ -270,15 +286,33 @@
         `;
       }).join("");
     } catch (err) {
-      tbody.innerHTML = `<tr><td colspan="7" style="color:var(--danger);padding:20px;">Error: ${esc(err.message)}</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="8" style="color:var(--danger);padding:20px;">Error: ${esc(err.message)}</td></tr>`;
     }
+  }
+
+  // Client-side shape check for the scopes box (B2). The server is the judge
+  // (lib/apiKeys machineKeyScopes: exact capability names, the route grammar);
+  // this only catches typos before a round trip.
+  const ROUTE_SCOPE = /^route:\/[A-Za-z0-9._~-][A-Za-z0-9._~\/-]*$/;
+  const CAPABILITY_SHAPE = /^[a-z_]+\.[a-z_]+$/;
+  function readScopes() {
+    const lines = document.getElementById("newScopes").value.split("\n").map(l => l.trim()).filter(Boolean);
+    const bad = lines.filter(l => !(ROUTE_SCOPE.test(l) && !l.includes("..") && !l.includes("//")) && !CAPABILITY_SHAPE.test(l));
+    return { lines, bad };
   }
 
   async function createKey() {
     const label = document.getElementById("newLabel").value.trim();
     if (!label) { alert("Label required"); return; }
+    const { lines, bad } = readScopes();
+    if (bad.length) {
+      alert("Not a scope: " + bad.join(", ") + "\nUse route:/<path> or a capability name such as firm.settings.");
+      return;
+    }
     try {
-      const data = await P.apiSend("/api/api-keys", "POST", { label });
+      const body = { label };
+      if (lines.length) body.scopes = lines;
+      const data = await P.apiSend("/api/api-keys", "POST", body);
       const area = document.getElementById("newKeyArea");
       area.innerHTML = `
         <div class="key-display">
@@ -287,11 +321,12 @@
           <div class="row">
             <button onclick="copyKey()">Copy</button>
             <button class="ghost" onclick="document.getElementById('newKeyArea').innerHTML=''">Dismiss</button>
-            <span class="warn-text">Label: ${esc(data.label)} · id ${data.id}</span>
+            <span class="warn-text">Label: ${esc(data.label)} · id ${data.id} · Scopes: ${data.scopes ? esc(data.scopes.join(", ")) : "all (unscoped)"}</span>
           </div>
         </div>
       `;
       document.getElementById("newLabel").value = "";
+      document.getElementById("newScopes").value = "";
       load();
     } catch (err) {
       alert("Create failed: " + err.message);

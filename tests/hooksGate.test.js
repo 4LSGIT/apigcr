@@ -55,7 +55,13 @@ const HOOK = {
   active: 1, version: 3, capture_mode: 'off', captured_sample: { raw: 'payload' }, captured_at: null,
   target_count: 1, modified_by_name: 'IT',
 };
-const SCOPED_YCK = 'yck_' + 'b5'.repeat(32);
+const SCOPED_YCK = 'yck_' + 'b5'.repeat(32);            // scopes ['route:/process-jobs']
+const CAP_YCK = 'yck_' + 'c5'.repeat(32);               // scopes ['automations.manage'] (B2)
+// The machine keys the stubs know: raw → api_keys row.
+const KEY_ROWS = () => ({
+  [apiKeys.hashKey(SCOPED_YCK)]: { id: 3, label: 'scheduler', revoked_at: null, scopes: ['route:/process-jobs'] },
+  [apiKeys.hashKey(CAP_YCK)]: { id: 4, label: 'hook-admin-bot', revoked_at: null, scopes: ['automations.manage'] },
+});
 
 function makeDb({ catchall = false } = {}) {
   const calls = [];
@@ -66,7 +72,7 @@ function makeDb({ catchall = false } = {}) {
       calls.push({ sql: s, params });
       if (/jwt_api_audit_log/.test(s)) return [{ affectedRows: 1 }];
       if (/FROM api_keys WHERE key_hash/.test(s)) {
-        return [params[0] === apiKeys.hashKey(SCOPED_YCK) ? [{ id: 3, label: 'scheduler', revoked_at: null, scopes: ['route:/process-jobs'] }] : []];
+        { const row = KEY_ROWS()[params[0]]; return [row ? [row] : []]; }
       }
       if (/UPDATE api_keys SET last_used_at/.test(s)) return [{}];
       if (/FROM hooks h LEFT JOIN hook_targets ht/.test(s)) return [[{ ...HOOK }]];
@@ -194,12 +200,14 @@ describe('gate matrix (17 routes)', () => {
     expect(r.body.hook.auth_config).toEqual({ key: SECRET_KEY, header: 'x-hook-key' });
   });
 
-  test('x-api-key passes (Q3): the internal key, and a SCOPED yck_ key (scopes enforced only from B2)', async () => {
-    for (const key of [process.env.INTERNAL_API_KEY, SCOPED_YCK]) {
+  // B5 pinned "a SCOPED yck_ key passes (scopes enforced only from B2)"; B2
+  // flips it on purpose: a scoped key needs the capability in its scopes.
+  test('x-api-key: the internal key passes; a scoped key passes only with automations.manage (B2 flip)', async () => {
+    for (const [key, ok] of [[process.env.INTERNAL_API_KEY, true], [CAP_YCK, true], [SCOPED_YCK, false]]) {
       apiKeys.invalidateCache();
       const r = await call('POST', '/api/hooks', { headers: { 'x-api-key': key }, body: { name: 'machine' } });
-      expect(r.status).toBe(200);
-      expect(writes(r.db).some(c => /^INSERT INTO hooks/.test(c.sql))).toBe(true);
+      expect({ key: key.slice(0, 8), status: r.status }).toEqual({ key: key.slice(0, 8), status: ok ? 200 : 403 });
+      expect(writes(r.db).some(c => /^INSERT INTO hooks/.test(c.sql))).toBe(ok);
     }
   });
 
@@ -326,7 +334,7 @@ describe('POST /api/pages/:id/create-hook (ruling F1)', () => {
         calls.push({ sql: s, params });
         if (/jwt_api_audit_log/.test(s)) return [{ affectedRows: 1 }];
         if (/FROM api_keys WHERE key_hash/.test(s)) {
-          return [params[0] === apiKeys.hashKey(SCOPED_YCK) ? [{ id: 3, label: 'scheduler', revoked_at: null, scopes: ['route:/process-jobs'] }] : []];
+          { const row = KEY_ROWS()[params[0]]; return [row ? [row] : []]; }
         }
         if (/UPDATE api_keys SET last_used_at/.test(s)) return [{}];
         if (/FROM pages WHERE id = \?/.test(s)) return [[{ id: 4, slug: 'promo', hook_slug: null, status: 'draft', host: null, path: null }]];
@@ -396,12 +404,12 @@ describe('POST /api/pages/:id/create-hook (ruling F1)', () => {
     }
   });
 
-  test('x-api-key passes: internal, and a scoped yck_ (scopes enforced only from B2)', async () => {
-    for (const key of [process.env.INTERNAL_API_KEY, SCOPED_YCK]) {
+  test('x-api-key: internal passes; a scoped key only with automations.manage (B2 flip)', async () => {
+    for (const [key, ok] of [[process.env.INTERNAL_API_KEY, true], [CAP_YCK, true], [SCOPED_YCK, false]]) {
       apiKeys.invalidateCache();
       const r = await callPages('POST', CREATE, { headers: { 'x-api-key': key }, body: {} });
-      expect(r.status).toBe(200);
-      expect(created(r.db)).toBe(true);
+      expect(r.status).toBe(ok ? 200 : 403);
+      expect(created(r.db)).toBe(ok);
     }
   });
 

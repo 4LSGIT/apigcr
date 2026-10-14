@@ -2,15 +2,20 @@
 //
 /**
  * API Keys admin — superuser-only management of inbound credentials.
- * Auto-mounts (routes/). UI: public/apiKeys.html.
+ * Auto-mounts (routes/). UI: public/apikeys.html.
  *
  *   GET  /api/api-keys                  — external keys list + internal-key status
- *   POST /api/api-keys      {label}     — mint external key; raw returned ONCE
+ *   POST /api/api-keys      {label, scopes?} — mint external key; raw returned ONCE.
+ *                                         scopes (access-control B2): route:/<path>
+ *                                         and capability names; omitted = NULL =
+ *                                         the legacy full surface
  *   POST /api/api-keys/:id/revoke       — revoke external key (immediate on this
  *                                         instance; ≤60s on others via cache TTL)
  *   POST /api/api-keys/rotate-internal  — rotate the app-to-self key
  *   GET  /api/api-keys/internal/log     — usage log for the internal key
- *   GET  /api/api-keys/rejected         — app-wide 401s (no credential resolved)
+ *   GET  /api/api-keys/rejected         — app-wide 401s (no credential resolved);
+ *                                         a scoped key's out-of-scope 403s are in
+ *                                         that key's own log (forbidden_scope)
  *   GET  /api/api-keys/:id/log          — usage log for one external key
  *
  * ROTATION SEMANTICS (see lib/firmConfig.js + lib/auth.jwtOrApiKey.js):
@@ -219,15 +224,20 @@ router.post('/api/api-keys', ...superuserOnlyFor(TOOL), async (req, res) => {
     return res.status(400).json({ status: 'error', message: `label exceeds ${MAX_LABEL_LEN} chars` });
   }
   try {
-    const out = await apiKeys.createKey(req.db, label, req.auth.userId);
+    // scopes (B2): optional; route:/<path> and capability names only.
+    // Omitted = NULL = the legacy full surface.
+    const out = await apiKeys.createKey(req.db, label, req.auth.userId, req.body?.scopes);
     await auditAdminAction(req.db, {
       ...reqMeta(req),
       status: 'created',
-      details: { key_id: out.id, label: out.label, key_prefix: out.key_prefix },
+      details: { key_id: out.id, label: out.label, key_prefix: out.key_prefix, scopes: out.scopes },
     });
     // The ONLY time the raw key ever leaves the server.
-    res.json({ status: 'success', key: out.raw, id: out.id, label: out.label, key_prefix: out.key_prefix });
+    res.json({ status: 'success', key: out.raw, id: out.id, label: out.label, key_prefix: out.key_prefix, scopes: out.scopes });
   } catch (err) {
+    if (err && err.status === 400) {
+      return res.status(400).json({ status: 'error', message: err.message });
+    }
     console.error('POST /api/api-keys error:', err);
     res.status(500).json({ status: 'error', message: 'Failed to create key' });
   }

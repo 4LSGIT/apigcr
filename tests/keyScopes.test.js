@@ -351,7 +351,7 @@ describe('readonly key mints', () => {
 // yck_ — attached, NOT enforced (B2 flips these deliberately)
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe('yck_ keys: scopes attached, not enforced in B1', () => {
+describe('yck_ keys: scopes attached (B1), ENFORCED since B2', () => {
   const apiKeys = require('../lib/apiKeys');
   const jwtOrApiKey = require('../lib/auth.jwtOrApiKey');
   const requireAuth = require('../lib/auth.requireAuth');
@@ -394,15 +394,22 @@ describe('yck_ keys: scopes attached, not enforced in B1', () => {
     expect(req.auth).toMatchObject({ type: 'api_key', key_id: 3, scopes: null });
   });
 
-  test('a scoped yck_ key still PASSES jwtOrApiKey in B1, scopes on req.auth', async () => {
-    const req = baseReq(keyDb(['route:/process-jobs']));
-    expect(await run(jwtOrApiKey, req)).toEqual({ via: 'next' });
-    expect(req.auth.scopes).toEqual(['route:/process-jobs']);
+  // B1 pinned "a scoped yck_ key still passes"; B2 flips it on purpose
+  // (route scopes in jwtOrApiKey; capability scopes on can gates). The full
+  // matrices are tests/machineKeyScopes.test.js.
+  test('B2 FLIP: a scoped yck_ key is refused off its routes (403), passes on them', async () => {
+    const off = baseReq(keyDb(['route:/process-jobs']));            // originalUrl /api/x
+    expect(await run(jwtOrApiKey, off)).toMatchObject({ via: 'res', status: 403 });
+    apiKeys.invalidateCache();
+    const on = { ...baseReq(keyDb(['route:/process-jobs'])), originalUrl: '/process-jobs' };
+    expect(await run(jwtOrApiKey, on)).toEqual({ via: 'next' });
+    expect(on.auth.scopes).toEqual(['route:/process-jobs']);
   });
 
-  test('...and still passes a can-gated allowApiKey route (Q3 retires per key in B2, not here)', async () => {
+  test('B2 FLIP: a can-gated allowApiKey route takes a scoped key only with that capability', async () => {
     const mw = requireAuth({ audience: 'staff', can: 'firm.settings', allowApiKey: true });
-    const req = baseReq(keyDb(['route:/process-jobs']));
-    expect(await run(mw, req)).toEqual({ via: 'next' });
+    expect(await run(mw, baseReq(keyDb(['route:/process-jobs'])))).toMatchObject({ via: 'res', status: 403 });
+    apiKeys.invalidateCache();
+    expect(await run(mw, baseReq(keyDb(['firm.settings'])))).toEqual({ via: 'next' });
   });
 });

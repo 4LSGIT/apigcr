@@ -128,15 +128,18 @@ test("audit write redacts referer, originalUrl and parsed query — secret reach
 test("audit write without referer or query secrets is unchanged in shape", async () => {
   const { logJwtApiAttempt } = require("../lib/auth.jwtOrApiKey");
   const { req, captured } = capturingReq({
-    originalUrl: "/api/cases?q=smith",
-    query: { q: "smith" },
+    // A non-search param: ?q= is redacted since access-control B2 (its own
+    // rule — tests/searchRedaction.test.js), so this "nothing secret" shape
+    // check uses a plain filter instead.
+    originalUrl: "/api/cases?status=open",
+    query: { status: "open" },
   });
 
   await logJwtApiAttempt(req, "jwt", "alice", "authorized");
 
   const [route, method, headersJson, queryJson] = captured.params;
-  expect(route).toBe("/api/cases?q=smith");
+  expect(route).toBe("/api/cases?status=open");
   expect(method).toBe("GET");
   expect(JSON.parse(headersJson)).toEqual({ "user-agent": "jest" });
-  expect(JSON.parse(queryJson)).toEqual({ q: "smith" });
+  expect(JSON.parse(queryJson)).toEqual({ status: "open" });
 });

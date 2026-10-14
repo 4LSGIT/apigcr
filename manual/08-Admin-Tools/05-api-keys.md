@@ -21,6 +21,25 @@ The raw key is shown **once**, at creation. We store only a hash — there is no
 Give it a label naming the system that will use it. The label is what usage
 attribution keys off, so "Pabbly" is useful and "test2" is not.
 
+### Scopes — what a key may reach
+
+Leave the **Scopes** box empty and the key is *unscoped*: it reaches every
+route and every capability-gated action, as keys always have. Put one scope
+per line and the key reaches only those:
+
+| Scope | Lets the key |
+|---|---|
+| `route:/process-jobs` | call `/process-jobs` and any path below it (`/process-jobs/…`) — never a look-alike such as `/process-jobs-evil` |
+| a capability name, e.g. `firm.settings` | pass that capability's gate (here: editing firm settings) — and only that one |
+
+A key needs a `route:` scope for ordinary routes and the capability name for
+capability-gated ones; one doesn't stand in for the other. A scoped key that
+calls anything else gets a **403**, and the refusal shows in that key's usage
+log as `forbidden_scope`. Session-key scopes (`sql.ro`, `scratch`, …) are
+refused here — they belong to [Session Keys](02-readonly-keys.md).
+Scopes are set at mint; to change them, mint a new key and revoke the old.
+The internal key is never scoped.
+
 ### Rotating the internal key
 
 Rotation moves the current key to a *previous* slot and makes a fresh one

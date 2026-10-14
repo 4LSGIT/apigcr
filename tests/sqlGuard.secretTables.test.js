@@ -12,7 +12,7 @@ const { touchesSecretTable, matchedSecretTable, SECRET_TABLES } = require("../li
 describe("sqlGuard.touchesSecretTable", () => {
   test("registry holds exactly the reviewed set", () => {
     // Adding a table here is an access decision — review the consumers.
-    expect(SECRET_TABLES).toEqual(["app_settings", "email_ingest_sources", "comms_transcripts", "comms_no_transcribe"]);
+    expect(SECRET_TABLES).toEqual(["app_settings", "email_ingest_sources", "comms_transcripts", "comms_no_transcribe", "jwt_api_audit_log"]);
   });
 
   test.each([
@@ -30,6 +30,11 @@ describe("sqlGuard.touchesSecretTable", () => {
     ["SELECT m.id, t.segments FROM comms_media m JOIN `comms_transcripts` t ON t.media_id = m.id"],
     ["SELECT COUNT(*) FROM comms_transcripts"],
     ["select phone from COMMS_NO_TRANSCRIBE"],
+    // access B2 landing: the gateway audit log stores full bodies (incl.
+    // SU-console write statements) — denied until SEC-2 shapes + scrub.
+    ["SELECT body FROM jwt_api_audit_log WHERE id = 1"],
+    ["SELECT a.route FROM `jwt_api_audit_log` a LIMIT 5"],
+    ["SELECT COUNT(*) FROM JWT_API_AUDIT_LOG"],
   ])("denies: %s", (sql) => {
     expect(touchesSecretTable(sql)).toBe(true);
   });

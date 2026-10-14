@@ -309,8 +309,9 @@ never accept the new enum beyond `startsWith('authorized')`.
    deny wins; `moreSettings`/`helpSupport` undeniable.
 5. Entitlement storage/resolve is owned by THIS arc (§2.6); ui-custom
    consumes `denied[]`; settings arc consumes the gate (§3.2–3).
-6. Machine callers (x-api-key) bypass role gates in v2 (status quo,
-   explicit); Phase B gives keys their own capability scopes.
+6. Machine callers (x-api-key) bypass role gates. A key with NULL scopes
+   also passes every capability gate (Q3); a scoped key passes only the
+   capabilities its scopes name (Phase B, B2 — §5.2).
 
 ---
 
@@ -381,14 +382,24 @@ Scope grammar, one flat namespace, three families:
   `["sql.ro","scratch","alert"]` — the documented trio; `temp.*` becomes
   an explicit grant.
 - **Route scopes** (machine keys): `route:/process-jobs`,
-  `route:/mailbox-ingest` — path-prefix match applied in jwtOrApiKey when
-  the key row carries scopes. The two Cloud Scheduler keys get exactly
-  their one route each.
+  `route:/mailbox-ingest` — enforced in jwtOrApiKey when the key row
+  carries scopes (B2, `routeAllowed`): `route:/p` reaches `p` and `p/…`,
+  never a sibling (`/process-jobs-evil`); case-insensitive, trailing slash
+  and query ignored, dot segments (plain or %-encoded) refused. Off its
+  routes a scoped key gets 403 `{ error, path }`, audited
+  `forbidden_scope` under its label (403, not 401: the key is known).
+  The two Cloud Scheduler keys get exactly their one route each.
 - **Capability scopes** (machine keys): the §2.3 registry names. A scoped
   yck_ key no longer blanket-passes `can()` / requireAuth's allowApiKey
   path — it passes only the capabilities it carries. **This is how the Q3
   machine-trust bypass retires**: per key, as each key gets scoped, with
-  NULL keys keeping today's behavior until touched.
+  NULL keys keeping today's behavior until touched. A capability-gated
+  `requireAuth({ can, allowApiKey })` mount judges a scoped key by its
+  capability alone (no route scope needed — and a route scope never stands
+  in for the capability); roles gates and plain jwtOrApiKey routes judge it
+  by route. The internal yci_ key carries no scopes and is untouched.
+  Mints (B2): `POST /api/api-keys` takes `scopes` (route + capability
+  names; session-key surface names refused); omitted = NULL.
 - Session-key "upgrades" (e.g. let a Claude session create one task) =
   capability-style named allowances in the same column, validated against
   a closed list exactly like `item_key` (unknown scope at mint = fail

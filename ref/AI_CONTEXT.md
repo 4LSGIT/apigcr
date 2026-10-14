@@ -245,7 +245,9 @@ body. Governing migrations in `ref/migrations/`.*
     `phone_line` body and vice versa (the ids overlap).
   - **`jwt_api_audit_log` redacts URL secrets** (SEC-1: credential-shaped
     param names, case-blind) in the route, the parsed query and the Referer
-    (`redactUrlParams`, `lib/auth.jwtOrApiKey.js`).
+    (`redactUrlParams`, `lib/auth.jwtOrApiKey.js`) — and, by a separate rule
+    (access-control B2), the search term `q` (exact name) in the route, the
+    parsed query, the Referer and a body (`redactSearchParams`).
   - `routes/internal/phoneTest.js` is gone. Migration
     `2026-10-12_phone_sph.sql` goes BEFORE the backend (it seeds the
     default-line grants the gate needs).
@@ -513,8 +515,12 @@ deploying code that writes new values.
 
 ## 3. AUTH & CODE PATTERNS
 
-`jwtOrApiKey` (lib/auth.jwtOrApiKey.js): `x-api-key` vs INTERNAL_API_KEY,
-then Bearer JWT. Everything requires it except the public surface:
+`jwtOrApiKey` (lib/auth.jwtOrApiKey.js): `x-api-key` vs the internal key
+(yci_, two slots), then the external `api_keys` (yck_), then Bearer JWT. A
+yck_ key with `scopes` reaches only its `route:/` paths (403
+`forbidden_scope` otherwise); capability gates judge it by the capability
+names it carries; NULL scopes = everything (access-control B2,
+lib/capabilities routeAllowed / can). Everything requires it except the public surface:
 `GET /isWorkday`, `GET /api/public/docs/:caseId` (10/min),
 `POST /api/public/get-upload-link`, `POST /hooks/:slug` (120/min per
 slug+IP), `GET /r/:slug` (60/min), `GET /auth/oauth/callback`, external
