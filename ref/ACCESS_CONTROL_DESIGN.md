@@ -340,10 +340,10 @@ pre-commit secret scan; key-format shortening; RO-key scope honesty.
 
 ---
 
-## 5. Phase B — scoped keys (DRAFT — awaiting Fred's ratification, 2026-10-14)
+## 5. Phase B — scoped keys (RATIFIED 2026-10-14)
 
 Supersedes the pre-Phase-A outline. Grounded live 2026-10-14 (RO queries +
-source). No code until ratified.
+source). Ratified same day; slices B1-B4 may dispatch.
 
 ### 5.1 Verified key reality
 
@@ -433,10 +433,12 @@ deliberate-choice pattern).
   scan** (yci_/ycro_/yck_ prefixes + common secret shapes) and document
   the in-SQL-generation path for setting secrets; audit-row redaction
   stays the reactive backstop.
-- Hygiene re-verified STILL OPEN today: H1 `email_credentials_backup_20260513`
-  (exists, 7 SMTP passwords), H2 key 45, H4 `tempusers` (2 plaintext
-  rows). One SU-console sitting, not slices. H3 (Ssandweiss referer
-  rotation/scrub) status unknown to this arc — confirm or strike at close.
+- Hygiene outcomes (ruled 2026-10-14): H1 DONE (table dropped by Fred).
+  H2 RULED KEEP — the gpt RO key is intentional, not an error; struck
+  from the debt list. H4: `tempusers` is dead (zero code references;
+  junk rows) — recommended `DROP TABLE tempusers`, awaiting the drop.
+  H3 (Ssandweiss referer rotation/scrub) status unknown to this arc —
+  confirm or strike at close.
 
 ### 5.6 Slice plan — Phase B (post-ratification)
 

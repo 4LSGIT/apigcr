@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-10-14T12:35:56.425Z
+-- Generated: 2026-10-14T13:00:11.083Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:d577a6e0d984467de69ace904b42eb4b
+-- Fingerprint: sha256:1c1a0c7c138af3bad007a51969e8c277
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -1581,26 +1581,6 @@ CREATE TABLE `email_credentials` (
   `signature_html` mediumtext CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci,
   `signature_text` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci,
   `owner_user` tinyint DEFAULT NULL
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
-
--- --------------------------------------------------------
-
---
--- Table structure for table `email_credentials_backup_20260513`
---
-
-DROP TABLE IF EXISTS `email_credentials_backup_20260513`;
-CREATE TABLE `email_credentials_backup_20260513` (
-  `id` int unsigned NOT NULL,
-  `email` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
-  `smtp_host` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
-  `smtp_port` int NOT NULL,
-  `smtp_user` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
-  `smtp_pass` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
-  `smtp_secure` tinyint(1) NOT NULL DEFAULT '1',
-  `provider` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'smtp',
-  `credential_id` int DEFAULT NULL,
-  `from_name` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- --------------------------------------------------------
@@ -4254,14 +4234,6 @@ ALTER TABLE `email_credentials`
   ADD KEY `fk_email_credentials_credential` (`credential_id`);
 
 --
--- Indexes for table `email_credentials_backup_20260513`
---
-ALTER TABLE `email_credentials_backup_20260513`
-  ADD PRIMARY KEY (`id`),
-  ADD UNIQUE KEY `idx_email` (`email`),
-  ADD KEY `fk_email_credentials_credential` (`credential_id`);
-
---
 -- Indexes for table `email_ingest_executions`
 --
 ALTER TABLE `email_ingest_executions`
@@ -5273,12 +5245,6 @@ ALTER TABLE `domain_event_queue`
 -- AUTO_INCREMENT for table `email_credentials`
 --
 ALTER TABLE `email_credentials`
-  MODIFY `id` int unsigned NOT NULL AUTO_INCREMENT;
-
---
--- AUTO_INCREMENT for table `email_credentials_backup_20260513`
---
-ALTER TABLE `email_credentials_backup_20260513`
   MODIFY `id` int unsigned NOT NULL AUTO_INCREMENT;
 
 --
