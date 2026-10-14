@@ -1385,3 +1385,49 @@ No migration is filed for either table: plain DDL, wholly captured by
    no-op restore appends nothing; deleting the newest version row is a 400.
    The append is non-transactional by house style — a crash between the two
    statements loses one history row, never the tool.
+
+## ═══════════════════════════════════════════════════════════════
+## 30. ACCESS CONTROL — ROLES, CAPABILITIES, ENTITLEMENTS, KEY SCOPES
+## ═══════════════════════════════════════════════════════════════
+
+Built 2026-10-14 (access-control arc; design = ref/ACCESS_CONTROL_DESIGN.md,
+the living authority — this section is the register).
+
+**Staff authz.** `users.user_auth` is AUTHN STATUS ONLY ('authorized' /
+'disabled'); the 'authorized - SU' string regime is deleted repo-wide and a
+literal-guard test (tests/accessA2bCollapse.test.js) keeps it out. SU = the
+`su` member of `users.roles` SET('it','admin','staff','attorney',
+'automation','form_dev','su'), minted into the 24h staff JWT.
+`lib/auth.superuser.isSuperuser(auth)` / `rowIsSuperuser(row)` are the only
+SU predicates (row variant requires user_auth startsWith 'authorized' — a
+DISABLED user is never SU). Capabilities: lib/capabilities.js CAPABILITIES
+(root-grade vs firm-grade; `su` passes all, `it` passes non-root, others via
+ROLE_CAPS) + `can(auth, cap)`; gate expression
+`requireAuth({audience:'staff', can:'<capability>', allowApiKey:true})`.
+Mounted today: firm.settings (app-settings writes), automations.manage
+(/api/hooks management + pages create-hook). Roles UI: users pane
+(su grants/revokes need an SU caller; nobody removes their own su).
+
+**Entitlements (launcher denies).** `entitlement_denies` (deny-only rows;
+scope firm(''), role, user; UNIQUE over the triple), resolver
+services/entitlementService.deniedFor → `denied[]` in /api/firm-data
+(fail-soft []). item_key = public/js/featureRegistry.js keys;
+`moreSettings` + `helpSupport` undeniable (write-reject AND resolve-strip).
+Visibility-only; CRUD behind firm.settings; editor UI ships with the CFG-3
+firm tab.
+
+**Key scopes.** Both key tables carry `scopes` JSON; NULL = legacy full
+surface MINUS `explicit` scopes (sql.ro.sensitive — a legacy key never
+gains it). Vocabulary + keyAllows/routeAllowed in lib/capabilities.js.
+Session (ycro_) keys: surface scopes (sql.ro, scratch, alert, temp.*);
+mints default sql.ro+scratch+alert; new bodies are 22-char base62 (old
+64-hex keys valid forever; identity = sha256 of the first two _-segments).
+Machine (yck_) keys: route:/<path> prefix scopes enforced in jwtOrApiKey
+(403 forbidden_scope, audited under the key label) + capability scopes on
+requireAuth({can}) routes; the two Cloud Scheduler keys are route-scoped.
+Table tiers + sql.ro.sensitive: §22.
+
+**Audit log.** jwt_api_audit_log stores SHAPES, never content
+(lib/auditShape; credential-named keys → [secret] with no length); URL/
+referer redaction (SEC-1 credentials + the separate exact-name `q` rule)
+unchanged; full history scrubbed 2026-10-14.

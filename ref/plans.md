@@ -289,6 +289,35 @@ deferred until the budget shows it's needed.
 
 ---
 
+## From the access-control arc (2026-10-14) — deferred
+
+- **jwt_api_audit_log retention** (~90 days): 134K rows / ~126MB since
+  April, never pruned. Shapes-only since SEC-2, so this is size, not
+  secrecy.
+- **schemaDump views**: lib/schemaDump.js dumps BASE TABLEs only; `ai_spend`
+  (the schema's first view) never reaches ref/database.sql and db:ref:check
+  cannot see it drift. Its migration record is its definition of record
+  meanwhile.
+- **automations.manage siblings**: the capability gates only hooks (+ pages
+  create-hook). Workflows / sequences / triggers / ingest management in the
+  same Automation Manager stay open to all staff — a visible inconsistency,
+  accepted as the first step.
+- **sbAdmin widening**: the Admin sidebar stays su-only until the first
+  firm-grade admin tile exists (the CFG-3 firm tab) — then widen
+  tile-by-tile, not by taxonomy.
+- **Require scopes on new yck_ mints**: today omitted scopes = NULL =
+  legacy full surface; flip to required once the existing integrations are
+  scoped.
+- **connections.html reads P.AUTH_STATE.jwt** (SU-guard fallback) — the one
+  pane besides liveHost violating "panes never read the token"; drop the
+  fallback and read firmData.currentUser.roles only. (Graduated from
+  docs-debt 2026-10-14.)
+- **Old referer header rows in jwt_api_audit_log**: SEC-2 shaped bodies and
+  query_params; HEADERS were already write-redacted (SEC-1) but rows older
+  than 2026-10-12 may still carry credential-bearing referers. The table is
+  sensitive-tier-gated now, so exposure is to diagnostic keys only; a
+  one-off header scrub is optional hygiene.
+
 ## SaaS-readiness (deferred indefinitely)
 
 Abstractions that would matter for offering YC to a second firm. Not relevant to 4LSG-only operation. Each can be picked up independently when a second customer is real.

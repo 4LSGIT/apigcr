@@ -73,9 +73,17 @@ Gates beyond Commands & gates below, every model:
 - Verification-first: ground claims about schema, rows, or behavior in the
   live DB and actual source before writing code or prompts.
 - Scripted edits are anchored: `assert src.count(old) == 1` before every
-  replace. Complete files (not fragments) for non-trivial edits.
+  replace. And FAIL CLOSED: the commit/next step must not run when the
+  edit step failed — verify the NEW text is on disk before acting on it
+  (two silent no-op edits shipped past green runs, 2026-10-14: a mutation
+  that never applied and a doc edit whose landing commit claimed it). Complete files (not fragments) for non-trivial edits.
 - New test assertions are mutation-checked (break the code, watch the test
   fail); no mocking the module under test; real-engine harnesses preferred.
+- Retiring a VALUE (an enum string, a magic constant): inventory by the
+  COLUMN/claim name, never the literal — comparison idioms
+  (indexOf('SU'), startsWith) don't contain the literal. Two frontend SU
+  gates survived an arc-wide literal grep AND a literal-guard test
+  (2026-10-14).
 - A harness that PRINTS an anomaly instead of asserting it is not a gate.
   UDS S4 (2026-09-23): a 288-check matrix logged leftover other-mode keys as
   a `note:` line. That residue WAS the bug, and it shipped through the gate,
