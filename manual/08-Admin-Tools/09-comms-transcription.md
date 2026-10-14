@@ -83,6 +83,43 @@ A missing or non-numeric cap counts as 0: nothing is sent.
 | `comms_transcribe_breaker` | AssemblyAI's last three answers to new requests were unreadable or missing. Each might still have been a real (billed) job, so new submissions pause for 6 hours, then try again. Jobs already in progress carry on. Check AssemblyAI's status page and tell IT. |
 | `comms_transcribe_anomaly` | Something a human must check. The message says exactly what. |
 
+### Summaries
+
+After a call is transcribed, **Claude** writes a short summary: what the call
+was about, who promised what, any dates, amounts, documents asked for, and
+case numbers mentioned. The summary is the text you see on the call in Comms.
+It is AI-generated, so check the recording before relying on it.
+
+- **The switch** is `comms_summarize_mode`. It works like the transcription
+  switch: `off` / `sample` / `on`, and anything else counts as `off`.
+- **The model** is `comms_summary_model`: `claude-sonnet-5-5` (the default) or
+  `claude-haiku-5-5`.
+- **The effort** is `comms_summary_effort`: `low` (the default), `medium` or
+  `high`. Higher effort thinks longer and costs more.
+- **What is never summarised:**
+  - **restricted calls**, which are never sent;
+  - calls with less than `comms_min_summary_s` (30) seconds of audio (voicemails
+    always are);
+  - calls Claude declines. That raises a `comms_summarize_refused` warning, and
+    the transcript is unaffected.
+- **Every item is checked against the transcript.** A promised document, a date
+  or an amount is kept only if its quoted words are really in the transcript.
+  Anything else is dropped. The "jump to" time for an item comes from the
+  transcript, not from the AI.
+- **Cost:** summaries share the one monthly cap above with transcription. When
+  the cap is reached, both wait.
+- **Who saw a summary:** each time a thread shows summaries, one audit record
+  lists which calls' summaries were shown (never their text). Find them in the
+  admin audit log, tool `comms_archive`, action `view_summary`.
+- **Purging** a call also blanks every stored AI request and reply for it.
+  Their cost records stay.
+
+| Alert | What to do |
+|---|---|
+| `comms_summarize_config` | A summary setting is wrong, or Claude refused the key or the request. The message says which. |
+| `comms_summarize_failed` | A call could not be summarised after three tries. The transcript is still there. |
+| `comms_summarize_refused` | Claude's safety checks declined to summarise a call. No action is needed; the transcript is unaffected. |
+
 ### Privacy
 
 - AssemblyAI does not train on our audio (an account setting), and keeps data

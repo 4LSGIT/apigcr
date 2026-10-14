@@ -116,6 +116,17 @@ function audit(req, status, details, tool = TOOL, errorMessage = null) {
     .catch(err => console.error('[phoneComms] audit log failed:', err.message));
 }
 
+/**
+ * Comms archive S3 (design §7 P9): AI summaries ride the thread as bubble text,
+ * so the view is audited here — ONE admin_audit_log row per fetch that handed
+ * out any, tool 'comms_archive', details {action:'view_summary', media_ids},
+ * never content. Fire-and-forget like this route's other audit rows.
+ */
+function auditSummaryViews(req, out) {
+  const ids = archiveView.summaryMediaIds(out);
+  if (ids.length) audit(req, 'success', { action: 'view_summary', media_ids: ids.slice(0, 200) }, 'comms_archive');
+}
+
 function sendError(res, label, err) {
   const status = Number.isInteger(err && err.status) ? err.status : 500;
   if (status >= 500) {
@@ -251,6 +262,7 @@ router.get('/api/phone-lines/all/conversations/:party', jwtOrApiKey, requireJwt,
   try {
     const out = await phone.listAllMessages(req.db, req.auth.userId, req.params.party, req.query || {});
     await archiveView.decorate(req.db, req.auth, out);
+    auditSummaryViews(req, out);
     res.json({ status: 'success', all: true, ...out });
   } catch (err) {
     sendError(res, 'GET /api/phone-lines/all/conversations/:party', err);
@@ -393,6 +405,7 @@ router.get('/api/phone-lines/:id/conversations/:party', jwtOrApiKey, requireJwt,
     const { line } = await phone.resolveRead(req.db, req.auth.userId, req.params.id);
     const out = await phone.listMessages(req.db, line, req.params.party, req.query || {});
     await archiveView.decorate(req.db, req.auth, out, { lineId: line.id });
+    auditSummaryViews(req, out);
     res.json({ status: 'success', line_id: line.id, ...out });
   } catch (err) {
     sendError(res, 'GET /api/phone-lines/:id/conversations/:party', err);

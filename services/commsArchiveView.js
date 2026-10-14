@@ -360,4 +360,18 @@ async function decorate(db, auth, out, { lineId = null } = {}) {
   return out;
 }
 
-module.exports = { decorate, viewOf, transcriptInfo, VENDOR_SQL, READABLE_STATES, VM_BEFORE_MS, VM_AFTER_MS };
+/**
+ * S3 (design §7 P9): the comms_media ids whose AI summary a decorated thread
+ * hands the viewer — the conversation routes write ONE batched view_summary
+ * audit row per fetch that returned any (ids only, never content).
+ */
+function summaryMediaIds(out) {
+  const ids = [];
+  for (const m of (out && Array.isArray(out.messages) ? out.messages : [])) {
+    if (m && m.archive && m.archive.summary_text != null) ids.push(Number(m.archive.media_id));
+    if (m && m.voicemail && m.voicemail.summary_text != null) ids.push(Number(m.voicemail.media_id));
+  }
+  return [...new Set(ids)];
+}
+
+module.exports = { decorate, summaryMediaIds, viewOf, transcriptInfo, VENDOR_SQL, READABLE_STATES, VM_BEFORE_MS, VM_AFTER_MS };

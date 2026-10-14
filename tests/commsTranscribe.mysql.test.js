@@ -589,7 +589,7 @@ maybe('comms archive S2 transcription on real MySQL', () => {
     const id = await media();
     await run();
     const r = await admin.purge(pool, id, { userId: 1, reason: 'private' });
-    expect(r.parts.transcripts).toEqual({ rows: 1, deleted: 0, vendor: 'deleted' });
+    expect(r.parts.transcripts).toEqual({ rows: 1, deleted: 0, vendor: 'deleted', ai_calls: 0 });
     expect(Object.keys(r.parts)[0]).toBe('transcripts');
     aai.jobs.get('tx-1').deleted = false;               // (even if the vendor still answered)
     aai.complete('tx-1');
@@ -661,14 +661,14 @@ maybe('comms archive S2 transcription on real MySQL', () => {
     await run(); aai.complete('tx-1'); await due(); await run();
     expect((await tr(id)).state).toBe('transcribed');
     const r = await admin.purge(pool, id, { userId: 1, reason: 'done' });
-    expect(r.parts.transcripts).toEqual({ rows: 1, deleted: 1, vendor: 'none' });   // the stt object (by listing); vendor copy already gone
+    expect(r.parts.transcripts).toEqual({ rows: 1, deleted: 1, vendor: 'none', ai_calls: 0 });   // the stt object (by listing); vendor copy already gone
     expect(r.parts.derived_children).toMatchObject({ rows: 1, deleted: 1 });
     const after = await tr(id);
     expect(after).toMatchObject({ state: 'purged', segments: null, full_text: null, summary: null, summary_text: null });
     expect(Number(after.stt_cost_cents)).toBeCloseTo(20 / 3600 * 23, 4);          // cost is not content: purge keeps it
     expect(await sweep.monthToDateCents(pool)).toBeCloseTo(20 / 3600 * 23, 4);
     const mms = await media({ kind: 'mms_file', mime: 'image/png' });
-    expect((await admin.purge(pool, mms, { userId: 1, reason: 'x' })).parts.transcripts).toEqual({ rows: 0, deleted: 0, vendor: 'none' });
+    expect((await admin.purge(pool, mms, { userId: 1, reason: 'x' })).parts.transcripts).toEqual({ rows: 0, deleted: 0, vendor: 'none', ai_calls: 0 });
   });
 
   test('P6 a pending row whose archive item was purged is fenced on claim, never submitted', async () => {
@@ -684,7 +684,7 @@ maybe('comms archive S2 transcription on real MySQL', () => {
     const id = await media();
     await pool.query('RENAME TABLE comms_transcripts TO comms_transcripts_x');
     try {
-      expect(await sweep.purgeTranscript(pool, { id, captured_at: new Date() })).toEqual({ rows: 0, deleted: 0, vendor: 'none' });
+      expect(await sweep.purgeTranscript(pool, { id, captured_at: new Date() })).toEqual({ rows: 0, deleted: 0, vendor: 'none', ai_calls: 0 });
     } finally {
       await pool.query('RENAME TABLE comms_transcripts_x TO comms_transcripts');
     }

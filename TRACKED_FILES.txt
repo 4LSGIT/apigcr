@@ -11,6 +11,7 @@ cloudbuild.yaml
 docs_review_2_2026-09-25.patch
 jest.config.js
 lib/actionDispatchers.js
+lib/aiPrompts/commsSummary.js
 lib/aiPrompts/courtExtract.js
 lib/aiPrompts/echo.js
 lib/aiPrompts/index.js
@@ -50,6 +51,7 @@ lib/internal_functions/appointments.js
 lib/internal_functions/calendar.js
 lib/internal_functions/cases.js
 lib/internal_functions/commsArchive.js
+lib/internal_functions/commsSummarize.js
 lib/internal_functions/commsTranscribe.js
 lib/internal_functions/communication.js
 lib/internal_functions/composition.js
@@ -533,6 +535,7 @@ ref/migrations/2026-10-14_comms_s1b.sql
 ref/migrations/2026-10-14_comms_s2_transcripts.sql
 ref/migrations/2026-10-14_sec2_audit_shapes.sql
 ref/migrations/2026-10-14_wf50_text_on_cancel_failure.console.js
+ref/migrations/2026-10-15_comms_s3_summaries.sql
 ref/migrations/S1_notes_migration.sql
 ref/migrations/documents_s1.sql
 ref/migrations/documents_s2.sql
@@ -841,6 +844,8 @@ services/commsArchiveSweep.js
 services/commsArchiveVerify.js
 services/commsArchiveView.js
 services/commsEvalService.js
+services/commsSummarizeSweep.js
+services/commsSummaryGround.js
 services/commsTranscribeAudio.js
 services/commsTranscribeService.js
 services/commsTranscribeSweep.js
@@ -951,6 +956,7 @@ tests/adminUsersRoles.test.js
 tests/adminapikeys.k2.test.js
 tests/aiMatchTypes.registry.test.js
 tests/aiService.attachments.test.js
+tests/aiService.wai.test.js
 tests/aimatch.service.test.js
 tests/alertingDigestCta.test.js
 tests/alertingStartLatency.test.js
@@ -1004,6 +1010,9 @@ tests/commsArchiveService.test.js
 tests/commsEval.mysql.test.js
 tests/commsEvalPage.test.js
 tests/commsShell.test.js
+tests/commsSummarize.audit.mysql.test.js
+tests/commsSummarize.mysql.test.js
+tests/commsSummaryGround.test.js
 tests/commsTranscribe.migration.mysql.test.js
 tests/commsTranscribe.mysql.test.js
 tests/commsTranscribeAudio.test.js

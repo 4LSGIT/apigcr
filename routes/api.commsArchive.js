@@ -446,10 +446,11 @@ router.get('/api/comms-archive/health', ...superuserOnlyFor('comms_archive_healt
         oldest_pending: old ? old.oldest : null,
       };
     });
-    // Month-to-date spend: S2's ledger (comms_stt_jobs — every job submitted this
-    // month, billed or estimated; the figure the monthly cap uses). Summaries (S3) not yet.
+    // Month-to-date spend, the two halves of the shared monthly cap: stt = S2's
+    // ledger (every job submitted this month, billed or estimated); llm = S3's
+    // summary ai_calls + calls in flight (null with no ai_calls table).
     const cost = await maybeTable(async () => ({
-      month_to_date_cents: { stt: await require('../services/commsTranscribeSweep').monthToDateCents(db), llm: null },
+      month_to_date_cents: await require('../services/commsTranscribeSweep').monthToDateParts(db),
     }));
     return res.json({
       status: 'success',

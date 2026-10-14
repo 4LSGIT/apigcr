@@ -126,6 +126,9 @@ const CTA_FN_DENYLIST = Object.freeze([
   // Comms archive S2: spends the STT budget (monthly cap) and sends client
   // audio to the vendor — no public link may start it.
   'comms_transcribe_sweep',
+  // Comms archive S3: spends the shared AI budget and sends call transcripts
+  // to the model — no public link may start it.
+  'comms_summarize_sweep',
 ]);
 
 /** Chromium-backed functions: eligible, but a public repeatable link fans out load. */

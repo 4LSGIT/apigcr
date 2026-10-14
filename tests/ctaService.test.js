@@ -104,10 +104,11 @@ const ctaAlerts = () => alert.mock.calls.map((c) => c[1]).filter((a) => a.source
 // Every registry addition is an exposure decision: a new function lands here
 // only by someone editing this list on purpose. Rejected today (28 of 115
 // raw keys): the 14 __-prefixed module exports/self-adds, the 6 controlFlow
-// functions, and the 9 denylisted: wait_until_time (§4.2), the S2 ruling's
+// functions, and the 10 denylisted: wait_until_time (§4.2), the S2 ruling's
 // cta_expiry_sweep, decision_timeout_cleanup, set_test_var, S3's create_cta,
 // and the comms archive's comms_archive_sweep, comms_archive_media_sweep,
-// comms_archive_verify and comms_transcribe_sweep (COMMS_ARCHIVE_DESIGN §6.5).
+// comms_archive_verify, comms_transcribe_sweep and comms_summarize_sweep
+// (COMMS_ARCHIVE_DESIGN §6.5).
 const EXPECTED_ELIGIBLE = [
   'advance_stage', 'ai_match', 'business_deadline', 'cancel_case_appointments',
   'cancel_sequences', 'cancel_workflow_execution', 'complete_event',
@@ -144,12 +145,12 @@ describe('eligibility — layered filter (§4)', () => {
     expect(registry.start_workflow.__meta.workflowOnly).toBe(true);
     expect(cta.isCtaEligible('start_workflow')).toBe(true);
     // the seeded denylist (+ the S2 ruling's three)
-    expect(cta.CTA_FN_DENYLIST).toEqual(['wait_until_time', 'cta_expiry_sweep', 'decision_timeout_cleanup', 'set_test_var', 'create_cta', 'comms_archive_sweep', 'comms_archive_media_sweep', 'comms_archive_verify', 'comms_transcribe_sweep']);
+    expect(cta.CTA_FN_DENYLIST).toEqual(['wait_until_time', 'cta_expiry_sweep', 'decision_timeout_cleanup', 'set_test_var', 'create_cta', 'comms_archive_sweep', 'comms_archive_media_sweep', 'comms_archive_verify', 'comms_transcribe_sweep', 'comms_summarize_sweep']);
     expect(registry.wait_until_time.__meta.controlFlow).toBeUndefined(); // flagless by design
     expect(cta.isCtaEligible('wait_until_time')).toBe(false);
     // S2 ruling: each is a real meta-bearing registry function that ONLY the
     // denylist keeps out (so dropping one from the list re-exposes it).
-    for (const f of ['cta_expiry_sweep', 'decision_timeout_cleanup', 'set_test_var', 'comms_archive_sweep', 'comms_archive_media_sweep', 'comms_archive_verify', 'comms_transcribe_sweep']) {
+    for (const f of ['cta_expiry_sweep', 'decision_timeout_cleanup', 'set_test_var', 'comms_archive_sweep', 'comms_archive_media_sweep', 'comms_archive_verify', 'comms_transcribe_sweep', 'comms_summarize_sweep']) {
       expect(typeof registry[f]).toBe('function');
       expect(registry[f].__meta).toBeTruthy();
       expect(registry[f].__meta.controlFlow).not.toBe(true);

@@ -1,0 +1,539 @@
+// services/commsSummarizeSweep.js
+//
+/**
+ * comms_summarize_sweep — one bounded tick of comms archive AI SUMMARIES
+ * (ref/COMMS_ARCHIVE_DESIGN.md §6.4, §6.5, §8; S3). A transcribed call or
+ * voicemail (comms_transcripts state 'transcribed') → Claude (aiService,
+ * credential 12) → a VERIFIED summary on the same row (state 'summarized').
+ *
+ * ── MODE (app_settings comms_summarize_mode, read uncached, fail-closed) ──
+ *   off     no summaries.
+ *   sample  only transcripts of the items in comms_eval_items (lane D's list);
+ *           the P6 short gate is bypassed; Restrict and the cap still apply.
+ *   on      every transcribed call_recording and voicemail, newest first.
+ *   anything else = off, alerted.
+ *
+ * ── THE QUEUE (comms_summaries, one row per transcript — no content) ──────
+ *   pending → calling (written AHEAD of the call with est_cents = the WORST
+ *   case — input + max_tokens of output at the model's price; the cap counts it
+ *   until ai_calls holds the billed cost) → done | skipped (restricted / short /
+ *   empty / refused / purged) | failed. rowOps bound to comms_summaries,
+ *   claimStates pending + calling. A 'calling' row reclaimed after its lease is
+ *   a call that never reported back (the process ended mid-call): BEFORE
+ *   anything else its est_cents is charged as a synthetic ai_calls row
+ *   ('lost_in_flight', no content), so the spend outlives the lease; and a
+ *   claim past maxAttempts fails the row without another call.
+ *
+ * ── MONEY (every path charges; never 0 for a call that may have run) ──────
+ *   completed → ai_calls' billed cost. timeout → the logged row is charged the
+ *   worst-case estimate. lost in flight → the synthetic row above. A
+ *   `max_tokens` stop is deterministic: failed at once, never retried.
+ *
+ * ── NO CONTENT AT REST OUTSIDE THE TRANSCRIPT ROW ──────────────────────────
+ * aiService is called with logContent:false: the ai_calls rows of
+ * 'comms_transcript:%' hold token counts, cost, status and model but no
+ * request_excerpt / response text (ai_calls stays readable on the read-only
+ * endpoint for spend monitoring). comms_summaries.last_error and the alerts
+ * carry fixed codes only.
+ *
+ * ── ONE TICK (lock CONCAT('comms_archive_summarize:', DATABASE()); nothing is
+ *    awaited between the lock and the try) ─────────────────────────────────
+ *   config → discover (+ a 'restricted' skip whose item was unrestricted goes
+ *   back to pending) → at most callsPerTick calls, none started after
+ *   startDeadlineMs (a call can run ~100 s: the scheduled-job runner is
+ *   serial, so a tick stays short).
+ *
+ * ── ONE ITEM ───────────────────────────────────────────────────────────────
+ *   Restricted → skipped (never sent — R5's escape hatch). A call (not a
+ *   voicemail) with comms_media.duration_s (AssemblyAI's measured length)
+ *   under comms_min_summary_s → skipped 'short' (mode on). Empty text →
+ *   skipped. The shared monthly cap (commsTranscribeSweep.monthToDateCents:
+ *   the STT ledger + this sweep's ai_calls + calls in flight) → wait. Then:
+ *   aiService.call — promptKey comms_summary, the transcript as UNTRUSTED
+ *   userInput ("[mm:ss] S: words"), trusted context in vars (kind, date,
+ *   direction, the contact whose number it was ON THE CALL DATE — a unique
+ *   match, else "unknown" — and that contact's open case numbers), model and
+ *   effort from settings (whitelisted), outputType json, consumerRef
+ *   'comms_transcript:<id>' (THE purge key: it catches every attempt,
+ *   including a stricter retry the caller never gets an id for),
+ *   noRetryOnStop (a refusal or a max_tokens cut is not retried).
+ *   The output is VALIDATED and GROUNDED (commsSummaryGround) and written in
+ *   ONE conditional UPDATE … WHERE state = 'transcribed' — the fence.
+ *
+ * ── FENCE (design §8) ──────────────────────────────────────────────────────
+ * Purge (PURGE_PARTS 'transcripts', first) sets the row 'purged' and clears
+ * every ai_calls row of its consumer_ref. A call in flight across a purge
+ * loses the fence — and aiService writes its ai_calls row AFTER the response,
+ * i.e. after the purge cleared: so whenever the row turns out purged, this
+ * sweep clears that consumer_ref's ai_calls itself.
+ *
+ * Cost: comms_transcripts.llm_cost_cents = the sum of every ai_calls row of the
+ * consumer_ref (every attempt; cumulative; purge never clears money).
+ */
+
+'use strict';
+
+const common = require('./commsArchiveCommon');
+const ground = require('./commsSummaryGround');
+
+const LOCK_EXPR = "CONCAT('comms_archive_summarize:', DATABASE())";
+const KEYS = Object.freeze({
+  mode: 'comms_summarize_mode',
+  model: 'comms_summary_model',
+  effort: 'comms_summary_effort',
+  minS: 'comms_min_summary_s',
+  cap: 'comms_ai_monthly_cap_cents',
+});
+const MODES = new Set(['off', 'sample', 'on']);
+const MODELS = new Set(['claude-sonnet-5-5', 'claude-haiku-5-5']);
+const EFFORTS = new Set(['low', 'medium', 'high']);
+const KINDS = ['call_recording', 'voicemail'];
+const PROMPT_KEY = 'comms_summary';
+
+/** Knobs, read at call time (tests shrink them). */
+const limits = {
+  callsPerTick: 3,
+  startDeadlineMs: 30_000,
+  discoverLimit: 200,
+  maxTokens: 16000,
+  timeoutLongMs: 120_000,
+  timeoutShortMs: 60_000,
+  longPromptTokens: 20_000,      // above this (estimated) the long timeout
+  systemTokens: 1_500,           // the prompt's own size, for the estimate
+  leaseMin: 15,
+  maxAttempts: 3,
+  backoffCapMin: 60,
+  stuckBackoffMin: 360,
+  repeatWindowHours: 24,
+  noCliffDays: 30,
+  maxCases: 5,
+};
+
+const { clamp, utcDate, alert } = common;
+const ops = common.rowOps(limits, { table: 'comms_summaries', claimStates: ['pending', 'calling'] });
+const consumerRef = (tid) => `comms_transcript:${tid}`;
+const FIRM_TZ = process.env.FIRM_TIMEZONE || 'America/Detroit';
+
+// ─────────────────────────────────────────────────────────────
+// Config + alerts
+// ─────────────────────────────────────────────────────────────
+
+async function readConfig(db) {
+  const { getSettings } = require('./settingsService'); // lazy require (convention)
+  const raw = await getSettings(db, Object.values(KEYS));
+  const problems = [], notes = [];
+  const m = String(raw[KEYS.mode] == null ? '' : raw[KEYS.mode]).trim().toLowerCase();
+  const mode = MODES.has(m) ? m : 'off';
+  if (!MODES.has(m) && m !== '') notes.push(`${KEYS.mode} = ${JSON.stringify(clamp(raw[KEYS.mode], 40))} is not off | sample | on — treated as off`);
+  const model = raw[KEYS.model];
+  if (!MODELS.has(model)) problems.push(`${KEYS.model} = ${JSON.stringify(clamp(model, 40))} is not one of ${[...MODELS].join(' | ')}`);
+  const effort = raw[KEYS.effort];
+  if (!EFFORTS.has(effort)) problems.push(`${KEYS.effort} = ${JSON.stringify(clamp(effort, 20))} is not one of ${[...EFFORTS].join(' | ')}`);
+  const minS = raw[KEYS.minS] != null && /^\s*\d+\s*$/.test(String(raw[KEYS.minS])) ? Number(raw[KEYS.minS]) : null;
+  if (minS == null) problems.push(`${KEYS.minS} is missing or not a number`);
+  let capCents = raw[KEYS.cap] != null && /^\s*\d+\s*$/.test(String(raw[KEYS.cap])) ? Number(raw[KEYS.cap]) : null;
+  if (capCents == null) { capCents = 0; if (mode !== 'off') notes.push(`${KEYS.cap} is missing or not a number — treated as 0: nothing is summarised`); }
+  return { mode, model, effort, minS, capCents, problems, notes };
+}
+
+async function _dailyAlert(db, groupKey, severity, title, message, context) {
+  return alert(db, {
+    kind: groupKey, group_key: groupKey, severity, title, message, context,
+    dedup_key: `${groupKey}:${severity}:${utcDate()}`,
+  });
+}
+
+// ─────────────────────────────────────────────────────────────
+// Rows
+// ─────────────────────────────────────────────────────────────
+
+async function _discover(db, cfg, out) {
+  // A 'restricted' skip whose item was unrestricted is eligible again.
+  const [back] = await db.query(
+    `UPDATE comms_summaries s
+       JOIN comms_transcripts t ON t.id = s.transcript_id
+       JOIN comms_media m ON m.id = t.media_id
+        SET s.state = 'pending', s.skip_reason = NULL, s.next_attempt_at = NULL
+      WHERE s.state = 'skipped' AND s.skip_reason = 'restricted' AND m.restricted = 0 AND t.state = 'transcribed'`);
+  out.unrestricted = back.affectedRows || 0;
+  const sample = cfg.mode === 'sample' ? ' AND EXISTS (SELECT 1 FROM comms_eval_items e WHERE e.media_id = m.id)' : '';
+  const [r] = await db.query(
+    `INSERT IGNORE INTO comms_summaries (transcript_id, state)
+     SELECT t.id, 'pending'
+       FROM comms_transcripts t JOIN comms_media m ON m.id = t.media_id
+      WHERE t.state = 'transcribed' AND m.kind IN (?)
+        AND NOT EXISTS (SELECT 1 FROM comms_summaries s WHERE s.transcript_id = t.id)${sample}
+      ORDER BY m.captured_at DESC, t.id DESC
+      LIMIT ?`, [KINDS, limits.discoverLimit]);
+  out.discovered = r.affectedRows || 0;
+}
+
+async function _nextDue(db, { sample, seen }) {
+  const params = [];
+  let extra = '';
+  if (sample) extra += ' AND EXISTS (SELECT 1 FROM comms_eval_items e WHERE e.media_id = m.id)';
+  if (seen.length) { extra += ' AND s.id NOT IN (?)'; params.push(seen); }
+  const [[row]] = await db.query(
+    `SELECT s.id, s.transcript_id, s.state AS s_state, s.attempts, s.created_at, s.est_cents, s.model AS s_model,
+            t.state AS t_state, t.segments, t.full_text, t.media_id,
+            m.kind, m.restricted, m.duration_s, m.captured_at, m.party, m.source_table, m.source_id,
+            e.direction
+       FROM comms_summaries s
+       JOIN comms_transcripts t ON t.id = s.transcript_id
+       JOIN comms_media m ON m.id = t.media_id
+       LEFT JOIN phone_event_log e ON m.source_table = 'phone_event_log' AND e.id = m.source_id
+      WHERE s.state IN ('pending', 'calling')
+        AND (s.next_attempt_at IS NULL OR s.next_attempt_at <= UTC_TIMESTAMP())${extra}
+      ORDER BY m.captured_at DESC, s.id DESC LIMIT 1`, params);
+  return row || null;
+}
+
+/** The queue row's terminal / waiting states (all conditional on the row still being ours). */
+async function _skip(db, row, reason) {
+  await db.query(
+    `UPDATE comms_summaries SET state = 'skipped', skip_reason = ?, est_cents = NULL, next_attempt_at = NULL,
+            attempts = GREATEST(attempts, 1) - 1
+      WHERE id = ? AND state IN ('pending', 'calling')`, [reason, row.id]);
+}
+
+async function _backToPending(db, row, { charge, why }) {
+  const attemptsNow = Number(row.attempts) + 1;
+  if (charge && attemptsNow >= limits.maxAttempts) {
+    await db.query(
+      `UPDATE comms_summaries SET state = 'failed', est_cents = NULL, next_attempt_at = NULL, last_error = ?
+        WHERE id = ? AND state IN ('pending', 'calling')`, [clamp(why, 500), row.id]);
+    return 'failed';
+  }
+  await db.query(
+    `UPDATE comms_summaries SET state = 'pending', est_cents = NULL, last_error = ?,
+            attempts = ${charge ? 'attempts' : 'GREATEST(attempts, 1) - 1'},
+            next_attempt_at = ${charge ? 'UTC_TIMESTAMP() + INTERVAL ? MINUTE' : 'NULL'}
+      WHERE id = ? AND state IN ('pending', 'calling')`,
+    charge ? [clamp(why, 500), Math.min(2 ** attemptsNow, limits.backoffCapMin), row.id] : [clamp(why, 500), row.id]);
+  return charge ? 'retry' : 'waiting';
+}
+
+/** ai_calls of this transcript → ai_call_ids + llm_cost_cents (every attempt; cumulative). */
+async function _syncLlm(db, transcriptId) {
+  const [rows] = await db.query('SELECT id, cost_cents FROM ai_calls WHERE consumer_ref = ? ORDER BY id', [consumerRef(transcriptId)]);
+  const ids = rows.map(r => Number(r.id));
+  const cost = rows.reduce((a, r) => a + (Number(r.cost_cents) || 0), 0);
+  await db.query('UPDATE comms_transcripts SET ai_call_ids = ?, llm_cost_cents = ? WHERE id = ?',
+    [JSON.stringify(ids), Math.round(cost * 10_000) / 10_000, transcriptId]);
+  return { ids, cost };
+}
+
+/** A failed queue row with a fixed code. */
+async function _fail(db, row, code) {
+  await db.query(
+    `UPDATE comms_summaries SET state = 'failed', est_cents = NULL, next_attempt_at = NULL, last_error = ?
+      WHERE id = ? AND state IN ('pending', 'calling')`, [code, row.id]);
+}
+
+/**
+ * A synthetic ai_calls row: spend for a call whose real row is missing or
+ * unpriced (lost in flight, a timeout aiService could not log). No content.
+ */
+async function _chargeSynthetic(db, transcriptId, model, cents, code) {
+  await db.query(
+    `INSERT INTO ai_calls (prompt_key, model, mode, output_type, consumer_ref, status, error, cost_cents)
+     VALUES (?, ?, 'sync', 'json', ?, 'error', ?, ?)`,
+    [PROMPT_KEY, model || null, consumerRef(transcriptId), code, Math.round(Number(cents || 0) * 10_000) / 10_000]);
+}
+
+/** The race the fence cannot close: aiService logs AFTER the response, so a purge may have run before it. */
+async function _clearAiCalls(db, transcriptId) {
+  const [r] = await db.query('UPDATE ai_calls SET request_excerpt = NULL, response = NULL WHERE consumer_ref = ?', [consumerRef(transcriptId)]);
+  return r.affectedRows || 0;
+}
+
+const _localDate = (d) => new Intl.DateTimeFormat('en-CA', { timeZone: FIRM_TZ, year: 'numeric', month: '2-digit', day: '2-digit' }).format(d);
+const _localWhen = (d) => new Intl.DateTimeFormat('en-US', { timeZone: FIRM_TZ, dateStyle: 'medium', timeStyle: 'short' }).format(d);
+
+/**
+ * The contact whose number it was ON THE CALL DATE (firm-local): contact_phones
+ * active then (start_date NULL = since forever). A unique contact → its name and
+ * up to maxCases open case numbers; none or several → unknown (never a guess).
+ */
+async function _context(db, row) {
+  const digits = String(row.party || '').replace(/\D/g, '').slice(-10);
+  if (digits.length !== 10 || !row.captured_at) return { contact: null, cases: [] };
+  const day = _localDate(new Date(row.captured_at));
+  const [rows] = await db.query(
+    `SELECT DISTINCT c.contact_id, c.contact_name
+       FROM contact_phones cp JOIN contacts c ON c.contact_id = cp.contact_id
+      WHERE cp.phone = ? AND (cp.start_date IS NULL OR cp.start_date <= ?) AND (cp.end_date IS NULL OR cp.end_date >= ?)`,
+    [digits, day, day]);
+  if (rows.length !== 1 || !rows[0].contact_name) return { contact: null, cases: [] };
+  const [cases] = await db.query(
+    `SELECT DISTINCT COALESCE(NULLIF(k.case_number_full, ''), k.case_number) AS num
+       FROM case_relate r JOIN cases k ON k.case_id = r.case_relate_case_id
+      WHERE r.case_relate_client_id = ? AND r.case_relate_type IN ('Primary', 'Secondary')
+        AND k.case_stage IN ('Open', 'Pending', 'Filed')
+        AND COALESCE(NULLIF(k.case_number_full, ''), k.case_number) IS NOT NULL
+        AND COALESCE(NULLIF(k.case_number_full, ''), k.case_number) <> ''
+      ORDER BY num LIMIT ?`, [rows[0].contact_id, limits.maxCases]);
+  return { contact: String(rows[0].contact_name), cases: cases.map(c => String(c.num)) };
+}
+
+/** The WORST case for one call: the input estimate + max_tokens of output, at the model's price. */
+function _estimate(model, text) {
+  const { computeCostCents } = require('./aiService'); // lazy require (convention)
+  const inTok = Math.ceil(String(text).length / 4) + limits.systemTokens;
+  return { inTok, cents: computeCostCents(inTok, limits.maxTokens, model) || 0 };
+}
+
+// ─────────────────────────────────────────────────────────────
+// One item
+// ─────────────────────────────────────────────────────────────
+
+/** → 'stop' when the tick must end. */
+async function _summarizeOne(ctx, row) {
+  const { db, out, cfg, acc } = ctx;
+  if (!(await ops.claim(db, row.id))) return null;
+  const attemptsNow = Number(row.attempts) + 1;
+  if (row.s_state === 'calling') {
+    // A call that never reported back: its reservation becomes spend that outlives the lease.
+    await _chargeSynthetic(db, row.transcript_id, row.s_model, row.est_cents, 'lost_in_flight');
+    await db.query("UPDATE comms_summaries SET est_cents = NULL WHERE id = ?", [row.id]);
+    await _syncLlm(db, row.transcript_id);
+    out.lost_in_flight = (out.lost_in_flight || 0) + 1;
+  }
+  if (attemptsNow > limits.maxAttempts) {
+    await _fail(db, row, 'attempts_exhausted');
+    out.failed++;
+    acc.failed.push({ id: row.transcript_id, why: 'attempts_exhausted' });
+    return null;
+  }
+  if (row.t_state !== 'transcribed') {
+    if (row.t_state === 'purged') await _clearAiCalls(db, row.transcript_id);   // a purge that landed mid-call, then a crash
+    await _skip(db, row, row.t_state === 'purged' ? 'purged' : 'not_transcribed');
+    return null;
+  }
+  if (Number(row.restricted) === 1) { await _skip(db, row, 'restricted'); out.skipped_restricted++; return null; }
+  if (cfg.mode === 'on' && row.kind === 'call_recording' && row.duration_s != null && Number(row.duration_s) < cfg.minS) {
+    await _skip(db, row, 'short'); out.skipped_short++; return null;
+  }
+  let segments = row.segments;
+  if (typeof segments === 'string') { try { segments = JSON.parse(segments); } catch (_) { segments = []; } }
+  const text = ground.transcriptText(segments, row.full_text);
+  if (!text.trim()) { await _skip(db, row, 'empty'); out.skipped_empty++; return null; }
+
+  // The shared cap (STT + summaries + calls in flight).
+  const est = _estimate(cfg.model, text);
+  const tx = require('./commsTranscribeSweep'); // lazy require (convention)
+  const mtd = await tx.monthToDateCents(db);
+  out.cap = { mtd_cents: Math.round(mtd * 100) / 100, cap_cents: cfg.capCents };
+  if (mtd + est.cents > cfg.capCents) {
+    await _backToPending(db, row, { charge: false, why: 'monthly_cap' });
+    out.stop = 'cap';
+    ctx.capHit = true;
+    return 'stop';
+  }
+
+  // Written ahead: the cap counts the call from here, whatever happens to the process.
+  await db.query(
+    `UPDATE comms_summaries SET state = 'calling', est_cents = ?, model = ?, effort = ?
+      WHERE id = ? AND state IN ('pending', 'calling')`,
+    [Math.round(est.cents * 10_000) / 10_000, cfg.model, cfg.effort, row.id]);
+
+  const context = await _context(db, row);
+
+  // The last look before anything leaves: still transcribed, still not restricted.
+  const [[chk]] = await db.query(
+    `SELECT t.state, m.restricted FROM comms_transcripts t JOIN comms_media m ON m.id = t.media_id WHERE t.id = ?`,
+    [row.transcript_id]);
+  if (!chk || chk.state !== 'transcribed') {
+    if (chk && chk.state === 'purged') await _clearAiCalls(db, row.transcript_id);
+    await _skip(db, row, chk && chk.state === 'purged' ? 'purged' : 'not_transcribed');
+    return null;
+  }
+  if (Number(chk.restricted) === 1) { await _skip(db, row, 'restricted'); out.skipped_restricted++; return null; }
+
+  const ai = require('./aiService'); // lazy require (convention)
+  const r = await ai.call(db, {
+    promptKey: PROMPT_KEY,
+    vars: {
+      item_kind: row.kind === 'voicemail' ? 'voicemail' : 'call',
+      call_date: row.captured_at ? _localWhen(new Date(row.captured_at)) : 'unknown',
+      direction: row.kind === 'voicemail' ? 'incoming (voicemail)' : (row.direction || 'unknown'),
+      contact: context.contact || 'unknown',
+      cases: context.cases.length ? context.cases.join(', ') : 'none known',
+    },
+    userInput: text,
+    model: cfg.model,
+    max_tokens: limits.maxTokens,
+    outputType: 'json',
+    timeout_ms: est.inTok > limits.longPromptTokens ? limits.timeoutLongMs : limits.timeoutShortMs,
+    consumerRef: consumerRef(row.transcript_id),
+    outputConfig: { effort: cfg.effort },
+    noRetryOnStop: true,
+    logContent: false,
+  });
+  out.calls++;
+  if (!r.ok && r.error === 'timeout') {
+    // The model may have run to the end: charge the worst case, never 0.
+    const [u] = r.callId
+      ? await db.query('UPDATE ai_calls SET cost_cents = ? WHERE id = ? AND cost_cents IS NULL', [Math.round(est.cents * 10_000) / 10_000, r.callId])
+      : [{ affectedRows: 0 }];
+    if (!u.affectedRows) await _chargeSynthetic(db, row.transcript_id, cfg.model, est.cents, 'timeout_charged');
+  }
+  await _syncLlm(db, row.transcript_id);
+
+  // The row may have been purged while we waited: its ai_calls are cleared here (aiService logged after the purge did).
+  const [[now]] = await db.query('SELECT state FROM comms_transcripts WHERE id = ?', [row.transcript_id]);
+  if (!now || now.state === 'purged') {
+    out.ai_calls_cleared = (out.ai_calls_cleared || 0) + await _clearAiCalls(db, row.transcript_id);
+    await _skip(db, row, 'purged');
+    out.fenced++;
+    return null;
+  }
+
+  if (!r.ok) {
+    if (r.error === 'refusal') {
+      await _skip(db, row, 'refused');
+      out.refused++;
+      acc.refused.push(row.transcript_id);
+      return null;
+    }
+    const detail = String(r.detail || '');
+    const status = Number((detail.match(/^http_(\d{3})/) || [])[1]) || null;
+    if (r.error === 'max_tokens') {
+      // Deterministic: the same transcript would be cut the same way. Failed at once, not retried.
+      await _fail(db, row, 'max_tokens');
+      out.failed++;
+      acc.failed.push({ id: row.transcript_id, why: 'max_tokens' });
+      return null;
+    }
+    if (r.error === 'no_auth' || status === 401 || status === 403) {
+      await _backToPending(db, row, { charge: false, why: `credential:${r.error}${status ? `:${status}` : ''}` });
+      acc.config.push(`Claude credential refused (${r.error}${status ? ` HTTP ${status}` : ''}) — check credential 12`);
+      out.stop = 'no_auth';
+      return 'stop';
+    }
+    if (status === 429) {
+      await _backToPending(db, row, { charge: false, why: 'rate_limited:429' });
+      out.stop = 'rate_limited';
+      return 'stop';
+    }
+    if (status && status >= 400 && status < 500) {
+      await _backToPending(db, row, { charge: false, why: `request_refused:${status}` });
+      acc.config.push(`Claude refused the request (HTTP ${status}) — every summary would fail the same way; check the model / effort settings and the request`);
+      out.stop = 'request_refused';
+      return 'stop';
+    }
+    // timeout / 5xx / network / unusable JSON: a failed call, charged.
+    const res = await _backToPending(db, row, { charge: true, why: `call_failed:${r.error}${status ? `:${status}` : ''}` });
+    if (res === 'failed') { out.failed++; acc.failed.push({ id: row.transcript_id, why: `call_failed:${r.error}` }); } else out.retried++;
+    return null;
+  }
+
+  const v = ground.validate(r.json, {
+    segments, fullText: row.full_text, kind: row.kind, knownNames: context.contact ? [context.contact] : [],
+  });
+  if (!v.ok) {
+    const res = await _backToPending(db, row, { charge: true, why: `output_rejected:${v.why}` });
+    if (res === 'failed') { out.failed++; acc.failed.push({ id: row.transcript_id, why: `output_rejected:${v.why}` }); } else out.retried++;
+    out.rejected++;
+    return null;
+  }
+
+  const [u] = await db.query(
+    `UPDATE comms_transcripts
+        SET state = 'summarized', summary = ?, summary_text = ?, summary_model = ?, grounding_dropped = ?
+      WHERE id = ? AND state = 'transcribed'`,
+    [JSON.stringify(v.summary), v.summaryText, cfg.model, Math.min(v.dropped, 65535), row.transcript_id]);
+  if (u.affectedRows !== 1) {
+    // Fenced between the check and here (a purge): its ai_calls go too.
+    out.ai_calls_cleared = (out.ai_calls_cleared || 0) + await _clearAiCalls(db, row.transcript_id);
+    await _skip(db, row, 'purged');
+    out.fenced++;
+    return null;
+  }
+  await db.query(
+    `UPDATE comms_summaries SET state = 'done', est_cents = NULL, next_attempt_at = NULL, last_error = NULL,
+            attempts = GREATEST(attempts, 1) - 1
+      WHERE id = ? AND state IN ('pending', 'calling')`, [row.id]);
+  out.summarized++;
+  out.grounding_dropped += v.dropped;
+  return null;
+}
+
+// ─────────────────────────────────────────────────────────────
+// Tick
+// ─────────────────────────────────────────────────────────────
+
+async function runSummarizeSweep(db) {
+  const t0 = Date.now();
+  const out = {
+    mode: null, discovered: 0, calls: 0, summarized: 0, retried: 0, failed: 0, rejected: 0, refused: 0, fenced: 0,
+    skipped_restricted: 0, skipped_short: 0, skipped_empty: 0, grounding_dropped: 0, stop: null,
+  };
+  const acc = { failed: [], refused: [], config: [] };
+  const lock = await common.acquireLock(db, LOCK_EXPR, 0);
+  if (!lock) return { ...out, skipped: 'locked' };
+  const ctx = { db, out, acc, cfg: null, capHit: false };
+  try {
+    const cfg = await readConfig(db);
+    ctx.cfg = cfg;
+    out.mode = cfg.mode;
+    if (cfg.problems.length || cfg.notes.length) {
+      await _dailyAlert(db, 'comms_summarize_config', cfg.problems.length ? 'error' : 'warning',
+        'Comms summaries: a setting is wrong',
+        [...cfg.problems, ...cfg.notes].join('\n') + (cfg.problems.length ? '\n\nSummaries are stopped until it is fixed.' : ''),
+        { problems: cfg.problems, notes: cfg.notes });
+    }
+    if (cfg.problems.length) { out.stop = 'config'; return out; }
+    if (cfg.mode === 'off') return out;
+
+    try {
+      await _discover(db, cfg, out);
+    } catch (err) {
+      if (err.code === 'ER_NO_SUCH_TABLE' && cfg.mode === 'sample') {
+        await _dailyAlert(db, 'comms_summarize_config', 'error', 'Comms summaries: sample mode has no sample list',
+          'comms_summarize_mode = sample but comms_eval_items does not exist. Nothing is summarised.', {});
+        out.stop = 'config';
+        return out;
+      }
+      throw err;
+    }
+    const seen = [];
+    while (out.calls < limits.callsPerTick && Date.now() - t0 < limits.startDeadlineMs) {
+      const row = await _nextDue(db, { sample: cfg.mode === 'sample', seen });
+      if (!row) break;
+      seen.push(row.id);
+      if ((await _summarizeOne(ctx, row)) === 'stop') break;
+    }
+    if (ctx.capHit) {
+      const tx = require('./commsTranscribeSweep'); // lazy require (convention)
+      await tx.capAlert(db, out);
+    }
+    return out;
+  } finally {
+    try {
+      if (acc.config.length) {
+        await _dailyAlert(db, 'comms_summarize_config', 'error', 'Comms summaries: Claude refused us',
+          acc.config.join('\n') + '\n\nNothing was charged; the tick stopped.', {});
+      }
+      if (acc.failed.length) {
+        await ops.escalatingAlert(db, 'comms_summarize_failed', 'comms_summarize_failed',
+          'Comms summaries: summaries failed',
+          `${acc.failed.length} transcript(s) could not be summarised after ${limits.maxAttempts} tries:\n` +
+          acc.failed.slice(0, 10).map(f => `  comms_transcripts ${f.id}: ${clamp(f.why, 120)}`).join('\n'),
+          { items: acc.failed.slice(0, 20) });
+      }
+      if (acc.refused.length) {
+        await _dailyAlert(db, 'comms_summarize_refused', 'warning',
+          'Comms summaries: Claude declined to summarise a call',
+          `${acc.refused.length} transcript(s) were declined by the model's safety checks and left without a summary ` +
+          `(the transcript is unaffected): comms_transcripts ${acc.refused.slice(0, 10).join(', ')}.`,
+          { transcripts: acc.refused.slice(0, 20) });
+      }
+    } catch (err) {
+      console.error('[COMMS SUMMARIZE] alert flush failed:', err.message);
+    }
+    await lock.release();
+  }
+}
+
+module.exports = { runSummarizeSweep, readConfig, limits, KEYS, LOCK_EXPR, PROMPT_KEY, consumerRef };

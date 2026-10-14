@@ -260,7 +260,7 @@ async function _storageAlert(db, what) {
 }
 
 /** The monthly cap: warning the first day it is hit, ERROR once it has held for capErrorAfterHours. */
-async function _capAlert(db, out) {
+async function capAlert(db, out) {
   let severity = 'warning';
   try {
     const [[r]] = await db.query(
@@ -271,9 +271,9 @@ async function _capAlert(db, out) {
     if (r) severity = 'error';
   } catch (_) { severity = 'error'; }
   return _dailyAlert(db, 'comms_transcribe_cap', severity,
-    'Comms transcription: the monthly AI cap is reached',
-    `Month-to-date ${out.cap.mtd_cents.toFixed(2)}¢ of ${out.cap.cap_cents}¢ (${KEYS.cap}), every job submitted this month counted. ` +
-    'New transcriptions wait; jobs in flight finish; archiving never stops. Raise the cap from the SU db console, or wait for the month to turn.',
+    'Comms archive: the monthly AI cap is reached',
+    `Month-to-date ${out.cap.mtd_cents.toFixed(2)}¢ of ${out.cap.cap_cents}¢ (${KEYS.cap}) — transcription and summaries together, every job and call this month counted. ` +
+    'New transcriptions and summaries wait; jobs in flight finish; archiving never stops. Raise the cap from the SU db console, or wait for the month to turn.',
     out.cap);
 }
 
@@ -466,16 +466,49 @@ async function _mainFailures(db, transcriptId) {
 }
 
 /**
- * Month-to-date STT spend in cents, from the ledger: every job submitted this
- * UTC month — billed cost when completed, the estimate otherwise —
- * regardless of what happened to its transcript row since. S3 adds the
- * summaries' ai_calls share here: this is the one place the cap is summed.
+ * Month-to-date AI spend in cents for the comms archive — THE one place the
+ * shared monthly cap (comms_ai_monthly_cap_cents) is summed:
+ *   STT        every vendor job submitted this UTC month (comms_stt_jobs) —
+ *              billed cost when completed, the estimate otherwise — whatever
+ *              its transcript row did since;
+ *   summaries  (S3) every ai_calls attempt of a transcript this UTC month
+ *              (consumer_ref 'comms_transcript:<id>' — stricter retries
+ *              included), plus the estimate of every call in flight
+ *              (comms_summaries state 'calling', written ahead of the call).
+ * A table a database has not reached yet (S3's queue) counts as 0.
  */
 async function monthToDateCents(db) {
+  const p = await monthToDateParts(db);
+  return p.stt + (p.llm || 0);
+}
+
+/**
+ * The same sum, by stage — S4's health read shows both. llm = the summaries'
+ * ai_calls + the estimates of calls in flight; null on a database without
+ * ai_calls (a missing table holds no calls).
+ */
+async function monthToDateParts(db) {
   const [[r]] = await db.query(
     `SELECT COALESCE(SUM(COALESCE(cost_cents, est_cents)), 0) AS c FROM comms_stt_jobs
       WHERE submitted_at >= DATE_FORMAT(UTC_TIMESTAMP(), '%Y-%m-01')`);
-  return Number(r.c) || 0;
+  const stt = Number(r.c) || 0;
+  let llm = null;
+  try {
+    const [[a]] = await db.query(
+      `SELECT COALESCE(SUM(cost_cents), 0) AS c FROM ai_calls
+        WHERE consumer_ref LIKE 'comms\\_transcript:%' AND created_at >= DATE_FORMAT(UTC_TIMESTAMP(), '%Y-%m-01')`);
+    llm = Number(a.c) || 0;
+  } catch (err) {
+    if (err.code !== 'ER_NO_SUCH_TABLE') throw err;
+  }
+  try {
+    const [[f]] = await db.query("SELECT COALESCE(SUM(est_cents), 0) AS c FROM comms_summaries WHERE state = 'calling'");
+    const inFlight = Number(f.c) || 0;
+    if (inFlight) llm = (llm || 0) + inFlight;
+  } catch (err) {
+    if (err.code !== 'ER_NO_SUCH_TABLE') throw err;
+  }
+  return { stt, llm: llm == null ? null : Math.round(llm * 10_000) / 10_000 };
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -1270,7 +1303,7 @@ async function runTranscribeSweep(db, opts = {}) {
         sseen.push(row.id);
         if (await _submitOne(ctx, row)) break;
       }
-      if (ctx.capHit) await _capAlert(db, out);
+      if (ctx.capHit) await capAlert(db, out);
       await _backlogAlarm(db, out);
     }
     if (out.download_errors && !out.completed) {
@@ -1296,9 +1329,12 @@ async function runTranscribeSweep(db, opts = {}) {
  *      (a crash between a put and its child row leaves an object no row
  *      names). A storage failure throws: the purge 502s and is retried;
  *   3. the vendor copies of its ledger jobs are deleted, best-effort — the
- *      sweep keeps retrying an owed one; the vendor's 30-day TTL backstops.
+ *      sweep keeps retrying an owed one; the vendor's 30-day TTL backstops;
+ *   4. (S3) every ai_calls row of the transcript (consumer_ref
+ *      'comms_transcript:<id>' — every attempt, retries included) loses its
+ *      request_excerpt and response; cost and tokens stay (not content).
  * Idempotent. On a database the S2 migration has not reached it is a no-op.
- * → { rows, deleted, vendor: 'none' | 'deleted' | 'owed' }
+ * → { rows, deleted, vendor: 'none' | 'deleted' | 'owed', ai_calls }
  */
 async function purgeTranscript(db, row, { vendor = require('./commsTranscribeVendor') } = {}) {
   let r;
@@ -1309,7 +1345,7 @@ async function purgeTranscript(db, row, { vendor = require('./commsTranscribeVen
               next_attempt_at = NULL
         WHERE media_id = ?`, [row.id]);
   } catch (err) {
-    if (err.code === 'ER_NO_SUCH_TABLE') return { rows: 0, deleted: 0, vendor: 'none' };
+    if (err.code === 'ER_NO_SUCH_TABLE') return { rows: 0, deleted: 0, vendor: 'none', ai_calls: 0 };
     throw err;
   }
 
@@ -1323,17 +1359,26 @@ async function purgeTranscript(db, row, { vendor = require('./commsTranscribeVen
   }
 
   const [[t]] = await db.query('SELECT id FROM comms_transcripts WHERE media_id = ?', [row.id]);
-  if (!t) return { rows: r.affectedRows, deleted, vendor: 'none' };
+  if (!t) return { rows: r.affectedRows, deleted, vendor: 'none', ai_calls: 0 };
+  // S3: the summary attempts' text (the model's output; the system text with the contact's name).
+  let aiCalls = 0;
+  try {
+    const [ac] = await db.query(
+      'UPDATE ai_calls SET request_excerpt = NULL, response = NULL WHERE consumer_ref = ?', [`comms_transcript:${t.id}`]);
+    aiCalls = ac.affectedRows || 0;
+  } catch (err) {
+    if (err.code !== 'ER_NO_SUCH_TABLE') throw err;            // no ai_calls table = no summary attempts to clear
+  }
   let jobs;
   try {
     [jobs] = await db.query(
       'SELECT id, transcript_id, job_ref, delete_attempts FROM comms_stt_jobs WHERE transcript_id = ? AND deleted_at IS NULL AND job_ref IS NOT NULL',
       [t.id]);
   } catch (err) {
-    if (err.code === 'ER_NO_SUCH_TABLE') return { rows: r.affectedRows, deleted, vendor: 'none' };
+    if (err.code === 'ER_NO_SUCH_TABLE') return { rows: r.affectedRows, deleted, vendor: 'none', ai_calls: aiCalls };
     throw err;
   }
-  if (!jobs.length) return { rows: r.affectedRows, deleted, vendor: 'none' };
+  if (!jobs.length) return { rows: r.affectedRows, deleted, vendor: 'none', ai_calls: aiCalls };
   let all = true;
   try {
     const cfg = await readConfig(db);
@@ -1351,7 +1396,7 @@ async function purgeTranscript(db, row, { vendor = require('./commsTranscribeVen
   } catch (_) {
     all = false;
   }
-  return { rows: r.affectedRows, deleted, vendor: all ? 'deleted' : 'owed' };
+  return { rows: r.affectedRows, deleted, vendor: all ? 'deleted' : 'owed', ai_calls: aiCalls };
 }
 
 /**
@@ -1370,6 +1415,6 @@ async function releaseCap(db, transcriptId, { userId }) {
 }
 
 module.exports = {
-  runTranscribeSweep, purgeTranscript, releaseCap, monthToDateCents, readConfig, proveSigning,
+  runTranscribeSweep, purgeTranscript, releaseCap, monthToDateCents, monthToDateParts, capAlert, readConfig, proveSigning,
   limits, KEYS, LOCK_EXPR, PROBE_OBJECT, PROBE_TEXT,
 };
