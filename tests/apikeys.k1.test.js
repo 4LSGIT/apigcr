@@ -80,7 +80,7 @@ test('create → lookup roundtrip; revoked → null', async () => {
   const raw = 'yck_' + 'a'.repeat(64);
   const h = apiKeys.hashKey(raw);
   let db = fakeDb({ keyRows: [{ id: 1, label: 'pabbly', key_hash: h, revoked_at: null }] });
-  expect(await apiKeys.lookup(db, raw)).toEqual({ id: 1, label: 'pabbly' });
+  expect(await apiKeys.lookup(db, raw)).toEqual({ id: 1, label: 'pabbly', scopes: null }); // B1: NULL column = legacy
 
   apiKeys.invalidateCache();
   db = fakeDb({ keyRows: [{ id: 1, label: 'pabbly', key_hash: h, revoked_at: new Date() }] });
@@ -123,7 +123,7 @@ test('lookup fails CLOSED (null) on DB error, and does not cache the error', asy
   const bad = fakeDb({ failLookup: true });
   expect(await apiKeys.lookup(bad, raw)).toBeNull();
   const good = fakeDb({ keyRows: [{ id: 4, label: 'z', key_hash: h, revoked_at: null }] });
-  expect(await apiKeys.lookup(good, raw)).toEqual({ id: 4, label: 'z' }); // recovered next call
+  expect(await apiKeys.lookup(good, raw)).toEqual({ id: 4, label: 'z', scopes: null }); // recovered next call
 });
 
 test('last_used_at touch is throttled per key', async () => {
@@ -199,7 +199,7 @@ test('external key authorizes with attribution', async () => {
   const mw = require('../lib/auth.jwtOrApiKey');
   const { req, next } = await run(mw, { 'x-api-key': raw }, db);
   expect(next).toHaveBeenCalled();
-  expect(req.auth).toEqual({ type: 'api_key', key_id: 8, key_label: 'pabbly' });
+  expect(req.auth).toEqual({ type: 'api_key', key_id: 8, key_label: 'pabbly', scopes: null });
 });
 
 test('unknown api key without Bearer → 401, next not called', async () => {

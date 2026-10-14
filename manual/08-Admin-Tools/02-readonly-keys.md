@@ -9,9 +9,26 @@ can't be reached with an API key, to avoid bootstrapping more access from less).
 
 ## What a key can do
 
-A key authorizes one thing: `POST /api/readonly/sql` with the key in the
-`X-Readonly-Api-Key` header, body `{ sql, params?, maxRows?, timeoutMs? }`.
-That endpoint runs a **single read-only SQL statement** and returns the rows.
+A key reaches only the surfaces in its **scopes**:
+
+| Scope | Lets the key call |
+|---|---|
+| `sql.ro` | `POST /api/readonly/sql` — read-only SQL (below) |
+| `scratch` | `PUT` / `DELETE /api/scratch/…` — cross-session notes |
+| `alert` | `POST /api/alert/it` — page IT |
+| `temp.clio`, `temp.dropbox`, `temp.ringcentral`, `temp.zohosign` | the `/api/temp/<provider>/…` proxies — calls to that provider **with the firm's credentials** |
+
+A new key gets `sql.ro`, `scratch` and `alert`. The `temp.*` proxies are never
+granted by default: to issue a key that needs one, send `scopes` in the create
+request (e.g. `["sql.ro","temp.clio"]`) — the Readonly Keys screen has no
+picker for it yet. An unknown scope is refused, not dropped. Keys issued
+before scopes existed carry none recorded and keep reaching every surface.
+A key that calls something outside its scopes gets a 403 that names the
+missing scope.
+
+The SQL surface, `POST /api/readonly/sql` with the key in the
+`X-Readonly-Api-Key` header, body `{ sql, params?, maxRows?, timeoutMs? }`,
+runs a **single read-only SQL statement** and returns the rows.
 It is safe by construction, in layers:
 
 1. Runs as the `yc_readonly` database user, which has **only SELECT** — it
@@ -61,7 +78,7 @@ Keys issued before this format existed have no stamp and keep working normally.
 
 ## Managing keys
 
-- **List** active (or all) keys with their labels and expiry.
+- **List** active (or all) keys with their labels, expiry and scopes.
 - **Revoke** a key at any time (it's marked revoked and stops working
   immediately) — do this the moment a key is no longer needed or might be
   exposed.

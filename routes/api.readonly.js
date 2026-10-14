@@ -2,7 +2,7 @@
 //
 // POST /api/readonly/sql  — execute a single read-only SQL statement.
 //
-// Auth:    X-Readonly-Api-Key header → readonlyApiKeyAuth
+// Auth:    X-Readonly-Api-Key header → readonlyApiKeyAuth + requireKeyScope('sql.ro')
 // Body:    { sql: string, params?: array, maxRows?: number, timeoutMs?: number }
 // Returns: { ok, rows, fields, rowCount, truncated, durationMs }
 //
@@ -21,7 +21,7 @@
 const express = require("express");
 const router  = express.Router();
 const roPool  = require("../startup/dbReadonly");
-const { readonlyApiKeyAuth } = require("../lib/auth.readonly");
+const { readonlyApiKeyAuth, requireKeyScope } = require("../lib/auth.readonly");
 const { isReadOnlyQuery, hasFileExfilClause, matchedSecretTable } = require("../lib/sqlGuard");
 
 const DEFAULT_MAX_ROWS  = 5000;
@@ -62,7 +62,7 @@ function logQuery(req, fields) {
     .catch(err => console.error("[api.readonly] query-log insert failed:", err.message));
 }
 
-router.post("/api/readonly/sql", readonlyApiKeyAuth, async (req, res) => {
+router.post("/api/readonly/sql", readonlyApiKeyAuth, requireKeyScope("sql.ro"), async (req, res) => {
   const started = Date.now();
   const { sql, params, maxRows, timeoutMs } = req.body || {};
 

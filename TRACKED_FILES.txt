@@ -519,6 +519,7 @@ ref/migrations/2026-10-13_wf50_end_after_cancel.console.js
 ref/migrations/2026-10-14_access_a2_su_role.sql
 ref/migrations/2026-10-14_access_a2b_user_auth_collapse.sql
 ref/migrations/2026-10-14_access_a5_entitlement_denies.sql
+ref/migrations/2026-10-14_access_b1_key_scopes.sql
 ref/migrations/2026-10-14_comms_media.sql
 ref/migrations/2026-10-14_comms_s1b.sql
 ref/migrations/2026-10-14_wf50_text_on_cancel_failure.console.js
@@ -687,6 +688,7 @@ scripts/Courtapprovetest.js
 scripts/accessA2SuRole.js
 scripts/accessA2bCollapse.js
 scripts/accessA5Entitlements.js
+scripts/accessB1KeyScopes.js
 scripts/add-path-headers.js
 scripts/backfill-password-hashes.js
 scripts/backfillAppts.js
@@ -1126,6 +1128,8 @@ tests/internalFn.cancelCaseAppts.test.js
 tests/internalFn.enrollSkipIfEnrolled.test.js
 tests/internal_functions.meta.test.js
 tests/jest.setup.js
+tests/keyScopes.mysql.test.js
+tests/keyScopes.test.js
 tests/likeEscapeSites.test.js
 tests/logService.setLogAbout.test.js
 tests/logService.updateLogLink.test.js

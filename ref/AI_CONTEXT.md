@@ -985,8 +985,15 @@ URI must exactly match `${APP_URL}/auth/oauth/callback`.
 ## 22. AI SESSION DB ACCESS (READONLY + SCRATCH)
 
 Header `X-Readonly-Api-Key: ycro_<64hex>` (SU-managed, max TTL 3 days,
-shown once) authorizes both endpoints. Every call logs to
-`readonly_query_log` (full SQL + params).
+shown once). Every call logs to `readonly_query_log` (full SQL + params).
+
+**Scopes (access-control B1):** a key reaches only the surfaces in its
+`readonly_api_keys.scopes` — `sql.ro`, `scratch`, `alert`, `temp.clio`,
+`temp.dropbox`, `temp.ringcentral`, `temp.zohosign` (vocabulary
+`lib/capabilities.js` KEY_SCOPES; each route mounts `requireKeyScope`). NULL
+(every key minted before B1) = all of them. New mints default to
+`sql.ro`+`scratch`+`alert` — a `temp.*` proxy must be named at mint. A miss
+is a 403 whose body names `missingScope`.
 
 **`POST /api/readonly/sql`** `{sql, params?, maxRows?, timeoutMs?}` →
 `{ok, rows, fields, rowCount, truncated, durationMs}`. First keyword must

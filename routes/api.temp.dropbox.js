@@ -60,7 +60,7 @@
 const express = require('express');
 const router = express.Router();
 
-const { readonlyApiKeyAuth } = require('../lib/auth.readonly');
+const { readonlyApiKeyAuth, requireKeyScope } = require('../lib/auth.readonly');
 const { buildHeadersForCredential } = require('../lib/credentialInjection');
 
 const PINNED_CREDENTIAL_ID = 8;              // "DropBox" (oauth2, connected)
@@ -315,12 +315,12 @@ async function dispatch(req, res, body) {
 }
 
 // ── POST /api/temp/dropbox/request ───────────────────────────────────────────
-router.post('/api/temp/dropbox/request', readonlyApiKeyAuth, async (req, res) => {
+router.post('/api/temp/dropbox/request', readonlyApiKeyAuth, requireKeyScope('temp.dropbox'), async (req, res) => {
   return dispatch(req, res, req.body || {});
 });
 
 // ── GET /api/temp/dropbox/whoami — one-call smoke test ───────────────────────
-router.get('/api/temp/dropbox/whoami', readonlyApiKeyAuth, async (req, res) => {
+router.get('/api/temp/dropbox/whoami', readonlyApiKeyAuth, requireKeyScope('temp.dropbox'), async (req, res) => {
   return dispatch(req, res, {
     method: 'POST',
     path: '/2/users/get_current_account',

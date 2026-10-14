@@ -56,7 +56,7 @@
 
 const express = require("express");
 const router  = express.Router();
-const { readonlyApiKeyAuth } = require("../lib/auth.readonly");
+const { readonlyApiKeyAuth, requireKeyScope } = require("../lib/auth.readonly");
 const { auditAdminAction }   = require("../lib/auth.superuser");
 const { getSetting }         = require("../services/settingsService");
 const { cfg }                = require("../lib/firmConfig");
@@ -122,7 +122,7 @@ async function audit(req, status, details, errorMessage, durationMs) {
 }
 
 // ── route ────────────────────────────────────────────────────────────────
-router.post("/api/alert/it", readonlyApiKeyAuth, async (req, res) => {
+router.post("/api/alert/it", readonlyApiKeyAuth, requireKeyScope("alert"), async (req, res) => {
   const started  = Date.now();
   const db       = req.db;
   const keyId    = req.auth.keyId;

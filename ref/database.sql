@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-10-14T13:00:11.083Z
+-- Generated: 2026-10-14T13:21:04.650Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:1c1a0c7c138af3bad007a51969e8c277
+-- Fingerprint: sha256:09b21ec1e52a2e752c1ffde1f0f5b926
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -178,7 +178,8 @@ CREATE TABLE `api_keys` (
   `created_by` int DEFAULT NULL,
   `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `last_used_at` timestamp NULL DEFAULT NULL,
-  `revoked_at` timestamp NULL DEFAULT NULL
+  `revoked_at` timestamp NULL DEFAULT NULL,
+  `scopes` json DEFAULT NULL COMMENT 'Key scopes (access-control B1): NULL = legacy full surface; else a JSON array of scope strings — surface (sql.ro, scratch, alert, temp.*), route:/<path>, or a capability name. Vocabulary: lib/capabilities.js KEY_SCOPES.'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- --------------------------------------------------------
@@ -2729,7 +2730,8 @@ CREATE TABLE `readonly_api_keys` (
   `revoked_at` datetime DEFAULT NULL,
   `last_used_at` datetime DEFAULT NULL,
   `use_count` int NOT NULL DEFAULT '0',
-  `ip_allowlist` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci
+  `ip_allowlist` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci,
+  `scopes` json DEFAULT NULL COMMENT 'Key scopes (access-control B1): NULL = legacy full surface; else a JSON array of scope strings — surface (sql.ro, scratch, alert, temp.*), route:/<path>, or a capability name. Vocabulary: lib/capabilities.js KEY_SCOPES.'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- --------------------------------------------------------

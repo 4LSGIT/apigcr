@@ -5,10 +5,19 @@
 // API-key bypass.
 //
 // Endpoints:
-//   POST   /api/readonly-keys          body { label, ttlMinutes?, ipAllowlist? }
+//   POST   /api/readonly-keys          body { label, ttlMinutes?, ipAllowlist?, scopes? }
 //   GET    /api/readonly-keys          ?activeOnly=1
 //   DELETE /api/readonly-keys/:id      revoke (sets revoked_at)
 //   GET    /api/readonly-keys/:id/log  ?limit=N&offset=N
+//
+// SCOPES (access-control B1, ACCESS_CONTROL_DESIGN §5.1–5.2): a key may use
+// only the surfaces in its scopes column (lib/auth.readonly requireKeyScope).
+// A mint WITHOUT `scopes` gets DEFAULT_SCOPES = sql.ro + scratch + alert — the
+// documented trio. NEW KEYS DO NOT GET temp.* (the credentialed provider
+// proxies) by default: that is the point; name e.g. "temp.clio" explicitly.
+// `scopes` is validated against lib/capabilities (surface list + route:/ and
+// capability grammar); an unknown scope is a 400, never a silent drop. Keys
+// minted before B1 have scopes NULL = the legacy full surface, untouched.
 //
 // Audit: key create/revoke goes to admin_audit_log via auditAdminAction
 // under tool='readonlyKeys'. Plaintext key is NEVER logged anywhere.
@@ -19,6 +28,9 @@ const crypto  = require("crypto");
 const router  = express.Router();
 const { superuserOnlyFor, auditAdminAction } = require("../lib/auth.superuser");
 const { hashKey } = require("../lib/auth.readonly");
+const { normalizeKeyScopes } = require("../lib/capabilities");
+
+const DEFAULT_SCOPES = Object.freeze(["sql.ro", "scratch", "alert"]);
 
 const MAX_TTL_DAYS    = parseInt(process.env.READONLY_KEY_MAX_TTL_DAYS, 10) || 3;
 const MAX_TTL_MINUTES = MAX_TTL_DAYS * 24 * 60;
@@ -43,10 +55,17 @@ const stampExpiry = (d) => d.toISOString().replace(/[-:]/g, "").slice(0, 13) + "
 // ─── CREATE ──────────────────────────────────────────────────────────
 router.post("/api/readonly-keys", ...superuserOnlyFor("readonlyKeys"), async (req, res) => {
   const started = Date.now();
-  const { label, ttlMinutes, ipAllowlist } = req.body || {};
+  const { label, ttlMinutes, ipAllowlist, scopes: scopesIn } = req.body || {};
 
   if (!label || typeof label !== "string" || !label.trim()) {
     return res.status(400).json({ error: "label is required" });
+  }
+
+  let scopes;
+  try {
+    scopes = scopesIn === undefined ? [...DEFAULT_SCOPES] : normalizeKeyScopes(scopesIn);
+  } catch (err) {
+    return res.status(400).json({ error: err.message });
   }
   const trimmedLabel = label.trim().slice(0, 255);
 
@@ -68,10 +87,10 @@ router.post("/api/readonly-keys", ...superuserOnlyFor("readonlyKeys"), async (re
   try {
     const [r] = await req.db.query(
       `INSERT INTO readonly_api_keys
-         (key_hash, key_prefix, label, created_by, expires_at, ip_allowlist)
-       VALUES (?, ?, ?, ?, ?, ?)`,
+         (key_hash, key_prefix, label, created_by, expires_at, ip_allowlist, scopes)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
       [keyHash, keyPrefix, trimmedLabel, req.auth.userId, expiresAt,
-       (ipAllowlist && String(ipAllowlist).trim()) || null]
+       (ipAllowlist && String(ipAllowlist).trim()) || null, JSON.stringify(scopes)]
     );
 
     await auditAdminAction(req.db, {
@@ -91,6 +110,7 @@ router.post("/api/readonly-keys", ...superuserOnlyFor("readonlyKeys"), async (re
         ttl_minutes: ttl,
         expires_at: expiresAt.toISOString(),
         ip_allowlist: ipAllowlist || null,
+        scopes,
       },
     });
 
@@ -103,6 +123,7 @@ router.post("/api/readonly-keys", ...superuserOnlyFor("readonlyKeys"), async (re
       label: trimmedLabel,
       expiresAt: expiresAt.toISOString(),
       ttlMinutes: ttl,
+      scopes,
     });
   } catch (err) {
     console.error("POST /api/readonly-keys error:", err);
@@ -119,7 +140,8 @@ router.get("/api/readonly-keys", ...superuserOnlyFor("readonlyKeys"), async (req
       : "";
     const [rows] = await req.db.query(
       `SELECT k.id, k.key_prefix, k.label, k.created_by, u.username AS created_by_username,
-              k.created_at, k.expires_at, k.revoked_at, k.last_used_at, k.use_count, k.ip_allowlist
+              k.created_at, k.expires_at, k.revoked_at, k.last_used_at, k.use_count, k.ip_allowlist,
+              k.scopes
          FROM readonly_api_keys k
          LEFT JOIN users u ON u.user = k.created_by
          ${where}
@@ -199,3 +221,4 @@ router.get("/api/readonly-keys/:id/log", ...superuserOnlyFor("readonlyKeys"), as
 });
 
 module.exports = router;
+module.exports.DEFAULT_SCOPES = DEFAULT_SCOPES;

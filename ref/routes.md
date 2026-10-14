@@ -1,6 +1,6 @@
 # Routes
 
-_Generated 2026-10-14T12:35:49.764Z_  
+_Generated 2026-10-14T13:20:59.230Z_  
 _755 routes total — DELETE: 63, GET: 316, PATCH: 51, POST: 287, PUT: 35, _ALL: 3_
 
 ## Global middleware chain
@@ -57,7 +57,7 @@ _755 routes total — DELETE: 63, GET: 316, PATCH: 51, POST: 287, PUT: 35, _ALL:
 | POST | `/api/admin/users/:id/enable` | `jwtOrApiKey`, `superuserCheck`, `elevationCheck`, `rateLimitMiddleware` | — |
 | POST | `/api/admin/users/:id/set-password` | `jwtOrApiKey`, `superuserCheck`, `elevationCheck`, `rateLimitMiddleware` | — |
 | POST | `/api/ai/file` | `jwtOrApiKey`, `uploadSingle` | — |
-| POST | `/api/alert/it` | `readonlyApiKeyAuth` | — |
+| POST | `/api/alert/it` | `readonlyApiKeyAuth`, `keyScopeCheck` | — |
 | GET | `/api/api-keys` | `jwtOrApiKey`, `superuserCheck`, `elevationCheck`, `rateLimitMiddleware` | — |
 | POST | `/api/api-keys` | `jwtOrApiKey`, `superuserCheck`, `elevationCheck`, `rateLimitMiddleware` | — |
 | GET | `/api/api-keys/:id/log` | `jwtOrApiKey`, `superuserCheck`, `elevationCheck`, `rateLimitMiddleware` | — |
@@ -529,7 +529,7 @@ _755 routes total — DELETE: 63, GET: 316, PATCH: 51, POST: 287, PUT: 35, _ALL:
 | POST | `/api/readonly-keys` | `jwtOrApiKey`, `superuserCheck`, `elevationCheck`, `rateLimitMiddleware` | — |
 | DELETE | `/api/readonly-keys/:id` | `jwtOrApiKey`, `superuserCheck`, `elevationCheck`, `rateLimitMiddleware` | — |
 | GET | `/api/readonly-keys/:id/log` | `jwtOrApiKey`, `superuserCheck`, `elevationCheck`, `rateLimitMiddleware` | — |
-| POST | `/api/readonly/sql` | `readonlyApiKeyAuth` | — |
+| POST | `/api/readonly/sql` | `readonlyApiKeyAuth`, `keyScopeCheck` | — |
 | GET | `/api/redirects` | `jwtOrApiKey` | — |
 | POST | `/api/redirects` | `jwtOrApiKey` | — |
 | DELETE | `/api/redirects/:id` | `jwtOrApiKey` | — |
@@ -551,9 +551,9 @@ _755 routes total — DELETE: 63, GET: 316, PATCH: 51, POST: 287, PUT: 35, _ALL:
 | POST | `/api/reports/preview` | `jwtOrApiKey`, `requireUser`, `limitPreview` | — |
 | GET | `/api/reports/runs` | `jwtOrApiKey` | — |
 | GET | `/api/reports/schema` | `jwtOrApiKey` | — |
-| DELETE | `/api/scratch/:ns` | `readonlyApiKeyAuth` | — |
-| DELETE | `/api/scratch/:ns/:k` | `readonlyApiKeyAuth` | — |
-| PUT | `/api/scratch/:ns/:k` | `readonlyApiKeyAuth` | — |
+| DELETE | `/api/scratch/:ns` | `readonlyApiKeyAuth`, `keyScopeCheck` | — |
+| DELETE | `/api/scratch/:ns/:k` | `readonlyApiKeyAuth`, `keyScopeCheck` | — |
+| PUT | `/api/scratch/:ns/:k` | `readonlyApiKeyAuth`, `keyScopeCheck` | — |
 | GET | `/api/search` | `jwtOrApiKey` | — |
 | GET | `/api/sequence-types` | `jwtOrApiKey` | — |
 | POST | `/api/sequence-types` | `jwtOrApiKey`, `superuserCheck`, `elevationCheck`, `rateLimitMiddleware` | — |
@@ -582,14 +582,14 @@ _755 routes total — DELETE: 63, GET: 316, PATCH: 51, POST: 287, PUT: 35, _ALL:
 | GET | `/api/tasks/:id(\d+)/history` | `jwtOrApiKey` | — |
 | PATCH | `/api/tasks/:id(\d+)/reopen` | `jwtOrApiKey` | — |
 | PATCH | `/api/tasks/:id(\d+)/transfer` | `jwtOrApiKey` | — |
-| POST | `/api/temp/clio/request` | `readonlyApiKeyAuth` | — |
-| GET | `/api/temp/clio/whoami` | `readonlyApiKeyAuth` | — |
-| POST | `/api/temp/dropbox/request` | `readonlyApiKeyAuth` | — |
-| GET | `/api/temp/dropbox/whoami` | `readonlyApiKeyAuth` | — |
-| GET | `/api/temp/ringcentral/probe` | `readonlyApiKeyAuth` | — |
-| POST | `/api/temp/ringcentral/request` | `readonlyApiKeyAuth` | — |
-| GET | `/api/temp/ringcentral/whoami` | `readonlyApiKeyAuth` | — |
-| POST | `/api/temp/zohosign/request` | `readonlyApiKeyAuth` | — |
+| POST | `/api/temp/clio/request` | `readonlyApiKeyAuth`, `keyScopeCheck` | — |
+| GET | `/api/temp/clio/whoami` | `readonlyApiKeyAuth`, `keyScopeCheck` | — |
+| POST | `/api/temp/dropbox/request` | `readonlyApiKeyAuth`, `keyScopeCheck` | — |
+| GET | `/api/temp/dropbox/whoami` | `readonlyApiKeyAuth`, `keyScopeCheck` | — |
+| GET | `/api/temp/ringcentral/probe` | `readonlyApiKeyAuth`, `keyScopeCheck` | — |
+| POST | `/api/temp/ringcentral/request` | `readonlyApiKeyAuth`, `keyScopeCheck` | — |
+| GET | `/api/temp/ringcentral/whoami` | `readonlyApiKeyAuth`, `keyScopeCheck` | — |
+| POST | `/api/temp/zohosign/request` | `readonlyApiKeyAuth`, `keyScopeCheck` | — |
 | GET | `/api/tools` | `jwtOrApiKey`, `superuserCheck`, `elevationCheck`, `rateLimitMiddleware` | — |
 | POST | `/api/tools` | `jwtOrApiKey`, `superuserCheck`, `elevationCheck`, `rateLimitMiddleware` | — |
 | DELETE | `/api/tools/:id` | `jwtOrApiKey`, `superuserCheck`, `elevationCheck`, `rateLimitMiddleware` | — |

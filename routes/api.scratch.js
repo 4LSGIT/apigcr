@@ -27,7 +27,7 @@
 
 const express = require("express");
 const router  = express.Router();
-const { readonlyApiKeyAuth } = require("../lib/auth.readonly");
+const { readonlyApiKeyAuth, requireKeyScope } = require("../lib/auth.readonly");
 
 const NS_K_RE = /^[a-zA-Z0-9_\-]{1,64}$/;
 
@@ -57,7 +57,7 @@ function logOp(req, fields) {
 }
 
 // ─── UPSERT ─────────────────────────────────────────────────────────
-router.put("/api/scratch/:ns/:k", readonlyApiKeyAuth, async (req, res) => {
+router.put("/api/scratch/:ns/:k", readonlyApiKeyAuth, requireKeyScope("scratch"), async (req, res) => {
   const started = Date.now();
   const { ns, k } = req.params;
   const { v, meta } = req.body || {};
@@ -127,7 +127,7 @@ router.put("/api/scratch/:ns/:k", readonlyApiKeyAuth, async (req, res) => {
 });
 
 // ─── DELETE one ─────────────────────────────────────────────────────
-router.delete("/api/scratch/:ns/:k", readonlyApiKeyAuth, async (req, res) => {
+router.delete("/api/scratch/:ns/:k", readonlyApiKeyAuth, requireKeyScope("scratch"), async (req, res) => {
   const started = Date.now();
   const { ns, k } = req.params;
 
@@ -163,7 +163,7 @@ router.delete("/api/scratch/:ns/:k", readonlyApiKeyAuth, async (req, res) => {
 });
 
 // ─── DELETE namespace (confirm-gated) ───────────────────────────────
-router.delete("/api/scratch/:ns", readonlyApiKeyAuth, async (req, res) => {
+router.delete("/api/scratch/:ns", readonlyApiKeyAuth, requireKeyScope("scratch"), async (req, res) => {
   const started = Date.now();
   const { ns } = req.params;
 

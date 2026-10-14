@@ -104,7 +104,7 @@
 const express = require('express');
 const router = express.Router();
 
-const { readonlyApiKeyAuth } = require('../lib/auth.readonly');
+const { readonlyApiKeyAuth, requireKeyScope } = require('../lib/auth.readonly');
 const { buildHeadersForCredential } = require('../lib/credentialInjection');
 
 const PINNED_CREDENTIAL_ID = 9;              // "RingCentral" (oauth2, connected)
@@ -403,12 +403,12 @@ async function dispatch(req, res, body) {
 }
 
 // ── POST /api/temp/ringcentral/request ───────────────────────────────────────
-router.post('/api/temp/ringcentral/request', readonlyApiKeyAuth, async (req, res) => {
+router.post('/api/temp/ringcentral/request', readonlyApiKeyAuth, requireKeyScope('temp.ringcentral'), async (req, res) => {
   return dispatch(req, res, req.body || {});
 });
 
 // ── GET /api/temp/ringcentral/whoami — one-call smoke test ───────────────────
-router.get('/api/temp/ringcentral/whoami', readonlyApiKeyAuth, async (req, res) => {
+router.get('/api/temp/ringcentral/whoami', readonlyApiKeyAuth, requireKeyScope('temp.ringcentral'), async (req, res) => {
   return dispatch(req, res, { method: 'GET', path: '/restapi/v1.0/client/info' });
 });
 
@@ -418,7 +418,7 @@ router.get('/api/temp/ringcentral/whoami', readonlyApiKeyAuth, async (req, res) 
 // hand-rolled round trips. Steps run sequentially and independently: a 403 on
 // one does not abort the others, because WHICH step fails is the diagnosis.
 // Step 4 chains off step 3 — see the header for what each outcome means.
-router.get('/api/temp/ringcentral/probe', readonlyApiKeyAuth, async (req, res) => {
+router.get('/api/temp/ringcentral/probe', readonlyApiKeyAuth, requireKeyScope('temp.ringcentral'), async (req, res) => {
   const days = Math.min(Math.max(parseInt(req.query.days, 10) || 30, 1), 365);
   const dateFrom = new Date(Date.now() - days * 86400_000).toISOString();
   const steps = [];

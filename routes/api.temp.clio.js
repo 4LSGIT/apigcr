@@ -54,7 +54,7 @@
 const express = require('express');
 const router = express.Router();
 
-const { readonlyApiKeyAuth } = require('../lib/auth.readonly');
+const { readonlyApiKeyAuth, requireKeyScope } = require('../lib/auth.readonly');
 const { buildHeadersForCredential } = require('../lib/credentialInjection');
 
 const PINNED_CREDENTIAL_ID = 7;              // "Clio YisraCase" (oauth2, connected)
@@ -308,12 +308,12 @@ async function dispatch(req, res, body) {
 }
 
 // ── POST /api/temp/clio/request ──────────────────────────────────────────────
-router.post('/api/temp/clio/request', readonlyApiKeyAuth, async (req, res) => {
+router.post('/api/temp/clio/request', readonlyApiKeyAuth, requireKeyScope('temp.clio'), async (req, res) => {
   return dispatch(req, res, req.body || {});
 });
 
 // ── GET /api/temp/clio/whoami — one-call smoke test ──────────────────────────
-router.get('/api/temp/clio/whoami', readonlyApiKeyAuth, async (req, res) => {
+router.get('/api/temp/clio/whoami', readonlyApiKeyAuth, requireKeyScope('temp.clio'), async (req, res) => {
   return dispatch(req, res, {
     method: 'GET',
     path: '/api/v4/users/who_am_i',

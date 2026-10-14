@@ -42,7 +42,7 @@
 const express = require('express');
 const router = express.Router();
 
-const { readonlyApiKeyAuth } = require('../lib/auth.readonly');
+const { readonlyApiKeyAuth, requireKeyScope } = require('../lib/auth.readonly');
 const { getValidAccessToken } = require('../services/oauthService');
 
 const PINNED_CREDENTIAL_ID = 13;          // Zoho Sign (oauth2, connected)
@@ -98,7 +98,7 @@ async function readBodyCapped(res, cap = MAX_RESPONSE_BYTES) {
 }
 
 // ── POST /api/temp/zohosign/request ──────────────────────────────────────────
-router.post('/api/temp/zohosign/request', readonlyApiKeyAuth, async (req, res) => {
+router.post('/api/temp/zohosign/request', readonlyApiKeyAuth, requireKeyScope('temp.zohosign'), async (req, res) => {
   const started = Date.now();
   const body = req.body || {};
 
