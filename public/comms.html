@@ -463,6 +463,8 @@
     .phone #ph-line-sel { display: none; }
   }
   .phone .bar #ph-line-sel { flex: 1 1 160px; }
+  /* search (slice PS): why a row is in the results when the name does not say — a case hit */
+  .msg .ph-why { font-size: 11px; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
   .msg .r2 .kind { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-2); }
   .msg.missed .kind { color: var(--danger); font-weight: 700; }
   .msg .snippet.call i { margin-right: 5px; }
@@ -654,10 +656,14 @@
         </span>
         <button class="btn icon" type="button" id="ph-refresh" title="Refresh" aria-label="Refresh"><i class="fa-solid fa-rotate" aria-hidden="true"></i></button>
         <button class="btn primary" type="button" id="ph-new" title="Text a number from this line" hidden><i class="fa-solid fa-pen" aria-hidden="true"></i> New text</button>
+        <span class="brk" aria-hidden="true"></span>
+        <input type="search" id="ph-q" placeholder="Number, name or case number" aria-label="Search texts and calls by phone number, contact name or case number" maxlength="100" autocomplete="off">
       </div>
       <div class="status-line"><span id="ph-status"></span></div>
       <div id="ph-error"></div>
       <ul class="msg-list" id="ph-list" aria-live="polite"></ul>
+      <!-- comms archive S6 fills this ("In call transcripts"); it listens for the ph-search event on #phone -->
+      <div id="ph-search-transcripts" hidden></div>
     </section>
 
     <section class="thread-col" aria-label="Conversation">
@@ -3260,6 +3266,9 @@ const ph = {
   lines: [],          // GET /api/phone-lines/readable
   lineId: null,       // a line id, or PH_ALL ("All numbers": every readable line at once)
   view: 'all',        // 'sms' | 'all' | 'calls'
+  q: '',              // the search in effect (slice PS) — '' = none; rides every list read as ?q=
+  search: null,       // the last list read's `search` block {q, too_short, capped}
+  qTimer: null,
   rows: [],           // conversations or calls of the line + view
   next: null,
   seq: 0,             // list request guard
@@ -3391,7 +3400,7 @@ function renderPhoneLines() {
   if (ph.lineId != null) sel.value = String(ph.lineId);
   sel.hidden = !ph.lines.length;
   E('ph-new').hidden = allOn ? !phSendable().length : !phCanSend(phLine());
-  E('ph-v-sms').disabled = E('ph-v-all').disabled = E('ph-v-calls').disabled = E('ph-refresh').disabled = !ph.lines.length;
+  E('ph-v-sms').disabled = E('ph-v-all').disabled = E('ph-v-calls').disabled = E('ph-refresh').disabled = E('ph-q').disabled = !ph.lines.length;
 }
 
 function selectLine(id) {
@@ -3401,6 +3410,45 @@ function selectLine(id) {
   closePhoneThread();
   renderPhoneLines();
   phoneLoad();
+  if (ph.q) phSearchEvent();
+}
+
+/*
+ * SEARCH (mailbox arc slice PS). One box: a number in any form, a contact's
+ * name, a case's number or caption — the server unions the three
+ * (phoneCommsService "Search"). It narrows whatever the line picker shows, in
+ * every view (Texts / All / Calls). Under 2 characters is no search. The open
+ * conversation stays open.
+ * HOOK for comms archive S6 (contract with COMM_ARC_MAN, 2026-10-14): every
+ * change of the search in effect — typed (debounced), cleared / Esc, or the
+ * line switched while one is on — dispatches `ph-search` on #phone with
+ * detail {q, lineId} (q '' on clear; lineId the line id or 'all'). A view
+ * switch does not: transcripts do not depend on the view.
+ */
+const PH_Q_MIN = 2;
+const PH_Q_DEBOUNCE_MS = 250;
+const phQueryOf = (raw) => { const q = String(raw == null ? '' : raw).trim(); return q.length >= PH_Q_MIN ? q : ''; };
+
+function phSearchEvent() {
+  E('phone').dispatchEvent(new CustomEvent('ph-search', { detail: { q: ph.q, lineId: phIsAll() ? PH_ALL : ph.lineId } }));
+}
+
+function phSetQuery(raw) {
+  clearTimeout(ph.qTimer);
+  const q = phQueryOf(raw);
+  if (q === ph.q) return;
+  ph.q = q;
+  phoneLoad();
+  phSearchEvent();
+}
+
+/** Why a row is in the results when its name does not say: the case it was found through. */
+function phMatchNote(row) {
+  if (!ph.q || !Array.isArray(row.matched_by) || !row.matched_by.includes('case') || !Array.isArray(row.matched_cases) || !row.matched_cases.length) return null;
+  const c = row.matched_cases[0];
+  const label = [c.number, c.caption].filter(Boolean).join(' · ') || c.case_id;
+  const more = row.matched_cases.length > 1 ? ` +${row.matched_cases.length - 1}` : '';
+  return h('div', { className: 'ph-why' }, icon('fa-briefcase'), ` Case ${label}${more}`);
 }
 
 function setPhoneView(view) {
@@ -3427,13 +3475,14 @@ async function phoneLoad({ append = false, silent = false } = {}) {
   if (!append && !silent) E('ph-status').textContent = 'Loading…';
   const path = ph.view === 'calls' ? 'calls' : 'conversations';
   try {
-    const q = { ...(ph.view === 'sms' ? { kind: 'sms' } : {}), ...(append && ph.next ? { cursor: ph.next } : {}) };
+    const q = { ...(ph.view === 'sms' ? { kind: 'sms' } : {}), ...(ph.q ? { q: ph.q } : {}), ...(append && ph.next ? { cursor: ph.next } : {}) };
     const params = Object.keys(q).length ? q : null;
     const data = await api(`/api/phone-lines/${scope}/${path}`, 'GET', params);
     if (seq !== ph.seq) return;
     const rows = Array.isArray(data && (ph.view === 'calls' ? data.calls : data.conversations)) ? (ph.view === 'calls' ? data.calls : data.conversations) : [];
     ph.rows = append ? ph.rows.concat(rows) : rows;
     ph.next = (data && data.next_cursor) || null;
+    ph.search = (data && data.search) || null;
     renderPhoneList();
   } catch (err) {
     if (seq !== ph.seq) return;
@@ -3455,6 +3504,7 @@ function convoRow(c) {
       h('span', { className: 'date' }, listDate(last.at))),
     c.contact ? h('div', { className: 'r2' }, h('span', { className: 'kind' }, fmtPhone(c.other_party))) : null,
     convoSnippet(last, mine),
+    phMatchNote(c),
     phIsAll() ? phLineTags(c.line_ids) : null,
   );
   return li;
@@ -3503,6 +3553,7 @@ function callRow(c) {
       h('span', { className: 'dir', 'aria-hidden': 'true', title: inbound ? 'Incoming' : 'Outgoing' }, icon(dirIcon)),
       h('span', { className: 'kind' }, what),
       c.contact ? h('span', { className: 'dir' }, fmtPhone(c.other_party)) : null),
+    phMatchNote(c),
     phIsAll() ? phLineTags([c.line_id]) : null);
 }
 
@@ -3510,11 +3561,16 @@ function renderPhoneList() {
   const list = E('ph-list');
   const n = ph.rows.length;
   const noun = ph.view === 'calls' ? 'call' : 'conversation';
-  E('ph-status').textContent = n ? `${n}${ph.next ? '+' : ''} ${noun}${n === 1 ? '' : 's'}` : '';
+  const s = ph.q ? ph.search : null;
+  const capped = s && Array.isArray(s.capped) && s.capped.length
+    ? ' — many names match; only the first 200 numbers each are searched, type more to narrow' : '';
+  E('ph-status').textContent = n ? `${n}${ph.next ? '+' : ''} ${noun}${n === 1 ? '' : 's'}${ph.q ? ` matching “${ph.q}”` : ''}${capped}` : (capped ? capped.slice(3) : '');
   if (!n) {
     const where = phIsAll() ? 'your lines' : 'this line';
+    const what = ph.view === 'calls' ? 'calls' : ph.view === 'sms' ? 'texts' : 'texts or calls';
     list.replaceChildren(h('li', { className: 'empty' },
-      ph.view === 'calls' ? `No calls on ${where}.` : ph.view === 'sms' ? `No texts on ${where}.` : `No texts or calls on ${where}.`));
+      ph.q ? `No ${what} on ${where} match “${ph.q}” — search by a phone number (3+ digits), a contact's name, or a case number.`
+        : ph.view === 'calls' ? `No calls on ${where}.` : ph.view === 'sms' ? `No texts on ${where}.` : `No texts or calls on ${where}.`));
     return;
   }
   const items = ph.rows.map(ph.view === 'calls' ? callRow : convoRow);
@@ -4194,6 +4250,15 @@ function wirePhone() {
   E('ph-v-sms').addEventListener('click', () => setPhoneView('sms'));
   E('ph-v-all').addEventListener('click', () => setPhoneView('all'));
   E('ph-v-calls').addEventListener('click', () => setPhoneView('calls'));
+  E('ph-q').addEventListener('input', () => {
+    clearTimeout(ph.qTimer);
+    const v = E('ph-q').value;
+    if (!v.trim()) return phSetQuery(''); // cleared (the × too): back at once
+    ph.qTimer = setTimeout(() => phSetQuery(v), PH_Q_DEBOUNCE_MS);
+  });
+  E('ph-q').addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && E('ph-q').value) { e.preventDefault(); E('ph-q').value = ''; phSetQuery(''); }
+  });
   E('ph-refresh').addEventListener('click', () => { phoneLoad(); if (ph.party) openConversation(ph.party, ph.thread && ph.thread.contact, { silent: true }); });
   E('ph-back').addEventListener('click', closePhoneThread);
   E('ph-text').addEventListener('input', phCount);

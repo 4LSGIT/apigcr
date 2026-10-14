@@ -564,6 +564,20 @@ lines alike (design: `ref/MAILBOX_SYSTEM_DESIGN.md` §4.4, slice S-PH).
   conversation with that number — its calls and texts — even when the
   number only ever called. (Only Quo reports unanswered calls; a RingCentral
   call nobody picked up still shows as answered.)
+- **Search** — the box under the toggle finds a conversation by **phone
+  number** in any form ("(202) 670-2603", "+1 202 670 2603", "2026702603",
+  or just part of it such as "2603"; at least 3 digits), by **contact name**
+  (the numbers that contact has now), or by **case number or caption** (the
+  numbers of the case's clients, Primary and Secondary). It looks for all
+  three at once, so a docket like "24-41234" also finds a number containing
+  those digits; a row found through a case says which case. It searches the
+  line you are on (or **All numbers**) in whichever list you are in — Texts,
+  All or Calls — and stays on when you switch either. Two characters at
+  least; clear the box (or press Esc) for the whole list again. When a short
+  name matches very many contacts, only the first 200 numbers each are
+  searched and the line under the bar says so — type more of the name.
+  Only numbers on file as a contact's *current* number are found by name, so
+  a number no contact holds is found by its digits.
 - **Sending.** With **Send** on an active line, a conversation has a message
   box at the bottom and the bar has **New text** (a US number, up to 1,000
   characters, text only — no pictures here). What you send shows as

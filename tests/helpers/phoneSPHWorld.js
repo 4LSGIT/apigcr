@@ -29,6 +29,10 @@
  *   - contact_phones.phone_active_uniq = phone while end_date IS NULL, else
  *     NULL (the generated unique column).
  *   - channel_grants UNIQUE(user, channel_type, channel_id) → ER_DUP_ENTRY.
+ *   - search (slice PS): LIKE with '\\' escapes, case-insensitive (general_ci);
+ *     `x LIKE NULL` / `x IN (NULL)` match nothing; the list reads' search
+ *     predicate is evaluated, the matcher statements' DISTINCT / ORDER BY /
+ *     LIMIT too. cases + case_relate rows come from W.kase().
  */
 
 'use strict';
@@ -57,6 +61,27 @@ const KEYSET = ' AND (processed_at < ? OR (processed_at = ? AND id < ?))';
 const ORDER_TAIL = ' ORDER BY processed_at DESC, id DESC LIMIT ?';
 const CONTACTS = 'SELECT cp.phone, c.contact_id, c.contact_name FROM contact_phones cp JOIN contacts c ON c.contact_id = cp.contact_id WHERE cp.phone_active_uniq IN (?)';
 const FIRST_SEEN = 'SELECT MIN(processed_at) AS first_at FROM phone_event_log WHERE other_party = ? AND line_number IN (?) AND suppressed = 0';
+// Search (slice PS): the list reads' predicate (its two params follow the
+// statement's FIRST param in all four) and the two name matchers.
+const SEARCH = ' AND (other_party LIKE ? OR other_party IN (?))';
+const IN_LINES_LOGGED = 'EXISTS (SELECT 1 FROM phone_event_log e WHERE e.other_party = cp.phone_active_uniq AND e.line_number IN (?) AND e.suppressed = 0)';
+const CONTACT_MATCH = `SELECT cp.phone_active_uniq AS phone FROM contacts c JOIN contact_phones cp ON cp.contact_id = c.contact_id WHERE c.contact_name LIKE ? AND cp.phone_active_uniq IS NOT NULL AND ${IN_LINES_LOGGED} ORDER BY c.contact_id DESC, cp.phone_active_uniq LIMIT ?`;
+const CASE_MATCH = `SELECT DISTINCT cp.phone_active_uniq AS phone, cs.case_id, cs.case_number, cs.case_number_full, cs.case_caption FROM cases cs JOIN case_relate cr ON cr.case_relate_case_id = cs.case_id JOIN contact_phones cp ON cp.contact_id = cr.case_relate_client_id WHERE (cs.case_number LIKE ? OR cs.case_number_full LIKE ? OR cs.case_caption LIKE ?) AND cr.case_relate_type IN ('Primary', 'Secondary') AND cp.phone_active_uniq IS NOT NULL AND ${IN_LINES_LOGGED} ORDER BY cs.case_id DESC, cp.phone_active_uniq LIMIT ?`;
+
+/** MySQL LIKE ('\\' escapes, case-insensitive like utf8mb4_general_ci); a NULL side matches nothing. */
+function likeMatch(value, pattern) {
+  if (value == null || pattern == null) return false;
+  let re = '';
+  const pat = String(pattern);
+  for (let i = 0; i < pat.length; i++) {
+    const ch = pat[i];
+    if (ch === '\\' && i + 1 < pat.length) { re += pat[++i].replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); continue; }
+    if (ch === '%') re += '[\\s\\S]*';
+    else if (ch === '_') re += '[\\s\\S]';
+    else re += ch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  }
+  return new RegExp(`^${re}$`, 'i').test(String(value));
+}
 
 /** The attribution rule — the JS twin of phone_event_log.line_number. */
 function lineOf(e) {
@@ -100,6 +125,8 @@ function makeWorld() {
     phone_event_log: [],
     contacts: [],
     contact_phones: [],
+    cases: [],
+    case_relate: [],
     admin_audit_log: [],
     jwt_api_audit_log: [],
     mailboxes: [],
@@ -155,6 +182,13 @@ function makeWorld() {
     if (!T.contacts.some(c => c.contact_id === contactId)) T.contacts.push({ contact_id: contactId, contact_name: name });
     T.contact_phones.push({ id: T.contact_phones.length + 1, contact_id: contactId, phone, end_date: ended ? '2026-01-01' : null });
   };
+  /** A case and its relations: relates = [[contact_id, type], …]. */
+  W.kase = (caseId, { number = null, full = null, caption = null } = {}, relates = []) => {
+    T.cases.push({ case_id: caseId, case_number: number, case_number_full: full, case_caption: caption });
+    for (const [client, type] of relates) {
+      T.case_relate.push({ case_relate_id: T.case_relate.length + 1, case_relate_case_id: caseId, case_relate_client_id: client, case_relate_type: type });
+    }
+  };
 
   const userRow = (id) => T.users.find(u => u.user === Number(id));
   const lineById = (id) => T.phone_lines.find(l => l.id === Number(id));
@@ -187,10 +221,55 @@ function makeWorld() {
   }
 
   async function query(sqlIn, params = []) {
-    const sql = norm(sqlIn);
-    const p = params || [];
+    let sql = norm(sqlIn);
+    let p = params || [];
     statements.push({ sql, params: clone(p) });
     let m;
+
+    // ── search (slice PS): strip the list reads' predicate, keep it as a filter ──
+    let partyOk = () => true;
+    if (sql.includes(SEARCH)) {
+      const bare = sql.replace(SEARCH, '');
+      const isList = groupTail(bare, CONVO_GROUP) || groupTail(bare, ALL_GROUP) ||
+        [CALLS, ALL_CALLS].some(c => bare === `${c}${ORDER_TAIL}` || bare === `${c}${KEYSET}${ORDER_TAIL}`);
+      if (!isList) throw new Error(`phoneSPHWorld: search predicate on an unscripted statement: ${sql}`);
+      const [like, list] = [p[1], p[2]];
+      partyOk = (op) => op != null && (likeMatch(op, like) || list.some(x => x != null && String(x) === String(op)));
+      sql = bare;
+      p = [p[0], ...p.slice(3)];
+    }
+    const logged = (phone, lines) => T.phone_event_log.some(e => e.other_party === phone && lines.has(String(lineOf(e))) && Number(e.suppressed) === 0);
+    const activePhones = (contactId) => T.contact_phones.filter(cp => cp.contact_id === contactId && cp.end_date == null).map(cp => cp.phone);
+    if (sql === CONTACT_MATCH) {
+      const lines = new Set(p[1].map(String));
+      const rows = [];
+      for (const c of T.contacts) {
+        if (!likeMatch(c.contact_name, p[0])) continue;
+        for (const phone of activePhones(c.contact_id)) if (logged(phone, lines)) rows.push({ contact_id: c.contact_id, phone });
+      }
+      rows.sort((a, b) => (b.contact_id - a.contact_id) || a.phone.localeCompare(b.phone));
+      return [rows.slice(0, Number(p[2])).map(r => ({ phone: r.phone }))];
+    }
+    if (sql === CASE_MATCH) {
+      const lines = new Set(p[3].map(String));
+      const seen = new Set();
+      const rows = [];
+      for (const cs of T.cases) {
+        if (![cs.case_number, cs.case_number_full, cs.case_caption].some((v, i) => likeMatch(v, p[i]))) continue;
+        for (const cr of T.case_relate) {
+          if (cr.case_relate_case_id !== cs.case_id || !['Primary', 'Secondary'].includes(cr.case_relate_type)) continue;
+          for (const phone of activePhones(cr.case_relate_client_id)) {
+            const key = `${phone}|${cs.case_id}`;
+            if (!logged(phone, lines) || seen.has(key)) continue;
+            seen.add(key);
+            rows.push({ phone, case_id: cs.case_id, case_number: cs.case_number, case_number_full: cs.case_number_full, case_caption: cs.case_caption });
+          }
+        }
+      }
+      const ci = (x) => String(x).toLowerCase();
+      rows.sort((a, b) => (ci(a.case_id) < ci(b.case_id) ? 1 : ci(a.case_id) > ci(b.case_id) ? -1 : 0) || a.phone.localeCompare(b.phone));
+      return [rows.slice(0, Number(p[4]))];
+    }
 
     // ── auth middleware + audit ──
     if (/^INSERT INTO jwt_api_audit_log/.test(sql)) {
@@ -309,6 +388,7 @@ function makeWorld() {
         // texts AND calls (no event_type predicate since calls joined the list) — texts only under ?kind=sms
         if (lineOf(e) !== String(p[0]) || Number(e.suppressed) !== 0 || e.other_party == null) continue;
         if (smsOnly && e.event_type !== 'sms') continue;
+        if (!partyOk(e.other_party)) continue;
         const g = groups.get(e.other_party) || { other_party: e.other_party, last_id: 0, n: 0 };
         g.last_id = Math.max(g.last_id, e.id);
         g.n += 1;
@@ -339,7 +419,7 @@ function makeWorld() {
       }))];
     }
     if (sql === `${CALLS}${ORDER_TAIL}` || sql === `${CALLS}${KEYSET}${ORDER_TAIL}`) {
-      let rows = T.phone_event_log.filter(e => lineOf(e) === String(p[0]) && e.event_type === 'call' && Number(e.suppressed) === 0);
+      let rows = T.phone_event_log.filter(e => lineOf(e) === String(p[0]) && e.event_type === 'call' && Number(e.suppressed) === 0 && partyOk(e.other_party));
       const ks = sql.includes(KEYSET);
       if (ks) rows = keyset(rows, p, 1);
       rows.sort(desc);
@@ -359,6 +439,7 @@ function makeWorld() {
         const ln = lineOf(e);
         if (ln == null || !lines.has(String(ln)) || Number(e.suppressed) !== 0 || e.other_party == null || firm.has(e.other_party)) continue;
         if (smsOnly && e.event_type !== 'sms') continue;
+        if (!partyOk(e.other_party)) continue;
         const g = groups.get(e.other_party) || { other_party: e.other_party, last_id: 0, n: 0, nums: new Set() };
         g.last_id = Math.max(g.last_id, e.id);
         g.n += 1;
@@ -391,7 +472,7 @@ function makeWorld() {
     }
     if (sql === `${ALL_CALLS}${ORDER_TAIL}` || sql === `${ALL_CALLS}${KEYSET}${ORDER_TAIL}`) {
       const lines = new Set(p[0].map(String));
-      let rows = T.phone_event_log.filter(e => lineOf(e) != null && lines.has(String(lineOf(e))) && e.event_type === 'call' && Number(e.suppressed) === 0);
+      let rows = T.phone_event_log.filter(e => lineOf(e) != null && lines.has(String(lineOf(e))) && e.event_type === 'call' && Number(e.suppressed) === 0 && partyOk(e.other_party));
       const ks = sql.includes(KEYSET);
       if (ks) rows = keyset(rows, p, 1);
       rows.sort(desc);
@@ -486,4 +567,33 @@ function SPH_SEED(W) {
   return { L1, L3, L6, P1, P2, P3, P4, ORPHAN };
 }
 
-module.exports = { makeWorld, lineOf, SPH_SEED, LINES, USERS };
+/**
+ * Search (slice PS) on top of SPH_SEED — both the fake world and the MySQL
+ * twin load it (the twin INSERTs W.T's new rows). NUM is an outside number in
+ * plain digits; a contact whose name holds LIKE wildcards; a Secondary client;
+ * a case reached only through a Bystander / Other relation (never searched);
+ * a contact whose number is on lines 3 and 6 (scope: a line-3 reader sees one
+ * of its two texts).
+ */
+function SEARCH_SEED(W, S) {
+  const NUM = '2026702603';
+  const P5 = '3135550005';
+  const P6 = '3135550006';
+  const P7 = '3135550007';
+  W.sms(S.L1, NUM, 'incoming', { body: 'about my case' });
+  W.call(S.L6, NUM, 'outgoing');
+  W.sms(S.L1, P5, 'incoming', { body: 'percent' });
+  W.sms(S.L3, P6, 'incoming', { body: 'on Rena' });
+  W.sms(S.L6, P6, 'incoming', { body: 'and on the office line' });
+  W.sms(S.L1, P7, 'incoming', { body: 'bystander' });
+  W.contact(503, 'Dana Smith', S.P4);
+  W.contact(504, 'Lee 50%_Off', P5);
+  W.contact(505, 'Rena Pal', P6);
+  W.contact(506, 'Pat Bystander', P7);
+  W.kase('CASE0001', { number: '24-41234', full: '2:24-bk-41234', caption: 'In re Pat One' }, [[501, 'Primary'], [503, 'Secondary']]);
+  W.kase('CASE0002', { number: '24-55555' }, [[506, 'Bystander']]);
+  W.kase('CASE0003', { full: '24-41234-tjt' }, [[504, 'Other']]);
+  return { NUM, P5, P6, P7 };
+}
+
+module.exports = { makeWorld, lineOf, likeMatch, SPH_SEED, SEARCH_SEED, LINES, USERS };

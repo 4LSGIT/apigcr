@@ -41,7 +41,7 @@ maybe('S-PH phone reads on real MySQL', () => {
   const mysql = require('mysql2/promise');
   const mbx = require('../services/mailboxService');
   const phone = require('../services/phoneCommsService');
-  const { makeWorld, SPH_SEED, LINES, USERS, lineOf } = require('./helpers/phoneSPHWorld');
+  const { makeWorld, SPH_SEED, SEARCH_SEED, LINES, USERS, lineOf } = require('./helpers/phoneSPHWorld');
 
   let pool;
   let conn; // ONE connection for SET/PREPARE groups (multipleStatements)
@@ -68,7 +68,9 @@ maybe('S-PH phone reads on real MySQL', () => {
     await q('SET FOREIGN_KEY_CHECKS = 0');
     for (const t of ['phone_event_log', 'phone_lines', 'channel_grants', 'contact_phones']) await q(`DELETE FROM ${t}`);
     await q('DELETE FROM credentials WHERE id IN (1, 2)');
-    await q('DELETE FROM contacts WHERE contact_id IN (501, 502) OR contact_id >= 900000');
+    await q("DELETE FROM case_relate WHERE case_relate_case_id LIKE 'CASE000%'");
+    await q("DELETE FROM cases WHERE case_id LIKE 'CASE000%'");
+    await q('DELETE FROM contacts WHERE contact_id IN (501, 502, 503, 504, 505, 506) OR contact_id >= 700000');
     await q(`DELETE FROM users WHERE user IN (${SEEDED_USERS.join(',')})`);
     await q("INSERT INTO credentials (id, name, type) VALUES (1, 'RC', 'oauth2'), (2, 'Quo', 'api_key')");
     for (const l of LINES) {
@@ -88,6 +90,8 @@ maybe('S-PH phone reads on real MySQL', () => {
     if (conn) await conn.end();
     if (pool) {
       await q('DELETE FROM users WHERE user = 8').catch(() => {});
+      await q("DELETE FROM case_relate WHERE case_relate_case_id LIKE 'CASE000%'").catch(() => {});
+      await q("DELETE FROM cases WHERE case_id LIKE 'CASE000%'").catch(() => {});
       await pool.end();
     }
   });
@@ -101,8 +105,13 @@ maybe('S-PH phone reads on real MySQL', () => {
     if (await has('col', 'line_number')) await q('ALTER TABLE phone_event_log DROP COLUMN line_number');
     expect([await has('col', 'line_number'), await has('idx', 'idx_phone_event_line')]).toEqual([0, 0]);
     const sql = fs.readFileSync(MIGRATION, 'utf8');
+    // The migration ran live on 2026-10-12, BEFORE access A2b moved the SU
+    // off user_auth = 'su' (the fixture's user 6 is 'authorized' + the su
+    // role since): model the apply-time row, or its seed takes the SU too.
+    await q("UPDATE users SET user_auth = 'su' WHERE user = 6");
     await conn.query(sql);
     await conn.query(sql); // idempotence
+    await q("UPDATE users SET user_auth = 'authorized' WHERE user = 6");
     const [col] = await q(`SELECT COLUMN_TYPE, EXTRA, GENERATION_EXPRESSION FROM information_schema.COLUMNS
                             WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'phone_event_log' AND COLUMN_NAME = 'line_number'`);
     expect(col.EXTRA).toBe('VIRTUAL GENERATED');
@@ -221,6 +230,79 @@ maybe('S-PH phone reads on real MySQL', () => {
     expect(t6.messages).toEqual([expect.objectContaining({ id: 10, kind: 'call', missed: true, duration_s: 30 })]);
   });
 
+  // ── search (slice PS) ──────────────────────────────────────────────────────
+  // Mutation-checked HERE: SEARCH_SQL without its parentheses (the OR escapes
+  // the line filter → another line's rows) → engine = world + the scope rows;
+  // the matchers' case_relate_type list / EXISTS line filter → engine = world.
+  test('ENGINE = WORLD: ?q= on all four lists — every matcher, every user, every page', async () => {
+    const before = { ev: W.T.phone_event_log.length, cp: W.T.contact_phones.length, c: W.T.contacts.length };
+    const X = SEARCH_SEED(W, S);
+    for (const e of W.T.phone_event_log.slice(before.ev)) {
+      await q(`INSERT INTO phone_event_log (id, provider, provider_ref, event_type, direction, from_number, to_number, other_party, body, suppressed, log_id, raw_extra, processed_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [e.id, e.provider, e.provider_ref, e.event_type, e.direction, e.from_number, e.to_number, e.other_party, e.body, e.suppressed, e.log_id, e.raw_extra, e.processed_at]);
+    }
+    for (const c of W.T.contacts.slice(before.c)) {
+      const [first, ...rest] = c.contact_name.split(' ');
+      await q(`INSERT INTO contacts (contact_id, contact_kind, contact_type, contact_name, contact_lfm_name, contact_rname, contact_fname, contact_mname, contact_lname, contact_pname, contact_phone)
+               VALUES (?, 'person', 'Client', ?, ?, ?, ?, '', ?, '', '')`, [c.contact_id, c.contact_name, c.contact_name, c.contact_name, first, rest.join(' ')]);
+    }
+    for (const cp of W.T.contact_phones.slice(before.cp)) {
+      await q('INSERT INTO contact_phones (contact_id, phone, end_date, start_date) VALUES (?, ?, ?, NULL)', [cp.contact_id, cp.phone, cp.end_date]);
+    }
+    for (const cs of W.T.cases) {
+      await q('INSERT INTO cases (case_id, case_number, case_number_full, case_caption) VALUES (?, ?, ?, ?)', [cs.case_id, cs.case_number, cs.case_number_full, cs.case_caption]);
+    }
+    for (const cr of W.T.case_relate) {
+      await q('INSERT INTO case_relate (case_relate_case_id, case_relate_client_id, case_relate_type) VALUES (?, ?, ?)', [cr.case_relate_case_id, cr.case_relate_client_id, cr.case_relate_type]);
+    }
+    // the trigger-maintained name is the one the world searches
+    expect((await q('SELECT contact_id, contact_name FROM contacts WHERE contact_id BETWEEN 501 AND 506 ORDER BY contact_id')).map(r => [r.contact_id, r.contact_name]))
+      .toEqual(W.T.contacts.map(c => [c.contact_id, c.contact_name]));
+
+    const pages = async (fn, db, ...args) => {
+      const out = [];
+      let cursor;
+      for (let i = 0; i < 10; i++) {
+        const r = await fn(db, ...args.slice(0, -1), { ...args[args.length - 1], limit: 2, cursor });
+        out.push(r);
+        if (!r.next_cursor) break;
+        cursor = r.next_cursor;
+      }
+      return out;
+    };
+    const QS = ['2026702603', '(202) 670-2603', '202-670-2603', '202.670.2603', '+1 202 670 2603', '+12026702603', '12026702603', '670-2603', '2603',
+      'smith', 'Old Owner', '%_', '50%', 'pat', 'PAT', '24-41234', '24-55555', 'bk-412', 'Rena Pal', '555', 'a', 'zq', '22395'];
+    for (const qq of QS) {
+      for (const [id, num] of [[1, S.L1], [3, S.L3], [6, S.L6]]) {
+        const line = { id, phone_number: num };
+        for (const kind of [undefined, 'sms']) {
+          expect([qq, id, kind, await pages(phone.listConversations, pool, line, { q: qq, kind })])
+            .toEqual([qq, id, kind, await pages(phone.listConversations, W.db, line, { q: qq, kind })]);
+        }
+        expect([qq, id, 'calls', await pages(phone.listCalls, pool, line, { q: qq })]).toEqual([qq, id, 'calls', await pages(phone.listCalls, W.db, line, { q: qq })]);
+      }
+      for (const user of [6, 1, 22, 9]) {
+        expect([qq, user, await pages(phone.listAllConversations, pool, user, { q: qq })]).toEqual([qq, user, await pages(phone.listAllConversations, W.db, user, { q: qq })]);
+        expect([qq, user, 'calls', await pages(phone.listAllCalls, pool, user, { q: qq })]).toEqual([qq, user, 'calls', await pages(phone.listAllCalls, W.db, user, { q: qq })]);
+      }
+    }
+    // the engine's own answers (the world could be wrong in step)
+    const byOf = (r) => r.conversations.map(c => [c.other_party, c.matched_by]);
+    expect(byOf(await phone.listAllConversations(pool, 6, { q: 'pat' }))).toEqual([[X.P7, ['contact']], [S.P4, ['case']], [S.P1, ['contact', 'case']]]);
+    expect(byOf(await phone.listAllConversations(pool, 6, { q: '%_' }))).toEqual([[X.P5, ['contact']]]);
+    expect(byOf(await phone.listAllConversations(pool, 6, { q: '+1 (202) 670-2603' }))).toEqual([[X.NUM, ['number']]]);
+    expect((await phone.listAllConversations(pool, 6, { q: '24-41234' })).conversations.find(c => c.other_party === S.P1).matched_cases)
+      .toEqual([{ case_id: 'CASE0001', number: '2:24-bk-41234', caption: 'In re Pat One' }]);
+    // scope: Rena (line 3 + a send-only line 6) sees her line's text with P6, not line 6's
+    expect((await phone.listAllConversations(pool, 22, { q: 'Rena Pal' })).conversations.map(c => [c.other_party, c.count, c.line_ids, c.matched_by]))
+      .toEqual([[X.P6, 1, [3], ['contact']]]);
+    expect((await phone.listConversations(pool, { id: 3, phone_number: S.L3 }, { q: 'Rena Pal' })).conversations.map(c => [c.other_party, c.count])).toEqual([[X.P6, 1]]);
+    expect(byOf(await phone.listAllConversations(pool, 22, { q: 'pat' }))).toEqual([]);
+    expect((await phone.listAllCalls(pool, 22, { q: '2603' })).calls).toEqual([]);
+    expect(byOf(await phone.listConversations(pool, { id: 1, phone_number: S.L1 }, { q: 'Rena Pal' }))).toEqual([]);
+  });
+
   test('plans: the per-line walks use idx_phone_event_line (backward, no filesort); the contact probe uses uk_phone_active', async () => {
     // engine-only volume on line 4 + orphans so the optimizer sees a realistic table
     const filler = [];
@@ -277,5 +359,54 @@ maybe('S-PH phone reads on real MySQL', () => {
     const [size] = await q(`SELECT stat_value * @@innodb_page_size AS bytes FROM mysql.innodb_index_stats
                              WHERE database_name = DATABASE() AND table_name = 'phone_event_log' AND index_name = 'idx_phone_event_line' AND stat_name = 'size'`);
     expect(Number(size.bytes)).toBeLessThan(2 * 1024 * 1024);
+  });
+
+  test('plans (search): the per-line walk stays on idx_phone_event_line; the matchers reach the log and the relations through indexes; a name matcher caps', async () => {
+    // engine-only: 250 contacts on the filler parties (120 of them on line 4, 3139900000-…)
+    const cappers = [];
+    for (let i = 0; i < 250; i++) cappers.push([700000 + i, `31399${String(i).padStart(5, '0')}`]);
+    await q(`INSERT INTO contacts (contact_id, contact_kind, contact_type, contact_name, contact_lfm_name, contact_rname, contact_fname, contact_mname, contact_lname, contact_pname, contact_phone) VALUES ?`,
+      [cappers.map(([id], i) => [id, 'person', 'Client', `Capper ${i}`, 'x', 'x', 'Capper', '', String(i), '', ''])]);
+    await q('INSERT INTO contact_phones (contact_id, phone) VALUES ?', [cappers]);
+    await q('ANALYZE TABLE phone_event_log, contact_phones, contacts, cases, case_relate');
+    const recorded = [];
+    const rec = { query: (sql, p) => { recorded.push([sql, p]); return pool.query(sql, p); } };
+    const explain = async (fn) => {
+      recorded.length = 0;
+      const out = await fn();
+      const plans = [];
+      for (const [sql, p] of recorded) plans.push({ sql: sql.replace(/\s+/g, ' ').trim(), rows: await q(`EXPLAIN ${sql}`, p) });
+      return { out, plans };
+    };
+    const line4 = { id: 4, phone_number: FILLER_LINE };
+    const noFullDependent = (rows) => rows.every(r => !(/DEPENDENT/.test(r.select_type) && r.type === 'ALL'));
+    for (const [qq, fn] of [
+      ['Capper', () => phone.listConversations(rec, line4, { q: 'Capper' })],
+      ['3139900', () => phone.listConversations(rec, line4, { q: '3139900', kind: 'sms' })],
+      ['Capper', () => phone.listCalls(rec, line4, { q: 'Capper' })],
+    ]) {
+      const { out, plans } = await explain(fn);
+      expect((out.conversations || out.calls).length).toBeGreaterThan(0);
+      const walk = plans.find(x => x.sql.includes('other_party LIKE ? OR other_party IN (?)'));
+      expect([qq, walk.rows[0].key, walk.rows[0].type]).toEqual([qq, 'idx_phone_event_line', 'ref']);
+      const contact = plans.find(x => /contact_name LIKE/.test(x.sql));
+      const kase = plans.find(x => /case_caption LIKE/.test(x.sql));
+      for (const m of [contact, kase]) expect(noFullDependent(m.rows)).toBe(true);
+      const tbl = (m, t) => m.rows.find(r => r.table === t);
+      expect(['uk_phone_active', 'idx_contact_active']).toContain(tbl(contact, 'cp').key);
+      expect(['idx_phone_event_line', 'idx_phone_event_other_party']).toContain(tbl(contact, 'e').key);
+      expect(tbl(kase, 'cr').key).toBe('uc_case_relate_unique');
+      expect(tbl(kase, 'cp').key).toBe('idx_contact_active');
+      expect(tbl(kase, 'e').key).toBe('idx_phone_event_other_party');
+    }
+    // the cap (SEARCH_PARTY_CAP = 200): 120 Cappers on line 4 → under it; all 250 on line 4 → capped
+    expect((await phone.listConversations(pool, line4, { q: 'Capper' })).search).toEqual({ q: 'Capper', too_short: false, capped: [] });
+    const more = [];
+    for (let i = 0; i < 250; i++) more.push(['quo', `cap${i}`, 'sms', 'incoming', `31399${String(i).padStart(5, '0')}`, FILLER_LINE, `31399${String(i).padStart(5, '0')}`, 'cap', 0, new Date(Date.parse('2026-07-01T00:00:00Z') + i * 1000)]);
+    await q('INSERT INTO phone_event_log (provider, provider_ref, event_type, direction, from_number, to_number, other_party, body, suppressed, processed_at) VALUES ?', [more]);
+    const capped = await phone.listConversations(pool, line4, { q: 'Capper', limit: 100 });
+    expect(capped.search).toEqual({ q: 'Capper', too_short: false, capped: ['contact'] });
+    expect(capped.conversations).toHaveLength(100);
+    expect(capped.conversations.every(c => /^Capper /.test(c.contact.name) && c.matched_by.includes('contact'))).toBe(true);
   });
 });

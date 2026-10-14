@@ -9,11 +9,11 @@
  *                                                    others: can_read grants) — the pane's rail
  *   GET    /api/phone-lines/all/conversations        every READABLE line at once ("All numbers"):
  *                                                    one row per OUTSIDE number, newest first,
- *                                                    line_ids + last.line_id ?kind=&cursor=&limit=
+ *                                                    line_ids + last.line_id ?kind=&q=&cursor=&limit=
  *   GET    /api/phone-lines/all/conversations/:party one number across the readable lines,
  *                                                    merged; items carry line_id ?cursor=&limit=
  *   GET    /api/phone-lines/all/calls                every readable line's call log, merged;
- *                                                    rows carry line_id ?cursor=&limit=
+ *                                                    rows carry line_id ?q=&cursor=&limit=
  *   GET    /api/phone-lines/first-seen?number=       firm-local day of the earliest text/call with
  *                                                    the number on any line the caller can READ
  *                                                    (the Add-to-contact start-date default)
@@ -26,11 +26,17 @@
  *   DELETE /api/phone-lines/:id/grants/:grantId      SU or can_manage   ownership-scoped
  *   GET    /api/phone-lines/:id/conversations        can_read — conversations (texts AND calls) per
  *                                                    number, newest activity first
- *                                                    ?kind=sms (texts only) &cursor=&limit=≤100
+ *                                                    ?kind=sms (texts only) &q=&cursor=&limit=≤100
  *   GET    /api/phone-lines/:id/conversations/:party can_read — one conversation (its texts AND
  *                                                    calls, each item `kind` sms|call), newest
  *                                                    page returned oldest-first ?cursor=&limit=
- *   GET    /api/phone-lines/:id/calls                can_read — the call log ?cursor=&limit=
+ *   GET    /api/phone-lines/:id/calls                can_read — the call log ?q=&cursor=&limit=
+ *
+ *   SEARCH (?q=, slice PS): the four LIST reads above narrow to the numbers
+ *   q matches — digits in the number, a contact's name, a case's docket
+ *   number / caption (its clients' numbers) — unioned; rows gain matched_by
+ *   (+ matched_cases), the page a `search` block. Same paging, same scope
+ *   (phoneCommsService "Search" has the rules). Threads take no q.
  *
  *   ARCHIVE (comms archive S4, ref/COMMS_ARCHIVE_DESIGN.md §9): both
  *   conversation-THREAD routes (…/:id/conversations/:party and

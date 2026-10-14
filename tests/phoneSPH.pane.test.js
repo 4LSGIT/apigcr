@@ -536,7 +536,7 @@ describe('comms.html — Phone tab', () => {
     await openPhone(env);
     const { doc, calls } = env;
     expect(doc.getElementById('ph-list').textContent).toMatch(/No phone lines are shared with you/);
-    expect(['ph-v-sms', 'ph-v-all', 'ph-v-calls'].map((id) => doc.getElementById(id).disabled)).toEqual([true, true, true]);
+    expect(['ph-v-sms', 'ph-v-all', 'ph-v-calls', 'ph-q'].map((id) => doc.getElementById(id).disabled)).toEqual([true, true, true, true]);
     expect(doc.getElementById('ph-new').hidden).toBe(true);
     expect(phoneCalls(calls).map((c) => c.url)).toEqual(['/api/phone-lines/readable']);
   });
@@ -735,6 +735,160 @@ describe('comms.html — All numbers', () => {
     expect(env2.doc.querySelector('#ph-rail-lines .vitem[data-line="all"]')).toBeNull();
     expect([...env2.doc.getElementById('ph-line-sel').options].map((o) => o.value)).toEqual(['1']);
     expect(phoneCalls(env2.calls).map((c) => c.url)).toEqual(['/api/phone-lines/readable', '/api/phone-lines/1/conversations']);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// comms.html — Phone search (mailbox arc slice PS)
+// ─────────────────────────────────────────────────────────────────────────────
+
+const SEARCH_ROWS = [
+  { ...CONVOS[0], matched_by: ['contact', 'case'], matched_cases: [{ case_id: 'C1', number: '24-41234', caption: `In re Pat ${EVIL}` }, { case_id: 'C2', number: '25-10001', caption: null }] },
+];
+// the search box's list reads answer by q; everything else as commsHandler
+function searchOver(extra = {}) {
+  const convos = (q) => (q && q.q
+    ? { conversations: q.q === 'zzz' ? [] : fresh(SEARCH_ROWS), next_cursor: q.q === 'pat' && !q.cursor ? '13' : null, search: { q: q.q, too_short: false, capped: q.q === 'smith' ? ['contact'] : [] } }
+    : { conversations: fresh(CONVOS), next_cursor: null });
+  return {
+    'GET /api/phone-lines/1/conversations': convos,
+    'GET /api/phone-lines/3/conversations': convos,
+    ...extra,
+  };
+}
+// the pane debounces 250 ms; 450 leaves a loaded machine room
+async function typeQ(env, value, wait = 450) {
+  const box = env.doc.getElementById('ph-q');
+  for (const v of [].concat(value)) {
+    box.value = v;
+    box.dispatchEvent(new env.window.Event('input'));
+  }
+  await tick(env.window, wait);
+}
+function searchEvents(env) {
+  const seen = [];
+  env.doc.getElementById('phone').addEventListener('ph-search', (e) => seen.push(fresh(e.detail)));
+  return seen;
+}
+
+describe('comms.html — Phone search', () => {
+  test('the box: second row of the list bar (.brk), the #f-q look, and the empty S6 slot under the results, hidden', async () => {
+    const env = await bootComms();
+    await openPhone(env);
+    const { doc } = env;
+    const box = doc.getElementById('ph-q');
+    expect(box.closest('section.list-col').getAttribute('aria-label')).toBe('Texts and calls');
+    expect(box.type).toBe('search');
+    expect(box.maxLength).toBe(100);
+    expect(box.previousElementSibling.className).toBe('brk');
+    expect(box.parentElement.className).toBe('bar');
+    const slot = doc.getElementById('ph-search-transcripts');
+    expect(slot.hidden).toBe(true);
+    expect(slot.children).toHaveLength(0);
+    expect(slot.previousElementSibling.id).toBe('ph-list');
+  });
+
+  test('typing searches (debounced, one read); rows say the case they were found through — as text; a clear restores at once; Esc too', async () => {
+    const env = await bootComms({ over: searchOver() });
+    await openPhone(env);
+    const { doc, window, calls, errors } = env;
+    const events = searchEvents(env);
+    const lists = () => calls.filter((c) => c.url === '/api/phone-lines/1/conversations').map((c) => c.payload);
+    expect(lists()).toEqual([null]);
+    // keystrokes inside the debounce make ONE read
+    await typeQ(env, ['p', 'pa', ' pat ']);
+    expect(lists()).toEqual([null, { q: 'pat' }]);
+    expect(events).toEqual([{ q: 'pat', lineId: 1 }]);
+    expect(doc.getElementById('ph-status').textContent).toBe('1+ conversation matching “pat”');
+    const row = doc.querySelector('#ph-list .msg');
+    expect(row.querySelector('.ph-why').textContent).toBe(` Case 24-41234 · In re Pat ${EVIL} +1`);
+    expect(row.querySelector('.ph-why img')).toBeNull();
+    expect(window.top.__pwned).toBeUndefined();
+    // Load more keeps q
+    doc.getElementById('ph-more').click();
+    await tick(window, 60);
+    expect(lists().slice(-1)).toEqual([{ q: 'pat', cursor: '13' }]);
+    // the same text again (spaces aside) reads nothing
+    await typeQ(env, 'pat');
+    expect(lists()).toHaveLength(3);
+    // cleared: back at once, without waiting for the debounce
+    await typeQ(env, '', 20);
+    expect(lists().slice(-1)).toEqual([null]);
+    expect(events.slice(-1)).toEqual([{ q: '', lineId: 1 }]);
+    expect(doc.querySelectorAll('#ph-list .msg')).toHaveLength(2);
+    expect(doc.querySelector('#ph-list .ph-why')).toBeNull();
+    expect(doc.getElementById('ph-status').textContent).toBe('2 conversations');
+    // Esc clears the box and the search
+    await typeQ(env, 'pat');
+    doc.getElementById('ph-q').dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    await tick(window, 20);
+    expect(doc.getElementById('ph-q').value).toBe('');
+    expect(lists().slice(-1)).toEqual([null]);
+    expect(events.slice(-2)).toEqual([{ q: 'pat', lineId: 1 }, { q: '', lineId: 1 }]);
+    // one character is no search (and no event)
+    const n = lists().length;
+    await typeQ(env, 'p');
+    expect(lists()).toHaveLength(n);
+    expect(events).toHaveLength(4);
+    expect(errors).toEqual([]);
+  });
+
+  test('a view switch keeps q (Texts, Calls) and fires no event; a line switch keeps q and fires one; no event for a line switch without a search', async () => {
+    const env = await bootComms({ over: searchOver() });
+    await openPhone(env);
+    const { doc, window, calls } = env;
+    const events = searchEvents(env);
+    // a line switch with an empty box: no event
+    const sel = doc.getElementById('ph-line-sel');
+    sel.value = '3';
+    sel.dispatchEvent(new window.Event('change'));
+    await tick(window, 60);
+    expect(events).toEqual([]);
+    sel.value = '1';
+    sel.dispatchEvent(new window.Event('change'));
+    await tick(window, 60);
+    await typeQ(env, 'pat');
+    expect(events).toEqual([{ q: 'pat', lineId: 1 }]);
+    doc.getElementById('ph-v-calls').click();
+    await tick(window, 60);
+    doc.getElementById('ph-v-sms').click();
+    await tick(window, 60);
+    expect(calls.filter((c) => c.url === '/api/phone-lines/1/calls').map((c) => c.payload)).toEqual([{ q: 'pat' }]);
+    expect(calls.filter((c) => c.url === '/api/phone-lines/1/conversations').map((c) => c.payload).slice(-1)).toEqual([{ kind: 'sms', q: 'pat' }]);
+    expect(events).toHaveLength(1);
+    sel.value = '3';
+    sel.dispatchEvent(new window.Event('change'));
+    await tick(window, 60);
+    expect(calls.filter((c) => c.url === '/api/phone-lines/3/conversations').map((c) => c.payload).slice(-1)).toEqual([{ kind: 'sms', q: 'pat' }]);
+    expect(events).toEqual([{ q: 'pat', lineId: 1 }, { q: 'pat', lineId: 3 }]);
+    expect(doc.getElementById('ph-q').value).toBe('pat');
+  });
+
+  test('All numbers: q rides the merged lists; the event names lineId "all"', async () => {
+    const env = await bootComms({ over: allOver() });
+    await openPhone(env);
+    const { doc, window, calls } = env;
+    const events = searchEvents(env);
+    await typeQ(env, '2603');
+    doc.querySelector('#ph-rail-lines .vitem[data-line="all"]').click();
+    await tick(window, 60);
+    expect(calls.filter((c) => c.url === '/api/phone-lines/all/conversations').map((c) => c.payload)).toEqual([{ q: '2603' }]);
+    expect(events).toEqual([{ q: '2603', lineId: 1 }, { q: '2603', lineId: 'all' }]);
+    doc.getElementById('ph-v-calls').click();
+    await tick(window, 60);
+    expect(calls.filter((c) => c.url === '/api/phone-lines/all/calls').map((c) => c.payload)).toEqual([{ q: '2603' }]);
+  });
+
+  test('nothing found says what can be searched; a capped matcher is said in the status line', async () => {
+    const env = await bootComms({ over: searchOver() });
+    await openPhone(env);
+    const { doc } = env;
+    await typeQ(env, 'zzz');
+    expect(doc.querySelector('#ph-list .empty').textContent)
+      .toBe('No texts or calls on this line match “zzz” — search by a phone number (3+ digits), a contact\'s name, or a case number.');
+    await typeQ(env, 'smith');
+    expect(doc.getElementById('ph-status').textContent)
+      .toBe('1 conversation matching “smith” — many names match; only the first 200 numbers each are searched, type more to narrow');
   });
 });
 

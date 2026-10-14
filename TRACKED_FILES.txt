@@ -1252,6 +1252,7 @@ tests/pdfRenderIntegration.test.js
 tests/phoneSPH.mysql.test.js
 tests/phoneSPH.pane.test.js
 tests/phoneSPH.routes.test.js
+tests/phoneSPH.search.test.js
 tests/phoneingestservice.dedup.test.js
 tests/pipelineAdminService.test.js
 tests/pipelineBoard.test.js
