@@ -130,6 +130,7 @@
     <div id="formCard" class="card hidden">
       <h2>4 · Your verdict</h2>
       <p class="muted">One tap per question — no typing. Takes a minute or two once you have listened.</p>
+      <p id="savedSummary" class="msg hidden"></p>
       <div id="questions"></div>
       <div class="row" style="margin-top:10px">
         <button id="saveScores" class="primary">Save</button>
@@ -145,17 +146,18 @@
   const $ = (id) => document.getElementById(id);
   // Rubric amendment A3 — the same fixed choices services/commsEvalService.js accepts.
   const QUESTIONS = [
-    { k: 'accuracy', q: 'Overall, how accurate is the transcript?', req: true,
+    { k: 'accuracy', short: 'accuracy', q: 'Overall, how accurate is the transcript?', req: true,
       o: [[1, '1 unusable'], [2, '2'], [3, '3'], [4, '4'], [5, '5 near-perfect']] },
-    { k: 'key_items', q: 'Names, case numbers, amounts, dates', req: true,
+    { k: 'key_items', short: 'key items', q: 'Names, case numbers, amounts, dates', req: true,
       o: [['all_right', 'All right'], ['some_wrong', 'Some wrong'], ['many_wrong', 'Many wrong'], ['none', 'None in this call']] },
-    { k: 'speakers', q: 'Who said what (speakers)', req: true,
+    { k: 'speakers', short: 'speakers', q: 'Speaker labels: are the right words attributed to the right person?', req: true,
+      h: 'Read a few turns: does each line come from the person its letter says it does?',
       o: [['right', 'Right'], ['mostly_right', 'Mostly right'], ['wrong', 'Wrong']] },
-    { k: 'variant_better', q: 'Which reads better?', variantOnly: true,
+    { k: 'variant_better', short: 'reads better', q: 'Which reads better?', variantOnly: true,
       o: [['diarized', 'Standard'], ['per_channel', 'Per channel'], ['same', 'Same']] },
-    { k: 'usable', q: 'Usable for a case note as it is?', req: true,
+    { k: 'usable', short: 'usable', q: 'Usable for a case note as it is?', req: true,
       o: [['yes', 'Yes'], ['with_fixes', 'With fixes'], ['no', 'No']] },
-    { k: 'worst', q: 'Worst problem (optional)',
+    { k: 'worst', short: 'worst', q: 'Worst problem (optional)',
       o: [['names', 'Names'], ['numbers', 'Numbers'], ['words', 'Words'], ['speakers', 'Speakers'], ['missed_speech', 'Missed speech'], ['none', 'None']] },
   ];
   let answers = {};
@@ -215,6 +217,7 @@
   const still = (id) => cur && cur.id === id && !$('itemView').classList.contains('hidden');
   async function openItem(it) {
     cur = it; transcript = null; variant = 'default'; reviews = {};
+    say('');
     $('listView').classList.add('hidden'); $('itemView').classList.remove('hidden');
     $('itemMeta').textContent = '#' + it.id + ' · ' + (it.line || it.provider) + ' · ' + it.day + (it.audio_s == null ? '' : ' · ≈ ' + mmss(it.audio_s));
     const pl = $('player'); pl.pause(); pl.removeAttribute('src'); pl.classList.add('hidden');
@@ -233,6 +236,7 @@
     if (t && t.scores && t.scores.noise) {
       const r = document.querySelector('input[name="noise"][value="' + t.scores.noise + '"]'); if (r) r.checked = true;
       if (t.transcript_opened) lockNoise();
+      if (t.transcript_opened) renderForm();     // the saved answers show at once, before the transcript arrives
       await loadTranscript();
     }
   }
@@ -252,8 +256,12 @@
     } catch (e) { if (still(id)) say(errText(e), 'bad'); }
   }
   function seek(s) { const pl = $('player'); if (!pl.src) { loadAudio(s); return; } pl.currentTime = s; pl.play().catch(() => {}); }
-  function lockNoise() { for (const r of document.querySelectorAll('input[name="noise"]')) r.disabled = true;
-    $('noiseNote').textContent = 'Fixed — the transcript has been opened.'; $('saveNoise').disabled = true; }
+  function lockNoise() {
+    for (const r of document.querySelectorAll('input[name="noise"]')) r.disabled = true;
+    const c = document.querySelector('input[name="noise"]:checked');
+    $('noiseNote').textContent = (c ? 'Your noise tag: ' + c.parentNode.textContent.trim() + ' — ' : '') + 'fixed, the transcript has been opened.';
+    $('saveNoise').disabled = true;
+  }
 
   async function saveNoise() {
     const id = cur.id;
@@ -325,9 +333,25 @@
         });
         opts.appendChild(b);
       }
-      box.appendChild(el('div', { cls: 'q' }, [el('div', { cls: 'qt', text: x.q }), opts]));
+      const kids = [el('div', { cls: 'qt', text: x.q })];
+      if (x.h) kids.push(el('div', { cls: 'muted', text: x.h, style: 'font-size:13px;margin:-2px 0 6px' }));
+      kids.push(opts);
+      box.appendChild(el('div', { cls: 'q' }, kids));
     }
     $('scoreNote').textContent = saved.complete && QUESTIONS.filter(x => x.req).every(x => saved[x.k] !== undefined) ? 'Done ✓' : '';
+    showSaved(saved);
+  }
+  /** The saved answers in plain words, so the state is visible even without the highlights. */
+  function showSaved(saved) {
+    const parts = [];
+    for (const x of QUESTIONS) {
+      if (saved[x.k] === undefined) continue;
+      const o = x.o.find(v => v[0] === saved[x.k]);
+      parts.push((x.short || x.k) + ': ' + (o ? o[1] : String(saved[x.k])));
+    }
+    const box = $('savedSummary');
+    box.textContent = parts.length ? 'Saved — ' + parts.join(' · ') : '';
+    box.classList.toggle('hidden', !parts.length);
   }
   async function saveScores() {
     const id = cur.id;
@@ -338,8 +362,12 @@
       if (!still(id)) return;
       reviews.transcript = { ...(reviews.transcript || {}), scores: r.scores };
       $('scoreNote').textContent = missing.length ? 'Saved — still to answer: ' + missing.join(' · ') : 'Done ✓';
+      showSaved(r.scores);
+      if (!missing.length) { backToList(); say('Call #' + id + ' saved — done ✓', 'ok'); }   // a partial save stays on the call
     } catch (e) { if (still(id)) $('scoreNote').textContent = errText(e); }
   }
+
+  function backToList() { $('player').pause(); $('itemView').classList.add('hidden'); $('listView').classList.remove('hidden'); loadList(); }
 
   async function signCheck() {
     $('signResult').textContent = 'Running…';
@@ -351,7 +379,7 @@
 
   function init() {
     $('refresh').addEventListener('click', loadList);
-    $('back').addEventListener('click', () => { $('player').pause(); $('itemView').classList.add('hidden'); $('listView').classList.remove('hidden'); loadList(); });
+    $('back').addEventListener('click', backToList);
     $('loadAudio').addEventListener('click', () => loadAudio($('player').currentTime || 0));
     $('player').addEventListener('error', () => { if ($('player').src) say('The audio link expired or failed — press Load audio again.', 'bad'); });
     $('saveNoise').addEventListener('click', saveNoise);

@@ -68,6 +68,15 @@ describe('comms eval review page', () => {
     expect(PAGE).not.toMatch(/<input[^>]+type="(number|text)"|<textarea/);
   });
 
+  test('Fred\'s fixes: saved answers shown on reopen; concrete speaker question; a complete save returns to the list', () => {
+    expect(SCRIPT).toMatch(/if \(t\.transcript_opened\) renderForm\(\);/);           // the verdict card from the saved review at once
+    expect(SCRIPT).toMatch(/function showSaved\(saved\)/);
+    expect(SCRIPT).toContain("Speaker labels: are the right words attributed to the right person?");
+    const save = SCRIPT.split('async function saveScores(')[1].split('\n  }\n')[0];
+    expect(save).toMatch(/if \(!missing\.length\) \{ backToList\(\);/);
+    expect(save).not.toMatch(/if \(missing\.length\) \{ backToList/);
+  });
+
   test('it only runs inside the shell (waits for the parent apiSend)', () => {
     expect(SCRIPT).toMatch(/P !== window && typeof P\.apiSend === 'function'/);
   });
