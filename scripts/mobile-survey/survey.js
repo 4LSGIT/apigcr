@@ -191,8 +191,14 @@ async function walk(page, W, record) {
       const PHONE = [
         ['phone-texts', "showTab('phone')"],
         ['phone-thread', 'openConversation(ph.rows[0].other_party, ph.rows[0].contact)'],
+        // Comms archive (S4), fixtures/api/comms-archive/*: the thread above carries a summary + Listen /
+        // Transcript, a voicemail, MMS thumbnails / chips / a tombstone, and admin ⋯ buttons (archive_admin);
+        // then the transcript viewer, the archive file viewer and the Purge dialog (password row)
+        ['phone-archive-transcript', "openTranscript(ph.thread.messages.find((m) => m.id === 23).archive, 'Call recording')"],
+        ['phone-archive-view', "closeTranscript(); openCaView(ph.thread.messages.find((m) => m.id === 42).attachments[1])"],
+        ['phone-archive-purge', "closeCaView(); openCaAct(ph.thread.messages.find((m) => m.id === 42).attachments[0], 'Attachment'); E('ca-act-purge').click()"],
         // a number no contact holds: number-only title + Add to contact; an attachment-only text
-        ['phone-thread-unknown', "openConversation('5555550198', null)"],
+        ['phone-thread-unknown', "closeCaAct(); openConversation('5555550198', null)"],
         ['phone-sms', "closePhoneThread(); setPhoneView('sms')"],
         ['phone-calls', "setPhoneView('calls')"],
         ['phone-new', "setPhoneView('all'); openNewText()"],
@@ -239,6 +245,11 @@ async function walk(page, W, record) {
         await fr.evaluate(() => { const t = document.querySelector('.tab[data-tab="phone"]'); if (t) t.click(); }); await sleep(800);
         await fr.evaluate(() => { const b = document.querySelector('tr[data-id] button[data-action="access"]'); if (b) b.click(); }); await sleep(1500);
         await record('panel:connectionsDiv:phone-access', await measure(page, fr), await shot('panel_connections_phone_access'));
+      }
+      // System Alerts → the Comms archive health section (S4, F4), fixtures/api/comms-archive/health.json
+      if (id === 'systemAlertsDiv' && fr) {
+        await fr.evaluate(() => { const d = document.getElementById('caHealth'); if (d) d.open = true; }); await sleep(1200);
+        await record('panel:systemAlertsDiv:comms-archive', await measure(page, fr), await shot('panel_system_alerts_comms_archive'));
       }
       // Users → Edit (the roles checkbox row, access-control A3), fixtures/api/admin/users.json
       if (id === 'usersDiv' && fr) {

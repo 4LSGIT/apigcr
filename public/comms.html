@@ -482,13 +482,42 @@
   .bub .ph-att { font-style: italic; opacity: 0.85; }
   .bub .ph-att i { margin-right: 5px; }
   .bub .bt { display: block; margin-top: 3px; font-size: 10.5px; opacity: 0.8; white-space: normal; }
-  /* A call in the conversation: a quiet box on the caller's side. The
-     recordings arc fills it later (summary text, recording / transcript
-     buttons) — keep it a .bub so it inherits width and alignment. */
+  /* A call in the conversation: a quiet box on the caller's side. The comms
+     archive (S4) fills it (summary text, Listen / Transcript, a voicemail —
+     the .ca-* rules) — keep it a .bub so it inherits width and alignment. */
   .bub.call.in, .bub.call.out { background: var(--surface); color: var(--text-2); border-color: var(--border); }
   .bub.call .ct { display: flex; align-items: center; gap: 6px; font-weight: 600; white-space: normal; }
   .bub.call .ct i { color: var(--text-muted); }
   .bub.call.missed .ct, .bub.call.missed .ct i { color: var(--danger); }
+  /* ── Comms archive (S4): summary, Listen / Transcript, voicemail, MMS ──
+     Everything below is built with textContent (the C3 gate); bytes come from
+     5-minute signed URLs on storage.googleapis.com, never this origin. */
+  .ca-sum { display: block; margin-top: 4px; color: var(--text); font-weight: 400; white-space: pre-wrap; }
+  .ca-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 6px; white-space: normal; min-width: 0; }
+  .ca-vm { display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; font-weight: 600; color: var(--text-2); }
+  .ca-badge { display: inline-block; padding: 1px 7px; border-radius: 999px; font-size: 10px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: .04em; background: var(--warn-soft); color: var(--warn-on-soft); border: 1px solid var(--warn); }
+  .ca-purged { display: block; margin-top: 5px; font-size: 11.5px; font-style: italic; color: var(--text-muted); white-space: normal; overflow-wrap: anywhere; }
+  .ca-slot { display: block; margin-top: 6px; min-width: 0; }
+  .ca-slot audio, .ca-tx-player audio, .ca-view-audio { display: block; width: 100%; max-width: 320px; }
+  .ca-atts { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 2px; white-space: normal; min-width: 0; }
+  .ca-att { display: inline-flex; align-items: flex-start; gap: 3px; min-width: 0; max-width: 100%; }
+  .ca-thumb { padding: 0; border: 1px solid var(--border); border-radius: 6px; background: var(--page-bg); cursor: pointer; line-height: 0; }
+  .ca-thumb img { display: block; max-width: 160px; max-height: 160px; min-width: 40px; min-height: 40px; object-fit: contain; border-radius: 5px; }
+  .ca-file { white-space: normal; text-align: left; max-width: 100%; overflow-wrap: anywhere; }
+  .ca-note { display: block; font-style: italic; opacity: 0.85; white-space: normal; }
+  a.btn { text-decoration: none; }
+  .modal.ca-tx { max-width: 720px; display: flex; flex-direction: column; max-height: calc(100vh - 48px); }
+  .ca-label { background: var(--warn-soft); color: var(--warn-on-soft); border: 1px solid var(--warn); border-radius: 4px; padding: 6px 9px; font-size: 12px; margin-bottom: 8px; }
+  .ca-tx-player { margin-bottom: 8px; }
+  .ca-tx-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; border: 1px solid var(--border); border-radius: 4px; padding: 8px 10px; background: var(--page-bg); font-size: 13px; line-height: 1.5; }
+  .ca-seg { margin: 0 0 8px; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .ca-seg .ca-spk { font-weight: 700; margin-right: 6px; color: var(--text-2); }
+  .ca-seg .ca-ts { margin-right: 6px; font-variant-numeric: tabular-nums; }
+  .modal .ca-pw-row input[type="password"], .modal .ca-pw-row input[type="text"] {
+    width: 100%; min-width: 0; background: var(--surface-2); color: var(--text); border: 1px solid var(--border);
+    border-radius: 4px; padding: 7px 9px; font-size: 13px; font-family: inherit;
+  }
   .ph-compose { flex: 0 0 auto; display: flex; flex-direction: column; gap: 6px; padding: 8px 10px; border-top: 1px solid var(--border); background: var(--surface); min-width: 0; }
   .ph-compose textarea#ph-text, .modal textarea#ph-new-text {
     width: 100%; min-width: 0; min-height: 64px; resize: vertical; background: var(--surface-2); color: var(--text);
@@ -763,6 +792,51 @@
       <button class="btn icon" type="button" id="compose-close" title="Close — what you wrote is kept until you reload the page" aria-label="Close"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button>
     </div>
     <div id="compose-slot"></div>
+  </div>
+</div>
+
+<!-- ── Comms archive (S4): media viewer · transcript · restrict / purge ── -->
+<div class="modal-backdrop" id="ca-view-backdrop">
+  <div class="modal viewer" role="dialog" aria-modal="true" aria-labelledby="ca-view-title">
+    <div class="viewer-head">
+      <h3 id="ca-view-title"></h3>
+      <a class="btn small" id="ca-view-tab" target="_blank" rel="noopener noreferrer" referrerpolicy="no-referrer" hidden><i class="fa-solid fa-up-right-from-square" aria-hidden="true"></i> New tab</a>
+      <button class="btn small" type="button" id="ca-view-close">Close</button>
+    </div>
+    <div class="viewer-body" id="ca-view-body"></div>
+  </div>
+</div>
+<div class="modal-backdrop" id="ca-tx-backdrop">
+  <div class="modal ca-tx" role="dialog" aria-modal="true" aria-labelledby="ca-tx-title">
+    <div class="viewer-head">
+      <h3 id="ca-tx-title">Transcript</h3>
+      <button class="btn small" type="button" id="ca-tx-close">Close</button>
+    </div>
+    <div class="ca-label" id="ca-tx-label" role="note"></div>
+    <div class="ca-tx-player" id="ca-tx-player"></div>
+    <div class="ca-tx-body" id="ca-tx-body"></div>
+  </div>
+</div>
+<div class="modal-backdrop" id="ca-act-backdrop">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="ca-act-title">
+    <h3 id="ca-act-title"></h3>
+    <div class="modal-err" id="ca-act-msg" role="alert"></div>
+    <span class="yc-hint" id="ca-act-what"></span>
+    <label class="yc-flabel" for="ca-act-reason" style="margin-top:10px">Reason</label>
+    <textarea id="ca-act-reason" class="task-field" rows="3" maxlength="500"></textarea>
+    <span class="yc-hint">Required. Kept in the audit log.</span>
+    <div class="ca-pw-row" id="ca-purge-fields" hidden>
+      <label class="yc-flabel" for="ca-act-confirm" style="margin-top:10px" id="ca-act-confirm-l">Type the item number to confirm</label>
+      <input type="text" id="ca-act-confirm" inputmode="numeric" maxlength="20" autocomplete="off">
+      <label class="yc-flabel" for="ca-act-pw" style="margin-top:10px">Your password</label>
+      <input type="password" id="ca-act-pw" maxlength="200" autocomplete="current-password">
+      <span class="yc-hint">Purge deletes this item from the archive for good, with anything made from it (transcript, summary). The record that the call or text happened stays.</span>
+    </div>
+    <div class="modal-actions">
+      <button class="btn" type="button" id="ca-act-cancel">Cancel</button>
+      <button class="btn danger" type="button" id="ca-act-purge">Purge…</button>
+      <button class="btn primary" type="button" id="ca-act-go">Restrict</button>
+    </div>
   </div>
 </div>
 
@@ -3095,6 +3169,9 @@ async function init() {
   document.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape') return;
     if (openMenu) closeMenu(); // the ⋯ menu first (D.1: keyboard-operable)
+    else if (E('ca-act-backdrop').classList.contains('open')) closeCaAct();
+    else if (E('ca-view-backdrop').classList.contains('open')) closeCaView();
+    else if (E('ca-tx-backdrop').classList.contains('open')) closeTranscript();
     else if (E('ph-new-backdrop').classList.contains('open')) closeNewText();
     else if (E('task-backdrop').classList.contains('open')) closeTaskModal();
     else if (E('viewer-backdrop').classList.contains('open')) closeViewer();
@@ -3154,7 +3231,8 @@ async function refreshNow() {
 // pingBecameVisible). Refresh the list and counts quietly; an open thread stays.
 window.ycBecameVisible = () => {
   if (E('case-backdrop').classList.contains('open') || E('views-backdrop').classList.contains('open') || E('viewer-backdrop').classList.contains('open')
-      || E('compose-backdrop').classList.contains('open') || E('ph-new-backdrop').classList.contains('open') || E('task-backdrop').classList.contains('open')) return;
+      || E('compose-backdrop').classList.contains('open') || E('ph-new-backdrop').classList.contains('open') || E('task-backdrop').classList.contains('open')
+      || E('ca-act-backdrop').classList.contains('open') || E('ca-view-backdrop').classList.contains('open') || E('ca-tx-backdrop').classList.contains('open')) return;
   if (phoneShown()) { phoneRefresh(); return; }
   loadSummary().catch(() => {});
   loadList({ silent: true });
@@ -3395,11 +3473,12 @@ function convoSnippet(last, mine) {
 }
 
 // A text with no words is a picture / file message (MMS): live 2026-10-12 every
-// blank one has an attachment (its refs sit in the log row's log_data, not in
-// phone_event_log; nothing displays them yet — ref/plans.md) — say so instead
-// of drawing an empty bubble.
+// blank one has an attachment. The comms archive (S4) sends its archived files
+// as `attachments` (smsBubble draws them) and counts the ones still being
+// fetched as `attachments_pending`; a blank text with NEITHER — its file not
+// in the archive — still says so instead of drawing an empty bubble.
 const phBlank = (body) => !String(body == null ? '' : body).trim();
-const phAttachmentNote = () => h('span', { className: 'ph-att', title: 'A picture or file came with this text. The phone system has it; YisraCase does not show attachments yet.' },
+const phAttachmentNote = () => h('span', { className: 'ph-att', title: 'A picture or file came with this text. The phone system has it; the archive does not hold a copy (yet).' },
   icon('fa-paperclip'), 'Attachment — not shown here yet');
 
 function callRow(c) {
@@ -3458,6 +3537,7 @@ async function openConversation(party, contact, { silent = false, older = false 
   paintHead(party, contact, known && known.line_ids);
   paintCompose(party);
   const seq = ++ph.tseq;
+  if (!same) caReset();
   if (!same && !silent) {
     ph.thread = null;
     E('ph-body').replaceChildren(h('div', { className: 'empty' }, 'Loading…'));
@@ -3480,7 +3560,8 @@ async function openConversation(party, contact, { silent = false, older = false 
       messages = [...byId.values()].sort((a, b) => a.id - b.id);
       next = prev.next;
     }
-    ph.thread = { party, contact: (data && data.contact) || contact || null, messages, next, line_ids: (data && data.line_ids) || null };
+    ph.thread = { party, contact: (data && data.contact) || contact || null, messages, next, line_ids: (data && data.line_ids) || null,
+      archiveAdmin: !!(data && data.archive_admin) };
     paintHead(party, ph.thread.contact, ph.thread.line_ids);
     paintCompose(party);
     renderPhoneThread({ keepScroll: older, quiet: silent && !!prev });
@@ -3610,8 +3691,7 @@ function renderPhoneThread({ keepScroll = false, quiet = false } = {}) {
   // ends, so the server's order can put it after texts sent while it ran.
   const when = (m) => { const x = Date.parse(m.at); return Number.isNaN(x) ? 0 : x; };
   for (const m of [...t.messages].sort((a, b) => when(a) - when(b) || a.id - b.id)) {
-    kids.push(m.kind === 'call' ? callBubble(m) : h('div', { className: `bub ${m.direction === 'outgoing' ? 'out' : 'in'}`, dataset: { id: String(m.id) } },
-      phBlank(m.body) ? phAttachmentNote() : m.body, h('span', { className: 'bt' }, phBubbleTime(m))));
+    kids.push(m.kind === 'call' ? callBubble(m) : smsBubble(m));
   }
   for (const p of pendingFor(t.party)) {
     kids.push(h('div', { className: 'bub out pending' }, p.body,
@@ -3628,18 +3708,364 @@ function renderPhoneThread({ keepScroll = false, quiet = false } = {}) {
 /** A bubble's time line; in All numbers, "· via <line>". */
 const phBubbleTime = (m) => `${bubbleTime(m.at)}${phIsAll() && m.line_id != null ? ` · via ${phLineShort(m.line_id)}` : ''}`;
 
-/** A call in the conversation: one small box — what happened, when. */
+/**
+ * A call in the conversation: one small box — what happened, when — plus,
+ * from the comms archive (S4), its summary (S3), Listen / Transcript, and a
+ * voicemail left on it. Only what the server sent: it omits what the viewer
+ * may not read (design §7).
+ */
 function callBubble(m) {
   const quiet = m.missed || m.unanswered;
+  const a = m.archive;
+  const vm = m.voicemail;
   return h('div', {
     className: `bub call ${m.direction === 'outgoing' ? 'out' : 'in'}${m.missed ? ' missed' : ''}`,
     dataset: { id: String(m.id), kind: 'call' },
   },
     h('span', { className: 'ct' }, icon(quiet ? 'fa-phone-slash' : 'fa-phone'), phCallLabel(m)),
+    a && a.summary_text ? h('span', { className: 'ca-sum' }, a.summary_text) : null,
+    a ? caMediaRow(a, { what: 'recording', label: 'Call recording' }) : null,
+    vm ? caMediaRow(vm, { what: 'voicemail', label: 'Voicemail', chip: true }) : null,
     h('span', { className: 'bt' }, phBubbleTime(m)));
 }
 
+/** A text: its words, its archived files (images inline, the rest as chips), its time. */
+function smsBubble(m) {
+  const atts = Array.isArray(m.attachments) ? m.attachments : [];
+  const live = atts.filter((x) => !x.purged);
+  const pending = Number(m.attachments_pending) || 0;
+  const blank = phBlank(m.body);
+  let note = null;
+  if (pending) note = h('span', { className: 'ca-note' }, icon('fa-paperclip'), ` ${pending === 1 ? 'Attachment' : `${pending} attachments`} — archiving, check back soon`);
+  else if (blank && !atts.length) note = phAttachmentNote();
+  return h('div', { className: `bub ${m.direction === 'outgoing' ? 'out' : 'in'}`, dataset: { id: String(m.id) } },
+    blank ? null : m.body,
+    live.length ? h('div', { className: 'ca-atts' }, ...live.map(caAttachment)) : null,
+    ...atts.filter((x) => x.purged).map((x) => caTombstone(x, 'Attachment')),
+    note,
+    h('span', { className: 'bt' }, phBubbleTime(m)));
+}
+
+// ── Comms archive (S4) ──────────────────────────────────────
+// Bytes: GET /api/comms-archive/media/:id/url → a 5-minute signed URL on
+// storage.googleapis.com, minted after the server's grant check and audited
+// there (listen / open_mms). Only that host is ever put in a src or href.
+// A <audio> stays one node per item across re-renders (a moved node keeps
+// playing); when its URL expires mid-playback (a seek re-requests a Range),
+// it re-mints once (?renew=1) and resumes where it was.
+const ca = {
+  urls: new Map(),     // media_id → { url, mime, inline, exp }
+  players: new Map(),  // media_id → <audio>
+  thumbs: new Map(),   // media_id → <img>
+  act: null,           // the open Restrict / Purge dialog: { item, label, mode }
+  tx: null,            // the open transcript: { mediaId }
+};
+const CA_URL_SLACK_MS = 60_000;
+const CA_URL_RE = /^https:\/\/storage\.googleapis\.com\//;
+const caAdmin = () => !!(ph.thread && ph.thread.archiveAdmin);
+/** play(): a promise in today's browsers, undefined in older engines — never an unhandled rejection either way. */
+const caPlay = (a) => { try { const p = a.play(); if (p && typeof p.catch === 'function') p.catch(() => {}); } catch (_) { /* noop */ } };
+
+async function caMint(id, { renew = false } = {}) {
+  const c = ca.urls.get(id);
+  if (!renew && c && c.exp - Date.now() > CA_URL_SLACK_MS) return c;
+  const r = await api(`/api/comms-archive/media/${encodeURIComponent(id)}/url${renew ? '?renew=1' : ''}`, 'GET');
+  if (!r || !CA_URL_RE.test(String(r.url || ''))) throw new Error('The archive answered with an unexpected link');
+  const v = { url: r.url, mime: String(r.mime || ''), inline: !!r.inline, exp: Date.now() + (Number(r.expires_in) || 300) * 1000 };
+  ca.urls.set(id, v);
+  return v;
+}
+
+/** Stop and forget every player / image (another conversation, or none). */
+function caReset() {
+  for (const a of ca.players.values()) { try { a.pause(); } catch (_) { /* noop */ } a.removeAttribute('src'); }
+  ca.players.clear();
+  ca.thumbs.clear();
+  if (caSeen) caSeen.disconnect();
+}
+
+// A picture's URL is minted only when it scrolls near the view (review A3):
+// a picture-heavy thread must not spend the per-user mint budget (120 /
+// 10 min) and leave Listen with a 429. Without IntersectionObserver (old
+// engines): at once.
+let caSeen = null;
+function caWhenSeen(el, load) {
+  if (typeof IntersectionObserver !== 'function') { load(); return; }
+  if (!caSeen) {
+    caSeen = new IntersectionObserver((entries) => {
+      for (const en of entries) {
+        if (!en.isIntersecting) continue;
+        caSeen.unobserve(en.target);
+        const go = en.target.caLoad;
+        en.target.caLoad = null;
+        if (go) go();
+      }
+    }, { rootMargin: '200px 0px' });
+  }
+  el.caLoad = load;
+  caSeen.observe(el);
+}
+
+function caPlayer(id) {
+  let a = ca.players.get(id);
+  if (a) return a;
+  a = h('audio', { controls: true, preload: 'metadata', referrerpolicy: 'no-referrer', className: 'ca-audio', dataset: { media: String(id) } });
+  let renewed = false;
+  let resumeAt = null;
+  a.addEventListener('loadedmetadata', () => { if (resumeAt != null) { try { a.currentTime = resumeAt; } catch (_) { /* noop */ } resumeAt = null; } });
+  a.addEventListener('playing', () => { renewed = false; });
+  a.addEventListener('error', async () => {
+    if (!a.getAttribute('src')) return;
+    if (renewed) { toast('Could not play this recording'); return; }
+    renewed = true;
+    resumeAt = a.currentTime || 0;
+    try {
+      const v = await caMint(id, { renew: true });
+      a.setAttribute('src', v.url);
+      caPlay(a);
+    } catch (err) { toast(`Could not play this recording: ${err.message}`); }
+  });
+  ca.players.set(id, a);
+  return a;
+}
+
+/** Put item `id`'s player into `slot` (minting its URL first time) and optionally play from `at` seconds. */
+async function caListen(id, slot, { at = null, play = true } = {}) {
+  const a = caPlayer(id);
+  if (!a.getAttribute('src')) {
+    const v = await caMint(id);
+    a.setAttribute('src', v.url);
+  }
+  slot.replaceChildren(a);
+  slot.hidden = false;
+  if (at != null) { try { a.currentTime = at; } catch (_) { /* before metadata: loadedmetadata never had it */ } }
+  if (play) caPlay(a);
+}
+
+const caWhen = (iso) => { const d = iso ? new Date(iso) : null; return d && !Number.isNaN(d.getTime()) ? fmt(d, { month: 'short', day: 'numeric', year: 'numeric' }) : ''; };
+function caTombstone(x, what) {
+  const p = x.purged || {};
+  return h('span', { className: 'ca-purged' }, icon('fa-trash-can'),
+    ` ${what} purged${p.at ? ` ${caWhen(p.at)}` : ''}${p.by ? ` by ${p.by}` : ''}${p.reason ? `: ${p.reason}` : ''}`);
+}
+
+function caAdminBtn(item, label) {
+  return caAdmin() ? h('button', {
+    className: 'btn small', type: 'button', title: `Restrict or purge this ${label.toLowerCase()} (archive admins)`,
+    'aria-label': `Manage ${label.toLowerCase()} in the archive`, onclick: () => openCaAct(item, label),
+  }, icon('fa-ellipsis')) : null;
+}
+
+/** Listen / Transcript (+ the admin ⋯ and a Restricted badge) for one recording or voicemail. */
+function caMediaRow(item, { what, label, chip = false }) {
+  if (item.purged) return caTombstone(item, label);
+  const slot = h('span', { className: 'ca-slot', hidden: true });
+  const id = item.media_id;
+  // A call RingCentral / Quo recorded in more than one file: Part 2, 3 … share the bubble's player slot.
+  const parts = [id, ...(Array.isArray(item.extra) ? item.extra : [])];
+  const held = parts.map((p) => ca.players.get(p)).find((a) => a && a.getAttribute('src') && !E('ca-tx-player').contains(a));
+  if (held) { slot.hidden = false; slot.append(held); }
+  const listenBtn = (p, label) => h('button', {
+    className: 'btn small', type: 'button', dataset: { ca: 'listen' },
+    onclick: (e) => { const b = e.target.closest('button'); b.disabled = true; caListen(p, slot).catch((err) => toast(`Could not open the ${what}: ${err.message}`)).finally(() => { b.disabled = false; }); },
+  }, icon('fa-play'), label);
+  return h('div', { className: 'ca-wrap' },
+    h('div', { className: 'ca-row' },
+      chip ? h('span', { className: 'ca-vm' }, icon('fa-voicemail'), 'Voicemail') : null,
+      item.has_audio ? listenBtn(id, 'Listen') : null,
+      ...parts.slice(1).map((p, i) => listenBtn(p, `Part ${i + 2}`)),
+      item.has_transcript ? h('button', { className: 'btn small', type: 'button', dataset: { ca: 'transcript' }, onclick: () => openTranscript(item, label) }, icon('fa-align-left'), 'Transcript') : null,
+      item.restricted ? h('span', { className: 'ca-badge', title: 'Only archive admins see this' }, 'Restricted') : null,
+      caAdminBtn(item, label)),
+    slot);
+}
+
+function caFileLabel(x) {
+  const kind = x.view === 'pdf' ? 'PDF' : x.view === 'audio' ? 'Audio' : x.view === 'image' ? 'Picture' : 'File';
+  const kb = x.bytes != null ? (x.bytes >= 1048576 ? `${(x.bytes / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(x.bytes / 1024))} KB`) : '';
+  return kb ? `${kind} · ${kb}` : kind;
+}
+
+function caFileChip(x) {
+  const ic = x.view === 'pdf' ? 'fa-file-pdf' : x.view === 'audio' ? 'fa-file-audio' : x.view === 'image' ? 'fa-file-image' : 'fa-file';
+  return h('button', { className: 'btn small ca-file', type: 'button', title: x.mime || '', onclick: () => openCaView(x) }, icon(ic), caFileLabel(x));
+}
+
+/**
+ * One archived MMS file: an inline thumbnail (images), or a chip that opens
+ * the viewer. A picture that cannot be loaded (no URL, or the bytes did not
+ * render — e.g. a HEIC renamed) becomes a chip, never a broken-image box.
+ */
+function caAttachment(x) {
+  let main;
+  let img = x.view === 'image' ? ca.thumbs.get(x.media_id) : null;
+  if (x.view === 'image' && !(img && img.dataset.failed)) {
+    if (!img) {
+      img = h('img', { alt: 'Picture sent by text', referrerpolicy: 'no-referrer', loading: 'lazy' });
+      ca.thumbs.set(x.media_id, img);
+      const fail = () => {
+        img.dataset.failed = '1';
+        const b = img.closest('.ca-thumb');
+        if (b) b.replaceWith(caFileChip(x));
+      };
+      img.addEventListener('error', fail);
+      caWhenSeen(img, () => caMint(x.media_id).then((v) => { img.setAttribute('src', v.url); }).catch(fail));
+    }
+    main = h('button', { className: 'ca-thumb', type: 'button', title: 'Open the picture', onclick: () => openCaView(x) }, img);
+  } else {
+    main = caFileChip(x);
+  }
+  return h('span', { className: 'ca-att', dataset: { media: String(x.media_id) } },
+    main,
+    x.restricted ? h('span', { className: 'ca-badge', title: 'Only archive admins see this' }, 'Restricted') : null,
+    caAdminBtn(x, 'Attachment'));
+}
+
+// The media viewer: images and PDFs from the signed URL (another origin —
+// nothing here can run on this page), audio in a player, anything else a
+// Download link the reader clicks (the URL serves it as an attachment).
+async function openCaView(x) {
+  const body = E('ca-view-body');
+  const tab = E('ca-view-tab');
+  E('ca-view-title').textContent = caFileLabel(x);
+  tab.hidden = true;
+  tab.removeAttribute('href');
+  body.replaceChildren(h('div', { className: 'empty' }, 'Loading from the archive…'));
+  E('ca-view-backdrop').classList.add('open');
+  try {
+    const v = await caMint(x.media_id);
+    if (!E('ca-view-backdrop').classList.contains('open')) return;
+    let el;
+    if (x.view === 'image' && v.inline) el = h('img', { src: v.url, alt: 'Picture sent by text', referrerpolicy: 'no-referrer' });
+    else if (x.view === 'pdf' && v.inline) el = h('iframe', { src: v.url, title: 'PDF sent by text', referrerpolicy: 'no-referrer' });
+    else if (x.view === 'audio' && v.inline) el = h('audio', { src: v.url, controls: true, preload: 'metadata', className: 'ca-view-audio', referrerpolicy: 'no-referrer' });
+    else el = h('div', { className: 'empty' }, 'This file cannot be shown here. ',
+      h('a', { href: v.url, rel: 'noopener noreferrer', referrerpolicy: 'no-referrer', className: 'btn small' }, icon('fa-download'), 'Download'));
+    if (x.view === 'image' || x.view === 'pdf') { tab.setAttribute('href', v.url); tab.hidden = false; }
+    body.replaceChildren(el);
+  } catch (err) {
+    body.replaceChildren(h('div', { className: 'inline-error' }, `Could not open it: ${err.message}`));
+  }
+}
+function closeCaView() {
+  E('ca-view-backdrop').classList.remove('open');
+  E('ca-view-body').replaceChildren();
+  E('ca-view-tab').removeAttribute('href');
+}
+
+const caClock = (sec) => { const n = Math.max(0, Math.floor(Number(sec) || 0)); return `${Math.floor(n / 60)}:${String(n % 60).padStart(2, '0')}`; };
+
+/** The transcript: its label (R8) on top, the player, then the text — every word as TEXT. */
+async function openTranscript(item, label) {
+  const id = item.media_id;
+  ca.tx = { mediaId: id };
+  E('ca-tx-title').textContent = `${label} — transcript`;
+  E('ca-tx-label').textContent = '';
+  E('ca-tx-player').replaceChildren();
+  E('ca-tx-body').replaceChildren(h('div', { className: 'empty' }, 'Loading…'));
+  E('ca-tx-backdrop').classList.add('open');
+  try {
+    const t = await api(`/api/comms-archive/media/${encodeURIComponent(id)}/transcript`, 'GET');
+    if (!ca.tx || ca.tx.mediaId !== id) return;
+    E('ca-tx-label').textContent = t.label || 'AI-generated — check the recording before relying on it';
+    const segs = Array.isArray(t.segments) ? t.segments : [];
+    const seek = (at) => caListen(id, E('ca-tx-player'), { at }).catch((err) => toast(`Could not play: ${err.message}`));
+    // Speakers: 'A', 'B'… (diarized) or 'ch1', 'ch2'… (one per recorded channel) — S2's segments.
+    const who = (s) => { const c = /^ch(\d{1,2})$/.exec(String(s)); return c ? `Channel ${c[1]}` : `Speaker ${s}`; };
+    const rows = segs.length
+      ? segs.map((g) => h('p', { className: 'ca-seg' },
+        g.a != null ? h('button', { className: 'btn small ca-ts', type: 'button', title: 'Play from here', onclick: () => seek(g.a) }, caClock(g.a)) : null,
+        g.s != null ? h('span', { className: 'ca-spk' }, who(g.s)) : null,
+        h('span', { className: 'ca-txt' }, g.t || '')))
+      : [h('p', { className: 'ca-seg' }, t.text || 'No speech was transcribed.')];
+    E('ca-tx-body').replaceChildren(...rows);
+    if (item.has_audio) {
+      E('ca-tx-player').replaceChildren(h('button', { className: 'btn small', type: 'button', onclick: () => seek(null) }, icon('fa-play'), 'Listen'));
+    }
+  } catch (err) {
+    if (!ca.tx || ca.tx.mediaId !== id) return;
+    E('ca-tx-body').replaceChildren(h('div', { className: 'inline-error' }, `Could not load the transcript: ${err.message}`));
+  }
+}
+function closeTranscript() {
+  // The player goes back to its bubble on the next render; here it just stops.
+  const a = ca.tx && ca.players.get(ca.tx.mediaId);
+  if (a && E('ca-tx-player').contains(a)) { try { a.pause(); } catch (_) { /* noop */ } }
+  ca.tx = null;
+  E('ca-tx-backdrop').classList.remove('open');
+  E('ca-tx-player').replaceChildren();
+  E('ca-tx-body').replaceChildren();
+  if (ph.thread) renderPhoneThread({ quiet: true });
+}
+
+// Restrict / Unrestrict / Purge (archive admins — the server decides; this
+// only draws the button for them). Purge asks for the item number AND the
+// reader's own password (Fred's ruling) — the password is sent once and
+// cleared, never kept.
+function openCaAct(item, label) {
+  ca.act = { item, label, mode: item.restricted ? 'unrestrict' : 'restrict' };
+  E('ca-act-reason').value = '';
+  E('ca-act-confirm').value = '';
+  E('ca-act-pw').value = '';
+  caActPaint();
+  E('ca-act-backdrop').classList.add('open');
+  E('ca-act-reason').focus();
+}
+function caActPaint() {
+  const a = ca.act;
+  if (!a) return;
+  const purge = a.mode === 'purge';
+  E('ca-act-title').textContent = purge ? `Purge ${a.label.toLowerCase()} #${a.item.media_id}` : `${a.mode === 'restrict' ? 'Restrict' : 'Unrestrict'} ${a.label.toLowerCase()} #${a.item.media_id}`;
+  E('ca-act-what').textContent = purge
+    ? 'Irreversible.'
+    : a.mode === 'restrict'
+      ? 'Restricted items are hidden from everyone except archive admins. You can undo this.'
+      : 'Everyone who can read this phone line will see it again.';
+  E('ca-purge-fields').hidden = !purge;
+  E('ca-act-confirm-l').textContent = `Type the item number (${a.item.media_id}) to confirm`;
+  E('ca-act-purge').hidden = purge;
+  const go = E('ca-act-go');
+  go.textContent = purge ? 'Purge for good' : a.mode === 'restrict' ? 'Restrict' : 'Unrestrict';
+  go.className = purge ? 'btn danger' : 'btn primary';
+  E('ca-act-msg').classList.remove('show');
+}
+function closeCaAct() {
+  ca.act = null;
+  E('ca-act-pw').value = '';
+  E('ca-act-backdrop').classList.remove('open');
+}
+async function caActGo() {
+  const a = ca.act;
+  if (!a) return;
+  const reason = E('ca-act-reason').value.trim();
+  const msg = E('ca-act-msg');
+  const fail = (t) => { msg.textContent = t; msg.classList.add('show'); };
+  if (!reason) return fail('A reason is required.');
+  const body = { reason };
+  if (a.mode === 'purge') {
+    if (E('ca-act-confirm').value.trim() !== String(a.item.media_id)) return fail(`Type ${a.item.media_id} to confirm the purge.`);
+    if (!E('ca-act-pw').value) return fail('Enter your password to confirm the purge.');
+    body.confirm = a.item.media_id;
+    body.password = E('ca-act-pw').value;
+  }
+  E('ca-act-go').disabled = true;
+  try {
+    await api(`/api/comms-archive/media/${encodeURIComponent(a.item.media_id)}/${a.mode}`, 'POST', body);
+    const done = a.mode === 'purge' ? 'Purged' : a.mode === 'restrict' ? 'Restricted' : 'Unrestricted';
+    closeCaAct();
+    ca.urls.delete(a.item.media_id);
+    toast(done);
+    if (ph.party) openConversation(ph.party, ph.thread && ph.thread.contact, { silent: true });
+  } catch (err) {
+    if (a.mode === 'purge') E('ca-act-pw').value = '';
+    fail(err.message || 'The archive refused');
+  } finally {
+    E('ca-act-go').disabled = false;
+  }
+}
+
 function closePhoneThread() {
+  caReset();
   ph.party = null;
   ph.thread = null;
   ph.tseq++;
@@ -3772,6 +4198,14 @@ function wirePhone() {
   E('ph-new-cancel').addEventListener('click', closeNewText);
   E('ph-new-send').addEventListener('click', sendNewText);
   E('ph-new-backdrop').addEventListener('click', (e) => { if (e.target === E('ph-new-backdrop')) closeNewText(); });
+  E('ca-view-close').addEventListener('click', closeCaView);
+  E('ca-view-backdrop').addEventListener('click', (e) => { if (e.target === E('ca-view-backdrop')) closeCaView(); });
+  E('ca-tx-close').addEventListener('click', closeTranscript);
+  E('ca-tx-backdrop').addEventListener('click', (e) => { if (e.target === E('ca-tx-backdrop')) closeTranscript(); });
+  E('ca-act-cancel').addEventListener('click', closeCaAct);
+  E('ca-act-purge').addEventListener('click', () => { if (ca.act) { ca.act.mode = 'purge'; caActPaint(); E('ca-act-confirm').focus(); } });
+  E('ca-act-go').addEventListener('click', caActGo);
+  E('ca-act-backdrop').addEventListener('click', (e) => { if (e.target === E('ca-act-backdrop')) closeCaAct(); });
 }
 
 // ── Boot ────────────────────────────────────────────────────

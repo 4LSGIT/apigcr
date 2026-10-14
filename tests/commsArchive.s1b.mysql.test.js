@@ -46,6 +46,7 @@ const sha = (b) => crypto.createHash('sha256').update(b).digest('hex');
 const daysAgo = (n) => new Date(Date.now() - n * 86400_000);
 
 maybe('comms archive S1b on real MySQL', () => {
+  const PW_HASH = require('bcrypt').hashSync('s1b-test-password', 4);  // S4: purge re-checks the caller's password
   const mysql   = require('mysql2/promise');
   const express = require('express');
   const jwt     = require('jsonwebtoken');
@@ -168,6 +169,7 @@ maybe('comms archive S1b on real MySQL', () => {
     await q(`INSERT INTO users (user, user_name, roles, user_auth) VALUES
       (1, 'SS', 'staff,attorney', 'authorized'), (3, 'Staff', 'staff', 'authorized'), (6, 'SU', 'it,admin,su', 'authorized'),
       (7, 'Legacy', 'it,admin', 'authorized - SU')`);   // 7: the pre-A2 SU shape WITHOUT the su role — not SU since A2b
+    await q('UPDATE users SET password_hash = ?', [PW_HASH]);   // S4: purge re-checks the caller's password
     await q("UPDATE app_settings SET `value` = '1' WHERE `key` = 'comms_archive_enabled'");
     await q("UPDATE app_settings SET `value` = '1' WHERE `key` = 'comms_archive_admins'");
     gcs = fakeStorage();
@@ -570,7 +572,12 @@ maybe('comms archive S1b on real MySQL', () => {
   // ── A — R9 + routes ─────────────────────────────────────────────────────
   const tok = (user, user_auth = 'authorized', roles = []) =>
     jwt.sign({ sub: String(user), username: 'u' + user, user_auth, roles, aud: 'staff' }, process.env.JWT_SECRET);
+  const PW = 's1b-test-password';
   async function post(path, body, { t, apiKey } = {}) {
+    // S4: a purge carries the caller's password (Fred's ruling) — these
+    // tests are about the purge itself; tests/commsArchive.s4.mysql.test.js
+    // owns the password re-check.
+    if (/\/purge$/.test(path) && body && body.password === undefined) body = { ...body, password: PW };
     const headers = { 'Content-Type': 'application/json' };
     if (t) headers.Authorization = `Bearer ${t}`;
     if (apiKey) headers['x-api-key'] = apiKey;

@@ -35,7 +35,15 @@
    "status": "Call connected",
    "unanswered": false,
    "missed": false,
-   "line_id": 2
+   "line_id": 2,
+   "archive": {
+    "media_id": 7001,
+    "has_audio": true,
+    "has_transcript": true,
+    "summary_text": "Client confirmed the paystubs for April through September and asked whether the 341 meeting can move to the afternoon session; the firm promised to check with the trustee's office and call back by Friday.",
+    "restricted": true,
+    "extra": []
+   }
   },
   {
    "id": 40,
@@ -56,12 +64,61 @@
    "status": "no-answer",
    "unanswered": true,
    "missed": true,
-   "line_id": 2
+   "line_id": 2,
+   "voicemail": {
+    "media_id": 7002,
+    "provider": "quo",
+    "has_audio": true,
+    "has_transcript": true,
+    "restricted": false
+   }
+  },
+  {
+   "id": 42,
+   "kind": "sms",
+   "direction": "incoming",
+   "body": "",
+   "at": "2026-10-12T15:05:00.000Z",
+   "logged": true,
+   "attachments": [
+    {
+     "media_id": 7101,
+     "mime": "image/jpeg",
+     "view": "image",
+     "bytes": 84213,
+     "restricted": false
+    },
+    {
+     "media_id": 7102,
+     "mime": "application/pdf",
+     "view": "pdf",
+     "bytes": 2621440,
+     "restricted": true
+    },
+    {
+     "media_id": 7103,
+     "mime": "text/vcard",
+     "view": "file",
+     "bytes": 412,
+     "restricted": false
+    },
+    {
+     "media_id": 7104,
+     "purged": {
+      "at": "2026-10-13T09:00:00.000Z",
+      "by": "Fred",
+      "reason": "Sent to the wrong client by mistake \u2014 removed at the client's request, see the case log for the full note"
+     }
+    }
+   ],
+   "attachments_pending": 1,
+   "line_id": 1
   }
  ],
  "all": true,
  "line_ids": [
   1,
   2
- ]
+ ],
+ "archive_admin": true
 }

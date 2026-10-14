@@ -89,7 +89,13 @@ an unbroken URL, a short code — and one with a number no contact holds at
 `…/conversations/5555550198` (Add to contact, an attachment-only text, a
 call), and All numbers at `phone-lines/all/{conversations,calls}` +
 `…/all/conversations/5555550199` (line tags, "via" bubbles, the From pickers)
-— surveyed as `tab:tabComms:phone-*`), the Calendar tab's list
+— surveyed as `tab:tabComms:phone-*`; the 5555550199 thread also carries the
+comms archive's fields — a summary, Listen / Transcript, a voicemail, MMS
+thumbnails / chips / a purge tombstone, admin ⋯ buttons — with
+`comms-archive/media/<id>/{url,transcript}` behind the transcript viewer, the
+archive file viewer and the Purge dialog, `tab:tabComms:phone-archive-*`), the
+System Alerts pane's Comms archive section (`comms-archive/health`,
+`panel:systemAlertsDiv:comms-archive`), the Calendar tab's list
 (`calendar-range` — one row per action-cell shape, surveyed as
 `tab:tabCalendar:list`; Grid is `tab:tabCalendar:grid`, against an empty
 `calendar-feed`), the

@@ -103,6 +103,8 @@ function makeWorld() {
     admin_audit_log: [],
     jwt_api_audit_log: [],
     mailboxes: [],
+    app_settings: {},     // key → value (comms archive S4: comms_archive_admins)
+    comms_media: [],      // comms archive S4: the thread decoration reads it (empty = no archive)
   };
   const seq = { channel_grants: 0, phone_event_log: 0, admin_audit_log: 0 };
   const statements = [];
@@ -415,6 +417,30 @@ function makeWorld() {
         if (c) rows.push({ phone: cp.phone, contact_id: c.contact_id, contact_name: c.contact_name });
       }
       return [rows];
+    }
+
+    // ── comms archive (S4): the thread decoration (services/commsArchiveView.js) ──
+    // The SQL itself is held to MySQL in tests/commsArchive.s4.mysql.test.js;
+    // here the archive is a list of rows, empty unless a test seeds it.
+    if (sql === 'SELECT `value` FROM app_settings WHERE `key` = ? LIMIT 1') {
+      return [Object.prototype.hasOwnProperty.call(T.app_settings, p[0]) ? [{ value: T.app_settings[p[0]] }] : []];
+    }
+    if (/FROM comms_media m LEFT JOIN users u ON u\.user = m\.purged_by WHERE m\.source_table = 'phone_event_log'/.test(sql)) {
+      const ids = new Set(p[0].map(Number));
+      const kinds = new Set(p[1]);
+      return [T.comms_media.filter(r => r.source_table === 'phone_event_log' && ids.has(Number(r.source_id)) && kinds.has(r.kind))];
+    }
+    if (/FROM comms_media m LEFT JOIN users u ON u\.user = m\.purged_by WHERE m\.party = \?/.test(sql)) {
+      const lo = sqlTimeMs(p[1]);
+      const hi = sqlTimeMs(p[2]);
+      return [T.comms_media.filter(r => r.kind === 'voicemail' && r.source_table === 'rc_message' && r.party === String(p[0])
+        && new Date(r.captured_at).getTime() >= lo && new Date(r.captured_at).getTime() <= hi)];
+    }
+    if (/FROM comms_transcripts/.test(sql)) {
+      throw Object.assign(new Error("Table 'comms_transcripts' doesn't exist"), { code: 'ER_NO_SUCH_TABLE', errno: 1146 });
+    }
+    if (/^SELECT source_id, restricted FROM comms_media WHERE source_table = 'comms_media' AND kind = 'stt_raw'/.test(sql)) {
+      return [[]];
     }
 
     throw new Error(`phoneSPHWorld: unscripted statement: ${sql}`);

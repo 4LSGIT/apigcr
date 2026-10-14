@@ -1,0 +1,107 @@
+{
+ "status": "success",
+ "at": "{{TODAY}}T12:00:00.000Z",
+ "media": [
+  {
+   "kind": "call_recording",
+   "provider": "ringcentral",
+   "state": "archived",
+   "n": 877,
+   "restricted": 2
+  },
+  {
+   "kind": "call_recording",
+   "provider": "ringcentral",
+   "state": "pending",
+   "n": 1338,
+   "restricted": 0
+  },
+  {
+   "kind": "call_recording",
+   "provider": "quo",
+   "state": "archived",
+   "n": 48,
+   "restricted": 0
+  },
+  {
+   "kind": "mms_file",
+   "provider": "quo",
+   "state": "pending",
+   "n": 36,
+   "restricted": 0
+  },
+  {
+   "kind": "voicemail",
+   "provider": "quo",
+   "state": "pending",
+   "n": 200,
+   "restricted": 0
+  }
+ ],
+ "pending": [
+  {
+   "kind": "call_recording",
+   "provider": "ringcentral",
+   "n": 1338,
+   "oldest_captured": "2026-08-20T15:41:53.000Z",
+   "oldest_created": "2026-10-14T06:40:00.000Z"
+  },
+  {
+   "kind": "mms_file",
+   "provider": "quo",
+   "n": 36,
+   "oldest_captured": "2026-06-09T13:24:59.000Z",
+   "oldest_created": "2026-10-14T07:20:00.000Z"
+  }
+ ],
+ "pending_errors": [
+  {
+   "kind": "call_recording",
+   "provider": "quo",
+   "error": "quo 403 0900403 on /v1/call-recordings/{callId}: You are forbidden to access the requested Call Recordings",
+   "n": 33
+  }
+ ],
+ "jobs": [
+  {
+   "key": "comms_archive_media_sweep",
+   "name": "Comms Archive Media Sweep",
+   "recurrence": "*/2 * * * *",
+   "active": true,
+   "status": "pending",
+   "last": {
+    "status": "success",
+    "at": "{{TODAY}}T11:58:00.000Z",
+    "duration_ms": 41234,
+    "output": {
+     "archived": 3,
+     "discovered_mms": 2,
+     "quo_forbidden": 33,
+     "rc_vm_listing": "complete",
+     "not_yet": 4
+    },
+    "error": null
+   }
+  },
+  {
+   "key": "comms_archive_verify",
+   "name": "Comms Archive Verify",
+   "recurrence": "15 7 * * *",
+   "active": true,
+   "status": "pending",
+   "last": null
+  }
+ ],
+ "alerts": [
+  {
+   "id": 632,
+   "severity": "error",
+   "group_key": "comms_archive_quo_forbidden:2489655355",
+   "title": "Comms archive: Quo refuses every request on line 2489655355 (recordings, MMS, voicemails) \u2014 33 rows waiting",
+   "created_at": "{{TODAY}}T12:30:00.000Z",
+   "acked_at": null
+  }
+ ],
+ "transcripts": null,
+ "cost": null
+}

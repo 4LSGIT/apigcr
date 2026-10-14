@@ -5,9 +5,9 @@
 Archived call recordings and voicemails are transcribed by **AssemblyAI**. A
 background job, **Comms Transcribe Sweep**, runs every 2 minutes. Every
 transcript is AI-generated, so check the recording before relying on it. There
-is no screen for this yet (the Comms surfaces come later): you control it with
-`app_settings` rows from the **DB Console**, and it tells you what's wrong
-through **System Alerts**.
+is no settings screen for it: you control it with `app_settings` rows from the
+**DB Console**, and it tells you what's wrong through **System Alerts**.
+Transcripts are read in Comms → Phone ([Comms archive](10-comms-archive.md)).
 
 ### The switch: `comms_transcribe_mode`
 

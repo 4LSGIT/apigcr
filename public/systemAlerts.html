@@ -111,6 +111,22 @@
   /* Pager buttons/text come from the shared pager (/js/ycPager.js); this
      rule is only the bar the strip sits in. */
   .pager { padding:6px 10px; background:var(--surface); border-top:1px solid var(--border); }
+
+  /* Comms archive health (ref/COMMS_ARCHIVE_DESIGN.md §10, F4) — a collapsed
+     section; it reads GET /api/comms-archive/health only when opened. flex
+     0 0 auto: it sits in the page's column flex, and its own scroll box must
+     not squash it (overflow on a flex child drops its min-height floor). */
+  details.cah { flex:0 0 auto; background:var(--surface); border-bottom:1px solid var(--border); }
+  details.cah > summary { cursor:pointer; padding:7px 10px; font-size:12px; font-weight:600; user-select:none; }
+  .cah-body { max-height:45vh; overflow:auto; padding:0 10px 10px; }
+  .cah-body h4 { margin:10px 0 4px; font-size:11px; text-transform:uppercase; letter-spacing:.05em; color:var(--text-muted); }
+  .cah-scroll { overflow-x:auto; max-width:100%; }
+  table.cah-t { border-collapse:collapse; font-size:12px; }
+  table.cah-t th, table.cah-t td { border-bottom:1px solid var(--border); padding:3px 8px; text-align:left; white-space:nowrap; }
+  table.cah-t td.num { text-align:right; font-variant-numeric:tabular-nums; }
+  table.cah-t td.wrap { white-space:normal; overflow-wrap:anywhere; min-width:180px; }
+  .cah-msg { font-size:11px; color:var(--text-muted); padding:4px 0; }
+  .cah-msg.err { color:var(--danger); }
 </style>
 </head>
 <body>
@@ -123,6 +139,11 @@
     <div class="card resv" data-status="resolved" data-severity=""><div class="n" id="cRes">–</div><div class="l">Resolved 7d</div></div>
     <div class="card undg" data-status="open" data-severity=""><div class="n" id="cUnd">–</div><div class="l">Undigested</div></div>
   </div>
+
+  <details class="cah" id="caHealth">
+    <summary>Comms archive</summary>
+    <div class="cah-body" id="caHealthBody"><div class="cah-msg">Open to load.</div></div>
+  </details>
 
   <div class="toolbar">
     <select id="fStatus">
@@ -383,6 +404,105 @@ document.querySelectorAll(".card").forEach((card) => {
     offset = 0; load();
   });
 });
+
+// ── Comms archive health (S4 — design §10, F4) ──────────────────────────────
+// Counts, the oldest work waiting, each sweep's last run and the archive's
+// open alerts. Read only when the section is opened (and on Refresh while
+// open). Built with createElement / textContent only.
+const el = (tag, cls, text) => {
+  const n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (text != null) n.textContent = String(text);
+  return n;
+};
+function cahTable(head, rows) {
+  const t = el("table", "cah-t");
+  const tr = el("tr");
+  for (const h of head) tr.appendChild(el("th", null, h));
+  const thead = el("thead"); thead.appendChild(tr); t.appendChild(thead);
+  const tb = el("tbody");
+  for (const r of rows) {
+    const row = el("tr");
+    for (const c of r) {
+      const td = el("td", c && c.cls ? c.cls : null, c && typeof c === "object" ? c.v : c);
+      row.appendChild(td);
+    }
+    tb.appendChild(row);
+  }
+  t.appendChild(tb);
+  const wrap = el("div", "cah-scroll"); wrap.appendChild(t);
+  return wrap;
+}
+const CAH_STATES = ["archived", "pending", "none", "gone", "failed", "purged"];
+const num = (v) => ({ v: v == null ? "—" : v, cls: "num" });
+function cahOutput(o) {
+  if (o == null) return "";
+  if (typeof o !== "object") return String(o).slice(0, 200);
+  return Object.entries(o).filter(([, v]) => v != null && typeof v !== "object").map(([k, v]) => `${k}=${v}`).join(" ").slice(0, 300);
+}
+function cahRender(d) {
+  const body = E("caHealthBody");
+  const parts = [el("div", "cah-msg", `Updated ${new Date(d.at).toLocaleTimeString()}`)];
+  // items by kind / provider × state
+  const byKey = new Map();
+  for (const r of d.media || []) {
+    const k = `${r.kind}|${r.provider || ""}`;
+    if (!byKey.has(k)) byKey.set(k, { kind: r.kind, provider: r.provider, restricted: 0 });
+    byKey.get(k)[r.state] = r.n;
+    byKey.get(k).restricted += r.restricted || 0;
+  }
+  parts.push(el("h4", null, "Archive items"));
+  parts.push(byKey.size
+    ? cahTable(["Kind", "Provider", ...CAH_STATES, "restricted"],
+      [...byKey.values()].map((x) => [x.kind, x.provider || "—", ...CAH_STATES.map((s) => num(x[s] || 0)), num(x.restricted)]))
+    : el("div", "cah-msg", "Nothing in the archive yet."));
+  parts.push(el("h4", null, "Waiting (pending)"));
+  parts.push((d.pending || []).length
+    ? cahTable(["Kind", "Provider", "Count", "Oldest call / message", "Waiting since"],
+      d.pending.map((p) => [p.kind, p.provider || "—", num(p.n), fmtTs(p.oldest_captured), `${fmtTs(p.oldest_created)} (${ago(p.oldest_created)})`]))
+    : el("div", "cah-msg", "Nothing waiting."));
+  if ((d.pending_errors || []).length) {
+    parts.push(el("h4", null, "Why they wait"));
+    parts.push(cahTable(["Kind", "Provider", "Reason", "Count"],
+      d.pending_errors.map((p) => [p.kind, p.provider || "—", { v: p.error, cls: "wrap" }, num(p.n)])));
+  }
+  parts.push(el("h4", null, "Sweeps"));
+  parts.push(cahTable(["Job", "Schedule", "Active", "Last run", "Result", "Output"],
+    (d.jobs || []).map((j) => [j.name || j.key, j.recurrence || "", j.active ? "yes" : "no",
+      j.last ? `${fmtTs(j.last.at)} (${ago(j.last.at)})` : "never",
+      j.last ? `${j.last.status}${j.last.duration_ms != null ? ` · ${j.last.duration_ms} ms` : ""}` : "",
+      { v: j.last ? (j.last.error || cahOutput(j.last.output)) : "", cls: "wrap" }])));
+  parts.push(el("h4", null, "Transcripts and summaries"));
+  if (d.transcripts) {
+    parts.push(cahTable(["State", "Count"], d.transcripts.by_state.map((r) => [r.state, num(r.n)])));
+    if (d.transcripts.oldest_pending) parts.push(el("div", "cah-msg", `Oldest waiting: ${fmtTs(d.transcripts.oldest_pending)} (${ago(d.transcripts.oldest_pending)})`));
+    if ((d.transcripts.skipped_by_reason || []).length) {
+      parts.push(el("div", "cah-msg", `Skipped: ${d.transcripts.skipped_by_reason.map((r) => `${r.reason || "—"} ${r.n}`).join(" · ")}`));
+    }
+    if (d.cost) {
+      const c = d.cost.month_to_date_cents;
+      parts.push(el("div", "cah-msg", `This month: transcription ${(c.stt / 100).toFixed(2)} USD${c.llm != null ? ` · summaries ${(c.llm / 100).toFixed(2)} USD` : ""}`));
+    }
+  } else {
+    parts.push(el("div", "cah-msg", "Not set up yet (the transcription tables do not exist)."));
+  }
+  parts.push(el("h4", null, "Open archive alerts"));
+  parts.push((d.alerts || []).length
+    ? cahTable(["ID", "Severity", "Group", "Title", "Created"],
+      d.alerts.map((a) => [num(a.id), a.severity, a.group_key, { v: a.title, cls: "wrap" }, `${fmtTs(a.created_at)}${a.acked_at ? " · acked" : ""}`]))
+    : el("div", "cah-msg", "None."));
+  body.replaceChildren(...parts);
+}
+async function loadCaHealth() {
+  if (!authed || !E("caHealth").open) return;
+  try {
+    cahRender(await api("/api/comms-archive/health", "GET"));
+  } catch (err) {
+    E("caHealthBody").replaceChildren(el("div", "cah-msg err", `Could not load the archive health: ${err.message || "failed"}`));
+  }
+}
+E("caHealth").addEventListener("toggle", () => { if (E("caHealth").open) loadCaHealth(); });
+E("btnRefresh").addEventListener("click", () => loadCaHealth());
 
 function bootAuthed() { load(); }
 </script>

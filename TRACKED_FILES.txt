@@ -198,6 +198,7 @@ manual/08-Admin-Tools/06-tools.md
 manual/08-Admin-Tools/07-cta-links.md
 manual/08-Admin-Tools/08-mailboxes.md
 manual/08-Admin-Tools/09-comms-transcription.md
+manual/08-Admin-Tools/10-comms-archive.md
 manual/08-Admin-Tools/README.md
 manual/README.md
 package-lock.json
@@ -753,6 +754,13 @@ scripts/mobile-survey/fixtures/api/calendar-feed.json
 scripts/mobile-survey/fixtures/api/calendar-range.json
 scripts/mobile-survey/fixtures/api/cases/TESTCASE1.json
 scripts/mobile-survey/fixtures/api/cases/TESTCASE1/pipeline.json
+scripts/mobile-survey/fixtures/api/comms-archive/health.json
+scripts/mobile-survey/fixtures/api/comms-archive/media/7001/transcript.json
+scripts/mobile-survey/fixtures/api/comms-archive/media/7001/url.json
+scripts/mobile-survey/fixtures/api/comms-archive/media/7002/url.json
+scripts/mobile-survey/fixtures/api/comms-archive/media/7101/url.json
+scripts/mobile-survey/fixtures/api/comms-archive/media/7102/url.json
+scripts/mobile-survey/fixtures/api/comms-archive/media/7103/url.json
 scripts/mobile-survey/fixtures/api/contacts/9001.json
 scripts/mobile-survey/fixtures/api/cta.json
 scripts/mobile-survey/fixtures/api/cta/10/executions.json
@@ -823,6 +831,7 @@ services/commsArchiveMediaSweep.js
 services/commsArchiveService.js
 services/commsArchiveSweep.js
 services/commsArchiveVerify.js
+services/commsArchiveView.js
 services/commsEvalService.js
 services/commsTranscribeAudio.js
 services/commsTranscribeService.js
@@ -974,6 +983,8 @@ tests/checklistView.autoGrow.test.js
 tests/checklists.s1notes.test.js
 tests/commsArchive.s1b.mysql.test.js
 tests/commsArchive.s1c.mysql.test.js
+tests/commsArchive.s4.mysql.test.js
+tests/commsArchive.s4.pane.test.js
 tests/commsArchive.sweep.mysql.test.js
 tests/commsArchiveCommon.rowOps.mysql.test.js
 tests/commsArchiveService.s2.test.js

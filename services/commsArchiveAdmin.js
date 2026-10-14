@@ -38,6 +38,18 @@
  * fence against the transcription sweep, which holds its own lock, not this
  * one); its stt_raw children ride derived_children. S3 appends the ai_calls
  * part; nothing else changes.
+ *
+ * ── canReadMedia (S4 — design §7) ──────────────────────────────────────────
+ * Who may READ one archive item's content (bytes, transcript): a staff JWT;
+ * restricted → archive admins only (R9); a line-less item (channel_id NULL —
+ * an RC voicemail left without a to-number) → the SU / attorney bypass only;
+ * otherwise mailboxService.getAccess on the item's line, can_read (R6). The
+ * comms hub's thread decoration (services/commsArchiveView.js) applies the
+ * same rules row by row; this is the one-item form the content routes use.
+ *
+ * ── verifyOwnPassword (S4 — Fred's ruling: a password re-check before Purge) ─
+ * bcrypt against the CALLER's own users.password_hash — the /admin/elevate
+ * pattern, which SS cannot use (it is SU-only). No hash → no_password.
  */
 
 'use strict';
@@ -110,6 +122,67 @@ async function isArchiveSu(db, auth) {
   const uid = _jwtUser(auth);
   if (uid == null) return false;
   return require('./mailboxService').isSuperuser(db, uid); // lazy require (convention)
+}
+
+/** SU or a READ-bypass role (attorney) — the only readers of a line-less item (§7). */
+async function hasLineBypass(db, auth) {
+  const uid = _jwtUser(auth);
+  if (uid == null) return false;
+  const mbx = require('./mailboxService'); // lazy require (convention)
+  if (await mbx.isSuperuser(db, uid)) return true;
+  return !!(await mbx.roleBypass(db, uid));
+}
+
+/**
+ * May this caller read this comms_media row's content? (design §7)
+ * `row` needs channel_id + restricted (+ source_table / source_id). `isAdmin`
+ * may be passed when already known. → { ok, why } — `why` is for the audit
+ * row, never the response.
+ *
+ * A row whose source is a phone_event_log event is held to the event's OWN
+ * line (re-derived like the thread view: line_number → phone_lines.id), not
+ * to comms_media.channel_id alone (review A2, defence in depth): a row whose
+ * stored line disagrees with its event's, or whose event is suppressed or
+ * gone, is refused for everyone.
+ */
+async function canReadMedia(db, auth, row, { isAdmin } = {}) {
+  const uid = _jwtUser(auth);
+  if (uid == null) return { ok: false, why: 'not_jwt' };
+  if (!row) return { ok: false, why: 'not_found' };
+  if (Number(row.restricted) === 1) {
+    const admin = isAdmin != null ? isAdmin : await isArchiveAdmin(db, auth);
+    if (!admin) return { ok: false, why: 'restricted' };
+  }
+  if (row.source_table === 'phone_event_log') {
+    const [[e]] = await db.query(
+      `SELECT e.suppressed, pl.id AS line_id
+         FROM phone_event_log e LEFT JOIN phone_lines pl ON pl.phone_number = e.line_number
+        WHERE e.id = ? LIMIT 1`, [row.source_id]);
+    if (!e || Number(e.suppressed) === 1) return { ok: false, why: 'no_event' };
+    const derived = e.line_id == null ? null : Number(e.line_id);
+    if (derived !== (row.channel_id == null ? null : Number(row.channel_id))) return { ok: false, why: 'line_mismatch' };
+  }
+  if (row.channel_id == null) {
+    return (await hasLineBypass(db, auth)) ? { ok: true, why: null } : { ok: false, why: 'no_line' };
+  }
+  const mbx = require('./mailboxService'); // lazy require (convention)
+  const access = await mbx.getAccess(db, uid, 'phone_line', row.channel_id);
+  return access.can_read ? { ok: true, why: null } : { ok: false, why: 'no_grant' };
+}
+
+/**
+ * The caller's own password, re-checked (purge step-up). Never logs or
+ * returns the password. → 'ok' | 'bad_password' | 'no_password'
+ */
+async function verifyOwnPassword(db, auth, password) {
+  const uid = _jwtUser(auth);
+  if (uid == null) return 'bad_password';
+  if (typeof password !== 'string' || !password) return 'bad_password';
+  const [[u]] = await db.query('SELECT password_hash FROM users WHERE user = ? LIMIT 1', [uid]);
+  const hash = u && u.password_hash;
+  if (!hash) return 'no_password';
+  const bcrypt = require('bcrypt'); // lazy require (convention)
+  return (await bcrypt.compare(password, String(hash))) ? 'ok' : 'bad_password';
 }
 
 async function _row(db, id) {
@@ -241,4 +314,7 @@ async function purge(db, id, { userId, reason }) {
   }
 }
 
-module.exports = { isArchiveAdmin, isEvalReviewer, isArchiveSu, REVIEWERS_KEY, parseAdmins, setRestricted, purge, PURGE_PARTS, ADMINS_KEY, SWEEP_LOCKS, httpError, limits };
+module.exports = {
+  isArchiveAdmin, isEvalReviewer, isArchiveSu, hasLineBypass, canReadMedia, verifyOwnPassword,
+  REVIEWERS_KEY, parseAdmins, setRestricted, purge, PURGE_PARTS, ADMINS_KEY, SWEEP_LOCKS, httpError, limits,
+};

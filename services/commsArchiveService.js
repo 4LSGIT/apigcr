@@ -46,10 +46,12 @@
  *   putStream(readable, {objectName, mime, expectedBytes, timeoutMs})
  *                                             -> Promise<{bytes, sha256, generation}>
  *   rehash(objectName, {timeoutMs})           -> Promise<{bytes, sha256, contentType}>
+ *   readText(objectName, {maxBytes, timeoutMs}) -> Promise<string>      (S4: vendor transcript JSON)
  *   exists(objectName, {timeoutMs})           -> Promise<boolean>   (delete detection)
  *   deleteObject(objectName, {timeoutMs})     -> Promise<void>      (purge; ignores not-found)
  *   signedUrl(objectName, {mime, filename?, ttlMs?}) -> Promise<string>  (V4; 5 min, ttlMs ≤ 1 h)
  *   readHead(objectName, n, {timeoutMs})      -> Promise<Buffer>  (the first ≤ n bytes — S2's audio header)
+ *   baseMime(mime)                            -> 'type/subtype' (parameters stripped, lower case)
  *   mmsPrefix({capturedAt, sourceId, part})   -> 'phone/mms/yyyy/mm/<id>-<part>.'
  *   classifyMedia(responseType, claimedType)  -> {mime, ext, note} | {error}
  */
@@ -469,6 +471,32 @@ async function readHead(objectName, n, { timeoutMs } = {}) {
   return Buffer.concat(chunks).subarray(0, want);
 }
 
+/**
+ * Read a SMALL object (a vendor transcript JSON, S4) as UTF-8, server-side.
+ * Over `maxBytes` → ourSide error, never a truncated read.
+ */
+async function readText(objectName, { maxBytes = 1_000_000, timeoutMs } = {}) {
+  const bucket = bucketName();
+  const src = _storage().bucket(bucket).file(objectName).createReadStream({ validation: false });
+  const chunks = [];
+  let n = 0;
+  const sink = new Writable({
+    write(c, _e, cb) {
+      n += c.length;
+      if (n > maxBytes) return cb(new Error(`object over ${maxBytes} bytes`));
+      chunks.push(c);
+      cb();
+    },
+  });
+  try {
+    await _bounded(pipelineP(src, sink), _timeoutMs(timeoutMs), `read ${objectName}`, (e) => { src.destroy(e); });
+  } catch (err) {
+    if (err.ourSide) throw err;
+    throw _ourSide(err, `read ${objectName}`);
+  }
+  return Buffer.concat(chunks).toString('utf8');
+}
+
 /** Does the live object exist? A soft-deleted object does NOT (delete detection). */
 async function exists(objectName, { timeoutMs } = {}) {
   const bucket = bucketName();
@@ -539,6 +567,7 @@ module.exports = {
   findByPrefix,
   putStream,
   rehash,
+  readText,
   exists,
   deleteObject,
   signedUrl,
@@ -546,6 +575,7 @@ module.exports = {
   AUDIO_TYPES,
   MEDIA_TYPES,
   INLINE_TYPES,
+  baseMime: _baseMime,
   REQUIRED_PERMISSIONS,
   SIGNED_URL_TTL_MS,
   SIGNED_URL_MAX_TTL_MS,

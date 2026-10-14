@@ -1,7 +1,7 @@
 # Routes
 
-_Generated 2026-10-14T14:44:15.986Z_  
-_762 routes total — DELETE: 63, GET: 320, PATCH: 51, POST: 289, PUT: 36, _ALL: 3_
+_Generated 2026-10-14T15:17:09.869Z_  
+_765 routes total — DELETE: 63, GET: 323, PATCH: 51, POST: 289, PUT: 36, _ALL: 3_
 
 ## Global middleware chain
 
@@ -145,9 +145,12 @@ _762 routes total — DELETE: 63, GET: 320, PATCH: 51, POST: 289, PUT: 36, _ALL:
 | GET | `/api/cases/:id/workflows` | `jwtOrApiKey` | — |
 | GET | `/api/cases/search` | `jwtOrApiKey` | — |
 | GET | `/api/cause_error` | `jwtOrApiKey` | — |
+| GET | `/api/comms-archive/health` | `jwtOrApiKey`, `superuserCheck`, `elevationCheck`, `rateLimitMiddleware` | — |
 | POST | `/api/comms-archive/media/:id/purge` | `jwtOrApiKey` | — |
 | POST | `/api/comms-archive/media/:id/restrict` | `jwtOrApiKey` | — |
+| GET | `/api/comms-archive/media/:id/transcript` | `jwtOrApiKey` | — |
 | POST | `/api/comms-archive/media/:id/unrestrict` | `jwtOrApiKey` | — |
+| GET | `/api/comms-archive/media/:id/url` | `jwtOrApiKey` | — |
 | GET | `/api/comms-eval/items` | `jwtOrApiKey` | — |
 | GET | `/api/comms-eval/items/:id/audio` | `jwtOrApiKey` | — |
 | GET | `/api/comms-eval/items/:id/review` | `jwtOrApiKey` | — |
@@ -1032,4 +1035,4 @@ _762 routes total — DELETE: 63, GET: 320, PATCH: 51, POST: 289, PUT: 36, _ALL:
 
 ---
 
-_762 routes total — DELETE: 63, GET: 320, PATCH: 51, POST: 289, PUT: 36, _ALL: 3_
+_765 routes total — DELETE: 63, GET: 323, PATCH: 51, POST: 289, PUT: 36, _ALL: 3_

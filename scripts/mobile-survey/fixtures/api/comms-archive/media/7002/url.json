@@ -1,0 +1,7 @@
+{
+ "status": "success",
+ "url": "https://storage.googleapis.com/survey-fixture/7002",
+ "mime": "audio/mpeg",
+ "inline": true,
+ "expires_in": 300
+}

@@ -7,8 +7,34 @@
  *
  *   POST /api/comms-archive/media/:id/restrict    {reason}            → restricted = 1
  *   POST /api/comms-archive/media/:id/unrestrict  {reason}            → restricted = 0
- *   POST /api/comms-archive/media/:id/purge       {reason, confirm}   → irreversible (§8);
+ *   POST /api/comms-archive/media/:id/purge       {reason, confirm, password}
+ *                                                                     → irreversible (§8);
  *                                                                       confirm must equal :id
+ *
+ * S4 — content + health (design §7, §10):
+ *   GET  /api/comms-archive/media/:id/url         → {url, mime, inline, expires_in}
+ *        a V4 signed URL (5 min) on storage.googleapis.com, minted only after
+ *        commsArchiveAdmin.canReadMedia (restricted → archive admins; no line
+ *        → SU / attorney bypass; else the line's can_read). Kinds:
+ *        call_recording / voicemail (audited 'listen') and mms_file
+ *        ('open_mms'); ?renew=1 marks a re-mint after the URL expired
+ *        mid-playback. Per user ≤ MINT_PER_WINDOW per 10 min (429, audited).
+ *   GET  /api/comms-archive/media/:id/transcript  → {source, label, segments, text}
+ *        comms_transcripts (S2) when present; for a voicemail, else the phone
+ *        provider's own transcript (stt_raw, read server-side). Audited
+ *        'view_transcript'. Rendered by the pane with textContent only.
+ *   GET  /api/comms-archive/health                → SU status read (F4) —
+ *        superuserOnlyFor('comms_archive_health'): SU + step-up.
+ *   EVERY content denial is the same 404 as a missing item (no existence
+ *   oracle — §7 "omitted, not locked"); the audit row carries the real reason.
+ *
+ * PASSWORD (purge, Fred's ruling S4): the caller's own password, re-checked
+ * by commsArchiveAdmin.verifyOwnPassword (SU and listed admins alike). Wrong
+ * → 403 code 'bad_password' — NOT 401, which the shell's apiSend reads as an
+ * expired session and answers with a re-login. Failures are counted per user
+ * (FAILED_PW_MAX per 15 min → 429), each attempt RESERVED before bcrypt runs
+ * so a parallel burst gets at most FAILED_PW_MAX guesses (per instance); the
+ * password never enters an audit row.
  *
  * WHO: a staff JWT whose user passes services/commsArchiveAdmin.isArchiveAdmin
  * (SU, or listed in app_settings comms_archive_admins). An API key is refused
@@ -37,15 +63,44 @@
 const express = require('express');
 const router = express.Router();
 const jwtOrApiKey = require('../lib/auth.jwtOrApiKey');
-const { auditAdminAction } = require('../lib/auth.superuser');
+const { auditAdminAction, superuserOnlyFor } = require('../lib/auth.superuser');
 const { makeLimiter } = require('../lib/rateLimiter');
 const admin = require('../services/commsArchiveAdmin');
+const archive = require('../services/commsArchiveService');
+const { VENDOR_SQL, READABLE_STATES } = require('../services/commsArchiveView');
 
 const TOOL = 'comms_archive';
 const MAX_REASON = 500;
 const HOUR_MS = 60 * 60 * 1000;
 const PURGE_PER_HOUR = 20;
 let purgeLimited = makeLimiter(HOUR_MS, PURGE_PER_HOUR);
+const MINT_WINDOW_MS = 10 * 60 * 1000;
+const MINT_PER_WINDOW = 120;
+let mintLimited = makeLimiter(MINT_WINDOW_MS, MINT_PER_WINDOW);
+const FAILED_PW_WINDOW_MS = 15 * 60 * 1000;
+const FAILED_PW_MAX = 5;
+let failedPw = new Map();   // user id → [{at}] failures + checks in flight (per instance, like every lib/rateLimiter consumer)
+
+/**
+ * Check AND reserve one password attempt, synchronously — no await between
+ * the count and the reservation, so a burst of parallel requests cannot all
+ * pass the check before any failure is counted (review F1: 30 parallel wrong
+ * passwords used to buy 13 bcrypt guesses). The reservation counts as a
+ * failure until the check says otherwise; release() drops it (right password,
+ * or no password hash — not a guess). → reservation | null (locked)
+ */
+function pwReserve(uid) {
+  const cut = Date.now() - FAILED_PW_WINDOW_MS;
+  const hits = (failedPw.get(uid) || []).filter(h => h.at > cut);
+  failedPw.set(uid, hits);
+  if (hits.length >= FAILED_PW_MAX) return null;
+  const r = { at: Date.now() };
+  hits.push(r);
+  return { release() { const a = failedPw.get(uid) || []; const i = a.indexOf(r); if (i >= 0) a.splice(i, 1); } };
+}
+
+const R8_LABEL = 'AI-generated — check the recording before relying on it';
+const PROVIDER_LABEL = "The phone provider's automatic transcript (machine-generated) — check the recording before relying on it";
 
 function reqMeta(req, tool) {
   return {
@@ -102,6 +157,28 @@ function handler(action) {
       return res.status(400).json({ status: 'error', message: 'Purge is irreversible: send confirm equal to the item id' });
     }
     if (action === 'purge') {
+      const uid = Number(req.auth.userId);
+      const slot = pwReserve(uid);
+      if (!slot) {
+        await audit(req, 'rejected_rate_limited', details, 'password failures');
+        return res.status(429).json({ status: 'error', message: 'Too many wrong passwords — wait 15 minutes' });
+      }
+      let pw;
+      try { pw = await admin.verifyOwnPassword(req.db, req.auth, req.body?.password); } catch (err) {
+        console.error('[commsArchive] password check error:', err.code || '', err.message);
+        await audit(req, 'error', details, 'password check failed');
+        return res.status(500).json({ status: 'error', message: 'Archive request failed' });
+      }
+      if (pw === 'no_password') {
+        slot.release();
+        await audit(req, 'rejected_no_password', details);
+        return res.status(403).json({ status: 'error', code: 'no_password', message: 'Your account has no password to confirm with — set one first' });
+      }
+      if (pw !== 'ok') {
+        await audit(req, 'rejected_bad_password', details);
+        return res.status(403).json({ status: 'error', code: 'bad_password', message: 'Incorrect password' });
+      }
+      slot.release();
       if (purgeLimited(`u${req.auth.userId}`)) {
         await audit(req, 'rejected_rate_limited', details);
         return res.status(429).json({ status: 'error', message: `At most ${PURGE_PER_HOUR} purges per hour` });
@@ -135,7 +212,255 @@ router.post('/api/comms-archive/media/:id/restrict', jwtOrApiKey, handler('restr
 router.post('/api/comms-archive/media/:id/unrestrict', jwtOrApiKey, handler('unrestrict'));
 router.post('/api/comms-archive/media/:id/purge', jwtOrApiKey, handler('purge'));
 
+// ─────────────────────────────────────────────────────────────
+// S4 — content (design §7) and health (§10, F4)
+// ─────────────────────────────────────────────────────────────
+
+/** Kinds whose bytes a viewer may open, → the audit action (P9). stt_raw is never served as bytes. */
+const CONTENT_ACTION = Object.freeze({ call_recording: 'listen', voicemail: 'listen', mms_file: 'open_mms' });
+const NOT_FOUND = Object.freeze({ status: 'error', message: 'Archive item not found' });
+const MAX_SEGMENTS = 20000;
+
+async function loadMedia(db, id) {
+  const [[row]] = await db.query(
+    `SELECT id, kind, source_table, source_id, provider, channel_id, restricted, state, object_name, mime
+       FROM comms_media WHERE id = ?`, [id]);
+  return row || null;
+}
+
+/**
+ * The shared front half of a content read: staff JWT, id, rate, the item,
+ * its kind, the grant (canReadMedia), archived. Sends the 4xx/5xx (audited)
+ * and returns null, or returns the row. Every denial is the SAME 404 as a
+ * missing item; the audit row carries the real reason.
+ */
+async function contentGate(req, res, { action, kinds }) {
+  const idRaw = String(req.params.id || '');
+  const id = /^\d{1,19}$/.test(idRaw) ? Number(idRaw) : null;
+  const details = { action, media_id: id ?? idRaw.slice(0, 32) };
+  if (!req.auth || req.auth.type !== 'jwt' || req.auth.userId == null) {
+    await audit(req, 'rejected_not_jwt', details);
+    res.status(403).json({ status: 'error', message: 'Archive content requires a signed-in user' });
+    return null;
+  }
+  if (id == null) {
+    await audit(req, 'rejected_bad_request', details, 'bad id');
+    res.status(400).json({ status: 'error', message: 'Bad archive item id' });
+    return null;
+  }
+  if (mintLimited(`u${req.auth.userId}`)) {
+    await audit(req, 'rejected_rate_limited', details);
+    res.status(429).json({ status: 'error', message: 'Too many archive requests — wait a few minutes' });
+    return null;
+  }
+  try {
+    const row = await loadMedia(req.db, id);
+    if (row && action === 'listen' && CONTENT_ACTION[row.kind]) details.action = CONTENT_ACTION[row.kind];
+    if (!row || !kinds.includes(row.kind)) {
+      await audit(req, 'not_found', details, row ? `kind ${row.kind}` : null);
+      res.status(404).json(NOT_FOUND);
+      return null;
+    }
+    const grant = await admin.canReadMedia(req.db, req.auth, row);
+    if (!grant.ok) {
+      await audit(req, `rejected_${grant.why}`, details);
+      res.status(404).json(NOT_FOUND);
+      return null;
+    }
+    if (row.state !== 'archived' || !row.object_name) {
+      await audit(req, 'not_found', details, `state ${row.state}`);
+      res.status(404).json(NOT_FOUND);
+      return null;
+    }
+    return { row, details };
+  } catch (err) {
+    console.error(`[commsArchive] ${action} gate error:`, err.code || '', err.message);
+    await audit(req, 'error', details, 'grant check failed');
+    res.status(500).json({ status: 'error', message: 'Archive request failed' });
+    return null;
+  }
+}
+
+// ─── GET /api/comms-archive/media/:id/url ───
+router.get('/api/comms-archive/media/:id/url', jwtOrApiKey, async (req, res) => {
+  const g = await contentGate(req, res, { action: 'listen', kinds: Object.keys(CONTENT_ACTION) });
+  if (!g) return;
+  const { row, details } = g;
+  if (String(req.query?.renew || '') === '1') details.renew = true;
+  try {
+    const ext = (/\.([A-Za-z0-9]{1,8})$/.exec(row.object_name) || [])[1] || 'bin';
+    const mime = row.mime || 'application/octet-stream';
+    const url = await archive.signedUrl(row.object_name, { mime, filename: `${row.kind}-${row.id}.${ext}` });
+    await audit(req, 'success', details);
+    return res.json({
+      status: 'success',
+      url,
+      mime,
+      inline: archive.INLINE_TYPES.has(archive.baseMime(mime)),       // the same normalisation signedUrl uses
+      expires_in: Math.round(archive.SIGNED_URL_TTL_MS / 1000),
+    });
+  } catch (err) {
+    console.error('[commsArchive] sign error:', err.message);
+    await audit(req, 'failed', details, String(err.message || '').slice(0, 1000));
+    return res.status(502).json({ status: 'error', message: 'Could not open the archive item — retry' });
+  }
+});
+
+/** comms_transcripts segments → [{s, a, b, t}] (strings / numbers only, bounded). */
+function shapeSegments(raw) {
+  let v = raw;
+  if (typeof v === 'string') { try { v = JSON.parse(v); } catch (_) { v = null; } }
+  if (!Array.isArray(v)) return [];
+  return v.slice(0, MAX_SEGMENTS).filter(x => x && typeof x === 'object').map(x => ({
+    s: x.s == null ? null : String(x.s).slice(0, 20),
+    a: Number.isFinite(Number(x.a)) ? Number(x.a) : null,
+    b: Number.isFinite(Number(x.b)) ? Number(x.b) : null,
+    t: x.t == null ? '' : String(x.t),
+  }));
+}
+
+// ─── GET /api/comms-archive/media/:id/transcript ───
+router.get('/api/comms-archive/media/:id/transcript', jwtOrApiKey, async (req, res) => {
+  const g = await contentGate(req, res, { action: 'view_transcript', kinds: ['call_recording', 'voicemail'] });
+  if (!g) return;
+  const { row, details } = g;
+  try {
+    // S2's transcript. Restriction is read from comms_media (the single
+    // source of truth — comms_transcripts has no restricted column): the
+    // JOIN re-asserts the row the grant just passed, so a transcript can
+    // never be read past its media row's state.
+    let t = null;
+    try {
+      const [[r]] = await req.db.query(
+        `SELECT t.segments, t.full_text, t.stt_vendor
+           FROM comms_transcripts t
+           JOIN comms_media m ON m.id = t.media_id AND m.state = 'archived' AND m.restricted = ?
+          WHERE t.media_id = ? AND t.state IN (?)
+            AND (t.segments IS NOT NULL OR t.full_text IS NOT NULL)
+          LIMIT 1`, [Number(row.restricted) === 1 ? 1 : 0, row.id, READABLE_STATES]);
+      t = r || null;
+    } catch (err) {
+      if (!err || err.code !== 'ER_NO_SUCH_TABLE') throw err;   // S2 not migrated yet
+    }
+    if (t) {
+      const out = { status: 'success', media_id: row.id, source: t.stt_vendor ? String(t.stt_vendor) : 'stt', label: R8_LABEL,
+        segments: shapeSegments(t.segments), text: t.full_text == null ? '' : String(t.full_text) };
+      await audit(req, 'success', { ...details, source: out.source });
+      return res.json(out);
+    }
+    // A voicemail's secondary record: the phone provider's own transcript.
+    if (row.kind === 'voicemail') {
+      const [[c]] = await req.db.query(
+        `SELECT id, object_name, restricted FROM comms_media
+          WHERE source_table = 'comms_media' AND source_id = ? AND kind = 'stt_raw' AND state = 'archived'
+            AND ${VENDOR_SQL}
+          ORDER BY id LIMIT 1`, [row.id]);
+      if (c && (Number(c.restricted) !== 1 || (await admin.isArchiveAdmin(req.db, req.auth)))) {
+        let doc = null;
+        try { doc = JSON.parse(await archive.readText(c.object_name, { maxBytes: 1_000_000 })); } catch (err) {
+          if (err && err.ourSide) throw err;
+          doc = null;                                               // unreadable JSON → treated as none
+        }
+        if (doc && typeof doc.transcript === 'string' && doc.transcript.trim()) {
+          await audit(req, 'success', { ...details, source: 'provider' });
+          return res.json({ status: 'success', media_id: row.id, source: 'provider',
+            vendor: typeof doc.vendor === 'string' ? doc.vendor : null, label: PROVIDER_LABEL, segments: [], text: doc.transcript });
+        }
+      }
+    }
+    await audit(req, 'not_found', details, 'no transcript');
+    return res.status(404).json({ status: 'error', message: 'No transcript for this item yet' });
+  } catch (err) {
+    console.error('[commsArchive] transcript error:', err.code || '', err.message);
+    await audit(req, 'failed', details, String(err.message || '').slice(0, 1000));
+    return res.status(502).json({ status: 'error', message: 'Could not load the transcript — retry' });
+  }
+});
+
+/** Sweep jobs the health read reports (S2 / S3 keys listed ahead of their slices; absent rows are skipped). */
+const HEALTH_JOBS = ['comms_archive_sweep', 'comms_archive_media_sweep', 'comms_archive_verify',
+  'comms_transcribe_sweep', 'comms_summarize_sweep'];
+
+/** A query on an S2/S3 table that may not exist yet → null instead of a 500. */
+async function maybeTable(fn) {
+  try { return await fn(); } catch (err) { if (err && err.code === 'ER_NO_SUCH_TABLE') return null; throw err; }
+}
+
+// ─── GET /api/comms-archive/health ─── SU status read (F4). Counts, never content.
+router.get('/api/comms-archive/health', ...superuserOnlyFor('comms_archive_health'), async (req, res) => {
+  try {
+    const db = req.db;
+    const [counts] = await db.query(
+      `SELECT kind, provider, state, COUNT(*) AS n, SUM(restricted) AS restricted
+         FROM comms_media GROUP BY kind, provider, state ORDER BY kind, provider, state`);
+    const [pending] = await db.query(
+      `SELECT kind, provider, COUNT(*) AS n, MIN(captured_at) AS oldest_captured, MIN(created_at) AS oldest_created
+         FROM comms_media WHERE state = 'pending' GROUP BY kind, provider ORDER BY kind, provider`);
+    const [errors] = await db.query(
+      `SELECT kind, provider, LEFT(last_error, 80) AS error, COUNT(*) AS n
+         FROM comms_media WHERE state = 'pending' AND last_error IS NOT NULL
+        GROUP BY kind, provider, LEFT(last_error, 80) ORDER BY n DESC LIMIT 12`);
+    const [jobRows] = await db.query(
+      `SELECT id, idempotency_key, name, recurrence_rule, active, status, scheduled_time
+         FROM scheduled_jobs WHERE idempotency_key IN (?) ORDER BY id`, [HEALTH_JOBS]);
+    const jobs = [];
+    for (const j of jobRows) {
+      const [[last]] = await db.query(
+        `SELECT status, executed_at, duration_ms, output_data, LEFT(error_message, 300) AS error_message
+           FROM job_results WHERE job_id = ? ORDER BY id DESC LIMIT 1`, [j.id]);
+      let output = last ? last.output_data : null;
+      if (typeof output === 'string') { try { output = JSON.parse(output); } catch (_) { /* keep text */ } }
+      const outText = output == null ? null : JSON.stringify(output);
+      jobs.push({
+        key: j.idempotency_key, name: j.name, recurrence: j.recurrence_rule, active: !!Number(j.active),
+        status: j.status, next_run: j.scheduled_time,
+        last: last ? { status: last.status, at: last.executed_at, duration_ms: last.duration_ms,
+          output: outText && outText.length > 4000 ? `${outText.slice(0, 4000)}…` : output,
+          error: last.error_message || null } : null,
+      });
+    }
+    const [alerts] = await db.query(
+      `SELECT id, severity, group_key, title, created_at, acked_at
+         FROM system_alerts WHERE group_key LIKE 'comms\\_archive%' AND resolved_at IS NULL
+        ORDER BY id DESC LIMIT 25`);
+    const transcripts = await maybeTable(async () => {
+      const [rows] = await db.query('SELECT state, COUNT(*) AS n FROM comms_transcripts GROUP BY state ORDER BY state');
+      const [skips] = await db.query(
+        `SELECT skip_reason, COUNT(*) AS n FROM comms_transcripts WHERE state = 'skipped' GROUP BY skip_reason ORDER BY skip_reason`);
+      const [[old]] = await db.query(
+        `SELECT MIN(created_at) AS oldest FROM comms_transcripts WHERE state IN ('pending', 'transcribing')`);
+      return {
+        by_state: rows.map(r => ({ state: r.state, n: Number(r.n) })),
+        skipped_by_reason: skips.map(r => ({ reason: r.skip_reason, n: Number(r.n) })),
+        oldest_pending: old ? old.oldest : null,
+      };
+    });
+    // Month-to-date spend: S2's ledger (comms_stt_jobs — every job submitted this
+    // month, billed or estimated; the figure the monthly cap uses). Summaries (S3) not yet.
+    const cost = await maybeTable(async () => ({
+      month_to_date_cents: { stt: await require('../services/commsTranscribeSweep').monthToDateCents(db), llm: null },
+    }));
+    return res.json({
+      status: 'success',
+      at: new Date().toISOString(),
+      media: counts.map(r => ({ kind: r.kind, provider: r.provider, state: r.state, n: Number(r.n), restricted: Number(r.restricted) || 0 })),
+      pending: pending.map(r => ({ kind: r.kind, provider: r.provider, n: Number(r.n), oldest_captured: r.oldest_captured, oldest_created: r.oldest_created })),
+      pending_errors: errors.map(r => ({ kind: r.kind, provider: r.provider, error: r.error, n: Number(r.n) })),
+      jobs,
+      alerts,
+      transcripts,
+      cost,
+    });
+  } catch (err) {
+    console.error('[commsArchive] health error:', err.code || '', err.message);
+    return res.status(500).json({ status: 'error', message: 'Archive health read failed' });
+  }
+});
+
 /** Test hook: a fresh purge limiter (optionally with another per-hour max). */
 router._resetPurgeLimit = (max = PURGE_PER_HOUR) => { purgeLimited = makeLimiter(HOUR_MS, max); };
+/** Test hooks (S4): fresh mint limiter / password-failure counter. */
+router._resetMintLimit = (max = MINT_PER_WINDOW) => { mintLimited = makeLimiter(MINT_WINDOW_MS, max); };
+router._resetPasswordFailures = () => { failedPw = new Map(); };
 
 module.exports = router;

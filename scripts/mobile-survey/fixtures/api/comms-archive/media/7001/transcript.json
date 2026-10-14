@@ -1,0 +1,27 @@
+{
+ "status": "success",
+ "media_id": 7001,
+ "source": "assemblyai",
+ "label": "AI-generated \u2014 check the recording before relying on it",
+ "segments": [
+  {
+   "s": "A",
+   "a": 0,
+   "b": 6.2,
+   "t": "Hi, this is the firm calling about your bankruptcy filing \u2014 do you have a minute to go over the paystubs?"
+  },
+  {
+   "s": "B",
+   "a": 6.2,
+   "b": 9,
+   "t": "Yes. I have April through September, and the bank statements too."
+  },
+  {
+   "s": "A",
+   "a": 3725,
+   "b": 3731,
+   "t": "Great. Uploadthemthroughtheportalwhenyoucanthelinkisverylongandunbrokenhttps://portal.example.test/upload/abcdef0123456789abcdef0123456789"
+  }
+ ],
+ "text": ""
+}

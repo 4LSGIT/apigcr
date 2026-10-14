@@ -31,6 +31,13 @@
  *                                                    calls, each item `kind` sms|call), newest
  *                                                    page returned oldest-first ?cursor=&limit=
  *   GET    /api/phone-lines/:id/calls                can_read — the call log ?cursor=&limit=
+ *
+ *   ARCHIVE (comms archive S4, ref/COMMS_ARCHIVE_DESIGN.md §9): both
+ *   conversation-THREAD routes (…/:id/conversations/:party and
+ *   …/all/conversations/:party) run services/commsArchiveView.decorate on the
+ *   page — call items gain `archive` / `voicemail`, text items `attachments`,
+ *   the page `archive_admin` — only what the viewer may read (§7). Bytes and
+ *   transcripts are fetched through routes/api.commsArchive.js.
  *   POST   /api/phone-lines/:id/sms                  can_send (SU: + step-up) {to, message}
  *
  * Auto-mounted (server.js readdirSync); req.db injected. Pane:
@@ -75,6 +82,7 @@ const { auditAdminAction, verifyElevationToken, stepupEnabled } = require('../li
 const { makeLimiter } = require('../lib/rateLimiter');
 const mbx = require('../services/mailboxService');
 const phone = require('../services/phoneCommsService');
+const archiveView = require('../services/commsArchiveView');
 
 const TOOL = 'phone_lines';
 const SEND_TOOL = 'phone_send';
@@ -241,7 +249,9 @@ router.get('/api/phone-lines/all/conversations', jwtOrApiKey, requireJwt, async 
 
 router.get('/api/phone-lines/all/conversations/:party', jwtOrApiKey, requireJwt, async (req, res) => {
   try {
-    res.json({ status: 'success', all: true, ...(await phone.listAllMessages(req.db, req.auth.userId, req.params.party, req.query || {})) });
+    const out = await phone.listAllMessages(req.db, req.auth.userId, req.params.party, req.query || {});
+    await archiveView.decorate(req.db, req.auth, out);
+    res.json({ status: 'success', all: true, ...out });
   } catch (err) {
     sendError(res, 'GET /api/phone-lines/all/conversations/:party', err);
   }
@@ -382,6 +392,7 @@ router.get('/api/phone-lines/:id/conversations/:party', jwtOrApiKey, requireJwt,
     if (lineIdOf(req, res) == null) return;
     const { line } = await phone.resolveRead(req.db, req.auth.userId, req.params.id);
     const out = await phone.listMessages(req.db, line, req.params.party, req.query || {});
+    await archiveView.decorate(req.db, req.auth, out, { lineId: line.id });
     res.json({ status: 'success', line_id: line.id, ...out });
   } catch (err) {
     sendError(res, 'GET /api/phone-lines/:id/conversations/:party', err);

@@ -571,10 +571,13 @@ lines alike (design: `ref/MAILBOX_SYSTEM_DESIGN.md` §4.4, slice S-PH).
   it back (seconds, usually); then it is an ordinary bubble. A short code
   (e.g. a 5-digit verification sender) cannot be texted back. Superusers
   confirm their password first ([elevation](README.md)).
-- **Pictures and files (MMS)** are not shown yet: a text that came with
-  one and no words shows **Attachment — not shown here yet** (and
-  "Attachment" in the list); a text with words shows just its words — open
-  it in the phone system's own app to see the attachment.
+- **Recordings, voicemails, pictures and files** come from the comms
+  archive: a call has **Listen** (and **Transcript** once transcribed), a
+  voicemail shows on the call it was left on, and a text shows its pictures
+  inline and other files as chips — see [Comms archive](10-comms-archive.md).
+  A text whose file the archive does not hold yet says "archiving, check back
+  soon"; one the archive does not hold at all still says **Attachment — not
+  shown here yet** (and "Attachment" in the list).
 - **Not shown:** texts and calls the spam filters caught (suppressed), and
   numbers on the phone system that are not set up as a line in Connections →
   Phone Lines. To make such a number readable, add it there — leave it
