@@ -156,7 +156,7 @@ async function search(db, auth, { q, lineId = null, cursor = null, limit } = {})
   if (q.length > MAX_Q) throw httpError(400, `q is at most ${MAX_Q} characters`);
   const tok = tokenize(q);
   if (!tok.terms.length) {
-    const e = httpError(400, 'A search needs a word of 3 or more letters');
+    const e = httpError(400, 'A search needs a word of 3 or more letters or digits');
     e.tok = tok;
     throw e;
   }

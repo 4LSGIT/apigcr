@@ -33,6 +33,24 @@ In a phone conversation (see [Phone lines — Comms](08-mailboxes.md#phone-lines
 Bubbles fill in on the next refresh after the archive catches up — usually
 minutes after the call.
 
+### Searching what was said — Comms → Phone
+
+The search box in Comms → Phone (see [Phone lines — Comms](08-mailboxes.md#phone-lines--comms))
+also looks inside call and voicemail **transcripts**: below the matching
+conversations an **In call transcripts** group lists the calls whose words
+match, newest first — who, when, and a line of the transcript with the
+searched words highlighted. **More** loads older matches. Click one to open
+its conversation and the transcript at that moment.
+
+- It searches **whole words from their start**: "bank" finds "bankruptcy",
+  every word you type must appear, and the order doesn't matter. There is no
+  "exact phrase" search.
+- Words under **3 letters or digits** and very common words ("the", "about", "with"…)
+  are skipped — the group says which. A search of only those shows nothing.
+- It covers what you can read: the same lines, restricted calls only for
+  archive admins, and only finished transcripts.
+- The words you search for are not kept in any log.
+
 ### Who sees what
 
 - **Access follows the phone line.** Anyone who can read a line in Comms can

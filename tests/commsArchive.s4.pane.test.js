@@ -548,3 +548,144 @@ describe('systemAlerts.html — Comms archive health', () => {
     expect(doc.getElementById('caHealthBody').textContent).toBe('Could not load the archive health: Elevation required');
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// comms.html — S6 "In call transcripts" (the mailbox arc's search bar fires
+// `ph-search` on #phone; S6 owns #ph-search-transcripts)
+// ─────────────────────────────────────────────────────────────────────────────
+describe('comms.html — S6 transcript search results', () => {
+  const HIT = (over = {}) => ({ media_id: 501, event_id: 10, source_table: 'phone_event_log', line_id: 1, party: PARTY, kind: 'call_recording',
+    captured_at: '2026-10-08T15:00:00.000Z', restricted: false, snippet: `about the Bankruptcy filing (rebankr) ${EVIL}`, snippet_at: 65.4, snippet_from: 'transcript', ...over });
+  function searchHandler({ search, transcript } = {}) {
+    const base = handler({ transcript });
+    return (url, method, payload) => {
+      if (url === '/api/comms-archive/search' && method === 'POST') return search(payload);
+      return base(url, method, payload);
+    };
+  }
+  const fire = (env, q, lineId = 1) => env.doc.getElementById('phone').dispatchEvent(new env.window.CustomEvent('ph-search', { detail: { q, lineId } }));
+  const posts = (calls) => calls.filter((c) => c.url === '/api/comms-archive/search').map((c) => c.payload);
+  const slot = (doc) => doc.getElementById('ph-search-transcripts');
+  const openPhone = async (env) => { env.doc.getElementById('tab-phone').click(); await tick(env.window, 60); };
+
+  test('typed in the bar: under 3 letters no request (hidden); then POST {q, line_id}; hits as TEXT with the words marked', async () => {
+    const env = await boot(searchHandler({ search: () => ({ status: 'success', results: [HIT()], next_cursor: null, terms: ['bankr'], ignored: [] }) }));
+    env.doc.getElementById('tab-phone').click();
+    await tick(env.window, 60);
+    const { doc, window, calls } = env;
+    const box = doc.getElementById('ph-q');
+    box.value = 'ba'; box.dispatchEvent(new window.Event('input'));
+    await tick(window, 450);
+    expect(posts(calls)).toEqual([]);
+    expect(slot(doc).hidden).toBe(true);
+    box.value = 'bankr'; box.dispatchEvent(new window.Event('input'));
+    await tick(window, 450);
+    expect(posts(calls)).toEqual([{ q: 'bankr', line_id: 1 }]);
+    expect(slot(doc).hidden).toBe(false);
+    expect(slot(doc).querySelector('.ca-sh').textContent).toBe('In call transcripts');
+    const hit = slot(doc).querySelector('.ca-hit');
+    expect(hit.querySelector('.snip').textContent).toBe(`about the Bankruptcy filing (rebankr) ${EVIL}`);
+    expect([...hit.querySelectorAll('mark')].map((m) => m.textContent)).toEqual(['Bankruptcy']);
+    expect(hit.querySelector('.snip img')).toBeNull();
+    expect(window.__pwned).toBeUndefined();
+    expect(hit.querySelector('.who').textContent).toBe('(313) 555-0001');
+    box.value = ''; box.dispatchEvent(new window.Event('input'));            // cleared → hidden, nothing sent
+    await tick(window);
+    expect(slot(doc).hidden).toBe(true);
+    expect(posts(calls)).toHaveLength(1);
+    expect(env.errors).toEqual([]);
+  });
+
+  test('"the to" (3+ letters but nothing usable) → the server 400 echo, quietly; a stopword-only word is shown as not searched', async () => {
+    const env = await boot(searchHandler({ search: () => { const e = new Error('A search needs a word of 3 or more letters or digits'); e.status = 400; e.body = { terms: [], ignored: ['the', 'to'] }; throw e; } }));
+    await openPhone(env);
+    fire(env, 'the to');
+    await tick(env.window);
+    expect(slot(env.doc).hidden).toBe(false);
+    expect(slot(env.doc).querySelector('.ca-snote').textContent).toBe('Transcripts are searched by words of 3 or more letters or digits — not searched: the, to');
+    expect(slot(env.doc).querySelector('.ca-hit')).toBeNull();
+  });
+
+  test('404 (line not readable) hides the group; 429 says so politely; All numbers sends no line_id and tags each hit with its line', async () => {
+    let mode = '404';
+    const env = await boot(searchHandler({ search: () => {
+      if (mode === 'ok') return { status: 'success', results: [HIT({ line_id: 1 })], next_cursor: null, terms: ['bankr'], ignored: [] };
+      const e = new Error('x'); e.status = mode === '404' ? 404 : 429; e.body = {}; throw e;
+    } }));
+    await openPhone(env);
+    const { doc, window, calls } = env;
+    fire(env, 'bankruptcy');
+    await tick(window);
+    expect(slot(doc).hidden).toBe(true);
+    mode = '429';
+    fire(env, 'bankruptcy filing');
+    await tick(window);
+    expect(slot(doc).querySelector('.ca-snote').textContent).toBe('Searching transcripts too often — try again in a few minutes.');
+    mode = 'ok';
+    window.eval("ph.lineId = 'all'");
+    fire(env, 'bankruptcy', 'all');
+    await tick(window);
+    expect(posts(calls).pop()).toEqual({ q: 'bankruptcy' });
+    expect([...slot(doc).querySelectorAll('.ca-hit .when')].map((x) => x.textContent)[0]).toBe('Stuart');
+  });
+
+  test('a newer search always wins: a slow first answer arriving last is dropped', async () => {
+    const pending = [];
+    const env = await boot(searchHandler({ search: (p) => new Promise((resolve) => pending.push({ p, resolve })) }));
+    await openPhone(env);
+    const { doc, window } = env;
+    fire(env, 'alpha');
+    fire(env, 'bravo');
+    await tick(window);
+    pending[1].resolve({ status: 'success', results: [HIT({ media_id: 2, snippet: 'bravo words' })], next_cursor: null, terms: ['bravo'], ignored: [] });
+    await tick(window);
+    pending[0].resolve({ status: 'success', results: [HIT({ media_id: 1, snippet: 'alpha words' })], next_cursor: null, terms: ['alpha'], ignored: [] });
+    await tick(window);
+    expect([...slot(doc).querySelectorAll('.ca-hit')].map((b) => b.dataset.media)).toEqual(['2']);
+    fire(env, 'charlie');                                                    // in flight…
+    await tick(window);
+    fire(env, '');                                                           // …then cleared: its answer must not reopen the group
+    pending[2].resolve({ status: 'success', results: [HIT({ media_id: 3, snippet: 'charlie words' })], next_cursor: null, terms: ['charlie'], ignored: [] });
+    await tick(window);
+    expect(slot(doc).hidden).toBe(true);
+    expect(slot(doc).querySelector('.ca-hit')).toBeNull();
+  });
+
+  test('More: posts the cursor, appends, and disappears at the end; an empty search says so', async () => {
+    const env = await boot(searchHandler({ search: (p) => (p.cursor
+      ? { status: 'success', results: [HIT({ media_id: 9, snippet: 'page two bankruptcy' })], next_cursor: null, terms: ['bankruptcy'], ignored: [] }
+      : p.q === 'zebra' ? { status: 'success', results: [], next_cursor: null, terms: ['zebra'], ignored: [] }
+        : { status: 'success', results: [HIT()], next_cursor: '1759000000000.501', terms: ['bankruptcy'], ignored: [] }) }));
+    await openPhone(env);
+    const { doc, window, calls } = env;
+    fire(env, 'bankruptcy');
+    await tick(window);
+    btn(slot(doc), 'More').click();
+    await tick(window);
+    expect(posts(calls)).toEqual([{ q: 'bankruptcy', line_id: 1 }, { q: 'bankruptcy', line_id: 1, cursor: '1759000000000.501' }]);
+    expect([...slot(doc).querySelectorAll('.ca-hit')].map((b) => b.dataset.media)).toEqual(['501', '9']);
+    expect(btn(slot(doc), 'More')).toBeUndefined();
+    fire(env, 'zebra');
+    await tick(window);
+    expect(slot(doc).querySelector('.ca-sst').textContent).toBe('No call transcripts match.');
+  });
+
+  test('opening a hit opens its conversation and the transcript, the hit\'s segment marked', async () => {
+    const env = await boot(searchHandler({
+      search: () => ({ status: 'success', results: [HIT()], next_cursor: null, terms: ['bankr'], ignored: [] }),
+      transcript: () => ({ status: 'success', source: 'assemblyai', label: 'AI-generated — check the recording before relying on it',
+        segments: [{ s: 'A', a: 0, b: 3, t: 'Hello' }, { s: 'B', a: 65.4, b: 70, t: 'about the Bankruptcy filing' }, { s: 'A', a: 71, b: 72, t: 'ok' }], text: '' }),
+    }));
+    await openPhone(env);
+    const { doc, window, calls } = env;
+    fire(env, 'bankruptcy');
+    await tick(window);
+    slot(doc).querySelector('.ca-hit').click();
+    await tick(window, 80);
+    expect(calls.some((c) => c.url === `/api/phone-lines/1/conversations/${PARTY}`)).toBe(true);
+    expect(doc.getElementById('ca-tx-backdrop').classList.contains('open')).toBe(true);
+    expect(doc.getElementById('ca-tx-title').textContent).toBe('Call recording — transcript');
+    expect([...doc.querySelectorAll('#ca-tx-body .ca-seg')].map((p) => p.classList.contains('hit'))).toEqual([false, true, false]);
+    expect(env.errors).toEqual([]);
+  });
+});

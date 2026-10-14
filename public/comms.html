@@ -495,6 +495,27 @@
      Everything below is built with textContent (the C3 gate); bytes come from
      5-minute signed URLs on storage.googleapis.com, never this origin. */
   .ca-sum { display: block; margin-top: 4px; color: var(--text); font-weight: 400; white-space: pre-wrap; }
+  /* Comms archive S6: the "In call transcripts" group under the phone list
+     (#ph-search-transcripts — the mailbox arc's search bar leaves it to S6).
+     flex 0 0 auto + its own max-height scroll: a scroll box in the column
+     flex must never squash the conversation list above it. */
+  #ph-search-transcripts { flex: 0 0 auto; max-height: 40vh; overflow-y: auto; border-top: 1px solid var(--border); background: var(--surface); min-width: 0; }
+  .ca-sh { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; padding: 6px 10px 2px; font-size: 11px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: .05em; color: var(--text-muted); }
+  .ca-sh .ca-sst { font-weight: 400; text-transform: none; letter-spacing: 0; }
+  .ca-sr { list-style: none; margin: 0; padding: 0 0 4px; }
+  .ca-hit { display: block; width: 100%; text-align: left; background: none; border: none; border-bottom: 1px solid var(--border);
+    padding: 6px 10px; cursor: pointer; color: var(--text); font: inherit; min-width: 0; }
+  .ca-hit:hover { background: var(--surface-2); }
+  .ca-hit .r1 { display: flex; align-items: baseline; gap: 6px; min-width: 0; font-size: 12.5px; }
+  .ca-hit .who { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+  .ca-hit .when { flex: 0 0 auto; font-size: 11px; color: var(--text-muted); white-space: nowrap; }
+  .ca-hit .r1 i { color: var(--text-muted); }
+  .ca-hit .snip { display: block; font-size: 12px; color: var(--text-2); margin-top: 2px; overflow-wrap: anywhere; }
+  .ca-hit mark { background: var(--warn-soft); color: inherit; padding: 0 1px; border-radius: 2px; }
+  .ca-snote { padding: 4px 10px 8px; font-size: 11.5px; color: var(--text-muted); overflow-wrap: anywhere; }
+  .ca-more { margin: 4px 10px 8px; }
+  .ca-seg.hit { background: var(--warn-soft); border-radius: 3px; }
   /* The R8 label under a summary: the house hint (.yc-hint) — only its wrapping is set here. */
   .bub .ca-ai { white-space: normal; margin-top: 2px; }
   .ca-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 6px; white-space: normal; min-width: 0; }
@@ -4017,7 +4038,7 @@ function closeCaView() {
 const caClock = (sec) => { const n = Math.max(0, Math.floor(Number(sec) || 0)); return `${Math.floor(n / 60)}:${String(n % 60).padStart(2, '0')}`; };
 
 /** The transcript: its label (R8) on top, the player, then the text — every word as TEXT. */
-async function openTranscript(item, label) {
+async function openTranscript(item, label, { at = null } = {}) {
   const id = item.media_id;
   ca.tx = { mediaId: id };
   E('ca-tx-title').textContent = `${label} — transcript`;
@@ -4040,6 +4061,12 @@ async function openTranscript(item, label) {
         h('span', { className: 'ca-txt' }, g.t || '')))
       : [h('p', { className: 'ca-seg' }, t.text || 'No speech was transcribed.')];
     E('ca-tx-body').replaceChildren(...rows);
+    // Opened from a search hit: mark the segment the hit came from (S6).
+    if (at != null && segs.length) {
+      let k = -1;
+      segs.forEach((g, i) => { if (g.a != null && g.a <= at && (k < 0 || g.a >= segs[k].a)) k = i; });
+      if (k >= 0) { rows[k].classList.add('hit'); try { rows[k].scrollIntoView({ block: 'center' }); } catch (_) { /* noop */ } }
+    }
     if (item.has_audio) {
       E('ca-tx-player').replaceChildren(h('button', { className: 'btn small', type: 'button', onclick: () => seek(null) }, icon('fa-play'), 'Listen'));
     }
@@ -4057,6 +4084,134 @@ function closeTranscript() {
   E('ca-tx-player').replaceChildren();
   E('ca-tx-body').replaceChildren();
   if (ph.thread) renderPhoneThread({ quiet: true });
+}
+
+// ── S6: "In call transcripts" — search results under the phone list ──
+// The mailbox arc's search bar (#ph-q) fires `ph-search` on #phone with
+// {q, lineId} on every change in effect; S6 owns the call and everything in
+// #ph-search-transcripts. POST /api/comms-archive/search (a POST: the words
+// never sit in a URL). Only for a query with a word of 3+ characters (the
+// index's minimum) — anything shorter hides the group without a request. A
+// newer search always wins (sequence). Server text is TEXT: snippets are
+// split into text nodes and <mark>s, never parsed as HTML.
+const caS = { q: '', lineId: null, seq: 0, cursor: null, terms: [], results: [], loading: false };
+const CA_WORD3 = /[\p{L}\p{N}_]{3,}/u;
+const CA_WCHAR = /[\p{L}\p{N}_]/u;
+
+/** text → nodes, each word that STARTS with a search term wrapped in <mark> (the server's prefix rule). */
+function caMarked(text, terms) {
+  const s = String(text || '');
+  const low = s.toLowerCase();
+  const out = [];
+  let from = 0;
+  let i = 0;
+  while (i < s.length) {
+    const atWordStart = CA_WCHAR.test(s[i]) && (i === 0 || !CA_WCHAR.test(s[i - 1]));
+    if (atWordStart && terms.some((t) => t && low.startsWith(t, i))) {
+      let j = i;
+      while (j < s.length && CA_WCHAR.test(s[j])) j++;
+      if (i > from) out.push(s.slice(from, i));
+      out.push(h('mark', null, s.slice(i, j)));
+      from = i = j;
+    } else i++;
+  }
+  if (from < s.length) out.push(s.slice(from));
+  return out;
+}
+
+function caSearchHide() {
+  const slot = E('ph-search-transcripts');
+  slot.hidden = true;
+  slot.replaceChildren();
+}
+
+function caSearchNote(text) {
+  return h('div', { className: 'ca-snote' }, text);
+}
+
+function caSearchPaint(status) {
+  const slot = E('ph-search-transcripts');
+  const kids = [h('div', { className: 'ca-sh' }, icon('fa-file-lines'), 'In call transcripts', status ? h('span', { className: 'ca-sst' }, status) : null)];
+  if (caS.results.length) {
+    kids.push(h('ul', { className: 'ca-sr' }, ...caS.results.map((r) => {
+      const row = ph.rows.find((x) => x.other_party === r.party);
+      const name = row && row.contact && row.contact.name ? row.contact.name : fmtPhone(r.party);
+      const vm = r.kind === 'voicemail';
+      const when = r.captured_at ? bubbleTime(r.captured_at) : '';
+      return h('li', null, h('button', {
+        className: 'ca-hit', type: 'button', dataset: { media: String(r.media_id) },
+        title: vm ? 'Open the voicemail transcript' : 'Open the call transcript',
+        onclick: () => caOpenHit(r),
+      },
+        h('span', { className: 'r1' }, icon(vm ? 'fa-voicemail' : 'fa-phone'), h('span', { className: 'who' }, name),
+          phIsAll() && r.line_id != null ? h('span', { className: 'when' }, phLineShort(r.line_id)) : null,
+          h('span', { className: 'when' }, when)),
+        h('span', { className: 'snip' }, ...caMarked(r.snippet, caS.terms))));
+    })));
+  }
+  if (caS.cursor) {
+    kids.push(h('button', { className: 'btn small ca-more', type: 'button', disabled: caS.loading || undefined, onclick: () => caSearchRun({ more: true }) }, 'More'));
+  }
+  slot.replaceChildren(...kids);
+  slot.hidden = false;
+}
+
+async function caSearchRun({ more = false } = {}) {
+  const seq = more ? caS.seq : ++caS.seq;
+  const body = { q: caS.q };
+  if (caS.lineId !== PH_ALL && caS.lineId != null) body.line_id = caS.lineId;
+  if (more) body.cursor = caS.cursor;
+  caS.loading = true;
+  if (!more) { caS.results = []; caS.cursor = null; caSearchPaint('Searching…'); } else caSearchPaint();
+  try {
+    const r = await api('/api/comms-archive/search', 'POST', body);
+    if (seq !== caS.seq) return;                                          // a newer search won
+    caS.loading = false;
+    caS.terms = Array.isArray(r.terms) ? r.terms : [];
+    caS.results = caS.results.concat(Array.isArray(r.results) ? r.results : []);
+    caS.cursor = r.next_cursor || null;
+    caSearchPaint(caS.results.length ? '' : 'No call transcripts match.');
+    if (Array.isArray(r.ignored) && r.ignored.length) {
+      E('ph-search-transcripts').append(caSearchNote(`Not searched (too short or too common): ${r.ignored.join(', ')}`));
+    }
+  } catch (err) {
+    if (seq !== caS.seq) return;
+    caS.loading = false;
+    const st = err && err.status;
+    if (st === 404) return caSearchHide();                                // the line is not readable (any more)
+    if (st === 400) {
+      const ign = err.body && Array.isArray(err.body.ignored) ? err.body.ignored : [];
+      caS.results = []; caS.cursor = null;
+      caSearchPaint('');
+      E('ph-search-transcripts').append(caSearchNote(ign.length
+        ? `Transcripts are searched by words of 3 or more letters or digits — not searched: ${ign.join(', ')}`
+        : 'Transcripts are searched by words of 3 or more letters or digits.'));
+      return;
+    }
+    caS.results = more ? caS.results : []; caS.cursor = more ? caS.cursor : null;
+    caSearchPaint('');
+    E('ph-search-transcripts').append(caSearchNote(st === 429
+      ? 'Searching transcripts too often — try again in a few minutes.'
+      : `Couldn't search the transcripts: ${err.message || 'failed'}`));
+  }
+}
+
+/** ph-search from the bar: {q, lineId}. */
+function caSearch(detail) {
+  const q = String((detail && detail.q) || '').trim();
+  caS.q = q;
+  caS.lineId = detail ? detail.lineId : null;
+  if (!q || !CA_WORD3.test(q)) { caS.seq++; caS.results = []; caS.cursor = null; caSearchHide(); return; }
+  caSearchRun();
+}
+
+/** A hit: its conversation (in the current scope), then the transcript at the hit. */
+function caOpenHit(r) {
+  if (r.party && phPartyOk(r.party)) {
+    const row = ph.rows.find((x) => x.other_party === r.party);
+    openConversation(r.party, row ? row.contact : null);
+  }
+  openTranscript({ media_id: r.media_id, has_audio: true }, r.kind === 'voicemail' ? 'Voicemail' : 'Call recording', { at: r.snippet_at });
 }
 
 // Restrict / Unrestrict / Purge (archive admins — the server decides; this
@@ -4268,6 +4423,7 @@ function wirePhone() {
   E('ph-new-cancel').addEventListener('click', closeNewText);
   E('ph-new-send').addEventListener('click', sendNewText);
   E('ph-new-backdrop').addEventListener('click', (e) => { if (e.target === E('ph-new-backdrop')) closeNewText(); });
+  E('phone').addEventListener('ph-search', (e) => caSearch(e.detail));   // S6 — the mailbox arc's search bar
   E('ca-view-close').addEventListener('click', closeCaView);
   E('ca-view-backdrop').addEventListener('click', (e) => { if (e.target === E('ca-view-backdrop')) closeCaView(); });
   E('ca-tx-close').addEventListener('click', closeTranscript);

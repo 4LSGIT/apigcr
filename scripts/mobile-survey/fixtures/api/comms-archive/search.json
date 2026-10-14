@@ -1,0 +1,38 @@
+{
+ "status": "success",
+ "terms": [
+  "bankruptcy"
+ ],
+ "ignored": [
+  "the"
+ ],
+ "next_cursor": "1760000000000.7001",
+ "results": [
+  {
+   "media_id": 7001,
+   "event_id": 23,
+   "source_table": "phone_event_log",
+   "line_id": 1,
+   "party": "5555550199",
+   "kind": "call_recording",
+   "captured_at": "2026-10-10T14:45:00.000Z",
+   "restricted": false,
+   "snippet": "\u2026and the trustee said the bankruptcy filing needs the last six months of paystubs before the 341 meeting, otherwiseitgetsadjournedandrescheduledwithoutfurthernoticetoanyone\u2026",
+   "snippet_at": 3725,
+   "snippet_from": "transcript"
+  },
+  {
+   "media_id": 7002,
+   "event_id": 41,
+   "source_table": "phone_event_log",
+   "line_id": 1,
+   "party": "5555550198",
+   "kind": "voicemail",
+   "captured_at": "2026-10-12T15:00:00.000Z",
+   "restricted": false,
+   "snippet": "Please call me back about my bankruptcy",
+   "snippet_at": 0,
+   "snippet_from": "transcript"
+  }
+ ]
+}

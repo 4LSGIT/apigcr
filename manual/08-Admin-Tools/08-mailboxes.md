@@ -577,7 +577,9 @@ lines alike (design: `ref/MAILBOX_SYSTEM_DESIGN.md` §4.4, slice S-PH).
   name matches very many contacts, only the first 200 numbers each are
   searched and the line under the bar says so — type more of the name.
   Only numbers on file as a contact's *current* number are found by name, so
-  a number no contact holds is found by its digits.
+  a number no contact holds is found by its digits. With a word of 3 or more
+  letters or digits it also searches what was SAID on calls — **In call transcripts**,
+  under the list ([Comms archive](10-comms-archive.md)).
 - **Sending.** With **Send** on an active line, a conversation has a message
   box at the bottom and the bar has **New text** (a US number, up to 1,000
   characters, text only — no pictures here). What you send shows as

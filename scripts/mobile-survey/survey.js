@@ -190,7 +190,10 @@ async function walk(page, W, record) {
       if (cf) await cf.evaluate(() => { if (state.composer) closeComposer(state.composer, { keepDraft: false }); closeThread(); });
       const PHONE = [
         ['phone-texts', "showTab('phone')"],
-        ['phone-thread', 'openConversation(ph.rows[0].other_party, ph.rows[0].contact)'],
+        // Comms archive S6: the "In call transcripts" group under the list (fixtures/api/comms-archive/search — an unbroken
+        // snippet word, a voicemail, More), as the mailbox arc's search bar would fire it
+        ['phone-search-transcripts', "E('phone').dispatchEvent(new CustomEvent('ph-search', { detail: { q: 'the bankruptcy', lineId: ph.lineId } }))"],
+        ['phone-thread', "E('phone').dispatchEvent(new CustomEvent('ph-search', { detail: { q: '', lineId: ph.lineId } })); openConversation(ph.rows[0].other_party, ph.rows[0].contact)"],
         // Comms archive (S4), fixtures/api/comms-archive/*: the thread above carries a summary + Listen /
         // Transcript, a voicemail, MMS thumbnails / chips / a tombstone, and admin ⋯ buttons (archive_admin);
         // then the transcript viewer, the archive file viewer and the Purge dialog (password row)

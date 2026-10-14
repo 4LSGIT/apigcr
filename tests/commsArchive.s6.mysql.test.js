@@ -277,7 +277,7 @@ maybe('comms archive S6 transcript search on real MySQL', () => {
     expect([r.json.terms, r.json.ignored]).toEqual([['bankruptcy'], ['the', 'to', 'me', 'about']]);
     expect(ids(r).length).toBe(5);
     const bad = await find({ q: 'to be or of' });
-    expect(bad).toEqual({ status: 400, json: { status: 'error', message: 'A search needs a word of 3 or more letters', terms: [], ignored: ['to', 'be', 'or', 'of'] } });
+    expect(bad).toEqual({ status: 400, json: { status: 'error', message: 'A search needs a word of 3 or more letters or digits', terms: [], ignored: ['to', 'be', 'or', 'of'] } });
     expect((await find({ q: '   ' })).status).toBe(400);
     expect((await find({ q: 'x'.repeat(201) })).status).toBe(400);
   });
