@@ -125,6 +125,172 @@ async function sendMms(db, { from, to, text, attachmentUrl, credential }) {
   );
 }
 
+// ─── ARCHIVE FETCHERS (comms archive S1a — ref/COMMS_ARCHIVE_DESIGN.md §6.1) ──
+//
+// Read-side calls for services/commsArchiveSweep.js. Both endpoints are in
+// RC's HEAVY rate group (10/min, shared with live call ingest's call-log
+// reads), so they do NOT ride the SMS limiter above — different group, and
+// the sweeper paces itself (≤ heavy_per_tick per tick, ≥ 20 s apart). Every
+// response hands back the X-Rate-Limit-* headers and Retry-After so the
+// sweeper can end its tick early.
+//
+// They NEVER throw on an HTTP status — the sweeper decides whose side a
+// status is on. They throw only:
+//   err.code 'NO_AUTH'  the credential produced no Authorization header
+//                       (disconnected, refresh failed, or URL out of
+//                       allowed_urls) — BEFORE any request is sent;
+//   network errors      (timeouts, sockets) — provider-side transients.
+//
+// `~` in the paths is load-bearing (the authenticated account): never
+// percent-encode it — RC 404s on %7E.
+
+const RC_PLATFORM = 'https://platform.ringcentral.com';
+const RC_MEDIA    = 'https://media.ringcentral.com';
+const ARCHIVE_TIMEOUT_MS = 120_000;   // default bound, whole request incl. body; a 4 h call is ~58 MB
+const CALL_LOG_TIMEOUT_MS = 30_000;
+
+function _ms(v, dflt) {
+  const n = Number(v);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : dflt;
+}
+
+function recordingContentUrl(recordingId) {
+  return `${RC_MEDIA}/restapi/v1.0/account/~/recording/${encodeURIComponent(recordingId)}/content`;
+}
+
+function callLogUrl(telephonySessionId, dateFrom, dateTo) {
+  const q = new URLSearchParams({
+    telephonySessionId,
+    view: 'Detailed',
+    perPage: '100',
+    dateFrom: dateFrom.toISOString(),
+    dateTo: dateTo.toISOString(),
+  });
+  return `${RC_PLATFORM}/restapi/v1.0/account/~/call-log?${q}`;
+}
+
+async function _authHeaders(db, credentialId, url) {
+  const headers = await buildHeadersForCredential(db, credentialId, url);
+  if (!headers.Authorization) {
+    const e = new Error(`RingCentral credential ${credentialId} produced no Authorization for ${new URL(url).host}`);
+    e.code = 'NO_AUTH';
+    throw e;
+  }
+  return headers;
+}
+
+function _rateInfo(res) {
+  const h = (k) => res.headers.get(k);
+  const num = (v) => (v == null || v === '' ? null : Number(v));
+  return {
+    group:     h('x-rate-limit-group'),
+    limit:     num(h('x-rate-limit-limit')),
+    remaining: num(h('x-rate-limit-remaining')),
+    window:    num(h('x-rate-limit-window')),
+    retryAfterS: num(h('retry-after')),
+  };
+}
+
+/**
+ * Pre-flight: does this credential yield an Authorization header for the
+ * media host? Run before claiming any row (no RC request is made — the
+ * token comes from oauthService's cache / refresh).
+ */
+async function checkArchiveAuth(db, credentialId) {
+  try {
+    await _authHeaders(db, credentialId, recordingContentUrl('0'));
+    return true;
+  } catch (err) {
+    if (err.code === 'NO_AUTH') return false;
+    throw err;
+  }
+}
+
+/**
+ * GET a recording's bytes. Returns the RESPONSE, unconsumed on 200:
+ *   { status, contentType, contentLength, body (Node Readable | null),
+ *     rate, errorText }
+ * The caller must consume or destroy `body`. `timeoutMs` bounds the whole
+ * request INCLUDING the body (the abort signal ends the stream too).
+ *
+ * Accept-Encoding: identity — fetch (undici) transparently DECOMPRESSES a
+ * gzip/br body while Content-Length still counts the compressed bytes, so a
+ * compressed response would fail the archive's length check every time.
+ */
+async function fetchRecordingContent(db, { credentialId, recordingId, timeoutMs }) {
+  const url = recordingContentUrl(recordingId);
+  const headers = await _authHeaders(db, credentialId, url);
+  const res = await fetch(url, {
+    headers: { ...headers, 'Accept-Encoding': 'identity' },
+    signal: AbortSignal.timeout(_ms(timeoutMs, ARCHIVE_TIMEOUT_MS)),
+  });
+  const rate = _rateInfo(res);
+  if (res.status !== 200) {
+    let errorText = '';
+    try { errorText = (await res.text()).slice(0, 300); } catch (_) { /* body gone */ }
+    return { status: res.status, contentType: res.headers.get('content-type'), contentLength: null, body: null, rate, errorText };
+  }
+  const cl = res.headers.get('content-length');
+  const { Readable } = require('stream');
+  return {
+    status: 200,
+    contentType: res.headers.get('content-type'),
+    contentLength: cl != null && cl !== '' && Number.isFinite(Number(cl)) ? Number(cl) : null,
+    body: res.body ? Readable.fromWeb(res.body) : null,
+    rate,
+    errorText: null,
+  };
+}
+
+/**
+ * Recover the recordings of a call that reached us only as a
+ * `tsi:<telephonySessionId>` ref (no call-log data at ingest). RC's call-log
+ * defaults dateFrom to dateTo − 24 h, so the window is passed explicitly
+ * around the call: [around − 2 d, around + 2 d].
+ *
+ * Returns { status, recordings: [{id, contentType}], records, rawRecords, rate, errorText }.
+ * `records` = how many call-log records matched the session (0 = RC has not
+ * logged the call yet, or never will); `rawRecords` = how many RC returned
+ * before that filter (rawRecords > 0 with records 0 = the filter or the field
+ * changed shape — the sweep alerts instead of concluding "no recording");
+ * recordings are de-duplicated across records and their legs.
+ *
+ * ONLY records whose telephonySessionId EQUALS the requested one count. If
+ * RC ever ignored the filter, a page of up to 100 other calls' recordings
+ * would otherwise be filed under THIS call's party and line — the grant
+ * anchor for privileged audio. A record without the field is dropped too.
+ */
+async function findSessionRecordings(db, { credentialId, telephonySessionId, around, timeoutMs }) {
+  const t = around instanceof Date ? around : new Date(around);
+  const url = callLogUrl(
+    telephonySessionId,
+    new Date(t.getTime() - 2 * 86400_000),
+    new Date(t.getTime() + 2 * 86400_000),
+  );
+  const headers = await _authHeaders(db, credentialId, url);
+  const res = await fetch(url, { headers, signal: AbortSignal.timeout(_ms(timeoutMs, CALL_LOG_TIMEOUT_MS)) });
+  const rate = _rateInfo(res);
+  if (res.status !== 200) {
+    let errorText = '';
+    try { errorText = (await res.text()).slice(0, 300); } catch (_) { /* body gone */ }
+    return { status: res.status, recordings: [], records: 0, rawRecords: 0, rate, errorText };
+  }
+  const json = await res.json();
+  const raw = Array.isArray(json && json.records) ? json.records : [];
+  const records = raw.filter(rec => rec && rec.telephonySessionId === telephonySessionId);
+  const seen = new Map();
+  const take = (r) => {
+    if (r && r.id != null && !seen.has(String(r.id))) {
+      seen.set(String(r.id), { id: String(r.id), contentType: r.contentType || null });
+    }
+  };
+  for (const rec of records) {
+    take(rec.recording);
+    for (const leg of (Array.isArray(rec.legs) ? rec.legs : [])) take(leg.recording);
+  }
+  return { status: 200, recordings: [...seen.values()], records: records.length, rawRecords: raw.length, rate, errorText: null };
+}
+
 module.exports = {
   displayName: 'RingCentral',
   capabilities: { sms: true, mms: true },
@@ -136,4 +302,7 @@ module.exports = {
   },
   sendSms,
   sendMms,
+  checkArchiveAuth,
+  fetchRecordingContent,
+  findSessionRecordings,
 };

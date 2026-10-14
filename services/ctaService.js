@@ -115,6 +115,10 @@ const CTA_FN_DENYLIST = Object.freeze([
   // public link can never supply — and links minting links is bearer-token
   // recursion with no owner in the loop.
   'create_cta',
+  // Comms archive S1a (ref/COMMS_ARCHIVE_DESIGN.md §6.5): spends the shared
+  // RingCentral Heavy budget and writes the private archive — no public link
+  // may start it. Deliberate divergence from the other (eligible) sweepers.
+  'comms_archive_sweep',
 ]);
 
 /** Chromium-backed functions: eligible, but a public repeatable link fans out load. */

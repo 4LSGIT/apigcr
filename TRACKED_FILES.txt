@@ -48,6 +48,7 @@ lib/internal_functions/ai_match.js
 lib/internal_functions/appointments.js
 lib/internal_functions/calendar.js
 lib/internal_functions/cases.js
+lib/internal_functions/commsArchive.js
 lib/internal_functions/communication.js
 lib/internal_functions/composition.js
 lib/internal_functions/connections.js
@@ -514,6 +515,7 @@ ref/migrations/2026-10-13_default_task_assignee.sql
 ref/migrations/2026-10-13_docs_review_comments.sql
 ref/migrations/2026-10-13_mail_sends.sql
 ref/migrations/2026-10-13_wf50_end_after_cancel.console.js
+ref/migrations/2026-10-14_comms_media.sql
 ref/migrations/2026-10-14_wf50_text_on_cancel_failure.console.js
 ref/migrations/S1_notes_migration.sql
 ref/migrations/documents_s1.sql
@@ -790,6 +792,8 @@ services/calendarWriteService.js
 services/campaignService.js
 services/caseEventService.js
 services/caseService.js
+services/commsArchiveService.js
+services/commsArchiveSweep.js
 services/contactAddressService.js
 services/contactEmailService.js
 services/contactPhoneService.js
@@ -929,6 +933,8 @@ tests/caseUi.sync.test.js
 tests/caseUi.timeline.test.js
 tests/checklistView.autoGrow.test.js
 tests/checklists.s1notes.test.js
+tests/commsArchive.sweep.mysql.test.js
+tests/commsArchiveService.test.js
 tests/commsShell.test.js
 tests/contactOrgKind.test.js
 tests/contactRelationService.updateType.test.js
@@ -1065,6 +1071,7 @@ tests/formtemplates.x1visibility.test.js
 tests/genTypeKeyBackfill.test.js
 tests/helpers/bcPolyfill.js
 tests/helpers/ctaWorld.js
+tests/helpers/fakeGcs.js
 tests/helpers/mailRenderBrowser.js
 tests/helpers/mailboxS1World.js
 tests/helpers/mailboxS2World.js

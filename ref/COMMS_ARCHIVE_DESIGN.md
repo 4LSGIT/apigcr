@@ -1,9 +1,9 @@
 # COMMS_ARCHIVE_DESIGN
 
-Status: v3 — 2026-10-13. Nothing built. v1 was independently reviewed the same day (claims re-verified against the code, the live DB and vendor pages); v2 carried the review's amendments; v3 folds in Fred's answers (Q1–Q4, Q6–Q7, F1–F6, F8 → §0 and their sections; F2 = AssemblyAI, P7). Still open: Q5 (SS) and F7 (revoke at arc close). An execution manager runs the slices in §12.
+Status: v3 — 2026-10-13; slices landing from 2026-10-14. Built: S0 infra (bucket, IAM, signing, `COMMS_ARCHIVE_BUCKET`) and S1a (RingCentral call recordings, §5–§6.2); §5, §6.1, §6.2 and §10 describe them as built. v1 was independently reviewed the same day (claims re-verified against the code, the live DB and vendor pages); v2 carried the review's amendments; v3 folds in Fred's answers (Q1–Q4, Q6–Q7, F1–F6, F8 → §0 and their sections; F2 = AssemblyAI, P7). Still open: Q5 (SS) and F7 (revoke at arc close). An execution manager runs the slices in §12.
 Scope: a private, long-retention archive for communication media — call recordings and MMS files now, email raw + attachments later (mailbox S6) — plus the derived text for calls: transcripts and AI summaries. Covers capture, storage, access, purge, the pipeline, and where the results surface (Comms hub, case/contact views, Documents tab, search).
 Related: `claude/RECORDINGS_OPTION_A_REVIEW.md` (claude.ai Project — the Option A review: SS-facing summary, vendor comparison, cost model; this doc supersedes its §2 design notes), `ref/MAILBOX_SYSTEM_DESIGN.md` (D1, D6, §4.4 S-PH, S6), `ref/plans.md` (phone-tab follow-ups), `ref/AUDIT_TENANCY.md` (open decision 15: GCS per tenant), `ref/INFRA_GCP.md`, AI_CONTEXT §28 (phone ingest). Arc state: scratch `fred/recordings_arc`.
-Verified against: `main` @ `0b9d788`, the live DB, and the RingCentral / Quo APIs on 2026-10-13; §2 figures and §11 vendor pricing re-measured at the same day's review. §4's IAM permission set: Google's published role reference, 2026-10-14.
+Verified against: `main` @ `0b9d788`, the live DB, and the RingCentral / Quo APIs on 2026-10-13; §2 figures and §11 vendor pricing re-measured at the same day's review. Sections edited by a slice are verified against that slice's code, not this line. §4's IAM permission set: Google's published role reference, 2026-10-14.
 
 ## 0. Decisions
 
@@ -120,43 +120,15 @@ Boundaries:
 
 **Config** (`lib/firmConfig` registry key, like `gcs_bucket`): `comms_archive_bucket`. **Kill switches and knobs** (`app_settings`, read uncached via `settingsService.getSetting`, fail-closed — exact string `'1'` enables): `comms_archive_enabled`, `comms_transcribe_enabled`, `comms_summarize_enabled`; numeric knobs `comms_min_transcribe_s` (15), `comms_min_summary_s` (30), `comms_stt_max_min_per_call` (e.g. 300), `comms_ai_monthly_cap_cents`.
 
-## 5. Schema (proposed — S1 / S2 migrations)
+## 5. Schema (S1 built; S2 proposed)
 
-Defaults follow `ref/SCHEMA_CONVENTIONS.md`: no `DEFAULT CHARSET` without `COLLATE` (inherit `utf8mb4_general_ci`), vocabularies are app-validated `VARCHAR`, every table and non-obvious column carries a COMMENT. Columns sized to what writes into them (non-strict `sql_mode` truncates silently).
+Defaults follow `ref/SCHEMA_CONVENTIONS.md`: no `DEFAULT CHARSET` without `COLLATE` (`comms_media` states `utf8mb4_general_ci` explicitly), vocabularies are app-validated `VARCHAR`, every table and non-obvious column carries a COMMENT. Columns sized to what writes into them (non-strict `sql_mode` truncates silently).
+
+`comms_media` keys to note: one row per file, unique on `(source_table, source_id, kind, part)`; `part=''` is a placeholder (a `tsi:` call before recovery). **Discovery tests existence on `(source_table, source_id, kind)` regardless of `part`** — recovery rewrites the placeholder's `part`, so the unique key alone would re-insert a placeholder every tick. `captured_at` is the call clock (§6.1). `attempts` counts provider-side failures only; `next_attempt_at` doubles as the per-row lease.
 
 ```sql
--- S1
-CREATE TABLE comms_media (
-  id            BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
-  channel       VARCHAR(8)   NOT NULL COMMENT 'phone | mail — app-validated',
-  kind          VARCHAR(20)  NOT NULL COMMENT 'call_recording | mms_file | stt_raw | mail_raw | mail_attachment',
-  source_table  VARCHAR(32)  NOT NULL COMMENT 'phone_event_log | mail_messages | comms_media (stt_raw)',
-  source_id     BIGINT UNSIGNED NOT NULL,
-  part          VARCHAR(64)  NOT NULL DEFAULT '' COMMENT 'provider recording / attachment id; '''' = placeholder before the provider lists any',
-  provider      VARCHAR(16)  NULL,
-  channel_id    INT UNSIGNED NULL COMMENT 'phone_lines.id / mailboxes.id — the grant anchor (mailboxService.getAccess)',
-  party         VARCHAR(20)  NULL COMMENT 'other party (10-digit) for phone — the log-style read-time anchor',
-  object_name   VARCHAR(255) NULL COMMENT 'name inside comms_archive_bucket; NULL until archived',
-  mime          VARCHAR(128) NULL,
-  bytes         BIGINT UNSIGNED NULL,
-  sha256        CHAR(64)     NULL,
-  duration_s    INT UNSIGNED NULL,
-  audio_channels TINYINT UNSIGNED NULL,
-  captured_at   DATETIME     NULL COMMENT 'provider time of the call/message (UTC wall clock, pool convention)',
-  state         VARCHAR(16)  NOT NULL DEFAULT 'pending' COMMENT 'pending | archived | none | gone | failed | purged',
-  restricted    TINYINT(1)   NOT NULL DEFAULT 0 COMMENT '1 = SU/SS-only visibility (Restrict, §8)',
-  attempts      INT UNSIGNED NOT NULL DEFAULT 0,
-  next_attempt_at DATETIME   NULL,
-  last_error    VARCHAR(1000) NULL,
-  archived_at   DATETIME     NULL,
-  purged_at     DATETIME     NULL, purged_by TINYINT NULL, purge_reason VARCHAR(500) NULL,
-  created_at    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  updated_at    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  UNIQUE KEY uq_comms_media_source (source_table, source_id, kind, part),
-  KEY idx_comms_media_work (state, next_attempt_at),
-  KEY idx_comms_media_party (party, captured_at),
-  KEY idx_comms_media_channel (channel, channel_id, captured_at)
-) ENGINE=InnoDB COMMENT='Comms archive registry (ref/COMMS_ARCHIVE_DESIGN.md). One row per archived file. Never deleted — purge clears content and stamps purged_*';
+-- S1 (built): comms_media — ref/migrations/2026-10-14_comms_media.sql. Its column
+-- COMMENTs are the contract and flow into ref/database.sql; not restated here.
 
 -- S2
 CREATE TABLE comms_transcripts (
@@ -195,35 +167,41 @@ CREATE TABLE comms_no_transcribe (
 ```
 
 States, `comms_media`:
-- `pending` — known work, not yet fetched.
+- `pending` — known work, not yet fetched. Includes rows the sweep cannot fetch for an our-side reason, with `last_error` saying why (`no_line`: the call's line is not a `phone_lines` row — 6 h backoff, no attempt charged, heals itself once the line is added).
 - `archived` — bytes in the bucket, `sha256` and `bytes` recorded.
-- `none` — the provider has no file after the wait window (Quo staff lines often record nothing).
-- `gone` — the provider returned not-found where a file was expected (past RC's 90 days, or deleted at the source). The cliff guard exists to keep this at zero.
-- `failed` — retries exhausted on a non-404 error; alerts.
+- `none` — the provider has no file after the wait window (Quo staff lines often record nothing; an RC `tsi:` call whose call-log lists no recording 24 h after the call).
+- `gone` — the provider returned not-found for the CONTENT of a file it had listed, on a call at least 24 h old (past RC's 90 days, or deleted at the source); a younger call's 404 is "not yet" and retries. A call-log 404 is not `gone`. The cliff guard exists to keep this at zero.
+- `failed` — the row was still not archivable (provider-side failures, `no_line`, or an unmatched call-log) when its call passed 90 days on the call clock, so the file can no longer exist at RC; alerts. Exhausting the attempt count does NOT make a row `failed`: no recording is abandoned while it can still exist (§6.1 step 5).
 - `purged` — §8.
 
 ## 6. Pipeline
 
 ### 6.1 Archive sweep — `comms_archive_sweep` (S1)
 
-Recurring `scheduled_jobs` row (`type:'recurring'`, `data:{type:'internal_function', function_name:'comms_archive_sweep'}`), every 2 minutes. Each tick, while time budget (≈ 45 s) and provider budgets last:
+Recurring `scheduled_jobs` row (`type:'recurring'`, `data:{type:'internal_function', function_name:'comms_archive_sweep'}`, `max_attempts` 1 — a throwing tick is rescheduled, not ended), every 2 minutes; seeded by Part B of `ref/migrations/2026-10-14_comms_media.sql`. Code: `services/commsArchiveSweep.js` (tick), `services/commsArchiveService.js` (bucket), `lib/internal_functions/commsArchive.js`. S1a covers RC call recordings; Quo recordings and MMS are S1b.
 
-1. **Discover.** Insert `pending` placeholder rows (`part=''`) for:
-   - calls in `phone_event_log` (`event_type='call'`, `suppressed=0`) with no `call_recording` row: RC rows carrying a `recording_id` or a `tsi:` ref; Quo rows that were answered (`started_at` < `ended_at` — Quo rows never carry a recording id, the recording list decides);
-   - MMS texts whose `log.log_data.attachments` is non-empty and have no `mms_file` row.
-   Oldest first within RC's window, so the backlog drains toward the cliff, not away from it. `INSERT IGNORE` on the unique key makes discovery idempotent across ticks and instances.
-2. **Fetch.** Through the line's adapter (new functions, credentials via `buildHeadersForCredential`):
-   - **RC recording:** recording id from `raw_extra.recording_id`. For `tsi:` rows, recover via `call-log?telephonySessionId=`. Then `media.ringcentral.com/…/recording/<id>/content`.
+**Call clock.** `phone_event_log` has no call-time columns: `started_at` / `ended_at` / `recording_id` are `raw_extra` JSON keys (ISO strings ending in `Z`). `captured_at` = `COALESCE(raw_extra.started_at, processed_at)`: the call's start as a UTC `DATETIME` whenever it is present, and ingest time only when it is blank (`tsi:` rows). The start precedes ingest, so an age taken from it is never younger than one taken from ingest time — ages fail safe; discovery order and the cliff guard (§6.2) both use it. (Never `NULLIF(…, '')` the string before the `CAST`: MySQL then types it numerically and every value comes back NULL — the ingest clock everywhere, silently.)
+
+**Concurrency.** Tick lock `GET_LOCK(CONCAT('comms_archive_sweep:', DATABASE()), 0)` on a dedicated pooled connection (released with it in `finally`; the loser returns `skipped:'locked'`) — one writer of the RC Heavy budget across instances and hand runs. Inside it, each row is claimed by a conditional UPDATE lease (`attempts+1`, `next_attempt_at` +10 min); a crashed tick's rows come back when the lease passes.
+
+Kill switch off → only the cliff guard runs. Otherwise each tick, until the 45 s deadline (stop starting work) or the Heavy budget; every RC and GCS call still in flight is bounded by a 3-minute hard deadline (uploads pass a timeout to the library and race a local timer that destroys both streams — the library's simple upload has none of its own), so a stalled GCS cannot hold the tick lock. The upload's bound is the RC fetch's bound plus 5 s, so when RC stalls the body RC's abort lands first and the failure is charged to RC — by design, not timer order. The cliff guard (§6.2) runs on every exit — disabled, locked, pre-flight failure, or a thrown tick:
+
+1. **Discover.** Insert `pending` rows for:
+   - calls in `phone_event_log` (`event_type='call'`, `suppressed=0`) with no `call_recording` row: RC rows carrying a `raw_extra.recording_id` (`part` = that id) or a `tsi:` ref (`part=''` placeholder), younger than 90 days on the call clock — older ones are already gone at RC and are not fetched; Quo rows that were answered (`raw_extra.started_at` < `raw_extra.ended_at` — Quo rows never carry a recording id, the recording list decides) — S1b;
+   - MMS texts whose `log.log_data.attachments` is non-empty and have no `mms_file` row — S1b.
+   Oldest first within RC's window (200 per tick), so the backlog drains toward the cliff, not away from it. The "no row" test is `NOT EXISTS` on `(source_table, source_id, kind)` regardless of `part` (§5); `INSERT IGNORE` on the unique key is only the race backstop.
+2. **Fetch.** Through the line's adapter (`services/adapters/phone/ringcentral.js` `fetchRecordingContent` / `findSessionRecordings`, credentials via `buildHeadersForCredential`). The line → credential path is data: `phone_event_log.line_number` = `phone_lines.phone_number` → `phone_lines.credential_id`; no `phone_lines` row → `no_line` (§5).
+   - **RC recording:** recording id from `raw_extra.recording_id`, `media.ringcentral.com/restapi/v1.0/account/~/recording/<id>/content`. For `tsi:` rows, `call-log?telephonySessionId=` with an explicit `dateFrom`/`dateTo` around the call (RC defaults to the last 24 h); only records whose `telephonySessionId` equals the requested one count (if RC ever ignored the filter, other calls' recordings would land under this call's party and line — the grant anchor); records returned but none matching is treated as a shape change, not as "no recording": the row is parked uncharged (2 h) and alerts, and is never marked `none` on that evidence (`none` satisfies the cliff guard); the first listed recording fills the placeholder, any others get rows of their own; nothing listed → retry in 2 h, `none` once the call is 24 h old.
    - **RC MMS:** `…/extension/~/message-store/<provider_ref>/content/<attachment id>`. rc2 (2486213656) needs its own extension id (raw webhook `body.ownerId`, in `hook_executions` since 2026-05-19) — S1 resolves it.
    - **Quo recording:** `GET /v1/call-recordings/<provider_ref>` → 0..n recordings → one row each (`part` = recording id), each fetched from its signed URL.
    - **Quo MMS:** `GET /v1/messages/<provider_ref>` → fresh signed `media[].url` (the stored link is not reused).
-3. **Store.** Stream to the bucket with `sha256` computed on the way, `ifGenerationMatch: 0` (never overwrite), then flip the row to `archived` in one UPDATE. A crash between upload and UPDATE leaves an object the next attempt finds by name and adopts after re-hashing.
-4. **Pacing.** RC Heavy ≤ 3 calls/min from this sweeper (live ingest keeps the rest of the 10/min). On 429: honour `Retry-After`, end the tick. Backfill of ~2,200 RC recordings (measured 2026-10-13) ≈ 12 h at that pace — well inside the cliff.
-5. **Retry.** Provider "not yet" (no recording right after the call): back off; after 24 h with nothing listed → `none`. Transient errors: exponential backoff, `failed` after N. A 404 for a file that was listed → `gone`.
+3. **Store.** Only a non-empty 200 whose content-type is on the audio allowlist (`audio/mpeg`, `audio/wav` and aliases) is stored; a 200 carrying JSON or HTML, an empty body, or one whose byte count differs from `Content-Length` is a provider error — the last two abort the upload, and a non-resumable upload whose body errors or ends short commits no object (verified against the real `@google-cloud/storage` 8.1.0 at the S1a review), so adopt only ever sees complete objects. The content fetch sends `Accept-Encoding: identity` (fetch would otherwise decompress a compressed body while `Content-Length` counts the compressed bytes). A failure is charged to whichever stream errored FIRST: the pipeline re-throws a GCS error through the source, so "the source errored" alone would blame RC for a bucket 403. Stream to the bucket with `sha256` computed on the way, `ifGenerationMatch: 0` (never overwrite), then flip the row to `archived` in one UPDATE. **Stat-first:** before fetching, the sweep lists the row's deterministic prefix `phone/rec/<yyyy>/<mm>/<id>-<part>.` (the extension depends on the content-type; yyyy/mm come from `captured_at`, so the prefix is stable across attempts); one object there — left by a crash between upload and UPDATE — is adopted after re-hashing, with no RC call; more than one, or a 0-byte one, is an anomaly (left pending, uncharged, alerted). A 412 on upload (lost race) adopts the same way.
+4. **Pacing.** At most `heavy_per_tick` (job param, default and maximum 3 — with calls ≥ 20 s apart and none started after 45 s, a tick cannot deliver more; higher values are clamped) RC Heavy calls per tick, ticks every 2 min: 1.5/min on average. What is guaranteed is the per-tick cap plus the two stops below, not a rolling-minute ceiling — a catch-up tick right after a late one can put 4 calls in one 60 s window, which the 10/min band absorbs (live ingest keeps the rest). On 429: refund the attempt, end the tick (`Retry-After` reported; RC's Heavy window is 60 s, under the tick gap). When RC reports ≤ 4 Heavy calls left in the window, stop after that item. At this pace the backlog measured 2026-10-14 (~2,240 RC recordings under 90 days) drains in ≈ 25 h; the 80–89-day band (~230) in ≈ 2.5 h — inside the cliff, with ~1,000/day of capacity against 21–46/day crossing it.
+5. **Retry — charge the side that failed; abandon nothing that can still exist.** Only provider-side failures keep the attempt: RC 5xx / network / timeout, a non-audio or empty 200, a short body → exponential backoff (2^attempts min, capped 60). After 8 the row stays `pending` on a 6 h backoff and alerts at error (repeated failure); it becomes `failed` only once its call is past 90 days on the call clock. A content 404 on a call ≥ 24 h old → `gone`; on a younger call it is a transient (the recording is not ready yet — RC rows are ingested about a minute after the call ends). Our-side failures never spend attempts: the bucket check (config, plus `testIamPermissions` proving create / get / list — no probe write) runs before any row is claimed; the credential's auth check runs before its first claim; a storage error, an RC 401/403 or a 429 mid-tick refunds the attempt and ends the tick — one misconfiguration must not walk the backlog to `failed`.
 
 ### 6.2 Cliff guard (S1)
 
-Every tick, after the work: any non-suppressed RC call row with a `recording_id`, older than 75 days, whose `call_recording` row is not `archived` / `none` / `purged` → `alerting.alert` (`source`, `kind`, `group_key` and `title` are required — it throws without them; `severity:'error'`, `dedup_key` per day). This is the alarm that matters: past 90 days the loss is permanent.
+Every tick, on every exit — after the work, and also when the kill switch is off (a paused archive near the edge must still page), when the tick lock is held elsewhere, when the pre-flight fails, or when the tick throws: any non-suppressed RC call row carrying a `raw_extra.recording_id` or a `tsi:` ref, 75–91 days old on the call clock (§6.1; the upper bound keeps calls lost long ago from tripping it forever, and its 1-day margin past 90 keeps it paging through the last day RC might still hold the file), with no `call_recording` row or with any of its rows not `archived` / `none` / `purged` (so `gone` and `failed` rows count) → `alerting.alert` (`source`, `kind`, `group_key` and `title` are required — it throws without them; `severity:'error'`, group `comms_archive_cliff`, `dedup_key` per UTC day; the message carries the count and the oldest age). This is the alarm that matters: past 90 days the loss is permanent. Expect it once on go-live day (the backlog's 75–89-day band is not yet archived); it should be quiet from the next day.
 
 ### 6.3 Transcription — `comms_transcribe_sweep` (S2)
 
@@ -313,11 +291,18 @@ The `log` row and the `phone_event_log` row stay: that a call happened is the fi
 | Alarm | Severity (CLAUDE.md convention) |
 |---|---|
 | Cliff guard (§6.2) | error |
-| `failed` rows (archive / transcribe / summarise) | warning first per subject, error on repeat |
-| Credential 9 refresh failure (stops the RC side) | the sweeper warns on `no_auth`, error on repeat (whether the `refresh_expiring_oauth_credentials` job already alerts: check in S1) |
+| `gone` rows (archive) | error — one row per UTC day (`comms_archive_gone`), the count in the message |
+| `failed` rows (archive / transcribe / summarise) | warning first per subject, error on repeat — archive: always error (`failed` means the call passed 90 days; one row per day, `comms_archive_failed`) |
+| Archive row still failing after 8 provider-side attempts | error, one row per day (`comms_archive_stuck`) — the row keeps retrying every 6 h |
+| Credential refresh failure (stops the RC side) | `oauthService` already pages `critical` (`oauth:<id>`) on the second consecutive refresh failure, and the error sweep reopens it while `oauth_status='refresh_failed'`. The sweeper adds `comms_archive_no_auth:<cred>` for any no-Authorization state (disconnected, refresh failed, URL outside `allowed_urls`) and RC 401/403: warning, error on repeat within 24 h |
+| Archive storage unavailable (bucket unset, a required permission missing, upload refused or timed out) | warning, error on repeat within 24 h (`comms_archive_storage`); the tick ends, no row is charged |
+| Call on a line that is not a `phone_lines` row | warning, error on repeat, one group per line (`comms_archive_no_line:<line>`); past 90 days the row turns `failed` (error) and stops retrying |
+| Call-log answered with records, none for the requested session | error, one row per day (`comms_archive_session_mismatch`) |
 | Delete detected outside a purge | error |
 | AI monthly cap reached | warning, then error if it holds 24 h |
 | Transcription backlog older than 48 h | warning |
+
+Every archive alert carries a per-UTC-day `dedup_key` (with the severity in it where a warning may escalate): `lib/alerting` turns a repeated `dedup_key` into a silent no-op — no row, no `alert_state` bump — and the hourly digest emails rows grouped by `group_key` with a 6 h per-group cooldown. So a backlog of `gone` rows pages once, never once per row.
 
 **Delete detection (F3):** a nightly rolling stat of 1/14 of `archived` objects — every object checked within the 30-day soft-delete window, so any unexplained delete is caught while still restorable; recorded in `ref/INFRA_GCP.md` at S1. (The alternative, a Pub/Sub `OBJECT_DELETE` push, was declined as the more moving parts; if ever adopted, the push subscription authenticates with an OIDC token the endpoint verifies — never an open endpoint.)
 
