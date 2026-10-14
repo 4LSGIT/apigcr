@@ -17,7 +17,7 @@
  *    one transaction, and the serve stamps transcript_seen_at with an UPDATE
  *    of that same row — so a stamp either lands before the save (→ 409) or
  *    waits for it (the tag was set before anything was served).
- *  - Scores hold numbers, booleans and fixed tags ONLY (validateScores):
+ *  - Scores hold fixed choices ONLY (validateScores, rubric amendment A3):
  *    unknown keys, strings outside the enums, out-of-range numbers → 400.
  *    No call content is ever stored.
  *  - The signing check never returns or logs a signed URL.
@@ -32,8 +32,6 @@ const { httpError } = require('./commsArchiveAdmin');
 const STAGES = Object.freeze(['transcript', 'transcript_alt', 'summary']);
 const STRATA = /^S[1-7]$/;
 const NOISE = Object.freeze(['N1', 'N2', 'N3']);
-const ITEM_CLASSES = Object.freeze(['names', 'case_numbers', 'amounts', 'dates']);
-const MAX_COUNT = 5000;
 const MAX_START_S = 86400;
 const WINDOW_S = 60;
 const WHOLE_CALL_MAX_S = 90;       // calls this short are scored whole (rubric S1)
@@ -72,58 +70,56 @@ function onlyKeys(o, allowed, where) {
 }
 
 /**
- * The fixed score schema. Returns a normalized copy; throws 400 otherwise.
- *   transcript      { noise, windows?, items?, turns?, one_party_per_channel?, complete? }
- *   transcript_alt  the same without noise (the noise tag lives on 'transcript')
+ * The fixed score schema — rubric amendment A3 (fixed choices only; target
+ * under 2 minutes per call after listening). Returns a normalized copy; 400
+ * otherwise.
+ *   transcript   { noise, accuracy?, key_items?, speakers?, usable?, worst?, variant_better?, complete? }
+ *                noise N1–N3 (blind, required); accuracy 1–5; key_items all_right | some_wrong |
+ *                many_wrong | none; speakers right | mostly_right | wrong; usable yes | with_fixes | no;
+ *                worst (optional) names | numbers | words | speakers | missed_speech | none;
+ *                variant_better (Quo) diarized | per_channel | same.
+ *                complete: true needs accuracy, key_items, speakers and usable.
+ *   transcript_alt  retired by A3 (the per-channel variant is judged by variant_better)
  *   summary         not open until S3 exists
  */
+const ENUMS = Object.freeze({
+  key_items: ['all_right', 'some_wrong', 'many_wrong', 'none'],
+  speakers: ['right', 'mostly_right', 'wrong'],
+  usable: ['yes', 'with_fixes', 'no'],
+  worst: ['names', 'numbers', 'words', 'speakers', 'missed_speech', 'none'],
+  variant_better: ['diarized', 'per_channel', 'same'],
+});
+const REQUIRED_FOR_COMPLETE = Object.freeze(['accuracy', 'key_items', 'speakers', 'usable']);
+
+/** A transcript review that counts as scored under A3. */
+function isScored(s) {
+  return !!s && s.complete === true && REQUIRED_FOR_COMPLETE.every(k => s[k] !== undefined);
+}
+
 function validateScores(stage, scores) {
   if (!STAGES.includes(stage)) throw bad('Unknown stage');
   if (stage === 'summary') throw bad('The summary stage opens when S3 (summaries) exists');
+  if (stage === 'transcript_alt') throw bad('Retired: the per-channel variant is judged on the transcript stage (variant_better)');
   if (!isObj(scores)) throw bad('scores must be an object');
-  const allowed = ['windows', 'items', 'turns', 'one_party_per_channel', 'complete'];
-  if (stage === 'transcript') allowed.unshift('noise');
-  onlyKeys(scores, allowed, 'scores');
-  const out = {};
-  if (stage === 'transcript') {
-    if (!NOISE.includes(scores.noise)) throw bad('noise must be N1, N2 or N3');
-    out.noise = scores.noise;
+  onlyKeys(scores, ['noise', 'accuracy', ...Object.keys(ENUMS), 'complete'], 'scores');
+  if (!NOISE.includes(scores.noise)) throw bad('noise must be N1, N2 or N3');
+  const out = { noise: scores.noise };
+  if (scores.accuracy !== undefined) {
+    if (!isInt(scores.accuracy, 1, 5)) throw bad('accuracy must be a whole number from 1 to 5');
+    out.accuracy = scores.accuracy;
   }
-  if (scores.windows !== undefined) {
-    if (!Array.isArray(scores.windows) || scores.windows.length > 2) throw bad('windows: at most 2');
-    out.windows = scores.windows.map((w, i) => {
-      if (!isObj(w)) throw bad(`windows[${i}] must be an object`);
-      onlyKeys(w, ['start_s', 'words', 'sub', 'ins', 'del'], `windows[${i}]`);
-      if (!isInt(w.start_s, 0, MAX_START_S)) throw bad(`windows[${i}].start_s out of range`);
-      for (const k of ['words', 'sub', 'ins', 'del']) if (!isInt(w[k], 0, MAX_COUNT)) throw bad(`windows[${i}].${k} out of range`);
-      if (w.sub + w.del > w.words) throw bad(`windows[${i}]: substitutions + deletions exceed the reference words`);
-      return { start_s: w.start_s, words: w.words, sub: w.sub, ins: w.ins, del: w.del };
-    });
+  for (const [k, allowed] of Object.entries(ENUMS)) {
+    if (scores[k] === undefined) continue;
+    if (!allowed.includes(scores[k])) throw bad(`${k} must be one of ${allowed.join(', ')}`);
+    out[k] = scores[k];
   }
-  if (scores.items !== undefined) {
-    if (!isObj(scores.items)) throw bad('items must be an object');
-    onlyKeys(scores.items, ITEM_CLASSES, 'items');
-    out.items = {};
-    for (const [k, v] of Object.entries(scores.items)) {
-      if (!isObj(v)) throw bad(`items.${k} must be an object`);
-      onlyKeys(v, ['heard', 'correct'], `items.${k}`);
-      if (!isInt(v.heard, 0, MAX_COUNT) || !isInt(v.correct, 0, MAX_COUNT)) throw bad(`items.${k} out of range`);
-      if (v.correct > v.heard) throw bad(`items.${k}: correct exceeds heard`);
-      out.items[k] = { heard: v.heard, correct: v.correct };
+  if (scores.complete !== undefined) {
+    if (typeof scores.complete !== 'boolean') throw bad('complete must be true or false');
+    if (scores.complete) {
+      const missing = REQUIRED_FOR_COMPLETE.filter(k => out[k] === undefined);
+      if (missing.length) throw bad(`To mark the call done, answer: ${missing.join(', ')}`);
     }
-  }
-  if (scores.turns !== undefined) {
-    if (!isObj(scores.turns)) throw bad('turns must be an object');
-    onlyKeys(scores.turns, ['total', 'correct'], 'turns');
-    if (!isInt(scores.turns.total, 0, MAX_COUNT) || !isInt(scores.turns.correct, 0, MAX_COUNT)) throw bad('turns out of range');
-    if (scores.turns.correct > scores.turns.total) throw bad('turns: correct exceeds total');
-    out.turns = { total: scores.turns.total, correct: scores.turns.correct };
-  }
-  for (const k of ['one_party_per_channel', 'complete']) {
-    if (scores[k] !== undefined) {
-      if (typeof scores[k] !== 'boolean') throw bad(`${k} must be true or false`);
-      out[k] = scores[k];
-    }
+    out.complete = scores.complete;
   }
   return out;
 }
@@ -158,7 +154,7 @@ async function listItems(db, reviewerId, { su = false } = {}) {
   for (const m of mine) {
     const s = parseJson(m.scores) || {};
     const e = byItem.get(String(m.media_id)) || {};
-    e[m.stage] = { saved: true, complete: s.complete === true, noise: s.noise || null };
+    e[m.stage] = { saved: true, complete: m.stage === 'transcript' ? isScored(s) : s.complete === true, noise: s.noise || null };
     byItem.set(String(m.media_id), e);
   }
   return rows.filter(r => su || (r.state === 'archived' && !r.restricted)).map(r => ({
@@ -392,7 +388,7 @@ async function signingCheck() {
 }
 
 module.exports = {
-  STAGES, NOISE, ITEM_CLASSES, PROBE_OBJECT, PROBE_TEXT,
+  STAGES, NOISE, ENUMS, REQUIRED_FOR_COMPLETE, PROBE_OBJECT, PROBE_TEXT, isScored,
   validateScores, windowsFor, listItems, loadItem, audioUrl, transcript, myReviews, saveReview, addSample,
   signingCheck, tamper, limits,
 };

@@ -66,6 +66,11 @@
   .msg.bad { color: var(--bad); } .msg.ok { color: var(--ok); }
   .hidden { display: none !important; }
   .tabs { display: flex; gap: 6px; margin: 8px 0; flex-wrap: wrap; }
+  .q { margin: 12px 0; }
+  .q .qt { font-weight: 600; margin-bottom: 6px; }
+  .q .opts { display: flex; flex-wrap: wrap; gap: 6px; }
+  .q .opts button { min-width: 44px; min-height: 40px; }
+  .q .opts button[aria-pressed="true"] { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
   .tabs button[aria-pressed="true"] { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
 </style>
 </head>
@@ -123,28 +128,11 @@
     </div>
 
     <div id="formCard" class="card hidden">
-      <h2>4 · Scores <span id="formFor" class="muted" style="font-weight:400"></span></h2>
-      <p class="muted">Counts only — never type what was said. In each window: words you heard, then the transcript's wrong words (substituted), extra words (inserted) and missing words (deleted).</p>
-      <div id="winFields"></div>
-      <fieldset>
-        <legend>Key items heard in the windows (whole call for short calls)</legend>
-        <div class="grid" id="itemFields"></div>
-      </fieldset>
-      <fieldset>
-        <legend>Speakers</legend>
-        <div class="grid">
-          <label class="f">Speaker turns<input type="number" min="0" inputmode="numeric" id="turnsTotal"></label>
-          <label class="f">Attributed correctly<input type="number" min="0" inputmode="numeric" id="turnsCorrect"></label>
-        </div>
-        <div id="channelRow" class="row hidden" style="margin-top:8px">
-          <span>Left and right each carry one person?</span>
-          <label><input type="radio" name="opc" value="yes"> yes</label>
-          <label><input type="radio" name="opc" value="no"> no</label>
-        </div>
-      </fieldset>
-      <div class="row">
-        <label><input type="checkbox" id="complete"> This call is done</label>
-        <button id="saveScores" class="primary">Save scores</button>
+      <h2>4 · Your verdict</h2>
+      <p class="muted">One tap per question — no typing. Takes a minute or two once you have listened.</p>
+      <div id="questions"></div>
+      <div class="row" style="margin-top:10px">
+        <button id="saveScores" class="primary">Save</button>
         <span id="scoreNote" class="muted"></span>
       </div>
     </div>
@@ -155,7 +143,22 @@
   'use strict';
   const P = window.parent;
   const $ = (id) => document.getElementById(id);
-  const CLASSES = [['names', 'Names'], ['case_numbers', 'Case numbers'], ['amounts', 'Dollar amounts'], ['dates', 'Dates']];
+  // Rubric amendment A3 — the same fixed choices services/commsEvalService.js accepts.
+  const QUESTIONS = [
+    { k: 'accuracy', q: 'Overall, how accurate is the transcript?', req: true,
+      o: [[1, '1 unusable'], [2, '2'], [3, '3'], [4, '4'], [5, '5 near-perfect']] },
+    { k: 'key_items', q: 'Names, case numbers, amounts, dates', req: true,
+      o: [['all_right', 'All right'], ['some_wrong', 'Some wrong'], ['many_wrong', 'Many wrong'], ['none', 'None in this call']] },
+    { k: 'speakers', q: 'Who said what (speakers)', req: true,
+      o: [['right', 'Right'], ['mostly_right', 'Mostly right'], ['wrong', 'Wrong']] },
+    { k: 'variant_better', q: 'Which reads better?', variantOnly: true,
+      o: [['diarized', 'Standard'], ['per_channel', 'Per channel'], ['same', 'Same']] },
+    { k: 'usable', q: 'Usable for a case note as it is?', req: true,
+      o: [['yes', 'Yes'], ['with_fixes', 'With fixes'], ['no', 'No']] },
+    { k: 'worst', q: 'Worst problem (optional)',
+      o: [['names', 'Names'], ['numbers', 'Numbers'], ['words', 'Words'], ['speakers', 'Speakers'], ['missed_speech', 'Missed speech'], ['none', 'None']] },
+  ];
+  let answers = {};
   let items = [], me = { su: false }, cur = null, transcript = null, variant = 'default', reviews = {};
 
   // ── tiny DOM helpers (textContent only) ──────────────────────────────────
@@ -216,7 +219,7 @@
     $('itemMeta').textContent = '#' + it.id + ' · ' + (it.line || it.provider) + ' · ' + it.day + (it.audio_s == null ? '' : ' · ≈ ' + mmss(it.audio_s));
     const pl = $('player'); pl.pause(); pl.removeAttribute('src'); pl.classList.add('hidden');
     $('transcriptCard').classList.add('hidden'); $('formCard').classList.add('hidden');
-    clear($('segments')); clear($('winFields')); clear($('itemFields')); $('variantTabs').classList.add('hidden');
+    clear($('segments')); clear($('questions')); answers = {}; $('variantTabs').classList.add('hidden');
     for (const x of document.querySelectorAll('#variantTabs button')) x.setAttribute('aria-pressed', String(x.dataset.v === 'default'));
     $('saveNoise').disabled = false;
     $('noiseNote').textContent = ''; $('scoreNote').textContent = '';
@@ -256,7 +259,7 @@
     const id = cur.id;
     const r = document.querySelector('input[name="noise"]:checked');
     if (!r) { $('noiseNote').textContent = 'Pick one first.'; return; }
-    const prev = (reviews.transcript && reviews.transcript.scores) || {};
+    const prev = pick((reviews.transcript && reviews.transcript.scores) || {});
     try {
       await api('/api/comms-eval/items/' + id + '/review/transcript', 'PUT', { scores: { ...prev, noise: r.value } });
       if (!still(id)) return;
@@ -299,77 +302,42 @@
     if (!shown) box.appendChild(el('p', { cls: 'muted', text: 'Nothing in these windows (hold music?). Untick the box to see everything.' }));
   }
 
-  // ── scores form ──────────────────────────────────────────────────────────
-  const stage = () => (variant === 'variant' ? 'transcript_alt' : 'transcript');
-  function num(id) { return el('input', { type: 'number', min: '0', inputmode: 'numeric', id }); }
+  // ── verdict form (rubric A3) ─────────────────────────────────────────────
+  const stage = () => 'transcript';
+  const shown = () => QUESTIONS.filter(x => !x.variantOnly || (transcript && transcript.variant));
+  /** Only the A3 answers of a stored score sheet (an older sheet may carry other keys). */
+  function pick(s) { const o = {}; for (const x of QUESTIONS) if (s[x.k] !== undefined) o[x.k] = s[x.k]; return o; }
   function renderForm() {
     $('formCard').classList.remove('hidden');
-    $('formFor').textContent = variant === 'variant' ? '(per channel)' : (transcript.variant ? '(standard)' : '');
-    $('channelRow').classList.toggle('hidden', cur.provider !== 'quo');
-    const wf = $('winFields'); clear(wf);
-    (cur.windows || []).forEach((w, i) => {
-      wf.appendChild(el('fieldset', null, [
-        el('legend', { text: w.whole ? 'Whole call' : 'Window ' + (i + 1) }),
-        el('div', { cls: 'grid' }, [
-          el('label', { cls: 'f' }, ['Start (seconds)', Object.assign(num('w' + i + '_start'), { value: String(w.start_s) })]),
-          el('label', { cls: 'f' }, ['Words heard', num('w' + i + '_words')]),
-          el('label', { cls: 'f' }, ['Wrong words', num('w' + i + '_sub')]),
-          el('label', { cls: 'f' }, ['Extra words', num('w' + i + '_ins')]),
-          el('label', { cls: 'f' }, ['Missing words', num('w' + i + '_del')]),
-        ]),
-      ]));
-    });
-    const itf = $('itemFields'); clear(itf);
-    for (const [k, label] of CLASSES) {
-      itf.appendChild(el('label', { cls: 'f' }, [label + ' heard', num('i_' + k + '_heard')]));
-      itf.appendChild(el('label', { cls: 'f' }, [label + ' transcribed exactly', num('i_' + k + '_correct')]));
-    }
-    fillForm(((reviews[stage()] || {}).scores) || {});
-  }
-  function setVal(id, v) { const n = $(id); if (n && v != null) n.value = String(v); }
-  function fillForm(s) {
-    (s.windows || []).forEach((w, i) => { setVal('w' + i + '_start', w.start_s); for (const k of ['words', 'sub', 'ins', 'del']) setVal('w' + i + '_' + k, w[k]); });
-    for (const [k] of CLASSES) { const v = (s.items || {})[k]; if (v) { setVal('i_' + k + '_heard', v.heard); setVal('i_' + k + '_correct', v.correct); } }
-    if (s.turns) { setVal('turnsTotal', s.turns.total); setVal('turnsCorrect', s.turns.correct); }
-    for (const r of document.querySelectorAll('input[name="opc"]')) r.checked = s.one_party_per_channel === (r.value === 'yes');
-    $('complete').checked = s.complete === true;
-  }
-  function intOf(id) { const v = $(id).value.trim(); if (v === '') return undefined; const n = Number(v); return Number.isInteger(n) && n >= 0 ? n : NaN; }
-  function collect() {
-    const out = {};
-    const wins = [];
-    (cur.windows || []).forEach((w, i) => {
-      const o = { start_s: intOf('w' + i + '_start') };
-      for (const k of ['words', 'sub', 'ins', 'del']) o[k] = intOf('w' + i + '_' + k);
-      if (['words', 'sub', 'ins', 'del'].some(k => o[k] !== undefined)) {
-        for (const k of ['sub', 'ins', 'del']) if (o[k] === undefined) o[k] = 0;
-        wins.push(o);
+    const box = $('questions'); clear(box);
+    const saved = ((reviews.transcript || {}).scores) || {};
+    if (!Object.keys(answers).length) answers = pick(saved);   // keep unsaved taps across a tab switch
+    for (const x of shown()) {
+      const opts = el('div', { cls: 'opts', role: 'group', 'aria-label': x.q });
+      for (const [v, label] of x.o) {
+        const b = el('button', { type: 'button', 'aria-pressed': String(answers[x.k] === v) }, [label]);
+        b.addEventListener('click', () => {
+          answers[x.k] = answers[x.k] === v && !x.req ? undefined : v;   // an optional answer can be cleared
+          if (answers[x.k] === undefined) delete answers[x.k];
+          for (const o of opts.children) o.setAttribute('aria-pressed', 'false');
+          if (answers[x.k] === v) b.setAttribute('aria-pressed', 'true');
+          $('scoreNote').textContent = '';
+        });
+        opts.appendChild(b);
       }
-    });
-    if (wins.length) out.windows = wins;
-    const its = {};
-    for (const [k] of CLASSES) {
-      const h = intOf('i_' + k + '_heard'), c = intOf('i_' + k + '_correct');
-      if (h !== undefined || c !== undefined) its[k] = { heard: h === undefined ? 0 : h, correct: c === undefined ? 0 : c };
+      box.appendChild(el('div', { cls: 'q' }, [el('div', { cls: 'qt', text: x.q }), opts]));
     }
-    if (Object.keys(its).length) out.items = its;
-    const tt = intOf('turnsTotal'), tc = intOf('turnsCorrect');
-    if (tt !== undefined || tc !== undefined) out.turns = { total: tt === undefined ? 0 : tt, correct: tc === undefined ? 0 : tc };
-    const opc = document.querySelector('input[name="opc"]:checked');
-    if (opc && cur.provider === 'quo') out.one_party_per_channel = opc.value === 'yes';
-    out.complete = $('complete').checked;
-    return out;
+    $('scoreNote').textContent = saved.complete && QUESTIONS.filter(x => x.req).every(x => saved[x.k] !== undefined) ? 'Done ✓' : '';
   }
   async function saveScores() {
-    const s = collect();
-    if (JSON.stringify(s).includes('null')) { $('scoreNote').textContent = 'Whole numbers only.'; return; }
-    if (stage() === 'transcript') s.noise = ((reviews.transcript || {}).scores || {}).noise;
-    const id = cur.id, st = stage();
+    const id = cur.id;
+    const missing = QUESTIONS.filter(x => x.req && answers[x.k] === undefined).map(x => x.q);
+    const s = { noise: ((reviews.transcript || {}).scores || {}).noise, ...answers, complete: missing.length === 0 };
     try {
-      const r = await api('/api/comms-eval/items/' + id + '/review/' + st, 'PUT', { scores: s });
+      const r = await api('/api/comms-eval/items/' + id + '/review/transcript', 'PUT', { scores: s });
       if (!still(id)) return;
-      reviews[st] = { ...(reviews[st] || {}), scores: r.scores };
-      $('scoreNote').textContent = 'Saved.';
+      reviews.transcript = { ...(reviews.transcript || {}), scores: r.scores };
+      $('scoreNote').textContent = missing.length ? 'Saved — still to answer: ' + missing.join(' · ') : 'Done ✓';
     } catch (e) { if (still(id)) $('scoreNote').textContent = errText(e); }
   }
 

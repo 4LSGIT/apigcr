@@ -278,10 +278,10 @@ maybe('comms archive S0 evaluation on real MySQL', () => {
     expect((await get(`/api/comms-eval/items/${id}/transcript`, SS)).status).toBe(200);
     expect((await call('PUT', `/api/comms-eval/items/${id}/review/transcript`, { scores: { noise: 'N1' } }, SS)).status).toBe(409);
     const ok = await call('PUT', `/api/comms-eval/items/${id}/review/transcript`,
-      { scores: { noise: 'N3', turns: { total: 10, correct: 9 }, complete: true } }, SS);
+      { scores: { noise: 'N3', accuracy: 4, key_items: 'some_wrong', speakers: 'mostly_right', usable: 'with_fixes', complete: true } }, SS);
     expect(ok.status).toBe(200);
     const [row] = await q('SELECT scores FROM comms_eval_reviews WHERE media_id = ? AND stage = ?', [id, 'transcript']);
-    expect(det({ details: row.scores })).toEqual({ noise: 'N3', turns: { total: 10, correct: 9 }, complete: true });
+    expect(det({ details: row.scores })).toEqual({ noise: 'N3', accuracy: 4, key_items: 'some_wrong', speakers: 'mostly_right', usable: 'with_fixes', complete: true });
   });
 
   test('B4 atomic freeze: a transcript served while a save holds the row waits for it — never a tag changed after serving', async () => {
@@ -320,53 +320,51 @@ maybe('comms archive S0 evaluation on real MySQL', () => {
   });
 
   // ── V ──────────────────────────────────────────────────────────────────
-  test('V1 the validator refuses every shape that is not numbers / booleans / tags — and stores nothing', async () => {
+  test('V1 the A3 validator refuses every shape that is not a fixed choice — and stores nothing', async () => {
     const id = await sampled();
     const bad = [
-      { noise: 'loud' }, { noise: 'N1', note: 'client said x' }, {},
-      { noise: 'N1', windows: [{ start_s: 0, words: 'ten', sub: 0, ins: 0, del: 0 }] },
-      { noise: 'N1', windows: [{ start_s: -1, words: 10, sub: 0, ins: 0, del: 0 }] },
-      { noise: 'N1', windows: [{ start_s: 0, words: 10, sub: 6, ins: 0, del: 5 }] },
-      { noise: 'N1', windows: [{ start_s: 0, words: 10, sub: 0, ins: 0, del: 0, text: 'x' }] },
-      { noise: 'N1', windows: [1, 2, 3] },
-      { noise: 'N1', items: { names: { heard: 2, correct: 3 } } },
-      { noise: 'N1', items: { names: { heard: 2, correct: 1, list: 'Smith' } } },
-      { noise: 'N1', items: { addresses: { heard: 1, correct: 1 } } },
-      { noise: 'N1', turns: { total: 3, correct: 4 } },
-      { noise: 'N1', complete: 'yes' }, { noise: 'N1', one_party_per_channel: 1 },
-      { noise: 'N1', turns: { total: 1.5, correct: 1 } },
+      { noise: 'loud' }, { noise: 'N1', note: 'client said x' }, {}, { accuracy: 4 },
+      { noise: 'N1', accuracy: 0 }, { noise: 'N1', accuracy: 6 }, { noise: 'N1', accuracy: 4.5 }, { noise: 'N1', accuracy: '4' },
+      { noise: 'N1', key_items: 'mostly' }, { noise: 'N1', speakers: 'Right' }, { noise: 'N1', usable: true },
+      { noise: 'N1', worst: 'the judge name' }, { noise: 'N1', variant_better: 'left' },
+      { noise: 'N1', complete: 'yes' },
+      { noise: 'N1', complete: true },                                                    // "done" without the answers (Fred's case)
+      { noise: 'N1', accuracy: 4, key_items: 'all_right', speakers: 'right', complete: true },   // usable missing
+      { noise: 'N1', windows: [{ start_s: 0, words: 10, sub: 0, ins: 0, del: 0 }] },            // the pre-A3 count fields
+      { noise: 'N1', items: { names: { heard: 1, correct: 1 } } }, { noise: 'N1', turns: { total: 1, correct: 1 } },
+      { noise: 'N1', key_items: { v: 'all_right' } }, { noise: 'N1', __proto__: { x: 1 }, worst: 'none', extra: 1 },
     ];
     for (const scores of bad) {
       const r = await call('PUT', `/api/comms-eval/items/${id}/review/transcript`, { scores }, SS);
       expect([r.status, JSON.stringify(scores)]).toEqual([400, JSON.stringify(scores)]);
     }
     expect((await call('PUT', `/api/comms-eval/items/${id}/review/transcript`, { scores: 'N1' }, SS)).status).toBe(400);
-    expect((await call('PUT', `/api/comms-eval/items/${id}/review/transcript_alt`, { scores: { noise: 'N1' } }, SS)).status).toBe(400);
+    const alt = await call('PUT', `/api/comms-eval/items/${id}/review/transcript_alt`, { scores: { noise: 'N1' } }, SS);
+    expect(alt.status).toBe(400);
+    expect(alt.json.message).toMatch(/Retired/);
     expect((await call('PUT', `/api/comms-eval/items/${id}/review/summary`, { scores: {} }, SS)).status).toBe(400);
     expect((await call('PUT', `/api/comms-eval/items/${id}/review/other`, { scores: {} }, SS)).status).toBe(400);
     expect(await q('SELECT * FROM comms_eval_reviews')).toHaveLength(0);
     const rows = await q("SELECT status, error_message FROM admin_audit_log WHERE tool = 'comms_archive'");
     expect(rows.length).toBeGreaterThanOrEqual(bad.length);
     for (const r of rows) expect(r).toEqual({ status: 'rejected_bad_request', error_message: 'invalid request' });
-    expect(JSON.stringify(rows)).not.toMatch(/note|list|text|client said|Smith/);
+    expect(JSON.stringify(rows)).not.toMatch(/note|client said|judge|accuracy|usable/);
   });
 
-  test('V2 a full valid score sheet is stored exactly as normalized', async () => {
-    const id = await sampled();
-    const scores = { noise: 'N2', windows: [{ start_s: 30, words: 120, sub: 4, ins: 1, del: 2 }, { start_s: 200, words: 90, sub: 0, ins: 0, del: 0 }],
-      items: { names: { heard: 3, correct: 2 }, amounts: { heard: 1, correct: 1 } }, turns: { total: 14, correct: 13 },
-      one_party_per_channel: false, complete: true };
+  test('V2 an A3 sheet is stored exactly as normalized; partial sheets save as not done', async () => {
+    const id = await sampled({ provider: 'quo', channel: 6 }, 'S5');
+    const scores = { noise: 'N2', accuracy: 5, key_items: 'none', speakers: 'right', usable: 'yes', worst: 'none',
+      variant_better: 'per_channel', complete: true };
     const r = await call('PUT', `/api/comms-eval/items/${id}/review/transcript`, { scores }, SS);
     expect(r.status).toBe(200);
     expect(r.json.scores).toEqual(scores);
     const [row] = await q('SELECT reviewer_id, stage, scores FROM comms_eval_reviews');
     expect(row).toMatchObject({ reviewer_id: 1, stage: 'transcript' });
     expect(det({ details: row.scores })).toEqual(scores);
-    const alt = await call('PUT', `/api/comms-eval/items/${id}/review/transcript_alt`, { scores: { turns: { total: 14, correct: 14 } } }, SS);
-    expect(alt.status).toBe(200);
+    const part = await call('PUT', `/api/comms-eval/items/${id}/review/transcript`, { scores: { noise: 'N2', accuracy: 3, complete: false } }, SS);
+    expect(part.status).toBe(200);
     const mine = await get(`/api/comms-eval/items/${id}/review`, SS);
-    expect(mine.json.reviews).toEqual({ transcript: { scores, transcript_opened: false },
-      transcript_alt: { scores: { turns: { total: 14, correct: 14 } }, transcript_opened: false } });
+    expect(mine.json.reviews).toEqual({ transcript: { scores: { noise: 'N2', accuracy: 3, complete: false }, transcript_opened: false } });
     expect((await get(`/api/comms-eval/items/${id}/review`, SU)).json.reviews).toEqual({});   // only my own
   });
 
@@ -400,13 +398,17 @@ maybe('comms archive S0 evaluation on real MySQL', () => {
   test('L1 the list: ids, stratum, line name, day, length, availability, my progress — never the party number', async () => {
     const a = await sampled({}, 'S2', 240);
     const b = await sampled({ restricted: 1 }, 'S1', 25);
-    await call('PUT', `/api/comms-eval/items/${a}/review/transcript`, { scores: { noise: 'N1', complete: true } }, SS);
+    await call('PUT', `/api/comms-eval/items/${a}/review/transcript`, { scores: { noise: 'N3', accuracy: 4, key_items: 'some_wrong', speakers: 'mostly_right', usable: 'with_fixes', complete: true } }, SS);
+    // the pre-A3 row shape Fred left on call 948: "complete" with no scores — must list as NOT done
+    const c = await sampled({}, 'S1', 25);
+    await q("INSERT INTO comms_eval_reviews (reviewer_id, media_id, stage, scores) VALUES (1, ?, 'transcript', ?)", [c, JSON.stringify({ noise: 'N1', complete: true })]);
     const r = await get('/api/comms-eval/items', SS);
     expect(r.status).toBe(200);
     expect(r.json.me).toEqual({ su: false });
     const byId = Object.fromEntries(r.json.items.map(i => [i.id, i]));
     expect(byId[a]).toMatchObject({ stratum: 'S2', provider: 'ringcentral', line: 'Main', day: '2026-08-18', audio_s: 240,
-      available: true, transcript_ready: false, mine: { transcript: { saved: true, complete: true, noise: 'N1' } } });
+      available: true, transcript_ready: false, mine: { transcript: { saved: true, complete: true, noise: 'N3' } } });
+    expect(byId[c].mine).toEqual({ transcript: { saved: true, complete: false, noise: 'N1' } });   // re-scored under A3
     expect(byId[b]).toBeUndefined();                                   // restricted: hidden from a reviewer
     const suList = Object.fromEntries((await get('/api/comms-eval/items', SU)).json.items.map(i => [i.id, i]));
     expect(suList[b]).toMatchObject({ available: false, windows: [{ start_s: 0, whole: true }] });   // SU still sees it

@@ -56,6 +56,18 @@ describe('comms eval review page', () => {
     expect(open).toMatch(/if \(!still\(it\.id\)\) return;/);
   });
 
+  test('A3: the page offers exactly the choices the server accepts (no typing anywhere)', () => {
+    const lit = SCRIPT.split('const QUESTIONS = ')[1].split('];')[0] + ']';
+    const QUESTIONS = vm.runInNewContext(lit);
+    const { ENUMS, REQUIRED_FOR_COMPLETE } = require('../services/commsEvalService');
+    const byKey = Object.fromEntries(QUESTIONS.map(x => [x.k, x]));
+    for (const [k, allowed] of Object.entries(ENUMS)) expect([k, byKey[k] && byKey[k].o.map(o => o[0])]).toEqual([k, allowed]);
+    expect(byKey.accuracy.o.map(o => o[0])).toEqual([1, 2, 3, 4, 5]);
+    expect(Object.keys(byKey).sort()).toEqual(['accuracy', ...Object.keys(ENUMS)].sort());
+    expect(QUESTIONS.filter(x => x.req).map(x => x.k).sort()).toEqual([...REQUIRED_FOR_COMPLETE].sort());
+    expect(PAGE).not.toMatch(/<input[^>]+type="(number|text)"|<textarea/);
+  });
+
   test('it only runs inside the shell (waits for the parent apiSend)', () => {
     expect(SCRIPT).toMatch(/P !== window && typeof P\.apiSend === 'function'/);
   });
