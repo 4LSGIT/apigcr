@@ -79,6 +79,7 @@ const limits = {
   stuckBackoffMin: 360,
   notYetBackoffMin: 30,        // Quo recording still processing
   notYetAlertHours: 24,        // a call this old still "not yet" → alert (S1)
+  forbiddenRecheckMin: 1440,   // a Quo 403 (resource-level) parks its row this long
   driftBackoffMin: 120,
   noneAfterHours: 24,
   noLineBackoffMin: 360,
@@ -220,7 +221,7 @@ async function _nextDue(db, skipIds, skipProviders) {
     `SELECT m.id, m.kind, m.provider, m.source_id, m.part, m.captured_at, m.created_at,
             m.attempts, m.channel_id,
             e.provider_ref, e.line_number,
-            pl.id AS line_id, pl.credential_id
+            pl.id AS line_id, pl.credential_id, pl.display_name AS line_name
        FROM comms_media m
        JOIN phone_event_log e ON e.id = m.source_id
        LEFT JOIN phone_lines pl ON pl.phone_number = e.line_number
@@ -260,11 +261,12 @@ async function runMediaSweep(db, opts = {}) {
     retried: 0, not_yet: 0, drift: 0, no_line: 0, rc_used: 0, quo_used: 0,
     stopped: {}, stop: null,
   };
-  const acc = { goneIds: [], failedIds: [], stuckIds: [], drift: [], notYetOld: [], noLine: new Map() };
+  const acc = { goneIds: [], failedIds: [], stuckIds: [], drift: [], notYetOld: [], noLine: new Map(), quoForbidden: new Map() };
   try {
     await _tick(db, opts, out, acc, startedAt);
   } finally {
     await _rowAlerts(db, acc);
+    await _quoForbiddenAlerts(db, acc, out);
     out.elapsed_ms = Date.now() - startedAt;
   }
   return out;
@@ -424,7 +426,7 @@ async function _tick(db, opts, out, acc, startedAt) {
           // ── Quo recording: list, then (per row) the item's signed URL ──
           if (!await slot('quo')) { await ops.refund(db, row.id, null); continue; }
           const r = await quo.listCallRecordings(db, { credentialId: row.credential_id, callId: row.provider_ref, timeoutMs: Math.min(io(), 30_000) });
-          const stopped = await _apiStatus(db, row, r, attemptsNow, 'quo', 'call-recordings', stopProvider, count, out);
+          const stopped = await _apiStatus(db, row, r, attemptsNow, 'quo', 'call-recordings', stopProvider, count, out, acc);
           if (stopped) continue;
           const data = r.json && r.json.data;
           if (!Array.isArray(data)) { await drift(row, `call-recordings: \`data\` is ${r.json === undefined ? 'unparseable' : (data === undefined ? 'missing' : typeof data)}`); continue; }
@@ -508,7 +510,7 @@ async function _tick(db, opts, out, acc, startedAt) {
           if (!ord) { await drift(row, `quo mms part ${JSON.stringify(row.part)}`); continue; }
           if (!await slot('quo')) { await ops.refund(db, row.id, null); continue; }
           const r = await quo.getMessage(db, { credentialId: row.credential_id, messageId: row.provider_ref, timeoutMs: Math.min(io(), 30_000) });
-          const stopped = await _apiStatus(db, row, r, attemptsNow, 'quo', 'messages', stopProvider, count, out);
+          const stopped = await _apiStatus(db, row, r, attemptsNow, 'quo', 'messages', stopProvider, count, out, acc);
           if (stopped) continue;
           const media = r.json && r.json.data && r.json.data.media;
           if (!Array.isArray(media)) { await drift(row, `messages: media is ${r.json === undefined ? 'unparseable' : (media === undefined ? 'missing' : typeof media)}`); continue; }
@@ -637,15 +639,39 @@ async function _tick(db, opts, out, acc, startedAt) {
 }
 
 /**
- * A Quo API status other than 200: 429 → refund + stop Quo for the tick;
- * 401/403 → refund + no_auth; anything else → provider transient. Returns
- * true when the row was handled (caller continues).
+ * A Quo API status other than 200:
+ *   429 → refund + stop Quo for the tick;
+ *   401 → the CREDENTIAL: refund + no_auth, stop Quo for the tick;
+ *   403 → the RESOURCE (live 2026-10-14: Quo 0900403 "You are forbidden to
+ *         access the requested Call Recordings" on one line while others are
+ *         fine — Quo forbids per line): park THAT row uncharged
+ *         (forbiddenRecheckMin), one alert per line, and the tick goes on
+ *         with every other row and line. Terminal: the no-cliff rule (failed
+ *         30 d after the row was created ≈ its first try). A credential-wide
+ *         403 cannot hide this way: if every Quo request of a tick is a 403
+ *         across ≥ 2 lines, the credential alert is raised too.
+ *   anything else → provider transient.
+ * Returns true when the row was handled (caller continues).
  */
-async function _apiStatus(db, row, r, attemptsNow, provider, label, stopProvider, count, out) {
+async function _apiStatus(db, row, r, attemptsNow, provider, label, stopProvider, count, out, acc) {
   if (r.status === 200) return false;
   if (r.status === 429) {
     await ops.refund(db, row.id, `${provider} 429`);
     stopProvider(provider, 'rate_limited');
+    return true;
+  }
+  if (provider === 'quo' && r.status === 403) {
+    const endpoint = `/v1/${label}`;
+    const qe = _quoError(r.errorText);
+    const why = `quo 403${qe.code ? ` ${qe.code}` : ''} on ${endpoint}: ${qe.message || clamp(r.errorText, 200) || '(no body)'}`;
+    const t = ops.terminalReason(row, { uncharged: true });
+    if (t) { await ops.fail(db, row.id, `${why} — ${t}`); count('failed', row.id); }
+    else await ops.park(db, row.id, limits.forbiddenRecheckMin, why);
+    out.quo_forbidden = (out.quo_forbidden || 0) + 1;
+    const k = String(row.line_number || '(none)');
+    const e = acc.quoForbidden.get(k) || { line: k, name: row.line_name || null, credential_id: row.credential_id, kinds: new Set(), count: 0, message: null, code: null };
+    e.kinds.add(label); e.count++; e.message = qe.message || e.message; e.code = qe.code || e.code;
+    acc.quoForbidden.set(k, e);
     return true;
   }
   if (r.status === 401 || r.status === 403) {
@@ -656,6 +682,51 @@ async function _apiStatus(db, row, r, attemptsNow, provider, label, stopProvider
   }
   count(await ops.transient(db, row, attemptsNow, `${label} ${r.status}: ${r.errorText || ''}`), row.id);
   return true;
+}
+
+/** Quo's error body ({message, code, status, title}) → {code, message}; tolerant of anything else. */
+function _quoError(text) {
+  try {
+    const j = JSON.parse(String(text || ''));
+    return { code: j && j.code != null ? clamp(String(j.code), 20) : null, message: j && j.message ? clamp(String(j.message), 200) : null };
+  } catch (_) {
+    return { code: null, message: null };
+  }
+}
+
+/**
+ * One escalating alert PER LINE for Quo 403s (group
+ * comms_archive_quo_forbidden:<line>) — the line and its name, which
+ * endpoints, how many rows of that line now wait, Quo's message. Plus the
+ * guard: a tick whose Quo requests were ALL 403, across ≥ 2 lines, also
+ * raises the credential-level no_auth alert. Never throws.
+ */
+async function _quoForbiddenAlerts(db, acc, out) {
+  try {
+    if (!acc.quoForbidden.size) return;
+    for (const e of acc.quoForbidden.values()) {
+      const [[c]] = await db.query(
+        `SELECT COUNT(*) AS n FROM comms_media m JOIN phone_event_log e ON m.source_table = 'phone_event_log' AND e.id = m.source_id
+          WHERE m.provider = 'quo' AND m.state = 'pending' AND m.last_error LIKE 'quo 403%' AND e.line_number = ?`, [e.line]);
+      const kinds = [...e.kinds].map(k => (k === 'call-recordings' ? 'recordings' : k === 'messages' ? 'MMS' : k === 'call-voicemails' ? 'voicemails' : k)).join(' + ');
+      await ops.escalatingAlert(db, `comms_archive_quo_forbidden:${e.line}`, 'comms_archive_quo_forbidden',
+        `Comms archive: Quo forbids ${kinds} on line ${e.line}${e.name ? ` (${e.name})` : ''}`,
+        `Quo answered 403${e.code ? ` ${e.code}` : ''}: "${e.message || '(no message)'}". ${Number(c.n)} row(s) of this line are ` +
+        `parked (re-checked every ${limits.forbiddenRecheckMin / 60} h, uncharged; failed after ${limits.noCliffDays} days). ` +
+        `Other lines are unaffected. Likely a per-line recording / access setting in Quo.`,
+        { line: e.line, name: e.name, kinds: [...e.kinds], parked: Number(c.n), quo_code: e.code, quo_message: e.message });
+    }
+    const lines = acc.quoForbidden.size;
+    if (out.quo_used > 0 && (out.quo_forbidden || 0) >= out.quo_used && lines >= 2) {
+      const first = acc.quoForbidden.values().next().value;
+      await _noAuthAlert(db, 'quo', first.credential_id, {
+        endpoint: `every Quo request this tick (${out.quo_used}) across ${lines} lines`, status: 403,
+        errorText: clamp(first.message || '', 300),
+      });
+    }
+  } catch (err) {
+    console.error('[COMMS ARCHIVE] quo forbidden alerts failed:', err.message);
+  }
 }
 
 /**

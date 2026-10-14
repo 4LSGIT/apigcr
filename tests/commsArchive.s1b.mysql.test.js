@@ -368,16 +368,16 @@ maybe('comms archive S1b on real MySQL', () => {
 
   test('AUTH a provider 401/403 records WHAT was refused: endpoint template, status, error text — never the key', async () => {
     const cid = await call();
-    quoF.recs[`AC${cid}`] = { status: 403, json: null, errorText: '{"message":"Forbidden","code":"0300403","docs":"https://quo.com/docs"}' };
+    quoF.recs[`AC${cid}`] = { status: 401, json: null, errorText: '{"message":"Unauthorized","code":"0300401","docs":"https://quo.com/docs"}' };
     const out = await runMedia();
     expect(out.stopped.quo).toBe('no_auth');
-    expect(out.quo_auth_error).toEqual({ endpoint: '/v1/call-recordings', status: 403,
-      errorText: '{"message":"Forbidden","code":"0300403","docs":"https://quo.com/docs"}' });
+    expect(out.quo_auth_error).toEqual({ endpoint: '/v1/call-recordings', status: 401,
+      errorText: '{"message":"Unauthorized","code":"0300401","docs":"https://quo.com/docs"}' });
     const [a] = await q("SELECT message, context FROM system_alerts WHERE group_key = 'comms_archive_no_auth:10'");
     const ctx = typeof a.context === 'string' ? JSON.parse(a.context) : a.context;
-    expect(ctx).toMatchObject({ credential_id: 10, provider: 'quo', endpoint: '/v1/call-recordings', status: 403 });
-    expect(ctx.error_text).toMatch(/0300403/);
-    expect(a.message).toMatch(/quo answered 403 on \/v1\/call-recordings: \{"message":"Forbidden"/);
+    expect(ctx).toMatchObject({ credential_id: 10, provider: 'quo', endpoint: '/v1/call-recordings', status: 401 });
+    expect(ctx.error_text).toMatch(/0300401/);
+    expect(a.message).toMatch(/quo answered 401 on \/v1\/call-recordings: \{"message":"Unauthorized"/);
     expect(JSON.stringify(a)).not.toMatch(/AC\d+|Authorization|Bearer/);       // a template, no ids, no header
     // RC, for symmetry
     await sms({ logData: { attachments: [{ id: '4011' }] } });
@@ -387,6 +387,63 @@ maybe('comms archive S1b on real MySQL', () => {
       errorText: '{"errorCode":"OAU-149","message":"Invalid token"}' });
     const [b] = await q("SELECT context FROM system_alerts WHERE group_key = 'comms_archive_no_auth:9'");
     expect((typeof b.context === 'string' ? JSON.parse(b.context) : b.context).error_text).toMatch(/OAU-149/);
+  });
+
+  const FORBID = { status: 403, json: null, errorText: '{"message":"You are forbidden to access the requested Call Recordings","code":"0900403","status":403,"title":"Forbidden"}' };
+
+  test('Q403a a Quo 403 is the RESOURCE: line A parked + alerted per line, line B archived in the same tick', async () => {
+    const a = await call({ line: '2489654574', ageDays: 9 });                       // oldest, first in line
+    const b = await call({ line: '2484179800', ageDays: 5 });
+    quoF.recs[`AC${a}`] = FORBID;
+    quoF.recs[`AC${b}`] = { status: 200, json: { data: [{ id: 'RB', status: 'completed', url: 'https://files.quo.example/rb', type: 'audio/mpeg' }] } };
+    quoF.urls['https://files.quo.example/rb'] = () => audio(Buffer.from('rb'));
+    const out = await runMedia();
+    expect(out.stopped.quo).toBeUndefined();                                        // the tick went on
+    expect(out.quo_forbidden).toBe(1);
+    const by = Object.fromEntries((await rows()).map(r => [r.source_id, r]));
+    expect(by[a]).toMatchObject({ state: 'pending', attempts: 0 });
+    expect(by[a].last_error).toBe('quo 403 0900403 on /v1/call-recordings: You are forbidden to access the requested Call Recordings');
+    expect((new Date(by[a].next_attempt_at) - Date.now()) / 3_600_000).toBeGreaterThan(23.9);
+    expect(by[b].state).toBe('archived');
+    const al = await q("SELECT group_key, severity, title, context FROM system_alerts WHERE group_key LIKE 'comms_archive_%'");
+    const fa = al.filter(x => x.group_key === 'comms_archive_quo_forbidden:2489654574');
+    expect(fa.length).toBe(1);
+    expect(fa[0].title).toMatch(/Quo forbids recordings on line 2489654574/);
+    expect((typeof fa[0].context === 'string' ? JSON.parse(fa[0].context) : fa[0].context)).toMatchObject({ parked: 1, quo_code: '0900403' });
+    expect(al.filter(x => x.group_key.startsWith('comms_archive_no_auth'))).toEqual([]);   // ONE line forbidden ≠ the credential
+  });
+
+  test('Q403b a Quo 401 is still the credential: stop Quo for the tick', async () => {
+    const a = await call({ line: '2489654574', ageDays: 9 });
+    const b = await call({ line: '2484179800', ageDays: 5 });
+    quoF.recs[`AC${a}`] = { status: 401, json: null, errorText: '{"code":"0300401"}' };
+    const out = await runMedia();
+    expect(out.stopped.quo).toBe('no_auth');
+    expect(quoF.calls.filter(c => c[0] === 'rec').map(c => c[1])).toEqual([`AC${a}`]);    // b never tried
+    expect((await rows()).find(r => r.source_id === b).attempts).toBe(0);
+  });
+
+  test('Q403c 403 on EVERY Quo request across ≥ 2 lines → both per-line alerts AND the credential alert', async () => {
+    const a = await call({ line: '2489654574', ageDays: 9 });
+    const b = await call({ line: '2484179800', ageDays: 5 });
+    quoF.recs[`AC${a}`] = FORBID;
+    quoF.recs[`AC${b}`] = FORBID;
+    const out = await runMedia();
+    expect(out).toMatchObject({ quo_forbidden: 2, quo_used: 2 });
+    const g = (await alerts()).map(x => x.group_key);
+    expect(g).toEqual(expect.arrayContaining(['comms_archive_quo_forbidden:2489654574', 'comms_archive_quo_forbidden:2484179800', 'comms_archive_no_auth:10']));
+  });
+
+  test('Q403d every request 403 but on ONE line → the per-line alert only (not the credential)', async () => {
+    const a = await call({ line: '2489654574', ageDays: 9 });
+    const b = await call({ line: '2489654574', ageDays: 8 });
+    quoF.recs[`AC${a}`] = FORBID;
+    quoF.recs[`AC${b}`] = FORBID;
+    const out = await runMedia();
+    expect(out).toMatchObject({ quo_forbidden: 2, quo_used: 2 });
+    const g = (await alerts()).map(x => x.group_key);
+    expect(g).toContain('comms_archive_quo_forbidden:2489654574');
+    expect(g.filter(x => x.startsWith('comms_archive_no_auth'))).toEqual([]);
   });
 
   // ── T — the no-cliff terminal rule ──────────────────────────────────────
