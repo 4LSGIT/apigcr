@@ -151,6 +151,20 @@ describe('comms.html — archive on the call bubble', () => {
     expect(env.errors).toEqual([]);
   });
 
+  test('R8: a summary always carries the "AI-generated" label (house hint class, no inline style); no summary, no label', async () => {
+    const env = await boot(handler());
+    await openThread(env);
+    const { doc } = env;
+    const b = bub(doc, 10);
+    const label = b.querySelector('.ca-ai');
+    expect(label && label.textContent).toBe('AI-generated — check the recording before relying on it');
+    expect(label.classList.contains('yc-hint')).toBe(true);
+    expect(label.getAttribute('style')).toBeNull();
+    expect(label.previousElementSibling.className).toBe('ca-sum');
+    expect(bub(doc, 11).querySelector('.ca-ai')).toBeNull();                 // a voicemail call with no summary
+    expect(bub(doc, 15).querySelector('.ca-ai')).toBeNull();                 // a purged recording
+  });
+
   test('a URL that is not storage.googleapis.com is refused — never put in a src', async () => {
     const env = await boot(handler({ urls: { 501: () => ({ status: 'success', url: 'https://evil.example/x.mp3', mime: 'audio/mpeg', inline: true, expires_in: 300 }) } }));
     await openThread(env);

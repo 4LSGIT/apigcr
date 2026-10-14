@@ -493,6 +493,8 @@
      Everything below is built with textContent (the C3 gate); bytes come from
      5-minute signed URLs on storage.googleapis.com, never this origin. */
   .ca-sum { display: block; margin-top: 4px; color: var(--text); font-weight: 400; white-space: pre-wrap; }
+  /* The R8 label under a summary: the house hint (.yc-hint) — only its wrapping is set here. */
+  .bub .ca-ai { white-space: normal; margin-top: 2px; }
   .ca-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 6px; white-space: normal; min-width: 0; }
   .ca-vm { display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; font-weight: 600; color: var(--text-2); }
   .ca-badge { display: inline-block; padding: 1px 7px; border-radius: 999px; font-size: 10px; font-weight: 700; text-transform: uppercase;
@@ -3724,6 +3726,7 @@ function callBubble(m) {
   },
     h('span', { className: 'ct' }, icon(quiet ? 'fa-phone-slash' : 'fa-phone'), phCallLabel(m)),
     a && a.summary_text ? h('span', { className: 'ca-sum' }, a.summary_text) : null,
+    a && a.summary_text ? h('span', { className: 'yc-hint ca-ai' }, CA_AI_LABEL) : null,   // R8: every summary says it is AI-generated
     a ? caMediaRow(a, { what: 'recording', label: 'Call recording' }) : null,
     vm ? caMediaRow(vm, { what: 'voicemail', label: 'Voicemail', chip: true }) : null,
     h('span', { className: 'bt' }, phBubbleTime(m)));
@@ -3761,6 +3764,8 @@ const ca = {
   tx: null,            // the open transcript: { mediaId }
 };
 const CA_URL_SLACK_MS = 60_000;
+/** R8 (design §0, §6.4): on every rendered transcript and summary. */
+const CA_AI_LABEL = 'AI-generated — check the recording before relying on it';
 const CA_URL_RE = /^https:\/\/storage\.googleapis\.com\//;
 const caAdmin = () => !!(ph.thread && ph.thread.archiveAdmin);
 /** play(): a promise in today's browsers, undefined in older engines — never an unhandled rejection either way. */
@@ -3967,7 +3972,7 @@ async function openTranscript(item, label) {
   try {
     const t = await api(`/api/comms-archive/media/${encodeURIComponent(id)}/transcript`, 'GET');
     if (!ca.tx || ca.tx.mediaId !== id) return;
-    E('ca-tx-label').textContent = t.label || 'AI-generated — check the recording before relying on it';
+    E('ca-tx-label').textContent = t.label || CA_AI_LABEL;
     const segs = Array.isArray(t.segments) ? t.segments : [];
     const seek = (at) => caListen(id, E('ca-tx-player'), { at }).catch((err) => toast(`Could not play: ${err.message}`));
     // Speakers: 'A', 'B'… (diarized) or 'ch1', 'ch2'… (one per recorded channel) — S2's segments.
