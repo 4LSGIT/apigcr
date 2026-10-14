@@ -728,6 +728,10 @@ maybe('comms archive S4 on real MySQL', () => {
 
   // ── H — health ──────────────────────────────────────────────────────────
   test('H1 SU + elevation: counts by kind/provider/state, oldest pending, jobs with their last run, open archive alerts only', async () => {
+    // The llm half reads ai_calls / comms_summaries — tables other suites leave
+    // behind in a shared _test DB. This test owns them: absent first, then
+    // built here with rows of its own (never another suite's state).
+    for (const t of ['ai_calls', 'comms_summaries']) await pool.query(`DROP TABLE IF EXISTS ${t}`);
     const [[job]] = await pool.query("SELECT id FROM scheduled_jobs WHERE idempotency_key = 'comms_archive_media_sweep'");
     await q(`INSERT INTO job_results (job_id, attempt, status, output_data, duration_ms, execution_number) VALUES (?, 1, 'success', ?, 900, 1)`,
       [job.id, JSON.stringify({ archived: 3, discovered_mms: 2 })]);
@@ -758,7 +762,13 @@ maybe('comms archive S4 on real MySQL', () => {
     await q(`INSERT INTO comms_transcripts (media_id, phone_event_id, state, skip_reason) VALUES (?, ?, 'skipped', 'over_cap'), (?, ?, 'pending', NULL)`,
       [S.rec1, S.call1, S.recR, S.callR]);
     const r3 = await get('/api/comms-archive/health', { t: T.su(), headers: { 'X-SU-Elevation': mintElevationToken(U.SU) } });
-    expect(r3.json.cost).toEqual({ month_to_date_cents: { stt: 5.25, llm: null } });   // the ledger: billed 3.25 + estimate 2.00
+    expect(r3.json.cost).toEqual({ month_to_date_cents: { stt: 5.25, llm: null } });   // the ledger: billed 3.25 + estimate 2.00; no ai_calls table
+    const { creates, alters } = schema.schemaFor(['ai_calls']);
+    for (const st of [...creates, ...alters]) await pool.query(st);
+    await q(`INSERT INTO ai_calls (consumer_ref, status, cost_cents) VALUES ('comms_transcript:1', 'ok', 1.5), ('something_else:9', 'ok', 40)`);
+    const r4 = await get('/api/comms-archive/health', { t: T.su(), headers: { 'X-SU-Elevation': mintElevationToken(U.SU) } });
+    expect(r4.json.cost).toEqual({ month_to_date_cents: { stt: 5.25, llm: 1.5 } });    // only the summaries' ai_calls
+    await pool.query('DROP TABLE IF EXISTS ai_calls');
     expect(r3.json.transcripts.skipped_by_reason).toEqual([{ reason: 'over_cap', n: 1 }]);
     expect(r3.json.transcripts.by_state).toEqual([{ state: 'pending', n: 1 }, { state: 'skipped', n: 1 }]);
   });
