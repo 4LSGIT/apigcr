@@ -479,6 +479,10 @@ function cahRender(d) {
     if ((d.transcripts.skipped_by_reason || []).length) {
       parts.push(el("div", "cah-msg", `Skipped: ${d.transcripts.skipped_by_reason.map((r) => `${r.reason || "—"} ${r.n}`).join(" · ")}`));
     }
+    if (d.redo && d.redo.count) {
+      parts.push(el("div", "cah-msg", `Being redone: ${Number(d.redo.count)} (${d.redo.by_state.map((r) => `${r.state} ${Number(r.n)}`).join(" · ")})` +
+        (d.redo.oldest_requested_at ? ` · oldest asked ${fmtTs(d.redo.oldest_requested_at)} (${ago(d.redo.oldest_requested_at)})` : "")));
+    }
     if (d.cost) {
       const c = d.cost.month_to_date_cents;
       parts.push(el("div", "cah-msg", `This month: transcription ${(c.stt / 100).toFixed(2)} USD${c.llm != null ? ` · summaries ${(c.llm / 100).toFixed(2)} USD` : ""}`));

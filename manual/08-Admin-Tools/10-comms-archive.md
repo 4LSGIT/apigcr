@@ -100,7 +100,7 @@ it to see:
 - **Waiting** — the oldest call / message still waiting per kind, and since
   when; **Why they wait** — the commonest reasons (e.g. Quo refusing a line).
 - **Sweeps** — each archive job's schedule, last run and its counts.
-- **Transcripts and summaries** — how many transcripts are in each state, why any were skipped (e.g. `over_cap` — see [Comms Transcription](09-comms-transcription.md)), the oldest still waiting, and this month's transcription spend (the figure the monthly cap uses).
+- **Transcripts and summaries** — how many transcripts are in each state, why any were skipped (e.g. `over_cap` — see [Comms Transcription](09-comms-transcription.md)), the oldest still waiting, how many are being redone and since when (see *Redoing transcripts or summaries* there), and this month's transcription spend (the figure the monthly cap uses).
 - **Open archive alerts** — the archive's own unresolved alerts (manage them
   in the table below as usual).
 

@@ -540,6 +540,20 @@ describe('systemAlerts.html — Comms archive health', () => {
     expect(calls.filter((c) => c === 'GET /api/comms-archive/health')).toHaveLength(2);
   });
 
+  test('S2c-2: transcripts being redone get one line (by state, oldest asked) — none when there are none', async () => {
+    const withRedo = { ...HEALTH, transcripts: { by_state: [{ state: 'pending', n: 2 }], skipped_by_reason: [], oldest_pending: null },
+      redo: { count: 3, oldest_requested_at: '2026-10-14T11:00:00.000Z', by_state: [{ state: 'failed', n: 1 }, { state: 'pending', n: 2 }] } };
+    const a = await bootSA(withRedo);
+    a.doc.getElementById('caHealth').open = true;
+    await tick(a.window);
+    const line = [...a.doc.querySelectorAll('#caHealthBody .cah-msg')].map(x => x.textContent).find(t => t.startsWith('Being redone'));
+    expect(line).toMatch(/^Being redone: 3 \(failed 1 · pending 2\) · oldest asked /);
+    const b = await bootSA({ ...withRedo, redo: { count: 0, oldest_requested_at: null, by_state: [] } });
+    b.doc.getElementById('caHealth').open = true;
+    await tick(b.window);
+    expect(b.doc.getElementById('caHealthBody').textContent).not.toContain('Being redone');
+  });
+
   test('a failed read says so in the section', async () => {
     const { window, doc } = await bootSA(new Error('Elevation required'));
     const d = doc.getElementById('caHealth');

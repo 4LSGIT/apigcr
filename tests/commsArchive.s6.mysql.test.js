@@ -212,6 +212,25 @@ maybe('comms archive S6 transcript search on real MySQL', () => {
     expect((await find({ q: 'bankruptcy' }, null, { apiKey: process.env.INTERNAL_API_KEY })).status).toBe(403);
   });
 
+  test('G6 S2c-2: a transcript being REDONE keeps its old text in the row and the FULLTEXT index, but search never returns it — until it is transcribed again', async () => {
+    for (const t of ['comms_summaries', 'comms_redo']) await pool.query(`DROP TABLE IF EXISTS ${t}`);
+    for (const f of ['2026-10-15_comms_s3_summaries.sql', '2026-10-15_comms_s2c_max_speakers.sql', '2026-10-15_comms_s2c_redo.sql']) {
+      for (const st of schema.migrationStatements(f)) await pool.query(st);
+    }
+    await q("UPDATE app_settings SET `value` = 'on' WHERE `key` = 'comms_transcribe_mode'");
+    const { m } = await rec('the zanzibar mortgage modification');
+    expect(ids(await find({ q: 'zanzibar' }))).toEqual([m]);
+    const r = await require('../services/commsArchiveRedo').redo(pool, { mode: 'transcript', select: { media_ids: [m] }, apply: true }, { userId: 6 });
+    expect(r).toMatchObject({ outcome: 'applied', applied: 1 });
+    const [[ft]] = await pool.query(
+      "SELECT state, COUNT(*) AS n FROM comms_transcripts WHERE MATCH(full_text, summary_text) AGAINST('zanzibar' IN BOOLEAN MODE) GROUP BY state");
+    expect(ft).toEqual({ state: 'pending', n: 1 });                       // still in the index, as 'pending'
+    for (const who of ['su', 'att', 'granted']) expect(ids(await find({ q: 'zanzibar' }, T[who]))).toEqual([]);
+    await q("UPDATE comms_transcripts SET state = 'transcribed' WHERE media_id = ?", [m]);   // as _complete / the restore leave it
+    expect(ids(await find({ q: 'zanzibar' }))).toEqual([m]);
+    for (const t of ['comms_summaries', 'comms_redo']) await pool.query(`DROP TABLE IF EXISTS ${t}`);
+  });
+
   test('G5 result fields: event_id is the call for a recording / Quo voicemail and NULL for an RC voicemail (source_table says why)', async () => {
     const by = new Map((await find({ q: 'bankruptcy' })).json.results.map(x => [x.media_id, x]));
     expect(by.get(S.rec1.m)).toMatchObject({ event_id: S.rec1.e, source_table: 'phone_event_log', line_id: 1, party: P, kind: 'call_recording', restricted: false });

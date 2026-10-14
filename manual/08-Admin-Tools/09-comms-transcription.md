@@ -63,7 +63,7 @@ A missing or non-numeric cap counts as 0: nothing is sent.
 |---|---|---|
 | `comms_stt_credential_id` | 14 | The AssemblyAI credential (Connections). |
 | `comms_stt_quo_stereo` | `diarize` | How a two-channel recording is transcribed in `on`. `diarize`: one mixed track with speaker labels (cheaper). `multichannel`: one transcript per channel, billed per channel. |
-| `comms_stt_max_speakers` | `2` | The most speakers a mixed (one-track) transcript may have — mono calls, voicemails, and stereo calls in `diarize`. Extra voices are merged into existing speakers; without it AssemblyAI sometimes splits a two-person call into many "speakers". `0` = no limit. Anything other than a whole number 0–10 stops transcription (alert `comms_transcribe_config`). Not used for `multichannel`. |
+| `comms_stt_max_speakers` | `2` (set to `0` since 2026-10-15) | The most speakers a mixed (one-track) transcript may have — mono calls, voicemails, and stereo calls in `diarize`. Extra voices are merged into existing speakers; without it AssemblyAI sometimes splits a two-person call into many "speakers". `0` = no limit — the current choice: a limit also merged real voices (a hearing or 341 meeting dialled into, a hold message, an IVR). Anything other than a whole number 0–10 stops transcription (alert `comms_transcribe_config`). Not used for `multichannel`. |
 | `comms_stt_keyterms` | `[]` | JSON list of names or phrases to help recognition, up to 6 words each. Leave empty unless needed: it adds $0.05 per audio hour. |
 | `comms_stt_language_detection` | `1` | `1` means AssemblyAI detects the language. Anything else means English only. |
 
@@ -120,6 +120,53 @@ It is AI-generated, so check the recording before relying on it.
 | `comms_summarize_config` | A summary setting is wrong, or Claude refused the key or the request. The message says which. |
 | `comms_summarize_failed` | A call could not be summarised after three tries. The transcript is still there. |
 | `comms_summarize_refused` | Claude's safety checks declined to summarise a call. No action is needed; the transcript is unaffected. |
+
+### Redoing transcripts or summaries
+
+When transcripts were made with older settings — before the speaker limit,
+or a stereo Quo call made as one mixed track — you can send them back to be
+made again with today's settings. The same goes for summaries, for example
+after switching `comms_summary_model`. SU only, with the password step-up.
+Run it from the browser console on the app (signed in as SU):
+
+```js
+// 1. A DRY RUN (nothing changes): what would be redone, and what it would cost.
+await apiSend('/api/comms-archive/redo', 'POST', { mode: 'transcript', select: { mono_min_speakers: 3 } });
+// 2. The same with apply: true does it, 50 at a time (limit up to 200). Repeat until "remaining" is 0.
+await apiSend('/api/comms-archive/redo', 'POST', { mode: 'transcript', select: { mono_min_speakers: 3 }, apply: true });
+```
+
+| `select` | Picks |
+|---|---|
+| `{ quo_stereo_diarized: true }` | Stereo Quo calls that were transcribed as one mixed track (set `comms_stt_quo_stereo` to `multichannel` first). |
+| `{ mono_min_speakers: 3 }` | One-track calls with 3 or more "speakers" that were made before the speaker limit. |
+| `{ capped: true }` | Calls transcribed while the speaker limit was on (it merged real voices, so it was turned off: `comms_stt_max_speakers` = 0). |
+| `{ summary_model: 'claude-haiku-5-5' }` | With `mode: 'summary'`: summaries made with that model. |
+| `{ media_ids: [123, 456] }` | These items, either mode. |
+
+- **While a transcript is redone it is not shown** — Listen still works, and the
+  new transcript appears in one step when it is ready (normally minutes). Redo
+  items go ahead of new calls in the queue. A summary redo keeps the old summary
+  visible until the new one replaces it.
+- **A redo that fails keeps the old transcript.** If AssemblyAI keeps failing on
+  it, or it is skipped (restricted meanwhile, on the do-not-transcribe list,
+  too short or too long), the old transcript comes back and its summary is made
+  again; a `comms_transcribe_redo_failed` warning lists the items.
+- **Never touched:** restricted calls, numbers on the do-not-transcribe list,
+  and the evaluation sample (unless you name its items in `media_ids` — then
+  BOTH stored versions of its transcript are replaced, including the
+  alternate the evaluation compares against). A call whose summary is being
+  made right now is reported as `busy` — run it again later.
+- **Money:** the dry run shows the estimate and the room left under the
+  monthly cap, after what earlier redos are still waiting to spend. An apply
+  that would go over it is refused (nothing changes): lower `limit`, or raise
+  the cap first. It is also refused while `comms_transcribe_mode` (or, for
+  summaries, `comms_summarize_mode`) is not `on`, and a transcript redo of
+  calls that already have summaries is refused while summaries are off (they
+  would not be made again). A refusal shows as an error in the console; its details (the same
+  counts and estimate) are in the error's `body`.
+- Every call, dry runs included, is recorded in the admin audit log (which
+  items, never what was said).
 
 ### Privacy
 

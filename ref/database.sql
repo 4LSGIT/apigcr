@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-10-14T21:10:54.700Z
+-- Generated: 2026-10-14T23:35:43.566Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:7b114626abcc6b73a2b0de9a4253d38b
+-- Fingerprint: sha256:005fb2fc3c3a1f07cc02289a4f0a0e14
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -898,6 +898,20 @@ CREATE TABLE `comms_no_transcribe` (
   `created_by` tinyint DEFAULT NULL COMMENT 'users.user',
   `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='Numbers whose calls are archived but never transcribed or summarised (P6). SU / SS maintain it (R9); adding a number later does not touch existing transcripts — Restrict or Purge does';
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `comms_redo`
+--
+
+DROP TABLE IF EXISTS `comms_redo`;
+CREATE TABLE `comms_redo` (
+  `transcript_id` bigint unsigned NOT NULL COMMENT 'comms_transcripts.id sent back to be transcribed again (POST /api/comms-archive/redo). Written in the same transaction as the row''s flip to pending; deleted when the new transcript is stored (a stale one is harmless) and by purge',
+  `requested_at` datetime NOT NULL COMMENT 'UTC. The transcribe sweep submits marked rows first, retires the old vendor JSON just before the new POST, and counts only main-job failures since this',
+  `requested_by` tinyint DEFAULT NULL COMMENT 'users.user of the SU who asked',
+  `prev_model` varchar(48) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'comms_transcripts.stt_model of the transcript being redone. The old text stays (hidden) in the row until the new one is stored; a redo that ends failed or skipped is RESTORED to transcribed with this model (the submit overwrote stt_model)'
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='Comms archive S2c-2: transcripts being redone. A side table because comms_transcripts cannot take an ADD COLUMN without ALGORITHM=COPY (its FULLTEXT index refuses INSTANT and INPLACE — ref/COMMS_ARCHIVE_DESIGN.md §5, the schema landmine). Ids and times only';
 
 -- --------------------------------------------------------
 
@@ -4193,6 +4207,12 @@ ALTER TABLE `comms_media`
 ALTER TABLE `comms_no_transcribe`
   ADD PRIMARY KEY (`id`),
   ADD UNIQUE KEY `uq_comms_no_transcribe_phone` (`phone`);
+
+--
+-- Indexes for table `comms_redo`
+--
+ALTER TABLE `comms_redo`
+  ADD PRIMARY KEY (`transcript_id`);
 
 --
 -- Indexes for table `comms_stt_jobs`

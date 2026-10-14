@@ -539,6 +539,7 @@ ref/migrations/2026-10-14_comms_s2_transcripts.sql
 ref/migrations/2026-10-14_sec2_audit_shapes.sql
 ref/migrations/2026-10-14_wf50_text_on_cancel_failure.console.js
 ref/migrations/2026-10-15_comms_s2c_max_speakers.sql
+ref/migrations/2026-10-15_comms_s2c_redo.sql
 ref/migrations/2026-10-15_comms_s3_summaries.sql
 ref/migrations/S1_notes_migration.sql
 ref/migrations/documents_s1.sql
@@ -846,6 +847,7 @@ services/caseService.js
 services/commsArchiveAdmin.js
 services/commsArchiveCommon.js
 services/commsArchiveMediaSweep.js
+services/commsArchiveRedo.js
 services/commsArchiveSearch.js
 services/commsArchiveService.js
 services/commsArchiveSweep.js
@@ -1013,6 +1015,7 @@ tests/commsArchive.s4.pane.test.js
 tests/commsArchive.s6.mysql.test.js
 tests/commsArchive.sweep.mysql.test.js
 tests/commsArchiveCommon.rowOps.mysql.test.js
+tests/commsArchiveRedo.test.js
 tests/commsArchiveSearch.test.js
 tests/commsArchiveService.s2.test.js
 tests/commsArchiveService.test.js

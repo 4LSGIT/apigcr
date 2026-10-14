@@ -33,7 +33,7 @@ const path = require('path');
 const URL_  = process.env.YC_TEST_MYSQL_URL;
 const maybe = URL_ ? describe : describe.skip;
 const PROD_SQL_MODE = 'IGNORE_SPACE,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION';
-const TABLES = ['users', 'system_alerts', 'alert_state', 'app_settings', 'scheduled_jobs', 'credentials'];
+const TABLES = ['users', 'system_alerts', 'alert_state', 'app_settings', 'scheduled_jobs', 'credentials', 'phone_event_log'];
 const FX = path.join(__dirname, 'fixtures', 'comms_s2_audio');
 const META = JSON.parse(fs.readFileSync(path.join(FX, 'meta.json'), 'utf8'));
 const headOf = (f) => fs.readFileSync(path.join(FX, `${f}.head`));
@@ -163,6 +163,11 @@ maybe('comms archive S2 transcription on real MySQL', () => {
       if (!r.ok) throw new Error(`migration: ${r.line}`);
     } finally { conn.release(); }
     for (const s of schema.migrationStatements('2026-10-15_comms_s2c_max_speakers.sql')) await pool.query(s);   // S2c-1's setting row
+    // S3's queue + settings (the redo deletes queue rows), then S2c-2's marker table — both from their migration files.
+    for (const t of ['comms_summaries', 'comms_redo']) await pool.query(`DROP TABLE IF EXISTS ${t}`);
+    for (const f of ['2026-10-15_comms_s3_summaries.sql', '2026-10-15_comms_s2c_redo.sql']) {
+      for (const s of schema.migrationStatements(f)) await pool.query(s);
+    }
     // S0's sample table, as committed on comms-eval (bbefcc0), ref/migrations/2026-10-14_comms_eval.sql §1.
     await pool.query(`CREATE TABLE IF NOT EXISTS comms_eval_items (
       media_id BIGINT UNSIGNED NOT NULL, stratum VARCHAR(4) NOT NULL, seed VARCHAR(32) NOT NULL,
@@ -179,12 +184,13 @@ maybe('comms archive S2 transcription on real MySQL', () => {
   });
   beforeEach(async () => {
     Object.assign(sweep.limits, ORIG);
-    for (const t of ['comms_transcripts', 'comms_stt_jobs', 'comms_media', 'comms_no_transcribe', 'comms_eval_items', 'system_alerts', 'alert_state']) {
+    for (const t of ['comms_transcripts', 'comms_stt_jobs', 'comms_media', 'comms_no_transcribe', 'comms_eval_items', 'comms_summaries', 'comms_redo', 'system_alerts', 'alert_state']) {
       await pool.query(`DELETE FROM ${t}`);
     }
     for (const [k, v] of [['comms_transcribe_mode', 'on'], ['comms_stt_credential_id', '14'], ['comms_min_transcribe_s', '15'],
       ['comms_stt_max_min_per_call', '300'], ['comms_ai_monthly_cap_cents', '7500'], ['comms_stt_quo_stereo', 'diarize'],
-      ['comms_stt_keyterms', '[]'], ['comms_stt_language_detection', '1'], ['comms_stt_max_speakers', '2']]) await set(k, v);
+      ['comms_stt_keyterms', '[]'], ['comms_stt_language_detection', '1'], ['comms_stt_max_speakers', '2'],
+      ['comms_summarize_mode', 'off'], ['comms_summary_model', 'claude-sonnet-5-5']]) await set(k, v);
     await pool.query(`UPDATE credentials SET allowed_urls = '["https://api.assemblyai.com/*"]' WHERE id = 14`);
     process.env.COMMS_ARCHIVE_BUCKET = 'lsg-yc-comms-archive-test';
     gcs = fakeStorage();
@@ -1143,5 +1149,408 @@ maybe('comms archive S2 transcription on real MySQL', () => {
     await q("UPDATE comms_transcripts SET created_at = UTC_TIMESTAMP() - INTERVAL 49 HOUR WHERE media_id = ?", [id]);
     expect(await run()).toMatchObject({ backlog_old: 1 });
     expect((await alerts()).find(a => a.group_key === 'comms_transcribe_backlog')).toMatchObject({ severity: 'warning' });
+  });
+  // ═══ RD — S2c-2 redo (services/commsArchiveRedo.js + the sweep's redo path) ═════════
+  const redo = require('../services/commsArchiveRedo');
+  const rd = (body) => redo.redo(pool, body);
+  const marks = () => q('SELECT transcript_id, requested_by, prev_model FROM comms_redo ORDER BY transcript_id');
+  const utter = (n) => Array.from({ length: n }, (_, i) => ({ speaker: 'ABCDEFGH'[i], start: i * 1000, end: i * 1000 + 900, text: `Line ${i}.`, words: [] }));
+  /** An item through the REAL pipeline to 'transcribed' (diarized with `speakers` voices, unless the job was multichannel). */
+  async function transcribedItem(opts = {}, speakers = 2) {
+    const id = await media(opts);
+    await run();
+    const t = await tr(id);
+    aai.complete(t.stt_job_ref, aai.jobs.get(t.stt_job_ref).body.multichannel ? {} : { utterances: utter(speakers) });
+    await due();
+    await run();
+    expect((await tr(id)).state).toBe('transcribed');
+    return id;
+  }
+  /** A stored transcript written directly (no vendor) — for the selection rules. */
+  async function storedItem({ speakers = 4, model = 'universal-3-5-pro+diarize', channels = 1, state = 'transcribed', summary = null, mediaOpts = {} } = {}) {
+    const id = await media(mediaOpts);
+    await q('UPDATE comms_media SET audio_channels = ?, duration_s = 60 WHERE id = ?', [channels, id]);
+    await q(`INSERT INTO comms_transcripts (media_id, state, stt_vendor, stt_model, speakers, segments, full_text, summary_text, summary_model, transcribed_at)
+             VALUES (?, ?, 'assemblyai', ?, ?, '[{"s":"A","a":0,"b":1,"t":"hi"}]', 'hi there', ?, ?, UTC_TIMESTAMP())`,
+      [id, state, model, speakers, summary, summary ? 'claude-haiku-5-5' : null]);
+    return id;
+  }
+
+  test('RD1 transcript redo (mono, over-split): the dry run changes nothing; apply hides it (the old text KEPT in the row) and drops its summary row; the sweep submits it FIRST with the cap; the old JSON is retired only when the new one is stored', async () => {
+    await set('comms_stt_max_speakers', '0');
+    const a = await transcribedItem({ capturedAt: daysAgo(30) }, 4);
+    const t0 = await tr(a);
+    expect(t0).toMatchObject({ speakers: 4, stt_model: 'universal-3-5-pro+diarize' });
+    const [oldKid] = await kids(a);
+    expect(oldKid.part).toBe('assemblyai');
+    expect(gcs.objects.has(oldKid.object_name)).toBe(true);
+    await q("UPDATE comms_transcripts SET state = 'summarized', summary_text = 'old summary', summary_model = 'claude-haiku-5-5' WHERE id = ?", [t0.id]);
+    await q("INSERT INTO comms_summaries (transcript_id, state) VALUES (?, 'done')", [t0.id]);
+    await set('comms_stt_max_speakers', '2');
+    await set('comms_summarize_mode', 'on');                            // or the cleared summary would not be remade (summaries_off)
+
+    const dry = await rd({ mode: 'transcript', select: { mono_min_speakers: 3 } });
+    expect(dry).toMatchObject({ outcome: 'dry_run', eligible: 1, batch: 1, remaining: 0, media_ids: [a], target_variants: { diarize: 1 } });
+    expect(dry.estimate.batch.stt_cents).toBeGreaterThan(0);
+    expect(dry.estimate.batch.summary_worst_cents).toBeGreaterThan(0);
+    expect((await tr(a)).state).toBe('summarized');
+
+    const ap = await redo.redo(pool, { mode: 'transcript', select: { mono_min_speakers: 3 }, apply: true }, { userId: 6 });
+    expect(ap).toMatchObject({ outcome: 'applied', applied: 1, changed_since_selection: 0, media_ids: [a] });
+    const t1 = await tr(a);
+    expect(t1).toMatchObject({ state: 'pending', summary_text: null, summary_model: null, stt_job_ref: null,
+      speakers: 4, full_text: t0.full_text, stt_model: 'universal-3-5-pro+diarize' });       // the old text stays, hidden by state
+    expect(t1.segments).toEqual(t0.segments);
+    expect(await marks()).toEqual([{ transcript_id: t0.id, requested_by: 6, prev_model: 'universal-3-5-pro+diarize' }]);
+    expect(Number(t1.stt_cost_cents)).toBeCloseTo(Number(t0.stt_cost_cents), 4);      // cost is not content
+    expect(await q('SELECT id FROM comms_summaries WHERE transcript_id = ?', [t0.id])).toEqual([]);
+    expect((await rd({ mode: 'transcript', select: { mono_min_speakers: 3 }, apply: true })).eligible).toBe(0);   // idempotent
+
+    const [ma] = await q('SELECT object_name FROM comms_media WHERE id = ?', [a]);
+    await media({ capturedAt: daysAgo(0) });                            // a NEWER item, discovered in the same tick
+    const before = aai.posts().length;
+    const sub = await run();
+    expect(sub).toMatchObject({ submitted: 2 });
+    expect(sub.redo_retired).toBeUndefined();
+    const posts = aai.posts().slice(before);
+    expect(posts[0].body.audio_url).toContain(ma.object_name);          // the redo first
+    expect(posts[0].body.speaker_options).toEqual({ max_speakers_expected: 2 });
+    expect((await kids(a)).map(k => k.id)).toEqual([oldKid.id]);        // the old JSON survives the submit
+    expect(gcs.objects.has(oldKid.object_name)).toBe(true);
+    aai.complete((await tr(a)).stt_job_ref, { utterances: utter(2) });
+    await due();
+    expect(await run()).toMatchObject({ completed: 1, redo_retired: 1 });
+    expect(await tr(a)).toMatchObject({ state: 'transcribed', speakers: 2, stt_model: 'universal-3-5-pro+diarize+max2' });
+    expect(await marks()).toEqual([]);                                    // the redo is done
+    const [newKid] = await kids(a);
+    expect(newKid).toMatchObject({ part: 'assemblyai', state: 'archived' });
+    expect(newKid.id).not.toBe(oldKid.id);
+    expect(newKid.sha256).not.toBe(oldKid.sha256);                        // the same name, the NEW transcript's bytes
+    expect(JSON.parse(gcs.objects.get(newKid.object_name).buf.toString()).utterances.length).toBe(2);
+  });
+
+  test('RD2 Quo stereo made with diarize → redone as multichannel: the diarized JSON retired, the new one stored as assemblyai-mc', async () => {
+    await set('comms_stt_max_speakers', '0');
+    const qo = await transcribedItem({ provider: 'quo', fixture: 'quo_cbr_js_64k.mp3' }, 6);
+    expect((await tr(qo)).stt_model).toBe('universal-3-5-pro+diarize');
+    await set('comms_stt_max_speakers', '2');
+    await set('comms_stt_quo_stereo', 'multichannel');
+    expect(await rd({ mode: 'transcript', select: { quo_stereo_diarized: true } })).toMatchObject({ eligible: 1, target_variants: { multichannel: 1 } });
+    expect((await rd({ mode: 'transcript', select: { mono_min_speakers: 2 } })).eligible).toBe(0);    // stereo is not mono
+    await rd({ mode: 'transcript', select: { quo_stereo_diarized: true }, apply: true });
+    const before = aai.posts().length;
+    await run();
+    const [p] = aai.posts().slice(before);
+    expect(p.body).toMatchObject({ multichannel: true });
+    expect(p.body.speaker_options).toBeUndefined();
+    expect((await kids(qo)).map(k => k.part)).toEqual(['assemblyai']);   // kept until the new one is stored
+    aai.complete((await tr(qo)).stt_job_ref);
+    await due();
+    await run();
+    expect(await tr(qo)).toMatchObject({ state: 'transcribed', stt_model: 'universal-3-5-pro+multichannel' });
+    expect(await marks()).toEqual([]);
+    expect((await kids(qo)).map(k => k.part)).toEqual(['assemblyai-mc']);
+    expect((await rd({ mode: 'transcript', select: { quo_stereo_diarized: true } })).eligible).toBe(0);
+  });
+
+  test('RD3 never selected: restricted, no-transcribe numbers, eval items (unless named), other states, a non-archived parent, a summary call in flight; hinted / stereo / few-speaker rows are no candidates', async () => {
+    const ok = await storedItem();
+    const restricted = await storedItem({ mediaOpts: { restricted: 1 } });
+    const nt = await storedItem({ mediaOpts: { party: '3135550199' } });
+    await q("INSERT INTO comms_no_transcribe (phone) VALUES ('3135550199')");
+    const ev = await storedItem();
+    await q("INSERT INTO comms_eval_items (media_id, stratum, seed, added_by) VALUES (?, 'S1', 'seed', 1)", [ev]);
+    const busy = await storedItem();
+    await q("INSERT INTO comms_summaries (transcript_id, state) SELECT id, 'calling' FROM comms_transcripts WHERE media_id = ?", [busy]);
+    const failed = await storedItem({ state: 'failed' });
+    const gone = await storedItem({ mediaOpts: { state: 'purged' } });
+    await storedItem({ model: 'universal-3-5-pro+diarize+max2', speakers: 3 });
+    await storedItem({ channels: 2 });
+    await storedItem({ speakers: 2 });
+    const r = await rd({ mode: 'transcript', select: { mono_min_speakers: 3 } });
+    expect(r.media_ids).toEqual([ok]);
+    expect(r.skipped).toEqual({ restricted: 1, no_transcribe: 1, eval: 1, busy: 1, state: 1, not_archived: 1 });
+    const named = await rd({ mode: 'transcript', select: { media_ids: [ev, ok, busy, 987654321] } });
+    expect(named.media_ids.sort()).toEqual([ev, ok].sort());               // a NAMED eval item is taken
+    expect(named.skipped).toEqual({ busy: 1, not_found: 1 });
+    expect(named.not_found_ids).toEqual([987654321]);
+    await rd({ mode: 'transcript', select: { mono_min_speakers: 3 }, apply: true });
+    for (const id of [restricted, nt, ev, busy, failed, gone]) expect((await tr(id)).state).not.toBe('pending');
+    expect((await tr(ok)).state).toBe('pending');
+  });
+
+  test.each([
+    ['a summary call started', (tid) => q("INSERT INTO comms_summaries (transcript_id, state) VALUES (?, 'calling')", [tid])],
+    ['the item was restricted', (tid, mid) => q('UPDATE comms_media SET restricted = 1 WHERE id = ?', [mid])],
+    ['the transcript was purged', (tid) => q("UPDATE comms_transcripts SET state = 'purged', segments = NULL, full_text = NULL WHERE id = ?", [tid])],
+    ['the parent left archived', (tid, mid) => q("UPDATE comms_media SET state = 'purged' WHERE id = ?", [mid])],
+  ])('RD4 the apply re-checks in its own UPDATE — %s between the selection and the write → left alone', async (_n, change) => {
+    const id = await storedItem();
+    const t = await tr(id);
+    let fired = false;
+    const racing = {
+      query: (s, p) => pool.query(s, p),
+      getConnection: async () => {
+        const c = await pool.getConnection();
+        return new Proxy(c, {
+          get(target, prop) {
+            if (prop === 'query') {
+              return async (s, p) => {
+                if (!fired && /^\s*UPDATE comms_transcripts t JOIN/.test(s)) { fired = true; await change(t.id, id); }
+                return target.query(s, p);
+              };
+            }
+            const v = target[prop];
+            return typeof v === 'function' ? v.bind(target) : v;
+          },
+        });
+      },
+    };
+    const r = await redo.redo(racing, { mode: 'transcript', select: { media_ids: [id] }, apply: true });
+    expect(fired).toBe(true);
+    expect(r).toMatchObject({ outcome: 'applied', applied: 0, changed_since_selection: 1, media_ids: [] });
+    expect((await tr(id)).state).not.toBe('pending');
+  });
+
+  test('RD5 apply refused, nothing changed: over the cap headroom, the sweep not on, settings wrong; sample mode takes named eval items only', async () => {
+    const id = await storedItem();
+    const sel = { mode: 'transcript', select: { media_ids: [id] }, apply: true };
+    await set('comms_ai_monthly_cap_cents', '0');
+    expect(await rd(sel)).toMatchObject({ outcome: 'refused', refusal: { code: 'over_cap' } });
+    await set('comms_ai_monthly_cap_cents', '7500');
+    await set('comms_transcribe_mode', 'off');
+    expect((await rd(sel)).refusal.code).toBe('mode');
+    await set('comms_transcribe_mode', 'sample');
+    expect((await rd(sel)).refusal.code).toBe('mode');                    // not an evaluation item
+    await set('comms_transcribe_mode', 'on');
+    await set('comms_stt_max_speakers', 'x');
+    expect((await rd(sel)).refusal.code).toBe('settings');
+    await set('comms_stt_max_speakers', '2');
+    await set('comms_summary_model', 'gpt-9');
+    expect((await rd(sel)).refusal.code).toBe('settings');               // no model, no summary estimate
+    await set('comms_summary_model', 'claude-sonnet-5-5');
+    expect((await tr(id)).state).toBe('transcribed');
+    await q("INSERT INTO comms_eval_items (media_id, stratum, seed, added_by) VALUES (?, 'S1', 'seed', 1)", [id]);
+    await set('comms_transcribe_mode', 'sample');
+    expect((await rd(sel)).outcome).toBe('applied');
+  });
+
+  test('RD6 summary redo: summarized → transcribed with the OLD summary still readable; its queue row goes so the summarize sweep remakes it', async () => {
+    const s = await storedItem({ state: 'summarized', summary: 'old summary' });
+    const t = await tr(s);
+    await q("INSERT INTO comms_summaries (transcript_id, state, model) VALUES (?, 'done', 'claude-haiku-5-5')", [t.id]);
+    const plain = await storedItem();
+    await set('comms_summarize_mode', 'on');
+    const dry = await rd({ mode: 'summary', select: { summary_model: 'claude-haiku-5-5' } });
+    expect(dry).toMatchObject({ outcome: 'dry_run', eligible: 1, media_ids: [s] });
+    expect(dry.estimate.batch.stt_cents).toBe(0);
+    expect((await rd({ mode: 'summary', select: { media_ids: [plain] } })).skipped).toEqual({ state: 1 });
+    expect(await rd({ mode: 'summary', select: { summary_model: 'claude-haiku-5-5' }, apply: true })).toMatchObject({ outcome: 'applied', applied: 1 });
+    expect(await tr(s)).toMatchObject({ state: 'transcribed', summary_text: 'old summary', full_text: 'hi there' });
+    expect(await marks()).toEqual([]);                                    // a summary redo marks nothing
+    expect(await q('SELECT id FROM comms_summaries WHERE transcript_id = ?', [t.id])).toEqual([]);
+    await set('comms_summarize_mode', 'off');
+    expect(await rd({ mode: 'summary', select: { media_ids: [s] }, apply: true })).toMatchObject({ outcome: 'refused', eligible: 0 });
+  });
+
+  test('RD7 a redo gets its own tries: main-job failures from BEFORE the redo do not count toward failed', async () => {
+    const id = await storedItem();
+    const t = await tr(id);
+    await q(`INSERT INTO comms_stt_jobs (transcript_id, media_id, role, variant, job_ref, state, est_cents, submitted_at, deleted_at)
+             VALUES (?, ?, 'main', 'diarize', 'old-1', 'error', 0, UTC_TIMESTAMP() - INTERVAL 2 HOUR, UTC_TIMESTAMP()),
+                    (?, ?, 'main', 'diarize', 'old-2', 'error', 0, UTC_TIMESTAMP() - INTERVAL 2 HOUR, UTC_TIMESTAMP()),
+                    (?, ?, 'main', 'diarize', 'old-3', 'lost', 0, UTC_TIMESTAMP() - INTERVAL 2 HOUR, UTC_TIMESTAMP())`,
+      [t.id, id, t.id, id, t.id, id]);
+    await rd({ mode: 'transcript', select: { media_ids: [id] }, apply: true });
+    await run();
+    const t1 = await tr(id);
+    expect(t1.state).toBe('transcribing');
+    aai.error(t1.stt_job_ref, 'Internal server error');
+    await due();
+    await run();
+    expect((await tr(id)).state).toBe('pending');                          // 1 failure since the redo, not 4
+  });
+
+  test('RD8 the retire, at the store: a crash-orphan JSON with no row is deleted by name; a storage failure refunds, alerts and stops with the old JSON intact; a provider voicemail transcript is never touched; purge drops a marker', async () => {
+    const id = await storedItem();
+    const [m] = await q('SELECT captured_at FROM comms_media WHERE id = ?', [id]);
+    const prefix = archive.sttPrefix({ capturedAt: m.captured_at, parentId: id });
+    gcs.objects.set(`${prefix}assemblyai.json`, { buf: Buffer.from('{}'), contentType: 'application/json', generation: '1' });
+    gcs.objects.set(`${prefix}quo.json`, { buf: Buffer.from('{}'), contentType: 'application/json', generation: '1' });
+    await q(`INSERT INTO comms_media (channel, kind, source_table, source_id, part, provider, channel_id, party, captured_at, state, object_name, mime, bytes, sha256, archived_at)
+             VALUES ('phone', 'stt_raw', 'comms_media', ?, 'quo', 'quo', 4, 'x', ?, 'archived', ?, 'application/json', 2, REPEAT('b', 64), UTC_TIMESTAMP())`,
+      [id, m.captured_at, `${prefix}quo.json`]);
+    await rd({ mode: 'transcript', select: { media_ids: [id] }, apply: true });
+    expect(await run()).toMatchObject({ submitted: 1 });
+    expect(gcs.objects.has(`${prefix}assemblyai.json`)).toBe(true);        // nothing retired at submit
+    aai.complete((await tr(id)).stt_job_ref, { utterances: utter(2) });
+    gcs.fail.delete = { code: 503 };
+    await due();
+    expect(await run()).toMatchObject({ stop: 'storage', completed: 0 });
+    expect(await tr(id)).toMatchObject({ state: 'transcribing', full_text: 'hi there' });
+    expect((await alerts()).map(a => a.group_key)).toContain('comms_transcribe_storage');
+    delete gcs.fail.delete;
+    await due();
+    expect(await run()).toMatchObject({ completed: 1 });
+    expect(gcs.objects.has(`${prefix}quo.json`)).toBe(true);
+    expect((await kids(id)).map(k => k.part)).toEqual(['assemblyai', 'quo']);
+    const [fresh] = (await kids(id)).filter(k => k.part === 'assemblyai');
+    expect(JSON.parse(gcs.objects.get(fresh.object_name).buf.toString()).utterances.length).toBe(2);   // the orphan was replaced, not adopted
+    expect(await marks()).toEqual([]);
+    // purge mid-redo: never restored, the marker goes with it
+    const p2 = await storedItem();
+    await rd({ mode: 'transcript', select: { media_ids: [p2] }, apply: true });
+    expect((await marks()).length).toBe(1);
+    await admin.purge(pool, p2, { userId: 6, reason: 'test' });
+    expect(await marks()).toEqual([]);
+    await run();
+    expect(await tr(p2)).toMatchObject({ state: 'purged', segments: null, full_text: null });
+  });
+
+  test('RD9 a redo whose new jobs all fail gets its OLD transcript back: transcribed, old text and model, the old JSON still there; the marker goes; warned once', async () => {
+    await set('comms_stt_max_speakers', '0');
+    const a = await transcribedItem({}, 4);
+    const t0 = await tr(a);
+    const [oldKid] = await kids(a);
+    await set('comms_stt_max_speakers', '2');
+    await rd({ mode: 'transcript', select: { media_ids: [a] }, apply: true });
+    await run();
+    for (let i = 1; i <= 3; i++) {
+      const t = await tr(a);
+      expect(t.state).toBe('transcribing');
+      aai.error(t.stt_job_ref, 'Internal server error');
+      await due();
+      const o = await run();
+      if (i < 3) { expect((await tr(a)).state).toBe('pending'); await due(); await run(); } else expect(o.redo_restored).toBe(1);
+    }
+    const t1 = await tr(a);
+    expect(t1).toMatchObject({ state: 'transcribed', stt_model: 'universal-3-5-pro+diarize', speakers: 4, full_text: t0.full_text, stt_job_ref: null });
+    expect(t1.segments).toEqual(t0.segments);
+    expect(t1.last_error).toMatch(/^redo failed .*old transcript was kept/);
+    expect(await kids(a)).toEqual([expect.objectContaining({ id: oldKid.id, part: 'assemblyai' })]);
+    expect(gcs.objects.has(oldKid.object_name)).toBe(true);
+    expect(await marks()).toEqual([]);
+    expect((await alerts()).filter(x => x.group_key === 'comms_transcribe_redo_failed').map(x => x.severity)).toEqual(['warning']);
+    expect((await rd({ mode: 'transcript', select: { media_ids: [a] } })).eligible).toBe(1);   // it can be redone again
+  });
+
+  test('RD10 a redo SKIPPED at submit (now under the minimum) is restored the same tick; a backlog of redo rows counts from the request, not the row', async () => {
+    const id = await storedItem();
+    await q('UPDATE comms_transcripts SET created_at = UTC_TIMESTAMP() - INTERVAL 5 DAY WHERE media_id = ?', [id]);
+    await rd({ mode: 'transcript', select: { media_ids: [id] }, apply: true });
+    await set('comms_min_transcribe_s', '1000');
+    const o = await run();
+    expect(o).toMatchObject({ skipped_short: 1, redo_restored: 1 });
+    expect(o.backlog_old).toBeUndefined();
+    expect(await tr(id)).toMatchObject({ state: 'transcribed', full_text: 'hi there', skip_reason: null, stt_model: 'universal-3-5-pro+diarize' });
+    expect(await marks()).toEqual([]);
+    // a redo still waiting, asked for just now on a 5-day-old row: no backlog alarm
+    await set('comms_min_transcribe_s', '15');
+    await rd({ mode: 'transcript', select: { media_ids: [id] }, apply: true });
+    await set('comms_ai_monthly_cap_cents', '0');                           // it waits (the cap)
+    expect((await run()).backlog_old).toBeUndefined();
+    expect((await alerts()).map(a => a.group_key)).not.toContain('comms_transcribe_backlog');
+  });
+
+  test('RD11 a redo restricted mid-way is restored (still restricted: hidden) and never summarised', async () => {
+    const id = await storedItem();
+    await rd({ mode: 'transcript', select: { media_ids: [id] }, apply: true });
+    await q('UPDATE comms_media SET restricted = 1 WHERE id = ?', [id]);
+    expect(await run()).toMatchObject({ skipped_restricted: 1, redo_restored: 1 });
+    expect(await tr(id)).toMatchObject({ state: 'transcribed', full_text: 'hi there', summary_text: null });
+    await set('comms_summarize_mode', 'on');
+    const s = await require('../services/commsSummarizeSweep').runSummarizeSweep(pool);
+    expect(s).toMatchObject({ calls: 0, skipped_restricted: 1 });
+    expect((await tr(id)).summary_text).toBeNull();
+  });
+
+  test('RD12 back-to-back applies: the second sees what the first queued (the cap headroom), and is refused', async () => {
+    // SUMMARISED rows: a redo adds both a new transcript and a new summary (a transcribed row's summary is future spend already)
+    await storedItem({ state: 'summarized', summary: 'old' });
+    await storedItem({ state: 'summarized', summary: 'old' });
+    await set('comms_summarize_mode', 'on');
+    const sel = { mode: 'transcript', select: { mono_min_speakers: 3 }, limit: 1 };
+    const one = (await rd(sel)).estimate.batch.total_cents;
+    expect(one).toBeGreaterThan(0);
+    await set('comms_ai_monthly_cap_cents', String(Math.ceil(one * 1.5)));
+    expect(await rd({ ...sel, apply: true })).toMatchObject({ outcome: 'applied', applied: 1 });
+    const second = await rd({ ...sel, apply: true });
+    expect(second).toMatchObject({ outcome: 'refused', refusal: { code: 'over_cap' } });
+    expect(second.cap.queued_cents).toBeCloseTo(one, 2);
+  });
+
+  test('RD13 a transcript redo that would clear summaries nobody remakes is refused (summaries_off): summarize off, or sample for non-eval rows; an unsummarised row is fine', async () => {
+    const s = await storedItem({ state: 'summarized', summary: 'old summary' });
+    const plain = await storedItem();
+    const sel = { mode: 'transcript', select: { media_ids: [s] }, apply: true };
+    expect(await rd(sel)).toMatchObject({ outcome: 'refused', refusal: { code: 'summaries_off' } });     // summarize is off
+    await set('comms_summarize_mode', 'sample');
+    expect((await rd(sel)).refusal.code).toBe('summaries_off');
+    expect((await tr(s)).summary_text).toBe('old summary');
+    await set('comms_summarize_mode', 'off');
+    expect(await rd({ mode: 'transcript', select: { media_ids: [plain] }, apply: true })).toMatchObject({ outcome: 'applied', applied: 1 });
+    await set('comms_summarize_mode', 'on');
+    expect(await rd(sel)).toMatchObject({ outcome: 'applied', applied: 1 });
+  });
+  test('RD14 {capped: true} (Fred dropped the speaker cap, 2026-10-15): every diarize row made under it, with the usual exclusions; redone with today\'s setting (no cap)', async () => {
+    const c2 = await storedItem({ model: 'universal-3-5-pro+diarize+max2', speakers: 2 });
+    const c1 = await storedItem({ model: 'universal-3-5-pro+diarize+max2', speakers: 1 });
+    const cr = await storedItem({ model: 'universal-3-5-pro+diarize+max2', speakers: 2, mediaOpts: { restricted: 1 } });
+    await storedItem({ model: 'universal-3-5-pro+diarize', speakers: 4 });                 // never capped
+    await storedItem({ model: 'universal-3-5-pro+multichannel', speakers: 2, channels: 2 });  // multichannel never was
+    const dry = await rd({ mode: 'transcript', select: { capped: true } });
+    expect(dry.media_ids.sort()).toEqual([c1, c2].sort());
+    expect(dry.skipped).toEqual({ restricted: 1 });
+    expect((await tr(cr)).state).toBe('transcribed');
+    await set('comms_stt_max_speakers', '0');
+    expect(await rd({ mode: 'transcript', select: { capped: true }, apply: true })).toMatchObject({ outcome: 'applied', applied: 2 });
+    expect((await marks()).map(m => m.prev_model)).toEqual(['universal-3-5-pro+diarize+max2', 'universal-3-5-pro+diarize+max2']);
+    const before = aai.posts().length;
+    expect(await run()).toMatchObject({ submitted: 2 });
+    for (const p of aai.posts().slice(before)) {
+      expect(p.body.speaker_labels).toBe(true);
+      expect(p.body.speaker_options).toBeUndefined();
+    }
+    expect((await rd({ mode: 'transcript', select: { capped: true } })).eligible).toBe(0);   // in flight: no longer transcribed
+  });
+  test('RD15 queued spend follows a redo through every stage: pending (STT + summary), transcribing (summary), stored awaiting its summary (summary); a summary-redone row (summary); no summary spend while summaries are off', async () => {
+    await set('comms_summarize_mode', 'on');
+    const queued = async () => (await rd({ mode: 'transcript', select: { media_ids: [987654321] } })).cap.queued_cents;
+    const a = await storedItem();
+    const est = (await rd({ mode: 'transcript', select: { media_ids: [a] } })).estimate.batch;
+    expect(await queued()).toBeCloseTo(est.summary_worst_cents, 2);          // transcribed, no queue row yet: a summary to come
+    await rd({ mode: 'transcript', select: { media_ids: [a] }, apply: true });
+    expect(await queued()).toBeCloseTo(est.stt_cents + est.summary_worst_cents, 2);   // pending
+    await run();
+    expect((await tr(a)).state).toBe('transcribing');
+    expect(await queued()).toBeCloseTo(est.summary_worst_cents, 2);          // the STT is in the ledger now
+    aai.complete((await tr(a)).stt_job_ref, { utterances: utter(2), audio_duration: 60 });   // over the summary minimum
+    await due();
+    await run();
+    expect(await marks()).toEqual([]);
+    expect(await queued()).toBeCloseTo(est.summary_worst_cents, 1);          // stored, marker gone, its summary still to come
+    await set('comms_summarize_mode', 'off');
+    expect(await queued()).toBe(0);
+    await set('comms_summarize_mode', 'on');
+    const s = await storedItem({ state: 'summarized', summary: 'old summary' });
+    const before = await queued();                                           // a summarized row is not future spend
+    await rd({ mode: 'summary', select: { media_ids: [s] }, apply: true });
+    const after = await queued();
+    expect(after).toBeGreaterThan(before + est.summary_worst_cents * 0.9);    // its new summary is
+    const shortCall = await storedItem();
+    await q('UPDATE comms_media SET duration_s = 10 WHERE id = ?', [shortCall]);   // under the summary minimum: never summarised
+    const hidden = await storedItem({ mediaOpts: { restricted: 1 } });            // restricted: never summarised
+    expect(await queued()).toBeCloseTo(after, 2);
+    expect([shortCall, hidden].length).toBe(2);
+  });
+
+  test('RD16 a failed redo is restored FIRST in the tick — even when a config problem stops everything else', async () => {
+    const id = await storedItem();
+    await rd({ mode: 'transcript', select: { media_ids: [id] }, apply: true });
+    await q("UPDATE comms_transcripts SET state = 'failed', last_error = 'x' WHERE media_id = ?", [id]);
+    await set('comms_stt_max_speakers', 'x');
+    expect(await run()).toMatchObject({ stop: 'config', redo_restored: 1 });
+    expect(await tr(id)).toMatchObject({ state: 'transcribed', full_text: 'hi there' });
+    expect(await marks()).toEqual([]);
   });
 });

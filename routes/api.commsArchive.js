@@ -29,6 +29,16 @@
  *        per user ≤ SEARCH_PER_WINDOW per 10 min (429).
  *   GET  /api/comms-archive/health                → SU status read (F4) —
  *        superuserOnlyFor('comms_archive_health'): SU + step-up.
+ *
+ * S2c-2 — redo (design §8):
+ *   POST /api/comms-archive/redo {mode, select, limit?, apply?} → send stored
+ *        transcripts (or only their summaries) back to be made again
+ *        (services/commsArchiveRedo.js). A DRY RUN unless apply: true — counts,
+ *        groups, the cost estimate against the monthly cap's headroom, the
+ *        media ids. superuserOnlyFor('comms_archive_redo') (SU + step-up) and a
+ *        staff JWT only; applies ≤ REDO_APPLY_PER_HOUR per user (429). Every
+ *        call audited ('redo_transcript' / 'redo_summary': the selector, counts,
+ *        ids — never content).
  *   EVERY content denial is the same 404 as a missing item (no existence
  *   oracle — §7 "omitted, not locked"); the audit row carries the real reason.
  *
@@ -73,6 +83,7 @@ const admin = require('../services/commsArchiveAdmin');
 const archive = require('../services/commsArchiveService');
 const { VENDOR_SQL, READABLE_STATES } = require('../services/commsArchiveView');
 const searchSvc = require('../services/commsArchiveSearch');
+const redoSvc = require('../services/commsArchiveRedo');
 
 const TOOL = 'comms_archive';
 const MAX_REASON = 500;
@@ -85,6 +96,8 @@ let mintLimited = makeLimiter(MINT_WINDOW_MS, MINT_PER_WINDOW);
 const SEARCH_WINDOW_MS = 10 * 60 * 1000;
 const SEARCH_PER_WINDOW = 60;
 let searchLimited = makeLimiter(SEARCH_WINDOW_MS, SEARCH_PER_WINDOW);
+const REDO_APPLY_PER_HOUR = 30;
+let redoLimited = makeLimiter(HOUR_MS, REDO_APPLY_PER_HOUR);
 const FAILED_PW_WINDOW_MS = 15 * 60 * 1000;
 const FAILED_PW_MAX = 5;
 let failedPw = new Map();   // user id → [{at}] failures + checks in flight (per instance, like every lib/rateLimiter consumer)
@@ -397,6 +410,36 @@ async function maybeTable(fn) {
   try { return await fn(); } catch (err) { if (err && err.code === 'ER_NO_SUCH_TABLE') return null; throw err; }
 }
 
+// ─── POST /api/comms-archive/redo ─── S2c-2 (design §8). SU + step-up (superuserOnlyFor), staff JWT only.
+router.post('/api/comms-archive/redo', ...superuserOnlyFor('comms_archive_redo'), async (req, res) => {
+  const body = req.body && typeof req.body === 'object' ? req.body : {};
+  const details = { action: body.mode === 'summary' ? 'redo_summary' : 'redo_transcript', apply: body.apply === true };
+  if (!req.auth || req.auth.type !== 'jwt' || req.auth.userId == null) {   // isSuperuser already demands it; named-human act
+    await audit(req, 'rejected_not_jwt', details);
+    return res.status(403).json({ status: 'error', message: 'Redo requires a signed-in user' });
+  }
+  if (details.apply && redoLimited(`u${req.auth.userId}`)) {
+    await audit(req, 'rejected_rate_limited', details);
+    return res.status(429).json({ status: 'error', message: `At most ${REDO_APPLY_PER_HOUR} redo applies per hour` });
+  }
+  try {
+    const r = await redoSvc.redo(req.db, body, { userId: Number(req.auth.userId) });
+    await audit(req, r.outcome === 'refused' ? 'refused' : 'success', {
+      ...details, outcome: r.outcome, select: r.select, eligible: r.eligible, batch: r.batch, skipped: r.skipped,
+      ...(r.outcome === 'applied' ? { applied: r.applied, changed_since_selection: r.changed_since_selection } : {}),
+      ...(r.refusal ? { refusal: r.refusal.code } : {}),
+      est_cents: r.estimate.batch.total_cents, media_ids: r.media_ids,
+    });
+    if (r.outcome === 'refused') return res.status(409).json({ status: 'error', code: r.refusal.code, message: r.refusal.message, ...r });
+    return res.json({ status: 'success', ...r });
+  } catch (err) {
+    const status = Number.isInteger(err && err.status) ? err.status : 500;
+    if (status >= 500) console.error('[commsArchive] redo error:', err.message);
+    await audit(req, status === 400 ? 'rejected_bad_request' : 'failed', details, String(err.message || '').slice(0, 300));
+    return res.status(status).json({ status: 'error', message: err.expose ? err.message : 'Redo failed' });
+  }
+});
+
 // ─── GET /api/comms-archive/health ─── SU status read (F4). Counts, never content.
 router.get('/api/comms-archive/health', ...superuserOnlyFor('comms_archive_health'), async (req, res) => {
   try {
@@ -438,12 +481,36 @@ router.get('/api/comms-archive/health', ...superuserOnlyFor('comms_archive_healt
       const [rows] = await db.query('SELECT state, COUNT(*) AS n FROM comms_transcripts GROUP BY state ORDER BY state');
       const [skips] = await db.query(
         `SELECT skip_reason, COUNT(*) AS n FROM comms_transcripts WHERE state = 'skipped' GROUP BY skip_reason ORDER BY skip_reason`);
-      const [[old]] = await db.query(
-        `SELECT MIN(created_at) AS oldest FROM comms_transcripts WHERE state IN ('pending', 'transcribing')`);
+      // A redo waits from when it was asked for (S2c-2), not from when its row was first made.
+      let old;
+      try {
+        [[old]] = await db.query(
+          `SELECT MIN(COALESCE(rd.requested_at, t.created_at)) AS oldest
+             FROM comms_transcripts t LEFT JOIN comms_redo rd ON rd.transcript_id = t.id
+            WHERE t.state IN ('pending', 'transcribing')`);
+      } catch (err) {
+        if (err.code !== 'ER_NO_SUCH_TABLE') throw err;          // before the comms_redo migration
+        [[old]] = await db.query(
+          `SELECT MIN(created_at) AS oldest FROM comms_transcripts WHERE state IN ('pending', 'transcribing')`);
+      }
       return {
         by_state: rows.map(r => ({ state: r.state, n: Number(r.n) })),
         skipped_by_reason: skips.map(r => ({ reason: r.skip_reason, n: Number(r.n) })),
         oldest_pending: old ? old.oldest : null,
+      };
+    });
+    // S2c-2: transcripts being redone (comms_redo markers) by their row's state — pending / transcribing are
+    // in progress; failed / skipped are restored by the next tick. null before the comms_redo migration.
+    const redo = await maybeTable(async () => {
+      const [rows] = await db.query(
+        `SELECT t.state, COUNT(*) AS n, MIN(rd.requested_at) AS oldest
+           FROM comms_redo rd JOIN comms_transcripts t ON t.id = rd.transcript_id
+          GROUP BY t.state ORDER BY t.state`);
+      const olds = rows.map(r => r.oldest).filter(Boolean).map(d => new Date(d).getTime());
+      return {
+        count: rows.reduce((a, r) => a + Number(r.n), 0),
+        oldest_requested_at: olds.length ? new Date(Math.min(...olds)).toISOString() : null,
+        by_state: rows.map(r => ({ state: r.state, n: Number(r.n) })),
       };
     });
     // Month-to-date spend, the two halves of the shared monthly cap: stt = S2's
@@ -461,6 +528,7 @@ router.get('/api/comms-archive/health', ...superuserOnlyFor('comms_archive_healt
       jobs,
       alerts,
       transcripts,
+      redo,
       cost,
     });
   } catch (err) {
@@ -520,6 +588,7 @@ router._resetPurgeLimit = (max = PURGE_PER_HOUR) => { purgeLimited = makeLimiter
 /** Test hooks (S4): fresh mint limiter / password-failure counter. */
 router._resetMintLimit = (max = MINT_PER_WINDOW) => { mintLimited = makeLimiter(MINT_WINDOW_MS, max); };
 router._resetSearchLimit = (max = SEARCH_PER_WINDOW) => { searchLimited = makeLimiter(SEARCH_WINDOW_MS, max); };
+router._resetRedoLimit = (max = REDO_APPLY_PER_HOUR) => { redoLimited = makeLimiter(HOUR_MS, max); };
 router._resetPasswordFailures = () => { failedPw = new Map(); };
 
 module.exports = router;

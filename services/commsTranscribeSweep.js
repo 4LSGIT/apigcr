@@ -60,7 +60,11 @@
  *      so a tick that a bad POST stops has already paid what it owed.
  *   2. DISCOVER (mode sample / on): new 'pending' rows; a 'restricted' skip
  *      whose item was unrestricted becomes pending again.
- *   3. SUBMIT due 'pending' rows (mode sample / on), newest first:
+ *   3. SUBMIT due 'pending' rows (mode sample / on): a REDO first (a
+ *      comms_redo marker — design §8; its old AssemblyAI JSON is retired only
+ *      when the new one is stored, _retireRaw), then newest first. (Steps 0
+ *      and 4, every mode, before any check: a redo that ended failed / skipped
+ *      gets its old transcript back — _restoreFailedRedos.)
  *        a. Restrict → skipped / restricted (a call someone marked private
  *           never leaves our storage — R5's escape hatch; re-eligible when
  *           unrestricted). A row restricted while in flight is stored (hidden
@@ -466,11 +470,15 @@ async function _syncCost(db, transcriptId) {
       WHERE t.id = ?`, [transcriptId]);
 }
 
-/** MAIN-role jobs of a row that ended without a transcript — the job-failure count (separate from transport `attempts`). */
-async function _mainFailures(db, transcriptId) {
+/**
+ * MAIN-role jobs of a row that ended without a transcript — the job-failure count (separate from transport
+ * `attempts`). A redo counts only the jobs since it was asked for: an old failure must not eat its tries.
+ */
+async function _mainFailures(db, transcriptId, since = null) {
   const [[r]] = await db.query(
-    `SELECT COUNT(*) AS n FROM comms_stt_jobs WHERE transcript_id = ? AND role = 'main' AND state IN (?)`,
-    [transcriptId, JOB_FAILED]);
+    `SELECT COUNT(*) AS n FROM comms_stt_jobs WHERE transcript_id = ? AND role = 'main' AND state IN (?)
+        AND (? IS NULL OR submitted_at >= ?)`,
+    [transcriptId, JOB_FAILED, since, since]);
   return Number(r.n) || 0;
 }
 
@@ -525,7 +533,7 @@ async function monthToDateParts(db) {
 // ─────────────────────────────────────────────────────────────
 
 const ROW_COLS = `t.id, t.media_id, t.state, t.attempts, t.stt_job_ref, t.alt_job_ref, t.stt_model, t.est_audio_s,
-       t.submitted_at, t.created_at, t.cap_released_by, t.last_error,
+       t.submitted_at, t.created_at, t.cap_released_by, t.last_error, rd.requested_at AS redo_requested_at,
        m.state AS m_state, m.kind, m.provider, m.object_name, m.mime, m.bytes, m.captured_at, m.party,
        m.audio_channels, m.restricted`;
 
@@ -534,10 +542,12 @@ async function _nextDue(db, state, { sample = false, seen = [] } = {}) {
   let extra = '';
   if (sample) extra += ' AND EXISTS (SELECT 1 FROM comms_eval_items e WHERE e.media_id = t.media_id)';
   if (seen.length) { extra += ' AND t.id NOT IN (?)'; params.push(seen); }
-  const order = state === 'pending' ? 'm.captured_at DESC, t.id DESC' : 't.next_attempt_at ASC, t.id ASC';
+  // A redo first (it was readable until an SU sent it back), then newest first.
+  const order = state === 'pending' ? 'rd.requested_at IS NULL, m.captured_at DESC, t.id DESC' : 't.next_attempt_at ASC, t.id ASC';
   const [[row]] = await db.query(
     `SELECT ${ROW_COLS}
        FROM comms_transcripts t JOIN comms_media m ON m.id = t.media_id
+       LEFT JOIN comms_redo rd ON rd.transcript_id = t.id
       WHERE t.state = ? AND (t.next_attempt_at IS NULL OR t.next_attempt_at <= UTC_TIMESTAMP())${extra}
       ORDER BY ${order} LIMIT 1`, params);
   return row || null;
@@ -590,7 +600,7 @@ async function _onNoTranscribe(db, party) {
  */
 async function _mainFailed(ctx, row, why) {
   const { db, out, acc } = ctx;
-  const n = await _mainFailures(db, row.id);
+  const n = await _mainFailures(db, row.id, row.redo_requested_at || null);
   const text = clamp(why, 900);
   if (n >= limits.maxAttempts) {
     const [u] = await db.query(
@@ -671,6 +681,30 @@ async function _postJob(ctx, row, { role, variant, estCents }) {
     maxSpeakers: cfg.maxSpeakers, timeoutMs: limits.vendorTimeoutMs, variant,
   });
   return _postOutcome(ctx, row, r, { role, variant, ledgerId });
+}
+
+/**
+ * A REDO (design §8): the item's old AssemblyAI JSON — both variants' parts — is deleted (object, then its stt_raw
+ * row) once the NEW transcript is in hand and parsed, immediately before it is stored: parts are named by variant,
+ * comms_media is unique on (source, kind, part) and _storeRaw never overwrites. Until then the old JSON (and the old
+ * text, kept hidden in the row) survive a redo that fails or stalls. The object is deleted by its expected NAME too,
+ * so a crash-orphan cannot block the store. Idempotent; a crash after it re-polls the job (still held: the vendor
+ * copy is deleted only after the store). Other stt_raw parts (a phone provider's own voicemail transcript, S1c) are
+ * never touched. A storage failure throws (ourSide) into _pollOne's handler: refund, alert, stop.
+ */
+async function _retireRaw(ctx, row) {
+  const { db, out, vendor } = ctx;
+  const parts = Object.values(vendor.VARIANTS).map(v => v.part);
+  const prefix = archive.sttPrefix({ capturedAt: row.captured_at, parentId: row.media_id });
+  const [kids] = await db.query(
+    `SELECT id, object_name FROM comms_media
+      WHERE source_table = 'comms_media' AND source_id = ? AND kind = 'stt_raw' AND part IN (?)`, [row.media_id, parts]);
+  const names = new Set([...parts.map(p => `${prefix}${p}.json`), ...kids.map(k => k.object_name).filter(Boolean)]);
+  for (const n of names) await archive.deleteObject(n, { timeoutMs: limits.gcsTimeoutMs });
+  if (kids.length) {
+    await db.query("DELETE FROM comms_media WHERE id IN (?) AND kind = 'stt_raw'", [kids.map(k => k.id)]);
+    out.redo_retired = (out.redo_retired || 0) + kids.length;
+  }
 }
 
 /**
@@ -844,6 +878,7 @@ async function _complete(ctx, row, json, altJson) {
     }
   }
 
+  if (row.redo_requested_at) await _retireRaw(ctx, row);   // a redo: the old JSON goes only now (above)
   const s1 = await _storeRaw(ctx, row, json, vendor.VARIANTS[variant].part);
   if (s1 !== 'ok') { if (s1 === 'fenced') out.fenced++; return; }
   if (altJson) {
@@ -861,6 +896,8 @@ async function _complete(ctx, row, json, altJson) {
     [clamp(json.language_code, 16), speakers || null, JSON.stringify(segs), vendor.fullTextOf(segs, json),
       note, row.id, row.stt_job_ref]);
   if (u.affectedRows !== 1) { out.fenced++; return; }   // purged between the child and here: the purge removes the child
+  // A redo is done. (A crash before this leaves a stale marker: harmless — a transcribed row is never submitted.)
+  await db.query('DELETE FROM comms_redo WHERE transcript_id = ?', [row.id]);
 
   if (Number.isFinite(audioS) && audioS >= 0) {
     await db.query("UPDATE comms_media SET duration_s = ? WHERE id = ? AND state = 'archived'", [Math.round(audioS), row.media_id]);
@@ -1211,11 +1248,48 @@ async function _deleteLoop(ctx) {
   }
 }
 
+/**
+ * A REDO that ended 'failed' (its new jobs failed, or transport ran out) or 'skipped' (restricted, no-transcribe,
+ * short, over the per-call cap at submit) gets its OLD transcript back: the text never left the row (the apply keeps
+ * it; readers hide it by state), so the row returns to 'transcribed' with the old stt_model (comms_redo.prev_model —
+ * the submit overwrote it), and the marker goes. The summarize sweep rediscovers it (the apply deleted its queue
+ * row), so the summary is made again — a restricted one is never summarised (its gate). Never a purged row (state
+ * 'purged', text NULL; purge deleted the marker). Idempotent: a crash re-runs it next tick. Warned, ids only.
+ */
+async function _restoreFailedRedos(ctx) {
+  const { db, out } = ctx;
+  const [rows] = await db.query(
+    `SELECT t.id, t.media_id, t.state, t.skip_reason, t.last_error, rd.prev_model
+       FROM comms_redo rd JOIN comms_transcripts t ON t.id = rd.transcript_id
+      WHERE t.state IN ('failed', 'skipped') AND t.segments IS NOT NULL
+      LIMIT 200`);
+  const restored = [];
+  for (const r of rows) {
+    const why = r.state === 'skipped' ? `skipped (${r.skip_reason || '?'})` : `failed (${clamp(r.last_error || '?', 300)})`;
+    const [u] = await db.query(
+      `UPDATE comms_transcripts
+          SET state = 'transcribed', stt_model = ?, skip_reason = NULL, stt_job_ref = NULL, alt_job_ref = NULL,
+              submitted_at = NULL, next_attempt_at = NULL, attempts = 0, last_error = ?
+        WHERE id = ? AND state IN ('failed', 'skipped') AND segments IS NOT NULL`,
+      [r.prev_model, clamp(`redo ${why} — the old transcript was kept`, 1000), r.id]);
+    await db.query('DELETE FROM comms_redo WHERE transcript_id = ?', [r.id]);
+    if (u.affectedRows === 1) restored.push(Number(r.media_id));
+  }
+  if (!restored.length) return;
+  out.redo_restored = (out.redo_restored || 0) + restored.length;
+  await _dailyAlert(db, 'comms_transcribe_redo_failed', 'warning',
+    `Comms transcription: redo failed for ${restored.length} item(s), old transcript kept`,
+    `These items were sent back to be transcribed again, and it did not work (the jobs failed, or the item was skipped at submit: restricted, on the do-not-transcribe list, short or over the per-call cap). Each has its old transcript back; its summary is made again. comms_media ids: ${restored.slice(0, 50).join(', ')}${restored.length > 50 ? ' …' : ''}. The reason is in comms_transcripts.last_error.`,
+    { media_ids: restored.slice(0, 200) });
+}
+
 async function _backlogAlarm(db, out) {
   try {
     const [[r]] = await db.query(
-      `SELECT COUNT(*) AS n, MIN(created_at) AS oldest FROM comms_transcripts
-        WHERE state IN ('pending', 'transcribing') AND created_at < UTC_TIMESTAMP() - INTERVAL ? HOUR`,
+      // A redo waits from when it was asked for, not from when its row was first made.
+      `SELECT COUNT(*) AS n, MIN(COALESCE(rd.requested_at, t.created_at)) AS oldest
+         FROM comms_transcripts t LEFT JOIN comms_redo rd ON rd.transcript_id = t.id
+        WHERE t.state IN ('pending', 'transcribing') AND COALESCE(rd.requested_at, t.created_at) < UTC_TIMESTAMP() - INTERVAL ? HOUR`,
       [limits.backlogAlertHours]);
     if (Number(r.n) > 0) {
       out.backlog_old = Number(r.n);
@@ -1255,6 +1329,9 @@ async function runTranscribeSweep(db, opts = {}) {
     stopVendor(why) { this.vendorStopped = true; out.stop = why; },
   };
   try {
+    // 0. a redo that ended failed / skipped gets its old transcript back FIRST — pure DB work, so a tick that a
+    //    config, auth or vendor problem stops below never keeps it hidden (and again at step 4, for this tick's)
+    await _restoreFailedRedos(ctx);
     const cfg = await readConfig(db);
     ctx.cfg = cfg;
     out.mode = cfg.mode;
@@ -1315,6 +1392,8 @@ async function runTranscribeSweep(db, opts = {}) {
       if (ctx.capHit) await capAlert(db, out);
       await _backlogAlarm(db, out);
     }
+    // 4. a redo that ended failed / skipped gets its old transcript back — every mode
+    await _restoreFailedRedos(ctx);
     if (out.download_errors && !out.completed) {
       await _storageAlert(db, `AssemblyAI could not download ${out.download_errors} signed URL(s) this tick and none completed — check V4 signing / the bucket`);
     }
@@ -1369,6 +1448,10 @@ async function purgeTranscript(db, row, { vendor = require('./commsTranscribeVen
 
   const [[t]] = await db.query('SELECT id FROM comms_transcripts WHERE media_id = ?', [row.id]);
   if (!t) return { rows: r.affectedRows, deleted, vendor: 'none', ai_calls: 0 };
+  // S2c-2: a redo marker has nothing left to redo.
+  try { await db.query('DELETE FROM comms_redo WHERE transcript_id = ?', [t.id]); } catch (err) {
+    if (err.code !== 'ER_NO_SUCH_TABLE') throw err;            // a database before S2c-2 holds no markers
+  }
   // S3: the summary attempts' text (the model's output; the system text with the contact's name).
   let aiCalls = 0;
   try {

@@ -155,6 +155,7 @@ maybe('comms archive S4 on real MySQL', () => {
     archiveRouter._resetPurgeLimit();
     archiveRouter._resetMintLimit();
     archiveRouter._resetPasswordFailures();
+    archiveRouter._resetRedoLimit();
     _resetRateLimits();
     for (const t of S2_TABLES) await pool.query(`DROP TABLE IF EXISTS ${t}`);
     for (const t of ['comms_media', 'phone_event_log', 'phone_lines', 'users', 'admin_audit_log', 'channel_grants',
@@ -731,7 +732,7 @@ maybe('comms archive S4 on real MySQL', () => {
     // The llm half reads ai_calls / comms_summaries — tables other suites leave
     // behind in a shared _test DB. This test owns them: absent first, then
     // built here with rows of its own (never another suite's state).
-    for (const t of ['ai_calls', 'comms_summaries']) await pool.query(`DROP TABLE IF EXISTS ${t}`);
+    for (const t of ['ai_calls', 'comms_summaries', 'comms_redo']) await pool.query(`DROP TABLE IF EXISTS ${t}`);
     const [[job]] = await pool.query("SELECT id FROM scheduled_jobs WHERE idempotency_key = 'comms_archive_media_sweep'");
     await q(`INSERT INTO job_results (job_id, attempt, status, output_data, duration_ms, execution_number) VALUES (?, 1, 'success', ?, 900, 1)`,
       [job.id, JSON.stringify({ archived: 3, discovered_mms: 2 })]);
@@ -750,7 +751,7 @@ maybe('comms archive S4 on real MySQL', () => {
     expect(media.last).toMatchObject({ status: 'success', duration_ms: 900, output: { archived: 3, discovered_mms: 2 } });
     expect(r.json.jobs.map(j => j.key).sort()).toEqual(['comms_archive_media_sweep', 'comms_archive_sweep', 'comms_archive_verify']);
     expect(r.json.alerts.map(a => a.title)).toEqual(['cliff']);
-    expect([r.json.transcripts, r.json.cost]).toEqual([null, null]);                // S2 not migrated
+    expect([r.json.transcripts, r.json.cost, r.json.redo]).toEqual([null, null, null]);   // S2 / S2c-2 not migrated
     await s2Tables();
     const r2 = await get('/api/comms-archive/health', { t: T.su(), headers: { 'X-SU-Elevation': mintElevationToken(U.SU) } });
     expect(r2.json.transcripts).toEqual({ by_state: [], skipped_by_reason: [], oldest_pending: null });
@@ -778,6 +779,72 @@ maybe('comms archive S4 on real MySQL', () => {
     const r = await get('/api/comms-archive/health', { t: T.su() });
     expect(r.status).toBe(401);
     expect(r.json.code).toBe('elevation_required');
+  });
+
+  // ── R — redo (S2c-2): the route's gates and audit. The behaviour is tested in commsTranscribe.mysql (RD*). ──
+  const elev = () => ({ 'X-SU-Elevation': mintElevationToken(U.SU) });
+  const det = (a) => (typeof a.details === 'string' ? JSON.parse(a.details) : a.details) || {};
+  const redoAudits = async () => (await audits()).filter(a => /^redo_/.test(det(a).action || ''));
+  async function redoScene() {
+    await s2Tables();
+    for (const t of ['comms_summaries', 'comms_redo']) await pool.query(`DROP TABLE IF EXISTS ${t}`);
+    for (const f of ['2026-10-15_comms_s3_summaries.sql', '2026-10-15_comms_s2c_max_speakers.sql', '2026-10-15_comms_s2c_redo.sql']) {
+      for (const s of schema.migrationStatements(f)) await pool.query(s);
+    }
+    await q("UPDATE app_settings SET `value` = 'on' WHERE `key` = 'comms_transcribe_mode'");
+    await q('UPDATE comms_media SET audio_channels = 1, duration_s = 60 WHERE id = ?', [S.rec1]);
+    await q(`INSERT INTO comms_transcripts (media_id, phone_event_id, state, stt_vendor, stt_model, speakers, segments, full_text)
+             VALUES (?, ?, 'transcribed', 'assemblyai', 'universal-3-5-pro+diarize', 4, '[{"s":"A","a":0,"b":1,"t":"secret words"}]', 'secret words')`,
+      [S.rec1, S.call1]);
+  }
+
+  test('R1 redo: SU + step-up only — a listed archive admin 403, an API key 403, SU without step-up 401; a dry run changes nothing and is audited with ids and counts, never content', async () => {
+    await redoScene();
+    const body = { mode: 'transcript', select: { mono_min_speakers: 3 } };
+    expect((await post('/api/comms-archive/redo', body, { t: T.ss() })).status).toBe(403);
+    expect((await post('/api/comms-archive/redo', body, { apiKey: process.env.INTERNAL_API_KEY })).status).toBe(403);
+    const noStep = await post('/api/comms-archive/redo', body, { t: T.su() });
+    expect(noStep.status).toBe(401);
+    expect(noStep.json.code).toBe('elevation_required');
+    const r = await post('/api/comms-archive/redo', body, { t: T.su(), headers: elev() });
+    expect(r.status).toBe(200);
+    expect(r.json).toMatchObject({ status: 'success', outcome: 'dry_run', eligible: 1, batch: 1, media_ids: [S.rec1] });
+    expect((await q('SELECT state FROM comms_transcripts WHERE media_id = ?', [S.rec1]))[0].state).toBe('transcribed');
+    const rows = await redoAudits();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ status: 'success', user_id: U.SU });
+    expect(det(rows[0])).toMatchObject({ action: 'redo_transcript', apply: false, outcome: 'dry_run', eligible: 1, batch: 1,
+      select: { mono_min_speakers: 3 }, media_ids: [S.rec1] });
+    expect(JSON.stringify(rows)).not.toMatch(/secret words/);
+  });
+
+  test('R2 redo: a bad body 400, over the cap 409 (refused, nothing changed), an apply 200 with the marker\'s who; applies are rate-limited, dry runs are not; every call audited', async () => {
+    await redoScene();
+    archiveRouter._resetRedoLimit(2);
+    const go = (body) => post('/api/comms-archive/redo', body, { t: T.su(), headers: elev() });
+    const one = { mode: 'transcript', select: { media_ids: [S.rec1] } };
+    const b400 = await go({ mode: 'transcript', select: { mono_min_speakers: 1 } });
+    expect(b400.status).toBe(400);
+    expect(b400.json.message).toMatch(/2–50/);
+    await q("UPDATE app_settings SET `value` = '0' WHERE `key` = 'comms_ai_monthly_cap_cents'");
+    const r409 = await go({ ...one, apply: true });
+    expect(r409.status).toBe(409);
+    expect(r409.json).toMatchObject({ status: 'error', code: 'over_cap', outcome: 'refused' });
+    expect((await q('SELECT state FROM comms_transcripts WHERE media_id = ?', [S.rec1]))[0].state).toBe('transcribed');
+    await q("UPDATE app_settings SET `value` = '7500' WHERE `key` = 'comms_ai_monthly_cap_cents'");
+    await q('UPDATE comms_transcripts SET created_at = UTC_TIMESTAMP() - INTERVAL 5 DAY WHERE media_id = ?', [S.rec1]);
+    const ok = await go({ ...one, apply: true });
+    expect(ok.status).toBe(200);
+    expect(ok.json).toMatchObject({ status: 'success', outcome: 'applied', applied: 1, media_ids: [S.rec1] });
+    expect(await q('SELECT requested_by FROM comms_redo')).toEqual([{ requested_by: U.SU }]);
+    expect((await go({ ...one, apply: true })).status).toBe(429);
+    expect((await go(one)).status).toBe(200);                                   // a dry run is not counted
+    const h = await get('/api/comms-archive/health', { t: T.su(), headers: elev() });   // the redo in the health read
+    expect(h.json.redo).toEqual({ count: 1, oldest_requested_at: expect.any(String), by_state: [{ state: 'pending', n: 1 }] });
+    expect(Date.now() - new Date(h.json.transcripts.oldest_pending).getTime()).toBeLessThan(3600_000);   // waiting since the REQUEST, not the 5-day-old row
+    expect((await redoAudits()).map(a => [a.status, det(a).apply, det(a).refusal || null])).toEqual([
+      ['rejected_bad_request', false, null], ['refused', true, 'over_cap'], ['success', true, null],
+      ['rejected_rate_limited', true, null], ['success', false, null]]);
   });
 
   // ── unit — view helpers ─────────────────────────────────────────────────
