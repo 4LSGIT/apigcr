@@ -467,7 +467,7 @@ deliberate-choice pattern).
   H3 (Ssandweiss referer rotation/scrub) status unknown to this arc —
   confirm or strike at close.
 
-### 5.7 Sensitive-read tier + content tables (DRAFT — awaiting Fred, 2026-10-14)
+### 5.7 Sensitive-read tier + content tables (RATIFIED 2026-10-14, incl. the stated audit-table limitation)
 
 Prompted by the jwt_api_audit_log deny (B2 landing) and two findings routed
 here the same day: ai_calls stores `request_excerpt` + full `response` for
