@@ -296,6 +296,16 @@ maybe('comms_archive_sweep on real MySQL', () => {
     expect(rows.filter(r => r.part === '').length).toBe(0);
   });
 
+  test('M5r a split inherits `restricted` from the placeholder (S1b review M2)', async () => {
+    const id = await ev({ tsi: true, ageDays: 30 });
+    rcFake.sessions[`s-${id}`] = { status: 200, records: 2, rate: {}, recordings: [{ id: 'P1' }, { id: 'P2' }] };
+    await sweep.discover(pool);
+    await q('UPDATE comms_media SET restricted = 1');
+    await run();
+    const rows = await media();
+    expect(rows.map(r => [r.part, r.restricted])).toEqual([['P1', 1], ['P2', 1]]);
+  });
+
   test('M5b tsi with nothing listed: young → back off uncharged; > 24 h → none', async () => {
     const young = await ev({ tsi: true, ageDays: 0.2 });
     const old   = await ev({ tsi: true, ageDays: 3 });

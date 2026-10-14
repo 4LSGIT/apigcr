@@ -1,7 +1,7 @@
 # Routes
 
-_Generated 2026-10-14T07:01:31.747Z_  
-_749 routes total — DELETE: 62, GET: 315, PATCH: 51, POST: 283, PUT: 35, _ALL: 3_
+_Generated 2026-10-14T07:16:15.598Z_  
+_752 routes total — DELETE: 62, GET: 315, PATCH: 51, POST: 286, PUT: 35, _ALL: 3_
 
 ## Global middleware chain
 
@@ -145,6 +145,9 @@ _749 routes total — DELETE: 62, GET: 315, PATCH: 51, POST: 283, PUT: 35, _ALL:
 | GET | `/api/cases/:id/workflows` | `jwtOrApiKey` | — |
 | GET | `/api/cases/search` | `jwtOrApiKey` | — |
 | GET | `/api/cause_error` | `jwtOrApiKey` | — |
+| POST | `/api/comms-archive/media/:id/purge` | `jwtOrApiKey` | — |
+| POST | `/api/comms-archive/media/:id/restrict` | `jwtOrApiKey` | — |
+| POST | `/api/comms-archive/media/:id/unrestrict` | `jwtOrApiKey` | — |
 | POST | `/api/compose-docs-message` | `jwtOrApiKey` | — |
 | POST | `/api/contact-addresses` | `jwtOrApiKey` | — |
 | DELETE | `/api/contact-addresses/:id` | `jwtOrApiKey` | — |
@@ -1019,4 +1022,4 @@ _749 routes total — DELETE: 62, GET: 315, PATCH: 51, POST: 283, PUT: 35, _ALL:
 
 ---
 
-_749 routes total — DELETE: 62, GET: 315, PATCH: 51, POST: 283, PUT: 35, _ALL: 3_
+_752 routes total — DELETE: 62, GET: 315, PATCH: 51, POST: 286, PUT: 35, _ALL: 3_

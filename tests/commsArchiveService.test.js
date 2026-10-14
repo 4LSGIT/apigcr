@@ -270,3 +270,145 @@ describe('RingCentral archive fetchers', () => {
     expect(r.rawRecords).toBe(4);   // the sweep alerts when raw > 0 and matched = 0
   });
 });
+
+// ═════════════════════════════════════════════════════════════════════════════
+// S1b — MMS types, exists / delete, the RC attachment and Quo fetchers
+// ═════════════════════════════════════════════════════════════════════════════
+
+describe('S1b storage additions', () => {
+  test('mmsPrefix mirrors recordingPrefix under phone/mms/', () => {
+    expect(archive.mmsPrefix({ capturedAt: '2026-10-13T15:04:57Z', sourceId: 10630, part: '855604942019' }))
+      .toBe('phone/mms/2026/10/10630-855604942019.');
+  });
+
+  test('classifyMedia: known types stored as themselves; generic defers to the claimed type', () => {
+    expect(archive.classifyMedia('image/jpeg', null)).toEqual({ mime: 'image/jpeg', ext: 'jpg', note: null });
+    expect(archive.classifyMedia('IMAGE/PNG; q=1', null)).toMatchObject({ mime: 'image/png', ext: 'png' });
+    expect(archive.classifyMedia('application/octet-stream', 'application/pdf')).toMatchObject({ mime: 'application/pdf', ext: 'pdf' });
+    expect(archive.classifyMedia('', 'video/3gpp')).toMatchObject({ mime: 'video/3gpp', ext: '3gp' });
+    expect(archive.classifyMedia('text/x-vcard', null)).toMatchObject({ mime: 'text/vcard', ext: 'vcf' });
+  });
+
+  test('classifyMedia: error-shaped 200s are refused; unknown types are evidence (.bin + note)', () => {
+    for (const t of ['text/html', 'application/json; charset=utf-8', 'text/xml', 'application/problem+json']) {
+      expect(archive.classifyMedia(t, 'image/png').error).toMatch(/error-shaped/);
+    }
+    const u = archive.classifyMedia('model/gltf+json2', 'x-weird/thing');
+    expect(u).toMatchObject({ mime: 'application/octet-stream', ext: 'bin' });
+    expect(u.note).toMatch(/provider type: model\/gltf\+json2/);
+    expect(u.note).toMatch(/claimed type: x-weird\/thing/);
+    // never served inline
+    expect(archive.INLINE_TYPES.has('application/octet-stream')).toBe(false);
+  });
+
+  test('exists / deleteObject: live object true, deleted false; delete is idempotent; failures ours', async () => {
+    await archive.putStream(Readable.from([Buffer.from('x')]), { objectName: 'phone/mms/2026/10/1-1.jpg', mime: 'image/jpeg' });
+    expect(await archive.exists('phone/mms/2026/10/1-1.jpg')).toBe(true);
+    await archive.deleteObject('phone/mms/2026/10/1-1.jpg');
+    expect(await archive.exists('phone/mms/2026/10/1-1.jpg')).toBe(false);
+    await expect(archive.deleteObject('phone/mms/2026/10/1-1.jpg')).resolves.toBeUndefined();
+    gcs.fail.exists = { code: 403 };
+    await expect(archive.exists('a')).rejects.toMatchObject({ ourSide: true });
+    gcs.fail.delete = { code: 500 };
+    await expect(archive.deleteObject('a')).rejects.toMatchObject({ ourSide: true });
+  });
+});
+
+describe('S1b adapters', () => {
+  const realFetch = global.fetch;
+  afterEach(() => { global.fetch = realFetch; });
+  const resp = (status, body, headers = {}) => new Response(body, { status, headers });
+  const quo = require('../services/adapters/phone/quo');
+
+  test('RC attachment: media host, extension ~ (rc2 shares it), identity encoding', async () => {
+    buildHeadersForCredential.mockResolvedValue({ Authorization: 'Bearer t' });
+    let seen;
+    global.fetch = jest.fn(async (url, init) => { seen = { url, init }; return resp(200, Buffer.from('jpg'), { 'content-type': 'image/jpeg' }); });
+    const r = await rc.fetchMessageAttachment({}, { credentialId: 9, messageId: '3091661067019', attachmentId: '855604942019' });
+    expect(seen.url).toBe('https://media.ringcentral.com/restapi/v1.0/account/~/extension/~/message-store/3091661067019/content/855604942019');
+    expect(seen.init.headers['Accept-Encoding']).toBe('identity');
+    expect(r).toMatchObject({ status: 200, contentType: 'image/jpeg' });
+  });
+
+  test('Quo API calls: api.openphone.com paths, credential header, statuses returned', async () => {
+    buildHeadersForCredential.mockResolvedValue({ Authorization: 'quo-key' });
+    const urls = [];
+    global.fetch = jest.fn(async (url, init) => {
+      urls.push([url, init.headers.Authorization]);
+      return url.includes('call-recordings')
+        ? resp(200, JSON.stringify({ data: [] }))
+        : resp(429, 'slow', { 'retry-after': '1' });
+    });
+    const a = await quo.listCallRecordings({}, { credentialId: 10, callId: 'AC123' });
+    expect(a).toMatchObject({ status: 200, json: { data: [] } });
+    const b = await quo.getMessage({}, { credentialId: 10, messageId: 'AC9' });
+    expect(b).toMatchObject({ status: 429, retryAfterS: 1, json: null });
+    expect(urls).toEqual([
+      ['https://api.openphone.com/v1/call-recordings/AC123', 'quo-key'],
+      ['https://api.openphone.com/v1/messages/AC9', 'quo-key'],
+    ]);
+  });
+
+  test('Quo: an unparseable 200 is json === undefined (drift), not null', async () => {
+    buildHeadersForCredential.mockResolvedValue({ Authorization: 'quo-key' });
+    global.fetch = jest.fn(async () => resp(200, '<html>oops</html>'));
+    expect((await quo.listCallRecordings({}, { credentialId: 10, callId: 'AC1' })).json).toBeUndefined();
+  });
+
+  test('Quo signed download: https only, NO credential header, host reported (never the signature)', async () => {
+    let seen;
+    global.fetch = jest.fn(async (url, init) => { seen = { url, init }; return resp(403, 'sig'); });
+    const r = await quo.fetchSigned('https://share.quo.com/v1/resource/message-media/abc.jpg?sig=SECRET');
+    expect(seen.init.headers).toEqual({ 'Accept-Encoding': 'identity' });
+    expect(r).toMatchObject({ status: 403, host: 'share.quo.com', body: null });
+    expect(JSON.stringify(r)).not.toMatch(/SECRET/);
+    await expect(quo.fetchSigned('http://share.quo.com/x')).rejects.toMatchObject({ code: 'BAD_URL' });
+    await expect(quo.fetchSigned('javascript:alert(1)')).rejects.toMatchObject({ code: 'BAD_URL' });
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+  });
+
+  test('Quo: no Authorization → NO_AUTH before any request', async () => {
+    buildHeadersForCredential.mockResolvedValue({});
+    global.fetch = jest.fn();
+    await expect(quo.getMessage({}, { credentialId: 10, messageId: 'AC1' })).rejects.toMatchObject({ code: 'NO_AUTH' });
+    expect(await quo.checkArchiveAuth({}, 10)).toBe(false);
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+});
+
+describe('S1b R9 list parsing', () => {
+  const { parseAdmins } = require('../services/commsArchiveAdmin');
+  test('digits only; everything else ignored', () => {
+    expect([...parseAdmins('1').ids]).toEqual([1]);
+    expect([...parseAdmins(' 1 , 6,,12 ').ids]).toEqual([1, 6, 12]);
+    const g = parseAdmins('1x, -2, 3.0, ss, 4');
+    expect([...g.ids]).toEqual([4]);
+    expect(g.junk).toEqual(['1x', '-2', '3.0', 'ss']);
+    expect(parseAdmins(null).ids.size).toBe(0);
+    expect(parseAdmins('').ids.size).toBe(0);
+  });
+});
+
+describe('S1b review S5 — signed-download redirects', () => {
+  const realFetch = global.fetch;
+  afterEach(() => { global.fetch = realFetch; });
+  const quo = require('../services/adapters/phone/quo');
+  const resp = (status, body, headers = {}) => new Response(body, { status, headers });
+
+  test('a redirect into http is refused; https hops are followed by hand (≤ 3)', async () => {
+    const seen = [];
+    global.fetch = jest.fn(async (url, init) => {
+      seen.push([url, init.redirect]);
+      if (url.includes('/a')) return resp(302, null, { location: 'https://cdn.quo.example/b' });
+      if (url.includes('/b')) return resp(200, Buffer.from('ok'), { 'content-type': 'image/jpeg', 'content-length': '2' });
+      if (url.includes('/h')) return resp(301, null, { location: 'http://cdn.quo.example/plain' });
+      return resp(302, null, { location: url + 'x' });                 // endless chain
+    });
+    const ok = await quo.fetchSigned('https://share.quo.com/a?sig=1');
+    expect(ok).toMatchObject({ status: 200, host: 'cdn.quo.example' });
+    expect(seen.every(([, r]) => r === 'manual')).toBe(true);
+    await expect(quo.fetchSigned('https://share.quo.com/h?sig=1')).rejects.toMatchObject({ code: 'BAD_URL' });
+    expect(seen.some(([u]) => u.startsWith('http:'))).toBe(false);
+    await expect(quo.fetchSigned('https://share.quo.com/loop')).rejects.toThrow(/too many redirects/);
+  });
+});

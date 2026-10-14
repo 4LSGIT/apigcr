@@ -518,6 +518,7 @@ ref/migrations/2026-10-13_mail_sends.sql
 ref/migrations/2026-10-13_wf50_end_after_cancel.console.js
 ref/migrations/2026-10-14_access_a2_su_role.sql
 ref/migrations/2026-10-14_comms_media.sql
+ref/migrations/2026-10-14_comms_s1b.sql
 ref/migrations/2026-10-14_wf50_text_on_cancel_failure.console.js
 ref/migrations/S1_notes_migration.sql
 ref/migrations/documents_s1.sql
@@ -561,6 +562,7 @@ routes/api.calendarTypesAdmin.js
 routes/api.caseEvents.js
 routes/api.cases.js
 routes/api.checklists.js
+routes/api.commsArchive.js
 routes/api.contactAddresses.js
 routes/api.contactEmails.js
 routes/api.contactLookup.js
@@ -795,8 +797,12 @@ services/calendarWriteService.js
 services/campaignService.js
 services/caseEventService.js
 services/caseService.js
+services/commsArchiveAdmin.js
+services/commsArchiveCommon.js
+services/commsArchiveMediaSweep.js
 services/commsArchiveService.js
 services/commsArchiveSweep.js
+services/commsArchiveVerify.js
 services/contactAddressService.js
 services/contactEmailService.js
 services/contactPhoneService.js
@@ -938,6 +944,7 @@ tests/caseUi.sync.test.js
 tests/caseUi.timeline.test.js
 tests/checklistView.autoGrow.test.js
 tests/checklists.s1notes.test.js
+tests/commsArchive.s1b.mysql.test.js
 tests/commsArchive.sweep.mysql.test.js
 tests/commsArchiveService.test.js
 tests/commsShell.test.js
@@ -1076,6 +1083,7 @@ tests/formtemplates.formdev.test.js
 tests/formtemplates.x1visibility.test.js
 tests/genTypeKeyBackfill.test.js
 tests/helpers/bcPolyfill.js
+tests/helpers/commsArchiveSchema.js
 tests/helpers/ctaWorld.js
 tests/helpers/fakeGcs.js
 tests/helpers/mailRenderBrowser.js

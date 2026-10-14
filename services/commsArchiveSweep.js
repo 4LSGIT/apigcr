@@ -126,20 +126,18 @@ const RC_RECORDED_CALL = `
   AND (${RECID_SQL} <> '' OR e.provider_ref LIKE 'tsi:%')`;
 
 // ─────────────────────────────────────────────────────────────
-// Small helpers
+// Small helpers — the shared row mechanics live in commsArchiveCommon,
+// bound to THIS sweep's limits.
 // ─────────────────────────────────────────────────────────────
 
-function _clamp(s, n) {
-  if (s == null) return null;
-  const str = String(s);
-  return str.length > n ? str.slice(0, n) : str;
-}
-
-function _utcDate() { return new Date().toISOString().slice(0, 10); }
-
-function _ageHours(capturedAt) {
-  return (Date.now() - new Date(capturedAt).getTime()) / 3_600_000;
-}
+const common = require('./commsArchiveCommon');
+const { clamp: _clamp, utcDate: _utcDate, ageHours: _ageHours, alert: _alert } = common;
+const {
+  repeatSeverity: _repeatSeverity, escalatingAlert: _escalatingAlert,
+  claim: _claim, refund: _refund, park: _park, fail: _fail,
+  markArchived: _markArchived, anomaly: _anomaly,
+  terminalReason: _terminalReason, transient: _transient,
+} = common.rowOps(limits);
 
 /**
  * The most Heavy calls one tick can actually make: the first at t=0, then
@@ -150,68 +148,7 @@ function maxHeavyPerTick() {
   return Math.floor((limits.deadlineMs - 1) / limits.heavySpacingMs) + 1;
 }
 
-function _alert(db, o) {
-  try {
-    const { alert } = require('../lib/alerting'); // lazy require (convention)
-    return Promise.resolve(alert(db, { source: 'app', ...o })).catch(() => {});
-  } catch (_) {
-    return Promise.resolve();
-  }
-}
-
-/** First occurrence for this group in the window → warning; repeat → error. */
-async function _repeatSeverity(db, groupKey) {
-  try {
-    const [[r]] = await db.query(
-      `SELECT 1 AS hit FROM system_alerts
-        WHERE group_key = ? AND created_at > UTC_TIMESTAMP() - INTERVAL ? HOUR
-        LIMIT 1`,
-      [groupKey, limits.repeatWindowHours],
-    );
-    return r ? 'error' : 'warning';
-  } catch (_) {
-    return 'error'; // can't tell → don't under-page
-  }
-}
-
-async function _escalatingAlert(db, groupKey, kind, title, message, context) {
-  const severity = await _repeatSeverity(db, groupKey);
-  return _alert(db, {
-    kind, group_key: groupKey, severity, title, message, context,
-    dedup_key: `${groupKey}:${severity}:${_utcDate()}`,
-  });
-}
-
-// ─────────────────────────────────────────────────────────────
-// Lock
-// ─────────────────────────────────────────────────────────────
-
-async function _acquireLock(db) {
-  const conn = await db.getConnection();
-  let got = false;
-  try {
-    const [[r]] = await conn.query(`SELECT GET_LOCK(${LOCK_EXPR}, 0) AS got`);
-    got = !!r && Number(r.got) === 1;
-  } catch (err) {
-    try { conn.release(); } catch (_) { try { conn.destroy(); } catch (_) { /* gone */ } }
-    throw err;
-  }
-  if (!got) {
-    try { conn.release(); } catch (_) { try { conn.destroy(); } catch (_) { /* gone */ } }
-    return null;
-  }
-  return {
-    async release() {
-      let clean = true;
-      try { await conn.query(`SELECT RELEASE_LOCK(${LOCK_EXPR})`); } catch (_) { clean = false; }
-      if (clean) {
-        try { conn.release(); } catch (_) { try { conn.destroy(); } catch (_) { /* gone */ } }
-      } else {
-        try { conn.destroy(); } catch (_) { /* closing the socket releases the lock */ }
-      }
-    },
-  };
-}
+const _acquireLock = (db) => common.acquireLock(db, LOCK_EXPR);
 
 // ─────────────────────────────────────────────────────────────
 // Discovery
@@ -242,7 +179,8 @@ async function discover(db) {
 
 async function _nextDue(db, skipIds) {
   const [[row]] = await db.query(
-    `SELECT m.id, m.source_id, m.part, m.captured_at, m.attempts, m.channel_id,
+    `SELECT m.id, m.kind, m.provider, m.source_id, m.part, m.captured_at, m.created_at,
+            m.attempts, m.channel_id,
             e.provider_ref, e.line_number,
             pl.id AS line_id, pl.credential_id
        FROM comms_media m
@@ -258,97 +196,9 @@ async function _nextDue(db, skipIds) {
   return row || null;
 }
 
-/** Per-row lease. affectedRows 1 (rows MATCHED, CLIENT_FOUND_ROWS) = ours. */
-async function _claim(db, id) {
-  const [r] = await db.query(
-    `UPDATE comms_media
-        SET attempts = attempts + 1,
-            next_attempt_at = UTC_TIMESTAMP() + INTERVAL ? MINUTE
-      WHERE id = ? AND state = 'pending'
-        AND (next_attempt_at IS NULL OR next_attempt_at <= UTC_TIMESTAMP())`,
-    [limits.leaseMin, id],
-  );
-  return r.affectedRows === 1;
-}
-
-/** Give the attempt back: the failure was not the provider's. Due again now. */
-async function _refund(db, id, lastError) {
-  await db.query(
-    `UPDATE comms_media
-        SET attempts = GREATEST(attempts, 1) - 1, next_attempt_at = NULL,
-            last_error = COALESCE(?, last_error)
-      WHERE id = ? AND state = 'pending'`,
-    [_clamp(lastError, 1000), id],
-  );
-}
-
-/** Uncharged park: refund the attempt and come back after `mins`. */
-async function _park(db, id, mins, lastError) {
-  await db.query(
-    `UPDATE comms_media SET attempts = GREATEST(attempts, 1) - 1,
-            next_attempt_at = UTC_TIMESTAMP() + INTERVAL ? MINUTE, last_error = ?
-      WHERE id = ? AND state = 'pending'`,
-    [mins, _clamp(lastError, 1000), id],
-  );
-}
-
-/**
- * Provider-side failure: keep the attempt. No recording is abandoned while
- * it can still exist at RC:
- *   call past windowDays (call clock) → `failed` (it is gone there anyway);
- *   attempts ≥ maxAttempts            → stays pending, stuckBackoffMin
- *                                       ('stuck' — error alert);
- *   otherwise                         → 2^attempts min, capped.
- */
-async function _transient(db, row, attemptsNow, err) {
-  if (_pastWindow(row)) {
-    await _fail(db, row.id, err);
-    return 'failed';
-  }
-  const stuck = attemptsNow >= limits.maxAttempts;
-  const mins = stuck ? limits.stuckBackoffMin : Math.min(2 ** attemptsNow, limits.backoffCapMin);
-  await db.query(
-    `UPDATE comms_media SET next_attempt_at = UTC_TIMESTAMP() + INTERVAL ? MINUTE, last_error = ?
-      WHERE id = ? AND state = 'pending'`,
-    [mins, _clamp(err, 1000), row.id],
-  );
-  return stuck ? 'stuck' : 'retry';
-}
-
-function _pastWindow(row) {
-  return _ageHours(row.captured_at) >= limits.windowDays * 24;
-}
-
-/** Terminal: the call is past RC's window, the file can no longer exist there. */
-async function _fail(db, id, lastError) {
-  await db.query(
-    `UPDATE comms_media SET state = 'failed', next_attempt_at = NULL, last_error = ?
-      WHERE id = ? AND state = 'pending'`,
-    [_clamp(lastError, 1000), id],
-  );
-}
-
-async function _markArchived(db, id, { objectName, mime, bytes, sha256 }) {
-  await db.query(
-    `UPDATE comms_media
-        SET state = 'archived', object_name = ?, mime = ?, bytes = ?, sha256 = ?,
-            archived_at = UTC_TIMESTAMP(), next_attempt_at = NULL, last_error = NULL
-      WHERE id = ? AND state = 'pending'`,
-    [objectName, mime, bytes, sha256, id],
-  );
-}
-
-/** Something under the row's prefix a human must look at: park 6 h, uncharged, alert. */
-async function _anomaly(db, row, what) {
-  await _park(db, row.id, limits.stuckBackoffMin, `anomaly: ${what}`);
-  await _alert(db, {
-    kind: 'comms_archive_anomaly', group_key: 'comms_archive_anomaly', severity: 'error',
-    title: 'Comms archive: an archive object needs a human',
-    message: `comms_media ${row.id}: ${what} — left pending (6 h backoff, uncharged).`,
-    ref_table: 'comms_media', ref_id: row.id,
-    dedup_key: `comms_archive_anomaly:${row.id}`,
-  });
-}
+// Provider-side failures and the terminal rule: common.rowOps — transient()
+// and terminalReason(). An RC call recording is a CLIFF kind: terminal only
+// once the call is past windowDays on the call clock.
 
 // ─────────────────────────────────────────────────────────────
 // The tick
@@ -451,7 +301,7 @@ async function _tick(db, opts, out, acc, startedAt) {
       // Line → credential (data). Not a phone_lines row → no_line, no charge
       // — until the call is past RC's window, when it is terminal (failed).
       if (!row.line_id || !row.credential_id) {
-        if (_pastWindow(row)) {
+        if (_terminalReason(row, { noLine: true })) {
           await _fail(db, row.id, `no_line: ${row.line_number} is not a phone line and the call is past ${limits.windowDays} days`);
           count('failed', row.id);
           continue;
@@ -528,7 +378,7 @@ async function _tick(db, opts, out, acc, startedAt) {
             // filter (or the field it keys on) changed shape. Never `none` on
             // that evidence — `none` satisfies the cliff guard, so a silent
             // drift would lose recordings with no alarm. Park uncharged, alert.
-            if (_pastWindow(row)) {
+            if (_terminalReason(row)) {
               await _fail(db, row.id, `call-log: ${r.rawRecords} record(s), none for this session; call past ${limits.windowDays} days`);
               count('failed', row.id);
             } else {
@@ -565,9 +415,11 @@ async function _tick(db, opts, out, acc, startedAt) {
           );
           for (const rec of rest) {
             const [ins] = await db.query(
+              // `restricted` is inherited: a Restrict on the placeholder
+              // covers every recording of that call (S1b review M2).
               `INSERT IGNORE INTO comms_media
-                 (channel, kind, source_table, source_id, part, provider, channel_id, party, captured_at, state)
-               SELECT channel, kind, source_table, source_id, ?, provider, channel_id, party, captured_at, 'pending'
+                 (channel, kind, source_table, source_id, part, provider, channel_id, party, captured_at, restricted, state)
+               SELECT channel, kind, source_table, source_id, ?, provider, channel_id, party, captured_at, restricted, 'pending'
                  FROM comms_media WHERE id = ?`,
               [_clamp(rec.id, 64), row.id],
             );

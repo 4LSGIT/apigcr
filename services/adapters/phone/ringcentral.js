@@ -218,7 +218,24 @@ async function checkArchiveAuth(db, credentialId) {
  * compressed response would fail the archive's length check every time.
  */
 async function fetchRecordingContent(db, { credentialId, recordingId, timeoutMs }) {
-  const url = recordingContentUrl(recordingId);
+  return _fetchBinary(db, credentialId, recordingContentUrl(recordingId), timeoutMs);
+}
+
+/**
+ * GET one MMS attachment's bytes (S1b) — the MEDIUM rate group. `~` is the
+ * authenticated extension: rc2 (2486213656) is a second number on the main
+ * extension (every RC webhook and rc2's own MMS URIs carry extension
+ * 55880693, verified 2026-10-14), so one path serves both lines and no
+ * extension id is stored anywhere. Same return shape as
+ * fetchRecordingContent.
+ */
+async function fetchMessageAttachment(db, { credentialId, messageId, attachmentId, timeoutMs }) {
+  const url = `${RC_MEDIA}/restapi/v1.0/account/~/extension/~/message-store/` +
+    `${encodeURIComponent(messageId)}/content/${encodeURIComponent(attachmentId)}`;
+  return _fetchBinary(db, credentialId, url, timeoutMs);
+}
+
+async function _fetchBinary(db, credentialId, url, timeoutMs) {
   const headers = await _authHeaders(db, credentialId, url);
   const res = await fetch(url, {
     headers: { ...headers, 'Accept-Encoding': 'identity' },
@@ -304,5 +321,6 @@ module.exports = {
   sendMms,
   checkArchiveAuth,
   fetchRecordingContent,
+  fetchMessageAttachment,
   findSessionRecordings,
 };

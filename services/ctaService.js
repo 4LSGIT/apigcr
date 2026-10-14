@@ -119,6 +119,10 @@ const CTA_FN_DENYLIST = Object.freeze([
   // RingCentral Heavy budget and writes the private archive — no public link
   // may start it. Deliberate divergence from the other (eligible) sweepers.
   'comms_archive_sweep',
+  // Comms archive S1b: same reasoning — provider budgets, archive writes, a
+  // whole-bucket stat pass.
+  'comms_archive_media_sweep',
+  'comms_archive_verify',
 ]);
 
 /** Chromium-backed functions: eligible, but a public repeatable link fans out load. */

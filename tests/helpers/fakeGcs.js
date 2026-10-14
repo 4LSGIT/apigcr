@@ -7,7 +7,7 @@
 //     existing name with a 412 at finalize;
 //   - an upload whose source errors (pipeline destroys the stream) is never
 //     finalized — no object appears, exactly like an aborted GCS upload.
-// Failure injection: fail.list / fail.put / fail.read / fail.sign / fail.perms
+// Failure injection: fail.list / fail.put / fail.read / fail.sign / fail.perms / fail.exists / fail.delete
 // = {code} (the call rejects); fail.putMid = {code} errors the upload on its
 // FIRST chunk while the source is still flowing (how the real library fails a
 // 403 / socket reset); fail.stall = true makes an upload accept nothing and
@@ -21,6 +21,7 @@ function fakeStorage() {
   const objects = new Map();   // name → { buf, contentType, generation }
   const fail = {};
   const denied = new Set();
+  const hooks = {};              // hooks.exists = async (name) => {} — runs inside exists()
   const calls = { list: 0, put: 0, read: 0, sign: [] };
   let gen = 1000;
 
@@ -75,6 +76,21 @@ function fakeStorage() {
           if (!o) { const r = new Readable({ read() {} }); process.nextTick(() => r.destroy(err({ code: 404 }))); return r; }
           return Readable.from([o.buf]);
         },
+        async exists() {
+          calls.exists = (calls.exists || 0) + 1;
+          if (fail.exists) throw err(fail.exists);
+          const live = objects.has(name);
+          if (hooks.exists) await hooks.exists(name);
+          return [live];
+        },
+        async delete(o = {}) {
+          if (fail.delete) throw err(fail.delete);
+          calls.deleted = calls.deleted || [];
+          calls.deleted.push(name);
+          if (!objects.has(name) && !o.ignoreNotFound) throw err({ code: 404 });
+          objects.delete(name);
+          return [{}];
+        },
         async getSignedUrl(o) {
           if (fail.sign) throw err(fail.sign);
           calls.sign.push({ name, ...o });
@@ -85,7 +101,7 @@ function fakeStorage() {
     },
   });
 
-  return { storage: { bucket }, objects, fail, denied, calls };
+  return { storage: { bucket }, objects, fail, denied, hooks, calls };
 }
 
 module.exports = { fakeStorage };

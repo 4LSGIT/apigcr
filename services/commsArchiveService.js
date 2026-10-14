@@ -46,7 +46,11 @@
  *   putStream(readable, {objectName, mime, expectedBytes, timeoutMs})
  *                                             -> Promise<{bytes, sha256, generation}>
  *   rehash(objectName, {timeoutMs})           -> Promise<{bytes, sha256, contentType}>
+ *   exists(objectName, {timeoutMs})           -> Promise<boolean>   (delete detection)
+ *   deleteObject(objectName, {timeoutMs})     -> Promise<void>      (purge; ignores not-found)
  *   signedUrl(objectName, {mime, filename?})  -> Promise<string>  (V4, 5 min)
+ *   mmsPrefix({capturedAt, sourceId, part})   -> 'phone/mms/yyyy/mm/<id>-<part>.'
+ *   classifyMedia(responseType, claimedType)  -> {mime, ext, note} | {error}
  */
 
 'use strict';
@@ -85,6 +89,37 @@ const AUDIO_TYPES = Object.freeze({
   'audio/wave':     ['audio/wav', 'wav'],
   'audio/vnd.wave': ['audio/wav', 'wav'],
 });
+
+/**
+ * MMS file types → [canonical mime, extension] (S1b). What is STORABLE, not
+ * what is servable — INLINE_TYPES below is the separate serving allowlist.
+ * classifyMedia() decides: a type on this map is stored as itself; an
+ * ERROR-SHAPED type (HTML / JSON / XML — a provider error page served with a
+ * 200) is refused as a provider transient; anything else is evidence and is
+ * stored as application/octet-stream (.bin, never inline), with the
+ * provider's claimed type recorded in the row's note.
+ */
+const MEDIA_TYPES = Object.freeze({
+  'image/jpeg': ['image/jpeg', 'jpg'], 'image/jpg': ['image/jpeg', 'jpg'], 'image/pjpeg': ['image/jpeg', 'jpg'],
+  'image/png':  ['image/png', 'png'],
+  'image/gif':  ['image/gif', 'gif'],
+  'image/webp': ['image/webp', 'webp'],
+  'image/heic': ['image/heic', 'heic'],
+  'image/heif': ['image/heif', 'heif'],
+  'application/pdf': ['application/pdf', 'pdf'],
+  'audio/mp4':  ['audio/mp4', 'm4a'],
+  'audio/mpeg': ['audio/mpeg', 'mp3'], 'audio/mp3': ['audio/mpeg', 'mp3'],
+  'audio/amr':  ['audio/amr', 'amr'],
+  'audio/ogg':  ['audio/ogg', 'ogg'],
+  'audio/wav':  ['audio/wav', 'wav'], 'audio/x-wav': ['audio/wav', 'wav'], 'audio/wave': ['audio/wav', 'wav'],
+  'video/3gpp': ['video/3gpp', '3gp'],
+  'video/mp4':  ['video/mp4', 'mp4'],
+  'video/quicktime': ['video/quicktime', 'mov'],
+  'text/vcard': ['text/vcard', 'vcf'], 'text/x-vcard': ['text/vcard', 'vcf'], 'text/directory': ['text/vcard', 'vcf'],
+});
+
+/** A 200 with one of these is a provider error page, never a file (S1b). */
+const ERROR_SHAPED = /^(text\/html|application\/(json|xml|problem\+json|xhtml\+xml)|text\/xml)$/;
 
 /**
  * Types a signed URL may render INLINE (design §7, C6). Everything else is
@@ -170,14 +205,19 @@ function bucketName() {
  * fetch — so stat-first looks the object up by THIS prefix, and yyyy/mm come
  * from captured_at, which never changes once the row exists.
  */
-function recordingPrefix({ capturedAt, sourceId, part }) {
+function _prefix(dir, { capturedAt, sourceId, part }, fn) {
   const d = capturedAt instanceof Date ? capturedAt : new Date(capturedAt);
-  if (Number.isNaN(d.getTime())) throw new Error(`recordingPrefix: bad capturedAt ${capturedAt}`);
-  if (!part) throw new Error('recordingPrefix: part is required (placeholders have no object)');
+  if (Number.isNaN(d.getTime())) throw new Error(`${fn}: bad capturedAt ${capturedAt}`);
+  if (!part) throw new Error(`${fn}: part is required (placeholders have no object)`);
   const yyyy = String(d.getUTCFullYear());
   const mm = String(d.getUTCMonth() + 1).padStart(2, '0');
-  return `phone/rec/${yyyy}/${mm}/${sourceId}-${part}.`;
+  return `phone/${dir}/${yyyy}/${mm}/${sourceId}-${part}.`;
 }
+
+function recordingPrefix(args) { return _prefix('rec', args, 'recordingPrefix'); }
+
+/** Same shape for an MMS file (design §4): phone/mms/<yyyy>/<mm>/<id>-<part>. */
+function mmsPrefix(args) { return _prefix('mms', args, 'mmsPrefix'); }
 
 function _baseMime(mime) {
   return String(mime || '').split(';')[0].trim().toLowerCase();
@@ -193,6 +233,28 @@ function canonicalAudioMime(mime) {
 function extForMime(mime) {
   const hit = AUDIO_TYPES[_baseMime(mime)];
   return hit ? hit[1] : null;
+}
+
+/**
+ * Decide how to store an MMS file (S1b). `responseType` is what the download
+ * served; `claimedType` what the provider's API / attachment record said.
+ * A generic response (octet-stream / blank) defers to the claimed type.
+ *   → { mime, ext, note }   storable (note non-null when stored as .bin)
+ *   → { error }             error-shaped: a provider transient
+ */
+function classifyMedia(responseType, claimedType) {
+  const resp = _baseMime(responseType);
+  const claimed = _baseMime(claimedType);
+  if (ERROR_SHAPED.test(resp)) return { error: `200 with error-shaped content-type ${resp}` };
+  const generic = !resp || resp === 'application/octet-stream' || resp === 'binary/octet-stream';
+  const t = generic ? claimed : resp;
+  const hit = MEDIA_TYPES[t];
+  if (hit) return { mime: hit[0], ext: hit[1], note: null };
+  return {
+    mime: 'application/octet-stream', ext: 'bin',
+    note: `stored as application/octet-stream; provider type: ${String(responseType || '') || '(none)'}` +
+      (claimed && claimed !== resp ? `; claimed type: ${claimed}` : ''),
+  };
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -354,6 +416,31 @@ async function rehash(objectName, { timeoutMs } = {}) {
   return { bytes: n, sha256: h.digest('hex'), contentType: (file.metadata && file.metadata.contentType) || null };
 }
 
+/** Does the live object exist? A soft-deleted object does NOT (delete detection). */
+async function exists(objectName, { timeoutMs } = {}) {
+  const bucket = bucketName();
+  try {
+    const [yes] = await _bounded(_storage().bucket(bucket).file(objectName).exists(),
+      _timeoutMs(timeoutMs), `stat ${objectName}`);
+    return !!yes;
+  } catch (err) {
+    if (err.ourSide) throw err;
+    throw _ourSide(err, `stat ${objectName}`);
+  }
+}
+
+/** Delete (→ soft-deleted for the bucket's window). Not-found is success (purge is idempotent). */
+async function deleteObject(objectName, { timeoutMs } = {}) {
+  const bucket = bucketName();
+  try {
+    await _bounded(_storage().bucket(bucket).file(objectName).delete({ ignoreNotFound: true }),
+      _timeoutMs(timeoutMs), `delete ${objectName}`);
+  } catch (err) {
+    if (err.ourSide) throw err;
+    throw _ourSide(err, `delete ${objectName}`);
+  }
+}
+
 /**
  * V4 read URL, 5 minutes. Issue ONLY after the caller's grant check (§7).
  * Inline for the allowlist; everything else downloads as an attachment.
@@ -380,14 +467,19 @@ async function signedUrl(objectName, { mime, filename } = {}) {
 module.exports = {
   bucketName,
   recordingPrefix,
+  mmsPrefix,
   extForMime,
   canonicalAudioMime,
+  classifyMedia,
   checkBucket,
   findByPrefix,
   putStream,
   rehash,
+  exists,
+  deleteObject,
   signedUrl,
   AUDIO_TYPES,
+  MEDIA_TYPES,
   INLINE_TYPES,
   REQUIRED_PERMISSIONS,
   SIGNED_URL_TTL_MS,
