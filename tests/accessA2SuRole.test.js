@@ -8,8 +8,10 @@
  *
  * Proof obligations:
  *   1. THE PREDICATES. A `su` role passes with a plain 'authorized'
- *      user_auth; the legacy string still passes (dual-accept window, A2b
- *      removes); everything else fails. Same for the DB-row variant.
+ *      user_auth; since A2b the legacy 'authorized - SU' string ALONE
+ *      confers nothing (a token or row carrying it without the role is a
+ *      spoof, not a credential); everything else fails. Same for the
+ *      DB-row variant.
  *   2. THE PHANTOM. 'authorized - admin' no longer authorizes anything:
  *      gone from both route files as a literal, and a token carrying it is
  *      403'd where it used to pass.
@@ -38,15 +40,16 @@ const read = p => fs.readFileSync(path.join(REPO, p), 'utf8');
 
 // ── 1. predicates ────────────────────────────────────────────────────────────
 
-describe('isSuperuser (JWT-shaped, A2 dual-accept)', () => {
+describe('isSuperuser (JWT-shaped; the su role only since A2b)', () => {
   const jwtAuth = (over = {}) =>
     ({ type: 'jwt', userId: 6, username: 'IT', user_auth: 'authorized', roles: [], ...over });
 
   test('su role passes with plain authorized user_auth', () => {
     expect(isSuperuser(jwtAuth({ roles: ['it', 'admin', 'su'] }))).toBe(true);
   });
-  test('legacy SU string passes with no roles (dual-accept window)', () => {
-    expect(isSuperuser(jwtAuth({ user_auth: 'authorized - SU' }))).toBe(true);
+  test('legacy SU string alone FAILS — no su role, no SU (A2b)', () => {
+    expect(isSuperuser(jwtAuth({ user_auth: 'authorized - SU' }))).toBe(false);
+    expect(isSuperuser(jwtAuth({ user_auth: 'authorized - SU', roles: ['it', 'admin'] }))).toBe(false);
   });
   test('both at once passes', () => {
     expect(isSuperuser(jwtAuth({ user_auth: 'authorized - SU', roles: ['su'] }))).toBe(true);
@@ -77,9 +80,13 @@ describe('rowIsSuperuser (DB-row-shaped)', () => {
     expect(rowIsSuperuser({ user_auth: 'authorized', roles: 'su' })).toBe(true);
     expect(rowIsSuperuser({ user_auth: 'authorized', roles: ' su ,staff' })).toBe(true);
   });
-  test('legacy SU string passes with empty/null roles', () => {
-    expect(rowIsSuperuser({ user_auth: 'authorized - SU', roles: '' })).toBe(true);
-    expect(rowIsSuperuser({ user_auth: 'authorized - SU', roles: null })).toBe(true);
+  test('legacy SU string alone FAILS with empty/null/non-su roles (A2b)', () => {
+    expect(rowIsSuperuser({ user_auth: 'authorized - SU', roles: '' })).toBe(false);
+    expect(rowIsSuperuser({ user_auth: 'authorized - SU', roles: null })).toBe(false);
+    expect(rowIsSuperuser({ user_auth: 'authorized - SU', roles: 'it,admin' })).toBe(false);
+  });
+  test('a not-yet-collapsed row (legacy string + su role) still passes', () => {
+    expect(rowIsSuperuser({ user_auth: 'authorized - SU', roles: 'it,admin,form_dev,su' })).toBe(true);
   });
   test('neither marker fails; missing row fails', () => {
     expect(rowIsSuperuser({ user_auth: 'authorized', roles: 'it,admin,staff' })).toBe(false);
@@ -101,8 +108,7 @@ describe('rowIsSuperuser (DB-row-shaped)', () => {
 });
 
 // ── 1b. the rerouted DB-row call sites meet a ROLE-ONLY SU (A2-F2) ──────────
-// Until A2b deletes the legacy string, every live SU row carries it — so
-// these are the only tests where the sites see su-by-role alone. A mutant
+// The sites see su-by-role alone (the post-collapse shape). A mutant
 // reverting any site to string-only dies here.
 
 describe('DB-row call sites on a role-only SU', () => {
@@ -208,8 +214,8 @@ describe("the 'authorized - admin' phantom tier is gone", () => {
   test('a su-role token passes the gate', async () => {
     expect(await get(appWithDb(), tokenWith({ roles: ['su'] }))).toBe(200);
   });
-  test('the legacy SU string still passes the gate (dual-accept window)', async () => {
-    expect(await get(appWithDb(), tokenWith({ user_auth: 'authorized - SU' }))).toBe(200);
+  test('the legacy SU string alone is 403’d (A2b — a claim, not a credential)', async () => {
+    expect(await get(appWithDb(), tokenWith({ user_auth: 'authorized - SU' }))).toBe(403);
   });
   test('plain staff is 403’d', async () => {
     expect(await get(appWithDb(), tokenWith({ roles: ['staff'] }))).toBe(403);

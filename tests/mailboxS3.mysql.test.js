@@ -84,7 +84,7 @@ maybe('mailbox S3 on real MySQL', () => {
        VALUES (?, ?, 1, ?, 'f', 'l', 'xx', ?, 0, '{}', ?)`, [id, 'u' + id, 'User ' + id, auth, roles]);
     await user(SS, 'authorized', 'staff,attorney');
     await user(READER, 'authorized', 'staff');
-    await user(SU, 'authorized - SU', 'it,admin,form_dev');
+    await user(SU, 'authorized', 'it,admin,form_dev,su');
     await user(SENDER, 'authorized', 'staff');
     await q("INSERT IGNORE INTO credentials (id, name, type) VALUES (11, 'Google Workspace (test)', 'oauth2')"); // email_credentials.credential_id FK
     await q(`INSERT INTO email_credentials (id, email, smtp_host, smtp_port, smtp_user, smtp_pass, smtp_secure, provider, credential_id, from_name, signature_html, signature_text) VALUES
@@ -113,7 +113,7 @@ maybe('mailbox S3 on real MySQL', () => {
     const engine = (await read.listMessages(pool, SU, { sent_only: '1', limit: 100 })).messages.map((m) => m.id).sort((a, b) => a - b);
     expect(engine).toEqual(want);
     const W = makeWorld();
-    W.user(SU, { auth: 'authorized - SU' });
+    W.user(SU, { auth: 'authorized', roles: 'su' });
     W.mailbox(1, { address: 'billing@firm.test' });
     W.mailbox(2, { address: 'stuart@firm.test' });
     for (const [id, mb, folder, labels] of MATRIX) W.message(id, { mailbox_id: mb, folder, gmail_labels: labels });

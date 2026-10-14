@@ -74,7 +74,7 @@ maybe('mailbox S3-R on real MySQL', () => {
       `INSERT INTO users (user, username, user_type, user_name, user_fname, user_lname, user_initials, user_auth, ringcentral, user_custom_tab, roles)
        VALUES (?, ?, 1, ?, 'f', 'l', 'xx', ?, 0, '{}', ?)`, [id, 'u' + id, 'User ' + id, auth, roles]);
     await user(SS, 'authorized', 'staff,attorney');
-    await user(SU, 'authorized - SU', 'it,admin,form_dev');
+    await user(SU, 'authorized', 'it,admin,form_dev,su');
     await user(AREADER, 'authorized', 'staff');
     await q(`INSERT INTO mailboxes (id, address, domain, imap_host, imap_user, imap_secret, ingest_folders, active, ingest_enabled, alias_of, alias_label) VALUES
       (2, 'stuart@firm.test', 'firm.test', 'imap.gmail.com', 'stuart@firm.test', 'ENCv1:y', '{"[Gmail]/All Mail":{"emit_to_rules":true}}', 1, 1, NULL, NULL),

@@ -83,7 +83,7 @@ maybe('mailbox S2P on real MySQL', () => {
       `INSERT INTO users (user, username, user_type, user_name, user_fname, user_lname, user_initials, user_auth, ringcentral, user_custom_tab, roles)
        VALUES (?, ?, 1, ?, 'f', 'l', 'xx', ?, 0, '{}', ?)`, [id, 'u' + id, 'User ' + id, auth, roles]);
     await user(READER, 'authorized', 'staff');
-    await user(SU, 'authorized - SU', 'it,admin,form_dev');
+    await user(SU, 'authorized', 'it,admin,form_dev,su');
     await user(SENDER, 'authorized', 'staff');
     await q(`INSERT INTO cases (case_id, case_number, case_number_full, case_type, case_stage, case_status)
              VALUES ('CaseA1', '26-11111', '26-11111-tjt', 'BK', 'Open', 'New'), ('CaseB2', '26-22222', NULL, 'BK', 'Open', 'New')`);

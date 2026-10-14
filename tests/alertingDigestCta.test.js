@@ -145,7 +145,7 @@ function parseMint(ins) {
   };
 }
 
-const SU = [{ user: 1, user_auth: 'authorized - SU' }];
+const SU = [{ user: 1, user_auth: 'authorized', roles: 'su' }];
 
 beforeEach(() => {
   jest.clearAllMocks();

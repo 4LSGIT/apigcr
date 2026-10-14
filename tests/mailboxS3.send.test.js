@@ -122,8 +122,8 @@ beforeAll(async () => {
 });
 afterAll(async () => { await new Promise((r) => server.close(r)); });
 
-const tok = (user, user_auth = 'authorized') =>
-  jwt.sign({ sub: String(user), username: 'u' + user, user_auth, aud: 'staff' }, process.env.JWT_SECRET);
+const tok = (user, user_auth = 'authorized', roles = []) =>
+  jwt.sign({ sub: String(user), username: 'u' + user, user_auth, roles, aud: 'staff' }, process.env.JWT_SECRET);
 
 async function call(method, url, { t, apiKey, body, elevate } = {}) {
   const headers = {};
@@ -149,7 +149,7 @@ function seed() {
   W.cred = (id, over = {}) => cred(id, { smtp_pass: encrypt('smtp-pw'), ...over }); // the adapter decrypts for real
   W.user(SS, { roles: 'staff,attorney' });
   W.user(READER, { roles: 'staff' });
-  W.user(SU, { auth: 'authorized - SU', roles: 'it,admin,form_dev' });
+  W.user(SU, { auth: 'authorized', roles: 'it,admin,form_dev,su' });
   W.user(SENDONLY, { roles: 'staff' });
   W.user(SENDER, { roles: 'staff' });
   W.user(NOBODY, { roles: 'staff' });
@@ -272,18 +272,18 @@ describe('the grant check sits on the interactive seat', () => {
   });
 
   test('SU: the bypass sends — but only elevated (S0 rule), refused BEFORE anything is dispatched', async () => {
-    const no = await call('POST', '/api/mail/send', { t: tok(SU, 'authorized - SU'), body: NEW_MSG() });
+    const no = await call('POST', '/api/mail/send', { t: tok(SU, 'authorized', ['su']), body: NEW_MSG() });
     expect([no.status, no.json.code]).toEqual([401, 'elevation_required']);
     expect(mockSendMail).not.toHaveBeenCalled();
     expect(W.T.admin_audit_log.map((a) => [a.tool, a.status])).toEqual([['mail_send', 'rejected_no_elevation']]);
-    const yes = await call('POST', '/api/mail/send', { t: tok(SU, 'authorized - SU'), elevate: SU, body: NEW_MSG() });
+    const yes = await call('POST', '/api/mail/send', { t: tok(SU, 'authorized', ['su']), elevate: SU, body: NEW_MSG() });
     expect(yes.status).toBe(200);
     expect(mockSendMail).toHaveBeenCalledTimes(1);
   });
 
   test('SU elevation is a real token for THIS user: a junk header or another user\'s token is a 401, nothing dispatched', async () => {
     const withHeader = async (h) => (await realFetch(base + '/api/mail/send', {
-      method: 'POST', headers: { Authorization: `Bearer ${tok(SU, 'authorized - SU')}`, 'Content-Type': 'application/json', 'x-su-elevation': h }, body: JSON.stringify(NEW_MSG()),
+      method: 'POST', headers: { Authorization: `Bearer ${tok(SU, 'authorized', ['su'])}`, 'Content-Type': 'application/json', 'x-su-elevation': h }, body: JSON.stringify(NEW_MSG()),
     })).status;
     expect(await withHeader('not-a-token')).toBe(401);
     expect(await withHeader(mintElevationToken(SENDER))).toBe(401);
@@ -293,17 +293,17 @@ describe('the grant check sits on the interactive seat', () => {
 
   test('a Google sender for a DIFFERENT address is refused (Gmail would send under its own address): 409, greyed in the picker', async () => {
     W.mailbox(6, { address: 'pilot@other.test', display_name: 'Pilot', send_credential_id: 2 }); // stuart@'s gmail sender
-    const r = await call('POST', '/api/mail/send', { t: tok(SU, 'authorized - SU'), elevate: SU, body: NEW_MSG({ mailbox_id: 6 }) });
+    const r = await call('POST', '/api/mail/send', { t: tok(SU, 'authorized', ['su']), elevate: SU, body: NEW_MSG({ mailbox_id: 6 }) });
     expect([r.status, r.json.message]).toEqual([409, expect.stringMatching(/different address/)]);
     expect(gmailCalls).toEqual([]);
-    const ids = (await call('GET', '/api/mail/identities', { t: tok(SU, 'authorized - SU') })).json.identities;
+    const ids = (await call('GET', '/api/mail/identities', { t: tok(SU, 'authorized', ['su']) })).json.identities;
     expect(ids.find((i) => i.id === 6)).toMatchObject({ sendable: false, reason: 'credential_mismatch' });
     expect(ids.find((i) => i.id === 2)).toMatchObject({ sendable: true }); // the box whose address IS the sender's
   });
 
   test('a box that cannot send: 409 with the reason (read-only, inactive, Pabbly)', async () => {
     for (const [id, re] of [[3, /Read-only/], [4, /switched off/], [5, /Pabbly/]]) {
-      const r = await call('POST', '/api/mail/send', { t: tok(SU, 'authorized - SU'), elevate: SU, body: NEW_MSG({ mailbox_id: id }) });
+      const r = await call('POST', '/api/mail/send', { t: tok(SU, 'authorized', ['su']), elevate: SU, body: NEW_MSG({ mailbox_id: id }) });
       expect([r.status, r.json.message]).toEqual([409, expect.stringMatching(re)]);
     }
     expect(mockSendMail).not.toHaveBeenCalled();
@@ -726,7 +726,7 @@ describe('send-only identities — a Google alias as its own box (S3.1; alias_of
   test('S3.2 (1b): an SU\'s explicit send grants say who they are; with none, the bypass picks as before', async () => {
     seedAlias();
     seedInternal();
-    const su = tok(SU, 'authorized - SU');
+    const su = tok(SU, 'authorized', ['su']);
     // no grant rows: today's pick (the From is a box the SU can send as)
     let r = await reply(220, su);
     expect([r.mailbox_id, emails(r.to)]).toEqual([2, ['it@firm.test']]);
@@ -745,7 +745,7 @@ describe('send-only identities — a Google alias as its own box (S3.1; alias_of
     W.cred(7, { email: 'abc@firm.test', provider: 'gmail', credential_id: 11, smtp_host: '', smtp_user: '' });
     W.mailbox(8, { address: 'abc@firm.test', send_credential_id: 7, ingest_enabled: 0, imap_secret: null, imap_host: 'imap.gmail.com', imap_user: 'stuart@firm.test', alias_of: 2 });
     W.grant(SS, 8, { read: 0, send: 1 });
-    let ids = (await call('GET', '/api/mail/identities', { t: tok(SU, 'authorized - SU') })).json.identities;
+    let ids = (await call('GET', '/api/mail/identities', { t: tok(SU, 'authorized', ['su']) })).json.identities;
     expect(ids.map((i) => [i.address, i.send_only])).toEqual([
       ['billing@firm.test', false], ['nosend@firm.test', false], ['off@firm.test', false], ['pab@firm.test', false], ['stuart@firm.test', false],
       ['abc@firm.test', true], ['it@firm.test', true],
@@ -762,7 +762,7 @@ describe('send-only identities — a Google alias as its own box (S3.1; alias_of
     let sum = (await call('GET', '/api/mail/mailboxes', { t: tok(SS) })).json;
     expect(sum.mailboxes.find((m) => m.id === ALIAS)).toMatchObject({ alias_of: 2, inbox_total: 1, inbox_unread: 1 });
     expect(sum.viewer.can_send).toBe(true);
-    expect((await call('GET', '/api/mail/mailboxes', { t: tok(SU, 'authorized - SU') })).json.mailboxes.find((m) => m.id === ALIAS))
+    expect((await call('GET', '/api/mail/mailboxes', { t: tok(SU, 'authorized', ['su']) })).json.mailboxes.find((m) => m.id === ALIAS))
       .toMatchObject({ alias_of: 2, inbox_total: 1 });
     const ids = (await call('GET', '/api/mail/identities', { t: tok(SS) })).json.identities;
     expect(ids.find((i) => i.id === ALIAS)).toMatchObject({ sendable: true, signature: true, send_only: true });
@@ -779,7 +779,7 @@ describe('send-only identities — a Google alias as its own box (S3.1; alias_of
     // never gets the picker's send_only flag.
     Object.assign(W.T.mailboxes.find((b) => b.id === 1), { imap_secret: null });
     expect((await call('GET', '/api/mail/mailboxes', { t: tok(SENDER) })).json.mailboxes.map((m) => m.id)).toEqual([1]);
-    const suIds = (await call('GET', '/api/mail/identities', { t: tok(SU, 'authorized - SU') })).json.identities;
+    const suIds = (await call('GET', '/api/mail/identities', { t: tok(SU, 'authorized', ['su']) })).json.identities;
     expect(suIds.find((i) => i.id === 1).send_only).toBe(false);
     expect((await call('GET', '/api/mail/mailboxes', { t: tok(READER) })).json.viewer.can_send).toBe(false);
   });
@@ -792,7 +792,7 @@ describe('the Sent scope (list) — the engine twin is tests/mailboxS3.mysql.tes
       W.message(id, { mailbox_id: mb, folder, gmail_labels: labels, message_id: `m${id}@x.test`, thread_key: `m${id}@x.test`, subject: `s${id}`, from_addr: 'a@x.test' });
     }
     const want = SENT_MATRIX.filter((r) => r[4]).map((r) => r[0]);
-    const su = await call('GET', '/api/mail/messages?sent_only=1&limit=100', { t: tok(SU, 'authorized - SU') });
+    const su = await call('GET', '/api/mail/messages?sent_only=1&limit=100', { t: tok(SU, 'authorized', ['su']) });
     expect(su.status).toBe(200);
     expect(su.json.messages.map((m) => m.id).sort((a, b) => a - b)).toEqual([103, ...want].sort((a, b) => a - b));
     const sender = await call('GET', '/api/mail/messages?sent_only=1&limit=100', { t: tok(SENDER) }); // box 1 only
@@ -859,9 +859,9 @@ describe('per-user send rate (route)', () => {
   test('an SU\'s elevation-rejected attempts do not use up the window (a prompt-and-retry is ONE send)', async () => {
     W.setting('mail_send_daily_budget', JSON.stringify({ smtp: 1000 }));
     for (let i = 0; i < mailRouter.SEND_RATE_MAX + 1; i++) {
-      expect((await call('POST', '/api/mail/send', { t: tok(SU, 'authorized - SU'), body: NEW_MSG() })).status).toBe(401);
+      expect((await call('POST', '/api/mail/send', { t: tok(SU, 'authorized', ['su']), body: NEW_MSG() })).status).toBe(401);
     }
-    expect((await call('POST', '/api/mail/send', { t: tok(SU, 'authorized - SU'), elevate: SU, body: NEW_MSG() })).status).toBe(200);
+    expect((await call('POST', '/api/mail/send', { t: tok(SU, 'authorized', ['su']), elevate: SU, body: NEW_MSG() })).status).toBe(200);
     expect(mockSendMail).toHaveBeenCalledTimes(1);
   });
 });

@@ -199,7 +199,7 @@ A2b trailing ≥24h lets every pre-A2 token expire naturally.
   users are never SU — the off switch is explicit now that SU survives in
   `roles`), straggler reroutes (incl. `lib/auth.formDev.js`), phantom
   admin tier removal.
-- **A2b (≥24h later):** the 11 frontend files → roles-based (overlaps A3's
+- **A2b (SHIPPED 2026-10-14, merged with A3):** the 11 frontend files → roles-based (overlaps A3's
   users.html work), stage-3 `user_auth` collapse, legacy-string branch
   removal (`auth.superuser` ×2, `capabilities.js`, mailboxService
   `SU_AUTH`), `ALLOWED_AUTH` shrink, `services/commsArchiveAdmin.js`
@@ -370,13 +370,14 @@ Direction only, so Phase A's shapes don't foreclose it:
 - **A2** SU migration, backend half: SET member `su`, stage-1 data
   migration, isSuperuser → roles (dual-accept), rowIsSuperuser, straggler
   sites, phantom-tier removal. Zero behavior change, no logout.
-- **A2b** (≥24h after A2 deploys) SU migration, cutover half: the 11
+- **A2b** (shipped 2026-10-14, merged with A3; the 24h wait was replaced by the SU holder re-logging-in) SU migration, cutover half: the 11
   frontend string-gates → roles, stage-3 user_auth collapse, legacy-string
   branch deletion, ALLOWED_AUTH shrink, commsArchiveAdmin follow-up, stale
   prose sweep. May merge with A3 (users.html overlap). §2.4 has the split
   rationale.
-- **A3** Roles UI in admin users pane (PATCH whitelist + validation +
-  su-only-grants-su) — unblocks real membership management.
+- **A3** (shipped 2026-10-14, inside A2b) Roles UI in admin users pane
+  (PATCH whitelist + validation + su-only-grants-su + no-self-su-removal)
+  — real membership management is live.
 - **A4** `firm.settings` gate on app-settings writes (**coordinate:
   settings arc owns the surface — entry in `admin_surface_coord` before
   any worker prompt**). Unblocks CFG-3.

@@ -760,12 +760,12 @@ function myUserId() {
 }
 
 /* Mirrors lib/auth.superuser.isSuperuser, which is the server's single source
-   of truth: JWT + user_auth === 'authorized - SU'. api.firmData's USER_STRIP
-   only removes password fields, so user_auth reaches the client intact.
+   of truth: the `su` role. currentUser.roles is the users.roles SET as a csv
+   string (api.firmData's USER_STRIP only removes password fields).
    This gates the UI ONLY — mayWriteTag() on the server is the real check, and
    a staff member editing the DOM gets a 403, not a corrupted invariant. */
 function isSU() {
-  try { return window.top.firmData?.currentUser?.user_auth === 'authorized - SU'; }
+  try { return String(window.top.firmData?.currentUser?.roles || '').split(',').includes('su'); }
   catch (_) { return false; }
 }
 

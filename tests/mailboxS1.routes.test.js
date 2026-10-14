@@ -55,8 +55,8 @@ beforeAll(async () => {
 });
 afterAll(async () => { await new Promise((r) => server.close(r)); });
 
-const tok = (user, user_auth = 'authorized') =>
-  jwt.sign({ sub: String(user), username: 'u' + user, user_auth, aud: 'staff' }, process.env.JWT_SECRET);
+const tok = (user, user_auth = 'authorized', roles = []) =>
+  jwt.sign({ sub: String(user), username: 'u' + user, user_auth, roles, aud: 'staff' }, process.env.JWT_SECRET);
 
 async function call(method, url, { t, apiKey } = {}) {
   const headers = {};
@@ -132,7 +132,7 @@ describe('GET …/messages/:mid/parts/:part', () => {
   test('no grant → 404; grant without read → 403; SU needs no grant', async () => {
     expect((await call('GET', partUrl(), { t: tok(9) })).status).toBe(404);
     expect((await call('GET', partUrl(), { t: tok(5) })).status).toBe(403);
-    expect((await call('GET', partUrl(), { t: tok(6, 'authorized - SU') })).status).toBe(200);
+    expect((await call('GET', partUrl(), { t: tok(6, 'authorized', ['su']) })).status).toBe(200);
     expect(transport.fetchPart).toHaveBeenCalledTimes(1);
   });
 
@@ -212,7 +212,7 @@ describe('ALL /mailbox-ingest', () => {
     }
     expect(ingest.runIngest).toHaveBeenCalledTimes(4);
     ingestRouter._resetStaffThrottle();
-    expect((await call('POST', '/mailbox-ingest', { t: tok(6, 'authorized - SU') })).json).toEqual(full);            // an SU sees the details
+    expect((await call('POST', '/mailbox-ingest', { t: tok(6, 'authorized', ['su']) })).json).toEqual(full);            // an SU sees the details
   });
 });
 
@@ -257,6 +257,6 @@ describe('GET …/parts/:part through an alias box (S3-R)', () => {
     expect((await call('GET', partUrl(MB, 31, '2'), { t: tok(7) })).status).toBe(404);
     expect(transport.fetchPart).not.toHaveBeenCalled();
     // the SU reads through either id
-    expect((await call('GET', partUrl(ALIAS, 31, '2'), { t: tok(6, 'authorized - SU') })).status).toBe(200);
+    expect((await call('GET', partUrl(ALIAS, 31, '2'), { t: tok(6, 'authorized', ['su']) })).status).toBe(200);
   });
 });

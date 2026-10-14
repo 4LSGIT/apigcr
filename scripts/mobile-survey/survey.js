@@ -240,6 +240,11 @@ async function walk(page, W, record) {
         await fr.evaluate(() => { const b = document.querySelector('tr[data-id] button[data-action="access"]'); if (b) b.click(); }); await sleep(1500);
         await record('panel:connectionsDiv:phone-access', await measure(page, fr), await shot('panel_connections_phone_access'));
       }
+      // Users → Edit (the roles checkbox row, access-control A3), fixtures/api/admin/users.json
+      if (id === 'usersDiv' && fr) {
+        await fr.evaluate(() => openForm(3)); await sleep(1000);
+        await record('panel:usersDiv:edit-form', await measure(page, fr), await shot('panel_users_edit_form'));
+      }
     }
   }
 

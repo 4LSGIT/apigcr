@@ -105,7 +105,7 @@ function makeWorld() {
       { user: 0, username: 'automations', user_name: 'Automations', user_auth: 'authorized' },
       { user: 1, username: 'Ssandweiss', user_name: 'Stuart', user_auth: 'authorized' },
       { user: 5, username: 'sb', user_name: 'Shoshana', user_auth: 'authorized' },
-      { user: 6, username: 'IT', user_name: 'Fred', user_auth: 'authorized - SU' },
+      { user: 6, username: 'IT', user_name: 'Fred', user_auth: 'authorized', roles: 'su' },
       // JWT will claim SU for user 7; the DB says otherwise.
       { user: 7, username: 'demoted', user_name: 'Demoted', user_auth: 'authorized' },
       { user: 22, username: 'RENA', user_name: 'Rena', user_auth: 'authorized' },
@@ -375,9 +375,9 @@ beforeAll(async () => {
 afterAll(async () => { await new Promise((resolve) => server.close(resolve)); });
 beforeEach(() => { W = makeWorld(); require('../lib/auth.superuser')._resetRateLimits(); });
 
-const tok = (user, user_auth = 'authorized') =>
-  jwt.sign({ sub: String(user), username: 'u' + user, user_auth, aud: 'staff' }, process.env.JWT_SECRET);
-const SU = () => tok(6, 'authorized - SU');
+const tok = (user, user_auth = 'authorized', roles = []) =>
+  jwt.sign({ sub: String(user), username: 'u' + user, user_auth, roles, aud: 'staff' }, process.env.JWT_SECRET);
+const SU = () => tok(6, 'authorized', ['su']);
 const ELEV = () => mintElevationToken(6);
 
 async function call(method, url, { t, body, elev, apiKey } = {}) {
@@ -561,7 +561,7 @@ describe('SU bypass and step-up', () => {
 
   test('the bypass is DB-sourced: a JWT claiming SU for a non-SU user gets no bypass', async () => {
     const id = await seedMailbox();
-    const fake = tok(7, 'authorized - SU');
+    const fake = tok(7, 'authorized', ['su']);
     const elev7 = mintElevationToken(7);
     expect((await call('PATCH', `/api/mailboxes/${id}`, { t: fake, elev: elev7, body: { display_name: 'x' } })).status).toBe(404);
     const list = await call('GET', '/api/mailboxes', { t: fake });

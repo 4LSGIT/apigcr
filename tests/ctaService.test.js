@@ -37,7 +37,7 @@ const registry = require('../lib/internal_functions');
 const { alert } = require('../lib/alerting');
 const { makeCtaWorld, decodeLog } = require('./helpers/ctaWorld');
 
-const SU = 6;          // 'authorized - SU' in the world
+const SU = 6;          // the su role in the world
 const NON_SU = 22;     // 'authorized'
 const HOUR = 3600e3;
 const DAY = 24 * HOUR;

@@ -400,13 +400,13 @@ const P = window.parent;
 (function checkSU() {
   try {
     const cu = P?.firmData?.currentUser;
-    if (cu && cu.user_auth === 'authorized - SU') return;
+    if (cu && String(cu.roles || '').split(',').includes('su')) return;   // su role (users.roles csv)
 
     // Fallback: try JWT (firmData might not be loaded yet on direct refresh)
     const token = P?.AUTH_STATE?.jwt;
     if (token) {
       const payload = JSON.parse(atob(token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
-      if (payload.user_auth === 'authorized - SU') return;
+      if (Array.isArray(payload.roles) && payload.roles.includes('su')) return;   // JWT roles claim
     }
 
     document.body.innerHTML =

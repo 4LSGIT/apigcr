@@ -156,7 +156,7 @@ function makeCtaWorld() {
     nextId: { cta_links: 1, cta_executions: 1 },
     users: new Map([
       [0, { user: 0, user_auth: 'authorized' }],
-      [6, { user: 6, user_auth: 'authorized - SU' }],
+      [6, { user: 6, user_auth: 'authorized', roles: 'su' }],
       [22, { user: 22, user_auth: 'authorized' }],
     ]),
     settings: new Map([

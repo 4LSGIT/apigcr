@@ -40,7 +40,7 @@ const ctaLinks = require('../lib/ctaLinks');
 const { makeCtaWorld, decodeAudit } = require('./helpers/ctaWorld');
 
 const SECRET = process.env.JWT_SECRET;
-const SU_ID = 6;   // 'authorized - SU' in the world
+const SU_ID = 6;   // the su role in the world
 
 let db;
 let W;
@@ -75,7 +75,7 @@ beforeEach(() => {
 });
 
 const staffToken = (over = {}) => jwt.sign(
-  { sub: SU_ID, username: 'fred', user_type: 'staff', user_auth: 'authorized - SU', aud: 'staff', roles: [], ...over },
+  { sub: SU_ID, username: 'fred', user_type: 'staff', user_auth: 'authorized', aud: 'staff', roles: ['su'], ...over },
   SECRET, { expiresIn: '1h' }
 );
 
@@ -114,7 +114,7 @@ const B62_22 = /^[0-9A-Za-z]{22}$/;
 describe('auth — superuserOnlyFor(cta)', () => {
   test('no JWT 401; non-SU 403; API key 403; SU without step-up 401 elevation_required', async () => {
     expect((await call('/api/cta')).status).toBe(401);
-    expect((await call('/api/cta', { bearer: staffToken({ sub: 22, user_auth: 'authorized' }) })).status).toBe(403);
+    expect((await call('/api/cta', { bearer: staffToken({ sub: 22, user_auth: 'authorized', roles: [] }) })).status).toBe(403);
     expect((await call('/api/cta', { apiKey: process.env.INTERNAL_API_KEY })).status).toBe(403);
     const noElev = await call('/api/cta', { method: 'POST', bearer: staffToken(), body: mintBody() });
     expect(noElev.status).toBe(401);

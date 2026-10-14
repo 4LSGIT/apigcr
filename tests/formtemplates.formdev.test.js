@@ -250,8 +250,13 @@ describe('isFormDev (lib/auth.formDev.js)', () => {
     expect(isFormDev({ type: 'api_key', key_id: 3, key_label: 'pabbly' })).toBe(true);
   });
 
-  test('SU passes regardless of roles', () => {
-    expect(isFormDev({ type: 'jwt', user_auth: 'authorized - SU', roles: [] })).toBe(true);
+  test('SU (the su role) passes without it / form_dev', () => {
+    expect(isFormDev({ type: 'jwt', user_auth: 'authorized', roles: ['su'] })).toBe(true);
+  });
+
+  test("the legacy 'authorized - SU' string alone confers nothing (A2b)", () => {
+    expect(isFormDev({ type: 'jwt', user_auth: 'authorized - SU', roles: [] })).toBe(false);
+    expect(isFormDev({ type: 'jwt', user_auth: 'authorized - SU', roles: ['staff'] })).toBe(false);
   });
 
   test('roles it / form_dev pass; plain staff does not', () => {

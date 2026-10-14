@@ -5,7 +5,7 @@
  * ref/COMMS_ARCHIVE_DESIGN.md §0 R9, §8. Routes: routes/api.commsArchive.js.
  *
  * ── isArchiveAdmin (R9 — Fred's ruling 2026-10-14) ─────────────────────────
- * SU always passes (users.user_auth, read from the DB through
+ * SU always passes (users.roles `su` member, read from the DB through
  * mailboxService.isSuperuser — never from the JWT's claim). Otherwise the
  * caller's users.user id must be listed in app_settings
  * `comms_archive_admins` (CSV of ids; is_editable 0 → SU console only),

@@ -45,9 +45,9 @@ beforeAll(async () => {
 });
 afterAll(async () => { await new Promise((r) => server.close(r)); });
 
-const tok = (user, user_auth = 'authorized') =>
-  jwt.sign({ sub: String(user), username: 'u' + user, user_auth, aud: 'staff' }, process.env.JWT_SECRET);
-const SU = () => tok(6, 'authorized - SU');
+const tok = (user, user_auth = 'authorized', roles = []) =>
+  jwt.sign({ sub: String(user), username: 'u' + user, user_auth, roles, aud: 'staff' }, process.env.JWT_SECRET);
+const SU = () => tok(6, 'authorized', ['su']);
 
 async function call(url, { t } = {}) {
   const headers = {};

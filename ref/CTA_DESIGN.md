@@ -417,9 +417,9 @@ tier needs a shell pane. Password + attribution covers the near-term cases.
   (B5). `lookup_contact`-class outputs (SSN column, DOB, notes) are exactly
   why.
 - `mint_source` governs the click-time check (B1): `su` mints refuse when
-  `minted_by` is no longer an active SU. Note: exactly one users row is
-  `'authorized - SU'` — that row's `user_auth` is a **global kill switch**
-  for every su-minted CTA.
+  `minted_by` is no longer an active SU. Note: exactly one users row holds
+  the `su` role — disabling that user, or removing its `su`, is a **global
+  kill switch** for every su-minted CTA.
 - `prompt` is escaped text; `context_html` is the only raw-HTML slot (same
   trust contract as decisions) — and staff-authored HTML on the landing host
   is why /c/ lives there, in all three pageLanding sets.

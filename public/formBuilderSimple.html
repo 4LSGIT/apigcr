@@ -576,9 +576,8 @@ function init() {
   // honest so a gated control is disabled with a reason instead of 403-ing.
   FORM_DEV = (() => {
     const u = (P.firmData && P.firmData.currentUser) || {};
-    if (u.user_auth === 'authorized - SU') return true;
     const roles = String(u.roles || '').split(',');
-    return roles.includes('it') || roles.includes('form_dev');
+    return roles.includes('su') || roles.includes('it') || roles.includes('form_dev');
   })();
 
   E('listSearch').oninput = renderList;

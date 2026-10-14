@@ -56,8 +56,8 @@ maybe('mailbox S2 on real MySQL', () => {
 
   let pool; let server; let base;
   const SU = 6; const SS = 1; const READER = 5; const NOBODY = 9;
-  const tok = (user, user_auth = 'authorized') =>
-    jwt.sign({ sub: String(user), username: 'u' + user, user_auth, aud: 'staff' }, process.env.JWT_SECRET);
+  const tok = (user, user_auth = 'authorized', roles = []) =>
+    jwt.sign({ sub: String(user), username: 'u' + user, user_auth, roles, aud: 'staff' }, process.env.JWT_SECRET);
 
   async function call(method, url, { t, body } = {}) {
     const headers = { Authorization: `Bearer ${t}` };
@@ -116,7 +116,7 @@ maybe('mailbox S2 on real MySQL', () => {
        VALUES (?, ?, 1, ?, 'f', 'l', 'xx', ?, 0, '{}', ?)`, [id, 'u' + id, 'User ' + id, auth, roles]);
     await user(SS, 'authorized', 'staff,attorney');
     await user(READER, 'authorized', 'staff');
-    await user(SU, 'authorized - SU', 'it,admin,form_dev');
+    await user(SU, 'authorized', 'it,admin,form_dev,su');
     await user(NOBODY, 'authorized', 'staff');
     await q(`INSERT INTO mailboxes (id, address, domain, imap_host, imap_user, ingest_folders, ingest_state) VALUES
       (1, 'billing@firm.test', 'firm.test', 'h', 'u', '{"INBOX":{"emit_to_rules":true}}', '{"INBOX":{"uidvalidity":1,"last_uid":103}}'),
@@ -337,7 +337,7 @@ maybe('mailbox S2 on real MySQL', () => {
     };
     await wipe();
     const W = makeWorld();
-    W.user(SU, { auth: 'authorized - SU' });
+    W.user(SU, { auth: 'authorized', roles: 'su' });
     W.mailbox(1, { address: 'billing@firm.test' });
     W.mailbox(2, { address: 'intake@firm.test' });
     W.mailbox(3, { address: 'shared@gmail.test' });
@@ -433,7 +433,7 @@ maybe('mailbox S2 on real MySQL', () => {
     // POST without a colour: an unused palette colour (blue is taken) — the engine runs the used-colour SELECT
     const r = await fetch(`${base}/api/mailboxes`, {
       method: 'POST',
-      headers: { Authorization: `Bearer ${tok(SU, 'authorized - SU')}`, 'X-SU-Elevation': mintElevationToken(SU), 'Content-Type': 'application/json' },
+      headers: { Authorization: `Bearer ${tok(SU, 'authorized', ['su'])}`, 'X-SU-Elevation': mintElevationToken(SU), 'Content-Type': 'application/json' },
       body: JSON.stringify({ address: 'new@firm.test', imap_host: 'imap.firm.test', imap_user: 'new' }),
     });
     expect(r.status).toBe(201);
@@ -543,7 +543,7 @@ maybe('mailbox S2 on real MySQL', () => {
     const svc = require('../services/mailbox/mailReadService');
     const ALL = '[Gmail]/All Mail';
     const W = makeWorld();
-    W.user(SU, { auth: 'authorized - SU' });
+    W.user(SU, { auth: 'authorized', roles: 'su' });
     W.mailbox(1, { address: 'billing@firm.test' });
     W.mailbox(2, { address: 'intake@firm.test' });
     W.mailbox(3, { address: 'stuart@firm.test' });

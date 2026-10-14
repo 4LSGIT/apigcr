@@ -10,7 +10,8 @@
  *     vs it-reachable; which role holds what) — any change fails here until
  *     the snapshot is deliberately updated, like the opened-param set in
  *     tests/ctaInputs.test.js.
- *   - can(): su role / legacy SU string pass everything; it passes firm-grade
+ *   - can(): su role passes everything (the legacy SU string alone: nothing,
+ *     since A2b); it passes firm-grade
  *     only; named roles pass exactly their ROLE_CAPS; staff/automation hold
  *     nothing; api_key = machine trust (Q3); portal / readonly / missing auth
  *     = false; an unknown capability THROWS.
@@ -175,14 +176,17 @@ describe('can()', () => {
     for (const c of ALL) expect(can(jwtAuth(['su']), c)).toBe(true);
   });
 
-  test('legacy SU string (no su role, no roles claim) passes every capability', () => {
+  test('legacy SU string alone (no su role) passes NOTHING since A2b', () => {
     const legacy = { type: 'jwt', userId: 6, user_auth: 'authorized - SU', roles: [] };
-    for (const c of ALL) expect(can(legacy, c)).toBe(true);
+    for (const c of ALL) expect(can(legacy, c)).toBe(false);
     const noClaim = { type: 'jwt', userId: 6, user_auth: 'authorized - SU' };
-    expect(can(noClaim, 'tools.author')).toBe(true);
+    expect(can(noClaim, 'firm.settings')).toBe(false);
+    // the string adds nothing to the roles it rides with
+    const withAttorney = { type: 'jwt', userId: 6, user_auth: 'authorized - SU', roles: ['attorney'] };
+    expect(ALL.filter(c => can(withAttorney, c))).toEqual(['comms.read_all']);
   });
 
-  test('legacy SU string only counts on a jwt (not on a portal-shaped auth)', () => {
+  test('the legacy SU string is no credential on a portal-shaped auth either', () => {
     expect(can({ type: 'portal', user_auth: 'authorized - SU' }, 'firm.settings')).toBe(false);
   });
 
@@ -326,7 +330,7 @@ describe('requireAuth({audience:"staff", can})', () => {
     expect(root).toMatchObject({ via: 'res', status: 403 });
   });
 
-  test('su role and legacy SU string pass a root-grade gate', async () => {
+  test('su role passes a root-grade gate; the legacy SU string alone is 403 (A2b)', async () => {
     const mw = requireAuth({ audience: 'staff', can: 'tools.author' });
     const su = await runMw(mw, baseReq({ headers: { authorization: 'Bearer ' + tok({ roles: ['su'] }) } }), stubRes());
     expect(su.via).toBe('next');
@@ -334,7 +338,7 @@ describe('requireAuth({audience:"staff", can})', () => {
       { sub: 6, username: 'IT', user_type: 'admin', user_auth: 'authorized - SU', ver: 1 },
       SECRET, { expiresIn: '1h' });
     const leg = await runMw(mw, baseReq({ headers: { authorization: 'Bearer ' + legacy } }), stubRes());
-    expect(leg.via).toBe('next');
+    expect(leg).toMatchObject({ via: 'res', status: 403 });
   });
 
   test('legacy non-SU token (no roles claim) fails a can gate CLOSED', async () => {

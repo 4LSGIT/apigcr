@@ -278,7 +278,7 @@ let authed = false;
   }
   const u = P.firmData && P.firmData.currentUser;
   if (!u) { setTimeout(checkSU, 100); return; }
-  if (u.user_auth !== "authorized - SU") {
+  if (!String(u.roles || "").split(",").includes("su")) {   // su role (users.roles csv)
     document.body.innerHTML = '<div style="padding:40px; text-align:center; color:var(--danger);">Superuser access required.</div>';
     return;
   }

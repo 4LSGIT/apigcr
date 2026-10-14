@@ -415,7 +415,8 @@ async function init() {
         await new Promise(r => setTimeout(r, 100));
       }
       const u = P.firmData.currentUser;
-      if (['authorized - SU','authorized - admin'].includes(u.user_auth)) {
+      // Mirrors routes/api.featureRequests.js isAdmin → isSuperuser: the su role.
+      if (String(u.roles || '').split(',').includes('su')) {
         document.body.classList.add('is-admin');
         isAdmin = true;
       }

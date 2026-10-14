@@ -4,7 +4,8 @@
    "user": 1,
    "username": "aadmin",
    "user_name": "Alex Admin",
-   "user_auth": "authorized - SU"
+   "user_auth": "authorized",
+   "roles": "it,admin,form_dev,su"
   },
   {
    "user": 2,

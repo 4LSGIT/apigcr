@@ -90,11 +90,11 @@ beforeEach(() => {
 });
 afterEach(() => jest.restoreAllMocks());
 
-const tok = (user, user_auth = 'authorized') =>
-  jwt.sign({ sub: String(user), username: 'u' + user, user_auth, aud: 'staff' }, process.env.JWT_SECRET);
+const tok = (user, user_auth = 'authorized', roles = []) =>
+  jwt.sign({ sub: String(user), username: 'u' + user, user_auth, roles, aud: 'staff' }, process.env.JWT_SECRET);
 const T = {
-  su: () => tok(SU, 'authorized - SU'), ss: () => tok(SS), sb: () => tok(SB), rena: () => tok(RENA), nobody: () => tok(NOBODY),
-  demoted: () => tok(DEMOTED, 'authorized - SU'), // the JWT claims SU; the DB says otherwise
+  su: () => tok(SU, 'authorized', ['su']), ss: () => tok(SS), sb: () => tok(SB), rena: () => tok(RENA), nobody: () => tok(NOBODY),
+  demoted: () => tok(DEMOTED, 'authorized', ['su']), // the JWT claims SU; the DB says otherwise
 };
 const ELEV = () => mintElevationToken(SU);
 

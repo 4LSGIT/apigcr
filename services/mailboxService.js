@@ -12,11 +12,12 @@
  * fetch, S2 inbox, S3 send, S-PH phone) asks getAccess / listReadable /
  * listSendable — never channel_grants directly.
  *
- *   - SU bypass: users.user_auth === 'authorized - SU' (the lib/auth.superuser
- *     string convention) short-circuits to full access. Read from the DB, not
- *     the JWT claim: callers like S1's part fetch hold only a user id, and the
- *     DB value is current where a JWT carries user_auth for up to 24h — a
- *     demoted SU loses the bypass immediately (fail-closed). Routes still
+ *   - SU bypass: the users row's roles SET holds `su` and user_auth is still
+ *     'authorized' (lib/auth.superuser rowIsSuperuser) — short-circuits to
+ *     full access. Read from the DB, not the JWT claim: callers like S1's
+ *     part fetch hold only a user id, and the DB value is current where a JWT
+ *     carries roles for up to 24h — a demoted or disabled SU loses the bypass
+ *     immediately (fail-closed). Routes still
  *     demand step-up elevation before an SU-bypass WRITE (elevation can only
  *     be minted by a JWT-SU), so SU writes need both sources to agree.
  *   - Role bypass (S2; phone lines since S-PH): users.roles containing
@@ -110,8 +111,6 @@
 const { encrypt } = require('../lib/credentialCrypto');
 const mailboxColor = require('../public/js/mailboxColor');
 const { rowIsSuperuser } = require('../lib/auth.superuser');
-
-const SU_AUTH = 'authorized - SU'; // legacy marker (A2b removes); still exported
 
 // users.roles values whose holders READ every mailbox without a grant (S2;
 // design §1 "SU and SS see everything" — SS holds 'attorney'). READ ONLY.
@@ -251,7 +250,7 @@ function noAccess() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** True iff this user is SU per the users table (DB, not JWT) — roles SET
- *  `su` member, or the legacy user_auth marker until A2b. */
+ *  `su` member on an enabled row (lib/auth.superuser rowIsSuperuser). */
 async function isSuperuser(db, userId) {
   const n = Number(userId);
   if (!Number.isInteger(n) || n < 0) return false;
@@ -1233,6 +1232,5 @@ module.exports = {
   DEFAULT_INGEST_FOLDERS,
   DEFAULT_EMIT_SOURCE,
   EMIT_ID_KINDS,
-  SU_AUTH,
   READ_BYPASS_ROLES,
 };

@@ -57,7 +57,7 @@
   }
   .form-grid label { display: block; font-size: 11px; color: var(--text-muted); margin-bottom: 3px; }
   .form-grid .wide { grid-column: span 2; }
-  .check-row { display: flex; gap: 18px; align-items: center; margin: 8px 0 10px; font-size: 12px; }
+  .check-row { display: flex; flex-wrap: wrap; gap: 8px 18px; align-items: center; margin: 8px 0 10px; font-size: 12px; }
   .check-row label { display: flex; gap: 5px; align-items: center; cursor: pointer; }
   .err { color: var(--danger); font-size: 12px; margin-top: 6px; }
   @media (max-width: 800px) { .form-grid { grid-template-columns: repeat(2, 1fr); } }
@@ -102,7 +102,6 @@
     <div><label>Access</label>
       <select id="f_user_auth">
         <option value="authorized">authorized</option>
-        <option value="authorized - SU">authorized - SU</option>
         <option value="disabled">disabled</option>
       </select>
     </div>
@@ -114,6 +113,10 @@
     <div class="wide"><label>Google Calendar ID</label><input id="f_user_gcal_id" maxlength="255"></div>
     <div class="wide" id="pwWrap"><label>Initial password (optional, min 4)</label><input id="f_password" type="text" autocomplete="off"></div>
   </div>
+  <!-- Roles = users.roles SET (routes/admin.users.js ROLE_MEMBERS). The su box
+       is disabled for a non-SU viewer and on your own row — cosmetic; the
+       server enforces both. Changes reach a JWT at the user's next login. -->
+  <div class="check-row" id="rolesRow"><span class="muted">Roles:</span></div>
   <div class="check-row">
     <label><input type="checkbox" id="f_allow_sms"> allow SMS</label>
     <label><input type="checkbox" id="f_does_appts"> does appointments</label>
@@ -132,7 +135,22 @@
   let USERS = [];        // last-loaded list
   let EDIT_ID = null;    // null = add mode
 
-  function init() { loadUsers(); }
+  // users.roles SET members, in column order (mirror of admin.users.js).
+  const ROLE_MEMBERS = ["it", "admin", "staff", "attorney", "automation", "form_dev", "su"];
+  const rolesOf = csv => String(csv || "").split(",").map(r => r.trim()).filter(Boolean);
+  function viewerIsSU() {
+    try { return rolesOf(P.firmData?.currentUser?.roles).includes("su"); }
+    catch (_) { return false; }
+  }
+  function viewerId() {
+    try { return P.firmData?.currentUser?.user ?? null; } catch (_) { return null; }
+  }
+
+  function init() {
+    document.getElementById("rolesRow").insertAdjacentHTML("beforeend", ROLE_MEMBERS.map(r =>
+      `<label><input type="checkbox" id="f_role_${r}"> ${r}</label>`).join(""));
+    loadUsers();
+  }
 
   function esc(s) {
     return String(s ?? "")
@@ -146,11 +164,18 @@
     return d.length === 10 ? `(${d.slice(0,3)}) ${d.slice(3,6)}-${d.slice(6)}` : esc(d);
   }
 
-  function authBadge(a) {
-    if (a === "authorized - SU") return `<span class="badge su">SU</span>`;
-    if (a === "authorized")      return `<span class="badge auth">authorized</span>`;
-    if (a === "disabled")        return `<span class="badge disabled">disabled</span>`;
-    return `<span class="badge other">${esc(a)}</span>`;
+  // Access cell: login status (SU when the roles SET holds su), then the
+  // remaining roles. A disabled row is never SU (rowIsSuperuser).
+  function accessCell(u) {
+    const a = u.user_auth;
+    const roles = rolesOf(u.roles);
+    let badge;
+    if (a === "disabled")               badge = `<span class="badge disabled">disabled</span>`;
+    else if (roles.includes("su"))      badge = `<span class="badge su">SU</span>`;
+    else if (a && a.startsWith("authorized")) badge = `<span class="badge auth">authorized</span>`;
+    else                                badge = `<span class="badge other">${esc(a)}</span>`;
+    const rest = roles.filter(r => r !== "su");
+    return badge + (rest.length ? `<div class="muted">${esc(rest.join(" · "))}</div>` : "");
   }
 
   function flags(u) {
@@ -206,7 +231,7 @@
             <td>${esc(u.user_name)}</td>
             <td>${esc(u.username)}</td>
             <td>${esc(u.user_initials)}</td>
-            <td>${authBadge(u.user_auth)}</td>
+            <td>${accessCell(u)}</td>
             <td>${esc(u.email || "—")}</td>
             <td>${fmtPhone(u.phone)}</td>
             <td class="muted">${flags(u)}</td>
@@ -261,8 +286,22 @@
     F("user_lname").value    = u ? u.user_lname : "";
     F("user_initials").value = u ? u.user_initials : "";
     F("user_name").value     = u ? u.user_name : "";
-    F("user_auth").value     = u && ["authorized","authorized - SU","disabled"].includes(u.user_auth)
-                                 ? u.user_auth : "authorized";
+    F("user_auth").value     = u && u.user_auth === "disabled" ? "disabled" : "authorized";
+    const held = u ? rolesOf(u.roles) : ["staff"];
+    const isSelf = u != null && u.user === viewerId();
+    for (const r of ROLE_MEMBERS) {
+      const box = F("role_" + r);
+      box.checked = held.includes(r);
+      box.disabled = false;
+      box.title = "";
+    }
+    if (!viewerIsSU()) {
+      F("role_su").disabled = true;
+      F("role_su").title = "Only a superuser can grant or revoke su";
+    } else if (isSelf && held.includes("su")) {
+      F("role_su").disabled = true;
+      F("role_su").title = "You cannot remove your own su role";
+    }
     F("email").value         = u ? (u.email || "") : "";
     F("phone").value         = u ? (u.phone || "") : "";
     F("user_type").value     = u ? u.user_type : 1;
@@ -302,6 +341,7 @@
       allow_sms:     F("allow_sms").checked ? 1 : 0,
       does_appts:    F("does_appts").checked ? 1 : 0,
       ringcentral:   F("ringcentral").checked ? 1 : 0,
+      roles:         ROLE_MEMBERS.filter(r => F("role_" + r).checked),
     };
     try {
       if (EDIT_ID == null) {

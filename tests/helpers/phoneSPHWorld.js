@@ -86,7 +86,7 @@ const USERS = [
   { user: 0, username: 'automations', user_name: 'Automations', user_auth: 'authorized', roles: 'automation', default_phone: null },
   { user: 1, username: 'Ssandweiss', user_name: 'Stuart', user_auth: 'authorized', roles: 'staff,attorney', default_phone: '2485592400' },
   { user: 5, username: 'sb', user_name: 'Shoshana', user_auth: 'authorized', roles: 'staff', default_phone: '2489654574' },
-  { user: 6, username: 'IT', user_name: 'Fred', user_auth: 'authorized - SU', roles: 'it,admin,form_dev', default_phone: '2486213656' },
+  { user: 6, username: 'IT', user_name: 'Fred', user_auth: 'authorized', roles: 'it,admin,form_dev,su', default_phone: '2486213656' },
   { user: 7, username: 'demoted', user_name: 'Demoted', user_auth: 'authorized', roles: 'staff', default_phone: null },
   { user: 9, username: 'nobody', user_name: 'Nobody', user_auth: 'authorized', roles: 'staff', default_phone: null },
   { user: 22, username: 'RENA', user_name: 'Rena', user_auth: 'authorized', roles: 'staff', default_phone: '2489655355' },

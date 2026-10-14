@@ -146,7 +146,7 @@ const db = {
 // ── tokens ──────────────────────────────────────────────────────────────────
 const staffToken = (over = {}) =>
   jwt.sign(
-    { sub: 42, username: 'fred', user_type: 'staff', user_auth: 'authorized - SU', aud: 'staff', roles: [], ...over },
+    { sub: 42, username: 'fred', user_type: 'staff', user_auth: 'authorized', aud: 'staff', roles: ['su'], ...over },
     SECRET,
     { expiresIn: '1h' }
   );
@@ -265,7 +265,7 @@ describe('auth on /api/tools', () => {
   });
 
   test('non-SU JWT → 403', async () => {
-    const res = await call('/api/tools', { bearer: staffToken({ user_auth: 'authorized', sub: 7 }), elev: ELEV() });
+    const res = await call('/api/tools', { bearer: staffToken({ user_auth: 'authorized', roles: [], sub: 7 }), elev: ELEV() });
     expect(res.status).toBe(403);
     expect((await res.json()).error).toMatch(/Superuser/);
   });

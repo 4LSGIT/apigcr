@@ -462,11 +462,11 @@ describe('POST /api/mailboxes/:id/labels/snapshot', () => {
   });
   afterEach(() => jest.restoreAllMocks());
 
-  const tok = (user, user_auth = 'authorized') => jwt.sign({ sub: String(user), username: 'u' + user, user_auth, aud: 'staff' }, process.env.JWT_SECRET);
-  async function post(body, { user = 6, auth = 'authorized - SU', elevated = true, apiKey } = {}) {
+  const tok = (user, user_auth = 'authorized', roles = []) => jwt.sign({ sub: String(user), username: 'u' + user, user_auth, roles, aud: 'staff' }, process.env.JWT_SECRET);
+  async function post(body, { user = 6, auth = 'authorized', roles = ['su'], elevated = true, apiKey } = {}) {
     const headers = { 'Content-Type': 'application/json' };
     if (apiKey) headers['x-api-key'] = apiKey;
-    else headers.Authorization = `Bearer ${tok(user, auth)}`;
+    else headers.Authorization = `Bearer ${tok(user, auth, roles)}`;
     if (elevated) headers['X-SU-Elevation'] = mintElevationToken(user);
     const r = await fetch(`${base}/api/mailboxes/${id}/labels/snapshot`, { method: 'POST', headers, body: JSON.stringify(body) });
     return { status: r.status, json: await r.json().catch(() => null) };
@@ -484,8 +484,8 @@ describe('POST /api/mailboxes/:id/labels/snapshot', () => {
   });
 
   test('a manager is 403, a stranger 404, an api key 403; an SU without elevation is 401 elevation_required — none writes', async () => {
-    expect((await post({}, { user: 1, auth: 'authorized' })).status).toBe(403);
-    expect((await post({}, { user: 9, auth: 'authorized' })).status).toBe(404);
+    expect((await post({}, { user: 1, auth: 'authorized', roles: [] })).status).toBe(403);
+    expect((await post({}, { user: 9, auth: 'authorized', roles: [] })).status).toBe(404);
     expect((await post({}, { apiKey: process.env.INTERNAL_API_KEY, elevated: false })).status).toBe(403);
     const noElev = await post({}, { elevated: false });
     expect([noElev.status, noElev.json.code]).toEqual([401, 'elevation_required']);

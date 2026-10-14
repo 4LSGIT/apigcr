@@ -160,7 +160,7 @@ describe('form-dev gate — builder UI (plain staff session)', () => {
 describe('form-dev gate — control case (SU session keeps editors enabled)', () => {
   test('SU: code editor enabled; hooks/code mutual exclusion still governs', async () => {
     const p = await ready(bootBuilder({
-      currentUser: { user_auth: 'authorized - SU', roles: 'it,admin' },
+      currentUser: { user_auth: 'authorized', roles: 'it,admin,su' },
     }));
     p.win.showTab('settings');
     const code = settingsPropByLabel(p.doc, 'Custom code (advanced)').querySelector('textarea');

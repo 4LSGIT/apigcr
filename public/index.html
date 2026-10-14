@@ -4776,8 +4776,11 @@ async function initAuth() {
       E("hdrUserArea").style.display = "flex";
       startFirmClock();
       E("appSidebar").style.display = "flex";
-      const isAdmin = user.user_auth === "authorized - SU" ||
-                      user.user_auth === "authorized - admin";
+      // su ONLY, not the taxonomy's su|it|admin: every Admin-grid tile is
+      // SU-gated on the server today, so it/admin would see a tab of refusals.
+      // Widen tile-by-tile when the first firm-grade admin surface lands
+      // (access-control ruling, 2026-10-14).
+      const isAdmin = String(user.roles || "").split(",").includes("su");
       E("sbAdmin").style.display = isAdmin ? "" : "none";
 
       Toast.fire({

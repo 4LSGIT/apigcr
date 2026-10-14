@@ -8,7 +8,8 @@
  * WHAT IS LOCKED
  *   - PUT /api/app-settings/:key and POST /api/app-settings: staff / attorney
  *     / form_dev JWTs → 403 and the handler never runs (no app_settings
- *     query); admin / it / su / legacy 'authorized - SU' string → through.
+ *     query); admin / it / su → through. The legacy 'authorized - SU'
+ *     string alone → 403 since A2b (a claim, not a credential).
  *   - x-api-key callers pass the gate (machine trust, Q3): PUT writes; POST
  *     still refuses them in its own handler (automation never mints keys).
  *   - Portal (aud:'contact') token / no credentials → 401 on writes.
@@ -176,16 +177,25 @@ describe('firm.settings holders write', () => {
     });
   }
 
-  test("legacy 'authorized - SU' string (no roles claim) passes PUT and POST", async () => {
+  test("legacy 'authorized - SU' string (no roles claim) is refused PUT and POST (A2b)", async () => {
     const legacy = { authorization: 'Bearer ' + jwt.sign(
       { sub: 6, username: 'IT', user_type: 'admin', user_auth: 'authorized - SU', ver: 1 },
       SECRET, { expiresIn: '1h' }) };
-    expect((await PUT(legacy)).status).toBe(200);
-    expect((await POST(legacy)).status).toBe(201);
+    const put = await PUT(legacy);
+    expect(put.status).toBe(403);
+    expect(writes(put.db)).toHaveLength(0);
+    const post = await POST(legacy);
+    expect(post.status).toBe(403);
+    expect(writes(post.db)).toHaveLength(0);
   });
 
-  test('legacy SU string on a staff-only roles claim still passes', async () => {
+  test('legacy SU string on a staff-only roles claim is refused', async () => {
     const r = await PUT(bearer({ sub: 6, username: 'IT', user_auth: 'authorized - SU', roles: ['staff'] }));
+    expect(r.status).toBe(403);
+  });
+
+  test('the post-collapse SU shape (authorized + su role) writes', async () => {
+    const r = await PUT(bearer({ sub: 6, username: 'IT', user_auth: 'authorized', roles: ['it', 'admin', 'form_dev', 'su'] }));
     expect(r.status).toBe(200);
   });
 });

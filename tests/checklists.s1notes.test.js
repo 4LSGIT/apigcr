@@ -53,10 +53,9 @@
 
 'use strict';
 
-// lib/auth.superuser.isSuperuser string-matches user_auth against the exact
-// literal "authorized - SU" — the repo-wide convention (see that file's note).
-// A shorter value here silently degrades every tagged test to a 403.
-const SU_AUTH = { type: 'jwt', userId: 1, username: 'fred', user_auth: 'authorized - SU' };
+// lib/auth.superuser.isSuperuser reads the JWT roles claim for `su` (access
+// control A2b). Without it every tagged test silently degrades to a 403.
+const SU_AUTH = { type: 'jwt', userId: 1, username: 'fred', user_auth: 'authorized', roles: ['su'] };
 
 // `mock` prefix is load-bearing: jest hoists mock factories above the file and
 // refuses out-of-scope references unless the identifier is prefixed this way.

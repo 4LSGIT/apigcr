@@ -185,7 +185,8 @@ let authed = false;
   }
   const u = P.firmData && P.firmData.currentUser;
   if (!u) { setTimeout(checkAdmin, 100); return; }
-  if (!["authorized - SU", "authorized - admin"].includes(u.user_auth)) {
+  // Mirrors routes/api.issueReports.js isAdmin → isSuperuser: the su role.
+  if (!String(u.roles || "").split(",").includes("su")) {
     document.body.innerHTML = '<div style="padding:40px; text-align:center; color:var(--danger);">Admin access required.</div>';
     return;
   }

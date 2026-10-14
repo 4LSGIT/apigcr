@@ -91,7 +91,7 @@ beforeEach(() => {
 });
 
 const staffToken = (over = {}) => jwt.sign(
-  { sub: SU_ID, username: 'fred', user_type: 'staff', user_auth: 'authorized - SU', aud: 'staff', roles: [], ...over },
+  { sub: SU_ID, username: 'fred', user_type: 'staff', user_auth: 'authorized', aud: 'staff', roles: ['su'], ...over },
   SECRET, { expiresIn: '1h' }
 );
 function call(p, { method = 'GET', bearer, elev, body } = {}) {
@@ -136,7 +136,7 @@ describe('auth', () => {
     const noElev = await call(`/api/cta/${m.id}/send`, { method: 'POST', bearer: staffToken(), body: { channel: 'email', to: 'a@example.com' } });
     expect(noElev.status).toBe(401);
     expect((await noElev.json()).code).toBe('elevation_required');
-    const nonSu = await call(`/api/cta/${m.id}/send`, { method: 'POST', bearer: staffToken({ sub: 22, user_auth: 'authorized' }), body: { channel: 'email', to: 'a@example.com' } });
+    const nonSu = await call(`/api/cta/${m.id}/send`, { method: 'POST', bearer: staffToken({ sub: 22, user_auth: 'authorized', roles: [] }), body: { channel: 'email', to: 'a@example.com' } });
     expect(nonSu.status).toBe(403);
     expect(emailService.sendEmail).not.toHaveBeenCalled();
   });

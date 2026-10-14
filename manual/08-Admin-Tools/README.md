@@ -1,7 +1,7 @@
 # Admin Tools (Super-User)
 
 Power tools for IT / super-users only. Every tool here is gated behind
-`user_auth = "authorized - SU"`, rate-limited, and writes every action to
+the `su` role, rate-limited, and writes every action to
 `admin_audit_log`. They all live on the **Admin** tab in the sidebar (the items marked
 **(SU)**) and won't appear for regular staff.
 

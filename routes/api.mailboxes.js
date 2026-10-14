@@ -258,7 +258,7 @@ router.post('/api/mailboxes', ...superuserOnlyFor(TOOL), async (req, res) => {
     // superuserOnlyFor trusted the JWT claim; the bypass everywhere else in
     // this subsystem is DB-sourced — both must agree.
     if (!(await svc.isSuperuser(req.db, req.auth.userId))) {
-      audit(req, 'rejected_not_su', { reason: 'db user_auth is not SU' });
+      audit(req, 'rejected_not_su', { reason: 'db row is not SU (roles lacks su, or user disabled)' });
       return res.status(403).json({ status: 'error', message: 'Superuser access required' });
     }
     const result = await svc.createMailbox(req.db, req.body);

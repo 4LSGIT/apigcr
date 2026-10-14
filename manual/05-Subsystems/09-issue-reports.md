@@ -51,7 +51,7 @@ public/issueReports.html     Admin list
 | `/api/issue-reports` | GET | admin | List — unresolved by default |
 | `/api/issue-reports/:id` | PATCH | admin | Resolve / reopen |
 
-Admin means `authorized - SU` or `authorized - admin`.
+Admin means a super-user (the `su` role).
 
 ### The email is awaited, not detached
 

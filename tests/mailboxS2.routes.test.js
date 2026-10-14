@@ -98,7 +98,7 @@ function seed() {
   W = makeWorld();
   W.user(SS, { roles: 'staff,attorney' });
   W.user(READER, { roles: 'staff' });
-  W.user(SU, { auth: 'authorized - SU', roles: 'it,admin,form_dev' });
+  W.user(SU, { auth: 'authorized', roles: 'it,admin,form_dev,su' });
   W.user(SENDONLY, { roles: 'staff' });
   W.user(NOBODY, { roles: 'staff' });
   W.user(MANAGER, { roles: 'staff' });

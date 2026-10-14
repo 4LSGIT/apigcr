@@ -160,7 +160,8 @@ maybe('comms archive S1b on real MySQL', () => {
       (1, '2485592400', 'ringcentral', 1, NULL, 9), (4, '2486213656', 'ringcentral', 1, NULL, 9),
       (2, '2489654574', 'quo', 1, 'PNa', 10), (6, '2484179800', 'quo', 1, 'PNb', 10)`);
     await q(`INSERT INTO users (user, user_name, roles, user_auth) VALUES
-      (1, 'SS', 'staff,attorney', 'authorized'), (3, 'Staff', 'staff', 'authorized'), (6, 'SU', 'it,admin', 'authorized - SU')`);
+      (1, 'SS', 'staff,attorney', 'authorized'), (3, 'Staff', 'staff', 'authorized'), (6, 'SU', 'it,admin,su', 'authorized'),
+      (7, 'Legacy', 'it,admin', 'authorized - SU')`);   // 7: the pre-A2 SU shape WITHOUT the su role — not SU since A2b
     await q("UPDATE app_settings SET `value` = '1' WHERE `key` = 'comms_archive_enabled'");
     await q("UPDATE app_settings SET `value` = '1' WHERE `key` = 'comms_archive_admins'");
     gcs = fakeStorage();
@@ -467,8 +468,8 @@ maybe('comms archive S1b on real MySQL', () => {
   });
 
   // ── A — R9 + routes ─────────────────────────────────────────────────────
-  const tok = (user, user_auth = 'authorized') =>
-    jwt.sign({ sub: String(user), username: 'u' + user, user_auth, aud: 'staff' }, process.env.JWT_SECRET);
+  const tok = (user, user_auth = 'authorized', roles = []) =>
+    jwt.sign({ sub: String(user), username: 'u' + user, user_auth, roles, aud: 'staff' }, process.env.JWT_SECRET);
   async function post(path, body, { t, apiKey } = {}) {
     const headers = { 'Content-Type': 'application/json' };
     if (t) headers.Authorization = `Bearer ${t}`;
@@ -492,21 +493,28 @@ maybe('comms archive S1b on real MySQL', () => {
     expect((await r({ t: tok(1) })).status).toBe(200);                    // listed (SS)
     expect((await r({ t: tok(3) })).status).toBe(403);                    // not listed
     await q("UPDATE app_settings SET `value` = '' WHERE `key` = 'comms_archive_admins'");
-    expect((await r({ t: tok(6, 'authorized - SU') })).status).toBe(200); // SU, empty list
+    expect((await r({ t: tok(6, 'authorized', ['su']) })).status).toBe(200); // SU, empty list
     expect((await r({ t: tok(1) })).status).toBe(403);
     await q("UPDATE app_settings SET `value` = '1x, ss,-1' WHERE `key` = 'comms_archive_admins'");
     expect((await r({ t: tok(1) })).status).toBe(403);                    // garbage = SU only
-    expect((await r({ t: tok(6, 'authorized - SU') })).status).toBe(200);
+    expect((await r({ t: tok(6, 'authorized', ['su']) })).status).toBe(200);
     await q("DELETE FROM app_settings WHERE `key` = 'comms_archive_admins'");
     expect((await r({ t: tok(1) })).status).toBe(403);                    // missing = SU only
     // the JWT claiming SU is not enough — the DB decides
     expect((await r({ t: tok(3, 'authorized - SU') })).status).toBe(403);
+    expect((await r({ t: tok(3, 'authorized', ['su']) })).status).toBe(403);
+    // post-cutover (A2b): the legacy string is a claim, not a credential — a
+    // user whose token AND row still read 'authorized - SU' but whose roles
+    // lack su is refused
+    expect((await r({ t: tok(7, 'authorized - SU') })).status).toBe(403);
     await q(`INSERT INTO app_settings (\`key\`, \`value\`, is_secret, is_editable, category, label, description, \`type\`, sort_order)
              VALUES ('comms_archive_admins', '1', 0, 0, 'Automations', 'x', 'x', 'string', 41)`);
     expect((await r({ apiKey: process.env.INTERNAL_API_KEY })).status).toBe(403);   // API key, never
     const a = await audits();
     expect(a.map(x => x.status)).toEqual(['success', 'rejected_not_admin', 'success', 'rejected_not_admin',
-      'rejected_not_admin', 'success', 'rejected_not_admin', 'rejected_not_admin', 'rejected_not_jwt']);
+      'rejected_not_admin', 'success', 'rejected_not_admin', 'rejected_not_admin',
+      'rejected_not_admin', 'rejected_not_admin',   // A2b: su-role claim on user 3; legacy row/token user 7
+      'rejected_not_jwt']);
     const d0 = typeof a[0].details === 'string' ? JSON.parse(a[0].details) : a[0].details;
     expect(d0).toEqual({ action: 'restrict', media_id: id, reason: 'privacy' });
     expect(a[0]).toMatchObject({ user_id: 1, method: 'POST', route: `/api/comms-archive/media/${id}/restrict` });
@@ -638,7 +646,7 @@ maybe('comms archive S1b on real MySQL', () => {
     const body = { reason: 'r', confirm: id };
     const [a, b] = await Promise.all([
       post(`/api/comms-archive/media/${id}/purge`, body, { t: tok(1) }),
-      post(`/api/comms-archive/media/${id}/purge`, body, { t: tok(6, 'authorized - SU') }),
+      post(`/api/comms-archive/media/${id}/purge`, body, { t: tok(6, 'authorized', ['su']) }),
     ]);
     expect([a.status, b.status].sort()).toEqual([200, 409]);
     expect((await audits()).filter(x => x.status === 'success').length).toBe(1);

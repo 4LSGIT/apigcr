@@ -3,8 +3,9 @@
 // Super-user-only MySQL console. Replaces /db-jwt for interactive use; /db-jwt
 // remains for backwards compatibility and will be deprecated.
 //
-// All endpoints require JWT with user_auth === "authorized - SU", are rate
-// limited (30/min/user), and every attempt is awaited into admin_audit_log.
+// All endpoints require a JWT holding the `su` role (lib/auth.superuser),
+// are rate limited (30/min/user), and every attempt is awaited into
+// admin_audit_log.
 //
 // Endpoints:
 //   POST   /admin/db/query              body { query, allowWrite }

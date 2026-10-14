@@ -1076,7 +1076,7 @@ describe('clicker inputs (§12, S2i)', () => {
   const firmConfig = require('../lib/firmConfig');
   const { mintElevationToken, _resetRateLimits } = require('../lib/auth.superuser');
   const { makeCtaWorld } = require('./helpers/ctaWorld');
-  const SU_ID = 6;   // 'authorized - SU' in the world
+  const SU_ID = 6;   // the su role in the world
   const META = internalFunctions.__getAllMeta();
 
   const SRV = { db: null, base: null, server: null };
@@ -1098,7 +1098,7 @@ describe('clicker inputs (§12, S2i)', () => {
   beforeEach(() => { SRV.db = makeCtaWorld(); _resetRateLimits(); });
 
   const staffToken = () => jwt.sign(
-    { sub: SU_ID, username: 'fred', user_type: 'staff', user_auth: 'authorized - SU', aud: 'staff', roles: [] },
+    { sub: SU_ID, username: 'fred', user_type: 'staff', user_auth: 'authorized', aud: 'staff', roles: ['su'] },
     process.env.JWT_SECRET, { expiresIn: '1h' });
   /** One call to the real routes/api.cta.js, as the shell's apiSend would make it (JWT + elevation; non-2xx throws its body). */
   async function real(url, method, payload) {

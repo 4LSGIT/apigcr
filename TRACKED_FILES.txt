@@ -517,6 +517,7 @@ ref/migrations/2026-10-13_docs_review_comments.sql
 ref/migrations/2026-10-13_mail_sends.sql
 ref/migrations/2026-10-13_wf50_end_after_cancel.console.js
 ref/migrations/2026-10-14_access_a2_su_role.sql
+ref/migrations/2026-10-14_access_a2b_user_auth_collapse.sql
 ref/migrations/2026-10-14_comms_media.sql
 ref/migrations/2026-10-14_comms_s1b.sql
 ref/migrations/2026-10-14_wf50_text_on_cancel_failure.console.js
@@ -682,6 +683,7 @@ routes/videoLanding.js
 routes/workflows.js
 scripts/Courtapprovetest.js
 scripts/accessA2SuRole.js
+scripts/accessA2bCollapse.js
 scripts/add-path-headers.js
 scripts/backfill-password-hashes.js
 scripts/backfillAppts.js
@@ -730,6 +732,7 @@ scripts/mobile-survey/README.md
 scripts/mobile-survey/commsDensity.js
 scripts/mobile-survey/fixtures/api/admin/scratch.json
 scripts/mobile-survey/fixtures/api/admin/scratch/fred/demo_state.json
+scripts/mobile-survey/fixtures/api/admin/users.json
 scripts/mobile-survey/fixtures/api/calendar-feed.json
 scripts/mobile-survey/fixtures/api/calendar-range.json
 scripts/mobile-survey/fixtures/api/cases/TESTCASE1.json
@@ -903,6 +906,8 @@ startup/db.js
 startup/dbReadonly.js
 startup/init.js
 tests/accessA2SuRole.test.js
+tests/accessA2bCollapse.test.js
+tests/adminUsersRoles.test.js
 tests/adminapikeys.k2.test.js
 tests/aiMatchTypes.registry.test.js
 tests/aiService.attachments.test.js

@@ -47,7 +47,7 @@ Each request carries a **stage** that shows its status:
 - **Working on it** — actively in progress.
 - **Implemented ✅** — done and shipped.
 
-Anyone can see the stage; **only admins/IT change it**, along with an optional
+Anyone can see the stage; **only super-users (the `su` role) change it**, along with an optional
 status note and a progress indicator. So the board doubles as a lightweight
 roadmap.
 

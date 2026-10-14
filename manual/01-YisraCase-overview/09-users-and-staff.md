@@ -15,7 +15,7 @@ Users are the firm's staff members — attorneys, paralegals, assistants, and an
 | Initials | `user_initials` — up to 3 characters. **Also stored and editable**: they are typed in, not derived, so a Robert who signs RJT can have RJT |
 | Email | Login email and contact address |
 | Auth level | `user_auth` — see below |
-| Roles | `roles` — any of `it`, `admin`, `staff`, `attorney`, `automation`, `form_dev` |
+| Roles | `roles` — any of `it`, `admin`, `staff`, `attorney`, `automation`, `form_dev`, `su` |
 | Does appointments | `does_appts` — whether this person can host appointments and appear in booking-view provider lists |
 
 > **There is no "active" flag on a user.** Deactivating someone means changing
@@ -23,20 +23,34 @@ Users are the firm's staff members — attorneys, paralegals, assistants, and an
 
 ### Auth level and roles
 
-`user_auth` is the gate everything security-related reads:
+`user_auth` is login status only:
 
-| Value | Who |
+| Value | Meaning |
 |---|---|
-| `authorized` | Ordinary staff |
-| `authorized - SU` | Super-user — the only level that can open the tools in [Admin Tools](../08-Admin-Tools/) |
+| `authorized` | May log in |
+| `disabled` | Cannot log in |
+
+What a person may *do* comes from `roles`, a set — a person can hold several.
+Edit them with the **Roles** checkboxes in the user's form (Admin → Users):
+
+| Role | Unlocks today |
+|---|---|
+| `su` | Super-user: the tools in [Admin Tools](../08-Admin-Tools/), and everything below |
+| `it` | Firm settings edits; template code in the form builder |
+| `admin` | Firm settings edits |
+| `attorney` | Reading every mailbox and phone line without a per-channel grant |
+| `form_dev` | Template code in the form builder |
+| `staff` | Nothing extra — the everyday surface every signed-in user has |
+| `automation` | Marks the automation pseudo-user (user 0); grants nothing |
+
+Only a super-user can give or remove `su`, and nobody can remove their own.
+A role change reaches the person at their next login (a session lasts up to
+24 hours); checks that read the database — mailbox and phone access
+(super-user and `attorney`), archive admin — see it at once.
 
 Being a super-user is **necessary but no longer sufficient**: every SU tool also
 requires a short-lived elevation token obtained by re-entering your own
 password. See [the elevation gate](../08-Admin-Tools/).
-
-`roles` is a separate, additive set used for finer-grained routing and feature
-access — `form_dev` for form authors, `automation` for the pseudo-user
-automation acts as, and so on. A person can hold several.
 
 ### Hosting appointments
 

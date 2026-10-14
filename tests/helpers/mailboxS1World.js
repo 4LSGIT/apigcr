@@ -62,7 +62,7 @@ function makeWorld() {
     users: [
       { user: 1, user_auth: 'authorized' },
       { user: 5, user_auth: 'authorized' },
-      { user: 6, user_auth: 'authorized - SU' },
+      { user: 6, user_auth: 'authorized', roles: 'su' },
       { user: 9, user_auth: 'authorized' },
     ],
   };

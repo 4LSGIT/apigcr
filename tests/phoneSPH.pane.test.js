@@ -57,7 +57,7 @@ async function bootPage({ url, html, libs, handler, width = 1200, before = null 
   const { window } = dom;
   window.Element.prototype.scrollIntoView = function () {};
   Object.defineProperty(window, 'innerWidth', { value: width, configurable: true });
-  window.firmData = { firmTimezone: 'America/Detroit', currentUser: { user_auth: 'authorized - SU' } };
+  window.firmData = { firmTimezone: 'America/Detroit', currentUser: { user_auth: 'authorized', roles: 'su' } };
   const calls = [];
   window.apiSend = async (u, method = 'GET', payload = null, headers = {}, opts = {}) => {
     calls.push({ url: u, method, payload: payload == null ? null : JSON.parse(JSON.stringify(payload)) });

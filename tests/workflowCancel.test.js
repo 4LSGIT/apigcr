@@ -154,7 +154,7 @@ describe('POST /executions/:id/cancel — route contract', () => {
   });
 
   const token = () => jwt.sign(
-    { sub: 6, username: 'fred', user_type: 'staff', user_auth: 'authorized - SU', aud: 'staff', roles: [] },
+    { sub: 6, username: 'fred', user_type: 'staff', user_auth: 'authorized', aud: 'staff', roles: ['su'] },
     process.env.JWT_SECRET, { expiresIn: '1h' }
   );
   const post = async (id, body) => {

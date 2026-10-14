@@ -200,7 +200,7 @@ const MAX_LIMIT     = 1000;
  *     have no userId (lib/auth.jwtOrApiKey sets req.auth = {type:'api_key'}),
  *     so gating them would break automation for zero security gain — anyone
  *     holding the internal key already owns the box.
- *   - superusers, per lib/auth.superuser.isSuperuser (JWT + user_auth === SU).
+ *   - superusers, per lib/auth.superuser.isSuperuser (JWT roles claim has `su`).
  *   - the owner: req.auth.userId === checklists.link.
  *
  * READS are never gated — a personal to-do list is not a secret in a

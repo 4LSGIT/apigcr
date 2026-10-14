@@ -68,7 +68,7 @@ const SU = 6; const READER = 5;
 // unreadable by everyone but the SU — its stamps still bridge.
 function seed() {
   W = makeWorld();
-  W.user(SU, { auth: 'authorized - SU', roles: 'it' });
+  W.user(SU, { auth: 'authorized', roles: 'it,su' });
   W.user(READER, { roles: 'staff' });
   W.T.users.push({ user: 2, username: 'rena', user_name: 'Rena R', user_auth: 'authorized', roles: 'staff' });
   W.mailbox(1, { address: 'billing@firm.test' }); // INBOX emits, last_uid 1000

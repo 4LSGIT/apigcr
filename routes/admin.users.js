@@ -7,12 +7,12 @@
  *   GET   /api/admin/users                    — list all users (secrets stripped,
  *                                               has_password / has_hash / reset_pending flags)
  *   POST  /api/admin/users                    — create user (optional initial password)
- *   PATCH /api/admin/users/:id                — edit whitelisted fields (incl. user_auth)
+ *   PATCH /api/admin/users/:id                — edit whitelisted fields (incl. user_auth, roles)
  *   POST  /api/admin/users/:id/set-password   — set/reset a user's password
  *   POST  /api/admin/users/:id/disable        — user_auth='disabled', wipe passwords + reset token
  *   POST  /api/admin/users/:id/enable         — user_auth='authorized' (password must be re-set)
  *
- * All endpoints: superuserOnlyFor('users') — JWT-only, user_auth === 'authorized - SU',
+ * All endpoints: superuserOnlyFor('users') — JWT-only, `su` role (lib/auth.superuser),
  * rate-limited, rejections audited. All mutations write an admin_audit_log row
  * (tool='users'); password values are never logged.
  *
@@ -27,12 +27,17 @@
  *       // TODO: REMOVE when dropping plaintext password column
  *   should be deleted once all legacy routes use password_hash exclusively.
  *
- * ACCESS LEVELS (current string-match convention; see lib/auth.superuser.js):
- *   'authorized'      — normal login
- *   'authorized - SU' — superuser (admin tools)
- *   'disabled'        — cannot log in (login requires user_auth LIKE 'authorized%')
- *   'authorized - admin' exists in two frontend checks but passes NO server-side
- *   SU gates — deliberately excluded here. Revisit in the access-level overhaul.
+ * ACCESS (ref/ACCESS_CONTROL_DESIGN.md §2.2, §2.4–2.5):
+ *   user_auth is login status only:
+ *     'authorized' — may log in
+ *     'disabled'   — cannot log in (login requires user_auth LIKE 'authorized%')
+ *   Authorization is users.roles (SET; ROLE_MEMBERS below). Accepted as an
+ *   array or csv, validated against the SET, written as csv in SET order.
+ *   `su` (root) changes only from an SU caller — today every caller is one
+ *   (superuserOnlyFor), so that check is the backstop for the day
+ *   users.manage is delegated. Nobody removes their own `su`.
+ *   Role changes reach the user's JWT at their next login (24h ceiling);
+ *   DB-read checks (mailbox/archive SU bypass) see them immediately.
  *
  * KNOWN LIMITATIONS:
  *   - Disabling a user does NOT invalidate a JWT they already hold; tokens are
@@ -45,13 +50,18 @@
 const express = require('express');
 const bcrypt  = require('bcrypt');
 const router  = express.Router();
-const { superuserOnlyFor, auditAdminAction } = require('../lib/auth.superuser');
+const { superuserOnlyFor, auditAdminAction, isSuperuser } = require('../lib/auth.superuser');
 
 const TOOL = 'users';
 const BCRYPT_ROUNDS = 12;
 const MIN_PASSWORD_LEN = 4; // matches auth.password.js / auth.login.js conventions
 
-const ALLOWED_AUTH = ['authorized', 'authorized - SU', 'disabled'];
+const ALLOWED_AUTH = ['authorized', 'disabled'];
+
+// users.roles SET members, in column order (ref/database.sql). Append-only,
+// like the SET itself; writes are normalized to this order.
+const ROLE_MEMBERS = ['it', 'admin', 'staff', 'attorney', 'automation', 'form_dev', 'su'];
+const DEFAULT_ROLES = 'staff';
 
 // Fields an SU may edit via PATCH. user_custom_tab / task_remind_freq /
 // freebusy_calendar_ids deliberately excluded (own tools / DB console).
@@ -59,7 +69,7 @@ const PATCH_WHITELIST = [
   'username', 'user_fname', 'user_lname', 'user_name', 'user_real_name',
   'user_initials', 'user_auth', 'user_type', 'email', 'phone',
   'default_phone', 'default_email', 'allow_sms', 'does_appts',
-  'ringcentral', 'user_gcal_id',
+  'ringcentral', 'user_gcal_id', 'roles',
 ];
 
 // ── helpers ──────────────────────────────────────────────────────────────────
@@ -86,6 +96,56 @@ function normPhone(v) {
   if (v == null || String(v).trim() === '') return null;
   const digits = String(v).replace(/\D/g, '');
   return digits.length === 10 ? digits : undefined;
+}
+
+/** users.roles csv (as mysql2 returns a SET) → array. */
+function rolesOf(csv) {
+  return String(csv || '').split(',').map(r => r.trim()).filter(Boolean);
+}
+
+/** Login status class: anything starting 'authorized' is 'authorized'. */
+function authStatus(v) {
+  return String(v || '').startsWith('authorized') ? 'authorized' : String(v || '');
+}
+
+/**
+ * Parse + validate a roles value (array of names, or csv string).
+ * Returns { csv } normalized to SET order, or { error }.
+ */
+function parseRoles(v) {
+  let list;
+  if (Array.isArray(v)) list = v;
+  else if (typeof v === 'string') list = v.split(',');
+  else return { error: 'roles must be an array or a comma-separated string' };
+  const names = [];
+  for (const r of list) {
+    if (typeof r !== 'string') return { error: 'roles must contain role names' };
+    const t = r.trim();
+    if (t) names.push(t);
+  }
+  const bad = names.filter(r => !ROLE_MEMBERS.includes(r));
+  if (bad.length) {
+    return { error: `unknown role(s): ${bad.join(', ')} (allowed: ${ROLE_MEMBERS.join(', ')})` };
+  }
+  return { csv: ROLE_MEMBERS.filter(r => names.includes(r)).join(',') };
+}
+
+/**
+ * The su rules for a roles write (design §2.2: granting root is root-grade;
+ * no self-service lock-out). Pure — callers pass the caller's req.auth, the
+ * target id (null on create), and the before/after csvs.
+ * Returns null when allowed, else { status, message }.
+ */
+function roleChangeRefusal(auth, targetId, oldCsv, newCsv) {
+  const hadSu = rolesOf(oldCsv).includes('su');
+  const getsSu = rolesOf(newCsv).includes('su');
+  if (hadSu !== getsSu && !isSuperuser(auth)) {
+    return { status: 403, message: 'Only a superuser can grant or revoke the su role' };
+  }
+  if (targetId != null && targetId === auth?.userId && hadSu && !getsSu) {
+    return { status: 400, message: 'You cannot remove your own su role' };
+  }
+  return null;
 }
 
 /**
@@ -149,6 +209,13 @@ function validateFields(fields, { partial = false } = {}) {
     } else clean.user_auth = v;
   }
 
+  // roles — SET members; create defaults to staff
+  if (!partial || has('roles')) {
+    const r = has('roles') ? parseRoles(fields.roles) : { csv: DEFAULT_ROLES };
+    if (r.error) errors.push(r.error);
+    else clean.roles = r.csv;
+  }
+
   // user_type — tinyint(1), default 1
   if (!partial || has('user_type')) {
     const n = has('user_type') ? Number(fields.user_type) : 1;
@@ -205,7 +272,7 @@ router.get('/api/admin/users', ...superuserOnlyFor(TOOL), async (req, res) => {
   try {
     const [rows] = await req.db.query(
       `SELECT user, username, user_name, user_real_name, user_fname, user_lname,
-              user_initials, user_auth, user_type, email, phone,
+              user_initials, user_auth, roles, user_type, email, phone,
               default_phone, default_email, allow_sms, does_appts, ringcentral,
               user_gcal_id,
               (password IS NOT NULL)      AS has_password,
@@ -235,6 +302,9 @@ router.post('/api/admin/users', ...superuserOnlyFor(TOOL), async (req, res) => {
   const { ok, errors, clean } = validateFields(body, { partial: false });
   if (!ok) return res.status(400).json({ status: 'error', message: errors.join('; ') });
 
+  const refusal = roleChangeRefusal(req.auth, null, '', clean.roles);
+  if (refusal) return res.status(refusal.status).json({ status: 'error', message: refusal.message });
+
   const password = body.password == null ? '' : String(body.password);
   if (password && password.length < MIN_PASSWORD_LEN) {
     return res.status(400).json({ status: 'error', message: `Password must be at least ${MIN_PASSWORD_LEN} characters` });
@@ -254,18 +324,18 @@ router.post('/api/admin/users', ...superuserOnlyFor(TOOL), async (req, res) => {
     const [r] = await req.db.query(
       `INSERT INTO users
          (username, user_type, user_real_name, user_name, user_fname, user_lname,
-          user_initials, user_auth, email, phone, default_phone, default_email,
+          user_initials, user_auth, roles, email, phone, default_phone, default_email,
           allow_sms, ringcentral, does_appts, user_gcal_id, user_custom_tab,
           password_hash,
           password)          -- TODO: REMOVE when dropping plaintext password column
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'null',
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'null',
           ?,
           ?)                 -- TODO: REMOVE when dropping plaintext password column
       `,
       [
         clean.username, clean.user_type, clean.user_real_name, clean.user_name,
         clean.user_fname, clean.user_lname, clean.user_initials, clean.user_auth,
-        clean.email, clean.phone, clean.default_phone, clean.default_email,
+        clean.roles, clean.email, clean.phone, clean.default_phone, clean.default_email,
         clean.allow_sms, clean.ringcentral, clean.does_appts, clean.user_gcal_id,
         hash,
         password || null, // TODO: REMOVE when dropping plaintext password column
@@ -276,6 +346,7 @@ router.post('/api/admin/users', ...superuserOnlyFor(TOOL), async (req, res) => {
       new_user_id: r.insertId,
       username: clean.username,
       user_auth: clean.user_auth,
+      roles: clean.roles,
       with_password: !!password,
     });
     res.json({ status: 'success', user: r.insertId, username: clean.username });
@@ -305,15 +376,22 @@ router.patch('/api/admin/users/:id', ...superuserOnlyFor(TOOL), async (req, res)
 
   try {
     const [[existing]] = await req.db.query(
-      'SELECT user, username, user_auth FROM users WHERE user = ?', [id]
+      'SELECT user, username, user_auth, roles FROM users WHERE user = ?', [id]
     );
     if (!existing) return res.status(404).json({ status: 'error', message: 'User not found' });
 
-    // Guardrail: you can't change your own access level.
+    // Guardrail: you can't change your own access level. Compared as login
+    // status, so a row still holding the legacy 'authorized - SU' string
+    // (until the A2b collapse runs) saves as 'authorized' rather than 400ing.
     if (id === req.auth.userId &&
         clean.user_auth !== undefined &&
-        clean.user_auth !== existing.user_auth) {
+        authStatus(clean.user_auth) !== authStatus(existing.user_auth)) {
       return res.status(400).json({ status: 'error', message: 'You cannot change your own access level' });
+    }
+
+    if (clean.roles !== undefined) {
+      const refusal = roleChangeRefusal(req.auth, id, existing.roles, clean.roles);
+      if (refusal) return res.status(refusal.status).json({ status: 'error', message: refusal.message });
     }
 
     if (clean.username !== undefined && clean.username !== existing.username) {
@@ -419,3 +497,6 @@ router.post('/api/admin/users/:id/enable', ...superuserOnlyFor(TOOL), async (req
 });
 
 module.exports = router;
+module.exports.parseRoles = parseRoles; // exported for tests
+module.exports.roleChangeRefusal = roleChangeRefusal;
+module.exports.ROLE_MEMBERS = ROLE_MEMBERS;

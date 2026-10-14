@@ -47,7 +47,7 @@ const staffToken = (over = {}) =>
   jwt.sign(
     {
       sub: 42, username: 'fred', user_type: 'staff',
-      user_auth: 'authorized - SU', aud: 'staff', roles: [],
+      user_auth: 'authorized', aud: 'staff', roles: ['su'],
       ...over,
     },
     SECRET,
@@ -161,7 +161,7 @@ describe('elevation gate on superuserOnlyFor routes', () => {
 
 // ── SU precedence — elevation ADDS, never substitutes ───────────────────────
 describe('non-SU callers', () => {
-  const nonSu = () => staffToken({ user_auth: 'authorized', sub: 7 });
+  const nonSu = () => staffToken({ user_auth: 'authorized', roles: [], sub: 7 });
 
   test('cannot elevate (403 before the password is read)', async () => {
     const res = await call('/admin/elevate', {

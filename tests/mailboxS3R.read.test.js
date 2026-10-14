@@ -66,8 +66,8 @@ beforeAll(async () => {
 });
 afterAll(async () => { await new Promise((r) => server.close(r)); });
 
-const tok = (user, user_auth = 'authorized') =>
-  jwt.sign({ sub: String(user), username: 'u' + user, user_auth, aud: 'staff' }, process.env.JWT_SECRET);
+const tok = (user, user_auth = 'authorized', roles = []) =>
+  jwt.sign({ sub: String(user), username: 'u' + user, user_auth, roles, aud: 'staff' }, process.env.JWT_SECRET);
 
 async function call(method, url, { t, body } = {}) {
   const headers = {};
@@ -89,7 +89,7 @@ function seed() {
   W = makeWorld();
   W.user(SS, { roles: 'staff,attorney' });
   W.user(PREADER, { roles: 'staff' });
-  W.user(SU, { auth: 'authorized - SU', roles: 'it,admin,form_dev' });
+  W.user(SU, { auth: 'authorized', roles: 'it,admin,form_dev,su' });
   W.user(NOBODY, { roles: 'staff' });
   W.user(AREADER, { roles: 'staff' });
   W.user(BOTH, { roles: 'staff' });
@@ -172,12 +172,12 @@ describe('the visibility matrix — list / scopes', () => {
     expect(new Set(p.json.messages.map((m) => m.mailbox_id))).toEqual(new Set([2]));
     // SU default scope holds the parent AND its aliases: the alias branches
     // are DROPPED (no duplicate rows), the parent branch carries everything.
-    const su = await call('GET', '/api/mail/messages?all_folders=1&limit=100', { t: tok(SU, 'authorized - SU') });
+    const su = await call('GET', '/api/mail/messages?all_folders=1&limit=100', { t: tok(SU, 'authorized', ['su']) });
     const got = su.json.messages.map((m) => m.id);
     expect(new Set(got).size).toBe(got.length);
     expect(got.sort((a, b) => a - b)).toEqual([301, 302, 303, 304, 305, 306, 307, 308, 310]);
     // …but scoped TO the alias, the SU reads the slice as the alias box.
-    const sliced = await call('GET', `/api/mail/messages?mailbox_ids=${IT}`, { t: tok(SU, 'authorized - SU') });
+    const sliced = await call('GET', `/api/mail/messages?mailbox_ids=${IT}`, { t: tok(SU, 'authorized', ['su']) });
     expect(ids(sliced)).toEqual([301, 302, 303, 306, 308]);
     expect(new Set(sliced.json.messages.map((m) => m.mailbox_id))).toEqual(new Set([IT]));
     // a reader of the parent AND one alias: the alias branch is DROPPED
@@ -293,7 +293,7 @@ describe('summary / badge counts + views', () => {
     s = await call('GET', '/api/mail/mailboxes', { t: tok(AREADER) });
     expect(s.json.mailboxes[0]).toMatchObject({ inbox_total: 5, inbox_unread: 4 });
     // SU: the parent keeps its own in_inbox count (304 + 307), the aliases their slices
-    const su = (await call('GET', '/api/mail/mailboxes', { t: tok(SU, 'authorized - SU') })).json.mailboxes;
+    const su = (await call('GET', '/api/mail/mailboxes', { t: tok(SU, 'authorized', ['su']) })).json.mailboxes;
     expect(su.find((m) => m.id === 2)).toMatchObject({ alias_of: null, inbox_total: 2 });
     expect(su.find((m) => m.id === IT)).toMatchObject({ alias_of: 2, inbox_total: 5 });
     expect(su.find((m) => m.id === RENA)).toMatchObject({ alias_of: 2, inbox_total: 1 });   // 306

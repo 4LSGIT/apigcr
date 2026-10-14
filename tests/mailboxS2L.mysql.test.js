@@ -46,7 +46,7 @@ maybe('mailbox S2-L on real MySQL', () => {
   const SU = 6;
   let pool; let server; let base; let S;
   const q = async (sql, p) => (await pool.query(sql, p))[0];
-  const tok = () => jwt.sign({ sub: String(SU), username: 'u6', user_auth: 'authorized - SU', aud: 'staff' }, process.env.JWT_SECRET);
+  const tok = () => jwt.sign({ sub: String(SU), username: 'u6', user_auth: 'authorized', roles: ['su'], aud: 'staff' }, process.env.JWT_SECRET);
   const hex = (n) => (0x1a11d045dc6887d0n + BigInt(n)).toString(16);
   const gmsg = (uid, labels) => msg(uid, { providerId: hex(uid), labels, date: new Date(Date.UTC(2026, 9, 11, 9, uid)) });
 
@@ -79,7 +79,7 @@ maybe('mailbox S2-L on real MySQL', () => {
     for (const t of ['mailboxes', 'channel_grants', 'mail_messages', 'mail_read_state', 'inbox_views']) await q(`DELETE FROM ${t}`);
     await q('DELETE FROM users WHERE user = ?', [SU]);
     await q(`INSERT INTO users (user, username, user_type, user_name, user_fname, user_lname, user_initials, user_auth, ringcentral, user_custom_tab, roles)
-             VALUES (?, 'u6', 1, 'User 6', 'f', 'l', 'xx', 'authorized - SU', 0, '{}', 'it')`, [SU]);
+             VALUES (?, 'u6', 1, 'User 6', 'f', 'l', 'xx', 'authorized', 0, '{}', 'it,su')`, [SU]);
     await q(`INSERT INTO mailboxes (id, address, domain, imap_host, imap_user, imap_secret, ingest_folders, ingest_state, ingest_enabled, active) VALUES
       (2, 'stuart@firm.test', 'firm.test', 'imap.gmail.com', 'u', 'ENCv1:fake', ?, ?, 1, 1),
       (5, 'pilot@firm.test', 'firm.test', 'gcam1191.siteground.biz', 'u', 'ENCv1:fake', ?, ?, 0, 1)`,
