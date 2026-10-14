@@ -542,7 +542,9 @@ Bearer never leaves origin), set `redirect:'error'` (no authed route
 redirects; the 302s are all public: /r, /d, /f, pageLanding), and are
 frozen non-writable on `window` so late-loading code can't swap in a MITM
 wrapper. Panes never read `AUTH_STATE.jwt` or localStorage `jwt`; role-gated
-panes read `firmData.currentUser.user_auth` (cosmetic — the server enforces).
+panes read `firmData.currentUser.roles` (a csv string from the MySQL SET;
+cosmetic — the server enforces; `user_auth` is authn status only since
+access-control A2b, 2026-10-14).
 ONE exception: `public/forms/liveHost.html` is a standalone tab outside the
 shell with its own apiSend clone (same guards) reading localStorage — it pins
 the token to localStorage until the token-storage decision (ref/plans.md).
