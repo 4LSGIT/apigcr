@@ -378,6 +378,8 @@ Active surfaces with known next steps.
 
 - **`// TODO: REMOVE` markers** scattered across the codebase — clean sweep at the same time.
 
+- **`jwt_api_audit_log` stores every request body** (lib/auth.jwtOrApiKey; only password-like keys are redacted). A route that refuses free text — the comms evaluation's score route accepts only numbers, booleans and tags, and audits a refusal as "invalid request" without the field — still has whatever the client sent recorded there, refused or not. Decide per route class whether bodies are logged at all (allowlist of loggable routes, or log only the key names). Found in the lane D review, 2026-10-14.
+
 - **`email_credentials.smtp_pass` → Connections** — the column is ENCv1-encrypted (2026-10-08: API encrypts on write, SMTP adapter refuses non-encrypted values, backfill run); what remains is replacing it with a Connections `basic`-type credential row. Either as part of email's auth migration (above), or as its own pass.
 
 - **JWT storage decision + liveHost's last token read (2026-10-05).** The

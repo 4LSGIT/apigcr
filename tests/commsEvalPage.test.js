@@ -1,0 +1,62 @@
+/**
+ * The S0 evaluation review page (scripts/commsArchive/eval/review-tool.html — an
+ * Admin → Tools page): static gates. Transcripts are call content, so the page
+ * renders with textContent only; its script must parse; every API path it calls
+ * must be a route of routes/api.commsEval.js; and it carries no data of its own.
+ */
+'use strict';
+
+const fs = require('fs');
+const path = require('path');
+const vm = require('vm');
+
+const PAGE = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'commsArchive', 'eval', 'review-tool.html'), 'utf8');
+const SCRIPT = (PAGE.match(/<script>([\s\S]*?)<\/script>/) || [])[1] || '';
+
+describe('comms eval review page', () => {
+  test('no HTML-writing sinks anywhere (textContent only)', () => {
+    for (const sink of ['innerHTML', 'outerHTML', 'insertAdjacentHTML', 'document.write']) {
+      expect([sink, PAGE.includes(sink)]).toEqual([sink, false]);
+    }
+  });
+
+  test('its script parses', () => {
+    expect(SCRIPT.length).toBeGreaterThan(1000);
+    expect(() => new vm.Script(SCRIPT)).not.toThrow();
+  });
+
+  test('every API path it calls is a route of api.commsEval.js, and it calls no other API', () => {
+    const called = [...SCRIPT.matchAll(/'(\/api\/[^']*)'/g)].map(m => m[1]);
+    expect(called.length).toBeGreaterThanOrEqual(5);
+    for (const p of called) expect(p.startsWith('/api/comms-eval/')).toBe(true);
+    const router = require('../routes/api.commsEval');
+    const routes = router.stack.filter(l => l.route).map(l => l.route.path);
+    const asRoute = (p) => p.replace(/\/$/, '');
+    const prefixes = called.map(asRoute);
+    for (const p of prefixes) expect(routes.some(r => r === p || r.startsWith(p + '/:id') || r.startsWith(p))).toBe(true);
+  });
+
+  test('no data baked in: no phone numbers, no media ids, no storage URLs', () => {
+    expect(PAGE).not.toMatch(/\b\d{10}\b/);
+    expect(PAGE).not.toMatch(/storage\.googleapis|phone\/rec\//);
+  });
+
+  test('R8: the transcript carries the ratified AI label; speakers are marked inferred', () => {
+    expect(PAGE).toContain('AI-generated — check the recording before relying on it.');
+    expect(PAGE).toMatch(/Speaker letters \(A, B…\) are inferred/);
+    expect(SCRIPT).toMatch(/title: 'inferred speaker'/);
+  });
+
+  test('a late answer for another call is dropped: every item request checks still(id) after it returns', () => {
+    for (const fn of ['loadAudio', 'saveNoise', 'loadTranscript', 'saveScores']) {
+      const body = SCRIPT.split('async function ' + fn + '(')[1].split('\n  }\n')[0];
+      expect([fn, /const id = cur\.id/.test(body), /if \(!still\(id\)\) return;/.test(body)]).toEqual([fn, true, true]);
+    }
+    const open = SCRIPT.split('async function openItem(')[1].split('\n  }\n')[0];
+    expect(open).toMatch(/if \(!still\(it\.id\)\) return;/);
+  });
+
+  test('it only runs inside the shell (waits for the parent apiSend)', () => {
+    expect(SCRIPT).toMatch(/P !== window && typeof P\.apiSend === 'function'/);
+  });
+});

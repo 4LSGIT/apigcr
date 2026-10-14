@@ -1,0 +1,411 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Call review</title>
+<!--
+  Comms archive S0 evaluation — the reviewers' page (an Admin → Tools page, key e.g. "call-review").
+  Source: scripts/commsArchive/eval/review-tool.html. API: routes/api.commsEval.js.
+
+  This page holds NO data. Everything comes through the shell's apiSend, so it only works pinned
+  as Settings → My Custom Tab (/tool/<key>); opened on its own every call fails, by design.
+  Rendering is textContent only (no HTML-string sinks; tests/commsEvalPage.test.js gates it), because transcripts are call content.
+  The rubric (blind noise tag first, two 60 s windows, counts only) is local/s0_eval_rubric.md.
+-->
+<style>
+  :root {
+    --bg: #f6f7f9; --card: #ffffff; --text: #1d2330; --muted: #5d6677; --line: #dde1e8;
+    --accent: #2f5bd3; --accent-text: #ffffff; --ok: #1e7f4f; --warn: #a15c00; --bad: #b42318; --chip: #eef1f6;
+    --hl: #fff4c2;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #12151b; --card: #1b1f27; --text: #e6e9ef; --muted: #9aa3b2; --line: #2c323d;
+      --accent: #7aa2ff; --accent-text: #0d1220; --ok: #4fc48a; --warn: #f0b24a; --bad: #ff7b6e; --chip: #262c37; --hl: #3a3420;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #12151b; --card: #1b1f27; --text: #e6e9ef; --muted: #9aa3b2; --line: #2c323d;
+    --accent: #7aa2ff; --accent-text: #0d1220; --ok: #4fc48a; --warn: #f0b24a; --bad: #ff7b6e; --chip: #262c37; --hl: #3a3420;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 900px; margin: 0 auto; padding: 16px; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  h2 { font-size: 16px; margin: 0 0 8px; }
+  p { margin: 0 0 8px; }
+  .muted { color: var(--muted); }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 14px; margin: 12px 0; }
+  .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  button { font: inherit; border: 1px solid var(--line); background: var(--card); color: var(--text); border-radius: 8px; padding: 7px 12px; cursor: pointer; }
+  button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+  button:disabled { opacity: .5; cursor: default; }
+  .chip { display: inline-block; font-size: 12px; padding: 2px 8px; border-radius: 999px; background: var(--chip); color: var(--muted); }
+  .chip.ok { color: var(--ok); } .chip.warn { color: var(--warn); } .chip.bad { color: var(--bad); }
+  .items { list-style: none; margin: 0; padding: 0; }
+  .items li { border-top: 1px solid var(--line); }
+  .items li:first-child { border-top: 0; }
+  .items button.item { width: 100%; text-align: left; border: 0; border-radius: 0; background: transparent; padding: 10px 4px;
+    display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; }
+  .items button.item:disabled { opacity: .55; }
+  .mono { font-variant-numeric: tabular-nums; }
+  audio { width: 100%; margin: 8px 0; }
+  .seg { display: grid; grid-template-columns: auto auto 1fr; gap: 4px 10px; padding: 6px 4px; border-radius: 6px; }
+  .seg.inwin { background: var(--hl); }
+  .seg button.t { padding: 0 6px; font-size: 12px; }
+  .seg .who { font-weight: 600; color: var(--muted); }
+  .seg .txt { min-width: 0; overflow-wrap: anywhere; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px; }
+  label.f { display: flex; flex-direction: column; gap: 3px; font-size: 13px; color: var(--muted); }
+  label.f input { font: inherit; color: var(--text); background: var(--card); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; width: 100%; }
+  fieldset { border: 1px solid var(--line); border-radius: 8px; margin: 10px 0; padding: 10px; }
+  legend { font-weight: 600; padding: 0 6px; }
+  .msg { padding: 8px 10px; border-radius: 8px; background: var(--chip); }
+  .msg.bad { color: var(--bad); } .msg.ok { color: var(--ok); }
+  .hidden { display: none !important; }
+  .tabs { display: flex; gap: 6px; margin: 8px 0; flex-wrap: wrap; }
+  .tabs button[aria-pressed="true"] { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Call review</h1>
+  <p class="muted">A small sample of archived calls, to check how well the transcription works. Listen first, tag the background noise, then the transcript opens. Every listen and every transcript view is logged.</p>
+  <div id="status" class="msg hidden" role="status"></div>
+
+  <section id="listView">
+    <div class="card">
+      <div class="row" style="justify-content: space-between">
+        <h2>Calls to review</h2>
+        <button id="refresh">Refresh</button>
+      </div>
+      <ul id="items" class="items"></ul>
+      <p id="empty" class="muted hidden">No calls in the sample yet.</p>
+    </div>
+    <div id="suCard" class="card hidden">
+      <h2>Signing check (SU)</h2>
+      <p class="muted">Run once before reviewers start: proves the archive's signed links work in production, and that a tampered link is refused.</p>
+      <div class="row"><button id="signCheck">Run signing check</button><span id="signResult" class="muted"></span></div>
+    </div>
+  </section>
+
+  <section id="itemView" class="hidden">
+    <div class="row"><button id="back">← All calls</button><span id="itemMeta" class="muted"></span></div>
+
+    <div class="card">
+      <h2>1 · Listen</h2>
+      <div class="row"><button id="loadAudio" class="primary">Load audio</button><span class="muted">The link lasts 5 minutes; reload it any time.</span></div>
+      <audio id="player" controls preload="none" class="hidden"></audio>
+      <div id="windows" class="row"></div>
+    </div>
+
+    <div class="card">
+      <h2>2 · Background noise <span class="muted" style="font-weight:400">(before you read anything)</span></h2>
+      <div class="row" role="radiogroup" aria-label="Noise">
+        <label><input type="radio" name="noise" value="N1"> N1 clean</label>
+        <label><input type="radio" name="noise" value="N2"> N2 some noise</label>
+        <label><input type="radio" name="noise" value="N3"> N3 hard to hear</label>
+      </div>
+      <div class="row" style="margin-top:8px"><button id="saveNoise" class="primary">Save noise tag</button><span id="noiseNote" class="muted"></span></div>
+    </div>
+
+    <div id="transcriptCard" class="card hidden">
+      <h2>3 · Transcript</h2>
+      <p class="msg"><b>AI-generated — check the recording before relying on it.</b> Speaker letters (A, B…) are inferred by the software, not identified.</p>
+      <div id="variantTabs" class="tabs hidden">
+        <button data-v="default" aria-pressed="true">Standard</button>
+        <button data-v="variant" aria-pressed="false">Per channel</button>
+      </div>
+      <div class="row"><label><input type="checkbox" id="onlyWin" checked> Show the review windows only</label></div>
+      <div id="segments"></div>
+    </div>
+
+    <div id="formCard" class="card hidden">
+      <h2>4 · Scores <span id="formFor" class="muted" style="font-weight:400"></span></h2>
+      <p class="muted">Counts only — never type what was said. In each window: words you heard, then the transcript's wrong words (substituted), extra words (inserted) and missing words (deleted).</p>
+      <div id="winFields"></div>
+      <fieldset>
+        <legend>Key items heard in the windows (whole call for short calls)</legend>
+        <div class="grid" id="itemFields"></div>
+      </fieldset>
+      <fieldset>
+        <legend>Speakers</legend>
+        <div class="grid">
+          <label class="f">Speaker turns<input type="number" min="0" inputmode="numeric" id="turnsTotal"></label>
+          <label class="f">Attributed correctly<input type="number" min="0" inputmode="numeric" id="turnsCorrect"></label>
+        </div>
+        <div id="channelRow" class="row hidden" style="margin-top:8px">
+          <span>Left and right each carry one person?</span>
+          <label><input type="radio" name="opc" value="yes"> yes</label>
+          <label><input type="radio" name="opc" value="no"> no</label>
+        </div>
+      </fieldset>
+      <div class="row">
+        <label><input type="checkbox" id="complete"> This call is done</label>
+        <button id="saveScores" class="primary">Save scores</button>
+        <span id="scoreNote" class="muted"></span>
+      </div>
+    </div>
+  </section>
+</main>
+<script>
+(function () {
+  'use strict';
+  const P = window.parent;
+  const $ = (id) => document.getElementById(id);
+  const CLASSES = [['names', 'Names'], ['case_numbers', 'Case numbers'], ['amounts', 'Dollar amounts'], ['dates', 'Dates']];
+  let items = [], me = { su: false }, cur = null, transcript = null, variant = 'default', reviews = {};
+
+  // ── tiny DOM helpers (textContent only) ──────────────────────────────────
+  function el(tag, props, kids) {
+    const n = document.createElement(tag);
+    if (props) for (const [k, v] of Object.entries(props)) {
+      if (k === 'text') n.textContent = v;
+      else if (k === 'cls') n.className = v;
+      else if (k.startsWith('on')) n.addEventListener(k.slice(2), v);
+      else n.setAttribute(k, v);
+    }
+    for (const c of kids || []) n.appendChild(typeof c === 'string' ? document.createTextNode(c) : c);
+    return n;
+  }
+  const clear = (n) => { while (n.firstChild) n.removeChild(n.firstChild); };
+  const mmss = (s) => { s = Math.max(0, Math.round(Number(s) || 0)); const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), x = s % 60;
+    return (h ? h + ':' + String(m).padStart(2, '0') : m) + ':' + String(x).padStart(2, '0'); };
+  function say(text, kind) { const s = $('status'); s.textContent = text; s.className = 'msg' + (kind ? ' ' + kind : ''); s.classList.toggle('hidden', !text); }
+  const api = (path, method, body) => P.apiSend(path, method || 'GET', body || null);
+  const errText = (e) => (e && e.message) || 'Something went wrong';
+
+  // ── list ────────────────────────────────────────────────────────────────
+  async function loadList() {
+    say('');
+    try {
+      const r = await api('/api/comms-eval/items');
+      items = r.items || []; me = r.me || { su: false };
+    } catch (e) { say(e.status === 403 ? 'You are not on the review list. Ask Fred.' : errText(e), 'bad'); return; }
+    $('suCard').classList.toggle('hidden', !me.su);
+    const ul = $('items'); clear(ul);
+    $('empty').classList.toggle('hidden', items.length > 0);
+    for (const it of items) {
+      const t = it.mine.transcript || {};
+      const chips = [
+        el('span', { cls: 'chip', text: it.stratum }),
+        el('span', { cls: 'chip ' + (it.transcript_ready ? 'ok' : 'warn'), text: it.transcript_ready ? 'transcript ready' : 'transcript not yet' }),
+        t.complete ? el('span', { cls: 'chip ok', text: 'done' }) : t.noise ? el('span', { cls: 'chip', text: 'noise ' + t.noise }) : el('span', { cls: 'chip', text: 'to do' }),
+      ];
+      if (!it.available) chips.push(el('span', { cls: 'chip bad', text: 'not available' }));
+      const b = el('button', { cls: 'item', onclick: () => openItem(it) }, [
+        el('span', { cls: 'mono', text: '#' + it.id }),
+        el('span', { text: (it.line || it.provider) + ' · ' + it.day }),
+        el('span', { cls: 'mono muted', text: it.audio_s == null ? '' : '≈ ' + mmss(it.audio_s) }),
+        ...chips,
+      ]);
+      if (!it.available) b.disabled = true;
+      ul.appendChild(el('li', null, [b]));
+    }
+  }
+
+  // ── item ────────────────────────────────────────────────────────────────
+  // Every request remembers which call it was for; an answer that arrives after the
+  // reviewer opened another call is dropped (no B scored against A's audio or counts).
+  const still = (id) => cur && cur.id === id && !$('itemView').classList.contains('hidden');
+  async function openItem(it) {
+    cur = it; transcript = null; variant = 'default'; reviews = {};
+    $('listView').classList.add('hidden'); $('itemView').classList.remove('hidden');
+    $('itemMeta').textContent = '#' + it.id + ' · ' + (it.line || it.provider) + ' · ' + it.day + (it.audio_s == null ? '' : ' · ≈ ' + mmss(it.audio_s));
+    const pl = $('player'); pl.pause(); pl.removeAttribute('src'); pl.classList.add('hidden');
+    $('transcriptCard').classList.add('hidden'); $('formCard').classList.add('hidden');
+    clear($('segments')); clear($('winFields')); clear($('itemFields')); $('variantTabs').classList.add('hidden');
+    for (const x of document.querySelectorAll('#variantTabs button')) x.setAttribute('aria-pressed', String(x.dataset.v === 'default'));
+    $('saveNoise').disabled = false;
+    $('noiseNote').textContent = ''; $('scoreNote').textContent = '';
+    for (const r of document.querySelectorAll('input[name="noise"]')) { r.checked = false; r.disabled = false; }
+    renderWindows();
+    let got;
+    try { got = (await api('/api/comms-eval/items/' + it.id + '/review')).reviews || {}; } catch (e) { if (still(it.id)) say(errText(e), 'bad'); return; }
+    if (!still(it.id)) return;
+    reviews = got;
+    const t = reviews.transcript;
+    if (t && t.scores && t.scores.noise) {
+      const r = document.querySelector('input[name="noise"][value="' + t.scores.noise + '"]'); if (r) r.checked = true;
+      if (t.transcript_opened) lockNoise();
+      await loadTranscript();
+    }
+  }
+  function renderWindows() {
+    const w = $('windows'); clear(w);
+    for (const [i, x] of (cur.windows || []).entries()) {
+      w.appendChild(el('button', { onclick: () => seek(x.start_s) }, [x.whole ? 'Whole call' : 'Window ' + (i + 1) + ' · ' + mmss(x.start_s) + '–' + mmss(x.start_s + 60)]));
+    }
+  }
+  async function loadAudio(keepAt) {
+    const id = cur.id;
+    try {
+      const r = await api('/api/comms-eval/items/' + id + '/audio');
+      if (!still(id)) return;
+      const pl = $('player'); pl.src = r.url; pl.classList.remove('hidden');
+      if (keepAt) pl.addEventListener('loadedmetadata', () => { pl.currentTime = keepAt; }, { once: true });
+    } catch (e) { if (still(id)) say(errText(e), 'bad'); }
+  }
+  function seek(s) { const pl = $('player'); if (!pl.src) { loadAudio(s); return; } pl.currentTime = s; pl.play().catch(() => {}); }
+  function lockNoise() { for (const r of document.querySelectorAll('input[name="noise"]')) r.disabled = true;
+    $('noiseNote').textContent = 'Fixed — the transcript has been opened.'; $('saveNoise').disabled = true; }
+
+  async function saveNoise() {
+    const id = cur.id;
+    const r = document.querySelector('input[name="noise"]:checked');
+    if (!r) { $('noiseNote').textContent = 'Pick one first.'; return; }
+    const prev = (reviews.transcript && reviews.transcript.scores) || {};
+    try {
+      await api('/api/comms-eval/items/' + id + '/review/transcript', 'PUT', { scores: { ...prev, noise: r.value } });
+      if (!still(id)) return;
+      reviews.transcript = { ...(reviews.transcript || {}), scores: { ...prev, noise: r.value } };
+      $('noiseNote').textContent = 'Saved.';
+      await loadTranscript();
+    } catch (e) { if (still(id)) $('noiseNote').textContent = errText(e); }
+  }
+
+  async function loadTranscript() {
+    const id = cur.id;
+    let r;
+    try { r = await api('/api/comms-eval/items/' + id + '/transcript'); }
+    catch (e) { if (still(id)) $('noiseNote').textContent = errText(e); return; }
+    if (!still(id)) return;
+    $('transcriptCard').classList.remove('hidden');
+    if (!r.ready) { const s = $('segments'); clear(s); s.appendChild(el('p', { cls: 'muted', text: 'The transcript is not ready yet. Come back later — your noise tag is saved.' })); return; }
+    transcript = r; lockNoise();
+    $('variantTabs').classList.toggle('hidden', !r.variant);
+    renderSegments(); renderForm();
+  }
+  function inWindow(seg) {
+    return (cur.windows || []).some(w => w.whole || (seg.b > w.start_s && seg.a < w.start_s + 60));
+  }
+  function renderSegments() {
+    const box = $('segments'); clear(box);
+    const segs = ((variant === 'variant' ? transcript.variant : transcript.default) || {}).segments || [];
+    const only = $('onlyWin').checked;
+    let shown = 0;
+    for (const seg of segs) {
+      const win = inWindow(seg);
+      if (only && !win) continue;
+      shown++;
+      box.appendChild(el('div', { cls: 'seg' + (win ? ' inwin' : '') }, [
+        el('button', { cls: 't mono', onclick: () => seek(seg.a) }, [mmss(seg.a)]),
+        el('span', { cls: 'who', title: 'inferred speaker', text: String(seg.s == null ? '?' : seg.s) + '*' }),
+        el('span', { cls: 'txt', text: String(seg.t == null ? '' : seg.t) }),
+      ]));
+    }
+    if (!shown) box.appendChild(el('p', { cls: 'muted', text: 'Nothing in these windows (hold music?). Untick the box to see everything.' }));
+  }
+
+  // ── scores form ──────────────────────────────────────────────────────────
+  const stage = () => (variant === 'variant' ? 'transcript_alt' : 'transcript');
+  function num(id) { return el('input', { type: 'number', min: '0', inputmode: 'numeric', id }); }
+  function renderForm() {
+    $('formCard').classList.remove('hidden');
+    $('formFor').textContent = variant === 'variant' ? '(per channel)' : (transcript.variant ? '(standard)' : '');
+    $('channelRow').classList.toggle('hidden', cur.provider !== 'quo');
+    const wf = $('winFields'); clear(wf);
+    (cur.windows || []).forEach((w, i) => {
+      wf.appendChild(el('fieldset', null, [
+        el('legend', { text: w.whole ? 'Whole call' : 'Window ' + (i + 1) }),
+        el('div', { cls: 'grid' }, [
+          el('label', { cls: 'f' }, ['Start (seconds)', Object.assign(num('w' + i + '_start'), { value: String(w.start_s) })]),
+          el('label', { cls: 'f' }, ['Words heard', num('w' + i + '_words')]),
+          el('label', { cls: 'f' }, ['Wrong words', num('w' + i + '_sub')]),
+          el('label', { cls: 'f' }, ['Extra words', num('w' + i + '_ins')]),
+          el('label', { cls: 'f' }, ['Missing words', num('w' + i + '_del')]),
+        ]),
+      ]));
+    });
+    const itf = $('itemFields'); clear(itf);
+    for (const [k, label] of CLASSES) {
+      itf.appendChild(el('label', { cls: 'f' }, [label + ' heard', num('i_' + k + '_heard')]));
+      itf.appendChild(el('label', { cls: 'f' }, [label + ' transcribed exactly', num('i_' + k + '_correct')]));
+    }
+    fillForm(((reviews[stage()] || {}).scores) || {});
+  }
+  function setVal(id, v) { const n = $(id); if (n && v != null) n.value = String(v); }
+  function fillForm(s) {
+    (s.windows || []).forEach((w, i) => { setVal('w' + i + '_start', w.start_s); for (const k of ['words', 'sub', 'ins', 'del']) setVal('w' + i + '_' + k, w[k]); });
+    for (const [k] of CLASSES) { const v = (s.items || {})[k]; if (v) { setVal('i_' + k + '_heard', v.heard); setVal('i_' + k + '_correct', v.correct); } }
+    if (s.turns) { setVal('turnsTotal', s.turns.total); setVal('turnsCorrect', s.turns.correct); }
+    for (const r of document.querySelectorAll('input[name="opc"]')) r.checked = s.one_party_per_channel === (r.value === 'yes');
+    $('complete').checked = s.complete === true;
+  }
+  function intOf(id) { const v = $(id).value.trim(); if (v === '') return undefined; const n = Number(v); return Number.isInteger(n) && n >= 0 ? n : NaN; }
+  function collect() {
+    const out = {};
+    const wins = [];
+    (cur.windows || []).forEach((w, i) => {
+      const o = { start_s: intOf('w' + i + '_start') };
+      for (const k of ['words', 'sub', 'ins', 'del']) o[k] = intOf('w' + i + '_' + k);
+      if (['words', 'sub', 'ins', 'del'].some(k => o[k] !== undefined)) {
+        for (const k of ['sub', 'ins', 'del']) if (o[k] === undefined) o[k] = 0;
+        wins.push(o);
+      }
+    });
+    if (wins.length) out.windows = wins;
+    const its = {};
+    for (const [k] of CLASSES) {
+      const h = intOf('i_' + k + '_heard'), c = intOf('i_' + k + '_correct');
+      if (h !== undefined || c !== undefined) its[k] = { heard: h === undefined ? 0 : h, correct: c === undefined ? 0 : c };
+    }
+    if (Object.keys(its).length) out.items = its;
+    const tt = intOf('turnsTotal'), tc = intOf('turnsCorrect');
+    if (tt !== undefined || tc !== undefined) out.turns = { total: tt === undefined ? 0 : tt, correct: tc === undefined ? 0 : tc };
+    const opc = document.querySelector('input[name="opc"]:checked');
+    if (opc && cur.provider === 'quo') out.one_party_per_channel = opc.value === 'yes';
+    out.complete = $('complete').checked;
+    return out;
+  }
+  async function saveScores() {
+    const s = collect();
+    if (JSON.stringify(s).includes('null')) { $('scoreNote').textContent = 'Whole numbers only.'; return; }
+    if (stage() === 'transcript') s.noise = ((reviews.transcript || {}).scores || {}).noise;
+    const id = cur.id, st = stage();
+    try {
+      const r = await api('/api/comms-eval/items/' + id + '/review/' + st, 'PUT', { scores: s });
+      if (!still(id)) return;
+      reviews[st] = { ...(reviews[st] || {}), scores: r.scores };
+      $('scoreNote').textContent = 'Saved.';
+    } catch (e) { if (still(id)) $('scoreNote').textContent = errText(e); }
+  }
+
+  async function signCheck() {
+    $('signResult').textContent = 'Running…';
+    try { const r = await api('/api/comms-eval/signing-check', 'POST', {});
+      $('signResult').textContent = r.check && r.check.pass ? 'PASS — signed link 200 with the right bytes; tampered link 403.' : 'Unexpected answer';
+      $('signResult').className = 'msg ok';
+    } catch (e) { $('signResult').textContent = 'FAIL — ' + errText(e); $('signResult').className = 'msg bad'; }
+  }
+
+  function init() {
+    $('refresh').addEventListener('click', loadList);
+    $('back').addEventListener('click', () => { $('player').pause(); $('itemView').classList.add('hidden'); $('listView').classList.remove('hidden'); loadList(); });
+    $('loadAudio').addEventListener('click', () => loadAudio($('player').currentTime || 0));
+    $('player').addEventListener('error', () => { if ($('player').src) say('The audio link expired or failed — press Load audio again.', 'bad'); });
+    $('saveNoise').addEventListener('click', saveNoise);
+    $('onlyWin').addEventListener('change', () => transcript && renderSegments());
+    $('saveScores').addEventListener('click', saveScores);
+    $('signCheck').addEventListener('click', signCheck);
+    for (const b of document.querySelectorAll('#variantTabs button')) {
+      b.addEventListener('click', () => {
+        variant = b.dataset.v;
+        for (const x of document.querySelectorAll('#variantTabs button')) x.setAttribute('aria-pressed', String(x === b));
+        renderSegments(); renderForm();
+      });
+    }
+    loadList();
+  }
+
+  (function waitForParent(n) {
+    if (P && P !== window && typeof P.apiSend === 'function') return init();
+    if (n > 50) { say('Open this page from your Custom Tab inside YisraCase (Settings → My Custom Tab).', 'bad'); return; }
+    setTimeout(() => waitForParent(n + 1), 100);
+  })(0);
+})();
+</script>
+</body>
+</html>

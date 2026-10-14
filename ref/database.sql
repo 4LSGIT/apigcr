@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-10-14T13:21:04.650Z
+-- Generated: 2026-10-14T13:50:59.093Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:09b21ec1e52a2e752c1ffde1f0f5b926
+-- Fingerprint: sha256:fc52aff9253488aa2ae12e951064a681
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -811,6 +811,40 @@ CREATE TABLE `checklists1` (
   `checklist_link` varchar(10) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `checklist_status` enum('complete','incomplete') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'incomplete'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `comms_eval_items`
+--
+
+DROP TABLE IF EXISTS `comms_eval_items`;
+CREATE TABLE `comms_eval_items` (
+  `media_id` bigint unsigned NOT NULL COMMENT 'comms_media.id (kind call_recording) in the S0 evaluation sample',
+  `stratum` varchar(4) COLLATE utf8mb4_general_ci NOT NULL COMMENT 'S1..S7 — the rubric §1 stratum it was drawn for',
+  `seed` varchar(32) COLLATE utf8mb4_general_ci NOT NULL COMMENT 'the selection seed (ORDER BY SHA2(id + seed)); fixed before the draw',
+  `audio_s` int unsigned DEFAULT NULL COMMENT 'ESTIMATED audio length at draw time, seconds: comms_media.bytes ÷ the provider byte rate (rubric amendment A1) — the review windows are drawn inside it',
+  `added_by` tinyint NOT NULL COMMENT 'users.user (SU) who inserted it',
+  `added_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='Comms archive S0 evaluation sample (lane D). Ids only — never call content';
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `comms_eval_reviews`
+--
+
+DROP TABLE IF EXISTS `comms_eval_reviews`;
+CREATE TABLE `comms_eval_reviews` (
+  `id` bigint unsigned NOT NULL,
+  `reviewer_id` tinyint NOT NULL COMMENT 'users.user',
+  `media_id` bigint unsigned NOT NULL COMMENT 'comms_eval_items.media_id',
+  `stage` varchar(16) COLLATE utf8mb4_general_ci NOT NULL COMMENT 'transcript | transcript_alt | summary — app-validated',
+  `scores` json NOT NULL COMMENT 'validated: numbers, booleans, enum tags only (commsEvalService.validateScores)',
+  `transcript_seen_at` datetime DEFAULT NULL COMMENT 'UTC; first time this reviewer was served the transcript — the noise tag is frozen from then on (blind rule)',
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='Comms archive S0 evaluation scores (lane D). Never call content';
 
 -- --------------------------------------------------------
 
@@ -4029,6 +4063,20 @@ ALTER TABLE `checklists1`
   ADD PRIMARY KEY (`checklist_id`);
 
 --
+-- Indexes for table `comms_eval_items`
+--
+ALTER TABLE `comms_eval_items`
+  ADD PRIMARY KEY (`media_id`);
+
+--
+-- Indexes for table `comms_eval_reviews`
+--
+ALTER TABLE `comms_eval_reviews`
+  ADD PRIMARY KEY (`id`),
+  ADD UNIQUE KEY `uq_comms_eval_reviews` (`reviewer_id`,`media_id`,`stage`),
+  ADD KEY `idx_comms_eval_reviews_media` (`media_id`);
+
+--
 -- Indexes for table `comms_media`
 --
 ALTER TABLE `comms_media`
@@ -5134,6 +5182,12 @@ ALTER TABLE `checklists`
 --
 ALTER TABLE `checklists1`
   MODIFY `checklist_id` int unsigned NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `comms_eval_reviews`
+--
+ALTER TABLE `comms_eval_reviews`
+  MODIFY `id` bigint unsigned NOT NULL AUTO_INCREMENT;
 
 --
 -- AUTO_INCREMENT for table `comms_media`

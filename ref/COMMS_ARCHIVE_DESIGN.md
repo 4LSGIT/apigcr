@@ -263,6 +263,7 @@ Plumbing: `MODEL_PRICING` gains `claude-sonnet-5-5` ($2 / $10 per MTok) and `cla
 | `restricted = 1` | SU and SS only, everywhere (R9) |
 | An item with no line (`channel_id` NULL — e.g. an RC voicemail RC recorded without a to-number) | **S4 input:** no line grant can reach it; by default only the SU / attorney bypass sees it. S4 decides. For an RC voicemail on a missed-call bubble S4 matches `party` = the call's other party, `channel_id` = the call's line, and `captured_at` within [call start − 5 min, call end + 30 min] (`idx_comms_media_party`); a Quo voicemail is its call's row (`source_id`). |
 | Sweepers, workflows | Grant-blind (C2) |
+| S0 evaluation review page (`/api/comms-eval/*`, an Admin → Tools page) | **A deliberate exception to R6 / C2.** SU, or a user on `app_settings` `comms_eval_reviewers` (SU-console list, staff JWT, still `authorized` — `commsArchiveAdmin.isEvalReviewer`), and ONLY the items in `comms_eval_items`, re-checked per request (restricted / not archived → 404, purged → 410). Not the line grant: a listed reviewer hears every sampled call whatever its line. So inserting into the sample is in effect an access grant: SU only, with the step-up (`superuserOnlyFor`), audited. Transcripts open only after the reviewer's blind noise tag (`routes/api.commsEval.js`) |
 
 "Stricter than the call log" (e.g. attorneys-only content on 2485592400) is not expressible today: `channel_grants` has `can_read` / `can_send` / `can_manage`, nothing that separates reading a line's log from reading its content. If SS wants it (§14 Q1), it is a grants change in mailbox-arc code, designed with the mailbox manager — not built here.
 
@@ -270,7 +271,7 @@ Plumbing: `MODEL_PRICING` gains `claude-sonnet-5-5` ($2 / $10 per MTok) and `cla
 
 **Text:** transcripts and summaries render with `textContent` only (C3 gate).
 
-**Audit (P9):** `admin_audit_log` via `auditAdminAction` (`tool='comms_archive'`; `details.action` ∈ `listen`, `view_transcript`, `view_summary`, `open_mms`, `restrict`, `unrestrict`, `purge`, `release_cap` — the table has no action column), with user, `comms_media.id` in `details`, outcome in `status`, `route`/`method` via `reqMeta`. No content in the audit row.
+**Audit (P9):** `admin_audit_log` via `auditAdminAction` (`tool='comms_archive'`; `details.action` ∈ `listen`, `view_transcript`, `view_summary`, `open_mms`, `restrict`, `unrestrict`, `purge`, `release_cap`, and for the S0 evaluation `eval_score`, `eval_sample`, `signing_check` — the table has no action column), with user, `comms_media.id` in `details`, outcome in `status`, `route`/`method` via `reqMeta`. No content in the audit row.
 
 ## 8. Restrict and purge
 

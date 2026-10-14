@@ -1,7 +1,7 @@
 # Routes
 
-_Generated 2026-10-14T13:20:59.230Z_  
-_755 routes total — DELETE: 63, GET: 316, PATCH: 51, POST: 287, PUT: 35, _ALL: 3_
+_Generated 2026-10-14T13:50:52.892Z_  
+_762 routes total — DELETE: 63, GET: 320, PATCH: 51, POST: 289, PUT: 36, _ALL: 3_
 
 ## Global middleware chain
 
@@ -148,6 +148,13 @@ _755 routes total — DELETE: 63, GET: 316, PATCH: 51, POST: 287, PUT: 35, _ALL:
 | POST | `/api/comms-archive/media/:id/purge` | `jwtOrApiKey` | — |
 | POST | `/api/comms-archive/media/:id/restrict` | `jwtOrApiKey` | — |
 | POST | `/api/comms-archive/media/:id/unrestrict` | `jwtOrApiKey` | — |
+| GET | `/api/comms-eval/items` | `jwtOrApiKey` | — |
+| GET | `/api/comms-eval/items/:id/audio` | `jwtOrApiKey` | — |
+| GET | `/api/comms-eval/items/:id/review` | `jwtOrApiKey` | — |
+| PUT | `/api/comms-eval/items/:id/review/:stage` | `jwtOrApiKey` | — |
+| GET | `/api/comms-eval/items/:id/transcript` | `jwtOrApiKey` | — |
+| POST | `/api/comms-eval/sample` | `jwtOrApiKey`, `superuserCheck`, `elevationCheck`, `rateLimitMiddleware` | — |
+| POST | `/api/comms-eval/signing-check` | `jwtOrApiKey`, `superuserCheck`, `elevationCheck`, `rateLimitMiddleware` | — |
 | POST | `/api/compose-docs-message` | `jwtOrApiKey` | — |
 | POST | `/api/contact-addresses` | `jwtOrApiKey` | — |
 | DELETE | `/api/contact-addresses/:id` | `jwtOrApiKey` | — |
@@ -1025,4 +1032,4 @@ _755 routes total — DELETE: 63, GET: 316, PATCH: 51, POST: 287, PUT: 35, _ALL:
 
 ---
 
-_755 routes total — DELETE: 63, GET: 316, PATCH: 51, POST: 287, PUT: 35, _ALL: 3_
+_762 routes total — DELETE: 63, GET: 320, PATCH: 51, POST: 289, PUT: 36, _ALL: 3_

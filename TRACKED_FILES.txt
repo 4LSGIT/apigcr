@@ -520,6 +520,7 @@ ref/migrations/2026-10-14_access_a2_su_role.sql
 ref/migrations/2026-10-14_access_a2b_user_auth_collapse.sql
 ref/migrations/2026-10-14_access_a5_entitlement_denies.sql
 ref/migrations/2026-10-14_access_b1_key_scopes.sql
+ref/migrations/2026-10-14_comms_eval.sql
 ref/migrations/2026-10-14_comms_media.sql
 ref/migrations/2026-10-14_comms_s1b.sql
 ref/migrations/2026-10-14_wf50_text_on_cancel_failure.console.js
@@ -566,6 +567,7 @@ routes/api.caseEvents.js
 routes/api.cases.js
 routes/api.checklists.js
 routes/api.commsArchive.js
+routes/api.commsEval.js
 routes/api.contactAddresses.js
 routes/api.contactEmails.js
 routes/api.contactLookup.js
@@ -699,6 +701,7 @@ scripts/calendarTypeOptionsSeed.js
 scripts/calendarTypeSeed.js
 scripts/checkThemePresets.js
 scripts/cleanup_court_event_dupes_2026_07.js
+scripts/commsArchive/eval/review-tool.html
 scripts/commsArchive/s0_harness/README.md
 scripts/commsArchive/s0_harness/bin/timeout.c
 scripts/commsArchive/s0_harness/bin/timeout_fallback.py
@@ -811,6 +814,7 @@ services/commsArchiveMediaSweep.js
 services/commsArchiveService.js
 services/commsArchiveSweep.js
 services/commsArchiveVerify.js
+services/commsEvalService.js
 services/contactAddressService.js
 services/contactEmailService.js
 services/contactPhoneService.js
@@ -959,6 +963,8 @@ tests/commsArchive.s1b.mysql.test.js
 tests/commsArchive.s1c.mysql.test.js
 tests/commsArchive.sweep.mysql.test.js
 tests/commsArchiveService.test.js
+tests/commsEval.mysql.test.js
+tests/commsEvalPage.test.js
 tests/commsShell.test.js
 tests/contactOrgKind.test.js
 tests/contactRelationService.updateType.test.js
