@@ -1,6 +1,6 @@
 # Routes
 
-_Generated 2026-10-12T18:48:05.567Z_  
+_Generated 2026-10-14T07:01:31.747Z_  
 _749 routes total — DELETE: 62, GET: 315, PATCH: 51, POST: 283, PUT: 35, _ALL: 3_
 
 ## Global middleware chain
@@ -66,8 +66,8 @@ _749 routes total — DELETE: 62, GET: 315, PATCH: 51, POST: 283, PUT: 35, _ALL:
 | GET | `/api/api-keys/rejected` | `jwtOrApiKey`, `superuserCheck`, `elevationCheck`, `rateLimitMiddleware` | — |
 | POST | `/api/api-keys/rotate-internal` | `jwtOrApiKey`, `superuserCheck`, `elevationCheck`, `rateLimitMiddleware` | — |
 | GET | `/api/app-settings` | `jwtOrApiKey` | — |
-| POST | `/api/app-settings` | `jwtOrApiKey` | — |
-| PUT | `/api/app-settings/:key` | `jwtOrApiKey` | — |
+| POST | `/api/app-settings` | `staffAuth` | — |
+| PUT | `/api/app-settings/:key` | `staffAuth` | — |
 | GET | `/api/appts` | `jwtOrApiKey` | — |
 | POST | `/api/appts` | `jwtOrApiKey` | — |
 | GET | `/api/appts/:id` | `jwtOrApiKey` | — |

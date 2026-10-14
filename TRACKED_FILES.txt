@@ -911,6 +911,7 @@ tests/apiCta.routes.test.js
 tests/apiCta.send.test.js
 tests/apiTools.routes.test.js
 tests/apikeys.k1.test.js
+tests/appSettingsGate.test.js
 tests/applyFeSetting.test.js
 tests/apptService.followUpTask.test.js
 tests/apptService.lineage.test.js

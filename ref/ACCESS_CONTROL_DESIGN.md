@@ -84,9 +84,10 @@ SU_STEPUP=0) → per-tool rate limit → `admin_audit_log` on every rejection.
 | internal_functions/users.js, reportSchema/manifest | expose/describe values | follow-on rename only |
 
 ### 1g. Gates currently missing (the demand side)
-- `PUT/POST /api/app-settings*` = plain jwtOrApiKey + per-row `is_editable`
-  (verified api.appSettings.js:148,226) — any staff member or any yck_ key
-  can edit firm knobs. **CFG-3's finding confirmed.**
+- `PUT/POST /api/app-settings*` — gated behind `firm.settings` since A4
+  (requireAuth({can}), the first staff-route mount; GET and per-row
+  `is_editable`/`is_secret` unchanged). yck_ keys still pass per Q3 until
+  Phase B. Before A4 this was plain jwtOrApiKey — CFG-3's founding finding.
 - ui-custom S3 firm-layer writes will need the same tier (ONE surface
   ruling).
 - comms-archive R9 (Restrict/Purge/comms_no_transcribe = SU+SS): wanted a

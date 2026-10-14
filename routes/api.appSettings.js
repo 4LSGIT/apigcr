@@ -9,7 +9,7 @@
  * PUT  /api/app-settings/:key  — update value of an existing editable row,
  *                                validated against the row's declared `type`
  * POST /api/app-settings       — create a NEW editable, non-secret setting.
- *                                Any signed-in user (JWT). API-key auth is
+ *                                firm.settings holders (JWT). API-key auth is
  *                                rejected — automation must never mint keys
  *                                (same philosophy as set_setting's
  *                                key-must-exist gate). Forces is_editable=1,
@@ -19,16 +19,22 @@
  * Consumed by public/settings.html (the Settings tab iframe).
  *
  * Gates:
+ *   - Writes (PUT, POST) require the firm.settings capability
+ *     (requireAuth({ audience:'staff', can:'firm.settings', allowApiKey:true })
+ *     — roles admin / it / su; ref/ACCESS_CONTROL_DESIGN.md §3.2–3, slice A4).
+ *     x-api-key callers still pass the gate (machine trust until Phase B,
+ *     §8 Q3); POST then refuses them itself. GET stays on jwtOrApiKey: any
+ *     signed-in user may read.
  *   - is_secret = 1 rows are NEVER returned or writable through this route,
  *     regardless of is_editable. (Belt-and-suspenders: a fat-fingered
  *     is_editable=1 on a secret still can't leak it.)
  *   - PUT only updates rows that already exist with is_editable = 1.
  *   - POST is the ONLY insert path and can only mint editable non-secret
- *     rows. Any JWT user may create; API-key auth (including the internal
- *     key) is rejected so automation can never mint keys — creation is a
- *     named human action, attributed by jwt_api_audit_log. A row created
- *     here is immediately usable by the get_setting / get_settings /
- *     set_setting internal functions (key exists, non-secret).
+ *     rows. Any firm.settings JWT user may create; API-key auth (including
+ *     the internal key) is rejected so automation can never mint keys —
+ *     creation is a named human action, attributed by jwt_api_audit_log.
+ *     A row created here is immediately usable by the get_setting /
+ *     get_settings / set_setting internal functions (key exists, non-secret).
  *   - Keys are never renamed or deleted through this route.
  *
  * TYPE VALIDATION (see type vocabulary in the Slice A migration SQL):
@@ -55,7 +61,11 @@
 const express     = require('express');
 const router      = express.Router();
 const jwtOrApiKey = require('../lib/auth.jwtOrApiKey');
+const requireAuth = require('../lib/auth.requireAuth');
 const firmConfig  = require('../lib/firmConfig');
+
+// The CFG-3 gate on every write (see Gates above).
+const firmSettingsWrite = requireAuth({ audience: 'staff', can: 'firm.settings', allowApiKey: true });
 
 // app_settings.value is TEXT (64KB). Leave headroom for multi-byte chars.
 const MAX_VALUE_LEN = 60000;
@@ -145,7 +155,7 @@ router.get('/api/app-settings', jwtOrApiKey, async (req, res) => {
 // PUT /api/app-settings/:key
 // Body: { value: string }  — validated by row type, stored verbatim
 // ─────────────────────────────────────────
-router.put('/api/app-settings/:key', jwtOrApiKey, async (req, res) => {
+router.put('/api/app-settings/:key', firmSettingsWrite, async (req, res) => {
   const key = req.params.key;
   const { value } = req.body || {};
 
@@ -209,7 +219,7 @@ router.put('/api/app-settings/:key', jwtOrApiKey, async (req, res) => {
 // ─────────────────────────────────────────
 // POST /api/app-settings
 // Body: { key, value?, category?, label?, description?, type?, sort_order? }
-// Creates a new editable, non-secret setting. Elevated JWT users only.
+// Creates a new editable, non-secret setting. firm.settings JWT users only.
 // ─────────────────────────────────────────
 
 // Mirror of the `type` vocabulary the validators + settings.html understand.
@@ -223,8 +233,9 @@ const SETTING_TYPES = ['string', 'template', 'number', 'bool', 'email',
 // lists in get_settings and {{placeholders}}), no leading _/- for tidiness.
 const KEY_RE = /^[a-zA-Z0-9][a-zA-Z0-9_\-]{0,99}$/;
 
-router.post('/api/app-settings', jwtOrApiKey, async (req, res) => {
-  // Any signed-in HUMAN may create. API-key auth (including the internal
+router.post('/api/app-settings', firmSettingsWrite, async (req, res) => {
+  // Any firm.settings HUMAN may create (the gate admits x-api-key callers;
+  // this check is what refuses them). API-key auth (including the internal
   // key) is deliberately rejected: automation must never mint settings keys
   // — that mirrors set_setting/get_setting's key-must-exist gate, which
   // exists so a typo'd params_mapping can't silently create a row.
