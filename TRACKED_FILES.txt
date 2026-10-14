@@ -49,6 +49,7 @@ lib/internal_functions/appointments.js
 lib/internal_functions/calendar.js
 lib/internal_functions/cases.js
 lib/internal_functions/commsArchive.js
+lib/internal_functions/commsTranscribe.js
 lib/internal_functions/communication.js
 lib/internal_functions/composition.js
 lib/internal_functions/connections.js
@@ -196,6 +197,7 @@ manual/08-Admin-Tools/05-api-keys.md
 manual/08-Admin-Tools/06-tools.md
 manual/08-Admin-Tools/07-cta-links.md
 manual/08-Admin-Tools/08-mailboxes.md
+manual/08-Admin-Tools/09-comms-transcription.md
 manual/08-Admin-Tools/README.md
 manual/README.md
 package-lock.json
@@ -525,6 +527,7 @@ ref/migrations/2026-10-14_access_b4_secrets_at_rest.sql
 ref/migrations/2026-10-14_comms_eval.sql
 ref/migrations/2026-10-14_comms_media.sql
 ref/migrations/2026-10-14_comms_s1b.sql
+ref/migrations/2026-10-14_comms_s2_transcripts.sql
 ref/migrations/2026-10-14_wf50_text_on_cancel_failure.console.js
 ref/migrations/S1_notes_migration.sql
 ref/migrations/documents_s1.sql
@@ -718,6 +721,7 @@ scripts/commsArchive/s0_harness/suite_precheck.sh
 scripts/commsArchive/s0_harness/suite_stages.sh
 scripts/commsArchive/s0_harness/t.sh
 scripts/commsArchive/s0_infra.sh
+scripts/commsTranscribeS2Migrate.js
 scripts/courtBacktest.js
 scripts/courtCitationTest.js
 scripts/courtReviewTest.js
@@ -819,6 +823,10 @@ services/commsArchiveService.js
 services/commsArchiveSweep.js
 services/commsArchiveVerify.js
 services/commsEvalService.js
+services/commsTranscribeAudio.js
+services/commsTranscribeService.js
+services/commsTranscribeSweep.js
+services/commsTranscribeVendor.js
 services/contactAddressService.js
 services/contactEmailService.js
 services/contactPhoneService.js
@@ -966,10 +974,16 @@ tests/checklists.s1notes.test.js
 tests/commsArchive.s1b.mysql.test.js
 tests/commsArchive.s1c.mysql.test.js
 tests/commsArchive.sweep.mysql.test.js
+tests/commsArchiveCommon.rowOps.mysql.test.js
+tests/commsArchiveService.s2.test.js
 tests/commsArchiveService.test.js
 tests/commsEval.mysql.test.js
 tests/commsEvalPage.test.js
 tests/commsShell.test.js
+tests/commsTranscribe.migration.mysql.test.js
+tests/commsTranscribe.mysql.test.js
+tests/commsTranscribeAudio.test.js
+tests/commsTranscribeVendor.test.js
 tests/contactOrgKind.test.js
 tests/contactRelationService.updateType.test.js
 tests/contactRoles.roleForms.test.js
@@ -1068,6 +1082,14 @@ tests/filePlacementService.test.js
 tests/firmConfig.test.js
 tests/firmConfigCoverage.test.js
 tests/fixtures/calendar_item_types.seed.json
+tests/fixtures/comms_s2_audio/meta.json
+tests/fixtures/comms_s2_audio/quo_cbr_info.mp3.head
+tests/fixtures/comms_s2_audio/quo_cbr_js_64k.mp3.head
+tests/fixtures/comms_s2_audio/rc_cbr_id3.mp3.head
+tests/fixtures/comms_s2_audio/rc_cbr_mono_32k.mp3.head
+tests/fixtures/comms_s2_audio/tiny_1s.mp3.head
+tests/fixtures/comms_s2_audio/vbr_xing.mp3.head
+tests/fixtures/comms_s2_audio/vm.wav.head
 tests/fixtures/intake_cards_definition.json
 tests/fixtures/quick_notes_slice2_definition.json
 tests/fixtures/slice26/issn_tabs_definition.json

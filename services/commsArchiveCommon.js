@@ -89,8 +89,26 @@ function hasCliff(row) {
  * Row operations bound to a sweep's `limits` (read at call time):
  *   leaseMin, stuckBackoffMin, repeatWindowHours, maxAttempts, backoffCapMin,
  *   windowDays (cliff kinds), noCliffDays (no-cliff kinds, default 30).
+ *
+ * `opts` (S2): the lease / refund / park / fail / transient helpers work on
+ *   table        the row table (default 'comms_media');
+ *   claimStates  the states a row may be leased, refunded, parked or failed
+ *                FROM (default ['pending']) — the transcription sweep leases
+ *                'pending' (to submit) and 'transcribing' (to poll).
+ * markArchived and anomaly are comms_media-only (they write its columns) and
+ * refuse any other table. Identifiers are validated, never interpolated raw.
  */
-function rowOps(limits) {
+function rowOps(limits, { table = 'comms_media', claimStates = ['pending'] } = {}) {
+  const IDENT = /^[a-z_]{1,64}$/;
+  if (!IDENT.test(table)) throw new Error(`rowOps: bad table ${table}`);
+  if (!Array.isArray(claimStates) || !claimStates.length || !claimStates.every(x => IDENT.test(x))) {
+    throw new Error('rowOps: claimStates must be a non-empty list of state names');
+  }
+  const T = table;
+  const LIVE = `state IN (${claimStates.map(x => `'${x}'`).join(', ')})`;
+  const mediaOnly = (fn) => {
+    if (T !== 'comms_media') throw new Error(`rowOps.${fn}: comms_media only (bound to ${T})`);
+  };
   const noCliffDays = () => (Number(limits.noCliffDays) > 0 ? Number(limits.noCliffDays) : 30);
   /** Plateau retries in noCliffDays: the attempt count past maxAttempts that marks "stuck that long". */
   const plateauSteps = () => Math.ceil((noCliffDays() * 24 * 60) / limits.stuckBackoffMin);
@@ -135,8 +153,8 @@ function rowOps(limits) {
     const stuck = attemptsNow >= limits.maxAttempts;
     const mins = stuck ? limits.stuckBackoffMin : Math.min(2 ** attemptsNow, limits.backoffCapMin);
     await db.query(
-      `UPDATE comms_media SET next_attempt_at = UTC_TIMESTAMP() + INTERVAL ? MINUTE, last_error = ?
-        WHERE id = ? AND state = 'pending'`,
+      `UPDATE ${T} SET next_attempt_at = UTC_TIMESTAMP() + INTERVAL ? MINUTE, last_error = ?
+        WHERE id = ? AND ${LIVE}`,
       [mins, clamp(err, 1000), row.id],
     );
     return stuck ? 'stuck' : 'retry';
@@ -168,10 +186,10 @@ function rowOps(limits) {
   /** Per-row lease. affectedRows 1 (rows MATCHED, CLIENT_FOUND_ROWS) = ours. */
   async function claim(db, id) {
     const [r] = await db.query(
-      `UPDATE comms_media
+      `UPDATE ${T}
           SET attempts = attempts + 1,
               next_attempt_at = UTC_TIMESTAMP() + INTERVAL ? MINUTE
-        WHERE id = ? AND state = 'pending'
+        WHERE id = ? AND ${LIVE}
           AND (next_attempt_at IS NULL OR next_attempt_at <= UTC_TIMESTAMP())`,
       [limits.leaseMin, id],
     );
@@ -181,10 +199,10 @@ function rowOps(limits) {
   /** Give the attempt back: the failure was not the provider's. Due again now. */
   async function refund(db, id, lastError) {
     await db.query(
-      `UPDATE comms_media
+      `UPDATE ${T}
           SET attempts = GREATEST(attempts, 1) - 1, next_attempt_at = NULL,
               last_error = COALESCE(?, last_error)
-        WHERE id = ? AND state = 'pending'`,
+        WHERE id = ? AND ${LIVE}`,
       [clamp(lastError, 1000), id],
     );
   }
@@ -192,9 +210,9 @@ function rowOps(limits) {
   /** Uncharged park: refund the attempt and come back after `mins`. */
   async function park(db, id, mins, lastError) {
     await db.query(
-      `UPDATE comms_media SET attempts = GREATEST(attempts, 1) - 1,
+      `UPDATE ${T} SET attempts = GREATEST(attempts, 1) - 1,
               next_attempt_at = UTC_TIMESTAMP() + INTERVAL ? MINUTE, last_error = ?
-        WHERE id = ? AND state = 'pending'`,
+        WHERE id = ? AND ${LIVE}`,
       [mins, clamp(lastError, 1000), id],
     );
   }
@@ -202,13 +220,14 @@ function rowOps(limits) {
   /** Terminal `failed`. */
   async function fail(db, id, lastError) {
     await db.query(
-      `UPDATE comms_media SET state = 'failed', next_attempt_at = NULL, last_error = ?
-        WHERE id = ? AND state = 'pending'`,
+      `UPDATE ${T} SET state = 'failed', next_attempt_at = NULL, last_error = ?
+        WHERE id = ? AND ${LIVE}`,
       [clamp(lastError, 1000), id],
     );
   }
 
   async function markArchived(db, id, { objectName, mime, bytes, sha256, note = null }) {
+    mediaOnly('markArchived');
     await db.query(
       `UPDATE comms_media
           SET state = 'archived', object_name = ?, mime = ?, bytes = ?, sha256 = ?,
@@ -220,6 +239,7 @@ function rowOps(limits) {
 
   /** Something under the row's prefix a human must look at: park, uncharged, alert. */
   async function anomaly(db, row, what) {
+    mediaOnly('anomaly');
     await park(db, row.id, limits.stuckBackoffMin, `anomaly: ${what}`);
     await alert(db, {
       kind: 'comms_archive_anomaly', group_key: 'comms_archive_anomaly', severity: 'error',

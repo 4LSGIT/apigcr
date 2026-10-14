@@ -490,7 +490,7 @@ const api = (...args) => P.apiSend(...args);
 // services/ctaService.js deriveState() / isStaleRunning() / CTA_FN_DENYLIST.
 // A drift here mis-colours a chip or offers a function the server will
 // reject on dry run; it can never let a bad action through.
-const CTA_FN_DENYLIST = ['wait_until_time', 'cta_expiry_sweep', 'decision_timeout_cleanup', 'set_test_var', 'create_cta', 'comms_archive_sweep', 'comms_archive_media_sweep', 'comms_archive_verify'];
+const CTA_FN_DENYLIST = ['wait_until_time', 'cta_expiry_sweep', 'decision_timeout_cleanup', 'set_test_var', 'create_cta', 'comms_archive_sweep', 'comms_archive_media_sweep', 'comms_archive_verify', 'comms_transcribe_sweep'];
 const STALE_RUNNING_MINUTES = 15;
 const VALUE_RE = /^[a-zA-Z0-9_\-]{1,64}$/;
 const ABOUT_TYPES = ['contact', 'case', 'appt', 'bill', 'phone', 'email', 'task', 'event']; // logService.ABOUT_TYPES

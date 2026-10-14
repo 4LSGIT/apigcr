@@ -48,7 +48,8 @@
  *   rehash(objectName, {timeoutMs})           -> Promise<{bytes, sha256, contentType}>
  *   exists(objectName, {timeoutMs})           -> Promise<boolean>   (delete detection)
  *   deleteObject(objectName, {timeoutMs})     -> Promise<void>      (purge; ignores not-found)
- *   signedUrl(objectName, {mime, filename?})  -> Promise<string>  (V4, 5 min)
+ *   signedUrl(objectName, {mime, filename?, ttlMs?}) -> Promise<string>  (V4; 5 min, ttlMs ≤ 1 h)
+ *   readHead(objectName, n, {timeoutMs})      -> Promise<Buffer>  (the first ≤ n bytes — S2's audio header)
  *   mmsPrefix({capturedAt, sourceId, part})   -> 'phone/mms/yyyy/mm/<id>-<part>.'
  *   classifyMedia(responseType, claimedType)  -> {mime, ext, note} | {error}
  */
@@ -62,6 +63,8 @@ const { promisify } = require('util');
 const pipelineP = promisify(pipeline);
 
 const SIGNED_URL_TTL_MS = 5 * 60 * 1000;
+/** The longest TTL a caller may ask for: the STT vendor's fetch window (S2, design §6.3). */
+const SIGNED_URL_MAX_TTL_MS = 60 * 60 * 1000;
 const IO_TIMEOUT_MS = 60_000;
 
 /**
@@ -441,6 +444,31 @@ async function rehash(objectName, { timeoutMs } = {}) {
   return { bytes: n, sha256: h.digest('hex'), contentType: (file.metadata && file.metadata.contentType) || null };
 }
 
+/**
+ * The first ≤ n bytes of an object (a ranged read — S2 reads the audio
+ * header for the duration gate, design §6.3). Shorter objects return what
+ * there is.
+ */
+async function readHead(objectName, n, { timeoutMs } = {}) {
+  const want = Math.floor(Number(n));
+  if (!Number.isFinite(want) || want < 1) throw new Error('readHead: n must be a positive integer');
+  const bucket = bucketName();
+  const src = _storage().bucket(bucket).file(objectName).createReadStream({ start: 0, end: want - 1, validation: false });
+  const chunks = [];
+  let got = 0;
+  const sink = new Writable({
+    write(c, _e, cb) { if (got < want) { chunks.push(c); got += c.length; } cb(); },
+  });
+  try {
+    await _bounded(pipelineP(src, sink), _timeoutMs(timeoutMs), `read head ${objectName}`,
+      (e) => { src.destroy(e); });
+  } catch (err) {
+    if (err.ourSide) throw err;
+    throw _ourSide(err, `read head ${objectName}`);
+  }
+  return Buffer.concat(chunks).subarray(0, want);
+}
+
 /** Does the live object exist? A soft-deleted object does NOT (delete detection). */
 async function exists(objectName, { timeoutMs } = {}) {
   const bucket = bucketName();
@@ -469,8 +497,16 @@ async function deleteObject(objectName, { timeoutMs } = {}) {
 /**
  * V4 read URL, 5 minutes. Issue ONLY after the caller's grant check (§7).
  * Inline for the allowlist; everything else downloads as an attachment.
+ * `ttlMs` (S2): a longer window for the STT vendor's fetch, capped at
+ * SIGNED_URL_MAX_TTL_MS; anything that is not a positive number is refused.
  */
-async function signedUrl(objectName, { mime, filename } = {}) {
+async function signedUrl(objectName, { mime, filename, ttlMs } = {}) {
+  let ttl = SIGNED_URL_TTL_MS;
+  if (ttlMs !== undefined) {
+    const t = Number(ttlMs);
+    if (!Number.isFinite(t) || t <= 0) throw new Error('signedUrl: ttlMs must be a positive number');
+    ttl = Math.min(Math.floor(t), SIGNED_URL_MAX_TTL_MS);
+  }
   const bucket = bucketName();
   const type = _baseMime(mime) || 'application/octet-stream';
   const inline = INLINE_TYPES.has(type);
@@ -479,7 +515,7 @@ async function signedUrl(objectName, { mime, filename } = {}) {
     const [url] = await _storage().bucket(bucket).file(objectName).getSignedUrl({
       version: 'v4',
       action: 'read',
-      expires: Date.now() + SIGNED_URL_TTL_MS,
+      expires: Date.now() + ttl,
       responseType: inline ? type : 'application/octet-stream',
       responseDisposition: inline ? 'inline' : `attachment; filename="${safeName}"`,
     });
@@ -506,11 +542,13 @@ module.exports = {
   exists,
   deleteObject,
   signedUrl,
+  readHead,
   AUDIO_TYPES,
   MEDIA_TYPES,
   INLINE_TYPES,
   REQUIRED_PERMISSIONS,
   SIGNED_URL_TTL_MS,
+  SIGNED_URL_MAX_TTL_MS,
   IO_TIMEOUT_MS,
   _test: { setStorage(s) { _storageOverride = s; } },
 };

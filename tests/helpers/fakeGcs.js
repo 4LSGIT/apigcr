@@ -12,6 +12,8 @@
 // FIRST chunk while the source is still flowing (how the real library fails a
 // 403 / socket reset); fail.stall = true makes an upload accept nothing and
 // never finish (a silent GCS); denied = Set of IAM permissions not granted.
+// signedHttp(url) stands in for GETting a signed URL (S2's signing proof and
+// the STT vendor's fetch).
 
 'use strict';
 
@@ -70,11 +72,15 @@ function fakeStorage() {
             },
           });
         },
-        createReadStream() {
+        createReadStream(ro = {}) {
           calls.read++;
           if (fail.read) { const r = new Readable({ read() {} }); process.nextTick(() => r.destroy(err(fail.read))); return r; }
           const o = objects.get(name);
           if (!o) { const r = new Readable({ read() {} }); process.nextTick(() => r.destroy(err({ code: 404 }))); return r; }
+          if (ro.start != null || ro.end != null) {           // ranged read: inclusive end, like the library
+            calls.ranged = (calls.ranged || 0) + 1;
+            return Readable.from([o.buf.subarray(ro.start || 0, ro.end != null ? ro.end + 1 : undefined)]);
+          }
           return Readable.from([o.buf]);
         },
         async exists() {
@@ -95,15 +101,34 @@ function fakeStorage() {
         },
         async getSignedUrl(o) {
           if (fail.sign) throw err(fail.sign);
-          calls.sign.push({ name, ...o });
-          return [`https://storage.googleapis.com/fake/${name}?sig`];
+          // A V4-shaped URL: a signature over (name, expires) that signedHttp() below checks.
+          const sig = require('crypto').createHash('sha256').update(`${name}|${o.expires}`).digest('hex');
+          const url = `https://storage.googleapis.com/fake/${name}?X-Goog-Expires=${o.expires}&X-Goog-Signature=${sig}`;
+          calls.sign.push({ name, ...o, url });
+          return [url];
         },
       };
       return f;
     },
   });
 
-  return { storage: { bucket }, objects, fail, denied, hooks, calls };
+  /**
+   * GCS's HTTP side for a signed URL (what AssemblyAI or the signing proof
+   * GETs): 200 + the object's bytes only for a URL this fake minted, unexpired
+   * and untampered; 403 otherwise. httpFail.status forces a status.
+   */
+  const httpFail = {};
+  async function signedHttp(url) {
+    calls.http = (calls.http || 0) + 1;
+    if (httpFail.status) return { status: httpFail.status, text: httpFail.text || '' };
+    const minted = calls.sign.find(c => c.url === url);
+    if (!minted || minted.expires < Date.now()) return { status: 403, text: '<Error>SignatureDoesNotMatch</Error>' };
+    const o = objects.get(minted.name);
+    if (!o) return { status: 404, text: '' };
+    return { status: 200, text: o.buf.toString('latin1'), buf: o.buf };
+  }
+
+  return { storage: { bucket }, objects, fail, denied, hooks, calls, signedHttp, httpFail };
 }
 
 module.exports = { fakeStorage };

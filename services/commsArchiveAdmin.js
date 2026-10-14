@@ -34,8 +34,10 @@
  * step is idempotent, so a retry completes it. The tombstone keeps
  * object_name (what was removed) and stamps purged_at / purged_by /
  * purge_reason; `purged` is a state no sweep ever reads, so a purged pending
- * row is never fetched afterwards. S2 appends transcript + stt_raw parts and
- * S3 the ai_calls part to PURGE_PARTS; nothing else changes.
+ * row is never fetched afterwards. S2's 'transcripts' step runs FIRST (the
+ * fence against the transcription sweep, which holds its own lock, not this
+ * one); its stt_raw children ride derived_children. S3 appends the ai_calls
+ * part; nothing else changes.
  */
 
 'use strict';
@@ -149,6 +151,19 @@ async function _objectsOf(row) {
  * report. S2/S3 append theirs here.
  */
 const PURGE_PARTS = [
+  {
+    // S2 (design §8): FIRST, because it is the fence. The transcript row goes
+    // 'purged' with its text cleared, so every later write of the
+    // transcription sweep (conditional on 'transcribing') loses; every object
+    // under the item's stt prefix is deleted by listing; an stt_raw child
+    // inserted before the fence is removed by derived_children next. Vendor
+    // jobs still held are deleted best-effort (reported; owed and retried by
+    // the sweep; the vendor's 30-day TTL backstops). Cost stays (not content).
+    name: 'transcripts',
+    async run(db, row) {
+      return require('./commsTranscribeSweep').purgeTranscript(db, row); // lazy require (convention)
+    },
+  },
   {
     // Derived children first (stt_raw: a voicemail's vendor transcript —
     // R10): their objects are deleted and the child rows tombstoned with the

@@ -12,7 +12,7 @@ const { touchesSecretTable, matchedSecretTable, SECRET_TABLES } = require("../li
 describe("sqlGuard.touchesSecretTable", () => {
   test("registry holds exactly the reviewed set", () => {
     // Adding a table here is an access decision — review the consumers.
-    expect(SECRET_TABLES).toEqual(["app_settings", "email_ingest_sources"]);
+    expect(SECRET_TABLES).toEqual(["app_settings", "email_ingest_sources", "comms_transcripts", "comms_no_transcribe"]);
   });
 
   test.each([
@@ -25,6 +25,11 @@ describe("sqlGuard.touchesSecretTable", () => {
     ["SELECT name, api_key FROM email_ingest_sources"],
     ["SELECT e.status, s.api_key FROM email_ingest_executions e JOIN `email_ingest_sources` s ON s.id = e.source_id"],
     ["select * from EMAIL_INGEST_SOURCES"],
+    // comms archive S2: transcript text and the never-transcribe list
+    ["SELECT full_text FROM comms_transcripts WHERE media_id = 1"],
+    ["SELECT m.id, t.segments FROM comms_media m JOIN `comms_transcripts` t ON t.media_id = m.id"],
+    ["SELECT COUNT(*) FROM comms_transcripts"],
+    ["select phone from COMMS_NO_TRANSCRIBE"],
   ])("denies: %s", (sql) => {
     expect(touchesSecretTable(sql)).toBe(true);
   });
@@ -39,6 +44,9 @@ describe("sqlGuard.touchesSecretTable", () => {
     // ingest executions/rules stay readable — only the key table is denied
     ["SELECT status, COUNT(*) FROM email_ingest_executions GROUP BY status"],
     ["SELECT * FROM email_ingest_rules"],
+    // the archive registry and the STT job ledger (ids + cost) stay readable
+    ["SELECT state, COUNT(*) FROM comms_media GROUP BY state"],
+    ["SELECT state, SUM(est_cents) FROM comms_stt_jobs GROUP BY state"],
   ])("allows: %s", (sql) => {
     expect(touchesSecretTable(sql)).toBe(false);
   });
@@ -50,6 +58,8 @@ describe("sqlGuard.touchesSecretTable", () => {
     ["SELECT name, api_key FROM email_ingest_sources", "email_ingest_sources"],
     ["select * from `EMAIL_INGEST_SOURCES` s", "email_ingest_sources"],
     ["SELECT * FROM email_ingest_executions", null],
+    ["SELECT * FROM comms_transcripts t", "comms_transcripts"],
+    ["SELECT * FROM comms_no_transcribe", "comms_no_transcribe"],
   ])("matchedSecretTable(%s) = %s", (sql, want) => {
     expect(matchedSecretTable(sql)).toBe(want);
   });

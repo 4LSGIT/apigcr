@@ -1,0 +1,37 @@
+{
+ "quo_cbr_info.mp3": {
+  "bytes": 296794,
+  "duration": 37.0,
+  "channels": 2
+ },
+ "quo_cbr_js_64k.mp3": {
+  "bytes": 296586,
+  "duration": 37.068,
+  "channels": 2
+ },
+ "rc_cbr_id3.mp3": {
+  "bytes": 80418,
+  "duration": 20.088,
+  "channels": 1
+ },
+ "rc_cbr_mono_32k.mp3": {
+  "bytes": 80352,
+  "duration": 20.088,
+  "channels": 1
+ },
+ "tiny_1s.mp3": {
+  "bytes": 4364,
+  "duration": 1.08,
+  "channels": 1
+ },
+ "vbr_xing.mp3": {
+  "bytes": 75248,
+  "duration": 25.0,
+  "channels": 1
+ },
+ "vm.wav": {
+  "bytes": 192078,
+  "duration": 12.0,
+  "channels": 1
+ }
+}

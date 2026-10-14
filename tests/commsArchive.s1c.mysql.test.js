@@ -425,7 +425,8 @@ maybe('comms archive S1c (voicemails) on real MySQL', () => {
     let e;
     try { await admin.purge(pool, v.id, { userId: 1, reason: 'r' }); } catch (x) { e = x; }
     expect(e && e.status).toBe(502);
-    expect(e.message).toMatch(/already purged: derived_children \(1 row\(s\)\); the item itself is NOT marked purged/);
+    // Robust to S2's 'transcripts' step (first in PURGE_PARTS where the S2 tables exist), which may also be named.
+    expect(e.message).toMatch(/already purged: (transcripts \(\d+ row\(s\)\), )?derived_children \(1 row\(s\)\); the item itself is NOT marked purged/);
     const all = await rows();
     expect(all.find(r => r.kind === 'stt_raw').state).toBe('purged');
     expect(all.find(r => r.kind === 'voicemail').state).toBe('archived');
