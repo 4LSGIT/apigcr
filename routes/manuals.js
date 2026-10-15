@@ -6,7 +6,9 @@
 // Routes (auto-mounted at root by server.js — the router owns the /manual
 // prefix itself, there is no app.use('/manuals', …)):
 //   GET /manual                       → JSON: list of sections
+//                                        [{ slug, label, count, blurb }]
 //   GET /manual/:section              → JSON: { section, intro, outro, files }
+//                                        files: [{ slug, label, desc }]
 //   GET /manual/:section/:file        → text/plain: raw markdown content
 //
 // README handling
@@ -22,7 +24,18 @@
 //
 // tests/manualReadmeCoverage.test.js guards the drift this creates a
 // dependency on (every chapter linked, every link resolvable, every row
-// described).
+// described). The README's first prose sentence is also the section's
+// `blurb` on the index cards.
+//
+// Chapter titles
+// ──────────────
+// A file's `label` is its own `# ` heading, not its filename: the counter
+// authors prefix ("Part 4 — ", "15 — ") is dropped (the list numbers chapters
+// itself) and inline markdown is flattened to plain text. A file with no H1
+// falls back to formatName(slug). Only the first TITLE_HEAD_BYTES of each
+// chapter are read, per request — no cache, so a manual edit shows on the
+// next request and nothing can go stale; a section is ~16 small reads.
+// tests/manualsRoute.test.js pins the shapes.
 //
 // No npm packages required beyond express.
 
@@ -46,16 +59,125 @@ function formatName(slug) {
     .replace(/\b\w/g, c => c.toUpperCase());
 }
 
-function getSections() {
+function sectionSlugs() {
   try {
     return fs.readdirSync(MANUALS_DIR, { withFileTypes: true })
       .filter(d => d.isDirectory())
       .map(d => d.name)
-      .sort()
-      .map(slug => ({ slug, label: formatName(slug) }));
+      .sort();
   } catch {
     return [];
   }
+}
+
+function getSections() {
+  return sectionSlugs().map(slug => ({
+    slug,
+    label: formatName(slug),
+    count: chapterFilenames(slug).length,
+    blurb: readmeBlurb(readReadme(slug))
+  }));
+}
+
+/** The chapter files of a section, sorted: every .md except the README. */
+function chapterFilenames(sectionSlug) {
+  try {
+    return fs.readdirSync(path.join(MANUALS_DIR, sectionSlug))
+      .filter(f => f.endsWith('.md') && f.toLowerCase() !== 'readme.md')
+      .sort();
+  } catch {
+    return [];
+  }
+}
+
+// ── Inline markdown → plain text ─────────────────────────────
+
+/**
+ * Flatten inline markdown for a plain-text label: links and images keep their
+ * text, code spans keep their content (and are shielded from the emphasis
+ * pass — `request_decision` must keep its underscore), emphasis markers go.
+ */
+function stripInline(s) {
+  const code = [];
+  return String(s)
+    .replace(/`+([^`]*?)`+/g, (_, c) => `\u0000${code.push(c) - 1}\u0000`)
+    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/(\*\*|__)(?=\S)(.+?)(?<=\S)\1/g, '$2')
+    .replace(/(^|[^\w*])\*(?=\S)(.+?)(?<=\S)\*(?!\*)/g, '$1$2')
+    .replace(/(^|[^\w])_(?=\S)(.+?)(?<=\S)_(?![\w])/g, '$1$2')
+    .replace(/\u0000(\d+)\u0000/g, (_, i) => code[Number(i)])
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+// ── Chapter titles ───────────────────────────────────────────
+
+const TITLE_HEAD_BYTES = 4096;
+
+/** "Part 4 — ", "15 — " — the author's counter; the app numbers the list. */
+const TITLE_COUNTER = /^(?:Part\s+)?\d+\s+[—–-]\s+/i;
+
+/** Plain-text title from a chapter's first `# ` line, or null. */
+function chapterTitle(md) {
+  if (!md) return null;
+  const m = String(md).match(/^#[ \t]+(.+?)[ \t#]*$/m);
+  if (!m) return null;
+  const title = stripInline(m[1].replace(TITLE_COUNTER, ''));
+  return title || null;
+}
+
+/** First TITLE_HEAD_BYTES of a file as text ('' when unreadable). */
+function readHead(filePath) {
+  let fd;
+  try {
+    fd = fs.openSync(filePath, 'r');
+    const buf = Buffer.alloc(TITLE_HEAD_BYTES);
+    const n = fs.readSync(fd, buf, 0, TITLE_HEAD_BYTES, 0);
+    return buf.toString('utf8', 0, n);
+  } catch {
+    return '';
+  } finally {
+    if (fd !== undefined) try { fs.closeSync(fd); } catch { /* already gone */ }
+  }
+}
+
+/** A chapter's display label: its H1, else the slug prettified. */
+function fileLabel(filePath, slug) {
+  return chapterTitle(readHead(filePath)) || formatName(slug);
+}
+
+// ── Section blurbs ───────────────────────────────────────────
+
+const BLURB_MAX = 160;
+
+/**
+ * The first sentence of a README's first prose paragraph, inline markdown
+ * stripped, at most BLURB_MAX characters (cut at a word, with an ellipsis).
+ * Headings, rules, tables, quotes, lists and fenced code are not prose.
+ */
+function readmeBlurb(md) {
+  if (!md) return null;
+  const lines = String(md).split('\n');
+  const para = [];
+  let fence = false;
+  for (const line of lines) {
+    if (/^\s*(```|~~~)/.test(line)) { fence = !fence; if (para.length) break; continue; }
+    if (fence) continue;
+    const blank = !line.trim();
+    const block = /^\s*(#|>|\||[-*+]\s|\d+[.)]\s|<)/.test(line) || /^\s*([-*_])(\s*\1){2,}\s*$/.test(line);
+    if (para.length && (blank || block)) break;
+    if (!blank && !block) para.push(line.trim());
+  }
+  if (!para.length) return null;
+  const text = stripInline(para.join(' '));
+  const m = text.match(/^.*?[.!?](?=\s|$)/);
+  let s = (m ? m[0] : text).trim();
+  if (s.length > BLURB_MAX) {
+    const cut = s.slice(0, BLURB_MAX - 1);
+    const sp  = cut.lastIndexOf(' ');
+    s = (sp > BLURB_MAX / 2 ? cut.slice(0, sp) : cut).replace(/[\s,;:—–-]+$/, '') + '…';
+  }
+  return s || null;
 }
 
 // ── README harvest ───────────────────────────────────────────
@@ -142,17 +264,10 @@ function splitReadme(md) {
 function getFiles(sectionSlug, readmeMd) {
   const dir  = path.join(MANUALS_DIR, sectionSlug);
   const desc = getDescriptions(readmeMd);
-  try {
-    return fs.readdirSync(dir)
-      .filter(f => f.endsWith('.md') && f.toLowerCase() !== 'readme.md')
-      .sort()
-      .map(filename => {
-        const slug = filename.replace(/\.md$/i, '');
-        return { slug, label: formatName(slug), desc: desc[slug] || null };
-      });
-  } catch {
-    return [];
-  }
+  return chapterFilenames(sectionSlug).map(filename => {
+    const slug = filename.replace(/\.md$/i, '');
+    return { slug, label: fileLabel(path.join(dir, filename), slug), desc: desc[slug] || null };
+  });
 }
 
 function safeResolvePath(sectionSlug, fileSlug) {
@@ -178,7 +293,11 @@ router.get('/manual/:section', jwtOrApiKey, (req, res) => {
   const { section } = req.params;
   const sectionDir  = path.join(MANUALS_DIR, section);
 
-  if (!fs.existsSync(sectionDir) || !fs.statSync(sectionDir).isDirectory()) {
+  // Express decodes %2F and %2E in params: "..", "../ref" would otherwise
+  // list (and now read the heads of) markdown outside manual/. A section is
+  // one of manual/'s own folders, nothing else.
+  if (!sectionSlugs().includes(section) ||
+      !fs.existsSync(sectionDir) || !fs.statSync(sectionDir).isDirectory()) {
     return res.status(404).json({ error: 'Section not found' });
   }
 
@@ -217,3 +336,5 @@ router.get('/manual/:section/:file', jwtOrApiKey, (req, res) => {
 });
 
 module.exports = router;
+// Pure helpers, for tests/manualsRoute.test.js (no-H1 fallback on a temp file).
+module.exports.helpers = { formatName, stripInline, chapterTitle, readmeBlurb, fileLabel };

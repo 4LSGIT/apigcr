@@ -42,9 +42,23 @@
       padding: 20px 18px 14px;
       border-bottom: 1px solid var(--border);
       cursor: pointer;
+      display: block;
+      text-decoration: none;
     }
 
     .sidebar-logo:hover { opacity: 0.8; }
+
+    /* Navigation is real links (hash routes, see the script's Routing): keyboard
+       focusable, middle-click / copy-link sane. One visible focus ring for every
+       one of them; the inset variant where the box clips (overflow: hidden) or
+       touches the next row. */
+    a:focus-visible, summary:focus-visible, button:focus-visible {
+      outline: 2px solid var(--accent-2);
+      outline-offset: 2px;
+    }
+    .sidebar-logo:focus-visible, .sidebar-section:focus-visible,
+    .sidebar-file:focus-visible, .file-row:focus-visible,
+    .otp-rail a:focus-visible { outline-offset: -2px; }
 
     .sidebar-section-label {
       color: var(--text-muted);
@@ -65,6 +79,7 @@
       cursor: pointer;
       transition: all 0.12s;
       user-select: none;
+      text-decoration: none;
     }
 
     .sidebar-section:hover { color: var(--text); background: var(--hover); }
@@ -82,6 +97,7 @@
       overflow: hidden;
       text-overflow: ellipsis;
       user-select: none;
+      text-decoration: none;
     }
 
     .sidebar-file:hover { color: var(--text); background: var(--hover); }
@@ -111,7 +127,7 @@
     }
 
     .bc-sep { color: var(--text-muted); }
-    .bc-link { color: var(--accent-2); cursor: pointer; }
+    .bc-link { color: var(--accent-2); cursor: pointer; text-decoration: none; }
     .bc-link:hover { text-decoration: underline; }
     .bc-current { color: var(--text); font-weight: 500; }
 
@@ -138,7 +154,8 @@
        chapter — except .md-body itself, so that a table (wrapped in its own
        scroll box after render, see wrapTables) can run wider than the prose
        when the pane has the room, and scroll inside its box when it hasn't. */
-    #content > :not(.md-body),
+    #content > :not(.md-body):not(.chapter),
+    .chapter-main > :not(.md-body),
     .md-body > :not(.table-wrap) { max-width: var(--measure); }
 
     /* ── Loading / error states ── */
@@ -169,6 +186,9 @@
     }
 
     .card {
+      display: block;
+      text-decoration: none;
+      color: var(--text);
       background: var(--surface);
       border: 1px solid var(--border);
       border-radius: 10px;
@@ -183,7 +203,8 @@
     }
 
     .card-title { font-size: var(--fs); font-weight: 650; color: var(--text); margin-bottom: 5px; }
-    .card-meta  { font-size: var(--fs-sm); color: var(--text-muted); }
+    .card-blurb { font-size: var(--fs-sm); color: var(--text-2); line-height: 1.5; margin-bottom: 8px; }
+    .card-meta  { font-size: var(--fs-xs); color: var(--text-muted); }
 
     /* ── File list ── */
     .section-title {
@@ -208,6 +229,8 @@
       cursor: pointer;
       transition: background 0.1s;
       gap: 14px;
+      text-decoration: none;
+      color: var(--text);
     }
 
     .file-row:last-child { border-bottom: none; }
@@ -285,6 +308,7 @@
       color: var(--accent-on-soft);
       font-size: var(--fs-sm);
     }
+    .md-body blockquote > :last-child { margin-bottom: 0; }
 
     .md-body code {
       font-family: var(--mono);
@@ -342,12 +366,96 @@
       font-size: var(--fs-sm);
     }
 
-    .prev-next span {
+    .prev-next a {
       color: var(--accent-2);
       cursor: pointer;
+      text-decoration: none;
     }
 
-    .prev-next span:hover { text-decoration: underline; }
+    .prev-next a:hover { text-decoration: underline; }
+
+    /* ── Heading permalinks ── a `#` after each h2–h4, shown on hover/focus.
+       It sets the hash (so Back returns here) and copies the SHELL deep link
+       (/?manual=…), the one URL that works outside this pane. */
+    .md-body .hd-link {
+      margin-left: 0.4em;
+      color: var(--text-muted);
+      text-decoration: none;
+      font-weight: 400;
+      opacity: 0;
+      transition: opacity 0.12s;
+    }
+    .md-body :is(h2, h3, h4):hover .hd-link,
+    .md-body .hd-link:focus-visible { opacity: 1; }
+    .md-body .hd-link:hover { color: var(--accent-2); }
+    .md-body .hd-link.copied::after {
+      content: ' link copied';
+      font-size: var(--fs-xs);
+      color: var(--ok);
+    }
+    @media (hover: none) { .md-body .hd-link { opacity: 0.45; } }
+
+    /* ── On this page ── the chapter's h2 (h3 nested) outline, for chapters
+       with 3+ of them. Narrow panes (phones included): a collapsed <details>
+       under the h1. Wide panes (≥1200px — the iframe's own width; the shell
+       sidebar comes off first, so ~1420px of window): a sticky rail beside the
+       reading column, with scroll-spy. Both are rendered; CSS picks one. */
+    .otp-title {
+      color: var(--text-muted);
+      font-size: var(--fs-xs);
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      margin-bottom: 6px;
+    }
+    .md-body .otp-list, .otp-rail .otp-list { list-style: none; margin: 0; padding: 0; }
+    .md-body .otp-list li, .otp-rail .otp-list li { margin: 0; }
+    .otp-list a {
+      display: block;
+      color: var(--text-2);
+      text-decoration: none;
+      line-height: 1.4;
+      padding: 4px 0 4px 10px;
+      border-left: 2px solid transparent;
+    }
+    .otp-list a:hover { color: var(--text); background: var(--hover); }
+    .otp-list .otp-h3 a { padding-left: 22px; color: var(--text-muted); }
+    .otp-list a.active { color: var(--text); border-left-color: var(--accent); font-weight: 600; }
+
+    .md-body .otp-inline {
+      margin: 6px 0 22px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--surface);
+      font-size: var(--fs-sm);
+    }
+    .otp-inline > summary {
+      cursor: pointer;
+      padding: 8px 14px;
+      font-weight: 600;
+      color: var(--text-2);
+    }
+    .otp-inline > .otp-list { padding: 0 14px 10px 4px; }
+
+    .otp-rail { display: none; }
+    @media (min-width: 1200px) {
+      .chapter.has-otp {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) calc(var(--fs) * 14);
+        column-gap: 40px;
+        align-items: start;
+      }
+      .chapter.has-otp .otp-rail {
+        display: block;
+        position: sticky;
+        top: 0;                                   /* = #content's top padding: sticky honours it */
+        max-height: calc(100vh - 48px - 72px);    /* topbar + #content's padding top and bottom */
+        overflow-y: auto;
+        font-size: var(--fs-sm);
+        padding: 2px 0 12px;
+      }
+      .chapter.has-otp .otp-inline { display: none; }
+    }
 
     /* ── Phones: the contents sidebar becomes a drawer ───────────────────
        At 375px the fixed 220px sidebar left ~150px for the manual itself.
@@ -379,13 +487,43 @@
         padding-top: calc((44px - 1.7em) / 2);
         padding-bottom: calc((44px - 1.7em) / 2);
       }
+      /* Breadcrumbs, prev/next, the outline's summary and rows: 44px
+         targets too. */
+      #topbar .bc-link, .prev-next a {
+        display: inline-flex;
+        align-items: center;
+        min-height: 44px;
+      }
+      .otp-inline > summary {
+        min-height: 44px;
+        padding-top: calc((44px - 1.7em) / 2);
+        padding-bottom: calc((44px - 1.7em) / 2);
+      }
+      .otp-list a { padding-top: calc((44px - 1.4em) / 2); padding-bottom: calc((44px - 1.4em) / 2); }
+      /* A table clipped by its scroll box fades out at the clipped edge(s);
+         the fade goes when that edge is reached. wrapTables() keeps the
+         data-clip attribute current (the cells paint their own backgrounds,
+         so a background-attachment shadow would be hidden under them; a mask
+         fades whatever is there, in either theme). */
+      .md-body .table-wrap[data-clip="right"] {
+        -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
+                mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
+      }
+      .md-body .table-wrap[data-clip="left"] {
+        -webkit-mask-image: linear-gradient(to left, #000 calc(100% - 28px), transparent);
+                mask-image: linear-gradient(to left, #000 calc(100% - 28px), transparent);
+      }
+      .md-body .table-wrap[data-clip="both"] {
+        -webkit-mask-image: linear-gradient(to right, transparent, #000 28px, #000 calc(100% - 28px), transparent);
+                mask-image: linear-gradient(to right, transparent, #000 28px, #000 calc(100% - 28px), transparent);
+      }
     }
   </style>
 </head>
 <body>
 
 <div id="sidebar">
-  <div class="sidebar-logo" onclick="manualsLoad()">YisraCase Docs</div>
+  <a class="sidebar-logo" href="#/">YisraCase Docs</a>
   <div id="sidebar-nav"></div>
 </div>
 
@@ -395,7 +533,7 @@
   <div class="topline">
     <button id="tocBtn" type="button" title="Contents" aria-label="Contents"
             onclick="document.body.classList.toggle('toc-open')">&#9776;</button>
-    <div id="topbar"><span class="bc-current">Documentation</span></div>
+    <nav id="topbar" aria-label="Breadcrumb"><span class="bc-current">Documentation</span></nav>
   </div>
   <div id="content"><div class="state-msg">Loading…</div></div>
 </div>
@@ -409,13 +547,94 @@ document.getElementById('sidebar').addEventListener('click', (e) => {
 });
 
 // ─────────────────────────────────────────────────────────────
+// Routing
+// ─────────────────────────────────────────────────────────────
+// The pane's place lives in its own location.hash:
+//   #/                               index
+//   #/<section>                      a section's chapter list
+//   #/<section>/<file>               a chapter
+//   #/<section>/<file>/<anchor>      a heading in a chapter
+// Every nav element is an <a href="#/…">: the browser pushes the hash, the
+// hashchange listener renders. manualsLoad() pushes with pushState (no
+// event) and renders itself, so its promise settles when the view is up.
+// Back / forward inside the pane are then plain history traversals. Scroll
+// position is mirrored into the anchor with replaceState (scroll-spy), so a
+// reload, Back, or the resume below lands where you were — without adding
+// entries. Slugs are checked against the loaded lists before anything is
+// fetched; an unknown one falls back to the deepest valid level (replace).
+//
+// The shell deep link is /?manual=<section>/<file>/<anchor> (index.html
+// hands it to this pane as the hash). This pane opened on its own — a
+// middle-clicked link — has no shell to fetch through, so it redirects there.
+
+const RESUME_KEY = 'yc.manuals.last';
+
+/** '#/a/b/c' → { sec, file, anchor } (each null when absent or malformed). */
+function parseHash(h) {
+  const raw = String(h || '').replace(/^#/, '');
+  if (!raw.startsWith('/')) return { sec: null, file: null, anchor: null };
+  const parts = raw.slice(1).split('/').map(p => {
+    try { return decodeURIComponent(p); } catch { return ''; }
+  });
+  return { sec: parts[0] || null, file: parts[1] || null, anchor: parts.slice(2).join('/') || null };
+}
+
+/** Route → path 'sec/file/anchor' (no leading '#/'); levels stop at the first gap. */
+function routePath(sec, file, anchor) {
+  const segs = [];
+  if (sec) { segs.push(sec); if (file) { segs.push(file); if (anchor) segs.push(anchor); } }
+  return segs.map(encodeURIComponent).join('/');
+}
+const routeHash = (sec, file, anchor) => '#/' + routePath(sec, file, anchor);
+
+/** The URL that opens the SHELL on this place (index.html's ?manual=). */
+function shellUrl(sec, file, anchor) {
+  const p = routePath(sec, file, anchor);
+  return location.origin + '/' + (p ? '?manual=' + p : '?manual=');
+}
+
+function storeGet() {
+  try { return localStorage.getItem(RESUME_KEY) || null; } catch { return null; }
+}
+function storeSet(v) {
+  try { localStorage.setItem(RESUME_KEY, v); } catch { /* private window / blocked */ }
+}
+
+function replaceHash(h) {
+  if (location.hash === h) return;
+  // try/catch: Safari throttles replaceState; a stale hash must not break nav.
+  try { history.replaceState(null, '', h); } catch { /* keep going */ }
+}
+
+/** Navigate: one history entry, then render. Same place = re-render only. */
+function go(h) {
+  if (location.hash !== h) {
+    try { history.pushState(null, '', h); }
+    catch { location.hash = h; return Promise.resolve(); }   // hashchange renders
+  }
+  return render();
+}
+
+window.addEventListener('hashchange', () => { render(); });
+
+// A plain click on a link to where we already are re-runs the route (back to
+// the top of the chapter / the heading) — the browser does nothing there.
+document.addEventListener('click', e => {
+  if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+  const a = e.target.closest('a[href^="#/"]');
+  if (!a || a.getAttribute('href') !== location.hash) return;
+  e.preventDefault();
+  render();
+});
+
+// ─────────────────────────────────────────────────────────────
 // State
 // ─────────────────────────────────────────────────────────────
 const state = {
-  sections:        [],   // [{ slug, label }]
+  sections:        [],   // [{ slug, label, count, blurb }]
   currentSection:  null, // { slug, label }
-  currentFiles:    [],   // [{ slug, label }]
-  currentFile:     null  // { slug, label }
+  currentFiles:    [],   // [{ slug, label, desc }]
+  currentFile:     null  // { slug, label } — the chapter on screen, if any
 };
 
 // ─────────────────────────────────────────────────────────────
@@ -429,6 +648,19 @@ async function api(path) {
 async function fetchMarkdown(section, file) {
   return await window.parent.apiSend(`/manual/${section}/${file}`, 'GET');
 }
+
+// The manual is static per deploy: each list / chapter is fetched once per
+// pane load, so Back / forward re-render without a round trip. A failure is
+// not cached.
+const cache = new Map();
+function cached(key, fn) {
+  if (!cache.has(key)) cache.set(key, fn().catch(err => { cache.delete(key); throw err; }));
+  return cache.get(key);
+}
+const loadSections = () => cached('sections', async () => (await api('/manual')).sections || []);
+const loadSectionData = sec => cached('sec:' + sec, () => api(`/manual/${encodeURIComponent(sec)}`));
+const loadChapter = (sec, file) => cached(`md:${sec}/${file}`,
+  () => fetchMarkdown(encodeURIComponent(sec), encodeURIComponent(file)));
 
 // ─────────────────────────────────────────────────────────────
 // DOM helpers
@@ -444,29 +676,13 @@ function esc(s) {
     ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
-// Breadcrumb handlers are held here and dispatched by index. They used to be
-// stringified into an inline onclick — which silently broke every section
-// crumb, because `onclick="(() => loadSection(sectionSlug))()"` evaluates in
-// global scope where the closure variable doesn't exist.
-let bcParts = [];
-
+/** parts: [{ label, href? }] — the last one is the current place (no href). */
 function setBreadcrumb(parts) {
-  // parts: [{ label, onClick? }]  — last one has no onClick (current)
-  bcParts = parts;
   $('topbar').innerHTML = parts.map((p, i) => {
-    const isLast = i === parts.length - 1;
-    if (isLast) return `<span class="bc-current">${esc(p.label)}</span>`;
-    return `<span class="bc-link" data-bc="${i}">${esc(p.label)}</span>`
-         + `<span class="bc-sep">›</span>`;
+    if (i === parts.length - 1) return `<span class="bc-current" aria-current="page">${esc(p.label)}</span>`;
+    return `<a class="bc-link" href="${esc(p.href)}">${esc(p.label)}</a><span class="bc-sep">›</span>`;
   }).join('');
 }
-
-$('topbar').addEventListener('click', e => {
-  const el = e.target.closest('[data-bc]');
-  if (!el) return;
-  const p = bcParts[Number(el.dataset.bc)];
-  if (p && typeof p.onClick === 'function') p.onClick();
-});
 
 // ─────────────────────────────────────────────────────────────
 // Markdown rendering helpers
@@ -479,16 +695,19 @@ function renderMd(md) {
 
 // Descriptions come from README table cells and carry inline markdown
 // (`code`, *emphasis*). parseInline exists in every marked 2.1+; fall back to
-// escaped text if the CDN ever serves something that lacks it.
+// escaped text if the CDN ever serves something that lacks it. They render
+// inside a row that is itself a link, so any link of their own is unwrapped.
 function renderMdInline(md) {
-  try { return marked.parseInline(md); }
+  try { return marked.parseInline(md).replace(/<\/?a\b[^>]*>/gi, ''); }
   catch { return esc(md); }
 }
 
 /**
  * marked stopped emitting heading ids in v5 (moved to a plugin), so anchor
  * links like `06-reports.md#locking` land nowhere. Slug them here instead —
- * pure DOM, so it survives whatever version the CDN serves.
+ * pure DOM, so it survives whatever version the CDN serves. GitHub's rule,
+ * which is what the manual's authored anchors follow: lowercase, punctuation
+ * dropped, EACH space a hyphen ("Parser v2 — the …" → "parser-v2--the-…").
  */
 function addHeadingIds(root) {
   const seen = new Set();
@@ -496,27 +715,39 @@ function addHeadingIds(root) {
     if (h.id) { seen.add(h.id); return; }
     const base = h.textContent.toLowerCase().trim()
       .replace(/[^\w\s-]/g, '')
-      .replace(/\s+/g, '-');
+      .replace(/\s/g, '-');
     if (!base) return;
-    let id = base, n = 2;
+    let id = base, n = 1;
     while (seen.has(id)) id = `${base}-${n++}`;
     seen.add(id);
     h.id = id;
   });
 }
 
+// A scroll the code made (landing on an anchor) must not be read back by
+// the scroll-spy as the user moving: until this time, the spy highlights but
+// never rewrites the hash.
+let spyQuietUntil = 0;
+
+// #content only: scrollIntoView() would also scroll every scrollable
+// ancestor — the shell's own page included — sliding the pane's breadcrumbs
+// under the shell header.
+const ANCHOR_GAP = 16;   // px of air above a landed-on heading
+
 function scrollToAnchor(hash) {
-  if (!hash) { $('content').scrollTop = 0; return; }
-  const el = document.getElementById(hash);
-  if (el) el.scrollIntoView({ block: 'start' });
-  else $('content').scrollTop = 0;
+  spyQuietUntil = performance.now() + 250;
+  const c  = $('content');
+  const el = hash && document.getElementById(hash);
+  if (el && c.contains(el)) c.scrollTop += el.getBoundingClientRect().top - c.getBoundingClientRect().top - ANCHOR_GAP;
+  else c.scrollTop = 0;
+  spyUpdate(hash || null);
 }
 
 /**
  * Markdown links are authored to work on GitHub — relative to the file's own
  * folder. In the viewer they used to navigate the iframe to a path that
  * doesn't exist (`06-data-modes.md` → `/06-data-modes.md` → 404), blowing the
- * whole page away. Map them onto the loader instead.
+ * whole page away. Map them onto the router instead (rewriteLinks).
  *
  * Returns one of:
  *   { kind: 'external' }                     leave to the browser
@@ -547,8 +778,18 @@ function resolveDocLink(raw, currentSection) {
 /**
  * Tables scroll in their own box instead of pushing #content sideways
  * (CSS: .table-wrap). marked emits bare <table>s, so wrap them after render.
+ * Each box keeps data-clip = which edge(s) currently hide columns
+ * (right / left / both / none); the phone CSS fades that edge as a scroll cue.
  * Idempotent.
  */
+function updateClip(w) {
+  const max = w.scrollWidth - w.clientWidth;
+  const l = w.scrollLeft > 1, r = w.scrollLeft < max - 1;
+  w.dataset.clip = l && r ? 'both' : l ? 'left' : r ? 'right' : 'none';
+}
+const clipObserver = typeof ResizeObserver === 'function'
+  ? new ResizeObserver(entries => entries.forEach(en => updateClip(en.target))) : null;
+
 function wrapTables(root) {
   root.querySelectorAll('table').forEach(t => {
     if (t.parentElement.classList.contains('table-wrap')) return;
@@ -556,38 +797,44 @@ function wrapTables(root) {
     w.className = 'table-wrap';
     t.parentNode.insertBefore(w, t);
     w.appendChild(t);
+    w.addEventListener('scroll', () => updateClip(w), { passive: true });
+    if (clipObserver) clipObserver.observe(w);
+    updateClip(w);
   });
 }
 
-/** Flag links the viewer can't follow so they don't look clickable-but-dead. */
-function markDeadLinks(root) {
+/**
+ * Point every link at its route (so it is a real, copyable, middle-clickable
+ * link) and flag the ones the viewer can't follow so they don't look
+ * clickable-but-dead. `page` is where the links live: { sec, file } (file
+ * null on a section page, whose README prose has no chapter to anchor in).
+ */
+function rewriteLinks(root, page) {
   root.querySelectorAll('a[href]').forEach(a => {
-    if (resolveDocLink(a.getAttribute('href'), state.currentSection?.slug).kind !== 'outside') return;
-    a.dataset.inert = '1';
-    a.title = 'Repo file — not served by the manual viewer';
+    if (a.classList.contains('hd-link')) return;
+    const r = resolveDocLink(a.getAttribute('href'), page.sec);
+    if (r.kind === 'external') {
+      a.target = '_blank';                // break out of the iframe
+      a.rel    = 'noopener noreferrer';
+    } else if (r.kind === 'anchor') {
+      if (page.file) a.setAttribute('href', routeHash(page.sec, page.file, r.hash));
+      else a.dataset.anchor = r.hash || '';
+    } else if (r.kind === 'section') {
+      a.setAttribute('href', routeHash(r.sec));
+    } else if (r.kind === 'file') {
+      a.setAttribute('href', routeHash(r.sec, r.file, r.hash));
+    } else {
+      a.dataset.inert = '1';
+      a.title = 'Repo file — not served by the manual viewer';
+    }
   });
 }
 
 $('content').addEventListener('click', e => {
   const a = e.target.closest('a');
   if (!a || !$('content').contains(a)) return;
-
-  const raw = a.getAttribute('href') || '';
-  if (!raw) return;
-
-  const r = resolveDocLink(raw, state.currentSection?.slug);
-
-  // External — break out of the iframe rather than replacing the viewer.
-  if (r.kind === 'external') {
-    a.target = '_blank';
-    a.rel    = 'noopener noreferrer';
-    return;
-  }
-
-  e.preventDefault();
-  if (r.kind === 'anchor')  scrollToAnchor(r.hash);
-  if (r.kind === 'section') loadSection(r.sec);
-  if (r.kind === 'file')    loadFile(r.sec, r.file, r.hash);
+  if (a.dataset.inert) { e.preventDefault(); return; }
+  if (a.dataset.anchor !== undefined) { e.preventDefault(); scrollToAnchor(a.dataset.anchor); }
 });
 
 // ─────────────────────────────────────────────────────────────
@@ -601,15 +848,15 @@ function renderSidebar() {
 
   for (const sec of state.sections) {
     const isActive = state.currentSection?.slug === sec.slug;
-    html += `<div class="sidebar-section${isActive ? ' active' : ''}"
-               onclick="loadSection('${sec.slug}')">${esc(sec.label)}</div>`;
+    html += `<a class="sidebar-section${isActive ? ' active' : ''}" href="${routeHash(sec.slug)}"`
+          + `${isActive && !state.currentFile ? ' aria-current="page"' : ''}>${esc(sec.label)}</a>`;
 
     if (isActive && state.currentFiles.length) {
       for (const file of state.currentFiles) {
         const isFileActive = state.currentFile?.slug === file.slug;
-        html += `<div class="sidebar-file${isFileActive ? ' active' : ''}"
-                   onclick="loadFile('${sec.slug}','${file.slug}')"
-                   title="${esc(file.desc || file.label)}">${esc(file.label)}</div>`;
+        html += `<a class="sidebar-file${isFileActive ? ' active' : ''}" href="${routeHash(sec.slug, file.slug)}"`
+              + `${isFileActive ? ' aria-current="page"' : ''}`
+              + ` title="${esc(file.desc || file.label)}">${esc(file.label)}</a>`;
       }
     }
   }
@@ -618,179 +865,323 @@ function renderSidebar() {
 }
 
 // ─────────────────────────────────────────────────────────────
+// On this page — outline, permalinks, scroll-spy
+// ─────────────────────────────────────────────────────────────
+const OTP_MIN = 3;           // fewer h2/h3 than this: no outline
+let spy = null;              // { sec, file, heads: [h2/h3], links: Map id → [a], active }
+
+/**
+ * Build the outline (rail + collapsed <details>) and the heading permalinks
+ * for the chapter in `body`. Returns the rail's HTML ('' = no outline).
+ */
+function buildOutline(body, sec, file) {
+  const heads = [...body.querySelectorAll('h2[id], h3[id]')];
+  // Permalinks: h2–h4. Built after the outline text is read.
+  const items = heads.map(h => ({ id: h.id, lvl: h.tagName, text: h.textContent.trim() }));
+  body.querySelectorAll('h2[id], h3[id], h4[id]').forEach(h => {
+    const a = document.createElement('a');
+    a.className = 'hd-link';
+    a.href = routeHash(sec, file, h.id);
+    a.setAttribute('aria-label', 'Link to this section');
+    a.title = 'Link to this section (copies the app link)';
+    a.textContent = '#';
+    h.appendChild(a);
+  });
+  spy = { sec, file, heads: items.length >= OTP_MIN ? heads : [], links: new Map(), active: undefined };
+  if (items.length < OTP_MIN) return '';
+
+  const list = '<ol class="otp-list">' + items.map(it =>
+    `<li class="otp-${it.lvl.toLowerCase()}"><a href="${routeHash(sec, file, it.id)}" data-otp="${esc(it.id)}">${esc(it.text)}</a></li>`
+  ).join('') + '</ol>';
+
+  const det = document.createElement('details');
+  det.className = 'otp-inline';
+  det.innerHTML = `<summary>On this page</summary>${list}`;
+  const h1 = body.querySelector('h1');
+  if (h1) h1.after(det); else body.prepend(det);
+
+  return `<nav class="otp-rail" aria-label="On this page"><div class="otp-title">On this page</div>${list}</nav>`;
+}
+
+function indexSpyLinks() {
+  if (!spy) return;
+  document.querySelectorAll('#content a[data-otp]').forEach(a => {
+    const id = a.dataset.otp;
+    if (!spy.links.has(id)) spy.links.set(id, []);
+    spy.links.get(id).push(a);
+  });
+}
+
+/** Which outline heading is the reader in? The last one whose top has passed
+ *  a line just under the pane's top edge; at the very bottom, the last one
+ *  on screen (short final sections can never reach the line). */
+function spyCurrent() {
+  const c = $('content');
+  const line = c.getBoundingClientRect().top + 80;
+  const atEnd = c.scrollTop + c.clientHeight >= c.scrollHeight - 2;
+  const bottom = c.getBoundingClientRect().bottom;
+  let cur = null;
+  for (const h of spy.heads) {
+    const top = h.getBoundingClientRect().top;
+    if (top <= line || (atEnd && top < bottom)) cur = h.id; else if (!atEnd) break;
+  }
+  return cur;
+}
+
+/** Highlight the current outline entry; on a user scroll, also mirror it into
+ *  the hash (replace) and the resume key. `forced` = the anchor just landed on. */
+function spyUpdate(forced) {
+  if (!spy || !spy.heads.length) return;
+  const id = forced !== undefined && (forced === null || spy.links.has(forced)) ? forced : spyCurrent();
+  if (id === spy.active) return;
+  spy.active = id;
+  spy.links.forEach((els, k) => els.forEach(a => a.classList.toggle('active', k === id)));
+  const rail = document.querySelector('.otp-rail');
+  const act = rail && id && rail.querySelector(`a[data-otp="${CSS.escape(id)}"]`);
+  if (act && (act.offsetTop < rail.scrollTop || act.offsetTop > rail.scrollTop + rail.clientHeight - 30)) {
+    rail.scrollTop = act.offsetTop - rail.clientHeight / 2;
+  }
+  if (forced !== undefined || performance.now() < spyQuietUntil) return;
+  replaceHash(routeHash(spy.sec, spy.file, id));
+  storeSet(routePath(spy.sec, spy.file, id));
+}
+
+let spyRaf = 0;
+$('content').addEventListener('scroll', () => {
+  if (spyRaf) return;
+  spyRaf = requestAnimationFrame(() => {
+    spyRaf = 0;
+    if (performance.now() >= spyQuietUntil) spyUpdate();   // not our own landing scroll
+  });
+}, { passive: true });
+
+// Permalink: the browser sets the hash (one entry); this also copies the
+// shell deep link — the one URL that opens this place from outside the pane.
+$('content').addEventListener('click', e => {
+  const a = e.target.closest('a.hd-link');
+  if (!a) return;
+  const r = parseHash(a.getAttribute('href'));
+  const url = shellUrl(r.sec, r.file, r.anchor);
+  const done = () => { a.classList.add('copied'); setTimeout(() => a.classList.remove('copied'), 1500); };
+  try {
+    navigator.clipboard.writeText(url).then(done, () => { if (copyFallback(url)) done(); });
+  } catch { if (copyFallback(url)) done(); }
+});
+
+function copyFallback(text) {
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.setAttribute('readonly', '');
+  ta.style.cssText = 'position:fixed;top:0;left:0;opacity:0;';
+  document.body.appendChild(ta);
+  ta.select();
+  let ok = false;
+  try { ok = document.execCommand('copy'); } catch { /* unsupported */ }
+  ta.remove();
+  return ok;
+}
+
+// ─────────────────────────────────────────────────────────────
 // Views
 // ─────────────────────────────────────────────────────────────
+let navSeq = 0;   // the newest render wins; an older one stops at its next await
+
+async function render() {
+  const seq = ++navSeq;
+  const stale = () => seq !== navSeq;
+  const r = parseHash(location.hash);
+
+  // A chapter already on screen: only the anchor moved (outline, permalink,
+  // Back between two headings) — scroll, don't refetch.
+  if (r.sec && r.file && state.currentFile && $('md-body') &&
+      state.currentSection?.slug === r.sec && state.currentFile.slug === r.file) {
+    scrollToAnchor(r.anchor);
+    storeSet(routePath(r.sec, r.file, r.anchor));
+    return;
+  }
+
+  let sections;
+  try { sections = await loadSections(); }
+  catch {
+    if (stale()) return;
+    setBreadcrumb([{ label: 'Documentation' }]);
+    setError('Could not load documentation index.');
+    return;
+  }
+  if (stale()) return;
+  state.sections = sections;
+
+  if (!r.sec || !sections.some(s => s.slug === r.sec)) {
+    if (r.sec) replaceHash('#/');           // unknown section → index
+    return showIndex();
+  }
+  if (r.file) { state.currentFile = { slug: r.file, label: '' }; setLoading(); }
+
+  let data;
+  try { data = await loadSectionData(r.sec); }
+  catch {
+    if (stale()) return;
+    setError('Could not load section.');
+    return;
+  }
+  if (stale()) return;
+  state.currentSection = data.section;
+  state.currentFiles   = data.files || [];
+
+  const file = r.file && state.currentFiles.find(f => f.slug === r.file);
+  if (!file) {
+    if (r.file) replaceHash(routeHash(r.sec));   // unknown chapter → its section
+    return showSection(data);
+  }
+  return showChapter(file, r.anchor, stale);
+}
 
 // Index — grid of section cards
-async function showIndex() {
+function showIndex() {
   state.currentSection = null;
   state.currentFile    = null;
   state.currentFiles   = [];
-
+  spy = null;
+  renderSidebar();
   setBreadcrumb([{ label: 'Documentation' }]);
-  setLoading();
 
-  try {
-    const data = await api('/manual');
-    state.sections = data.sections || [];
-    renderSidebar();
-
-    if (!state.sections.length) {
-      setContent('<div class="state-msg">No documentation sections found.</div>');
-      return;
-    }
-
-    const cards = state.sections.map(sec => `
-      <div class="card" onclick="loadSection('${sec.slug}')">
-        <div class="card-title">${esc(sec.label)}</div>
-        <div class="card-meta">Click to browse</div>
-      </div>`).join('');
-
-    setContent(`
-      <div class="index-title">YisraCase Documentation</div>
-      <p class="index-sub">Select a module below.</p>
-      <div class="card-grid">${cards}</div>`);
-
-  } catch {
-    setError('Could not load documentation index.');
+  if (!state.sections.length) {
+    setContent('<div class="state-msg">No documentation sections found.</div>');
+    return;
   }
+
+  const cards = state.sections.map(sec => `
+    <a class="card" href="${routeHash(sec.slug)}">
+      <div class="card-title">${esc(sec.label)}</div>
+      ${sec.blurb ? `<div class="card-blurb">${esc(sec.blurb)}</div>` : ''}
+      ${sec.count != null ? `<div class="card-meta">${sec.count} chapter${sec.count === 1 ? '' : 's'}</div>` : ''}
+    </a>`).join('');
+
+  setContent(`
+    <div class="index-title">YisraCase Documentation</div>
+    <p class="index-sub">Select a module below.</p>
+    <div class="card-grid">${cards}</div>`);
+  $('content').scrollTop = 0;
 }
 
 // Section — file list
-async function loadSection(sectionSlug) {
-  state.currentSection = { slug: sectionSlug, label: '' };
-  state.currentFile    = null;
-  state.currentFiles   = [];
-
-  setBreadcrumb([
-    { label: 'Documentation', onClick: manualsLoad },
-    { label: '…' }
-  ]);
-  setLoading();
-
-  try {
-    const data = await api(`/manual/${sectionSlug}`);
-    state.currentSection = data.section;
-    state.currentFiles   = data.files || [];
-    renderSidebar();
-
-    setBreadcrumb([
-      { label: 'Documentation', onClick: manualsLoad },
-      { label: data.section.label }
-    ]);
-
-    // intro / outro are the section README's prose, split around its TOC
-    // table — see routes/manuals.js. The chapter list between them is
-    // generated from the filesystem, so it can't go stale.
-    const intro = data.intro
-      ? `<div class="md-body section-intro">${renderMd(data.intro)}</div>` : '';
-    const outro = data.outro
-      ? `<div class="md-body section-outro">${renderMd(data.outro)}</div>` : '';
-
-    if (!state.currentFiles.length) {
-      setContent(`
-        <div class="section-title">${esc(data.section.label)}</div>
-        ${intro}
-        <div class="state-msg">No files in this section.</div>
-        ${outro}`);
-      return;
-    }
-
-    const rows = state.currentFiles.map((f, i) => `
-      <div class="file-row" onclick="loadFile('${sectionSlug}','${f.slug}')">
-        <div class="file-num">${i + 1}</div>
-        <div class="file-text">
-          <div class="file-label">${esc(f.label)}</div>
-          ${f.desc ? `<div class="file-desc">${renderMdInline(f.desc)}</div>` : ''}
-        </div>
-        <div class="file-arrow">›</div>
-      </div>`).join('');
-
-    setContent(`
-      <div class="section-title">${esc(data.section.label)}</div>
-      ${intro}
-      <div class="file-list">${rows}</div>
-      ${outro}`);
-
-    $('content').querySelectorAll('.md-body').forEach(el => {
-      addHeadingIds(el);
-      markDeadLinks(el);
-      wrapTables(el);
-    });
-    $('content').scrollTop = 0;
-
-  } catch {
-    setError('Could not load section.');
-  }
-}
-
-// File — rendered markdown. `hash` is an optional heading anchor to land on.
-async function loadFile(sectionSlug, fileSlug, hash) {
-  state.currentFile = { slug: fileSlug, label: '' };
-  setLoading();
-
-  // Find labels from state
-  if (!state.currentSection || state.currentSection.slug !== sectionSlug) {
-    // Navigate to section first to populate state, then load file
-    await loadSection(sectionSlug);
-  }
-
-  const secLabel  = state.currentSection?.label || sectionSlug;
-  const fileLabel = state.currentFiles.find(f => f.slug === fileSlug)?.label || fileSlug;
-  state.currentFile = { slug: fileSlug, label: fileLabel };
+function showSection(data) {
+  const sec = data.section.slug;
+  state.currentFile = null;
+  spy = null;
   renderSidebar();
-
   setBreadcrumb([
-    { label: 'Documentation', onClick: manualsLoad },
-    { label: secLabel, onClick: () => loadSection(sectionSlug) },
-    { label: fileLabel }
+    { label: 'Documentation', href: '#/' },
+    { label: data.section.label }
   ]);
 
-  try {
-    const md = await fetchMarkdown(sectionSlug, fileSlug);
+  // intro / outro are the section README's prose, split around its TOC
+  // table — see routes/manuals.js. The chapter list between them is
+  // generated from the filesystem, so it can't go stale.
+  const intro = data.intro
+    ? `<div class="md-body section-intro">${renderMd(data.intro)}</div>` : '';
+  const outro = data.outro
+    ? `<div class="md-body section-outro">${renderMd(data.outro)}</div>` : '';
 
-    // Prev / next
-    const idx  = state.currentFiles.findIndex(f => f.slug === fileSlug);
-    const prev = state.currentFiles[idx - 1];
-    const next = state.currentFiles[idx + 1];
+  const rows = state.currentFiles.map((f, i) => `
+    <a class="file-row" href="${routeHash(sec, f.slug)}">
+      <div class="file-num">${i + 1}</div>
+      <div class="file-text">
+        <div class="file-label">${esc(f.label)}</div>
+        ${f.desc ? `<div class="file-desc">${renderMdInline(f.desc)}</div>` : ''}
+      </div>
+      <div class="file-arrow">›</div>
+    </a>`).join('');
 
-    const prevNext = (prev || next) ? `
-      <div class="prev-next">
-        <div>${prev
-          ? `<span onclick="loadFile('${sectionSlug}','${prev.slug}')">← ${prev.label}</span>`
-          : ''}</div>
-        <div>${next
-          ? `<span onclick="loadFile('${sectionSlug}','${next.slug}')">${next.label} →</span>`
-          : ''}</div>
-      </div>` : '';
+  setContent(`
+    <div class="section-title">${esc(data.section.label)}</div>
+    ${intro}
+    ${rows ? `<div class="file-list">${rows}</div>` : '<div class="state-msg">No files in this section.</div>'}
+    ${outro}`);
 
-    setContent(`<div id="md-body" class="md-body">${renderMd(md)}</div>${prevNext}`);
-    addHeadingIds($('md-body'));
-    markDeadLinks($('md-body'));
-    wrapTables($('md-body'));
-    scrollToAnchor(hash);
+  $('content').querySelectorAll('.md-body').forEach(el => {
+    addHeadingIds(el);
+    rewriteLinks(el, { sec, file: null });
+    wrapTables(el);
+  });
+  $('content').scrollTop = 0;
+}
 
-  } catch {
+// Chapter — rendered markdown, landing on `anchor` (a heading id) if given.
+async function showChapter(file, anchor, stale) {
+  const sec = state.currentSection.slug;
+  state.currentFile = { slug: file.slug, label: file.label };
+  renderSidebar();
+  setBreadcrumb([
+    { label: 'Documentation', href: '#/' },
+    { label: state.currentSection.label, href: routeHash(sec) },
+    { label: file.label }
+  ]);
+
+  let md;
+  try { md = await loadChapter(sec, file.slug); }
+  catch {
+    if (stale()) return;
     setError('Could not load file.');
+    return;
   }
+  if (stale()) return;
+
+  const idx  = state.currentFiles.findIndex(f => f.slug === file.slug);
+  const prev = state.currentFiles[idx - 1];
+  const next = state.currentFiles[idx + 1];
+  const prevNext = (prev || next) ? `
+    <nav class="prev-next" aria-label="Chapters">
+      <div>${prev ? `<a href="${routeHash(sec, prev.slug)}" rel="prev">← ${esc(prev.label)}</a>` : ''}</div>
+      <div>${next ? `<a href="${routeHash(sec, next.slug)}" rel="next">${esc(next.label)} →</a>` : ''}</div>
+    </nav>` : '';
+
+  setContent(`<div class="chapter"><div class="chapter-main">`
+    + `<div id="md-body" class="md-body">${renderMd(md)}</div>${prevNext}</div></div>`);
+  const body = $('md-body');
+  addHeadingIds(body);
+  rewriteLinks(body, { sec, file: file.slug });
+  wrapTables(body);
+  const rail = buildOutline(body, sec, file.slug);
+  if (rail) {
+    const ch = $('content').querySelector('.chapter');
+    ch.classList.add('has-otp');
+    ch.insertAdjacentHTML('beforeend', rail);
+  }
+  indexSpyLinks();
+  scrollToAnchor(anchor);
+  storeSet(routePath(sec, file.slug, anchor));
 }
 
 // ─────────────────────────────────────────────────────────────
-// Entry point — called by index.html button on first open,
-// and by the sidebar logo. Safe to call multiple times.
+// Entry point — kept for callers that drive the pane from outside (the
+// mobile survey; anything poking the iframe). Same signature as before the
+// router: (section?, file?, anchor?). Pushes one history entry and resolves
+// once the view is rendered.
 // ─────────────────────────────────────────────────────────────
-async function manualsLoad(sectionSlug, fileSlug, hash) {
-  if (fileSlug) {
-    await loadFile(sectionSlug, fileSlug, hash);
-  } else if (sectionSlug) {
-    await loadSection(sectionSlug);
-  } else {
-    await showIndex();
-  }
+function manualsLoad(sectionSlug, fileSlug, hash) {
+  return go(routeHash(sectionSlug || null, sectionSlug ? fileSlug : null, hash));
 }
 
-// Auto-load on open
-manualsLoad();
+// ─────────────────────────────────────────────────────────────
+// Boot
+// ─────────────────────────────────────────────────────────────
+(function boot() {
+  // Opened on its own (a middle-clicked or copied link): there is no shell to
+  // fetch through — hand the place to the shell's deep link instead.
+  if (window.parent === window) {
+    const r = parseHash(location.hash);
+    location.replace(shellUrl(r.sec, r.file, r.anchor));
+    return;
+  }
+  // No hash at all = a fresh open of the pane: resume the last chapter read.
+  // An explicit '#/' (the logo, the Documentation crumb) is the index.
+  if (!location.hash || location.hash === '#') {
+    const last = storeGet();
+    if (last) replaceHash('#/' + last);
+  }
+  render();
+})();
 </script>
 </body>
 </html>

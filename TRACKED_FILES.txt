@@ -1275,6 +1275,7 @@ tests/mailboxS3R.read.test.js
 tests/maintenanceGate.test.js
 tests/manageSelfService.policy.test.js
 tests/manualReadmeCoverage.test.js
+tests/manualsRoute.test.js
 tests/mascotSkins.test.js
 tests/moduleLoad.smoke.test.js
 tests/multipartBody.test.js

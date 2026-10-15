@@ -5214,6 +5214,18 @@ async function initAuth() {
               params.contact.split(",")[1]
             );
           }
+          // ?manual=<section>[/<file>[/<anchor>]] — a manual permalink (manuals.html
+          // copies these). Opens the Manuals panel there: the path becomes the
+          // pane's own hash route, which the pane validates. One-shot like ?case=:
+          // the sync below rebuilds the bar without it.
+          if (params.manual !== undefined) {
+            const mf = E("manualsDiv") && E("manualsDiv").querySelector("iframe");
+            const route = "#/" + String(params.manual).split("/").filter(Boolean)
+              .slice(0, 3).map(encodeURIComponent).join("/");
+            if (mf && mf.dataset.src) mf.dataset.src = "/manuals.html" + route;
+            else if (mf && mf.contentWindow) mf.contentWindow.location.hash = route;
+            ycLauncher.exec("moreManuals");
+          }
         } catch (err) {
           // A file that won't open must not take the whole boot with it.
           console.error("[workspace] restore failed:", err);
