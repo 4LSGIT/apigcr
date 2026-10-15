@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-10-15T00:20:55.178Z
+-- Generated: 2026-10-15T00:24:04.632Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:850e34c3c343bbae5811f3e33a0a5b98
+-- Fingerprint: sha256:26c6a8fa895ac7c1bb45cc2455191152
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -2883,7 +2883,6 @@ CREATE TABLE `readonly_api_keys` (
   `revoked_at` datetime DEFAULT NULL,
   `last_used_at` datetime DEFAULT NULL,
   `use_count` int NOT NULL DEFAULT '0',
-  `ip_allowlist` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci,
   `scopes` json DEFAULT NULL COMMENT 'Key scopes (access-control B1): NULL = legacy full surface; else a JSON array of scope strings — surface (sql.ro, scratch, alert, temp.*), route:/<path>, or a capability name. Vocabulary: lib/capabilities.js KEY_SCOPES.',
   `parent_key_id` int DEFAULT NULL COMMENT 'Delegation (access-control D1): NULL = a root key (SU-minted); else the id of the keys.mint key that minted this child. A child is refused at auth once its parent is revoked or expired; its effective scopes = own ∩ parent ∩ (sql.ro, scratch, alert). FK RESTRICT: no hard delete of a parent.'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
