@@ -14,8 +14,16 @@ hosts, at the widths you pass:
 For each surface it records **horizontal overflow**: the shell document, the
 pane document, any visible nested frame (e.g. `tasks.html` inside a case tab),
 and an open SweetAlert dialog, where it flags a card that is off-screen,
-content poking out of the card, or a content box that scrolls sideways. It
-also takes a screenshot and collects page errors.
+content poking out of the card, or a content box that scrolls sideways. In
+each document it also flags a visible element **cut off at the right edge
+while the document itself fits** — `position:fixed` chrome such as the shell
+header never widens the document, so a document-width check alone is blind to
+it (the header clipped Log Out at 769–1150 px for a long time while every
+surface said ok). It also takes a screenshot and collects page errors: puppeteer's
+`pageerror` (uncaught exceptions) **and** a window `error` / `unhandledrejection`
+listener in every frame, which is the only place "ResizeObserver loop completed
+with undelivered notifications" shows up. An exception reaches both; it is
+counted once.
 
 It exits **1 if anything overflows**, so it can gate a UI change. It does not
 judge looks — read the screenshots for that.
@@ -40,6 +48,11 @@ applied to every pane.
 node scripts/mobile-survey/survey.js --widths 320,375,414
 ```
 
+Phone widths are the default gate, but mid widths matter too: tablet and
+narrow-desktop layouts (769–1200 px) are where the header and the wide tables
+broke unseen. For a change to the shell, a header, a table or anything with a
+desktop breakpoint, also run `--widths 800,1000,1200`.
+
 | Option | Default | |
 |---|---|---|
 | `--widths` | `375` | comma-separated viewport widths (phones: 320 small Android / old SE, 375 iPhone, 414 large iPhone) |
@@ -62,7 +75,18 @@ Output looks like:
 
 `docW/clientW` is the document's scroll width against its visible width; the
 named elements are the **outermost** ones past the right edge — the thing to
-fix, not its descendants.
+fix, not its descendants. When the document fits (`docW` equals `clientW`), the
+line reads `cut off at the edge:` and names the visible elements past the edge
+with their right edge in px, e.g.
+`shell 320/320 cut off at the edge: div#hdrUserArea.hdr-right (139px, right 362)`.
+
+What counts as visible: rendered (`checkVisibility` — not `display:none`, not
+`visibility:hidden`, not `opacity:0`, on it or an ancestor), not zero-size, not
+inside an ancestor that scrolls or clips sideways, and not **parked** — an
+element that is positioned (`absolute`/`fixed`) or transformed and lies wholly
+past the right edge, the way an off-canvas drawer or a hidden toast waits. No
+selector allowlist. (A document that scrolls sideways still lists every
+element past the edge, visible or not, as it always did.)
 
 ## Manual heading ordinals
 
@@ -158,6 +182,18 @@ survey a surface with real-shaped data, add a fixture at the endpoint's path.
 ## Limits
 
 - Layout only. No API behaviour is exercised; saves go nowhere.
+- Right edge only. Nothing checks the left edge, or vertical clipping (a
+  fixed bar or sheet cut off at the bottom).
+- Content clipped INSIDE a box (`overflow:hidden`/`auto` on an ancestor) is
+  skipped by design — the box is the fix, or it scrolls. That also skips a
+  fixed element under such an ancestor, even though a fixed element escapes
+  the clip.
+- The parked rule trusts positioning: a positioned or transformed element
+  pushed WHOLLY past the edge by a layout bug reads as parked. An in-flow
+  element pushed wholly off (a flex item past a fixed header's end) does count.
+- Page errors are uncaught exceptions, unhandled rejections and window
+  `error` events. `console.error` calls and failed requests are not counted,
+  and errors fail the run only with `--fail-on-errors`.
 - The current user is a superuser, so Admin panels open. Role-gated
   rendering is not covered.
 - The builder editors under Automations, YisraCase Config and Portal Manager

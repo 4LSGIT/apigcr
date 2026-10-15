@@ -10,9 +10,12 @@
 //   dialogs  the shell-level form dialogs (new client/case/appt/event, …)
 //
 // For each one it records HORIZONTAL OVERFLOW — the shell document, the pane
-// document, any visible nested frame, and an open SweetAlert popup — plus a
-// screenshot and any page errors. Exit code 1 if anything overflows, so it can
-// gate a UI change. It does NOT judge looks; read the screenshots for that.
+// document, any visible nested frame, and an open SweetAlert popup; in each
+// document, also any visible element cut off at the right edge while the
+// document itself fits (position:fixed chrome) — plus a screenshot and any page
+// errors (puppeteer's pageerror AND window error / unhandledrejection in every
+// frame). Exit code 1 if anything overflows, so it can gate a UI change. It does
+// NOT judge looks; read the screenshots for that.
 //
 //   node scripts/mobile-survey/survey.js [options]
 //     --widths 320,375,414   viewport widths (default 375)
@@ -66,9 +69,18 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // OUTERMOST elements past the right edge — anything inside a scroll box (or
 // already counted through its parent) is skipped, so the list names the
 // element to fix rather than its 200 descendants.
+// `seen` is the subset a user would see cut off at the edge. It fails a
+// surface even when the document FITS: a position:fixed element never widens
+// the document, so the shell header clipped Log Out at 769-1150px while docW
+// said ok (H1, Oct 2026). Left out of `seen`: an element not rendered visible
+// (checkVisibility — display, visibility, opacity 0, on it or an ancestor),
+// and one PARKED off-screen on purpose — positioned (absolute/fixed) or
+// transformed, and lying wholly past the right edge, the way an off-canvas
+// drawer or a hidden toast waits. Zero-size and clipped-by-an-ancestor
+// elements are skipped for both lists, as before.
 function measureDoc() {
   const w = document.documentElement.clientWidth;
-  const offenders = [];
+  const offenders = [], seen = [];
   for (const el of document.body ? document.body.querySelectorAll('*') : []) {
     const cs = getComputedStyle(el);
     if (cs.display === 'none' || cs.visibility === 'hidden') continue;
@@ -82,9 +94,14 @@ function measureDoc() {
     }
     if (skip) continue;
     const cls = typeof el.className === 'string' && el.className.trim() ? '.' + el.className.trim().split(/\s+/)[0] : '';
-    offenders.push(`${el.tagName.toLowerCase()}${el.id ? '#' + el.id : ''}${cls} (${Math.round(r.width)}px)`);
+    const name = `${el.tagName.toLowerCase()}${el.id ? '#' + el.id : ''}${cls}`;
+    offenders.push(`${name} (${Math.round(r.width)}px)`);
+    const parked = r.left >= w - 1 && (/^(absolute|fixed)$/.test(cs.position) || cs.transform !== 'none' || cs.translate !== 'none');
+    if (!parked && el.checkVisibility({ opacityProperty: true, visibilityProperty: true })) {
+      seen.push(`${name} (${Math.round(r.width)}px, right ${Math.round(r.right)})`);
+    }
   }
-  return { docW: document.documentElement.scrollWidth, clientW: w, offenders: offenders.slice(0, 6) };
+  return { docW: document.documentElement.scrollWidth, clientW: w, offenders: offenders.slice(0, 6), seen: seen.slice(0, 6) };
 }
 
 // A scroll box INSIDE a pane that scrolls sideways (scrollWidth past its
@@ -178,9 +195,13 @@ async function measure(page, frame) {
 
 function overflowOf(m) {
   const bad = [];
-  if (m.shell.docW > m.shell.clientW) bad.push(`shell ${m.shell.docW}/${m.shell.clientW} ${m.shell.offenders.join(', ')}`);
-  if (m.pane && m.pane.docW > m.pane.clientW) bad.push(`pane ${m.pane.docW}/${m.pane.clientW} ${m.pane.offenders.join(', ')}`);
-  for (const n of m.nested || []) if (n.docW > n.clientW) bad.push(`nested ${n.src} ${n.docW}/${n.clientW} ${n.offenders.join(', ')}`);
+  // the document scrolls sideways (its offenders), or it fits and something
+  // visible is cut off at the edge anyway (`seen`, measureDoc)
+  const doc = (d) => (d.docW > d.clientW ? `${d.docW}/${d.clientW} ${d.offenders.join(', ')}`
+    : d.seen.length ? `${d.docW}/${d.clientW} cut off at the edge: ${d.seen.join(', ')}` : '');
+  if (doc(m.shell)) bad.push(`shell ${doc(m.shell)}`);
+  if (m.pane && doc(m.pane)) bad.push(`pane ${doc(m.pane)}`);
+  for (const n of m.nested || []) if (doc(n)) bad.push(`nested ${n.src} ${doc(n)}`);
   for (const b of m.boxes || []) {
     if (b.missing) bad.push(`box ${b.sel} missing`);
     else if (b.scrollW > b.clientW + 1) bad.push(`box ${b.sel} ${b.scrollW}/${b.clientW} ${b.offenders.join(', ')}`);
@@ -431,6 +452,19 @@ async function walk(page, W, record) {
       await page.evaluateOnNewDocument((jwt) => { try { localStorage.setItem('jwt', jwt); } catch (_) { } }, fakeJwt());
       let errors = [];
       page.on('pageerror', (e) => errors.push(String(e.message || e).slice(0, 160)));
+      // pageerror sees exceptions only; "ResizeObserver loop completed with
+      // undelivered notifications" reaches a window `error` listener and never
+      // pageerror. So every frame (evaluateOnNewDocument runs in iframes too)
+      // also reports window error / unhandledrejection. An exception reaches
+      // BOTH channels; the listener sends the text pageerror records (the
+      // thrown value's message, not the event's "Uncaught …"), so the
+      // per-surface Set in the record callback folds the pair into one.
+      await page.exposeFunction('__ycSurveyError', (msg) => errors.push(String(msg).slice(0, 160)));
+      await page.evaluateOnNewDocument(() => {
+        const send = (x) => { try { window.__ycSurveyError(String((x && x.message) || x)); } catch (_) { } };
+        addEventListener('error', (e) => send(e.error != null ? e.error : e.message));
+        addEventListener('unhandledrejection', (e) => send(e.reason));
+      });
       await page.goto(url + '/', { waitUntil: 'networkidle2' });
       await page.waitForFunction(() => window.firmData && document.getElementById('appSidebar').style.display === 'flex', { timeout: 15000 });
 
