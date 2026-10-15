@@ -66,7 +66,7 @@ const DOM = `<!DOCTYPE html><html><body>
   <div id="tabMore" class="tab-main" style="display:none">
     <button class="big-button" id="tManuals" data-target="manualsDiv" data-exclusive-group="more">Manuals</button>
     <button class="big-button" id="tAuto" data-target="automationsDiv" data-exclusive-group="more">Automations</button>
-    <button class="big-button" id="tClio">Clio code</button>
+    <button class="big-button" id="tSettings" onclick="openMainTab('tabSettings')">Settings</button>
     <button class="big-button" id="tStray" data-target="strayDiv" data-exclusive-group="more">Stray</button>
     <div id="automationsDiv" style="display:none"><iframe id="autoFrame" data-src="/automationManager.html"></iframe><div><iframe id="deepFrame"></iframe></div></div>
     <div id="manualsDiv" style="display:none"><iframe id="manFrame" data-src="/manuals.html"></iframe></div>
@@ -74,6 +74,7 @@ const DOM = `<!DOCTYPE html><html><body>
   </div>
   <div id="tabAdmin" class="tab-main" style="display:none">
     <button class="big-button" id="tDb" data-target="dbConsoleDiv" data-exclusive-group="admin">DB</button>
+    <button class="big-button" id="tEtch" onclick="etchSwal()">Etch</button>
     <div id="dbConsoleDiv" style="display:none"><iframe id="dbFrame" data-src="/dbConsole.html"></iframe></div>
   </div>
   <div class="swal2-container"><iframe id="swalFrame"></iframe></div>
@@ -119,7 +120,7 @@ function shell({ su = true, denied = [] } = {}) {
   const EL = {
     moreAutomations: { more: $('tAuto') },
     moreManuals: { more: $('tManuals') },
-    moreClioCode: { more: $('tClio') },                   // an ACTION tile: no data-target
+    moreSettings: { more: $('tSettings') },               // an ACTION tile: no data-target (it switches tab)
     newClient: { sidebar: d.createElement('a') },        // not on the More grid at all
     'firm:x': {},
     // A firm item WITH a panel tile (ui-custom S3.3 adds a firm row to the
@@ -128,6 +129,7 @@ function shell({ su = true, denied = [] } = {}) {
     moreStray: { more: $('tStray') },                     // its panel is NOT inside tabMore (J6)
   };
   if (su) EL.adminDbConsole = { admin: $('tDb') };
+  if (su) EL.adminEtch = { admin: $('tEtch') };           // an ACTION tile that opens a DIALOG
   const effective = Object.keys(EL).filter((id) => !denied.includes(id));
   const TAB = { more: 'tabMore', admin: 'tabAdmin' };
   w.ycLauncher = {
@@ -242,7 +244,7 @@ describe('wsurl S2 — restore (openMainTabOnBoot), every refusal lands on the g
     ['firm:x', 'a firm item (":")'],
     ['firm:tile', 'a firm item even WITH a panel tile'],
     ['more:x', 'any ":"-bearing id'],
-    ['moreClioCode', 'an ACTION tile (no data-target — a dialog)'],
+    ['moreSettings', 'an ACTION tile (no data-target — it switches tab)'],
     ['newClient', 'an id with no tile on this grid (wrong surface)'],
     ['adminDbConsole', 'an Admin id on tabMore (wrong surface)'],
     ['moreBogus', 'an unknown id'],
@@ -255,6 +257,15 @@ describe('wsurl S2 — restore (openMainTabOnBoot), every refusal lands on the g
     expect(w.wsOpenPanel('tabMore')).toBeNull();
     expect(w.__ws.panel).toEqual({});
     expect(w.ycTakeSubTab($('autoFrame'))).toBeNull();
+  });
+
+  test('refused on tabAdmin: adminEtch, an action tile that opens a DIALOG (SU)', () => {
+    const { w } = shell({ su: true });
+    w.openMainTabOnBoot('tabAdmin', 'adminEtch');
+    expect(w.__calls.exec).toEqual([]);
+    expect(w.__calls.dialog).toBe(0);
+    expect(w.__calls.openMainTab).toEqual(['tabAdmin']);
+    expect(w.wsOpenPanel('tabAdmin')).toBeNull();
   });
 
   test('exec refuses (a denied id): the grid, and nothing is left held', () => {

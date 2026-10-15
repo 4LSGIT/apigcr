@@ -82,6 +82,7 @@ const { generateToken } = require('../lib/token');
 const { DateTime } = require('luxon');
 const { FIRM_TZ }  = require('./timezoneService');
 const logService   = require('./logService');
+const shellLinks   = require('../lib/shellLinks');
 const { blankDatesToNull } = require('../lib/blankDateToNull');
 const { escapeLike } = require('../lib/escapeLike');
 
@@ -98,9 +99,9 @@ function settings() { return require('./settingsService'); }
 const APP_URL = () => require('../lib/firmConfig').cfg('app_url') || 'https://app.4lsg.com';
 // Client/recipient-facing action links (/t/:token) live on the PUBLIC landing
 // host as of 2026-08-17 — see ref/archive/ORIGIN_SEPARATION_ROLLOUT.md. APP_URL
-// stays for STAFF-shell deep links (?contact= / ?case=), which only resolve on
-// the app origin. Keeping both named makes the choice explicit at each call
-// site.
+// stays for STAFF-shell deep links (lib/shellLinks: /?files=c<id> / p<id>, by
+// exact id), which only resolve on the app origin. Keeping both named makes
+// the choice explicit at each call site.
 const PUBLIC_URL = () => require('../lib/firmConfig').publicUrl();
 
 /**
@@ -555,9 +556,9 @@ function buildDigestEmail(user, overdue, dueToday, pending, dayName) {
     const linkName = t.contact_name || t.case_number_full || t.case_number || '';
     if (linkName) {
       let href = APP_URL();
-      if (t.contact_name) href += `?contact=${t.contact_id || ''}`;
-      else if (t.case_number_full || t.case_number|| t.case_id) href += `?case=${t.case_id || ''}`;
-      linkHtml = `<a href="${href}" style="color:#4f46e5;text-decoration:none">${htmlEscape(linkName)}</a>`;
+      if (t.contact_name) href = shellLinks.contactLink(APP_URL(), t.contact_id);
+      else if (t.case_number_full || t.case_number|| t.case_id) href = shellLinks.caseLink(APP_URL(), t.case_id);
+      linkHtml = `<a href="${htmlEscape(href)}" style="color:#4f46e5;text-decoration:none">${htmlEscape(linkName)}</a>`;
     }
     // One-click complete link (requires the digest query to SELECT t.task_action_token)
     const doneHtml = t.task_action_token

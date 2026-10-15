@@ -43,10 +43,17 @@
 //        pane loaded ONCE); switching panels moves the id; the All pill → tabMore
 //   (d2) Admin as SU round-trips; non-SU tabAdmin~<id> → Home, pane never loaded
 //   (d3) refusals → the grid, no dialog: denied, firm-hidden, an action tile
-//        (moreClioCode, a Swal), newClient (no More tile), firm:x, a bogus id
+//        (moreSettings, a tab switch; SU: adminEtch, a Swal), newClient (no
+//        More tile), firm:x, a bogus id
 //   (d4) a panel's pane: a synthetic report → tabMore~<id>~<rest>; from the
 //        same frame while another tab is active → no URL change
 //   (d5) ?manual= + ?open=tabMore~<id> → the manual wins
+//
+// S-links — the links the server emits (lib/shellLinks), opened cold:
+//   (L1) /?files=c<id>&open=file:0 in a FRESH context (no label cache), the
+//        search answering the exact row → the case file opens, URL settles
+//   (L2) the same for /?files=p<id>&open=file:0 → the contact file
+//   (L3) the search answering a DIFFERENT id → "could not be reopened", no file
 //
 // The mock's /api/search answers nothing, so every scenario seeds the
 // sessionStorage label cache (ycFileLabels) the way a same-tab reload would
@@ -435,6 +442,31 @@ const activeTab = (page) => page.evaluate(() => window.currentMainTabId());
       await ctx.close();
     }
 
+    // ════ S-links — server-emitted links, opened cold ══════════════════════
+    for (const [tag, kind, id, row] of [
+      ['L1', 'c', CASE, { type: 'case', id: CASE, name: 'Test Case' }],
+      ['L2', 'p', CONTACT, { type: 'contact', id: Number(CONTACT), name: 'Test Contact' }],
+    ]) {
+      const { page, ctx } = await boot(browser, url, `?files=${kind}${id}&open=file:0`, { search: [row] });
+      const specs = await page.$$eval('#tabOpenFiles .file-button', (b) => b.map((x) => x.dataset.fileSpec));
+      let shown = null;
+      try { shown = await shownIn(await fileFrame(page)); } catch (_) { /* no frame */ }
+      check(`(${tag}) a cold /?files=${kind}<id>&open=file:0 opens that file, the URL settles`,
+        JSON.stringify(specs) === JSON.stringify([kind + id]) && shown !== null
+          && q(page.url()).files === kind + id && q(page.url()).open === 'file:0',
+        `specs=${JSON.stringify(specs)} shown=${shown} ${page.url()}`);
+      await ctx.close();
+    }
+    {
+      const { page, ctx } = await boot(browser, url, `?files=p${CONTACT}&open=file:0`,
+        { search: [{ type: 'contact', id: 9002, name: 'Someone Else' }] });
+      const specs = await page.$$eval('#tabOpenFiles .file-button', (b) => b.length);
+      const said = (await shellText(page)).includes('could not be reopened');
+      check('(L3) the search answering a DIFFERENT id → "could not be reopened", no file',
+        specs === 0 && said && !q(page.url()).files, `files=${specs} toast=${said} ${page.url()}`);
+      await ctx.close();
+    }
+
     // ════ S2 — More / Admin drill panels ═══════════════════════════════════
     const openPanelOf = (page, tabId) => page.evaluate((t) => {
       const p = window.wsOpenPanel(t);
@@ -478,20 +510,26 @@ const activeTab = (page) => page.evaluate(() => window.currentMainTabId());
         (await activeTab(page)) === 'tabHome' && hits.dbConsole === 0, `${await activeTab(page)} loads=${hits.dbConsole}`);
       await ctx.close();
     }
-    for (const [label, id, firmPatch] of [
-      ['denied', 'moreAutomations', { denied: ['moreAutomations'] }],
-      ['firm-hidden', 'moreViews', { ui: { firm: { registry_overrides: { hidden: ['moreViews'] } } } }],
-      ['an action tile (a dialog)', 'moreClioCode', null],
-      ['no More tile (newClient)', 'newClient', null],
-      ['a firm id', 'firm:x', null],
-      ['a bogus id', 'moreBogus', null],
+    // The action tiles are ones that EXIST: moreSettings (it switches to
+    // tabSettings) and, for SU, adminEtch (a Swal) — not moreClioCode, which
+    // ui-custom S3.3b retires (exec would refuse it as unknown, proving
+    // nothing about rule (c)).
+    for (const [label, tabId, id, firmPatch] of [
+      ['denied', 'tabMore', 'moreAutomations', { denied: ['moreAutomations'] }],
+      ['firm-hidden', 'tabMore', 'moreViews', { ui: { firm: { registry_overrides: { hidden: ['moreViews'] } } } }],
+      ['an action tile (it switches tab)', 'tabMore', 'moreSettings', null],
+      ['an action tile (a dialog, SU)', 'tabAdmin', 'adminEtch', null],
+      ['no More tile (newClient)', 'tabMore', 'newClient', null],
+      ['a firm id', 'tabMore', 'firm:x', null],
+      ['a bogus id', 'tabMore', 'moreBogus', null],
     ]) {
-      const { page, ctx, hits } = await boot(browser, url, `?open=tabMore~${encodeURIComponent(id)}`, { firmPatch });
+      const { page, ctx, hits } = await boot(browser, url, `?open=${tabId}~${encodeURIComponent(id)}`, { firmPatch });
       await sleep(1300);   // past the welcome toast; a dialog would still be up
-      const tab = await activeTab(page), open = await openPanelOf(page, 'tabMore'), dlg = await realDialog(page);
-      check(`(d3) refused, ${label} (${id}) → the More grid, no dialog`,
-        tab === 'tabMore' && open === null && !dlg && q(page.url()).open === 'tabMore' && (id !== 'moreAutomations' || hits.automationManager === 0),
-        `tab=${tab} panel=${open} dialog=${dlg} url=${page.url()} loads=${hits.automationManager}`);
+      const tab = await activeTab(page), open = await openPanelOf(page, tabId), dlg = await realDialog(page);
+      const swal = await page.evaluate(() => !!document.querySelector('.swal2-container'));
+      check(`(d3) refused, ${label} (${id}) → the ${tabId} grid, no dialog`,
+        tab === tabId && open === null && !dlg && !swal && q(page.url()).open === tabId && (id !== 'moreAutomations' || hits.automationManager === 0),
+        `tab=${tab} panel=${open} dialog=${dlg} swal=${swal} url=${page.url()} loads=${hits.automationManager}`);
       await ctx.close();
     }
     {

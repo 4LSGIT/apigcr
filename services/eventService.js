@@ -47,6 +47,7 @@ const gcal         = require('./gcalService');
 const taskService  = require('./taskService');
 const logService   = require('./logService');
 const emailService = require('./emailService');
+const shellLinks   = require('../lib/shellLinks');
 const { FIRM_TZ }  = require('./timezoneService');
 const { cfg }      = require('../lib/firmConfig');
 const { DateTime } = require('luxon');
@@ -2603,9 +2604,10 @@ function buildEventDigestEmail(recipientFName, eventsByDate, opts = {}) {
   // Every interpolated event field goes through htmlEscape(). This builder was
   // the last unescaped one in the family — taskService's buildDigestEmail was
   // escaped earlier and the note here claiming parity with it went stale.
-  // Escaped: titles, types, locations, entity names, dockets, links, the
-  // window label, the greeting name, and the <title>. NOT escaped: APP_URL and
-  // HEADER (config/literals), and the MIME subject returned by the caller.
+  // Escaped: titles, types, locations, entity names, dockets, links (each
+  // whole href, lib/shellLinks — the ?files= form carries '&'), the window
+  // label, the greeting name, and the <title>. NOT escaped: HEADER (a
+  // literal), and the MIME subject returned by the caller.
 
   function timeLabel(row) {
     const allDay = row.event_all_day === 1 || row.event_all_day === '1' || row.event_all_day === true;
@@ -2623,14 +2625,14 @@ function buildEventDigestEmail(recipientFName, eventsByDate, opts = {}) {
       const name = row.contact_name
         || (row.event_link_id != null ? `Contact #${row.event_link_id}` : '');
       if (!name) return '';
-      return `<a href="${APP_URL}?contact=${htmlEscape(row.event_link_id || '')}" `
+      return `<a href="${htmlEscape(shellLinks.contactLink(APP_URL, row.event_link_id))}" `
            + `style="color:${HEADER};text-decoration:none">${htmlEscape(name)}</a>`;
     }
     if (row.event_link_type === 'case') {
       const name = row.case_number_full || row.case_number
         || (row.event_link_id != null ? `Case ${row.event_link_id}` : '');
       if (!name) return '';
-      return `<a href="${APP_URL}?case=${htmlEscape(row.case_id || row.event_link_id || '')}" `
+      return `<a href="${htmlEscape(shellLinks.caseLink(APP_URL, row.case_id || row.event_link_id))}" `
            + `style="color:${HEADER};text-decoration:none">${htmlEscape(name)}</a>`;
     }
     if (row.event_link_type === 'case_number') {
@@ -2639,7 +2641,7 @@ function buildEventDigestEmail(recipientFName, eventsByDate, opts = {}) {
       const name = row.event_link_id || '';
       if (!name) return '';
       if (row.resolved_case_id) {
-        return `<a href="${APP_URL}?case=${htmlEscape(row.resolved_case_id)}" `
+        return `<a href="${htmlEscape(shellLinks.caseLink(APP_URL, row.resolved_case_id))}" `
              + `style="color:${HEADER};text-decoration:none">${htmlEscape(name)}</a>`;
       }
       return htmlEscape(name);

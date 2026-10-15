@@ -524,7 +524,7 @@ describe('portal_callback_reminder', () => {
     expect(body).toContain('Callback now: Test Client');
     expect(body).toContain('(248) 555-1212');
     expect(body).toContain('2:00–4:00 PM');
-    expect(body).toContain(`/?contact=${CONTACT_ID}`);
+    expect(body).toContain(`/?files=p${CONTACT_ID}&open=file:0`);   // the exact-id form (wsurl S-links)
   });
 
   test('email fallback when the assignee disallows SMS — hostile name escaped', async () => {

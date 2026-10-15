@@ -100,6 +100,7 @@ lib/routeFamilies.js
 lib/schemaDump.js
 lib/secretAtRest.js
 lib/sequenceEngine.js
+lib/shellLinks.js
 lib/signatureValidation.js
 lib/sqlGuard.js
 lib/ssrfGuard.js
@@ -1430,6 +1431,7 @@ tests/wsurlS0dApptParam.test.js
 tests/wsurlS1a.test.js
 tests/wsurlS1b.test.js
 tests/wsurlS2.test.js
+tests/wsurlSlinks.test.js
 tests/ycFrameFit.test.js
 tests/ycPager.test.js
 tests/ycSync.test.js
