@@ -1430,8 +1430,8 @@ requireAuth({can}) routes; the two Cloud Scheduler keys are route-scoped.
 Optional `api_keys.expires_at` (B6; NULL = never — every pre-B6 key and the
 infrastructure keys): an expired key is refused exactly like a revoked one
 (lookup → null → the JWT fall-through), and the 60s lookup cache re-checks
-the cached row's expiry on every hit, so only REVOCATION keeps the ≤60s
-cross-instance lag. Mint input `ttlMinutes` (the session-key mint's shape;
+the cached row's expiry on every hit, so only REVOCATION and edits keep the
+≤60s cross-instance lag. Mint input `ttlMinutes` (the session-key mint's shape;
 1 min–5 years, junk = 400, never a silent "never"). The api-keys pane's scope
 picker is served by the GET (`scope_vocabulary`: CAPABILITIES + route
 families walked from the live router, lib/routeFamilies); the POST stays the
@@ -1450,8 +1450,21 @@ parent on every request: parent revoked/missing/expired → 401
 `rejected_parent_revoked|expired`, no write to the child row; child scopes =
 `childEffectiveScopes` (own ∩ trio ∩ parent, per request). `req.auth` carries
 `parentKeyId` + `rootKeyId` — per-identity budgets (the IT-alert 10/h) key on
-rootKeyId. `ip_allowlist` is RETIRED (never enforced; mint 400s on it; column
+rootKeyId. A manager renews its own children (`POST …/children/:id/renew`).
+`ip_allowlist` is RETIRED (never enforced; mint 400s on it; column
 dropped post-deploy by stage 2 of scripts/accessD1ParentKey.js).
+
+**Editing scopes + expiry (D2, design §5.9).** SU: `PATCH
+/api/readonly-keys/:id {scopes}`, `POST /api/readonly-keys/:id/renew
+{ttlMinutes?}`, `PATCH /api/api-keys/:id {scopes}`, `POST
+/api/api-keys/:id/expiry {ttlMinutes}|{never:true}`. The mint's validators,
+reused; a revoked key is a 409 (terminal, no un-revoke); no key is ever set
+back to NULL scopes (legacy → scoped is the retrofit); adding
+sql.ro.sensitive needs ≤24h left; renew = now + ttl within the mint caps for
+the key's kind, 400 over (never clamped), works on an expired key, replies
+`expiresStamp`. Editing a parent never writes its children. Machine edits
+invalidateCache() locally; other instances ≤60s (old scopes / old expiry).
+Audited before/after.
 
 **Audit log.** jwt_api_audit_log stores SHAPES, never content
 (lib/auditShape; credential-named keys → [secret] with no length); URL/

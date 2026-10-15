@@ -1212,6 +1212,8 @@ tests/internal_functions.meta.test.js
 tests/jest.setup.js
 tests/keyDelegation.mysql.test.js
 tests/keyDelegation.test.js
+tests/keyEditRenew.mysql.test.js
+tests/keyEditRenew.test.js
 tests/keyExpiry.mysql.test.js
 tests/keyExpiryPicker.test.js
 tests/keyFormat.test.js

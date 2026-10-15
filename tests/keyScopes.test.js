@@ -173,8 +173,8 @@ function readonlyMounts() {
 describe('every readonly-key mount declares its surface', () => {
   const mounts = readonlyMounts();
 
-  test('the inventory: 16 mounts across the 8 files', () => {
-    expect(mounts).toHaveLength(16);
+  test('the inventory: 17 mounts across the 8 files', () => {
+    expect(mounts).toHaveLength(17);
     expect([...new Set(mounts.map(m => m.file))].sort()).toEqual(Object.keys(SURFACE_BY_FILE).sort());
   });
 
@@ -217,7 +217,7 @@ describe('every readonly-key mount declares its surface', () => {
     return { passed, res, req, db };
   }
 
-  test('a NULL-scopes (legacy) key passes every gate but the 3 keys.mint ones (explicit — D1)', async () => {
+  test('a NULL-scopes (legacy) key passes every gate but the 4 keys.mint ones (explicit — D1, D2 renew)', async () => {
     let refused = 0;
     for (const m of mounts) {
       const r = await throughGate(m, null);
@@ -226,7 +226,7 @@ describe('every readonly-key mount declares its surface', () => {
       expect({ at: `${m.method} ${m.path}`, passed: r.passed }).toEqual({ at: `${m.method} ${m.path}`, passed: want });
       expect(r.req.auth.scopes).toBeNull();
     }
-    expect(refused).toBe(3);
+    expect(refused).toBe(4);
   });
 
   test('a ["sql.ro"] key passes sql only; 403 NAMING the missing scope everywhere else, audited', async () => {

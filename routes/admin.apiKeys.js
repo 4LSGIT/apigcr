@@ -17,6 +17,15 @@
  *    the live router, lib/routeFamilies — so the page carries no copy)
  *   POST /api/api-keys/:id/revoke       — revoke external key (immediate on this
  *                                         instance; ≤60s on others via cache TTL)
+ *   PATCH /api/api-keys/:id   {scopes}   — replace a key's scopes (D2): full list,
+ *                                         the mint's rules; never back to NULL
+ *   POST /api/api-keys/:id/expiry {ttlMinutes} | {never:true}
+ *                                       — set / clear a key's expiry (D2), the
+ *                                         B6 mint rule; works on an expired key.
+ *                                         Both: 409 on a revoked key (terminal),
+ *                                         audited before/after, invalidateCache()
+ *                                         here, ≤60s on other instances
+ *                                         (lib/apiKeys CACHING)
  *   POST /api/api-keys/rotate-internal  — rotate the app-to-self key
  *   GET  /api/api-keys/internal/log     — usage log for the internal key
  *   GET  /api/api-keys/rejected         — app-wide 401s (no credential resolved);
@@ -278,6 +287,40 @@ router.post('/api/api-keys/:id/revoke', ...superuserOnlyFor(TOOL), async (req, r
     res.status(500).json({ status: 'error', message: 'Failed to revoke key' });
   }
 });
+
+// ── PATCH scopes / POST expiry (D2) ──────────────────────────────────────────
+// The internal yci_ key is not an api_keys row and is untouched by both.
+function editHandler(status, apply, shape) {
+  return async (req, res) => {
+    const id = parseInt(req.params.id, 10);
+    if (!Number.isInteger(id) || id < 1 || String(id) !== req.params.id) {
+      return res.status(400).json({ status: 'error', message: 'invalid id' });
+    }
+    try {
+      const { before, after } = await apply(req.db, id, req.body || {});
+      await auditAdminAction(req.db, {
+        ...reqMeta(req),
+        status,
+        details: { key_id: id, before: shape(before), after: shape(after) },
+      });
+      res.json({ status: 'success', id, before: shape(before), after: shape(after) });
+    } catch (err) {
+      if (err && [400, 404, 409].includes(err.status)) {
+        return res.status(err.status).json({ status: 'error', message: err.message });
+      }
+      console.error(`${req.method} ${req.originalUrl} error:`, err);
+      res.status(500).json({ status: 'error', message: 'Failed to update key' });
+    }
+  };
+}
+
+router.patch('/api/api-keys/:id', ...superuserOnlyFor(TOOL),
+  editHandler('scopes_edited', (db, id, body) => apiKeys.setScopes(db, id, body.scopes),
+    (scopes) => ({ scopes })));
+
+router.post('/api/api-keys/:id/expiry', ...superuserOnlyFor(TOOL),
+  editHandler('expiry_set', (db, id, body) => apiKeys.setExpiry(db, id, { ttlMinutes: body.ttlMinutes, never: body.never }),
+    (d) => ({ expires_at: d ? d.toISOString() : null })));
 
 // ── POST rotate internal ─────────────────────────────────────────────────────
 router.post('/api/api-keys/rotate-internal', ...superuserOnlyFor(TOOL), async (req, res) => {

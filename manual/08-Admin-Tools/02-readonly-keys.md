@@ -116,6 +116,7 @@ mints its own **child keys** — no trip back to this pane for each worker:
 | `POST /api/readonly-keys/children` `{ label, ttlMinutes?, scopes? }` | mint a child; returns `{ id, key, expiresAt, scopes }` — the key shown once |
 | `GET /api/readonly-keys/children` | list this key's own children |
 | `DELETE /api/readonly-keys/children/<id>` | revoke one of this key's own children |
+| `POST /api/readonly-keys/children/<id>/renew` `{ ttlMinutes? }` | give one of this key's own children a new expiry, within the child limits below |
 
 A child is always weaker than its parent:
 
@@ -125,7 +126,8 @@ A child is always weaker than its parent:
   refused, naming the scope. A child can never mint keys of its own.
 - **Lifetime**: at most 24 hours, and never past the manager key's own
   expiry. Leave `ttlMinutes` out to get the longer that allows; ask for more
-  and it is refused, not shortened.
+  and it is refused, not shortened. The same limits apply when a child is
+  renewed.
 - **Dies with its parent**: revoke the manager key (or let it expire) and
   every child stops working on its next request.
 - **Shares the parent's alert budget**: a manager and all its children
@@ -150,6 +152,24 @@ manager key.
   exposed.
 - **Per-key usage log** — see when and how a key has been used (`?limit`/
   `?offset`).
+- **Change a key's scopes** with the row's **scopes** button: the same
+  checkboxes, starting from what the key holds; saving replaces the whole
+  list. A key issued before scopes existed starts with everything it reaches
+  today ticked — once saved it is scoped for good. A child key's choices are
+  only `sql.ro`, `scratch` and `alert`. To add `sql.ro.sensitive`, the key
+  must have at most 24 hours left — renew it shorter first. Taking
+  `keys.mint` away from a manager key leaves its children working (they die
+  with it as before, and you can still revoke them here).
+- **Renew a key** with the row's **renew** button: a new lifetime counted
+  from now, within the same limits as when it was created (1 day by default
+  and at most 3; a sensitive key 4 hours by default and at most 24; a child at
+  most 24 hours and never past its manager key). Asking for more is refused,
+  not shortened. An expired key can be renewed — that brings it back. The
+  date stamp at the end of the key string doesn't change by itself; the
+  pane shows the new stamp, which the holder may paste over the old one (it's
+  only a hint either way).
+- **Revoked is final.** A revoked key can't be edited or renewed — issue a
+  new one.
 
 ## Guardrails
 

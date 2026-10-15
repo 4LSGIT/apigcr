@@ -8,7 +8,8 @@
   },
   {
    "name": "sql.ro.sensitive",
-   "desc": "read-only SQL may also read the sensitive tables (audit logs, AI calls, call transcripts); TTL-capped at mint"
+   "desc": "read-only SQL may also read the sensitive tables (audit logs, AI calls, call transcripts); TTL-capped at mint",
+   "explicit": true
   },
   {
    "name": "scratch",
@@ -20,7 +21,8 @@
   },
   {
    "name": "keys.mint",
-   "desc": "/api/readonly-keys/children — mint, list and revoke this key's own child keys (sql.ro/scratch/alert only, ≤24h, die with it)"
+   "desc": "/api/readonly-keys/children — mint, list and revoke this key's own child keys (sql.ro/scratch/alert only, ≤24h, die with it)",
+   "explicit": true
   },
   {
    "name": "temp.clio",
@@ -151,5 +153,15 @@
    "parent_revoked_at": null,
    "parent_expires_at": null
   }
- ]
+ ],
+ "child_scopes": [
+  "sql.ro",
+  "scratch",
+  "alert"
+ ],
+ "ttl": {
+  "max_minutes": 4320,
+  "default_minutes": 1440,
+  "child_max_minutes": 1440
+ }
 }

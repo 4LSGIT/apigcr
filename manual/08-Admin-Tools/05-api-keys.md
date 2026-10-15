@@ -28,7 +28,9 @@ every key minted before this field existed does, and what the infrastructure
 keys (the Cloud Scheduler jobs) should keep doing. Use it for a vendor trial or
 a one-off migration script: the key retires itself if nobody remembers to. The
 list shows each key's expiry (— for never) and marks a lapsed one **expired**.
-An expiry is set at mint; to change it, mint a new key and revoke the old.
+To change it later, use the row's **expiry** button: a number of days from
+now, or **never expires**. It works on an expired key too — that brings it
+back. It does not work on a revoked key: revocation is final.
 
 ### Scopes — what a key may reach
 
@@ -52,7 +54,14 @@ capability-gated ones; one doesn't stand in for the other. A scoped key that
 calls anything else gets a **403**, and the refusal shows in that key's usage
 log as `forbidden_scope`. Session-key scopes (`sql.ro`, `scratch`, …) are
 refused here — they belong to [Session Keys](02-readonly-keys.md).
-Scopes are set at mint; to change them, mint a new key and revoke the old.
+To change a key's scopes later, use the row's **scopes** button: the same
+picker, starting from what the key holds; saving replaces the whole list. An
+unscoped key can be scoped this way (it then stays scoped — there is no way
+back to unscoped), and a revoked key can't be edited at all.
+
+Scope and expiry changes, like revocation, apply at once on the instance you
+reach and within about 60 seconds on the others — so a key you've just
+brought back from expiry may still be refused for up to a minute.
 The internal key is never scoped.
 
 ### Rotating the internal key

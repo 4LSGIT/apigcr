@@ -1,7 +1,7 @@
 # Routes
 
-_Generated 2026-10-15T00:20:48.458Z_  
-_770 routes total — DELETE: 64, GET: 324, PATCH: 51, POST: 292, PUT: 36, _ALL: 3_
+_Generated 2026-10-15T00:56:02.739Z_  
+_775 routes total — DELETE: 64, GET: 324, PATCH: 53, POST: 295, PUT: 36, _ALL: 3_
 
 ## Global middleware chain
 
@@ -60,6 +60,8 @@ _770 routes total — DELETE: 64, GET: 324, PATCH: 51, POST: 292, PUT: 36, _ALL:
 | POST | `/api/alert/it` | `readonlyApiKeyAuth`, `keyScopeCheck` | — |
 | GET | `/api/api-keys` | `jwtOrApiKey`, `superuserCheck`, `elevationCheck`, `rateLimitMiddleware` | — |
 | POST | `/api/api-keys` | `jwtOrApiKey`, `superuserCheck`, `elevationCheck`, `rateLimitMiddleware` | — |
+| PATCH | `/api/api-keys/:id` | `jwtOrApiKey`, `superuserCheck`, `elevationCheck`, `rateLimitMiddleware` | — |
+| POST | `/api/api-keys/:id/expiry` | `jwtOrApiKey`, `superuserCheck`, `elevationCheck`, `rateLimitMiddleware` | — |
 | GET | `/api/api-keys/:id/log` | `jwtOrApiKey`, `superuserCheck`, `elevationCheck`, `rateLimitMiddleware` | — |
 | POST | `/api/api-keys/:id/revoke` | `jwtOrApiKey`, `superuserCheck`, `elevationCheck`, `rateLimitMiddleware` | — |
 | GET | `/api/api-keys/internal/log` | `jwtOrApiKey`, `superuserCheck`, `elevationCheck`, `rateLimitMiddleware` | — |
@@ -540,10 +542,13 @@ _770 routes total — DELETE: 64, GET: 324, PATCH: 51, POST: 292, PUT: 36, _ALL:
 | GET | `/api/readonly-keys` | `jwtOrApiKey`, `superuserCheck`, `elevationCheck`, `rateLimitMiddleware` | — |
 | POST | `/api/readonly-keys` | `jwtOrApiKey`, `superuserCheck`, `elevationCheck`, `rateLimitMiddleware` | — |
 | DELETE | `/api/readonly-keys/:id` | `jwtOrApiKey`, `superuserCheck`, `elevationCheck`, `rateLimitMiddleware` | — |
+| PATCH | `/api/readonly-keys/:id` | `jwtOrApiKey`, `superuserCheck`, `elevationCheck`, `rateLimitMiddleware` | — |
 | GET | `/api/readonly-keys/:id/log` | `jwtOrApiKey`, `superuserCheck`, `elevationCheck`, `rateLimitMiddleware` | — |
+| POST | `/api/readonly-keys/:id/renew` | `jwtOrApiKey`, `superuserCheck`, `elevationCheck`, `rateLimitMiddleware` | — |
 | GET | `/api/readonly-keys/children` | `readonlyApiKeyAuth`, `keyScopeCheck` | — |
 | POST | `/api/readonly-keys/children` | `readonlyApiKeyAuth`, `keyScopeCheck` | — |
 | DELETE | `/api/readonly-keys/children/:id` | `readonlyApiKeyAuth`, `keyScopeCheck` | — |
+| POST | `/api/readonly-keys/children/:id/renew` | `readonlyApiKeyAuth`, `keyScopeCheck` | — |
 | POST | `/api/readonly/sql` | `readonlyApiKeyAuth`, `keyScopeCheck` | — |
 | GET | `/api/redirects` | `jwtOrApiKey` | — |
 | POST | `/api/redirects` | `jwtOrApiKey` | — |
@@ -1040,4 +1045,4 @@ _770 routes total — DELETE: 64, GET: 324, PATCH: 51, POST: 292, PUT: 36, _ALL:
 
 ---
 
-_770 routes total — DELETE: 64, GET: 324, PATCH: 51, POST: 292, PUT: 36, _ALL: 3_
+_775 routes total — DELETE: 64, GET: 324, PATCH: 53, POST: 295, PUT: 36, _ALL: 3_

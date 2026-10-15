@@ -19,12 +19,26 @@
 //                                      vocabulary + the mint default (the UI picker)
 //   DELETE /api/readonly-keys/:id      revoke (sets revoked_at)
 //   GET    /api/readonly-keys/:id/log  ?limit=N&offset=N
+//   PATCH  /api/readonly-keys/:id      body { scopes } — full replace (D2)
+//   POST   /api/readonly-keys/:id/renew body { ttlMinutes? } (D2)
+//
+// EDIT + RENEW (access-control D2, ACCESS_CONTROL_DESIGN §5.9): scopes and
+// expiry are no longer frozen at mint. Both reuse the mint's rules (one copy,
+// below: sessionScopes / rootTtlMinutes / childExpiresAt / childScopesWithin).
+// Revocation is TERMINAL — every edit or renew of a revoked key is a 409; there
+// is no un-revoke. A key is never set back to NULL scopes (a legacy key may
+// leave NULL — the retrofit — never enter it). Adding sql.ro.sensitive needs
+// ≤24h left (renew shorter first). A child's scopes stay within the trio. Every
+// edit / renew is audited with before + after. Renew = now + ttl within the
+// mint caps for the key's kind, 400 over a cap (the mint itself still clamps an
+// ordinary over-long ask, as it always has), and works on an expired key.
 //
 // DELEGATION (access-control D1, ACCESS_CONTROL_DESIGN §5.8) — session-key
 // authed (X-Readonly-Api-Key) + requireKeyScope('keys.mint'):
 //   POST   /api/readonly-keys/children      body { label, ttlMinutes?, scopes? }
 //   GET    /api/readonly-keys/children      the caller's own children
 //   DELETE /api/readonly-keys/children/:id  revoke one of the caller's own children
+//   POST   /api/readonly-keys/children/:id/renew  { ttlMinutes? } renew one (D2)
 // A key holding keys.mint (SU-minted; explicit, so no legacy key holds it) mints
 // CHILD keys for the sessions it manages. Delegation adds identities, never power:
 //   - scopes ⊆ CHILD_SCOPES (sql.ro, scratch, alert) ∩ the parent's; omitted →
@@ -70,7 +84,7 @@ const express = require("express");
 const router  = express.Router();
 const { superuserOnlyFor, auditAdminAction } = require("../lib/auth.superuser");
 const { readonlyApiKeyAuth, requireKeyScope, hashKey } = require("../lib/auth.readonly");
-const { normalizeKeyScopes, KEY_SCOPES, CHILD_SCOPES, keyAllows } = require("../lib/capabilities");
+const { normalizeKeyScopes, KEY_SCOPES, CHILD_SCOPES, keyAllows, scopesFromColumn } = require("../lib/capabilities");
 const { randomBase62, KEY_BODY_LEN } = require("../lib/apiKeys");
 const { withTransaction } = require("../lib/withTransaction");
 
@@ -112,6 +126,116 @@ function generateSessionKey(expiresAt) {
   return { raw, keyHash: hashKey(raw), keyPrefix: raw.slice(0, 12) };
 }
 
+// ─── THE RULES (one copy — mint, edit and renew all call these; D2) ────
+// Each throws a Refusal carrying the HTTP status and body; the handlers only
+// translate. Revocation is TERMINAL: no edit or renew ever touches a revoked key.
+
+class Refusal extends Error {
+  constructor(status, body) { super(body.error); this.status = status; this.body = body; }
+}
+const send = (res, err) => res.status(err.status).json(err.body);
+const REVOKED = () => new Refusal(409, { error: "revoked keys stay revoked — mint a new one" });
+
+/** A session key's scope list (mint or edit): normalized; sensitive needs sql.ro. */
+function sessionScopes(list) {
+  let scopes;
+  try { scopes = normalizeKeyScopes(list); }
+  catch (err) { throw new Refusal(400, { error: err.message }); }
+  if (scopes.includes(SENSITIVE_SCOPE) && !scopes.includes("sql.ro")) {
+    throw new Refusal(400, { error: `${SENSITIVE_SCOPE} needs sql.ro too — it widens the SQL surface, it does not grant it` });
+  }
+  return scopes;
+}
+
+/**
+ * A ROOT session key's lifetime in minutes. Sensitive: ≤ 24h (default 4h), over
+ * = 400. Ordinary: default 1 day; over MAX_TTL_MINUTES the MINT clamps (its
+ * behaviour since before D2, kept) while a RENEW (strict) refuses — the D2
+ * ruling is "over a cap → 400, never a clamp". Strict also refuses junk, which
+ * the mint reads as "not given".
+ */
+function rootTtlMinutes(ttlMinutes, { sensitive, strict }) {
+  let given = false, requested;
+  if (strict) {
+    if (ttlMinutes !== undefined && ttlMinutes !== null) {
+      requested = Number(ttlMinutes);
+      if (!Number.isInteger(requested) || requested <= 0) {
+        throw new Refusal(400, { error: "ttlMinutes must be a positive whole number of minutes" });
+      }
+      given = true;
+    }
+  } else {
+    requested = parseInt(ttlMinutes, 10);
+    given = Number.isFinite(requested) && requested > 0;
+  }
+  if (sensitive) {
+    if (given && requested > SENSITIVE_MAX_TTL_MIN) {
+      throw new Refusal(400, {
+        error: `a ${SENSITIVE_SCOPE} key lives at most ${SENSITIVE_MAX_TTL_MIN} minutes (24h); asked for ${requested}`,
+        maxTtlMinutes: SENSITIVE_MAX_TTL_MIN,
+      });
+    }
+    return given ? requested : SENSITIVE_DEFAULT_TTL_MIN;
+  }
+  if (!given) return DEFAULT_TTL_MIN;
+  if (requested > MAX_TTL_MINUTES) {
+    if (strict) {
+      throw new Refusal(400, {
+        error: `a session key lives at most ${MAX_TTL_MINUTES} minutes (${MAX_TTL_DAYS} days); asked for ${requested}`,
+        maxTtlMinutes: MAX_TTL_MINUTES,
+      });
+    }
+    return MAX_TTL_MINUTES;
+  }
+  return requested;
+}
+
+/**
+ * A CHILD key's expiry (mint or renew): ≤ 24h AND ≤ its parent's; omitted →
+ * the smaller; over either → 400. Whole seconds (DATETIME would ROUND a
+ * fraction, which could carry a child a second past its parent).
+ */
+function childExpiresAt(ttlMinutes, parentExpMs, now = Date.now()) {
+  if (!(parentExpMs > now)) {
+    throw new Refusal(400, {
+      error: "the parent key has expired — a child cannot outlive it",
+      parentExpiresAt: Number.isFinite(parentExpMs) ? new Date(parentExpMs).toISOString() : null,
+    });
+  }
+  let expiresMs;
+  if (ttlMinutes === undefined || ttlMinutes === null) {
+    expiresMs = Math.min(now + CHILD_MAX_TTL_MIN * 60_000, parentExpMs);
+  } else {
+    const t = Number(ttlMinutes);
+    if (!Number.isInteger(t) || t <= 0) {
+      throw new Refusal(400, { error: "ttlMinutes must be a positive whole number of minutes" });
+    }
+    if (t > CHILD_MAX_TTL_MIN) {
+      throw new Refusal(400, { error: `a child key lives at most ${CHILD_MAX_TTL_MIN} minutes (24h); asked for ${t}`, maxTtlMinutes: CHILD_MAX_TTL_MIN });
+    }
+    expiresMs = now + t * 60_000;
+    if (expiresMs > parentExpMs) {
+      throw new Refusal(400, {
+        error: `a child key cannot outlive its parent — the parent expires ${new Date(parentExpMs).toISOString()}`,
+        parentExpiresAt: new Date(parentExpMs).toISOString(),
+      });
+    }
+  }
+  return new Date(Math.floor(expiresMs / 1000) * 1000);
+}
+
+/** A child's scopes must stay within the trio (and, at mint, within what the parent holds). */
+function childScopesWithin(scopes, allowed) {
+  const offending = scopes.filter(s => !allowed.includes(s));
+  if (offending.length) {
+    throw new Refusal(400, {
+      error: `scope(s) not delegable: ${offending.join(", ")} — a child key may hold only ${allowed.join(", ") || "nothing"} (${CHILD_SCOPES.join(", ")}${allowed.length < CHILD_SCOPES.length ? " that its parent holds" : ""})`,
+      offendingScopes: offending,
+      delegableScopes: allowed,
+    });
+  }
+}
+
 // ─── CHILD KEYS (D1) ─────────────────────────────────────────────────
 // Registered BEFORE the SU /:id routes (belt — the segment counts already differ).
 
@@ -137,10 +261,6 @@ function refuseChildCaller(req, res) {
   return true;
 }
 
-class ChildMintRefusal extends Error {
-  constructor(status, body) { super(body.error); this.status = status; this.body = body; }
-}
-
 router.post("/api/readonly-keys/children", readonlyApiKeyAuth, requireKeyScope("keys.mint"), async (req, res) => {
   const started = Date.now();
   if (refuseChildCaller(req, res)) return;
@@ -154,52 +274,23 @@ router.post("/api/readonly-keys/children", readonlyApiKeyAuth, requireKeyScope("
 
   // Scopes: ⊆ CHILD_SCOPES ∩ what the parent holds (req.auth.scopes — a root key's own).
   const delegable = CHILD_SCOPES.filter(s => keyAllows(req.auth, s));
-  let scopes;
-  if (scopesIn === undefined) {
-    if (!delegable.length) {
-      return res.status(400).json({ error: `this key holds none of ${CHILD_SCOPES.join(", ")} — nothing to delegate` });
+  let scopes, expiresAt;
+  try {
+    if (scopesIn === undefined) {
+      if (!delegable.length) {
+        throw new Refusal(400, { error: `this key holds none of ${CHILD_SCOPES.join(", ")} — nothing to delegate` });
+      }
+      scopes = delegable;
+    } else {
+      try { scopes = normalizeKeyScopes(scopesIn); }
+      catch (err) { throw new Refusal(400, { error: err.message, delegableScopes: delegable }); }
+      childScopesWithin(scopes, delegable);
     }
-    scopes = delegable;
-  } else {
-    try {
-      scopes = normalizeKeyScopes(scopesIn);
-    } catch (err) {
-      return res.status(400).json({ error: err.message, delegableScopes: delegable });
-    }
-    const offending = scopes.filter(s => !delegable.includes(s));
-    if (offending.length) {
-      return res.status(400).json({
-        error: `scope(s) not delegable: ${offending.join(", ")} — a child key may hold only ${delegable.join(", ") || "nothing"} (${CHILD_SCOPES.join(", ")} that this key holds)`,
-        offendingScopes: offending,
-        delegableScopes: delegable,
-      });
-    }
+    expiresAt = childExpiresAt(ttlMinutes, req.auth.expiresAt.getTime());
+  } catch (err) {
+    if (err instanceof Refusal) return send(res, err);
+    throw err;
   }
-
-  // Expiry: ≤ 24h and ≤ the parent's. Whole seconds (DATETIME would ROUND a
-  // fraction, which could carry a child a second past its parent).
-  const now = Date.now();
-  const parentExp = req.auth.expiresAt.getTime();
-  let expiresMs;
-  if (ttlMinutes === undefined || ttlMinutes === null) {
-    expiresMs = Math.min(now + CHILD_MAX_TTL_MIN * 60_000, parentExp);
-  } else {
-    const t = Number(ttlMinutes);
-    if (!Number.isInteger(t) || t <= 0) {
-      return res.status(400).json({ error: "ttlMinutes must be a positive whole number of minutes" });
-    }
-    if (t > CHILD_MAX_TTL_MIN) {
-      return res.status(400).json({ error: `a child key lives at most ${CHILD_MAX_TTL_MIN} minutes (24h); asked for ${t}`, maxTtlMinutes: CHILD_MAX_TTL_MIN });
-    }
-    expiresMs = now + t * 60_000;
-    if (expiresMs > parentExp) {
-      return res.status(400).json({
-        error: `a child key cannot outlive its parent — this key expires ${new Date(parentExp).toISOString()}`,
-        parentExpiresAt: new Date(parentExp).toISOString(),
-      });
-    }
-  }
-  const expiresAt = new Date(Math.floor(expiresMs / 1000) * 1000);
   const { raw, keyHash, keyPrefix } = generateSessionKey(expiresAt);
 
   let childId;
@@ -210,16 +301,16 @@ router.post("/api/readonly-keys/children", readonlyApiKeyAuth, requireKeyScope("
         `SELECT id, created_by, revoked_at, parent_key_id
            FROM readonly_api_keys WHERE id = ? FOR UPDATE`, [parentId]);
       if (!parent || parent.revoked_at) {
-        throw new ChildMintRefusal(401, { error: "Readonly API key revoked" });
+        throw new Refusal(401, { error: "Readonly API key revoked" });
       }
       if (parent.parent_key_id != null) {
-        throw new ChildMintRefusal(403, { error: "A child key cannot manage keys" });
+        throw new Refusal(403, { error: "A child key cannot manage keys" });
       }
       const [[{ n }]] = await conn.query(
         `SELECT COUNT(*) AS n FROM readonly_api_keys
           WHERE parent_key_id = ? AND created_at > NOW() - INTERVAL 1 HOUR`, [parentId]);
       if (Number(n) >= CHILD_MINTS_PER_HOUR) {
-        throw new ChildMintRefusal(429, {
+        throw new Refusal(429, {
           error: `Rate limit: ${CHILD_MINTS_PER_HOUR} child keys per rolling hour per parent key`,
           limit: CHILD_MINTS_PER_HOUR,
         });
@@ -232,7 +323,7 @@ router.post("/api/readonly-keys/children", readonlyApiKeyAuth, requireKeyScope("
       return r.insertId;
     });
   } catch (err) {
-    if (err instanceof ChildMintRefusal) {
+    if (err instanceof Refusal) {
       if (err.status === 429) {
         await childAudit(req, "rejected_child_rate_limit", { parentKeyId: parentId, limit: CHILD_MINTS_PER_HOUR }, started);
       }
@@ -296,6 +387,39 @@ router.delete("/api/readonly-keys/children/:id", readonlyApiKeyAuth, requireKeyS
   }
 });
 
+// A parent renews its OWN child (D2) within the child caps. A key is never its
+// own child, so a self-renew is the same 404 as a foreign or missing id.
+router.post("/api/readonly-keys/children/:id/renew", readonlyApiKeyAuth, requireKeyScope("keys.mint"), async (req, res) => {
+  const started = Date.now();
+  if (refuseChildCaller(req, res)) return;
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) {
+    return res.status(400).json({ error: "Invalid id" });
+  }
+  try {
+    const [[row]] = await req.db.query(
+      `SELECT id, expires_at, revoked_at FROM readonly_api_keys WHERE id = ? AND parent_key_id = ?`,
+      [id, req.auth.keyId]);
+    if (!row) throw new Refusal(404, { error: "Not found" });
+    if (row.revoked_at) throw REVOKED();
+    const expiresAt = childExpiresAt((req.body || {}).ttlMinutes, req.auth.expiresAt.getTime());
+    const [r] = await req.db.query(
+      `UPDATE readonly_api_keys SET expires_at = ?
+        WHERE id = ? AND parent_key_id = ? AND revoked_at IS NULL`, [expiresAt, id, req.auth.keyId]);
+    if (!r.affectedRows) throw REVOKED();
+    await childAudit(req, "child_renewed", {
+      parentKeyId: req.auth.keyId, childKeyId: id,
+      before: { expiresAt: new Date(row.expires_at).toISOString() },
+      after: { expiresAt: expiresAt.toISOString() },
+    }, started);
+    res.json({ ok: true, id, expiresAt: expiresAt.toISOString(), expiresStamp: stampExpiry(expiresAt) });
+  } catch (err) {
+    if (err instanceof Refusal) return send(res, err);
+    console.error("POST /api/readonly-keys/children/:id/renew error:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ─── CREATE ──────────────────────────────────────────────────────────
 router.post("/api/readonly-keys", ...superuserOnlyFor("readonlyKeys"), async (req, res) => {
   const started = Date.now();
@@ -309,29 +433,15 @@ router.post("/api/readonly-keys", ...superuserOnlyFor("readonlyKeys"), async (re
     return res.status(400).json({ error: "ipAllowlist is retired — it was never enforced; a session key is not IP-restricted" });
   }
 
-  let scopes;
+  let scopes, ttl;
   try {
-    scopes = scopesIn === undefined ? [...DEFAULT_SCOPES] : normalizeKeyScopes(scopesIn);
+    scopes = scopesIn === undefined ? [...DEFAULT_SCOPES] : sessionScopes(scopesIn);
+    ttl = rootTtlMinutes(ttlMinutes, { sensitive: scopes.includes(SENSITIVE_SCOPE), strict: false });
   } catch (err) {
-    return res.status(400).json({ error: err.message });
+    if (err instanceof Refusal) return send(res, err);
+    throw err;
   }
   const trimmedLabel = label.trim().slice(0, 255);
-
-  const requested = parseInt(ttlMinutes, 10);
-  const given = Number.isFinite(requested) && requested > 0;
-  const sensitive = scopes.includes(SENSITIVE_SCOPE);
-  if (sensitive && !scopes.includes("sql.ro")) {
-    return res.status(400).json({ error: `${SENSITIVE_SCOPE} needs sql.ro too — it widens the SQL surface, it does not grant it` });
-  }
-  if (sensitive && given && requested > SENSITIVE_MAX_TTL_MIN) {
-    return res.status(400).json({
-      error: `a ${SENSITIVE_SCOPE} key lives at most ${SENSITIVE_MAX_TTL_MIN} minutes (24h); asked for ${requested}`,
-      maxTtlMinutes: SENSITIVE_MAX_TTL_MIN,
-    });
-  }
-  const ttl = sensitive
-    ? (given ? requested : SENSITIVE_DEFAULT_TTL_MIN)
-    : (given ? Math.min(requested, MAX_TTL_MINUTES) : DEFAULT_TTL_MIN);
 
   // Must precede the key — the key carries this value as its suffix and the two have
   // to agree. Note ttl here is the *clamped* value, so an over-long request can't mint
@@ -411,11 +521,16 @@ router.get("/api/readonly-keys", ...superuserOnlyFor("readonlyKeys"), async (req
       ok: true, keys: rows, max_ttl_days: MAX_TTL_DAYS,
       // The picker's source (B3): the surface vocabulary and the default trio,
       // so the page never carries its own copy of either.
-      scope_vocabulary: Object.entries(KEY_SCOPES).map(([name, v]) => ({ name, desc: v.desc })),
+      // `explicit` (D2): what a legacy NULL key does NOT hold — the edit dialog's
+      // starting point for a retrofit is the legacy surface, i.e. the rest.
+      scope_vocabulary: Object.entries(KEY_SCOPES).map(([name, v]) => ({ name, desc: v.desc, ...(v.explicit ? { explicit: true } : {}) })),
       default_scopes: DEFAULT_SCOPES,
       // SEC-3: the sensitive scope and its mint cap, so the page renders the
       // box apart and caps the TTL field from the server's numbers.
       sensitive_scope: { name: SENSITIVE_SCOPE, max_ttl_minutes: SENSITIVE_MAX_TTL_MIN, default_ttl_minutes: SENSITIVE_DEFAULT_TTL_MIN },
+      // D2: the edit dialog's child picker and the renew dialog's caps.
+      child_scopes: CHILD_SCOPES,
+      ttl: { max_minutes: MAX_TTL_MINUTES, default_minutes: DEFAULT_TTL_MIN, child_max_minutes: CHILD_MAX_TTL_MIN },
     });
   } catch (err) {
     console.error("GET /api/readonly-keys error:", err);
@@ -462,6 +577,129 @@ router.delete("/api/readonly-keys/:id", ...superuserOnlyFor("readonlyKeys"), asy
   }
 });
 
+// ─── EDIT SCOPES / RENEW (D2) ────────────────────────────────────────
+// SU only. Revocation is terminal: a revoked key is a 409 on both. Neither
+// ever writes another row — editing a parent narrows (or, on its next edit,
+// re-widens) its children through D1's per-request intersection.
+
+async function loadForEdit(db, id) {
+  const [[row]] = await db.query(
+    `SELECT k.id, k.scopes, k.expires_at, k.revoked_at, k.parent_key_id,
+            p.expires_at AS parent_expires_at, p.revoked_at AS parent_revoked_at
+       FROM readonly_api_keys k
+       LEFT JOIN readonly_api_keys p ON p.id = k.parent_key_id
+      WHERE k.id = ?`, [id]);
+  if (!row) throw new Refusal(404, { error: "Not found" });
+  if (row.revoked_at) throw REVOKED();
+  return row;
+}
+
+const suAudit = (req, status, details, started) =>
+  auditAdminAction(req.db, {
+    tool: "readonlyKeys",
+    userId: req.auth.userId,
+    username: req.auth.username,
+    route: req.originalUrl,
+    method: req.method,
+    status,
+    durationMs: Date.now() - started,
+    ip: ipOf(req),
+    userAgent: req.headers["user-agent"] || "unknown",
+    details,
+  });
+
+const idParam = (req) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) throw new Refusal(400, { error: "Invalid id" });
+  return id;
+};
+
+// PATCH { scopes } — a FULL replacement. A legacy NULL key may be given scopes
+// (the retrofit); no key is ever set back to NULL.
+router.patch("/api/readonly-keys/:id", ...superuserOnlyFor("readonlyKeys"), async (req, res) => {
+  const started = Date.now();
+  try {
+    const id = idParam(req);
+    const { scopes: scopesIn } = req.body || {};
+    if (scopesIn === undefined || scopesIn === null) {
+      throw new Refusal(400, { error: "scopes is required — the full new list; a key is never set back to NULL (the legacy full surface)" });
+    }
+    const scopes = sessionScopes(scopesIn);
+    const row = await loadForEdit(req.db, id);
+    const before = scopesFromColumn(row.scopes);
+    if (row.parent_key_id != null) childScopesWithin(scopes, CHILD_SCOPES);
+
+    const hadSensitive = Array.isArray(before) && before.includes(SENSITIVE_SCOPE);
+    if (scopes.includes(SENSITIVE_SCOPE) && !hadSensitive) {
+      const leftMin = Math.ceil((new Date(row.expires_at).getTime() - Date.now()) / 60_000);
+      if (leftMin > SENSITIVE_MAX_TTL_MIN) {
+        throw new Refusal(400, {
+          error: `${SENSITIVE_SCOPE} needs a key with at most ${SENSITIVE_MAX_TTL_MIN} minutes (24h) left; this one has ${leftMin} — renew it shorter first: POST /api/readonly-keys/${id}/renew { ttlMinutes ≤ ${SENSITIVE_MAX_TTL_MIN} }`,
+          renewRoute: `/api/readonly-keys/${id}/renew`,
+          maxTtlMinutes: SENSITIVE_MAX_TTL_MIN,
+        });
+      }
+    }
+
+    const [r] = await req.db.query(
+      `UPDATE readonly_api_keys SET scopes = ? WHERE id = ? AND revoked_at IS NULL`, [JSON.stringify(scopes), id]);
+    if (!r.affectedRows) throw REVOKED();
+
+    const notes = [];
+    const hadMint = Array.isArray(before) && before.includes("keys.mint");
+    if (hadMint && !scopes.includes("keys.mint")) {
+      const [[{ n }]] = await req.db.query(
+        `SELECT COUNT(*) AS n FROM readonly_api_keys
+          WHERE parent_key_id = ? AND revoked_at IS NULL AND expires_at > NOW()`, [id]);
+      notes.push(`keys.mint removed: ${Number(n)} live child key(s) keep working, without a manager — `
+        + `they can no longer be renewed or revoked by this key, still die with it, and the SU can revoke them here`);
+    }
+    await suAudit(req, "scopes_edited", { key_id: id, before: { scopes: before }, after: { scopes } }, started);
+    res.json({ ok: true, id, scopes, before, ...(notes.length ? { notes } : {}) });
+  } catch (err) {
+    if (err instanceof Refusal) return send(res, err);
+    console.error("PATCH /api/readonly-keys/:id error:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST { ttlMinutes? } — new expires_at = now + ttl, within the MINT caps for
+// this key's kind (ordinary / sensitive / child); over a cap is a 400, never a
+// clamp. Works on an expired, unrevoked key. The key's advisory stamp goes
+// stale: the reply carries expiresStamp so the holder can rewrite its suffix.
+router.post("/api/readonly-keys/:id/renew", ...superuserOnlyFor("readonlyKeys"), async (req, res) => {
+  const started = Date.now();
+  try {
+    const id = idParam(req);
+    const { ttlMinutes } = req.body || {};
+    const row = await loadForEdit(req.db, id);
+    let expiresAt;
+    if (row.parent_key_id != null) {
+      if (row.parent_revoked_at) {
+        throw new Refusal(409, { error: "its parent key is revoked, so this child is dead for good — mint a new one" });
+      }
+      expiresAt = childExpiresAt(ttlMinutes, new Date(row.parent_expires_at).getTime());
+    } else {
+      const own = scopesFromColumn(row.scopes);
+      const ttl = rootTtlMinutes(ttlMinutes, { sensitive: Array.isArray(own) && own.includes(SENSITIVE_SCOPE), strict: true });
+      expiresAt = new Date(Math.floor((Date.now() + ttl * 60_000) / 1000) * 1000);
+    }
+    const [r] = await req.db.query(
+      `UPDATE readonly_api_keys SET expires_at = ? WHERE id = ? AND revoked_at IS NULL`, [expiresAt, id]);
+    if (!r.affectedRows) throw REVOKED();
+    await suAudit(req, "renewed", {
+      key_id: id,
+      before: { expires_at: new Date(row.expires_at).toISOString() },
+      after: { expires_at: expiresAt.toISOString() },
+    }, started);
+    res.json({ ok: true, id, expiresAt: expiresAt.toISOString(), expiresStamp: stampExpiry(expiresAt) });
+  } catch (err) {
+    if (err instanceof Refusal) return send(res, err);
+    console.error("POST /api/readonly-keys/:id/renew error:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ─── PER-KEY QUERY LOG ───────────────────────────────────────────────
 router.get("/api/readonly-keys/:id/log", ...superuserOnlyFor("readonlyKeys"), async (req, res) => {
   const id = Number(req.params.id);
@@ -494,3 +732,5 @@ module.exports.SENSITIVE_MAX_TTL_MIN = SENSITIVE_MAX_TTL_MIN;
 module.exports.SENSITIVE_DEFAULT_TTL_MIN = SENSITIVE_DEFAULT_TTL_MIN;
 module.exports.CHILD_MAX_TTL_MIN = CHILD_MAX_TTL_MIN;
 module.exports.CHILD_MINTS_PER_HOUR = CHILD_MINTS_PER_HOUR;
+// The shared rules (D2), for their unit tests.
+module.exports._rules = { Refusal, sessionScopes, rootTtlMinutes, childExpiresAt, childScopesWithin, stampExpiry };

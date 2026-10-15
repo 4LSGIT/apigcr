@@ -77,7 +77,7 @@
   }
   .pick-row { display: flex; gap: 8px; align-items: center; margin-top: 6px; }
   .pick-row select, .pick-row input { flex: 1 1 auto; min-width: 0; }
-  #routeCustom { font-family: ui-monospace, "SF Mono", Menlo, monospace; }
+  #routeCustom, #e-routeCustom { font-family: ui-monospace, "SF Mono", Menlo, monospace; }
   .chip {
     display: inline-flex; align-items: center; gap: 4px; max-width: 100%;
     background: var(--surface-2); border: 1px solid var(--border); border-radius: 12px;
@@ -114,6 +114,23 @@
   details.log-more > summary::-webkit-details-marker { display: none; }
   details.log-more > summary::before { content: "▸ "; }
   details.log-more[open] > summary::before { content: "▾ "; }
+  /* Edit / expiry dialog (D2) — an in-pane overlay; this page loads no
+     style.css, so nothing outranks these rules. Width capped to the viewport
+     so it never widens the page at phone width. */
+  .dlg-backdrop {
+    position: fixed; inset: 0; z-index: 20; display: flex; align-items: flex-start;
+    justify-content: center; padding: 32px 12px; overflow-y: auto;
+    background: rgba(0, 0, 0, 0.45);
+  }
+  .dlg {
+    background: var(--surface); color: var(--text); border: 1px solid var(--border);
+    border-radius: 6px; padding: 14px; width: 100%; max-width: 480px; min-width: 0;
+  }
+  .dlg h3 { margin: 0 0 8px; font-size: 14px; }
+  .notice {
+    border: 1px solid var(--border); background: var(--surface-2); border-radius: 4px;
+    padding: 6px 8px; font-size: 11px; line-height: 1.5; margin: 8px 0; word-break: break-word;
+  }
   .banner {
     border: 1px solid var(--warn); background: var(--warn-soft);
     color: var(--warn-on-soft); border-radius: 4px; padding: 6px 8px;
@@ -199,8 +216,22 @@
     "Last used" updates at most every 5 minutes per key — it's the instrument
     for retiring a caller: swap its key, watch the old one go quiet, revoke.
     Revocation applies immediately on the instance you hit and within ~60s on
-    the rest.
+    the rest; so do scope and expiry edits. A revoked key stays revoked — edit
+    and expiry act only on unrevoked keys.
   </p>
+  <div id="noticeArea"></div>
+</div>
+
+<!-- ── Edit dialog (D2) ─────────────────────────────────────── -->
+<div class="dlg-backdrop" id="dlg" style="display:none;" onclick="if (event.target === this) closeDlg()">
+  <div class="dlg" role="dialog" aria-modal="true" aria-labelledby="dlgTitle">
+    <h3 id="dlgTitle"></h3>
+    <div id="dlgBody"></div>
+    <div class="row" style="margin-top:10px;">
+      <button id="dlgOk">Save</button>
+      <button class="ghost" onclick="closeDlg()">Cancel</button>
+    </div>
+  </div>
 </div>
 
 <!-- ── Usage log ────────────────────────────────────────────── -->
@@ -298,6 +329,7 @@
         const revoked = !!row.revoked_at;
         const expired = !revoked && !!row.expires_at && new Date(row.expires_at).getTime() <= Date.now();
         const status = revoked ? "revoked" : expired ? "expired" : "active";
+        rowsById[row.id] = row;
         return `
           <tr class="${revoked || expired ? "revoked" : ""}">
             <td>${row.id}</td>
@@ -310,7 +342,9 @@
             <td><span class="badge ${status}">${status}</span></td>
             <td>
               <button class="ghost" style="font-size:11px;padding:2px 6px;" onclick="viewLog(${row.id}, '${esc(row.label).replace(/'/g, "\\'")}')">log</button>
-              ${revoked ? "" : `<button class="danger" style="font-size:11px;padding:2px 6px;" onclick="revokeKey(${row.id}, '${esc(row.label).replace(/'/g, "\\'")}')">revoke</button>`}
+              ${revoked ? "" : `<button class="ghost edit-btn" style="font-size:11px;padding:2px 6px;" onclick="openScopes(${row.id})">scopes</button>
+              <button class="ghost expiry-btn" style="font-size:11px;padding:2px 6px;" onclick="openExpiry(${row.id})">expiry</button>
+              <button class="danger" style="font-size:11px;padding:2px 6px;" onclick="revokeKey(${row.id}, '${esc(row.label).replace(/'/g, "\\'")}')">revoke</button>`}
             </td>
           </tr>
         `;
@@ -327,45 +361,74 @@
   // body.scopes = ["route:/<path>", "<capability>", …]. The server is the
   // judge (lib/apiKeys machineKeyScopes); the free-text check below only
   // catches typos before a round trip.
+  //
+  // ONE picker, two instances (D2): the create form's (static markup, the ids
+  // below) and the edit dialog's (pickerHtml("e"), rendered on open). Each
+  // instance is a state object; the functions take its name, defaulting to the
+  // create form so the form's own onclicks stay as they were.
   const ROUTE_PATH = /^\/[A-Za-z0-9._~-][A-Za-z0-9._~\/-]*$/;
   let pickerBuilt = false;
-  const routeScopes = [];   // paths, in the order added
+  let vocabCache = null;
+  const routeScopes = [];   // the create picker's paths, in the order added
+  const PICKERS = {
+    create: { routes: routeScopes, box: "cap-box", cap: "capPicker", fam: "routeFamily", custom: "routeCustom", chips: "routeChips" },
+    edit:   { routes: [], box: "ecap-box", cap: "e-capPicker", fam: "e-routeFamily", custom: "e-routeCustom", chips: "e-routeChips" },
+  };
+  const capBoxes = (vocab, cls, checked = []) => (vocab.capabilities || []).map(c =>
+    `<label title="${esc(c.desc)}"><input type="checkbox" class="${cls}" value="${esc(c.name)}"${checked.includes(c.name) ? " checked" : ""}> <code>${esc(c.name)}</code></label>`).join("");
+  const familyOptions = (vocab) => (vocab.route_families || []).map(f => `<option value="${esc(f)}">${esc(f)}</option>`).join("");
   function buildPicker(vocab) {
     if (pickerBuilt || !vocab) return;
     pickerBuilt = true;
-    document.getElementById("capPicker").insertAdjacentHTML("beforeend", (vocab.capabilities || []).map(c =>
-      `<label title="${esc(c.desc)}"><input type="checkbox" class="cap-box" value="${esc(c.name)}"> <code>${esc(c.name)}</code></label>`).join(""));
-    document.getElementById("routeFamily").insertAdjacentHTML("beforeend", (vocab.route_families || []).map(f =>
-      `<option value="${esc(f)}">${esc(f)}</option>`).join(""));
+    vocabCache = vocab;
+    document.getElementById("capPicker").insertAdjacentHTML("beforeend", capBoxes(vocab, "cap-box"));
+    document.getElementById("routeFamily").insertAdjacentHTML("beforeend", familyOptions(vocab));
   }
-  function renderChips() {
-    document.getElementById("routeChips").innerHTML = routeScopes.map((p, i) =>
-      `<span class="chip">route:${esc(p)}<button title="Remove" onclick="removeRoute(${i})">×</button></span>`).join("");
+  // The dialog's copy of the create form's picker markup.
+  function pickerHtml(vocab, checkedCaps) {
+    return `
+      <div class="scope-row" id="e-capPicker"><span class="muted">Capabilities:</span>${capBoxes(vocab, "ecap-box", checkedCaps)}</div>
+      <div class="pick-row">
+        <select id="e-routeFamily" aria-label="Route family"><option value="">Route family…</option>${familyOptions(vocab)}</select>
+        <button class="ghost" onclick="addRouteFamily('edit')">Add</button>
+      </div>
+      <div class="pick-row">
+        <input id="e-routeCustom" spellcheck="false" aria-label="Narrower route" placeholder="Narrower route, e.g. /process-jobs/run">
+        <button class="ghost" onclick="addRouteCustom('edit')">Add</button>
+      </div>
+      <div class="scope-row" id="e-routeChips"></div>`;
   }
-  function addRoute(p) {
-    if (!routeScopes.includes(p)) routeScopes.push(p);
-    renderChips();
+  function renderChips(name = "create") {
+    const pk = PICKERS[name];
+    document.getElementById(pk.chips).innerHTML = pk.routes.map((p, i) =>
+      `<span class="chip">route:${esc(p)}<button title="Remove" onclick="removeRoute(${i}, '${name}')">×</button></span>`).join("");
   }
-  function removeRoute(i) { routeScopes.splice(i, 1); renderChips(); }
-  function addRouteFamily() {
-    const sel = document.getElementById("routeFamily");
-    if (sel.value) addRoute(sel.value);
+  function addRoute(p, name = "create") {
+    const pk = PICKERS[name];
+    if (!pk.routes.includes(p)) pk.routes.push(p);
+    renderChips(name);
+  }
+  function removeRoute(i, name = "create") { PICKERS[name].routes.splice(i, 1); renderChips(name); }
+  function addRouteFamily(name = "create") {
+    const sel = document.getElementById(PICKERS[name].fam);
+    if (sel.value) addRoute(sel.value, name);
     sel.value = "";
   }
-  function addRouteCustom() {
-    const el = document.getElementById("routeCustom");
+  function addRouteCustom(name = "create") {
+    const el = document.getElementById(PICKERS[name].custom);
     const v = el.value.trim().replace(/^route:/, "");
     if (!v) return;
     if (!ROUTE_PATH.test(v) || v.includes("..") || v.includes("//")) {
       alert("Not a route: " + v + "\nA path like /process-jobs or /api/cases/import — letters, digits and . _ ~ - / only.");
       return;
     }
-    addRoute(v);
+    addRoute(v, name);
     el.value = "";
   }
-  function pickedScopes() {
-    const caps = [...document.querySelectorAll(".cap-box")].filter(b => b.checked).map(b => b.value);
-    return [...routeScopes.map(p => "route:" + p), ...caps];
+  function pickedScopes(name = "create") {
+    const pk = PICKERS[name];
+    const caps = [...document.querySelectorAll("." + pk.box)].filter(b => b.checked).map(b => b.value);
+    return [...pk.routes.map(p => "route:" + p), ...caps];
   }
   // Expiry: whole days in the field, minutes on the wire (ttlMinutes — the
   // session-key mint's shape). Blank = never.
@@ -422,6 +485,84 @@
       () => { v.style.outline = "1px solid var(--ok)"; setTimeout(() => v.style.outline = "", 600); },
       () => alert("Copy failed — select and copy manually.")
     );
+  }
+
+  // ── edit scopes / expiry (D2) ─────────────────────────────────────────────
+  // The server is the judge (lib/apiKeys setScopes / setExpiry — the mint's
+  // own rules); a revoked row offers neither (revocation is terminal).
+  const rowsById = {};
+  function openDlg(title, bodyHtml, onSave) {
+    document.getElementById("dlgTitle").textContent = title;
+    document.getElementById("dlgBody").innerHTML = bodyHtml;
+    document.getElementById("dlgOk").onclick = onSave;
+    document.getElementById("dlg").style.display = "";
+  }
+  function closeDlg() {
+    document.getElementById("dlg").style.display = "none";
+    document.getElementById("dlgBody").innerHTML = "";
+  }
+  function notice(html) { document.getElementById("noticeArea").innerHTML = `<div class="notice">${html}</div>`; }
+
+  function openScopes(id) {
+    const row = rowsById[id];
+    if (!row || !vocabCache) return;
+    const cur = Array.isArray(row.scopes) ? row.scopes : [];
+    const pk = PICKERS.edit;
+    pk.routes.length = 0;
+    for (const sc of cur) if (sc.startsWith("route:")) pk.routes.push(sc.slice("route:".length));
+    const legacy = row.scopes == null
+      ? `<div class="warn-text">This key is unscoped: it reaches every route and capability. Saving a list scopes it for good — a key never goes back to unscoped.</div>`
+      : "";
+    openDlg(`Scopes — key #${row.id} "${row.label}"`, legacy + pickerHtml(vocabCache, cur) +
+      `<div class="muted" style="margin-top:6px;">The whole list is replaced. Other instances pick the change up within ~60s.</div>`,
+      () => saveScopes(id));
+    renderChips("edit");
+  }
+  async function saveScopes(id) {
+    const scopes = pickedScopes("edit");
+    if (!scopes.length) { alert("Pick at least one route or capability — a key is never set back to unscoped."); return; }
+    try {
+      const data = await P.apiSend(`/api/api-keys/${id}`, "PATCH", { scopes });
+      closeDlg();
+      notice(`Key #${id}: scopes now ${esc((data.after.scopes || []).join(", "))}.`);
+      load();
+    } catch (err) {
+      alert("Edit failed: " + err.message);
+    }
+  }
+
+  function openExpiry(id) {
+    const row = rowsById[id];
+    if (!row) return;
+    openDlg(`Expiry — key #${row.id} "${row.label}"`, `
+      <div class="muted">Now: ${row.expires_at ? fmtDate(row.expires_at) : "never expires"}. Works on an expired key too.</div>
+      <div class="pick-row">
+        <input id="expDays" type="number" min="1" step="1" inputmode="numeric" aria-label="Expires in days" placeholder="Expires in days from now">
+      </div>
+      <label class="muted" style="display:inline-flex;gap:4px;align-items:center;margin-top:6px;">
+        <input type="checkbox" id="expNever"> never expires
+      </label>`, () => saveExpiry(id));
+  }
+  async function saveExpiry(id) {
+    const never = document.getElementById("expNever").checked;
+    const raw = document.getElementById("expDays").value.trim();
+    let body;
+    if (never) {
+      if (raw) { alert("Either a number of days or never — not both."); return; }
+      body = { never: true };
+    } else {
+      const d = Number(raw);
+      if (!raw || !Number.isInteger(d) || d < 1) { alert("Expiry must be a whole number of days, or tick never."); return; }
+      body = { ttlMinutes: d * 1440 };
+    }
+    try {
+      const data = await P.apiSend(`/api/api-keys/${id}/expiry`, "POST", body);
+      closeDlg();
+      notice(`Key #${id}: ${data.after.expires_at ? "expires " + fmtDate(data.after.expires_at) : "never expires"}.`);
+      load();
+    } catch (err) {
+      alert("Expiry change failed: " + err.message);
+    }
   }
 
   async function revokeKey(id, label) {

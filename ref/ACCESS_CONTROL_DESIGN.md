@@ -8,7 +8,7 @@ Manager state: scratch `fred/access_control_state`. Coordination:
 
 Every claim in §1–§5.7 verified 2026-10-14 against the live DB (RO key) and
 actual source — including where it contradicts the arc's boot prompt. Later
-additions carry their own date (§5.8: 2026-10-15, source + the 8.4 twin).
+additions carry their own date (§5.8, §5.9: 2026-10-15, source + the 8.4 twin).
 
 ---
 
@@ -573,6 +573,51 @@ dropped by stage 2 of the same script — AFTER the deploy, the reverse of
 stage 1, because the pre-D1 backend's mint and list name it. Session keys
 are not IP-restricted; if that is ever wanted, it is a new, enforced design.
 
+### 5.9 Editing scopes and expiry (D2, Fred's go 2026-10-15)
+
+A key's scopes and expiry are no longer frozen at mint. **Revocation stays
+terminal**: every edit or renew of a revoked key is a 409 ("revoked keys stay
+revoked — mint a new one"), and there is no un-revoke anywhere. No schema
+change. Every edit / renew lands in admin_audit_log with BEFORE and AFTER
+(tool = the pane's tag: `readonlyKeys` / `api_keys`), never the plaintext.
+
+- **One copy of the rules.** Edit and renew call the mint's own validators —
+  session keys: `sessionScopes` / `rootTtlMinutes` / `childExpiresAt` /
+  `childScopesWithin` (routes/api.readonlyKeys.js); machine keys:
+  `machineKeyScopes` / `machineKeyExpiry` (lib/apiKeys). An unknown scope is
+  a 400. **Legacy is a state you leave, never enter**: a NULL-scopes key may
+  be given scopes (the retrofit); no key is ever set back to NULL.
+- **Session keys** (SU): `PATCH /api/readonly-keys/:id {scopes}` — a full
+  replace. Adding `sql.ro.sensitive` to a key with more than 24h left is a
+  400 that names the renew route (renew shorter first). A child's scopes
+  stay within the trio. Editing a parent never writes its children: D1's
+  per-request intersection narrows them; removing `keys.mint` leaves them
+  alive without a manager (the reply says how many), still dying with it.
+  `POST /api/readonly-keys/:id/renew {ttlMinutes?}` — now + ttl within the
+  MINT caps for the key's kind (ordinary ≤ 3d default 1d, sensitive ≤ 24h
+  default 4h, child ≤ 24h and ≤ the parent, default the smaller); over a cap
+  is a 400, never a clamp (the mint itself still clamps an ordinary over-long
+  ask, as it always has). Works on an expired key; a child of a revoked
+  parent is a 409 (dead for good).
+- **A manager renews its own children**: `POST
+  /api/readonly-keys/children/:id/renew` (keys.mint) within the child caps.
+  Foreign, missing or its own id → 404; a child can renew nothing.
+- **The advisory stamp** in a renewed key's plaintext goes stale; renew
+  replies carry `expiresStamp` so the holder can rewrite its suffix. The DB
+  is the truth, as ever.
+- **Machine keys** (SU): `PATCH /api/api-keys/:id {scopes}` (B2 rules) and
+  `POST /api/api-keys/:id/expiry {ttlMinutes} | {never:true}` (B6 rules;
+  exactly one — an omitted ttl is a 400, never a silent "never"). Both call
+  invalidateCache() on the serving instance; other instances converge within
+  the 60s lookup cache, like revocation — including the OLD expiry the cache
+  carries, so a key renewed after it lapsed may stay refused there ≤60s.
+  The internal `yci_` key is out of scope.
+- **Panes**: per-row "scopes" and "renew" / "expiry" dialogs (the existing
+  pickers, server-fed), never on a revoked row nor — in the session pane — a
+  child of a dead parent. A child's picker is the trio; a legacy key's
+  dialog starts from its legacy surface, so saving unchanged changes nothing.
+- Keys are not a sync-bus entity (no yc-sync MATCHER covers either family).
+
 ### 5.6 Slice plan — Phase B (post-ratification)
 
 - **B1** `scopes` column (both tables, one migration) + `keyAllows()` +
@@ -586,10 +631,13 @@ are not IP-restricted; if that is ever wanted, it is a new, enforced design.
 - **B6** (shipped 2026-10-15, post-close addendum): machine-key scope
   picker (server-fed; live router walk for route families, bare /api
   never offered) + optional api_keys.expires_at (NULL = never; cache
-  re-checks expiry every hit; mint-only, junk TTL refused).
+  re-checks expiry every hit; set at mint, editable since D2, junk TTL
+  refused).
 - **D1** (2026-10-15) Delegated session keys — `keys.mint`, the /children
   endpoints, the auth-time cascade, root-keyed alert budget (§5.8); plus
   the ip_allowlist retirement. Migration in two stages around the deploy.
+- **D2** (2026-10-15) Edit scopes + renew expiry on both key families
+  (§5.9). No schema change.
 - **B4** Secrets: hooks.auth_config + credentials.config secret values
   encrypted at rest (code first, then the data script — §5.5);
   pre-commit secret scan. (Hygiene sitting rides whenever Fred has 10
