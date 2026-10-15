@@ -272,6 +272,32 @@
   .grants-box .check { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; cursor: pointer; white-space: nowrap; }
   .grants-box .yc-hint { display: block; font-size: var(--fs-xs); color: var(--text-muted); margin-top: 6px; line-height: 1.45; }
   .badge.off { background: var(--surface-2); color: var(--text-muted); }
+
+  /* ── Do-not-transcribe list (comms archive R9) — a dialog that fits a phone ──
+     .yc-flabel / .yc-hint: the shared label / hint look (AI_CONTEXT §12),
+     declared here because style.css and scripts.js don't load on this pane. */
+  #noTxDialog { min-width: 0; width: min(680px, calc(100vw - 24px)); max-width: calc(100vw - 24px); }
+  #noTxDialog .yc-flabel { display: block; font-size: var(--fs-sm); font-weight: 700; color: var(--text); margin: 0 0 4px; }
+  #noTxDialog .yc-hint { display: block; font-size: var(--fs-xs); font-weight: 400; color: var(--text-muted); margin: 0 0 12px; line-height: 1.45; }
+  #noTxDialog .notx-add { display: flex; flex-wrap: wrap; gap: 8px 10px; align-items: flex-end; }
+  #noTxDialog .notx-add .f { display: flex; flex-direction: column; min-width: 0; }
+  #noTxDialog .notx-add .f-phone { flex: 1 1 130px; }
+  #noTxDialog .notx-add .f-note { flex: 3 1 170px; }
+  #noTxDialog .notx-add .f-by { flex: 1 1 140px; }
+  #noTxDialog .notx-add select {
+    width: 100%; padding: 6px 8px; background: var(--page-bg); color: var(--text);
+    border: 1px solid var(--border); border-radius: 4px; font-size: 12px; font-family: inherit;
+  }
+  #noTxDialog .notx-scroll { overflow: auto; max-height: 45vh; margin-top: 12px; }
+  #noTxDialog table.list tbody tr { cursor: default; }
+  #noTxDialog table.list td.notx-note { overflow-wrap: anywhere; min-width: 9em; }   /* the table scrolls in its box before a note goes one letter wide */
+  #noTxDialog table.list td.notx-num { white-space: nowrap; }
+  #noTxDialog table.list th.notx-xcol { width: 34px; }
+  #noTxDialog .notx-x {
+    background: var(--surface-2); color: var(--text-muted); border: 1px solid var(--border);
+    border-radius: 4px; padding: 2px 7px; font-size: 11px; cursor: pointer;
+  }
+  #noTxDialog .notx-x:hover { border-color: var(--danger); color: var(--danger); }
 </style>
 </head>
 <body>
@@ -381,6 +407,39 @@
   <div class="actions">
     <button class="btn" id="phoneTestSmsCancel">Cancel</button>
     <button class="btn primary" id="phoneTestSmsSend">Send Test</button>
+  </div>
+</dialog>
+
+<dialog id="noTxDialog">
+  <h3>Do-not-transcribe numbers</h3>
+  <span class="yc-hint">Calls with a listed number are still archived and playable, but are not sent for transcription,
+    so they get no AI summary either (a voicemail can still show the phone provider's own transcript).
+    Adding a number does not touch transcripts that already exist, and those are still summarised; to hide or delete one,
+    Restrict or Purge the call. Removing a number lets future calls be transcribed; calls already skipped stay skipped.</span>
+  <div class="notx-add">
+    <div class="f f-phone">
+      <label class="yc-flabel" for="noTxPhone">Phone</label>
+      <input id="noTxPhone" type="text" maxlength="20" inputmode="tel" autocomplete="off" placeholder="2485551234">
+    </div>
+    <div class="f f-note">
+      <label class="yc-flabel" for="noTxNote">Reason</label>
+      <input id="noTxNote" type="text" maxlength="255" autocomplete="off" placeholder="(optional)">
+    </div>
+    <div class="f f-by">
+      <label class="yc-flabel" for="noTxBy">Requested by</label>
+      <select id="noTxBy"></select>
+    </div>
+    <button class="btn primary" id="noTxAdd" type="button">Add</button>
+  </div>
+  <div class="result" id="noTxMsg"></div>
+  <div class="notx-scroll">
+    <table class="list">
+      <thead><tr><th class="notx-xcol"></th><th>Phone</th><th>Note</th><th>Requested by</th></tr></thead>
+      <tbody id="noTxBody"></tbody>
+    </table>
+  </div>
+  <div class="actions">
+    <button class="btn" id="noTxClose" type="button">Close</button>
   </div>
 </dialog>
 
@@ -2213,6 +2272,7 @@ function renderPhoneList() {
     <div class="list-header">
       <h2>Phone Lines</h2>
       <div class="right">
+        <button class="btn" id="phone-notx" title="Numbers whose calls are archived but never transcribed">Do-not-transcribe</button>
         <button class="btn primary" id="phone-new">+ Add Line</button>
       </div>
     </div>
@@ -2235,6 +2295,7 @@ function renderPhoneList() {
     <div id="phone-grants-host"></div>
   `;
 
+  E('phone-notx').addEventListener('click', () => openNoTx());
   E('phone-new').addEventListener('click', () => openPhoneEditor(null));
   host.querySelectorAll('tr[data-id]').forEach(tr => {
     tr.addEventListener('click', e => {
@@ -2880,6 +2941,132 @@ E('phoneTestSmsSend').addEventListener('click', async () => {
     btn.textContent = 'Send Test';
   }
 });
+
+// ── Do-not-transcribe list (comms archive, design §0 R9 / P6) ─
+//
+// comms_no_transcribe through /api/comms-archive/no-transcribe
+// (routes/api.commsArchive.js — staff JWT + archive admin: SU, or listed in
+// comms_archive_admins; the server is the gate). This page is SU-only and SU
+// is always an archive admin, so the button needs no gate of its own; a 403
+// from the list would show in the dialog. Add and ✕ act at once (✕ asks
+// first) — the dialog holds nothing unsaved, so Close loses nothing.
+// "Requested by" = who asked (any active staff member, default the signed-in
+// admin); the audit row records who added it. Not a sync-bus entity: the
+// dialog repaints from each response.
+
+const noTx = { entries: [], busy: false };
+
+function noTxPhone(p) {
+  return p && /^\d{10}$/.test(p) ? `(${p.slice(0, 3)}) ${p.slice(3, 6)}-${p.slice(6)}` : (p || '—');
+}
+
+function noTxMsg(text, kind = '') {
+  const el = E('noTxMsg');
+  el.className = 'result' + (kind ? ' ' + kind : '');
+  el.textContent = text || '';
+}
+
+/**
+ * Active staff (the D3 picker rule: firmData `user_type && active !== false`), the signed-in user selected.
+ * When the signed-in user is not among them (firmData not loaded, or no `user`), a leading "Me" option
+ * with an empty value is selected instead: no requested_by is sent and the server records the caller.
+ */
+function noTxRenderPicker() {
+  const sel = E('noTxBy');
+  const me = P?.firmData?.currentUser?.user;
+  const staff = ((P && P.firmData && P.firmData.users) || []).filter(u => u.user_type && u.active !== false);
+  const meListed = me != null && staff.some(u => String(u.user) === String(me));
+  sel.innerHTML = (meListed ? '' : '<option value="">Me</option>')
+    + staff.map(u => `<option value="${esc(u.user)}">${esc(u.user_name || ('user ' + u.user))}</option>`).join('');
+  sel.value = meListed ? String(me) : '';
+}
+
+function noTxRenderList({ loading = false } = {}) {
+  const body = E('noTxBody');
+  if (loading) { body.innerHTML = '<tr class="empty-row"><td colspan="4">Loading…</td></tr>'; return; }
+  if (!noTx.entries.length) { body.innerHTML = '<tr class="empty-row"><td colspan="4">No numbers on the list.</td></tr>'; return; }
+  body.innerHTML = noTx.entries.map(e => {
+    const who = e.created_by_name || (e.created_by != null ? `user #${e.created_by}` : '—');
+    return `<tr data-id="${esc(e.id)}">
+      <td><button class="notx-x" type="button" data-id="${esc(e.id)}" title="Remove" aria-label="Remove ${esc(noTxPhone(e.phone))}">✕</button></td>
+      <td class="notx-num">${esc(noTxPhone(e.phone))}</td>
+      <td class="notx-note">${esc(e.note || '')}</td>
+      <td>${esc(who)}</td>
+    </tr>`;
+  }).join('');
+}
+
+async function noTxLoad() {
+  try {
+    const r = await P.apiSend('/api/comms-archive/no-transcribe');
+    noTx.entries = Array.isArray(r && r.entries) ? r.entries : [];
+  } catch (err) {
+    noTx.entries = [];
+    noTxMsg(`Couldn't load the list: ${err.message}`, 'err');
+  }
+  noTxRenderList();
+}
+
+async function openNoTx() {
+  noTxRenderPicker();
+  E('noTxPhone').value = '';
+  E('noTxNote').value = '';
+  noTxMsg('');
+  noTx.entries = [];
+  noTxRenderList({ loading: true });
+  const dlg = E('noTxDialog');
+  if (!dlg.open) dlg.showModal();
+  await noTxLoad();
+}
+
+async function noTxAdd() {
+  if (noTx.busy) return;
+  const phone = E('noTxPhone').value.trim();
+  if (!phone) { noTxMsg('Enter a phone number.', 'err'); return; }
+  noTx.busy = true;
+  E('noTxAdd').disabled = true;
+  try {
+    const r = await P.apiSend('/api/comms-archive/no-transcribe', 'POST',
+      { phone, note: E('noTxNote').value, requested_by: E('noTxBy').value || undefined });
+    const entry = r && r.entry;
+    if (entry) noTx.entries = [entry, ...noTx.entries.filter(x => Number(x.id) !== Number(entry.id))];
+    E('noTxPhone').value = '';
+    E('noTxNote').value = '';
+    noTxMsg(`Added ${noTxPhone(entry && entry.phone)}.`, 'ok');
+    noTxRenderList();
+    E('noTxPhone').focus();
+  } catch (err) {
+    noTxMsg(err.message, 'err');          // what was typed stays in the form
+  } finally {
+    noTx.busy = false;
+    E('noTxAdd').disabled = false;
+  }
+}
+
+async function noTxRemove(id) {
+  const e = noTx.entries.find(x => Number(x.id) === Number(id));
+  if (!e) return;
+  if (!confirm(`Remove ${noTxPhone(e.phone)} from the do-not-transcribe list?\n\nFuture calls with this number will be transcribed; calls already skipped stay skipped.`)) return;
+  try {
+    await P.apiSend(`/api/comms-archive/no-transcribe/${encodeURIComponent(id)}`, 'DELETE');
+    noTx.entries = noTx.entries.filter(x => Number(x.id) !== Number(id));
+    noTxMsg(`Removed ${noTxPhone(e.phone)}.`, 'ok');
+    noTxRenderList();
+  } catch (err) {
+    noTxMsg(err.message, 'err');
+    await noTxLoad();                     // e.g. removed meanwhile elsewhere: show what is there now
+  }
+}
+
+E('noTxAdd').addEventListener('click', () => noTxAdd());
+for (const id of ['noTxPhone', 'noTxNote']) {
+  E(id).addEventListener('keydown', ev => { if (ev.key === 'Enter') { ev.preventDefault(); noTxAdd(); } });
+}
+E('noTxBody').addEventListener('click', ev => {
+  const b = ev.target.closest('button.notx-x');
+  if (b) noTxRemove(b.dataset.id);
+});
+E('noTxClose').addEventListener('click', () => E('noTxDialog').close());
 
 // ── Refresh (button + visibility) ────────────────────────────
 //

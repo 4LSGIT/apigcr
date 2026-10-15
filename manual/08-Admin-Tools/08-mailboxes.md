@@ -626,3 +626,9 @@ Phone-line access works like mailbox access: click **Access** on a line in
   own default line (Stuart → his line, Shoshana → hers, Rena → hers).
 - **Automations are never checked**: workflow, sequence, campaign and
   reminder texts go out from any line, as before.
+
+### Do-not-transcribe — Connections → Phone Lines
+
+**Do-not-transcribe**, left of **+ Add Line**, opens the list of numbers whose
+calls are archived but never sent for transcription. What it does, and who
+it belongs to: [Comms Transcription](09-comms-transcription.md#what-never-gets-transcribed).

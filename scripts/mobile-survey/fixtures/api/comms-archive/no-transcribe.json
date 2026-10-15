@@ -1,0 +1,8 @@
+{
+ "status": "success",
+ "entries": [
+  { "id": 12, "phone": "5555550142", "note": "Personal line of a staff member - never transcribe, per the request made at the October staff meeting", "created_by": 3, "created_by_name": "Pat Paralegal", "created_at": "2026-10-15T14:00:00.000Z" },
+  { "id": 9, "phone": "5555550199", "note": "Unbrokenreasonwithnospacesatalltotestwrappinginsidethenarrowestphonewidthcolumn", "created_by": 1, "created_by_name": "Alex Admin", "created_at": "2026-10-14T14:00:00.000Z" },
+  { "id": 4, "phone": "5555550123", "note": null, "created_by": 2, "created_by_name": "Sam Staff", "created_at": "2026-10-13T14:00:00.000Z" }
+ ]
+}

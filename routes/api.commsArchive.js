@@ -47,6 +47,18 @@
  *        staff JWT only; applies ≤ REDO_APPLY_PER_HOUR per user (429). Every
  *        call audited ('redo_transcript' / 'redo_summary': the selector, counts,
  *        ids — never content).
+ * The do-not-transcribe list (design §0 R9, P6; services/commsNoTranscribe.js):
+ *   GET    /api/comms-archive/no-transcribe       → {entries:[{id, phone, note, created_by, created_by_name, created_at}]}
+ *   POST   /api/comms-archive/no-transcribe       {phone, note?, requested_by?} → {entry}
+ *          phone: non-digits stripped, 10 digits or 1 + 10 (else 400); already
+ *          listed → 409; note ≤ 255 (trimmed, optional); requested_by = an
+ *          active staff user (400 otherwise), default the caller.
+ *   DELETE /api/comms-archive/no-transcribe/:id   → {entry} (the removed row); unknown id → 404
+ *   Same WHO as restrict (staff JWT + isArchiveAdmin, else 403); every outcome
+ *   audited — actions no_transcribe_{list|add|remove}: the phone, ids and the
+ *   note's LENGTH, never its text. Not a sync-bus entity (no ycSync matcher):
+ *   the one page that shows the list repaints from the response.
+ *
  *   EVERY content denial is the same 404 as a missing item (no existence
  *   oracle — §7 "omitted, not locked"); the audit row carries the real reason.
  *
@@ -93,6 +105,7 @@ const { VENDOR_SQL, READABLE_STATES } = require('../services/commsArchiveView');
 const searchSvc = require('../services/commsArchiveSearch');
 const redoSvc = require('../services/commsArchiveRedo');
 const resummarizeSvc = require('../services/commsArchiveResummarize');
+const noTxSvc = require('../services/commsNoTranscribe');
 
 const TOOL = 'comms_archive';
 const MAX_REASON = 500;
@@ -621,6 +634,83 @@ router.post('/api/comms-archive/search', jwtOrApiKey, async (req, res) => {
     if (err && err.tok) Object.assign(body, { terms: err.tok.terms, ignored: err.tok.ignored });
     return res.status(status).json(body);
   }
+});
+
+// ─── The do-not-transcribe list ─── design §0 R9, P6 (services/commsNoTranscribe.js)
+// The restrict handler's WHO: a staff JWT whose user isArchiveAdmin; every outcome audited.
+
+/** Staff JWT + archive admin, or the 403 / 500 is sent (audited) and false returned. */
+async function noTxGate(req, res, details) {
+  if (!req.auth || req.auth.type !== 'jwt' || req.auth.userId == null) {
+    await audit(req, 'rejected_not_jwt', details);
+    res.status(403).json({ status: 'error', message: 'The do-not-transcribe list requires a signed-in user' });
+    return false;
+  }
+  let ok = false;
+  try { ok = await admin.isArchiveAdmin(req.db, req.auth); } catch (err) {
+    console.error('[commsArchive] isArchiveAdmin error:', err.code || '', err.message);
+    await audit(req, 'error', details, 'admin check failed');
+    res.status(500).json({ status: 'error', message: 'Archive request failed' });
+    return false;
+  }
+  if (!ok) {
+    await audit(req, 'rejected_not_admin', details);
+    res.status(403).json({ status: 'error', message: 'Archive admins only' });
+    return false;
+  }
+  return true;
+}
+
+/** A service error → its 4xx (audited as rejected / not_found / conflict) or a 500. */
+async function noTxFail(req, res, details, err) {
+  const status = Number.isInteger(err && err.status) ? err.status : 500;
+  if (status >= 500) console.error(`[commsArchive] ${details.action} error:`, err.code || '', err.message);
+  await audit(req, status === 400 ? 'rejected_bad_request' : status === 404 ? 'not_found' : status === 409 ? 'conflict' : 'failed',
+    details, status >= 500 ? String(err.message || '').slice(0, 300) : err.message);
+  return res.status(status).json({ status: 'error', message: err.expose ? err.message : 'Archive request failed' });
+}
+
+router.get('/api/comms-archive/no-transcribe', jwtOrApiKey, async (req, res) => {
+  const details = { action: 'no_transcribe_list' };
+  if (!(await noTxGate(req, res, details))) return;
+  try {
+    const entries = await noTxSvc.list(req.db);
+    await audit(req, 'success', { ...details, count: entries.length });
+    return res.json({ status: 'success', entries });
+  } catch (err) { return noTxFail(req, res, details, err); }
+});
+
+router.post('/api/comms-archive/no-transcribe', jwtOrApiKey, async (req, res) => {
+  const body = req.body && typeof req.body === 'object' ? req.body : {};
+  const reqBy = body.requested_by == null || body.requested_by === '' ? req.auth?.userId : body.requested_by;
+  const details = {
+    action: 'no_transcribe_add',
+    phone: noTxSvc.normalizePhone(body.phone) || String(body.phone ?? '').slice(0, 32),
+    requested_by: reqBy == null ? null : String(reqBy).slice(0, 12),
+    note_len: typeof body.note === 'string' ? body.note.trim().length : 0,   // the LENGTH — never the note
+  };
+  if (!(await noTxGate(req, res, details))) return;
+  try {
+    const entry = await noTxSvc.add(req.db, { phone: body.phone, note: body.note, requestedBy: reqBy });
+    await audit(req, 'success', { ...details, id: entry.id });
+    return res.json({ status: 'success', entry });
+  } catch (err) { return noTxFail(req, res, details, err); }
+});
+
+router.delete('/api/comms-archive/no-transcribe/:id', jwtOrApiKey, async (req, res) => {
+  const idRaw = String(req.params.id || '');
+  const id = /^\d{1,10}$/.test(idRaw) ? Number(idRaw) : null;
+  const details = { action: 'no_transcribe_remove', id: id ?? idRaw.slice(0, 32) };
+  if (!(await noTxGate(req, res, details))) return;
+  if (id == null) {
+    await audit(req, 'rejected_bad_request', details, 'bad id');
+    return res.status(400).json({ status: 'error', message: 'Bad list entry id' });
+  }
+  try {
+    const entry = await noTxSvc.remove(req.db, id);
+    await audit(req, 'success', { ...details, phone: entry.phone });
+    return res.json({ status: 'success', entry });
+  } catch (err) { return noTxFail(req, res, details, err); }
 });
 
 /** Test hook: a fresh purge limiter (optionally with another per-hour max). */

@@ -26,10 +26,30 @@ run, so a change takes effect within 2 minutes.
   AssemblyAI. If it is unrestricted later, it is transcribed on the next run.
   A call restricted after it was already sent is still saved, but its
   transcript is hidden exactly like the call.
-- **Numbers on the do-not-transcribe list.** Add one from the DB Console:
-  `INSERT INTO comms_no_transcribe (phone, note, created_by) VALUES ('2485551234', 'why', <your user id>);`
-  The audio is still archived. Adding a number later does **not** remove
-  transcripts it already has; use Restrict or Purge for those.
+- **Numbers on the do-not-transcribe list.** Manage it from **Connections →
+  Phone Lines → Do-not-transcribe** (the button left of **+ Add Line**). Type
+  the number (any US format — punctuation is ignored and a leading `1` is
+  dropped; a number that is not 10 digits, such as an international one, is
+  refused), an optional reason,
+  and who asked for it (**Requested by**, any active staff member — you by
+  default), then **Add**. **✕** removes a number after a confirm. Both act
+  at once; **Close** loses nothing. The list belongs to superusers and the
+  archive admins (`comms_archive_admins` — the same people as Restrict and
+  Purge), but the Connections page itself is superusers-only, so an archive
+  admin who is not a superuser has the API (`/api/comms-archive/no-transcribe`)
+  and no screen yet. Every add, remove and view is recorded in
+  `admin_audit_log` (tool `comms_archive`) — the number, never the reason.
+  - A listed number's calls are still archived and playable; they are skipped
+    when their turn to be sent comes, so they get no transcript and no
+    summary. A voicemail still shows the phone provider's own transcript.
+    A call already being transcribed when its number is added still
+    completes.
+  - Adding a number later does **not** touch transcripts it already has —
+    they stay, and are still summarised; use Restrict or Purge for those.
+    **Redo** skips them, though: a listed number's transcripts are never
+    selected for a redo (below).
+  - Removing a number lets its future calls be transcribed. Calls already
+    skipped for being on the list stay skipped.
 - **Calls with under 15 seconds of audio** (`comms_min_transcribe_s`). This is
   measured from the recording itself, not the call log: the call log counts
   ringing, so a "24-second call" can hold one second of sound. Voicemails are

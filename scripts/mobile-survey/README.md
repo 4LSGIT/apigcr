@@ -104,7 +104,9 @@ System Alerts pane's Comms archive section (`comms-archive/health`,
 `tab:tabCalendar:list`; Grid is `tab:tabCalendar:grid`, against an empty
 `calendar-feed`), the
 Connections phone-line Access editor (`phone-lines/admin`,
-`phone-lines/1/grants`, `users`; `panel:connectionsDiv:phone-access`), the
+`phone-lines/1/grants`, `users`; `panel:connectionsDiv:phone-access`) and its
+Do-not-transcribe dialog (`comms-archive/no-transcribe` — a long note, an
+unbroken one; `panel:connectionsDiv:phone-no-transcribe`), the
 Scratch Browser list (`admin/scratch` — an unbroken overlong key, a stale and
 an oversized row; plus `admin/scratch/fred/demo_state` for opening a value by
 hand) — enough to fill the tables

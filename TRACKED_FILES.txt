@@ -784,6 +784,7 @@ scripts/mobile-survey/fixtures/api/comms-archive/media/7002/url.json
 scripts/mobile-survey/fixtures/api/comms-archive/media/7101/url.json
 scripts/mobile-survey/fixtures/api/comms-archive/media/7102/url.json
 scripts/mobile-survey/fixtures/api/comms-archive/media/7103/url.json
+scripts/mobile-survey/fixtures/api/comms-archive/no-transcribe.json
 scripts/mobile-survey/fixtures/api/comms-archive/search.json
 scripts/mobile-survey/fixtures/api/contacts/9001.json
 scripts/mobile-survey/fixtures/api/cta.json
@@ -864,6 +865,7 @@ services/commsArchiveSweep.js
 services/commsArchiveVerify.js
 services/commsArchiveView.js
 services/commsEvalService.js
+services/commsNoTranscribe.js
 services/commsSummarizeSweep.js
 services/commsSummaryGround.js
 services/commsTranscribeAudio.js
@@ -1032,6 +1034,8 @@ tests/commsArchiveService.s2.test.js
 tests/commsArchiveService.test.js
 tests/commsEval.mysql.test.js
 tests/commsEvalPage.test.js
+tests/commsNoTranscribe.mysql.test.js
+tests/commsNoTranscribe.pane.test.js
 tests/commsShell.test.js
 tests/commsSummarize.audit.mysql.test.js
 tests/commsSummarize.mysql.test.js

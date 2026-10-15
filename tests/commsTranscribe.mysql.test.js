@@ -308,6 +308,29 @@ maybe('comms archive S2 transcription on real MySQL', () => {
     expect(gcs.calls.sign.length).toBe(0);
   });
 
+  test('G4b the list API\'s stored form is what the sweep matches; removing lets NEW calls through, a skipped call stays skipped', async () => {
+    // services/commsNoTranscribe (what POST /api/comms-archive/no-transcribe runs) → the sweep's _onNoTranscribe.
+    const noTx = require('../services/commsNoTranscribe');
+    await q('DELETE FROM users WHERE user = 77');
+    await q(`INSERT INTO users (user, username, user_name, user_fname, user_lname, user_initials, user_auth, user_type, roles, ringcentral)
+             VALUES (77, 'g4b', 'G4b', 'G', 'B', 'GB', 'authorized', 1, 'staff', 0)`);
+    const entry = await noTx.add(pool, { phone: '1-248-555-1234', note: 'personal', requestedBy: 77 });
+    expect(entry.phone).toBe('2485551234');
+    const listed = await media({ party: '+1 (248) 555-1234' });
+    const other = await media({ party: '2485551235' });
+    expect(await run()).toMatchObject({ skipped_no_transcribe: 1, submitted: 1 });
+    expect(await tr(listed)).toMatchObject({ state: 'skipped', skip_reason: 'no_transcribe' });
+    expect(await tr(other)).toMatchObject({ state: 'transcribing' });
+    // removed: a NEW call on the number is transcribed; the one already skipped stays skipped
+    await noTx.remove(pool, entry.id);
+    const later = await media({ party: '(248) 555-1234' });
+    await due();
+    expect(await run()).toMatchObject({ skipped_no_transcribe: 0, submitted: 1 });
+    expect(await tr(later)).toMatchObject({ state: 'transcribing' });
+    expect(await tr(listed)).toMatchObject({ state: 'skipped', skip_reason: 'no_transcribe' });
+    await q('DELETE FROM users WHERE user = 77');
+  });
+
   test('G5 over_cap → skipped; releaseCap → submitted next tick (and only an over_cap skip can be released)', async () => {
     await set('comms_stt_max_min_per_call', '1');
     const id = await media({ bytes: 80352 * 4 });     // ~80 s of 32 kbps audio

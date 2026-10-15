@@ -250,6 +250,10 @@ async function walk(page, W, record) {
         await fr.evaluate(() => { const t = document.querySelector('.tab[data-tab="phone"]'); if (t) t.click(); }); await sleep(800);
         await fr.evaluate(() => { const b = document.querySelector('tr[data-id] button[data-action="access"]'); if (b) b.click(); }); await sleep(1500);
         await record('panel:connectionsDiv:phone-access', await measure(page, fr), await shot('panel_connections_phone_access'));
+        // … → Do-not-transcribe (comms archive R9), fixtures/api/comms-archive/no-transcribe — a long note, an unbroken one
+        await fr.evaluate(() => { const b = document.getElementById('phone-notx'); if (b) b.click(); }); await sleep(1500);
+        await record('panel:connectionsDiv:phone-no-transcribe', await measure(page, fr), await shot('panel_connections_phone_no_transcribe'));
+        await fr.evaluate(() => { const d = document.getElementById('noTxDialog'); if (d && d.open) d.close(); });
       }
       // System Alerts → the Comms archive health section (S4, F4), fixtures/api/comms-archive/health.json
       if (id === 'systemAlertsDiv' && fr) {

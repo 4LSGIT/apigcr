@@ -782,8 +782,9 @@ trailing colons. Set in four places that must move together: style.css
 `.input-label` (carries the note), scripts.js dialog CSS (`.ncf-`/`.na-`/
 `.ne-`/`.cad-`/`.oad-` labels + `.yc-flabel` for inline labels), tasks.html
 `.tk-dlg-grid`, and pane-local copies on theme.css-only Admin panes
-(ctaManager.html declares `.yc-flabel`/`.yc-hint` with these values —
-style.css and scripts.js don't load there). Known divergence:
+(ctaManager.html declares `.yc-flabel`/`.yc-hint` with these values, and
+connections.html scoped to its `#noTxDialog` — style.css and scripts.js
+don't load there). Known divergence:
 toolManager.html styles labels as `.field label` (uppercase 11px
 `--text-muted`) — a different look. Hoisting `.yc-flabel`/`.yc-hint` into
 theme.css would collapse this to one definition (plans.md).
