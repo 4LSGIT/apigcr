@@ -97,6 +97,15 @@ It is AI-generated, so check the recording before relying on it.
   `claude-haiku-5-5`.
 - **The effort** is `comms_summary_effort`: `low` (the default), `medium` or
   `high`. Higher effort thinks longer and costs more.
+- **What Claude is told about the firm** (so it can tell who is who on a call):
+  the names of everyone who signs in to YisraCase (except automation accounts),
+  and `comms_summary_firm_context` — a few lines you can edit: the firm's names,
+  Sonoma (the AI receptionist), the recorded greetings, call screening, and how
+  the transcriber mishears "Sandweiss". Keep it under 2,000 characters: longer
+  stops the summaries (alert `comms_summarize_config`). It is read on every run.
+- **Dates:** a date said on a call ("Monday", "the 15th") is kept exactly as
+  said, and Claude also works out the calendar date from the call's date. That
+  worked-out date is a best guess — check it against the words.
 - **What is never summarised:**
   - **restricted calls**, which are never sent;
   - calls with less than `comms_min_summary_s` (30) seconds of audio (voicemails

@@ -90,7 +90,17 @@ const KEYS = Object.freeze({
   effort: 'comms_summary_effort',
   minS: 'comms_min_summary_s',
   cap: 'comms_ai_monthly_cap_cents',
+  firmContext: 'comms_summary_firm_context',
 });
+/** comms_summary_firm_context: free text written by an SU (v3). Longer = a config problem (fail-closed, not truncated). */
+const FIRM_CONTEXT_MAX = 2000;
+/**
+ * Who counts as the firm on a call — the staff names the prompt's <firm_context> lists: every authorized human user
+ * (IT / SU included), never an automation account (S3b ruling; users.roles is a SET, so FIND_IN_SET — a mixed
+ * 'automation,…' role string is excluded too).
+ */
+const STAFF_WHERE = "user_auth LIKE 'authorized%' AND roles <> '' AND FIND_IN_SET('automation', roles) = 0";
+const STAFF_MAX = 40;
 const MODES = new Set(['off', 'sample', 'on']);
 const MODELS = new Set(['claude-sonnet-5-5', 'claude-haiku-5-5']);
 const EFFORTS = new Set(['low', 'medium', 'high']);
@@ -108,7 +118,7 @@ const limits = {
   timeoutLongMs: 120_000,
   timeoutShortMs: 60_000,
   longPromptTokens: 20_000,      // above this (estimated) the long timeout
-  systemTokens: 1_500,           // the prompt's own size, for the estimate
+  systemTokens: 2_600,           // the prompt's own size (v3, with the firm context at its cap), for the estimate
   leaseMin: 15,
   maxAttempts: 3,
   backoffCapMin: 60,
@@ -142,7 +152,12 @@ async function readConfig(db) {
   if (minS == null) problems.push(`${KEYS.minS} is missing or not a number`);
   let capCents = raw[KEYS.cap] != null && /^\s*\d+\s*$/.test(String(raw[KEYS.cap])) ? Number(raw[KEYS.cap]) : null;
   if (capCents == null) { capCents = 0; if (mode !== 'off') notes.push(`${KEYS.cap} is missing or not a number — treated as 0: nothing is summarised`); }
-  return { mode, model, effort, minS, capCents, problems, notes };
+  let firmContext = raw[KEYS.firmContext] == null ? '' : String(raw[KEYS.firmContext]).trim();
+  if (firmContext.length > FIRM_CONTEXT_MAX) {
+    problems.push(`${KEYS.firmContext} is ${firmContext.length} characters — at most ${FIRM_CONTEXT_MAX}`);
+    firmContext = '';
+  }
+  return { mode, model, effort, minS, capCents, firmContext, problems, notes };
 }
 
 async function _dailyAlert(db, groupKey, severity, title, message, context) {
@@ -286,6 +301,28 @@ async function _context(db, row) {
   return { contact: String(rows[0].contact_name), cases: cases.map(c => String(c.num)) };
 }
 
+/** Staff as the prompt's firm context lists them: "First Last (user_name)" — the name in brackets only when it adds one. */
+async function _staffNames(db) {
+  const [rows] = await db.query(
+    `SELECT user_fname, user_lname, user_name FROM users WHERE ${STAFF_WHERE} ORDER BY user LIMIT ?`, [STAFF_MAX]);
+  return rows.map((r) => {
+    const full = [r.user_fname, r.user_lname].map(x => String(x || '').trim()).filter(Boolean).join(' ');
+    const nick = String(r.user_name || '').trim();
+    if (!full) return nick;
+    if (!nick || full.toLowerCase().split(' ').includes(nick.toLowerCase())) return full;
+    return `${full} (${nick})`;
+  }).filter(Boolean);
+}
+
+/**
+ * Trusted text going INTO the prompt — EVERY var, since several come from people (a contact name typed at intake,
+ * the staff names, the SU-written firm context): < and > escaped so a value can never close the <firm_context>
+ * block or open another tag. aiService substitutes {{vars}} in one pass, so
+ * a value holding "{{x}}" stays literal.
+ */
+const _asData = (s) => String(s).replace(/</g, '&lt;').replace(/>/g, '&gt;');
+const _escapeAll = (vars) => Object.fromEntries(Object.entries(vars).map(([k, v]) => [k, _asData(v)]));
+
 /** The WORST case for one call: the input estimate + max_tokens of output, at the model's price. */
 function _estimate(model, text) {
   const { computeCostCents } = require('./aiService'); // lazy require (convention)
@@ -383,13 +420,17 @@ async function _summarizeOne(ctx, row) {
   const ai = require('./aiService'); // lazy require (convention)
   const r = await ai.call(db, {
     promptKey: PROMPT_KEY,
-    vars: {
+    // Every var is escaped as data: some come from people (a contact name from intake, staff names, the SU text).
+    vars: _escapeAll({
       item_kind: row.kind === 'voicemail' ? 'voicemail' : 'call',
       call_date: row.captured_at ? _localWhen(new Date(row.captured_at)) : 'unknown',
+      call_day: row.captured_at ? _localDate(new Date(row.captured_at)) : 'unknown',
       direction: row.kind === 'voicemail' ? 'incoming (voicemail)' : (row.direction || 'unknown'),
       contact: context.contact || 'unknown',
       cases: context.cases.length ? context.cases.join(', ') : 'none known',
-    },
+      staff_names: ctx.staff && ctx.staff.length ? ctx.staff.join('; ') : 'not listed',
+      firm_context: cfg.firmContext || '(nothing more)',
+    }),
     userInput: text,
     model: cfg.model,
     max_tokens: limits.maxTokens,
@@ -460,7 +501,9 @@ async function _summarizeOne(ctx, row) {
 
   const v = ground.validate(r.json, {
     segments, fullText: row.full_text, kind: row.kind, knownNames: context.contact ? [context.contact] : [],
+    callDay: row.captured_at ? _localDate(new Date(row.captured_at)) : null,
   });
+  if (v.ok && v.coerced === 'call_type') out.coerced_call_type = (out.coerced_call_type || 0) + 1;   // "voicemail" as a type → other
   if (!v.ok) {
     const res = await _backToPending(db, row, { charge: true, why: `output_rejected:${v.why}` });
     if (res === 'failed') { out.failed++; acc.failed.push({ id: row.transcript_id, why: `output_rejected:${v.why}` }); } else out.retried++;
@@ -515,6 +558,7 @@ async function runSummarizeSweep(db) {
     }
     if (cfg.problems.length) { out.stop = 'config'; return out; }
     if (cfg.mode === 'off') return out;
+    ctx.staff = await _staffNames(db);                // once per tick: the firm context's staff list
 
     try {
       await _discover(db, cfg, out);
@@ -566,4 +610,4 @@ async function runSummarizeSweep(db) {
   }
 }
 
-module.exports = { runSummarizeSweep, readConfig, limits, KEYS, LOCK_EXPR, PROMPT_KEY, consumerRef };
+module.exports = { runSummarizeSweep, readConfig, limits, KEYS, LOCK_EXPR, PROMPT_KEY, consumerRef, FIRM_CONTEXT_MAX, STAFF_WHERE };

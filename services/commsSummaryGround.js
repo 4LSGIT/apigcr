@@ -30,11 +30,13 @@
  * the quote itself carries a currency sign ("$50,000" stands alone), so a lone
  * "50" from "I'm 50 years old" cannot ground "$50". A commitment needs 3
  * words, unless its quote is a WHOLE segment ("Yes.", "Will do."): then EVERY
- * occurrence is tried and the first that is a whole segment is taken (t and
- * the speaker are that segment's), and that speaker's role from parties[]
- * must agree with `by` (firm ↔ firm; other ↔ client / other) — a speaker with
- * no role given cannot contradict it. An item's own claim must be inside its
- * own quote:
+ * For EVERY commitment (v3) every occurrence of its quote is tried, and the
+ * first that is ONE speaker's words AND whose speaker's role from parties[]
+ * agrees with `by` (firm ↔ firm; other ↔ client / other; a speaker with no
+ * role given cannot contradict it) — and, for a short quote, a whole segment —
+ * is taken (t is that occurrence's). So a firm commitment quoted from the
+ * other party's request is dropped, and a phrase said by both sides is kept
+ * at the right speaker's turn. An item's own claim must be inside its own quote:
  * date_text, amount_text and case_refs[].text, normalised the same way, must
  * occur as whole words in the item's quote ("$50,000" quoting "the" fails). A
  * commitment's quote may span segments only of ONE speaker (a splice across a
@@ -52,14 +54,26 @@
  * A failed validation returns a FIXED code in `why` (never model text): it
  * lands in comms_summaries.last_error and in alerts.
  *
- * A voicemail's call_type is always 'voicemail' (its caller's role stays in
- * parties[]).
+ * call_type (v3) is the counterparty / purpose and never 'voicemail': an
+ * output saying so is COERCED to call_type 'other' + reached_voicemail true
+ * and reported as coerced: 'call_type' (a label is not an ungrounded claim, so
+ * it costs no attempt); reached_voicemail is a boolean (missing = false; any
+ * other type fails), forced true for a voicemail.
+ *
+ * dates[].resolved_date (v3) is DERIVED — the model's reading of date_text
+ * against the call day — so it is not grounded: it survives only as a real
+ * calendar date YYYY-MM-DD within [callDay − 400, callDay + 800] days, and is
+ * otherwise null (the item, grounded by date_text + quote, stays). Any surface
+ * shows it as resolved, never as said.
  */
 
 'use strict';
 
+// v3: call_type is the counterparty / purpose — "it went to voicemail" is reached_voicemail, not a type.
 const CALL_TYPES = new Set(['client', 'prospect', 'creditor', 'trustee', 'court', 'opposing_counsel',
-  'agency', 'vendor', 'personal', 'spam', 'voicemail', 'other']);
+  'agency', 'vendor', 'personal', 'spam', 'other']);
+/** resolved_date must fall within this many days of the call (firm-local calendar day) — else null. */
+const RESOLVED_RANGE = Object.freeze({ before: 400, after: 800 });
 const ROLES = new Set(['firm', 'client', 'other']);
 const BY = new Set(['firm', 'other']);
 const FLAGS = new Set(['personal', 'sensitive', 'dispute']);
@@ -130,12 +144,18 @@ function timeAt(hay, at) {
 }
 
 /** Every occurrence of `q` (on word boundaries); the first that is a whole segment whose test passes → its offset, else -1. */
-function wholeSegmentHit(hay, q, accept) {
+function firstHit(hay, q, accept) {
   const padded = ` ${hay.text} `;
   for (let i = padded.indexOf(` ${q} `); i >= 0; i = padded.indexOf(` ${q} `, i + 1)) {
-    if (wholeSegment(hay, i, q) && accept(segAt(hay, i))) return i;
+    if (accept(i)) return i;
   }
   return -1;
+}
+
+/** Does the speaker of the segment a hit at `at` starts in agree with `by`? (No segments / no role → no objection.) */
+function speakerAgrees(hay, roles, at, by) {
+  const k = segAt(hay, at);
+  return k < 0 || roleAgrees(roles, hay.segs[k].s, by);
 }
 
 /** A commitment's `by` against its speaker's role (parties[]): firm ↔ firm, other ↔ client / other. No role → no objection. */
@@ -190,30 +210,56 @@ function evidence(list, spec, hay, counter, roles = new Map()) {
       // A bare number binds nothing on its own: it needs a quote of 2+ words, or a currency sign IN the quote.
       const bare = /^\d+( \d+)*$/.test(normalise(clean[spec.claim])) && !/[$€£]/.test(it.quote);
       if (words(q) < (bare ? 2 : 1)) { counter.n++; continue; }
-    } else if (words(q) < MIN_QUOTE_WORDS) {
-      // Only a commitment may be short — as a WHOLE segment, at the first occurrence that is one,
-      // spoken by someone whose role agrees with `by`.
-      if (!spec.oneSpeaker) { counter.n++; continue; }
-      at = wholeSegmentHit(hay, q, (k) => roleAgrees(roles, hay.segs[k].s, clean.by));
+    } else if (!spec.oneSpeaker && words(q) < MIN_QUOTE_WORDS) { counter.n++; continue; }
+    if (spec.oneSpeaker) {
+      // A promise is quoted from the one who makes it. EVERY occurrence is tried (a phrase said by both sides,
+      // or a short "Yes." said mid-sentence first): the first that is ONE speaker's words, by someone whose role
+      // agrees with `by` — and, for a quote under MIN_QUOTE_WORDS, a WHOLE segment — is taken, with its t.
+      const short = words(q) < MIN_QUOTE_WORDS;
+      at = firstHit(hay, q, (i) => (!short || wholeSegment(hay, i, q)) && oneSpeaker(hay, i, q.length)
+        && speakerAgrees(hay, roles, i, clean.by));
       if (at < 0) { counter.n++; continue; }
     }
     if (spec.claim && wordIndex(q, normalise(clean[spec.claim])) < 0) { counter.n++; continue; }
-    if (spec.oneSpeaker && !oneSpeaker(hay, at, q.length)) { counter.n++; continue; }
     clean.quote = it.quote.trim();
     if (spec.t) clean.t = timeAt(hay, at);
+    if (spec.resolveDay !== undefined) clean.resolved_date = resolvedDate(it.resolved_date, spec.resolveDay);
     out.push(clean);
   }
   return out;
 }
 
-function validate(json, { segments = [], fullText = '', kind = 'call_recording', knownNames = [] } = {}) {
+/** A model's resolved_date → 'YYYY-MM-DD' when it is a real date within RESOLVED_RANGE of callDay, else null. */
+function resolvedDate(v, callDay) {
+  const day = (x) => {
+    if (typeof x !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(x)) return null;
+    const [y, m, d] = x.split('-').map(Number);
+    const ms = Date.UTC(y, m - 1, d);
+    const back = new Date(ms);
+    return back.getUTCFullYear() === y && back.getUTCMonth() === m - 1 && back.getUTCDate() === d ? ms : null;
+  };
+  const at = day(v), base = day(callDay);
+  if (at == null || base == null) return null;
+  const diff = (at - base) / 86_400_000;
+  return diff >= -RESOLVED_RANGE.before && diff <= RESOLVED_RANGE.after ? v : null;
+}
+
+function validate(json, { segments = [], fullText = '', kind = 'call_recording', knownNames = [], callDay = null } = {}) {
   if (!json || typeof json !== 'object' || Array.isArray(json)) return fail('not_object');
   const hay = haystackOf(segments, fullText);
   const counter = { n: 0 };
 
   let callType = json.call_type;
-  if (kind === 'voicemail') callType = 'voicemail';
-  else if (!CALL_TYPES.has(callType)) return fail('bad_call_type');
+  let coerced = null;
+  // v2's habit: "voicemail" as a TYPE. A label is not an ungrounded claim — coerce it (counted), never burn an attempt.
+  if (callType === 'voicemail') { callType = 'other'; coerced = 'call_type'; }
+  if (!CALL_TYPES.has(callType)) return fail('bad_call_type');
+  let reachedVoicemail = coerced === 'call_type';
+  if (json.reached_voicemail !== undefined && json.reached_voicemail !== null) {
+    if (typeof json.reached_voicemail !== 'boolean') return fail('bad_reached_voicemail');
+    reachedVoicemail = json.reached_voicemail || coerced === 'call_type';
+  }
+  if (kind === 'voicemail') reachedVoicemail = true;
 
   if (!isStr(json.summary, MAX.summary)) return fail('bad_summary');
   const summaryText = json.summary.trim();
@@ -236,7 +282,7 @@ function validate(json, { segments = [], fullText = '', kind = 'call_recording',
 
   const roles = new Map(parties.map(p => [p.speaker, p.role]));
   const commitments = evidence(json.commitments, { fields: { by: 'by', what: 'what' }, t: true, oneSpeaker: true }, hay, counter, roles);
-  const dates = evidence(json.dates, { fields: { what: 'what', date_text: 'text' }, claim: 'date_text', t: true }, hay, counter);
+  const dates = evidence(json.dates, { fields: { what: 'what', date_text: 'text' }, claim: 'date_text', t: true, resolveDay: callDay }, hay, counter);
   const documents = evidence(json.documents_requested, { fields: { what: 'what' }, t: true }, hay, counter);
   const amounts = evidence(json.amounts, { fields: { what: 'what', amount_text: 'text' }, claim: 'amount_text', t: true }, hay, counter);
   const caseRefs = evidence(json.case_refs, { fields: { text: 'text' }, claim: 'text', t: false }, hay, counter);
@@ -261,8 +307,9 @@ function validate(json, { segments = [], fullText = '', kind = 'call_recording',
     ok: true,
     summaryText,
     dropped: counter.n,
+    coerced,
     summary: {
-      call_type: callType, summary: summaryText, parties,
+      call_type: callType, reached_voicemail: reachedVoicemail, summary: summaryText, parties,
       commitments, dates, documents_requested: documents, amounts, case_refs: caseRefs,
       follow_up: followUp, flags,
     },
@@ -282,4 +329,4 @@ function transcriptText(segments, fullText) {
   return segs.map(s => `[${ts(s.a)}] ${s.s}: ${s.t}`).join('\n');
 }
 
-module.exports = { validate, normalise, haystackOf, transcriptText, MIN_QUOTE_WORDS, CALL_TYPES, ROLES, FLAGS };
+module.exports = { validate, normalise, haystackOf, transcriptText, resolvedDate, MIN_QUOTE_WORDS, CALL_TYPES, ROLES, FLAGS, RESOLVED_RANGE };

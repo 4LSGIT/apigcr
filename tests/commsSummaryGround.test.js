@@ -41,7 +41,7 @@ describe('a well-grounded summary', () => {
     expect(r.summary.documents_requested[0].t).toBe(12.4);
     expect(r.summary.amounts[0].t).toBe(20.5);
     expect(r.summary.case_refs[0]).toEqual({ text: 'Chapter 13', quote: 'my Chapter 13 case' });   // no t
-    expect(Object.keys(r.summary)).toEqual(['call_type', 'summary', 'parties', 'commitments', 'dates',
+    expect(Object.keys(r.summary)).toEqual(['call_type', 'reached_voicemail', 'summary', 'parties', 'commitments', 'dates',
       'documents_requested', 'amounts', 'case_refs', 'follow_up', 'flags']);
   });
 
@@ -231,9 +231,10 @@ describe('wrong SHAPE fails the summary (the caller charges an attempt)', () => 
 });
 
 describe('voicemail + no segments', () => {
-  test('a voicemail is always call_type voicemail, whatever the model said', () => {
-    expect(run(base({ call_type: 'client' }), { kind: 'voicemail' }).summary.call_type).toBe('voicemail');
-    expect(run(base({ call_type: 'nonsense' }), { kind: 'voicemail' }).ok).toBe(true);
+  test('v3: a voicemail keeps the counterparty as call_type and is always reached_voicemail; a bad call_type still fails', () => {
+    const r = run(base({ call_type: 'client', reached_voicemail: false }), { kind: 'voicemail' });
+    expect(r.summary).toMatchObject({ call_type: 'client', reached_voicemail: true });
+    expect(run(base({ call_type: 'nonsense' }), { kind: 'voicemail' })).toMatchObject({ ok: false, why: 'bad_call_type' });
   });
   test('with only full_text, quotes still ground; t is null', () => {
     const r = g.validate(base(), { segments: [], fullText: FULL, kind: 'call_recording' });
@@ -294,5 +295,64 @@ describe('round 3 (2026-10-14): bare numbers, short commitments at their whole-s
   test('a speaker with no role in parties[] cannot contradict `by`', () => {
     expect(v4({ commitments: [{ by: 'firm', what: 'x', quote: 'Sure.' }] }).dropped).toBe(0);
     expect(v4({ commitments: [{ by: 'other', what: 'x', quote: 'Sure.' }] }).dropped).toBe(0);
+  });
+});
+
+describe('v3 (2026-10-15): call_type / reached_voicemail, resolved_date, the role check on EVERY commitment', () => {
+  const vg = (o, opts = {}) => g.validate(base(o), { segments: SEGS, fullText: FULL, kind: 'call_recording', knownNames: [], ...opts });
+
+  test('call_type is the counterparty: "voicemail" is COERCED to other + reached_voicemail (counted, never a failure); reached_voicemail is a boolean, false when missing', () => {
+    const c = vg({ call_type: 'voicemail' });
+    expect(c).toMatchObject({ ok: true, coerced: 'call_type', summary: { call_type: 'other', reached_voicemail: true } });
+    expect(vg({ call_type: 'voicemail', reached_voicemail: false }).summary.reached_voicemail).toBe(true);
+    expect(vg({}).coerced).toBeNull();
+    expect(vg({ call_type: 'nonsense' })).toEqual({ ok: false, why: 'bad_call_type' });
+    expect(vg({}).summary.reached_voicemail).toBe(false);
+    expect(vg({ reached_voicemail: true }).summary).toMatchObject({ call_type: 'client', reached_voicemail: true });
+    for (const bad of ['yes', 1, [], {}]) expect(vg({ reached_voicemail: bad })).toEqual({ ok: false, why: 'bad_reached_voicemail' });
+    expect(g.CALL_TYPES.has('voicemail')).toBe(false);
+  });
+
+  test('resolved_date: a real date within [−400, +800] days of the call day survives; anything else is null and the item stays', () => {
+    const d = (rd, callDay = '2026-10-15') => vg({ dates: [{ what: 'hearing', date_text: 'November 3rd at 9 a.m.', resolved_date: rd,
+      quote: 'Your hearing is on November 3rd at 9 a.m.' }] }, { callDay });
+    expect(d('2026-11-03').summary.dates[0]).toMatchObject({ date_text: 'November 3rd at 9 a.m.', resolved_date: '2026-11-03', t: 30.2 });
+    expect(d('2025-09-10').summary.dates[0].resolved_date).toBe('2025-09-10');        // −400 days: the edge, kept
+    expect(d('2028-12-23').summary.dates[0].resolved_date).toBe('2028-12-23');        // +800 days: the edge, kept
+    for (const bad of ['2025-09-09', '2028-12-24', '2026-02-30', '2026-13-01', '11/03/2026', 'Monday', 20261103, null, undefined]) {
+      const r = d(bad);
+      expect([String(bad), r.ok, r.dropped, r.summary.dates.length, r.summary.dates[0].resolved_date]).toEqual([String(bad), true, 0, 1, null]);
+    }
+    expect(d('2026-11-03', null).summary.dates[0].resolved_date).toBeNull();          // no call day: nothing to check against
+    expect(g.resolvedDate('2024-02-29', '2024-03-01')).toBe('2024-02-29');            // a real leap day
+  });
+
+  test('every commitment — not only a short one — is quoted from a speaker whose role agrees with `by`', () => {
+    // the firm ASKED for the pay stubs; quoting that request as a FIRM commitment is the 2140 shape
+    const askedAsFirm = vg({ commitments: [{ by: 'firm', what: 'send pay stubs', quote: 'send us your last two pay stubs by Friday' }] });
+    expect([askedAsFirm.dropped, askedAsFirm.summary.commitments]).toEqual([0, [expect.objectContaining({ by: 'firm' })]]);   // speaker A is the firm: kept
+    const clientAsFirm = vg({ commitments: [{ by: 'firm', what: 'email the stubs', quote: 'I will email them' }] });
+    expect([clientAsFirm.dropped, clientAsFirm.summary.commitments]).toEqual([1, []]);                // B is the client: dropped
+    const firmAsOther = vg({ commitments: [{ by: 'other', what: 'send stubs', quote: 'send us your last two pay stubs by Friday' }] });
+    expect([firmAsOther.dropped, firmAsOther.summary.commitments]).toEqual([1, []]);
+    const noRoles = vg({ parties: [], commitments: [{ by: 'firm', what: 'email the stubs', quote: 'I will email them' }] });
+    expect(noRoles.dropped).toBe(0);                                                                  // no role: no objection
+  });
+
+  test('a phrase said by BOTH sides: each commitment is kept at the turn of the speaker whose role agrees with `by`, with that turn\'s t', () => {
+    const SEG = [
+      { s: 'B', a: 0, b: 5, t: 'I will email you the documents tonight.' },
+      { s: 'A', a: 5, b: 9, t: 'Great, I will email you the documents tonight too, so we both have them.' },
+      { s: 'B', a: 9, b: 11, t: 'Thanks.' },
+    ];
+    const P = [{ speaker: 'A', role: 'firm', name: null }, { speaker: 'B', role: 'client', name: null }];
+    const v = (by) => g.validate({ call_type: 'client', summary: 'x', parties: P,
+      commitments: [{ by, what: 'email the documents', quote: 'I will email you the documents tonight' }] },
+    { segments: SEG, fullText: SEG.map(x => x.t).join('\n') });
+    expect([v('firm').dropped, v('firm').summary.commitments[0].t]).toEqual([0, 5]);                 // the firm's turn, not the first
+    expect([v('other').dropped, v('other').summary.commitments[0].t]).toEqual([0, 0]);
+    const nobody = g.validate({ call_type: 'client', summary: 'x', parties: [{ speaker: 'A', role: 'client', name: null }, { speaker: 'B', role: 'client', name: null }],
+      commitments: [{ by: 'firm', what: 'x', quote: 'I will email you the documents tonight' }] }, { segments: SEG, fullText: '' });
+    expect(nobody.dropped).toBe(1);                                                                   // no firm turn says it
   });
 });
