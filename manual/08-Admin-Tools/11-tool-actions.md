@@ -165,7 +165,9 @@ code inside a sentence that says it won't work — and checks every 5 seconds fo
 up to 2 minutes for the new one. Meanwhile it nudges the app's job queue so the
 new code arrives in seconds rather than at the next minute tick. Those
 background checks are **quiet**, so a sign-in that lapses while it waits never
-pops a sign-in box. **Copy Code** copies the code and closes the dialog.
+pops a sign-in box. **Copy Code** copies the code and closes the dialog;
+clicking the code itself copies it and leaves the dialog open, as does
+clicking the old code in the waiting message.
 
 Its source is kept in the repository at `ref/tools/clio-code.html`. That file's
 header has the install steps:

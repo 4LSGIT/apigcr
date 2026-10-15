@@ -94,6 +94,29 @@ describe('a fresh code', () => {
     c.close();
   });
 
+  test('the code itself is click-to-copy, and the dialog stays open', async () => {
+    const c = await start();
+    const code = c.fd.querySelector('.cc-code');
+    expect(code.getAttribute('role')).toBe('button');             // keyboard-reachable
+    expect(code.tabIndex).toBe(0);
+    code.click();
+    await c.settle();
+    expect(c.copied).toEqual(['222222']);
+    expect(c.rec.toast).toEqual([{ icon: 'success', titleText: 'Code copied' }]);
+    expect(c.dlgOpen()).toBe(true);                               // a click on a number closes nothing
+    c.close();
+  });
+
+  test('Enter on the focused code copies it', async () => {
+    const c = await start();
+    const code = c.fd.querySelector('.cc-code');
+    code.dispatchEvent(new c.fd.defaultView.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await c.settle();
+    expect(c.copied).toEqual(['222222']);
+    expect(c.dlgOpen()).toBe(true);
+    c.close();
+  });
+
   test('Close closes the dialog', async () => {
     const c = await start();
     c.btn('Close').click();
@@ -112,6 +135,25 @@ describe('a stale code', () => {
     expect(c.fd.getElementById('clioNextCheck').textContent).toBe('Next check in 5s');
     await c.clock.tick(1000);
     expect(c.fd.getElementById('clioNextCheck').textContent).toBe('Next check in 4s');
+    c.close();
+  });
+
+  test('the dead code in the sentence is click-to-copy too', async () => {
+    const c = await start({ codes: [OLD] });
+    const old = c.fd.querySelector('.cc-stale .cc-copy');
+    expect(old.textContent).toBe('111111');
+    old.click();
+    await c.settle();
+    expect(c.copied).toEqual(['111111']);
+    expect(c.rec.toast).toEqual([{ icon: 'success', titleText: 'Old code copied' }]);
+    expect(c.dlgOpen()).toBe(true);
+    c.close();
+  });
+
+  test('no stored code: nothing to copy, so the sentence carries no copy target', async () => {
+    const c = await start({ codes: [{ value: null, updated_at: null, age_seconds: null }] });
+    expect(c.text()).toContain('The last code (none stored) is of unknown age and cannot be trusted.');
+    expect(c.fd.querySelector('.cc-stale .cc-copy')).toBeNull();
     c.close();
   });
 

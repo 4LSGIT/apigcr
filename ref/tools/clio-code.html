@@ -45,20 +45,48 @@
 <link rel="stylesheet" href="/theme.css">
 <script src="/themeSync.js"></script>
 <style>
+  /* The card this page lives in is the shell's compact tool dialog: a fixed
+     480x480 box with its own title bar. The page is therefore laid out like
+     the pop-up card it replaced — one centred column, parked in the middle of
+     whatever height it is given. `margin: auto` on a flex child centres on
+     both axes WITHOUT clipping overflow the way justify-content: center does,
+     so a tall state (the waiting one, on a phone) can still be scrolled back
+     to its start. */
+  html { height: 100%; }
   html, body { margin: 0; background: var(--surface); color: var(--text); }
-  body { font-family: var(--ui); font-size: var(--fs); line-height: 1.45; }
-  #app { box-sizing: border-box; padding: 16px 18px 18px; max-width: 100%; overflow-wrap: anywhere; }
-  .cc-h { margin: 0 0 10px; font-size: var(--fs-lg); font-weight: 600; color: var(--text); }
+  body {
+    min-height: 100%; box-sizing: border-box; display: flex;
+    font-family: var(--ui); font-size: var(--fs); line-height: 1.45;
+  }
+  #app {
+    margin: auto; box-sizing: border-box; width: 100%; padding: 18px 20px 22px;
+    text-align: center; overflow-wrap: anywhere;
+  }
+  /* The dialog icon, drawn in theme colours: a ring with one glyph in it.
+     --warn-fill (not --warn) is the amber that is deliberately NOT restated
+     for dark mode, so the ring reads the same in both; --info and --danger
+     are restated and follow the theme. */
+  .cc-icon {
+    width: 72px; height: 72px; margin: 2px auto 16px; box-sizing: border-box;
+    display: flex; align-items: center; justify-content: center;
+    border: 4px solid; border-radius: 50%;
+    font: 700 40px/1 var(--ui); user-select: none;
+  }
+  .cc-icon.info { border-color: var(--info); color: var(--info); }
+  .cc-icon.warn { border-color: var(--warn-fill); color: var(--warn-fill); }
+  .cc-icon.err { border-color: var(--danger); color: var(--danger); }
+  .cc-h { margin: 0 0 12px; font-size: var(--fs-title); font-weight: 600; line-height: 1.25; color: var(--text); }
   .cc-code {
-    margin: 10px 0 12px; padding: 10px 12px; border-radius: var(--radius);
-    background: var(--surface-2); border: 1px solid var(--border);
-    font: 700 28px/1.2 var(--mono); letter-spacing: .08em; text-align: center; user-select: all;
+    /* inline-block so the click-to-copy hover hugs the number instead of
+       banding the whole card. */
+    display: inline-block; margin: 6px 0 10px; padding: 2px 14px;
+    font: 700 30px/1.2 var(--ui); letter-spacing: .06em; user-select: all;
   }
   .cc-p { margin: 10px 0; }
   .cc-hint { margin: 2px 0; font-size: var(--fs-sm); color: var(--text-muted); }
-  .cc-stale { padding: 10px 12px; border-radius: var(--radius); background: var(--warn-soft); color: var(--text); }
-  .cc-err { padding: 10px 12px; border-radius: var(--radius); background: var(--danger-soft); color: var(--text); }
-  .cc-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 14px; }
+  .cc-stale { margin: 12px 0; }
+  .cc-err { margin: 12px 0; color: var(--danger); }
+  .cc-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 8px; margin-top: 16px; }
   .cc-row .cc-hint { margin: 0; }
   .cc-btn {
     min-height: var(--ctl-h); padding: 0 14px; border-radius: var(--radius-sm); cursor: pointer;
@@ -68,6 +96,11 @@
   .cc-btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
   .cc-btn.primary:hover { background: var(--accent-dark); border-color: var(--accent-dark); }
   .cc-btn.small { min-height: 0; padding: 3px 10px; font-size: var(--fs-sm); }
+  .cc-btn.wide { min-width: 150px; }
+  /* Click-to-copy: the number itself is a target, not just the button. */
+  .cc-copy { cursor: pointer; border-radius: var(--radius-sm); }
+  .cc-copy:hover { background: var(--hover); }
+  .cc-copy:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 </style>
 </head>
 <body>
@@ -98,6 +131,14 @@
     b.type = 'button';
     b.addEventListener('click', onClick);
     return b;
+  }
+  // The icon the shell's showClioCode() pop-up drew: a coloured ring
+  // with one glyph. Decorative — the heading under it carries the meaning,
+  // so it is hidden from screen readers.
+  function icon(kind, glyph) {
+    const n = el('div', 'cc-icon ' + kind, glyph);
+    n.setAttribute('aria-hidden', 'true');
+    return n;
   }
   function show(...nodes) { app.replaceChildren(...nodes); }
 
@@ -193,9 +234,37 @@
         .finally(() => { kickInFlight = false; });
     };
 
+    // Copying. One path for the Copy Code button and for clicking the code
+    // itself. The promise chain starts with Promise.resolve() so a missing
+    // navigator.clipboard (an old browser, an insecure context) rejects
+    // rather than throwing synchronously.
+    const copyToClipboard = (value) =>
+      Promise.resolve().then(() => navigator.clipboard.writeText(value));
+
+    // Make a node copy `value` when clicked. It copies and STAYS PUT: the
+    // button is the deliberate "I'm done" action that closes the dialog, and
+    // a stray click on a number must never close anything. Reachable by
+    // keyboard, because a div that acts like a button has to be.
+    const copyable = (node, value, label) => {
+      if (value === null || value === undefined || value === '') return node;
+      const go = () => copyToClipboard(value).then(
+        () => T.toast(label + ' copied', 'success'),
+        () => T.toast('Could not copy — select it and copy it by hand', 'error'));
+      node.classList.add('cc-copy');
+      node.title = 'Click to copy';
+      node.setAttribute('role', 'button');
+      node.tabIndex = 0;
+      node.addEventListener('click', go);
+      node.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); go(); }
+      });
+      return node;
+    };
+
     // The code — the pre-2026-08-22 presentation: the code, when it was
     // updated, and how fresh that is; Copy Code (copies, then closes like
-    // the old dialog's confirm button) and Close.
+    // the old dialog's confirm button) and Close. The number itself copies
+    // on click too, without closing.
     const showCode = (d) => {
       const secondsOld = ageOf(d);
       let freshnessLabel = '';
@@ -206,16 +275,16 @@
 
       const value = d.value == null ? '' : String(d.value);
       show(
+        icon('info', 'i'),
         el('h1', 'cc-h', 'Clio Login Code'),
-        el('div', 'cc-code', value || '—'),
+        copyable(el('div', 'cc-code', value || '—'), value, 'Code'),
         el('p', 'cc-hint', 'Updated ' + (d.updated_at ? fmtTime(d.updated_at) : 'unknown')),
         el('p', 'cc-hint', freshnessLabel),
         el('div', 'cc-row', [
           button('Copy Code', 'primary', () => {
-            Promise.resolve()
-              .then(() => navigator.clipboard.writeText(value))
-              .then(() => { T.toast('Code copied', 'success'); T.close(window); },
-                    () => T.toast('Could not copy — select the code and copy it by hand', 'error'));
+            copyToClipboard(value).then(
+              () => { T.toast('Code copied', 'success'); T.close(window); },
+              () => T.toast('Could not copy — select the code and copy it by hand', 'error'));
           }),
           button('Close', '', () => T.close(window)),
         ]),
@@ -234,6 +303,7 @@
     } catch (err) {
       console.error(err);
       show(
+        icon('err', '!'),
         el('h1', 'cc-h', 'Error'),
         el('p', 'cc-err', 'Unable to fetch login code'),
         el('div', 'cc-row', [button('Close', '', () => T.close(window))]),
@@ -313,20 +383,22 @@
     const ageText  = humanAge(lastAge);
     const codeText = (data.value === null || data.value === undefined || data.value === '')
       ? 'none stored' : String(data.value);
+    const staleCode = copyable(el('b', '', codeText), data.value, 'Old code');
     const staleLine = (data.updated_at && ageText)
-      ? el('p', 'cc-p cc-stale', ['The last code (', el('b', '', codeText), ') arrived ',
+      ? el('p', 'cc-p cc-stale', ['The last code (', staleCode, ') arrived ',
           el('b', '', fmtTime(data.updated_at)), ` — it is ${ageText} old and will not work.`])
-      : el('p', 'cc-p cc-stale', ['The last code (', el('b', '', codeText), ') is of unknown age and cannot be trusted.']);
+      : el('p', 'cc-p cc-stale', ['The last code (', staleCode, ') is of unknown age and cannot be trusted.']);
 
     // "Check now" cannot close anything: it nudges the queue and checks.
     const checkNow = button('Check now', 'small', () => { kickQueue(); doCheck(); });
     checkNow.id = 'clioCheckNow';
     show(
+      icon('warn', '!'),
       el('h1', 'cc-h', 'Waiting for a new code'),
       staleLine,
       el('p', 'cc-p', 'Start the Clio login now. The new code will appear here automatically — usually a few seconds after the text arrives, occasionally up to a minute.'),
       el('div', 'cc-row', [status, checkNow]),
-      el('div', 'cc-row', [button('Show the old code anyway', '', () => {
+      el('div', 'cc-row', [button('Show the old code anyway', 'wide', () => {
         if (settled) return;
         settled = true;
         stop();
