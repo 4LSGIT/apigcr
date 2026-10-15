@@ -543,6 +543,7 @@ ref/migrations/2026-10-15_comms_s2c_max_speakers.sql
 ref/migrations/2026-10-15_comms_s2c_redo.sql
 ref/migrations/2026-10-15_comms_s3_summaries.sql
 ref/migrations/2026-10-15_comms_s3b_firm_context.sql
+ref/migrations/2026-10-15_hook16_quo_message_group_to.console.js
 ref/migrations/S1_notes_migration.sql
 ref/migrations/documents_s1.sql
 ref/migrations/documents_s2.sql
@@ -1299,6 +1300,7 @@ tests/portalNextSteps.test.js
 tests/prefillFieldsUi.test.js
 tests/processJobs.longJobConnection.test.js
 tests/processJobs.targeted.test.js
+tests/quoMessageTransform.test.js
 tests/refererRedaction.test.js
 tests/refreshonmiss.k3.test.js
 tests/reportSchemaDenylist.test.js

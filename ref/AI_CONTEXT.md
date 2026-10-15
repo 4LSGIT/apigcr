@@ -1308,11 +1308,32 @@ against re-divergence (CLAUDE.md).
 `manual/03-YisraFlow/10-ingest.md`.*
 
 ### Entry chain
-RingCentral webhook → YisraHook receiver (§16) → workflow → `phone_log`
+RingCentral / Quo webhook → YisraHook receiver (§16) → workflow → `phone_log`
 internal function (`lib/internal_functions/log.js`) →
 `services/phoneIngestService.js`. The pipeline body is a verbatim extraction
 of the old inline `phone_log` implementation; Layer 3 was wired in after,
 mirroring email.
+
+### Line resolution lives in the hook transforms (DB-stored)
+The firm line an SMS belongs to (`phone_event_log.line_number`, which drives
+the Comms phone views and the comms archive's credential) is picked by the
+hook's code transform, not by app code — and each transform carries its own
+HARDCODED line map. **Adding a line in Connections → Phone Lines is not
+enough: add it to the provider's map too.**
+- `rc-message-in` (hook 21): `LINES` — RC numbers; the first `to[]` entry in
+  the map is the line, else `to[0]`.
+- `quo-message` (hook 16, v3): `QUO_LINES` — Quo `phoneNumberId` (=
+  `phone_lines.provider_id`) → number. Incoming: the line is the inbox the
+  webhook fired for; an unknown inbox falls back to the first recipient.
+  Quo sends a GROUP text's `to` as one comma-joined string (v2 ran the digits
+  together); v3 splits it and emits `recipients` (wf 18 does not forward it
+  today). Outgoing group send: line = `from`, other party = the FIRST
+  recipient that is not the line, so it threads under that client only.
+  Source + install: `ref/migrations/2026-10-15_hook16_quo_message_group_to.console.js`;
+  `tests/quoMessageTransform.test.js` runs those exact bytes.
+- A group text to a RC line AND a Quo line arrives once per provider → one
+  event per line (no fan-out, no firm-to-firm suppression: `firmToFirm`
+  tests the SENDER). The all-lines contact thread shows both copies.
 
 ### Pipeline (per event)
 1. **firmToFirm enrichment** — stamped as `extra.firmToFirm`, a MATCH FIELD,

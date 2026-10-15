@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-10-15T00:24:04.632Z
+-- Generated: 2026-10-15T01:24:35.727Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:26c6a8fa895ac7c1bb45cc2455191152
+-- Fingerprint: sha256:10543e447a78072c812a01b0ab2d0a7e
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -3458,6 +3458,7 @@ CREATE TABLE `tasks` (
   `task_desc` varchar(1000) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `task_notification` tinyint(1) NOT NULL DEFAULT '0' COMMENT 'notify task assigner upon completion?',
   `task_source` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `task_session_key_id` int DEFAULT NULL COMMENT 'Session-key tasks (access-control D3): NULL = not created by a session key; else readonly_api_keys.id of the tasks.own key that created it and alone may manage it via /api/key-tasks. Ownership lives HERE, never in task_source (free text). No FK: hot table; key ids are never reused.',
   `task_dedupe_key` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `task_last_update` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `task_due_job_id` bigint DEFAULT NULL,
@@ -5044,7 +5045,8 @@ ALTER TABLE `tasks`
   ADD UNIQUE KEY `uq_tasks_action_token` (`task_action_token`),
   ADD KEY `task_to` (`task_to`),
   ADD KEY `idx_task_link_type_id` (`task_link_type`,`task_link_id`),
-  ADD KEY `idx_task_source_dedupe` (`task_source`,`task_dedupe_key`,`task_status`);
+  ADD KEY `idx_task_source_dedupe` (`task_source`,`task_dedupe_key`,`task_status`),
+  ADD KEY `idx_tasks_session_key` (`task_session_key_id`,`task_date`);
 
 --
 -- Indexes for table `temp_contacts`
