@@ -1429,6 +1429,7 @@ tests/wsurlS0cRowRenders.test.js
 tests/wsurlS0dApptParam.test.js
 tests/wsurlS1a.test.js
 tests/wsurlS1b.test.js
+tests/wsurlS2.test.js
 tests/ycFrameFit.test.js
 tests/ycPager.test.js
 tests/ycSync.test.js

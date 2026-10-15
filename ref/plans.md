@@ -596,6 +596,8 @@ Active surfaces with known next steps.
 
 - **Documentation currency** now has a mechanism (2026-09-14): doc≠code divergences are filed to scratch `ns=docs` at discovery; the weekly docs review (`ref/DOCS_REVIEW.md`) drains the queue and updates `ref/AI_CONTEXT.md`'s currency header. No more ad-hoc drift sweeps.
 
+- **case.html `loadIframes()` calls `Dropbox.embed` unguarded (wsurl S2, 2026-10-15).** dropins.js is external (www.dropbox.com); when it is blocked (an ad blocker, the network) a case with `case_dropbox` throws in boot. S1b's catch-path restore keeps a tab on screen, but the Dropbox panel and the boot's `tabLogGet(0)` are skipped. Fix: guard with `typeof Dropbox !== 'undefined'` (else show the noDB state), plus a test (the wsurl harness's (b7) already blocks dropins.js by interception).
+
 ---
 ---
 

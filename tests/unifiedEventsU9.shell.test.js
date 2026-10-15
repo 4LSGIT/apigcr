@@ -423,7 +423,9 @@ describe('U9b-P2 — F5 restore goes through each tab\'s opener', () => {
       openEventsTab: rec('openEventsTab'), openLogsTab: rec('openLogsTab'),
       openMainTab: (t) => calls.push('openMainTab:' + t),
     });
-    vm.runInContext(fnSrc(SHELL, 'openMainTabOnBoot') + '\nthis.f = openMainTabOnBoot;', ctx);
+    // wsurl S2: openMainTabOnBoot reads the drill-surface map — the real source, extracted.
+    vm.runInContext(/var WS_DRILL_SURFACE = \{[^}]*\};/.exec(SHELL)[0] + '\n'
+      + fnSrc(SHELL, 'openMainTabOnBoot') + '\nthis.f = openMainTabOnBoot;', ctx);
     return { f: ctx.f, calls };
   }
 

@@ -5066,6 +5066,7 @@
     // The strip only exists once the tab has been drilled into at least once.
     tab.querySelectorAll(':scope > .feature-strip .pill-button')
        .forEach(p => p.classList.remove('active'));
+    syncWorkspaceUrl();   // the address bar's drill segment (WORKSPACE URL)
   }
 
   // After any panel toggle: enter/exit drilled mode and highlight the active pill.
@@ -5091,6 +5092,7 @@
       const sr = strip.getBoundingClientRect(), ar = act.getBoundingClientRect();
       strip.scrollLeft += (ar.left - sr.left) - (strip.clientWidth - ar.width) / 2;
     }
+    syncWorkspaceUrl();   // the address bar's drill segment (WORKSPACE URL)
   }
 </script>
   <script>
@@ -6395,8 +6397,15 @@ async function initAuth() {
        invalid rest is dropped at its layer; the file or tab itself is kept.
        file:<n> takes no rest (a file's lives in its ?files= token).
        A main tab's rest belongs to its own pane frame; a tab with NO pane
-       frame drops it (openMainTabOnBoot). That is S1a's rule, not the final
-       one: S2 makes the More/Admin drill state shell-owned.
+       frame drops it (openMainTabOnBoot) — except tabMore / tabAdmin, whose
+       first segment is the SHELL's: the FEATURE_REGISTRY id of the open
+       drill panel (tabMore~moreAutomations), read live from which panel is
+       showing, never a DOM id or a tile position. Anything after it is that
+       panel's own pane's rest (tabMore~moreAutomations~<rest>). Restoring one
+       goes through ycLauncher.exec, and only for a plain registry id whose
+       tile on that grid opens a PANEL (data-target) — never an action tile
+       (dialogs) or a firm item; exec itself refuses denied, firm-hidden and
+       admin-gated ids. Anything refused leaves the grid, silently.
 
        IDs ONLY — never names, search text, phones or emails. A client's name in
        the query string would leak to any external site the user clicks through
@@ -6461,6 +6470,76 @@ async function initAuth() {
      *  is one pane iframe have one — see openMainTabOnBoot). */
     var wsMainRest = {};
 
+    /** More / Admin: drill panel registry id → its pane's last reported rest. */
+    var wsPanelRest = {};
+    var WS_DRILL_SURFACE = { tabMore: "more", tabAdmin: "admin" };
+
+    /**
+     * The drill panels of tabMore / tabAdmin, [{ id, panel }]: every item of
+     * the EFFECTIVE registry whose tile on that grid opens a panel inside the
+     * tab — matched by the tile's data-target, never by position (ui-custom
+     * S4 may reorder the grids). ycLauncher's public API only; firm items
+     * (firm:<slug>) have no tile and are skipped.
+     */
+    function wsDrillPanels(tabId) {
+      const sf = WS_DRILL_SURFACE[tabId];
+      const L = window.ycLauncher;
+      const tab = E(tabId);
+      if (!sf || !tab || !L || typeof L.isReady !== "function" || !L.isReady()) return [];
+      const out = [];
+      L.effectiveRegistry().forEach((it) => {
+        if (String(it.id).indexOf(":") >= 0) return;
+        const el = (L.elementsOf(it.id) || {})[sf];
+        const target = el && el.getAttribute("data-target");
+        const panel = target && document.getElementById(target);
+        if (panel && tab.contains(panel)) out.push({ id: it.id, panel });
+      });
+      return out;
+    }
+
+    /** The drill panel open in that tab now, or null (its grid is showing). */
+    function wsOpenPanel(tabId) {
+      return wsDrillPanels(tabId).find((p) => getComputedStyle(p.panel).display !== "none") || null;
+    }
+
+    /** A main tab's rest for the URL: tabMore / tabAdmin read it live from
+     *  the open panel (+ that panel's pane rest); others, from wsMainRest. */
+    function wsTabRest(tabId) {
+      if (!WS_DRILL_SURFACE[tabId]) return wsMainRest[tabId] || "";
+      const open = wsOpenPanel(tabId);
+      if (!open) return "";
+      return wsPanelRest[open.id] ? open.id + "~" + wsPanelRest[open.id] : open.id;
+    }
+
+    /**
+     * Boot (openMainTabOnBoot only): reopen the drill panel `rest` names.
+     * ALL must hold — (a) a plain registry id (no ':' — never a firm item),
+     * (b) it has a tile on this tab's grid, (c) that tile opens a PANEL
+     * (data-target; action tiles open dialogs and never fire from a URL),
+     * (d) ycLauncher.exec(id) agrees (it refuses denied / firm-hidden /
+     * admin-gated ids, and opens the tab itself). Any rest after the id is
+     * held for the panel's lazy iframe. true = done; false = show the grid.
+     */
+    function wsRestoreDrill(tabId, rest) {
+      const sf = WS_DRILL_SURFACE[tabId];
+      const L = window.ycLauncher;
+      const segs = String(rest || "").split("~");
+      const id = segs[0], sub = segs.slice(1).join("~");
+      if (!sf || !id || id.indexOf(":") >= 0 || !L || !L.isReady()) return false;
+      const el = (L.elementsOf(id) || {})[sf];
+      if (!el || !el.hasAttribute("data-target")) return false;
+      const panel = document.getElementById(el.getAttribute("data-target"));
+      const pane = panel && panel.querySelector(":scope > iframe");
+      if (sub) {
+        wsPanelRest[id] = sub;
+        if (pane && window.ycSubTab) ycSubTab.host.hold(pane, sub);
+      }
+      if (L.exec(id) === true) return true;
+      delete wsPanelRest[id];
+      if (pane && window.ycSubTab) ycSubTab.host.take(pane);   // drop the hold: nobody will open it
+      return false;
+    }
+
     /** Give a file button's restore token a new rest ('' = default). */
     function wsSetFileRest(btn, rest) {
       const base = (btn.dataset.fileSpec || "").split("~")[0];
@@ -6480,6 +6559,11 @@ async function initAuth() {
         return btn && btn.dataset.fileSpec ? { btn } : null;
       }
       const tab = frameEl.closest(".tab-main");
+      if (tab && WS_DRILL_SURFACE[tab.id] && frameEl.parentElement !== tab) {
+        // a drill panel's own pane frame (S4's panes report through this)
+        const p = wsDrillPanels(tab.id).find((x) => x.panel === frameEl.parentElement);
+        return p ? { tab: tab.id, panel: p.id } : null;
+      }
       return tab && frameEl.parentElement === tab ? { tab: tab.id } : null;
     }
 
@@ -6506,6 +6590,13 @@ async function initAuth() {
         }
         delete where.btn.dataset.wsPending;
         wsSetFileRest(where.btn, r);
+      } else if (where.panel) {
+        // shown only while that panel is the open one in the active tab
+        if (r && ycSubTab.normalize(where.panel + "~" + r) === null) return;   // id~rest over the caps
+        if (r) wsPanelRest[where.panel] = r;
+        else delete wsPanelRest[where.panel];
+        const open = currentMainTabId() === where.tab ? wsOpenPanel(where.tab) : null;
+        if (!open || open.id !== where.panel) return;
       } else {
         if (r) wsMainRest[where.tab] = r;
         else delete wsMainRest[where.tab];
@@ -6602,7 +6693,10 @@ async function initAuth() {
         // omit ?open= and land on Home. (Before the case_id fix above, every case
         // took this path, which is why the bar read `open=file-div4`.)
         const emit = cur && cur !== "tabHome" && cur.indexOf("file-div") !== 0;
-        if (emit) u.searchParams.set("open", wsMainRest[cur] ? cur + "~" + wsMainRest[cur] : cur);
+        if (emit) {
+          const rest = wsTabRest(cur);
+          u.searchParams.set("open", rest ? cur + "~" + rest : cur);
+        }
       }
       return u.toString();
     }
@@ -6728,9 +6822,16 @@ async function initAuth() {
      * `rest` (already validated, wsOpenTarget) belongs to the tab's own pane —
      * a lazy iframe straight under the tab div: kept for the URL and held for
      * the pane to take() when it boots. A tab with no pane has no reader for
-     * it, so it is dropped. (More/Admin drill panels: S2.)
+     * it, so it is dropped. tabMore / tabAdmin: the rest names a drill
+     * panel, reopened through ycLauncher.exec (wsRestoreDrill) — which opens
+     * the tab itself, so on success this does NOT open it again (that would
+     * run exitDrillMode on the tab now current and close the panel).
      */
     function openMainTabOnBoot(tabId, rest) {
+      if (WS_DRILL_SURFACE[tabId]) {
+        if (!(rest && wsRestoreDrill(tabId, rest))) openMainTab(tabId);
+        return;
+      }
       const pane = rest ? E(tabId) && E(tabId).querySelector(":scope > iframe") : null;
       if (pane) {
         wsMainRest[tabId] = rest;

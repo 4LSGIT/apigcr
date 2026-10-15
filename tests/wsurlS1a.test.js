@@ -221,6 +221,9 @@ function shell() {
     ${fnSrc(SHELL, 'currentMainTabId')}
     ${pick(/const YC_LABEL_KEY = "ycFileLabels";/)}
     ${pick(/var wsMainRest = \{\};/)}
+    ${pick(/var wsPanelRest = \{\};/)}
+    ${pick(/var WS_DRILL_SURFACE = \{[^}]*\};/)}
+    ${['wsDrillPanels', 'wsOpenPanel', 'wsTabRest', 'wsRestoreDrill'].map((n) => fnSrc(SHELL, n)).join('\n')}
     ${fnSrc(SHELL, 'wsSetFileRest')}
     ${fnSrc(SHELL, 'wsFrameOwner')}
     ${assignedFnSrc(SHELL, 'ycReportSubTab')}

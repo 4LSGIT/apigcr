@@ -38,6 +38,16 @@
 //        blocked, a case with case_dropbox: loadIframes' Dropbox.embed
 //        throws) still shows the restored tab, and the URL settles
 //
+// S2 — the open More / Admin drill panel is in the URL (registry ids):
+//   (d1) SU: drill into a More panel → tabMore~<id>; a reload reopens it (its
+//        pane loaded ONCE); switching panels moves the id; the All pill → tabMore
+//   (d2) Admin as SU round-trips; non-SU tabAdmin~<id> → Home, pane never loaded
+//   (d3) refusals → the grid, no dialog: denied, firm-hidden, an action tile
+//        (moreClioCode, a Swal), newClient (no More tile), firm:x, a bogus id
+//   (d4) a panel's pane: a synthetic report → tabMore~<id>~<rest>; from the
+//        same frame while another tab is active → no URL change
+//   (d5) ?manual= + ?open=tabMore~<id> → the manual wins
+//
 // The mock's /api/search answers nothing, so every scenario seeds the
 // sessionStorage label cache (ycFileLabels) the way a same-tab reload would
 // find it. Roles: /api/firm-data is intercepted and currentUser.roles
@@ -91,18 +101,20 @@ const q = (href) => Object.fromEntries(new URL(href).searchParams);
  * user's roles set. Resolves once boot has handed the bar to syncWorkspaceUrl
  * and the frames have had a moment to load.
  */
-async function boot(browser, base, query, { su = true, labels = {}, caseType = null, casePatch = null, search = null, blockHosts = [] } = {}) {
+async function boot(browser, base, query, { su = true, labels = {}, caseType = null, casePatch = null, search = null, blockHosts = [], firmPatch = null } = {}) {
   const ctx = await browser.createBrowserContext();
   const page = await ctx.newPage();
   await page.setViewport({ width: 1280, height: 900 });
   const errors = [];
   page.on('pageerror', (e) => errors.push(String(e.message || e).slice(0, 200)));
-  const hits = { casesList: 0, log: 0 };
+  const hits = { casesList: 0, log: 0, automationManager: 0, dbConsole: 0 };
   await page.setRequestInterception(true);
   page.on('request', (req) => {
     const u = new URL(req.url());
     if (u.pathname === '/api/cases' && req.method() === 'GET') hits.casesList++;
     if (u.pathname === '/api/log' && req.method() === 'GET') hits.log++;
+    if (u.pathname === '/automationManager.html') hits.automationManager++;
+    if (u.pathname === '/dbConsole.html') hits.dbConsole++;
     if (blockHosts.includes(u.hostname)) return req.abort('blockedbyclient');
     if ((caseType || casePatch) && u.pathname === `/api/cases/${CASE}` && req.method() === 'GET') {
       const fx = JSON.parse(fs.readFileSync(path.join(__dirname, 'fixtures', 'api', 'cases', CASE + '.json'), 'utf8'));
@@ -116,6 +128,7 @@ async function boot(browser, base, query, { su = true, labels = {}, caseType = n
     if (u.pathname === '/api/firm-data') {
       const fd = JSON.parse(JSON.stringify(FIRM_DATA));
       fd.currentUser.roles = su ? 'it,admin,form_dev,su' : 'staff';
+      Object.assign(fd, firmPatch || {});
       return req.respond({ status: 200, contentType: 'application/json', body: JSON.stringify(fd) });
     }
     return req.continue();
@@ -419,6 +432,91 @@ const activeTab = (page) => page.evaluate(() => window.currentMainTabId());
       check('(b7) dropins.js blocked: the boot error still leaves the restored tab, URL settles',
         threw && (await shownIn(f)) === 'tabDocuments' && q(page.url()).files === `c${CASE}~documents`,
         `threw=${threw} shown=${await shownIn(f)} ${page.url()}`);
+      await ctx.close();
+    }
+
+    // ════ S2 — More / Admin drill panels ═══════════════════════════════════
+    const openPanelOf = (page, tabId) => page.evaluate((t) => {
+      const p = window.wsOpenPanel(t);
+      return p ? p.id : null;
+    }, tabId);
+    const clickTile = (page, id, sf) => page.evaluate((i, s) => window.ycLauncher.elementsOf(i)[s].click(), id, sf);
+    const realDialog = (page) => page.evaluate(() => !!document.querySelector('.swal2-popup:not(.swal2-toast)'));
+    {
+      const { page, ctx, hits } = await boot(browser, url, '?open=tabMore');
+      await clickTile(page, 'moreAutomations', 'more');
+      await sleep(150);
+      check('(d1) SU: drilling into Automations → open=tabMore~moreAutomations', q(page.url()).open === 'tabMore~moreAutomations', page.url());
+      const was = page.url();
+      hits.automationManager = 0;
+      await page.reload({ waitUntil: 'networkidle2' });
+      await settle(page);
+      check('(d1) …a reload reopens that panel, URL unchanged, its pane loaded ONCE',
+        (await openPanelOf(page, 'tabMore')) === 'moreAutomations' && page.url() === was && hits.automationManager === 1,
+        `panel=${await openPanelOf(page, 'tabMore')} url=${page.url()} loads=${hits.automationManager}`);
+      await clickTile(page, 'moreManuals', 'more');
+      await sleep(150);
+      check('(d1) …switching panels moves the id', q(page.url()).open === 'tabMore~moreManuals', page.url());
+      await page.evaluate(() => document.querySelector('#tabMore > .feature-strip .pill-button').click());   // "All"
+      await sleep(150);
+      check('(d1) …the All pill → open=tabMore, the grid', q(page.url()).open === 'tabMore' && (await openPanelOf(page, 'tabMore')) === null, page.url());
+      await ctx.close();
+    }
+    {
+      const { page, ctx } = await boot(browser, url, '?open=tabAdmin~adminDbConsole', { su: true });
+      const ok1 = (await activeTab(page)) === 'tabAdmin' && (await openPanelOf(page, 'tabAdmin')) === 'adminDbConsole'
+        && q(page.url()).open === 'tabAdmin~adminDbConsole';
+      await page.reload({ waitUntil: 'networkidle2' });
+      await settle(page);
+      check('(d2) SU: tabAdmin~adminDbConsole round-trips (and survives a reload)',
+        ok1 && (await openPanelOf(page, 'tabAdmin')) === 'adminDbConsole' && q(page.url()).open === 'tabAdmin~adminDbConsole', page.url());
+      await ctx.close();
+    }
+    {
+      const { page, ctx, hits } = await boot(browser, url, '?open=tabAdmin~adminDbConsole', { su: false });
+      check('(d2) non-SU tabAdmin~adminDbConsole → Home, the pane never loaded',
+        (await activeTab(page)) === 'tabHome' && hits.dbConsole === 0, `${await activeTab(page)} loads=${hits.dbConsole}`);
+      await ctx.close();
+    }
+    for (const [label, id, firmPatch] of [
+      ['denied', 'moreAutomations', { denied: ['moreAutomations'] }],
+      ['firm-hidden', 'moreViews', { ui: { firm: { registry_overrides: { hidden: ['moreViews'] } } } }],
+      ['an action tile (a dialog)', 'moreClioCode', null],
+      ['no More tile (newClient)', 'newClient', null],
+      ['a firm id', 'firm:x', null],
+      ['a bogus id', 'moreBogus', null],
+    ]) {
+      const { page, ctx, hits } = await boot(browser, url, `?open=tabMore~${encodeURIComponent(id)}`, { firmPatch });
+      await sleep(1300);   // past the welcome toast; a dialog would still be up
+      const tab = await activeTab(page), open = await openPanelOf(page, 'tabMore'), dlg = await realDialog(page);
+      check(`(d3) refused, ${label} (${id}) → the More grid, no dialog`,
+        tab === 'tabMore' && open === null && !dlg && q(page.url()).open === 'tabMore' && (id !== 'moreAutomations' || hits.automationManager === 0),
+        `tab=${tab} panel=${open} dialog=${dlg} url=${page.url()} loads=${hits.automationManager}`);
+      await ctx.close();
+    }
+    {
+      const { page, ctx, hits } = await boot(browser, url, '?open=tabMore~moreAutomations');
+      check('(d4) the boot opened the panel, its pane loaded once', (await openPanelOf(page, 'tabMore')) === 'moreAutomations' && hits.automationManager === 1,
+        `loads=${hits.automationManager}`);
+      await page.evaluate(() => window.ycReportSubTab(document.querySelector('#automationsDiv > iframe'), 'activity'));
+      await sleep(100);
+      check('(d4) a report from the panel\'s pane → tabMore~moreAutomations~activity', q(page.url()).open === 'tabMore~moreAutomations~activity', page.url());
+      await page.evaluate(() => window.openMainTab('tabCases'));
+      await sleep(100);
+      const was = page.url();
+      await page.evaluate(() => window.ycReportSubTab(document.querySelector('#automationsDiv > iframe'), 'workflows'));
+      await sleep(100);
+      check('(d4) …from the same frame while another tab is active: no URL change', page.url() === was, `${was} → ${page.url()}`);
+      await page.evaluate(() => window.openMainTab('tabMore'));
+      await sleep(100);
+      check('(d4) …and shown once its panel is on screen again', q(page.url()).open === 'tabMore~moreAutomations~workflows', page.url());
+      await ctx.close();
+    }
+    {
+      const { page, ctx } = await boot(browser, url, '?open=tabMore~moreAutomations&manual=03-YisraFlow');
+      await sleep(300);
+      check('(d5) ?manual= + ?open=tabMore~moreAutomations → the manual wins',
+        (await openPanelOf(page, 'tabMore')) === 'moreManuals' && q(page.url()).open === 'tabMore~moreManuals', page.url());
       await ctx.close();
     }
 
