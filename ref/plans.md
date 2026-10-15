@@ -285,8 +285,8 @@ deferred until the budget shows it's needed.
     API (`window.ycTool`; `manual/08-Admin-Tools/11-tool-actions.md`). The
     declarative launcher **action** kind was dropped (2026-10-15): config
     cannot cover the permutations firms ask for. The shell's own Get Clio
-    Code tile and `showClioCode()` stay until the tool is installed, then
-    retire (ui-custom S3.3b) (§3-12).
+    Code tile and `showClioCode()` retired once the tool was installed
+    (ui-custom S3.3b, 2026-10-15) (§3-12).
 13. Heartbeat per-tenant vs platform (§3-13).
 14. Provider-console webhook URL inventory at migration time (§3-14).
 15. GCS per-tenant buckets vs prefixes (§3-15). 16. Freeze §B4's

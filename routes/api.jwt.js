@@ -19,7 +19,7 @@ router.get('/api/cause_error', jwtOrApiKey, (req, res, next) => {
 // age_seconds (added 2026-08-22) is computed IN SQL so it is immune to client
 // clock skew. It exists because the UI must never present a dead code as
 // usable: on 2026-08-21 a user read a three-day-old code four times in 26
-// seconds and tried to log in with it. See public/index.html showClioCode().
+// seconds and tried to log in with it. See the clio-code tool (ref/tools/clio-code.html).
 // NULL when updated_at is NULL (the column is nullable) — callers must treat
 // null as "infinitely old", not as "fresh".
 router.get("/clio-code", jwtOrApiKey, async (req, res) => {

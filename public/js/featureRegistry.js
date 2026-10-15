@@ -24,7 +24,8 @@
  * stable id. The id is the item's name everywhere from here on (ui_config's
  * firm registry_overrides — hidden / renames / locked — and the firm/user
  * layouts still to come, entitlement denies): never rename one, and never
- * reuse a retired one. Grid items carry a surface prefix (more* / admin*); home/sidebar items
+ * reuse a retired one. Retired: moreClioCode (2026-10-15 — Get Clio Code is the
+ * firm tool `clio-code` now; ref/tools/clio-code.html). Grid items carry a surface prefix (more* / admin*); home/sidebar items
  * do not. Fields — all optional except label and icon:
  *
  *   label          visible text, PLAIN (the renderer escapes it)
@@ -246,11 +247,6 @@ window.FEATURE_REGISTRY = {
     label: 'Court Preview', icon: 'gavel', target: 'courtPreviewDiv', group: 'more',
     hoverAnim: 'fa-shake', styleVars: '--fa-animation-duration:0.6s',
   },
-  // A Swal, not a panel (showClioCode() in index.html).
-  moreClioCode: {
-    label: 'Get Clio Code', icon: 'c', onclick: 'showClioCode()',
-    hoverAnim: 'fa-spin-pulse', styleVars: '--fa-animation-duration:1.6s',
-  },
   moreCampaigns: {
     label: 'Campaigns', icon: 'envelopes-bulk', target: 'campaignsDiv', group: 'more',
     hoverAnim: 'fa-shake', styleVars: '--fa-animation-duration:0.9s',
@@ -355,16 +351,15 @@ window.DEFAULT_LAYOUTS = {
 
   // More Features.
   //
-  // Layout rule: 4 buttons per row, and every row full. 24 buttons = six full
-  // rows. Keep new buttons inside the row they belong to rather than
-  // appending to the end.
+  // Layout rule: 4 buttons per row. Keep new buttons inside the row they
+  // belong to rather than appending to the end. Row 5 has three: Get Clio
+  // Code left the grid for the firm row (ui-custom S3.3b, 2026-10-15) — it is
+  // now a firm tool, and firm items render in a row of their own after this
+  // grid. The next tile fills that gap or waits for S4's layouts; ask first.
   //
-  // Row 5's fourth tile was the cat, a toy holding that slot square until a
-  // real feature wanted it. Settings did (2026-10-11, when Comms took its
-  // sidebar and Home places): Settings joined row 1 beside Theme, and Get
-  // Clio Code moved down into the cat's slot. Casey is still summoned by
-  // long-pressing the header logo. The grid has NO free slot now — the next
-  // tile starts a seventh row or replaces something; ask first. (placeholder / data-placeholder, which ensureStrip()
+  // Row 5's fourth tile was the cat before that, a toy holding the slot
+  // square until Settings took a row-1 place (2026-10-11). Casey is still
+  // summoned by long-pressing the header logo. (placeholder / data-placeholder, which ensureStrip()
   // skips so a tile that opens nothing never reaches the pill strip, is
   // unused; keep the mechanism for the next gap in the grid.)
   //
@@ -398,9 +393,9 @@ window.DEFAULT_LAYOUTS = {
     { item: 'moreCaseConfig' }, { item: 'moreChecklists' }, { item: 'moreAutomations' }, { item: 'moreViews' },
     { break: true },
     // When things happen: what can be booked, when, and the court email as it
-    // will go out — and the Clio sign-in code, the loosest fit on the grid,
-    // parked in the cat's old slot when Settings took its row-1 place.
-    { item: 'moreAvailability' }, { item: 'moreBooking' }, { item: 'moreCourtPreview' }, { item: 'moreClioCode' },
+    // will go out. Three tiles since Get Clio Code left for the firm row
+    // (ui-custom S3.3b); S4's layouts settle the gap.
+    { item: 'moreAvailability' }, { item: 'moreBooking' }, { item: 'moreCourtPreview' },
     { break: true },
     // What goes out, and what comes back as numbers: the message, the page it
     // lands on, the links that get there, and the reporting over all of it.

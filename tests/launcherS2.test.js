@@ -339,8 +339,9 @@ describe('exec(id) (for real)', () => {
   test('grid actions and the custom tab click their real element', () => {
     t.L.exec('moreSettings');
     expect([t.w.currentMainTabId(), t.active()]).toEqual(['tabSettings', ['tabMore']]);
-    t.L.exec('moreClioCode');
-    expect(t.calls).toContain('showClioCode');
+    t.L.applyAccess({ isAdmin: true });            // the one dialog tile left on a grid is Admin's
+    t.L.exec('adminEtch');
+    expect(t.calls).toContain('etchSwal');
     t.L.exec('custom');
     expect(t.w.currentMainTabId()).toBe('tabCustom');
   });

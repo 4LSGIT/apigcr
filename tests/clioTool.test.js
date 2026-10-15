@@ -7,7 +7,8 @@
  * toolShell.js) with a scripted backend; the tool page mounted in the dialog's
  * own frame, on a fake clock.
  *
- * It ports the shell's showClioCode() (public/index.html), so the paths are
+ * It ports the shell's former showClioCode() (retired from public/index.html in
+ * ui-custom S3.3b), so the paths are
  * that function's: a fresh code shown (copy → clipboard, toast, close); a
  * stale code named as dead while it waits — re-checks every 5 s, gives up
  * after 120 s showing the best it has, "Check now", "Show the old code
