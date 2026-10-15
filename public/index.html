@@ -236,6 +236,10 @@
       //   − the custom tab while the user has none (applyCustomTab hides
       //     both its elements then); while they do, it is listed under its
       //     own title and icon.
+      //   − firm-hidden ids, + firm-added items (group "Firm", after More,
+      //     before Admin, in their array order), with firm renames applied to
+      //     label AND surfaceLabels (the custom item ignores renames: its
+      //     user owns its title). See the firm overlay below.
       // Each entry: { id, group, label, labels, icon } — labels = label +
       // surfaceLabels, what the matcher reads. group = the item's origin:
       // its sidebar section, else Home, else the grid it is on; groups run
@@ -255,12 +259,128 @@
         return out;
       }
 
+      // ── The firm overlay (ui-custom S3.1) ──────────────────────────────
+      // ui = /api/firm-data `ui`: { firm: { <config_key>: doc }, user: {…} }.
+      // What acts in this slice is firm.registry_overrides:
+      //   hidden   ids hidden like a deny (the undeniable set stripped again)
+      //   renames  { id: { label } } — plain text, set with textContent
+      //   items    firm-added items: { id 'firm:…', label, icon, action }.
+      //            Each is RE-VALIDATED here by the server's rules
+      //            (lib/uiConfigShape.js; tests/uiConfigS31.test.js runs both
+      //            over one fixture set): a bad item is dropped with a console
+      //            warning, so it is never listed and never navigates.
+      //   locked   delivered, inert until S4's user layer.
+      // user.shortcuts is storage only until S4.
+      var FIRM_GROUP = 'Firm';
+      var FIRM_ID_RE = /^firm:[a-z0-9-]{1,40}$/;
+      var ICON_RE = /^[a-z0-9-]{1,40}$/;
+      var TOOL_KEY_RE = /^[a-z0-9-]{1,80}$/;         // routes/api.tools.js TOOL_KEY_RE
+      var VIEW_KEY_RE = /^[a-z][a-z0-9_]{2,59}$/;    // services/reportService.js REPORT_KEY_RE
+      var CONTROL_RE = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/;
+      // tool / view are modal-only: their pages boot from the PARENT shell's
+      // apiSend (window.parent), so a bare window would be a dead page.
+      var FIRM_ACTIONS = {
+        url:  { keys: ['type', 'href', 'present'], present: ['window'] },
+        tool: { keys: ['type', 'key', 'present'], present: ['modal'] },
+        view: { keys: ['type', 'key', 'present'], present: ['modal'] },
+      };
+      function hasOwn(o, k) { return Object.prototype.hasOwnProperty.call(o, k); }
+      function isObj(o) { return o !== null && typeof o === 'object' && Object.prototype.toString.call(o) === '[object Object]'; }
+      function onlyKeys(o, keys) { for (var k in o) if (hasOwn(o, k) && keys.indexOf(k) < 0) return false; return true; }
+      function note(msg) { if (typeof console !== 'undefined' && console.warn) console.warn('[ycLauncher] ' + msg); }
+      /** Plain-text label, trimmed, 1–40 characters — or null. */
+      function cleanLabel(v) {
+        if (typeof v !== 'string') return null;
+        var t = v.trim(), n = Array.from(t).length;
+        return n >= 1 && n <= 40 && !CONTROL_RE.test(t) ? t : null;
+      }
+      // A root-relative href landing on a page that needs the parent shell
+      // (/tool/…, /customView[.html]) after the browser's normalisation — the
+      // server's lib/uiConfigShape.js shellOnlyPath, line for line. Those
+      // pages are tool / view items (modal); a url item's window is dead.
+      function shellOnlyPath(h) {
+        var BASE = 'https://shell.invalid', p;
+        try { p = new URL(h, BASE).pathname; } catch (_) { return true; }
+        for (var i = 0; i < 3; i++) {
+          var d;
+          try { d = decodeURIComponent(p); } catch (_) { return true; }
+          d = d.replace(/\\/g, '/').replace(/\/{2,}/g, '/');
+          try { d = new URL(d, BASE).pathname; } catch (_) { return true; }
+          if (d === p) break;
+          p = d;
+        }
+        p = p.toLowerCase();                     // the loop already collapsed repeated slashes
+        return /^\/(tool(\/|$)|customview(\.html)?(\/|$))/.test(p);
+      }
+      function hrefOk(h) {
+        if (typeof h !== 'string' || !h || h.length > 2000 || /[\s\\]/.test(h) || CONTROL_RE.test(h)) return false;
+        if (h.charAt(0) === '/') return h.charAt(1) !== '/' && !shellOnlyPath(h);
+        if (!/^https:\/\//i.test(h)) return false;
+        try {
+          var u = new URL(h);
+          return u.protocol === 'https:' && !!u.hostname && !u.username && !u.password;
+        } catch (_) { return false; }
+      }
+      /** A firm action → { url, present }, or null when it breaks a rule. */
+      function firmTarget(a) {
+        if (!isObj(a) || typeof a.type !== 'string' || !hasOwn(FIRM_ACTIONS, a.type)) return null;
+        var shape = FIRM_ACTIONS[a.type];
+        if (!onlyKeys(a, shape.keys) || shape.present.indexOf(a.present) < 0) return null;
+        if (a.type === 'url') return hrefOk(a.href) ? { url: a.href, present: a.present } : null;
+        var re = a.type === 'tool' ? TOOL_KEY_RE : VIEW_KEY_RE;
+        if (typeof a.key !== 'string' || !re.test(a.key)) return null;
+        return {
+          url: a.type === 'tool' ? '/tool/' + encodeURIComponent(a.key) : '/customView.html?key=' + encodeURIComponent(a.key),
+          present: a.present,
+        };
+      }
+      /** One firm item → its clean copy, or null. */
+      function cleanFirmItem(it) {
+        if (!isObj(it) || !onlyKeys(it, ['id', 'label', 'icon', 'action'])) return null;
+        if (typeof it.id !== 'string' || !FIRM_ID_RE.test(it.id)) return null;
+        var label = cleanLabel(it.label);
+        if (label == null || typeof it.icon !== 'string' || !ICON_RE.test(it.icon) || !firmTarget(it.action)) return null;
+        var a = it.action;
+        return { id: it.id, label: label, icon: it.icon,
+          action: a.type === 'url' ? { type: 'url', href: a.href, present: a.present } : { type: a.type, key: a.key, present: a.present } };
+      }
+      /** ui → { hidden: {id:true}, renames: {id: label}, items: [clean item] }.
+       *  quiet: no console warnings (applyAccess's second read of the same ui). */
+      function firmOverlay(ui, quiet) {
+        var out = { hidden: {}, renames: {}, items: [] };
+        var ro = isObj(ui) && isObj(ui.firm) && isObj(ui.firm.registry_overrides) ? ui.firm.registry_overrides : null;
+        if (!ro) return out;
+        out.hidden = cleanDenied(ro.hidden);
+        if (isObj(ro.renames)) {
+          for (var id in ro.renames) {
+            if (!hasOwn(ro.renames, id) || id === 'custom') continue;
+            var l = isObj(ro.renames[id]) ? cleanLabel(ro.renames[id].label) : null;
+            if (l != null) out.renames[id] = l;
+            else if (!quiet) note('firm rename of "' + id + '" ignored: not a 1-40 character plain label');
+          }
+        }
+        if (Object.prototype.toString.call(ro.items) === '[object Array]') {
+          var seen = {};
+          for (var i = 0; i < ro.items.length; i++) {
+            var c = cleanFirmItem(ro.items[i]);
+            if (!c || hasOwn(seen, c.id)) {
+              if (!quiet) note('firm item ' + i + ' dropped: ' + (c ? 'duplicate id ' + c.id : 'it breaks the firm item rules'));
+              continue;
+            }
+            seen[c.id] = true;
+            out.items.push(c);
+          }
+        }
+        return out;
+      }
+
       function computeEffective(opts, registry, layouts) {
         opts = opts || {};
         registry = registry || window.FEATURE_REGISTRY || {};
         layouts = layouts || window.DEFAULT_LAYOUTS || {};
         var own = function (id) { return Object.prototype.hasOwnProperty.call(registry, id); };
         var denied = cleanDenied(opts.denied);
+        var firm = firmOverlay(opts.ui);
         var gated = {};
         (layouts.admin || []).forEach(function (e) { if (e && e.item != null) gated[e.item] = true; });
 
@@ -281,6 +401,7 @@
           order.push(GRID_GROUP[sf]);
           (layouts[sf] || []).forEach(function (e) { if (e) place(e.item, GRID_GROUP[sf]); });
         });
+        if (firm.items.length) order.splice(order.indexOf(GRID_GROUP.admin), 0, FIRM_GROUP);
         GROUPS = order;
 
         var out = [];
@@ -288,7 +409,7 @@
           var it = registry[id];
           if (it.placeholder) return;   // a grid square that opens nothing
           if (!opts.isAdmin && (gated[id] || it.tab === 'tabAdmin')) return;
-          if (denied[id]) return;
+          if (denied[id] || firm.hidden[id]) return;
           var label = it.label, icon = it.icon;
           if (id === 'custom') {
             var ct = opts.customTab;
@@ -297,11 +418,23 @@
             if (ct.icon) icon = String(ct.icon);
           }
           var labels = [label];
-          for (var sf in (it.surfaceLabels || {})) {
-            var l = it.surfaceLabels[sf];
-            if (l != null && labels.indexOf(String(l)) < 0) labels.push(String(l));
+          if (hasOwn(firm.renames, id)) {
+            labels = [label = firm.renames[id]];     // replaces surfaceLabels too
+          } else {
+            for (var sf in (it.surfaceLabels || {})) {
+              var l = it.surfaceLabels[sf];
+              if (l != null && labels.indexOf(String(l)) < 0) labels.push(String(l));
+            }
           }
           out.push({ id: id, group: origin[id], label: label, labels: labels, icon: icon });
+        });
+        // Firm-added items: no launcher element in this slice (firm layouts
+        // come with S4), so they live in All + the palette and exec()
+        // dispatches their action. Hidden / denied like any other id.
+        firm.items.forEach(function (fi) {
+          if (denied[fi.id] || firm.hidden[fi.id]) return;
+          seq.push(fi.id);
+          out.push({ id: fi.id, group: FIRM_GROUP, label: fi.label, labels: [fi.label], icon: fi.icon, action: fi.action });
         });
         out.sort(function (a, b) {
           return (order.indexOf(a.group) - order.indexOf(b.group)) || (seq.indexOf(a.id) - seq.indexOf(b.id));
@@ -310,42 +443,51 @@
       }
 
       // ── Access: the effective registry + the hide pass ─────────────────
-      // applyAccess({ isAdmin, denied, customTab }) — loadUserContext calls it
-      // once after firm data; applyCustomTab calls it again with just
-      // { customTab } when Settings changes the custom tab. Fields left out
-      // keep their last value. Re-runnable: the hide pass is idempotent.
+      // applyAccess({ isAdmin, denied, ui, customTab }) — loadUserContext
+      // calls it once after firm data; applyCustomTab calls it again with
+      // just { customTab } when Settings changes the custom tab. Fields left
+      // out keep their last value. Re-runnable: the hide pass is idempotent.
       var STATE = null, EFFECTIVE = [], lastDenied = null;
       var DENIED_ATTR = 'data-yc-denied';   // CSS: [data-yc-denied] { display:none !important }
 
       function applyAccess(opts) {
         opts = opts || {};
-        var prev = STATE || { isAdmin: false, denied: [], customTab: null };
+        var prev = STATE || { isAdmin: false, denied: [], ui: null, customTab: null };
         STATE = {};
-        ['isAdmin', 'denied', 'customTab'].forEach(function (k) {
+        ['isAdmin', 'denied', 'ui', 'customTab'].forEach(function (k) {
           STATE[k] = Object.prototype.hasOwnProperty.call(opts, k) ? opts[k] : prev[k];
         });
         STATE.isAdmin = !!STATE.isAdmin;
         EFFECTIVE = computeEffective(STATE);
-        hidePass(cleanDenied(STATE.denied));
+        var firm = firmOverlay(STATE.ui, true), hide = cleanDenied(STATE.denied);
+        for (var h in firm.hidden) hide[h] = true;
+        hidePass(hide, firm.renames);
         try { window.dispatchEvent(new CustomEvent('ycLauncherAccess')); } catch (_) { /* no CustomEvent */ }
         return effectiveRegistry();
       }
 
-      // Hide the rendered elements of denied items on every surface. By
-      // attribute + an !important rule, not style.display: applyCustomTab
-      // and loadUserContext write style.display on #sbCustom / #sbAdmin /
-      // #tabCustomButton, and must not be able to resurrect a denied item.
-      function hidePass(denied) {
+      // Hide the rendered elements of denied AND firm-hidden items on every
+      // surface — one attribute for both (ensureStrip and the CSS rule already
+      // honour it; firm "hide" is decluttering, a deny is visibility-only:
+      // neither secures anything). By attribute + an !important rule, not
+      // style.display: applyCustomTab and loadUserContext write style.display
+      // on #sbCustom / #sbAdmin / #tabCustomButton, and must not be able to
+      // resurrect a hidden item. Then relabel the renamed ones.
+      function hidePass(denied, renames) {
+        renames = renames || {};
         for (var id in EL) for (var sf in EL[id]) {
           if (denied[id]) EL[id][sf].setAttribute(DENIED_ATTR, '');
           else EL[id][sf].removeAttribute(DENIED_ATTR);
         }
-        var key = Object.keys(denied).sort().join(',');
+        relabel(renames);
+        var key = Object.keys(denied).sort().join(',') + '|' +
+          Object.keys(renames).sort().map(function (k) { return k + '=' + renames[k]; }).join('\u0001');
         if (key === lastDenied) return;
         lastDenied = key;
-        // A grid's pill strip is built once, from its buttons (ensureStrip
-        // skips [data-yc-denied]). One built under another denied set would
-        // keep a stale pill: drop it — and rebuild it now if drilled in.
+        // A grid's pill strip is built once, from its buttons' text (ensureStrip
+        // skips [data-yc-denied]). One built under another hidden set or other
+        // renames would keep a stale pill: drop it — and rebuild it now if
+        // drilled in.
         ['more', 'admin'].forEach(function (sf) {
           var tab = document.getElementById(TAB_OF[sf]);
           var strip = tab && tab.querySelector(':scope > .feature-strip');
@@ -353,6 +495,54 @@
           strip.parentNode.removeChild(strip);
           if (tab.classList.contains('drill-active') && typeof window.syncDrillState === 'function') window.syncDrillState(tab, sf);
         });
+      }
+
+      // Firm renames, in place on every rendered element of the item: the
+      // label text only (textContent / a text node — never markup; icons,
+      // badges and the S1 structure untouched). A sidebar item's title follows
+      // the label unless its registry entry sets an explicit title (S1's
+      // rule — skinny mode shows it). The text an element had before its first
+      // rename is remembered, so dropping the rename restores it exactly; a
+      // re-run with the same renames changes nothing. The custom item is never
+      // renamed (applyCustomTab owns its text).
+      var ORIG = typeof WeakMap === 'function' ? new WeakMap() : null;
+      function labelNode(el, sf) {
+        if (sf === 'sidebar') {
+          for (var c = el.firstElementChild; c; c = c.nextElementSibling) {
+            if (c.tagName === 'SPAN' && !c.classList.contains('sb-badge')) return c;
+          }
+          return null;
+        }
+        var t = el.lastChild;                       // tiles: the text after <br><br>
+        return t && t.nodeType === 3 ? t : null;
+      }
+      function relabel(renames) {
+        if (!ORIG) return;
+        var reg = window.FEATURE_REGISTRY || {};
+        for (var id in EL) {
+          if (id === 'custom') continue;
+          for (var sf in EL[id]) {
+            var el = EL[id][sf], node = labelNode(el, sf);
+            if (!node) continue;
+            var want = hasOwn(renames, id) ? renames[id] : null, rec = ORIG.get(el);
+            if (want == null && !rec) continue;
+            if (!rec) {
+              rec = { text: node.nodeType === 3 ? node.nodeValue : node.textContent, title: el.getAttribute('title') };
+              ORIG.set(el, rec);
+            }
+            var text = rec.text;
+            if (want != null) {
+              var ws = /^(\s*)[\s\S]*?(\s*)$/.exec(rec.text);   // keep the markup's indentation
+              text = ws[1] + want + ws[2];
+            }
+            if (node.nodeType === 3) node.nodeValue = text; else node.textContent = text;
+            if (sf === 'sidebar' && !(reg[id] && reg[id].title != null)) {
+              var title = want != null ? want : rec.title;
+              if (title == null) el.removeAttribute('title'); else el.setAttribute('title', title);
+            }
+            if (want == null) ORIG.delete(el);
+          }
+        }
       }
 
       function isReady() { return !!STATE; }
@@ -370,11 +560,26 @@
       // the drill-in, lazy iframes, the highlight, the custom tab's
       // loadFunc) happens exactly as it does by hand. Refuses, loudly, an id
       // not in the effective registry: denied, admin-gated or unknown.
+      //
+      // A firm item has no element (no launcher surface draws one yet): its
+      // action is dispatched declaratively — re-validated first, so a bad one
+      // never navigates — 'window' → window.open(url, '_blank', 'noopener');
+      // 'modal' → openToolDialog(url, { title }). Either way an open tool
+      // dialog is closed first: whatever exec() opens must not sit behind it.
       function exec(id) {
         if (!STATE) { warn('exec("' + id + '") before login'); return false; }
-        var ok = false;
-        for (var i = 0; i < EFFECTIVE.length; i++) if (EFFECTIVE[i].id === id) ok = true;
-        if (!ok) { warn('exec("' + id + '"): not in this user\'s launcher'); return false; }
+        var entry = null;
+        for (var i = 0; i < EFFECTIVE.length; i++) if (EFFECTIVE[i].id === id) entry = EFFECTIVE[i];
+        if (!entry) { warn('exec("' + id + '"): not in this user\'s launcher'); return false; }
+        var td = window.openToolDialog;
+        if (td && td.isOpen && td.isOpen()) td.close();
+        if (entry.action) {
+          var t = firmTarget(entry.action);
+          if (!t) { warn('exec("' + id + '"): its action breaks the firm item rules — refused'); return false; }
+          if (t.present === 'window') { window.open(t.url, '_blank', 'noopener'); return true; }
+          if (typeof td !== 'function') { warn('exec("' + id + '"): no tool dialog on this page'); return false; }
+          return td(t.url, { title: entry.label }) === true;
+        }
         var m = elementsOf(id);
         if (m.sidebar) { m.sidebar.click(); return true; }
         var sf = m.home ? 'home' : m.more ? 'more' : m.admin ? 'admin' : null;
@@ -436,7 +641,7 @@
         build: build, mount: mount,
         computeEffective: computeEffective, rank: rank, matchTier: matchTier,
         applyAccess: applyAccess, isReady: isReady, effectiveRegistry: effectiveRegistry,
-        elementsOf: elementsOf, exec: exec,
+        elementsOf: elementsOf, exec: exec, cleanFirmItem: cleanFirmItem,
         UNDENIABLE: UNDENIABLE, groups: function () { return GROUPS.slice(); },
       };
     })();
@@ -446,6 +651,134 @@
        style.display on a launcher element (applyCustomTab, loadUserContext)
        cannot bring a denied one back. -->
   <style>[data-yc-denied] { display: none !important; }</style>
+  <!-- The tool dialog (ui-custom S3.1): ONE host that shows a same-origin page
+       in an iframe over the shell — today a firm item's tool page
+       (/tool/<key>) or saved view (/customView.html?key=<key>). Those pages
+       boot from window.parent.apiSend, and an iframe mounted here has this
+       shell as its parent, so they run exactly as they do in a pane.
+         openToolDialog(url, opts) → true | false
+           url   a root-relative same-origin path (/…, never //host, no
+                 backslash, whitespace or control character) — else refused
+           opts  { title } — the heading (set as text). Other keys are ignored
+                 today; S3.3 grows this same object (per-tool sizing, the
+                 token-free shell API for tool frames).
+         openToolDialog.close()    close; focus goes back where it was
+         openToolDialog.isOpen()
+       Esc (inside the frame too), the close button and a click on the
+       backdrop close it; opening while open swaps the page. Nothing
+       tool-specific lives here. z-index 1040: above the shell and the
+       system-alert bar (999), below the Ctrl-K palette (1050) and
+       SweetAlert2 (1060); ycLauncher.exec() closes it before it acts. -->
+  <script id="ycToolDialogJs">
+    window.openToolDialog = (function () {
+      'use strict';
+      var root = null, titleEl = null, closeBtn = null, body = null, restoreTo = null;
+      var PATH_RE = /^\/(?!\/)/;
+      var BAD_RE = /[\s\\\u0000-\u001f\u007f-\u009f\u2028\u2029]/;
+
+      function swalUp() {
+        try {
+          if (!(window.Swal && Swal.isVisible && Swal.isVisible())) return false;
+          var pop = Swal.getPopup && Swal.getPopup();
+          return !(pop && pop.classList.contains('swal2-toast'));
+        } catch (_) { return false; }
+      }
+      function onKey(e) {
+        if (e.key !== 'Escape' || !isOpen() || e.defaultPrevented || swalUp()) return;
+        e.preventDefault();
+        close();
+      }
+      function hookFrame(f) {
+        try { f.contentDocument.addEventListener('keydown', onKey); } catch (_) { /* not same-origin */ }
+      }
+      function build() {
+        root = document.createElement('div');
+        root.id = 'ycToolDialog';
+        root.hidden = true;
+        root.innerHTML =
+          '<div class="yc-td" role="dialog" aria-modal="true" aria-labelledby="ycToolDialogTitle">' +
+            '<div class="yc-td-head"><h2 id="ycToolDialogTitle"></h2>' +
+              '<button type="button" class="yc-td-close" aria-label="Close" title="Close"><i class="fa-solid fa-xmark"></i></button></div>' +
+            '<div class="yc-td-body"></div>' +
+          '</div>';
+        document.body.appendChild(root);
+        titleEl = root.querySelector('#ycToolDialogTitle');
+        closeBtn = root.querySelector('.yc-td-close');
+        body = root.querySelector('.yc-td-body');
+        closeBtn.addEventListener('click', function () { close(); });
+        root.addEventListener('mousedown', function (e) { if (e.target === root) close(); });
+        document.addEventListener('keydown', onKey);
+      }
+      function isOpen() { return !!(root && !root.hidden); }
+      function close() {
+        if (!isOpen()) return;
+        root.hidden = true;
+        body.textContent = '';                 // drop the frame: the page unloads
+        var r = restoreTo;
+        restoreTo = null;
+        try { if (r && r.focus && r.isConnected !== false) r.focus(); } catch (_) { /* gone */ }
+      }
+      function open(url, opts) {
+        if (typeof url !== 'string' || url.length > 2000 || !PATH_RE.test(url) || BAD_RE.test(url)) {
+          if (window.console) console.warn('[openToolDialog] refused: not a same-origin /path');
+          return false;
+        }
+        opts = opts && typeof opts === 'object' ? opts : {};
+        if (!document.body) return false;
+        if (!root) build();
+        if (!isOpen()) restoreTo = document.activeElement;
+        var title = opts.title == null ? '' : String(opts.title);
+        titleEl.textContent = title || 'Tool';
+        body.textContent = '';
+        var f = document.createElement('iframe');
+        f.className = 'yc-td-frame';
+        f.title = title || 'Tool';
+        f.addEventListener('load', function () { hookFrame(f); });
+        f.src = url;
+        body.appendChild(f);
+        root.hidden = false;
+        closeBtn.focus();
+        return true;
+      }
+      open.close = close;
+      open.isOpen = isOpen;
+      return open;
+    })();
+  </script>
+  <style>
+    /* The tool dialog. Scoped by id: style.css's global iframe rule (100vh) and
+       its dark-theme button rule (0,6,2) lose to an id. Full-bleed on phones. */
+    #ycToolDialog {
+      position: fixed; inset: 0; z-index: 1040; display: flex; align-items: center; justify-content: center;
+      padding: 16px; box-sizing: border-box; background: var(--backdrop);
+    }
+    #ycToolDialog[hidden] { display: none; }
+    #ycToolDialog .yc-td {
+      display: flex; flex-direction: column; width: 100%; max-width: 1100px; height: 100%; max-height: 860px;
+      min-width: 0; box-sizing: border-box; overflow: hidden; text-align: left;
+      background: var(--surface); color: var(--text);
+      border: 1px solid var(--border-strong); border-radius: var(--radius); box-shadow: var(--shadow-drawer);
+    }
+    #ycToolDialog .yc-td-head {
+      flex: 0 0 auto; display: flex; align-items: center; gap: 8px; min-width: 0;
+      padding: 6px 6px 6px 16px; border-bottom: 1px solid var(--border);
+    }
+    #ycToolDialog .yc-td-head h2 {
+      flex: 1 1 auto; min-width: 0; margin: 0; font-size: var(--fs-lg); font-weight: 600; color: var(--text);
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    #ycToolDialog .yc-td-close {
+      flex: 0 0 auto; width: var(--ctl-h-lg); height: var(--ctl-h-lg); margin: 0; padding: 0; cursor: pointer;
+      font-size: var(--fs-lg); background: transparent; color: var(--text-muted); border: 0; border-radius: var(--radius-sm);
+    }
+    #ycToolDialog .yc-td-close:hover, #ycToolDialog .yc-td-close:focus-visible { background: var(--hover); color: var(--text); }
+    #ycToolDialog .yc-td-body { flex: 1 1 auto; min-height: 0; display: flex; }
+    #ycToolDialog .yc-td-frame { flex: 1 1 auto; display: block; width: 100%; height: auto; min-height: 0; margin: 0; border: 0; }
+    @media (max-width: 768px) {
+      #ycToolDialog { padding: 0; }
+      #ycToolDialog .yc-td { max-width: none; max-height: none; border: 0; border-radius: 0; }
+    }
+  </style>
   <script src="/scripts.js"></script>
   <!-- Stale-tab guard: force-reloads this page when the server is running a newer
        build than the one this tab booted on. Started at the bottom of the boot
@@ -4849,7 +5182,7 @@
     Object.defineProperty(window, 'uploadWithProgress', { value: uploadWithProgress, writable: false, configurable: false });
 
     // ── Firm-wide data — loaded once after auth, available to all child iframes ──
-    window.firmData = { phoneLines: [], emailFrom: [], currentUser: null, users: [], settings: {}, firmTimezone: "America/Detroit", denied: [] };
+    window.firmData = { phoneLines: [], emailFrom: [], currentUser: null, users: [], settings: {}, firmTimezone: "America/Detroit", denied: [], ui: { firm: {}, user: {} } };
 
 async function loadFirmData() {
   const data = await apiSend('/api/firm-data', 'GET');  // let it throw
@@ -4862,6 +5195,10 @@ async function loadFirmData() {
   // Launcher item ids denied to this user (access-control A5) — the
   // launcher hides them (ycLauncher.applyAccess, from loadUserContext).
   window.firmData.denied      = Array.isArray(data.denied) ? data.denied : [];
+  // The launcher's config layers (ui-custom S3.1): { firm, user } — the firm
+  // overlay (hidden / renames / firm items) is applied by the same
+  // applyAccess call. ycLauncher re-validates everything in it.
+  window.firmData.ui          = (data.ui && typeof data.ui === 'object') ? data.ui : { firm: {}, user: {} };
   if (!window.firmData.currentUser) throw new Error("No user data returned");
 }
 
@@ -5156,10 +5493,11 @@ async function initAuth() {
 
       // The launcher's effective registry + entitlement hide pass (ui-custom
       // S2): admin-gated items by the isAdmin signal above, denied items per
-      // firmData.denied. Before the ?open= restore below, so a restored All
-      // tab renders full. A launcher bug must not take the boot down.
+      // firmData.denied, the firm overlay per firmData.ui (S3.1). Before the
+      // ?open= restore below, so a restored All tab renders full. A launcher
+      // bug must not take the boot down.
       try {
-        ycLauncher.applyAccess({ isAdmin, denied: window.firmData.denied, customTab: user.user_custom_tab || null });
+        ycLauncher.applyAccess({ isAdmin, denied: window.firmData.denied, ui: window.firmData.ui, customTab: user.user_custom_tab || null });
       } catch (err) { console.error('[ycLauncher] applyAccess failed:', err); }
 
       tasksBadgeRefresh();   // sidebar Tasks badge (fire-and-forget)

@@ -29,6 +29,11 @@
  *                  services/entitlementService.deniedFor): firm ∪ the user's
  *                  roles ∪ the user, undeniables stripped; [] when none. ONE
  *                  query. Visibility-only — ui-custom's launcher hides them.
+ *   ui           — the launcher's config layers (ui-custom S3.1,
+ *                  services/uiConfigService.readFor — the same read as
+ *                  GET /api/ui-config): { firm: { <config_key>: config },
+ *                  user: { … } }. user only for a staff JWT caller ({} for an
+ *                  x-api-key one). Fail-SOFT to { firm: {}, user: {} }.
  *
  * This replaces the need for separate calls to:
  *   GET /api/phone-lines
@@ -44,6 +49,7 @@ const router      = express.Router();
 const jwtOrApiKey = require('../lib/auth.jwtOrApiKey');
 const { loadTrusteeRoster } = require('../lib/trusteeRoster');
 const { deniedFor } = require('../services/entitlementService');
+const { readFor: uiConfigFor } = require('../services/uiConfigService');
 
 // Fields to strip from the current user response
 const USER_STRIP = ['password', 'password_hash', 'reset_token', 'reset_expires'];
@@ -66,7 +72,8 @@ router.get('/api/firm-data', jwtOrApiKey, async (req, res) => {
       [users],
       [settingsRows],
       trustees,
-      denied
+      denied,
+      ui
     ] = await Promise.all([
       req.db.query('SELECT * FROM users WHERE user = ?', [userId]),
       req.db.query(
@@ -110,6 +117,13 @@ router.get('/api/firm-data', jwtOrApiKey, async (req, res) => {
       deniedFor(req.db, userId).catch(err => {
         console.error('GET /api/firm-data: entitlement denies load failed:', err.message);
         return [];
+      }),
+      // Launcher config layers (ui-custom S3.1). Fail-SOFT like denied: a
+      // missing overlay shows the shipped launcher, a dead shell shows nothing.
+      // The user layer needs a user: an x-api-key caller gets the firm layer only.
+      uiConfigFor(req.db, req.auth.type === 'jwt' ? userId : null).catch(err => {
+        console.error('GET /api/firm-data: ui config load failed:', err.message);
+        return { firm: {}, user: {} };
       })
     ]);
 
@@ -143,6 +157,7 @@ router.get('/api/firm-data', jwtOrApiKey, async (req, res) => {
       users: users.map(u => ({ ...u, active: !!u.active })),
       settings,
       denied,
+      ui,
       firmTimezone: process.env.FIRM_TIMEZONE || 'America/Detroit'
     });
   } catch (err) {

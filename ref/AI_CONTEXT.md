@@ -579,7 +579,8 @@ New raw `fetch` with a lifted token is a regression, not a pattern.
 
 Full inventory: `ref/routes.md` (auto-generated — middleware + handler per
 route). Conventions:
-- `GET /api/firm-data` → `{currentUser, phoneLines, emailFrom, users}`.
+- `GET /api/firm-data` → `{currentUser, phoneLines, emailFrom, users,
+  settings, denied, ui, firmTimezone}` (field notes: the route's header).
   `users` includes user 0 — filtering is the CONSUMER's job (§12 pattern).
 - List endpoints: `?q, limit, offset, sort_by, sort_dir` → `{data, total}`.
   Detail endpoints take `?include=` and return only what's requested.

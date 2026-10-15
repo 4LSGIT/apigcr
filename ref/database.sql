@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-10-15T01:48:44.586Z
+-- Generated: 2026-10-15T12:34:48.540Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:9c6365fa7748bd56705ab53b6b7ae588
+-- Fingerprint: sha256:4e8d89e3558b5cbcd4712a2baee509f3
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -3739,6 +3739,40 @@ CREATE TABLE `trigger_rules` (
 -- --------------------------------------------------------
 
 --
+-- Table structure for table `ui_config`
+--
+
+DROP TABLE IF EXISTS `ui_config`;
+CREATE TABLE `ui_config` (
+  `id` int unsigned NOT NULL,
+  `scope` enum('system','firm','user') COLLATE utf8mb4_general_ci NOT NULL COMMENT 'firm = everyone (user_id 0); user = one user (user_id = users.user); system RESERVED (refused at write - the platform tier is code). sql_mode is relaxed here: an invalid value is stored as empty string with a warning, NOT rejected - the app layer (lib/uiConfigShape.js) is the only real validator',
+  `user_id` tinyint NOT NULL DEFAULT '0' COMMENT 'users.user (signed tinyint, FK by convention) for scope user; sentinel 0 for scope firm. NOT NULL is load-bearing: MySQL unique indexes never collide on NULL, so a nullable user_id would allow duplicate firm rows',
+  `role` varchar(20) COLLATE utf8mb4_general_ci NOT NULL DEFAULT '' COMMENT 'RESERVED: empty string only until a role model lands (writes refuse anything else). NOT NULL sentinel is load-bearing for uq_ui_config_scope, same reason as user_id',
+  `config_key` varchar(50) COLLATE utf8mb4_general_ci NOT NULL COMMENT 'app-validated per scope: firm registry_overrides | user shortcuts (lib/uiConfigShape.js CONFIG_KEYS)',
+  `config` json NOT NULL COMMENT 'the normalized document lib/uiConfigShape.js returned. MySQL re-orders object keys on write - compare key-order-insensitively',
+  `updated_by` tinyint DEFAULT NULL COMMENT 'users.user of the last writer (staff JWT only)',
+  `updated_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='ui-custom launcher config documents (PLAN §6): firm overlay + per-user layers, delivered by /api/firm-data ui and GET /api/ui-config, written by PUT /api/ui-config. Firm writes are versioned in ui_config_versions; user writes are not.';
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `ui_config_versions`
+--
+
+DROP TABLE IF EXISTS `ui_config_versions`;
+CREATE TABLE `ui_config_versions` (
+  `id` int unsigned NOT NULL,
+  `ui_config_id` int unsigned NOT NULL COMMENT 'ui_config.id (FK, ON DELETE CASCADE)',
+  `config_key` varchar(50) COLLATE utf8mb4_general_ci NOT NULL COMMENT 'copy of ui_config.config_key at save time',
+  `config` json NOT NULL COMMENT 'the NEW document saved - the newest row equals ui_config.config (routes/api.tools.js versioning convention); no row when a save left the document unchanged',
+  `saved_by` tinyint DEFAULT NULL COMMENT 'users.user of the writer',
+  `saved_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='Save history of FIRM-scope ui_config rows: one row per firm save that changed the document, holding the new document. User scope is not versioned (PLAN §6).';
+
+-- --------------------------------------------------------
+
+--
 -- Table structure for table `user_availability`
 --
 
@@ -5140,6 +5174,20 @@ ALTER TABLE `trigger_rules`
   ADD KEY `idx_event_active` (`event_type`,`active`,`position`);
 
 --
+-- Indexes for table `ui_config`
+--
+ALTER TABLE `ui_config`
+  ADD PRIMARY KEY (`id`),
+  ADD UNIQUE KEY `uq_ui_config_scope` (`scope`,`user_id`,`role`,`config_key`);
+
+--
+-- Indexes for table `ui_config_versions`
+--
+ALTER TABLE `ui_config_versions`
+  ADD PRIMARY KEY (`id`),
+  ADD KEY `idx_ui_config_versions_config` (`ui_config_id`,`id`);
+
+--
 -- Indexes for table `user_availability`
 --
 ALTER TABLE `user_availability`
@@ -5999,6 +6047,18 @@ ALTER TABLE `trigger_rules`
   MODIFY `id` int unsigned NOT NULL AUTO_INCREMENT;
 
 --
+-- AUTO_INCREMENT for table `ui_config`
+--
+ALTER TABLE `ui_config`
+  MODIFY `id` int unsigned NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `ui_config_versions`
+--
+ALTER TABLE `ui_config_versions`
+  MODIFY `id` int unsigned NOT NULL AUTO_INCREMENT;
+
+--
 -- AUTO_INCREMENT for table `user_availability`
 --
 ALTER TABLE `user_availability`
@@ -6211,6 +6271,12 @@ ALTER TABLE `trigger_execution_rules`
 --
 ALTER TABLE `trigger_rule_actions`
   ADD CONSTRAINT `fk_trigger_rule_actions_rule` FOREIGN KEY (`rule_id`) REFERENCES `trigger_rules` (`id`) ON DELETE CASCADE;
+
+--
+-- Constraints for table `ui_config_versions`
+--
+ALTER TABLE `ui_config_versions`
+  ADD CONSTRAINT `fk_ui_config_versions_config` FOREIGN KEY (`ui_config_id`) REFERENCES `ui_config` (`id`) ON DELETE CASCADE;
 
 --
 -- Constraints for table `video_slug_aliases`

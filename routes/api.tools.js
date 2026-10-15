@@ -414,3 +414,6 @@ router.get('/tool/:key', async (req, res) => {
 });
 
 module.exports = router;
+// The tool-key grammar, for the other places that name a tool by key (the
+// launcher's firm items: lib/uiConfigShape.js) — reuse, never copy.
+module.exports.TOOL_KEY_RE = TOOL_KEY_RE;

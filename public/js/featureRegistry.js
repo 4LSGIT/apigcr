@@ -21,9 +21,10 @@
  * it in the page.
  *
  * ── window.FEATURE_REGISTRY ── one entry per launcher button, keyed by its
- * stable id. The id is the item's name everywhere from here on (firm/user
- * layouts, entitlement denies): never rename one, and never reuse a retired
- * one. Grid items carry a surface prefix (more* / admin*); home/sidebar items
+ * stable id. The id is the item's name everywhere from here on (ui_config's
+ * firm registry_overrides — hidden / renames / locked — and the firm/user
+ * layouts still to come, entitlement denies): never rename one, and never
+ * reuse a retired one. Grid items carry a surface prefix (more* / admin*); home/sidebar items
  * do not. Fields — all optional except label and icon:
  *
  *   label          visible text, PLAIN (the renderer escapes it)
@@ -53,7 +54,7 @@
  *   domIds         { <surface>: element id } — ids other code looks up by
  *   badge          sidebar: { id, title } — the count pill, hidden until set
  *   defaultHidden  rendered with style="display:none" (Admin: loadUserContext
- *                  reveals it for admin/SU)
+ *                  reveals it for SU only)
  *
  * ── window.DEFAULT_LAYOUTS ── the shipped arrangement of each surface, in
  * order: { item: '<id>' } | { break: true } | { label: '<text>' }.
@@ -137,7 +138,7 @@ window.FEATURE_REGISTRY = {
     onclick: "openMainTab('tabCustom')", tab: 'tabCustom',
     domIds: { sidebar: 'sbCustom', home: 'tabCustomButton' },
   },
-  // Hidden until loadUserContext() shows it to admin/SU.
+  // Hidden until loadUserContext() shows it — to SU only (the su role).
   admin: {
     label: 'Admin', icon: 'mug-hot',
     onclick: "openMainTab('tabAdmin')", tab: 'tabAdmin',
@@ -314,7 +315,8 @@ window.FEATURE_REGISTRY = {
     hoverAnim: 'fa-beat', styleVars: '--fa-beat-scale:1.25; --fa-animation-duration:0.7s',
   },
   // NOT "(SU)" like its neighbours on purpose: reading what staff reported is
-  // not a superuser act (routes/api.issueReports.js gates it admin-or-SU).
+  // not meant to be a superuser act — though routes/api.issueReports.js gates
+  // it SU-only today (access A2 retired the admin tier that once shared it).
   adminSupportInbox: {
     label: 'Support Inbox', icon: 'life-ring', target: 'issueReportsDiv', group: 'admin',
     hoverAnim: 'fa-spin', styleVars: '--fa-animation-duration:3s',
