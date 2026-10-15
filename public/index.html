@@ -123,10 +123,13 @@
         };
       }
       var RULES = {
+        // Home is a flex row container since ui-custom S4a (#tabHome
+        // .home-grid, CSS by the Home rules): a break is a full-width
+        // .home-break sentinel, 5px tall — the row gap the old spacer div was.
         home: {
           sel: 'home-btn',
           indent: '\n    ',
-          brk: '<div style="height: 5px"></div>',
+          brk: '<div class="home-break"></div>',
           item: function (it) {
             return '<button' + attr('id', idOf(it, 'home')) + ' class="home-btn"' +
               attr('onclick', it.onclick) +
@@ -164,12 +167,15 @@
       // naming an unknown item, or one the surface cannot draw, is skipped
       // with a console error rather than blanking the whole surface. ids =
       // the registry id of every item drawn, in order (one element each).
+      // drawn = every entry drawn, in order — { kind, id | text, bi } with bi
+      // its index in the layout; each is ONE element on Home and the sidebar
+      // (a grid break is two <br>s).
       function render(surface, layout, registry) {
         var rules = RULES[surface];
         if (!rules) throw new Error('ycLauncher: unknown surface "' + surface + '"');
         layout = layout || (window.DEFAULT_LAYOUTS || {})[surface] || [];
         registry = registry || window.FEATURE_REGISTRY || {};
-        var out = '', ids = [];
+        var out = '', ids = [], drawn = [];
         for (var i = 0; i < layout.length; i++) {
           var e = layout[i] || {};
           if (e.item != null) {
@@ -177,15 +183,18 @@
             if (!it) { warn(surface + ': no registry item "' + e.item + '"'); continue; }
             out += rules.indent + rules.item(it);
             ids.push(e.item);
+            drawn.push({ kind: 'item', id: e.item, bi: i });
           } else if (e.break && rules.brk) {
             out += rules.indent + rules.brk;
+            drawn.push({ kind: 'break', bi: i });
           } else if (e.label != null && rules.label) {
             out += rules.indent + rules.label(e.label);
+            drawn.push({ kind: 'label', text: String(e.label), bi: i });
           } else {
             warn(surface + ': cannot render layout entry ' + i);
           }
         }
-        return { html: out, ids: ids };
+        return { html: out, ids: ids, drawn: drawn };
       }
       function build(surface, layout, registry) { return render(surface, layout, registry).html; }
 
@@ -207,11 +216,13 @@
         if (!s) throw new Error('ycLauncher.mount("' + surface + '") must run from an inline script while the page parses');
         var r = render(surface);
         var prev = s.previousElementSibling;
+        var before = s.previousSibling, parent = s.parentNode;
         s.insertAdjacentHTML('beforebegin', r.html);
         var els = [];
         for (var n = prev ? prev.nextElementSibling : s.parentNode.firstElementChild; n && n !== s; n = n.nextElementSibling) {
           if (n.classList.contains(RULES[surface].sel)) els.push(n);
         }
+        if (hasOwn(LAYOUT_SURFACES, surface)) recordRegion(surface, parent, before, s, r);
         s.parentNode.removeChild(s);
         if (els.length !== r.ids.length) {
           warn(surface + ': ' + els.length + ' elements for ' + r.ids.length + ' items — surface left unmapped');
@@ -248,10 +259,15 @@
       // its sidebar section, else Home, else the grid it is on; groups run
       // Home, the sidebar's sections in order (Records / Actions /
       // Settings), More, Admin. Visibility only: hiding secures nothing.
+      // computeEffective is PURE (ui-custom S4a): it returns the list with
+      // the group order it computed alongside it — list.groups, a
+      // non-enumerable array — and writes nothing. applyAccess keeps the
+      // order of the list it applied, which groups() hands out (the All tab
+      // renders by it); any other caller (the Firm tab) changes nothing.
       var UNDENIABLE = ['moreSettings', 'helpSupport'];
       var TAB_OF = { home: 'tabHome', more: 'tabMore', admin: 'tabAdmin' };
       var GRID_GROUP = { more: 'More', admin: 'Admin' };
-      var GROUPS = [];   // filled by computeEffective(): the group order
+      var GROUPS = [];   // set by applyAccess: the applied list's .groups
 
       function cleanDenied(list) {
         var out = {};
@@ -272,8 +288,11 @@
       //            (lib/uiConfigShape.js; tests/uiConfigS31.test.js runs both
       //            over one fixture set): a bad item is dropped with a console
       //            warning, so it is never listed and never navigates.
-      //   locked   delivered, inert until S4's user layer.
-      // user.shortcuts is storage only until S4.
+      //   locked   ids a user's layout cannot remove (S4a: the user layer
+      //            below ignores a removal of a locked id).
+      //   retired  server-managed (S4a), ignored here.
+      // user.layout is the user's Home / sidebar layout (S4a, below);
+      // user.shortcuts is storage only until S4c.
       var FIRM_GROUP = 'Firm';
       var FIRM_ID_RE = /^firm:[a-z0-9-]{1,40}$/;
       var ICON_RE = /^[a-z0-9-]{1,40}$/;
@@ -356,13 +375,17 @@
         }
         return { id: it.id, label: label, icon: it.icon, action: ca };
       }
-      /** ui → { hidden: {id:true}, renames: {id: label}, items: [clean item] }.
+      /** ui → { hidden: {id:true}, renames: {id: label}, items: [clean item],
+       *         locked: {id:true} }.
        *  quiet: no console warnings (applyAccess's second read of the same ui). */
       function firmOverlay(ui, quiet) {
-        var out = { hidden: {}, renames: {}, items: [] };
+        var out = { hidden: {}, renames: {}, items: [], locked: {} };
         var ro = isObj(ui) && isObj(ui.firm) && isObj(ui.firm.registry_overrides) ? ui.firm.registry_overrides : null;
         if (!ro) return out;
         out.hidden = cleanDenied(ro.hidden);
+        if (Object.prototype.toString.call(ro.locked) === '[object Array]') {
+          ro.locked.forEach(function (id) { if (typeof id === 'string') out.locked[id] = true; });
+        }
         if (isObj(ro.renames)) {
           for (var id in ro.renames) {
             if (!hasOwn(ro.renames, id) || id === 'custom') continue;
@@ -414,7 +437,6 @@
           (layouts[sf] || []).forEach(function (e) { if (e) place(e.item, GRID_GROUP[sf]); });
         });
         if (firm.items.length) order.splice(order.indexOf(GRID_GROUP.admin), 0, FIRM_GROUP);
-        GROUPS = order;
 
         var out = [];
         seq.forEach(function (id) {
@@ -451,6 +473,7 @@
         out.sort(function (a, b) {
           return (order.indexOf(a.group) - order.indexOf(b.group)) || (seq.indexOf(a.id) - seq.indexOf(b.id));
         });
+        Object.defineProperty(out, 'groups', { value: order, enumerable: false });
         return out;
       }
 
@@ -471,10 +494,12 @@
         });
         STATE.isAdmin = !!STATE.isAdmin;
         EFFECTIVE = computeEffective(STATE);
+        GROUPS = EFFECTIVE.groups;
         var firm = firmOverlay(STATE.ui, true), hide = cleanDenied(STATE.denied);
         for (var h in firm.hidden) hide[h] = true;
         hidePass(hide, firm.renames);
         renderFirmRow();
+        layoutPass(firm.locked);
         try { window.dispatchEvent(new CustomEvent('ycLauncherAccess')); } catch (_) { /* no CustomEvent */ }
         return effectiveRegistry();
       }
@@ -556,10 +581,7 @@
       // resurrect a hidden item. Then relabel the renamed ones.
       function hidePass(denied, renames) {
         renames = renames || {};
-        for (var id in EL) for (var sf in EL[id]) {
-          if (denied[id]) EL[id][sf].setAttribute(DENIED_ATTR, '');
-          else EL[id][sf].removeAttribute(DENIED_ATTR);
-        }
+        for (var id in EL) for (var sf in EL[id]) setAttr(EL[id][sf], DENIED_ATTR, denied[id] ? '' : null);
         relabel(renames);
         var key = Object.keys(denied).sort().join(',') + '|' +
           Object.keys(renames).sort().map(function (k) { return k + '=' + renames[k]; }).join('\u0001');
@@ -616,13 +638,305 @@
               var ws = /^(\s*)[\s\S]*?(\s*)$/.exec(rec.text);   // keep the markup's indentation
               text = ws[1] + want + ws[2];
             }
-            if (node.nodeType === 3) node.nodeValue = text; else node.textContent = text;
-            if (sf === 'sidebar' && !(reg[id] && reg[id].title != null)) {
-              var title = want != null ? want : rec.title;
-              if (title == null) el.removeAttribute('title'); else el.setAttribute('title', title);
-            }
+            if (node.nodeType === 3) { if (node.nodeValue !== text) node.nodeValue = text; } else setText(node, text);
+            if (sf === 'sidebar' && !(reg[id] && reg[id].title != null)) setAttr(el, 'title', want != null ? want : rec.title);
             if (want == null) ORIG.delete(el);
           }
+        }
+      }
+
+      // ── The user layer: Home + sidebar layouts (ui-custom S4a) ──────────
+      // PLAN §7. A user's layout (ui.user.layout, scope user; grammar:
+      // lib/uiConfigShape.js) stores only explicit placements and explicit
+      // removals:
+      //   { placed: { home?: [entry…], sidebar?: [entry…] },
+      //     removed: { home?: [id…], sidebar?: [id…] } }   (per surface)
+      //   entry = { item: id } | { break: true } (Home) | { label: text } (sidebar)
+      // Home and the sidebar are the only user surfaces (More / Admin keep
+      // every tile in its grid — the wsurl arc relies on elementsOf(id).more
+      // / .admin).
+      //
+      // resolveLayout(surface, { base, user, effective, locked }) → the
+      // surface's entries, in order: { kind: 'item', id, origin } |
+      // { kind: 'break', origin } | { kind: 'label', text, origin }, origin
+      // 'default' (from base) or 'user' (from placed). PURE, no DOM: the
+      // renderer below and S4b's editor call the same function.
+      //   base       the surface's base layout (today DEFAULT_LAYOUTS[surface];
+      //              a firm layout slots in here later)
+      //   user       the user layout document (anything malformed is ignored)
+      //   effective  this user's effective registry — entries or ids. An id
+      //              missing from it drops silently, wherever it comes from.
+      //   locked     the firm's locked ids: a removal of one is ignored.
+      // The MERGE RULE:
+      //   - removed = user.removed[surface] minus locked: each surface reads
+      //     ONLY its own list (hiding Billing from the sidebar leaves Home's
+      //     tile; resetting one surface — dropping placed[sf] and removed[sf] —
+      //     leaves the other as it is). It suppresses INHERITED placements only:
+      //     an item the user placed on the surface is shown even if that
+      //     surface's removed list names it. Anything but an object of arrays
+      //     (the old flat array included) removes nothing.
+      //   - No placed[surface]: the base layout, minus removed items, minus
+      //     ids not in effective. Breaks and labels stay as they are.
+      //   - placed[surface] (even []): the user's entries ARE the order — an
+      //     item once (the first), a break on Home only, a label on the sidebar
+      //     only, items not in effective dropped. Then every base ITEM that is
+      //     neither placed nor removed (and is effective) goes in, in base
+      //     order, right AFTER the output entry holding the nearest preceding
+      //     base item (by base position) — itself included once it is in — or
+      //     first when no earlier base item is in the output. So an item new to
+      //     the base layout lands next to its base neighbour, and a run of new
+      //     items keeps its base order. The base's own breaks and labels are
+      //     not inherited: the user's entries own the structure.
+      // Deterministic: the output is a function of the four inputs only.
+      var LAYOUT_SURFACES = { home: true, sidebar: true };
+      var LAYOUT_CAP = 200;   // entries read per list (the server caps at 100)
+
+      function layoutEntry(e, surface) {
+        if (!isObj(e)) return null;
+        if (typeof e.item === 'string' && e.item) return { kind: 'item', id: e.item };
+        if (e.break === true && surface === 'home') return { kind: 'break' };
+        if (surface === 'sidebar' && hasOwn(e, 'label')) {
+          var t = cleanLabel(e.label);
+          return t == null ? null : { kind: 'label', text: t };
+        }
+        return null;
+      }
+      // A null-prototype set of the ids in list (strings, or entries with a
+      // string id) — never Object.prototype's names ('toString' is an id
+      // shape too).
+      function idSet(list, cap) {
+        var s = Object.create(null);
+        if (Object.prototype.toString.call(list) !== '[object Array]') return s;
+        for (var i = 0; i < list.length && (cap == null || i < cap); i++) {
+          var x = list[i], id = isObj(x) ? x.id : x;
+          if (typeof id === 'string') s[id] = true;
+        }
+        return s;
+      }
+      // Insert e into out right after the entry with the largest base index
+      // below e.bi (entries without a bi — the user's own — never anchor), or
+      // first when there is none.
+      function anchorInsert(out, e) {
+        var at = -1, best = -1;
+        for (var i = 0; i < out.length; i++) {
+          if (out[i].bi != null && out[i].bi < e.bi && out[i].bi > best) { best = out[i].bi; at = i; }
+        }
+        out.splice(at + 1, 0, e);
+      }
+      // withHidden (the renderer): also every base item the result leaves
+      // out, flagged hidden, placed by the same anchor rule over ALL base
+      // entries — so with no placed[surface] the order is exactly the base
+      // order. why: 'unplaced' (effective, but the layout leaves it out —
+      // the user removed it) or 'absent' (not effective: denied, firm-hidden,
+      // admin-gated, no custom tab).
+      function resolve(surface, o, withHidden) {
+        o = o || {};
+        var base = Object.prototype.toString.call(o.base) === '[object Array]' ? o.base : [];
+        var user = isObj(o.user) ? o.user : {};
+        var eff = idSet(o.effective), locked = idSet(o.locked);
+        var removed = idSet(isObj(user.removed) ? user.removed[surface] : null, LAYOUT_CAP);
+        for (var k in locked) delete removed[k];
+        var B = [], baseIdx = Object.create(null);
+        for (var bi = 0; bi < base.length; bi++) {
+          var be = layoutEntry(base[bi], surface);
+          if (!be) continue;
+          be.bi = bi; be.origin = 'default';
+          B.push(be);
+          if (be.kind === 'item' && !(be.id in baseIdx)) baseIdx[be.id] = bi;
+        }
+        var placed = isObj(user.placed) && Object.prototype.toString.call(user.placed[surface]) === '[object Array]'
+          ? user.placed[surface] : null;
+        var out = [], shown = Object.create(null), usedBi = Object.create(null);
+        var take = function (b) {   // a base item, unless its id is already out
+          if (b.id in shown || !(b.id in eff) || b.id in removed) return false;
+          shown[b.id] = true; usedBi[b.bi] = true;
+          return true;
+        };
+        if (!placed) {
+          B.forEach(function (b) { if (b.kind !== 'item' || take(b)) out.push(b); });
+        } else {
+          for (var i = 0; i < placed.length && i < LAYOUT_CAP; i++) {
+            var p = layoutEntry(placed[i], surface);
+            if (!p) continue;
+            p.origin = 'user';
+            if (p.kind === 'item') {
+              if (p.id in shown || !(p.id in eff)) continue;
+              shown[p.id] = true;
+              if (p.id in baseIdx) { p.bi = baseIdx[p.id]; usedBi[p.bi] = true; }
+            }
+            out.push(p);
+          }
+          B.forEach(function (b) { if (b.kind === 'item' && take(b)) anchorInsert(out, b); });
+        }
+        if (withHidden) {
+          B.forEach(function (b) {
+            if (b.kind !== 'item' || b.bi in usedBi) return;
+            usedBi[b.bi] = true;
+            anchorInsert(out, { kind: 'item', id: b.id, bi: b.bi, origin: 'default', hidden: true,
+              why: b.id in eff ? 'unplaced' : 'absent' });
+          });
+        }
+        return out;
+      }
+      function resolveLayout(surface, o) {
+        return resolve(surface, o, false).map(function (e) {
+          return e.kind === 'item' ? { kind: 'item', id: e.id, origin: e.origin }
+            : e.kind === 'label' ? { kind: 'label', text: e.text, origin: e.origin }
+            : { kind: 'break', origin: e.origin };
+        });
+      }
+
+      // ── The renderer ──
+      // mount() records each layout surface's REGION: the nodes it inserted,
+      // as [whitespace, element] pairs per drawn entry, and the page node
+      // just before them. (Not the node after: a mount runs while the page
+      // parses, so nothing after it exists yet.) The region is the nodes the
+      // last pass placed (R.cur), right after that anchor; nothing else ever
+      // goes there. layoutPass() (from applyAccess, so after the
+      // ui layers land at boot and on every re-run) lays each surface out from
+      // resolve(…, withHidden):
+      //   - a DEFAULT element is MOVED, never re-created: its id, listeners,
+      //     badge and every attribute other code wrote stay. A default item
+      //     the user REMOVED stays in the DOM, hidden by data-yc-unplaced + an
+      //     !important rule — like data-yc-denied, never style.display, which
+      //     applyCustomTab / loadUserContext write. (An item absent from the
+      //     effective registry is hidden by its own mechanism: data-yc-denied,
+      //     or the style.display its owner sets; it only keeps its slot.)
+      //     So every default Home / sidebar item always has an element, and
+      //     exec() keeps clicking it while it is hidden — which retires the
+      //     S3.1 "D4" question of an exec() with no element to click.
+      //   - an item placed where it has no default element is a NEUTRAL
+      //     shortcut: the surface's own grammar (a .home-btn tile / an
+      //     .sb-item row), no id, no data-target / data-exclusive-group (the
+      //     drill-in machinery queries those page-wide), label as text, icon
+      //     from the effective entry (registry, or the validated firm slug),
+      //     data-yc-shortcut = its id; a click runs exec(id). On the sidebar
+      //     it carries the registry item's data-tab / data-tab-also, so
+      //     updateSidebarActive lights it like the real one.
+      //   - a user break / label is the surface's own break / label markup.
+      // A pass whose node order is already in place changes nothing, and an
+      // empty layout puts back exactly the nodes mount() inserted, in their
+      // order: the default DOM.
+      var UNPLACED_ATTR = 'data-yc-unplaced';   // CSS: [data-yc-unplaced] { display:none !important }
+      var SHORTCUT_ATTR = 'data-yc-shortcut';
+      var REGION = {};
+
+      function recordRegion(surface, parent, before, s, r) {
+        var def = {}, ws = null, k = 0, ok = true, cur = [];
+        for (var n = before ? before.nextSibling : parent.firstChild; n && n !== s; n = n.nextSibling) {
+          cur.push(n);
+          if (n.nodeType === 3 && !/\S/.test(n.nodeValue)) { ws = n; continue; }
+          var d = r.drawn[k++];
+          if (n.nodeType !== 1 || !d) { ok = false; break; }
+          def[d.bi] = { ws: ws, el: n };
+          ws = null;
+        }
+        if (!ok || k !== r.drawn.length) {
+          warn(surface + ': unexpected mounted nodes — user layouts will not be applied here');
+          return;
+        }
+        REGION[surface] = {
+          parent: parent, before: before, def: def, cur: cur,
+          base: (window.DEFAULT_LAYOUTS || {})[surface] || [], neutral: {}, user: {},
+        };
+      }
+      function setText(node, text) { if (node.textContent !== text) node.textContent = text; }
+      function setAttr(el, name, value) {
+        if (value == null) { if (el.hasAttribute(name)) el.removeAttribute(name); }
+        else if (el.getAttribute(name) !== value) el.setAttribute(name, value);
+      }
+      function iconClass(slug, extra) {
+        return 'fa-solid fa-' + (typeof slug === 'string' && ICON_RE.test(slug) ? slug : 'circle-question') + (extra || '');
+      }
+      // A neutral shortcut for entry (an effective entry) on surface, made
+      // once and kept up to date.
+      function neutral(R, surface, entry) {
+        var id = entry.id, n = R.neutral[id];
+        if (!n) {
+          var el = document.createElement(surface === 'home' ? 'button' : 'div');
+          el.className = surface === 'home' ? 'home-btn' : 'sb-item';
+          el.setAttribute(SHORTCUT_ATTR, id);
+          el.appendChild(document.createElement('i'));
+          if (surface === 'home') {
+            el.appendChild(document.createElement('br'));
+            el.appendChild(document.createElement('br'));
+            el.appendChild(document.createTextNode(''));
+          } else {
+            el.appendChild(document.createElement('span'));
+          }
+          // A sidebar shortcut closes the phone drawer whatever exec opens — a
+          // firm item's new window included (openMainTab only covers tabs).
+          el.addEventListener('click', function () {
+            exec(id);
+            if (surface === 'sidebar') document.body.classList.remove('sidebar-mobile-open');
+          });
+          n = R.neutral[id] = { ws: document.createTextNode(RULES[surface].indent), el: el };
+        }
+        var reg = window.FEATURE_REGISTRY || {}, it = hasOwn(reg, id) ? reg[id] : {};
+        var label = String(entry.label), cls = iconClass(entry.icon, surface === 'home' ? ' fa-2xl' : '');
+        if (n.el.firstChild.className !== cls) n.el.firstChild.className = cls;
+        setText(n.el.lastChild, label);
+        if (surface === 'sidebar') {
+          setAttr(n.el, 'data-tab', typeof it.tab === 'string' ? it.tab : null);
+          setAttr(n.el, 'data-tab-also', typeof it.tabAlso === 'string' ? it.tabAlso : null);
+          setAttr(n.el, 'title', it.title != null ? String(it.title) : label);
+        }
+        return n;
+      }
+      // The k-th user break / label of the surface, made once.
+      function userNode(R, surface, kind, k, text) {
+        var key = kind + '#' + k, n = R.user[key];
+        if (!n) {
+          var el = document.createElement('div');
+          el.className = kind === 'break' ? 'home-break' : 'sb-section-label';
+          n = R.user[key] = { ws: document.createTextNode(RULES[surface].indent), el: el };
+        }
+        if (kind === 'label') setText(n.el, text);
+        return n;
+      }
+      function applyLayout(surface, locked) {
+        var R = REGION[surface];
+        if (!R) return;
+        for (var c = 0; c < R.cur.length; c++) {
+          if (R.cur[c].parentNode !== R.parent) { warn(surface + ': layout region was changed by other code — left as it is'); return; }
+        }
+        var ui = STATE && isObj(STATE.ui) ? STATE.ui : {};
+        var user = isObj(ui.user) && isObj(ui.user.layout) ? ui.user.layout : null;
+        var seq = resolve(surface, { base: R.base, user: user, effective: EFFECTIVE, locked: Object.keys(locked || {}) }, true);
+        var byId = Object.create(null);
+        EFFECTIVE.forEach(function (e) { byId[e.id] = e; });
+        var want = [], count = { break: 0, label: 0 };
+        seq.forEach(function (e) {
+          var pair = null;
+          if (e.kind === 'item') {
+            if (e.bi != null) {
+              pair = R.def[e.bi];
+              if (!pair) return;                         // a base item mount() could not draw
+              setAttr(pair.el, UNPLACED_ATTR, e.hidden && e.why === 'unplaced' ? '' : null);
+            } else if (e.id in byId) {
+              pair = neutral(R, surface, byId[e.id]);
+            } else return;
+          } else if (e.origin === 'default' && R.def[e.bi]) {
+            pair = R.def[e.bi];
+          } else {
+            pair = userNode(R, surface, e.kind, count[e.kind]++, e.text);
+          }
+          if (pair.ws) want.push(pair.ws);
+          want.push(pair.el);
+        });
+        var cur = R.cur, same = cur.length === want.length;
+        for (var i = 0; same && i < cur.length; i++) same = cur[i] === want[i];
+        if (same) return;
+        var ref = cur.length ? cur[cur.length - 1].nextSibling : (R.before ? R.before.nextSibling : R.parent.firstChild);
+        cur.forEach(function (node) { R.parent.removeChild(node); });
+        var frag = document.createDocumentFragment();
+        want.forEach(function (node) { frag.appendChild(node); });
+        R.parent.insertBefore(frag, ref);
+        R.cur = want;
+      }
+      function layoutPass(locked) {
+        for (var sf in LAYOUT_SURFACES) {
+          try { applyLayout(sf, locked); } catch (err) { warn(sf + ': layout failed — ' + (err && err.message)); }
         }
       }
 
@@ -641,6 +955,11 @@
       // the drill-in, lazy iframes, the highlight, the custom tab's
       // loadFunc) happens exactly as it does by hand. Refuses, loudly, an id
       // not in the effective registry: denied, admin-gated or unknown.
+      // A user layout never takes that element away (S4a): an item removed
+      // from Home or the sidebar is hidden in place, so exec clicks it all the
+      // same, and a neutral shortcut is never in EL (exec never clicks one —
+      // it calls exec). Every platform item keeps an element; the "no element
+      // to click" path S3.1 left open (its D4 note) is not needed.
       //
       // A firm item's action is dispatched declaratively — re-validated
       // first, so a bad one never navigates — 'window' →
@@ -724,16 +1043,18 @@
         build: build, mount: mount,
         computeEffective: computeEffective, rank: rank, matchTier: matchTier,
         applyAccess: applyAccess, isReady: isReady, effectiveRegistry: effectiveRegistry,
-        elementsOf: elementsOf, exec: exec, cleanFirmItem: cleanFirmItem,
+        elementsOf: elementsOf, exec: exec, cleanFirmItem: cleanFirmItem, resolveLayout: resolveLayout,
         UNDENIABLE: UNDENIABLE, groups: function () { return GROUPS.slice(); },
       };
     })();
   </script>
-  <!-- ycLauncher's entitlement hide pass marks denied items' elements. An
-       attribute + !important rather than style.display, so code that writes
-       style.display on a launcher element (applyCustomTab, loadUserContext)
-       cannot bring a denied one back. -->
-  <style>[data-yc-denied] { display: none !important; }</style>
+  <!-- ycLauncher's entitlement hide pass marks denied items' elements; its
+       layout pass marks the default Home / sidebar elements a user's layout
+       leaves out (S4a). Attributes + !important rather than style.display, so
+       code that writes style.display on a launcher element (applyCustomTab,
+       loadUserContext) cannot bring a hidden one back. Two attributes keep the
+       two reasons apart. -->
+  <style>[data-yc-denied] { display: none !important; } [data-yc-unplaced] { display: none !important; }</style>
   <!-- The tool dialog (ui-custom S3.1, S3.3): ONE host that shows a same-origin
        page in an iframe over the shell — today a firm item's tool page
        (/tool/<key>) or saved view (/customView.html?key=<key>). Those pages
@@ -1132,6 +1453,27 @@
     }
     #appHeader .hdr-search button:hover { background: var(--accent-dark); }
 
+    /* Home's tiles (ui-custom S4a): a flex row container instead of
+       inline-block tiles in line boxes, so a user's layout re-orders tiles by
+       moving elements and a row break is an element (.home-break: a
+       full-width, 5px sentinel — the old spacer row's height) rather than
+       markup between tiles. It reproduces the inline layout to the pixel
+       (pixel-diffed at 375 and 1300): rows centred, so a row missing a hidden
+       tile (no custom tab, a denied item) still centres — a CSS grid would
+       left-align it; tiles one space of the 16px system font apart (4.1875px
+       measured, 67/256 em — what the whitespace between inline-blocks was);
+       120px rows with no row gap; wrapping wherever three do not fit (320px).
+       At most three per row: the box is three tiles + three gaps wide (short
+       of four tiles), centred. Phone rules (style.css #tabHome .home-btn)
+       apply to every tile, neutral shortcuts included. */
+    #tabHome .home-grid {
+      display: flex; flex-wrap: wrap; justify-content: center;
+      column-gap: calc(67em / 256); row-gap: 0;
+      max-width: calc(360px + 201em / 256); margin: 0 auto;
+    }
+    #tabHome .home-grid > .home-btn { flex: none; }
+    #tabHome .home-grid > .home-break { flex: 0 0 100%; height: 5px; }
+
     /* Quick search inside the Home tab — hidden by default, revealed only on
        narrow viewports (see the max-width:768px block) where the header
        search is hidden. */
@@ -1280,6 +1622,12 @@
       text-transform: uppercase; letter-spacing: 0.6px;
       padding: 14px 18px 4px; font-weight: 700;
     }
+    /* A label up to 40 characters long — a firm item's, or a section label
+       of the user's own (ui-custom S4a) — ends in an ellipsis instead of
+       running under the sidebar's edge (it clips sideways). The item's
+       title, the skinny-mode tooltip, still carries the whole label. */
+    #appSidebar .sb-item > span:not(.sb-badge) { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+    #appSidebar .sb-section-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
     /* Open Files sublist */
     #appSidebar .sb-sublist {
@@ -1632,8 +1980,10 @@
 
   <div id="tabHome" class="tab-main"><br><br>
     <!-- The tiles: rendered from FEATURE_REGISTRY + DEFAULT_LAYOUTS.home
-         (public/js/featureRegistry.js). -->
-    <script>ycLauncher.mount('home')</script>
+         (public/js/featureRegistry.js) into .home-grid, a flex row container
+         (ui-custom S4a): a row ends at a .home-break sentinel, and a user's
+         layout re-orders the tiles inside it. -->
+    <div class="home-grid"><script>ycLauncher.mount('home')</script></div>
     <!-- All (ui-custom S2): fixed chrome like the sidebar's All — the last
          Home tile, on a row of its own. -->
     <div style="height: 5px"></div>

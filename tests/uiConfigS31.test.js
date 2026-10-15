@@ -61,7 +61,10 @@ describe('scope / config_key / role / body envelope', () => {
     expect(shape.validate('user', 'shortcuts', {}).ok).toBe(true);
     expect(errs(shape.validate('firm', 'shortcuts', {}))).toMatch(/config_key/);
     expect(errs(shape.validate('user', 'registry_overrides', {}))).toMatch(/config_key/);
-    for (const k of ['layout', 'prefs', 'drawers', 'custom_tabs', '']) {
+    // ui-custom S4a: the user layer's layout key (a firm layout is not here yet)
+    expect(shape.validate('user', 'layout', {}).ok).toBe(true);
+    expect(errs(shape.validate('firm', 'layout', {}))).toMatch(/config_key/);
+    for (const k of ['prefs', 'drawers', 'custom_tabs', '']) {
       expect(shape.validate('firm', k, {}).ok).toBe(false);
       expect(shape.validate('user', k, {}).ok).toBe(false);
     }

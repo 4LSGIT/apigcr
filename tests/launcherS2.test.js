@@ -115,12 +115,13 @@ describe('the effective registry (pure)', () => {
 
   test('groups: by origin — sidebar section, else Home, else the grid — in the shipped order', () => {
     const eff = L.computeEffective({ isAdmin: true, customTab: { src: '/x' } });
-    expect(L.groups()).toEqual(['Home', 'Records', 'Actions', 'Settings', 'More', 'Admin']);
+    // the order rides on the list (computeEffective is pure since S4a)
+    expect(eff.groups).toEqual(['Home', 'Records', 'Actions', 'Settings', 'More', 'Admin']);
     const g = Object.fromEntries(eff.map((e) => [e.id, e.group]));
     expect([g.cases, g.calendar, g.pipeline, g.newClient, g.admin, g.helpSupport, g.moreManuals, g.adminMailboxes])
       .toEqual(['Records', 'Records', 'Actions', 'Actions', 'Settings', 'Settings', 'More', 'Admin']);
     // ordered by group, then by layout order within it
-    const order = L.groups();
+    const order = eff.groups;
     for (let i = 1; i < eff.length; i++) expect(order.indexOf(eff[i - 1].group)).toBeLessThanOrEqual(order.indexOf(eff[i].group));
     expect(ids(eff.filter((e) => e.group === 'More'))).toEqual(placed('more'));
     // surfaceLabels feed the matcher

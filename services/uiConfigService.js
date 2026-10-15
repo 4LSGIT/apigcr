@@ -37,6 +37,14 @@
  *     a mismatch is a 409 (CONFLICT_MSG) and nothing is written — two admins
  *     never silently overwrite each other. `base` is optional: absent, there
  *     is no check (the S3.1 PUT contract is unchanged). User rows carry none.
+ *     RETIRED FIRM IDS (S4a): the firm registry_overrides document carries a
+ *     server-managed `retired` list (lib/uiConfigShape.js). Whatever `retired`
+ *     the body sends is dropped before validation; inside the FOR UPDATE span
+ *     the list is re-derived: the stored row's retired ids, plus the id of
+ *     every item the stored row has and this write drops. The merged document
+ *     is validated again, so an item reusing a retired id is a 400 and
+ *     nothing is written. A restore (opts.resurrect) may bring retired items
+ *     back — the very items, so their ids leave the list.
  *
  * Firm editor reads (ui-custom S3.2 — the Firm tab, public/caseconfig/firm.html).
  * The ROUTES gate all of these on firm.settings; restoreVersion is also
@@ -52,6 +60,7 @@
  *   firmVersionIds(db) → { <firm config_key>: newest version id | null } — the
  *     `base` an editor sends back (GET /api/ui-config, firm.settings holders).
  *   restoreVersion(db, id, auth, base) → write()'s result + { restored_from: id }.
+ *     It may bring back an item whose id was retired (write's resurrect).
  *     base as for a PUT (optional; a stale one → 409). The document goes back
  *     into the version's PARENT row's config_key; a version row whose own
  *     config_key disagrees with its parent's is refused (400).
@@ -113,10 +122,34 @@ function inputError(message, errors, status = 400) {
 
 const CONFLICT_MSG = 'The firm launcher was changed since you loaded it — reload to see the change';
 
-async function write(db, body, auth) {
-  const r = shape.validateWrite(body);
+const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
+const keepsRetired = (scope, key) => scope === 'firm' && key === 'registry_overrides';
+
+/** The firm document to store: incoming (validated, no `retired`) with the
+ *  retired list re-derived from the stored row — its retired ids, plus every
+ *  stored item id incoming drops; resurrect takes incoming's own ids back out. */
+function withRetired(stored, incoming, resurrect) {
+  const sd = isObj(stored) ? stored : {};
+  const firmId = (id) => typeof id === 'string' && shape.FIRM_ID_RE.test(id);
+  const keep = new Set(incoming.items.map((it) => it.id));
+  const ids = (Array.isArray(sd.retired) ? sd.retired.filter(firmId) : [])
+    .concat((Array.isArray(sd.items) ? sd.items : []).map((it) => (isObj(it) ? it.id : null)).filter((id) => firmId(id) && !keep.has(id)));
+  const retired = [...new Set(ids)].filter((id) => !(resurrect && keep.has(id)));
+  return retired.length ? { ...incoming, retired } : { ...incoming };
+}
+
+async function write(db, body, auth, opts = {}) {
+  // `retired` is the server's (S4a): never taken from a client.
+  let input = body;
+  if (isObj(body) && keepsRetired(body.scope, body.config_key) && isObj(body.config)
+      && Object.prototype.hasOwnProperty.call(body.config, 'retired')) {
+    const { retired: _dropped, ...rest } = body.config;
+    input = { ...body, config: rest };
+  }
+  const r = shape.validateWrite(input);
   if (!r.ok) throw inputError(r.errors[0], r.errors);
-  const { scope, config_key: key, config, base } = r.value;
+  const { scope, config_key: key, base } = r.value;
+  let config = r.value.config;
   const actor = auth && auth.type === 'jwt' ? userIdOf(auth.userId) : null;
   if (actor == null) throw inputError('a ui_config write needs a staff user', null, 403);
   if (scope === 'firm' && !can(auth, 'firm.settings')) throw inputError('Forbidden', null, 403);
@@ -132,6 +165,11 @@ async function write(db, body, auth) {
       head = h && h.id != null ? Number(h.id) : null;
     }
     if (scope === 'firm' && base !== undefined && base !== head) throw inputError(CONFLICT_MSG, null, 409);
+    if (keepsRetired(scope, key)) {
+      const merged = shape.validate(scope, key, withRetired(cur ? parseConfig(cur.config) : null, r.value.config, !!opts.resurrect));
+      if (!merged.ok) throw inputError(merged.errors[0], merged.errors);
+      config = merged.value;
+    }
     if (cur && shape.canonical(parseConfig(cur.config)) === shape.canonical(config)) {
       return scope === 'firm' ? { changed: false, versioned: false, version_id: head } : { changed: false, versioned: false };
     }
@@ -213,7 +251,7 @@ async function restoreVersion(db, id, auth, base) {
   if (!doc.ok) throw inputError(`version ${v.id} no longer passes today's rules, so it was not restored`, doc.errors);
   const body = { scope: 'firm', config_key: v.row_config_key, config: v.config };
   if (base !== undefined) body.base = base;
-  return { ...(await write(db, body, auth)), restored_from: v.id };
+  return { ...(await write(db, body, auth, { resurrect: true })), restored_from: v.id };
 }
 
 async function firmVersionIds(db) {

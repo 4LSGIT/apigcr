@@ -107,7 +107,8 @@ describe('the firm overlay in the effective registry (pure)', () => {
   test('firm items: group "Firm" after More, before Admin, in array order; bad / duplicate dropped with a warning', () => {
     const v = vmLauncher();
     const eff = v.L.computeEffective({ isAdmin: true, ui: ui({ items: [FI.leads, FI.bad, FI.payroll, { ...FI.payroll, label: 'Dup' }, FI.appt] }) });
-    expect(v.L.groups()).toEqual(['Home', 'Records', 'Actions', 'Settings', 'More', 'Firm', 'Admin']);
+    // the order rides on the list (computeEffective is pure since S4a)
+    expect(eff.groups).toEqual(['Home', 'Records', 'Actions', 'Settings', 'More', 'Firm', 'Admin']);
     const firm = eff.filter((e) => e.group === 'Firm');
     expect(firm.map((e) => [e.id, e.label, e.icon])).toEqual([
       ['firm:leads', 'Lead Follow-ups', 'table-list'], ['firm:payroll', 'Payroll', 'money-check'], ['firm:appt', 'Appointment Form', 'calendar-plus']]);
@@ -115,8 +116,7 @@ describe('the firm overlay in the effective registry (pure)', () => {
     expect(gi('More') < gi('Firm') && gi('Firm') < gi('Admin')).toBe(true);
     expect(v.warnings.filter((w) => /firm item \d+ dropped/.test(w))).toHaveLength(2);
     // no items → no Firm group at all
-    v.L.computeEffective({ isAdmin: true });
-    expect(v.L.groups()).toEqual(['Home', 'Records', 'Actions', 'Settings', 'More', 'Admin']);
+    expect(v.L.computeEffective({ isAdmin: true }).groups).toEqual(['Home', 'Records', 'Actions', 'Settings', 'More', 'Admin']);
   });
 
   test('firm items are hidden / denied like any id; effectiveRegistry() never hands out the action', () => {

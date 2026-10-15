@@ -6,7 +6,8 @@
  * two structures into the markup of four launcher surfaces, at parse time, in
  * the exact place that markup used to be written by hand:
  *
- *   home     #tabHome's .home-btn tiles and the 5px spacer rows between them
+ *   home     #tabHome's .home-btn tiles and the .home-break row breaks between
+ *            them, inside its .home-grid flex container (ui-custom S4a)
  *   sidebar  the Records / Actions / Settings sections of #appSidebar
  *            (Home, Open Files, the spacer, the version stamp and the collapse
  *            bar are shell chrome and stay in index.html)
@@ -14,7 +15,9 @@
  *   admin    #tabAdmin's .big-button grid and its <br><br> row breaks
  *
  * The rendered markup is meant to be IDENTICAL to the hand-written markup it
- * replaced — every id, data-tab, data-target, onclick and inline style — so
+ * replaced (Home's row breaks excepted: S4a made them .home-break sentinels
+ * in a flex container, pixel-identical on screen) — every id, data-tab,
+ * data-target, onclick and inline style — so
  * nothing that finds these elements (updateSidebarActive, applyCustomTab,
  * loadUserContext, ensureStrip, the hover-animation and panel listeners, the
  * mobile CSS) can tell the difference. Change an attribute here and you change
@@ -22,8 +25,8 @@
  *
  * ── window.FEATURE_REGISTRY ── one entry per launcher button, keyed by its
  * stable id. The id is the item's name everywhere from here on (ui_config's
- * firm registry_overrides — hidden / renames / locked — and the firm/user
- * layouts still to come, entitlement denies): never rename one, and never
+ * firm registry_overrides — hidden / renames / locked —, each user's Home /
+ * sidebar layout (S4a), entitlement denies): never rename one, and never
  * reuse a retired one. Retired: moreClioCode (2026-10-15 — Get Clio Code is the
  * firm tool `clio-code` now; ref/tools/clio-code.html). Grid items carry a surface prefix (more* / admin*); home/sidebar items
  * do not. Fields — all optional except label and icon:
@@ -59,11 +62,15 @@
  *
  * ── window.DEFAULT_LAYOUTS ── the shipped arrangement of each surface, in
  * order: { item: '<id>' } | { break: true } | { label: '<text>' }.
- *   break: a row break — the 5px spacer on Home, <br><br> on the grids.
+ *   break: a row break — a .home-break sentinel on Home (5px tall), <br><br>
+ *          on the grids.
  *   label: a sidebar section heading.
  * One item may appear on several surfaces (Cases is on Home and the sidebar):
  * it is ONE registry entry; the surface differences (fa-2xl on tiles, data-tab
  * on the sidebar) are the renderer's rules, not duplicated data.
+ * These are the BASE layouts a user's own Home / sidebar layout applies to
+ * (ycLauncher.resolveLayout, S4a): an item added here also appears for a user
+ * who has rearranged that surface, next to its neighbour here.
  */
 window.FEATURE_REGISTRY = {
 
@@ -325,7 +332,7 @@ window.FEATURE_REGISTRY = {
 
 window.DEFAULT_LAYOUTS = {
 
-  // Home: three tiles per row; break = the 5px spacer row.
+  // Home: three tiles per row; break = a .home-break sentinel (a 5px row gap).
   home: [
     { item: 'cases' }, { item: 'contacts' }, { item: 'appts' },
     { break: true },

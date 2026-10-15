@@ -602,6 +602,15 @@ describe('fix round: a firm id still referenced in the stored document is never 
     F.relabelRow(st.stored, st.form, row, 'Payroll');
     expect(row.id).toBe('firm:payroll-2');
   });
+
+  test('ui-custom S4a: the server\'s retired list counts too — a deleted item\'s id is never offered again', async () => {
+    const { F } = await boot();
+    const st = { stored: { hidden: [], locked: [], renames: {}, items: [], retired: ['firm:payroll', 'firm:payroll-2'] }, form: { items: [] } };
+    const row = { saved: false, id: '' };
+    st.form.items.push(row);
+    F.relabelRow(st.stored, st.form, row, 'Payroll');
+    expect(row.id).toBe('firm:payroll-3');
+  });
 });
 
 describe('fix round: History renders DB text as text (SF3)', () => {

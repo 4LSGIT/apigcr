@@ -106,7 +106,7 @@
   "firm": {
    "registry_overrides": {
     "hidden": [],
-    "locked": [],
+    "locked": ["bills"],
     "renames": {},
     "items": [
      { "id": "firm:clio-code", "label": "Get Clio Code", "icon": "c",
@@ -120,6 +120,31 @@
     ]
    }
   },
-  "user": {}
+  "user": {
+   "layout": {
+    "placed": {
+     "home": [
+      { "item": "comms" }, { "item": "cases" }, { "item": "contacts" },
+      { "break": true },
+      { "item": "moreAutomations" }, { "item": "firm:unbroken" }, { "item": "calendar" },
+      { "break": true },
+      { "item": "appts" }, { "item": "events" }, { "item": "tasks" }, { "item": "newClient" }, { "item": "firm:intake-checklist" },
+      { "break": true },
+      { "item": "custom" }, { "item": "moreFeatures" }, { "item": "pipeline" }, { "item": "bills" }
+     ],
+     "sidebar": [
+      { "label": "Mine: the forty-character section label" },
+      { "item": "comms" }, { "item": "cases" }, { "item": "firm:intake-checklist" }, { "item": "moreAutomations" },
+      { "label": "Records" },
+      { "item": "contacts" }, { "item": "appts" }, { "item": "calendar" }, { "item": "events" }, { "item": "tasks" }, { "item": "bills" },
+      { "label": "Actions" },
+      { "item": "pipeline" }, { "item": "newClient" }, { "item": "custom" },
+      { "label": "Settings" },
+      { "item": "admin" }, { "item": "moreFeatures" }, { "item": "helpSupport" }
+     ]
+    },
+    "removed": { "home": ["log", "bills"], "sidebar": ["log"] }
+   }
+  }
  }
 }

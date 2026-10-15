@@ -286,16 +286,12 @@ function makeId(label, taken) {
 /** The registry rows the form offers, grouped like All. Read from the shell's
  *  own ycLauncher.computeEffective (never re-derived here): every item, as an
  *  admin would see it, with no hides and no renames — so hidden items are
- *  listed too. computeEffective also RECORDS the group order it computed
- *  (ycLauncher.groups(), which the All tab renders by), so it is handed the
- *  shell's own firm items: the record it leaves is the shell's. */
-function launcherCatalog(L, firmData) {
-  const ro = firmData && isObj(firmData.ui) && isObj(firmData.ui.firm) && isObj(firmData.ui.firm.registry_overrides)
-    ? firmData.ui.firm.registry_overrides : null;
-  const ui = { firm: { registry_overrides: { items: ro && Array.isArray(ro.items) ? ro.items : [] } }, user: {} };
-  const entries = L.computeEffective({ isAdmin: true, denied: [], ui, customTab: { src: '#' } })
-    .filter((e) => !FIRM_ID_RE.test(e.id));
-  const groups = L.groups().filter((g) => entries.some((e) => e.group === g));
+ *  listed too. computeEffective is pure (ui-custom S4a): the group order comes
+ *  back on the list (.groups) and the shell's All tab is untouched. */
+function launcherCatalog(L) {
+  const all = L.computeEffective({ isAdmin: true, denied: [], customTab: { src: '#' } });
+  const entries = all.filter((e) => !FIRM_ID_RE.test(e.id));
+  const groups = (all.groups || []).filter((g) => entries.some((e) => e.group === g));
   const undeniable = Array.isArray(L.UNDENIABLE) ? L.UNDENIABLE.slice() : ['moreSettings', 'helpSupport'];
   return { entries, groups, undeniable };
 }
@@ -373,12 +369,14 @@ function docFromForm(stored, form, catalog) {
 
 /** Every firm id the form must not hand a NEW row: other rows', and EVERY
  *  firm id the stored document references anywhere — items, hidden, locked,
- *  renames keys, and any field or key carried through untouched. A firm id
- *  that is still referenced (say hidden or locked after its item was deleted
- *  and saved) is never handed to a new item, which would inherit that
- *  reference. Ids referenced only from users' own rows (shortcuts) or from
- *  older versions are not visible here: a durable retired-ids record comes
- *  with S4 (review SF2 (b)). */
+ *  renames keys, `retired`, and any field or key carried through untouched.
+ *  A firm id that is still referenced (say hidden or locked after its item
+ *  was deleted and saved) is never handed to a new item, which would inherit
+ *  that reference. `retired` (S4a) is the server's durable record of every
+ *  deleted item's id, so ids referenced only from users' own rows (layouts,
+ *  shortcuts) are covered too: the server refuses a retired id, and this
+ *  scan never offers one. The form carries `retired` back untouched like any
+ *  key it does not edit; the server drops it on input and re-derives it. */
 function firmIdsIn(v, out) {
   if (typeof v === 'string') { if (FIRM_ID_RE.test(v)) out.add(v); return out; }
   if (Array.isArray(v)) { v.forEach((x) => firmIdsIn(x, out)); return out; }
@@ -480,7 +478,7 @@ const LauncherSection = {
     if (pk.status === 'rejected') banner(errText(pk.reason, 'Could not load the tool and view lists'));
     else this.st.pickers = { tools: pk.value.tools || [], views: pk.value.views || [] };
     const doc = cfg.value && isObj(cfg.value.firm) && isObj(cfg.value.firm.registry_overrides) ? cfg.value.firm.registry_overrides : null;
-    this.st.catalog = launcherCatalog(L, P.firmData);
+    this.st.catalog = launcherCatalog(L);
     const fv = cfg.value && isObj(cfg.value.firm_versions) ? cfg.value.firm_versions : null;
     this.st.base = fv && Object.prototype.hasOwnProperty.call(fv, 'registry_overrides') ? fv.registry_overrides : undefined;
     this.setStored(doc);

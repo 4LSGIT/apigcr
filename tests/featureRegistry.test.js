@@ -126,6 +126,8 @@ describe('the mounts in public/index.html', () => {
     };
     within('sidebar', '<nav id="appSidebar"', '</nav>');
     within('home', '<div id="tabHome" class="tab-main">', '<div class="home-search">');
+    // Home's tiles mount inside their flex row container (ui-custom S4a)
+    expect(RAW).toContain(`<div class="home-grid"><script>ycLauncher.mount('home')</script></div>`);
     within('more', '<div id="tabMore" class="tab-main">', '<div class="more-egg-row">');
     within('admin', '<div id="tabAdmin" class="tab-main"', '<div id="sequencesDiv"');
     // the renderer is defined before the first mount; the boot runs after the last
@@ -151,7 +153,7 @@ describe('mount(), run for real in jsdom', () => {
       <script>ycLauncher.mount('sidebar')</script>
       <div class="sb-spacer"></div></nav>
     <div id="tabHome" class="tab-main"><br><br>
-      <script>ycLauncher.mount('home')</script>
+      <div class="home-grid"><script>ycLauncher.mount('home')</script></div>
       <div class="home-search"></div></div>
     <div id="tabMore" class="tab-main"><h1>More</h1>
       <script>ycLauncher.mount('more')</script>
@@ -183,9 +185,13 @@ describe('mount(), run for real in jsdom', () => {
       const next = k[k.indexOf(tiles[tiles.length - 1]) + 1];
       expect(next.className || next.id).toBe(before);
     }
-    const home = doc.querySelectorAll('#tabHome > .home-btn');
+    // Home: direct children of its .home-grid container (S4a), which sits
+    // right before the quick search; a break is a .home-break sentinel
+    const home = doc.querySelectorAll('#tabHome > .home-grid > .home-btn');
     expect(home).toHaveLength(LAY.home.filter((e) => e.item).length);
-    expect(home[home.length - 1].nextElementSibling.className).toBe('home-search');
+    expect(doc.querySelectorAll('#tabHome > .home-grid > .home-break')).toHaveLength(LAY.home.filter((e) => e.break).length);
+    expect(home[home.length - 1].nextElementSibling).toBe(null);
+    expect(home[0].parentElement.nextElementSibling.className).toBe('home-search');
     const sb = doc.querySelectorAll('#appSidebar > .sb-item');
     expect(sb).toHaveLength(LAY.sidebar.filter((e) => e.item).length);
     expect(doc.querySelectorAll('#appSidebar > .sb-section-label')).toHaveLength(LAY.sidebar.filter((e) => e.label).length);

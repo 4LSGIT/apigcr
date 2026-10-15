@@ -175,7 +175,12 @@ hand), the Firm tab of YisraCase Config (`ui-config`, `ui-config/pickers`,
 `ui-config/versions`; `panel:caseConfigDiv:firm` — the step fails if the tab
 does not open) and the More grid's firm row (`firm-data.json`'s `ui`: a
 compact tool, a 40-character label, a 40-character unbroken one and a link;
-surveyed in `tab:tabMore` and `tab:tabAll`) — enough to fill the tables
+surveyed in `tab:tabMore` and `tab:tabAll`), and a user's own Home and
+sidebar layout (`ui.user.layout`, ui-custom S4a: both surfaces re-ordered, a
+More panel and the two long-labelled firm items pinned to Home and the
+sidebar, user breaks, a 39-character section label, per-surface removals (one
+of them firm-locked) — on screen on every surface, the phone drawer included) —
+enough to fill the tables
 that tend to overflow and to put every conditional Overview / Case Details box
 on screen. The mock ignores
 query strings, so `field-defs` answers for contacts too (a case def on the
