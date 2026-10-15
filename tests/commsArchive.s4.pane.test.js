@@ -703,3 +703,178 @@ describe('comms.html — S6 transcript search results', () => {
     expect(env.errors).toEqual([]);
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// comms.html — S3c re-summarise (any reader; the summary footer; the pending poll)
+// ─────────────────────────────────────────────────────────────────────────────
+describe('comms.html — S3c re-summarise', () => {
+  const NONE = { summary_model: null, summary_note: null, summary_note_by: null, summary_requested_at: null, summary_pending: false };
+  const thread = (archive = {}, voicemail = {}) => {
+    const t = THREAD();
+    t.messages[0].archive = { ...t.messages[0].archive, ...NONE, summary_model: 'claude-haiku-5-5', ...archive };
+    t.messages[1].voicemail = { ...t.messages[1].voicemail, ...NONE, ...voicemail };
+    return t;
+  };
+  function rsHandler({ thread: th, post } = {}) {
+    const base = handler({ thread: th });
+    return (url, method, payload) => {
+      if (/\/resummarize$/.test(url) && method === 'POST') return post(payload, url);
+      return base(url, method, payload);
+    };
+  }
+  const reads = (calls) => calls.filter((c) => c.url === `/api/phone-lines/1/conversations/${PARTY}`).length;
+  const dlg = (doc) => doc.getElementById('ca-rs-backdrop');
+
+  test('the action: "Re-summarise…" with a summary, "Summarise…" without, on a voicemail with a transcript; never restricted / no transcript', async () => {
+    const env = await boot(rsHandler({ thread: thread({}, { has_transcript: true }) }));
+    await openThread(env);
+    const { doc } = env;
+    expect(btn(bub(doc, 10), 'Re-summarise…')).toBeTruthy();
+    expect(btn(bub(doc, 11), 'Summarise…')).toBeTruthy();
+    const env2 = await boot(rsHandler({ thread: thread({ restricted: true }, { has_transcript: false }) }));
+    await openThread(env2);
+    expect(bub(env2.doc, 10).querySelector('[data-ca="resummarize"]')).toBeNull();
+    expect(bub(env2.doc, 11).querySelector('[data-ca="resummarize"]')).toBeNull();
+    expect(dlg(doc).classList.contains('open')).toBe(false);
+  });
+
+  test('the footer: R8 label, "Made with Sonnet" (not for Haiku), the note as TEXT with its author; a voicemail summary shows under its row', async () => {
+    const env = await boot(rsHandler({ thread: thread(
+      { summary_model: 'claude-sonnet-5-5', summary_note: `Speaker A is the trustee ${EVIL}`, summary_note_by: 'Fred Smith' },
+      { has_transcript: true, summary_text: 'Wants a callback', summary_model: 'claude-haiku-5-5' }) }));
+    await openThread(env);
+    const { doc, window } = env;
+    const b = bub(doc, 10);
+    expect(b.querySelector('.ca-ai').textContent).toBe('AI-generated — check the recording before relying on it');
+    expect(b.querySelector('.ca-model').textContent).toBe('Made with Sonnet');
+    expect(b.querySelector('.ca-rs-note').textContent).toBe(`Guided by a note from Fred Smith: Speaker A is the trustee ${EVIL}`);
+    expect(b.querySelector('.ca-rs-note img')).toBeNull();
+    expect(window.__pwned).toBeUndefined();
+    for (const el of b.querySelectorAll('.ca-model, .ca-rs-note')) expect(el.classList.contains('yc-hint')).toBe(true);
+    const v = bub(doc, 11);
+    expect(v.querySelector('.ca-sum').textContent).toBe('Wants a callback');
+    expect(v.querySelector('.ca-ai')).toBeTruthy();
+    expect(v.querySelector('.ca-model')).toBeNull();                         // Haiku: the default, no tag
+    expect(v.querySelector('.ca-wrap').compareDocumentPosition(v.querySelector('.ca-sum')) & 4).toBeTruthy();   // under the row
+  });
+
+  test('the dialog: Sonnet on, a counter, Send posts {model, note}; unticked + empty note → Haiku, no note; success closes it and re-reads', async () => {
+    const env = await boot(rsHandler({ thread: thread(), post: () => ({ status: 'success', summary_pending: true }) }));
+    await openThread(env);
+    const { doc, window, calls } = env;
+    btn(bub(doc, 10), 'Re-summarise…').click();
+    expect(dlg(doc).classList.contains('open')).toBe(true);
+    expect(doc.getElementById('ca-rs-title').textContent).toBe('Re-summarise this call');
+    expect(doc.getElementById('ca-rs-sonnet').checked).toBe(true);
+    const note = doc.getElementById('ca-rs-note');
+    expect(note.getAttribute('maxlength')).toBe('500');
+    note.value = '  A is the debtor  ';
+    note.dispatchEvent(new window.Event('input'));
+    expect(doc.getElementById('ca-rs-count').textContent).toBe('19/500');
+    const before = reads(calls);
+    btn(dlg(doc), 'Send').click();
+    await tick(window, 60);
+    expect(calls.filter((c) => /resummarize$/.test(c.url)).map((c) => [c.url, c.payload])).toEqual([
+      ['/api/comms-archive/media/501/resummarize', { model: 'claude-sonnet-5-5', note: 'A is the debtor' }]]);
+    expect(dlg(doc).classList.contains('open')).toBe(false);
+    expect(reads(calls)).toBeGreaterThan(before);
+    btn(bub(doc, 10), 'Re-summarise…').click();
+    doc.getElementById('ca-rs-sonnet').checked = false;
+    btn(dlg(doc), 'Send').click();
+    await tick(window, 60);
+    expect(calls.filter((c) => /resummarize$/.test(c.url)).pop().payload).toEqual({ model: 'claude-haiku-5-5' });
+    expect(env.errors).toEqual([]);
+  });
+
+  test('every refusal is a plain sentence in the dialog', async () => {
+    let next;
+    const env = await boot(rsHandler({ thread: thread(), post: () => { throw next; } }));
+    await openThread(env);
+    const { doc, window } = env;
+    const err = (status, code) => Object.assign(new Error('x'), { status, body: code ? { code } : {} });
+    const cases = [
+      [err(409, 'restricted'), "Restricted calls aren't summarised."],
+      [err(409, 'not_transcribed'), "There's no finished transcript to summarise yet."],
+      [err(409, 'busy'), 'A summary for this call is already being made — check back in a minute.'],
+      [err(409, 'over_cap'), "This month's AI budget is used up — ask IT."],
+      [err(409, 'empty'), "This call's transcript is empty — nothing to summarise."],
+      [err(409, 'summaries_off'), 'AI summaries are switched off right now.'],
+      [err(409, 'settings'), 'AI summaries are misconfigured — tell IT.'],
+      [err(429), 'Too many re-summarise requests — try again in a little while.'],
+      [err(404), 'This call is no longer available.'],
+      [Object.assign(new Error('boom'), { status: 500, body: {} }), "Couldn't re-summarise: boom"],
+    ];
+    btn(bub(doc, 10), 'Re-summarise…').click();
+    for (const [e, text] of cases) {
+      next = e;
+      btn(dlg(doc), 'Send').click();
+      await tick(window);
+      expect(doc.getElementById('ca-rs-msg').textContent).toBe(text);
+      expect(dlg(doc).classList.contains('open')).toBe(true);
+    }
+  });
+
+  test('pending: "Re-summarising…" under the CURRENT summary; the conversation re-reads itself until it lands, then stops', async () => {
+    let pending = true;
+    const env = await boot(rsHandler({ thread: () => (pending
+      ? thread({ summary_pending: true, summary_requested_at: new Date().toISOString() })
+      : thread({ summary_text: 'New summary' })) }));
+    env.window.CA_RS_POLL_MS = [40, 40];                                      // the page's own var, shrunk before the first render
+    await openThread(env);
+    const { doc, window, calls } = env;
+    const b = bub(doc, 10);
+    expect(b.querySelector('.ca-sum').textContent).toBe(`Client asked about the 341 ${EVIL}`);
+    expect(b.querySelector('.ca-rs-pending').textContent).toBe('Re-summarising…');
+    const r0 = reads(calls);
+    await tick(window, 120);
+    expect(reads(calls)).toBeGreaterThan(r0);                                 // it polled
+    pending = false;
+    await tick(window, 120);
+    expect(bub(doc, 10).querySelector('.ca-sum').textContent).toBe('New summary');
+    expect(bub(doc, 10).querySelector('.ca-rs-pending')).toBeNull();
+    const r1 = reads(calls);
+    await tick(window, 200);
+    expect(reads(calls)).toBe(r1);                                            // landed: no more re-reads
+  });
+
+  test('switching conversations hands the poll over: the new one polls on its own schedule (no stale timer blocks it)', async () => {
+    const P2 = '3135550002';
+    const pend = () => thread({ summary_pending: true, summary_requested_at: new Date().toISOString() });
+    const base = rsHandler({ thread: pend });
+    const env = await boot((url, method, payload) => {
+      if (url === `/api/phone-lines/1/conversations/${P2}`) return { ...pend(), other_party: P2 };
+      return base(url, method, payload);
+    });
+    env.window.CA_RS_POLL_MS = [250];
+    await openThread(env);                                                    // party 1: a 250 ms timer armed
+    env.window.CA_RS_POLL_MS = [60];
+    env.window.eval(`openConversation('${P2}', null)`);                       // switch before it fires
+    await tick(env.window, 40);
+    const n = () => env.calls.filter((c) => c.url === `/api/phone-lines/1/conversations/${P2}`).length;
+    expect(n()).toBe(1);
+    await tick(env.window, 200);
+    expect(n()).toBeGreaterThan(1);                                           // party 2 polled on its own 60 ms schedule
+  });
+
+  test('pending for over 5 minutes: "Still working — check back later." and no polling; leaving the conversation stops it too', async () => {
+    const old = new Date(Date.now() - 6 * 60_000).toISOString();
+    const env = await boot(rsHandler({ thread: thread({ summary_pending: true, summary_requested_at: old }) }));
+    env.window.CA_RS_POLL_MS = [30];
+    await openThread(env);
+    const { doc, window, calls } = env;
+    expect(bub(doc, 10).querySelector('.ca-rs-pending').textContent).toBe('Still working — check back later.');
+    const r0 = reads(calls);
+    await tick(window, 150);
+    expect(reads(calls)).toBe(r0);
+    // a fresh pending item polls; closing the conversation cancels it
+    const env2 = await boot(rsHandler({ thread: thread({ summary_pending: true, summary_requested_at: new Date().toISOString() }) }));
+    env2.window.CA_RS_POLL_MS = [30];
+    await openThread(env2);
+    env2.window.eval(`openConversation('${PARTY}', null, { silent: true })`);
+    await tick(env2.window, 10);
+    env2.window.eval('closePhoneThread()');
+    const r1 = reads(env2.calls);
+    await tick(env2.window, 150);
+    expect(reads(env2.calls)).toBe(r1);
+  });
+});

@@ -42,7 +42,12 @@
     "has_transcript": true,
     "summary_text": "Client confirmed the paystubs for April through September and asked whether the 341 meeting can move to the afternoon session; the firm promised to check with the trustee's office and call back by Friday.",
     "restricted": true,
-    "extra": []
+    "extra": [],
+    "summary_model": "claude-sonnet-5-5",
+    "summary_note": "Speaker A is the trustee's paralegal, Speaker B is the debtor \u2014 they talked about the April-through-September paystubs and the 341 date; anunbrokenwordthatisverylongtocheckwrappinginsidethebubble",
+    "summary_note_by": "Bartholomew Featherstonehaugh",
+    "summary_requested_at": "2026-10-12T15:00:00.000Z",
+    "summary_pending": false
    }
   },
   {
@@ -70,7 +75,13 @@
     "provider": "quo",
     "has_audio": true,
     "has_transcript": true,
-    "restricted": false
+    "restricted": false,
+    "summary_text": "The caller asks for a callback about the hearing date and says the phone was off all morning.",
+    "summary_model": "claude-haiku-5-5",
+    "summary_note": null,
+    "summary_note_by": null,
+    "summary_requested_at": "{{TODAY}}T12:00:00.000Z",
+    "summary_pending": true
    }
   },
   {

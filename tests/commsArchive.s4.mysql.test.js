@@ -41,9 +41,11 @@ const TABLES = ['phone_lines', 'phone_event_log', 'log', 'users', 'system_alerts
 // S2's tables are made by S2's own migration runner (scripts/commsTranscribeS2Migrate.js
 // — the script that ran live), only in the tests that need them; the rest run with
 // no comms_transcripts at all, as before S2's migration.
-const S2_TABLES = ['comms_transcripts', 'comms_stt_jobs', 'comms_no_transcribe'];
+const S2_TABLES = ['comms_transcripts', 'comms_stt_jobs', 'comms_no_transcribe', 'comms_summary_guides'];
 
 const PW = 'correct horse battery';
+// The summary fields an item carries before anything is summarised (S3 + S3c).
+const NO_SUMMARY = { summary_text: null, summary_model: null, summary_note: null, summary_note_by: null, summary_requested_at: null, summary_pending: false };
 const P = '3135550001';
 const L1 = '2485592400', L4 = '2486213656', L6 = '2484179800';
 const U = { SS: 1, ATT: 2, GRANTED: 3, NOBODY: 4, SU: 6, NOHASH: 8 };
@@ -217,7 +219,7 @@ maybe('comms archive S4 on real MySQL', () => {
     const t = await thread(T.su);
     expect(t.archive_admin).toBe(true);
     const m = byId(t.messages);
-    expect(m.get(S.call1).archive).toEqual({ media_id: S.rec1, has_audio: true, has_transcript: false, summary_text: null, restricted: false, extra: [] });
+    expect(m.get(S.call1).archive).toEqual({ media_id: S.rec1, has_audio: true, has_transcript: false, ...NO_SUMMARY, restricted: false, extra: [] });
     expect(m.get(S.callR).archive).toMatchObject({ media_id: S.recR, restricted: true });
     expect(m.get(S.callP).archive).toEqual({ media_id: S.recP, purged: { at: '2026-10-05T09:00:00.000Z', by: 'Fred', reason: 'personal call' } });
     expect(m.get(S.sms).attachments).toEqual([
@@ -225,7 +227,7 @@ maybe('comms archive S4 on real MySQL', () => {
       { media_id: S.pdf, mime: 'application/pdf', view: 'pdf', bytes: 2048, restricted: false },
     ]);
     expect(m.get(S.sms).attachments_pending).toBe(1);
-    expect(m.get(S.callVm).voicemail).toEqual({ media_id: S.rcVm, provider: 'ringcentral', has_audio: true, has_transcript: false, restricted: false });
+    expect(m.get(S.callVm).voicemail).toEqual({ media_id: S.rcVm, provider: 'ringcentral', has_audio: true, has_transcript: false, ...NO_SUMMARY, restricted: false });
     expect(m.get(S.callNull).voicemail).toMatchObject({ media_id: S.rcVmNull });
     expect(m.get(S.callMis).archive).toBeUndefined();                       // channel_id 4 on a line-1 call: never shown
     expect(m.has(S.callVmL4)).toBe(false);                                  // line 4's call is not in line 1's thread
@@ -278,7 +280,7 @@ maybe('comms archive S4 on real MySQL', () => {
     expect(byId(g.messages).get(S.call1).archive).toMatchObject({ media_id: S.rec1 });
     const s = (await get(`/api/phone-lines/all/conversations/${P}?limit=100`, { t: T.su() })).json;
     const m = byId(s.messages);
-    expect(m.get(S.quoCall).voicemail).toEqual({ media_id: S.quoVm, provider: 'quo', has_audio: true, has_transcript: true, restricted: false });
+    expect(m.get(S.quoCall).voicemail).toEqual({ media_id: S.quoVm, provider: 'quo', has_audio: true, has_transcript: true, ...NO_SUMMARY, restricted: false });
     expect(m.get(S.callVmL4).voicemail).toBeUndefined();                    // the RC voicemail is line 1's (channel_id 1)
     expect(m.get(S.callVm).voicemail).toMatchObject({ media_id: S.rcVm });
     expect(m.get(S.callMis).archive).toBeUndefined();
@@ -660,6 +662,75 @@ maybe('comms archive S4 on real MySQL', () => {
     for (const k of kids) expect((await url(k, T.su)).status).toBe(404);
     expect((await tx(S.quoVm, T.su)).status).toBe(404);
     expect(byId((await get(`/api/phone-lines/6/conversations/${P}`, { t: T.su() })).json.messages).get(S.quoCall).voicemail.has_transcript).toBe(false);
+  });
+
+  // S2's own migration for the guide table (ref/migrations/2026-10-16_comms_s3c_summary_guides.sql).
+  async function guidesTable() {
+    for (const st of schema.migrationStatements('2026-10-16_comms_s3c_summary_guides.sql')) await pool.query(st);
+  }
+
+  test('X7 S3c: summary fields on BOTH the recording and the voicemail — the note is the one STAMPED into the summary shown; pending / when from the guide table; gated like the summary', async () => {
+    await s2Tables();
+    const tr = async (mediaId, eventId, state, text, model, summary) => {
+      const [r] = await pool.query(`INSERT INTO comms_transcripts (media_id, phone_event_id, state, segments, full_text, summary_text, summary_model, summary)
+        VALUES (?, ?, ?, '[]', 'words', ?, ?, ?)`, [mediaId, eventId, state, text, model, summary === undefined ? null : JSON.stringify(summary)]);
+      return r.insertId;
+    };
+    const stamp = (note, by) => ({ summary: 'x', guide: note == null ? null : { note, note_by: 6, note_by_name: by, requested_at: '2026-10-15T08:00:00Z', model: 'claude-sonnet-5-5' } });
+    const tRec = await tr(S.rec1, S.call1, 'summarized', 'Client asked about the 341.', 'claude-sonnet-5-5', stamp('Speaker A is the trustee <b>x</b>', 'Fred S'));
+    const tVm = await tr(S.quoVm, S.quoCall, 'summarized', 'Caller wants a callback.', 'claude-haiku-5-5', stamp(null));
+    const tRes = await tr(S.recR, S.callR, 'summarized', 'secret summary', 'claude-haiku-5-5', stamp('restricted note', 'Fred S'));
+    // before the guide table exists: the stamped note shows, nothing is pending — the voicemail's summary included (F1)
+    let su = byId((await get(`/api/phone-lines/all/conversations/${P}?limit=100`, { t: T.su() })).json.messages);
+    expect(su.get(S.call1).archive).toMatchObject({ summary_text: 'Client asked about the 341.', summary_model: 'claude-sonnet-5-5',
+      summary_note: 'Speaker A is the trustee <b>x</b>', summary_note_by: 'Fred S', summary_requested_at: null, summary_pending: false });
+    expect(su.get(S.quoCall).voicemail).toMatchObject({ summary_text: 'Caller wants a callback.', summary_model: 'claude-haiku-5-5',
+      summary_note: null, summary_note_by: null, summary_pending: false });
+    // a NEWER request is pending with a different note: the old summary keeps its OWN note; the new note is not shown yet
+    await guidesTable();
+    await q(`INSERT INTO comms_summary_guides (transcript_id, model, note, note_by, requested_at, requested_by, outcome) VALUES
+      (?, 'claude-haiku-5-5', 'a newer note, not used yet', 3, '2026-10-15 09:00:00', 3, NULL),
+      (?, 'claude-haiku-5-5', NULL, NULL, '2026-10-15 07:00:00', 3, 'done'),
+      (?, 'claude-sonnet-5-5', 'restricted note', 6, '2026-10-15 07:00:00', 6, NULL)`, [tRec, tVm, tRes]);
+    su = byId((await get(`/api/phone-lines/all/conversations/${P}?limit=100`, { t: T.su() })).json.messages);
+    expect(su.get(S.call1).archive).toMatchObject({ summary_note: 'Speaker A is the trustee <b>x</b>', summary_note_by: 'Fred S',
+      summary_requested_at: '2026-10-15T09:00:00.000Z', summary_pending: true });
+    expect(JSON.stringify(su.get(S.call1))).not.toMatch(/a newer note/);
+    expect(su.get(S.quoCall).voicemail).toMatchObject({ summary_note: null, summary_requested_at: '2026-10-15T07:00:00.000Z', summary_pending: false });
+    // a pre-S3c summary (no `guide` key) and a JSON null summary → no note
+    await q("UPDATE comms_transcripts SET summary = JSON_OBJECT('summary', 'old') WHERE id = ?", [tVm]);
+    await q('UPDATE comms_transcripts SET summary = NULL WHERE id = ?', [tRec]);
+    su = byId((await get(`/api/phone-lines/all/conversations/${P}?limit=100`, { t: T.su() })).json.messages);
+    expect([su.get(S.call1).archive.summary_note, su.get(S.quoCall).voicemail.summary_note]).toEqual([null, null]);
+    // the restricted recording's summary / note never reach a non-admin (the object itself is absent)
+    const g = byId((await get(`/api/phone-lines/1/conversations/${P}`, { t: T.granted() })).json.messages);
+    expect(g.get(S.callR).archive).toBeUndefined();
+    expect(JSON.stringify(g.get(S.callR))).not.toMatch(/restricted note|secret summary/);
+    // a re-queued transcript (not readable) hands out no summary fields at all
+    await q("UPDATE comms_transcripts SET state = 'transcribing' WHERE id = ?", [tRec]);
+    su = byId((await get(`/api/phone-lines/1/conversations/${P}`, { t: T.su() })).json.messages);
+    expect(su.get(S.call1).archive).toMatchObject({ summary_text: null, summary_model: null, summary_note: null, summary_note_by: null,
+      summary_requested_at: null, summary_pending: false });
+  });
+
+  test('X8 the view_summary audit counts every summary handed out — the voicemail\'s too — and a pending first request shows no note', async () => {
+    await s2Tables();
+    await guidesTable();
+    const [r] = await pool.query(`INSERT INTO comms_transcripts (media_id, phone_event_id, state, segments, full_text) VALUES (?, ?, 'transcribed', '[]', 'words')`, [S.rec1, S.call1]);
+    await q(`INSERT INTO comms_transcripts (media_id, phone_event_id, state, segments, full_text, summary_text, summary_model)
+             VALUES (?, ?, 'summarized', '[]', 'words', 'Wants a callback', 'claude-haiku-5-5')`, [S.quoVm, S.quoCall]);
+    await q(`INSERT INTO comms_summary_guides (transcript_id, model, note, note_by, requested_at, requested_by) VALUES (?, 'claude-sonnet-5-5', 'who is who', 3, UTC_TIMESTAMP(), 3)`, [r.insertId]);
+    await q('TRUNCATE TABLE admin_audit_log');
+    const m = byId((await get(`/api/phone-lines/all/conversations/${P}?limit=100`, { t: T.su() })).json.messages);
+    expect(m.get(S.call1).archive).toMatchObject({ summary_text: null, summary_note: null, summary_note_by: null, summary_pending: true });
+    expect(m.get(S.quoCall).voicemail.summary_text).toBe('Wants a callback');
+    // the conversation route writes this audit row fire-and-forget (not awaited before the response): wait for it
+    let a = [];
+    for (let i = 0; i < 50 && !a.length; i++) {
+      a = (await q("SELECT details FROM admin_audit_log WHERE tool = 'comms_archive'")).map(x => x.details);
+      if (!a.length) await new Promise(res => setTimeout(res, 20));
+    }
+    expect(a).toEqual([{ action: 'view_summary', media_ids: [S.quoVm] }]);
   });
 
   // ── P — purge's password re-check ───────────────────────────────────────

@@ -93,7 +93,8 @@ call), and All numbers at `phone-lines/all/{conversations,calls}` +
 comms archive's fields — a summary, Listen / Transcript, a voicemail, MMS
 thumbnails / chips / a purge tombstone, admin ⋯ buttons — with
 `comms-archive/media/<id>/{url,transcript}` behind the transcript viewer, the
-archive file viewer and the Purge dialog, `tab:tabComms:phone-archive-*`; and
+archive file viewer, the Purge dialog and the Re-summarise dialog (a noted
+Sonnet summary, a pending voicemail summary), `tab:tabComms:phone-archive-*`; and
 the In call transcripts group from `comms-archive/search`,
 `tab:tabComms:phone-search-transcripts`), the
 System Alerts pane's Comms archive section (`comms-archive/health`,

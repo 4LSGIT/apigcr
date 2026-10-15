@@ -11,8 +11,12 @@
  * admins only, R9) and the item's own line (a row whose channel_id is not
  * the item's line is never shown — enforced, not assumed).
  *
- *   call item  + archive:   {media_id, has_audio, has_transcript, summary_text, restricted, extra}
- *              + voicemail: {media_id, provider, has_audio, has_transcript, restricted}
+ *   call item  + archive:   {media_id, has_audio, has_transcript, …summary, restricted, extra}
+ *              + voicemail: {media_id, provider, has_audio, has_transcript, …summary, restricted}
+ *     …summary = summary_text, summary_model (S3), summary_note, summary_note_by
+ *                (S3c: the note that SHAPED the summary shown — stamped into it),
+ *                summary_requested_at, summary_pending (S3c: the current request,
+ *                comms_summary_guides; a pending request's note is not shown)
  *   sms item   + attachments: [{media_id, mime, view, bytes, restricted}]
  *              + attachments_pending: n   (rows not archived yet)
  *   page       + archive_admin: bool      (draws Restrict / Purge)
@@ -43,7 +47,9 @@
  * read answers ER_NO_SUCH_TABLE and has_transcript is false (self-heals, any
  * deploy order). A voicemail also has a transcript when the phone provider's
  * own (an archived stt_raw child) exists — the secondary record (R10).
- * summary_text is S3's; null until then.
+ * summary_text / summary_model are S3's (comms_transcripts); the note fields
+ * come from the summary's own stamp, pending / requested_at from S2's
+ * comms_summary_guides (absent table → null / false).
  */
 
 'use strict';
@@ -99,11 +105,19 @@ async function transcriptInfo(db, ids) {
   if (!ids.length) return out;
   try {
     const [rows] = await db.query(
-      `SELECT media_id, (segments IS NOT NULL OR full_text IS NOT NULL) AS has_text, summary_text
+      `SELECT id, media_id, (segments IS NOT NULL OR full_text IS NOT NULL) AS has_text, summary_text, summary_model, summary
          FROM comms_transcripts WHERE media_id IN (?) AND state IN (?)`, [ids, READABLE_STATES]);
     for (const r of rows) {
-      out.set(Number(r.media_id), { has: !!Number(r.has_text), summary: r.summary_text == null ? null : String(r.summary_text) });
+      out.set(Number(r.media_id), {
+        tid: Number(r.id),
+        has: !!Number(r.has_text),
+        summary: r.summary_text == null ? null : String(r.summary_text),
+        model: r.summary_model == null ? null : String(r.summary_model),
+        stamp: guideStamp(r.summary),
+        guide: null,
+      });
     }
+    await attachGuides(db, out);
   } catch (err) {
     if (err && err.code === 'ER_NO_SUCH_TABLE') return out;
     if (err && err.code === 'ER_BAD_FIELD_ERROR') {
@@ -113,6 +127,54 @@ async function transcriptInfo(db, ids) {
     throw err;
   }
   return out;
+}
+
+/**
+ * S3c (re-summarise). The NOTE shown is the one that shaped the summary shown:
+ * S2 stamps it into the stored summary JSON (comms_transcripts.summary →
+ * top-level `guide` {note, note_by, note_by_name, requested_at, model}, or
+ * null; absent on pre-S3c summaries). The guide TABLE (comms_summary_guides)
+ * holds the CURRENT request — a newer or pending one replaces its note — so it
+ * gives only summary_pending (outcome NULL) and summary_requested_at; a
+ * pending request's new note is never shown until its summary lands. Read
+ * only for transcripts this viewer was already handed (gated exactly like
+ * summary_text). Before S2's migration the table is missing: not pending.
+ */
+function guideStamp(summary) {
+  let s = summary;
+  if (typeof s === 'string') { try { s = JSON.parse(s); } catch (_) { s = null; } }
+  const g = s && typeof s === 'object' && !Array.isArray(s) ? s.guide : null;
+  if (!g || typeof g !== 'object' || typeof g.note !== 'string' || !g.note.trim()) return null;
+  return { note: g.note, by: typeof g.note_by_name === 'string' && g.note_by_name.trim() ? g.note_by_name.trim() : null };
+}
+
+async function attachGuides(db, byMedia) {
+  const tids = [...byMedia.values()].map(t => t.tid);
+  if (!tids.length) return;
+  let rows;
+  try {
+    [rows] = await db.query(
+      'SELECT transcript_id, requested_at, outcome FROM comms_summary_guides WHERE transcript_id IN (?)', [tids]);
+  } catch (err) {
+    if (err && err.code === 'ER_NO_SUCH_TABLE') return;
+    throw err;
+  }
+  const byTid = new Map(rows.map(r => [Number(r.transcript_id), r]));
+  for (const t of byMedia.values()) t.guide = byTid.get(t.tid) || null;
+}
+
+/** The summary fields of one archive / voicemail object (S3 + S3c), from its transcriptInfo entry. */
+function summaryFields(t) {
+  const g = t && t.guide;
+  const stamp = t && t.summary != null ? t.stamp : null;       // a note only rides WITH the summary it shaped
+  return {
+    summary_text: t ? t.summary : null,
+    summary_model: t ? t.model : null,
+    summary_note: stamp ? stamp.note : null,
+    summary_note_by: stamp ? stamp.by : null,
+    summary_requested_at: g && g.requested_at ? new Date(g.requested_at).toISOString() : null,
+    summary_pending: !!(g && g.outcome == null),
+  };
 }
 
 /** Voicemail ids that have an archived vendor transcript (stt_raw child) the viewer may see. */
@@ -314,7 +376,7 @@ async function decorate(db, auth, out, { lineId = null } = {}) {
           media_id: Number(live[0].id),
           has_audio: true,
           has_transcript: !!(t && t.has),
-          summary_text: t ? t.summary : null,
+          ...summaryFields(t),
           restricted: Number(live[0].restricted) === 1,
           extra: live.slice(1).map(r => Number(r.id)),
         };
@@ -330,6 +392,7 @@ async function decorate(db, auth, out, { lineId = null } = {}) {
           provider: vm.provider,
           has_audio: true,
           has_transcript: !!(t && t.has) || vendor.has(Number(vm.id)),
+          ...summaryFields(t),                                  // a voicemail's summary too (S3 summarises them)
           restricted: Number(vm.restricted) === 1,
         };
       } else if (vm && vm.state === 'purged' && isAdmin) {
@@ -368,8 +431,10 @@ async function decorate(db, auth, out, { lineId = null } = {}) {
 function summaryMediaIds(out) {
   const ids = [];
   for (const m of (out && Array.isArray(out.messages) ? out.messages : [])) {
-    if (m && m.archive && m.archive.summary_text != null) ids.push(Number(m.archive.media_id));
-    if (m && m.voicemail && m.voicemail.summary_text != null) ids.push(Number(m.voicemail.media_id));
+    for (const o of [m && m.archive, m && m.voicemail]) {
+      // a summary, or a reader's note that guides one (S3c), handed to the viewer
+      if (o && (o.summary_text != null || o.summary_note != null)) ids.push(Number(o.media_id));
+    }
   }
   return [...new Set(ids)];
 }

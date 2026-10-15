@@ -516,6 +516,10 @@
   .ca-snote { padding: 4px 10px 8px; font-size: 11.5px; color: var(--text-muted); overflow-wrap: anywhere; }
   .ca-more { margin: 4px 10px 8px; }
   .ca-seg.hit { background: var(--warn-soft); border-radius: 3px; }
+  /* S3c: the note / model / pending lines under a summary are house hints (.yc-hint); only wrapping is set here. */
+  .bub .ca-rs-note, .bub .ca-model, .bub .ca-rs-pending { white-space: normal; overflow-wrap: anywhere; margin-top: 2px; }
+  .bub .ca-rs-pending i { margin-right: 4px; }
+  .modal .ca-rs-row { display: flex; margin: 4px 0 6px; }
   /* The R8 label under a summary: the house hint (.yc-hint) — only its wrapping is set here. */
   .bub .ca-ai { white-space: normal; margin-top: 2px; }
   .ca-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 6px; white-space: normal; min-width: 0; }
@@ -844,6 +848,21 @@
     <div class="ca-label" id="ca-tx-label" role="note"></div>
     <div class="ca-tx-player" id="ca-tx-player"></div>
     <div class="ca-tx-body" id="ca-tx-body"></div>
+  </div>
+</div>
+<div class="modal-backdrop" id="ca-rs-backdrop">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="ca-rs-title">
+    <h3 id="ca-rs-title"></h3>
+    <div class="modal-err" id="ca-rs-msg" role="alert"></div>
+    <div class="ca-rs-row"><label class="check"><input type="checkbox" id="ca-rs-sonnet" checked> Use the better model (Sonnet)</label></div>
+    <label class="yc-flabel" for="ca-rs-note">Note (optional)</label>
+    <textarea id="ca-rs-note" class="task-field" rows="3" maxlength="500"></textarea>
+    <span class="yc-hint" id="ca-rs-count">0/500</span>
+    <span class="yc-hint">Optional — tell it what the call was about or who the speakers are. Your note is shown with the summary.</span>
+    <div class="modal-actions">
+      <button class="btn" type="button" id="ca-rs-cancel">Cancel</button>
+      <button class="btn primary" type="button" id="ca-rs-send">Send</button>
+    </div>
   </div>
 </div>
 <div class="modal-backdrop" id="ca-act-backdrop">
@@ -3198,6 +3217,7 @@ async function init() {
   document.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape') return;
     if (openMenu) closeMenu(); // the ⋯ menu first (D.1: keyboard-operable)
+    else if (E('ca-rs-backdrop').classList.contains('open')) closeCaRs();
     else if (E('ca-act-backdrop').classList.contains('open')) closeCaAct();
     else if (E('ca-view-backdrop').classList.contains('open')) closeCaView();
     else if (E('ca-tx-backdrop').classList.contains('open')) closeTranscript();
@@ -3261,7 +3281,8 @@ async function refreshNow() {
 window.ycBecameVisible = () => {
   if (E('case-backdrop').classList.contains('open') || E('views-backdrop').classList.contains('open') || E('viewer-backdrop').classList.contains('open')
       || E('compose-backdrop').classList.contains('open') || E('ph-new-backdrop').classList.contains('open') || E('task-backdrop').classList.contains('open')
-      || E('ca-act-backdrop').classList.contains('open') || E('ca-view-backdrop').classList.contains('open') || E('ca-tx-backdrop').classList.contains('open')) return;
+      || E('ca-act-backdrop').classList.contains('open') || E('ca-view-backdrop').classList.contains('open') || E('ca-tx-backdrop').classList.contains('open')
+      || E('ca-rs-backdrop').classList.contains('open')) return;
   if (phoneShown()) { phoneRefresh(); return; }
   loadSummary().catch(() => {});
   loadList({ silent: true });
@@ -3782,6 +3803,7 @@ function renderPhoneThread({ keepScroll = false, quiet = false } = {}) {
   if (keepScroll) body.scrollTop = prevTop + (body.scrollHeight - prevH);
   else if (quiet && !wasAtBottom) body.scrollTop = prevTop;
   else body.scrollTop = body.scrollHeight;
+  caRsSchedule();
 }
 
 /** A bubble's time line; in All numbers, "· via <line>". */
@@ -3802,8 +3824,7 @@ function callBubble(m) {
     dataset: { id: String(m.id), kind: 'call' },
   },
     h('span', { className: 'ct' }, icon(quiet ? 'fa-phone-slash' : 'fa-phone'), phCallLabel(m)),
-    a && a.summary_text ? h('span', { className: 'ca-sum' }, a.summary_text) : null,
-    a && a.summary_text ? h('span', { className: 'yc-hint ca-ai' }, CA_AI_LABEL) : null,   // R8: every summary says it is AI-generated
+    ...(a ? caSummary(a) : []),
     a ? caMediaRow(a, { what: 'recording', label: 'Call recording' }) : null,
     vm ? caMediaRow(vm, { what: 'voicemail', label: 'Voicemail', chip: true }) : null,
     h('span', { className: 'bt' }, phBubbleTime(m)));
@@ -3839,6 +3860,9 @@ const ca = {
   thumbs: new Map(),   // media_id → <img>
   act: null,           // the open Restrict / Purge dialog: { item, label, mode }
   tx: null,            // the open transcript: { mediaId }
+  rs: null,            // the open re-summarise dialog: { item, label }
+  rsTimer: null,       // the pending-summary re-read (caRsSchedule)
+  rsStep: 0,
 };
 const CA_URL_SLACK_MS = 60_000;
 /** R8 (design §0, §6.4): on every rendered transcript and summary. */
@@ -3864,6 +3888,7 @@ function caReset() {
   ca.players.clear();
   ca.thumbs.clear();
   if (caSeen) caSeen.disconnect();
+  clearTimeout(ca.rsTimer); ca.rsTimer = null; ca.rsStep = 0;
 }
 
 // A picture's URL is minted only when it scrolls near the view (review A3):
@@ -3957,9 +3982,14 @@ function caMediaRow(item, { what, label, chip = false }) {
       item.has_audio ? listenBtn(id, 'Listen') : null,
       ...parts.slice(1).map((p, i) => listenBtn(p, `Part ${i + 2}`)),
       item.has_transcript ? h('button', { className: 'btn small', type: 'button', dataset: { ca: 'transcript' }, onclick: () => openTranscript(item, label) }, icon('fa-align-left'), 'Transcript') : null,
+      // S3c: any reader may ask for a (new) summary — never on a restricted item (the server refuses those)
+      item.has_transcript && !item.restricted ? h('button', {
+        className: 'btn small', type: 'button', dataset: { ca: 'resummarize' }, onclick: () => openCaRs(item, label),
+      }, icon('fa-wand-magic-sparkles'), item.summary_text ? 'Re-summarise…' : 'Summarise…') : null,
       item.restricted ? h('span', { className: 'ca-badge', title: 'Only archive admins see this' }, 'Restricted') : null,
       caAdminBtn(item, label)),
-    slot);
+    slot,
+    ...(chip ? caSummary(item) : []));                 // a voicemail's summary sits under its own row
 }
 
 function caFileLabel(x) {
@@ -4001,6 +4031,110 @@ function caAttachment(x) {
     main,
     x.restricted ? h('span', { className: 'ca-badge', title: 'Only archive admins see this' }, 'Restricted') : null,
     caAdminBtn(x, 'Attachment'));
+}
+
+// ── S3c: the summary block and re-summarise ─────────────────
+// Under a summary: the R8 label, then — when a reader guided it — "Guided by a
+// note from <name>: <note>" and the model when it isn't the default (Haiku),
+// and while a request is pending a "Re-summarising…" line (the summary shown
+// may still be the previous one; the note describes the CURRENT request). All
+// text nodes. The open conversation re-reads itself quietly while anything is
+// pending (CA_RS_POLL_MS, then the last step repeated) and gives up after
+// CA_RS_GIVE_UP_MS since the request — "Still working — check back later".
+var CA_RS_POLL_MS = [10000, 20000, 30000];
+var CA_RS_GIVE_UP_MS = 5 * 60 * 1000;
+const CA_MODELS = { 'claude-sonnet-5-5': 'Sonnet', 'claude-haiku-5-5': 'Haiku' };
+const CA_DEFAULT_MODEL = 'claude-haiku-5-5';
+const caRsOverdue = (it) => { const t = Date.parse(it.summary_requested_at || ''); return Number.isFinite(t) && Date.now() - t > CA_RS_GIVE_UP_MS; };
+
+function caSummary(it) {
+  if (!it || it.purged) return [];
+  const out = [];
+  if (it.summary_text) {
+    out.push(h('span', { className: 'ca-sum' }, it.summary_text));
+    out.push(h('span', { className: 'yc-hint ca-ai' }, CA_AI_LABEL));   // R8: every summary says it is AI-generated
+    if (it.summary_model && it.summary_model !== CA_DEFAULT_MODEL) {
+      out.push(h('span', { className: 'yc-hint ca-model' }, `Made with ${CA_MODELS[it.summary_model] || it.summary_model}`));
+    }
+  }
+  if (it.summary_note) {
+    out.push(h('span', { className: 'yc-hint ca-rs-note' }, `Guided by a note from ${it.summary_note_by || 'a colleague'}: ${it.summary_note}`));
+  }
+  if (it.summary_pending) {
+    out.push(caRsOverdue(it)
+      ? h('span', { className: 'yc-hint ca-rs-pending' }, 'Still working — check back later.')
+      : h('span', { className: 'yc-hint ca-rs-pending' }, icon('fa-spinner fa-spin'), it.summary_text ? 'Re-summarising…' : 'Summarising…'));
+  }
+  return out;
+}
+
+const CA_RS_ERRORS = {
+  restricted: "Restricted calls aren't summarised.",
+  not_transcribed: "There's no finished transcript to summarise yet.",
+  busy: 'A summary for this call is already being made — check back in a minute.',
+  over_cap: "This month's AI budget is used up — ask IT.",
+  empty: "This call's transcript is empty — nothing to summarise.",
+  summaries_off: 'AI summaries are switched off right now.',
+  settings: 'AI summaries are misconfigured — tell IT.',
+};
+
+function openCaRs(item, label) {
+  ca.rs = { item, label };
+  const what = label === 'Voicemail' ? 'voicemail' : 'call';
+  E('ca-rs-title').textContent = `${item.summary_text ? 'Re-summarise' : 'Summarise'} this ${what}`;
+  E('ca-rs-sonnet').checked = true;
+  E('ca-rs-note').value = '';
+  caRsCount();
+  E('ca-rs-msg').classList.remove('show');
+  E('ca-rs-backdrop').classList.add('open');
+  E('ca-rs-note').focus();
+}
+function closeCaRs() {
+  ca.rs = null;
+  E('ca-rs-backdrop').classList.remove('open');
+}
+function caRsCount() { E('ca-rs-count').textContent = `${E('ca-rs-note').value.length}/500`; }
+
+async function caRsSend() {
+  const r = ca.rs;
+  if (!r) return;
+  const msg = E('ca-rs-msg');
+  const note = E('ca-rs-note').value.trim();
+  const body = { model: E('ca-rs-sonnet').checked ? 'claude-sonnet-5-5' : 'claude-haiku-5-5' };
+  if (note) body.note = note.slice(0, 500);
+  E('ca-rs-send').disabled = true;
+  try {
+    await api(`/api/comms-archive/media/${encodeURIComponent(r.item.media_id)}/resummarize`, 'POST', body);
+    closeCaRs();
+    toast(r.item.summary_text ? 'Re-summarising…' : 'Summarising…');
+    ca.rsStep = 0;
+    if (ph.party) openConversation(ph.party, ph.thread && ph.thread.contact, { silent: true });
+  } catch (err) {
+    const code = err && err.body && err.body.code;
+    const st = err && err.status;
+    msg.textContent = (st === 409 && CA_RS_ERRORS[code])
+      || (st === 429 ? 'Too many re-summarise requests — try again in a little while.' : null)
+      || (st === 404 ? 'This call is no longer available.' : null)
+      || `Couldn't re-summarise: ${(err && err.message) || 'failed'}`;
+    msg.classList.add('show');
+  } finally {
+    E('ca-rs-send').disabled = false;
+  }
+}
+
+/** After each render of the open conversation: re-read it again later while a summary it shows is pending. */
+function caRsSchedule() {
+  const t = ph.thread;
+  const waiting = !!t && t.messages.some((m) => [m.archive, m.voicemail].some((o) => o && o.summary_pending && !caRsOverdue(o)));
+  if (!waiting) { clearTimeout(ca.rsTimer); ca.rsTimer = null; ca.rsStep = 0; return; }
+  if (ca.rsTimer) return;
+  const delay = CA_RS_POLL_MS[Math.min(ca.rsStep || 0, CA_RS_POLL_MS.length - 1)];
+  ca.rsStep = (ca.rsStep || 0) + 1;
+  const party = t.party;
+  ca.rsTimer = setTimeout(() => {
+    ca.rsTimer = null;
+    if (ph.party === party && ph.thread) openConversation(party, ph.thread.contact, { silent: true });
+  }, delay);
 }
 
 // The media viewer: images and PDFs from the signed URL (another origin —
@@ -4424,6 +4558,10 @@ function wirePhone() {
   E('ph-new-send').addEventListener('click', sendNewText);
   E('ph-new-backdrop').addEventListener('click', (e) => { if (e.target === E('ph-new-backdrop')) closeNewText(); });
   E('phone').addEventListener('ph-search', (e) => caSearch(e.detail));   // S6 — the mailbox arc's search bar
+  E('ca-rs-cancel').addEventListener('click', closeCaRs);
+  E('ca-rs-send').addEventListener('click', caRsSend);
+  E('ca-rs-note').addEventListener('input', caRsCount);
+  E('ca-rs-backdrop').addEventListener('click', (e) => { if (e.target === E('ca-rs-backdrop')) closeCaRs(); });
   E('ca-view-close').addEventListener('click', closeCaView);
   E('ca-view-backdrop').addEventListener('click', (e) => { if (e.target === E('ca-view-backdrop')) closeCaView(); });
   E('ca-tx-close').addEventListener('click', closeTranscript);

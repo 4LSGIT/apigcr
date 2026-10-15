@@ -200,8 +200,10 @@ async function walk(page, W, record) {
         ['phone-archive-transcript', "openTranscript(ph.thread.messages.find((m) => m.id === 23).archive, 'Call recording')"],
         ['phone-archive-view', "closeTranscript(); openCaView(ph.thread.messages.find((m) => m.id === 42).attachments[1])"],
         ['phone-archive-purge', "closeCaView(); openCaAct(ph.thread.messages.find((m) => m.id === 42).attachments[0], 'Attachment'); E('ca-act-purge').click()"],
+        // S3c: the re-summarise dialog (the voicemail's summary, pending, sits under its row in the thread shots)
+        ['phone-archive-resummarize', "closeCaAct(); openCaRs(ph.thread.messages.find((m) => m.id === 41).voicemail, 'Voicemail')"],
         // a number no contact holds: number-only title + Add to contact; an attachment-only text
-        ['phone-thread-unknown', "closeCaAct(); openConversation('5555550198', null)"],
+        ['phone-thread-unknown', "closeCaRs(); closeCaAct(); openConversation('5555550198', null)"],
         ['phone-sms', "closePhoneThread(); setPhoneView('sms')"],
         ['phone-calls', "setPhoneView('calls')"],
         ['phone-new', "setPhoneView('all'); openNewText()"],

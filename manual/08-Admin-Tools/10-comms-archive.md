@@ -33,6 +33,20 @@ In a phone conversation (see [Phone lines — Comms](08-mailboxes.md#phone-lines
 Bubbles fill in on the next refresh after the archive catches up — usually
 minutes after the call.
 
+### Re-summarise — Comms → Phone
+
+Anyone who can read a call (not only admins) can ask for a fresh summary:
+**Re-summarise…** next to Listen / Transcript (**Summarise…** when the call
+has a transcript but no summary yet — even a short one). The dialog offers
+**Use the better model (Sonnet)** (on by default) and an optional **note** of up
+to 500 characters — tell it what the call was about or who the speakers are.
+The note is shown under the summary it shaped ("Guided by a note from …"), as
+is the model when it was Sonnet — a new note appears with the new summary. While the new summary is being made the call says
+**Re-summarising…** and the old summary stays until the new one lands
+(usually within two minutes; the page checks by itself for about five, then
+says "Still working — check back later"). Restricted calls can't be
+re-summarised, and voicemails show their summary under the voicemail too.
+
 ### Searching what was said — Comms → Phone
 
 The search box in Comms → Phone (see [Phone lines — Comms](08-mailboxes.md#phone-lines--comms))
