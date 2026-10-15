@@ -97,6 +97,12 @@ Gates beyond Commands & gates below, every model:
   edit step failed — verify the NEW text is on disk before acting on it
   (two silent no-op edits shipped past green runs, 2026-10-14: a mutation
   that never applied and a doc edit whose landing commit claimed it). Complete files (not fragments) for non-trivial edits.
+- The Bash tool runs zsh: an unquoted `$VAR` holding a list does NOT
+  word-split, so `for f in $FILES` runs once and `jest $T` gets one arg.
+  Use an array or a literal list, and in a mutation loop assert the
+  iteration count and a clean tree after each restore (2026-10-15: a
+  worker's loop never backed up or restored, so mutations piled up; a
+  manager's `jest $T` ran 3 suites of 7 and looked green).
 - New test assertions are mutation-checked (break the code, watch the test
   fail); no mocking the module under test; real-engine harnesses preferred.
 - Retiring a VALUE (an enum string, a magic constant): inventory by the
