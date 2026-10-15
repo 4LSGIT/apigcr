@@ -17,8 +17,12 @@
     .yc-label { font-size: 0.84rem; margin-bottom: 3px; }
     .yc-check-grid { gap: 4px 12px; }
     .yc-check-grid label { font-size: 0.84rem; }
-    /* Side-by-side section pairs */
-    .yc-section-pair { display: flex; gap: 20px; }
+    /* Side-by-side section pairs. They wrap: each half is flex: 1 from a
+       zero basis, so a pair stacks exactly when its two halves no longer fit
+       side by side at their min-content. Matrix + Schedules (two date inputs
+       a half) needed ~650px and pushed a 668px frame (a 900px window)
+       sideways. The 600px query below still stacks every pair on phones. */
+    .yc-section-pair { display: flex; flex-wrap: wrap; gap: 20px; }
     .yc-section-pair > .yc-section { flex: 1; }
     @media (max-width: 600px) { .yc-section-pair { flex-direction: column; } }
     /* Sublabel hints */

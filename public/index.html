@@ -2131,6 +2131,29 @@
     /* List mode: the grid frame is out of the layout entirely (it outranks
        the shell's `.tab-main > iframe { display: block }`). */
     #tabCalendar:not(.calx-grid) > #calxGridFrame { display: none; }
+
+    /* Mid widths (769–1299px), for the Events tab's table as well as this
+       one. Between the phone layout and a full desktop window the sidebar
+       leaves these two list tables less room than their columns need — the
+       Calendar list has ~800px of min-content against a 580–780px tab at
+       800–1000px windows, and Events overflowed at 800 with no rows at all —
+       so they pushed the whole shell sideways, header and filter bar too.
+       Here they take the phone block's idiom (`.tab-main > table.logTable`
+       in the shell's ≤768px rules): the <table> is its own scroll box and the
+       parser-made <tbody> re-forms the table inside it at full width. Where
+       the table fits, it renders exactly as before. Id-scoped (2,0,0), so
+       Grid mode's `#tabCalendar.calx-grid > #calxTable` hide (2,1,0) still
+       wins. */
+    @media (min-width: 769px) and (max-width: 1299px) {
+      #tabEvents > #eventsTable,
+      #tabCalendar > #calxTable { display: block; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+      /* 1px short of the box: with collapsed borders the outer half of the
+         last column's border lies outside the table, so at 100% a table
+         that FITS still scrolled its box by 1px — a scrollbar under it on
+         any OS that shows classic scrollbars. */
+      #tabEvents > #eventsTable > tbody,
+      #tabCalendar > #calxTable > tbody { display: table; width: calc(100% - 1px); }
+    }
   </style>
 
   <div id="tabCalendar" class="tab-main">
