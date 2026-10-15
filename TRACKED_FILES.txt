@@ -336,6 +336,7 @@ public/js/yc-sync.js
 public/js/ycAll.js
 public/js/ycNoTranscribe.js
 public/js/ycPager.js
+public/js/ycSubTab.js
 public/mailboxAdmin.html
 public/manage.html
 public/manuals.html
@@ -832,6 +833,7 @@ scripts/mobile-survey/fixtures/firm-data.json
 scripts/mobile-survey/manualOrdinals.js
 scripts/mobile-survey/server.js
 scripts/mobile-survey/survey.js
+scripts/mobile-survey/wsurl.js
 scripts/probe-db-connect.js
 scripts/reviveScalarReplacedValues.js
 scripts/sec2ScrubAuditShapes.js
@@ -1420,6 +1422,7 @@ tests/wsurlS0Injection.test.js
 tests/wsurlS0bFileLinks.test.js
 tests/wsurlS0cRowRenders.test.js
 tests/wsurlS0dApptParam.test.js
+tests/wsurlS1a.test.js
 tests/ycFrameFit.test.js
 tests/ycPager.test.js
 tests/ycSync.test.js

@@ -72,6 +72,9 @@
        every id (sbAdmin, sbCustom, tabCustomButton, …) exists before
        initAuth() runs. -->
   <script src="/js/featureRegistry.js"></script>
+  <!-- The workspace URL's sub-state token: parse/validate + the frame-host
+       caches (WORKSPACE URL block below). Plain script, no DOM at load. -->
+  <script src="/js/ycSubTab.js"></script>
   <script id="ycLauncher">
     window.ycLauncher = (function () {
       'use strict';
@@ -5635,23 +5638,21 @@ async function initAuth() {
       tasksBadgeRefresh();   // sidebar Tasks badge (fire-and-forget)
       commsBadgeRefresh();   // sidebar Comms unread badge (fire-and-forget)
 
-      // ?open= is either a main tab id, or `file:<n>` pointing into ?files=.
-      // Everything else is rejected: E('file:0') is null, E('whatever-a-user-typed')
-      // is null, and openMainTab() throws on both. A raw `file-div<n>` is rejected
-      // too — fileCounter restarts every boot, so it names a different file each
-      // time. (URLs written before the case_id fix contain exactly that.)
-      const openIsIndex = /^file:\d+$/.test(params.open || "");
-      const openIsStale = (params.open || "").indexOf("file-div") === 0;
-      const openTab =
-        !openIsIndex && !openIsStale && params.open && E(params.open)
-          ? params.open
-          : "tabHome";
+      // ?open= is either a main tab id (+ an optional rest), or `file:<n>`
+      // pointing into ?files=. wsOpenTarget validates the head against what
+      // this user's launcher offers — so it must run AFTER applyAccess above —
+      // and lands anything else on Home: an arbitrary element id, tabAdmin for
+      // a non-SU, a raw `file-div<n>` (fileCounter restarts every boot, so it
+      // names a different file each time). file:<n> is Home here; with
+      // ?files=, restoreOpenFiles() opens the file.
+      const openAt = wsOpenTarget(params.open);
+      const openTab = openAt.tab || "tabHome";
       // With ?files= this is a placeholder: restoreOpenFiles() re-opens the
       // real view once the files are up, through the tab's opener. Without,
       // this IS the restore — so it goes through the opener here, and each
       // boot calls a tab's opener exactly once (openMainTabOnBoot says why).
       if (params.files) openMainTab(openTab);
-      else openMainTabOnBoot(openTab);
+      else openMainTabOnBoot(openTab, openAt.rest);
 
       // Rebuild the workspace, THEN hand the address bar over to syncWorkspaceUrl().
       //
@@ -5832,9 +5833,10 @@ async function initAuth() {
     }
 
     function addFile(fileName, fileType, fileID) {
-      // `fileID` arrives as either "123" or "123&tab=documents" (see quickPick),
-      // so split the sub-tab back out before anything else — the dedup guard
-      // below and the fileSpec restore token both need the parts.
+      // `fileID` arrives as either "123" or "123&tab=<rest>" (see quickPick and
+      // restoreOpenFiles), so split the sub-state back out before anything
+      // else — the dedup guard below and the fileSpec restore token both need
+      // the parts. The rest may be several segments (documents~x, ycSubTab.js).
       //
       // ID SHAPES — do not "simplify" this to /^\d+$/:
       //   contact_id  numeric        (1405)
@@ -5848,14 +5850,20 @@ async function initAuth() {
       // The charset also has to exclude the fileSpec delimiters — ',' between
       // tokens and '~' before a sub-tab — and [A-Za-z0-9] does.
       //
-      // The tab is the WHOLE `tab=` value or nothing — never a prefix of it.
+      // The rest is the WHOLE `tab=` value or nothing — never a prefix of it.
       // The id is checked against the same shape before it can reach a src.
+      // _sub is the full rest (fileSpec, and held for the frame to take());
+      // _subHead its first segment, all a legacy ?tab= reader understands.
       const _rawId = String(fileID);
       const _parts = _rawId.split("&");
       const _id = _parts[0];
       const _idOk = /^[A-Za-z0-9_-]+$/.test(_id);
       const _tabPart = _parts.slice(1).find((p) => p.indexOf("tab=") === 0);
-      const _sub = _tabPart && ycSubTabOk(_tabPart.slice(4)) ? _tabPart.slice(4) : null;
+      // Without /js/ycSubTab.js (it failed to load) only ONE plain segment
+      // passes: S0's rule, never looser.
+      const _norm = (r) => (window.ycSubTab ? ycSubTab.normalize(r) : ycSubTabOk(r) ? r : null);
+      const _sub = (_tabPart && _norm(_tabPart.slice(4))) || null;
+      const _subHead = _sub ? _sub.split("~")[0] : null;
       const _kind =
         fileType === "case" ? "c"
         : fileType === "client" || fileType === "contact" ? "p"
@@ -5863,7 +5871,7 @@ async function initAuth() {
         : "";
 
       // ── Dedup: focus an already-open file instead of opening a twin ──────
-      // Match on kind+id only — a file opened earlier via ?tab=docs and a plain
+      // Match on kind+id only — a file opened earlier via ?tab=documents and a plain
       // re-open of the same entity are the same file, so the ~sub suffix is
       // stripped from the stored spec before comparing.
       //
@@ -5893,13 +5901,19 @@ async function initAuth() {
           const _div = E(_twin.dataset.fileId);
           const _w = _div && _div.querySelector("iframe")?.contentWindow;
           try {
-            if (_sub && _w?.document) {
-              // Mirror the entity pages' ?tab= boot convention (`${tab}Button`,
-              // see case.html initial load). Guard on .tab class — contact.html
-              // has non-tab buttons whose ids match the convention by accident
-              // (tabLogButton is a SEARCH button; clicking it would fire a
-              // search, not switch tabs).
-              const _btn = _w.document.getElementById(_sub + "Button");
+            if (_sub && typeof _w?.ycApplySubTab === "function") {
+              // A page that owns its sub-state (wsurl S1b) applies the whole
+              // rest itself, and its own report updates this file's spec: the
+              // page is the spec's one writer, not this refocus.
+              _w.ycApplySubTab(_sub);
+            } else if (_sub && _w?.document) {
+              // Legacy: mirror the entity pages' ?tab= boot convention
+              // (`${tab}Button`, see case.html initial load) with the first
+              // segment. Guard on .tab class — contact.html has non-tab buttons
+              // whose ids match the convention by accident (tabLogButton is a
+              // SEARCH button; clicking it would fire a search, not switch
+              // tabs). The spec keeps its old rest here until S1b's report.
+              const _btn = _w.document.getElementById(_subHead + "Button");
               if (_btn && _btn.classList.contains("tab")) _btn.click();
             }
             // Prefer the entity page's QUEUED refresh entry point: bare
@@ -5949,11 +5963,13 @@ async function initAuth() {
       const _frame = (page, idKey) => {
         const qs = new URLSearchParams();
         qs.set(idKey, _id);
-        if (_sub) qs.set("tab", _sub);
+        if (_subHead) qs.set("tab", _subHead);
         qs.set("fileCount", fileCounter);
         const iframe = document.createElement("iframe");
         iframe.setAttribute("src", page + "?" + qs.toString());
         file.replaceChildren(iframe);
+        // The full rest waits for the page to take() it at boot (S1b).
+        if (_sub && window.ycSubTab) ycSubTab.host.hold(iframe, _sub);
       };
       if (fileType == "case") {
         _label("fa-landmark");
@@ -6073,16 +6089,26 @@ async function initAuth() {
      * boot order is rearranged later.
      *
      * try/catch: Safari throttles replaceState (~100 calls/30s) and throws when
-     * exceeded. Human-speed clicking can't reach that, but a briefly stale address
-     * bar must never break the app.
+     * exceeded. A briefly stale address bar must never break the app.
+     *
+     * COALESCED (wsurl S1): every caller in one task — a file open, its view
+     * switch, the frames' sub-state reports — queues ONE replaceState, written
+     * in a microtask from the state as it stands then. Nested frames each
+     * report, and without this a single click could spend several of Safari's
+     * budget.
      */
     var _wsSyncEnabled = false;
+    var _wsSyncQueued = false;
 
     function syncWorkspaceUrl() {
-      if (!_wsSyncEnabled) return;
-      try {
-        history.replaceState(null, "", currentOpenFilesUrl());
-      } catch (_) {}
+      if (!_wsSyncEnabled || _wsSyncQueued) return;
+      _wsSyncQueued = true;
+      queueMicrotask(function () {
+        _wsSyncQueued = false;
+        try {
+          history.replaceState(null, "", currentOpenFilesUrl());
+        } catch (_) {}
+      });
     }
 
     function enableWorkspaceUrlSync() {
@@ -6098,13 +6124,48 @@ async function initAuth() {
        ignore. So we don't reload — we NAVIGATE to a URL that re-opens everything.
 
        Format:
-         ?files=c123,p456,c789~docs   c<id> = case, p<id> = contact,
-                                      ~<sub> = the file's inner tab (optional)
+         ?files=c123,p456,c789~documents   c<id> = case, p<id> = contact,
+                                           b<id> = bill; ~<rest> = where inside
+                                           the file (optional, below)
          &open=file:1                 the 2nd file is the one being viewed
-         &open=tabCases               ...or a main tab was
+         &open=tabComms~<rest>        ...or a main tab was (rest optional)
 
-       IDs ONLY — never names. A client's name in the query string would leak to
-       any external site the user clicks through to, via the Referer header.
+       A <rest> is the view's sub-state, one segment per frame layer, joined by
+       '~' (public/js/ycSubTab.js has the rules and caps). Each layer owns its
+       own segment's vocabulary. Frames REPORT where they are
+       (window.ycReportSubTab, below) and TAKE a rest handed down to them at
+       boot (window.ycTakeSubTab); the address bar shows the ACTIVE view's
+       rest — a hidden file's report waits until that file is on screen. An
+       invalid rest is dropped at its layer; the file or tab itself is kept.
+       file:<n> takes no rest (a file's lives in its ?files= token).
+       A main tab's rest belongs to its own pane frame; a tab with NO pane
+       frame drops it (openMainTabOnBoot). That is S1a's rule, not the final
+       one: S2 makes the More/Admin drill state shell-owned.
+
+       IDs ONLY — never names, search text, phones or emails. A client's name in
+       the query string would leak to any external site the user clicks through
+       to, via the Referer header — and every API call's Referer is stored in
+       jwt_api_audit_log, redacted by key only.
+
+       ?open= is validated before anything opens (wsOpenTarget): the head must
+       be a main tab (.tab-main, not a file) that this user's launcher offers
+       (ycLauncher's effective registry), else Home — so a non-SU never lands
+       on tabAdmin, and a denied tab stays closed.
+
+       Boot params (loadUserContext), and what each one is allowed to do:
+         files, open   this block: parsed and validated as above
+         case, contact quickPick(term, type, tab): the tab must be ONE plain
+                       segment (ycSubTabOk) or it is dropped; the term is a
+                       search, the file opens by its verified id
+         qp            quickPick(term) per comma-separated term
+         appt          showAppt(id), digits only
+         manual        <section>[/<file>[/<anchor>]]: each segment
+                       encodeURIComponent'd into manuals.html's #/ route,
+                       never markup; the pane validates the slugs. It runs
+                       AFTER the ?open= restore, so it wins over ?open=tabMore~…
+         tasks, clients, cases, log
+                       truthiness only (preload a list); their value is unused
+       Every one-shot param is dropped from the bar by the first sync.
 
        Side-effects worth knowing about, both good:
          · the address bar now holds the workspace, so a plain F5 restores it too
@@ -6140,16 +6201,128 @@ async function initAuth() {
      */
     const YC_LABEL_KEY = "ycFileLabels";
 
+    /** Main tab id → its pane's last reported rest (only tabs whose whole body
+     *  is one pane iframe have one — see openMainTabOnBoot). */
+    var wsMainRest = {};
+
+    /** Give a file button's restore token a new rest ('' = default). */
+    function wsSetFileRest(btn, rest) {
+      const base = (btn.dataset.fileSpec || "").split("~")[0];
+      if (base) btn.dataset.fileSpec = base + (rest ? "~" + rest : "");
+    }
+
+    /** Which workspace view a frame element belongs to: a file's own pane
+     *  frame → { btn }, a main tab's own pane frame → { tab }, else null — a
+     *  Swal, a tool dialog, a More/Admin panel (S2), anything nested. */
+    function wsFrameOwner(frameEl) {
+      if (!frameEl || frameEl.ownerDocument !== document || frameEl.tagName !== "IFRAME") return null;
+      const fileDiv = frameEl.closest(".file");
+      if (fileDiv) {
+        if (frameEl.parentElement !== fileDiv) return null;
+        const btn = Array.from(document.querySelectorAll("#tabOpenFiles .file-button"))
+          .find((b) => b.dataset.fileId === fileDiv.id);
+        return btn && btn.dataset.fileSpec ? { btn } : null;
+      }
+      const tab = frameEl.closest(".tab-main");
+      return tab && frameEl.parentElement === tab ? { tab: tab.id } : null;
+    }
+
+    /**
+     * A frame says where it is: frameEl = its iframe element here (the child
+     * passes its own window.frameElement), rest = its sub-state. Invalid rests
+     * and frames outside a file / main-tab pane are ignored. Stores the state
+     * and asks for a sync — NEVER opens or switches anything. A report from a
+     * hidden file waits on its button (data-ws-pending) and reaches the URL
+     * when that file is shown (currentOpenFilesUrl); a hidden main tab's sits
+     * in wsMainRest, which the URL only reads for the active tab.
+     */
+    window.ycReportSubTab = function (frameEl, rest) {
+      const r = window.ycSubTab ? ycSubTab.normalize(rest) : null;
+      if (r === null) return;
+      const where = wsFrameOwner(frameEl);
+      if (!where) return;
+      ycSubTab.host.noteReport(frameEl, r);
+      if (where.btn) {
+        const div = E(where.btn.dataset.fileId);
+        if (!div || div.style.display !== "block") {
+          where.btn.dataset.wsPending = r;
+          return;
+        }
+        delete where.btn.dataset.wsPending;
+        wsSetFileRest(where.btn, r);
+      } else {
+        if (r) wsMainRest[where.tab] = r;
+        else delete wsMainRest[where.tab];
+        if (currentMainTabId() !== where.tab) return;
+      }
+      syncWorkspaceUrl();
+    };
+
+    /** A cold frame asks, once, for the rest handed down to it. */
+    window.ycTakeSubTab = function (frameEl) {
+      return window.ycSubTab && wsFrameOwner(frameEl) ? ycSubTab.host.take(frameEl) : null;
+    };
+
+    /**
+     * Where ?open= points: { file: n } (its rest lives in ?files=), or
+     * { tab, rest } with the head validated and the rest canonical ('' when
+     * absent or invalid — dropped, the tab kept). The head must be a main tab
+     * that this user's launcher offers (wsMainTabAllowed); anything else is
+     * Home, silently.
+     */
+    function wsOpenTarget(open) {
+      const raw = String(open || "");
+      const cut = raw.indexOf("~");
+      const head = cut < 0 ? raw : raw.slice(0, cut);
+      const m = /^file:(\d+)$/.exec(head);
+      if (m) return { file: Number(m[1]) };
+      if (!wsMainTabAllowed(head)) return { tab: "tabHome", rest: "" };
+      const rest = cut < 0 || !window.ycSubTab ? "" : ycSubTab.normalize(raw.slice(cut + 1));
+      return { tab: head, rest: rest || "" };
+    }
+
+    /**
+     * Fail closed. Allowed: tabHome, tabAll, and every main tab an item of the
+     * EFFECTIVE registry opens — its sidebar element's data-tab / data-tab-also,
+     * tabHome / tabMore / tabAdmin for a Home / More / Admin tile. Admin-gated
+     * and denied items are not in the effective registry, so a non-SU gets no
+     * tabAdmin; firm items have no element and add nothing. ycLauncher's
+     * PUBLIC API only, and only registry ids — never other launcher element
+     * ids (ui-custom S4 re-renders the surfaces). Before applyAccess has run
+     * (isReady false) nothing but Home is allowed.
+     */
+    function wsMainTabAllowed(id) {
+      if (!id || id === "tabHome") return id === "tabHome";
+      const el = document.getElementById(id);
+      if (!el || !el.classList.contains("tab-main") || el.classList.contains("file")) return false;
+      const L = window.ycLauncher;
+      if (!L || typeof L.isReady !== "function" || !L.isReady()) return false;
+      if (id === "tabAll") return true;
+      return L.effectiveRegistry().some((it) => {
+        const m = L.elementsOf(it.id) || {};
+        const sb = m.sidebar;
+        if (sb && (sb.dataset.tab === id || (sb.dataset.tabAlso || "").split(" ").includes(id))) return true;
+        return (m.home && id === "tabHome") || (m.more && id === "tabMore") || (m.admin && id === "tabAdmin");
+      });
+    }
+
     function currentOpenFilesUrl() {
       const specs = [];
       const labels = {};
       let activeIdx = -1;
 
       document.querySelectorAll("#tabOpenFiles .file-button").forEach((btn) => {
+        const div = E(btn.dataset.fileId);
+        const active = !!div && div.style.display === "block";
+        // A report that arrived while this file was hidden lands now that it
+        // is the one on screen (ycReportSubTab).
+        if (active && btn.dataset.wsPending !== undefined) {
+          wsSetFileRest(btn, btn.dataset.wsPending);
+          delete btn.dataset.wsPending;
+        }
         const spec = btn.dataset.fileSpec;
         if (!spec) return;
-        const div = E(btn.dataset.fileId);
-        if (div && div.style.display === "block") activeIdx = specs.length;
+        if (active) activeIdx = specs.length;
         labels[spec] = btn.title;
         specs.push(spec);
       });
@@ -6173,7 +6346,7 @@ async function initAuth() {
         // omit ?open= and land on Home. (Before the case_id fix above, every case
         // took this path, which is why the bar read `open=file-div4`.)
         const emit = cur && cur !== "tabHome" && cur.indexOf("file-div") !== 0;
-        if (emit) u.searchParams.set("open", cur);
+        if (emit) u.searchParams.set("open", wsMainRest[cur] ? cur + "~" + wsMainRest[cur] : cur);
       }
       return u.toString();
     }
@@ -6209,10 +6382,14 @@ async function initAuth() {
       // contact_id is numeric. The kind is always exactly one leading char, so
       // `cDnmGvcrB` parses unambiguously even though the id can itself start
       // with a c/p/b (Base32 has C, B, P; legacy ids can start lowercase).
+      //
+      // Everything after the first '~' is the file's rest (ycSubTab.js). An
+      // invalid one is dropped and the FILE IS KEPT — the old one-optional-~
+      // regex dropped the whole file on a second '~'.
       const want = [];
       for (const tok of String(spec).split(",")) {
-        const m = /^([cpb])([A-Za-z0-9_-]+)(?:~([A-Za-z0-9_-]+))?$/.exec(tok.trim());
-        if (m) want.push({ tok: m[0], kind: m[1], id: m[2], sub: m[3] || "" });
+        const m = /^([cpb])([A-Za-z0-9_-]+)(?:~(.*))?$/.exec(tok.trim());
+        if (m) want.push({ tok: m[0], kind: m[1], id: m[2], sub: (m[3] != null && window.ycSubTab && ycSubTab.normalize(m[3])) || "" });
       }
       if (!want.length) return;
 
@@ -6266,16 +6443,16 @@ async function initAuth() {
       }
 
       // addFile() leaves the LAST file showing, so restore the real view now.
-      const m = /^file:(\d+)$/.exec(open || "");
-      if (m) {
-        const target = divIds[Number(m[1])];
+      // wsOpenTarget validates the head: a raw file-div<n> is a .file, not a
+      // main tab, so it lands Home — that counter restarts every boot, and an
+      // old one would select an unrelated file (URLs from before the case_id
+      // fix contain exactly that).
+      const at = wsOpenTarget(open);
+      if (at.file !== undefined) {
+        const target = divIds[at.file];
         openMainTab(target && E(target) ? target : "tabHome");
       } else {
-        // A raw file-div<n> must never be honoured: that counter restarts every
-        // boot, so an old one would now select a completely unrelated file.
-        // (URLs written before the case_id fix contain exactly that.)
-        const stale = open && open.indexOf("file-div") === 0;
-        openMainTabOnBoot(!stale && open && E(open) ? open : "tabHome");
+        openMainTabOnBoot(at.tab, at.rest);
       }
     }
 
@@ -6291,8 +6468,18 @@ async function initAuth() {
      * are no ?files=, else restoreOpenFiles' tail), never both: an opener's
      * first-open guard (`if (!cases)`, `calxRows === null`) stays falsy until
      * its GET resolves, so a second call would fetch the list twice.
+     *
+     * `rest` (already validated, wsOpenTarget) belongs to the tab's own pane —
+     * a lazy iframe straight under the tab div: kept for the URL and held for
+     * the pane to take() when it boots. A tab with no pane has no reader for
+     * it, so it is dropped. (More/Admin drill panels: S2.)
      */
-    function openMainTabOnBoot(tabId) {
+    function openMainTabOnBoot(tabId, rest) {
+      const pane = rest ? E(tabId) && E(tabId).querySelector(":scope > iframe") : null;
+      if (pane) {
+        wsMainRest[tabId] = rest;
+        if (window.ycSubTab) ycSubTab.host.hold(pane, rest);
+      }
       const opener = {
         tabCases:    openCasesTab,
         tabContacts: openContactsTab,

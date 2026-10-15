@@ -578,7 +578,7 @@ describe('the boot wiring (review fixes): loadFirmData + loadUserContext, extrac
     const at = (needle) => { const i = LUC_FULL.indexOf(needle); expect([needle, i >= 0]).toEqual([needle, true]); return i; };
     const custom = at('applyCustomTab(user.user_custom_tab || null);');
     const access = at('ycLauncher.applyAccess({ isAdmin, denied: window.firmData.denied');
-    const restore = at('else openMainTabOnBoot(openTab);');
+    const restore = at('else openMainTabOnBoot(openTab, openAt.rest);');
     expect(custom < access && access < restore).toBe(true);
   });
 });

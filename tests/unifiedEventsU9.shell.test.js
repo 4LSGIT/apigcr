@@ -438,7 +438,7 @@ describe('U9b-P2 — F5 restore goes through each tab\'s opener', () => {
   test('exactly one opener call per boot: the boot site defers to restore when ?files= is present', () => {
     // An opener's first-open guard stays falsy until its GET resolves, so the
     // boot site and the restore tail must never BOTH run the opener.
-    expect(SHELL).toMatch(/if \(params\.files\) openMainTab\(openTab\);\s*else openMainTabOnBoot\(openTab\);/);
+    expect(SHELL).toMatch(/if \(params\.files\) openMainTab\(openTab\);\s*else openMainTabOnBoot\(openTab, openAt\.rest\);/);
     expect(SHELL).not.toMatch(/^\s*openMainTab\(openTab\);/m);
     expect(SHELL).toMatch(/if \(params\.files\) await restoreOpenFiles\(params\.files, params\.open\);/);
     expect(SHELL.match(/openMainTabOnBoot\(/g)).toHaveLength(3);   // declaration + the two sites
@@ -446,8 +446,23 @@ describe('U9b-P2 — F5 restore goes through each tab\'s opener', () => {
 
   test('restoreOpenFiles routes a main tab through the helper; a file stays bare', () => {
     const restore = fnSrc(SHELL, 'restoreOpenFiles');
-    expect(restore).toContain('openMainTabOnBoot(!stale && open && E(open) ? open : "tabHome")');
+    // wsurl S1a: the head is validated by wsOpenTarget (a file-div<n> or any
+    // non-main-tab id lands Home — behaviour pinned in the S1a block below);
+    // a main tab still goes through the one helper, a file stays bare.
+    expect(restore).toContain('const at = wsOpenTarget(open);');
+    expect(restore).toContain('openMainTabOnBoot(at.tab, at.rest)');
     expect(restore).toContain('openMainTab(target && E(target) ? target : "tabHome")');
+  });
+
+  test('wsurl S1a: the boot validates ?open= AFTER applyAccess, and restores after that', () => {
+    const luc = fnSrc(SHELL, 'loadUserContext');
+    const at = (needle) => { const i = luc.indexOf(needle); expect([needle, i >= 0]).toEqual([needle, true]); return i; };
+    const access = at('ycLauncher.applyAccess({');
+    const parse = at('const openAt = wsOpenTarget(params.open);');
+    const restore = at('else openMainTabOnBoot(openTab, openAt.rest);');
+    expect(access < parse && parse < restore).toBe(true);
+    // the restore tail parses ?open= the same way
+    expect(fnSrc(SHELL, 'restoreOpenFiles').match(/wsOpenTarget\(/g)).toHaveLength(1);
   });
 
   test('the Log tab has a real opener, used by both its buttons', () => {
