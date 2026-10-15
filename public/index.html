@@ -939,8 +939,8 @@
        768px, so from 769 to ~1150px (more with a long name; the system font
        is wider than Arial) the right group was clipped, Log Out first. The
        hdrFit script after </header> adds these levels, cumulatively and
-       lowest first, until the content fits. At <=768px it adds none and the
-       phone block does the job; L3 is the phone look for the buttons. */
+       lowest first, until the content fits. At <=768px it uses the phone
+       ladder below instead; L3 is the phone look for the buttons. */
     #appHeader.hdr-fit-1 .hdr-clock .hdr-clock-date { display: none; }
     #appHeader.hdr-fit-2 .hdr-greeting { display: none; }
     #appHeader.hdr-fit-3 .hdr-btn span,
@@ -949,6 +949,28 @@
     #appHeader.hdr-fit-3 .hdr-btn,
     #appHeader.hdr-fit-3 .hdr-logout { padding: 0 10px; }
     #appHeader.hdr-fit-4 .hdr-search input { width: 120px; }
+
+    /* Phone ladder, on top of the <=768/<=380 blocks below, picked the same
+       way. Without it 320-373px and 381-446px clipped the right group, Log
+       Out first (measured with a 3-digit badge). Least loss first: spacing, the
+       clock icon, a smaller clock, a smaller logo; then the theme toggle
+       (still reachable at More -> Theme -> Light/Dark), then the clock. The
+       hamburger, My Tasks with its badge, and Log Out never go. */
+    @media (max-width: 768px) {
+      #appHeader.hdr-fit-p1 { padding: 0 4px; gap: 2px; }
+      #appHeader.hdr-fit-p1 .hdr-right { gap: 2px; }
+      #appHeader.hdr-fit-p1 .hdr-hamburger { padding: 6px 4px; }
+      #appHeader.hdr-fit-p1 .hdr-clock { padding: 4px 6px; }
+      #appHeader.hdr-fit-p1 .hdr-btn,
+      #appHeader.hdr-fit-p1 .hdr-logout { padding: 0 6px; }
+      #appHeader.hdr-fit-p2 .hdr-clock i { display: none; }
+      #appHeader.hdr-fit-p3 .hdr-clock { font-size: 11px; }
+      #appHeader.hdr-fit-p4 .hdr-logo { height: 24px; }
+      #appHeader.hdr-fit-p5 #themeBtn { display: none; }
+      /* !important: startFirmClock() shows the clock with an inline
+         display:flex, which would beat any class rule. */
+      #appHeader.hdr-fit-p6 .hdr-clock { display: none !important; }
+    }
 
     /* Sidebar */
     #appSidebar {
@@ -1155,11 +1177,10 @@
       #appSidebar .sb-collapse-bar { display: none; }
       #appSidebar .sb-version { display: none; }
 
-      /* The header's fixed content (hamburger, logo, clock, right group) is
-         ~320px; at desktop padding + gaps it measured 396px wide, so on every
-         phone narrower than that the right group — Log Out first — was
-         clipped off-screen. Tighter padding/gaps: ~355px. Both spacers stay,
-         so the clock is still centred between logo and buttons. */
+      /* Tighter padding/gaps than desktop. Both spacers stay, so the clock
+         is still centred between logo and buttons. With the theme toggle the
+         content measures ~437px here (~368px under the <=380 block), so the
+         hdrFit phone ladder (hdr-fit-p*, above) closes the rest. */
       #appHeader { padding: 0 10px; gap: 6px; }
       #appHeader .hdr-right { gap: 6px; }
 
@@ -1268,20 +1289,24 @@
   // size changes that are not DOM changes (the logo loading, the icon font
   // arriving), via ResizeObserver. That one is deferred to the next frame:
   // changing classes inside its callback resizes what it observes, and Chrome
-  // reports that as a "ResizeObserver loop" error. <=768px: no levels.
+  // reports that as a "ResizeObserver loop" error. <=768px climbs the phone
+  // ladder (hdr-fit-p*) instead of the desktop one.
   (() => {
     const h = document.getElementById('appHeader');
     const phone = matchMedia('(max-width: 768px)');
-    const LEVELS = 4;
+    const DESK = ['hdr-fit-1', 'hdr-fit-2', 'hdr-fit-3', 'hdr-fit-4'];
+    const PHONE = ['hdr-fit-p1', 'hdr-fit-p2', 'hdr-fit-p3', 'hdr-fit-p4', 'hdr-fit-p5', 'hdr-fit-p6'];
     const overflows = () => {
       const limit = h.getBoundingClientRect().right - parseFloat(getComputedStyle(h).paddingRight) + 0.5;
       for (const el of h.children) if (el.getBoundingClientRect().right > limit) return true;
       return false;
     };
     const fit = () => {
-      for (let n = 1; n <= LEVELS; n++) h.classList.remove('hdr-fit-' + n);
-      if (phone.matches) return;
-      for (let n = 1; n <= LEVELS && overflows(); n++) h.classList.add('hdr-fit-' + n);
+      h.classList.remove(...DESK, ...PHONE);
+      for (const c of phone.matches ? PHONE : DESK) {
+        if (!overflows()) break;
+        h.classList.add(c);
+      }
     };
     let queued = false;
     const nextFrame = () => {
