@@ -318,6 +318,21 @@ deferred until the budget shows it's needed.
   sensitive-tier-gated now, so exposure is to diagnostic keys only; a
   one-off header scrub is optional hygiene.
 
+### Delegation addendum (D1–D3b, 2026-10-15) — deferred
+
+- **Strict session-key mint TTL**: `POST /api/readonly-keys` still clamps an
+  over-3-day ttl to 3 days and reads junk as "not given"; renew (D2) is
+  strict (400). Make the mint strict too — a behaviour change, so its own
+  slice.
+- **Completion email wording for key-completed tasks**: when a `tasks.own`
+  key completes its own task, taskService names the actor (the minter), so
+  the minter is emailed "<minter> completed…". Name the key instead.
+- **Comms task-to picker** (comms.html create-task-from-message) still lists
+  inactive users — handed to the comms arc (S4) with the D3 pattern.
+- **does_appts loss on scripts.js "Blocks calendar of"** is fixed (D3b keep-
+  current is filter-agnostic); other pickers keyed on does_appts were not
+  audited for the same silent fallback.
+
 ## SaaS-readiness (deferred indefinitely)
 
 Abstractions that would matter for offering YC to a second firm. Not relevant to 4LSG-only operation. Each can be picked up independently when a second customer is real.

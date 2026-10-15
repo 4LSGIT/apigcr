@@ -697,6 +697,13 @@ scope, and the key manages only what it created.
   (§5.9). No schema change.
 - **D3** (2026-10-15) `tasks.own` + `/api/key-tasks` — the first app-table
   write a session key makes (§5.10). Migration: tasks.task_session_key_id.
+  Follow-ups: key tasks email the minter on completion (`notify`, default
+  on); firmData users carry a boolean `active`; tasks.html assignee pickers
+  offer active staff only.
+- **D3b** (2026-10-15) The other assign pickers (appt / event / reminder /
+  checklists / CTA / automation) offer active users only; a stored value is
+  always kept, whatever filter would drop it (AI_CONTEXT §18). Comms'
+  task-to picker is the comms arc's to follow.
 - **B4** Secrets: hooks.auth_config + credentials.config secret values
   encrypted at rest (code first, then the data script — §5.5);
   pre-commit secret scan. (Hygiene sitting rides whenever Fred has 10
