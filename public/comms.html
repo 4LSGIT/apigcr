@@ -13,6 +13,7 @@
 <script src="/js/mailRender.js"></script>
 <script src="/js/mailboxColor.js"></script>
 <script src="/js/ycNoTranscribe.js"></script>  <!-- admin-tools slot: the do-not-transcribe dialog -->
+<script src="/js/ycSubTab.js"></script>  <!-- the shell's workspace URL: this pane's tab (wsurl S3) -->
 <style>
   /* Comms hub — mailbox-system arc, slices S2 (read) + S3 (compose / reply /
      Sent) + S-PH (the Phone tab: per-line texts + calls). Spec:
@@ -3252,6 +3253,16 @@ async function init() {
     else if (E('compose-backdrop').classList.contains('open') && state.composer) closeComposer(state.composer, { keepDraft: true });
     else if (!E('mb-panel').hidden) toggleBoxPanel(false);
   });
+  // The workspace URL (wsurl S3): reopen the tab the shell handed down —
+  // phone or team — through showTab, which boots Phone and fires comms-tab.
+  // No rest → nothing at all (the boot is unchanged). Any other rest (email,
+  // an unknown token) only reports '' so the shell's URL settles on tabComms.
+  try {
+    const rest = window.ycSubTab ? ycSubTab.leaf.take() : null;
+    const tab = rest ? String(rest).split('~')[0] : '';
+    if (tab === 'phone' || tab === 'team') showTab(tab);
+    else if (rest) ycSubTab.leaf.report('');
+  } catch (_) { /* stay on Email */ }
 
   const [s, v] = await Promise.allSettled([loadSummary(), loadViews()]);
   if (s.status === 'rejected') showError(E('list-error'), `Couldn't load your mailboxes: ${s.reason && s.reason.message}`);
@@ -3413,6 +3424,9 @@ function showTab(which) {
   }
   if (which === 'phone' && !ph.booted) phoneBoot();
   announceTab(which);
+  // The shell's workspace URL (tabComms~phone): the tab, a token only — never
+  // a mailbox, line, thread or search. Email is the default, reported as ''.
+  if (window.ycSubTab) ycSubTab.leaf.report(which === 'email' ? '' : which);
 }
 /** Tells listeners which tab now shows (the admin-tools slot repaints on it). With no listener it does nothing. */
 function announceTab(which) { document.dispatchEvent(new CustomEvent('comms-tab', { detail: { tab: which } })); }

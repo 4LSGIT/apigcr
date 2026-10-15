@@ -9,7 +9,8 @@
 //   (2)  ?files=c<id>~documents&open=file:0 settles to the same URL, and a
 //        reload settles there again
 //   (3s) a 3-segment rest round-trips in ?files= (a bill: no frame, no
-//        reporter) and in ?open=; (3c) a case's converges on its own segment
+//        reporter) and in ?open= (tabTasks: no leaf); (3c) a case's converges
+//        on its own segment
 //   (7)  a report from a HIDDEN file's frame changes nothing in the URL, and
 //        shows once that file is activated
 //   (8)  a report from a frame inside a Swal is ignored
@@ -54,6 +55,14 @@
 //        search answering the exact row → the case file opens, URL settles
 //   (L2) the same for /?files=p<id>&open=file:0 → the contact file
 //   (L3) the search answering a DIFFERENT id → "could not be reopened", no file
+//
+// S3 — comms.html owns its tab (email / phone / team):
+//   (c1) a Phone click → ?open=tabComms~phone; (c2) a reload shows Phone,
+//        URL unchanged; (c3) an Email click → ?open=tabComms
+//   (c4) ?open=tabComms~bogus → Email, the URL settles on tabComms
+//   (c5) ?open=tabComms~team → Team
+//   (c6) a report from comms' frame while another tab is active changes
+//        nothing in the URL, and shows once Comms is back
 //
 // The mock's /api/search answers nothing, so every scenario seeds the
 // sessionStorage label cache (ycFileLabels) the way a same-tab reload would
@@ -250,10 +259,14 @@ const activeTab = (page) => page.evaluate(() => window.currentMainTabId());
       await ctx.close();
     }
     {
-      const { page, ctx } = await boot(browser, url, '?open=tabComms~a~b~c');
+      // tabTasks: its pane (tasks.html) has no leaf, so nothing reports and
+      // the shell's own parse → hold → serialize is all that touches the rest.
+      // (Comms owns its tab since S3 — see (c4).) When tasks.html becomes a
+      // leaf, move this to a pane that still has none, or to the panel-pane path.
+      const { page, ctx } = await boot(browser, url, '?open=tabTasks~a~b~c');
       check('(3s) a 3-segment rest round-trips in ?open=',
-        q(page.url()).open === 'tabComms~a~b~c' && (await activeTab(page)) === 'tabComms', page.url());
-      const held = await page.evaluate(() => window.ycTakeSubTab(document.querySelector('#tabComms > iframe')));
+        q(page.url()).open === 'tabTasks~a~b~c' && (await activeTab(page)) === 'tabTasks', page.url());
+      const held = await page.evaluate(() => window.ycTakeSubTab(document.querySelector('#tabTasks > iframe')));
       check('(3s) …and is held for the tab\'s pane to take()', held === 'a~b~c', String(held));
       await ctx.close();
     }
@@ -464,6 +477,54 @@ const activeTab = (page) => page.evaluate(() => window.currentMainTabId());
       const said = (await shellText(page)).includes('could not be reopened');
       check('(L3) the search answering a DIFFERENT id → "could not be reopened", no file',
         specs === 0 && said && !q(page.url()).files, `files=${specs} toast=${said} ${page.url()}`);
+      await ctx.close();
+    }
+
+    // ════ S3 — comms.html owns its tab ═════════════════════════════════════
+    async function commsFrame(page) {
+      const h = await page.$('#tabComms > iframe');
+      const f = h && await h.contentFrame();
+      if (!f) throw new Error('no comms frame');
+      await f.waitForFunction(() => typeof window.showTab === 'function' && document.getElementById('tab-phone'), { timeout: 20000 });
+      await sleep(800);   // init's wiring (and its restore) has run
+      return f;
+    }
+    const commsOn = (f) => f.evaluate(() => ['email', 'phone', 'team'].filter((k) => {
+      const b = document.getElementById('tab-' + k);
+      return b.classList.contains('on') && b.getAttribute('aria-selected') === 'true';
+    }).join(','));
+    {
+      const { page, ctx } = await boot(browser, url, '?open=tabComms');
+      let f = await commsFrame(page);
+      await f.evaluate(() => document.getElementById('tab-phone').click());
+      await sleep(150);
+      check('(c1) a Phone click → open=tabComms~phone', q(page.url()).open === 'tabComms~phone', page.url());
+      const was = page.url();
+      await page.reload({ waitUntil: 'networkidle2' });
+      await settle(page);
+      f = await commsFrame(page);
+      check('(c2) a reload shows Phone (.on + aria-selected), URL unchanged',
+        (await commsOn(f)) === 'phone' && page.url() === was, `${await commsOn(f)} ${page.url()}`);
+      await f.evaluate(() => document.getElementById('tab-email').click());
+      await sleep(150);
+      check('(c3) an Email click → open=tabComms', q(page.url()).open === 'tabComms', page.url());
+      // (c6) synthetic: a report from comms' frame while another tab is on screen
+      await page.evaluate(() => window.openMainTab('tabCases'));
+      await sleep(150);
+      const before = page.url();
+      await f.evaluate(() => window.ycSubTab.leaf.report('team'));
+      await sleep(150);
+      check('(c6) a report from comms\' frame while Cases is active: no URL change', page.url() === before, `${before} → ${page.url()}`);
+      await page.evaluate(() => window.openMainTab('tabComms'));
+      await sleep(150);
+      check('(c6) …and it shows once Comms is back', q(page.url()).open === 'tabComms~team', page.url());
+      await ctx.close();
+    }
+    for (const [query, want, wantOpen] of [['?open=tabComms~bogus', 'email', 'tabComms'], ['?open=tabComms~team', 'team', 'tabComms~team']]) {
+      const { page, ctx } = await boot(browser, url, query);
+      const f = await commsFrame(page);
+      check(`(${want === 'email' ? 'c4' : 'c5'}) ${query} → ${want}, URL settles on ${wantOpen}`,
+        (await commsOn(f)) === want && q(page.url()).open === wantOpen, `${await commsOn(f)} ${page.url()}`);
       await ctx.close();
     }
 
