@@ -822,6 +822,19 @@ with a scrollbar inside the host. Users: eventform.html, checklistsView.html,
 apptform2.html (which `stop()`s the previous appointment's watch on remount).
 The framed page must be standards-mode with a content-sized body.
 
+**Manual viewer** (`manuals.html` + `routes/manuals.js`): the pane's place is
+its hash — `#/<sec>/<file>/<anchor>`, anchors = GitHub heading slugs;
+`search` is reserved (`#/search/<q>` results, and `/manual/search` is
+registered before `/manual/:section` — no manual folder may take the name); a
+hit links `#/<sec>/<file>/~<n>/<q>`, n = the heading's ordinal among the
+chapter's h1..h6, replaced by the heading's id on arrival. Shell deep link:
+`/?manual=<sec>/<file>/<anchor>`. Chapter titles = the H1 minus its `N — `
+counter; section labels + card blurbs = `manual/README.md`'s Sections table.
+Search index is in-process, built on the first query (chapter bodies, not
+READMEs); the server's heading count must match what marked renders —
+`scripts/mobile-survey/manualOrdinals.js` checks it (rerun after a marked pin
+bump or a parser change). Contracts: the route file's header.
+
 ## 13. WORKFLOWS IN PRODUCTION — retired section
 Query the live `workflows` / `sequence_templates` tables; a static list here
 was stale by definition.

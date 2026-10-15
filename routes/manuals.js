@@ -7,9 +7,24 @@
 // prefix itself, there is no app.use('/manuals', …)):
 //   GET /manual                       → JSON: list of sections
 //                                        [{ slug, label, count, blurb }]
+//   GET /manual/search?q=             → JSON: { q, total, results } — full-text
+//                                        search of every chapter (see Search)
 //   GET /manual/:section              → JSON: { section, intro, outro, files }
 //                                        files: [{ slug, label, desc }]
 //   GET /manual/:section/:file        → text/plain: raw markdown content
+//
+// `search` is RESERVED: /manual/search is registered before /manual/:section
+// (or Express would route it as a section named "search"), and manuals.html's
+// router reads #/search/<q> as the results view. Never name a manual folder
+// "search" (tests/manualReadmeCoverage.test.js checks).
+//
+// Section names and card blurbs
+// ─────────────────────────────
+// manual/README.md's "Sections" table — | n | [Label](folder/) | description |
+// — names each section (`label`, everywhere a section is named) and supplies
+// its index-card `blurb`. A folder with no row there falls back to
+// formatName(slug) and its own README's first sentence (below).
+// tests/manualReadmeCoverage.test.js requires a row for every folder.
 //
 // README handling
 // ───────────────
@@ -24,8 +39,8 @@
 //
 // tests/manualReadmeCoverage.test.js guards the drift this creates a
 // dependency on (every chapter linked, every link resolvable, every row
-// described). The README's first prose sentence is also the section's
-// `blurb` on the index cards.
+// described). The README's first prose sentence is the section's fallback
+// `blurb` on the index cards (the root Sections table wins, above).
 //
 // Chapter titles
 // ──────────────
@@ -36,6 +51,28 @@
 // chapter are read, per request — no cache, so a manual edit shows on the
 // next request and nothing can go stale; a section is ~16 small reads.
 // tests/manualsRoute.test.js pins the shapes.
+//
+// Search
+// ──────
+// GET /manual/search?q= searches chapter bodies (not READMEs). The index is
+// built lazily on the first search and kept for the process — the manual is
+// static per deploy. Each chapter is cut into heading blocks: every ATX
+// heading (#..######) OUTSIDE fenced code (``` / ~~~) opens one, and each
+// body line — fenced code included, HTML comments excluded — belongs to the
+// nearest heading above it. A result is one block in which EVERY
+// whitespace-separated term occurs (case-insensitive substring of the plain
+// text — no regex is built from the query). Ranked: the chapter's own title
+// block when the title holds every term, then blocks whose heading holds
+// every term, then body matches; within a tier by total term frequency, then
+// manual order. Capped at SEARCH_CAP (`total` is the uncapped count).
+// `headingIndex` is the heading's ordinal among ALL the chapter's h1..h6
+// (0 = the first, normally the H1; null = text above any heading) — the
+// count the browser gets from the rendered chapter, which is how the client
+// finds the heading (scripts/mobile-survey/manualOrdinals.js checks the two
+// agree over the whole corpus). Everything returned is plain text: the client escapes
+// and highlights. tests/manualSearch.test.js pins the parser and the route.
+// Cost (Oct 2026, 82 chapters / ~1.15 MB): ~1.4k blocks, ~4 MB of heap,
+// 30–55 ms to build on the first search, under 2 ms a query after that.
 //
 // No npm packages required beyond express.
 
@@ -71,11 +108,12 @@ function sectionSlugs() {
 }
 
 function getSections() {
+  const named = rootSections();
   return sectionSlugs().map(slug => ({
     slug,
-    label: formatName(slug),
+    label: sectionLabel(slug, named),
     count: chapterFilenames(slug).length,
-    blurb: readmeBlurb(readReadme(slug))
+    blurb: sectionBlurb(slug, named)
   }));
 }
 
@@ -171,7 +209,12 @@ function readmeBlurb(md) {
   if (!para.length) return null;
   const text = stripInline(para.join(' '));
   const m = text.match(/^.*?[.!?](?=\s|$)/);
-  let s = (m ? m[0] : text).trim();
+  return clampBlurb(m ? m[0] : text);
+}
+
+/** At most BLURB_MAX characters, cut at a word, with an ellipsis. */
+function clampBlurb(text) {
+  let s = String(text).trim();
   if (s.length > BLURB_MAX) {
     const cut = s.slice(0, BLURB_MAX - 1);
     const sp  = cut.lastIndexOf(' ');
@@ -197,6 +240,35 @@ function readReadme(sectionSlug) {
   } catch {
     return null;
   }
+}
+
+// ── Root README: section names + card blurbs ─────────────────
+
+/** A Sections row: | n | [Label](folder/) | description | — a folder link, no .md. */
+const SECTION_ROW = /^\s*\|[^|]*\|\s*\[([^\]]+)\]\((?:\.\/)?([^)\s/]+)\/?\)\s*\|\s*(.*?)\s*\|\s*$/;
+
+/** { folder: { label, desc } } from manual/README.md's Sections table. Plain text. */
+function rootSections() {
+  const out = {};
+  let md;
+  try { md = fs.readFileSync(path.join(MANUALS_DIR, 'README.md'), 'utf8'); } catch { return out; }
+  for (const line of md.split('\n')) {
+    const m = line.match(SECTION_ROW);
+    if (!m || /\.md$/i.test(m[2])) continue;
+    out[m[2]] = { label: stripInline(m[1]) || null, desc: stripInline(m[3]) || null };
+  }
+  return out;
+}
+
+/** A section's display name: its root README label, else the slug prettified. */
+function sectionLabel(slug, named) {
+  return (named || rootSections())[slug]?.label || formatName(slug);
+}
+
+/** A section's card blurb: its root README description, else its own README's first sentence. */
+function sectionBlurb(slug, named) {
+  const desc = (named || rootSections())[slug]?.desc;
+  return desc ? clampBlurb(desc) : readmeBlurb(readReadme(slug));
 }
 
 /** { fileSlug: description } harvested from the README TOC table. */
@@ -270,6 +342,186 @@ function getFiles(sectionSlug, readmeMd) {
   });
 }
 
+// ── Search ───────────────────────────────────────────────────
+
+const SEARCH_MIN   = 2;     // characters, after trimming
+const SEARCH_MAX   = 200;   // characters
+const SEARCH_TERMS = 8;     // terms beyond this are ignored
+const SEARCH_CAP   = 50;    // results returned
+const SNIPPET_LEN  = 160;   // characters of plain text around the first hit
+
+const ENTITIES = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ', '#39': "'" };
+
+/** Markdown inline → the text a browser shows. Code spans and backslash
+ *  escapes are set aside first — both are literal (`<input>` is text, not a
+ *  tag; \_x\_ is not emphasis) — then tags are dropped, entities resolved,
+ *  and stripInline flattens links and emphasis. */
+function plainInline(s) {
+  const lit = [];
+  const keep = c => `\u0001${lit.push(c) - 1}\u0001`;
+  const shielded = String(s)
+    .replace(/(?<!`)(`+)(?!`)([\s\S]*?[^`])\1(?!`)/g, (_, _t, c) => keep(c.trim()))
+    .replace(/\\([!-/:-@[-`{-~])/g, (_, c) => keep(c))
+    .replace(/<\/?[A-Za-z][^>]*>/g, '')
+    .replace(/&(amp|lt|gt|quot|apos|nbsp|#39);/g, (_, e) => ENTITIES[e]);
+  return stripInline(shielded).replace(/\u0001(\d+)\u0001/g, (_, i) => lit[Number(i)]);
+}
+
+/** One body line outside code, block syntax removed ('' for rules and table
+ *  separators). Inline markdown is flattened per paragraph (plainInline), not
+ *  per line: a code span or **bold** may wrap onto the next line. */
+function unblockLine(line) {
+  let s = line;
+  if (/^\s{0,3}([-*_])(\s*\1){2,}\s*$/.test(s)) return '';                       // rule
+  if (/^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)*\|?\s*$/.test(s)) return '';    // table separator
+  s = s.replace(/^\s*(?:>\s?)+/, '')                                             // quote markers
+       .replace(/^\s*(?:[-*+]|\d+[.)])\s+(?:\[[ xX]\]\s+)?/, '');                // list marker, task box
+  if (/^\s*\|/.test(s)) s = s.replace(/^\s*\||\|\s*$/g, '').replace(/\s*\|\s*/g, ' · ');
+  return s.trim();
+}
+
+/** An ATX heading line (outside code) → { level, text } or null. The text is
+ *  what the browser renders: closing #s dropped, inline markdown flattened. */
+function atxHeading(line) {
+  const m = line.match(/^ {0,3}(#{1,6})(?:[ \t]+(.*?))?[ \t]*$/);
+  if (!m) return null;
+  const raw = (m[2] || '').replace(/(?:^|[ \t]+)#+$/, '');
+  return { level: m[1].length, text: plainInline(raw) };
+}
+
+/**
+ * A chapter → { headings: [{ level, text }], blocks: [{ headingIndex, heading, text }] }.
+ * A heading's block carries its ordinal among all headings; body text before
+ * the first heading is a block with headingIndex null. Fenced code (``` or
+ * ~~~, closed by the same character at least as long) never opens a heading,
+ * and its lines are searchable as they stand. HTML comments are not body text.
+ */
+function parseChapter(md) {
+  const headings = [];
+  const blocks = [];
+  let cur = { headingIndex: null, heading: '', lines: [] };
+  let fence = null;          // { ch, len } while inside a fenced block
+  let comment = false;       // inside a multi-line <!-- -->
+  let para = [];             // the current paragraph's lines, block syntax removed
+  const endPara = () => {
+    if (para.length) { const t = plainInline(para.join(' ')); if (t) cur.lines.push(t); }
+    para = [];
+  };
+  const flush = () => { endPara(); if (cur.headingIndex !== null || cur.lines.length) blocks.push(cur); };
+
+  for (const line of String(md).replace(/\r\n?/g, '\n').split('\n')) {
+    if (fence) {
+      const close = line.match(/^\s*(`{3,}|~{3,})\s*$/);
+      if (close && close[1][0] === fence.ch && close[1].length >= fence.len) { fence = null; continue; }
+      if (line.trim()) cur.lines.push(line.trim());
+      continue;
+    }
+    let s = line;
+    if (comment) {
+      const end = s.indexOf('-->');
+      if (end === -1) continue;
+      comment = false;
+      s = s.slice(end + 3);
+    }
+    s = s.replace(/<!--[\s\S]*?-->/g, '');
+    const open = s.indexOf('<!--');
+    if (open !== -1) { comment = true; s = s.slice(0, open); }
+
+    const f = s.match(/^\s*(`{3,}|~{3,})(.*)$/);
+    if (f && !(f[1][0] === '`' && f[2].includes('`'))) { endPara(); fence = { ch: f[1][0], len: f[1].length }; continue; }
+
+    const h = atxHeading(s);
+    if (h) {
+      flush();
+      cur = { headingIndex: headings.length, heading: h.text, lines: [] };
+      headings.push(h);
+      continue;
+    }
+    const t = unblockLine(s);
+    if (t) para.push(t); else endPara();
+  }
+  flush();
+  return {
+    headings,
+    blocks: blocks.map(b => ({ headingIndex: b.headingIndex, heading: b.heading, text: b.lines.join(' ') }))
+  };
+}
+
+/** One chapter's index entries — one per heading block. */
+function chapterEntries({ section, sectionLabel: secLabel, file, md }) {
+  const title = chapterTitle(md) || formatName(file);
+  return parseChapter(md).blocks.map(b => ({
+    section, sectionLabel: secLabel, file, title,
+    titleLower: title.toLowerCase(),
+    heading: b.heading, headingIndex: b.headingIndex,
+    headingLower: b.heading.toLowerCase(),
+    text: b.text, textLower: b.text.toLowerCase()
+  }));
+}
+
+let searchIndexCache = null;
+
+/** Every chapter's blocks, built once per process (the manual is static per deploy). */
+function getSearchIndex() {
+  if (searchIndexCache) return searchIndexCache;
+  const named = rootSections();
+  const entries = [];
+  for (const sec of sectionSlugs()) {
+    const secLabel = sectionLabel(sec, named);
+    for (const filename of chapterFilenames(sec)) {
+      let md;
+      try { md = fs.readFileSync(path.join(MANUALS_DIR, sec, filename), 'utf8'); } catch { continue; }
+      entries.push(...chapterEntries({ section: sec, sectionLabel: secLabel, file: filename.replace(/\.md$/i, ''), md }));
+    }
+  }
+  searchIndexCache = entries;
+  return entries;
+}
+
+function countOf(hay, term) {
+  let n = 0;
+  for (let i = hay.indexOf(term); i !== -1; i = hay.indexOf(term, i + term.length)) n++;
+  return n;
+}
+
+/** ~SNIPPET_LEN characters of `text` around the first term found, cut at words. */
+function snippetOf(text, lower, terms) {
+  if (text.length <= SNIPPET_LEN) return text;
+  let at = -1;
+  for (const t of terms) { const i = lower.indexOf(t); if (i !== -1 && (at === -1 || i < at)) at = i; }
+  const hit = at === -1 ? 0 : at;
+  let end   = Math.min(text.length, Math.max(0, hit - Math.floor(SNIPPET_LEN / 3)) + SNIPPET_LEN);
+  let start = Math.max(0, end - SNIPPET_LEN);
+  if (start > 0) { const sp = text.indexOf(' ', start); if (sp !== -1 && sp < hit) start = sp + 1; }
+  if (end < text.length) { const sp = text.lastIndexOf(' ', end); if (sp > start && sp > hit) end = sp; }
+  return (start > 0 ? '…' : '') + text.slice(start, end).trim() + (end < text.length ? '…' : '');
+}
+
+/** Run a (trimmed) query over the index: { total, results ≤ SEARCH_CAP }. */
+function searchIndex(entries, q) {
+  const terms = [...new Set(String(q).toLowerCase().split(/\s+/).filter(Boolean))].slice(0, SEARCH_TERMS);
+  if (!terms.length) return { total: 0, results: [] };
+  const hits = [];
+  entries.forEach((e, order) => {
+    const hay = e.headingLower + '\n' + e.textLower;
+    if (!terms.every(t => hay.includes(t))) return;
+    const tier = (e.headingIndex === 0 && terms.every(t => e.titleLower.includes(t))) ? 3
+               : (e.headingIndex !== null && terms.every(t => e.headingLower.includes(t))) ? 2 : 1;
+    let freq = 0;
+    for (const t of terms) freq += countOf(hay, t);
+    hits.push({ e, tier, freq, order });
+  });
+  hits.sort((a, b) => b.tier - a.tier || b.freq - a.freq || a.order - b.order);
+  return {
+    total: hits.length,
+    results: hits.slice(0, SEARCH_CAP).map(({ e }) => ({
+      section: e.section, sectionLabel: e.sectionLabel, file: e.file, title: e.title,
+      heading: e.heading, headingIndex: e.headingIndex,
+      snippet: snippetOf(e.text, e.textLower, terms)
+    }))
+  };
+}
+
 function safeResolvePath(sectionSlug, fileSlug) {
   const filename  = fileSlug.endsWith('.md') ? fileSlug : `${fileSlug}.md`;
   const resolved  = path.resolve(MANUALS_DIR, sectionSlug, filename);
@@ -284,6 +536,26 @@ function safeResolvePath(sectionSlug, fileSlug) {
 // ─────────────────────────────────────────────────────────────
 router.get('/manual', jwtOrApiKey, (req, res) => {
   res.json({ sections: getSections() });
+});
+
+// ─────────────────────────────────────────────────────────────
+// GET /manual/search?q= → ranked heading blocks (plain text)
+// MUST stay above /manual/:section — see the header.
+// ─────────────────────────────────────────────────────────────
+router.get('/manual/search', jwtOrApiKey, (req, res) => {
+  const q = typeof req.query.q === 'string' ? req.query.q.replace(/\s+/g, ' ').trim() : '';
+  if (q.length < SEARCH_MIN) {
+    return res.status(400).json({ error: `Type at least ${SEARCH_MIN} characters to search.` });
+  }
+  if (q.length > SEARCH_MAX) {
+    return res.status(400).json({ error: `Search is limited to ${SEARCH_MAX} characters.` });
+  }
+  try {
+    const { total, results } = searchIndex(getSearchIndex(), q);
+    res.json({ q, total, results });
+  } catch {
+    res.status(500).json({ error: 'Search failed' });
+  }
 });
 
 // ─────────────────────────────────────────────────────────────
@@ -305,7 +577,7 @@ router.get('/manual/:section', jwtOrApiKey, (req, res) => {
   const { intro, outro } = splitReadme(readmeMd);
 
   res.json({
-    section: { slug: section, label: formatName(section) },
+    section: { slug: section, label: sectionLabel(section) },
     intro,
     outro,
     files: getFiles(section, readmeMd)
@@ -337,4 +609,8 @@ router.get('/manual/:section/:file', jwtOrApiKey, (req, res) => {
 
 module.exports = router;
 // Pure helpers, for tests/manualsRoute.test.js (no-H1 fallback on a temp file).
-module.exports.helpers = { formatName, stripInline, chapterTitle, readmeBlurb, fileLabel };
+module.exports.helpers = {
+  formatName, stripInline, chapterTitle, readmeBlurb, fileLabel,
+  rootSections, sectionLabel, sectionBlurb,
+  parseChapter, chapterEntries, searchIndex, getSearchIndex, SEARCH_CAP
+};

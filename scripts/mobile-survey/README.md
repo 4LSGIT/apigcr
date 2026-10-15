@@ -23,8 +23,10 @@ judge looks — read the screenshots for that.
 **Manuals** (`panel:manualsDiv:*`): the index, the `03-YisraFlow` section, four
 real chapters (`03-YisraFlow/05-internal-functions`, `03-YisraFlow/15-triggers`,
 `05-Subsystems/13-custom-fields` — wide tables, long inline code —
-and `02-YisraForms/11-api-reference` — API paths in headings), and the phone
-contents drawer. `manuals.html` scrolls its whole body inside `#content`, so a
+and `02-YisraForms/11-api-reference` — API paths in headings), search results
+for `workflow` (the capped 50-row list, highlighted snippets) and the chapter
+its first result lands on (`search-hit`, terms highlighted), and the phone
+contents drawer (with the search box). `manuals.html` scrolls its whole body inside `#content`, so a
 too-wide table or an unbroken word pushes `#content` sideways while the
 document stays the viewport's width. These surfaces therefore ALSO fail when
 `#content` scrolls sideways (`box #content scrollW/clientW`, naming the
@@ -61,6 +63,22 @@ Output looks like:
 `docW/clientW` is the document's scroll width against its visible width; the
 named elements are the **outermost** ones past the right edge — the thing to
 fix, not its descendants.
+
+## Manual heading ordinals
+
+```sh
+node scripts/mobile-survey/manualOrdinals.js
+```
+
+Manual search (`GET /manual/search`) names a hit's heading by its ordinal
+among the chapter's h1..h6, counted by the server's parser in
+`routes/manuals.js`; the viewer resolves it against the h1..h6 that marked
+rendered in the browser. This walks every chapter on the same mock origin and
+checks the two heading lists agree (text and order), then opens three hits
+per chapter through the real router and checks each lands on its heading.
+One `GO` / `NO-GO` line; exit 1 on any mismatch or page error. No
+screenshots. **Run it after bumping the marked pin in `manuals.html`, or
+after changing the heading parser in `routes/manuals.js`.**
 
 ## Browsing by hand
 

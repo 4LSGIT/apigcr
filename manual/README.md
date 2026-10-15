@@ -23,6 +23,10 @@ Most chapters open with a **For operators** part — plain English, what it does
 and how to use the screen — followed by a **Technical reference** for everyone
 else. Read as much as you need and stop.
 
+In the app, the search box at the top of the contents finds a word in any
+chapter (press `/` to jump to it). A longer chapter has an **On this page**
+outline, and a heading's `#` copies a link to that spot.
+
 If you're new, read
 [01-introduction](01-YisraCase-overview/01-introduction.md) first: it explains
 the building blocks, the navigation, and where the More menu leads.
@@ -40,6 +44,18 @@ the building blocks, the navigation, and where the More menu leads.
 - **Adding a chapter** means dropping the `.md` in the folder *and* adding its
   row to the section README. Nothing else — the file list is generated from the
   filesystem.
+- **A chapter's title in the app is its H1**, minus a leading `N — ` or
+  `Part N — ` counter (the app numbers the list itself). No H1 → the filename,
+  prettified.
+- **The Sections table above names the sections** in the app and writes their
+  index-card blurbs. A new section folder needs a row here too (the coverage
+  test checks).
+- **`/?manual=<section>/<chapter>/<anchor>` deep-links into the viewer** — a
+  heading's `#` copies one. Anchors are GitHub's heading slugs.
+- **Search covers chapter bodies, not READMEs.** It indexes every heading
+  block once per deploy; a heading inside a fenced code block is code, not a
+  heading. No folder may be named `search` (the route and the viewer reserve
+  it).
 - **When code and docs disagree, the code wins.** Where a chapter quotes a
   count or a list that lives in code, it says which endpoint serves the live
   version. Prefer linking to that over restating it.

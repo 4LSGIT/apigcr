@@ -1,7 +1,7 @@
 # Routes
 
-_Generated 2026-10-15T12:34:41.611Z_  
-_789 routes total — DELETE: 65, GET: 329, PATCH: 57, POST: 298, PUT: 37, _ALL: 3_
+_Generated 2026-10-15T14:38:30.411Z_  
+_790 routes total — DELETE: 65, GET: 330, PATCH: 57, POST: 298, PUT: 37, _ALL: 3_
 
 ## Global middleware chain
 
@@ -851,6 +851,7 @@ _789 routes total — DELETE: 65, GET: 329, PATCH: 57, POST: 298, PUT: 37, _ALL:
 | GET | `/manual` | `jwtOrApiKey` | — |
 | GET | `/manual/:section` | `jwtOrApiKey` | — |
 | GET | `/manual/:section/:file` | `jwtOrApiKey` | — |
+| GET | `/manual/search` | `jwtOrApiKey` | — |
 
 ## /myip
 
@@ -1059,4 +1060,4 @@ _789 routes total — DELETE: 65, GET: 329, PATCH: 57, POST: 298, PUT: 37, _ALL:
 
 ---
 
-_789 routes total — DELETE: 65, GET: 329, PATCH: 57, POST: 298, PUT: 37, _ALL: 3_
+_790 routes total — DELETE: 65, GET: 330, PATCH: 57, POST: 298, PUT: 37, _ALL: 3_

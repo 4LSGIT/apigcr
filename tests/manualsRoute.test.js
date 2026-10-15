@@ -3,9 +3,11 @@
 // manuals-ui S2 — routes/manuals.js, served over a real express app against
 // the repo's real manual/ tree. Only the auth dependency is stubbed.
 //
-//   GET /manual            sections carry `count` (chapters, README excluded)
-//                          and `blurb` (the README's first prose sentence,
-//                          inline markdown stripped, ≤160 chars)
+//   GET /manual            sections carry `count` (chapters, README excluded),
+//                          and `label` + `blurb` from manual/README.md's
+//                          Sections table (S3); with no row there, formatName
+//                          and the section README's first prose sentence
+//                          (inline markdown stripped, ≤160 chars)
 //   GET /manual/:section   each file's `label` is its own H1, with the
 //                          author's counter ("Part 4 — ", "15 — ") dropped and
 //                          inline markdown flattened; no H1 → formatName(slug)
@@ -79,28 +81,66 @@ describe('GET /manual — section cards', () => {
     expect(jwtOrApiKey).toHaveBeenCalled();
   });
 
-  test('blurb = the README\'s first prose sentence, inline markdown stripped', () => {
-    const by = Object.fromEntries(sections.map((s) => [s.slug, s.blurb]));
-    // a plain first sentence ending in "."
-    expect(by['01-YisraCase-overview']).toBe(
-      'The core of the system: the records the firm works with every day, and the screens that manage them.');
-    // **bold** stripped
-    expect(by['06-Client-Facing']).toBe('Everything a client touches directly.');
-    // the README opens with a heading then a "---"-free paragraph
-    expect(by['08-Admin-Tools']).toBe('Power tools for IT / super-users only.');
+  // S3: the root README's Sections table names the sections and writes their
+  // card blurbs; a section's own README is the fallback (next describe).
+  test('label + blurb come from manual/README.md\'s Sections table, inline markdown stripped', () => {
+    const by = Object.fromEntries(sections.map((s) => [s.slug, s]));
+    expect(by['07-ESign'].label).toBe('E-Signature');                 // formatName would say "ESign"
+    expect(by['06-Client-Facing'].label).toBe('Client-Facing');       // … "Client Facing"
+    expect(by['01-YisraCase-overview'].label).toBe('YisraCase Overview');
+    // **Start here.** → plain
+    expect(by['01-YisraCase-overview'].blurb).toBe(
+      'The records the firm works with every day — contacts, matters, appointments, tasks, events, pipelines — and the screens that manage them. Start here.');
+    // **client** → plain
+    expect(by['06-Client-Facing'].blurb).toBe(
+      'Everything a client touches — the portal, booking pages, manage links, document requests, landing pages.');
   });
 
-  test('a long first sentence is cut at a word, ≤160 chars, with an ellipsis; *emphasis* stripped', () => {
-    const flow = sections.find((s) => s.slug === '03-YisraFlow').blurb;
-    expect(flow.length).toBeLessThanOrEqual(160);
-    expect(flow.endsWith('…')).toBe(true);
-    expect(flow.startsWith('YisraFlow is the umbrella name for everything in YisraCase that runs by itself:')).toBe(true);
-    expect(flow).not.toMatch(/[*`]/);
+  test('/manual/:section names the section the same way', async () => {
+    const r = await getJson('/manual/07-ESign');
+    expect(r.body.section).toEqual({ slug: '07-ESign', label: 'E-Signature' });
+  });
+
+  test('every blurb is plain text, ≤160 chars', () => {
     for (const s of sections) {
       expect(typeof s.blurb).toBe('string');
       expect(s.blurb.length).toBeLessThanOrEqual(160);
       expect(s.blurb).not.toMatch(/[*`[\]]/);
     }
+  });
+});
+
+describe('fallback: a section with no root Sections row', () => {
+  const { sectionLabel, sectionBlurb } = router.helpers;
+  const none = {};   // no root rows at all
+
+  test('label = formatName(slug)', () => {
+    expect(sectionLabel('07-ESign', none)).toBe('ESign');
+  });
+
+  test('blurb = the section README\'s first prose sentence, inline markdown stripped', () => {
+    // a plain first sentence ending in "."
+    expect(sectionBlurb('01-YisraCase-overview', none)).toBe(
+      'The core of the system: the records the firm works with every day, and the screens that manage them.');
+    // **bold** stripped
+    expect(sectionBlurb('06-Client-Facing', none)).toBe('Everything a client touches directly.');
+    // the README opens with a heading then a "---"-free paragraph
+    expect(sectionBlurb('08-Admin-Tools', none)).toBe('Power tools for IT / super-users only.');
+  });
+
+  test('a long first sentence is cut at a word, ≤160 chars, with an ellipsis; *emphasis* stripped', () => {
+    const flow = sectionBlurb('03-YisraFlow', none);
+    expect(flow.length).toBeLessThanOrEqual(160);
+    expect(flow.endsWith('…')).toBe(true);
+    expect(flow.startsWith('YisraFlow is the umbrella name for everything in YisraCase that runs by itself:')).toBe(true);
+    expect(flow).not.toMatch(/[*`]/);
+  });
+
+  test('a root row with a description longer than 160 is clamped the same way', () => {
+    const long = 'word '.repeat(60).trim();
+    const b = sectionBlurb('07-ESign', { '07-ESign': { label: 'X', desc: long } });
+    expect(b.length).toBeLessThanOrEqual(160);
+    expect(b.endsWith('…')).toBe(true);
   });
 });
 

@@ -48,6 +48,27 @@
 
     .sidebar-logo:hover { opacity: 0.8; }
 
+    /* Search box — top of the sidebar, so it rides into the phone drawer too.
+       Full-text over chapter bodies (routes/manuals.js "Search"); results
+       render in #content at #/search/<q>. */
+    .sidebar-search { padding: 12px 14px 10px; border-bottom: 1px solid var(--border); }
+    .sidebar-search input {
+      width: 100%;
+      font: inherit;
+      font-size: var(--fs-sm);
+      color: var(--text);
+      background: var(--surface);
+      border: 1px solid var(--border-strong);
+      border-radius: 6px;
+      padding: 6px 10px;
+    }
+    .sidebar-search input::placeholder { color: var(--text-muted); opacity: 1; }
+    .sidebar-search input:focus-visible { outline: 2px solid var(--accent-2); outline-offset: 0; }
+    .sr-only {
+      position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+      overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+    }
+
     /* Navigation is real links (hash routes, see the script's Routing): keyboard
        focusable, middle-click / copy-link sane. One visible focus ring for every
        one of them; the inset variant where the box clips (overflow: hidden) or
@@ -148,15 +169,19 @@
          so tables keep their columns and scroll in their own box. No effect
          inside <pre> (white-space: pre never wraps). */
       overflow-wrap: break-word;
+      /* The pane's own width decides the outline rail (On this page, below),
+         in the pane's em — that is --fs, so the condition follows density. */
+      container-type: inline-size;
     }
 
     /* Everything in the pane sits in the measure — index, section view,
-       chapter — except .md-body itself, so that a table (wrapped in its own
-       scroll box after render, see wrapTables) can run wider than the prose
-       when the pane has the room, and scroll inside its box when it hasn't. */
+       chapter, search results — except .md-body itself, so that a table
+       (wrapped in its own scroll box after render, see wrapTables) or a code
+       block can run wider than the prose when the pane has the room, and
+       scroll inside its box when it hasn't. */
     #content > :not(.md-body):not(.chapter),
     .chapter-main > :not(.md-body),
-    .md-body > :not(.table-wrap) { max-width: var(--measure); }
+    .md-body > :not(.table-wrap):not(pre) { max-width: var(--measure); }
 
     /* ── Loading / error states ── */
     .state-msg {
@@ -334,6 +359,14 @@
       overflow-x: auto;
       margin: 14px 0 18px;
     }
+    /* A chapter-level code block breaks out of the measure like .table-wrap:
+       as wide as its longest line, never narrower than the measure, never
+       wider than the pane — past that it scrolls in its own box (phones). */
+    .md-body > pre {
+      width: fit-content;
+      min-width: min(100%, var(--measure));
+      max-width: 100%;
+    }
 
     .md-body pre code {
       background: none; color: var(--code-fg); padding: 0;
@@ -397,9 +430,14 @@
 
     /* ── On this page ── the chapter's h2 (h3 nested) outline, for chapters
        with 3+ of them. Narrow panes (phones included): a collapsed <details>
-       under the h1. Wide panes (≥1200px — the iframe's own width; the shell
-       sidebar comes off first, so ~1420px of window): a sticky rail beside the
-       reading column, with scroll-spy. Both are rendered; CSS picks one. */
+       under the h1. A pane whose content box fits the measure (40em) + the
+       gap (2em) + the rail (11em) = 53em: a sticky rail beside the reading
+       column, with scroll-spy. A container query on #content, in #content's
+       em (= --fs), so it holds at every density: #content ≥ ~952px at the
+       default 16px, ~1058px at Comfortable's 18px (+ this pane's 220px
+       sidebar + the shell's: a window of 1392 / 1498px,
+       measured). The measure is never squeezed to make room. Both are
+       rendered; CSS picks one. */
     .otp-title {
       color: var(--text-muted);
       font-size: var(--fs-xs);
@@ -438,11 +476,11 @@
     .otp-inline > .otp-list { padding: 0 14px 10px 4px; }
 
     .otp-rail { display: none; }
-    @media (min-width: 1200px) {
+    @container (min-width: 53em) {
       .chapter.has-otp {
         display: grid;
-        grid-template-columns: minmax(0, 1fr) calc(var(--fs) * 14);
-        column-gap: 40px;
+        grid-template-columns: minmax(0, 1fr) calc(var(--fs) * 11);
+        column-gap: calc(var(--fs) * 2);
         align-items: start;
       }
       .chapter.has-otp .otp-rail {
@@ -455,6 +493,36 @@
         padding: 2px 0 12px;
       }
       .chapter.has-otp .otp-inline { display: none; }
+    }
+
+    /* ── Search results (#/search/<q>) ── */
+    .search-title { font-size: var(--fs-title); font-weight: 700; color: var(--text); margin-bottom: 4px; }
+    .search-sum   { color: var(--text-muted); font-size: var(--fs-sm); margin-bottom: 18px; }
+    .sr-list { list-style: none; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); overflow: hidden; }
+    .sr-list > li { border-bottom: 1px solid var(--border); }
+    .sr-list > li:last-child { border-bottom: none; }
+    .sr-item {
+      display: block;
+      padding: 12px 18px;
+      color: var(--text);
+      text-decoration: none;
+      line-height: 1.5;
+    }
+    .sr-item:hover { background: var(--hover); }
+    .sr-item:focus-visible { outline-offset: -2px; }
+    .sr-where   { display: block; font-size: var(--fs-xs); color: var(--text-muted); }
+    .sr-heading { display: block; font-weight: 600; color: var(--accent-2); }
+    .sr-snippet { display: block; font-size: var(--fs-sm); color: var(--text-2); margin-top: 2px; }
+
+    /* A query term — in a result, and in the chapter landed on from one (until
+       the next navigation). A status tint behind inherited text, so it reads
+       on the page, in a table stripe and on the dark code surface alike; the
+       underline carries it where the tint is faint. */
+    mark.hit {
+      background: var(--warn-soft);
+      color: inherit;
+      box-shadow: inset 0 -2px 0 var(--warn-fill);
+      border-radius: 2px;
     }
 
     /* ── Phones: the contents sidebar becomes a drawer ───────────────────
@@ -500,6 +568,9 @@
         padding-bottom: calc((44px - 1.7em) / 2);
       }
       .otp-list a { padding-top: calc((44px - 1.4em) / 2); padding-bottom: calc((44px - 1.4em) / 2); }
+      /* 16px+ or iOS zooms the page on focus; a finger-sized box. */
+      .sidebar-search input { font-size: max(16px, var(--fs)); min-height: 44px; }
+      .sr-item { padding: 12px 14px; }
       /* A table clipped by its scroll box fades out at the clipped edge(s);
          the fade goes when that edge is reached. wrapTables() keeps the
          data-clip attribute current (the cells paint their own backgrounds,
@@ -524,6 +595,11 @@
 
 <div id="sidebar">
   <a class="sidebar-logo" href="#/">YisraCase Docs</a>
+  <form class="sidebar-search" role="search" onsubmit="return false">
+    <label for="searchQ" class="sr-only">Search the manual</label>
+    <input id="searchQ" type="search" placeholder="Search the manual" title="Search the manual (press / to jump here)"
+           autocomplete="off" spellcheck="false" enterkeyhint="search" maxlength="200">
+  </form>
   <div id="sidebar-nav"></div>
 </div>
 
@@ -554,6 +630,16 @@ document.getElementById('sidebar').addEventListener('click', (e) => {
 //   #/<section>                      a section's chapter list
 //   #/<section>/<file>               a chapter
 //   #/<section>/<file>/<anchor>      a heading in a chapter
+//   #/search/<q>                     search results ('search' is RESERVED —
+//                                    no manual folder may take the name;
+//                                    routes/manuals.js says so too)
+//   #/<section>/<file>/~<n>/<q>      a search hit: the chapter's n-th heading
+//                                    (h1..h6, 0-based; empty n = the top),
+//                                    with q's terms highlighted. Resolved on
+//                                    arrival to the heading's own id
+//                                    (replaceState), so Back from a hit is
+//                                    the results list. Heading ids never
+//                                    hold '~' (addHeadingIds drops it).
 // Every nav element is an <a href="#/…">: the browser pushes the hash, the
 // hashchange listener renders. manualsLoad() pushes with pushState (no
 // event) and renders itself, so its promise settles when the view is up.
@@ -586,6 +672,17 @@ function routePath(sec, file, anchor) {
   return segs.map(encodeURIComponent).join('/');
 }
 const routeHash = (sec, file, anchor) => '#/' + routePath(sec, file, anchor);
+
+const SEARCH_SEC = 'search';
+const searchHash = q => '#/' + SEARCH_SEC + '/' + encodeURIComponent(q);
+/** A search hit's route: lands on heading #idx (null = the chapter's top). */
+const hitHash = (sec, file, idx, q) =>
+  routeHash(sec, file) + '/~' + (idx == null ? '' : idx) + (q ? '/' + encodeURIComponent(q) : '');
+/** An anchor in the hit form ('~3/send email') → { idx, q }, else null. */
+function parseHit(anchor) {
+  const m = /^~(\d*)(?:\/([\s\S]*))?$/.exec(anchor || '');
+  return m ? { idx: m[1] === '' ? null : Number(m[1]), q: m[2] || '' } : null;
+}
 
 /** The URL that opens the SHELL on this place (index.html's ?manual=). */
 function shellUrl(sec, file, anchor) {
@@ -661,6 +758,7 @@ const loadSections = () => cached('sections', async () => (await api('/manual'))
 const loadSectionData = sec => cached('sec:' + sec, () => api(`/manual/${encodeURIComponent(sec)}`));
 const loadChapter = (sec, file) => cached(`md:${sec}/${file}`,
   () => fetchMarkdown(encodeURIComponent(sec), encodeURIComponent(file)));
+const loadSearch = q => cached('q:' + q, () => window.parent.apiSend('/manual/search', 'GET', { q }));
 
 // ─────────────────────────────────────────────────────────────
 // DOM helpers
@@ -982,6 +1080,153 @@ function copyFallback(text) {
 }
 
 // ─────────────────────────────────────────────────────────────
+// Search — box, results, landing on a hit, highlighting
+// ─────────────────────────────────────────────────────────────
+// The server (GET /manual/search) matches every whitespace-separated term as
+// a case-insensitive substring and returns PLAIN text; everything shown here
+// is escaped, then the terms are wrapped in <mark class="hit">. The query is
+// untrusted text: it only ever reaches a RegExp through escapeRe.
+const SEARCH_MIN = 2;
+const searchBox  = $('searchQ');
+let searchTimer  = 0;
+
+const normQ = q => String(q || '').replace(/\s+/g, ' ').trim();
+const escapeRe = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/** One case-insensitive regex for a query's terms (longest first), or null. */
+function termsRe(q) {
+  const terms = [...new Set(normQ(q).toLowerCase().split(' ').filter(Boolean))]
+    .sort((a, b) => b.length - a.length);
+  return terms.length ? new RegExp(terms.map(escapeRe).join('|'), 'gi') : null;
+}
+
+/** Escaped HTML of plain `text`, the regex's matches wrapped in <mark>. */
+function markText(text, re) {
+  text = String(text ?? '');
+  if (!re) return esc(text);
+  let out = '', last = 0;
+  re.lastIndex = 0;
+  for (let m; (m = re.exec(text));) {
+    if (!m[0]) { re.lastIndex++; continue; }
+    out += esc(text.slice(last, m.index)) + `<mark class="hit">${esc(m[0])}</mark>`;
+    last = m.index + m[0].length;
+  }
+  return out + esc(text.slice(last));
+}
+
+/** Wrap the query's terms in the rendered chapter — text nodes only, never
+ *  innerHTML: the permalink #s and the collapsed outline are left alone. */
+function highlightTerms(root, q) {
+  const re = termsRe(q);
+  if (!root || !re) return;
+  const skip = 'mark, script, style, .hd-link, .otp-inline';
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+    acceptNode: n => (n.nodeValue.trim() && !n.parentElement.closest(skip))
+      ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT
+  });
+  const nodes = [];
+  for (let n; (n = walker.nextNode());) nodes.push(n);
+  for (const n of nodes) {
+    const text = n.nodeValue;
+    re.lastIndex = 0;
+    if (!re.test(text)) continue;
+    const frag = document.createDocumentFragment();
+    let last = 0;
+    re.lastIndex = 0;
+    for (let m; (m = re.exec(text));) {
+      if (!m[0]) { re.lastIndex++; continue; }
+      if (m.index > last) frag.appendChild(document.createTextNode(text.slice(last, m.index)));
+      const mark = document.createElement('mark');
+      mark.className = 'hit';
+      mark.textContent = m[0];
+      frag.appendChild(mark);
+      last = m.index + m[0].length;
+    }
+    if (last < text.length) frag.appendChild(document.createTextNode(text.slice(last)));
+    n.parentNode.replaceChild(frag, n);
+  }
+}
+
+/** Unwrap every highlight in the pane (a navigation clears them). */
+function clearHighlights() {
+  document.querySelectorAll('#content mark.hit').forEach(m => {
+    const p = m.parentNode;
+    p.replaceChild(document.createTextNode(m.textContent), m);
+    p.normalize();
+  });
+}
+
+/**
+ * On a rendered chapter: resolve a hit's heading ordinal against the
+ * rendered h1..h6 (the server counts them the same way), put that heading's
+ * id in the hash in place of the hit form, scroll there, highlight.
+ */
+function landOnHit(body, sec, file, hit) {
+  const heads = body.querySelectorAll('h1,h2,h3,h4,h5,h6');
+  const h  = hit.idx == null ? null : heads[hit.idx];
+  const id = (h && h.id) || null;
+  replaceHash(routeHash(sec, file, id));
+  scrollToAnchor(id);
+  highlightTerms(body, hit.q);
+  storeSet(routePath(sec, file, id));
+}
+
+/** Show the query in the box — unless the reader is typing in it. */
+function syncSearchBox(q) {
+  if (document.activeElement !== searchBox) searchBox.value = q;
+}
+
+const isPhone = () => window.matchMedia('(max-width: 768px)').matches;
+
+/** Run the box's query: one history entry for a search, refinements replace it. */
+function runSearch() {
+  clearTimeout(searchTimer);
+  const q = normQ(searchBox.value);
+  if (q.length < SEARCH_MIN) return;
+  const h = searchHash(q);
+  if (location.hash === h) return;
+  if (parseHash(location.hash).sec === SEARCH_SEC) { replaceHash(h); render(); }
+  else go(h);
+}
+
+searchBox.addEventListener('input', () => {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(runSearch, 250);
+});
+searchBox.addEventListener('keydown', e => {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    runSearch();
+    // Phones: the results are behind the drawer and the keyboard — show them.
+    if (isPhone() && normQ(searchBox.value).length >= SEARCH_MIN) {
+      document.body.classList.remove('toc-open');
+      searchBox.blur();
+    }
+  } else if (e.key === 'Escape') {
+    e.preventDefault();
+    clearTimeout(searchTimer);
+    if (searchBox.value) searchBox.value = ''; else searchBox.blur();
+  }
+});
+
+// '/' jumps to the box (opening the drawer on phones) — not while typing.
+document.addEventListener('keydown', e => {
+  if (e.key !== '/' || e.ctrlKey || e.metaKey || e.altKey || e.defaultPrevented) return;
+  const t = e.target;
+  if (t && (t.isContentEditable || (t.closest && t.closest('input, textarea, select')))) return;
+  e.preventDefault();
+  if (isPhone()) document.body.classList.add('toc-open');
+  searchBox.focus();
+  searchBox.select();
+});
+
+// A result is a plain link (the router does the rest); on phones it also
+// closes the drawer, like every other pick.
+$('content').addEventListener('click', e => {
+  if (e.target.closest('a.sr-item')) document.body.classList.remove('toc-open');
+});
+
+// ─────────────────────────────────────────────────────────────
 // Views
 // ─────────────────────────────────────────────────────────────
 let navSeq = 0;   // the newest render wins; an older one stops at its next await
@@ -990,11 +1235,16 @@ async function render() {
   const seq = ++navSeq;
   const stale = () => seq !== navSeq;
   const r = parseHash(location.hash);
+  clearHighlights();   // a search hit's highlights last until the next navigation
+
+  if (r.sec === SEARCH_SEC) return showSearch(r.file, stale);
 
   // A chapter already on screen: only the anchor moved (outline, permalink,
-  // Back between two headings) — scroll, don't refetch.
+  // Back between two headings, another hit in it) — scroll, don't refetch.
   if (r.sec && r.file && state.currentFile && $('md-body') &&
       state.currentSection?.slug === r.sec && state.currentFile.slug === r.file) {
+    const hit = parseHit(r.anchor);
+    if (hit) return landOnHit($('md-body'), r.sec, r.file, hit);
     scrollToAnchor(r.anchor);
     storeSet(routePath(r.sec, r.file, r.anchor));
     return;
@@ -1149,8 +1399,67 @@ async function showChapter(file, anchor, stale) {
     ch.insertAdjacentHTML('beforeend', rail);
   }
   indexSpyLinks();
+  const hit = parseHit(anchor);
+  if (hit) return landOnHit(body, sec, file.slug, hit);
   scrollToAnchor(anchor);
   storeSet(routePath(sec, file.slug, anchor));
+}
+
+// Search results — #/search/<q>. One row per matching heading block.
+async function showSearch(rawQ, stale) {
+  const q = normQ(rawQ);
+  state.currentSection = null;
+  state.currentFile    = null;
+  state.currentFiles   = [];
+  spy = null;
+  syncSearchBox(q);
+  setBreadcrumb([{ label: 'Documentation', href: '#/' }, { label: 'Search' }]);
+
+  let sections;
+  try { sections = await loadSections(); } catch { sections = state.sections; }
+  if (stale()) return;
+  state.sections = sections || [];
+  renderSidebar();
+
+  const head = sum => `<div class="search-title">Search</div><p class="search-sum">${sum}</p>`;
+  if (q.length < SEARCH_MIN) {
+    setContent(head(`Type at least ${SEARCH_MIN} characters in the search box.`));
+    return;
+  }
+  setLoading();
+  let data;
+  try { data = await loadSearch(q); }
+  catch (err) {
+    if (stale()) return;
+    const msg = err && err.message ? String(err.message) : '';
+    const why = !msg || /search failed/i.test(msg) ? 'Search failed.' : `Search failed: ${msg}`;
+    setContent(head('') + `<div class="state-msg">⚠ ${esc(why)}</div>`);
+    return;
+  }
+  if (stale()) return;
+
+  const results = (data && data.results) || [];
+  const total   = (data && data.total) || results.length;
+  const quoted  = `“${esc(q)}”`;
+  if (!results.length) {
+    setContent(head('') + `<div class="state-msg">No matches for ${quoted}.</div>`);
+    $('content').scrollTop = 0;
+    return;
+  }
+  const re = termsRe(q);
+  const rows = results.map(x => {
+    const showHead = x.heading && x.headingIndex !== 0;
+    return `<li><a class="sr-item" href="${esc(hitHash(x.section, x.file, x.headingIndex, q))}">`
+      + `<span class="sr-where">${markText(x.title, re)} · ${esc(x.sectionLabel)}</span>`
+      + `<span class="sr-heading">${markText(showHead ? x.heading : x.title, re)}</span>`
+      + (x.snippet ? `<span class="sr-snippet">${markText(x.snippet, re)}</span>` : '')
+      + `</a></li>`;
+  }).join('');
+  const sum = total > results.length
+    ? `The first ${results.length} of ${total} matches for ${quoted} — add a word to narrow it.`
+    : `${total} match${total === 1 ? '' : 'es'} for ${quoted}.`;
+  setContent(head(sum) + `<ol class="sr-list">${rows}</ol>`);
+  $('content').scrollTop = 0;
 }
 
 // ─────────────────────────────────────────────────────────────

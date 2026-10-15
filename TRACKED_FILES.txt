@@ -823,6 +823,7 @@ scripts/mobile-survey/fixtures/api/readonly-keys.json
 scripts/mobile-survey/fixtures/api/tasks.json
 scripts/mobile-survey/fixtures/api/users.json
 scripts/mobile-survey/fixtures/firm-data.json
+scripts/mobile-survey/manualOrdinals.js
 scripts/mobile-survey/server.js
 scripts/mobile-survey/survey.js
 scripts/probe-db-connect.js
@@ -1283,6 +1284,7 @@ tests/mailboxS3R.read.test.js
 tests/maintenanceGate.test.js
 tests/manageSelfService.policy.test.js
 tests/manualReadmeCoverage.test.js
+tests/manualSearch.test.js
 tests/manualsRoute.test.js
 tests/mascotSkins.test.js
 tests/moduleLoad.smoke.test.js

@@ -333,6 +333,11 @@ async function walk(page, W, record) {
           ['05-Subsystems-13-custom-fields', "manualsLoad('05-Subsystems', '13-custom-fields')"],
           // unbreakable runs in PROSE, not code: API paths in its h2s
           ['02-YisraForms-11-api-reference', "manualsLoad('02-YisraForms', '11-api-reference')"],
+          // search (S3): a term with many hits (50-row cap, highlighted
+          // snippets), then the chapter its first result lands on (scrolled
+          // to the heading, terms highlighted in prose, tables and code)
+          ['search-workflow', "go(searchHash('workflow'))"],
+          ['search-hit', "go(searchHash('workflow')).then(() => document.querySelector('.sr-item').click())"],
           ['drawer', "document.body.classList.add('toc-open')"],
         ];
         for (const [key, js] of MANUALS) {

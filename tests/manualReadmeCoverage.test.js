@@ -55,6 +55,47 @@ test('the manual tree is non-trivial (guards the scan itself from rotting)', () 
   expect(sections.reduce((n, s) => n + chaptersOf(s).length, 0)).toBeGreaterThanOrEqual(40);
 });
 
+// Must stay in sync with SECTION_ROW in routes/manuals.js. manual/README.md's
+// "Sections" table names every section in the app and writes its index-card
+// blurb: | n | [Label](folder/) | description |. A folder with no row falls
+// back to its slug prettified ("ESign") — silently, so it is guarded here.
+const SECTION_ROW = /^\s*\|[^|]*\|\s*\[([^\]]+)\]\((?:\.\/)?([^)\s/]+)\/?\)\s*\|\s*(.*?)\s*\|\s*$/;
+
+function rootSectionRows() {
+  const rows = [];
+  for (const line of fs.readFileSync(path.join(MANUALS_DIR, 'README.md'), 'utf8').split('\n')) {
+    const m = line.match(SECTION_ROW);
+    if (m && !/\.md$/i.test(m[2])) rows.push({ label: m[1].trim(), folder: m[2], desc: m[3].trim() });
+  }
+  return rows;
+}
+
+test('manual/README.md\'s Sections table has a row — label and description — for every section folder', () => {
+  const rows = rootSectionRows();
+  const byFolder = new Map(rows.map(r => [r.folder, r]));
+  const problems = [];
+  for (const sec of sections) {
+    const r = byFolder.get(sec);
+    if (!r) problems.push(`${sec} — no row in manual/README.md's Sections table`);
+    else if (!r.label || !r.desc) problems.push(`${sec} — row has an empty label or description`);
+  }
+  expect(problems).toEqual([]);
+});
+
+test('every Sections row links a section folder that exists', () => {
+  const rows = rootSectionRows();
+  expect(rows.length).toBeGreaterThanOrEqual(5);
+  const problems = rows
+    .filter(r => !fs.existsSync(path.join(MANUALS_DIR, r.folder)) ||
+                 !fs.statSync(path.join(MANUALS_DIR, r.folder)).isDirectory())
+    .map(r => `[${r.label}](${r.folder}/) — no such folder in manual/`);
+  expect(problems).toEqual([]);
+});
+
+test('no manual folder is named "search" (reserved: /manual/search, #/search/<q>)', () => {
+  expect(sections.map(s => s.toLowerCase())).not.toContain('search');
+});
+
 test('every manual section has a README.md', () => {
   const missing = sections.filter(
     s => !fs.existsSync(path.join(MANUALS_DIR, s, 'README.md')));
