@@ -277,20 +277,15 @@ maybe('comms archive S3 summaries on real MySQL', () => {
     expect(await qrow(tid)).toMatchObject({ state: 'done', attempts: 0 });
   });
 
-  test('V4a a party greeting its OWN assigned name ("Hey, Stuart." from "Stuart") is listed in the tick output; its name nulled, the summary kept', async () => {
-    const segs = [{ s: 'A', a: 0, b: 1, t: 'Hey, Stuart.' }, { s: 'B', a: 1, b: 4, t: 'Hi, it is Stuart from the law office, about your case.' }];
+  test('V4a a party greeting its OWN assigned name ("Hey, Stuart." from "Stuart") is listed in the tick output; its name nulled, the summary kept (no retry: three speakers — R1 covers two)', async () => {
+    const segs = [{ s: 'A', a: 0, b: 1, t: 'Hey, Stuart.' }, { s: 'B', a: 1, b: 4, t: 'Hi, it is Stuart from the law office, about your case.' },
+      { s: 'C', a: 4, b: 7, t: 'And I am on the line from the trustee office.' }];
     const { tid } = await item({ segs, direction: 'outgoing' });
-    const { tid: ok } = await item({ segs });
-    api.queue.push(reply(JSON.stringify({ call_type: 'client', summary: 'Stuart called.', parties: [{ speaker: 'A', role: 'firm', name: 'Stuart' }, { speaker: 'B', role: 'client', name: null }] })));
-    api.queue.push(reply(JSON.stringify({ call_type: 'client', summary: 'Stuart called.', parties: [{ speaker: 'B', role: 'firm', name: 'Stuart' }, { speaker: 'A', role: 'client', name: null }] })));
+    api.queue.push(reply(JSON.stringify({ call_type: 'client', summary: 'Stuart called.', parties: [{ speaker: 'A', role: 'firm', name: 'Stuart' },
+      { speaker: 'B', role: 'client', name: null }, { speaker: 'C', role: 'other', name: null }] })));
     const out = await run();
-    expect(out).toMatchObject({ summarized: 2, rejected: 0 });
-    expect(out.self_addressed).toHaveLength(1);
-    const flagged = out.self_addressed[0];
-    expect([tid, ok]).toContain(flagged);
-    const other = flagged === tid ? ok : tid;
-    expect((await tr(flagged)).summary.parties.find(p => p.role === 'firm').name).toBeNull();
-    expect((await tr(other)).summary.parties.find(p => p.role === 'firm').name).toBe('Stuart');
+    expect(out).toMatchObject({ calls: 1, summarized: 1, rejected: 0, self_addressed: [tid] });
+    expect((await tr(tid)).summary.parties.find(p => p.role === 'firm').name).toBeNull();
   });
 
   test('V3b a firm context over 2,000 characters stops the summaries (config problem, alerted) — 2,000 is fine', async () => {
@@ -705,6 +700,233 @@ maybe('comms archive S3 summaries on real MySQL', () => {
     expect(fired).toBe(true);
     expect(out.self_addressed).toBeUndefined();
   });
+
+  // ═══ v4.1 — the guided retry on a self-addressed answer ═══════════════════
+  const SWAP = [
+    { s: 'A', a: 0, b: 1, t: 'Hey, Stuart.' },
+    { s: 'B', a: 1, b: 4, t: 'Hi, it is Stuart from the law office, about your case.' },
+    { s: 'A', a: 4, b: 6, t: 'Yes, Stuart Sandweiss. Send me the papers.' },
+  ];
+  const SWAPPED = { call_type: 'client', summary: 'Stuart took a call.', parties: [{ speaker: 'A', role: 'firm', name: 'Stuart' }, { speaker: 'B', role: 'client', name: null }] };
+  const RIGHT = { call_type: 'client', summary: 'Stuart called the client.', parties: [{ speaker: 'B', role: 'firm', name: 'Stuart' }, { speaker: 'A', role: 'client', name: null }] };
+  const HINT_A = 'A previous answer for this call gave speaker A the name that speaker A greets or answers by name. '
+    + 'A greeting or an answer names the OTHER speaker, never the one who says it. '
+    + 'Re-check "parties", every commitment\'s "by", and the summary, then give the whole answer again.';
+  const estOf = (text) => ai.computeCostCents(Math.ceil(text.length / 4) + sweep.limits.systemTokens, 16000, 'claude-sonnet-5-5');
+
+  test('R1 a self-addressed answer on a two-speaker call is retried ONCE with the fixed hint; the retry\'s answer is kept; two charged calls', async () => {
+    const { tid } = await item({ segs: SWAP, direction: 'outgoing' });
+    api.queue.push(reply(JSON.stringify(SWAPPED)), reply(JSON.stringify(RIGHT)));
+    const out = await run();
+    expect(out).toMatchObject({ calls: 2, summarized: 1, self_addressed: [tid], self_addressed_retried: [tid] });
+    expect(out.self_addressed_after_retry).toBeUndefined();                    // the retry fixed it
+    expect(api.bodies).toHaveLength(2);
+    const s = (await tr(tid)).summary;
+    expect(s.parties).toEqual([{ speaker: 'B', role: 'firm', name: 'Stuart' }, { speaker: 'A', role: 'client', name: null }]);
+    expect(s.summary).toBe('Stuart called the client.');
+    const cs = await calls(tid);
+    expect(cs).toHaveLength(2);
+    expect((await tr(tid)).ai_call_ids).toEqual(cs.map(c => c.id));
+    expect(Number((await tr(tid)).llm_cost_cents)).toBeCloseTo(2 * ai.computeCostCents(900, 400, 'claude-sonnet-5-5'), 4);
+    expect(await qrow(tid)).toMatchObject({ state: 'done', est_cents: null, attempts: 0 });
+  });
+
+  test('R2 the hint carries NO transcript text: the retry\'s request is the first one plus the fixed hint, and nothing else', async () => {
+    expect(sweep.selfAddressHint(['A'])).toBe(HINT_A);
+    expect(sweep.selfAddressHint(['A', 'B'])).toMatch(/^A previous answer for this call gave speaker A and speaker B the name that each of them greets/);
+    expect(sweep.selfAddressHint(['Stuart <x>'])).toBeNull();                   // never anything but a label shape
+    expect(sweep.selfAddressHint([])).toBeNull();
+    expect(sweep.selfAddressHint(['A', 'A'])).toBe(HINT_A);                   // deduped
+    await item({ segs: SWAP, direction: 'outgoing' });
+    api.queue.push(reply(JSON.stringify(SWAPPED)), reply(JSON.stringify(RIGHT)));
+    await run();
+    const [b0, b1] = api.bodies;
+    expect(b1.messages).toEqual(b0.messages);
+    expect(b1.system).not.toBe(b0.system);
+    expect(b1.system.replace(`\n\n${HINT_A}`, '')).toBe(b0.system);
+    expect(HINT_A).not.toMatch(/Stuart|Sandweiss|papers|law office/);
+  });
+
+  test('R3 no retry: three substantive speakers; an answer that does not self-address; a recording as the second label', async () => {
+    const three = [...SWAP, { s: 'C', a: 6, b: 9, t: 'I am the trustee and I am on the line too.' }];
+    // only labels the answer gives a role count: C unroled → two; roled → three
+    expect(sweep.substantiveSpeakers(three, SWAPPED.parties)).toEqual(['A', 'B']);
+    expect(sweep.substantiveSpeakers(three, [...SWAPPED.parties, { speaker: 'C', role: 'other', name: null }])).toEqual(['A', 'B', 'C']);
+    expect(sweep.substantiveSpeakers([{ s: 'A', a: 0, b: 1, t: 'Hello?' }, SWAP[1]], SWAPPED.parties)).toEqual(['B']);   // one word: not substantive
+    await item({ segs: three, direction: 'outgoing' });
+    api.queue.push(reply(JSON.stringify({ ...SWAPPED, parties: [...SWAPPED.parties, { speaker: 'C', role: 'other', name: null }] })));
+    const o3 = await run();
+    expect(o3).toMatchObject({ calls: 1, summarized: 1 });
+    expect(o3.self_addressed).toHaveLength(1);
+    expect(o3.self_addressed_retried).toBeUndefined();
+
+    await item({ segs: SWAP, direction: 'outgoing' });
+    api.queue.push(reply(JSON.stringify(RIGHT)));
+    const ok = await run();
+    expect(ok).toMatchObject({ calls: 1, summarized: 1 });
+    expect(ok.self_addressed).toBeUndefined();
+    expect(ok.self_addressed_retried).toBeUndefined();
+
+    const rec = [{ s: 'A', a: 0, b: 1, t: 'Hey, Stuart.' }, { s: 'B', a: 1, b: 5, t: 'The person you are calling is not available. Please leave a message after the tone.' }];
+    await item({ segs: rec, direction: 'outgoing' });
+    api.queue.push(reply(JSON.stringify({ ...SWAPPED, parties: [{ speaker: 'A', role: 'firm', name: 'Stuart' }, { speaker: 'B', role: 'other', name: null }] })));
+    const r1 = await run();
+    expect(r1).toMatchObject({ calls: 1, summarized: 1 });
+    expect(r1.self_addressed_retried).toBeUndefined();
+    expect(api.bodies).toHaveLength(3);
+  });
+
+  test('R4 a retry that STILL self-addresses is kept with the name nulled — and never retried again', async () => {
+    const { tid } = await item({ segs: SWAP, direction: 'outgoing' });
+    api.queue.push(reply(JSON.stringify(SWAPPED)), reply(JSON.stringify({ ...SWAPPED, summary: 'The retry, still swapped.' })));
+    const out = await run();
+    expect(out).toMatchObject({ calls: 2, summarized: 1, self_addressed_retried: [tid], self_addressed_after_retry: [tid] });
+    expect(api.bodies).toHaveLength(2);
+    const s = (await tr(tid)).summary;
+    expect(s.summary).toBe('The retry, still swapped.');                       // the retry's answer, not the first
+    expect(s.parties[0]).toEqual({ speaker: 'A', role: 'firm', name: null });
+  });
+
+  test('R4b a retry whose output fails validation keeps the first answer — uncharged as an attempt, not counted as rejected', async () => {
+    const { tid } = await item({ segs: SWAP, direction: 'outgoing' });
+    api.queue.push(reply(JSON.stringify(SWAPPED)), reply(JSON.stringify({ ...RIGHT, call_type: 'bogus' })));
+    const out = await run();
+    expect(out).toMatchObject({ calls: 2, summarized: 1, rejected: 0, self_addressed_retried: [tid], self_addressed_after_retry: [tid] });
+    const s = (await tr(tid)).summary;
+    expect(s.summary).toBe('Stuart took a call.');
+    expect(s.parties[0]).toEqual({ speaker: 'A', role: 'firm', name: null });
+    expect(await qrow(tid)).toMatchObject({ state: 'done', attempts: 0, last_error: null });
+  });
+
+  test('R8 restricted while the first call ran: the retry\'s write-ahead fence holds — no retry, the first answer written', async () => {
+    const { tid, mid } = await item({ segs: SWAP, direction: 'outgoing' });
+    api.queue.push(reply(JSON.stringify(SWAPPED)));
+    api.before = async () => { if (api.bodies.length === 1) await pool.query('UPDATE comms_media SET restricted = 1 WHERE id = ?', [mid]); };
+    const out = await run();
+    api.before = null;
+    expect(out).toMatchObject({ calls: 1, summarized: 1 });
+    expect(out.self_addressed_retried).toBeUndefined();
+    expect(api.bodies).toHaveLength(1);
+    expect((await tr(tid)).summary.parties[0]).toEqual({ speaker: 'A', role: 'firm', name: null });
+  });
+
+  test('R9 a retry LOST in flight (the process dies mid-call) is charged on reclaim as lost_in_flight — its fresh lease starts after the first call\'s row', async () => {
+    const { tid } = await item({ segs: SWAP, direction: 'outgoing' });
+    api.queue.push(reply(JSON.stringify(SWAPPED)), reply(JSON.stringify(RIGHT)));
+    const real = ai.call;
+    let n = 0;
+    const spy = jest.spyOn(ai, 'call').mockImplementation(async (...a) => {
+      if (++n === 2) throw new Error('process died');
+      return real.apply(ai, a);
+    });
+    try { await expect(run()).rejects.toThrow(/process died/); } finally { spy.mockRestore(); }
+    await pool.query(`SELECT RELEASE_LOCK(${sweep.LOCK_EXPR})`).catch(() => {});
+    const lost = await qrow(tid);
+    expect(lost.state).toBe('calling');
+    const est2 = Number(lost.est_cents);
+    expect(est2).toBeCloseTo(estOf(`${require('../services/commsSummaryGround').transcriptText(SWAP)}\n${HINT_A}`), 3);
+    // the lease runs out: 16 minutes pass for the queue row and the first call's logged row alike
+    await q('UPDATE comms_summaries SET next_attempt_at = next_attempt_at - INTERVAL 16 MINUTE WHERE transcript_id = ?', [tid]);
+    await q('UPDATE ai_calls SET created_at = created_at - INTERVAL 16 MINUTE WHERE consumer_ref = ?', [`comms_transcript:${tid}`]);
+    const out = await run();
+    expect(out).toMatchObject({ lost_in_flight: 1, summarized: 1 });
+    expect(out.recovered_in_flight).toBeUndefined();
+    const cs = await calls(tid);
+    expect(cs.map(c => c.error)).toEqual([null, 'lost_in_flight', null]);
+    expect(Number(cs[1].cost_cents)).toBeCloseTo(est2, 3);
+    expect((await tr(tid)).summary.parties[0]).toEqual({ speaker: 'B', role: 'firm', name: 'Stuart' });
+  });
+
+  test('R10 a label self-addressed twice (two party entries) gets ONE hint naming it once', async () => {
+    const { tid } = await item({ segs: SWAP, direction: 'outgoing' });
+    const dup = { ...SWAPPED, parties: [...SWAPPED.parties, { speaker: 'A', role: 'firm', name: 'Stuart' }] };
+    api.queue.push(reply(JSON.stringify(dup)), reply(JSON.stringify(RIGHT)));
+    const out = await run();
+    expect(out).toMatchObject({ calls: 2, self_addressed_retried: [tid] });
+    expect(api.bodies[1].system.replace(`\n\n${HINT_A}`, '')).toBe(api.bodies[0].system);
+  });
+
+  test('R11 no retry when a self-addressed label is NOT one of the two substantive speakers (a recording that greets by name)', async () => {
+    const segs = [
+      { s: 'A', a: 0, b: 3, t: 'Hi, Stuart. Please leave a message after the tone.' },
+      { s: 'B', a: 3, b: 6, t: 'Hi, it is Stuart from the law office, about your case.' },
+      { s: 'C', a: 6, b: 9, t: 'Okay, I will call the office back on Monday.' },
+    ];
+    await item({ segs, direction: 'outgoing' });
+    api.queue.push(reply(JSON.stringify({ call_type: 'client', summary: 'x', parties: [{ speaker: 'A', role: 'firm', name: 'Stuart' },
+      { speaker: 'B', role: 'other', name: null }, { speaker: 'C', role: 'client', name: null }] })));
+    expect(sweep.substantiveSpeakers(segs, [{ speaker: 'A' }, { speaker: 'B' }, { speaker: 'C' }])).toEqual(['B', 'C']);
+    const out = await run();
+    expect(out).toMatchObject({ calls: 1, summarized: 1 });
+    expect(out.self_addressed).toHaveLength(1);
+    expect(out.self_addressed_retried).toBeUndefined();
+  });
+
+  test('R5 the retry is written ahead (est_cents + a fresh lease) and checked against the cap BEFORE it is sent', async () => {
+    const userInput = require('../services/commsSummaryGround').transcriptText(SWAP);
+    const est1 = estOf(userInput);
+    const est2 = estOf(`${userInput}\n${HINT_A}`);
+    const billed1 = ai.computeCostCents(900, 400, 'claude-sonnet-5-5');
+    // the cap fits the first call but not the first's billed cost + the retry's worst case → no retry, the first answer kept
+    const tight = Math.floor(billed1 + est2);
+    expect(est1).toBeLessThanOrEqual(tight);
+    expect(billed1 + est2).toBeGreaterThan(tight);
+    await set('comms_ai_monthly_cap_cents', String(tight));
+    const { tid } = await item({ segs: SWAP, direction: 'outgoing' });
+    api.queue.push(reply(JSON.stringify(SWAPPED)));
+    const out = await run();
+    expect(out).toMatchObject({ calls: 1, summarized: 1, self_addressed: [tid] });
+    expect(out.self_addressed_retried).toBeUndefined();
+    expect((await tr(tid)).summary.parties[0]).toEqual({ speaker: 'A', role: 'firm', name: null });
+    // one cent more of headroom (the first call's reservation released, not double-counted) → the retry is made,
+    // and at the moment it is SENT its worst case is already reserved and its lease renewed
+    await set('comms_ai_monthly_cap_cents', String(tight + 1));
+    await q('DELETE FROM ai_calls');
+    const { tid: t2 } = await item({ segs: SWAP, direction: 'outgoing' });
+    api.queue.push(reply(JSON.stringify(SWAPPED)), reply(JSON.stringify(RIGHT)));
+    let seen = null, claimed = null;
+    api.before = async () => {                                                 // bodies: R5's first item, then t2's two calls
+      const [[row]] = await pool.query('SELECT state, est_cents, next_attempt_at FROM comms_summaries WHERE transcript_id = ?', [t2]);
+      if (api.bodies.length === 2) claimed = new Date(row.next_attempt_at).getTime();          // the claim's lease
+      if (api.bodies.length === 3) seen = { state: row.state, est: Number(row.est_cents), next: new Date(row.next_attempt_at).getTime() };
+    };
+    const o2 = await run();
+    api.before = null;
+    expect(o2).toMatchObject({ calls: 2, summarized: 1, self_addressed_retried: [t2] });
+    expect(seen).not.toBeNull();
+    expect(seen.state).toBe('calling');
+    expect(seen.est).toBeCloseTo(est2, 3);
+    expect(claimed).not.toBeNull();
+    expect(seen.next).toBeGreaterThan(claimed);                                // a FRESH lease, past the claim's (+1 s at least)
+  });
+
+  test('R6 purged while the retry is in flight: nothing is written, its ai_calls text cleared', async () => {
+    const { tid, mid } = await item({ segs: SWAP, direction: 'outgoing' });
+    api.queue.push(reply(JSON.stringify(SWAPPED)), reply(JSON.stringify(SWAPPED)));     // the retry still swapped: nothing listed anyway
+    api.before = async () => { if (api.bodies.length === 2) await admin.purge(pool, mid, { userId: 1, reason: 'race' }); };
+    const out = await run();
+    api.before = null;
+    expect(out).toMatchObject({ calls: 2, fenced: 1, summarized: 0 });
+    expect(out.self_addressed_retried).toBeUndefined();
+    expect(out.self_addressed_after_retry).toBeUndefined();
+    expect(out.self_addressed).toBeUndefined();
+    expect(await tr(tid)).toMatchObject({ state: 'purged', summary: null, summary_text: null });
+    for (const c of await calls(tid)) expect(c.response).toBeNull();
+  });
+
+  test.each([[429, 'rate_limited', false], [401, 'no_auth', true], [400, 'request_refused', true], [500, null, false]])(
+    'R7 a retry answered HTTP %i keeps the first answer (name nulled); a 401 / 400 / 429 ends the tick (%s)', async (status, stop, alerted) => {
+      const { tid } = await item({ segs: SWAP, direction: 'outgoing' });
+      await item({ at: new Date(AT.getTime() - 3600e3) });                          // older: next in the queue
+      api.queue.push(reply(JSON.stringify(SWAPPED)), { status, body: { type: 'error' } });
+      const out = await run();
+      // a stop ends the tick before the next item; a 5xx does not
+      expect(out).toMatchObject({ calls: stop ? 2 : 3, summarized: stop ? 1 : 2, stop, self_addressed_retried: [tid], self_addressed_after_retry: [tid] });
+      expect((await tr(tid)).summary.parties[0]).toEqual({ speaker: 'A', role: 'firm', name: null });
+      expect((await tr(tid)).summary.summary).toBe('Stuart took a call.');
+      expect(await qrow(tid)).toMatchObject({ state: 'done', last_error: null });
+      expect(!!(await alerts()).find(a => a.group_key === 'comms_summarize_config')).toBe(alerted);
+    });
 
   // ═══ T ════════════════════════════════════════════════════════════════════
   test('T1 pacing: at most callsPerTick calls; none started after the deadline', async () => {

@@ -57,8 +57,9 @@
  * "bye Mr. Sandweiss") has that name contradicted by its own words — the v3
  * QA's top fault, roles swapped by address on the attorney's outgoing calls.
  * Its `name` becomes null and its speaker is listed in `selfAddressed` (the
- * sweep lists the transcript in the tick output). FLAG ONLY, never repaired:
- * the role stays as given, and nothing is counted in `dropped`. The name must
+ * sweep lists the transcript in the tick output). Here it only FLAGS, never
+ * repairs: the role stays as given, and nothing is counted in `dropped`; the
+ * sweep's guided retry (v4.1, commsSummarizeSweep) acts on it. The name must
  * follow the opener (hi / hey / hello / yes / thanks / thank you / bye /
  * goodbye / good morning…) in the same clause — fillers ("so much", "there")
  * and a title aside, a sentence break ends it — so a self-introduction never

@@ -13,8 +13,8 @@ const { getPrompt } = require('../lib/aiPrompts');
 describe('comms_summary prompt', () => {
   const p = getPrompt('comms_summary');
 
-  test('registered: Sonnet 5.5 default, json, 16000 tokens, version 4', () => {
-    expect(p).toMatchObject({ model: 'claude-sonnet-5-5', output_type: 'json', max_tokens: 16000, version: '4' });
+  test('registered: Sonnet 5.5 default, json, 16000 tokens, version 4.1', () => {
+    expect(p).toMatchObject({ model: 'claude-sonnet-5-5', output_type: 'json', max_tokens: 16000, version: '4.1' });
   });
 
   test('states the grounding rules the validator enforces', () => {
@@ -115,5 +115,21 @@ describe('comms_summary prompt', () => {
     expect(types).toEqual(['"client"', '"prospect"', '"creditor"', '"trustee"', '"court"', '"opposing_counsel"',
       '"agency"', '"vendor"', '"personal"', '"spam"', '"other"']);
     expect(p.system).toMatch(/Summarise only what is in the transcript\.$/);
+  });
+
+  test('v4.1: the first sentence says who called whom exactly as direction says — voicemail and reached_voicemail included', () => {
+    expect(p.system).toMatch(/- The summary's FIRST sentence says who called whom exactly as "direction" says\./);
+    expect(p.system).toMatch(/Outgoing: the\s+firm called the other party \(name the staff member when said\)\./);
+    expect(p.system).toMatch(/Incoming: the other party called\s+the firm\./);
+    expect(p.system).toMatch(/A voicemail: the other party left the firm a message\./);
+    expect(p.system).toMatch(/Outgoing with\s+"reached_voicemail": the firm called and left a message, or reached voicemail\./);
+    expect(p.system).toMatch(/reached voicemail\. Direction\s+unknown: do not say who called whom\./);
+    // it LEADS the prose rules
+    expect(p.system.indexOf("The summary's FIRST sentence")).toBeGreaterThan(p.system.indexOf('Writing "summary" and "follow_up.why":'));
+    expect(p.system.indexOf("The summary's FIRST sentence")).toBeLessThan(p.system.indexOf('Give each action to the speaker who said it'));
+  });
+
+  test('v4.1: the first-speaker cue is for roles only — who called whom is direction', () => {
+    expect(p.system).toMatch(/may speak first\. The cue is for roles only:\s+who called whom is "direction"\./);
   });
 });

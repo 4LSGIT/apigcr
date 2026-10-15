@@ -32,7 +32,10 @@
  * ── MONEY (every path charges; never 0 for a call that may have run) ──────
  *   completed → ai_calls' billed cost. timeout → the logged row is charged the
  *   worst-case estimate. lost in flight → the synthetic row above. A
- *   `max_tokens` stop is deterministic: failed at once, never retried.
+ *   `max_tokens` stop is deterministic: failed at once, never retried. The
+ *   v4.1 guided retry (a self-addressed answer on a two-speaker call) is a
+ *   second charged call, capped and written ahead like the first
+ *   (_retrySelfAddressed).
  *
  * ── NO CONTENT AT REST OUTSIDE THE TRANSCRIPT ROW ──────────────────────────
  * aiService is called with logContent:false: the ai_calls rows of
@@ -126,7 +129,7 @@ const limits = {
   timeoutLongMs: 120_000,
   timeoutShortMs: 60_000,
   longPromptTokens: 20_000,      // above this (estimated) the long timeout
-  systemTokens: 3_400,           // the prompt's own size (v4, ~7.9K characters, with the firm context at its cap), for the estimate
+  systemTokens: 3_400,           // the prompt's own size (v4.1, ~8.4K characters + the firm context at its cap + staff names ≈ 3K tokens), for the estimate
   leaseMin: 15,
   maxAttempts: 3,
   backoffCapMin: 60,
@@ -465,49 +468,19 @@ async function _summarizeOne(ctx, row) {
     return null;
   }
 
-  const ai = require('./aiService'); // lazy require (convention)
-  const r = await ai.call(db, {
-    promptKey: PROMPT_KEY,
-    // Every var is escaped as data: some come from people (a contact name from intake, staff names, the SU text).
-    vars: _escapeAll({
-      item_kind: row.kind === 'voicemail' ? 'voicemail' : 'call',
-      call_date: row.captured_at ? _localWhen(new Date(row.captured_at)) : 'unknown',
-      call_day: row.captured_at ? _localDate(new Date(row.captured_at)) : 'unknown',
-      direction: row.kind === 'voicemail' ? 'incoming (voicemail)' : (row.direction || 'unknown'),
-      contact: context.contact || 'unknown',
-      cases: context.cases.length ? context.cases.join(', ') : 'none known',
-      staff_names: ctx.staff && ctx.staff.length ? ctx.staff.join('; ') : 'not listed',
-      firm_context: cfg.firmContext || '(nothing more)',
-    }),
-    userInput,
-    systemAppend: note ? NOTE_FRAMING : null,
-    model,
-    max_tokens: limits.maxTokens,
-    outputType: 'json',
-    timeout_ms: est.inTok > limits.longPromptTokens ? limits.timeoutLongMs : limits.timeoutShortMs,
-    consumerRef: consumerRef(row.transcript_id),
-    outputConfig: { effort: cfg.effort },
-    noRetryOnStop: true,
-    logContent: false,
+  // Every var is escaped as data: some come from people (a contact name from intake, staff names, the SU text).
+  const vars = _escapeAll({
+    item_kind: row.kind === 'voicemail' ? 'voicemail' : 'call',
+    call_date: row.captured_at ? _localWhen(new Date(row.captured_at)) : 'unknown',
+    call_day: row.captured_at ? _localDate(new Date(row.captured_at)) : 'unknown',
+    direction: row.kind === 'voicemail' ? 'incoming (voicemail)' : (row.direction || 'unknown'),
+    contact: context.contact || 'unknown',
+    cases: context.cases.length ? context.cases.join(', ') : 'none known',
+    staff_names: ctx.staff && ctx.staff.length ? ctx.staff.join('; ') : 'not listed',
+    firm_context: cfg.firmContext || '(nothing more)',
   });
-  out.calls++;
-  if (!r.ok && r.error === 'timeout') {
-    // The model may have run to the end: charge the worst case, never 0.
-    const [u] = r.callId
-      ? await db.query('UPDATE ai_calls SET cost_cents = ? WHERE id = ? AND cost_cents IS NULL', [Math.round(est.cents * 10_000) / 10_000, r.callId])
-      : [{ affectedRows: 0 }];
-    if (!u.affectedRows) await _chargeSynthetic(db, row.transcript_id, model, est.cents, 'timeout_charged');
-  }
-  await _syncLlm(db, row.transcript_id);
-
-  // The row may have been purged while we waited: its ai_calls are cleared here (aiService logged after the purge did).
-  const [[now]] = await db.query('SELECT state FROM comms_transcripts WHERE id = ?', [row.transcript_id]);
-  if (!now || now.state === 'purged') {
-    out.ai_calls_cleared = (out.ai_calls_cleared || 0) + await _clearAiCalls(db, row.transcript_id);
-    await _skip(db, row, 'purged');
-    out.fenced++;
-    return null;
-  }
+  const r = await _call(ctx, row, { model, vars, userInput, systemAppend: note ? NOTE_FRAMING : null, est });
+  if (await _purgedInFlight(ctx, row)) return null;
 
   if (!r.ok) {
     if (r.error === 'refusal') {
@@ -548,16 +521,31 @@ async function _summarizeOne(ctx, row) {
     return null;
   }
 
-  const v = ground.validate(r.json, {
+  const vopts = {
     segments, fullText: row.full_text, kind: row.kind, knownNames: context.contact ? [context.contact] : [],
     callDay: row.captured_at ? _localDate(new Date(row.captured_at)) : null,
-  });
+  };
+  const v = ground.validate(r.json, vopts);
   if (v.ok && v.coerced === 'call_type') out.coerced_call_type = (out.coerced_call_type || 0) + 1;   // "voicemail" as a type → other
   if (!v.ok) {
     const res = await _backToPending(db, row, { charge: true, why: `output_rejected:${v.why}` });
     if (res === 'failed') { out.failed++; acc.failed.push({ id: row.transcript_id, why: `output_rejected:${v.why}` }); } else out.retried++;
     out.rejected++;
     return null;
+  }
+
+  // v4.1: the GUIDED RETRY — the first answer names a party by the name that party greets or answers, on a call of
+  // exactly two substantive speakers: ONE more call with a fixed hint, then its own validation. Never loops: the
+  // retry's own self-address only nulls the name, as without a retry. Any failure keeps the first answer.
+  let final = v;
+  let again = null;
+  // Each self-addressed label must be one of the two substantive speakers; otherwise no retry (the hint dedupes them).
+  const labels = v.selfAddressed;
+  const subs = labels.length ? substantiveSpeakers(segments, v.summary.parties) : [];
+  const hint = subs.length === 2 && labels.every(l => subs.includes(l)) ? selfAddressHint(labels) : null;
+  if (hint) {
+    again = await _retrySelfAddressed(ctx, row, { model, vars, userInput, note, hint, vopts });
+    if (again && again.v) final = again.v;
   }
 
   // S3c: the note that shaped THIS summary is stamped into it ($.guide), so a later request (which replaces the guide)
@@ -572,7 +560,7 @@ async function _summarizeOne(ctx, row) {
     `UPDATE comms_transcripts
         SET state = 'summarized', summary = ?, summary_text = ?, summary_model = ?, grounding_dropped = ?
       WHERE id = ? AND state = 'transcribed'`,
-    [JSON.stringify({ ...v.summary, guide }), v.summaryText, model, Math.min(v.dropped, 65535), row.transcript_id]);
+    [JSON.stringify({ ...final.summary, guide }), final.summaryText, model, Math.min(final.dropped, 65535), row.transcript_id]);
   if (u.affectedRows !== 1) {
     // Fenced between the check and here (a purge): its ai_calls go too.
     out.ai_calls_cleared = (out.ai_calls_cleared || 0) + await _clearAiCalls(db, row.transcript_id);
@@ -583,14 +571,142 @@ async function _summarizeOne(ctx, row) {
   // v4: a party greeting its own assigned name ("Hey, Stuart" from "Stuart") — its name nulled; listed only once the
   // summary is written (a purge fenced above never is). Transcript ids, no content: they land in job_results.
   if (v.selfAddressed.length) out.self_addressed = [...(out.self_addressed || []), row.transcript_id];
+  if (again && again.called) out.self_addressed_retried = [...(out.self_addressed_retried || []), row.transcript_id];
+  // …and whether the retry fixed it: the FINAL answer (the retry's, or the first one kept) still self-addresses.
+  if (again && again.called && final.selfAddressed.length) {
+    out.self_addressed_after_retry = [...(out.self_addressed_after_retry || []), row.transcript_id];
+  }
   await db.query(
     `UPDATE comms_summaries SET state = 'done', est_cents = NULL, next_attempt_at = NULL, last_error = NULL,
             attempts = GREATEST(attempts, 1) - 1
       WHERE id = ? AND state IN ('pending', 'calling')`, [row.id]);
   await _guideOutcome(db, row, 'done');
   out.summarized++;
-  out.grounding_dropped += v.dropped;
-  return null;
+  out.grounding_dropped += final.dropped;
+  return again && again.stop ? 'stop' : null;
+}
+
+/** One model call, counted in out.calls; a timeout is charged its worst case (never 0); ai_call_ids synced after. */
+async function _call(ctx, row, { model, vars, userInput, systemAppend, est }) {
+  const { db, out, cfg } = ctx;
+  const ai = require('./aiService'); // lazy require (convention)
+  const r = await ai.call(db, {
+    promptKey: PROMPT_KEY,
+    vars,
+    userInput,
+    systemAppend,
+    model,
+    max_tokens: limits.maxTokens,
+    outputType: 'json',
+    timeout_ms: est.inTok > limits.longPromptTokens ? limits.timeoutLongMs : limits.timeoutShortMs,
+    consumerRef: consumerRef(row.transcript_id),
+    outputConfig: { effort: cfg.effort },
+    noRetryOnStop: true,
+    logContent: false,
+  });
+  out.calls++;
+  if (!r.ok && r.error === 'timeout') {
+    // The model may have run to the end: charge the worst case, never 0.
+    const [u] = r.callId
+      ? await db.query('UPDATE ai_calls SET cost_cents = ? WHERE id = ? AND cost_cents IS NULL', [Math.round(est.cents * 10_000) / 10_000, r.callId])
+      : [{ affectedRows: 0 }];
+    if (!u.affectedRows) await _chargeSynthetic(db, row.transcript_id, model, est.cents, 'timeout_charged');
+  }
+  await _syncLlm(db, row.transcript_id);
+  return r;
+}
+
+/** The row may have been purged while we waited: its ai_calls are cleared here (aiService logged after the purge did). */
+async function _purgedInFlight(ctx, row) {
+  const { db, out } = ctx;
+  const [[now]] = await db.query('SELECT state FROM comms_transcripts WHERE id = ?', [row.transcript_id]);
+  if (now && now.state !== 'purged') return false;
+  out.ai_calls_cleared = (out.ai_calls_cleared || 0) + await _clearAiCalls(db, row.transcript_id);
+  await _skip(db, row, 'purged');
+  out.fenced++;
+  return true;
+}
+
+/**
+ * v4.1: the speakers that count for the guided retry — a label the validated parties[] gives a role, with at least
+ * SUBSTANTIVE_MIN_WORDS words (normalised, all its segments), none of whose segments sounds like a recording
+ * (RECORDING). Deterministic, from the transcript and the validated parties only.
+ */
+const SUBSTANTIVE_MIN_WORDS = 2;
+const RECORDING = /\b(?:after the (?:tone|beep)|leave (?:a|your) (?:message|name)|record your message|press (?:\d|one|two|star|pound)|mailbox|is not available|are not available|the (?:number|person|party) you (?:have )?(?:dialed|called|are calling|reached)|please hold|your call is important)\b/i;
+function substantiveSpeakers(segments, parties) {
+  const roled = new Set((parties || []).map(p => p.speaker));
+  const words = new Map();
+  const recorded = new Set();
+  for (const s of Array.isArray(segments) ? segments : []) {
+    if (!s || !roled.has(s.s)) continue;
+    const n = ground.normalise(s.t);
+    words.set(s.s, (words.get(s.s) || 0) + (n ? n.split(' ').length : 0));
+    if (RECORDING.test(String(s.t || ''))) recorded.add(s.s);
+  }
+  return [...words].filter(([sp, n]) => n >= SUBSTANTIVE_MIN_WORDS && !recorded.has(sp)).map(([sp]) => sp);
+}
+
+/**
+ * v4.1: the retry's system line. FIXED text: the only thing from the call is the speaker LABEL (validated against the
+ * segments by the validator, and a vendor label shape here) — never the name, which is untrusted. null → no retry.
+ */
+const LABEL = /^[A-Za-z0-9]{1,8}$/;
+function selfAddressHint(list) {
+  const labels = Array.isArray(list) ? [...new Set(list.map(String))] : [];
+  if (!labels.length || !labels.every(l => LABEL.test(l))) return null;
+  const who = labels.map(l => `speaker ${l}`).join(' and ');
+  return `A previous answer for this call gave ${who} the name that ${labels.length > 1 ? 'each of them' : 'speaker ' + labels[0]} `
+    + 'greets or answers by name. A greeting or an answer names the OTHER speaker, never the one who says it. '
+    + 'Re-check "parties", every commitment\'s "by", and the summary, then give the whole answer again.';
+}
+
+/**
+ * v4.1: the ONE guided retry (see _summarizeOne). Charged like the first call: the first call's reservation is
+ * released (its ai_calls row holds its cost), the cap is read, and the retry is written ahead — est_cents and a FRESH
+ * lease that starts after the first call's row (+1 s), so a retry lost in flight is charged as lost_in_flight —
+ * BEFORE the call, under the first call's fence (still 'calling', still transcribed, not restricted, same guide).
+ * → { called, v?, stop? } | null (not made: the cap, or the fence). A purge in flight: the summary write's fence.
+ */
+async function _retrySelfAddressed(ctx, row, { model, vars, userInput, note, hint, vopts }) {
+  const { db, out, acc, cfg } = ctx;
+  const systemAppend = note ? `${NOTE_FRAMING}\n\n${hint}` : hint;
+  const est = _estimate(model, `${userInput}\n${systemAppend}`);
+  await db.query("UPDATE comms_summaries SET est_cents = NULL WHERE id = ? AND state = 'calling'", [row.id]);
+  const tx = require('./commsTranscribeSweep'); // lazy require (convention)
+  const mtd = await tx.monthToDateCents(db);
+  out.cap = { mtd_cents: Math.round(mtd * 100) / 100, cap_cents: cfg.capCents };
+  if (mtd + est.cents > cfg.capCents) return null;                    // over the cap: the first answer stands
+  const [wa] = await db.query(
+    `UPDATE comms_summaries s
+       JOIN comms_transcripts t ON t.id = s.transcript_id
+       JOIN comms_media m ON m.id = t.media_id
+        SET s.est_cents = ?, s.next_attempt_at = UTC_TIMESTAMP() + INTERVAL ? MINUTE + INTERVAL 1 SECOND
+      WHERE s.id = ? AND s.state = 'calling' AND t.state = 'transcribed' AND m.restricted = 0
+        AND NOT EXISTS (SELECT 1 FROM comms_summary_guides g
+                         WHERE g.transcript_id = s.transcript_id AND NOT (g.version <=> ?))`,
+    [Math.round(est.cents * 10_000) / 10_000, limits.leaseMin, row.id, row.g_ver]);
+  if (wa.affectedRows !== 1) return null;                             // changed meanwhile: the fenced write decides
+  // A purge that lands meanwhile is caught by the summary write's own fence (state = 'transcribed'), as for a first call.
+  const r = await _call(ctx, row, { model, vars, userInput, systemAppend, est });
+  if (!r.ok) {
+    // The first answer stands; a credential / rate / request refusal still ends the tick, as on a first call.
+    const status = Number((String(r.detail || '').match(/^http_(\d{3})/) || [])[1]) || null;
+    if (r.error === 'no_auth' || status === 401 || status === 403) {
+      acc.config.push(`Claude credential refused (${r.error}${status ? ` HTTP ${status}` : ''}) — check credential 12`);
+      out.stop = 'no_auth';
+      return { called: true, stop: true };
+    }
+    if (status === 429) { out.stop = 'rate_limited'; return { called: true, stop: true }; }
+    if (status && status >= 400 && status < 500) {
+      acc.config.push(`Claude refused the request (HTTP ${status}) — every summary would fail the same way; check the model / effort settings and the request`);
+      out.stop = 'request_refused';
+      return { called: true, stop: true };
+    }
+    return { called: true };
+  }
+  const v = ground.validate(r.json, vopts);
+  return v.ok ? { called: true, v } : { called: true };
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -671,4 +787,5 @@ async function runSummarizeSweep(db) {
   }
 }
 
-module.exports = { runSummarizeSweep, readConfig, limits, KEYS, LOCK_EXPR, PROMPT_KEY, consumerRef, FIRM_CONTEXT_MAX, STAFF_WHERE, MODELS, NOTE_FRAMING };
+module.exports = { runSummarizeSweep, readConfig, limits, KEYS, LOCK_EXPR, PROMPT_KEY, consumerRef, FIRM_CONTEXT_MAX, STAFF_WHERE, MODELS, NOTE_FRAMING,
+  selfAddressHint, substantiveSpeakers, SUBSTANTIVE_MIN_WORDS };
