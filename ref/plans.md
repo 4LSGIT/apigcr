@@ -527,6 +527,18 @@ Active surfaces with known next steps.
 
 ## Hygiene
 
+- **Mid-width table exposure beyond the fixtures (ui-custom H3, 2026-10-15).** H3 gave
+  Events / Calendar list (shell) and case People / Appointments their own scroll box at
+  769–1299px (pane 769–1079px in case.html); the survey is clean at 320–1200 on its
+  synthetic rows. Not covered: `contact.html` has its own copy of the phone table rule
+  and the same mid-width exposure; `forms/issn.html` has the same `.yc-section-pair`
+  (the `flex-wrap: wrap` one-liner applies); with REAL data (long addresses, emails)
+  the shell Cases / Contacts / Appts / Log tables, the case Events / Log tables, and
+  People even at ≥1300px can still widen the page. Dropping the bands' upper bound is a
+  one-line fix (a scroll-box table that fits renders identically) but would clip any
+  popover inside a cell under `overflow:auto` — check cells first. Bundle with the
+  next slice touching those pages.
+
 - **Mascot behavioural tests wait in wall clock (2026-10-15).** `tests/mascotSkins.test.js`
   drives the engine on real requestAnimationFrame at `Mascot.speed(n)` and polls with
   `Date.now()`/`setTimeout`, so results depend on how many frames a loaded machine
