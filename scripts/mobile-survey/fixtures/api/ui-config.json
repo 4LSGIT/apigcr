@@ -1,0 +1,23 @@
+{
+ "status": "success",
+ "firm": {
+  "registry_overrides": {
+   "hidden": ["moreCampaigns"],
+   "locked": [],
+   "renames": {
+    "cases": { "label": "Matters" },
+    "moreReports": { "label": "Numbers, charts and the weekly roll-up" }
+   },
+   "items": [
+    { "id": "firm:payroll-portal", "label": "Payroll and timesheets portal (vendor)", "icon": "money-check",
+      "action": { "type": "url", "href": "https://payroll.example.com/firm/sign-in?return=/timesheets/weekly-overview-with-a-long-path", "present": "window" } },
+    { "id": "firm:intake-tool", "label": "Intake checklist", "icon": "clipboard-check",
+      "action": { "type": "tool", "key": "qa-intake-tool", "present": "modal" } },
+    { "id": "firm:follow-ups", "label": "Lead follow-ups", "icon": "list-check",
+      "action": { "type": "view", "key": "lead_followups", "present": "modal" } }
+   ]
+  }
+ },
+ "user": {},
+ "can_edit_firm": true
+}

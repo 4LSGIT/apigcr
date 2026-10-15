@@ -181,6 +181,7 @@ manual/05-Subsystems/10-court-pipeline.md
 manual/05-Subsystems/11-calendar-types.md
 manual/05-Subsystems/12-calendar-tab.md
 manual/05-Subsystems/13-custom-fields.md
+manual/05-Subsystems/14-firm-launcher.md
 manual/05-Subsystems/README.md
 manual/06-Client-Facing/01-overview.md
 manual/06-Client-Facing/02-client-portal.md
@@ -258,6 +259,7 @@ public/case.html
 public/caseConfigManager.html
 public/caseconfig/calendarTypes.html
 public/caseconfig/fields.html
+public/caseconfig/firm.html
 public/caseconfig/pipelines.html
 public/caseconfig/types.html
 public/caseerror.html
@@ -821,6 +823,10 @@ scripts/mobile-survey/fixtures/api/phone-lines/all/conversations/5555550199.json
 scripts/mobile-survey/fixtures/api/phone-lines/readable.json
 scripts/mobile-survey/fixtures/api/readonly-keys.json
 scripts/mobile-survey/fixtures/api/tasks.json
+scripts/mobile-survey/fixtures/api/ui-config.json
+scripts/mobile-survey/fixtures/api/ui-config/pickers.json
+scripts/mobile-survey/fixtures/api/ui-config/versions.json
+scripts/mobile-survey/fixtures/api/ui-config/versions/2.json
 scripts/mobile-survey/fixtures/api/users.json
 scripts/mobile-survey/fixtures/firm-data.json
 scripts/mobile-survey/manualOrdinals.js
@@ -1150,6 +1156,7 @@ tests/fieldDefs.s1.test.js
 tests/filePlacementService.test.js
 tests/firmConfig.test.js
 tests/firmConfigCoverage.test.js
+tests/firmTab.test.js
 tests/fixtures/calendar_item_types.seed.json
 tests/fixtures/comms_s2_audio/meta.json
 tests/fixtures/comms_s2_audio/quo_cbr_info.mp3.head
@@ -1376,6 +1383,8 @@ tests/trusteesRoute.test.js
 tests/typeKeyVocabulary.test.js
 tests/uiConfig.mysql.test.js
 tests/uiConfigS31.test.js
+tests/uiConfigS32.mysql.test.js
+tests/uiConfigS32.test.js
 tests/unifiedEventsU2b.admin.test.js
 tests/unifiedEventsU2b.apptsFilter.test.js
 tests/unifiedEventsU2b.options.test.js

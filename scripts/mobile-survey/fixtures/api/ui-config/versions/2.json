@@ -1,0 +1,8 @@
+{
+ "status": "success",
+ "version": {
+  "id": 2, "config_key": "registry_overrides", "saved_by": 2, "saved_by_name": "Sam Staffmember-With-A-Long-Surname",
+  "saved_at": "2026-10-14T09:30:00.000Z",
+  "config": { "hidden": ["moreCampaigns", "moreRedirects"], "locked": [], "renames": { "bills": { "label": "Invoices" } }, "items": [] }
+ }
+}

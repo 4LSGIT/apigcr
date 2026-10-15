@@ -1,0 +1,8 @@
+{
+ "status": "success",
+ "versions": [
+  { "id": 3, "saved_by": 1, "saved_by_name": "Alex Admin", "saved_at": "2026-10-15T14:05:00.000Z", "size": 812, "is_current": true },
+  { "id": 2, "saved_by": 2, "saved_by_name": "Sam Staffmember-With-A-Long-Surname", "saved_at": "2026-10-14T09:30:00.000Z", "size": 120, "is_current": false },
+  { "id": 1, "saved_by": 1, "saved_by_name": "Alex Admin", "saved_at": "2026-10-13T16:45:00.000Z", "size": 64, "is_current": false }
+ ]
+}

@@ -1,0 +1,11 @@
+{
+ "status": "success",
+ "tools": [
+  { "key": "qa-intake-tool", "title": "Intake checklist" },
+  { "key": "qa-tool-with-a-very-long-key-name", "title": "A tool whose title runs on long enough to wrap twice at phone width" }
+ ],
+ "views": [
+  { "key": "lead_followups", "title": "Leads — Follow Ups" },
+  { "key": "upcoming_hearings", "title": "Upcoming hearings" }
+ ]
+}

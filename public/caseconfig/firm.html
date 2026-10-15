@@ -1,0 +1,927 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Firm</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+  <link rel="stylesheet" href="/theme.css">
+  <script src="/themeSync.js"></script>
+  <style>
+    /* ══════════════════════════════════════════════
+       FIRM SUB-PAGE — self-contained styles (house pattern: theme.css tokens,
+       no style.css). Labels and hints by CLASS only: .yc-flabel / .yc-hint
+       are pane-local copies of scripts.js's dialog values (AI_CONTEXT §12 —
+       this page loads neither style.css nor scripts.js, like ctaManager.html).
+       ══════════════════════════════════════════════ */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      font-size: 14px; color: var(--text); background: var(--page-bg);
+      display: flex; flex-direction: column; height: 100vh; overflow: hidden;
+    }
+    .yc-flabel { display: block; font-size: var(--fs-sm); font-weight: 700; color: var(--text); margin: 0 0 4px; }
+    .yc-hint { display: block; font-size: var(--fs-xs); font-weight: 400; color: var(--text-muted); margin-top: 4px; line-height: 1.45; }
+
+    .btn {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 6px 12px; border-radius: 6px; border: none;
+      font-size: 12px; font-weight: 500; cursor: pointer; font-family: inherit;
+      transition: all 0.15s; white-space: nowrap;
+    }
+    .btn-primary { background: var(--accent); color: var(--accent-text); }
+    .btn-primary:hover { background: var(--accent-dark); }
+    .btn-outline { background: var(--page-bg); border: 1px solid var(--border); color: var(--text-2); }
+    .btn-outline:hover { background: var(--border); }
+    .btn-sm { padding: 4px 9px; font-size: 11px; }
+    .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    #wrap { flex: 1; overflow: auto; padding: 16px; }
+    .fm-page { max-width: 980px; margin: 0 auto; display: flex; flex-direction: column; gap: 16px; }
+    .fm-intro { font-size: 13px; color: var(--text-2); line-height: 1.5; }
+    .fm-toc { display: flex; flex-wrap: wrap; gap: 6px; }
+    .fm-banner {
+      border-radius: 8px; padding: 10px 12px; font-size: 13px; line-height: 1.45;
+      background: var(--danger-soft); color: var(--danger-on-soft); border: 1px solid var(--danger);
+      overflow-wrap: anywhere;
+    }
+    .fm-banner[hidden] { display: none; }
+
+    /* A section: the unit this page hosts (Launcher today). */
+    .fm-section { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; min-width: 0; }
+    .fm-sec-head {
+      display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px;
+      padding: 12px 14px; border-bottom: 1px solid var(--border);
+    }
+    .fm-sec-head h2 { font-size: 15px; font-weight: 700; display: flex; align-items: center; gap: 8px; }
+    .fm-sec-head h2 i { color: var(--text-muted); }
+    .fm-sec-status { font-size: 12px; color: var(--text-muted); flex: 1 1 auto; min-width: 0; }
+    .fm-sec-status.dirty { color: var(--warn); font-weight: 600; }
+    .fm-sec-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+    .fm-sec-body { padding: 14px; display: flex; flex-direction: column; gap: 18px; min-width: 0; }
+    .fm-block h3 { font-size: 13px; font-weight: 700; margin-bottom: 2px; }
+    .fm-block > .yc-hint { margin: 0 0 10px; }
+
+    /* Hide + rename: one row per registry item, grouped like All. */
+    .fm-group-title {
+      font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em;
+      color: var(--text-2); background: var(--surface-2); padding: 5px 8px; border-radius: 6px; margin: 10px 0 4px;
+    }
+    .fm-row {
+      display: grid; grid-template-columns: 4.5em 22px minmax(7em, 1fr) minmax(9em, 1.4fr);
+      align-items: center; gap: 4px 10px; padding: 5px 8px; border-bottom: 1px solid var(--page-bg);
+    }
+    .fm-row.is-hidden .fm-name, .fm-row.is-hidden .fm-ico { opacity: .45; text-decoration: line-through; }
+    .fm-hide { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; cursor: pointer; }
+    .fm-hide input:disabled + span { color: var(--text-muted); }
+    .fm-ico { color: var(--text-muted); text-align: center; }
+    .fm-name { font-weight: 600; font-size: 13px; overflow-wrap: anywhere; min-width: 0; }
+    .fm-name .yc-hint { display: inline; margin: 0 0 0 6px; }
+    .fm-row .fm-err, .fm-item .fm-err { grid-column: 1 / -1; }
+
+    .fm-section input[type=text], .fm-section select {
+      width: 100%; min-width: 0; padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px;
+      font-size: 13px; font-family: inherit; background: var(--page-bg); color: var(--text); outline: none;
+    }
+    .fm-section input[type=text]:focus, .fm-section select:focus { border-color: var(--info); }
+    .fm-section input.bad, .fm-section select.bad { border-color: var(--danger); }
+    .fm-err { font-size: 12px; color: var(--danger); overflow-wrap: anywhere; }
+    .fm-err:empty { display: none; }
+
+    /* Firm items: one card per item. */
+    .fm-items { display: flex; flex-direction: column; gap: 8px; }
+    .fm-item { border: 1px solid var(--border); border-radius: 8px; padding: 10px; background: var(--page-bg); min-width: 0; }
+    .fm-item-grid { display: grid; grid-template-columns: minmax(8em, 1.2fr) minmax(8em, 1fr) minmax(7em, .8fr) minmax(10em, 1.6fr); gap: 8px 10px; }
+    .fm-item-grid > div { min-width: 0; }
+    .fm-icon-in { display: flex; align-items: center; gap: 6px; }
+    .fm-icon-prev { width: 22px; text-align: center; color: var(--text-2); flex: 0 0 auto; }
+    .fm-icon-prev .bad { opacity: .35; }
+    .fm-item-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin-top: 8px; }
+    .fm-item-foot .yc-hint { margin: 0; flex: 1 1 12em; min-width: 0; overflow-wrap: anywhere; }
+    .fm-item-foot code { font-size: 11px; }
+    .fm-item-btns { display: flex; gap: 4px; }
+    .fm-kept { font-size: 13px; overflow-wrap: anywhere; }
+    .fm-empty { font-size: 13px; color: var(--text-muted); padding: 6px 2px; }
+
+    /* History (in-page panel under the section head). */
+    .fm-history { border: 1px solid var(--border); border-radius: 8px; padding: 10px; background: var(--page-bg); }
+    .fm-history[hidden] { display: none; }
+    .fm-history h3 { font-size: 13px; font-weight: 700; margin-bottom: 6px; }
+    .fm-ver { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; padding: 6px 0; border-bottom: 1px solid var(--border); }
+    .fm-ver:last-child { border-bottom: none; }
+    .fm-ver-when { font-size: 13px; font-weight: 600; }
+    .fm-ver-who { font-size: 12px; color: var(--text-2); flex: 1 1 8em; min-width: 0; overflow-wrap: anywhere; }
+    .fm-badge { font-size: 10px; font-weight: 700; padding: 1px 6px; border-radius: 4px; background: var(--accent-soft); color: var(--info-dark); }
+    .fm-ver-view { flex: 1 1 100%; font-size: 12px; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; }
+    .fm-ver-view dt { font-weight: 700; margin-top: 6px; }
+    .fm-ver-view dt:first-child { margin-top: 0; }
+    .fm-ver-view dd { margin: 2px 0 0 0; color: var(--text-2); overflow-wrap: anywhere; }
+
+    .empty-state {
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      padding: 40px 10px; color: var(--text-muted); gap: 10px; text-align: center;
+    }
+    .empty-state i { font-size: 32px; opacity: 0.25; }
+    .spin { animation: spin 0.8s linear infinite; display: inline-block; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* Phones: the rename input takes its own line; item fields stack. */
+    @media (max-width: 640px) {
+      #wrap { padding: 10px; }
+      .fm-row { grid-template-columns: 4.5em 22px minmax(0, 1fr); }
+      .fm-row .fm-rename { grid-column: 1 / -1; }
+      .fm-row[aria-hidden] .fm-rename { display: none; }
+      .fm-item-grid { grid-template-columns: minmax(0, 1fr); }
+    }
+    @media (min-width: 641px) and (max-width: 900px) {
+      .fm-item-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+
+    ::-webkit-scrollbar { width: 4px; height: 4px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+  </style>
+</head>
+<body>
+
+<div id="wrap">
+  <div class="fm-page">
+    <p class="fm-intro">Settings that apply to <b>everyone at the firm</b>. Only staff with the firm-settings
+      permission (the admin, IT and SU roles) see this tab, and the server checks that permission on every save.</p>
+    <div class="fm-banner" id="fm-banner" role="alert" hidden></div>
+    <nav class="fm-toc" id="fm-toc" hidden></nav>
+    <div id="fm-sections"></div>
+  </div>
+</div>
+
+<script>
+// ═══════════════════════════════════════════════════════════════
+// FIRM SUB-PAGE (Config shell → Firm) — ui-custom S3.2
+//
+// The CFG-3 firm surface: firm-wide settings, as a HOST OF SECTIONS. Each
+// section is one object in SECTIONS below:
+//   { id, title, icon, mount(body, head), load(), isDirty(), save() }
+// The page owns the shell protocol (topbar Save/Refresh, the dirty guard,
+// the 403 session message, the banner); a section owns its own form. Adding a
+// section (the settings arc: app_settings firm sections, the entitlements
+// editor) is purely additive — a new object, nothing else changes.
+//
+// Section 1, Launcher: the firm registry_overrides document of ui_config
+// (PUT /api/ui-config scope firm; grammar lib/uiConfigShape.js). A FORM, never
+// JSON: hide (checkbox = hidden), rename, firm items. Fields it does not edit
+// (locked — inert until S4 — unknown keys, items of a kind it can't edit) are
+// carried through a save untouched. After a save the shell's firmData.ui is
+// updated and ycLauncher.applyAccess({ ui }) re-runs the overlay, so the
+// admin's own launcher changes at once; everyone else gets it on next load.
+//
+// VISIBILITY of this tab is the shell's business (can_edit_firm from GET
+// /api/ui-config); AUTHORITY is the server's — every route this page calls is
+// gated on firm.settings, and a firm write is re-checked in
+// uiConfigService.write.
+//
+// Shell protocol: P.apiSend relay; P.setTopbarButtons; lifecycle hooks
+// onShow / onHide / onSave / onRefresh on this window; the launcher via the
+// Config shell's bridge getters (P.ycLauncher, P.FEATURE_REGISTRY,
+// P.DEFAULT_LAYOUTS, P.firmData — live views of index.html's).
+// ═══════════════════════════════════════════════════════════════
+
+const P = window.parent;
+const api = (...args) => P.apiSend(...args);
+const E = id => document.getElementById(id);
+const Toast = window.Swal ? Swal.mixin({ toast: true, position: 'top-end', showConfirmButton: false, timer: 3200 }) : null;
+
+function esc(s) {
+  return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+function toast(icon, title) { if (Toast) Toast.fire({ icon, title }); }
+async function ask(title, text, confirmText) {
+  if (window.Swal) {
+    const r = await Swal.fire({ icon: 'question', title, text, showCancelButton: true, confirmButtonText: confirmText || 'OK' });
+    return !!r.isConfirmed;
+  }
+  return window.confirm(title + '\n\n' + text);
+}
+
+const SESSION_MSG = 'Your session predates a permissions change — sign out and back in.';
+// A 409 is optimistic concurrency (uiConfigService.write's base check):
+// someone saved since this page loaded. Never merged, never overwritten —
+// the edits stay on the page until the admin reloads (Refresh asks first).
+const CONFLICT_MSG = 'Another admin saved changes since you opened this — reload to see them; your edits are kept until you reload';
+/** A request error → the plain sentence to show. A 403 here is the legacy
+ *  token without a roles claim (or a role revoked since this page loaded):
+ *  never a generic error (S3.1 review N6). */
+function errText(e, what) {
+  if (e && e.status === 403) return SESSION_MSG;
+  if (e && e.status === 409) return CONFLICT_MSG;
+  return (what ? what + ': ' : '') + ((e && e.message) || 'request failed');
+}
+function banner(msg) {
+  const b = E('fm-banner');
+  if (!msg) { b.hidden = true; b.textContent = ''; return; }
+  b.textContent = msg;
+  b.hidden = false;
+}
+
+// ── Canonical JSON: object keys sorted at every level, arrays in order —
+//    lib/uiConfigShape.js canonical(), line for line. MySQL JSON re-orders
+//    keys on write, so "is the form different from what is stored?" must not
+//    see key order (tests/firmTab.test.js pins this copy to the server's). ──
+function canonical(v) {
+  if (Array.isArray(v)) return '[' + v.map(canonical).join(',') + ']';
+  if (v !== null && typeof v === 'object') {
+    return '{' + Object.keys(v).sort().map((k) => JSON.stringify(k) + ':' + canonical(v[k])).join(',') + '}';
+  }
+  return JSON.stringify(v);
+}
+const isObj = (o) => o !== null && typeof o === 'object' && !Array.isArray(o);
+
+// ═══════════════════════════════════════════════════════════════
+// SECTION: Launcher
+// ═══════════════════════════════════════════════════════════════
+// The cheap client checks — instant feedback only; the server (lib/
+// uiConfigShape.js) is the authority and its errors[] land inline too.
+const ICON_RE = /^[a-z0-9-]{1,40}$/;          // lib/uiConfigShape ICON_RE
+const FIRM_ID_RE = /^firm:[a-z0-9-]{1,40}$/;  // lib/uiConfigShape FIRM_ID_RE
+const CONTROL_RE = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/;
+const LABEL_MAX = 40;
+const HREF_MAX = 2000;
+const EDIT_TYPES = { url: 'Link', tool: 'Tool', view: 'Saved view' };
+const EMPTY_DOC = Object.freeze({ hidden: [], locked: [], renames: {}, items: [] });
+
+function labelProblem(v, optional) {
+  const s = String(v ?? '').trim();
+  if (!s) return optional ? null : 'a label is required';
+  if ([...s].length > LABEL_MAX) return `at most ${LABEL_MAX} characters`;
+  if (CONTROL_RE.test(s)) return 'plain text only';
+  return null;
+}
+function iconProblem(v) {
+  return ICON_RE.test(String(v ?? '').trim()) ? null : 'a Font Awesome name: a-z, 0-9 and dashes (e.g. money-check)';
+}
+function hrefProblem(v) {
+  const h = String(v ?? '').trim();
+  if (!h) return 'an address is required';
+  if (h.length > HREF_MAX) return `at most ${HREF_MAX} characters`;
+  if (/[\s\\]/.test(h) || CONTROL_RE.test(h)) return 'no spaces, backslashes or control characters';
+  if (h.charAt(0) === '/') return h.charAt(1) === '/' ? 'use https://… for another site' : null;
+  return /^https:\/\/[^/]/i.test(h) ? null : 'must start with https:// or be an app path like /…';
+}
+
+/** label → a firm id 'firm:<slug>' that no id in `taken` holds. */
+function slugOf(label) {
+  return String(label ?? '').normalize('NFKD').replace(/[̀-ͯ]/g, '').toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+}
+function makeId(label, taken) {
+  const base = slugOf(label).slice(0, 40).replace(/-+$/, '') || 'item';
+  let id = 'firm:' + base;
+  for (let n = 2; taken.has(id); n++) {
+    const suf = '-' + n;
+    id = 'firm:' + (base.slice(0, 40 - suf.length).replace(/-+$/, '') || 'item') + suf;
+  }
+  return id;
+}
+
+/** The registry rows the form offers, grouped like All. Read from the shell's
+ *  own ycLauncher.computeEffective (never re-derived here): every item, as an
+ *  admin would see it, with no hides and no renames — so hidden items are
+ *  listed too. computeEffective also RECORDS the group order it computed
+ *  (ycLauncher.groups(), which the All tab renders by), so it is handed the
+ *  shell's own firm items: the record it leaves is the shell's. */
+function launcherCatalog(L, firmData) {
+  const ro = firmData && isObj(firmData.ui) && isObj(firmData.ui.firm) && isObj(firmData.ui.firm.registry_overrides)
+    ? firmData.ui.firm.registry_overrides : null;
+  const ui = { firm: { registry_overrides: { items: ro && Array.isArray(ro.items) ? ro.items : [] } }, user: {} };
+  const entries = L.computeEffective({ isAdmin: true, denied: [], ui, customTab: { src: '#' } })
+    .filter((e) => !FIRM_ID_RE.test(e.id));
+  const groups = L.groups().filter((g) => entries.some((e) => e.group === g));
+  const undeniable = Array.isArray(L.UNDENIABLE) ? L.UNDENIABLE.slice() : ['moreSettings', 'helpSupport'];
+  return { entries, groups, undeniable };
+}
+
+/** stored document (+ the catalog) → the form's state. */
+function formFromDoc(doc, catalog) {
+  const d = isObj(doc) ? doc : EMPTY_DOC;
+  const shown = new Set(catalog.entries.map((e) => e.id));
+  const renames = {};
+  const ren = isObj(d.renames) ? d.renames : {};
+  for (const id of shown) {
+    if (isObj(ren[id]) && typeof ren[id].label === 'string') renames[id] = ren[id].label;
+  }
+  const items = (Array.isArray(d.items) ? d.items : []).map((it) => {
+    const a = isObj(it) && isObj(it.action) ? it.action : null;
+    const editable = a && Object.prototype.hasOwnProperty.call(EDIT_TYPES, a.type) && typeof it.id === 'string';
+    if (!editable) return { kept: true, orig: it, id: isObj(it) ? it.id : undefined, saved: true };
+    return {
+      kept: false, orig: it, saved: true, id: it.id,
+      label: typeof it.label === 'string' ? it.label : '',
+      icon: typeof it.icon === 'string' ? it.icon : '',
+      type: a.type,
+      href: a.type === 'url' && typeof a.href === 'string' ? a.href : '',
+      key: a.type !== 'url' && typeof a.key === 'string' ? a.key : '',
+    };
+  });
+  const hidden = new Set((Array.isArray(d.hidden) ? d.hidden : []).filter((id) => shown.has(id)));
+  return { hidden, renames, items };
+}
+
+/** The form → the document a save sends. Data the form does not show rides
+ *  through untouched: hidden / renames entries for ids it doesn't list, every
+ *  top-level key but the four it builds (locked included), an item's own
+ *  extra fields, and items of a kind it cannot edit. Hidden keeps the stored
+ *  order for ids still hidden (so un-ticking then re-ticking is no change). */
+function docFromForm(stored, form, catalog) {
+  const base = isObj(stored) ? stored : EMPTY_DOC;
+  const order = catalog.entries.map((e) => e.id);
+  const shown = new Set(order);
+  const renameable = new Set(order.filter((id) => id !== 'custom'));
+
+  const hidden = (Array.isArray(base.hidden) ? base.hidden : []).filter((id) => !shown.has(id) || form.hidden.has(id));
+  for (const id of order) if (form.hidden.has(id) && !hidden.includes(id)) hidden.push(id);
+
+  const renames = {};
+  const baseRen = isObj(base.renames) ? base.renames : {};
+  for (const id of Object.keys(baseRen)) if (!renameable.has(id)) renames[id] = baseRen[id];
+  for (const id of order) {
+    if (!renameable.has(id)) continue;
+    const v = String(form.renames[id] ?? '').trim();
+    if (v) renames[id] = { ...(isObj(baseRen[id]) ? baseRen[id] : {}), label: v };
+  }
+
+  const items = form.items.map((row) => {
+    if (row.kept) return row.orig;
+    const orig = isObj(row.orig) ? row.orig : {};
+    const oa = isObj(orig.action) && orig.action.type === row.type ? orig.action : null;
+    const action = row.type === 'url'
+      ? { ...(oa || {}), type: 'url', href: String(row.href ?? '').trim(), present: (oa && oa.present) || 'window' }
+      : { ...(oa || {}), type: row.type, key: row.key || '', present: (oa && oa.present) || 'modal' };
+    return { ...orig, id: row.id, label: String(row.label ?? '').trim(), icon: String(row.icon ?? '').trim(), action };
+  });
+
+  return { ...base, hidden, locked: Array.isArray(base.locked) ? base.locked : [], renames, items };
+}
+
+/** Every firm id the form must not hand a NEW row: other rows', and EVERY
+ *  firm id the stored document references anywhere — items, hidden, locked,
+ *  renames keys, and any field or key carried through untouched. A firm id
+ *  that is still referenced (say hidden or locked after its item was deleted
+ *  and saved) is never handed to a new item, which would inherit that
+ *  reference. Ids referenced only from users' own rows (shortcuts) or from
+ *  older versions are not visible here: a durable retired-ids record comes
+ *  with S4 (review SF2 (b)). */
+function firmIdsIn(v, out) {
+  if (typeof v === 'string') { if (FIRM_ID_RE.test(v)) out.add(v); return out; }
+  if (Array.isArray(v)) { v.forEach((x) => firmIdsIn(x, out)); return out; }
+  if (isObj(v)) for (const k of Object.keys(v)) { if (FIRM_ID_RE.test(k)) out.add(k); firmIdsIn(v[k], out); }
+  return out;
+}
+function takenIds(stored, form, exceptRow) {
+  const t = firmIdsIn(stored, new Set());
+  form.items.forEach((r) => { if (r !== exceptRow && typeof r.id === 'string') t.add(r.id); });
+  return t;
+}
+/** A row's label changed: a NEW row's id follows it; a saved row's id is
+ *  frozen (ids are API surface — PLAN §5: hidden, shortcuts and denies key on
+ *  them). */
+function relabelRow(stored, form, row, label) {
+  row.label = label;
+  if (!row.saved) row.id = makeId(label, takenIds(stored, form, row));
+}
+
+/** The form's client-side problems: { rows: {i: msg}, renames: {id: msg}, count }. */
+function formProblems(form) {
+  const out = { rows: {}, renames: {}, count: 0 };
+  form.items.forEach((r, i) => {
+    if (r.kept) return;
+    const p = labelProblem(r.label) || iconProblem(r.icon)
+      || (r.type === 'url' ? hrefProblem(r.href) : (r.key ? null : `choose a ${r.type === 'tool' ? 'tool' : 'saved view'}`));
+    if (p) { out.rows[i] = p; out.count++; }
+  });
+  for (const id of Object.keys(form.renames)) {
+    const p = labelProblem(form.renames[id], true);
+    if (p) { out.renames[id] = p; out.count++; }
+  }
+  return out;
+}
+
+/** The server's errors[] → where they belong on the form (paths are the
+ *  document's: items[i] is form row i, renames.<id>, hidden[i]). */
+function placeErrors(errors, doc) {
+  const out = { rows: {}, renames: {}, hidden: {}, general: [] };
+  const add = (bag, k, m) => { (bag[k] = bag[k] || []).push(m); };
+  (Array.isArray(errors) ? errors : []).forEach((m) => {
+    const s = String(m);
+    let x;
+    if ((x = /^items\[(\d+)\]/.exec(s))) add(out.rows, Number(x[1]), s.replace(/^items\[\d+\](\.action)?:?\s*/, ''));
+    else if ((x = /^renames\.([A-Za-z0-9:-]+)/.exec(s))) add(out.renames, x[1], s.replace(/^renames\.[A-Za-z0-9:-]+:?\s*/, ''));
+    else if ((x = /^hidden\[(\d+)\]/.exec(s)) && doc && Array.isArray(doc.hidden) && doc.hidden[Number(x[1])] != null) {
+      add(out.hidden, doc.hidden[Number(x[1])], s.replace(/^hidden\[\d+\]:?\s*/, ''));
+    } else out.general.push(s);
+  });
+  return out;
+}
+
+/** Hand the saved document to the shell: firmData.ui updated in place, then
+ *  the overlay re-run (loadFirmData alone would NOT re-run it — S3.1). */
+function refreshShell(config) {
+  const fd = P.firmData, L = P.ycLauncher;
+  if (!fd || !L || typeof L.applyAccess !== 'function') {
+    console.warn('[firm] shell launcher not reachable — the change shows on next load');
+    return false;
+  }
+  const ui = isObj(fd.ui) ? fd.ui : { firm: {}, user: {} };
+  fd.ui = { ...ui, firm: { ...(isObj(ui.firm) ? ui.firm : {}), registry_overrides: config } };
+  L.applyAccess({ ui: fd.ui });
+  return true;
+}
+
+const LauncherSection = {
+  id: 'launcher', title: 'Launcher', icon: 'grip',
+  // base: the newest firm version id this page loaded (null = no firm row
+  // yet; undefined = the server did not say — then no base is sent).
+  st: { stored: null, base: undefined, form: null, catalog: null, pickers: { tools: [], views: [] }, srv: null, loaded: false, error: null },
+  body: null, head: null,
+
+  mount(body, head) {
+    this.body = body; this.head = head;
+    head.querySelector('.fm-sec-actions').innerHTML =
+      '<button type="button" class="btn btn-outline btn-sm" data-act="history"><i class="fa-solid fa-clock-rotate-left"></i> History</button>';
+    head.addEventListener('click', (ev) => {
+      if (ev.target.closest('[data-act=history]')) this.toggleHistory();
+    });
+    body.addEventListener('input', (ev) => this.onInput(ev));
+    body.addEventListener('change', (ev) => this.onChange(ev));
+    body.addEventListener('click', (ev) => this.onClick(ev));
+  },
+
+  async load() {
+    const L = P.ycLauncher;
+    if (!L || typeof L.computeEffective !== 'function') {
+      this.st.error = 'The launcher is not reachable from here — open this page from YisraCase (More → YisraCase Config).';
+      this.render();
+      return;
+    }
+    const [cfg, pk] = await Promise.allSettled([api('/api/ui-config'), api('/api/ui-config/pickers')]);
+    if (cfg.status === 'rejected') {
+      this.st.error = errText(cfg.reason, 'Could not load the launcher settings');
+      this.render();
+      return;
+    }
+    if (pk.status === 'rejected') banner(errText(pk.reason, 'Could not load the tool and view lists'));
+    else this.st.pickers = { tools: pk.value.tools || [], views: pk.value.views || [] };
+    const doc = cfg.value && isObj(cfg.value.firm) && isObj(cfg.value.firm.registry_overrides) ? cfg.value.firm.registry_overrides : null;
+    this.st.catalog = launcherCatalog(L, P.firmData);
+    const fv = cfg.value && isObj(cfg.value.firm_versions) ? cfg.value.firm_versions : null;
+    this.st.base = fv && Object.prototype.hasOwnProperty.call(fv, 'registry_overrides') ? fv.registry_overrides : undefined;
+    this.setStored(doc);
+    this.st.loaded = true;
+    this.st.error = null;
+    this.render();
+  },
+
+  setStored(doc) {
+    this.st.stored = doc;
+    this.st.form = formFromDoc(doc, this.st.catalog);
+    this.st.srv = null;
+  },
+  doc() { return docFromForm(this.st.stored, this.st.form, this.st.catalog); },
+  isDirty() {
+    if (!this.st.loaded) return false;
+    return canonical(this.doc()) !== canonical(isObj(this.st.stored) ? this.st.stored : EMPTY_DOC);
+  },
+
+  async save() {
+    const probs = formProblems(this.st.form);
+    if (probs.count) {
+      this.renderErrors();
+      banner(`Launcher: fix the ${probs.count === 1 ? 'highlighted field' : probs.count + ' highlighted fields'} first.`);
+      return false;
+    }
+    const doc = this.doc();
+    let r;
+    try {
+      const body = { scope: 'firm', config_key: 'registry_overrides', config: doc };
+      if (this.st.base !== undefined) body.base = this.st.base;   // a stale base → 409, never an overwrite
+      r = await api('/api/ui-config', 'PUT', body);
+    } catch (e) {
+      if (e && e.status === 400 && e.body && Array.isArray(e.body.errors)) {
+        this.st.srv = placeErrors(e.body.errors, doc);
+        this.renderErrors();
+        banner('Launcher: the server refused the save — see the highlighted fields.' +
+          (this.st.srv.general.length ? ' ' + this.st.srv.general.join(' · ') : ''));
+      } else {
+        banner(errText(e, 'Launcher: save failed'));
+      }
+      return false;
+    }
+    this.setStored(r.config);
+    if (Object.prototype.hasOwnProperty.call(r, 'version_id')) this.st.base = r.version_id;
+    this.render();
+    const live = refreshShell(r.config);
+    toast('success', r.changed === false ? 'Nothing changed' : (live ? 'Saved — your launcher is updated' : 'Saved'));
+    return true;
+  },
+
+  // ── rendering ──
+  render() {
+    const st = this.st;
+    if (st.error) {
+      this.body.innerHTML = '';
+      const d = document.createElement('div');
+      d.className = 'empty-state';
+      d.innerHTML = '<i class="fa-solid fa-triangle-exclamation"></i><div></div>';
+      d.lastChild.textContent = st.error;
+      this.body.appendChild(d);
+      this.status();
+      return;
+    }
+    if (!st.loaded) {
+      this.body.innerHTML = '<div class="empty-state"><i class="fa-solid fa-spinner spin"></i><div>Loading…</div></div>';
+      return;
+    }
+    const cat = st.catalog;
+    const groups = cat.groups.map((g) => `<div class="fm-group-title">${esc(g)}</div>` +
+      cat.entries.filter((e) => e.group === g).map((e) => this.rowHtml(e)).join('')).join('');
+    this.body.innerHTML = `
+      <div class="fm-history" id="fm-history" hidden></div>
+      <div class="fm-block">
+        <h3>Hide and rename</h3>
+        <span class="yc-hint">Tick <b>Hide</b> to take a feature off everyone's launcher — the sidebar, Home, the grids,
+          All and the Ctrl-K search. A name typed beside it replaces its label everywhere; leave it empty to keep the
+          usual name. <b>Hiding is decluttering, not security:</b> it removes a button, not anyone's access — what a
+          person may open is decided by their role. Settings and Help &amp; Support always stay.</span>
+        <div class="fm-row" aria-hidden="true">
+          <span class="yc-flabel">Hide</span><span></span><span class="yc-flabel">Feature</span><span class="yc-flabel fm-rename">Rename to</span>
+        </div>
+        ${groups}
+      </div>
+      <div class="fm-block">
+        <h3>Firm items</h3>
+        <span class="yc-hint">Your own launcher entries, listed under <b>Firm</b> in All and found by the Ctrl-K search.
+          A <b>link</b> opens in a new window; a <b>tool</b> or <b>saved view</b> opens over the app. An item's id is
+          made from its first label and never changes after it is saved.</span>
+        <div class="fm-items" id="fm-items">${this.itemsHtml()}</div>
+        <div style="margin-top:8px"><button type="button" class="btn btn-outline btn-sm" data-act="add-item"><i class="fa-solid fa-plus"></i> Add item</button></div>
+      </div>
+      <span class="yc-hint">Saved changes reach your own launcher straight away. Everyone else sees them the next time they load YisraCase.
+        Every save is kept in <b>History</b>, where an earlier version can be restored.</span>`;
+    this.renderErrors();
+    this.status();
+  },
+
+  rowHtml(e) {
+    const st = this.st, und = st.catalog.undeniable.includes(e.id), hid = st.form.hidden.has(e.id);
+    const ren = e.id === 'custom'
+      ? '<span class="yc-hint fm-rename" style="margin:0">Titled by each user</span>'
+      : `<input type="text" class="fm-rename" data-rename="${esc(e.id)}" maxlength="80" placeholder="${esc(e.label)}"
+           aria-label="Rename ${esc(e.label)}" value="${esc(st.form.renames[e.id] ?? '')}">`;
+    return `<div class="fm-row${hid ? ' is-hidden' : ''}" data-row-id="${esc(e.id)}">
+      <label class="fm-hide" title="${und ? 'always shown' : 'hide from everyone\'s launcher'}">
+        <input type="checkbox" data-hide="${esc(e.id)}" ${hid ? 'checked' : ''} ${und ? 'disabled' : ''}><span>${und ? 'Always' : 'Hide'}</span></label>
+      <span class="fm-ico"><i class="fa-solid fa-${esc(ICON_RE.test(e.icon) ? e.icon : 'square')}"></i></span>
+      <span class="fm-name">${esc(e.label)}</span>
+      ${ren}
+      <div class="fm-err" data-err-rename="${esc(e.id)}"></div>
+    </div>`;
+  },
+
+  itemsHtml() {
+    const rows = this.st.form.items;
+    if (!rows.length) return '<div class="fm-empty">No firm items yet.</div>';
+    return rows.map((r, i) => this.itemHtml(r, i, rows.length)).join('');
+  },
+
+  itemHtml(r, i, n) {
+    const btns = `<span class="fm-item-btns">
+        <button type="button" class="btn btn-outline btn-sm" data-act="up" title="Move up" ${i === 0 ? 'disabled' : ''}><i class="fa-solid fa-arrow-up"></i></button>
+        <button type="button" class="btn btn-outline btn-sm" data-act="down" title="Move down" ${i === n - 1 ? 'disabled' : ''}><i class="fa-solid fa-arrow-down"></i></button>
+        <button type="button" class="btn btn-outline btn-sm" data-act="del" title="Delete"><i class="fa-solid fa-trash"></i></button></span>`;
+    if (r.kept) {
+      const it = isObj(r.orig) ? r.orig : {};
+      const t = isObj(it.action) ? it.action.type : '?';
+      return `<div class="fm-item" data-row="${i}">
+        <div class="fm-kept"><b>${esc(it.label ?? it.id ?? 'item')}</b> — a <code>${esc(t)}</code> item this editor can't change; it is kept as it is.</div>
+        <div class="fm-item-foot"><span class="yc-hint">id <code>${esc(it.id ?? '')}</code></span>${btns}</div>
+        <div class="fm-err" data-err-row="${i}"></div></div>`;
+    }
+    const pre = `fi${i}`;
+    const typeSel = Object.keys(EDIT_TYPES).map((t) => `<option value="${t}" ${r.type === t ? 'selected' : ''}>${EDIT_TYPES[t]}</option>`).join('');
+    let target;
+    if (r.type === 'url') {
+      target = `<label class="yc-flabel" for="${pre}-href">Address</label>
+        <input type="text" id="${pre}-href" data-f="href" maxlength="2000" placeholder="https://… or /path" value="${esc(r.href)}">
+        <span class="yc-hint">Opens in a new window.</span>`;
+    } else {
+      const list = r.type === 'tool' ? this.st.pickers.tools : this.st.pickers.views;
+      const opts = list.map((o) => `<option value="${esc(o.key)}" ${o.key === r.key ? 'selected' : ''}>${esc(o.title)}</option>`);
+      if (r.key && !list.some((o) => o.key === r.key)) {
+        opts.unshift(`<option value="${esc(r.key)}" selected>${esc(r.key)} (${r.type === 'tool' ? 'not live' : 'not found'})</option>`);
+      }
+      const what = r.type === 'tool' ? 'Tool' : 'Saved view';
+      target = `<label class="yc-flabel" for="${pre}-key">${what}</label>
+        <select id="${pre}-key" data-f="key"><option value="" ${r.key ? '' : 'selected'}>Choose…</option>${opts.join('')}</select>
+        <span class="yc-hint">Opens over the app.${list.length ? '' : (r.type === 'tool' ? ' No live tools yet.' : ' No saved views yet.')}</span>`;
+    }
+    const iconOk = ICON_RE.test(r.icon);
+    return `<div class="fm-item" data-row="${i}">
+      <div class="fm-item-grid">
+        <div><label class="yc-flabel" for="${pre}-label">Label</label>
+          <input type="text" id="${pre}-label" data-f="label" maxlength="80" value="${esc(r.label)}" placeholder="e.g. Payroll"></div>
+        <div><label class="yc-flabel" for="${pre}-icon">Icon</label>
+          <div class="fm-icon-in"><span class="fm-icon-prev" aria-hidden="true"><i class="fa-solid ${iconOk ? 'fa-' + r.icon : 'fa-circle-question bad'}"></i></span>
+          <input type="text" id="${pre}-icon" data-f="icon" maxlength="40" value="${esc(r.icon)}" placeholder="money-check"></div></div>
+        <div><label class="yc-flabel" for="${pre}-type">Opens</label>
+          <select id="${pre}-type" data-f="type">${typeSel}</select></div>
+        <div>${target}</div>
+      </div>
+      <div class="fm-item-foot"><span class="yc-hint" data-id-line>${this.idLine(r)}</span>${btns}</div>
+      <div class="fm-err" data-err-row="${i}"></div>
+    </div>`;
+  },
+
+  idLine(r) {
+    return r.saved
+      ? `id <code>${esc(r.id)}</code> — permanent`
+      : (r.id ? `id <code>${esc(r.id)}</code> — set from the label, permanent once saved` : 'id: set from the label');
+  },
+
+  /** Client problems + the server's last errors[] into the error slots. */
+  renderErrors() {
+    const st = this.st;
+    if (!st.loaded) return;
+    const probs = formProblems(st.form), srv = st.srv || { rows: {}, renames: {}, hidden: {} };
+    this.body.querySelectorAll('[data-err-row]').forEach((el) => {
+      const i = Number(el.dataset.errRow);
+      el.textContent = [probs.rows[i], ...(srv.rows[i] || [])].filter(Boolean).join(' · ');
+    });
+    this.body.querySelectorAll('[data-err-rename]').forEach((el) => {
+      const id = el.dataset.errRename;
+      el.textContent = [probs.renames[id], ...(srv.renames[id] || []), ...(srv.hidden[id] || [])].filter(Boolean).join(' · ');
+      const inp = el.parentNode.querySelector('[data-rename]');
+      if (inp) inp.classList.toggle('bad', !!probs.renames[id]);
+    });
+  },
+
+  status() {
+    const el = this.head.querySelector('.fm-sec-status');
+    if (this.st.error || !this.st.loaded) { el.textContent = ''; el.classList.remove('dirty'); return; }
+    const d = this.isDirty();
+    el.textContent = d ? 'Unsaved changes' : 'All changes saved';
+    el.classList.toggle('dirty', d);
+  },
+
+  changed() { this.renderErrors(); this.status(); Page.syncTopbar(); },
+
+  // ── events ──
+  rowOf(el) { const card = el.closest('[data-row]'); return card ? Number(card.dataset.row) : -1; },
+
+  onInput(ev) {
+    const t = ev.target, st = this.st;
+    if (t.dataset.rename) {
+      st.form.renames[t.dataset.rename] = t.value;
+      if (!t.value.trim()) delete st.form.renames[t.dataset.rename];
+      if (st.srv) delete st.srv.renames[t.dataset.rename];
+      return this.changed();
+    }
+    const i = this.rowOf(t);
+    const row = st.form.items[i];
+    if (!row || !t.dataset.f || t.tagName === 'SELECT') return;
+    if (t.dataset.f === 'label') {
+      relabelRow(st.stored, st.form, row, t.value);
+      const line = t.closest('.fm-item').querySelector('[data-id-line]');
+      if (line) line.innerHTML = this.idLine(row);
+    } else if (t.dataset.f === 'icon') {
+      row.icon = t.value;
+      const v = t.value.trim();
+      const i2 = t.closest('.fm-icon-in').querySelector('.fm-icon-prev i');
+      // The class is built ONLY from a slug that passes the regex.
+      i2.className = ICON_RE.test(v) ? 'fa-solid fa-' + v : 'fa-solid fa-circle-question bad';
+    } else if (t.dataset.f === 'href') {
+      row.href = t.value;
+    }
+    if (st.srv) delete st.srv.rows[i];
+    this.changed();
+  },
+
+  onChange(ev) {
+    const t = ev.target, st = this.st;
+    if (t.dataset.hide) {
+      const id = t.dataset.hide;
+      if (st.catalog.undeniable.includes(id)) { t.checked = false; return; }
+      if (t.checked) st.form.hidden.add(id); else st.form.hidden.delete(id);
+      t.closest('.fm-row').classList.toggle('is-hidden', t.checked);
+      if (st.srv) delete st.srv.hidden[id];
+      return this.changed();
+    }
+    const i = this.rowOf(t);
+    const row = st.form.items[i];
+    if (!row || t.tagName !== 'SELECT') return;
+    if (t.dataset.f === 'type') {
+      row.type = t.value;
+      if (row.type === 'url') row.key = ''; else { row.href = ''; row.key = ''; }
+      this.redrawItems(`#fi${i}-type`);
+    } else if (t.dataset.f === 'key') {
+      row.key = t.value;
+    }
+    if (st.srv) delete st.srv.rows[i];
+    this.changed();
+  },
+
+  onClick(ev) {
+    const b = ev.target.closest('button[data-act]');
+    if (!b) return;
+    const st = this.st, rows = st.form.items, act = b.dataset.act;
+    if (act === 'add-item') {
+      rows.push({ kept: false, saved: false, orig: null, id: '', label: '', icon: 'link', type: 'url', href: '', key: '' });
+      st.srv = null;
+      this.redrawItems(`#fi${rows.length - 1}-label`);
+      return this.changed();
+    }
+    const i = this.rowOf(b);
+    if (i < 0) return;
+    if (act === 'up' && i > 0) { [rows[i - 1], rows[i]] = [rows[i], rows[i - 1]]; st.srv = null; this.redrawItems(); }
+    else if (act === 'down' && i < rows.length - 1) { [rows[i + 1], rows[i]] = [rows[i], rows[i + 1]]; st.srv = null; this.redrawItems(); }
+    else if (act === 'del') { rows.splice(i, 1); st.srv = null; this.redrawItems(); }
+    else return;
+    this.changed();
+  },
+
+  redrawItems(focusSel) {
+    E('fm-items').innerHTML = this.itemsHtml();
+    if (focusSel) { const f = this.body.querySelector(focusSel); if (f) f.focus(); }
+  },
+
+  // ── History ──
+  async toggleHistory() {
+    const box = E('fm-history');
+    if (!box) return;
+    if (!box.hidden) { box.hidden = true; return; }
+    box.hidden = false;
+    box.innerHTML = '<h3>History</h3><div class="fm-empty"><i class="fa-solid fa-spinner spin"></i> Loading…</div>';
+    let vs;
+    try {
+      vs = (await api('/api/ui-config/versions?config_key=registry_overrides')).versions || [];
+    } catch (e) {
+      box.lastChild.textContent = errText(e, 'Could not load the history');
+      return;
+    }
+    const when = (t) => { const d = new Date(t); return isNaN(d) ? String(t ?? '') : d.toLocaleString(); };
+    box.innerHTML = '<h3>History</h3>' + (vs.length ? vs.map((v) => `
+      <div class="fm-ver" data-ver="${esc(v.id)}">
+        <span class="fm-ver-when">${esc(when(v.saved_at))}</span>
+        <span class="fm-ver-who">${esc(v.saved_by_name || (v.saved_by != null ? 'user ' + v.saved_by : 'unknown'))}</span>
+        ${v.is_current ? '<span class="fm-badge">current</span>' : ''}
+        <button type="button" class="btn btn-outline btn-sm" data-ver-act="view">View</button>
+        ${v.is_current ? '' : '<button type="button" class="btn btn-outline btn-sm" data-ver-act="restore">Restore</button>'}
+      </div>`).join('') : '<div class="fm-empty">Nothing saved yet.</div>');
+    box.querySelectorAll('[data-ver-act]').forEach((b) => b.addEventListener('click', () => {
+      const id = b.closest('[data-ver]').dataset.ver;
+      if (b.dataset.verAct === 'view') this.viewVersion(id, b.closest('.fm-ver'));
+      else this.restoreVersion(id);
+    }));
+  },
+
+  async viewVersion(id, rowEl) {
+    const open = rowEl.querySelector('.fm-ver-view');
+    if (open) { open.remove(); return; }
+    const box = document.createElement('dl');
+    box.className = 'fm-ver-view';
+    box.textContent = 'Loading…';
+    rowEl.appendChild(box);
+    let v;
+    try { v = (await api(`/api/ui-config/versions/${encodeURIComponent(id)}`)).version; }
+    catch (e) { box.textContent = errText(e, 'Could not load that version'); return; }
+    const doc = isObj(v && v.config) ? v.config : EMPTY_DOC;
+    const name = (eid) => { const e = this.st.catalog.entries.find((x) => x.id === eid); return e ? e.label : eid; };
+    const parts = [
+      ['Hidden', (doc.hidden || []).map(name).join(', ') || 'nothing'],
+      ['Renamed', Object.keys(doc.renames || {}).map((k) => `${name(k)} → ${(doc.renames[k] || {}).label ?? ''}`).join(', ') || 'nothing'],
+      ['Firm items', (doc.items || []).map((it) => {
+        const a = isObj(it.action) ? it.action : {};
+        return `${it.label} (${EDIT_TYPES[a.type] || a.type}: ${a.type === 'url' ? a.href : a.key})`;
+      }).join(', ') || 'none'],
+    ];
+    if (Array.isArray(doc.locked) && doc.locked.length) parts.push(['Locked', doc.locked.map(name).join(', ')]);
+    box.textContent = '';
+    for (const [k, val] of parts) {
+      const dt = document.createElement('dt'); dt.textContent = k;
+      const dd = document.createElement('dd'); dd.textContent = val;
+      box.append(dt, dd);
+    }
+  },
+
+  async restoreVersion(id) {
+    const extra = this.isDirty() ? ' Your unsaved changes on this page are discarded too.' : '';
+    if (!(await ask('Restore this version?', 'It becomes the firm launcher for everyone (a new entry in History).' + extra, 'Restore'))) return;
+    let r;
+    try {
+      r = await api(`/api/ui-config/versions/${encodeURIComponent(id)}/restore`, 'POST',
+        this.st.base !== undefined ? { base: this.st.base } : {});
+    } catch (e) {
+      if (e && e.status === 400 && e.body && Array.isArray(e.body.errors)) {
+        banner((e.message || 'That version can no longer be restored') + ': ' + e.body.errors.join(' · '));
+      } else banner(errText(e, 'Restore failed'));
+      return;
+    }
+    banner(null);
+    this.setStored(r.config);
+    if (Object.prototype.hasOwnProperty.call(r, 'version_id')) this.st.base = r.version_id;
+    this.render();
+    refreshShell(r.config);
+    Page.syncTopbar();
+    toast('success', r.changed === false ? 'That version is already current — nothing changed' : 'Restored');
+  },
+};
+
+// ═══════════════════════════════════════════════════════════════
+// PAGE — the section host + the shell protocol
+// ═══════════════════════════════════════════════════════════════
+const SECTIONS = [LauncherSection];
+
+const Page = {
+  mounted: false, saving: false,
+  dirty() { return SECTIONS.some((s) => s.isDirty()); },
+  syncTopbar() { P.setTopbarButtons({ save: this.dirty() && !this.saving, refresh: true }); },
+
+  mount() {
+    const host = E('fm-sections');
+    host.innerHTML = SECTIONS.map((s) => `
+      <section class="fm-section" id="fm-sec-${s.id}">
+        <header class="fm-sec-head"><h2><i class="fa-solid fa-${s.icon}"></i> ${esc(s.title)}</h2>
+          <span class="fm-sec-status"></span><span class="fm-sec-actions"></span></header>
+        <div class="fm-sec-body"><div class="empty-state"><i class="fa-solid fa-spinner spin"></i><div>Loading…</div></div></div>
+      </section>`).join('');
+    if (SECTIONS.length > 1) {
+      const toc = E('fm-toc');
+      toc.innerHTML = SECTIONS.map((s) => `<a class="btn btn-outline btn-sm" href="#fm-sec-${s.id}">${esc(s.title)}</a>`).join('');
+      toc.hidden = false;
+    }
+    SECTIONS.forEach((s) => {
+      const el = E(`fm-sec-${s.id}`);
+      s.mount(el.querySelector('.fm-sec-body'), el.querySelector('.fm-sec-head'));
+    });
+    this.mounted = true;
+  },
+
+  async loadAll() {
+    banner(null);
+    await Promise.all(SECTIONS.map((s) => s.load().catch((e) => { console.error('[firm] section load failed', s.id, e); })));
+    this.syncTopbar();
+  },
+
+  async save() {
+    if (this.saving) return;
+    this.saving = true;
+    this.syncTopbar();
+    banner(null);
+    try {
+      for (const s of SECTIONS) if (s.isDirty() && !(await s.save())) break;
+    } finally {
+      this.saving = false;
+      this.syncTopbar();
+    }
+  },
+};
+
+// ── Lifecycle ──────────────────────────────────────────────────
+async function init() {
+  Page.mount();
+  P.setTopbarButtons({ refresh: true });
+  await Page.loadAll();
+}
+// Coming back to the tab reloads — never over unsaved edits (fields.html idiom).
+function onShow()    { Page.syncTopbar(); if (Page.mounted && !Page.dirty()) Page.loadAll(); }
+function onHide()    {}
+function onSave()    { return Page.save(); }
+function onRefresh() {
+  if (Page.dirty() && !confirm('Discard unsaved firm settings?')) return;
+  return Page.loadAll();
+}
+window.onShow = onShow; window.onHide = onHide; window.onSave = onSave; window.onRefresh = onRefresh;
+
+// The Config shell keeps this frame alive across tab switches (it hides,
+// never unloads), so edits survive them. What loses them is a reload or close
+// of the whole app — a child frame's beforeunload runs then, so the browser
+// asks first (checklistView.html idiom).
+window.addEventListener('beforeunload', (e) => {
+  if (!Page.dirty()) return;
+  e.preventDefault();
+  e.returnValue = '';
+  return '';
+});
+
+// Test / debug handle: the pure parts of the Launcher section.
+window.FirmPage = { Page, SECTIONS, LauncherSection, canonical, makeId, slugOf, formFromDoc, docFromForm,
+  relabelRow, formProblems, placeErrors, launcherCatalog, refreshShell, firmIdsIn, SESSION_MSG, CONFLICT_MSG };
+
+// ── Boot ───────────────────────────────────────────────────────
+(function waitForShell() {
+  if (P && typeof P.apiSend === 'function' && typeof P.setTopbarButtons === 'function') {
+    return init();
+  }
+  setTimeout(waitForShell, 50);
+})();
+</script>
+</body>
+</html>

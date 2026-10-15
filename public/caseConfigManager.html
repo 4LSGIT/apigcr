@@ -79,6 +79,9 @@
     }
     .tab-nav-btn:hover { color: var(--text); background: var(--hover); }
     .tab-nav-btn.active { color: var(--text); border-bottom-color: var(--accent); }
+    /* A gated tab (the Firm tab) waits hidden until the server says so —
+       display:flex above would otherwise beat the [hidden] attribute. */
+    .tab-nav-btn[hidden] { display: none; }
 
     .topbar-actions { display: flex; gap: 8px; margin-left: auto; }
 
@@ -168,6 +171,9 @@
 // are lazy-loaded iframes talking to the shell only via
 //   - window.parent.apiSend(...)          (relay up to index.html)
 //   - window.parent.firmData              (live getter → index.html's object)
+//   - window.parent.FEATURE_REGISTRY / DEFAULT_LAYOUTS / ycLauncher
+//                                          (live getters → index.html's launcher;
+//                                           the Firm tab's Launcher section)
 //   - window.parent.setTopbarButtons({...})
 //   - lifecycle hooks (onShow, onHide, onSave, onDelete, onRefresh,
 //     onNew) exposed on their own window, which the shell calls.
@@ -190,6 +196,18 @@ Object.defineProperty(window, 'firmData', {
   configurable: true,
 });
 
+// The shell's launcher, for the Firm tab's Launcher section (ui-custom S3.2):
+// the registry + shipped layouts it edits over, and ycLauncher itself —
+// computeEffective for the grouping, applyAccess to re-run the firm overlay
+// after a save. Live getters, like firmData; undefined when this page is not
+// framed by the shell (a bare window is its own parent).
+['FEATURE_REGISTRY', 'DEFAULT_LAYOUTS', 'ycLauncher'].forEach((name) => {
+  Object.defineProperty(window, name, {
+    get() { return window.parent && window.parent !== window ? window.parent[name] : undefined; },
+    configurable: true,
+  });
+});
+
 function esc(s) {
   return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 }
@@ -210,6 +228,10 @@ const SUB_PAGES = [
   // ingest aliases. Reserved next door: an Events & Deadlines tab (U9 —
   // unmapped-type minting, deadline rules) slots in after this entry.
   { id: 'caltypes',  title: 'Calendar Types',   icon: 'calendar-check', src: '/caseconfig/calendarTypes.html', newLabel: 'New Type' },
+  // ui-custom S3.2: firm-wide settings — the CFG-3 firm surface. A host of
+  // sections (Launcher today; the settings arc adds its own). gate:'firm' =
+  // the tab is HIDDEN until GET /api/ui-config says can_edit_firm (below).
+  { id: 'firm',      title: 'Firm',             icon: 'building',      src: '/caseconfig/firm.html',      newLabel: 'New', gate: 'firm' },
 ];
 
 // ── Shell state ────────────────────────────────────────────────
@@ -222,7 +244,7 @@ function renderShellStructure() {
   const root = document.getElementById('subpages-root');
 
   nav.innerHTML = SUB_PAGES.map(p => `
-    <button class="tab-nav-btn" id="tabnav-${p.id}" onclick="switchSubPage('${p.id}')">
+    <button class="tab-nav-btn" id="tabnav-${p.id}" onclick="switchSubPage('${p.id}')"${p.gate ? ' hidden' : ''}>
       <i class="fa-solid fa-${p.icon}"></i> ${esc(p.title)}
     </button>
   `).join('');
@@ -238,6 +260,7 @@ function renderShellStructure() {
 function switchSubPage(id) {
   const page = SUB_PAGES.find(p => p.id === id);
   if (!page) return;
+  if (page.gate && document.getElementById(`tabnav-${id}`).hidden) return;   // not revealed for this user
 
   if (activeSubPageId && activeSubPageId !== id) {
     callSubPageHook(activeSubPageId, 'onHide');
@@ -302,9 +325,30 @@ window.apiSend          = apiSend;
 window.setTopbarButtons = setTopbarButtons;
 window.esc              = esc;
 
+// ── Gated tabs: Firm ───────────────────────────────────────────
+// VISIBILITY ONLY. The server gates every firm write (PUT /api/ui-config
+// scope firm, re-checked in uiConfigService.write) and every Firm-tab route
+// (/api/ui-config/versions*, /pickers) on firm.settings; hiding the tab
+// secures nothing. The flag is computed SERVER-side with lib/capabilities
+// can() — never re-derived here from roles (ROLE_CAPS would drift). Fetched
+// once at boot; a failed fetch leaves the tab hidden and touches nothing else.
+async function revealGatedTabs() {
+  let data = null;
+  try {
+    if (typeof window.parent.apiSend !== 'function') return;
+    data = await apiSend('/api/ui-config');
+  } catch (err) {
+    console.warn('[caseConfig] Firm tab stays hidden: /api/ui-config failed', err && err.message);
+    return;
+  }
+  const btn = document.getElementById('tabnav-firm');
+  if (btn && data && data.can_edit_firm === true) btn.hidden = false;
+}
+
 // ── Boot ───────────────────────────────────────────────────────
 renderShellStructure();
 switchSubPage(SUB_PAGES[0].id);
+revealGatedTabs();
 </script>
 
 </body>

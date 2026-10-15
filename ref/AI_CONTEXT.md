@@ -783,9 +783,9 @@ trailing colons. Set in four places that must move together: style.css
 `.input-label` (carries the note), scripts.js dialog CSS (`.ncf-`/`.na-`/
 `.ne-`/`.cad-`/`.oad-` labels + `.yc-flabel` for inline labels), tasks.html
 `.tk-dlg-grid`, and pane-local copies on theme.css-only Admin panes
-(ctaManager.html declares `.yc-flabel`/`.yc-hint` with these values, and
-connections.html scoped to its `#noTxDialog` — style.css and scripts.js
-don't load there). Known divergence:
+(ctaManager.html and caseconfig/firm.html declare `.yc-flabel`/`.yc-hint`
+with these values, and connections.html scoped to its `#noTxDialog` —
+style.css and scripts.js don't load there). Known divergence:
 toolManager.html styles labels as `.field label` (uppercase 11px
 `--text-muted`) — a different look. Hoisting `.yc-flabel`/`.yc-hint` into
 theme.css would collapse this to one definition (plans.md).
@@ -1470,8 +1470,9 @@ scope firm(''), role, user; UNIQUE over the triple), resolver
 services/entitlementService.deniedFor → `denied[]` in /api/firm-data
 (fail-soft []). item_key = public/js/featureRegistry.js keys;
 `moreSettings` + `helpSupport` undeniable (write-reject AND resolve-strip).
-Visibility-only; CRUD behind firm.settings; editor UI ships with the CFG-3
-firm tab.
+Visibility-only; CRUD behind firm.settings; no editor UI yet — it joins
+the Config shell's Firm tab (the CFG-3 surface, public/caseconfig/firm.html,
+ui-custom S3.2) as a section in the settings arc.
 
 **Key scopes.** Both key tables carry `scopes` JSON; NULL = legacy full
 surface MINUS `explicit` scopes (sql.ro.sensitive — a legacy key never

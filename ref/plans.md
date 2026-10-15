@@ -20,8 +20,10 @@ Two operator surfaces, ratified:
   template repoint, unlike caseconfig/types.html — a live footgun, not just clutter).
 
 PENDING (parallel session; do not bake in):
-- CFG-3: whether app_settings category sections become a "Firm Settings" tab in the
-  Config shell, and how tool-grouped settings split between tool managers and that
+- CFG-3: which app_settings category sections move into the Config shell's **Firm**
+  tab (it exists since ui-custom S3.2: public/caseconfig/firm.html, a host of
+  sections shown on GET /api/ui-config `can_edit_firm`; Launcher is its first
+  section), and how tool-grouped settings split between tool managers and that
   tab. Gate finding (2026-09-24): PUT/POST /api/app-settings/* is `jwtOrApiKey` +
   per-row `is_editable` — no role tier exists; moving knobs into a role-gated shell is
   an access-control change and needs its own ruling.
@@ -29,9 +31,10 @@ PENDING (parallel session; do not bake in):
   kind — automation-minted runtime state hiding behind is_editable=0, which ALSO means
   "SU-only boundary" (landing_hosts). Likely: separate flag + read-only diagnostics
   view. Don't design against is_editable semantics meanwhile.
-- Collision: ui-custom arc decided "the tenant admin tool is just the role-gated
-  firm-settings editor" — that editor and the Config shell must converge on ONE
-  surface.
+- Collision, settled (Fred, 2026-10-15): the ui-custom firm editor and the Config
+  shell are ONE surface — the Config shell's Firm tab. ui-custom owns its Launcher
+  section; the settings arc adds its sections there, the entitlements editor
+  included.
 
 ---
 

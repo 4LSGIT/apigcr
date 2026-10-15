@@ -170,7 +170,9 @@ d('ui_config on real MySQL', () => {
     const r = await firmPut('admin', { hidden: ['bills', 'bills'], renames: { cases: { label: ' Matters ' } } });
     expect(r.status).toBe(200);
     const doc = { hidden: ['bills'], locked: [], renames: { cases: { label: 'Matters' } }, items: [] };
-    expect(r.body).toEqual({ status: 'success', scope: 'firm', config_key: 'registry_overrides', config: doc, changed: true, versioned: true });
+    // version_id: the new version's id (S3.2's optimistic-concurrency base; tests/uiConfigS32.mysql.test.js)
+    expect(r.body).toEqual({ status: 'success', scope: 'firm', config_key: 'registry_overrides', config: doc, changed: true, versioned: true,
+      version_id: expect.any(Number) });
     const [row] = await rows();
     expect(row).toMatchObject({ scope: 'firm', user_id: 0, role: '', config_key: 'registry_overrides', config: doc, updated_by: 1 });
     expect(await versions()).toEqual([{ ui_config_id: row.id, config_key: 'registry_overrides', config: doc, saved_by: 1 }]);

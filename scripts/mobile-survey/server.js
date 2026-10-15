@@ -14,6 +14,14 @@
 //                                    (exact path only — /api/cases/X/pipeline
 //                                    does NOT fall back to /api/cases/X),
 //                                    otherwise an empty-success envelope.
+//   PUT /api/ui-config            -> echoes the body's document back as saved
+//   POST /api/ui-config/versions/:id/restore
+//                                 -> fixtures/api/ui-config/versions/<id>.json's
+//                                    document as the restored one (else 404).
+//                                    No state: the Firm tab (Config shell) can be
+//                                    clicked through, nothing persists. The GETs
+//                                    (/api/ui-config, …/pickers, …/versions[/<id>])
+//                                    are plain fixtures.
 //   GET /manual[/:section[/:file]] -> the REAL routes/manuals.js, reading the
 //                                    repo's manual/ from disk (no DB); only its
 //                                    auth middleware is swapped for a
@@ -104,6 +112,18 @@ function createApp({ log = null } = {}) {
   app.post('/login', (req, res) => res.json({ token: fakeJwt() }));
 
   app.use(manualsRouter());
+
+  // ui-custom S3.2 — the Firm tab's two writes (stateless; see the header).
+  app.put('/api/ui-config', express.json(), (req, res) => {
+    const b = req.body || {};
+    res.json({ status: 'success', scope: b.scope, config_key: b.config_key, config: b.config, changed: true, versioned: b.scope === 'firm' });
+  });
+  app.post(/^\/api\/ui-config\/versions\/(\d+)\/restore$/, (req, res) => {
+    const v = fixtureFor(`/api/ui-config/versions/${req.params[0]}`);
+    if (!v || !v.version) return res.status(404).json({ status: 'error', message: 'Version not found' });
+    res.json({ status: 'success', scope: 'firm', config_key: v.version.config_key, config: v.version.config,
+      changed: true, versioned: true, restored_from: v.version.id });
+  });
 
   app.all(/^\/(api|admin)\//, (req, res) => {
     const body = req.path === '/api/firm-data'
