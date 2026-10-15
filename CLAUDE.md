@@ -51,6 +51,21 @@ picks per task:
    - Landing = manager squash-merges the branch onto main (hook regenerates
      the generated files), on Fred's explicit go; workers then
      `git reset --hard origin/main`.
+   - The push itself is ONE gated command from a fresh worktree (node_modules
+     + .env symlinked) — never Fred's main checkout, which another lander may
+     be mid-squash in (D3's staged files sat there, 2026-10-15):
+     `bash local/heavy-gate.sh land "<who: what>" -- bash -c 'git fetch &&
+     git rebase origin/main && npx jest --maxWorkers=3 && git push origin
+     HEAD:main'` (jest dropped for a doc-only commit). The `land` slot queues
+     the next lander; `heavy-gate.sh status` shows who holds it. Do NOT
+     broadcast push notices: a peer message wakes every idle session for a
+     full turn. Message only a session whose files you touched.
+   - A hand-off patch is cut from `git merge-base HEAD origin/main` after a
+     fresh fetch, and only when that base equals the target checkout's HEAD
+     and `git diff --name-only` lists exactly the slice's files. `origin/main`
+     is shared by every worktree: once someone fetches, a diff against it
+     reverses whatever landed since your rebase, and `git apply --check`
+     passes that patch clean (ui-custom S2, 2026-10-15).
    - Manager turns end with a fixed last block: `NEEDS FRED:` + numbered
      asks, each self-contained (exact command, path, hash) — or
      `NEEDS FRED: nothing`. Fred skims that, not the chat. Approvals are
