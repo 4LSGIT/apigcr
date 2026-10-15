@@ -488,6 +488,12 @@
   .bub .bt { display: block; margin-top: 3px; font-size: 10.5px; opacity: 0.8; white-space: normal; }
   /* The item's reference id (#<phone_event_log.id>) at the time line's end — one click selects it to copy. */
   .bub .bt .ph-ref { float: right; margin-left: 8px; -webkit-user-select: all; user-select: all; cursor: text; }
+  /* The bubble a "#<id>" search led to (phJumpStep): a ring for PH_HIT_MS, pulsed once on arrival — still, without the
+     pulse, under reduced motion. box-shadow: no layout change. */
+  .bub.ph-hit { box-shadow: 0 0 0 2px var(--accent); animation: ph-hit 1.2s ease-out 1; }
+  @keyframes ph-hit { 0%, 35% { box-shadow: 0 0 0 5px var(--accent-soft), 0 0 0 2px var(--accent); } 100% { box-shadow: 0 0 0 2px var(--accent); } }
+  @media (prefers-reduced-motion: reduce) { .bub.ph-hit { animation: none; } }
+  .ph-thread .ph-jump-note { align-self: center; font-size: 11.5px; color: var(--text-muted); text-align: center; padding: 0 0 4px; }
   /* A call in the conversation: a quiet box on the caller's side. The comms
      archive (S4) fills it (summary text, Listen / Transcript, a voicemail —
      the .ca-* rules) — keep it a .bub so it inherits width and alignment. */
@@ -698,7 +704,7 @@
         <button class="btn icon" type="button" id="ph-refresh" title="Refresh" aria-label="Refresh"><i class="fa-solid fa-rotate" aria-hidden="true"></i></button>
         <button class="btn primary" type="button" id="ph-new" title="Text a number from this line" hidden><i class="fa-solid fa-pen" aria-hidden="true"></i> New text</button>
         <span class="brk" aria-hidden="true"></span>
-        <input type="search" id="ph-q" placeholder="Number, name or case number" aria-label="Search texts and calls by phone number, contact name or case number" maxlength="100" autocomplete="off">
+        <input type="search" id="ph-q" placeholder="Number, name, case number or #ref" aria-label="Search texts and calls by phone number, contact name, case number or #reference number" maxlength="100" autocomplete="off">
       </div>
       <div class="status-line"><span id="ph-status"></span></div>
       <div id="ph-error"></div>
@@ -3334,6 +3340,9 @@ const ph = {
   party: null,        // the open conversation's other party
   thread: null,       // { party, contact, messages, next }
   tseq: 0,
+  jump: null,         // a "#<id>" search's bubble to reach: { id, party, pages, note } — set by each row open (phOpenRow), acted on only while its party's thread shows (phJumpStep)
+  enterOpen: false,   // Enter in the box: open the ref's conversation once the search in the box has answered
+  hitTimer: null,
   pending: [],        // sent from here, not echoed yet: { lineId, party, body, at }
   timers: [],
   sending: false,
@@ -3477,10 +3486,15 @@ function selectLine(id) {
 
 /*
  * SEARCH (mailbox arc slice PS). One box: a number in any form, a contact's
- * name, a case's number or caption — the server unions the three
+ * name, a case's number or caption, a reference number — the server unions the four
  * (phoneCommsService "Search"). It narrows whatever the line picker shows, in
  * every view (Texts / All / Calls). Under 2 characters is no search. The open
- * conversation stays open.
+ * conversation stays open. A bubble's reference number ("#<id>", or bare
+ * digits — a number AND a ref) finds that one item: the answer's
+ * `search.ref` {id, kind, other_party, line_id} marks it, and opening its
+ * row — or Enter in the box — opens the conversation AT that bubble
+ * (phJumpStep: earlier pages are loaded until it shows, PH_JUMP_PAGES at
+ * most, then a muted note). Typing alone never opens anything.
  * HOOK for comms archive S6 (contract with COMM_ARC_MAN, 2026-10-14): every
  * change of the search in effect — typed (debounced), cleared / Esc, or the
  * line switched while one is on — dispatches `ph-search` on #phone with
@@ -3500,17 +3514,90 @@ function phSetQuery(raw) {
   const q = phQueryOf(raw);
   if (q === ph.q) return;
   ph.q = q;
+  ph.jump = null; // a jump belongs to the search that found it
   phoneLoad();
   phSearchEvent();
 }
 
-/** Why a row is in the results when its name does not say: the case it was found through. */
+/** Why a row is in the results when its name does not say: the reference number, the case it was found through. */
 function phMatchNote(row) {
-  if (!ph.q || !Array.isArray(row.matched_by) || !row.matched_by.includes('case') || !Array.isArray(row.matched_cases) || !row.matched_cases.length) return null;
-  const c = row.matched_cases[0];
-  const label = [c.number, c.caption].filter(Boolean).join(' · ') || c.case_id;
-  const more = row.matched_cases.length > 1 ? ` +${row.matched_cases.length - 1}` : '';
-  return h('div', { className: 'ph-why' }, icon('fa-briefcase'), ` Case ${label}${more}`);
+  if (!ph.q || !Array.isArray(row.matched_by)) return null;
+  const ref = row.matched_by.includes('ref') ? phRefHint() : null;
+  const notes = ref ? [h('div', { className: 'ph-why' }, icon('fa-hashtag'), ` Reference #${ref.id}`)] : [];
+  if (row.matched_by.includes('case') && Array.isArray(row.matched_cases) && row.matched_cases.length) {
+    const c = row.matched_cases[0];
+    const label = [c.number, c.caption].filter(Boolean).join(' · ') || c.case_id;
+    const more = row.matched_cases.length > 1 ? ` +${row.matched_cases.length - 1}` : '';
+    notes.push(h('div', { className: 'ph-why' }, icon('fa-briefcase'), ` Case ${label}${more}`));
+  }
+  return notes.length ? notes : null;
+}
+
+// ── "#<id>": the reference number's bubble ──
+const PH_JUMP_PAGES = 10;   // earlier pages loaded to reach a ref's bubble before giving up (Load earlier still goes on)
+var PH_HIT_MS = 2400;       // how long the reached bubble keeps its ring (a var: the pane tests shorten it)
+/** The listed results' ref hit (the server's `search.ref`, set with ph.rows by the same read), or null. */
+const phRefHint = () => (ph.q && ph.search && ph.search.ref && Number.isInteger(ph.search.ref.id) ? ph.search.ref : null);
+const phReducedMotion = () => { try { return !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches); } catch (_) { return false; } };
+
+/** A result row opened: its conversation — at the ref's bubble when this row is the ref's (a call row: that call). */
+function phOpenRow(party, contact, callId = null) {
+  const r = phRefHint();
+  const hit = r && (ph.view === 'calls' ? callId === r.id : party === r.other_party);
+  ph.jump = hit ? { id: r.id, party, pages: 0, note: '' } : null;
+  openConversation(party, contact, { jump: !!hit });
+}
+
+/** Enter in the box: the ref's conversation at its bubble — after the search in the box has answered. */
+function phSearchEnter() {
+  const q = phQueryOf(E('ph-q').value);
+  if (!q) return;
+  if (q !== ph.q) { ph.enterOpen = true; phSetQuery(q); return; }
+  if (!ph.search || ph.search.q !== q) { ph.enterOpen = true; phoneLoad(); return; } // no answer for it yet (or it failed): ask again
+  phOpenRef();
+}
+function phOpenRef() {
+  const r = phRefHint();
+  if (!r || !phPartyOk(r.other_party)) return;
+  const row = ph.rows.find((x) => x.other_party === r.other_party);
+  phOpenRow(r.other_party, row ? row.contact : null, r.id);
+}
+
+/**
+ * After each render of the open thread: reach the jump's bubble — scroll it
+ * to the middle (instantly under reduced motion) and ring it; else load the
+ * next earlier page (PH_JUMP_PAGES at most); past that, or with nothing
+ * earlier, a muted note at the top. A Load earlier after the note keeps
+ * looking.
+ */
+function phJumpStep() {
+  const j = ph.jump;
+  const t = ph.thread;
+  if (!j || !t || t.party !== j.party) return;
+  const body = E('ph-body');
+  let el = body.querySelector(`.bub[data-id="${j.id}"]`);
+  if (el) {
+    ph.jump = null;
+    if (j.note) { renderPhoneThread({ quiet: true }); el = body.querySelector(`.bub[data-id="${j.id}"]`); }
+    phHit(body, el);
+    return;
+  }
+  if (t.next && j.pages < PH_JUMP_PAGES) { j.pages++; openConversation(t.party, t.contact, { older: true }); return; }
+  const note = t.next ? `#${j.id} is further back than ${PH_JUMP_PAGES} earlier pages — Load earlier to keep looking.` : `#${j.id} is not in this conversation.`;
+  if (j.note === note) return;
+  j.note = note;
+  renderPhoneThread({ quiet: true });
+}
+function phHit(body, el) {
+  if (!el) return;
+  const top = body.scrollTop + (el.getBoundingClientRect().top - body.getBoundingClientRect().top) - Math.max(0, (body.clientHeight - el.offsetHeight) / 2);
+  const behavior = phReducedMotion() ? 'auto' : 'smooth';
+  if (typeof body.scrollTo === 'function') body.scrollTo({ top, behavior });
+  else body.scrollTop = top;
+  for (const x of body.querySelectorAll('.bub.ph-hit')) x.classList.remove('ph-hit');
+  el.classList.add('ph-hit');
+  clearTimeout(ph.hitTimer);
+  ph.hitTimer = setTimeout(() => el.classList.remove('ph-hit'), PH_HIT_MS);
 }
 
 function setPhoneView(view) {
@@ -3546,8 +3633,10 @@ async function phoneLoad({ append = false, silent = false } = {}) {
     ph.next = (data && data.next_cursor) || null;
     ph.search = (data && data.search) || null;
     renderPhoneList();
+    if (ph.enterOpen && !append) { ph.enterOpen = false; phOpenRef(); }
   } catch (err) {
     if (seq !== ph.seq) return;
+    ph.enterOpen = false;
     E('ph-status').textContent = '';
     showError(E('ph-error'), `Couldn't load ${ph.view === 'calls' ? 'calls' : 'conversations'}: ${err.message}`);
   }
@@ -3558,8 +3647,8 @@ function convoRow(c) {
   const mine = last.direction === 'outgoing';
   const li = h('li', {
     className: 'msg' + (ph.party === c.other_party ? ' selected' : ''), dataset: { party: c.other_party }, tabindex: '0', role: 'button',
-    onclick: () => openConversation(c.other_party, c.contact),
-    onkeydown: (e) => { if (e.key === 'Enter') openConversation(c.other_party, c.contact); },
+    onclick: () => phOpenRow(c.other_party, c.contact),
+    onkeydown: (e) => { if (e.key === 'Enter') phOpenRow(c.other_party, c.contact); },
   },
     h('div', { className: 'r1' },
       h('span', { className: 'from', title: fmtPhone(c.other_party) }, phWho(c.other_party, c.contact)),
@@ -3605,8 +3694,8 @@ function callRow(c) {
     className: 'msg' + (c.missed ? ' missed' : ''), dataset: { call: String(c.id) },
     tabindex: opens ? '0' : null, role: opens ? 'button' : null,
     title: opens ? 'Open the conversation with this number — its texts and calls' : null,
-    onclick: () => { if (opens) openConversation(c.other_party, c.contact); },
-    onkeydown: (e) => { if (e.key === 'Enter' && opens) openConversation(c.other_party, c.contact); },
+    onclick: () => { if (opens) phOpenRow(c.other_party, c.contact, c.id); },
+    onkeydown: (e) => { if (e.key === 'Enter' && opens) phOpenRow(c.other_party, c.contact, c.id); },
   },
     h('div', { className: 'r1' },
       h('span', { className: 'from', title: fmtPhone(c.other_party) }, c.other_party ? phWho(c.other_party, c.contact) : '(unknown number)'),
@@ -3631,7 +3720,7 @@ function renderPhoneList() {
     const where = phIsAll() ? 'your lines' : 'this line';
     const what = ph.view === 'calls' ? 'calls' : ph.view === 'sms' ? 'texts' : 'texts or calls';
     list.replaceChildren(h('li', { className: 'empty' },
-      ph.q ? `No ${what} on ${where} match “${ph.q}” — search by a phone number (3+ digits), a contact's name, or a case number.`
+      ph.q ? `No ${what} on ${where} match “${ph.q}” — search by a phone number (3+ digits), a contact's name, a case number, or a #reference number.`
         : ph.view === 'calls' ? `No calls on ${where}.` : ph.view === 'sms' ? `No texts on ${where}.` : `No texts or calls on ${where}.`));
     return;
   }
@@ -3645,9 +3734,10 @@ function renderPhoneList() {
   list.replaceChildren(...items);
 }
 
-async function openConversation(party, contact, { silent = false, older = false } = {}) {
+async function openConversation(party, contact, { silent = false, older = false, jump = false } = {}) {
   const scope = phScope();
   if (scope == null) return;
+  if (!older && !jump) ph.jump = null; // opened any other way than the ref jump (or its earlier pages): no jump
   const same = ph.party === party;
   ph.party = party;
   for (const li of E('ph-list').querySelectorAll('.msg[data-party]')) li.classList.toggle('selected', li.dataset.party === party);
@@ -3685,6 +3775,7 @@ async function openConversation(party, contact, { silent = false, older = false 
     paintHead(party, ph.thread.contact, ph.thread.line_ids);
     paintCompose(party);
     renderPhoneThread({ keepScroll: older, quiet: silent && !!prev });
+    phJumpStep();
   } catch (err) {
     if (seq !== ph.tseq) return;
     if (!silent) E('ph-body').replaceChildren(h('div', { className: 'inline-error' }, `Couldn't open this conversation: ${err.message}`));
@@ -3804,6 +3895,7 @@ function renderPhoneThread({ keepScroll = false, quiet = false } = {}) {
       onclick: (e) => { e.target.disabled = true; openConversation(t.party, t.contact, { older: true }); },
     }, 'Load earlier')));
   }
+  if (ph.jump && ph.jump.note && ph.jump.party === t.party) kids.push(h('div', { className: 'ph-jump-note' }, ph.jump.note));
   if (!t.messages.length && !pendingFor(t.party).length) {
     kids.push(h('div', { className: 'empty' }, 'No texts or calls with this number yet.'));
   }
@@ -4275,6 +4367,7 @@ function closeTranscript() {
 // split into text nodes and <mark>s, never parsed as HTML.
 const caS = { q: '', lineId: null, seq: 0, cursor: null, terms: [], results: [], loading: false };
 const CA_WORD3 = /[\p{L}\p{N}_]{3,}/u;
+const CA_REF_ONLY = /^#\s*\d+$/; // the Phone search's ref-only form (phoneCommsService REF_ONLY_RE)
 const CA_WCHAR = /[\p{L}\p{N}_]/u;
 
 /** text → nodes, each word that STARTS with a search term wrapped in <mark> (the server's prefix rule). */
@@ -4380,7 +4473,8 @@ function caSearch(detail) {
   const q = String((detail && detail.q) || '').trim();
   caS.q = q;
   caS.lineId = detail ? detail.lineId : null;
-  if (!q || !CA_WORD3.test(q)) { caS.seq++; caS.results = []; caS.cursor = null; caSearchHide(); return; }
+  // a reference number ("#123") is one item, not words said on a call — not searched here
+  if (!q || !CA_WORD3.test(q) || CA_REF_ONLY.test(q)) { caS.seq++; caS.results = []; caS.cursor = null; caSearchHide(); return; }
   caSearchRun();
 }
 
@@ -4461,6 +4555,7 @@ async function caActGo() {
 
 function closePhoneThread() {
   caReset();
+  ph.jump = null;
   ph.party = null;
   ph.thread = null;
   ph.tseq++;
@@ -4586,12 +4681,14 @@ function wirePhone() {
   E('ph-v-calls').addEventListener('click', () => setPhoneView('calls'));
   E('ph-q').addEventListener('input', () => {
     clearTimeout(ph.qTimer);
+    ph.enterOpen = false; // only an Enter after the last keystroke opens anything
     const v = E('ph-q').value;
     if (!v.trim()) return phSetQuery(''); // cleared (the × too): back at once
     ph.qTimer = setTimeout(() => phSetQuery(v), PH_Q_DEBOUNCE_MS);
   });
   E('ph-q').addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && E('ph-q').value) { e.preventDefault(); E('ph-q').value = ''; phSetQuery(''); }
+    if (e.key === 'Enter') { e.preventDefault(); phSearchEnter(); }
   });
   E('ph-refresh').addEventListener('click', () => { phoneLoad(); if (ph.party) openConversation(ph.party, ph.thread && ph.thread.contact, { silent: true }); });
   E('ph-back').addEventListener('click', closePhoneThread);

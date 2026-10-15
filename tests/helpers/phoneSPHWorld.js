@@ -30,7 +30,7 @@
  *     NULL (the generated unique column).
  *   - channel_grants UNIQUE(user, channel_type, channel_id) → ER_DUP_ENTRY.
  *   - search (slice PS): LIKE with '\\' escapes, case-insensitive (general_ci);
- *     `x LIKE NULL` / `x IN (NULL)` match nothing; the list reads' search
+ *     `x LIKE NULL` / `x IN (NULL)` / `id = NULL` match nothing; the list reads' search
  *     predicate is evaluated, the matcher statements' DISTINCT / ORDER BY /
  *     LIMIT too. cases + case_relate rows come from W.kase().
  */
@@ -61,9 +61,11 @@ const KEYSET = ' AND (processed_at < ? OR (processed_at = ? AND id < ?))';
 const ORDER_TAIL = ' ORDER BY processed_at DESC, id DESC LIMIT ?';
 const CONTACTS = 'SELECT cp.phone, c.contact_id, c.contact_name FROM contact_phones cp JOIN contacts c ON c.contact_id = cp.contact_id WHERE cp.phone_active_uniq IN (?)';
 const FIRST_SEEN = 'SELECT MIN(processed_at) AS first_at FROM phone_event_log WHERE other_party = ? AND line_number IN (?) AND suppressed = 0';
-// Search (slice PS): the list reads' predicate (its two params follow the
-// statement's FIRST param in all four) and the two name matchers.
-const SEARCH = ' AND (other_party LIKE ? OR other_party IN (?))';
+// Search (slice PS): the list reads' predicate (its three params follow the
+// statement's FIRST param in all four), the two name matchers and the ref
+// matcher's PK lookup.
+const SEARCH = ' AND (other_party LIKE ? OR other_party IN (?) OR id = ?)';
+const REF_MATCH = 'SELECT e.id, e.event_type, e.other_party, e.line_number, EXISTS (SELECT 1 FROM phone_lines pl WHERE pl.phone_number = e.other_party) AS firm_party FROM phone_event_log e WHERE e.id = ? AND e.line_number IN (?) AND e.suppressed = 0';
 const IN_LINES_LOGGED = 'EXISTS (SELECT 1 FROM phone_event_log e WHERE e.other_party = cp.phone_active_uniq AND e.line_number IN (?) AND e.suppressed = 0)';
 const CONTACT_MATCH = `SELECT cp.phone_active_uniq AS phone FROM contacts c JOIN contact_phones cp ON cp.contact_id = c.contact_id WHERE c.contact_name LIKE ? AND cp.phone_active_uniq IS NOT NULL AND ${IN_LINES_LOGGED} ORDER BY c.contact_id DESC, cp.phone_active_uniq LIMIT ?`;
 const CASE_MATCH = `SELECT DISTINCT cp.phone_active_uniq AS phone, cs.case_id, cs.case_number, cs.case_number_full, cs.case_caption FROM cases cs JOIN case_relate cr ON cr.case_relate_case_id = cs.case_id JOIN contact_phones cp ON cp.contact_id = cr.case_relate_client_id WHERE (cs.case_number LIKE ? OR cs.case_number_full LIKE ? OR cs.case_caption LIKE ?) AND cr.case_relate_type IN ('Primary', 'Secondary') AND cp.phone_active_uniq IS NOT NULL AND ${IN_LINES_LOGGED} ORDER BY cs.case_id DESC, cp.phone_active_uniq LIMIT ?`;
@@ -227,19 +229,26 @@ function makeWorld() {
     let m;
 
     // ── search (slice PS): strip the list reads' predicate, keep it as a filter ──
-    let partyOk = () => true;
+    let rowOk = () => true;
     if (sql.includes(SEARCH)) {
       const bare = sql.replace(SEARCH, '');
       const isList = groupTail(bare, CONVO_GROUP) || groupTail(bare, ALL_GROUP) ||
         [CALLS, ALL_CALLS].some(c => bare === `${c}${ORDER_TAIL}` || bare === `${c}${KEYSET}${ORDER_TAIL}`);
       if (!isList) throw new Error(`phoneSPHWorld: search predicate on an unscripted statement: ${sql}`);
-      const [like, list] = [p[1], p[2]];
-      partyOk = (op) => op != null && (likeMatch(op, like) || list.some(x => x != null && String(x) === String(op)));
+      const [like, list, id] = [p[1], p[2], p[3]];
+      rowOk = (e) => (e.other_party != null && (likeMatch(e.other_party, like) || list.some(x => x != null && String(x) === String(e.other_party))))
+        || (id != null && e.id === Number(id));
       sql = bare;
-      p = [p[0], ...p.slice(3)];
+      p = [p[0], ...p.slice(4)];
     }
     const logged = (phone, lines) => T.phone_event_log.some(e => e.other_party === phone && lines.has(String(lineOf(e))) && Number(e.suppressed) === 0);
     const activePhones = (contactId) => T.contact_phones.filter(cp => cp.contact_id === contactId && cp.end_date == null).map(cp => cp.phone);
+    if (sql === REF_MATCH) {
+      const lines = new Set(p[1].map(String));
+      const firm = new Set(T.phone_lines.map(l => l.phone_number));
+      const e = T.phone_event_log.find(x => x.id === Number(p[0]) && lineOf(x) != null && lines.has(String(lineOf(x))) && Number(x.suppressed) === 0);
+      return [e ? [{ id: e.id, event_type: e.event_type, other_party: e.other_party, line_number: lineOf(e), firm_party: e.other_party != null && firm.has(e.other_party) ? 1 : 0 }] : []];
+    }
     if (sql === CONTACT_MATCH) {
       const lines = new Set(p[1].map(String));
       const rows = [];
@@ -388,7 +397,7 @@ function makeWorld() {
         // texts AND calls (no event_type predicate since calls joined the list) — texts only under ?kind=sms
         if (lineOf(e) !== String(p[0]) || Number(e.suppressed) !== 0 || e.other_party == null) continue;
         if (smsOnly && e.event_type !== 'sms') continue;
-        if (!partyOk(e.other_party)) continue;
+        if (!rowOk(e)) continue;
         const g = groups.get(e.other_party) || { other_party: e.other_party, last_id: 0, n: 0 };
         g.last_id = Math.max(g.last_id, e.id);
         g.n += 1;
@@ -419,7 +428,7 @@ function makeWorld() {
       }))];
     }
     if (sql === `${CALLS}${ORDER_TAIL}` || sql === `${CALLS}${KEYSET}${ORDER_TAIL}`) {
-      let rows = T.phone_event_log.filter(e => lineOf(e) === String(p[0]) && e.event_type === 'call' && Number(e.suppressed) === 0 && partyOk(e.other_party));
+      let rows = T.phone_event_log.filter(e => lineOf(e) === String(p[0]) && e.event_type === 'call' && Number(e.suppressed) === 0 && rowOk(e));
       const ks = sql.includes(KEYSET);
       if (ks) rows = keyset(rows, p, 1);
       rows.sort(desc);
@@ -439,7 +448,7 @@ function makeWorld() {
         const ln = lineOf(e);
         if (ln == null || !lines.has(String(ln)) || Number(e.suppressed) !== 0 || e.other_party == null || firm.has(e.other_party)) continue;
         if (smsOnly && e.event_type !== 'sms') continue;
-        if (!partyOk(e.other_party)) continue;
+        if (!rowOk(e)) continue;
         const g = groups.get(e.other_party) || { other_party: e.other_party, last_id: 0, n: 0, nums: new Set() };
         g.last_id = Math.max(g.last_id, e.id);
         g.n += 1;
@@ -472,7 +481,7 @@ function makeWorld() {
     }
     if (sql === `${ALL_CALLS}${ORDER_TAIL}` || sql === `${ALL_CALLS}${KEYSET}${ORDER_TAIL}`) {
       const lines = new Set(p[0].map(String));
-      let rows = T.phone_event_log.filter(e => lineOf(e) != null && lines.has(String(lineOf(e))) && e.event_type === 'call' && Number(e.suppressed) === 0 && partyOk(e.other_party));
+      let rows = T.phone_event_log.filter(e => lineOf(e) != null && lines.has(String(lineOf(e))) && e.event_type === 'call' && Number(e.suppressed) === 0 && rowOk(e));
       const ks = sql.includes(KEYSET);
       if (ks) rows = keyset(rows, p, 1);
       rows.sort(desc);
@@ -596,4 +605,18 @@ function SEARCH_SEED(W, S) {
   return { NUM, P5, P6, P7 };
 }
 
-module.exports = { makeWorld, lineOf, likeMatch, SPH_SEED, SEARCH_SEED, LINES, USERS };
+/**
+ * The ref matcher (bubble reference numbers, 2026-10-15) on top of
+ * SEARCH_SEED — both worlds load it. REF_ID is an id whose digits are inside
+ * NUM ('702' in 2026702603) on a party that is not: bare "702" is a number
+ * AND a ref. SUPP_CALL is a suppressed call on line 1.
+ */
+function REF_SEED(W, S) {
+  const REF_PARTY = '8105550123';
+  const REF_ID = 702;
+  W.sms(S.L1, REF_PARTY, 'incoming', { id: REF_ID, body: 'the one with the ref' });
+  const SUPP_CALL = W.call(S.L1, S.P2, 'incoming', { suppressed: 1 });
+  return { REF_PARTY, REF_ID, SUPP_CALL };
+}
+
+module.exports = { makeWorld, lineOf, likeMatch, SPH_SEED, SEARCH_SEED, REF_SEED, LINES, USERS };

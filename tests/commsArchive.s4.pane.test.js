@@ -671,6 +671,22 @@ describe('comms.html — S6 transcript search results', () => {
     expect(env.errors).toEqual([]);
   });
 
+  test('a reference number ("#12345", the Phone search\'s ref) is one item, not words: no request, the group hidden; bare digits still search', async () => {
+    const env = await boot(searchHandler({ search: () => ({ status: 'success', results: [], next_cursor: null, terms: ['12345'], ignored: [] }) }));
+    await openPhone(env);
+    for (const q of ['#12345', '# 12345']) {
+      fire(env, q);
+      await tick(env.window);
+      expect([q, posts(env.calls), slot(env.doc).hidden]).toEqual([q, [], true]);
+    }
+    fire(env, '12345');
+    await tick(env.window);
+    expect(posts(env.calls)).toEqual([{ q: '12345', line_id: 1 }]);
+    fire(env, '#12345');
+    await tick(env.window);
+    expect([posts(env.calls), slot(env.doc).hidden]).toEqual([[{ q: '12345', line_id: 1 }], true]);
+  });
+
   test('"the to" (3+ letters but nothing usable) → the server 400 echo, quietly; a stopword-only word is shown as not searched', async () => {
     const env = await boot(searchHandler({ search: () => { const e = new Error('A search needs a word of 3 or more letters or digits'); e.status = 400; e.body = { terms: [], ignored: ['the', 'to'] }; throw e; } }));
     await openPhone(env);

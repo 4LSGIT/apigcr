@@ -41,12 +41,14 @@ maybe('S-PH phone reads on real MySQL', () => {
   const mysql = require('mysql2/promise');
   const mbx = require('../services/mailboxService');
   const phone = require('../services/phoneCommsService');
-  const { makeWorld, SPH_SEED, SEARCH_SEED, LINES, USERS, lineOf } = require('./helpers/phoneSPHWorld');
+  const { makeWorld, SPH_SEED, SEARCH_SEED, REF_SEED, LINES, USERS, lineOf } = require('./helpers/phoneSPHWorld');
 
   let pool;
   let conn; // ONE connection for SET/PREPARE groups (multipleStatements)
   let W;
   let S;
+  let X;
+  let R;
   const q = async (sql, p) => (await pool.query(sql, p))[0];
   const SEEDED_USERS = USERS.filter(u => u.user > 0).map(u => u.user);
   const FILLER_LINE = '2486213656'; // line 4 — engine-only volume for the plans, never compared
@@ -236,7 +238,7 @@ maybe('S-PH phone reads on real MySQL', () => {
   // the matchers' case_relate_type list / EXISTS line filter → engine = world.
   test('ENGINE = WORLD: ?q= on all four lists — every matcher, every user, every page', async () => {
     const before = { ev: W.T.phone_event_log.length, cp: W.T.contact_phones.length, c: W.T.contacts.length };
-    const X = SEARCH_SEED(W, S);
+    X = SEARCH_SEED(W, S);
     for (const e of W.T.phone_event_log.slice(before.ev)) {
       await q(`INSERT INTO phone_event_log (id, provider, provider_ref, event_type, direction, from_number, to_number, other_party, body, suppressed, log_id, raw_extra, processed_at)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -301,6 +303,52 @@ maybe('S-PH phone reads on real MySQL', () => {
     expect(byOf(await phone.listAllConversations(pool, 22, { q: 'pat' }))).toEqual([]);
     expect((await phone.listAllCalls(pool, 22, { q: '2603' })).calls).toEqual([]);
     expect(byOf(await phone.listConversations(pool, { id: 1, phone_number: S.L1 }, { q: 'Rena Pal' }))).toEqual([]);
+  });
+
+  // ── the ref matcher (bubble reference numbers, 2026-10-15) ────────────────
+  // Mutation-checked HERE (the world matches statement TEXT): REF_MATCH_SQL
+  // without its line filter / its suppressed = 0 → engine = world + the scope
+  // rows; SEARCH_SQL's `OR id = ?` outside the parentheses → the call rows.
+  test('ENGINE = WORLD: the ref matcher on all four lists — every user, both conversation kinds; scope and suppression on the engine', async () => {
+    const before = W.T.phone_event_log.length;
+    R = REF_SEED(W, S);
+    for (const e of W.T.phone_event_log.slice(before)) {
+      await q(`INSERT INTO phone_event_log (id, provider, provider_ref, event_type, direction, from_number, to_number, other_party, body, suppressed, log_id, raw_extra, processed_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [e.id, e.provider, e.provider_ref, e.event_type, e.direction, e.from_number, e.to_number, e.other_party, e.body, e.suppressed, e.log_id, e.raw_extra, e.processed_at]);
+    }
+    const QS = ['#3', '#4', '# 4', '#5', '#7', '#8', '#15', '#17', '#19', `#${R.SUPP_CALL}`, `#${R.REF_ID}`, '702', '4', '13', '#99999', '#4294967296'];
+    for (const qq of QS) {
+      for (const [id, num] of [[1, S.L1], [3, S.L3], [6, S.L6]]) {
+        const line = { id, phone_number: num };
+        for (const kind of [undefined, 'sms']) {
+          expect([qq, id, kind, await phone.listConversations(pool, line, { q: qq, kind })]).toEqual([qq, id, kind, await phone.listConversations(W.db, line, { q: qq, kind })]);
+        }
+        expect([qq, id, 'calls', await phone.listCalls(pool, line, { q: qq })]).toEqual([qq, id, 'calls', await phone.listCalls(W.db, line, { q: qq })]);
+      }
+      for (const user of [6, 1, 22, 9]) {
+        for (const kind of [undefined, 'sms']) {
+          expect([qq, user, kind, await phone.listAllConversations(pool, user, { q: qq, kind })]).toEqual([qq, user, kind, await phone.listAllConversations(W.db, user, { q: qq, kind })]);
+        }
+        expect([qq, user, 'calls', await phone.listAllCalls(pool, user, { q: qq })]).toEqual([qq, user, 'calls', await phone.listAllCalls(W.db, user, { q: qq })]);
+      }
+    }
+    // the engine's own answers (the world could be wrong in step)
+    const L1 = { id: 1, phone_number: S.L1 };
+    const one = await phone.listConversations(pool, L1, { q: '#4' });
+    expect([one.conversations.map(c => [c.other_party, c.count, c.matched_by]), one.search.ref]).toEqual([[[S.P2, 2, ['ref']]], { id: 4, kind: 'sms', other_party: S.P2, line_id: 1 }]);
+    expect((await phone.listConversations(pool, L1, { q: '702' })).conversations.map(c => [c.other_party, c.matched_by]))
+      .toEqual([[R.REF_PARTY, ['ref']], [X.NUM, ['number']]]);
+    expect((await phone.listAllCalls(pool, 6, { q: '#3' })).calls.map(c => [c.id, c.matched_by])).toEqual([[3, ['ref']]]);
+    expect((await phone.listCalls(pool, L1, { q: '#15' })).calls.map(c => [c.id, c.other_party, c.matched_by])).toEqual([[15, null, ['ref']]]);
+    // scope: Rena (line 3 + a send-only line 6) — line 1's #4 and line 6's #20 are nothing, her #19 is hers
+    const rena = async (qq) => phone.listAllConversations(pool, 22, { q: qq });
+    expect([(await rena('#4')).conversations, (await rena('#4')).search]).toEqual([[], { q: '#4', too_short: false, capped: [] }]);
+    expect((await rena('#20')).search.ref).toBeUndefined();
+    expect((await rena('#19')).search.ref).toEqual({ id: 19, kind: 'sms', other_party: X.P6, line_id: 3 });
+    // suppressed: nothing, anywhere
+    expect((await phone.listConversations(pool, L1, { q: '#5' })).conversations).toEqual([]);
+    expect((await phone.listAllCalls(pool, 6, { q: `#${R.SUPP_CALL}` })).calls).toEqual([]);
   });
 
   test('plans: the per-line walks use idx_phone_event_line (backward, no filesort); the contact probe uses uk_phone_active', async () => {
@@ -408,5 +456,38 @@ maybe('S-PH phone reads on real MySQL', () => {
     expect(capped.search).toEqual({ q: 'Capper', too_short: false, capped: ['contact'] });
     expect(capped.conversations).toHaveLength(100);
     expect(capped.conversations.every(c => /^Capper /.test(c.contact.name) && c.matched_by.includes('contact'))).toBe(true);
+  });
+
+  test('plans (ref): the lookup is one PRIMARY-key const read; the walks are the search walks (per-line idx_phone_event_line; merged call log no worse)', async () => {
+    const recorded = [];
+    const rec = { query: (sql, p) => { recorded.push([sql, p]); return pool.query(sql, p); } };
+    const explain = async (fn) => {
+      recorded.length = 0;
+      const out = await fn();
+      const plans = [];
+      for (const [sql, p] of recorded) plans.push({ sql: sql.replace(/\s+/g, ' ').trim(), rows: await q(`EXPLAIN ${sql}`, p) });
+      return { out, plans };
+    };
+    const line4 = { id: 4, phone_number: FILLER_LINE };
+    const [{ id: call4 }] = await q("SELECT MIN(id) AS id FROM phone_event_log WHERE line_number = ? AND event_type = 'call'", [FILLER_LINE]);
+    const [{ id: text4 }] = await q("SELECT MIN(id) AS id FROM phone_event_log WHERE line_number = ? AND event_type = 'sms'", [FILLER_LINE]);
+    // each read with a ref vs the same read with a PS number search (the cost note's baseline)
+    for (const [label, fn] of [
+      ['convos', (qq) => phone.listConversations(rec, line4, { q: qq })],
+      ['calls', (qq) => phone.listCalls(rec, line4, { q: qq })],
+      ['all-calls', (qq) => phone.listAllCalls(rec, 6, { q: qq })],
+      ['all-convos', (qq) => phone.listAllConversations(rec, 6, { q: qq })],
+    ]) {
+      const want = label.endsWith('calls') ? call4 : text4;
+      const { out, plans } = await explain(() => fn(`#${want}`));
+      expect([label, out.search.ref && out.search.ref.id]).toEqual([label, want]);
+      const ref = plans.find(x => /^SELECT e\.id, e\.event_type/.test(x.sql));
+      const e = ref.rows.find(r => r.table === 'e');
+      expect([label, e.type, e.key]).toEqual([label, 'const', 'PRIMARY']);
+      const walkOf = (ps) => { const w = ps.find(x => x.sql.includes('OR id = ?')).rows[0]; return [w.key, w.type]; };
+      const base = await explain(() => fn('3139900'));
+      expect([label, walkOf(plans)]).toEqual([label, walkOf(base.plans)]);
+      if (!label.startsWith('all')) expect([label, walkOf(plans)]).toEqual([label, ['idx_phone_event_line', 'ref']]);
+    }
   });
 });

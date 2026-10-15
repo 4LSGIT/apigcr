@@ -354,7 +354,7 @@ function callLogItem(r, names) {
 // Search — ?q= on the four list reads (conversations / calls, per line and All)
 // ─────────────────────────────────────────────────────────────────────────────
 //
-// Mailbox arc slice PS (Fred, 2026-10-14). One box, three matchers, UNIONED —
+// Mailbox arc slice PS (Fred, 2026-10-14). One box, four matchers, UNIONED —
 // never a guess at which one the user meant (a docket like 24-41234 is
 // digit-shaped too):
 //   number  — every non-digit stripped; a leading country 1 dropped when the
@@ -367,22 +367,51 @@ function callLogItem(r, names) {
 //             Primary + Secondary clients → their active numbers. ≥2 chars.
 //             The phone log carries no case link, so cases reach it only
 //             through contacts.
+//   ref     — the bubble's reference number (Fred, 2026-10-15): exactly
+//             phone_event_log.id = n. "#<digits>" ("# 123" too) is a ref ONLY
+//             (no other matcher runs); bare digits are a number AND a ref.
+//             One PK lookup (REF_MATCH_SQL), held to the read: the lines being
+//             read, unsuppressed, and an item the list can hold — a list of
+//             conversations needs an other party (not a firm line in All
+//             numbers; a text under ?kind=sms), a call log needs a call. A
+//             conversation list then shows that event's conversation (its
+//             other party joins the name matchers' numbers); a call log shows
+//             that one call row (`id = ?`). A match puts `search.ref` = {id,
+//             kind, other_party, line_id} on the answer so the pane can jump to
+//             the bubble; anything else (another line, suppressed, no such id,
+//             outside the list) gives no `ref` and no other difference.
 // The name matchers resolve to a number list, pruned to numbers with an
 // unsuppressed event on the lines being read (so the cap counts numbers that
 // can show) and capped at SEARCH_PARTY_CAP each; a capped matcher is named in
 // `search.capped` and the pane says so. The list read then adds ONE predicate
 // (SEARCH_SQL) before its GROUP BY / keyset — paging and order are unchanged.
-// Scope never widens: the matchers only pick numbers; which lines are read is
-// the route's (resolveRead) or readableScope's, as without q.
+// Scope never widens: the matchers only pick numbers (or the one ref id);
+// which lines are read is the route's (resolveRead) or readableScope's, as
+// without q.
 // COST: live 2026-10-14 every search statement 9–42 ms; the slowest is the
 // merged call log with a rare match (walks idx_phone_event_processed_at to
 // the end) — ref/plans.md "Phone search query cost" has the threshold note.
+// The ref matcher adds one PRIMARY-key lookup (a const read); a ref-only call
+// log read is that same rare-match walk.
 
 const SEARCH_MAX_CHARS = 100;
 const SEARCH_PARTY_CAP = 200;
 // The number matcher's LIKE, else NULL (matches nothing); the name matchers'
-// numbers, else [NULL] (matches nothing) — one statement shape for every mix.
-const SEARCH_SQL = ' AND (other_party LIKE ? OR other_party IN (?))';
+// numbers (+ a ref's other party on a conversation list), else [NULL]
+// (matches nothing); a ref's id on a call log, else NULL (matches nothing) —
+// one statement shape for every mix.
+const SEARCH_SQL = ' AND (other_party LIKE ? OR other_party IN (?) OR id = ?)';
+// "#123" / "# 123" → a ref only; bare digits → a number and a ref. An id past
+// the column (int unsigned) can be no event: a "#…" one matches nothing, a
+// bare one is left to the number matcher.
+const REF_ONLY_RE = /^#\s*(\d+)$/;
+const REF_BARE_RE = /^\d+$/;
+const REF_MAX = 4294967295;
+const REF_MATCH_SQL =
+  `SELECT e.id, e.event_type, e.other_party, e.line_number,
+          EXISTS (SELECT 1 FROM phone_lines pl WHERE pl.phone_number = e.other_party) AS firm_party
+     FROM phone_event_log e
+    WHERE e.id = ? AND e.line_number IN (?) AND e.suppressed = 0`;
 const IN_LINES_LOGGED =
   'EXISTS (SELECT 1 FROM phone_event_log e WHERE e.other_party = cp.phone_active_uniq AND e.line_number IN (?) AND e.suppressed = 0)';
 const CONTACT_MATCH_SQL =
@@ -422,16 +451,48 @@ function searchDigits(q) {
   return d.length >= 3 ? d : null;
 }
 
+/** ?q='s ref: {only, id} — `id` null when the digits can be no event; null when q is no ref. */
+function searchRef(q) {
+  const m = REF_ONLY_RE.exec(String(q));
+  const digits = m ? m[1] : (REF_BARE_RE.test(String(q)) ? String(q) : null);
+  if (digits == null) return null;
+  const n = Number(digits);
+  return { only: !!m, id: n >= 1 && n <= REF_MAX ? n : null };
+}
+
 /**
- * Resolve ?q= against the lines being read (`lineNumbers`). null = no search.
- * Otherwise {q, digits, contact:Set, cases:Map(phone → [{case_id, number,
- * caption}]), capped:[], too_short, none} — `none` when no matcher can match
- * (the caller answers empty without reading the log).
+ * The ref matcher: the event `id` when the read can show it, else null.
+ * `read` = {list: 'conversations'|'calls', kind ('' | the ?kind= clause),
+ * all (All numbers: firm-line parties are not listed), lineIdOf(number)}.
  */
-async function searchOf(db, q, lineNumbers) {
+async function refOf(db, id, lineNumbers, read) {
+  const [rows] = await db.query(REF_MATCH_SQL, [id, lineNumbers]);
+  const r = rows[0];
+  if (!r) return null;
+  const party = r.other_party == null ? null : String(r.other_party);
+  if (read.list === 'calls') {
+    if (r.event_type !== 'call') return null;
+  } else if (party == null || (read.kind && r.event_type !== 'sms') || (read.all && Number(r.firm_party))) {
+    return null;
+  }
+  return { id: Number(r.id), kind: r.event_type, other_party: party, line_id: read.lineIdOf(String(r.line_number)) };
+}
+
+/**
+ * Resolve ?q= against the lines being read (`lineNumbers`) for one list read
+ * (`read`, see refOf). null = no search. Otherwise {q, digits, contact:Set,
+ * cases:Map(phone → [{case_id, number, caption}]), ref, list, capped:[],
+ * too_short, none} — `none` when no matcher can match (the caller answers
+ * empty without reading the log).
+ */
+async function searchOf(db, q, lineNumbers, read) {
   if (!q) return null;
-  const s = { q, digits: searchDigits(q), contact: new Set(), cases: new Map(), capped: [], too_short: false, none: false };
-  if (q.length >= 2 && lineNumbers.length) {
+  const ref = searchRef(q);
+  const s = { q, digits: ref && ref.only ? null : searchDigits(q), contact: new Set(), cases: new Map(), ref: null, list: read.list, capped: [], too_short: false, none: false };
+  if (ref && ref.id != null && lineNumbers.length) s.ref = await refOf(db, ref.id, lineNumbers, read);
+  if (ref && ref.only) {
+    // a ref and nothing else
+  } else if (q.length >= 2 && lineNumbers.length) {
     const like = `%${escapeLike(q)}%`;
     const [people] = await db.query(CONTACT_MATCH_SQL, [like, lineNumbers, SEARCH_PARTY_CAP + 1]);
     if (people.length > SEARCH_PARTY_CAP) s.capped.push('contact');
@@ -443,34 +504,38 @@ async function searchOf(db, q, lineNumbers) {
       list.push({ case_id: String(r.case_id), number: r.case_number_full || r.case_number || null, caption: r.case_caption || null });
       s.cases.set(String(r.phone), list);
     }
-  } else if (!s.digits) {
+  } else if (!s.digits && !ref) {
     s.too_short = q.length < 2;
   }
-  s.none = !s.digits && !s.contact.size && !s.cases.size;
+  s.none = !s.digits && !s.contact.size && !s.cases.size && !s.ref;
   return s;
 }
 
 /** SEARCH_SQL's text + params (appended to `params`), '' without a search. */
 function searchClause(s, params) {
   if (!s) return '';
-  const parties = [...new Set([...s.contact, ...s.cases.keys()])];
-  params.push(s.digits ? `%${s.digits}%` : null, parties.length ? parties : [null]);
+  const byId = s.ref && s.list === 'calls';
+  const parties = [...new Set([...s.contact, ...s.cases.keys(), ...(s.ref && !byId ? [s.ref.other_party] : [])])];
+  params.push(s.digits ? `%${s.digits}%` : null, parties.length ? parties : [null], byId ? s.ref.id : null);
   return SEARCH_SQL;
 }
 
-/** A row's `matched_by` (+ `matched_cases` on a case hit); nothing without a search. */
-function matchOf(s, party) {
-  if (!s || party == null) return {};
+/** A row's `matched_by` (+ `matched_cases` on a case hit); nothing without a search. `id` = the call-log row's. */
+function matchOf(s, party, id = null) {
+  if (!s) return {};
+  const refHit = !!s.ref && (s.list === 'calls' ? id != null && Number(id) === s.ref.id : party != null && String(party) === s.ref.other_party);
+  if (party == null) return refHit ? { matched_by: ['ref'] } : {};
   const p = String(party);
   const by = [];
   if (s.digits && p.includes(s.digits)) by.push('number');
   if (s.contact.has(p)) by.push('contact');
   if (s.cases.has(p)) by.push('case');
+  if (refHit) by.push('ref');
   return by.includes('case') ? { matched_by: by, matched_cases: s.cases.get(p) } : { matched_by: by };
 }
 
-/** The response's `search` block; nothing without a search. */
-const searchMeta = (s) => (s ? { search: { q: s.q, too_short: s.too_short, capped: s.capped } } : {});
+/** The response's `search` block (+ `ref` when the ref matcher found an event the read shows); nothing without a search. */
+const searchMeta = (s) => (s ? { search: { q: s.q, too_short: s.too_short, capped: s.capped, ...(s.ref ? { ref: s.ref } : {}) } } : {});
 
 function convoCursor(query) {
   if (query.cursor === undefined || query.cursor === null || query.cursor === '') return null;
@@ -514,7 +579,7 @@ async function listConversations(db, line, query = {}) {
   const limit = pageLimit(query.limit);
   const before = convoCursor(query);
   const kind = convoKind(query);
-  const s = await searchOf(db, searchText(query), [line.phone_number]);
+  const s = await searchOf(db, searchText(query), [line.phone_number], { list: 'conversations', kind, all: false, lineIdOf: () => Number(line.id) });
   if (s && s.none) return { conversations: [], next_cursor: null, ...searchMeta(s) };
   const params = [line.phone_number];
   const search = searchClause(s, params);
@@ -601,7 +666,7 @@ async function listMessages(db, line, party, query = {}) {
 async function listCalls(db, line, query = {}) {
   const limit = pageLimit(query.limit);
   parseCursor(query.cursor); // a malformed cursor is a 400 before any search read
-  const s = await searchOf(db, searchText(query), [line.phone_number]);
+  const s = await searchOf(db, searchText(query), [line.phone_number], { list: 'calls', kind: '', all: false, lineIdOf: () => Number(line.id) });
   if (s && s.none) return { calls: [], next_cursor: null, ...searchMeta(s) };
   const params = [line.phone_number];
   const search = searchClause(s, params);
@@ -621,7 +686,7 @@ async function listCalls(db, line, query = {}) {
   const page = rows.slice(0, limit);
   const names = await contactsFor(db, page.map(r => (r.other_party == null ? null : String(r.other_party))));
   return {
-    calls: page.map(r => ({ ...callLogItem(r, names), ...matchOf(s, r.other_party) })),
+    calls: page.map(r => ({ ...callLogItem(r, names), ...matchOf(s, r.other_party, r.id) })),
     next_cursor: rows.length > limit && page.length ? cursorOf(page[page.length - 1]) : null,
     ...searchMeta(s),
   };
@@ -667,7 +732,7 @@ async function listAllConversations(db, userId, query = {}) {
   const kind = convoKind(query);
   const q = searchText(query);
   const { numbers, idOf } = await readableScope(db, userId);
-  const s = await searchOf(db, q, numbers);
+  const s = await searchOf(db, q, numbers, { list: 'conversations', kind, all: true, lineIdOf: n => idOf.get(n) || null });
   if (!numbers.length || (s && s.none)) return { conversations: [], next_cursor: null, ...searchMeta(s) };
   const params = [numbers];
   const search = searchClause(s, params);
@@ -759,7 +824,7 @@ async function listAllCalls(db, userId, query = {}) {
   parseCursor(query.cursor); // a malformed cursor is a 400 even with nothing readable
   const q = searchText(query);
   const { numbers, idOf } = await readableScope(db, userId);
-  const s = await searchOf(db, q, numbers);
+  const s = await searchOf(db, q, numbers, { list: 'calls', kind: '', all: true, lineIdOf: n => idOf.get(n) || null });
   if (!numbers.length || (s && s.none)) return { calls: [], next_cursor: null, ...searchMeta(s) };
   const params = [numbers];
   const search = searchClause(s, params);
@@ -779,7 +844,7 @@ async function listAllCalls(db, userId, query = {}) {
   const page = rows.slice(0, limit);
   const names = await contactsFor(db, page.map(r => (r.other_party == null ? null : String(r.other_party))));
   return {
-    calls: page.map(r => ({ ...callLogItem(r, names), line_id: idOf.get(String(r.line_number)) || null, ...matchOf(s, r.other_party) })),
+    calls: page.map(r => ({ ...callLogItem(r, names), line_id: idOf.get(String(r.line_number)) || null, ...matchOf(s, r.other_party, r.id) })),
     next_cursor: rows.length > limit && page.length ? cursorOf(page[page.length - 1]) : null,
     ...searchMeta(s),
   };
@@ -854,6 +919,7 @@ module.exports = {
   validateMessage,
   tenDigits,
   searchDigits,
+  searchRef,
   parseCursor,
   cursorOf,
   httpError,

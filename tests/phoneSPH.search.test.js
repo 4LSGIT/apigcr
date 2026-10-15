@@ -22,6 +22,11 @@
  *   paging   q rides every page; the keyset is unchanged.
  *   calls    the call log narrows to the same numbers.
  *   limits   too short / capped / too long / not one string.
+ *   ref      "#<id>" (the bubble's reference number) is that event and
+ *            nothing else — its conversation, or on a call log its one call
+ *            row — with `search.ref` for the pane's jump; bare digits are a
+ *            number AND a ref; another line's, a suppressed or an
+ *            out-of-list event finds nothing and leaves no trace.
  */
 
 'use strict';
@@ -34,11 +39,11 @@ const jwt = require('jsonwebtoken');
 const { _resetRateLimits } = require('../lib/auth.superuser');
 const phone = require('../services/phoneCommsService');
 const router = require('../routes/api.phoneComms');
-const { makeWorld, SPH_SEED, SEARCH_SEED } = require('./helpers/phoneSPHWorld');
+const { makeWorld, SPH_SEED, SEARCH_SEED, REF_SEED } = require('./helpers/phoneSPHWorld');
 
 const SU = 6; const SB = 5; const RENA = 22;
 
-let W; let S; let X;
+let W; let S; let X; let R;
 const app = express();
 app.use(express.json());
 app.use((req, res, next) => { req.db = W.db; next(); });
@@ -55,6 +60,7 @@ beforeEach(() => {
   W = makeWorld();
   S = SPH_SEED(W);
   X = SEARCH_SEED(W, S);
+  R = REF_SEED(W, S);
   _resetRateLimits();
   jest.spyOn(console, 'error').mockImplementation(() => {});
 });
@@ -230,5 +236,111 @@ describe('limits', () => {
     expect([long.status, long.json.message]).toEqual([400, `q is ${phone.SEARCH_MAX_CHARS + 1} characters — the limit is ${phone.SEARCH_MAX_CHARS}`]);
     expect((await get('/api/phone-lines/all/calls?q=a&q=b')).status).toBe(400);
     expect((await get(withQ('/api/phone-lines/1/conversations', 'x'.repeat(phone.SEARCH_MAX_CHARS)))).status).toBe(200);
+  });
+});
+
+describe('ref matcher (the bubble reference number)', () => {
+  const refReads = () => W.statements.filter(x => /^SELECT e\.id, e\.event_type, e\.other_party/.test(x.sql));
+  const callsOf = (r) => r.json.calls.map(c => [c.id, c.other_party, c.matched_by]);
+
+  test('"#<id>" finds exactly that event\'s conversation — on its line and across All — and says so in search.ref', async () => {
+    for (const q of ['#4', '# 4', '#  4']) {
+      const one = await get(withQ('/api/phone-lines/1/conversations', q));
+      expect([q, one.status, by(one)]).toEqual([q, 200, { [S.P2]: ['ref'] }]);
+      expect(one.json.search).toEqual({ q, too_short: false, capped: [], ref: { id: 4, kind: 'sms', other_party: S.P2, line_id: 1 } });
+      const all = await get(withQ('/api/phone-lines/all/conversations', q));
+      expect([q, by(all), all.json.search.ref]).toEqual([q, { [S.P2]: ['ref'] }, { id: 4, kind: 'sms', other_party: S.P2, line_id: 1 }]);
+    }
+    // the conversation is the whole of it: P2's text AND its call on line 1
+    W.statements.length = 0;
+    const one = await get(withQ('/api/phone-lines/1/conversations', '#4'));
+    expect(one.json.conversations[0].count).toBe(2);
+    // one PK lookup per read, held to the lines being read
+    expect(refReads().map(x => x.params)).toEqual([[4, ['2485592400']]]);
+  });
+
+  test('"#<digits>" is a ref ONLY: the number and name matchers do not run', async () => {
+    const asNumber = await get(withQ('/api/phone-lines/all/conversations', '2603'));
+    expect(parties(asNumber)).toEqual([X.NUM]);
+    W.statements.length = 0;
+    const asRef = await get(withQ('/api/phone-lines/all/conversations', '#2603'));
+    expect(asRef.json).toMatchObject({ conversations: [], next_cursor: null, search: { q: '#2603', too_short: false, capped: [] } });
+    expect(asRef.json.search.ref).toBeUndefined();
+    expect(W.statements.filter(x => /contact_name LIKE|case_caption LIKE/.test(x.sql))).toEqual([]);
+    expect(logReads()).toEqual([]); // nothing can match: the log is never read
+    // past the column (int unsigned): no lookup, nothing found
+    W.statements.length = 0;
+    const huge = await get(withQ('/api/phone-lines/all/conversations', '#4294967296'));
+    expect([huge.json.conversations, huge.json.search.ref, refReads()]).toEqual([[], undefined, []]);
+  });
+
+  test('bare digits are a number AND a ref (never a guess): each row says which', async () => {
+    const r = await get(withQ('/api/phone-lines/1/conversations', '702'));
+    expect(by(r)).toEqual({ [R.REF_PARTY]: ['ref'], [X.NUM]: ['number'] });
+    expect(r.json.search.ref).toEqual({ id: R.REF_ID, kind: 'sms', other_party: R.REF_PARTY, line_id: 1 });
+    // the ref alone
+    expect(by(await get(withQ('/api/phone-lines/1/conversations', '#702')))).toEqual({ [R.REF_PARTY]: ['ref'] });
+    // a single digit is a ref, not "too short"
+    const short = await get(withQ('/api/phone-lines/1/conversations', '4'));
+    expect([by(short), short.json.search]).toEqual([{ [S.P2]: ['ref'] }, { q: '4', too_short: false, capped: [], ref: { id: 4, kind: 'sms', other_party: S.P2, line_id: 1 } }]);
+    // 11 digits starting 1 = a number only (past the column): no lookup
+    W.statements.length = 0;
+    expect(parties(await get(withQ('/api/phone-lines/all/conversations', '12026702603')))).toEqual([X.NUM]);
+    expect(refReads()).toEqual([]);
+  });
+
+  test('scope never widens: another line\'s ref is invisible to a grantee and to a per-line read, and leaves no trace', async () => {
+    W.grant(RENA, 3, { can_read: 1 });
+    const nothing = (q) => ({ conversations: [], next_cursor: null, search: { q, too_short: false, capped: [] } });
+    // Rena reads line 3: #4 (line 1) is nothing — the same answer as an id that does not exist
+    const hidden = await get(withQ('/api/phone-lines/all/conversations', '#4'), T.rena());
+    const absent = await get(withQ('/api/phone-lines/all/conversations', '#99999'), T.rena());
+    expect([hidden.json.conversations, hidden.json.next_cursor, hidden.json.search]).toEqual([[], null, nothing('#4').search]);
+    expect({ ...absent.json, search: { ...absent.json.search, q: '#4' } }).toEqual(hidden.json);
+    expect((await get(withQ('/api/phone-lines/all/calls', '#3'), T.rena())).json).toEqual({ status: 'success', all: true, calls: [], next_cursor: null, search: { q: '#3', too_short: false, capped: [] } });
+    expect((await get(withQ('/api/phone-lines/1/conversations', '#4'), T.rena())).status).toBe(404);
+    // her own line's ref she sees
+    const own = await get(withQ('/api/phone-lines/all/conversations', '#19'), T.rena());
+    expect([by(own), own.json.search.ref]).toEqual([{ [X.P6]: ['ref'] }, { id: 19, kind: 'sms', other_party: X.P6, line_id: 3 }]);
+    // the SU reading line 1 does not see line 3's event either
+    const su = await get(withQ('/api/phone-lines/1/conversations', '#19'));
+    expect([su.json.conversations, su.json.search.ref]).toEqual([[], undefined]);
+  });
+
+  test('a suppressed event is invisible — text or call, every list', async () => {
+    for (const [q, path] of [['#5', '/api/phone-lines/1/conversations'], ['#5', '/api/phone-lines/all/conversations'],
+      [`#${R.SUPP_CALL}`, '/api/phone-lines/1/calls'], [`#${R.SUPP_CALL}`, '/api/phone-lines/all/calls'], [`#${R.SUPP_CALL}`, '/api/phone-lines/all/conversations']]) {
+      const r = await get(withQ(path, q));
+      expect([q, path, (r.json.conversations || r.json.calls), r.json.search]).toEqual([q, path, [], { q, too_short: false, capped: [] }]);
+    }
+  });
+
+  test('call logs: a ref is that ONE call row — not the other calls with its number; a text ref finds no call', async () => {
+    // P2 has calls 3 (line 1) and 11 (line 6): #3 is call 3 only
+    expect(callsOf(await get(withQ('/api/phone-lines/all/calls', '#3')))).toEqual([[3, S.P2, ['ref']]]);
+    const one = await get(withQ('/api/phone-lines/1/calls', '#3'));
+    expect([callsOf(one), one.json.search.ref]).toEqual([[[3, S.P2, ['ref']]], { id: 3, kind: 'call', other_party: S.P2, line_id: 1 }]);
+    const six = await get(withQ('/api/phone-lines/all/calls', '#17'));
+    expect([six.json.calls.map(c => [c.id, c.line_id]), six.json.search.ref]).toEqual([[[17, 6]], { id: 17, kind: 'call', other_party: X.NUM, line_id: 6 }]);
+    // a call with no other party is still a call-log row (and no conversation)
+    const anon = await get(withQ('/api/phone-lines/1/calls', '#15'));
+    expect([callsOf(anon), anon.json.search.ref]).toEqual([[[15, null, ['ref']]], { id: 15, kind: 'call', other_party: null, line_id: 1 }]);
+    expect((await get(withQ('/api/phone-lines/1/conversations', '#15'))).json.search.ref).toBeUndefined();
+    // a text's ref on a call log: nothing
+    const text = await get(withQ('/api/phone-lines/1/calls', '#4'));
+    expect([text.json.calls, text.json.search.ref]).toEqual([[], undefined]);
+    // bare digits on a call log: the number's calls AND the ref's call
+    W.call(S.L1, '7345550100', 'incoming', { id: 2026 });
+    expect(callsOf(await get(withQ('/api/phone-lines/all/calls', '2026')))).toEqual([[2026, '7345550100', ['ref']], [17, X.NUM, ['number']]]);
+  });
+
+  test('a ref outside the list finds nothing: a call under Texts (kind=sms); a firm line\'s text in All numbers', async () => {
+    const texts = await get(withQ('/api/phone-lines/1/conversations', '#3', '&kind=sms'));
+    expect([texts.json.conversations, texts.json.search.ref]).toEqual([[], undefined]);
+    expect(by(await get(withQ('/api/phone-lines/1/conversations', '#4', '&kind=sms')))).toEqual({ [S.P2]: ['ref'] });
+    // #7: line 1 → line 3 — listed on line 1, never in All (a firm line is not an outside number)
+    expect(by(await get(withQ('/api/phone-lines/1/conversations', '#7')))).toEqual({ [S.L3]: ['ref'] });
+    const all = await get(withQ('/api/phone-lines/all/conversations', '#7'));
+    expect([all.json.conversations, all.json.search.ref]).toEqual([[], undefined]);
   });
 });

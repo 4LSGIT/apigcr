@@ -552,7 +552,8 @@ lines alike (design: `ref/MAILBOX_SYSTEM_DESIGN.md` §4.4, slice S-PH).
   goes back further. Every confirmed text and call ends with its reference
   number (**#12345**, at the right of its time line; a text you just sent
   gets one once the phone system confirms it) — click it to select it, then
-  copy, to point someone at exactly that text or call.
+  copy, to point someone at exactly that text or call. Typing it into the
+  search box (below) finds that text or call again.
 - **Texts** is the same list for texts only: a number that only ever called
   is not in it, and each row shows its latest text. It filters the list, not
   the conversation — opening a number still shows its calls among the texts.
@@ -580,8 +581,19 @@ lines alike (design: `ref/MAILBOX_SYSTEM_DESIGN.md` §4.4, slice S-PH).
   name matches very many contacts, only the first 200 numbers each are
   searched and the line under the bar says so — type more of the name.
   Only numbers on file as a contact's *current* number are found by name, so
-  a number no contact holds is found by its digits. With a word of 3 or more
-  letters or digits it also searches what was SAID on calls — **In call transcripts**,
+  a number no contact holds is found by its digits.
+  A **reference number** finds one text or call: type it with its **#**
+  ("#12345") and nothing else is searched — the list shows that item's
+  conversation (in **Calls**, that one call). Typed without the # ("12345")
+  it is searched as a reference number AND as digits of a phone number, so
+  both kinds of row can show; the one found by its reference number says
+  "Reference #12345". Open that row — or press **Enter** in the box — and the
+  conversation opens at that bubble, scrolled to it and briefly ringed
+  (earlier messages load as needed, up to 10 pages; past that a note says to
+  use **Load earlier**). It finds only what the list you are in can show: a
+  text or call on a line you can read, not one hidden from the phone log; a
+  call is not found in **Texts**, and a text not in **Calls**. With a word of 3 or more
+  letters or digits (but not a #reference number) it also searches what was SAID on calls — **In call transcripts**,
   under the list ([Comms archive](10-comms-archive.md)).
 - **Sending.** With **Send** on an active line, a conversation has a message
   box at the bottom and the bar has **New text** (a US number, up to 1,000

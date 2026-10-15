@@ -885,10 +885,269 @@ describe('comms.html — Phone search', () => {
     const { doc } = env;
     await typeQ(env, 'zzz');
     expect(doc.querySelector('#ph-list .empty').textContent)
-      .toBe('No texts or calls on this line match “zzz” — search by a phone number (3+ digits), a contact\'s name, or a case number.');
+      .toBe('No texts or calls on this line match “zzz” — search by a phone number (3+ digits), a contact\'s name, a case number, or a #reference number.');
     await typeQ(env, 'smith');
     expect(doc.getElementById('ph-status').textContent)
       .toBe('1 conversation matching “smith” — many names match; only the first 200 numbers each are searched, type more to narrow');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// comms.html — Phone search by reference number ("#<id>", 2026-10-15)
+// ─────────────────────────────────────────────────────────────────────────────
+
+const REF = { id: 13, kind: 'sms', other_party: '3135550001', line_id: 1 };
+const sms = (id, n = 0) => ({ id, kind: 'sms', direction: 'incoming', body: `text ${id}`, at: new Date(Date.parse('2026-10-08T00:00:00Z') + id * 60000 + n).toISOString(), logged: false });
+/**
+ * The ref search's fixtures: '#13' (and bare '13') find P1 with search.ref;
+ * P1's thread is `pages` (newest first): page 0 is the newest page, page k
+ * the answer to cursor `p<k>`; the last page has no next_cursor.
+ */
+function refOver(pages, extra = {}) {
+  const convos = (q) => {
+    if (!q || !q.q) return { conversations: fresh(CONVOS), next_cursor: null };
+    const ref = ['#13', '13'].includes(q.q);
+    return {
+      conversations: ref ? [{ ...fresh(CONVOS[0]), matched_by: ['ref'] }, { ...fresh(CONVOS[1]), matched_by: ['contact'] }] : [{ ...fresh(CONVOS[1]), matched_by: ['contact'] }],
+      next_cursor: null,
+      search: { q: q.q, too_short: false, capped: [], ...(ref ? { ref: { ...REF } } : {}) },
+    };
+  };
+  const thread = (q) => {
+    const k = q && q.cursor ? Number(String(q.cursor).slice(1)) : 0;
+    return { other_party: '3135550001', contact: { contact_id: 501, name: 'Pat One' }, messages: fresh(pages[k]), next_cursor: k + 1 < pages.length ? `p${k + 1}` : null };
+  };
+  return {
+    'GET /api/phone-lines/1/conversations': convos,
+    'GET /api/phone-lines/1/conversations/3135550001': thread,
+    'GET /api/phone-lines/1/conversations/22395': () => ({ other_party: '22395', contact: null, messages: [sms(9)], next_cursor: null }),
+    ...extra,
+  };
+}
+/** Boot with the ref fixtures; body.scrollTo recorded; the ring held `hitMs`. */
+async function bootRef(pages, { reduced = false, extra, hitMs = 1500 } = {}) {
+  const scrolls = [];
+  const env = await bootComms({
+    over: refOver(pages, extra),
+    before: (w) => {
+      if (reduced) w.matchMedia = (m) => ({ matches: /prefers-reduced-motion:\s*reduce/.test(m), media: m, addEventListener() {}, removeEventListener() {} });
+    },
+  });
+  env.window.PH_HIT_MS = hitMs; // after boot: the page's own `var` would overwrite it
+  await openPhone(env);
+  env.doc.getElementById('ph-body').scrollTo = (o) => scrolls.push(fresh(o));
+  return { ...env, scrolls };
+}
+const threadReads = (calls) => calls.filter((c) => c.url === '/api/phone-lines/1/conversations/3135550001').map((c) => c.payload);
+const hits = (doc) => [...doc.querySelectorAll('#ph-body .bub.ph-hit')].map((b) => Number(b.dataset.id));
+const jumpNote = (doc) => { const n = doc.querySelector('#ph-body .ph-jump-note'); return n ? n.textContent : null; };
+
+describe('comms.html — Phone search by reference number', () => {
+  test('the box says it takes a #ref; a ref row says so; opening it rings that bubble, centred, smoothly — briefly', async () => {
+    const env = await bootRef([[sms(2), sms(13), sms(14)]], { hitMs: 300 });
+    const { doc, window, scrolls, errors } = env;
+    expect(doc.getElementById('ph-q').placeholder).toBe('Number, name, case number or #ref');
+    expect(doc.getElementById('ph-q').getAttribute('aria-label')).toMatch(/#reference number/);
+    await typeQ(env, '#13');
+    const rows = [...doc.querySelectorAll('#ph-list .msg')];
+    expect(rows.map((r) => r.querySelector('.ph-why') && r.querySelector('.ph-why').textContent)).toEqual([' Reference #13', null]);
+    rows[0].click();
+    await tick(window, 40);
+    expect(hits(doc)).toEqual([13]);
+    expect(scrolls).toEqual([{ top: 0, behavior: 'smooth' }]);
+    expect(threadReads(env.calls)).toEqual([null]); // found on the newest page: no paging
+    await tick(window, 400);
+    expect(hits(doc)).toEqual([]); // the ring is brief
+    expect(errors).toEqual([]);
+  });
+
+  test('a row the ref did not find opens without a ring; a non-ref search never rings', async () => {
+    const env = await bootRef([[sms(2), sms(13)]]);
+    const { doc, window, scrolls } = env;
+    await typeQ(env, '#13');
+    doc.querySelectorAll('#ph-list .msg')[1].click(); // 22395, found by its contact
+    await tick(window, 40);
+    expect([hits(doc), scrolls, jumpNote(doc)]).toEqual([[], [], null]); // no jump at all — not even a failed one
+    await typeQ(env, 'pat');
+    doc.querySelector('#ph-list .msg').click();
+    await tick(window, 40);
+    expect([hits(doc), scrolls]).toEqual([[], []]);
+  });
+
+  test('not on the loaded page: earlier pages load, one at a time, until the bubble shows — then the ring', async () => {
+    const env = await bootRef([[sms(40), sms(41)], [sms(30), sms(31)], [sms(20), sms(21)], [sms(12), sms(13)], [sms(1)]]);
+    const { doc, window, errors } = env;
+    await typeQ(env, '#13');
+    doc.querySelector('#ph-list .msg').click();
+    await tick(window, 150);
+    expect(threadReads(env.calls)).toEqual([null, { cursor: 'p1' }, { cursor: 'p2' }, { cursor: 'p3' }]);
+    expect(hits(doc)).toEqual([13]);
+    expect([...doc.querySelectorAll('#ph-body .bub')].map((b) => Number(b.dataset.id))).toEqual([12, 13, 20, 21, 30, 31, 40, 41]);
+    expect(doc.getElementById('ph-older')).not.toBeNull(); // page 4 is still there to load
+    expect(jumpNote(doc)).toBeNull();
+    expect(errors).toEqual([]);
+  });
+
+  test('the cap: PH_JUMP_PAGES earlier pages, then a muted note; Load earlier keeps looking and rings it when it shows', async () => {
+    const pages = Array.from({ length: 13 }, (_, k) => [sms(500 - k * 2), sms(501 - k * 2)]);
+    pages[11] = [sms(13), sms(14)];
+    const env = await bootRef(pages);
+    const { doc, window } = env;
+    await typeQ(env, '#13');
+    doc.querySelector('#ph-list .msg').click();
+    await tick(window, 300);
+    const reads = threadReads(env.calls);
+    expect(reads).toHaveLength(11); // the newest page + 10 earlier
+    expect(reads.slice(-1)).toEqual([{ cursor: 'p10' }]);
+    expect(hits(doc)).toEqual([]);
+    expect(jumpNote(doc)).toBe('#13 is further back than 10 earlier pages — Load earlier to keep looking.');
+    expect(doc.querySelector('#ph-body .ph-jump-note').getAttribute('style')).toBeNull();
+    doc.getElementById('ph-older').click();
+    await tick(window, 60);
+    expect(threadReads(env.calls).slice(-1)).toEqual([{ cursor: 'p11' }]);
+    expect(hits(doc)).toEqual([13]);
+    expect(jumpNote(doc)).toBeNull();
+  });
+
+  test('nothing earlier and no bubble: the note says it is not in this conversation', async () => {
+    const env = await bootRef([[sms(2), sms(14)]]);
+    const { doc, window } = env;
+    await typeQ(env, '#13');
+    doc.querySelector('#ph-list .msg').click();
+    await tick(window, 60);
+    expect([hits(doc), jumpNote(doc)]).toEqual([[], '#13 is not in this conversation.']);
+    // another conversation drops the note and the jump
+    doc.querySelectorAll('#ph-list .msg')[1].click();
+    await tick(window, 60);
+    expect(jumpNote(doc)).toBeNull();
+  });
+
+  test('reduced motion: the jump is instant and the ring does not pulse', async () => {
+    const env = await bootRef([[sms(2), sms(13)]], { reduced: true });
+    const { doc, window, scrolls } = env;
+    await typeQ(env, '#13');
+    doc.querySelector('#ph-list .msg').click();
+    await tick(window, 40);
+    expect(hits(doc)).toEqual([13]);
+    expect(scrolls).toEqual([{ top: 0, behavior: 'auto' }]);
+    // the stylesheet: the ring animates, and reduced motion takes the animation away
+    expect(COMMS).toMatch(/\.bub\.ph-hit \{[^}]*animation: ph-hit/);
+    expect(COMMS).toMatch(/@media \(prefers-reduced-motion: reduce\) \{ \.bub\.ph-hit \{ animation: none; \} \}/);
+  });
+
+  test('Enter in the box opens the ref\'s conversation at its bubble — after the search answers, even mid-debounce; Enter on other text opens nothing', async () => {
+    const env = await bootRef([[sms(2), sms(13)]]);
+    const { doc, window } = env;
+    const box = doc.getElementById('ph-q');
+    box.value = '#13';
+    box.dispatchEvent(new window.Event('input'));
+    box.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await tick(window, 80);
+    expect(env.calls.filter((c) => c.url === '/api/phone-lines/1/conversations').map((c) => c.payload)).toEqual([null, { q: '#13' }]);
+    expect(hits(doc)).toEqual([13]);
+    expect(doc.getElementById('phone').classList.contains('show-thread')).toBe(true);
+    await tick(window, 400); // the debounce that Enter overtook reads nothing more
+    expect(env.calls.filter((c) => c.url === '/api/phone-lines/1/conversations')).toHaveLength(2);
+    // typing alone never opens: a fresh pane, '#13' typed and left
+    const env2 = await bootRef([[sms(2), sms(13)]]);
+    await typeQ(env2, '#13');
+    expect([threadReads(env2.calls), env2.doc.getElementById('phone').classList.contains('show-thread')]).toEqual([[], false]);
+    await typeQ(env2, 'pat');
+    env2.doc.getElementById('ph-q').dispatchEvent(new env2.window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await tick(env2.window, 60);
+    expect(threadReads(env2.calls)).toEqual([]);
+  });
+
+  test('Enter after a failed search asks again (and opens on the answer); a keystroke after Enter cancels the open', async () => {
+    let fail = 1;
+    const base = refOver([[sms(2), sms(13)]])['GET /api/phone-lines/1/conversations'];
+    const flaky = (q) => { if (q && q.q === '#13' && fail-- > 0) throw new Error('down'); return base(q); };
+    const env = await bootRef([[sms(2), sms(13)]], { extra: { 'GET /api/phone-lines/1/conversations': flaky } });
+    const { doc, window } = env;
+    const lists = () => env.calls.filter((c) => c.url === '/api/phone-lines/1/conversations').map((c) => c.payload);
+    const enter = () => doc.getElementById('ph-q').dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await typeQ(env, '#13');
+    expect(doc.getElementById('ph-error').textContent).toMatch(/down/);
+    enter();
+    await tick(window, 80);
+    expect(lists()).toEqual([null, { q: '#13' }, { q: '#13' }]);
+    expect(hits(doc)).toEqual([13]);
+    // a slow answer: Enter, then another keystroke before it lands — the answer opens nothing
+    const slow = (q) => new Promise((r) => window.setTimeout(() => r(base(q)), 150));
+    const env2 = await bootRef([[sms(2), sms(13)]], { extra: { 'GET /api/phone-lines/1/conversations': (q) => (q && q.q ? slow(q) : base(q)) } });
+    const box = env2.doc.getElementById('ph-q');
+    box.value = '#13';
+    box.dispatchEvent(new env2.window.Event('input'));
+    box.dispatchEvent(new env2.window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await tick(env2.window, 30);
+    box.value = '#13 ';
+    box.dispatchEvent(new env2.window.Event('input')); // same q once trimmed: no new read, only the keystroke
+    await tick(env2.window, 500);
+    expect([threadReads(env2.calls), env2.doc.getElementById('phone').classList.contains('show-thread')]).toEqual([[], false]);
+  });
+
+  test('a jump stops when the search changes, and a conversation reopened any other way does not resume it', async () => {
+    const pages = Array.from({ length: 13 }, (_, k) => [sms(500 - k * 2), sms(501 - k * 2)]);
+    const base = refOver(pages)['GET /api/phone-lines/1/conversations/3135550001'];
+    const slowThread = (q) => new Promise((r) => setTimeout(() => r(base(q)), 60));
+    const env = await bootRef(pages, { extra: { 'GET /api/phone-lines/1/conversations/3135550001': slowThread } });
+    const { doc, window } = env;
+    await typeQ(env, '#13');
+    doc.querySelector('#ph-list .msg').click();
+    await tick(window, 100);
+    await typeQ(env, '#13 99', 300); // a new search mid-jump
+    const n = threadReads(env.calls).length;
+    await tick(window, 900);
+    expect(threadReads(env.calls)).toHaveLength(n);
+    expect(n).toBeLessThan(11);
+    expect(jumpNote(doc)).toBeNull();
+    // paused at the cap (the note up), then the same conversation re-read by Refresh: the jump is gone, the note too
+    const env2 = await bootRef(pages);
+    await typeQ(env2, '#13');
+    env2.doc.querySelector('#ph-list .msg').click();
+    await tick(env2.window, 300);
+    expect(jumpNote(env2.doc)).toMatch(/further back than 10 earlier pages/);
+    env2.doc.getElementById('ph-refresh').click();
+    await tick(env2.window, 80);
+    expect([jumpNote(env2.doc), hits(env2.doc)]).toEqual([null, []]);
+    env2.doc.getElementById('ph-older').click(); // a plain Load earlier now: no ring when #13's page arrives
+    await tick(env2.window, 60);
+    expect(hits(env2.doc)).toEqual([]);
+  });
+
+  test('a ref whose id is not a whole number is ignored (it never reaches a selector): no note, no jump', async () => {
+    const odd = (q) => ({ conversations: [{ ...fresh(CONVOS[0]), matched_by: ['ref'] }], next_cursor: null, search: { q: q.q, too_short: false, capped: [], ref: { ...REF, id: '13"]' } } });
+    const env = await bootRef([[sms(2), sms(13)]], { extra: { 'GET /api/phone-lines/1/conversations': (q) => (q && q.q ? odd(q) : { conversations: fresh(CONVOS), next_cursor: null }) } });
+    const { doc, window, errors } = env;
+    await typeQ(env, '#13');
+    expect(doc.querySelector('#ph-list .ph-why')).toBeNull();
+    doc.querySelector('#ph-list .msg').click();
+    await tick(window, 60);
+    expect([hits(doc), jumpNote(doc), errors]).toEqual([[], null, []]);
+  });
+
+  test('Calls: the ref\'s call row opens the conversation at that call; another call with the number does not ring', async () => {
+    const CALL_REF = { id: 10, kind: 'call', other_party: '3135550001', line_id: 1 };
+    const callsQ = (q) => ({
+      calls: q && q.q ? [{ ...fresh(CALLS.calls[0]), matched_by: ['ref'] }, { ...fresh(CALLS.calls[0]), id: 8, matched_by: ['number'] }] : fresh(CALLS.calls),
+      next_cursor: null,
+      ...(q && q.q ? { search: { q: q.q, too_short: false, capped: [], ref: CALL_REF } } : {}),
+    });
+    const call = (id) => ({ id, kind: 'call', direction: 'incoming', at: new Date(Date.parse('2026-10-08T00:00:00Z') + id * 60000).toISOString(), logged: false, duration_s: 30, status: 'no-answer', unanswered: true, missed: true });
+    const env = await bootRef([[call(8), sms(9), call(10)]], { extra: { 'GET /api/phone-lines/1/calls': callsQ } });
+    const { doc, window } = env;
+    doc.getElementById('ph-v-calls').click();
+    await tick(window, 60);
+    await typeQ(env, '#10');
+    const rows = [...doc.querySelectorAll('#ph-list .msg')];
+    expect(rows.map((r) => r.dataset.call)).toEqual(['10', '8']);
+    rows[1].click();
+    await tick(window, 40);
+    expect(hits(doc)).toEqual([]);
+    rows[0].click();
+    await tick(window, 40);
+    expect(hits(doc)).toEqual([10]);
+    expect(doc.querySelector('#ph-body .bub.ph-hit').classList.contains('call')).toBe(true);
   });
 });
 

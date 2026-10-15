@@ -68,6 +68,8 @@ its conversation and the transcript at that moment.
   "exact phrase" search.
 - Words under **3 letters or digits** and very common words ("the", "about", "with"…)
   are skipped — the group says which. A search of only those shows nothing.
+- A **reference number** typed with its # ("#12345") finds that one text or
+  call and is not looked for in transcripts.
 - It covers what you can read: the same lines, restricted calls only for
   archive admins, and only finished transcripts.
 - The words you search for are not kept in any log.
