@@ -388,24 +388,44 @@ function makeDb({ uiRows = [], uiThrows = false } = {}) {
   };
 }
 
-function call(router, method, url, { headers = {}, body, db }) {
-  const app = express();
-  app.use(express.json());
-  app.use((req, _res, next) => { req.db = db; next(); });
-  app.use(router);
-  return new Promise((resolve, reject) => {
-    const server = app.listen(0, async () => {
-      try {
-        const r = await fetch(`http://127.0.0.1:${server.address().port}${url}`, {
-          method, headers: { 'content-type': 'application/json', ...headers },
-          body: body === undefined ? undefined : JSON.stringify(body),
-        });
-        const text = await r.text();
-        let json = {}; try { json = JSON.parse(text); } catch (_) { /* text */ }
-        resolve({ status: r.status, body: json });
-      } catch (e) { reject(e); } finally { server.close(); }
-    });
+// HTTP round trips on a loaded machine (a full gated run beside Chromium
+// surveys) can pass jest's 5 s default; 20 s still catches a real hang.
+jest.setTimeout(20000);
+
+// One server per router for the whole file, the stub db swapped per call.
+// Building an app and listening anew on every call (several per test) hit
+// jest's 5 s default under a loaded full run (2026-10-15) and could NO-GO
+// another arc's landing. Calls in this file are sequential, so one current
+// db is safe.
+const callServers = new Map();
+let callDb = null;
+function callServer(router) {
+  if (!callServers.has(router)) callServers.set(router, new Promise((resolve) => {
+    const app = express();
+    app.use(express.json());
+    app.use((req, _res, next) => { req.db = callDb; next(); });
+    app.use(router);
+    const server = app.listen(0, '127.0.0.1', () => resolve(server));
+  }));
+  return callServers.get(router);
+}
+afterAll(async () => {
+  for (const p of callServers.values()) {
+    const server = await p;
+    server.closeAllConnections();
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+async function call(router, method, url, { headers = {}, body, db }) {
+  const server = await callServer(router);
+  callDb = db;
+  const r = await fetch(`http://127.0.0.1:${server.address().port}${url}`, {
+    method, headers: { 'content-type': 'application/json', ...headers },
+    body: body === undefined ? undefined : JSON.stringify(body),
   });
+  const text = await r.text();
+  let json = {}; try { json = JSON.parse(text); } catch (_) { /* text */ }
+  return { status: r.status, body: json };
 }
 
 const tok = (roles, sub = 9) => ({ authorization: 'Bearer ' + jwt.sign(
