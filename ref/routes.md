@@ -1,7 +1,7 @@
 # Routes
 
-_Generated 2026-10-15T01:48:38.364Z_  
-_776 routes total — DELETE: 64, GET: 324, PATCH: 53, POST: 296, PUT: 36, _ALL: 3_
+_Generated 2026-10-15T02:00:25.050Z_  
+_783 routes total — DELETE: 64, GET: 326, PATCH: 57, POST: 297, PUT: 36, _ALL: 3_
 
 ## Global middleware chain
 
@@ -403,6 +403,13 @@ _776 routes total — DELETE: 64, GET: 324, PATCH: 53, POST: 296, PUT: 36, _ALL:
 | GET | `/api/issue-reports/:id` | `jwtOrApiKey`, `requireAdmin` | — |
 | POST | `/api/issue-reports/resolve` | `jwtOrApiKey`, `requireAdmin` | — |
 | GET | `/api/judges` | `jwtOrApiKey` | — |
+| GET | `/api/key-tasks` | `readonlyApiKeyAuth`, `keyScopeCheck` | — |
+| POST | `/api/key-tasks` | `readonlyApiKeyAuth`, `keyScopeCheck` | — |
+| GET | `/api/key-tasks/:id(\d+)` | `readonlyApiKeyAuth`, `keyScopeCheck` | — |
+| PATCH | `/api/key-tasks/:id(\d+)` | `readonlyApiKeyAuth`, `keyScopeCheck` | — |
+| PATCH | `/api/key-tasks/:id(\d+)/complete` | `readonlyApiKeyAuth`, `keyScopeCheck` | — |
+| PATCH | `/api/key-tasks/:id(\d+)/delete` | `readonlyApiKeyAuth`, `keyScopeCheck` | — |
+| PATCH | `/api/key-tasks/:id(\d+)/reopen` | `readonlyApiKeyAuth`, `keyScopeCheck` | — |
 | GET | `/api/log` | `jwtOrApiKey` | — |
 | POST | `/api/log` | `jwtOrApiKey` | — |
 | GET | `/api/log/:id` | `jwtOrApiKey` | — |
@@ -1046,4 +1053,4 @@ _776 routes total — DELETE: 64, GET: 324, PATCH: 53, POST: 296, PUT: 36, _ALL:
 
 ---
 
-_776 routes total — DELETE: 64, GET: 324, PATCH: 53, POST: 296, PUT: 36, _ALL: 3_
+_783 routes total — DELETE: 64, GET: 326, PATCH: 57, POST: 297, PUT: 36, _ALL: 3_

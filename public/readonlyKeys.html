@@ -125,6 +125,10 @@
     keys.mint makes a manager key: it can mint its own child keys for the sessions it runs
     (sql.ro / scratch / alert only, at most 24h, never past this key, and dead the moment this key is).
   </div>
+  <div class="warn-text" id="tasksWarn" style="margin-top:4px;">
+    tasks.own lets the key create tasks for active staff (they get the assignment email) and manage the
+    ones it made — the one scope that writes to the firm's records.
+  </div>
   <!-- SEC-3: the sensitive scope sits apart (filled from the server's sensitive_scope). -->
   <div class="scope-row" id="sensitivePicker" style="display:none;"></div>
   <div class="warn-text" id="sensitiveWarn" style="display:none;margin-top:4px;">

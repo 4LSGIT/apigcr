@@ -54,7 +54,8 @@
    "user_lname": "Admin",
    "user_initials": "AA",
    "user_type": 1,
-   "does_appts": 1
+   "does_appts": 1,
+   "active": true
   },
   {
    "user": 2,
@@ -63,7 +64,8 @@
    "user_lname": "Staff",
    "user_initials": "SS",
    "user_type": 1,
-   "does_appts": 1
+   "does_appts": 1,
+   "active": true
   },
   {
    "user": 3,
@@ -72,7 +74,8 @@
    "user_lname": "Paralegal",
    "user_initials": "PP",
    "user_type": 1,
-   "does_appts": 0
+   "does_appts": 0,
+   "active": true
   }
  ],
  "settings": {

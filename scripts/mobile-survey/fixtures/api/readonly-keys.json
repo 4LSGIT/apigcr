@@ -25,6 +25,11 @@
    "explicit": true
   },
   {
+   "name": "tasks.own",
+   "desc": "/api/key-tasks — create tasks for active staff and manage the ones this key created (the first app-table write a session key makes)",
+   "explicit": true
+  },
+  {
    "name": "temp.clio",
    "desc": "/api/temp/clio/* — credentialed Clio proxy"
   },

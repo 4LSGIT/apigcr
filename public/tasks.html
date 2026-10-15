@@ -343,6 +343,8 @@ function init() {
   // Populate the two user filter selects (shell mode) from firmData —
   // BOTH filtered on user_type now (F21: the old Assigned-By select listed
   // users who could never be assignees; assigners are the same staff set).
+  // NOT filtered on `active`: these FIND tasks, and a departed user's open
+  // tasks are exactly the ones someone needs to find and reassign.
   const users = (firm().users || []).filter(u => u.user_type);
   for (const selId of ['fBy', 'fTo']) {
     const sel = E(selId);
@@ -505,6 +507,8 @@ const SOURCE_LABELS = {
 };
 function sourceLabel(slug) {
   if (!slug) return '';
+  const key = /^session_key:(\d+)$/.exec(String(slug));   // D3: a session key's task
+  if (key) return `Session key #${key[1]}`;
   return SOURCE_LABELS[slug] ||
     String(slug).replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
 }
@@ -863,6 +867,7 @@ async function viewTask(taskId) {
       if (h.action === 'updated' && Array.isArray(x.changed)) label += ` <span class="tk-id">(${x.changed.map(esc).join(', ')})</span>`;
       if (h.action === 'deleted' && x.previous_status) label += ` <span class="tk-id">(was ${esc(x.previous_status)})</span>`;
       if (x.via === 'email_link') label += ' <span class="tk-id">via email link</span>';
+      if (x.via === 'session_key') label += ` <span class="tk-id">via session key #${esc(x.keyId)}</span>`;
       return `<div class="tk-hist-row"><span class="tk-hist-date">${when}</span><strong>${label}</strong> — ${esc(who)}</div>` +
         (h.note ? `<div class="tk-hist-note">${esc(h.note)}</div>` : '');
     }).join('');
@@ -890,7 +895,8 @@ async function transferDialog(taskId) {
   try { task = await getTaskById(taskId); }
   catch (err) { Toast.fire({ icon: 'error', title: 'Error', text: err.message }); return; }
 
-  const users = (firm().users || []).filter(u => u.user_type && +u.user !== +(task.to?.id || 0));
+  // Assignee picker: active staff only (firmData `active`; an old cached payload without it passes).
+  const users = (firm().users || []).filter(u => u.user_type && u.active !== false && +u.user !== +(task.to?.id || 0));
   const opts = users.map(u => `<option value="${u.user}">${esc(u.user_name)}</option>`).join('');
   const { value, isConfirmed } = await Swal.fire({
     title: 'Transfer task',
@@ -938,7 +944,10 @@ function newTaskDialog(task) {
 
   const userOpts =
     '<option value="" disabled selected hidden>— select assignee —</option>' +
-    (firm().users || []).filter(u => u.user_type)
+    // Active staff only (firmData `active`) — but in EDIT mode the task's CURRENT
+    // assignee always stays, even if inactive: without its option the select
+    // loses the value and a save would silently reassign or blank it.
+    (firm().users || []).filter(u => u.user_type && (u.active !== false || (isEdit && +u.user === +toVal)))
       .map(u => `<option value="${u.user}">${esc(u.user_name)}</option>`).join('');
 
   const qd = (label, days, months, target = 'tkDue') =>

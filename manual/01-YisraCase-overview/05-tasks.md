@@ -70,6 +70,25 @@ Tasks can be created manually from any record's detail page, or automatically by
 
 A configurable default assignee (`default_task_assignee` in app settings) is used when the automation engine creates tasks without a specific person specified.
 
+### Tasks from an AI session
+
+An AI session working for the firm can hand someone a task directly, if the
+super-user gave its [session key](../08-Admin-Tools/02-readonly-keys.md) the
+`tasks.own` scope. Such a task looks like any other — it lands in the
+assignee's list, sends the usual assignment email, and gets the usual
+reminders — with three marks of where it came from:
+
+- the robot chip reads **Session key #N** (the key that made it);
+- **Assigned by** is the super-user who issued that key;
+- each line of its history ends **via session key #N**.
+
+When it is completed, the super-user who issued the key gets the usual
+completion email (the key can switch that off per task).
+
+A key can only assign to active staff, and it can see and change only the
+tasks it created — nobody else's. Everyone in the app can still work on the
+task as normal.
+
 ---
 
 ## The Task UI
@@ -116,7 +135,7 @@ Inline on any task row, and from the detail view:
 - **Complete** — marks the task as done. If notifications are enabled and the person who assigned the task isn't the one completing it, they'll receive a notification email.
 - **Cancel** — soft-deletes the task with an optional note explaining why (it still exists in history and can be reinstated).
 - **Reopen** — restores a Completed or Deleted task. The status is recomputed from the due date.
-- **Transfer** — reassigns the task to a different staff member. The new assignee is notified. Changing the assignee in the Edit dialog routes through Transfer too, so a reassignment always notifies.
+- **Transfer** — reassigns the task to a different staff member. The new assignee is notified. Only active staff are offered here and when creating a task; editing a task assigned to someone who has since been disabled keeps them selected, so a save never reassigns it by accident. The **Assigned by / Assigned to** list filters still include everyone, so a departed person's open tasks can be found and moved. Changing the assignee in the Edit dialog routes through Transfer too, so a reassignment always notifies.
 - **Edit** — change title, description, start date, due date, link, or notification setting. Quick-date buttons set either date in one tap (start: +1 mo / +3 mo / +1 yr; due: Today / Tomorrow / +1 wk / +1 mo), and Clear removes it.
 
 Every action is written to the activity log with details of what changed.

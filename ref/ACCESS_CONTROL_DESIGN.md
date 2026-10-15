@@ -8,7 +8,7 @@ Manager state: scratch `fred/access_control_state`. Coordination:
 
 Every claim in §1–§5.7 verified 2026-10-14 against the live DB (RO key) and
 actual source — including where it contradicts the arc's boot prompt. Later
-additions carry their own date (§5.8, §5.9: 2026-10-15, source + the 8.4 twin).
+additions carry their own date (§5.8–§5.10: 2026-10-15, source + the 8.4 twin).
 
 ---
 
@@ -619,6 +619,62 @@ change. Every edit / renew lands in admin_audit_log with BEFORE and AFTER
   dialog starts from its legacy surface, so saving unchanged changes nothing.
 - Keys are not a sync-bus entity (no yc-sync MATCHER covers either family).
 
+### 5.10 Session-key tasks — the first app-table write (D3, Fred's go 2026-10-15)
+
+**The line this crosses, and why.** Until D3 a session key reached read-only
+SQL, scratch notes and IT alerts: nothing a key did changed the firm's own
+records. `tasks.own` is the first scope that writes an app table. The reason:
+AI manager sessions hand Fred and staff work items directly — a task in the
+assignee's list, with its email and reminders — instead of through chat,
+where they get lost. The boundary is kept narrow on purpose: one table, one
+scope, and the key manages only what it created.
+
+- **The scope.** `tasks.own`, surface, `explicit` (legacy NULL keys lack
+  it), NOT in CHILD_SCOPES (no child ever holds it — dropped even from a
+  tampered child row). SU-minted through the picker; D2's edit can add it.
+- **Ownership is a real column**: `tasks.task_session_key_id` (int NULL,
+  indexed with task_date) — never `task_source`, which is free text any
+  caller can set. The key that creates a task owns it; any other task (made
+  in the app, or by another key) is a 404 on every verb — existence is never
+  confirmed. No FK to readonly_api_keys: on the hot table an FK adds a
+  parent lookup + shared lock to every keyed INSERT, and ownership needs
+  only equality (key ids are never reused).
+- **Endpoints** (`readonlyApiKeyAuth, requireKeyScope('tasks.own')`; the
+  jwtOrApiKey `/api/tasks*` routes untouched): `POST /api/key-tasks`,
+  `GET /api/key-tasks`, `GET|PATCH /api/key-tasks/:id`, `PATCH
+  …/:id/complete|reopen|delete`. All through services/taskService (no
+  parallel task SQL); reassigning (`to`) is transferTask. Bodies are closed:
+  an unknown field is a 400.
+- **Assignee** = any ACTIVE STAFF user — `taskService.findAssignableStaff`,
+  the app's own predicate (list_users' defaults: `user_auth LIKE
+  'authorized%'`, the login gate, AND `user_type <> 0`, the task-assignee
+  picker's filter, which drops Automation 0). Anyone else → 400. The same
+  `active` now rides each /api/firm-data user row, so the in-app assignee
+  pickers offer only active staff too (lists and name lookups still see
+  everyone — see AI_CONTEXT §18).
+- **Attribution**: task_from = the key's created_by (the SU who minted it);
+  task_source = `session_key:<keyId>` (labelled "Session key #N"); every
+  task_log row these routes write carries `{ via: 'session_key', keyId }`
+  (history reads "… via session key #N"); log `by` = task_from. No
+  admin_audit_log row — task_log is the record.
+- **Assignment email** on by default (taskService's); `send_assignment_email:
+  false` turns it off. **Completion email** (`notify` → task_notification)
+  DEFAULT TRUE (Fred, 2026-10-15): completing the task emails task_from, the
+  key's minter; `notify:false` turns it off; PATCH may change it.
+- **Create limit**: 20 per rolling hour per ROOT key (`req.auth.rootKeyId`;
+  a child's rows count toward it), DB-counted under a per-root named lock
+  (GET_LOCK) so concurrent creates cannot overshoot. Edits unlimited.
+- **The action token** (task_action_token / action_url) is never returned:
+  it is the assignee's one-click bearer.
+- **Sync bus**: not registered — `/api/tasks*` has no yc-sync MATCHER either
+  (tasks are not a bus entity today), and key callers are sessions, not
+  browser frames. Reported to the arc manager rather than invented.
+- **Deploy order**: `scripts/accessD3TaskSessionKey.js` (column INSTANT,
+  index INPLACE/LOCK=NONE) before the backend — the key routes name the
+  column and fail CLOSED (500, nothing written) without it; every other task
+  path is untouched on either schema (createTask names the column only for a
+  key's task).
+
 ### 5.6 Slice plan — Phase B (post-ratification)
 
 - **B1** `scopes` column (both tables, one migration) + `keyAllows()` +
@@ -639,6 +695,8 @@ change. Every edit / renew lands in admin_audit_log with BEFORE and AFTER
   the ip_allowlist retirement. Migration in two stages around the deploy.
 - **D2** (2026-10-15) Edit scopes + renew expiry on both key families
   (§5.9). No schema change.
+- **D3** (2026-10-15) `tasks.own` + `/api/key-tasks` — the first app-table
+  write a session key makes (§5.10). Migration: tasks.task_session_key_id.
 - **B4** Secrets: hooks.auth_config + credentials.config secret values
   encrypted at rest (code first, then the data script — §5.5);
   pre-commit secret scan. (Hygiene sitting rides whenever Fred has 10

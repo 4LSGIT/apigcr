@@ -138,6 +138,7 @@ describe('readonlyKeys.html — delegation (D1) + ip_allowlist retired', () => {
     expect(mint).not.toBeNull();
     expect(mint.checked).toBe(false);
     expect(w.document.getElementById('mintWarn').textContent).toMatch(/child keys/);
+    expect(w.document.getElementById('tasksWarn').textContent).toMatch(/writes to the firm's records/);
     expect(w.document.getElementById('newIpAllow')).toBeNull();
     expect(w.document.body.innerHTML).not.toMatch(/allowlist/i);
     w.document.getElementById('newLabel').value = 'manager';

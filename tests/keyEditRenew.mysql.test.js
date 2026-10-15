@@ -230,7 +230,7 @@ d('D2 edit + renew on real MySQL', () => {
 
   test('the GET vocabulary flags the explicit scopes (the retrofit dialog\'s starting point)', async () => {
     const r = await hit('GET', '/api/readonly-keys', { su: true });
-    expect(r.body.scope_vocabulary.filter(v => v.explicit).map(v => v.name)).toEqual(['sql.ro.sensitive', 'keys.mint']);
+    expect(r.body.scope_vocabulary.filter(v => v.explicit).map(v => v.name)).toEqual(['sql.ro.sensitive', 'keys.mint', 'tasks.own']);
     expect(r.body.child_scopes).toEqual(['sql.ro', 'scratch', 'alert']);
     expect(r.body.ttl).toEqual({ max_minutes: 4320, default_minutes: 1440, child_max_minutes: 1440 });
   });

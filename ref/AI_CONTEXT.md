@@ -907,6 +907,18 @@ Transitions cancel/reschedule the `task_due_reminder` job
 `task_remind_freq`, optional SMS counts. Every event writes a linked log
 row (created/updated/completed/deleted/reopened/transferred). Depth:
 `manual/` task chapter + `TASK_SYSTEM_REFERENCE.md`.
+**Session-key tasks (D3, §30):** `routes/api.keyTasks.js` — a `tasks.own`
+key creates tasks (owned via `tasks.task_session_key_id`, NEVER
+task_source) and manages only its own (else 404). task_source
+`session_key:<id>` ("Session key #N"); log rows carry `{via:'session_key',
+keyId}`. createTask names task_session_key_id only when given
+`session_key_id`; the mutators take an optional `logExtra`.
+**Assignee pickers vs lists:** /api/firm-data `users` lists EVERY user (pages
+resolve names on old records through it — never filter it server-side); each
+row carries boolean `active` (user_auth LIKE 'authorized%', the login gate =
+findAssignableStaff's). ASSIGN pickers filter `u.user_type && u.active !==
+false` (tasks.html transfer + create; edit always keeps the current assignee);
+list FILTERS and lookups keep everyone.
 
 ## 19. NOTES & LISTS (checklists tables)
 
@@ -1486,6 +1498,17 @@ the key's kind, 400 over (never clamped), works on an expired key, replies
 `expiresStamp`. Editing a parent never writes its children. Machine edits
 invalidateCache() locally; other instances ≤60s (old scopes / old expiry).
 Audited before/after.
+
+**Session-key tasks (D3, design §5.10) — the first app-table write.**
+`tasks.own` (explicit; never a child's) → `/api/key-tasks` (POST, GET,
+GET|PATCH /:id, PATCH /:id/complete|reopen|delete), all through
+taskService. Ownership = `tasks.task_session_key_id` (no FK); foreign or
+missing = 404. Assignee = active staff (taskService.findAssignableStaff:
+user_auth 'authorized%' AND user_type <> 0). from = key's created_by; log
+via session_key + keyId; assignment email default on; completion email to
+the minter (`notify`) default on; 20 creates / rolling
+hour / root key (DB count under GET_LOCK); the action token never leaves.
+Not a sync-bus write (no /api/tasks* MATCHER exists).
 
 **Audit log.** jwt_api_audit_log stores SHAPES, never content
 (lib/auditShape; credential-named keys → [secret] with no length); URL/

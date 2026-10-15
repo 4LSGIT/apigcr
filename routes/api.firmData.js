@@ -10,7 +10,13 @@
  *   currentUser  — full row (stripped of sensitive fields) for the JWT user
  *   phoneLines   — active phone lines
  *   emailFrom    — email sender addresses
- *   users        — active staff users (user_type = true)
+ *   users        — EVERY user, disabled ones included (pages resolve names on old
+ *                  records through this list — never filter it). Each row
+ *                  carries `active` (boolean): user_auth LIKE 'authorized%',
+ *                  the login gate — the same predicate as
+ *                  taskService.findAssignableStaff. Assignee PICKERS filter on
+ *                  `u.user_type && u.active !== false` (tolerant of a cached
+ *                  payload without the field); name lookups don't.
  *   settings     — frontend settings map: every app_settings row keyed 'fe-*'
  *                  (prefix stripped, value JSON-parsed, raw-string fallback).
  *                  settings.trustees is OVERRIDDEN from contacts +
@@ -80,7 +86,7 @@ router.get('/api/firm-data', jwtOrApiKey, async (req, res) => {
       ),
       req.db.query(
         `SELECT user, user_name, user_fname, user_lname, user_initials,
-         user_type, does_appts
+         user_type, does_appts, (user_auth LIKE 'authorized%') AS active
          FROM users
          ORDER BY user_name ASC`
       ),
@@ -132,7 +138,9 @@ router.get('/api/firm-data', jwtOrApiKey, async (req, res) => {
       currentUser,
       phoneLines: lines,
       emailFrom: emails,
-      users,
+      // mysql2 hands the predicate back as 1 / 0; a picker's `active !== false`
+      // must see a real boolean (0 !== false would let a disabled user through).
+      users: users.map(u => ({ ...u, active: !!u.active })),
       settings,
       denied,
       firmTimezone: process.env.FIRM_TIMEZONE || 'America/Detroit'

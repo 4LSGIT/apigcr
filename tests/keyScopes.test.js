@@ -56,7 +56,7 @@ const flush = () => new Promise(r => setImmediate(r));
 describe('KEY_SCOPES vocabulary', () => {
   test('the surface family is exactly the reviewed snapshot', () => {
     expect(Object.keys(KEY_SCOPES)).toEqual([
-      'sql.ro', 'sql.ro.sensitive', 'scratch', 'alert', 'keys.mint', 'temp.clio', 'temp.dropbox', 'temp.ringcentral', 'temp.zohosign',
+      'sql.ro', 'sql.ro.sensitive', 'scratch', 'alert', 'keys.mint', 'tasks.own', 'temp.clio', 'temp.dropbox', 'temp.ringcentral', 'temp.zohosign',
     ]);
     expect(Object.isFrozen(KEY_SCOPES)).toBe(true);
     for (const v of Object.values(KEY_SCOPES)) expect(v.desc).toMatch(/\S/);
@@ -103,7 +103,7 @@ describe('keyAllows', () => {
     }
     // SEC-3 + D1: the explicit scopes — a legacy key never gained the sensitive tables,
     // nor the power to mint child keys
-    expect(Object.keys(KEY_SCOPES).filter(s => KEY_SCOPES[s].explicit)).toEqual(['sql.ro.sensitive', 'keys.mint']);
+    expect(Object.keys(KEY_SCOPES).filter(s => KEY_SCOPES[s].explicit)).toEqual(['sql.ro.sensitive', 'keys.mint', 'tasks.own']);
     expect(keyAllows({ scopes: ['sql.ro', 'sql.ro.sensitive'] }, 'sql.ro.sensitive')).toBe(true);
   });
 
@@ -146,6 +146,7 @@ const SURFACE_BY_FILE = {
   'api.scratch.js': 'scratch',
   'api.alertIt.js': 'alert',
   'api.readonlyKeys.js': 'keys.mint',
+  'api.keyTasks.js': 'tasks.own',
   'api.temp.clio.js': 'temp.clio',
   'api.temp.dropbox.js': 'temp.dropbox',
   'api.temp.ringcentral.js': 'temp.ringcentral',
@@ -173,8 +174,8 @@ function readonlyMounts() {
 describe('every readonly-key mount declares its surface', () => {
   const mounts = readonlyMounts();
 
-  test('the inventory: 17 mounts across the 8 files', () => {
-    expect(mounts).toHaveLength(17);
+  test('the inventory: 24 mounts across the 9 files', () => {
+    expect(mounts).toHaveLength(24);
     expect([...new Set(mounts.map(m => m.file))].sort()).toEqual(Object.keys(SURFACE_BY_FILE).sort());
   });
 
@@ -217,7 +218,7 @@ describe('every readonly-key mount declares its surface', () => {
     return { passed, res, req, db };
   }
 
-  test('a NULL-scopes (legacy) key passes every gate but the 4 keys.mint ones (explicit — D1, D2 renew)', async () => {
+  test('a NULL-scopes (legacy) key passes every gate but the 4 keys.mint + 7 tasks.own ones (explicit — D1, D2, D3)', async () => {
     let refused = 0;
     for (const m of mounts) {
       const r = await throughGate(m, null);
@@ -226,7 +227,7 @@ describe('every readonly-key mount declares its surface', () => {
       expect({ at: `${m.method} ${m.path}`, passed: r.passed }).toEqual({ at: `${m.method} ${m.path}`, passed: want });
       expect(r.req.auth.scopes).toBeNull();
     }
-    expect(refused).toBe(4);
+    expect(refused).toBe(11);
   });
 
   test('a ["sql.ro"] key passes sql only; 403 NAMING the missing scope everywhere else, audited', async () => {

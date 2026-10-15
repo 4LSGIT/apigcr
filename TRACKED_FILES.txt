@@ -540,6 +540,7 @@ ref/migrations/2026-10-14_comms_s2_transcripts.sql
 ref/migrations/2026-10-14_sec2_audit_shapes.sql
 ref/migrations/2026-10-14_wf50_text_on_cancel_failure.console.js
 ref/migrations/2026-10-15_access_d1_parent_key.sql
+ref/migrations/2026-10-15_access_d3_task_session_key.sql
 ref/migrations/2026-10-15_comms_s2c_max_speakers.sql
 ref/migrations/2026-10-15_comms_s2c_redo.sql
 ref/migrations/2026-10-15_comms_s3_summaries.sql
@@ -621,6 +622,7 @@ routes/api.intake.js
 routes/api.intake.petition.js
 routes/api.issueReports.js
 routes/api.jwt.js
+routes/api.keyTasks.js
 routes/api.log.js
 routes/api.mail.js
 routes/api.mailboxes.js
@@ -716,6 +718,7 @@ scripts/accessB1KeyScopes.js
 scripts/accessB4SecretsAtRest.js
 scripts/accessB6KeyExpiry.js
 scripts/accessD1ParentKey.js
+scripts/accessD3TaskSessionKey.js
 scripts/accessSec3SensitiveTier.js
 scripts/add-path-headers.js
 scripts/b2SchedulerKeySwap.sh
@@ -1223,6 +1226,8 @@ tests/keyExpiryPicker.test.js
 tests/keyFormat.test.js
 tests/keyScopes.mysql.test.js
 tests/keyScopes.test.js
+tests/keyTasks.mysql.test.js
+tests/keyTasks.test.js
 tests/launcherS2.test.js
 tests/likeEscapeSites.test.js
 tests/logService.setLogAbout.test.js

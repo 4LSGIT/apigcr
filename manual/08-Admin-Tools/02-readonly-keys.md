@@ -2,7 +2,8 @@
 
 Short-lived keys for a script or an AI session working on the system from
 outside YisraCase: read-only SQL, cross-session notes, paging IT, and — only
-when granted — the credentialed provider proxies. They used to be called
+when granted — the credentialed provider proxies, minting child keys, or
+handing staff tasks. They used to be called
 "readonly keys"; the name undersold them, so it changed. The key itself still
 starts `ycro_`, and the request header is still `X-Readonly-Api-Key`.
 
@@ -22,6 +23,7 @@ A key reaches only the surfaces in its **scopes**:
 | `scratch` | `PUT` / `DELETE /api/scratch/…` — cross-session notes |
 | `alert` | `POST /api/alert/it` — page IT |
 | `keys.mint` | mint, list and revoke its own **child keys** (below) — never ticked by default |
+| `tasks.own` | create **tasks** for active staff and manage the ones it created ([below](#tasks-from-a-session-key)) — the one scope that writes to the firm's records; never ticked by default |
 | `temp.clio`, `temp.dropbox`, `temp.ringcentral`, `temp.zohosign` | the `/api/temp/<provider>/…` proxies — calls to that provider **with the firm's credentials** |
 
 A new key gets `sql.ro`, `scratch` and `alert` — the boxes ticked by default
@@ -139,6 +141,35 @@ A child is always weaker than its parent:
 Every child mint and revoke is audited (`admin_audit_log`,
 `tool='readonlyKeys'`), and a child is created under the same owner as its
 manager key.
+
+## Tasks from a session key
+
+Tick **`tasks.own`** to let a session hand work to people as tasks. With it the
+key calls `/api/key-tasks` (header `X-Readonly-Api-Key`):
+
+| Call | Does |
+|---|---|
+| `POST /api/key-tasks` `{ to, title, desc?, start?, due?, link_type?, link_id?, send_assignment_email?, notify? }` | create a task for an **active staff member** (`to` is their user id) |
+| `GET /api/key-tasks` `?status=` | list this key's own tasks (open ones by default) |
+| `GET /api/key-tasks/<id>` | one of them |
+| `PATCH /api/key-tasks/<id>` | change its title, description, dates, link, assignee (`to`), or `notify` |
+| `PATCH /api/key-tasks/<id>/complete`, `/reopen`, `/delete` | the usual actions (`note` on complete / delete) |
+
+What to know:
+
+- **It's the only scope that writes to the firm's records** — one table, and
+  only tasks the key itself created. Any other task reads as "not found".
+- The task is **assigned by you** (the super-user who issued the key), its
+  source reads **Session key #N**, and its history says **via session key #N**.
+- The assignee gets the usual **assignment email** unless the call sends
+  `send_assignment_email: false`.
+- When the task is completed, **you get the completion email** (you're its
+  assigner) unless the call sends `notify: false`.
+- **20 new tasks per hour** per key (a manager key and its children share
+  that); editing isn't limited.
+- The task's one-click action link is never handed to the key — it belongs to
+  the person the task is for.
+- Child keys never get `tasks.own`.
 
 ## Managing keys
 

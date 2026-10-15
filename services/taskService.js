@@ -61,6 +61,16 @@
  *       email so the caller can send its own containing action_url.
  *       It does NOT suppress the due-date reminder — omit `due` for that.
  *
+ * Session-key tasks (access-control D3, ACCESS_CONTROL_DESIGN §5.10):
+ *   routes/api.keyTasks.js lets a session key holding `tasks.own` create tasks
+ *   and manage the ones IT created. Ownership is the column
+ *   tasks.task_session_key_id (never task_source — free text anyone can set),
+ *   written by createTask({ session_key_id }) and read only through the
+ *   *SessionKey* helpers below. Nothing here names that column unless a key
+ *   id is passed, so every other caller runs unchanged on a schema without
+ *   it. The mutating functions take an optional `logExtra` merged into their
+ *   log row (the key routes pass { via: 'session_key', keyId }).
+ *
  * HTML escaping:
  *   Every user/machine-supplied value interpolated into the email builders
  *   below goes through htmlEscape(). MIME subject headers do NOT (escaping a
@@ -235,6 +245,8 @@ const SOURCE_LABELS = {
 };
 function sourceLabel(slug) {
   if (!slug) return '';
+  const key = /^session_key:(\d+)$/.exec(String(slug));   // D3: a session key's task
+  if (key) return `Session key #${key[1]}`;
   return SOURCE_LABELS[slug] ||
     String(slug).replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
 }
@@ -865,6 +877,7 @@ async function listTasks(db, {
   link_id     = null,
   source      = null,
   defer       = null,
+  session_key_id = null,   // D3: only this key's tasks (names task_session_key_id — key routes only)
   limit       = 100,
   offset      = 0
 } = {}) {
@@ -910,6 +923,8 @@ async function listTasks(db, {
     params.push(q, q, q, q, q);
     if (idMatch) params.push(Number(query.trim()));
   }
+
+  if (session_key_id != null) { where.push('t.task_session_key_id = ?'); params.push(session_key_id); }
 
   if (assigned_to) { where.push('t.task_to = ?');   params.push(assigned_to); }
   if (assigned_by) { where.push('t.task_from = ?');  params.push(assigned_by); }
@@ -1095,6 +1110,10 @@ async function getTaskHistory(db, taskId) {
  *                                               so the caller can send its own containing
  *                                               action_url. Does NOT suppress the due-date
  *                                               reminder — omit `due` for that.
+ * @param {number}  [opts.session_key_id=null]   D3: the owning session key
+ *                                               (tasks.task_session_key_id). The INSERT names
+ *                                               the column ONLY when this is given.
+ * @param {object}  [opts.log_extra=null]        merged into the 'created' log row's data.
  *
  * @returns {Promise<{task_id:number, action_token:string, action_url:string}>}
  *
@@ -1114,7 +1133,9 @@ async function createTask(db, {
   link_type = null,
   link_id   = null,
   source                = null,
-  send_assignment_email = true
+  send_assignment_email = true,
+  session_key_id        = null,
+  log_extra             = null
 }) {
   if (!title) throw new Error('createTask requires title');
   if (!to)    throw new Error('createTask requires to');
@@ -1139,12 +1160,15 @@ async function createTask(db, {
   // (esignAlertService et al., all IN-set consumers) is unaffected.
   const initialStatus = computeStatus(due);
 
+  // D3: the owning key's column rides only when there is one — so every other
+  // caller's INSERT is byte-identical to before and survives a schema without it.
+  const keyed = session_key_id != null;
   const [result] = await db.query(
     `INSERT INTO tasks
        (task_from, task_to, task_title, task_desc, task_start, task_due,
         task_notification, task_source, task_status, task_date, task_last_update,
-        task_link, task_link_type, task_link_id, task_action_token)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW(), ?, ?, ?, ?)`,
+        task_link, task_link_type, task_link_id, task_action_token${keyed ? ', task_session_key_id' : ''})
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW(), ?, ?, ?, ?${keyed ? ', ?' : ''})`,
     [
       taskFrom, to, title, desc,
       start || null, due || null,
@@ -1154,14 +1178,15 @@ async function createTask(db, {
       link_id != null ? String(link_id) : '',  // task_link — legacy
       link_type,
       link_id != null ? String(link_id) : null,
-      actionToken
+      actionToken,
+      ...(keyed ? [session_key_id] : [])
     ]
   );
 
   const taskId = result.insertId;
 
   // Log creation
-  await logTaskEvent(db, taskId, taskFrom, 'created', { assigned_to: to });
+  await logTaskEvent(db, taskId, taskFrom, 'created', { assigned_to: to, ...(log_extra || {}) });
 
   // Non-blocking: notify assignee + schedule due reminder
   setImmediate(async () => {
@@ -1194,7 +1219,7 @@ async function createTask(db, {
 // UPDATE (generic field patch)
 // ─────────────────────────────────────────────────────────────────────────────
 
-async function updateTask(db, taskId, fields, actingUserId = 0) {
+async function updateTask(db, taskId, fields, actingUserId = 0, logExtra = {}) {
   if (!fields || !Object.keys(fields).length) {
     throw new Error('updateTask requires at least one field');
   }
@@ -1264,7 +1289,7 @@ async function updateTask(db, taskId, fields, actingUserId = 0) {
     }
   }
 
-  await logTaskEvent(db, taskId, actingUserId, 'updated', { changed: keys });
+  await logTaskEvent(db, taskId, actingUserId, 'updated', { changed: keys, ...(logExtra || {}) });
 
   return getTask(db, taskId);
 }
@@ -1347,7 +1372,7 @@ async function deleteTask(db, taskId, actingUserId = 0, logExtra = {}) {
   return getTask(db, taskId);
 }
 
-async function reopenTask(db, taskId, actingUserId = 0) {
+async function reopenTask(db, taskId, actingUserId = 0, logExtra = {}) {
   const task = await getTask(db, taskId);
   if (!task) throw new Error(`Task ${taskId} not found`);
 
@@ -1362,7 +1387,7 @@ async function reopenTask(db, taskId, actingUserId = 0) {
     [newStatus, taskId]
   );
 
-  await logTaskEvent(db, taskId, actingUserId, 'reopened', { previous_status: task.status, new_status: newStatus });
+  await logTaskEvent(db, taskId, actingUserId, 'reopened', { previous_status: task.status, new_status: newStatus, ...(logExtra || {}) });
 
   // Re-schedule the due reminder. No date guard here: scheduleDueReminder
   // already no-ops when the 8 AM firm-time instant is past, and the guard
@@ -1383,8 +1408,9 @@ async function reopenTask(db, taskId, actingUserId = 0) {
  * @param {number} taskId
  * @param {number} newUserId
  * @param {number} actingUserId
+ * @param {object} [logExtra={}]  merged into the 'transferred' log row's data
  */
-async function transferTask(db, taskId, newUserId, actingUserId = 0) {
+async function transferTask(db, taskId, newUserId, actingUserId = 0, logExtra = {}) {
   const task = await getTask(db, taskId);
   if (!task) throw new Error(`Task ${taskId} not found`);
   if (['Completed', 'Deleted'].includes(task.status)) {
@@ -1409,7 +1435,8 @@ async function transferTask(db, taskId, newUserId, actingUserId = 0) {
     from_user_id:   prevTo,
     from_user_name: prevName,
     to_user_id:     newUserId,
-    to_user_name:   newUser.user_name
+    to_user_name:   newUser.user_name,
+    ...(logExtra || {})
   });
 
   // Notify new assignee (non-blocking)
@@ -1427,6 +1454,43 @@ async function transferTask(db, taskId, newUserId, actingUserId = 0) {
 
 
 // ─────────────────────────────────────────────────────────────────────────────
+// SESSION-KEY TASKS (D3) — ownership, assignee, rate count
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** One of this key's tasks (shaped like getTask), or null — someone else's and missing look alike. */
+async function getSessionKeyTask(db, taskId, keyId) {
+  const [[own]] = await db.query(
+    'SELECT task_id FROM tasks WHERE task_id = ? AND task_session_key_id = ? LIMIT 1', [taskId, keyId]);
+  return own ? getTask(db, taskId) : null;
+}
+
+/**
+ * An assignable staff user, or null. The app's existing predicate, reused:
+ * lib/internal_functions/users.js list_users' defaults — ACTIVE (user_auth
+ * starts with 'authorized', the login gate) and HUMAN (user_type <> 0, the
+ * filter public/tasks.html's assignee picker applies; it drops the Automation
+ * user 0).
+ */
+async function findAssignableStaff(db, userId) {
+  const [[u]] = await db.query(
+    `SELECT user, user_name FROM users
+      WHERE user = ? AND user_auth LIKE 'authorized%' AND user_type <> 0 LIMIT 1`, [userId]);
+  return u || null;
+}
+
+/** Tasks created in the last hour by a ROOT key or any of its children (D1). */
+async function countRecentSessionKeyTasks(db, rootKeyId) {
+  const [[{ n }]] = await db.query(
+    `SELECT COUNT(*) AS n
+       FROM tasks t
+       JOIN readonly_api_keys k ON k.id = t.task_session_key_id
+      WHERE (k.id = ? OR k.parent_key_id = ?)
+        AND t.task_date > NOW() - INTERVAL 1 HOUR`, [rootKeyId, rootKeyId]);
+  return Number(n);
+}
+
+
+// ─────────────────────────────────────────────────────────────────────────────
 // EXPORTS
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -1440,6 +1504,9 @@ module.exports = {
   deleteTask,
   reopenTask,
   transferTask,
+  getSessionKeyTask,
+  findAssignableStaff,
+  countRecentSessionKeyTasks,
   scheduleDueReminder,
   cancelDueReminder,
   scheduleStartReminder,
