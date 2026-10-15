@@ -119,6 +119,35 @@
     }
    ],
    "attachments_pending": 1
+  },
+  {
+   "id": 987654,
+   "kind": "call",
+   "direction": "incoming",
+   "at": "2026-10-12T16:00:00.000Z",
+   "logged": true,
+   "duration_s": 19000,
+   "status": "Accepted",
+   "unanswered": false,
+   "missed": false,
+   "archive": {
+    "media_id": 7003,
+    "has_audio": true,
+    "has_transcript": false,
+    "summary_text": null,
+    "summary_model": null,
+    "summary_note": null,
+    "summary_note_by": null,
+    "summary_requested_at": null,
+    "summary_pending": false,
+    "restricted": false,
+    "extra": [],
+    "transcript_status": {
+     "state": "skipped",
+     "reason": "over_cap",
+     "est_s": null
+    }
+   }
   }
  ],
  "archive_admin": true

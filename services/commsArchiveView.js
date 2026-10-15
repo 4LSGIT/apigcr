@@ -11,12 +11,21 @@
  * admins only, R9) and the item's own line (a row whose channel_id is not
  * the item's line is never shown — enforced, not assumed).
  *
- *   call item  + archive:   {media_id, has_audio, has_transcript, …summary, restricted, extra}
- *              + voicemail: {media_id, provider, has_audio, has_transcript, …summary, restricted}
+ *   call item  + archive:   {media_id, has_audio, has_transcript, …summary, restricted, extra, [transcript_status]}
+ *              + voicemail: {media_id, provider, has_audio, has_transcript, …summary, restricted, [transcript_status]}
  *     …summary = summary_text, summary_model (S3), summary_note, summary_note_by
  *                (S3c: the note that SHAPED the summary shown — stamped into it),
  *                summary_requested_at, summary_pending (S3c: the current request,
  *                comms_summary_guides; a pending request's note is not shown)
+ *     transcript_status = {state, reason, est_s} — WHY there is no transcript,
+ *                only when has_transcript is false and comms_transcripts holds
+ *                a row in a state that is not readable and not purged (else
+ *                the key is absent): state in_progress (pending / transcribing)
+ *                | skipped | failed; reason 'short' | 'over_cap' | null (every
+ *                other skip_reason — no_transcribe, policy, restricted — is
+ *                null: comms_no_transcribe is a SENSITIVE table, its
+ *                membership never reaches a line reader); est_s the estimated
+ *                audio seconds, only with reason 'short'. No content.
  *   sms item   + attachments: [{media_id, mime, view, bytes, restricted}]
  *              + attachments_pending: n   (rows not archived yet)
  *   page       + archive_admin: bool      (draws Restrict / Purge)
@@ -63,6 +72,13 @@ const CONTENT_KINDS = ['call_recording', 'mms_file', 'voicemail'];
 // 'summarized'). pending / transcribing / skipped / failed / purged never are —
 // a re-submitted row's old text must not show while it is 'transcribing'.
 const READABLE_STATES = ['transcribed', 'summarized'];
+// The states that say why a recording has NO transcript (the thread's
+// transcript_status). purged is not one of them: a purged row shows nothing.
+const STATUS_OF = { pending: 'in_progress', transcribing: 'in_progress', skipped: 'skipped', failed: 'failed' };
+// The only skip reasons a line reader is told. no_transcribe would leak
+// comms_no_transcribe membership (a SENSITIVE table); policy / restricted /
+// anything new read as a bare skip.
+const SHOWN_SKIP_REASONS = ['short', 'over_cap'];
 // stt_raw children that ARE a phone provider's voicemail transcript: S1c names
 // them <voicemail id>.<vendor>.json (Quo's part is 'quo', RC's the attachment
 // id — so the object name, not the part, says which). S2 adds other stt_raw
@@ -122,6 +138,38 @@ async function transcriptInfo(db, ids) {
     if (err && err.code === 'ER_NO_SUCH_TABLE') return out;
     if (err && err.code === 'ER_BAD_FIELD_ERROR') {
       console.error('[commsArchiveView] comms_transcripts does not match the S4 contract (media_id, segments, full_text, summary_text, state):', err.message);
+      return out;
+    }
+    throw err;
+  }
+  return out;
+}
+
+/**
+ * media_id → {state, reason, est_s}: why a recording / voicemail the viewer was
+ * already handed has no readable transcript (comms_transcripts rows that are
+ * pending / transcribing / skipped / failed). State, a whitelisted reason and
+ * a number — never content. Same tolerance as transcriptInfo: a missing table
+ * is "no status"; a renamed column is logged loudly and read the same way.
+ */
+async function transcriptStatus(db, ids) {
+  const out = new Map();
+  if (!ids.length) return out;
+  try {
+    const [rows] = await db.query(
+      'SELECT media_id, state, skip_reason, est_audio_s FROM comms_transcripts WHERE media_id IN (?) AND state IN (?)',
+      [ids, Object.keys(STATUS_OF)]);
+    for (const r of rows) {
+      const state = STATUS_OF[r.state];
+      if (!state) continue;
+      const reason = state === 'skipped' && SHOWN_SKIP_REASONS.includes(r.skip_reason) ? r.skip_reason : null;
+      const est = reason === 'short' && r.est_audio_s != null && Number.isFinite(Number(r.est_audio_s)) ? Math.round(Number(r.est_audio_s)) : null;
+      out.set(Number(r.media_id), { state, reason, est_s: est });
+    }
+  } catch (err) {
+    if (err && err.code === 'ER_NO_SUCH_TABLE') return out;
+    if (err && err.code === 'ER_BAD_FIELD_ERROR') {
+      console.error('[commsArchiveView] comms_transcripts does not match the S4 status contract (media_id, state, skip_reason, est_audio_s):', err.message);
       return out;
     }
     throw err;
@@ -364,6 +412,12 @@ async function decorate(db, auth, out, { lineId = null } = {}) {
     if (p.vm && p.vm.state === 'archived') { archivedIds.push(Number(p.vm.id)); vmIds.push(Number(p.vm.id)); }
   }
   const tx = await transcriptInfo(db, archivedIds);
+  const txStatus = await transcriptStatus(db, archivedIds);
+  const withStatus = (o) => {                       // only when there is no transcript; else the key stays absent
+    const st = o.has_transcript ? null : txStatus.get(o.media_id);
+    if (st) o.transcript_status = { ...st };
+    return o;
+  };
   const vendor = await vendorTranscripts(db, vmIds, isAdmin);
 
   for (const p of plan) {
@@ -372,14 +426,14 @@ async function decorate(db, auth, out, { lineId = null } = {}) {
       const live = p.recs.filter(r => r.state === 'archived');
       if (live.length) {
         const t = tx.get(Number(live[0].id));
-        m.archive = {
+        m.archive = withStatus({
           media_id: Number(live[0].id),
           has_audio: true,
           has_transcript: !!(t && t.has),
           ...summaryFields(t),
           restricted: Number(live[0].restricted) === 1,
           extra: live.slice(1).map(r => Number(r.id)),
-        };
+        });
       } else if (isAdmin) {
         const gone = p.recs.find(r => r.state === 'purged');
         if (gone) m.archive = tombstone(gone);
@@ -387,14 +441,14 @@ async function decorate(db, auth, out, { lineId = null } = {}) {
       const vm = p.vm;
       if (vm && vm.state === 'archived') {
         const t = tx.get(Number(vm.id));
-        m.voicemail = {
+        m.voicemail = withStatus({
           media_id: Number(vm.id),
           provider: vm.provider,
           has_audio: true,
           has_transcript: !!(t && t.has) || vendor.has(Number(vm.id)),
           ...summaryFields(t),                                  // a voicemail's summary too (S3 summarises them)
           restricted: Number(vm.restricted) === 1,
-        };
+        });
       } else if (vm && vm.state === 'purged' && isAdmin) {
         m.voicemail = tombstone(vm);
       }

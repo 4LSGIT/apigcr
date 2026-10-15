@@ -549,7 +549,10 @@ lines alike (design: `ref/MAILBOX_SYSTEM_DESIGN.md` §4.4, slice S-PH).
   that number among them as small call boxes (incoming on the left, outgoing
   on the right: direction and length, **Missed call** in red, "no answer"
   when nobody picked up), all in the order they happened; **Load earlier**
-  goes back further.
+  goes back further. Every confirmed text and call ends with its reference
+  number (**#12345**, at the right of its time line; a text you just sent
+  gets one once the phone system confirms it) — click it to select it, then
+  copy, to point someone at exactly that text or call.
 - **Texts** is the same list for texts only: a number that only ever called
   is not in it, and each row shows its latest text. It filters the list, not
   the conversation — opening a number still shows its calls among the texts.

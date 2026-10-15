@@ -91,7 +91,8 @@ call), and All numbers at `phone-lines/all/{conversations,calls}` +
 `…/all/conversations/5555550199` (line tags, "via" bubbles, the From pickers)
 — surveyed as `tab:tabComms:phone-*`; the 5555550199 thread also carries the
 comms archive's fields — a summary, Listen / Transcript, a voicemail, MMS
-thumbnails / chips / a purge tombstone, admin ⋯ buttons — with
+thumbnails / chips / a purge tombstone, admin ⋯ buttons, a call with no
+transcript and its status line, a six-digit `#` reference number — with
 `comms-archive/media/<id>/{url,transcript}` behind the transcript viewer, the
 archive file viewer, the Purge dialog and the Re-summarise dialog (a noted
 Sonnet summary, a pending voicemail summary), `tab:tabComms:phone-archive-*`; and

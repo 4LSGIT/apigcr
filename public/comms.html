@@ -484,6 +484,8 @@
   .bub .ph-att { font-style: italic; opacity: 0.85; }
   .bub .ph-att i { margin-right: 5px; }
   .bub .bt { display: block; margin-top: 3px; font-size: 10.5px; opacity: 0.8; white-space: normal; }
+  /* The item's reference id (#<phone_event_log.id>) at the time line's end — one click selects it to copy. */
+  .bub .bt .ph-ref { float: right; margin-left: 8px; -webkit-user-select: all; user-select: all; cursor: text; }
   /* A call in the conversation: a quiet box on the caller's side. The comms
      archive (S4) fills it (summary text, Listen / Transcript, a voicemail —
      the .ca-* rules) — keep it a .bub so it inherits width and alignment. */
@@ -535,6 +537,7 @@
   .ca-thumb img { display: block; max-width: 160px; max-height: 160px; min-width: 40px; min-height: 40px; object-fit: contain; border-radius: 5px; }
   .ca-file { white-space: normal; text-align: left; max-width: 100%; overflow-wrap: anywhere; }
   .ca-note { display: block; font-style: italic; opacity: 0.85; white-space: normal; }
+  .ca-wrap > .ca-note { margin-top: 4px; }
   a.btn { text-decoration: none; }
   .modal.ca-tx { max-width: 720px; display: flex; flex-direction: column; max-height: calc(100vh - 48px); }
   .ca-label { background: var(--warn-soft); color: var(--warn-on-soft); border: 1px solid var(--warn); border-radius: 4px; padding: 6px 9px; font-size: 12px; margin-bottom: 8px; }
@@ -3808,6 +3811,9 @@ function renderPhoneThread({ keepScroll = false, quiet = false } = {}) {
 
 /** A bubble's time line; in All numbers, "· via <line>". */
 const phBubbleTime = (m) => `${bubbleTime(m.at)}${phIsAll() && m.line_id != null ? ` · via ${phLineShort(m.line_id)}` : ''}`;
+/** A bubble's foot: its time line plus the item's reference id ("#<id>", select-all to copy) — what staff quote to point at one item. */
+const phBubbleFoot = (m) => h('span', { className: 'bt' },
+  h('span', { className: 'ph-ref', title: 'Reference number — click to select, then copy' }, `#${m.id}`), phBubbleTime(m));
 
 /**
  * A call in the conversation: one small box — what happened, when — plus,
@@ -3827,7 +3833,7 @@ function callBubble(m) {
     ...(a ? caSummary(a) : []),
     a ? caMediaRow(a, { what: 'recording', label: 'Call recording' }) : null,
     vm ? caMediaRow(vm, { what: 'voicemail', label: 'Voicemail', chip: true }) : null,
-    h('span', { className: 'bt' }, phBubbleTime(m)));
+    phBubbleFoot(m));
 }
 
 /** A text: its words, its archived files (images inline, the rest as chips), its time. */
@@ -3844,7 +3850,7 @@ function smsBubble(m) {
     live.length ? h('div', { className: 'ca-atts' }, ...live.map(caAttachment)) : null,
     ...atts.filter((x) => x.purged).map((x) => caTombstone(x, 'Attachment')),
     note,
-    h('span', { className: 'bt' }, phBubbleTime(m)));
+    phBubbleFoot(m));
 }
 
 // ── Comms archive (S4) ──────────────────────────────────────
@@ -3963,6 +3969,27 @@ function caAdminBtn(item, label) {
   }, icon('fa-ellipsis')) : null;
 }
 
+/**
+ * Why a recording / voicemail has no Transcript button (the server's
+ * transcript_status: state, a whitelisted reason, est_s) — one muted line, or
+ * null. The server sends it only when there is no transcript.
+ */
+function caTxStatusNote(item) {
+  const st = !item.has_transcript && item.transcript_status;
+  if (!st) return null;
+  let ic = 'fa-circle-info';
+  let text;
+  if (st.state === 'in_progress') { ic = 'fa-hourglass-half'; text = 'Transcript in progress — check back soon'; }
+  else if (st.state === 'failed') { ic = 'fa-triangle-exclamation'; text = 'Transcription failed'; }
+  else if (st.state === 'skipped' && st.reason === 'short') {
+    const s = Number(st.est_s);
+    text = `Not transcribed — too short${st.est_s != null && Number.isFinite(s) ? ` (about ${s} s)` : ''}`;
+  } else if (st.state === 'skipped' && st.reason === 'over_cap') text = 'Not transcribed — too long';
+  else if (st.state === 'skipped') text = 'Not transcribed';
+  else return null;
+  return h('span', { className: 'ca-note', dataset: { ca: 'tx-status' } }, icon(ic), ` ${text}`);
+}
+
 /** Listen / Transcript (+ the admin ⋯ and a Restricted badge) for one recording or voicemail. */
 function caMediaRow(item, { what, label, chip = false }) {
   if (item.purged) return caTombstone(item, label);
@@ -3988,6 +4015,7 @@ function caMediaRow(item, { what, label, chip = false }) {
       }, icon('fa-wand-magic-sparkles'), item.summary_text ? 'Re-summarise…' : 'Summarise…') : null,
       item.restricted ? h('span', { className: 'ca-badge', title: 'Only archive admins see this' }, 'Restricted') : null,
       caAdminBtn(item, label)),
+    caTxStatusNote(item),
     slot,
     ...(chip ? caSummary(item) : []));                 // a voicemail's summary sits under its own row
 }

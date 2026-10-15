@@ -18,6 +18,13 @@ In a phone conversation (see [Phone lines — Comms](08-mailboxes.md#phone-lines
 - **A voicemail** shows on the call it was left on, with **Listen** (and
   **Transcript** when there is one — for now that can be the phone system's
   own automatic transcript).
+- **No Transcript button?** The box says why, in one grey line under Listen:
+  "Transcript in progress — check back soon" (waiting its turn, being
+  transcribed, or held until the monthly budget allows), "Not transcribed —
+  too short (about 9 s)", "Not transcribed — too long", "Not transcribed" (any
+  other reason — the box does not say which), or "Transcription failed" (tell
+  IT). No line means it is not
+  queued for transcription (yet).
 - **A text with a picture or file** shows pictures inline (click one for full
   size) and other files as a chip (**PDF · 2.4 MB**, **File · 1 KB** …); a PDF
   opens in a viewer with **New tab**, anything else downloads. A file still

@@ -13,7 +13,9 @@
  *   X   transcripts — S2's comms_transcripts absent (ER_NO_SUCH_TABLE →
  *       has_transcript false) and present (JOIN on comms_media's restricted);
  *       the phone provider's own transcript for a voicemail; an S2 eval
- *       child (assemblyai-mc) never counts.
+ *       child (assemblyai-mc) never counts. X9: transcript_status — why an
+ *       item has no transcript (state, a whitelisted reason, est_s), absent
+ *       otherwise, never for an item the viewer was not handed.
  *   P   purge's password re-check (Fred's ruling): wrong / empty / no hash /
  *       lockout; the password never reaches an audit row.
  *   H   the SU health read.
@@ -731,6 +733,56 @@ maybe('comms archive S4 on real MySQL', () => {
       if (!a.length) await new Promise(res => setTimeout(res, 20));
     }
     expect(a).toEqual([{ action: 'view_summary', media_ids: [S.quoVm] }]);
+  });
+
+  test('X9 transcript_status: why there is no transcript — state mapped, only short / over_cap named, est_s only with short; absent when readable, purged or no row; never for an item the viewer was not handed', async () => {
+    await s2Tables();
+    const all = async (who) => byId((await get(`/api/phone-lines/all/conversations/${P}?limit=100`, { t: who() })).json.messages);
+    // a table with no row for the recording: no status
+    let m = await all(T.su);
+    expect('transcript_status' in m.get(S.call1).archive).toBe(false);
+    await q(`INSERT INTO comms_transcripts (media_id, phone_event_id, state) VALUES (?, ?, 'pending')`, [S.rec1, S.call1]);
+    const cases = [
+      ['pending', null, null, { state: 'in_progress', reason: null, est_s: null }],
+      ['pending', null, 12, { state: 'in_progress', reason: null, est_s: null }],
+      ['transcribing', null, 40, { state: 'in_progress', reason: null, est_s: null }],
+      ['skipped', 'short', 9, { state: 'skipped', reason: 'short', est_s: 9 }],
+      ['skipped', 'short', null, { state: 'skipped', reason: 'short', est_s: null }],
+      ['skipped', 'over_cap', 20000, { state: 'skipped', reason: 'over_cap', est_s: null }],
+      ['skipped', 'no_transcribe', 30, { state: 'skipped', reason: null, est_s: null }],
+      ['skipped', 'policy', 30, { state: 'skipped', reason: null, est_s: null }],
+      ['skipped', 'restricted', null, { state: 'skipped', reason: null, est_s: null }],
+      ['skipped', 'brand_new_reason', 5, { state: 'skipped', reason: null, est_s: null }],
+      ['failed', 'short', 5, { state: 'failed', reason: null, est_s: null }],      // a reason rides only with a skip
+    ];
+    for (const [state, why, est, want] of cases) {
+      await q('UPDATE comms_transcripts SET state = ?, skip_reason = ?, est_audio_s = ? WHERE media_id = ?', [state, why, est, S.rec1]);
+      for (const who of [T.su, T.granted]) {
+        const a = (await all(who)).get(S.call1).archive;
+        expect([state, why, est, a.has_transcript, a.transcript_status]).toEqual([state, why, est, false, want]);
+      }
+    }
+    // readable (with text, or a transcribed row with none), purged: absent
+    for (const [state, text] of [['transcribed', 'words'], ['summarized', 'words'], ['transcribed', null], ['purged', null]]) {
+      await q('UPDATE comms_transcripts SET state = ?, skip_reason = NULL, full_text = ? WHERE media_id = ?', [state, text, S.rec1]);
+      const a = (await all(T.su)).get(S.call1).archive;
+      expect([state, text, a.has_transcript, 'transcript_status' in a]).toEqual([state, text, text != null && state !== 'purged', false]);
+    }
+    // a voicemail: the RC one gets a status; the Quo one has the provider's transcript, so none
+    await q(`INSERT INTO comms_transcripts (media_id, phone_event_id, state) VALUES (?, NULL, 'transcribing'), (?, ?, 'failed')`,
+      [S.rcVm, S.quoVm, S.quoCall]);
+    m = await all(T.su);
+    expect(m.get(S.callVm).voicemail.transcript_status).toEqual({ state: 'in_progress', reason: null, est_s: null });
+    expect(m.get(S.quoCall).voicemail.has_transcript).toBe(true);
+    expect('transcript_status' in m.get(S.quoCall).voicemail).toBe(false);
+    // a restricted recording: its status is an archive admin's only — a line reader gets no object at all
+    await q(`INSERT INTO comms_transcripts (media_id, phone_event_id, state, skip_reason, est_audio_s) VALUES (?, ?, 'skipped', 'short', 7)`, [S.recR, S.callR]);
+    expect((await all(T.su)).get(S.callR).archive.transcript_status).toEqual({ state: 'skipped', reason: 'short', est_s: 7 });
+    for (const who of [T.granted, T.att]) {
+      const item = (await all(who)).get(S.callR);
+      expect(item.archive).toBeUndefined();
+      expect(JSON.stringify(item)).not.toMatch(/transcript_status|short/);
+    }
   });
 
   // ── P — purge's password re-check ───────────────────────────────────────

@@ -230,6 +230,67 @@ describe('comms.html — archive on the call bubble', () => {
   });
 });
 
+describe('comms.html — why there is no transcript, and the reference number', () => {
+  const call = (id, archive, extra = {}) => ({ id, kind: 'call', direction: 'incoming', at: `2026-10-08T1${id % 10}:00:00.000Z`, logged: true, duration_s: 30,
+    status: 'Accepted', unanswered: false, missed: false, archive: { media_id: 700 + id, has_audio: true, has_transcript: false, restricted: false, extra: [], ...archive }, ...extra });
+  const st = (state, reason = null, est_s = null) => ({ transcript_status: { state, reason, est_s } });
+  const STATUS_THREAD = () => THREAD({ messages: [
+    call(20, st('in_progress')),
+    call(21, st('skipped', 'short', 9)),
+    call(22, st('skipped', 'short', null)),
+    call(23, st('skipped', 'over_cap', null)),
+    call(24, st('skipped', null, null)),
+    call(25, st('failed')),
+    call(26, { ...st('skipped', 'short', 9), has_transcript: true }),        // a transcript wins: no line
+    call(27, {}),                                                            // no status: no line
+    call(28, {}, { voicemail: { media_id: 828, provider: 'quo', has_audio: true, has_transcript: false, restricted: false, ...st('in_progress') } }),
+    { id: 29, kind: 'sms', direction: 'incoming', body: 'hello', at: '2026-10-08T19:30:00.000Z', logged: false },
+  ] });
+
+  test('one muted .ca-note per item, by state / reason (no inline style); none with a transcript or without a status', async () => {
+    const env = await boot(handler({ thread: STATUS_THREAD }));
+    await openThread(env);
+    const { doc, errors } = env;
+    const note = (id) => [...bub(doc, id).querySelectorAll('[data-ca="tx-status"]')];
+    const text = (id) => note(id).map((n) => n.textContent.trim());
+    expect(text(20)).toEqual(['Transcript in progress — check back soon']);
+    expect(text(21)).toEqual(['Not transcribed — too short (about 9 s)']);
+    expect(text(22)).toEqual(['Not transcribed — too short']);
+    expect(text(23)).toEqual(['Not transcribed — too long']);
+    expect(text(24)).toEqual(['Not transcribed']);
+    expect(text(25)).toEqual(['Transcription failed']);
+    expect(text(26)).toEqual([]);
+    expect(btn(bub(doc, 26), 'Transcript')).toBeTruthy();
+    expect(text(27)).toEqual([]);
+    expect(text(28)).toEqual(['Transcript in progress — check back soon']);    // the voicemail's own
+    for (const id of [20, 21, 25]) {
+      const n = note(id)[0];
+      expect(n.className).toBe('ca-note');
+      expect(n.getAttribute('style')).toBeNull();
+      expect(n.querySelector('i.fa-solid')).toBeTruthy();
+    }
+    expect(note(20)[0].querySelector('i').classList.contains('fa-hourglass-half')).toBe(true);
+    expect(note(25)[0].querySelector('i').classList.contains('fa-triangle-exclamation')).toBe(true);
+    expect(errors).toEqual([]);
+  });
+
+  test('every phone bubble — call and text — ends with its reference number "#<id>", selectable, in the time line', async () => {
+    const env = await boot(handler());
+    await openThread(env);
+    const { doc } = env;
+    for (const id of [10, 11, 12, 13, 14, 15]) {
+      const refs = bub(doc, id).querySelectorAll('.ph-ref');
+      expect([id, refs.length]).toEqual([id, 1]);
+      expect(refs[0].textContent).toBe(`#${id}`);
+      expect(refs[0].parentElement.className).toBe('bt');
+    }
+    // the harness boots the body only (no <head> styles): the rule itself makes it one-click selectable
+    expect(COMMS).toMatch(/\.bub \.bt \.ph-ref \{[^}]*\buser-select: all;/);
+    // the time is still there beside it
+    expect(bub(doc, 10).querySelector('.bt').textContent.replace('#10', '').trim()).not.toBe('');
+  });
+});
+
 describe('comms.html — transcript viewer', () => {
   test('label on top, segments as TEXT with speakers, a timestamp plays from that moment', async () => {
     const env = await boot(handler({ transcript: () => ({ status: 'success', source: 'assemblyai', label: 'AI-generated — check the recording before relying on it',
