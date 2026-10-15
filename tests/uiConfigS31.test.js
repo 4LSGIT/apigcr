@@ -248,8 +248,8 @@ describe('firm item actions', () => {
     expect(act({ type: 'url', href: '/x' }).ok).toBe(false);            // present is required
   });
 
-  test('every other type is refused — action (deferred), iframe, fn, tab, panel', () => {
-    expect(errs(act({ type: 'action', fetch: '/clio-code', present: 'modal' }))).toMatch(/deferred/);
+  test('every other type is refused — action (dropped: a tool item), iframe, fn, tab, panel', () => {
+    expect(errs(act({ type: 'action', fetch: '/clio-code', present: 'modal' }))).toMatch(/no action kind: a firm action is a tool item/);
     for (const type of ['iframe', 'fn', 'tab', 'panel', 'URL', '', undefined]) {
       expect([type, act({ type, href: '/x', key: 'x', present: 'modal' }).ok]).toEqual([type, false]);
     }

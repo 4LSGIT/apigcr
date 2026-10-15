@@ -205,6 +205,7 @@ manual/08-Admin-Tools/07-cta-links.md
 manual/08-Admin-Tools/08-mailboxes.md
 manual/08-Admin-Tools/09-comms-transcription.md
 manual/08-Admin-Tools/10-comms-archive.md
+manual/08-Admin-Tools/11-tool-actions.md
 manual/08-Admin-Tools/README.md
 manual/README.md
 package-lock.json
@@ -570,6 +571,7 @@ ref/plans.md
 ref/routes.md
 ref/templates/build_notice_of_bankruptcy_filing.py
 ref/templates/notice_of_bankruptcy_filing.json
+ref/tools/clio-code.html
 routes/_aitest.js
 routes/_courtexec.js
 routes/_errtest.js
@@ -1035,6 +1037,7 @@ tests/caseUi.sync.test.js
 tests/caseUi.timeline.test.js
 tests/checklistView.autoGrow.test.js
 tests/checklists.s1notes.test.js
+tests/clioTool.test.js
 tests/commsAdminTools.pane.test.js
 tests/commsArchive.lockNames.mysql.test.js
 tests/commsArchive.s1b.mysql.test.js
@@ -1218,6 +1221,7 @@ tests/helpers/phoneSPHWorld.js
 tests/helpers/renderSmoke.js
 tests/helpers/scriptGuard.js
 tests/helpers/shellHtml.js
+tests/helpers/toolShell.js
 tests/helpers/u6aEventsDb.js
 tests/hookHmacRawBody.test.js
 tests/hookHmacTimestamped.test.js
@@ -1377,6 +1381,7 @@ tests/test-timing-extensions.js
 tests/test_classifier.js
 tests/test_report_author.sh
 tests/token.test.js
+tests/toolShellS33.test.js
 tests/triggerService.matchFailure.test.js
 tests/triggerService.test.js
 tests/trusteeMatch.test.js

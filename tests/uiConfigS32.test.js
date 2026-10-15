@@ -202,7 +202,7 @@ describe('restore', () => {
     expect(r.status).toBe(400);
     expect(r.body.message).toMatch(/version 5 no longer passes/);
     expect(r.body.errors.join(' | ')).toMatch(/moreSettings cannot be hidden/);
-    expect(r.body.errors.join(' | ')).toMatch(/action kind is deferred/);
+    expect(r.body.errors.join(' | ')).toMatch(/there is no action kind: a firm action is a tool item/);
   });
 
   test('a missing version → 404, nothing written', async () => {

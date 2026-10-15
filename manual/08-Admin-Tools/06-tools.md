@@ -22,6 +22,12 @@ with elevation can write one — not that the page is somehow contained. Don't
 paste in HTML you didn't read, and don't treat the Tools screen as a safe
 place to try a snippet from the internet.
 
+New tools reach the app through the **tool shell API**,
+`window.parent.ycTool` — API calls without ever touching the sign-in token,
+a quiet mode for background polling, toasts, closing or resizing their dialog,
+opening a case or contact. A tool can also be put on the firm's launcher as a
+button. Both are in [Tool actions](11-tool-actions.md).
+
 ## Writing one
 
 1. **New tool.** Give it a **key** — lowercase letters, numbers and hyphens,

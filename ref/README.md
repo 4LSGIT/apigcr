@@ -92,6 +92,13 @@ files move.
   read by `tests/sendingformBk.dbkqLink.test.js`.
 - `templates/` — e-sign template artifacts; read by
   `tests/esignPrefill.notice.test.js`.
+- `tools/` — reference copies of SU-authored tools whose live copy is a row
+  of the `tools` table (served at `/tool/<key>`; manual
+  `08-Admin-Tools/11-tool-actions.md`). Like `gas.js`, each is kept
+  byte-identical to the live tool — edit here and paste, or copy back after an
+  edit in Tool Manager — and its header says how to install it. Nothing serves
+  these files. `clio-code.html` (Get Clio Code) is read by
+  `tests/clioTool.test.js`.
 
 ## Known dangling references
 One file this tree is expected to contain does not exist and has no git

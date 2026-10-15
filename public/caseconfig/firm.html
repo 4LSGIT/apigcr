@@ -320,6 +320,7 @@ function formFromDoc(doc, catalog) {
       type: a.type,
       href: a.type === 'url' && typeof a.href === 'string' ? a.href : '',
       key: a.type !== 'url' && typeof a.key === 'string' ? a.key : '',
+      size: a.type !== 'url' && a.size === 'compact' ? 'compact' : 'large',
     };
   });
   const hidden = new Set((Array.isArray(d.hidden) ? d.hidden : []).filter((id) => shown.has(id)));
@@ -356,6 +357,14 @@ function docFromForm(stored, form, catalog) {
     const action = row.type === 'url'
       ? { ...(oa || {}), type: 'url', href: String(row.href ?? '').trim(), present: (oa && oa.present) || 'window' }
       : { ...(oa || {}), type: row.type, key: row.key || '', present: (oa && oa.present) || 'modal' };
+    // The dialog size (S3.3) is optional, absent = large: compact is written
+    // as 'compact'; large stays ABSENT unless the stored action named a size
+    // (so a document saved before sizes existed round-trips unchanged).
+    if (row.type !== 'url') {
+      if (row.size === 'compact') action.size = 'compact';
+      else if (oa && Object.prototype.hasOwnProperty.call(oa, 'size')) action.size = 'large';
+      else delete action.size;
+    }
     return { ...orig, id: row.id, label: String(row.label ?? '').trim(), icon: String(row.icon ?? '').trim(), action };
   });
 
@@ -621,7 +630,11 @@ const LauncherSection = {
       const what = r.type === 'tool' ? 'Tool' : 'Saved view';
       target = `<label class="yc-flabel" for="${pre}-key">${what}</label>
         <select id="${pre}-key" data-f="key"><option value="" ${r.key ? '' : 'selected'}>Choose…</option>${opts.join('')}</select>
-        <span class="yc-hint">Opens over the app.${list.length ? '' : (r.type === 'tool' ? ' No live tools yet.' : ' No saved views yet.')}</span>`;
+        <span class="yc-hint">Opens over the app.${list.length ? '' : (r.type === 'tool' ? ' No live tools yet.' : ' No saved views yet.')}</span>
+        <label class="yc-flabel" for="${pre}-size">Dialog size</label>
+        <select id="${pre}-size" data-f="size">
+          <option value="large" ${r.size === 'compact' ? '' : 'selected'}>Large</option>
+          <option value="compact" ${r.size === 'compact' ? 'selected' : ''}>Compact</option></select>`;
     }
     const iconOk = ICON_RE.test(r.icon);
     return `<div class="fm-item" data-row="${i}">
@@ -723,6 +736,8 @@ const LauncherSection = {
       this.redrawItems(`#fi${i}-type`);
     } else if (t.dataset.f === 'key') {
       row.key = t.value;
+    } else if (t.dataset.f === 'size') {
+      row.size = t.value === 'compact' ? 'compact' : 'large';
     }
     if (st.srv) delete st.srv.rows[i];
     this.changed();
@@ -733,7 +748,7 @@ const LauncherSection = {
     if (!b) return;
     const st = this.st, rows = st.form.items, act = b.dataset.act;
     if (act === 'add-item') {
-      rows.push({ kept: false, saved: false, orig: null, id: '', label: '', icon: 'link', type: 'url', href: '', key: '' });
+      rows.push({ kept: false, saved: false, orig: null, id: '', label: '', icon: 'link', type: 'url', href: '', key: '', size: 'large' });
       st.srv = null;
       this.redrawItems(`#fi${rows.length - 1}-label`);
       return this.changed();

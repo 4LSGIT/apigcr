@@ -376,6 +376,21 @@ async function walk(page, W, record) {
         await fr.evaluate(() => openEditor(4)); await sleep(1000);
         await record('panel:landingPagesDiv:editor', await measure(page, fr), await shot('panel_landing_editor'));
       }
+      // YisraCase Config → the Firm tab (ui-custom S3.2's launcher editor), fixtures/api/ui-config*
+      // (can_edit_firm, 38-40-character labels, a long href, a long picker title). The tab is gated
+      // on can_edit_firm, so one that never opened is a FAILURE here (a missing box), not a quiet
+      // capture of whichever tab was showing.
+      if (id === 'caseConfigDiv' && fr) {
+        const opened = await fr.evaluate(() => {
+          switchSubPage('firm');
+          const b = document.getElementById('tabnav-firm');
+          return !!b && !b.hidden && b.classList.contains('active');
+        });
+        await sleep(1500);
+        const m = await measure(page, fr);
+        if (!opened) m.boxes = [{ sel: '#tabnav-firm (the Firm tab did not open)', missing: true }];
+        await record('panel:caseConfigDiv:firm', m, await shot('panel_caseconfig_firm'));
+      }
     }
   }
 

@@ -1399,8 +1399,9 @@ function registry for tests.
 
 Internal HTML utilities stored in the DB and served on the app origin. An SU
 authors a page in the manager; it is served at `/tool/<key>` and runs as an
-iframe child of the shell on the parent's `apiSend` — the same runtime
-contract as `public/customView.html`.
+iframe child of the shell and reaches it through the tool shell API,
+`window.parent.ycTool` (runtime contract below); `parent.apiSend`, the
+customView-style contract, still works and is legacy.
 
 Code: `routes/api.tools.js` — **its header block is the contract; read it
 before changing anything here.** UI `public/toolManager.html` (Admin tab →
@@ -1442,6 +1443,36 @@ No migration is filed for either table: plain DDL, wholly captured by
    no-op restore appends nothing; deleting the newest version row is a 400.
    The append is non-transactional by house style — a crash between the two
    statements loses one history row, never the tool.
+
+### Runtime contract — the tool shell API (ui-custom S3.3)
+- **What:** `window.ycTool` on the shell, defined beside `openToolDialog` in
+  `public/index.html`'s `<script id="ycToolDialogJs">` (its header comment is
+  the contract); a tool reaches it as `window.parent.ycTool`. `version` 1;
+  `apiSend(path, method, body, {quiet})`, `authReady()`, `toast(msg, kind)`,
+  `close(win)`, `resize(size, win)`, `openCase(id, win)`,
+  `openContact(id, win)`, `exec(id)`.
+- **Invariants:** token-free — no member returns or exposes the JWT or
+  `AUTH_STATE` (the two-transport rule, §3); `apiSend` delegates to the
+  shell's frozen apiSend with every guard, and `quiet` rejects
+  `ToolAuthError` instead of the blocking login when the client-held session
+  is missing or expired — it does not suppress apiSend's prompts on a server
+  401: the SU step-up (`elevation_required`) and the re-login still appear.
+  `close` / `resize` /
+  the dialog-closing half of `openCase` act only when `win` is the open
+  dialog's page or nested in it — an API contract, not a boundary
+  (invariant 1). Dialog sizes are presets end to end (`compact` | `large`):
+  firm item `action.size` (lib/uiConfigShape.js `SIZES`; optional, absent =
+  large and stays absent), `openToolDialog(url, {size})`, `resize`. The object
+  is frozen and non-writable; `parent.apiSend` keeps working for older tools
+  and customView.
+- **Firm actions are tools** (2026-10-15): there is no declarative `action`
+  launcher kind. An SU writes a tool; a firm admin places it as a `tool` firm
+  item (the More grid's firm row, All, Ctrl-K). Reference copies of DB-stored
+  tools live in `ref/tools/` (`clio-code.html`, kept byte-identical to the
+  live row).
+- **Pointers:** manual `manual/08-Admin-Tools/11-tool-actions.md`; tests
+  `tests/toolShellS33.test.js`, `tests/clioTool.test.js` (shell harness
+  `tests/helpers/toolShell.js`).
 
 ## ═══════════════════════════════════════════════════════════════
 ## 30. ACCESS CONTROL — ROLES, CAPABILITIES, ENTITLEMENTS, KEY SCOPES

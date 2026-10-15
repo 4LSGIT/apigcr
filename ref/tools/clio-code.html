@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<!--
+  Get Clio Code — a YisraCase TOOL (SU-authored page, served at /tool/clio-code)
+
+  REFERENCE COPY of code that lives in the DATABASE (the `tools` table), not in
+  this repo's runtime: nothing serves this file. The live copy is the tool row
+  with tool_key `clio-code`; keep the two byte-identical (edit here, paste
+  there; or copy the live one back here after an edit in Tool Manager).
+
+  INSTALL (SU, once):
+    1. Admin -> Tools (SU) -> New tool.
+       Key: clio-code   Title: Get Clio Code   HTML: this whole file.
+       Save, then set the status to live.
+    2. More -> YisraCase Config -> Firm -> Launcher -> Firm items -> Add:
+       Label "Get Clio Code", Icon "c", Opens: Tool -> Get Clio Code,
+       Dialog size: Compact. Save.
+    It then shows in the More grid's firm row, under Firm in All, and in Ctrl-K.
+
+  WHAT IT IS: the shell's showClioCode() (public/index.html) ported to a firm
+  tool; the shell's own copy and its More tile retire in ui-custom S3.3b, once
+  this tool is installed. It talks to the shell ONLY through the tool
+  shell API, window.parent.ycTool (manual/08-Admin-Tools/11-tool-actions.md):
+  it never reads the token, AUTH_STATE, isJwtExpired or the shell's Swal.
+
+  Why each piece exists (the 2026-08-22 "Clio code not updating" incident: a
+  user read a three-day-old code four times in 26 seconds and tried to log in
+  with it). There is a 0-60 s delay between the SMS arriving and
+  app_settings.clio_login_code being written, and it is NOT carrier latency:
+  the inbound webhook only QUEUES the work (lib/actionDispatchers.js
+  deliverWorkflow -> scheduleResume inserts a workflow_resume row), which then
+  sits until the next Cloud Scheduler tick hits POST /process-jobs. This page
+  attacks the delay from both ends — it refuses to present a stale code AS
+  USABLE (names it as dead and waits for the new one), and it drains the queue
+  itself so the wait collapses to seconds.
+
+  Server contract: GET /clio-code -> { value, updated_at, age_seconds }
+  (routes/api.jwt.js; age_seconds is computed in SQL, immune to client clock
+  skew, NULL when updated_at is NULL).
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Get Clio Code</title>
+<link rel="stylesheet" href="/theme.css">
+<script src="/themeSync.js"></script>
+<style>
+  html, body { margin: 0; background: var(--surface); color: var(--text); }
+  body { font-family: var(--ui); font-size: var(--fs); line-height: 1.45; }
+  #app { box-sizing: border-box; padding: 16px 18px 18px; max-width: 100%; overflow-wrap: anywhere; }
+  .cc-h { margin: 0 0 10px; font-size: var(--fs-lg); font-weight: 600; color: var(--text); }
+  .cc-code {
+    margin: 10px 0 12px; padding: 10px 12px; border-radius: var(--radius);
+    background: var(--surface-2); border: 1px solid var(--border);
+    font: 700 28px/1.2 var(--mono); letter-spacing: .08em; text-align: center; user-select: all;
+  }
+  .cc-p { margin: 10px 0; }
+  .cc-hint { margin: 2px 0; font-size: var(--fs-sm); color: var(--text-muted); }
+  .cc-stale { padding: 10px 12px; border-radius: var(--radius); background: var(--warn-soft); color: var(--text); }
+  .cc-err { padding: 10px 12px; border-radius: var(--radius); background: var(--danger-soft); color: var(--text); }
+  .cc-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 14px; }
+  .cc-row .cc-hint { margin: 0; }
+  .cc-btn {
+    min-height: var(--ctl-h); padding: 0 14px; border-radius: var(--radius-sm); cursor: pointer;
+    font: inherit; border: 1px solid var(--border-strong); background: var(--surface); color: var(--text);
+  }
+  .cc-btn:hover { background: var(--hover); }
+  .cc-btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+  .cc-btn.primary:hover { background: var(--accent-dark); border-color: var(--accent-dark); }
+  .cc-btn.small { min-height: 0; padding: 3px 10px; font-size: var(--fs-sm); }
+</style>
+</head>
+<body>
+<main id="app" aria-live="polite"><p class="cc-hint">Fetching the code…</p></main>
+<script>
+(function () {
+  'use strict';
+
+  const FRESH_MAX_AGE_S  = 180;    // <= this many seconds old: show it
+  const POLL_INTERVAL_MS = 5000;   // gap between automatic re-checks
+  const POLL_MAX_MS      = 120000; // stop waiting after this long
+  const TICK_MS          = 250;    // countdown repaint granularity
+  const KICK_INTERVAL_MS = 10000;  // how often to nudge the job queue
+
+  const app = document.getElementById('app');
+
+  // ── DOM helpers: every value from the server goes in as TEXT ─────────────
+  function el(tag, cls, kids) {
+    const n = document.createElement(tag);
+    if (cls) n.className = cls;
+    for (const k of [].concat(kids == null ? [] : kids)) {
+      n.appendChild(typeof k === 'string' ? document.createTextNode(k) : k);
+    }
+    return n;
+  }
+  function button(text, cls, onClick) {
+    const b = el('button', 'cc-btn' + (cls ? ' ' + cls : ''), text);
+    b.type = 'button';
+    b.addEventListener('click', onClick);
+    return b;
+  }
+  function show(...nodes) { app.replaceChildren(...nodes); }
+
+  const fmtTime = (ts) => new Date(ts).toLocaleString('en-US', {
+    timeZone: 'America/New_York',
+    year: 'numeric',
+    month: 'short',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: true,
+    timeZoneName: 'short',
+  });
+
+  // Server-computed age. NULL updated_at (the column is nullable) or a
+  // missing field means "we don't know" — treat as infinitely old so it can
+  // never pass the freshness gate. NULL is tested for by name: Number(null)
+  // is 0, which would read as "just updated" (the shell's showClioCode() had
+  // exactly that slip).
+  const ageOf = (d) => {
+    const v = d ? d.age_seconds : undefined;
+    const n = v === null || v === undefined || v === '' ? NaN : Number(v);
+    return Number.isFinite(n) ? n : Infinity;
+  };
+
+  // "3 minutes", "4 hours", "3 days". Null when the age is unknown. Cutoffs
+  // are chosen so the singular never actually fires (this path is only
+  // reached above FRESH_MAX_AGE_S), but pluralize anyway.
+  const humanAge = (s) => {
+    if (!Number.isFinite(s)) return null;
+    const u = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
+    if (s < 90)     return u(Math.round(s), 'second');
+    if (s < 5400)   return u(Math.round(s / 60), 'minute');
+    if (s < 172800) return u(Math.round(s / 3600), 'hour');
+    return u(Math.round(s / 86400), 'day');
+  };
+
+  // ── The shell: ONLY window.parent.ycTool ──────────────────────────────────
+  function shellApi() {
+    try {
+      const T = window.parent !== window ? window.parent.ycTool : null;
+      return T && T.version >= 1 ? T : null;
+    } catch (_) { return null; }
+  }
+  let waited = 0;
+  (function waitForShell() {
+    const T = shellApi();
+    if (T) { run(T); return; }
+    if ((waited += 100) > 5000) {
+      show(el('p', 'cc-err', 'Open this from YisraCase (More → Get Clio Code): on its own it has no session to fetch the code with.'));
+      return;
+    }
+    setTimeout(waitForShell, 100);
+  })();
+
+  async function run(T) {
+    // Nudge the job queue while we wait.
+    //
+    // The inbound SMS creates a scheduled_jobs row immediately, but the row
+    // only runs when the 60s Cloud Scheduler tick hits POST /process-jobs —
+    // which is the whole reason the code shows up late. Hitting that endpoint
+    // ourselves collapses the wait to seconds.
+    //
+    // Safe to call repeatedly: the claim is transactional (FOR UPDATE SKIP
+    // LOCKED, pending->running) and recoverStuckJobs is purely
+    // time-thresholded, so extra invocations are no-ops. The engine
+    // explicitly documents overlapping polls as harmless — advanceWorkflow's
+    // claim-lock lets exactly one win.
+    //
+    // The inFlight guard is NOT about correctness, it is about the thundering
+    // herd: each call can claim up to BATCH_SIZE jobs, so N stacked calls
+    // could drain a backlog 10N-wide in parallel and fan out that many
+    // webhooks/SMS at once. One at a time.
+    let kickInFlight = false;
+    let lastKickAt   = 0;
+    let nextCheckAt  = 0;       // set when the wait path starts
+    let settled      = false;   // declared early: kickQueue reads it
+
+    const kickQueue = () => {
+      if (settled || kickInFlight || !T.authReady()) return;
+      kickInFlight = true;
+      lastKickAt   = Date.now();
+      // quiet: a session that lapses mid-wait rejects instead of popping the
+      // shell's blocking login over this dialog.
+      T.apiSend('/process-jobs', 'POST', null, { quiet: true })
+        .then((r) => {
+          // Something actually ran — re-read the code now instead of waiting
+          // out the countdown. nextCheckAt is picked up by the ticker on its
+          // next pass, so no reentrancy here.
+          if (!settled && r && r.processed > 0) nextCheckAt = 0;
+        })
+        .catch((e) => console.warn('process-jobs kick failed', e))
+        .finally(() => { kickInFlight = false; });
+    };
+
+    // The code — the pre-2026-08-22 presentation: the code, when it was
+    // updated, and how fresh that is; Copy Code (copies, then closes like
+    // the old dialog's confirm button) and Close.
+    const showCode = (d) => {
+      const secondsOld = ageOf(d);
+      let freshnessLabel = '';
+      if (secondsOld < 60) freshnessLabel = 'Just updated';
+      else if (secondsOld < 300) freshnessLabel = 'Recently updated';
+      else if (Number.isFinite(secondsOld)) freshnessLabel = `${Math.floor(secondsOld / 60)} min ago`;
+      else freshnessLabel = 'Age unknown';
+
+      const value = d.value == null ? '' : String(d.value);
+      show(
+        el('h1', 'cc-h', 'Clio Login Code'),
+        el('div', 'cc-code', value || '—'),
+        el('p', 'cc-hint', 'Updated ' + (d.updated_at ? fmtTime(d.updated_at) : 'unknown')),
+        el('p', 'cc-hint', freshnessLabel),
+        el('div', 'cc-row', [
+          button('Copy Code', 'primary', () => {
+            Promise.resolve()
+              .then(() => navigator.clipboard.writeText(value))
+              .then(() => { T.toast('Code copied', 'success'); T.close(window); },
+                    () => T.toast('Could not copy — select the code and copy it by hand', 'error'));
+          }),
+          button('Close', '', () => T.close(window)),
+        ]),
+      );
+    };
+
+    // Fire the first nudge in parallel with the initial read rather than
+    // after it. If the code turns out to be stale, the queue is already
+    // draining by the time we know; if it turns out to be fresh, we have
+    // spent one cheap request and processed any other due jobs early.
+    kickQueue();
+
+    let data;
+    try {
+      data = await T.apiSend('/clio-code');
+    } catch (err) {
+      console.error(err);
+      show(
+        el('h1', 'cc-h', 'Error'),
+        el('p', 'cc-err', 'Unable to fetch login code'),
+        el('div', 'cc-row', [button('Close', '', () => T.close(window))]),
+      );
+      return;
+    }
+
+    if (ageOf(data) <= FRESH_MAX_AGE_S) {
+      showCode(data);
+      return;
+    }
+
+    // ---- stale: name it as dead and wait for a new one ----
+    //
+    // The old code IS shown here, in body text, inside a sentence that says
+    // it will not work. That is the opposite of the bug: the bug was a 24px
+    // bold number with the staleness in 12px grey underneath. Seeing it lets
+    // the user confirm it matches the one they already tried and failed with.
+    const baselineUpdatedAt = data.updated_at;
+    const baselineValue     = data.value;
+    const startedAt         = Date.now();
+    let latest      = data;   // most recent successful fetch
+    let ticker      = null;
+    let inFlight    = false;  // stops overlapping checks
+    nextCheckAt     = Date.now() + POLL_INTERVAL_MS;
+
+    const stop = () => {
+      if (ticker) { clearInterval(ticker); ticker = null; }
+    };
+
+    const finish = (d) => {
+      if (settled) return;
+      settled = true;
+      stop();
+      showCode(d);            // replaces the waiting view
+    };
+
+    const status = el('span', 'cc-hint', `Next check in ${Math.round(POLL_INTERVAL_MS / 1000)}s`);
+    status.id = 'clioNextCheck';
+    const setStatus = (text) => { status.textContent = text; };
+
+    const doCheck = async () => {
+      if (settled || inFlight) return;
+
+      // Don't let a mid-wait token expiry pop the shell's blocking login
+      // dialog on top of this one. Skip this check; the user's next action
+      // re-authenticates normally. (The quiet apiSend below would refuse
+      // too; this keeps the countdown honest instead of reading "Checking…".)
+      if (!T.authReady()) {
+        nextCheckAt = Date.now() + POLL_INTERVAL_MS;
+        return;
+      }
+
+      inFlight = true;
+      setStatus('Checking…');
+      let fresh;
+      try {
+        fresh = await T.apiSend('/clio-code', 'GET', null, { quiet: true });
+      } catch (e) {
+        console.warn('clio-code check failed, will retry', e);
+        return;               // transient — the ticker keeps going
+      } finally {
+        inFlight    = false;
+        nextCheckAt = Date.now() + POLL_INTERVAL_MS;
+      }
+
+      latest = fresh;
+      // set_setting relies on ON UPDATE CURRENT_TIMESTAMP, which does not
+      // fire when the written value is identical to the stored one. Watch the
+      // value too, and accept either as "a new code landed".
+      if (fresh.updated_at !== baselineUpdatedAt || fresh.value !== baselineValue) {
+        finish(fresh);
+      }
+    };
+
+    const lastAge  = ageOf(data);
+    const ageText  = humanAge(lastAge);
+    const codeText = (data.value === null || data.value === undefined || data.value === '')
+      ? 'none stored' : String(data.value);
+    const staleLine = (data.updated_at && ageText)
+      ? el('p', 'cc-p cc-stale', ['The last code (', el('b', '', codeText), ') arrived ',
+          el('b', '', fmtTime(data.updated_at)), ` — it is ${ageText} old and will not work.`])
+      : el('p', 'cc-p cc-stale', ['The last code (', el('b', '', codeText), ') is of unknown age and cannot be trusted.']);
+
+    // "Check now" cannot close anything: it nudges the queue and checks.
+    const checkNow = button('Check now', 'small', () => { kickQueue(); doCheck(); });
+    checkNow.id = 'clioCheckNow';
+    show(
+      el('h1', 'cc-h', 'Waiting for a new code'),
+      staleLine,
+      el('p', 'cc-p', 'Start the Clio login now. The new code will appear here automatically — usually a few seconds after the text arrives, occasionally up to a minute.'),
+      el('div', 'cc-row', [status, checkNow]),
+      el('div', 'cc-row', [button('Show the old code anyway', '', () => {
+        if (settled) return;
+        settled = true;
+        stop();
+        showCode(latest);
+      })]),
+    );
+
+    // One timer drives everything: the give-up check, the automatic re-check,
+    // the queue nudge, and the countdown repaint. Ticking at 250ms keeps the
+    // button responsive while the visible text still only changes once a
+    // second.
+    ticker = setInterval(() => {
+      if (settled) return;
+      if (Date.now() - startedAt >= POLL_MAX_MS) {
+        finish(latest);       // gave up — show the best we have
+        return;
+      }
+      if (Date.now() - lastKickAt >= KICK_INTERVAL_MS) kickQueue();
+      if (inFlight) return;   // status already reads "Checking…"
+      if (Date.now() >= nextCheckAt) { doCheck(); return; }
+      setStatus(`Next check in ${Math.max(1, Math.ceil((nextCheckAt - Date.now()) / 1000))}s`);
+    }, TICK_MS);
+  }
+})();
+</script>
+</body>
+</html>

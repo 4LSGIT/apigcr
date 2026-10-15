@@ -171,7 +171,11 @@ Do-not-transcribe dialog (`comms-archive/no-transcribe` — a long note, an
 unbroken one; `panel:connectionsDiv:phone-no-transcribe`), the
 Scratch Browser list (`admin/scratch` — an unbroken overlong key, a stale and
 an oversized row; plus `admin/scratch/fred/demo_state` for opening a value by
-hand) — enough to fill the tables
+hand), the Firm tab of YisraCase Config (`ui-config`, `ui-config/pickers`,
+`ui-config/versions`; `panel:caseConfigDiv:firm` — the step fails if the tab
+does not open) and the More grid's firm row (`firm-data.json`'s `ui`: a
+compact tool, a 40-character label, a 40-character unbroken one and a link;
+surveyed in `tab:tabMore` and `tab:tabAll`) — enough to fill the tables
 that tend to overflow and to put every conditional Overview / Case Details box
 on screen. The mock ignores
 query strings, so `field-defs` answers for contacts too (a case def on the

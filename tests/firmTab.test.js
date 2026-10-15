@@ -625,3 +625,65 @@ describe('fix round: History renders DB text as text (SF3)', () => {
     }
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────
+// ui-custom S3.3: the tool dialog's size on a tool / view item.
+describe('S3.3: the dialog size select', () => {
+  const TOOL_ITEM = { id: 'firm:appt', label: 'Appointments', icon: 'calendar', action: { type: 'tool', key: 'appt-form', present: 'modal' } };
+  const docWith = (...items) => ({ hidden: [], locked: [], renames: {}, items });
+
+  test('offered on tool and view rows only; Large unless the item says compact', async () => {
+    const { $, $$, setVal, fire } = await boot({ doc: docWith(SHELL_ITEM, TOOL_ITEM,
+      { id: 'firm:leads', label: 'Leads', icon: 'list', action: { type: 'view', key: 'lead_followups', present: 'modal', size: 'compact' } }) });
+    expect($$('[data-f="size"]').map((s) => [s.id, s.value])).toEqual([['fi1-size', 'large'], ['fi2-size', 'compact']]);
+    expect($('#fi0-size')).toBeNull();
+    fire($('[data-act="add-item"]'), 'click');
+    expect($('#fi3-size')).toBeNull();                       // a new row starts as a link
+    setVal($('#fi3-type'), 'tool');
+    expect($('#fi3-size').value).toBe('large');
+  });
+
+  test('compact saves as size "compact", passes the real validator, and the shell opens the item compact', async () => {
+    const { $, setVal, mid, backend, L, fire } = await boot();
+    fire($('[data-act="add-item"]'), 'click');
+    setVal($('#fi0-label'), 'Get Clio Code');
+    setVal($('#fi0-icon'), 'c');
+    setVal($('#fi0-type'), 'tool');
+    setVal($('#fi0-key'), 'appt-form');
+    setVal($('#fi0-size'), 'compact');
+    await mid.onTopbarSave();
+    await flush();
+    expect(backend.st.doc.items[0].action).toEqual({ type: 'tool', key: 'appt-form', present: 'modal', size: 'compact' });
+    expect(L.effectiveRegistry().filter((e) => e.group === 'Firm').map((e) => e.id)).toEqual(['firm:get-clio-code']);
+  });
+
+  test('round-trip: an item saved before sizes existed stays size-less (not dirty, no size written); explicit large is kept', async () => {
+    const stored = docWith(TOOL_ITEM, { ...TOOL_ITEM, id: 'firm:big', label: 'Big', action: { ...TOOL_ITEM.action, size: 'large' } });
+    const { F, $, setVal, mid, backend, tick } = await boot({ doc: stored });
+    expect(F.LauncherSection.isDirty()).toBe(false);
+    tick('log', true);
+    await mid.onTopbarSave();
+    await flush();
+    expect(puts(backend)[0].payload.config.items.map((i) => i.action)).toEqual([TOOL_ITEM.action, { ...TOOL_ITEM.action, size: 'large' }]);
+    setVal($('#fi0-size'), 'compact');
+    setVal($('#fi1-size'), 'compact');
+    expect(F.LauncherSection.doc().items.map((i) => i.action.size)).toEqual(['compact', 'compact']);
+    setVal($('#fi0-size'), 'large');
+    setVal($('#fi1-size'), 'large');
+    expect(F.LauncherSection.doc().items.map((i) => i.action)).toEqual([TOOL_ITEM.action, { ...TOOL_ITEM.action, size: 'large' }]);
+    expect(F.LauncherSection.isDirty()).toBe(false);
+  });
+
+  test('a stored compact item → compact selected; switching it to large writes size "large"; switching tool → view keeps the size', async () => {
+    const stored = docWith({ ...TOOL_ITEM, action: { ...TOOL_ITEM.action, size: 'compact' } });
+    const { F, $, setVal } = await boot({ doc: stored });
+    expect($('#fi0-size').value).toBe('compact');
+    setVal($('#fi0-type'), 'view');
+    setVal($('#fi0-key'), 'lead_followups');
+    expect(F.LauncherSection.doc().items[0].action).toEqual({ type: 'view', key: 'lead_followups', present: 'modal', size: 'compact' });
+    setVal($('#fi0-type'), 'tool');
+    setVal($('#fi0-key'), 'appt-form');
+    setVal($('#fi0-size'), 'large');
+    expect(F.LauncherSection.doc().items[0].action).toEqual({ ...TOOL_ITEM.action, size: 'large' });
+  });
+});

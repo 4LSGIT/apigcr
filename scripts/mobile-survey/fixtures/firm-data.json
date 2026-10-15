@@ -101,5 +101,25 @@
   "firm_phone": "5555550100",
   "trustees": []
  },
- "firmTimezone": "America/Detroit"
+ "firmTimezone": "America/Detroit",
+ "ui": {
+  "firm": {
+   "registry_overrides": {
+    "hidden": [],
+    "locked": [],
+    "renames": {},
+    "items": [
+     { "id": "firm:clio-code", "label": "Get Clio Code", "icon": "c",
+       "action": { "type": "tool", "key": "clio-code", "present": "modal", "size": "compact" } },
+     { "id": "firm:intake-checklist", "label": "Intake checklist and conflict-check tool", "icon": "clipboard-check",
+       "action": { "type": "tool", "key": "qa-intake-tool", "present": "modal" } },
+     { "id": "firm:unbroken", "label": "Supercalifragilisticexpialidociousnesses", "icon": "spell-check",
+       "action": { "type": "view", "key": "lead_followups", "present": "modal", "size": "large" } },
+     { "id": "firm:payroll", "label": "Payroll", "icon": "money-check",
+       "action": { "type": "url", "href": "https://payroll.example.com/", "present": "window" } }
+    ]
+   }
+  },
+  "user": {}
+ }
 }

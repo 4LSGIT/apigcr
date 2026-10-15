@@ -276,13 +276,17 @@ deferred until the budget shows it's needed.
 10. `JWT_SECRET`: lean shared-secret + tenant claim (simpler rotation,
     upgradeable to per-tenant later); same ruling pass for
     `CREDENTIALS_ENCRYPTION_KEY` (§3-10). 11. Live Cloud Run env inventory
-    (§3-11). 12. **RESOLVED 2026-10-05**: not built — it was the concept
-    that motivated SU landing pages. Storage
-    (`app_settings.clio_login_code`), authed `GET /clio-code`, and the shell
-    button exist; the generic shape goes to
-    the ui-customization arc as a declarative launcher **action** primitive
-    (config: fetch endpoint → Swal/display), a third registry kind beside
-    iframe panes and iframe tools — config, not authored code (§3-12).
+    (§3-11). 12. **RESOLVED 2026-10-15**: not built as a landing page — it
+    was the concept that motivated SU landing pages. Storage
+    (`app_settings.clio_login_code`) and authed `GET /clio-code` exist. Firm
+    custom actions are SU-authored tool pages placed as firm launcher items
+    (ui-customization arc, S3.3): Get Clio Code is the tool `clio-code`
+    (reference copy `ref/tools/clio-code.html`) on the token-free tool shell
+    API (`window.ycTool`; `manual/08-Admin-Tools/11-tool-actions.md`). The
+    declarative launcher **action** kind was dropped (2026-10-15): config
+    cannot cover the permutations firms ask for. The shell's own Get Clio
+    Code tile and `showClioCode()` stay until the tool is installed, then
+    retire (ui-custom S3.3b) (§3-12).
 13. Heartbeat per-tenant vs platform (§3-13).
 14. Provider-console webhook URL inventory at migration time (§3-14).
 15. GCS per-tenant buckets vs prefixes (§3-15). 16. Freeze §B4's

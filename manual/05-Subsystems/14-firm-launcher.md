@@ -17,7 +17,7 @@ Launcher section changes it for **everyone at the firm** in three ways:
 |---|---|
 | **Hide** | Takes a feature off every launcher surface — sidebar, Home, the grids, All and the Ctrl-K search. |
 | **Rename** | Gives a feature a firm name, shown everywhere that feature appears (for example *Cases* → *Matters*). |
-| **Firm items** | Adds the firm's own entries — a link, a tool or a saved view — listed under **Firm** in All and found by Ctrl-K. |
+| **Firm items** | Adds the firm's own entries — a link, a tool or a saved view — as tiles at the end of the More grid, under **Firm** in All, and in Ctrl-K. |
 
 The Firm tab is a page of sections. Launcher is the first; firm-wide settings
 from other areas join it as sections of their own.
@@ -50,22 +50,28 @@ Each firm item has a **label**, an **icon** and what it **opens**:
 | Opens | You choose | How it opens |
 |---|---|---|
 | **Link** | an address: `https://…` for another site, or an app path like `/reports` | in a new window |
-| **Tool** | one of the **live** tools from the list | over the app, in a dialog |
-| **Saved view** | one of the active saved views | over the app, in a dialog |
+| **Tool** | one of the **live** tools from the list, and a **Dialog size** | over the app, in a dialog |
+| **Saved view** | one of the active saved views, and a **Dialog size** | over the app, in a dialog |
 
 - **Icon** is a [Font Awesome](https://fontawesome.com/icons) name, such as
   `money-check` or `calendar`. A preview shows beside the box; a question mark
   means the name isn't valid.
 - **Order** — the arrow buttons move an item up or down. Firm items show in this
-  order under **Firm** in the All tab.
+  order in the More grid's firm row and under **Firm** in the All tab.
 - **Delete** — the bin button.
+- **Dialog size** (tools and saved views): **Large**, the big working dialog
+  (full screen on a phone), or **Compact**, a small card for something short
+  like a code. Items saved before this choice existed open Large.
 - **Tools** are written by SU (Admin → **Tools (SU)**); the list here shows only
-  the ones that are **live**. **Saved views** come from YisraView (More → Views).
+  the ones that are **live**. A tool is how the firm gets a button that *does*
+  something — see [Tool actions](../08-Admin-Tools/11-tool-actions.md).
+  **Saved views** come from YisraView (More → Views).
 - A link may not point at a tool page or a saved view directly (`/tool/…`,
   `/customView…`): those only work inside the app, so pick **Tool** or **Saved
   view** for them instead.
-- Firm items appear in **All** and **Ctrl-K** only. They don't get a tile on Home
-  or the grids yet.
+- Firm items appear as tiles in a row of their own at the **end of the More
+  grid**, in this order, and in **All** and **Ctrl-K**. They don't get a tile on
+  Home, the sidebar or the Admin grid.
 
 **An item's id is permanent.** The id (shown under the item, like
 `firm:payroll`) is made from the label the first time the item is saved. After
@@ -113,5 +119,6 @@ newest first, with who saved it and when. The one in use is marked **current**.
 
 - **Locking** items so a person can't remove them from their own launcher, and
   **personal layouts**: these come with per-user launcher editing.
-- **Placing** firm items on Home or the grids.
+- **Placing** firm items anywhere but the More grid's firm row (Home, the
+  sidebar, a spot of your choosing in a grid).
 - Per-role launchers.

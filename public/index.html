@@ -281,12 +281,15 @@
       var VIEW_KEY_RE = /^[a-z][a-z0-9_]{2,59}$/;    // services/reportService.js REPORT_KEY_RE
       var CONTROL_RE = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/;
       // tool / view are modal-only: their pages boot from the PARENT shell's
-      // apiSend (window.parent), so a bare window would be a dead page.
+      // apiSend (window.parent), so a bare window would be a dead page. They
+      // may name the tool dialog's size preset (S3.3) — optional, absent =
+      // 'large', kept absent (lib/uiConfigShape.js SIZES).
       var FIRM_ACTIONS = {
         url:  { keys: ['type', 'href', 'present'], present: ['window'] },
-        tool: { keys: ['type', 'key', 'present'], present: ['modal'] },
-        view: { keys: ['type', 'key', 'present'], present: ['modal'] },
+        tool: { keys: ['type', 'key', 'present', 'size'], present: ['modal'] },
+        view: { keys: ['type', 'key', 'present', 'size'], present: ['modal'] },
       };
+      var SIZES = ['compact', 'large'];
       function hasOwn(o, k) { return Object.prototype.hasOwnProperty.call(o, k); }
       function isObj(o) { return o !== null && typeof o === 'object' && Object.prototype.toString.call(o) === '[object Object]'; }
       function onlyKeys(o, keys) { for (var k in o) if (hasOwn(o, k) && keys.indexOf(k) < 0) return false; return true; }
@@ -324,7 +327,7 @@
           return u.protocol === 'https:' && !!u.hostname && !u.username && !u.password;
         } catch (_) { return false; }
       }
-      /** A firm action → { url, present }, or null when it breaks a rule. */
+      /** A firm action → { url, present[, size] }, or null when it breaks a rule. */
       function firmTarget(a) {
         if (!isObj(a) || typeof a.type !== 'string' || !hasOwn(FIRM_ACTIONS, a.type)) return null;
         var shape = FIRM_ACTIONS[a.type];
@@ -332,9 +335,11 @@
         if (a.type === 'url') return hrefOk(a.href) ? { url: a.href, present: a.present } : null;
         var re = a.type === 'tool' ? TOOL_KEY_RE : VIEW_KEY_RE;
         if (typeof a.key !== 'string' || !re.test(a.key)) return null;
+        if (hasOwn(a, 'size') && SIZES.indexOf(a.size) < 0) return null;
         return {
           url: a.type === 'tool' ? '/tool/' + encodeURIComponent(a.key) : '/customView.html?key=' + encodeURIComponent(a.key),
           present: a.present,
+          size: hasOwn(a, 'size') ? a.size : 'large',
         };
       }
       /** One firm item → its clean copy, or null. */
@@ -343,9 +348,13 @@
         if (typeof it.id !== 'string' || !FIRM_ID_RE.test(it.id)) return null;
         var label = cleanLabel(it.label);
         if (label == null || typeof it.icon !== 'string' || !ICON_RE.test(it.icon) || !firmTarget(it.action)) return null;
-        var a = it.action;
-        return { id: it.id, label: label, icon: it.icon,
-          action: a.type === 'url' ? { type: 'url', href: a.href, present: a.present } : { type: a.type, key: a.key, present: a.present } };
+        var a = it.action, ca;
+        if (a.type === 'url') ca = { type: 'url', href: a.href, present: a.present };
+        else {
+          ca = { type: a.type, key: a.key, present: a.present };
+          if (hasOwn(a, 'size')) ca.size = a.size;
+        }
+        return { id: it.id, label: label, icon: it.icon, action: ca };
       }
       /** ui → { hidden: {id:true}, renames: {id: label}, items: [clean item] }.
        *  quiet: no console warnings (applyAccess's second read of the same ui). */
@@ -431,9 +440,9 @@
           }
           out.push({ id: id, group: origin[id], label: label, labels: labels, icon: icon });
         });
-        // Firm-added items: no launcher element in this slice (firm layouts
-        // come with S4), so they live in All + the palette and exec()
-        // dispatches their action. Hidden / denied like any other id.
+        // Firm-added items: listed in All + the palette, and drawn as tiles in
+        // the More grid's firm row (renderFirmRow, S3.3); exec() dispatches
+        // their action. Hidden / denied like any other id.
         firm.items.forEach(function (fi) {
           if (denied[fi.id] || firm.hidden[fi.id]) return;
           seq.push(fi.id);
@@ -465,8 +474,77 @@
         var firm = firmOverlay(STATE.ui, true), hide = cleanDenied(STATE.denied);
         for (var h in firm.hidden) hide[h] = true;
         hidePass(hide, firm.renames);
+        renderFirmRow();
         try { window.dispatchEvent(new CustomEvent('ycLauncherAccess')); } catch (_) { /* no CustomEvent */ }
         return effectiveRegistry();
+      }
+
+      // ── The More firm row (ui-custom S3.3) ─────────────────────────────
+      // The firm's own items (the effective ones: hidden / denied firm items
+      // are not drawn), as tiles at the END of the More grid after a row
+      // break, in array order. The grid's markup grammar — a direct-child
+      // .big-button with the icon, <br><br> and the label — built as DOM:
+      // the icon class from the validated slug only, the label as a text
+      // node. A click runs exec(id). No data-target / data-exclusive-group
+      // (the drill machinery queries those page-wide), and no EL entry:
+      // hidePass / relabel never touch these, and elementsOf(firm id) stays
+      // {} — exec() dispatches a firm item declaratively, never by clicking
+      // its tile (which itself calls exec). Like every grid tile they get a
+      // pill in the drilled-in strip (ensureStrip: an action tile's pill
+      // proxies its click, as Get Clio Code's does). Re-runnable: a run with
+      // the same items changes nothing; any change replaces the whole row
+      // (and drops a built strip, rebuilt now if drilled in); no items, no row.
+      var FIRM_ROW_ATTR = 'data-yc-firm-row';
+      var lastFirmRow = null;
+      function renderFirmRow() {
+        var tab = document.getElementById(TAB_OF.more);
+        if (!tab) return;
+        var items = EFFECTIVE.filter(function (e) { return !!e.action; });
+        // [id, label, icon] is all a tile shows; its action is resolved at click time by exec(e.id), so an action-only edit rightly keeps the nodes.
+        var key = JSON.stringify(items.map(function (e) { return [e.id, e.label, e.icon]; }));
+        var old = tab.querySelectorAll(':scope > [' + FIRM_ROW_ATTR + ']');
+        if (key === lastFirmRow && old.length === (items.length ? items.length + 2 : 0)) return;
+        lastFirmRow = key;
+        for (var o = 0; o < old.length; o++) {
+          var ws = old[o].previousSibling;
+          if (ws && ws.nodeType === 3 && !/\S/.test(ws.nodeValue)) ws.parentNode.removeChild(ws);
+          old[o].parentNode.removeChild(old[o]);
+        }
+        if (items.length) {
+          var tiles = tab.querySelectorAll(':scope > .big-button:not([' + FIRM_ROW_ATTR + '])');
+          var at = tiles.length ? tiles[tiles.length - 1] : null;
+          var frag = document.createDocumentFragment();
+          // The grid's own whitespace before every element (rules.indent): the
+          // tiles are inline-blocks, so it is part of their spacing. A text
+          // node can't carry the marker attribute, so the removal loop above
+          // drops the whitespace node before each element it removes.
+          var mark = function (n) {
+            frag.appendChild(document.createTextNode(RULES.more.indent));
+            n.setAttribute(FIRM_ROW_ATTR, '');
+            frag.appendChild(n);
+            return n;
+          };
+          mark(document.createElement('br'));
+          mark(document.createElement('br'));
+          items.forEach(function (e) {
+            var b = document.createElement('button'), i = document.createElement('i');
+            b.className = 'big-button';
+            i.className = 'fa-solid fa-' + (ICON_RE.test(e.icon) ? e.icon : 'circle-question') + ' fa-2xl';
+            b.appendChild(i);
+            b.appendChild(document.createElement('br'));
+            b.appendChild(document.createElement('br'));
+            b.appendChild(document.createTextNode(e.label));
+            b.addEventListener('click', function () { exec(e.id); });
+            mark(b).setAttribute(FIRM_ROW_ATTR, e.id);
+          });
+          if (at) at.parentNode.insertBefore(frag, at.nextSibling);
+          else tab.appendChild(frag);
+        }
+        var strip = tab.querySelector(':scope > .feature-strip');
+        if (strip) {
+          strip.parentNode.removeChild(strip);
+          if (tab.classList.contains('drill-active') && typeof window.syncDrillState === 'function') window.syncDrillState(tab, 'more');
+        }
       }
 
       // Hide the rendered elements of denied AND firm-hidden items on every
@@ -564,11 +642,13 @@
       // loadFunc) happens exactly as it does by hand. Refuses, loudly, an id
       // not in the effective registry: denied, admin-gated or unknown.
       //
-      // A firm item has no element (no launcher surface draws one yet): its
-      // action is dispatched declaratively — re-validated first, so a bad one
-      // never navigates — 'window' → window.open(url, '_blank', 'noopener');
-      // 'modal' → openToolDialog(url, { title }). Either way an open tool
-      // dialog is closed first: whatever exec() opens must not sit behind it.
+      // A firm item's action is dispatched declaratively — re-validated
+      // first, so a bad one never navigates — 'window' →
+      // window.open(url, '_blank', 'noopener'); 'modal' →
+      // openToolDialog(url, { title, size }). Its More tile (the firm row,
+      // renderFirmRow) calls exec(); exec never clicks the tile. Either way
+      // an open tool dialog is closed first: whatever exec() opens must not
+      // sit behind it.
       function exec(id) {
         if (!STATE) { warn('exec("' + id + '") before login'); return false; }
         var entry = null;
@@ -581,7 +661,7 @@
           if (!t) { warn('exec("' + id + '"): its action breaks the firm item rules — refused'); return false; }
           if (t.present === 'window') { window.open(t.url, '_blank', 'noopener'); return true; }
           if (typeof td !== 'function') { warn('exec("' + id + '"): no tool dialog on this page'); return false; }
-          return td(t.url, { title: entry.label }) === true;
+          return td(t.url, { title: entry.label, size: t.size }) === true;
         }
         var m = elementsOf(id);
         if (m.sidebar) { m.sidebar.click(); return true; }
@@ -654,30 +734,40 @@
        style.display on a launcher element (applyCustomTab, loadUserContext)
        cannot bring a denied one back. -->
   <style>[data-yc-denied] { display: none !important; }</style>
-  <!-- The tool dialog (ui-custom S3.1): ONE host that shows a same-origin page
-       in an iframe over the shell — today a firm item's tool page
+  <!-- The tool dialog (ui-custom S3.1, S3.3): ONE host that shows a same-origin
+       page in an iframe over the shell — today a firm item's tool page
        (/tool/<key>) or saved view (/customView.html?key=<key>). Those pages
-       boot from window.parent.apiSend, and an iframe mounted here has this
-       shell as its parent, so they run exactly as they do in a pane.
+       boot from window.parent, and an iframe mounted here has this shell as
+       its parent, so they run exactly as they do in a pane.
          openToolDialog(url, opts) → true | false
            url   a root-relative same-origin path (/…, never //host, no
                  backslash, whitespace or control character) — else refused
-           opts  { title } — the heading (set as text). Other keys are ignored
-                 today; S3.3 grows this same object (per-tool sizing, the
-                 token-free shell API for tool frames).
+           opts  { title, size }
+                 title  the heading (set as text)
+                 size   'large' (the default) | 'compact' — a PRESET, never
+                        pixels: large is the big working dialog, compact a
+                        small centred card (a code display, a short form).
+                        Anything else opens large, with a console warning.
+                        At ≤768px large goes full-bleed; compact stays a card
+                        that fits the screen.
          openToolDialog.close()    close; focus goes back where it was
          openToolDialog.isOpen()
+         openToolDialog.size()     the open dialog's preset, or null
        Esc (inside the frame too), the close button and a click on the
        backdrop close it; opening while open swaps the page. Nothing
        tool-specific lives here. z-index 1040: above the shell and the
        system-alert bar (999), below the Ctrl-K palette (1050) and
-       SweetAlert2 (1060); ycLauncher.exec() closes it before it acts. -->
+       SweetAlert2 (1060); ycLauncher.exec() closes it before it acts.
+       The same block defines window.ycTool, the tool shell API (S3.3) — its
+       contract is the comment at `THE TOOL SHELL API` below. -->
   <script id="ycToolDialogJs">
     window.openToolDialog = (function () {
       'use strict';
-      var root = null, titleEl = null, closeBtn = null, body = null, restoreTo = null;
+      var root = null, box = null, titleEl = null, closeBtn = null, body = null, frame = null, restoreTo = null;
+      var size = null;
       var PATH_RE = /^\/(?!\/)/;
       var BAD_RE = /[\s\\\u0000-\u001f\u007f-\u009f\u2028\u2029]/;
+      var SIZES = ['compact', 'large'];          // lib/uiConfigShape.js SIZES
 
       function swalUp() {
         try {
@@ -705,6 +795,7 @@
             '<div class="yc-td-body"></div>' +
           '</div>';
         document.body.appendChild(root);
+        box = root.querySelector('.yc-td');
         titleEl = root.querySelector('#ycToolDialogTitle');
         closeBtn = root.querySelector('.yc-td-close');
         body = root.querySelector('.yc-td-body');
@@ -712,11 +803,18 @@
         root.addEventListener('mousedown', function (e) { if (e.target === root) close(); });
         document.addEventListener('keydown', onKey);
       }
+      function setSize(z) {
+        size = z;
+        root.setAttribute('data-size', z);
+        box.classList.toggle('yc-td-compact', z === 'compact');
+      }
       function isOpen() { return !!(root && !root.hidden); }
       function close() {
         if (!isOpen()) return;
         root.hidden = true;
         body.textContent = '';                 // drop the frame: the page unloads
+        frame = null;
+        size = null;
         var r = restoreTo;
         restoreTo = null;
         try { if (r && r.focus && r.isConnected !== false) r.focus(); } catch (_) { /* gone */ }
@@ -731,6 +829,11 @@
         if (!root) build();
         if (!isOpen()) restoreTo = document.activeElement;
         var title = opts.title == null ? '' : String(opts.title);
+        var z = opts.size == null ? 'large' : opts.size;
+        if (SIZES.indexOf(z) < 0) {
+          if (window.console) console.warn('[openToolDialog] size must be "compact" or "large" — opening large');
+          z = 'large';
+        }
         titleEl.textContent = title || 'Tool';
         body.textContent = '';
         var f = document.createElement('iframe');
@@ -739,18 +842,162 @@
         f.addEventListener('load', function () { hookFrame(f); });
         f.src = url;
         body.appendChild(f);
+        frame = f;
+        setSize(z);
         root.hidden = false;
         closeBtn.focus();
         return true;
       }
+
+      // Is `win` (a tool's own window) the page in the open dialog, or a
+      // frame nested inside it? The dialog acts only for its own page: a
+      // pane or a custom-tab frame calling close()/resize() gets false and
+      // changes nothing. An API contract, not a security boundary — every
+      // caller is same-origin code (CLAUDE.md, the tools trust model).
+      function hosts(win) {
+        var fw = isOpen() && frame ? frame.contentWindow : null;
+        if (!fw || !win) return false;
+        for (var w = win, i = 0; w && i < 10; i++) {
+          if (w === fw) return true;
+          var p;
+          try { p = w.parent; } catch (_) { return false; }
+          if (!p || p === w) return false;
+          w = p;
+        }
+        return false;
+      }
+
+      // ── THE TOOL SHELL API (ui-custom S3.3) ──────────────────────────────
+      // window.ycTool — the documented, versioned, TOKEN-FREE way for a page
+      // running inside the shell (a tool at /tool/<key>, in this dialog or a
+      // custom tab) to use it. Reach it as window.parent.ycTool (the shell is
+      // the parent of a tool frame). The operator guide, with an example, is
+      // manual/08-Admin-Tools/11-tool-actions.md.
+      //
+      //   version                         1. Bumped only by a breaking change;
+      //                                   members are only ever added.
+      //   apiSend(endpoint, method, payload, { quiet })  → Promise
+      //       The shell's apiSend with ALL its guards (root-relative only,
+      //       redirect:'error', the 401 re-login / step-up retry, ApiError
+      //       shape). No extra headers, no options but `quiet`.
+      //       quiet: true — with no valid session it REJECTS at once with an
+      //       Error named 'ToolAuthError' (code 'auth_required') instead of
+      //       popping the blocking login. For polling and background work:
+      //       a mid-wait expiry must not throw a login dialog over the tool.
+      //       Quiet checks only the session the client holds, as authReady()
+      //       does. It does NOT suppress apiSend's prompts on a server 401:
+      //       the SU password step-up (401 code 'elevation_required') and the
+      //       re-login (any other 401, e.g. a token revoked early) both still
+      //       appear.
+      //   authReady()                     → boolean. A session exists and has
+      //       not expired. Never prompts; never hands out the token.
+      //   toast(message, kind)            → boolean. The shell's toast, TEXT
+      //       only (≤300 characters); kind: success | error | warning | info
+      //       (default) | question.
+      //   close(win)                      → boolean
+      //   resize(size, win)               → boolean
+      //       Act on the tool dialog `win` is hosted in — pass your own
+      //       `window`. A frame that isn't the dialog's page (a pane, a custom
+      //       tab) gets false and nothing changes. size: 'compact' | 'large'
+      //       (presets only; anything else → false).
+      //   openCase(caseId, win)           → Promise<boolean>
+      //   openContact(contactId, win)     → Promise<boolean>
+      //       Open the file through the shell's addFile, IN FRONT: when `win`
+      //       is the dialog's page, the dialog closes first. The name comes
+      //       from /api/search's exact-id lookup (as a restored workspace URL
+      //       does); an id it cannot confirm opens nothing (false). caseId: a
+      //       case id (letters, digits, - and _, ≤20 — never parsed further:
+      //       case ids are opaque, lib/caseId.js); contactId: a positive
+      //       integer (number or digit string).
+      //   exec(registryId)                → boolean. ycLauncher.exec — every
+      //       refusal kept (denied, admin-gated, unknown, a bad firm action).
+      //
+      // Invariants: every member is a plain frozen function on this frozen,
+      // non-writable object; none returns or exposes the token, AUTH_STATE or
+      // any credential-bearing object. Older pages that call parent.apiSend
+      // keep working — this is the path forward, not a replacement.
+      var KINDS = ['success', 'error', 'warning', 'info', 'question'];
+      var CASE_ID_RE = /^[A-Za-z0-9_-]{1,20}$/;   // cases.case_id varchar(20); addFile's id charset
+      var CONTACT_ID_RE = /^[1-9][0-9]{0,9}$/;     // contacts.contact_id int unsigned
+
+      function authReady() {
+        try {
+          var st = window.AUTH_STATE, expired = window.isJwtExpired;
+          return !!(st && st.jwt && typeof expired === 'function' && !expired(st.jwt));
+        } catch (_) { return false; }
+      }
+      function toolApiSend(endpoint, method, payload, opts) {
+        if (opts && opts.quiet === true && !authReady()) {
+          var e = new Error('No valid session — sign in again, then retry.');
+          e.name = 'ToolAuthError';
+          e.code = 'auth_required';
+          return Promise.reject(e);
+        }
+        var send = window.apiSend;
+        if (typeof send !== 'function') return Promise.reject(new Error('ycTool.apiSend: the shell is not ready'));
+        try { return Promise.resolve(send(endpoint, method, payload)); } catch (err) { return Promise.reject(err); }
+      }
+      function toast(message, kind) {
+        var T = window.Toast, text;
+        // A hostile toString / Symbol must not throw out of the API: false instead.
+        try { text = String(message == null ? '' : message).slice(0, 300); } catch (_) { return false; }
+        if (!text || !T || typeof T.fire !== 'function') return false;
+        T.fire({ icon: KINDS.indexOf(kind) >= 0 ? kind : 'info', titleText: text });
+        return true;
+      }
+      function toolClose(win) {
+        if (!hosts(win)) return false;
+        close();
+        return true;
+      }
+      function toolResize(z, win) {
+        if (SIZES.indexOf(z) < 0 || !hosts(win)) return false;
+        setSize(z);
+        return true;
+      }
+      function openFile(kind, id, win) {
+        var sid = typeof id === 'number' && kind === 'contact' ? String(id) : id;
+        if (typeof sid !== 'string' || !(kind === 'case' ? CASE_ID_RE : CONTACT_ID_RE).test(sid)) {
+          if (window.console) console.warn('[ycTool] open' + (kind === 'case' ? 'Case' : 'Contact') + ': not a ' + kind + ' id');
+          return Promise.resolve(false);
+        }
+        return toolApiSend('/api/search', 'GET', { q: sid, type: kind, limit: 1 }).then(function (d) {
+          var r = d && d.results && d.results[0];
+          if (!r || String(r.id) !== sid || r.type !== kind) return false;
+          if (typeof window.addFile !== 'function') return false;
+          if (hosts(win)) close();
+          window.addFile(String(r.name == null ? sid : r.name), kind === 'case' ? 'case' : 'client', sid);
+          return true;
+        }, function () { return false; });
+      }
+      function toolExec(id) {
+        var L = window.ycLauncher;
+        return typeof id === 'string' && !!L && typeof L.exec === 'function' && L.exec(id) === true;
+      }
+      var api = {
+        version: 1,
+        apiSend: toolApiSend,
+        authReady: authReady,
+        toast: toast,
+        close: toolClose,
+        resize: toolResize,
+        openCase: function (id, win) { return openFile('case', id, win); },
+        openContact: function (id, win) { return openFile('contact', id, win); },
+        exec: toolExec,
+      };
+      for (var k in api) if (typeof api[k] === 'function') Object.freeze(api[k]);
+      Object.defineProperty(window, 'ycTool', { value: Object.freeze(api), writable: false, configurable: false, enumerable: true });
+
       open.close = close;
       open.isOpen = isOpen;
+      open.size = function () { return isOpen() ? size : null; };
       return open;
     })();
   </script>
   <style>
     /* The tool dialog. Scoped by id: style.css's global iframe rule (100vh) and
-       its dark-theme button rule (0,6,2) lose to an id. Full-bleed on phones. */
+       its dark-theme button rule (0,6,2) lose to an id. Large is full-bleed on
+       phones; compact stays a small card. */
     #ycToolDialog {
       position: fixed; inset: 0; z-index: 1040; display: flex; align-items: center; justify-content: center;
       padding: 16px; box-sizing: border-box; background: var(--backdrop);
@@ -762,6 +1009,7 @@
       background: var(--surface); color: var(--text);
       border: 1px solid var(--border-strong); border-radius: var(--radius); box-shadow: var(--shadow-drawer);
     }
+    #ycToolDialog .yc-td.yc-td-compact { max-width: 480px; max-height: 480px; }
     #ycToolDialog .yc-td-head {
       flex: 0 0 auto; display: flex; align-items: center; gap: 8px; min-width: 0;
       padding: 6px 6px 6px 16px; border-bottom: 1px solid var(--border);
@@ -780,7 +1028,15 @@
     @media (max-width: 768px) {
       #ycToolDialog { padding: 0; }
       #ycToolDialog .yc-td { max-width: none; max-height: none; border: 0; border-radius: 0; }
+      #ycToolDialog[data-size="compact"] { padding: 12px; }
+      #ycToolDialog .yc-td.yc-td-compact {
+        max-width: 480px; max-height: 480px; border: 1px solid var(--border-strong); border-radius: var(--radius);
+      }
     }
+    /* The More grid's firm row (ycLauncher renderFirmRow): a firm label is
+       DB text up to 40 characters, so an unbroken one wraps inside its tile
+       rather than widening it. */
+    #tabMore > .big-button[data-yc-firm-row] { overflow-wrap: anywhere; vertical-align: top; }
   </style>
   <script src="/scripts.js"></script>
   <!-- Stale-tab guard: force-reloads this page when the server is running a newer
