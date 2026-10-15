@@ -192,7 +192,8 @@ describe('comms hub pane', () => {
     doc.getElementById('tab-email').click();
     expect(doc.getElementById('team').hidden).toBe(true);
     expect(doc.getElementById('email').hidden).toBe(false);
-    expect(calls.map((c) => c.url)).toEqual(['/api/mail/mailboxes', '/api/mail/views', '/api/mail/messages']);
+    // + the admin-tools slot's archive-admin flag (read once per load — tests/commsAdminTools.pane.test.js)
+    expect(calls.map((c) => c.url)).toEqual(['/api/comms-archive/admin', '/api/mail/mailboxes', '/api/mail/views', '/api/mail/messages']);
     expect(doc.querySelectorAll('#msg-list .msg')).toHaveLength(2);
     expect(doc.querySelector('#msg-list .msg').classList.contains('unread')).toBe(true);
     // mailbox chips because two boxes are readable; the case chip on row 2
@@ -1107,8 +1108,8 @@ describe('comms hub pane', () => {
     expect(email.classList.contains('show-thread')).toBe(true);
     doc.getElementById('back-btn').click();
     expect(email.classList.contains('show-thread')).toBe(false);
-    // the CSS that makes it stacked lives in the phone media block
-    const css = HTML.match(/@media \(max-width: 768px\) \{([\s\S]*?)\n  \}/)[1];
+    // the CSS that makes it stacked lives in the phone media block (anchored on its comment, not on order)
+    const css = HTML.match(/stacked navigation ── \*\/\n  @media \(max-width: 768px\) \{([\s\S]*?)\n  \}/)[1];
     expect(css).toMatch(/\.email:not\(\.show-thread\) \.thread-col \{ display: none; \}/);
     expect(css).toMatch(/\.email\.show-thread \.list-col \{ display: none; \}/);
   });

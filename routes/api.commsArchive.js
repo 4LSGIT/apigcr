@@ -57,7 +57,15 @@
  *   Same WHO as restrict (staff JWT + isArchiveAdmin, else 403); every outcome
  *   audited — actions no_transcribe_{list|add|remove}: the phone, ids and the
  *   note's LENGTH, never its text. Not a sync-bus entity (no ycSync matcher):
- *   the one page that shows the list repaints from the response.
+ *   the dialog that shows the list (public/js/ycNoTranscribe.js — Connections
+ *   and the Comms Phone tab) repaints from the response.
+ *   GET    /api/comms-archive/admin               → {archive_admin: bool} — is the CALLER an
+ *          archive admin (isArchiveAdmin)? The comms hub's admin-tools slot reads it once per
+ *          page load to show its Do-not-transcribe button — a soft, cosmetic gate; the routes
+ *          above stay the real one. Staff JWT → the real answer; an in-scope API key → false
+ *          (a scoped key outside its routes is refused by jwtOrApiKey first). NOT audited: it reveals only the caller's own flag, and a
+ *          row per Comms open would bury the real ones. An admin-check failure → 500 (the slot
+ *          stays empty).
  *
  *   EVERY content denial is the same 404 as a missing item (no existence
  *   oracle — §7 "omitted, not locked"); the audit row carries the real reason.
@@ -711,6 +719,20 @@ router.delete('/api/comms-archive/no-transcribe/:id', jwtOrApiKey, async (req, r
     await audit(req, 'success', { ...details, phone: entry.phone });
     return res.json({ status: 'success', entry });
   } catch (err) { return noTxFail(req, res, details, err); }
+});
+
+// ─── Am I an archive admin? ─── comms.html's admin-tools slot (header above).
+// The caller's own flag only: not audited. A non-JWT caller is never an archive admin.
+router.get('/api/comms-archive/admin', jwtOrApiKey, async (req, res) => {
+  if (!req.auth || req.auth.type !== 'jwt' || req.auth.userId == null) {
+    return res.json({ status: 'success', archive_admin: false });
+  }
+  try {
+    return res.json({ status: 'success', archive_admin: (await admin.isArchiveAdmin(req.db, req.auth)) === true });
+  } catch (err) {
+    console.error('[commsArchive] isArchiveAdmin error:', err.code || '', err.message);
+    return res.status(500).json({ status: 'error', message: 'Archive request failed' });
+  }
 });
 
 /** Test hook: a fresh purge limiter (optionally with another per-hour max). */

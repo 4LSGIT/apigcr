@@ -13,6 +13,10 @@
  *   D   delete → the row, then 404;
  *   A   every outcome audited (admin_audit_log, tool comms_archive) — the
  *       phone and the note's LENGTH, never the note.
+ * And GET /api/comms-archive/admin (comms.html's admin-tools slot):
+ *   M   the caller's own isArchiveAdmin — SU true, a listed admin true (false
+ *       once disabled), plain staff false, an API key false (200, not 403);
+ *       never audited, whatever the answer.
  * The sweep's side of the match (what POST stores is what _onNoTranscribe
  * hits) is G4b in tests/commsTranscribe.mysql.test.js, where the sweep runs.
  *
@@ -211,6 +215,23 @@ maybe('comms do-not-transcribe list on real MySQL', () => {
     expect(again.status).toBe(404);
     expect((await del('abc')).status).toBe(400);
     expect((await list(T.su)).json.entries).toEqual([]);
+  });
+
+  // ── M — am I an archive admin? (GET /api/comms-archive/admin) ──────────────
+  test('M1 the flag is the caller\'s isArchiveAdmin: SU and a listed admin true, plain staff false, an API key false', async () => {
+    const flag = async (opts) => { const r = await http('GET', '/api/comms-archive/admin', opts); return [r.status, r.json]; };
+    const yes = [200, { status: 'success', archive_admin: true }];
+    const no = [200, { status: 'success', archive_admin: false }];
+    expect(await flag({ t: T.su() })).toEqual(yes);
+    expect(await flag({ t: T.ss() })).toEqual(yes);                          // listed in comms_archive_admins
+    expect(await flag({ t: T.nobody() })).toEqual(no);
+    expect(await flag({ apiKey: process.env.INTERNAL_API_KEY })).toEqual(no);  // never an archive admin, and not a 403
+    expect((await http('GET', '/api/comms-archive/admin')).status).toBe(401);   // no credential: jwtOrApiKey's 401
+    await q("UPDATE users SET user_auth = 'disabled' WHERE user = 1");
+    expect(await flag({ t: T.ss() })).toEqual(no);                            // the same per-request check as the writes
+    await q("UPDATE app_settings SET `value` = '' WHERE `key` = 'comms_archive_admins'");
+    expect(await flag({ t: T.su() })).toEqual(yes);                           // SU needs no listing
+    expect(await audits()).toEqual([]);                                        // not audited: it reveals only the caller's own flag
   });
 
   // ── A — audit ───────────────────────────────────────────────────────────

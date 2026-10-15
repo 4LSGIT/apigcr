@@ -31,7 +31,9 @@ run, so a change takes effect within 2 minutes.
   A call restricted after it was already sent is still saved, but its
   transcript is hidden exactly like the call.
 - **Numbers on the do-not-transcribe list.** Manage it from **Connections →
-  Phone Lines → Do-not-transcribe** (the button left of **+ Add Line**). Type
+  Phone Lines → Do-not-transcribe** (the button left of **+ Add Line**), or
+  from **Comms → Phone → Do-not-transcribe** (the button at the right end of
+  the tabs, shown only while Phone is selected). Type
   the number (any US format — punctuation is ignored and a leading `1` is
   dropped; a number that is not 10 digits, such as an international one, is
   refused), an optional reason,
@@ -39,9 +41,10 @@ run, so a change takes effect within 2 minutes.
   default), then **Add**. **✕** removes a number after a confirm. Both act
   at once; **Close** loses nothing. The list belongs to superusers and the
   archive admins (`comms_archive_admins` — the same people as Restrict and
-  Purge), but the Connections page itself is superusers-only, so an archive
-  admin who is not a superuser has the API (`/api/comms-archive/no-transcribe`)
-  and no screen yet. Every add, remove and view is recorded in
+  Purge). The Connections page is superusers-only; the Comms button shows to
+  every archive admin, superuser or not. Showing it is only a convenience —
+  the list itself refuses anyone who is not an archive admin, and says so
+  inside the window. Every add, remove and view is recorded in
   `admin_audit_log` (tool `comms_archive`) — the number, never the reason.
   - A listed number's calls are still archived and playable; they are skipped
     when their turn to be sent comes, so they get no transcript and no

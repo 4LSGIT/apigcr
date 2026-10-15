@@ -12,6 +12,7 @@
 <script src="/js/vendor/purify-3.4.16.min.js"></script>
 <script src="/js/mailRender.js"></script>
 <script src="/js/mailboxColor.js"></script>
+<script src="/js/ycNoTranscribe.js"></script>  <!-- admin-tools slot: the do-not-transcribe dialog -->
 <style>
   /* Comms hub — mailbox-system arc, slices S2 (read) + S3 (compose / reply /
      Sent) + S-PH (the Phone tab: per-line texts + calls). Spec:
@@ -69,6 +70,7 @@
   .tab .soon { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--text-muted); }
   .tab .tab-n { font-size: 11px; font-weight: 700; color: var(--accent-2); }
   .tab .tab-n:empty { display: none; }
+  .tab-strip { display: flex; gap: 2px; min-width: 0; }   /* the tablist; the row (.tabs) also holds the admin-tools slot */
   /* Team tab: reserved — a "coming soon" placeholder until chat lands */
   .team { flex: 1 1 auto; min-height: 0; overflow: auto; }
 
@@ -591,18 +593,29 @@
     .cf-lbl { flex: 0 0 100%; padding-top: 0; }
     .cf-more { padding-top: 0; }
   }
+
+  /* ── Admin-tools slot ▼ — the tabs row's right end, NOT a tab (tear-out recipe: ADMIN TOOLS ▼ in the script).
+     After the phone block on purpose: tests read the FIRST 768px block as the page's phone rules.
+     ≤768px a tool is its icon (title + aria-label carry the name), like Compose. */
+  .comms-admin-tools { margin-left: auto; display: flex; align-items: center; gap: 4px; flex: 0 0 auto; padding: 0 0 3px 8px; }
+  @media (max-width: 768px) { .comms-admin-tools .cat-label { display: none; } }
+  /* ── Admin-tools slot ▲ */
 </style>
 </head>
 <body>
 
 <div class="hub">
-  <div class="tabs" role="tablist">
-    <button class="tab on" type="button" role="tab" aria-selected="true" aria-controls="email" id="tab-email"><i class="fa-solid fa-envelope"></i> Email <span class="tab-n" id="tab-email-n" title="Unread in your inboxes"></span></button>
-    <button class="tab" type="button" role="tab" aria-selected="false" aria-controls="phone" id="tab-phone"
-            title="Texts and calls on the firm's phone lines you have access to"><i class="fa-solid fa-phone"></i> Phone</button>
-    <!-- Reserved: key "team" (id tab-team, badge tab-team-n) is what deep links / &tab= will use — keep it stable. -->
-    <button class="tab" type="button" role="tab" aria-selected="false" aria-controls="team" id="tab-team"
-            title="Team chat — coming soon"><i class="fa-solid fa-comments"></i> Team <span class="tab-n" id="tab-team-n" title="Unread team messages"></span></button>
+  <div class="tabs">
+    <div class="tab-strip" role="tablist">
+      <button class="tab on" type="button" role="tab" aria-selected="true" aria-controls="email" id="tab-email"><i class="fa-solid fa-envelope"></i> Email <span class="tab-n" id="tab-email-n" title="Unread in your inboxes"></span></button>
+      <button class="tab" type="button" role="tab" aria-selected="false" aria-controls="phone" id="tab-phone"
+              title="Texts and calls on the firm's phone lines you have access to"><i class="fa-solid fa-phone"></i> Phone</button>
+      <!-- Reserved: key "team" (id tab-team, badge tab-team-n) is what deep links / &tab= will use — keep it stable. -->
+      <button class="tab" type="button" role="tab" aria-selected="false" aria-controls="team" id="tab-team"
+              title="Team chat — coming soon"><i class="fa-solid fa-comments"></i> Team <span class="tab-n" id="tab-team-n" title="Unread team messages"></span></button>
+    </div>
+    <!-- Admin-tools slot: NOT a tab (outside the tablist). Painted by the script's ADMIN TOOLS block (tear-out recipe there). -->
+    <div class="comms-admin-tools" id="commsAdminTools" role="toolbar" aria-label="Admin tools" hidden></div>
   </div>
 
   <div class="email" id="email" role="tabpanel" aria-labelledby="tab-email">
@@ -3153,6 +3166,7 @@ function stopSentWatch() {
 // ── Wiring ──────────────────────────────────────────────────
 async function init() {
   wirePhone();
+  announceTab('email');   // the markup's starting tab (the admin-tools slot reads its flag on it)
   let qTimer = null;
   const debounced = () => { clearTimeout(qTimer); qTimer = setTimeout(() => { renderFbarBtn(); loadList(); }, 350); };
   E('f-q').addEventListener('input', debounced);
@@ -3389,7 +3403,10 @@ function showTab(which) {
     E(k).hidden = !on;
   }
   if (which === 'phone' && !ph.booted) phoneBoot();
+  announceTab(which);
 }
+/** Tells listeners which tab now shows (the admin-tools slot repaints on it). With no listener it does nothing. */
+function announceTab(which) { document.dispatchEvent(new CustomEvent('comms-tab', { detail: { tab: which } })); }
 const phoneShown = () => !E('phone').hidden;
 
 async function phoneBoot() {
@@ -4599,6 +4616,77 @@ function wirePhone() {
   E('ca-act-go').addEventListener('click', caActGo);
   E('ca-act-backdrop').addEventListener('click', (e) => { if (e.target === E('ca-act-backdrop')) closeCaAct(); });
 }
+
+/* ══ ADMIN TOOLS ▼ — the tabs row's right-end slot (#commsAdminTools) ══════════
+ * Buttons for admins, shown per tab; NOT tabs (the slot sits outside the
+ * tablist). One registry entry per tool:
+ *   { id, label, icon, title, when: (ctx) => bool, open: () => … }
+ *   ctx = { tab: 'email'|'phone'|'team', isArchiveAdmin: bool }
+ * ADD a tool (mailbox / phone access, say): one ADMIN_TOOLS entry; a tool that
+ * needs another gate adds its flag to adminTools and loads it in
+ * adminToolsLoad. A new TAB goes in the tablist (.tab-strip) and showTab instead.
+ *
+ * "Admin rights" = ARCHIVE admin: GET /api/comms-archive/admin answers with
+ * services/commsArchiveAdmin.isArchiveAdmin (SU, or listed in app_settings
+ * comms_archive_admins) — the gate the do-not-transcribe routes apply. This is
+ * a SOFT, COSMETIC gate: it only decides whether the button shows; those
+ * routes are the real gate (and a 403 from them renders inside the dialog).
+ * Read once per page load, on the first 'comms-tab' event (init sends it once
+ * P.apiSend is up); a failed read leaves it false, so the slot stays empty.
+ * Never probe with the no-transcribe GET: that writes an audited
+ * rejected_not_admin row per non-admin per load.
+ *
+ * TEAR-OUT (no other page code depends on it): delete
+ *   1. <div class="comms-admin-tools" id="commsAdminTools"> in the tabs row;
+ *   2. the CSS between "Admin-tools slot ▼" and "Admin-tools slot ▲";
+ *   3. this block, ADMIN TOOLS ▼ to ADMIN TOOLS ▲;
+ *   4. <script src="/js/ycNoTranscribe.js"> in <head>;
+ *   then the tests and gates that name it: tests/commsAdminTools.pane.test.js;
+ *   the comms host in tests/commsNoTranscribe.pane.test.js (HOSTS.comms + its
+ *   <script src> check); '/api/comms-archive/admin' in the boot-call lists of
+ *   tests/mailboxS2.pane.test.js and tests/mailboxS3.pane.test.js; the
+ *   survey's phone-no-transcribe step (scripts/mobile-survey/survey.js).
+ * announceTab() (showTab, init) stays — a 'comms-tab' event nobody hears — as does
+ * .tab-strip. GET /api/comms-archive/admin may stay or go (its only caller is here).
+ */
+const ADMIN_TOOLS = [
+  {
+    id: 'notx', label: 'Do-not-transcribe', icon: 'fa-microphone-slash',
+    title: 'Numbers whose calls are archived but never transcribed',
+    when: (ctx) => ctx.tab === 'phone' && ctx.isArchiveAdmin,
+    open: () => window.ycNoTranscribe.open({ api, firmData: P.firmData }),   // public/js/ycNoTranscribe.js
+  },
+];
+const adminTools = { tab: 'email', isArchiveAdmin: false, loaded: false };
+
+function paintAdminTools() {
+  const slot = E('commsAdminTools');
+  const ctx = { tab: adminTools.tab, isArchiveAdmin: adminTools.isArchiveAdmin };
+  const shown = ADMIN_TOOLS.filter((t) => t.when(ctx));
+  slot.replaceChildren(...shown.map((t) => h('button', {
+    className: 'btn small', type: 'button', id: 'cat-' + t.id, title: t.title || t.label, 'aria-label': t.label,
+    onclick: () => { t.open(); },
+  }, icon(t.icon), h('span', { className: 'cat-label' }, t.label))));
+  slot.hidden = !shown.length;
+}
+
+async function adminToolsLoad() {
+  adminTools.loaded = true;
+  try {
+    const r = await api('/api/comms-archive/admin', 'GET');
+    adminTools.isArchiveAdmin = !!(r && r.archive_admin === true);
+  } catch (_) {
+    adminTools.isArchiveAdmin = false;   // hidden; nothing to tell
+  }
+  paintAdminTools();
+}
+
+document.addEventListener('comms-tab', (e) => {
+  adminTools.tab = e.detail && e.detail.tab;
+  paintAdminTools();
+  if (!adminTools.loaded) adminToolsLoad();
+});
+/* ══ ADMIN TOOLS ▲ ═══════════════════════════════════════════════════════════ */
 
 // ── Boot ────────────────────────────────────────────────────
 // Runs LAST: if the parent is already ready this calls init() synchronously.

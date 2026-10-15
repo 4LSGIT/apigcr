@@ -627,8 +627,12 @@ Phone-line access works like mailbox access: click **Access** on a line in
 - **Automations are never checked**: workflow, sequence, campaign and
   reminder texts go out from any line, as before.
 
-### Do-not-transcribe — Connections → Phone Lines
+### Do-not-transcribe — Connections → Phone Lines, or Comms → Phone
 
-**Do-not-transcribe**, left of **+ Add Line**, opens the list of numbers whose
-calls are archived but never sent for transcription. What it does, and who
-it belongs to: [Comms Transcription](09-comms-transcription.md#what-never-gets-transcribed).
+**Do-not-transcribe** opens the list of numbers whose calls are archived but
+never sent for transcription. It sits in two places, and both open the same
+list: on **Connections → Phone Lines**, left of **+ Add Line** (superusers),
+and in **Comms → Phone**, at the right end of the Email / Phone / Team tabs —
+shown only to archive admins, and only while Phone is selected (on a phone it
+is just its icon). What it does, and who it belongs to:
+[Comms Transcription](09-comms-transcription.md#what-never-gets-transcribed).

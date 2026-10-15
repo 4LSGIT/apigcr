@@ -1,18 +1,26 @@
 /**
  * @jest-environment node
  *
- * tests/commsNoTranscribe.pane.test.js — public/connections.html Phone Lines →
- * Do-not-transcribe (comms archive R9), booted in jsdom against a stub shell
- * apiSend (the tests/phoneSPH.pane.test.js harness; in jsdom a top-level
- * window is its own parent, so window.apiSend IS the pane's P.apiSend):
- *   - the button sits just left of "+ Add Line" and opens the dialog, which
- *     GETs the list and renders [✕] | phone | note | requested by (all text);
+ * tests/commsNoTranscribe.pane.test.js — the do-not-transcribe dialog (comms
+ * archive R9): ONE module, public/js/ycNoTranscribe.js, hosted by
+ *   - public/connections.html — Phone Lines → Do-not-transcribe (left of "+ Add Line");
+ *   - public/comms.html — the Phone tab's admin-tools slot (archive admins, a
+ *     soft gate; the slot itself: tests/commsAdminTools.pane.test.js).
+ * Each host is booted in jsdom against a stub shell apiSend (the
+ * tests/phoneSPH.pane.test.js harness; in jsdom a top-level window is its own
+ * parent, so window.apiSend IS the pane's P.apiSend), with the module loaded
+ * the way the page's <script src> would. On BOTH hosts:
+ *   - the button opens the dialog, which GETs the list and renders
+ *     [✕] | phone | note | requested by (all text);
  *   - "Requested by" offers active staff only (firmData user_type && active
- *     !== false), the signed-in user selected;
+ *     !== false), the signed-in user selected; else a leading "Me";
  *   - Add POSTs at once and repaints from the response; a refusal keeps what
  *     was typed; ✕ asks first, then DELETEs at once; a 403 shows in the dialog;
  *   - the hint is a .yc-hint, the labels .yc-flabel — no inline style.
- * Mutation-checked (the NOTX report lists each).
+ * And the module's own contract: both hosts load it (no copy left in a page),
+ * every CSS rule is scoped through #noTxDialog (wins on specificity), one
+ * dialog + one style however often it opens.
+ * Mutation-checked (the NOTX and COMMSADM reports list each).
  */
 
 'use strict';
@@ -21,7 +29,15 @@ const fs = require('fs');
 const path = require('path');
 const { JSDOM } = require('jsdom');
 
-const CONN = fs.readFileSync(path.join(__dirname, '..', 'public/connections.html'), 'utf8');
+const ROOT = path.join(__dirname, '..');
+const read = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8');
+const CONN = read('public/connections.html');
+const COMMS = read('public/comms.html');
+const NOTX = read('public/js/ycNoTranscribe.js');
+const PURIFY = read('public/js/vendor/purify-3.4.16.min.js');
+const RENDER = read('public/js/mailRender.js');
+const COLOR = read('public/js/mailboxColor.js');
+
 const DOMS = [];
 afterEach(() => { DOMS.splice(0).forEach((d) => { try { d.window.close(); } catch (_) { /* noop */ } }); });
 const tick = (w, ms = 40) => new Promise((r) => w.setTimeout(r, ms));
@@ -41,39 +57,88 @@ const ENTRIES = [
   { id: 3, phone: '3135550199', note: null, created_by: 9, created_by_name: null, created_at: '2026-10-14T10:00:00.000Z' },
 ];
 
-async function boot({ handler, confirmAnswer = true, currentUser = 6 }) {
+/** Each host: its page, the libs its <script src> tags load, its own routes, and how its button opens the dialog. */
+const HOSTS = {
+  connections: {
+    url: 'https://app.4lsg.com/connections.html',
+    html: CONN,
+    libs: [NOTX],
+    routes(u) {
+      if (u === '/api/credentials') return { credentials: [] };
+      if (u === '/api/email-credentials') return { email_credentials: [] };
+      if (u === '/api/phone-lines/admin') return { phone_lines: [], providers: {} };
+      return undefined;
+    },
+    async open(env) {
+      env.doc.getElementById('phone-notx').click();
+      await tick(env.window, 60);
+    },
+  },
+  comms: {
+    url: 'https://app.4lsg.com/comms.html',
+    html: COMMS,
+    libs: [PURIFY, RENDER, COLOR, NOTX],
+    routes(u) {
+      if (u === '/api/comms-archive/admin') return { status: 'success', archive_admin: true };
+      if (u === '/api/mail/mailboxes') return { mailboxes: [], viewer: { su: false, role: null, can_send: false } };
+      if (u === '/api/mail/views') return { views: [] };
+      if (u === '/api/mail/views/counts') return { counts: {} };
+      if (u === '/api/mail/messages') return { messages: [], next_cursor: null };
+      if (u === '/api/phone-lines/readable') return { viewer: { su: false }, lines: [] };
+      return undefined;
+    },
+    async open(env) {
+      env.doc.getElementById('tab-phone').click();
+      await tick(env.window, 60);
+      env.doc.getElementById('cat-notx').click();
+      await tick(env.window, 60);
+    },
+  },
+};
+
+function pageParts(html) {
+  const noComments = html.replace(/<!--[\s\S]*?-->/g, '');
+  const bodyHtml = (noComments.match(/<body[^>]*>([\s\S]*)<\/body>/) || [])[1] || '';
+  const inline = [...noComments.matchAll(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/g)].map((m) => m[1]);
+  const head = (noComments.match(/<head>([\s\S]*?)<\/head>/) || [])[1] || '';
+  const srcs = [...head.matchAll(/<script src="([^"]+)"><\/script>/g)].map((m) => m[1]);   // real tags in <head>, not a mention in a comment
+  return { bodyHtml: bodyHtml.replace(/<script[\s\S]*?<\/script>/g, ''), inline, srcs };
+}
+
+async function boot(hostName, { handler, confirmAnswer = true, currentUser = 6 }) {
+  const host = HOSTS[hostName];
   const dom = new JSDOM('<!DOCTYPE html><html><head></head><body></body></html>',
-    { url: 'https://app.4lsg.com/connections.html', runScripts: 'dangerously', pretendToBeVisual: true });
+    { url: host.url, runScripts: 'dangerously', pretendToBeVisual: true });
   DOMS.push(dom);
   const { window } = dom;
   window.Element.prototype.scrollIntoView = function () {};
+  Object.defineProperty(window, 'innerWidth', { value: 1200, configurable: true });
   const D = window.HTMLDialogElement && window.HTMLDialogElement.prototype;
   if (D && typeof D.showModal !== 'function') D.showModal = function () { this.setAttribute('open', ''); };
   if (D && typeof D.close !== 'function') D.close = function () { this.removeAttribute('open'); };
-  window.firmData = { currentUser: { user: currentUser, user_auth: 'authorized', roles: 'it,admin,su' }, users: fresh(USERS) };
+  window.firmData = { firmTimezone: 'America/Detroit', currentUser: { user: currentUser, user_auth: 'authorized', roles: 'it,admin,su' }, users: fresh(USERS) };
   const calls = [];
   window.apiSend = async (u, method = 'GET', payload = null) => {
     calls.push({ url: u, method, payload: payload == null ? null : JSON.parse(JSON.stringify(payload)) });
-    if (u === '/api/credentials') return { credentials: [] };
-    if (u === '/api/email-credentials') return { email_credentials: [] };
-    if (u === '/api/phone-lines/admin') return { phone_lines: [], providers: {} };
+    const own = host.routes(u, method);
+    if (own !== undefined) return own;
     return handler(u, method, payload);
   };
   const confirms = [];
   window.confirm = (m) => { confirms.push(m); return confirmAnswer; };
-  const noComments = CONN.replace(/<!--[\s\S]*?-->/g, '');
-  const bodyHtml = (noComments.match(/<body[^>]*>([\s\S]*)<\/body>/) || [])[1] || '';
-  const inline = [...noComments.matchAll(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/g)].map((m) => m[1]);
+  const { bodyHtml, inline } = pageParts(host.html);
   expect(inline.length).toBe(1); // a second inline block means this harness is stale
-  window.document.body.innerHTML = bodyHtml.replace(/<script[\s\S]*?<\/script>/g, '');
+  window.document.body.innerHTML = bodyHtml;
   const errors = [];
   window.addEventListener('error', (e) => errors.push(String(e.error || e.message)));
   window.addEventListener('unhandledrejection', (e) => errors.push(String(e.reason)));
-  const sc = window.document.createElement('script');
-  sc.textContent = inline[0];
-  window.document.body.appendChild(sc);
+  for (const src of [...host.libs, inline[0]]) {
+    const sc = window.document.createElement('script');
+    sc.textContent = src;
+    window.document.body.appendChild(sc);
+  }
   await tick(window, 80);
-  return { window, doc: window.document, calls, errors, confirms };
+  return { window, doc: window.document, calls, errors, confirms, host };
 }
 
 /** A stub of the three routes over an in-memory list. */
@@ -100,25 +165,32 @@ function listHandler(state) {
   };
 }
 
-async function openDialog(env) {
-  env.doc.getElementById('phone-notx').click();
-  await tick(env.window, 60);
-}
+const openDialog = (env) => env.host.open(env);
 const rowsText = (doc) => [...doc.querySelectorAll('#noTxBody tr')].map((tr) => [...tr.cells].map((td) => td.textContent.trim()));
+const listCalls = (calls) => calls.filter((c) => c.url.startsWith('/api/comms-archive/no-transcribe'));
 
-describe('connections.html — Phone Lines → Do-not-transcribe', () => {
-  test('the button sits left of "+ Add Line"; it opens the dialog, GETs the list and renders the four columns as text', async () => {
-    const state = { entries: fresh(ENTRIES) };
-    const env = await boot({ handler: listHandler(state) });
-    const { doc, window, calls, errors } = env;
-    const btn = doc.getElementById('phone-notx');
+describe('connections.html — the Phone Lines button', () => {
+  test('sits left of "+ Add Line"; nothing list-shaped is fetched until it is clicked', async () => {
+    const env = await boot('connections', { handler: listHandler({ entries: fresh(ENTRIES) }) });
+    const btn = env.doc.getElementById('phone-notx');
     expect(btn.textContent).toBe('Do-not-transcribe');
     expect(btn.nextElementSibling.id).toBe('phone-new');
-    expect(calls.some((c) => c.url.startsWith('/api/comms-archive'))).toBe(false);    // nothing until it is opened
+    expect(env.calls.some((c) => c.url.startsWith('/api/comms-archive'))).toBe(false);
+    expect(env.doc.getElementById('noTxDialog')).toBeNull();                      // built on first open
+    await openDialog(env);
+    expect(env.doc.getElementById('noTxDialog').open).toBe(true);
+  });
+});
+
+describe.each(Object.keys(HOSTS))('%s.html — the do-not-transcribe dialog', (hostName) => {
+  test('the button opens the dialog, GETs the list and renders the four columns as text', async () => {
+    const state = { entries: fresh(ENTRIES) };
+    const env = await boot(hostName, { handler: listHandler(state) });
+    const { doc, window, calls, errors } = env;
+    expect(listCalls(calls)).toEqual([]);                                        // nothing until it is opened
     await openDialog(env);
     expect(doc.getElementById('noTxDialog').open).toBe(true);
-    expect(calls.filter((c) => c.url.startsWith('/api/comms-archive')).map((c) => `${c.method} ${c.url}`))
-      .toEqual(['GET /api/comms-archive/no-transcribe']);
+    expect(listCalls(calls).map((c) => `${c.method} ${c.url}`)).toEqual(['GET /api/comms-archive/no-transcribe']);
     expect(rowsText(doc)).toEqual([
       ['✕', '(248) 555-1234', `personal ${EVIL}`, `Eve ${EVIL}`],
       ['✕', '(313) 555-0199', '', 'user #9'],
@@ -127,11 +199,12 @@ describe('connections.html — Phone Lines → Do-not-transcribe', () => {
     expect(doc.querySelector('#noTxBy img')).toBeNull();
     expect(window.__pwned).toBeUndefined();
     expect([...doc.querySelectorAll('#noTxDialog thead th')].map((th) => th.textContent)).toEqual(['', 'Phone', 'Note', 'Requested by']);
+    expect(doc.querySelector('#noTxBody button.notx-x[data-id="7"]').getAttribute('aria-label')).toBe('Remove (248) 555-1234');
     expect(errors).toEqual([]);
   });
 
   test('"Requested by" offers active staff only, the signed-in admin selected; hint and labels by class, no inline style', async () => {
-    const env = await boot({ handler: listHandler({ entries: [] }) });
+    const env = await boot(hostName, { handler: listHandler({ entries: [] }) });
     await openDialog(env);
     const { doc } = env;
     const sel = doc.getElementById('noTxBy');
@@ -143,15 +216,15 @@ describe('connections.html — Phone Lines → Do-not-transcribe', () => {
     expect(hint.textContent).toMatch(/still archived and playable, but are not sent for transcription/);
     expect(hint.textContent).toMatch(/does not touch transcripts that already exist/);
     expect(hint.textContent).toMatch(/Removing a number lets future calls be transcribed; calls already skipped stay skipped/);
-    expect([...doc.querySelectorAll('#noTxDialog label')].map((l) => [l.className, l.textContent]))
-      .toEqual([['yc-flabel', 'Phone'], ['yc-flabel', 'Reason'], ['yc-flabel', 'Requested by']]);
+    expect([...doc.querySelectorAll('#noTxDialog label')].map((l) => [l.className, l.textContent, l.getAttribute('for')]))
+      .toEqual([['yc-flabel', 'Phone', 'noTxPhone'], ['yc-flabel', 'Reason', 'noTxNote'], ['yc-flabel', 'Requested by', 'noTxBy']]);
     expect(doc.querySelectorAll('#noTxDialog [style]')).toHaveLength(0);
     expect(rowsText(doc)).toEqual([['No numbers on the list.']]);
   });
 
   test('Add POSTs at once and repaints from the response; a refusal keeps what was typed', async () => {
     const state = { entries: fresh(ENTRIES) };
-    const env = await boot({ handler: listHandler(state) });
+    const env = await boot(hostName, { handler: listHandler(state) });
     await openDialog(env);
     const { doc, window, calls } = env;
     doc.getElementById('noTxPhone').value = '(586) 555-0101';
@@ -186,7 +259,7 @@ describe('connections.html — Phone Lines → Do-not-transcribe', () => {
 
   test('✕ asks first: No sends nothing; Yes DELETEs at once and the row goes', async () => {
     const state = { entries: fresh(ENTRIES) };
-    const no = await boot({ handler: listHandler(state), confirmAnswer: false });
+    const no = await boot(hostName, { handler: listHandler(state), confirmAnswer: false });
     await openDialog(no);
     no.doc.querySelector('#noTxBody button.notx-x[data-id="7"]').click();
     await tick(no.window, 40);
@@ -194,7 +267,7 @@ describe('connections.html — Phone Lines → Do-not-transcribe', () => {
     expect(no.calls.filter((c) => c.method === 'DELETE')).toEqual([]);
     expect(rowsText(no.doc)).toHaveLength(2);
 
-    const yes = await boot({ handler: listHandler(state) });
+    const yes = await boot(hostName, { handler: listHandler(state) });
     await openDialog(yes);
     yes.doc.querySelector('#noTxBody button.notx-x[data-id="7"]').click();
     await tick(yes.window, 60);
@@ -205,7 +278,7 @@ describe('connections.html — Phone Lines → Do-not-transcribe', () => {
 
   test('signed-in user not among active staff: a leading "Me" is selected and no requested_by is sent (the server records the caller)', async () => {
     const state = { entries: [] };
-    const env = await boot({ handler: listHandler(state), currentUser: 41 });
+    const env = await boot(hostName, { handler: listHandler(state), currentUser: 41 });
     await openDialog(env);
     const { doc, window, calls } = env;
     const sel = doc.getElementById('noTxBy');
@@ -218,18 +291,66 @@ describe('connections.html — Phone Lines → Do-not-transcribe', () => {
     const post = calls.find((c) => c.method === 'POST');
     expect(post.payload).toEqual({ phone: '5865550101', note: '' });               // requested_by absent
     // listed again (the normal case): no "Me" — the signed-in admin's own option instead
-    const env2 = await boot({ handler: listHandler({ entries: [] }) });
+    const env2 = await boot(hostName, { handler: listHandler({ entries: [] }) });
     await openDialog(env2);
     expect([...env2.doc.getElementById('noTxBy').options].some((o) => o.value === '')).toBe(false);
   });
 
-  test('a refused list read (403) shows in the dialog; Close closes it', async () => {
-    const env = await boot({ handler: listHandler({ entries: [], getError: 'Archive admins only' }) });
+  test('a refused list read (403) shows in the dialog; Close closes it; a reopen starts clean, with one dialog and one style', async () => {
+    const state = { entries: [], getError: 'Archive admins only' };
+    const env = await boot(hostName, { handler: listHandler(state) });
     await openDialog(env);
-    const { doc } = env;
+    const { doc, window } = env;
     expect(doc.getElementById('noTxMsg').textContent).toBe("Couldn't load the list: Archive admins only");
     expect(rowsText(doc)).toEqual([['No numbers on the list.']]);
+    doc.getElementById('noTxPhone').value = 'typed';
     doc.getElementById('noTxClose').click();
     expect(doc.getElementById('noTxDialog').open).toBe(false);
+    delete state.getError;
+    state.entries = fresh(ENTRIES);
+    await openDialog(env);
+    expect(doc.getElementById('noTxDialog').open).toBe(true);
+    expect(doc.getElementById('noTxMsg').textContent).toBe('');
+    expect(doc.getElementById('noTxPhone').value).toBe('');
+    expect(rowsText(doc)).toHaveLength(2);
+    expect(doc.querySelectorAll('#noTxDialog')).toHaveLength(1);
+    expect(doc.querySelectorAll('.notx-add')).toHaveLength(1);                   // the one dialog, reused
+    expect(doc.querySelectorAll('style#ycNoTxStyle')).toHaveLength(1);
+    expect(window.document.head.querySelector('style#ycNoTxStyle')).not.toBeNull();
+  });
+});
+
+describe('public/js/ycNoTranscribe.js — one copy, scoped CSS', () => {
+  test('both hosts load the module by <script src>, and neither keeps a copy of the dialog', () => {
+    for (const [name, html] of [['connections.html', CONN], ['comms.html', COMMS]]) {
+      expect([name, pageParts(html).srcs.includes('/js/ycNoTranscribe.js')]).toEqual([name, true]);
+      expect([name, /noTxDialog|noTxAdd|noTxRenderList|#noTx/.test(html)]).toEqual([name, false]);
+    }
+  });
+
+  test('every CSS rule is scoped through #noTxDialog (it wins on specificity, not load order)', async () => {
+    const dom = new JSDOM('<!DOCTYPE html><html><head></head><body></body></html>', { runScripts: 'dangerously' });
+    DOMS.push(dom);
+    const w = dom.window;
+    const D = w.HTMLDialogElement.prototype;
+    if (typeof D.showModal !== 'function') D.showModal = function () { this.setAttribute('open', ''); };
+    const sc = w.document.createElement('script');
+    sc.textContent = NOTX;
+    w.document.body.appendChild(sc);
+    w.ycNoTranscribe.open({ api: async () => ({ entries: [] }), firmData: null });
+    const style = w.document.getElementById('ycNoTxStyle');
+    const selectors = [...style.sheet.cssRules].flatMap((r) => {
+      expect(r.type).toBe(1);                                                    // plain style rules only (no @media escaping the scope)
+      return r.selectorText.split(',').map((x) => x.trim());
+    });
+    expect(selectors.length).toBeGreaterThan(30);
+    expect(selectors.filter((x) => !/^#noTxDialog(?![\w-])/.test(x))).toEqual([]);
+    // the look the dialog needs from a host is all restated here: box, inputs, buttons, table, result
+    for (const need of ['#noTxDialog', '#noTxDialog input', '#noTxDialog .btn', '#noTxDialog .btn.primary', '#noTxDialog table.list',
+      '#noTxDialog .result.err', '#noTxDialog .yc-flabel', '#noTxDialog .yc-hint', '#noTxDialog::backdrop']) {
+      expect([need, selectors.includes(need)]).toEqual([need, true]);
+    }
+    await expect(w.ycNoTranscribe.open({})).rejects.toThrow(/api must be a function/);
+    expect(Object.isFrozen(w.ycNoTranscribe)).toBe(true);
   });
 });

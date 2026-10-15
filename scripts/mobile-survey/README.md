@@ -107,7 +107,9 @@ an unbroken URL, a short code — and one with a number no contact holds at
 `…/conversations/5555550198` (Add to contact, an attachment-only text, a
 call), and All numbers at `phone-lines/all/{conversations,calls}` +
 `…/all/conversations/5555550199` (line tags, "via" bubbles, the From pickers)
-— surveyed as `tab:tabComms:phone-*`; the 5555550199 thread also carries the
+— surveyed as `tab:tabComms:phone-*`, with the tabs row's admin-tools slot
+showing (`comms-archive/admin` says archive admin) and its Do-not-transcribe
+dialog opened from Comms (`tab:tabComms:phone-no-transcribe`); the 5555550199 thread also carries the
 comms archive's fields — a summary, Listen / Transcript, a voicemail, MMS
 thumbnails / chips / a purge tombstone, admin ⋯ buttons, a call with no
 transcript and its status line, a six-digit `#` reference number — with

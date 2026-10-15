@@ -21,7 +21,8 @@
  * (gated on PUPPETEER_EXECUTABLE_PATH) proves in real Chrome that each of
  * sanitize / sandbox / CSP stops the payload ON ITS OWN.
  *
- * SINKS. comms.html and mailRender.js are grepped: no innerHTML / outerHTML /
+ * SINKS. comms.html, mailRender.js and ycNoTranscribe.js (the dialog comms.html
+ * hosts) are grepped: no innerHTML / outerHTML /
  * insertAdjacentHTML / document.write anywhere; `srcdoc` is assigned in
  * exactly one place.
  */
@@ -38,6 +39,7 @@ const PURIFY_PATH = path.join(ROOT, 'public/js/vendor/purify-3.4.16.min.js');
 const PURIFY = fs.readFileSync(PURIFY_PATH, 'utf8');
 const RENDER = fs.readFileSync(path.join(ROOT, 'public/js/mailRender.js'), 'utf8');
 const COMMS = fs.readFileSync(path.join(ROOT, 'public/comms.html'), 'utf8');
+const NOTX = fs.readFileSync(path.join(ROOT, 'public/js/ycNoTranscribe.js'), 'utf8');
 
 const DOMS = [];
 afterEach(() => { DOMS.splice(0).forEach((d) => { try { d.window.close(); } catch (_) { /* noop */ } }); });
@@ -260,8 +262,8 @@ describe('sanitizer detail', () => {
 
 describe('sinks (grep-provable)', () => {
   const strip = (s) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '').replace(/<!--[\s\S]*?-->/g, '');
-  test('comms.html and mailRender.js never write markup from strings', () => {
-    for (const [name, src] of [['comms.html', strip(COMMS)], ['mailRender.js', strip(RENDER)]]) {
+  test('comms.html, mailRender.js and ycNoTranscribe.js never write markup from strings', () => {
+    for (const [name, src] of [['comms.html', strip(COMMS)], ['mailRender.js', strip(RENDER)], ['ycNoTranscribe.js', strip(NOTX)]]) {
       for (const re of [/\.innerHTML\s*[+]?=/, /\.outerHTML\s*=/, /insertAdjacentHTML/, /document\.write/, /createContextualFragment/, /\bDOMParser\b/]) {
         expect([name, re.source, re.test(src)]).toEqual([name, re.source, false]);
       }

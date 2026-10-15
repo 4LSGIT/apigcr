@@ -159,7 +159,8 @@ describe('compose (S3)', () => {
   test('boot makes no new call; Compose shows only when a readable box can send', async () => {
     const { doc, calls, errors } = await boot({ handler: standard() });
     expect(errors).toEqual([]);
-    expect(calls.map((c) => c.url)).toEqual(['/api/mail/mailboxes', '/api/mail/views', '/api/mail/messages']);
+    // + the admin-tools slot's archive-admin flag (read once per load — tests/commsAdminTools.pane.test.js)
+    expect(calls.map((c) => c.url)).toEqual(['/api/comms-archive/admin', '/api/mail/mailboxes', '/api/mail/views', '/api/mail/messages']);
     expect([doc.getElementById('compose-btn').hidden, doc.getElementById('rail-compose').hidden]).toEqual([false, false]);
     const ro = await boot({ handler: standard(), mailboxes: MB.map((m) => ({ ...m, can_send: false })) });
     expect([ro.doc.getElementById('compose-btn').hidden, ro.doc.getElementById('rail-compose').hidden]).toEqual([true, true]);
