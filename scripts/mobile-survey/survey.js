@@ -87,6 +87,51 @@ function measureDoc() {
   return { docW: document.documentElement.scrollWidth, clientW: w, offenders: offenders.slice(0, 6) };
 }
 
+// A scroll box INSIDE a pane that scrolls sideways (scrollWidth past its
+// clientWidth). measureDoc can't see it: the box clips, so the document stays
+// the viewport's width. Used where a pane's whole body lives in one box —
+// manuals.html's #content — and a wide table or an unbroken identifier pushes
+// THAT sideways. Offenders are the outermost descendants past the box's right
+// edge that aren't inside a scroll box of their own (a table in its own
+// overflow-x wrapper is the fix, not an offender). The edge is the CONTENT
+// box's: the box's end padding is added after whatever pokes past it, so an
+// element 12px into the padding already scrolls the box 12px. An unbreakable
+// text run (a long path in a heading) has no element of its own — those are
+// named as `text in <parent>`.
+function measureBox(sel) {
+  const box = document.querySelector(sel);
+  if (!box) return { sel, missing: true };
+  const edge = box.getBoundingClientRect().left + box.clientLeft + box.clientWidth
+    - parseFloat(getComputedStyle(box).paddingRight);
+  const offenders = [];
+  // true when `a` or an ancestor (below the box) scrolls/clips sideways, or
+  // already pokes past the edge itself (it, not its insides, is the offender)
+  const covered = (a) => {
+    for (; a && a !== box; a = a.parentElement) {
+      if (/(auto|scroll|hidden|clip)/.test(getComputedStyle(a).overflowX)) return true;
+      if (a.getBoundingClientRect().right > edge + 1) return true;
+    }
+    return false;
+  };
+  for (const el of box.querySelectorAll('*')) {
+    const cs = getComputedStyle(el);
+    if (cs.display === 'none' || cs.visibility === 'hidden') continue;
+    const r = el.getBoundingClientRect();
+    if ((!r.width && !r.height) || r.right <= edge + 1 || covered(el.parentElement)) continue;
+    const cls = typeof el.className === 'string' && el.className.trim() ? '.' + el.className.trim().split(/\s+/)[0] : '';
+    offenders.push(`${el.tagName.toLowerCase()}${el.id ? '#' + el.id : ''}${cls} (${Math.round(r.width)}px)`);
+  }
+  const tw = document.createTreeWalker(box, NodeFilter.SHOW_TEXT);
+  for (let n; (n = tw.nextNode());) {
+    if (!n.textContent.trim() || covered(n.parentElement)) continue;
+    const range = document.createRange(); range.selectNodeContents(n);
+    if ([...range.getClientRects()].some((b) => b.right > edge + 1)) {
+      offenders.push(`text in ${n.parentElement.tagName.toLowerCase()} "${n.textContent.trim().slice(0, 40)}"`);
+    }
+  }
+  return { sel, scrollW: box.scrollWidth, clientW: box.clientWidth, offenders: offenders.slice(0, 6) };
+}
+
 // Three ways a dialog overflows: the card itself is off-screen; something
 // pokes out of the card (swal2 lets overflow show); or the content box scrolls
 // sideways — .swal2-html-container is overflow:auto, so a too-wide field is
@@ -136,6 +181,10 @@ function overflowOf(m) {
   if (m.shell.docW > m.shell.clientW) bad.push(`shell ${m.shell.docW}/${m.shell.clientW} ${m.shell.offenders.join(', ')}`);
   if (m.pane && m.pane.docW > m.pane.clientW) bad.push(`pane ${m.pane.docW}/${m.pane.clientW} ${m.pane.offenders.join(', ')}`);
   for (const n of m.nested || []) if (n.docW > n.clientW) bad.push(`nested ${n.src} ${n.docW}/${n.clientW} ${n.offenders.join(', ')}`);
+  for (const b of m.boxes || []) {
+    if (b.missing) bad.push(`box ${b.sel} missing`);
+    else if (b.scrollW > b.clientW + 1) bad.push(`box ${b.sel} ${b.scrollW}/${b.clientW} ${b.offenders.join(', ')}`);
+  }
   if (m.popup && (m.popup.offScreen || m.popup.contentScroll || m.popup.poking.length)) {
     bad.push(`popup${m.popup.offScreen ? ' off-screen' : ''}${m.popup.contentScroll ? ' content-scrolls-sideways' : ''}${m.popup.poking.length ? ' poking: ' + m.popup.poking.join(', ') : ''}`);
   }
@@ -264,6 +313,34 @@ async function walk(page, W, record) {
       if (id === 'usersDiv' && fr) {
         await fr.evaluate(() => openForm(3)); await sleep(1000);
         await record('panel:usersDiv:edit-form', await measure(page, fr), await shot('panel_users_edit_form'));
+      }
+      // Manuals (manuals-ui S1): the real routes/manuals.js serves the repo's
+      // manual/ (server.js), so these are real chapters. The pane's whole body
+      // scrolls inside #content, so a wide table or a long identifier pushes
+      // #content sideways without widening the document — these surfaces ALSO
+      // fail when #content scrolls sideways (m.boxes). The chapters are the
+      // three widest measured before the fix (wide tables, long inline code)
+      // plus one whose overflow was prose; the drawer is the phone TOC.
+      if (id === 'manualsDiv' && fr) {
+        const MANUALS = [
+          ['index', 'manualsLoad()'],
+          ['section-03-YisraFlow', "manualsLoad('03-YisraFlow')"],
+          ['03-YisraFlow-05-internal-functions', "manualsLoad('03-YisraFlow', '05-internal-functions')"],
+          ['03-YisraFlow-15-triggers', "manualsLoad('03-YisraFlow', '15-triggers')"],
+          ['05-Subsystems-13-custom-fields', "manualsLoad('05-Subsystems', '13-custom-fields')"],
+          // unbreakable runs in PROSE, not code: API paths in its h2s
+          ['02-YisraForms-11-api-reference', "manualsLoad('02-YisraForms', '11-api-reference')"],
+          ['drawer', "document.body.classList.add('toc-open')"],
+        ];
+        for (const [key, js] of MANUALS) {
+          await fr.evaluate((js) => { try { return (0, eval)(js); } catch (e) { console.error(e); } }, js);
+          await fr.waitForFunction(() => !document.querySelector('#content .state-msg'), { timeout: 10000 }).catch(() => {});
+          await sleep(600);
+          const m = await measure(page, fr);
+          m.boxes = [await fr.evaluate(measureBox, '#content')];
+          await record(`panel:manualsDiv:${key}`, m, await shot('panel_manuals_' + key));
+        }
+        await fr.evaluate(() => document.body.classList.remove('toc-open'));
       }
       // Landing Pages → editor (the hook row: create-hook button / role sentence, B3), fixtures/api/pages*
       if (id === 'landingPagesDiv' && fr) {

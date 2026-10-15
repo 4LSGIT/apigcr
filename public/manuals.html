@@ -11,8 +11,8 @@
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
     body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      font-size: 14px;
+      font-family: var(--ui);
+      font-size: var(--fs);
       line-height: 1.7;
       color: var(--text);
       background: var(--page-bg);
@@ -36,7 +36,7 @@
     .sidebar-logo {
       color: var(--text);
       font-weight: 700;
-      font-size: 12px;
+      font-size: var(--fs-xs);
       letter-spacing: 0.1em;
       text-transform: uppercase;
       padding: 20px 18px 14px;
@@ -48,7 +48,7 @@
 
     .sidebar-section-label {
       color: var(--text-muted);
-      font-size: 10px;
+      font-size: var(--fs-xs);
       font-weight: 700;
       letter-spacing: 0.12em;
       text-transform: uppercase;
@@ -58,7 +58,7 @@
     .sidebar-section {
       display: block;
       color: var(--text-2);
-      font-size: 13px;
+      font-size: var(--fs-sm);
       font-weight: 600;
       padding: 8px 18px;
       border-left: 3px solid transparent;
@@ -73,7 +73,7 @@
     .sidebar-file {
       display: block;
       color: var(--text-muted);
-      font-size: 12px;
+      font-size: var(--fs-sm);
       padding: 5px 18px 5px 28px;
       border-left: 3px solid transparent;
       cursor: pointer;
@@ -105,13 +105,13 @@
       display: flex;
       align-items: center;
       gap: 8px;
-      font-size: 13px;
+      font-size: var(--fs-sm);
       color: var(--text-muted);
       flex-shrink: 0;
     }
 
     .bc-sep { color: var(--text-muted); }
-    .bc-link { color: var(--info); cursor: pointer; }
+    .bc-link { color: var(--accent-2); cursor: pointer; }
     .bc-link:hover { text-decoration: underline; }
     .bc-current { color: var(--text); font-weight: 500; }
 
@@ -120,19 +120,38 @@
       flex: 1;
       overflow-y: auto;
       padding: 36px 52px;
+      /* Reading measure: ~80 characters of body text at the default 16px,
+         stated in --fs so it follows the density choice. A multiple of --fs
+         (not em/ch on each element) so headings, prose, lists and the h2 rule
+         all share ONE right edge whatever their own font size. Left-aligned
+         under the breadcrumbs; tables break out of it (below). */
+      --measure: calc(var(--fs) * 40);
+      /* An unbreakable run in prose — an API path in a heading, an error
+         constant in a list item — breaks at the edge instead of pushing the
+         pane sideways. break-word, not anywhere: it leaves min-content alone,
+         so tables keep their columns and scroll in their own box. No effect
+         inside <pre> (white-space: pre never wraps). */
+      overflow-wrap: break-word;
     }
+
+    /* Everything in the pane sits in the measure — index, section view,
+       chapter — except .md-body itself, so that a table (wrapped in its own
+       scroll box after render, see wrapTables) can run wider than the prose
+       when the pane has the room, and scroll inside its box when it hasn't. */
+    #content > :not(.md-body),
+    .md-body > :not(.table-wrap) { max-width: var(--measure); }
 
     /* ── Loading / error states ── */
     .state-msg {
       color: var(--text-muted);
-      font-size: 14px;
+      font-size: var(--fs-sm);
       padding: 40px 0;
       text-align: center;
     }
 
     /* ── Index grid ── */
     .index-title {
-      font-size: 24px;
+      font-size: var(--fs-title);
       font-weight: 700;
       color: var(--text);
       margin-bottom: 4px;
@@ -163,12 +182,12 @@
       border-color: var(--info);
     }
 
-    .card-title { font-size: 14px; font-weight: 650; color: var(--text); margin-bottom: 5px; }
-    .card-meta  { font-size: 12px; color: var(--text-muted); }
+    .card-title { font-size: var(--fs); font-weight: 650; color: var(--text); margin-bottom: 5px; }
+    .card-meta  { font-size: var(--fs-sm); color: var(--text-muted); }
 
     /* ── File list ── */
     .section-title {
-      font-size: 22px;
+      font-size: var(--fs-title);
       font-weight: 700;
       color: var(--text);
       margin-bottom: 20px;
@@ -195,37 +214,38 @@
     .file-row:hover { background: var(--hover); }
 
     .file-num {
-      width: 24px; height: 24px;
+      width: 2em; height: 2em;
       border-radius: 50%;
       /* A numbered index chip — a solid fill, not a code surface. --accent is
          the sheet's only non-status fill, and --accent-text is its label. */
       background: var(--accent);
       color: var(--accent-text);
-      font-size: 10px;
+      font-size: var(--fs-xs);
       font-weight: 700;
       display: flex; align-items: center; justify-content: center;
       flex-shrink: 0;
     }
 
     .file-text  { flex: 1; min-width: 0; }
-    .file-label { font-size: 13px; font-weight: 500; }
+    .file-label { font-size: var(--fs); font-weight: 500; }
     .file-arrow { color: var(--text-muted); }
 
     /* Harvested from the section README's TOC table. */
     .file-desc {
-      font-size: 12px;
+      font-size: var(--fs-sm);
       color: var(--text-muted);
       line-height: 1.5;
       margin-top: 1px;
     }
 
     .file-desc code {
-      font-family: 'SF Mono', 'Fira Code', monospace;
-      font-size: 11px;
+      font-family: var(--mono);
+      font-size: 0.9em;
       background: var(--surface-2);
       padding: 1px 4px;
       border-radius: 3px;
       color: var(--text-2);
+      overflow-wrap: anywhere;   /* a long identifier must not push the row */
     }
 
     /* ── Section intro / outro (README prose) ── */
@@ -237,16 +257,18 @@
     .section-outro > *:last-child  { margin-bottom: 0; }
 
     /* ── Markdown ── */
-    .md-body h1 { font-size: 24px; font-weight: 700; margin-bottom: 8px; color: var(--text); }
-    .md-body h2 { font-size: 18px; font-weight: 650; margin: 36px 0 12px;
+    /* h1 > h2 > h3 > h4 > body at every density preset: h1/h3 ride the
+       title/lg tokens, h2/h4 are em of the body (--fs) between them. */
+    .md-body h1 { font-size: var(--fs-title); font-weight: 700; margin-bottom: 8px; color: var(--text); }
+    .md-body h2 { font-size: 1.25em; font-weight: 650; margin: 36px 0 12px;
                   padding-bottom: 7px; border-bottom: 1px solid var(--border); }
-    .md-body h3 { font-size: 15px; font-weight: 650; margin: 24px 0 8px; }
-    .md-body h4 { font-size: 13px; font-weight: 600; margin: 18px 0 6px; color: var(--text-2); }
+    .md-body h3 { font-size: var(--fs-lg); font-weight: 650; margin: 24px 0 8px; }
+    .md-body h4 { font-size: 1.0625em; font-weight: 600; margin: 18px 0 6px; color: var(--text-2); }
     .md-body p  { margin-bottom: 13px; }
     .md-body ul, .md-body ol { margin: 0 0 13px 22px; }
     .md-body li { margin-bottom: 3px; }
     .md-body strong { font-weight: 650; }
-    .md-body a  { color: var(--info); cursor: pointer; }
+    .md-body a  { color: var(--accent-2); cursor: pointer; }
     .md-body a[data-inert] {
       color: var(--text-muted);
       cursor: default;
@@ -255,23 +277,31 @@
     .md-body hr { border: none; border-top: 1px solid var(--border); margin: 28px 0; }
 
     .md-body blockquote {
-      border-left: 4px solid var(--info);
+      border-left: 4px solid var(--accent);
       background: var(--accent-soft);
       margin: 14px 0;
       padding: 11px 15px;
       border-radius: 0 6px 6px 0;
       color: var(--accent-on-soft);
-      font-size: 13px;
+      font-size: var(--fs-sm);
     }
 
     .md-body code {
-      font-family: 'SF Mono', 'Fira Code', monospace;
-      font-size: 12px;
+      font-family: var(--mono);
+      font-size: 0.875em;
       background: var(--surface-2);
       padding: 2px 5px;
       border-radius: 4px;
       color: var(--danger);
     }
+
+    /* Inline code wraps rather than push the pane sideways (a long
+       identifier is one unbreakable word). Inside a table it only breaks
+       when the cell can't otherwise fit — break-word leaves the table's
+       min-content alone, so the column keeps the identifier whole and the
+       table scrolls in its own box instead of shredding it. */
+    .md-body :not(pre) > code { overflow-wrap: anywhere; }
+    .md-body td > code, .md-body th > code { overflow-wrap: break-word; }
 
     .md-body pre {
       background: var(--code-bg);
@@ -283,10 +313,20 @@
 
     .md-body pre code {
       background: none; color: var(--code-fg); padding: 0;
-      font-size: 12px; line-height: 1.6;
+      font-size: 0.875em; line-height: 1.6;
     }
 
-    .md-body table { width: 100%; border-collapse: collapse; margin: 14px 0 20px; font-size: 13px; }
+    /* Tables scroll in their own box (AI_CONTEXT §12 phone rule), at every
+       width. The box is as wide as the table wants, never narrower than the
+       measure, never wider than the pane. */
+    .md-body .table-wrap {
+      overflow-x: auto;
+      width: fit-content;
+      min-width: min(100%, var(--measure));
+      max-width: 100%;
+      margin: 14px 0 20px;
+    }
+    .md-body table { width: 100%; border-collapse: collapse; font-size: var(--fs-sm); }
     .md-body th { background: var(--surface-2); color: var(--text); font-weight: 600; padding: 9px 13px; text-align: left; }
     .md-body td { padding: 8px 13px; border-bottom: 1px solid var(--border); vertical-align: top; }
     .md-body tr:last-child td { border-bottom: none; }
@@ -299,11 +339,11 @@
       margin-top: 44px;
       padding-top: 18px;
       border-top: 1px solid var(--border);
-      font-size: 13px;
+      font-size: var(--fs-sm);
     }
 
     .prev-next span {
-      color: var(--info);
+      color: var(--accent-2);
       cursor: pointer;
     }
 
@@ -321,7 +361,7 @@
       #tocBtn {
         display: block; flex: 0 0 auto; width: 44px; border: none;
         border-bottom: 1px solid var(--border); border-right: 1px solid var(--border);
-        background: var(--surface); color: var(--text); font-size: 20px; cursor: pointer;
+        background: var(--surface); color: var(--text); font-size: calc(var(--fs) * 1.25); cursor: pointer;
       }
       #topbar { padding: 0 10px; overflow-x: auto; white-space: nowrap; }
       #content { padding: 18px 14px; }
@@ -332,6 +372,13 @@
       }
       body.toc-open #sidebar { transform: none; }
       body.toc-open #tocScrim { display: block; position: fixed; inset: 0; z-index: 19; background: var(--backdrop); }
+      /* Finger-sized rows: 44px whatever the density (padding centres one
+         line of text; line-height is the body's 1.7). */
+      .sidebar-section, .sidebar-file {
+        min-height: 44px;
+        padding-top: calc((44px - 1.7em) / 2);
+        padding-bottom: calc((44px - 1.7em) / 2);
+      }
     }
   </style>
 </head>
@@ -497,6 +544,21 @@ function resolveDocLink(raw, currentSection) {
   return { kind: 'outside' };
 }
 
+/**
+ * Tables scroll in their own box instead of pushing #content sideways
+ * (CSS: .table-wrap). marked emits bare <table>s, so wrap them after render.
+ * Idempotent.
+ */
+function wrapTables(root) {
+  root.querySelectorAll('table').forEach(t => {
+    if (t.parentElement.classList.contains('table-wrap')) return;
+    const w = document.createElement('div');
+    w.className = 'table-wrap';
+    t.parentNode.insertBefore(w, t);
+    w.appendChild(t);
+  });
+}
+
 /** Flag links the viewer can't follow so they don't look clickable-but-dead. */
 function markDeadLinks(root) {
   root.querySelectorAll('a[href]').forEach(a => {
@@ -653,6 +715,7 @@ async function loadSection(sectionSlug) {
     $('content').querySelectorAll('.md-body').forEach(el => {
       addHeadingIds(el);
       markDeadLinks(el);
+      wrapTables(el);
     });
     $('content').scrollTop = 0;
 
@@ -704,6 +767,7 @@ async function loadFile(sectionSlug, fileSlug, hash) {
     setContent(`<div id="md-body" class="md-body">${renderMd(md)}</div>${prevNext}`);
     addHeadingIds($('md-body'));
     markDeadLinks($('md-body'));
+    wrapTables($('md-body'));
     scrollToAnchor(hash);
 
   } catch {

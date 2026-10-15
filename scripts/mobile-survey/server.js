@@ -14,6 +14,10 @@
 //                                    (exact path only — /api/cases/X/pipeline
 //                                    does NOT fall back to /api/cases/X),
 //                                    otherwise an empty-success envelope.
+//   GET /manual[/:section[/:file]] -> the REAL routes/manuals.js, reading the
+//                                    repo's manual/ from disk (no DB); only its
+//                                    auth middleware is swapped for a
+//                                    pass-through (manualsRouter below).
 //
 // Fixtures are synthetic on purpose (the repo is treated as public): no real
 // staff, clients, phone numbers or emails. See README.md.
@@ -66,10 +70,40 @@ function fakeJwt() {
   return `${b64({ alg: 'none', typ: 'JWT' })}.${b64({ userId: 1, username: 'layout-test', exp: 4102444800 })}.x`;
 }
 
+/** The real routes/manuals.js with its one dependency outside express/fs —
+ *  lib/auth.jwtOrApiKey — replaced by a pass-through: the module is pre-seeded
+ *  in require.cache for the duration of the router's require, then the cache
+ *  entry is put back the way it was, so nothing else loaded in this process
+ *  ever gets the stub. The router captures the stub at require time. */
+let manualsRouterCache = null;
+function manualsRouter() {
+  if (manualsRouterCache) return manualsRouterCache;
+  const Module   = require('module');
+  const authPath = require.resolve(path.join(ROOT, 'lib', 'auth.jwtOrApiKey'));
+  const routerPath = require.resolve(path.join(ROOT, 'routes', 'manuals'));
+  const prevAuth = require.cache[authPath];
+  const prevRouter = require.cache[routerPath];
+  const stub = new Module(authPath);
+  stub.filename = authPath;
+  stub.loaded = true;
+  stub.exports = (req, res, next) => next();
+  require.cache[authPath] = stub;
+  delete require.cache[routerPath];
+  try {
+    manualsRouterCache = require(routerPath);
+  } finally {
+    if (prevAuth) require.cache[authPath] = prevAuth; else delete require.cache[authPath];
+    if (prevRouter) require.cache[routerPath] = prevRouter; else delete require.cache[routerPath];
+  }
+  return manualsRouterCache;
+}
+
 function createApp({ log = null } = {}) {
   const app = express();
 
   app.post('/login', (req, res) => res.json({ token: fakeJwt() }));
+
+  app.use(manualsRouter());
 
   app.all(/^\/(api|admin)\//, (req, res) => {
     const body = req.path === '/api/firm-data'

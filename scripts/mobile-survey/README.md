@@ -7,7 +7,7 @@ hosts, at the widths you pass:
 | Group     | What it opens |
 |-----------|---------------|
 | `tabs`    | every sidebar tab, plus the Calendar tab's List (rows + quick actions) and Grid modes |
-| `panels`  | every More Features / Admin panel (each `[data-target]` tile — new tiles are picked up automatically) |
+| `panels`  | every More Features / Admin panel (each `[data-target]` tile — new tiles are picked up automatically), plus sub-surfaces for some (below) |
 | `files`   | a case file and a contact file, and every tab inside each (Refresh is skipped: it opens a reload confirm) |
 | `dialogs` | New Client, New Case, New Appointment, New Event, Reschedule, Show Appointment, the two deadline quick actions (complete, cancel), the two Log adopt dialogs (case docket, phone/email) |
 
@@ -19,6 +19,18 @@ also takes a screenshot and collects page errors.
 
 It exits **1 if anything overflows**, so it can gate a UI change. It does not
 judge looks — read the screenshots for that.
+
+**Manuals** (`panel:manualsDiv:*`): the index, the `03-YisraFlow` section, four
+real chapters (`03-YisraFlow/05-internal-functions`, `03-YisraFlow/15-triggers`,
+`05-Subsystems/13-custom-fields` — wide tables, long inline code —
+and `02-YisraForms/11-api-reference` — API paths in headings), and the phone
+contents drawer. `manuals.html` scrolls its whole body inside `#content`, so a
+too-wide table or an unbroken word pushes `#content` sideways while the
+document stays the viewport's width. These surfaces therefore ALSO fail when
+`#content` scrolls sideways (`box #content scrollW/clientW`, naming the
+outermost element — or `text in <tag>` for an unbreakable run — past its
+content edge). The check is per-surface (`m.boxes` in `survey.js`), not
+applied to every pane.
 
 ## Run
 
@@ -72,6 +84,12 @@ repo root does — the `text/html; charset=UTF-8` header matters, because
   exists (exact path, no prefix fallback), else an empty-success envelope
   that covers the list shapes the panes read (`data`, `rows`, `entries`,
   `documents`, …), so an un-fixtured pane renders its empty state.
+- `GET /manual`, `/manual/:section`, `/manual/:section/:file`: the REAL
+  `routes/manuals.js`, reading the repo's `manual/` from disk (no DB, no
+  fixture). Only its auth middleware is stubbed: `lib/auth.jwtOrApiKey` is
+  pre-seeded in `require.cache` with a pass-through while the router loads,
+  then the cache is restored. The Manuals panel therefore surveys real
+  chapters — a manual edit can fail the gate.
 
 Fixtures cover one case (`TESTCASE1`) with two contacts, appointments, log
 rows, an alert, a custom-field value and a pipeline (`cases/TESTCASE1/pipeline`),
