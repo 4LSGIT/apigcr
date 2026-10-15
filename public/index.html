@@ -1602,11 +1602,11 @@
             let clientsHTML = "";
             C.contacts.forEach((client) => {
               if (client.contact_id) {
-                clientsHTML += `<a href="#" onclick="addFile('${(client.contact_name || '').replace(/'/g, "\\'")}','client','${client.contact_id}')">${client.contact_name}</a> (${client.contact_relate})<br>`;
+                clientsHTML += `${fileLinkHtml(client.contact_name, 'client', client.contact_id, client.contact_name || '')} (${client.contact_relate})<br>`;
               }
             });
             row.innerHTML = `
-        <td><a href="#" onclick="addFile('${C.case_number || C.case_id}','case','${C.case_id}')">${C.case_id}</a></td>
+        <td>${fileLinkHtml(C.case_id, 'case', C.case_id, C.case_number || C.case_id)}</td>
         <td>${clientsHTML}</td>
         <td>${C.case_number}</td>
         <td>${fmtCaseType(C)}</td>
@@ -1810,13 +1810,13 @@
             const caseList = typeof contact.cases === "string" ? JSON.parse(contact.cases) : contact.cases;
             caseList.forEach((c) => {
               if (c.case_id) {
-                casesHTML += `<a href="#" title="${c.case_id}" onclick="addFile('${c.case_number || c.case_id}','case','${c.case_id}')">${c.case_number || c.case_id}</a><br>`;
+                casesHTML += `${fileLinkHtml(c.case_number || c.case_id, 'case', c.case_id, c.case_number || c.case_id, c.case_id)}<br>`;
               }
             });
 
             row.innerHTML = `
             <td>${contact.contact_id}</td>
-            <td><a href="#" onclick="addFile('${(contact.contact_name || '').replace(/'/g, "\\'")}','contact','${contact.contact_id}')">${contact.contact_name}</a></td>
+            <td>${fileLinkHtml(contact.contact_name, 'contact', contact.contact_id, contact.contact_name || '')}</td>
             <td>${phone}</td>
             <td>${contact.contact_email || ""}</td>
             <td>${address}</td>
@@ -2368,13 +2368,11 @@
       if (lt === 'contact') {
         const name = d.contact_name || ('Contact #' + row.link_id);
         return row.link_id == null ? calxEsc(name)
-          : '<a href="#" onclick="addFile(' + JSON.stringify(String(name)).replace(/"/g, '&quot;')
-            + ',\'client\',\'' + calxEsc(row.link_id) + '\');return false">' + calxEsc(name) + '</a>';
+          : fileLinkHtml(name, 'client', row.link_id, String(name));
       }
       if (row.case_id) {
         const label = d.case_label || row.docket || row.case_id;
-        return '<a href="#" onclick="addFile(' + JSON.stringify(String(label)).replace(/"/g, '&quot;')
-          + ',\'case\',\'' + calxEsc(row.case_id) + '\');return false">' + calxEsc(label) + '</a>';
+        return fileLinkHtml(label, 'case', row.case_id, String(label));
       }
       if (row.docket) {
         return calxEsc(row.docket)
@@ -2859,16 +2857,14 @@
             if (ev.event_link_type === "case_number" && ev.event_link_id != null) {
               const docket = String(ev.link_label || ev.event_link_id);
               if (ev.resolved_case_id) {
-                const jsLabel = docket.replace(/'/g, "\\'");
-                linked = `Case #: <a href="#" onclick="addFile('${jsLabel}','case','${ev.resolved_case_id}');return false">${esc(docket)}</a>`;
+                linked = `Case #: ${fileLinkHtml(docket, 'case', ev.resolved_case_id, docket)}`;
               } else {
                 linked = `Case #: ${esc(docket)}`;
               }
             } else if (ev.link_label && ev.event_link_id != null) {
-              const jsLabel = String(ev.link_label).replace(/'/g, "\\'");
               const ft = ev.event_link_type === "case" ? "case" : "contact";
               const noun = ev.event_link_type === "case" ? "Case" : "Contact";
-              linked = `${noun}: <a href="#" onclick="addFile('${jsLabel}','${ft}','${ev.event_link_id}');return false">${esc(ev.link_label)}</a>`;
+              linked = `${noun}: ${fileLinkHtml(ev.link_label, ft, ev.event_link_id, String(ev.link_label))}`;
             }
             row.innerHTML = `
               <td><a href="#" onclick="showEvent(${ev.event_id});return false">${ev.event_id}</a></td>
@@ -3178,8 +3174,8 @@
             <td><a href="#" onclick="showAppt(${appt.id})">${appt.id}</a></td>
             <td>${appt.format_date}</td>
             <td>${appt.time}</td>
-            <td><a href="#" onclick="addFile('${name.replace(/'/g, "\\'")}','client','${appt.appt_client_id}');return false">${name}</a></td>
-            <td><a href="#" onclick="addFile('${caseName}','case','${caseId}');return false">${caseName}</a></td>
+            <td>${fileLinkHtml(name, 'client', appt.appt_client_id, name)}</td>
+            <td>${fileLinkHtml(caseName, 'case', caseId, caseName)}</td>
             <td>${appt.appt_type}</td>
             <td>${appt.status}</td>
             <td>${appt.user_name}</td>`;
@@ -3757,10 +3753,9 @@
             let link = "";
             if (entry.case_id && isNaN(entry.log_link)) {
               const caseName = entry.case_number || entry.case_id;
-              link = `<a href="#" onclick="addFile('${caseName}','case','${entry.case_id}');return false">${caseName}</a>`;
+              link = fileLinkHtml(caseName, 'case', entry.case_id, caseName);
             } else if (entry.contact_id) {
-              const cname = (entry.contact_name || "").replace(/'/g, "\\'");
-              link = `<a href="#" onclick="addFile('${cname}','client','${entry.contact_id}');return false">${entry.contact_name || "Name Error"}</a>`;
+              link = fileLinkHtml(entry.contact_name || "Name Error", 'client', entry.contact_id, entry.contact_name || "");
             } else if (entry.log_link_type === "phone" && entry.log_link_id) {
               const p = String(entry.log_link_id);
               const formatted = p.length === 10

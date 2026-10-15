@@ -644,9 +644,20 @@ function renderCase() {
 
   if (a.appt_case_id) {
     const caseNum = a.case_number_display || a.case_number || a.appt_case_id;
-    display.innerHTML = `<a href="#" onclick="P.addFile('${caseNum}', 'case', '${a.appt_case_id}'); return false;">${caseNum}</a>` +
-      ` <span style="color:var(--text-muted);font-size:0.84rem;">(${a.appt_case_id})</span>`;
-    document.getElementById('caseInfo').innerHTML = `<a href="#" onclick="P.addFile('${caseNum}', 'case', '${a.appt_case_id}'); return false;">${caseNum}</a>`;
+    // DOM, not an onclick string: the docket is free text (wsurl S0b). Same
+    // markup and the same addFile(caseNum, 'case', id) the template made.
+    const caseLink = () => {
+      const link = document.createElement('a');
+      link.href = '#';
+      link.textContent = String(caseNum);
+      link.addEventListener('click', (e) => { e.preventDefault(); P.addFile(String(caseNum), 'case', String(a.appt_case_id)); });
+      return link;
+    };
+    const caseIdNote = document.createElement('span');
+    caseIdNote.style.cssText = 'color:var(--text-muted);font-size:0.84rem;';
+    caseIdNote.textContent = `(${a.appt_case_id})`;
+    display.replaceChildren(caseLink(), ' ', caseIdNote);
+    document.getElementById('caseInfo').replaceChildren(caseLink());
     addPanel.style.display = 'none';
   } else {
     display.innerHTML = '<span style="color:var(--text-muted);">No case linked</span>';

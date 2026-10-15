@@ -1310,11 +1310,11 @@
               // hydrated via the date-windowed contact_phones/contact_emails JOINs).
               let link = "";
               if (entry.case_id && isNaN(entry.log_link)) {
-                const caseName = (entry.case_number || entry.case_id || "").toString().replace(/'/g, "\\'");
-                link = `<a href="#" onclick="P.addFile('${caseName}','case','${entry.case_id}');return false">${entry.case_number || entry.case_id}</a>`;
+                const caseName = (entry.case_number || entry.case_id || "").toString();
+                link = fileLinkHtml(entry.case_number || entry.case_id, 'case', entry.case_id, caseName);
               } else if (entry.contact_id) {
-                const cname = (entry.contact_name || "").replace(/'/g, "\\'");
-                link = `<a href="#" onclick="P.addFile('${cname}','client','${entry.contact_id}');return false">${entry.contact_name || "Name Error"}</a>`;
+                const cname = entry.contact_name || "";
+                link = fileLinkHtml(entry.contact_name || "Name Error", 'client', entry.contact_id, cname);
               }
               // Slice B.2 (variant): direction icon trails the log_type on a second line,
               // small + grey so the type word stays the primary read.
@@ -2041,7 +2041,7 @@ function putClients() {
     const row = table.insertRow();
     const relateType = client.relate_type || client.case_relate_type || "";
     row.innerHTML = `
-      <td><a href="#" onclick="P.addFile('${(client.contact_name||'').replace(/'/g,"\\'")}','client','${client.contact_id}');return false">${client.contact_id}</a></td>
+      <td>${fileLinkHtml(client.contact_id, 'client', client.contact_id, client.contact_name||'')}</td>
       <td>${client.contact_name||""}</td>
       <td>${client.contact_phone||""}</td>
       <td>${client.contact_email||""}</td>

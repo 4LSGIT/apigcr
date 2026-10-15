@@ -594,11 +594,11 @@ async function tabLogGet(offset) {
         // hydrated via the date-windowed contact_phones/contact_emails JOINs).
         let link = "";
         if (entry.case_id && isNaN(entry.log_link)) {
-          const caseName = (entry.case_number || entry.case_id || "").toString().replace(/'/g, "\\'");
-          link = `<a href="#" onclick="P.addFile('${caseName}','case','${entry.case_id}');return false">${entry.case_number || entry.case_id}</a>`;
+          const caseName = (entry.case_number || entry.case_id || "").toString();
+          link = fileLinkHtml(entry.case_number || entry.case_id, 'case', entry.case_id, caseName);
         } else if (entry.contact_id) {
-          const cname = (entry.contact_name || "").replace(/'/g, "\\'");
-          link = `<a href="#" onclick="P.addFile('${cname}','client','${entry.contact_id}');return false">${entry.contact_name || "Name Error"}</a>`;
+          const cname = entry.contact_name || "";
+          link = fileLinkHtml(entry.contact_name || "Name Error", 'client', entry.contact_id, cname);
         }
         // Slice B.2 (variant): direction icon trails the log_type on a second line,
         // small + grey so the type word stays the primary read.
@@ -796,7 +796,7 @@ function putCases() {
   emptyHeader.style.display = "none";
   window.entityData.cases.forEach(C => {
     const row = table.insertRow();
-    row.innerHTML = `<td><a href="#" onclick="P.addFile('${C.case_id}','case','${C.case_id}');return false">${C.case_id}</a></td>
+    row.innerHTML = `<td>${fileLinkHtml(C.case_id, 'case', C.case_id, C.case_id)}</td>
       <td>${C.relate_type}</td>
       <td>${C.case_number_full||C.case_number||"No Case Number"}</td>
       <td>${fmtCaseType(C)}</td><td>${C.case_stage}</td><td>${C.case_status}</td>

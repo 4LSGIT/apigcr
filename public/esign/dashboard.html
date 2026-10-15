@@ -202,7 +202,7 @@ function render() {
     const daysHtml = (!esignIsTerminal(r.status) && days != null)
       ? `<span${days >= 7 ? ' class="db-days-hot"' : ''}>${days}</span>` : '';
     tr.innerHTML =
-      `<td><span class="db-link" onclick="openLinkable('${r.linkable_type}','${esignEsc(String(r.linkable_id)).replace(/'/g, '')}','${esignEsc(label).replace(/'/g, "\\'")}')">` +
+      `<td><span class="db-link" data-linkable-type="${escAttr(r.linkable_type)}" data-linkable-id="${escAttr(String(r.linkable_id).replace(/'/g, ''))}" data-linkable-label="${escAttr(label)}">` +
       `<i class="fa-solid ${r.linkable_type === 'case' ? 'fa-landmark' : 'fa-user'}"></i> ${esignEsc(label)}</span></td>` +
       `<td style="max-width:20em;overflow-wrap:anywhere">${esignEsc(r.document_name || '')}</td>` +
       `<td>${esignEsc(r.kind || '')}</td>` +
@@ -222,6 +222,15 @@ function openActionsFor(id) {
 
 // Case/contact link → the shell's file tabs. addFile lives on the shell
 // (index.html); every cross-link in the app opens files this way.
+// The case/contact cell's click. Data attributes, not onclick source: the
+// label is free text, and a " in it broke out of the old attribute, a \ out
+// of its JS string (wsurl S0b). Capture phase, where the inline handler ran.
+document.addEventListener('click', (e) => {
+  const el = e.target.closest ? e.target.closest('.db-link[data-linkable-type]') : null;
+  if (!el) return;
+  openLinkable(el.dataset.linkableType, el.dataset.linkableId, el.dataset.linkableLabel);
+}, true);
+
 function openLinkable(type, id, label) {
   const t = window.top;
   if (t && typeof t.addFile === 'function') {

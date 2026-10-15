@@ -1215,6 +1215,40 @@ function _resolveAddFile() {
   return null;
 }
 
+/* A link that opens a workspace file, as HTML for an innerHTML render:
+     fileLinkHtml(text, kind, id, label[, title])
+   → <a href="#" class="yc-file-link" data-file-kind data-file-id
+        data-file-label [title]>text</a>
+   The click is the delegated listener below: it calls
+   addFile(label, kind, id) with the attribute values, which are the raw
+   strings passed in here. Use this instead of building
+   onclick="addFile('${name}',…)" source: names and dockets are free text,
+   and a ' " or \ in one broke out of that string, or out of the attribute,
+   in the shell's own document (wsurl S0b). */
+function fileLinkHtml(text, kind, id, label, title) {
+  return '<a href="#" class="yc-file-link"'
+    + (title != null ? ' title="' + escAttr(title) + '"' : '')
+    + ' data-file-kind="' + escAttr(kind) + '"'
+    + ' data-file-id="' + escAttr(id) + '"'
+    + ' data-file-label="' + escAttr(label) + '">'
+    + escText(text) + '</a>';
+}
+
+/* One listener per document for every fileLinkHtml link. Capture phase so
+   it runs before any row-level click handler, where the inline onclick it
+   replaces used to run, and so a handler that stops propagation can't
+   swallow it. */
+if (!document.__ycFileLinks) {
+  document.__ycFileLinks = true;
+  document.addEventListener('click', function (e) {
+    const a = e.target && e.target.closest ? e.target.closest('a.yc-file-link') : null;
+    if (!a) return;
+    e.preventDefault();
+    const open = _resolveAddFile();
+    if (open) open(a.dataset.fileLabel, a.dataset.fileKind, a.dataset.fileId);
+  }, true);
+}
+
 /* Inject styles for the ContactPicker dropdown once per document.
    Mirrors the injectLogHelpersStyles IIFE pattern above (guarded by id). */
 (function injectContactPickerStyles() {

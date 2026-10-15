@@ -627,7 +627,7 @@ function renderRows(total) {
       (deferred ? ` <span class="tk-starts" title="Not in play until ${esc(fmtDue(task.start))} — hidden from the daily digest until then">starts ${esc(fmtDue(task.start))}</span>` : '');
 
     const linkHTML = task.link?.id
-      ? `<a href="#" onclick="openLinked('${(task.link.title || '').replace(/'/g, "\\'").replace(/"/g, '&quot;')}','${task.link.type}','${task.link.id}');return false">${esc(task.link.title || task.link.id)}</a>`
+      ? `<a href="#" class="tk-linked" data-link-title="${escAttr(task.link.title || '')}" data-link-type="${escAttr(task.link.type)}" data-link-id="${escAttr(task.link.id)}">${esc(task.link.title || task.link.id)}</a>`
       : '';
     const created = task.created
       ? new Date(task.created).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
@@ -667,6 +667,16 @@ function openLinked(title, type, id) {
     window.top.addFile(title, type === 'contact' ? 'client' : 'case', id);
   } catch (_) { }
 }
+// The linked-to cell's click. Data attributes, not onclick source: the title
+// is free text, and a \ or ' in it broke out of the old JS string
+// (wsurl S0b). Capture phase, where the inline handler used to run: before
+// any row-level click handler.
+document.addEventListener('click', (e) => {
+  const a = e.target.closest ? e.target.closest('a.tk-linked') : null;
+  if (!a) return;
+  e.preventDefault();
+  openLinked(a.dataset.linkTitle, a.dataset.linkType, a.dataset.linkId);
+}, true);
 
 // ─── Row / modal actions ────────────────────────────────────────────────────
 async function getTaskById(taskId) {
