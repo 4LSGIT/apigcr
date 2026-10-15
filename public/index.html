@@ -1602,19 +1602,19 @@
             let clientsHTML = "";
             C.contacts.forEach((client) => {
               if (client.contact_id) {
-                clientsHTML += `${fileLinkHtml(client.contact_name, 'client', client.contact_id, client.contact_name || '')} (${client.contact_relate})<br>`;
+                clientsHTML += `${fileLinkHtml(client.contact_name, 'client', client.contact_id, client.contact_name || '')} (${escText(client.contact_relate)})<br>`;
               }
             });
             row.innerHTML = `
         <td>${fileLinkHtml(C.case_id, 'case', C.case_id, C.case_number || C.case_id)}</td>
         <td>${clientsHTML}</td>
-        <td>${C.case_number}</td>
-        <td>${fmtCaseType(C)}</td>
-        <td>${C.case_stage}</td>
-        <td>${C.case_status}</td>
-        <td>${C.open}</td>
-        <td>${C.file}</td>
-        <td>${C.close}</td>`;
+        <td>${escText(C.case_number)}</td>
+        <td>${escText(fmtCaseType(C))}</td>
+        <td>${escText(C.case_stage)}</td>
+        <td>${escText(C.case_status)}</td>
+        <td>${escText(C.open)}</td>
+        <td>${escText(C.file)}</td>
+        <td>${escText(C.close)}</td>`;
           });
 
           // Pagination — the shared footer (js/ycPager.js). The print-every-
@@ -1803,7 +1803,7 @@
             const row = table.insertRow();
             const phone = (contact.contact_phone || "").replace(/(\d{3})(\d{3})(\d{4})/, "$1-$2-$3");
             const address = contact.contact_address
-              ? `${contact.contact_address}<br>${contact.contact_city}, ${contact.contact_state} ${contact.contact_zip}`
+              ? `${escText(contact.contact_address)}<br>${escText(contact.contact_city)}, ${escText(contact.contact_state)} ${escText(contact.contact_zip)}`
               : "";
 
             let casesHTML = "";
@@ -1817,11 +1817,11 @@
             row.innerHTML = `
             <td>${contact.contact_id}</td>
             <td>${fileLinkHtml(contact.contact_name, 'contact', contact.contact_id, contact.contact_name || '')}</td>
-            <td>${phone}</td>
-            <td>${contact.contact_email || ""}</td>
+            <td>${escText(phone)}</td>
+            <td>${escText(contact.contact_email || "")}</td>
             <td>${address}</td>
             <td>${casesHTML}</td>
-            <td>${contact.dob || ""}</td>`;
+            <td>${escText(contact.dob || "")}</td>`;
           });
 
           // Pagination — the shared footer (js/ycPager.js), same shape and
@@ -2548,7 +2548,7 @@
           foot.innerHTML = calxRows.length + ' item' + (calxRows.length === 1 ? '' : 's') + ' · '
             + calxEsc(calxFilterSentence())
             + (data.has_more
-              ? ' · <b style="color:var(--warn)">capped at ' + data.limit
+              ? ' · <b style="color:var(--warn)">capped at ' + calxEsc(data.limit)
                 + ' — narrow the window or the filters to see the rest</b>'
               : '');
         }
@@ -2870,8 +2870,8 @@
               <td><a href="#" onclick="showEvent(${ev.event_id});return false">${ev.event_id}</a></td>
               <td>${esc(ev.event_type)}</td>
               <td>${esc(ev.event_title)}</td>
-              <td>${date}</td>
-              <td>${timeStr}</td>
+              <td>${esc(date)}</td>
+              <td>${esc(timeStr)}</td>
               <td>${blocks}</td>
               <td>${esc(ev.event_status)}</td>
               <td>${linked}</td>
@@ -3172,13 +3172,13 @@
             const name = appt.contact_name || "";
             row.innerHTML = `
             <td><a href="#" onclick="showAppt(${appt.id})">${appt.id}</a></td>
-            <td>${appt.format_date}</td>
-            <td>${appt.time}</td>
+            <td>${escText(appt.format_date)}</td>
+            <td>${escText(appt.time)}</td>
             <td>${fileLinkHtml(name, 'client', appt.appt_client_id, name)}</td>
             <td>${fileLinkHtml(caseName, 'case', caseId, caseName)}</td>
-            <td>${appt.appt_type}</td>
-            <td>${appt.status}</td>
-            <td>${appt.user_name}</td>`;
+            <td>${escText(appt.appt_type)}</td>
+            <td>${escText(appt.status)}</td>
+            <td>${escText(appt.user_name)}</td>`;
 
             // Always show all 4 action buttons except the one matching the current status.
             // Backend blocks same-state transitions; user gets a correction warning on
@@ -3187,18 +3187,28 @@
             const s = appt.status;
             const buttons = [];
             if (s !== "Attended") {
-              buttons.push(`<button onclick="apptUpdate(${appt.id},'Attended',null,null,'${s}')"><i class="fa-solid fa-user-check"></i> Attended</button>`);
+              buttons.push(`<button data-appt-act="Attended"><i class="fa-solid fa-user-check"></i> Attended</button>`);
             }
             if (s !== "No Show") {
-              buttons.push(`<button onclick="apptUpdate(${appt.id},'No Show',null,null,'${s}')"><i class="fa-solid fa-user-xmark"></i> No Show</button>`);
+              buttons.push(`<button data-appt-act="No Show"><i class="fa-solid fa-user-xmark"></i> No Show</button>`);
             }
             if (s !== "Canceled") {
-              buttons.push(`<button onclick="apptUpdate(${appt.id},'Cancel','${apptDateTime}',null,'${s}')"><i class="fa-solid fa-calendar-xmark"></i> Cancel</button>`);
+              buttons.push(`<button data-appt-act="Cancel"><i class="fa-solid fa-calendar-xmark"></i> Cancel</button>`);
             }
             if (s !== "Rescheduled") {
-              buttons.push(`<button onclick="apptUpdate(${appt.id},'Reschedule','${appt.appt_datetime_local}',null,'${s}')"><i class="fa-solid fa-user-clock"></i> Reschedule</button>`);
+              buttons.push(`<button data-appt-act="Reschedule"><i class="fa-solid fa-user-clock"></i> Reschedule</button>`);
             }
             row.innerHTML += `<td>${buttons.join(" ")}</td>`;
+            // Bound here, AFTER the last innerHTML write, with the row's own
+            // values: status and dates are server text, and used to be quoted
+            // into onclick source (wsurl S0c). Same apptUpdate arguments.
+            const actDate = { Cancel: apptDateTime, Reschedule: `${appt.appt_datetime_local}` };
+            row.querySelectorAll("button[data-appt-act]").forEach((b) => {
+              b.addEventListener("click", () => {
+                const act = b.dataset.apptAct;
+                apptUpdate(Number(appt.id), act, actDate[act] ?? null, null, `${s}`);
+              });
+            });
           });
 
           // Pagination — the shared footer (js/ycPager.js), same shape and
@@ -3761,18 +3771,18 @@
               const formatted = p.length === 10
                 ? `(${p.slice(0,3)}) ${p.slice(3,6)}-${p.slice(6)}`
                 : p;
-              link = `${formatted} <br><a href="#" onclick="OrphanAdoptDialog('${p}', 'phone', () => tabLogGet(offsets.logs));return false" title="Attach to contact"><i class="fa-solid fa-user-plus"></i></a>`;
+              link = `${escText(formatted)} <br><a href="#" data-adopt="phone" data-adopt-value="${escAttr(p)}" title="Attach to contact"><i class="fa-solid fa-user-plus"></i></a>`;
             } else if (entry.log_link_type === "email" && entry.log_link_id) {
-              const e = String(entry.log_link_id).replace(/'/g, "\\'");
-              link = `${entry.log_link_id} <br><a href="#" onclick="OrphanAdoptDialog('${e}', 'email', () => tabLogGet(offsets.logs));return false" title="Attach to contact"><i class="fa-solid fa-user-plus"></i></a>`;
+              const e = String(entry.log_link_id);
+              link = `${escText(e)} <br><a href="#" data-adopt="email" data-adopt-value="${escAttr(e)}" title="Attach to contact"><i class="fa-solid fa-user-plus"></i></a>`;
             } else if (entry.log_link_type === "case" && entry.log_link_id) {
               // Court email or other case-typed row that didn't resolve (no matching case row).
               // Phase 4.1: "+ Add" adopts the docket onto an existing case.
-              const d = String(entry.log_link_id).replace(/'/g, "\\'");
-              link = `<span title="No matching case">${entry.log_link_id}</span> <br><a href="#" onclick="CaseAdoptDialog('${d}', () => tabLogGet(offsets.logs));return false" title="Adopt this docket onto a case"><i class="fa-solid fa-folder-plus"></i></a>`;
+              const d = String(entry.log_link_id);
+              link = `<span title="No matching case">${escText(d)}</span> <br><a href="#" data-adopt="case" data-adopt-value="${escAttr(d)}" title="Adopt this docket onto a case"><i class="fa-solid fa-folder-plus"></i></a>`;
             } else if (entry.log_link_type == null && entry.log_link) {
               // Legacy NULL-typed row whose log_link didn't resolve via any JOIN.
-              link = `<span title="Unresolved legacy link">${entry.log_link}</span>`;
+              link = `<span title="Unresolved legacy link">${escText(entry.log_link)}</span>`;
             }
 
             // Slice B.4: Data cell collapsed by default (1 line per key + ellipsis).
@@ -3796,11 +3806,21 @@
 
             row.innerHTML = `
               <td>${entry.log_id}</td>
-              <td>${entry.log_type}${dirIcon}</td>
-              <td>${entry.formatted_date}</td>
+              <td>${escText(entry.log_type)}${dirIcon}</td>
+              <td>${escText(entry.formatted_date)}</td>
               <td><div style="min-width:10em;max-width:16em;overflow-wrap:anywhere">${typeIcon}${link}${aboutBadge}</div></td>
               <td>${cell_data}</td>
-              <td>${entry.by_name || entry.log_by || ""}${extrasIcon}</td>`;
+              <td>${escText(entry.by_name || entry.log_by || "")}${extrasIcon}</td>`;
+            // The adopt links carry their value in data-*, not in onclick
+            // source: it is a raw phone, email or docket (wsurl S0c).
+            row.querySelectorAll("a[data-adopt]").forEach((a) => {
+              a.addEventListener("click", (ev) => {
+                ev.preventDefault();
+                const refresh = () => tabLogGet(offsets.logs);
+                if (a.dataset.adopt === "case") CaseAdoptDialog(a.dataset.adoptValue, refresh);
+                else OrphanAdoptDialog(a.dataset.adoptValue, a.dataset.adopt, refresh);
+              });
+            });
           });
 
           // Slice B.4: unified footer (pagination + meta + limit + toggle + buttons)

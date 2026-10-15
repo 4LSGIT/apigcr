@@ -1330,7 +1330,7 @@
               const extrasIcon = logExtrasIcon(entry);
               // About-link S3: badge / add-link affordance (shared helper in scripts.js).
               const aboutBadge = logAboutBadge(entry, "() => tabLogGet(0)", !!link);
-              row.innerHTML = `<td>${entry.log_id}</td><td>${entry.log_type}${dirIcon}</td><td>${entry.formatted_date}</td><td><div style="min-width:10em;max-width:16em;overflow-wrap:anywhere">${typeIcon}${link}${aboutBadge}</div></td><td>${cell_data}</td><td>${entry.by_name||entry.log_by||""}${extrasIcon}</td>`;
+              row.innerHTML = `<td>${entry.log_id}</td><td>${escText(entry.log_type)}${dirIcon}</td><td>${escText(entry.formatted_date)}</td><td><div style="min-width:10em;max-width:16em;overflow-wrap:anywhere">${typeIcon}${link}${aboutBadge}</div></td><td>${cell_data}</td><td>${escText(entry.by_name||entry.log_by||"")}${extrasIcon}</td>`;
             });
             // Slice B.4: unified footer
             renderLogFooter(foot, data, limit, offset,
@@ -2042,17 +2042,21 @@ function putClients() {
     const relateType = client.relate_type || client.case_relate_type || "";
     row.innerHTML = `
       <td>${fileLinkHtml(client.contact_id, 'client', client.contact_id, client.contact_name||'')}</td>
-      <td>${client.contact_name||""}</td>
-      <td>${client.contact_phone||""}</td>
-      <td>${client.contact_email||""}</td>
-      <td>${client.contact_address||""}</td>
-      <td>${client.contact_city||""}</td>
-      <td>${client.contact_state||""}</td>
-      <td>${client.contact_zip||""}</td>
-      <td>${client.dob||""}</td>
-      <td>${client.contact_ssn||""}</td>
-      <td>${relateType}</td>
-      <td><button onclick="modifyCaseClient('${client.contact_id}','${relateType}')">Modify</button></td>`;
+      <td>${escText(client.contact_name||"")}</td>
+      <td>${escText(client.contact_phone||"")}</td>
+      <td>${escText(client.contact_email||"")}</td>
+      <td>${escText(client.contact_address||"")}</td>
+      <td>${escText(client.contact_city||"")}</td>
+      <td>${escText(client.contact_state||"")}</td>
+      <td>${escText(client.contact_zip||"")}</td>
+      <td>${escText(client.dob||"")}</td>
+      <td>${escText(client.contact_ssn||"")}</td>
+      <td>${escText(relateType)}</td>
+      <td><button data-modify-client>Modify</button></td>`;
+    // Bound with the row's own values, not quoted into onclick source: the
+    // relate type is server text (wsurl S0c). Same arguments as before.
+    row.querySelector("button[data-modify-client]")
+      .addEventListener("click", () => modifyCaseClient(`${client.contact_id}`, `${relateType}`));
   });
 }
 

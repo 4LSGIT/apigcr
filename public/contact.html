@@ -614,7 +614,7 @@ async function tabLogGet(offset) {
         const extrasIcon = logExtrasIcon(entry);
         // About-link S3: badge / add-link affordance (shared helper in scripts.js).
         const aboutBadge = logAboutBadge(entry, "() => tabLogGet(0)", !!link);
-        row.innerHTML = `<td>${entry.log_id}</td><td>${entry.log_type}${dirIcon}</td><td>${entry.formatted_date}</td><td><div style="min-width:10em;max-width:16em;overflow-wrap:anywhere">${typeIcon}${link}${aboutBadge}</div></td><td>${cell_data}</td><td>${entry.by_name||entry.log_by||""}${extrasIcon}</td>`;
+        row.innerHTML = `<td>${entry.log_id}</td><td>${escText(entry.log_type)}${dirIcon}</td><td>${escText(entry.formatted_date)}</td><td><div style="min-width:10em;max-width:16em;overflow-wrap:anywhere">${typeIcon}${link}${aboutBadge}</div></td><td>${cell_data}</td><td>${escText(entry.by_name||entry.log_by||"")}${extrasIcon}</td>`;
       });
       // Slice B.4: unified footer
       renderLogFooter(foot, data, limit, offset,
@@ -797,10 +797,10 @@ function putCases() {
   window.entityData.cases.forEach(C => {
     const row = table.insertRow();
     row.innerHTML = `<td>${fileLinkHtml(C.case_id, 'case', C.case_id, C.case_id)}</td>
-      <td>${C.relate_type}</td>
-      <td>${C.case_number_full||C.case_number||"No Case Number"}</td>
-      <td>${fmtCaseType(C)}</td><td>${C.case_stage}</td><td>${C.case_status}</td>
-      <td>${C.open||""}</td><td>${C.file||""}</td><td>${C.close||""}</td>`;
+      <td>${escText(C.relate_type)}</td>
+      <td>${escText(C.case_number_full||C.case_number||"No Case Number")}</td>
+      <td>${escText(fmtCaseType(C))}</td><td>${escText(C.case_stage)}</td><td>${escText(C.case_status)}</td>
+      <td>${escText(C.open||"")}</td><td>${escText(C.file||"")}</td><td>${escText(C.close||"")}</td>`;
   });
 }
 

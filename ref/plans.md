@@ -455,6 +455,20 @@ Active surfaces with known next steps.
   refuse a whole-value marker on workflow mints unless the step lists it in
   an explicit `bindings` param. `ref/CTA_DESIGN.md` §12 "Known landmine".
 
+- **Row renders: escape every data field (app-wide sweep).** Rows are built
+  as HTML strings from server data, and stored free text (names, dockets,
+  statuses, labels) reaches them from intake. Done (wsurl, 2026-10-15): S0 the
+  shell's file-open path (quickPick, picker, addFile), S0b every file-open
+  link, S0c every field in index.html's tabCasesGet / tabContactsGet / calxGet
+  / tabEventsGet / tabApptsGet / tabLogGet, case.html's tabLogGet /
+  putClients, and contact.html's tabLogGet / putCases. Still raw, seen in
+  passing, not hunted: case.html putAppts and contact.html putAppt (cells,
+  plus status and dates quoted into apptUpdate onclick source), both pages'
+  putEvents, case.html's pipeline widget (`pwOverride('${k}')`), tasks.html's
+  other cells and taskModalAction, and every page outside these three. Tools:
+  escText / escAttr / fileLinkHtml in scripts.js; data-* or a bound listener,
+  never data in onclick source.
+
 
 ---
 
