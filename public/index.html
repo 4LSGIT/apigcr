@@ -2997,9 +2997,17 @@
      * cost when nothing changed.
      */
     function showAppt(apptID) {
+      // The id reaches the Swal's title and an iframe src, both HTML: a
+      // positive integer or nothing (wsurl S0d — /?appt=<markup> injected
+      // into the shell). Every caller passes appts.appt_id, an int PK.
+      if (!/^\d+$/.test(String(apptID))) {
+        console.warn("[showAppt] refused: not an appointment id");
+        return;
+      }
+      const id = Number(apptID);
       Swal.fire({
-        title: `Appointment ${apptID}`,
-        html: `<iframe src="/apptform2.html?apptID=${apptID}" width="100%"  style="border:none;height:650px;"></iframe>`,
+        titleText: `Appointment ${id}`,
+        html: `<iframe src="/apptform2.html?apptID=${id}" width="100%"  style="border:none;height:650px;"></iframe>`,
         width: swalWide("75%"),
         heightAuto: true,
         showConfirmButton: false,
@@ -3015,9 +3023,15 @@
      * rather than on every close.
      */
     function showEvent(eventID) {
+      // Same rule as showAppt: events.event_id is an int PK (wsurl S0d).
+      if (!/^\d+$/.test(String(eventID))) {
+        console.warn("[showEvent] refused: not an event id");
+        return;
+      }
+      const id = Number(eventID);
       Swal.fire({
-        title: `Event ${eventID}`,
-        html: `<iframe src="/eventform.html?eventID=${eventID}" width="100%" style="border:none;height:650px;"></iframe>`,
+        titleText: `Event ${id}`,
+        html: `<iframe src="/eventform.html?eventID=${id}" width="100%" style="border:none;height:650px;"></iframe>`,
         width: swalWide("75%"),
         heightAuto: true,
         showConfirmButton: false,
@@ -5654,7 +5668,8 @@ async function initAuth() {
       if (params.log) {
         tabLogGet(0);
       }
-      if (params.appt) {
+      // ?appt=<id>: digits only, anything else is dropped (wsurl S0d).
+      if (params.appt && /^\d+$/.test(params.appt)) {
         showAppt(params.appt);
       }
       // Populate all user-list selects in the parent shell.
