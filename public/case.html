@@ -22,6 +22,7 @@
   <script src="/js/yc-sync.js"></script>
   <script src="/js/ycPager.js"></script>
   <script src="/scripts.js"></script>
+  <script src="/js/ycSubTab.js"></script>
     <link rel="stylesheet" href="/theme.css">
     <script src="/themeSync.js"></script>
   <link rel="stylesheet" type="text/css" href="style.css" />
@@ -94,16 +95,16 @@
          Use the format id="?Button" to append case=caseID,tab to url -->
     <div id="caseButtons">
       <div class="tab-row">
-        <button class="tab active" onclick="openTab(this, 'tabOverview')">
+        <button data-ws-tab="overview" class="tab active" onclick="openTab(this, 'tabOverview')">
           <i class="fa-solid fa-star"></i> Overview
         </button>
-        <button class="tab" onclick="openTab(this, 'tabClients')">
+        <button data-ws-tab="clients" class="tab" onclick="openTab(this, 'tabClients')">
           <i class="fa-solid fa-circle-question"></i> People
         </button>
-        <button class="tab" onclick="openTab(this, 'tabAppts')">
+        <button data-ws-tab="appts" class="tab" onclick="openTab(this, 'tabAppts')">
           <i class="fa-solid fa-calendar-check"></i> Appointments
         </button>
-        <button class="tab" onclick="openTab(this, 'tabEvents'); if (typeof events==='undefined' || !events.length) refreshEvents();">
+        <button data-ws-tab="events" class="tab" onclick="openTab(this, 'tabEvents'); if (typeof events==='undefined' || !events.length) refreshEvents();">
           <i class="fa-solid fa-calendar-day"></i> Events
         </button>
         <!-- Unified timeline (E1). Sits between Appointments and Events
@@ -115,7 +116,7 @@
              removed until the unified list proves itself (v0.5 §6 U9).
              Lazy-loaded on first open, like tabEvents — the tab costs nothing
              on a case page nobody opens it on. -->
-        <button class="tab" id="timelineButton" onclick="openTab(this, 'tabTimeline'); ctEnter();">
+        <button data-ws-tab="timeline" class="tab" id="timelineButton" onclick="openTab(this, 'tabTimeline'); ctEnter();">
           <i class="fa-solid fa-timeline"></i> Timeline
         </button>
 
@@ -124,7 +125,7 @@
              The id, the tab-content id, the frame id, the file name and the
              reload hook all keep their pre-rename names on purpose — this was
              a label change only (W1). -->
-        <button
+        <button data-ws-tab="checklists"
           class="tab"
           id="checklistsButton"
           onclick="openTab(this, 'checklists'); if (!E('checklistFrame').src) E('checklistFrame').src = `checklistView.html?link_type=case&link=${caseID}`; else E('checklistFrame').contentWindow?.reloadChecklists?.();"
@@ -134,7 +135,7 @@
         <!-- Tasks widget — consolidated /tasks.html in entity mode. Lazy iframe
              src on first open (esignButton idiom); re-entry pushes a reload so
              the list is fresh (reloadChecklists/reloadAutomations pattern). -->
-        <button class="tab" id="tasksButton" onclick="openTab(this, 'tabTasks'); if (!E('tasksFrame').src) E('tasksFrame').src = `tasks.html?link_type=case&link_id=${caseID}`; else E('tasksFrame').contentWindow?.reloadTasks?.();">
+        <button data-ws-tab="tasks" class="tab" id="tasksButton" onclick="openTab(this, 'tabTasks'); if (!E('tasksFrame').src) E('tasksFrame').src = `tasks.html?link_type=case&link_id=${caseID}`; else E('tasksFrame').contentWindow?.reloadTasks?.();">
           <i class="fa-solid fa-clipboard"></i> Tasks
         </button>
         <button
@@ -147,7 +148,7 @@
         </button>
       </div>
       <div class="tab-row">
-        <button class="tab" onclick="openTab(this, 'tabDB')">
+        <button data-ws-tab="db" class="tab" onclick="openTab(this, 'tabDB')">
           <i class="fa-brands fa-dropbox"></i> Dropbox
         </button>
         <!-- Documents (S3). Sits immediately after Dropbox because they are
@@ -158,31 +159,31 @@
              Lazy src (esignButton idiom); re-entry pushes a reload so the
              list is fresh (reloadTasks / reloadChecklists pattern).
              id follows the ?Button URL-restore convention (?tab=documents). -->
-        <button class="tab" id="documentsButton" onclick="openTab(this, 'tabDocuments'); if (!E('documentsFrame').src) E('documentsFrame').src = `documents.html?link_type=case&link_id=${caseID}`; else E('documentsFrame').contentWindow?.reloadDocuments?.();">
+        <button data-ws-tab="documents" class="tab" id="documentsButton" onclick="openTab(this, 'tabDocuments'); if (!E('documentsFrame').src) E('documentsFrame').src = `documents.html?link_type=case&link_id=${caseID}`; else E('documentsFrame').contentWindow?.reloadDocuments?.();">
           <i class="fa-solid fa-folder-open"></i> Documents
         </button>
         <!-- Form submissions (X4). STANDARD tab, not a bkButtons one: any case
              type can receive a form, and an adopted intake most often lands on
              a non-BK case (the anonymous ones arrive before the type is set).
              Lazy src (esignButton idiom). -->
-        <button class="tab" id="formsButton" onclick="openTab(this, 'tabForms'); if (!E('formsFrame').src) E('formsFrame').src = `forms/submissionsWidget.html?link_type=case&link_id=${caseID}`;">
+        <button data-ws-tab="forms" class="tab" id="formsButton" onclick="openTab(this, 'tabForms'); if (!E('formsFrame').src) E('formsFrame').src = `forms/submissionsWidget.html?link_type=case&link_id=${caseID}`;">
           <i class="fa-solid fa-inbox"></i> Form Submissions
         </button>
         <!-- Signatures (e-sign, Phase 2C). Standard tab — every case type can
              send documents. Lazy src (tabEvents idiom): the widget iframe only
              loads on first open, so case pages without signing activity pay
              nothing. -->
-        <button class="tab" id="esignButton" onclick="openTab(this, 'tabEsign'); if (!E('esignFrame').src) E('esignFrame').src = `esign/caseWidget.html?case_id=${caseID}`;">
+        <button data-ws-tab="esign" class="tab" id="esignButton" onclick="openTab(this, 'tabEsign'); if (!E('esignFrame').src) E('esignFrame').src = `esign/caseWidget.html?case_id=${caseID}`;">
           <i class="fa-solid fa-file-signature"></i> Signatures
         </button>
         <!-- Automations widget (sequences + workflows across the case's related
              contacts). Lazy iframe src on first open (esignButton idiom); on
              re-entry pushes a reload into the widget so the lists are fresh.
              id follows the ?Button URL-restore convention (?tab=auto). -->
-        <button class="tab" id="autoButton" onclick="openTab(this, 'tabAuto'); if (!E('autoFrame').src) E('autoFrame').src = `automation/automationsWidget.html?case_id=${caseID}`; else E('autoFrame').contentWindow?.reloadAutomations?.();">
+        <button data-ws-tab="auto" class="tab" id="autoButton" onclick="openTab(this, 'tabAuto'); if (!E('autoFrame').src) E('autoFrame').src = `automation/automationsWidget.html?case_id=${caseID}`; else E('autoFrame').contentWindow?.reloadAutomations?.();">
           <i class="fa-solid fa-robot"></i> Automations
         </button>
-        <button class="tab" onclick="openTab(this, 'tabLog')">
+        <button data-ws-tab="log" class="tab" onclick="openTab(this, 'tabLog')">
           <i class="fa-solid fa-receipt"></i> Case Log
         </button>
       </div>
@@ -192,27 +193,27 @@
          case_type. #otherButtons is the generic fallback. To add a new type,
          add a group here AND a branch in applyCaseType — see the recipe there. -->
     <div id="bkButtons" class="tab-row" style="display: none">
-      <button class="tab" id="ISSNButton" onclick="openTab(this, 'tabInfo')">
+      <button data-ws-tab="ISSN" class="tab" id="ISSNButton" onclick="openTab(this, 'tabInfo')">
         <i class="fa-solid fa-circle-info"></i> Initial Strategy Session Notes
       </button>
-      <button class="tab" onclick="openTab(this, 'tabSend')">
+      <button data-ws-tab="send" class="tab" onclick="openTab(this, 'tabSend')">
         <i class="fa-solid fa-comments"></i> Sending Form
       </button>
-      <button class="tab" onclick="openTab(this, 'tabCase')">
+      <button data-ws-tab="case" class="tab" onclick="openTab(this, 'tabCase')">
         <i class="fa-solid fa-landmark"></i> Case Details
       </button>
-      <button class="tab" id="341Button" onclick="openTab(this, 'tab341')">
+      <button data-ws-tab="341" class="tab" id="341Button" onclick="openTab(this, 'tab341')">
         <i class="fa-solid fa-gavel"></i> 341 Notes
       </button>
-      <button class="tab" onclick="openTab(this, 'tabDet')">
+      <button data-ws-tab="det" class="tab" onclick="openTab(this, 'tabDet')">
         <i class="fa-brands fa-wpforms"></i> Detailed Questionnaire
       </button>
     </div>
     <div id="otherButtons" class="tab-row" style="display: none">
-      <button class="tab" onclick="openTab(this, 'tabSend')">
+      <button data-ws-tab="send" class="tab" onclick="openTab(this, 'tabSend')">
         <i class="fa-solid fa-comments"></i> Sending Form
       </button>
-      <button class="tab" onclick="openTab(this, 'tabCase')">
+      <button data-ws-tab="case" class="tab" onclick="openTab(this, 'tabCase')">
         <i class="fa-solid fa-landmark"></i> Case Details
       </button>
     </div>
@@ -2092,7 +2093,96 @@ function openTab(tab, tabName) {
   if (tabName !== 'tabAuto') {
     try { E('autoFrame')?.contentWindow?.stopAutomationPolling?.(); } catch (_) { }
   }
+  wsReportTab(tab, tabName);   // the workspace URL follows (below)
 }
+
+// ── Workspace URL: this page's inner tab (wsurl S1b) ────────
+// Every tab button carries data-ws-tab, this page's token for its tab: the
+// segment after the file's id in the shell's ?files= (public/js/ycSubTab.js).
+// The existing <x>Button id prefixes ARE the tokens, so old ?tab=<x> links
+// and the shell's legacy `<x>Button` click keep working. Tokens are
+// vocabulary, never data, and nothing here builds a selector from one:
+// buttons are found by comparing dataset.wsTab.
+//   REPORT   openTab tells the shell which tab is shown, on every switch;
+//            the default tab reports '' (empty = default).
+//   RESTORE  boot clicks the button for the rest the shell handed down (else
+//            the legacy ?tab=), so the button's own onclick side effects run.
+//   APPLY    window.ycApplySubTab, the shell's refocus: same resolution, and
+//            the tab already shown is left alone (no click, no reload).
+// `var`, not const/let: openTab reaches these at call time, never in a TDZ.
+var WS_DEFAULT_TAB = "tabOverview";
+var wsTabMap = null;   // content id → token, built once from the buttons
+
+function wsTargetOf(btn) {
+  const m = /openTab\(this,\s*'([^']+)'\)/.exec(btn.getAttribute("onclick") || "");
+  return m ? m[1] : null;
+}
+
+function wsTokenFor(tabName) {
+  if (!wsTabMap) {
+    wsTabMap = {};
+    document.querySelectorAll("button.tab[data-ws-tab]").forEach((b) => {
+      const t = wsTargetOf(b);
+      if (t && !(t in wsTabMap)) wsTabMap[t] = b.dataset.wsTab;
+    });
+  }
+  return wsTabMap[tabName] || null;
+}
+
+function wsReportTab(btn, tabName) {
+  if (!window.ycSubTab) return;
+  ycSubTab.leaf.report(tabName === WS_DEFAULT_TAB ? ""
+    : (btn && btn.dataset && btn.dataset.wsTab) || wsTokenFor(tabName) || "");
+}
+
+function wsShown(el) {
+  for (let n = el; n && n.nodeType === 1; n = n.parentElement) {
+    if (getComputedStyle(n).display === "none") return false;
+  }
+  return true;
+}
+
+/** The on-screen tab button for a rest's first segment, or null: an unknown
+ *  token, or a button in a row that is hidden (a type row for another case
+ *  type). */
+function wsButtonFor(rest) {
+  const token = String(rest == null ? "" : rest).split("~")[0];
+  if (!token) return null;
+  for (const b of document.querySelectorAll("button.tab[data-ws-tab]")) {
+    if (b.dataset.wsTab === token && wsShown(b)) return b;
+  }
+  return null;
+}
+
+function wsShownTab() {
+  for (const c of document.querySelectorAll(".tab-content")) if (c.style.display === "block") return c.id;
+  return null;
+}
+
+/** The button to show for `rest`: its own, else the default tab's. */
+function wsResolve(rest) {
+  return wsButtonFor(rest) || wsButtonFor(wsTokenFor(WS_DEFAULT_TAB));
+}
+
+/** Boot: show the tab `rest` names, else the default. Never throws on a token. */
+function wsRestoreTab(rest) {
+  const b = wsResolve(rest);
+  if (b) b.click();
+  else openTab(null, WS_DEFAULT_TAB);
+}
+
+/** The rest handed down by the shell (once), else the legacy ?tab=. */
+function wsBootRest() {
+  const held = window.ycSubTab ? ycSubTab.leaf.take() : null;
+  return held != null ? held : tab;
+}
+
+window.ycApplySubTab = function (rest) {
+  const b = wsResolve(rest);
+  if ((b ? wsTargetOf(b) : WS_DEFAULT_TAB) === wsShownTab()) return;
+  if (b) b.click();
+  else openTab(null, WS_DEFAULT_TAB);
+};
 
 // ── Utilities ───────────────────────────────────────────────
 function processing() {
@@ -2962,6 +3052,7 @@ async function pwMoveOpen() {
 // ── Initial load ────────────────────────────────────────────
 processing();
 (async () => {
+  let wsRest = null;   // taken ONCE (take() hands it over once); the catch reuses it
   try {
     await loadEntityData();
     updateHeader();
@@ -2972,13 +3063,23 @@ processing();
 
     E("tabButtons").style.display = "block";
     Swal.close();
-    tab ? E(`${tab}Button`).click() : openTab(null, "tabOverview");
 
+    wsRest = wsBootRest();
     loadIframes();
+    // The inner tab: AFTER loadIframes, whose applyCaseType decides which
+    // type row (and so which Sending Form / Case Details button) is on
+    // screen. An unknown token falls back to Overview; it never throws.
+    wsRestoreTab(wsRest);
     tabLogGet(0);
 
   } catch (err) {
     Swal.close();
+    // A failure AFTER the tab strip is up — loadIframes' Dropbox.embed throws
+    // when the external dropins.js is blocked — must still leave a tab on
+    // screen, not a blank page under the error toast.
+    try {
+      if (E("tabButtons").style.display === "block" && !wsShownTab()) wsRestoreTab(wsRest);
+    } catch (_) { /* the toast below still says what failed */ }
     P.Toast.fire({ icon: "error", title: "Error loading case", text: err.message });
   }
 })();

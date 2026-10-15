@@ -6,6 +6,7 @@
   <script src="/js/yc-sync.js"></script>
   <script src="/js/ycPager.js"></script>
   <script src="/scripts.js"></script>
+  <script src="/js/ycSubTab.js"></script>
   <link rel="stylesheet" href="/theme.css">
   <script src="/themeSync.js"></script>
   <link rel="stylesheet" type="text/css" href="style.css">
@@ -343,35 +344,35 @@
          top-right, Log bottom-right — put them last, not first, to keep them
          out of the path of the tabs staff click all day. -->
     <div class="tab-row">
-      <button class="tab active" onclick="openTab(this, 'tabInfo')"><i class="fa-solid fa-circle-info"></i> Client Information</button>
-      <button class="tab" onclick="openTab(this, 'tabRels')"><i class="fa-solid fa-people-arrows"></i> Relationships</button>
-      <button class="tab" onclick="openTab(this, 'tabSend')"><i class="fa-solid fa-comments"></i> Communication</button>
-      <button class="tab" id="tasksButton" onclick="openTab(this, 'tabTasks'); if (!E('tasksFrame').src) E('tasksFrame').src = `tasks.html?link_type=contact&link_id=${clientID}`; else E('tasksFrame').contentWindow?.reloadTasks?.();"><i class="fa-solid fa-clipboard"></i> Tasks</button>
+      <button data-ws-tab="info" class="tab active" onclick="openTab(this, 'tabInfo')"><i class="fa-solid fa-circle-info"></i> Client Information</button>
+      <button data-ws-tab="rels" class="tab" onclick="openTab(this, 'tabRels')"><i class="fa-solid fa-people-arrows"></i> Relationships</button>
+      <button data-ws-tab="send" class="tab" onclick="openTab(this, 'tabSend')"><i class="fa-solid fa-comments"></i> Communication</button>
+      <button data-ws-tab="tasks" class="tab" id="tasksButton" onclick="openTab(this, 'tabTasks'); if (!E('tasksFrame').src) E('tasksFrame').src = `tasks.html?link_type=contact&link_id=${clientID}`; else E('tasksFrame').contentWindow?.reloadTasks?.();"><i class="fa-solid fa-clipboard"></i> Tasks</button>
       <!-- Notes & Lists widget — public/checklistView.html in entity mode.
            Same lazy-src / reload-on-re-entry idiom as tasksButton above. Note
            the param is `link`, not `link_id` — that page reads the checklists
            COLUMN name, unlike tasks.html. -->
-      <button class="tab" id="notesButton" onclick="openTab(this, 'tabNotes'); if (!E('notesFrame').src) E('notesFrame').src = `checklistView.html?link_type=contact&link=${clientID}`; else E('notesFrame').contentWindow?.reloadChecklists?.();"><i class="fa-solid fa-list-check"></i> Notes &amp; Lists</button>
+      <button data-ws-tab="notes" class="tab" id="notesButton" onclick="openTab(this, 'tabNotes'); if (!E('notesFrame').src) E('notesFrame').src = `checklistView.html?link_type=contact&link=${clientID}`; else E('notesFrame').contentWindow?.reloadChecklists?.();"><i class="fa-solid fa-list-check"></i> Notes &amp; Lists</button>
       <button class="tab" onclick="Swal.fire({ title: 'Reload Page',html: '<p>Are you sure you want to reload the page?</p><p>You will lose all unsaved data!</p>',
                                    icon: 'warning', showCancelButton: true, confirmButtonText: 'Yes, reload!',cancelButtonText: 'No, cancel',
                                    preConfirm: () => { location.reload();}});"><i class="fa-solid fa-circle-down"></i> Refresh</button>
     </div>
     <div class="tab-row">
-      <button class="tab" onclick="openTab(this, 'tabAppts')"><i class="fa-solid fa-calendar-check"></i>&nbsp;&nbsp;Appointments</button>
-      <button class="tab" onclick="openTab(this, 'tabEvents'); if (typeof events==='undefined' || !events.length) refreshEvents();"><i class="fa-solid fa-calendar-day"></i>&nbsp;&nbsp;Events</button>
-      <button class="tab" onclick="openTab(this, 'tabCases')"><i class="fa-solid fa-landmark"></i> Cases</button>
-      <button class="tab" onclick="openTab(this, 'tabBills')"><i class="fa-solid fa-file-invoice-dollar"></i> Bills</button>
+      <button data-ws-tab="appts" class="tab" onclick="openTab(this, 'tabAppts')"><i class="fa-solid fa-calendar-check"></i>&nbsp;&nbsp;Appointments</button>
+      <button data-ws-tab="events" class="tab" onclick="openTab(this, 'tabEvents'); if (typeof events==='undefined' || !events.length) refreshEvents();"><i class="fa-solid fa-calendar-day"></i>&nbsp;&nbsp;Events</button>
+      <button data-ws-tab="cases" class="tab" onclick="openTab(this, 'tabCases')"><i class="fa-solid fa-landmark"></i> Cases</button>
+      <button data-ws-tab="bills" class="tab" onclick="openTab(this, 'tabBills')"><i class="fa-solid fa-file-invoice-dollar"></i> Bills</button>
       <!-- Documents (S3) — public/documents.html in scoped mode. Same lazy-src
            / reload-on-re-entry idiom as tasksButton and notesButton above.
            NOTE the param is `link_id`, matching the registry's list API (and
            tasks.html); `checklistView.html` next door takes `link` instead
            because it reads the checklists COLUMN name. Do not copy that one.
-           The id follows the ?Button convention for symmetry with case.html —
-           contact.html has no ?tab= restore today (it boots straight to
-           tabInfo), so nothing reads it yet. -->
-      <button class="tab" id="documentsButton" onclick="openTab(this, 'tabDocuments'); if (!E('documentsFrame').src) E('documentsFrame').src = `documents.html?link_type=contact&link_id=${clientID}`; else E('documentsFrame').contentWindow?.reloadDocuments?.();"><i class="fa-solid fa-folder-open"></i> Documents</button>
-      <button class="tab" onclick="openTab(this, 'tabSeq'); if (!E('tabSeqIframe').src) E('tabSeqIframe').src = `automation/automationsWidget.html?contact_id=${clientID}`; else E('tabSeqIframe').contentWindow?.reloadAutomations?.();"><i class="fa-solid fa-robot"></i> Automations</button>
-      <button class="tab" onclick="openTab(this, 'tabLog')"><i class="fa-solid fa-receipt"></i> Log</button>
+           The id follows the ?Button convention, as in case.html: the shell's
+           legacy refocus clicks `<x>Button`. The workspace URL's token is the
+           button's data-ws-tab (see "Workspace URL" in this page's script). -->
+      <button data-ws-tab="documents" class="tab" id="documentsButton" onclick="openTab(this, 'tabDocuments'); if (!E('documentsFrame').src) E('documentsFrame').src = `documents.html?link_type=contact&link_id=${clientID}`; else E('documentsFrame').contentWindow?.reloadDocuments?.();"><i class="fa-solid fa-folder-open"></i> Documents</button>
+      <button data-ws-tab="auto" class="tab" onclick="openTab(this, 'tabSeq'); if (!E('tabSeqIframe').src) E('tabSeqIframe').src = `automation/automationsWidget.html?contact_id=${clientID}`; else E('tabSeqIframe').contentWindow?.reloadAutomations?.();"><i class="fa-solid fa-robot"></i> Automations</button>
+      <button data-ws-tab="log" class="tab" onclick="openTab(this, 'tabLog')"><i class="fa-solid fa-receipt"></i> Log</button>
     </div>
     <h3 style="color:var(--text);">Client Name:
       <span onclick="copy(this.innerText)">
@@ -862,7 +863,96 @@ function openTab(tab, tabName) {
   if (tabName === 'tabRels') {
     loadContactRelations();
   }
+  wsReportTab(tab, tabName);   // the workspace URL follows (below)
 }
+
+// ── Workspace URL: this page's inner tab (wsurl S1b) ────────
+// Every tab button carries data-ws-tab, this page's token for its tab: the
+// segment after the file's id in the shell's ?files= (public/js/ycSubTab.js).
+// The existing <x>Button id prefixes ARE the tokens, so old ?tab=<x> links
+// and the shell's legacy `<x>Button` click keep working. Tokens are
+// vocabulary, never data, and nothing here builds a selector from one:
+// buttons are found by comparing dataset.wsTab.
+//   REPORT   openTab tells the shell which tab is shown, on every switch;
+//            the default tab reports '' (empty = default).
+//   RESTORE  boot clicks the button for the rest the shell handed down (else
+//            the legacy ?tab=), so the button's own onclick side effects run.
+//   APPLY    window.ycApplySubTab, the shell's refocus: same resolution, and
+//            the tab already shown is left alone (no click, no reload).
+// `var`, not const/let: openTab reaches these at call time, never in a TDZ.
+var WS_DEFAULT_TAB = "tabInfo";
+var wsTabMap = null;   // content id → token, built once from the buttons
+
+function wsTargetOf(btn) {
+  const m = /openTab\(this,\s*'([^']+)'\)/.exec(btn.getAttribute("onclick") || "");
+  return m ? m[1] : null;
+}
+
+function wsTokenFor(tabName) {
+  if (!wsTabMap) {
+    wsTabMap = {};
+    document.querySelectorAll("button.tab[data-ws-tab]").forEach((b) => {
+      const t = wsTargetOf(b);
+      if (t && !(t in wsTabMap)) wsTabMap[t] = b.dataset.wsTab;
+    });
+  }
+  return wsTabMap[tabName] || null;
+}
+
+function wsReportTab(btn, tabName) {
+  if (!window.ycSubTab) return;
+  ycSubTab.leaf.report(tabName === WS_DEFAULT_TAB ? ""
+    : (btn && btn.dataset && btn.dataset.wsTab) || wsTokenFor(tabName) || "");
+}
+
+function wsShown(el) {
+  for (let n = el; n && n.nodeType === 1; n = n.parentElement) {
+    if (getComputedStyle(n).display === "none") return false;
+  }
+  return true;
+}
+
+/** The on-screen tab button for a rest's first segment, or null: an unknown
+ *  token, or a button in a row that is hidden (a type row for another case
+ *  type). */
+function wsButtonFor(rest) {
+  const token = String(rest == null ? "" : rest).split("~")[0];
+  if (!token) return null;
+  for (const b of document.querySelectorAll("button.tab[data-ws-tab]")) {
+    if (b.dataset.wsTab === token && wsShown(b)) return b;
+  }
+  return null;
+}
+
+function wsShownTab() {
+  for (const c of document.querySelectorAll(".tab-content")) if (c.style.display === "block") return c.id;
+  return null;
+}
+
+/** The button to show for `rest`: its own, else the default tab's. */
+function wsResolve(rest) {
+  return wsButtonFor(rest) || wsButtonFor(wsTokenFor(WS_DEFAULT_TAB));
+}
+
+/** Boot: show the tab `rest` names, else the default. Never throws on a token. */
+function wsRestoreTab(rest) {
+  const b = wsResolve(rest);
+  if (b) b.click();
+  else openTab(null, WS_DEFAULT_TAB);
+}
+
+/** The rest handed down by the shell (once), else the legacy ?tab=. */
+function wsBootRest() {
+  const held = window.ycSubTab ? ycSubTab.leaf.take() : null;
+  return held != null ? held : (new URLSearchParams(location.search).get("tab") || "");
+}
+
+window.ycApplySubTab = function (rest) {
+  const b = wsResolve(rest);
+  if ((b ? wsTargetOf(b) : WS_DEFAULT_TAB) === wsShownTab()) return;
+  if (b) b.click();
+  else openTab(null, WS_DEFAULT_TAB);
+};
 
 // ── Utilities ───────────────────────────────────────────────
 function processing() {
@@ -1885,7 +1975,7 @@ processing();
     loadIframes();
 
     E('tabViewClient').style.display = 'block';
-    openTab(null, 'tabInfo');
+    wsRestoreTab(wsBootRest());   // the inner tab (wsurl S1b); unknown → Client Information
     Swal.close();
 
     if (window.entityData.cases.length)     putCases();
