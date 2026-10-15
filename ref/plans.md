@@ -472,9 +472,21 @@ Active surfaces with known next steps.
   passing, not hunted: case.html putAppts and contact.html putAppt (cells,
   plus status and dates quoted into apptUpdate onclick source), both pages'
   putEvents, case.html's pipeline widget (`pwOverride('${k}')`), tasks.html's
-  other cells and taskModalAction, and every page outside these three. Tools:
+  other cells and taskModalAction, and every page outside these three. Also
+  seen raw during wsurl S-links: the link TEXT cells of get_events
+  (lib/internal_functions/events.js) and get_appointments (appointments.js)
+  html rows, and routes/renaReminder.jsx's links (legacy, unmounted). Tools:
   escText / escAttr / fileLinkHtml in scripts.js; data-* or a bound listener,
   never data in onclick source.
+
+- **Workspace URL — deferred levels (wsurl, 2026-10-16).** The protocol
+  (ref/AI_CONTEXT.md §12 Workspace URL) stops at the levels built so far.
+  Next: S4, automationManager reporting its sub-page (the drill-panel pane
+  plumbing from S2 is ready; it needs only the leaf calls); the HOST role
+  inside case.html / contact.html, once a nested pane (documents, tasks,
+  widgets) gains a vocabulary — today a deep link into a file keeps only its
+  tab level; tasks.html as a leaf (then move the wsurl harness's (3s) ?open=
+  check to a pane that still has none, or to the panel-pane path).
 
 
 ---

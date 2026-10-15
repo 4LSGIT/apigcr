@@ -835,6 +835,35 @@ READMEs); the server's heading count must match what marked renders —
 `scripts/mobile-survey/manualOrdinals.js` checks it (rerun after a marked pin
 bump or a parser change). Contracts: the route file's header.
 
+**Workspace URL:** the shell's address bar is a live workspace snapshot
+(`syncWorkspaceUrl`: replaceState, one write per microtask, gated until boot;
+the version guard reloads through `window.ycReloadUrl`):
+`?files=c<case_id>|p<contact_id>|b<id>[~rest],…` + `?open=file:<n>` (a file's
+rest lives in its token) or `?open=<mainTabId>[~rest]`. A rest = one
+`~`-joined segment per frame layer, each layer owning its vocabulary (case /
+contact: `data-ws-tab`; comms: email|phone|team; tabMore/tabAdmin: the open
+drill panel's FEATURE_REGISTRY id). Grammar in `public/js/ycSubTab.js`:
+`[A-Za-z0-9_-]{1,32}`, depth ≤4, ≤128, empty = default, invalid → dropped at
+its layer (file/tab kept). Vocabulary or surrogate DB ids ONLY: the URL rides
+Referer into jwt_api_audit_log, redacted by key (credentials, `q`), not value.
+A leaf reports from its ONE switch function (`ycSubTab.leaf.report` → parent
+`window.ycReportSubTab(frameElement, rest)`) and takes the handed-down rest
+ONCE at boot (`leaf.take` → `ycTakeSubTab`); file pages add `ycApplySubTab`
+for the dedup refocus. The shell accepts only a file's / main tab's own pane
+frame or a drill panel's direct iframe (not Swal / tool dialogs), shows only
+the ACTIVE view's rest, and never opens anything on a report. `?open=`'s head
+must be a tab the effective registry offers (`wsMainTabAllowed`, after
+applyAccess; else Home); a drill panel reopens ONLY via `ycLauncher.exec`, for
+a plain registry id whose tile has `data-target` (never action/dialog tiles or
+`firm:` ids). Leaves: case.html, contact.html, comms.html; panel panes are
+plumbed, none reports. A new pane: load ycSubTab.js; report from its one
+switch; take once AFTER the content deciding which choices are visible;
+restore by clicking / calling its own switch; never throw on a token. Server:
+`lib/shellLinks.js` builds staff deep links by exact id; legacy `?case=` /
+`?contact=` (a limit=1 search) is accepted forever. Gate:
+`scripts/mobile-survey/wsurl.js` (heavy-gate `browser`) + `tests/wsurlS*.test.js`.
+Detail: index.html's WORKSPACE URL comment; deferred levels: plans.md.
+
 ## 13. WORKFLOWS IN PRODUCTION — retired section
 Query the live `workflows` / `sequence_templates` tables; a static list here
 was stale by definition.
@@ -1504,6 +1533,10 @@ services/entitlementService.deniedFor → `denied[]` in /api/firm-data
 Visibility-only; CRUD behind firm.settings; no editor UI yet — it joins
 the Config shell's Firm tab (the CFG-3 surface, public/caseconfig/firm.html,
 ui-custom S3.2) as a section in the settings arc.
+A deny (`data-yc-denied`) only HIDES launcher elements — the delegated
+`[data-target]` handler never checks it — so programmatic opens (URL restore,
+§12 Workspace URL; the palette) go through `ycLauncher.exec`, which refuses
+denied / admin-gated / firm-hidden ids (wsurl S2, F2 of its review).
 
 **Key scopes.** Both key tables carry `scopes` JSON; NULL = legacy full
 surface MINUS `explicit` scopes (sql.ro.sensitive — a legacy key never
