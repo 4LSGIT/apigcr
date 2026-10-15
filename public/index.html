@@ -856,7 +856,7 @@
       flex: 1; max-width: 480px; margin-left: 16px;
     }
     #appHeader .hdr-search input {
-      flex: 1; height: 36px; padding: 0 14px;
+      flex: 1; width: 220px; height: 36px; padding: 0 14px;
       border: 1px solid var(--border); border-radius: 6px;
       font-size: 14px; outline: none; transition: border-color 0.15s, box-shadow 0.15s;
       background: var(--surface); color: var(--text);
@@ -934,6 +934,21 @@
     #appHeader .hdr-btn-icon i { font-size: 15px; }
     #appHeader .hdr-logout { color: var(--danger); }
     #appHeader .hdr-logout:hover { background: var(--danger-soft); }
+
+    /* Progressive fit, above the phone block. Nothing used to collapse over
+       768px, so from 769 to ~1150px (more with a long name; the system font
+       is wider than Arial) the right group was clipped, Log Out first. The
+       hdrFit script after </header> adds these levels, cumulatively and
+       lowest first, until the content fits. At <=768px it adds none and the
+       phone block does the job; L3 is the phone look for the buttons. */
+    #appHeader.hdr-fit-1 .hdr-clock .hdr-clock-date { display: none; }
+    #appHeader.hdr-fit-2 .hdr-greeting { display: none; }
+    #appHeader.hdr-fit-3 .hdr-btn span,
+    #appHeader.hdr-fit-3 .hdr-logout span { display: none; }
+    #appHeader.hdr-fit-3 .hdr-btn .hdr-badge { display: inline-block; }
+    #appHeader.hdr-fit-3 .hdr-btn,
+    #appHeader.hdr-fit-3 .hdr-logout { padding: 0 10px; }
+    #appHeader.hdr-fit-4 .hdr-search input { width: 120px; }
 
     /* Sidebar */
     #appSidebar {
@@ -1220,7 +1235,7 @@
       alt="4LSG YisraCase">
   </a>
     <div class="hdr-search">
-      <input style="width:220px;" id="qpInput" placeholder="Name, Phone, Case # or ID"
+      <input id="qpInput" placeholder="Name, Phone, Case # or ID"
         onkeydown="if (event.key === 'Enter'){event.preventDefault();quickPick(this.value, null, null, 10);}" />
       <button onclick="quickPick(E('qpInput').value, null, null, 10)">Go</button>
     </div>
@@ -1242,6 +1257,46 @@
       </button>
     </div>
   </header>
+  <script id="hdrFit">
+  // Progressive header fit: picks the lowest hdr-fit-N level (header CSS)
+  // at which the header's content fits. Fit = no child's right edge past the
+  // header's content box. One synchronous pass, reset then step up, so no
+  // frame paints an in-between level. Re-runs on: resize (sync, before the
+  // new width paints); DOM changes in the header (name, user area shown,
+  // tasks badge, clock text) and the body class (sidebar-hidden shows the
+  // hamburger), via MutationObserver, a microtask, also before paint; and
+  // size changes that are not DOM changes (the logo loading, the icon font
+  // arriving), via ResizeObserver. That one is deferred to the next frame:
+  // changing classes inside its callback resizes what it observes, and Chrome
+  // reports that as a "ResizeObserver loop" error. <=768px: no levels.
+  (() => {
+    const h = document.getElementById('appHeader');
+    const phone = matchMedia('(max-width: 768px)');
+    const LEVELS = 4;
+    const overflows = () => {
+      const limit = h.getBoundingClientRect().right - parseFloat(getComputedStyle(h).paddingRight) + 0.5;
+      for (const el of h.children) if (el.getBoundingClientRect().right > limit) return true;
+      return false;
+    };
+    const fit = () => {
+      for (let n = 1; n <= LEVELS; n++) h.classList.remove('hdr-fit-' + n);
+      if (phone.matches) return;
+      for (let n = 1; n <= LEVELS && overflows(); n++) h.classList.add('hdr-fit-' + n);
+    };
+    let queued = false;
+    const nextFrame = () => {
+      if (queued) return;
+      queued = true;
+      requestAnimationFrame(() => { queued = false; fit(); });
+    };
+    addEventListener('resize', fit);
+    const mo = new MutationObserver(fit);
+    mo.observe(h, { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ['style'] });
+    mo.observe(document.body, { attributes: true, attributeFilter: ['class'] });
+    const ro = new ResizeObserver(nextFrame);
+    for (const el of h.querySelectorAll('.hdr-hamburger, .hdr-logo, .hdr-clock, #hdrUserArea > *')) ro.observe(el);
+  })();
+  </script>
 
   <!-- ============ SIDEBAR ============ -->
   <nav id="appSidebar" style="display:none">
