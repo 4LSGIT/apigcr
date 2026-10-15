@@ -277,6 +277,22 @@ maybe('comms archive S3 summaries on real MySQL', () => {
     expect(await qrow(tid)).toMatchObject({ state: 'done', attempts: 0 });
   });
 
+  test('V4a a party greeting its OWN assigned name ("Hey, Stuart." from "Stuart") is listed in the tick output; its name nulled, the summary kept', async () => {
+    const segs = [{ s: 'A', a: 0, b: 1, t: 'Hey, Stuart.' }, { s: 'B', a: 1, b: 4, t: 'Hi, it is Stuart from the law office, about your case.' }];
+    const { tid } = await item({ segs, direction: 'outgoing' });
+    const { tid: ok } = await item({ segs });
+    api.queue.push(reply(JSON.stringify({ call_type: 'client', summary: 'Stuart called.', parties: [{ speaker: 'A', role: 'firm', name: 'Stuart' }, { speaker: 'B', role: 'client', name: null }] })));
+    api.queue.push(reply(JSON.stringify({ call_type: 'client', summary: 'Stuart called.', parties: [{ speaker: 'B', role: 'firm', name: 'Stuart' }, { speaker: 'A', role: 'client', name: null }] })));
+    const out = await run();
+    expect(out).toMatchObject({ summarized: 2, rejected: 0 });
+    expect(out.self_addressed).toHaveLength(1);
+    const flagged = out.self_addressed[0];
+    expect([tid, ok]).toContain(flagged);
+    const other = flagged === tid ? ok : tid;
+    expect((await tr(flagged)).summary.parties.find(p => p.role === 'firm').name).toBeNull();
+    expect((await tr(other)).summary.parties.find(p => p.role === 'firm').name).toBe('Stuart');
+  });
+
   test('V3b a firm context over 2,000 characters stops the summaries (config problem, alerted) — 2,000 is fine', async () => {
     await item();
     await set('comms_summary_firm_context', 'x'.repeat(2001));
@@ -670,6 +686,24 @@ maybe('comms archive S3 summaries on real MySQL', () => {
     expect(await tr(tid)).toMatchObject({ state: 'purged', summary: null, summary_text: null });
     const [c] = await calls(tid);
     expect(c.response).toBeNull();
+  });
+
+  test('P3b v4: a self-addressed summary purged between the validation and the UPDATE is NOT listed in self_addressed', async () => {
+    const segs = [{ s: 'A', a: 0, b: 1, t: 'Hey, Stuart.' }, { s: 'B', a: 1, b: 4, t: 'Hi, it is Stuart from the law office, about your case.' }];
+    const { mid } = await item({ segs, direction: 'outgoing' });
+    api.queue.push(reply(JSON.stringify({ call_type: 'client', summary: 'Stuart called.', parties: [{ speaker: 'A', role: 'firm', name: 'Stuart' }] })));
+    let fired = false;
+    const db = {
+      getConnection: () => pool.getConnection(),
+      async query(sql, p) {
+        if (!fired && /SET state = 'summarized'/.test(sql)) { fired = true; await admin.purge(pool, mid, { userId: 1, reason: 'race' }); }
+        return pool.query(sql, p);
+      },
+    };
+    const out = await run(db);
+    expect(out).toMatchObject({ fenced: 1, summarized: 0 });
+    expect(fired).toBe(true);
+    expect(out.self_addressed).toBeUndefined();
   });
 
   // ═══ T ════════════════════════════════════════════════════════════════════

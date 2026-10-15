@@ -356,3 +356,132 @@ describe('v3 (2026-10-15): call_type / reached_voicemail, resolved_date, the rol
     expect(nobody.dropped).toBe(1);                                                                   // no firm turn says it
   });
 });
+
+describe('v4 self-address: a party whose OWN words greet its assigned name loses that name (flag only, never repaired)', () => {
+  // The v3 QA's top fault, on the attorney's OUTGOING calls: the callee answers "Hey, Stuart." and the model makes
+  // the callee Stuart. Synthetic transcripts only.
+  const SWAP = [
+    { s: 'A', a: 0, b: 1, t: 'Hey, Stuart.' },
+    { s: 'B', a: 1, b: 3, t: 'Hi, it\'s Stuart. Do you know who it is?' },
+    { s: 'A', a: 3, b: 6, t: 'Yes, Stuart Sandweiss. Send me the papers and I\'ll look at them.' },
+    { s: 'B', a: 6, b: 8, t: 'I\'ll call you back tomorrow.' },
+  ];
+  const vs = (parties, segs) => g.validate({ call_type: 'client', summary: 'x', parties }, { segments: segs, fullText: segs.map(x => x.t).join('\n') });
+  const named = (r, sp) => r.summary.parties.find(p => p.speaker === sp).name;
+
+  test('"Hey, Stuart" from the party made Stuart: name nulled, speaker listed; the role is NOT repaired; nothing counted as dropped', () => {
+    const r = vs([{ speaker: 'A', role: 'firm', name: 'Stuart' }, { speaker: 'B', role: 'client', name: null }], SWAP);
+    expect(r.ok).toBe(true);
+    expect(r.selfAddressed).toEqual(['A']);
+    expect(r.summary.parties).toEqual([{ speaker: 'A', role: 'firm', name: null }, { speaker: 'B', role: 'client', name: null }]);
+    expect(r.dropped).toBe(0);
+  });
+
+  test('the full name in reply ("Yes, Stuart Sandweiss." after "do you know who it is?") is an address, not the opening line', () => {
+    const segs = [{ s: 'A', a: 0, b: 1, t: 'Hello?' }, ...SWAP.slice(1)];
+    expect(vs([{ speaker: 'A', role: 'firm', name: 'Stuart Sandweiss' }], segs).selfAddressed).toEqual(['A']);
+  });
+
+  test('the correct assignment passes: "Hi, this is Stuart" / "Hi, it\'s Stuart" from Stuart is a self-introduction', () => {
+    const r = vs([{ speaker: 'B', role: 'firm', name: 'Stuart' }, { speaker: 'A', role: 'client', name: null }], SWAP);
+    expect([r.selfAddressed, named(r, 'B')]).toEqual([[], 'Stuart']);
+    const intro = [{ s: 'A', a: 0, b: 1, t: 'Hello?' }, { s: 'B', a: 1, b: 3, t: 'Hi, this is Stuart from the law office.' }];
+    expect(vs([{ speaker: 'B', role: 'firm', name: 'Stuart' }], intro).selfAddressed).toEqual([]);
+  });
+
+  test('the attorney\'s own opening line "Hello, Stuart Sandweiss." is a self-introduction — full name or first name assigned', () => {
+    const segs = [{ s: 'A', a: 0, b: 1, t: 'Hello?' }, { s: 'B', a: 1, b: 3, t: 'Hello, Stuart Sandweiss.' }, { s: 'A', a: 3, b: 5, t: 'Oh hi.' }];
+    expect(vs([{ speaker: 'B', role: 'firm', name: 'Stuart Sandweiss' }], segs).selfAddressed).toEqual([]);
+    expect(vs([{ speaker: 'B', role: 'firm', name: 'Stuart' }], segs).selfAddressed).toEqual([]);
+    // …but a first name ENDING the greeting in the opening line is an address ("Hey, Stuart. How are you?")
+    const greet = [{ s: 'A', a: 0, b: 1, t: 'Hey, Stuart. How are you?' }];
+    expect(vs([{ speaker: 'A', role: 'firm', name: 'Stuart' }], greet).selfAddressed).toEqual(['A']);
+  });
+
+  test('"Thanks, Stuart" from the OTHER party flags nothing — only a party\'s own assigned name counts', () => {
+    const segs = [
+      { s: 'A', a: 0, b: 2, t: 'Sandweiss law, Stuart speaking.' },
+      { s: 'B', a: 2, b: 5, t: 'Thanks so much, Stuart, for the help.' },
+    ];
+    const r = vs([{ speaker: 'A', role: 'firm', name: 'Stuart' }, { speaker: 'B', role: 'client', name: null }], segs);
+    expect([r.selfAddressed, named(r, 'A')]).toEqual([[], 'Stuart']);
+    // the same words, the parties swapped by the model → B (made Stuart) thanks Stuart: flagged
+    const s = vs([{ speaker: 'B', role: 'firm', name: 'Stuart' }, { speaker: 'A', role: 'client', name: null }], segs);
+    expect(s.selfAddressed).toEqual(['B']);
+  });
+
+  test('self-tails ("Stuart here", "Stuart calling") are introductions; "bye Mr. Sandweiss" is an address; a last name needs a title', () => {
+    // the name rides as a KNOWN name (it is not said whole here), so it survives grounding and only the self-address check decides
+    const one = (t) => {
+      const segs = [{ s: 'B', a: 0, b: 1, t: 'Hello?' }, { s: 'A', a: 1, b: 2, t: 'Okay.' }, { s: 'A', a: 2, b: 3, t }];
+      const r = g.validate({ call_type: 'client', summary: 'x', parties: [{ speaker: 'A', role: 'firm', name: 'Stuart Sandweiss' }] },
+        { segments: segs, fullText: '', knownNames: ['Stuart Sandweiss'] });
+      expect(r.summary.parties[0].name).toBe(r.selfAddressed.length ? null : 'Stuart Sandweiss');
+      return r.selfAddressed;
+    };
+    expect(one('Hi, Stuart here.')).toEqual([]);
+    expect(one('Hey, Stuart calling about the case.')).toEqual([]);
+    expect(one('Okay, bye Mr. Sandweiss.')).toEqual(['A']);
+    expect(one('Thanks, Sandweiss law.')).toEqual([]);
+    expect(one('Good morning, Sandweiss Law.')).toEqual([]);                    // the firm's own greeting: a surname with no title
+    expect(one('Hey, Stuart, calling about the case.')).toEqual([]);            // a self-tail after punctuation
+    expect(one('Hi, Stuartson.')).toEqual([]);                                   // whole words only
+  });
+
+  test('the name absent from the call: nothing to check, nothing flagged; a known contact name that is never greeted survives', () => {
+    const segs = [{ s: 'A', a: 0, b: 2, t: 'Hello, how can I help?' }, { s: 'B', a: 2, b: 5, t: 'I have a question about my case.' }];
+    const r = g.validate({ call_type: 'client', summary: 'x', parties: [{ speaker: 'A', role: 'firm', name: 'Stuart' },
+      { speaker: 'B', role: 'client', name: 'Maria Lopez' }] }, { segments: segs, fullText: '', knownNames: ['Maria Lopez'] });
+    expect(r.selfAddressed).toEqual([]);
+    expect(r.summary.parties.map(p => p.name)).toEqual([null, 'Maria Lopez']);    // Stuart: not said → null by grounding, not flagged
+  });
+
+  test('the base fixture ("Hi, this is Maria Lopez") is untouched', () => {
+    expect(run(base()).selfAddressed).toEqual([]);
+    expect(run(base()).summary.parties[1].name).toBe('Maria Lopez');
+  });
+});
+
+describe('v4: a vendor-masked word in a quote (first letter + asterisks) grounds like any other word', () => {
+  test('a commitment quoting a masked word is kept, with its t', () => {
+    const segs = [{ s: 'A', a: 0, b: 2, t: 'Hello?' }, { s: 'B', a: 2, b: 6, t: 'I will send the f*** papers tomorrow, I promise.' }];
+    const r = g.validate({ call_type: 'client', summary: 'x', parties: [{ speaker: 'B', role: 'firm', name: null }],
+      commitments: [{ by: 'firm', what: 'send the papers', quote: 'I will send the f*** papers tomorrow' }] },
+    { segments: segs, fullText: segs.map(x => x.t).join('\n') });
+    expect([r.dropped, r.summary.commitments.length, r.summary.commitments[0].t]).toEqual([0, 1, 2]);
+  });
+});
+
+describe('v4 self-address, read on the raw words: common words, sentence breaks, greetings vs replies with a full name', () => {
+  const flagged = (name, lines, knownNames = []) => g.validate({ call_type: 'client', summary: 'x', parties: [{ speaker: 'A', role: 'firm', name }] },
+    { segments: lines.map((t, i) => ({ s: 'A', a: i, b: i + 1, t })), fullText: '', knownNames }).selfAddressed;
+
+  test('a common word is no name: "Yes, will do." (Will), "Thanks, Mark it down." (Mark) — the capitalised address still is', () => {
+    expect(flagged('Will', ['Okay.', 'Yes, will do.'])).toEqual([]);
+    expect(flagged('Will', ['Okay.', 'Yes, will, as soon as it comes in.'])).toEqual([]);   // lowercase: not a name
+    expect(flagged('Will', ['Okay.', 'Thanks, Will.'])).toEqual(['A']);
+    expect(flagged('Mark', ['Okay.', 'Thanks, Mark it down.'])).toEqual([]);
+    expect(flagged('Mark', ['Okay.', 'Thanks. Mark it down.'])).toEqual([]);        // a sentence break ends the greeting
+    expect(flagged('Mark', ['Okay.', 'Thanks, Mark.'])).toEqual(['A']);
+  });
+
+  test('a GREETING + the full name is a self-introduction in any segment: a split pickup, a voicemail line', () => {
+    expect(flagged('Stuart Sandweiss', ['Hello.', 'Hello, Stuart Sandweiss.'])).toEqual([]);
+    expect(flagged('Stuart', ['Hello.', 'Hello, Stuart Sandweiss.'], ['Stuart'])).toEqual([]);   // surname unassigned: a run-on capital
+    expect(flagged('Stuart Sandweiss', ['Hi, it is me.', 'Hi, Stuart Sandweiss again, about the hearing.'])).toEqual([]);
+  });
+
+  test('a REPLY + the full name is an address after the opening line, and not in it', () => {
+    expect(flagged('Stuart Sandweiss', ['Okay.', 'Thanks, Stuart Sandweiss.'])).toEqual(['A']);
+    expect(flagged('Stuart Sandweiss', ['Thanks, Stuart Sandweiss.'])).toEqual([]);
+    expect(flagged('Stuart', ['Okay.', 'Yes, Stuart Sandweiss.'], ['Stuart'])).toEqual(['A']);
+  });
+});
+
+describe('v4 self-address: a sentence break ends the greeting', () => {
+  test('"Yes. Will, the trustee, called." mentions Will; it does not address him', () => {
+    const r = g.validate({ call_type: 'client', summary: 'x', parties: [{ speaker: 'A', role: 'firm', name: 'Will' }] },
+      { segments: [{ s: 'A', a: 0, b: 1, t: 'Okay.' }, { s: 'A', a: 1, b: 3, t: 'Yes. Will, the trustee, called.' }], fullText: '' });
+    expect(r.selfAddressed).toEqual([]);
+  });
+});

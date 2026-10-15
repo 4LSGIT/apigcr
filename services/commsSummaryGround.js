@@ -6,7 +6,7 @@
  * the transcript in, a clean summary out. No DB, no I/O.
  *
  *   validate(json, { segments, fullText, kind, knownNames })
- *     → { ok: true, summary, summaryText, dropped }
+ *     → { ok: true, summary, summaryText, dropped, coerced, selfAddressed }
  *     | { ok: false, why }
  *
  * SHAPE (strict): the §6.4 keys only — anything else is dropped; a key of the
@@ -51,6 +51,29 @@
  * only if it occurs in the transcript AS WHOLE WORDS ("Tom" is not in
  * "tomorrow") or equals a known name (the matched contact) — otherwise null.
  *
+ * SELF-ADDRESS (v4): a name said TO someone names the OTHER speaker, so a party
+ * whose OWN segments greet, thank, answer or bid goodbye to its assigned name
+ * ("hey Stuart", "thanks so much Stuart", "yes, Stuart Sandweiss" in reply,
+ * "bye Mr. Sandweiss") has that name contradicted by its own words — the v3
+ * QA's top fault, roles swapped by address on the attorney's outgoing calls.
+ * Its `name` becomes null and its speaker is listed in `selfAddressed` (the
+ * sweep lists the transcript in the tick output). FLAG ONLY, never repaired:
+ * the role stays as given, and nothing is counted in `dropped`. The name must
+ * follow the opener (hi / hey / hello / yes / thanks / thank you / bye /
+ * goodbye / good morning…) in the same clause — fillers ("so much", "there")
+ * and a title aside, a sentence break ends it — so a self-introduction never
+ * matches: "hi, this is Stuart", "hello, it's Stuart"; an opener + name
+ * followed by "calling" / "here" / "speaking" / "from" is one too. Read on the
+ * RAW words: the name must be capitalised ("Yes, will do." is no address to
+ * Will) and must not run on into a lowercase word ("Thanks, Mark it down.").
+ * The FULL name (the assigned surname next, or any capitalised word run
+ * straight on — the surname unassigned or misheard) after a GREETING (hi /
+ * hey / hello / good morning…) is a self-introduction in any segment ("Hello,
+ * Stuart Sandweiss.", "Hi, Stuart Sandweiss again"); after a REPLY (yes /
+ * thanks / thank you / bye / goodbye) it is an address — outside the speaker's
+ * own first segment ("Yes, Stuart Sandweiss." after "you know who it is?").
+ * A last name alone counts only after a title.
+ *
  * A failed validation returns a FIXED code in `why` (never model text): it
  * lands in comms_summaries.last_error and in alerts.
  *
@@ -79,6 +102,14 @@ const BY = new Set(['firm', 'other']);
 const FLAGS = new Set(['personal', 'sensitive', 'dispute']);
 
 const MAX = { summary: 2000, what: 300, quote: 500, text: 200, why: 500, name: 120 };
+/** v4 self-address (see the header): normalised word patterns. */
+const ADDRESS = Object.freeze({
+  greetings: ['hi', 'hey', 'hello', 'good morning', 'good afternoon', 'good evening'],   // + a FULL name: a self-introduction
+  replies: ['yes', 'thanks', 'thank you', 'bye', 'goodbye'],                              // + a FULL name: an address
+  fillers: ['so much', 'very much', 'a lot', 'again', 'there'],
+  titles: ['mr', 'mrs', 'ms', 'miss', 'dr'],
+  selfTails: ['calling', 'here', 'speaking', 'from'],
+});
 const MIN_QUOTE_WORDS = 3;
 
 /**
@@ -180,6 +211,38 @@ function oneSpeaker(hay, at, len) {
   return true;
 }
 
+/** v4: do `speaker`'s own segments greet / thank / answer / bid goodbye to `name` (its assigned name)? See the header. */
+function addressesOwnName(hay, speaker, name) {
+  const toks = normalise(name).split(' ').filter(t => t && !ADDRESS.titles.includes(t));
+  if (!toks.length) return false;
+  const esc = (t) => t.replace(/[.*+?^${}()|[\]\\\/-]/g, '\\$&');
+  const SEP = '[\\s,;:—–-]+';                       // inside one clause: a sentence break (. ! ?) ends the greeting
+  const alt = (xs) => xs.map(x => x.split(' ').map(esc).join(SEP)).join('|');
+  const title = `(?:${alt(ADDRESS.titles)})\\.?${SEP}`;
+  const first = esc(toks[0]), last = toks[toks.length - 1];
+  const who = toks.length > 1 ? `(?:${title})?(${first})|${title}(${esc(last)})` : `(?:${title})?(${first})`;
+  // Read on the RAW words: a name is capitalised by the transcriber, a common word ("yes, will do") is not.
+  const re = new RegExp(`(?:^|[^\\p{L}\\p{N}])(${alt([...ADDRESS.greetings, ...ADDRESS.replies])})`
+    + `(?:${SEP}(?:${alt(ADDRESS.fillers)}))?${SEP}(?:${who})(?![\\p{L}\\p{N}])`, 'giu');
+  const own = hay.segs.filter(s => s && s.s === speaker);
+  return own.some((s, i) => {
+    const raw = String(s.t).normalize('NFKC').replace(/[​-‍⁠﻿­]/g, '');
+    for (const m of raw.matchAll(re)) {
+      if (!/^\p{Lu}/u.test(m[2] || m[3])) continue;                 // "Yes, will do." — not a name
+      const rest = raw.slice(m.index + m[0].length);
+      if (/^\s+\p{Ll}/u.test(rest)) continue;                       // "Thanks, Mark it down." — the word runs on into its clause
+      const next = normalise(rest).split(' ')[0] || '';
+      if (ADDRESS.selfTails.includes(next)) continue;               // "Hi, Stuart here" / "… calling" / "… speaking" / "… from"
+      // The FULL name (the assigned surname next, or any capitalised word run straight on: unassigned or misheard).
+      const full = !!m[2] && ((toks.length > 1 && next === last) || /^\s+\p{Lu}/u.test(rest));
+      if (!full) return true;                                       // a first name (or a title + surname) alone: an address
+      if (ADDRESS.greetings.includes(normalise(m[1]))) continue;   // "Hello, Stuart Sandweiss." — a self-introduction, anywhere
+      if (i > 0) return true;                                       // "Yes, Stuart Sandweiss." after the opening line — an address
+    }
+    return false;
+  });
+}
+
 const isStr = (v, max, min = 1) => typeof v === 'string' && v.trim().length >= min && v.length <= max;
 const fail = (why) => ({ ok: false, why });
 
@@ -267,6 +330,7 @@ function validate(json, { segments = [], fullText = '', kind = 'call_recording',
   const speakers = new Set((Array.isArray(segments) ? segments : []).map(s => s && s.s).filter(Boolean));
   const known = new Set((knownNames || []).filter(Boolean).map(normalise));
   const parties = [];
+  const selfAddressed = [];
   if (json.parties !== undefined && json.parties !== null) {
     if (!Array.isArray(json.parties)) return fail('parties_not_array');
     for (const p of json.parties) {
@@ -276,6 +340,8 @@ function validate(json, { segments = [], fullText = '', kind = 'call_recording',
         const n = normalise(p.name);
         if (n && (known.has(n) || wordIndex(hay.text, n) >= 0)) name = p.name.trim();
       }
+      // v4: a name the party greets in its OWN words is the other speaker's — contradicted, so null (counted apart).
+      if (name && addressesOwnName(hay, p.speaker, name)) { name = null; selfAddressed.push(p.speaker); }
       parties.push({ speaker: p.speaker, role: p.role, name });
     }
   }
@@ -308,6 +374,7 @@ function validate(json, { segments = [], fullText = '', kind = 'call_recording',
     summaryText,
     dropped: counter.n,
     coerced,
+    selfAddressed,
     summary: {
       call_type: callType, reached_voicemail: reachedVoicemail, summary: summaryText, parties,
       commitments, dates, documents_requested: documents, amounts, case_refs: caseRefs,
@@ -329,4 +396,4 @@ function transcriptText(segments, fullText) {
   return segs.map(s => `[${ts(s.a)}] ${s.s}: ${s.t}`).join('\n');
 }
 
-module.exports = { validate, normalise, haystackOf, transcriptText, resolvedDate, MIN_QUOTE_WORDS, CALL_TYPES, ROLES, FLAGS, RESOLVED_RANGE };
+module.exports = { validate, normalise, haystackOf, transcriptText, resolvedDate, MIN_QUOTE_WORDS, CALL_TYPES, ROLES, FLAGS, RESOLVED_RANGE, ADDRESS };

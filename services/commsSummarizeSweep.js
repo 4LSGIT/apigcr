@@ -103,7 +103,7 @@ const STAFF_WHERE = "user_auth LIKE 'authorized%' AND roles <> '' AND FIND_IN_SE
 const STAFF_MAX = 40;
 /**
  * S3c: the system line that frames a staff note — appended (aiService systemAppend, after the {{var}} pass) ONLY
- * when the call has one, so the v3 prompt is unchanged otherwise. The note itself rides INSIDE the untrusted user
+ * when the call has one, so the prompt is unchanged otherwise. The note itself rides INSIDE the untrusted user
  * input, escaped: it is data, never instructions, and the validator grounds quotes in the transcript only.
  */
 const NOTE_FRAMING = 'The input may begin with a <staff_note> block: a firm staff member\'s hint about this call\'s context '
@@ -126,7 +126,7 @@ const limits = {
   timeoutLongMs: 120_000,
   timeoutShortMs: 60_000,
   longPromptTokens: 20_000,      // above this (estimated) the long timeout
-  systemTokens: 2_600,           // the prompt's own size (v3, with the firm context at its cap), for the estimate
+  systemTokens: 3_400,           // the prompt's own size (v4, ~7.9K characters, with the firm context at its cap), for the estimate
   leaseMin: 15,
   maxAttempts: 3,
   backoffCapMin: 60,
@@ -580,6 +580,9 @@ async function _summarizeOne(ctx, row) {
     out.fenced++;
     return null;
   }
+  // v4: a party greeting its own assigned name ("Hey, Stuart" from "Stuart") — its name nulled; listed only once the
+  // summary is written (a purge fenced above never is). Transcript ids, no content: they land in job_results.
+  if (v.selfAddressed.length) out.self_addressed = [...(out.self_addressed || []), row.transcript_id];
   await db.query(
     `UPDATE comms_summaries SET state = 'done', est_cents = NULL, next_attempt_at = NULL, last_error = NULL,
             attempts = GREATEST(attempts, 1) - 1
