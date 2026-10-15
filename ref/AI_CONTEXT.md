@@ -1013,8 +1013,8 @@ named at mint. A miss is a 403 whose body names `missingScope`.
 **Table tiers (SEC-3, ACCESS_CONTROL_DESIGN §5.7, `lib/sqlGuard.js`):**
 `SECRET_TABLES` (`app_settings`, `email_ingest_sources`) — refused to every
 key (400). `SENSITIVE_TABLES` (`jwt_api_audit_log`, `ai_calls`,
-`comms_transcripts`, `comms_no_transcribe`, `admin_audit_log`,
-`readonly_query_log`) — a 403 naming `sql.ro.sensitive` unless the key holds
+`comms_transcripts`, `comms_no_transcribe`, `comms_summary_guides`,
+`admin_audit_log`, `readonly_query_log`) — a 403 naming `sql.ro.sensitive` unless the key holds
 it. The `ai_spend` VIEW (ai_calls minus `error` / `request_excerpt` /
 `response`; not in `ref/database.sql` — schemaDump dumps base tables only, its
 definition is `ref/migrations/2026-10-14_access_sec3_sensitive_tier.sql`) is

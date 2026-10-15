@@ -544,6 +544,7 @@ ref/migrations/2026-10-15_comms_s2c_redo.sql
 ref/migrations/2026-10-15_comms_s3_summaries.sql
 ref/migrations/2026-10-15_comms_s3b_firm_context.sql
 ref/migrations/2026-10-15_hook16_quo_message_group_to.console.js
+ref/migrations/2026-10-16_comms_s3c_summary_guides.sql
 ref/migrations/S1_notes_migration.sql
 ref/migrations/documents_s1.sql
 ref/migrations/documents_s2.sql
@@ -852,6 +853,7 @@ services/commsArchiveAdmin.js
 services/commsArchiveCommon.js
 services/commsArchiveMediaSweep.js
 services/commsArchiveRedo.js
+services/commsArchiveResummarize.js
 services/commsArchiveSearch.js
 services/commsArchiveService.js
 services/commsArchiveSweep.js

@@ -16,7 +16,7 @@ describe("sqlGuard.touchesSecretTable", () => {
     // Adding a table here is an access decision — review the consumers.
     // SEC-3 split the old list in two (ACCESS_CONTROL_DESIGN §5.7).
     expect(SECRET_TABLES).toEqual(["app_settings", "email_ingest_sources"]);
-    expect(SENSITIVE_TABLES).toEqual(["jwt_api_audit_log", "ai_calls", "comms_transcripts", "comms_no_transcribe", "admin_audit_log", "readonly_query_log"]);
+    expect(SENSITIVE_TABLES).toEqual(["jwt_api_audit_log", "ai_calls", "comms_transcripts", "comms_no_transcribe", "comms_summary_guides", "admin_audit_log", "readonly_query_log"]);
   });
 
   test.each([
@@ -34,6 +34,9 @@ describe("sqlGuard.touchesSecretTable", () => {
     ["SELECT m.id, t.segments FROM comms_media m JOIN `comms_transcripts` t ON t.media_id = m.id"],
     ["SELECT COUNT(*) FROM comms_transcripts"],
     ["select phone from COMMS_NO_TRANSCRIBE"],
+    // comms archive S3c: staff notes on calls
+    ["SELECT note FROM comms_summary_guides WHERE transcript_id = 1"],
+    ["SELECT t.id, g.note FROM comms_transcripts t JOIN `comms_summary_guides` g ON g.transcript_id = t.id"],
     // access B2 landing → SEC-3 sensitive tier: the gateway audit log.
     ["SELECT body FROM jwt_api_audit_log WHERE id = 1"],
     ["SELECT a.route FROM `jwt_api_audit_log` a LIMIT 5"],
@@ -55,6 +58,8 @@ describe("sqlGuard.touchesSecretTable", () => {
     // the archive registry and the STT job ledger (ids + cost) stay readable
     ["SELECT state, COUNT(*) FROM comms_media GROUP BY state"],
     ["SELECT state, SUM(est_cents) FROM comms_stt_jobs GROUP BY state"],
+    // the summary QUEUE holds no content — it stays readable
+    ["SELECT state, COUNT(*) FROM comms_summaries GROUP BY state"],
   ])("allows: %s", (sql) => {
     expect(touchesSecretTable(sql)).toBe(false);
   });
@@ -68,6 +73,7 @@ describe("sqlGuard.touchesSecretTable", () => {
     ["SELECT * FROM email_ingest_executions", null],
     ["SELECT * FROM comms_transcripts t", "comms_transcripts"],
     ["SELECT * FROM comms_no_transcribe", "comms_no_transcribe"],
+    ["SELECT * FROM comms_summary_guides", "comms_summary_guides"],
   ])("matchedSecretTable(%s) = %s", (sql, want) => {
     expect(matchedSecretTable(sql)).toBe(want);
   });

@@ -71,7 +71,7 @@ describe('lib/sqlGuard — two tiers', () => {
   test('the registries hold exactly the ratified sets (§5.7) — adding one is an access decision', () => {
     expect(SECRET_TABLES).toEqual(['app_settings', 'email_ingest_sources']);
     expect(SENSITIVE_TABLES).toEqual([
-      'jwt_api_audit_log', 'ai_calls', 'comms_transcripts', 'comms_no_transcribe', 'admin_audit_log', 'readonly_query_log',
+      'jwt_api_audit_log', 'ai_calls', 'comms_transcripts', 'comms_no_transcribe', 'comms_summary_guides', 'admin_audit_log', 'readonly_query_log',
     ]);
   });
 
@@ -83,7 +83,7 @@ describe('lib/sqlGuard — two tiers', () => {
   });
 
   test.each([
-    'jwt_api_audit_log', 'ai_calls', 'comms_transcripts', 'comms_no_transcribe', 'admin_audit_log', 'readonly_query_log',
+    'jwt_api_audit_log', 'ai_calls', 'comms_transcripts', 'comms_no_transcribe', 'comms_summary_guides', 'admin_audit_log', 'readonly_query_log',
   ])('SENSITIVE %s: refused without the scope, readable with it', (t) => {
     for (const sql of [`SELECT COUNT(*) FROM ${t}`, `SELECT a.id FROM \`${t}\` a JOIN users u ON 1`, `select 1 from ${t.toUpperCase()}`]) {
       expect(deniedTable(sql)).toEqual({ table: t, tier: 'sensitive' });

@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-10-15T01:24:35.727Z
+-- Generated: 2026-10-15T01:48:44.586Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:10543e447a78072c812a01b0ab2d0a7e
+-- Fingerprint: sha256:9c6365fa7748bd56705ab53b6b7ae588
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -962,6 +962,25 @@ CREATE TABLE `comms_summaries` (
   `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='AI summary work queue, one row per transcript (comms archive S3). No content — that is on comms_transcripts';
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `comms_summary_guides`
+--
+
+DROP TABLE IF EXISTS `comms_summary_guides`;
+CREATE TABLE `comms_summary_guides` (
+  `transcript_id` bigint unsigned NOT NULL COMMENT 'comms_transcripts.id. One row = the CURRENT guide: a staff request (POST /api/comms-archive/media/:id/resummarize) replaces it. It drives EVERY later summary of this transcript (bulk and transcript redos included); purge deletes it',
+  `model` varchar(48) COLLATE utf8mb4_general_ci NOT NULL COMMENT 'the summary model asked for (claude-sonnet-5-5 | claude-haiku-5-5 — app-validated); overrides comms_summary_model for this transcript',
+  `note` varchar(500) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'a staff hint about the call''s context, sent to the model as UNTRUSTED input (escaped, inside the user turn) — never a source for quotes or names. NULL = no note; a new request without a note clears it. Content: purge deletes the row; Restrict hides it with the summary',
+  `note_by` tinyint DEFAULT NULL COMMENT 'users.user who wrote the note (NULL with no note)',
+  `requested_at` datetime NOT NULL COMMENT 'UTC; the latest request. The summarize sweep runs a pending guide first',
+  `requested_by` tinyint NOT NULL COMMENT 'users.user who asked',
+  `version` int unsigned NOT NULL DEFAULT '1' COMMENT 'bumped on every request: the identity of a request (requested_at is seconds-precise, two requests can share it). The sweep''s write-ahead and its outcome stamp are conditional on the version it read',
+  `outcome` varchar(16) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'NULL = pending (summary_pending) | done | failed | skipped — app-validated; set by the summarize sweep',
+  `outcome_at` datetime DEFAULT NULL COMMENT 'UTC'
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='Comms archive S3c: the model + staff note a transcript''s summary is made with. A side table because both redo modes delete comms_summaries rows';
 
 -- --------------------------------------------------------
 
@@ -4232,6 +4251,12 @@ ALTER TABLE `comms_summaries`
   ADD PRIMARY KEY (`id`),
   ADD UNIQUE KEY `uq_comms_summaries_transcript` (`transcript_id`),
   ADD KEY `idx_comms_summaries_work` (`state`,`next_attempt_at`);
+
+--
+-- Indexes for table `comms_summary_guides`
+--
+ALTER TABLE `comms_summary_guides`
+  ADD PRIMARY KEY (`transcript_id`);
 
 --
 -- Indexes for table `comms_transcripts`

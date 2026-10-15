@@ -123,6 +123,17 @@ It is AI-generated, so check the recording before relying on it.
   admin audit log, tool `comms_archive`, action `view_summary`.
 - **Purging** a call also blanks every stored AI request and reply for it.
   Their cost records stay.
+- **Re-summarise one call:** anyone who can open a call can ask for its summary
+  to be made again (or made at all, if it was skipped), with Sonnet by default,
+  and can add a short note about the call ("this was about the Chase car loan;
+  the caller is the client's wife"). It is done on the next run, usually within
+  two minutes, and the old summary stays until the new one is ready. The note is
+  a hint only — Claude still has to find everything in the transcript itself.
+  The model and note are **kept** for that call: any later re-summarise, even a
+  bulk one, uses them. A new request **without** a note clears the old note.
+  Restricted calls are never sent; each person can ask 10 times an hour; the
+  monthly cap applies. Each request is in the admin audit log (action
+  `resummarize`), with the note's length but never its words.
 
 | Alert | What to do |
 |---|---|

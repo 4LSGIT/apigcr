@@ -1448,9 +1448,11 @@ async function purgeTranscript(db, row, { vendor = require('./commsTranscribeVen
 
   const [[t]] = await db.query('SELECT id FROM comms_transcripts WHERE media_id = ?', [row.id]);
   if (!t) return { rows: r.affectedRows, deleted, vendor: 'none', ai_calls: 0 };
-  // S2c-2: a redo marker has nothing left to redo.
-  try { await db.query('DELETE FROM comms_redo WHERE transcript_id = ?', [t.id]); } catch (err) {
-    if (err.code !== 'ER_NO_SUCH_TABLE') throw err;            // a database before S2c-2 holds no markers
+  // S2c-2: a redo marker has nothing left to redo. S3c: a staff note is content — it goes with the text.
+  for (const sql of ['DELETE FROM comms_redo WHERE transcript_id = ?', 'DELETE FROM comms_summary_guides WHERE transcript_id = ?']) {
+    try { await db.query(sql, [t.id]); } catch (err) {
+      if (err.code !== 'ER_NO_SUCH_TABLE') throw err;          // a database before S2c-2 / S3c holds none
+    }
   }
   // S3: the summary attempts' text (the model's output; the system text with the contact's name).
   let aiCalls = 0;

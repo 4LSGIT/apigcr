@@ -164,8 +164,8 @@ maybe('comms archive S2 transcription on real MySQL', () => {
     } finally { conn.release(); }
     for (const s of schema.migrationStatements('2026-10-15_comms_s2c_max_speakers.sql')) await pool.query(s);   // S2c-1's setting row
     // S3's queue + settings (the redo deletes queue rows), then S2c-2's marker table — both from their migration files.
-    for (const t of ['comms_summaries', 'comms_redo']) await pool.query(`DROP TABLE IF EXISTS ${t}`);
-    for (const f of ['2026-10-15_comms_s3_summaries.sql', '2026-10-15_comms_s2c_redo.sql']) {
+    for (const t of ['comms_summaries', 'comms_redo', 'comms_summary_guides']) await pool.query(`DROP TABLE IF EXISTS ${t}`);
+    for (const f of ['2026-10-15_comms_s3_summaries.sql', '2026-10-15_comms_s2c_redo.sql', '2026-10-16_comms_s3c_summary_guides.sql']) {
       for (const s of schema.migrationStatements(f)) await pool.query(s);
     }
     // S0's sample table, as committed on comms-eval (bbefcc0), ref/migrations/2026-10-14_comms_eval.sql §1.

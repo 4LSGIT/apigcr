@@ -27,6 +27,14 @@
  *        newest first, one snippet each (services/commsArchiveSearch.js);
  *        audited 'search' with counts + media ids, NEVER the query text;
  *        per user ≤ SEARCH_PER_WINDOW per 10 min (429).
+ *   POST /api/comms-archive/media/:id/resummarize {model?, note?} → S3c: any
+ *        staff user who may READ the call asks for its summary to be made again
+ *        (or for the first time) — model default claude-sonnet-5-5, an optional
+ *        note ≤ 500 characters (untrusted input to the model). canReadMedia
+ *        (else the same 404); restricted / not_transcribed / empty / busy /
+ *        summaries_off / settings / over_cap → 409 {code}; ≤ RESUMMARIZE_PER_HOUR
+ *        per user (429). Audited 'resummarize': the model and the note's LENGTH,
+ *        never its text. services/commsArchiveResummarize.js.
  *   GET  /api/comms-archive/health                → SU status read (F4) —
  *        superuserOnlyFor('comms_archive_health'): SU + step-up.
  *
@@ -84,6 +92,7 @@ const archive = require('../services/commsArchiveService');
 const { VENDOR_SQL, READABLE_STATES } = require('../services/commsArchiveView');
 const searchSvc = require('../services/commsArchiveSearch');
 const redoSvc = require('../services/commsArchiveRedo');
+const resummarizeSvc = require('../services/commsArchiveResummarize');
 
 const TOOL = 'comms_archive';
 const MAX_REASON = 500;
@@ -96,6 +105,8 @@ let mintLimited = makeLimiter(MINT_WINDOW_MS, MINT_PER_WINDOW);
 const SEARCH_WINDOW_MS = 10 * 60 * 1000;
 const SEARCH_PER_WINDOW = 60;
 let searchLimited = makeLimiter(SEARCH_WINDOW_MS, SEARCH_PER_WINDOW);
+const RESUMMARIZE_PER_HOUR = 10;
+let resummarizeLimited = makeLimiter(HOUR_MS, RESUMMARIZE_PER_HOUR);
 const REDO_APPLY_PER_HOUR = 30;
 let redoLimited = makeLimiter(HOUR_MS, REDO_APPLY_PER_HOUR);
 const FAILED_PW_WINDOW_MS = 15 * 60 * 1000;
@@ -410,6 +421,35 @@ async function maybeTable(fn) {
   try { return await fn(); } catch (err) { if (err && err.code === 'ER_NO_SUCH_TABLE') return null; throw err; }
 }
 
+// ─── POST /api/comms-archive/media/:id/resummarize ─── S3c (design §6.4). Staff JWT + canReadMedia (contentGate).
+router.post('/api/comms-archive/media/:id/resummarize', jwtOrApiKey, async (req, res) => {
+  const g = await contentGate(req, res, { action: 'resummarize', kinds: ['call_recording', 'voicemail'] });
+  if (!g) return;
+  const { row, details } = g;
+  const body = req.body && typeof req.body === 'object' ? req.body : {};
+  details.model = typeof body.model === 'string' ? body.model.slice(0, 48) : resummarizeSvc.DEFAULT_MODEL;
+  details.note_len = typeof body.note === 'string' ? body.note.trim().length : 0;   // the LENGTH — never the note
+  if (resummarizeLimited(`u${req.auth.userId}`)) {
+    await audit(req, 'rejected_rate_limited', details);
+    return res.status(429).json({ status: 'error', message: `At most ${RESUMMARIZE_PER_HOUR} re-summarise requests per hour` });
+  }
+  try {
+    const r = await resummarizeSvc.resummarize(req.db, row, { userId: Number(req.auth.userId), body });
+    await audit(req, 'success', { ...details, model: r.model });
+    return res.json({ status: 'success', ...r });
+  } catch (err) {
+    const status = Number.isInteger(err && err.status) ? err.status : 500;
+    if (status === 400 || status === 409) {
+      const code = status === 400 ? 'bad_request' : err.code;
+      await audit(req, `rejected_${code}`, details);
+      return res.status(status).json({ status: 'error', code, message: err.message });
+    }
+    console.error('[commsArchive] resummarize error:', err.code || '', err.message);
+    await audit(req, 'failed', details, String(err.message || '').slice(0, 300));
+    return res.status(500).json({ status: 'error', message: 'Re-summarise failed' });
+  }
+});
+
 // ─── POST /api/comms-archive/redo ─── S2c-2 (design §8). SU + step-up (superuserOnlyFor), staff JWT only.
 router.post('/api/comms-archive/redo', ...superuserOnlyFor('comms_archive_redo'), async (req, res) => {
   const body = req.body && typeof req.body === 'object' ? req.body : {};
@@ -589,6 +629,7 @@ router._resetPurgeLimit = (max = PURGE_PER_HOUR) => { purgeLimited = makeLimiter
 router._resetMintLimit = (max = MINT_PER_WINDOW) => { mintLimited = makeLimiter(MINT_WINDOW_MS, max); };
 router._resetSearchLimit = (max = SEARCH_PER_WINDOW) => { searchLimited = makeLimiter(SEARCH_WINDOW_MS, max); };
 router._resetRedoLimit = (max = REDO_APPLY_PER_HOUR) => { redoLimited = makeLimiter(HOUR_MS, max); };
+router._resetResummarizeLimit = (max = RESUMMARIZE_PER_HOUR) => { resummarizeLimited = makeLimiter(HOUR_MS, max); };
 router._resetPasswordFailures = () => { failedPw = new Map(); };
 
 module.exports = router;

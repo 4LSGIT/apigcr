@@ -157,7 +157,7 @@ async function _candidates(db, { mode, select }) {
             m.kind, m.provider, m.audio_channels, m.duration_s, m.state AS m_state, m.restricted,
             EXISTS (SELECT 1 FROM comms_no_transcribe n
                      WHERE n.phone = RIGHT(REGEXP_REPLACE(COALESCE(m.party, ''), '[^0-9]', ''), 10)) AS no_transcribe,
-            ${evalExpr} AS is_eval,
+            ${evalExpr} AS is_eval, ${await _guideExprOf(db)} AS guide_model,
             (SELECT s.state FROM comms_summaries s WHERE s.transcript_id = t.id) AS s_state
        FROM comms_transcripts t JOIN comms_media m ON m.id = t.media_id
       WHERE ${where}
@@ -192,7 +192,16 @@ function _summaryWorstCents(row, cfgS) {
   const { computeCostCents } = require('./aiService'); // lazy require (convention)
   const sum = require('./commsSummarizeSweep');        // lazy require (convention)
   const inTok = Math.ceil((Number(row.text_len) || 0) / 4) + sum.limits.systemTokens;
-  return computeCostCents(inTok, sum.limits.maxTokens, cfgS.model) || 0;
+  // S3c: a transcript with a staff guide is summarised with ITS model, whatever comms_summary_model says.
+  const model = row.guide_model && sum.MODELS.has(row.guide_model) ? row.guide_model : cfgS.model;
+  return computeCostCents(inTok, sum.limits.maxTokens, model) || 0;
+}
+
+/** SQL: this transcript's guided model (S3c comms_summary_guides), or NULL — 'NULL' on a database without the table. */
+async function _guideExprOf(db) {
+  const [[r]] = await db.query(
+    "SELECT COUNT(*) AS n FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'comms_summary_guides'");
+  return Number(r.n) > 0 ? '(SELECT g.model FROM comms_summary_guides g WHERE g.transcript_id = t.id)' : 'NULL';
 }
 
 const r2 = (n) => Math.round(n * 100) / 100;
@@ -206,14 +215,16 @@ const r2 = (n) => Math.round(n * 100) / 100;
  */
 async function _queuedCents(db, cfgT, cfgS, evalExpr) {
   let c = 0;
+  const guideExpr = await _guideExprOf(db);
   const [marked] = await db.query(
     `SELECT t.state, t.est_audio_s, CHAR_LENGTH(t.full_text) AS text_len, m.audio_channels, m.duration_s,
-            m.kind, m.restricted, ${evalExpr} AS is_eval
+            m.kind, m.restricted, ${evalExpr} AS is_eval, ${guideExpr} AS guide_model
        FROM comms_redo rd JOIN comms_transcripts t ON t.id = rd.transcript_id JOIN comms_media m ON m.id = t.media_id
       WHERE t.state IN ('pending', 'transcribing')`);
   for (const r of marked) if (r.state === 'pending') c += _sttCents(r, cfgT);
   const [awaiting] = await db.query(
-    `SELECT CHAR_LENGTH(t.full_text) AS text_len, m.kind, m.restricted, m.duration_s, ${evalExpr} AS is_eval
+    `SELECT CHAR_LENGTH(t.full_text) AS text_len, m.kind, m.restricted, m.duration_s, ${evalExpr} AS is_eval,
+            ${guideExpr} AS guide_model
        FROM comms_transcripts t JOIN comms_media m ON m.id = t.media_id
       WHERE t.state = 'transcribed'
         AND NOT EXISTS (SELECT 1 FROM comms_summaries s WHERE s.transcript_id = t.id AND s.state <> 'pending')`);
@@ -340,4 +351,4 @@ async function redo(db, body, { userId = null } = {}) {
   return { outcome: 'applied', ...out, applied, changed_since_selection: lost, media_ids: appliedIds };
 }
 
-module.exports = { redo, parseRequest, whyNot, MAX_IDS, MAX_LIMIT, DEFAULT_LIMIT };
+module.exports = { redo, parseRequest, whyNot, MAX_IDS, MAX_LIMIT, DEFAULT_LIMIT, _queuedCents, _evalExprOf, _summaryWorstCents };

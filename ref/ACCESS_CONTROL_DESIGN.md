@@ -485,8 +485,9 @@ him and the SU console.
   the whole store stays SU-console-only.
 - `SENSITIVE_TABLES` (new — readable ONLY under the new scope):
   `jwt_api_audit_log`, `ai_calls`, `comms_transcripts`,
-  `comms_no_transcribe`, `admin_audit_log`, `readonly_query_log`.
-  Content tables: client communications, AI prompts/replies, console
+  `comms_no_transcribe`, `comms_summary_guides`, `admin_audit_log`,
+  `readonly_query_log`. Content tables: client communications, AI
+  prompts/replies, staff notes on calls (comms archive S3c), console
   query texts, other sessions' SQL.
 - **`ai_spend` VIEW** (new, ordinary-readable): id, created_at,
   prompt_key, prompt_version, model, mode, output_type, consumer_ref,

@@ -1,7 +1,7 @@
 # Routes
 
-_Generated 2026-10-15T00:56:02.739Z_  
-_775 routes total — DELETE: 64, GET: 324, PATCH: 53, POST: 295, PUT: 36, _ALL: 3_
+_Generated 2026-10-15T01:48:38.364Z_  
+_776 routes total — DELETE: 64, GET: 324, PATCH: 53, POST: 296, PUT: 36, _ALL: 3_
 
 ## Global middleware chain
 
@@ -150,6 +150,7 @@ _775 routes total — DELETE: 64, GET: 324, PATCH: 53, POST: 295, PUT: 36, _ALL:
 | GET | `/api/comms-archive/health` | `jwtOrApiKey`, `superuserCheck`, `elevationCheck`, `rateLimitMiddleware` | — |
 | POST | `/api/comms-archive/media/:id/purge` | `jwtOrApiKey` | — |
 | POST | `/api/comms-archive/media/:id/restrict` | `jwtOrApiKey` | — |
+| POST | `/api/comms-archive/media/:id/resummarize` | `jwtOrApiKey` | — |
 | GET | `/api/comms-archive/media/:id/transcript` | `jwtOrApiKey` | — |
 | POST | `/api/comms-archive/media/:id/unrestrict` | `jwtOrApiKey` | — |
 | GET | `/api/comms-archive/media/:id/url` | `jwtOrApiKey` | — |
@@ -1045,4 +1046,4 @@ _775 routes total — DELETE: 64, GET: 324, PATCH: 53, POST: 295, PUT: 36, _ALL:
 
 ---
 
-_775 routes total — DELETE: 64, GET: 324, PATCH: 53, POST: 295, PUT: 36, _ALL: 3_
+_776 routes total — DELETE: 64, GET: 324, PATCH: 53, POST: 296, PUT: 36, _ALL: 3_

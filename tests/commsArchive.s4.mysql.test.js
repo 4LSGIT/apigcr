@@ -156,6 +156,7 @@ maybe('comms archive S4 on real MySQL', () => {
     archiveRouter._resetMintLimit();
     archiveRouter._resetPasswordFailures();
     archiveRouter._resetRedoLimit();
+    archiveRouter._resetResummarizeLimit();
     _resetRateLimits();
     for (const t of S2_TABLES) await pool.query(`DROP TABLE IF EXISTS ${t}`);
     for (const t of ['comms_media', 'phone_event_log', 'phone_lines', 'users', 'admin_audit_log', 'channel_grants',
@@ -845,6 +846,54 @@ maybe('comms archive S4 on real MySQL', () => {
     expect((await redoAudits()).map(a => [a.status, det(a).apply, det(a).refusal || null])).toEqual([
       ['rejected_bad_request', false, null], ['refused', true, 'over_cap'], ['success', true, null],
       ['rejected_rate_limited', true, null], ['success', false, null]]);
+  });
+
+  // ── RS — per-call re-summarise (S3c): the route's gates, contract and audit. The behaviour: commsSummarize.mysql (SC*). ──
+  async function rsScene() {
+    await redoScene();
+    for (const t of ['comms_summary_guides']) await pool.query(`DROP TABLE IF EXISTS ${t}`);
+    for (const f of ['2026-10-16_comms_s3c_summary_guides.sql', '2026-10-15_comms_s3b_firm_context.sql']) {
+      for (const st of schema.migrationStatements(f)) await pool.query(st);
+    }
+    await q('DELETE FROM comms_summaries');
+    await q("UPDATE app_settings SET `value` = 'on' WHERE `key` = 'comms_summarize_mode'");
+    await q(`INSERT INTO comms_transcripts (media_id, phone_event_id, state, stt_vendor, segments, full_text)
+             VALUES (?, ?, 'transcribed', 'assemblyai', '[{"s":"A","a":0,"b":1,"t":"private words"}]', 'private words')`, [S.recR, S.callR]);
+  }
+  const rsAudits = async () => (await audits()).filter(a => det(a).action === 'resummarize');
+
+  test('RS1 resummarize: a granted staff user gets the contract; not readable → the same 404; an API key → 403; restricted → 409 even for an archive admin; a bad model → 400; audited with the note LENGTH, never its text', async () => {
+    await rsScene();
+    const path = (id) => `/api/comms-archive/media/${id}/resummarize`;
+    expect((await post(path(S.rec1), {}, { t: T.nobody() })).status).toBe(404);
+    expect((await post(path(S.rec1), {}, { apiKey: process.env.INTERNAL_API_KEY })).status).toBe(403);
+    const ok = await post(path(S.rec1), { note: 'About the Chase car loan; the caller is the wife.' }, { t: T.granted() });
+    expect(ok.status).toBe(200);
+    expect(ok.json).toEqual({ status: 'success', media_id: S.rec1, model: 'claude-sonnet-5-5', has_note: true,
+      requested_at: expect.stringMatching(/^\d{4}-\d\d-\d\dT/), summary_pending: true });
+    expect(await q('SELECT model, note_by, requested_by, outcome FROM comms_summary_guides')).toEqual([
+      { model: 'claude-sonnet-5-5', note_by: U.GRANTED, requested_by: U.GRANTED, outcome: null }]);
+    const rr = await post(path(S.recR), {}, { t: T.ss() });
+    expect([rr.status, rr.json.code]).toEqual([409, 'restricted']);
+    const bad = await post(path(S.rec1), { model: 'gpt-9' }, { t: T.granted() });
+    expect([bad.status, bad.json.code]).toEqual([400, 'bad_request']);
+    const rows = await rsAudits();
+    expect(rows.map(a => [a.status, det(a).media_id, det(a).note_len])).toEqual([
+      ['rejected_no_grant', S.rec1, undefined], ['rejected_not_jwt', S.rec1, undefined],   // the gate's own rejections
+      ['success', S.rec1, 49], ['rejected_restricted', S.recR, 0], ['rejected_bad_request', S.rec1, 0]]);
+    expect(det(rows[2])).toMatchObject({ action: 'resummarize', model: 'claude-sonnet-5-5', note_len: 49 });
+    expect(JSON.stringify(await rsAudits())).not.toMatch(/Chase|wife/);
+  });
+
+  test('RS2 resummarize is rate-limited per user (429, audited); another user is not affected', async () => {
+    await rsScene();
+    archiveRouter._resetResummarizeLimit(2);
+    const go = (t) => post(`/api/comms-archive/media/${S.rec1}/resummarize`, {}, { t });
+    expect((await go(T.granted())).status).toBe(200);
+    expect((await go(T.granted())).status).toBe(200);                       // a pending request may be replaced
+    expect((await go(T.granted())).status).toBe(429);
+    expect((await go(T.su())).status).toBe(200);
+    expect((await rsAudits()).map(a => a.status)).toEqual(['success', 'success', 'rejected_rate_limited', 'success']);
   });
 
   // ── unit — view helpers ─────────────────────────────────────────────────
