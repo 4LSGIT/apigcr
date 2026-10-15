@@ -527,6 +527,15 @@ Active surfaces with known next steps.
 
 ## Hygiene
 
+- **Mascot behavioural tests wait in wall clock (2026-10-15).** `tests/mascotSkins.test.js`
+  drives the engine on real requestAnimationFrame at `Mascot.speed(n)` and polls with
+  `Date.now()`/`setTimeout`, so results depend on how many frames a loaded machine
+  delivers. "a finished web starts the next one at overlap" NO-GO'd a land.sh run
+  (d≈4.5 vs >12) and is `test.skip`ped until this is fixed; the file's header lists it
+  and the fetcher test as known loose ends. Fix: a deterministic clock the tests can
+  step (engine-side tick hook or jsdom fake timers + rAF), then un-skip. Own small arc;
+  the deterministic contract checks in the same file stay the shell's engine gate.
+
 - **Migrate the case-merge span onto `withTransaction` (docs review #2, 2026-10-13).**
   `services/caseService.js` case-merge (~:2187) is the one transaction span on a raw
   `getConnection()` with manual begin/commit/rollback — the sole exception to the
