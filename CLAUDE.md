@@ -51,15 +51,20 @@ picks per task:
    - Landing = manager squash-merges the branch onto main (hook regenerates
      the generated files), on Fred's explicit go; workers then
      `git reset --hard origin/main`.
-   - The push itself is ONE gated command from a fresh worktree (node_modules
-     + .env symlinked) — never Fred's main checkout, which another lander may
-     be mid-squash in (D3's staged files sat there, 2026-10-15):
-     `bash local/heavy-gate.sh land "<who: what>" -- bash -c 'git fetch &&
-     git rebase origin/main && npx jest --maxWorkers=3 && git push origin
-     HEAD:main'` (jest dropped for a doc-only commit). The `land` slot queues
-     the next lander; `heavy-gate.sh status` shows who holds it. Do NOT
-     broadcast push notices: a peer message wakes every idle session for a
-     full turn. Message only a session whose files you touched.
+   - The push itself is `bash /Users/FRED/apigcr/local/land.sh "<who: what>"
+     [--no-jest] [--dry-run]`, run from a fresh worktree (node_modules + .env
+     symlinked) holding ONE squashed commit — never from Fred's main checkout,
+     which another lander may be mid-squash in (it refuses). Inside the
+     heavy-gate `land` slot it fetches, rebases (a conflict in the three
+     generated files takes origin/main's copy; any other conflict aborts),
+     amends so the hook regenerates them over the combined tree (rebase runs
+     no hook), runs full jest (skip only for doc-only), pushes, and ends on
+     one GO / NO-GO. The slot queues the next lander; `heavy-gate.sh status`
+     shows who holds it. Never `git reset --soft origin/main` to dodge a
+     conflict: the commit still sits on its old base, so the recommit reverts
+     whatever landed since. Do NOT broadcast push notices: a peer message
+     wakes every idle session for a full turn. Message only a session whose
+     files you touched.
    - A hand-off patch is cut from `git merge-base HEAD origin/main` after a
      fresh fetch, and only when that base equals the target checkout's HEAD
      and `git diff --name-only` lists exactly the slice's files. `origin/main`
