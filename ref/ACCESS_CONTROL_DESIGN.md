@@ -6,8 +6,9 @@ Canonical home: this file. The pre-ratification draft lived in local/
 Manager state: scratch `fred/access_control_state`. Coordination:
 `fred/admin_surface_coord`.
 
-Every claim below verified 2026-10-14 against the live DB (RO key) and
-actual source — including where it contradicts the arc's boot prompt.
+Every claim in §1–§5.7 verified 2026-10-14 against the live DB (RO key) and
+actual source — including where it contradicts the arc's boot prompt. Later
+additions carry their own date (§5.8: 2026-10-15, source + the 8.4 twin).
 
 ---
 
@@ -514,6 +515,64 @@ him and the SU console.
 SENSITIVE_TABLES + scope enforcement + mint cap + pane warning + tests.
 Small; after SEC-2 lands (sqlGuard + readonlyKeys files overlap).
 
+### 5.8 Delegated session keys (D1, Fred's go 2026-10-15)
+
+A **manager key** — a session key holding `keys.mint` — mints, lists and
+revokes its OWN child session keys to hand to worker sessions, without a
+round-trip through the SU pane. Delegation adds identities, never power.
+
+- **The scope.** `keys.mint` is a surface scope, `explicit` (a legacy
+  NULL-scopes key does not hold it). Only the SU mints it, through the
+  ordinary session-key POST and its server-fed picker; it may sit beside
+  `sql.ro.sensitive`, whose 24h cap applies unchanged.
+- **Endpoints** (session-key authed + `requireKeyScope('keys.mint')`):
+  `POST /api/readonly-keys/children {label, ttlMinutes?, scopes?}` →
+  `{id, key, expiresAt, scopes}` (plaintext once); `GET …/children` (own
+  only); `DELETE …/children/:id` (own only — another key's child is a 404,
+  never a 403: existence is not confirmed). The paths never collide with
+  the SU `/:id`, `/:id/log` routes (different segment counts; registered
+  first anyway).
+- **Child scopes** ⊆ `CHILD_SCOPES` (`sql.ro`, `scratch`, `alert`) ∩ the
+  parent's. Never `keys.mint` (no chains), `sql.ro.sensitive`, `temp.*`,
+  route or capability scopes. Omitted → the whole intersection (empty → 400);
+  anything outside → 400 naming it. Never a silent drop.
+- **Child TTL** ≤ 24h AND ≤ the parent's expiry; omitted → the smaller;
+  over either → 400 (fail loud, never clamp). Stored to the whole second.
+- **Rate**: 10 mints per rolling hour per parent, counted in the DB under a
+  row lock on the parent (exact under concurrency; Cloud Run runs several
+  instances) → 429. No cap on live children.
+- **Cascade at auth time** (lib/auth.readonly, one SELECT joining the
+  parent): parent revoked or missing → 401 `rejected_parent_revoked`;
+  parent expired → 401 `rejected_parent_expired`; audited like the other
+  rejects; nothing is written to the child's row (no sweep). Effective child
+  scopes = `childEffectiveScopes` = own ∩ CHILD_SCOPES ∩ the parent's,
+  recomputed per request — narrowing a parent narrows its children at once,
+  and a tampered child row cannot carry anything past the trio.
+- **Budgets per identity root**: `req.auth.rootKeyId` (the parent's id for a
+  child, its own otherwise). The IT-alert 10/h limit keys on it, so children
+  never multiply it.
+- **Provenance**: `readonly_api_keys.parent_key_id` (nullable, indexed with
+  created_at, FK ON DELETE **RESTRICT** — CASCADE would silently delete
+  children and their query logs, SET NULL would promote them to roots that
+  no longer die with their parent). Child `created_by` = the parent's. Every
+  child mint / revoke → admin_audit_log (tool `readonlyKeys`, userId null,
+  details parentKeyId / childKeyId / scopes / expiresAt; never the plaintext).
+- **SU pane**: a Parent column; a child of a dead parent reads dead
+  ("parent revoked" / "parent expired") and drops out of active-only.
+- **Deploy order**: `scripts/accessD1ParentKey.js` stage 1 (ADD) before the
+  backend — the D1 auth SELECT names parent_key_id and fails CLOSED (500)
+  without it. Rolling the backend back after children exist: revoke them
+  first (the old auth would treat a child as a root key until its own ≤24h
+  expiry).
+
+**`ip_allowlist` retired (D1, Fred's ruling 2026-10-15).** The column was
+stored at mint and enforced nowhere, so its holders believed in a
+restriction that did not exist. The mint refuses `ipAllowlist` (400, so no
+caller keeps believing in it), the pane lost the field, and the column is
+dropped by stage 2 of the same script — AFTER the deploy, the reverse of
+stage 1, because the pre-D1 backend's mint and list name it. Session keys
+are not IP-restricted; if that is ever wanted, it is a new, enforced design.
+
 ### 5.6 Slice plan — Phase B (post-ratification)
 
 - **B1** `scopes` column (both tables, one migration) + `keyAllows()` +
@@ -528,6 +587,9 @@ Small; after SEC-2 lands (sqlGuard + readonlyKeys files overlap).
   picker (server-fed; live router walk for route families, bare /api
   never offered) + optional api_keys.expires_at (NULL = never; cache
   re-checks expiry every hit; mint-only, junk TTL refused).
+- **D1** (2026-10-15) Delegated session keys — `keys.mint`, the /children
+  endpoints, the auth-time cascade, root-keyed alert budget (§5.8); plus
+  the ip_allowlist retirement. Migration in two stages around the deploy.
 - **B4** Secrets: hooks.auth_config + credentials.config secret values
   encrypted at rest (code first, then the data script — §5.5);
   pre-commit secret scan. (Hygiene sitting rides whenever Fred has 10

@@ -46,7 +46,8 @@ d('key scopes on real MySQL', () => {
       key_hash char(64) NOT NULL UNIQUE, key_prefix varchar(16) NOT NULL, label varchar(255) NOT NULL,
       created_by int NOT NULL, created_at datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
       expires_at datetime NOT NULL, revoked_at datetime DEFAULT NULL, last_used_at datetime DEFAULT NULL,
-      use_count int NOT NULL DEFAULT '0', ip_allowlist text
+      use_count int NOT NULL DEFAULT '0',
+      parent_key_id int DEFAULT NULL  -- D1 (lib/auth.readonly SELECTs it; ip_allowlist retired)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci`);
     await q(`CREATE TABLE api_keys (
       id int NOT NULL AUTO_INCREMENT PRIMARY KEY, label varchar(100) NOT NULL,

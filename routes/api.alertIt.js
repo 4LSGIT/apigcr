@@ -38,8 +38,9 @@
 //   A send that was never attempted because its config is unset (SMS
 //   recipient / SMS from-line) is a skip, not a failure — noted, still 200.
 //
-//   Rate limit 10/hour per key, in-memory sliding window keyed on
-//   req.auth.keyId. Checked AFTER validation so a caller's malformed
+//   Rate limit 10/hour per ROOT key, in-memory sliding window keyed on
+//   req.auth.rootKeyId — a child key (access-control D1) spends its parent's
+//   budget, so minting children never multiplies it. Checked AFTER validation so a caller's malformed
 //   attempts can't burn the quota it needs for the real alert. The 429 tells
 //   the caller to fold overflow into one digest alert. In-memory means
 //   per-instance; Cloud Run runs min-instances=1 so this is effectively
@@ -63,7 +64,7 @@ const { cfg }                = require("../lib/firmConfig");
 
 const SUBJECT_MAX    = 200;
 const MESSAGE_MAX    = 10_000;
-const RATE_LIMIT     = 10;                 // alerts per window per key
+const RATE_LIMIT     = 10;                 // alerts per window per root key
 const RATE_WINDOW_MS = 60 * 60 * 1000;     // 1 hour, sliding
 const SMS_BODY_MAX   = 400;                // ≤ 3 segments; subject leads
 
@@ -79,7 +80,7 @@ function trunc(s, n) {
 
 // ── rate limiter (per-key, sliding window, in-memory) ────────────────────
 // Same idiom as lib/auth.superuser's SU limiter, scoped to this route.
-const hits = new Map(); // keyId → [epoch ms, …] within the window
+const hits = new Map(); // rootKeyId → [epoch ms, …] within the window
 
 function rateLimitCheck(keyId) {
   const now    = Date.now();
@@ -127,6 +128,7 @@ router.post("/api/alert/it", readonlyApiKeyAuth, requireKeyScope("alert"), async
   const db       = req.db;
   const keyId    = req.auth.keyId;
   const keyLabel = req.auth.label;
+  const rootKeyId = req.auth.rootKeyId ?? keyId;
 
   // 1. Validate.
   const body = req.body || {};
@@ -168,14 +170,14 @@ router.post("/api/alert/it", readonlyApiKeyAuth, requireKeyScope("alert"), async
   subject = subject.trim();
 
   // 2. Rate limit (post-validation — malformed attempts don't burn quota).
-  const rl = rateLimitCheck(keyId);
+  const rl = rateLimitCheck(rootKeyId);
   if (!rl.ok) {
     await audit(req, "rejected_rate_limit", {
-      keyId, keyLabel, severity, subject: trunc(subject, SUBJECT_MAX),
+      keyId, rootKeyId, keyLabel, severity, subject: trunc(subject, SUBJECT_MAX),
     }, null, Date.now() - started);
     return res.status(429).json({
       error:
-        `Rate limit: ${RATE_LIMIT} IT alerts per hour per key. ` +
+        `Rate limit: ${RATE_LIMIT} IT alerts per hour per key — a child key shares its parent's budget. ` +
         `Fold further findings into a single digest alert instead of sending more.`,
       retryInMs: rl.retryInMs,
     });

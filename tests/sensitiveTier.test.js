@@ -287,7 +287,7 @@ describe('POST /api/readonly-keys — the sensitive mint cap', () => {
     expect(r.body.ttlMinutes).toBe(1440);
     expect(hoursFromNow(r.body.expiresAt)).toBeCloseTo(24, 1);
     expect(hoursFromNow(r.ins.params[4])).toBeCloseTo(24, 1);   // the stored expires_at, not just the reply
-    expect(JSON.parse(r.ins.params[6])).toEqual(S);
+    expect(JSON.parse(r.ins.params[5])).toEqual(S);
   });
 
   test('unspecified → 4h default; a junk / non-positive TTL → 4h, never the 1-day default', async () => {

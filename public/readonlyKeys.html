@@ -94,7 +94,6 @@
   <div class="row">
     <input id="newLabel" placeholder="Label (e.g. 'Claude debug 2026-05-24')" style="flex:1;min-width:200px;">
     <input id="newTtl"   placeholder="TTL minutes" type="number" min="1" style="width:120px;">
-    <input id="newIpAllow" placeholder="IP allowlist (optional, future)" style="width:200px;">
     <button onclick="createKey()">Create</button>
     <span class="muted" id="ttlHint">Default 1440 min (1 day). Max <span id="maxDays">3</span> days.</span>
   </div>
@@ -102,6 +101,10 @@
   <div class="warn-text" id="tempWarn" style="margin-top:4px;">
     temp.* scopes call an external provider (Clio, Dropbox, RingCentral, Zoho Sign) with the firm's
     credentials — grant one only for the task at hand.
+  </div>
+  <div class="warn-text" id="mintWarn" style="margin-top:4px;">
+    keys.mint makes a manager key: it can mint its own child keys for the sessions it runs
+    (sql.ro / scratch / alert only, at most 24h, never past this key, and dead the moment this key is).
   </div>
   <!-- SEC-3: the sensitive scope sits apart (filled from the server's sensitive_scope). -->
   <div class="scope-row" id="sensitivePicker" style="display:none;"></div>
@@ -126,13 +129,13 @@
   <table>
     <thead>
       <tr>
-        <th>ID</th><th>Prefix</th><th>Label</th><th>Scopes</th><th>Created by</th>
+        <th>ID</th><th>Prefix</th><th>Label</th><th>Parent</th><th>Scopes</th><th>Created by</th>
         <th>Created</th><th>Expires</th><th>Last used</th><th>Use #</th>
         <th>Status</th><th></th>
       </tr>
     </thead>
     <tbody id="keysTbody">
-      <tr><td colspan="11" class="muted" style="text-align:center;padding:20px;">Loading…</td></tr>
+      <tr><td colspan="12" class="muted" style="text-align:center;padding:20px;">Loading…</td></tr>
     </tbody>
   </table>
   </div>
@@ -246,15 +249,25 @@
     return esc((Array.isArray(scopes) ? scopes : []).join(", ") || "none");
   }
 
+  // Effective status: a child key (D1) is dead the moment its parent is — the
+  // server refuses it at auth — so it reads dead here too, whatever its own row says.
   function keyStatus(row) {
     if (row.revoked_at) return { cls: "revoked", label: "revoked" };
     if (new Date(row.expires_at).getTime() < Date.now()) return { cls: "expired", label: "expired" };
+    if (row.parent_key_id != null) {
+      if (row.parent_revoked_at || !row.parent_expires_at) return { cls: "revoked", label: "parent revoked" };
+      if (new Date(row.parent_expires_at).getTime() < Date.now()) return { cls: "expired", label: "parent expired" };
+    }
     return { cls: "active", label: "active" };
+  }
+  function parentCell(row) {
+    if (row.parent_key_id == null) return '<span class="muted">—</span>';
+    return `#${row.parent_key_id}${row.parent_label ? ` <span class="muted">${esc(row.parent_label)}</span>` : ""}`;
   }
 
   async function loadKeys() {
     const tbody = document.getElementById("keysTbody");
-    tbody.innerHTML = `<tr><td colspan="11" class="muted" style="text-align:center;padding:20px;">Loading…</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="12" class="muted" style="text-align:center;padding:20px;">Loading…</td></tr>`;
     try {
       const activeOnly = document.getElementById("activeOnly").checked ? 1 : 0;
       const data = await P.apiSend(`/api/readonly-keys?activeOnly=${activeOnly}`, "GET");
@@ -266,17 +279,18 @@
       }
 
       if (!data.keys || !data.keys.length) {
-        tbody.innerHTML = `<tr><td colspan="11" class="muted" style="text-align:center;padding:20px;">No keys.</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="12" class="muted" style="text-align:center;padding:20px;">No keys.</td></tr>`;
         return;
       }
       tbody.innerHTML = data.keys.map(row => {
         const s = keyStatus(row);
-        const canRevoke = !row.revoked_at && new Date(row.expires_at).getTime() >= Date.now();
+        const canRevoke = s.cls === "active";
         return `
           <tr class="${s.cls}">
             <td>${row.id}</td>
             <td><code>${esc(row.key_prefix)}…</code></td>
             <td>${esc(row.label)}</td>
+            <td class="parent-cell">${parentCell(row)}</td>
             <td class="scope-cell">${scopesCell(row.scopes)}</td>
             <td>${esc(row.created_by_username || row.created_by)}</td>
             <td>${fmtDate(row.created_at)}</td>
@@ -292,14 +306,13 @@
         `;
       }).join("");
     } catch (err) {
-      tbody.innerHTML = `<tr><td colspan="11" style="color:var(--danger);padding:20px;">Error: ${esc(err.message)}</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="12" style="color:var(--danger);padding:20px;">Error: ${esc(err.message)}</td></tr>`;
     }
   }
 
   async function createKey() {
     const label = document.getElementById("newLabel").value.trim();
     const ttl   = document.getElementById("newTtl").value.trim();
-    const ipAllow = document.getElementById("newIpAllow").value.trim();
     if (!label) { alert("Label required"); return; }
     const scopes = pickedScopes();
     if (pickerBuilt && !scopes.length) { alert("Pick at least one scope — a key with none can do nothing."); return; }
@@ -311,7 +324,6 @@
       const body = { label };
       if (pickerBuilt) body.scopes = scopes;
       if (ttl) body.ttlMinutes = parseInt(ttl, 10);
-      if (ipAllow) body.ipAllowlist = ipAllow;
       const data = await P.apiSend("/api/readonly-keys", "POST", body);
 
       // Show plaintext once
@@ -331,7 +343,6 @@
       `;
       document.getElementById("newLabel").value = "";
       document.getElementById("newTtl").value   = "";
-      document.getElementById("newIpAllow").value = "";
       loadKeys();
     } catch (err) {
       alert("Create failed: " + err.message);

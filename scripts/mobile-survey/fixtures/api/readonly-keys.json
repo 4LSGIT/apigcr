@@ -19,6 +19,10 @@
    "desc": "POST /api/alert/it — page IT"
   },
   {
+   "name": "keys.mint",
+   "desc": "/api/readonly-keys/children — mint, list and revoke this key's own child keys (sql.ro/scratch/alert only, ≤24h, die with it)"
+  },
+  {
    "name": "temp.clio",
    "desc": "/api/temp/clio/* — credentialed Clio proxy"
   },
@@ -47,6 +51,46 @@
  },
  "keys": [
   {
+   "id": 95,
+   "key_prefix": "ycro_Zk4Wn8R",
+   "label": "S2 worker — child of the review session (minted by key #91)",
+   "scopes": [
+    "sql.ro",
+    "scratch"
+   ],
+   "created_by": 6,
+   "created_by_username": "IT",
+   "created_at": "{{TODAY}}T07:30:00Z",
+   "expires_at": "2099-01-01T00:00:00Z",
+   "revoked_at": null,
+   "last_used_at": "{{TODAY}}T08:10:00Z",
+   "use_count": 37,
+   "parent_key_id": 91,
+   "parent_label": "Comms archive S2 worker — transcription backfill review session",
+   "parent_revoked_at": null,
+   "parent_expires_at": "2099-01-01T00:00:00Z"
+  },
+  {
+   "id": 94,
+   "key_prefix": "ycro_Pp2Rt6Y",
+   "label": "Earlier worker (parent revoked)",
+   "scopes": [
+    "sql.ro",
+    "scratch"
+   ],
+   "created_by": 6,
+   "created_by_username": "IT",
+   "created_at": "{{TODAY}}T07:30:00Z",
+   "expires_at": "2099-01-01T00:00:00Z",
+   "revoked_at": null,
+   "last_used_at": "{{TODAY}}T08:10:00Z",
+   "use_count": 12,
+   "parent_key_id": 88,
+   "parent_label": "Old manager session",
+   "parent_revoked_at": "{{TODAY}}T06:00:00Z",
+   "parent_expires_at": "2099-01-01T00:00:00Z"
+  },
+  {
    "id": 75,
    "key_prefix": "ycro_0a1b2c3",
    "label": "claude long key",
@@ -58,7 +102,10 @@
    "revoked_at": null,
    "last_used_at": "{{TODAY}}T08:00:00Z",
    "use_count": 4210,
-   "ip_allowlist": null
+   "parent_key_id": null,
+   "parent_label": null,
+   "parent_revoked_at": null,
+   "parent_expires_at": null
   },
   {
    "id": 91,
@@ -69,7 +116,8 @@
     "scratch",
     "alert",
     "temp.ringcentral",
-    "temp.dropbox"
+    "temp.dropbox",
+    "keys.mint"
    ],
    "created_by": 6,
    "created_by_username": "IT",
@@ -78,7 +126,10 @@
    "revoked_at": null,
    "last_used_at": null,
    "use_count": 0,
-   "ip_allowlist": null
+   "parent_key_id": null,
+   "parent_label": null,
+   "parent_revoked_at": null,
+   "parent_expires_at": null
   },
   {
    "id": 93,
@@ -95,7 +146,10 @@
    "revoked_at": null,
    "last_used_at": null,
    "use_count": 0,
-   "ip_allowlist": null
+   "parent_key_id": null,
+   "parent_label": null,
+   "parent_revoked_at": null,
+   "parent_expires_at": null
   }
  ]
 }

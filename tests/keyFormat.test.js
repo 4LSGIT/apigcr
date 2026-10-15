@@ -166,7 +166,7 @@ describe('session key (ycro_) mints', () => {
     const r = await mint({ label: 'picker', scopes: ['sql.ro', 'temp.ringcentral'] });
     expect(r.body.scopes).toEqual(['sql.ro', 'temp.ringcentral']);
     const ins = r.db.calls.find(c => /^INSERT INTO readonly_api_keys/.test(c.sql));
-    expect(JSON.parse(ins.params[6])).toEqual(['sql.ro', 'temp.ringcentral']);
+    expect(JSON.parse(ins.params[5])).toEqual(['sql.ro', 'temp.ringcentral']);
   });
 
   test('the list hands the UI the vocabulary (exactly KEY_SCOPES) and the default trio', async () => {

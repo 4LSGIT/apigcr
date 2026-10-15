@@ -1002,10 +1002,11 @@ SU-managed, max TTL 3 days, shown once. Every call logs to `readonly_query_log` 
 
 **Scopes (access-control B1):** a key reaches only the surfaces in its
 `readonly_api_keys.scopes` — `sql.ro`, `sql.ro.sensitive`, `scratch`,
-`alert`, `temp.clio`, `temp.dropbox`, `temp.ringcentral`, `temp.zohosign`
-(vocabulary `lib/capabilities.js` KEY_SCOPES; each route mounts
+`alert`, `keys.mint`, `temp.clio`, `temp.dropbox`, `temp.ringcentral`,
+`temp.zohosign` (vocabulary `lib/capabilities.js` KEY_SCOPES; each route mounts
 `requireKeyScope`). NULL (every key minted before B1) = all of them EXCEPT an
-`explicit` scope — today `sql.ro.sensitive`, which a legacy key never holds.
+`explicit` scope — today `sql.ro.sensitive` and `keys.mint`, which a legacy
+key never holds. A `keys.mint` (manager) key mints its own child keys — §30.
 New mints default to `sql.ro`+`scratch`+`alert` — a `temp.*` proxy must be
 named at mint. A miss is a 403 whose body names `missingScope`.
 
@@ -1047,7 +1048,8 @@ against `rw_scratch`. Live namespaces: `fred` (manager session state),
 text), severity: info|warn|critical}` — same key/header. No `channel` param
 (a 400): delivery DERIVES from severity — info/warn email IT, critical also
 SMS. Reuses the `email_it`/`alert_from_email`/`alert_critical_sms_to`/
-`sms_staff_from` settings; 10/hr per key; audits to `admin_audit_log`
+`sms_staff_from` settings; 10/hr per ROOT key (a child shares its parent's —
+§30); audits to `admin_audit_log`
 tool=it_alert. Synchronous — a send that throws is a 502, but
 `sent.email:true` only means the relay took the handoff; confirm real
 delivery via `email_log.delivery_info`. Usage rules: CLAUDE.md "AI session
@@ -1434,6 +1436,22 @@ cross-instance lag. Mint input `ttlMinutes` (the session-key mint's shape;
 picker is served by the GET (`scope_vocabulary`: CAPABILITIES + route
 families walked from the live router, lib/routeFamilies); the POST stays the
 judge. Table tiers + sql.ro.sensitive: §22.
+
+**Delegated session keys (D1, design §5.8).** A session key holding
+`keys.mint` (SU-minted, explicit) mints / lists / revokes its OWN children:
+`POST|GET /api/readonly-keys/children`, `DELETE …/children/:id`
+(session-key authed; another key's child = 404). Child scopes ⊆
+CHILD_SCOPES (sql.ro, scratch, alert) ∩ parent — never keys.mint, sensitive,
+temp.*, route or capability; TTL ≤ 24h and ≤ the parent's; anything over /
+outside = 400, never clamped or dropped; 10 mints / rolling hour / parent,
+DB-counted under a parent row lock (429). `readonly_api_keys.parent_key_id`
+(FK RESTRICT; child created_by = parent's). lib/auth.readonly joins the
+parent on every request: parent revoked/missing/expired → 401
+`rejected_parent_revoked|expired`, no write to the child row; child scopes =
+`childEffectiveScopes` (own ∩ trio ∩ parent, per request). `req.auth` carries
+`parentKeyId` + `rootKeyId` — per-identity budgets (the IT-alert 10/h) key on
+rootKeyId. `ip_allowlist` is RETIRED (never enforced; mint 400s on it; column
+dropped post-deploy by stage 2 of scripts/accessD1ParentKey.js).
 
 **Audit log.** jwt_api_audit_log stores SHAPES, never content
 (lib/auditShape; credential-named keys → [secret] with no length); URL/

@@ -102,6 +102,51 @@ describe('readonlyKeys.html — session keys', () => {
   });
 });
 
+describe('readonlyKeys.html — delegation (D1) + ip_allowlist retired', () => {
+  const future = new Date(Date.now() + 864e5).toISOString();
+  const past = new Date(Date.now() - 6e4).toISOString();
+  const keys = [
+    { id: 91, key_prefix: 'ycro_Mgr', label: 'manager', scopes: ['sql.ro', 'keys.mint'], expires_at: future, use_count: 1, parent_key_id: null },
+    { id: 95, key_prefix: 'ycro_Kid', label: 'live child', scopes: ['sql.ro'], expires_at: future, use_count: 2,
+      parent_key_id: 91, parent_label: 'manager', parent_revoked_at: null, parent_expires_at: future },
+    { id: 94, key_prefix: 'ycro_Rev', label: 'orphaned by revoke', scopes: ['sql.ro'], expires_at: future, use_count: 0,
+      parent_key_id: 88, parent_label: 'old manager', parent_revoked_at: past, parent_expires_at: future },
+    { id: 93, key_prefix: 'ycro_Exp', label: 'orphaned by expiry', scopes: ['sql.ro'], expires_at: future, use_count: 0,
+      parent_key_id: 87, parent_label: 'older manager', parent_revoked_at: null, parent_expires_at: past },
+  ];
+  const rowOf = (w, id) => [...w.document.querySelectorAll('#keysTbody tr')].find(tr => tr.cells[0].textContent.trim() === String(id));
+
+  test('Parent column; a child of a dead parent reads dead and offers no revoke', async () => {
+    const { w } = bootKeys({ keys });
+    await flush(); await flush();
+    const heads = [...w.document.querySelectorAll('thead th')].map(th => th.textContent.trim());
+    expect(heads.slice(0, 5)).toEqual(['ID', 'Prefix', 'Label', 'Parent', 'Scopes']);
+    expect(rowOf(w, 91).querySelector('.parent-cell').textContent.trim()).toBe('—');
+    expect(rowOf(w, 95).querySelector('.parent-cell').textContent.trim()).toBe('#91 manager');
+    const status = (id) => rowOf(w, id).querySelector('.badge').textContent.trim();
+    expect([95, 94, 93].map(status)).toEqual(['active', 'parent revoked', 'parent expired']);
+    expect(rowOf(w, 94).className).toBe('revoked');
+    expect(rowOf(w, 93).className).toBe('expired');
+    const revokable = (id) => !!rowOf(w, id).querySelector('button.danger');
+    expect([91, 95, 94, 93].map(revokable)).toEqual([true, true, false, false]);
+  });
+
+  test('keys.mint comes from the vocabulary, unticked, with its note; no IP allowlist field is sent', async () => {
+    const { w, sent } = bootKeys();
+    await flush(); await flush();
+    const mint = w.document.querySelector('.scope-box[value="keys.mint"]');
+    expect(mint).not.toBeNull();
+    expect(mint.checked).toBe(false);
+    expect(w.document.getElementById('mintWarn').textContent).toMatch(/child keys/);
+    expect(w.document.getElementById('newIpAllow')).toBeNull();
+    expect(w.document.body.innerHTML).not.toMatch(/allowlist/i);
+    w.document.getElementById('newLabel').value = 'manager';
+    mint.checked = true;
+    await w.createKey();
+    expect(sent.find(s => s.method === 'POST').body).toEqual({ label: 'manager', scopes: ['sql.ro', 'scratch', 'alert', 'keys.mint'] });
+  });
+});
+
 describe('pageManager.html — create-hook button', () => {
   function bootPages(roles) {
     const html = fs.readFileSync(path.join(ROOT, 'public', 'pageManager.html'), 'utf8');

@@ -56,7 +56,7 @@ const flush = () => new Promise(r => setImmediate(r));
 describe('KEY_SCOPES vocabulary', () => {
   test('the surface family is exactly the reviewed snapshot', () => {
     expect(Object.keys(KEY_SCOPES)).toEqual([
-      'sql.ro', 'sql.ro.sensitive', 'scratch', 'alert', 'temp.clio', 'temp.dropbox', 'temp.ringcentral', 'temp.zohosign',
+      'sql.ro', 'sql.ro.sensitive', 'scratch', 'alert', 'keys.mint', 'temp.clio', 'temp.dropbox', 'temp.ringcentral', 'temp.zohosign',
     ]);
     expect(Object.isFrozen(KEY_SCOPES)).toBe(true);
     for (const v of Object.values(KEY_SCOPES)) expect(v.desc).toMatch(/\S/);
@@ -101,8 +101,9 @@ describe('keyAllows', () => {
       expect([s, keyAllows({ type: 'readonly_apikey', scopes: null }, s)]).toEqual([s, want]);
       expect([s, keyAllows({ type: 'readonly_apikey' }, s)]).toEqual([s, want]);
     }
-    // SEC-3: the one explicit scope today — a legacy key never gained the sensitive tables
-    expect(Object.keys(KEY_SCOPES).filter(s => KEY_SCOPES[s].explicit)).toEqual(['sql.ro.sensitive']);
+    // SEC-3 + D1: the explicit scopes — a legacy key never gained the sensitive tables,
+    // nor the power to mint child keys
+    expect(Object.keys(KEY_SCOPES).filter(s => KEY_SCOPES[s].explicit)).toEqual(['sql.ro.sensitive', 'keys.mint']);
     expect(keyAllows({ scopes: ['sql.ro', 'sql.ro.sensitive'] }, 'sql.ro.sensitive')).toBe(true);
   });
 
@@ -144,6 +145,7 @@ const SURFACE_BY_FILE = {
   'api.readonly.js': 'sql.ro',
   'api.scratch.js': 'scratch',
   'api.alertIt.js': 'alert',
+  'api.readonlyKeys.js': 'keys.mint',
   'api.temp.clio.js': 'temp.clio',
   'api.temp.dropbox.js': 'temp.dropbox',
   'api.temp.ringcentral.js': 'temp.ringcentral',
@@ -171,8 +173,8 @@ function readonlyMounts() {
 describe('every readonly-key mount declares its surface', () => {
   const mounts = readonlyMounts();
 
-  test('the inventory: 13 mounts across the 7 files', () => {
-    expect(mounts).toHaveLength(13);
+  test('the inventory: 16 mounts across the 8 files', () => {
+    expect(mounts).toHaveLength(16);
     expect([...new Set(mounts.map(m => m.file))].sort()).toEqual(Object.keys(SURFACE_BY_FILE).sort());
   });
 
@@ -215,12 +217,16 @@ describe('every readonly-key mount declares its surface', () => {
     return { passed, res, req, db };
   }
 
-  test('a NULL-scopes (legacy) key passes all 13 gates', async () => {
+  test('a NULL-scopes (legacy) key passes every gate but the 3 keys.mint ones (explicit — D1)', async () => {
+    let refused = 0;
     for (const m of mounts) {
       const r = await throughGate(m, null);
-      expect({ at: `${m.method} ${m.path}`, passed: r.passed }).toEqual({ at: `${m.method} ${m.path}`, passed: true });
+      const want = !KEY_SCOPES[SURFACE_BY_FILE[m.file]].explicit;
+      refused += want ? 0 : 1;
+      expect({ at: `${m.method} ${m.path}`, passed: r.passed }).toEqual({ at: `${m.method} ${m.path}`, passed: want });
       expect(r.req.auth.scopes).toBeNull();
     }
+    expect(refused).toBe(3);
   });
 
   test('a ["sql.ro"] key passes sql only; 403 NAMING the missing scope everywhere else, audited', async () => {
@@ -245,10 +251,10 @@ describe('every readonly-key mount declares its surface', () => {
     }
   });
 
-  test('the default mint trio reaches sql, scratch and alert — and no temp route', async () => {
+  test('the default mint trio reaches sql, scratch and alert — no temp route, no key minting', async () => {
     for (const m of mounts) {
       const r = await throughGate(m, ['sql.ro', 'scratch', 'alert']);
-      expect(r.passed).toBe(!SURFACE_BY_FILE[m.file].startsWith('temp.'));
+      expect(r.passed).toBe(['sql.ro', 'scratch', 'alert'].includes(SURFACE_BY_FILE[m.file]));
     }
   });
 
@@ -309,8 +315,9 @@ describe('readonly key mints', () => {
     const r = await call('POST', '/api/readonly-keys', { label: 'session' });
     expect(r.status).toBe(200);
     expect(r.body.scopes).toEqual(['sql.ro', 'scratch', 'alert']);
-    expect(insert(r.db).sql).toMatch(/ip_allowlist, scopes\)/);
-    expect(JSON.parse(insert(r.db).params[6])).toEqual(['sql.ro', 'scratch', 'alert']);
+    expect(insert(r.db).sql).toMatch(/expires_at, scopes\)/);
+    expect(insert(r.db).sql).not.toMatch(/ip_allowlist/);           // retired (D1)
+    expect(JSON.parse(insert(r.db).params[5])).toEqual(['sql.ro', 'scratch', 'alert']);
     expect(router.DEFAULT_SCOPES).toEqual(['sql.ro', 'scratch', 'alert']);
   });
 
@@ -318,7 +325,7 @@ describe('readonly key mints', () => {
     const r = await call('POST', '/api/readonly-keys', { label: 'clio work', scopes: ['sql.ro', 'temp.clio', 'sql.ro'] });
     expect(r.status).toBe(200);
     expect(r.body.scopes).toEqual(['sql.ro', 'temp.clio']);
-    expect(JSON.parse(insert(r.db).params[6])).toEqual(['sql.ro', 'temp.clio']);
+    expect(JSON.parse(insert(r.db).params[5])).toEqual(['sql.ro', 'temp.clio']);
   });
 
   test('route:/ and capability scopes are mintable now (B2 enforces them)', async () => {
@@ -335,6 +342,15 @@ describe('readonly key mints', () => {
     }
   });
 
+  test('ipAllowlist is retired (D1): a mint still sending it is a 400, nothing inserted', async () => {
+    for (const ipAllowlist of ['10.0.0.1', '', null]) {
+      const r = await call('POST', '/api/readonly-keys', { label: 'x', ipAllowlist });
+      expect(r.status).toBe(400);
+      expect(r.body.error).toMatch(/ipAllowlist is retired/);
+      expect(insert(r.db)).toBeUndefined();
+    }
+  });
+
   test('the audit row records the scopes', async () => {
     const r = await call('POST', '/api/readonly-keys', { label: 'audited', scopes: ['scratch'] });
     await flush();
@@ -347,6 +363,7 @@ describe('readonly key mints', () => {
     const r = await call('GET', '/api/readonly-keys');
     expect(r.status).toBe(200);
     expect(r.db.calls.find(c => /FROM readonly_api_keys k/.test(c.sql)).sql).toMatch(/k\.scopes/);
+    expect(r.db.calls.find(c => /FROM readonly_api_keys k/.test(c.sql)).sql).not.toMatch(/ip_allowlist/);
     expect(r.body.keys.map(k => k.scopes)).toEqual([null, ['sql.ro']]);
   });
 });

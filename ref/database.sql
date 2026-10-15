@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-10-14T23:35:43.566Z
+-- Generated: 2026-10-15T00:20:55.178Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:005fb2fc3c3a1f07cc02289a4f0a0e14
+-- Fingerprint: sha256:850e34c3c343bbae5811f3e33a0a5b98
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -2884,7 +2884,8 @@ CREATE TABLE `readonly_api_keys` (
   `last_used_at` datetime DEFAULT NULL,
   `use_count` int NOT NULL DEFAULT '0',
   `ip_allowlist` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci,
-  `scopes` json DEFAULT NULL COMMENT 'Key scopes (access-control B1): NULL = legacy full surface; else a JSON array of scope strings — surface (sql.ro, scratch, alert, temp.*), route:/<path>, or a capability name. Vocabulary: lib/capabilities.js KEY_SCOPES.'
+  `scopes` json DEFAULT NULL COMMENT 'Key scopes (access-control B1): NULL = legacy full surface; else a JSON array of scope strings — surface (sql.ro, scratch, alert, temp.*), route:/<path>, or a capability name. Vocabulary: lib/capabilities.js KEY_SCOPES.',
+  `parent_key_id` int DEFAULT NULL COMMENT 'Delegation (access-control D1): NULL = a root key (SU-minted); else the id of the keys.mint key that minted this child. A child is refused at auth once its parent is revoked or expired; its effective scopes = own ∩ parent ∩ (sql.ro, scratch, alert). FK RESTRICT: no hard delete of a parent.'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- --------------------------------------------------------
@@ -4844,7 +4845,8 @@ ALTER TABLE `readonly_api_keys`
   ADD PRIMARY KEY (`id`),
   ADD UNIQUE KEY `key_hash` (`key_hash`),
   ADD KEY `idx_expires` (`expires_at`),
-  ADD KEY `idx_created_by` (`created_by`,`created_at`);
+  ADD KEY `idx_created_by` (`created_by`,`created_at`),
+  ADD KEY `idx_rok_parent` (`parent_key_id`,`created_at`);
 
 --
 -- Indexes for table `readonly_query_log`
@@ -6128,6 +6130,12 @@ ALTER TABLE `phone_ingest_rule_actions`
 --
 ALTER TABLE `phone_lines`
   ADD CONSTRAINT `fk_phone_lines_credential` FOREIGN KEY (`credential_id`) REFERENCES `credentials` (`id`);
+
+--
+-- Constraints for table `readonly_api_keys`
+--
+ALTER TABLE `readonly_api_keys`
+  ADD CONSTRAINT `fk_rok_parent` FOREIGN KEY (`parent_key_id`) REFERENCES `readonly_api_keys` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT;
 
 --
 -- Constraints for table `readonly_query_log`

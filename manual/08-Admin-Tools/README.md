@@ -52,7 +52,7 @@ SQL query, an HTTP request, and an API key are.
 | # | File | What it is |
 |---|------|----|
 | 1 | [01-db-console.md](01-db-console.md) | Interactive MySQL console — read-only by default, opt-in writes, schema browser, saved queries. (Admin → DB Console) |
-| 2 | [02-readonly-keys.md](02-readonly-keys.md) | Session keys: issue and revoke short-lived, scoped keys for scripts and AI sessions — read-only SQL via `/api/readonly/sql`, scratch, IT alerts. (Admin → Session Keys) |
+| 2 | [02-readonly-keys.md](02-readonly-keys.md) | Session keys: issue and revoke short-lived, scoped keys for scripts and AI sessions — read-only SQL via `/api/readonly/sql`, scratch, IT alerts; manager keys mint their own child keys. (Admin → Session Keys) |
 | 3 | [03-api-tester.md](03-api-tester.md) | Send arbitrary HTTP requests from the server, with stored-credential injection and SSRF protection. (Admin → API Tester) |
 | 4 | [04-system-alerts.md](04-system-alerts.md) | The alert console behind the shell's red banner — why non-OAuth alerts never clear themselves, the open/acked/resolved states, and the two independent delivery channels. (Admin → System Alerts) |
 | 5 | [05-api-keys.md](05-api-keys.md) | Inbound API credentials — minting and revoking external keys, internal-key rotation and its one-rotation grace, and why the usage log's silence proves nothing. (Admin → API Keys) |

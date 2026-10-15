@@ -8,6 +8,8 @@ starts `ycro_`, and the request header is still `X-Readonly-Api-Key`.
 
 **Where:** Admin → **Session Keys**. SU only (humans only — these endpoints
 can't be reached with an API key, to avoid bootstrapping more access from less).
+The one exception is a **manager key** minting short-lived keys for its own
+worker sessions — see [Manager keys and child keys](#manager-keys-and-child-keys).
 
 ## What a key can do
 
@@ -19,6 +21,7 @@ A key reaches only the surfaces in its **scopes**:
 | `sql.ro.sensitive` | the same SQL may also read the **sensitive tables** (below) — short-lived keys only |
 | `scratch` | `PUT` / `DELETE /api/scratch/…` — cross-session notes |
 | `alert` | `POST /api/alert/it` — page IT |
+| `keys.mint` | mint, list and revoke its own **child keys** (below) — never ticked by default |
 | `temp.clio`, `temp.dropbox`, `temp.ringcentral`, `temp.zohosign` | the `/api/temp/<provider>/…` proxies — calls to that provider **with the firm's credentials** |
 
 A new key gets `sql.ro`, `scratch` and `alert` — the boxes ticked by default
@@ -27,7 +30,7 @@ the one the task needs (the form warns that they act with the firm's
 credentials). An unknown scope is refused, not dropped. Keys issued
 before scopes existed carry none recorded and keep reaching every surface —
 except the sensitive tables, which only a key minted with `sql.ro.sensitive`
-reads. A key that calls something outside its scopes gets a 403 that names
+reads, and `keys.mint`, which only a key minted with it holds. A key that calls something outside its scopes gets a 403 that names
 the missing scope.
 
 The SQL surface, `POST /api/readonly/sql` with the key in the
@@ -60,13 +63,12 @@ string, so a size query that merely *lists* `ai_calls` is refused too.
 2. Optionally set a **TTL** (how long it lives) — **default 1 day, maximum 3
    days**. Keys are meant to be short-lived; re-issue rather than making them
    long.
-3. Optionally set an **IP allowlist** to restrict where it can be used from.
-4. Tick its **scopes** — at least one; the default three are pre-ticked.
+3. Tick its **scopes** — at least one; the default three are pre-ticked.
    The **Sensitive** box sits on its own line: ticking it asks you to
    confirm, ticks `sql.ro` with it, and caps the TTL — a sensitive key lives
    **at most 24 hours (default 4)**, and a longer TTL is refused rather than
    shortened. Grant it for the one diagnostic session that needs it.
-5. Create. **The key's plaintext is shown exactly once, right now.** Copy it
+4. Create. **The key's plaintext is shown exactly once, right now.** Copy it
    immediately — it is never displayed again and is never stored or logged in
    plaintext anywhere (only a hash is kept).
 
@@ -99,10 +101,50 @@ Two things to know about that stamp:
 
 Keys issued before this format existed have no stamp and keep working normally.
 
+Session keys are **not** IP-restricted. The create form once had an "IP
+allowlist" box; it was never enforced, so it was removed (October 2026) and a
+request that still sends one is refused.
+
+## Manager keys and child keys
+
+Tick **`keys.mint`** to make a **manager key**: a key for a session that runs
+other sessions (a manager handing work to workers). With it, the session
+mints its own **child keys** — no trip back to this pane for each worker:
+
+| Call (header `X-Readonly-Api-Key: <manager key>`) | Does |
+|---|---|
+| `POST /api/readonly-keys/children` `{ label, ttlMinutes?, scopes? }` | mint a child; returns `{ id, key, expiresAt, scopes }` — the key shown once |
+| `GET /api/readonly-keys/children` | list this key's own children |
+| `DELETE /api/readonly-keys/children/<id>` | revoke one of this key's own children |
+
+A child is always weaker than its parent:
+
+- **Scopes**: only `sql.ro`, `scratch` and `alert`, and only those the
+  manager key itself holds. Leave `scopes` out to get all of those. Anything
+  else — another `keys.mint`, `sql.ro.sensitive`, a `temp.*` proxy — is
+  refused, naming the scope. A child can never mint keys of its own.
+- **Lifetime**: at most 24 hours, and never past the manager key's own
+  expiry. Leave `ttlMinutes` out to get the longer that allows; ask for more
+  and it is refused, not shortened.
+- **Dies with its parent**: revoke the manager key (or let it expire) and
+  every child stops working on its next request.
+- **Shares the parent's alert budget**: a manager and all its children
+  together get 10 IT alerts an hour.
+- A manager key may mint **10 children per hour**; there is no limit on how
+  many are alive at once. It sees and revokes only its own children — any
+  other id reads as "not found".
+
+Every child mint and revoke is audited (`admin_audit_log`,
+`tool='readonlyKeys'`), and a child is created under the same owner as its
+manager key.
+
 ## Managing keys
 
 - **List** active (or all) keys with their labels, scopes and expiry (a key
-  issued before scopes existed shows "all (legacy)").
+  issued before scopes existed shows "all (legacy)"). A child key shows its
+  manager key in the **Parent** column, and reads **parent revoked** /
+  **parent expired** — and drops out of "active only" — once its manager key
+  is dead.
 - **Revoke** a key at any time (it's marked revoked and stops working
   immediately) — do this the moment a key is no longer needed or might be
   exposed.
@@ -112,7 +154,8 @@ Keys issued before this format existed have no stamp and keep working normally.
 ## Guardrails
 
 - SU-only, humans-only.
-- Key create and revoke are audited to `admin_audit_log` (`tool='readonlyKeys'`).
+- Key create and revoke — child keys included — are audited to
+  `admin_audit_log` (`tool='readonlyKeys'`).
 - Every query a `sql.ro.sensitive` key runs is flagged in its usage log
   (`readonly_query_log.sensitive_key = 1`). Such a key can read the logs
   themselves — a known, accepted limit; keep these keys short-lived.
