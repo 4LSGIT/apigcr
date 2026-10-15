@@ -15,7 +15,9 @@
  * The request (verified against the API reference 2026-10-14):
  *   POST /v2/transcript {audio_url, speech_models:['universal-3-5-pro'],
  *     speaker_labels (diarize) | multichannel, language_detection,
- *     keyterms_prompt (only when non-empty: +$0.05/h)}
+ *     keyterms_prompt (only when non-empty: +$0.05/h), filter_profanity: true
+ *     (always — Fred 2026-10-15: the vendor replaces foul words with
+ *     asterisks; +$0.01/h; no word list is kept here)}
  *   GET /v2/transcript/<id> → {id, status queued|processing|completed|error,
  *     error, audio_duration (s), language_code, utterances[{speaker, channel,
  *     start, end (ms), text}], text}
@@ -47,10 +49,11 @@ const MODEL = 'universal-3-5-pro';
 
 /**
  * Price card, cents per audio hour (assemblyai.com/pricing.md, 2026-10-14):
- * Universal-3.5 Pro async 21, diarization +2, keyterms prompting +5;
- * multichannel bills PER CHANNEL (a 2-channel hour = 2 billable hours).
+ * Universal-3.5 Pro async 21, diarization +2, keyterms prompting +5, profanity
+ * filtering +1 (on every job, 2026-10-15); multichannel bills PER CHANNEL (a
+ * 2-channel hour = 2 billable hours) — the add-ons included, as for keyterms.
  */
-const RATE_CENTS_PER_H = Object.freeze({ base: 21, diarize: 2, keyterms: 5 });
+const RATE_CENTS_PER_H = Object.freeze({ base: 21, diarize: 2, keyterms: 5, profanity: 1 });
 
 const VARIANTS = Object.freeze({
   diarize: { part: 'assemblyai', model: `${MODEL}+diarize` },
@@ -130,6 +133,7 @@ async function submit(db, { credId, audioUrl, variant, keyterms = [], languageDe
     audio_url: audioUrl,
     speech_models: [MODEL],
     language_detection: !!languageDetection,
+    filter_profanity: true,      // every job: the recording is the record; staff never see foul words spelled out
   };
   if (variant === 'diarize') {
     body.speaker_labels = true;
@@ -243,9 +247,10 @@ function stripSignedUrl(json) {
 function costCents({ audioS, variant, channels = 2, keyterms = false }) {
   const h = Math.max(0, Number(audioS) || 0) / 3600;
   const kt = keyterms ? RATE_CENTS_PER_H.keyterms : 0;
+  const pf = RATE_CENTS_PER_H.profanity;
   const perH = variant === 'multichannel'
-    ? (RATE_CENTS_PER_H.base + kt) * Math.max(1, Number(channels) || 2)
-    : RATE_CENTS_PER_H.base + RATE_CENTS_PER_H.diarize + kt;
+    ? (RATE_CENTS_PER_H.base + kt + pf) * Math.max(1, Number(channels) || 2)
+    : RATE_CENTS_PER_H.base + RATE_CENTS_PER_H.diarize + kt + pf;
   return Math.round(h * perH * 10_000) / 10_000;
 }
 

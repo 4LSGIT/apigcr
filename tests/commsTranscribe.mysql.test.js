@@ -216,12 +216,12 @@ maybe('comms archive S2 transcription on real MySQL', () => {
     expect(audioSign.expires - Date.now()).toBeLessThanOrEqual(60 * 60e3 + 1000);
     const [post] = aai.posts();
     expect(post.auth).toBe('aai_test_key');
-    expect(post.body).toEqual({ audio_url: audioSign.url, speech_models: ['universal-3-5-pro'], language_detection: true, speaker_labels: true,
+    expect(post.body).toEqual({ audio_url: audioSign.url, speech_models: ['universal-3-5-pro'], language_detection: true, filter_profanity: true, speaker_labels: true,
       speaker_options: { max_speakers_expected: 2 } });
     expect(aai.jobs.get('tx-1')).toMatchObject({ fetched: 200, fetchedBytes: 8192 });
     let t = await tr(id);
     expect(t).toMatchObject({ state: 'transcribing', stt_job_ref: 'tx-1', stt_model: 'universal-3-5-pro+diarize+max2', attempts: 0, est_audio_s: 20, phone_event_id: expect.any(Number) });
-    expect(Number(t.stt_cost_cents)).toBeCloseTo(20.088 / 3600 * 23, 4);     // the estimate, from the ledger
+    expect(Number(t.stt_cost_cents)).toBeCloseTo(20.088 / 3600 * 24, 4);     // the estimate, from the ledger
     expect(await jobs(id)).toEqual([expect.objectContaining({ role: 'main', variant: 'diarize', job_ref: 'tx-1', state: 'submitted', cost_cents: null, deleted_at: null })]);
     expect((await q('SELECT audio_channels FROM comms_media WHERE id = ?', [id]))[0].audio_channels).toBe(1);
 
@@ -238,7 +238,7 @@ maybe('comms archive S2 transcription on real MySQL', () => {
     expect(t).toMatchObject({ state: 'transcribed', stt_vendor: 'assemblyai', language: 'en_us', speakers: 2, attempts: 0, last_error: null });
     expect(t.segments).toEqual([{ s: 'A', a: 0, b: 1.5, t: 'Hello, law office.' }, { s: 'B', a: 1.6, b: 3, t: 'Yes, about my case.' }]);
     expect(t.full_text).toBe('Hello, law office.\nYes, about my case.');
-    expect(Number(t.stt_cost_cents)).toBeCloseTo(20 / 3600 * 23, 4);         // billed (vendor audio_duration)
+    expect(Number(t.stt_cost_cents)).toBeCloseTo(20 / 3600 * 24, 4);         // billed (vendor audio_duration)
     expect(t.transcribed_at).toBeTruthy();
     expect(await jobs(id)).toEqual([expect.objectContaining({ state: 'completed', deleted_at: expect.any(Date) })]);
     expect(aai.deleted).toEqual(['tx-1']);
@@ -359,7 +359,7 @@ maybe('comms archive S2 transcription on real MySQL', () => {
     let cap = (await alerts()).filter(x => x.group_key === 'comms_transcribe_cap');
     expect(cap.map(x => x.severity)).toEqual(['warning']);
     // MTD counts what was transcribed this month
-    expect(await sweep.monthToDateCents(pool)).toBeCloseTo(20 / 3600 * 23, 4);      // the ledger: a's billed job
+    expect(await sweep.monthToDateCents(pool)).toBeCloseTo(20 / 3600 * 24, 4);      // the ledger: a's billed job
     // held for > 24 h → error
     await q("UPDATE system_alerts SET created_at = UTC_TIMESTAMP() - INTERVAL 25 HOUR, dedup_key = 'old' WHERE group_key = 'comms_transcribe_cap'");
     await run();
@@ -372,7 +372,7 @@ maybe('comms archive S2 transcription on real MySQL', () => {
   });
 
   test('G7 the cap counts in-flight reservations: two big calls, room for one', async () => {
-    await set('comms_ai_monthly_cap_cents', '5');      // 5¢ ≈ 13 min of audio at 23¢/h
+    await set('comms_ai_monthly_cap_cents', '5');      // 5¢ ≈ 12.5 min of audio at 24¢/h
     await media({ bytes: 80352 * 30 });                 // ~10 min each ≈ 3.8¢
     await media({ bytes: 80352 * 30 });
     expect(await run()).toMatchObject({ submitted: 1, stop: 'cap' });
@@ -391,9 +391,10 @@ maybe('comms archive S2 transcription on real MySQL', () => {
     const posts = aai.posts();
     expect(posts.length).toBe(3);                       // quo ×2 + tiny ×1
     expect(posts.filter(p => p.body.multichannel).length).toBe(1);
+    expect(posts.every(p => p.body.filter_profanity === true)).toBe(true);   // every variant, the sample alt included
     const tq = await tr(quo);
     expect(tq).toMatchObject({ state: 'transcribing', stt_model: 'universal-3-5-pro+diarize+max2', alt_job_ref: expect.stringMatching(/^tx-/) });
-    expect(Number(tq.stt_cost_cents)).toBeCloseTo(37.068 / 3600 * (23 + 42), 3);   // both variants reserved (exact Xing-less CBR estimate)
+    expect(Number(tq.stt_cost_cents)).toBeCloseTo(37.068 / 3600 * (24 + 44), 3);   // both variants reserved (exact Xing-less CBR estimate)
     // the variant still processing holds the row
     aai.complete(tq.stt_job_ref);
     await due();
@@ -404,7 +405,7 @@ maybe('comms archive S2 transcription on real MySQL', () => {
     await run();
     const done = await tr(quo);
     expect(done).toMatchObject({ state: 'transcribed', speakers: 2 });
-    expect(Number(done.stt_cost_cents)).toBeCloseTo(20 / 3600 * (23 + 42), 4);    // both variants billed
+    expect(Number(done.stt_cost_cents)).toBeCloseTo(20 / 3600 * (24 + 44), 3);    // both variants billed (each rounded to 4 dp)
     expect(done.segments[0].s).toBe('A');
     const ks = await kids(quo);
     expect(ks.map(k => k.part)).toEqual(['assemblyai', 'assemblyai-mc']);
@@ -560,7 +561,7 @@ maybe('comms archive S2 transcription on real MySQL', () => {
     expect(t.state).toBe('failed');
     const js = await jobs(id);
     expect(js.map(j => j.state)).toEqual(['refused', 'error', 'error', 'error']);   // every POST is in the ledger…
-    expect(Number(t.stt_cost_cents)).toBeCloseTo(3 * 20.088 / 3600 * 23, 3); // …and counted (the refused one at 0)
+    expect(Number(t.stt_cost_cents)).toBeCloseTo(3 * 20.088 / 3600 * 24, 3); // …and counted (the refused one at 0)
     expect(aai.deleted.sort()).toEqual(js.filter(j => j.job_ref).map(j => j.job_ref).sort());   // each errored job deleted at the vendor
     expect(t.last_error).toMatch(/vendor error \(download\)/);
     expect(gcs.calls.sign.filter(s => s.name !== sweep.PROBE_OBJECT).length).toBeGreaterThanOrEqual(2);   // a fresh URL per try
@@ -750,8 +751,8 @@ maybe('comms archive S2 transcription on real MySQL', () => {
     expect(r.parts.derived_children).toMatchObject({ rows: 1, deleted: 1 });
     const after = await tr(id);
     expect(after).toMatchObject({ state: 'purged', segments: null, full_text: null, summary: null, summary_text: null });
-    expect(Number(after.stt_cost_cents)).toBeCloseTo(20 / 3600 * 23, 4);          // cost is not content: purge keeps it
-    expect(await sweep.monthToDateCents(pool)).toBeCloseTo(20 / 3600 * 23, 4);
+    expect(Number(after.stt_cost_cents)).toBeCloseTo(20 / 3600 * 24, 4);          // cost is not content: purge keeps it
+    expect(await sweep.monthToDateCents(pool)).toBeCloseTo(20 / 3600 * 24, 4);
     const mms = await media({ kind: 'mms_file', mime: 'image/png' });
     expect((await admin.purge(pool, mms, { userId: 1, reason: 'x' })).parts.transcripts).toEqual({ rows: 0, deleted: 0, vendor: 'none', ai_calls: 0 });
   });
@@ -794,7 +795,7 @@ maybe('comms archive S2 transcription on real MySQL', () => {
     const t = await tr(a);
     expect(t.state).toBe('failed');
     expect((await jobs(a)).map(x => x.state)).toEqual(['drift', 'unknown', 'unknown']);
-    expect(Number(t.stt_cost_cents)).toBeCloseTo(3 * 20.088 / 3600 * 23, 3);
+    expect(Number(t.stt_cost_cents)).toBeCloseTo(3 * 20.088 / 3600 * 24, 3);
     expect(aai.deleted).toEqual(['tx-1']);                                // the owed delete was paid at the next tick's start
   });
 
@@ -824,7 +825,7 @@ maybe('comms archive S2 transcription on real MySQL', () => {
     expect(t.state).toBe('failed');
     expect((await jobs(a)).map(j => j.state)).toEqual(['lost', 'lost', 'lost']);
     expect(aai.posts().length).toBe(3);
-    expect(await sweep.monthToDateCents(pool)).toBeCloseTo(3 * 20.088 / 3600 * 23, 3);
+    expect(await sweep.monthToDateCents(pool)).toBeCloseTo(3 * 20.088 / 3600 * 24, 3);
   });
 
   test('R-S2 a POST that times out after the vendor accepted: found in the vendor list by URL hash, then deleted', async () => {
@@ -1070,7 +1071,7 @@ maybe('comms archive S2 transcription on real MySQL', () => {
     delete aai.fail.POST;
     expect(aai.posts().length).toBe(1);
     expect((await jobs(a))[0]).toMatchObject({ state: 'unknown', post_status: 504 });
-    expect(await sweep.monthToDateCents(pool)).toBeCloseTo(20.088 / 3600 * 23, 3);
+    expect(await sweep.monthToDateCents(pool)).toBeCloseTo(20.088 / 3600 * 24, 3);
     await q('UPDATE comms_stt_jobs SET delete_after = NULL');
     await run();
     expect((await jobs(a))[0]).toMatchObject({ state: 'orphan', job_ref: 'tx-1', deleted_at: expect.any(Date) });

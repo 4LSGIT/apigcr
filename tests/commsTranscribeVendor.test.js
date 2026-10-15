@@ -35,7 +35,7 @@ describe('HTTP through the real credential injection', () => {
     expect(seen[0].init.redirect).toBe('error');
     expect(JSON.parse(seen[0].init.body)).toEqual({
       audio_url: 'https://storage.googleapis.com/b/o?X-Goog-Signature=s',
-      speech_models: ['universal-3-5-pro'], language_detection: true, speaker_labels: true,
+      speech_models: ['universal-3-5-pro'], language_detection: true, filter_profanity: true, speaker_labels: true,
     });
   });
 
@@ -164,11 +164,12 @@ describe('the rest of the pure helpers', () => {
   });
 
   test('costCents: the price card; multichannel bills per channel', () => {
-    expect(v.costCents({ audioS: 3600, variant: 'diarize' })).toBe(23);
-    expect(v.costCents({ audioS: 3600, variant: 'diarize', keyterms: true })).toBe(28);
-    expect(v.costCents({ audioS: 3600, variant: 'multichannel', channels: 2 })).toBe(42);
-    expect(v.costCents({ audioS: 3600, variant: 'multichannel', channels: 2, keyterms: true })).toBe(52);
-    expect(v.costCents({ audioS: 60, variant: 'diarize' })).toBeCloseTo(0.3833, 4);
+    // 21 base + 2 diarize + 1 profanity filter (always on); multichannel: (21 + 1) per channel
+    expect(v.costCents({ audioS: 3600, variant: 'diarize' })).toBe(24);
+    expect(v.costCents({ audioS: 3600, variant: 'diarize', keyterms: true })).toBe(29);
+    expect(v.costCents({ audioS: 3600, variant: 'multichannel', channels: 2 })).toBe(44);
+    expect(v.costCents({ audioS: 3600, variant: 'multichannel', channels: 2, keyterms: true })).toBe(54);
+    expect(v.costCents({ audioS: 60, variant: 'diarize' })).toBeCloseTo(0.4, 4);
     expect(v.costCents({ audioS: -5, variant: 'diarize' })).toBe(0);
   });
 

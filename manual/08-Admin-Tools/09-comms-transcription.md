@@ -8,6 +8,10 @@ transcript is AI-generated, so check the recording before relying on it. There
 is no settings screen for it: you control it with `app_settings` rows from the
 **DB Console**, and it tells you what's wrong through **System Alerts**.
 Transcripts are read in Comms → Phone ([Comms archive](10-comms-archive.md)).
+Foul language is masked in every transcript made since 2026-10-15: AssemblyAI
+replaces it with asterisks. The recording is
+unchanged and stays the record. Older transcripts are masked once they are
+redone, and AssemblyAI warns that its filter can miss a word.
 
 ### The switch: `comms_transcribe_mode`
 
