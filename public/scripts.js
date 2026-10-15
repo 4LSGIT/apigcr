@@ -1956,7 +1956,7 @@ function newContact(prefill = {}, onSuccess = null) {
     ? window.firmData
     : ((P && P.firmData) || {});
   const apptUsers = (firm.users || [])
-    .filter(u => u.does_appts)
+    .filter(u => u.does_appts && u.active !== false)   // active providers only (firmData `active`; create-only, nothing to keep)
     .sort((a, b) => a.user - b.user);
   const defaultWith = apptUsers.length ? String(apptUsers[0].user) : '';
   const withOptions = apptUsers
@@ -2410,7 +2410,7 @@ function newApptDialog(opts = {}) {
     ? window.firmData
     : ((P && P.firmData) || {});
   const apptUsers = (firm.users || [])
-    .filter(u => u.does_appts)
+    .filter(u => u.does_appts && u.active !== false)   // active providers only (firmData `active`; create-only, nothing to keep)
     .sort((a, b) => a.user - b.user);
   const defaultWith = apptUsers.length ? String(apptUsers[0].user) : '';
   const withOptions = apptUsers
@@ -3003,7 +3003,10 @@ function newEventDialog(opts = {}) {
   const firm = (typeof window !== 'undefined' && window.firmData)
     ? window.firmData
     : ((P && P.firmData) || {});
-  const reminderUsers = (firm.users || []).slice().sort((a, b) => a.user - b.user);
+  // Active staff only (firmData `active`; user_type drops Automation — a
+  // reminder to user 0 reaches nobody). No keep-current: the select never
+  // shows an existing reminder ("leave blank to keep existing").
+  const reminderUsers = (firm.users || []).filter(u => u.user_type && u.active !== false).sort((a, b) => a.user - b.user);
   const reminderUserOptions = reminderUsers
     .map(u => `<option value="${u.user}">${escAttr(u.user_name)}</option>`)
     .join('');
@@ -3015,11 +3018,20 @@ function newEventDialog(opts = {}) {
   // block availability, so the field lives inside neTimeWrap (hidden when
   // all-day) and is sent null for all-day events, same as event_length.
   const existingWith = isEdit && ev.event_with != null ? String(ev.event_with) : '';
-  const blocksWithOptions = (firm.users || [])
-    .filter(u => u.does_appts)
-    .sort((a, b) => a.user - b.user)
+  // New choices: active providers only (does_appts + firmData `active`). An
+  // edit KEEPS the stored provider whatever filter excludes it (inactive, no
+  // longer does_appts, or missing from the list) — listed and selected — so an
+  // unchanged save never silently becomes "Everyone". '' and '0' are the
+  // Everyone / Nobody options above, never a user (user 0 is Automation).
+  const keepWith = existingWith && existingWith !== '0' ? existingWith : null;
+  const blocksWithUsers = (firm.users || [])
+    .filter(u => String(u.user) === keepWith || (u.does_appts && u.active !== false))
+    .sort((a, b) => a.user - b.user);
+  const blocksWithOptions = blocksWithUsers
     .map(u => `<option value="${u.user}"${String(u.user) === existingWith ? ' selected' : ''}>${escAttr(u.user_name)} only</option>`)
-    .join('');
+    .join('') +
+    (keepWith && !blocksWithUsers.some(u => String(u.user) === keepWith)
+      ? `<option value="${escAttr(keepWith)}" selected>User #${escAttr(keepWith)} only</option>` : '');
 
   // ── Active picker handle (destroy on close / on link-kind switch) ────────
   let picker = null;

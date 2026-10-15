@@ -365,7 +365,7 @@ function fdParamSourceDatalistHtml(datalistId) {
     const label = `[email] ${e.from_name || ''} <${e.email}>`;
     return `<option value="'${esc(e.email)}'" label="${esc(label)}"></option>`;
   }).join('');
-  const usOpts = fdUsers().map(u => {
+  const usOpts = fdUsers().filter(u => u.active !== false).map(u => {   // suggestions: active users only
     const label = `[user] ${u.user_name || u.user_fname || ''} (#${u.user})`;
     return `<option value="'${u.user}'" label="${esc(label)}"></option>`;
   }).join('');

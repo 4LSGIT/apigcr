@@ -794,8 +794,10 @@ function efRenderForm() {
     o.value = v; o.textContent = label;
     bw.appendChild(o);
   });
+  // Active providers only (firmData `active`); a stored inactive provider is
+  // re-added below by the not-in-the-list idiom, so an edit keeps it.
   (efFirm().users || [])
-    .filter(u => u.does_appts)
+    .filter(u => u.does_appts && u.active !== false)
     .sort((a, b) => a.user - b.user)
     .forEach(u => {
       const o = document.createElement('option');

@@ -918,7 +918,14 @@ resolve names on old records through it — never filter it server-side); each
 row carries boolean `active` (user_auth LIKE 'authorized%', the login gate =
 findAssignableStaff's). ASSIGN pickers filter `u.user_type && u.active !==
 false` (tasks.html transfer + create; edit always keeps the current assignee);
-list FILTERS and lookups keep everyone.
+list FILTERS and lookups keep everyone. Same rule at every other ASSIGN site
+(D3b, tests/assignPickersActive.test.js): scripts.js newContact/newApptDialog
+appt_with, newEventDialog reminder (+user_type) and "Blocks calendar of",
+eventform.html event_with, ctaManager attribution, automationManager user
+suggestions; checklistsView "Lists for" puts inactive users under an
+"Inactive — view only" optgroup. Where a picker shows a stored value it is
+KEPT whatever filter excludes it (event_with: inactive, lost does_appts, or
+missing — '0' = Nobody, never user 0).
 
 ## 19. NOTES & LISTS (checklists tables)
 

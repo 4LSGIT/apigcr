@@ -1937,6 +1937,13 @@ function shownRisks(d) {
 function renderMint() {
   const d = state.draft;
   const users = ((P.firmData && P.firmData.users) || []).filter((u) => Number(u.user) > 0);
+  // New choices: active users only (firmData `active`). A current value that is
+  // not among them stays, named — inactive, or missing from the list entirely.
+  const activeUsers = users.filter((u) => u.active !== false);
+  const attrKept = (id) => {
+    const u = users.find((x) => String(x.user) === String(id));
+    return u ? `${esc(u.user_name || ('user #' + u.user))} (inactive)` : `user #${esc(id)} (not in the staff list)`;
+  };
   const rep = d.mode === 'repeatable';
   const hasInputs = d.options.some((o) => o.inputs.length);
 
@@ -2047,9 +2054,9 @@ function renderMint() {
           <label class="yc-flabel" for="m-attr">Attribute clicks to</label>
           <select id="m-attr" data-bind="attributed_user_id">
             <option value="">— nobody (automations) —</option>
-            ${users.map((u) => `<option value="${esc(u.user)}"${String(d.attributed_user_id) === String(u.user) ? ' selected' : ''}>${esc(u.user_name || ('user #' + u.user))}</option>`).join('')}
-            ${d.attributed_user_id && !users.some((u) => String(u.user) === String(d.attributed_user_id))
-              ? `<option value="${esc(d.attributed_user_id)}" selected>user #${esc(d.attributed_user_id)} (not in the staff list)</option>` : ''}
+            ${activeUsers.map((u) => `<option value="${esc(u.user)}"${String(d.attributed_user_id) === String(u.user) ? ' selected' : ''}>${esc(u.user_name || ('user #' + u.user))}</option>`).join('')}
+            ${d.attributed_user_id && !activeUsers.some((u) => String(u.user) === String(d.attributed_user_id))
+              ? `<option value="${esc(d.attributed_user_id)}" selected>${attrKept(d.attributed_user_id)}</option>` : ''}
           </select>
           <span class="yc-hint">Who the outcome log names for link/password clicks — an assertion, not authentication. Timeout runs always log as automations.</span>
         </div>

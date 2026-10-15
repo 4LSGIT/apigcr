@@ -996,6 +996,7 @@ tests/apptService.providerCancelNotice.test.js
 tests/apptService.typeKey.test.js
 tests/apptTypeKey.patch.test.js
 tests/apptsSearch.picker.test.js
+tests/assignPickersActive.test.js
 tests/auditShape.mysql.test.js
 tests/auditShape.test.js
 tests/autoGrow.test.js

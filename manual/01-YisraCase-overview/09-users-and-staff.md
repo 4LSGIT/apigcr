@@ -30,6 +30,14 @@ Users are the firm's staff members — attorneys, paralegals, assistants, and an
 | `authorized` | May log in |
 | `disabled` | Cannot log in |
 
+A disabled person also drops out of every list that hands out **new** work:
+the task assignee, an appointment's provider, an event's "Blocks calendar of"
+and reminder, a CTA link's attribution, and the user suggestions in the
+automation builder. They stay everywhere a name is shown, in list filters
+(their open tasks can still be found and moved), and as "view only" in the
+Notes & Lists picker. A record that already points at them keeps them —
+opening and saving it never quietly changes who it names.
+
 What a person may *do* comes from `roles`, a set — a person can hold several.
 Edit them with the **Roles** checkboxes in the user's form (Admin → Users):
 
@@ -54,8 +62,8 @@ password. See [the elevation gate](../08-Admin-Tools/).
 
 ### Hosting appointments
 
-`does_appts = 1` marks someone as a provider: they appear in the appointment
-staff picker, in `GET /api/booking-views/providers`, and their working hours
+`does_appts = 1` marks someone as a provider: while their login is
+`authorized` they appear in the appointment staff picker, in `GET /api/booking-views/providers`, and their working hours
 drive [availability](../06-Client-Facing/04-booking-and-scheduling.md).
 
 A database constraint enforces that a provider must have a `default_phone` —

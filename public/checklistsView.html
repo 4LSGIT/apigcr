@@ -239,14 +239,26 @@ function renderHead() {
     sel.id = 'cxNewFor';
     const me = myUserId();
     if (forUser == null) forUser = me;
-    users().forEach(u => {
+    // Active users first; inactive ones (firmData `active` === false) stay
+    // reachable — viewing their lists is a lookup — but under their own group,
+    // so nobody mistakes them for current staff. A cached payload without
+    // `active` keeps everyone in the main list. The selection stays wherever it is.
+    const opt = (u) => {
       const o = document.createElement('option');
       o.value = u.user;
       o.textContent = String(u.user) === String(me)
         ? 'My lists' : ('Lists for ' + (u.user_name || u.user_initials || u.user));
       if (String(u.user) === String(forUser)) o.selected = true;
-      sel.appendChild(o);
-    });
+      return o;
+    };
+    users().filter(u => u.active !== false).forEach(u => sel.appendChild(opt(u)));
+    const inactive = users().filter(u => u.active === false);
+    if (inactive.length) {
+      const g = document.createElement('optgroup');
+      g.label = 'Inactive — view only';
+      inactive.forEach(u => g.appendChild(opt(u)));
+      sel.appendChild(g);
+    }
     sel.onchange = () => { forUser = sel.value; render(); };
     if (users().length) head.appendChild(sel);
   }
