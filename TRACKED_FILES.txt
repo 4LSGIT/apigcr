@@ -330,6 +330,7 @@ public/js/yc-custom-fields.js
 public/js/yc-forms.js
 public/js/yc-frame-fit.js
 public/js/yc-sync.js
+public/js/ycAll.js
 public/js/ycPager.js
 public/mailboxAdmin.html
 public/manage.html
@@ -1222,6 +1223,7 @@ tests/keyExpiryPicker.test.js
 tests/keyFormat.test.js
 tests/keyScopes.mysql.test.js
 tests/keyScopes.test.js
+tests/launcherS2.test.js
 tests/likeEscapeSites.test.js
 tests/logService.setLogAbout.test.js
 tests/logService.updateLogLink.test.js

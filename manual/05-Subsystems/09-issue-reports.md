@@ -2,7 +2,7 @@
 
 ## For operators
 
-The **Help & Support** button at the bottom of the sidebar. One textarea, one
+The **Help & Support** button near the bottom of the sidebar. One textarea, one
 send. It captures the technical state of what you were looking at automatically,
 so you don't have to describe it.
 

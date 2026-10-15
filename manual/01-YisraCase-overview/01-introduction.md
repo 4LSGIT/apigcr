@@ -66,6 +66,7 @@ YisraCase is organized into tabs down the left sidebar, in this order:
 | **Custom** | Your own pinned view, if you've pinned one — see [YisraView](../05-Subsystems/05-YisraView.md) |
 | **Admin** | Firm administration. Hidden unless your account has the authorization for it |
 | **More Features** | Everything else, including **Settings** (personal and firm settings — also one click on "Hi, *your name*!" at the top) — see below |
+| **All** | Every feature you have, in one searchable list — see *Finding any feature* below |
 
 Opening any record takes you to a detail page that shows everything connected to it: related contacts or cases, appointments, tasks, and the full activity log.
 
@@ -90,8 +91,23 @@ they live behind **More Features**, and the section READMEs refer to that as
   Users. Covered in [08-Admin-Tools](../08-Admin-Tools/) and
   [04-Integrations](../04-Integrations/).
 
-There is also a **Help & Support** button at the bottom of the sidebar — one
+There is also a **Help & Support** button near the bottom of the sidebar — one
 textarea that files a report with the technical state attached automatically.
+
+### Finding any feature
+
+**All** — the last item in the sidebar, and the last tile on Home — lists
+every feature your account has, grouped the way the sidebar and the More
+menu are, with a search box on top. Type part of a name (or its initials:
+"fb" finds Form Builder) and press **Enter** to open the top match.
+
+The same search opens from anywhere with **Ctrl+K** (**⌘K** on a Mac), even
+while you are typing in a field: arrow keys to choose, **Enter** to open,
+**Esc** to close and carry on where you were. It does not open over a dialog,
+and in an email editor Ctrl+K keeps its usual job there: inserting a link.
+
+A feature your firm has switched off for you is not in the sidebar, on Home,
+in the More menu, under All, or in the search.
 
 ### On a phone
 
