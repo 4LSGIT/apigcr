@@ -1405,6 +1405,7 @@ tests/workflows.editor.roundtrip.test.js
 tests/workflows.ensureDraft.test.js
 tests/workflows.flowgraph.test.js
 tests/workflows.reorder.state.test.js
+tests/wsurlS0Injection.test.js
 tests/ycFrameFit.test.js
 tests/ycPager.test.js
 tests/ycSync.test.js

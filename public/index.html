@@ -5742,10 +5742,21 @@ async function initAuth() {
       // location.reload();
     }
 
+    /**
+     * A file's sub-tab token (?case=<id>,<tab>, a picker row, ?files=…~<tab>)
+     * is a plain word or nothing. Anything else is DROPPED by the caller —
+     * the file still opens, on its default tab. It used to reach the file's
+     * iframe markup unchecked: a crafted ?case=<term>,"></iframe><img …> link
+     * injected HTML into the shell (wsurl S0).
+     */
+    function ycSubTabOk(tab) {
+      return typeof tab === "string" && /^[A-Za-z0-9_-]{1,32}$/.test(tab);
+    }
+
     function addFile(fileName, fileType, fileID) {
-      // `fileID` arrives as either "123" or "123&tab=docs" (see quickPick), so
-      // split the sub-tab back out before anything else — the dedup guard below
-      // and the fileSpec restore token both need the parts.
+      // `fileID` arrives as either "123" or "123&tab=documents" (see quickPick),
+      // so split the sub-tab back out before anything else — the dedup guard
+      // below and the fileSpec restore token both need the parts.
       //
       // ID SHAPES — do not "simplify" this to /^\d+$/:
       //   contact_id  numeric        (1405)
@@ -5758,9 +5769,15 @@ async function initAuth() {
       //
       // The charset also has to exclude the fileSpec delimiters — ',' between
       // tokens and '~' before a sub-tab — and [A-Za-z0-9] does.
+      //
+      // The tab is the WHOLE `tab=` value or nothing — never a prefix of it.
+      // The id is checked against the same shape before it can reach a src.
       const _rawId = String(fileID);
-      const _id = _rawId.split("&")[0];
-      const _sub = /(?:^|&)tab=([A-Za-z0-9_-]+)/.exec(_rawId);
+      const _parts = _rawId.split("&");
+      const _id = _parts[0];
+      const _idOk = /^[A-Za-z0-9_-]+$/.test(_id);
+      const _tabPart = _parts.slice(1).find((p) => p.indexOf("tab=") === 0);
+      const _sub = _tabPart && ycSubTabOk(_tabPart.slice(4)) ? _tabPart.slice(4) : null;
       const _kind =
         fileType === "case" ? "c"
         : fileType === "client" || fileType === "contact" ? "p"
@@ -5778,7 +5795,7 @@ async function initAuth() {
       // means unsaved edits are never clobbered. If the twin's iframe hasn't
       // finished booting yet, both calls no-op: it's mid-load with fresh data
       // anyway.
-      if (_kind && /^[A-Za-z0-9_-]+$/.test(_id)) {
+      if (_kind && _idOk) {
         const _base = _kind + _id;
         const _twin = Array.from(
           document.querySelectorAll("#tabOpenFiles .file-button")
@@ -5804,7 +5821,7 @@ async function initAuth() {
               // has non-tab buttons whose ids match the convention by accident
               // (tabLogButton is a SEARCH button; clicking it would fire a
               // search, not switch tabs).
-              const _btn = _w.document.getElementById(_sub[1] + "Button");
+              const _btn = _w.document.getElementById(_sub + "Button");
               if (_btn && _btn.classList.contains("tab")) _btn.click();
             }
             // Prefer the entity page's QUEUED refresh entry point: bare
@@ -5827,18 +5844,47 @@ async function initAuth() {
         }
       }
 
+      // A case/contact file's id goes into its iframe's src — one that isn't
+      // the id shape never gets that far.
+      const _framed = fileType == "case" || fileType == "client" || fileType == "contact";
+      if (_framed && !_idOk) {
+        console.warn("[addFile] refused: not a " + fileType + " id");
+        Toast.fire({ icon: "error", title: "Could not open that file" });
+        return null;
+      }
+
       const fileButtonContainer = E("tabOpenFiles");
       const fileButton = document.createElement("div");
       const file = document.createElement("div");
       file.innerHTML = "this is a test!";
+      // Built as DOM, never as an HTML string: fileName is data (a client's
+      // name), and the src carries only the checked id and sub-tab. Same
+      // markup and the same src (key order caseID|clientID, tab, fileCount)
+      // as the template strings this replaced.
+      const _label = (iconClass) => {
+        const icon = document.createElement("i");
+        icon.className = "fa-solid " + iconClass;
+        const span = document.createElement("span");
+        span.textContent = String(fileName);
+        fileButton.append(icon, span);
+      };
+      const _frame = (page, idKey) => {
+        const qs = new URLSearchParams();
+        qs.set(idKey, _id);
+        if (_sub) qs.set("tab", _sub);
+        qs.set("fileCount", fileCounter);
+        const iframe = document.createElement("iframe");
+        iframe.setAttribute("src", page + "?" + qs.toString());
+        file.replaceChildren(iframe);
+      };
       if (fileType == "case") {
-        fileButton.innerHTML = `<i class="fa-solid fa-landmark"></i><span>${fileName}</span>`;
-        file.innerHTML = `<iframe src="/case.html?caseID=${fileID}&fileCount=${fileCounter}"></iframe>`;
+        _label("fa-landmark");
+        _frame("/case.html", "caseID");
       } else if (fileType == "client" || fileType == "contact") {
-        fileButton.innerHTML = `<i class="fa-solid fa-user"></i><span>${fileName}</span>`;
-        file.innerHTML = `<iframe src="/contact.html?clientID=${fileID}&fileCount=${fileCounter}"></iframe>`;
+        _label("fa-user");
+        _frame("/contact.html", "clientID");
       } else if (fileType == "bill") {
-        fileButton.innerHTML = `<i class="fa-solid fa-file-invoice-dollar"></i><span>${fileName}</span>`;
+        _label("fa-file-invoice-dollar");
         file.innerHTML = `<h1>No bills today!</h1><p>file Count: ${fileCounter}</p>`;
       }
       fileButton.className = "file-button";
@@ -5859,8 +5905,8 @@ async function initAuth() {
       //
       // _kind/_id/_sub are parsed at the top of this function — the dedup guard
       // needs them before the button exists. ID-shape rationale lives up there.
-      if (_kind && /^[A-Za-z0-9_-]+$/.test(_id)) {
-        fileButton.dataset.fileSpec = _kind + _id + (_sub ? "~" + _sub[1] : "");
+      if (_kind && _idOk) {
+        fileButton.dataset.fileSpec = _kind + _id + (_sub ? "~" + _sub : "");
       }
       fileButton.onclick = function () {
         openMainTab(file.id);
@@ -5871,7 +5917,7 @@ async function initAuth() {
       closeBtn.addEventListener("click", function (e) {
         e.stopPropagation();
         Swal.fire({
-          title: `Close "${fileName}"?`,
+          titleText: `Close "${fileName}"?`,   // titleText: plain text — fileName is data
           text: `Did you save all the forms?`,
           showCancelButton: true,
           confirmButtonText: "Confirm",
@@ -6221,6 +6267,9 @@ async function initAuth() {
      * @param {number} [limit=1] — 1 for best-match (URL params), 10+ for picker (search box)
      */
     async function quickPick(term, type, tab, limit = 1) {
+      // `tab` is often straight from the address bar (?case=<term>,<tab>):
+      // not a plain token → dropped, and the file opens on its default tab.
+      if (tab != null && !ycSubTabOk(tab)) tab = undefined;
       if (!term) {
         Toast.fire({ icon: 'warning', title: 'Enter a search term' });
         return;
@@ -6242,7 +6291,7 @@ async function initAuth() {
           Toast.fire({ icon: 'error', title: 'No results found' });
         } else if (data.results.length === 1) {
           const r = data.results[0];
-          Toast.fire({ icon: 'success', title: `Opening: ${r.name}`, timer: 1000 });
+          Toast.fire({ icon: 'success', titleText: `Opening: ${r.name}`, timer: 1000 });
           addFile(
             r.name,
             r.type === 'contact' ? 'client' : r.type,
@@ -6258,30 +6307,49 @@ async function initAuth() {
     }
 
     function showSearchPicker(results, tab) {
-      const rows = results.map(r => {
+      if (tab != null && !ycSubTabOk(tab)) tab = undefined;
+      // Rows are DOM with bound listeners, not an HTML string with onclick
+      // source: r.name / r.detail are data, and the click carries the result
+      // itself rather than re-quoting it into JavaScript.
+      const list = document.createElement('div');
+      list.style.cssText = 'max-height:400px;overflow-y:auto;border:1px solid #eee;border-radius:6px';
+      results.forEach(r => {
         const icon = r.type === 'contact' ? 'fa-user' : 'fa-landmark';
         // Case rows label with "Type: Subtype" (fmtCaseType, scripts.js) —
         // the landmark icon + contact-name line already convey case-ness.
         // Untyped cases (and older cached results) fall back to 'Case'.
         const label = r.type === 'contact' ? 'Contact' : (fmtCaseType(r) || 'Case');
-        const safeName = (r.name || '').replace(/'/g, "\\'");
         const fileType = r.type === 'contact' ? 'client' : r.type;
         const fileId = r.id + (tab ? `&tab=${tab}` : '');
-        return `<div class="qp-row" onclick="Swal.close();addFile('${safeName}','${fileType}','${fileId}')"
-                     style="padding:8px 12px;cursor:pointer;border-bottom:1px solid #eee;text-align:left;display:flex;align-items:center;gap:8px;"
-                     onmouseover="this.style.background='#f0f7ff'" onmouseout="this.style.background=''">
-          <i class="fa-solid ${icon}" style="color:#07ADEF;width:20px;text-align:center"></i>
-          <div>
-            <b>${r.name || 'Unknown'}</b>
-            <span style="color:#888;font-size:0.85em;margin-left:6px">${label}</span>
-            ${r.detail ? `<br><span style="color:#666;font-size:0.85em">${r.detail}</span>` : ''}
-          </div>
-        </div>`;
-      }).join('');
+        const row = document.createElement('div');
+        row.className = 'qp-row';
+        row.style.cssText = 'padding:8px 12px;cursor:pointer;border-bottom:1px solid #eee;text-align:left;display:flex;align-items:center;gap:8px;';
+        row.addEventListener('click', () => { Swal.close(); addFile(r.name || '', fileType, fileId); });
+        row.addEventListener('mouseover', () => { row.style.background = '#f0f7ff'; });
+        row.addEventListener('mouseout', () => { row.style.background = ''; });
+        const i = document.createElement('i');
+        i.className = `fa-solid ${icon}`;
+        i.style.cssText = 'color:#07ADEF;width:20px;text-align:center';
+        const body = document.createElement('div');
+        const name = document.createElement('b');
+        name.textContent = r.name || 'Unknown';
+        const kind = document.createElement('span');
+        kind.style.cssText = 'color:#888;font-size:0.85em;margin-left:6px';
+        kind.textContent = label;
+        body.append(name, ' ', kind);   // ' ': the space the template's line break rendered
+        if (r.detail) {
+          const detail = document.createElement('span');
+          detail.style.cssText = 'color:#666;font-size:0.85em';
+          detail.textContent = r.detail;
+          body.append(document.createElement('br'), detail);
+        }
+        row.append(i, body);
+        list.appendChild(row);
+      });
 
       Swal.fire({
         title: `${results.length} results found`,
-        html: `<div style="max-height:400px;overflow-y:auto;border:1px solid #eee;border-radius:6px">${rows}</div>`,
+        html: list,
         showConfirmButton: false,
         showCloseButton: true,
         width: '450px'
