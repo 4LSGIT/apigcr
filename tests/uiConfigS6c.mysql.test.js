@@ -17,8 +17,8 @@
  *     `ui` read); staff get 403; a stale base is a 409 that writes nothing and
  *     appends no version; the same document again (MySQL re-ordered its keys)
  *     is a no-op; versions list and restore work for this key exactly as for
- *     registry_overrides; a reserved `pages` key and a removal of `all` from
- *     Home's icon row are 400s that store nothing.
+ *     registry_overrides; a user's page in the firm's `pages` (S6c-5) and a
+ *     removal of `all` from Home's icon row are 400s that store nothing.
  *   - A user's layout carrying homeIcons round-trips.
  */
 'use strict';
@@ -149,9 +149,9 @@ d('S6c: the firm default layout on real MySQL', () => {
     expect((await hit('GET', '/api/ui-config/versions?config_key=registry_overrides', 'admin')).body.versions).toEqual([]);   // its own key only
   });
 
-  test('refused and unstored: a reserved pages key; a removal of all from Home\'s icon row; a user id in a firm list', async () => {
+  test('refused and unstored: a user page in the firm\'s pages; a removal of all from Home\'s icon row; a user id in a firm list', async () => {
     const before = [await row(), (await versions()).length];
-    for (const bad of [{ pages: {} }, { removed: { homeIcons: ['all'] } }, { placed: { home: [{ item: 'user:x' }] } }, { placed: { adminIcons: Array.from({ length: 13 }, (_, i) => ({ item: 'i' + i })) } }]) {
+    for (const bad of [{ pages: { 'user:x': {} } }, { removed: { homeIcons: ['all'] } }, { placed: { home: [{ item: 'user:x' }] } }, { placed: { adminIcons: Array.from({ length: 13 }, (_, i) => ({ item: 'i' + i })) } }]) {
       const r = await put('admin', bad);
       expect([bad, r.status, Array.isArray(r.body.errors)]).toEqual([bad, 400, true]);
     }

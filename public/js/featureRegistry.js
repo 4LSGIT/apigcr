@@ -96,6 +96,10 @@
  * sidebar / Home icon-row layout apply to, in that order
  * (ycLauncher.resolveLayout, S4a): an item added here also appears for a firm
  * or a user who has rearranged that surface, next to its neighbour here.
+ * The firm's and the users' own PAGES (ui-custom S6c-5: items of kind
+ * { type:'page' }) have no base here: their tiles and icon rows live in that
+ * tier's `layout.pages[<id>]` and are drawn by ycLauncher.buildPages as
+ * neutrals, never mounted.
  */
 window.FEATURE_REGISTRY = {
 

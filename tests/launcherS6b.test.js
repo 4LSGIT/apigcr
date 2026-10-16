@@ -224,9 +224,10 @@ describe('3. #homeAll: an icon-only button in the Home icon row', () => {
     const t = boot();
     try {
       // the Home row and button ride on the More rules
-      expect(rule(t.d, '.more-egg-row, .home-egg-row, .admin-egg-row')).toHaveLength(1);
-      expect(rule(t.d, '#tabMore .more-egg, #tabHome .home-egg, #tabAdmin .admin-egg')).toHaveLength(1);
-      expect(rule(t.d, '#tabMore .more-egg:hover, #tabMore .more-egg:focus-visible, #tabHome .home-egg:hover, #tabHome .home-egg:focus-visible, #tabAdmin .admin-egg:hover, #tabAdmin .admin-egg:focus-visible')).toHaveLength(1);
+      // (the custom pages' row and button joined the lists in S6c-5)
+      expect(rule(t.d, '.more-egg-row, .home-egg-row, .admin-egg-row, .page-egg-row')).toHaveLength(1);
+      expect(rule(t.d, '#tabMore .more-egg, #tabHome .home-egg, #tabAdmin .admin-egg, #ycPages .page-egg')).toHaveLength(1);
+      expect(rule(t.d, '#tabMore .more-egg:hover, #tabMore .more-egg:focus-visible, #tabHome .home-egg:hover, #tabHome .home-egg:focus-visible, #tabAdmin .admin-egg:hover, #tabAdmin .admin-egg:focus-visible, #ycPages .page-egg:hover, #ycPages .page-egg:focus-visible')).toHaveLength(1);
       // and nothing styles a Home one without its More twin in the same rule
       const lone = [];
       for (const sh of t.d.styleSheets) for (const r of sh.cssRules) {

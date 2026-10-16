@@ -70,6 +70,22 @@
 //        frame's performance.timeOrigin is unchanged; the pane loaded ONCE
 //   (s4) non-SU tabMore~adminUsers → the More grid, no neutral, empty stage
 //
+// S6c-5 — pages (#ycPages: the firm's and the user's own page tabs):
+//   (p1) SU: exec('user:my-desk') opens the user's page tab (a .tab-main.yc-hub
+//        carrying data-yc-page), its sidebar neutral lit; the URL carries NO
+//        open= there; a reload lands on Home (Fred's ruling Q4, v1)
+//   (p2) a panel tile on the page opens the panel IN PLACE (page drilled, one
+//        stage panel, URL still without open=); the strip shows exactly the
+//        page's tiles' pills; the SAME Automations iframe is seen from More
+//        and from the page: text typed into its pane survives page → More →
+//        Cases → page, performance.timeOrigin unchanged, loaded ONCE
+//   (p3) ?open=<the page's tab id> → Home (never a restorable head)
+//   (p4) the firm page firm:ops (visible_to it, admin): present for SU — a tab,
+//        a tile on More, exec opens it; GONE for staff — no tab, no tile, exec
+//        refuses, not in the effective registry
+//   (p5) staff: the user page shows no su tile (adminUsers, adminDbConsole)
+//        and its strip has no pill for them
+//
 // S-links — the links the server emits (lib/shellLinks), opened cold:
 //   (L1) /?files=c<id>&open=file:0 in a FRESH context (no label cache), the
 //        search answering the exact row → the case file opens, URL settles
@@ -777,6 +793,77 @@ const activeTab = (page) => page.evaluate(() => window.currentMainTabId());
         neutral: await page.evaluate(() => !!document.querySelector('#tabMore > .big-button[data-yc-shortcut="adminUsers"]')) };
       check('(s4) non-SU tabMore~adminUsers → the More grid, no neutral, nothing on the stage',
         s4.tab === 'tabMore' && s4.open === 'tabMore' && s4.stage.length === 0 && !s4.neutral, JSON.stringify(s4));
+      await ctx.close();
+    }
+
+    // ════ S6c-5 — pages ═══════════════════════════════════════════════════
+    const pageTab = (page, id) => page.evaluate((i) => { const e = document.querySelector(`#ycPages > [data-yc-page="${i}"]`); return e ? e.id : null; }, id);
+    const tilesOf = (page, tab) => page.evaluate((t) => [...document.querySelectorAll(`#${t} > .big-button`)].map((b) => b.getAttribute('data-yc-shortcut')), tab);
+    const pillsOf = (page, tab) => page.evaluate((t) => [...document.querySelectorAll(`#${t} > .feature-strip .pill-button`)].slice(1).map((b) => b.dataset.target || b.textContent.trim()), tab);
+    {
+      // (p1) the user's page opens; nothing of it in the URL; F5 → Home
+      const { page, ctx, hits } = await boot(browser, url, '?open=tabHome');
+      const tab = await pageTab(page, 'user:my-desk');
+      check('(p1) SU: the user page user:my-desk has a tab in #ycPages (a .tab-main.yc-hub)', !!tab && await page.evaluate((t) => document.getElementById(t).className === 'tab-main yc-hub', tab), String(tab));
+      await page.evaluate(() => ycLauncher.exec('user:my-desk')); await sleep(400);
+      const p1 = await page.evaluate((t) => ({ cur: currentMainTabId(), open: new URL(location.href).searchParams.get('open'),
+        lit: !!document.querySelector(`#appSidebar .sb-item[data-yc-shortcut="user:my-desk"].active`), tabAttr: document.querySelector('#appSidebar .sb-item[data-yc-shortcut="user:my-desk"]').getAttribute('data-tab') }), tab);
+      check('(p1) …exec opened it (its sidebar row carries the tab and is lit) and the URL carries NO open=', p1.cur === tab && p1.open === null && p1.lit && p1.tabAttr === tab, JSON.stringify(p1));
+      await page.reload({ waitUntil: 'networkidle2' }); await settle(page);
+      check('(p1) …a reload lands on Home', await page.evaluate(() => currentMainTabId()) === 'tabHome', await page.evaluate(() => currentMainTabId()));
+      // (p2) a panel in place; the strip; the same iframe from More and the page
+      await page.evaluate(() => ycLauncher.exec('user:my-desk')); await sleep(300);
+      const tiles = await tilesOf(page, tab);
+      await page.evaluate((t) => document.querySelector(`#${t} > .big-button[data-yc-shortcut="moreAutomations"]`).click(), tab); await sleep(2500);
+      const p2 = await page.evaluate((t) => ({ cur: currentMainTabId(), open: new URL(location.href).searchParams.get('open'), drilled: document.getElementById(t).classList.contains('drill-active'),
+        stage: [...document.getElementById('ycPanels').children].filter((p) => p.style.display !== 'none').map((p) => p.id), moreDrilled: document.getElementById('tabMore').classList.contains('drill-active') }), tab);
+      check('(p2) a panel tile on the page opens Automations IN PLACE: the page is drilled, one stage panel, More not drilled, no open= in the URL',
+        p2.cur === tab && p2.drilled && p2.stage.join() === 'automationsDiv' && !p2.moreDrilled && p2.open === null, JSON.stringify(p2));
+      const pills = await pillsOf(page, tab);
+      check('(p2) …the strip shows exactly the page\'s tiles\' pills', pills.length === tiles.length && pills.length > 5, JSON.stringify({ pills, tiles }));
+      const af = await paneFrame(page, 'automationsDiv');
+      check('(p2) …the Automations pane loaded', !!af, 'no pane frame');
+      let same = null;
+      if (af) {
+        const t0 = await af.evaluate(() => { const t = document.createElement('textarea'); t.id = 's6c5probe'; document.body.appendChild(t); t.focus(); return performance.timeOrigin; });
+        await af.type('#s6c5probe', 'unsaved on the page');
+        await page.evaluate(() => openMainTab('tabMore')); await sleep(300);
+        await page.evaluate(() => ycLauncher.elementsOf('moreAutomations').more.click()); await sleep(500);
+        const onMore = await page.evaluate(() => ({ cur: currentMainTabId(), stage: [...document.getElementById('ycPanels').children].filter((p) => p.style.display !== 'none').map((p) => p.id), open: new URL(location.href).searchParams.get('open') }));
+        await page.evaluate(() => openMainTab('tabCases')); await sleep(300);
+        await page.evaluate(() => ycLauncher.exec('user:my-desk')); await sleep(400);
+        const af2 = await paneFrame(page, 'automationsDiv');
+        const after = af2 ? await af2.evaluate(() => ({ t: performance.timeOrigin, v: (document.getElementById('s6c5probe') || {}).value || null, url: location.href })) : null;
+        const back = await page.evaluate((t) => ({ cur: currentMainTabId(), stage: [...document.getElementById('ycPanels').children].filter((p) => p.style.display !== 'none').map((p) => p.id) }), tab);
+        same = after && after.t === t0 && after.v === 'unsaved on the page' && hits.automationManager === 1 && onMore.cur === 'tabMore' && onMore.stage.join() === 'automationsDiv' && onMore.open === 'tabMore~moreAutomations' && back.cur === tab && back.stage.join() === 'automationsDiv';
+        check('(p2) …the SAME iframe from More (open=tabMore~moreAutomations there) and back on the page: typed text kept, timeOrigin unchanged, loaded ONCE', !!same,
+          JSON.stringify({ t0, sameFrame: af2 === af, afUrl: af.url(), after, onMore, back, tab, loads: hits.automationManager }));
+      }
+      // (p3) the tab id is never a head
+      await page.goto(url + '/?open=' + tab, { waitUntil: 'networkidle2' }); await settle(page);
+      check('(p3) ?open=<page tab id> → Home', await page.evaluate(() => currentMainTabId()) === 'tabHome', await page.evaluate(() => currentMainTabId()));
+      // (p4) the firm page for SU
+      const fp = await page.evaluate(() => ({ tab: (document.querySelector('#ycPages > [data-yc-page="firm:ops"]') || {}).id || null,
+        tile: !!document.querySelector('#tabMore > .big-button[data-yc-shortcut="firm:ops"]'), eff: ycLauncher.effectiveRegistry().some((e) => e.id === 'firm:ops' && e.page === true) }));
+      const opened = await page.evaluate(() => ycLauncher.exec('firm:ops')); await sleep(300);
+      check('(p4) SU: the firm page firm:ops has a tab, a tile on More, is a page in the effective registry, and exec opens it',
+        !!fp.tab && fp.tile && fp.eff && opened === true && await page.evaluate(() => currentMainTabId()) === fp.tab, JSON.stringify(fp));
+      await ctx.close();
+    }
+    {
+      // (p4) / (p5) staff: the firm page is gone; the user page shows no su tile
+      const { page, ctx } = await boot(browser, url, '?open=tabHome', { su: false });
+      const st = await page.evaluate(() => ({ tab: !!document.querySelector('#ycPages > [data-yc-page="firm:ops"]'), tile: !!document.querySelector('#tabMore > .big-button[data-yc-shortcut="firm:ops"]'),
+        eff: ycLauncher.effectiveRegistry().some((e) => e.id === 'firm:ops'), exec: ycLauncher.exec('firm:ops') }));
+      check('(p4) staff: firm:ops has no tab, no tile, is not effective, exec refuses', !st.tab && !st.tile && !st.eff && st.exec === false, JSON.stringify(st));
+      const utab = await pageTab(page, 'user:my-desk');
+      const utiles = utab ? await tilesOf(page, utab) : [];
+      // (the fixture restricts Automations to admin / attorney: staff drills the first panel tile the page gives them)
+      await page.evaluate((t) => { openMainTab(t); const b = document.querySelector(`#${t} > .big-button[data-target]`); if (b) b.click(); }, utab); await sleep(1500);
+      const upills = await pillsOf(page, utab);
+      check('(p5) staff: the user page draws no su tile and its strip has no su pill',
+        !!utab && utiles.length > 3 && !utiles.includes('adminUsers') && !utiles.includes('adminDbConsole') && !upills.includes('usersDiv') && !upills.includes('dbConsoleDiv'),
+        JSON.stringify({ utiles, upills }));
       await ctx.close();
     }
 

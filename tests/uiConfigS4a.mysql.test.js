@@ -122,7 +122,7 @@ d('S4a: user layouts and retired firm ids on real MySQL', () => {
       expect(r.body.errors).toEqual(expect.arrayContaining([expect.stringMatching(/label is for the sidebar only/), expect.stringMatching(/already placed/)]));
       expect((await put('staff', { removed: ['bills'] })).status).toBe(400);      // the flat form: refused
       expect(await q("SELECT config FROM ui_config WHERE scope = 'user'")).toEqual(before);
-      expect((await hit('PUT', '/api/ui-config', 'admin', { scope: 'firm', config_key: 'layout', config: { pages: {} } })).status).toBe(400);   // S6c: firm layout is a key; pages is reserved
+      expect((await hit('PUT', '/api/ui-config', 'admin', { scope: 'firm', config_key: 'layout', config: { pages: { 'user:x': {} } } })).status).toBe(400);   // S6c: firm layout is a key; S6c-5: its pages map names firm pages only
     });
   });
 

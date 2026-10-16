@@ -1659,18 +1659,38 @@ editor is the Config shell's Firm tab (`public/caseconfig/firm.html`:
 Launcher + Who sees what, History over both firm documents), whose "Arrange
 pages and defaults…" opens the same `ycLayoutEditor` in firm mode
 (`open({ scope:'firm' })`, drawn in the top document; edits the firm `layout`
-over all seven surfaces, ONE PUT with `base`, 409 → Reload; the More list
-closes with the firm row while the firm has no `placed.more`).
+over all seven surfaces and the firm's pages, ONE PUT with `base`, 409 →
+Reload; the More list closes with the firm row while the firm has no
+`placed.more`; `open({ scope:'firm', section:'pages', page })` lands on one
+firm page's block — firm.html's "Arrange its tiles…" on a Page item).
+**Pages (S6c-5).** A firm item or a user's button of kind `{ type:'page' }`
+is a main tab of its own like More / Admin: `ycLauncher.buildPages` (from
+applyAccess) draws one `<div class="tab-main yc-hub" id="ycPage-N"
+data-yc-page="<item id>">` per effective page item into `#ycPages` (between
+`#tabAdmin` and the stage) — heading as text + ycIcon, tiles as neutrals
+(a panel item's with `data-target`, opening in place on the stage), a
+`.page-egg-row`; contents from that tier's `layout.pages[id]` (`{ tiles,
+icons }`, no base: the lists ARE the page; non-effective items not drawn);
+`exec(pageId)` → `openMainTab`; a sidebar neutral for a page carries its
+tab in `data-tab`. The tab id is per session and opaque: the WORKSPACE URL
+never writes it and refuses it as a head (F5 on a page lands on Home —
+Fred's ruling Q4, v1). The class is `yc-hub`, NOT the design's `yc-page`:
+`/js/ycPager.js` owns `.yc-page` in the shell document. The drawer kind is
+called **List** in every UI string; its stored type stays `drawer`.
 
 **Storage.** One table, `ui_config` (scope firm|user; `user_id` 0 / `role`
 '' sentinels are load-bearing for the UNIQUE; `role` reserved). Firm
 `registry_overrides` = `{ hidden, renames, locked, items, visible_to, retired }`
-and firm `layout` = `{ placed, removed }` over every surface (the firm's
-default; More, Admin and their icon rows are firm-only; `pages` reserved) —
+and firm `layout` = `{ placed, removed, pages? }` over every surface (the
+firm's default; More, Admin and their icon rows are firm-only) plus
+`pages { 'firm:<slug>': { tiles?, icons? } }` (S6c-5; ≤50 keys, tiles the
+grid grammar ≤100, icons items-only ≤12, keys of the scope's own id shape) —
 both versioned in `ui_config_versions`, optimistic `base` → 409. User keys:
-`layout` `{ placed, removed }` per surface (home, sidebar, homeIcons), `shortcuts` `{ bindings }`,
+`layout` `{ placed, removed, pages? }` per surface (home, sidebar, homeIcons;
+`pages` keyed `user:<slug>`), `shortcuts` `{ bindings }`,
 `items` (own buttons, ≤50, `user:<slug>`; a button may be a drawer,
-`{ type:'drawer', items:[ref…] }` — ≤30 refs, one level deep), `prefs` `{ theme }`. `retired`
+`{ type:'drawer', items:[ref…] }` — ≤30 refs, one level deep — or a page,
+`{ type:'page' }`, at both tiers), `prefs` `{ theme }`. `retired`
 lists are server-managed (a deleted firm/user item id never comes back —
 layouts and shortcuts point at ids). Strict validator `lib/uiConfigShape.js`
 (linear regexes, timing-tested); `services/uiConfigService.js`;
@@ -1689,14 +1709,23 @@ layouts and shortcuts point at ids). Strict validator `lib/uiConfigShape.js`
 - The panel stage (S6c-4): every More / Admin panel div is a child of ONE
   container after the tabs, `#ycPanels` (not a `.tab-main`), and never
   moves — a moved `<iframe>` reloads and loses unsaved work. The drill is
-  page-scoped: a tile's page is `closest('.tab-main')`, each page remembers
-  the panel it last opened (`drillMemory`), `openMainTab` shows the active
-  page's remembered panel or hides the stage (`stageSync`), `exitDrillMode`
-  forgets; a panel's `display` is '' iff it is the one on the stage now.
-  One panel may sit on any number of pages (one element). `exec` of a grid
-  item routes by page: `opts.page`, the active page, More, Admin — the
-  first that SHOWS a tile for it; else the hidden default tile. Panel CSS
-  targets `#ycPanels > div`; the grid rules still target the hubs' tiles.
+  page-scoped: a tile's page is `closest('.tab-main')` (More, Admin or a
+  custom page in `#ycPages`), each page remembers the panel it last opened
+  (`drillMemory`), `openMainTab` shows the active page's remembered panel or
+  hides the stage (`stageSync`), `exitDrillMode` forgets; a panel's
+  `display` is '' iff it is the one on the stage now. One panel may sit on
+  any number of pages (one element). `exec` of a grid item routes by page:
+  `opts.page`, the active page, More, Admin, the firm pages, the user's
+  pages — the first that SHOWS a tile for it; else the hidden default tile.
+  Panel CSS targets `#ycPanels > div`; the hubs' phone grid rules and the
+  egg rows key on `.yc-hub` / `.page-egg-row` (every hub carries `yc-hub`).
+- A page (S6c-5) deleted or restricted while open: `buildPages` opens Home
+  first, forgets its drill memory, removes the tab. A gated / hidden /
+  denied item placed on a page is not drawn there and gets no pill —
+  the page shows only what its viewer may open (fuzzed in
+  `tests/launcherS6c5.test.js`). Blocking a page (`visible_to` / hide /
+  deny on its id) hides its openers everywhere; its contents stay reachable
+  through All. Per-tier page count = the items cap (50).
   Pane pages reach the shell via `window.parent`, unchanged; the Simple
   Forms → Form Builder hand-off goes through `exec('moreFormBuilder')`.
 - Layouts resolve shipped → firm → user with ONE merge rule applied twice
@@ -1728,6 +1757,8 @@ layouts and shortcuts point at ids). Strict validator `lib/uiConfigShape.js`
   login read can never wipe a surface); the theme account value wins at login,
   localStorage is its write-through cache (the pre-paint script reads it).
 
-**Pointers.** Operator docs: manual 05/14 (Firm launcher), 01/15 (your
-launcher), 08/11 (tool actions). Tests: `tests/launcherS*.test.js`,
-`tests/uiConfigS*.test.js`, `tests/firmTab.test.js`, `tests/themePrefsS5d.test.js`.
+**Pointers.** Operator docs: manual 05/14 (Firm launcher, Firm pages), 01/15
+(your launcher: Lists, Pages), 08/11 (tool actions). Tests:
+`tests/launcherS*.test.js` (pages: `launcherS6c5`, `launcherS6c5editor`),
+`tests/uiConfigS*.test.js` (`uiConfigS6c5`), `tests/firmTab.test.js`,
+`tests/themePrefsS5d.test.js`.

@@ -1,13 +1,14 @@
 # Your own launcher: All, Ctrl+K, Home and the sidebar, keyboard shortcuts, and your own buttons
 
 The **launcher** is every way into a feature: the sidebar, the Home tiles, the
-More Features and Admin grids, the **All** tab and the **Ctrl+K** search. Your
-firm sets it up for everyone. On top of that, you can arrange **your own Home
-tiles and your own sidebar**, give features **keyboard shortcuts** of your
-own, and make **buttons of your own** (a saved view, a tool, a link to
-another website, or a **drawer** that holds several). Nobody else sees your arrangement, your shortcuts or your
-buttons, and all three are saved on your account, so they follow you to any
-computer you sign in on.
+More Features and Admin grids, your firm's own **pages**, the **All** tab and
+the **Ctrl+K** search. Your firm sets it up for everyone. On top of that, you
+can arrange **your own Home tiles and your own sidebar**, give features
+**keyboard shortcuts** of your own, and make **buttons of your own** (a saved
+view, a tool, a link to another website, a **list** that holds several, or a
+**page** of your own, like More Features). Nobody else sees your arrangement,
+your shortcuts or your buttons, and all three are saved on your account, so
+they follow you to any computer you sign in on.
 
 ---
 
@@ -192,8 +193,9 @@ pick another combination.
 ## My buttons
 
 Your own buttons, besides the features and your firm's items: a saved view
-you use every day, a tool, the court's website. Make up to **50**. Only you
-see them, and they are saved on your account like the rest of this page.
+you use every day, a tool, the court's website, a list of several things, a
+page of your own. Make up to **50**. Only you see them, and they are saved on
+your account like the rest of this page.
 
 ### What a button can open
 
@@ -202,7 +204,8 @@ see them, and they are saved on your account like the rest of this page.
 | **A saved view** | One of the firm's saved views (picked from a list) | Over the app, in a window you close with **×** or **Esc**. Pick **Large** (the usual) or **Compact** (a small card). Or as **a tab** of its own: see [Buttons that open as a tab](#buttons-that-open-as-a-tab). |
 | **A tool** | One of the firm's live tools (picked from a list) | The same way: over the app, Large or Compact, or as a tab. |
 | **A link to a website** | Any secure address (`https://…`), or a page of YisraCase itself (`/…`) | **Always in a new browser window**, never inside YisraCase. |
-| **A drawer** | A small menu of up to 30 other items: features, your firm's items, your other buttons | Beside its tile or sidebar row; pick an item to open it. See [Drawers](#drawers). |
+| **A list** | A small menu of up to 30 other items: features, your firm's items, your other buttons | Beside its tile or sidebar row; pick an item to open it. See [Lists](#lists). |
+| **A page** | A tab of your own, like More Features: big tiles for anything you have, and a row of small buttons under them | As a main tab, from its tile, its sidebar row, All, Ctrl+K or a shortcut. See [Pages](#pages). |
 
 **Why links open in a new window.** Another website isn't part of YisraCase:
 shown inside the app, it would look like YisraCase while being somebody
@@ -221,9 +224,11 @@ button for those.
    - **Icon**: press **Choose…** and pick one (see
      [Choosing an icon](#choosing-an-icon)); the icon and its name show
      beside the button;
-   - **Opens**: a saved view, a tool, or a link; then pick the view or the tool
-     from the list (and where it **Opens in**: a dialog, large or compact, or a
-     tab), or type the address.
+   - **Opens**: a saved view, a tool, a link, a list or a page; then pick the
+     view or the tool from the list (and where it **Opens in**: a dialog, large
+     or compact, or a tab), type the address, fill the list, or — for a page —
+     nothing more here: its tiles are arranged from its row (see
+     [Pages](#pages)).
 3. Press **Add button**, then **Save**.
 
 Each button in the list shows its icon, its name, what it opens (*Saved view ·
@@ -268,10 +273,11 @@ you save: the button, its place and its shortcut are saved together.
 
 ### Deleting a button
 
-The bin deletes a button. If it is on your Home or sidebar, in one of your
-drawers, or has a keyboard shortcut, the editor says so and asks first;
-deleting it takes it off those too, so nothing is left pointing at it. Nothing
-is gone until you Save.
+The bin deletes a button. If it is on your Home or sidebar, on one of your
+pages, in one of your lists, or has a keyboard shortcut, the editor says so
+and asks first; deleting it takes it off those too, so nothing is left
+pointing at it. Deleting a page takes its own tiles with it. Nothing is gone
+until you Save.
 
 ### Things to know
 
@@ -309,35 +315,37 @@ There is no custom tab (**Settings → My Custom Tab**) any more. Each one becam
 a button of its owner's, in the same places on Home and the sidebar: a saved
 view or a tool opens as a tab, as before; another page is a link or the app's
 own tile for it. The button works like any other: rename it, move it, give it
-a shortcut, or put it in a drawer. **Calendar** took the custom tab's place in
+a shortcut, or put it in a list. **Calendar** took the custom tab's place in
 the shipped Home. If you had already arranged your Home yourself, it is added
 to yours too, after **Log** (or the nearest tile before it that you kept);
 take it off like any tile if you don't want it.
 
-## Drawers
+## Lists
 
-A **drawer** is a button that holds other items: put the five things you open
+A **list** is a button that holds other items: put the five things you open
 every morning in one, give it a single tile on your Home or a single row on
-your sidebar, and open the rest from there. It is one of your buttons, so it
-counts toward the 50, is listed under **Mine** in All and the search, and can
-go on Home, on the sidebar, and get a keyboard shortcut like any other.
+your sidebar, and open the rest from there as a small menu. (Lists were called
+*drawers* until October 2026; nothing but the name changed.) It is one of your
+buttons, so it counts toward the 50, is listed under **Mine** in All and the
+search, and can go on Home, on the sidebar, on a page, and get a keyboard
+shortcut like any other.
 
 ### Making one
 
 1. On the **My buttons** tab, press **Add a button**, give it a **Name** and an
-   **Icon**, and set **Opens** to **A drawer**.
-2. Press **Add to the drawer** and pick from the list (type part of a name to
+   **Icon**, and set **Opens** to **A list**.
+2. Press **Add to the list** and pick from the picker (type part of a name to
    find it). Anything you have can go in: a feature, a More Features or Admin
    panel, one of your firm's items, or one of your own buttons, even one you
-   made a minute ago and haven't saved. The list stays open, so you can pick
+   made a minute ago and haven't saved. The picker stays open, so you can pick
    several in a row; **Done** closes it.
-3. **↑ / ↓** set the order the drawer shows them in, and **×** takes one out.
-   A drawer holds up to **30** items.
+3. **↑ / ↓** set the order the list shows them in, and **×** takes one out.
+   A list holds up to **30** items.
 4. Press **Add button**, then **Save**. Put it on your Home or sidebar with
    **Add to Home** / **Add to sidebar**, as with any button.
 
-In the list of buttons, a drawer says how many items it holds (*Drawer · 4
-items*), and each button inside one is tagged with the drawer's name.
+In the list of buttons, a list says how many items it holds (*List · 4
+items*), and each button inside one is tagged with the list's name.
 
 ### Opening it
 
@@ -345,24 +353,81 @@ items*), and each button inside one is tagged with the drawer's name.
   phone it slides up from the bottom of the screen.
 - From **All**, it opens under the tile you clicked; from the **Ctrl+K**
   search or its keyboard shortcut, near the top of the screen.
-- Click an item to open it; the drawer closes as it does.
+- Click an item to open it; the menu closes as it does.
 - **Esc**, the **×**, or a click anywhere outside closes it, and so does a
   second click on its tile. With the keyboard, **↑ / ↓** (and **Home** /
   **End**) move between the items and **Enter** opens one.
-- Only one drawer is open at a time. It doesn't open while a dialog or the
+- Only one list is open at a time. It doesn't open while a dialog or the
   **Customize my launcher** editor is open.
 
 ### Things to know
 
-- **A drawer only shows what you can open right now.** If your firm hides a
-  feature you put in a drawer, or it isn't available to your account, the
-  drawer simply leaves it out (the editor still lists it, tagged
-  **Unavailable**, so it comes back if the feature does). A drawer with
-  nothing you can open says *Nothing here you can open*.
-- **One level deep.** A drawer can't hold another drawer, and a button that is
-  inside a drawer can't be turned into one; take it out of that drawer first.
-- Deleting a button takes it out of every drawer that held it (see
+- **A list only shows what you can open right now.** If your firm hides a
+  feature you put in a list, or it isn't available to your account, the list
+  simply leaves it out (the editor still shows it, tagged **Unavailable**, so
+  it comes back if the feature does). A list with nothing you can open says
+  *Nothing here you can open*.
+- **One level deep.** A list can't hold another list, and a button that is
+  inside a list can't be turned into one; take it out of that list first.
+- Deleting a button takes it out of every list that held it (see
   [Deleting a button](#deleting-a-button)).
+
+## Pages
+
+A **page** is a tab of your own that works like **More Features**: a heading,
+big tiles, and a row of small round buttons under them. Put the panels you
+live in — Automations, Users, a saved view that opens as a tab, a list — on
+one page and open them from there. It is one of your buttons, so it counts
+toward the 50, is listed under **Mine** in All and the search, and can go on
+Home, on the sidebar, and get a keyboard shortcut like any other.
+
+### Making one
+
+1. On the **My buttons** tab, press **Add a button**, give it a **Name** and an
+   **Icon**, and set **Opens** to **A page**. Press **Add button**.
+2. Press **Arrange…** on its row. Two lists open under the buttons: **Tiles**
+   and **Small buttons**.
+   - **Add a tile** opens the same picker as Home's: a feature, a More
+     Features or Admin panel, one of your firm's items (or firm pages), or
+     one of your own buttons. A page can't hold itself.
+   - **Add a row break** starts a new row of tiles. **↑ / ↓** move a row, **×**
+     takes it out. Up to 100 entries.
+   - **Add a small button** fills the row under the tiles — up to 12, like the
+     All icon under your Home tiles.
+3. Press **Done**, then **Save**. The page appears at once, with no reload.
+   Put it on your Home or sidebar with **Add to Home** / **Add to sidebar**.
+
+A button on one of your pages is tagged with the page's name in the list of
+buttons (*On “My desk”*).
+
+### Using it
+
+- Its tile, its sidebar row (lit while you are on the page), All, Ctrl+K or a
+  keyboard shortcut opens it as a main tab.
+- A **panel** tile (Automations, Users, Manuals…) opens that panel **on the
+  page itself**, with the page's own strip of pills across the top — exactly
+  as More Features does. The panel is the same one More Features shows:
+  switch from the page to More Features and back and you are looking at the
+  same Automations, with what you typed still there. Each page remembers
+  which panel it had open.
+- Any other tile opens the feature where it always opens: a tab, a dialog, a
+  list's menu, a link in a new window.
+- **Reloading the browser while you are on a page brings you back to Home.**
+  The address bar never names your page (your pages are yours alone); More
+  Features and Admin come back as before.
+
+### Things to know
+
+- **A page only shows what you can open right now.** A feature your firm hides
+  or your account doesn't have is left off the page (and off its pills); the
+  editor still lists it so it comes back if the feature does.
+- Deleting a page takes its own tiles with it (nothing else is deleted:
+  the features are still in All). Deleting a button takes it off every page
+  that held it (see [Deleting a button](#deleting-a-button)).
+- Your firm can make pages for everyone too, and can decide who sees each
+  ([Firm Launcher](../05-Subsystems/14-firm-launcher.md#firm-pages)). A firm
+  page you can see is a tab like your own; a firm page meant for other roles
+  is simply not there for you.
 
 ## What your firm controls
 
@@ -372,14 +437,18 @@ arrangement:
 
 - **Your Home starts from the firm's.** Your firm can arrange Home, the
   sidebar and the small buttons under the Home tiles for everyone (and the More
-  Features and Admin pages). Until you arrange a surface yourself, you see the
+  Features and Admin pages, and its own pages). Until you arrange a surface yourself, you see the
   firm's arrangement, and the editor starts from it. Once you have arranged
   one, a later change by the firm only **adds** new items for you, next to
   their neighbours: it never reorders or takes away yours. **Reset** brings
   back the firm's arrangement.
+- **Firm pages.** A page your firm made shows as a tab for everyone the firm
+  lets see it (**Who sees what**). You can put a firm page on your Home or
+  sidebar, in a list or on your own page, like any item; its tiles are the
+  firm's to arrange.
 
 - **Firm hides.** A feature the firm hid is gone from every surface, from your
-  layout, from your drawers and from **Add a shortcut**. If the firm brings it back, so does your
+  layout, from your lists and pages and from **Add a shortcut**. If the firm brings it back, so does your
   launcher: it comes back where you had it (or, if you never had it, in its
   usual place).
 - **Renames.** A feature the firm renamed shows the firm's name in your
@@ -397,5 +466,7 @@ arrangement:
 ## Not here (yet)
 
 - **More Features and Admin** keep the order your firm and the app give them.
-  Only Home and the sidebar are yours to arrange.
+  Only Home, the sidebar and your own pages are yours to arrange.
 - Firm-wide keyboard shortcuts: shortcuts are personal only.
+- **A page in the address bar.** Reloading while on one of your pages lands on
+  Home; a link to a page of your own can't be shared or bookmarked yet.

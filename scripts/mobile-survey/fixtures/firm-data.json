@@ -120,13 +120,15 @@
      { "id": "firm:payroll", "label": "Payroll", "icon": "money-check",
        "action": { "type": "url", "href": "https://payroll.example.com/", "present": "window" } },
      { "id": "firm:payroll-portal", "label": "Payroll and timesheets portal (vendor)", "icon": "money-check",
-       "action": { "type": "url", "href": "https://payroll.example.com/firm/sign-in?return=/timesheets/weekly-overview-with-a-long-path", "present": "window" } }
+       "action": { "type": "url", "href": "https://payroll.example.com/firm/sign-in?return=/timesheets/weekly-overview-with-a-long-path", "present": "window" } },
+     { "id": "firm:ops", "label": "Operations desk (a firm page)", "icon": "layer-group", "action": { "type": "page" } }
     ],
     "visible_to": {
      "moreAutomations": ["admin", "attorney"],
      "firm:payroll-portal": [],
      "tasks": ["it", "admin", "staff", "attorney", "automation", "form_dev"],
-     "admin": ["it", "admin"]
+     "admin": ["it", "admin"],
+     "firm:ops": ["it", "admin"]
     }
    },
    "layout": {
@@ -146,11 +148,21 @@
       { "break": true },
       { "item": "firm:unbroken" }, { "item": "firm:intake-checklist" }, { "item": "firm:payroll" }, { "item": "firm:payroll-portal" },
       { "break": true },
-      { "item": "adminUsers" }
+      { "item": "adminUsers" }, { "item": "firm:ops" }
      ],
      "moreIcons": [{ "item": "casey" }, { "item": "myTasks" }]
     },
-    "removed": { "admin": ["adminScratch"] }
+    "removed": { "admin": ["adminScratch"] },
+    "pages": {
+     "firm:ops": {
+      "tiles": [
+       { "item": "moreManuals" }, { "item": "adminUsers" }, { "item": "moreCaseConfig" },
+       { "break": true },
+       { "item": "firm:clio-code" }, { "item": "firm:unbroken" }, { "item": "firm:payroll-portal" }
+      ],
+      "icons": [{ "item": "myTasks" }, { "item": "casey" }]
+     }
+    }
    }
   },
   "user": {
@@ -162,13 +174,13 @@
       { "item": "moreAutomations" }, { "item": "firm:unbroken" }, { "item": "calendar" },
       { "break": true },
       { "item": "appts" }, { "item": "events" }, { "item": "tasks" }, { "item": "newClient" }, { "item": "firm:intake-checklist" },
-      { "item": "user:long-tool" }, { "item": "user:morning-drawer" },
+      { "item": "user:long-tool" }, { "item": "user:morning-drawer" }, { "item": "user:my-desk" },
       { "break": true },
       { "item": "custom" }, { "item": "moreFeatures" }, { "item": "pipeline" }, { "item": "bills" }
      ],
      "sidebar": [
       { "label": "Mine: the forty-character section label" },
-      { "item": "comms" }, { "item": "cases" }, { "item": "firm:intake-checklist" }, { "item": "user:my-open-leads" }, { "item": "user:morning-drawer" }, { "item": "moreAutomations" },
+      { "item": "comms" }, { "item": "cases" }, { "item": "firm:intake-checklist" }, { "item": "user:my-open-leads" }, { "item": "user:morning-drawer" }, { "item": "user:my-desk" }, { "item": "moreAutomations" },
       { "label": "Records" },
       { "item": "contacts" }, { "item": "appts" }, { "item": "calendar" }, { "item": "events" }, { "item": "tasks" }, { "item": "bills" },
       { "label": "Actions" },
@@ -177,7 +189,19 @@
       { "item": "admin" }, { "item": "moreFeatures" }, { "item": "helpSupport" }
      ]
     },
-    "removed": { "home": ["log", "bills"], "sidebar": ["log"] }
+    "removed": { "home": ["log", "bills"], "sidebar": ["log"] },
+    "pages": {
+     "user:my-desk": {
+      "tiles": [
+       { "item": "moreManuals" }, { "item": "moreAutomations" }, { "item": "adminUsers" }, { "item": "user:leads-tab" },
+       { "break": true },
+       { "item": "user:morning-drawer" }, { "item": "user:court-site" }, { "item": "firm:unbroken" }, { "item": "user:long-tool" },
+       { "break": true },
+       { "item": "firm:ops" }, { "item": "adminDbConsole" }
+      ],
+      "icons": [{ "item": "casey" }, { "item": "all" }, { "item": "myTasks" }]
+     }
+    }
    },
    "shortcuts": {
     "bindings": [
@@ -201,7 +225,8 @@
        "action": { "type": "drawer", "items": ["user:my-open-leads", "firm:unbroken", "user:long-tool", "firm:payroll-portal", "tasks",
          "moreDocuments", "user:court-site", "cases", "notAnItemAnymore"] } },
      { "id": "user:leads-tab", "label": "My leads, in a tab of their own, always", "icon": "table-list",
-       "action": { "type": "view", "key": "lead_followups", "present": "tab" } }
+       "action": { "type": "view", "key": "lead_followups", "present": "tab" } },
+     { "id": "user:my-desk", "label": "My desk, everything I use in one place", "icon": "desktop", "action": { "type": "page" } }
     ],
     "retired": ["user:old-button"]
    }

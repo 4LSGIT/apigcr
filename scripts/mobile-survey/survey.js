@@ -227,11 +227,30 @@ async function walk(page, W, record) {
   if (ONLY.has('tabs')) {
     // data-tab-also: tabs reached from a hub rather than their own sidebar item
     // (Settings, from More Features since 2026-10-11) — surveyed all the same.
+    // (a custom page's sidebar row carries its per-session tab id, ui-custom
+    // S6c-5 — those pages are surveyed by item id in the pages pass below)
     const tabs = await page.evaluate(() => [...new Set([...document.querySelectorAll('#appSidebar [data-tab]')]
-      .flatMap((e) => [e.dataset.tab, ...(e.dataset.tabAlso || '').split(' ').filter(Boolean)]))]);
+      .flatMap((e) => [e.dataset.tab, ...(e.dataset.tabAlso || '').split(' ').filter(Boolean)]))]
+      .filter((t) => { const el = document.getElementById(t); return !(el && el.hasAttribute('data-yc-page')); }));
     for (const t of tabs) {
       await page.evaluate((t) => openMainTab(t), t); await sleep(1500);
       await record(`tab:${t}`, await measure(page, await frameOf(page, VISIBLE_TAB_FRAME)), await shot('tab_' + t));
+    }
+
+    // The custom pages (ui-custom S6c-5): the firm's (fixture: firm:ops, restricted to
+    // it / admin — the fixture user is su) and the user's own (user:my-desk) — each
+    // page's grid, then drilled into its first panel tile (the panel opens on the
+    // page itself, on the stage). Named by item id: the tab id is per session.
+    const pages = await page.evaluate(() => [...document.querySelectorAll('#ycPages > [data-yc-page]')].map((e) => ({ tab: e.id, id: e.getAttribute('data-yc-page') })));
+    for (const { tab, id } of pages) {
+      await page.evaluate((t) => { openMainTab(t); const el = E(t); if (el.classList.contains('drill-active')) exitDrillMode(el); }, tab); await sleep(800);
+      await record(`page:${id}`, await measure(page, null), await shot('page_' + id));
+      const target = await page.evaluate((t) => { const b = document.querySelector(`#${t} > .big-button[data-target]`); if (!b) return null; b.click(); return b.dataset.target; }, tab);
+      if (!target) continue;
+      await sleep(2000);
+      const fr = await frameOf(page, `document.querySelector('#${target} iframe')`);
+      await record(`page:${id}:drilled`, await measure(page, fr), await shot('page_' + id + '_drilled'));
+      await page.evaluate((t) => exitDrillMode(E(t)), tab);
     }
 
     // Comms → Phone tab (S-PH): the texts list, one conversation (stacked at
