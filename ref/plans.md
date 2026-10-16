@@ -8,8 +8,8 @@ Living doc. Deferred work, design ideas, and known cleanups — not active devel
 
 Two operator surfaces, ratified:
 
-- **My Settings** (settings.html, slimmed): personal — account, password, signature,
-  custom tab.
+- **My Settings** (settings.html, slimmed): personal — account, password,
+  signature.
 - **YisraCase Config** (caseConfigManager.html, renamed from "Case Config"): every
   firm-wide vocabulary editor as a first-class tab — types/subtypes, pipelines,
   calendar types, custom fields (CFG-1), contact roles (CFG-2), eventually contact
@@ -318,12 +318,20 @@ deferred until the budget shows it's needed.
   orphans up when an item is deleted. (b) role / firm deny rows written through
   the API (0 live 2026-10-16) still hide items while the editor says "Everyone"
   — add a read-only "also hidden by an older rule" note if any ever appear.
-- **Custom tab clear has no compare step** (ui-custom S5c-b review N4): My
-  buttons' "Make my custom tab a button" clears `users.user_custom_tab` with
-  an unconditional `POST /api/auth/update-custom-tab { clear: true }` at Save,
-  so a custom tab changed on another device between opening the panel and
-  Save is wiped. Fix: a compare-and-clear on the route (e.g. `ifSrc`: clear
-  only while the stored src still matches what the editor converted).
+- **Drop `users.user_custom_tab`** (ui-custom S5e-3, after a soak of S5e-2):
+  nothing reads or writes it since S5e-2 retired the custom tab, except
+  `routes/admin.users.js`'s INSERT of `'null'` (the column is `json NOT
+  NULL`). The slice: a session script (CHECK by default; `lock_wait_timeout`
+  low; asserts every row is still the JSON null) that drops the column; the
+  INSERT stops naming it — mind the order: the INSERT names the column, so a
+  drop that lands before that backend breaks creating users; the
+  `lib/internal_functions/users.js` BLOCKED_COLUMNS entry, the survey
+  fixture's `currentUser.user_custom_tab`, the gated `*.mysql.test.js`
+  users INSERTs that name it, and manual 01/09's line go too.
+  `/api/firm-data` ships it today only through `SELECT *`. The spent S5e-1
+  script (`scripts/uiCustomS5eCustomTabsToButtons.js`) reads and writes the
+  column: it stays as the record of that run but no longer runs after the
+  drop.
 - **sbAdmin widening**: the Admin sidebar stays su-only until the first
   firm-grade admin tile exists (the CFG-3 firm tab) — then widen
   tile-by-tile, not by taxonomy.

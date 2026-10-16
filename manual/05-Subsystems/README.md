@@ -16,7 +16,7 @@ requests, landing pages — moved to [06-Client-Facing](../06-Client-Facing/).
 | 2 | [02-redirects.md](02-redirects.md) | Short, branded links (`app.4lsg.com/r/<slug>`) for long URLs like Clio payment links. (More → Redirects Manager) |
 | 3 | [03-feature-requests.md](03-feature-requests.md) | Staff feature-request and bug board — submit, vote, comment, track stages. (More → Feature Requests) |
 | 4 | [04-reports.md](04-reports.md) | Saved questions that answer with a number — charts, filters, CSV, scheduled emails, and an AI that drafts new ones. (More → Reports) |
-| 5 | [05-YisraView.md](05-YisraView.md) | Working lists built on the same engine — filter, sort, and click straight into a case. Pin one to your own sidebar tab. (More → Views) |
+| 5 | [05-YisraView.md](05-YisraView.md) | Working lists built on the same engine — filter, sort, and click straight into a case. Put one on your own Home or sidebar. (More → Views) |
 | 6 | [06-documents.md](06-documents.md) | The Documents registry: how files in Dropbox reach a case, the Sync panel that operates it, and the guided workflow for re-linking a case that points at the wrong folder. (More → Documents) |
 | 7 | [07-checklists.md](07-checklists.md) | Checklists and notes — one board, two shapes; the `docs_needed` list the sending form, document requests and the portal all read; derived vs manual status. |
 | 8 | [08-asset-manager.md](08-asset-manager.md) | The shared asset store — uploads, collections, the picker other tools read from, and why delete is a soft delete. (More → Asset Manager) |

@@ -125,6 +125,23 @@ describe('the registry data', () => {
     for (const id of divs) expect([id, targets.has(id)]).toEqual([id, true]);
   });
 
+  test('the custom tab is retired (ui-custom S5e): no item, in no default layout; Calendar holds its Home slot', () => {
+    expect(Object.prototype.hasOwnProperty.call(REG, 'custom')).toBe(false);
+    for (const sf of Object.keys(LAY)) {
+      expect([sf, LAY[sf].filter((e) => e.item === 'custom').length]).toEqual([sf, 0]);
+    }
+    // the shipped Home: Calendar is the first tile of the last row (-3), right after its break
+    const home = LAY.home;
+    expect(home.slice(-4)).toEqual([{ break: true }, { item: 'calendar' }, { item: 'moreFeatures' }, { item: 'comms' }]);
+    expect(home.filter((e) => e.item === 'calendar')).toHaveLength(1);
+    // the sidebar's Actions section lost its slot, nothing took it
+    const sb = LAY.sidebar, a = sb.findIndex((e) => e.label === 'Actions'), z = sb.findIndex((e) => e.label === 'Settings');
+    expect(sb.slice(a + 1, z)).toEqual([{ item: 'pipeline' }, { item: 'newClient' }]);
+    // and the page has no custom tab, tile or row left
+    for (const id of ['tabCustom', 'tabCustomFrame', 'sbCustom', 'tabCustomButton']) expect(expandedShellHtml()).not.toContain(`id="${id}"`);
+    expect(RAW).not.toMatch(/applyCustomTab|user_custom_tab|customTabVar/);
+  });
+
   test('every sidebar data-tab / data-tab-also names a real tab; dialogs have none', () => {
     for (const e of LAY.sidebar.filter((x) => x.item)) {
       const it = REG[e.item];
@@ -164,7 +181,7 @@ describe('the mounts in public/index.html', () => {
 
   test('the expanded page still holds every element other code looks up by id', () => {
     const html = expandedShellHtml();
-    for (const id of ['sbCustom', 'tabCustomButton', 'sbAdmin', 'sbComms', 'homeComms', 'sbTasksBadge', 'sbCommsBadge', 'sbAll', 'homeAll']) {
+    for (const id of ['sbAdmin', 'sbComms', 'homeComms', 'sbTasksBadge', 'sbCommsBadge', 'sbAll', 'homeAll']) {
       expect([id, (html.match(new RegExp(`id="${id}"`, 'g')) || []).length]).toEqual([id, 1]);
     }
   });
@@ -235,8 +252,7 @@ describe('mount(), run for real in jsdom', () => {
     expect(doc.getElementById('sbAdmin').style.display).toBe('none');
     expect(doc.getElementById('sbAll').getAttribute('onclick')).toBe("openMainTab('tabAll')");   // the `all` item (S6c)
     expect(doc.getElementById('sbTasksBadge').style.display).toBe('none');
-    expect(doc.getElementById('sbCustom').textContent.trim()).toBe(REG.custom.label);
-    expect(doc.getElementById('tabCustomButton').className).toBe('home-btn');
+    expect(doc.getElementById('homeComms').className).toBe('home-btn');
     expect(doc.querySelector('#appSidebar [data-tab="tabMore"]').dataset.tabAlso).toBe('tabSettings');
     // panel tiles carry no onclick; the delegated listener opens them
     expect(doc.querySelectorAll('.big-button[data-target][onclick]')).toHaveLength(0);

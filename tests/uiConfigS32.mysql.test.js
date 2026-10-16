@@ -204,7 +204,8 @@ d('Firm-tab routes on real MySQL', () => {
     expect(r.status).toBe(400);
     expect(r.body.message).toMatch(/no longer passes/);
     expect(r.body.errors.join(' | ')).toMatch(/moreSettings cannot be hidden/);
-    expect(r.body.errors.join(' | ')).toMatch(/custom tab is titled by its user/);
+    // (its rename of `custom` passes since ui-custom S5e: a soft ref to the retired custom tab)
+    expect(r.body.errors.join(' | ')).not.toMatch(/custom/);
     expect([await firmRow(), await versions()]).toEqual(before);
     await q('DELETE FROM ui_config_versions WHERE id = ?', [ins.insertId]);
   });

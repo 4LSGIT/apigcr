@@ -69,7 +69,7 @@
        spot its markup used to be written by hand; the mount runs synchronously
        while the page parses, inserts the markup in its own place and removes
        itself, so the finished DOM is the same as the hand-written one and
-       every id (sbAdmin, sbCustom, tabCustomButton, …) exists before
+       every id (sbAdmin, sbComms, homeComms, …) exists before
        initAuth() runs. -->
   <!-- The stored icon value → Font Awesome classes (ui-custom S6a): bare slug =
        solid, or solid: / regular: / brands: + slug. The launcher below renders
@@ -274,13 +274,9 @@
       //   − denied ids (firmData.denied, access-control A5). The server
       //     already strips the undeniable set; the client strips it again
       //     rather than trust its input, and ignores anything not a string.
-      //   − the custom tab while the user has none (applyCustomTab hides
-      //     both its elements then); while they do, it is listed under its
-      //     own title and icon.
       //   − firm-hidden ids, + firm-added items (group "Firm", after More,
       //     before Admin, in their array order), with firm renames applied to
-      //     label AND surfaceLabels (the custom item ignores renames: its
-      //     user owns its title). See the firm overlay below.
+      //     label AND surfaceLabels. See the firm overlay below.
       //   − role-restricted ids (the firm's visible_to, ui-custom S3.4): an
       //     item with an entry is dropped unless the user holds one of its
       //     roles (opts.roles, the users.roles members) or is su. Registry
@@ -530,7 +526,7 @@
         }
         if (isObj(ro.renames)) {
           for (var id in ro.renames) {
-            if (!hasOwn(ro.renames, id) || id === 'custom') continue;
+            if (!hasOwn(ro.renames, id)) continue;
             var l = isObj(ro.renames[id]) ? cleanLabel(ro.renames[id].label) : null;
             if (l != null) out.renames[id] = l;
             else if (!quiet) note('firm rename of "' + id + '" ignored: not a 1-40 character plain label');
@@ -628,12 +624,6 @@
           if (!gatePasses(it.gate, opts)) return;
           if (denied[id] || firm.hidden[id] || restricted[id]) return;
           var label = it.label, icon = it.icon;
-          if (id === 'custom') {
-            var ct = opts.customTab;
-            if (!ct || !ct.src) return;
-            if (ct.title) label = String(ct.title);
-            icon = ct.icon ? String(ct.icon) : 'bug';   // no icon: the bug applyCustomTab has always drawn
-          }
           var labels = [label];
           if (hasOwn(firm.renames, id)) {
             labels = [label = firm.renames[id]];     // replaces surfaceLabels too
@@ -672,19 +662,19 @@
       }
 
       // ── Access: the effective registry + the hide pass ─────────────────
-      // applyAccess({ isAdmin, denied, ui, customTab, roles }) — loadUserContext
-      // calls it once after firm data; applyCustomTab calls it again with
-      // just { customTab } when Settings changes the custom tab. Fields left
-      // out keep their last value. Re-runnable: the hide pass is idempotent.
+      // applyAccess({ isAdmin, denied, ui, roles }) — loadUserContext calls it
+      // once after firm data; the editors call it again with what they
+      // changed. Fields left out keep their last value. Re-runnable: the hide
+      // pass is idempotent.
       // roles = the user's users.roles members (an array), for visible_to.
       var STATE = null, EFFECTIVE = [], lastDenied = null;
       var DENIED_ATTR = 'data-yc-denied';   // CSS: [data-yc-denied] { display:none !important }
 
       function applyAccess(opts) {
         opts = opts || {};
-        var prev = STATE || { isAdmin: false, denied: [], ui: null, customTab: null, roles: [] };
+        var prev = STATE || { isAdmin: false, denied: [], ui: null, roles: [] };
         STATE = {};
-        ['isAdmin', 'denied', 'ui', 'customTab', 'roles'].forEach(function (k) {
+        ['isAdmin', 'denied', 'ui', 'roles'].forEach(function (k) {
           STATE[k] = Object.prototype.hasOwnProperty.call(opts, k) ? opts[k] : prev[k];
         });
         STATE.isAdmin = !!STATE.isAdmin;
@@ -807,9 +797,9 @@
       // (ensureStrip and the CSS rule already honour it; firm "hide" and role
       // scoping are decluttering, a deny is visibility-only: none of them
       // secures anything). By attribute + an !important rule, not
-      // style.display: applyCustomTab and loadUserContext write style.display
-      // on #sbCustom / #sbAdmin / #tabCustomButton, and must not be able to
-      // resurrect a hidden item. Then relabel the renamed ones.
+      // style.display: loadUserContext writes style.display on #sbAdmin, and
+      // must not be able to resurrect a hidden item. Then relabel the renamed
+      // ones.
       function hidePass(denied, renames) {
         renames = renames || {};
         for (var id in EL) for (var sf in EL[id]) setAttr(EL[id][sf], DENIED_ATTR, denied[id] ? '' : null);
@@ -837,8 +827,7 @@
       // the label unless its registry entry sets an explicit title (S1's
       // rule — skinny mode shows it). The text an element had before its first
       // rename is remembered, so dropping the rename restores it exactly; a
-      // re-run with the same renames changes nothing. The custom item is never
-      // renamed (applyCustomTab owns its text).
+      // re-run with the same renames changes nothing.
       var ORIG = typeof WeakMap === 'function' ? new WeakMap() : null;
       function labelNode(el, sf) {
         if (sf === 'sidebar') {
@@ -854,7 +843,6 @@
         if (!ORIG) return;
         var reg = window.FEATURE_REGISTRY || {};
         for (var id in EL) {
-          if (id === 'custom') continue;
           for (var sf in EL[id]) {
             var el = EL[id][sf], node = labelNode(el, sf);
             if (!node) continue;
@@ -1065,7 +1053,7 @@
       //   - a default item the layouts leave out is NEVER dropped: it stays in
       //     the DOM, next to its default neighbour, hidden by data-yc-unplaced
       //     + an !important rule — like data-yc-denied, never style.display,
-      //     which applyCustomTab / loadUserContext write. (An item absent from
+      //     which loadUserContext writes. (An item absent from
       //     the effective registry is hidden by its own mechanism: data-yc-
       //     denied, or the style.display its owner sets; it only keeps its
       //     slot.) So every default element always has an element, and exec()
@@ -1565,8 +1553,8 @@
       // Clicks the item's REAL rendered element — the sidebar item if it has
       // one, else its Home tile, else its grid tile (after opening that
       // grid's tab with openMainTab) — so everything a click does (openers,
-      // the drill-in, lazy iframes, the highlight, the custom tab's
-      // loadFunc) happens exactly as it does by hand. Refuses, loudly, an id
+      // the drill-in, lazy iframes, the highlight) happens exactly as it does
+      // by hand. Refuses, loudly, an id
       // not in the effective registry: denied, admin-gated or unknown.
       // A user layout never takes that element away (S4a): an item removed
       // from Home or the sidebar is hidden in place, so exec clicks it all the
@@ -1748,8 +1736,8 @@
   <!-- ycLauncher's entitlement hide pass marks denied items' elements; its
        layout pass marks the default Home / sidebar elements a user's layout
        leaves out (S4a). Attributes + !important rather than style.display, so
-       code that writes style.display on a launcher element (applyCustomTab,
-       loadUserContext) cannot bring a hidden one back. Two attributes keep the
+       code that writes style.display on a launcher element (loadUserContext)
+       cannot bring a hidden one back. Two attributes keep the
        two reasons apart. -->
   <style>[data-yc-denied] { display: none !important; } [data-yc-unplaced] { display: none !important; }</style>
   <!-- The tool dialog (ui-custom S3.1, S3.3): ONE host that shows a same-origin
@@ -1869,7 +1857,7 @@
 
       // Is `win` (a tool's own window) the page in the open dialog, or a
       // frame nested inside it? The dialog acts only for its own page: a
-      // pane or a custom-tab frame calling close()/resize() gets false and
+      // pane or a button tab's frame calling close()/resize() gets false and
       // changes nothing. An API contract, not a security boundary — every
       // caller is same-origin code (CLAUDE.md, the tools trust model).
       function hosts(win) {
@@ -1888,7 +1876,7 @@
       // ── THE TOOL SHELL API (ui-custom S3.3) ──────────────────────────────
       // window.ycTool — the documented, versioned, TOKEN-FREE way for a page
       // running inside the shell (a tool at /tool/<key>, in this dialog or a
-      // custom tab) to use it. Reach it as window.parent.ycTool (the shell is
+      // button tab) to use it. Reach it as window.parent.ycTool (the shell is
       // the parent of a tool frame). The operator guide, with an example, is
       // manual/08-Admin-Tools/11-tool-actions.md.
       //
@@ -1915,8 +1903,8 @@
       //   close(win)                      → boolean
       //   resize(size, win)               → boolean
       //       Act on the tool dialog `win` is hosted in — pass your own
-      //       `window`. A frame that isn't the dialog's page (a pane, a custom
-      //       tab, a button tab — S5c-b) gets false and nothing changes. size: 'compact' | 'large'
+      //       `window`. A frame that isn't the dialog's page (a pane, a
+      //       button tab — S5c-b) gets false and nothing changes. size: 'compact' | 'large'
       //       (presets only; anything else → false).
       //   openCase(caseId, win)           → Promise<boolean>
       //   openContact(contactId, win)     → Promise<boolean>
@@ -2357,7 +2345,7 @@
        full-width, 5px sentinel — the old spacer row's height) rather than
        markup between tiles. It reproduces the inline layout to the pixel
        (pixel-diffed at 375 and 1300): rows centred, so a row missing a hidden
-       tile (no custom tab, a denied item) still centres — a CSS grid would
+       tile (a denied item) still centres — a CSS grid would
        left-align it; tiles one space of the 16px system font apart (4.1875px
        measured, 67/256 em — what the whitespace between inline-blocks was);
        120px rows with no row gap. Rows wrap only at the screen edge or at a
@@ -3180,10 +3168,6 @@
     #ycLayoutEditor .ymb-none[hidden], #ycLayoutEditor .ymb-pickers-err[hidden], #ycLayoutEditor .ymb-form[hidden],
     #ycLayoutEditor .ymb-field[hidden] { display: none; }
     #ycLayoutEditor .ymb-pickers-err { margin: 0 0 6px; }
-    /* the legacy custom tab's note and its "Make my custom tab a button" (S5c-b) */
-    #ycLayoutEditor .ymb-legacy { margin: 0 0 8px; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-2); }
-    #ycLayoutEditor .ymb-legacy[hidden], #ycLayoutEditor .ymb-legacy .yle-add[hidden] { display: none; }
-    #ycLayoutEditor .ymb-legacy-text { margin: 0 0 6px; overflow-wrap: anywhere; }
     #ycLayoutEditor .ymb-form {
       margin-top: 8px; padding: 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-2);
     }
@@ -3221,10 +3205,6 @@
   <div id="tabBills" class="tab-main">
     <h1><i class="fa-solid fa-file-invoice-dollar"></i> Billing <i class="fa-solid fa-file-invoice-dollar"></i></h1>
     <p>Was this page intentionally left blank?</p>
-  </div>
-
-  <div id="tabCustom" class="tab-main">
-    <iframe id="tabCustomFrame" src=""></iframe>
   </div>
 
   <!-- A user's own button that opens as a tab (ui-custom S5c-b): ONE tab for
@@ -5779,7 +5759,8 @@
     <iframe data-src="/automationManager.html"></iframe>
   </div>
   <!-- YisraView: no ?key= means browse mode — lists every view the user can
-       see. A pinned single view lives on the custom tab instead. -->
+       see. A single view is a saved-view button instead (a firm item, or
+       My buttons). -->
   <div id="viewsDiv" class="more-panel" style="display:none">
     <iframe data-src="/customView.html"></iframe>
   </div>
@@ -6439,93 +6420,6 @@
     events = "";
     logs = "";
     offsets = { cases: 0, contacts: 0, appts: 0, events: 0, logs: 0, custom: 0,  };
-    customTabVar = ""
-
-    /**
-     * Wire the per-user custom tab from users.user_custom_tab.
-     * Shape: { src, icon, title, loadFunc }.
-     *
-     * `src`, `icon` and `title` are USER-EDITABLE (Settings → My Custom Tab),
-     * so all three are escaped here before they reach innerHTML. The server
-     * validates them as well (routes/auth.customTab.js); this is the
-     * render-side half of that pair and costs nothing.
-     *
-     * `loadFunc` stays ADMIN-ONLY — the settings endpoint preserves it and
-     * never writes it. It is wrapped in try/catch because it is glued in front
-     * of openMainTab(): an admin-set loadFunc written for a page the user has
-     * since changed away from would otherwise throw first and leave the tab
-     * permanently unopenable.
-     *
-     * Idempotent and re-runnable — settings.html calls it after a save so the
-     * sidebar updates without a reload. That is why the "no tab" branch hides
-     * the iframe instead of blowing away tabCustom's innerHTML, which is what
-     * the original inline version did (and which destroyed #tabCustomFrame).
-     */
-    function applyCustomTab(cfg) {
-      const esc = (v) => String(v ?? "").replace(/[&<>"']/g, c => (
-        { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]
-      ));
-
-      const frame = E('tabCustomFrame');
-      const tcb   = E('tabCustomButton');
-      const sbc   = E('sbCustom');
-      const tab   = E('tabCustom');
-
-      let empty = E('tabCustomEmpty');
-      if (!empty && tab) {
-        empty = document.createElement('div');
-        empty.id = 'tabCustomEmpty';
-        empty.innerHTML = '<h1>Custom Tab</h1>' +
-          '<p>Pick a page for this tab in Settings &rarr; My Custom Tab.</p>';
-        tab.appendChild(empty);
-      }
-
-      const on = !!(cfg && cfg.src);
-
-      // The launcher lists the custom tab (All, Ctrl-K) only while there is
-      // one, under its title. Settings re-runs this function after a save;
-      // the boot's first run is before login, when there is nothing to tell.
-      try {
-        if (window.ycLauncher && ycLauncher.isReady()) ycLauncher.applyAccess({ customTab: cfg || null });
-      } catch (err) { console.error('[ycLauncher] applyAccess failed:', err); }
-
-      if (tcb) tcb.style.display = on ? '' : 'none';
-      if (sbc) sbc.style.display = on ? '' : 'none';
-      if (frame) frame.style.display = on ? '' : 'none';
-      if (empty) empty.style.display = on ? 'none' : '';
-
-      if (!on) {
-        if (frame) { frame.removeAttribute('src'); delete frame.dataset.src; }
-        return;
-      }
-
-      const icon  = esc(window.ycIcon.cls(cfg.icon || 'bug'));   // family-aware (ui-custom S6a)
-      const title = esc(cfg.title || 'Custom Tab');
-      const raw   = cfg.loadFunc ? String(cfg.loadFunc) : '';
-      const click = raw
-        ? `try{ ${raw} }catch(e){ console.error('custom tab loadFunc:', e) } openMainTab('tabCustom')`
-        : "openMainTab('tabCustom')";
-
-      if (tcb) {
-        tcb.innerHTML = `<i class="${icon} fa-2xl"></i><br /><br />${title}`;
-        tcb.setAttribute('onclick', click);
-      }
-      if (sbc) {
-        sbc.innerHTML = `<i class="${icon}"></i><span>${title}</span>`;
-        sbc.setAttribute('onclick', click);
-        sbc.setAttribute('title', title);
-      }
-
-      // Lazy-load like every other tab iframe — openMainTab() promotes
-      // data-src → src on first open. Eagerly assigning .src loaded the custom
-      // page on every login even when the tab was never visited. Clearing src
-      // first makes a re-apply after a settings save actually reload.
-      if (frame) {
-        frame.removeAttribute('src');
-        frame.dataset.src = cfg.src;
-      }
-    }
-    window.applyCustomTab = applyCustomTab;
 
     /* ── "your host tab was re-entered" ────────────────────────────────────
        NOTHING fires inside an iframe when a parent flips `display`. No load,
@@ -7222,8 +7116,6 @@ async function initAuth() {
         timer: 1000
       });
 
-      applyCustomTab(user.user_custom_tab || null);
-
       // The launcher's effective registry + entitlement hide pass (ui-custom
       // S2): gated items by the su signal above and the user's roles (S6c),
       // denied items per firmData.denied, the firm overlay per firmData.ui
@@ -7233,7 +7125,7 @@ async function initAuth() {
       // hidden). The Admin sidebar row shows when the `admin` item is
       // effective — never from a role test of its own.
       try {
-        const eff = ycLauncher.applyAccess({ isAdmin, denied: window.firmData.denied, ui: window.firmData.ui, customTab: user.user_custom_tab || null, roles: String(user.roles || "").split(",").map(r => r.trim()).filter(Boolean) });
+        const eff = ycLauncher.applyAccess({ isAdmin, denied: window.firmData.denied, ui: window.firmData.ui, roles: String(user.roles || "").split(",").map(r => r.trim()).filter(Boolean) });
         E("sbAdmin").style.display = eff.some(e => e.id === 'admin') ? "" : "none";
       } catch (err) { console.error('[ycLauncher] applyAccess failed:', err); }
 

@@ -57,7 +57,6 @@ function slice(from, to) {
 const ALL_TAB = slice('  <div id="tabAll" class="tab-main">', '\n  <style>');
 const DRILL_SRC = slice('  // ── Big-button hover animations ── HOW TO USE', '</script>\n  <script>\n    params = {};');
 const TABS_SRC = slice('    function openMainTab(tabName) {', '    // ---- Global auth state ----');
-const CUSTOM_SRC = slice('    function applyCustomTab(cfg) {', '    window.applyCustomTab = applyCustomTab;');
 const CURRENT_SRC = slice('    function currentMainTabId() {', '\n    }\n') + '\n    }\n';
 const HIDE_CSS = RAW.match(/<style>\[data-yc-denied\][^<]*<\/style>/)[0];
 
@@ -186,7 +185,7 @@ const FIRM_URL = { id: 'firm:payroll', label: 'Pay <img src=x onerror=alert(1)>'
 const FIRM_GONE = { id: 'firm:gone', label: 'Gone for now', icon: 'ghost',
   action: { type: 'url', href: 'https://gone.example.com/', present: 'window' } };
 const RO = { items: [FIRM_URL, FIRM_GONE], hidden: ['firm:gone'], locked: [], renames: {} };
-const ACCESS = { isAdmin: false, denied: ['moreViews'], customTab: null };
+const ACCESS = { isAdmin: false, denied: ['moreViews'] };
 
 function boot({ shortcuts = null, layout = null, access = ACCESS, login = true, platform = '', editor = true } = {}) {
   const LAY = (() => { const c = vm.createContext({}); c.window = c; vm.runInContext(REGISTRY_SRC, c); return J(c.DEFAULT_LAYOUTS); })();
@@ -194,9 +193,9 @@ function boot({ shortcuts = null, layout = null, access = ACCESS, login = true, 
   const placedIds = (sf) => LAY[sf].filter((e) => e.item).map((e) => e.item);
   const grid = (sf) => placedIds(sf).map((k) => REG[k]).filter((it) => it.target)
     .map((it) => `<div id="${it.target}" style="display:none"><iframe data-src="/${it.target}.html"></iframe></div>`).join('');
-  const tabs = new Set(['tabHome', 'tabMore', 'tabAdmin', 'tabCustom']);
+  const tabs = new Set(['tabHome', 'tabMore', 'tabAdmin']);
   for (const it of Object.values(REG)) for (const t of [it.tab, it.tabAlso]) if (t) tabs.add(t);
-  const plainTabs = [...tabs].filter((t) => !['tabHome', 'tabMore', 'tabAdmin', 'tabCustom', 'tabAll'].includes(t))
+  const plainTabs = [...tabs].filter((t) => !['tabHome', 'tabMore', 'tabAdmin', 'tabAll'].includes(t))
     .map((t) => `<div id="${t}" class="tab-main"></div>`).join('');
   const page = `<!DOCTYPE html><html><head>
     <script>${ICON_SRC}</script><script>${REGISTRY_SRC}</script><script id="ycLauncher">${RENDERER_SRC}</script>${HIDE_CSS}</head><body>
@@ -206,7 +205,6 @@ function boot({ shortcuts = null, layout = null, access = ACCESS, login = true, 
       <div class="home-grid"><script>ycLauncher.mount('home')</script></div>
       <button id="homeAll" class="home-btn"></button></div>
     ${ALL_TAB}
-    <div id="tabCustom" class="tab-main"><iframe id="tabCustomFrame"></iframe></div>
     ${plainTabs}
     <div id="tabMore" class="tab-main"><h1>More</h1><script>ycLauncher.mount('more')</script></div>
     <div id="tabAdmin" class="tab-main"><h1>Admin</h1><script>ycLauncher.mount('admin')</script></div>
@@ -229,7 +227,7 @@ function boot({ shortcuts = null, layout = null, access = ACCESS, login = true, 
     stubSrc += `function ${m[1]}() { __calls.push('${m[1]}'); ${it.tab ? `openMainTab('${it.tab}');` : ''} }\n`;
   }
   w.__calls = calls;
-  w.eval(stubSrc + CURRENT_SRC + TABS_SRC + CUSTOM_SRC + DRILL_SRC);
+  w.eval(stubSrc + CURRENT_SRC + TABS_SRC + DRILL_SRC);
   const opened = [];
   w.open = (url) => { opened.push(url); return null; };
   const ui = () => ({ firm: { registry_overrides: J(RO) }, user: { ...(layout ? { layout: J(layout) } : {}), ...(shortcuts ? { shortcuts: J(shortcuts) } : {}) } });
@@ -485,7 +483,7 @@ describe('the dispatcher (ycAll.js onKey, for real)', () => {
     t = boot({ shortcuts: SC });
     const v0 = t.w.ycAll.shortcutsVersion();
     t.w.ycLauncher.applyAccess({});                                      // nothing changed
-    t.w.applyCustomTab && t.w.ycLauncher.applyAccess({ customTab: null });
+    t.w.ycLauncher.applyAccess({ roles: [] });                           // a partial re-run: still nothing changed
     expect(t.w.ycAll.shortcutsVersion()).toBe(v0);
     // MySQL hands the same document back with its keys in another order: still unchanged
     t.w.firmData.ui = { ...t.w.firmData.ui, user: { shortcuts: { bindings: SC.bindings.map((b) => ({ id: b.id, combo: { key: b.combo.key, shift: b.combo.shift, alt: b.combo.alt, meta: b.combo.meta, ctrl: b.combo.ctrl } })) } } };

@@ -22,7 +22,7 @@
  * replaced (Home's row breaks excepted: S4a made them .home-break sentinels
  * in a flex container, pixel-identical on screen) — every id, data-tab,
  * data-target, onclick and inline style — so
- * nothing that finds these elements (updateSidebarActive, applyCustomTab,
+ * nothing that finds these elements (updateSidebarActive,
  * loadUserContext, ensureStrip, the hover-animation and panel listeners, the
  * mobile CSS) can tell the difference. Change an attribute here and you change
  * it in the page.
@@ -32,7 +32,9 @@
  * firm registry_overrides — hidden / renames / locked —, each user's Home /
  * sidebar layout (S4a), entitlement denies): never rename one, and never
  * reuse a retired one. Retired: moreClioCode (2026-10-15 — Get Clio Code is the
- * firm tool `clio-code` now; ref/tools/clio-code.html). Grid items carry a surface prefix (more* / admin*); home/sidebar items
+ * firm tool `clio-code` now; ref/tools/clio-code.html); custom (2026-10-16 —
+ * the per-user custom tab: every one became a launcher button, ui-custom
+ * S5e). Grid items carry a surface prefix (more* / admin*); home/sidebar items
  * do not. Fields — all optional except label and icon:
  *
  *   label          visible text, PLAIN (the renderer escapes it)
@@ -159,15 +161,6 @@ window.FEATURE_REGISTRY = {
   newClient: {
     label: 'New Client', icon: 'user-plus',
     onclick: 'newContact()',
-  },
-  // The per-user custom tab. This is only its pre-login default:
-  // applyCustomTab() in index.html finds both elements by id and rewrites
-  // their icon, label, onclick and (sidebar) title from users.user_custom_tab,
-  // or hides them when the user has none.
-  custom: {
-    label: 'Custom Tab', title: 'Custom', icon: 'clock',
-    onclick: "openMainTab('tabCustom')", tab: 'tabCustom',
-    domIds: { sidebar: 'sbCustom', home: 'tabCustomButton' },
   },
   // Hidden until loadUserContext() shows it — to whoever the firm's
   // visible_to on this id admits (live: it and admin; su always), ui-custom
@@ -425,8 +418,9 @@ window.DEFAULT_LAYOUTS = {
     { item: 'tasks' }, { item: 'newClient' }, { item: 'log' },
     { break: true },
     // Comms took Settings' Home slot with its sidebar one (2026-10-11);
-    // always shown, like the sidebar item.
-    { item: 'custom' }, { item: 'moreFeatures' }, { item: 'comms' },
+    // always shown, like the sidebar item. Calendar took the retired custom
+    // tab's slot (ui-custom S5e, 2026-10-16).
+    { item: 'calendar' }, { item: 'moreFeatures' }, { item: 'comms' },
   ],
 
   sidebar: [
@@ -435,7 +429,7 @@ window.DEFAULT_LAYOUTS = {
     { item: 'calendar' }, { item: 'events' }, { item: 'tasks' },
     { item: 'comms' }, { item: 'log' }, { item: 'bills' },
     { label: 'Actions' },
-    { item: 'pipeline' }, { item: 'newClient' }, { item: 'custom' },
+    { item: 'pipeline' }, { item: 'newClient' },
     { label: 'Settings' },
     { item: 'admin' }, { item: 'moreFeatures' }, { item: 'helpSupport' },
     // All, the last item (S2's fixed #sbAll until S6c; an ordinary, removable

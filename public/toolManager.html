@@ -173,8 +173,9 @@
           Paste a complete, self-contained HTML file into a tool record. A <b>live</b> tool is served
           at <code>/tool/&lt;key&gt;</code> on the app origin only — it dead-ends on the marketing
           domains. Tools run inside the YisraCase shell as iframes and call the real API through the
-          parent's <code>apiSend</code>: staff pin one via <b>Settings &rarr; My Custom Tab</b> with
-          path <code>/tool/&lt;key&gt;</code> (use the <b>Copy path</b> action). Opened directly in a
+          parent's <code>apiSend</code>: the firm adds one as a launcher item (YisraCase Config &rarr;
+          <b>Firm</b>), or staff make one their own button (All &rarr; Customize my launcher &rarr;
+          <b>My buttons</b>); its path is <code>/tool/&lt;key&gt;</code> (the <b>Copy path</b> action). Opened directly in a
           browser tab a tool has no parent shell, so every API call fails — that's by design; there is
           deliberately no open-in-new-tab action here.
         </p>
@@ -432,7 +433,7 @@ function renderList() {
     tr.querySelector('button[data-action=copy]')?.addEventListener('click', e => {
       e.stopPropagation();
       const t = state.tools.find(x => x.id === id);
-      copyText(toolPath(t), 'Path copied — paste into Settings → My Custom Tab');
+      copyText(toolPath(t), 'Path copied');
     });
     tr.querySelector('button[data-action=delete]')?.addEventListener('click', e => {
       e.stopPropagation();
@@ -454,7 +455,7 @@ function listRow(t) {
         <button data-action="edit">Edit</button>
         <button data-action="preview" title="Preview the saved HTML">Preview</button>
         <button data-action="versions">Versions</button>
-        <button data-action="copy" title="Copy /tool/&lt;key&gt; for Settings → My Custom Tab">Copy path</button>
+        <button data-action="copy" title="Copy /tool/&lt;key&gt;">Copy path</button>
         <button data-action="delete" class="danger">Delete</button>
       </td>
     </tr>
@@ -535,7 +536,7 @@ async function deleteTool(id) {
   const t = state.tools.find(x => x.id === id);
   const ok = window.confirm(
     `Delete tool "${t ? t.tool_key : id}"? /tool/${t ? t.tool_key : '…'} will 404, ` +
-    `any custom tab pinned to it breaks, and ALL saved versions are deleted with it. This cannot be undone.`
+    `any launcher item or button that opens it breaks, and ALL saved versions are deleted with it. This cannot be undone.`
   );
   if (!ok) return;
   try {

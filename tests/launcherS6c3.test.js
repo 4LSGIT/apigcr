@@ -9,7 +9,7 @@
  *      REAL ycLauncher over the real registry, every document checked by the
  *      REAL server validator (lib/uiConfigShape.js, scope firm): the catalogue
  *      (computeEffective as su under the firm overlay; firm items in, user
- *      buttons and the custom tab out); the More list closes with the firm row
+ *      buttons out, the retired custom tab nowhere); the More list closes with the firm row
  *      while nothing is placed there (the seed), and an edit writes it as
  *      placed entries; Fred's scenario (rows of four, Get Clio Code in row 5);
  *      breaks only on the grids, icon rows ≤12 and items only; All always in
@@ -118,7 +118,7 @@ describe('1. the firm mode\'s core (pure)', () => {
     expect(FIRM_SURFACES).toEqual(J(shape.FIRM_LAYOUT_SURFACES));
   });
 
-  test('the catalogue: every feature a superuser has under the firm overlay, firm items in, user buttons / custom tab / hidden items out; seed = the firm row', () => {
+  test('the catalogue: every feature a superuser has under the firm overlay, firm items in, user buttons / hidden items out (the retired custom tab nowhere); seed = the firm row', () => {
     const ids = CAT.entries.map((e) => e.id);
     const hid = J(VE.firmCatalog({ firm: { registry_overrides: { ...RO, hidden: ['firm:gone', 'moreVideoManager'] } } })).entries.map((e) => e.id);
     expect(hid).toEqual(ids.filter((id) => id !== 'moreVideoManager'));
@@ -283,7 +283,7 @@ describe('1. the firm mode\'s core (pure)', () => {
 
 // ── 2. the personal editor starts from the firm's ──────────────────────────
 describe('2. the personal editor starts from the firm\'s default', () => {
-  const ACCESS = { isAdmin: false, roles: ['staff'], denied: [], customTab: null };
+  const ACCESS = { isAdmin: false, roles: ['staff'], denied: [] };
   const FIRM = { placed: { home: [{ item: 'comms' }, { item: 'cases' }, { break: true }, { item: 'moreAutomations' }] }, removed: { sidebar: ['log'] } };
   const eff = J(VL.computeEffective({ ...ACCESS, ui: { firm: { registry_overrides: RO } } }));
   const userSess = (stored, firm = FIRM) => VE.session({ stored, effective: eff, locked: RO.locked, base: LAY, registry: REG, groups: J(eff.groups || []), firm });
@@ -342,9 +342,9 @@ function shellPage() {
   const placedIds = (sf) => LAY[sf].filter((e) => e.item).map((e) => e.item);
   const grid = (sf) => placedIds(sf).map((k) => REG[k]).filter((it) => it.target)
     .map((it) => `<div id="${it.target}" style="display:none"><iframe data-src="/${it.target}.html"></iframe></div>`).join('');
-  const tabs = new Set(['tabHome', 'tabMore', 'tabAdmin', 'tabCustom', 'tabAll']);
+  const tabs = new Set(['tabHome', 'tabMore', 'tabAdmin', 'tabAll']);
   for (const it of Object.values(REG)) for (const t of [it.tab, it.tabAlso]) if (t) tabs.add(t);
-  const plainTabs = [...tabs].filter((t) => !['tabHome', 'tabMore', 'tabAdmin', 'tabCustom', 'tabAll'].includes(t))
+  const plainTabs = [...tabs].filter((t) => !['tabHome', 'tabMore', 'tabAdmin', 'tabAll'].includes(t))
     .map((t) => `<div id="${t}" class="tab-main"></div>`).join('');
   return `<!DOCTYPE html><html><head>
     <script>${ICON_SRC}</script><script>${REGISTRY_SRC}</script><script id="ycLauncher">${RENDERER_SRC}</script>${HIDE_CSS}<style>${EGG_CSS}</style></head><body>
@@ -354,7 +354,6 @@ function shellPage() {
       <div class="home-grid"><script>ycLauncher.mount('home')</script></div>
       <div class="home-egg-row"><script>ycLauncher.mount('homeIcons')</script></div></div>
     ${ALL_TAB}
-    <div id="tabCustom" class="tab-main"><iframe id="tabCustomFrame"></iframe></div>
     ${plainTabs}
     <div id="tabMore" class="tab-main"><h1>More</h1>
   <script>ycLauncher.mount('more')</script>
@@ -367,7 +366,7 @@ function shellPage() {
 const PAGE = shellPage();
 
 /** The shell over a store: firmData.ui read through the store's GET (as login does). */
-async function boot({ store = makeStore(), canEdit = true, auth = ADMIN, access = { isAdmin: true, roles: ['su'], denied: [], customTab: null }, vc = null } = {}) {
+async function boot({ store = makeStore(), canEdit = true, auth = ADMIN, access = { isAdmin: true, roles: ['su'], denied: [] }, vc = null } = {}) {
   const errors = [];
   const dom = new JSDOM(PAGE, { runScripts: 'dangerously', pretendToBeVisual: true, url: 'https://app.test/', ...(vc ? { virtualConsole: vc } : {}) });
   const w = dom.window;

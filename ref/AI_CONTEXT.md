@@ -1643,7 +1643,7 @@ more / admin as `{item}|{break}|{label}`, plus the icon rows homeIcons /
 moreIcons / adminIcons — `{item}` only, ≤12: the small buttons under each
 grid, Casey's paw and All). `window.ycLauncher` (public/index.html) renders
 the seven surfaces at parse time, then `applyAccess({ isAdmin, roles, denied,
-ui, customTab })` (from loadUserContext; re-run after any editor save) applies
+ui })` (from loadUserContext; re-run after any editor save) applies
 the overlays. `computeEffective` (pure) = registry − gated (a `gate` the
 user's roles don't pass by `can()`'s rule, su passes all; the Admin PAGE item
 has no gate — the firm's `visible_to` decides it) − `denied`
@@ -1680,7 +1680,7 @@ layouts and shortcuts point at ids). Strict validator `lib/uiConfigShape.js`
 - Visibility only: every hide — deny, firm hide, `visible_to`, a user's
   removal — hides tiles; routes enforce their own gates.
 - Removal HIDES, reorder MOVES: default launcher elements always stay in the
-  DOM (ids like sbAdmin / sbCustom / badges are looked up elsewhere), hidden by
+  DOM (ids like sbAdmin / sbComms / badges are looked up elsewhere), hidden by
   attribute (`data-yc-denied`, `data-yc-unplaced`) + `!important`, never
   `style.display`. Added placements are neutral `exec` shortcuts — except a
   PANEL item's tile on a grid page, which carries the item's `data-target`

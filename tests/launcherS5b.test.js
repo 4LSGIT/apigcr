@@ -65,7 +65,6 @@ function slice(from, to) {
 const ALL_TAB = slice('  <div id="tabAll" class="tab-main">', '\n  <style>');
 const DRILL_SRC = slice('  // ── Big-button hover animations ── HOW TO USE', '</script>\n  <script>\n    params = {};');
 const TABS_SRC = slice('    function openMainTab(tabName) {', '    // ---- Global auth state ----');
-const CUSTOM_SRC = slice('    function applyCustomTab(cfg) {', '    window.applyCustomTab = applyCustomTab;');
 const CURRENT_SRC = slice('    function currentMainTabId() {', '\n    }\n') + '\n    }\n';
 const HIDE_CSS = RAW.match(/<style>\[data-yc-denied\][^<]*<\/style>/)[0];
 
@@ -82,7 +81,7 @@ const DRAWER = (items, over = {}) => ({ id: 'user:box', label: 'My box', icon: '
 // every way an entry can be ineffective for a non-admin staff user denied moreViews
 const MIXED = ['tasks', 'moreAutomations', 'firm:payroll', 'calendar', 'moreViews', 'firm:secret', 'adminUsers', 'notARealItem', 'user:leads', 'user:gone', 'moreDocuments', 'firm:clio'];
 const MIXED_SHOWN = ['tasks', 'firm:payroll', 'user:leads', 'moreDocuments', 'firm:clio'];
-const ACCESS = { isAdmin: false, denied: ['moreViews'], customTab: null, roles: ['staff'] };
+const ACCESS = { isAdmin: false, denied: ['moreViews'], roles: ['staff'] };
 const PICKERS = { status: 'success', tools: [{ key: 'clio-code', title: 'Get Clio Code' }], views: [{ key: 'lead_followups', title: 'Leads follow ups' }] };
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -156,9 +155,9 @@ function boot({ items = null, layout = null, shortcuts = null, ro = RO, access =
   const placedIds = (sf) => LAY[sf].filter((e) => e.item).map((e) => e.item);
   const grid = (sf) => placedIds(sf).map((k) => REG[k]).filter((it) => it.target)
     .map((it) => `<div id="${it.target}" style="display:none"><iframe data-src="/${it.target}.html"></iframe></div>`).join('');
-  const tabs = new Set(['tabHome', 'tabMore', 'tabAdmin', 'tabCustom']);
+  const tabs = new Set(['tabHome', 'tabMore', 'tabAdmin']);
   for (const it of Object.values(REG)) for (const t of [it.tab, it.tabAlso]) if (t) tabs.add(t);
-  const plainTabs = [...tabs].filter((t) => !['tabHome', 'tabMore', 'tabAdmin', 'tabCustom', 'tabAll'].includes(t))
+  const plainTabs = [...tabs].filter((t) => !['tabHome', 'tabMore', 'tabAdmin', 'tabAll'].includes(t))
     .map((t) => `<div id="${t}" class="tab-main"></div>`).join('');
   const page = `<!DOCTYPE html><html><head>
     <script>${ICON_SRC}</script><script>${REGISTRY_SRC}</script><script id="ycLauncher">${RENDERER_SRC}</script>${HIDE_CSS}</head><body>
@@ -170,7 +169,6 @@ function boot({ items = null, layout = null, shortcuts = null, ro = RO, access =
       <div class="home-grid"><script>ycLauncher.mount('home')</script></div>
       <button id="homeAll" class="home-btn"></button></div>
     ${ALL_TAB}
-    <div id="tabCustom" class="tab-main"><iframe id="tabCustomFrame"></iframe></div>
     ${plainTabs}
     <div id="tabMore" class="tab-main"><h1>More</h1><script>ycLauncher.mount('more')</script></div>
     <div id="tabAdmin" class="tab-main"><h1>Admin</h1><script>ycLauncher.mount('admin')</script></div>
@@ -192,7 +190,7 @@ function boot({ items = null, layout = null, shortcuts = null, ro = RO, access =
     stubSrc += `function ${m[1]}() { __calls.push('${m[1]}'); ${it.tab ? `openMainTab('${it.tab}');` : ''} }\n`;
   }
   w.__calls = calls;
-  w.eval(stubSrc + CURRENT_SRC + TABS_SRC + CUSTOM_SRC + DRILL_SRC);
+  w.eval(stubSrc + CURRENT_SRC + TABS_SRC + DRILL_SRC);
   const opened = [];
   w.open = (...a) => { opened.push(a); return null; };
   // a SweetAlert stand-in: swal.dialog() puts a modal dialog up, swal.toast() a toast
@@ -430,15 +428,15 @@ describe('the drawer menu (for real)', () => {
     expect([t.entries(), t.drawer().querySelector('.yc-dr-empty').textContent]).toEqual([[], 'Nothing here you can open']);
   });
 
-  test('escaping: the drawer\'s and the entries\' labels are text; an icon only from a valid slug (the custom tab\'s too)', () => {
+  test('escaping: the drawer\'s and the entries\' labels are text; an icon only from a valid slug', () => {
+    // (until ui-custom S5e the custom tab's unvalidated title and icon were the hostile entry; a firm rename is the label source left)
     const hostile = '<img src=x onerror="window.__pwn=1">';
-    t = boot({ items: [DRAWER(['custom', 'firm:payroll'], { label: 'Box ' + hostile.slice(0, 30) })],
-      ro: { ...RO, renames: { tasks: { label: hostile.slice(0, 40) } } },
-      access: { ...ACCESS, customTab: { src: '/x.html', title: hostile, icon: 'x" onmouseover="window.__pwn=1' } } });
+    t = boot({ items: [DRAWER(['tasks', 'firm:payroll'], { label: 'Box ' + hostile.slice(0, 30) })],
+      ro: { ...RO, renames: { tasks: { label: hostile.slice(0, 40) } } } });
     t.w.ycLauncher.exec('user:box');
     expect(t.drawer().querySelector('#ycDrawerTitle').textContent).toBe('Box ' + hostile.slice(0, 30));
-    expect(t.entry('custom').querySelector('span').textContent).toBe(hostile);
-    expect(t.entry('custom').querySelector('i').className).toBe('fa-solid fa-circle-question');
+    expect(t.entry('tasks').querySelector('span').textContent).toBe(hostile.slice(0, 40));
+    for (const i of t.drawer().querySelectorAll('i')) expect(i.className).toMatch(/^fa-(solid|regular|brands) fa-[a-z0-9-]+$/);
     expect(t.drawer().querySelector('img')).toBe(null);
     expect(t.w.__pwn).toBeUndefined();
   });

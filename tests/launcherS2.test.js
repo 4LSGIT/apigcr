@@ -7,17 +7,16 @@
  *   1. THE MATH (ycLauncher.computeEffective / matchTier / rank, run in a bare
  *      vm over the real registry): admin-gated items out unless the admin
  *      signal holds; denied ids out, except the undeniable set, which the
- *      client strips again rather than trust its input; the custom tab only
- *      while the user has one; every placed item exactly once, grouped by
+ *      client strips again rather than trust its input; the retired custom
+ *      tab never listed (ui-custom S5e); every placed item exactly once, grouped by
  *      origin in the shipped group order. The matcher's three tiers and the
  *      All-order tie-break.
  *   2. THE MECHANISM, RUN FOR REAL in jsdom: the page's own renderer mounts the
  *      four surfaces (recording the id → element map), and the page's own
- *      drill-in script, openMainTab / updateSidebarActive and applyCustomTab
- *      run over them — extracted from public/index.html, not re-typed. The
+ *      drill-in script and openMainTab / updateSidebarActive run over them — extracted from public/index.html, not re-typed. The
  *      hide pass reaches both renderings of a shared item, keeps a denied tile
  *      out of the pill strip (and rebuilds a stale one), and survives
- *      applyCustomTab writing style.display. exec() lands where a click on the
+ *      other code writing style.display. exec() lands where a click on the
  *      real element lands, and refuses what the user may not see.
  *   3. public/js/ycAll.js in the same page: All lists every effective item
  *      once, by group, with no drill attributes; its search and the palette
@@ -30,7 +29,7 @@
  * dropped; exec() without its already-open-panel check; the hide pass by
  * style.display instead of the attribute; word-start ranked above substring;
  * All entries given data-target; the palette's pre-login guard removed; the
- * palette's Swal guard removed; applyCustomTab no longer telling the launcher;
+ * palette's Swal guard removed;
  * the palette listening in the capture phase (an editor's own Ctrl-K lost); a
  * toast counted as a dialog; iframes not hooked; the top window's Swal check
  * dropped; loadUserContext not calling applyAccess; isAdmin not passed;
@@ -64,14 +63,13 @@ function slice(from, to) {
 // The page's own code, cut out of public/index.html.
 const DRILL_SRC = slice('  // ── Big-button hover animations ── HOW TO USE', '</script>\n  <script>\n    params = {};');
 const TABS_SRC = slice('    function openMainTab(tabName) {', '    // ---- Global auth state ----');
-const CUSTOM_SRC = slice('    function applyCustomTab(cfg) {', '    window.applyCustomTab = applyCustomTab;');
 const CURRENT_SRC = slice('    function currentMainTabId() {', '\n    }\n') + '\n    }\n';
 const DENIED_CSS = RAW.match(/<style>\[data-yc-denied\][^<]*<\/style>/)[0];
 const ALL_TAB = slice('  <div id="tabAll" class="tab-main">', '\n  <style>');
 const FIRMDATA_INIT = slice('    window.firmData = { phoneLines', ';\n') + ';\n';
 const LOAD_FIRMDATA = slice('async function loadFirmData() {', '\n}\n') + '\n}\n';
-// loadUserContext up to the badge refreshes: the admin signal, the custom tab
-// and the launcher's applyAccess — closed off into a callable function.
+// loadUserContext up to the badge refreshes: the admin signal and the
+// launcher's applyAccess — closed off into a callable function.
 const LUC_HEAD = slice('    async function loadUserContext() {', '      tasksBadgeRefresh();') + '\n    }\n';
 const LUC_FULL = slice('    async function loadUserContext() {', '    async function ') ;
 
@@ -88,10 +86,10 @@ const ids = (eff) => eff.map((e) => e.id);
 
 // ─────────────────────────────────────────────────────────────────────────
 describe('the effective registry (pure)', () => {
-  test('non-admin: every placed item (and every S6b extra) once, minus gated and the absent custom tab', () => {
+  test('non-admin: every placed item (and every S6b extra) once, minus gated', () => {
     const eff = L.computeEffective({ isAdmin: false });
     expect(EXTRAS).toEqual(['myTasks', 'logout']);
-    const want = ALL_LISTED.filter((k) => !GATED.has(k) && k !== 'custom');
+    const want = ALL_LISTED.filter((k) => !GATED.has(k));
     expect(ids(eff).sort()).toEqual(want.sort());
     expect(new Set(ids(eff)).size).toBe(eff.length);
     expect(ids(eff)).not.toContain('adminDbConsole');
@@ -103,7 +101,7 @@ describe('the effective registry (pure)', () => {
   });
 
   test('admin: the Admin grid and the Admin item come back', () => {
-    const eff = L.computeEffective({ isAdmin: true, customTab: { src: '/x.html' } });
+    const eff = L.computeEffective({ isAdmin: true });
     expect(ids(eff).sort()).toEqual([...ALL_LISTED].sort());
     for (const k of GATED) expect(ids(eff)).toContain(k);
   });
@@ -119,15 +117,13 @@ describe('the effective registry (pure)', () => {
     expect(ids(L.computeEffective({ denied: { cases: true } }))).toContain('cases');
   });
 
-  test('the custom tab: listed only while the user has one, under its own title and icon', () => {
-    expect(ids(L.computeEffective({ customTab: { title: 'x' } }))).not.toContain('custom');
-    const c = L.computeEffective({ customTab: { src: '/forms.html', title: 'My Forms', icon: 'book' } }).find((e) => e.id === 'custom');
-    expect([c.label, c.icon]).toEqual(['My Forms', 'book']);
-    expect(L.computeEffective({ customTab: { src: '/forms.html' } }).find((e) => e.id === 'custom').label).toBe(REG.custom.label);
+  test('the custom tab is retired (ui-custom S5e): never listed, even handed an old custom tab value', () => {
+    expect(REG.custom).toBe(undefined);
+    expect(ids(L.computeEffective({ isAdmin: true, customTab: { src: '/forms.html', title: 'My Forms', icon: 'book' } }))).not.toContain('custom');
   });
 
   test('groups: by origin — sidebar section, else Home, else the grid, else More actions — in the shipped order', () => {
-    const eff = L.computeEffective({ isAdmin: true, customTab: { src: '/x' } });
+    const eff = L.computeEffective({ isAdmin: true });
     // the order rides on the list (computeEffective is pure since S4a)
     expect(eff.groups).toEqual(['Home', 'Records', 'Actions', 'Settings', 'More actions', 'More', 'Admin']);
     // S6b: the items no default layout places, in registry order
@@ -172,13 +168,13 @@ describe('the matcher (pure)', () => {
 
 // ─────────────────────────────────────────────────────────────────────────
 // A page skeleton with the real mounts, panels and tab divs; the page's own
-// drill-in, tab and custom-tab code evaluated into it.
+// drill-in and tab code evaluated into it.
 function boot({ withAll = false } = {}) {
   const grid = (sf) => placed(sf).map((k) => REG[k]).filter((it) => it.target)
     .map((it) => `<div id="${it.target}" style="display:none"><iframe data-src="/${it.target}.html"></iframe></div>`).join('');
-  const tabs = new Set(['tabHome', 'tabMore', 'tabAdmin', 'tabCustom']);
+  const tabs = new Set(['tabHome', 'tabMore', 'tabAdmin']);
   for (const it of Object.values(REG)) for (const t of [it.tab, it.tabAlso]) if (t) tabs.add(t);
-  const plainTabs = [...tabs].filter((t) => !['tabHome', 'tabMore', 'tabAdmin', 'tabCustom', 'tabAll'].includes(t))
+  const plainTabs = [...tabs].filter((t) => !['tabHome', 'tabMore', 'tabAdmin', 'tabAll'].includes(t))
     .map((t) => `<div id="${t}" class="tab-main"></div>`).join('');
   const page = `<!DOCTYPE html><html><head>
     <script>${ICON_SRC}</script><script>${REGISTRY_SRC}</script><script id="ycLauncher">${RENDERER_SRC}</script>${DENIED_CSS}</head><body>
@@ -188,7 +184,6 @@ function boot({ withAll = false } = {}) {
       </nav>
     <div id="tabHome" class="tab-main"><script>ycLauncher.mount('home')</script></div>
     ${withAll ? ALL_TAB : '<div id="tabAll" class="tab-main"></div>'}
-    <div id="tabCustom" class="tab-main"><iframe id="tabCustomFrame"></iframe></div>
     ${plainTabs}
     <div id="tabMore" class="tab-main"><h1>More</h1><script>ycLauncher.mount('more')</script></div>
     <div id="tabAdmin" class="tab-main"><h1>Admin</h1><script>ycLauncher.mount('admin')</script></div>
@@ -212,7 +207,7 @@ function boot({ withAll = false } = {}) {
     stubs.add(m[1]);
     stubSrc += `function ${m[1]}() { __calls.push('${m[1]}'); ${it.tab ? `openMainTab('${it.tab}');` : ''} }\n`;
   }
-  w.eval(stubSrc + CURRENT_SRC + TABS_SRC + CUSTOM_SRC + DRILL_SRC);
+  w.eval(stubSrc + CURRENT_SRC + TABS_SRC + DRILL_SRC);
   if (withAll) w.eval(YCALL_SRC);
   const d = w.document;
   const $ = (s) => d.querySelector(s);
@@ -251,7 +246,7 @@ describe('the hide pass (for real)', () => {
   afterEach(() => t.close());
 
   test('a denied shared item is hidden on BOTH surfaces; a denied tile is hidden and gets no pill', () => {
-    t.L.applyAccess({ isAdmin: false, denied: ['cases', 'moreAutomations'], customTab: null });
+    t.L.applyAccess({ isAdmin: false, denied: ['cases', 'moreAutomations'] });
     const c = t.L.elementsOf('cases');
     expect([t.shown(c.sidebar), t.shown(c.home)]).toEqual([false, false]);
     expect(t.shown(t.L.elementsOf('moreAutomations').more)).toBe(false);
@@ -269,21 +264,20 @@ describe('the hide pass (for real)', () => {
     expect(t.d.querySelectorAll('[data-yc-denied]:not(#tabAdmin *)')).toHaveLength(0);   // (#tabAdmin: the su tiles, hidden for this non-su since S6c)
   });
 
-  test('idempotent: re-running neither double-hides nor sticks; applyCustomTab cannot resurrect a denied item', () => {
-    t.L.applyAccess({ denied: ['custom', 'cases'] });
+  test('idempotent: re-running neither double-hides nor sticks; a style.display write cannot resurrect a denied item', () => {
+    t.L.applyAccess({ denied: ['newClient', 'cases'] });
     const n = t.d.querySelectorAll('[data-yc-denied]:not(#tabAdmin *)').length;   // (the su tiles carry it too for a non-su, S6c)
-    expect(n).toBe(4);                                     // custom ×2 + cases ×2
-    t.L.applyAccess({ denied: ['custom', 'cases'] });
+    expect(n).toBe(4);                                     // newClient ×2 + cases ×2
+    t.L.applyAccess({ denied: ['newClient', 'cases'] });
     expect(t.d.querySelectorAll('[data-yc-denied]:not(#tabAdmin *)')).toHaveLength(n);
-    t.w.applyCustomTab({ src: '/x.html', title: 'X' });    // writes style.display = '' on both
-    const c = t.L.elementsOf('custom');
-    expect([c.sidebar.style.display, c.home.style.display]).toEqual(['', '']);
+    const c = t.L.elementsOf('newClient');
+    c.sidebar.style.display = ''; c.home.style.display = '';   // what loadUserContext does to #sbAdmin
     expect([t.shown(c.sidebar), t.shown(c.home)]).toEqual([false, false]);
-    expect(t.L.effectiveRegistry().map((e) => e.id)).not.toContain('custom');
+    expect(t.L.effectiveRegistry().map((e) => e.id)).not.toContain('newClient');
     t.L.applyAccess({ denied: [] });                      // lifted → back
     expect(t.d.querySelectorAll('[data-yc-denied]:not(#tabAdmin *)')).toHaveLength(0);
     expect([t.shown(c.sidebar), t.shown(c.home)]).toEqual([true, true]);
-    expect(t.L.effectiveRegistry().find((e) => e.id === 'custom').label).toBe('X');   // applyCustomTab told it
+    expect(t.L.effectiveRegistry().map((e) => e.id)).toContain('newClient');
   });
 
   test('a strip built under another denied set is rebuilt, drilled-in state and active pill kept', () => {
@@ -299,7 +293,7 @@ describe('the hide pass (for real)', () => {
 
 describe('exec(id) (for real)', () => {
   let t;
-  beforeEach(() => { t = boot(); t.L.applyAccess({ isAdmin: false, denied: ['moreViews'], customTab: { src: '/c.html', title: 'C' } }); t.w.applyCustomTab({ src: '/c.html', title: 'C' }); t.w.openMainTab('tabHome'); });
+  beforeEach(() => { t = boot(); t.L.applyAccess({ isAdmin: false, denied: ['moreViews'] }); t.w.openMainTab('tabHome'); });
   afterEach(() => t.close());
 
   test('before login it refuses', () => {
@@ -353,14 +347,12 @@ describe('exec(id) (for real)', () => {
     expect(t.w.currentMainTabId()).toBe('tabContacts');
   });
 
-  test('grid actions and the custom tab click their real element', () => {
+  test('grid actions click their real element', () => {
     t.L.exec('moreSettings');
     expect([t.w.currentMainTabId(), t.active()]).toEqual(['tabSettings', ['tabMore']]);
     t.L.applyAccess({ isAdmin: true });            // the one dialog tile left on a grid is Admin's
     t.L.exec('adminEtch');
     expect(t.calls).toContain('etchSwal');
-    t.L.exec('custom');
-    expect(t.w.currentMainTabId()).toBe('tabCustom');
   });
 
   test('refuses denied and admin-gated ids, and unknown ones — and does nothing', () => {
@@ -388,7 +380,7 @@ describe('the All tab (public/js/ycAll.js, for real)', () => {
 
   test('empty before login; then every effective item once, grouped, in order; Admin only for admins', () => {
     expect(entries()).toEqual([]);
-    t.L.applyAccess({ isAdmin: false, denied: ['moreAutomations'], customTab: null });
+    t.L.applyAccess({ isAdmin: false, denied: ['moreAutomations'] });
     // Admin holds what this user can use: Etch is open to staff (S6c gates), the su tools are not
     expect(groups()).toEqual(['Records', 'Actions', 'Settings', 'More actions', 'More', 'Admin']);
     expect(t.L.effectiveRegistry().filter((e) => e.group === 'Admin').map((e) => e.id)).toEqual(['adminEtch']);
@@ -575,7 +567,7 @@ describe('the boot wiring (review fixes): loadFirmData + loadUserContext, extrac
   const luc = async (roles, denied, ui = null) => {
     const t = boot();
     t.w.eval('var Toast = { fire() {} }; function startFirmClock() {}\n' + LUC_HEAD);
-    t.w.eval(`var user = { user: 1, user_name: 'x', roles: ${JSON.stringify(roles)}, user_custom_tab: null };
+    t.w.eval(`var user = { user: 1, user_name: 'x', roles: ${JSON.stringify(roles)} };
       window.firmData = { denied: ${JSON.stringify(denied)}, ui: ${JSON.stringify(ui)} };`);
     await t.w.eval('loadUserContext()');
     return t;
@@ -608,12 +600,12 @@ describe('the boot wiring (review fixes): loadFirmData + loadUserContext, extrac
     t.close();
   });
 
-  test('order inside loadUserContext: applyCustomTab, then applyAccess, then the ?open= restore', () => {
+  test('order inside loadUserContext: applyAccess, then the ?open= restore; no custom tab left', () => {
     const at = (needle) => { const i = LUC_FULL.indexOf(needle); expect([needle, i >= 0]).toEqual([needle, true]); return i; };
-    const custom = at('applyCustomTab(user.user_custom_tab || null);');
     const access = at('const eff = ycLauncher.applyAccess({ isAdmin, denied: window.firmData.denied');
     const restore = at('else openMainTabOnBoot(openTab, openAt.rest);');
-    expect(custom < access && access < restore).toBe(true);
+    expect(access < restore).toBe(true);
+    expect(LUC_FULL).not.toMatch(/applyCustomTab|user_custom_tab|customTab/);
   });
 });
 

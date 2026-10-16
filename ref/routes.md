@@ -1,7 +1,7 @@
 # Routes
 
-_Generated 2026-10-15T16:01:46.272Z_  
-_794 routes total — DELETE: 65, GET: 333, PATCH: 57, POST: 299, PUT: 37, _ALL: 3_
+_Generated 2026-10-16T17:30:38.760Z_  
+_793 routes total — DELETE: 65, GET: 333, PATCH: 57, POST: 298, PUT: 37, _ALL: 3_
 
 ## Global middleware chain
 
@@ -84,7 +84,6 @@ _794 routes total — DELETE: 65, GET: 333, PATCH: 57, POST: 299, PUT: 37, _ALL:
 | PATCH | `/api/assets/:id` | `jwtOrApiKey` | — |
 | GET | `/api/assets/collections` | `jwtOrApiKey` | — |
 | POST | `/api/auth/change-password` | `jwtOrApiKey` | — |
-| POST | `/api/auth/update-custom-tab` | `jwtOrApiKey` | — |
 | POST | `/api/auth/update-profile` | `jwtOrApiKey` | — |
 | GET | `/api/availability` | `jwtOrApiKey` | — |
 | GET | `/api/availability-blocks` | `jwtOrApiKey` | — |
@@ -1064,4 +1063,4 @@ _794 routes total — DELETE: 65, GET: 333, PATCH: 57, POST: 299, PUT: 37, _ALL:
 
 ---
 
-_794 routes total — DELETE: 65, GET: 333, PATCH: 57, POST: 299, PUT: 37, _ALL: 3_
+_793 routes total — DELETE: 65, GET: 333, PATCH: 57, POST: 298, PUT: 37, _ALL: 3_

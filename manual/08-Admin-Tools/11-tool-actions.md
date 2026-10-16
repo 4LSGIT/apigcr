@@ -42,8 +42,8 @@ Details that matter:
 
 - **Pass `window` to `close`, `resize`, `openCase` and `openContact`.** That is
   how the app knows the call comes from the tool in the dialog. A tool that is
-  not in a dialog (for example one shown on someone's custom tab, or on a
-  button of theirs that opens as a tab) gets `false`
+  not in a dialog (for example one on a button of theirs that opens as a
+  tab) gets `false`
   from `close` and `resize`, and nothing happens.
 - `openCase` / `openContact` look the id up first. An id that doesn't exist, or
   isn't a valid id, opens nothing and returns `false`.

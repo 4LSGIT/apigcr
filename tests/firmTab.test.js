@@ -153,7 +153,7 @@ function makeTop(backend, shellDoc, users) {
   w.firmData = { ui: { firm: shellDoc ? { registry_overrides: clone(shellDoc) } : {}, user: {} } };
   if (users) w.firmData.users = clone(users);
   w.apiSend = backend.api;
-  w.ycLauncher.applyAccess({ isAdmin: true, denied: [], ui: w.firmData.ui, customTab: null });
+  w.ycLauncher.applyAccess({ isAdmin: true, denied: [], ui: w.firmData.ui });
   return w;
 }
 function writeFrame(iframe, html) {
@@ -233,7 +233,7 @@ describe('Config shell: the Firm tab is shown only on can_edit_firm', () => {
 
 // ─────────────────────────────────────────────────────────────────────────
 describe('Launcher form: grouping and catalog', () => {
-  test('grouped like All, from ycLauncher\'s own grouping; every item once; undeniables locked on; custom not renameable', async () => {
+  test('grouped like All, from ycLauncher\'s own grouping; every item once, every one renameable; undeniables locked on; no custom tab row', async () => {
     const { $$, L, top } = await boot({ doc: { hidden: [], locked: [], renames: {}, items: [SHELL_ITEM] } });
     const titles = $$('#fm-sec-launcher .fm-group-title').map((e) => e.textContent);   // S3.4: the Launcher section's (Who sees what has its own)
     const groupsBefore = L.groups();
@@ -249,8 +249,9 @@ describe('Launcher form: grouping and catalog', () => {
       const c = $$(`[data-hide="${id}"]`)[0];
       expect([id, c.disabled, c.checked]).toEqual([id, true, false]);
     }
-    expect($$('[data-rename="custom"]')).toEqual([]);
-    expect($$('[data-hide="custom"]')).toHaveLength(1);
+    // the custom tab is retired (ui-custom S5e): no row; every row has its rename box
+    expect($$('[data-row-id="custom"]')).toEqual([]);
+    expect($$('[data-rename]').map((e) => e.dataset.rename).sort()).toEqual(all.slice().sort());
     expect($$('[data-row-id^="firm:"]')).toEqual([]);           // firm items are edited below, not here
   });
 });

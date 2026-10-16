@@ -82,7 +82,7 @@ const SU_TILES = ['adminReadonlyKeys', 'adminApiKeys', 'adminCtaLinks', 'adminDb
 const SURFACES = ['home', 'sidebar', 'homeIcons', 'more', 'moreIcons', 'admin', 'adminIcons'];
 const FIRM_URL = { id: 'firm:payroll', label: 'Payroll', icon: 'money-check', action: { type: 'url', href: 'https://payroll.example.com/', present: 'window' } };
 const ui = ({ layout, firm, ro } = {}) => ({ firm: { ...(ro ? { registry_overrides: ro } : {}), ...(firm ? { layout: firm } : {}) }, user: layout ? { layout } : {} });
-const SU = { isAdmin: true, roles: ['su'], denied: [], customTab: { src: '/c.html', title: 'C' } };
+const SU = { isAdmin: true, roles: ['su'], denied: [] };
 
 // ─────────────────────────────────────────────────────────────────────────
 describe('1. gates', () => {
@@ -137,7 +137,7 @@ describe('1. gates', () => {
   test('for real: a non-su\'s su tiles are HIDDEN on the Admin grid (data-yc-denied), Etch shows, the Admin row follows the page item; su sees all 13', () => {
     const t = boot();
     try {
-      t.L.applyAccess({ isAdmin: false, roles: ['it'], denied: [], customTab: null, ui: ui({ ro: { visible_to: { admin: ['it', 'admin'] } } }) });
+      t.L.applyAccess({ isAdmin: false, roles: ['it'], denied: [], ui: ui({ ro: { visible_to: { admin: ['it', 'admin'] } } }) });
       const tiles = [...t.d.querySelectorAll('#tabAdmin > .big-button')];
       expect(tiles).toHaveLength(13);
       expect(tiles.filter((b) => t.shown(b)).map((b) => b.textContent.trim())).toEqual(['Etch']);
@@ -228,9 +228,9 @@ describe('2. icon rows: the surfaces and their markup', () => {
 function boot() {
   const grid = (sf) => placed(sf).map((k) => REG[k]).filter((it) => it.target)
     .map((it) => `<div id="${it.target}" style="display:none"><iframe data-src="/${it.target}.html"></iframe></div>`).join('');
-  const tabs = new Set(['tabHome', 'tabMore', 'tabAdmin', 'tabCustom', 'tabAll']);
+  const tabs = new Set(['tabHome', 'tabMore', 'tabAdmin', 'tabAll']);
   for (const it of Object.values(REG)) for (const t of [it.tab, it.tabAlso]) if (t) tabs.add(t);
-  const plainTabs = [...tabs].filter((t) => !['tabHome', 'tabMore', 'tabAdmin', 'tabCustom', 'tabAll'].includes(t))
+  const plainTabs = [...tabs].filter((t) => !['tabHome', 'tabMore', 'tabAdmin', 'tabAll'].includes(t))
     .map((t) => `<div id="${t}" class="tab-main"></div>`).join('');
   const page = `<!DOCTYPE html><html><head>
     <script>${ICON_SRC}</script><script>${REGISTRY_SRC}</script><script id="ycLauncher">${RENDERER_SRC}</script>${HIDE_CSS}<style>${EGG_CSS}</style></head><body>
@@ -241,7 +241,6 @@ function boot() {
       <div class="home-egg-row"><script>ycLauncher.mount('homeIcons')</script></div>
       <div class="home-search"></div></div>
     <div id="tabAll" class="tab-main"></div>
-    <div id="tabCustom" class="tab-main"><iframe id="tabCustomFrame"></iframe></div>
     ${plainTabs}
     <div id="tabMore" class="tab-main"><h1>More</h1>
   <script>ycLauncher.mount('more')</script>
@@ -434,7 +433,7 @@ describe('4. the two-level resolver: shipped → firm → user', () => {
   test('without a firm document the S4a contract holds (base → user); an empty firm document changes nothing', () => {
     const user = { placed: { home: [{ item: 'comms' }, { item: 'cases' }, { break: true }, { item: 'moreAutomations' }] }, removed: { home: ['tasks'] } };
     const a = shape_(R('home', { user })), b = shape_(R('home', { user, firm: {} })), c = shape_(R('home', { user, firm: null }));
-    expect(a).toEqual(['comms', 'cases', 'contacts', 'appts', 'bills', 'pipeline', 'events', 'newClient', 'log', 'custom', 'moreFeatures', '|', 'moreAutomations']);
+    expect(a).toEqual(['comms', 'cases', 'contacts', 'appts', 'bills', 'pipeline', 'events', 'newClient', 'log', 'calendar', 'moreFeatures', '|', 'moreAutomations']);
     expect(b).toEqual(a);
     expect(c).toEqual(a);
     for (const e of R('home', { user, firm: {} })) expect(Object.keys(e).sort()).toEqual(e.kind === 'item' ? ['id', 'kind', 'origin'] : ['kind', 'origin']);
@@ -455,7 +454,7 @@ describe('4. the two-level resolver: shipped → firm → user', () => {
 
   test('ruling 4: a firm Home change only ADDS for a user who already arranged Home; a fresh user gets the firm\'s order', () => {
     // a FULL firm list, as the firm editor writes one (a partial list pulls base items next to their neighbours, S4a JC3)
-    const FIRM_HOME = ['tasks', 'cases', 'moreAutomations', '|', 'contacts', 'appts', 'bills', '|', 'pipeline', 'events', 'newClient', '|', 'custom', 'moreFeatures', 'comms', 'firm:payroll'];
+    const FIRM_HOME = ['tasks', 'cases', 'moreAutomations', '|', 'contacts', 'appts', 'bills', '|', 'pipeline', 'events', 'newClient', '|', 'calendar', 'moreFeatures', 'comms', 'firm:payroll'];
     const firm = { placed: { home: FIRM_HOME.map((x) => (x === '|' ? { break: true } : { item: x })) }, removed: { home: ['log'] } };
     // no user layout: the firm's Home exactly
     const fresh = shape_(R('home', { firm }));
@@ -636,7 +635,7 @@ describe('5. the renderer under a firm layout, for real', () => {
     const snap = SURFACES.map((sf) => t.region(sf));
     const done = t.observe();
     t.L.applyAccess(state);
-    t.L.applyAccess({ customTab: state.customTab });
+    t.L.applyAccess({ roles: state.roles });
     expect(done().map((r) => r.type + ' ' + (r.target.id || r.target.nodeName))).toEqual([]);
     expect(SURFACES.map((sf) => t.region(sf))).toEqual(snap);
     for (const empty of [{}, { placed: {}, removed: {} }, null]) {

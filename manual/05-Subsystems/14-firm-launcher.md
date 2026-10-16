@@ -47,7 +47,6 @@ Actions, Settings, More, Admin).
 - **Hide** — tick it to take that feature off everyone's launcher.
 - **Rename to** — type the firm's name for it. Leave it empty to keep the usual
   name, which shows greyed in the box. Up to 40 characters, plain text.
-- **Custom Tab** can be hidden but not renamed: each person titles their own.
 
 ## Firm items
 

@@ -62,8 +62,7 @@
  *             change (checked on every 'ycLauncherAccess').
  *
  * Re-renders on the 'ycLauncherAccess' window event, which
- * ycLauncher.applyAccess() fires after login, when the custom tab changes and
- * after an editor save.
+ * ycLauncher.applyAccess() fires after login and after an editor save.
  * Styles: the #tabAll / #ycPalette block in index.html (theme.css tokens).
  */
 (function () {

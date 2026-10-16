@@ -4,8 +4,8 @@
  * The shell, for real, as far as a TOOL sees it (ui-custom S3.3): the launcher
  * (public/js/featureRegistry.js + the page's <script id="ycLauncher">), the
  * tool dialog AND the tool shell API (<script id="ycToolDialogJs">, which
- * defines window.openToolDialog and window.ycTool), the tab / drill-in /
- * custom-tab code, and the auth half the API delegates to — AUTH_STATE,
+ * defines window.openToolDialog and window.ycTool), the tab / drill-in
+ * code, and the auth half the API delegates to — AUTH_STATE,
  * getJwtPayload, isJwtExpired and the shell's own apiSend, every one cut out
  * of public/index.html unmodified and run in jsdom.
  *
@@ -50,7 +50,6 @@ const DRILL_SRC = cut('  // ── Big-button hover animations ── HOW TO USE
 const TABS_SRC = cut('    function openMainTab(tabName) {', '    // ---- Global auth state ----');
 const AUTH_SRC = cut('    // ---- Global auth state ----', "    /**\n     * The app's ONE auth transport.");
 const APISEND_SRC = cut('    async function apiSend(endpoint', '\n\n    /**\n     * Multipart upload with progress');
-const CUSTOM_SRC = cut('    function applyCustomTab(cfg) {', '    window.applyCustomTab = applyCustomTab;');
 const CURRENT_SRC = cut('    function currentMainTabId() {', '\n    }\n') + '\n    }\n';
 
 const b64 = (o) => Buffer.from(JSON.stringify(o)).toString('base64url');
@@ -68,9 +67,9 @@ function boot({ routes = {}, token = jwt(3600) } = {}) {
   const placed = (sf) => LAY[sf].filter((e) => e.item).map((e) => e.item);
   const grid = (sf) => placed(sf).map((k) => REG[k]).filter((it) => it.target)
     .map((it) => `<div id="${it.target}" style="display:none"><iframe data-src="/${it.target}.html"></iframe></div>`).join('');
-  const tabs = new Set(['tabHome', 'tabMore', 'tabAdmin', 'tabCustom']);
+  const tabs = new Set(['tabHome', 'tabMore', 'tabAdmin']);
   for (const it of Object.values(REG)) for (const t of [it.tab, it.tabAlso]) if (t) tabs.add(t);
-  const plainTabs = [...tabs].filter((t) => !['tabHome', 'tabMore', 'tabAdmin', 'tabCustom', 'tabAll'].includes(t))
+  const plainTabs = [...tabs].filter((t) => !['tabHome', 'tabMore', 'tabAdmin', 'tabAll'].includes(t))
     .map((t) => `<div id="${t}" class="tab-main"></div>`).join('');
   const page = `<!DOCTYPE html><html><head>
     <script>${ICON_SRC}</script><script>${REGISTRY_SRC}</script><script id="ycLauncher">${RENDERER_SRC}</script>${DENIED_CSS}${DIALOG_BLOCK}</head><body>
@@ -78,7 +77,7 @@ function boot({ routes = {}, token = jwt(3600) } = {}) {
       <script>ycLauncher.mount('sidebar')</script></nav>
     <div id="tabHome" class="tab-main"><script>ycLauncher.mount('home')</script></div>
     <div id="tabAll" class="tab-main"></div>
-    <div id="tabCustom" class="tab-main"><iframe id="tabCustomFrame"></iframe></div>
+    <div id="tabOther" class="tab-main"><iframe id="tabOtherFrame"></iframe></div>
     ${plainTabs}
     <div id="tabMore" class="tab-main"><h1>More</h1><script>ycLauncher.mount('more')</script><div class="more-egg-row"></div></div>
     <div id="tabAdmin" class="tab-main"><h1>Admin</h1><script>ycLauncher.mount('admin')</script></div>
@@ -132,7 +131,7 @@ function boot({ routes = {}, token = jwt(3600) } = {}) {
     stubs.add(m[1]);
     stubSrc += `function ${m[1]}() { ${it.tab ? `openMainTab('${it.tab}');` : ''} }\n`;
   }
-  w.eval(stubSrc + CURRENT_SRC + TABS_SRC + AUTH_SRC + APISEND_SRC + CUSTOM_SRC + DRILL_SRC);
+  w.eval(stubSrc + CURRENT_SRC + TABS_SRC + AUTH_SRC + APISEND_SRC + DRILL_SRC);
   const d = w.document;
   const dlg = () => d.getElementById('ycToolDialog');
   const dlgOpen = () => !!dlg() && !dlg().hidden;

@@ -65,7 +65,7 @@ const STYLES = [...RAW.matchAll(/<style>([\s\S]*?)<\/style>/g)].map((m) => m[1])
 const DRILL_CSS = (() => { const h = STYLES.filter((s) => s.includes('/* Drill-in pill strip for big-button tabs */')); if (h.length !== 1) throw new Error('drill css'); return h[0]; })();
 
 const ui = ({ layout, firm, ro } = {}) => ({ firm: { ...(ro ? { registry_overrides: ro } : {}), ...(firm ? { layout: firm } : {}) }, user: layout ? { layout } : {} });
-const SU = { isAdmin: true, roles: ['su'], denied: [], customTab: null };
+const SU = { isAdmin: true, roles: ['su'], denied: [] };
 // the firm puts Users (an Admin panel) and Settings (an action tile) on More, and Manuals (a More panel) on Admin
 const CROSS = { placed: {
   more: [...placed('more').map((k) => ({ item: k })), { break: true }, { item: 'adminUsers' }],
@@ -113,9 +113,9 @@ describe('1. the markup and the CSS', () => {
 function boot() {
   const grid = (sf) => placed(sf).map((k) => REG[k]).filter((it) => it.target)
     .map((it) => `<div id="${it.target}" style="display:none"><iframe data-src="/${it.target}.html"></iframe></div>`).join('');
-  const tabs = new Set(['tabHome', 'tabMore', 'tabAdmin', 'tabCustom', 'tabAll']);
+  const tabs = new Set(['tabHome', 'tabMore', 'tabAdmin', 'tabAll']);
   for (const it of Object.values(REG)) for (const t of [it.tab, it.tabAlso]) if (t) tabs.add(t);
-  const plainTabs = [...tabs].filter((t) => !['tabHome', 'tabMore', 'tabAdmin', 'tabCustom', 'tabAll'].includes(t))
+  const plainTabs = [...tabs].filter((t) => !['tabHome', 'tabMore', 'tabAdmin', 'tabAll'].includes(t))
     .map((t) => `<div id="${t}" class="tab-main"></div>`).join('');
   const page = `<!DOCTYPE html><html><head>
     <script>${ICON_SRC}</script><script>${REGISTRY_SRC}</script><script id="ycLauncher">${RENDERER_SRC}</script>${HIDE_CSS}<style>${DRILL_CSS}</style></head><body>
@@ -126,7 +126,6 @@ function boot() {
       <div class="home-egg-row"><script>ycLauncher.mount('homeIcons')</script></div>
       <div class="home-search"></div></div>
     <div id="tabAll" class="tab-main"></div>
-    <div id="tabCustom" class="tab-main"><iframe id="tabCustomFrame"></iframe></div>
     ${plainTabs}
     <div id="tabMore" class="tab-main"><h1>More</h1>
   <script>ycLauncher.mount('more')</script>

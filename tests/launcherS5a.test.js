@@ -66,7 +66,6 @@ function slice(from, to) {
 const ALL_TAB = slice('  <div id="tabAll" class="tab-main">', '\n  <style>');
 const DRILL_SRC = slice('  // ── Big-button hover animations ── HOW TO USE', '</script>\n  <script>\n    params = {};');
 const TABS_SRC = slice('    function openMainTab(tabName) {', '    // ---- Global auth state ----');
-const CUSTOM_SRC = slice('    function applyCustomTab(cfg) {', '    window.applyCustomTab = applyCustomTab;');
 const CURRENT_SRC = slice('    function currentMainTabId() {', '\n    }\n') + '\n    }\n';
 const HIDE_CSS = RAW.match(/<style>\[data-yc-denied\][^<]*<\/style>/)[0];
 
@@ -176,15 +175,15 @@ function memDb() {
   return { rows, getConnection: async () => conn, query: async () => { throw new Error('memDb: no pool queries'); } };
 }
 
-function boot({ items = null, layout = null, shortcuts = null, retired = null, platform = 'MacIntel', access = { isAdmin: false, denied: [], customTab: null }, pickersFail = false } = {}) {
+function boot({ items = null, layout = null, shortcuts = null, retired = null, platform = 'MacIntel', access = { isAdmin: false, denied: [] }, pickersFail = false } = {}) {
   const LAY = (() => { const c = vm.createContext({}); c.window = c; vm.runInContext(REGISTRY_SRC, c); return J(c.DEFAULT_LAYOUTS); })();
   const REG = (() => { const c = vm.createContext({}); c.window = c; vm.runInContext(REGISTRY_SRC, c); return c.FEATURE_REGISTRY; })();
   const placedIds = (sf) => LAY[sf].filter((e) => e.item).map((e) => e.item);
   const grid = (sf) => placedIds(sf).map((k) => REG[k]).filter((it) => it.target)
     .map((it) => `<div id="${it.target}" style="display:none"><iframe data-src="/${it.target}.html"></iframe></div>`).join('');
-  const tabs = new Set(['tabHome', 'tabMore', 'tabAdmin', 'tabCustom']);
+  const tabs = new Set(['tabHome', 'tabMore', 'tabAdmin']);
   for (const it of Object.values(REG)) for (const t of [it.tab, it.tabAlso]) if (t) tabs.add(t);
-  const plainTabs = [...tabs].filter((t) => !['tabHome', 'tabMore', 'tabAdmin', 'tabCustom', 'tabAll'].includes(t))
+  const plainTabs = [...tabs].filter((t) => !['tabHome', 'tabMore', 'tabAdmin', 'tabAll'].includes(t))
     .map((t) => `<div id="${t}" class="tab-main"></div>`).join('');
   const page = `<!DOCTYPE html><html><head>
     <script>${ICON_SRC}</script><script>${REGISTRY_SRC}</script><script id="ycLauncher">${RENDERER_SRC}</script>${HIDE_CSS}</head><body>
@@ -195,7 +194,6 @@ function boot({ items = null, layout = null, shortcuts = null, retired = null, p
       <div class="home-grid"><script>ycLauncher.mount('home')</script></div>
       <button id="homeAll" class="home-btn"></button></div>
     ${ALL_TAB}
-    <div id="tabCustom" class="tab-main"><iframe id="tabCustomFrame"></iframe></div>
     ${plainTabs}
     <div id="tabMore" class="tab-main"><h1>More</h1><script>ycLauncher.mount('more')</script></div>
     <div id="tabAdmin" class="tab-main"><h1>Admin</h1><script>ycLauncher.mount('admin')</script></div>
@@ -217,7 +215,7 @@ function boot({ items = null, layout = null, shortcuts = null, retired = null, p
     stubSrc += `function ${m[1]}() { __calls.push('${m[1]}'); ${it.tab ? `openMainTab('${it.tab}');` : ''} }\n`;
   }
   w.__calls = calls;
-  w.eval(stubSrc + CURRENT_SRC + TABS_SRC + CUSTOM_SRC + DRILL_SRC);
+  w.eval(stubSrc + CURRENT_SRC + TABS_SRC + DRILL_SRC);
   const opened = [];
   w.open = (...a) => { opened.push(a); return null; };
   const userDoc = () => ({
@@ -877,44 +875,6 @@ describe('S6a: My buttons choose their icon in the picker', () => {
     t.mb().querySelector('[data-act="mb-commit"]').click();
     await t.save();
     expect(t.server.user().items.items[0].icon).toBe('regular:star');
-  });
-
-  test('the custom tab draws its icon by family: More tile, sidebar row, All; junk falls back; none is the old bug', () => {
-    t = boot({ items: [] });
-    const tile = () => t.d.getElementById('tabCustomButton').querySelector('i').className;
-    const row = () => t.d.getElementById('sbCustom').querySelector('i').className;
-    const all = () => t.d.querySelector('#ycAllList .yc-all-item[data-yc-item="custom"] i').className;
-    t.w.applyCustomTab({ src: '/reports.html', title: 'Repo', icon: 'brands:github', loadFunc: '' });
-    expect([tile(), row(), all()]).toEqual(['fa-brands fa-github fa-2xl', 'fa-brands fa-github', 'fa-brands fa-github']);
-    t.w.applyCustomTab({ src: '/reports.html', title: 'Repo', icon: 'regular:star', loadFunc: '' });
-    expect([tile(), row(), all()]).toEqual(['fa-regular fa-star fa-2xl', 'fa-regular fa-star', 'fa-regular fa-star']);
-    t.w.applyCustomTab({ src: '/reports.html', title: 'Repo', icon: 'house', loadFunc: '' });
-    expect([tile(), row(), all()]).toEqual(['fa-solid fa-house fa-2xl', 'fa-solid fa-house', 'fa-solid fa-house']);
-    t.w.applyCustomTab({ src: '/reports.html', title: 'Repo', icon: 'x" onmouseover="y', loadFunc: '' });
-    expect([tile(), row(), all()]).toEqual(['fa-solid fa-circle-question fa-2xl', 'fa-solid fa-circle-question', 'fa-solid fa-circle-question']);
-    expect(t.d.getElementById('sbCustom').querySelector('i').getAttribute('onmouseover')).toBe(null);
-    t.w.applyCustomTab({ src: '/reports.html', title: 'Repo', loadFunc: '' });
-    expect([tile(), row()]).toEqual(['fa-solid fa-bug fa-2xl', 'fa-solid fa-bug']);
-  });
-
-  test('review fix 2: a legacy custom tab with NO icon (or an empty one) draws the bug everywhere — tab button, sidebar row, All, palette', () => {
-    for (const cfg of [{ src: '/reports.html', title: 'Old tab', loadFunc: '' }, { src: '/reports.html', title: 'Old tab', icon: '', loadFunc: '' }]) {
-      t = boot({ items: [] });
-      t.w.ycLauncher.applyAccess({ customTab: cfg });                    // what loadUserContext hands the launcher
-      t.w.applyCustomTab(cfg);
-      expect(t.d.getElementById('tabCustomButton').querySelector('i').className).toBe('fa-solid fa-bug fa-2xl');
-      expect(t.d.getElementById('sbCustom').querySelector('i').className).toBe('fa-solid fa-bug');
-      expect(t.d.querySelector('#ycAllList .yc-all-item[data-yc-item="custom"] i').className).toBe('fa-solid fa-bug');
-      expect(t.w.ycLauncher.effectiveRegistry().find((e) => e.id === 'custom').icon).toBe('bug');
-      t.w.ycAll.open(t.d);
-      const pq = t.d.querySelector('#ycPalette .yc-pal-input');
-      pq.value = 'old tab'; pq.dispatchEvent(new t.w.Event('input', { bubbles: true }));
-      const row = [...t.d.querySelectorAll('#ycPalette .yc-pal-item')].find((r) => r.querySelector('span').textContent === 'Old tab');
-      expect(row.querySelector('i').className).toBe('fa-solid fa-bug');
-      t.w.ycAll.close(false);
-      t.close();
-    }
-    t = null;
   });
 
   test('review N1: a drawer\'s own heading icon is drawn by family (brands:github)', () => {

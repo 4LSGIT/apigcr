@@ -22,9 +22,9 @@
  *   7. Incremental: a first chunk only; scrolling and End draw more.
  *   8. From a same-origin iframe: drawn in the TOP document, resolves into
  *      the frame, focus goes back to the frame's button.
- *   9. Settings → My Custom Tab (the real settings.html in a frame under a
- *      stub shell): Choose… opens the top picker; the choice previews with
- *      its family and is what Save posts; the old icon grid is gone.
+ *   9. Settings has no custom tab any more (ui-custom S5e): the real
+ *      settings.html in a frame under a stub shell shows no My Custom Tab
+ *      section and runs none of its code.
  *
  * The layout editor (My buttons) and the Firm tab use it too: see the S6a
  * cases in tests/launcherS5a.test.js and tests/firmTab.test.js.
@@ -527,66 +527,27 @@ describe('from a same-origin iframe', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────
-describe('Settings → My Custom Tab', () => {
-  function settings({ tab = { src: '/reports.html', title: 'Reports', icon: 'bug', loadFunc: '' } } = {}) {
+describe('Settings: no custom tab (ui-custom S5e retired it)', () => {
+  test('the real settings.html: no My Custom Tab section, no ctab element, nothing of its code runs — even for a user with an old value', async () => {
     const t = shell();
-    const posts = [];
-    t.w.firmData = { currentUser: { user: 7, roles: 'staff', user_custom_tab: tab } };
+    const calls = [];
+    t.w.firmData = { currentUser: { user: 7, roles: 'staff', user_custom_tab: { src: '/reports.html', title: 'Reports', icon: 'bug', loadFunc: '' } } };
     t.w.user = t.w.firmData.currentUser;
-    t.w.apiSend = async (url, method, body) => {
-      if (url === '/api/auth/update-custom-tab') {
-        posts.push(JSON.parse(JSON.stringify(body)));
-        return { status: 'success', user_custom_tab: { ...body, loadFunc: '' } };
-      }
-      if (url.startsWith('/api/reports')) return { reports: [] };
-      return { status: 'success', settings: [], items: [], types: [], calendars: [], signatures: [] };
+    t.w.apiSend = async (url, method) => {
+      calls.push((method || 'GET') + ' ' + url);
+      return { status: 'success', settings: [], items: [], types: [], calendars: [], signatures: [], reports: [] };
     };
-    t.w.applyCustomTab = () => {};
     const f = t.d.getElementById('pane');
     const html = SETTINGS_HTML.replace(/<script src=[^>]*><\/script>/g, '').replace(/<link [^>]*>/g, '');
     const fd = f.contentDocument;
-    f.contentWindow.CSS = { escape: (s) => String(s).replace(/["\\]/g, '\\$&') };   // jsdom has no CSS.escape
+    f.contentWindow.CSS = { escape: (x) => String(x).replace(/["\\]/g, '\\$&') };   // jsdom has no CSS.escape
     fd.open(); fd.write(html); fd.close();
-    return { ...t, fw: f.contentWindow, fd, posts };
-  }
-
-  test('Choose… opens the top picker on the saved icon; the choice previews with its family; Save posts it', async () => {
-    const t = settings();
     await flush(30);
-    const $ = (id) => t.fd.getElementById(id);
-    expect($('ctabIcons')).toBe(null);                                 // the old curated grid is gone
-    expect($('ctabIconText')).toBe(null);                              // and the free-text box
-    expect(t.fw.CTAB_ICONS).toBe(undefined);
-    expect($('ctabIconPrev').className).toBe('fa-solid fa-bug');
-    expect($('ctabIconName').textContent).toBe('bug · Solid');
-    $('ctabIconPick').click();
-    await flush();
-    expect(t.P.isOpen()).toBe(true);
-    expect(t.root().querySelector('.is-current').getAttribute('data-v')).toBe('bug');
-    t.type('house');
-    t.tiles().find((b) => b.getAttribute('data-v') === 'house').click();
-    await flush();
-    expect($('ctabIconPrev').className).toBe('fa-solid fa-house');
-    expect($('ctabIconName').textContent).toBe('house · Solid');
-    expect($('ctabPreview').querySelector('i').className).toBe('fa-solid fa-house');
-    $('ctabSave').click();
-    await flush();
-    expect(t.posts).toEqual([{ title: 'Reports', icon: 'house', src: '/reports.html' }]);
-    // a brand, and a cancel that keeps it
-    $('ctabIconPick').click();
-    await flush();
-    t.type('github');
-    t.tiles()[0].click();
-    await flush();
-    expect($('ctabPreview').querySelector('i').className).toBe('fa-brands fa-github');
-    $('ctabIconPick').click();
-    await flush();
-    t.key('Escape');
-    await flush();
-    expect($('ctabIconName').textContent).toBe('github · Brands');
-    expect(t.fd.activeElement).toBe($('ctabIconPick'));
-    $('ctabSave').click();
-    await flush();
-    expect(t.posts[1].icon).toBe('brands:github');
+    expect(calls.length).toBeGreaterThan(0);                                   // the page did boot
+    expect(fd.querySelector('[id^="ctab"]')).toBe(null);
+    expect([...fd.querySelectorAll('.sec-head h2')].map((h) => h.textContent).filter((x) => /custom tab/i.test(x))).toEqual([]);
+    expect(calls.filter((c) => /custom-tab|\/api\/reports/.test(c))).toEqual([]);   // ctabInit read the views list first
+    expect(typeof f.contentWindow.ctabInit).toBe('undefined');
+    expect(SETTINGS_HTML).not.toMatch(/user_custom_tab|update-custom-tab|applyCustomTab|My Custom Tab/);
   });
 });

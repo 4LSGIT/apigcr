@@ -254,8 +254,7 @@ three families: **Solid** (filled), **Regular** (outlined; a smaller set) and
   box picks the first match; **Esc** or **Cancel** closes it and keeps the icon
   you had.
 
-The same picker chooses the icon of your
-[custom tab](../05-Subsystems/05-YisraView.md#your-own-tab) and of your firm's items
+The same picker chooses the icon of your firm's items
 ([Firm launcher](../05-Subsystems/14-firm-launcher.md)).
 
 ### Putting a button on Home or the sidebar, and giving it a shortcut
@@ -304,23 +303,16 @@ where you left it.
 - A link never opens as a tab: another website always opens in a new window
   (see above).
 
-### Your old custom tab
+### The custom tab
 
-The **custom tab** you may have set up in **Settings → My Custom Tab** keeps
-working as it always has. If it shows a **saved view** or a **tool**, the **My
-buttons** tab offers **Make my custom tab a button**: one click adds a button
-that opens the same page as a tab, puts it where the custom tab is on your
-Home and sidebar, and, when you **Save**, removes the old custom tab. (If the
-removal fails, the new button is still saved; press **Save** again.) The
-button then works like any other: rename it, move it, give it a shortcut, or
-put it in a drawer. A keyboard shortcut or a drawer entry that opened the old
-custom tab is not moved over: it stops working once the custom tab is gone, so
-point it at the new button instead.
-
-A custom tab that shows anything else (another of the app's pages, an outside
-website your administrator set up, or one with an extra step IT added) can't
-be a button: it stays as it is, the **My buttons** tab says why, and
-**Settings → My Custom Tab** still changes it.
+There is no custom tab (**Settings → My Custom Tab**) any more. Each one became
+a button of its owner's, in the same places on Home and the sidebar: a saved
+view or a tool opens as a tab, as before; another page is a link or the app's
+own tile for it. The button works like any other: rename it, move it, give it
+a shortcut, or put it in a drawer. **Calendar** took the custom tab's place in
+the shipped Home. If you had already arranged your Home yourself, it is added
+to yours too, after **Log** (or the nearest tile before it that you kept);
+take it off like any tile if you don't want it.
 
 ## Drawers
 

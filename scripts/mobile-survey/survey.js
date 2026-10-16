@@ -463,29 +463,6 @@ async function walk(page, W, record) {
         }); await sleep(400);
         await record('tab:tabAll:layout-editor:buttons-drawer', await editorBox(await measure(page, null)), await shot('all_layout_editor_buttons_drawer'));
         await page.evaluate(() => document.querySelector('#ycLayoutEditor .ymb-sec [data-act="mb-cancel"]').click()); await sleep(200);
-        // the legacy custom tab's note (ui-custom S5c-b), read from the shell's
-        // copy of users.user_custom_tab: one that can become a button (a tool;
-        // with its "Make my custom tab a button"), then one that stays (another
-        // website: the longest reason). Set in the page, the form opened and
-        // cancelled to redraw the tab; nothing is converted, and the value is
-        // put back, so the editor still closes without a prompt.
-        const legacy = async (ct, name) => {
-          await page.evaluate((ct) => {
-            window.firmData.currentUser.user_custom_tab = ct;
-            document.querySelector('#ycLayoutEditor .ymb-sec [data-act="mb-open"]').click();
-            document.querySelector('#ycLayoutEditor .ymb-sec [data-act="mb-cancel"]').click();
-            const box = document.querySelector('#ycLayoutEditor .ymb-legacy');
-            if (box) box.scrollIntoView();
-          }, ct); await sleep(300);
-          await record('tab:tabAll:layout-editor:' + name, await editorBox(await measure(page, null)), await shot('all_layout_editor_' + name.replace(/-/g, '_')));
-        };
-        await legacy({ src: '/tool/qa-tool-with-a-very-long-key-name', icon: 'star', title: 'A custom tab name of forty characters ok', loadFunc: '' }, 'buttons-legacy');
-        await legacy({ src: 'https://intranet.example.com/a/long/address', icon: 'globe', title: 'Anunbrokencustomtabnameoffortycharacter', loadFunc: '' }, 'buttons-legacy-stays');
-        await page.evaluate(() => {
-          window.firmData.currentUser.user_custom_tab = null;
-          document.querySelector('#ycLayoutEditor .ymb-sec [data-act="mb-open"]').click();
-          document.querySelector('#ycLayoutEditor .ymb-sec [data-act="mb-cancel"]').click();
-        }); await sleep(200);
         await page.evaluate(() => ycLayoutEditor.close()); await sleep(300);
       }
     }

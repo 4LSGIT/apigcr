@@ -139,10 +139,26 @@ describe('registry_overrides', () => {
     expect(ro({ renames: { 'not an id': { label: 'x' } } }).ok).toBe(false);
   });
 
-  test('renames refuse custom (its user titles it) and firm items (edit their label) — never stored as silent data', () => {
-    expect(errs(ro({ renames: { custom: { label: 'Mine' } } }))).toMatch(/custom tab is titled by its user/);
+  test('renames refuse firm items (edit their label) — never stored as silent data', () => {
     expect(errs(ro({ renames: { 'firm:payroll': { label: 'Pay' } } }))).toMatch(/firm item is renamed by editing its own label/);
     expect(ro({ renames: { cases: { label: 'Matters' } } }).ok).toBe(true);
+  });
+
+  test('the retired custom tab (ui-custom S5e) is a soft ref like any registry-shaped id: accepted everywhere, as written', () => {
+    // a stale client or a restore may still send it; the shell drops ids its registry lacks (tests/launcherS4a.test.js)
+    const r = ro({ renames: { custom: { label: 'Mine' } }, hidden: ['custom'], locked: ['custom'], visible_to: { custom: ['staff'] } });
+    expect([r.ok, r.errors]).toEqual([true, []]);
+    expect(r.value).toMatchObject({ renames: { custom: { label: 'Mine' } }, hidden: ['custom'], locked: ['custom'], visible_to: { custom: ['staff'] } });
+    for (const [scope, key, doc] of [
+      ['user', 'layout', { placed: { home: [{ item: 'custom' }], sidebar: [{ item: 'custom' }] }, removed: { home: ['custom'] } }],
+      ['firm', 'layout', { placed: { home: [{ item: 'custom' }] }, removed: { sidebar: ['custom'] } }],
+      ['user', 'shortcuts', { bindings: [{ id: 'custom', combo: { ctrl: true, meta: true, alt: false, shift: false, key: 'u' } }] }],
+      ['user', 'items', { items: [{ id: 'user:box', label: 'Box', icon: 'box', action: { type: 'drawer', items: ['custom'] } }] }],
+    ]) {
+      const v = shape.validate(scope, key, doc);
+      expect([scope, key, v.ok, v.errors]).toEqual([scope, key, true, []]);
+      expect(shape.canonical(v.value)).toBe(shape.canonical(doc));
+    }
   });
 
   test('labels: plain text, trimmed, 1–40 characters', () => {

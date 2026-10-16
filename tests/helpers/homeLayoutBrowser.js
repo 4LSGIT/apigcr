@@ -40,7 +40,7 @@ const info = {};
 // firm-locked in the fixture, so it is one of the eight).
 const EIGHT = {
   placed: { home: ['cases', 'contacts', 'appts', 'bills', 'events', 'tasks', 'comms', 'logout'].map((item) => ({ item })) },
-  removed: { home: ['pipeline', 'newClient', 'log', 'custom', 'moreFeatures'] },
+  removed: { home: ['pipeline', 'newClient', 'log', 'calendar', 'moreFeatures'] },   // calendar: the custom tab's old slot (ui-custom S5e)
 };
 
 async function open(browser, url, { width, height = 900, user = {}, mobile = width < 769 }) {

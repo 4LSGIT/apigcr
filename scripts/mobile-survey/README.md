@@ -199,7 +199,8 @@ layout editor refreshes the shell when they differ), and a user's own Home and
 sidebar layout (`ui.user.layout`, ui-custom S4a: both surfaces re-ordered, a
 More panel and the two long-labelled firm items pinned to Home and the
 sidebar, user breaks, a 39-character section label, per-surface removals (one
-of them firm-locked) — on screen on every surface, the phone drawer included,
+of them firm-locked), and `custom` — the custom tab ui-custom S5e retired — on
+both, a stale id the resolver drops — on screen on every surface, the phone drawer included,
 and in the layout editor (ui-custom S4b; `tab:tabAll:layout-editor`,
 `…:picker`, `…:label` — these also fail when the editor's scrolling body goes
 sideways, `m.boxes`) and keyboard shortcuts (`ui.user.shortcuts`, ui-custom
@@ -228,10 +229,7 @@ the sidebar row, `tab:tabHome:drawer-sidebar`, a sheet at phone width; both also
 fail when the menu's list goes sideways, `m.boxes`) and a button that opens as a
 tab (ui-custom S5c-b: a saved view with a 39-character name, opened through
 `ycLauncher.exec` — `tab:tabUserItem`, the button tab, which also fails when its
-heading goes sideways, `m.boxes`); the My buttons tab's note on the legacy
-custom tab, set in the page from the shell's copy of `user_custom_tab`
-(`…:buttons-legacy`, one that can become a button; `…:buttons-legacy-stays`,
-another website, the longest reason) and put back) —
+heading goes sideways, `m.boxes`)) —
 enough to fill the tables
 that tend to overflow and to put every conditional Overview / Case Details box
 on screen. The mock ignores

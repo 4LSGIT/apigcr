@@ -86,7 +86,7 @@ const ids = (list) => list.map((e) => e.id);
 // launcher and its openMainTab. Page functions the S6b items call are stubs
 // that record their arguments.
 function boot() {
-  const tabs = new Set(['tabAll', 'tabMore', 'tabAdmin', 'tabCustom', 'tabSettings']);
+  const tabs = new Set(['tabAll', 'tabMore', 'tabAdmin', 'tabSettings']);
   for (const it of Object.values(REG)) for (const t of [it.tab, it.tabAlso]) if (t) tabs.add(t);
   const plain = [...tabs].filter((t) => !['tabMore', 'tabAdmin'].includes(t)).map((t) => `<div id="${t}" class="tab-main"></div>`).join('');
   const page = `<!DOCTYPE html><html><head>
@@ -121,7 +121,7 @@ function boot() {
   const d = w.document;
   return { w, d, L: w.ycLauncher, calls, errors, close: () => w.close() };
 }
-const ACCESS = { isAdmin: true, denied: [], customTab: { src: '/c.html', title: 'C' } };
+const ACCESS = { isAdmin: true, denied: [] };
 const ui = ({ layout, ro } = {}) => ({ firm: ro ? { registry_overrides: ro } : {}, user: layout ? { layout } : {} });
 
 /** A CSSOM style rule of the page's sheets whose selector list is exactly sel. */
@@ -167,7 +167,7 @@ describe('2. the default layout is unchanged (the S1 expanded page)', () => {
     const want = LAY.home.map((e) => (e.break ? '|' : REG[e.item].surfaceLabels && REG[e.item].surfaceLabels.home ? REG[e.item].surfaceLabels.home : REG[e.item].label));
     expect(kids.map((k) => (k.classList.contains('home-break') ? '|' : k.textContent.trim()))).toEqual(want);
     expect(want).toEqual(['Cases', 'Contacts', 'Appointments', '|', 'Billing', 'Pipeline Board', 'Events', '|',
-      'Tasks', 'New Client', 'Log', '|', 'Custom Tab', 'More Features', 'Comms']);
+      'Tasks', 'New Client', 'Log', '|', 'Calendar', 'More Features', 'Comms']);   // Calendar in the custom tab's old slot (S5e)
     expect(kids.every((k) => k.className === 'home-btn' || k.className === 'home-break')).toBe(true);
     const tpl = doc.createElement('template');
     tpl.innerHTML = VL.build('home');

@@ -6,9 +6,9 @@
 <title>Settings</title>
 <link rel="stylesheet" href="/theme.css">
 <script src="/themeSync.js"></script>
-<!-- Font Awesome: the icon preview in "My Custom Tab" renders Font Awesome
-     glyphs (solid, regular or brands). The kit loaded by index.html lives in window.top and does not
-     reach this iframe, so the sheet has to be linked here too. -->
+<!-- Font Awesome: the heading's glyphs. The kit loaded by index.html lives in
+     window.top and does not reach this iframe, so the sheet has to be linked
+     here too. -->
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
 <style>
   /* Palette comes from /theme.css, shared with redirects.html /
@@ -26,17 +26,6 @@
      compact 13.5px section heads. */
   h1 { text-align: center; margin: 4px 0 14px; }
 
-  /* Custom tab editor */
-  /* The icon field (ui-custom S6a): the current icon, its name, Choose… */
-  .ctab-icon-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-  .ctab-icon-row > i { width: 1.6em; text-align: center; font-size: 20px; }
-  .ctab-icon-row .ctab-icon-name { min-width: 0; overflow-wrap: anywhere; }
-  .ctab-preview {
-    display: inline-flex; align-items: center; gap: 10px;
-    border: 1px solid var(--border); border-radius: 6px;
-    padding: 9px 14px; min-width: 190px;
-  }
-  .ctab-preview .ph { opacity: .55; font-style: italic; }
   .section {
     background: var(--surface); border: 1px solid var(--border);
     border-radius: 8px; margin-bottom: 16px; overflow: hidden;
@@ -230,52 +219,6 @@
             <button class="btn primary" id="fbSave">Save Booking Calendars</button>
             <span class="status" id="fbStatus"></span>
           </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- ── My Custom Tab ──────────────────────────────────────── -->
-    <!-- Self-service editor for users.user_custom_tab. Writes through
-         POST /api/auth/update-custom-tab, which validates every field and
-         preserves any admin-authored loadFunc (never writes one). Non-SU
-         users may only point at same-origin paths; SU additionally gets a
-         free-text box that accepts absolute https:// URLs. -->
-    <div class="section collapsed">
-      <div class="sec-head"><h2><span class="chev">▸</span>My Custom Tab</h2><span class="hint" id="ctabHint"></span></div>
-      <div class="sec-body">
-        <p class="note">Your own tab in the sidebar. Pick what it shows, name it, and give it an icon.</p>
-        <p class="note">You can now have many buttons of your own, and ones that open as a tab: All &rarr; Customize my launcher &rarr; My buttons. If this tab shows a saved view or a tool, <b>Make my custom tab a button</b> there turns it into one, in the same places.</p>
-        <div class="grid2">
-          <div>
-            <label class="fld">Tab Name</label>
-            <input type="text" id="ctabTitle" maxlength="40" placeholder="Follow Ups">
-          </div>
-          <div>
-            <label class="fld">Shows</label>
-            <select id="ctabSrc"></select>
-          </div>
-        </div>
-
-        <div id="ctabPathRow" style="display:none">
-          <label class="fld">Address</label>
-          <input type="text" id="ctabPath" class="mono" placeholder="/customView.html?key=lead_followups">
-          <p class="note" id="ctabPathNote"></p>
-        </div>
-
-        <label class="fld" style="margin-top:12px" for="ctabIconPick">Icon</label>
-        <div class="ctab-icon-row">
-          <i id="ctabIconPrev" aria-hidden="true"></i>
-          <span class="ctab-icon-name note" id="ctabIconName" style="margin:0"></span>
-          <button type="button" class="btn" id="ctabIconPick">Choose…</button>
-        </div>
-
-        <label class="fld" style="margin-top:12px">Preview</label>
-        <div id="ctabPreview" class="ctab-preview"></div>
-
-        <div class="btn-row">
-          <button class="btn primary" id="ctabSave">Save Custom Tab</button>
-          <button class="btn" id="ctabRemove">Remove Tab</button>
-          <span class="status" id="ctabStatus"></span>
         </div>
       </div>
     </div>
@@ -1150,187 +1093,6 @@ async function saveFreebusyCals() {
   E('fbSave').disabled = false;
 }
 
-/* ════════════════ MY CUSTOM TAB ════════════════
-   Edits users.user_custom_tab via POST /api/auth/update-custom-tab.
-
-   The server is the real gate — it validates title/icon/src and preserves any
-   admin-authored loadFunc. Everything here is convenience: the shell's icon
-   picker, a "Shows" picker built from the live view list, and a live preview.
-
-   The icon is CHOSEN in the shell's icon picker (window.top.ycIconPicker,
-   ui-custom S6a — every free Font Awesome icon, solid / regular / brands),
-   never typed. The value is the shared icon grammar (window.top.ycIcon:
-   a bare slug = solid, or regular: / brands: + slug), which the server's
-   ICON_RE checks again; ycIcon renders it. */
-
-// Same-origin pages worth offering. Kept short on purpose — the long tail lives
-// behind the SU free-text box.
-const CTAB_PAGES = [
-  ['/manuals.html',            'Manuals'],
-  ['/reports.html',            'Reports'],
-  ['/automationManager.html',  'Automations'],
-  ['/formBuilder.html',        'Form Builder'],
-  ['/assetManager.html',       'Asset Manager'],
-  ['/esign/dashboard.html',    'Signatures'],
-  ['/featureRequests.html',    'Feature Requests'],
-  ['/etch.html',               'Paint'],
-];
-
-let ctabIcon = 'list-check';
-let ctabIsSU = false;
-
-function ctabCurrent() {
-  const u = window.top.firmData?.currentUser || window.top.user || {};
-  let c = u.user_custom_tab;
-  if (typeof c === 'string') { try { c = JSON.parse(c); } catch { c = null; } }
-  return (c && typeof c === 'object' && !Array.isArray(c)) ? c : null;
-}
-
-async function ctabInit() {
-  const u = window.top.firmData?.currentUser || window.top.user || {};
-  ctabIsSU = String(u.roles || '').split(',').includes('su');
-
-  const cur = ctabCurrent();
-  E('ctabHint').textContent = cur && cur.src ? (cur.title || 'Custom Tab') : 'not set up';
-
-  // Icon: Choose… opens the shell's picker; the choice is kept, not saved, until Save.
-  E('ctabIconPick').addEventListener('click', ctabPickIcon);
-
-  // "Shows" picker: views first, then app pages.
-  let views = [];
-  try {
-    const d = await api('/api/reports?kind=view');
-    views = d.reports || [];
-  } catch (_) { /* views are a bonus; the picker still works without them */ }
-
-  const opts = ['<option value="">— none —</option>'];
-  opts.push('<optgroup label="Views">');
-  opts.push(`<option value="/customView.html">All views (browse)</option>`);
-  for (const v of views) {
-    opts.push(`<option value="/customView.html?key=${encodeURIComponent(v.report_key)}">${esc(v.title)}</option>`);
-  }
-  opts.push('</optgroup>');
-  opts.push('<optgroup label="Pages">');
-  for (const [href, label] of CTAB_PAGES) opts.push(`<option value="${esc(href)}">${esc(label)}</option>`);
-  opts.push('</optgroup>');
-  if (ctabIsSU) opts.push(`<option value="__custom__">Other address…</option>`);
-  E('ctabSrc').innerHTML = opts.join('');
-
-  // Seed from the stored row. If the stored src matches no option — an admin
-  // may have set something bespoke, including an external URL — surface it as
-  // its own option rather than silently switching the user off it.
-  const src = cur && cur.src ? String(cur.src) : '';
-  if (src && !E('ctabSrc').querySelector(`option[value="${CSS.escape(src)}"]`)) {
-    E('ctabSrc').insertAdjacentHTML('afterbegin',
-      `<option value="${esc(src)}">Current setting — ${esc(src)}</option>`);
-  }
-  E('ctabSrc').value = src;
-  E('ctabTitle').value = cur && cur.title ? cur.title : '';
-  ctabSetIcon(cur && cur.icon ? cur.icon : 'list-check');
-
-  E('ctabSrc').addEventListener('change', ctabOnSrcChange);
-  E('ctabTitle').addEventListener('input', ctabPreview);
-  E('ctabSave').addEventListener('click', ctabSave);
-  E('ctabRemove').addEventListener('click', ctabRemove);
-
-  ctabOnSrcChange();
-}
-
-function ctabOnSrcChange() {
-  const isCustom = E('ctabSrc').value === '__custom__';
-  E('ctabPathRow').style.display = isCustom ? '' : 'none';
-  E('ctabPathNote').textContent = ctabIsSU
-    ? 'A path inside YisraCase (starting with /) or a full https:// URL.'
-    : 'A path inside YisraCase, starting with /.';
-  // Suggest a name from the chosen option when the box is still empty.
-  if (!E('ctabTitle').value.trim() && !isCustom) {
-    const o = E('ctabSrc').selectedOptions[0];
-    if (o && o.value) E('ctabTitle').value = o.textContent.trim().slice(0, 40);
-  }
-  ctabPreview();
-}
-
-function ctabSetIcon(name) {
-  ctabIcon = String(name || '').trim().toLowerCase().replace(/^fa-/, '');
-  const YI = window.top.ycIcon, p = YI.parse(ctabIcon);
-  E('ctabIconPrev').className = YI.cls(ctabIcon);
-  E('ctabIconName').textContent = p
-    ? `${p.name} · ${p.family.charAt(0).toUpperCase()}${p.family.slice(1)}`
-    : 'Not a valid icon: choose another';
-  ctabPreview();
-}
-
-async function ctabPickIcon() {
-  const pk = window.top.ycIconPicker;
-  if (!pk || typeof pk.open !== 'function') return;
-  const v = await pk.open({ value: ctabIcon, title: 'Icon for your custom tab', from: E('ctabIconPick') });
-  if (typeof v === 'string' && v) ctabSetIcon(v);
-}
-
-function ctabPreview() {
-  const title = E('ctabTitle').value.trim();
-  E('ctabPreview').innerHTML = title
-    ? `<i class="${esc(window.top.ycIcon.cls(ctabIcon))}"></i><span>${esc(title)}</span>`
-    : `<span class="ph">Name the tab to see a preview</span>`;
-}
-
-function ctabResolvedSrc() {
-  const v = E('ctabSrc').value;
-  return v === '__custom__' ? E('ctabPath').value.trim() : v;
-}
-
-async function ctabSave() {
-  const title = E('ctabTitle').value.trim();
-  const src = ctabResolvedSrc();
-  if (!src) return setStatus('ctabStatus', 'Pick what the tab should show', false);
-  if (!title) return setStatus('ctabStatus', 'Give the tab a name', false);
-  if (!window.top.ycIcon.valid(ctabIcon)) {
-    return setStatus('ctabStatus', 'Choose an icon', false);
-  }
-
-  E('ctabSave').disabled = true;
-  try {
-    const d = await api('/api/auth/update-custom-tab', 'POST', { title, icon: ctabIcon, src });
-    ctabApply(d.user_custom_tab);
-    setStatus('ctabStatus', 'Custom tab saved', true);
-  } catch (err) {
-    setStatus('ctabStatus', err.message || 'Could not save the custom tab', false);
-  } finally {
-    E('ctabSave').disabled = false;
-  }
-}
-
-async function ctabRemove() {
-  E('ctabRemove').disabled = true;
-  try {
-    const d = await api('/api/auth/update-custom-tab', 'POST', { clear: true });
-    ctabApply(d.user_custom_tab);
-    E('ctabTitle').value = '';
-    E('ctabSrc').value = '';
-    ctabOnSrcChange();
-    setStatus('ctabStatus', 'Custom tab removed', true);
-  } catch (err) {
-    setStatus('ctabStatus', err.message || 'Could not remove the custom tab', false);
-  } finally {
-    E('ctabRemove').disabled = false;
-  }
-}
-
-/* Push the saved row into the shell so the sidebar updates without a reload —
-   same idea as syncParentUser() above. applyCustomTab() is exported by
-   index.html; guard it so an older shell just needs a refresh instead of
-   throwing. */
-function ctabApply(cfg) {
-  const T = window.top;
-  try {
-    if (T.user) T.user.user_custom_tab = cfg;
-    if (T.firmData?.currentUser) T.firmData.currentUser.user_custom_tab = cfg;
-  } catch (_) {}
-  E('ctabHint').textContent = cfg && cfg.src ? (cfg.title || 'Custom Tab') : 'not set up';
-  if (typeof T.applyCustomTab === 'function') T.applyCustomTab(cfg);
-  else setStatus('ctabStatus', 'Saved — refresh to see the tab', true);
-}
-
 /* ════════════════ CONTACT ROLES EDITOR (role-forms slice) ════════════════
    Structured editor over GET/POST/PUT /api/contact-role-types. Unlike the
    caseTypes/eventTypes editors (one app_settings blob, whole-blob save),
@@ -1564,7 +1326,6 @@ async function init() {
   E('asCreate').addEventListener('click', createSetting); // bound even if GET below fails
   E('crAdd').addEventListener('click', crCreate);
   crInit();            // contact role types (own table + routes, fire-and-forget)
-  ctabInit();          // self-only custom tab (fire-and-forget, same as freebusy)
 
   try {
     const data = await api('/api/app-settings');

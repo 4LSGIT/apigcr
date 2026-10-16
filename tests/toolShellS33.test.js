@@ -278,7 +278,7 @@ describe('close / resize: only the dialog\'s own page', () => {
   afterEach(() => t.close());
 
   test('a frame that is not the dialog\'s page gets false and changes nothing', () => {
-    const tabFrame = t.d.getElementById('tabCustomFrame').contentWindow;
+    const tabFrame = t.d.getElementById('tabOtherFrame').contentWindow;
     for (const other of [t.pane(), tabFrame, t.w, undefined, null, {}, { parent: t.w }]) {
       expect(t.w.ycTool.resize('compact', other)).toBe(false);
       expect(t.w.ycTool.close(other)).toBe(false);
@@ -310,9 +310,9 @@ describe('close / resize: only the dialog\'s own page', () => {
     expect(t.dlgOpen()).toBe(true);
   });
 
-  test('outside any dialog (a custom-tab frame, nothing open) both are no-ops returning false', () => {
+  test('outside any dialog (a frame in another tab, nothing open) both are no-ops returning false', () => {
     t.w.openToolDialog.close();
-    const tabFrame = t.d.getElementById('tabCustomFrame').contentWindow;
+    const tabFrame = t.d.getElementById('tabOtherFrame').contentWindow;
     expect([t.w.ycTool.close(tabFrame), t.w.ycTool.resize('compact', tabFrame)]).toEqual([false, false]);
   });
 });
@@ -463,13 +463,12 @@ describe('the More firm row', () => {
     expect(t.dlgOpen()).toBe(false);                                // exec closes the dialog first
   });
 
-  test('idempotent: the same items re-run (applyAccess, applyCustomTab) leave the very same nodes', () => {
+  test('idempotent: the same items re-run (applyAccess, also with only roles) leave the very same nodes', () => {
     const doc = ui({ items: [FI.clio, FI.appt] });
     t.L.applyAccess({ ui: doc });
     const first = row();
     t.L.applyAccess({ ui: JSON.parse(JSON.stringify(doc)) });
-    t.w.applyCustomTab({ src: '/x.html', title: 'X' });
-    t.L.applyAccess({ customTab: { src: '/x.html', title: 'X' } });
+    t.L.applyAccess({ roles: ['staff'] });
     expect(row()).toEqual(first);
     expect(row().every((n, i) => n === first[i])).toBe(true);
     expect(tiles()).toHaveLength(2);

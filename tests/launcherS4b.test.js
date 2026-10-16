@@ -56,7 +56,6 @@ function slice(from, to) {
 const ALL_TAB = slice('  <div id="tabAll" class="tab-main">', '\n  <style>');
 const DRILL_SRC = slice('  // ── Big-button hover animations ── HOW TO USE', '</script>\n  <script>\n    params = {};');
 const TABS_SRC = slice('    function openMainTab(tabName) {', '    // ---- Global auth state ----');
-const CUSTOM_SRC = slice('    function applyCustomTab(cfg) {', '    window.applyCustomTab = applyCustomTab;');
 const CURRENT_SRC = slice('    function currentMainTabId() {', '\n    }\n') + '\n    }\n';
 const HIDE_CSS = RAW.match(/<style>\[data-yc-denied\][^<]*<\/style>/)[0];
 
@@ -82,7 +81,7 @@ const FIRM_GONE = { id: 'firm:gone', label: 'Gone for now', icon: 'ghost',
   action: { type: 'url', href: 'https://gone.example.com/', present: 'window' } };
 const RO = { items: [FIRM_ITEM, FIRM_GONE], hidden: ['firm:gone'], locked: ['bills'], renames: { cases: { label: 'Matters <b>' } } };
 const UI = (layout, ro = RO) => ({ firm: { registry_overrides: ro }, user: layout ? { layout } : {} });
-const ACCESS = { isAdmin: true, denied: ['moreViews'], customTab: { src: '/c.html', title: 'C' } };
+const ACCESS = { isAdmin: true, denied: ['moreViews'] };
 function effective(ro = RO) {
   const list = VL.computeEffective({ ...ACCESS, ui: UI(null, ro) });
   return { eff: J(list), groups: J(list.groups) };
@@ -117,7 +116,8 @@ function mysqlOrder(v) {
 }
 
 // A stored layout with both surfaces edited, an ineffective firm item placed
-// on each and an ineffective id removed.
+// on each and an ineffective id removed. `custom` on both is the custom tab
+// ui-custom S5e retired: a stale id now, ineffective like firm:gone.
 const STORED = {
   placed: {
     home: [{ item: 'comms' }, { item: 'firm:gone' }, { item: 'cases' }, { break: true }, { item: 'moreAutomations' },
@@ -399,9 +399,9 @@ function boot({ layout = null, ro = RO, access = ACCESS, serverLayout = layout, 
   const placedIds = (sf) => LAYD[sf].filter((e) => e.item).map((e) => e.item);
   const grid = (sf) => placedIds(sf).map((k) => REG[k]).filter((it) => it.target)
     .map((it) => `<div id="${it.target}" style="display:none"><iframe data-src="/${it.target}.html"></iframe></div>`).join('');
-  const tabs = new Set(['tabHome', 'tabMore', 'tabAdmin', 'tabCustom']);
+  const tabs = new Set(['tabHome', 'tabMore', 'tabAdmin']);
   for (const it of Object.values(REG)) for (const t of [it.tab, it.tabAlso]) if (t) tabs.add(t);
-  const plainTabs = [...tabs].filter((t) => !['tabHome', 'tabMore', 'tabAdmin', 'tabCustom', 'tabAll'].includes(t))
+  const plainTabs = [...tabs].filter((t) => !['tabHome', 'tabMore', 'tabAdmin', 'tabAll'].includes(t))
     .map((t) => `<div id="${t}" class="tab-main"></div>`).join('');
   const page = `<!DOCTYPE html><html><head>
     <script>${ICON_SRC}</script><script>${REGISTRY_SRC}</script><script id="ycLauncher">${RENDERER_SRC}</script>${HIDE_CSS}</head><body>
@@ -411,7 +411,6 @@ function boot({ layout = null, ro = RO, access = ACCESS, serverLayout = layout, 
       <div class="home-grid"><script>ycLauncher.mount('home')</script></div>
       <button id="homeAll" class="home-btn"></button></div>
     ${ALL_TAB}
-    <div id="tabCustom" class="tab-main"><iframe id="tabCustomFrame"></iframe></div>
     ${plainTabs}
     <div id="tabMore" class="tab-main"><h1>More</h1><script>ycLauncher.mount('more')</script></div>
     <div id="tabAdmin" class="tab-main"><h1>Admin</h1><script>ycLauncher.mount('admin')</script></div>
@@ -430,7 +429,7 @@ function boot({ layout = null, ro = RO, access = ACCESS, serverLayout = layout, 
     stubs.add(m[1]);
     stubSrc += `function ${m[1]}() { ${it.tab ? `openMainTab('${it.tab}');` : ''} }\n`;
   }
-  w.eval(stubSrc + CURRENT_SRC + TABS_SRC + CUSTOM_SRC + DRILL_SRC);
+  w.eval(stubSrc + CURRENT_SRC + TABS_SRC + DRILL_SRC);
   // the shell's copy of the layers, then login's applyAccess
   w.firmData = { ui: J(UI(layout, ro)) };
   w.ycLauncher.applyAccess({ ...access, ui: w.firmData.ui });
@@ -722,9 +721,7 @@ describe('the panel (for real, jsdom)', () => {
 
   test('escaping: markup in user labels, firm renames and firm item labels stays text — rows, hidden list, picker, launcher', async () => {
     const layout = { placed: { sidebar: [{ label: '<img src=x onerror=alert(1)>' }, { item: 'firm:payroll' }, { item: 'cases' }] }, removed: { home: ['log'] } };
-    // the custom tab's title and icon reach the effective registry unvalidated (its owner validates on write)
-    const customTab = { src: '/c.html', title: 'Mine <b>bold</b>', icon: 'x" onmouseover="alert(1)' };
-    t = boot({ layout, access: { ...ACCESS, customTab } });
+    t = boot({ layout });
     await t.open();
     t.sec('home').querySelector('[data-act="pick"]').click();
     expect(t.rowNames('sidebar').slice(0, 3)).toEqual(['#<img src=x onerror=alert(1)>', FIRM_ITEM.label, 'Matters <b>']);
@@ -736,9 +733,6 @@ describe('the panel (for real, jsdom)', () => {
     expect(t.act('sidebar', FIRM_ITEM.label, 'up').getAttribute('aria-label')).toBe('Move ' + FIRM_ITEM.label + ' up');
     // every icon class comes from a validated slug — a bad one becomes the question mark
     for (const i of t.panel().querySelectorAll('i')) expect(i.className).toMatch(/^fa-solid fa-[a-z0-9-]+( yle-ic)?$/);
-    const mine = t.rowOf('home', 'Mine <b>bold</b>');
-    expect(mine.querySelector('i').className).toBe('fa-solid fa-circle-question yle-ic');
-    expect(mine.querySelector('[onmouseover]')).toBe(null);
   });
 
   test('saving with nothing changed closes without a PUT', async () => {

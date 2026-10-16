@@ -16,7 +16,7 @@
  *      depends only on the four inputs.
  *   2. THE RENDERER, RUN FOR REAL in jsdom: the page's own renderer mounts the
  *      surfaces (Home inside its .home-grid), the page's own openMainTab /
- *      updateSidebarActive / drill-in / applyCustomTab run over them —
+ *      updateSidebarActive / drill-in run over them —
  *      extracted from public/index.html, not re-typed. An empty layout puts
  *      back the default DOM byte for byte (the markup the S1 helper,
  *      tests/helpers/shellHtml.js, expands the page with); a re-run changes
@@ -26,8 +26,9 @@
  *      data-exclusive-group and run exec() (the one exception, a panel
  *      item's tile on a grid page, carries data-target — S6c-4,
  *      launcherS6c4; this file places panel items on Home and the sidebar
- *      only); denies, firm hides, renames,
- *      locks and the custom tab compose with the layout; highlights land on
+ *      only); denies, firm hides, renames and locks compose with the
+ *      layout, and a stale `custom` (the custom tab ui-custom S5e retired)
+ *      drops; highlights land on
  *      moved and neutral items.
  *   3. computeEffective is pure: the group order rides on the list, and a
  *      call from anyone (the Firm tab) leaves groups() and the effective
@@ -61,7 +62,6 @@ function slice(from, to) {
 }
 const DRILL_SRC = slice('  // ── Big-button hover animations ── HOW TO USE', '</script>\n  <script>\n    params = {};');
 const TABS_SRC = slice('    function openMainTab(tabName) {', '    // ---- Global auth state ----');
-const CUSTOM_SRC = slice('    function applyCustomTab(cfg) {', '    window.applyCustomTab = applyCustomTab;');
 const CURRENT_SRC = slice('    function currentMainTabId() {', '\n    }\n') + '\n    }\n';
 const HIDE_CSS = RAW.match(/<style>\[data-yc-denied\][^<]*<\/style>/)[0];
 
@@ -109,9 +109,9 @@ describe('resolveLayout (pure)', () => {
 
   test('a placed list IS the order; base items neither placed nor removed slot in after their nearest preceding base item', () => {
     const user = { placed: { home: [{ item: 'comms' }, { item: 'cases' }, { break: true }, { item: 'moreAutomations' }] }, removed: { home: ['tasks'] } };
-    // base home: cases contacts appts | bills pipeline events | tasks newClient log | custom moreFeatures comms
+    // base home: cases contacts appts | bills pipeline events | tasks newClient log | calendar moreFeatures comms
     expect(shape(R('home', { user }))).toEqual([
-      'comms', 'cases', 'contacts', 'appts', 'bills', 'pipeline', 'events', 'newClient', 'log', 'custom', 'moreFeatures',
+      'comms', 'cases', 'contacts', 'appts', 'bills', 'pipeline', 'events', 'newClient', 'log', 'calendar', 'moreFeatures',
       '|', 'moreAutomations']);
     const out = R('home', { user });
     expect(out.filter((e) => e.origin === 'user').map((e) => e.id || '|')).toEqual(['comms', 'cases', '|', 'moreAutomations']);
@@ -129,10 +129,10 @@ describe('resolveLayout (pure)', () => {
 
   test('an item NEW to the base layout appears for a customized user, next to its base neighbour', () => {
     const base = LAY.home.slice();
-    base.splice(base.findIndex((e) => e.item === 'appts') + 1, 0, { item: 'calendar' });
+    base.splice(base.findIndex((e) => e.item === 'appts') + 1, 0, { item: 'helpSupport' });
     const user = { placed: { home: [{ item: 'log' }, { item: 'appts' }, { break: true }, { item: 'cases' }] } };
     const out = shape(VL.resolveLayout('home', { base, user, effective: ALL }));
-    expect(out.indexOf('calendar')).toBe(out.indexOf('appts') + 1);
+    expect(out.indexOf('helpSupport')).toBe(out.indexOf('appts') + 1);
   });
 
   test('an explicit placement beats a removal; an item is placed once (the first)', () => {
@@ -240,16 +240,16 @@ describe('resolveLayout (pure)', () => {
 
 // ─────────────────────────────────────────────────────────────────────────
 // A page skeleton with the real mounts (Home inside its .home-grid), the
-// panels and tab divs; the page's own drill-in, tab and custom-tab code.
+// panels and tab divs; the page's own drill-in and tab code.
 // Sidebar mount sits right after #tabOpenFiles, last in the nav, with no
 // whitespace, so the nodes from there to the nav's end ARE what the mount
 // inserted (#sbAll is the mounted `all` item since ui-custom S6c).
 function boot({ extra = '' } = {}) {
   const grid = (sf) => placed(sf).map((k) => REG[k]).filter((it) => it.target)
     .map((it) => `<div id="${it.target}" style="display:none"><iframe data-src="/${it.target}.html"></iframe></div>`).join('');
-  const tabs = new Set(['tabHome', 'tabMore', 'tabAdmin', 'tabCustom']);
+  const tabs = new Set(['tabHome', 'tabMore', 'tabAdmin']);
   for (const it of Object.values(REG)) for (const t of [it.tab, it.tabAlso]) if (t) tabs.add(t);
-  const plainTabs = [...tabs].filter((t) => !['tabHome', 'tabMore', 'tabAdmin', 'tabCustom', 'tabAll'].includes(t))
+  const plainTabs = [...tabs].filter((t) => !['tabHome', 'tabMore', 'tabAdmin', 'tabAll'].includes(t))
     .map((t) => `<div id="${t}" class="tab-main"></div>`).join('');
   const page = `<!DOCTYPE html><html><head>
     <script>${ICON_SRC}</script><script>${REGISTRY_SRC}</script>${extra}<script id="ycLauncher">${RENDERER_SRC}</script>${HIDE_CSS}</head><body>
@@ -259,7 +259,6 @@ function boot({ extra = '' } = {}) {
       <div class="home-grid"><script>ycLauncher.mount('home')</script></div>
       <button id="homeAll" class="home-btn"></button></div>
     <div id="tabAll" class="tab-main"></div>
-    <div id="tabCustom" class="tab-main"><iframe id="tabCustomFrame"></iframe></div>
     ${plainTabs}
     <div id="tabMore" class="tab-main"><h1>More</h1><script>ycLauncher.mount('more')</script></div>
     <div id="tabAdmin" class="tab-main"><h1>Admin</h1><script>ycLauncher.mount('admin')</script></div>
@@ -282,7 +281,7 @@ function boot({ extra = '' } = {}) {
     stubs.add(m[1]);
     stubSrc += `function ${m[1]}() { __calls.push('${m[1]}'); ${it.tab ? `openMainTab('${it.tab}');` : ''} }\n`;
   }
-  w.eval(stubSrc + CURRENT_SRC + TABS_SRC + CUSTOM_SRC + DRILL_SRC);
+  w.eval(stubSrc + CURRENT_SRC + TABS_SRC + DRILL_SRC);
   const d = w.document;
   const L = w.ycLauncher;
   const shown = (el) => w.getComputedStyle(el).display !== 'none';
@@ -319,12 +318,12 @@ const FIRM_ITEM = { id: 'firm:payroll', label: 'Pay <img src=x onerror=alert(1)>
 const ui = ({ layout, ro } = {}) => ({ firm: ro ? { registry_overrides: ro } : {}, user: layout ? { layout } : {} });
 const LAYOUT = {
   placed: {
-    home: [{ item: 'comms' }, { item: 'moreAutomations' }, { item: 'firm:payroll' }, { break: true }, { item: 'calendar' }, { item: 'cases' }],
+    home: [{ item: 'comms' }, { item: 'moreAutomations' }, { item: 'firm:payroll' }, { break: true }, { item: 'admin' }, { item: 'cases' }],
     sidebar: [{ label: 'Mine <b>' }, { item: 'tasks' }, { item: 'moreAutomations' }, { item: 'firm:payroll' }, { label: 'Rest' }],
   },
   removed: { home: ['bills', 'log'], sidebar: ['bills', 'log'] },
 };
-const ADMIN = { isAdmin: true, denied: [], customTab: { src: '/c.html', title: 'C' } };
+const ADMIN = { isAdmin: true, denied: [] };
 
 describe('the renderer (for real): default DOM, reversibility, idempotence', () => {
   let t;
@@ -371,7 +370,7 @@ describe('the renderer (for real): default DOM, reversibility, idempotence', () 
     const snap = [t.html.home(), t.html.sidebar()];
     const done = t.observe();
     t.L.applyAccess(state);
-    t.L.applyAccess({ customTab: state.customTab });
+    t.L.applyAccess({ denied: state.denied });          // a partial re-run
     expect(done().map((r) => r.type + ' ' + (r.target.id || r.target.nodeName))).toEqual([]);
     expect([t.html.home(), t.html.sidebar()]).toEqual(snap);
   });
@@ -385,7 +384,7 @@ describe('the renderer (for real): default DOM, reversibility, idempotence', () 
         .map((e) => (e.kind === 'break' ? '|' : e.kind === 'label' ? '#' + e.text : (t.L.elementsOf(e.id)[sf] ? e.id : '+' + e.id)));
       expect([sf, t.seen(sf)]).toEqual([sf, want]);
     }
-    expect(t.seen('home').slice(0, 6)).toEqual(['comms', '+moreAutomations', '+firm:payroll', '|', '+calendar', 'cases']);
+    expect(t.seen('home').slice(0, 6)).toEqual(['comms', '+moreAutomations', '+firm:payroll', '|', '+admin', 'cases']);
     // the user's own entries, in the user's order (base items slot in around them)
     const mine = ['#Mine <b>', 'tasks', '+moreAutomations', '+firm:payroll', '#Rest'];
     expect(t.seen('sidebar').filter((x) => mine.includes(x))).toEqual(mine);
@@ -410,7 +409,7 @@ describe('the renderer (for real): moved elements keep what other code holds', (
     expect(badge.textContent).toBe('7');
     expect(t.L.elementsOf('tasks').sidebar).toBe(tasks);
     expect(tasks.isConnected).toBe(true);
-    for (const id of ['sbCustom', 'tabCustomButton', 'sbAdmin', 'sbComms', 'homeComms', 'sbCommsBadge']) {
+    for (const id of ['sbAdmin', 'sbComms', 'homeComms', 'sbCommsBadge']) {
       expect([id, t.d.querySelectorAll('#' + id).length]).toEqual([id, 1]);
     }
     tasks.click();
@@ -510,9 +509,9 @@ describe('the renderer (for real): neutral shortcuts', () => {
     expect(t.w.currentMainTabId()).toBe('tabMore');
     expect(t.shown(t.d.getElementById('automationsDiv'))).toBe(true);
     expect(t.d.getElementById('tabMore').classList.contains('drill-active')).toBe(true);
-    neutral('home', 'calendar').click();
-    expect(t.w.currentMainTabId()).toBe('tabCalendar');
-    expect(t.active()).toEqual(['tabCalendar']);
+    neutral('home', 'admin').click();
+    expect(t.w.currentMainTabId()).toBe('tabAdmin');
+    expect(t.active()).toEqual(['tabAdmin']);
     neutral('sidebar', 'firm:payroll').click();
     expect(t.calls.find((c) => Array.isArray(c) && c[0] === 'open')).toEqual(['open', 'https://payroll.example.com/', '_blank', 'noopener']);
   });
@@ -526,12 +525,12 @@ describe('the renderer (for real): neutral shortcuts', () => {
 
   test('neutral shortcuts are not launcher elements: elementsOf / exec never reach them', () => {
     expect(t.L.elementsOf('moreAutomations')).toEqual({ more: expect.anything() });
-    expect(Object.keys(t.L.elementsOf('calendar'))).toEqual(['sidebar']);
+    expect(Object.keys(t.L.elementsOf('admin'))).toEqual(['sidebar']);
     expect(t.L.elementsOf('firm:payroll')).toEqual({});
   });
 });
 
-describe('the renderer (for real): composition with denies, firm hides, renames, locks, the custom tab', () => {
+describe('the renderer (for real): composition with denies, firm hides, renames, locks, a stale id', () => {
   let t;
   beforeEach(() => { t = boot(); });
   afterEach(() => t.close());
@@ -572,15 +571,22 @@ describe('the renderer (for real): composition with denies, firm hides, renames,
     expect(t.shown(b.home)).toBe(false);
   });
 
-  test('the custom tab where the user put it: applyCustomTab finds it by id, rewrites it there, hides it there', () => {
-    t.L.applyAccess({ ...ADMIN, customTab: null, ui: ui({ layout: { placed: { sidebar: [{ item: 'custom' }, { item: 'cases' }] } } }) });
-    t.w.applyCustomTab({ src: '/forms.html', title: 'My Forms', icon: 'book' });
-    expect(t.seen('sidebar')[0]).toBe('custom');
-    expect(t.d.getElementById('sbCustom').textContent).toMatch(/My Forms/);
-    t.w.applyCustomTab(null);
-    expect(t.shown(t.d.getElementById('sbCustom'))).toBe(false);
-    expect(t.d.getElementById('sbCustom').isConnected).toBe(true);
-    expect(t.seen('sidebar')[0]).not.toBe('custom');
+  test('a stored layout still naming the retired custom tab (ui-custom S5e: a stale client, a restore) drops it — nothing drawn, nothing thrown', () => {
+    const stale = { placed: { home: [{ item: 'custom' }, { item: 'cases' }], sidebar: [{ item: 'custom' }, { item: 'cases' }] }, removed: { home: ['custom'], sidebar: ['custom'] } };
+    t.L.applyAccess({ ...ADMIN, ui: ui({ layout: stale, ro: { hidden: ['custom'], renames: { custom: { label: 'Old' } }, locked: ['custom'] } }) });
+    expect([t.seen('home')[0], t.seen('sidebar')[0]]).toEqual(['cases', 'cases']);
+    expect([...t.seen('home'), ...t.seen('sidebar')].filter((x) => /custom|Old/.test(x))).toEqual([]);
+    expect(t.d.querySelector('[data-yc-shortcut="custom"], #sbCustom, #tabCustomButton')).toBe(null);
+    expect(t.L.effectiveRegistry().map((e) => e.id)).not.toContain('custom');
+    // the rest resolves as if the stale entry were not there
+    const eff = t.L.effectiveRegistry();
+    const clean = { placed: { home: [{ item: 'cases' }], sidebar: [{ item: 'cases' }] }, removed: { home: [], sidebar: [] } };
+    for (const sf of ['home', 'sidebar']) {
+      expect(t.L.resolveLayout(sf, { base: LAY[sf], user: stale, effective: eff, locked: ['custom'] }))
+        .toEqual(t.L.resolveLayout(sf, { base: LAY[sf], user: clean, effective: eff, locked: [] }));
+    }
+    expect(t.errors).toEqual([]);
+    expect(t.L.exec('custom')).toBe(false);                // unknown: refused, like any id not effective
   });
 
   test('a gated tile never shows wherever the user placed it; the Admin page follows the firm\'s visible_to (S6c)', () => {

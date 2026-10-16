@@ -5,9 +5,10 @@
  * catalog.
  *
  *   1. The grammar ^(?:(?:solid|regular|brands):)?[a-z0-9-]{1,40}$, ONE
- *      definition in four copies: public/js/ycIcon.js (the client helper),
- *      lib/uiConfigShape.js ICON_RE, routes/auth.customTab.js ICON_RE and the
- *      launcher's own copy in index.html — pinned equal; accepts bare / solid:
+ *      definition in three copies: public/js/ycIcon.js (the client helper),
+ *      lib/uiConfigShape.js ICON_RE and the launcher's own copy in index.html
+ *      (the fourth, routes/auth.customTab.js, left with that route in
+ *      ui-custom S5e) — pinned equal; accepts bare / solid:
  *      / regular: / brands:, refuses junk; linear on hostile input (timed).
  *   2. ycIcon: cls() maps every form to its family + name and anything else to
  *      fa-solid fa-circle-question; parse / value / same.
@@ -17,9 +18,8 @@
  *      icon differs only in the regex quoted in its message; a family-prefixed
  *      icon is the one intended change (refused before, accepted now, stored
  *      verbatim).
- *   4. POST /api/auth/update-custom-tab (the real router, a scripted db)
- *      accepts brands: / regular: / solid: / bare, stores them verbatim
- *      (lowercased, a leading fa- dropped, as before) and refuses junk.
+ *   4. POST /api/auth/update-custom-tab, the custom tab's route, is gone
+ *      (ui-custom S5e): 404 from the auth.* routers, no route file names it.
  *   5. The catalog: scripts/buildFaIconCatalog.js build() over synthetic
  *      metadata (free styles only, the name grammar enforced, terms + alias
  *      names, deterministic); the committed public/js/faIcons-<v>.json is
@@ -50,12 +50,10 @@ const OLD_RE_SRC = '/^[a-z0-9-]{1,40}$/';
 const NEW_RE_SRC = '/^(?:(?:solid|regular|brands):)?[a-z0-9-]{1,40}$/';
 
 // ─────────────────────────────────────────────────────────────────────────
-describe('the grammar: one definition, four copies', () => {
-  test('ycIcon.RE, lib/uiConfigShape ICON_RE, routes/auth.customTab ICON_RE and the launcher copy are the same regex', () => {
+describe('the grammar: one definition, three copies', () => {
+  test('ycIcon.RE, lib/uiConfigShape ICON_RE and the launcher copy are the same regex', () => {
     expect(String(YI.RE)).toBe(NEW_RE_SRC);
     expect(String(shape.ICON_RE)).toBe(NEW_RE_SRC);
-    const route = fs.readFileSync(path.join(ROOT, 'routes/auth.customTab.js'), 'utf8').match(/const ICON_RE = (\/.*?\/[a-z]*);/);
-    expect(route && route[1]).toBe(NEW_RE_SRC);
     const shell = fs.readFileSync(path.join(ROOT, 'public/index.html'), 'utf8').match(/var ICON_RE = (\/.*?\/[a-z]*);/);
     expect(shell && shell[1]).toBe(NEW_RE_SRC);
   });
@@ -259,49 +257,28 @@ describe('the firm differential: the validator before S6a vs today', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────
-describe('POST /api/auth/update-custom-tab takes the new forms', () => {
-  let server, base, db;
+describe('POST /api/auth/update-custom-tab is gone (ui-custom S5e retired the custom tab)', () => {
+  // the server mounts every routes/*.js (server.js's loader); here: every auth.* router, the family the route lived in
+  let server, base;
   beforeAll(async () => {
     const app = express();
     app.use(express.json());
-    app.use((req, _res, next) => { req.db = db; next(); });
-    app.use(require('../routes/auth.customTab'));
+    for (const f of fs.readdirSync(path.join(ROOT, 'routes')).filter((n) => /^auth\..*\.js$/.test(n))) app.use(require(path.join(ROOT, 'routes', f)));
     server = http.createServer(app);
     await new Promise((r) => server.listen(0, '127.0.0.1', r));
     base = `http://127.0.0.1:${server.address().port}`;
   });
   afterAll(() => new Promise((r) => server.close(r)));
-  beforeEach(() => {
-    const writes = [];
-    db = {
-      writes,
-      query: async (sql, p) => {
-        if (/^SELECT user_custom_tab FROM users/.test(sql)) return [[{ user_custom_tab: { src: '/reports.html', icon: 'bug', title: 'Old', loadFunc: '' } }]];
-        if (/^UPDATE users SET user_custom_tab = \?/.test(sql)) { writes.push(JSON.parse(p[0])); return [{ affectedRows: 1 }]; }
-        throw new Error('unscripted ' + sql);
-      },
-    };
-  });
-  const post = async (body) => {
-    const r = await fetch(base + '/api/auth/update-custom-tab', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
-    return { status: r.status, body: await r.json() };
-  };
 
-  test.each([
-    ['brands:github', 'brands:github'], ['regular:star', 'regular:star'], ['solid:house', 'solid:house'], ['house', 'house'],
-    ['  Brands:GitHub ', 'brands:github'], ['fa-list-check', 'list-check'],
-    ['brands:fa-github', 'brands:github'], ['FA-Brands:FA-GitHub', 'brands:github'], ['regular:fa-star', 'regular:star'], ['fa-solid:star', 'solid:star'],
-  ])('%j → stored %j', async (icon, stored) => {
-    const r = await post({ title: 'Tab', icon, src: '/reports.html' });
-    expect([r.status, r.body.user_custom_tab && r.body.user_custom_tab.icon]).toEqual([200, stored]);
-    expect(db.writes.map((w) => w.icon)).toEqual([stored]);
-  });
-
-  test.each(['brands:', 'fab:github', 'light:star', 'brands:git hub', 'star"><i>', 'x'.repeat(41), ''])('refuses %j, writes nothing', async (icon) => {
-    const r = await post({ title: 'Tab', icon, src: '/reports.html' });
-    expect([r.status, r.body.message]).toEqual([400, 'Icon must be a Font Awesome name']);
-    expect(r.body.detail).toMatch(/brands:/);
-    expect(db.writes).toEqual([]);
+  test('404 for a POST (with or without a token) — and no route file names the path', async () => {
+    for (const headers of [{}, { authorization: 'Bearer x.y.z' }]) {
+      const r = await fetch(base + '/api/auth/update-custom-tab', { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify({ clear: true }) });
+      expect(r.status).toBe(404);
+    }
+    expect(fs.existsSync(path.join(ROOT, 'routes/auth.customTab.js'))).toBe(false);
+    for (const f of fs.readdirSync(path.join(ROOT, 'routes')).filter((n) => n.endsWith('.js'))) {
+      expect([f, /update-custom-tab|user_custom_tab\s*=\s*\?/.test(fs.readFileSync(path.join(ROOT, 'routes', f), 'utf8'))]).toEqual([f, false]);
+    }
   });
 });
 

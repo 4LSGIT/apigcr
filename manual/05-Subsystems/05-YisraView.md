@@ -21,15 +21,16 @@ The rule of thumb: **a report is a number, a view is a to-do list.**
   as if you'd searched for it.
 - **Copy a value** — a docket number, a hearing dial-in link — with one click.
 - **Export to CSV**.
-- **Pin one view to your own sidebar tab**, named and iconed however you like.
+- **Put a view on your own Home or sidebar** as a button of yours, named and
+  iconed however you like.
 
 ## Where to find it
 
 **More → Views** shows every view you can see, and lets you move between them.
 
-You can also put a single view on **your own tab** in the sidebar — see
-[Your own tab](#your-own-tab) below. That's the intended home for the one list
-you look at every morning.
+You can also put a single view on your own Home or sidebar — see
+[A view of your own](#a-view-of-your-own) below. That's the intended home for
+the one list you look at every morning.
 
 ---
 
@@ -93,34 +94,15 @@ ask an administrator to build one for you.
 
 ---
 
-## Your own tab
+## A view of your own
 
-**Settings → My Custom Tab** gives you one tab in the sidebar that's yours.
-
-1. **Shows** — pick a view, "All views (browse)", or one of the app pages listed.
-2. **Tab Name** — up to 40 characters. It's suggested from your choice; change it
-   to whatever you'd actually call it.
-3. **Icon** — press **Choose…** and pick any free
-   [Font Awesome](https://fontawesome.com/icons) icon: solid, regular or a
-   brand logo (see
-   [Choosing an icon](../01-YisraCase-overview/15-your-launcher.md#choosing-an-icon)).
-4. Check the **Preview**, then **Save Custom Tab**. The sidebar updates
-   immediately — no reload.
-
-**Remove Tab** takes it back off your sidebar. Nothing else is affected.
-
-You can also have **many buttons of your own**, including saved views that open
-as a tab, and a custom tab that shows a view can become one of them: see
-[Your old custom tab](../01-YisraCase-overview/15-your-launcher.md#your-old-custom-tab).
-
-A few notes:
-
-- The tab is **yours alone**. Changing it affects nobody else's sidebar.
-- Pick **a specific view** and the tab opens straight into it. Pick **All views**
-  and the tab opens the list, so one tab reaches everything.
-- Tabs can only point at pages **inside YisraCase**. If you need an outside site
-  embedded, ask IT — they can set that up for you, and once it's set you can
-  still rename and re-icon the tab without losing it.
+Make the view one of **your own buttons**: **All → Customize my launcher → My
+buttons**, a **saved view** button, and set **Opens in** to **A tab** if you
+want it beside the sidebar like the app's own tabs. Name it, choose its icon,
+and press **Add to Home** or **Add to sidebar** — see
+[My buttons](../01-YisraCase-overview/15-your-launcher.md#my-buttons). You can
+have as many as you like; they are **yours alone** and change nobody else's
+launcher.
 
 ---
 
@@ -276,9 +258,9 @@ has a default you need to be able to override.
 
 ### Publishing it
 
-Save it, then either point someone's custom tab at
-`/customView.html?key=<report_key>`, or just tell them it's in **More → Views** —
-every shared view appears there automatically.
+Save it, then either have them make a saved-view button for it
+([A view of your own](#a-view-of-your-own)), or just tell them it's in
+**More → Views** — every shared view appears there automatically.
 
 ---
 

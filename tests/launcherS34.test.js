@@ -47,7 +47,6 @@ function slice(from, to) {
 }
 const DRILL_SRC = slice('  // ── Big-button hover animations ── HOW TO USE', '</script>\n  <script>\n    params = {};');
 const TABS_SRC = slice('    function openMainTab(tabName) {', '    // ---- Global auth state ----');
-const CUSTOM_SRC = slice('    function applyCustomTab(cfg) {', '    window.applyCustomTab = applyCustomTab;');
 const CURRENT_SRC = slice('    function currentMainTabId() {', '\n    }\n') + '\n    }\n';
 const HIDE_CSS = RAW.match(/<style>\[data-yc-denied\][^<]*<\/style>/)[0];
 const LUC_HEAD = slice('    async function loadUserContext() {', '      tasksBadgeRefresh();') + '\n    }\n';
@@ -164,13 +163,13 @@ describe('the S4b layout editor\'s picker (its pure core)', () => {
 
 // ─────────────────────────────────────────────────────────────────────────
 // A page skeleton with the real mounts (Home inside its .home-grid), the
-// panels and tab divs; the page's own drill-in, tab and custom-tab code.
+// panels and tab divs; the page's own drill-in and tab code.
 function boot() {
   const grid = (sf) => placed(sf).map((k) => REG[k]).filter((it) => it.target)
     .map((it) => `<div id="${it.target}" style="display:none"><iframe data-src="/${it.target}.html"></iframe></div>`).join('');
-  const tabs = new Set(['tabHome', 'tabMore', 'tabAdmin', 'tabCustom']);
+  const tabs = new Set(['tabHome', 'tabMore', 'tabAdmin']);
   for (const it of Object.values(REG)) for (const t of [it.tab, it.tabAlso]) if (t) tabs.add(t);
-  const plainTabs = [...tabs].filter((t) => !['tabHome', 'tabMore', 'tabAdmin', 'tabCustom', 'tabAll'].includes(t))
+  const plainTabs = [...tabs].filter((t) => !['tabHome', 'tabMore', 'tabAdmin', 'tabAll'].includes(t))
     .map((t) => `<div id="${t}" class="tab-main"></div>`).join('');
   const page = `<!DOCTYPE html><html><head>
     <script>${ICON_SRC}</script><script>${REGISTRY_SRC}</script><script id="ycLauncher">${RENDERER_SRC}</script>${HIDE_CSS}</head><body>
@@ -180,7 +179,6 @@ function boot() {
       <div class="home-grid"><script>ycLauncher.mount('home')</script></div>
       <button id="homeAll" class="home-btn"></button></div>
     <div id="tabAll" class="tab-main"></div>
-    <div id="tabCustom" class="tab-main"><iframe id="tabCustomFrame"></iframe></div>
     ${plainTabs}
     <div id="tabMore" class="tab-main"><h1>More</h1><script>ycLauncher.mount('more')</script></div>
     <div id="tabAdmin" class="tab-main"><h1>Admin</h1><script>ycLauncher.mount('admin')</script></div>
@@ -203,7 +201,7 @@ function boot() {
     stubs.add(m[1]);
     stubSrc += `function ${m[1]}() { __calls.push('${m[1]}'); ${it.tab ? `openMainTab('${it.tab}');` : ''} }\n`;
   }
-  w.eval(stubSrc + CURRENT_SRC + TABS_SRC + CUSTOM_SRC + DRILL_SRC);
+  w.eval(stubSrc + CURRENT_SRC + TABS_SRC + DRILL_SRC);
   const d = w.document;
   const L = w.ycLauncher;
   const shown = (el) => w.getComputedStyle(el).display !== 'none';
@@ -222,7 +220,7 @@ const PINS = {
     sidebar: [{ item: 'tasks' }, { item: 'moreAutomations' }],
   },
 };
-const STATE = (roles, extra = {}) => ({ isAdmin: false, denied: [], customTab: null, ui: ui(RO, PINS), roles, ...extra });
+const STATE = (roles, extra = {}) => ({ isAdmin: false, denied: [], ui: ui(RO, PINS), roles, ...extra });
 
 describe('applyAccess with roles: every surface follows (real mounts)', () => {
   let t;
@@ -276,9 +274,9 @@ describe('applyAccess with roles: every surface follows (real mounts)', () => {
     expect(t.d.querySelectorAll('[data-yc-denied]')).toHaveLength(0);
   });
 
-  test('roles keep their last value (applyAccess({ customTab }) does not drop them); a role change re-shows', () => {
+  test('roles keep their last value (a partial applyAccess({ denied }) does not drop them); a role change re-shows', () => {
     t.L.applyAccess(STATE(['staff']));
-    t.L.applyAccess({ customTab: { src: '/c.html', title: 'C' } });
+    t.L.applyAccess({ denied: [] });
     expect(ids(t.L.effectiveRegistry())).not.toContain('moreAutomations');
     t.L.applyAccess({ roles: ['attorney'] });
     expect(t.shown(t.L.elementsOf('moreAutomations').more)).toBe(true);
@@ -294,7 +292,7 @@ describe('boot wiring: loadUserContext hands users.roles to applyAccess (extract
   const run = async (roles) => {
     const t = boot();
     t.w.eval('var Toast = { fire() {} }; function startFirmClock() {}\n' + LUC_HEAD);
-    t.w.eval(`var user = { user: 2, user_name: 'x', roles: ${JSON.stringify(roles)}, user_custom_tab: null };
+    t.w.eval(`var user = { user: 2, user_name: 'x', roles: ${JSON.stringify(roles)} };
       window.firmData = { denied: [], ui: ${JSON.stringify(ui(RO))} };`);
     await t.w.eval('loadUserContext()');
     const out = ids(t.L.effectiveRegistry());

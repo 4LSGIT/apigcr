@@ -64,7 +64,6 @@ YisraCase is organized into tabs down the left sidebar, in this order.
 | **Log** | The activity log across records — see [Activity log](06-activity-log.md) |
 | **Bills** | Billing records *(placeholder; full feature in progress)* |
 | **Pipeline Board** | Where every case sits by stage and lane — see [Pipelines](13-pipelines.md) |
-| **Custom** | Your own pinned view, if you've pinned one — see [YisraView](../05-Subsystems/05-YisraView.md) |
 | **Admin** | Firm administration. Hidden unless your account has the authorization for it |
 | **More Features** | Everything else, including **Settings** (personal and firm settings — also one click on "Hi, *your name*!" at the top) — see below |
 | **All** | Every feature you have, in one searchable list — see *Finding any feature* below |

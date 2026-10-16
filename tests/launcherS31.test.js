@@ -6,13 +6,13 @@
  *
  *   1. THE MATH (computeEffective, in a bare vm over the real registry): firm
  *      hidden out (the undeniable set defies it), renames replace label AND
- *      surfaceLabels (the custom item ignores them), firm items in a "Firm"
+ *      surfaceLabels (a rename of an id the registry lacks names nothing), firm items in a "Firm"
  *      group after More and before Admin in array order, a bad item dropped
  *      with a warning, firm items hideable / deniable like any id.
- *   2. THE MECHANISM, RUN FOR REAL in jsdom (the page's own renderer, drill-in,
- *      tab and custom-tab code, cut out of index.html as tests/launcherS2.test.js
+ *   2. THE MECHANISM, RUN FOR REAL in jsdom (the page's own renderer, drill-in
+ *      and tab code, cut out of index.html as tests/launcherS2.test.js
  *      does): the hide pass and the relabel pass on every surface, idempotent
- *      across applyAccess and applyCustomTab re-runs, exactly reversible; the
+ *      across full and partial applyAccess re-runs, exactly reversible; the
  *      pill strip follows a rename; icons and badges untouched.
  *   3. exec() for firm items: window → window.open(url, '_blank', 'noopener');
  *      modal → openToolDialog(url, { title }) — the real dialog block: opens,
@@ -51,7 +51,6 @@ function slice(from, to) {
 }
 const DRILL_SRC = slice('  // ── Big-button hover animations ── HOW TO USE', '</script>\n  <script>\n    params = {};');
 const TABS_SRC = slice('    function openMainTab(tabName) {', '    // ---- Global auth state ----');
-const CUSTOM_SRC = slice('    function applyCustomTab(cfg) {', '    window.applyCustomTab = applyCustomTab;');
 const CURRENT_SRC = slice('    function currentMainTabId() {', '\n    }\n') + '\n    }\n';
 const DENIED_CSS = RAW.match(/<style>\[data-yc-denied\][^<]*<\/style>/)[0];
 const FIRMDATA_INIT = slice('    window.firmData = { phoneLines', ';\n') + ';\n';
@@ -93,14 +92,15 @@ describe('the firm overlay in the effective registry (pure)', () => {
     }
   });
 
-  test('renames replace label AND surfaceLabels; the custom item ignores them; bad labels ignored', () => {
-    const eff = L.computeEffective({ customTab: { src: '/x', title: 'Mine' }, ui: ui({ renames: {
+  test('renames replace label AND surfaceLabels; a rename of the retired custom names nothing; bad labels ignored', () => {
+    const eff = L.computeEffective({ ui: ui({ renames: {
       bills: { label: ' Invoices ' }, cases: { label: 'Matters' }, custom: { label: 'Nope' },
       contacts: { label: '' }, log: { label: 'x'.repeat(41) }, tasks: 'To-dos' } }) });
     const by = Object.fromEntries(eff.map((e) => [e.id, e]));
     expect([by.bills.label, by.bills.labels]).toEqual(['Invoices', ['Invoices']]);     // "Billing" gone too
     expect(by.cases.label).toBe('Matters');
-    expect(by.custom.label).toBe('Mine');
+    expect(by.custom).toBe(undefined);                                            // retired (ui-custom S5e): a stale key
+    expect(eff.some((e) => e.label === 'Nope')).toBe(false);
     expect([by.contacts.label, by.log.label, by.tasks.label]).toEqual(['Contacts', 'Log', 'Tasks']);
     expect(L.rank('billing', eff).map((e) => e.id)).not.toContain('bills');
     expect(L.rank('invoices', eff)[0].id).toBe('bills');
@@ -136,9 +136,9 @@ describe('the firm overlay in the effective registry (pure)', () => {
 function boot({ registrySrc = REGISTRY_SRC } = {}) {
   const grid = (sf) => placed(sf).map((k) => REG[k]).filter((it) => it.target)
     .map((it) => `<div id="${it.target}" style="display:none"><iframe data-src="/${it.target}.html"></iframe></div>`).join('');
-  const tabs = new Set(['tabHome', 'tabMore', 'tabAdmin', 'tabCustom']);
+  const tabs = new Set(['tabHome', 'tabMore', 'tabAdmin']);
   for (const it of Object.values(REG)) for (const t of [it.tab, it.tabAlso]) if (t) tabs.add(t);
-  const plainTabs = [...tabs].filter((t) => !['tabHome', 'tabMore', 'tabAdmin', 'tabCustom', 'tabAll'].includes(t))
+  const plainTabs = [...tabs].filter((t) => !['tabHome', 'tabMore', 'tabAdmin', 'tabAll'].includes(t))
     .map((t) => `<div id="${t}" class="tab-main"></div>`).join('');
   const page = `<!DOCTYPE html><html><head>
     <script>${ICON_SRC}</script><script>${registrySrc}</script><script id="ycLauncher">${RENDERER_SRC}</script>${DENIED_CSS}${DIALOG_BLOCK}</head><body>
@@ -146,7 +146,6 @@ function boot({ registrySrc = REGISTRY_SRC } = {}) {
       <script>ycLauncher.mount('sidebar')</script></nav>
     <div id="tabHome" class="tab-main"><script>ycLauncher.mount('home')</script></div>
     <div id="tabAll" class="tab-main"></div>
-    <div id="tabCustom" class="tab-main"><iframe id="tabCustomFrame"></iframe></div>
     ${plainTabs}
     <div id="tabMore" class="tab-main"><h1>More</h1><script>ycLauncher.mount('more')</script></div>
     <div id="tabAdmin" class="tab-main"><h1>Admin</h1><script>ycLauncher.mount('admin')</script></div>
@@ -169,7 +168,7 @@ function boot({ registrySrc = REGISTRY_SRC } = {}) {
     stubs.add(m[1]);
     stubSrc += `function ${m[1]}() { __calls.push('${m[1]}'); ${it.tab ? `openMainTab('${it.tab}');` : ''} }\n`;
   }
-  w.eval(stubSrc + CURRENT_SRC + TABS_SRC + CUSTOM_SRC + DRILL_SRC);
+  w.eval(stubSrc + CURRENT_SRC + TABS_SRC + DRILL_SRC);
   const d = w.document;
   const shown = (el) => w.getComputedStyle(el).display !== 'none';
   const pills = (tab) => [...d.querySelectorAll(`#${tab} > .feature-strip .pill-button`)].slice(1).map((p) => p.textContent.trim());
@@ -177,10 +176,9 @@ function boot({ registrySrc = REGISTRY_SRC } = {}) {
   const dlgOpen = () => !!dlg() && !dlg().hidden;
   return { w, d, L: w.ycLauncher, calls, opened, errors, warnings, shown, pills, dlg, dlgOpen, close: () => w.close() };
 }
-// Every launcher element's markup — but the custom item's, which applyCustomTab
-// rewrites wholesale (icon, label, title) and the launcher never relabels.
+// Every launcher element's markup.
 const launcherHtml = (t) => ['sidebar', 'home', 'more', 'admin'].map((sf) =>
-  placed(sf).filter((id) => id !== 'custom').map((id) => t.L.elementsOf(id)[sf].outerHTML).join('\n')).join('\n');
+  placed(sf).map((id) => t.L.elementsOf(id)[sf].outerHTML).join('\n')).join('\n');
 
 describe('the hide pass + relabel (for real)', () => {
   let t;
@@ -230,29 +228,26 @@ describe('the hide pass + relabel (for real)', () => {
     expect(c.sidebar.querySelector('span').textContent).toBe('<img src=x onerror=alert(1)>');
   });
 
-  test('idempotent across applyAccess and applyCustomTab re-runs; removing the rename restores the markup exactly', () => {
+  test('idempotent across full and partial applyAccess re-runs; removing the rename restores the markup exactly', () => {
     const before = launcherHtml(t);
     const doc = ui({ hidden: ['moreViews'], renames: { cases: { label: 'Matters' }, bills: { label: 'Invoices' }, admin: { label: 'Back Office' } } });
     t.L.applyAccess({ isAdmin: true, ui: doc });
     const once = launcherHtml(t);
     t.L.applyAccess({ ui: doc });
-    t.w.applyCustomTab({ src: '/x.html', title: 'X' });
-    t.L.applyAccess({ customTab: { src: '/x.html', title: 'X' } });
-    expect(launcherHtml(t).replace(/ style="[^"]*"/g, '')).toBe(once.replace(/ style="[^"]*"/g, ''));
+    t.L.applyAccess({ roles: [] });
+    expect(launcherHtml(t)).toBe(once);
     expect(t.L.elementsOf('cases').home.textContent.trim()).toBe('Matters');
-    t.w.applyCustomTab(null);
     t.L.applyAccess({ ui: { firm: {}, user: {} } });
     expect(launcherHtml(t)).toBe(before);
   });
 
-  test('an explicit registry title is kept; the custom item is never relabelled', () => {
+  test('an explicit registry title is kept', () => {
     const src = REGISTRY_SRC.replace("label: 'Log', icon: 'box-archive',", "label: 'Log', icon: 'box-archive', title: 'The log',");
     expect(src).not.toBe(REGISTRY_SRC);
     const t2 = boot({ registrySrc: src });
-    t2.L.applyAccess({ ui: ui({ renames: { log: { label: 'Journal' }, custom: { label: 'Hijack' } } }) });
+    t2.L.applyAccess({ ui: ui({ renames: { log: { label: 'Journal' } } }) });
     const lg = t2.L.elementsOf('log').sidebar;
     expect([lg.querySelector('span').textContent, lg.getAttribute('title')]).toEqual(['Journal', 'The log']);
-    expect(t2.L.elementsOf('custom').sidebar.querySelector('span').textContent).toBe('Custom Tab');
     t2.close();
   });
 
@@ -377,7 +372,7 @@ describe('boot wiring: loadFirmData + loadUserContext, extracted and run', () =>
   test('loadUserContext hands firmData.ui to applyAccess: hidden + renamed + firm items live after boot', async () => {
     const t = boot();
     t.w.eval('var Toast = { fire() {} }; function startFirmClock() {}\n' + LUC_HEAD);
-    t.w.eval(`var user = { user: 1, user_name: 'x', roles: 'staff', user_custom_tab: null };
+    t.w.eval(`var user = { user: 1, user_name: 'x', roles: 'staff' };
       window.firmData = { denied: [], ui: ${JSON.stringify(ui({ hidden: ['contacts'], renames: { cases: { label: 'Matters' } }, items: [FI.payroll] }))} };`);
     await t.w.eval('loadUserContext()');
     expect(t.shown(t.L.elementsOf('contacts').sidebar)).toBe(false);

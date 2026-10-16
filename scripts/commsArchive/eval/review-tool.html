@@ -9,8 +9,9 @@
   Comms archive S0 evaluation — the reviewers' page (an Admin → Tools page, key e.g. "call-review").
   Source: scripts/commsArchive/eval/review-tool.html. API: routes/api.commsEval.js.
 
-  This page holds NO data. Everything comes through the shell's apiSend, so it only works pinned
-  as Settings → My Custom Tab (/tool/<key>); opened on its own every call fails, by design.
+  This page holds NO data. Everything comes through the shell's apiSend, so it only works opened
+  inside YisraCase — a My buttons button for the tool (/tool/<key>) or the Tools manager's Preview; opened on
+  its own every call fails, by design.
   Rendering is textContent only (no HTML-string sinks; tests/commsEvalPage.test.js gates it), because transcripts are call content.
   The rubric (blind noise tag first, two 60 s windows, counts only) is local/s0_eval_rubric.md.
 -->
@@ -398,7 +399,7 @@
 
   (function waitForParent(n) {
     if (P && P !== window && typeof P.apiSend === 'function') return init();
-    if (n > 50) { say('Open this page from your Custom Tab inside YisraCase (Settings → My Custom Tab).', 'bad'); return; }
+    if (n > 50) { say('Open this page inside YisraCase: from your button for it (All → Customize my launcher → My buttons, the tool "call-review"), or from Preview in the Tools manager.', 'bad'); return; }
     setTimeout(() => waitForParent(n + 1), 100);
   })(0);
 })();

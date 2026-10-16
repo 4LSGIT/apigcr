@@ -346,7 +346,7 @@ function makeId(label, taken) {
  *  listed too. computeEffective is pure (ui-custom S4a): the group order comes
  *  back on the list (.groups) and the shell's All tab is untouched. */
 function launcherCatalog(L) {
-  const all = L.computeEffective({ isAdmin: true, denied: [], customTab: { src: '#' } });
+  const all = L.computeEffective({ isAdmin: true, denied: [] });
   const entries = all.filter((e) => !FIRM_ID_RE.test(e.id));
   const groups = (all.groups || []).filter((g) => entries.some((e) => e.group === g));
   const undeniable = Array.isArray(L.UNDENIABLE) ? L.UNDENIABLE.slice() : ['moreSettings', 'helpSupport'];
@@ -389,7 +389,7 @@ function docFromForm(stored, form, catalog) {
   const base = isObj(stored) ? stored : EMPTY_DOC;
   const order = catalog.entries.map((e) => e.id);
   const shown = new Set(order);
-  const renameable = new Set(order.filter((id) => id !== 'custom'));
+  const renameable = new Set(order);
 
   const hidden = (Array.isArray(base.hidden) ? base.hidden : []).filter((id) => !shown.has(id) || form.hidden.has(id));
   for (const id of order) if (form.hidden.has(id) && !hidden.includes(id)) hidden.push(id);
@@ -736,9 +736,7 @@ const LauncherSection = {
 
   rowHtml(e) {
     const st = this.st, und = st.catalog.undeniable.includes(e.id), hid = st.form.hidden.has(e.id);
-    const ren = e.id === 'custom'
-      ? '<span class="yc-hint fm-rename" style="margin:0">Titled by each user</span>'
-      : `<input type="text" class="fm-rename" data-rename="${esc(e.id)}" maxlength="80" placeholder="${esc(e.label)}"
+    const ren = `<input type="text" class="fm-rename" data-rename="${esc(e.id)}" maxlength="80" placeholder="${esc(e.label)}"
            aria-label="Rename ${esc(e.label)}" value="${esc(st.form.renames[e.id] ?? '')}">`;
     return `<div class="fm-row${hid ? ' is-hidden' : ''}" data-row-id="${esc(e.id)}">
       <label class="fm-hide" title="${und ? 'always shown' : 'hide from everyone\'s launcher'}">
@@ -1148,7 +1146,7 @@ const SU_TIP = 'Superusers always see everything';
  *  computeEffective (pure), as launcherCatalog does. */
 function whoCatalog(L, stored) {
   const items = isObj(stored) && Array.isArray(stored.items) ? stored.items : [];
-  const all = L.computeEffective({ isAdmin: true, denied: [], customTab: { src: '#' }, ui: { firm: { registry_overrides: { items } } } });
+  const all = L.computeEffective({ isAdmin: true, denied: [], ui: { firm: { registry_overrides: { items } } } });
   const entries = all.slice();
   const groups = (all.groups || []).filter((g) => entries.some((e) => e.group === g));
   const undeniable = Array.isArray(L.UNDENIABLE) ? L.UNDENIABLE.slice() : ['moreSettings', 'helpSupport'];

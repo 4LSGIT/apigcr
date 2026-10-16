@@ -88,8 +88,10 @@ on the firm's Google account) and `freebusy_calendar_ids` (the calendars
 consulted when computing whether they are free). See
 [Google Calendar](../04-Integrations/04-google-calendar.md).
 
-`user_custom_tab` holds the view pinned to that person's **Custom** sidebar tab —
-see [YisraView](../05-Subsystems/05-YisraView.md).
+`user_custom_tab` held the page of that person's old custom tab. Nothing reads
+it any more — every custom tab became a launcher button
+([Your launcher](15-your-launcher.md#the-custom-tab)) — and the column is
+dropped once that has settled.
 
 ---
 

@@ -71,6 +71,12 @@
  *     their roles — isAdmin = su, as loadUserContext —, their denies
  *     (entitlementService.deniedFor), the firm's ui_config and their own);
  *   - Fred's: the single literal swap the ruling names.
+ * AFTER S5e-2 (which retired the custom tab from the client once this script
+ * had run live, 2026-10-16) the client no longer has `custom`: loadCore then
+ * puts back exactly what S5e-2 took out of these pure cores — the registry
+ * item, its Home slot (Calendar's since) and its sidebar slot, and
+ * computeEffective's rule for it — so the script stays runnable as the record
+ * of that run. Its CHECK on the live state reads AFTER for every user.
  * Every document is validated by lib/uiConfigShape.js (and must normalize to
  * itself) and written by services/uiConfigService.write — on this script's ONE
  * connection, inside the per-user transaction (txDb below: the service's own
@@ -184,6 +190,39 @@ function fillUnknown(v) {
 // The client's own code, in a bare vm
 // ─────────────────────────────────────────────────────────────────────────
 let CORE = null;
+// What S5e-2 took out of the client's pure cores (featureRegistry.js and
+// index.html's computeEffective at 5eef883, its parent), put back when absent.
+const HISTORIC_CUSTOM = Object.freeze({
+  label: 'Custom Tab', title: 'Custom', icon: 'clock',
+  onclick: "openMainTab('tabCustom')", tab: 'tabCustom',
+  domIds: { sidebar: 'sbCustom', home: 'tabCustomButton' },
+});
+function restoreCustomTab(w) {
+  const home = w.DEFAULT_LAYOUTS.home, side = w.DEFAULT_LAYOUTS.sidebar;
+  const cal = home.map((e, i) => (e && e.item === 'calendar' ? i : -1)).filter((i) => i >= 0);
+  if (cal.length !== 1 || cal[0] !== home.length - 3) throw new Error('loadCore: Home has no single calendar at -3 (the slot S5e-2 gave it)');
+  const nc = side.map((e, i) => (e && e.item === 'newClient' ? i : -1)).filter((i) => i >= 0);
+  if (nc.length !== 1) throw new Error('loadCore: the sidebar has no single newClient');
+  w.FEATURE_REGISTRY.custom = JSON.parse(JSON.stringify(HISTORIC_CUSTOM));
+  home[cal[0]] = { item: 'custom' };
+  side.splice(nc[0] + 1, 0, { item: 'custom' });
+}
+// computeEffective's custom-tab rule as it was: listed only while the user has
+// a custom tab (opts.customTab with a src), under its title (else the
+// registry label) and its icon (else the bug); no firm rename reaches it.
+function wrapCustomTabRule(L) {
+  const base = L.computeEffective;
+  L.computeEffective = function (opts, ...rest) {
+    const out = base.call(this, opts, ...rest);
+    const i = out.findIndex((e) => e.id === 'custom');
+    if (i < 0) return out;
+    const ct = opts && opts.customTab;
+    if (!ct || !ct.src) { out.splice(i, 1); return out; }
+    const label = ct.title ? String(ct.title) : HISTORIC_CUSTOM.label;
+    Object.assign(out[i], { label, labels: [label], icon: ct.icon ? String(ct.icon) : 'bug' });
+    return out;
+  };
+}
 function loadCore() {
   if (CORE) return CORE;
   const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
@@ -198,14 +237,17 @@ function loadCore() {
   ctx.window = ctx;
   vm.runInContext(read('public/js/ycIcon.js'), ctx, { filename: 'ycIcon.js' });
   vm.runInContext(read('public/js/featureRegistry.js'), ctx, { filename: 'featureRegistry.js' });
+  const historic = !Object.prototype.hasOwnProperty.call(ctx.window.FEATURE_REGISTRY, 'custom');
+  if (historic) restoreCustomTab(ctx.window);
   vm.runInContext(m[1], ctx, { filename: 'index.html#ycLauncher' });
   vm.runInContext(read('public/js/ycLayoutEditor.js'), ctx, { filename: 'ycLayoutEditor.js' });
   const L = ctx.window.ycLauncher, E = ctx.window.ycLayoutEditor;
+  if (historic && L && typeof L.computeEffective === 'function') wrapCustomTabRule(L);
   for (const [n, f] of [['ycLauncher.computeEffective', L && L.computeEffective], ['ycLauncher.resolveLayout', L && L.resolveLayout],
     ['ycLayoutEditor.session', E && E.session], ['ycLayoutEditor.makeUserId', E && E.makeUserId]]) {
     if (typeof f !== 'function') throw new Error(`the client core has no ${n}`);
   }
-  CORE = { L, E, REG: ctx.window.FEATURE_REGISTRY, LAY: J(ctx.window.DEFAULT_LAYOUTS), warnings };
+  CORE = { L, E, REG: ctx.window.FEATURE_REGISTRY, LAY: J(ctx.window.DEFAULT_LAYOUTS), warnings, historic };
   return CORE;
 }
 
