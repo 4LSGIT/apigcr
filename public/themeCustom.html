@@ -169,6 +169,17 @@
 </head>
 <body>
 
+<!-- Shown only while this browser tab has custom theming switched off — the
+     ?notheme=1 escape hatch (themeSync.js), which survives reloads in the tab.
+     Without it, presets, density and token edits are saved to the account but
+     visibly do nothing here, and nothing says why (2026-10-16). -->
+<div class="warn-banner" id="themeOffNotice" hidden>
+  <b>Custom theming is switched off in this browser tab</b> (it was opened with
+  <code>?notheme=1</code>). Your changes are still saved, but this tab won't show
+  them.
+  <button type="button" id="themeOffBtn" class="btn">Turn it back on</button>
+</div>
+
 <div class="tabs">
   <button id="tabBtnPresets" class="on" onclick="showTab('presets')">Presets</button>
   <button id="tabBtnAdvanced" onclick="showTab('advanced')">Advanced</button>
@@ -919,6 +930,39 @@ addEventListener('yc-theme', e => {
 addEventListener('storage', e => { if (!e.key || e.key === VARS_KEY) { store = load(); render(); } });
 
 render();
+</script>
+<script>
+// The ?notheme=1 notice (see #themeOffNotice). Turning theming back on clears
+// the per-tab flag and repaints the shell and every same-origin frame through
+// their own themeSync.js (ycApplyThemeVars re-reads the flag on each call). If
+// the top window's own address still says notheme=1, it would set the flag
+// again, so then the shell reloads with notheme=0, which clears it for good.
+(function () {
+  var KEY = 'yc-theme-vars-off';
+  var notice = document.getElementById('themeOffNotice');
+  var btn = document.getElementById('themeOffBtn');
+  function isOff() { try { return sessionStorage.getItem(KEY) === '1'; } catch (_) { return false; } }
+  function repaintAll(w) {
+    try { if (typeof w.ycApplyThemeVars === 'function') w.ycApplyThemeVars(); } catch (_) { return; }
+    for (var i = 0; i < w.frames.length; i++) repaintAll(w.frames[i]);
+  }
+  function themeBackOn() {
+    try { sessionStorage.removeItem(KEY); } catch (_) {}
+    var top = window.top;
+    repaintAll(top);
+    if (isOff()) {
+      var u = new URL(top.location.href);
+      u.searchParams.set('notheme', '0');
+      top.location.replace(u.toString());
+      return;
+    }
+    notice.hidden = true;
+  }
+  if (notice && btn) {
+    notice.hidden = !isOff();
+    btn.addEventListener('click', themeBackOn);
+  }
+})();
 </script>
 </body>
 </html>
