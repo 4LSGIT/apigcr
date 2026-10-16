@@ -29,7 +29,8 @@
  * is evaluated in an empty vm context — the same way tests/helpers/shellHtml.js
  * loads it — never required. A write naming any other key is refused (a typo
  * must not mint a dead deny); if the registry cannot be loaded at all, writes
- * fail loud while resolution carries on.
+ * fail loud while resolution carries on. A firm item id (firm:<slug>,
+ * lib/uiConfigShape FIRM_ID_RE) is accepted too (ui-custom S3.4).
  *
  * Registry-external chrome (§2.6): the shell header greeting (index.html
  * .hdr-greeting) opens tabSettings directly — it is not a registry item, so
@@ -66,6 +67,10 @@ function loadRegistryKeys() {
   registryKeys = new Set(Object.keys(reg));
   return registryKeys;
 }
+
+// Read lazily: lib/uiConfigShape requires this module (UNDENIABLE), so a
+// load-time require here would be a cycle.
+const isFirmItemId = (k) => require('../lib/uiConfigShape').FIRM_ID_RE.test(k);
 
 function inputError(message, status = 400) {
   const e = new Error(message);
@@ -107,7 +112,7 @@ function normalizeDeny(body) {
   const item = b.item_key;
   if (typeof item !== 'string' || !item) throw inputError('item_key is required');
   if (UNDENIABLE.includes(item)) throw inputError(`${item} cannot be denied (always available)`);
-  if (!loadRegistryKeys().has(item)) throw inputError(`unknown item_key "${item}" (not in public/js/featureRegistry.js)`);
+  if (!loadRegistryKeys().has(item) && !isFirmItemId(item)) throw inputError(`unknown item_key "${item}" (not in public/js/featureRegistry.js, nor a firm:<slug> id)`);
 
   let ref = b.scope_ref;
   if (scope === 'firm') {

@@ -121,7 +121,12 @@
        "action": { "type": "url", "href": "https://payroll.example.com/", "present": "window" } },
      { "id": "firm:payroll-portal", "label": "Payroll and timesheets portal (vendor)", "icon": "money-check",
        "action": { "type": "url", "href": "https://payroll.example.com/firm/sign-in?return=/timesheets/weekly-overview-with-a-long-path", "present": "window" } }
-    ]
+    ],
+    "visible_to": {
+     "moreAutomations": ["admin", "attorney"],
+     "firm:payroll-portal": [],
+     "tasks": ["it", "admin", "staff", "attorney", "automation", "form_dev"]
+    }
    }
   },
   "user": {

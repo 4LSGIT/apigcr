@@ -172,8 +172,10 @@ unbroken one; `panel:connectionsDiv:phone-no-transcribe`), the
 Scratch Browser list (`admin/scratch` — an unbroken overlong key, a stale and
 an oversized row; plus `admin/scratch/fred/demo_state` for opening a value by
 hand), the Firm tab of YisraCase Config (`ui-config`, `ui-config/pickers`,
-`ui-config/versions`; `panel:caseConfigDiv:firm` — the step fails if the tab
-does not open) and the More grid's firm row (`firm-data.json`'s `ui`: a
+`ui-config/versions`, and for its Who sees what section `firm-data.json`'s
+`ui` `visible_to` — one item with every role ticked — plus `entitlements`:
+per-user hides, one item hidden from three people, one of them not in the user
+list; `panel:caseConfigDiv:firm` — the step fails if the tab does not open) and the More grid's firm row (`firm-data.json`'s `ui`: a
 compact tool, a 40-character label, a 40-character unbroken one, a link and a
 38-character link with a long href, plus a long rename of Reports; surveyed in
 `tab:tabMore` and `tab:tabAll`. `GET /api/ui-config` answers the SAME layers —

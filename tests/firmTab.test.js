@@ -34,6 +34,7 @@ const path = require('path');
 const { JSDOM, VirtualConsole } = require('jsdom');
 const { rawShellHtml } = require('./helpers/shellHtml');
 const shape = require('../lib/uiConfigShape');
+const entSvc = require('../services/entitlementService');
 
 const ROOT = path.join(__dirname, '..');
 const RAW = rawShellHtml();
@@ -49,8 +50,8 @@ const flush = async (n = 20) => { for (let i = 0; i < n; i++) await new Promise(
 const clone = (x) => JSON.parse(JSON.stringify(x));
 
 // ── the in-memory server ─────────────────────────────────────────────────
-function makeBackend({ doc = null, canEdit = true, lenient = false, getFails = null, failWith = {}, toolTitle = 'Appt Form' } = {}) {
-  const st = { doc: doc ? clone(doc) : null, versions: [], nextId: 1, calls: [] };
+function makeBackend({ doc = null, canEdit = true, lenient = false, getFails = null, failWith = {}, toolTitle = 'Appt Form', denies = [] } = {}) {
+  const st = { doc: doc ? clone(doc) : null, versions: [], nextId: 1, calls: [], denies: clone(denies), nextDeny: 100 };
   if (st.doc) st.versions.push({ id: st.nextId++, config: clone(st.doc), saved_by: 1, saved_by_name: 'Alex', saved_at: '2026-10-14T10:00:00Z' });
   const err = (status, message, errors) => {
     const e = new Error(message); e.name = 'ApiError'; e.status = status; e.body = { status: 'error', message, ...(errors ? { errors } : {}) }; return e;
@@ -93,7 +94,24 @@ function makeBackend({ doc = null, canEdit = true, lenient = false, getFails = n
       return { status: 'success', versions: st.versions.slice().reverse().map((v) => ({ id: v.id, saved_by: v.saved_by,
         saved_by_name: v.saved_by_name, saved_at: v.saved_at, size: 9, is_current: shape.canonical(v.config) === shape.canonical(st.doc) })) };
     }
+    // /api/entitlements (S3.4: the Who sees what section's per-user hides),
+    // validated by the REAL services/entitlementService.normalizeDeny.
+    if (key === 'GET /api/entitlements') return { status: 'success', denies: clone(st.denies), undeniable: ['moreSettings', 'helpSupport'] };
+    if (key === 'POST /api/entitlements') {
+      let d;
+      try { d = entSvc.normalizeDeny(payload); } catch (e) { throw err(e.status || 400, e.message); }
+      if (st.denies.some((x) => x.scope === d.scope && x.scope_ref === d.scope_ref && x.item_key === d.item_key)) throw err(409, 'that deny already exists');
+      const row = { id: st.nextDeny++, ...d, created_by: 1, created_at: '2026-10-16T10:00:00Z' };
+      st.denies.push(row);
+      return { status: 'success', deny: { id: row.id, ...d } };
+    }
     let m;
+    if ((m = /^DELETE \/api\/entitlements\/(\d+)$/.exec(key))) {
+      const n = Number(m[1]);
+      if (!st.denies.some((x) => x.id === n)) throw err(404, 'deny not found');
+      st.denies = st.denies.filter((x) => x.id !== n);
+      return { status: 'success', id: n };
+    }
     if ((m = /^GET \/api\/ui-config\/versions\/(\d+)$/.exec(key))) {
       const v = st.versions.find((x) => x.id === Number(m[1]));
       if (!v) throw err(404, 'Version not found');
@@ -111,7 +129,7 @@ function makeBackend({ doc = null, canEdit = true, lenient = false, getFails = n
 }
 
 // ── the three frames ─────────────────────────────────────────────────────
-function makeTop(backend, shellDoc) {
+function makeTop(backend, shellDoc, users) {
   const page = `<!DOCTYPE html><html><head>${DENIED_CSS}<script>${REGISTRY_SRC}</script><script>${RENDERER_SRC}</script></head><body>
     <nav id="appSidebar"><script>ycLauncher.mount('sidebar')</script></nav>
     <div id="tabHome" class="tab-main"><script>ycLauncher.mount('home')</script></div>
@@ -126,6 +144,7 @@ function makeTop(backend, shellDoc) {
   const w = dom.window;
   w.__logs = logs;
   w.firmData = { ui: { firm: shellDoc ? { registry_overrides: clone(shellDoc) } : {}, user: {} } };
+  if (users) w.firmData.users = clone(users);
   w.apiSend = backend.api;
   w.ycLauncher.applyAccess({ isAdmin: true, denied: [], ui: w.firmData.ui, customTab: null });
   return w;
@@ -145,7 +164,7 @@ async function makeConfigShell(top) {
 /** Everything: the shell, the Config shell, the Firm page booted on its tab. */
 async function boot(opts = {}) {
   const backend = makeBackend(opts);
-  const top = makeTop(backend, opts.shellDoc === undefined ? opts.doc : opts.shellDoc);
+  const top = makeTop(backend, opts.shellDoc === undefined ? opts.doc : opts.shellDoc, opts.users);
   const mid = await makeConfigShell(top);
   mid.switchSubPage('firm');
   const firm = writeFrame(mid.document.getElementById('subpage-firm'), FIRM_HTML);
@@ -209,7 +228,7 @@ describe('Config shell: the Firm tab is shown only on can_edit_firm', () => {
 describe('Launcher form: grouping and catalog', () => {
   test('grouped like All, from ycLauncher\'s own grouping; every item once; undeniables locked on; custom not renameable', async () => {
     const { $$, L, top } = await boot({ doc: { hidden: [], locked: [], renames: {}, items: [SHELL_ITEM] } });
-    const titles = $$('.fm-group-title').map((e) => e.textContent);
+    const titles = $$('#fm-sec-launcher .fm-group-title').map((e) => e.textContent);   // S3.4: the Launcher section's (Who sees what has its own)
     const groupsBefore = L.groups();
     expect(groupsBefore).toContain('Firm');                  // the shell has a firm item
     expect(titles).toEqual(groupsBefore.filter((g) => g !== 'Firm' && g !== 'Home'));
@@ -394,7 +413,7 @@ describe('errors', () => {
     expect(puts(backend)).toHaveLength(1);
     expect(backend.st.doc).toBe(null);
     expect($('[data-err-row="0"]').textContent).toMatch(/shell-only page/);
-    expect($('#fm-banner').textContent).toMatch(/refused/);
+    expect($('#fm-banner').textContent).toMatch(/^Launcher: the server refused the save/);
     setVal($('#fi0-href'), '/reports');                      // editing the row clears its server error
     expect($('[data-err-row="0"]').textContent).toBe('');
   });
@@ -694,5 +713,257 @@ describe('S3.3: the dialog size select', () => {
     setVal($('#fi0-key'), 'appt-form');
     setVal($('#fi0-size'), 'large');
     expect(F.LauncherSection.doc().items[0].action).toEqual({ ...TOOL_ITEM.action, size: 'large' });
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// ui-custom S3.4: the "Who sees what" section — the firm's visible_to (role
+// scoping, saved with the page Save in the SAME document as the Launcher
+// section) and per-user hides (entitlement_denies at scope user, written at
+// once through /api/entitlements).
+describe('S3.4: Who sees what', () => {
+  const USERS = [
+    { user: 0, user_name: 'Automations', user_type: 0, active: true },
+    { user: 1, user_name: 'Stuart', user_type: 1, active: true },
+    { user: 3, user_name: 'Rivka', user_type: 1, active: true },
+    { user: 5, user_name: 'Rena', user_type: 1, active: true },
+    { user: 9, user_name: 'Former', user_type: 1, active: false },
+  ];
+  const DOC = { hidden: [], locked: [], renames: {}, items: [SHELL_ITEM] };
+  const whoRow = (firm, id) => [...firm.document.querySelectorAll('[data-who-id]')].find((r) => r.dataset.whoId === id);
+  const mode = (t, id, v) => t.setVal(whoRow(t.firm, id).querySelector('[data-mode]'), v);
+  const role = (t, id, r, on) => { const c = whoRow(t.firm, id).querySelector(`[data-role="${r}"]`); c.checked = on; t.fire(c, 'change'); };
+  const chips = (t, id) => [...whoRow(t.firm, id).querySelectorAll('.fm-chip')].map((c) => c.firstChild.textContent);
+  const errOf = (t, id) => whoRow(t.firm, id).querySelector('[data-err-who]').textContent;
+  const save = async (t) => { await t.mid.onTopbarSave(); await flush(); };
+  const ids = (list) => list.map((e) => e.id);
+
+  test('the role vocabulary is the server\'s: STORE_ROLES == uiConfigShape VISIBLE_ROLES (ROLE_MEMBERS minus su), every one labelled', async () => {
+    const { F } = await boot({ doc: DOC });
+    expect(F.STORE_ROLES).toEqual(shape.VISIBLE_ROLES.slice());
+    expect(Object.keys(F.ROLE_LABELS).sort()).toEqual(shape.VISIBLE_ROLES.slice().sort());
+    expect(Object.values(F.ROLE_LABELS)).toEqual(['Admin', 'Attorney', 'Staff', 'IT', 'Form dev', 'Automation']);
+  });
+
+  test('rows: every registry item plus the saved firm items, grouped like All; Settings and Help locked on Everyone; a second section in the TOC', async () => {
+    const t = await boot({ doc: DOC });
+    const titles = t.$$('#fm-sec-who .fm-group-title').map((e) => e.textContent);
+    expect(titles).toEqual(['Records', 'Actions', 'Settings', 'More', 'Firm', 'Admin']);
+    const rowIds = t.$$('[data-who-id]').map((e) => e.dataset.whoId);
+    const all = Object.keys(t.top.FEATURE_REGISTRY).filter((id) => !t.top.FEATURE_REGISTRY[id].placeholder);
+    expect(rowIds.slice().sort()).toEqual([...all, 'firm:payroll'].sort());
+    for (const id of ['moreSettings', 'helpSupport']) {
+      const sel = whoRow(t.firm, id).querySelector('[data-mode]');
+      expect([id, sel.disabled, sel.value, !!whoRow(t.firm, id).querySelector('[data-people]')]).toEqual([id, true, 'all', false]);
+    }
+    expect(t.$('#fm-toc').hidden).toBe(false);
+    expect(t.$$('#fm-toc a').map((a) => a.textContent)).toEqual(['Launcher', 'Who sees what']);
+    expect(t.F.WhoSection.isDirty()).toBe(false);
+  });
+
+  test('restrict → save → the shell follows; unrestrict → save → the entry is gone (absent = everyone)', async () => {
+    const t = await boot({ doc: DOC, users: USERS });
+    t.L.applyAccess({ roles: ['staff'] });                       // the admin's own shell, as a staff-role user here
+    expect(ids(t.L.effectiveRegistry())).toContain('moreAutomations');
+    mode(t, 'moreAutomations', 'except');
+    expect(t.F.WhoSection.isDirty()).toBe(true);                 // [] = only su is a change
+    role(t, 'moreAutomations', 'attorney', true);
+    role(t, 'moreAutomations', 'admin', true);
+    expect(t.saveBtnShown()).toBe(true);
+    await save(t);
+    expect(puts(t.backend)).toHaveLength(1);
+    expect(puts(t.backend)[0].payload.base).toBe(1);
+    expect(t.backend.st.doc.visible_to).toEqual({ moreAutomations: ['admin', 'attorney'] });   // the server's order
+    expect(t.top.firmData.ui.firm.registry_overrides.visible_to).toEqual({ moreAutomations: ['admin', 'attorney'] });
+    expect(ids(t.L.effectiveRegistry())).not.toContain('moreAutomations');
+    expect(t.L.elementsOf('moreAutomations').more.hasAttribute('data-yc-denied')).toBe(true);
+    expect([t.F.WhoSection.isDirty(), t.saveBtnShown()]).toEqual([false, false]);
+    expect(whoRow(t.firm, 'moreAutomations').querySelector('[data-role="admin"]').checked).toBe(true);
+    // unrestrict
+    mode(t, 'moreAutomations', 'all');
+    expect(whoRow(t.firm, 'moreAutomations').querySelector('.fm-who-roles')).toBeNull();
+    await save(t);
+    expect(Object.prototype.hasOwnProperty.call(t.backend.st.doc, 'visible_to')).toBe(false);
+    expect(ids(t.L.effectiveRegistry())).toContain('moreAutomations');
+    expect(t.F.WhoSection.isDirty()).toBe(false);
+  });
+
+  test('a firm item can be restricted too ([] = only su) — and an untouched stored list never reads as dirty, whatever its order', async () => {
+    const t = await boot({ doc: { ...DOC, visible_to: { bills: ['attorney', 'admin'] } }, lenient: true });   // stored out of order
+    expect(t.F.WhoSection.isDirty()).toBe(false);
+    mode(t, 'firm:payroll', 'except');
+    await save(t);
+    expect(t.backend.st.doc.visible_to).toEqual({ bills: ['attorney', 'admin'], 'firm:payroll': [] });
+  });
+
+  test('SU is always ticked and locked, with its tooltip; un-ticking it changes nothing', async () => {
+    const t = await boot({ doc: DOC });
+    mode(t, 'moreAutomations', 'except');
+    const su = whoRow(t.firm, 'moreAutomations').querySelector('[data-role="su"]');
+    expect([su.checked, su.disabled, su.title, su.closest('label').title]).toEqual([true, true, t.F.SU_TIP, t.F.SU_TIP]);
+    expect(t.F.SU_TIP).toBe('Superusers always see everything');
+    su.checked = false; t.fire(su, 'change');
+    expect([...t.F.WhoSection.st.form.vis.get('moreAutomations')]).toEqual([]);
+    expect(t.F.WhoSection.apply(t.F.RegistryDoc.stored).visible_to).toEqual({ moreAutomations: [] });
+  });
+
+  test('un-ticking a role drops it; SU can never be ticked into a list; entries for ids the form does not list ride through', async () => {
+    const t = await boot({ doc: { ...DOC, visible_to: { notInRegistry: ['staff'], 'firm:retired-one': [] } }, lenient: true });
+    expect(t.F.WhoSection.isDirty()).toBe(false);
+    mode(t, 'moreAutomations', 'except');
+    role(t, 'moreAutomations', 'admin', true);
+    role(t, 'moreAutomations', 'staff', true);
+    role(t, 'moreAutomations', 'admin', false);
+    const su = whoRow(t.firm, 'moreAutomations').querySelector('[data-role="su"]');
+    su.checked = true; t.fire(su, 'change');                    // a forced tick on the locked box changes nothing
+    await save(t);
+    expect(t.backend.st.doc.visible_to).toEqual({ notInRegistry: ['staff'], 'firm:retired-one': [], moreAutomations: ['staff'] });
+  });
+
+  test('ONE document, two sections: Launcher and Who-sees-what edits pending together → ONE PUT carrying both; both clean after', async () => {
+    const t = await boot({ doc: DOC });
+    t.tick('bills', true);
+    t.setVal(t.$('[data-rename="cases"]'), 'Matters');
+    mode(t, 'moreAutomations', 'except');
+    role(t, 'moreAutomations', 'admin', true);
+    expect([t.F.LauncherSection.isDirty(), t.F.WhoSection.isDirty()]).toEqual([true, true]);
+    await save(t);
+    expect(puts(t.backend)).toHaveLength(1);
+    expect(t.backend.st.doc).toEqual({ hidden: ['bills'], locked: [], renames: { cases: { label: 'Matters' } }, items: [SHELL_ITEM],
+      visible_to: { moreAutomations: ['admin'] } });
+    expect([t.F.LauncherSection.isDirty(), t.F.WhoSection.isDirty(), t.backend.st.versions.length]).toEqual([false, false, 2]);
+    expect(t.F.RegistryDoc.base).toBe(2);
+    // each section alone keeps the other's stored part
+    mode(t, 'bills', 'except');
+    await save(t);
+    expect(t.backend.st.doc.hidden).toEqual(['bills']);
+    expect(t.backend.st.doc.renames).toEqual({ cases: { label: 'Matters' } });
+    t.tick('log', true);
+    await save(t);
+    expect(t.backend.st.doc.visible_to).toEqual({ moreAutomations: ['admin'], bills: [] });
+    expect(puts(t.backend).map((p) => p.payload.base)).toEqual([1, 2, 3]);
+  });
+
+  test('a firm item deleted in the Launcher section takes its visible_to entry with it in the same save', async () => {
+    const t = await boot({ doc: { ...DOC, visible_to: { 'firm:payroll': ['admin'], moreAutomations: ['staff'] } } });
+    t.fire(t.$('.fm-item [data-act="del"]'), 'click');
+    await save(t);
+    expect(t.backend.st.doc.items).toEqual([]);
+    expect(t.backend.st.doc.visible_to).toEqual({ moreAutomations: ['staff'] });
+    expect(whoRow(t.firm, 'firm:payroll')).toBeUndefined();     // the row follows the stored items
+  });
+
+  test('409: another admin saved — the conflict message; nothing overwritten; both sections keep their edits', async () => {
+    const t = await boot({ doc: DOC });
+    t.backend.st.otherAdminSaves({ ...DOC, hidden: ['log'] });
+    t.tick('bills', true);
+    mode(t, 'moreAutomations', 'except');
+    await save(t);
+    expect(t.$('#fm-banner').textContent).toBe(t.F.CONFLICT_MSG);
+    expect(t.backend.st.doc).toEqual({ ...DOC, hidden: ['log'] });
+    expect([t.F.LauncherSection.isDirty(), t.F.WhoSection.isDirty(), t.saveBtnShown()]).toEqual([true, true, true]);
+  });
+
+  test('the server\'s visible_to errors land on their row; the rest on the banner', async () => {
+    const t = await boot({ doc: DOC });
+    mode(t, 'moreAutomations', 'except');
+    t.F.WhoSection.st.form.vis.get('moreAutomations').add('su');      // what the UI can't do: a hand-made bad list
+    t.F.WhoSection.changed();
+    await save(t);
+    expect(errOf(t, 'moreAutomations')).toMatch(/su always sees every item/);
+    expect(t.$('#fm-banner').textContent).toMatch(/^Who sees what: the server refused the save/);   // not "Launcher:" (review N2)
+    expect(t.backend.st.doc).toEqual(DOC);
+  });
+
+  test('per-user hides: listed by name; the picker offers ACTIVE users only; add and remove write at once through the CRUD, never the page Save', async () => {
+    const denies = [{ id: 1, scope: 'user', scope_ref: '5', item_key: 'bills' }, { id: 2, scope: 'role', scope_ref: 'staff', item_key: 'bills' }];
+    const t = await boot({ doc: DOC, users: USERS, denies });
+    expect(chips(t, 'bills')).toEqual(['Rena']);                     // the role deny is not shown
+    expect(chips(t, 'firm:payroll')).toEqual([]);
+    const pick = whoRow(t.firm, 'firm:payroll').querySelector('[data-person-for]');
+    expect([...pick.options].map((o) => o.textContent)).toEqual(['Add a person…', 'Stuart', 'Rivka', 'Rena']);
+    expect([...whoRow(t.firm, 'bills').querySelector('[data-person-for]').options].map((o) => o.value)).toEqual(['', '1', '3']);
+    // add, on a FIRM item
+    t.setVal(pick, '3');
+    t.fire(whoRow(t.firm, 'firm:payroll').querySelector('[data-act="hide-person"]'), 'click');
+    await flush();
+    expect(t.backend.st.calls.filter((c) => c.method === 'POST').map((c) => c.payload)).toEqual([{ scope: 'user', scope_ref: 3, item_key: 'firm:payroll' }]);
+    expect(chips(t, 'firm:payroll')).toEqual(['Rivka']);
+    expect(t.backend.st.denies.map((d) => [d.scope, d.scope_ref, d.item_key])).toContainEqual(['user', '3', 'firm:payroll']);
+    // remove
+    t.fire(whoRow(t.firm, 'bills').querySelector('[data-act="unhide"]'), 'click');
+    await flush();
+    expect(t.backend.st.calls.filter((c) => c.method === 'DELETE').map((c) => c.endpoint)).toEqual(['/api/entitlements/1']);
+    expect(chips(t, 'bills')).toEqual([]);
+    expect(t.backend.st.denies.map((d) => d.id)).toEqual([2, 100]);
+    // none of it is the page's business
+    expect([puts(t.backend).length, t.F.RegistryDoc.dirty(), t.saveBtnShown()]).toEqual([0, false, false]);
+    // nothing chosen → a nudge, no request
+    t.fire(whoRow(t.firm, 'cases').querySelector('[data-act="hide-person"]'), 'click');
+    await flush();
+    expect(errOf(t, 'cases')).toBe('Choose a person first.');
+    expect(t.backend.st.calls.filter((c) => c.method === 'POST')).toHaveLength(1);
+  });
+
+  test('per-user hide errors are inline on the row: 403 session message, duplicate, already removed', async () => {
+    const t = await boot({ doc: DOC, users: USERS, denies: [{ id: 7, scope: 'user', scope_ref: '5', item_key: 'bills' }] });
+    // a duplicate made behind the page's back
+    t.backend.st.denies.push({ id: 8, scope: 'user', scope_ref: '3', item_key: 'cases' });
+    t.setVal(whoRow(t.firm, 'cases').querySelector('[data-person-for]'), '3');
+    t.fire(whoRow(t.firm, 'cases').querySelector('[data-act="hide-person"]'), 'click');
+    await flush();
+    expect(errOf(t, 'cases')).toBe('Already hidden from them.');
+    // …and the row catches up (review S1): the existing hide is a chip, and Rivka leaves the picker
+    expect(chips(t, 'cases')).toEqual(['Rivka']);
+    expect([...whoRow(t.firm, 'cases').querySelector('[data-person-for]').options].map((o) => o.value)).toEqual(['', '1', '5']);
+    expect(t.backend.st.denies.filter((d) => d.item_key === 'cases')).toHaveLength(1);   // no duplicate written
+    // removed behind the page's back → 404 → the chip goes, the message says so
+    t.backend.st.denies = t.backend.st.denies.filter((d) => d.id !== 7);
+    t.fire(whoRow(t.firm, 'bills').querySelector('[data-act="unhide"]'), 'click');
+    await flush();
+    expect([errOf(t, 'bills'), chips(t, 'bills')]).toEqual(['That hide was already removed.', []]);
+    // a 403
+    const t2 = await boot({ doc: DOC, users: USERS, failWith: { 'POST /api/entitlements': 403 } });
+    t2.setVal(whoRow(t2.firm, 'log').querySelector('[data-person-for]'), '1');
+    t2.fire(whoRow(t2.firm, 'log').querySelector('[data-act="hide-person"]'), 'click');
+    await flush();
+    expect(errOf(t2, 'log')).toBe(t2.F.SESSION_MSG);
+    expect(chips(t2, 'log')).toEqual([]);
+  });
+
+  test('the denies list failing to load: said once, no people controls, visible_to still editable and saveable', async () => {
+    const t = await boot({ doc: DOC, users: USERS, failWith: { 'GET /api/entitlements': 403 } });
+    expect(t.$('#fm-who-denies-err').textContent).toBe(t.F.SESSION_MSG);
+    expect(t.$$('[data-people] select')).toEqual([]);
+    mode(t, 'moreAutomations', 'except');
+    await save(t);
+    expect(t.backend.st.doc.visible_to).toEqual({ moreAutomations: [] });
+  });
+
+  test('escaping: a user name and a firm item label with markup create no element', async () => {
+    const users = [...USERS, { user: 4, user_name: '<img id=xu1 src=x>"><b id=xu2>', user_type: 1, active: true }];
+    const item = { ...SHELL_ITEM, label: '<img id=xl1>"><b id=xl2>' };
+    const t = await boot({ doc: { ...DOC, items: [item] }, users, denies: [{ id: 3, scope: 'user', scope_ref: '4', item_key: 'bills' }], lenient: true });
+    for (const id of ['xu1', 'xu2', 'xl1', 'xl2']) expect(t.firm.document.getElementById(id)).toBeNull();
+    expect(chips(t, 'bills')).toEqual(['<img id=xu1 src=x>"><b id=xu2>']);
+    expect(whoRow(t.firm, 'firm:payroll').querySelector('.fm-name').textContent).toBe('<img id=xl1>"><b id=xl2>');
+    expect([...whoRow(t.firm, 'cases').querySelector('[data-person-for]').options].map((o) => o.textContent)).toContain('<img id=xu1 src=x>"><b id=xu2>');
+  });
+
+  test('History shows a version\'s restrictions; a restore re-forms this section too', async () => {
+    const t = await boot({ doc: { ...DOC, visible_to: { moreAutomations: ['admin'] } } });
+    mode(t, 'moreAutomations', 'all');
+    await save(t);                                               // v2: no restrictions
+    t.fire(t.$('[data-act="history"]'), 'click');
+    await flush();
+    const rows = t.$$('.fm-ver');
+    t.fire(rows[1].querySelector('[data-ver-act="view"]'), 'click');
+    await flush();
+    expect(rows[1].querySelector('.fm-ver-view').textContent).toMatch(/Who sees what\s*Automations: Admin, SU/);
+    t.firm.Swal = undefined; t.firm.confirm = () => true;
+    t.fire(rows[1].querySelector('[data-ver-act="restore"]'), 'click');
+    await flush();
+    expect(t.backend.st.doc.visible_to).toEqual({ moreAutomations: ['admin'] });
+    expect([whoRow(t.firm, 'moreAutomations').querySelector('[data-mode]').value, t.F.WhoSection.isDirty()]).toEqual(['except', false]);
   });
 });

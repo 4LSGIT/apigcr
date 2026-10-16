@@ -8,7 +8,9 @@ Manager state: scratch `fred/access_control_state`. Coordination:
 
 Every claim in §1–§5.7 verified 2026-10-14 against the live DB (RO key) and
 actual source — including where it contradicts the arc's boot prompt. Later
-additions carry their own date (§5.8–§5.10: 2026-10-15, source + the 8.4 twin).
+additions carry their own date (§5.8–§5.10: 2026-10-15, source + the 8.4 twin;
+§2.6's firm-id vocabulary and §8 Q4's shipped editor: 2026-10-16, source —
+ui-custom S3.4).
 
 ---
 
@@ -255,8 +257,9 @@ grid items more*/admin*; Settings moved into the More grid 2026-10-11).
   shell as `denied: [item_key...]` in the firmData/ui-config payload the
   launcher already fetches.
 - `item_key` vocabulary = the launcher registry keys that ui-custom S1
-  extracts; this arc owns the table + resolver, ui-custom consumes the
-  denied set when it builds the launcher. Cosmetic firm/user hide stays in
+  extracts, plus firm launcher item ids `firm:<slug>` (ui-custom S3.4); this
+  arc owns the table + resolver, ui-custom consumes the denied set when it
+  builds the launcher. Cosmetic firm/user hide stays in
   ui-custom (its ruling stands: hiding secures nothing).
 - Enforcement seam (later, designed now): each registry item MAY carry a
   route-family prefix list; a v3 middleware maps denied item → 403 on its
@@ -773,5 +776,8 @@ ratification.
   not an accident: §3.6.
 
 - **Q4 — yes (2026-10-14):** entitlement admin lives inside the CFG-3 firm
-  tab (ONE surface). Non-cosmetic editor on the settings arc's surface —
-  coordinate via `admin_surface_coord` when that slice is cut.
+  tab (ONE surface). It shipped in ui-custom S3.4 as that tab's "Who sees
+  what" section: per-USER denies only. Role scoping is NOT role denies (a
+  deny hits everyone holding the role and nobody bypasses it) but the firm
+  ui_config `visible_to` allow-list, su implicit (Fred, 2026-10-16); role /
+  firm deny scopes stay API-only.

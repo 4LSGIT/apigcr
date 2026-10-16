@@ -18,6 +18,9 @@
  *     planted by hand are stripped; 'user' refs match numerically.
  *   - The UNIQUE holds for a duplicate FIRM deny (scope_ref '' sentinel) —
  *     refused by the engine, and createDeny maps it to 409.
+ *   - ui-custom S3.4: a per-user deny of a FIRM item (firm:<slug>) is written,
+ *     resolved for that user only, fits the column at the longest slug, and
+ *     deletes; a malformed firm id never reaches the table.
  */
 'use strict';
 
@@ -149,6 +152,30 @@ d('entitlements on real MySQL', () => {
       await svc.deleteDeny(pool, id);
       expect(await svc.deniedFor(pool, 5)).toEqual([]);
       await expect(svc.deleteDeny(pool, id)).rejects.toMatchObject({ status: 404 });
+    });
+  });
+
+  describe('ui-custom S3.4: per-user denies of firm items', () => {
+    beforeEach(() => q('DELETE FROM entitlement_denies'));
+    const LONGEST = 'firm:' + 'a'.repeat(40);                        // 45 characters: the longest firm id
+
+    test('a firm id is written, resolved for that user only, and deleted; a registry id still works beside it', async () => {
+      const a = await svc.createDeny(pool, { scope: 'user', scope_ref: 5, item_key: 'firm:payroll' }, 6);
+      await svc.createDeny(pool, { scope: 'user', scope_ref: '5', item_key: LONGEST }, 6);
+      await svc.createDeny(pool, { scope: 'user', scope_ref: 5, item_key: 'bills' }, 6);
+      expect(await svc.deniedFor(pool, 5)).toEqual(['bills', LONGEST, 'firm:payroll']);
+      expect(await svc.deniedFor(pool, 22)).toEqual([]);
+      expect((await q('SELECT item_key FROM entitlement_denies WHERE item_key = ?', [LONGEST]))).toEqual([{ item_key: LONGEST }]);
+      await expect(svc.createDeny(pool, { scope: 'user', scope_ref: 5, item_key: 'firm:payroll' }, 6)).rejects.toMatchObject({ status: 409 });
+      await svc.deleteDeny(pool, a.id);
+      expect(await svc.deniedFor(pool, 5)).toEqual(['bills', LONGEST]);
+    });
+
+    test('a malformed firm id is refused before the table', async () => {
+      for (const bad of ['firm:Payroll', 'firm:', 'firm:' + 'a'.repeat(41), 'firm:pay roll', 'Firm:payroll']) {
+        await expect(svc.createDeny(pool, { scope: 'user', scope_ref: 5, item_key: bad }, 6)).rejects.toMatchObject({ status: 400 });
+      }
+      expect(await q('SELECT COUNT(*) n FROM entitlement_denies')).toEqual([{ n: 0 }]);
     });
   });
 });

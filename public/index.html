@@ -254,6 +254,10 @@
       //     before Admin, in their array order), with firm renames applied to
       //     label AND surfaceLabels (the custom item ignores renames: its
       //     user owns its title). See the firm overlay below.
+      //   − role-restricted ids (the firm's visible_to, ui-custom S3.4): an
+      //     item with an entry is dropped unless the user holds one of its
+      //     roles (opts.roles, the users.roles members) or is su. Registry
+      //     and firm items alike; per-user denies still apply on top.
       // Each entry: { id, group, label, labels, icon } — labels = label +
       // surfaceLabels, what the matcher reads. group = the item's origin:
       // its sidebar section, else Home, else the grid it is on; groups run
@@ -291,6 +295,12 @@
       //   locked   ids a user's layout cannot remove (S4a: the user layer
       //            below ignores a removal of a locked id).
       //   retired  server-managed (S4a), ignored here.
+      //   visible_to  { id: [role…] } (S3.4): the item is HIDDEN, except from
+      //            users holding at least one listed role; su sees it always,
+      //            [] means only su, no entry means everyone. An allow-list, so
+      //            a role nobody ticked (a new one included) never sees it.
+      //            The undeniable set is stripped again; an entry that is not
+      //            an array is ignored (with a warning) like a bad rename.
       // user.layout is the user's Home / sidebar layout (S4a, below);
       // user.shortcuts is storage only until S4c.
       var FIRM_GROUP = 'Firm';
@@ -376,10 +386,10 @@
         return { id: it.id, label: label, icon: it.icon, action: ca };
       }
       /** ui → { hidden: {id:true}, renames: {id: label}, items: [clean item],
-       *         locked: {id:true} }.
+       *         locked: {id:true}, visibleTo: {id: {role:true}} }.
        *  quiet: no console warnings (applyAccess's second read of the same ui). */
       function firmOverlay(ui, quiet) {
-        var out = { hidden: {}, renames: {}, items: [], locked: {} };
+        var out = { hidden: {}, renames: {}, items: [], locked: {}, visibleTo: Object.create(null) };
         var ro = isObj(ui) && isObj(ui.firm) && isObj(ui.firm.registry_overrides) ? ui.firm.registry_overrides : null;
         if (!ro) return out;
         out.hidden = cleanDenied(ro.hidden);
@@ -392,6 +402,19 @@
             var l = isObj(ro.renames[id]) ? cleanLabel(ro.renames[id].label) : null;
             if (l != null) out.renames[id] = l;
             else if (!quiet) note('firm rename of "' + id + '" ignored: not a 1-40 character plain label');
+          }
+        }
+        if (isObj(ro.visible_to)) {
+          for (var vid in ro.visible_to) {
+            if (!hasOwn(ro.visible_to, vid) || UNDENIABLE.indexOf(vid) >= 0) continue;
+            var vl = ro.visible_to[vid];
+            if (Object.prototype.toString.call(vl) !== '[object Array]') {
+              if (!quiet) note('visible_to of "' + vid + '" ignored: not a list of roles');
+              continue;
+            }
+            var rs = Object.create(null);
+            vl.forEach(function (r) { if (typeof r === 'string') rs[r] = true; });
+            out.visibleTo[vid] = rs;
           }
         }
         if (Object.prototype.toString.call(ro.items) === '[object Array]') {
@@ -409,6 +432,26 @@
         return out;
       }
 
+      /** roles → { role: true } (strings only; anything but an array → {}). */
+      function roleSet(list) {
+        var s = Object.create(null);
+        if (Object.prototype.toString.call(list) !== '[object Array]') return s;
+        list.forEach(function (r) { if (typeof r === 'string' && r) s[r] = true; });
+        return s;
+      }
+      /** The firm's role-restricted ids this user does NOT see: an entry in
+       *  visible_to naming none of their roles, unless they are su. */
+      function roleHidden(visibleTo, roles) {
+        var out = Object.create(null), mine = roleSet(roles);
+        if (mine.su) return out;
+        for (var id in visibleTo) {
+          var ok = false;
+          for (var r in visibleTo[id]) if (mine[r]) { ok = true; break; }
+          if (!ok) out[id] = true;
+        }
+        return out;
+      }
+
       function computeEffective(opts, registry, layouts) {
         opts = opts || {};
         registry = registry || window.FEATURE_REGISTRY || {};
@@ -416,6 +459,7 @@
         var own = function (id) { return Object.prototype.hasOwnProperty.call(registry, id); };
         var denied = cleanDenied(opts.denied);
         var firm = firmOverlay(opts.ui);
+        var restricted = roleHidden(firm.visibleTo, opts.roles);
         var gated = {};
         (layouts.admin || []).forEach(function (e) { if (e && e.item != null) gated[e.item] = true; });
 
@@ -443,7 +487,7 @@
           var it = registry[id];
           if (it.placeholder) return;   // a grid square that opens nothing
           if (!opts.isAdmin && (gated[id] || it.tab === 'tabAdmin')) return;
-          if (denied[id] || firm.hidden[id]) return;
+          if (denied[id] || firm.hidden[id] || restricted[id]) return;
           var label = it.label, icon = it.icon;
           if (id === 'custom') {
             var ct = opts.customTab;
@@ -466,7 +510,7 @@
         // the More grid's firm row (renderFirmRow, S3.3); exec() dispatches
         // their action. Hidden / denied like any other id.
         firm.items.forEach(function (fi) {
-          if (denied[fi.id] || firm.hidden[fi.id]) return;
+          if (denied[fi.id] || firm.hidden[fi.id] || restricted[fi.id]) return;
           seq.push(fi.id);
           out.push({ id: fi.id, group: FIRM_GROUP, label: fi.label, labels: [fi.label], icon: fi.icon, action: fi.action });
         });
@@ -478,18 +522,19 @@
       }
 
       // ── Access: the effective registry + the hide pass ─────────────────
-      // applyAccess({ isAdmin, denied, ui, customTab }) — loadUserContext
+      // applyAccess({ isAdmin, denied, ui, customTab, roles }) — loadUserContext
       // calls it once after firm data; applyCustomTab calls it again with
       // just { customTab } when Settings changes the custom tab. Fields left
       // out keep their last value. Re-runnable: the hide pass is idempotent.
+      // roles = the user's users.roles members (an array), for visible_to.
       var STATE = null, EFFECTIVE = [], lastDenied = null;
       var DENIED_ATTR = 'data-yc-denied';   // CSS: [data-yc-denied] { display:none !important }
 
       function applyAccess(opts) {
         opts = opts || {};
-        var prev = STATE || { isAdmin: false, denied: [], ui: null, customTab: null };
+        var prev = STATE || { isAdmin: false, denied: [], ui: null, customTab: null, roles: [] };
         STATE = {};
-        ['isAdmin', 'denied', 'ui', 'customTab'].forEach(function (k) {
+        ['isAdmin', 'denied', 'ui', 'customTab', 'roles'].forEach(function (k) {
           STATE[k] = Object.prototype.hasOwnProperty.call(opts, k) ? opts[k] : prev[k];
         });
         STATE.isAdmin = !!STATE.isAdmin;
@@ -497,6 +542,8 @@
         GROUPS = EFFECTIVE.groups;
         var firm = firmOverlay(STATE.ui, true), hide = cleanDenied(STATE.denied);
         for (var h in firm.hidden) hide[h] = true;
+        var rh = roleHidden(firm.visibleTo, STATE.roles);
+        for (var r in rh) hide[r] = true;
         hidePass(hide, firm.renames);
         renderFirmRow();
         layoutPass(firm.locked);
@@ -572,10 +619,11 @@
         }
       }
 
-      // Hide the rendered elements of denied AND firm-hidden items on every
-      // surface — one attribute for both (ensureStrip and the CSS rule already
-      // honour it; firm "hide" is decluttering, a deny is visibility-only:
-      // neither secures anything). By attribute + an !important rule, not
+      // Hide the rendered elements of denied, firm-hidden AND role-restricted
+      // (visible_to, S3.4) items on every surface — one attribute for all
+      // (ensureStrip and the CSS rule already honour it; firm "hide" and role
+      // scoping are decluttering, a deny is visibility-only: none of them
+      // secures anything). By attribute + an !important rule, not
       // style.display: applyCustomTab and loadUserContext write style.display
       // on #sbCustom / #sbAdmin / #tabCustomButton, and must not be able to
       // resurrect a hidden item. Then relabel the renamed ones.
@@ -6093,11 +6141,12 @@ async function initAuth() {
 
       // The launcher's effective registry + entitlement hide pass (ui-custom
       // S2): admin-gated items by the isAdmin signal above, denied items per
-      // firmData.denied, the firm overlay per firmData.ui (S3.1). Before the
+      // firmData.denied, the firm overlay per firmData.ui (S3.1), the user's
+      // roles for the firm's role scoping (visible_to, S3.4). Before the
       // ?open= restore below, so a restored All tab renders full. A launcher
       // bug must not take the boot down.
       try {
-        ycLauncher.applyAccess({ isAdmin, denied: window.firmData.denied, ui: window.firmData.ui, customTab: user.user_custom_tab || null });
+        ycLauncher.applyAccess({ isAdmin, denied: window.firmData.denied, ui: window.firmData.ui, customTab: user.user_custom_tab || null, roles: String(user.roles || "").split(",").map(r => r.trim()).filter(Boolean) });
       } catch (err) { console.error('[ycLauncher] applyAccess failed:', err); }
 
       tasksBadgeRefresh();   // sidebar Tasks badge (fire-and-forget)

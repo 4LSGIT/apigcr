@@ -11,16 +11,18 @@
  * Gate: the firm.settings capability — the same expression as the
  * app-settings writes (A4): roles admin / it / su; x-api-key callers pass
  * (machine trust until Phase B, §8 Q3) and are recorded as created_by 0.
- * The editor UI lives inside the CFG-3 firm tab (settings arc, ruling Q4);
- * nothing in this repo renders one yet.
+ * The editor UI is the CFG-3 firm tab's "Who sees what" section
+ * (public/caseconfig/firm.html, ui-custom S3.4): per-USER denies only — role
+ * scoping is ui_config's visible_to, and role / firm scopes stay API-only.
  *
  * POST body:
  *   scope      'firm' | 'role' | 'user'
  *   scope_ref  firm: omit, null or '' — all normalized to '' at this boundary
  *              (the column's firm sentinel); role: a users.roles member;
  *              user: a users.user id (number or digits; must exist)
- *   item_key   a public/js/featureRegistry.js key; moreSettings / helpSupport
- *              are undeniable and refused
+ *   item_key   a public/js/featureRegistry.js key, or a firm launcher item id
+ *              firm:<slug> (ui-custom S3.4); moreSettings / helpSupport are
+ *              undeniable and refused
  * 400 bad input · 409 duplicate · 404 unknown id (services/entitlementService).
  *
  * Visibility-only: a deny hides a launcher item via /api/firm-data `denied`;

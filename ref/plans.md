@@ -33,8 +33,9 @@ PENDING (parallel session; do not bake in):
   view. Don't design against is_editable semantics meanwhile.
 - Collision, settled (Fred, 2026-10-15): the ui-custom firm editor and the Config
   shell are ONE surface — the Config shell's Firm tab. ui-custom owns its Launcher
-  section; the settings arc adds its sections there, the entitlements editor
-  included.
+  and Who sees what sections (the latter is the entitlements editor: per-user
+  denies, plus role scoping through ui_config `visible_to` — ui-custom S3.4); the
+  settings arc adds its own sections there.
 
 ---
 
@@ -309,6 +310,13 @@ deferred until the budget shows it's needed.
   create-hook). Workflows / sequences / triggers / ingest management in the
   same Automation Manager stay open to all staff — a visible inconsistency,
   accepted as the first step.
+- **Deny rows the Firm tab never shows** (ui-custom S3.4 review N4): Who sees
+  what lists per-USER denies of items that exist. (a) A per-user deny of a firm
+  item later deleted stays in `entitlement_denies` with no row to remove it from
+  — harmless, since S4a `retired` means firm ids are never reused; clean such
+  orphans up when an item is deleted. (b) role / firm deny rows written through
+  the API (0 live 2026-10-16) still hide items while the editor says "Everyone"
+  — add a read-only "also hidden by an older rule" note if any ever appear.
 - **sbAdmin widening**: the Admin sidebar stays su-only until the first
   firm-grade admin tile exists (the CFG-3 firm tab) — then widen
   tile-by-tile, not by taxonomy.

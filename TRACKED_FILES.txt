@@ -806,6 +806,7 @@ scripts/mobile-survey/fixtures/api/cta.json
 scripts/mobile-survey/fixtures/api/cta/10/executions.json
 scripts/mobile-survey/fixtures/api/cta/2/executions.json
 scripts/mobile-survey/fixtures/api/documents.json
+scripts/mobile-survey/fixtures/api/entitlements.json
 scripts/mobile-survey/fixtures/api/field-defs.json
 scripts/mobile-survey/fixtures/api/mail/first-seen.json
 scripts/mobile-survey/fixtures/api/mail/identities.json
@@ -1262,6 +1263,7 @@ tests/keyTasks.mysql.test.js
 tests/keyTasks.test.js
 tests/launcherS2.test.js
 tests/launcherS31.test.js
+tests/launcherS34.test.js
 tests/launcherS4a.test.js
 tests/launcherS4b.test.js
 tests/likeEscapeSites.test.js
@@ -1400,6 +1402,7 @@ tests/uiConfig.mysql.test.js
 tests/uiConfigS31.test.js
 tests/uiConfigS32.mysql.test.js
 tests/uiConfigS32.test.js
+tests/uiConfigS34.test.js
 tests/uiConfigS4a.mysql.test.js
 tests/uiConfigS4a.test.js
 tests/unifiedEventsU2b.admin.test.js

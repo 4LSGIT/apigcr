@@ -1548,11 +1548,9 @@ Mounted today: firm.settings (app-settings writes), automations.manage
 **Entitlements (launcher denies).** `entitlement_denies` (deny-only rows;
 scope firm(''), role, user; UNIQUE over the triple), resolver
 services/entitlementService.deniedFor → `denied[]` in /api/firm-data
-(fail-soft []). item_key = public/js/featureRegistry.js keys;
+(fail-soft []). item_key = public/js/featureRegistry.js keys or `firm:<slug>` ids;
 `moreSettings` + `helpSupport` undeniable (write-reject AND resolve-strip).
-Visibility-only; CRUD behind firm.settings; no editor UI yet — it joins
-the Config shell's Firm tab (the CFG-3 surface, public/caseconfig/firm.html,
-ui-custom S3.2) as a section in the settings arc.
+Visibility-only; CRUD behind firm.settings. Editor: the Firm tab's "Who sees what" section (public/caseconfig/firm.html, ui-custom S3.4) — per-USER denies only; ROLE scoping is the firm registry_overrides `visible_to` allow-list (lib/uiConfigShape.js; su implicit), never role denies.
 A deny (`data-yc-denied`) only HIDES launcher elements — the delegated
 `[data-target]` handler never checks it — so programmatic opens (URL restore,
 §12 Workspace URL; the palette) go through `ycLauncher.exec`, which refuses

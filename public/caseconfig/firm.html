@@ -104,6 +104,26 @@
     .fm-kept { font-size: 13px; overflow-wrap: anywhere; }
     .fm-empty { font-size: 13px; color: var(--text-muted); padding: 6px 2px; }
 
+    /* Who sees what: one row per launcher item (registry + saved firm items). */
+    .fm-who-row {
+      display: grid; grid-template-columns: 22px minmax(7em, 1fr) minmax(9em, 12em);
+      align-items: center; gap: 6px 10px; padding: 7px 8px; border-bottom: 1px solid var(--page-bg);
+    }
+    .fm-who-row .fm-who-roles, .fm-who-row .fm-who-people, .fm-who-row .fm-err { grid-column: 2 / -1; min-width: 0; }
+    .fm-who-roles { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; }
+    .fm-who-roles label { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; }
+    .fm-who-roles input:disabled + span { color: var(--text-muted); }
+    .fm-who-people { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; font-size: 12px; }
+    .fm-who-people .fm-who-plabel { color: var(--text-2); font-weight: 600; }
+    .fm-who-people .fm-who-none { color: var(--text-muted); }
+    .fm-section .fm-who-people select { width: auto; max-width: 100%; flex: 0 1 14em; padding: 3px 6px; font-size: 12px; }
+    .fm-chip {
+      display: inline-flex; align-items: center; gap: 2px; padding: 1px 2px 1px 8px; border-radius: 12px;
+      background: var(--surface-2); border: 1px solid var(--border); max-width: 100%; overflow-wrap: anywhere;
+    }
+    .fm-chip button { border: none; background: none; color: var(--text-2); cursor: pointer; padding: 0 5px; font-size: 14px; line-height: 1; font-family: inherit; }
+    .fm-chip button:hover { color: var(--danger); }
+
     /* History (in-page panel under the section head). */
     .fm-history { border: 1px solid var(--border); border-radius: 8px; padding: 10px; background: var(--page-bg); }
     .fm-history[hidden] { display: none; }
@@ -133,6 +153,8 @@
       .fm-row .fm-rename { grid-column: 1 / -1; }
       .fm-row[aria-hidden] .fm-rename { display: none; }
       .fm-item-grid { grid-template-columns: minmax(0, 1fr); }
+      .fm-who-row { grid-template-columns: 22px minmax(0, 1fr); }
+      .fm-who-row .fm-who-mode { grid-column: 2 / -1; }
     }
     @media (min-width: 641px) and (max-width: 900px) {
       .fm-item-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -170,10 +192,24 @@
 // Section 1, Launcher: the firm registry_overrides document of ui_config
 // (PUT /api/ui-config scope firm; grammar lib/uiConfigShape.js). A FORM, never
 // JSON: hide (checkbox = hidden), rename, firm items. Fields it does not edit
-// (locked — inert until S4 — unknown keys, items of a kind it can't edit) are
-// carried through a save untouched. After a save the shell's firmData.ui is
-// updated and ycLauncher.applyAccess({ ui }) re-runs the overlay, so the
-// admin's own launcher changes at once; everyone else gets it on next load.
+// (locked — which user layouts obey since S4a, but which has no editor yet —
+// unknown keys, items of a kind it can't edit) are carried through a save
+// untouched. After a save the shell's firmData.ui is updated and
+// ycLauncher.applyAccess({ ui }) re-runs the overlay, so the admin's own
+// launcher changes at once; everyone else gets it on next load.
+//
+// Section 2, Who sees what (ui-custom S3.4): the SAME document's visible_to
+// (role scoping: Everyone, or Hidden except for ticked roles — su always),
+// plus per-user hides, which are entitlement_denies rows at scope user and
+// write at once through /api/entitlements, outside the page Save.
+//
+// ONE DOCUMENT, TWO SECTIONS: RegistryDoc below holds the stored document and
+// the base (the newest version id) for both. Each section only APPLIES its own
+// part to a document (Launcher: hidden / renames / items; Who sees what:
+// visible_to), so a save composes stored → Launcher → Who sees what and sends
+// ONE PUT with ONE base: neither section drops the other's pending edits, and
+// a stale base is still a 409. Whichever dirty section the page's Save reaches
+// first saves the whole document; the other is then clean and skipped.
 //
 // VISIBILITY of this tab is the shell's business (can_edit_firm from GET
 // /api/ui-config); AUTHORITY is the server's — every route this page calls is
@@ -429,6 +465,82 @@ function placeErrors(errors, doc) {
   return out;
 }
 
+// ═══════════════════════════════════════════════════════════════
+// The shared registry_overrides document (both sections edit it)
+// ═══════════════════════════════════════════════════════════════
+const RegistryDoc = {
+  stored: null,      // the document as the server last returned it (null: no firm row)
+  base: undefined,   // its newest version id; null = no firm row yet; undefined = not told → no base sent
+  sections: [],      // the sections that edit it, in apply order (set below SECTIONS)
+  inflight: null,
+
+  /** GET /api/ui-config once for every section loading at the same time;
+   *  sets stored + base. Resolves to the response. */
+  load() {
+    if (!this.inflight) {
+      this.inflight = api('/api/ui-config').then((cfg) => {
+        this.stored = cfg && isObj(cfg.firm) && isObj(cfg.firm.registry_overrides) ? cfg.firm.registry_overrides : null;
+        const fv = cfg && isObj(cfg.firm_versions) ? cfg.firm_versions : null;
+        this.base = fv && Object.prototype.hasOwnProperty.call(fv, 'registry_overrides') ? fv.registry_overrides : undefined;
+        return cfg;
+      }).finally(() => { this.inflight = null; });
+    }
+    return this.inflight;
+  },
+  /** A new stored document: every loaded section rebuilds its form from it. */
+  setStored(doc) {
+    this.stored = doc;
+    this.sections.forEach((s) => { if (s.st.loaded) s.reform(); });
+  },
+  /** stored, then each section's own part applied in turn — what a save sends. */
+  compose() {
+    return this.sections.reduce((d, s) => (s.st.loaded ? s.apply(d) : d), isObj(this.stored) ? this.stored : EMPTY_DOC);
+  },
+  dirty() { return this.sections.some((s) => s.isDirty()); },
+
+  /** Save the whole document — every section's pending edits — in ONE PUT. */
+  async save() {
+    const live = this.sections.filter((s) => s.st.loaded);
+    // The banner names the section(s) a problem is in — this save is shared.
+    const names = (list) => list.map((s) => s.title).join(' and ') || 'Firm settings';
+    let bad = 0;
+    const badIn = [];
+    live.forEach((s) => { const n = s.problemCount(); if (n) { bad += n; badIn.push(s); s.renderErrors(); } });
+    if (bad) {
+      banner(`${names(badIn)}: fix the ${bad === 1 ? 'highlighted field' : bad + ' highlighted fields'} first.`);
+      return false;
+    }
+    const doc = this.compose();
+    let r;
+    try {
+      const body = { scope: 'firm', config_key: 'registry_overrides', config: doc };
+      if (this.base !== undefined) body.base = this.base;   // a stale base → 409, never an overwrite
+      r = await api('/api/ui-config', 'PUT', body);
+    } catch (e) {
+      if (e && e.status === 400 && e.body && Array.isArray(e.body.errors)) {
+        // Each section takes the errors on its own fields; the rest go to the banner.
+        let rest = e.body.errors;
+        const hit = [];
+        live.forEach((s) => {
+          const before = rest.length;
+          rest = s.takeErrors(rest, doc);   // each hands back what it did not place
+          if (rest.length < before) hit.push(s);
+        });
+        banner(`${names(hit)}: the server refused the save — see the highlighted fields.` + (rest.length ? ' ' + rest.join(' · ') : ''));
+      } else {
+        banner(errText(e, `${names(live.filter((s) => s.isDirty()))}: save failed`));
+      }
+      return false;
+    }
+    this.setStored(r.config);
+    if (Object.prototype.hasOwnProperty.call(r, 'version_id')) this.base = r.version_id;
+    live.forEach((s) => s.render());
+    const shown = refreshShell(r.config);
+    toast('success', r.changed === false ? 'Nothing changed' : (shown ? 'Saved — your launcher is updated' : 'Saved'));
+    return true;
+  },
+};
+
 /** Hand the saved document to the shell: firmData.ui updated in place, then
  *  the overlay re-run (loadFirmData alone would NOT re-run it — S3.1). */
 function refreshShell(config) {
@@ -445,9 +557,14 @@ function refreshShell(config) {
 
 const LauncherSection = {
   id: 'launcher', title: 'Launcher', icon: 'grip',
-  // base: the newest firm version id this page loaded (null = no firm row
+  // stored / base are RegistryDoc's (one document, one base for both sections):
+  // base = the newest firm version id this page loaded (null = no firm row
   // yet; undefined = the server did not say — then no base is sent).
-  st: { stored: null, base: undefined, form: null, catalog: null, pickers: { tools: [], views: [] }, srv: null, loaded: false, error: null },
+  st: {
+    get stored() { return RegistryDoc.stored; }, set stored(v) { RegistryDoc.stored = v; },
+    get base() { return RegistryDoc.base; }, set base(v) { RegistryDoc.base = v; },
+    form: null, catalog: null, pickers: { tools: [], views: [] }, srv: null, loaded: false, error: null,
+  },
   body: null, head: null,
 
   mount(body, head) {
@@ -469,7 +586,7 @@ const LauncherSection = {
       this.render();
       return;
     }
-    const [cfg, pk] = await Promise.allSettled([api('/api/ui-config'), api('/api/ui-config/pickers')]);
+    const [cfg, pk] = await Promise.allSettled([RegistryDoc.load(), api('/api/ui-config/pickers')]);
     if (cfg.status === 'rejected') {
       this.st.error = errText(cfg.reason, 'Could not load the launcher settings');
       this.render();
@@ -477,58 +594,34 @@ const LauncherSection = {
     }
     if (pk.status === 'rejected') banner(errText(pk.reason, 'Could not load the tool and view lists'));
     else this.st.pickers = { tools: pk.value.tools || [], views: pk.value.views || [] };
-    const doc = cfg.value && isObj(cfg.value.firm) && isObj(cfg.value.firm.registry_overrides) ? cfg.value.firm.registry_overrides : null;
     this.st.catalog = launcherCatalog(L);
-    const fv = cfg.value && isObj(cfg.value.firm_versions) ? cfg.value.firm_versions : null;
-    this.st.base = fv && Object.prototype.hasOwnProperty.call(fv, 'registry_overrides') ? fv.registry_overrides : undefined;
-    this.setStored(doc);
+    this.reform();
     this.st.loaded = true;
     this.st.error = null;
     this.render();
   },
 
-  setStored(doc) {
-    this.st.stored = doc;
-    this.st.form = formFromDoc(doc, this.st.catalog);
+  /** The form, rebuilt from RegistryDoc's stored document. */
+  reform() {
+    this.st.form = formFromDoc(this.st.stored, this.st.catalog);
     this.st.srv = null;
   },
-  doc() { return docFromForm(this.st.stored, this.st.form, this.st.catalog); },
+  setStored(doc) { RegistryDoc.setStored(doc); },
+  /** This section's part (hidden / renames / items) applied to d. */
+  apply(d) { return docFromForm(d, this.st.form, this.st.catalog); },
+  doc() { return this.apply(this.st.stored); },
   isDirty() {
     if (!this.st.loaded) return false;
     return canonical(this.doc()) !== canonical(isObj(this.st.stored) ? this.st.stored : EMPTY_DOC);
   },
-
-  async save() {
-    const probs = formProblems(this.st.form);
-    if (probs.count) {
-      this.renderErrors();
-      banner(`Launcher: fix the ${probs.count === 1 ? 'highlighted field' : probs.count + ' highlighted fields'} first.`);
-      return false;
-    }
-    const doc = this.doc();
-    let r;
-    try {
-      const body = { scope: 'firm', config_key: 'registry_overrides', config: doc };
-      if (this.st.base !== undefined) body.base = this.st.base;   // a stale base → 409, never an overwrite
-      r = await api('/api/ui-config', 'PUT', body);
-    } catch (e) {
-      if (e && e.status === 400 && e.body && Array.isArray(e.body.errors)) {
-        this.st.srv = placeErrors(e.body.errors, doc);
-        this.renderErrors();
-        banner('Launcher: the server refused the save — see the highlighted fields.' +
-          (this.st.srv.general.length ? ' ' + this.st.srv.general.join(' · ') : ''));
-      } else {
-        banner(errText(e, 'Launcher: save failed'));
-      }
-      return false;
-    }
-    this.setStored(r.config);
-    if (Object.prototype.hasOwnProperty.call(r, 'version_id')) this.st.base = r.version_id;
-    this.render();
-    const live = refreshShell(r.config);
-    toast('success', r.changed === false ? 'Nothing changed' : (live ? 'Saved — your launcher is updated' : 'Saved'));
-    return true;
+  problemCount() { return formProblems(this.st.form).count; },
+  /** The server's errors[] on this section's fields placed; the rest returned. */
+  takeErrors(errors, doc) {
+    this.st.srv = placeErrors(errors, doc);
+    this.renderErrors();
+    return this.st.srv.general;
   },
+  save() { return RegistryDoc.save(); },
 
   // ── rendering ──
   render() {
@@ -816,6 +909,13 @@ const LauncherSection = {
       }).join(', ') || 'none'],
     ];
     if (Array.isArray(doc.locked) && doc.locked.length) parts.push(['Locked', doc.locked.map(name).join(', ')]);
+    if (isObj(doc.visible_to) && Object.keys(doc.visible_to).length) {
+      const firmName = (eid) => { const it = (doc.items || []).find((x) => isObj(x) && x.id === eid); return it ? it.label : name(eid); };
+      parts.push(['Who sees what', Object.keys(doc.visible_to).map((k) => {
+        const rs = Array.isArray(doc.visible_to[k]) ? doc.visible_to[k] : [];
+        return `${firmName(k)}: ${rs.length ? rs.map((r) => ROLE_LABELS[r] || r).join(', ') + ', SU' : 'SU only'}`;
+      }).join('; ')]);
+    }
     box.textContent = '';
     for (const [k, val] of parts) {
       const dt = document.createElement('dt'); dt.textContent = k;
@@ -825,7 +925,7 @@ const LauncherSection = {
   },
 
   async restoreVersion(id) {
-    const extra = this.isDirty() ? ' Your unsaved changes on this page are discarded too.' : '';
+    const extra = RegistryDoc.dirty() ? ' Your unsaved changes on this page are discarded too.' : '';
     if (!(await ask('Restore this version?', 'It becomes the firm launcher for everyone (a new entry in History).' + extra, 'Restore'))) return;
     let r;
     try {
@@ -838,9 +938,9 @@ const LauncherSection = {
       return;
     }
     banner(null);
-    this.setStored(r.config);
-    if (Object.prototype.hasOwnProperty.call(r, 'version_id')) this.st.base = r.version_id;
-    this.render();
+    RegistryDoc.setStored(r.config);
+    if (Object.prototype.hasOwnProperty.call(r, 'version_id')) RegistryDoc.base = r.version_id;
+    RegistryDoc.sections.forEach((s) => { if (s.st.loaded) s.render(); });
     refreshShell(r.config);
     Page.syncTopbar();
     toast('success', r.changed === false ? 'That version is already current — nothing changed' : 'Restored');
@@ -848,9 +948,327 @@ const LauncherSection = {
 };
 
 // ═══════════════════════════════════════════════════════════════
+// SECTION: Who sees what (ui-custom S3.4)
+// ═══════════════════════════════════════════════════════════════
+// Role scoping (Fred's rulings, 2026-10-16): each launcher item is either
+// EVERYONE (no visible_to entry, the default) or HIDDEN, EXCEPT for the ticked
+// roles — su always, shown ticked and locked. An allow-list, so a role nobody
+// ticked (a new role included) never sees a restricted item. Settings and Help
+// & Support are always Everyone. Saved with the page Save, in the same
+// document as the Launcher section (RegistryDoc).
+// Per-user hides ("Hidden from these people") are entitlement_denies rows at
+// scope user, written AT ONCE through POST / DELETE /api/entitlements — not by
+// the page Save. Role and firm deny scopes are deliberately not offered here
+// (a deny hits everyone holding the role and nobody bypasses it: it cannot say
+// "only these roles").
+// Visibility only: nothing here secures anything; server routes keep their gates.
+
+// visible_to's roles, in the order the server stores them: lib/capabilities.js
+// ROLE_MEMBERS minus su (= lib/uiConfigShape VISIBLE_ROLES — tests/firmTab.test.js
+// pins this copy to it; the page cannot require server code).
+const STORE_ROLES = ['it', 'admin', 'staff', 'attorney', 'automation', 'form_dev'];
+// What the admin reads, in this order (raw keys are what is stored).
+const ROLE_LABELS = { admin: 'Admin', attorney: 'Attorney', staff: 'Staff', it: 'IT', form_dev: 'Form dev', automation: 'Automation' };
+const SU_TIP = 'Superusers always see everything';
+
+/** The rows: every registry item (as an admin sees it, no hides) plus the
+ *  STORED document's firm items, grouped like All — the shell's own
+ *  computeEffective (pure), as launcherCatalog does. */
+function whoCatalog(L, stored) {
+  const items = isObj(stored) && Array.isArray(stored.items) ? stored.items : [];
+  const all = L.computeEffective({ isAdmin: true, denied: [], customTab: { src: '#' }, ui: { firm: { registry_overrides: { items } } } });
+  const entries = all.slice();
+  const groups = (all.groups || []).filter((g) => entries.some((e) => e.group === g));
+  const undeniable = Array.isArray(L.UNDENIABLE) ? L.UNDENIABLE.slice() : ['moreSettings', 'helpSupport'];
+  return { entries, groups, undeniable };
+}
+/** stored visible_to → { id: Set(roles) } for the rows the catalog shows. */
+function visFromDoc(doc, catalog) {
+  const vt = isObj(doc) && isObj(doc.visible_to) ? doc.visible_to : {};
+  const out = new Map();
+  catalog.entries.forEach((e) => {
+    if (!catalog.undeniable.includes(e.id) && Array.isArray(vt[e.id])) out.set(e.id, new Set(vt[e.id].filter((r) => typeof r === 'string')));
+  });
+  return out;
+}
+const sameSet = (list, set) => list.length === set.size && list.every((r) => set.has(r));
+/** The form's visible_to applied to d. Entries for ids the form doesn't list
+ *  ride through untouched; an untouched row keeps its stored list verbatim;
+ *  a changed one is written in the server's order. An entry for a firm item
+ *  that d no longer has (deleted in this same save) is dropped. No entry at
+ *  all → no visible_to key (absent = everyone). */
+function visApply(d, vis, catalog) {
+  const base = isObj(d) ? d : EMPTY_DOC;
+  const vt = isObj(base.visible_to) ? base.visible_to : {};
+  const shown = new Set(catalog.entries.map((e) => e.id));
+  const itemIds = new Set((Array.isArray(base.items) ? base.items : []).map((it) => (isObj(it) ? it.id : null)));
+  const out = {};
+  for (const id of Object.keys(vt)) if (!shown.has(id)) out[id] = vt[id];
+  for (const e of catalog.entries) {
+    const set = vis.get(e.id);
+    if (!set || (FIRM_ID_RE.test(e.id) && !itemIds.has(e.id))) continue;
+    const orig = vt[e.id];
+    out[e.id] = Array.isArray(orig) && sameSet(orig, set) ? orig
+      : [...STORE_ROLES.filter((r) => set.has(r)), ...[...set].filter((r) => !STORE_ROLES.includes(r))];
+  }
+  const next = { ...base };
+  if (Object.keys(out).length) next.visible_to = out; else delete next.visible_to;
+  return next;
+}
+/** A per-user deny's error → the sentence to show inline. */
+function denyErrText(e) {
+  if (e && e.status === 403) return SESSION_MSG;
+  if (e && e.status === 409) return 'Already hidden from them.';
+  if (e && e.status === 404) return 'That hide was already removed.';
+  return (e && e.message) || 'request failed';
+}
+
+const WhoSection = {
+  id: 'who', title: 'Who sees what', icon: 'user-lock',
+  st: { form: null, catalog: null, denies: null, deniesError: null, srv: null, loaded: false, error: null, busy: new Set() },
+  body: null, head: null, L: null,
+
+  mount(body, head) {
+    this.body = body; this.head = head;
+    body.addEventListener('change', (ev) => this.onChange(ev));
+    body.addEventListener('click', (ev) => this.onClick(ev));
+  },
+
+  async load() {
+    const L = P.ycLauncher;
+    if (!L || typeof L.computeEffective !== 'function') {
+      this.st.error = 'The launcher is not reachable from here — open this page from YisraCase (More → YisraCase Config).';
+      this.render();
+      return;
+    }
+    this.L = L;
+    const [cfg, dn] = await Promise.allSettled([RegistryDoc.load(), api('/api/entitlements')]);
+    if (cfg.status === 'rejected') {
+      this.st.error = errText(cfg.reason, 'Could not load who sees what');
+      this.render();
+      return;
+    }
+    if (dn.status === 'rejected') {
+      this.st.denies = null;
+      this.st.deniesError = errText(dn.reason, 'Could not load the per-person hides');
+    } else {
+      this.st.denies = (Array.isArray(dn.value && dn.value.denies) ? dn.value.denies : []).filter((d) => isObj(d) && d.scope === 'user');
+      this.st.deniesError = null;
+    }
+    this.reform();
+    this.st.loaded = true;
+    this.st.error = null;
+    this.render();
+  },
+
+  reform() {
+    this.st.catalog = whoCatalog(this.L, RegistryDoc.stored);
+    this.st.form = { vis: visFromDoc(RegistryDoc.stored, this.st.catalog) };
+    this.st.srv = null;
+  },
+  apply(d) { return visApply(d, this.st.form.vis, this.st.catalog); },
+  isDirty() {
+    if (!this.st.loaded) return false;
+    const stored = isObj(RegistryDoc.stored) ? RegistryDoc.stored : EMPTY_DOC;
+    return canonical(this.apply(stored)) !== canonical(stored);
+  },
+  problemCount() { return 0; },
+  takeErrors(errors) {
+    const srv = {}, rest = [];
+    errors.forEach((m) => {
+      const x = /^visible_to\.([A-Za-z0-9:-]+)/.exec(String(m));
+      if (x) (srv[x[1]] = srv[x[1]] || []).push(String(m).replace(/^visible_to\.[A-Za-z0-9:-]+(\[\d+\])?:?\s*/, ''));
+      else rest.push(m);
+    });
+    this.st.srv = srv;
+    this.renderErrors();
+    return rest;
+  },
+  save() { return RegistryDoc.save(); },
+
+  // ── people (per-user denies) ──
+  users() { return P.firmData && Array.isArray(P.firmData.users) ? P.firmData.users : []; },
+  userName(uid) {
+    const u = this.users().find((x) => String(x.user) === String(uid));
+    if (!u) return 'user ' + uid;
+    return (u.user_name || 'user ' + uid) + (u.active === false ? ' (inactive)' : '');
+  },
+  deniesFor(id) { return (this.st.denies || []).filter((d) => d.item_key === id); },
+
+  // ── rendering ──
+  render() {
+    const st = this.st;
+    if (st.error) {
+      this.body.innerHTML = '';
+      const d = document.createElement('div');
+      d.className = 'empty-state';
+      d.innerHTML = '<i class="fa-solid fa-triangle-exclamation"></i><div></div>';
+      d.lastChild.textContent = st.error;
+      this.body.appendChild(d);
+      this.status();
+      return;
+    }
+    if (!st.loaded) {
+      this.body.innerHTML = '<div class="empty-state"><i class="fa-solid fa-spinner spin"></i><div>Loading…</div></div>';
+      return;
+    }
+    const cat = st.catalog;
+    const groups = cat.groups.map((g) => `<div class="fm-group-title">${esc(g)}</div>` +
+      cat.entries.filter((e) => e.group === g).map((e) => `<div class="fm-who-row" data-who-id="${esc(e.id)}">${this.rowInner(e)}</div>`).join('')).join('');
+    this.body.innerHTML = `
+      <div class="fm-block">
+        <span class="yc-hint">Choose who sees each launcher item. <b>Everyone</b> is the default. <b>Hidden, except</b> hides
+          the item from everyone but the roles you tick — superusers (SU) always see everything, and a role added later
+          sees nothing restricted until you tick it here. These choices are kept by the page's <b>Save</b>, together with
+          the Launcher section above. New firm items appear here once they are saved.</span>
+        <span class="yc-hint"><b>Hidden from these people</b> takes one item off one person's launcher. Those changes are
+          saved the moment you make them, not by Save, and reach that person the next time they load YisraCase.</span>
+        <span class="yc-hint"><b>This is decluttering, not security:</b> it removes buttons, not anyone's access — what a
+          person may open is decided by their role.</span>
+        <div class="fm-err" id="fm-who-denies-err"></div>
+        ${groups}
+      </div>`;
+    E('fm-who-denies-err').textContent = st.deniesError || '';
+    this.renderErrors();
+    this.status();
+  },
+
+  rowInner(e) {
+    const st = this.st, und = st.catalog.undeniable.includes(e.id), set = st.form.vis.get(e.id);
+    const head = `<span class="fm-ico"><i class="fa-solid fa-${esc(ICON_RE.test(e.icon) ? e.icon : 'square')}"></i></span>
+      <span class="fm-name">${esc(e.label)}${und ? '<span class="yc-hint">always shown</span>' : ''}</span>
+      <select class="fm-who-mode" data-mode="${esc(e.id)}" aria-label="Who sees ${esc(e.label)}" ${und ? 'disabled' : ''}>
+        <option value="all">Everyone</option>
+        <option value="except" ${set && !und ? 'selected' : ''}>Hidden, except…</option></select>`;
+    if (und) return head;
+    const roles = !set ? '' : `<div class="fm-who-roles" role="group" aria-label="Roles that see ${esc(e.label)}">` +
+      Object.keys(ROLE_LABELS).map((r) => `<label><input type="checkbox" data-role="${r}" ${set.has(r) ? 'checked' : ''}><span>${ROLE_LABELS[r]}</span></label>`).join('') +
+      `<label title="${SU_TIP}"><input type="checkbox" data-role="su" checked disabled title="${SU_TIP}"><span>SU</span></label></div>`;
+    return head + roles +
+      `<div class="fm-who-people" data-people="${esc(e.id)}">${this.peopleHtml(e)}</div>
+      <div class="fm-err" data-err-who="${esc(e.id)}"></div>`;
+  },
+
+  peopleHtml(e) {
+    if (!this.st.denies) return '';
+    const mine = this.deniesFor(e.id);
+    const taken = new Set(mine.map((d) => String(d.scope_ref)));
+    const chips = mine.length ? mine.map((d) => `<span class="fm-chip">${esc(this.userName(d.scope_ref))}<button type="button"
+        data-act="unhide" data-deny="${esc(d.id)}" title="Stop hiding it from ${esc(this.userName(d.scope_ref))}"
+        aria-label="Stop hiding ${esc(e.label)} from ${esc(this.userName(d.scope_ref))}">×</button></span>`).join('')
+      : '<span class="fm-who-none">nobody</span>';
+    // ACTIVE users only — the assign-picker rule (AI_CONTEXT §18, firm-data's
+    // header): u.user_type && u.active !== false.
+    const opts = this.users().filter((u) => u.user_type && u.active !== false && !taken.has(String(u.user)))
+      .map((u) => `<option value="${esc(u.user)}">${esc(u.user_name || 'user ' + u.user)}</option>`).join('');
+    const busy = this.st.busy.has(e.id) ? 'disabled' : '';
+    return `<span class="fm-who-plabel">Hidden from these people:</span> ${chips}
+      <select data-person-for="${esc(e.id)}" aria-label="Hide ${esc(e.label)} from a person" ${busy}><option value="">Add a person…</option>${opts}</select>
+      <button type="button" class="btn btn-outline btn-sm" data-act="hide-person" ${busy}>Hide</button>`;
+  },
+
+  redrawRow(id) {
+    const row = [...this.body.querySelectorAll('[data-who-id]')].find((el) => el.dataset.whoId === id);
+    const e = this.st.catalog.entries.find((x) => x.id === id);
+    if (!row || !e) return;
+    row.innerHTML = this.rowInner(e);
+    this.renderErrors();
+  },
+  /** An inline message on one row (per-user hide results). */
+  rowMsg(id, msg) {
+    const el = [...this.body.querySelectorAll('[data-err-who]')].find((x) => x.dataset.errWho === id);
+    if (el) el.textContent = msg || '';
+  },
+
+  renderErrors() {
+    if (!this.st.loaded) return;
+    const srv = this.st.srv || {};
+    this.body.querySelectorAll('[data-err-who]').forEach((el) => { el.textContent = (srv[el.dataset.errWho] || []).join(' · '); });
+  },
+  status() {
+    const el = this.head.querySelector('.fm-sec-status');
+    if (this.st.error || !this.st.loaded) { el.textContent = ''; el.classList.remove('dirty'); return; }
+    const d = this.isDirty();
+    el.textContent = d ? 'Unsaved changes' : 'All changes saved';
+    el.classList.toggle('dirty', d);
+  },
+  changed() { this.status(); Page.syncTopbar(); },
+
+  // ── events ──
+  idOf(el) { const r = el.closest('[data-who-id]'); return r ? r.dataset.whoId : null; },
+
+  onChange(ev) {
+    const t = ev.target, id = this.idOf(t), st = this.st;
+    if (!id || st.catalog.undeniable.includes(id)) return;
+    if (t.dataset.mode) {
+      if (t.value === 'except') { if (!st.form.vis.has(id)) st.form.vis.set(id, new Set()); }
+      else st.form.vis.delete(id);
+      if (st.srv) delete st.srv[id];
+      this.redrawRow(id);
+      return this.changed();
+    }
+    if (t.dataset.role) {
+      const set = st.form.vis.get(id);
+      if (!set || t.dataset.role === 'su' || !Object.prototype.hasOwnProperty.call(ROLE_LABELS, t.dataset.role)) return;
+      if (t.checked) set.add(t.dataset.role); else set.delete(t.dataset.role);
+      if (st.srv) delete st.srv[id];
+      return this.changed();
+    }
+  },
+
+  async onClick(ev) {
+    const b = ev.target.closest('button[data-act]');
+    if (!b) return;
+    const id = this.idOf(b);
+    if (!id || this.st.busy.has(id)) return;
+    if (b.dataset.act === 'hide-person') {
+      const sel = b.parentNode.querySelector('[data-person-for]');
+      const uid = sel && sel.value;
+      if (!uid) { this.rowMsg(id, 'Choose a person first.'); return; }
+      await this.denyWrite(id, async () => {
+        const r = await api('/api/entitlements', 'POST', { scope: 'user', scope_ref: Number(uid), item_key: id });
+        if (r && isObj(r.deny)) this.st.denies.push(r.deny);
+      });
+    } else if (b.dataset.act === 'unhide') {
+      const did = Number(b.dataset.deny);
+      await this.denyWrite(id, async () => {
+        try { await api(`/api/entitlements/${encodeURIComponent(did)}`, 'DELETE'); }
+        catch (e) { if (!(e && e.status === 404)) throw e; this.st.denies = this.st.denies.filter((d) => Number(d.id) !== did); throw e; }
+        this.st.denies = this.st.denies.filter((d) => Number(d.id) !== did);
+      });
+    }
+  },
+  /** Re-read the per-user hides; on failure the list stays as it was. */
+  async reloadDenies() {
+    try {
+      const r = await api('/api/entitlements');
+      this.st.denies = (Array.isArray(r && r.denies) ? r.denies : []).filter((d) => isObj(d) && d.scope === 'user');
+    } catch (_) { /* keep what we had */ }
+  },
+  /** One per-user hide write (immediate, outside the page Save): the row is
+   *  busy meanwhile; a failure is shown on the row. */
+  async denyWrite(id, fn) {
+    this.st.busy.add(id);
+    this.redrawRow(id);
+    let msg = '';
+    try { await fn(); } catch (e) {
+      msg = denyErrText(e);
+      // A 409 is a hide someone else already made: re-read the list (it is
+      // tiny) so the row shows it as a chip and the picker stops offering them.
+      if (e && e.status === 409) await this.reloadDenies();
+    }
+    this.st.busy.delete(id);
+    this.redrawRow(id);
+    this.rowMsg(id, msg);
+    if (!msg) toast('success', 'Saved');
+  },
+};
+
+// ═══════════════════════════════════════════════════════════════
 // PAGE — the section host + the shell protocol
 // ═══════════════════════════════════════════════════════════════
-const SECTIONS = [LauncherSection];
+const SECTIONS = [LauncherSection, WhoSection];
+RegistryDoc.sections = [LauncherSection, WhoSection];   // the two that edit registry_overrides, in apply order
 
 const Page = {
   mounted: false, saving: false,
@@ -926,7 +1344,8 @@ window.addEventListener('beforeunload', (e) => {
 
 // Test / debug handle: the pure parts of the Launcher section.
 window.FirmPage = { Page, SECTIONS, LauncherSection, canonical, makeId, slugOf, formFromDoc, docFromForm,
-  relabelRow, formProblems, placeErrors, launcherCatalog, refreshShell, firmIdsIn, SESSION_MSG, CONFLICT_MSG };
+  relabelRow, formProblems, placeErrors, launcherCatalog, refreshShell, firmIdsIn, SESSION_MSG, CONFLICT_MSG,
+  RegistryDoc, WhoSection, whoCatalog, visFromDoc, visApply, STORE_ROLES, ROLE_LABELS, SU_TIP };
 
 // ── Boot ───────────────────────────────────────────────────────
 (function waitForShell() {
