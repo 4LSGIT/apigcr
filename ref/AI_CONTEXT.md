@@ -1648,7 +1648,8 @@ runs user shortcuts; the personal editor is `public/js/ycLayoutEditor.js`
 `registry_overrides` = `{ hidden, renames, locked, items, visible_to, retired }`
 — versioned in `ui_config_versions`, optimistic `base` → 409. User keys:
 `layout` `{ placed, removed }` per surface, `shortcuts` `{ bindings }`,
-`items` (own buttons, ≤50, `user:<slug>`), `prefs` `{ theme }`. `retired`
+`items` (own buttons, ≤50, `user:<slug>`; a button may be a drawer,
+`{ type:'drawer', items:[ref…] }` — ≤30 refs, one level deep), `prefs` `{ theme }`. `retired`
 lists are server-managed (a deleted firm/user item id never comes back —
 layouts and shortcuts point at ids). Strict validator `lib/uiConfigShape.js`
 (linear regexes, timing-tested); `services/uiConfigService.js`;
@@ -1664,7 +1665,9 @@ layouts and shortcuts point at ids). Strict validator `lib/uiConfigShape.js`
   `data-target`).
 - More/Admin grids are not user-editable: every grid item keeps its tile
   (the wsurl drill restore depends on `elementsOf(id).more/.admin`).
-- DB-authored items carry no code: kinds url | tool | view only. Tool/view
+- DB-authored items carry no code: kinds url | tool | view only, plus
+  drawer for a user's own buttons (a list of ids; `exec` opens it as the
+  `#ycDrawer` menu, listing only entries effective right now). Tool/view
   open in the tool dialog (they need the parent shell's `apiSend`); links open
   a new window (noopener), never embedded. Custom behaviour for a firm = an
   SU-authored tool (§29), talking through `window.parent.ycTool`.

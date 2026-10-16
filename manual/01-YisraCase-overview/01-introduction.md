@@ -114,8 +114,9 @@ tiles and sidebar: move items, hide the ones you don't use, and add shortcuts to
 anything else. Its **Keyboard shortcuts** tab gives any feature a key
 combination of your own, such as **⌃⌘T** (**Ctrl+Alt+T** on Windows) for
 Tasks; the Ctrl+K search shows each feature's combination beside its name. Its
-**My buttons** tab makes buttons of your own: a saved view, a tool, or a link to
-another website, listed under **Mine** in All and the search. See
+**My buttons** tab makes buttons of your own: a saved view, a tool, a link to
+another website, or a drawer that opens a small menu of several, listed under
+**Mine** in All and the search. See
 [Your own launcher](15-your-launcher.md).
 
 ### On a phone

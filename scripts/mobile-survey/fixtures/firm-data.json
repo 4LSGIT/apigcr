@@ -138,13 +138,13 @@
       { "item": "moreAutomations" }, { "item": "firm:unbroken" }, { "item": "calendar" },
       { "break": true },
       { "item": "appts" }, { "item": "events" }, { "item": "tasks" }, { "item": "newClient" }, { "item": "firm:intake-checklist" },
-      { "item": "user:long-tool" },
+      { "item": "user:long-tool" }, { "item": "user:morning-drawer" },
       { "break": true },
       { "item": "custom" }, { "item": "moreFeatures" }, { "item": "pipeline" }, { "item": "bills" }
      ],
      "sidebar": [
       { "label": "Mine: the forty-character section label" },
-      { "item": "comms" }, { "item": "cases" }, { "item": "firm:intake-checklist" }, { "item": "user:my-open-leads" }, { "item": "moreAutomations" },
+      { "item": "comms" }, { "item": "cases" }, { "item": "firm:intake-checklist" }, { "item": "user:my-open-leads" }, { "item": "user:morning-drawer" }, { "item": "moreAutomations" },
       { "label": "Records" },
       { "item": "contacts" }, { "item": "appts" }, { "item": "calendar" }, { "item": "events" }, { "item": "tasks" }, { "item": "bills" },
       { "label": "Actions" },
@@ -172,7 +172,10 @@
      { "id": "user:long-tool", "label": "Thewholeintakechecklistwithnospaces", "icon": "screwdriver-wrench",
        "action": { "type": "tool", "key": "qa-tool-with-a-very-long-key-name", "present": "modal", "size": "compact" } },
      { "id": "user:court-site", "label": "Court e-filing", "icon": "gavel",
-       "action": { "type": "url", "href": "https://ecf.mieb.uscourts.gov/cgi-bin/login.pl?with=a-long-query-string-that-runs-on", "present": "window" } }
+       "action": { "type": "url", "href": "https://ecf.mieb.uscourts.gov/cgi-bin/login.pl?with=a-long-query-string-that-runs-on", "present": "window" } },
+     { "id": "user:morning-drawer", "label": "Everything I open first thing every day", "icon": "box-open",
+       "action": { "type": "drawer", "items": ["user:my-open-leads", "firm:unbroken", "user:long-tool", "firm:payroll-portal", "tasks",
+         "moreDocuments", "user:court-site", "cases", "notAnItemAnymore"] } }
     ],
     "retired": ["user:old-button"]
    }

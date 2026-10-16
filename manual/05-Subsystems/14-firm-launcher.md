@@ -176,6 +176,8 @@ newest first, with who saved it and when. The one in use is marked **current**.
 - Hides by role or for the whole firm aren't offered under **Hidden from these
   people**: use **Hidden, except** for roles, and Hide for the whole firm.
 - **People's own buttons.** Each person can add buttons of their own (links,
-  tools, saved views). The firm's Hide and **Who sees what** don't reach them,
-  because they are that person's own: see
+  tools, saved views, and drawers holding several items). The firm's Hide and
+  **Who sees what** don't reach those buttons, because they are that person's
+  own; a feature or firm item the firm hides, or keeps from someone, still
+  drops out of that person's drawers. See
   [Your own launcher → My buttons](../01-YisraCase-overview/15-your-launcher.md#my-buttons).

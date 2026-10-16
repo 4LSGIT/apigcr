@@ -309,6 +309,36 @@ async function walk(page, W, record) {
       await page.evaluate(() => calxSetView('list'));
     }
 
+    // A drawer's menu (ui-custom S5b, fixtures/firm-data.json: ui.user.items'
+    // drawer — a 39-character name, the long user and firm labels inside it,
+    // a role-restricted firm item (shown: the survey user is su) and an
+    // unknown id (dropped)): opened from
+    // its Home tile (a popover under the tile; at ≤768px a sheet at the bottom
+    // over a backdrop), then from its sidebar row (beside the row; at phone
+    // width the sheet again). The list clips sideways, so m.boxes checks it.
+    if (tabs.includes('tabHome')) {
+      const drawerBox = async (m, ok, sel) => {
+        m.boxes = [ok ? await page.evaluate(measureBox, '#ycDrawer .yc-dr-list') : { sel: '#ycDrawer from ' + sel + ' (did not open)', missing: true }];
+        return m;
+      };
+      const openFrom = (sel) => page.evaluate((sel) => {
+        const t = document.querySelector(sel);
+        if (t) t.click();
+        const d = document.getElementById('ycDrawer');
+        return !!(d && !d.hidden);
+      }, sel);
+      const closeDrawer = () => page.evaluate(() => { const x = document.querySelector('#ycDrawer:not([hidden]) .yc-dr-close'); if (x) x.click(); });
+      await page.evaluate(() => openMainTab('tabHome')); await sleep(800);
+      const fromHome = '#tabHome [data-yc-shortcut="user:morning-drawer"]';
+      const okHome = await openFrom(fromHome); await sleep(300);
+      await record('tab:tabHome:drawer', await drawerBox(await measure(page, null), okHome, fromHome), await shot('home_drawer'));
+      await closeDrawer(); await sleep(200);
+      const fromSidebar = '#appSidebar [data-yc-shortcut="user:morning-drawer"]';
+      const okSidebar = await openFrom(fromSidebar); await sleep(300);
+      await record('tab:tabHome:drawer-sidebar', await drawerBox(await measure(page, null), okSidebar, fromSidebar), await shot('home_drawer_sidebar'));
+      await closeDrawer(); await sleep(200);
+    }
+
     // All → Customize my launcher (ui-custom S4b): the layout editor, a
     // full-screen panel over the shell (public/js/ycLayoutEditor.js), over the
     // fixture user layout (fixtures/firm-data.json: a 40-character section
@@ -386,6 +416,15 @@ async function walk(page, W, record) {
           document.querySelector('#ycLayoutEditor .ymb-form').scrollIntoView();
         }); await sleep(400);
         await record('tab:tabAll:layout-editor:buttons-form-error', await editorBox(await measure(page, null)), await shot('all_layout_editor_buttons_form_error'));
+        await page.evaluate(() => document.querySelector('#ycLayoutEditor .ymb-sec [data-act="mb-cancel"]').click()); await sleep(200);
+        // the drawer's form (ui-custom S5b): its contents list (the long
+        // labels, an Unavailable entry) with the "Add to the drawer" picker open
+        await page.evaluate(() => {
+          document.querySelector('#ycLayoutEditor .ymb-row[data-id="user:morning-drawer"] [data-act="mb-edit"]').click();
+          document.querySelector('#ycLayoutEditor .ymb-form [data-act="mb-ref-pick"]').click();
+          document.querySelector('#ycLayoutEditor .ymb-form [data-field="refs"]').scrollIntoView();
+        }); await sleep(400);
+        await record('tab:tabAll:layout-editor:buttons-drawer', await editorBox(await measure(page, null)), await shot('all_layout_editor_buttons_drawer'));
         await page.evaluate(() => document.querySelector('#ycLayoutEditor .ymb-sec [data-act="mb-cancel"]').click()); await sleep(200);
         await page.evaluate(() => ycLayoutEditor.close()); await sleep(300);
       }

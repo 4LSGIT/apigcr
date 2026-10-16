@@ -4,8 +4,8 @@ The **launcher** is every way into a feature: the sidebar, the Home tiles, the
 More Features and Admin grids, the **All** tab and the **Ctrl+K** search. Your
 firm sets it up for everyone. On top of that, you can arrange **your own Home
 tiles and your own sidebar**, give features **keyboard shortcuts** of your
-own, and make **buttons of your own** (a saved view, a tool, or a link to
-another website). Nobody else sees your arrangement, your shortcuts or your
+own, and make **buttons of your own** (a saved view, a tool, a link to
+another website, or a **drawer** that holds several). Nobody else sees your arrangement, your shortcuts or your
 buttons, and all three are saved on your account, so they follow you to any
 computer you sign in on.
 
@@ -194,6 +194,7 @@ see them, and they are saved on your account like the rest of this page.
 | **A saved view** | One of the firm's saved views (picked from a list) | Over the app, in a window you close with **×** or **Esc**. Pick **Large** (the usual) or **Compact** (a small card). |
 | **A tool** | One of the firm's live tools (picked from a list) | The same way: over the app, Large or Compact. |
 | **A link to a website** | Any secure address (`https://…`), or a page of YisraCase itself (`/…`) | **Always in a new browser window**, never inside YisraCase. |
+| **A drawer** | A small menu of up to 30 other items: features, your firm's items, your other buttons | Beside its tile or sidebar row; pick an item to open it. See [Drawers](#drawers). |
 
 **Why links open in a new window.** Another website isn't part of YisraCase:
 shown inside the app, it would look like YisraCase while being somebody
@@ -237,9 +238,10 @@ you save: the button, its place and its shortcut are saved together.
 
 ### Deleting a button
 
-The bin deletes a button. If it is on your Home or sidebar or has a keyboard
-shortcut, the editor says so and asks first; deleting it takes it off those
-too, so nothing is left pointing at it. Nothing is gone until you Save.
+The bin deletes a button. If it is on your Home or sidebar, in one of your
+drawers, or has a keyboard shortcut, the editor says so and asks first;
+deleting it takes it off those too, so nothing is left pointing at it. Nothing
+is gone until you Save.
 
 ### Things to know
 
@@ -254,6 +256,56 @@ too, so nothing is left pointing at it. Nothing is gone until you Save.
 - Buttons that open as a tab of their own, like the custom tab in Settings,
   are not here yet.
 
+## Drawers
+
+A **drawer** is a button that holds other items: put the five things you open
+every morning in one, give it a single tile on your Home or a single row on
+your sidebar, and open the rest from there. It is one of your buttons, so it
+counts toward the 50, is listed under **Mine** in All and the search, and can
+go on Home, on the sidebar, and get a keyboard shortcut like any other.
+
+### Making one
+
+1. On the **My buttons** tab, press **Add a button**, give it a **Name** and an
+   **Icon**, and set **Opens** to **A drawer**.
+2. Press **Add to the drawer** and pick from the list (type part of a name to
+   find it). Anything you have can go in: a feature, a More Features or Admin
+   panel, one of your firm's items, or one of your own buttons, even one you
+   made a minute ago and haven't saved. The list stays open, so you can pick
+   several in a row; **Done** closes it.
+3. **↑ / ↓** set the order the drawer shows them in, and **×** takes one out.
+   A drawer holds up to **30** items.
+4. Press **Add button**, then **Save**. Put it on your Home or sidebar with
+   **Add to Home** / **Add to sidebar**, as with any button.
+
+In the list of buttons, a drawer says how many items it holds (*Drawer · 4
+items*), and each button inside one is tagged with the drawer's name.
+
+### Opening it
+
+- Click its tile or sidebar row: a small menu opens right beside it. On a
+  phone it slides up from the bottom of the screen.
+- From **All**, it opens under the tile you clicked; from the **Ctrl+K**
+  search or its keyboard shortcut, near the top of the screen.
+- Click an item to open it; the drawer closes as it does.
+- **Esc**, the **×**, or a click anywhere outside closes it, and so does a
+  second click on its tile. With the keyboard, **↑ / ↓** (and **Home** /
+  **End**) move between the items and **Enter** opens one.
+- Only one drawer is open at a time. It doesn't open while a dialog or the
+  **Customize my launcher** editor is open.
+
+### Things to know
+
+- **A drawer only shows what you can open right now.** If your firm hides a
+  feature you put in a drawer, or it isn't available to your account, the
+  drawer simply leaves it out (the editor still lists it, tagged
+  **Unavailable**, so it comes back if the feature does). A drawer with
+  nothing you can open says *Nothing here you can open*.
+- **One level deep.** A drawer can't hold another drawer, and a button that is
+  inside a drawer can't be turned into one; take it out of that drawer first.
+- Deleting a button takes it out of every drawer that held it (see
+  [Deleting a button](#deleting-a-button)).
+
 ## What your firm controls
 
 Your firm's launcher settings (More → YisraCase Config → Firm, see
@@ -261,7 +313,7 @@ Your firm's launcher settings (More → YisraCase Config → Firm, see
 arrangement:
 
 - **Firm hides.** A feature the firm hid is gone from every surface, from your
-  layout and from **Add a shortcut**. If the firm brings it back, so does your
+  layout, from your drawers and from **Add a shortcut**. If the firm brings it back, so does your
   launcher: it comes back where you had it (or, if you never had it, in its
   usual place).
 - **Renames.** A feature the firm renamed shows the firm's name in your

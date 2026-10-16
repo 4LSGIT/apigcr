@@ -262,7 +262,9 @@
       //     buttons"), group "Mine" — after Firm, before Admin — in their
       //     array order. They are the user's: firm hidden / renames /
       //     visible_to, entitlement denies (a user: id can't be denied) and
-      //     the undeniable rules do not touch them. See userItems below.
+      //     the undeniable rules do not touch them. See userItems below. A
+      //     button may be a DRAWER (S5b): listed, placed and bound like any
+      //     other; exec opens its menu (see Drawers below).
       // Each entry: { id, group, label, labels, icon } — labels = label +
       // surfaceLabels, what the matcher reads. group = the item's origin:
       // its sidebar section, else Home, else the grid it is on; groups run
@@ -309,12 +311,15 @@
       // user.layout is the user's Home / sidebar layout (S4a, below);
       // user.shortcuts is the user's keyboard shortcuts: /js/ycAll.js
       // dispatches them (S4c); nothing in this block reads it.
-      // user.items is the user's own buttons (S5a, userItems below).
+      // user.items is the user's own buttons (S5a, userItems below), drawers
+      // among them (S5b).
       var FIRM_GROUP = 'Firm';
       var FIRM_ID_RE = /^firm:[a-z0-9-]{1,40}$/;
       var USER_GROUP = 'Mine';
       var USER_ID_RE = /^user:[a-z0-9-]{1,40}$/;     // lib/uiConfigShape.js USER_ID_RE
       var USER_ITEMS_MAX = 50;                       // lib/uiConfigShape.js CAPS.items
+      var DRAWER_MAX = 30;                           // lib/uiConfigShape.js CAPS.drawer
+      var REGISTRY_ID_RE = /^[A-Za-z][A-Za-z0-9]{0,63}$/;   // lib/uiConfigShape.js REGISTRY_ID_RE
       var ICON_RE = /^[a-z0-9-]{1,40}$/;
       var TOOL_KEY_RE = /^[a-z0-9-]{1,80}$/;         // routes/api.tools.js TOOL_KEY_RE
       var VIEW_KEY_RE = /^[a-z][a-z0-9_]{2,59}$/;    // services/reportService.js REPORT_KEY_RE
@@ -381,16 +386,37 @@
           size: hasOwn(a, 'size') ? a.size : 'large',
         };
       }
+      /** A drawer's action (S5b, a user's own button only) → its clean copy,
+       *  or null: { type:'drawer', items:[id…] } — no other key, ≤ DRAWER_MAX
+       *  ids of the registry / firm / user shape, no duplicates
+       *  (lib/uiConfigShape.js drawerRefs; its depth rule — no drawer in a
+       *  drawer — is applied where the drawer is drawn, drawerEntries). */
+      function cleanDrawer(a) {
+        if (!isObj(a) || a.type !== 'drawer' || !onlyKeys(a, ['type', 'items'])) return null;
+        if (Object.prototype.toString.call(a.items) !== '[object Array]' || a.items.length > DRAWER_MAX) return null;
+        var seen = Object.create(null), out = [];
+        for (var i = 0; i < a.items.length; i++) {
+          var r = a.items[i];
+          if (typeof r !== 'string' || !(REGISTRY_ID_RE.test(r) || FIRM_ID_RE.test(r) || USER_ID_RE.test(r)) || r in seen) return null;
+          seen[r] = true;
+          out.push(r);
+        }
+        return { type: 'drawer', items: out };
+      }
       /** One launcher item (firm: idRe FIRM_ID_RE; a user's own button:
        *  USER_ID_RE — the same grammar, lib/uiConfigShape.js cleanItems) →
-       *  its clean copy, or null. */
-      function cleanItem(it, idRe) {
+       *  its clean copy, or null. drawers: a drawer action is allowed (user
+       *  buttons only, S5b). */
+      function cleanItem(it, idRe, drawers) {
         if (!isObj(it) || !onlyKeys(it, ['id', 'label', 'icon', 'action'])) return null;
         if (typeof it.id !== 'string' || !idRe.test(it.id)) return null;
         var label = cleanLabel(it.label);
-        if (label == null || typeof it.icon !== 'string' || !ICON_RE.test(it.icon) || !firmTarget(it.action)) return null;
+        if (label == null || typeof it.icon !== 'string' || !ICON_RE.test(it.icon)) return null;
+        var dr = drawers && isObj(it.action) && it.action.type === 'drawer' ? cleanDrawer(it.action) : null;
+        if (!dr && !firmTarget(it.action)) return null;
         var a = it.action, ca;
-        if (a.type === 'url') ca = { type: 'url', href: a.href, present: a.present };
+        if (dr) ca = dr;
+        else if (a.type === 'url') ca = { type: 'url', href: a.href, present: a.present };
         else {
           ca = { type: a.type, key: a.key, present: a.present };
           if (hasOwn(a, 'size')) ca.size = a.size;
@@ -398,7 +424,7 @@
         return { id: it.id, label: label, icon: it.icon, action: ca };
       }
       function cleanFirmItem(it) { return cleanItem(it, FIRM_ID_RE); }
-      function cleanUserItem(it) { return cleanItem(it, USER_ID_RE); }
+      function cleanUserItem(it) { return cleanItem(it, USER_ID_RE, true); }
       /** ui → the user's own buttons (S5a), clean, in array order: a bad or
        *  duplicate one is dropped with a console warning (never listed, never
        *  navigates); at most USER_ITEMS_MAX are read. quiet: no warnings. */
@@ -592,6 +618,7 @@
         hidePass(hide, firm.renames);
         renderFirmRow();
         layoutPass(firm.locked);
+        refreshDrawer();
         try { window.dispatchEvent(new CustomEvent('ycLauncherAccess')); } catch (_) { /* no CustomEvent */ }
         return effectiveRegistry();
       }
@@ -959,8 +986,9 @@
           }
           // A sidebar shortcut closes the phone drawer whatever exec opens — a
           // firm item's new window included (openMainTab only covers tabs).
+          // (a drawer, S5b, opens anchored to this element)
           el.addEventListener('click', function () {
-            exec(id);
+            exec(id, { from: el });
             if (surface === 'sidebar') document.body.classList.remove('sidebar-mobile-open');
           });
           n = R.neutral[id] = { ws: document.createTextNode(RULES[surface].indent), el: el };
@@ -1033,6 +1061,300 @@
         }
       }
 
+
+      // ── Drawers (ui-custom S5b) ────────────────────────────────────────
+      // A drawer is one of the user's own buttons whose action is
+      // { type:'drawer', items:[id…] } (ui.user.items; lib/uiConfigShape.js).
+      // It is an effective item like any other button (group Mine: All, the
+      // palette, shortcuts, Home / the sidebar), and exec(drawerId) opens its
+      // MENU: #ycDrawer, ONE host, one drawer at a time.
+      //   - Where: a small popover anchored to the element that opened it
+      //     (the Home tile / sidebar row passes itself as opts.from; an All
+      //     tile is the element of the click being dispatched) — below it, or
+      //     to the right of a sidebar row, kept inside the window. Opened with
+      //     no element (the palette, a keyboard shortcut, ycTool.exec) it sits
+      //     centred near the top. At ≤768px it is a sheet at the bottom of the
+      //     screen over a backdrop (CSS below).
+      //   - What: the drawer's EFFECTIVE entries, in its order — an id not in
+      //     this user's effective registry right now (hidden, denied,
+      //     role-restricted, admin-gated, deleted) drops out silently, and so
+      //     does a drawer (one level deep). None left: "Nothing here you can
+      //     open". Labels are text nodes; icons only from a validated slug.
+      //   - Choosing an entry closes the drawer (focus back — see below),
+      //     then runs exec(entry).
+      //   - Esc closes it and gives focus back; so does the × button. Back
+      //     to the opener when it can take focus (a Home or All tile — a
+      //     button); a sidebar row is a plain div that can't, so focus goes
+      //     back to wherever it was when the drawer opened (an input a
+      //     shortcut was pressed in), else nowhere in particular. A press
+      //     outside it, or focus moving elsewhere (a pane's iframe), closes it
+      //     where the user went. A POINTER press on its own opener closes it
+      //     (a toggle); keyboard activation of the opener (a click with
+      //     detail 0) always opens. Arrows / Home / End move between entries;
+      //     Tab cycles inside it.
+      //   - It stands down like the Ctrl-K palette: it does not open while a
+      //     SweetAlert dialog (not a toast) or the layout editor
+      //     (ycLayoutEditor.js) is open, and while a SweetAlert dialog or the
+      //     palette is up it leaves keys and presses to them. exec() of
+      //     anything else closes it first; applyAccess re-draws an open one (or
+      //     closes it, when the drawer itself is gone).
+      // z-index 1046: above the tool dialog (1040) and the layout editor
+      // (1045, never open with it), below the palette (1050) and SweetAlert2
+      // (1060).
+      var DR = { root: null, pop: null, list: null, title: null, icon: null, id: null, from: null, restore: null };
+      var lastClick = null, drSuppress = null;
+      if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
+        // the click being dispatched — its element anchors a drawer exec() opens from it
+        document.addEventListener('click', function (e) { lastClick = e; }, true);
+      }
+      function swalUp() {
+        try {
+          var S = window.Swal;
+          if (!(S && S.isVisible && S.isVisible())) return false;
+          var p = S.getPopup && S.getPopup();
+          return !(p && p.classList.contains('swal2-toast'));
+        } catch (_) { return false; }
+      }
+      function editorUp() {
+        var E = window.ycLayoutEditor;
+        return !!(E && typeof E.isOpen === 'function' && E.isOpen());
+      }
+      function paletteUp() {
+        var A = window.ycAll;
+        return !!(A && typeof A.isOpen === 'function' && A.isOpen());
+      }
+      // On screen as far as the DOM can tell (no layout needed): connected,
+      // not <body>, no [hidden] / display:none ancestor.
+      function shown(el) {
+        if (!el || el.nodeType !== 1 || !el.isConnected || el === document.body || el === document.documentElement) return false;
+        for (var n = el; n && n.nodeType === 1; n = n.parentElement) {
+          if (n.hidden) return false;
+          try { if (getComputedStyle(n).display === 'none') return false; } catch (_) { /* no styles */ }
+        }
+        return true;
+      }
+      // Can take focus: shown, tabindex ≥ 0 (a button, a link, an input — not
+      // a plain div such as a sidebar row), not disabled.
+      function focusable(el) { return shown(el) && el.tabIndex >= 0 && !el.disabled; }
+      function isDrawer(e) { return !!(e && e.userAction && e.userAction.type === 'drawer'); }
+      function entryById(id) {
+        for (var i = 0; i < EFFECTIVE.length; i++) if (EFFECTIVE[i].id === id) return EFFECTIVE[i];
+        return null;
+      }
+      /** A drawer entry → the entries it shows: effective now, not a drawer,
+       *  each once, its order, ≤ DRAWER_MAX. */
+      function drawerEntries(entry) {
+        var out = [], seen = Object.create(null);
+        var refs = isDrawer(entry) ? entry.userAction.items : [];
+        for (var i = 0; i < refs.length && i < DRAWER_MAX; i++) {
+          var e = entryById(refs[i]);
+          if (!e || isDrawer(e) || e.id in seen) continue;
+          seen[e.id] = true;
+          out.push(e);
+        }
+        return out;
+      }
+      function drawerOpen() { return !!(DR.root && !DR.root.hidden); }
+      function buildDrawer() {
+        if (DR.root) return;
+        var root = document.createElement('div');
+        root.id = 'ycDrawer';
+        root.hidden = true;
+        var back = document.createElement('div');
+        back.className = 'yc-dr-back';
+        root.appendChild(back);
+        var pop = document.createElement('div');
+        pop.className = 'yc-dr';
+        pop.setAttribute('role', 'dialog');
+        pop.setAttribute('aria-labelledby', 'ycDrawerTitle');
+        var head = document.createElement('div');
+        head.className = 'yc-dr-head';
+        var ic = document.createElement('i');
+        var h = document.createElement('h2');
+        h.id = 'ycDrawerTitle';
+        var x = document.createElement('button');
+        x.type = 'button';
+        x.className = 'yc-dr-close';
+        x.setAttribute('aria-label', 'Close');
+        x.title = 'Close';
+        var xi = document.createElement('i');
+        xi.className = 'fa-solid fa-xmark';
+        x.appendChild(xi);
+        head.appendChild(ic);
+        head.appendChild(h);
+        head.appendChild(x);
+        pop.appendChild(head);
+        var list = document.createElement('div');
+        list.className = 'yc-dr-list';
+        list.setAttribute('role', 'menu');
+        pop.appendChild(list);
+        root.appendChild(pop);
+        document.body.appendChild(root);
+        DR.root = root; DR.pop = pop; DR.list = list; DR.title = h; DR.icon = ic;
+        x.addEventListener('click', function () { closeDrawer(true); });
+        list.addEventListener('click', function (e) {
+          var b = e.target.closest('.yc-dr-item');
+          if (b && list.contains(b)) pickDrawer(b.getAttribute('data-yc-item'));
+        });
+        document.addEventListener('mousedown', onDrawerDown, true);
+        document.addEventListener('keydown', onDrawerKey);
+        document.addEventListener('focusin', onDrawerFocus);
+        window.addEventListener('resize', placeDrawer);
+        window.addEventListener('scroll', placeDrawer, true);
+      }
+      function fillDrawer(entry, keepFocus) {
+        var at = keepFocus ? drawerItems().indexOf(document.activeElement) : -1;
+        setText(DR.title, String(entry.label));
+        DR.icon.className = iconClass(entry.icon);
+        DR.list.textContent = '';
+        var items = drawerEntries(entry);
+        items.forEach(function (e) {
+          var b = document.createElement('button');
+          b.type = 'button';
+          b.className = 'yc-dr-item';
+          b.setAttribute('role', 'menuitem');
+          b.setAttribute('data-yc-item', e.id);
+          var i = document.createElement('i');
+          i.className = iconClass(e.icon);
+          var sp = document.createElement('span');
+          sp.textContent = String(e.label);
+          b.appendChild(i);
+          b.appendChild(sp);
+          DR.list.appendChild(b);
+        });
+        if (!items.length) {
+          var none = document.createElement('div');
+          none.className = 'yc-dr-empty';
+          none.textContent = 'Nothing here you can open';
+          DR.list.appendChild(none);
+        }
+        if (at >= 0) focusDrawerItem(Math.min(at, items.length - 1));
+      }
+      function drawerItems() { return DR.list ? Array.prototype.slice.call(DR.list.querySelectorAll('.yc-dr-item')) : []; }
+      function focusDrawerItem(i) {
+        var items = drawerItems();
+        var t = items.length ? items[Math.max(0, Math.min(i, items.length - 1))] : DR.pop.querySelector('.yc-dr-close');
+        try { t.focus({ preventScroll: true }); } catch (_) { t.focus(); }
+      }
+      function phoneWidth() {
+        try { return !!(window.matchMedia && window.matchMedia('(max-width: 768px)').matches); } catch (_) { return false; }
+      }
+      // Below the opener (or above it when there is no room below), to the
+      // right of a sidebar row, centred near the top with no opener — kept 8px
+      // inside the window. At phone width the CSS makes it a sheet.
+      function placeDrawer() {
+        if (!drawerOpen()) return;
+        var pop = DR.pop;
+        if (phoneWidth()) { pop.style.left = ''; pop.style.top = ''; return; }
+        var G = 8;
+        var vw = document.documentElement.clientWidth || window.innerWidth, vh = window.innerHeight;
+        var w = pop.offsetWidth, h = pop.offsetHeight, left, top;
+        var a = DR.from && shown(DR.from) ? DR.from.getBoundingClientRect() : null;
+        if (!a) {
+          left = (vw - w) / 2;
+          top = Math.round(vh * 0.12);
+        } else if (DR.from.closest('#appSidebar')) {
+          left = a.right + 6;
+          top = a.top;
+          if (left + w > vw - G) left = a.left;
+        } else {
+          left = a.left;
+          top = a.bottom + 6;
+          if (top + h > vh - G && a.top - 6 - h >= G) top = a.top - 6 - h;
+        }
+        left = Math.max(G, Math.min(left, vw - w - G));
+        top = Math.max(G, Math.min(top, vh - h - G));
+        pop.style.left = Math.round(left) + 'px';
+        pop.style.top = Math.round(top) + 'px';
+      }
+      /** Open drawer `entry` (an effective drawer entry). from: its opener. */
+      function openDrawer(entry, from) {
+        if (typeof document === 'undefined' || !document.body) return false;
+        if (editorUp() || swalUp()) { note('drawer "' + entry.id + '" not opened: a dialog or the layout editor is open'); return false; }
+        if (!from) {
+          var ev = lastClick;
+          var t = ev && ev.eventPhase !== 0 && ev.target && ev.target.closest
+            ? ev.target.closest('button, [role="button"], a, .sb-item') : null;
+          if (t && shown(t) && !(DR.root && DR.root.contains(t))) from = t;
+        }
+        var sup = drSuppress;
+        drSuppress = null;
+        // a pointer press on the open drawer's own opener closed it: the click
+        // that ends it is a toggle. Only a pointer click (detail > 0) being
+        // dispatched now: a press dragged off with no click leaves sup behind,
+        // and keyboard activation (detail 0) must never be eaten by it.
+        var pointer = !!(lastClick && lastClick.eventPhase !== 0 && lastClick.detail > 0);
+        if (sup && pointer && sup.id === entry.id && from && sup.el === from && Date.now() - sup.at < 1500) return true;
+        buildDrawer();
+        var restore = drawerOpen() ? DR.restore : (focusable(from) ? from : document.activeElement);
+        DR.id = entry.id;
+        DR.from = from && shown(from) ? from : null;
+        DR.restore = shown(restore) && !DR.root.contains(restore) ? restore : null;
+        fillDrawer(entry, false);
+        DR.root.hidden = false;
+        placeDrawer();
+        focusDrawerItem(0);
+        return true;
+      }
+      function closeDrawer(restore) {
+        if (!drawerOpen()) return;
+        DR.root.hidden = true;
+        var r = DR.restore;
+        DR.id = null; DR.from = null; DR.restore = null;
+        if (restore && r && shown(r)) {
+          try { r.focus({ preventScroll: true }); } catch (_) { try { r.focus(); } catch (__) { /* gone */ } }
+        }
+      }
+      function pickDrawer(id) {
+        closeDrawer(true);
+        exec(id);
+      }
+      function onDrawerDown(e) {
+        drSuppress = null;
+        if (!drawerOpen() || swalUp() || paletteUp()) return;
+        var t = e.target;
+        if (DR.pop.contains(t)) return;
+        if (DR.from && t && t.nodeType === 1 && DR.from.contains(t)) drSuppress = { id: DR.id, el: DR.from, at: Date.now() };
+        closeDrawer(false);
+      }
+      function onDrawerFocus(e) {
+        if (!drawerOpen() || swalUp() || paletteUp()) return;
+        var t = e.target;
+        if (t && t.nodeType === 1 && !DR.root.contains(t) && t !== document.body) closeDrawer(false);
+      }
+      function onDrawerKey(e) {
+        if (!drawerOpen() || swalUp() || paletteUp() || e.defaultPrevented) return;
+        var items = drawerItems(), at = items.indexOf(document.activeElement);
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          e.stopPropagation();
+          closeDrawer(true);
+        } else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+          e.preventDefault();
+          if (!items.length) return;
+          var n = items.length;
+          focusDrawerItem(at < 0 ? (e.key === 'ArrowDown' ? 0 : n - 1) : (at + (e.key === 'ArrowDown' ? 1 : n - 1)) % n);
+        } else if (e.key === 'Home' || e.key === 'End') {
+          e.preventDefault();
+          if (items.length) focusDrawerItem(e.key === 'Home' ? 0 : items.length - 1);
+        } else if (e.key === 'Tab') {
+          // modal while open: focus cycles between the entries and the × button
+          var f = Array.prototype.slice.call(DR.pop.querySelectorAll('button'));
+          var i = f.indexOf(document.activeElement);
+          e.preventDefault();
+          f[i < 0 ? 0 : (i + (e.shiftKey ? f.length - 1 : 1)) % f.length].focus();
+        }
+      }
+      // applyAccess: an open drawer is drawn again from the new registry, or
+      // closed when it is no longer one of this user's drawers.
+      function refreshDrawer() {
+        if (!drawerOpen()) return;
+        var e = entryById(DR.id);
+        if (!isDrawer(e)) { closeDrawer(false); return; }
+        fillDrawer(e, DR.pop.contains(document.activeElement));
+        placeDrawer();
+      }
+
       function isReady() { return !!STATE; }
       /** The effective registry (see above); [] before login. A copy. */
       function effectiveRegistry() {
@@ -1063,14 +1385,18 @@
       // sit behind it. A user's own button (S5a, its entry's userAction) is
       // dispatched the same way, by the same rules: a link always opens a
       // new window (noopener), never embedded; a tool / view the dialog, at
-      // its size.
-      function exec(id) {
+      // its size. A drawer (S5b, a user's button) opens its menu (Drawers
+      // above), anchored to opts.from when given. An open drawer is closed
+      // before anything else is run (one drawer at a time).
+      function exec(id, opts) {
         if (!STATE) { warn('exec("' + id + '") before login'); return false; }
         var entry = null;
         for (var i = 0; i < EFFECTIVE.length; i++) if (EFFECTIVE[i].id === id) entry = EFFECTIVE[i];
         if (!entry) { warn('exec("' + id + '"): not in this user\'s launcher'); return false; }
         var td = window.openToolDialog;
         if (td && td.isOpen && td.isOpen()) td.close();
+        if (isDrawer(entry)) return openDrawer(entry, opts && opts.from && opts.from.nodeType === 1 ? opts.from : null);
+        closeDrawer(false);
         var act = entry.action || entry.userAction;
         if (act) {
           var t = firmTarget(act);
@@ -1455,6 +1781,58 @@
        DB text up to 40 characters, so an unbroken one wraps inside its tile
        rather than widening it. */
     #tabMore > .big-button[data-yc-firm-row] { overflow-wrap: anywhere; vertical-align: top; }
+  </style>
+  <style>
+    /* A drawer's menu (ui-custom S5b, ycLauncher "Drawers"): a small popover
+       placed by script next to its opener; at ≤768px a sheet at the bottom
+       of the screen over a backdrop. z-index 1046: above the tool dialog
+       (1040), below the Ctrl-K palette (1050) and SweetAlert2 (1060). Scoped
+       by id: style.css's global button rule and its dark-theme button rule
+       (0,6,2) lose to an id. The root lets presses through on a desktop (an
+       outside press closes the menu, by script). */
+    #ycDrawer { position: fixed; inset: 0; z-index: 1046; pointer-events: none; }
+    #ycDrawer[hidden] { display: none; }
+    #ycDrawer .yc-dr-back { display: none; }
+    #ycDrawer .yc-dr {
+      position: fixed; left: 8px; top: 8px; pointer-events: auto;
+      display: flex; flex-direction: column; width: 300px; max-width: calc(100vw - 16px); max-height: min(60vh, 460px);
+      box-sizing: border-box; overflow: hidden; text-align: left; background: var(--surface); color: var(--text);
+      border: 1px solid var(--border-strong); border-radius: var(--radius); box-shadow: var(--shadow-drawer);
+    }
+    #ycDrawer .yc-dr-head {
+      flex: 0 0 auto; display: flex; align-items: center; gap: 8px; min-width: 0;
+      padding: 4px 4px 4px 12px; border-bottom: 1px solid var(--border);
+    }
+    #ycDrawer .yc-dr-head > i { flex: 0 0 auto; color: var(--text-muted); }
+    #ycDrawer .yc-dr-head h2 {
+      flex: 1 1 auto; min-width: 0; margin: 0; font-size: var(--fs); font-weight: 600; color: var(--text);
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    #ycDrawer .yc-dr-close {
+      flex: 0 0 auto; width: var(--ctl-h); height: var(--ctl-h); min-width: 0; margin: 0; padding: 0; cursor: pointer;
+      font-size: var(--fs); background: transparent; color: var(--text-muted); border: 0; border-radius: var(--radius-sm);
+    }
+    #ycDrawer .yc-dr-list { flex: 1 1 auto; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: 4px; }
+    #ycDrawer .yc-dr-item {
+      display: flex; align-items: center; gap: 10px; width: 100%; min-width: 0; height: auto; margin: 0; padding: 8px 10px;
+      cursor: pointer; text-align: left; font-size: var(--fs); background: transparent; color: var(--text);
+      border: 0; border-radius: var(--radius-sm); box-sizing: border-box;
+    }
+    #ycDrawer .yc-dr-item i { flex: 0 0 auto; width: 1.25em; text-align: center; color: var(--text-muted); }
+    #ycDrawer .yc-dr-item span { min-width: 0; overflow-wrap: anywhere; }
+    #ycDrawer .yc-dr-item:hover, #ycDrawer .yc-dr-item:focus-visible,
+    #ycDrawer .yc-dr-close:hover, #ycDrawer .yc-dr-close:focus-visible { background: var(--hover); color: var(--text); }
+    #ycDrawer .yc-dr-item:focus-visible, #ycDrawer .yc-dr-close:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+    #ycDrawer .yc-dr-empty { padding: 12px; color: var(--text-muted); font-size: var(--fs-sm); }
+    @media (max-width: 768px) {
+      #ycDrawer { pointer-events: auto; }
+      #ycDrawer .yc-dr-back { display: block; position: absolute; inset: 0; background: var(--backdrop); }
+      #ycDrawer .yc-dr {
+        left: 0; right: 0; top: auto; bottom: 0; width: auto; max-width: none; max-height: 70vh;
+        border-bottom: 0; border-radius: var(--radius) var(--radius) 0 0; padding-bottom: env(safe-area-inset-bottom);
+      }
+      #ycDrawer .yc-dr-item { padding: 12px; }
+    }
   </style>
   <script src="/scripts.js"></script>
   <!-- Stale-tab guard: force-reloads this page when the server is running a newer
@@ -2355,6 +2733,12 @@
     #ycLayoutEditor .ymb-icon-prev { flex: 0 0 auto; width: 2em; text-align: center; font-size: var(--fs-lg); color: var(--accent-2); }
     #ycLayoutEditor .ymb-id-line { margin-top: 8px; overflow-wrap: anywhere; }
     #ycLayoutEditor .ymb-id-line:empty { display: none; }
+    /* A drawer's contents in the button form (S5b): rows like the lists above. */
+    #ycLayoutEditor .ymb-refs { list-style: none; margin: 4px 0 0; padding: 0; }
+    #ycLayoutEditor .ymb-refs .yle-row { background: var(--surface); }
+    #ycLayoutEditor .ymb-refs-none { margin-top: 4px; }
+    #ycLayoutEditor .ymb-refs-none[hidden] { display: none; }
+    #ycLayoutEditor .ymb-refs-field .yle-picker { background: var(--surface); }
     @media (max-width: 768px) {
       #ycLayoutEditor { padding: 0; }
       #ycLayoutEditor .yle-box { max-width: none; max-height: none; height: 100%; border: 0; border-radius: 0; }

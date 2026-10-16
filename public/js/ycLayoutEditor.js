@@ -89,6 +89,17 @@
  * placements and bindings in the same session (it asks first when it has
  * any). Save sends up to three documents, items first; see save().
  *
+ * Drawers (ui-custom S5b): a button may be a DRAWER — { type:'drawer', items:
+ * [id…] }, a menu of up to 30 other items the shell opens beside the tile /
+ * row that opened it. It is one more kind in the same form ("A drawer"), and
+ * its contents are an ordered list there: add (the "find a feature" picker
+ * over the editor's effective registry, minus drawers — one level deep — and
+ * minus what the drawer already holds), remove, ↑ / ↓. A drawer is placed and
+ * bound like any button. A button inside a drawer can't become a drawer, and
+ * its id is frozen once a drawer holds it (as when placed or bound). Deleting
+ * a button drops it from every drawer too, in the same session (the delete
+ * prompt names them), so the items document never names a deleted button.
+ *
  * window.ycLayoutEditor = { open, close, isOpen, isDirty, session, shortcutSession, reservedProblem,
  *                           itemSession, makeUserId, buttonProblems }
  *   session(o) is the editor's pure core (no DOM; the panel drives one):
@@ -633,7 +644,8 @@
   var USER_ID_RE = /^user:[a-z0-9-]{1,40}$/;      // lib/uiConfigShape.js USER_ID_RE
   var TOOL_KEY_RE = /^[a-z0-9-]{1,80}$/;          // routes/api.tools.js TOOL_KEY_RE
   var VIEW_KEY_RE = /^[a-z][a-z0-9_]{2,59}$/;     // lib/uiConfigShape.js VIEW_KEY_RE
-  var MB_KINDS = ['view', 'tool', 'url'];
+  var MB_KINDS = ['view', 'tool', 'url', 'drawer'];
+  var DRAWER_CAP = 30;                            // lib/uiConfigShape.js CAPS.drawer
   var MINE = 'Mine';                              // ycLauncher's group for them
   var ADMIN = 'Admin';                            // ycLauncher's GRID_GROUP.admin
 
@@ -676,6 +688,10 @@
     } else if (f.type === 'tool' || f.type === 'view') {
       var k = String(f.key == null ? '' : f.key);
       if (!(f.type === 'tool' ? TOOL_KEY_RE : VIEW_KEY_RE).test(k)) p.key = f.type === 'tool' ? 'Choose a tool' : 'Choose a saved view';
+    } else if (f.type === 'drawer') {
+      var refs = isArr(f.refs) ? f.refs : [];
+      if (refs.length > DRAWER_CAP) p.refs = 'A drawer holds at most ' + DRAWER_CAP + ' items';
+      else if (refs.some(function (r, i) { return typeof r !== 'string' || refs.indexOf(r) !== i; })) p.refs = 'Each item can be in the drawer once';
     } else p.type = 'Choose what it opens';
     return p;
   }
@@ -689,7 +705,8 @@
    *   o.refs     () → ids the user's layout and shortcuts name now (stored and
    *              edited): a NEW button never takes one, and a new button
    *              already placed or bound keeps its id
-   * A row: { id, saved, kept, label, icon, type, key, href, size, orig }. A
+   * A row: { id, saved, kept, label, icon, type, key, href, size, refs, orig }
+   * (refs: a drawer's contents, S5b). A
    * stored button the client grammar refuses is KEPT as it is (shown, never
    * edited, removable). Ids: from the label (user:<slug>), unique against
    * every button, every stored id, the server's retired list and o.refs();
@@ -710,8 +727,9 @@
       var a = c.action;
       return {
         kept: false, saved: true, orig: c, id: c.id, label: c.label, icon: c.icon, type: a.type,
-        key: a.type === 'url' ? '' : a.key, href: a.type === 'url' ? a.href : '',
-        size: a.type !== 'url' && a.size === 'compact' ? 'compact' : 'large',
+        key: a.type === 'url' || a.type === 'drawer' ? '' : a.key, href: a.type === 'url' ? a.href : '',
+        size: a.type === 'tool' || a.type === 'view' ? (a.size === 'compact' ? 'compact' : 'large') : 'large',
+        refs: a.type === 'drawer' ? a.items.slice() : [],
       };
     }
     var R = storedItems.map(rowOf);
@@ -720,6 +738,9 @@
 
     function itemOf(r) {
       if (r.kept) return r.orig;
+      if (r.type === 'drawer') {
+        return { id: r.id, label: String(r.label).trim(), icon: String(r.icon).trim(), action: { type: 'drawer', items: (r.refs || []).slice() } };
+      }
       var oa = r.orig && isObj(r.orig.action) && r.orig.action.type === r.type ? r.orig.action : null;
       var action = r.type === 'url'
         ? { type: 'url', href: String(r.href).trim(), present: 'window' }
@@ -738,7 +759,17 @@
       for (var s in storedIds) t[s] = true;
       retired.forEach(function (id) { t[id] = true; });
       R.forEach(function (r) { if (r !== except && r.id) t[r.id] = true; });
+      // the ids drawers name (S5b), stored or as edited: a new button never
+      // takes one — it would land in that drawer
+      storedItems.concat(R.map(function (r) { return r.kept ? null : { action: { type: r.type, items: r.refs } }; })).forEach(function (it) {
+        var a = it && isObj(it.action) ? it.action : null;
+        if (a && a.type === 'drawer' && isArr(a.items)) a.items.forEach(function (id) { if (typeof id === 'string' && USER_ID_RE.test(id)) t[id] = true; });
+      });
       return t;
+    }
+    /** The drawers (rows) holding id, in order. */
+    function holders(id) {
+      return R.filter(function (r) { return !r.kept && r.type === 'drawer' && (r.refs || []).indexOf(id) >= 0; });
     }
     function titleOf(type, key) {
       var list = pk ? (type === 'tool' ? pk.tools : pk.views) : null;
@@ -748,6 +779,10 @@
     }
     function summary(r) {
       if (r.kept) return 'Can’t be edited here (it breaks today’s rules); it is kept as it is';
+      if (r.type === 'drawer') {
+        var n = (r.refs || []).length;
+        return 'Drawer · ' + (n ? n + (n === 1 ? ' item' : ' items') : 'empty');
+      }
       if (r.type === 'url') {
         var h = String(r.href).trim();
         if (h.charAt(0) === '/') return 'Link · ' + h + ' (new window)';
@@ -755,18 +790,30 @@
       }
       return (r.type === 'tool' ? 'Tool' : 'Saved view') + ' · ' + titleOf(r.type, r.key) + (r.size === 'compact' ? ' (compact)' : '');
     }
-    function fieldsOk(f) {
+    // r: the row being edited (null for a new one)
+    function fieldsOk(f, r) {
       var p = buttonProblems(f);
+      if (f.type === 'drawer' && !p.refs && isArr(f.refs)) {
+        // one level deep: no drawer inside a drawer, and a button a drawer
+        // holds can't become one
+        var drawerIds = Object.create(null);
+        R.forEach(function (x) { if (x !== r && !x.kept && x.type === 'drawer') drawerIds[x.id] = true; });
+        if (r && f.refs.indexOf(r.id) >= 0) p.refs = 'A drawer can’t hold itself';
+        else if (f.refs.some(function (id) { return id in drawerIds; })) p.refs = 'A drawer can’t hold another drawer';
+        var inside = r ? holders(r.id).filter(function (x) { return x !== r; }) : [];
+        if (inside.length) p.type = 'It is inside the drawer “' + inside[0].label + '”: a drawer can’t go inside a drawer. Take it out of that drawer first.';
+      }
       if (Object.keys(p).length) return p;
       // the shell's own grammar has the last word (a root-relative link to a
       // page that needs the shell, /tool/… or /customView…, is refused there)
-      var probe = itemOf({ id: 'user:probe', label: f.label, icon: f.icon, type: f.type, key: f.key || '', href: f.href || '', size: f.size, orig: null });
+      var probe = itemOf({ id: 'user:probe', label: f.label, icon: f.icon, type: f.type, key: f.key || '', href: f.href || '', size: f.size,
+        refs: isArr(f.refs) ? f.refs : [], orig: null });
       if (!clean(probe)) {
         return f.type === 'url'
           ? { href: String(f.href).trim().charAt(0) === '/'
             ? 'That page only works inside YisraCase: make a Tool or Saved view button for it instead'
             : 'That isn’t a usable https:// address' }
-          : { key: 'That choice can’t be used' };
+          : f.type === 'drawer' ? { refs: 'Those items can’t be in a drawer' } : { key: 'That choice can’t be used' };
       }
       return null;
     }
@@ -774,34 +821,38 @@
       r.label = String(f.label).trim();
       r.icon = String(f.icon).trim();
       r.type = f.type;
-      r.key = f.type === 'url' ? '' : String(f.key);
+      r.key = f.type === 'tool' || f.type === 'view' ? String(f.key) : '';
       r.href = f.type === 'url' ? String(f.href).trim() : '';
-      r.size = f.type !== 'url' && f.size === 'compact' ? 'compact' : 'large';
+      r.size = (f.type === 'tool' || f.type === 'view') && f.size === 'compact' ? 'compact' : 'large';
+      r.refs = f.type === 'drawer' && isArr(f.refs) ? f.refs.slice() : [];
     }
 
     var api = {
-      /** The rows as shown: [{ id, label, icon, type, summary, kept, saved }]. */
+      /** The rows as shown: [{ id, label, icon, type, summary, kept, saved,
+       *  inDrawers: [drawer label…] }]. */
       list: function () {
         return R.map(function (r) {
           return {
             id: r.id, label: r.kept ? String(isObj(r.orig) && typeof r.orig.label === 'string' ? r.orig.label : r.id) : r.label,
             icon: !r.kept && ICON_RE.test(r.icon) ? r.icon : 'circle-question', type: r.kept ? null : r.type,
             summary: summary(r), kept: r.kept, saved: r.saved,
+            inDrawers: holders(r.id).map(function (x) { return x.label; }),
           };
         });
       },
       /** A row's form values (null for a kept row). */
       fields: function (i) {
         var r = R[i];
-        return r && !r.kept ? { label: r.label, icon: r.icon, type: r.type, key: r.key, href: r.href, size: r.size } : null;
+        return r && !r.kept ? { label: r.label, icon: r.icon, type: r.type, key: r.key, href: r.href, size: r.size, refs: (r.refs || []).slice() } : null;
       },
-      problems: function (f) { return fieldsOk(f) || {}; },
+      /** i: the row being edited (omit for a new one). */
+      problems: function (f, i) { return fieldsOk(f, i >= 0 ? R[i] || null : null) || {}; },
       /** The id a NEW button with this label would get. */
       previewId: function (label) { return makeUserId(label, taken(null)); },
       /** Add a button. → { ok: true, id, i } | { ok: false, problems }. */
       add: function (f) {
         if (R.length >= MB_CAP) return { ok: false, problems: { label: 'You have the most buttons there can be (' + MB_CAP + ')' } };
-        var p = fieldsOk(f);
+        var p = fieldsOk(f, null);
         if (p) return { ok: false, problems: p };
         var r = { kept: false, saved: false, orig: null };
         apply(r, f);
@@ -814,10 +865,10 @@
       update: function (i, f) {
         var r = R[i];
         if (!r || r.kept) return { ok: false, problems: { label: 'That button can’t be edited here' } };
-        var p = fieldsOk(f);
+        var p = fieldsOk(f, r);
         if (p) return { ok: false, problems: p };
         apply(r, f);
-        if (!r.saved && !(refs() || {})[r.id]) r.id = makeUserId(r.label, taken(r));
+        if (!r.saved && !(refs() || {})[r.id] && !holders(r.id).length) r.id = makeUserId(r.label, taken(r));
         return { ok: true, id: r.id, i: i };
       },
       /** Delete button i. → its id, or null. */
@@ -832,6 +883,35 @@
         if (!(i >= 0 && i < R.length && j >= 0 && j < R.length) || (d !== 1 && d !== -1)) return false;
         var t = R[i]; R[i] = R[j]; R[j] = t;
         return true;
+      },
+      /** A button deleted (S5b): drop id from every drawer. → how many held it. */
+      dropRef: function (id) {
+        var n = 0;
+        R.forEach(function (r) {
+          if (r.kept || r.type !== 'drawer') return;
+          var k = (r.refs || []).indexOf(id);
+          if (k >= 0) { r.refs.splice(k, 1); n++; }
+        });
+        return n;
+      },
+      /** The drawers' ids (one level deep: none of them can go in a drawer). */
+      drawerIds: function () { return R.filter(function (r) { return !r.kept && r.type === 'drawer'; }).map(function (r) { return r.id; }); },
+      /** What a drawer can take: the entries of `effective` (an effective
+       *  registry) that are not drawers and not in `refs`, grouped like All
+       *  (`groups` order) — or one ranked group for a query (rank: the All
+       *  tab's matcher). → [{ group, items: [{ id, label, icon, group }] }] */
+      drawerCandidates: function (effective, groups, refsNow, query, rank) {
+        var no = Object.create(null);
+        api.drawerIds().forEach(function (id) { no[id] = true; });
+        (isArr(refsNow) ? refsNow : []).forEach(function (id) { no[id] = true; });
+        var list = (isArr(effective) ? effective : []).filter(function (e) { return isObj(e) && typeof e.id === 'string' && !(e.id in no); });
+        var view = function (e) { return { id: e.id, label: String(e.label), icon: typeof e.icon === 'string' && ICON_RE.test(e.icon) ? e.icon : 'circle-question', group: e.group }; };
+        if (String(query == null ? '' : query).replace(/\s+/g, '') && typeof rank === 'function') return [{ group: null, items: rank(query, list).map(view) }];
+        var order = isArr(groups) ? groups.slice() : [];
+        list.forEach(function (e) { if (order.indexOf(e.group) < 0) order.push(e.group); });
+        return order.map(function (g) {
+          return { group: g, items: list.filter(function (e) { return e.group === g; }).map(view) };
+        }).filter(function (g) { return g.items.length; });
       },
       room: function () { return MB_CAP - R.length; },
       /** The tool / view lists arrived (or failed: null) — summaries follow. */
@@ -1123,7 +1203,7 @@
 
   // My buttons (S5a): the list, then the add / edit form (one form, hidden
   // until "Add a button" or a row's edit button opens it).
-  var MB_TYPES = { view: 'A saved view', tool: 'A tool', url: 'A link to a website' };
+  var MB_TYPES = { view: 'A saved view', tool: 'A tool', url: 'A link to a website', drawer: 'A drawer (a menu of other items)' };
   var PICKERS_FAIL = 'Couldn’t load the lists of tools and saved views. Link buttons still work; for the others, close and open the editor again later.';
   // The tool / view lists (GET /api/ui-config/pickers — keys and titles
   // only), read once per opening, the first time My buttons is shown: the
@@ -1219,6 +1299,26 @@
     var sizeSel = el('select', 'yle-input ymb-select');
     [['large', 'Large'], ['compact', 'Compact']].forEach(function (z) { var op = el('option', null, z[1]); op.value = z[0]; sizeSel.appendChild(op); });
     field(form, 'size', 'Window size', sizeSel, 'It opens over the app: Large for a working page, Compact for something small.');
+    // a drawer's contents (S5b): an ordered list, the picker to add to it
+    var rw = el('div', 'ymb-field ymb-refs-field');
+    rw.setAttribute('data-field', 'refs');
+    rw.appendChild(el('div', 'yc-flabel', 'In the drawer'));
+    var rl = el('ol', 'ymb-refs');
+    rl.setAttribute('aria-label', 'In the drawer');
+    rw.appendChild(rl);
+    rw.appendChild(el('div', 'yc-hint ymb-refs-none', 'Nothing in it yet.'));
+    var ra = el('div', 'yle-adds');
+    var rp = btn('yle-add', 'mb-ref-pick', null, 'plus', 'Add to the drawer');
+    rp.id = 'ymb_refs';
+    ra.appendChild(rp);
+    ra.appendChild(el('span', 'yc-hint yle-room ymb-refs-room'));
+    rw.appendChild(ra);
+    rw.appendChild(el('div', 'yc-hint', 'Up to ' + DRAWER_CAP + ' items: features, your firm\u2019s items or your other buttons (not another drawer). It opens as a small menu beside its tile.'));
+    var rfe = el('div', 'yle-field-err');
+    rfe.setAttribute('data-err', 'refs');
+    rw.appendChild(rfe);
+    rw.appendChild(buildPicker('drawer', 'Add to this drawer'));
+    form.appendChild(rw);
     form.appendChild(el('div', 'yc-hint ymb-id-line'));
     var frow = el('div', 'ysc-add-row');
     frow.appendChild(btn('yle-add-go yle-primary ymb-commit', 'mb-commit', null, 'check', 'Add button'));
@@ -1313,7 +1413,12 @@
     var list = pk.querySelector('.yle-pick-list');
     list.textContent = '';
     var q = pk.querySelector('.yle-pick-q').value;
-    var groups = sf === 'shortcuts' ? scs.candidates(q) : sess.candidates(sf, q);
+    // the drawer picker (S5b, in the My buttons form): the editor's registry
+    // minus drawers, what the drawer already holds and the button being edited
+    var held = !mbForm ? [] : mbForm.i >= 0 ? mbForm.refs.concat(its.ids()[mbForm.i]) : mbForm.refs;
+    var groups = sf === 'shortcuts' ? scs.candidates(q)
+      : sf === 'buttons' ? its.drawerCandidates(editorEffective(), editorGroups(), held, q, L.rank)
+        : sess.candidates(sf, q);
     if (!groups.length || (groups.length === 1 && !groups[0].items.length)) {
       list.appendChild(el('div', 'yc-hint yle-pick-empty', sf === 'shortcuts'
         ? 'Nothing matches.' : 'Nothing to add: everything that matches is already here.'));
@@ -1490,9 +1595,10 @@
       if (!b.saved) main.appendChild(el('span', 'yle-tag', 'New'));
       main.appendChild(el('span', 'yc-hint ymb-sum', b.summary));
       var on = b.kept ? [] : sess.where(b.id), combos = scs.combosOf(b.id);
-      if (on.length || combos.length) {
+      if (on.length || combos.length || b.inDrawers.length) {
         var wh = el('span', 'ymb-where');
         on.forEach(function (sf) { wh.appendChild(el('span', 'yle-tag', sf === 'home' ? 'On Home' : 'On sidebar')); });
+        b.inDrawers.forEach(function (n) { wh.appendChild(el('span', 'yle-tag', 'In \u201c' + n + '\u201d')); });
         combos.forEach(function (t) { wh.appendChild(el('kbd', 'ysc-kbd', t)); });
         main.appendChild(wh);
       }
@@ -1551,9 +1657,67 @@
   }
   function showKind(type) {
     var f = formEl();
-    f.querySelector('[data-field="key"]').hidden = type === 'url';
-    f.querySelector('[data-field="size"]').hidden = type === 'url';
+    var modal = type === 'tool' || type === 'view';
+    f.querySelector('[data-field="key"]').hidden = !modal;
+    f.querySelector('[data-field="size"]').hidden = !modal;
     f.querySelector('[data-field="href"]').hidden = type !== 'url';
+    f.querySelector('[data-field="refs"]').hidden = type !== 'drawer';
+    if (type !== 'drawer') f.querySelector('[data-field="refs"] .yle-picker').hidden = true;
+  }
+  // The drawer's contents in the open form (S5b): mbForm.refs, each with its
+  // label from the editor's registry — else the feature's own name, else the
+  // id, tagged Unavailable (kept; the drawer simply doesn't show it).
+  function refView(id) {
+    var eff = editorEffective();
+    for (var i = 0; i < eff.length; i++) if (eff[i].id === id) return { label: String(eff[i].label), icon: eff[i].icon, ok: true };
+    var reg = window.FEATURE_REGISTRY || {}, it = hasOwn(reg, id) && isObj(reg[id]) ? reg[id] : null;
+    return { label: it && it.label != null ? String(it.label) : id, icon: it ? it.icon : null, ok: false };
+  }
+  function renderRefs() {
+    var f = formEl(), ol = f.querySelector('.ymb-refs');
+    ol.textContent = '';
+    var refs = mbForm ? mbForm.refs : [];
+    refs.forEach(function (id, i) {
+      var v = refView(id);
+      var li = el('li', 'yle-row ymb-ref' + (v.ok ? '' : ' ysc-unavailable'));
+      li.setAttribute('data-ri', String(i));
+      li.setAttribute('data-id', id);
+      li.appendChild(iconEl(typeof v.icon === 'string' ? v.icon : '', 'yle-ic'));
+      var main = el('span', 'yle-main');
+      main.appendChild(el('span', 'yle-name', v.label));
+      if (!v.ok) {
+        var tag = el('span', 'yle-tag', 'Unavailable');
+        tag.title = 'Not available to you right now: the drawer leaves it out. It is kept until you remove it.';
+        main.appendChild(tag);
+      }
+      li.appendChild(main);
+      var acts = el('span', 'yle-acts');
+      var up = btn('yle-up', 'mb-ref-up', 'Move ' + v.label + ' up', 'arrow-up');
+      var dn = btn('yle-down', 'mb-ref-down', 'Move ' + v.label + ' down', 'arrow-down');
+      up.disabled = i === 0;
+      dn.disabled = i === refs.length - 1;
+      acts.appendChild(up);
+      acts.appendChild(dn);
+      acts.appendChild(btn('yle-remove', 'mb-ref-del', 'Take ' + v.label + ' out of the drawer', 'xmark'));
+      li.appendChild(acts);
+      ol.appendChild(li);
+    });
+    f.querySelector('.ymb-refs-none').hidden = refs.length > 0;
+    var full = refs.length >= DRAWER_CAP;
+    f.querySelector('.ymb-refs-room').textContent = full ? 'The drawer is full (' + DRAWER_CAP + ' items).' : '';
+    f.querySelector('[data-act="mb-ref-pick"]').disabled = full;
+    if (full) f.querySelector('[data-field="refs"] .yle-picker').hidden = true;
+    renderPicker('buttons');
+  }
+  function refEdited(focusSel, i) {
+    var fe = formEl().querySelector('[data-err="refs"]');
+    if (fe) fe.textContent = '';
+    renderRefs();
+    var rows = formEl().querySelectorAll('.ymb-ref');
+    var r = rows.length ? rows[Math.max(0, Math.min(i, rows.length - 1))] : null;
+    var t = (r && focusSel && r.querySelector(focusSel + ':not(:disabled)')) || (r && r.querySelector('button:not(:disabled)'))
+      || formEl().querySelector('[data-act="mb-ref-pick"]:not(:disabled)') || formEl().querySelector('#ymb_type');
+    if (t) t.focus();
   }
   function iconPreview() {
     var v = String(fval('icon')).trim();
@@ -1578,8 +1742,8 @@
     });
   }
   function openForm(i) {
-    var f = its.fields(i) || { label: '', icon: '', type: 'view', key: '', href: '', size: 'large' };
-    mbForm = { i: i };
+    var f = its.fields(i) || { label: '', icon: '', type: 'view', key: '', href: '', size: 'large', refs: [] };
+    mbForm = { i: i, refs: (f.refs || []).slice() };
     var form = formEl();
     form.hidden = false;
     form.querySelector('.ymb-form-title').textContent = i >= 0 ? 'Edit a button' : 'New button';
@@ -1591,6 +1755,8 @@
     mbSec().querySelector('#ymb_size').value = f.size;
     fillKeys(f.type, f.key);
     showKind(f.type);
+    form.querySelector('[data-field="refs"] .yle-picker').hidden = true;
+    renderRefs();
     iconPreview();
     formErrors(null);
     idLine();
@@ -1610,7 +1776,8 @@
     (row || mbSec().querySelector('[data-act="mb-open"]')).focus();
   }
   function formFields() {
-    return { label: fval('label'), icon: fval('icon'), type: fval('type'), key: fval('key'), href: fval('href'), size: fval('size') };
+    return { label: fval('label'), icon: fval('icon'), type: fval('type'), key: fval('key'), href: fval('href'), size: fval('size'),
+      refs: mbForm ? mbForm.refs.slice() : [] };
   }
   function buttonsChanged() {
     retargetAll();
@@ -1631,6 +1798,7 @@
     }
     mbForm = null;
     formEl().hidden = true;
+    formEl().querySelector('[data-field="refs"] .yle-picker').hidden = true;
     buttonsChanged();
     var b = mbSec().querySelector('.ymb-row[data-i="' + r.i + '"] [data-act="mb-edit"]');
     if (b) b.focus();
@@ -1638,21 +1806,33 @@
   function deleteButton(i) {
     var b = its.list()[i];
     if (!b) return;
-    var on = b.kept ? [] : sess.where(b.id), combos = scs.combosOf(b.id);
+    var on = b.kept ? [] : sess.where(b.id), combos = scs.combosOf(b.id), drawers = b.inDrawers;
     var go = function () {
-      if (!its) return;
+      if (!its || its.list()[i] == null || its.list()[i].id !== b.id) return;
       var id = its.remove(i);
       if (id == null) return;
       sess.dropId(id);
       scs.dropId(id);
+      its.dropRef(id);                 // out of every drawer too (S5b)
+      if (mbForm) {
+        // the open form follows its own row (or closes with it), and a drawer
+        // being edited lets go of the deleted button
+        if (mbForm.i === i) { mbForm = null; formEl().hidden = true; }
+        else {
+          if (mbForm.i > i) mbForm.i--;
+          mbForm.refs = mbForm.refs.filter(function (x) { return x !== id; });
+          renderRefs();
+        }
+      }
       buttonsChanged();
       var left = mbSec().querySelectorAll('.ymb-row [data-act="mb-del"]');
       (left[Math.min(i, left.length - 1)] || mbSec().querySelector('[data-act="mb-open"]')).focus();
     };
-    if (!on.length && !combos.length) { go(); return; }
+    if (!on.length && !combos.length && !drawers.length) { go(); return; }
     var where = [];
     if (on.length) where.push('it’s on your ' + on.map(function (sf) { return sf === 'home' ? 'Home' : 'sidebar'; }).join(' and '));
-    if (combos.length) where.push((on.length ? '' : 'it’s ') + 'bound to ' + combos.join(', '));
+    if (drawers.length) where.push((on.length ? '' : 'it’s ') + 'in your drawer' + (drawers.length > 1 ? 's ' : ' ') + drawers.map(function (n) { return '“' + n + '”'; }).join(', '));
+    if (combos.length) where.push((on.length || drawers.length ? '' : 'it’s ') + 'bound to ' + combos.join(', '));
     ask('Delete “' + b.label + '”? Note: ' + where.join(' and ') + '. Deleting it takes it off there too.', 'Delete', 'Keep it')
       .then(function (yes) { if (yes && !saving) go(); });
   }
@@ -1785,10 +1965,33 @@
         else if (act === 'mb-del') deleteButton(mi);
         else if (act === 'mb-home' || act === 'mb-sidebar') placeButton(mi, act === 'mb-home' ? 'home' : 'sidebar');
         else if (its.move(mi, act === 'mb-up' ? -1 : 1)) {
+          var mj = mi + (act === 'mb-up' ? -1 : 1);
+          if (mbForm && mbForm.i === mi) mbForm.i = mj;          // the open form follows its row
+          else if (mbForm && mbForm.i === mj) mbForm.i = mi;
           buttonsChanged();
           var mv = mbSec().querySelector('.ymb-row[data-i="' + (mi + (act === 'mb-up' ? -1 : 1)) + '"] .yle-' + (act === 'mb-up' ? 'up' : 'down') + ':not(:disabled)');
           (mv || mbSec().querySelector('.ymb-row[data-i="' + (mi + (act === 'mb-up' ? -1 : 1)) + '"] [data-act="mb-edit"]') || mbSec().querySelector('[data-act="mb-open"]')).focus();
         }
+        return;
+      }
+      case 'mb-ref-pick': {
+        if (!mbForm) return;
+        var dpk = formEl().querySelector('[data-field="refs"] .yle-picker');
+        dpk.hidden = false;
+        dpk.querySelector('.yle-pick-q').value = '';
+        renderPicker('buttons');
+        dpk.querySelector('.yle-pick-q').focus();
+        return;
+      }
+      case 'mb-ref-up': case 'mb-ref-down': case 'mb-ref-del': {
+        if (!mbForm) return;
+        var ri = Number(b.closest('.ymb-ref').getAttribute('data-ri')), rr = mbForm.refs;
+        if (!(ri >= 0 && ri < rr.length)) return;
+        if (act === 'mb-ref-del') { rr.splice(ri, 1); refEdited('.yle-remove', ri); return; }
+        var rj = ri + (act === 'mb-ref-up' ? -1 : 1);
+        if (rj < 0 || rj >= rr.length) return;
+        var tmp = rr[ri]; rr[ri] = rr[rj]; rr[rj] = tmp;
+        refEdited(act === 'mb-ref-up' ? '.yle-up' : '.yle-down', rj);
         return;
       }
       case 'sc-open': openScAdd(); return;
@@ -1870,6 +2073,7 @@
       }
       case 'pick-close':
         sec.querySelector('.yle-picker').hidden = true;
+        if (sf === 'buttons') { formEl().querySelector('[data-act="mb-ref-pick"]').focus(); return; }
         if (sf === 'shortcuts') {
           if (scAdd && scAdd.id != null) sec.querySelector('.ysc-capture').focus();
           else closeScAdd(true);
@@ -1879,6 +2083,16 @@
         return;
       case 'pick-add': {
         var pid = b.getAttribute('data-id');
+        if (sf === 'buttons') {           // into the drawer being edited (S5b); the picker stays open for more
+          if (!mbForm || mbForm.refs.length >= DRAWER_CAP || mbForm.refs.indexOf(pid) >= 0) return;
+          mbForm.refs.push(pid);
+          var rfe = formEl().querySelector('[data-err="refs"]');
+          if (rfe) rfe.textContent = '';
+          renderRefs();
+          var q2 = formEl().querySelector('[data-field="refs"] .yle-picker:not([hidden]) .yle-pick-q');
+          (q2 || formEl().querySelector('[data-act="mb-ref-pick"]:not(:disabled)') || formEl().querySelector('#ymb_type')).focus();
+          return;
+        }
         if (sf === 'shortcuts') {         // step 1 of a shortcut: the item, then the keys
           if (!scAdd) return;
           scAdd.id = pid;
@@ -1954,6 +2168,7 @@
     if (t.id === 'ymb_type') {
       fillKeys(t.value, '');
       showKind(t.value);
+      if (t.value === 'drawer') renderRefs();
       formErrors(null);
     } else if (t.id === 'ymb_key') {
       var fe = formEl().querySelector('[data-err="key"]');
@@ -1974,6 +2189,12 @@
       e.stopPropagation();
       var sca = e.target.closest && e.target.closest('.ysc-add');
       if (sca && !sca.hidden) { closeScAdd(true); return; }
+      var dpk = e.target.closest && e.target.closest('.ymb-form .yle-picker');
+      if (dpk && !dpk.hidden) {           // the drawer picker (S5b) closes before the form
+        dpk.hidden = true;
+        formEl().querySelector('[data-act="mb-ref-pick"]').focus();
+        return;
+      }
       var mbf = e.target.closest && e.target.closest('.ymb-form');
       if (mbf && !mbf.hidden) { closeForm(true); return; }
       var pk = e.target.closest && e.target.closest('.yle-picker, .yle-label-add');
@@ -1989,12 +2210,11 @@
       if (!t || !t.classList) return;
       if (t.classList.contains('yle-new-label')) { e.preventDefault(); addLabelFromInput(t.closest('.yle-sec')); }
       else if (t.classList.contains('ysc-capture')) { e.preventDefault(); addShortcutFromForm(); }
-      else if (t.tagName === 'INPUT' && t.closest('.ymb-form')) { e.preventDefault(); commitForm(); }
       else if (t.classList.contains('yle-pick-q')) {
         e.preventDefault();
         var first = t.closest('.yle-picker').querySelector('.yle-pick-item');
         if (first) first.click();
-      }
+      } else if (t.tagName === 'INPUT' && t.closest('.ymb-form')) { e.preventDefault(); commitForm(); }
     } else if (e.key === 'Tab') {
       // modal: focus cycles inside the panel
       var f = focusables();
