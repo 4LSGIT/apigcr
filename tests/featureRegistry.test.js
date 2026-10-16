@@ -10,7 +10,7 @@
  * depends on three things lining up, and this file fences each:
  *
  *   1. THE DATA. Every layout entry names a registry item; every registry item
- *      is placed somewhere; ids are unique — an object literal with a repeated
+ *      is placed somewhere (bar the pinned S6b extras); ids are unique — an object literal with a repeated
  *      key keeps the LAST one without a word, so uniqueness is checked on the
  *      source text; grid ids carry their prefix; a panel tile has no onclick
  *      (the delegated [data-target] listener opens it — an onclick would fire
@@ -80,9 +80,13 @@ describe('the registry data', () => {
     expect(new Set(keys).size).toBe(keys.length);
   });
 
-  test('every item is placed on a surface, ids are camelCase, grid ids carry their prefix', () => {
+  test('every item is placed on a surface (bar the S6b extras), ids are camelCase, grid ids carry their prefix', () => {
     const placed = new Set(SURFACES.flatMap((s) => LAY[s].filter((e) => e.item).map((e) => e.item)));
-    expect(Object.keys(REG).filter((k) => !placed.has(k))).toEqual([]);
+    // ui-custom S6b: an item in NO default layout is listed by the effective
+    // registry ("More actions") and runs through exec's closed NO_ELEMENT
+    // dispatch. That set is deliberate, so it is pinned: a new orphan fails
+    // here until it is added on purpose (and to NO_ELEMENT).
+    expect(Object.keys(REG).filter((k) => !placed.has(k))).toEqual(['myTasks', 'logout', 'casey']);
     for (const k of Object.keys(REG)) expect(k).toMatch(/^[a-z][A-Za-z0-9]*$/);
     for (const e of LAY.more.filter((x) => x.item)) expect(e.item).toMatch(/^more[A-Z]/);
     for (const e of LAY.admin.filter((x) => x.item)) expect(e.item).toMatch(/^admin[A-Z]/);

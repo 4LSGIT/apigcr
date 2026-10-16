@@ -60,6 +60,11 @@
  *   defaultHidden  rendered with style="display:none" (Admin: loadUserContext
  *                  reveals it for SU only)
  *
+ * An item placed in NO default layout (myTasks, logout, casey — ui-custom
+ * S6b) is still a launcher item: the effective registry lists it in group
+ * "More actions" (after the sidebar's sections, before More), and a user can
+ * place it. Which ids may be unplaced is pinned by tests/featureRegistry.test.js.
+ *
  * ── window.DEFAULT_LAYOUTS ── the shipped arrangement of each surface, in
  * order: { item: '<id>' } | { break: true } | { label: '<text>' }.
  *   break: a row break — a .home-break sentinel on Home (5px tall), <br><br>
@@ -328,11 +333,36 @@ window.FEATURE_REGISTRY = {
     label: 'Mailboxes (SU)', icon: 'envelope-open-text', target: 'mailboxesDiv', group: 'admin',
     hoverAnim: 'fa-bounce', styleVars: '--fa-animation-duration:1.2s',
   },
+
+  // ── In no default layout: "More actions" (ui-custom S6b) ─────────────────
+  // Launcher items for things the shell already does from fixed chrome. They
+  // sit in NO default layout, so no surface changes; computeEffective lists
+  // them in their own group (All, the palette, the shortcut picker) and a
+  // user can place them on Home or the sidebar (a neutral shortcut). With no
+  // element to click, ycLauncher.exec runs them through a CLOSED dispatch
+  // (NO_ELEMENT in index.html's ycLauncher block) — never this onclick
+  // string, which is what a default surface would render if one ever placed
+  // them. The header's My Tasks (overdue badge) and Log Out, and More's paw,
+  // stay as they are: fixed chrome.
+  myTasks: {
+    label: 'My Tasks', icon: 'list',
+    onclick: "openTasksTab({assigned_to:user.user,status:'Incomplete',defer:'active'})",
+  },
+  logout: {
+    label: 'Log out', icon: 'right-from-bracket',
+    onclick: 'confirmLogout()',
+  },
+  casey: {
+    label: 'Casey', icon: 'paw',
+    onclick: 'toggleMascot()',
+  },
 };
 
 window.DEFAULT_LAYOUTS = {
 
   // Home: three tiles per row; break = a .home-break sentinel (a 5px row gap).
+  // The breaks make the rows: the Home grid itself wraps only at the screen
+  // edge (ui-custom S6b), so a user's layout may put more on a row.
   home: [
     { item: 'cases' }, { item: 'contacts' }, { item: 'appts' },
     { break: true },

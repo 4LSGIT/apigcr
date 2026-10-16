@@ -77,14 +77,19 @@ const LUC_FULL = slice('    async function loadUserContext() {', '    async func
 
 const placed = (sf) => LAY[sf].filter((e) => e.item).map((e) => e.item);
 const ALL_PLACED = [...new Set(['sidebar', 'home', 'more', 'admin'].flatMap(placed))];
+// ui-custom S6b: registry items in no default layout are listed too, group
+// "More actions" (the set itself is pinned by featureRegistry.test.js).
+const EXTRAS = Object.keys(REG).filter((k) => !ALL_PLACED.includes(k));
+const ALL_LISTED = [...ALL_PLACED, ...EXTRAS];
 const GATED = new Set([...placed('admin'), ...Object.keys(REG).filter((k) => REG[k].tab === 'tabAdmin')]);
 const ids = (eff) => eff.map((e) => e.id);
 
 // ─────────────────────────────────────────────────────────────────────────
 describe('the effective registry (pure)', () => {
-  test('non-admin: every placed item once, minus admin-gated and the absent custom tab', () => {
+  test('non-admin: every placed item (and every S6b extra) once, minus admin-gated and the absent custom tab', () => {
     const eff = L.computeEffective({ isAdmin: false });
-    const want = ALL_PLACED.filter((k) => !GATED.has(k) && k !== 'custom');
+    expect(EXTRAS).toEqual(['myTasks', 'logout', 'casey']);
+    const want = ALL_LISTED.filter((k) => !GATED.has(k) && k !== 'custom');
     expect(ids(eff).sort()).toEqual(want.sort());
     expect(new Set(ids(eff)).size).toBe(eff.length);
     expect(ids(eff)).not.toContain('admin');
@@ -93,7 +98,7 @@ describe('the effective registry (pure)', () => {
 
   test('admin: the Admin grid and the Admin item come back', () => {
     const eff = L.computeEffective({ isAdmin: true, customTab: { src: '/x.html' } });
-    expect(ids(eff).sort()).toEqual([...ALL_PLACED].sort());
+    expect(ids(eff).sort()).toEqual([...ALL_LISTED].sort());
     for (const k of GATED) expect(ids(eff)).toContain(k);
   });
 
@@ -115,10 +120,12 @@ describe('the effective registry (pure)', () => {
     expect(L.computeEffective({ customTab: { src: '/forms.html' } }).find((e) => e.id === 'custom').label).toBe(REG.custom.label);
   });
 
-  test('groups: by origin — sidebar section, else Home, else the grid — in the shipped order', () => {
+  test('groups: by origin — sidebar section, else Home, else the grid, else More actions — in the shipped order', () => {
     const eff = L.computeEffective({ isAdmin: true, customTab: { src: '/x' } });
     // the order rides on the list (computeEffective is pure since S4a)
-    expect(eff.groups).toEqual(['Home', 'Records', 'Actions', 'Settings', 'More', 'Admin']);
+    expect(eff.groups).toEqual(['Home', 'Records', 'Actions', 'Settings', 'More actions', 'More', 'Admin']);
+    // S6b: the items no default layout places, in registry order
+    expect(ids(eff.filter((e) => e.group === 'More actions'))).toEqual(EXTRAS);
     const g = Object.fromEntries(eff.map((e) => [e.id, e.group]));
     expect([g.cases, g.calendar, g.pipeline, g.newClient, g.admin, g.helpSupport, g.moreManuals, g.adminMailboxes])
       .toEqual(['Records', 'Records', 'Actions', 'Actions', 'Settings', 'Settings', 'More', 'Admin']);
@@ -371,11 +378,11 @@ describe('the All tab (public/js/ycAll.js, for real)', () => {
   test('empty before login; then every effective item once, grouped, in order; Admin only for admins', () => {
     expect(entries()).toEqual([]);
     t.L.applyAccess({ isAdmin: false, denied: ['moreAutomations'], customTab: null });
-    expect(groups()).toEqual(['Records', 'Actions', 'Settings', 'More']);
+    expect(groups()).toEqual(['Records', 'Actions', 'Settings', 'More actions', 'More']);
     expect(entries()).toEqual(t.L.effectiveRegistry().map((e) => e.id));
     expect(entries()).not.toContain('moreAutomations');
     t.L.applyAccess({ isAdmin: true });
-    expect(groups()).toEqual(['Records', 'Actions', 'Settings', 'More', 'Admin']);
+    expect(groups()).toEqual(['Records', 'Actions', 'Settings', 'More actions', 'More', 'Admin']);
     expect(new Set(entries()).size).toBe(entries().length);
   });
 

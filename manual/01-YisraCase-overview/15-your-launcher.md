@@ -13,8 +13,8 @@ computer you sign in on.
 
 ## All and Ctrl+K: every feature, always
 
-**All**, the last item in the sidebar and the last tile on Home, lists every
-feature your account has, with a search box on top. **Ctrl+K** (**⌘K** on a
+**All**, the last item in the sidebar and the small grid icon under the Home
+tiles, lists every feature your account has, with a search box on top. **Ctrl+K** (**⌘K** on a
 Mac) opens the same search from anywhere. See *Finding any feature* in the
 [introduction](01-introduction.md).
 
@@ -61,10 +61,14 @@ type. A heading is plain text, 1 to 40 characters.
   that surface yet, grouped the way All groups them, with a search box. Pick
   one and it goes to the end of the list; move it with the arrows. Anything
   can go on Home or the sidebar: a More Features or Admin panel, a firm item,
-  a sidebar feature on Home. A shortcut does exactly what the feature does
-  anywhere else. A More panel pinned to Home, for example, opens More Features
-  with that panel showing.
-- **Add a row break** (Home) starts a new row of tiles.
+  a sidebar feature on Home, or one of the **More actions** (My Tasks, Log
+  out, Casey), which have no tile or sidebar item of their own until you add
+  one. A shortcut does exactly what the feature does anywhere else. A More
+  panel pinned to Home, for example, opens More Features with that panel
+  showing.
+- **Add a row break** (Home) starts a new row of tiles. Without a break, a row
+  holds as many tiles as fit across the screen: the standard Home layout
+  has a break after every three tiles.
 - **Add a section label** (sidebar) adds a heading. Type it and press
   **Add** or **Enter**.
 

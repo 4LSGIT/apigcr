@@ -1229,6 +1229,7 @@ tests/helpers/bcPolyfill.js
 tests/helpers/commsArchiveSchema.js
 tests/helpers/ctaWorld.js
 tests/helpers/fakeGcs.js
+tests/helpers/homeLayoutBrowser.js
 tests/helpers/mailRenderBrowser.js
 tests/helpers/mailboxS1World.js
 tests/helpers/mailboxS2World.js
@@ -1279,6 +1280,8 @@ tests/launcherS4b.test.js
 tests/launcherS4c.test.js
 tests/launcherS5a.test.js
 tests/launcherS5b.test.js
+tests/launcherS6b.browser.test.js
+tests/launcherS6b.test.js
 tests/likeEscapeSites.test.js
 tests/logService.setLogAbout.test.js
 tests/logService.updateLogLink.test.js

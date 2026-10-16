@@ -48,7 +48,8 @@ Tasks and log entries can be linked to a contact, a case, an appointment, or a b
 
 ## Navigation Basics
 
-YisraCase is organized into tabs down the left sidebar, in this order:
+YisraCase is organized into tabs down the left sidebar, in this order.
+**Home** stays at the top of the sidebar while you scroll the rest of it.
 
 | Tab | What it is |
 |---|---|
@@ -96,8 +97,8 @@ textarea that files a report with the technical state attached automatically.
 
 ### Finding any feature
 
-**All** — the last item in the sidebar, and the last tile on Home — lists
-every feature your account has, grouped the way the sidebar and the More
+**All** — the last item in the sidebar, and the small grid icon under the
+Home tiles — lists every feature your account has, grouped the way the sidebar and the More
 menu are, with a search box on top. Type part of a name (or its initials:
 "fb" finds Form Builder) and press **Enter** to open the top match.
 
@@ -108,6 +109,11 @@ and in an email editor Ctrl+K keeps its usual job there: inserting a link.
 
 A feature your firm has switched off for you is not in the sidebar, on Home,
 in the More menu, under All, or in the search.
+
+All and the search also list **More actions**: **My Tasks**, **Log out** and
+**Casey** (the cat). They do what the My Tasks and Log Out buttons at the top
+of the screen and Casey's paw on More Features do, and you can put them on
+your Home or sidebar as shortcuts (see below).
 
 **Customize my launcher**, under the search box on All, arranges your own Home
 tiles and sidebar: move items, hide the ones you don't use, and add shortcuts to

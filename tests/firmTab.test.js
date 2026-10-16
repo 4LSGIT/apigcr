@@ -239,7 +239,7 @@ describe('Launcher form: grouping and catalog', () => {
     const groupsBefore = L.groups();
     expect(groupsBefore).toContain('Firm');                  // the shell has a firm item
     expect(titles).toEqual(groupsBefore.filter((g) => g !== 'Firm' && g !== 'Home'));
-    expect(titles).toEqual(['Records', 'Actions', 'Settings', 'More', 'Admin']);
+    expect(titles).toEqual(['Records', 'Actions', 'Settings', 'More actions', 'More', 'Admin']);   // More actions: S6b
     // computeEffective's group record was left exactly as the shell's
     expect(L.groups()).toEqual(groupsBefore);
     const rowIds = $$('[data-row-id]').map((e) => e.dataset.rowId);
@@ -755,7 +755,7 @@ describe('S3.4: Who sees what', () => {
   test('rows: every registry item plus the saved firm items, grouped like All; Settings and Help locked on Everyone; a second section in the TOC', async () => {
     const t = await boot({ doc: DOC });
     const titles = t.$$('#fm-sec-who .fm-group-title').map((e) => e.textContent);
-    expect(titles).toEqual(['Records', 'Actions', 'Settings', 'More', 'Firm', 'Admin']);
+    expect(titles).toEqual(['Records', 'Actions', 'Settings', 'More actions', 'More', 'Firm', 'Admin']);   // More actions: S6b
     const rowIds = t.$$('[data-who-id]').map((e) => e.dataset.whoId);
     const all = Object.keys(t.top.FEATURE_REGISTRY).filter((id) => !t.top.FEATURE_REGISTRY[id].placeholder);
     expect(rowIds.slice().sort()).toEqual([...all, 'firm:payroll'].sort());

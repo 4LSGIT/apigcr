@@ -628,7 +628,7 @@ describe('computeEffective is pure (S3.2 review carry-over)', () => {
     const groups = t.L.groups(), eff = JSON.stringify(t.L.effectiveRegistry());
     expect(groups).not.toContain('Firm');
     const list = t.L.computeEffective({ isAdmin: true, ui: ui({ ro: { items: [FIRM_ITEM] } }) });
-    expect(list.groups).toEqual(['Home', 'Records', 'Actions', 'Settings', 'More', 'Firm', 'Admin']);
+    expect(list.groups).toEqual(['Home', 'Records', 'Actions', 'Settings', 'More actions', 'More', 'Firm', 'Admin']);   // More actions: S6b
     expect(Object.keys(list)).not.toContain('groups');
     expect(t.L.groups()).toEqual(groups);
     expect(JSON.stringify(t.L.effectiveRegistry())).toBe(eff);
