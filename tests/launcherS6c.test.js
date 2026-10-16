@@ -30,7 +30,7 @@
  *      never by position); a firm-removed tile stays in the DOM hidden by
  *      data-yc-unplaced, out of the pill strip, still reached by exec; a firm
  *      item placed on the grid is a neutral tile and the firm row is gone; an
- *      Admin item on More navigates to Admin (option C); a FUZZ of random firm
+ *      Admin item on More opens in place there (S6c-4, the panel stage); a FUZZ of random firm
  *      layouts never drops a mounted default element nor duplicates an id, and
  *      an empty firm layout restores the default DOM; a re-run changes nothing.
  *   6. THE USER EDITOR carries homeIcons through a save untouched.
@@ -245,10 +245,11 @@ function boot() {
     ${plainTabs}
     <div id="tabMore" class="tab-main"><h1>More</h1>
   <script>ycLauncher.mount('more')</script>
-  <div class="more-egg-row"><script>ycLauncher.mount('moreIcons')</script></div>${grid('more')}</div>
+  <div class="more-egg-row"><script>ycLauncher.mount('moreIcons')</script></div></div>
     <div id="tabAdmin" class="tab-main"><h1>Admin</h1>
   <script>ycLauncher.mount('admin')</script>
-  <div class="admin-egg-row"><script>ycLauncher.mount('adminIcons')</script></div>${grid('admin')}</div>
+  <div class="admin-egg-row"><script>ycLauncher.mount('adminIcons')</script></div></div>
+    <div id="ycPanels" style="display:none">${grid('more')}${grid('admin')}</div>
   </body></html>`;
   const errors = [];
   const dom = new JSDOM(page, { runScripts: 'dangerously', pretendToBeVisual: true });
@@ -545,12 +546,14 @@ describe('5. the renderer under a firm layout, for real', () => {
     expect(t.errors).toEqual([]);
   });
 
-  test('an Admin item placed on More navigates to Admin and opens its panel (option C, no data-target); a non-su never gets the tile', () => {
+  test('an Admin item placed on More opens its panel IN PLACE on More (S6c-4: the neutral carries data-target, no group); a non-su never gets the tile', () => {
     t.L.applyAccess({ ...SU, ui: ui({ firm: MORE }) });
     t.w.openMainTab('tabMore');
-    t.d.querySelector('#tabMore > .big-button[data-yc-shortcut="adminUsers"]').click();
-    expect([t.w.currentMainTabId(), t.shown(t.d.getElementById('usersDiv')), t.d.getElementById('tabAdmin').classList.contains('drill-active')]).toEqual(['tabAdmin', true, true]);
-    expect(t.d.querySelector('#tabAdmin > .feature-strip .pill-button.active').dataset.target).toBe('usersDiv');
+    const n = t.d.querySelector('#tabMore > .big-button[data-yc-shortcut="adminUsers"]');
+    expect([n.getAttribute('data-target'), n.hasAttribute('data-exclusive-group'), n.hasAttribute('onclick')]).toEqual(['usersDiv', false, false]);
+    n.click();
+    expect([t.w.currentMainTabId(), t.shown(t.d.getElementById('usersDiv')), t.d.getElementById('tabMore').classList.contains('drill-active'), t.d.getElementById('tabAdmin').classList.contains('drill-active')]).toEqual(['tabMore', true, true, false]);
+    expect(t.d.querySelector('#tabMore > .feature-strip .pill-button.active').dataset.target).toBe('usersDiv');
     // the Admin tile is still the one element of adminUsers; More's neutral is not in elementsOf
     expect(Object.keys(t.L.elementsOf('adminUsers'))).toEqual(['admin']);
     t.L.applyAccess({ isAdmin: false, roles: ['it'] });
@@ -619,9 +622,10 @@ describe('5. the renderer under a firm layout, for real', () => {
     // the sidebar: the firm's label is a default node for the user (no user layout for it)
     expect(t.seen('sidebar')[0]).toBe('#Firm');
     expect(t.seen('sidebar')[1]).toBe('cases');
-    // the More panel pinned on Admin drills into More
+    // the More panel pinned on Admin opens in place on Admin (S6c-4)
+    t.w.openMainTab('tabAdmin');
     t.d.querySelector('#tabAdmin > .big-button[data-yc-shortcut="moreManuals"]').click();
-    expect([t.w.currentMainTabId(), t.shown(t.d.getElementById('manualsDiv'))]).toEqual(['tabMore', true]);
+    expect([t.w.currentMainTabId(), t.shown(t.d.getElementById('manualsDiv')), t.d.getElementById('tabAdmin').classList.contains('drill-active')]).toEqual(['tabAdmin', true, true]);
     expect(t.errors).toEqual([]);
   });
 

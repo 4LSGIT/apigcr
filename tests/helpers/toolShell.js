@@ -80,8 +80,9 @@ function boot({ routes = {}, token = jwt(3600) } = {}) {
     <div id="tabAll" class="tab-main"></div>
     <div id="tabCustom" class="tab-main"><iframe id="tabCustomFrame"></iframe></div>
     ${plainTabs}
-    <div id="tabMore" class="tab-main"><h1>More</h1><script>ycLauncher.mount('more')</script><div class="more-egg-row"></div>${grid('more')}</div>
-    <div id="tabAdmin" class="tab-main"><h1>Admin</h1><script>ycLauncher.mount('admin')</script>${grid('admin')}</div>
+    <div id="tabMore" class="tab-main"><h1>More</h1><script>ycLauncher.mount('more')</script><div class="more-egg-row"></div></div>
+    <div id="tabAdmin" class="tab-main"><h1>Admin</h1><script>ycLauncher.mount('admin')</script></div>
+    <div id="ycPanels" style="display:none">${grid('more')}${grid('admin')}</div>
     <iframe id="paneFrame"></iframe>
   </body></html>`;
   const dom = new JSDOM(page, { runScripts: 'dangerously', pretendToBeVisual: true, url: 'https://app.test/' });

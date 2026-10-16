@@ -239,6 +239,9 @@ const DOM = `<!DOCTYPE html><html><body>
   <div id="tabMore" class="tab-main" style="display:none">
     <button class="big-button" id="tCfg" data-target="caseConfigDiv" data-exclusive-group="more">Config</button>
     <button class="big-button" id="tAuto" data-target="automationsDiv" data-exclusive-group="more">Automations</button>
+  </div>
+  <!-- the panel stage (ui-custom S6c-4): the panels live here, after the pages -->
+  <div id="ycPanels" style="display:none">
     <div id="caseConfigDiv" style="display:none"><iframe id="cfgFrame"></iframe></div>
     <div id="automationsDiv" style="display:none"><iframe id="autoFrame"></iframe></div>
   </div>
@@ -264,14 +267,20 @@ function realShell() {
     ${pick(/var wsMainRest = \{\};/)}
     ${pick(/var wsPanelRest = \{\};/)}
     ${pick(/var WS_DRILL_SURFACE = \{[^}]*\};/)}
-    ${['wsDrillPanels', 'wsOpenPanel', 'wsTabRest', 'wsRestoreDrill', 'wsSetFileRest', 'wsFrameOwner',
+    ${['wsDrillPanels', 'wsPageTile', 'wsOpenPanel', 'wsTabRest', 'wsRestoreDrill', 'wsSetFileRest', 'wsFrameOwner',
       'wsOpenTarget', 'wsMainTabAllowed', 'currentOpenFilesUrl', 'openMainTabOnBoot'].map((n) => fnSrc(SHELL, n)).join('\n')}
     ${assignedFnSrc(SHELL, 'ycReportSubTab')}
     ${assignedFnSrc(SHELL, 'ycTakeSubTab')}
+    // the panel stage, for real (the drill script; S6c-4)
+    ${pick(/var drillMemory = \{\};/)}
+    function hoverAnimClasses() { return []; }
+    ${['stageShow', 'drillOpen', 'stageSync', 'ensureStrip', 'exitDrillMode', 'syncDrillState'].map((n) => fnSrc(SHELL, n)).join('\n')}
     function openCasesTab() {} function openContactsTab() {} function openApptsTab() {}
     function openCalendarTab() {} function openEventsTab() {} function openLogsTab() {}
     function openMainTab(id) {
+      if (currentMainTabId() === id) exitDrillMode(E(id));
       for (const t of document.querySelectorAll('.tab-main')) t.style.display = t.id === id ? 'block' : 'none';
+      stageSync(id);   // what the real openMainTab does before its sync
       syncWorkspaceUrl();
     }
   `);
@@ -279,14 +288,12 @@ function realShell() {
   const EL = { moreAutomations: { more: $('tAuto') }, moreCaseConfig: { more: $('tCfg') }, moreFeatures: { sidebar: d.createElement('a') } };   // moreFeatures: the More PAGE item — the URL door to tabMore (ui-custom S6c)
   const FRAME = { automationsDiv: ['automations', 'autoFrame'], caseConfigDiv: ['caseConfig', 'cfgFrame'] };
   const booted = {};
-  /** What the click handler does: show the panel, its iframe boots ONCE (the lazy load). */
+  /** What a tile click does: the page opens the panel on the stage (the real
+   *  drillOpen); its iframe boots ONCE (the lazy load). */
   const showPanel = (target) => {
-    for (const t of d.querySelectorAll('#tabMore > .big-button[data-target]')) {
-      $(t.getAttribute('data-target')).style.display = t.getAttribute('data-target') === target ? '' : 'none';
-    }
+    w.drillOpen($('tabMore'), target);
     const [page, fid] = FRAME[target];
     if (!booted[fid]) booted[fid] = bootPage(page, $(fid));
-    w.syncWorkspaceUrl();
   };
   w.ycLauncher = {
     isReady: () => true,

@@ -208,8 +208,9 @@ function boot({ shortcuts = null, layout = null, access = ACCESS, login = true, 
     ${ALL_TAB}
     <div id="tabCustom" class="tab-main"><iframe id="tabCustomFrame"></iframe></div>
     ${plainTabs}
-    <div id="tabMore" class="tab-main"><h1>More</h1><script>ycLauncher.mount('more')</script>${grid('more')}</div>
-    <div id="tabAdmin" class="tab-main"><h1>Admin</h1><script>ycLauncher.mount('admin')</script>${grid('admin')}</div>
+    <div id="tabMore" class="tab-main"><h1>More</h1><script>ycLauncher.mount('more')</script></div>
+    <div id="tabAdmin" class="tab-main"><h1>Admin</h1><script>ycLauncher.mount('admin')</script></div>
+    <div id="ycPanels" style="display:none">${grid('more')}${grid('admin')}</div>
     <textarea id="elsewhere"></textarea>
   </body></html>`;
   const errors = [];

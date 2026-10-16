@@ -107,7 +107,7 @@ function boot() {
   w.console.warn = (...a) => errors.push(a.join(' '));
   const calls = [];
   w.__calls = calls;
-  w.eval('var E = (id) => document.getElementById(id);\nfunction syncWorkspaceUrl() {}\nfunction pingBecameVisible() {}\n' +
+  w.eval('var E = (id) => document.getElementById(id);\nfunction syncWorkspaceUrl() {}\nfunction pingBecameVisible() {}\nfunction stageSync() { return null; }\n' +   // stageSync: the panel stage (S6c-4), not loaded here
     'function openTasksTab(f) { __calls.push(["openTasksTab", JSON.parse(JSON.stringify(f))]); }\n' +
     'function confirmLogout() { __calls.push(["confirmLogout"]); }\n' +
     'function toggleMascot() { __calls.push(["toggleMascot"]); }\n' +

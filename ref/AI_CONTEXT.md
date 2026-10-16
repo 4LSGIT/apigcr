@@ -857,9 +857,14 @@ for the dedup refocus. The shell accepts only a file's / main tab's own pane
 frame or a drill panel's direct iframe (not Swal / tool dialogs), shows only
 the ACTIVE view's rest, and never opens anything on a report. `?open=`'s head
 must be a tab the effective registry offers (`wsMainTabAllowed`, after
-applyAccess; else Home); a drill panel reopens ONLY via `ycLauncher.exec`, for
-a plain registry id whose tile has `data-target` (never action/dialog tiles or
-`firm:` ids). Leaves: case.html, contact.html, comms.html, and two drill-panel
+applyAccess; else Home); a drill panel reopens ONLY via `ycLauncher.exec(id,
+{ page })`, for a plain registry id whose tile ON THAT PAGE has `data-target`
+— its default tile, or a neutral the firm placed there (S6c-4: `tabMore~
+adminUsers` reopens Users on More) — never action/dialog tiles, firm-unplaced
+tiles or `firm:` ids. The panels live on the stage (`#ycPanels`, below);
+`wsDrillPanels(tab)` maps a page's tiles to stage panels, `wsFrameOwner` maps
+a stage pane to the active page when it has a tile for the panel, else the
+first drill page that has. Leaves: case.html, contact.html, comms.html, and two drill-panel
 panes, automationManager.html + caseConfigManager.html (a gated sub-tab —
 Config's Firm — is taken at boot but opened only after its reveal, and only
 if the default is still showing). A new pane: load ycSubTab.js; report from its one
@@ -1677,8 +1682,23 @@ layouts and shortcuts point at ids). Strict validator `lib/uiConfigShape.js`
 - Removal HIDES, reorder MOVES: default launcher elements always stay in the
   DOM (ids like sbAdmin / sbCustom / badges are looked up elsewhere), hidden by
   attribute (`data-yc-denied`, `data-yc-unplaced`) + `!important`, never
-  `style.display`. Added placements are neutral `exec` shortcuts (no
-  `data-target`).
+  `style.display`. Added placements are neutral `exec` shortcuts — except a
+  PANEL item's tile on a grid page, which carries the item's `data-target`
+  and no listener (S6c-4): the page's delegated handler opens the panel in
+  place.
+- The panel stage (S6c-4): every More / Admin panel div is a child of ONE
+  container after the tabs, `#ycPanels` (not a `.tab-main`), and never
+  moves — a moved `<iframe>` reloads and loses unsaved work. The drill is
+  page-scoped: a tile's page is `closest('.tab-main')`, each page remembers
+  the panel it last opened (`drillMemory`), `openMainTab` shows the active
+  page's remembered panel or hides the stage (`stageSync`), `exitDrillMode`
+  forgets; a panel's `display` is '' iff it is the one on the stage now.
+  One panel may sit on any number of pages (one element). `exec` of a grid
+  item routes by page: `opts.page`, the active page, More, Admin — the
+  first that SHOWS a tile for it; else the hidden default tile. Panel CSS
+  targets `#ycPanels > div`; the grid rules still target the hubs' tiles.
+  Pane pages reach the shell via `window.parent`, unchanged; the Simple
+  Forms → Form Builder hand-off goes through `exec('moreFormBuilder')`.
 - Layouts resolve shipped → firm → user with ONE merge rule applied twice
   (`resolveLayout`): a firm Home / sidebar change only ADDS for a user who
   already arranged that surface (`locked` is how the firm insists). More /

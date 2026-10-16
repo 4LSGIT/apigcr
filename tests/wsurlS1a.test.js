@@ -223,7 +223,7 @@ function shell() {
     ${pick(/var wsMainRest = \{\};/)}
     ${pick(/var wsPanelRest = \{\};/)}
     ${pick(/var WS_DRILL_SURFACE = \{[^}]*\};/)}
-    ${['wsDrillPanels', 'wsOpenPanel', 'wsTabRest', 'wsRestoreDrill'].map((n) => fnSrc(SHELL, n)).join('\n')}
+    ${['wsDrillPanels', 'wsPageTile', 'wsOpenPanel', 'wsTabRest', 'wsRestoreDrill'].map((n) => fnSrc(SHELL, n)).join('\n')}
     ${fnSrc(SHELL, 'wsSetFileRest')}
     ${fnSrc(SHELL, 'wsFrameOwner')}
     ${assignedFnSrc(SHELL, 'ycReportSubTab')}

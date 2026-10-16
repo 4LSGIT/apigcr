@@ -1200,6 +1200,7 @@ tests/fixtures/slice26/tpl5_code.js
 tests/fixtures/slice26/tpl5_draft_definition.json
 tests/fixtures/slice26/tpl6_code.js
 tests/fixtures/slice26/tpl6_draft_definition.json
+tests/formBuilderSimpleHandoff.test.js
 tests/formBuilder_phaseA.test.js
 tests/formBuilder_phaseB.test.js
 tests/formBuilder_phaseC.test.js
@@ -1290,6 +1291,7 @@ tests/launcherS6b.browser.test.js
 tests/launcherS6b.test.js
 tests/launcherS6c.test.js
 tests/launcherS6c3.test.js
+tests/launcherS6c4.test.js
 tests/likeEscapeSites.test.js
 tests/logService.setLogAbout.test.js
 tests/logService.updateLogLink.test.js

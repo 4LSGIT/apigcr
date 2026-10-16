@@ -59,6 +59,17 @@
 //   (a5) Config: ~pipelines round-trips a reload; ~firm (gated, revealed by
 //        the mock's can_edit_firm) → Firm, URL unchanged
 //
+// S6c-4 — the panel stage (#ycPanels; page-scoped drill, per-page memory):
+//   (s1) SU: the firm-placed Users neutral on More opens Users IN PLACE →
+//        open=tabMore~adminUsers; the panel is the stage's child; a reload
+//        reopens it on MORE (exec told the page)
+//   (s2) Admin shows its own grid (per-page memory), drilling it shows ONE
+//        stage panel, back on More shows Users again, Cases hides the stage
+//   (s3) THE NO-RELOAD PROOF: text typed into Automations' pane survives
+//        Cases → Admin (DB Console) → More → Manuals → Automations; the
+//        frame's performance.timeOrigin is unchanged; the pane loaded ONCE
+//   (s4) non-SU tabMore~adminUsers → the More grid, no neutral, empty stage
+//
 // S-links — the links the server emits (lib/shellLinks), opened cold:
 //   (L1) /?files=c<id>&open=file:0 in a FRESH context (no label cache), the
 //        search answering the exact row → the case file opens, URL settles
@@ -684,6 +695,89 @@ const activeTab = (page) => page.evaluate(() => window.currentMainTabId());
       check('(a5) Config: ~firm (gated, revealed) → Firm, URL unchanged',
         (await subOn(f)) === 'firm' && q(g.page.url()).open === 'tabMore~moreCaseConfig~firm', `${await subOn(f)} ${g.page.url()}`);
       await g.ctx.close();
+    }
+
+    // ════ S6c-4 — the panel stage ═════════════════════════════════════════
+    // The panels live in ONE container after the tabs (#ycPanels); the drill is
+    // page-scoped with a per-page memory; a panel item the firm places on
+    // another page (the fixture: Users on More, row 8) opens IN PLACE there.
+    const onStage = (page) => page.evaluate(() => [...document.getElementById('ycPanels').children].filter((p) => p.style.display !== 'none').map((p) => p.id));
+    const stageShown = (page) => page.evaluate(() => document.getElementById('ycPanels').style.display !== 'none');
+    const drilled = (page, tab) => page.evaluate((t) => document.getElementById(t).classList.contains('drill-active'), tab);
+    {
+      // (s1) the firm-placed neutral opens Users on More, in place; the URL names it on More; a reload restores it THERE
+      const { page, ctx, hits } = await boot(browser, url, '?open=tabMore');
+      const neutral = await page.$('#tabMore > .big-button[data-yc-shortcut="adminUsers"][data-target="usersDiv"]');
+      check('(s1) SU: the firm-placed Users neutral is on More with data-target', !!neutral, 'no neutral tile');
+      if (neutral) await neutral.click();
+      await sleep(400);
+      const s1 = { tab: await activeTab(page), open: q(page.url()).open, stage: await onStage(page), more: await drilled(page, 'tabMore'), admin: await drilled(page, 'tabAdmin') };
+      check('(s1) …a click opens the panel IN PLACE on More: open=tabMore~adminUsers, Users on the stage, Admin not drilled',
+        s1.tab === 'tabMore' && s1.open === 'tabMore~adminUsers' && s1.stage.join() === 'usersDiv' && s1.more && !s1.admin, JSON.stringify(s1));
+      const panelWhere = await page.evaluate(() => document.getElementById('usersDiv').parentElement.id);
+      check('(s1) …the panel is the stage\'s child, not the page\'s', panelWhere === 'ycPanels', panelWhere);
+      await page.reload({ waitUntil: 'networkidle2' });
+      await settle(page);
+      const s1r = { tab: await activeTab(page), open: q(page.url()).open, stage: await onStage(page), more: await drilled(page, 'tabMore') };
+      check('(s1) …a reload reopens Users on MORE (exec told the page), URL unchanged',
+        s1r.tab === 'tabMore' && s1r.open === 'tabMore~adminUsers' && s1r.stage.join() === 'usersDiv' && s1r.more, JSON.stringify(s1r));
+      // (s2) per-page memory + one panel at a time + hidden off the pages
+      await page.evaluate(() => window.openMainTab('tabAdmin'));
+      await sleep(200);
+      const s2a = { open: q(page.url()).open, stage: await onStage(page), shown: await stageShown(page), admin: await drilled(page, 'tabAdmin') };
+      check('(s2) Admin shows its own grid: the stage is empty and hidden there (per-page memory)',
+        s2a.open === 'tabAdmin' && s2a.stage.length === 0 && !s2a.shown && !s2a.admin, JSON.stringify(s2a));
+      await clickTile(page, 'adminDbConsole', 'admin');
+      await sleep(400);
+      const s2b = { open: q(page.url()).open, stage: await onStage(page) };
+      check('(s2) …drilling Admin into DB Console: exactly ONE stage panel, open=tabAdmin~adminDbConsole',
+        s2b.open === 'tabAdmin~adminDbConsole' && s2b.stage.join() === 'dbConsoleDiv', JSON.stringify(s2b));
+      await page.evaluate(() => window.openMainTab('tabMore'));
+      await sleep(200);
+      const s2c = { open: q(page.url()).open, stage: await onStage(page), db: await page.evaluate(() => document.getElementById('dbConsoleDiv').style.display) };
+      check('(s2) …back on More: Users again (More\'s memory), DB Console off the stage',
+        s2c.open === 'tabMore~adminUsers' && s2c.stage.join() === 'usersDiv' && s2c.db === 'none', JSON.stringify(s2c));
+      await page.evaluate(() => window.openMainTab('tabCases'));
+      await sleep(200);
+      const s2d = { stage: await onStage(page), shown: await stageShown(page), open: q(page.url()).open };
+      check('(s2) …on Cases: no panel shown, #ycPanels hidden', s2d.stage.length === 0 && !s2d.shown && s2d.open === 'tabCases', JSON.stringify(s2d));
+      // the pane loaded once through all of it
+      check('(s2) …DB Console\'s pane loaded ONCE through all of it', hits.dbConsole === 1, `dbConsole loads=${hits.dbConsole}`);
+      await ctx.close();
+    }
+    {
+      // (s3) THE NO-RELOAD PROOF: type into a panel's pane, switch tab / page / panel and back —
+      // the text is still there and the frame's performance.timeOrigin is unchanged
+      const { page, ctx, hits } = await boot(browser, url, '?open=tabMore~moreAutomations');
+      let f = await paneFrame(page, 'automationsDiv');
+      const t0 = await f.evaluate(() => { const t = document.createElement('textarea'); t.id = 's6c4probe'; document.body.appendChild(t); t.focus(); return performance.timeOrigin; });
+      await f.type('#s6c4probe', 'unsaved words');
+      await page.evaluate(() => window.openMainTab('tabCases'));
+      await sleep(200);
+      await page.evaluate(() => window.openMainTab('tabAdmin'));
+      await clickTile(page, 'adminDbConsole', 'admin');
+      await sleep(400);
+      await page.evaluate(() => window.openMainTab('tabMore'));
+      await sleep(200);
+      await clickTile(page, 'moreManuals', 'more');
+      await sleep(300);
+      await clickTile(page, 'moreAutomations', 'more');
+      await sleep(300);
+      f = await paneFrame(page, 'automationsDiv');
+      const after = await f.evaluate(() => ({ t: performance.timeOrigin, v: (document.getElementById('s6c4probe') || {}).value || null }));
+      const s3 = { t0, ...after, loads: hits.automationManager, open: q(page.url()).open, stage: await onStage(page) };
+      check('(s3) no reload: after Cases → Admin (DB Console) → More → Manuals → Automations, the typed text is still there, timeOrigin unchanged, the pane loaded ONCE',
+        after.t === t0 && after.v === 'unsaved words' && hits.automationManager === 1 && s3.open === 'tabMore~moreAutomations' && s3.stage.join() === 'automationsDiv', JSON.stringify(s3));
+      await ctx.close();
+    }
+    {
+      // (s4) non-SU: tabMore~adminUsers → the More grid (Users is not effective; the neutral is not drawn), no pane
+      const { page, ctx } = await boot(browser, url, '?open=tabMore~adminUsers', { su: false });
+      const s4 = { tab: await activeTab(page), open: q(page.url()).open, stage: await onStage(page),
+        neutral: await page.evaluate(() => !!document.querySelector('#tabMore > .big-button[data-yc-shortcut="adminUsers"]')) };
+      check('(s4) non-SU tabMore~adminUsers → the More grid, no neutral, nothing on the stage',
+        s4.tab === 'tabMore' && s4.open === 'tabMore' && s4.stage.length === 0 && !s4.neutral, JSON.stringify(s4));
+      await ctx.close();
     }
 
     // (b6) dedup refocus with a new tab: the page switches, its report moves the token

@@ -14,24 +14,25 @@
  *      key keeps the LAST one without a word, so uniqueness is checked on the
  *      source text; grid ids carry their prefix; a panel tile has no onclick
  *      (the delegated [data-target] listener opens it — an onclick would fire
- *      twice) and names a real panel div in its own tab; every sidebar
- *      data-tab names a real tab.
+ *      twice) and names a real panel div on the stage (#ycPanels, ui-custom
+ *      S6c-4 — never inside its tab); every sidebar data-tab names a real tab.
  *   2. THE MOUNTS. One per surface, in page order, each inside the container
  *      the surface lives in — before the boot script, which looks the items
  *      up by id.
  *   3. THE MECHANISM, RUN FOR REAL. jsdom executes the page's own renderer
  *      over the real registry, mount by mount, inside a skeleton of each
  *      container: the markup lands in the mount's place, as DIRECT children
- *      (ensureStrip(), exitDrillMode() and the drill-in/phone CSS select with
- *      ">"), and the mount script removes itself.
+ *      (ensureStrip() and the drill-in/phone CSS select with ">"), and the
+ *      mount script removes itself.
  *
  * Wiring of particular items (Comms, Calendar, the Config label) is asserted
  * where it was decided — commsShell, unifiedEventsU9.shell, fieldDefs.cfg1 —
  * against the expanded page (tests/helpers/shellHtml.js).
  *
  * Mutation-checked: a duplicated registry key; an orphaned item; a layout ref
- * to a missing id; a panel tile given an onclick; a tile targeting a panel in
- * the other grid; a sidebar data-tab to nowhere; a mount moved after the boot
+ * to a missing id; a panel tile given an onclick; a tile targeting a panel
+ * that is not on the stage, or one left inside a hub; a sidebar data-tab to
+ * nowhere; a mount moved after the boot
  * script; mount() not removing its script; insertion as a wrapper instead of
  * direct children.
  *
@@ -98,17 +99,30 @@ describe('the registry data', () => {
     }
   });
 
-  test('grid panel tiles have NO onclick and open a real panel in their own tab, in their own group', () => {
+  test('grid panel tiles have NO onclick and open a real panel on the stage (#ycPanels), never one inside a hub, in their own group', () => {
+    // the stage: one container after the hubs, closed before the drill CSS
+    const a = RAW.indexOf('<div id="ycPanels" style="display:none">');
+    const b = RAW.indexOf('<style>\n  /* Drill-in pill strip for big-button tabs */', a);
+    expect(a).toBeGreaterThan(RAW.indexOf('<div id="tabAdmin" class="tab-main"'));
+    expect(b).toBeGreaterThan(a);
+    const stage = RAW.slice(a, b);
+    expect(stage).not.toMatch(/class="tab-main/);
     for (const [surface, tab] of [['more', 'tabMore'], ['admin', 'tabAdmin']]) {
-      const html = tabDiv(tab);
+      const html = tabDiv(tab).split('<div id="ycPanels"')[0];   // the hub ends where the stage begins
       for (const e of LAY[surface].filter((x) => x.item)) {
         const it = REG[e.item];
         if (it.target == null) { expect([e.item, typeof it.onclick]).toEqual([e.item, 'string']); continue; }
         expect([e.item, it.onclick]).toEqual([e.item, undefined]);
         expect([e.item, it.group]).toEqual([e.item, surface]);
-        expect([e.item, html.includes(`<div id="${it.target}"`)]).toEqual([e.item, true]);
+        expect([e.item, stage.includes(`<div id="${it.target}"`)]).toEqual([e.item, true]);
+        expect([e.item, html.includes(`<div id="${it.target}"`)]).toEqual([e.item, false]);
       }
     }
+    // and nothing else on the stage opens a panel: every stage div is some tile's target
+    const divs = [...stage.matchAll(/\n  <div id="(\w+)"/g)].map((m) => m[1]);
+    const targets = new Set(Object.values(REG).map((it) => it.target).filter(Boolean));
+    expect(divs.length).toBe(targets.size);
+    for (const id of divs) expect([id, targets.has(id)]).toEqual([id, true]);
   });
 
   test('every sidebar data-tab / data-tab-also names a real tab; dialogs have none', () => {

@@ -731,7 +731,8 @@
       // .big-button with the icon, <br><br> and the label — built as DOM:
       // the icon class from the validated slug only, the label as a text
       // node. A click runs exec(id). No data-target / data-exclusive-group
-      // (the drill machinery queries those page-wide), and no EL entry:
+      // (a [data-target] inside a page drills THAT page onto the panel
+      // stage, S6c-4 — a firm item has no panel), and no EL entry:
       // hidePass / relabel never touch these, and elementsOf(firm id) stays
       // {} — exec() dispatches a firm item declaratively, never by clicking
       // its tile (which itself calls exec). Like every grid tile they get a
@@ -1075,15 +1076,17 @@
       //   - an item placed where it has no default element is a NEUTRAL
       //     shortcut: the surface's own grammar (a .home-btn tile / an
       //     .sb-item row / a .big-button grid tile / a .<page>-egg icon
-      //     button), no id, no data-target / data-exclusive-group (the
-      //     drill-in machinery queries those page-wide — a panel item placed
-      //     on another grid navigates to its own page, option C of
-      //     S6c_DESIGN until the panel stage lands), label as text (an icon
+      //     button), no id, no data-exclusive-group, label as text (an icon
       //     button: as its title and aria-label), icon from the effective
       //     entry (registry, or the validated firm slug), data-yc-shortcut =
       //     its id; a click runs exec(id). On the sidebar it carries the
       //     registry item's data-tab / data-tab-also, so updateSidebarActive
-      //     lights it like the real one.
+      //     lights it like the real one. One exception (ui-custom S6c-4, the
+      //     panel stage): a PANEL item's tile on a grid page (More, Admin)
+      //     carries the item's data-target and no click listener — the
+      //     page's delegated [data-target] handler opens the panel in place
+      //     on that page, as it does for a default tile (exec may click it:
+      //     it never calls exec back). Every other neutral calls exec.
       // A pass whose node order is already in place changes nothing, and an
       // empty layout puts back exactly the nodes mount() inserted, in their
       // order: the default DOM.
@@ -1136,6 +1139,9 @@
         var icons = !!ICON_SURFACES[surface], grid = surface === 'more' || surface === 'admin';
         if (!n) {
           var el;
+          // a panel item on a grid page: the stage opens it in place (S6c-4)
+          var regIt = hasOwn(window.FEATURE_REGISTRY || {}, id) ? window.FEATURE_REGISTRY[id] : null;
+          var panelTile = grid && regIt && typeof regIt.target === 'string' && regIt.target ? regIt.target : null;
           if (surface === 'sidebar') { el = document.createElement('div'); el.className = 'sb-item'; }
           else {
             el = document.createElement('button');
@@ -1143,6 +1149,7 @@
             if (icons) el.type = 'button';
           }
           el.setAttribute(SHORTCUT_ATTR, id);
+          if (panelTile) el.setAttribute('data-target', panelTile);
           var ic = document.createElement('i');
           if (icons) ic.setAttribute('aria-hidden', 'true');
           el.appendChild(ic);
@@ -1156,7 +1163,7 @@
           // A sidebar shortcut closes the phone drawer whatever exec opens — a
           // firm item's new window included (openMainTab only covers tabs).
           // (a drawer, S5b, opens anchored to this element)
-          el.addEventListener('click', function () {
+          if (!panelTile) el.addEventListener('click', function () {
             exec(id, { from: el });
             if (surface === 'sidebar') document.body.classList.remove('sidebar-mobile-open');
           });
@@ -1567,6 +1574,18 @@
       // it calls exec). Every item a default layout places keeps an element;
       // the items placed in none (S6b) run through NO_ELEMENT below.
       //
+      // A GRID item (a More / Admin tile — ui-custom S6c-4, the panel stage)
+      // is opened from the page you are looking at when that page shows a
+      // tile for it (its default tile, or a neutral the firm placed there);
+      // else from the first page that does — More, then Admin (later firm
+      // pages, then user pages); else by its own default tile, hidden on
+      // its page (a firm-unplaced tile still opens its panel, with no pill
+      // lit). opts.page names a page to try first (the WORKSPACE URL restore:
+      // tabAdmin~adminUsers must reopen on Admin even when Users also sits
+      // on More). A neutral panel tile is clicked like a default one — it has
+      // no exec listener (see neutral()); an ACTION item's neutral calls exec
+      // itself, so it is never a routing target: its default tile is.
+      //
       // A firm item's action is dispatched declaratively — re-validated
       // first, so a bad one never navigates — 'window' →
       // window.open(url, '_blank', 'noopener'); 'modal' →
@@ -1640,15 +1659,39 @@
           warn('exec("' + id + '"): no rendered element');
           return false;
         }
-        window.openMainTab(TAB_OF[sf]);
+        var at = sf === 'home' ? { tab: TAB_OF.home, el: m.home } : gridTileFor(id, m[sf], TAB_OF[sf], opts && opts.page);
+        window.openMainTab(at.tab);
         // A panel tile TOGGLES its panel. Arriving from another tab,
-        // openMainTab() leaves the grid drilled into whatever was open — if
+        // openMainTab() leaves the page drilled into whatever was open — if
         // that is this panel, clicking would close it. It is already up.
-        var tgt = m[sf].getAttribute('data-target');
+        var tgt = at.el.getAttribute('data-target');
         var panel = tgt && document.getElementById(tgt);
         if (panel && getComputedStyle(panel).display !== 'none') return true;
-        m[sf].click();
+        at.el.click();
         return true;
+      }
+      // The grid tile exec clicks for id, { tab, el }: the first page in the
+      // order [opts.page, the active tab, More, Admin] that SHOWS one — its
+      // default tile `def` (on `home`, when not firm-unplaced) or a neutral
+      // panel tile ([data-yc-shortcut=id][data-target], the only neutral kind
+      // exec may click) — else the default tile on its own page, hidden.
+      function gridTileFor(id, def, home, first) {
+        var cur = typeof window.currentMainTabId === 'function' ? window.currentMainTabId() : null;
+        var pages = [first, cur, TAB_OF.more, TAB_OF.admin], seen = {};
+        for (var i = 0; i < pages.length; i++) {
+          var tabId = pages[i];
+          if (!tabId || seen[tabId]) continue;
+          seen[tabId] = true;
+          var el = pageTileFor(tabId, id, def, home);
+          if (el) return { tab: tabId, el: el };
+        }
+        return { tab: home, el: def };
+      }
+      function pageTileFor(tabId, id, def, home) {
+        var tab = document.getElementById(tabId);
+        if (!tab) return null;
+        if (tabId === home && def && !def.hasAttribute(UNPLACED_ATTR) && def.parentNode === tab) return def;
+        return tab.querySelector(':scope > .big-button[' + SHORTCUT_ATTR + '="' + id + '"][data-target]');
       }
 
       // ── The matcher: the All tab's search box and the Ctrl-K palette ───
@@ -2889,8 +2932,9 @@
   <!-- All (ui-custom S2): every item of this user's effective registry
        (ycLauncher.effectiveRegistry()), grouped by origin; each entry is a
        neutral button that runs ycLauncher.exec(id), which clicks the real
-       launcher element. NEVER data-target / data-exclusive-group in here: the
-       drill-in machinery queries those page-wide. The search box ranks with
+       launcher element. NEVER data-target / data-exclusive-group in here: a
+       [data-target] inside a tab drills THAT tab onto the panel stage
+       (#ycPanels, S6c-4). The search box ranks with
        the Ctrl-K palette's matcher (the phone's way in). Rendered after login
        by /js/ycAll.js, which also owns the palette. Its "Customize my
        launcher" button opens the layout editor (/js/ycLayoutEditor.js). -->
@@ -5634,8 +5678,9 @@
   <!-- The grid: rendered from FEATURE_REGISTRY + DEFAULT_LAYOUTS.more
        (public/js/featureRegistry.js) — the layout rule and the row notes live
        there. The tiles and the row breaks must stay DIRECT children of this
-       div, ahead of the panels: ensureStrip(), exitDrillMode() and the
-       drill-in and phone CSS all select them with ">". -->
+       div: ensureStrip(), the drill-in and phone CSS all select them with
+       ">". The panels the tiles open live on the stage (#ycPanels, after the
+       tabs — ui-custom S6c-4), never in here. -->
   <script>ycLauncher.mount('more')</script>
   <!-- More's icon row (ui-custom S6c): Casey's way back in, now that its tile
        went to Settings — a small paw under the grid, not a tile (the rows stay
@@ -5643,11 +5688,42 @@
        DEFAULT_LAYOUTS.moreIcons (the `casey` item, its old markup byte for
        byte) and the firm's layout. -->
   <div class="more-egg-row"><script>ycLauncher.mount('moreIcons')</script></div>
-    <!-- Panels are kept in the same order as the buttons above. Order has no
-       effect on rendering (they are all display:none until opened) — it just
-       keeps the two lists readable side by side. Two grid tiles have no panel
-       here on purpose: Get Clio Code is a Swal, and Settings opens its own
-       main tab (tabSettings). -->
+</div>
+  
+<div id="tabAdmin" class="tab-main" data-all-icons='<i class="fa-solid fa-arrow-left"></i><i class="fa-solid fa-mug-hot"></i>'>
+  <h1><i class="fa-solid fa-mug-hot"></i> Admin <i class="fa-solid fa-mug-hot"></i></h1>
+  <!-- The grid: rendered from FEATURE_REGISTRY + DEFAULT_LAYOUTS.admin
+       (public/js/featureRegistry.js) — layout rule and row notes live there;
+       same direct-child rule as the More Features grid. -->
+  <script>ycLauncher.mount('admin')</script>
+  <!-- Admin's icon row (ui-custom S6c): empty by default — the div takes no
+       space while it holds nothing (the :empty rule below); the firm's layout
+       may place small items here. -->
+  <div class="admin-egg-row"><script>ycLauncher.mount('adminIcons')</script></div>
+
+  <div id="sequencesDiv" style="display:none"></div>
+</div>
+<!-- ══ The panel stage (ui-custom S6c-4) ══════════════════════════════════
+     Every More / Admin panel (the lazy iframes behind the grid tiles) lives
+     HERE, in one container, never inside a page tab. A panel is one element,
+     so it can be opened from any page that holds a tile for it (the firm's
+     layout may put Users on More, a firm or user page may hold Automations
+     beside it), and it NEVER moves: moving an <iframe> in the DOM destroys
+     its browsing context and reloads it, losing unsaved work (a Form Builder
+     draft, an open automation). Switching pages or panels only toggles
+     display. The stage shows ONE panel — the one the active page last opened
+     (the drill script below keeps a per-page memory) — and nothing while any
+     other tab is on screen; #ycPanels itself is display:none then. It is NOT
+     a .tab-main; it sits after the tabs, so on screen it follows the active
+     page (strip, heading) exactly where the panel used to be. The pane
+     iframes' window.parent is still the shell. Admin's panels carry their
+     own inline sizing; More's take style.css's iframe defaults. -->
+<div id="ycPanels" style="display:none">
+  <!-- More's panels, in the order of the tiles on its default grid. Order has
+       no effect on rendering (they are all display:none until opened) — it
+       just keeps the two lists readable side by side. Two grid tiles have no
+       panel here on purpose: Get Clio Code is a Swal, and Settings opens its
+       own main tab (tabSettings). -->
 
   <!-- What the client fills in -->
   <!-- Simple Forms: the friendly builder. Same form_templates records and the
@@ -5655,9 +5731,10 @@
        to open definitions it cannot faithfully represent (tabs, repeaters,
        code/hooks/css) and hands those to the full builder instead. Its
        "Open in Form Builder" button sets the formBuilderDiv iframe's src and
-       clicks that panel's button, so BOTH must stay in the "more" exclusive
-       group and this iframe must stay a DIRECT child of the shell (it relays
-       apiSend to its own preview render.html frame). -->
+       runs ycLauncher.exec('moreFormBuilder') (ui-custom S6c-4; the hand-off
+       is formBuilderSimple.html's openFullBuilder), so both panels must stay
+       on this stage, and this iframe's window.parent must stay the shell (it
+       relays apiSend to its own preview render.html frame). -->
   <div id="formSimpleDiv" class="more-panel" style="display:none">
     <iframe data-src="/formBuilderSimple.html"></iframe>
   </div>
@@ -5666,7 +5743,7 @@
   </div>
   <!-- X4 Form Inbox: unlinked external submissions — view + adopt onto a
        case/contact/appt. formInbox.html relays apiSend to its render.html
-       view iframes, so it must stay a DIRECT child of the shell. -->
+       view iframes, so its window.parent must stay the shell. -->
   <div id="formInboxDiv" class="more-panel" style="display:none">
     <iframe data-src="/formInbox.html"></iframe>
   </div>
@@ -5744,20 +5821,8 @@
   <div id="themeCustomDiv" class="more-panel" style="display:none">
     <iframe data-src="/themeCustom.html"></iframe>
   </div>
-</div>
-  
-<div id="tabAdmin" class="tab-main" data-all-icons='<i class="fa-solid fa-arrow-left"></i><i class="fa-solid fa-mug-hot"></i>'>
-  <h1><i class="fa-solid fa-mug-hot"></i> Admin <i class="fa-solid fa-mug-hot"></i></h1>
-  <!-- The grid: rendered from FEATURE_REGISTRY + DEFAULT_LAYOUTS.admin
-       (public/js/featureRegistry.js) — layout rule and row notes live there;
-       same direct-child rule as the More Features grid. -->
-  <script>ycLauncher.mount('admin')</script>
-  <!-- Admin's icon row (ui-custom S6c): empty by default — the div takes no
-       space while it holds nothing (the :empty rule below); the firm's layout
-       may place small items here. -->
-  <div class="admin-egg-row"><script>ycLauncher.mount('adminIcons')</script></div>
 
-  <div id="sequencesDiv" style="display:none"></div>
+  <!-- Admin's panels, in the order of the tiles on its default grid. -->
   <div id="readonlyKeysDiv" style="display:none; margin-top:10px;">
     <iframe data-src="/readonlyKeys.html"
             style="width:100%; height:80vh; border:1px solid var(--border); border-radius:6px; background:var(--page-bg);"></iframe>
@@ -5840,10 +5905,14 @@
   .pill-button:hover { border-color:#1d7fe0; }
   .pill-button.active { background:#1d7fe0; border-color:#1d7fe0; color:#fff; }
 
+  /* The panel stage (ui-custom S6c-4, see the #ycPanels markup): the panels
+     used to inherit text-align:center from their .tab-main; the stage gives
+     them the same. Colour and background come from body, as before. */
+  #ycPanels { text-align: center; }
   /* Admin panel iframes carry width:100% + a 1px border inline, i.e. 2px
      wider than their box under content-box — on a phone that widened the
-     whole shell by 2px. */
-  #tabAdmin > div > iframe { box-sizing: border-box; }
+     whole shell by 2px. (More's have no border, so the rule is a no-op there.) */
+  #ycPanels > div > iframe { box-sizing: border-box; }
 
   /* ── Hubs on a phone ──────────────────────────────────────────────────
      Grid: the desktop tiles are 200px each, so a phone got ONE per line —
@@ -5874,11 +5943,11 @@
     .feature-strip .pill-button { flex: 0 0 auto; }
     /* 46px = the strip line (6px pads + ~34px pill). !important: the Admin
        panels set height:80vh and margin-top inline. */
-    #tabMore > div > iframe, #tabAdmin > div > iframe {
+    #ycPanels > div > iframe {
       height: calc(100vh - var(--header-h) - 46px) !important;
       height: calc(100dvh - var(--header-h) - 46px) !important;
     }
-    #tabAdmin > div { margin-top: 0 !important; }
+    #ycPanels > div { margin-top: 0 !important; }
   }
 
   /* The mascot's trick panel. Lives inside a Swal TOAST, so it is 360px wide
@@ -6145,45 +6214,78 @@
 
   // ── Panel toggle + drill-in pill strip ── HOW TO USE ──────────────────
   // Panel button:  <button class="big-button" data-target="myDiv" data-exclusive-group="more">
-  //                + sibling <div id="myDiv" style="display:none"><iframe data-src="/x.html"></iframe></div>
+  //                + a panel <div id="myDiv" style="display:none"><iframe data-src="/x.html"></iframe></div>
+  //                  on the stage (#ycPanels, after the tabs — ui-custom S6c-4)
   //   Click = open panel (iframe lazy-loads once), hide the grid, show pill strip.
-  //   One panel open per group; re-clicking the active pill returns to the grid.
+  //   ONE panel on the stage at a time; re-clicking the active pill returns to the grid.
   // Action button (no data-target): its pill proxies the original onclick.
   // Pills auto-build from ALL .big-buttons in the tab — zero wiring per feature.
   //   Icon-only (cloned from button, fa-2xl stripped); label shows when active,
   //   or always if the button has no icon. Hover = tooltip.
   // "All" pill exits to the grid; its icons come from data-all-icons on the
   //   tab div (HTML string), default: back-arrow + grip.
+  //
+  // The stage, and the drill is PAGE-scoped (ui-custom S6c-4): the page a
+  // tile sits on (btn.closest('.tab-main') — More, Admin, later a firm or user
+  // page) is the drill's context, not the tile's data-exclusive-group (kept
+  // in the markup for the pills; it names nothing any more). Each page
+  // remembers the panel it last opened (drillMemory), so More can be drilled
+  // into Automations while Admin is drilled into Users, and arriving back on
+  // either shows what you left (openMainTab sets the stage from that
+  // memory; any other tab hides it). The same panel may sit on several
+  // pages: it is one element, opened in place on whichever page you press
+  // it from, never moved (an <iframe> that moves reloads). Its display is
+  // the one truth: a panel is display:'' iff it is the one on the stage now
+  // (wsOpenPanel reads that, WORKSPACE URL).
+  var drillMemory = {};   // page (tab id) → the panel id it last opened
+
+  // Put exactly one panel (or none) on the stage — the stage's children are
+  // THE panels; a div anywhere else is never one (J6). Returns the shown panel.
+  function stageShow(panelId) {
+    let shown = null;
+    const stage = document.getElementById('ycPanels');
+    if (!stage) return null;
+    for (const p of stage.children) {
+      const on = !!panelId && p.id === panelId;
+      p.style.display = on ? '' : 'none';
+      if (on) shown = p;
+    }
+    stage.style.display = shown ? '' : 'none';
+    return shown;
+  }
+  // Open a panel on a page: remember it there, show it (lazy-loading its
+  // iframe on the first open), light the strip.
+  function drillOpen(page, panelId) {
+    drillMemory[page.id] = panelId;
+    const panel = stageShow(panelId);
+    if (panel) {
+      const iframe = panel.querySelector('iframe[data-src]');
+      if (iframe) {
+        iframe.src = iframe.dataset.src;
+        delete iframe.dataset.src;
+      }
+    }
+    syncDrillState(page);
+  }
+  // A page is on screen: show the panel it remembers, or nothing. Called by
+  // openMainTab; returns the shown panel (so it can be pinged).
+  function stageSync(tabId) {
+    return stageShow(drillMemory[tabId] || null);
+  }
   document.addEventListener('click', (e) => {
     const btn = e.target.closest('[data-target]');
     if (!btn) return;
 
     const target = document.getElementById(btn.dataset.target);
     if (!target) return;
+    const page = btn.closest('.tab-main');
+    if (!page) return;
 
-    const wasHidden = getComputedStyle(target).display === 'none';
-
-    // If this button belongs to an exclusive group, hide other panels in that group first.
-    const group = btn.dataset.exclusiveGroup;
-    if (group) {
-      document.querySelectorAll(`[data-target][data-exclusive-group="${group}"]`)
-        .forEach(b => {
-          const panel = document.getElementById(b.dataset.target);
-          if (panel) panel.style.display = 'none';
-        });
-    }
-
-    target.style.display = wasHidden ? '' : 'none';
-
-    if (wasHidden) {
-      const iframe = target.querySelector('iframe[data-src]');
-      if (iframe) {
-        iframe.src = iframe.dataset.src;
-        delete iframe.dataset.src;
-      }
-    }
-
-    if (group) syncDrillState(btn.closest('.tab-main'), group);
+    // A press on the page's open panel goes back to the grid; anything else
+    // opens that panel here (and closes whatever the stage showed).
+    const isOpen = drillMemory[page.id] === target.id && getComputedStyle(target).display !== 'none';
+    if (isOpen) exitDrillMode(page);
+    else drillOpen(page, target.id);
   });
 
   // Build the pill strip once per tab (lazy, on first drill-in).
@@ -6229,9 +6331,10 @@
       pill.appendChild(label);
 
       if (src.dataset.target) {
-        // Let the generic handler above drive panel switching
+        // Let the generic handler above drive panel switching (a neutral
+        // page tile of a panel item, S6c-4, has a target and no group)
         pill.dataset.target = src.dataset.target;
-        pill.dataset.exclusiveGroup = src.dataset.exclusiveGroup || '';
+        if (src.dataset.exclusiveGroup) pill.dataset.exclusiveGroup = src.dataset.exclusiveGroup;
       } else {
         // Action button: proxy the original click
         pill.addEventListener('click', () => src.click());
@@ -6244,16 +6347,18 @@
     return strip;
   }
 
-  // Back out of a drilled-in panel to the tab's grid: hide every panel this
-  // tab's grid buttons own, drop drilled-in mode, clear the pill highlight.
-  // Called by the "All" pill and by openMainTab() when you re-open the tab you
-  // are already on. No-op on tabs with no grid (every tab but More/Admin).
+  // Back out of a drilled-in panel to the page's grid: forget the panel this
+  // page had open, clear the stage (when this page is the one on screen —
+  // another page's panel is never touched), drop drilled-in mode, clear the
+  // pill highlight. Called by the "All" pill, by the click handler on the
+  // open panel's own tile / pill, and by openMainTab() when you re-open the
+  // tab you are already on. No-op on tabs with no grid (every tab but the
+  // pages) beyond the URL sync.
   function exitDrillMode(tab) {
     if (!tab) return;
-    tab.querySelectorAll(':scope > .big-button[data-target]').forEach(b => {
-      const panel = document.getElementById(b.dataset.target);
-      if (panel) panel.style.display = 'none';
-    });
+    delete drillMemory[tab.id];
+    const cur = typeof currentMainTabId === 'function' ? currentMainTabId() : null;
+    if (!cur || cur === tab.id) stageShow(null);
     tab.classList.remove('drill-active');
     // The strip only exists once the tab has been drilled into at least once.
     tab.querySelectorAll(':scope > .feature-strip .pill-button')
@@ -6261,16 +6366,16 @@
     syncWorkspaceUrl();   // the address bar's drill segment (WORKSPACE URL)
   }
 
-  // After any panel toggle: enter/exit drilled mode and highlight the active pill.
-  function syncDrillState(tab, group) {
+  // After any panel toggle: enter/exit drilled mode and highlight the active
+  // pill. The open panel is the one this page remembers, while the stage
+  // shows it. (A second argument was the exclusive group before S6c-4;
+  // callers may still pass it, it is ignored.)
+  function syncDrillState(tab) {
     if (!tab) return;
     const strip = ensureStrip(tab);
 
-    let openId = null;
-    document.querySelectorAll(`[data-target][data-exclusive-group="${group}"]`).forEach(b => {
-      const panel = document.getElementById(b.dataset.target);
-      if (panel && getComputedStyle(panel).display !== 'none') openId = panel.id;
-    });
+    const remembered = drillMemory[tab.id] ? document.getElementById(drillMemory[tab.id]) : null;
+    const openId = remembered && getComputedStyle(remembered).display !== 'none' ? remembered.id : null;
 
     tab.classList.toggle('drill-active', !!openId);
     strip.querySelectorAll('.pill-button').forEach(p =>
@@ -6433,10 +6538,10 @@
        the Pipeline board is merely the first implementer. A frame opts in by
        defining `window.ycBecameVisible`; everything else is a no-op.
 
-       Zero-width frames are skipped so the name stays honest: hub tabs
-       (tabMore, tabAdmin) hold ~20 panel iframes in hidden divs, and those did
+       Zero-width frames are skipped so the name stays honest: the panel
+       stage (#ycPanels) holds ~35 panel iframes in hidden divs, and those did
        NOT become visible. A drilled-into panel that is still open on re-entry
-       has width and correctly gets the ping.
+       has width and correctly gets the ping (openMainTab pings it).
 
        Per-frame try/catch: cross-origin frames (the legacy Jotform ISSN
        embeds) throw on contentWindow access, and one throw must not cost the
@@ -6466,17 +6571,24 @@
       target.style.display = "block";
       // Lazy-load the tab's OWN iframe on first open (tabSettings, tabTasks,
       // tabPipeline — tabs whose whole body is one iframe). ":scope >" is
-      // load-bearing: hub tabs (tabMore, tabAdmin) hold ~20 more panel iframes
-      // in hidden divs, and an unscoped querySelector picked the first of those
-      // in DOM order — loading /manuals.html and /readonlyKeys.html, and firing
-      // their startup fetches, just because you opened the tab. Hidden iframes
-      // still load and run their JS. Panel iframes are the click handler's job
-      // (see the data-target listener above).
+      // load-bearing: a tab may hold other iframes in hidden divs (a harness
+      // keeps the hub panels there), and an unscoped querySelector picked the
+      // first of those in DOM order — loading /manuals.html and
+      // /readonlyKeys.html, and firing their startup fetches, just because you
+      // opened the tab. Hidden iframes still load and run their JS. Panel
+      // iframes are the click handler's job (see the data-target listener
+      // above).
       const iframe = target.querySelector(':scope > iframe[data-src]');
       if (iframe) {
         iframe.src = iframe.dataset.src;
         delete iframe.dataset.src;
       }
+      // The panel stage (ui-custom S6c-4): a page shows the panel it last
+      // opened, any other tab shows none — set BEFORE the URL sync below reads
+      // the open panel. A panel the page remembers is pinged like a tab's own
+      // pane: it just became visible.
+      const panel = stageSync(tabName);
+      if (panel) pingBecameVisible(panel);
       pingBecameVisible(target);
       // Update sidebar active state
       updateSidebarActive(tabName);
@@ -7632,12 +7744,14 @@ async function initAuth() {
        frame drops it (openMainTabOnBoot) — except tabMore / tabAdmin, whose
        first segment is the SHELL's: the FEATURE_REGISTRY id of the open
        drill panel (tabMore~moreAutomations), read live from which panel is
-       showing, never a DOM id or a tile position. Anything after it is that
-       panel's own pane's rest (tabMore~moreAutomations~<rest>). Restoring one
-       goes through ycLauncher.exec, and only for a plain registry id whose
-       tile on that grid opens a PANEL (data-target) — never an action tile
-       (dialogs) or a firm item; exec itself refuses denied, firm-hidden and
-       admin-gated ids. Anything refused leaves the grid, silently.
+       showing on the stage (#ycPanels), never a DOM id or a tile position.
+       Anything after it is that panel's own pane's rest
+       (tabMore~moreAutomations~<rest>). Restoring one goes through
+       ycLauncher.exec, and only for a plain registry id whose tile on that
+       PAGE opens a PANEL (data-target; a default tile or a firm-placed
+       neutral, S6c-4) — never an action tile (dialogs) or a firm item; exec
+       itself refuses denied, firm-hidden and admin-gated ids. Anything
+       refused leaves the grid, silently.
 
        IDs ONLY — never names, search text, phones or emails. A client's name in
        the query string would leak to any external site the user clicks through
@@ -7704,31 +7818,50 @@ async function initAuth() {
      *  is one pane iframe have one — see openMainTabOnBoot). */
     var wsMainRest = {};
 
-    /** More / Admin: drill panel registry id → its pane's last reported rest. */
+    /** Drill panel registry id → its pane's last reported rest (the id is the
+     *  item's, whichever page it was opened from). */
     var wsPanelRest = {};
+    /** The drill PAGES the URL can name, and the launcher surface each one's
+     *  default tiles are mounted on (ycLauncher.elementsOf(id)[surface]). */
     var WS_DRILL_SURFACE = { tabMore: "more", tabAdmin: "admin" };
 
     /**
-     * The drill panels of tabMore / tabAdmin, [{ id, panel }]: every item of
-     * the EFFECTIVE registry whose tile on that grid opens a panel inside the
-     * tab — matched by the tile's data-target, never by position (ui-custom
-     * S4 may reorder the grids). ycLauncher's public API only; firm items
-     * (firm:<slug>) have no tile and are skipped.
+     * The drill panels a page can show, [{ id, panel }]: every item of the
+     * EFFECTIVE registry with a tile on THAT page that opens a panel on the
+     * stage (#ycPanels, ui-custom S6c-4) — matched by the tile's data-target,
+     * never by position. The tile is the item's default one on this page
+     * (ycLauncher.elementsOf(id)[surface]; a firm-unplaced default still
+     * counts, so a hidden tile's open panel is still named in the URL —
+     * only the restore refuses it) or a neutral the firm placed here
+     * ([data-yc-shortcut=id][data-target]). A panel not on the stage never
+     * maps (J6, restated: the stage holds it AND this page has a tile for
+     * it). Firm items (firm:<slug>) have no panel and are skipped.
      */
     function wsDrillPanels(tabId) {
       const sf = WS_DRILL_SURFACE[tabId];
       const L = window.ycLauncher;
       const tab = E(tabId);
-      if (!sf || !tab || !L || typeof L.isReady !== "function" || !L.isReady()) return [];
+      const stage = E("ycPanels");
+      if (!sf || !tab || !stage || !L || typeof L.isReady !== "function" || !L.isReady()) return [];
       const out = [];
       L.effectiveRegistry().forEach((it) => {
         if (String(it.id).indexOf(":") >= 0) return;
-        const el = (L.elementsOf(it.id) || {})[sf];
+        const el = wsPageTile(tab, sf, it.id, L);
         const target = el && el.getAttribute("data-target");
         const panel = target && document.getElementById(target);
-        if (panel && tab.contains(panel)) out.push({ id: it.id, panel });
+        if (panel && stage.contains(panel)) out.push({ id: it.id, panel });
       });
       return out;
+    }
+
+    /** The tile for a registry id on a drill page: its default tile when it
+     *  is this page's (and not firm-unplaced, when `placed`), else a neutral
+     *  the firm placed here, else null. */
+    function wsPageTile(tab, sf, id, L, placed) {
+      const def = (L.elementsOf(id) || {})[sf];
+      if (def && def.parentNode === tab && !(placed && def.hasAttribute("data-yc-unplaced"))) return def;
+      if (!/^[A-Za-z0-9_-]+$/.test(id)) return null;
+      return tab.querySelector(':scope > .big-button[data-yc-shortcut="' + id + '"][data-target]');
     }
 
     /** The drill panel open in that tab now, or null (its grid is showing). */
@@ -7748,30 +7881,33 @@ async function initAuth() {
     /**
      * Boot (openMainTabOnBoot only): reopen the drill panel `rest` names.
      * ALL must hold — (a) a plain registry id (no ':' — never a firm item),
-     * (b) it has a tile on this tab's grid that the firm's layout has not
-     * taken off it (data-yc-unplaced, ui-custom S6c — the tile is in the DOM,
-     * hidden; its panel would open with no pill lit, so the grid shows
-     * instead), (c) that tile opens a PANEL (data-target; action tiles open
-     * dialogs and never fire from a URL), (d) ycLauncher.exec(id) agrees (it
-     * refuses denied / firm-hidden / gated ids, and opens the tab itself).
-     * Any rest after the id is held for the panel's lazy iframe. true = done;
-     * false = show the grid.
+     * (b) this page SHOWS a tile for it: its default tile that the firm's
+     * layout has not taken off the grid (data-yc-unplaced, ui-custom S6c —
+     * the tile is in the DOM, hidden; its panel would open with no pill lit,
+     * so the grid shows instead), or a neutral the firm placed on this page
+     * (S6c-4: tabMore~adminUsers, Users placed on More), (c) that tile opens
+     * a PANEL (data-target; action tiles open dialogs and never fire from a
+     * URL), (d) ycLauncher.exec(id, { page }) agrees (it refuses denied /
+     * firm-hidden / gated ids, and opens THIS page itself — the same item may
+     * sit on several pages). Any rest after the id is held for the panel's
+     * lazy iframe. true = done; false = show the grid.
      */
     function wsRestoreDrill(tabId, rest) {
       const sf = WS_DRILL_SURFACE[tabId];
       const L = window.ycLauncher;
+      const tab = E(tabId);
       const segs = String(rest || "").split("~");
       const id = segs[0], sub = segs.slice(1).join("~");
-      if (!sf || !id || id.indexOf(":") >= 0 || !L || !L.isReady()) return false;
-      const el = (L.elementsOf(id) || {})[sf];
-      if (!el || !el.hasAttribute("data-target") || el.hasAttribute("data-yc-unplaced")) return false;
+      if (!sf || !tab || !id || id.indexOf(":") >= 0 || !L || !L.isReady()) return false;
+      const el = wsPageTile(tab, sf, id, L, true);
+      if (!el || !el.hasAttribute("data-target")) return false;
       const panel = document.getElementById(el.getAttribute("data-target"));
       const pane = panel && panel.querySelector(":scope > iframe");
       if (sub) {
         wsPanelRest[id] = sub;
         if (pane && window.ycSubTab) ycSubTab.host.hold(pane, sub);
       }
-      if (L.exec(id) === true) return true;
+      if (L.exec(id, { page: tabId }) === true) return true;
       delete wsPanelRest[id];
       if (pane && window.ycSubTab) ycSubTab.host.take(pane);   // drop the hold: nobody will open it
       return false;
@@ -7784,9 +7920,13 @@ async function initAuth() {
     }
 
     /** Which workspace view a frame element belongs to: a file's own pane
-     *  frame → { btn }, a main tab's own pane frame → { tab }, a More/Admin
-     *  drill panel's direct iframe → { tab, panel } (automationManager,
-     *  caseConfigManager), else null — a Swal, a tool dialog, anything nested. */
+     *  frame → { btn }, a main tab's own pane frame → { tab }, a drill
+     *  panel's direct iframe on the stage → { tab, panel } (automationManager,
+     *  caseConfigManager; `tab` = the page showing it: the active page when
+     *  that page has a tile for the panel, else the first drill page that has
+     *  — the panel is one element that several pages may hold, S6c-4; `panel`
+     *  = the registry id), else null — a Swal, a tool dialog, anything nested,
+     *  a panel no page of this user's shows. */
     function wsFrameOwner(frameEl) {
       if (!frameEl || frameEl.ownerDocument !== document || frameEl.tagName !== "IFRAME") return null;
       const fileDiv = frameEl.closest(".file");
@@ -7796,12 +7936,19 @@ async function initAuth() {
           .find((b) => b.dataset.fileId === fileDiv.id);
         return btn && btn.dataset.fileSpec ? { btn } : null;
       }
-      const tab = frameEl.closest(".tab-main");
-      if (tab && WS_DRILL_SURFACE[tab.id] && frameEl.parentElement !== tab) {
+      const stage = E("ycPanels");
+      const div = frameEl.parentElement;
+      if (stage && div && div.parentElement === stage) {
         // a drill panel's own pane frame (S4's panes report through this)
-        const p = wsDrillPanels(tab.id).find((x) => x.panel === frameEl.parentElement);
-        return p ? { tab: tab.id, panel: p.id } : null;
+        const cur = currentMainTabId();
+        const pages = (WS_DRILL_SURFACE[cur] ? [cur] : []).concat(Object.keys(WS_DRILL_SURFACE).filter((t) => t !== cur));
+        for (const tabId of pages) {
+          const p = wsDrillPanels(tabId).find((x) => x.panel === div);
+          if (p) return { tab: tabId, panel: p.id };
+        }
+        return null;
       }
+      const tab = frameEl.closest(".tab-main");
       return tab && frameEl.parentElement === tab ? { tab: tab.id } : null;
     }
 

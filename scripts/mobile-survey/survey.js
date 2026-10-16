@@ -496,7 +496,8 @@ async function walk(page, W, record) {
       .map((b) => ({ id: b.dataset.target, hub: b.closest('.tab-main').id })));
     for (const { id, hub } of panels) {
       await page.evaluate((hub) => { openMainTab(hub); const t = E(hub); if (t.classList.contains('drill-active')) exitDrillMode(t); }, hub);
-      await page.evaluate((id) => document.querySelector(`[data-target="${id}"]`).click(), id); await sleep(2000);
+      // the HUB's tile: a firm layout may place the same panel's neutral on the other hub (S6c-4 gives it data-target)
+      await page.evaluate((hub, id) => document.querySelector(`#${hub} > [data-target="${id}"]`).click(), hub, id); await sleep(2000);
       const fr = await frameOf(page, `document.querySelector('#${id} iframe')`);
       await record(`panel:${id}`, await measure(page, fr), await shot('panel_' + id));
       // Connections → Phone Lines → Access (S-PH grants editor), fixtures/api/phone-lines/{admin,1/grants}

@@ -23,7 +23,10 @@
  *      nothing; moved elements keep their ids, listeners and badges; a
  *      removed item stays in the DOM, hidden by data-yc-unplaced, and exec()
  *      still reaches it; neutral shortcuts carry no id / data-target /
- *      data-exclusive-group and run exec(); denies, firm hides, renames,
+ *      data-exclusive-group and run exec() (the one exception, a panel
+ *      item's tile on a grid page, carries data-target — S6c-4,
+ *      launcherS6c4; this file places panel items on Home and the sidebar
+ *      only); denies, firm hides, renames,
  *      locks and the custom tab compose with the layout; highlights land on
  *      moved and neutral items.
  *   3. computeEffective is pure: the group order rides on the list, and a
@@ -258,8 +261,9 @@ function boot({ extra = '' } = {}) {
     <div id="tabAll" class="tab-main"></div>
     <div id="tabCustom" class="tab-main"><iframe id="tabCustomFrame"></iframe></div>
     ${plainTabs}
-    <div id="tabMore" class="tab-main"><h1>More</h1><script>ycLauncher.mount('more')</script>${grid('more')}</div>
-    <div id="tabAdmin" class="tab-main"><h1>Admin</h1><script>ycLauncher.mount('admin')</script>${grid('admin')}</div>
+    <div id="tabMore" class="tab-main"><h1>More</h1><script>ycLauncher.mount('more')</script></div>
+    <div id="tabAdmin" class="tab-main"><h1>Admin</h1><script>ycLauncher.mount('admin')</script></div>
+    <div id="ycPanels" style="display:none">${grid('more')}${grid('admin')}</div>
   </body></html>`;
   const errors = [];
   const dom = new JSDOM(page, { runScripts: 'dangerously', pretendToBeVisual: true });

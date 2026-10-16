@@ -755,18 +755,25 @@ function uniqueKey(base) {
 }
 
 // ── The full builder, for anything this page will not do ────────────────────
-// The shell mounts every feature as a lazily-src'd iframe toggled by a
-// [data-target] button (index.html panel-toggle handler). Setting the src
-// first and clicking second lands the full builder straight on this template.
+// The shell keeps every feature as a lazily-src'd iframe in a panel on its
+// stage (index.html #ycPanels, ui-custom S6c-4), opened by a [data-target]
+// tile on whichever page holds one. Setting the src first and opening second
+// lands the full builder straight on this template.
 //
-// TOGGLE HAZARD: that shell handler is a TOGGLE — clicking the button while
-// its panel is already visible HIDES it. Both panels sit in the "more"
-// exclusive group so in normal use the builder is hidden whenever this page
-// is on screen, but relying on that invariant would make a repeat hand-off
-// close the builder instead of opening it. So: click only to open, and fall
-// back to showing the panel directly (hiding the group's siblings the way the
-// handler would) when it is already up or the button is missing.
+// The opening goes through the shell's ONE programmatic way to activate an
+// item, ycLauncher.exec('moreFormBuilder'): it picks the page (the one on
+// screen when it shows a Form Builder tile, else the first that does, else
+// the hidden default tile), opens it, and shows the panel there — a panel
+// already up is left up, never toggled shut (exec's own check). Clicking
+// "the first .big-button[data-target=formBuilderDiv]" by hand would drive a
+// page you are not on now that a firm layout can place the tile anywhere.
+// exec answers false (the item is denied / hidden for this user, or the
+// launcher is not ready): the fallback is a toast saying the builder is not
+// available to them, never a hand-made panel swap — the stage is the
+// shell's to run. No launcher at all (this page outside the shell): a toast
+// saying where the builder lives.
 function openFullBuilder(id) {
+  const form = id ? ' (form id ' + id + ')' : '';
   try {
     const pd = P.document;
     const panel = pd.getElementById('formBuilderDiv');
@@ -775,15 +782,9 @@ function openFullBuilder(id) {
       ifr.removeAttribute('data-src');          // stop the shell overwriting our src
       ifr.src = '/formBuilder.html' + (id ? '?id=' + encodeURIComponent(id) : '');
     }
-    const btn = pd.querySelector('.big-button[data-target="formBuilderDiv"]');
-    const alreadyOpen = panel && P.getComputedStyle(panel).display !== 'none';
-    if (btn && !alreadyOpen) { btn.click(); return; }   // normal path: shell drives it
-    if (!panel) throw new Error('no panel');
-    pd.querySelectorAll('[data-target][data-exclusive-group="more"]').forEach(b => {
-      const other = pd.getElementById(b.dataset.target);
-      if (other && other !== panel) other.style.display = 'none';
-    });
-    panel.style.display = '';
+    const L = P.ycLauncher;
+    if (!L || typeof L.exec !== 'function') throw new Error('no launcher');
+    if (L.exec('moreFormBuilder') !== true) { toast('The full Form Builder is not available to you' + form + ' — ask an admin.', 'info'); return; }
   } catch (e) {
     toast('Open “More Features → Form Builder”' + (id ? ' and choose this form (id ' + id + ').' : '.'), 'info');
   }
