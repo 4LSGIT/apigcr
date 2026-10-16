@@ -1437,7 +1437,7 @@
         return false;
       }
       function matchTier(query, text) {
-        var q = String(query == null ? '' : query).toLowerCase().replace(/^\s+|\s+$/g, '');
+        var q = String(query == null ? '' : query).toLowerCase().trim();   // not /^\s+|\s+$/g: quadratic on a long inner whitespace run
         var t = String(text == null ? '' : text).toLowerCase();
         if (!q) return 0;
         if (t.indexOf(q) >= 0) return 3;
