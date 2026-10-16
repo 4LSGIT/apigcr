@@ -258,6 +258,11 @@
       //     item with an entry is dropped unless the user holds one of its
       //     roles (opts.roles, the users.roles members) or is su. Registry
       //     and firm items alike; per-user denies still apply on top.
+      //   + the user's OWN buttons (ui.user.items, ui-custom S5a: "My
+      //     buttons"), group "Mine" — after Firm, before Admin — in their
+      //     array order. They are the user's: firm hidden / renames /
+      //     visible_to, entitlement denies (a user: id can't be denied) and
+      //     the undeniable rules do not touch them. See userItems below.
       // Each entry: { id, group, label, labels, icon } — labels = label +
       // surfaceLabels, what the matcher reads. group = the item's origin:
       // its sidebar section, else Home, else the grid it is on; groups run
@@ -304,8 +309,12 @@
       // user.layout is the user's Home / sidebar layout (S4a, below);
       // user.shortcuts is the user's keyboard shortcuts: /js/ycAll.js
       // dispatches them (S4c); nothing in this block reads it.
+      // user.items is the user's own buttons (S5a, userItems below).
       var FIRM_GROUP = 'Firm';
       var FIRM_ID_RE = /^firm:[a-z0-9-]{1,40}$/;
+      var USER_GROUP = 'Mine';
+      var USER_ID_RE = /^user:[a-z0-9-]{1,40}$/;     // lib/uiConfigShape.js USER_ID_RE
+      var USER_ITEMS_MAX = 50;                       // lib/uiConfigShape.js CAPS.items
       var ICON_RE = /^[a-z0-9-]{1,40}$/;
       var TOOL_KEY_RE = /^[a-z0-9-]{1,80}$/;         // routes/api.tools.js TOOL_KEY_RE
       var VIEW_KEY_RE = /^[a-z][a-z0-9_]{2,59}$/;    // services/reportService.js REPORT_KEY_RE
@@ -372,10 +381,12 @@
           size: hasOwn(a, 'size') ? a.size : 'large',
         };
       }
-      /** One firm item → its clean copy, or null. */
-      function cleanFirmItem(it) {
+      /** One launcher item (firm: idRe FIRM_ID_RE; a user's own button:
+       *  USER_ID_RE — the same grammar, lib/uiConfigShape.js cleanItems) →
+       *  its clean copy, or null. */
+      function cleanItem(it, idRe) {
         if (!isObj(it) || !onlyKeys(it, ['id', 'label', 'icon', 'action'])) return null;
-        if (typeof it.id !== 'string' || !FIRM_ID_RE.test(it.id)) return null;
+        if (typeof it.id !== 'string' || !idRe.test(it.id)) return null;
         var label = cleanLabel(it.label);
         if (label == null || typeof it.icon !== 'string' || !ICON_RE.test(it.icon) || !firmTarget(it.action)) return null;
         var a = it.action, ca;
@@ -385,6 +396,26 @@
           if (hasOwn(a, 'size')) ca.size = a.size;
         }
         return { id: it.id, label: label, icon: it.icon, action: ca };
+      }
+      function cleanFirmItem(it) { return cleanItem(it, FIRM_ID_RE); }
+      function cleanUserItem(it) { return cleanItem(it, USER_ID_RE); }
+      /** ui → the user's own buttons (S5a), clean, in array order: a bad or
+       *  duplicate one is dropped with a console warning (never listed, never
+       *  navigates); at most USER_ITEMS_MAX are read. quiet: no warnings. */
+      function userItems(ui, quiet) {
+        var out = [], seen = {};
+        var doc = isObj(ui) && isObj(ui.user) && isObj(ui.user.items) ? ui.user.items : null;
+        var list = doc && Object.prototype.toString.call(doc.items) === '[object Array]' ? doc.items : [];
+        for (var i = 0; i < list.length && i < USER_ITEMS_MAX; i++) {
+          var c = cleanUserItem(list[i]);
+          if (!c || hasOwn(seen, c.id)) {
+            if (!quiet) note('your button ' + i + ' dropped: ' + (c ? 'duplicate id ' + c.id : 'it breaks the button rules'));
+            continue;
+          }
+          seen[c.id] = true;
+          out.push(c);
+        }
+        return out;
       }
       /** ui → { hidden: {id:true}, renames: {id: label}, items: [clean item],
        *         locked: {id:true}, visibleTo: {id: {role:true}} }.
@@ -482,6 +513,8 @@
           (layouts[sf] || []).forEach(function (e) { if (e) place(e.item, GRID_GROUP[sf]); });
         });
         if (firm.items.length) order.splice(order.indexOf(GRID_GROUP.admin), 0, FIRM_GROUP);
+        var mine = userItems(opts.ui);
+        if (mine.length) order.splice(order.indexOf(GRID_GROUP.admin), 0, USER_GROUP);
 
         var out = [];
         seq.forEach(function (id) {
@@ -514,6 +547,17 @@
           if (denied[fi.id] || firm.hidden[fi.id] || restricted[fi.id]) return;
           seq.push(fi.id);
           out.push({ id: fi.id, group: FIRM_GROUP, label: fi.label, labels: [fi.label], icon: fi.icon, action: fi.action });
+        });
+        // The user's own buttons (S5a): no firm hide / rename / visible_to,
+        // no deny (a user: id can't be denied) — they are the user's. Listed
+        // in All + the palette, placeable on Home / the sidebar (the layout
+        // pass draws a neutral shortcut), bindable to a shortcut; exec()
+        // dispatches their action like a firm item's. Their action rides as
+        // userAction, NOT action: the More grid's firm row draws every entry
+        // with an `action` (renderFirmRow), and that row is the firm's only.
+        mine.forEach(function (ub) {
+          seq.push(ub.id);
+          out.push({ id: ub.id, group: USER_GROUP, label: ub.label, labels: [ub.label], icon: ub.icon, userAction: ub.action });
         });
         out.sort(function (a, b) {
           return (order.indexOf(a.group) - order.indexOf(b.group)) || (seq.indexOf(a.id) - seq.indexOf(b.id));
@@ -1016,7 +1060,10 @@
       // openToolDialog(url, { title, size }). Its More tile (the firm row,
       // renderFirmRow) calls exec(); exec never clicks the tile. Either way
       // an open tool dialog is closed first: whatever exec() opens must not
-      // sit behind it.
+      // sit behind it. A user's own button (S5a, its entry's userAction) is
+      // dispatched the same way, by the same rules: a link always opens a
+      // new window (noopener), never embedded; a tool / view the dialog, at
+      // its size.
       function exec(id) {
         if (!STATE) { warn('exec("' + id + '") before login'); return false; }
         var entry = null;
@@ -1024,9 +1071,10 @@
         if (!entry) { warn('exec("' + id + '"): not in this user\'s launcher'); return false; }
         var td = window.openToolDialog;
         if (td && td.isOpen && td.isOpen()) td.close();
-        if (entry.action) {
-          var t = firmTarget(entry.action);
-          if (!t) { warn('exec("' + id + '"): its action breaks the firm item rules — refused'); return false; }
+        var act = entry.action || entry.userAction;
+        if (act) {
+          var t = firmTarget(act);
+          if (!t) { warn('exec("' + id + '"): its action breaks the ' + (entry.action ? 'firm item' : 'button') + ' rules — refused'); return false; }
           if (t.present === 'window') { window.open(t.url, '_blank', 'noopener'); return true; }
           if (typeof td !== 'function') { warn('exec("' + id + '"): no tool dialog on this page'); return false; }
           return td(t.url, { title: entry.label, size: t.size }) === true;
@@ -1092,7 +1140,7 @@
         build: build, mount: mount,
         computeEffective: computeEffective, rank: rank, matchTier: matchTier,
         applyAccess: applyAccess, isReady: isReady, effectiveRegistry: effectiveRegistry,
-        elementsOf: elementsOf, exec: exec, cleanFirmItem: cleanFirmItem, resolveLayout: resolveLayout,
+        elementsOf: elementsOf, exec: exec, cleanFirmItem: cleanFirmItem, cleanUserItem: cleanUserItem, resolveLayout: resolveLayout,
         UNDENIABLE: UNDENIABLE, groups: function () { return GROUPS.slice(); },
       };
     })();
@@ -2252,7 +2300,7 @@
     #ycLayoutEditor .yle-pick-item span { min-width: 0; overflow-wrap: anywhere; }
     #ycLayoutEditor .yle-hidden-wrap { margin-top: 10px; }
     #ycLayoutEditor .yle-hidden-none[hidden] { display: none; }
-    /* Its two tabs and the Keyboard shortcuts tab (S4c). The strip sits
+    /* Its tabs (S4c; My buttons is the third, S5a) and the Keyboard shortcuts tab (S4c). The strip sits
        between the head and the scrolling body (flex: 0 0 auto, like them). */
     #ycLayoutEditor .yle-tabs { flex: 0 0 auto; display: flex; gap: 4px; padding: 8px 16px 0; border-bottom: 1px solid var(--border); }
     #ycLayoutEditor .yle-tab {
@@ -2283,6 +2331,30 @@
     #ycLayoutEditor .ysc-msg.ysc-warn { color: var(--warn-text); }
     #ycLayoutEditor .ysc-msg.ysc-ok { color: var(--ok); }
     #ycLayoutEditor .ysc-add-row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+    /* My buttons (S5a): a row wraps — the summary, where it is placed / bound,
+       and the "Add to Home / sidebar" buttons each get their own line. */
+    #ycLayoutEditor .ymb-intro { margin: 0 0 8px; }
+    #ycLayoutEditor .ymb-rows { list-style: none; margin: 0; padding: 0; }
+    #ycLayoutEditor .ymb-row { flex-wrap: wrap; }
+    #ycLayoutEditor .ymb-main { flex: 1 1 0; }   /* icon, name and buttons share the first line */
+    #ycLayoutEditor .ymb-sum { flex: 1 1 100%; min-width: 0; overflow-wrap: anywhere; }
+    #ycLayoutEditor .ymb-where { flex: 1 1 100%; display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+    #ycLayoutEditor .ymb-place { flex: 1 1 100%; display: flex; flex-wrap: wrap; gap: 4px; padding-left: calc(1.25em + 8px); }
+    #ycLayoutEditor .ymb-kept .yle-name { color: var(--text-muted); }
+    #ycLayoutEditor .ymb-none[hidden], #ycLayoutEditor .ymb-pickers-err[hidden], #ycLayoutEditor .ymb-form[hidden],
+    #ycLayoutEditor .ymb-field[hidden] { display: none; }
+    #ycLayoutEditor .ymb-pickers-err { margin: 0 0 6px; }
+    #ycLayoutEditor .ymb-form {
+      margin-top: 8px; padding: 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-2);
+    }
+    #ycLayoutEditor .ymb-form-title { margin: 0; font-size: var(--fs); font-weight: 700; }
+    #ycLayoutEditor .ymb-field { margin-top: 8px; min-width: 0; }
+    #ycLayoutEditor .ymb-field .yc-hint { overflow-wrap: anywhere; }
+    #ycLayoutEditor .ymb-icon-row { display: flex; align-items: center; gap: 6px; }
+    #ycLayoutEditor .ymb-icon-row .yle-input { flex: 1 1 auto; }
+    #ycLayoutEditor .ymb-icon-prev { flex: 0 0 auto; width: 2em; text-align: center; font-size: var(--fs-lg); color: var(--accent-2); }
+    #ycLayoutEditor .ymb-id-line { margin-top: 8px; overflow-wrap: anywhere; }
+    #ycLayoutEditor .ymb-id-line:empty { display: none; }
     @media (max-width: 768px) {
       #ycLayoutEditor { padding: 0; }
       #ycLayoutEditor .yle-box { max-width: none; max-height: none; height: 100%; border: 0; border-radius: 0; }

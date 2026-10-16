@@ -528,7 +528,7 @@ describe('the editor\'s Keyboard shortcuts tab (for real)', () => {
     const marker = t.w.__noReload = {};
     expect(await t.openEditor('layout')).toBe(true);
     const tabs = [...t.panel().querySelectorAll('.yle-tab')];
-    expect(tabs.map((b) => b.textContent.replace('•', '').trim())).toEqual(['Home & sidebar', 'Keyboard shortcuts']);
+    expect(tabs.map((b) => b.textContent.replace('•', '').trim())).toEqual(['Home & sidebar', 'Keyboard shortcuts', 'My buttons']);   // My buttons: S5a
     expect(t.panel().querySelector('#ylePane_shortcuts').hidden).toBe(true);
     tabs[1].click();
     expect([t.panel().querySelector('#ylePane_shortcuts').hidden, t.panel().querySelector('#ylePane_layout').hidden]).toEqual([false, true]);

@@ -66,17 +66,36 @@
  * bound (naming its item); it WARNS on Ctrl+Alt (AltGr on non-US Windows
  * layouts types characters with it). A binding whose item is not in this
  * user's effective registry now is listed as unavailable, kept, removable.
- * The tabs share one Save: each dirty document is its own PUT (layout, then
- * shortcuts); a failure in either keeps both sets of edits open, says which
- * failed, and what did save becomes the new stored state. After a save the
+ * The tabs share one Save: each dirty document is its own PUT (items, then
+ * layout, then shortcuts); a failure in any keeps every set of edits open,
+ * says which failed, and what did save becomes the new stored state. After a save the
  * shell's firmData.ui.user is updated and applyAccess re-run once, which also
  * rebuilds ycAll's shortcut map (its 'ycLauncherAccess' listener).
  *
- * window.ycLayoutEditor = { open, close, isOpen, isDirty, session, shortcutSession, reservedProblem }
+ *
+ * My buttons (ui-custom S5a): the panel's third tab. The user's ui_config
+ * `items` document, { items: [ { id, label, icon, action } ] } — their own
+ * buttons, the firm item grammar with user:<slug> ids (lib/uiConfigShape.js):
+ * a saved view or a tool (opening in the tool dialog, Large or Compact) or a
+ * link (always a new window). A list (icon, name, what it opens, where it is
+ * placed and bound; move, edit, delete, "Add to Home" / "Add to sidebar") and
+ * one add / edit form; the tool and view lists come from GET
+ * /api/ui-config/pickers, read the first time the tab shows. Ids come from the
+ * name (user:<slug>), unique against every button, the ids the user's layout
+ * and shortcuts name, and the server's retired list; a saved button's id never
+ * changes. While the panel is open the other two tabs work from an effective
+ * registry with the EDITED buttons in it (editorEffective), so a new button
+ * can be placed and bound before it is saved; deleting a button drops its
+ * placements and bindings in the same session (it asks first when it has
+ * any). Save sends up to three documents, items first; see save().
+ *
+ * window.ycLayoutEditor = { open, close, isOpen, isDirty, session, shortcutSession, reservedProblem,
+ *                           itemSession, makeUserId, buttonProblems }
  *   session(o) is the editor's pure core (no DOM; the panel drives one):
  *   o = { stored, effective, locked, base, registry, groups } — see session().
- *   shortcutSession(o) is the Keyboard shortcuts tab's: see there.
- *   open({ section: 'shortcuts' }) opens on that tab (default: the layout).
+ *   shortcutSession(o) is the Keyboard shortcuts tab's, itemSession(o) My
+ *   buttons': see there.
+ *   open({ section: 'shortcuts' | 'buttons' }) opens on that tab (default: the layout).
  */
 (function () {
   'use strict';
@@ -161,9 +180,17 @@
   function session(o) {
     o = o || {};
     var stored = normalize(o.stored);
-    var eff = isArr(o.effective) ? o.effective.filter(function (e) { return isObj(e) && typeof e.id === 'string'; }) : [];
-    var byId = Object.create(null);
-    eff.forEach(function (e) { byId[e.id] = e; });
+    // eff / byId / groups: the items the editor can show. retarget() replaces
+    // them while the panel is open — the My buttons tab (S5a) adds, renames
+    // and deletes the user's own buttons before they are saved.
+    var eff, byId, groups;
+    function setEffective(list, g) {
+      eff = isArr(list) ? list.filter(function (e) { return isObj(e) && typeof e.id === 'string'; }) : [];
+      byId = Object.create(null);
+      eff.forEach(function (e) { byId[e.id] = e; });
+      groups = isArr(g) ? g.slice() : [];
+    }
+    setEffective(o.effective, o.groups);
     var locked = Object.create(null);
     (isArr(o.locked) ? o.locked : []).forEach(function (id) { if (typeof id === 'string') locked[id] = true; });
     var lockedList = Object.keys(locked);
@@ -200,9 +227,17 @@
     SURFACES.forEach(function (sf) { S[sf] = fresh(sf); INIT[sf] = sig(sf); });
 
     // A surface edited back to what it was is the stored one again; a reset
-    // of a surface that has nothing stored is no change.
+    // of a surface that has nothing stored is no change. Never back to a
+    // stored surface that names a dropped id (a deleted button, S5a): that
+    // would write the reference dropId took out.
+    var dropped = Object.create(null);
+    function storedNames(sf, id) {
+      return (hasOwn(stored.placed, sf) && indexOfItem(stored.placed[sf], id) >= 0)
+        || (hasOwn(stored.removed, sf) && stored.removed[sf].indexOf(id) >= 0);
+    }
     function settle(sf) {
       var st = S[sf];
+      for (var d in dropped) if (storedNames(sf, d)) return;
       if (st.mode === 'edited' && sig(sf) === INIT[sf]) S[sf] = fresh(sf);
       else if (st.mode === 'reset' && !hasOwn(stored.placed, sf) && !hasOwn(stored.removed, sf)) S[sf] = fresh(sf);
     }
@@ -216,6 +251,7 @@
       old.forEach(function (e) {
         if (!e || typeof e.item !== 'string') return;
         if (e.item in byId) { prev.push(e.item); chain = false; return; }
+        if (USER_ID_RE.test(e.item)) return;   // a button that is gone (deleted / retired): never carried (review N1)
         if (indexOfItem(out, e.item) >= 0) return;
         var at = 0;
         if (chain) at = lastAt + 1;
@@ -296,11 +332,41 @@
         if (String(query == null ? '' : query).replace(/\s+/g, '')) {
           return [{ group: null, items: L.rank(query, list).map(function (e) { return entryView(sf, e); }) }];
         }
-        var order = isArr(o.groups) ? o.groups.slice() : [];
+        var order = groups.slice();
         list.forEach(function (e) { if (order.indexOf(e.group) < 0) order.push(e.group); });
         return order.map(function (g) {
           return { group: g, items: list.filter(function (e) { return e.group === g; }).map(function (e) { return entryView(sf, e); }) };
         }).filter(function (g) { return g.items.length; });
+      },
+      /** The surfaces an id is visible on: ['home'?, 'sidebar'?]. */
+      where: function (id) {
+        return SURFACES.filter(function (sf) { return !!visibleIds(resolved(sf))[id]; });
+      },
+      /** A new effective registry (and group order) — the panel's own
+       *  buttons changed (S5a). Nothing stored or edited changes. */
+      retarget: function (list, g) { setEffective(list, g); return true; },
+      /** A button the user deleted (S5a): drop every placement and removal
+       *  of id on both surfaces — a surface that held it becomes edited —
+       *  so no dangling reference is written. → whether anything changed. */
+      dropId: function (id) {
+        var any = false;
+        if (typeof id !== 'string') return false;
+        dropped[id] = true;
+        SURFACES.forEach(function (sf) {
+          var st = S[sf];
+          var placed = st.mode === 'stored' ? (hasOwn(stored.placed, sf) ? stored.placed[sf] : null) : st.placed;
+          var removed = st.mode === 'stored' ? (hasOwn(stored.removed, sf) ? stored.removed[sf] : []) : st.removed;
+          var inPlaced = !!placed && indexOfItem(placed, id) >= 0, inRemoved = removed.indexOf(id) >= 0;
+          if (!inPlaced && !inRemoved) return;
+          any = true;
+          S[sf] = {
+            mode: 'edited',
+            placed: placed ? placed.filter(function (e) { return e.item !== id; }).map(function (e) { return copyEntry(e, sf); }).filter(Boolean) : null,
+            removed: without(removed, id),
+          };
+          settle(sf);
+        });
+        return any;
       },
       /** Room left on sf (entries Save could still add). */
       room: function (sf) { return CAP - sizeAfter(sf, resolved(sf)); },
@@ -378,7 +444,9 @@
             if (hasOwn(stored.placed, sf)) out.placed[sf] = stored.placed[sf].map(function (e) { return copyEntry(e, sf); });
             if (hasOwn(stored.removed, sf)) out.removed[sf] = stored.removed[sf].slice();
           } else if (st.mode === 'edited') {
-            out.placed[sf] = st.placed.map(function (e) { return copyEntry(e, sf); });
+            // placed is null only when dropId emptied a removal on a surface
+            // that follows the base layout: that surface keeps no placed list
+            if (st.placed) out.placed[sf] = st.placed.map(function (e) { return copyEntry(e, sf); });
             if (st.removed.length) out.removed[sf] = st.removed.slice();
           }
         });
@@ -444,14 +512,20 @@
     o = o || {};
     var K = o.keys;
     var mac = !!o.mac, win = !!o.win;
-    var eff = isArr(o.effective) ? o.effective.filter(function (e) { return isObj(e) && typeof e.id === 'string'; }) : [];
-    var byId = Object.create(null);
-    eff.forEach(function (e) { byId[e.id] = e; });
+    var eff, byId, groups;                // retarget() replaces them (S5a)
+    function setEffective(list, g) {
+      eff = isArr(list) ? list.filter(function (e) { return isObj(e) && typeof e.id === 'string'; }) : [];
+      byId = Object.create(null);
+      eff.forEach(function (e) { byId[e.id] = e; });
+      groups = isArr(g) ? g.slice() : [];
+    }
+    setEffective(o.effective, o.groups);
     var reg = isObj(o.registry) ? o.registry : {};
     function norm(doc) {
       var out = { bindings: [] };
       if (isObj(doc) && isArr(doc.bindings)) doc.bindings.forEach(function (b) {
         var c = isObj(b) && typeof b.id === 'string' && b.id ? K.cleanCombo(b.combo) : null;
+        if (c && USER_ID_RE.test(b.id) && !(b.id in byId)) c = null;   // a button that is gone (review N1)
         if (c) out.bindings.push({ combo: c, id: b.id });
       });
       return out;
@@ -484,7 +558,7 @@
         if (String(query == null ? '' : query).replace(/\s+/g, '')) {
           return [{ group: null, items: L.rank(query, eff).map(view) }];
         }
-        var order = isArr(o.groups) ? o.groups.slice() : [];
+        var order = groups.slice();
         eff.forEach(function (e) { if (order.indexOf(e.group) < 0) order.push(e.group); });
         return order.map(function (g) {
           return { group: g, items: eff.filter(function (e) { return e.group === g; }).map(view) };
@@ -533,9 +607,248 @@
         B.splice(i, 1);
         return true;
       },
+      /** The combos bound to id, written for this platform. */
+      combosOf: function (id) {
+        return B.filter(function (b) { return b.id === id; }).map(function (b) { return fmt(b.combo); });
+      },
+      /** A new effective registry (and group order): the panel's own buttons
+       *  changed (S5a). */
+      retarget: function (list, g) { setEffective(list, g); return true; },
+      /** A button the user deleted (S5a): drop its bindings. → how many. */
+      dropId: function (id) {
+        var n = B.length;
+        B = B.filter(function (b) { return b.id !== id; });
+        return n - B.length;
+      },
       /** The document Save writes: the full bindings list. */
       doc: function () { return { bindings: B.map(copy) }; },
       isDirty: function () { return canonical(api.doc()) !== canonical(stored); },
+    };
+    return api;
+  }
+
+  // ── My buttons (S5a) ────────────────────────────────────────────────────
+  var MB_CAP = 50;                                // lib/uiConfigShape.js CAPS.items
+  var HREF_MAX = 2000;                            // lib/uiConfigShape.js HREF_MAX
+  var USER_ID_RE = /^user:[a-z0-9-]{1,40}$/;      // lib/uiConfigShape.js USER_ID_RE
+  var TOOL_KEY_RE = /^[a-z0-9-]{1,80}$/;          // routes/api.tools.js TOOL_KEY_RE
+  var VIEW_KEY_RE = /^[a-z][a-z0-9_]{2,59}$/;     // lib/uiConfigShape.js VIEW_KEY_RE
+  var MB_KINDS = ['view', 'tool', 'url'];
+  var MINE = 'Mine';                              // ycLauncher's group for them
+  var ADMIN = 'Admin';                            // ycLauncher's GRID_GROUP.admin
+
+  /** label → 'user:<slug>' that no id in `taken` holds (public/caseconfig/
+   *  firm.html makeId, with the user: prefix). */
+  function slugOf(label) {
+    return String(label == null ? '' : label).normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+  }
+  function makeUserId(label, taken) {
+    var base = slugOf(label).slice(0, 40).replace(/-+$/, '') || 'button';
+    var id = 'user:' + base;
+    for (var n = 2; taken[id]; n++) {
+      var suf = '-' + n;
+      id = 'user:' + (base.slice(0, 40 - suf.length).replace(/-+$/, '') || 'button') + suf;
+    }
+    return id;
+  }
+  /** Every user: id anywhere in v (a layout or shortcuts document). */
+  function userIdsIn(v, out) {
+    out = out || Object.create(null);
+    if (typeof v === 'string') { if (USER_ID_RE.test(v)) out[v] = true; return out; }
+    if (isArr(v)) v.forEach(function (x) { userIdsIn(x, out); });
+    else if (isObj(v)) for (var k in v) if (hasOwn(v, k)) userIdsIn(v[k], out);
+    return out;
+  }
+  /** The field problems of a button form: { label?, icon?, key?, href? }. */
+  function buttonProblems(f) {
+    var p = {};
+    var lp = labelProblem(f.label);
+    if (lp) p.label = lp === 'Type a label' ? 'Give it a name' : lp;
+    if (!ICON_RE.test(String(f.icon == null ? '' : f.icon).trim())) p.icon = 'A Font Awesome icon name: a-z, 0-9 and dashes (for example star)';
+    if (f.type === 'url') {
+      var h = String(f.href == null ? '' : f.href).trim();
+      if (!h) p.href = 'Type the address';
+      else if (h.length > HREF_MAX) p.href = 'At most ' + HREF_MAX + ' characters';
+      else if (/[\s\\]/.test(h) || CONTROL_RE.test(h)) p.href = 'No spaces, backslashes or control characters';
+      else if (h.charAt(0) === '/') { if (h.charAt(1) === '/') p.href = 'Use https://… for another website'; }
+      else if (!/^https:\/\/[^/]/i.test(h)) p.href = 'Start it with https:// (a secure website address)';
+    } else if (f.type === 'tool' || f.type === 'view') {
+      var k = String(f.key == null ? '' : f.key);
+      if (!(f.type === 'tool' ? TOOL_KEY_RE : VIEW_KEY_RE).test(k)) p.key = f.type === 'tool' ? 'Choose a tool' : 'Choose a saved view';
+    } else p.type = 'Choose what it opens';
+    return p;
+  }
+
+  /**
+   * The My buttons tab's core — pure: no DOM, no network.
+   *   o.stored   the user's stored items document { items, retired? } (or null)
+   *   o.pickers  { tools: [{ key, title }], views: [{ key, title }] } or null
+   *              (the lists could not be read)
+   *   o.clean    the shell's client grammar for a button (ycLauncher.cleanUserItem)
+   *   o.refs     () → ids the user's layout and shortcuts name now (stored and
+   *              edited): a NEW button never takes one, and a new button
+   *              already placed or bound keeps its id
+   * A row: { id, saved, kept, label, icon, type, key, href, size, orig }. A
+   * stored button the client grammar refuses is KEPT as it is (shown, never
+   * edited, removable). Ids: from the label (user:<slug>), unique against
+   * every button, every stored id, the server's retired list and o.refs();
+   * a new button's id follows its label until it is placed, bound or saved;
+   * a saved one never changes.
+   */
+  function itemSession(o) {
+    o = o || {};
+    var clean = typeof o.clean === 'function' ? o.clean : function () { return null; };
+    var refs = typeof o.refs === 'function' ? o.refs : function () { return {}; };
+    var pk = isObj(o.pickers) ? o.pickers : null;
+    var sd = isObj(o.stored) ? o.stored : {};
+    var storedItems = isArr(sd.items) ? sd.items.filter(isObj) : [];
+    var retired = isArr(sd.retired) ? sd.retired.filter(function (id) { return typeof id === 'string'; }) : [];
+    function rowOf(it) {
+      var c = clean(it);
+      if (!c) return { kept: true, saved: true, id: typeof it.id === 'string' ? it.id : '', orig: it };
+      var a = c.action;
+      return {
+        kept: false, saved: true, orig: c, id: c.id, label: c.label, icon: c.icon, type: a.type,
+        key: a.type === 'url' ? '' : a.key, href: a.type === 'url' ? a.href : '',
+        size: a.type !== 'url' && a.size === 'compact' ? 'compact' : 'large',
+      };
+    }
+    var R = storedItems.map(rowOf);
+    var storedIds = Object.create(null);
+    storedItems.forEach(function (it) { if (typeof it.id === 'string') storedIds[it.id] = true; });
+
+    function itemOf(r) {
+      if (r.kept) return r.orig;
+      var oa = r.orig && isObj(r.orig.action) && r.orig.action.type === r.type ? r.orig.action : null;
+      var action = r.type === 'url'
+        ? { type: 'url', href: String(r.href).trim(), present: 'window' }
+        : { type: r.type, key: r.key, present: 'modal' };
+      // the dialog size (S3.3): compact written; large stays ABSENT unless
+      // the stored action named a size (as the Firm tab does)
+      if (r.type !== 'url') {
+        if (r.size === 'compact') action.size = 'compact';
+        else if (oa && hasOwn(oa, 'size')) action.size = 'large';
+      }
+      return { id: r.id, label: String(r.label).trim(), icon: String(r.icon).trim(), action: action };
+    }
+    function taken(except) {
+      var t = Object.create(null), ext = refs() || {};
+      for (var k in ext) t[k] = true;
+      for (var s in storedIds) t[s] = true;
+      retired.forEach(function (id) { t[id] = true; });
+      R.forEach(function (r) { if (r !== except && r.id) t[r.id] = true; });
+      return t;
+    }
+    function titleOf(type, key) {
+      var list = pk ? (type === 'tool' ? pk.tools : pk.views) : null;
+      var hit = isArr(list) ? list.filter(function (x) { return isObj(x) && x.key === key; })[0] : null;
+      if (hit) return String(hit.title == null || hit.title === '' ? key : hit.title);
+      return pk ? key + (type === 'tool' ? ' (not live)' : ' (not found)') : key;
+    }
+    function summary(r) {
+      if (r.kept) return 'Can’t be edited here (it breaks today’s rules); it is kept as it is';
+      if (r.type === 'url') {
+        var h = String(r.href).trim();
+        if (h.charAt(0) === '/') return 'Link · ' + h + ' (new window)';
+        try { return 'Link · ' + new URL(h).hostname + ' (new window)'; } catch (_) { return 'Link (new window)'; }
+      }
+      return (r.type === 'tool' ? 'Tool' : 'Saved view') + ' · ' + titleOf(r.type, r.key) + (r.size === 'compact' ? ' (compact)' : '');
+    }
+    function fieldsOk(f) {
+      var p = buttonProblems(f);
+      if (Object.keys(p).length) return p;
+      // the shell's own grammar has the last word (a root-relative link to a
+      // page that needs the shell, /tool/… or /customView…, is refused there)
+      var probe = itemOf({ id: 'user:probe', label: f.label, icon: f.icon, type: f.type, key: f.key || '', href: f.href || '', size: f.size, orig: null });
+      if (!clean(probe)) {
+        return f.type === 'url'
+          ? { href: String(f.href).trim().charAt(0) === '/'
+            ? 'That page only works inside YisraCase: make a Tool or Saved view button for it instead'
+            : 'That isn’t a usable https:// address' }
+          : { key: 'That choice can’t be used' };
+      }
+      return null;
+    }
+    function apply(r, f) {
+      r.label = String(f.label).trim();
+      r.icon = String(f.icon).trim();
+      r.type = f.type;
+      r.key = f.type === 'url' ? '' : String(f.key);
+      r.href = f.type === 'url' ? String(f.href).trim() : '';
+      r.size = f.type !== 'url' && f.size === 'compact' ? 'compact' : 'large';
+    }
+
+    var api = {
+      /** The rows as shown: [{ id, label, icon, type, summary, kept, saved }]. */
+      list: function () {
+        return R.map(function (r) {
+          return {
+            id: r.id, label: r.kept ? String(isObj(r.orig) && typeof r.orig.label === 'string' ? r.orig.label : r.id) : r.label,
+            icon: !r.kept && ICON_RE.test(r.icon) ? r.icon : 'circle-question', type: r.kept ? null : r.type,
+            summary: summary(r), kept: r.kept, saved: r.saved,
+          };
+        });
+      },
+      /** A row's form values (null for a kept row). */
+      fields: function (i) {
+        var r = R[i];
+        return r && !r.kept ? { label: r.label, icon: r.icon, type: r.type, key: r.key, href: r.href, size: r.size } : null;
+      },
+      problems: function (f) { return fieldsOk(f) || {}; },
+      /** The id a NEW button with this label would get. */
+      previewId: function (label) { return makeUserId(label, taken(null)); },
+      /** Add a button. → { ok: true, id, i } | { ok: false, problems }. */
+      add: function (f) {
+        if (R.length >= MB_CAP) return { ok: false, problems: { label: 'You have the most buttons there can be (' + MB_CAP + ')' } };
+        var p = fieldsOk(f);
+        if (p) return { ok: false, problems: p };
+        var r = { kept: false, saved: false, orig: null };
+        apply(r, f);
+        r.id = makeUserId(r.label, taken(null));
+        R.push(r);
+        return { ok: true, id: r.id, i: R.length - 1 };
+      },
+      /** Change button i. A new one's id follows its label unless the
+       *  layout or shortcuts already name it. → as add. */
+      update: function (i, f) {
+        var r = R[i];
+        if (!r || r.kept) return { ok: false, problems: { label: 'That button can’t be edited here' } };
+        var p = fieldsOk(f);
+        if (p) return { ok: false, problems: p };
+        apply(r, f);
+        if (!r.saved && !(refs() || {})[r.id]) r.id = makeUserId(r.label, taken(r));
+        return { ok: true, id: r.id, i: i };
+      },
+      /** Delete button i. → its id, or null. */
+      remove: function (i) {
+        var r = R[i];
+        if (!r) return null;
+        R.splice(i, 1);
+        return r.id;
+      },
+      move: function (i, d) {
+        var j = i + d;
+        if (!(i >= 0 && i < R.length && j >= 0 && j < R.length) || (d !== 1 && d !== -1)) return false;
+        var t = R[i]; R[i] = R[j]; R[j] = t;
+        return true;
+      },
+      room: function () { return MB_CAP - R.length; },
+      /** The tool / view lists arrived (or failed: null) — summaries follow. */
+      setPickers: function (p) { pk = isObj(p) ? p : null; return true; },
+      ids: function () { return R.map(function (r) { return r.id; }); },
+      storedIds: function () { return Object.keys(storedIds); },
+      retired: function () { return retired.slice(); },
+      /** Effective-registry entries for the buttons the shell would list —
+       *  group Mine, in order (a kept one is listed by nobody). */
+      entries: function () {
+        return R.filter(function (r) { return !r.kept; }).map(function (r) {
+          return { id: r.id, group: MINE, label: r.label, labels: [r.label], icon: r.icon };
+        });
+      },
+      /** The document Save writes: { items } (`retired` is the server's). */
+      doc: function () { return { items: R.map(itemOf) }; },
+      isDirty: function () { return canonical(api.doc().items) !== canonical(storedItems); },
     };
     return api;
   }
@@ -545,6 +858,7 @@
     window.ycLayoutEditor = {
       session: session, labelProblem: labelProblem, canonical: canonical,
       shortcutSession: shortcutSession, reservedProblem: reservedProblem,
+      itemSession: itemSession, makeUserId: makeUserId, buttonProblems: buttonProblems,
     };
     return;
   }
@@ -554,9 +868,14 @@
   var scs = null;           // the Keyboard shortcuts tab's session
   var sessOpts = null;      // what sess was built from (a partial save rebuilds it)
   var scAdd = null;         // the shortcut being added: { id, combo }
-  var PANES = ['layout', 'shortcuts'];
+  var its = null;           // the My buttons tab's session (S5a)
+  var pickers = null;       // GET /api/ui-config/pickers, read the first time My buttons shows
+  var pickersState = 'idle';   // 'idle' | 'loading' | 'ok' | 'failed' — per opening
+  var opening = 0;          // bumps on every show(): a late picker reply for an old opening is dropped
+  var mbForm = null;        // the button form while it is open: { i } (-1 = a new one)
+  var PANES = ['layout', 'shortcuts', 'buttons'];
   var KEYS = (window.ycAll && window.ycAll.keys) || null;
-  function anyDirty() { return !!((sess && sess.isDirty()) || (scs && scs.isDirty())); }
+  function anyDirty() { return !!((sess && sess.isDirty()) || (scs && scs.isDirty()) || (its && its.isDirty())); }
 
   function el(tag, cls, text) {
     var n = document.createElement(tag);
@@ -600,7 +919,7 @@
     // tab with unsaved changes.
     var tabs = el('div', 'yle-tabs');
     tabs.setAttribute('role', 'tablist');
-    [['layout', 'Home & sidebar', 'table-cells'], ['shortcuts', 'Keyboard shortcuts', 'keyboard']].forEach(function (t) {
+    [['layout', 'Home & sidebar', 'table-cells'], ['shortcuts', 'Keyboard shortcuts', 'keyboard'], ['buttons', 'My buttons', 'star']].forEach(function (t) {
       var b = btn('yle-tab', 'tab', null, t[2], t[1]);
       b.setAttribute('data-pane', t[0]);
       b.setAttribute('role', 'tab');
@@ -637,6 +956,14 @@
     scp.hidden = true;
     scp.appendChild(buildShortcutSection());
     body.appendChild(scp);
+    var mbp = el('div', 'yle-pane');
+    mbp.id = 'ylePane_buttons';
+    mbp.setAttribute('data-pane', 'buttons');
+    mbp.setAttribute('role', 'tabpanel');
+    mbp.setAttribute('aria-labelledby', 'yleTab_buttons');
+    mbp.hidden = true;
+    mbp.appendChild(buildButtonsSection());
+    body.appendChild(mbp);
     box.appendChild(body);
 
     var foot = el('div', 'yle-foot');
@@ -651,6 +978,7 @@
 
     root.addEventListener('click', onClick);
     root.addEventListener('input', onInput);
+    root.addEventListener('change', onChange);
     // the Keys box reads the combo before anything else hears it
     root.addEventListener('keydown', onCaptureKey);
     root.addEventListener('keyup', onCaptureKeyUp);
@@ -790,6 +1118,113 @@
     row.appendChild(btn('yle-add-cancel', 'sc-cancel', null, null, 'Cancel'));
     add.appendChild(row);
     sec.appendChild(add);
+    return sec;
+  }
+
+  // My buttons (S5a): the list, then the add / edit form (one form, hidden
+  // until "Add a button" or a row's edit button opens it).
+  var MB_TYPES = { view: 'A saved view', tool: 'A tool', url: 'A link to a website' };
+  var PICKERS_FAIL = 'Couldn’t load the lists of tools and saved views. Link buttons still work; for the others, close and open the editor again later.';
+  // The tool / view lists (GET /api/ui-config/pickers — keys and titles
+  // only), read once per opening, the first time My buttons is shown: the
+  // other tabs never need them. A failure is said in the tab; links still work.
+  function loadPickers() {
+    if (pickersState !== 'idle' || typeof window.apiSend !== 'function') return;
+    pickersState = 'loading';
+    var mine = opening;
+    var done = function (p) {
+      if (mine !== opening || !its) return;
+      pickers = p;
+      pickersState = p ? 'ok' : 'failed';
+      its.setPickers(p);
+      renderButtons();
+      if (mbForm && fval('type') !== 'url') fillKeys(fval('type'), fval('key'));
+    };
+    Promise.resolve()
+      .then(function () { return window.apiSend('/api/ui-config/pickers', 'GET'); })
+      .then(function (r) {
+        done(isObj(r) && isArr(r.tools) && isArr(r.views) ? { tools: r.tools, views: r.views } : null);
+      }, function () { done(null); });
+    if (its) renderButtons();
+  }
+  function field(form, id, label, input, hint) {
+    var w = el('div', 'ymb-field');
+    w.setAttribute('data-field', id);
+    var l = el('label', 'yc-flabel', label);
+    l.setAttribute('for', 'ymb_' + id);
+    w.appendChild(l);
+    input.id = 'ymb_' + id;
+    w.appendChild(input);
+    if (hint) w.appendChild(el('div', 'yc-hint', hint));
+    var fe = el('div', 'yle-field-err');
+    fe.setAttribute('data-err', id);
+    w.appendChild(fe);
+    form.appendChild(w);
+    return w;
+  }
+  function textInput(max, placeholder) {
+    var i = el('input', 'yle-input');
+    i.type = 'text';
+    i.maxLength = max;
+    i.autocomplete = 'off';
+    if (placeholder) i.placeholder = placeholder;
+    return i;
+  }
+  function buildButtonsSection() {
+    var sec = el('section', 'yle-sec ymb-sec');
+    sec.setAttribute('data-sf', 'buttons');
+    var head = el('div', 'yle-sec-head');
+    head.appendChild(el('h3', null, 'My buttons'));
+    sec.appendChild(head);
+    sec.appendChild(el('p', 'yc-hint ymb-intro',
+      'Your own buttons: a saved view, a tool, or a link to another website. Only you see them. They are listed in All ' +
+      'and Ctrl+K under Mine; put them on your Home or sidebar, or give them a keyboard shortcut. A link always opens ' +
+      'in a new window, never inside YisraCase.'));
+    var errs = el('ul', 'yle-errs');
+    errs.setAttribute('role', 'alert');
+    errs.hidden = true;
+    sec.appendChild(errs);
+    var pe = el('div', 'yc-hint ymb-pickers-err', PICKERS_FAIL);
+    pe.setAttribute('role', 'status');
+    pe.hidden = true;
+    sec.appendChild(pe);
+    var rows = el('ol', 'ymb-rows');
+    rows.setAttribute('aria-label', 'Your buttons');
+    sec.appendChild(rows);
+    sec.appendChild(el('div', 'yc-hint ymb-none', 'No buttons yet.'));
+    var adds = el('div', 'yle-adds');
+    adds.appendChild(btn('yle-add', 'mb-open', null, 'plus', 'Add a button'));
+    adds.appendChild(el('span', 'yc-hint yle-room'));
+    sec.appendChild(adds);
+
+    var form = el('div', 'ymb-form');
+    form.hidden = true;
+    form.appendChild(el('h4', 'ymb-form-title'));
+    field(form, 'label', 'Name', textInput(80, 'e.g. My open leads'));
+    var iconIn = textInput(40, 'e.g. star');
+    var iw = field(form, 'icon', 'Icon', iconIn, 'A Font Awesome icon name, like star, folder-open or link.');
+    var irow = el('div', 'ymb-icon-row');
+    var prev = el('span', 'ymb-icon-prev');
+    prev.setAttribute('aria-hidden', 'true');
+    prev.appendChild(iconEl('circle-question'));
+    iw.insertBefore(irow, iconIn);
+    irow.appendChild(prev);
+    irow.appendChild(iconIn);
+    var typeSel = el('select', 'yle-input ymb-select');
+    MB_KINDS.forEach(function (k) { var op = el('option', null, MB_TYPES[k]); op.value = k; typeSel.appendChild(op); });
+    field(form, 'type', 'Opens', typeSel);
+    field(form, 'key', 'Saved view', el('select', 'yle-input ymb-select'));
+    field(form, 'href', 'Address', textInput(HREF_MAX, 'https://…'),
+      'Opens in a new window: another website never opens inside YisraCase.');
+    var sizeSel = el('select', 'yle-input ymb-select');
+    [['large', 'Large'], ['compact', 'Compact']].forEach(function (z) { var op = el('option', null, z[1]); op.value = z[0]; sizeSel.appendChild(op); });
+    field(form, 'size', 'Window size', sizeSel, 'It opens over the app: Large for a working page, Compact for something small.');
+    form.appendChild(el('div', 'yc-hint ymb-id-line'));
+    var frow = el('div', 'ysc-add-row');
+    frow.appendChild(btn('yle-add-go yle-primary ymb-commit', 'mb-commit', null, 'check', 'Add button'));
+    frow.appendChild(btn('yle-add-cancel', 'mb-cancel', null, null, 'Cancel'));
+    form.appendChild(frow);
+    sec.appendChild(form);
     return sec;
   }
 
@@ -1004,6 +1439,232 @@
     sec.querySelector('[data-act="sc-open"]').focus();
   }
 
+  // ── The My buttons tab (S5a) ──
+  // The effective registry the layout and shortcut tabs work from while the
+  // panel is open: the shell's, with its stored buttons swapped for the ones
+  // being edited here (group Mine, after Firm, before Admin) — so a new
+  // button can be placed or bound before it is saved, and a deleted one
+  // can't.
+  function editorEffective() {
+    var base = L.effectiveRegistry().filter(function (e) { return !USER_ID_RE.test(e.id); });
+    var mine = its ? its.entries() : [];
+    var at = base.length;
+    for (var i = 0; i < base.length; i++) if (base[i].group === ADMIN) { at = i; break; }
+    return base.slice(0, at).concat(mine, base.slice(at));
+  }
+  function editorGroups() {
+    var g = L.groups().filter(function (x) { return x !== MINE; });
+    if (its && its.entries().length) { var a = g.indexOf(ADMIN); g.splice(a < 0 ? g.length : a, 0, MINE); }
+    return g;
+  }
+  function retargetAll() {
+    var eff = editorEffective(), g = editorGroups();
+    if (sess) sess.retarget(eff, g);
+    if (scs) scs.retarget(eff, g);
+  }
+  // The ids the user's layout and shortcuts name — stored (as read at open)
+  // and as edited now: a new button never takes one.
+  var storedRefs = null;
+  function refsNow() {
+    var r = Object.create(null), k;
+    for (k in storedRefs || {}) r[k] = true;
+    if (sess) userIdsIn(sess.doc(), r);
+    if (scs) userIdsIn(scs.doc(), r);
+    return r;
+  }
+  function newItemSession(stored) {
+    return itemSession({ stored: stored, pickers: pickers, clean: L.cleanUserItem, refs: refsNow });
+  }
+  function mbSec() { return secOf('buttons'); }
+  function renderButtons() {
+    var sec = mbSec(), ol = sec.querySelector('.ymb-rows');
+    ol.textContent = '';
+    var list = its.list();
+    list.forEach(function (b, i) {
+      var li = el('li', 'yle-row ymb-row' + (b.kept ? ' ymb-kept' : ''));
+      li.setAttribute('data-i', String(i));
+      li.setAttribute('data-id', b.id);
+      li.appendChild(iconEl(b.icon, 'yle-ic'));
+      var main = el('span', 'yle-main ymb-main');
+      main.appendChild(el('span', 'yle-name', b.label));
+      if (!b.saved) main.appendChild(el('span', 'yle-tag', 'New'));
+      main.appendChild(el('span', 'yc-hint ymb-sum', b.summary));
+      var on = b.kept ? [] : sess.where(b.id), combos = scs.combosOf(b.id);
+      if (on.length || combos.length) {
+        var wh = el('span', 'ymb-where');
+        on.forEach(function (sf) { wh.appendChild(el('span', 'yle-tag', sf === 'home' ? 'On Home' : 'On sidebar')); });
+        combos.forEach(function (t) { wh.appendChild(el('kbd', 'ysc-kbd', t)); });
+        main.appendChild(wh);
+      }
+      li.appendChild(main);
+      var acts = el('span', 'yle-acts');
+      var up = btn('yle-up', 'mb-up', 'Move ' + b.label + ' up', 'arrow-up');
+      var dn = btn('yle-down', 'mb-down', 'Move ' + b.label + ' down', 'arrow-down');
+      up.disabled = i === 0;
+      dn.disabled = i === list.length - 1;
+      acts.appendChild(up);
+      acts.appendChild(dn);
+      if (!b.kept) acts.appendChild(btn('ymb-edit', 'mb-edit', 'Edit ' + b.label, 'pen'));
+      acts.appendChild(btn('yle-remove', 'mb-del', 'Delete ' + b.label, 'trash'));
+      li.appendChild(acts);
+      if (!b.kept && on.length < 2) {
+        var place = el('div', 'ymb-place');
+        if (on.indexOf('home') < 0) place.appendChild(btn('yle-add-cancel', 'mb-home', 'Add ' + b.label + ' to your Home', 'plus', 'Add to Home'));
+        if (on.indexOf('sidebar') < 0) place.appendChild(btn('yle-add-cancel', 'mb-sidebar', 'Add ' + b.label + ' to your sidebar', 'plus', 'Add to sidebar'));
+        li.appendChild(place);
+      }
+      ol.appendChild(li);
+    });
+    sec.querySelector('.ymb-none').hidden = list.length > 0;
+    var pe = sec.querySelector('.ymb-pickers-err');
+    pe.hidden = pickersState !== 'failed' && pickersState !== 'loading';
+    pe.textContent = pickersState === 'loading' ? 'Loading the lists of tools and saved views…' : PICKERS_FAIL;
+    var room = its.room();
+    sec.querySelector('.yle-room').textContent = room <= 0 ? 'You have the most buttons there can be (' + MB_CAP + ').' : '';
+    sec.querySelector('[data-act="mb-open"]').disabled = room <= 0 || !!mbForm;
+  }
+  function formEl() { return mbSec().querySelector('.ymb-form'); }
+  function fval(id) { return mbSec().querySelector('#ymb_' + id).value; }
+  // The key picker for the chosen kind: the live tools / active saved views
+  // (titles), plus the stored key when the lists don't have it.
+  function fillKeys(type, key) {
+    var sel = mbSec().querySelector('#ymb_key');
+    sel.textContent = '';
+    var none = el('option', null, 'Choose…');
+    none.value = '';
+    sel.appendChild(none);
+    var list = pickers ? (type === 'tool' ? pickers.tools : pickers.views) : null;
+    (isArr(list) ? list : []).forEach(function (x) {
+      if (!isObj(x) || typeof x.key !== 'string') return;
+      var op = el('option', null, String(x.title == null || x.title === '' ? x.key : x.title));
+      op.value = x.key;
+      sel.appendChild(op);
+    });
+    if (key && !Array.prototype.some.call(sel.options, function (op) { return op.value === key; })) {
+      var keep = el('option', null, key + (pickers ? (type === 'tool' ? ' (not live)' : ' (not found)') : ''));
+      keep.value = key;
+      sel.appendChild(keep);
+    }
+    sel.value = key || '';
+    var lab = mbSec().querySelector('[data-field="key"] label');
+    lab.textContent = type === 'tool' ? 'Tool' : 'Saved view';
+  }
+  function showKind(type) {
+    var f = formEl();
+    f.querySelector('[data-field="key"]').hidden = type === 'url';
+    f.querySelector('[data-field="size"]').hidden = type === 'url';
+    f.querySelector('[data-field="href"]').hidden = type !== 'url';
+  }
+  function iconPreview() {
+    var v = String(fval('icon')).trim();
+    var prev = formEl().querySelector('.ymb-icon-prev');
+    prev.textContent = '';
+    prev.appendChild(iconEl(ICON_RE.test(v) ? v : 'circle-question'));
+  }
+  function idLine() {
+    var line = formEl().querySelector('.ymb-id-line');
+    if (!mbForm) { line.textContent = ''; return; }
+    var r = mbForm.i >= 0 ? its.list()[mbForm.i] : null;
+    if (r && r.saved) { line.textContent = 'Its id is ' + r.id + ' (permanent).'; return; }
+    var label = fval('label');
+    line.textContent = labelProblem(label) ? '' : 'Its id will be ' + (r ? r.id : its.previewId(label)) + ', set from the name.';
+  }
+  function formErrors(p) {
+    formEl().querySelectorAll('[data-err]').forEach(function (n) {
+      var m = p && p[n.getAttribute('data-err')];
+      n.textContent = m || '';
+      var inp = mbSec().querySelector('#ymb_' + n.getAttribute('data-err'));
+      if (inp) { if (m) inp.setAttribute('aria-invalid', 'true'); else inp.removeAttribute('aria-invalid'); }
+    });
+  }
+  function openForm(i) {
+    var f = its.fields(i) || { label: '', icon: '', type: 'view', key: '', href: '', size: 'large' };
+    mbForm = { i: i };
+    var form = formEl();
+    form.hidden = false;
+    form.querySelector('.ymb-form-title').textContent = i >= 0 ? 'Edit a button' : 'New button';
+    form.querySelector('.ymb-commit span').textContent = i >= 0 ? 'Apply' : 'Add button';
+    mbSec().querySelector('#ymb_label').value = f.label;
+    mbSec().querySelector('#ymb_icon').value = f.icon;
+    mbSec().querySelector('#ymb_type').value = f.type;
+    mbSec().querySelector('#ymb_href').value = f.href;
+    mbSec().querySelector('#ymb_size').value = f.size;
+    fillKeys(f.type, f.key);
+    showKind(f.type);
+    iconPreview();
+    formErrors(null);
+    idLine();
+    renderButtons();
+    renderStatus();
+    form.scrollIntoView && form.scrollIntoView({ block: 'nearest' });
+    mbSec().querySelector('#ymb_label').focus();
+  }
+  function closeForm(focus) {
+    var was = mbForm;
+    mbForm = null;
+    formEl().hidden = true;
+    renderButtons();
+    renderStatus();
+    if (!focus) return;
+    var row = was && was.i >= 0 ? mbSec().querySelector('.ymb-row[data-i="' + was.i + '"] [data-act="mb-edit"]') : null;
+    (row || mbSec().querySelector('[data-act="mb-open"]')).focus();
+  }
+  function formFields() {
+    return { label: fval('label'), icon: fval('icon'), type: fval('type'), key: fval('key'), href: fval('href'), size: fval('size') };
+  }
+  function buttonsChanged() {
+    retargetAll();
+    SURFACES.forEach(renderSection);
+    renderShortcuts();
+    renderButtons();
+    renderStatus();
+  }
+  function commitForm() {
+    if (saving || !mbForm) return;
+    var f = formFields();
+    var r = mbForm.i >= 0 ? its.update(mbForm.i, f) : its.add(f);
+    if (!r.ok) {
+      formErrors(r.problems);
+      var first = formEl().querySelector('[aria-invalid="true"]');
+      if (first) first.focus();
+      return;
+    }
+    mbForm = null;
+    formEl().hidden = true;
+    buttonsChanged();
+    var b = mbSec().querySelector('.ymb-row[data-i="' + r.i + '"] [data-act="mb-edit"]');
+    if (b) b.focus();
+  }
+  function deleteButton(i) {
+    var b = its.list()[i];
+    if (!b) return;
+    var on = b.kept ? [] : sess.where(b.id), combos = scs.combosOf(b.id);
+    var go = function () {
+      if (!its) return;
+      var id = its.remove(i);
+      if (id == null) return;
+      sess.dropId(id);
+      scs.dropId(id);
+      buttonsChanged();
+      var left = mbSec().querySelectorAll('.ymb-row [data-act="mb-del"]');
+      (left[Math.min(i, left.length - 1)] || mbSec().querySelector('[data-act="mb-open"]')).focus();
+    };
+    if (!on.length && !combos.length) { go(); return; }
+    var where = [];
+    if (on.length) where.push('it’s on your ' + on.map(function (sf) { return sf === 'home' ? 'Home' : 'sidebar'; }).join(' and '));
+    if (combos.length) where.push((on.length ? '' : 'it’s ') + 'bound to ' + combos.join(', '));
+    ask('Delete “' + b.label + '”? Note: ' + where.join(' and ') + '. Deleting it takes it off there too.', 'Delete', 'Keep it')
+      .then(function (yes) { if (yes && !saving) go(); });
+  }
+  function placeButton(i, sf) {
+    var b = its.list()[i];
+    if (!b || !sess.add(sf, b.id)) return;
+    edited(sf);
+    renderButtons();
+    var r = mbSec().querySelector('.ymb-row[data-i="' + i + '"] [data-act="mb-edit"]');
+    if (r) r.focus();
+  }
+
   function showPane(name) {
     if (PANES.indexOf(name) < 0) name = 'layout';
     root.querySelectorAll('.yle-pane').forEach(function (p) { p.hidden = p.getAttribute('data-pane') !== name; });
@@ -1013,6 +1674,7 @@
       t.classList.toggle('active', on);
     });
     root.querySelector('.yle-body').scrollTop = 0;
+    if (name === 'buttons') loadPickers();
   }
   function paneShown() {
     var t = root.querySelector('.yle-tab.active');
@@ -1022,9 +1684,10 @@
   function renderStatus() {
     var dirty = anyDirty();
     root.querySelector('.yle-status').textContent = dirty ? 'Unsaved changes' : 'No changes';
-    // a held bad label keeps Save clickable: the click says what to fix
-    root.querySelector('.yle-save').disabled = (!dirty && !Object.keys(labelErr).length) || saving;
-    var dots = { layout: !!(sess && sess.isDirty()), shortcuts: !!(scs && scs.isDirty()) };
+    // a held bad label, or an open button form, keeps Save clickable: the
+    // click says what to finish
+    root.querySelector('.yle-save').disabled = (!dirty && !Object.keys(labelErr).length && !mbForm) || saving;
+    var dots = { layout: !!(sess && sess.isDirty()), shortcuts: !!(scs && scs.isDirty()), buttons: !!(its && its.isDirty()) };
     root.querySelectorAll('.yle-tab').forEach(function (t) {
       t.querySelector('.yle-tab-dot').hidden = !dots[t.getAttribute('data-pane')];
     });
@@ -1032,6 +1695,7 @@
   function render() {
     SURFACES.forEach(renderSection);
     renderShortcuts();
+    renderButtons();
     renderStatus();
   }
 
@@ -1045,7 +1709,7 @@
   }
   function clearErrors() {
     banner('');
-    SURFACES.concat('shortcuts').forEach(function (sf) {
+    SURFACES.concat('shortcuts', 'buttons').forEach(function (sf) {
       var u = secOf(sf).querySelector('.yle-errs');
       u.textContent = '';
       u.hidden = true;
@@ -1053,12 +1717,12 @@
   }
   /** A refused save's errors[] inside the panel. The layout document's go
    *  under the surface their path names (placed.home[3]…, removed.sidebar…);
-   *  the shortcuts document's all go under Keyboard shortcuts. → the rest
-   *  (for the banner). */
+   *  the shortcuts document's all go under Keyboard shortcuts, the items
+   *  document's (S5a) under My buttons. → the rest (for the banner). */
   function placeErrors(key, errors) {
     var general = [];
     errors.forEach(function (m) {
-      var hit = key === 'layout' ? /^(?:placed|removed)\.(home|sidebar)\b/.exec(String(m)) : [null, 'shortcuts'];
+      var hit = key === 'layout' ? /^(?:placed|removed)\.(home|sidebar)\b/.exec(String(m)) : [null, PANE_OF[key]];
       if (hit) {
         var u = secOf(hit[1]).querySelector('.yle-errs');
         u.appendChild(el('li', null, String(m)));
@@ -1112,6 +1776,21 @@
       case 'cancel': requestClose(); return;
       case 'save': save(); return;
       case 'tab': showPane(b.getAttribute('data-pane')); return;
+      case 'mb-open': openForm(-1); return;
+      case 'mb-cancel': closeForm(true); return;
+      case 'mb-commit': commitForm(); return;
+      case 'mb-edit': case 'mb-del': case 'mb-up': case 'mb-down': case 'mb-home': case 'mb-sidebar': {
+        var mi = Number(b.closest('.ymb-row').getAttribute('data-i'));
+        if (act === 'mb-edit') openForm(mi);
+        else if (act === 'mb-del') deleteButton(mi);
+        else if (act === 'mb-home' || act === 'mb-sidebar') placeButton(mi, act === 'mb-home' ? 'home' : 'sidebar');
+        else if (its.move(mi, act === 'mb-up' ? -1 : 1)) {
+          buttonsChanged();
+          var mv = mbSec().querySelector('.ymb-row[data-i="' + (mi + (act === 'mb-up' ? -1 : 1)) + '"] .yle-' + (act === 'mb-up' ? 'up' : 'down') + ':not(:disabled)');
+          (mv || mbSec().querySelector('.ymb-row[data-i="' + (mi + (act === 'mb-up' ? -1 : 1)) + '"] [data-act="mb-edit"]') || mbSec().querySelector('[data-act="mb-open"]')).focus();
+        }
+        return;
+      }
       case 'sc-open': openScAdd(); return;
       case 'sc-cancel': closeScAdd(true); return;
       case 'sc-add': addShortcutFromForm(); return;
@@ -1234,6 +1913,14 @@
   function onInput(e) {
     if (saving) return;
     var t = e.target;
+    if (t.id && t.id.indexOf('ymb_') === 0) {
+      var fe = formEl().querySelector('[data-err="' + t.id.slice(4) + '"]');
+      if (fe) fe.textContent = '';
+      t.removeAttribute('aria-invalid');
+      if (t.id === 'ymb_icon') iconPreview();
+      if (t.id === 'ymb_label') idLine();
+      return;
+    }
     if (t.classList.contains('yle-pick-q')) { renderPicker(t.closest('.yle-sec').getAttribute('data-sf')); return; }
     if (t.classList.contains('yle-new-label')) {
       t.closest('.yle-label-add').querySelector('.yle-field-err').textContent = '';
@@ -1260,8 +1947,23 @@
     }
   }
 
+  // The button form's selects: a new kind shows its own fields.
+  function onChange(e) {
+    if (saving || !mbForm) return;
+    var t = e.target;
+    if (t.id === 'ymb_type') {
+      fillKeys(t.value, '');
+      showKind(t.value);
+      formErrors(null);
+    } else if (t.id === 'ymb_key') {
+      var fe = formEl().querySelector('[data-err="key"]');
+      if (fe) fe.textContent = '';
+      t.removeAttribute('aria-invalid');
+    }
+  }
+
   function focusables() {
-    return Array.prototype.filter.call(root.querySelectorAll('button, input'), function (n) {
+    return Array.prototype.filter.call(root.querySelectorAll('button, input, select'), function (n) {
       return !n.disabled && n.offsetParent !== null;
     });
   }
@@ -1272,6 +1974,8 @@
       e.stopPropagation();
       var sca = e.target.closest && e.target.closest('.ysc-add');
       if (sca && !sca.hidden) { closeScAdd(true); return; }
+      var mbf = e.target.closest && e.target.closest('.ymb-form');
+      if (mbf && !mbf.hidden) { closeForm(true); return; }
       var pk = e.target.closest && e.target.closest('.yle-picker, .yle-label-add');
       if (pk && !pk.hidden) {
         pk.hidden = true;
@@ -1285,6 +1989,7 @@
       if (!t || !t.classList) return;
       if (t.classList.contains('yle-new-label')) { e.preventDefault(); addLabelFromInput(t.closest('.yle-sec')); }
       else if (t.classList.contains('ysc-capture')) { e.preventDefault(); addShortcutFromForm(); }
+      else if (t.tagName === 'INPUT' && t.closest('.ymb-form')) { e.preventDefault(); commitForm(); }
       else if (t.classList.contains('yle-pick-q')) {
         e.preventDefault();
         var first = t.closest('.yle-picker').querySelector('.yle-pick-item');
@@ -1341,9 +2046,12 @@
   function shortcutsOf(ui) {
     return isObj(ui) && isObj(ui.user) && isObj(ui.user.shortcuts) ? ui.user.shortcuts : null;
   }
+  function itemsOf(ui) {
+    return isObj(ui) && isObj(ui.user) && isObj(ui.user.items) ? ui.user.items : null;
+  }
   function newShortcutSession(stored) {
     return shortcutSession({
-      stored: stored, effective: L.effectiveRegistry(), registry: window.FEATURE_REGISTRY || {}, groups: L.groups(),
+      stored: stored, effective: editorEffective(), registry: window.FEATURE_REGISTRY || {}, groups: editorGroups(),
       keys: KEYS, mac: !!(KEYS && KEYS.isMac()), win: !!(KEYS && KEYS.isWindows()),
     });
   }
@@ -1428,13 +2136,22 @@
     L.applyAccess({ ui: fd.ui });
   }
   function show(ui, from, section) {
+    opening++;
+    pickers = null;
+    pickersState = 'idle';
+    mbForm = null;
+    sess = null;
+    scs = null;
+    storedRefs = userIdsIn([storedOf(ui), shortcutsOf(ui)]);
+    its = newItemSession(itemsOf(ui));
     sessOpts = {
-      stored: storedOf(ui), effective: L.effectiveRegistry(), locked: lockedOf(ui),
-      base: window.DEFAULT_LAYOUTS || {}, registry: window.FEATURE_REGISTRY || {}, groups: L.groups(),
+      stored: storedOf(ui), effective: editorEffective(), locked: lockedOf(ui),
+      base: window.DEFAULT_LAYOUTS || {}, registry: window.FEATURE_REGISTRY || {}, groups: editorGroups(),
     };
     sess = session(sessOpts);
     scs = newShortcutSession(shortcutsOf(ui));
     scAdd = null;
+    root.querySelector('.ymb-form').hidden = true;
     root.querySelector('.ysc-add').hidden = true;
     labelErr = {};
     saving = false;
@@ -1457,6 +2174,9 @@
     root.hidden = true;
     sess = null;
     scs = null;
+    its = null;
+    mbForm = null;
+    opening++;
     scAdd = null;
     labelErr = {};
     window.removeEventListener('beforeunload', onBeforeUnload);
@@ -1467,7 +2187,7 @@
   function requestClose() {
     if (!isOpen()) return Promise.resolve(true);
     if (saving) return Promise.resolve(false);
-    if (!anyDirty() && !Object.keys(labelErr).length) { closeNow(); return Promise.resolve(true); }
+    if (!anyDirty() && !Object.keys(labelErr).length && !mbForm) { closeNow(); return Promise.resolve(true); }
     return ask('Discard your unsaved launcher changes?', 'Discard', 'Keep editing').then(function (yes) {
       if (yes) closeNow();
       return yes;
@@ -1502,13 +2222,19 @@
   // ignored in onClick), so nothing is typed that the PUT would not carry.
   function freeze(on) {
     root.querySelectorAll('input').forEach(function (n) { if (!n.classList.contains('ysc-capture')) n.readOnly = !!on; });
+    root.querySelectorAll('select').forEach(function (n) { n.disabled = !!on; });
   }
-  // Save: each dirty document is its own PUT — layout, then shortcuts; the
-  // second is sent whatever became of the first. All saved: the shell takes
-  // them, the panel closes. Anything refused: the panel stays open with
-  // every edit, what DID save becomes the new stored state (its tab is
-  // clean), and the banner says which part failed.
-  var PART_NAME = { layout: 'launcher layout', shortcuts: 'keyboard shortcuts' };
+  // Save: each dirty document is its own PUT, in this order — items (My
+  // buttons, S5a), layout, shortcuts — so a new button exists before the
+  // layout or a shortcut names it. Each is sent whatever became of the one
+  // before, with one exception: when the buttons were refused, a layout or
+  // shortcuts document that names a button the server does not hold (a new,
+  // unsaved one) is HELD — not sent — so no reference to it is written. All
+  // saved: the shell takes them, the panel closes. Anything refused or held:
+  // the panel stays open with every edit, what DID save becomes the new
+  // stored state (its tab is clean), and the banner says which part failed.
+  var PART_NAME = { items: 'buttons', layout: 'launcher layout', shortcuts: 'keyboard shortcuts' };
+  var PANE_OF = { items: 'buttons', layout: 'layout', shortcuts: 'shortcuts' };
   function save() {
     if (!isOpen() || saving) return Promise.resolve(false);
     clearErrors();
@@ -1519,22 +2245,37 @@
       if (bad) bad.focus();
       return Promise.resolve(false);
     }
+    if (mbForm) {
+      showPane('buttons');
+      banner('Finish the button you are editing first: press ' + (mbForm.i >= 0 ? 'Apply' : 'Add button') + ', or Cancel.');
+      mbSec().querySelector('#ymb_label').focus();
+      return Promise.resolve(false);
+    }
     if (!anyDirty()) { closeNow(); return Promise.resolve(true); }
     if (typeof window.apiSend !== 'function') { banner('Saving is not available on this page.', true); return Promise.resolve(false); }
     var parts = [];
+    if (its.isDirty()) parts.push({ key: 'items', doc: its.doc() });
     if (sess.isDirty()) parts.push({ key: 'layout', doc: sess.doc() });
     if (scs.isDirty()) parts.push({ key: 'shortcuts', doc: scs.doc() });
+    var heldIds = Object.create(null);     // the buttons the server holds before this save
+    its.storedIds().concat(its.retired()).forEach(function (id) { heldIds[id] = true; });   // retired: not new (review N2)
     saving = true;
     freeze(true);
     renderStatus();
-    root.querySelector('.yle-status').textContent = 'Saving…';
+    root.querySelector('.yle-status').textContent = 'Saving\u2026';
     var res = {};
     var chain = Promise.resolve();
     parts.forEach(function (p) {
-      chain = chain
-        .then(function () { return window.apiSend('/api/ui-config', 'PUT', { scope: 'user', config_key: p.key, config: p.doc }); })
-        .then(function (r) { res[p.key] = { ok: true, config: r && isObj(r.config) ? r.config : p.doc }; },
-          function (e) { res[p.key] = { ok: false, e: e }; });
+      chain = chain.then(function () {
+        if (p.key !== 'items' && res.items && !res.items.ok) {
+          var names = userIdsIn(p.doc);
+          for (var id in names) if (!heldIds[id]) { res[p.key] = { ok: false, held: true }; return null; }
+        }
+        return Promise.resolve()
+          .then(function () { return window.apiSend('/api/ui-config', 'PUT', { scope: 'user', config_key: p.key, config: p.doc }); })
+          .then(function (r) { res[p.key] = { ok: true, config: r && isObj(r.config) ? r.config : p.doc }; },
+            function (e) { res[p.key] = { ok: false, e: e }; });
+      });
     });
     return chain.then(function () {
       saving = false;
@@ -1543,30 +2284,41 @@
       if (Object.keys(saved).length) applyToShell(saved);
       if (!failed.length) {
         closeNow();
-        toast('success', 'Saved — your launcher is updated');
+        toast('success', 'Saved \u2014 your launcher is updated');
         return true;
       }
       freeze(false);
       if (!isOpen()) return false;
-      if (hasOwn(saved, 'layout')) { sessOpts.stored = saved.layout; sessOpts.effective = L.effectiveRegistry(); sess = session(sessOpts); }
+      // what saved is the new stored state: the buttons first (the other
+      // tabs' item list follows them), then the layout and shortcuts
+      if (hasOwn(saved, 'items')) its = newItemSession(saved.items);
+      if (hasOwn(saved, 'layout')) { sessOpts.stored = saved.layout; sessOpts.effective = editorEffective(); sessOpts.groups = editorGroups(); sess = session(sessOpts); }
       if (hasOwn(saved, 'shortcuts')) scs = newShortcutSession(saved.shortcuts);
+      if (hasOwn(saved, 'layout')) storedRefs = userIdsIn([saved.layout, storedRefs ? Object.keys(storedRefs) : []]);
+      if (hasOwn(saved, 'shortcuts')) storedRefs = userIdsIn([saved.shortcuts, storedRefs ? Object.keys(storedRefs) : []]);
+      retargetAll();
       if (Object.keys(saved).length) render(); else renderStatus();
-      var both = parts.length > 1;
+      var multi = parts.length > 1;
       parts.forEach(function (p) {
-        if (res[p.key].ok) { said.push('Your ' + PART_NAME[p.key] + (p.key === 'layout' ? ' was' : ' were') + ' saved.'); return; }
+        var name = PART_NAME[p.key], plural = p.key !== 'layout';
+        if (res[p.key].ok) { said.push('Your ' + name + (plural ? ' were' : ' was') + ' saved.'); return; }
+        if (res[p.key].held) {
+          said.push('Your ' + name + (plural ? ' were' : ' was') + ' not sent: ' + (plural ? 'they use' : 'it uses') + ' a button that did not save.');
+          return;
+        }
         var e = res[p.key].e;
         if (e && e.status === 400 && e.body && isArr(e.body.errors) && e.body.errors.length) {
           var general = placeErrors(p.key, e.body.errors);
-          said.push((both ? 'The server refused your ' + PART_NAME[p.key] + '.' : 'The server refused the save.') +
-            (general.length ? ' ' + general.join(' · ')
-              : ' See the messages under ' + (p.key === 'layout' ? 'each section.' : 'Keyboard shortcuts.')));
+          said.push((multi ? 'The server refused your ' + name + '.' : 'The server refused the save.') +
+            (general.length ? ' ' + general.join(' \u00b7 ')
+              : ' See the messages under ' + (p.key === 'layout' ? 'each section.' : p.key === 'items' ? 'My buttons.' : 'Keyboard shortcuts.')));
         } else {
           var why = (e && e.message) || 'request failed';
-          said.push(both ? 'Your ' + PART_NAME[p.key] + ' did not save: ' + why + '.' : 'Save failed: ' + why + '.');
+          said.push(multi ? 'Your ' + name + ' did not save: ' + why + '.' : 'Save failed: ' + why + '.');
         }
       });
       said.push('Your changes are still here.');
-      if (failed.indexOf(paneShown()) < 0) showPane(failed[0]);
+      if (failed.map(function (k) { return PANE_OF[k]; }).indexOf(paneShown()) < 0) showPane(PANE_OF[failed[0]]);
       banner(said.join(' '), true);
       return false;
     });
@@ -1579,5 +2331,6 @@
     open: open, close: requestClose, isOpen: isOpen, isDirty: isDirty,
     session: session, labelProblem: labelProblem, canonical: canonical,
     shortcutSession: shortcutSession, reservedProblem: reservedProblem,
+    itemSession: itemSession, makeUserId: makeUserId, buttonProblems: buttonProblems,
   };
 })();

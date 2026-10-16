@@ -16,8 +16,9 @@
  *
  * WHAT IS LOCKED
  *   - can_edit_firm across roles, on the real router.
- *   - The auth matrix: versions / view / restore / pickers 403 without
+ *   - The auth matrix: versions / view / restore 403 without
  *     firm.settings (nothing written), 401 for an API key; 200 for admin/it/su.
+ *     Pickers: 200 for any staff user since ui-custom S5a, still 401 for an API key.
  *   - versions: newest first, saved_by_name joined, is_current a boolean that
  *     is true for exactly the current document (MySQL JSON equality, key-order
  *     insensitive); only the FIRM row's versions; a user row's never.
@@ -211,12 +212,15 @@ d('Firm-tab routes on real MySQL', () => {
   test('auth matrix: no firm.settings → 403 and nothing written; API key → 401', async () => {
     const [v] = await versions();
     const routes = [['GET', '/api/ui-config/versions?config_key=registry_overrides'], ['GET', `/api/ui-config/versions/${v.id}`],
-      ['POST', `/api/ui-config/versions/${v.id}/restore`], ['GET', '/api/ui-config/pickers']];
+      ['POST', `/api/ui-config/versions/${v.id}/restore`]];
+    // pickers: any staff user since ui-custom S5a — still never an API key
+    const pickers = ['GET', '/api/ui-config/pickers'];
     const before = [await firmRow(), await versions()];
     for (const who of ['staff', 'dana']) {
       for (const [m, url] of routes) expect([who, m, url, (await hit(m, url, who)).status]).toEqual([who, m, url, 403]);
+      expect([who, (await hit(...pickers, who)).status]).toEqual([who, 200]);
     }
-    for (const [m, url] of routes) {
+    for (const [m, url] of [...routes, pickers]) {
       expect([m, url, (await hit(m, url, null, undefined, { 'x-api-key': process.env.INTERNAL_API_KEY })).status]).toEqual([m, url, 401]);
     }
     expect([await firmRow(), await versions()]).toEqual(before);

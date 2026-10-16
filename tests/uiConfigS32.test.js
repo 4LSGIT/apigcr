@@ -5,8 +5,10 @@
  * services/uiConfigService.js), on a scripted stub DB:
  *   - GET /api/ui-config's can_edit_firm = lib/capabilities can(firm.settings),
  *     across roles (and a legacy token with no roles claim → false);
- *   - the versions / view / restore / pickers auth matrix: no firm.settings →
- *     403 with nothing but the audit row touched; API key / no token → 401;
+ *   - the versions / view / restore auth matrix: no firm.settings →
+ *     403 with nothing but the audit row touched; API key / no token → 401
+ *     (pickers too — since ui-custom S5a any staff user reads it, so it is
+ *     out of the 403 matrix; tests/uiConfigS5a.test.js has its staff 200);
  *   - versions: is_current mapped to a real boolean (mysql2 hands 1/0),
  *     config_key whitelisted; view: bad id 400, not a firm row's 404;
  *   - restore of a version the validator now refuses → 400 with errors[],
@@ -105,8 +107,9 @@ const FIRM_ROUTES = [
   ['GET', '/api/ui-config/versions?config_key=registry_overrides'],
   ['GET', '/api/ui-config/versions/3'],
   ['POST', '/api/ui-config/versions/3/restore'],
-  ['GET', '/api/ui-config/pickers'],
 ];
+// any staff user since ui-custom S5a (their own buttons pick tools / views)
+const PICKERS = ['GET', '/api/ui-config/pickers'];
 
 beforeEach(() => jest.spyOn(console, 'error').mockImplementation(() => {}));
 afterEach(() => jest.restoreAllMocks());
@@ -150,7 +153,7 @@ describe('Firm-tab routes — the auth matrix', () => {
 
   test('API key → 401; no token → 401; nothing read', async () => {
     for (const headers of [KEY, {}]) {
-      for (const [m, url] of FIRM_ROUTES) {
+      for (const [m, url] of [...FIRM_ROUTES, PICKERS]) {
         const db = makeDb();
         const r = await call(m, url, { headers, db });
         expect([m, url, r.status]).toEqual([m, url, 401]);
@@ -164,7 +167,7 @@ describe('Firm-tab routes — the auth matrix', () => {
       const db = makeDb({ versions: [], version: { id: 3, config_key: 'registry_overrides', config: { hidden: ['moreSettings'] } } });
       expect((await call('GET', FIRM_ROUTES[0][1], { headers: tok(roles), db })).status).toBe(200);
       expect((await call('GET', FIRM_ROUTES[1][1], { headers: tok(roles), db })).status).toBe(200);
-      expect((await call('GET', FIRM_ROUTES[3][1], { headers: tok(roles), db })).status).toBe(200);
+      expect((await call('GET', PICKERS[1], { headers: tok(roles), db })).status).toBe(200);
       // restore reaches the service (this version is stale-invalid → 400, not 403)
       expect((await call('POST', FIRM_ROUTES[2][1], { headers: tok(roles), db })).status).toBe(400);
     }

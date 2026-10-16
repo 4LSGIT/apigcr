@@ -138,12 +138,13 @@
       { "item": "moreAutomations" }, { "item": "firm:unbroken" }, { "item": "calendar" },
       { "break": true },
       { "item": "appts" }, { "item": "events" }, { "item": "tasks" }, { "item": "newClient" }, { "item": "firm:intake-checklist" },
+      { "item": "user:long-tool" },
       { "break": true },
       { "item": "custom" }, { "item": "moreFeatures" }, { "item": "pipeline" }, { "item": "bills" }
      ],
      "sidebar": [
       { "label": "Mine: the forty-character section label" },
-      { "item": "comms" }, { "item": "cases" }, { "item": "firm:intake-checklist" }, { "item": "moreAutomations" },
+      { "item": "comms" }, { "item": "cases" }, { "item": "firm:intake-checklist" }, { "item": "user:my-open-leads" }, { "item": "moreAutomations" },
       { "label": "Records" },
       { "item": "contacts" }, { "item": "appts" }, { "item": "calendar" }, { "item": "events" }, { "item": "tasks" }, { "item": "bills" },
       { "label": "Actions" },
@@ -160,8 +161,20 @@
      { "combo": { "ctrl": true, "meta": true, "alt": true, "shift": true, "key": "F12" }, "id": "firm:unbroken" },
      { "combo": { "ctrl": true, "meta": false, "alt": true, "shift": false, "key": "p" }, "id": "firm:payroll-portal" },
      { "combo": { "ctrl": true, "meta": true, "alt": false, "shift": true, "key": "ArrowRight" }, "id": "moreAutomations" },
-     { "combo": { "ctrl": true, "meta": true, "alt": false, "shift": false, "key": "r" }, "id": "firm:retired-for-the-survey" }
+     { "combo": { "ctrl": true, "meta": true, "alt": false, "shift": false, "key": "r" }, "id": "firm:retired-for-the-survey" },
+     { "combo": { "ctrl": true, "meta": true, "alt": false, "shift": false, "key": "l" }, "id": "user:my-open-leads" }
     ]
+   },
+   "items": {
+    "items": [
+     { "id": "user:my-open-leads", "label": "My open leads and the follow-ups due", "icon": "star",
+       "action": { "type": "view", "key": "lead_followups", "present": "modal" } },
+     { "id": "user:long-tool", "label": "Thewholeintakechecklistwithnospaces", "icon": "screwdriver-wrench",
+       "action": { "type": "tool", "key": "qa-tool-with-a-very-long-key-name", "present": "modal", "size": "compact" } },
+     { "id": "user:court-site", "label": "Court e-filing", "icon": "gavel",
+       "action": { "type": "url", "href": "https://ecf.mieb.uscourts.gov/cgi-bin/login.pl?with=a-long-query-string-that-runs-on", "present": "window" } }
+    ],
+    "retired": ["user:old-button"]
    }
   }
  }

@@ -45,6 +45,13 @@
  *     is validated again, so an item reusing a retired id is a 400 and
  *     nothing is written. A restore (opts.resurrect) may bring retired items
  *     back — the very items, so their ids leave the list.
+ *     RETIRED USER IDS (S5a): a user's `items` document (their own buttons,
+ *     "My buttons") carries the same server-managed `retired` list, by the
+ *     same code: dropped from the body, re-derived from the caller's stored
+ *     row under its lock, the merged document re-validated — so a deleted
+ *     button's id is never reused by that user (their own layout and
+ *     shortcuts refer to it). User rows have no versions, so nothing
+ *     resurrects one.
  *
  * Firm editor reads (ui-custom S3.2 — the Firm tab, public/caseconfig/firm.html).
  * The ROUTES gate all of these on firm.settings; restoreVersion is also
@@ -75,6 +82,8 @@
  *     views = active report_definitions of kind 'view' by report_key. Keys the
  *     firm-item grammar would refuse are left out. Firm admins are not SU, so
  *     GET /api/tools (SU + step-up) is closed to them: this is the lean read.
+ *     Since S5a every staff user reads it too, for their own buttons (the
+ *     route header says why that is safe).
  */
 
 'use strict';
@@ -123,23 +132,28 @@ function inputError(message, errors, status = 400) {
 const CONFLICT_MSG = 'The firm launcher was changed since you loaded it — reload to see the change';
 
 const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
-const keepsRetired = (scope, key) => scope === 'firm' && key === 'registry_overrides';
+// The documents holding launcher items, and the id grammar of their items:
+// the firm's registry_overrides (S4a) and a user's own buttons (S5a).
+const RETIRED_ID_RE = { 'firm/registry_overrides': shape.FIRM_ID_RE, 'user/items': shape.USER_ID_RE };
+const retiredIdRe = (scope, key) => RETIRED_ID_RE[`${scope}/${key}`] || null;
+const keepsRetired = (scope, key) => !!retiredIdRe(scope, key);
 
-/** The firm document to store: incoming (validated, no `retired`) with the
+/** The document to store: incoming (validated, no `retired`) with the
  *  retired list re-derived from the stored row — its retired ids, plus every
- *  stored item id incoming drops; resurrect takes incoming's own ids back out. */
-function withRetired(stored, incoming, resurrect) {
+ *  stored item id incoming drops; resurrect takes incoming's own ids back out.
+ *  idRe: the document's item id grammar (firm: or user:). */
+function withRetired(stored, incoming, resurrect, idRe) {
   const sd = isObj(stored) ? stored : {};
-  const firmId = (id) => typeof id === 'string' && shape.FIRM_ID_RE.test(id);
+  const isId = (id) => typeof id === 'string' && idRe.test(id);
   const keep = new Set(incoming.items.map((it) => it.id));
-  const ids = (Array.isArray(sd.retired) ? sd.retired.filter(firmId) : [])
-    .concat((Array.isArray(sd.items) ? sd.items : []).map((it) => (isObj(it) ? it.id : null)).filter((id) => firmId(id) && !keep.has(id)));
+  const ids = (Array.isArray(sd.retired) ? sd.retired.filter(isId) : [])
+    .concat((Array.isArray(sd.items) ? sd.items : []).map((it) => (isObj(it) ? it.id : null)).filter((id) => isId(id) && !keep.has(id)));
   const retired = [...new Set(ids)].filter((id) => !(resurrect && keep.has(id)));
   return retired.length ? { ...incoming, retired } : { ...incoming };
 }
 
 async function write(db, body, auth, opts = {}) {
-  // `retired` is the server's (S4a): never taken from a client.
+  // `retired` is the server's (S4a; a user's items too, S5a): never taken from a client.
   let input = body;
   if (isObj(body) && keepsRetired(body.scope, body.config_key) && isObj(body.config)
       && Object.prototype.hasOwnProperty.call(body.config, 'retired')) {
@@ -166,7 +180,8 @@ async function write(db, body, auth, opts = {}) {
     }
     if (scope === 'firm' && base !== undefined && base !== head) throw inputError(CONFLICT_MSG, null, 409);
     if (keepsRetired(scope, key)) {
-      const merged = shape.validate(scope, key, withRetired(cur ? parseConfig(cur.config) : null, r.value.config, !!opts.resurrect));
+      const merged = shape.validate(scope, key,
+        withRetired(cur ? parseConfig(cur.config) : null, r.value.config, !!opts.resurrect, retiredIdRe(scope, key)));
       if (!merged.ok) throw inputError(merged.errors[0], merged.errors);
       config = merged.value;
     }

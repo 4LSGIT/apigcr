@@ -360,6 +360,33 @@ async function walk(page, W, record) {
           cap.scrollIntoView();
         }); await sleep(400);
         await record('tab:tabAll:layout-editor:shortcuts-capture', await editorBox(await measure(page, null)), await shot('all_layout_editor_shortcuts_capture'));
+        // its My buttons tab (ui-custom S5a, fixtures: ui.user.items — a long
+        // name, an unbroken one, a link with a long address; placed on Home and
+        // the sidebar, one bound): the list, its titles from the pickers
+        // fixture; then the add form on a tool with the longest title picked;
+        // then a link the editor refuses (the longest field message it draws).
+        // Nothing is added — the form is cancelled — so it still closes
+        // without a prompt.
+        await page.evaluate(() => document.querySelector('#ycLayoutEditor .yle-tab[data-pane="buttons"]').click()); await sleep(800);
+        await record('tab:tabAll:layout-editor:buttons', await editorBox(await measure(page, null)), await shot('all_layout_editor_buttons'));
+        await page.evaluate(() => {
+          const set = (id, v) => { const n = document.getElementById(id); n.value = v; n.dispatchEvent(new Event(n.tagName === 'SELECT' ? 'change' : 'input', { bubbles: true })); };
+          document.querySelector('#ycLayoutEditor .ymb-sec [data-act="mb-open"]').click();
+          set('ymb_label', 'A button name forty characters long, too');
+          set('ymb_type', 'tool');
+          set('ymb_key', 'qa-tool-with-a-very-long-key-name');
+          document.querySelector('#ycLayoutEditor .ymb-form').scrollIntoView();
+        }); await sleep(400);
+        await record('tab:tabAll:layout-editor:buttons-form', await editorBox(await measure(page, null)), await shot('all_layout_editor_buttons_form'));
+        await page.evaluate(() => {
+          const set = (id, v) => { const n = document.getElementById(id); n.value = v; n.dispatchEvent(new Event(n.tagName === 'SELECT' ? 'change' : 'input', { bubbles: true })); };
+          set('ymb_type', 'url');
+          set('ymb_href', '/tool/qa-tool-with-a-very-long-key-name');
+          document.querySelector('#ycLayoutEditor .ymb-sec [data-act="mb-commit"]').click();
+          document.querySelector('#ycLayoutEditor .ymb-form').scrollIntoView();
+        }); await sleep(400);
+        await record('tab:tabAll:layout-editor:buttons-form-error', await editorBox(await measure(page, null)), await shot('all_layout_editor_buttons_form_error'));
+        await page.evaluate(() => document.querySelector('#ycLayoutEditor .ymb-sec [data-act="mb-cancel"]').click()); await sleep(200);
         await page.evaluate(() => ycLayoutEditor.close()); await sleep(300);
       }
     }

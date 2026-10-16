@@ -1269,6 +1269,7 @@ tests/launcherS34.test.js
 tests/launcherS4a.test.js
 tests/launcherS4b.test.js
 tests/launcherS4c.test.js
+tests/launcherS5a.test.js
 tests/likeEscapeSites.test.js
 tests/logService.setLogAbout.test.js
 tests/logService.updateLogLink.test.js
@@ -1409,6 +1410,8 @@ tests/uiConfigS32.test.js
 tests/uiConfigS34.test.js
 tests/uiConfigS4a.mysql.test.js
 tests/uiConfigS4a.test.js
+tests/uiConfigS5a.mysql.test.js
+tests/uiConfigS5a.test.js
 tests/uiCustomS34ItemKeyComment.test.js
 tests/unifiedEventsU2b.admin.test.js
 tests/unifiedEventsU2b.apptsFilter.test.js

@@ -40,8 +40,8 @@
  * (defence in depth: the gate reads the raw body.scope).
  *
  * The firm editor (ui-custom S3.2, public/caseconfig/firm.html) — every route
- * below is requireAuth({ audience:'staff', can:'firm.settings' }); firm scope
- * only (user rows are never versioned):
+ * below is requireAuth({ audience:'staff', can:'firm.settings' }), except
+ * pickers (see there); firm scope only (user rows are never versioned):
  *   GET  /api/ui-config/versions?config_key=registry_overrides
  *        → { status, versions: [{ id, saved_by, saved_by_name, saved_at, size,
  *            is_current }] } newest first
@@ -58,6 +58,12 @@
  *            views: [{ key, title }] } — live tools, active saved views; keys
  *        and titles only (never tool html). GET /api/tools is SU + step-up, so
  *        firm admins need this lean read to place tool items.
+ *        Gate: requireAuth({ audience:'staff' }) — ANY staff user (ui-custom
+ *        S5a), because every user's own buttons ("My buttons") pick a tool or
+ *        a saved view the same way. Safe to show staff: keys and titles only,
+ *        never tool html or a view's definition, and /tool/<key> and saved
+ *        views are already reachable by staff. If a picker list ever must stay
+ *        admin-only, split it into its own route then — don't re-gate this one.
  *
  * Not a sync-bus entity: nothing in public/js/yc-sync.js watches ui_config.
  *
@@ -121,7 +127,9 @@ router.post('/api/ui-config/versions/:id/restore', firmSettings, async (req, res
   } catch (err) { fail(res, 'POST /api/ui-config/versions/:id/restore', err); }
 });
 
-router.get('/api/ui-config/pickers', firmSettings, async (req, res) => {
+// Pickers: any staff user since ui-custom S5a (their own buttons pick a tool
+// or a saved view too) — see the header. Was firm.settings (S3.2).
+router.get('/api/ui-config/pickers', staff, async (req, res) => {
   try {
     res.json({ status: 'success', ...(await svc.pickers(req.db)) });
   } catch (err) { fail(res, 'GET /api/ui-config/pickers', err); }

@@ -1,11 +1,13 @@
-# Your own launcher: All, Ctrl+K, Home and the sidebar, and keyboard shortcuts
+# Your own launcher: All, Ctrl+K, Home and the sidebar, keyboard shortcuts, and your own buttons
 
 The **launcher** is every way into a feature: the sidebar, the Home tiles, the
 More Features and Admin grids, the **All** tab and the **Ctrl+K** search. Your
 firm sets it up for everyone. On top of that, you can arrange **your own Home
-tiles and your own sidebar**, and give features **keyboard shortcuts** of
-your own. Nobody else sees your arrangement or your shortcuts, and both are
-saved on your account, so they follow you to any computer you sign in on.
+tiles and your own sidebar**, give features **keyboard shortcuts** of your
+own, and make **buttons of your own** (a saved view, a tool, or a link to
+another website). Nobody else sees your arrangement, your shortcuts or your
+buttons, and all three are saved on your account, so they follow you to any
+computer you sign in on.
 
 ---
 
@@ -30,9 +32,10 @@ catch up to it as the editor opens). If it can't load your layout, it says
 *Couldn't load your current layout; try again* beside the button and doesn't
 open.
 
-The editor has two tabs at the top: **Home & sidebar**, described here, and
-**Keyboard shortcuts** (see [Keyboard shortcuts](#keyboard-shortcuts) below).
-A dot on a tab means it has unsaved changes.
+The editor has three tabs at the top: **Home & sidebar**, described here,
+**Keyboard shortcuts** (see [Keyboard shortcuts](#keyboard-shortcuts) below)
+and **My buttons** (see [My buttons](#my-buttons) below). A dot on a tab means
+it has unsaved changes.
 
 **Home & sidebar** has two sections, **Home** and **Sidebar**. Each one lists that surface
 exactly as you see it now, top to bottom: features with their icon and name,
@@ -83,9 +86,9 @@ that surface. You can then move it or hide it like any other.
 
 ## Saving and cancelling
 
-- **Nothing changes until you press Save.** One Save covers both tabs. It
-  updates your Home, your sidebar and your keyboard shortcuts straight away,
-  with no reload, and closes the editor. The status
+- **Nothing changes until you press Save.** One Save covers all three tabs.
+  It updates your Home, your sidebar, your keyboard shortcuts and your buttons
+  straight away, with no reload, and closes the editor. The status
   line at the bottom says *Unsaved changes* or *No changes*; Save is greyed
   out while there is nothing to save.
 - **Cancel**, the **×** at the top, **Esc** and a click outside the card all
@@ -93,9 +96,12 @@ that surface. You can then move it or hide it like any other.
   reloading the page.
 - If a save is refused, the reason shows at the top of the editor, and under
   the section it is about. Your changes stay in the editor; fix them, or
-  Cancel. When both tabs had changes, each is saved on its own: the message
-  says which one was saved and which wasn't, the one that was saved is done
-  (its tab loses its dot), and the other keeps your changes for another try.
+  Cancel. When more than one tab had changes, each is saved on its own, your
+  buttons first: the message says which were saved and which weren't, the
+  ones that were saved are done (their tabs lose their dot), and the others
+  keep your changes for another try. If your buttons don't save, a Home,
+  sidebar or shortcut change that uses a **new** button isn't sent either (it
+  would point at a button that doesn't exist yet); it waits for your next Save.
 - If you have YisraCase open in more than one browser tab, the others pick up
   your arrangement the next time they load, or when you open the editor there.
   If the editor is open in two tabs at once and you save from both, the later
@@ -175,6 +181,79 @@ pick another combination.
   own shortcuts, for example) keeps it.
 - Holding a shortcut down opens the feature once.
 
+## My buttons
+
+Your own buttons, besides the features and your firm's items: a saved view
+you use every day, a tool, the court's website. Make up to **50**. Only you
+see them, and they are saved on your account like the rest of this page.
+
+### What a button can open
+
+| Kind | What it opens | How |
+|---|---|---|
+| **A saved view** | One of the firm's saved views (picked from a list) | Over the app, in a window you close with **×** or **Esc**. Pick **Large** (the usual) or **Compact** (a small card). |
+| **A tool** | One of the firm's live tools (picked from a list) | The same way: over the app, Large or Compact. |
+| **A link to a website** | Any secure address (`https://…`), or a page of YisraCase itself (`/…`) | **Always in a new browser window**, never inside YisraCase. |
+
+**Why links open in a new window.** Another website isn't part of YisraCase:
+shown inside the app, it would look like YisraCase while being somebody
+else's page, and many sites refuse to be shown inside another one anyway. A
+new window makes plain where you are. For the same reason a link must be
+`https://`, and it can't point at a page that only works inside YisraCase
+(a tool's or a saved view's own page): make a **Tool** or **Saved view**
+button for those.
+
+### Making one
+
+1. Open **All**, press **Customize my launcher**, and pick the **My buttons**
+   tab.
+2. Press **Add a button** and fill in:
+   - **Name**: what the button says, 1 to 40 characters;
+   - **Icon**: a Font Awesome icon name, such as `star`, `folder-open` or
+     `link` (a preview shows beside the box; a name it doesn't know shows a
+     question mark);
+   - **Opens**: a saved view, a tool, or a link; then pick the view or the tool
+     from the list (with its **Window size**), or type the address.
+3. Press **Add button**, then **Save**.
+
+Each button in the list shows its icon, its name, what it opens (*Saved view ·
+Leads*, *Link · ecf.example.gov*), and where you have put it (*On Home*, *On
+sidebar*, its keyboard shortcut). **↑ / ↓** set their order, which is their
+order in All and the search. The **pen** edits one, the **bin** deletes it.
+A button you haven't saved yet says **New**.
+
+If the lists of tools and saved views can't be loaded, the tab says so: link
+buttons still work, and the lists come back the next time you open the
+editor.
+
+### Putting a button on Home or the sidebar, and giving it a shortcut
+
+A button you make is in **All** and the **Ctrl+K** search straight away, under
+**Mine**. To have it on your Home or sidebar, press **Add to Home** or **Add to
+sidebar** under it in the list (or use **Add a shortcut** on the Home & sidebar
+tab); then arrange it there like anything else. On the **Keyboard shortcuts**
+tab you can give it a key combination of its own. All of this works before
+you save: the button, its place and its shortcut are saved together.
+
+### Deleting a button
+
+The bin deletes a button. If it is on your Home or sidebar or has a keyboard
+shortcut, the editor says so and asks first; deleting it takes it off those
+too, so nothing is left pointing at it. Nothing is gone until you Save.
+
+### Things to know
+
+- **Your firm's settings don't reach your buttons.** The firm's hides,
+  renames and **Who sees what** apply to the app's features and the firm's
+  items; your own buttons are yours. A button is a shortcut, not a key: what
+  the tool or view behind it lets you do is still decided by your role.
+- A button's internal name (its id) is made from the name you give it and
+  never changes once saved, so renaming a saved button keeps its place on
+  your Home and its shortcut. A deleted button's id is never used again for
+  you.
+- Buttons that open as a tab of their own, like the custom tab in Settings,
+  are not here yet.
+
 ## What your firm controls
 
 Your firm's launcher settings (More → YisraCase Config → Firm, see
@@ -191,6 +270,8 @@ arrangement:
   hide it from a surface it is on by default.
 - **Firm items.** The firm's own links, tools and saved views can be pinned to
   your Home or sidebar like any feature, from **Add a shortcut**.
+- **Your own buttons** (see [My buttons](#my-buttons)) are not touched by any
+  of the above: the firm can't hide, rename or lock them.
 - A feature that isn't available to your account never appears, here or
   anywhere else. Hiding is about tidiness, not access: what you may open is
   decided by your role, whatever the launcher shows.

@@ -6,7 +6,7 @@ hosts, at the widths you pass:
 
 | Group     | What it opens |
 |-----------|---------------|
-| `tabs`    | every sidebar tab, plus the Calendar tab's List (rows + quick actions) and Grid modes, and All's "Customize my launcher" layout editor (open, its shortcut picker, its section-label box) |
+| `tabs`    | every sidebar tab, plus the Calendar tab's List (rows + quick actions) and Grid modes, and All's "Customize my launcher" layout editor (open, its shortcut picker, its section-label box, its Keyboard shortcuts and My buttons tabs) |
 | `panels`  | every More Features / Admin panel (each `[data-target]` tile — new tiles are picked up automatically), plus sub-surfaces for some (below) |
 | `files`   | a case file and a contact file, and every tab inside each (Refresh is skipped: it opens a reload confirm) |
 | `dialogs` | New Client, New Case, New Appointment, New Event, Reschedule, Show Appointment, the two deadline quick actions (complete, cancel), the two Log adopt dialogs (case docket, phone/email) |
@@ -193,7 +193,14 @@ S4c: the longest combo the editor can draw, the two long-labelled firm items,
 one binding to an item that doesn't exist so it lists as unavailable — in the
 Ctrl-K palette rows (`tab:tabAll:palette`) and the editor's Keyboard shortcuts tab,
 `tab:tabAll:layout-editor:shortcuts`, `…:shortcuts-add` (the picker open) and
-`…:shortcuts-capture` (a long refusal message under the keys box))) —
+`…:shortcuts-capture` (a long refusal message under the keys box)) and the
+user's own buttons (`ui.user.items`, ui-custom S5a: a long name, an unbroken
+one, a link with a long address and a retired id; one pinned to Home, one to
+the sidebar and bound to a shortcut — so they are on the Home, sidebar, All
+and palette surfaces too — and in the editor's My buttons tab,
+`tab:tabAll:layout-editor:buttons` (its titles from `ui-config/pickers.json`),
+`…:buttons-form` (a tool with the longest title picked) and
+`…:buttons-form-error` (a refused link's message))) —
 enough to fill the tables
 that tend to overflow and to put every conditional Overview / Case Details box
 on screen. The mock ignores
