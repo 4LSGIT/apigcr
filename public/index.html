@@ -7336,8 +7336,9 @@ async function initAuth() {
     }
 
     /** Which workspace view a frame element belongs to: a file's own pane
-     *  frame → { btn }, a main tab's own pane frame → { tab }, else null — a
-     *  Swal, a tool dialog, a More/Admin panel (S2), anything nested. */
+     *  frame → { btn }, a main tab's own pane frame → { tab }, a More/Admin
+     *  drill panel's direct iframe → { tab, panel } (automationManager,
+     *  caseConfigManager), else null — a Swal, a tool dialog, anything nested. */
     function wsFrameOwner(frameEl) {
       if (!frameEl || frameEl.ownerDocument !== document || frameEl.tagName !== "IFRAME") return null;
       const fileDiv = frameEl.closest(".file");

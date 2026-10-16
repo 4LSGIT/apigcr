@@ -1463,6 +1463,7 @@ tests/wsurlS1a.test.js
 tests/wsurlS1b.test.js
 tests/wsurlS2.test.js
 tests/wsurlS3.test.js
+tests/wsurlS5ca.test.js
 tests/wsurlSlinks.test.js
 tests/ycFrameFit.test.js
 tests/ycIconS6a.test.js

@@ -14,6 +14,7 @@ YisraCase keeps your workspace in the browser's address bar. Refreshing the page
 | A main tab on screen instead (Cases, Calendar, Tasks, …) | That tab is the one showing |
 | Comms on its Phone or Team tab | Comms opens on that tab |
 | A panel open under **More** or **Admin** (Automations, Manuals, …) | The panel reopens |
+| A tab inside **Automations** (Workflows, Triggers, Activity, …) or **YisraCase Config** (Pipelines, Custom Fields, Firm, …) | The panel reopens on that tab |
 
 The address bar updates as you work, so it is always current — there is nothing to save.
 

@@ -845,7 +845,8 @@ the version guard reloads through `window.ycReloadUrl`):
 rest lives in its token) or `?open=<mainTabId>[~rest]`. A rest = one
 `~`-joined segment per frame layer, each layer owning its vocabulary (case /
 contact: `data-ws-tab`; comms: email|phone|team; tabMore/tabAdmin: the open
-drill panel's FEATURE_REGISTRY id). Grammar in `public/js/ycSubTab.js`:
+drill panel's FEATURE_REGISTRY id; automationManager / caseConfigManager:
+their `SUB_PAGES` id, e.g. `tabMore~moreAutomations~triggers`). Grammar in `public/js/ycSubTab.js`:
 `[A-Za-z0-9_-]{1,32}`, depth ≤4, ≤128, empty = default, invalid → dropped at
 its layer (file/tab kept). Vocabulary or surrogate DB ids ONLY: the URL rides
 Referer into jwt_api_audit_log, redacted by key (credentials, `q`), not value.
@@ -858,8 +859,10 @@ the ACTIVE view's rest, and never opens anything on a report. `?open=`'s head
 must be a tab the effective registry offers (`wsMainTabAllowed`, after
 applyAccess; else Home); a drill panel reopens ONLY via `ycLauncher.exec`, for
 a plain registry id whose tile has `data-target` (never action/dialog tiles or
-`firm:` ids). Leaves: case.html, contact.html, comms.html; panel panes are
-plumbed, none reports. A new pane: load ycSubTab.js; report from its one
+`firm:` ids). Leaves: case.html, contact.html, comms.html, and two drill-panel
+panes, automationManager.html + caseConfigManager.html (a gated sub-tab —
+Config's Firm — is taken at boot but opened only after its reveal, and only
+if the default is still showing). A new pane: load ycSubTab.js; report from its one
 switch; take once AFTER the content deciding which choices are visible;
 restore by clicking / calling its own switch; never throw on a token. Server:
 `lib/shellLinks.js` builds staff deep links by exact id; legacy `?case=` /

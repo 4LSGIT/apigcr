@@ -50,6 +50,15 @@
 //        same frame while another tab is active → no URL change
 //   (d5) ?manual= + ?open=tabMore~<id> → the manual wins
 //
+// S5c-a — the manager panes own their sub-tab (real automationManager.html
+// and caseConfigManager.html in their drill panels):
+//   (a1) Automations: a Triggers click → open=tabMore~moreAutomations~triggers
+//   (a2) …a reload shows Triggers, URL unchanged, the pane loaded ONCE
+//   (a3) the same URL in a FRESH context → Triggers
+//   (a4) ~bogus → Workflows, the URL settles on tabMore~moreAutomations
+//   (a5) Config: ~pipelines round-trips a reload; ~firm (gated, revealed by
+//        the mock's can_edit_firm) → Firm, URL unchanged
+//
 // S-links — the links the server emits (lib/shellLinks), opened cold:
 //   (L1) /?files=c<id>&open=file:0 in a FRESH context (no label cache), the
 //        search answering the exact row → the case file opens, URL settles
@@ -617,6 +626,64 @@ const activeTab = (page) => page.evaluate(() => window.currentMainTabId());
       check('(d5) ?manual= + ?open=tabMore~moreAutomations → the manual wins',
         (await openPanelOf(page, 'tabMore')) === 'moreManuals' && q(page.url()).open === 'tabMore~moreManuals', page.url());
       await ctx.close();
+    }
+
+    // ════ S5c-a — the manager panes' sub-tab ═══════════════════════════════
+    const paneFrame = async (page, div) => {
+      const h = await page.$(`#${div} > iframe`);
+      const f = h && await h.contentFrame();
+      if (!f) throw new Error('no pane frame in ' + div);
+      await f.waitForFunction(() => document.querySelectorAll('.tab-nav-btn.active').length === 1, { timeout: 20000 });
+      return f;
+    };
+    const subOn = (f) => f.evaluate(() => document.querySelector('.tab-nav-btn.active').id.replace(/^tabnav-/, ''));
+    {
+      const { page, ctx, hits, errors } = await boot(browser, url, '?open=tabMore');
+      await clickTile(page, 'moreAutomations', 'more');
+      let f = await paneFrame(page, 'automationsDiv');
+      await f.evaluate(() => document.getElementById('tabnav-triggers').click());   // the shipped inline onclick
+      await sleep(150);
+      check('(a1) Automations: a Triggers click → open=tabMore~moreAutomations~triggers',
+        q(page.url()).open === 'tabMore~moreAutomations~triggers' && (await subOn(f)) === 'triggers', page.url());
+      const was = page.url();
+      hits.automationManager = 0;
+      await page.reload({ waitUntil: 'networkidle2' });
+      await settle(page);
+      f = await paneFrame(page, 'automationsDiv');
+      check('(a2) …a reload shows Triggers, URL unchanged, the pane loaded ONCE',
+        (await subOn(f)) === 'triggers' && page.url() === was && hits.automationManager === 1,
+        `sub=${await subOn(f)} url=${page.url()} loads=${hits.automationManager}`);
+      check('(a1-a2) no page errors', errors.length === 0, errors.join(' | '));
+      await ctx.close();
+      const fresh = await boot(browser, url, '?open=tabMore~moreAutomations~triggers');
+      f = await paneFrame(fresh.page, 'automationsDiv');
+      check('(a3) the same URL in a fresh context → Triggers',
+        (await subOn(f)) === 'triggers' && q(fresh.page.url()).open === 'tabMore~moreAutomations~triggers', fresh.page.url());
+      await fresh.ctx.close();
+    }
+    {
+      const { page, ctx } = await boot(browser, url, '?open=tabMore~moreAutomations~bogus');
+      const f = await paneFrame(page, 'automationsDiv');
+      check('(a4) ~bogus → Workflows, the URL settles on tabMore~moreAutomations',
+        (await subOn(f)) === 'workflows' && q(page.url()).open === 'tabMore~moreAutomations', `${await subOn(f)} ${page.url()}`);
+      await ctx.close();
+    }
+    {
+      const { page, ctx } = await boot(browser, url, '?open=tabMore~moreCaseConfig~pipelines');
+      let f = await paneFrame(page, 'caseConfigDiv');
+      const ok1 = (await subOn(f)) === 'pipelines' && q(page.url()).open === 'tabMore~moreCaseConfig~pipelines';
+      await page.reload({ waitUntil: 'networkidle2' });
+      await settle(page);
+      f = await paneFrame(page, 'caseConfigDiv');
+      check('(a5) Config: ~pipelines round-trips a reload',
+        ok1 && (await subOn(f)) === 'pipelines' && q(page.url()).open === 'tabMore~moreCaseConfig~pipelines', `${await subOn(f)} ${page.url()}`);
+      await ctx.close();
+      const g = await boot(browser, url, '?open=tabMore~moreCaseConfig~firm');
+      f = await paneFrame(g.page, 'caseConfigDiv');
+      await f.waitForFunction(() => document.getElementById('tabnav-firm').classList.contains('active'), { timeout: 5000 }).catch(() => {});
+      check('(a5) Config: ~firm (gated, revealed) → Firm, URL unchanged',
+        (await subOn(f)) === 'firm' && q(g.page.url()).open === 'tabMore~moreCaseConfig~firm', `${await subOn(f)} ${g.page.url()}`);
+      await g.ctx.close();
     }
 
     // (b6) dedup refocus with a new tab: the page switches, its report moves the token

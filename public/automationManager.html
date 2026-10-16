@@ -7,6 +7,7 @@
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
   <link rel="stylesheet" href="/theme.css">
   <script src="/themeSync.js"></script>
+  <script src="/js/ycSubTab.js"></script>
   <style>
     /* ══════════════════════════════════════════════
        SHELL — owns topbar + tab switcher + iframe container only.
@@ -447,6 +448,7 @@ function switchSubPage(id) {
   document.querySelectorAll('.tab-nav-btn').forEach(el => el.classList.remove('active'));
   document.getElementById(`subpage-panel-${id}`).classList.add('active');
   document.getElementById(`tabnav-${id}`).classList.add('active');
+  wsReportSubPage(id);   // the workspace URL follows (below)
 
   // Lazy-load: copy data-src → src on first activation
   const iframe = document.getElementById(`subpage-${id}`);
@@ -463,6 +465,30 @@ function switchSubPage(id) {
 
   // Subsequent activations: iframe is already loaded, call onShow now.
   callSubPageHook(id, 'onShow');
+}
+
+// ── Workspace URL: this page's sub-tab (S5c-a) ─────────────────
+// This page is a ycSubTab leaf (public/js/ycSubTab.js) inside the shell's
+// More panel: its segment is the SUB_PAGES id of the shown sub-tab —
+// ?open=tabMore~moreAutomations~triggers. Ids are vocabulary, never data,
+// and a token is only ever COMPARED to SUB_PAGES ids, never put in a
+// selector. The sub-pages own no segment: anything after ours is dropped.
+//   REPORT   switchSubPage, the one switch, reports every switch; the
+//            default sub-tab reports '' (empty = default).
+//   RESTORE  boot takes the rest the shell handed down, ONCE, and opens
+//            that sub-tab; an unknown token opens the default, silently.
+function wsReportSubPage(id) {
+  if (!window.ycSubTab) return;
+  ycSubTab.leaf.report(id === SUB_PAGES[0].id ? '' : id);
+}
+
+/** The sub-page id to boot on: the handed-down rest's first segment when it
+ *  names a sub-page, else the default. Never throws on a token. */
+function wsBootSubPage() {
+  const held = window.ycSubTab ? ycSubTab.leaf.take() : null;
+  const token = String(held == null ? '' : held).split('~')[0];
+  const page = SUB_PAGES.find(p => p.id === token);
+  return page ? page.id : SUB_PAGES[0].id;
 }
 
 // ── Lifecycle hook invocation ──────────────────────────────────
@@ -580,7 +606,7 @@ window.esc                 = esc; // useful for sub-pages that want to match hel
 
 // ── Boot ───────────────────────────────────────────────────────
 renderShellStructure();
-switchSubPage(SUB_PAGES[0].id);
+switchSubPage(wsBootSubPage());
 </script>
 
 </body>

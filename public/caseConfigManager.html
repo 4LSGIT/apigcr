@@ -7,6 +7,7 @@
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
   <link rel="stylesheet" href="/theme.css">
   <script src="/themeSync.js"></script>
+  <script src="/js/ycSubTab.js"></script>
   <style>
     /* ══════════════════════════════════════════════
        SHELL — owns topbar + tab switcher + iframe container only.
@@ -276,6 +277,7 @@ function switchSubPage(id) {
   document.querySelectorAll('.tab-nav-btn').forEach(el => el.classList.remove('active'));
   document.getElementById(`subpage-panel-${id}`).classList.add('active');
   document.getElementById(`tabnav-${id}`).classList.add('active');
+  wsReportSubPage(id);   // the workspace URL follows (below)
 
   const iframe = document.getElementById(`subpage-${id}`);
   if (iframe && iframe.dataset.src) {
@@ -286,6 +288,38 @@ function switchSubPage(id) {
   }
 
   callSubPageHook(id, 'onShow');
+}
+
+// ── Workspace URL: this page's sub-tab (S5c-a) ─────────────────
+// A ycSubTab leaf, as automationManager.html: its segment is the SUB_PAGES
+// id of the shown sub-tab (?open=tabMore~moreCaseConfig~pipelines), only
+// ever COMPARED to SUB_PAGES ids; the default reports ''. A gated sub-tab
+// (Firm) is hidden until revealGatedTabs answers, so a handed-down gated id
+// waits in wsPendingSubPage: boot shows the default, and the reveal opens
+// it — only if the tab was revealed and the default is still showing.
+let wsPendingSubPage = null;
+
+function wsReportSubPage(id) {
+  if (!window.ycSubTab) return;
+  ycSubTab.leaf.report(id === SUB_PAGES[0].id ? '' : id);
+}
+
+/** The sub-page id to boot on (takes the handed-down rest, ONCE). An unknown
+ *  token → the default, silently; a gated one → the default for now. */
+function wsBootSubPage() {
+  const held = window.ycSubTab ? ycSubTab.leaf.take() : null;
+  const token = String(held == null ? '' : held).split('~')[0];
+  const page = SUB_PAGES.find(p => p.id === token);
+  if (!page) return SUB_PAGES[0].id;
+  if (page.gate) { wsPendingSubPage = page.id; return SUB_PAGES[0].id; }
+  return page.id;
+}
+
+/** After the reveal: open the pending gated sub-tab if it is now shown. */
+function wsApplyPendingSubPage() {
+  const id = wsPendingSubPage;
+  wsPendingSubPage = null;
+  if (id && activeSubPageId === SUB_PAGES[0].id) switchSubPage(id);   // refuses a still-hidden tab
 }
 
 // ── Lifecycle hook invocation ──────────────────────────────────
@@ -347,8 +381,8 @@ async function revealGatedTabs() {
 
 // ── Boot ───────────────────────────────────────────────────────
 renderShellStructure();
-switchSubPage(SUB_PAGES[0].id);
-revealGatedTabs();
+switchSubPage(wsBootSubPage());
+revealGatedTabs().finally(wsApplyPendingSubPage);
 </script>
 
 </body>

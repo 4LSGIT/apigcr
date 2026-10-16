@@ -491,8 +491,9 @@ Active surfaces with known next steps.
 
 - **Workspace URL — deferred levels (wsurl, 2026-10-16).** The protocol
   (ref/AI_CONTEXT.md §12 Workspace URL) stops at the levels built so far.
-  Next: S4, automationManager reporting its sub-page (the drill-panel pane
-  plumbing from S2 is ready; it needs only the leaf calls); the HOST role
+  Done (ui-custom S5c-a): automationManager and caseConfigManager report
+  their sub-page. Next: the other drill-panel panes with sub-tabs
+  (portalManager.html has the same SUB_PAGES shell); the HOST role
   inside case.html / contact.html, once a nested pane (documents, tasks,
   widgets) gains a vocabulary — today a deep link into a file keeps only its
   tab level; tasks.html as a leaf (then move the wsurl harness's (3s) ?open=
