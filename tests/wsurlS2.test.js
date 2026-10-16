@@ -68,6 +68,8 @@ const DOM = `<!DOCTYPE html><html><body>
     <button class="big-button" id="tAuto" data-target="automationsDiv" data-exclusive-group="more">Automations</button>
     <button class="big-button" id="tSettings" onclick="openMainTab('tabSettings')">Settings</button>
     <button class="big-button" id="tStray" data-target="strayDiv" data-exclusive-group="more">Stray</button>
+    <button class="big-button" id="tUnplaced" data-target="unplacedDiv" data-exclusive-group="more" data-yc-unplaced="">Unplaced</button>
+    <div id="unplacedDiv" style="display:none"><iframe id="unplacedFrame" data-src="/unplaced.html"></iframe></div>
     <div id="automationsDiv" style="display:none"><iframe id="autoFrame" data-src="/automationManager.html"></iframe><div><iframe id="deepFrame"></iframe></div></div>
     <div id="manualsDiv" style="display:none"><iframe id="manFrame" data-src="/manuals.html"></iframe></div>
     <div id="orphanDiv" style="display:none"><iframe id="orphanFrame"></iframe></div>
@@ -127,8 +129,13 @@ function shell({ su = true, denied = [] } = {}) {
     // More grid): still never restored from a URL — refusal (a) on its own.
     'firm:tile': { more: $('tManuals') },
     moreStray: { more: $('tStray') },                     // its panel is NOT inside tabMore (J6)
+    // A tile the firm's layout took off this grid (ui-custom S6c): in the DOM, hidden by
+    // data-yc-unplaced, still an effective item — the restore refuses it, the grid shows.
+    moreUnplaced: { more: $('tUnplaced') },
   };
   if (su) EL.adminDbConsole = { admin: $('tDb') };
+  if (su) EL.admin = { sidebar: d.createElement('a') };  // the Admin PAGE item (S6c: the URL door to tabAdmin)
+  EL.moreFeatures = { sidebar: d.createElement('a') };    // the More page item
   if (su) EL.adminEtch = { admin: $('tEtch') };           // an ACTION tile that opens a DIALOG
   const effective = Object.keys(EL).filter((id) => !denied.includes(id));
   const TAB = { more: 'tabMore', admin: 'tabAdmin' };
@@ -169,7 +176,7 @@ describe('wsurl S2 — the open panel → its registry id (by data-target)', () 
     w.openMainTab('tabMore');
     await tick();
     expect(lastOpen()).toBe('tabMore');
-    expect(JSON.parse(JSON.stringify(w.wsDrillPanels('tabMore').map((p) => p.id)))).toEqual(['moreAutomations', 'moreManuals']);   // firm:tile skipped
+    expect(JSON.parse(JSON.stringify(w.wsDrillPanels('tabMore').map((p) => p.id)))).toEqual(['moreAutomations', 'moreManuals', 'moreUnplaced']);   // firm:tile skipped; an unplaced tile still maps (only the restore refuses it)
     showPanel('automationsDiv'); w.syncWorkspaceUrl(); await tick();
     expect(lastOpen()).toBe('tabMore~moreAutomations');
     showPanel('manualsDiv'); w.syncWorkspaceUrl(); await tick();
@@ -248,6 +255,7 @@ describe('wsurl S2 — restore (openMainTabOnBoot), every refusal lands on the g
     ['newClient', 'an id with no tile on this grid (wrong surface)'],
     ['adminDbConsole', 'an Admin id on tabMore (wrong surface)'],
     ['moreBogus', 'an unknown id'],
+    ['moreUnplaced', 'a tile the firm\'s layout took off this grid (data-yc-unplaced, ui-custom S6c) — its panel would open with no pill lit'],
   ])('refused: %s — %s', (id) => {
     const { w, $ } = shell();
     w.openMainTabOnBoot('tabMore', id + '~x');
@@ -257,6 +265,8 @@ describe('wsurl S2 — restore (openMainTabOnBoot), every refusal lands on the g
     expect(w.wsOpenPanel('tabMore')).toBeNull();
     expect(w.__ws.panel).toEqual({});
     expect(w.ycTakeSubTab($('autoFrame'))).toBeNull();
+    expect(w.ycTakeSubTab($('unplacedFrame'))).toBeNull();
+    expect($('unplacedFrame').getAttribute('src')).toBeNull();   // never loaded
   });
 
   test('refused on tabAdmin: adminEtch, an action tile that opens a DIALOG (SU)', () => {
@@ -287,11 +297,12 @@ describe('wsurl S2 — restore (openMainTabOnBoot), every refusal lands on the g
     expect(g.w.__calls).toEqual({ openMainTab: ['tabMore'], exec: [], dialog: 0 });
   });
 
-  test('non-SU tabAdmin~<id>: the HEAD fails first → Home', () => {
+  test('non-SU tabAdmin~<id>: the HEAD fails first → Home (the Admin page item is not effective); SU: allowed', () => {
     const { w } = shell({ su: false });
-    // the shell's own head check: no effective item opens tabAdmin
-    w.ycLauncher.elementsOf = (id) => (id === 'moreAutomations' ? { more: w.document.getElementById('tAuto') } : {});
     expect(w.wsOpenTarget('tabAdmin~adminDbConsole').tab).toBe('tabHome');
+    expect(w.wsOpenTarget('tabMore~moreAutomations').tab).toBe('tabMore');
+    const su = shell({ su: true });
+    expect(su.w.wsOpenTarget('tabAdmin~adminDbConsole').tab).toBe('tabAdmin');
   });
 });
 

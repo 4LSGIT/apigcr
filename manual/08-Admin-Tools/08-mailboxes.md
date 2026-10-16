@@ -218,8 +218,8 @@ Click **Access** on a row. Each person gets any mix of:
 - A **Manage** holder who is not a superuser may change who has access to that
   box, its display name and its colour — nothing else; host, login, secret, send
   credential, folders and Active stay superuser-only. The server enforces
-  this today, but Mailboxes is on the superuser-only Admin tab, so they have
-  no screen for it yet (the comms hub itself is in the sidebar now).
+  this today, but the Mailboxes tile is superuser-only, so they have no
+  screen for it yet (the comms hub itself is in the sidebar now).
 
 Every change — mailbox or grant — is recorded in `admin_audit_log` under the
 tool `mailboxes`.

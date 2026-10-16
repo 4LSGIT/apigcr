@@ -31,9 +31,10 @@ it.** What a person may open is decided by their role, and the server enforces
 that whether or not a button is showing. Hide what your firm doesn't use; never
 hide something to keep it from someone.
 
-Two items can't be hidden — **Settings** and **Help & Support**. Their Hide
-checkbox is greyed out, can't be ticked, and is labelled *Always*. The **All**
-tab isn't an item at all; it's always there, so nobody can lose their way back.
+Three items can't be hidden — **Settings**, **Help & Support** and **All**.
+Their Hide checkbox is greyed out, can't be ticked, and is labelled *Always*.
+All is always there (the small grid icon under everyone's Home tiles, and
+Ctrl-K), so nobody can lose their way back.
 
 ## Hide and rename
 
@@ -171,8 +172,11 @@ newest first, with who saved it and when. The one in use is marked **current**.
   person's editor and can't be hidden there), but this page has no control to
   set one yet. Personal layouts themselves are each person's own:
   [Your own launcher](../01-YisraCase-overview/15-your-launcher.md).
-- **Placing** firm items for everyone anywhere but the More grid's firm row (a
-  firm-wide spot on Home, the sidebar, or in a grid).
+- **Arranging** the launcher for everyone — where the More and Admin tiles
+  sit, placing firm items anywhere but the More grid's firm row (a firm-wide
+  spot on Home, the sidebar, or in a grid), the small icons under each grid.
+  The firm-wide layout exists (the server stores it, and the launcher follows
+  it), but this page has no editor for it yet.
 - Per-role launcher **layouts** (a different arrangement for each role). **Who
   sees what** decides which items a role sees, not where they sit.
 - Hides by role or for the whole firm aren't offered under **Hidden from these

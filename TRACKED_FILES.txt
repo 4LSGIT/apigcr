@@ -1287,6 +1287,7 @@ tests/launcherS5b.test.js
 tests/launcherS5cb.test.js
 tests/launcherS6b.browser.test.js
 tests/launcherS6b.test.js
+tests/launcherS6c.test.js
 tests/likeEscapeSites.test.js
 tests/logService.setLogAbout.test.js
 tests/logService.updateLogLink.test.js
@@ -1431,6 +1432,8 @@ tests/uiConfigS5a.mysql.test.js
 tests/uiConfigS5a.test.js
 tests/uiConfigS5b.test.js
 tests/uiConfigS5cb.test.js
+tests/uiConfigS6c.mysql.test.js
+tests/uiConfigS6c.test.js
 tests/uiCustomConfigKeyComment.test.js
 tests/uiCustomS34ItemKeyComment.test.js
 tests/uiCustomS5e.mysql.test.js

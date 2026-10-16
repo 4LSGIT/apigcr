@@ -406,7 +406,7 @@ function boot({ layout = null, ro = RO, access = ACCESS, serverLayout = layout, 
   const page = `<!DOCTYPE html><html><head>
     <script>${ICON_SRC}</script><script>${REGISTRY_SRC}</script><script id="ycLauncher">${RENDERER_SRC}</script>${HIDE_CSS}</head><body>
     <nav id="appSidebar"><div class="sb-item" data-tab="tabHome" onclick="openMainTab('tabHome')"></div>
-      <div class="sb-item" id="sbOpenFiles"></div><div id="tabOpenFiles"></div><script>ycLauncher.mount('sidebar')</script><div class="sb-item" id="sbAll" data-tab="tabAll" onclick="openMainTab('tabAll')"></div></nav>
+      <div class="sb-item" id="sbOpenFiles"></div><div id="tabOpenFiles"></div><script>ycLauncher.mount('sidebar')</script></nav>
     <div id="tabHome" class="tab-main"><br><br>
       <div class="home-grid"><script>ycLauncher.mount('home')</script></div>
       <button id="homeAll" class="home-btn"></button></div>
@@ -481,7 +481,7 @@ function boot({ layout = null, ro = RO, access = ACCESS, serverLayout = layout, 
   };
   const sbNodes = () => {
     const out = [];
-    for (let n = d.getElementById('tabOpenFiles').nextElementSibling; n && n.id !== 'sbAll'; n = n.nextElementSibling) out.push(n);
+    for (let n = d.getElementById('tabOpenFiles').nextElementSibling; n; n = n.nextElementSibling) out.push(n);
     return out;
   };
   const seen = (sf) => (sf === 'home' ? [...homeGrid.children] : sbNodes())

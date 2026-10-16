@@ -170,12 +170,12 @@ function boot() {
     .map((it) => `<div id="${it.target}" style="display:none"><iframe data-src="/${it.target}.html"></iframe></div>`).join('');
   const tabs = new Set(['tabHome', 'tabMore', 'tabAdmin', 'tabCustom']);
   for (const it of Object.values(REG)) for (const t of [it.tab, it.tabAlso]) if (t) tabs.add(t);
-  const plainTabs = [...tabs].filter((t) => !['tabHome', 'tabMore', 'tabAdmin', 'tabCustom'].includes(t))
+  const plainTabs = [...tabs].filter((t) => !['tabHome', 'tabMore', 'tabAdmin', 'tabCustom', 'tabAll'].includes(t))
     .map((t) => `<div id="${t}" class="tab-main"></div>`).join('');
   const page = `<!DOCTYPE html><html><head>
     <script>${ICON_SRC}</script><script>${REGISTRY_SRC}</script><script id="ycLauncher">${RENDERER_SRC}</script>${HIDE_CSS}</head><body>
     <nav id="appSidebar"><div class="sb-item" data-tab="tabHome" onclick="openMainTab('tabHome')"></div>
-      <div class="sb-item" id="sbOpenFiles"></div><div id="tabOpenFiles"></div><script>ycLauncher.mount('sidebar')</script><div class="sb-item" id="sbAll" data-tab="tabAll" onclick="openMainTab('tabAll')"></div></nav>
+      <div class="sb-item" id="sbOpenFiles"></div><div id="tabOpenFiles"></div><script>ycLauncher.mount('sidebar')</script></nav>
     <div id="tabHome" class="tab-main"><br><br>
       <div class="home-grid"><script>ycLauncher.mount('home')</script></div>
       <button id="homeAll" class="home-btn"></button></div>
@@ -284,7 +284,7 @@ describe('applyAccess with roles: every surface follows (real mounts)', () => {
     expect(t.L.elementsOf('moreAutomations').more.hasAttribute('data-yc-denied')).toBe(false);
     expect(t.shown(t.L.elementsOf('tasks').sidebar)).toBe(false);
     t.L.applyAccess({ ui: ui({ ...RO, visible_to: undefined }, PINS) });  // restrictions removed → all back
-    expect(t.d.querySelectorAll('[data-yc-denied]')).toHaveLength(0);
+    expect(t.d.querySelectorAll('[data-yc-denied]:not(#tabAdmin *)')).toHaveLength(0);   // (#tabAdmin: the su tiles, hidden for a non-su since S6c)
     expect(t.errors).toEqual([]);
   });
 });

@@ -138,7 +138,7 @@ function boot({ registrySrc = REGISTRY_SRC } = {}) {
     .map((it) => `<div id="${it.target}" style="display:none"><iframe data-src="/${it.target}.html"></iframe></div>`).join('');
   const tabs = new Set(['tabHome', 'tabMore', 'tabAdmin', 'tabCustom']);
   for (const it of Object.values(REG)) for (const t of [it.tab, it.tabAlso]) if (t) tabs.add(t);
-  const plainTabs = [...tabs].filter((t) => !['tabHome', 'tabMore', 'tabAdmin', 'tabCustom'].includes(t))
+  const plainTabs = [...tabs].filter((t) => !['tabHome', 'tabMore', 'tabAdmin', 'tabCustom', 'tabAll'].includes(t))
     .map((t) => `<div id="${t}" class="tab-main"></div>`).join('');
   const page = `<!DOCTYPE html><html><head>
     <script>${ICON_SRC}</script><script>${registrySrc}</script><script id="ycLauncher">${RENDERER_SRC}</script>${DENIED_CSS}${DIALOG_BLOCK}</head><body>
@@ -199,7 +199,7 @@ describe('the hide pass + relabel (for real)', () => {
 
   test('denied ∪ firm-hidden: one attribute, both honoured, and lifting one keeps the other', () => {
     t.L.applyAccess({ denied: ['cases'], ui: ui({ hidden: ['contacts'] }) });
-    expect(t.d.querySelectorAll('[data-yc-denied]')).toHaveLength(4);
+    expect(t.d.querySelectorAll('[data-yc-denied]:not(#tabAdmin *)')).toHaveLength(4);   // (#tabAdmin: the su tiles, hidden for a non-su since S6c)
     t.L.applyAccess({ ui: ui({}) });
     expect([t.shown(t.L.elementsOf('cases').home), t.shown(t.L.elementsOf('contacts').home)]).toEqual([false, true]);
   });

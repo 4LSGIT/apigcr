@@ -20,9 +20,10 @@
  * VISIBILITY-ONLY in v2: nothing here gates a route. The v3 seam (design
  * §2.6) maps a denied item to a 403 on its route family.
  *
- * UNDENIABLE = moreSettings + helpSupport (§2.6): refused at WRITE and stripped
- * at RESOLVE — a row that reached the table some other way (DB console) still
- * never hides them.
+ * UNDENIABLE = moreSettings + helpSupport (§2.6) + all (ui-custom S6c: the All
+ * tab is a registry item now, guaranteed in Home's icon row and in Ctrl-K —
+ * Fred's ruling 2026-10-16): refused at WRITE and stripped at RESOLVE — a row
+ * that reached the table some other way (DB console) still never hides them.
  *
  * item_key vocabulary = the keys of public/js/featureRegistry.js (ui-custom
  * S1). That file is browser data (it assigns window.FEATURE_REGISTRY), so it
@@ -48,7 +49,7 @@ const path = require('path');
 const vm = require('vm');
 const { ROLE_MEMBERS } = require('../lib/capabilities');
 
-const UNDENIABLE = Object.freeze(['moreSettings', 'helpSupport']);
+const UNDENIABLE = Object.freeze(['moreSettings', 'helpSupport', 'all']);
 const SCOPES = Object.freeze(['firm', 'role', 'user']);
 const REGISTRY_FILE = path.join(__dirname, '..', 'public', 'js', 'featureRegistry.js');
 

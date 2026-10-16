@@ -175,10 +175,20 @@ hand), the Firm tab of YisraCase Config (`ui-config`, `ui-config/pickers`,
 `ui-config/versions`, and for its Who sees what section `firm-data.json`'s
 `ui` `visible_to` — one item with every role ticked — plus `entitlements`:
 per-user hides, one item hidden from three people, one of them not in the user
-list; `panel:caseConfigDiv:firm` — the step fails if the tab does not open) and the More grid's firm row (`firm-data.json`'s `ui`: a
+list; `panel:caseConfigDiv:firm` — the step fails if the tab does not open) and the firm's items (`firm-data.json`'s `ui`: a
 compact tool, a 40-character label, a 40-character unbroken one, a link and a
 38-character link with a long href, plus a long rename of Reports; surveyed in
-`tab:tabMore` and `tab:tabAll`. `GET /api/ui-config` answers the SAME layers —
+`tab:tabMore` and `tab:tabAll`) placed by the firm's default **layout**
+(`ui.firm.layout`, ui-custom S6c: a full More arrangement with Get Clio Code
+in row 5, the four long-labelled firm items as a row of their own — the
+40-character UNBROKEN label first: a desktop `.big-button` has no
+`overflow-wrap`, so that word runs ~100px past its 200px tile, and in the
+right-hand column at 800 that passes the viewport (the firm row placed it in
+the left column; a real finding, filed) — an Admin
+panel item (Users) on More that navigates to Admin, My Tasks beside Casey's
+paw in More's icon row, Scratch taken off the Admin grid — so the firm row is
+NOT drawn; `visible_to.admin` restricts the Admin page to it / admin like the
+live firm, which wsurl.js's non-SU "staff" runs rely on). `GET /api/ui-config` answers the SAME layers —
 server.js builds it from `firm-data.json`'s `ui`, with only `can_edit_firm`
 from `ui-config.json` — because in production both come from one read and the
 layout editor refreshes the shell when they differ), and a user's own Home and

@@ -76,24 +76,30 @@ const LUC_HEAD = slice('    async function loadUserContext() {', '      tasksBad
 const LUC_FULL = slice('    async function loadUserContext() {', '    async function ') ;
 
 const placed = (sf) => LAY[sf].filter((e) => e.item).map((e) => e.item);
-const ALL_PLACED = [...new Set(['sidebar', 'home', 'more', 'admin'].flatMap(placed))];
+const ALL_PLACED = [...new Set(['sidebar', 'home', 'homeIcons', 'more', 'moreIcons', 'admin', 'adminIcons'].flatMap(placed))];   // the icon rows place too (S6c)
 // ui-custom S6b: registry items in no default layout are listed too, group
 // "More actions" (the set itself is pinned by featureRegistry.test.js).
 const EXTRAS = Object.keys(REG).filter((k) => !ALL_PLACED.includes(k));
 const ALL_LISTED = [...ALL_PLACED, ...EXTRAS];
-const GATED = new Set([...placed('admin'), ...Object.keys(REG).filter((k) => REG[k].tab === 'tabAdmin')]);
+// ui-custom S6c: a gate is the registry's own (`gate`), no longer derived from
+// the Admin grid; the Admin PAGE (`admin`) is visibility (the firm's visible_to).
+const GATED = new Set(Object.keys(REG).filter((k) => REG[k].gate));
 const ids = (eff) => eff.map((e) => e.id);
 
 // ─────────────────────────────────────────────────────────────────────────
 describe('the effective registry (pure)', () => {
-  test('non-admin: every placed item (and every S6b extra) once, minus admin-gated and the absent custom tab', () => {
+  test('non-admin: every placed item (and every S6b extra) once, minus gated and the absent custom tab', () => {
     const eff = L.computeEffective({ isAdmin: false });
-    expect(EXTRAS).toEqual(['myTasks', 'logout', 'casey']);
+    expect(EXTRAS).toEqual(['myTasks', 'logout']);
     const want = ALL_LISTED.filter((k) => !GATED.has(k) && k !== 'custom');
     expect(ids(eff).sort()).toEqual(want.sort());
     expect(new Set(ids(eff)).size).toBe(eff.length);
-    expect(ids(eff)).not.toContain('admin');
     expect(ids(eff)).not.toContain('adminDbConsole');
+    // the Admin page item is not gated: the firm's visible_to decides (S6c)
+    expect(ids(eff)).toContain('admin');
+    const ro = { visible_to: { admin: ['it', 'admin'] } };
+    expect(ids(L.computeEffective({ isAdmin: false, roles: ['staff'], ui: { firm: { registry_overrides: ro } } }))).not.toContain('admin');
+    expect(ids(L.computeEffective({ isAdmin: false, roles: ['admin'], ui: { firm: { registry_overrides: ro } } }))).toContain('admin');
   });
 
   test('admin: the Admin grid and the Admin item come back', () => {
@@ -108,7 +114,7 @@ describe('the effective registry (pure)', () => {
     expect(ids(eff)).not.toContain('cases');
     expect(ids(eff)).toContain('moreSettings');
     expect(ids(eff)).toContain('helpSupport');
-    expect([...L.UNDENIABLE].sort()).toEqual(['helpSupport', 'moreSettings']);
+    expect([...L.UNDENIABLE].sort()).toEqual(['all', 'helpSupport', 'moreSettings']);
     expect(ids(L.computeEffective({ denied: 'cases' }))).toContain('cases');
     expect(ids(L.computeEffective({ denied: { cases: true } }))).toContain('cases');
   });
@@ -132,7 +138,7 @@ describe('the effective registry (pure)', () => {
     // ordered by group, then by layout order within it
     const order = eff.groups;
     for (let i = 1; i < eff.length; i++) expect(order.indexOf(eff[i - 1].group)).toBeLessThanOrEqual(order.indexOf(eff[i].group));
-    expect(ids(eff.filter((e) => e.group === 'More'))).toEqual(placed('more'));
+    expect(ids(eff.filter((e) => e.group === 'More'))).toEqual([...placed('more'), ...placed('moreIcons')]);   // the icon row is the grid's group (S6c)
     // surfaceLabels feed the matcher
     expect(eff.find((e) => e.id === 'bills').labels).toEqual(['Bills', 'Billing']);
   });
@@ -172,14 +178,14 @@ function boot({ withAll = false } = {}) {
     .map((it) => `<div id="${it.target}" style="display:none"><iframe data-src="/${it.target}.html"></iframe></div>`).join('');
   const tabs = new Set(['tabHome', 'tabMore', 'tabAdmin', 'tabCustom']);
   for (const it of Object.values(REG)) for (const t of [it.tab, it.tabAlso]) if (t) tabs.add(t);
-  const plainTabs = [...tabs].filter((t) => !['tabHome', 'tabMore', 'tabAdmin', 'tabCustom'].includes(t))
+  const plainTabs = [...tabs].filter((t) => !['tabHome', 'tabMore', 'tabAdmin', 'tabCustom', 'tabAll'].includes(t))
     .map((t) => `<div id="${t}" class="tab-main"></div>`).join('');
   const page = `<!DOCTYPE html><html><head>
     <script>${ICON_SRC}</script><script>${REGISTRY_SRC}</script><script id="ycLauncher">${RENDERER_SRC}</script>${DENIED_CSS}</head><body>
     <nav id="appSidebar"><div class="sb-item" data-tab="tabHome" onclick="openMainTab('tabHome')"></div>
       <div class="sb-item" id="sbOpenFiles"></div><div id="tabOpenFiles"></div>
       <script>ycLauncher.mount('sidebar')</script>
-      <div class="sb-item" id="sbAll" data-tab="tabAll" onclick="openMainTab('tabAll')"></div></nav>
+      </nav>
     <div id="tabHome" class="tab-main"><script>ycLauncher.mount('home')</script></div>
     ${withAll ? ALL_TAB : '<div id="tabAll" class="tab-main"></div>'}
     <div id="tabCustom" class="tab-main"><iframe id="tabCustomFrame"></iframe></div>
@@ -259,22 +265,22 @@ describe('the hide pass (for real)', () => {
     t.L.applyAccess({ denied: ['moreSettings', 'helpSupport'] });
     expect(t.shown(t.L.elementsOf('moreSettings').more)).toBe(true);
     expect(t.shown(t.L.elementsOf('helpSupport').sidebar)).toBe(true);
-    expect(t.d.querySelectorAll('[data-yc-denied]')).toHaveLength(0);
+    expect(t.d.querySelectorAll('[data-yc-denied]:not(#tabAdmin *)')).toHaveLength(0);   // (#tabAdmin: the su tiles, hidden for this non-su since S6c)
   });
 
   test('idempotent: re-running neither double-hides nor sticks; applyCustomTab cannot resurrect a denied item', () => {
     t.L.applyAccess({ denied: ['custom', 'cases'] });
-    const n = t.d.querySelectorAll('[data-yc-denied]').length;
+    const n = t.d.querySelectorAll('[data-yc-denied]:not(#tabAdmin *)').length;   // (the su tiles carry it too for a non-su, S6c)
     expect(n).toBe(4);                                     // custom ×2 + cases ×2
     t.L.applyAccess({ denied: ['custom', 'cases'] });
-    expect(t.d.querySelectorAll('[data-yc-denied]')).toHaveLength(n);
+    expect(t.d.querySelectorAll('[data-yc-denied]:not(#tabAdmin *)')).toHaveLength(n);
     t.w.applyCustomTab({ src: '/x.html', title: 'X' });    // writes style.display = '' on both
     const c = t.L.elementsOf('custom');
     expect([c.sidebar.style.display, c.home.style.display]).toEqual(['', '']);
     expect([t.shown(c.sidebar), t.shown(c.home)]).toEqual([false, false]);
     expect(t.L.effectiveRegistry().map((e) => e.id)).not.toContain('custom');
     t.L.applyAccess({ denied: [] });                      // lifted → back
-    expect(t.d.querySelectorAll('[data-yc-denied]')).toHaveLength(0);
+    expect(t.d.querySelectorAll('[data-yc-denied]:not(#tabAdmin *)')).toHaveLength(0);
     expect([t.shown(c.sidebar), t.shown(c.home)]).toEqual([true, true]);
     expect(t.L.effectiveRegistry().find((e) => e.id === 'custom').label).toBe('X');   // applyCustomTab told it
   });
@@ -358,10 +364,14 @@ describe('exec(id) (for real)', () => {
 
   test('refuses denied and admin-gated ids, and unknown ones — and does nothing', () => {
     const before = [t.w.currentMainTabId(), t.calls.length];
-    for (const id of ['moreViews', 'adminDbConsole', 'admin', 'nope']) expect(t.L.exec(id)).toBe(false);
+    for (const id of ['moreViews', 'adminDbConsole', 'nope']) expect(t.L.exec(id)).toBe(false);
     expect([t.w.currentMainTabId(), t.calls.length]).toEqual(before);
     expect(t.shown(t.d.getElementById('viewsDiv'))).toBe(false);
-    t.L.applyAccess({ isAdmin: true });
+    // the Admin page: refused when the firm's visible_to leaves this user out (S6c)
+    t.L.applyAccess({ roles: ['staff'], ui: { firm: { registry_overrides: { visible_to: { admin: ['it', 'admin'] } } } } });
+    expect(t.L.exec('admin')).toBe(false);
+    expect([t.w.currentMainTabId(), t.calls.length]).toEqual(before);
+    t.L.applyAccess({ isAdmin: true, roles: ['su'], ui: null });
     expect(t.L.exec('adminDbConsole')).toBe(true);
     expect([t.w.currentMainTabId(), t.shown(t.d.getElementById('dbConsoleDiv'))]).toEqual(['tabAdmin', true]);
   });
@@ -378,7 +388,9 @@ describe('the All tab (public/js/ycAll.js, for real)', () => {
   test('empty before login; then every effective item once, grouped, in order; Admin only for admins', () => {
     expect(entries()).toEqual([]);
     t.L.applyAccess({ isAdmin: false, denied: ['moreAutomations'], customTab: null });
-    expect(groups()).toEqual(['Records', 'Actions', 'Settings', 'More actions', 'More']);
+    // Admin holds what this user can use: Etch is open to staff (S6c gates), the su tools are not
+    expect(groups()).toEqual(['Records', 'Actions', 'Settings', 'More actions', 'More', 'Admin']);
+    expect(t.L.effectiveRegistry().filter((e) => e.group === 'Admin').map((e) => e.id)).toEqual(['adminEtch']);
     expect(entries()).toEqual(t.L.effectiveRegistry().map((e) => e.id));
     expect(entries()).not.toContain('moreAutomations');
     t.L.applyAccess({ isAdmin: true });
@@ -557,28 +569,36 @@ describe('the boot wiring (review fixes): loadFirmData + loadUserContext, extrac
     expect(await run('cases')).toEqual([[], []]);
   });
 
-  const luc = async (roles, denied) => {
+  const luc = async (roles, denied, ui = null) => {
     const t = boot();
     t.w.eval('var Toast = { fire() {} }; function startFirmClock() {}\n' + LUC_HEAD);
     t.w.eval(`var user = { user: 1, user_name: 'x', roles: ${JSON.stringify(roles)}, user_custom_tab: null };
-      window.firmData = { denied: ${JSON.stringify(denied)} };`);
+      window.firmData = { denied: ${JSON.stringify(denied)}, ui: ${JSON.stringify(ui)} };`);
     await t.w.eval('loadUserContext()');
     return t;
   };
 
-  test('non-SU: the effective registry has no admin items; denied items hidden on both surfaces', async () => {
-    const t = await luc('admin,it', ['cases', 'moreAutomations']);
+  test('non-SU: the effective registry has no su-gated item; denied items hidden on both surfaces; #sbAdmin follows the Admin item (S6c)', async () => {
+    const ro = { visible_to: { admin: ['it', 'admin'] } };   // the live firm's rule
+    const t = await luc('admin,it', ['cases', 'moreAutomations'], { firm: { registry_overrides: ro } });
     const eff = t.L.effectiveRegistry().map((e) => e.id);
     expect(t.L.isReady()).toBe(true);
     expect(eff.filter((id) => GATED.has(id))).toEqual([]);
     expect(eff).not.toContain('cases');
     const c = t.L.elementsOf('cases');
     expect([t.shown(c.sidebar), t.shown(c.home), t.shown(t.L.elementsOf('moreAutomations').more)]).toEqual([false, false, false]);
-    expect(t.shown(t.d.getElementById('sbAdmin'))).toBe(false);
+    // it/admin: the Admin page is theirs (visible_to), with the one tile they can use
+    expect(t.shown(t.d.getElementById('sbAdmin'))).toBe(true);
+    expect(eff.filter((id) => id.startsWith('admin'))).toEqual(['admin', 'adminEtch']);
     t.close();
+    // staff: the firm's visible_to leaves them out — no Admin row, no Admin page item
+    const s = await luc('staff', [], { firm: { registry_overrides: ro } });
+    expect(s.shown(s.d.getElementById('sbAdmin'))).toBe(false);
+    expect(s.L.effectiveRegistry().map((e) => e.id)).not.toContain('admin');
+    s.close();
   });
 
-  test('SU: the same signal that reveals #sbAdmin admits the Admin items', async () => {
+  test('SU: #sbAdmin shown and every Admin item effective', async () => {
     const t = await luc('it,su', []);
     expect(t.shown(t.d.getElementById('sbAdmin'))).toBe(true);
     expect(t.L.effectiveRegistry().filter((e) => e.group === 'Admin')).toHaveLength(placed('admin').length);
@@ -588,7 +608,7 @@ describe('the boot wiring (review fixes): loadFirmData + loadUserContext, extrac
   test('order inside loadUserContext: applyCustomTab, then applyAccess, then the ?open= restore', () => {
     const at = (needle) => { const i = LUC_FULL.indexOf(needle); expect([needle, i >= 0]).toEqual([needle, true]); return i; };
     const custom = at('applyCustomTab(user.user_custom_tab || null);');
-    const access = at('ycLauncher.applyAccess({ isAdmin, denied: window.firmData.denied');
+    const access = at('const eff = ycLauncher.applyAccess({ isAdmin, denied: window.firmData.denied');
     const restore = at('else openMainTabOnBoot(openTab, openAt.rest);');
     expect(custom < access && access < restore).toBe(true);
   });

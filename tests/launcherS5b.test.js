@@ -165,7 +165,7 @@ function boot({ items = null, layout = null, shortcuts = null, ro = RO, access =
     <script id="ycToolDialogJs">${DIALOG_SRC}</script>
     <input id="outsideInput">
     <nav id="appSidebar"><div class="sb-item" data-tab="tabHome" onclick="openMainTab('tabHome')"></div>
-      <div class="sb-item" id="sbOpenFiles"></div><div id="tabOpenFiles"></div><script>ycLauncher.mount('sidebar')</script><div class="sb-item" id="sbAll" data-tab="tabAll" onclick="openMainTab('tabAll')"></div></nav>
+      <div class="sb-item" id="sbOpenFiles"></div><div id="tabOpenFiles"></div><script>ycLauncher.mount('sidebar')</script></nav>
     <div id="tabHome" class="tab-main"><br><br>
       <div class="home-grid"><script>ycLauncher.mount('home')</script></div>
       <button id="homeAll" class="home-btn"></button></div>

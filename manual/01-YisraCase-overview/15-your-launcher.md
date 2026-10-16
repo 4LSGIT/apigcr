@@ -19,8 +19,9 @@ Mac) opens the same search from anywhere. See *Finding any feature* in the
 [introduction](01-introduction.md).
 
 Whatever you hide or move, **All and Ctrl+K still list everything you have**.
-All itself can't be hidden or moved, so it is always there to find a feature
-and to undo a change.
+The All icon under the Home tiles can't be hidden, and neither can Ctrl+K, so
+there is always a way to find a feature and to undo a change. The sidebar's
+All entry is an ordinary item: you may hide it there like any other.
 
 ## Customizing Home and the sidebar
 

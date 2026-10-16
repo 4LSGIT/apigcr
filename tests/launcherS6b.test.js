@@ -20,13 +20,15 @@
  *      items, no overflow on the flex child, the hover / active tints layered
  *      and winning, the scroll-driven edge), not scoped away from skinny or
  *      the phone drawer.
- *   5. THE S6b ITEMS: in the effective registry (group More actions, after the
- *      sidebar sections, before More), denied / hidden / renamed / restricted
- *      like any item, offered by the layout editor and the shortcut picker;
- *      exec runs each through the CLOSED dispatch with no placement and when
- *      placed (a neutral shortcut, no loop), doing exactly what the fixed
- *      chrome does (header My Tasks / Log Out, More's paw — dispatched on the
- *      rendered controls); never an eval of the registry string.
+ *   5. THE S6b ITEMS: myTasks and logout in the effective registry (group
+ *      More actions, after the sidebar sections, before More), denied /
+ *      hidden / renamed / restricted like any item, offered by the layout
+ *      editor and the shortcut picker; exec runs each through the CLOSED
+ *      dispatch with no placement and when placed (a neutral shortcut, no
+ *      loop), doing exactly what the fixed chrome does (header My Tasks / Log
+ *      Out — dispatched on the rendered controls); never an eval of the
+ *      registry string. casey left the extras in ui-custom S6c: More's paw IS
+ *      its element (DEFAULT_LAYOUTS.moreIcons), so exec clicks it in place.
  *
  * Mutation-checked (see the S6b worker report).
  *
@@ -48,7 +50,7 @@ const ICON_SRC = fs.readFileSync(path.join(ROOT, 'public/js/ycIcon.js'), 'utf8')
 const EDITOR_SRC = fs.readFileSync(path.join(ROOT, 'public/js/ycLayoutEditor.js'), 'utf8');
 const RENDERER_SRC = RAW.match(/<script id="ycLauncher">([\s\S]*?)<\/script>/)[1];
 const { launcher: VL, registry: REG, layouts: LAY } = loadLauncher(RAW);
-const EXTRAS = ['myTasks', 'logout', 'casey'];
+const EXTRAS = ['myTasks', 'logout'];   // casey: placed in More's icon row since S6c
 
 function slice(from, to) {
   const a = RAW.indexOf(from);
@@ -71,7 +73,9 @@ const EGG_CSS = styleWith('.home-egg-row');
 // Real markup, cut out of the page.
 const NAV = slice('<nav id="appSidebar" style="display:none">', '</nav>') + '</nav>';
 const HOME = slice('  <div id="tabHome" class="tab-main">', '    <!-- Quick search') + '</div>';
-const PAW_ROW = RAW.match(/<div class="more-egg-row">[\s\S]*?<\/div>/)[0];
+// the paw row: in the raw page a mount (S6c), in the browser the paw's old markup
+const PAW_MOUNT = RAW.match(/<div class="more-egg-row">[\s\S]*?<\/div>/)[0];
+const PAW_ROW = expandedShellHtml().match(/<div class="more-egg-row">[\s\S]*?<\/div>/)[0];
 const HDR_TASKS = RAW.match(/<button class="hdr-btn" onclick="[^"]*" title="My Tasks">[\s\S]*?<\/button>/)[0];
 const HDR_LOGOUT = RAW.match(/<button class="hdr-logout" onclick="[^"]*" title="Log Out">[\s\S]*?<\/button>/)[0];
 const J = (x) => JSON.parse(JSON.stringify(x));
@@ -92,7 +96,7 @@ function boot() {
     ${NAV}
     ${HOME}
     ${plain}
-    <div id="tabMore" class="tab-main"><script>ycLauncher.mount('more')</script>${PAW_ROW}</div>
+    <div id="tabMore" class="tab-main"><script>ycLauncher.mount('more')</script>${PAW_MOUNT}</div>
     <div id="tabAdmin" class="tab-main"><script>ycLauncher.mount('admin')</script></div>
     <style>${EGG_CSS}</style>
   </body></html>`;
@@ -210,8 +214,9 @@ describe('3. #homeAll: an icon-only button in the Home icon row', () => {
       const sb = t.d.getElementById('sbAll');
       expect([sb.classList.contains('sb-item'), sb.dataset.tab, sb.getAttribute('onclick'), sb.title]).toEqual([true, 'tabAll', "openMainTab('tabAll')", 'All features']);
       expect(sb.classList.contains('active')).toBe(true);   // the sidebar's All is lit, as for any way into All
-      // fixed chrome: no registry id, no launcher element
-      for (const id of Object.keys(REG)) expect(Object.values(t.L.elementsOf(id))).not.toContain(t.d.getElementById('homeAll'));
+      // the `all` item's icon-row element (S6c), and no other item's
+      expect(t.L.elementsOf('all').homeIcons).toBe(t.d.getElementById('homeAll'));
+      for (const id of Object.keys(REG).filter((k) => k !== 'all')) expect(Object.values(t.L.elementsOf(id))).not.toContain(t.d.getElementById('homeAll'));
     } finally { t.close(); }
   });
 
@@ -219,9 +224,9 @@ describe('3. #homeAll: an icon-only button in the Home icon row', () => {
     const t = boot();
     try {
       // the Home row and button ride on the More rules
-      expect(rule(t.d, '.more-egg-row, .home-egg-row')).toHaveLength(1);
-      expect(rule(t.d, '#tabMore .more-egg, #tabHome .home-egg')).toHaveLength(1);
-      expect(rule(t.d, '#tabMore .more-egg:hover, #tabMore .more-egg:focus-visible, #tabHome .home-egg:hover, #tabHome .home-egg:focus-visible')).toHaveLength(1);
+      expect(rule(t.d, '.more-egg-row, .home-egg-row, .admin-egg-row')).toHaveLength(1);
+      expect(rule(t.d, '#tabMore .more-egg, #tabHome .home-egg, #tabAdmin .admin-egg')).toHaveLength(1);
+      expect(rule(t.d, '#tabMore .more-egg:hover, #tabMore .more-egg:focus-visible, #tabHome .home-egg:hover, #tabHome .home-egg:focus-visible, #tabAdmin .admin-egg:hover, #tabAdmin .admin-egg:focus-visible')).toHaveLength(1);
       // and nothing styles a Home one without its More twin in the same rule
       const lone = [];
       for (const sh of t.d.styleSheets) for (const r of sh.cssRules) {
@@ -306,12 +311,12 @@ describe('4. the sticky Home entry (CSS hooks)', () => {
 // ─────────────────────────────────────────────────────────────────────────
 describe('5. the S6b items: myTasks, logout, casey', () => {
   test('in the registry with the spec\'s labels and icons; their onclick is the fixed chrome\'s, verbatim', () => {
-    expect(EXTRAS.map((id) => [id, REG[id].label, REG[id].icon])).toEqual([
+    expect([...EXTRAS, 'casey'].map((id) => [id, REG[id].label, REG[id].icon])).toEqual([
       ['myTasks', 'My Tasks', 'list'], ['logout', 'Log out', 'right-from-bracket'], ['casey', 'Casey', 'paw']]);
     expect(REG.myTasks.onclick).toBe(HDR_TASKS.match(/onclick="([^"]*)"/)[1]);
     expect(REG.logout.onclick).toBe(HDR_LOGOUT.match(/onclick="([^"]*)"/)[1]);
     expect(REG.casey.onclick).toBe(PAW_ROW.match(/onclick="([^"]*)"/)[1]);
-    for (const id of EXTRAS) expect([id, REG[id].tab, REG[id].target, REG[id].group]).toEqual([id, undefined, undefined, undefined]);
+    for (const id of [...EXTRAS, 'casey']) expect([id, REG[id].tab, REG[id].target, REG[id].group]).toEqual([id, undefined, undefined, undefined]);
   });
 
   test('the effective registry: group More actions, after the sidebar sections, before More, in registry order', () => {
@@ -366,9 +371,10 @@ describe('5. the S6b items: myTasks, logout, casey', () => {
     beforeEach(() => { t = boot(); });
     afterEach(() => t.close());
 
-    test('with NO placement: no element, and exec runs each through the closed dispatch', () => {
+    test('with NO placement: no element, and exec runs each through the closed dispatch; casey through its paw', () => {
       t.L.applyAccess(ACCESS);
       for (const id of EXTRAS) expect([id, J(t.L.elementsOf(id))]).toEqual([id, {}]);
+      expect(t.L.elementsOf('casey').moreIcons).toBe(t.d.querySelector('#tabMore .more-egg'));   // S6c: the paw is its element
       expect(t.d.querySelectorAll('[data-yc-shortcut]')).toHaveLength(0);
       expect(t.L.exec('myTasks')).toBe(true);
       expect(t.L.exec('logout')).toBe(true);
@@ -384,7 +390,7 @@ describe('5. the S6b items: myTasks, logout, casey', () => {
       t.d.querySelector('#hdr [title="Log Out"]').click();
       t.d.querySelector('#tabMore .more-egg').click();
       const chrome = t.calls.splice(0);
-      EXTRAS.forEach((id) => t.L.exec(id));
+      [...EXTRAS, 'casey'].forEach((id) => t.L.exec(id));
       expect(t.calls).toEqual(chrome);
       expect(chrome).toHaveLength(3);
     });
@@ -397,7 +403,7 @@ describe('5. the S6b items: myTasks, logout, casey', () => {
       expect([tile.firstElementChild.className, tile.textContent.trim(), tile.id]).toEqual(['fa-solid fa-right-from-bracket fa-2xl', 'Log out', '']);
       const row = t.d.querySelector('#appSidebar > .sb-item[data-yc-shortcut="casey"]');
       expect([row.firstElementChild.className, row.textContent.trim(), row.getAttribute('title'), row.hasAttribute('data-tab')])
-        .toEqual(['fa-solid fa-paw', 'Casey', 'Casey', false]);
+        .toEqual(['fa-solid fa-paw', 'Casey', 'Casey the YisraCat', false]);   // the registry title (S6c gave casey the paw's)
       // still no launcher element: a neutral is never in elementsOf
       expect(J(t.L.elementsOf('logout'))).toEqual({});
       tile.click();
@@ -426,14 +432,14 @@ describe('5. the S6b items: myTasks, logout, casey', () => {
       expect(t.L.exec('nope')).toBe(false);
     });
 
-    test('the dispatch is closed: exactly the three ids, named functions, no eval of the registry string', () => {
+    test('the dispatch is closed: exactly the unplaced ids, named functions, no eval of the registry string', () => {
       const src = RENDERER_SRC.slice(RENDERER_SRC.indexOf('var NO_ELEMENT = {'), RENDERER_SRC.indexOf('function exec(id, opts) {'));
       expect(src.length).toBeGreaterThan(100);
       expect([...src.matchAll(/^ {8}(\w+): function/gm)].map((m) => m[1])).toEqual(EXTRAS);
       expect(src).not.toMatch(/\beval\b|new Function|\.onclick|setTimeout\(\s*['"`]/);
       expect(src).toMatch(/pageCall\('openTasksTab'/);
       expect(src).toMatch(/pageCall\('confirmLogout'/);
-      expect(src).toMatch(/pageCall\('toggleMascot'/);
+      expect(src).not.toMatch(/pageCall\('toggleMascot'/);   // casey has an element since S6c
       // a registry item with an onclick of its own but no element is not run from it
       t.w.eval('FEATURE_REGISTRY.qaOrphan = { label: "QA", icon: "bug", onclick: "__calls.push([\\"orphan\\"])" };');
       t.L.applyAccess(ACCESS);

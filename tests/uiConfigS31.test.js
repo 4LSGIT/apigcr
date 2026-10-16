@@ -61,9 +61,9 @@ describe('scope / config_key / role / body envelope', () => {
     expect(shape.validate('user', 'shortcuts', {}).ok).toBe(true);
     expect(errs(shape.validate('firm', 'shortcuts', {}))).toMatch(/config_key/);
     expect(errs(shape.validate('user', 'registry_overrides', {}))).toMatch(/config_key/);
-    // ui-custom S4a: the user layer's layout key (a firm layout is not here yet)
+    // ui-custom S4a: the user layer's layout key; S6c: the firm's default layout too
     expect(shape.validate('user', 'layout', {}).ok).toBe(true);
-    expect(errs(shape.validate('firm', 'layout', {}))).toMatch(/config_key/);
+    expect(shape.validate('firm', 'layout', {}).ok).toBe(true);
     // ui-custom S5d: the user's theme (prefs) is a user key only
     expect(shape.validate('user', 'prefs', {}).ok).toBe(true);
     expect(errs(shape.validate('firm', 'prefs', {}))).toMatch(/config_key/);
@@ -125,7 +125,7 @@ describe('registry_overrides', () => {
   });
 
   test('hidden refuses the undeniable set (one definition: entitlementService.UNDENIABLE)', () => {
-    expect([...UNDENIABLE].sort()).toEqual(['helpSupport', 'moreSettings']);
+    expect([...UNDENIABLE].sort()).toEqual(['all', 'helpSupport', 'moreSettings']);   // all: ui-custom S6c
     for (const id of UNDENIABLE) expect(errs(ro({ hidden: [id] }))).toMatch(/cannot be hidden/);
     expect(ro({ locked: ['moreSettings'] }).ok).toBe(true);           // locking is not hiding
   });
@@ -484,7 +484,7 @@ describe('routes/api.uiConfig.js — gates (no database reached)', () => {
 
   test('body errors are 400 with the error list, after auth: system, role, user_id, bad key', async () => {
     for (const body of [{ ...FIRM_PUT, scope: 'system' }, { ...FIRM_PUT, role: 'admin' },
-      { scope: 'user', config_key: 'shortcuts', config: {}, user_id: 3 }, { ...FIRM_PUT, config_key: 'layout' }, { scope: 'nope' }]) {
+      { scope: 'user', config_key: 'shortcuts', config: {}, user_id: 3 }, { ...FIRM_PUT, config_key: 'prefs' }, { scope: 'nope' }]) {
       const r = await call(uiRouter, 'PUT', '/api/ui-config', { headers: tok(['su']), body, db: makeDb() });
       expect([body, r.status, Array.isArray(r.body.errors)]).toEqual([body, 400, true]);
     }

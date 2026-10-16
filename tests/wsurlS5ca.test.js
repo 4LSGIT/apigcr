@@ -276,7 +276,7 @@ function realShell() {
     }
   `);
   const $ = (id) => d.getElementById(id);
-  const EL = { moreAutomations: { more: $('tAuto') }, moreCaseConfig: { more: $('tCfg') } };
+  const EL = { moreAutomations: { more: $('tAuto') }, moreCaseConfig: { more: $('tCfg') }, moreFeatures: { sidebar: d.createElement('a') } };   // moreFeatures: the More PAGE item — the URL door to tabMore (ui-custom S6c)
   const FRAME = { automationsDiv: ['automations', 'autoFrame'], caseConfigDiv: ['caseConfig', 'cfgFrame'] };
   const booted = {};
   /** What the click handler does: show the panel, its iframe boots ONCE (the lazy load). */

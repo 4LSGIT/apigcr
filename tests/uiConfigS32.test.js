@@ -134,7 +134,7 @@ describe('GET /api/ui-config — can_edit_firm', () => {
     const db = makeDb({ uiRows: [{ scope: 'firm', user_id: 0, config_key: 'registry_overrides', config: { hidden: ['bills'] } }] });
     const r = await call('GET', '/api/ui-config', { headers: tok(['admin']), db });
     expect(r.body).toEqual({ status: 'success', firm: { registry_overrides: { hidden: ['bills'] } }, user: {}, can_edit_firm: true,
-      firm_versions: { registry_overrides: null } });
+      firm_versions: { registry_overrides: null, layout: null } });   // layout: the firm's default layout key (S6c)
   });
 });
 
@@ -194,7 +194,7 @@ describe('versions + view', () => {
   });
 
   test('list: config_key is whitelisted (firm keys only) → 400 otherwise', async () => {
-    for (const k of ['', 'shortcuts', 'layout', 'x%27--']) {
+    for (const k of ['', 'shortcuts', 'prefs', 'x%27--']) {   // (layout is a firm key since S6c)
       const db = makeDb();
       const r = await call('GET', `/api/ui-config/versions?config_key=${k}`, { headers: tok(['admin']), db });
       expect([k, r.status]).toEqual([k, 400]);
@@ -280,7 +280,7 @@ describe('base (optimistic concurrency) — envelope and delivery', () => {
   test('GET hands firm.settings holders the newest version id per firm key; staff get none and cost no query', async () => {
     const db = makeDb({ heads: [{ config_key: 'registry_overrides', version_id: '7' }, { config_key: 'nope', version_id: 3 }] });
     const r = await call('GET', '/api/ui-config', { headers: tok(['admin']), db });
-    expect(r.body.firm_versions).toEqual({ registry_overrides: 7 });
+    expect(r.body.firm_versions).toEqual({ registry_overrides: 7, layout: null });
     const db2 = makeDb({ heads: [{ config_key: 'registry_overrides', version_id: 7 }] });
     const r2 = await call('GET', '/api/ui-config', { headers: tok(['staff']), db: db2 });
     expect(r2.body).not.toHaveProperty('firm_versions');

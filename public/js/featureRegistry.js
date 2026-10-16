@@ -13,6 +13,10 @@
  *            bar are shell chrome and stay in index.html)
  *   more     #tabMore's .big-button grid and its <br><br> row breaks
  *   admin    #tabAdmin's .big-button grid and its <br><br> row breaks
+ *   homeIcons / moreIcons / adminIcons   (ui-custom S6c) the ICON ROW under
+ *            each page's grid: small icon-only buttons (Casey's paw under
+ *            More, All under Home), inside the page's .<page>-egg-row div.
+ *            { item } entries only — no breaks, no labels, at most 12.
  *
  * The rendered markup is meant to be IDENTICAL to the hand-written markup it
  * replaced (Home's row breaks excepted: S4a made them .home-break sentinels
@@ -36,7 +40,9 @@
  *                  (Bills reads "Billing" on Home)
  *   title          tooltip. Sidebar items always carry one: this, else the
  *                  label (skinny mode shows it). Grid items: only when set.
- *                  Home tiles never carry one.
+ *                  Home tiles never carry one. An icon-row button always does
+ *                  (this, else the label), and the same text is its
+ *                  aria-label — the button shows no text.
  *   icon           Font Awesome solid slug, without "fa-" (fa-solid fa-<icon>)
  *   onclick        handler source, VERBATIM — rendered as the onclick
  *                  attribute (action items)
@@ -58,24 +64,36 @@
  *   domIds         { <surface>: element id } — ids other code looks up by
  *   badge          sidebar: { id, title } — the count pill, hidden until set
  *   defaultHidden  rendered with style="display:none" (Admin: loadUserContext
- *                  reveals it for SU only)
+ *                  reveals it once the effective registry lists it)
+ *   gate           (ui-custom S6c) what the item's SERVER routes enforce, so
+ *                  the launcher never shows a tile that answers 403: 'su'
+ *                  (lib/auth.superuser — the su role) or a lib/capabilities
+ *                  name (requireAuth({ can })). Absent = open to every staff
+ *                  user. The shell's ycLauncher.computeEffective applies it
+ *                  with the user's roles by lib/capabilities' rule (su passes
+ *                  everything); it follows the ITEM wherever a layout puts it.
+ *                  Visibility only: the route keeps its own gate. Every Admin
+ *                  tile's value is classified from its routes' middleware
+ *                  (tests/launcherS6c.test.js pins the set).
  *
- * An item placed in NO default layout (myTasks, logout, casey — ui-custom
- * S6b) is still a launcher item: the effective registry lists it in group
- * "More actions" (after the sidebar's sections, before More), and a user can
- * place it. Which ids may be unplaced is pinned by tests/featureRegistry.test.js.
+ * An item placed in NO default layout (myTasks, logout — ui-custom S6b) is
+ * still a launcher item: the effective registry lists it in group "More
+ * actions" (after the sidebar's sections, before More), and a user can place
+ * it. Which ids may be unplaced is pinned by tests/featureRegistry.test.js.
  *
  * ── window.DEFAULT_LAYOUTS ── the shipped arrangement of each surface, in
  * order: { item: '<id>' } | { break: true } | { label: '<text>' }.
  *   break: a row break — a .home-break sentinel on Home (5px tall), <br><br>
- *          on the grids.
+ *          on the grids. Not in an icon row.
  *   label: a sidebar section heading.
  * One item may appear on several surfaces (Cases is on Home and the sidebar):
  * it is ONE registry entry; the surface differences (fa-2xl on tiles, data-tab
  * on the sidebar) are the renderer's rules, not duplicated data.
- * These are the BASE layouts a user's own Home / sidebar layout applies to
- * (ycLauncher.resolveLayout, S4a): an item added here also appears for a user
- * who has rearranged that surface, next to its neighbour here.
+ * These are the BASE layouts the firm's default layout (ui_config firm
+ * `layout`, ui-custom S6c: every surface here) and then a user's own Home /
+ * sidebar / Home icon-row layout apply to, in that order
+ * (ycLauncher.resolveLayout, S4a): an item added here also appears for a firm
+ * or a user who has rearranged that surface, next to its neighbour here.
  */
 window.FEATURE_REGISTRY = {
 
@@ -151,7 +169,10 @@ window.FEATURE_REGISTRY = {
     onclick: "openMainTab('tabCustom')", tab: 'tabCustom',
     domIds: { sidebar: 'sbCustom', home: 'tabCustomButton' },
   },
-  // Hidden until loadUserContext() shows it — to SU only (the su role).
+  // Hidden until loadUserContext() shows it — to whoever the firm's
+  // visible_to on this id admits (live: it and admin; su always), ui-custom
+  // S6c, Fred's ruling 2026-10-16. No gate of its own: the Admin PAGE is
+  // visibility; each Admin TILE carries the gate its routes enforce.
   admin: {
     label: 'Admin', icon: 'mug-hot',
     onclick: "openMainTab('tabAdmin')", tab: 'tabAdmin',
@@ -171,6 +192,17 @@ window.FEATURE_REGISTRY = {
   helpSupport: {
     label: 'Help & Support', icon: 'life-ring',
     onclick: 'reportIssue()',
+  },
+  // All (ui-custom S2; an item since S6c): every feature this user has,
+  // searchable — #tabAll. GUARANTEED (Fred's ruling 2026-10-16): undeniable
+  // like Settings and Help (entitlementService UNDENIABLE — no hide, deny or
+  // visible_to), and the layout resolver keeps it in Home's icon row whatever
+  // a firm or user layout says (the other small items may sit around it). The
+  // sidebar's copy is an ordinary item a layout may remove; Ctrl-K lists it.
+  all: {
+    label: 'All', title: 'All features', icon: 'table-cells',
+    onclick: "openMainTab('tabAll')", tab: 'tabAll',
+    domIds: { sidebar: 'sbAll', homeIcons: 'homeAll' },
   },
 
   // ── More Features grid ────────────────────────────────────────────────
@@ -277,32 +309,43 @@ window.FEATURE_REGISTRY = {
   },
 
   // ── Admin grid ────────────────────────────────────────────────────────
+  // gate: 'su' = every route the tile's page calls is superuserOnly /
+  // superuserOnlyFor (lib/auth.superuser) or isSuperuser — classified route
+  // by route in ui-custom S6c (the table is in local/ui-custom/S6c12_worker_report.md).
+  // Etch is a static page with no API: no gate.
   adminReadonlyKeys: {
     label: 'Session Keys (SU)', icon: 'eye', target: 'readonlyKeysDiv', group: 'admin',
+    gate: 'su',
     hoverAnim: 'fa-fade', styleVars: '--fa-animation-duration:1.2s',
   },
   adminApiKeys: {
     label: 'API Keys (SU)', icon: 'key', target: 'apiKeysDiv', group: 'admin',
+    gate: 'su',
     hoverAnim: 'fa-flip', styleVars: '--fa-animation-duration:1.8s; --fa-flip-y:0; --fa-flip-x:1',
   },
   adminCtaLinks: {
     label: 'CTA Links (SU)', icon: 'hand-pointer', target: 'ctaLinksDiv', group: 'admin',
+    gate: 'su',
     hoverAnim: 'fa-beat', styleVars: '--fa-beat-scale:1.15; --fa-animation-duration:0.9s',
   },
   adminDbConsole: {
     label: 'DB Console (SU)', icon: 'database', target: 'dbConsoleDiv', group: 'admin',
+    gate: 'su',
     hoverAnim: 'fa-beat-fade', styleVars: '--fa-beat-fade-opacity:0.55; --fa-animation-duration:1.4s',
   },
   adminConnections: {
     label: 'Connections (SU)', icon: 'plug', target: 'connectionsDiv', group: 'admin',
+    gate: 'su',
     hoverAnim: 'fa-bounce', styleVars: '--fa-animation-duration:1.2s',
   },
   adminApiTester: {
     label: 'API Tester (SU)', icon: 'vial', target: 'apiTesterDiv', group: 'admin',
+    gate: 'su',
     hoverAnim: 'fa-shake', styleVars: '--fa-animation-duration:0.7s',
   },
   adminTools: {
     label: 'Tools (SU)', icon: 'screwdriver-wrench', target: 'toolsDiv', group: 'admin',
+    gate: 'su',
     hoverAnim: 'fa-beat', styleVars: '--fa-beat-scale:1.2; --fa-animation-duration:1.1s',
   },
   // A Swal hosting a page (etchSwal() in index.html), not a panel.
@@ -312,25 +355,31 @@ window.FEATURE_REGISTRY = {
   },
   adminScratch: {
     label: 'Scratch (SU)', icon: 'box-archive', target: 'scratchBrowserDiv', group: 'admin',
+    gate: 'su',
     hoverAnim: 'fa-fade', styleVars: '--fa-animation-duration:1.6s',
   },
   adminUsers: {
     label: 'Users (SU)', icon: 'users-gear', target: 'usersDiv', group: 'admin',
+    gate: 'su',
     hoverAnim: 'fa-spin', styleVars: '--fa-animation-duration:3s',
   },
   adminSystemAlerts: {
     label: 'System Alerts (SU)', icon: 'triangle-exclamation', target: 'systemAlertsDiv', group: 'admin',
+    gate: 'su',
     hoverAnim: 'fa-beat', styleVars: '--fa-beat-scale:1.25; --fa-animation-duration:0.7s',
   },
   // NOT "(SU)" like its neighbours on purpose: reading what staff reported is
   // not meant to be a superuser act — though routes/api.issueReports.js gates
-  // it SU-only today (access A2 retired the admin tier that once shared it).
+  // it SU-only today (access A2 retired the admin tier that once shared it),
+  // hence gate 'su' until that route takes a capability.
   adminSupportInbox: {
     label: 'Support Inbox', icon: 'life-ring', target: 'issueReportsDiv', group: 'admin',
+    gate: 'su',
     hoverAnim: 'fa-spin', styleVars: '--fa-animation-duration:3s',
   },
   adminMailboxes: {
     label: 'Mailboxes (SU)', icon: 'envelope-open-text', target: 'mailboxesDiv', group: 'admin',
+    gate: 'su',
     hoverAnim: 'fa-bounce', styleVars: '--fa-animation-duration:1.2s',
   },
 
@@ -342,8 +391,9 @@ window.FEATURE_REGISTRY = {
   // element to click, ycLauncher.exec runs them through a CLOSED dispatch
   // (NO_ELEMENT in index.html's ycLauncher block) — never this onclick
   // string, which is what a default surface would render if one ever placed
-  // them. The header's My Tasks (overdue badge) and Log Out, and More's paw,
-  // stay as they are: fixed chrome.
+  // them. The header's My Tasks (overdue badge) and Log Out stay as they
+  // are: fixed chrome. Casey left this set in S6c: More's paw IS its element
+  // now (DEFAULT_LAYOUTS.moreIcons), rendered with the paw's exact markup.
   myTasks: {
     label: 'My Tasks', icon: 'list',
     onclick: "openTasksTab({assigned_to:user.user,status:'Incomplete',defer:'active'})",
@@ -352,8 +402,12 @@ window.FEATURE_REGISTRY = {
     label: 'Log out', icon: 'right-from-bracket',
     onclick: 'confirmLogout()',
   },
+  // Casey the YisraCat (ui-custom S6b item; placed in More's icon row by
+  // S6c). toggleMascot() is the old tile's handler: the first press summons,
+  // a press while Casey is out opens the trick panel — the panel's ONLY
+  // entry; the logo long-press only summons and dismisses.
   casey: {
-    label: 'Casey', icon: 'paw',
+    label: 'Casey', title: 'Casey the YisraCat', icon: 'paw',
     onclick: 'toggleMascot()',
   },
 };
@@ -384,6 +438,15 @@ window.DEFAULT_LAYOUTS = {
     { item: 'pipeline' }, { item: 'newClient' }, { item: 'custom' },
     { label: 'Settings' },
     { item: 'admin' }, { item: 'moreFeatures' }, { item: 'helpSupport' },
+    // All, the last item (S2's fixed #sbAll until S6c; an ordinary, removable
+    // item since — Home's icon row and Ctrl-K are the guarantee).
+    { item: 'all' },
+  ],
+
+  // Home's icon row (ui-custom S6c): the small buttons under the Home grid.
+  // All is GUARANTEED here — the resolver puts it back whatever a layout says.
+  homeIcons: [
+    { item: 'all' },
   ],
 
   // More Features.
@@ -442,6 +505,11 @@ window.DEFAULT_LAYOUTS = {
     { item: 'moreCampaigns' }, { item: 'moreRedirects' }, { item: 'moreLandingPages' }, { item: 'moreReports' },
   ],
 
+  // More's icon row: Casey's paw (its markup, byte for byte, is the item's).
+  moreIcons: [
+    { item: 'casey' },
+  ],
+
   // Admin.
   //
   // Layout rule: 3 buttons per row, and every row full. 12 tiles = four full
@@ -472,4 +540,9 @@ window.DEFAULT_LAYOUTS = {
     // hub where granted staff read them is the sidebar's Comms tab.
     { item: 'adminMailboxes' },
   ],
+
+  // Admin's icon row: empty by default (the row's div takes no space while it
+  // holds nothing — the :empty rule in index.html); the firm's layout may
+  // place small items here.
+  adminIcons: [],
 };

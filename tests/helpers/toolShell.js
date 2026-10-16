@@ -70,7 +70,7 @@ function boot({ routes = {}, token = jwt(3600) } = {}) {
     .map((it) => `<div id="${it.target}" style="display:none"><iframe data-src="/${it.target}.html"></iframe></div>`).join('');
   const tabs = new Set(['tabHome', 'tabMore', 'tabAdmin', 'tabCustom']);
   for (const it of Object.values(REG)) for (const t of [it.tab, it.tabAlso]) if (t) tabs.add(t);
-  const plainTabs = [...tabs].filter((t) => !['tabHome', 'tabMore', 'tabAdmin', 'tabCustom'].includes(t))
+  const plainTabs = [...tabs].filter((t) => !['tabHome', 'tabMore', 'tabAdmin', 'tabCustom', 'tabAll'].includes(t))
     .map((t) => `<div id="${t}" class="tab-main"></div>`).join('');
   const page = `<!DOCTYPE html><html><head>
     <script>${ICON_SRC}</script><script>${REGISTRY_SRC}</script><script id="ycLauncher">${RENDERER_SRC}</script>${DENIED_CSS}${DIALOG_BLOCK}</head><body>

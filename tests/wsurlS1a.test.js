@@ -348,7 +348,9 @@ describe('shell ?open= — wsOpenTarget / wsMainTabAllowed (fail closed)', () =>
       moreManuals: { more: el({}) },
       'firm:x': {},                                         // firm items have no element
     };
-    if (su) items.adminDbConsole = { admin: el({}) };
+    // ui-custom S6c: tabAdmin follows the Admin PAGE item (`admin`), not a tile on its grid
+    if (su) { items.admin = { sidebar: el({ tab: 'tabAdmin' }) }; items.adminDbConsole = { admin: el({}) }; }
+    items.adminEtch = { admin: el({}) };                 // open to staff, on the Admin grid — never opens the page's door
     w.ycLauncher = {
       isReady: () => ready,
       effectiveRegistry: () => Object.keys(items).map((id) => ({ id })),
@@ -380,10 +382,13 @@ describe('shell ?open= — wsOpenTarget / wsMainTabAllowed (fail closed)', () =>
     expect(JSON.parse(JSON.stringify(w.wsOpenTarget(open)))).toEqual(want);
   });
 
-  test('SU: tabAdmin allowed', () => {
+  test('SU: tabAdmin allowed; a non-SU with only Etch on the grid is not (the page item decides, S6c)', () => {
     const { w } = shell();
     launcher(w, { su: true });
     expect(w.wsOpenTarget('tabAdmin~x').tab).toBe('tabAdmin');
+    launcher(w, { su: false });
+    expect(w.ycLauncher.effectiveRegistry().some((it) => it.id === 'adminEtch')).toBe(true);
+    expect(w.wsOpenTarget('tabAdmin').tab).toBe('tabHome');
   });
 
   test('launcher not ready → Home for everything but Home', () => {

@@ -38,7 +38,10 @@ const RECORD = S.loadRecord();
 // user 5's loadFunc, read live by the manager 2026-10-16 (U+1F947, a gold medal, twice)
 const PRANK = "Toast.fire({text:'you clicked the link first so you get this prize',icon:'info',title:'\u{1F947} First Place! \u{1F947}'});";
 const exp = (uid) => J(RECORD.get(uid));
-const ENV = (roles = ['staff'], o = {}) => ({ firm: {}, denied: [], roles, isAdmin: roles.includes('su'), locked: [], ...o });
+// The live firm's one rule (ui-custom S6c, Fred's ruling): the Admin page is for it / admin (su always) — what the
+// live CHECK ran with. A test passing its own `firm` replaces it (those run as su, where it makes no difference).
+const LIVE_FIRM = { registry_overrides: { visible_to: { admin: ['it', 'admin'] } } };
+const ENV = (roles = ['staff'], o = {}) => ({ firm: J(LIVE_FIRM), denied: [], roles, isAdmin: roles.includes('su'), locked: [], ...o });
 
 const FRED_ITEMS = { items: [
   { id: 'user:call-review', label: 'call review', icon: 'phone', action: { type: 'tool', key: 'call-review', present: 'modal' } },
@@ -59,7 +62,7 @@ function stateOf(uid, rows = null) {
 const envOf = (uid) => ENV(stateOf(uid).roles);
 const swap = (list, from, to) => list.map((e) => (e.item === from ? { item: to } : e));
 const items = (list) => list.filter((e) => e.item).map((e) => e.item);
-// the sidebar a non-su user sees: the base one without Admin (admin-gated)
+// the sidebar the record's staff users see: the base one without Admin (the firm's visible_to keeps it for it / admin)
 const SIDE = () => LAY.sidebar.filter((e) => e.item !== 'admin');
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -144,7 +147,8 @@ describe('the planner', () => {
     expect(side).toContain('admin');                                            // su sees Admin: the editor writes it
     expect(side).not.toContain('calendar');                                     // firm-hidden: not in the visible list
     expect(side).not.toContain('bills');                                        // denied
-    expect(items(S.planUser(1, stateOf(1), envOf(1)).writes[1].config.placed.sidebar)).not.toContain('admin');
+    expect(items(S.planUser(1, stateOf(1), envOf(1)).writes[1].config.placed.sidebar)).not.toContain('admin');   // staff: the firm's visible_to keeps the page from them
+    expect(items(S.planUser(1, stateOf(1), ENV(['admin'])).writes[1].config.placed.sidebar)).toContain('admin');   // an admin-role user: the page is theirs (S6c)
   });
 
   test('refused: custom not in this user\'s launcher (firm-hidden / denied) — the editor can\'t place the button', () => {

@@ -190,7 +190,7 @@ function boot({ items = null, layout = null, shortcuts = null, retired = null, p
     <script>${ICON_SRC}</script><script>${REGISTRY_SRC}</script><script id="ycLauncher">${RENDERER_SRC}</script>${HIDE_CSS}</head><body>
     <script id="ycToolDialogJs">${DIALOG_SRC}</script>
     <nav id="appSidebar"><div class="sb-item" data-tab="tabHome" onclick="openMainTab('tabHome')"></div>
-      <div class="sb-item" id="sbOpenFiles"></div><div id="tabOpenFiles"></div><script>ycLauncher.mount('sidebar')</script><div class="sb-item" id="sbAll" data-tab="tabAll" onclick="openMainTab('tabAll')"></div></nav>
+      <div class="sb-item" id="sbOpenFiles"></div><div id="tabOpenFiles"></div><script>ycLauncher.mount('sidebar')</script></nav>
     <div id="tabHome" class="tab-main"><br><br>
       <div class="home-grid"><script>ycLauncher.mount('home')</script></div>
       <button id="homeAll" class="home-btn"></button></div>
@@ -350,8 +350,8 @@ describe('exec(id) for a button, for real (jsdom, the real tool dialog)', () => 
   test('All lists them under Mine; the palette finds them', () => {
     t = boot({ items: [LINK, VIEW] });
     const groups = [...t.d.querySelectorAll('#ycAllList .yc-all-group h2')].map((h) => h.textContent);
-    expect(groups.slice(-2)).toEqual(['Firm', 'Mine']);
-    expect([...t.d.querySelectorAll('#ycAllList .yc-all-group:last-child .yc-all-item span')].map((s) => s.textContent)).toEqual(['Court site', 'My leads']);
+    expect(groups.slice(-3)).toEqual(['Firm', 'Mine', 'Admin']);   // Admin: Etch is open to staff (S6c gates)
+    expect([...t.d.querySelectorAll('#ycAllList .yc-all-group:nth-last-child(2) .yc-all-item span')].map((s) => s.textContent)).toEqual(['Court site', 'My leads']);
     expect(t.w.ycLauncher.rank('court site').map((e) => e.id)[0]).toBe('user:court');
     expect(t.w.ycLauncher.rank('my lea').map((e) => e.id)).toContain('user:leads');
   });

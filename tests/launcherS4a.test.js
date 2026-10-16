@@ -238,19 +238,20 @@ describe('resolveLayout (pure)', () => {
 // ─────────────────────────────────────────────────────────────────────────
 // A page skeleton with the real mounts (Home inside its .home-grid), the
 // panels and tab divs; the page's own drill-in, tab and custom-tab code.
-// Sidebar mount sits between #tabOpenFiles and #sbAll with no whitespace, so
-// the nodes between those two ARE what the mount inserted.
+// Sidebar mount sits right after #tabOpenFiles, last in the nav, with no
+// whitespace, so the nodes from there to the nav's end ARE what the mount
+// inserted (#sbAll is the mounted `all` item since ui-custom S6c).
 function boot({ extra = '' } = {}) {
   const grid = (sf) => placed(sf).map((k) => REG[k]).filter((it) => it.target)
     .map((it) => `<div id="${it.target}" style="display:none"><iframe data-src="/${it.target}.html"></iframe></div>`).join('');
   const tabs = new Set(['tabHome', 'tabMore', 'tabAdmin', 'tabCustom']);
   for (const it of Object.values(REG)) for (const t of [it.tab, it.tabAlso]) if (t) tabs.add(t);
-  const plainTabs = [...tabs].filter((t) => !['tabHome', 'tabMore', 'tabAdmin', 'tabCustom'].includes(t))
+  const plainTabs = [...tabs].filter((t) => !['tabHome', 'tabMore', 'tabAdmin', 'tabCustom', 'tabAll'].includes(t))
     .map((t) => `<div id="${t}" class="tab-main"></div>`).join('');
   const page = `<!DOCTYPE html><html><head>
     <script>${ICON_SRC}</script><script>${REGISTRY_SRC}</script>${extra}<script id="ycLauncher">${RENDERER_SRC}</script>${HIDE_CSS}</head><body>
     <nav id="appSidebar"><div class="sb-item" data-tab="tabHome" onclick="openMainTab('tabHome')"></div>
-      <div class="sb-item" id="sbOpenFiles"></div><div id="tabOpenFiles"></div><script>ycLauncher.mount('sidebar')</script><div class="sb-item" id="sbAll" data-tab="tabAll" onclick="openMainTab('tabAll')"></div></nav>
+      <div class="sb-item" id="sbOpenFiles"></div><div id="tabOpenFiles"></div><script>ycLauncher.mount('sidebar')</script></nav>
     <div id="tabHome" class="tab-main"><br><br>
       <div class="home-grid"><script>ycLauncher.mount('home')</script></div>
       <button id="homeAll" class="home-btn"></button></div>
@@ -285,7 +286,7 @@ function boot({ extra = '' } = {}) {
   const homeGrid = d.querySelector('#tabHome > .home-grid');
   const sbNodes = () => {
     const out = [];
-    for (let n = d.getElementById('tabOpenFiles').nextSibling; n && n.id !== 'sbAll'; n = n.nextSibling) out.push(n);
+    for (let n = d.getElementById('tabOpenFiles').nextSibling; n; n = n.nextSibling) out.push(n);
     return out;
   };
   const ser = (nodes) => { const t = d.createElement('div'); nodes.forEach((n) => t.appendChild(n.cloneNode(true))); return t.innerHTML; };
@@ -578,11 +579,19 @@ describe('the renderer (for real): composition with denies, firm hides, renames,
     expect(t.seen('sidebar')[0]).not.toBe('custom');
   });
 
-  test('admin-gated Admin: a non-SU never sees it, wherever the user placed it', () => {
-    t.L.applyAccess({ isAdmin: false, ui: ui({ layout: { placed: { home: [{ item: 'admin' }, { item: 'adminDbConsole' }], sidebar: [{ item: 'admin' }] } } }) });
-    t.w.E('sbAdmin').style.display = 'none';      // loadUserContext's own hide for a non-SU
+  test('a gated tile never shows wherever the user placed it; the Admin page follows the firm\'s visible_to (S6c)', () => {
+    const layout = { placed: { home: [{ item: 'admin' }, { item: 'adminDbConsole' }], sidebar: [{ item: 'admin' }] } };
+    const ro = { visible_to: { admin: ['it', 'admin'] } };   // the live firm's rule
+    // staff: neither the su tile nor the restricted Admin page, on either surface
+    t.L.applyAccess({ isAdmin: false, roles: ['staff'], ui: ui({ layout, ro }) });
     expect(t.d.querySelectorAll('[data-yc-shortcut]')).toHaveLength(0);
     expect(t.seen('sidebar')).not.toContain('admin');
+    // it/admin: the Admin PAGE where they put it (its sidebar element moved first, a neutral tile on Home); the su tile never
+    t.L.applyAccess({ roles: ['it', 'admin'] });
+    t.w.E('sbAdmin').style.display = '';          // loadUserContext's reveal once the item is effective
+    expect([...t.d.querySelectorAll('[data-yc-shortcut]')].map((e) => e.getAttribute('data-yc-shortcut'))).toEqual(['admin']);
+    expect(t.seen('sidebar')).toContain('admin');   // the base items slot in around it (the merge rule), so not first
+    expect(t.seen('home')).not.toContain('+adminDbConsole');
   });
 });
 

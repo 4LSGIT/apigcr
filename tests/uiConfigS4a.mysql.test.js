@@ -115,14 +115,14 @@ d('S4a: user layouts and retired firm ids on real MySQL', () => {
       expect([r.status, r.body.changed]).toEqual([200, false]);
     });
 
-    test('a bad document is a 400 with errors, and nothing changes; layout is not a firm key', async () => {
+    test('a bad document is a 400 with errors, and nothing changes (either scope)', async () => {
       const before = await q("SELECT config FROM ui_config WHERE scope = 'user'");
       const r = await put('staff', { placed: { home: [{ label: 'x' }, { item: 'cases' }, { item: 'cases' }] } });
       expect(r.status).toBe(400);
       expect(r.body.errors).toEqual(expect.arrayContaining([expect.stringMatching(/label is for the sidebar only/), expect.stringMatching(/already placed/)]));
       expect((await put('staff', { removed: ['bills'] })).status).toBe(400);      // the flat form: refused
       expect(await q("SELECT config FROM ui_config WHERE scope = 'user'")).toEqual(before);
-      expect((await hit('PUT', '/api/ui-config', 'admin', { scope: 'firm', config_key: 'layout', config: {} })).status).toBe(400);
+      expect((await hit('PUT', '/api/ui-config', 'admin', { scope: 'firm', config_key: 'layout', config: { pages: {} } })).status).toBe(400);   // S6c: firm layout is a key; pages is reserved
     });
   });
 

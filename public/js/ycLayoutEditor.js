@@ -14,6 +14,9 @@
  * lib/uiConfigShape.js), as the S4a contract has it —
  *   { placed: { home?: [entry…], sidebar?: [entry…] },
  *     removed: { home?: [id…], sidebar?: [id…] } }
+ * The document's third surface, homeIcons (Home's icon row, ui-custom S6c),
+ * has no section here yet (S6c-3): its placed / removed lists ride through a
+ * save untouched (PASS below), so saving Home never drops them.
  * It never merges anything itself. Every list it shows is
  * ycLauncher.resolveLayout(surface, { base: DEFAULT_LAYOUTS[surface], user,
  * effective, locked }) over the surface's working state — the ONE merge the
@@ -136,6 +139,10 @@
   }
 
   var SURFACES = ['home', 'sidebar'];
+  // Surfaces of the user layout this editor does not show yet (ui-custom S6c:
+  // Home's icon row — its editor is S6c-3): their lists are written back as
+  // stored, so a save never drops them. { item } entries only, as the server has it.
+  var PASS = ['homeIcons'];
   var NAME = { home: 'Home', sidebar: 'Sidebar' };
   var CAP = 100;          // lib/uiConfigShape.js CAPS.placed / CAPS.removed
   var LABEL_MAX = 40;     // lib/uiConfigShape.js LABEL_MAX
@@ -179,7 +186,7 @@
   function normalize(doc) {
     var out = { placed: {}, removed: {} };
     if (!isObj(doc)) return out;
-    SURFACES.forEach(function (sf) {
+    SURFACES.concat(PASS).forEach(function (sf) {
       if (isObj(doc.placed) && isArr(doc.placed[sf])) {
         out.placed[sf] = doc.placed[sf].map(function (e) { return copyEntry(e, sf); }).filter(Boolean);
       }
@@ -509,6 +516,11 @@
             if (st.placed) out.placed[sf] = st.placed.map(function (e) { return copyEntry(e, sf); });
             if (st.removed.length) out.removed[sf] = st.removed.slice();
           }
+        });
+        // the surfaces this editor does not show (S6c): exactly as stored
+        PASS.forEach(function (sf) {
+          if (hasOwn(stored.placed, sf)) out.placed[sf] = stored.placed[sf].map(function (e) { return copyEntry(e, sf); });
+          if (hasOwn(stored.removed, sf)) out.removed[sf] = stored.removed[sf].slice();
         });
         return out;
       },

@@ -6,12 +6,13 @@
  *   - the user `layout` document: { placed: { home?, sidebar? },
  *     removed: { home?, sidebar? } } (removals PER SURFACE — fix round SF1; the
  *     flat array form is refused, never coerced) —
- *     an entry is exactly one of { item } / { break: true } (Home only) /
+ *     an entry is exactly one of { item } / { break: true } (a grid) /
  *     { label } (sidebar only, plain text 1–40); an item once per surface;
  *     every array capped (refused at the length check, before its entries are
  *     looked at); unknown keys are errors; ids are soft refs (any id shape,
  *     never checked against the registry); a surface left out stays out;
- *   - `layout` is a USER key only (a firm layout is not here yet);
+ *   - `layout` is a key of BOTH scopes since ui-custom S6c (the firm's default
+ *     layout); a user's covers home / sidebar / homeIcons only;
  *   - registry_overrides' server-managed `retired` list: firm ids only, absent
  *     when empty (documents saved before S4a normalize to themselves), an item
  *     whose id is retired is refused;
@@ -71,7 +72,7 @@ describe('the user layout document', () => {
     }
   });
 
-  test('an entry is exactly one shape; a break is Home only, a label the sidebar only', () => {
+  test('an entry is exactly one shape; a break is for a grid, a label the sidebar only', () => {
     const r = L({
       placed: {
         home: [{ label: 'x' }, { break: 1 }, { break: false }, { item: 'a', break: true }, {}, { foo: 1 }, 'cases', null],
@@ -88,7 +89,7 @@ describe('the user layout document', () => {
     expect(e).toMatch(/placed\.home\[5\]: unknown field "foo"/);
     expect(e).toMatch(/placed\.home\[6\] must be an object/);
     expect(e).toMatch(/placed\.home\[7\] must be an object/);
-    expect(e).toMatch(/placed\.sidebar\[0\]: a break is for the Home grid only/);
+    expect(e).toMatch(/placed\.sidebar\[0\]: a break is for a grid \(home, more, admin\) only/);
     expect(e).toMatch(/placed\.sidebar\[1\]: label must be 1-40/);
     expect(e).toMatch(/placed\.sidebar\[2\]: label must be 1-40/);
     expect(e).toMatch(/placed\.sidebar\[3\]: label must be plain text/);
@@ -132,16 +133,17 @@ describe('the user layout document', () => {
     for (const flat of [['bills'], []]) {
       const r = L({ removed: flat });
       expect(r.ok).toBe(false);
-      expect(errs(r)).toBe('removed must be an object { home?, sidebar? } — removals are per surface');
+      expect(errs(r)).toBe('removed must be an object { home?, sidebar?, homeIcons? } — removals are per surface');
     }
     // each surface keeps its own list, untouched by the other's
     expect(L({ removed: { sidebar: ['bills'] } }).value.removed).toEqual({ sidebar: ['bills'] });
     expect(L({ removed: { home: ['log'], sidebar: ['bills'] } }).value.removed).toEqual({ home: ['log'], sidebar: ['bills'] });
   });
 
-  test('layout is a USER key: the PUT envelope takes it for scope user, not firm', () => {
+  test('layout is a key of both scopes (S6c): the PUT envelope takes it for user and firm; a user may not arrange More', () => {
     expect(shape.validateWrite({ scope: 'user', config_key: 'layout', config: { placed: { home: [] } } }).ok).toBe(true);
-    expect(errs(shape.validateWrite({ scope: 'firm', config_key: 'layout', config: {} }))).toMatch(/config_key for scope firm/);
+    expect(shape.validateWrite({ scope: 'firm', config_key: 'layout', config: {} }).ok).toBe(true);
+    expect(errs(shape.validateWrite({ scope: 'user', config_key: 'layout', config: { placed: { more: [] } } }))).toMatch(/placed: unknown field "more"/);
     expect(shape.CONFIG_KEYS.user).toEqual(['shortcuts', 'layout', 'prefs', 'items']);   // prefs: S5d's theme; items: S5a's user buttons
   });
 });

@@ -1632,11 +1632,16 @@ unchanged; full history scrubbed 2026-10-14.
 
 **What.** `public/js/featureRegistry.js` holds `FEATURE_REGISTRY` (one entry
 per launcher button; the id is API surface — never renamed, never reused; its
-header lists retired ids) and `DEFAULT_LAYOUTS` (home / sidebar / more / admin
-as `{item}|{break}|{label}`). `window.ycLauncher` (public/index.html) renders
-the four surfaces at parse time, then `applyAccess({ isAdmin, roles, denied,
+header lists retired ids; an item's `gate` — `'su'` or a lib/capabilities
+name — is what its routes enforce) and `DEFAULT_LAYOUTS` (home / sidebar /
+more / admin as `{item}|{break}|{label}`, plus the icon rows homeIcons /
+moreIcons / adminIcons — `{item}` only, ≤12: the small buttons under each
+grid, Casey's paw and All). `window.ycLauncher` (public/index.html) renders
+the seven surfaces at parse time, then `applyAccess({ isAdmin, roles, denied,
 ui, customTab })` (from loadUserContext; re-run after any editor save) applies
-the overlays. `computeEffective` (pure) = registry − admin-gated − `denied`
+the overlays. `computeEffective` (pure) = registry − gated (a `gate` the
+user's roles don't pass by `can()`'s rule, su passes all; the Admin PAGE item
+has no gate — the firm's `visible_to` decides it) − `denied`
 (entitlement_denies, §30) − firm `hidden` − role-restricted (firm
 `visible_to`) + firm items + the user's own buttons ("Mine"), renames applied.
 `ycLauncher.exec(id)` is the ONE programmatic activation (All, Ctrl-K, user
@@ -1649,8 +1654,10 @@ runs user shortcuts; the personal editor is `public/js/ycLayoutEditor.js`
 **Storage.** One table, `ui_config` (scope firm|user; `user_id` 0 / `role`
 '' sentinels are load-bearing for the UNIQUE; `role` reserved). Firm
 `registry_overrides` = `{ hidden, renames, locked, items, visible_to, retired }`
-— versioned in `ui_config_versions`, optimistic `base` → 409. User keys:
-`layout` `{ placed, removed }` per surface, `shortcuts` `{ bindings }`,
+and firm `layout` = `{ placed, removed }` over every surface (the firm's
+default; More, Admin and their icon rows are firm-only; `pages` reserved) —
+both versioned in `ui_config_versions`, optimistic `base` → 409. User keys:
+`layout` `{ placed, removed }` per surface (home, sidebar, homeIcons), `shortcuts` `{ bindings }`,
 `items` (own buttons, ≤50, `user:<slug>`; a button may be a drawer,
 `{ type:'drawer', items:[ref…] }` — ≤30 refs, one level deep), `prefs` `{ theme }`. `retired`
 lists are server-managed (a deleted firm/user item id never comes back —
@@ -1666,8 +1673,20 @@ layouts and shortcuts point at ids). Strict validator `lib/uiConfigShape.js`
   attribute (`data-yc-denied`, `data-yc-unplaced`) + `!important`, never
   `style.display`. Added placements are neutral `exec` shortcuts (no
   `data-target`).
-- More/Admin grids are not user-editable: every grid item keeps its tile
-  (the wsurl drill restore depends on `elementsOf(id).more/.admin`).
+- Layouts resolve shipped → firm → user with ONE merge rule applied twice
+  (`resolveLayout`): a firm Home / sidebar change only ADDS for a user who
+  already arranged that surface (`locked` is how the firm insists). More /
+  Admin grids are firm-editable, never user-editable: every grid item keeps
+  its tile under any layout — found by id, hidden by `data-yc-unplaced` when
+  left out (the wsurl drill restore depends on `elementsOf(id).more/.admin`
+  and refuses an unplaced tile); the More firm row draws only while the firm
+  has no `placed.more`.
+- All (`all`) is GUARANTEED in Home's icon row and in Ctrl-K (ruling
+  2026-10-16): undeniable, and the resolver puts it back whatever a layout
+  says; the sidebar's All is an ordinary, removable item.
+- The Admin page follows the firm's `visible_to` on `admin` (live: it, admin;
+  su always); each Admin tile follows its own `gate` (today every tool but
+  Etch is `su`), so a non-su sees the page with only what they can open.
 - DB-authored items carry no code: kinds url | tool | view only, plus
   drawer for a user's own buttons (a list of ids; `exec` opens it as the
   `#ycDrawer` menu, listing only entries effective right now). Tool/view
@@ -1678,7 +1697,7 @@ layouts and shortcuts point at ids). Strict validator `lib/uiConfigShape.js`
   SU-authored tool (§29), talking through `window.parent.ycTool`.
 - `visible_to` is an allow-list ("Hidden, except [roles]"): su always sees
   everything; a role added later sees nothing restricted until ticked.
-  `moreSettings` / `helpSupport` can never be hidden or restricted.
+  `moreSettings` / `helpSupport` / `all` can never be hidden or restricted.
 - Editors start from a fresh `GET /api/ui-config` (a stale tab or a fail-soft
   login read can never wipe a surface); the theme account value wins at login,
   localStorage is its write-through cache (the pre-paint script reads it).

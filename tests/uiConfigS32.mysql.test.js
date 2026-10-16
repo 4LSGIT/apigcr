@@ -245,7 +245,7 @@ d('Firm-tab routes on real MySQL', () => {
   const put = (who, config, extra = {}) => hit('PUT', '/api/ui-config', who, { scope: 'firm', config_key: 'registry_overrides', config, ...extra });
 
   test('GET firm_versions = the newest version id (firm.settings holders only)', async () => {
-    expect((await hit('GET', '/api/ui-config', 'admin')).body.firm_versions).toEqual({ registry_overrides: await head() });
+    expect((await hit('GET', '/api/ui-config', 'admin')).body.firm_versions).toEqual({ registry_overrides: await head(), layout: null });
     expect((await hit('GET', '/api/ui-config', 'staff')).body).not.toHaveProperty('firm_versions');
   });
 

@@ -125,8 +125,32 @@
     "visible_to": {
      "moreAutomations": ["admin", "attorney"],
      "firm:payroll-portal": [],
-     "tasks": ["it", "admin", "staff", "attorney", "automation", "form_dev"]
+     "tasks": ["it", "admin", "staff", "attorney", "automation", "form_dev"],
+     "admin": ["it", "admin"]
     }
+   },
+   "layout": {
+    "placed": {
+     "more": [
+      { "item": "moreManuals" }, { "item": "moreSettings" }, { "item": "moreTheme" }, { "item": "moreFeatureRequests" },
+      { "break": true },
+      { "item": "moreSimpleForms" }, { "item": "moreFormBuilder" }, { "item": "moreFormInbox" }, { "item": "morePortalManager" },
+      { "break": true },
+      { "item": "moreSignatures" }, { "item": "moreAssetManager" }, { "item": "moreVideoManager" }, { "item": "moreDocuments" },
+      { "break": true },
+      { "item": "moreCaseConfig" }, { "item": "moreChecklists" }, { "item": "moreAutomations" }, { "item": "moreViews" },
+      { "break": true },
+      { "item": "moreAvailability" }, { "item": "moreBooking" }, { "item": "moreCourtPreview" }, { "item": "firm:clio-code" },
+      { "break": true },
+      { "item": "moreCampaigns" }, { "item": "moreRedirects" }, { "item": "moreLandingPages" }, { "item": "moreReports" },
+      { "break": true },
+      { "item": "firm:unbroken" }, { "item": "firm:intake-checklist" }, { "item": "firm:payroll" }, { "item": "firm:payroll-portal" },
+      { "break": true },
+      { "item": "adminUsers" }
+     ],
+     "moreIcons": [{ "item": "casey" }, { "item": "myTasks" }]
+    },
+    "removed": { "admin": ["adminScratch"] }
    }
   },
   "user": {

@@ -7,7 +7,7 @@
  *
  * WHAT IS LOCKED (the real-engine half — the union, deny-wins, the UNIQUE —
  * is tests/entitlements.mysql.test.js)
- *   - UNDENIABLE is exactly { moreSettings, helpSupport }, both real registry
+ *   - UNDENIABLE is exactly { moreSettings, helpSupport, all }, all real registry
  *     keys.
  *   - normalizeDeny: firm ref omitted/null/'' → '' (anything else 400); role
  *     ref must be a users.roles member; user ref digits/number, one spelling;
@@ -118,8 +118,8 @@ const entQueries = db => db.calls.filter(c => /entitlement_denies/.test(c.sql));
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe('vocabulary', () => {
-  test('UNDENIABLE is exactly moreSettings + helpSupport, frozen', () => {
-    expect([...UNDENIABLE]).toEqual(['moreSettings', 'helpSupport']);
+  test('UNDENIABLE is exactly moreSettings + helpSupport + all, frozen', () => {
+    expect([...UNDENIABLE]).toEqual(['moreSettings', 'helpSupport', 'all']);   // all: ui-custom S6c
     expect(Object.isFrozen(UNDENIABLE)).toBe(true);
   });
 
@@ -267,7 +267,7 @@ describe('/api/entitlements CRUD', () => {
     const r = await call(ent, 'GET', '/api/entitlements', { headers: admin });
     expect(r.status).toBe(200);
     expect(r.body.denies).toHaveLength(1);
-    expect(r.body.undeniable).toEqual(['moreSettings', 'helpSupport']);
+    expect(r.body.undeniable).toEqual(['moreSettings', 'helpSupport', 'all']);
   });
 
   test('POST: undeniable 400, unknown key 400, nothing written', async () => {
