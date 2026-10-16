@@ -113,7 +113,9 @@ const PAGE_VALUES = [
 
 // The client copy: the shell's theme section in a bare vm.
 const CLIENT = (() => {
-  const ctx = vm.createContext({ console: { warn() {} }, document: { documentElement: { getAttribute: () => 'light' } } });
+  // addEventListener: the section registers its pagehide / visibilitychange flush (T1).
+  const ctx = vm.createContext({ console: { warn() {} }, addEventListener() {},
+    document: { documentElement: { getAttribute: () => 'light' }, addEventListener() {} } });
   ctx.window = ctx;
   vm.runInContext(THEME_SRC, ctx);
   return ctx.window.ycThemePrefs;
@@ -260,7 +262,7 @@ function boot({ local = {}, token = jwt(3600), routes = {}, ready = false } = {}
   const dom = new JSDOM(`<!DOCTYPE html><html><head></head><body><i id="themeIcon" class="fa-solid fa-moon"></i><iframe id="pane"></iframe></body></html>`,
     { runScripts: 'dangerously', pretendToBeVisual: true, url: 'https://app.test/', resources: new CssOnly() });
   const w = dom.window;
-  const rec = { login: 0, fetch: [], warnings: [], errors: [], toast: [], setItem: [] };
+  const rec = { login: 0, fetch: [], keepalive: [], warnings: [], errors: [], toast: [], setItem: [] };
   w.console.warn = (...a) => rec.warnings.push(a.map(String).join(' '));
   w.console.error = (...a) => rec.errors.push(a.map(String).join(' '));
   if (token) w.localStorage.setItem('jwt', token);
@@ -277,6 +279,7 @@ function boot({ local = {}, token = jwt(3600), routes = {}, ready = false } = {}
     const u = new URL(url, 'https://app.test/');
     const req = { method: opts.method || 'GET', path: u.pathname, body: opts.body ? JSON.parse(opts.body) : null };
     rec.fetch.push(req);
+    rec.keepalive.push(opts.keepalive === true);
     const h = routes[`${req.method} ${req.path}`];
     let out = typeof h === 'function' ? await h(req) : h;
     if (out === undefined) out = { status: 404, body: { error: 'no route' } };
@@ -782,5 +785,94 @@ describe('fix round F5: a stock device never claims the account', () => {
     t = boot({ local, routes: NOROW });
     expect(await t.T.adopt({ firm: {}, user: {} })).toBe('uploaded');
     expect(t.puts().length).toBe(1);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// T1 (2026-10-16, "theme doesn't work anymore"): a change still waiting on the
+// debounce when the page went away (a reload, a closed tab) was never sent, and
+// the next boot's adopt put the account's older theme back over it. Proven in
+// real Chrome (local/ui-custom/t1-worker/repro_fast.js): toggle, reload 300 ms
+// later → light again on a546ed6, dark on 9b0e959. pagehide / hidden now flush
+// it with fetch keepalive.
+describe('T1: a change still in the debounce is flushed when the page goes away', () => {
+  let t, t2;
+  afterEach(() => { if (t) t.close(); if (t2) t2.close(); t = t2 = null; });
+  const hide = (w) => {
+    Object.defineProperty(w.document, 'visibilityState', { value: 'hidden', configurable: true });
+    w.document.dispatchEvent(new w.Event('visibilitychange'));
+  };
+
+  test('pagehide inside the debounce: ONE PUT at once, keepalive, carrying the change; the timer is gone', async () => {
+    t = boot({ ready: true, local: LOCAL, routes: { 'PUT /api/ui-config': savedPut } });
+    t.w.toggleTheme();
+    expect(t.puts()).toEqual([]);
+    t.w.dispatchEvent(new t.w.Event('pagehide'));
+    expect(t.puts().length).toBe(1);                 // dispatched in the same task, no tick
+    expect(t.rec.keepalive).toEqual([true]);
+    expect(t.puts()[0].body).toEqual({ scope: 'user', config_key: 'prefs', config: { theme: { mode: 'dark', vars: LOCAL['yc-theme-vars'] } } });
+    expect(t.clock.pending()).toBe(0);
+    await t.clock.tick(5000);
+    expect(t.puts().length).toBe(1);
+    expect(t.rec.login).toBe(0);
+  });
+
+  test('the tab going hidden flushes the same way; a normal debounced PUT is not keepalive', async () => {
+    t = boot({ ready: true, local: LOCAL, routes: { 'PUT /api/ui-config': savedPut } });
+    t.w.toggleTheme();
+    await t.clock.tick(1000);
+    expect(t.rec.keepalive).toEqual([false]);
+    t.w.toggleTheme();
+    hide(t.w);
+    expect(t.puts().length).toBe(2);
+    expect(t.rec.keepalive).toEqual([false, true]);
+    expect(t.puts()[1].body.config.theme.mode).toBe('light');
+  });
+
+  test('nothing pending → pagehide sends nothing', async () => {
+    t = boot({ ready: true, local: LOCAL, routes: { 'PUT /api/ui-config': savedPut } });
+    t.w.dispatchEvent(new t.w.Event('pagehide'));
+    t.w.toggleTheme();
+    await t.clock.tick(1000);
+    t.w.dispatchEvent(new t.w.Event('pagehide'));
+    hide(t.w);
+    expect(t.puts().length).toBe(1);
+  });
+
+  test('before adopt has settled, pagehide still sends nothing (F2: a pre-adopt change never overwrites the account)', async () => {
+    t = boot({ local: LOCAL, routes: { 'PUT /api/ui-config': savedPut } });
+    t.w.toggleTheme();
+    t.w.dispatchEvent(new t.w.Event('pagehide'));
+    await t.settle();
+    expect(t.rec.fetch).toEqual([]);
+  });
+
+  test('no session → quiet: no request, no login prompt, a warning', async () => {
+    t = boot({ ready: true, local: LOCAL, token: jwt(-60), routes: { 'PUT /api/ui-config': savedPut } });
+    t.w.toggleTheme();
+    t.w.dispatchEvent(new t.w.Event('pagehide'));
+    await t.settle();
+    expect(t.rec.fetch).toEqual([]);
+    expect(t.rec.login).toBe(0);
+    expect(t.rec.warnings.join('\n')).toMatch(/\[theme\] not saved to your account/);
+  });
+
+  test('the reload: toggle, the page goes away 300 ms later, the next boot shows the change (the account no longer reverts it)', async () => {
+    const server = { prefs: J(ACCOUNT) };
+    server.prefs.theme.mode = 'light';
+    const put = (req) => { const r = savedPut(req); server.prefs = r.config; return r; };
+    t = boot({ local: { 'yc-theme': 'light', 'yc-theme-vars': ACCOUNT.theme.vars }, routes: { 'PUT /api/ui-config': put } });
+    expect(await t.T.adopt({ firm: {}, user: { prefs: J(server.prefs) } })).toBe('account');
+    t.w.toggleTheme();
+    await t.clock.tick(300);
+    t.w.dispatchEvent(new t.w.Event('pagehide'));
+    await t.settle();
+    const cache = { 'yc-theme': t.ls('yc-theme'), 'yc-theme-vars': t.ls('yc-theme-vars') };
+    t.close(); t = null;
+    t2 = boot({ local: cache, routes: { 'PUT /api/ui-config': put } });
+    expect(t2.theme()).toBe('dark');                 // pre-paint, from the cache
+    expect(await t2.T.adopt({ firm: {}, user: { prefs: J(server.prefs) } })).toBe('account');
+    expect(t2.theme()).toBe('dark');                 // was 'light': the account reverted it
+    expect(t2.ls('yc-theme')).toBe('dark');
   });
 });

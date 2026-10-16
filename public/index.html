@@ -6111,6 +6111,9 @@
      * the ApiError shape on failure: an error body is JSON no matter what
      * the success body is, so it is always parsed as such.
      *
+     * opts.keepalive — true sends fetch's keepalive, so the request survives
+     * the page unloading (a write flushed from pagehide). Body ≤ 64 KB.
+     *
      * This exists because binary responses previously forced callers to
      * hand-roll fetch with a lifted JWT (esignActions.esignFetchBinary /
      * esignFetchPdf, assetManager/videoManager uploads) — each one a private
@@ -6152,6 +6155,9 @@
         // of re-sending the Authorization header to wherever it points.
         redirect: "error"
       };
+      // opts.keepalive (T1, 2026-10-16): the request outlives the page — for a
+      // write flushed from pagehide (ycThemePrefs). Default off: unchanged.
+      if (opts.keepalive === true) options.keepalive = true;
       // SU step-up (2026-08-16): attach the tab-scoped elevation token when
       // one is held. Harmless on routes that don't check it; required by the
       // superuser tools. See getSuElevToken/elevateBlocking below.
@@ -7911,9 +7917,15 @@ async function initAuth() {
     //               runs both over one matrix. themeCustom.html refuses a value
     //               that fails it, so the editor never makes what the server
     //               would refuse.
+    //   flush       pagehide / the tab going hidden: a PUT still waiting on
+    //               the debounce goes NOW, with fetch keepalive, so it outlives
+    //               the page. Without it a reload or a closed tab inside the
+    //               debounce dropped the change, and the next boot's adopt put
+    //               the account's older theme back over it (T1, 2026-10-16:
+    //               "the theme reverts after reload").
     // Two devices: the last write wins. A change that never reached the
-    // account (the tab closed inside the debounce, or no session) loses to
-    // the account at the next boot.
+    // account (no session, a failed PUT) loses to the account at the next
+    // boot.
     window.ycThemePrefs = (function () {
       var VARS_KEY = 'yc-theme-vars';
       var DELAY = 1000;                           // ms of quiet before a PUT
@@ -7994,13 +8006,28 @@ async function initAuth() {
         return mode() === 'light' && !v.preset && !v.density
           && !Object.keys(v.light).length && !Object.keys(v.dark).length;
       }
-      function send() {
+      // keep: from flush() — straight through the shell's apiSend with
+      // keepalive (ycTool.apiSend takes no options but quiet), quiet by hand.
+      function send(keep) {
         timer = null;
         if (!settled) { warn('not saved to your account: the account theme has not been read yet'); return Promise.resolve(false); }
         var T = window.ycTool;
         if (!T) { warn('not saved to your account: the shell is not ready'); return Promise.resolve(false); }
         var doc = { theme: { mode: mode(), vars: localVars() } };
-        return T.apiSend('/api/ui-config', 'PUT', { scope: 'user', config_key: 'prefs', config: doc }, { quiet: true })
+        var body = { scope: 'user', config_key: 'prefs', config: doc };
+        var sent;
+        if (keep === true) {
+          // Called in the same task as pagehide: apiSend reaches fetch()
+          // before its first await (a session exists, so no login wait).
+          try {
+            sent = T.authReady()
+              ? Promise.resolve(window.apiSend('/api/ui-config', 'PUT', body, {}, { keepalive: true }))
+              : Promise.reject(new Error('no valid session'));
+          } catch (err) { sent = Promise.reject(err); }
+        } else {
+          sent = T.apiSend('/api/ui-config', 'PUT', body, { quiet: true });
+        }
+        return sent
           .then(function (r) { remember(r && r.config); return true; },
                 function (err) { warn('not saved to your account', err); return false; });
       }
@@ -8008,6 +8035,15 @@ async function initAuth() {
         if (timer) clearTimeout(timer);
         timer = setTimeout(send, DELAY);
       }
+      function flush() {
+        if (!timer) return;
+        cancel();
+        send(true);
+      }
+      window.addEventListener('pagehide', flush);
+      document.addEventListener('visibilitychange', function () {
+        if (document.visibilityState === 'hidden') flush();
+      });
 
       // The account's row into the cache, and on screen. → whether anything moved.
       function apply(row) {
