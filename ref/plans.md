@@ -24,9 +24,10 @@ PENDING (parallel session; do not bake in):
   tab (it exists since ui-custom S3.2: public/caseconfig/firm.html, a host of
   sections shown on GET /api/ui-config `can_edit_firm`; Launcher is its first
   section), and how tool-grouped settings split between tool managers and that
-  tab. Gate finding (2026-09-24): PUT/POST /api/app-settings/* is `jwtOrApiKey` +
-  per-row `is_editable` — no role tier exists; moving knobs into a role-gated shell is
-  an access-control change and needs its own ruling.
+  tab. The role tier exists: since access A4, PUT/POST /api/app-settings* are
+  `requireAuth({audience:'staff', can:'firm.settings', allowApiKey:true})`
+  (routes/api.appSettings.js; GET stays jwtOrApiKey; per-row `is_editable` still
+  applies), so moving knobs into the Firm tab needs no new gate.
 - Machine-state rows (sweep watermarks, counters, rc_subscriptions…) are a fourth
   kind — automation-minted runtime state hiding behind is_editable=0, which ALSO means
   "SU-only boundary" (landing_hosts). Likely: separate flag + read-only diagnostics

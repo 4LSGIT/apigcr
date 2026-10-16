@@ -195,7 +195,7 @@ Firm state lives in three buckets; the middle one is the finding:
 | `services/firmBlocksService.js:54` | `HEBCAL_ZIP = '48075'` — firm ZIP drives candle-lighting blocks |
 | `public/manage.html:260`, `public/book.html:346` | `var FIRM_TZ = 'America/New_York'; // matches the server's FIRM_TZ` — **the comment is false** (server is `America/Detroit`); latent today (identical offsets), breaks on the first non-Eastern tenant |
 | `public/index.html:3998` (+ `:2468, :4007, :4241`), `public/tasks.html:429`, `public/forms/liveHost.html:168` | frontend `America/Detroit` defaults |
-| `routes/api.jwt.js:25` (`GET /clio-code`) + `public/index.html:3005, :3063` | Clio 2FA-code relay — firm workflow baked into shell + route |
+| `routes/api.jwt.js` (`GET /clio-code`) + the DB tool `clio-code` (reference copy `ref/tools/clio-code.html`) | Clio 2FA-code relay — the route is code; the firm workflow is now a firm tool placed as a firm item (ui-custom S3.3/S3.3b retired the shell's showClioCode) |
 | `routes/renaReminder.jsx` (`:7` APP_URL, `:21` env `API_KEY`, `:33` route) | firm-staff-named surface |
 | `landing_hosts`/`pages.host` machinery | per-tenant-correct via DB, but `pageService.hostCache` + firmConfig caches must tenant-key first |
 
@@ -470,7 +470,7 @@ Middleware order (`server.js`): compression `:47` → build headers + `refreshMi
 - **Audited:** `routes/api.tools.js:94-110` `audit(…)` → `auditAdminAction(req.db, {tool:'tools',…})` at `:218` create · `:249` update · `:272` delete · `:347` delete_version · `:380` restore; `superuserOnlyFor` audits rejections; reads not audited (`:52-56`).
 - **Versioned:** `tool_versions` (FK-cascade on delete `:265`). Convention `:29-43`, insert `:168`: on any save where html differs, a row with the NEW html is appended — complete save history (v1 = creation html; newest row = `tools.html`); title/status-only PATCH appends nothing; restore appends unless no-op. Retrievable: `GET /api/tools/:id/versions` `:288`, `/:vid` `:306`; `version_count` on the list `:182`. Append is not transactional with the tools write (`:40-42`) — crash loses one history row, never the tool.
 
-**"get-clio-code"-style landing page:** no such route exists in the repo. The in-repo Clio surfaces are `GET /clio-code` (`routes/api.jwt.js:25`, `jwtOrApiKey`, reads `app_settings.clio_login_code`; consumed by the shell `public/index.html:3005, :3063`) and the `api.temp.clio.js` proxy. If "get-clio-code" is a `tools` or `pages` **row**, it is DB content served by `GET /tool/:key` or the vanity middleware and invisible to a repo audit — §3-12.
+**"get-clio-code"-style landing page:** no such route exists in the repo. The in-repo Clio surfaces are `GET /clio-code` (`routes/api.jwt.js:25`, `jwtOrApiKey`, reads `app_settings.clio_login_code`; consumed since ui-custom S3.3b by the firm tool `clio-code`, a `tools` row placed as a firm launcher item — reference copy `ref/tools/clio-code.html`) and the `api.temp.clio.js` proxy. If "get-clio-code" is a `tools` or `pages` **row**, it is DB content served by `GET /tool/:key` or the vanity middleware and invisible to a repo audit — §3-12.
 
 ## E2. Iframe parent reach-in (`P.apiSend` / `waitForParent`) — 63 files
 

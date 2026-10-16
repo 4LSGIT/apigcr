@@ -1622,3 +1622,59 @@ Not a sync-bus write (no /api/tasks* MATCHER exists).
 (lib/auditShape; credential-named keys → [secret] with no length); URL/
 referer redaction (SEC-1 credentials + the separate exact-name `q` rule)
 unchanged; full history scrubbed 2026-10-14.
+
+## ═══════════════════════════════════════════════════════════════
+## 31. LAUNCHER & UI CONFIG (ui-customization arc, Oct 2026)
+## ═══════════════════════════════════════════════════════════════
+
+**What.** `public/js/featureRegistry.js` holds `FEATURE_REGISTRY` (one entry
+per launcher button; the id is API surface — never renamed, never reused; its
+header lists retired ids) and `DEFAULT_LAYOUTS` (home / sidebar / more / admin
+as `{item}|{break}|{label}`). `window.ycLauncher` (public/index.html) renders
+the four surfaces at parse time, then `applyAccess({ isAdmin, roles, denied,
+ui, customTab })` (from loadUserContext; re-run after any editor save) applies
+the overlays. `computeEffective` (pure) = registry − admin-gated − `denied`
+(entitlement_denies, §30) − firm `hidden` − role-restricted (firm
+`visible_to`) + firm items + the user's own buttons ("Mine"), renames applied.
+`ycLauncher.exec(id)` is the ONE programmatic activation (All, Ctrl-K, user
+shortcuts, URL restore) and refuses anything not effective. The All tab +
+palette live in `public/js/ycAll.js`, whose single keydown dispatcher also
+runs user shortcuts; the personal editor is `public/js/ycLayoutEditor.js`
+(All > Customize my launcher); the firm editor is the Config shell's Firm tab
+(`public/caseconfig/firm.html`: Launcher + Who sees what).
+
+**Storage.** One table, `ui_config` (scope firm|user; `user_id` 0 / `role`
+'' sentinels are load-bearing for the UNIQUE; `role` reserved). Firm
+`registry_overrides` = `{ hidden, renames, locked, items, visible_to, retired }`
+— versioned in `ui_config_versions`, optimistic `base` → 409. User keys:
+`layout` `{ placed, removed }` per surface, `shortcuts` `{ bindings }`,
+`items` (own buttons, ≤50, `user:<slug>`), `prefs` `{ theme }`. `retired`
+lists are server-managed (a deleted firm/user item id never comes back —
+layouts and shortcuts point at ids). Strict validator `lib/uiConfigShape.js`
+(linear regexes, timing-tested); `services/uiConfigService.js`;
+`routes/api.uiConfig.js`; delivered to the shell in `/api/firm-data` `ui`.
+
+**Invariants.**
+- Visibility only: every hide — deny, firm hide, `visible_to`, a user's
+  removal — hides tiles; routes enforce their own gates.
+- Removal HIDES, reorder MOVES: default launcher elements always stay in the
+  DOM (ids like sbAdmin / sbCustom / badges are looked up elsewhere), hidden by
+  attribute (`data-yc-denied`, `data-yc-unplaced`) + `!important`, never
+  `style.display`. Added placements are neutral `exec` shortcuts (no
+  `data-target`).
+- More/Admin grids are not user-editable: every grid item keeps its tile
+  (the wsurl drill restore depends on `elementsOf(id).more/.admin`).
+- DB-authored items carry no code: kinds url | tool | view only. Tool/view
+  open in the tool dialog (they need the parent shell's `apiSend`); links open
+  a new window (noopener), never embedded. Custom behaviour for a firm = an
+  SU-authored tool (§29), talking through `window.parent.ycTool`.
+- `visible_to` is an allow-list ("Hidden, except [roles]"): su always sees
+  everything; a role added later sees nothing restricted until ticked.
+  `moreSettings` / `helpSupport` can never be hidden or restricted.
+- Editors start from a fresh `GET /api/ui-config` (a stale tab or a fail-soft
+  login read can never wipe a surface); the theme account value wins at login,
+  localStorage is its write-through cache (the pre-paint script reads it).
+
+**Pointers.** Operator docs: manual 05/14 (Firm launcher), 01/15 (your
+launcher), 08/11 (tool actions). Tests: `tests/launcherS*.test.js`,
+`tests/uiConfigS*.test.js`, `tests/firmTab.test.js`, `tests/themePrefsS5d.test.js`.
