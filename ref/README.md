@@ -98,7 +98,8 @@ files move.
   byte-identical to the live tool — edit here and paste, or copy back after an
   edit in Tool Manager — and its header says how to install it. Nothing serves
   these files. `clio-code.html` (Get Clio Code) is read by
-  `tests/clioTool.test.js`.
+  `tests/clioTool.test.js`, and `clio-code-2.html` (the SweetAlert2 variant of
+  the same tool) by `tests/clioTool2.test.js`.
 
 ## Known dangling references
 One file this tree is expected to contain does not exist and has no git

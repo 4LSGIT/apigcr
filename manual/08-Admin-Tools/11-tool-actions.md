@@ -179,3 +179,21 @@ header has the install steps:
 
 If the tool is changed in Tools (SU), copy the new version back into that file,
 so the repository and the live tool stay the same.
+
+### The same tool, the old look: Get Clio Code 2
+
+`ref/tools/clio-code-2.html` (key `clio-code-2`) does exactly the same job and
+looks different: it draws the SweetAlert2 pop-up the app used before tools
+existed, at full screen size, instead of drawing its own page inside the
+dialog. Install it the same way; both can be live at once, and you pick which
+one the firm gets by which firm item you keep.
+
+It also fixes a fault in the old pop-up: while it waits for a new code, the
+only way out was **Show the old code anyway**, which hands you the dead code
+you did not ask for. The new one has a close button.
+
+**It is not the example to copy.** To draw in the app's own window it reaches
+past `ycTool` twice — once for the app's pop-up library, once to hide the tool
+dialog behind the pop-up so you see the pop-up and nothing else. Both are
+allowed here, deliberately, and explained at length in the file's header. A
+tool you write uses `ycTool`.

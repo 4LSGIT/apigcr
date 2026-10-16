@@ -1499,6 +1499,26 @@ No migration is filed for either table: plain DDL, wholly captured by
   item (the More grid's firm row, All, Ctrl-K). Reference copies of DB-stored
   tools live in `ref/tools/` (`clio-code.html`, kept byte-identical to the
   live row).
+- **The one sanctioned exception** (2026-10-16): `ref/tools/clio-code-2.html`
+  does the same job as `clio-code` but draws its popup with `window.top.Swal`
+  — the shell's SweetAlert2 — instead of rendering in its own frame, to keep
+  the pre-S3.3 dialog at full screen size rather than boxed in the 480x480
+  card. Same origin, no `sandbox`, so it works; it is a contract break, not a
+  boundary break, and its header says so at length. The token rule is NOT
+  bent: data still rides `ycTool` and nothing reads `AUTH_STATE`. Both tools
+  may be live at once; `clio-code` is the pattern to copy.
+  It reaches the shell in exactly TWO places, and a test asserts that count
+  (`tests/clioTool2.test.js`, the `top.` set): `top.Swal` to draw, and
+  `top.document.head` to append a `<style>` hiding `#ycToolDialog` while the
+  popup is up — the whole dialog, not just `.yc-td`, because the dialog's own
+  `--backdrop` would otherwise stack under swal's and dim the app twice.
+  The WRITE is the sharper half: a read cannot leave damage, but a `<style>`
+  orphaned in the shell's head by a mid-flow throw would make every later tool
+  dialog in that tab invisible. Hence removal on every exit plus a `pagehide`
+  backstop; the residual risk was weighed and accepted (2026-10-16). The
+  sanctioned fix, if a second tool ever wants this, is a `ycTool` member the
+  shell owns and resets in `close()` — additive to v1, testable, no orphan
+  state possible.
 - **Pointers:** manual `manual/08-Admin-Tools/11-tool-actions.md`; tests
   `tests/toolShellS33.test.js`, `tests/clioTool.test.js` (shell harness
   `tests/helpers/toolShell.js`).

@@ -1,0 +1,448 @@
+<!DOCTYPE html>
+<!--
+  Get Clio Code 2 — a YisraCase TOOL (SU-authored page, served at /tool/clio-code-2)
+
+  REFERENCE COPY of code that lives in the DATABASE (the `tools` table), not in
+  this repo's runtime: nothing serves this file. The live copy is the tool row
+  with tool_key `clio-code-2`; keep the two byte-identical (edit here, paste
+  there; or copy the live one back here after an edit in Tool Manager).
+
+  INSTALL (SU, once):
+    1. Admin -> Tools (SU) -> New tool.
+       Key: clio-code-2   Title: Get Clio Code 2   HTML: this whole file.
+       Save, then set the status to live.
+    2. More -> YisraCase Config -> Firm -> Launcher -> Firm items -> Add:
+       Label "Get Clio Code 2", Icon "c", Opens: Tool -> Get Clio Code 2,
+       Dialog size: Compact. Save.
+
+  WHAT IT IS: the SECOND of two tools that do the same job. `clio-code` draws
+  its own page inside the tool dialog; this one restores the SweetAlert2 popup
+  the shell's showClioCode() used before ui-custom S3.3, by drawing in the
+  SHELL's document (window.top.Swal) rather than in its own frame. Everything
+  it SHOWS is therefore the real pre-S3.3 dialog — swal's icons, buttons,
+  backdrop and the shell's own .yc-hint styling — at full screen size, not
+  boxed inside the 480x480 card. Both tools can be live at once; keeping the
+  one you prefer is a matter of deleting the other's firm item.
+
+  THE ONE DELIBERATE DIFFERENCE from the original: the waiting popup gains
+  showCloseButton. The original offered no way out of it but "Show the old
+  code anyway" (showConfirmButton: false, allowOutsideClick: false, one
+  cancel button) — Escape worked, silently and undiscoverably. Asking for the
+  code and then being unable to put the window down without being handed the
+  dead code was a bug, not a policy.
+
+  Carried over from `clio-code` rather than from the original, because they
+  are correctness, not presentation:
+    - ageOf() tests for NULL by name. The original's Number(d.age_seconds) made
+      a NULL updated_at read as 0 seconds — "Just updated" — which is the exact
+      failure the freshness gate exists to prevent.
+    - the background re-checks are quiet, so a session that lapses mid-wait
+      cannot pop the shell's blocking login on top of the popup.
+
+  WHAT IT COSTS, stated plainly: window.top.Swal is NOT part of the tool shell
+  API. A tool is served from the `tools` table and nothing versions it against
+  public/index.html, so if the shell ever stops loading SweetAlert2 under that
+  name, this page breaks in production with every test still green. The shell's
+  own comment at hosts() is the licence — "An API contract, not a security
+  boundary" — but it is a licence to be spent knowingly, once, here. The TOKEN
+  rule is not bent: all data still travels through window.parent.ycTool, and
+  this page never touches AUTH_STATE, isJwtExpired, localStorage or the token.
+  Nothing else in the firm should copy this pattern; `clio-code` is the model.
+
+  THE SECOND REACH, and the sharper one: a tool always runs in a frame inside
+  the tool dialog, so the dialog's card would sit behind the popup — a 480x480
+  box poking out around a 512-wide popup, with its own title bar above it and
+  its own backdrop stacked under swal's, dimming the app twice. So this page
+  hides #ycToolDialog outright, by appending a <style> to the SHELL's head.
+  Hiding the whole dialog, not just .yc-td, is what drops the second backdrop
+  and restores the original's single dim.
+    opacity:0 + pointer-events:none, never display:none: a display:none frame
+  keeps its document but stops being rendered, and the countdown runs on a
+  250 ms setInterval that should not be handed to throttling heuristics.
+    Writing to the shell's DOM is worse than reading one of its globals,
+  because a read cannot leave damage behind and this can: the <style> lives in
+  the shell's head, so a throw between hideCard() and the popup resolving
+  would leave EVERY later tool dialog in that tab invisible, with nothing on
+  screen to explain it. Hence showCard() on every exit path and a `pagehide`
+  backstop for a teardown that skips them. That residual risk — an exception
+  mid-flow — is the price, and it was weighed and accepted (2026-10-16); the
+  sanctioned fix is a `ycTool` member the shell owns and resets in close().
+
+  Why the whole thing exists (the 2026-08-22 "Clio code not updating"
+  incident: a user read a three-day-old code four times in 26 seconds and
+  tried to log in with it). There is a 0-60 s delay between the SMS arriving
+  and app_settings.clio_login_code being written, and it is NOT carrier
+  latency: the inbound webhook only QUEUES the work (lib/actionDispatchers.js
+  deliverWorkflow -> scheduleResume inserts a workflow_resume row), which then
+  sits until the next Cloud Scheduler tick hits POST /process-jobs. This page
+  attacks the delay from both ends — it refuses to present a stale code AS
+  USABLE (names it as dead and waits for the new one), and it drains the queue
+  itself so the wait collapses to seconds.
+
+  Server contract: GET /clio-code -> { value, updated_at, age_seconds }
+  (routes/api.jwt.js; age_seconds is computed in SQL, immune to client clock
+  skew, NULL when updated_at is NULL).
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Get Clio Code 2</title>
+<link rel="stylesheet" href="/theme.css">
+<script src="/themeSync.js"></script>
+<style>
+  /* This page draws nothing. Every pixel the user sees is a popup in the
+     shell's document; all that is here is the tool dialog's card behind it,
+     so keep it transparent and empty. The fallback below is the one thing
+     that ever renders, and only when there is no shell to draw into. */
+  html, body { margin: 0; height: 100%; background: transparent; color: var(--text); }
+  body { font-family: var(--ui); font-size: var(--fs); line-height: 1.45; }
+  #fallback {
+    box-sizing: border-box; padding: 16px 18px; margin: 0;
+    background: var(--surface); overflow-wrap: anywhere;
+  }
+</style>
+</head>
+<body>
+<main id="fallback" aria-live="polite" hidden></main>
+<script>
+(function () {
+  'use strict';
+
+  const FRESH_MAX_AGE_S  = 180;    // <= this many seconds old: show it
+  const POLL_INTERVAL_MS = 5000;   // gap between automatic re-checks
+  const POLL_MAX_MS      = 120000; // stop waiting after this long
+  const TICK_MS          = 250;    // countdown repaint granularity
+  const KICK_INTERVAL_MS = 10000;  // how often to nudge the job queue
+
+  const fallback = document.getElementById('fallback');
+  const giveUp = (msg) => { fallback.textContent = msg; fallback.hidden = false; };
+
+  // ── The two things this page reaches for ────────────────────────────────
+  // Data: window.parent.ycTool, the documented token-free API, exactly as
+  // every other tool uses it.
+  // Drawing: window.top.Swal, which is NOT the documented API. See the header
+  // for why this one page spends that; nothing else should.
+  function shellApi() {
+    try {
+      const T = window.parent !== window ? window.parent.ycTool : null;
+      return T && T.version >= 1 ? T : null;
+    } catch (_) { return null; }
+  }
+  function shellSwal() {
+    try { return (window.top && window.top.Swal) || null; } catch (_) { return null; }
+  }
+
+  let waited = 0;
+  (function waitForShell() {
+    const T = shellApi();
+    const S = shellSwal();
+    if (T && S) { run(T, S); return; }
+    if ((waited += 100) > 5000) {
+      giveUp(T
+        ? 'This version draws its dialog with the app’s popup library, which did not load. Use Get Clio Code instead.'
+        : 'Open this from YisraCase (More → Get Clio Code 2): on its own it has no session to fetch the code with.');
+      return;
+    }
+    setTimeout(waitForShell, 100);
+  })();
+
+  function run(T, Swal) {
+    // ── The dialog this tool lives in is chrome we do not want ────────────
+    // The popup IS the UI, so the card behind it is hidden for the whole
+    // flow (including the gap before the first popup, which is how the
+    // original behaved: click, a beat of nothing, then the dialog).
+    // See THE SECOND REACH in the header for what this costs.
+    let hideStyle = null;
+    const hideCard = () => {
+      if (hideStyle) return;
+      try {
+        const d = window.top.document;
+        hideStyle = d.createElement('style');
+        hideStyle.setAttribute('data-clio-code-2', '');
+        hideStyle.textContent = '#ycToolDialog{opacity:0;pointer-events:none}';
+        d.head.appendChild(hideStyle);
+      } catch (_) { hideStyle = null; }
+    };
+    const showCard = () => {
+      try { if (hideStyle) hideStyle.remove(); } catch (_) { /* head is gone */ }
+      hideStyle = null;
+    };
+    // Every ordinary exit runs showCard(); this catches the ones that are not
+    // ordinary — the frame torn down without the popup ever resolving.
+    window.addEventListener('pagehide', showCard);
+
+    // The popup is in the shell's document; this frame is only the card
+    // behind it. When the flow ends, the card comes back and goes — once.
+    let closed = false;
+    const done = () => { if (closed) return; closed = true; showCard(); T.close(window); };
+
+    hideCard();
+
+    // Nudge the job queue while we wait.
+    //
+    // The inbound SMS creates a scheduled_jobs row immediately, but the row
+    // only runs when the 60s Cloud Scheduler tick hits POST /process-jobs —
+    // which is the whole reason the code shows up late. Hitting that endpoint
+    // ourselves collapses the wait to seconds.
+    //
+    // Safe to call repeatedly: the claim is transactional (FOR UPDATE SKIP
+    // LOCKED, pending->running) and recoverStuckJobs is purely
+    // time-thresholded, so extra invocations are no-ops. The engine
+    // explicitly documents overlapping polls as harmless — advanceWorkflow's
+    // claim-lock lets exactly one win.
+    //
+    // The inFlight guard is NOT about correctness, it is about the thundering
+    // herd: each call can claim up to BATCH_SIZE jobs, so N stacked calls
+    // could drain a backlog 10N-wide in parallel and fan out that many
+    // webhooks/SMS at once. One at a time.
+    let kickInFlight = false;
+    let lastKickAt   = 0;
+    let nextCheckAt  = 0;       // set when the wait path starts
+    let settled      = false;   // declared early: kickQueue reads it
+
+    const kickQueue = () => {
+      if (settled || kickInFlight || !T.authReady()) return;
+      kickInFlight = true;
+      lastKickAt   = Date.now();
+      T.apiSend('/process-jobs', 'POST', null, { quiet: true })
+        .then((r) => {
+          // Something actually ran — re-read the code now instead of waiting
+          // out the countdown. nextCheckAt is picked up by the ticker on its
+          // next pass, so no reentrancy here.
+          if (!settled && r && r.processed > 0) nextCheckAt = 0;
+        })
+        .catch((e) => console.warn('process-jobs kick failed', e))
+        .finally(() => { kickInFlight = false; });
+    };
+
+    // Server text goes into a swal `html:` string, so it is escaped here —
+    // the same esc() the original used.
+    const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => (
+      { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+    ));
+
+    const fmtTime = (ts) => new Date(ts).toLocaleString('en-US', {
+      timeZone: 'America/New_York',
+      year: 'numeric',
+      month: 'short',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: true,
+      timeZoneName: 'short',
+    });
+
+    // Server-computed age. NULL updated_at (the column is nullable) or a
+    // missing field means "we don't know" — treat as infinitely old so it can
+    // never pass the freshness gate. NULL is tested for by name: Number(null)
+    // is 0, which would read as "just updated" — the original's slip, not
+    // carried over.
+    const ageOf = (d) => {
+      const v = d ? d.age_seconds : undefined;
+      const n = v === null || v === undefined || v === '' ? NaN : Number(v);
+      return Number.isFinite(n) ? n : Infinity;
+    };
+
+    // "3 minutes", "4 hours", "3 days". Null when the age is unknown. Cutoffs
+    // are chosen so the singular never actually fires (this path is only
+    // reached above FRESH_MAX_AGE_S), but pluralize anyway.
+    const humanAge = (s) => {
+      if (!Number.isFinite(s)) return null;
+      const u = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
+      if (s < 90)     return u(Math.round(s), 'second');
+      if (s < 5400)   return u(Math.round(s / 60), 'minute');
+      if (s < 172800) return u(Math.round(s / 3600), 'hour');
+      return u(Math.round(s / 86400), 'day');
+    };
+
+    // The normal dialog — the pre-2026-08-22 presentation, unchanged.
+    const showCode = (d) => {
+      const secondsOld = ageOf(d);
+      let freshnessLabel = '';
+      if (secondsOld < 60) freshnessLabel = 'Just updated';
+      else if (secondsOld < 300) freshnessLabel = 'Recently updated';
+      else if (Number.isFinite(secondsOld)) freshnessLabel = `${Math.floor(secondsOld / 60)} min ago`;
+      else freshnessLabel = 'Age unknown';
+
+      Swal.fire({
+        title: 'Clio Login Code',
+        html: `
+          <div style="font-size: 24px; font-weight: bold; margin: 10px 0;"> ${esc(d.value)}</div>
+          <div class="yc-hint">Updated ${d.updated_at ? esc(fmtTime(d.updated_at)) : 'unknown'}</div>
+          <div class="yc-hint">${esc(freshnessLabel)}</div>`,
+        showCancelButton: true,
+        confirmButtonText: 'Copy Code',
+        cancelButtonText: 'Close',
+        icon: 'info',
+      }).then((result) => {
+        if (!result.isConfirmed) { done(); return; }
+        // The original fired the copy and forgot it. Here the copy has to
+        // finish BEFORE done() unloads this frame, or the write goes with it.
+        Promise.resolve()
+          .then(() => navigator.clipboard.writeText(d.value))
+          .catch((e) => console.warn('copy failed', e))
+          .then(done);
+      });
+    };
+
+    // Fire the first nudge in parallel with the initial read rather than
+    // after it. If the code turns out to be stale, the queue is already
+    // draining by the time we know; if it turns out to be fresh, we have
+    // spent one cheap request and processed any other due jobs early.
+    kickQueue();
+
+    main();
+
+    async function main() {
+      let data;
+      try {
+        data = await T.apiSend('/clio-code');
+      } catch (err) {
+        console.error(err);
+        Swal.fire({ title: 'Error', text: 'Unable to fetch login code', icon: 'error' }).then(done);
+        return;
+      }
+
+      if (ageOf(data) <= FRESH_MAX_AGE_S) {
+        showCode(data);
+        return;
+      }
+
+      // ---- stale: name it as dead and wait for a new one ----
+      //
+      // The old code IS shown here, in body text, inside a sentence that says
+      // it will not work. That is the opposite of the bug: the bug was a 24px
+      // bold number with the staleness in 12px grey underneath. Seeing it lets
+      // the user confirm it matches the one they already tried and failed with.
+      const baselineUpdatedAt = data.updated_at;
+      const baselineValue     = data.value;
+      const startedAt         = Date.now();
+      let latest      = data;   // most recent successful fetch
+      let ticker      = null;
+      let inFlight    = false;  // stops overlapping checks
+      let statusEl    = null;   // the countdown, inside the shell's popup
+      nextCheckAt     = Date.now() + POLL_INTERVAL_MS;
+
+      const stop = () => {
+        if (ticker) { clearInterval(ticker); ticker = null; }
+      };
+
+      const finish = (d) => {
+        if (settled) return;
+        settled = true;
+        stop();
+        showCode(d);            // Swal.fire replaces the waiting popup
+      };
+
+      // The popup is in the shell's document, so the countdown element is
+      // reached through the handle didOpen hands us, never getElementById
+      // (which would search THIS frame and find nothing).
+      const setStatus = (text) => { if (statusEl) statusEl.textContent = text; };
+
+      const doCheck = async () => {
+        if (settled || inFlight) return;
+
+        // Don't let a mid-wait token expiry pop the shell's blocking login
+        // dialog on top of ours. Skip this check; the user's next action
+        // re-authenticates normally.
+        if (!T.authReady()) {
+          nextCheckAt = Date.now() + POLL_INTERVAL_MS;
+          return;
+        }
+
+        inFlight = true;
+        setStatus('Checking…');
+        let fresh;
+        try {
+          fresh = await T.apiSend('/clio-code', 'GET', null, { quiet: true });
+        } catch (e) {
+          console.warn('clio-code check failed, will retry', e);
+          return;               // transient — the ticker keeps going
+        } finally {
+          inFlight    = false;
+          nextCheckAt = Date.now() + POLL_INTERVAL_MS;
+        }
+
+        latest = fresh;
+        // set_setting relies on ON UPDATE CURRENT_TIMESTAMP, which does not
+        // fire when the written value is identical to the stored one. Watch the
+        // value too, and accept either as "a new code landed".
+        if (fresh.updated_at !== baselineUpdatedAt || fresh.value !== baselineValue) {
+          finish(fresh);
+        }
+      };
+
+      const lastAge  = ageOf(data);
+      const ageText  = humanAge(lastAge);
+      const codeText = (data.value === null || data.value === undefined || data.value === '')
+        ? 'none stored' : esc(data.value);
+      const staleLine = (data.updated_at && ageText)
+        ? `The last code (<b>${codeText}</b>) arrived <b>${esc(fmtTime(data.updated_at))}</b> &mdash; it is ${esc(ageText)} old and will not work.`
+        : `The last code (<b>${codeText}</b>) is of unknown age and cannot be trusted.`;
+
+      Swal.fire({
+        title: 'Waiting for a new code',
+        html: `
+          <div style="font-size: 14px; margin: 10px 0;">${staleLine}</div>
+          <div style="font-size: 14px; margin: 10px 0;">
+            Start the Clio login now. The new code will appear here automatically &mdash;
+            usually a few seconds after the text arrives, occasionally up to a minute.
+          </div>
+          <div class="yc-hint" style="margin-top: 14px;">
+            <span id="clioNextCheck">Next check in ${Math.round(POLL_INTERVAL_MS / 1000)}s</span>
+            <button type="button" id="clioCheckNow"
+                    style="margin-left:10px; font-size:12px; padding:3px 10px; cursor:pointer;
+                           border:1px solid #bbb; border-radius:4px; background:#f6f6f6; color:#333;">
+              Check now
+            </button>
+          </div>`,
+        icon: 'warning',
+        showConfirmButton: false,
+        showCancelButton: true,
+        cancelButtonText: 'Show the old code anyway',
+        // THE ONE DELIBERATE DIFFERENCE from the original: a way out that is
+        // not "hand me the dead code". Dismissing with it closes the popup and
+        // the dialog behind it, and shows nothing.
+        showCloseButton: true,
+        allowOutsideClick: false,
+        didOpen: (popup) => {
+          // "Check now" lives in the HTML, not as a Swal confirm button, so
+          // that clicking it cannot close the dialog. A Swal button would
+          // resolve the promise and need a preConfirm dance to stay open.
+          statusEl = popup.querySelector('#clioNextCheck');
+          const btn = popup.querySelector('#clioCheckNow');
+          if (btn) btn.addEventListener('click', () => { kickQueue(); doCheck(); });
+        },
+      }).then((result) => {
+        // settled === true means doCheck (or the timeout) swapped in the real
+        // dialog. SweetAlert resolves THIS promise when that happens, so
+        // without the flag we would fire a second dialog on top of it — and
+        // close the frame out from under it.
+        if (settled) return;
+        stop();
+        if (result.dismiss === Swal.DismissReason.cancel) { showCode(latest); return; }
+        done();                 // the close button, or Escape
+      });
+
+      // One timer drives everything: the give-up check, the automatic
+      // re-check, the queue nudge, and the countdown repaint. Ticking at
+      // 250ms keeps the button responsive while the visible text still only
+      // changes once a second.
+      ticker = setInterval(() => {
+        if (settled) return;
+        if (Date.now() - startedAt >= POLL_MAX_MS) {
+          finish(latest);       // gave up — show the best we have
+          return;
+        }
+        if (Date.now() - lastKickAt >= KICK_INTERVAL_MS) kickQueue();
+        if (inFlight) return;   // status already reads "Checking…"
+        if (Date.now() >= nextCheckAt) { doCheck(); return; }
+        setStatus(`Next check in ${Math.max(1, Math.ceil((nextCheckAt - Date.now()) / 1000))}s`);
+      }, TICK_MS);
+    }
+  }
+})();
+</script>
+</body>
+</html>
