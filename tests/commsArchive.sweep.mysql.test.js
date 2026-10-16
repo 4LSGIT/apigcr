@@ -735,24 +735,27 @@ maybe('comms_archive_sweep on real MySQL', () => {
   });
 
   // ── M9 — cliff guard ────────────────────────────────────────────────────
-  test('M9 cliff guard: 75–90 d not all archived/none/purged; one error alert per day', async () => {
+  test('M9 cliff guard: 75–90 d not all archived/none/gone/purged; one error alert per day', async () => {
     const atRisk  = await ev({ recId: 'k1', ageDays: 80 });     // no row yet
     const done    = await ev({ recId: 'k2', ageDays: 80 });
     const lost    = await ev({ recId: 'k3', ageDays: 95 });     // past the window — ignored
     const fresh   = await ev({ recId: 'k4', ageDays: 30 });     // too young — ignored
     const split   = await ev({ tsi: true, ageDays: 78 });
-    const goneC   = await ev({ recId: 'k5', ageDays: 88 });     // gone is NOT resolved
-    const failC   = await ev({ recId: 'k6', ageDays: 77 });     // failed is NOT resolved
+    const goneC   = await ev({ recId: 'k5', ageDays: 88 });     // gone IS resolved (lost; comms_archive_gone pages it)
+    const failC   = await ev({ recId: 'k6', ageDays: 77 });     // failed is NOT resolved (may still be fetchable)
+    const mixed   = await ev({ recId: 'k7', ageDays: 82 });     // archived + gone: resolved
     await q(`INSERT INTO comms_media (channel, kind, source_table, source_id, part, provider, state)
              VALUES ('phone','call_recording','phone_event_log',?, 'k2','ringcentral','archived'),
                     ('phone','call_recording','phone_event_log',?, 'S1','ringcentral','archived'),
                     ('phone','call_recording','phone_event_log',?, 'S2','ringcentral','pending'),
                     ('phone','call_recording','phone_event_log',?, 'k5','ringcentral','gone'),
-                    ('phone','call_recording','phone_event_log',?, 'k6','ringcentral','failed')`,
-      [done, split, split, goneC, failC]);
+                    ('phone','call_recording','phone_event_log',?, 'k6','ringcentral','failed'),
+                    ('phone','call_recording','phone_event_log',?, 'k7','ringcentral','archived'),
+                    ('phone','call_recording','phone_event_log',?, 'k7b','ringcentral','gone')`,
+      [done, split, split, goneC, failC, mixed, mixed]);
     void atRisk; void lost; void fresh;
     let c = await sweep.cliffGuard(pool);
-    expect(c).toMatchObject({ at_risk: 4, no_row: 1 });
+    expect(c).toMatchObject({ at_risk: 3, no_row: 1 });
     expect(c.oldest_days).toBeGreaterThanOrEqual(79);
     await sweep.cliffGuard(pool);
     const cl = (await alerts()).filter(a => a.group_key === 'comms_archive_cliff');
@@ -761,7 +764,7 @@ maybe('comms_archive_sweep on real MySQL', () => {
 
     await q("UPDATE comms_media SET state = 'none' WHERE part = 'S2'");
     c = await sweep.cliffGuard(pool);
-    expect(c.at_risk).toBe(3);
+    expect(c.at_risk).toBe(2);
     await q("DELETE FROM comms_media WHERE part IN ('k5', 'k6')");
     await q("DELETE FROM phone_event_log WHERE id IN (?, ?)", [goneC, failC]);
     c = await sweep.cliffGuard(pool);

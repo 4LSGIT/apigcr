@@ -52,7 +52,7 @@
  *      90 days on the call clock.
  *   5. Cliff guard — on EVERY exit (disabled, locked, pre-flight failure,
  *      thrown error): any RC call 75–91 days old whose recording rows are
- *      not all archived / none / purged → one `error` alert per UTC day.
+ *      not all archived / none / gone / purged → one `error` alert per UTC day.
  *
  * ── TIME BOUND ─────────────────────────────────────────────────────────────
  * `deadlineMs` (45 s) stops STARTING work; `hardDeadlineMs` (3 min) bounds
@@ -619,10 +619,13 @@ async function _rowAlerts(db, { goneIds, failedIds, stuckIds, mismatchIds, noLin
 
 /**
  * RC calls cliffDays–(windowDays + cliffMarginDays) old (call clock) whose
- * recording rows are not ALL archived / none / purged — including calls with
- * no row at all yet, and rows that are gone or failed. The upper bound keeps
- * calls lost long ago from tripping it forever; the 1-day margin past 90
- * keeps it paging through the last day RC might still hold the file.
+ * recording rows are not ALL archived / none / gone / purged — including calls
+ * with no row at all yet, and failed rows (they may still be fetchable). A
+ * gone row is resolved: its content is already lost, and comms_archive_gone
+ * alerts on it; counting it would page daily for nothing anyone can save.
+ * The upper bound keeps calls lost long ago from tripping it forever; the
+ * 1-day margin past 90 keeps it paging through the last day RC might still
+ * hold the file.
  */
 async function cliffGuard(db) {
   const [[r]] = await db.query(
@@ -637,7 +640,7 @@ async function cliffGuard(db) {
                           WHERE m.source_table = ? AND m.source_id = e.id AND m.kind = ?)
              OR EXISTS (SELECT 1 FROM comms_media m
                          WHERE m.source_table = ? AND m.source_id = e.id AND m.kind = ?
-                           AND m.state NOT IN ('archived', 'none', 'purged')))`,
+                           AND m.state NOT IN ('archived', 'none', 'gone', 'purged')))`,
     [SOURCE, KIND, limits.cliffDays, limits.windowDays + limits.cliffMarginDays, SOURCE, KIND, SOURCE, KIND],
   );
   const n = Number(r.n) || 0;
