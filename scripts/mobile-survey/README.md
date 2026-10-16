@@ -188,7 +188,12 @@ sidebar, user breaks, a 39-character section label, per-surface removals (one
 of them firm-locked) — on screen on every surface, the phone drawer included,
 and in the layout editor (ui-custom S4b; `tab:tabAll:layout-editor`,
 `…:picker`, `…:label` — these also fail when the editor's scrolling body goes
-sideways, `m.boxes`)) —
+sideways, `m.boxes`) and keyboard shortcuts (`ui.user.shortcuts`, ui-custom
+S4c: the longest combo the editor can draw, the two long-labelled firm items,
+one binding to an item that doesn't exist so it lists as unavailable — in the
+Ctrl-K palette rows (`tab:tabAll:palette`) and the editor's Keyboard shortcuts tab,
+`tab:tabAll:layout-editor:shortcuts`, `…:shortcuts-add` (the picker open) and
+`…:shortcuts-capture` (a long refusal message under the keys box))) —
 enough to fill the tables
 that tend to overflow and to put every conditional Overview / Case Details box
 on screen. The mock ignores

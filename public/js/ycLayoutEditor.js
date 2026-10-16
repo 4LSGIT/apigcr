@@ -56,9 +56,27 @@
  * (theme.css tokens; id-scoped, so it outranks style.css's global input and
  * dark-theme button rules on specificity, never on load order).
  *
- * window.ycLayoutEditor = { open, close, isOpen, isDirty, session }
+ * Keyboard shortcuts (ui-custom S4c): the panel's second tab. The user's
+ * ui_config `shortcuts` document, { bindings: [ { combo, id } ] } — a combo
+ * captured by pressing it in the "Keys" box, bound to an item picked from the
+ * effective registry (the same picker as Home / sidebar, firm items
+ * included). The editor refuses what the server refuses (comboProblem, from
+ * ycAll.keys), the browser- and OS-reserved combos (reservedProblem below —
+ * platform knowledge, so here and not in the server), and a combo already
+ * bound (naming its item); it WARNS on Ctrl+Alt (AltGr on non-US Windows
+ * layouts types characters with it). A binding whose item is not in this
+ * user's effective registry now is listed as unavailable, kept, removable.
+ * The tabs share one Save: each dirty document is its own PUT (layout, then
+ * shortcuts); a failure in either keeps both sets of edits open, says which
+ * failed, and what did save becomes the new stored state. After a save the
+ * shell's firmData.ui.user is updated and applyAccess re-run once, which also
+ * rebuilds ycAll's shortcut map (its 'ycLauncherAccess' listener).
+ *
+ * window.ycLayoutEditor = { open, close, isOpen, isDirty, session, shortcutSession, reservedProblem }
  *   session(o) is the editor's pure core (no DOM; the panel drives one):
  *   o = { stored, effective, locked, base, registry, groups } — see session().
+ *   shortcutSession(o) is the Keyboard shortcuts tab's: see there.
+ *   open({ section: 'shortcuts' }) opens on that tab (default: the layout).
  */
 (function () {
   'use strict';
@@ -371,14 +389,174 @@
     return api;
   }
 
+  // ── Keyboard shortcuts (S4c) ────────────────────────────────────────────
+  var SC_CAP = 50;          // lib/uiConfigShape.js CAPS.bindings
+  var ARROWS = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'];
+  var FKEYS = ['F1', 'F2', 'F3', 'F4', 'F5', 'F6', 'F7', 'F8', 'F9', 'F10', 'F11', 'F12'];
+  // Combos the browser or the operating system owns, beyond the broad rules
+  // in reservedProblem. Exact ctrl / meta / alt; Shift either way. Kept
+  // conservative: a combo missing here that the browser keeps simply never
+  // reaches the page, but one that IS caught here can't be bound by mistake.
+  var RESERVED = [
+    { ctrl: true, meta: true, alt: false, keys: ['f'], why: '⌃⌘F is full screen on a Mac.' },
+    { ctrl: true, meta: true, alt: false, keys: ['q'], why: '⌃⌘Q locks a Mac.' },
+    { ctrl: true, meta: true, alt: false, keys: ['d'], why: '⌃⌘D looks up a word on a Mac.' },
+    { ctrl: true, meta: true, alt: false, keys: ['Space'], why: '⌃⌘Space opens the Mac emoji picker.' },
+    { ctrl: false, meta: true, alt: true, keys: ['i', 'j', 'c', 'u'], why: '⌘⌥I, J, C and U open the browser\'s developer tools and page source.' },
+    { ctrl: false, meta: true, alt: true, keys: ['d', 'h', 'm', 'w', 'n'], why: 'macOS and the browser use ⌘⌥D, H, M, W and N (Dock, hide others, minimize all, close all, new window).' },
+    { ctrl: false, meta: true, alt: true, keys: ARROWS, why: '⌘⌥ with an arrow switches browser tabs.' },
+    { ctrl: true, meta: false, alt: true, keys: ['Delete', 'Backspace'], why: 'Ctrl+Alt+Delete belongs to Windows.' },
+    { ctrl: true, meta: false, alt: true, keys: ARROWS, why: 'Ctrl+Alt with an arrow rotates the screen on some Windows computers.' },
+    { ctrl: true, meta: false, alt: true, keys: FKEYS, why: 'Ctrl+Alt with F1–F12 switches screens on Linux.' },
+  ];
+  /** Why the editor refuses a combo the browser or the OS owns, or null.
+   *  (The server's own rules — a modifier needed, not the palette's Ctrl-K /
+   *  ⌘K — are comboProblem's, checked first.) mac: word it for a Mac. */
+  function reservedProblem(c, mac) {
+    if (c.key === 'Tab' || c.key === 'Escape') {
+      return 'Tab and Esc move between fields and close dialogs, so they stay free.';
+    }
+    if (c.alt && !c.ctrl && !c.meta) {
+      return (mac ? '⌥' : 'Alt') + ' on its own types characters on a Mac (⌥E makes é) and opens the browser\'s menus on Windows.';
+    }
+    if ((c.ctrl ? 1 : 0) + (c.meta ? 1 : 0) === 1 && !c.alt) {
+      return (c.meta ? '⌘' : 'Ctrl') + ' with a single key belongs to the browser or to typing (new tab, close, reload, ' +
+        'address bar, copy, paste, undo, find, print…), and some of those can\'t be taken over at all.';
+    }
+    for (var i = 0; i < RESERVED.length; i++) {
+      var r = RESERVED[i];
+      if (r.ctrl === c.ctrl && r.meta === c.meta && r.alt === c.alt && r.keys.indexOf(c.key) >= 0) return r.why;
+    }
+    return null;
+  }
+
+  /**
+   * The Keyboard shortcuts tab's core — pure: no DOM, no network.
+   *   o.stored     the user's stored shortcuts document (or null)
+   *   o.effective  this user's effective registry
+   *   o.registry   FEATURE_REGISTRY (a label for an unavailable binding)
+   *   o.groups     the All tab's group order
+   *   o.keys       ycAll.keys (comboProblem, cleanCombo, format, sig)
+   *   o.mac, o.win the platform the combos are written for
+   * Edits return true, or false when refused (nothing changes).
+   */
+  function shortcutSession(o) {
+    o = o || {};
+    var K = o.keys;
+    var mac = !!o.mac, win = !!o.win;
+    var eff = isArr(o.effective) ? o.effective.filter(function (e) { return isObj(e) && typeof e.id === 'string'; }) : [];
+    var byId = Object.create(null);
+    eff.forEach(function (e) { byId[e.id] = e; });
+    var reg = isObj(o.registry) ? o.registry : {};
+    function norm(doc) {
+      var out = { bindings: [] };
+      if (isObj(doc) && isArr(doc.bindings)) doc.bindings.forEach(function (b) {
+        var c = isObj(b) && typeof b.id === 'string' && b.id ? K.cleanCombo(b.combo) : null;
+        if (c) out.bindings.push({ combo: c, id: b.id });
+      });
+      return out;
+    }
+    function copy(b) { return { combo: { ctrl: b.combo.ctrl, meta: b.combo.meta, alt: b.combo.alt, shift: b.combo.shift, key: b.combo.key }, id: b.id }; }
+    var stored = norm(o.stored);
+    var B = stored.bindings.map(copy);
+    function fmt(c) { return K.format(c, mac, win); }
+    function labelOf(id) {
+      if (id in byId) return String(byId[id].label);
+      var it = hasOwn(reg, id) && isObj(reg[id]) ? reg[id] : null;
+      return it && it.label != null ? String(it.label) : id;
+    }
+    function iconOf(id) {
+      var e = id in byId ? byId[id] : hasOwn(reg, id) && isObj(reg[id]) ? reg[id] : null;
+      return e && typeof e.icon === 'string' && ICON_RE.test(e.icon) ? e.icon : 'circle-question';
+    }
+    function view(e) { return { id: e.id, label: String(e.label), icon: typeof e.icon === 'string' && ICON_RE.test(e.icon) ? e.icon : 'circle-question', group: e.group }; }
+
+    var api = {
+      /** The bindings: [{ text, id, label, icon, available }], stored order. */
+      list: function () {
+        return B.map(function (b) {
+          return { text: fmt(b.combo), combo: copy(b).combo, id: b.id, label: labelOf(b.id), icon: iconOf(b.id), available: b.id in byId };
+        });
+      },
+      /** Items a shortcut can open: every effective item, grouped like All
+       *  (one ranked group for a query). → [{ group, items: [view] }] */
+      candidates: function (query) {
+        if (String(query == null ? '' : query).replace(/\s+/g, '')) {
+          return [{ group: null, items: L.rank(query, eff).map(view) }];
+        }
+        var order = isArr(o.groups) ? o.groups.slice() : [];
+        eff.forEach(function (e) { if (order.indexOf(e.group) < 0) order.push(e.group); });
+        return order.map(function (g) {
+          return { group: g, items: eff.filter(function (e) { return e.group === g; }).map(view) };
+        }).filter(function (g) { return g.items.length; });
+      },
+      /** What the editor says about a combo: { refuse } (can't be added),
+       *  else { ok: true, warn? }. */
+      check: function (c) {
+        var p = K.comboProblem(c);
+        if (p) {
+          return { refuse: (c.ctrl || c.meta || c.alt)
+            ? fmt(c) + ' opens the search palette (Ctrl+K, or ⌘K on a Mac), so it can\'t be a shortcut.'
+            : 'A shortcut needs Ctrl, ' + (mac ? '⌘ or ⌥' : 'Alt or ⌘') + ': without one it would fire while you type.' };
+        }
+        var r = reservedProblem(c, mac);
+        if (r) {
+          var sug = mac ? { ctrl: true, meta: true, alt: false, shift: false, key: c.key } : { ctrl: true, meta: false, alt: true, shift: false, key: c.key };
+          var free = !K.comboProblem(sug) && !reservedProblem(sug, mac) && !api.holder(sug);
+          return { refuse: r + ' Try ' + (free ? fmt(sug) : (mac ? '⌃⌘' : 'Ctrl+Alt+') + ' with another key') + '.' };
+        }
+        var h = api.holder(c);
+        if (h != null) return { refuse: fmt(c) + ' already opens ' + labelOf(h) + '.' };
+        var out = { ok: true };
+        if (c.ctrl && c.alt && !c.meta) {
+          out.warn = 'On Windows keyboards with an AltGr key (most non-US layouts), Ctrl+Alt with a key can type a ' +
+            'character such as € or @. If typing that character stops working, pick another combination.';
+        }
+        return out;
+      },
+      /** The id a combo is already bound to, or null. */
+      holder: function (c) {
+        var s = K.sig(c);
+        for (var i = 0; i < B.length; i++) if (K.sig(B[i].combo) === s) return B[i].id;
+        return null;
+      },
+      room: function () { return SC_CAP - B.length; },
+      format: fmt,
+      add: function (id, c) {
+        var cc = K.cleanCombo(c);
+        if (!cc || !(id in byId) || B.length >= SC_CAP || api.check(cc).refuse) return false;
+        B.push({ combo: cc, id: id });
+        return true;
+      },
+      remove: function (i) {
+        if (!(i >= 0 && i < B.length)) return false;
+        B.splice(i, 1);
+        return true;
+      },
+      /** The document Save writes: the full bindings list. */
+      doc: function () { return { bindings: B.map(copy) }; },
+      isDirty: function () { return canonical(api.doc()) !== canonical(stored); },
+    };
+    return api;
+  }
+
   // ── The panel ───────────────────────────────────────────────────────────
   if (typeof document === 'undefined') {
-    window.ycLayoutEditor = { session: session, labelProblem: labelProblem, canonical: canonical };
+    window.ycLayoutEditor = {
+      session: session, labelProblem: labelProblem, canonical: canonical,
+      shortcutSession: shortcutSession, reservedProblem: reservedProblem,
+    };
     return;
   }
 
   var root = null, sess = null, opener = null, saving = false;
   var labelErr = {};        // 'sf:i' → message, for label inputs holding a bad value
+  var scs = null;           // the Keyboard shortcuts tab's session
+  var sessOpts = null;      // what sess was built from (a partial save rebuilds it)
+  var scAdd = null;         // the shortcut being added: { id, combo }
+  var PANES = ['layout', 'shortcuts'];
+  var KEYS = (window.ycAll && window.ycAll.keys) || null;
+  function anyDirty() { return !!((sess && sess.isDirty()) || (scs && scs.isDirty())); }
 
   function el(tag, cls, text) {
     var n = document.createElement(tag);
@@ -417,15 +595,48 @@
     head.appendChild(btn('yle-x', 'cancel', 'Close', 'xmark'));
     box.appendChild(head);
 
+    // Two tabs (S4c): the Home + sidebar layout, and keyboard shortcuts. A
+    // strip outside the scrolling body, so it stays in view; a dot marks a
+    // tab with unsaved changes.
+    var tabs = el('div', 'yle-tabs');
+    tabs.setAttribute('role', 'tablist');
+    [['layout', 'Home & sidebar', 'table-cells'], ['shortcuts', 'Keyboard shortcuts', 'keyboard']].forEach(function (t) {
+      var b = btn('yle-tab', 'tab', null, t[2], t[1]);
+      b.setAttribute('data-pane', t[0]);
+      b.setAttribute('role', 'tab');
+      b.id = 'yleTab_' + t[0];
+      b.setAttribute('aria-controls', 'ylePane_' + t[0]);
+      var dot = el('span', 'yle-tab-dot', '•');
+      dot.setAttribute('aria-label', 'unsaved changes');
+      dot.hidden = true;
+      b.appendChild(dot);
+      tabs.appendChild(b);
+    });
+    box.appendChild(tabs);
+
     var body = el('div', 'yle-body');
-    body.appendChild(el('p', 'yc-hint yle-intro',
-      'Arrange your own Home tiles and sidebar. Nothing changes until you Save. ' +
-      'Hiding an item only takes its shortcut away: All and Ctrl+K still list every feature you have.'));
     var banner = el('div', 'yle-banner');
     banner.setAttribute('role', 'alert');
     banner.hidden = true;
     body.appendChild(banner);
-    SURFACES.forEach(function (sf) { body.appendChild(buildSection(sf)); });
+    var lay = el('div', 'yle-pane');
+    lay.id = 'ylePane_layout';
+    lay.setAttribute('data-pane', 'layout');
+    lay.setAttribute('role', 'tabpanel');
+    lay.setAttribute('aria-labelledby', 'yleTab_layout');
+    lay.appendChild(el('p', 'yc-hint yle-intro',
+      'Arrange your own Home tiles and sidebar. Nothing changes until you Save. ' +
+      'Hiding an item only takes its shortcut away: All and Ctrl+K still list every feature you have.'));
+    SURFACES.forEach(function (sf) { lay.appendChild(buildSection(sf)); });
+    body.appendChild(lay);
+    var scp = el('div', 'yle-pane');
+    scp.id = 'ylePane_shortcuts';
+    scp.setAttribute('data-pane', 'shortcuts');
+    scp.setAttribute('role', 'tabpanel');
+    scp.setAttribute('aria-labelledby', 'yleTab_shortcuts');
+    scp.hidden = true;
+    scp.appendChild(buildShortcutSection());
+    body.appendChild(scp);
     box.appendChild(body);
 
     var foot = el('div', 'yle-foot');
@@ -440,6 +651,9 @@
 
     root.addEventListener('click', onClick);
     root.addEventListener('input', onInput);
+    // the Keys box reads the combo before anything else hears it
+    root.addEventListener('keydown', onCaptureKey);
+    root.addEventListener('keyup', onCaptureKeyUp);
     // Esc / Tab / Enter on the document, not the panel: a click on a
     // non-focusable spot in the card leaves focus on <body>.
     document.addEventListener('keydown', onKey);
@@ -492,9 +706,22 @@
       sec.appendChild(la);
     }
 
+    sec.appendChild(buildPicker(sf, 'Add a shortcut to ' + (sf === 'home' ? 'Home' : 'the sidebar')));
+
+    var hw = el('div', 'yle-hidden-wrap');
+    hw.appendChild(el('h4', null, 'Hidden on this surface'));
+    hw.appendChild(el('ul', 'yle-hidden'));
+    hw.appendChild(el('div', 'yc-hint yle-hidden-none', 'Nothing hidden.'));
+    sec.appendChild(hw);
+    return sec;
+  }
+
+  // The "find a feature" picker: Home's, the sidebar's and the shortcut
+  // tab's (S4c) are the same markup, filled by renderPicker.
+  function buildPicker(sf, title) {
     var pk = el('div', 'yle-picker');
     pk.hidden = true;
-    var pl = el('label', 'yc-flabel', 'Add a shortcut to ' + (sf === 'home' ? 'Home' : 'the sidebar'));
+    var pl = el('label', 'yc-flabel', title);
     pl.setAttribute('for', 'ylePick_' + sf);
     pk.appendChild(pl);
     var prow = el('div', 'yle-pick-row');
@@ -507,13 +734,62 @@
     prow.appendChild(btn('yle-add-cancel', 'pick-close', null, null, 'Done'));
     pk.appendChild(prow);
     pk.appendChild(el('div', 'yle-pick-list'));
-    sec.appendChild(pk);
+    return pk;
+  }
 
-    var hw = el('div', 'yle-hidden-wrap');
-    hw.appendChild(el('h4', null, 'Hidden on this surface'));
-    hw.appendChild(el('ul', 'yle-hidden'));
-    hw.appendChild(el('div', 'yc-hint yle-hidden-none', 'Nothing hidden.'));
-    sec.appendChild(hw);
+  function buildShortcutSection() {
+    var sec = el('section', 'yle-sec ysc-sec');
+    sec.setAttribute('data-sf', 'shortcuts');
+    var head = el('div', 'yle-sec-head');
+    head.appendChild(el('h3', null, 'Keyboard shortcuts'));
+    sec.appendChild(head);
+    sec.appendChild(el('p', 'yc-hint ysc-intro',
+      'Press a key combination anywhere in YisraCase to open a feature. Shortcuts need a keyboard: on a phone ' +
+      'you can see and remove them here, but not press them. They are saved to your account, so they follow you ' +
+      'to every computer you sign in on.'));
+    var errs = el('ul', 'yle-errs');
+    errs.setAttribute('role', 'alert');
+    errs.hidden = true;
+    sec.appendChild(errs);
+    var rows = el('ol', 'ysc-rows');
+    rows.setAttribute('aria-label', 'Your keyboard shortcuts');
+    sec.appendChild(rows);
+    sec.appendChild(el('div', 'yc-hint ysc-none', 'No keyboard shortcuts yet.'));
+    var adds = el('div', 'yle-adds');
+    adds.appendChild(btn('yle-add', 'sc-open', null, 'plus', 'Add a keyboard shortcut'));
+    adds.appendChild(el('span', 'yc-hint yle-room'));
+    sec.appendChild(adds);
+
+    var add = el('div', 'ysc-add');
+    add.hidden = true;
+    var fl = el('div', 'yc-flabel ysc-step', '1. The feature it opens');
+    add.appendChild(fl);
+    var chosen = el('div', 'ysc-chosen');
+    chosen.hidden = true;
+    chosen.appendChild(el('span', 'ysc-chosen-name'));
+    chosen.appendChild(btn('yle-add-cancel', 'sc-change', null, null, 'Change'));
+    add.appendChild(chosen);
+    add.appendChild(buildPicker('shortcuts', 'Find the feature'));
+    var kl = el('label', 'yc-flabel ysc-step', '2. The keys');
+    kl.setAttribute('for', 'yscCapture');
+    add.appendChild(kl);
+    var cap = el('input', 'yle-input ysc-capture');
+    cap.id = 'yscCapture';
+    cap.type = 'text';
+    cap.readOnly = true;
+    cap.autocomplete = 'off';
+    cap.placeholder = 'Click here, then press the keys';
+    cap.setAttribute('aria-describedby', 'yscMsg');
+    add.appendChild(cap);
+    var msg = el('div', 'ysc-msg');
+    msg.id = 'yscMsg';
+    msg.setAttribute('aria-live', 'polite');
+    add.appendChild(msg);
+    var row = el('div', 'ysc-add-row');
+    row.appendChild(btn('yle-add-go yle-primary', 'sc-add', null, 'check', 'Add shortcut'));
+    row.appendChild(btn('yle-add-cancel', 'sc-cancel', null, null, 'Cancel'));
+    add.appendChild(row);
+    sec.appendChild(add);
     return sec;
   }
 
@@ -601,9 +877,11 @@
     if (pk.hidden) return;
     var list = pk.querySelector('.yle-pick-list');
     list.textContent = '';
-    var groups = sess.candidates(sf, pk.querySelector('.yle-pick-q').value);
-    if (!groups.length) {
-      list.appendChild(el('div', 'yc-hint yle-pick-empty', 'Nothing to add: everything that matches is already here.'));
+    var q = pk.querySelector('.yle-pick-q').value;
+    var groups = sf === 'shortcuts' ? scs.candidates(q) : sess.candidates(sf, q);
+    if (!groups.length || (groups.length === 1 && !groups[0].items.length)) {
+      list.appendChild(el('div', 'yc-hint yle-pick-empty', sf === 'shortcuts'
+        ? 'Nothing matches.' : 'Nothing to add: everything that matches is already here.'));
       return;
     }
     groups.forEach(function (g) {
@@ -630,14 +908,130 @@
     sec.querySelector('.yle-room').textContent = room <= 0 ? 'This surface is full (' + CAP + ' entries).' : '';
     sec.querySelectorAll('.yle-adds [data-act]').forEach(function (b) { b.disabled = room <= 0; });
   }
+  // ── The Keyboard shortcuts tab ──
+  function scSec() { return secOf('shortcuts'); }
+  function renderShortcuts() {
+    var sec = scSec(), ol = sec.querySelector('.ysc-rows');
+    ol.textContent = '';
+    var list = scs.list();
+    list.forEach(function (b, i) {
+      var li = el('li', 'yle-row ysc-row' + (b.available ? '' : ' ysc-unavailable'));
+      li.setAttribute('data-i', String(i));
+      li.appendChild(el('kbd', 'ysc-kbd', b.text));
+      li.appendChild(iconEl(b.icon, 'yle-ic'));
+      var main = el('span', 'yle-main');
+      main.appendChild(el('span', 'yle-name', b.label));
+      if (!b.available) {
+        var tag = el('span', 'yle-tag', 'Unavailable');
+        tag.title = 'Not available to you right now: pressing it does nothing. It is kept until you remove it.';
+        main.appendChild(tag);
+      }
+      li.appendChild(main);
+      var acts = el('span', 'yle-acts');
+      acts.appendChild(btn('yle-remove', 'sc-remove', 'Remove the shortcut ' + b.text + ' (' + b.label + ')', 'xmark'));
+      li.appendChild(acts);
+      ol.appendChild(li);
+    });
+    sec.querySelector('.ysc-none').hidden = list.length > 0;
+    var room = scs.room();
+    sec.querySelector('.yle-room').textContent = room <= 0 ? 'You have the most shortcuts there can be (' + SC_CAP + ').' : '';
+    sec.querySelector('[data-act="sc-open"]').disabled = room <= 0;
+    renderScAdd();
+  }
+  // The add box: the chosen item, the captured combo, and what the editor
+  // says about it (refused / a warning / free).
+  function renderScAdd() {
+    var sec = scSec(), add = sec.querySelector('.ysc-add');
+    if (add.hidden || !scAdd) return;
+    var chosen = add.querySelector('.ysc-chosen'), name = add.querySelector('.ysc-chosen-name');
+    name.textContent = '';
+    var ent = null;
+    if (scAdd.id != null) {
+      scs.candidates('').forEach(function (g) { g.items.forEach(function (it) { if (it.id === scAdd.id) ent = it; }); });
+    }
+    chosen.hidden = !ent;
+    if (ent) { name.appendChild(iconEl(ent.icon, 'yle-ic')); name.appendChild(el('span', null, ent.label)); }
+    var cap = add.querySelector('.ysc-capture'), msg = add.querySelector('.ysc-msg');
+    cap.value = scAdd.combo ? fmtCombo(scAdd.combo) : (scAdd.live || '');
+    msg.textContent = '';
+    msg.className = 'ysc-msg';
+    var ok = false;
+    if (scAdd.combo) {
+      var r = scs.check(scAdd.combo);
+      if (r.refuse) { msg.textContent = r.refuse; msg.className = 'ysc-msg ysc-refuse'; cap.setAttribute('aria-invalid', 'true'); }
+      else {
+        cap.removeAttribute('aria-invalid');
+        ok = true;
+        msg.textContent = r.warn ? r.warn : 'Free to use.';
+        msg.className = 'ysc-msg ' + (r.warn ? 'ysc-warn' : 'ysc-ok');
+      }
+    } else {
+      cap.removeAttribute('aria-invalid');
+      msg.textContent = 'For example ' + fmtCombo(isMacNow()
+        ? { ctrl: true, meta: true, alt: false, shift: false, key: 't' }
+        : { ctrl: true, meta: false, alt: true, shift: false, key: 't' }) + '.';
+    }
+    add.querySelector('[data-act="sc-add"]').disabled = !(ok && ent);
+  }
+  function isMacNow() { return !!(KEYS && KEYS.isMac()); }
+  function fmtCombo(c) { return scs ? scs.format(c) : ''; }
+  function openScAdd() {
+    var sec = scSec(), add = sec.querySelector('.ysc-add');
+    scAdd = { id: null, combo: null, live: '' };
+    add.hidden = false;
+    var pk = add.querySelector('.yle-picker');
+    pk.hidden = false;
+    pk.querySelector('.yle-pick-q').value = '';
+    renderPicker('shortcuts');
+    renderScAdd();
+    pk.querySelector('.yle-pick-q').focus();
+  }
+  function closeScAdd(focus) {
+    var sec = scSec();
+    sec.querySelector('.ysc-add').hidden = true;
+    scAdd = null;
+    if (focus) sec.querySelector('[data-act="sc-open"]').focus();
+  }
+  function addShortcutFromForm() {
+    if (saving || !scAdd) return;
+    var sec = scSec();
+    if (scAdd.id == null) { sec.querySelector('.ysc-add .yle-pick-q').focus(); return; }
+    if (!scAdd.combo) { sec.querySelector('.ysc-capture').focus(); return; }
+    if (!scs.add(scAdd.id, scAdd.combo)) { renderScAdd(); sec.querySelector('.ysc-capture').focus(); return; }
+    closeScAdd(false);
+    renderShortcuts();
+    renderStatus();
+    sec.querySelector('[data-act="sc-open"]').focus();
+  }
+
+  function showPane(name) {
+    if (PANES.indexOf(name) < 0) name = 'layout';
+    root.querySelectorAll('.yle-pane').forEach(function (p) { p.hidden = p.getAttribute('data-pane') !== name; });
+    root.querySelectorAll('.yle-tab').forEach(function (t) {
+      var on = t.getAttribute('data-pane') === name;
+      t.setAttribute('aria-selected', on ? 'true' : 'false');
+      t.classList.toggle('active', on);
+    });
+    root.querySelector('.yle-body').scrollTop = 0;
+  }
+  function paneShown() {
+    var t = root.querySelector('.yle-tab.active');
+    return t ? t.getAttribute('data-pane') : 'layout';
+  }
+
   function renderStatus() {
-    var dirty = sess.isDirty();
+    var dirty = anyDirty();
     root.querySelector('.yle-status').textContent = dirty ? 'Unsaved changes' : 'No changes';
     // a held bad label keeps Save clickable: the click says what to fix
     root.querySelector('.yle-save').disabled = (!dirty && !Object.keys(labelErr).length) || saving;
+    var dots = { layout: !!(sess && sess.isDirty()), shortcuts: !!(scs && scs.isDirty()) };
+    root.querySelectorAll('.yle-tab').forEach(function (t) {
+      t.querySelector('.yle-tab-dot').hidden = !dots[t.getAttribute('data-pane')];
+    });
   }
   function render() {
     SURFACES.forEach(renderSection);
+    renderShortcuts();
     renderStatus();
   }
 
@@ -651,25 +1045,27 @@
   }
   function clearErrors() {
     banner('');
-    SURFACES.forEach(function (sf) {
+    SURFACES.concat('shortcuts').forEach(function (sf) {
       var u = secOf(sf).querySelector('.yle-errs');
       u.textContent = '';
       u.hidden = true;
     });
   }
-  /** The server's errors[] inside the panel: under the surface its path
-   *  names (placed.home[3]…, removed.sidebar…), the rest in the banner. */
-  function placeErrors(errors) {
+  /** A refused save's errors[] inside the panel. The layout document's go
+   *  under the surface their path names (placed.home[3]…, removed.sidebar…);
+   *  the shortcuts document's all go under Keyboard shortcuts. → the rest
+   *  (for the banner). */
+  function placeErrors(key, errors) {
     var general = [];
     errors.forEach(function (m) {
-      var hit = /^(?:placed|removed)\.(home|sidebar)\b/.exec(String(m));
+      var hit = key === 'layout' ? /^(?:placed|removed)\.(home|sidebar)\b/.exec(String(m)) : [null, 'shortcuts'];
       if (hit) {
         var u = secOf(hit[1]).querySelector('.yle-errs');
         u.appendChild(el('li', null, String(m)));
         u.hidden = false;
       } else general.push(String(m));
     });
-    banner('The server refused the save.' + (general.length ? ' ' + general.join(' · ') : ' See the messages under each section.'), true);
+    return general;
   }
 
   // Focus the control `sel` on row i of sf after a re-render (or the nearest
@@ -715,6 +1111,28 @@
     switch (act) {
       case 'cancel': requestClose(); return;
       case 'save': save(); return;
+      case 'tab': showPane(b.getAttribute('data-pane')); return;
+      case 'sc-open': openScAdd(); return;
+      case 'sc-cancel': closeScAdd(true); return;
+      case 'sc-add': addShortcutFromForm(); return;
+      case 'sc-change': {
+        var cpk = scSec().querySelector('.ysc-add .yle-picker');
+        cpk.hidden = false;
+        cpk.querySelector('.yle-pick-q').value = '';
+        renderPicker('shortcuts');
+        cpk.querySelector('.yle-pick-q').focus();
+        return;
+      }
+      case 'sc-remove': {
+        var ri = Number(b.closest('.ysc-row').getAttribute('data-i'));
+        if (scs.remove(ri)) {
+          renderShortcuts();
+          renderStatus();
+          var left = scSec().querySelectorAll('.ysc-row [data-act="sc-remove"]');
+          (left[Math.min(ri, left.length - 1)] || scSec().querySelector('[data-act="sc-open"]')).focus();
+        }
+        return;
+      }
       case 'up': case 'down': {
         var d = act === 'up' ? -1 : 1;
         if (sess.move(sf, i, d)) { edited(sf); focusRow(sf, i + d, '.yle-' + act); }
@@ -773,10 +1191,23 @@
       }
       case 'pick-close':
         sec.querySelector('.yle-picker').hidden = true;
+        if (sf === 'shortcuts') {
+          if (scAdd && scAdd.id != null) sec.querySelector('.ysc-capture').focus();
+          else closeScAdd(true);
+          return;
+        }
         sec.querySelector('[data-act="pick"]').focus();
         return;
       case 'pick-add': {
         var pid = b.getAttribute('data-id');
+        if (sf === 'shortcuts') {         // step 1 of a shortcut: the item, then the keys
+          if (!scAdd) return;
+          scAdd.id = pid;
+          sec.querySelector('.yle-picker').hidden = true;
+          renderScAdd();
+          sec.querySelector('.ysc-capture').focus();
+          return;
+        }
         if (sess.add(sf, pid)) {
           sec.querySelector('.yle-picker').hidden = true;
           edited(sf);
@@ -839,6 +1270,8 @@
     if (e.key === 'Escape') {
       e.preventDefault();
       e.stopPropagation();
+      var sca = e.target.closest && e.target.closest('.ysc-add');
+      if (sca && !sca.hidden) { closeScAdd(true); return; }
       var pk = e.target.closest && e.target.closest('.yle-picker, .yle-label-add');
       if (pk && !pk.hidden) {
         pk.hidden = true;
@@ -851,6 +1284,7 @@
       var t = e.target;
       if (!t || !t.classList) return;
       if (t.classList.contains('yle-new-label')) { e.preventDefault(); addLabelFromInput(t.closest('.yle-sec')); }
+      else if (t.classList.contains('ysc-capture')) { e.preventDefault(); addShortcutFromForm(); }
       else if (t.classList.contains('yle-pick-q')) {
         e.preventDefault();
         var first = t.closest('.yle-picker').querySelector('.yle-pick-item');
@@ -866,12 +1300,52 @@
     }
   }
 
+  // The Keys box. Plain Tab / Shift+Tab move on, plain Esc closes the add
+  // box and plain Enter adds (the panel's onKey does those); plain Backspace
+  // or Delete clears. Anything else is captured — preventDefault, and no one
+  // else hears it (the panel's keys, the browser's where it lets a page) —
+  // and checked live. A bare modifier press shows the modifiers held.
+  function plainKey(e, k) { return e.key === k && !e.ctrlKey && !e.metaKey && !e.altKey; }
+  function onCaptureKey(e) {
+    var t = e.target;
+    if (!t || !t.classList || !t.classList.contains('ysc-capture')) return;
+    if (plainKey(e, 'Tab') || (plainKey(e, 'Escape') && !e.shiftKey) || (plainKey(e, 'Enter') && !e.shiftKey)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (saving || !scAdd || !KEYS) return;
+    if ((plainKey(e, 'Backspace') || plainKey(e, 'Delete')) && !e.shiftKey) { scAdd.combo = null; scAdd.live = ''; renderScAdd(); return; }
+    var c = KEYS.comboOf(e);
+    if (!c) {
+      scAdd.combo = null;
+      scAdd.live = fmtCombo({ ctrl: !!e.ctrlKey, meta: !!e.metaKey, alt: !!e.altKey, shift: !!e.shiftKey, key: '' }) + '…';
+      renderScAdd();
+      return;
+    }
+    scAdd.combo = c;
+    scAdd.live = '';
+    renderScAdd();
+  }
+  function onCaptureKeyUp(e) {
+    var t = e.target;
+    if (!t || !t.classList || !t.classList.contains('ysc-capture') || !scAdd || scAdd.combo) return;
+    if (!e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && scAdd.live) { scAdd.live = ''; renderScAdd(); }
+  }
+
   function onBeforeUnload(e) {
-    if (sess && sess.isDirty()) { e.preventDefault(); e.returnValue = ''; return ''; }
+    if (anyDirty()) { e.preventDefault(); e.returnValue = ''; return ''; }
   }
 
   function storedOf(ui) {
     return isObj(ui) && isObj(ui.user) && isObj(ui.user.layout) ? ui.user.layout : null;
+  }
+  function shortcutsOf(ui) {
+    return isObj(ui) && isObj(ui.user) && isObj(ui.user.shortcuts) ? ui.user.shortcuts : null;
+  }
+  function newShortcutSession(stored) {
+    return shortcutSession({
+      stored: stored, effective: L.effectiveRegistry(), registry: window.FEATURE_REGISTRY || {}, groups: L.groups(),
+      keys: KEYS, mac: !!(KEYS && KEYS.isMac()), win: !!(KEYS && KEYS.isWindows()),
+    });
   }
   function lockedOf(ui) {
     var ro = isObj(ui) && isObj(ui.firm) && isObj(ui.firm.registry_overrides) ? ui.firm.registry_overrides : null;
@@ -891,10 +1365,13 @@
   var loading = null;
   /** Open the editor over the shell. → Promise<opened?> (false before login,
    *  or when the current layout could not be read). */
-  function open() {
+  function open(opts) {
     if (!L.isReady()) return Promise.resolve(false);
+    if (!KEYS) KEYS = (window.ycAll && window.ycAll.keys) || null;
+    if (!KEYS) { console.error('[ycLayoutEditor] ycAll.keys missing — load order'); return Promise.resolve(false); }
     build();
-    if (isOpen()) return Promise.resolve(true);
+    var section = opts && opts.section;
+    if (isOpen()) { if (section) showPane(section); return Promise.resolve(true); }
     if (loading) return loading;
     if (typeof window.apiSend !== 'function') { notice(LOAD_FAIL); return Promise.resolve(false); }
     var from = document.activeElement;
@@ -906,7 +1383,7 @@
         if (!isObj(r)) throw new Error('no layers in the response');
         var fresh = { firm: isObj(r.firm) ? r.firm : {}, user: isObj(r.user) ? r.user : {} };
         syncShell(fresh);
-        show(fresh, from);
+        show(fresh, from, section);
         return true;
       })
       .catch(function (e) {
@@ -950,11 +1427,15 @@
     fd.ui = next;
     L.applyAccess({ ui: fd.ui });
   }
-  function show(ui, from) {
-    sess = session({
+  function show(ui, from, section) {
+    sessOpts = {
       stored: storedOf(ui), effective: L.effectiveRegistry(), locked: lockedOf(ui),
       base: window.DEFAULT_LAYOUTS || {}, registry: window.FEATURE_REGISTRY || {}, groups: L.groups(),
-    });
+    };
+    sess = session(sessOpts);
+    scs = newShortcutSession(shortcutsOf(ui));
+    scAdd = null;
+    root.querySelector('.ysc-add').hidden = true;
     labelErr = {};
     saving = false;
     clearErrors();
@@ -963,15 +1444,20 @@
     render();
     opener = from && from !== document.body ? from : document.getElementById('ycAllCustomize');
     root.hidden = false;
-    root.querySelector('.yle-body').scrollTop = 0;
+    showPane(section);
     window.addEventListener('beforeunload', onBeforeUnload);
-    var first = root.querySelector('.yle-rows button:not(:disabled)') || root.querySelector('.yle-cancel');
+    var first = paneShown() === 'shortcuts'
+      ? root.querySelector('.ysc-sec [data-act="sc-open"]:not(:disabled)')
+      : root.querySelector('.yle-rows button:not(:disabled)');
+    first = first || root.querySelector('.yle-cancel');
     if (first) first.focus();
   }
   function closeNow() {
     if (!root) return;
     root.hidden = true;
     sess = null;
+    scs = null;
+    scAdd = null;
     labelErr = {};
     window.removeEventListener('beforeunload', onBeforeUnload);
     try { if (opener && opener.focus && opener.isConnected) opener.focus(); } catch (_) { /* gone */ }
@@ -981,23 +1467,25 @@
   function requestClose() {
     if (!isOpen()) return Promise.resolve(true);
     if (saving) return Promise.resolve(false);
-    if (!sess.isDirty() && !Object.keys(labelErr).length) { closeNow(); return Promise.resolve(true); }
+    if (!anyDirty() && !Object.keys(labelErr).length) { closeNow(); return Promise.resolve(true); }
     return ask('Discard your unsaved launcher changes?', 'Discard', 'Keep editing').then(function (yes) {
       if (yes) closeNow();
       return yes;
     });
   }
   function isOpen() { return !!(root && !root.hidden); }
-  function isDirty() { return !!(isOpen() && sess && sess.isDirty()); }
+  function isDirty() { return !!(isOpen() && anyDirty()); }
 
-  // The shell's copy of the user layer, then the launcher re-run with it.
-  function applyToShell(cfg) {
+  // The shell's copy of the user layer — saved = { layout?, shortcuts? }, the
+  // stored documents — then the launcher re-run with it, once (which also
+  // rebuilds ycAll's shortcut map).
+  function applyToShell(saved) {
     var fd = window.firmData;
     if (!fd) return false;
     var ui = isObj(fd.ui) ? fd.ui : { firm: {}, user: {} };
     var user = {};
     if (isObj(ui.user)) for (var k in ui.user) if (hasOwn(ui.user, k)) user[k] = ui.user[k];
-    user.layout = cfg;
+    for (var s in saved) if (hasOwn(saved, s)) user[s] = saved[s];
     var next = {};
     for (var j in ui) if (hasOwn(ui, j)) next[j] = ui[j];
     next.user = user;
@@ -1013,41 +1501,75 @@
   // While a save is out: the panel's text boxes read-only (its clicks are
   // ignored in onClick), so nothing is typed that the PUT would not carry.
   function freeze(on) {
-    root.querySelectorAll('input').forEach(function (n) { n.readOnly = !!on; });
+    root.querySelectorAll('input').forEach(function (n) { if (!n.classList.contains('ysc-capture')) n.readOnly = !!on; });
   }
+  // Save: each dirty document is its own PUT — layout, then shortcuts; the
+  // second is sent whatever became of the first. All saved: the shell takes
+  // them, the panel closes. Anything refused: the panel stays open with
+  // every edit, what DID save becomes the new stored state (its tab is
+  // clean), and the banner says which part failed.
+  var PART_NAME = { layout: 'launcher layout', shortcuts: 'keyboard shortcuts' };
   function save() {
     if (!isOpen() || saving) return Promise.resolve(false);
     clearErrors();
     if (Object.keys(labelErr).length) {
+      showPane('layout');
       banner('Fix the highlighted section label first.');
       var bad = root.querySelector('.yle-label-in[aria-invalid="true"]');
       if (bad) bad.focus();
       return Promise.resolve(false);
     }
-    if (!sess.isDirty()) { closeNow(); return Promise.resolve(true); }
+    if (!anyDirty()) { closeNow(); return Promise.resolve(true); }
     if (typeof window.apiSend !== 'function') { banner('Saving is not available on this page.', true); return Promise.resolve(false); }
-    var doc = sess.doc();
+    var parts = [];
+    if (sess.isDirty()) parts.push({ key: 'layout', doc: sess.doc() });
+    if (scs.isDirty()) parts.push({ key: 'shortcuts', doc: scs.doc() });
     saving = true;
     freeze(true);
     renderStatus();
     root.querySelector('.yle-status').textContent = 'Saving…';
-    return Promise.resolve()
-      .then(function () { return window.apiSend('/api/ui-config', 'PUT', { scope: 'user', config_key: 'layout', config: doc }); })
-      .then(function (r) {
-        saving = false;
-        applyToShell(r && isObj(r.config) ? r.config : doc);
+    var res = {};
+    var chain = Promise.resolve();
+    parts.forEach(function (p) {
+      chain = chain
+        .then(function () { return window.apiSend('/api/ui-config', 'PUT', { scope: 'user', config_key: p.key, config: p.doc }); })
+        .then(function (r) { res[p.key] = { ok: true, config: r && isObj(r.config) ? r.config : p.doc }; },
+          function (e) { res[p.key] = { ok: false, e: e }; });
+    });
+    return chain.then(function () {
+      saving = false;
+      var saved = {}, failed = [], said = [];
+      parts.forEach(function (p) { if (res[p.key].ok) saved[p.key] = res[p.key].config; else failed.push(p.key); });
+      if (Object.keys(saved).length) applyToShell(saved);
+      if (!failed.length) {
         closeNow();
         toast('success', 'Saved — your launcher is updated');
         return true;
-      }, function (e) {
-        saving = false;
-        freeze(false);
-        if (!isOpen()) return false;
-        renderStatus();
-        if (e && e.status === 400 && e.body && isArr(e.body.errors) && e.body.errors.length) placeErrors(e.body.errors);
-        else banner('Save failed: ' + ((e && e.message) || 'request failed') + '. Your changes are still here.', true);
-        return false;
+      }
+      freeze(false);
+      if (!isOpen()) return false;
+      if (hasOwn(saved, 'layout')) { sessOpts.stored = saved.layout; sessOpts.effective = L.effectiveRegistry(); sess = session(sessOpts); }
+      if (hasOwn(saved, 'shortcuts')) scs = newShortcutSession(saved.shortcuts);
+      if (Object.keys(saved).length) render(); else renderStatus();
+      var both = parts.length > 1;
+      parts.forEach(function (p) {
+        if (res[p.key].ok) { said.push('Your ' + PART_NAME[p.key] + (p.key === 'layout' ? ' was' : ' were') + ' saved.'); return; }
+        var e = res[p.key].e;
+        if (e && e.status === 400 && e.body && isArr(e.body.errors) && e.body.errors.length) {
+          var general = placeErrors(p.key, e.body.errors);
+          said.push((both ? 'The server refused your ' + PART_NAME[p.key] + '.' : 'The server refused the save.') +
+            (general.length ? ' ' + general.join(' · ')
+              : ' See the messages under ' + (p.key === 'layout' ? 'each section.' : 'Keyboard shortcuts.')));
+        } else {
+          var why = (e && e.message) || 'request failed';
+          said.push(both ? 'Your ' + PART_NAME[p.key] + ' did not save: ' + why + '.' : 'Save failed: ' + why + '.');
+        }
       });
+      said.push('Your changes are still here.');
+      if (failed.indexOf(paneShown()) < 0) showPane(failed[0]);
+      banner(said.join(' '), true);
+      return false;
+    });
   }
 
   var cust = document.getElementById('ycAllCustomize');
@@ -1056,5 +1578,6 @@
   window.ycLayoutEditor = {
     open: open, close: requestClose, isOpen: isOpen, isDirty: isDirty,
     session: session, labelProblem: labelProblem, canonical: canonical,
+    shortcutSession: shortcutSession, reservedProblem: reservedProblem,
   };
 })();

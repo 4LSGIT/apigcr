@@ -269,7 +269,7 @@ describe('firm item actions', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────
-describe('shortcuts (user scope; storage only)', () => {
+describe('shortcuts (user scope; S4c adds the combo rules: tests/launcherS4c.test.js)', () => {
   const sc = (doc) => shape.validate('user', 'shortcuts', doc);
   const b = (over = {}, combo = {}) => ({ combo: { ctrl: true, meta: false, alt: false, shift: false, key: 'b', ...combo }, id: 'bills', ...over });
 
@@ -295,7 +295,8 @@ describe('shortcuts (user scope; storage only)', () => {
   test('duplicate combos refused (case-folded); cap 50', () => {
     expect(errs(sc({ bindings: [b(), b({ id: 'cases' }, { key: 'B' })] }))).toMatch(/same combo as bindings\[0\]/);
     expect(sc({ bindings: [b(), b({ id: 'cases' }, { shift: true })] }).ok).toBe(true);
-    const many = (n) => Array.from({ length: n }, (_, i) => b({}, { key: String.fromCharCode(33 + i) }));
+    // ctrl+alt: '!'…'R' include K, and Ctrl-K alone is the palette's (S4c rule)
+    const many = (n) => Array.from({ length: n }, (_, i) => b({}, { key: String.fromCharCode(33 + i), alt: true }));
     expect(sc({ bindings: many(50) }).ok).toBe(true);
     expect(errs(sc({ bindings: many(51) }))).toMatch(/at most 50/);
   });

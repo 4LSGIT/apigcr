@@ -302,7 +302,8 @@
       //            The undeniable set is stripped again; an entry that is not
       //            an array is ignored (with a warning) like a bad rename.
       // user.layout is the user's Home / sidebar layout (S4a, below);
-      // user.shortcuts is storage only until S4c.
+      // user.shortcuts is the user's keyboard shortcuts: /js/ycAll.js
+      // dispatches them (S4c); nothing in this block reads it.
       var FIRM_GROUP = 'Firm';
       var FIRM_ID_RE = /^firm:[a-z0-9-]{1,40}$/;
       var ICON_RE = /^[a-z0-9-]{1,40}$/;
@@ -2131,6 +2132,13 @@
     #ycPalette .yc-pal-item i { flex: 0 0 auto; width: 1.25em; text-align: center; color: var(--text-muted); }
     #ycPalette .yc-pal-item span { min-width: 0; overflow-wrap: anywhere; }
     #ycPalette .yc-pal-item .yc-pal-group { margin-left: auto; padding-left: 8px; font-size: var(--fs-xs); color: var(--text-muted); white-space: nowrap; }
+    /* the user's keyboard shortcuts for a row (S4c) */
+    #ycPalette .yc-pal-item .yc-pal-keys { flex: 0 0 auto; display: inline-flex; gap: 4px; margin-left: auto; }
+    #ycPalette .yc-pal-item .yc-pal-keys + .yc-pal-group { margin-left: 0; }
+    #ycPalette .yc-pal-keys kbd, #ycLayoutEditor .ysc-kbd {
+      font-family: var(--mono); font-size: var(--fs-xs); line-height: 1.4; padding: 0 6px; white-space: nowrap;
+      background: var(--surface-sunken); color: var(--text); border: 1px solid var(--border-strong); border-radius: var(--radius-sm);
+    }
     #ycPalette .yc-pal-item.active { background: var(--accent-soft); color: var(--accent-on-soft); }
     #ycPalette .yc-pal-item.active i { color: inherit; }
     #ycPalette .yc-pal-empty { padding: 12px; color: var(--text-muted); }
@@ -2244,6 +2252,37 @@
     #ycLayoutEditor .yle-pick-item span { min-width: 0; overflow-wrap: anywhere; }
     #ycLayoutEditor .yle-hidden-wrap { margin-top: 10px; }
     #ycLayoutEditor .yle-hidden-none[hidden] { display: none; }
+    /* Its two tabs and the Keyboard shortcuts tab (S4c). The strip sits
+       between the head and the scrolling body (flex: 0 0 auto, like them). */
+    #ycLayoutEditor .yle-tabs { flex: 0 0 auto; display: flex; gap: 4px; padding: 8px 16px 0; border-bottom: 1px solid var(--border); }
+    #ycLayoutEditor .yle-tab {
+      flex: 0 1 auto; min-width: 0; margin-bottom: -1px; border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+      border-color: transparent; background: transparent; white-space: normal; text-align: left;
+    }
+    #ycLayoutEditor .yle-tab.active { border-color: var(--border); border-bottom-color: var(--surface); background: var(--surface); font-weight: 600; }
+    #ycLayoutEditor .yle-tab i { color: var(--accent-2); }
+    #ycLayoutEditor .yle-tab-dot { color: var(--accent); font-weight: 700; }
+    #ycLayoutEditor .yle-tab-dot[hidden], #ycLayoutEditor .yle-pane[hidden] { display: none; }
+    #ycLayoutEditor .ysc-intro { margin: 0 0 8px; }
+    #ycLayoutEditor .ysc-rows { list-style: none; margin: 0; padding: 0; }
+    #ycLayoutEditor .ysc-kbd { flex: 0 0 auto; }
+    #ycLayoutEditor .ysc-unavailable .yle-name { color: var(--text-muted); }
+    #ycLayoutEditor .ysc-none[hidden], #ycLayoutEditor .ysc-add[hidden], #ycLayoutEditor .ysc-chosen[hidden] { display: none; }
+    #ycLayoutEditor .ysc-add {
+      margin-top: 8px; padding: 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-2);
+    }
+    #ycLayoutEditor .ysc-add .yle-picker { margin-top: 4px; padding: 0; border: 0; background: transparent; }
+    #ycLayoutEditor .ysc-step { display: block; margin-top: 8px; }
+    #ycLayoutEditor .ysc-step:first-child { margin-top: 0; }
+    #ycLayoutEditor .ysc-chosen { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 10px; margin-top: 4px; }
+    #ycLayoutEditor .ysc-chosen-name { display: inline-flex; align-items: center; gap: 6px; min-width: 0; overflow-wrap: anywhere; font-weight: 600; }
+    #ycLayoutEditor .ysc-capture { margin-top: 4px; font-family: var(--mono); cursor: pointer; }
+    #ycLayoutEditor .ysc-capture:focus { border-color: var(--accent); outline: 2px solid var(--accent-soft); }
+    #ycLayoutEditor .ysc-msg { margin-top: 4px; font-size: var(--fs-sm); color: var(--text-muted); overflow-wrap: anywhere; }
+    #ycLayoutEditor .ysc-msg.ysc-refuse { color: var(--danger); }
+    #ycLayoutEditor .ysc-msg.ysc-warn { color: var(--warn-text); }
+    #ycLayoutEditor .ysc-msg.ysc-ok { color: var(--ok); }
+    #ycLayoutEditor .ysc-add-row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
     @media (max-width: 768px) {
       #ycLayoutEditor { padding: 0; }
       #ycLayoutEditor .yle-box { max-width: none; max-height: none; height: 100%; border: 0; border-radius: 0; }
@@ -2251,6 +2290,7 @@
       #ycLayoutEditor .yle-body { padding: 8px 12px 16px; }
       #ycLayoutEditor .yle-row { padding-left: 8px; gap: 6px; }
       #ycLayoutEditor .yle-pick-items { grid-template-columns: 1fr; }
+      #ycLayoutEditor .yle-tabs { padding: 6px 12px 0; }
     }
   </style>
   <script src="/js/ycAll.js"></script>

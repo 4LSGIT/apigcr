@@ -111,7 +111,10 @@ in the More menu, under All, or in the search.
 
 **Customize my launcher**, under the search box on All, arranges your own Home
 tiles and sidebar: move items, hide the ones you don't use, and add shortcuts to
-anything else. See [Your own launcher](15-your-launcher.md).
+anything else. Its **Keyboard shortcuts** tab gives any feature a key
+combination of your own, such as **⌃⌘T** (**Ctrl+Alt+T** on Windows) for
+Tasks; the Ctrl+K search shows each feature's combination beside its name. See
+[Your own launcher](15-your-launcher.md).
 
 ### On a phone
 

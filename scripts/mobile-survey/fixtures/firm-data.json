@@ -153,6 +153,15 @@
      ]
     },
     "removed": { "home": ["log", "bills"], "sidebar": ["log"] }
+   },
+   "shortcuts": {
+    "bindings": [
+     { "combo": { "ctrl": true, "meta": true, "alt": false, "shift": false, "key": "t" }, "id": "tasks" },
+     { "combo": { "ctrl": true, "meta": true, "alt": true, "shift": true, "key": "F12" }, "id": "firm:unbroken" },
+     { "combo": { "ctrl": true, "meta": false, "alt": true, "shift": false, "key": "p" }, "id": "firm:payroll-portal" },
+     { "combo": { "ctrl": true, "meta": true, "alt": false, "shift": true, "key": "ArrowRight" }, "id": "moreAutomations" },
+     { "combo": { "ctrl": true, "meta": true, "alt": false, "shift": false, "key": "r" }, "id": "firm:retired-for-the-survey" }
+    ]
    }
   }
  }

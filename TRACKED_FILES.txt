@@ -1268,6 +1268,7 @@ tests/launcherS31.test.js
 tests/launcherS34.test.js
 tests/launcherS4a.test.js
 tests/launcherS4b.test.js
+tests/launcherS4c.test.js
 tests/likeEscapeSites.test.js
 tests/logService.setLogAbout.test.js
 tests/logService.updateLogLink.test.js

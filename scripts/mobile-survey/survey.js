@@ -320,6 +320,13 @@ async function walk(page, W, record) {
     if (tabs.includes('tabAll')) {
       const editorBox = async (m) => { m.boxes = [await page.evaluate(measureBox, '#ycLayoutEditor .yle-body')]; return m; };
       await page.evaluate(() => openMainTab('tabAll')); await sleep(800);
+      // the Ctrl-K palette, whose rows carry the user's keyboard shortcuts
+      // (ui-custom S4c): its list scrolls and clips sideways, so m.boxes
+      const palOpen = await page.evaluate(() => !!(window.ycAll && ycAll.open(document))); await sleep(300);
+      const pm = await measure(page, null);
+      pm.boxes = [palOpen ? await page.evaluate(measureBox, '#ycPalette .yc-pal-list') : { sel: '#ycPalette (did not open)', missing: true }];
+      await record('tab:tabAll:palette', pm, await shot('all_palette'));
+      await page.evaluate(() => window.ycAll && ycAll.close(false)); await sleep(200);
       // open() reads GET /api/ui-config first (S4b fix round) and resolves to whether it opened
       const opened = await page.evaluate(() => (window.ycLayoutEditor ? ycLayoutEditor.open() : false)) === true; await sleep(600);
       let m = await measure(page, null);
@@ -336,6 +343,23 @@ async function walk(page, W, record) {
           document.querySelector('#ycLayoutEditor .yle-sec[data-sf="sidebar"] .yle-label-add').scrollIntoView();
         }); await sleep(400);
         await record('tab:tabAll:layout-editor:label', await editorBox(await measure(page, null)), await shot('all_layout_editor_label'));
+        // its Keyboard shortcuts tab (ui-custom S4c, fixtures: ui.user.shortcuts):
+        // the list; the add box with its picker; then a feature picked and a
+        // refused combo pressed in the keys box (the longest message it draws).
+        // Nothing is added, so it still closes without a prompt.
+        await page.evaluate(() => document.querySelector('#ycLayoutEditor .yle-tab[data-pane="shortcuts"]').click()); await sleep(300);
+        await record('tab:tabAll:layout-editor:shortcuts', await editorBox(await measure(page, null)), await shot('all_layout_editor_shortcuts'));
+        await page.evaluate(() => document.querySelector('#ycLayoutEditor .ysc-sec [data-act="sc-open"]').click()); await sleep(400);
+        await record('tab:tabAll:layout-editor:shortcuts-add', await editorBox(await measure(page, null)), await shot('all_layout_editor_shortcuts_add'));
+        await page.evaluate(() => {
+          const item = document.querySelector('#ycLayoutEditor .ysc-add .yle-pick-item[data-id="firm:unbroken"]')
+            || document.querySelector('#ycLayoutEditor .ysc-add .yle-pick-item');
+          item.click();
+          const cap = document.querySelector('#ycLayoutEditor .ysc-capture');
+          cap.dispatchEvent(new KeyboardEvent('keydown', { key: 'w', code: 'KeyW', ctrlKey: true, bubbles: true, cancelable: true }));
+          cap.scrollIntoView();
+        }); await sleep(400);
+        await record('tab:tabAll:layout-editor:shortcuts-capture', await editorBox(await measure(page, null)), await shot('all_layout_editor_shortcuts_capture'));
         await page.evaluate(() => ycLayoutEditor.close()); await sleep(300);
       }
     }
