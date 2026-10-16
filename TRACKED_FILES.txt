@@ -1393,6 +1393,7 @@ tests/test-oauthService.js
 tests/test-timing-extensions.js
 tests/test_classifier.js
 tests/test_report_author.sh
+tests/themePrefsS5d.test.js
 tests/token.test.js
 tests/toolShellS33.test.js
 tests/triggerService.matchFailure.test.js

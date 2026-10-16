@@ -3,7 +3,7 @@
 Repo: `4LSGIT/apigcr`, branch `main`, work confined to `public/`.
 Supersedes `THEME-HANDOFF.md`. Verified against the `main` tarball of
 2026-08-24 — every count, path and line number below was read out of the repo,
-not from the v1 doc.
+not from the v1 doc (§10's storage paragraph: against main of 2026-10-16).
 
 **Goal:** one token sheet, one compact density, and a light/dark toggle in the
 shell that reaches every page nested outward from `index.html`, at any depth.
@@ -777,10 +777,15 @@ impossible to bisect.
 ## 10. User token overrides — the Theme page
 
 Landed after the colour arc. Each user can set their own value for any token in
-`theme.css`, per mode, stored in their browser. Reached from the More Features
+`theme.css`, per mode, saved on their account. Reached from the More Features
 grid; the page is `public/themeCustom.html`.
 
-**Storage.** `localStorage['yc-theme-vars']`, next to `yc-theme`:
+**Storage.** `localStorage['yc-theme-vars']`, next to `yc-theme` — the
+write-through cache of the account's ui_config user row `prefs`
+(`{ theme: { mode, vars } }`, ui-custom S5d), which is the truth: the shell
+adopts it at boot and writes every change back (`ycThemePrefs` in
+`index.html`; grammar in `lib/uiConfigShape.js`). Everything that paints reads
+only the cache, so nothing here waits on a fetch. The blob:
 
 ```json
 { "v":1, "preset":"warm-paper",
@@ -823,12 +828,20 @@ exactly `html[data-theme="dark"]`. Text-parsing that second block is wrong —
 `theme.css` opens **four** `html[data-theme="dark"]` blocks (the token block,
 C12's control baseline, and two SweetAlert blocks) and a regex welds them
 together. This is why §9 requires new tokens to live in those two blocks: a token
-declared anywhere else is simply not editable.
+declared anywhere else is simply not editable. The server's token list
+(`lib/uiConfigShape.js` `THEME_TOKENS`, which account writes are checked
+against) does text-parse theme.css, safely: each selector is matched only as a
+whole line ending in `{` — so only the bare token block, never the three
+`html[data-theme="dark"] …` element blocks — and cut at the first line-leading
+`}`, the way `scripts/checkThemePresets.js` does; `tests/themePrefsS5d.test.js`
+pins it to a real CSSOM walk, so drift fails CI.
 
 **Contrast.** The Advanced tab measures every pair `theme.css` documents (grep
 `Pairing:`) as the user edits, badges each AA/AAA/fail, and counts the failures
-in the toolbar. Nothing is blocked — it is their browser — but it is never
-silent. The point is narrow and worth stating plainly: the tokens are not
+in the toolbar. No contrast choice is blocked — it is their theme — but it is never
+silent. (What IS refused is a value outside the account's grammar — colours,
+lengths, numbers, font names: `setToken` turns it away at entry with a toast.)
+The point is narrow and worth stating plainly: the tokens are not
 independent knobs, and a free-form colour picker over all 71 of them is a
 one-click way to rebuild the exact defect §9's retuning note describes. The
 Presets tab exists so that most users never touch the raw tokens at all; every

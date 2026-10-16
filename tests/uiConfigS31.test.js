@@ -64,7 +64,10 @@ describe('scope / config_key / role / body envelope', () => {
     // ui-custom S4a: the user layer's layout key (a firm layout is not here yet)
     expect(shape.validate('user', 'layout', {}).ok).toBe(true);
     expect(errs(shape.validate('firm', 'layout', {}))).toMatch(/config_key/);
-    for (const k of ['prefs', 'drawers', 'custom_tabs', '']) {
+    // ui-custom S5d: the user's theme (prefs) is a user key only
+    expect(shape.validate('user', 'prefs', {}).ok).toBe(true);
+    expect(errs(shape.validate('firm', 'prefs', {}))).toMatch(/config_key/);
+    for (const k of ['drawers', 'custom_tabs', '']) {
       expect(shape.validate('firm', k, {}).ok).toBe(false);
       expect(shape.validate('user', k, {}).ok).toBe(false);
     }

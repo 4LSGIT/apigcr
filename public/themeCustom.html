@@ -179,9 +179,9 @@
   <div class="panel">
     <h2>Theme</h2>
     <div class="muted" style="margin-bottom:10px;">
-      Pick a look. It applies to this browser only — nobody else sees it, and it
-      follows you across every page of the app. Each preset carries a light and a
-      dark version, so the header toggle keeps working.
+      Pick a look. It is saved to your account and follows you to every device
+      and every page of the app — nobody else sees it. Each preset carries a
+      light and a dark version, so the header toggle keeps working.
     </div>
     <div class="cards" id="cards"></div>
   </div>
@@ -189,8 +189,8 @@
     <h2>Density</h2>
     <div class="muted" style="margin-bottom:10px;">
       How much fits on screen. Density is its own choice — it combines with
-      whichever theme is picked above, and follows the same rules: this browser
-      only, in both light and dark.
+      whichever theme is picked above, and follows the same rules: saved to your
+      account, yours only, in both light and dark.
     </div>
     <div class="cards" id="densityCards"></div>
   </div>
@@ -235,6 +235,14 @@
    actually applies it, in this page and in every other frame. See that file's
    header for the mechanism (setProperty, not an injected stylesheet) and for
    the ?notheme=1 escape hatch.
+
+   The theme follows the user (ui-custom S5d): localStorage is the cache of
+   the account's ui_config 'prefs' row. Inside the shell every save() and
+   every mode switch calls the shell's ycThemePrefs.changed(), which writes
+   the whole cache through to the account (debounced, quiet), and setToken()
+   refuses a value the account would refuse (ycThemePrefs.valueOk: colours,
+   lengths, numbers, font names). Opened standalone there is no shell, so
+   nothing roams and nothing is checked. public/index.html, "THEME ROAMING".
 
    Two rules this file exists to keep:
 
@@ -479,6 +487,11 @@ const DENSITY = {
 };
 
 /* ── store ──────────────────────────────────────────────────────────── */
+// The shell's roaming API, or null standalone (and cross-origin, which throws).
+function roaming() {
+  try { return (window.top !== window && window.top.ycThemePrefs) || null; } catch (_) { return null; }
+}
+
 function load() {
   let o = null;
   try { o = JSON.parse(localStorage.getItem(VARS_KEY) || 'null'); } catch (_) {}
@@ -496,6 +509,8 @@ let store = load();
 
 function save() {
   try { localStorage.setItem(VARS_KEY, JSON.stringify(store)); } catch (_) {}
+  const R = roaming();
+  if (R) R.changed();
   // The writer never receives its own storage event, so this document has to
   // re-apply itself. Every OTHER frame — the shell included — picks the change
   // up through the storage listener in themeSync.js.
@@ -797,19 +812,19 @@ function rowHtml(n) {
   let ctl;
   if (shape === 'hex') {
     ctl = `<input type="color" value="${esc(/^#[0-9a-f]{6}$/i.test(cur) ? cur : stk)}"
-             oninput="write('${n}', this.value)">
+             oninput="setToken('${n}', this.value)">
            <input type="text" value="${esc(cur)}" spellcheck="false"
-             onchange="write('${n}', this.value)">`;
+             onchange="setToken('${n}', this.value)">`;
   } else if (shape === 'len') {
     const num = parseFloat(cur), unit = String(cur).replace(/^-?[\d.]+/, '') || 'px';
     ctl = `<input type="number" step="0.5" value="${esc(isNaN(num) ? '' : num)}"
-             onchange="write('${n}', this.value === '' ? '' : this.value + '${esc(unit)}')">
+             onchange="setToken('${n}', this.value === '' ? '' : this.value + '${esc(unit)}')">
            <span class="unit">${esc(unit)}</span>`;
   } else {
     const c = parseColor(resolve(n, mode));
     ctl = (c ? `<span class="chip" style="background:${esc(cur)}"></span>` : '')
       + `<input type="text" value="${esc(cur)}" spellcheck="false"
-           onchange="write('${n}', this.value)">`;
+           onchange="setToken('${n}', this.value)">`;
   }
 
   const badges = pairsFor(n).map(p => {
@@ -825,7 +840,7 @@ function rowHtml(n) {
     <div class="nm">${esc(n)}${shared ? '<span class="flag">both modes</span>' : ''}</div>
     <div class="ctl">${ctl}</div>
     <div class="stock">${esc(stk)}</div>
-    <button class="x" title="Reset this token" onclick="write('${n}', '')">
+    <button class="x" title="Reset this token" onclick="setToken('${n}', '')">
       <i class="fa-solid fa-rotate-left"></i></button>
     ${badges ? `<div class="pairs">${badges}</div>` : ''}
   </div>`;
@@ -842,9 +857,27 @@ function renderFails() {
 }
 
 /* ── actions ────────────────────────────────────────────────────────── */
-function write(n, v) {
+// NOT named write(): an inline handler (onchange="…") resolves names through
+// the element and the DOCUMENT before the window, so write(…) there was
+// document.write — every Advanced-tab edit blanked this page (2026-08-26 →
+// ui-custom S5d). Keep handler names off document's own members (write,
+// open, close, …).
+function setToken(n, v) {
   v = String(v || '').trim();
-  setVar(n, v === '' || v === String(stockOf(n, mode)) ? null : v);
+  const off = v === '' || v === String(stockOf(n, mode));
+  const R = roaming();
+  if (!off && R && !R.valueOk(v)) {
+    // The account refuses it, so it would never follow the user — and the
+    // next boot's account copy would take it back off this device. Say so
+    // and put the row back the way it was.
+    try {
+      window.top.ycTool.toast('"' + v.slice(0, 60) + '" is not a value the Theme page can save. Use a colour '
+        + '(#1a2b3c, rgb(…), hsl(…)), a length (12px), a number or a font name.', 'warning');
+    } catch (_) {}
+    renderRows();
+    return;
+  }
+  setVar(n, off ? null : v);
 }
 function toggleGroup(t) { shut[t] = shut[t] === false; renderRows(); }
 
@@ -871,6 +904,8 @@ function setMode(m) {
     document.documentElement.setAttribute('data-theme', mode);
     try { localStorage.setItem('yc-theme', mode); } catch (_) {}
   }
+  const R = roaming();
+  if (viaShell && R) R.changed();
   render();
 }
 

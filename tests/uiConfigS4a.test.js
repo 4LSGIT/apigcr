@@ -142,7 +142,7 @@ describe('the user layout document', () => {
   test('layout is a USER key: the PUT envelope takes it for scope user, not firm', () => {
     expect(shape.validateWrite({ scope: 'user', config_key: 'layout', config: { placed: { home: [] } } }).ok).toBe(true);
     expect(errs(shape.validateWrite({ scope: 'firm', config_key: 'layout', config: {} }))).toMatch(/config_key for scope firm/);
-    expect(shape.CONFIG_KEYS.user).toEqual(['shortcuts', 'layout']);
+    expect(shape.CONFIG_KEYS.user).toEqual(['shortcuts', 'layout', 'prefs']);
   });
 });
 

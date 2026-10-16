@@ -413,7 +413,10 @@ body. Governing migrations in `ref/migrations/`.*
   is load-bearing: `case.html`/`contact.html` are quirks-mode, no doctype,
   and quirks tables don't inherit font-size — flip filed in `ref/plans.md`);
   `.tab-row` caps at `max(850px, 53.125em)`. Depth: `ref/THEME-CHEATSHEET.md`;
-  mode stays per-device, server-side roaming parked for ui_config (S5).
+  mode + overrides roam with the account (ui_config user `prefs`, ui-custom
+  S5d; localStorage is its write-through cache, adopted at boot and written
+  through on change by `ycThemePrefs` in index.html; values validated by
+  `lib/uiConfigShape.js` `themeValueProblem`).
 
 ## 1. SYSTEM OVERVIEW
 

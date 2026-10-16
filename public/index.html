@@ -6155,6 +6155,11 @@ async function initAuth() {
   }
   user  = window.firmData.currentUser || {};
   users = window.firmData.users       || [];
+  // The theme follows the user (ui-custom S5d): the account's theme beats this
+  // device's cache. Fire-and-forget — a theme problem must not hold the boot.
+  try {
+    window.ycThemePrefs.adopt(window.firmData.ui).catch(err => console.warn('[theme] adopt failed:', err));
+  } catch (err) { console.warn('[theme] adopt failed:', err); }
   loadUserContext();
 }
 
@@ -7394,7 +7399,178 @@ async function initAuth() {
 
     function toggleTheme() {
       applyTheme(document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark');
+      window.ycThemePrefs.changed();
     }
+
+    // ============ THEME ROAMING (ui-custom S5d) ============
+    // The theme follows the USER. The account's ui_config row (scope user,
+    // config_key 'prefs': { theme: { mode, vars } } — lib/uiConfigShape.js)
+    // is the truth; localStorage (yc-theme, yc-theme-vars) is its
+    // write-through cache. Everything that paints reads only the cache — the
+    // pre-paint script at the top of <head>, themeSync.js in every frame — so
+    // a device's second boot paints right before any fetch returns.
+    //   adopt(ui)   once per boot (initAuth), with firmData.ui. The account
+    //               beats the cache: its theme goes into localStorage and is
+    //               applied here (applyTheme + ycApplyThemeVars); every pane
+    //               follows on themeSync.js's own paths (the storage event for
+    //               the vars, the top-window observer for the mode). No row
+    //               yet: this device's theme is kept, and — when it is not the
+    //               stock theme — uploaded once as the account's first value
+    //               (a stock device must not claim the account; its first
+    //               change will). Only after GET /api/ui-config confirms there
+    //               is no row, because firm-data's ui read is fail-soft ({} on a
+    //               failed read looks like "no row") and a failed read must
+    //               never overwrite the account.
+    //   changed()   after every local change (toggleTheme, themeCustom.html):
+    //               a debounced PUT of the whole cache. Fire-and-forget, never
+    //               blocking, a console warning on failure, and quiet
+    //               (ycTool.apiSend { quiet: true }: no session → no login).
+    //               HELD until adopt has settled (applied the account, or
+    //               confirmed there is none): the header toggle works from first
+    //               paint, and a PUT of the pre-adopt cache would overwrite the
+    //               account with this device's stale theme. adopt also drops a
+    //               pending PUT — the account wins over a pre-adopt change (on
+    //               the no-row path the upload carries it). A read that failed
+    //               leaves write-through off for the session.
+    //   valueOk(v)  the value grammar for vars. lib/uiConfigShape.js
+    //               (themeValueProblem) holds the same; tests/themePrefsS5d.test.js
+    //               runs both over one matrix. themeCustom.html refuses a value
+    //               that fails it, so the editor never makes what the server
+    //               would refuse.
+    // Two devices: the last write wins. A change that never reached the
+    // account (the tab closed inside the debounce, or no session) loses to
+    // the account at the next boot.
+    window.ycThemePrefs = (function () {
+      var VARS_KEY = 'yc-theme-vars';
+      var DELAY = 1000;                           // ms of quiet before a PUT
+      var MODES = ['light', 'dark'];
+      var NAME_RE = /^--[a-zA-Z0-9-]{1,60}$/;     // themeSync.js's own name check
+      var SLUG_RE = /^[a-z0-9-]{1,40}$/;
+      var NUM = '[-+]?(?:\\d+(?:\\.\\d*)?|\\.\\d+)';
+      var ARG = '(?:' + NUM + '(?:%|deg)?|none)';
+      var TOKEN = new RegExp([
+        '#(?:[0-9a-fA-F]{8}|[0-9a-fA-F]{6}|[0-9a-fA-F]{3,4})(?![0-9a-zA-Z])',
+        '(?:rgba?|hsla?)\\(\\s*' + ARG + '(?:(?:\\s*[,/]\\s*|\\s+)' + ARG + '){2,3}\\s*\\)',
+        'var\\(\\s*--[a-zA-Z0-9-]{1,60}\\s*\\)',
+        NUM + '(?:px|rem|em|%|vh|vw|dvh|ch|ex|pt|deg)?(?![0-9a-zA-Z.%(])',
+        '"[A-Za-z0-9 _-]{1,40}"',
+        "'[A-Za-z0-9 _-]{1,40}'",
+        '-?[A-Za-z][A-Za-z0-9-]{0,40}(?![A-Za-z0-9_(-])',
+        '\\s*[,/]\\s*',
+        '\\s+'
+      ].map(function (s) { return '(?:' + s + ')'; }).join('|'), 'y');
+      var timer = null;
+      var settled = false;     // adopt applied the account, or confirmed there is none
+
+      function isObj(o) { return !!o && typeof o === 'object' && !Array.isArray(o); }
+      function warn(what, err) {
+        try { console.warn('[theme] ' + what + (err && err.message ? ': ' + err.message : '')); } catch (_) {}
+      }
+      function valueOk(v) {
+        if (typeof v !== 'string' || !v || v.length > 120 || v !== v.trim()) return false;
+        TOKEN.lastIndex = 0;
+        while (TOKEN.lastIndex < v.length) {
+          var at = TOKEN.lastIndex;
+          if (!TOKEN.exec(v) || TOKEN.lastIndex === at) return false;
+        }
+        return true;
+      }
+      function mode() {
+        return document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light';
+      }
+      function rawVars() {
+        try { return JSON.parse(localStorage.getItem(VARS_KEY) || 'null'); } catch (_) { return null; }
+      }
+      // The cache's vars blob in the shape the account stores (themeCustom.html's
+      // store). An entry the server would refuse is left out: a value saved before
+      // the editor checked values must not stop the rest of the theme roaming.
+      function localVars() {
+        var o = rawVars();
+        if (!isObj(o)) o = {};
+        var slug = function (s) { return typeof s === 'string' && SLUG_RE.test(s) ? s : null; };
+        var out = { v: 1, preset: slug(o.preset), density: slug(o.density), light: {}, dark: {} };
+        MODES.forEach(function (m) {
+          var src = isObj(o[m]) ? o[m] : {};
+          Object.keys(src).slice(0, 200).forEach(function (n) {
+            if (NAME_RE.test(n) && valueOk(src[n])) out[m][n] = src[n];
+          });
+        });
+        return out;
+      }
+      // JSON with object keys sorted (MySQL JSON re-orders keys on write).
+      function canonical(v) {
+        if (Array.isArray(v)) return '[' + v.map(canonical).join(',') + ']';
+        if (v !== null && typeof v === 'object') {
+          return '{' + Object.keys(v).sort().map(function (k) { return JSON.stringify(k) + ':' + canonical(v[k]); }).join(',') + '}';
+        }
+        return JSON.stringify(v);
+      }
+      function remember(row) {
+        var ui = window.firmData && window.firmData.ui;
+        if (ui && isObj(ui.user) && isObj(row)) ui.user.prefs = row;
+      }
+
+      function cancel() {
+        if (timer) clearTimeout(timer);
+        timer = null;
+      }
+      // The stock theme: light, and no override, preset or density in the cache.
+      function stock() {
+        var v = localVars();
+        return mode() === 'light' && !v.preset && !v.density
+          && !Object.keys(v.light).length && !Object.keys(v.dark).length;
+      }
+      function send() {
+        timer = null;
+        if (!settled) { warn('not saved to your account: the account theme has not been read yet'); return Promise.resolve(false); }
+        var T = window.ycTool;
+        if (!T) { warn('not saved to your account: the shell is not ready'); return Promise.resolve(false); }
+        var doc = { theme: { mode: mode(), vars: localVars() } };
+        return T.apiSend('/api/ui-config', 'PUT', { scope: 'user', config_key: 'prefs', config: doc }, { quiet: true })
+          .then(function (r) { remember(r && r.config); return true; },
+                function (err) { warn('not saved to your account', err); return false; });
+      }
+      function changed() {
+        if (timer) clearTimeout(timer);
+        timer = setTimeout(send, DELAY);
+      }
+
+      // The account's row into the cache, and on screen. → whether anything moved.
+      function apply(row) {
+        var th = isObj(row) && isObj(row.theme) ? row.theme : null;
+        if (!th) return false;
+        var varsMoved = false;
+        if (isObj(th.vars) && canonical(th.vars) !== canonical(rawVars())) {
+          try { localStorage.setItem(VARS_KEY, JSON.stringify(th.vars)); varsMoved = true; } catch (_) {}
+        }
+        var modeMoved = MODES.indexOf(th.mode) >= 0 && th.mode !== mode();
+        if (modeMoved) applyTheme(th.mode);
+        if (varsMoved && typeof window.ycApplyThemeVars === 'function') window.ycApplyThemeVars();
+        return varsMoved || modeMoved;
+      }
+
+      function adopt(ui) {
+        cancel();
+        var user = ui && isObj(ui.user) ? ui.user : null;
+        if (user && isObj(user.prefs)) { apply(user.prefs); settled = true; return Promise.resolve('account'); }
+        var T = window.ycTool;
+        if (!T) return Promise.resolve('skipped');
+        return T.apiSend('/api/ui-config', 'GET', null, { quiet: true }).then(function (r) {
+          cancel();                        // a change made while the read was in flight
+          if (r && isObj(r.user) && isObj(r.user.prefs)) {
+            remember(r.user.prefs);
+            apply(r.user.prefs);
+            settled = true;
+            return 'account';
+          }
+          settled = true;
+          if (stock()) return 'kept';
+          return send().then(function (ok) { return ok ? 'uploaded' : 'failed'; });
+        }, function (err) { warn('the account theme was not read; theme changes stay on this device this session', err); return 'failed'; });
+      }
+
+      return Object.freeze({ adopt: adopt, changed: changed, valueOk: valueOk });
+    })();
 
     // Restore sidebar state + theme on page load
     (function () {
