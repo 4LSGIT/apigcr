@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-10-16T05:14:05.421Z
+-- Generated: 2026-10-16T14:40:24.581Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:2ec4f5ded46185929fcfe29ec2c6bfca
+-- Fingerprint: sha256:85912779591dc4e031acc9fe0be4e578
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -3748,7 +3748,7 @@ CREATE TABLE `ui_config` (
   `scope` enum('system','firm','user') COLLATE utf8mb4_general_ci NOT NULL COMMENT 'firm = everyone (user_id 0); user = one user (user_id = users.user); system RESERVED (refused at write - the platform tier is code). sql_mode is relaxed here: an invalid value is stored as empty string with a warning, NOT rejected - the app layer (lib/uiConfigShape.js) is the only real validator',
   `user_id` tinyint NOT NULL DEFAULT '0' COMMENT 'users.user (signed tinyint, FK by convention) for scope user; sentinel 0 for scope firm. NOT NULL is load-bearing: MySQL unique indexes never collide on NULL, so a nullable user_id would allow duplicate firm rows',
   `role` varchar(20) COLLATE utf8mb4_general_ci NOT NULL DEFAULT '' COMMENT 'RESERVED: empty string only until a role model lands (writes refuse anything else). NOT NULL sentinel is load-bearing for uq_ui_config_scope, same reason as user_id',
-  `config_key` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL COMMENT 'app-validated per scope (lib/uiConfigShape.js CONFIG_KEYS): firm registry_overrides | user layout, shortcuts, items, prefs',
+  `config_key` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL COMMENT 'app-validated per scope (lib/uiConfigShape.js CONFIG_KEYS): firm registry_overrides, layout | user layout, shortcuts, items, prefs',
   `config` json NOT NULL COMMENT 'the normalized document lib/uiConfigShape.js returned. MySQL re-orders object keys on write - compare key-order-insensitively',
   `updated_by` tinyint DEFAULT NULL COMMENT 'users.user of the last writer (staff JWT only)',
   `updated_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
