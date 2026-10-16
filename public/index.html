@@ -1622,12 +1622,15 @@
       text-transform: uppercase; letter-spacing: 0.6px;
       padding: 14px 18px 4px; font-weight: 700;
     }
-    /* A label up to 40 characters long — a firm item's, or a section label
-       of the user's own (ui-custom S4a) — ends in an ellipsis instead of
-       running under the sidebar's edge (it clips sideways). The item's
-       title, the skinny-mode tooltip, still carries the whole label. */
+    /* An item label up to 40 characters long (a firm item's, or a renamed
+       one) ends in an ellipsis instead of running under the sidebar's edge;
+       the item's title, the skinny-mode tooltip, still carries the whole
+       label. Section labels get NO overflow rule: #appSidebar is a flex
+       column, and overflow:hidden on its direct child drops that child's
+       min-height floor, so once the sidebar is taller than the window the
+       headings were squashed and clipped (2026-10-16). A long section label
+       wraps instead. */
     #appSidebar .sb-item > span:not(.sb-badge) { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-    #appSidebar .sb-section-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
     /* Open Files sublist */
     #appSidebar .sb-sublist {
