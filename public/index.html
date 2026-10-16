@@ -6390,6 +6390,17 @@ YC.on('setting:*', '*', (fields, msg) => {
           denyButtonText: "Forgot Password",
           allowOutsideClick: false,
           allowEscapeKey: false,
+          // Enter in either field logs in (the deny button is Forgot Password,
+          // so Enter must never land on it). No <form> here: implicit
+          // submission would not apply anyway.
+          didOpen: () => {
+            ['username', 'password'].forEach((id) => {
+              const el = document.getElementById(id);
+              if (el) el.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); Swal.clickConfirm(); }
+              });
+            });
+          },
 
           preDeny: () => {
             const identifier = E("username").value;
@@ -6530,6 +6541,13 @@ async function elevateBlocking() {
       const form = document.getElementById("suElevForm");
       const pw = document.getElementById("suElevPassword");
       if (pw) pw.focus();
+      // Enter in the password field confirms. The form has two text inputs
+      // and no submit button, so the browser's implicit submission never
+      // fires on Enter; the submit listener below still serves a password
+      // manager's fill-and-submit.
+      if (pw) pw.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" && !e.isComposing) { e.preventDefault(); Swal.clickConfirm(); }
+      });
       if (form) form.addEventListener("submit", (e) => {
         e.preventDefault();
         Swal.clickConfirm();
