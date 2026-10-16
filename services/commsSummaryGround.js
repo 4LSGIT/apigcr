@@ -73,7 +73,17 @@
  * Stuart Sandweiss.", "Hi, Stuart Sandweiss again"); after a REPLY (yes /
  * thanks / thank you / bye / goodbye) it is an address — outside the speaker's
  * own first segment ("Yes, Stuart Sandweiss." after "you know who it is?").
- * A last name alone counts only after a title.
+ * A last name alone counts only after a title. v4.2 (the v4.1 QA: every call
+ * still flagged after the retry had correct roles): a segment that ALSO plainly
+ * addresses a different name is not counted — a reply + the full name there is
+ * the speaker's own (a split pickup: "Hello, Maria. Yes, Stuart Sandweiss."),
+ * and two plain addresses are merged turns ("Hey, Stuart. Hi, Maria.") —
+ * ambiguous (a near-variant of the assigned name — "Stewart", "Stu" — is the
+ * same name, and "I", "Ma'am", "Absolutely"… are no names); and thanks /
+ * thank you + the FULL name ENDING a segment (only digits or punctuation after
+ * it; "… Stuart Sandweiss. Bye." does not end with the name) with ≥ SIGNOFF_MIN_WORDS (20) words before it
+ * is a sign-off ("… Thank you, Stuart Sandweiss." closing a letter read aloud).
+ * Not handled: on-screen text read aloud that holds the reader's own name.
  *
  * A failed validation returns a FIXED code in `why` (never model text): it
  * lands in comms_summaries.last_error and in alerts.
@@ -110,6 +120,30 @@ const ADDRESS = Object.freeze({
   fillers: ['so much', 'very much', 'a lot', 'again', 'there'],
   titles: ['mr', 'mrs', 'ms', 'miss', 'dr'],
   selfTails: ['calling', 'here', 'speaking', 'from'],
+  signOffs: ['thanks', 'thank you'],                                                      // + a FULL name ending a long segment: a sign-off
+  // compared with apostrophes removed ("Ma'am" → maam, "I'll" → ill): pronouns, forms of address, and the reply words a
+  // transcriber may capitalise after a comma ("Yes, Absolutely.") — none of them a name
+  notNames: ['i', 'im', 'ill', 'ive', 'id', 'sir', 'maam', 'madam', 'mister', 'everyone', 'everybody', 'guys', 'all', 'god',
+    'absolutely', 'sure', 'great', 'perfect', 'right', 'correct', 'exactly', 'definitely', 'certainly', 'fine', 'cool',
+    'awesome', 'wonderful', 'excellent', 'good', 'welcome', 'please', 'no', 'nope', 'of', 'so', 'well', 'now', 'again',
+    'too', 'also', 'anyway', 'that', 'this', 'it', 'we', 'you', 'he', 'she', 'they', 'the', 'and', 'but'],
+});
+/** v4.2: a reply + the FULL name that ENDS a segment with at least this many words before it is a sign-off, not an address. */
+const SIGNOFF_MIN_WORDS = 20;
+/**
+ * v4.2: words that carry no content on their own — greetings, fillers, goodbyes, the stock "thank you for calling" /
+ * "have a nice day", and the dead-air phrases of a call that never connected ("Hello? Hello? Can you hear me?").
+ * Normalised forms ("can't" → "can t"). contentWords() scans the tokens once, dropping the longest phrase that starts at
+ * each token, then the single words; what is left is content (the no-speech gate, commsSummarizeSweep.speechGate).
+ */
+const FILLER = Object.freeze({
+  phrases: ['can you hear me', 'can t hear you', 'cannot hear you', 'i can t hear you', 'are you there', 'is anybody there',
+    'is anyone there', 'anybody there', 'anyone there', 'hello there', 'hi there', 'thank you', 'good morning',
+    'good afternoon', 'good evening', 'one moment', 'one second', 'just a second', 'hold on', 'excuse me', 'bye bye', 'uh huh',
+    'thank you for calling', 'thank you very much for calling', 'thanks for calling', 'have a nice day', 'have a good day',
+    'have a great day'],
+  words: ['hello', 'hi', 'hey', 'hiya', 'yes', 'yeah', 'yep', 'yup', 'ya', 'ok', 'okay', 'oh', 'um', 'uh', 'umm', 'uhh',
+    'hmm', 'hm', 'mm', 'mhm', 'mmhmm', 'ah', 'er', 'erm', 'alright', 'bye', 'goodbye', 'thanks', 'sorry', 'pardon', 'huh'],
 });
 const MIN_QUOTE_WORDS = 3;
 
@@ -212,7 +246,28 @@ function oneSpeaker(hay, at, len) {
   return true;
 }
 
-/** v4: do `speaker`'s own segments greet / thank / answer / bid goodbye to `name` (its assigned name)? See the header. */
+/** v4.2: the words of `text` that carry content — normalised, the FILLER phrases and words removed (see FILLER). */
+const FILLER_PHRASE_TOKENS = FILLER.phrases.map(p => p.split(' ')).sort((a, b) => b.length - a.length);   // longest first
+function contentWords(text) {
+  // One left-to-right token scan (a repeated string replace was quadratic: 1.3 s on 50k repeats).
+  const t = normalise(text).split(' ').filter(Boolean);
+  const out = [];
+  for (let i = 0; i < t.length;) {
+    const ph = FILLER_PHRASE_TOKENS.find(p => p.every((w, j) => t[i + j] === w));
+    if (ph) { i += ph.length; continue; }
+    if (!FILLER.words.includes(t[i])) out.push(t[i]);
+    i++;
+  }
+  return out;
+}
+
+/**
+ * v4 / v4.2: do `speaker`'s own segments greet / thank / answer / bid goodbye to `name` (its assigned name)? See the
+ * header. One segment at a time: an address to the assigned name counts unless the SAME segment also plainly addresses
+ * a DIFFERENT name (v4.2) — then a reply + the full name is the speaker's own (a split pickup: "Hello, Maria. Yes,
+ * Stuart Sandweiss."), and two plain addresses are two people's turns merged by diarization ("Hey, Stuart. Hi, Maria.")
+ * — ambiguous, so not counted either way.
+ */
 function addressesOwnName(hay, speaker, name) {
   const toks = normalise(name).split(' ').filter(t => t && !ADDRESS.titles.includes(t));
   if (!toks.length) return false;
@@ -222,12 +277,35 @@ function addressesOwnName(hay, speaker, name) {
   const title = `(?:${alt(ADDRESS.titles)})\\.?${SEP}`;
   const first = esc(toks[0]), last = toks[toks.length - 1];
   const who = toks.length > 1 ? `(?:${title})?(${first})|${title}(${esc(last)})` : `(?:${title})?(${first})`;
+  const opener = `(?:^|[^\\p{L}\\p{N}])(${alt([...ADDRESS.greetings, ...ADDRESS.replies])})(?:${SEP}(?:${alt(ADDRESS.fillers)}))?${SEP}`;
   // Read on the RAW words: a name is capitalised by the transcriber, a common word ("yes, will do") is not.
-  const re = new RegExp(`(?:^|[^\\p{L}\\p{N}])(${alt([...ADDRESS.greetings, ...ADDRESS.replies])})`
-    + `(?:${SEP}(?:${alt(ADDRESS.fillers)}))?${SEP}(?:${who})(?![\\p{L}\\p{N}])`, 'giu');
+  const re = new RegExp(`${opener}(?:${who})(?![\\p{L}\\p{N}])`, 'giu');
+  // v4.2: any word after an opener (a title allowed) — a candidate address to SOMEONE; classified below.
+  const reAny = new RegExp(`${opener}(?:${title})?([\\p{L}][\\p{L}'’]*)(?![\\p{L}\\p{N}])`, 'giu');
+  const nonName = new Set([...ADDRESS.notNames, ...ADDRESS.titles, ...FILLER.words,
+    ...[...ADDRESS.greetings, ...ADDRESS.replies].map(x => x.split(' ')[0])]);
+  /**
+   * v4.2: the same name, misspelled or shortened by the transcriber ("Stewart" / "Stu" for Stuart): a token sharing its
+   * first 3 letters with an assigned name token, or its first 2 letters and within 2 edits of it.
+   */
+  const sameName = (w) => toks.some(t => t === w || (w.length >= 3 && t.length >= 3 && w.slice(0, 3) === t.slice(0, 3))
+    || (w.slice(0, 2) === t.slice(0, 2) && editDistance(w, t) <= 2));
+  /** v4.2: a PLAIN address to a name that is not the assigned one: capitalised, alone (no capitalised word run on), not run on into its clause, no self-tail. */
+  const addressesAnother = (raw) => {
+    for (const m of raw.matchAll(reAny)) {
+      const w = normalise(m[2].replace(/['’]/g, '')).split(' ')[0] || '';
+      if (!/^\p{Lu}/u.test(m[2]) || sameName(w) || nonName.has(w)) continue;
+      const rest = raw.slice(m.index + m[0].length);
+      if (/^\s+\p{L}/u.test(rest)) continue;                         // "Thanks, Mark it down" / "Hello, Maria Lopez" (a full name: no plain address)
+      if (ADDRESS.selfTails.includes(normalise(rest).split(' ')[0] || '')) continue;
+      return true;
+    }
+    return false;
+  };
   const own = hay.segs.filter(s => s && s.s === speaker);
   return own.some((s, i) => {
     const raw = String(s.t).normalize('NFKC').replace(/[​-‍⁠﻿­]/g, '');
+    let hit = false;
     for (const m of raw.matchAll(re)) {
       if (!/^\p{Lu}/u.test(m[2] || m[3])) continue;                 // "Yes, will do." — not a name
       const rest = raw.slice(m.index + m[0].length);
@@ -236,12 +314,33 @@ function addressesOwnName(hay, speaker, name) {
       if (ADDRESS.selfTails.includes(next)) continue;               // "Hi, Stuart here" / "… calling" / "… speaking" / "… from"
       // The FULL name (the assigned surname next, or any capitalised word run straight on: unassigned or misheard).
       const full = !!m[2] && ((toks.length > 1 && next === last) || /^\s+\p{Lu}/u.test(rest));
-      if (!full) return true;                                       // a first name (or a title + surname) alone: an address
-      if (ADDRESS.greetings.includes(normalise(m[1]))) continue;   // "Hello, Stuart Sandweiss." — a self-introduction, anywhere
-      if (i > 0) return true;                                       // "Yes, Stuart Sandweiss." after the opening line — an address
+      if (!full) { hit = true; break; }                             // a first name (or a title + surname) alone: an address
+      const op = normalise(m[1]);
+      if (ADDRESS.greetings.includes(op)) continue;                 // "Hello, Stuart Sandweiss." — a self-introduction, anywhere
+      if (i === 0) continue;                                        // "Yes, Stuart Sandweiss." as the opening line — a self-ID
+      if (ADDRESS.signOffs.includes(op)) {
+        // v4.2: "… Thank you, Stuart Sandweiss." ENDING a long segment (a letter read aloud, a message) is a sign-off:
+        // after the full name only digits (a call-back number) or punctuation, and SIGNOFF_MIN_WORDS words before it.
+        // the rest of the name: capitalised words, an initial may keep its period ("J."); a sentence after it is not the name
+        const after = rest.replace(/^(?:[\s,;:—–-]+\p{Lu}(?:\.|[\p{L}'’\-]*))+/u, '');
+        const before = raw.slice(0, /^[\p{L}\p{N}]/u.test(m[0]) ? m.index : m.index + 1);   // the words ahead of the opener
+        if (!/\p{L}/u.test(after) && words(normalise(before)) >= SIGNOFF_MIN_WORDS) continue;
+      }
+      hit = true; break;                                            // "Yes, Stuart Sandweiss." after the opening line — an address
     }
-    return false;
+    return hit && !addressesAnother(raw);
   });
+}
+
+/** Levenshtein distance, for two short name tokens. */
+function editDistance(a, b) {
+  let prev = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) {
+    const cur = [i];
+    for (let j = 1; j <= b.length; j++) cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    prev = cur;
+  }
+  return prev[b.length];
 }
 
 const isStr = (v, max, min = 1) => typeof v === 'string' && v.trim().length >= min && v.length <= max;
@@ -397,4 +496,5 @@ function transcriptText(segments, fullText) {
   return segs.map(s => `[${ts(s.a)}] ${s.s}: ${s.t}`).join('\n');
 }
 
-module.exports = { validate, normalise, haystackOf, transcriptText, resolvedDate, MIN_QUOTE_WORDS, CALL_TYPES, ROLES, FLAGS, RESOLVED_RANGE, ADDRESS };
+module.exports = { validate, normalise, haystackOf, transcriptText, resolvedDate, contentWords, MIN_QUOTE_WORDS, CALL_TYPES, ROLES, FLAGS,
+  RESOLVED_RANGE, ADDRESS, FILLER, SIGNOFF_MIN_WORDS };

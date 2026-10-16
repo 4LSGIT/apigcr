@@ -137,6 +137,9 @@ It is AI-generated, so check the recording before relying on it.
   - **restricted calls**, which are never sent;
   - calls with less than `comms_min_summary_s` (30) seconds of audio (voicemails
     always are);
+  - calls and voicemails with no real speech — only greetings, "Hello? Hello?",
+    a phone menu, a hold message, call screening or a voicemail greeting (anyone
+    saying two real words, or a call-back number, is enough to get a summary);
   - calls Claude declines. That raises a `comms_summarize_refused` warning, and
     the transcript is unaffected.
 - **Every item is checked against the transcript.** A promised document, a date

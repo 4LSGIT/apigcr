@@ -13,8 +13,8 @@ const { getPrompt } = require('../lib/aiPrompts');
 describe('comms_summary prompt', () => {
   const p = getPrompt('comms_summary');
 
-  test('registered: Sonnet 5.5 default, json, 16000 tokens, version 4.1', () => {
-    expect(p).toMatchObject({ model: 'claude-sonnet-5-5', output_type: 'json', max_tokens: 16000, version: '4.1' });
+  test('registered: Sonnet 5.5 default, json, 16000 tokens, version 4.2', () => {
+    expect(p).toMatchObject({ model: 'claude-sonnet-5-5', output_type: 'json', max_tokens: 16000, version: '4.2' });
   });
 
   test('states the grounding rules the validator enforces', () => {
@@ -82,7 +82,7 @@ describe('comms_summary prompt', () => {
   });
 
   test('v4: staff are "firm" even on a personal call; their own affairs are call_type personal + the personal flag', () => {
-    expect(p.system).toMatch(/Firm staff are role "firm" on every call, their own personal calls included\./);
+    expect(p.system).toMatch(/Firm staff are role "firm" on every call, their own personal calls included/);   // v4.2 extends the sentence
     expect(p.system).toMatch(/A call by or to firm staff about their own affairs \(home,\s+car, shopping, travel, family, school or tuition, charity, synagogue\) is call_type "personal" with\s+the "personal" flag — never "creditor", "vendor" or "other"\./);
   });
 
@@ -131,5 +131,19 @@ describe('comms_summary prompt', () => {
 
   test('v4.1: the first-speaker cue is for roles only — who called whom is direction', () => {
     expect(p.system).toMatch(/may speak first\. The cue is for roles only:\s+who called whom is "direction"\./);
+  });
+
+  test('v4.2: staff are "firm" even unnamed — the caller on an outgoing call, the one who answered on an incoming call; personal calls included', () => {
+    expect(p.system).toMatch(/Firm staff are role "firm" on every call, their own personal calls included — named or not\. On an\s+"outgoing" call the person who placed the call is firm staff even when no name is said; on an\s+"incoming" call, so is the person who answered for the firm\./);
+    expect(p.system).toMatch(/Direction\s+unknown: do not say who called whom\. A personal call is no exception\./);
+  });
+
+  test('v4.2: a greeting + a FULL name in a message left on voicemail is the caller introducing themself, with an example', () => {
+    expect(p.system).toMatch(/The same holds in a message left on voicemail: a greeting followed by a FULL name is the caller\s+introducing themself, not the listener\./);
+    expect(p.system).toMatch(/\[00:00\] A: You've reached Maria\. Please leave a message after the tone\.\n\s+\[00:05\] B: Hi, Stuart Sandweiss, 248-555-0100, please call me back about your case\./);
+    expect(p.system).toMatch(/B is firm staff named Stuart, leaving the message; A is a recorded greeting\./);
+    // it sits in "Who is who", right after the full-name self-introduction rule it extends
+    expect(p.system.indexOf('The same holds in a message left on voicemail')).toBeGreaterThan(p.system.indexOf('by answering with their FULL name'));
+    expect(p.system.indexOf('The same holds in a message left on voicemail')).toBeLessThan(p.system.indexOf('Return exactly this JSON object'));
   });
 });

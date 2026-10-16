@@ -357,6 +357,28 @@ maybe('comms archive S3 summaries on real MySQL', () => {
     expect(await qrow(s.tid)).toMatchObject({ state: 'skipped', skip_reason: 'short' });
   });
 
+  test('G4b v4.2 no speech (greetings, fillers, a menu, a voicemail greeting only) → skipped no_speech: no call, no ai_calls row; a message with content is summarised', async () => {
+    const hello = await item({ segs: [{ s: 'A', a: 0, b: 1, t: 'Hello?' }, { s: 'B', a: 1, b: 2, t: 'Hello? Hello? Can you hear me?' }] });
+    const menu = await item({ segs: [{ s: 'A', a: 0, b: 9, t: 'For billing, press 1. For claims, press 2.' }] });
+    const vm = await item({ kind: 'voicemail', duration: 5, segs: [{ s: 'A', a: 0, b: 2, t: 'Hello? Hello?' }] });
+    const left = await item({ kind: 'voicemail', duration: 5, segs: [{ s: 'A', a: 0, b: 2, t: 'Hi, it\'s Maria.' }] });
+    expect(await run()).toMatchObject({ skipped_no_speech: 3, calls: 1, summarized: 1 });
+    for (const x of [hello, menu, vm]) {
+      expect(await qrow(x.tid)).toMatchObject({ state: 'skipped', skip_reason: 'no_speech', attempts: 0, est_cents: null });
+      expect(await calls(x.tid)).toEqual([]);
+      expect(await tr(x.tid)).toMatchObject({ state: 'transcribed', summary: null });
+    }
+    expect((await tr(left.tid)).state).toBe('summarized');
+    expect(api.bodies).toHaveLength(1);
+  });
+
+  test('G4c the no-speech gate is mode on only, like short: a sampled call is summarised', async () => {
+    await set('comms_summarize_mode', 'sample');
+    const a = await item({ segs: [{ s: 'A', a: 0, b: 1, t: 'Hello? Hello?' }] });
+    await q("INSERT INTO comms_eval_items (media_id, stratum, seed, added_by) VALUES (?, 'S1', 's', 1)", [a.mid]);
+    expect(await run()).toMatchObject({ calls: 1, summarized: 1, skipped_no_speech: 0 });
+  });
+
   test('G5 the SHARED cap: STT ledger + summary calls + calls in flight; no call past it (uncharged), alert', async () => {
     const { tid } = await item();
     await q(`INSERT INTO comms_stt_jobs (transcript_id, media_id, role, variant, job_ref, state, est_cents, cost_cents)
@@ -767,7 +789,8 @@ maybe('comms archive S3 summaries on real MySQL', () => {
     expect(ok.self_addressed).toBeUndefined();
     expect(ok.self_addressed_retried).toBeUndefined();
 
-    const rec = [{ s: 'A', a: 0, b: 1, t: 'Hey, Stuart.' }, { s: 'B', a: 1, b: 5, t: 'The person you are calling is not available. Please leave a message after the tone.' }];
+    // (v4.2: A says something after the greeting — "Hey, Stuart." beside a recording alone is a no-speech call, skipped)
+    const rec = [{ s: 'A', a: 0, b: 1, t: 'Hey, Stuart. Call me back about the papers.' }, { s: 'B', a: 1, b: 5, t: 'The person you are calling is not available. Please leave a message after the tone.' }];
     await item({ segs: rec, direction: 'outgoing' });
     api.queue.push(reply(JSON.stringify({ ...SWAPPED, parties: [{ speaker: 'A', role: 'firm', name: 'Stuart' }, { speaker: 'B', role: 'other', name: null }] })));
     const r1 = await run();
@@ -1007,6 +1030,15 @@ maybe('comms archive S3 summaries on real MySQL', () => {
     expect(await run()).toMatchObject({ summarized: 2, skipped_short: 0 });
     expect((await tr(short.tid)).summary_model).toBe('claude-sonnet-5-5');
     expect((await tr(failed.tid)).summary_model).toBe('claude-haiku-5-5');
+  });
+
+  test('SC3b a no-speech call skipped by the gate is summarised when asked (a request bypasses it, as it does short)', async () => {
+    const x = await item({ segs: [{ s: 'A', a: 0, b: 1, t: 'Hello? Hello?' }] });
+    await run();
+    expect(await qrow(x.tid)).toMatchObject({ state: 'skipped', skip_reason: 'no_speech' });
+    await ask(x.mid);
+    expect(await run()).toMatchObject({ summarized: 1, skipped_no_speech: 0 });
+    expect((await tr(x.tid)).state).toBe('summarized');
   });
 
   test('SC4 a request that ends refused (skipped) or max_tokens (failed) stamps its outcome: summary_pending never sticks', async () => {

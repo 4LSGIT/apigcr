@@ -485,3 +485,101 @@ describe('v4 self-address: a sentence break ends the greeting', () => {
     expect(r.selfAddressed).toEqual([]);
   });
 });
+
+describe('v4.2 self-address: the false positives of the v4.1 QA (every flagged call had correct roles)', () => {
+  // Synthetic transcripts only; the patterns are the QA's, the words are not.
+  const flagged = (name, lines, knownNames = []) => g.validate({ call_type: 'client', summary: 'x', parties: [{ speaker: 'A', role: 'firm', name }] },
+    { segments: lines.map((t, i) => ({ s: 'A', a: i, b: i + 1, t })), fullText: '', knownNames }).selfAddressed;
+  // 32 words before the sign-off: a letter read aloud
+  const LETTER = 'We are writing to let you know that your payment for the month of October has been received and applied to '
+    + 'your account balance as of today, and we thank you for it.';
+
+  test('1. a split pickup: "Hello." "Hello." then "Hello, Maria. Yes, Stuart Sandweiss." — the reply + full name is the speaker\'s own, since the same segment greets Maria', () => {
+    expect(flagged('Stuart Sandweiss', ['Hello.', 'Hello.', 'Hello, Maria. Yes, Stuart Sandweiss.'])).toEqual([]);
+    expect(flagged('Stuart', ['Hello.', 'Hello.', 'Hello, Maria. Yes, Stuart Sandweiss.'], ['Stuart'])).toEqual([]);
+    // the same segment from a speaker the model named MARIA: the greeting to Maria is still an address (the full name is a self-ID)
+    expect(flagged('Maria', ['Hello.', 'Hello.', 'Hello, Maria. Yes, Stuart Sandweiss.'])).toEqual(['A']);
+    // the other name must be PLAIN: a full name after a greeting is a self-introduction, so it disqualifies nothing
+    expect(flagged('Stuart Sandweiss', ['Hello.', 'Hello, Maria Lopez. Yes, Stuart Sandweiss.'])).toEqual(['A']);
+  });
+
+  test('2. a sign-off: "Thank you, <own full name>." ENDING a long segment (a letter read aloud) is not an address', () => {
+    expect(flagged('Stuart Sandweiss', ['Okay.', `${LETTER} Thank you, Stuart Sandweiss.`])).toEqual([]);
+    expect(flagged('Stuart Sandweiss', ['Okay.', `${LETTER} Thanks, Stuart Sandweiss, 248-555-0100.`])).toEqual([]);   // a call-back number may follow
+    // …not when words follow, not in a short reply, and not a first name alone (a message closing "Thanks, Stuart" thanks Stuart)
+    expect(flagged('Stuart Sandweiss', ['Okay.', `${LETTER} Thank you, Stuart Sandweiss, for everything.`])).toEqual(['A']);
+    expect(flagged('Stuart Sandweiss', ['Okay.', 'I will send it over. Thank you, Stuart Sandweiss.'])).toEqual(['A']);
+    expect(flagged('Stuart', ['Okay.', `${LETTER} Thanks, Stuart.`])).toEqual(['A']);
+    // the name must END the segment: a sentence after it is not part of the name ("Bye" capitalised included)
+    expect(flagged('Stuart Sandweiss', ['Okay.', `${LETTER} Thank you, Stuart Sandweiss. Bye.`])).toEqual(['A']);
+    expect(flagged('Stuart Sandweiss', ['Okay.', `${LETTER} Thank you, Stuart Sandweiss. bye.`])).toEqual(['A']);
+    // …while a middle initial (with its period) is part of the name (a known name: "Stuart J. Sandweiss" does not contain it whole)
+    expect(flagged('Stuart Sandweiss', ['Okay.', `${LETTER} Thank you, Stuart J. Sandweiss.`], ['Stuart Sandweiss'])).toEqual([]);
+    expect(flagged('Stuart Sandweiss', ['Okay.', `${LETTER} Thank you, Stuart J. Sandweiss. Bye.`], ['Stuart Sandweiss'])).toEqual(['A']);
+  });
+
+  test(`2b. the sign-off threshold: ${g.SIGNOFF_MIN_WORDS} words before the opener, not one fewer`, () => {
+    const lead = (n) => Array.from({ length: n }, (_, i) => `word${i}`).join(' ') + '.';
+    expect(g.SIGNOFF_MIN_WORDS).toBe(20);
+    expect(flagged('Stuart Sandweiss', ['Okay.', `${lead(20)} Thank you, Stuart Sandweiss.`])).toEqual([]);
+    expect(flagged('Stuart Sandweiss', ['Okay.', `${lead(19)} Thank you, Stuart Sandweiss.`])).toEqual(['A']);
+  });
+
+  test('3. diarization merged two turns: a segment greeting two different names is ambiguous — not counted', () => {
+    expect(flagged('Stuart', ['Okay.', 'Hey, Stuart. Hi, Maria, how are you?'])).toEqual([]);
+    expect(flagged('Stuart', ['Okay.', 'Thanks, Mr. Lopez. Bye, Stuart.'])).toEqual([]);
+    // one name only, or a second "name" that is no name (I, Sir, a filler, a self-tail): still an address
+    expect(flagged('Stuart', ['Okay.', 'Hey, Stuart. How are you?'])).toEqual(['A']);
+    expect(flagged('Stuart', ['Okay.', 'Hey, Stuart. Yes, I will.'])).toEqual(['A']);
+    expect(flagged('Stuart', ['Okay.', 'Thanks, Stuart. Yes, Sir.'])).toEqual(['A']);
+    expect(flagged('Stuart', ['Okay.', 'Hey, Stuart. Hi, Okay.'])).toEqual(['A']);
+    expect(flagged('Stuart', ['Okay.', 'Hey, Stuart. Yes, sure.'])).toEqual(['A']);                // lowercase: no name
+    expect(flagged('Stuart', ['Okay.', 'Hey, Stuart. Hi, Maria here.'])).toEqual(['A']);
+    expect(flagged('Stuart', ['Okay.', 'Hey, Stuart. Hi, Maria, calling about the case.'])).toEqual(['A']);   // a self-tail after punctuation
+    // apostrophes go before the lookup: "Ma'am", "I'll" are no names; nor is a reply word the transcriber capitalised
+    expect(flagged('Stuart', ['Okay.', 'Thanks, Stuart. Yes, Ma\'am.'])).toEqual(['A']);
+    expect(flagged('Stuart', ['Okay.', 'Hey, Stuart. Yes, I\'ll.'])).toEqual(['A']);
+    expect(flagged('Stuart', ['Okay.', 'Hey, Stuart. Yes, I, uh, think so.'])).toEqual(['A']);
+    expect(flagged('Stuart', ['Okay.', 'Hey, Stuart. Yes, Absolutely.'])).toEqual(['A']);
+    expect(flagged('Stuart', ['Okay.', 'Thanks, Stuart. Okay, Great.'])).toEqual(['A']);
+    // a near-variant of the assigned name is the SAME name (a misspelling, a short form), not a second person
+    expect(flagged('Stuart', ['Okay.', 'Hi, Stewart. Thanks, Stuart.'])).toEqual(['A']);
+    expect(flagged('Stuart', ['Okay.', 'Hi, Stuart. Bye, Stu.'])).toEqual(['A']);
+    expect(flagged('Stuart', ['Okay.', 'Hi, Stuart. Bye, Steve.'])).toEqual([]);   // a different name stays one
+    // the second name in ANOTHER segment does not excuse this one
+    expect(flagged('Stuart', ['Hi, Maria.', 'Hey, Stuart.'])).toEqual(['A']);
+  });
+
+  test('4. text read aloud that holds the reader\'s own name is NOT fixed: it reads as an address (recall kept)', () => {
+    expect(flagged('Maria Lopez', ['Okay, it says.', 'Thank you, Maria Lopez, for your payment of the balance.'])).toEqual(['A']);
+  });
+
+  test('the v4 true positives still flag', () => {
+    const segs = [
+      { s: 'A', a: 0, b: 1, t: 'Hello?' },
+      { s: 'B', a: 1, b: 3, t: 'Hi, it\'s Stuart. Do you know who it is?' },
+      { s: 'A', a: 3, b: 6, t: 'Yes, Stuart Sandweiss. Send me the papers and I\'ll look at them.' },
+    ];
+    const v = (name, ss) => g.validate({ call_type: 'client', summary: 'x', parties: [{ speaker: 'A', role: 'firm', name }] },
+      { segments: ss, fullText: ss.map(x => x.t).join('\n') }).selfAddressed;
+    expect(v('Stuart Sandweiss', segs)).toEqual(['A']);
+    expect(v('Stuart', [{ s: 'A', a: 0, b: 1, t: 'Hey, Stuart.' }, ...segs.slice(1)])).toEqual(['A']);
+    expect(flagged('Stuart Sandweiss', ['Okay.', 'Okay, bye Mr. Sandweiss.'], ['Stuart Sandweiss'])).toEqual(['A']);
+  });
+
+  test('contentWords: greetings, fillers and dead-air phrases removed; anything else is content', () => {
+    expect(g.contentWords('Hello? Hello, can you hear me? Hi there. Okay, bye-bye.')).toEqual([]);
+    expect(g.contentWords('Thank you. Good morning! Uh huh.')).toEqual([]);
+    expect(g.contentWords('Hello, call me back.')).toEqual(['call', 'me', 'back']);
+    expect(g.contentWords('Hi, it\'s Maria.')).toEqual(['it', 's', 'maria']);
+    expect(g.contentWords('No.')).toEqual(['no']);                                // an answer is content
+    expect(g.contentWords('Thank you very much for calling, have a great day. Thanks for calling.')).toEqual([]);
+    expect(g.contentWords('I can\'t hear you.')).toEqual([]);                      // the longest phrase wins
+  });
+
+  test('contentWords is linear: 100k repeated phrases in well under a second (a repeated replace took seconds)', () => {
+    const t0 = Date.now();
+    expect(g.contentWords('hello there '.repeat(100_000))).toEqual([]);
+    expect(Date.now() - t0).toBeLessThan(1000);
+  });
+});

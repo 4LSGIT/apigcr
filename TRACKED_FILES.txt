@@ -1071,6 +1071,7 @@ tests/commsSummarize.audit.mysql.test.js
 tests/commsSummarize.mysql.test.js
 tests/commsSummaryGround.test.js
 tests/commsSummaryPrompt.test.js
+tests/commsSummarySpeechGate.test.js
 tests/commsTranscribe.migration.mysql.test.js
 tests/commsTranscribe.mysql.test.js
 tests/commsTranscribeAudio.test.js

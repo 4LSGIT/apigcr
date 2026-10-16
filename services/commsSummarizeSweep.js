@@ -17,7 +17,7 @@
  *   pending → calling (written AHEAD of the call with est_cents = the WORST
  *   case — input + max_tokens of output at the model's price; the cap counts it
  *   until ai_calls holds the billed cost) → done | skipped (restricted / short /
- *   empty / refused / purged) | failed. rowOps bound to comms_summaries,
+ *   empty / no_speech / refused / purged) | failed. rowOps bound to comms_summaries,
  *   claimStates pending + calling. The 'calling' write is the LAST step before
  *   the call: one conditional UPDATE that also requires the transcript still
  *   'transcribed' and its item not restricted (no gap between the last look
@@ -55,7 +55,9 @@
  *   Restricted → skipped (never sent — R5's escape hatch). A call (not a
  *   voicemail) with comms_media.duration_s (AssemblyAI's measured length)
  *   under comms_min_summary_s → skipped 'short' (mode on). Empty text →
- *   skipped. The shared monthly cap (commsTranscribeSweep.monthToDateCents:
+ *   skipped. No real speech (speechGate: greetings, fillers, menus, hold,
+ *   call screening, voicemail greetings only) → skipped 'no_speech' (mode
+ *   on). The shared monthly cap (commsTranscribeSweep.monthToDateCents:
  *   the STT ledger + this sweep's ai_calls + calls in flight) → wait. Then:
  *   aiService.call — promptKey comms_summary, the transcript as UNTRUSTED
  *   userInput ("[mm:ss] S: words"), trusted context in vars (kind, date,
@@ -129,7 +131,7 @@ const limits = {
   timeoutLongMs: 120_000,
   timeoutShortMs: 60_000,
   longPromptTokens: 20_000,      // above this (estimated) the long timeout
-  systemTokens: 3_400,           // the prompt's own size (v4.1, ~8.4K characters + the firm context at its cap + staff names ≈ 3K tokens), for the estimate
+  systemTokens: 3_400,           // the prompt's own size (v4.2, ~9.1K characters + the firm context at its cap + staff names ≈ 3K tokens), for the estimate
   leaseMin: 15,
   maxAttempts: 3,
   backoffCapMin: 60,
@@ -423,6 +425,11 @@ async function _summarizeOne(ctx, row) {
   if (typeof segments === 'string') { try { segments = JSON.parse(segments); } catch (_) { segments = []; } }
   const text = ground.transcriptText(segments, row.full_text);
   if (!text.trim()) { await _skip(db, row, 'empty'); out.skipped_empty++; return null; }
+  // v4.2: no real speech (greetings, fillers, menus, hold or voicemail greetings only) → skipped, no call, nothing charged.
+  // Gated like 'short': mode on, never a staff request.
+  if (!requested && cfg.mode === 'on' && speechGate(segments, row.full_text).skip) {
+    await _skip(db, row, 'no_speech'); out.skipped_no_speech++; return null;
+  }
 
   // The shared cap (STT + summaries + calls in flight).
   const userInput = note ? `<staff_note>\n${_asData(note)}\n</staff_note>\n\n${text}` : text;
@@ -633,7 +640,39 @@ async function _purgedInFlight(ctx, row) {
  * (RECORDING). Deterministic, from the transcript and the validated parties only.
  */
 const SUBSTANTIVE_MIN_WORDS = 2;
-const RECORDING = /\b(?:after the (?:tone|beep)|leave (?:a|your) (?:message|name)|record your message|press (?:\d|one|two|star|pound)|mailbox|is not available|are not available|the (?:number|person|party) you (?:have )?(?:dialed|called|are calling|reached)|please hold|your call is important)\b/i;
+/**
+ * v4.2: a RECORDING is told by phrasings only recordings use — a voicemail greeting, a carrier intercept, a phone
+ * menu, a queue message. Phrases a live receptionist says too ("please hold", "he is not available", "would you like
+ * to leave a message?", "please stay on the line while I transfer you") are NOT cues on their own: v4.1 counted them,
+ * so a live speaker became a "recording" and the guided retry was wrongly suppressed. One canonical phrasing is enough.
+ */
+const RECORDING = new RegExp(`\\b(?:${[
+  'after the (?:tone|beep)', 'at the (?:sound of the )?(?:tone|beep)', 'record your (?:message|name)', 'when you (?:have )?finished recording',
+  // a request to someone ("… a message for / to / on / with …") and a caller's own "if I don't answer, please leave a
+  // message" are live; the lookbehind runs only where "please leave" has already matched, and looks back at most 200
+  // characters of the sentence (unbounded, a long run of "please leave" rescanned it at every match: 5 s on 240 KB)
+  "please leave(?<!\\bif (?:i|we) (?:don't|don’t|do not|can't|can’t|cannot) (?:answer|pick up|get it|get to it)\\b[^.?!]{0,200}please leave)"
+    + " (?:a|your|me a) (?:brief |short |detailed )?(?:message|voicemail)(?!,?\\s+(?:for|with|to|on)\\b)",
+  'please leave your name,? (?:and )?(?:your )?(?:(?:tele)?phone )?number,? (?:and )?(?:a |any )?(?:brief |short |detailed )?message',
+  // a menu's "press N" opens its clause (start, after , ; : . ? !, "please" or "or") — "it told me to press 1" is speech
+  '(?<=(?:^|[.?!,;:])\\s*|\\b(?:please|or)\\s+)press (?:\\d|one|two|three|four|five|six|seven|eight|nine|zero|star|pound)',
+  'para espa[nñ]ol', 'oprima',
+  "(?:you(?:'ve|’ve| have) reached|welcome to) (?:the )?(?:voice ?mail|mailbox)", 'mailbox (?:is full|has not been set up|belonging to)',
+  'the (?:number|person|party|subscriber|customer|wireless customer) you (?:have (?:dialed|dialled|called|reached)|dialed|dialled|are calling|are trying to reach|called is)',
+  "the (?:person|party|subscriber|customer) you(?:'re|’re) trying to reach is (?:not available|unavailable)",
+  '(?:disconnected|changed) or is no longer in service', 'your call has been forwarded', 'automated voice (?:messaging|message) system',
+  'your call is (?:very )?important to us', 'please continue to hold', 'please hold for the next available',
+  'all (?:of )?our (?:representatives|agents|associates|operators) are (?:currently )?(?:busy|assisting|helping|on other)',
+  'in the order (?:it was|they were) received', 'google voice will try to connect you',
+  "(?:there is|there's|there’s) no one available to take your call", 'no one is available to take your call',
+  "(?:we're|we’re|we are) (?:not able|unable) to take your call",
+].join('|')})\\b`, 'i');
+/**
+ * v4.2: the no-speech gate's cues — RECORDING, plus "you've reached", which a live receptionist may say ("you've
+ * reached the law office, this is Anna") and so is no RECORDING cue for the retry; for the gate it only drops its own
+ * sentence, and the rest of what that speaker said still counts.
+ */
+const GATE_CUES = new RegExp(`${RECORDING.source}|\\byou(?:'ve|’ve| have) reached\\b(?!\\s+out\\b)`, 'i');
 function substantiveSpeakers(segments, parties) {
   const roled = new Set((parties || []).map(p => p.speaker));
   const words = new Map();
@@ -645,6 +684,65 @@ function substantiveSpeakers(segments, parties) {
     if (RECORDING.test(String(s.t || ''))) recorded.add(s.s);
   }
   return [...words].filter(([sp, n]) => n >= SUBSTANTIVE_MIN_WORDS && !recorded.has(sp)).map(([sp]) => sp);
+}
+
+/**
+ * v4.2: the NO-SPEECH gate — pure, deterministic, no model call. Is there any real speech to summarise, or only
+ * greetings, fillers, "Hello? Hello?", phone menus, hold messages, call screening and voicemail greetings?
+ * → { skip, reason, counts }.
+ *   segments  comms_transcripts.segments as stored: an array of { s, a, b, t } or its JSON string (the sweep reads the
+ *             column; mysql2 may hand back either). fullText: comms_transcripts.full_text, read only when there are no
+ *             segments (then it is one speaker).
+ * Every SENTENCE holding a recording cue (GATE_CUES) is dropped — a cue sits mid-sentence in call screening ("…state
+ * your name after the tone and Google Voice will try to connect you") and is followed by more recording in a greeting,
+ * while a message left before or after a menu is its own sentence. A speaker's SUBSTANTIVE words are what remains,
+ * minus the greeting / filler / dead-air vocabulary (ground.contentWords); a token of 7+ digits (a phone number) counts
+ * SPEECH_MIN_WORDS on its own. Skip ONLY when no speaker has SPEECH_MIN_WORDS (2): one stray word ("Maria?") is no
+ * conversation, while any two — "Call me.", "It's Maria.", a call-back number — keep the call. CONSERVATIVE by design:
+ * a lost summary of a real call is worse than a needless one, so anything unrecognised counts as speech.
+ */
+const SPEECH_MIN_WORDS = 2;
+const PHONE_DIGITS = 7;
+/** Not a sentence end: a period after a title or a single letter ("Mr. Smith", "J. Smith", "9 a.m. tomorrow"). */
+const ABBREVIATIONS = new Set(['mr', 'mrs', 'ms', 'dr', 'st', 'jr', 'sr', 'vs', 'etc']);
+/** A segment's sentences: split after . ? ! followed by a space or the end; a segment end is always one. */
+function sentencesOf(text) {
+  const out = [];
+  let start = 0;
+  for (const m of text.matchAll(/[.?!]+(?=\s|$)/g)) {
+    // a bounded window: a long run of periods that do not end a sentence ("Mr. Mr. …") must not rescan from `start`
+    const word = (text.slice(Math.max(start, m.index - 40), m.index).match(/\p{L}+$/u) || [''])[0].toLowerCase();
+    if (m[0] === '.' && (word.length === 1 || ABBREVIATIONS.has(word))) continue;
+    out.push(text.slice(start, m.index + m[0].length));
+    start = m.index + m[0].length;
+  }
+  if (text.slice(start).trim()) out.push(text.slice(start));
+  return out;
+}
+/** Substantive weight: each content word 1, a phone-number token (7+ digits) SPEECH_MIN_WORDS. */
+const weightOf = (text) => ground.contentWords(text)
+  .reduce((n, w) => n + ((w.match(/\d/g) || []).length >= PHONE_DIGITS ? SPEECH_MIN_WORDS : 1), 0);
+function speechGate(segments, fullText = '') {
+  let segs = segments;
+  if (typeof segs === 'string') { try { segs = JSON.parse(segs); } catch (_) { segs = []; } }
+  segs = Array.isArray(segs) ? segs.filter(s => s && typeof s.t === 'string') : [];
+  if (!segs.length && String(fullText || '').trim()) segs = [{ s: '', t: String(fullText) }];
+  const speakers = {};
+  let words = 0, substantive = 0, max = 0;
+  for (const s of segs) {
+    const k = String(s.s == null ? '' : s.s);
+    const sp = speakers[k] || (speakers[k] = { words: 0, substantive: 0, cue_sentences: 0 });
+    const n = ground.normalise(s.t);
+    sp.words += n ? n.split(' ').length : 0;
+    for (const sentence of sentencesOf(s.t)) {
+      if (GATE_CUES.test(sentence)) { sp.cue_sentences++; continue; }
+      sp.substantive += weightOf(sentence);
+    }
+  }
+  for (const sp of Object.values(speakers)) { words += sp.words; substantive += sp.substantive; max = Math.max(max, sp.substantive); }
+  const skip = segs.length > 0 && max < SPEECH_MIN_WORDS;
+  return { skip, reason: skip ? 'no_speech' : null,
+    counts: { segments: segs.length, speakers: Object.keys(speakers).length, words, substantive, max_speaker_substantive: max, by_speaker: speakers } };
 }
 
 /**
@@ -717,7 +815,7 @@ async function runSummarizeSweep(db) {
   const t0 = Date.now();
   const out = {
     mode: null, discovered: 0, calls: 0, summarized: 0, retried: 0, failed: 0, rejected: 0, refused: 0, fenced: 0,
-    skipped_restricted: 0, skipped_short: 0, skipped_empty: 0, grounding_dropped: 0, stop: null,
+    skipped_restricted: 0, skipped_short: 0, skipped_empty: 0, skipped_no_speech: 0, grounding_dropped: 0, stop: null,
   };
   const acc = { failed: [], refused: [], config: [] };
   const lock = await common.acquireLock(db, LOCK_EXPR, 0);
@@ -788,4 +886,4 @@ async function runSummarizeSweep(db) {
 }
 
 module.exports = { runSummarizeSweep, readConfig, limits, KEYS, LOCK_EXPR, PROMPT_KEY, consumerRef, FIRM_CONTEXT_MAX, STAFF_WHERE, MODELS, NOTE_FRAMING,
-  selfAddressHint, substantiveSpeakers, SUBSTANTIVE_MIN_WORDS };
+  selfAddressHint, substantiveSpeakers, SUBSTANTIVE_MIN_WORDS, speechGate, SPEECH_MIN_WORDS, RECORDING, GATE_CUES };
