@@ -45,7 +45,11 @@
  * absent, an unknown recording status, a recording id no longer listed, a
  * non-https media URL — parks the row UNCHARGED and raises one error alert
  * per day (comms_archive_shape_drift). `none` is reached only from a
- * well-formed `data: []` (or a recording status that means no file).
+ * well-formed `data: []` (or a recording status that means no file), or from
+ * Quo's "Call not found" on the recording list — a 404 carrying BOTH code
+ * 0900404 and that message, on a placeholder whose call is 24 h+ old on the
+ * call clock (uncharged, never stuck; younger: not yet). Any other 404 there
+ * stays a charged provider failure.
  *
  * ── TERMINAL RULE ──────────────────────────────────────────────────────────
  * These kinds have no provider retention cliff: common.rowOps.terminalReason
@@ -539,7 +543,7 @@ async function runMediaSweep(db, opts = {}) {
     enabled: false, discovered_calls: 0, discovered_mms: 0,
     archived: 0, adopted: 0, resolved: 0, split: 0, none: 0, gone: 0, failed: 0, stuck: 0,
     retried: 0, not_yet: 0, drift: 0, no_line: 0, rc_used: 0, quo_used: 0,
-    discovered_vm: 0, discovered_rc_vm: 0, vm_held404: 0, rc_light_used: 0,
+    discovered_vm: 0, discovered_rc_vm: 0, vm_held404: 0, rc_light_used: 0, quo_call_not_found: 0,
     stopped: {}, stop: null,
   };
   const acc = { goneIds: [], failedIds: [], stuckIds: [], drift: [], listingDrift: [], notYetOld: [], noLine: new Map(), quoForbidden: new Map() };
@@ -869,6 +873,27 @@ async function _tick(db, opts, out, acc, startedAt) {
           // ── Quo recording: list, then (per row) the item's signed URL ──
           if (!await slot('quo')) { await ops.refund(db, row.id, null); continue; }
           const r = await quo.listCallRecordings(db, { credentialId: row.credential_id, callId: row.provider_ref, timeoutMs: Math.min(io(), 30_000) });
+          if (!row.part && _quoCallNotFound(r)) {
+            // Quo does not know the call: no recording will ever be listed.
+            // Uncharged either way, never stuck. A call under noneAfterHours
+            // may still be settling at Quo → not yet (the "nothing listed
+            // yet" park); older → none. Placeholders only: a resolved row
+            // (Quo listed recordings for this call before) keeps the charged
+            // path below, so that contradiction reaches a human.
+            if (ageHours(row.captured_at) >= limits.noneAfterHours) {
+              await db.query(
+                `UPDATE comms_media SET state = 'none', attempts = GREATEST(attempts, 1) - 1, next_attempt_at = NULL, last_error = ?
+                  WHERE id = ? AND state = 'pending'`,
+                [`quo call-recordings 404 Call not found (${limits.noneAfterHours} h+) - none`, row.id]);
+              out.none++;
+              out.quo_call_not_found++;
+            } else {
+              await ops.park(db, row.id, limits.notYetBackoffMin,
+                `quo call-recordings 404 Call not found (call under ${limits.noneAfterHours} h) - not yet`);
+              out.not_yet++;
+            }
+            continue;
+          }
           const stopped = await _apiStatus(db, row, r, attemptsNow, 'quo', 'call-recordings', stopProvider, count, out, acc);
           if (stopped) continue;
           const data = r.json && r.json.data;
@@ -1154,6 +1179,20 @@ function _quoError(text) {
   } catch (_) {
     return { code: null, message: null };
   }
+}
+
+/**
+ * Quo's "Call not found" on GET /v1/call-recordings/<callId> (live 2026-10:
+ * 404 {"message":"Call not found","code":"0900404",…} — Quo does not know the
+ * call id). BOTH the code and the message are required: the outcome is a
+ * terminal, silent `none`, so a 404 that matches only one of them (a reworded
+ * message, a code shared by another not-found) keeps the charged-retry path
+ * and its stuck alert instead of closing a row Quo might still serve.
+ */
+function _quoCallNotFound(r) {
+  if (!r || r.status !== 404) return false;
+  const qe = _quoError(r.errorText);
+  return qe.code === '0900404' && /^call not found\.?$/i.test(String(qe.message || '').trim());
 }
 
 /**

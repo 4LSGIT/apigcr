@@ -6,7 +6,7 @@
  *       log rows harmless; idempotent;
  *   Q   Quo recordings — list → placeholder fill + split, statuses, the
  *       docs-only shape guard (drift parks + alerts, never `none`), signed
- *       downloads with host-only errors;
+ *       downloads with host-only errors, Quo's 404 "Call not found";
  *   M   MMS — RC message-store content, Quo fresh media URLs, the storable /
  *       error-shaped / unknown-type rule;
  *   T   the no-cliff terminal rule (one helper, keyed by kind/provider);
@@ -299,6 +299,40 @@ maybe('comms archive S1b on real MySQL', () => {
     expect(st[young]).toMatchObject({ state: 'pending', attempts: 0 });
     expect(st[old].state).toBe('none');
     expect(out).toMatchObject({ drift: 2, gone: 1 });
+  });
+
+  test('Q404 Quo "Call not found" (404 + 0900404 + the message): none at 24 h+ uncharged and never stuck; younger = not yet; other 404s unchanged', async () => {
+    const NF = { status: 404, json: null, errorText: '{"message":"Call not found","code":"0900404","status":404,"title":"Not Found"}' };
+    const old = await call({ ageDays: 3 });
+    const veteran = await call({ ageDays: 9 });           // pending under the old rule: 13 charged attempts, stuck
+    const young = await call({ ageDays: 0.1 });
+    const otherMsg = await call({ ageDays: 3 }); const otherCode = await call({ ageDays: 3 }); const plain = await call({ ageDays: 3 });
+    const resolved = await call({ ageDays: 3 });
+    const noBody = await call({ ageDays: 3 }); const emptyBody = await call({ ageDays: 3 });
+    await media.discoverQuoCalls(pool);
+    await q(`UPDATE comms_media SET attempts = 13, last_error = ? WHERE source_id = ?`,
+      [`call-recordings 404: ${NF.errorText}`, veteran]);
+    await q("UPDATE comms_media SET part = 'RECz' WHERE source_id = ?", [resolved]);
+    for (const id of [old, veteran, young, resolved]) quoF.recs[`AC${id}`] = NF;
+    quoF.recs[`AC${otherMsg}`] = { status: 404, json: null, errorText: '{"message":"Recording not found","code":"0900404","status":404}' };
+    quoF.recs[`AC${otherCode}`] = { status: 404, json: null, errorText: '{"message":"Call not found","code":"1200404","status":404}' };
+    quoF.recs[`AC${plain}`] = { status: 404, json: null, errorText: 'Not Found' };
+    quoF.recs[`AC${noBody}`] = { status: 404, json: null, errorText: null }; quoF.recs[`AC${emptyBody}`] = { status: 404, json: null, errorText: '' };
+    const out = await runMedia();
+    const st = Object.fromEntries((await rows()).map(r => [r.source_id, r]));
+    const NONE = 'quo call-recordings 404 Call not found (24 h+) - none';
+    expect(st[old]).toMatchObject({ state: 'none', attempts: 0, next_attempt_at: null, last_error: NONE });
+    expect(st[veteran]).toMatchObject({ state: 'none', attempts: 13, next_attempt_at: null, last_error: NONE });
+    expect(st[young]).toMatchObject({ state: 'pending', attempts: 0, last_error: 'quo call-recordings 404 Call not found (call under 24 h) - not yet' });
+    const [[w]] = await pool.query('SELECT TIMESTAMPDIFF(MINUTE, UTC_TIMESTAMP(), next_attempt_at) AS m FROM comms_media WHERE source_id = ?', [young]);
+    expect(w.m).toBeGreaterThanOrEqual(28); expect(w.m).toBeLessThanOrEqual(30);   // the not-yet backoff (30 min)
+    // Any other 404 shape — and a RESOLVED row (Quo listed recordings for the call before) — keeps the charged path.
+    for (const id of [otherMsg, otherCode, plain, noBody, emptyBody, resolved]) {
+      expect(st[id]).toMatchObject({ state: 'pending', attempts: 1 });
+      expect(st[id].last_error).toMatch(/^call-recordings 404: /);
+    }
+    expect(out).toMatchObject({ none: 2, quo_call_not_found: 2, not_yet: 1, retried: 6, stuck: 0 });
+    expect((await alerts()).filter(a => a.group_key === 'comms_archive_stuck')).toEqual([]);
   });
 
   test('Q4 signed-URL errors carry the HOST only, never the signature; non-https = drift', async () => {
