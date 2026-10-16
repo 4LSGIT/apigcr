@@ -7,12 +7,14 @@
  * clicks the item's real launcher element. Neither view re-implements what a
  * launcher button does, and neither draws a copy of one: the entries here are
  * neutral buttons carrying data-yc-item, NEVER data-target /
- * data-exclusive-group (the drill-in machinery in index.html queries those
- * page-wide, and a second node per panel would corrupt it).
+ * data-exclusive-group: the drill-in machinery in index.html takes any button
+ * carrying those for a panel opener, and All is not a page panels open on —
+ * an entry runs exec(id), which opens the panel on the page that holds it.
  *
  *   All tab   #tabAll in index.html. Grouped by origin (ycLauncher.groups()
  *             order); a search box above it ranks with the palette's matcher
  *             (ycLauncher.rank) — the phone's way in. Enter runs the top hit.
+ *             It never lists the `all` item itself (S6c): the palette does.
  *   Palette   Ctrl-K / ⌘K from anywhere once signed in, focused inputs and
  *             same-origin pane iframes included — except an editor that binds
  *             Ctrl-K itself (Quill's insert-link). Arrows + Enter run, Esc (or
@@ -184,7 +186,8 @@
     if (!list) return;
     var input = document.getElementById('ycAllSearch');
     var q = input ? input.value : '';
-    var eff = L.effectiveRegistry();
+    // the All tab never lists All itself (S6c ruling): Ctrl-K and exec('all') keep it
+    var eff = L.effectiveRegistry().filter(function (e) { return e.id !== 'all'; });
     if (q.replace(/\s+/g, '')) {
       var hits = L.rank(q, eff);
       list.innerHTML = hits.length

@@ -391,7 +391,9 @@ describe('the All tab (public/js/ycAll.js, for real)', () => {
     // Admin holds what this user can use: Etch is open to staff (S6c gates), the su tools are not
     expect(groups()).toEqual(['Records', 'Actions', 'Settings', 'More actions', 'More', 'Admin']);
     expect(t.L.effectiveRegistry().filter((e) => e.group === 'Admin').map((e) => e.id)).toEqual(['adminEtch']);
-    expect(entries()).toEqual(t.L.effectiveRegistry().map((e) => e.id));
+    // every effective item but All itself (S6c ruling: the All tab doesn't list All; Ctrl-K does)
+    expect(t.L.effectiveRegistry().map((e) => e.id)).toContain('all');
+    expect(entries()).toEqual(t.L.effectiveRegistry().map((e) => e.id).filter((id) => id !== 'all'));
     expect(entries()).not.toContain('moreAutomations');
     t.L.applyAccess({ isAdmin: true });
     expect(groups()).toEqual(['Records', 'Actions', 'Settings', 'More actions', 'More', 'Admin']);

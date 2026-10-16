@@ -117,13 +117,47 @@
  * saved. Any other custom tab stays as it is, and the tab says why
  * (legacyTab).
  *
+ * The firm's starting point (ui-custom S6c-3): every list above is the user
+ * step over the FIRM's default (ui_config firm `layout`) — resolveLayout(sf,
+ * { base, firm, user, … }), the renderer's own two-tier merge — so a Home
+ * the firm arranged is what this editor starts from, a "standard" item is
+ * one the firm's default puts there (hidden, not removed), and Reset follows
+ * the firm's default again.
+ *
+ * FIRM MODE (ui-custom S6c-3): open({ scope: 'firm' }) — launched from the
+ * Config shell's Firm tab (public/caseconfig/firm.html, Launcher section,
+ * "Arrange pages and defaults…"), drawn here in the top document like the
+ * icon picker. It edits the firm's `layout` document (scope firm, one
+ * versioned document): the firm default of Home + its icon row and the
+ * sidebar, and the More Features and Admin pages + their icon rows (firm-only
+ * surfaces, Fred's ruling) — three tabs (FIRM_PANES; firm pages join it in
+ * S6c-5). Same session core and rules as above, with the firm's document as
+ * the edited layer over the shipped DEFAULT_LAYOUTS; nothing is locked
+ * against the firm itself, except All in Home's icon row (GUARANTEED). The
+ * catalogue: the shell's computeEffective as a superuser sees it with the
+ * firm's own overlay (hides, renames, firm items — what the shell renders),
+ * no user buttons. The More list starts from what More shows: while the firm
+ * has no placed.more, the firm row (a break, then every firm item) closes it
+ * (o.seed), so the first save keeps Get Clio Code where it was. Open: a
+ * fresh GET /api/ui-config (can_edit_firm, else nothing opens; its
+ * firm_versions.layout is the base). Save: ONE PUT { scope:'firm',
+ * config_key:'layout', config, base } → firmData.ui.firm.layout := the
+ * stored document → applyAccess({ ui }): the shell repaints without a
+ * reload. A 409 (someone saved since this opened) keeps every edit and offers
+ * a Reload, which discards them for the firm's current arrangement. Who:
+ * firm.settings holders (the server re-checks every write); the admin role
+ * arranges the Admin page too (ruling 1).
+ *
  * window.ycLayoutEditor = { open, close, isOpen, isDirty, session, shortcutSession, reservedProblem,
- *                           itemSession, makeUserId, buttonProblems, legacyTab }
+ *                           itemSession, makeUserId, buttonProblems, legacyTab, firmCatalog,
+ *                           FIRM_SURFACES, GUARANTEED }
  *   session(o) is the editor's pure core (no DOM; the panel drives one):
- *   o = { stored, effective, locked, base, registry, groups } — see session().
+ *   o = { stored, effective, locked, base, registry, groups, firm?, surfaces?,
+ *   pass?, seed? } — see session().
  *   shortcutSession(o) is the Keyboard shortcuts tab's, itemSession(o) My
  *   buttons': see there.
- *   open({ section: 'shortcuts' | 'buttons' }) opens on that tab (default: the layout).
+ *   open({ section: 'shortcuts' | 'buttons' }) opens on that tab (default: the layout);
+ *   open({ scope: 'firm', section?: 'home' | 'more' | 'admin', from? }) the firm mode.
  */
 (function () {
   'use strict';
@@ -139,12 +173,21 @@
   }
 
   var SURFACES = ['home', 'sidebar'];
-  // Surfaces of the user layout this editor does not show yet (ui-custom S6c:
-  // Home's icon row — its editor is S6c-3): their lists are written back as
-  // stored, so a save never drops them. { item } entries only, as the server has it.
+  // Surfaces of the user layout this editor does not show (ui-custom S6c:
+  // Home's icon row — the firm mode arranges the firm's; a user's own has no
+  // section yet): their lists are written back as stored, so a save never
+  // drops them. { item } entries only, as the server has it.
   var PASS = ['homeIcons'];
-  var NAME = { home: 'Home', sidebar: 'Sidebar' };
+  // The firm's layout (S6c-3): every surface (lib/uiConfigShape.js FIRM_LAYOUT_SURFACES).
+  var FIRM_SURFACES = ['home', 'sidebar', 'homeIcons', 'more', 'moreIcons', 'admin', 'adminIcons'];
+  var BREAK_SF = { home: true, more: true, admin: true };              // lib/uiConfigShape.js BREAK_SURFACES
+  var ICON_SF = { homeIcons: true, moreIcons: true, adminIcons: true }; // lib/uiConfigShape.js ICON_SURFACES
+  var GUARANTEED = { homeIcons: ['all'] };                             // lib/uiConfigShape.js GUARANTEED
+  var NAME = { home: 'Home', sidebar: 'Sidebar', homeIcons: 'Home’s small buttons', more: 'More Features',
+    moreIcons: 'More Features’ small buttons', admin: 'Admin', adminIcons: 'Admin’s small buttons' };
   var CAP = 100;          // lib/uiConfigShape.js CAPS.placed / CAPS.removed
+  var ICON_CAP = 12;      // lib/uiConfigShape.js CAPS.icons (an icon row's placed list)
+  function capOf(sf) { return ICON_SF[sf] ? ICON_CAP : CAP; }
   var LABEL_MAX = 40;     // lib/uiConfigShape.js LABEL_MAX
   var ICON_RE = YI.RE;    // bare slug = solid, or solid: / regular: / brands: + slug (lib/uiConfigShape.js ICON_RE)
   var CONTROL_RE = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/;
@@ -175,18 +218,20 @@
   }
 
   // The stored document, with anything malformed left out (the resolver
-  // ignores the same things) — always { placed: {…}, removed: {…} }.
+  // ignores the same things) — always { placed: {…}, removed: {…} }, plus a
+  // stored `pages` map carried as it is (the seam for S6c-5's pages; the
+  // server refuses one until then).
   function copyEntry(e, sf) {
     if (!isObj(e)) return null;
     if (typeof e.item === 'string' && e.item) return { item: e.item };
-    if (e.break === true && sf === 'home') return { break: true };
+    if (e.break === true && BREAK_SF[sf]) return { break: true };
     if (typeof e.label === 'string' && sf === 'sidebar') return { label: e.label };
     return null;
   }
-  function normalize(doc) {
+  function normalize(doc, surfaces) {
     var out = { placed: {}, removed: {} };
     if (!isObj(doc)) return out;
-    SURFACES.concat(PASS).forEach(function (sf) {
+    (surfaces || SURFACES.concat(PASS)).forEach(function (sf) {
       if (isObj(doc.placed) && isArr(doc.placed[sf])) {
         out.placed[sf] = doc.placed[sf].map(function (e) { return copyEntry(e, sf); }).filter(Boolean);
       }
@@ -194,6 +239,7 @@
         out.removed[sf] = doc.removed[sf].filter(function (id) { return typeof id === 'string'; });
       }
     });
+    if (isObj(doc.pages)) out.pages = JSON.parse(JSON.stringify(doc.pages));
     return out;
   }
   function entryOf(r) {
@@ -212,11 +258,26 @@
    *   o.base       { home, sidebar } base layouts (DEFAULT_LAYOUTS)
    *   o.registry   FEATURE_REGISTRY (surface labels: Bills reads Billing on Home)
    *   o.groups     the All tab's group order (ycLauncher.groups())
+   *   o.firm       the firm's layout document (or null): the edited layer
+   *                sits on the firm step, as the renderer stacks them (S6c-3)
+   *   o.surfaces   the surfaces edited (default Home and the sidebar; the
+   *                firm mode: FIRM_SURFACES)
+   *   o.pass       the surfaces written back as stored (default PASS; the
+   *                firm mode: none)
+   *   o.seed       { surface: [id…] } — what the shell draws after a
+   *                surface while its working state has no placed list (the
+   *                More firm row, S6c-3): a break, then those of the ids that
+   *                are effective and not shown yet, closing the list. An
+   *                edit writes them as placed entries, where they then are.
    * Every edit returns true, or false when it is refused (nothing changes).
    */
   function session(o) {
     o = o || {};
-    var stored = normalize(o.stored);
+    var SFS = isArr(o.surfaces) ? o.surfaces.slice() : SURFACES.slice();
+    var PS = isArr(o.pass) ? o.pass.slice() : PASS.slice();
+    var stored = normalize(o.stored, SFS.concat(PS));
+    var firmDoc = isObj(o.firm) ? o.firm : null;
+    var seed = isObj(o.seed) ? o.seed : {};
     // eff / byId / groups: the items the editor can show. retarget() replaces
     // them while the panel is open — the My buttons tab (S5a) adds, renames
     // and deletes the user's own buttons before they are saved.
@@ -233,11 +294,26 @@
     var lockedList = Object.keys(locked);
     var base = isObj(o.base) ? o.base : {};
     var reg = isObj(o.registry) ? o.registry : {};
-    var baseIds = {};
-    SURFACES.forEach(function (sf) {
-      baseIds[sf] = Object.create(null);
-      (isArr(base[sf]) ? base[sf] : []).forEach(function (e) { if (e && typeof e.item === 'string') baseIds[sf][e.item] = true; });
+    // defaultIds: the shipped layout's items (a surface label shows only on
+    // the default element); baseRows / baseIds: what the edited layer
+    // inherits — the shipped layout under the firm's step (S6c-3), so an item
+    // the firm's default puts on a surface is a "standard" one there (hidden,
+    // never removed). Read live: the effective registry changes (retarget).
+    var defaultIds = {}, guaranteed = {};
+    SFS.forEach(function (sf) {
+      defaultIds[sf] = Object.create(null);
+      (isArr(base[sf]) ? base[sf] : []).forEach(function (e) { if (e && typeof e.item === 'string') defaultIds[sf][e.item] = true; });
+      guaranteed[sf] = Object.create(null);
+      (GUARANTEED[sf] || []).forEach(function (id) { guaranteed[sf][id] = true; });
     });
+    function baseRows(sf) {
+      return L.resolveLayout(sf, { base: isArr(base[sf]) ? base[sf] : [], firm: firmDoc, user: null, effective: eff, locked: [] });
+    }
+    function baseIdsOf(sf) {
+      var s = Object.create(null);
+      baseRows(sf).forEach(function (r) { if (r.kind === 'item') s[r.id] = true; });
+      return s;
+    }
 
     // Working state per surface: mode 'stored' (write it as stored),
     // 'edited' (write placed + removed below) or 'reset' (delete both).
@@ -255,13 +331,22 @@
       var user = { placed: {}, removed: {} };
       if (st.placed) user.placed[sf] = st.placed;
       user.removed[sf] = st.removed;
-      return L.resolveLayout(sf, { base: isArr(base[sf]) ? base[sf] : [], user: user, effective: eff, locked: lockedList });
+      var rows = L.resolveLayout(sf, { base: isArr(base[sf]) ? base[sf] : [], firm: firmDoc, user: user, effective: eff, locked: lockedList });
+      // the seed (the More firm row): only while nothing is placed here
+      if (!st.placed && isArr(seed[sf])) {
+        var vis = visibleIds(rows), more = [];
+        seed[sf].forEach(function (id) {
+          if (typeof id === 'string' && id in byId && !vis[id]) { vis[id] = true; more.push({ kind: 'item', id: id }); }
+        });
+        if (more.length) rows = rows.concat(BREAK_SF[sf] ? [{ kind: 'break' }] : [], more);
+      }
+      return rows;
     }
     // What a surface looks like: its rows, and its removals as a set.
     function sig(sf) {
       return canonical({ rows: resolved(sf).map(entryOf), removed: S[sf].removed.slice().sort() });
     }
-    SURFACES.forEach(function (sf) { S[sf] = fresh(sf); INIT[sf] = sig(sf); });
+    SFS.forEach(function (sf) { S[sf] = fresh(sf); INIT[sf] = sig(sf); });
 
     // A surface edited back to what it was is the stored one again; a reset
     // of a surface that has nothing stored is no change. Never back to a
@@ -315,7 +400,7 @@
       var it = hasOwn(reg, e.id) && isObj(reg[e.id]) ? reg[e.id] : null;
       // a surface label (Bills → Billing on Home) only where the default
       // element shows it: a base item that the firm has not renamed
-      if (it && isObj(it.surfaceLabels) && it.surfaceLabels[sf] != null && e.label === it.label && e.id in baseIds[sf]) {
+      if (it && isObj(it.surfaceLabels) && it.surfaceLabels[sf] != null && e.label === it.label && e.id in defaultIds[sf]) {
         return String(it.surfaceLabels[sf]);
       }
       return String(e.label);
@@ -329,33 +414,37 @@
       return s;
     }
     // The size Save would write for sf after rows: placed (with carried
-    // items) — the server caps a list at CAP.
+    // items) — the server caps a list at capOf(sf).
     function sizeAfter(sf, rows) { return carry(S[sf].placed, rows.map(entryOf)).length; }
 
     var api = {
       /** The surface as the user sees it: { kind:'item', id, label, icon,
-       *  base, locked, firm, act } | { kind:'break', act } | { kind:'label',
+       *  base, locked, always, firm, act } | { kind:'break', act } | { kind:'label',
        *  text, act }. act: 'hide' (a default item), 'locked' (a default item
-       *  the firm locked: no hide), 'remove' (anything the user added). */
+       *  the firm locked, or one always on this surface — All in Home's icon
+       *  row: no hide), 'remove' (anything the user added). */
       view: function (sf) {
+        var baseIds = baseIdsOf(sf);
         return resolved(sf).map(function (r) {
           if (r.kind !== 'item') return r.kind === 'label' ? { kind: 'label', text: r.text, act: 'remove' } : { kind: 'break', act: 'remove' };
           var v = entryView(sf, byId[r.id]);
           v.kind = 'item';
-          v.base = r.id in baseIds[sf];
+          v.base = r.id in baseIds;
           v.locked = r.id in locked;
+          v.always = r.id in guaranteed[sf];
           v.firm = /^firm:/.test(r.id);
-          v.act = v.base ? (v.locked ? 'locked' : 'hide') : 'remove';
+          v.act = v.always ? 'locked' : v.base ? (v.locked ? 'locked' : 'hide') : 'remove';
           return v;
         });
       },
-      /** Default items the user hid here (effective, not locked), base order. */
+      /** Default items the user hid here (effective, not locked), base order
+       *  (the base the edited layer inherits: the firm's step, S6c-3). */
       hidden: function (sf) {
         var rm = Object.create(null), vis = visibleIds(resolved(sf)), out = [];
         S[sf].removed.forEach(function (id) { rm[id] = true; });
-        (isArr(base[sf]) ? base[sf] : []).forEach(function (e) {
-          var id = e && e.item;
-          if (typeof id !== 'string' || !(id in rm) || !(id in byId) || id in locked || id in vis) return;
+        baseRows(sf).forEach(function (e) {
+          var id = e.kind === 'item' ? e.id : null;
+          if (typeof id !== 'string' || !(id in rm) || !(id in byId) || id in locked || id in guaranteed[sf] || id in vis) return;
           if (out.some(function (x) { return x.id === id; })) return;
           out.push(entryView(sf, byId[id]));
         });
@@ -376,16 +465,17 @@
           return { group: g, items: list.filter(function (e) { return e.group === g; }).map(function (e) { return entryView(sf, e); }) };
         }).filter(function (g) { return g.items.length; });
       },
-      /** The surfaces an id is visible on: ['home'?, 'sidebar'?]. */
+      /** The surfaces an id is visible on: ['home'?, 'sidebar'?] (the
+       *  session's surfaces, in order). */
       where: function (id) {
-        return SURFACES.filter(function (sf) { return !!visibleIds(resolved(sf))[id]; });
+        return SFS.filter(function (sf) { return !!visibleIds(resolved(sf))[id]; });
       },
       /** A new effective registry (and group order) — the panel's own
        *  buttons changed (S5a). Nothing stored or edited changes. */
       // …and a surface edited back to what it was becomes the stored one again
       // under the new registry (S5c-b review N1: a conversion cancelled by
       // deleting its button was settled while `custom` was out of it).
-      retarget: function (list, g) { setEffective(list, g); SURFACES.forEach(settle); return true; },
+      retarget: function (list, g) { setEffective(list, g); SFS.forEach(settle); return true; },
       /** A button the user deleted (S5a): drop every placement and removal
        *  of id on both surfaces — a surface that held it becomes edited —
        *  so no dangling reference is written. → whether anything changed. */
@@ -393,7 +483,7 @@
         var any = false;
         if (typeof id !== 'string') return false;
         dropped[id] = true;
-        SURFACES.forEach(function (sf) {
+        SFS.forEach(function (sf) {
           var st = S[sf];
           var placed = st.mode === 'stored' ? (hasOwn(stored.placed, sf) ? stored.placed[sf] : null) : st.placed;
           var removed = st.mode === 'stored' ? (hasOwn(stored.removed, sf) ? stored.removed[sf] : []) : st.removed;
@@ -423,12 +513,12 @@
       replace: function (oldId, newId) {
         var out = [];
         if (typeof newId !== 'string' || !(newId in byId)) return out;
-        SURFACES.forEach(function (sf) {
+        SFS.forEach(function (sf) {
           var rows = resolved(sf), at = -1;
           for (var i = 0; i < rows.length; i++) if (rows[i].kind === 'item' && rows[i].id === oldId) at = i;
           if (at < 0 || visibleIds(rows)[newId]) return;
           rows[at] = { kind: 'item', id: newId };
-          if (sizeAfter(sf, rows) > CAP) return;
+          if (sizeAfter(sf, rows) > capOf(sf)) return;
           commit(sf, rows, without(S[sf].removed, newId));
           swapped[newId] = oldId;
           out.push(sf);
@@ -436,7 +526,7 @@
         return out;
       },
       /** Room left on sf (entries Save could still add). */
-      room: function (sf) { return CAP - sizeAfter(sf, resolved(sf)); },
+      room: function (sf) { return capOf(sf) - sizeAfter(sf, resolved(sf)); },
       mode: function (sf) { return S[sf].mode; },
 
       move: function (sf, i, d) {
@@ -447,7 +537,7 @@
       },
       hide: function (sf, i) {
         var rows = resolved(sf), r = rows[i];
-        if (!r || r.kind !== 'item' || !(r.id in baseIds[sf]) || r.id in locked) return false;
+        if (!r || r.kind !== 'item' || !(r.id in baseIdsOf(sf)) || r.id in locked || r.id in guaranteed[sf]) return false;
         var removed = S[sf].removed.slice();
         if (removed.indexOf(r.id) < 0) {
           if (removed.length >= CAP) return false;
@@ -458,7 +548,7 @@
       },
       remove: function (sf, i) {
         var rows = resolved(sf), r = rows[i];
-        if (!r || (r.kind === 'item' && r.id in baseIds[sf])) return false;
+        if (!r || (r.kind === 'item' && (r.id in baseIdsOf(sf) || r.id in guaranteed[sf]))) return false;
         rows.splice(i, 1);
         return commit(sf, rows, S[sf].removed.slice());
       },
@@ -466,24 +556,27 @@
         if (!api.hidden(sf).some(function (h) { return h.id === id; })) return false;
         var removed = without(S[sf].removed, id);
         var rows = resolved(sf, { placed: S[sf].placed, removed: removed });   // the resolver slots it back
-        if (sizeAfter(sf, rows) > CAP) return false;
+        if (sizeAfter(sf, rows) > capOf(sf)) return false;
         return commit(sf, rows, removed);
       },
       add: function (sf, id) {
         var rows = resolved(sf);
         if (!(id in byId) || visibleIds(rows)[id]) return false;
         rows.push({ kind: 'item', id: id });
-        if (sizeAfter(sf, rows) > CAP) return false;
+        if (sizeAfter(sf, rows) > capOf(sf)) return false;
         return commit(sf, rows, without(S[sf].removed, id));
       },
-      addBreak: function () {
-        var rows = resolved('home');
+      /** A row break at the end of sf (default Home; a grid only). */
+      addBreak: function (sf) {
+        sf = sf == null ? 'home' : sf;
+        if (!BREAK_SF[sf] || !hasOwn(S, sf)) return false;
+        var rows = resolved(sf);
         rows.push({ kind: 'break' });
-        if (sizeAfter('home', rows) > CAP) return false;
-        return commit('home', rows, S.home.removed.slice());
+        if (sizeAfter(sf, rows) > capOf(sf)) return false;
+        return commit(sf, rows, S[sf].removed.slice());
       },
       addLabel: function (text) {
-        if (labelProblem(text)) return false;
+        if (labelProblem(text) || !hasOwn(S, 'sidebar')) return false;
         var rows = resolved('sidebar');
         rows.push({ kind: 'label', text: text.trim() });
         if (sizeAfter('sidebar', rows) > CAP) return false;
@@ -505,7 +598,7 @@
       /** The document Save writes. */
       doc: function () {
         var out = { placed: {}, removed: {} };
-        SURFACES.forEach(function (sf) {
+        SFS.forEach(function (sf) {
           var st = S[sf];
           if (st.mode === 'stored') {
             if (hasOwn(stored.placed, sf)) out.placed[sf] = stored.placed[sf].map(function (e) { return copyEntry(e, sf); });
@@ -518,10 +611,11 @@
           }
         });
         // the surfaces this editor does not show (S6c): exactly as stored
-        PASS.forEach(function (sf) {
+        PS.forEach(function (sf) {
           if (hasOwn(stored.placed, sf)) out.placed[sf] = stored.placed[sf].map(function (e) { return copyEntry(e, sf); });
           if (hasOwn(stored.removed, sf)) out.removed[sf] = stored.removed[sf].slice();
         });
+        if (stored.pages) out.pages = JSON.parse(JSON.stringify(stored.pages));   // S6c-5's seam: as stored
         return out;
       },
       isDirty: function () { return canonical(api.doc()) !== canonical(stored); },
@@ -1044,12 +1138,33 @@
     return api;
   }
 
+  // ── The firm mode's catalogue (S6c-3) ──────────────────────────────────
+  /** Every item the firm can arrange: the shell's own computeEffective as a
+   *  superuser sees it under the firm's overlay — its hides (a hidden item is
+   *  drawn nowhere, so it isn't offered; a placement of one is carried), its
+   *  renames and its firm items — with no user buttons, no custom tab and no
+   *  denies: what the launcher draws. seed: the firm items in order — the
+   *  More grid's firm row, which closes the More list while the firm has no
+   *  placed.more. ui = { firm: { registry_overrides? } }.
+   *  → { entries: [{ id, group, label, labels, icon }], groups, seed } */
+  function firmCatalog(ui) {
+    var ro = isObj(ui) && isObj(ui.firm) && isObj(ui.firm.registry_overrides) ? ui.firm.registry_overrides : {};
+    var list = L.computeEffective({ isAdmin: true, roles: ['su'], denied: [], customTab: null, ui: { firm: { registry_overrides: ro } } });
+    var mine = list.filter(function (e) { return !USER_ID_RE.test(e.id); });
+    return {
+      entries: mine.map(function (e) { return { id: e.id, group: e.group, label: e.label, labels: e.labels.slice(), icon: e.icon }; }),
+      groups: (list.groups || []).filter(function (g) { return mine.some(function (e) { return e.group === g; }); }),
+      seed: mine.filter(function (e) { return !!e.action; }).map(function (e) { return e.id; }),
+    };
+  }
+
   // ── The panel ───────────────────────────────────────────────────────────
   if (typeof document === 'undefined') {
     window.ycLayoutEditor = {
       session: session, labelProblem: labelProblem, canonical: canonical,
       shortcutSession: shortcutSession, reservedProblem: reservedProblem,
       itemSession: itemSession, makeUserId: makeUserId, buttonProblems: buttonProblems, legacyTab: legacyTab,
+      firmCatalog: firmCatalog, FIRM_SURFACES: FIRM_SURFACES, GUARANTEED: GUARANTEED,
     };
     return;
   }
@@ -1067,6 +1182,37 @@
   var mbForm = null;        // the button form while it is open: { i } (-1 = a new one)
   var PANES = ['layout', 'shortcuts', 'buttons'];
   var KEYS = (window.ycAll && window.ycAll.keys) || null;
+  // The firm mode (S6c-3): the panel is built for ONE scope at a time —
+  // 'user' (Customize my launcher) or 'firm' — and rebuilt when the other
+  // one opens (never while it is open: one modal at a time).
+  var scope = 'user';
+  var firmBase;             // the firm mode's base: firm_versions.layout at open (null = no row; undefined = not told → none sent)
+  var firmFrom = null;      // what opened the firm mode (a reload keeps it)
+  var FIRM_PANES = [
+    { id: 'home', label: 'Home & sidebar', icon: 'house', surfaces: ['home', 'homeIcons', 'sidebar'],
+      intro: 'What everyone\u2019s Home and sidebar start from. Someone who has arranged their own keeps their arrangement; ' +
+        'what you add here is added for them too, next to its neighbour.' },
+    { id: 'more', label: 'More Features', icon: 'grip', surfaces: ['more', 'moreIcons'],
+      intro: 'The More Features page for everyone: the tiles left to right, a row break starts a new row. Your firm\u2019s own items go wherever you put them.' },
+    { id: 'admin', label: 'Admin', icon: 'mug-hot', surfaces: ['admin', 'adminIcons'],
+      intro: 'The Admin page for everyone who sees it. Each person still sees only the tiles they are allowed to open.' },
+  ];   // firm pages (S6c-5) join as a pane of their own
+  var FIRM_HINT = {
+    homeIcons: 'The small round buttons under the Home tiles. All always stays here.',
+    moreIcons: 'The small round buttons under the More Features tiles (Casey\u2019s paw).',
+    adminIcons: 'The small round buttons under the Admin tiles (none as shipped).',
+  };
+  var SESSION_MSG = 'Your session predates a permissions change \u2014 sign out and back in.';   // firm.html SESSION_MSG
+  var CONFLICT_MSG = 'Someone else saved the firm\u2019s arrangement since you opened this, so nothing was saved. ' +
+    'Reload to see theirs: your changes here are discarded.';
+  var FIRM_DENIED = 'Arranging the firm\u2019s pages needs the firm-settings permission.';
+  function panes() { return scope === 'firm' ? FIRM_PANES.map(function (p) { return p.id; }) : PANES; }
+  function liveSurfaces() { return scope === 'firm' ? FIRM_SURFACES : SURFACES; }
+  function paneOf(sf) {
+    if (scope !== 'firm') return PANE_OF[sf] || (SURFACES.indexOf(sf) >= 0 ? 'layout' : sf);
+    for (var i = 0; i < FIRM_PANES.length; i++) if (FIRM_PANES[i].surfaces.indexOf(sf) >= 0) return FIRM_PANES[i].id;
+    return FIRM_PANES[0].id;
+  }
   function anyDirty() { return !!((sess && sess.isDirty()) || (scs && scs.isDirty()) || (its && its.isDirty()) || clearPending()); }
 
   function el(tag, cls, text) {
@@ -1088,10 +1234,15 @@
     return b;
   }
 
-  function build() {
-    if (root) return;
+  function build(sc) {
+    sc = sc === 'firm' ? 'firm' : 'user';
+    if (root && scope === sc) return;
+    if (root) { root.parentNode && root.parentNode.removeChild(root); root = null; }
+    scope = sc;
+    var firm = sc === 'firm';
     root = el('div');
     root.id = 'ycLayoutEditor';
+    root.setAttribute('data-scope', sc);
     root.hidden = true;
     var box = el('div', 'yle-box');
     box.setAttribute('role', 'dialog');
@@ -1100,18 +1251,19 @@
     var head = el('div', 'yle-head');
     var h = el('h2');
     h.id = 'yleTitle';
-    h.appendChild(iconEl('sliders'));
-    h.appendChild(document.createTextNode(' Customize my launcher'));
+    h.appendChild(iconEl(firm ? 'building' : 'sliders'));
+    h.appendChild(document.createTextNode(firm ? ' Arrange pages and defaults for everyone' : ' Customize my launcher'));
     head.appendChild(h);
     head.appendChild(btn('yle-x', 'cancel', 'Close', 'xmark'));
     box.appendChild(head);
 
-    // Two tabs (S4c): the Home + sidebar layout, and keyboard shortcuts. A
-    // strip outside the scrolling body, so it stays in view; a dot marks a
-    // tab with unsaved changes.
+    // The tabs (S4c; the firm mode's, S6c-3): a strip outside the scrolling
+    // body, so it stays in view; a dot marks a tab with unsaved changes.
     var tabs = el('div', 'yle-tabs');
     tabs.setAttribute('role', 'tablist');
-    [['layout', 'Home & sidebar', 'table-cells'], ['shortcuts', 'Keyboard shortcuts', 'keyboard'], ['buttons', 'My buttons', 'star']].forEach(function (t) {
+    var tabList = firm ? FIRM_PANES.map(function (p) { return [p.id, p.label, p.icon]; })
+      : [['layout', 'Home & sidebar', 'table-cells'], ['shortcuts', 'Keyboard shortcuts', 'keyboard'], ['buttons', 'My buttons', 'star']];
+    tabList.forEach(function (t) {
       var b = btn('yle-tab', 'tab', null, t[2], t[1]);
       b.setAttribute('data-pane', t[0]);
       b.setAttribute('role', 'tab');
@@ -1130,32 +1282,43 @@
     banner.setAttribute('role', 'alert');
     banner.hidden = true;
     body.appendChild(banner);
-    var lay = el('div', 'yle-pane');
-    lay.id = 'ylePane_layout';
-    lay.setAttribute('data-pane', 'layout');
-    lay.setAttribute('role', 'tabpanel');
-    lay.setAttribute('aria-labelledby', 'yleTab_layout');
-    lay.appendChild(el('p', 'yc-hint yle-intro',
-      'Arrange your own Home tiles and sidebar. Nothing changes until you Save. ' +
-      'Hiding an item only takes its shortcut away: All and Ctrl+K still list every feature you have.'));
-    SURFACES.forEach(function (sf) { lay.appendChild(buildSection(sf)); });
-    body.appendChild(lay);
-    var scp = el('div', 'yle-pane');
-    scp.id = 'ylePane_shortcuts';
-    scp.setAttribute('data-pane', 'shortcuts');
-    scp.setAttribute('role', 'tabpanel');
-    scp.setAttribute('aria-labelledby', 'yleTab_shortcuts');
-    scp.hidden = true;
-    scp.appendChild(buildShortcutSection());
-    body.appendChild(scp);
-    var mbp = el('div', 'yle-pane');
-    mbp.id = 'ylePane_buttons';
-    mbp.setAttribute('data-pane', 'buttons');
-    mbp.setAttribute('role', 'tabpanel');
-    mbp.setAttribute('aria-labelledby', 'yleTab_buttons');
-    mbp.hidden = true;
-    mbp.appendChild(buildButtonsSection());
-    body.appendChild(mbp);
+    var pane = function (id) {
+      var p = el('div', 'yle-pane');
+      p.id = 'ylePane_' + id;
+      p.setAttribute('data-pane', id);
+      p.setAttribute('role', 'tabpanel');
+      p.setAttribute('aria-labelledby', 'yleTab_' + id);
+      return p;
+    };
+    if (firm) {
+      // a 409's way out (S6c-3): reload the firm's arrangement as it is now
+      var cf = el('div', 'yle-conflict');
+      cf.hidden = true;
+      cf.appendChild(btn('yle-add', 'reload', null, 'rotate', 'Reload the firm’s arrangement'));
+      body.appendChild(cf);
+      FIRM_PANES.forEach(function (fp, i) {
+        var p = pane(fp.id);
+        p.hidden = i > 0;
+        p.appendChild(el('p', 'yc-hint yle-intro', fp.intro + ' Nothing changes until you Save.'));
+        fp.surfaces.forEach(function (sf) { p.appendChild(buildSection(sf)); });
+        body.appendChild(p);
+      });
+    } else {
+      var lay = pane('layout');
+      lay.appendChild(el('p', 'yc-hint yle-intro',
+        'Arrange your own Home tiles and sidebar. Nothing changes until you Save. ' +
+        'Hiding an item only takes its shortcut away: All and Ctrl+K still list every feature you have.'));
+      SURFACES.forEach(function (sf) { lay.appendChild(buildSection(sf)); });
+      body.appendChild(lay);
+      var scp = pane('shortcuts');
+      scp.hidden = true;
+      scp.appendChild(buildShortcutSection());
+      body.appendChild(scp);
+      var mbp = pane('buttons');
+      mbp.hidden = true;
+      mbp.appendChild(buildButtonsSection());
+      body.appendChild(mbp);
+    }
     box.appendChild(body);
 
     var foot = el('div', 'yle-foot');
@@ -1175,7 +1338,8 @@
     root.addEventListener('keydown', onCaptureKey);
     root.addEventListener('keyup', onCaptureKeyUp);
     // Esc / Tab / Enter on the document, not the panel: a click on a
-    // non-focusable spot in the card leaves focus on <body>.
+    // non-focusable spot in the card leaves focus on <body>. (The same
+    // function each build: added once.)
     document.addEventListener('keydown', onKey);
     // a press that starts AND ends on the backdrop closes (not a text
     // selection dragged out of the card)
@@ -1189,8 +1353,10 @@
     sec.setAttribute('data-sf', sf);
     var head = el('div', 'yle-sec-head');
     head.appendChild(el('h3', null, NAME[sf]));
-    head.appendChild(btn('yle-reset', 'reset', null, 'rotate-left', sf === 'home' ? 'Reset Home to default' : 'Reset sidebar to default'));
+    head.appendChild(btn('yle-reset', 'reset', null, 'rotate-left', scope === 'firm' ? 'Reset to standard'
+      : sf === 'home' ? 'Reset Home to default' : 'Reset sidebar to default'));
     sec.appendChild(head);
+    if (scope === 'firm' && FIRM_HINT[sf]) sec.appendChild(el('p', 'yc-hint yle-sec-hint', FIRM_HINT[sf]));
     var errs = el('ul', 'yle-errs');
     errs.setAttribute('role', 'alert');
     errs.hidden = true;
@@ -1200,9 +1366,9 @@
     sec.appendChild(rows);
 
     var adds = el('div', 'yle-adds');
-    adds.appendChild(btn('yle-add', 'pick', null, 'plus', 'Add a shortcut'));
-    if (sf === 'home') adds.appendChild(btn('yle-add', 'add-break', null, 'grip-lines', 'Add a row break'));
-    else adds.appendChild(btn('yle-add', 'label-open', null, 'heading', 'Add a section label'));
+    adds.appendChild(btn('yle-add', 'pick', null, 'plus', ICON_SF[sf] ? 'Add a small button' : 'Add a shortcut'));
+    if (BREAK_SF[sf]) adds.appendChild(btn('yle-add', 'add-break', null, 'grip-lines', 'Add a row break'));
+    else if (sf === 'sidebar') adds.appendChild(btn('yle-add', 'label-open', null, 'heading', 'Add a section label'));
     adds.appendChild(el('span', 'yc-hint yle-room'));
     sec.appendChild(adds);
 
@@ -1226,7 +1392,8 @@
       sec.appendChild(la);
     }
 
-    sec.appendChild(buildPicker(sf, 'Add a shortcut to ' + (sf === 'home' ? 'Home' : 'the sidebar')));
+    sec.appendChild(buildPicker(sf, scope === 'firm' ? 'Add to ' + NAME[sf]
+      : 'Add a shortcut to ' + (sf === 'home' ? 'Home' : 'the sidebar')));
 
     var hw = el('div', 'yle-hidden-wrap');
     hw.appendChild(el('h4', null, 'Hidden on this surface'));
@@ -1474,7 +1641,8 @@
         // name rather than squeezing it into a mid-word break
         var main = el('span', 'yle-main');
         main.appendChild(el('span', 'yle-name', r.label));
-        if (r.locked) {
+        if (r.always) main.appendChild(el('span', 'yle-tag', 'Always here'));
+        else if (r.locked) {
           var tag = el('span', 'yle-tag');
           tag.appendChild(iconEl('lock'));
           tag.appendChild(document.createTextNode(' Locked'));
@@ -1510,7 +1678,8 @@
       acts.appendChild(dn);
       if (r.act === 'hide') acts.appendChild(btn('yle-hide', 'hide', 'Hide ' + name + ' here', 'eye-slash'));
       else if (r.act === 'locked') {
-        var lk = btn('yle-hide yle-locked', 'hide', 'Locked by your firm — it stays on this surface', 'lock');
+        var lk = btn('yle-hide yle-locked', 'hide', r.always ? name + ' always stays here: it can move, not leave'
+          : 'Locked by your firm — it stays on this surface', 'lock');
         lk.disabled = true;
         acts.appendChild(lk);
       } else acts.appendChild(btn('yle-remove', 'remove', 'Remove ' + name, 'xmark'));
@@ -1575,7 +1744,7 @@
     renderHidden(sf);
     renderPicker(sf);
     var sec = secOf(sf), room = sess.room(sf);
-    sec.querySelector('.yle-room').textContent = room <= 0 ? 'This surface is full (' + CAP + ' entries).' : '';
+    sec.querySelector('.yle-room').textContent = room <= 0 ? 'This surface is full (' + capOf(sf) + ' entries).' : '';
     sec.querySelectorAll('.yle-adds [data-act]').forEach(function (b) { b.disabled = room <= 0; });
   }
   // ── The Keyboard shortcuts tab ──
@@ -2066,7 +2235,7 @@
   }
 
   function showPane(name) {
-    if (PANES.indexOf(name) < 0) name = 'layout';
+    if (panes().indexOf(name) < 0) name = panes()[0];
     root.querySelectorAll('.yle-pane').forEach(function (p) { p.hidden = p.getAttribute('data-pane') !== name; });
     root.querySelectorAll('.yle-tab').forEach(function (t) {
       var on = t.getAttribute('data-pane') === name;
@@ -2078,7 +2247,7 @@
   }
   function paneShown() {
     var t = root.querySelector('.yle-tab.active');
-    return t ? t.getAttribute('data-pane') : 'layout';
+    return t ? t.getAttribute('data-pane') : panes()[0];
   }
 
   function renderStatus() {
@@ -2088,14 +2257,23 @@
     // click says what to finish
     root.querySelector('.yle-save').disabled = (!dirty && !Object.keys(labelErr).length && !mbForm) || saving;
     var dots = { layout: !!(sess && sess.isDirty()), shortcuts: !!(scs && scs.isDirty()), buttons: !!(its && its.isDirty()) || clearPending() };
+    if (scope === 'firm') {
+      // a firm tab's dot: one of its surfaces differs from what is stored
+      dots = {};
+      FIRM_PANES.forEach(function (fp) {
+        dots[fp.id] = !!sess && fp.surfaces.some(function (sf) { return sess.mode(sf) !== 'stored'; });
+      });
+    }
     root.querySelectorAll('.yle-tab').forEach(function (t) {
       t.querySelector('.yle-tab-dot').hidden = !dots[t.getAttribute('data-pane')];
     });
   }
   function render() {
-    SURFACES.forEach(renderSection);
-    renderShortcuts();
-    renderButtons();
+    liveSurfaces().forEach(renderSection);
+    if (scope !== 'firm') {
+      renderShortcuts();
+      renderButtons();
+    }
     renderStatus();
   }
 
@@ -2109,7 +2287,9 @@
   }
   function clearErrors() {
     banner('');
-    SURFACES.concat('shortcuts', 'buttons').forEach(function (sf) {
+    var cf = root.querySelector('.yle-conflict');
+    if (cf) cf.hidden = true;
+    liveSurfaces().concat(scope === 'firm' ? [] : ['shortcuts', 'buttons']).forEach(function (sf) {
       var u = secOf(sf).querySelector('.yle-errs');
       u.textContent = '';
       u.hidden = true;
@@ -2122,7 +2302,10 @@
   function placeErrors(key, errors) {
     var general = [];
     errors.forEach(function (m) {
-      var hit = key === 'layout' ? /^(?:placed|removed)\.(home|sidebar)\b/.exec(String(m)) : [null, PANE_OF[key]];
+      // (\b: placed.home never matches placed.homeIcons — I is a word character)
+      var hit = key === 'layout' ? /^(?:placed|removed)\.(home|sidebar|homeIcons|more|moreIcons|admin|adminIcons)\b/.exec(String(m))
+        : [null, PANE_OF[key]];
+      if (hit && !secOf(hit[1])) hit = null;   // a surface this panel doesn't show: the banner
       if (hit) {
         var u = secOf(hit[1]).querySelector('.yle-errs');
         u.appendChild(el('li', null, String(m)));
@@ -2174,7 +2357,8 @@
     var row = b.closest('.yle-rows > .yle-row'), i = row ? Number(row.getAttribute('data-i')) : -1;
     switch (act) {
       case 'cancel': requestClose(); return;
-      case 'save': save(); return;
+      case 'save': if (scope === 'firm') saveFirm(); else save(); return;
+      case 'reload': reloadFirm(); return;
       case 'tab': showPane(b.getAttribute('data-pane')); return;
       case 'mb-open': openForm(-1); return;
       case 'mb-cancel': closeForm(true); return;
@@ -2258,10 +2442,12 @@
         return;
       }
       case 'reset':
-        ask(sf === 'home'
-          ? 'Reset Home to the standard layout? Your Home arrangement is replaced when you Save.'
-          : 'Reset the sidebar to the standard layout? Your sidebar arrangement is replaced when you Save.',
-        'Reset', 'Keep mine').then(function (yes) {
+        ask(scope === 'firm'
+          ? 'Reset ' + NAME[sf] + ' to the app\u2019s standard layout? The firm\u2019s arrangement of it is replaced when you Save.'
+          : sf === 'home'
+            ? 'Reset Home to the standard layout? Your Home arrangement is replaced when you Save.'
+            : 'Reset the sidebar to the standard layout? Your sidebar arrangement is replaced when you Save.',
+        'Reset', scope === 'firm' ? 'Keep it' : 'Keep mine').then(function (yes) {
           if (!yes || !sess) return;
           sess.reset(sf);
           edited(sf);
@@ -2270,7 +2456,7 @@
         });
         return;
       case 'add-break':
-        if (sess.addBreak()) { edited('home'); focusRow('home', sess.view('home').length - 1, '.yle-remove'); }
+        if (sess.addBreak(sf)) { edited(sf); focusRow(sf, sess.view(sf).length - 1, '.yle-remove'); }
         return;
       case 'label-open': {
         var la = sec.querySelector('.yle-label-add');
@@ -2517,12 +2703,14 @@
    *  or when the current layout could not be read). */
   function open(opts) {
     if (!L.isReady()) return Promise.resolve(false);
+    if (opts && opts.scope === 'firm') return openFirm(opts);
+    if (isOpen() && scope !== 'user') return Promise.resolve(false);   // the firm mode is open: one at a time
+    if (loading) return loading;
     if (!KEYS) KEYS = (window.ycAll && window.ycAll.keys) || null;
     if (!KEYS) { console.error('[ycLayoutEditor] ycAll.keys missing — load order'); return Promise.resolve(false); }
-    build();
+    build('user');
     var section = opts && opts.section;
     if (isOpen()) { if (section) showPane(section); return Promise.resolve(true); }
-    if (loading) return loading;
     if (typeof window.apiSend !== 'function') { notice(LOAD_FAIL); return Promise.resolve(false); }
     var from = document.activeElement;
     notice('');
@@ -2547,12 +2735,14 @@
   // The All button: busy while the read is out; a failure message beside it
   // (or a toast when the editor was opened from elsewhere).
   function busy(on) {
+    if (scope === 'firm') return;                       // not All's button: the Firm tab's own
     var b = document.getElementById('ycAllCustomize');
     if (!b) return;
     b.disabled = !!on;
     if (on) b.setAttribute('aria-busy', 'true'); else b.removeAttribute('aria-busy');
   }
   function notice(msg) {
+    if (scope === 'firm') { if (msg) toast('error', msg); return; }
     var b = document.getElementById('ycAllCustomize');
     var m = document.getElementById('ycAllCustomizeMsg');
     if (!m && b && msg) {
@@ -2588,7 +2778,7 @@
     storedRefs = userIdsIn([storedOf(ui), shortcutsOf(ui)]);
     its = newItemSession(itemsOf(ui));
     sessOpts = {
-      stored: storedOf(ui), effective: editorEffective(), locked: lockedOf(ui),
+      stored: storedOf(ui), effective: editorEffective(), locked: lockedOf(ui), firm: firmLayoutOf(ui),
       base: window.DEFAULT_LAYOUTS || {}, registry: window.FEATURE_REGISTRY || {}, groups: editorGroups(),
     };
     sess = session(sessOpts);
@@ -2615,6 +2805,7 @@
   function closeNow() {
     if (!root) return;
     root.hidden = true;
+    firmFrom = null;
     sess = null;
     scs = null;
     its = null;
@@ -2632,7 +2823,8 @@
     if (!isOpen()) return Promise.resolve(true);
     if (saving) return Promise.resolve(false);
     if (!anyDirty() && !Object.keys(labelErr).length && !mbForm) { closeNow(); return Promise.resolve(true); }
-    return ask('Discard your unsaved launcher changes?', 'Discard', 'Keep editing').then(function (yes) {
+    return ask(scope === 'firm' ? 'Discard your unsaved changes to the firm\u2019s arrangement?' : 'Discard your unsaved launcher changes?',
+      'Discard', 'Keep editing').then(function (yes) {
       if (yes) closeNow();
       return yes;
     });
@@ -2790,6 +2982,164 @@
     });
   }
 
+  // ── The firm mode (S6c-3) ──────────────────────────────────────────────
+  // open({ scope: 'firm', section?, from? }): a fresh GET /api/ui-config (the
+  // shell catches up to it, as the personal editor's open does); nothing
+  // opens without can_edit_firm (the server refuses the save anyway) or when
+  // the read fails — a toast says which. The personal editor's panel, if
+  // built, is rebuilt for the firm (never while either is open).
+  function openFirm(opts) {
+    if (isOpen()) {
+      if (scope === 'firm' && opts.section) showPane(opts.section);
+      return Promise.resolve(scope === 'firm');
+    }
+    if (loading) return loading;
+    if (typeof window.apiSend !== 'function') { toast('error', LOAD_FIRM_FAIL); return Promise.resolve(false); }
+    var from = opts.from && opts.from.nodeType === 1 ? opts.from : document.activeElement;
+    loading = Promise.resolve()
+      .then(function () { return window.apiSend('/api/ui-config', 'GET'); })
+      .then(function (r) {
+        if (!isObj(r)) throw new Error('no layers in the response');
+        if (r.can_edit_firm !== true) { toast('error', FIRM_DENIED); return false; }
+        var fresh = { firm: isObj(r.firm) ? r.firm : {}, user: isObj(r.user) ? r.user : {} };
+        syncShell(fresh);
+        var fv = isObj(r.firm_versions) ? r.firm_versions : null;
+        build('firm');
+        showFirm(fresh, fv && hasOwn(fv, 'layout') ? fv.layout : undefined, from, opts.section);
+        return true;
+      })
+      .catch(function (e) {
+        if (typeof console !== 'undefined') console.warn('[ycLayoutEditor] firm layout read failed — not opened:', e && e.message);
+        toast('error', LOAD_FIRM_FAIL);
+        return false;
+      })
+      .then(function (ok) { loading = null; return ok; });
+    return loading;
+  }
+  var LOAD_FIRM_FAIL = 'Couldn\u2019t load the firm\u2019s arrangement; try again.';
+  function firmLayoutOf(ui) {
+    return isObj(ui) && isObj(ui.firm) && isObj(ui.firm.layout) ? ui.firm.layout : null;
+  }
+  function showFirm(ui, base, from, section) {
+    opening++;
+    saving = false;
+    labelErr = {};
+    sess = null; scs = null; its = null; mbForm = null; scAdd = null;   // the personal editor's parts: none here
+    firmBase = base;
+    var cat = firmCatalog(ui);
+    sessOpts = {
+      stored: firmLayoutOf(ui), effective: cat.entries, locked: [], base: window.DEFAULT_LAYOUTS || {},
+      registry: window.FEATURE_REGISTRY || {}, groups: cat.groups, surfaces: FIRM_SURFACES, pass: [], seed: { more: cat.seed },
+    };
+    sess = session(sessOpts);
+    clearErrors();
+    root.querySelectorAll('.yle-picker, .yle-label-add').forEach(function (n) { n.hidden = true; });
+    freeze(false);
+    render();
+    if (from && from !== document.body) firmFrom = from;
+    opener = firmFrom;
+    root.hidden = false;
+    showPane(section);
+    window.addEventListener('beforeunload', onBeforeUnload);
+    var first = root.querySelector('.yle-pane:not([hidden]) .yle-rows button:not(:disabled)') || root.querySelector('.yle-cancel');
+    if (first) first.focus();
+  }
+  // After a 409: the firm's arrangement as it is now, every edit here dropped
+  // (the button says so). A failed read keeps the panel as it was.
+  function reloadFirm() {
+    if (saving || scope !== 'firm' || typeof window.apiSend !== 'function') return Promise.resolve(false);
+    var keep = paneShown(), from = firmFrom;
+    saving = true;
+    freeze(true);
+    renderStatus();
+    return Promise.resolve()
+      .then(function () { return window.apiSend('/api/ui-config', 'GET'); })
+      .then(function (r) {
+        if (!isObj(r) || r.can_edit_firm !== true) throw new Error(isObj(r) ? FIRM_DENIED : 'no layers in the response');
+        var fresh = { firm: isObj(r.firm) ? r.firm : {}, user: isObj(r.user) ? r.user : {} };
+        syncShell(fresh);
+        var fv = isObj(r.firm_versions) ? r.firm_versions : null;
+        showFirm(fresh, fv && hasOwn(fv, 'layout') ? fv.layout : undefined, from, keep);
+        toast('success', 'Reloaded: this is the firm\u2019s arrangement as saved now');
+        return true;
+      }, function (e) {
+        saving = false;
+        freeze(false);
+        renderStatus();
+        banner('Couldn\u2019t reload: ' + ((e && e.message) || 'request failed') + '.', true);
+        return false;
+      });
+  }
+  // The shell's copy of the firm layer, then the launcher re-run: every
+  // surface repaints in place, the More firm row included (S6c-2).
+  function applyFirmToShell(config) {
+    var fd = window.firmData;
+    if (!fd) return false;
+    var ui = isObj(fd.ui) ? fd.ui : { firm: {}, user: {} };
+    var firm = {};
+    if (isObj(ui.firm)) for (var k in ui.firm) if (hasOwn(ui.firm, k)) firm[k] = ui.firm[k];
+    firm.layout = config;
+    var next = {};
+    for (var j in ui) if (hasOwn(ui, j)) next[j] = ui[j];
+    next.firm = firm;
+    fd.ui = next;
+    L.applyAccess({ ui: fd.ui });
+    return true;
+  }
+  // Save: ONE PUT of the firm's layout with its base. 200 → the shell takes
+  // it and the panel closes; 409 → nothing saved, the edits stay, Reload is
+  // offered; 400 → the server's errors under their surfaces; 403 → the
+  // session message (firm.html's).
+  function saveFirm() {
+    if (!isOpen() || saving || scope !== 'firm') return Promise.resolve(false);
+    clearErrors();
+    if (Object.keys(labelErr).length) {
+      showPane(paneOf('sidebar'));
+      banner('Fix the highlighted section label first.');
+      var bad = root.querySelector('.yle-label-in[aria-invalid="true"]');
+      if (bad) bad.focus();
+      return Promise.resolve(false);
+    }
+    if (!sess.isDirty()) { closeNow(); return Promise.resolve(true); }
+    if (typeof window.apiSend !== 'function') { banner('Saving is not available on this page.', true); return Promise.resolve(false); }
+    var body = { scope: 'firm', config_key: 'layout', config: sess.doc() };
+    if (firmBase !== undefined) body.base = firmBase;        // stale → 409, never an overwrite
+    saving = true;
+    freeze(true);
+    renderStatus();
+    root.querySelector('.yle-status').textContent = 'Saving\u2026';
+    return Promise.resolve()
+      .then(function () { return window.apiSend('/api/ui-config', 'PUT', body); })
+      .then(function (r) {
+        saving = false;
+        applyFirmToShell(r && isObj(r.config) ? r.config : body.config);
+        closeNow();
+        toast('success', r && r.changed === false ? 'Nothing changed' : 'Saved \u2014 everyone gets the new arrangement as they load YisraCase');
+        return true;
+      }, function (e) {
+        saving = false;
+        freeze(false);
+        renderStatus();
+        if (!isOpen()) return false;
+        if (e && e.status === 409) {
+          banner(CONFLICT_MSG, true);
+          root.querySelector('.yle-conflict').hidden = false;
+          return false;
+        }
+        if (e && e.status === 403) { banner(SESSION_MSG, true); return false; }
+        if (e && e.status === 400 && e.body && isArr(e.body.errors) && e.body.errors.length) {
+          var general = placeErrors('layout', e.body.errors);
+          var first = root.querySelector('.yle-errs:not([hidden])');
+          if (first) showPane(first.closest('.yle-pane').getAttribute('data-pane'));
+          banner('The server refused the save.' + (general.length ? ' ' + general.join(' \u00b7 ') : ' See the messages under each section.') +
+            ' Your changes are still here.', true);
+          return false;
+        }
+        banner('Save failed: ' + ((e && e.message) || 'request failed') + '. Your changes are still here.', true);
+        return false;
+      });
+  }
+
   var cust = document.getElementById('ycAllCustomize');
   if (cust) cust.addEventListener('click', function () { open(); });
 
@@ -2798,5 +3148,7 @@
     session: session, labelProblem: labelProblem, canonical: canonical,
     shortcutSession: shortcutSession, reservedProblem: reservedProblem,
     itemSession: itemSession, makeUserId: makeUserId, buttonProblems: buttonProblems, legacyTab: legacyTab,
+    firmCatalog: firmCatalog, FIRM_SURFACES: FIRM_SURFACES, GUARANTEED: GUARANTEED,
+    scope: function () { return scope; },
   };
 })();

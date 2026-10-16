@@ -75,7 +75,9 @@ type. A heading is plain text, 1 to 40 characters.
 
 ## Hide versus remove
 
-- **Hide** is for the standard items, the ones a surface has by default.
+- **Hide** is for the standard items, the ones a surface has by default:
+  your firm's arrangement of it, if your firm has arranged it (see
+  [What your firm controls](#what-your-firm-controls)), otherwise the app's.
   Hiding one takes it off **that surface only**: hiding Billing from the
   sidebar leaves its Home tile alone. Hidden items are listed under **Hidden
   on this surface** at the end of the section, each with a **Show** button
@@ -85,9 +87,9 @@ type. A heading is plain text, 1 to 40 characters.
 - Neither one takes a feature away from you. It's still in All and Ctrl+K,
   and it still opens from anywhere else it appears.
 
-When YisraCase adds a new feature to Home or the sidebar, it shows up for you
-too, next to the item it sits beside by default, even if you've rearranged
-that surface. You can then move it or hide it like any other.
+When YisraCase or your firm adds a new feature to Home or the sidebar, it
+shows up for you too, next to the item it sits beside by default, even if
+you've rearranged that surface. You can then move it or hide it like any other.
 
 ## Saving and cancelling
 
@@ -116,7 +118,8 @@ that surface. You can then move it or hide it like any other.
 ## Reset
 
 **Reset Home to default** and **Reset sidebar to default** each put **one**
-surface back to the standard layout. They ask first, and take effect when you
+surface back to the standard layout: your firm's arrangement of it, or the
+app's if your firm hasn't arranged it. They ask first, and take effect when you
 Save. The other surface keeps your arrangement.
 
 ## Keyboard shortcuts
@@ -374,6 +377,14 @@ items*), and each button inside one is tagged with the drawer's name.
 Your firm's launcher settings (More → YisraCase Config → Firm, see
 [Firm Launcher](../05-Subsystems/14-firm-launcher.md)) apply underneath your
 arrangement:
+
+- **Your Home starts from the firm's.** Your firm can arrange Home, the
+  sidebar and the small buttons under the Home tiles for everyone (and the More
+  Features and Admin pages). Until you arrange a surface yourself, you see the
+  firm's arrangement, and the editor starts from it. Once you have arranged
+  one, a later change by the firm only **adds** new items for you, next to
+  their neighbours: it never reorders or takes away yours. **Reset** brings
+  back the firm's arrangement.
 
 - **Firm hides.** A feature the firm hid is gone from every surface, from your
   layout, from your drawers and from **Add a shortcut**. If the firm brings it back, so does your

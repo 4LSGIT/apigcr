@@ -200,6 +200,16 @@
 // ycLauncher.applyAccess({ ui }) re-runs the overlay, so the admin's own
 // launcher changes at once; everyone else gets it on next load.
 //
+// The Launcher section also opens the firm's ARRANGEMENT (ui-custom S6c-3):
+// "Arrange pages and defaults…" → window.top.ycLayoutEditor.open({ scope:
+// 'firm' }), the shell's layout editor in its firm mode, drawn over the whole
+// app like the icon picker. It edits ANOTHER firm document, `layout` (Home,
+// the sidebar, the More Features and Admin pages and their small buttons),
+// with its own load, base and save — never this page's Save. History lists
+// either document (a switch at its top); restoring a `layout` version sends
+// the newest version id the list shows as its base (a save since → 409) and
+// hands the restored document to the shell the same way.
+//
 // Section 2, Who sees what (ui-custom S3.4): the SAME document's visible_to
 // (role scoping: Everyone, or Hidden except for ticked roles — su always),
 // plus per-user hides, which are entitlement_denies rows at scope user and
@@ -476,6 +486,40 @@ function placeErrors(errors, doc) {
   return out;
 }
 
+// ── The firm `layout` document in History (ui-custom S6c-3) ──
+// A version, read-only, as one line per surface it arranges: its tiles in
+// order (a grid's / Home's rows split at the breaks, the sidebar's under
+// their headings), then what it hides there.
+const LAYOUT_NAMES = [['home', 'Home'], ['homeIcons', 'Home’s small buttons'], ['sidebar', 'Sidebar'],
+  ['more', 'More Features'], ['moreIcons', 'More Features’ small buttons'], ['admin', 'Admin'], ['adminIcons', 'Admin’s small buttons']];
+/** A layout document → [[surface name, text]…]; nameOf(id) → its label. */
+function layoutParts(doc, nameOf) {
+  const d = isObj(doc) ? doc : {};
+  const placed = isObj(d.placed) ? d.placed : {};
+  const removed = isObj(d.removed) ? d.removed : {};
+  const parts = [];
+  for (const [sf, title] of LAYOUT_NAMES) {
+    const bits = [];
+    if (Array.isArray(placed[sf])) {
+      const groups = [{ head: null, ids: [] }];
+      for (const e of placed[sf]) {
+        if (!isObj(e)) continue;
+        if (typeof e.item === 'string') groups[groups.length - 1].ids.push(nameOf(e.item));
+        else if (e.break === true) groups.push({ head: null, ids: [] });
+        else if (typeof e.label === 'string') groups.push({ head: e.label, ids: [] });
+      }
+      const live = groups.filter((g) => g.head != null || g.ids.length);
+      const rows = sf === 'sidebar'
+        ? live.map((g) => (g.head != null ? `${g.head}: ` : '') + (g.ids.join(', ') || '—'))
+        : live.map((g, i) => (live.length > 1 ? `Row ${i + 1}: ` : '') + g.ids.join(', '));
+      bits.push(rows.join('; ') || 'nothing');
+    }
+    if (Array.isArray(removed[sf]) && removed[sf].length) bits.push('hidden: ' + removed[sf].map(nameOf).join(', '));
+    if (bits.length) parts.push([title, bits.join(' · ')]);
+  }
+  return parts.length ? parts : [['Arrangement', 'The app’s standard layout everywhere']];
+}
+
 // ═══════════════════════════════════════════════════════════════
 // The shared registry_overrides document (both sections edit it)
 // ═══════════════════════════════════════════════════════════════
@@ -553,15 +597,16 @@ const RegistryDoc = {
 };
 
 /** Hand the saved document to the shell: firmData.ui updated in place, then
- *  the overlay re-run (loadFirmData alone would NOT re-run it — S3.1). */
-function refreshShell(config) {
+ *  the overlay re-run (loadFirmData alone would NOT re-run it — S3.1). key:
+ *  the firm document it is (registry_overrides, or layout — S6c-3). */
+function refreshShell(config, key = 'registry_overrides') {
   const fd = P.firmData, L = P.ycLauncher;
   if (!fd || !L || typeof L.applyAccess !== 'function') {
     console.warn('[firm] shell launcher not reachable — the change shows on next load');
     return false;
   }
   const ui = isObj(fd.ui) ? fd.ui : { firm: {}, user: {} };
-  fd.ui = { ...ui, firm: { ...(isObj(ui.firm) ? ui.firm : {}), registry_overrides: config } };
+  fd.ui = { ...ui, firm: { ...(isObj(ui.firm) ? ui.firm : {}), [key]: config } };
   L.applyAccess({ ui: fd.ui });
   return true;
 }
@@ -656,6 +701,14 @@ const LauncherSection = {
       cat.entries.filter((e) => e.group === g).map((e) => this.rowHtml(e)).join('')).join('');
     this.body.innerHTML = `
       <div class="fm-history" id="fm-history" hidden></div>
+      <div class="fm-block">
+        <h3>Pages and defaults</h3>
+        <span class="yc-hint">Arrange the <b>More Features</b> and <b>Admin</b> pages for everyone — the order of the
+          tiles, where a row breaks, where your firm items sit, the small buttons under them — and the <b>Home</b> and
+          <b>sidebar</b> everyone starts from. It opens over the app and saves on its own (not with this page's Save),
+          from the settings as saved: save a new firm item here first to place it.</span>
+        <div style="margin-top:8px"><button type="button" class="btn btn-outline btn-sm" data-act="arrange"><i class="fa-solid fa-table-cells-large"></i> Arrange pages and defaults…</button></div>
+      </div>
       <div class="fm-block">
         <h3>Hide and rename</h3>
         <span class="yc-hint">Tick <b>Hide</b> to take a feature off everyone's launcher — the sidebar, Home, the grids,
@@ -852,6 +905,7 @@ const LauncherSection = {
     const b = ev.target.closest('button[data-act]');
     if (!b) return;
     const st = this.st, rows = st.form.items, act = b.dataset.act;
+    if (act === 'arrange') return this.openArrange(b);
     if (act === 'add-item') {
       rows.push({ kept: false, saved: false, orig: null, id: '', label: '', icon: 'link', type: 'url', href: '', key: '', size: 'large' });
       st.srv = null;
@@ -890,34 +944,120 @@ const LauncherSection = {
     if (focusSel) { const f = this.body.querySelector(focusSel); if (f) f.focus(); }
   },
 
-  // ── History ──
+  // ── Pages and defaults (S6c-3): the shell's layout editor, firm mode ──
+  /** Opens it over the app (the top document draws it, like the icon picker).
+   *  It works from the SAVED firm settings: with unsaved edits here, it asks
+   *  first. A refusal (no permission, a failed read) is the editor's own
+   *  toast. */
+  async openArrange(b) {
+    const ed = window.top && window.top.ycLayoutEditor;
+    if (!ed || typeof ed.open !== 'function') {
+      banner('The arrangement editor is not reachable from here — open this page from YisraCase (More → YisraCase Config).');
+      return false;
+    }
+    if (RegistryDoc.dirty() && !(await ask('Arrange pages and defaults?',
+      'This page has unsaved changes. The arrangement works from the saved settings, so a new firm item appears there once you Save here. Open it anyway?', 'Open'))) return false;
+    b.disabled = true;
+    try { return await ed.open({ scope: 'firm', from: b }); } finally { b.disabled = false; }
+  },
+
+  // ── History ── of either firm document: registry_overrides (this page's),
+  // or layout (the arrangement, S6c-3) — a switch at the top.
+  histDoc: 'registry_overrides',
+  histHead: null,       // the newest version id of the list shown: a layout restore's base
   async toggleHistory() {
     const box = E('fm-history');
     if (!box) return;
     if (!box.hidden) { box.hidden = true; return; }
     box.hidden = false;
-    box.innerHTML = '<h3>History</h3><div class="fm-empty"><i class="fa-solid fa-spinner spin"></i> Loading…</div>';
+    return this.loadHistory(this.histDoc);
+  },
+
+  async loadHistory(doc) {
+    const box = E('fm-history');
+    if (!box) return;
+    this.histDoc = doc;
+    const docs = [['registry_overrides', 'Hide, rename and items'], ['layout', 'Pages and defaults']];
+    box.innerHTML = '<h3>History</h3><div class="fm-toc fm-hist-docs" role="group" aria-label="Which settings">' +
+      docs.map(([k, t]) => `<button type="button" class="btn ${k === doc ? 'btn-primary' : 'btn-outline'} btn-sm" data-hist-doc="${k}" aria-pressed="${k === doc}">${t}</button>`).join('') +
+      '</div><div class="fm-empty"><i class="fa-solid fa-spinner spin"></i> Loading…</div>';
+    box.querySelectorAll('[data-hist-doc]').forEach((b) => b.addEventListener('click', () => {
+      if (b.dataset.histDoc !== this.histDoc) this.loadHistory(b.dataset.histDoc);
+    }));
     let vs;
     try {
-      vs = (await api('/api/ui-config/versions?config_key=registry_overrides')).versions || [];
+      vs = (await api(`/api/ui-config/versions?config_key=${encodeURIComponent(doc)}`)).versions || [];
     } catch (e) {
-      box.lastChild.textContent = errText(e, 'Could not load the history');
+      if (this.histDoc === doc) box.lastChild.textContent = errText(e, 'Could not load the history');
       return;
     }
+    if (this.histDoc !== doc || !box.isConnected) return;      // switched meanwhile
+    this.histHead = vs.length ? vs[0].id : null;
     const when = (t) => { const d = new Date(t); return isNaN(d) ? String(t ?? '') : d.toLocaleString(); };
-    box.innerHTML = '<h3>History</h3>' + (vs.length ? vs.map((v) => `
+    box.lastChild.remove();
+    box.insertAdjacentHTML('beforeend', vs.length ? vs.map((v) => `
       <div class="fm-ver" data-ver="${esc(v.id)}">
         <span class="fm-ver-when">${esc(when(v.saved_at))}</span>
         <span class="fm-ver-who">${esc(v.saved_by_name || (v.saved_by != null ? 'user ' + v.saved_by : 'unknown'))}</span>
         ${v.is_current ? '<span class="fm-badge">current</span>' : ''}
         <button type="button" class="btn btn-outline btn-sm" data-ver-act="view">View</button>
         ${v.is_current ? '' : '<button type="button" class="btn btn-outline btn-sm" data-ver-act="restore">Restore</button>'}
-      </div>`).join('') : '<div class="fm-empty">Nothing saved yet.</div>');
+      </div>`).join('') : `<div class="fm-empty">${doc === 'layout' ? 'Nothing arranged yet: everyone has the app’s standard layout.' : 'Nothing saved yet.'}</div>`);
     box.querySelectorAll('[data-ver-act]').forEach((b) => b.addEventListener('click', () => {
       const id = b.closest('[data-ver]').dataset.ver;
-      if (b.dataset.verAct === 'view') this.viewVersion(id, b.closest('.fm-ver'));
+      const row = b.closest('.fm-ver');
+      if (doc === 'layout') {
+        if (b.dataset.verAct === 'view') this.viewLayoutVersion(id, row);
+        else this.restoreLayoutVersion(id);
+      } else if (b.dataset.verAct === 'view') this.viewVersion(id, row);
       else this.restoreVersion(id);
     }));
+  },
+
+  /** An id → its label: a feature (as listed above), a saved firm item, else the id. */
+  labelOf(eid) {
+    const e = (this.st.catalog ? this.st.catalog.entries : []).find((x) => x.id === eid);
+    if (e) return e.label;
+    const it = (isObj(RegistryDoc.stored) && Array.isArray(RegistryDoc.stored.items) ? RegistryDoc.stored.items : [])
+      .find((x) => isObj(x) && x.id === eid);
+    return it && typeof it.label === 'string' ? it.label : eid;
+  },
+
+  async viewLayoutVersion(id, rowEl) {
+    const open = rowEl.querySelector('.fm-ver-view');
+    if (open) { open.remove(); return; }
+    const box = document.createElement('dl');
+    box.className = 'fm-ver-view';
+    box.textContent = 'Loading…';
+    rowEl.appendChild(box);
+    let v;
+    try { v = (await api(`/api/ui-config/versions/${encodeURIComponent(id)}`)).version; }
+    catch (e) { box.textContent = errText(e, 'Could not load that version'); return; }
+    box.textContent = '';
+    for (const [k, val] of layoutParts(v && v.config, (eid) => this.labelOf(eid))) {
+      const dt = document.createElement('dt'); dt.textContent = k;
+      const dd = document.createElement('dd'); dd.textContent = val;
+      box.append(dt, dd);
+    }
+  },
+
+  /** Restore a layout version: its base is the newest id the list shows (a
+   *  save since → 409, never an overwrite); the shell takes the result. */
+  async restoreLayoutVersion(id) {
+    if (!(await ask('Restore this version?', 'It becomes the arrangement of pages and defaults for everyone (a new entry in History).', 'Restore'))) return;
+    let r;
+    try {
+      r = await api(`/api/ui-config/versions/${encodeURIComponent(id)}/restore`, 'POST', { base: this.histHead });
+    } catch (e) {
+      if (e && e.status === 400 && e.body && Array.isArray(e.body.errors)) {
+        banner((e.message || 'That version can no longer be restored') + ': ' + e.body.errors.join(' · '));
+      } else banner(errText(e, 'Restore failed'));
+      return;
+    }
+    banner(null);
+    refreshShell(r.config, 'layout');
+    toast('success', r.changed === false ? 'That version is already current — nothing changed' : 'Restored');
+    await this.loadHistory('layout');
   },
 
   async viewVersion(id, rowEl) {
@@ -1376,7 +1516,7 @@ window.addEventListener('beforeunload', (e) => {
 
 // Test / debug handle: the pure parts of the Launcher section.
 window.FirmPage = { Page, SECTIONS, LauncherSection, canonical, makeId, slugOf, formFromDoc, docFromForm,
-  relabelRow, formProblems, placeErrors, launcherCatalog, refreshShell, firmIdsIn, SESSION_MSG, CONFLICT_MSG,
+  relabelRow, formProblems, placeErrors, launcherCatalog, refreshShell, firmIdsIn, SESSION_MSG, CONFLICT_MSG, layoutParts,
   RegistryDoc, WhoSection, whoCatalog, visFromDoc, visApply, STORE_ROLES, ROLE_LABELS, SU_TIP };
 
 // ── Boot ───────────────────────────────────────────────────────

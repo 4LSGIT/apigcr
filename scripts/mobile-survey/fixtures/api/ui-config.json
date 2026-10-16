@@ -1,4 +1,5 @@
 {
  "status": "success",
- "can_edit_firm": true
+ "can_edit_firm": true,
+ "firm_versions": { "registry_overrides": 3, "layout": 3 }
 }

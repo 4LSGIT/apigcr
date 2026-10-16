@@ -1,12 +1,14 @@
-# Firm Launcher — hide, rename and add launcher items for the whole firm
+# Firm Launcher — hide, rename, add and arrange launcher items for the whole firm
 
 **Where:** More → YisraCase Config → **Firm** tab → the **Launcher** and **Who sees
-what** sections.
+what** sections; the Launcher section's **Arrange pages and defaults…** opens the
+arrangement editor.
 **Who:** staff holding the *firm settings* permission — the **admin**, **IT** and
 **SU** roles. Nobody else sees the Firm tab, and the server refuses their saves
 anyway: the tab being hidden is not what protects it.
-**Stored as:** one firm-wide document (`ui_config`, key `registry_overrides`),
-with every save kept in a history.
+**Stored as:** two firm-wide documents (`ui_config`, keys `registry_overrides`
+for hides, renames, firm items and who sees what, and `layout` for the
+arrangement), with every save of either kept in a history.
 
 ## What it is
 
@@ -18,7 +20,8 @@ Launcher section changes it for **everyone at the firm** in three ways:
 |---|---|
 | **Hide** | Takes a feature off every launcher surface — sidebar, Home, the grids, All and the Ctrl-K search. |
 | **Rename** | Gives a feature a firm name, shown everywhere that feature appears (for example *Cases* → *Matters*). |
-| **Firm items** | Adds the firm's own entries — a link, a tool or a saved view — as tiles at the end of the More grid, under **Firm** in All, and in Ctrl-K. |
+| **Firm items** | Adds the firm's own entries — a link, a tool or a saved view — as tiles on More Features, under **Firm** in All, and in Ctrl-K. |
+| **Arrange** | Sets out the **More Features** and **Admin** pages, and the **Home** and **sidebar** everyone starts from (see [Arranging pages and defaults](#arranging-pages-and-defaults)). |
 
 The Firm tab is a page of sections. **Launcher** is the first; **Who sees what**
 (below) decides which roles and people see each item. Firm-wide settings from
@@ -62,7 +65,8 @@ Each firm item has a **label**, an **icon** and what it **opens**:
   icon and its name show beside the button. See
   [Choosing an icon](../01-YisraCase-overview/15-your-launcher.md#choosing-an-icon).
 - **Order** — the arrow buttons move an item up or down. Firm items show in this
-  order in the More grid's firm row and under **Firm** in the All tab.
+  order under **Firm** in the All tab, and in the More grid's firm row until
+  the firm arranges More Features.
 - **Delete** — the bin button.
 - **Dialog size** (tools and saved views): **Large**, the big working dialog
   (full screen on a phone), or **Compact**, a small card for something short
@@ -74,10 +78,13 @@ Each firm item has a **label**, an **icon** and what it **opens**:
 - A link may not point at a tool page or a saved view directly (`/tool/…`,
   `/customView…`): those only work inside the app, so pick **Tool** or **Saved
   view** for them instead.
-- Firm items appear as tiles in a row of their own at the **end of the More
-  grid**, in this order, and in **All** and **Ctrl-K**. They don't get a
-  firm-wide tile on Home, the sidebar or the Admin grid; each person can pin one
-  to their own Home or sidebar
+- Firm items appear in **All** and **Ctrl-K**, and as tiles on More Features:
+  in a row of their own at the **end of the More grid**, in this order, until
+  the firm arranges More Features — from then on, wherever the arrangement puts
+  them (and nowhere on More if it leaves one out). The arrangement can also
+  give one a firm-wide tile on Home, a row on the sidebar or a place on the
+  Admin page ([Arranging pages and defaults](#arranging-pages-and-defaults)), and
+  each person can pin one to their own Home or sidebar
   ([Your own launcher](../01-YisraCase-overview/15-your-launcher.md)).
 
 **An item's id is permanent.** The id (shown under the item, like
@@ -85,6 +92,58 @@ Each firm item has a **label**, an **icon** and what it **opens**:
 that, renaming the item changes its label but never its id. Other settings
 point at items by id, so a new item never takes an id the launcher settings still
 refer to — it gets `firm:payroll-2` instead.
+
+## Arranging pages and defaults
+
+**Arrange pages and defaults…** (at the top of the Launcher section) opens the
+arrangement editor over the app: a card on a computer, the whole screen on a
+phone. It has three tabs:
+
+| Tab | What it arranges |
+|---|---|
+| **Home & sidebar** | The **Home** tiles, the small buttons under them, and the **sidebar** that everyone starts from. |
+| **More Features** | The More Features page: its tiles, where a row breaks, where your firm items sit, and the small buttons under the tiles (Casey's paw). |
+| **Admin** | The Admin page: its tiles, rows and small buttons. |
+
+Each section lists that part as everyone sees it now, top to bottom, with the
+same buttons as each person's own editor
+([Customizing Home and the sidebar](../01-YisraCase-overview/15-your-launcher.md#customizing-home-and-the-sidebar)):
+**↑ / ↓** to move, the **eye with a slash** to hide a standard item, **×** to
+remove one you added, **Add a shortcut** (on the small-button rows, **Add a
+small button**), **Add a row break** on Home, More Features and Admin, and
+**Add a section label** on the sidebar. Tags say **Firm** (one of your firm
+items) or **Added** (not there in the app's standard layout). A dot on a tab
+means it has unsaved changes.
+
+- **The More Features list starts with the page as it is.** Until you save an
+  arrangement of More Features, your firm items sit at its end, after a row
+  break, exactly as the page shows them. Move them where you want them (for
+  example, Get Clio Code up into the row with a gap), and take out a row
+  break you no longer need with its **×**.
+- **All always stays** among the small buttons under the Home tiles: it can
+  move, but not leave (the row shows **Always here**). The sidebar's All is an
+  ordinary item.
+- A hidden feature (ticked **Hide** in the Launcher section) isn't offered: it
+  shows nowhere. Save a new firm item here first, then arrange it.
+- **Save** keeps the arrangement for everyone. It saves on its own, not with
+  this page's Save. Your own screen changes straight away; everyone else gets it
+  the next time they load YisraCase.
+- **Reset to standard** puts one part back to the app's standard layout (it
+  asks first; it takes effect when you Save).
+- If someone else saved the arrangement after you opened the editor, Save says
+  so and keeps your changes on screen. Nothing of theirs is overwritten.
+  **Reload the firm's arrangement** shows theirs, discarding your changes.
+
+**What people see.** Everyone's More Features and Admin pages follow the
+arrangement. Home and the sidebar are where each person **starts**: someone who
+has already arranged their own Home or sidebar keeps it, and a later change
+here only **adds** new items for them, next to their neighbours (Reset in their
+own editor brings back the firm's). The Admin page still shows each person only the
+tiles they can open, and only people allowed the Admin page see it (**Who sees
+what**). Like Hide, arranging is about tidiness, not access.
+
+**Who.** Anyone who can open this tab: the admin, IT and SU roles. The admin
+role can arrange the Admin page too.
 
 ## Who sees what
 
@@ -156,12 +215,18 @@ edits), then make your changes again. Restore checks the same way.
 
 **History** (beside the section title) lists the latest 200 saved versions,
 newest first, with who saved it and when. The one in use is marked **current**.
+A switch at its top chooses which settings: **Hide, rename and items** (this
+page's Save, including Who sees what) or **Pages and defaults** (the
+arrangement).
 
-- **View** shows what a version hid, renamed, added and restricted to roles,
+- **View** shows what a version hid, renamed, added and restricted to roles —
+  or, for the arrangement, each part's tiles row by row and what it hides —
   without changing anything.
 - **Restore** makes that version the firm's launcher again, for everyone. It is
   saved as a new version, so a restore can itself be undone from History.
-  Restoring discards any unsaved changes on the page (it asks first).
+  Restoring hide / rename / items discards any unsaved changes on the page (it
+  asks first). Restoring an arrangement is refused if someone saved the
+  arrangement after the list opened: reopen History to see the newest.
 - A very old version can be refused if it breaks a rule added since it was
   saved; the message lists what's wrong with it, and nothing changes.
 
@@ -172,11 +237,8 @@ newest first, with who saved it and when. The one in use is marked **current**.
   person's editor and can't be hidden there), but this page has no control to
   set one yet. Personal layouts themselves are each person's own:
   [Your own launcher](../01-YisraCase-overview/15-your-launcher.md).
-- **Arranging** the launcher for everyone — where the More and Admin tiles
-  sit, placing firm items anywhere but the More grid's firm row (a firm-wide
-  spot on Home, the sidebar, or in a grid), the small icons under each grid.
-  The firm-wide layout exists (the server stores it, and the launcher follows
-  it), but this page has no editor for it yet.
+- **Firm pages** — pages of your own tiles, like More Features, for the whole
+  firm. More Features and Admin are the two pages there are.
 - Per-role launcher **layouts** (a different arrangement for each role). **Who
   sees what** decides which items a role sees, not where they sit.
 - Hides by role or for the whole firm aren't offered under **Hidden from these

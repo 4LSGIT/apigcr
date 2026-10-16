@@ -1244,6 +1244,7 @@ tests/helpers/scriptGuard.js
 tests/helpers/shellHtml.js
 tests/helpers/toolShell.js
 tests/helpers/u6aEventsDb.js
+tests/helpers/uiConfigStore.js
 tests/hookHmacRawBody.test.js
 tests/hookHmacTimestamped.test.js
 tests/hookMapper.test.js
@@ -1288,6 +1289,7 @@ tests/launcherS5cb.test.js
 tests/launcherS6b.browser.test.js
 tests/launcherS6b.test.js
 tests/launcherS6c.test.js
+tests/launcherS6c3.test.js
 tests/likeEscapeSites.test.js
 tests/logService.setLogAbout.test.js
 tests/logService.updateLogLink.test.js

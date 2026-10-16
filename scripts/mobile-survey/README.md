@@ -175,7 +175,11 @@ hand), the Firm tab of YisraCase Config (`ui-config`, `ui-config/pickers`,
 `ui-config/versions`, and for its Who sees what section `firm-data.json`'s
 `ui` `visible_to` — one item with every role ticked — plus `entitlements`:
 per-user hides, one item hidden from three people, one of them not in the user
-list; `panel:caseConfigDiv:firm` — the step fails if the tab does not open) and the firm's items (`firm-data.json`'s `ui`: a
+list; `panel:caseConfigDiv:firm` — the step fails if the tab does not open — then its "Arrange pages
+and defaults…" opens the layout editor in firm mode over the firm's layout below:
+`panel:caseConfigDiv:firm-editor:home` / `:more` / `:admin` / `:more-picker`, which fail when it does not
+open or its scrolling body goes wider than itself, and `panel:caseConfigDiv:firm-history-layout`, History
+switched to "Pages and defaults" with a version's View open) and the firm's items (`firm-data.json`'s `ui`: a
 compact tool, a 40-character label, a 40-character unbroken one, a link and a
 38-character link with a long href, plus a long rename of Reports; surveyed in
 `tab:tabMore` and `tab:tabAll`) placed by the firm's default **layout**
@@ -190,7 +194,7 @@ paw in More's icon row, Scratch taken off the Admin grid — so the firm row is
 NOT drawn; `visible_to.admin` restricts the Admin page to it / admin like the
 live firm, which wsurl.js's non-SU "staff" runs rely on). `GET /api/ui-config` answers the SAME layers —
 server.js builds it from `firm-data.json`'s `ui`, with only `can_edit_firm`
-from `ui-config.json` — because in production both come from one read and the
+and `firm_versions` from `ui-config.json` — because in production both come from one read and the
 layout editor refreshes the shell when they differ), and a user's own Home and
 sidebar layout (`ui.user.layout`, ui-custom S4a: both surfaces re-ordered, a
 More panel and the two long-labelled firm items pinned to Home and the

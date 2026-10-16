@@ -1647,9 +1647,15 @@ has no gate — the firm's `visible_to` decides it) − `denied`
 `ycLauncher.exec(id)` is the ONE programmatic activation (All, Ctrl-K, user
 shortcuts, URL restore) and refuses anything not effective. The All tab +
 palette live in `public/js/ycAll.js`, whose single keydown dispatcher also
-runs user shortcuts; the personal editor is `public/js/ycLayoutEditor.js`
-(All > Customize my launcher); the firm editor is the Config shell's Firm tab
-(`public/caseconfig/firm.html`: Launcher + Who sees what).
+runs user shortcuts (the All tab never lists `all` itself; the palette does);
+the personal editor is `public/js/ycLayoutEditor.js` (All > Customize my
+launcher; its lists are the user step over the firm's `layout`); the firm
+editor is the Config shell's Firm tab (`public/caseconfig/firm.html`:
+Launcher + Who sees what, History over both firm documents), whose "Arrange
+pages and defaults…" opens the same `ycLayoutEditor` in firm mode
+(`open({ scope:'firm' })`, drawn in the top document; edits the firm `layout`
+over all seven surfaces, ONE PUT with `base`, 409 → Reload; the More list
+closes with the firm row while the firm has no `placed.more`).
 
 **Storage.** One table, `ui_config` (scope firm|user; `user_id` 0 / `role`
 '' sentinels are load-bearing for the UNIQUE; `role` reserved). Firm

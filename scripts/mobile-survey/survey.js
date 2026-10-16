@@ -572,6 +572,48 @@ async function walk(page, W, record) {
         if (!opened) m.boxes = [{ sel: '#tabnav-firm (the Firm tab did not open)', missing: true }];
         await record('panel:caseConfigDiv:firm', m, await shot('panel_caseconfig_firm'));
       }
+      // …its "Arrange pages and defaults…" (ui-custom S6c-3): the layout editor in firm mode, drawn in
+      // the top document over the fixture firm layout (More with Clio in row 5 and the long firm labels,
+      // the Admin page minus Scratch) — each of its three tabs, then More's picker open. Its body scrolls
+      // and clips sideways, so m.boxes checks it. Nothing is edited, so it closes without a prompt. Then
+      // the Firm tab's History on "Pages and defaults" with a version's View open.
+      if (id === 'caseConfigDiv' && fr) {
+        const ff = page.frames().find((f) => /caseconfig\/firm\.html/.test(f.url()));
+        const ok = !!ff && await ff.evaluate(async () => {
+          const b = document.querySelector('[data-act="arrange"]');
+          if (!b) return false;
+          b.click();
+          for (let i = 0; i < 40 && !(window.top.ycLayoutEditor && window.top.ycLayoutEditor.isOpen()); i++) await new Promise((r) => setTimeout(r, 100));
+          return window.top.ycLayoutEditor.isOpen() && window.top.ycLayoutEditor.scope() === 'firm';
+        });
+        const firmBox = async (m) => {
+          m.boxes = [ok ? await page.evaluate(measureBox, '#ycLayoutEditor .yle-body') : { sel: '#ycLayoutEditor (firm mode did not open)', missing: true }];
+          return m;
+        };
+        for (const pane of ['home', 'more', 'admin']) {
+          if (ok) { await page.evaluate((p) => document.querySelector(`#ycLayoutEditor .yle-tab[data-pane="${p}"]`).click(), pane); await sleep(300); }
+          await record('panel:caseConfigDiv:firm-editor:' + pane, await firmBox(await measure(page, null)), await shot('panel_caseconfig_firm_editor_' + pane));
+          if (!ok) break;
+        }
+        if (ok) {
+          await page.evaluate(() => {
+            document.querySelector('#ycLayoutEditor .yle-tab[data-pane="more"]').click();
+            document.querySelector('#ycLayoutEditor .yle-sec[data-sf="more"] [data-act="pick"]').click();
+            document.querySelector('#ycLayoutEditor .yle-sec[data-sf="more"] .yle-picker').scrollIntoView();
+          }); await sleep(400);
+          await record('panel:caseConfigDiv:firm-editor:more-picker', await firmBox(await measure(page, null)), await shot('panel_caseconfig_firm_editor_more_picker'));
+          await page.evaluate(() => ycLayoutEditor.close()); await sleep(300);
+          await ff.evaluate(async () => {
+            const wait = () => new Promise((r) => setTimeout(r, 400));
+            document.querySelector('[data-act="history"]').click(); await wait();
+            const d = document.querySelector('[data-hist-doc="layout"]'); if (d) d.click(); await wait();
+            const v = document.querySelector('.fm-ver [data-ver-act="view"]'); if (v) v.click(); await wait();
+            const h = document.getElementById('fm-history'); if (h) h.scrollIntoView();
+          }); await sleep(400);
+          const hm = await measure(page, fr);
+          await record('panel:caseConfigDiv:firm-history-layout', hm, await shot('panel_caseconfig_firm_history_layout'));
+        }
+      }
     }
   }
 
