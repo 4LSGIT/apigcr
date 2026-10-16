@@ -130,6 +130,7 @@ manual/01-YisraCase-overview/11-campaign-manager.md
 manual/01-YisraCase-overview/12-sync-bus.md
 manual/01-YisraCase-overview/13-pipelines.md
 manual/01-YisraCase-overview/14-workspace-url.md
+manual/01-YisraCase-overview/15-your-launcher.md
 manual/01-YisraCase-overview/README.md
 manual/02-YisraForms/01-overview.md
 manual/02-YisraForms/02-creating-a-form.md
@@ -337,6 +338,7 @@ public/js/yc-forms.js
 public/js/yc-frame-fit.js
 public/js/yc-sync.js
 public/js/ycAll.js
+public/js/ycLayoutEditor.js
 public/js/ycNoTranscribe.js
 public/js/ycPager.js
 public/js/ycSubTab.js
@@ -1261,6 +1263,7 @@ tests/keyTasks.test.js
 tests/launcherS2.test.js
 tests/launcherS31.test.js
 tests/launcherS4a.test.js
+tests/launcherS4b.test.js
 tests/likeEscapeSites.test.js
 tests/logService.setLogAbout.test.js
 tests/logService.updateLogLink.test.js

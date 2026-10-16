@@ -26,6 +26,7 @@ independent: read the one matching the record you're working with.
 | 12 | [12-sync-bus.md](12-sync-bus.md) | The sync bus — how every open screen, frame, and browser window hears about data changes. Developer reference: what announces, who listens, the fences, and the honest list of what it doesn't cover |
 | 13 | [13-pipelines.md](13-pipelines.md) | Pipelines — where a case is (stages, lanes, the intake→matter hand-off) and what's left to do (derived requirements, overrides), the Steps panel, the board, the portal card, and the automation guards that move cases forward but never back |
 | 14 | [14-workspace-url.md](14-workspace-url.md) | Keeping your place — what F5, an update reload or a shared link brings back (open files, the tab inside a file, Comms' tab, the open More/Admin panel), what it doesn't, and why email links open the exact file |
+| 15 | [15-your-launcher.md](15-your-launcher.md) | Your own launcher — All and Ctrl+K, arranging your own Home tiles and sidebar (move, hide, add shortcuts, row breaks and section labels), hide versus remove, reset, and what the firm's hides, renames, locks and firm items do to it |
 
 ---
 

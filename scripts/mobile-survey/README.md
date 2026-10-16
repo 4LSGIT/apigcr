@@ -6,7 +6,7 @@ hosts, at the widths you pass:
 
 | Group     | What it opens |
 |-----------|---------------|
-| `tabs`    | every sidebar tab, plus the Calendar tab's List (rows + quick actions) and Grid modes |
+| `tabs`    | every sidebar tab, plus the Calendar tab's List (rows + quick actions) and Grid modes, and All's "Customize my launcher" layout editor (open, its shortcut picker, its section-label box) |
 | `panels`  | every More Features / Admin panel (each `[data-target]` tile — new tiles are picked up automatically), plus sub-surfaces for some (below) |
 | `files`   | a case file and a contact file, and every tab inside each (Refresh is skipped: it opens a reload confirm) |
 | `dialogs` | New Client, New Case, New Appointment, New Event, Reschedule, Show Appointment, the two deadline quick actions (complete, cancel), the two Log adopt dialogs (case docket, phone/email) |
@@ -174,12 +174,19 @@ an oversized row; plus `admin/scratch/fred/demo_state` for opening a value by
 hand), the Firm tab of YisraCase Config (`ui-config`, `ui-config/pickers`,
 `ui-config/versions`; `panel:caseConfigDiv:firm` — the step fails if the tab
 does not open) and the More grid's firm row (`firm-data.json`'s `ui`: a
-compact tool, a 40-character label, a 40-character unbroken one and a link;
-surveyed in `tab:tabMore` and `tab:tabAll`), and a user's own Home and
+compact tool, a 40-character label, a 40-character unbroken one, a link and a
+38-character link with a long href, plus a long rename of Reports; surveyed in
+`tab:tabMore` and `tab:tabAll`. `GET /api/ui-config` answers the SAME layers —
+server.js builds it from `firm-data.json`'s `ui`, with only `can_edit_firm`
+from `ui-config.json` — because in production both come from one read and the
+layout editor refreshes the shell when they differ), and a user's own Home and
 sidebar layout (`ui.user.layout`, ui-custom S4a: both surfaces re-ordered, a
 More panel and the two long-labelled firm items pinned to Home and the
 sidebar, user breaks, a 39-character section label, per-surface removals (one
-of them firm-locked) — on screen on every surface, the phone drawer included) —
+of them firm-locked) — on screen on every surface, the phone drawer included,
+and in the layout editor (ui-custom S4b; `tab:tabAll:layout-editor`,
+`…:picker`, `…:label` — these also fail when the editor's scrolling body goes
+sideways, `m.boxes`)) —
 enough to fill the tables
 that tend to overflow and to put every conditional Overview / Case Details box
 on screen. The mock ignores

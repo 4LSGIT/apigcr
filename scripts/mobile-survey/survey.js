@@ -308,6 +308,37 @@ async function walk(page, W, record) {
       await record('tab:tabCalendar:grid', await measure(page, await frameOf(page, VISIBLE_TAB_FRAME)), await shot('calendar_grid'));
       await page.evaluate(() => calxSetView('list'));
     }
+
+    // All → Customize my launcher (ui-custom S4b): the layout editor, a
+    // full-screen panel over the shell (public/js/ycLayoutEditor.js), over the
+    // fixture user layout (fixtures/firm-data.json: a 40-character section
+    // label, the unbroken firm label pinned to Home, a locked item); then its
+    // shortcut picker open on Home, then the sidebar's new-label box. Its body
+    // scrolls vertically and clips sideways, so a too-wide row would hide from
+    // measureDoc: m.boxes checks the body itself. Opening it edits nothing,
+    // so it closes without a prompt.
+    if (tabs.includes('tabAll')) {
+      const editorBox = async (m) => { m.boxes = [await page.evaluate(measureBox, '#ycLayoutEditor .yle-body')]; return m; };
+      await page.evaluate(() => openMainTab('tabAll')); await sleep(800);
+      // open() reads GET /api/ui-config first (S4b fix round) and resolves to whether it opened
+      const opened = await page.evaluate(() => (window.ycLayoutEditor ? ycLayoutEditor.open() : false)) === true; await sleep(600);
+      let m = await measure(page, null);
+      if (opened) await editorBox(m); else m.boxes = [{ sel: '#ycLayoutEditor (did not open)', missing: true }];
+      await record('tab:tabAll:layout-editor', m, await shot('all_layout_editor'));
+      if (opened) {
+        await page.evaluate(() => {
+          document.querySelector('#ycLayoutEditor .yle-sec[data-sf="home"] [data-act="pick"]').click();
+          document.querySelector('#ycLayoutEditor .yle-sec[data-sf="home"] .yle-picker').scrollIntoView();
+        }); await sleep(400);
+        await record('tab:tabAll:layout-editor:picker', await editorBox(await measure(page, null)), await shot('all_layout_editor_picker'));
+        await page.evaluate(() => {
+          document.querySelector('#ycLayoutEditor .yle-sec[data-sf="sidebar"] [data-act="label-open"]').click();
+          document.querySelector('#ycLayoutEditor .yle-sec[data-sf="sidebar"] .yle-label-add').scrollIntoView();
+        }); await sleep(400);
+        await record('tab:tabAll:layout-editor:label', await editorBox(await measure(page, null)), await shot('all_layout_editor_label'));
+        await page.evaluate(() => ycLayoutEditor.close()); await sleep(300);
+      }
+    }
   }
 
   if (ONLY.has('panels')) {

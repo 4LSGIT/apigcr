@@ -17,7 +17,8 @@
  *             same-origin pane iframes included — except an editor that binds
  *             Ctrl-K itself (Quill's insert-link). Arrows + Enter run, Esc (or
  *             a click outside) closes and gives focus back. Stands down while a
- *             SweetAlert dialog (not a toast) is open, and before login.
+ *             SweetAlert dialog (not a toast) is open, while the "Customize my
+ *             launcher" editor is open (ycLayoutEditor.js), and before login.
  *
  * Re-renders on the 'ycLauncherAccess' window event, which
  * ycLauncher.applyAccess() fires after login and when the custom tab changes.
@@ -220,6 +221,9 @@
     if (e.defaultPrevented) return;
     if (e.key !== 'k' && e.key !== 'K' && e.code !== 'KeyK') return;
     if (!L.isReady()) return;   // before login: not ours (the browser keeps its own Ctrl-K)
+    // The layout editor (ycLayoutEditor.js, S4b) is modal: an item run from
+    // the palette would open behind it, and the next Esc would go to it.
+    if (window.ycLayoutEditor && typeof window.ycLayoutEditor.isOpen === 'function' && window.ycLayoutEditor.isOpen()) return;
     var doc = (e.target && e.target.ownerDocument) || (e.target && e.target.nodeType === 9 ? e.target : document);
     if (swalOpen(window) || swalOpen(doc.defaultView)) return;
     e.preventDefault();

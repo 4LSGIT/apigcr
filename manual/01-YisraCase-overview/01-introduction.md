@@ -109,6 +109,10 @@ and in an email editor Ctrl+K keeps its usual job there: inserting a link.
 A feature your firm has switched off for you is not in the sidebar, on Home,
 in the More menu, under All, or in the search.
 
+**Customize my launcher**, under the search box on All, arranges your own Home
+tiles and sidebar: move items, hide the ones you don't use, and add shortcuts to
+anything else. See [Your own launcher](15-your-launcher.md).
+
 ### On a phone
 
 YisraCase works at phone width; a few things look different:

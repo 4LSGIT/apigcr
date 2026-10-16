@@ -70,8 +70,10 @@ Each firm item has a **label**, an **icon** and what it **opens**:
   `/customView…`): those only work inside the app, so pick **Tool** or **Saved
   view** for them instead.
 - Firm items appear as tiles in a row of their own at the **end of the More
-  grid**, in this order, and in **All** and **Ctrl-K**. They don't get a tile on
-  Home, the sidebar or the Admin grid.
+  grid**, in this order, and in **All** and **Ctrl-K**. They don't get a
+  firm-wide tile on Home, the sidebar or the Admin grid; each person can pin one
+  to their own Home or sidebar
+  ([Your own launcher](../01-YisraCase-overview/15-your-launcher.md)).
 
 **An item's id is permanent.** The id (shown under the item, like
 `firm:payroll`) is made from the label the first time the item is saved. After
@@ -117,8 +119,11 @@ newest first, with who saved it and when. The one in use is marked **current**.
 
 ## Not here (yet)
 
-- **Locking** items so a person can't remove them from their own launcher, and
-  **personal layouts**: these come with per-user launcher editing.
-- **Placing** firm items anywhere but the More grid's firm row (Home, the
-  sidebar, a spot of your choosing in a grid).
+- **Locking** items so a person can't hide them from their own Home or
+  sidebar. The launcher honours a lock (a locked item shows *Locked* in each
+  person's editor and can't be hidden there), but this page has no control to
+  set one yet. Personal layouts themselves are each person's own:
+  [Your own launcher](../01-YisraCase-overview/15-your-launcher.md).
+- **Placing** firm items for everyone anywhere but the More grid's firm row (a
+  firm-wide spot on Home, the sidebar, or in a grid).
 - Per-role launchers.

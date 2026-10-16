@@ -20,8 +20,11 @@
 //                                    document as the restored one (else 404).
 //                                    No state: the Firm tab (Config shell) can be
 //                                    clicked through, nothing persists. The GETs
-//                                    (/api/ui-config, …/pickers, …/versions[/<id>])
-//                                    are plain fixtures.
+//                                    …/pickers, …/versions[/<id>] are plain fixtures.
+//   GET /api/ui-config            -> fixtures/api/ui-config.json (can_edit_firm)
+//                                    with firm / user taken from firm-data.json's
+//                                    `ui`: one source for the layers, as in
+//                                    production (the layout editor re-reads them).
 //   GET /manual[/:section[/:file]] -> the REAL routes/manuals.js, reading the
 //                                    repo's manual/ from disk (no DB); only its
 //                                    auth middleware is swapped for a
@@ -112,6 +115,16 @@ function createApp({ log = null } = {}) {
   app.post('/login', (req, res) => res.json({ token: fakeJwt() }));
 
   app.use(manualsRouter());
+
+  // GET /api/ui-config: its layers ARE firm-data.json's `ui` — in production
+  // both reads come from one uiConfigService.readFor, and the layout editor
+  // (ui-custom S4b) refreshes the shell from this read when the two differ, so
+  // a mock that disagreed with itself would re-run the launcher mid-survey.
+  // The rest (can_edit_firm, …) comes from fixtures/api/ui-config.json.
+  app.get('/api/ui-config', (req, res) => {
+    const ui = readJson(path.join(FIXTURES, 'firm-data.json')).ui || {};
+    res.json({ ...fixtureFor('/api/ui-config'), firm: ui.firm || {}, user: ui.user || {} });
+  });
 
   // ui-custom S3.2 — the Firm tab's two writes (stateless; see the header).
   app.put('/api/ui-config', express.json(), (req, res) => {

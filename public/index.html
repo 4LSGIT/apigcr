@@ -2007,12 +2007,20 @@
        launcher element. NEVER data-target / data-exclusive-group in here: the
        drill-in machinery queries those page-wide. The search box ranks with
        the Ctrl-K palette's matcher (the phone's way in). Rendered after login
-       by /js/ycAll.js, which also owns the palette. -->
+       by /js/ycAll.js, which also owns the palette. Its "Customize my
+       launcher" button opens the layout editor (/js/ycLayoutEditor.js). -->
   <div id="tabAll" class="tab-main">
     <h1><i class="fa-solid fa-table-cells"></i> All Features <i class="fa-solid fa-table-cells"></i></h1>
     <div class="yc-all">
       <input id="ycAllSearch" type="search" placeholder="Find a feature…" autocomplete="off" aria-label="Find a feature">
       <div class="yc-hint yc-all-hint">Ctrl+K (⌘K on a Mac) opens this search from anywhere.</div>
+      <!-- Customize my launcher (ui-custom S4b): opens the user's own Home /
+           sidebar layout editor, public/js/ycLayoutEditor.js. It lives HERE
+           because All is fixed chrome no layout can hide — a user can always
+           get back to it and undo themselves. -->
+      <div class="yc-all-tools">
+        <button type="button" id="ycAllCustomize" class="yc-all-customize"><i class="fa-solid fa-sliders"></i><span>Customize my launcher</span></button>
+      </div>
       <div id="ycAllList"></div>
     </div>
   </div>
@@ -2083,8 +2091,122 @@
       #ycPalette { padding-top: 8px; }
       #ycPalette .yc-pal-foot { display: none; }
     }
+
+    /* All's "Customize my launcher" button (ui-custom S4b). */
+    #tabAll .yc-all-tools { display: flex; justify-content: flex-end; align-items: center; flex-wrap: wrap; gap: 6px 10px; margin-top: 10px; }
+    #tabAll .yc-all-customize {
+      display: inline-flex; align-items: center; gap: 8px; min-height: var(--ctl-h); padding: 0 12px; margin: 0;
+      cursor: pointer; font-size: var(--fs-sm); background: var(--surface); color: var(--text);
+      border: 1px solid var(--border-strong); border-radius: var(--radius);
+    }
+    #tabAll .yc-all-customize i { color: var(--accent-2); }
+    #tabAll .yc-all-customize:disabled { cursor: progress; opacity: .6; }
+    #tabAll .yc-all-msg { color: var(--danger); font-size: var(--fs-sm); overflow-wrap: anywhere; }
+    #tabAll .yc-all-msg[hidden] { display: none; }
+    #tabAll .yc-all-customize:hover, #tabAll .yc-all-customize:focus-visible { background: var(--hover); border-color: var(--accent); }
+
+    /* The layout editor (ui-custom S4b, public/js/ycLayoutEditor.js): a
+       full-screen panel — a card on a desktop, the whole screen at ≤768px.
+       z-index 1045: above the tool dialog (1040), below the Ctrl-K palette
+       (1050) and SweetAlert2 (1060), whose confirms it uses. Scoped by id, so
+       it outranks style.css's global input rule (0,2,1) and its dark-theme
+       button rule on specificity, never on load order. The head and foot are
+       flex: 0 0 auto beside the scrolling body, so a short screen squeezes
+       the body, never them. */
+    #ycLayoutEditor {
+      position: fixed; inset: 0; z-index: 1045; display: flex; justify-content: center; align-items: flex-start;
+      padding: 4vh 16px 16px; box-sizing: border-box; background: var(--backdrop);
+    }
+    #ycLayoutEditor[hidden] { display: none; }
+    #ycLayoutEditor .yle-box {
+      display: flex; flex-direction: column; width: 100%; max-width: 720px; max-height: 92vh; overflow: hidden;
+      box-sizing: border-box; text-align: left; background: var(--surface); color: var(--text);
+      border: 1px solid var(--border-strong); border-radius: var(--radius); box-shadow: var(--shadow-drawer);
+    }
+    #ycLayoutEditor .yle-head, #ycLayoutEditor .yle-foot { flex: 0 0 auto; display: flex; align-items: center; gap: 8px; padding: 10px 16px; }
+    #ycLayoutEditor .yle-head { border-bottom: 1px solid var(--border); }
+    #ycLayoutEditor .yle-head h2 { flex: 1 1 auto; min-width: 0; margin: 0; font-size: var(--fs-lg); line-height: 1.3; }
+    #ycLayoutEditor .yle-head h2 i { color: var(--accent-2); }
+    #ycLayoutEditor .yle-foot { flex-wrap: wrap; justify-content: flex-end; border-top: 1px solid var(--border); }
+    #ycLayoutEditor .yle-status { flex: 1 1 auto; min-width: 0; }
+    #ycLayoutEditor .yle-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 12px 16px 16px; }
+    #ycLayoutEditor .yle-intro { margin: 0 0 8px; }
+    #ycLayoutEditor .yle-banner {
+      margin: 8px 0; padding: 8px 12px; border-radius: var(--radius-sm); overflow-wrap: anywhere;
+      background: var(--danger-soft); color: var(--danger-on-soft); border: 1px solid var(--danger);
+    }
+    #ycLayoutEditor .yle-sec { margin-top: 16px; }
+    #ycLayoutEditor .yle-sec-head { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 6px; }
+    #ycLayoutEditor .yle-sec-head h3 { flex: 1 1 auto; margin: 0; font-size: var(--fs); font-weight: 700; }
+    #ycLayoutEditor .yle-errs { margin: 0 0 6px; padding-left: 20px; color: var(--danger); font-size: var(--fs-sm); overflow-wrap: anywhere; }
+    #ycLayoutEditor .yle-rows, #ycLayoutEditor .yle-hidden { list-style: none; margin: 0; padding: 0; }
+    #ycLayoutEditor .yle-row {
+      display: flex; align-items: center; gap: 8px; min-width: 0; padding: 4px 4px 4px 10px; margin: 0 0 4px;
+      background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-sm);
+    }
+    #ycLayoutEditor .yle-row-break, #ycLayoutEditor .yle-row-label { background: var(--surface-sunken); }
+    #ycLayoutEditor .yle-ic { flex: 0 0 auto; width: 1.25em; text-align: center; color: var(--accent-2); }
+    #ycLayoutEditor .yle-name { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; font-size: var(--fs); }
+    #ycLayoutEditor .yle-main { flex: 1 1 auto; min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 2px 8px; }
+    #ycLayoutEditor .yle-main > .yle-name { flex: 0 1 auto; }
+    #ycLayoutEditor .yle-break { color: var(--text-muted); font-style: italic; }
+    #ycLayoutEditor .yle-tag {
+      flex: 0 0 auto; padding: 1px 6px; font-size: var(--fs-xs); white-space: nowrap; color: var(--text-muted);
+      border: 1px solid var(--border); border-radius: var(--radius-sm);
+    }
+    #ycLayoutEditor .yle-acts { flex: 0 0 auto; display: flex; gap: 4px; }
+    #ycLayoutEditor .yle-btn {
+      display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-width: var(--ctl-h);
+      min-height: var(--ctl-h); padding: 0 10px; margin: 0; box-sizing: border-box; cursor: pointer;
+      font-size: var(--fs-sm); line-height: 1.2; background: var(--surface); color: var(--text);
+      border: 1px solid var(--border-strong); border-radius: var(--radius-sm);
+    }
+    #ycLayoutEditor .yle-acts .yle-btn { padding: 0; }
+    #ycLayoutEditor .yle-hidden-row .yle-acts .yle-btn { padding: 0 10px; }
+    #ycLayoutEditor .yle-btn:hover:not(:disabled), #ycLayoutEditor .yle-btn:focus-visible { background: var(--hover); border-color: var(--accent); }
+    #ycLayoutEditor .yle-btn:disabled { cursor: default; opacity: .45; }
+    #ycLayoutEditor .yle-btn.yle-locked:disabled { opacity: .8; color: var(--text-muted); }
+    #ycLayoutEditor .yle-btn.yle-primary { background: var(--accent); color: var(--fill-text); border-color: var(--accent); }
+    #ycLayoutEditor .yle-btn.yle-primary:hover:not(:disabled) { background: var(--accent-dark); }
+    #ycLayoutEditor .yle-x { border-color: transparent; background: transparent; }
+    #ycLayoutEditor .yle-adds { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 6px; }
+    #ycLayoutEditor .yle-room { flex: 1 1 100%; }
+    #ycLayoutEditor .yle-room:empty { display: none; }
+    #ycLayoutEditor .yle-input {
+      display: block; width: 100%; min-width: 0; height: var(--ctl-h); box-sizing: border-box; margin: 0; padding: 0 10px;
+      font-size: var(--fs); background: var(--surface); color: var(--text);
+      border: 1px solid var(--border-strong); border-radius: var(--radius-sm);
+    }
+    #ycLayoutEditor .yle-input[aria-invalid="true"] { border-color: var(--danger); }
+    #ycLayoutEditor .yle-field-err { display: block; color: var(--danger); font-size: var(--fs-xs); }
+    #ycLayoutEditor .yle-field-err:empty { display: none; }
+    #ycLayoutEditor .yle-label-add, #ycLayoutEditor .yle-picker {
+      margin-top: 8px; padding: 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-2);
+    }
+    #ycLayoutEditor .yle-label-add[hidden], #ycLayoutEditor .yle-picker[hidden] { display: none; }
+    #ycLayoutEditor .yle-label-add-row, #ycLayoutEditor .yle-pick-row { display: flex; gap: 6px; margin-top: 4px; }
+    #ycLayoutEditor .yle-label-add-row .yle-input, #ycLayoutEditor .yle-pick-row .yle-input { flex: 1 1 auto; }
+    #ycLayoutEditor .yle-pick-list { max-height: 45vh; overflow-y: auto; margin-top: 8px; }
+    #ycLayoutEditor .yle-pick-group h4, #ycLayoutEditor .yle-hidden-wrap h4 {
+      margin: 8px 0 4px; font-size: var(--fs-xs); font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--text-muted);
+    }
+    #ycLayoutEditor .yle-pick-items { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 4px; }
+    #ycLayoutEditor .yle-pick-item { justify-content: flex-start; min-width: 0; text-align: left; padding: 6px 10px; font-size: var(--fs); }
+    #ycLayoutEditor .yle-pick-item i { flex: 0 0 auto; width: 1.25em; text-align: center; color: var(--accent-2); }
+    #ycLayoutEditor .yle-pick-item span { min-width: 0; overflow-wrap: anywhere; }
+    #ycLayoutEditor .yle-hidden-wrap { margin-top: 10px; }
+    #ycLayoutEditor .yle-hidden-none[hidden] { display: none; }
+    @media (max-width: 768px) {
+      #ycLayoutEditor { padding: 0; }
+      #ycLayoutEditor .yle-box { max-width: none; max-height: none; height: 100%; border: 0; border-radius: 0; }
+      #ycLayoutEditor .yle-head, #ycLayoutEditor .yle-foot { padding: 8px 12px; }
+      #ycLayoutEditor .yle-body { padding: 8px 12px 16px; }
+      #ycLayoutEditor .yle-row { padding-left: 8px; gap: 6px; }
+      #ycLayoutEditor .yle-pick-items { grid-template-columns: 1fr; }
+    }
   </style>
   <script src="/js/ycAll.js"></script>
+  <script src="/js/ycLayoutEditor.js"></script>
 
   <div id="tabBills" class="tab-main">
     <h1><i class="fa-solid fa-file-invoice-dollar"></i> Billing <i class="fa-solid fa-file-invoice-dollar"></i></h1>
