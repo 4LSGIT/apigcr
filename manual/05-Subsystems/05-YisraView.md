@@ -100,9 +100,10 @@ ask an administrator to build one for you.
 1. **Shows** — pick a view, "All views (browse)", or one of the app pages listed.
 2. **Tab Name** — up to 40 characters. It's suggested from your choice; change it
    to whatever you'd actually call it.
-3. **Icon** — click one from the grid, or type any
-   [Font Awesome](https://fontawesome.com/icons) free-solid name into the box
-   next to it (`paw`, `rocket`, `gavel`). The grid is a shortcut, not a limit.
+3. **Icon** — press **Choose…** and pick any free
+   [Font Awesome](https://fontawesome.com/icons) icon: solid, regular or a
+   brand logo (see
+   [Choosing an icon](../01-YisraCase-overview/15-your-launcher.md#choosing-an-icon)).
 4. Check the **Preview**, then **Save Custom Tab**. The sidebar updates
    immediately — no reload.
 

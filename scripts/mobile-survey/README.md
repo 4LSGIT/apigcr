@@ -199,7 +199,11 @@ one, a link with a long address and a retired id; one pinned to Home, one to
 the sidebar and bound to a shortcut — so they are on the Home, sidebar, All
 and palette surfaces too — and in the editor's My buttons tab,
 `tab:tabAll:layout-editor:buttons` (its titles from `ui-config/pickers.json`),
-`…:buttons-form` (a tool with the longest title picked),
+`…:buttons-form` (a tool with the longest title picked), the icon picker
+opened from that form's Choose… (ui-custom S6a: `…:icon-picker`, the whole
+catalog; `…:icon-picker-search`, Brands with a 60-character query that matches
+nothing — both also fail when the picker's card or its grid goes sideways,
+`m.boxes`),
 `…:buttons-form-error` (a refused link's message) and `…:buttons-drawer`
 (a drawer's contents with its picker open)) and a drawer (ui-custom S5b: one
 of those buttons is a drawer with a 39-character name holding the long user

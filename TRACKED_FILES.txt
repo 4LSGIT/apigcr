@@ -311,6 +311,7 @@ public/index.html
 public/issueReports.html
 public/js/assetpicker.js
 public/js/diag.js
+public/js/faIcons-6.5.0.json
 public/js/featureRegistry.js
 public/js/mailRender.js
 public/js/mailboxColor.js
@@ -338,6 +339,8 @@ public/js/yc-forms.js
 public/js/yc-frame-fit.js
 public/js/yc-sync.js
 public/js/ycAll.js
+public/js/ycIcon.js
+public/js/ycIconPicker.js
 public/js/ycLayoutEditor.js
 public/js/ycNoTranscribe.js
 public/js/ycPager.js
@@ -743,6 +746,7 @@ scripts/backfillAppts.js
 scripts/backfillCampaignContacts.js
 scripts/backfillCaseRoleIds.js
 scripts/backfill_court_event_calendars_2026_08.js
+scripts/buildFaIconCatalog.js
 scripts/calendarTypeOptionsSeed.js
 scripts/calendarTypeSeed.js
 scripts/checkThemePresets.js
@@ -1248,6 +1252,7 @@ tests/hookSpool.test.js
 tests/hookSpoolReplay.mysql.test.js
 tests/hookTransforms.test.js
 tests/hooksGate.test.js
+tests/iconPickerS6a.test.js
 tests/ingestRuleService.duplicate.test.js
 tests/ingestRuleService.transformFailure.test.js
 tests/ingestService.evaluatorFailure.test.js
@@ -1460,6 +1465,7 @@ tests/wsurlS2.test.js
 tests/wsurlS3.test.js
 tests/wsurlSlinks.test.js
 tests/ycFrameFit.test.js
+tests/ycIconS6a.test.js
 tests/ycPager.test.js
 tests/ycSync.test.js
 views/v.html

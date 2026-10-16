@@ -55,9 +55,11 @@ Each firm item has a **label**, an **icon** and what it **opens**:
 | **Tool** | one of the **live** tools from the list, and a **Dialog size** | over the app, in a dialog |
 | **Saved view** | one of the active saved views, and a **Dialog size** | over the app, in a dialog |
 
-- **Icon** is a [Font Awesome](https://fontawesome.com/icons) name, such as
-  `money-check` or `calendar`. A preview shows beside the box; a question mark
-  means the name isn't valid.
+- **Icon**: press **Choose…** and pick any free
+  [Font Awesome](https://fontawesome.com/icons) icon: solid, regular or a brand
+  logo. Search by name or a related word; the families filter the list. The
+  icon and its name show beside the button. See
+  [Choosing an icon](../01-YisraCase-overview/15-your-launcher.md#choosing-an-icon).
 - **Order** — the arrow buttons move an item up or down. Firm items show in this
   order in the More grid's firm row and under **Firm** in the All tab.
 - **Delete** — the bin button.

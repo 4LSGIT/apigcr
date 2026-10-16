@@ -71,6 +71,10 @@
        itself, so the finished DOM is the same as the hand-written one and
        every id (sbAdmin, sbCustom, tabCustomButton, …) exists before
        initAuth() runs. -->
+  <!-- The stored icon value → Font Awesome classes (ui-custom S6a): bare slug =
+       solid, or solid: / regular: / brands: + slug. The launcher below renders
+       every stored icon through it. Pure, no DOM. -->
+  <script src="/js/ycIcon.js"></script>
   <script src="/js/featureRegistry.js"></script>
   <!-- The workspace URL's sub-state token: parse/validate + the frame-host
        caches (WORKSPACE URL block below). Plain script, no DOM at load. -->
@@ -320,7 +324,7 @@
       var USER_ITEMS_MAX = 50;                       // lib/uiConfigShape.js CAPS.items
       var DRAWER_MAX = 30;                           // lib/uiConfigShape.js CAPS.drawer
       var REGISTRY_ID_RE = /^[A-Za-z][A-Za-z0-9]{0,63}$/;   // lib/uiConfigShape.js REGISTRY_ID_RE
-      var ICON_RE = /^[a-z0-9-]{1,40}$/;
+      var ICON_RE = /^(?:(?:solid|regular|brands):)?[a-z0-9-]{1,40}$/;   // lib/uiConfigShape.js ICON_RE (/js/ycIcon.js renders it)
       var TOOL_KEY_RE = /^[a-z0-9-]{1,80}$/;         // routes/api.tools.js TOOL_KEY_RE
       var VIEW_KEY_RE = /^[a-z][a-z0-9_]{2,59}$/;    // services/reportService.js REPORT_KEY_RE
       var CONTROL_RE = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/;
@@ -553,7 +557,7 @@
             var ct = opts.customTab;
             if (!ct || !ct.src) return;
             if (ct.title) label = String(ct.title);
-            if (ct.icon) icon = String(ct.icon);
+            icon = ct.icon ? String(ct.icon) : 'bug';   // no icon: the bug applyCustomTab has always drawn
           }
           var labels = [label];
           if (hasOwn(firm.renames, id)) {
@@ -673,7 +677,7 @@
           items.forEach(function (e) {
             var b = document.createElement('button'), i = document.createElement('i');
             b.className = 'big-button';
-            i.className = 'fa-solid fa-' + (ICON_RE.test(e.icon) ? e.icon : 'circle-question') + ' fa-2xl';
+            i.className = iconClass(e.icon, ' fa-2xl');
             b.appendChild(i);
             b.appendChild(document.createElement('br'));
             b.appendChild(document.createElement('br'));
@@ -965,9 +969,9 @@
         if (value == null) { if (el.hasAttribute(name)) el.removeAttribute(name); }
         else if (el.getAttribute(name) !== value) el.setAttribute(name, value);
       }
-      function iconClass(slug, extra) {
-        return 'fa-solid fa-' + (typeof slug === 'string' && ICON_RE.test(slug) ? slug : 'circle-question') + (extra || '');
-      }
+      // A stored icon value (bare slug = solid, or family:slug) → its classes;
+      // a value that fails the grammar → circle-question (/js/ycIcon.js).
+      function iconClass(value, extra) { return window.ycIcon.cls(value, extra); }
       // A neutral shortcut for entry (an effective entry) on surface, made
       // once and kept up to date.
       function neutral(R, surface, entry) {
@@ -2751,6 +2755,10 @@
   </style>
   <script src="/js/ycAll.js"></script>
   <script src="/js/ycLayoutEditor.js"></script>
+  <!-- The icon picker (ui-custom S6a): ONE dialog for the shell and its
+       same-origin panes (window.top.ycIconPicker.open). Draws in this
+       document; its catalog (/js/faIcons-<v>.json) loads on first open. -->
+  <script src="/js/ycIconPicker.js"></script>
 
   <div id="tabBills" class="tab-main">
     <h1><i class="fa-solid fa-file-invoice-dollar"></i> Billing <i class="fa-solid fa-file-invoice-dollar"></i></h1>
@@ -5953,7 +5961,7 @@
         return;
       }
 
-      const icon  = esc(cfg.icon || 'bug');
+      const icon  = esc(window.ycIcon.cls(cfg.icon || 'bug'));   // family-aware (ui-custom S6a)
       const title = esc(cfg.title || 'Custom Tab');
       const raw   = cfg.loadFunc ? String(cfg.loadFunc) : '';
       const click = raw
@@ -5961,11 +5969,11 @@
         : "openMainTab('tabCustom')";
 
       if (tcb) {
-        tcb.innerHTML = `<i class="fa-solid fa-${icon} fa-2xl"></i><br /><br />${title}`;
+        tcb.innerHTML = `<i class="${icon} fa-2xl"></i><br /><br />${title}`;
         tcb.setAttribute('onclick', click);
       }
       if (sbc) {
-        sbc.innerHTML = `<i class="fa-solid fa-${icon}"></i><span>${title}</span>`;
+        sbc.innerHTML = `<i class="${icon}"></i><span>${title}</span>`;
         sbc.setAttribute('onclick', click);
         sbc.setAttribute('title', title);
       }

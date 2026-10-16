@@ -210,9 +210,9 @@ button for those.
    tab.
 2. Press **Add a button** and fill in:
    - **Name**: what the button says, 1 to 40 characters;
-   - **Icon**: a Font Awesome icon name, such as `star`, `folder-open` or
-     `link` (a preview shows beside the box; a name it doesn't know shows a
-     question mark);
+   - **Icon**: press **Choose…** and pick one (see
+     [Choosing an icon](#choosing-an-icon)); the icon and its name show
+     beside the button;
    - **Opens**: a saved view, a tool, or a link; then pick the view or the tool
      from the list (with its **Window size**), or type the address.
 3. Press **Add button**, then **Save**.
@@ -226,6 +226,28 @@ A button you haven't saved yet says **New**.
 If the lists of tools and saved views can't be loaded, the tab says so: link
 buttons still work, and the lists come back the next time you open the
 editor.
+
+### Choosing an icon
+
+**Choose…** opens the icon picker: every free
+[Font Awesome](https://fontawesome.com/icons) icon, about 2,000 of them, in
+three families: **Solid** (filled), **Regular** (outlined; a smaller set) and
+**Brands** (company logos, such as GitHub or Dropbox).
+
+- **Search**: type part of a name or a related word (`calendar`, `money`,
+  `github`). Older Font Awesome names find their new icon too (`home` finds
+  *house*).
+- **All / Solid / Regular / Brands** narrow the list to one family.
+- The icon you have now is outlined, and is named at the top.
+- Click an icon to pick it. Point at one (or move to it) to see its name.
+- Keys: **↓** from the search box moves into the icons; the arrow keys,
+  **Home** and **End** move around; **Enter** picks; **Enter** in the search
+  box picks the first match; **Esc** or **Cancel** closes it and keeps the icon
+  you had.
+
+The same picker chooses the icon of your
+[custom tab](../05-Subsystems/05-YisraView.md#your-own-tab) and of your firm's items
+([Firm launcher](../05-Subsystems/14-firm-launcher.md)).
 
 ### Putting a button on Home or the sidebar, and giving it a shortcut
 

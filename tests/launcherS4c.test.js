@@ -42,6 +42,8 @@ const { rawShellHtml } = require('./helpers/shellHtml');
 const ROOT = path.join(__dirname, '..');
 const RAW = rawShellHtml();
 const REGISTRY_SRC = fs.readFileSync(path.join(ROOT, 'public/js/featureRegistry.js'), 'utf8');
+// the stored icon value → classes, loaded before the launcher as in index.html (ui-custom S6a)
+const ICON_SRC = fs.readFileSync(path.join(ROOT, 'public/js/ycIcon.js'), 'utf8');
 const RENDERER_SRC = RAW.match(/<script id="ycLauncher">([\s\S]*?)<\/script>/)[1];
 const YCALL_SRC = fs.readFileSync(path.join(ROOT, 'public/js/ycAll.js'), 'utf8');
 const EDITOR_SRC = fs.readFileSync(path.join(ROOT, 'public/js/ycLayoutEditor.js'), 'utf8');
@@ -197,7 +199,7 @@ function boot({ shortcuts = null, layout = null, access = ACCESS, login = true, 
   const plainTabs = [...tabs].filter((t) => !['tabHome', 'tabMore', 'tabAdmin', 'tabCustom', 'tabAll'].includes(t))
     .map((t) => `<div id="${t}" class="tab-main"></div>`).join('');
   const page = `<!DOCTYPE html><html><head>
-    <script>${REGISTRY_SRC}</script><script id="ycLauncher">${RENDERER_SRC}</script>${HIDE_CSS}</head><body>
+    <script>${ICON_SRC}</script><script>${REGISTRY_SRC}</script><script id="ycLauncher">${RENDERER_SRC}</script>${HIDE_CSS}</head><body>
     <nav id="appSidebar"><div class="sb-item" data-tab="tabHome" onclick="openMainTab('tabHome')"></div>
       <div class="sb-item" id="sbOpenFiles"></div><div id="tabOpenFiles"></div><script>ycLauncher.mount('sidebar')</script><div class="sb-item" id="sbAll" data-tab="tabAll" onclick="openMainTab('tabAll')"></div></nav>
     <div id="tabHome" class="tab-main"><br><br>
@@ -761,6 +763,7 @@ describe('the shortcut session core (pure) — every document it writes passes t
   const core = () => {
     const ctx = vm.createContext({ URL, console: { error: (m) => { throw new Error(String(m)); }, warn() {} } });
     ctx.window = ctx;
+    vm.runInContext(ICON_SRC, ctx);
     vm.runInContext(REGISTRY_SRC, ctx);
     vm.runInContext(RENDERER_SRC, ctx);
     vm.runInContext(YCALL_SRC, ctx);

@@ -34,6 +34,8 @@ const { rawShellHtml } = require('./shellHtml');
 const ROOT = path.join(__dirname, '..', '..');
 const RAW = rawShellHtml();
 const REGISTRY_SRC = fs.readFileSync(path.join(ROOT, 'public/js/featureRegistry.js'), 'utf8');
+// the stored icon value → classes, loaded before the launcher as in index.html (ui-custom S6a)
+const ICON_SRC = fs.readFileSync(path.join(ROOT, 'public/js/ycIcon.js'), 'utf8');
 
 function cut(from, to) {
   const a = RAW.indexOf(from);
@@ -71,7 +73,7 @@ function boot({ routes = {}, token = jwt(3600) } = {}) {
   const plainTabs = [...tabs].filter((t) => !['tabHome', 'tabMore', 'tabAdmin', 'tabCustom'].includes(t))
     .map((t) => `<div id="${t}" class="tab-main"></div>`).join('');
   const page = `<!DOCTYPE html><html><head>
-    <script>${REGISTRY_SRC}</script><script id="ycLauncher">${RENDERER_SRC}</script>${DENIED_CSS}${DIALOG_BLOCK}</head><body>
+    <script>${ICON_SRC}</script><script>${REGISTRY_SRC}</script><script id="ycLauncher">${RENDERER_SRC}</script>${DENIED_CSS}${DIALOG_BLOCK}</head><body>
     <nav id="appSidebar"><div class="sb-item" data-tab="tabHome" onclick="openMainTab('tabHome')"></div>
       <script>ycLauncher.mount('sidebar')</script></nav>
     <div id="tabHome" class="tab-main"><script>ycLauncher.mount('home')</script></div>

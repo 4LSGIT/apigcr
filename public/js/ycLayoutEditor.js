@@ -52,7 +52,8 @@
  * No live preview: nothing changes on screen until Save.
  *
  * Everything shown is set as text (labels, renames, firm item labels); icons
- * only from a validated slug. Styles: the #ycLayoutEditor block in index.html
+ * only through /js/ycIcon.js (a value that fails the grammar draws
+ * circle-question). Styles: the #ycLayoutEditor block in index.html
  * (theme.css tokens; id-scoped, so it outranks style.css's global input and
  * dark-theme button rules on specificity, never on load order).
  *
@@ -77,7 +78,9 @@
  * `items` document, { items: [ { id, label, icon, action } ] } — their own
  * buttons, the firm item grammar with user:<slug> ids (lib/uiConfigShape.js):
  * a saved view or a tool (opening in the tool dialog, Large or Compact) or a
- * link (always a new window). A list (icon, name, what it opens, where it is
+ * link (always a new window). Its icon is chosen in the shell's icon picker
+ * (/js/ycIconPicker.js: any free Font Awesome icon, solid / regular /
+ * brands — ui-custom S6a), never typed. A list (icon, name, what it opens, where it is
  * placed and bound; move, edit, delete, "Add to Home" / "Add to sidebar") and
  * one add / edit form; the tool and view lists come from GET
  * /api/ui-config/pickers, read the first time the tab shows. Ids come from the
@@ -115,12 +118,17 @@
     if (typeof console !== 'undefined') console.error('[ycLayoutEditor] ycLauncher missing — load order');
     return;
   }
+  var YI = window.ycIcon;     // the stored icon value → classes (/js/ycIcon.js, ui-custom S6a)
+  if (!YI) {
+    if (typeof console !== 'undefined') console.error('[ycLayoutEditor] ycIcon missing — load order');
+    return;
+  }
 
   var SURFACES = ['home', 'sidebar'];
   var NAME = { home: 'Home', sidebar: 'Sidebar' };
   var CAP = 100;          // lib/uiConfigShape.js CAPS.placed / CAPS.removed
   var LABEL_MAX = 40;     // lib/uiConfigShape.js LABEL_MAX
-  var ICON_RE = /^[a-z0-9-]{1,40}$/;
+  var ICON_RE = YI.RE;    // bare slug = solid, or solid: / regular: / brands: + slug (lib/uiConfigShape.js ICON_RE)
   var CONTROL_RE = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/;
 
   function hasOwn(o, k) { return Object.prototype.hasOwnProperty.call(o, k); }
@@ -677,7 +685,7 @@
     var p = {};
     var lp = labelProblem(f.label);
     if (lp) p.label = lp === 'Type a label' ? 'Give it a name' : lp;
-    if (!ICON_RE.test(String(f.icon == null ? '' : f.icon).trim())) p.icon = 'A Font Awesome icon name: a-z, 0-9 and dashes (for example star)';
+    if (!ICON_RE.test(String(f.icon == null ? '' : f.icon).trim())) p.icon = 'Choose an icon';
     if (f.type === 'url') {
       var h = String(f.href == null ? '' : f.href).trim();
       if (!h) p.href = 'Type the address';
@@ -963,8 +971,8 @@
     if (text != null) n.textContent = text;
     return n;
   }
-  function iconEl(slug, extra) {
-    return el('i', 'fa-solid fa-' + (ICON_RE.test(slug) ? slug : 'circle-question') + (extra ? ' ' + extra : ''));
+  function iconEl(value, extra) {
+    return el('i', YI.cls(value, extra));     // a value that fails the grammar → circle-question
   }
   function btn(cls, act, label, slug, text) {
     var b = el('button', 'yle-btn ' + cls);
@@ -1281,15 +1289,23 @@
     form.hidden = true;
     form.appendChild(el('h4', 'ymb-form-title'));
     field(form, 'label', 'Name', textInput(80, 'e.g. My open leads'));
-    var iconIn = textInput(40, 'e.g. star');
-    var iw = field(form, 'icon', 'Icon', iconIn, 'A Font Awesome icon name, like star, folder-open or link.');
+    // The icon is CHOSEN, never typed (ui-custom S6a): the value rides in a
+    // hidden input; Choose… opens the shell's icon picker (/js/ycIconPicker.js).
+    var iconIn = el('input');
+    iconIn.type = 'hidden';
+    var iw = field(form, 'icon', 'Icon', iconIn, 'Any free Font Awesome icon: solid, regular or a brand.');
     var irow = el('div', 'ymb-icon-row');
     var prev = el('span', 'ymb-icon-prev');
     prev.setAttribute('aria-hidden', 'true');
-    prev.appendChild(iconEl('circle-question'));
+    prev.appendChild(iconEl(''));
+    var iname = el('span', 'yle-name ymb-icon-name');
+    var ipick = btn('ymb-icon-pick', 'mb-icon-pick', null, null, 'Choose…');
+    ipick.id = 'ymb_icon_pick';
+    iw.querySelector('label').setAttribute('for', 'ymb_icon_pick');
     iw.insertBefore(irow, iconIn);
     irow.appendChild(prev);
-    irow.appendChild(iconIn);
+    irow.appendChild(iname);
+    irow.appendChild(ipick);
     var typeSel = el('select', 'yle-input ymb-select');
     MB_KINDS.forEach(function (k) { var op = el('option', null, MB_TYPES[k]); op.value = k; typeSel.appendChild(op); });
     field(form, 'type', 'Opens', typeSel);
@@ -1723,7 +1739,25 @@
     var v = String(fval('icon')).trim();
     var prev = formEl().querySelector('.ymb-icon-prev');
     prev.textContent = '';
-    prev.appendChild(iconEl(ICON_RE.test(v) ? v : 'circle-question'));
+    prev.appendChild(iconEl(v));
+    var p = YI.parse(v);
+    formEl().querySelector('.ymb-icon-name').textContent = p
+      ? p.name + ' · ' + p.family.charAt(0).toUpperCase() + p.family.slice(1)
+      : (v ? 'Not a valid icon: choose another' : 'None chosen yet');
+  }
+  /** Choose… — the shell's picker; the choice lands in the hidden input as
+   *  if typed (same error clearing and preview), unless the form moved on. */
+  function pickIcon(b) {
+    var P = window.ycIconPicker;
+    if (!mbForm || !P || typeof P.open !== 'function') return;
+    var form = mbForm, label = String(fval('label')).trim();
+    P.open({ value: String(fval('icon')).trim(), title: label ? 'Icon for “' + label.slice(0, 40) + '”' : 'Choose an icon', from: b })
+      .then(function (v) {
+        if (typeof v !== 'string' || !v || mbForm !== form || saving) return;
+        var inp = mbSec().querySelector('#ymb_icon');
+        inp.value = v;
+        inp.dispatchEvent(new Event('input', { bubbles: true }));
+      });
   }
   function idLine() {
     var line = formEl().querySelector('.ymb-id-line');
@@ -1793,6 +1827,7 @@
     if (!r.ok) {
       formErrors(r.problems);
       var first = formEl().querySelector('[aria-invalid="true"]');
+      if (first && first.id === 'ymb_icon') first = formEl().querySelector('#ymb_icon_pick');   // the value is hidden: its Choose…
       if (first) first.focus();
       return;
     }
@@ -1958,6 +1993,7 @@
       case 'tab': showPane(b.getAttribute('data-pane')); return;
       case 'mb-open': openForm(-1); return;
       case 'mb-cancel': closeForm(true); return;
+      case 'mb-icon-pick': pickIcon(b); return;
       case 'mb-commit': commitForm(); return;
       case 'mb-edit': case 'mb-del': case 'mb-up': case 'mb-down': case 'mb-home': case 'mb-sidebar': {
         var mi = Number(b.closest('.ymb-row').getAttribute('data-i'));

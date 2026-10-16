@@ -174,8 +174,8 @@ header has the install steps:
 
 1. Admin → Tools (SU) → **New tool**: key `clio-code`, title *Get Clio Code*,
    paste the whole file, save, set it **live**.
-2. Firm tab → Firm items → **Add**: label *Get Clio Code*, icon `c`, Opens
-   **Tool** → *Get Clio Code*, Dialog size **Compact**. Save.
+2. Firm tab → Firm items → **Add**: label *Get Clio Code*, icon *c* (Choose…,
+   search `c`), Opens **Tool** → *Get Clio Code*, Dialog size **Compact**. Save.
 
 If the tool is changed in Tools (SU), copy the new version back into that file,
 so the repository and the live tool stay the same.

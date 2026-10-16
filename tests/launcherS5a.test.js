@@ -47,10 +47,15 @@ const { rawShellHtml } = require('./helpers/shellHtml');
 const ROOT = path.join(__dirname, '..');
 const RAW = rawShellHtml();
 const REGISTRY_SRC = fs.readFileSync(path.join(ROOT, 'public/js/featureRegistry.js'), 'utf8');
+// the stored icon value → classes, loaded before the launcher as in index.html (ui-custom S6a)
+const ICON_SRC = fs.readFileSync(path.join(ROOT, 'public/js/ycIcon.js'), 'utf8');
 const RENDERER_SRC = RAW.match(/<script id="ycLauncher">([\s\S]*?)<\/script>/)[1];
 const DIALOG_SRC = RAW.match(/<script id="ycToolDialogJs">([\s\S]*?)<\/script>/)[1];
 const YCALL_SRC = fs.readFileSync(path.join(ROOT, 'public/js/ycAll.js'), 'utf8');
 const EDITOR_SRC = fs.readFileSync(path.join(ROOT, 'public/js/ycLayoutEditor.js'), 'utf8');
+// the icon picker (ui-custom S6a) and its catalog, served by a fetch stub
+const PICKER_SRC = fs.readFileSync(path.join(ROOT, 'public/js/ycIconPicker.js'), 'utf8');
+const CATALOG = fs.readFileSync(path.join(ROOT, 'public', PICKER_SRC.match(/var CATALOG_URL = '([^']+)';/)[1]), 'utf8');
 
 function slice(from, to) {
   const a = RAW.indexOf(from);
@@ -182,7 +187,7 @@ function boot({ items = null, layout = null, shortcuts = null, retired = null, p
   const plainTabs = [...tabs].filter((t) => !['tabHome', 'tabMore', 'tabAdmin', 'tabCustom', 'tabAll'].includes(t))
     .map((t) => `<div id="${t}" class="tab-main"></div>`).join('');
   const page = `<!DOCTYPE html><html><head>
-    <script>${REGISTRY_SRC}</script><script id="ycLauncher">${RENDERER_SRC}</script>${HIDE_CSS}</head><body>
+    <script>${ICON_SRC}</script><script>${REGISTRY_SRC}</script><script id="ycLauncher">${RENDERER_SRC}</script>${HIDE_CSS}</head><body>
     <script id="ycToolDialogJs">${DIALOG_SRC}</script>
     <nav id="appSidebar"><div class="sb-item" data-tab="tabHome" onclick="openMainTab('tabHome')"></div>
       <div class="sb-item" id="sbOpenFiles"></div><div id="tabOpenFiles"></div><script>ycLauncher.mount('sidebar')</script><div class="sb-item" id="sbAll" data-tab="tabAll" onclick="openMainTab('tabAll')"></div></nav>
@@ -249,6 +254,8 @@ function boot({ items = null, layout = null, shortcuts = null, retired = null, p
   w.ycLauncher.applyAccess({ ...access, ui: w.firmData.ui });
   w.eval(YCALL_SRC);
   w.eval(EDITOR_SRC);
+  w.fetch = () => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(JSON.parse(CATALOG)) });
+  w.eval(PICKER_SRC);
   const d = w.document;
   const flush = async () => { for (let i = 0; i < 6; i++) await new Promise((r) => setTimeout(r, 0)); };
   const key = (el, init) => {
@@ -408,7 +415,7 @@ describe('the editor\'s My buttons tab (for real)', () => {
     const commit = () => t.mb().querySelector('[data-act="mb-commit"]').click();
     t.fill({ label: '', icon: 'Bad Icon', type: 'view' });
     commit();
-    expect([t.fieldErr('label'), t.fieldErr('icon'), t.fieldErr('key')]).toEqual(['Give it a name', expect.stringMatching(/Font Awesome/), 'Choose a saved view']);
+    expect([t.fieldErr('label'), t.fieldErr('icon'), t.fieldErr('key')]).toEqual(['Give it a name', 'Choose an icon', 'Choose a saved view']);   // the icon is chosen, not typed (S6a)
     t.fill({ label: 'x', icon: 'star', type: 'url', href: 'http://x.example/' });
     commit();
     expect(t.fieldErr('href')).toMatch(/Start it with https:\/\//);
@@ -726,6 +733,7 @@ describe('the pure cores', () => {
   function bare() {
     const ctx = vm.createContext({ console: { error() {}, warn() {} }, URL });
     ctx.window = ctx;
+    vm.runInContext(ICON_SRC, ctx);
     vm.runInContext(REGISTRY_SRC, ctx);
     vm.runInContext(RENDERER_SRC, ctx);
     vm.runInContext(YCALL_SRC, ctx);
@@ -785,5 +793,162 @@ describe('the pure cores', () => {
     expect(JSON.stringify(doc)).not.toMatch(/user:gone/);
     expect(shape.validate('user', 'layout', doc).ok).toBe(true);
     expect(s.dropId('user:none')).toBe(false);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// ui-custom S6a: the icon is CHOSEN in the shell's picker, never typed.
+describe('S6a: My buttons choose their icon in the picker', () => {
+  let t;
+  afterEach(() => t && t.close());
+  const pk = () => t.d.getElementById('ycIconPicker');
+  const pkType = (s) => { const q = pk().querySelector('.yip-q'); q.value = s; q.dispatchEvent(new t.w.Event('input', { bubbles: true })); };
+
+  test('no icon box to type in: a preview, its name and Choose…; the hidden value starts empty and says so', async () => {
+    t = boot({ items: [] });
+    await t.openEditor();
+    t.mb().querySelector('[data-act="mb-open"]').click();
+    const f = t.mb().querySelector('[data-field="icon"]');
+    expect(f.querySelector('#ymb_icon').type).toBe('hidden');
+    expect(f.querySelectorAll('input[type="text"]')).toHaveLength(0);
+    expect(f.querySelector('label').getAttribute('for')).toBe('ymb_icon_pick');
+    expect(f.querySelector('.ymb-icon-name').textContent).toBe('None chosen yet');
+    expect(f.querySelector('.ymb-icon-prev i').className).toBe('fa-solid fa-circle-question');
+  });
+
+  test('a brand icon (github): picked by search + Enter, previewed, saved, then drawn with fa-brands on Home, the sidebar, All and the palette', async () => {
+    t = boot({ items: [] });
+    await t.openEditor();
+    t.mb().querySelector('[data-act="mb-open"]').click();
+    t.fill({ label: 'Code', type: 'url', href: 'https://github.com/' });
+    const choose = t.mb().querySelector('[data-act="mb-icon-pick"]');
+    choose.click();
+    await t.flush();
+    expect(t.w.ycIconPicker.isOpen()).toBe(true);
+    expect(pk().querySelector('#yipTitle').textContent).toBe('Icon for “Code”');
+    pkType('github');
+    t.key(pk().querySelector('.yip-q'), { key: 'Enter' });
+    await t.flush();
+    expect(t.w.ycIconPicker.isOpen()).toBe(false);
+    expect(t.d.activeElement).toBe(choose);
+    expect(t.mb().querySelector('#ymb_icon').value).toBe('brands:github');
+    expect(t.mb().querySelector('.ymb-icon-prev i').className).toBe('fa-brands fa-github');
+    expect(t.mb().querySelector('.ymb-icon-name').textContent).toBe('github · Brands');
+    t.mb().querySelector('[data-act="mb-commit"]').click();
+    expect(t.mbRows().map((r) => r.id)).toEqual(['user:code']);
+    expect(t.rowOf('Code').querySelector('i').className).toBe('fa-brands fa-github yle-ic');
+    t.act('Code', 'mb-home').click();
+    t.act('Code', 'mb-sidebar').click();
+    await t.save();
+    const items = t.server.puts.find((p) => p.body.config_key === 'items').body.config;
+    expect(items.items.map((i) => i.icon)).toEqual(['brands:github']);
+    expect(shape.validate('user', 'items', items).ok).toBe(true);
+    expect(t.server.user().items.items[0].icon).toBe('brands:github');
+    expect(t.d.querySelector('#tabHome .home-grid [data-yc-shortcut="user:code"] i').className).toBe('fa-brands fa-github fa-2xl');
+    expect(t.d.querySelector('#appSidebar [data-yc-shortcut="user:code"] i').className).toBe('fa-brands fa-github');
+    expect(t.d.querySelector('#ycAllList .yc-all-item[data-yc-item="user:code"] i').className).toBe('fa-brands fa-github');
+    t.w.ycAll.open(t.d);
+    const pq = t.d.querySelector('#ycPalette .yc-pal-input');
+    pq.value = 'code'; pq.dispatchEvent(new t.w.Event('input', { bubbles: true }));
+    const row = [...t.d.querySelectorAll('#ycPalette .yc-pal-item')].find((r) => r.querySelector('span').textContent === 'Code');
+    expect(row.querySelector('i').className).toBe('fa-brands fa-github');
+    expect(t.errors).toEqual([]);
+  });
+
+  test('editing a saved button: its icon is highlighted; a regular icon replaces it; Esc in the picker keeps the form and the icon', async () => {
+    t = boot({ items: [VIEW] });
+    await t.openEditor();
+    t.act('My leads', 'mb-edit').click();
+    t.mb().querySelector('[data-act="mb-icon-pick"]').click();
+    await t.flush();
+    expect(pk().querySelector('.is-current').getAttribute('data-v')).toBe('star');
+    t.key(pk().querySelector('.yip-q'), { key: 'Escape' });              // the picker's Esc, not the editor's
+    await t.flush();
+    expect([t.w.ycIconPicker.isOpen(), t.mb().querySelector('.ymb-form').hidden, t.panel().hidden]).toEqual([false, false, false]);
+    expect(t.mb().querySelector('#ymb_icon').value).toBe('star');
+    t.mb().querySelector('[data-act="mb-icon-pick"]').click();
+    await t.flush();
+    pkType('star');
+    pk().querySelector('.yip-chip[data-fam="regular"]').click();
+    pk().querySelector('.yip-tile').click();
+    await t.flush();
+    expect(t.mb().querySelector('#ymb_icon').value).toBe('regular:star');
+    t.mb().querySelector('[data-act="mb-commit"]').click();
+    await t.save();
+    expect(t.server.user().items.items[0].icon).toBe('regular:star');
+  });
+
+  test('the custom tab draws its icon by family: More tile, sidebar row, All; junk falls back; none is the old bug', () => {
+    t = boot({ items: [] });
+    const tile = () => t.d.getElementById('tabCustomButton').querySelector('i').className;
+    const row = () => t.d.getElementById('sbCustom').querySelector('i').className;
+    const all = () => t.d.querySelector('#ycAllList .yc-all-item[data-yc-item="custom"] i').className;
+    t.w.applyCustomTab({ src: '/reports.html', title: 'Repo', icon: 'brands:github', loadFunc: '' });
+    expect([tile(), row(), all()]).toEqual(['fa-brands fa-github fa-2xl', 'fa-brands fa-github', 'fa-brands fa-github']);
+    t.w.applyCustomTab({ src: '/reports.html', title: 'Repo', icon: 'regular:star', loadFunc: '' });
+    expect([tile(), row(), all()]).toEqual(['fa-regular fa-star fa-2xl', 'fa-regular fa-star', 'fa-regular fa-star']);
+    t.w.applyCustomTab({ src: '/reports.html', title: 'Repo', icon: 'house', loadFunc: '' });
+    expect([tile(), row(), all()]).toEqual(['fa-solid fa-house fa-2xl', 'fa-solid fa-house', 'fa-solid fa-house']);
+    t.w.applyCustomTab({ src: '/reports.html', title: 'Repo', icon: 'x" onmouseover="y', loadFunc: '' });
+    expect([tile(), row(), all()]).toEqual(['fa-solid fa-circle-question fa-2xl', 'fa-solid fa-circle-question', 'fa-solid fa-circle-question']);
+    expect(t.d.getElementById('sbCustom').querySelector('i').getAttribute('onmouseover')).toBe(null);
+    t.w.applyCustomTab({ src: '/reports.html', title: 'Repo', loadFunc: '' });
+    expect([tile(), row()]).toEqual(['fa-solid fa-bug fa-2xl', 'fa-solid fa-bug']);
+  });
+
+  test('review fix 2: a legacy custom tab with NO icon (or an empty one) draws the bug everywhere — tab button, sidebar row, All, palette', () => {
+    for (const cfg of [{ src: '/reports.html', title: 'Old tab', loadFunc: '' }, { src: '/reports.html', title: 'Old tab', icon: '', loadFunc: '' }]) {
+      t = boot({ items: [] });
+      t.w.ycLauncher.applyAccess({ customTab: cfg });                    // what loadUserContext hands the launcher
+      t.w.applyCustomTab(cfg);
+      expect(t.d.getElementById('tabCustomButton').querySelector('i').className).toBe('fa-solid fa-bug fa-2xl');
+      expect(t.d.getElementById('sbCustom').querySelector('i').className).toBe('fa-solid fa-bug');
+      expect(t.d.querySelector('#ycAllList .yc-all-item[data-yc-item="custom"] i').className).toBe('fa-solid fa-bug');
+      expect(t.w.ycLauncher.effectiveRegistry().find((e) => e.id === 'custom').icon).toBe('bug');
+      t.w.ycAll.open(t.d);
+      const pq = t.d.querySelector('#ycPalette .yc-pal-input');
+      pq.value = 'old tab'; pq.dispatchEvent(new t.w.Event('input', { bubbles: true }));
+      const row = [...t.d.querySelectorAll('#ycPalette .yc-pal-item')].find((r) => r.querySelector('span').textContent === 'Old tab');
+      expect(row.querySelector('i').className).toBe('fa-solid fa-bug');
+      t.w.ycAll.close(false);
+      t.close();
+    }
+    t = null;
+  });
+
+  test('review N1: a drawer\'s own heading icon is drawn by family (brands:github)', () => {
+    const DRAWER = { id: 'user:dr', label: 'Morning', icon: 'brands:github', action: { type: 'drawer', items: ['user:leads'] } };
+    t = boot({ items: [VIEW, DRAWER] });
+    t.w.ycLauncher.exec('user:dr');
+    const d = t.d.getElementById('ycDrawer');
+    expect(d.hidden).toBe(false);
+    expect(d.querySelector('.yc-dr-head > i').className).toBe('fa-brands fa-github');
+    expect(d.querySelector('.yc-dr-item[data-yc-item="user:leads"] i').className).toBe('fa-solid fa-star');
+  });
+
+  test('review N3: committing a button with no icon focuses its Choose… (the value itself is hidden)', async () => {
+    t = boot({ items: [] });
+    await t.openEditor();
+    t.mb().querySelector('[data-act="mb-open"]').click();
+    t.fill({ label: 'No icon yet', type: 'url', href: 'https://x.example/' });
+    t.mb().querySelector('[data-act="mb-commit"]').click();
+    expect(t.fieldErr('icon')).toBe('Choose an icon');
+    expect(t.d.activeElement).toBe(t.mb().querySelector('#ymb_icon_pick'));
+  });
+
+  test('a pick that lands after the form closed is dropped (the form moved on)', async () => {
+    t = boot({ items: [] });
+    await t.openEditor();
+    t.mb().querySelector('[data-act="mb-open"]').click();
+    t.mb().querySelector('[data-act="mb-icon-pick"]').click();
+    await t.flush();
+    const tile = pk().querySelector('.yip-tile');
+    t.mb().querySelector('[data-act="mb-cancel"]').click();          // (a script closing the form under the picker)
+    tile.click();
+    await t.flush();
+    expect(t.mb().querySelector('#ymb_icon').value).toBe('');           // the pick went nowhere
+    expect(t.mb().querySelector('.ymb-icon-name').textContent).toBe('None chosen yet');
+    t.mb().querySelector('[data-act="mb-open"]').click();
+    expect(t.mb().querySelector('#ymb_icon').value).toBe('');
   });
 });

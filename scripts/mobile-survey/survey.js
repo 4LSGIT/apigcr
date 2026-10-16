@@ -408,6 +408,30 @@ async function walk(page, W, record) {
           document.querySelector('#ycLayoutEditor .ymb-form').scrollIntoView();
         }); await sleep(400);
         await record('tab:tabAll:layout-editor:buttons-form', await editorBox(await measure(page, null)), await shot('all_layout_editor_buttons_form'));
+        // the icon picker (ui-custom S6a), opened from the form's Choose…: drawn over the editor
+        // in the top document (a card on a desktop, full-bleed at phone width), the whole catalog
+        // (public/js/faIcons-*.json, fetched on this first open); then Brands with a 60-character
+        // query that matches nothing, so its message wraps. Its card clips, and its grid scrolls
+        // and clips sideways, so m.boxes checks both. Closed (cancelled) before the next step.
+        const pickOpen = await page.evaluate(() => {
+          document.querySelector('#ycLayoutEditor .ymb-form [data-act="mb-icon-pick"]').click();
+          return !!(window.ycIconPicker && ycIconPicker.isOpen());
+        }); await sleep(1500);
+        const pickBox = async (m) => {
+          m.boxes = pickOpen ? [await page.evaluate(measureBox, '#ycIconPicker .yip-box'), await page.evaluate(measureBox, '#ycIconPicker .yip-grid')]
+            : [{ sel: '#ycIconPicker (did not open)', missing: true }];
+          return m;
+        };
+        await record('tab:tabAll:layout-editor:icon-picker', await pickBox(await measure(page, null)), await shot('all_layout_editor_icon_picker'));
+        await page.evaluate(() => {
+          const q = document.querySelector('#ycIconPicker .yip-q');
+          if (!q) return;
+          q.value = 'a-search-that-matches-nothing-at-all-in-sixty-characters-xy';
+          q.dispatchEvent(new Event('input', { bubbles: true }));
+          document.querySelector('#ycIconPicker .yip-chip[data-fam="brands"]').click();
+        }); await sleep(300);
+        await record('tab:tabAll:layout-editor:icon-picker-search', await pickBox(await measure(page, null)), await shot('all_layout_editor_icon_picker_search'));
+        await page.evaluate(() => window.ycIconPicker && ycIconPicker.close()); await sleep(200);
         await page.evaluate(() => {
           const set = (id, v) => { const n = document.getElementById(id); n.value = v; n.dispatchEvent(new Event(n.tagName === 'SELECT' ? 'change' : 'input', { bubbles: true })); };
           set('ymb_type', 'url');

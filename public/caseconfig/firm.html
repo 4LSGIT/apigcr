@@ -97,6 +97,8 @@
     .fm-icon-in { display: flex; align-items: center; gap: 6px; }
     .fm-icon-prev { width: 22px; text-align: center; color: var(--text-2); flex: 0 0 auto; }
     .fm-icon-prev .bad { opacity: .35; }
+    .fm-icon-name { flex: 1 1 auto; min-width: 0; font-size: 12px; color: var(--text-muted); overflow-wrap: anywhere; }
+    .fm-icon-in .btn { flex: 0 0 auto; }
     .fm-item-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin-top: 8px; }
     .fm-item-foot .yc-hint { margin: 0; flex: 1 1 12em; min-width: 0; overflow-wrap: anywhere; }
     .fm-item-foot code { font-size: 11px; }
@@ -277,7 +279,16 @@ const isObj = (o) => o !== null && typeof o === 'object' && !Array.isArray(o);
 // ═══════════════════════════════════════════════════════════════
 // The cheap client checks — instant feedback only; the server (lib/
 // uiConfigShape.js) is the authority and its errors[] land inline too.
-const ICON_RE = /^[a-z0-9-]{1,40}$/;          // lib/uiConfigShape ICON_RE
+// Icons (ui-custom S6a): the stored value — a bare slug (solid) or solid: /
+// regular: / brands: + slug, lib/uiConfigShape ICON_RE — is rendered and
+// checked by the shell's /js/ycIcon.js, and CHOSEN in the shell's icon picker
+// (window.top.ycIconPicker, drawn in the top document), never typed.
+const YI = () => window.top.ycIcon;
+function iconCls(v, extra) { return YI().cls(v, extra); }   // a value that fails the grammar → circle-question
+function iconName(v) {
+  const p = YI().parse(String(v ?? '').trim());
+  return p ? `${p.name} · ${p.family.charAt(0).toUpperCase()}${p.family.slice(1)}` : 'none chosen';
+}
 const FIRM_ID_RE = /^firm:[a-z0-9-]{1,40}$/;  // lib/uiConfigShape FIRM_ID_RE
 const CONTROL_RE = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/;
 const LABEL_MAX = 40;
@@ -293,7 +304,7 @@ function labelProblem(v, optional) {
   return null;
 }
 function iconProblem(v) {
-  return ICON_RE.test(String(v ?? '').trim()) ? null : 'a Font Awesome name: a-z, 0-9 and dashes (e.g. money-check)';
+  return YI().valid(String(v ?? '').trim()) ? null : 'choose an icon';
 }
 function hrefProblem(v) {
   const h = String(v ?? '').trim();
@@ -679,7 +690,7 @@ const LauncherSection = {
     return `<div class="fm-row${hid ? ' is-hidden' : ''}" data-row-id="${esc(e.id)}">
       <label class="fm-hide" title="${und ? 'always shown' : 'hide from everyone\'s launcher'}">
         <input type="checkbox" data-hide="${esc(e.id)}" ${hid ? 'checked' : ''} ${und ? 'disabled' : ''}><span>${und ? 'Always' : 'Hide'}</span></label>
-      <span class="fm-ico"><i class="fa-solid fa-${esc(ICON_RE.test(e.icon) ? e.icon : 'square')}"></i></span>
+      <span class="fm-ico"><i class="${esc(iconCls(e.icon))}"></i></span>
       <span class="fm-name">${esc(e.label)}</span>
       ${ren}
       <div class="fm-err" data-err-rename="${esc(e.id)}"></div>
@@ -727,14 +738,16 @@ const LauncherSection = {
           <option value="large" ${r.size === 'compact' ? '' : 'selected'}>Large</option>
           <option value="compact" ${r.size === 'compact' ? 'selected' : ''}>Compact</option></select>`;
     }
-    const iconOk = ICON_RE.test(r.icon);
+    const iconOk = YI().valid(r.icon);
     return `<div class="fm-item" data-row="${i}">
       <div class="fm-item-grid">
         <div><label class="yc-flabel" for="${pre}-label">Label</label>
           <input type="text" id="${pre}-label" data-f="label" maxlength="80" value="${esc(r.label)}" placeholder="e.g. Payroll"></div>
-        <div><label class="yc-flabel" for="${pre}-icon">Icon</label>
-          <div class="fm-icon-in"><span class="fm-icon-prev" aria-hidden="true"><i class="fa-solid ${iconOk ? 'fa-' + r.icon : 'fa-circle-question bad'}"></i></span>
-          <input type="text" id="${pre}-icon" data-f="icon" maxlength="40" value="${esc(r.icon)}" placeholder="money-check"></div></div>
+        <div><label class="yc-flabel" for="${pre}-iconpick">Icon</label>
+          <div class="fm-icon-in"><span class="fm-icon-prev" aria-hidden="true"><i class="${esc(iconCls(r.icon, iconOk ? '' : 'bad'))}"></i></span>
+          <span class="fm-icon-name">${esc(iconName(r.icon))}</span>
+          <input type="hidden" id="${pre}-icon" data-f="icon" value="${esc(r.icon)}">
+          <button type="button" class="btn btn-outline btn-sm" id="${pre}-iconpick" data-act="icon">Choose…</button></div></div>
         <div><label class="yc-flabel" for="${pre}-type">Opens</label>
           <select id="${pre}-type" data-f="type">${typeSel}</select></div>
         <div>${target}</div>
@@ -798,9 +811,10 @@ const LauncherSection = {
     } else if (t.dataset.f === 'icon') {
       row.icon = t.value;
       const v = t.value.trim();
-      const i2 = t.closest('.fm-icon-in').querySelector('.fm-icon-prev i');
-      // The class is built ONLY from a slug that passes the regex.
-      i2.className = ICON_RE.test(v) ? 'fa-solid fa-' + v : 'fa-solid fa-circle-question bad';
+      const box = t.closest('.fm-icon-in');
+      // The class comes ONLY from ycIcon: a value that fails the grammar draws circle-question.
+      box.querySelector('.fm-icon-prev i').className = iconCls(v, YI().valid(v) ? '' : 'bad');
+      box.querySelector('.fm-icon-name').textContent = iconName(v);
     } else if (t.dataset.f === 'href') {
       row.href = t.value;
     }
@@ -849,8 +863,26 @@ const LauncherSection = {
     if (act === 'up' && i > 0) { [rows[i - 1], rows[i]] = [rows[i], rows[i - 1]]; st.srv = null; this.redrawItems(); }
     else if (act === 'down' && i < rows.length - 1) { [rows[i + 1], rows[i]] = [rows[i], rows[i + 1]]; st.srv = null; this.redrawItems(); }
     else if (act === 'del') { rows.splice(i, 1); st.srv = null; this.redrawItems(); }
+    else if (act === 'icon') return this.pickIcon(b, rows[i]);
     else return;
     this.changed();
+  },
+
+  /** Choose… — the shell's icon picker. The choice lands in the row's hidden
+   *  input as if typed (onInput: row.icon, preview, errors). */
+  pickIcon(b, row) {
+    const pk = window.top.ycIconPicker;
+    if (!pk || typeof pk.open !== 'function') return;
+    const label = String(row.label ?? '').trim();
+    pk.open({ value: String(row.icon ?? '').trim(), title: label ? `Icon for “${label.slice(0, 40)}”` : 'Choose an icon', from: b })
+      .then((v) => {
+        const i = this.st.form.items.indexOf(row);
+        if (typeof v !== 'string' || !v || i < 0) return;
+        const inp = E(`fi${i}-icon`);
+        if (!inp) return;
+        inp.value = v;
+        inp.dispatchEvent(new Event('input', { bubbles: true }));
+      });
   },
 
   redrawItems(focusSel) {
@@ -1135,7 +1167,7 @@ const WhoSection = {
 
   rowInner(e) {
     const st = this.st, und = st.catalog.undeniable.includes(e.id), set = st.form.vis.get(e.id);
-    const head = `<span class="fm-ico"><i class="fa-solid fa-${esc(ICON_RE.test(e.icon) ? e.icon : 'square')}"></i></span>
+    const head = `<span class="fm-ico"><i class="${esc(iconCls(e.icon))}"></i></span>
       <span class="fm-name">${esc(e.label)}${und ? '<span class="yc-hint">always shown</span>' : ''}</span>
       <select class="fm-who-mode" data-mode="${esc(e.id)}" aria-label="Who sees ${esc(e.label)}" ${und ? 'disabled' : ''}>
         <option value="all">Everyone</option>

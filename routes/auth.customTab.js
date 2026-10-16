@@ -14,7 +14,7 @@
  * ── WHY THIS IS NOT A PASSTHROUGH ───────────────────────────────────────────
  * Every field on this row is consumed by the SHELL, not by a sandboxed page:
  *
- *   index.html applyCustomTab()  →  innerHTML `<i class="fa-solid fa-${icon}">
+ *   index.html applyCustomTab()  →  innerHTML `<i class="${ycIcon.cls(icon)}">
  *                                   <span>${title}</span>`
  *                                →  setAttribute('onclick', loadFunc + …)
  *                                →  iframe src
@@ -27,8 +27,15 @@
  *   loadFunc  NEVER written here. Read from the existing row and written back
  *             untouched, so a user editing their title cannot destroy an
  *             admin-authored loadFunc — and cannot author one either.
- *   icon      /^[a-z0-9-]{1,40}$/ — matches every real Font Awesome name and
- *             nothing that can break out of the class attribute.
+ *   icon      ICON_RE below (ui-custom S6a): a Font Awesome name, optionally
+ *             prefixed by its family —
+ *               ^(?:(?:solid|regular|brands):)?[a-z0-9-]{1,40}$
+ *             A bare slug means solid (every value stored before S6a), so
+ *             `brands:github` → fa-brands fa-github, `regular:star` →
+ *             fa-regular fa-star. The same grammar as lib/uiConfigShape.js
+ *             ICON_RE; public/js/ycIcon.js renders it. Matches every real
+ *             Font Awesome name and nothing that can break out of the class
+ *             attribute.
  *   title     trimmed, length-capped. Escaped again at render.
  *   src       SU: any http(s) URL or same-origin path.
  *             Non-SU: same-origin path only (see SAFE_PATH). That blocks
@@ -56,10 +63,13 @@ const { isSuperuser } = require("../lib/auth.superuser");
 const MAX_TITLE = 40;
 const MAX_SRC = 300;
 
-// Font Awesome icon names: lowercase, digits, hyphens. Deliberately permissive
-// enough for any real icon ("money-check-dollar", "1", "arrow-up-9-1") and
-// narrow enough that the value can never terminate the class attribute.
-const ICON_RE = /^[a-z0-9-]{1,40}$/;
+// Font Awesome icon names: lowercase, digits, hyphens, optionally after a
+// family prefix (solid: / regular: / brands:; bare = solid — ui-custom S6a).
+// Deliberately permissive enough for any real icon ("money-check-dollar",
+// "1", "arrow-up-9-1", "brands:github") and narrow enough that the value can
+// never terminate the class attribute. Linear: anchored, one optional group,
+// one class. lib/uiConfigShape.js ICON_RE is the same grammar.
+const ICON_RE = /^(?:(?:solid|regular|brands):)?[a-z0-9-]{1,40}$/;
 
 // Same-origin path: one leading slash, not protocol-relative ("//evil.tld"),
 // no scheme (no ':'), no backslash (some engines normalise "\\evil.tld" like
@@ -114,12 +124,15 @@ router.post("/api/auth/update-custom-tab", jwtOrApiKey, async (req, res) => {
       return fail(res, 400, `Tab name must be ${MAX_TITLE} characters or fewer`);
     }
 
-    const cleanIcon = String(icon ?? "").trim().toLowerCase().replace(/^fa-/, "");
+    // "fa-" is dropped from the start and from the name after a family
+    // prefix ("brands:fa-github" → "brands:github", ui-custom S6a fix round).
+    const cleanIcon = String(icon ?? "").trim().toLowerCase().replace(/^fa-/, "")
+      .replace(/^((?:solid|regular|brands):)fa-/, "$1");
     if (!ICON_RE.test(cleanIcon)) {
       return fail(
         res, 400,
         "Icon must be a Font Awesome name",
-        "Lowercase letters, digits and hyphens only — for example: list-check, gavel, paw."
+        "Lowercase letters, digits and hyphens only, optionally after solid:, regular: or brands: — for example: list-check, gavel, brands:github."
       );
     }
 

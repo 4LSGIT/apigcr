@@ -170,7 +170,8 @@
       return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
     });
   }
-  function iconHtml(e) { return '<i class="fa-solid fa-' + esc(e.icon) + '"></i>'; }
+  // the entry's stored icon (bare slug = solid, or family:slug) → /js/ycIcon.js (ui-custom S6a)
+  function iconHtml(e) { return '<i class="' + esc(window.ycIcon.cls(e.icon)) + '"></i>'; }
 
   // ── All tab ──────────────────────────────────────────────────────────
   function allItem(e) {

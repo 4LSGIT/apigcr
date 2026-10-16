@@ -39,6 +39,11 @@ const entSvc = require('../services/entitlementService');
 const ROOT = path.join(__dirname, '..');
 const RAW = rawShellHtml();
 const REGISTRY_SRC = fs.readFileSync(path.join(ROOT, 'public/js/featureRegistry.js'), 'utf8');
+// the stored icon value → classes, loaded before the launcher as in index.html (ui-custom S6a)
+const ICON_SRC = fs.readFileSync(path.join(ROOT, 'public/js/ycIcon.js'), 'utf8');
+// the shell's icon picker (ui-custom S6a) and its catalog, served by a fetch stub on the top window
+const PICKER_SRC = fs.readFileSync(path.join(ROOT, 'public/js/ycIconPicker.js'), 'utf8');
+const CATALOG = fs.readFileSync(path.join(ROOT, 'public', PICKER_SRC.match(/var CATALOG_URL = '([^']+)';/)[1]), 'utf8');
 const RENDERER_SRC = RAW.match(/<script id="ycLauncher">([\s\S]*?)<\/script>/)[1];
 const DENIED_CSS = RAW.match(/<style>\[data-yc-denied\][^<]*<\/style>/)[0];
 const CCM_HTML = fs.readFileSync(path.join(ROOT, 'public/caseConfigManager.html'), 'utf8');
@@ -130,7 +135,7 @@ function makeBackend({ doc = null, canEdit = true, lenient = false, getFails = n
 
 // ── the three frames ─────────────────────────────────────────────────────
 function makeTop(backend, shellDoc, users) {
-  const page = `<!DOCTYPE html><html><head>${DENIED_CSS}<script>${REGISTRY_SRC}</script><script>${RENDERER_SRC}</script></head><body>
+  const page = `<!DOCTYPE html><html><head>${DENIED_CSS}<script>${ICON_SRC}</script><script>${REGISTRY_SRC}</script><script>${RENDERER_SRC}</script></head><body>
     <nav id="appSidebar"><script>ycLauncher.mount('sidebar')</script></nav>
     <div id="tabHome" class="tab-main"><script>ycLauncher.mount('home')</script></div>
     <div id="tabMore" class="tab-main"><script>ycLauncher.mount('more')</script></div>
@@ -143,6 +148,8 @@ function makeTop(backend, shellDoc, users) {
   const dom = new JSDOM(page, { runScripts: 'dangerously', url: 'https://app.test/', pretendToBeVisual: true, virtualConsole: vc });
   const w = dom.window;
   w.__logs = logs;
+  w.fetch = () => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(JSON.parse(CATALOG)) });
+  w.eval(PICKER_SRC);
   w.firmData = { ui: { firm: shellDoc ? { registry_overrides: clone(shellDoc) } : {}, user: {} } };
   if (users) w.firmData.users = clone(users);
   w.apiSend = backend.api;
@@ -965,5 +972,84 @@ describe('S3.4: Who sees what', () => {
     await flush();
     expect(t.backend.st.doc.visible_to).toEqual({ moreAutomations: ['admin'] });
     expect([whoRow(t.firm, 'moreAutomations').querySelector('[data-mode]').value, t.F.WhoSection.isDirty()]).toEqual(['except', false]);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// ui-custom S6a: a firm item's icon is CHOSEN in the shell's picker (drawn in
+// the TOP document, opened from inside this nested frame), never typed.
+describe('S6a: firm items choose their icon in the shell\'s picker', () => {
+  const pick = async ({ top, firm }, { query, fam }) => {
+    const pk = top.document.getElementById('ycIconPicker');
+    const q = pk.querySelector('.yip-q');
+    q.value = query; q.dispatchEvent(new top.Event('input', { bubbles: true }));
+    pk.querySelector(`.yip-chip[data-fam="${fam}"]`).click();
+    pk.querySelector('.yip-tile').click();
+    await flush();
+  };
+
+  test('the card: a preview, the icon\'s name and Choose… — no box to type in', async () => {
+    const { $ } = await boot({ doc: { hidden: [], locked: [], renames: {}, items: [{ ...SHELL_ITEM, icon: 'brands:dropbox' }] } });
+    const box = $('#fi0-icon').closest('.fm-icon-in');
+    expect($('#fi0-icon').type).toBe('hidden');
+    expect(box.querySelectorAll('input[type="text"]')).toHaveLength(0);
+    expect(box.querySelector('.fm-icon-prev i').className).toBe('fa-brands fa-dropbox');
+    expect(box.querySelector('.fm-icon-name').textContent).toBe('dropbox · Brands');
+    expect(box.querySelector('[data-act="icon"]').textContent).toBe('Choose…');
+    expect($('label[for="fi0-iconpick"]').textContent).toBe('Icon');
+  });
+
+  test('a regular icon: chosen from inside the frame, drawn in the top document; saved; the shell draws it with fa-regular', async () => {
+    const t = await boot({ doc: { hidden: [], locked: [], renames: {}, items: [SHELL_ITEM] } });
+    const { $, firm, top, mid, backend, L } = t;
+    const choose = $('[data-act="icon"]');
+    choose.click();
+    await flush();
+    expect(top.ycIconPicker.isOpen()).toBe(true);
+    expect(firm.document.getElementById('ycIconPicker')).toBe(null);
+    expect(mid.document.getElementById('ycIconPicker')).toBe(null);
+    const pk = top.document.getElementById('ycIconPicker');
+    expect(pk.querySelector('#yipTitle').textContent).toBe('Icon for “Payroll”');
+    expect(pk.querySelector('.is-current').getAttribute('data-v')).toBe('money-check');
+    await pick(t, { query: 'star', fam: 'regular' });
+    expect(top.ycIconPicker.isOpen()).toBe(false);
+    expect(firm.document.activeElement).toBe(choose);
+    expect($('#fi0-icon').value).toBe('regular:star');
+    const box = $('#fi0-icon').closest('.fm-icon-in');
+    expect(box.querySelector('.fm-icon-prev i').className).toBe('fa-regular fa-star');
+    expect(box.querySelector('.fm-icon-name').textContent).toBe('star · Regular');
+    expect(t.F.LauncherSection.isDirty()).toBe(true);
+    await mid.onTopbarSave();
+    await flush();
+    expect(puts(backend)).toHaveLength(1);
+    expect(backend.st.doc.items[0].icon).toBe('regular:star');
+    // the shell: the More grid's firm row and All's registry
+    const tile = top.document.querySelector('#tabMore [data-yc-firm-row="firm:payroll"] i');
+    expect(tile.className).toBe('fa-regular fa-star fa-2xl');
+    expect(L.effectiveRegistry().find((e) => e.id === 'firm:payroll').icon).toBe('regular:star');
+    // Who sees what lists the firm item with its family too
+    const who = [...firm.document.querySelectorAll('.fm-who-row')].find((r) => /Payroll/.test(r.textContent));
+    expect(who.querySelector('.fm-ico i').className).toBe('fa-regular fa-star');
+  });
+
+  test('cancel keeps the icon and changes nothing; a brand can be picked for a new item', async () => {
+    const t = await boot();
+    const { $, top, fire, setVal, mid, backend } = t;
+    fire($('[data-act="add-item"]'), 'click');
+    setVal($('#fi0-label'), 'Code');
+    setVal($('#fi0-href'), 'https://github.com/');
+    expect($('#fi0-icon').value).toBe('link');                      // a new item starts on link
+    $('[data-act="icon"]').click();
+    await flush();
+    top.document.getElementById('ycIconPicker').querySelector('.yip-cancel').click();
+    await flush();
+    expect($('#fi0-icon').value).toBe('link');
+    $('[data-act="icon"]').click();
+    await flush();
+    await pick(t, { query: 'github', fam: 'brands' });
+    expect($('#fi0-icon').value).toBe('brands:github');
+    await mid.onTopbarSave();
+    await flush();
+    expect(backend.st.doc.items[0]).toEqual({ id: 'firm:code', label: 'Code', icon: 'brands:github', action: { type: 'url', href: 'https://github.com/', present: 'window' } });
   });
 });
