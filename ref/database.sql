@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-10-15T12:34:48.540Z
+-- Generated: 2026-10-16T01:51:49.412Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:4e8d89e3558b5cbcd4712a2baee509f3
+-- Fingerprint: sha256:f94bff3a9ed492767c7e1d19419727bc
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -1888,7 +1888,7 @@ CREATE TABLE `entitlement_denies` (
   `id` int unsigned NOT NULL,
   `scope` enum('firm','role','user') COLLATE utf8mb4_general_ci NOT NULL COMMENT 'firm = everyone; role = holders of scope_ref; user = users.user scope_ref',
   `scope_ref` varchar(64) COLLATE utf8mb4_general_ci NOT NULL DEFAULT '' COMMENT 'empty string = firm (sentinel; NOT NULL so the UNIQUE holds); role = a users.roles SET member; user = users.user as digits',
-  `item_key` varchar(64) COLLATE utf8mb4_general_ci NOT NULL COMMENT 'public/js/featureRegistry.js key — validated at write; moreSettings/helpSupport refused (undeniable)',
+  `item_key` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL COMMENT 'public/js/featureRegistry.js key OR a firm launcher item id firm:<slug> (ui-custom S3.4) — validated at write; moreSettings/helpSupport refused (undeniable)',
   `created_by` tinyint NOT NULL COMMENT 'users.user of the writer; 0 = an x-api-key caller',
   `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='Launcher entitlement DENIES (access-control A5). Deny-only: absent = allowed; any matching row denies. Visibility-only in v2 — no route enforcement.';

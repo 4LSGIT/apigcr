@@ -35,7 +35,7 @@ const CREATE_SQL = `CREATE TABLE IF NOT EXISTS \`entitlement_denies\` (
   \`id\` int unsigned NOT NULL AUTO_INCREMENT,
   \`scope\` enum('firm','role','user') NOT NULL COMMENT 'firm = everyone; role = holders of scope_ref; user = users.user scope_ref',
   \`scope_ref\` varchar(64) NOT NULL DEFAULT '' COMMENT 'empty string = firm (sentinel; NOT NULL so the UNIQUE holds); role = a users.roles SET member; user = users.user as digits',
-  \`item_key\` varchar(64) NOT NULL COMMENT 'public/js/featureRegistry.js key — validated at write; moreSettings/helpSupport refused (undeniable)',
+  \`item_key\` varchar(64) NOT NULL COMMENT 'public/js/featureRegistry.js key OR a firm launcher item id firm:<slug> (ui-custom S3.4) — validated at write; moreSettings/helpSupport refused (undeniable)',
   \`created_by\` tinyint NOT NULL COMMENT 'users.user of the writer; 0 = an x-api-key caller',
   \`created_at\` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (\`id\`),

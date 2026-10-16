@@ -558,6 +558,7 @@ ref/migrations/2026-10-15_comms_s3b_firm_context.sql
 ref/migrations/2026-10-15_hook16_quo_message_group_to.console.js
 ref/migrations/2026-10-16_comms_s3c_summary_guides.sql
 ref/migrations/2026-10-16_ui_custom_s31_ui_config.sql
+ref/migrations/2026-10-16_ui_custom_s34_item_key_comment.sql
 ref/migrations/S1_notes_migration.sql
 ref/migrations/documents_s1.sql
 ref/migrations/documents_s2.sql
@@ -855,6 +856,7 @@ scripts/test_email_ingest_automation.sh
 scripts/test_email_ingest_crud.js
 scripts/test_email_ingest_suppression.sh
 scripts/typeKeyVocabulary.js
+scripts/uiCustomS34ItemKeyComment.js
 scripts/updateRoutes.js
 scripts/verifyTrusteeReadthrough.js
 scripts/verify_strictstring_live.js
@@ -1405,6 +1407,7 @@ tests/uiConfigS32.test.js
 tests/uiConfigS34.test.js
 tests/uiConfigS4a.mysql.test.js
 tests/uiConfigS4a.test.js
+tests/uiCustomS34ItemKeyComment.test.js
 tests/unifiedEventsU2b.admin.test.js
 tests/unifiedEventsU2b.apptsFilter.test.js
 tests/unifiedEventsU2b.options.test.js
