@@ -287,6 +287,17 @@ describe('base (optimistic concurrency) — envelope and delivery', () => {
     expect(db2.calls.some((c) => /AS version_id/.test(c.sql))).toBe(false);
   });
 
+  test('S6c-3 review SF1: the version ids are read BEFORE the documents (a save between them can only cost a spurious 409)', async () => {
+    const db = makeDb({ heads: [{ config_key: 'registry_overrides', version_id: 7 }] });
+    await call('GET', '/api/ui-config', { headers: tok(['admin']), db });
+    const order = notAudit(db).map((c) => c.sql);
+    const heads = order.findIndex((q) => /AS version_id FROM ui_config c/.test(q));
+    const docs = order.findIndex((q) => /FROM ui_config/.test(q) && !/AS version_id/.test(q));
+    expect(heads).toBeGreaterThanOrEqual(0);
+    expect(docs).toBeGreaterThanOrEqual(0);
+    expect(heads).toBeLessThan(docs);
+  });
+
   test('N3: a version whose key disagrees with its parent row\'s → 400, nothing written; view never leaks the parent key', async () => {
     const version = { id: 5, config_key: 'registry_overrides', row_config_key: 'other_key', config: { hidden: ['bills'] } };
     const r = await call('POST', '/api/ui-config/versions/5/restore', { headers: tok(['admin']), db: makeDb({ version }) });

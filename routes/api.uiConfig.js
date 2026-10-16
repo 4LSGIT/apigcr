@@ -99,8 +99,13 @@ function fail(res, label, err) {
 router.get('/api/ui-config', staff, async (req, res) => {
   try {
     const canEditFirm = can(req.auth, 'firm.settings');
+    // The version ids BEFORE the documents (ui-custom S6c-3 review SF1): a firm
+    // save committing between the two reads then pairs a NEWER document with an
+    // older base — a spurious 409 on the next save. The other order paired an
+    // older document with the newer base, and that save silently overwrote.
+    const firmVersions = canEditFirm ? await svc.firmVersionIds(req.db) : null;
     const out = { status: 'success', ...(await svc.readFor(req.db, req.auth.userId)), can_edit_firm: canEditFirm };
-    if (canEditFirm) out.firm_versions = await svc.firmVersionIds(req.db);
+    if (canEditFirm) out.firm_versions = firmVersions;
     res.json(out);
   } catch (err) { fail(res, 'GET /api/ui-config', err); }
 });
