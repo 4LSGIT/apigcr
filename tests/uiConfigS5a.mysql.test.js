@@ -122,10 +122,10 @@ d('S5a: users\' own buttons on real MySQL', () => {
     expect([r.status, r.body.changed]).toEqual([200, false]);
   });
 
-  test('a bad document is a 400 that stores nothing (tab, a shell-only link, http:, a firm id, 51 buttons)', async () => {
+  test('a bad document is a 400 that stores nothing (a link as a tab, a shell-only link, http:, a firm id, 51 buttons)', async () => {
     const before = await row(9);
     const bad = [
-      { items: [{ ...BTN('user:x'), action: { type: 'view', key: 'lead_followups', present: 'tab' } }] },
+      { items: [{ ...BTN('user:x'), action: { type: 'url', href: 'https://x.example/', present: 'tab' } }] },   // a link never opens as a tab (S5c-b)
       { items: [{ ...BTN('user:x'), action: { type: 'url', href: '/tool/clio-code', present: 'window' } }] },
       { items: [{ ...BTN('user:x'), action: { type: 'url', href: 'http://x.example/', present: 'window' } }] },
       { items: [BTN('firm:x')] },

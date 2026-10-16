@@ -109,6 +109,10 @@ ask an administrator to build one for you.
 
 **Remove Tab** takes it back off your sidebar. Nothing else is affected.
 
+You can also have **many buttons of your own**, including saved views that open
+as a tab, and a custom tab that shows a view can become one of them: see
+[Your old custom tab](../01-YisraCase-overview/15-your-launcher.md#your-old-custom-tab).
+
 A few notes:
 
 - The tab is **yours alone**. Changing it affects nobody else's sidebar.

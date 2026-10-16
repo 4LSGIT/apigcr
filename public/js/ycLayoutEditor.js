@@ -77,8 +77,8 @@
  * My buttons (ui-custom S5a): the panel's third tab. The user's ui_config
  * `items` document, { items: [ { id, label, icon, action } ] } — their own
  * buttons, the firm item grammar with user:<slug> ids (lib/uiConfigShape.js):
- * a saved view or a tool (opening in the tool dialog, Large or Compact) or a
- * link (always a new window). Its icon is chosen in the shell's icon picker
+ * a saved view or a tool (opening in the tool dialog, Large or Compact, or —
+ * S5c-b — as a tab) or a link (always a new window). Its icon is chosen in the shell's icon picker
  * (/js/ycIconPicker.js: any free Font Awesome icon, solid / regular /
  * brands — ui-custom S6a), never typed. A list (icon, name, what it opens, where it is
  * placed and bound; move, edit, delete, "Add to Home" / "Add to sidebar") and
@@ -103,8 +103,19 @@
  * a button drops it from every drawer too, in the same session (the delete
  * prompt names them), so the items document never names a deleted button.
  *
+ * Tabs (ui-custom S5c-b): a tool or saved view button "Opens in" a dialog
+ * (large / compact) or A TAB — present:'tab', the shell's button tab
+ * (window.ycButtonTabs, up to 3 pages kept open). The legacy custom tab
+ * (users.user_custom_tab, Settings → My Custom Tab) is read here too: when it
+ * shows a tool or a saved view, the tab offers "Make my custom tab a button" —
+ * one click adds a tab button for the same page (or reuses one an earlier
+ * conversion made) where the custom tab is on Home and the sidebar, and Save
+ * then clears the old tab through its own route, after the buttons and layout
+ * saved. Any other custom tab stays as it is, and the tab says why
+ * (legacyTab).
+ *
  * window.ycLayoutEditor = { open, close, isOpen, isDirty, session, shortcutSession, reservedProblem,
- *                           itemSession, makeUserId, buttonProblems }
+ *                           itemSession, makeUserId, buttonProblems, legacyTab }
  *   session(o) is the editor's pure core (no DOM; the panel drives one):
  *   o = { stored, effective, locked, base, registry, groups } — see session().
  *   shortcutSession(o) is the Keyboard shortcuts tab's, itemSession(o) My
@@ -250,6 +261,7 @@
     // stored surface that names a dropped id (a deleted button, S5a): that
     // would write the reference dropId took out.
     var dropped = Object.create(null);
+    var swapped = Object.create(null);   // newId → the oldId it replaced (replace, S5c-b)
     function storedNames(sf, id) {
       return (hasOwn(stored.placed, sf) && indexOfItem(stored.placed[sf], id) >= 0)
         || (hasOwn(stored.removed, sf) && stored.removed[sf].indexOf(id) >= 0);
@@ -363,7 +375,10 @@
       },
       /** A new effective registry (and group order) — the panel's own
        *  buttons changed (S5a). Nothing stored or edited changes. */
-      retarget: function (list, g) { setEffective(list, g); return true; },
+      // …and a surface edited back to what it was becomes the stored one again
+      // under the new registry (S5c-b review N1: a conversion cancelled by
+      // deleting its button was settled while `custom` was out of it).
+      retarget: function (list, g) { setEffective(list, g); SURFACES.forEach(settle); return true; },
       /** A button the user deleted (S5a): drop every placement and removal
        *  of id on both surfaces — a surface that held it becomes edited —
        *  so no dangling reference is written. → whether anything changed. */
@@ -378,14 +393,40 @@
           var inPlaced = !!placed && indexOfItem(placed, id) >= 0, inRemoved = removed.indexOf(id) >= 0;
           if (!inPlaced && !inRemoved) return;
           any = true;
+          // a button that took another item's place (replace, S5c-b) gives
+          // the place back: the item returns to that very slot, so a
+          // cancelled conversion leaves the surface as it was (review N1)
+          var back = swapped[id];
           S[sf] = {
             mode: 'edited',
-            placed: placed ? placed.filter(function (e) { return e.item !== id; }).map(function (e) { return copyEntry(e, sf); }).filter(Boolean) : null,
+            placed: placed ? placed.map(function (e) { return e.item === id ? (back ? { item: back } : null) : copyEntry(e, sf); }).filter(Boolean) : null,
             removed: without(removed, id),
           };
           settle(sf);
         });
         return any;
+      },
+      /** The legacy custom tab became a button (S5c-b): on each surface
+       *  where oldId shows, newId takes its place — unless newId already
+       *  shows there. oldId leaves that surface's placed list (it is in this
+       *  session's registry right now, so carry() never puts it back); while
+       *  it is still effective the resolver would slot it back in as a base
+       *  item, so the panel retargets without it (editorEffective). → the
+       *  surfaces changed. */
+      replace: function (oldId, newId) {
+        var out = [];
+        if (typeof newId !== 'string' || !(newId in byId)) return out;
+        SURFACES.forEach(function (sf) {
+          var rows = resolved(sf), at = -1;
+          for (var i = 0; i < rows.length; i++) if (rows[i].kind === 'item' && rows[i].id === oldId) at = i;
+          if (at < 0 || visibleIds(rows)[newId]) return;
+          rows[at] = { kind: 'item', id: newId };
+          if (sizeAfter(sf, rows) > CAP) return;
+          commit(sf, rows, without(S[sf].removed, newId));
+          swapped[newId] = oldId;
+          out.push(sf);
+        });
+        return out;
       },
       /** Room left on sf (entries Save could still add). */
       room: function (sf) { return CAP - sizeAfter(sf, resolved(sf)); },
@@ -654,6 +695,7 @@
   var VIEW_KEY_RE = /^[a-z][a-z0-9_]{2,59}$/;     // lib/uiConfigShape.js VIEW_KEY_RE
   var MB_KINDS = ['view', 'tool', 'url', 'drawer'];
   var DRAWER_CAP = 30;                            // lib/uiConfigShape.js CAPS.drawer
+  var TAB_KEEP = 3;                               // index.html ycButtonTabs MAX: pages kept open
   var MINE = 'Mine';                              // ycLauncher's group for them
   var ADMIN = 'Admin';                            // ycLauncher's GRID_GROUP.admin
 
@@ -680,6 +722,37 @@
     else if (isObj(v)) for (var k in v) if (hasOwn(v, k)) userIdsIn(v[k], out);
     return out;
   }
+  // ── The legacy custom tab (users.user_custom_tab, ui-custom S5c-b) ──────
+  // Read both, write new: the old tab keeps working until its user turns it
+  // into a button (My buttons: "Make my custom tab a button"). Only a tab
+  // showing a tool or a saved view can be one — the two pages a button opens
+  // as a tab; any other page (an app page, an SU-set outside site) stays as it
+  // is, and the tab says why. So does a tab with an IT-set loadFunc (an extra
+  // step on opening, which a button can't carry).
+  var LEGACY_TOOL_RE = /^\/tool\/([a-z0-9-]{1,80})$/;                  // TOOL_KEY_RE
+  var LEGACY_VIEW_RE = /^\/customView\.html\?key=([a-z][a-z0-9_]{2,59})$/;   // VIEW_KEY_RE
+  /** A user_custom_tab value → null (no custom tab) |
+   *    { ok: true, title, button: { label, icon, type, key, size: 'tab' } } |
+   *    { ok: false, title, why }   (why: a sentence, shown as text) */
+  function legacyTab(ct) {
+    if (typeof ct === 'string') { try { ct = JSON.parse(ct); } catch (_) { ct = null; } }
+    if (!isObj(ct) || typeof ct.src !== 'string' || !ct.src.trim()) return null;
+    var t = typeof ct.title === 'string' ? ct.title.trim() : '';
+    var title = !t || labelProblem(t) ? 'Custom Tab' : t;     // applyCustomTab's own fallback
+    var src = ct.src.trim(), m;
+    var kind = (m = LEGACY_TOOL_RE.exec(src)) ? 'tool' : (m = LEGACY_VIEW_RE.exec(src)) ? 'view' : null;
+    if (!kind) {
+      return { ok: false, title: title, why: /^[a-z][a-z0-9+.-]*:/i.test(src)
+        ? 'It shows another website, and a button never shows another website inside YisraCase.'
+        : 'It shows a page that is not a tool or a saved view, and only those can be a button that opens as a tab.' };
+    }
+    if (ct.loadFunc && !(typeof ct.loadFunc === 'string' && !ct.loadFunc.trim())) {   // applyCustomTab runs any truthy value
+      return { ok: false, title: title, why: 'It runs an extra step when it opens, set up for you by IT, and a button can\u2019t do that.' };
+    }
+    var icon = typeof ct.icon === 'string' && ICON_RE.test(ct.icon) ? ct.icon : 'bug';   // no icon: the bug applyCustomTab draws
+    return { ok: true, title: title, button: { label: title, icon: icon, type: kind, key: m[1], size: 'tab' } };
+  }
+
   /** The field problems of a button form: { label?, icon?, key?, href? }. */
   function buttonProblems(f) {
     var p = {};
@@ -713,8 +786,9 @@
    *   o.refs     () → ids the user's layout and shortcuts name now (stored and
    *              edited): a NEW button never takes one, and a new button
    *              already placed or bound keeps its id
-   * A row: { id, saved, kept, label, icon, type, key, href, size, refs, orig }
-   * (refs: a drawer's contents, S5b). A
+   * A row: { id, saved, kept, label, icon, type, key, href, size, present, refs, orig }
+   * (refs: a drawer's contents, S5b; present: 'modal' | 'tab' for a tool /
+   * view, S5c-b — the form's size field carries 'tab' for it). A
    * stored button the client grammar refuses is KEPT as it is (shown, never
    * edited, removable). Ids: from the label (user:<slug>), unique against
    * every button, every stored id, the server's retired list and o.refs();
@@ -737,6 +811,7 @@
         kept: false, saved: true, orig: c, id: c.id, label: c.label, icon: c.icon, type: a.type,
         key: a.type === 'url' || a.type === 'drawer' ? '' : a.key, href: a.type === 'url' ? a.href : '',
         size: a.type === 'tool' || a.type === 'view' ? (a.size === 'compact' ? 'compact' : 'large') : 'large',
+        present: (a.type === 'tool' || a.type === 'view') && a.present === 'tab' ? 'tab' : 'modal',
         refs: a.type === 'drawer' ? a.items.slice() : [],
       };
     }
@@ -750,12 +825,14 @@
         return { id: r.id, label: String(r.label).trim(), icon: String(r.icon).trim(), action: { type: 'drawer', items: (r.refs || []).slice() } };
       }
       var oa = r.orig && isObj(r.orig.action) && r.orig.action.type === r.type ? r.orig.action : null;
+      var tab = r.type !== 'url' && r.present === 'tab';
       var action = r.type === 'url'
         ? { type: 'url', href: String(r.href).trim(), present: 'window' }
-        : { type: r.type, key: r.key, present: 'modal' };
+        : { type: r.type, key: r.key, present: tab ? 'tab' : 'modal' };
       // the dialog size (S3.3): compact written; large stays ABSENT unless
-      // the stored action named a size (as the Firm tab does)
-      if (r.type !== 'url') {
+      // the stored action named a size (as the Firm tab does). A tab (S5c-b)
+      // has no size.
+      if (r.type !== 'url' && !tab) {
         if (r.size === 'compact') action.size = 'compact';
         else if (oa && hasOwn(oa, 'size')) action.size = 'large';
       }
@@ -796,7 +873,8 @@
         if (h.charAt(0) === '/') return 'Link · ' + h + ' (new window)';
         try { return 'Link · ' + new URL(h).hostname + ' (new window)'; } catch (_) { return 'Link (new window)'; }
       }
-      return (r.type === 'tool' ? 'Tool' : 'Saved view') + ' · ' + titleOf(r.type, r.key) + (r.size === 'compact' ? ' (compact)' : '');
+      return (r.type === 'tool' ? 'Tool' : 'Saved view') + ' · ' + titleOf(r.type, r.key) +
+        (r.present === 'tab' ? ' (opens as a tab)' : r.size === 'compact' ? ' (compact)' : '');
     }
     // r: the row being edited (null for a new one)
     function fieldsOk(f, r) {
@@ -814,8 +892,9 @@
       if (Object.keys(p).length) return p;
       // the shell's own grammar has the last word (a root-relative link to a
       // page that needs the shell, /tool/… or /customView…, is refused there)
-      var probe = itemOf({ id: 'user:probe', label: f.label, icon: f.icon, type: f.type, key: f.key || '', href: f.href || '', size: f.size,
-        refs: isArr(f.refs) ? f.refs : [], orig: null });
+      var pr = { id: 'user:probe', kept: false, orig: null };
+      apply(pr, { label: f.label, icon: f.icon, type: f.type, key: f.key || '', href: f.href || '', size: f.size, refs: f.refs });
+      var probe = itemOf(pr);
       if (!clean(probe)) {
         return f.type === 'url'
           ? { href: String(f.href).trim().charAt(0) === '/'
@@ -832,6 +911,8 @@
       r.key = f.type === 'tool' || f.type === 'view' ? String(f.key) : '';
       r.href = f.type === 'url' ? String(f.href).trim() : '';
       r.size = (f.type === 'tool' || f.type === 'view') && f.size === 'compact' ? 'compact' : 'large';
+      // the form's "Opens in" (S5c-b): 'large' | 'compact' (the dialog) | 'tab'
+      r.present = (f.type === 'tool' || f.type === 'view') && f.size === 'tab' ? 'tab' : 'modal';
       r.refs = f.type === 'drawer' && isArr(f.refs) ? f.refs.slice() : [];
     }
 
@@ -851,7 +932,8 @@
       /** A row's form values (null for a kept row). */
       fields: function (i) {
         var r = R[i];
-        return r && !r.kept ? { label: r.label, icon: r.icon, type: r.type, key: r.key, href: r.href, size: r.size, refs: (r.refs || []).slice() } : null;
+        return r && !r.kept ? { label: r.label, icon: r.icon, type: r.type, key: r.key, href: r.href,
+          size: r.present === 'tab' ? 'tab' : r.size, refs: (r.refs || []).slice() } : null;
       },
       /** i: the row being edited (omit for a new one). */
       problems: function (f, i) { return fieldsOk(f, i >= 0 ? R[i] || null : null) || {}; },
@@ -922,6 +1004,15 @@
         }).filter(function (g) { return g.items.length; });
       },
       room: function () { return MB_CAP - R.length; },
+      /** The row of a button that opens this tool / view as a TAB (S5c-b),
+       *  or -1: converting the custom tab again reuses it. */
+      findTab: function (type, key) {
+        for (var i = 0; i < R.length; i++) {
+          var r = R[i];
+          if (!r.kept && r.type === type && r.key === key && r.present === 'tab') return i;
+        }
+        return -1;
+      },
       /** The tool / view lists arrived (or failed: null) — summaries follow. */
       setPickers: function (p) { pk = isObj(p) ? p : null; return true; },
       ids: function () { return R.map(function (r) { return r.id; }); },
@@ -946,7 +1037,7 @@
     window.ycLayoutEditor = {
       session: session, labelProblem: labelProblem, canonical: canonical,
       shortcutSession: shortcutSession, reservedProblem: reservedProblem,
-      itemSession: itemSession, makeUserId: makeUserId, buttonProblems: buttonProblems,
+      itemSession: itemSession, makeUserId: makeUserId, buttonProblems: buttonProblems, legacyTab: legacyTab,
     };
     return;
   }
@@ -957,13 +1048,14 @@
   var sessOpts = null;      // what sess was built from (a partial save rebuilds it)
   var scAdd = null;         // the shortcut being added: { id, combo }
   var its = null;           // the My buttons tab's session (S5a)
+  var convert = null;       // the custom tab being made a button (S5c-b): { id } — cleared at Save
   var pickers = null;       // GET /api/ui-config/pickers, read the first time My buttons shows
   var pickersState = 'idle';   // 'idle' | 'loading' | 'ok' | 'failed' — per opening
   var opening = 0;          // bumps on every show(): a late picker reply for an old opening is dropped
   var mbForm = null;        // the button form while it is open: { i } (-1 = a new one)
   var PANES = ['layout', 'shortcuts', 'buttons'];
   var KEYS = (window.ycAll && window.ycAll.keys) || null;
-  function anyDirty() { return !!((sess && sess.isDirty()) || (scs && scs.isDirty()) || (its && its.isDirty())); }
+  function anyDirty() { return !!((sess && sess.isDirty()) || (scs && scs.isDirty()) || (its && its.isDirty()) || clearPending()); }
 
   function el(tag, cls, text) {
     var n = document.createElement(tag);
@@ -1268,6 +1360,12 @@
       'Your own buttons: a saved view, a tool, or a link to another website. Only you see them. They are listed in All ' +
       'and Ctrl+K under Mine; put them on your Home or sidebar, or give them a keyboard shortcut. A link always opens ' +
       'in a new window, never inside YisraCase.'));
+    // the legacy custom tab (S5c-b): what My buttons can do with it
+    var lg = el('div', 'ymb-legacy');
+    lg.hidden = true;
+    lg.appendChild(el('p', 'yc-hint ymb-legacy-text'));
+    lg.appendChild(btn('yle-add', 'mb-legacy', null, 'arrow-right-arrow-left', 'Make my custom tab a button'));
+    sec.appendChild(lg);
     var errs = el('ul', 'yle-errs');
     errs.setAttribute('role', 'alert');
     errs.hidden = true;
@@ -1312,9 +1410,13 @@
     field(form, 'key', 'Saved view', el('select', 'yle-input ymb-select'));
     field(form, 'href', 'Address', textInput(HREF_MAX, 'https://…'),
       'Opens in a new window: another website never opens inside YisraCase.');
+    // "Opens in" (S3.3 size; S5c-b tab): the dialog, Large or Compact, or a tab
     var sizeSel = el('select', 'yle-input ymb-select');
-    [['large', 'Large'], ['compact', 'Compact']].forEach(function (z) { var op = el('option', null, z[1]); op.value = z[0]; sizeSel.appendChild(op); });
-    field(form, 'size', 'Window size', sizeSel, 'It opens over the app: Large for a working page, Compact for something small.');
+    [['large', 'A dialog, large'], ['compact', 'A dialog, compact'], ['tab', 'A tab']].forEach(function (z) {
+      var op = el('option', null, z[1]); op.value = z[0]; sizeSel.appendChild(op);
+    });
+    field(form, 'size', 'Opens in', sizeSel, 'A dialog opens over the app: large for a working page, compact for something small. ' +
+      'A tab opens like the app\u2019s own tabs; up to ' + TAB_KEEP + ' stay open at once, so switching back keeps your place.');
     // a drawer's contents (S5b): an ordered list, the picker to add to it
     var rw = el('div', 'ymb-field ymb-refs-field');
     rw.setAttribute('data-field', 'refs');
@@ -1567,7 +1669,10 @@
   // button can be placed or bound before it is saved, and a deleted one
   // can't.
   function editorEffective() {
-    var base = L.effectiveRegistry().filter(function (e) { return !USER_ID_RE.test(e.id); });
+    // while the custom tab is being made a button (S5c-b), the panel shows
+    // what Save leaves: the button in its place, the custom tab gone
+    var pending = clearPending();
+    var base = L.effectiveRegistry().filter(function (e) { return !USER_ID_RE.test(e.id) && !(pending && e.id === 'custom'); });
     var mine = its ? its.entries() : [];
     var at = base.length;
     for (var i = 0; i < base.length; i++) if (base[i].group === ADMIN) { at = i; break; }
@@ -1644,6 +1749,74 @@
     var room = its.room();
     sec.querySelector('.yle-room').textContent = room <= 0 ? 'You have the most buttons there can be (' + MB_CAP + ').' : '';
     sec.querySelector('[data-act="mb-open"]').disabled = room <= 0 || !!mbForm;
+    renderLegacy();
+  }
+  // ── The legacy custom tab → a button (S5c-b) ──
+  // The shell's copy of users.user_custom_tab (settings.html keeps it current).
+  function legacyNow() {
+    var u = (window.firmData && isObj(window.firmData.currentUser) && window.firmData.currentUser) || (isObj(window.user) && window.user) || {};
+    return legacyTab(u.user_custom_tab);
+  }
+  // A conversion waiting for Save: its button is still in the list.
+  function clearPending() { return !!(convert && its && its.ids().indexOf(convert.id) >= 0); }
+  function renderLegacy() {
+    var box = mbSec().querySelector('.ymb-legacy'), lt = legacyNow();
+    if (convert && !clearPending()) convert = null;              // its button was deleted: nothing to do at Save
+    box.hidden = !lt;
+    if (!lt) return;
+    var text = box.querySelector('.ymb-legacy-text'), go = box.querySelector('[data-act="mb-legacy"]');
+    go.hidden = !lt.ok || !!convert;
+    go.disabled = !!mbForm || its.room() <= 0;
+    if (convert) {
+      var ci = its.ids().indexOf(convert.id), b = its.list()[ci], bf = its.fields(ci);
+      // the button as it is now: the user may have edited it to a dialog (review N2)
+      text.textContent = 'When you save, your custom tab \u201c' + lt.title + '\u201d becomes your button \u201c' + (b ? b.label : convert.id) +
+        '\u201d: it opens ' + (bf && bf.size !== 'tab' ? 'in a dialog' : 'as a tab') + ', where the custom tab was. ' + LEGACY_REFS;
+    } else if (lt.ok) {
+      text.textContent = 'You have a custom tab, \u201c' + lt.title + '\u201d (Settings \u2192 My Custom Tab). Make it one of your buttons: ' +
+        'it keeps opening as a tab, in the same places on your Home and sidebar. ' + LEGACY_REFS +
+        (its.room() <= 0 ? ' You have the most buttons there can be: delete one first.' : '');
+    } else {
+      text.textContent = 'Your custom tab, \u201c' + lt.title + '\u201d, stays as it is: ' + lt.why.charAt(0).toLowerCase() + lt.why.slice(1) +
+        ' Settings \u2192 My Custom Tab still changes it.';
+    }
+  }
+  // What the conversion does NOT move (review S1, ruled): a keyboard shortcut or
+  // a drawer entry naming `custom` stops working once the old tab is cleared.
+  var LEGACY_REFS = 'A keyboard shortcut or drawer entry that opened the custom tab stops working: point it at the new button.';
+  // One click: a button that opens the same tool / view as a tab (or the one
+  // an earlier conversion already made — idempotent), placed where the custom
+  // tab is on Home and the sidebar. The old tab is cleared at Save, after the
+  // buttons and the layout saved.
+  function convertLegacy() {
+    if (saving || mbForm || convert) return;
+    var lt = legacyNow();
+    if (!lt || !lt.ok) return;
+    var at = its.findTab(lt.button.type, lt.button.key), id;
+    if (at >= 0) id = its.ids()[at];
+    else {
+      var r = its.add(lt.button);
+      if (!r.ok) {
+        var p = r.problems || {};
+        banner('Your custom tab could not be made a button: ' + (p.label || p.key || p.icon || p.type || 'it breaks the button rules') + '.', true);
+        return;
+      }
+      id = r.id;
+    }
+    retargetAll();
+    sess.replace('custom', id);
+    convert = { id: id };
+    buttonsChanged();       // retargets without the custom tab (editorEffective)
+    var row = mbSec().querySelector('.ymb-row[data-id="' + id + '"] [data-act="mb-edit"]');
+    if (row) row.focus();
+  }
+  // The old tab is gone (Save cleared it): the shell's copies, then the shell.
+  function legacyCleared() {
+    try {
+      if (window.firmData && isObj(window.firmData.currentUser)) window.firmData.currentUser.user_custom_tab = null;
+      if (isObj(window.user)) window.user.user_custom_tab = null;
+    } catch (_) { /* not ours to fix */ }
+    if (typeof window.applyCustomTab === 'function') window.applyCustomTab(null);
   }
   function formEl() { return mbSec().querySelector('.ymb-form'); }
   function fval(id) { return mbSec().querySelector('#ymb_' + id).value; }
@@ -1902,7 +2075,7 @@
     // a held bad label, or an open button form, keeps Save clickable: the
     // click says what to finish
     root.querySelector('.yle-save').disabled = (!dirty && !Object.keys(labelErr).length && !mbForm) || saving;
-    var dots = { layout: !!(sess && sess.isDirty()), shortcuts: !!(scs && scs.isDirty()), buttons: !!(its && its.isDirty()) };
+    var dots = { layout: !!(sess && sess.isDirty()), shortcuts: !!(scs && scs.isDirty()), buttons: !!(its && its.isDirty()) || clearPending() };
     root.querySelectorAll('.yle-tab').forEach(function (t) {
       t.querySelector('.yle-tab-dot').hidden = !dots[t.getAttribute('data-pane')];
     });
@@ -1995,6 +2168,7 @@
       case 'mb-cancel': closeForm(true); return;
       case 'mb-icon-pick': pickIcon(b); return;
       case 'mb-commit': commitForm(); return;
+      case 'mb-legacy': convertLegacy(); return;
       case 'mb-edit': case 'mb-del': case 'mb-up': case 'mb-down': case 'mb-home': case 'mb-sidebar': {
         var mi = Number(b.closest('.ymb-row').getAttribute('data-i'));
         if (act === 'mb-edit') openForm(mi);
@@ -2393,6 +2567,7 @@
   }
   function show(ui, from, section) {
     opening++;
+    convert = null;
     pickers = null;
     pickersState = 'idle';
     mbForm = null;
@@ -2431,6 +2606,7 @@
     sess = null;
     scs = null;
     its = null;
+    convert = null;
     mbForm = null;
     opening++;
     scAdd = null;
@@ -2489,8 +2665,13 @@
   // saved: the shell takes them, the panel closes. Anything refused or held:
   // the panel stays open with every edit, what DID save becomes the new
   // stored state (its tab is clean), and the banner says which part failed.
+  // Last, when the custom tab was made a button (S5c-b), the old tab is
+  // cleared (POST /api/auth/update-custom-tab { clear: true }) — only once the
+  // buttons and the layout that replace it saved (or had nothing to save), so
+  // a failure never leaves the user with neither; a failed clear keeps the
+  // conversion pending, and the next Save retries just that.
   var PART_NAME = { items: 'buttons', layout: 'launcher layout', shortcuts: 'keyboard shortcuts' };
-  var PANE_OF = { items: 'buttons', layout: 'layout', shortcuts: 'shortcuts' };
+  var PANE_OF = { items: 'buttons', layout: 'layout', shortcuts: 'shortcuts', customTab: 'buttons' };
   function save() {
     if (!isOpen() || saving) return Promise.resolve(false);
     clearErrors();
@@ -2513,6 +2694,7 @@
     if (its.isDirty()) parts.push({ key: 'items', doc: its.doc() });
     if (sess.isDirty()) parts.push({ key: 'layout', doc: sess.doc() });
     if (scs.isDirty()) parts.push({ key: 'shortcuts', doc: scs.doc() });
+    var clearTab = clearPending();
     var heldIds = Object.create(null);     // the buttons the server holds before this save
     its.storedIds().concat(its.retired()).forEach(function (id) { heldIds[id] = true; });   // retired: not new (review N2)
     saving = true;
@@ -2533,11 +2715,21 @@
             function (e) { res[p.key] = { ok: false, e: e }; });
       });
     });
+    if (clearTab) {
+      chain = chain.then(function () {
+        if ((res.items && !res.items.ok) || (res.layout && !res.layout.ok)) { res.customTab = { ok: false, held: true }; return null; }
+        return Promise.resolve()
+          .then(function () { return window.apiSend('/api/auth/update-custom-tab', 'POST', { clear: true }); })
+          .then(function () { res.customTab = { ok: true }; }, function (e) { res.customTab = { ok: false, e: e }; });
+      });
+    }
     return chain.then(function () {
       saving = false;
       var saved = {}, failed = [], said = [];
       parts.forEach(function (p) { if (res[p.key].ok) saved[p.key] = res[p.key].config; else failed.push(p.key); });
       if (Object.keys(saved).length) applyToShell(saved);
+      if (clearTab && res.customTab.ok) { convert = null; legacyCleared(); }
+      else if (clearTab) failed.push('customTab');
       if (!failed.length) {
         closeNow();
         toast('success', 'Saved \u2014 your launcher is updated');
@@ -2573,6 +2765,12 @@
           said.push(multi ? 'Your ' + name + ' did not save: ' + why + '.' : 'Save failed: ' + why + '.');
         }
       });
+      if (clearTab) {
+        var ct = res.customTab, why = ct.e && ct.e.message ? ct.e.message : 'request failed';
+        said.push(ct.ok ? 'Your old custom tab was removed.'
+          : ct.held ? 'Your old custom tab was not removed: the button that replaces it did not save.'
+          : 'Your old custom tab could not be removed (' + why + '): press Save to try again.');
+      }
       said.push('Your changes are still here.');
       if (failed.map(function (k) { return PANE_OF[k]; }).indexOf(paneShown()) < 0) showPane(PANE_OF[failed[0]]);
       banner(said.join(' '), true);
@@ -2587,6 +2785,6 @@
     open: open, close: requestClose, isOpen: isOpen, isDirty: isDirty,
     session: session, labelProblem: labelProblem, canonical: canonical,
     shortcutSession: shortcutSession, reservedProblem: reservedProblem,
-    itemSession: itemSession, makeUserId: makeUserId, buttonProblems: buttonProblems,
+    itemSession: itemSession, makeUserId: makeUserId, buttonProblems: buttonProblems, legacyTab: legacyTab,
   };
 })();

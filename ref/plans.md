@@ -318,6 +318,12 @@ deferred until the budget shows it's needed.
   orphans up when an item is deleted. (b) role / firm deny rows written through
   the API (0 live 2026-10-16) still hide items while the editor says "Everyone"
   — add a read-only "also hidden by an older rule" note if any ever appear.
+- **Custom tab clear has no compare step** (ui-custom S5c-b review N4): My
+  buttons' "Make my custom tab a button" clears `users.user_custom_tab` with
+  an unconditional `POST /api/auth/update-custom-tab { clear: true }` at Save,
+  so a custom tab changed on another device between opening the panel and
+  Save is wiped. Fix: a compare-and-clear on the route (e.g. `ifSrc`: clear
+  only while the stored src still matches what the editor converted).
 - **sbAdmin widening**: the Admin sidebar stays su-only until the first
   firm-grade admin tile exists (the CFG-3 firm tab) — then widen
   tile-by-tile, not by taxonomy.

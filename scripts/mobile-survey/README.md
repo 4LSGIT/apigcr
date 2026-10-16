@@ -211,7 +211,13 @@ and firm labels, a role-restricted firm item (listed: the fixture user is su) an
 an unknown id (dropped), pinned to Home and
 the sidebar — its menu opened from the Home tile, `tab:tabHome:drawer`, and from
 the sidebar row, `tab:tabHome:drawer-sidebar`, a sheet at phone width; both also
-fail when the menu's list goes sideways, `m.boxes`)) —
+fail when the menu's list goes sideways, `m.boxes`) and a button that opens as a
+tab (ui-custom S5c-b: a saved view with a 39-character name, opened through
+`ycLauncher.exec` — `tab:tabUserItem`, the button tab, which also fails when its
+heading goes sideways, `m.boxes`); the My buttons tab's note on the legacy
+custom tab, set in the page from the shell's copy of `user_custom_tab`
+(`…:buttons-legacy`, one that can become a button; `…:buttons-legacy-stays`,
+another website, the longest reason) and put back) —
 enough to fill the tables
 that tend to overflow and to put every conditional Overview / Case Details box
 on screen. The mock ignores

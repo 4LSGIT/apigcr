@@ -129,7 +129,7 @@ describe('computeEffective: the user\'s own buttons', () => {
   test('a bad or duplicate button is dropped with a warning (never listed); at most 50 are read', () => {
     const { L, warnings } = vmLauncher();
     const bad = [{ ...VIEW, id: 'user:Bad' }, { ...LINK, id: 'user:x', action: { type: 'url', href: '/tool/clio', present: 'window' } },
-      { ...VIEW, id: 'user:t', action: { ...VIEW.action, present: 'tab' } }, { ...LINK, id: 'firm:z' }, VIEW, VIEW];
+      { ...LINK, id: 'user:t', action: { ...LINK.action, present: 'tab' } }, { ...LINK, id: 'firm:z' }, VIEW, VIEW];   // a link never opens as a tab (S5c-b)
     const eff = L.computeEffective({ ui: ui(bad) });
     expect(eff.filter((e) => e.group === 'Mine').map((e) => e.id)).toEqual(['user:leads']);
     expect(warnings.filter((w) => /your button \d dropped/.test(w))).toHaveLength(5);
@@ -320,7 +320,7 @@ describe('exec(id) for a button, for real (jsdom, the real tool dialog)', () => 
   test('a malformed button never navigates (dropped from the registry; exec refuses it)', () => {
     const bad = [{ ...LINK, id: 'user:shell', action: { type: 'url', href: '/%74ool/x', present: 'window' } },
       { ...LINK, id: 'user:http', action: { type: 'url', href: 'http://x.example/', present: 'window' } },
-      { ...VIEW, id: 'user:tab', action: { ...VIEW.action, present: 'tab' } }];
+      { ...LINK, id: 'user:tab', action: { ...LINK.action, present: 'tab' } }];   // a link never opens as a tab (S5c-b)
     t = boot({ items: bad });
     for (const id of ['user:shell', 'user:http', 'user:tab']) expect([id, t.w.ycLauncher.exec(id)]).toEqual([id, false]);
     expect(t.opened).toEqual([]);

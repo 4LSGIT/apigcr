@@ -25,6 +25,7 @@ The address bar updates as you work, so it is always current — there is nothin
 - **Where you were inside a tab:** scroll position, filters, search text, a selected row, an open conversation or a folder you browsed to. The tab reopens in its normal starting state.
 - **Anything you are not allowed to see.** If a link points at a tab or panel the person opening it doesn't have, they land on Home or on the More / Admin grid instead — quietly, with no error. A file that can't be found is skipped, with a short "could not be reopened" notice.
 - **Unsaved form edits.** A reload is still a reload: save your work first.
+- **A button of your own that opens as a tab.** The address never names one (it would carry your button's name), so a reload or a link from one starts on Home. See [Buttons that open as a tab](15-your-launcher.md#buttons-that-open-as-a-tab).
 
 ---
 

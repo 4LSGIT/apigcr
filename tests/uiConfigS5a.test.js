@@ -5,9 +5,10 @@
  * (lib/uiConfigShape.js + services/uiConfigService.js + routes/api.uiConfig.js):
  *   - the user `items` document: { items: [ { id 'user:<slug>', label, icon,
  *     action } ] } — the firm item grammar (one function, cleanItems): url /
- *     tool / view, modal-only tool and view with the optional size, links
+ *     tool / view, tool and view with the optional size, links
  *     https:// or a root-relative path that is not a shell-only page; cap 50;
- *     present:'tab' refused with "coming later"; non-https links, shell-only
+ *     present:'tab' refused for a link (a tool / view tab is S5c-b's,
+ *     tests/uiConfigS5cb.test.js); non-https links, shell-only
  *     pages, firm / bad ids and duplicates refused; unknown keys are errors;
  *   - its server-managed `retired` list: user ids only, absent when empty, a
  *     button reusing a retired id refused;
@@ -73,10 +74,13 @@ describe('the user items document', () => {
     expect(I({ items: [BTN({ label: '  Trimmed  ' })] }).value.items[0].label).toBe('Trimmed');
   });
 
-  test('present "tab" is refused for every kind, saying it is coming', () => {
-    for (const a of [{ type: 'view', key: 'lead_followups', present: 'tab' }, { type: 'tool', key: 'x', present: 'tab' }, { type: 'url', href: 'https://x.example/', present: 'tab' }]) {
-      const r = I({ items: [BTN({ action: a })] });
-      expect([a.type, r.ok, errs(r)]).toEqual([a.type, false, 'items[0]: present "tab" is coming later (buttons that open as a tab): use "modal" for now']);
+  // S5c-b: a tool / view button may now open as a tab (tests/uiConfigS5cb.test.js);
+  // a link never does — it always opens a new window.
+  test('present "tab" is refused for a link, saying a link always opens a new window', () => {
+    const r = I({ items: [BTN({ action: { type: 'url', href: 'https://x.example/', present: 'tab' } })] });
+    expect([r.ok, errs(r)]).toEqual([false, 'items[0]: present "tab" is for tools and saved views: a link always opens in a new window, never inside YisraCase']);
+    for (const a of [{ type: 'view', key: 'lead_followups', present: 'tab' }, { type: 'tool', key: 'x', present: 'tab' }]) {
+      expect([a.type, I({ items: [BTN({ action: a })] }).ok]).toEqual([a.type, true]);
     }
   });
 

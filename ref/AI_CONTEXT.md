@@ -1671,7 +1671,9 @@ layouts and shortcuts point at ids). Strict validator `lib/uiConfigShape.js`
 - DB-authored items carry no code: kinds url | tool | view only, plus
   drawer for a user's own buttons (a list of ids; `exec` opens it as the
   `#ycDrawer` menu, listing only entries effective right now). Tool/view
-  open in the tool dialog (they need the parent shell's `apiSend`); links open
+  open in the tool dialog (they need the parent shell's `apiSend`) or, a
+  user's own with `present:'tab'`, in the button tab (`window.ycButtonTabs`,
+  `#tabUserItem`: ≤3 pages kept, LRU; never in `?open=`); links open
   a new window (noopener), never embedded. Custom behaviour for a firm = an
   SU-authored tool (§29), talking through `window.parent.ycTool`.
 - `visible_to` is an allow-list ("Hidden, except [roles]"): su always sees

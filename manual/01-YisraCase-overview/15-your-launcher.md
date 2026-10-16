@@ -195,8 +195,8 @@ see them, and they are saved on your account like the rest of this page.
 
 | Kind | What it opens | How |
 |---|---|---|
-| **A saved view** | One of the firm's saved views (picked from a list) | Over the app, in a window you close with **×** or **Esc**. Pick **Large** (the usual) or **Compact** (a small card). |
-| **A tool** | One of the firm's live tools (picked from a list) | The same way: over the app, Large or Compact. |
+| **A saved view** | One of the firm's saved views (picked from a list) | Over the app, in a window you close with **×** or **Esc**. Pick **Large** (the usual) or **Compact** (a small card). Or as **a tab** of its own: see [Buttons that open as a tab](#buttons-that-open-as-a-tab). |
+| **A tool** | One of the firm's live tools (picked from a list) | The same way: over the app, Large or Compact, or as a tab. |
 | **A link to a website** | Any secure address (`https://…`), or a page of YisraCase itself (`/…`) | **Always in a new browser window**, never inside YisraCase. |
 | **A drawer** | A small menu of up to 30 other items: features, your firm's items, your other buttons | Beside its tile or sidebar row; pick an item to open it. See [Drawers](#drawers). |
 
@@ -218,7 +218,8 @@ button for those.
      [Choosing an icon](#choosing-an-icon)); the icon and its name show
      beside the button;
    - **Opens**: a saved view, a tool, or a link; then pick the view or the tool
-     from the list (with its **Window size**), or type the address.
+     from the list (and where it **Opens in**: a dialog, large or compact, or a
+     tab), or type the address.
 3. Press **Add button**, then **Save**.
 
 Each button in the list shows its icon, its name, what it opens (*Saved view ·
@@ -279,8 +280,43 @@ is gone until you Save.
   never changes once saved, so renaming a saved button keeps its place on
   your Home and its shortcut. A deleted button's id is never used again for
   you.
-- Buttons that open as a tab of their own, like the custom tab in Settings,
-  are not here yet.
+
+### Buttons that open as a tab
+
+A saved view or tool button can open as **a tab** instead of over the app:
+set **Opens in** to **A tab**. It then works like the app's own tabs: it fills
+the screen beside the sidebar, its name and icon show at the top, and its
+sidebar row is lit while you are on it. Open a case and come back, and it is
+where you left it.
+
+- **Up to 3 stay open.** The pages of the last three button tabs you opened
+  stay loaded, so switching between them keeps your place. Opening a fourth
+  closes the one you used least recently (the first time, a note says which);
+  it loads again, from the start, when you next open it. You can have as many
+  tab buttons as you like; only three are kept open at once.
+- **A reload starts on Home.** The address bar never names a button tab
+  (it would carry your button's name), so reloading the page while on one
+  brings you back to Home; the button is still there.
+- A link never opens as a tab: another website always opens in a new window
+  (see above).
+
+### Your old custom tab
+
+The **custom tab** you may have set up in **Settings → My Custom Tab** keeps
+working as it always has. If it shows a **saved view** or a **tool**, the **My
+buttons** tab offers **Make my custom tab a button**: one click adds a button
+that opens the same page as a tab, puts it where the custom tab is on your
+Home and sidebar, and, when you **Save**, removes the old custom tab. (If the
+removal fails, the new button is still saved; press **Save** again.) The
+button then works like any other: rename it, move it, give it a shortcut, or
+put it in a drawer. A keyboard shortcut or a drawer entry that opened the old
+custom tab is not moved over: it stops working once the custom tab is gone, so
+point it at the new button instead.
+
+A custom tab that shows anything else (another of the app's pages, an outside
+website your administrator set up, or one with an extra step IT added) can't
+be a button: it stays as it is, the **My buttons** tab says why, and
+**Settings → My Custom Tab** still changes it.
 
 ## Drawers
 

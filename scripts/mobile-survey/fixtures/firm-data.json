@@ -175,7 +175,9 @@
        "action": { "type": "url", "href": "https://ecf.mieb.uscourts.gov/cgi-bin/login.pl?with=a-long-query-string-that-runs-on", "present": "window" } },
      { "id": "user:morning-drawer", "label": "Everything I open first thing every day", "icon": "box-open",
        "action": { "type": "drawer", "items": ["user:my-open-leads", "firm:unbroken", "user:long-tool", "firm:payroll-portal", "tasks",
-         "moreDocuments", "user:court-site", "cases", "notAnItemAnymore"] } }
+         "moreDocuments", "user:court-site", "cases", "notAnItemAnymore"] } },
+     { "id": "user:leads-tab", "label": "My leads, in a tab of their own, always", "icon": "table-list",
+       "action": { "type": "view", "key": "lead_followups", "present": "tab" } }
     ],
     "retired": ["user:old-button"]
    }
