@@ -1,0 +1,59 @@
+{
+  "record": "ui-custom S5e-1: every legacy custom tab (users.user_custom_tab) moved into the launcher, then cleared",
+  "date": "2026-10-16",
+  "script": "scripts/uiCustomS5eCustomTabsToButtons.js",
+  "how_the_script_uses_this_file": "This file is the script's expected live state. Before it writes anything, the script asserts that each user listed here has EXACTLY this user_custom_tab (JSON compared key-order-insensitively) and EXACTLY these scope-user ui_config rows (ui_config_before: the config_keys), and that no other user has a custom tab. A value written {\"$unknown\": …} is one this record does not hold yet: the script refuses (NO-GO) until it is replaced by the exact live value, which its CHECK prints under PRIOR VALUES.",
+  "users": [
+    {
+      "user": 0, "name": "Automations (system)",
+      "user_custom_tab": { "src": "/manuals.html", "icon": "book-open", "title": "manuals", "loadFunc": "" },
+      "ui_config_before": [],
+      "done": "user_custom_tab cleared; nothing in ui_config"
+    },
+    {
+      "user": 1, "name": "Stuart",
+      "user_custom_tab": { "src": "/tool/call-review", "icon": "headset", "title": "Call Review", "loadFunc": "" },
+      "ui_config_before": [],
+      "done": "new button user:call-review (tool call-review, opens as a tab) where the custom tab was on Home and in the sidebar (new items + layout rows); user_custom_tab cleared"
+    },
+    {
+      "user": 2, "user_custom_tab": null, "ui_config_before": [], "done": "nothing (no custom tab)"
+    },
+    {
+      "user": 3, "name": "Rivka",
+      "user_custom_tab": { "src": "/etch.html", "icon": "paintbrush", "title": "Paint", "loadFunc": "" },
+      "ui_config_before": [],
+      "done": "new button user:paint (link /etch.html, a new window) where the custom tab was on Home and in the sidebar (new items + layout rows); user_custom_tab cleared"
+    },
+    {
+      "user": 4, "user_custom_tab": null, "ui_config_before": [], "done": "nothing (no custom tab)"
+    },
+    {
+      "user": 5, "name": "Shoshana",
+      "user_custom_tab": { "src": "/manuals.html", "icon": "award", "title": "winner", "loadFunc": "Toast.fire({text:'you clicked the link first so you get this prize',icon:'info',title:'\ud83e\udd47 First Place! \ud83e\udd47'});" },
+      "ui_config_before": [],
+      "done": "registry item moreManuals where the custom tab was on Home and in the sidebar (new layout row); the loadFunc prank dropped; user_custom_tab cleared"
+    },
+    {
+      "user": 6, "name": "Fred",
+      "user_custom_tab": { "src": "/tool/call-review", "icon": "phone", "title": "call review", "loadFunc": "" },
+      "ui_config_before": ["items", "layout", "prefs", "shortcuts"],
+      "done": "in his stored layout, placed.home's {item:'custom'} (right after log) became {item:'user:call-review'}, his existing button; nothing else changed; user_custom_tab cleared"
+    },
+    {
+      "user": 22, "name": "Rena",
+      "user_custom_tab": { "src": "/customView.html?key=lead_followups", "icon": "list-check", "title": "Follow Ups", "loadFunc": "" },
+      "ui_config_before": [],
+      "done": "new button user:follow-ups (view lead_followups, opens as a tab) where the custom tab was on Home and in the sidebar (new items + layout rows); user_custom_tab cleared"
+    },
+    {
+      "user": 23, "user_custom_tab": null, "ui_config_before": [], "done": "nothing (no custom tab)"
+    }
+  ],
+  "reverse_by_hand": [
+    "Only while S5e-2 has not retired the custom tab's code: after it, an old value does nothing.",
+    "1. Each user's custom tab: UPDATE users SET user_custom_tab = '<that user's user_custom_tab above, as JSON>' WHERE user = <user>; (users 0, 1, 3, 5, 6, 22).",
+    "2. Users 1, 3, 5 and 22 had no ui_config rows: DELETE FROM ui_config WHERE scope = 'user' AND role = '' AND user_id IN (1, 3, 5, 22) AND config_key IN ('items', 'layout'); this also drops anything they changed in My buttons or their layout since.",
+    "3. Fred: in his layout's placed.home, put {\"item\":\"custom\"} back in place of {\"item\":\"user:call-review\"} (his whole prior layout document is printed by the --apply run, under user 6)."
+  ]
+}
