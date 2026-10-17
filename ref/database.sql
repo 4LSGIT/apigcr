@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-10-17T22:42:59.528Z
+-- Generated: 2026-10-17T23:24:39.673Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:2f517ff196882d33a9adb888ed907286
+-- Fingerprint: sha256:e6ea14c3eb1dc51a9aecfc5a5a8bf755
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -952,7 +952,7 @@ CREATE TABLE `comms_summaries` (
   `id` bigint unsigned NOT NULL,
   `transcript_id` bigint unsigned NOT NULL COMMENT 'comms_transcripts.id — the summary itself is written there (summary, summary_text, …); this row is only the work queue',
   `state` varchar(16) COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'pending' COMMENT 'pending | calling | done | skipped | failed — app-validated. calling = a model call in flight (written AHEAD of it, so the monthly cap counts est_cents even if the process dies mid-call)',
-  `skip_reason` varchar(32) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'restricted (back to pending once unrestricted) | short | empty | refused | purged',
+  `skip_reason` varchar(32) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'restricted (back to pending once unrestricted) | short | empty | no_speech | not_transcribed | refused | purged',
   `model` varchar(48) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'the model of the latest call',
   `effort` varchar(8) COLLATE utf8mb4_general_ci DEFAULT NULL,
   `est_cents` decimal(10,4) DEFAULT NULL COMMENT 'estimated cost of the call in flight; the cap counts it while state = calling (ai_calls holds the billed cost)',
