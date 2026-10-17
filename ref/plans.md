@@ -562,6 +562,16 @@ Active surfaces with known next steps.
 
 ## Operational
 
+- **WF27's decision-outcome notes are unlinked.** `logDecisionOutcome`
+  (`lib/internal_functions/decisions.js`) links an outcome note to the
+  execution's contact, but every WF27 ("static site hit") execution has
+  `contact_id` NULL (84 of 84, 2026-10-17): the workflow sets no
+  `default_contact_id_from`, and nothing fills the contact in after its
+  intake step creates one, so all its outcome notes float free. Options:
+  set WF27's `default_contact_id_from`; backfill the execution's
+  `contact_id` from the intake step's output; or link the note through
+  `lead_case_id`. Any of these changes a live workflow definition — CLAUDE.md's
+  rule for scripts that mutate automation definitions applies.
 - **Case creation's remaining gaps (the chokepoint itself is now closed).**
   `caseService.createCase` was extracted 2026-09-25 (Fred's ruling, custom-fields
   S6-B) and is the only `INSERT INTO cases` in the repo, guarded by a test. What

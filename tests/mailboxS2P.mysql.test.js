@@ -20,7 +20,8 @@
  * (the S2P migration is applied BY THIS SUITE, from the file — that is part
  * of what it proves). Timezone tables must be loaded (logService uses named
  * zones): mysql_tzinfo_to_sql /usr/share/zoneinfo | mysql mysql.
- *   YC_TEST_MYSQL_URL=mysql://root@127.0.0.1:3318/yc_s2p_test npx jest tests/mailboxS2P.mysql.test.js
+ *   YC_TEST_MYSQL_URL=mysql://root@127.0.0.1:3318/yc_s2p_test npx jest --runInBand tests/mailboxS2P.mysql.test.js
+ * One fresh database per run (the protocol in tests/mailboxS2.mysql.test.js).
  * Worker run 2026-10-13: MySQL 8.4.11, all green.
  *
  * Mutation-checked HERE (the fake world only matches statement TEXT):

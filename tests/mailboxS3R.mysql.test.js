@@ -11,9 +11,9 @@
  *
  * ── GATED ON YC_TEST_MYSQL_URL — SKIPPED OTHERWISE ──────────────────────────
  * A THROWAWAY database whose name ends in _test, loaded as
- * tests/mailboxS2.mysql.test.js describes PLUS this slice's migration:
- *   mysql -uroot yc_s3r_test < ref/migrations/2026-10-12_mailbox_s3r_alias.sql
- *   YC_TEST_MYSQL_URL=mysql://user:pass@127.0.0.1:3306/yc_s3r_test npx jest tests/mailboxS3R.mysql.test.js
+ * tests/mailboxS2.mysql.test.js describes (the dump carries this slice's
+ * alias_of) — one fresh database per run:
+ *   YC_TEST_MYSQL_URL=mysql://user:pass@127.0.0.1:3306/yc_s3r_test npx jest --runInBand tests/mailboxS3R.mysql.test.js
  * Worker run 2026-10-12: MySQL 8.0.46, all green (with the S2/S3 twins).
  *
  * Mutation-checked HERE (the worlds only match the statement texts, so the

@@ -6,8 +6,8 @@ all work that renders or submits YisraForm templates outside the authed staff fr
 below), security co-review by the portal manager. Repo beats this doc; verify before
 claiming.
 
-Boot context for any session picking this up: `rw_scratch ns=fred k=supermgr_state`
-(program decisions), `ns=fred k=formbuilder_build_state` (forms arc),
+Boot context for any session picking this up: `rw_scratch ns=fred
+k=formbuilder_build_state` (forms arc),
 `ref/FORM_TEMPLATE_SCHEMA_V1.md` (template contract), `ref/YF_PORTAL_INTERSECTION.md`
 (v2 — the refusal invariant's origin).
 

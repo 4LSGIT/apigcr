@@ -10,12 +10,15 @@
  * whose name ends in _test — the suite deletes rows in the tables it uses):
  *
  *   mysql -uroot -e "CREATE DATABASE yc_s2_test CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci"
- *   mysql -uroot yc_s2_test < ref/database.sql
- *   mysql -uroot yc_s2_test < ref/migrations/2026-10-09_mailbox_s2.sql   # until the dump carries mailboxes.color
- *   mysql -uroot yc_s2_test < ref/migrations/2026-10-09_mail_image_senders.sql   # …and mail_image_senders
- *   mysql -uroot yc_s2_test < ref/migrations/2026-10-11_mailbox_s2l_labels.sql   # …and gmail_labels / in_inbox (S2-L)
+ *   mysql -uroot yc_s2_test < ref/database.sql      # the dump carries the S2 / S2-L / S3R migrations
  *   mysql_tzinfo_to_sql /usr/share/zoneinfo | mysql -uroot mysql      # CONVERT_TZ(…'EST5EDT')
- *   YC_TEST_MYSQL_URL=mysql://user:pass@127.0.0.1:3306/yc_s2_test npx jest tests/mailboxS2.mysql.test.js
+ *   YC_TEST_MYSQL_URL=mysql://user:pass@127.0.0.1:3306/yc_s2_test npx jest --runInBand tests/mailboxS2.mysql.test.js
+ *
+ * The protocol for every gated mailbox / phone suite: ONE FRESH database per
+ * suite run, loaded as above, and --runInBand. The suites delete rows and some
+ * apply one-shot migrations, so two suites sharing a database, or a re-run on
+ * an already-seeded one, interfere (2026-10-13, identical on a pristine base:
+ * environmental, not a code bug).
  *
  * Every connection runs production's sql_mode (no STRICT, no ONLY_FULL_GROUP_BY,
  * no NO_BACKSLASH_ESCAPES, IGNORE_SPACE on) and the pool's timezone 'Z', like

@@ -604,9 +604,9 @@ router.get('/api/comms-archive/health', ...superuserOnlyFor('comms_archive_healt
 // in a URL (Cloud Run request logs, Referer). Audited as action 'search' with
 // the COUNTS and the media ids returned — never the query text, not even
 // hashed: the words can be client data, and admin_audit_log is readable by
-// RO-SQL keys (manager ruling Q1). Rejects likewise. jwtOrApiKey's own
-// jwt_api_audit_log row redacts `q` at write (access B2), and that table is
-// denied to the RO SQL endpoint.
+// any RO-SQL key holding sql.ro.sensitive (lib/sqlGuard SENSITIVE_TABLES,
+// access SEC-3). Rejects likewise. jwtOrApiKey's own jwt_api_audit_log row
+// redacts `q` at write (access B2); that table is in the same sensitive tier.
 router.post('/api/comms-archive/search', jwtOrApiKey, async (req, res) => {
   const details = { action: 'search' };
   if (!req.auth || req.auth.type !== 'jwt' || req.auth.userId == null) {

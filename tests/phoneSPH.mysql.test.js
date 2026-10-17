@@ -12,10 +12,10 @@
  * phone_event_log, phone_lines, channel_grants, contact_phones, credentials and
  * the users / contacts it seeds):
  *   mysql -uroot -e "CREATE DATABASE yc_sph_test CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci"
- *   mysql -uroot yc_sph_test < ref/database.sql
- *   mysql -uroot yc_sph_test < ref/migrations/2026-10-12_mailbox_s3r_alias.sql   # until the dump carries alias_of
+ *   mysql -uroot yc_sph_test < ref/database.sql      # the dump carries alias_of
  *   YC_TEST_MYSQL_URL=mysql://user:pass@127.0.0.1:3306/yc_sph_test npx jest --runInBand tests/phoneSPH.mysql.test.js
- * The suite itself applies ref/migrations/2026-10-12_phone_sph.sql (twice).
+ * The suite itself applies ref/migrations/2026-10-12_phone_sph.sql (twice), so
+ * a re-run needs a fresh database (the protocol in tests/mailboxS2.mysql.test.js).
  * Worker run 2026-10-12: MySQL 8.0.46, all green.
  *
  * Mutation-checked HERE (the world only matches statement TEXT):

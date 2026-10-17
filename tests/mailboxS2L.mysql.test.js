@@ -7,8 +7,8 @@
  * through imapTransport.withMailbox; everything else is real.
  *
  * ── GATED ON YC_TEST_MYSQL_URL — SKIPPED OTHERWISE ──────────────────────────
- * Same throwaway *_test database as tests/mailboxS2.mysql.test.js (its header
- * lists the setup, including ref/migrations/2026-10-11_mailbox_s2l_labels.sql).
+ * A fresh throwaway *_test database, loaded as tests/mailboxS2.mysql.test.js
+ * describes (its header has the setup and the one-fresh-database protocol).
  * Worker run 2026-10-11: MySQL 8.0.46 and 8.4.6, all green.
  *
  * Mutation-checked here: the label half of isDraft removed (the fake account

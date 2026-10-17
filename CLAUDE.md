@@ -110,6 +110,12 @@ Gates beyond Commands & gates below, every model:
   (indexOf('SU'), startsWith) don't contain the literal. Two frontend SU
   gates survived an arc-wide literal grep AND a literal-guard test
   (2026-10-14).
+- Dropping a COLUMN: a soak cannot reveal hidden readers — they keep
+  working while the column exists. The gate is a sweep of the code, of the
+  schema's objects (a trigger naming the column lets the DROP succeed, then
+  fails every UPDATE on the table) AND of the definitions stored in app
+  tables (report SQL, workflow / sequence / trigger configs, tools, saved
+  queries). Worked example: `scripts/uiCustomS5e3DropCustomTab.js`.
 - A harness that PRINTS an anomaly instead of asserting it is not a gate.
   UDS S4 (2026-09-23): a 288-check matrix logged leftover other-mode keys as
   a `note:` line. That residue WAS the bug, and it shipped through the gate,
@@ -194,7 +200,7 @@ Mechanics: AI_CONTEXT §22 (`v` is string-only — stringify JSON yourself).
 - `node --check <file>` on every modified JS file, including inline `<script>` blocks extracted from HTML.
 - `npm run db:ref:check` — schema-drift check against the live DB.
 - Local DB access goes through the Cloud SQL Auth Proxy. `npm run dev`, `npm run db:ref[:check]` and the pre-commit hook start it on demand (`scripts/ensure-sql-proxy.js`; opt-in via `DEV_SQL_PROXY_INSTANCE` in `.env`, inert everywhere else); `npm run db:proxy` / `db:proxy:stop` by hand. New-machine setup and troubleshooting: `ref/INFRA_GCP.md` §10.
-- UI changes: the mobile survey at `320,375,414,800,1000,1200` — one gated call per width (loop in `local/heavy-gate.sh`'s header) — boots the real shell on a mock API and fails on any horizontal overflow (every tab, panel, case/contact tab, dialog), on visible elements cut off at the right edge even when the page fits (fixed chrome), and on window errors; screenshots for the eye check. The mid widths are not optional: between the phone rules and a full desktop the header clipped Log Out and five tables pushed the page sideways for months, unseen by a phone-only run (Oct 2026). `scripts/mobile-survey/README.md`.
+- UI changes: the mobile survey at `320,375,414,800,1000,1200` — one gated call per width (loop in `local/heavy-gate.sh`'s header) — boots the real shell on a mock API and fails on any horizontal overflow (every tab, panel, case/contact tab, dialog), on visible elements cut off at the right edge even when the page fits (fixed chrome), and on window errors; screenshots for the eye check. The mid widths are not optional: between the phone rules and a full desktop the header clipped Log Out and five tables pushed the page sideways for months, unseen by a phone-only run (Oct 2026). `scripts/mobile-survey/README.md`. A before/after pixel diff of the shell hides `#hdrClock` (visibility, layout kept): its minutes tick between the shots and read as a layout change (S6c-5).
 - Pre-commit hook (`.githooks/pre-commit`, enable once via `git config core.hooksPath .githooks`) regenerates and stages THREE files on every commit: `ref/database.sql` (from the live schema; skipped with a warning, commit still goes through, when the DB or the proxy is unreachable), `ref/routes.md` (from `routes/*.js`, no DB) and `TRACKED_FILES.txt` (`git ls-files`). `SCHEMA_DUMP_ASYNC=1` backgrounds the schema step for one commit; `SKIP_SCHEMA_DUMP=1` / `SKIP_ROUTES_DUMP=1` skip a step.
 - **Never edit those three files — not by hand, not by script, not in a patch or diff you hand Fred.** Their contents carry timestamps and totals that drift between your checkout and his, so a hunk on them makes the whole patch fail to apply (`patch failed: ref/routes.md:1`). Leave them out; the commit regenerates them. A new table only reaches `ref/database.sql` once its migration has run on the live DB — that's expected, not a gap to fill by hand.
 

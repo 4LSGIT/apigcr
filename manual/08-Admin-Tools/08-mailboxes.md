@@ -614,6 +614,12 @@ lines alike (design: `ref/MAILBOX_SYSTEM_DESIGN.md` §4.4, slice S-PH).
   Phone Lines. To make such a number readable, add it there — leave it
   **inactive** if it should never be texted from (an inactive line can be
   read and granted, never sent from, and stays out of every "From" list).
+  For **texts** that alone is not enough: the hooks that receive them carry
+  their own list of the firm's numbers (`rc-message-in` for RingCentral,
+  `quo-message` for Quo — More Features → Automations → Hooks), so add a new
+  line to that hook's list too. Until then its texts file under the wrong
+  line: a RingCentral text under the first number it was sent to, a Quo
+  group text under its first recipient.
 - No unread counts on phone yet.
 
 ### Who can read and send — Connections → Phone Lines → Access
