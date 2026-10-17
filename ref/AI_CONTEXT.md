@@ -1753,6 +1753,23 @@ layouts and shortcuts point at ids). Strict validator `lib/uiConfigShape.js`
   `#tabUserItem`: ≤3 pages kept, LRU; never in `?open=`); links open
   a new window (noopener), never embedded. Custom behaviour for a firm = an
   SU-authored tool (§29), talking through `window.parent.ycTool`.
+- Icons (S6a): ONE stored grammar,
+  `^(?:(?:solid|regular|brands):)?[a-z0-9-]{1,40}$` (a bare slug is solid,
+  so every value stored before S6a renders as it did), and ONE renderer,
+  `public/js/ycIcon.js`, for every place that draws a stored icon (launcher,
+  All / palette, both editors, the picker, firm.html via `window.top`). A
+  value outside the grammar renders `fa-circle-question`, never a class built
+  from it. The server's copy (`lib/uiConfigShape.js` `ICON_RE`) and the
+  launcher's are pinned to it by `tests/ycIconS6a.test.js`. The picker
+  (`ycIconPicker.js`) reads `/js/faIcons-6.5.0.json`, which matches the Font
+  Awesome the shell loads (index.html's CDN link): upgrade the two together.
+- NO_ELEMENT (S6b): an effective item with no rendered element — the
+  registry's "More actions" placed in no default layout (`myTasks`,
+  `logout`) — runs through `exec`'s CLOSED dispatch of named page functions
+  (the fixed header's own calls), never an eval of the registry's `onclick`
+  string. A new element-less registry item needs an entry there, or `exec`
+  refuses it ("no rendered element"). An icon-row button is clicked in
+  place, with no tab switch.
 - `visible_to` is an allow-list ("Hidden, except [roles]"): su always sees
   everything; a role added later sees nothing restricted until ticked.
   `moreSettings` / `helpSupport` / `all` can never be hidden or restricted.
