@@ -398,6 +398,19 @@ their own entry further down.)
   recorded twice as `panel:usersDiv`, and the second shot overwrites the first
   (`panel_usersDiv`). Name the hub in the key and the shot when it is not the
   panel's own.
+- **S6c-3 review nits** (the firm layout editor, 2026-10-16):
+  - *A "Locked for users" tag in firm mode.* Firm mode edits with
+    `locked: []` by design (the firm is not locked against itself), so the
+    firm can hide one of its own locked items (e.g. `bills`) from the default
+    Home, and every user who hasn't arranged Home loses it. Coherent, but a
+    tag on those rows would stop a surprise.
+  - *Pin `placeErrors`' unknown-section guard.* No test sends the PERSONAL
+    editor a 400 naming `placed.homeIcons` (a section it doesn't show), which
+    must land in the banner, not throw (`public/js/ycLayoutEditor.js`).
+  - *Make `tests/helpers/uiConfigStore.js` reorder JSON keys on write*, as
+    MySQL does (CLAUDE.md: a dry-run store must store JSON the way MySQL
+    does). A deep key sort is enough; the S6c-3 reviewer showed the launcher
+    suites already pass that way.
 
 ## SaaS-readiness (deferred indefinitely)
 
