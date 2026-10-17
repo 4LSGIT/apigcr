@@ -9,8 +9,7 @@
   "user_type": 1,
   "does_appts": 1,
   "user_auth": "authorized",
-  "roles": "it,admin,form_dev,su",
-  "user_custom_tab": null
+  "roles": "it,admin,form_dev,su"
  },
  "phoneLines": [
   {

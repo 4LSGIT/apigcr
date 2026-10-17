@@ -8,7 +8,8 @@
  *   YC_TEST_MYSQL_URL=mysql://root@127.0.0.1:3395/yc_s5e1_test npx jest tests/uiCustomS5e.mysql.test.js --runInBand
  * The database name must end in _test; this suite DROPS and recreates users,
  * ui_config, ui_config_versions and entitlement_denies in it, cloned from
- * ref/database.sql (users.user_custom_tab is `json NOT NULL`, as live). The
+ * ref/database.sql (users.user_custom_tab is `json NOT NULL`, as live at the
+ * S5e-1 run; once S5e-3 has dropped it, the suite adds it back where it stood). The
  * session runs the LIVE global sql_mode (manager, 2026-10-16:
  * NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION).
  * S5E_CHECK_OUT=<file>: the seeded CHECK's output is also written there.
@@ -88,6 +89,11 @@ d('S5e-1: the custom-tab conversion on real MySQL', () => {
     const ddl = fs.readFileSync(path.join(ROOT, 'ref', 'database.sql'), 'utf8');
     for (const t of ['ui_config_versions', 'ui_config', 'entitlement_denies', 'users']) await q(`DROP TABLE IF EXISTS \`${t}\``);
     for (const t of ['users', 'entitlement_denies', 'ui_config', 'ui_config_versions']) for (const st of cloneDdl(ddl, t)) await q(st);
+    // this suite records the S5e-1 run, which met users.user_custom_tab; S5e-3
+    // (scripts/uiCustomS5e3DropCustomTab.js) drops it, so put it back where it stood
+    const [[has]] = await pool.query("SELECT COUNT(*) AS n FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() " +
+      "AND TABLE_NAME = 'users' AND COLUMN_NAME = 'user_custom_tab'");
+    if (!Number(has.n)) await q('ALTER TABLE `users` ADD COLUMN `user_custom_tab` json NOT NULL AFTER `reset_expires`');
     // the shipped record IS the expected state; a copy with an {$unknown} value for the refusal
     RECORD_OK = S.RECORD_FILE;
     tmp = fs.mkdtempSync(path.join(os.tmpdir(), 's5e1-'));

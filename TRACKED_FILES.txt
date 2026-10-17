@@ -565,6 +565,7 @@ ref/migrations/2026-10-16_ui_custom_s31_ui_config.sql
 ref/migrations/2026-10-16_ui_custom_s34_item_key_comment.sql
 ref/migrations/2026-10-16_ui_custom_s5e_custom_tabs_to_buttons.json
 ref/migrations/2026-10-16_ui_custom_s6c_config_key_comment.sql
+ref/migrations/2026-10-17_ui_custom_s5e3_drop_user_custom_tab.sql
 ref/migrations/S1_notes_migration.sql
 ref/migrations/documents_s1.sql
 ref/migrations/documents_s2.sql
@@ -864,6 +865,7 @@ scripts/test_email_ingest_suppression.sh
 scripts/typeKeyVocabulary.js
 scripts/uiCustomConfigKeyComment.js
 scripts/uiCustomS34ItemKeyComment.js
+scripts/uiCustomS5e3DropCustomTab.js
 scripts/uiCustomS5eCustomTabsToButtons.js
 scripts/uiCustomS6cConfigKeyComment.js
 scripts/updateRoutes.js
@@ -1444,6 +1446,8 @@ tests/uiCustomConfigKeyComment.test.js
 tests/uiCustomS34ItemKeyComment.test.js
 tests/uiCustomS5e.mysql.test.js
 tests/uiCustomS5e.test.js
+tests/uiCustomS5e3.mysql.test.js
+tests/uiCustomS5e3DropCustomTab.test.js
 tests/uiCustomS6cConfigKeyComment.test.js
 tests/unifiedEventsU2b.admin.test.js
 tests/unifiedEventsU2b.apptsFilter.test.js

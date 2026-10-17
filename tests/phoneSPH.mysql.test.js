@@ -80,12 +80,12 @@ maybe('S-PH phone reads on real MySQL', () => {
                VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, [l.id, l.phone_number, l.display_name, l.provider, l.active, l.mms_capable, l.credential_id, l.provider_id]);
     }
     for (const x of USERS.filter(v => v.user > 0)) {
-      await q(`INSERT INTO users (user, username, user_type, user_name, user_fname, user_lname, user_initials, user_auth, ringcentral, user_custom_tab, roles, default_phone)
-               VALUES (?, ?, 1, ?, 'f', 'l', 'xx', ?, 0, '{}', ?, ?)`, [x.user, x.username, x.user_name, x.user_auth, x.roles, x.default_phone]);
+      await q(`INSERT INTO users (user, username, user_type, user_name, user_fname, user_lname, user_initials, user_auth, ringcentral, roles, default_phone)
+               VALUES (?, ?, 1, ?, 'f', 'l', 'xx', ?, 0, ?, ?)`, [x.user, x.username, x.user_name, x.user_auth, x.roles, x.default_phone]);
     }
     // a DISABLED user whose default line exists: the seed must skip them
-    await q(`INSERT INTO users (user, username, user_type, user_name, user_fname, user_lname, user_initials, user_auth, ringcentral, user_custom_tab, roles, default_phone)
-             VALUES (8, 'gone', 1, 'Gone', 'f', 'l', 'xx', 'disabled', 0, '{}', 'staff', '2484179800')`);
+    await q(`INSERT INTO users (user, username, user_type, user_name, user_fname, user_lname, user_initials, user_auth, ringcentral, roles, default_phone)
+             VALUES (8, 'gone', 1, 'Gone', 'f', 'l', 'xx', 'disabled', 0, 'staff', '2484179800')`);
     await q('SET FOREIGN_KEY_CHECKS = 1');
   });
   afterAll(async () => {

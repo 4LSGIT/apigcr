@@ -80,8 +80,8 @@ maybe('mailbox S3 on real MySQL', () => {
     await q("DELETE FROM app_settings WHERE `key` = 'mail_send_daily_budget'");
     await q('DELETE FROM users WHERE user IN (1, 5, 6, 8)');
     const user = (id, auth, roles) => q(
-      `INSERT INTO users (user, username, user_type, user_name, user_fname, user_lname, user_initials, user_auth, ringcentral, user_custom_tab, roles)
-       VALUES (?, ?, 1, ?, 'f', 'l', 'xx', ?, 0, '{}', ?)`, [id, 'u' + id, 'User ' + id, auth, roles]);
+      `INSERT INTO users (user, username, user_type, user_name, user_fname, user_lname, user_initials, user_auth, ringcentral, roles)
+       VALUES (?, ?, 1, ?, 'f', 'l', 'xx', ?, 0, ?)`, [id, 'u' + id, 'User ' + id, auth, roles]);
     await user(SS, 'authorized', 'staff,attorney');
     await user(READER, 'authorized', 'staff');
     await user(SU, 'authorized', 'it,admin,form_dev,su');

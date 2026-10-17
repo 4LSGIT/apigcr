@@ -318,20 +318,6 @@ deferred until the budget shows it's needed.
   orphans up when an item is deleted. (b) role / firm deny rows written through
   the API (0 live 2026-10-16) still hide items while the editor says "Everyone"
   — add a read-only "also hidden by an older rule" note if any ever appear.
-- **Drop `users.user_custom_tab`** (ui-custom S5e-3, after a soak of S5e-2):
-  nothing reads or writes it since S5e-2 retired the custom tab, except
-  `routes/admin.users.js`'s INSERT of `'null'` (the column is `json NOT
-  NULL`). The slice: a session script (CHECK by default; `lock_wait_timeout`
-  low; asserts every row is still the JSON null) that drops the column; the
-  INSERT stops naming it — mind the order: the INSERT names the column, so a
-  drop that lands before that backend breaks creating users; the
-  `lib/internal_functions/users.js` BLOCKED_COLUMNS entry, the survey
-  fixture's `currentUser.user_custom_tab`, the gated `*.mysql.test.js`
-  users INSERTs that name it, and manual 01/09's line go too.
-  `/api/firm-data` ships it today only through `SELECT *`. The spent S5e-1
-  script (`scripts/uiCustomS5eCustomTabsToButtons.js`) reads and writes the
-  column: it stays as the record of that run but no longer runs after the
-  drop.
 - **sbAdmin widening**: the Admin sidebar stays su-only until the first
   firm-grade admin tile exists (the CFG-3 firm tab) — then widen
   tile-by-tile, not by taxonomy.
@@ -365,9 +351,8 @@ deferred until the budget shows it's needed.
 
 ## From the ui-customization arc (2026-10-17) — deferred
 
-(The arc's other leftovers sit above: the Firm tab's unseen deny rows and the
-`users.user_custom_tab` drop, S5e-3; the workspace URL's deferred levels have
-their own entry further down.)
+(The arc's other leftover sits above, the Firm tab's unseen deny rows; the
+workspace URL's deferred levels have their own entry further down.)
 
 - **Per-role firm layouts.** `ui_config.role` is reserved (writes refuse
   anything but `''`), kept so a firm layout per role can slot in as one more

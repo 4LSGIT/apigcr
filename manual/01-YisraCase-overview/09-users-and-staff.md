@@ -89,9 +89,10 @@ consulted when computing whether they are free). See
 [Google Calendar](../04-Integrations/04-google-calendar.md).
 
 `user_custom_tab` held the page of that person's old custom tab. Nothing reads
-it any more — every custom tab became a launcher button
-([Your launcher](15-your-launcher.md#the-custom-tab)) — and the column is
-dropped once that has settled.
+or writes it any more — every custom tab became a launcher button
+([Your launcher](15-your-launcher.md#the-custom-tab)) — and
+`scripts/uiCustomS5e3DropCustomTab.js` drops the column once that has
+settled.
 
 ---
 

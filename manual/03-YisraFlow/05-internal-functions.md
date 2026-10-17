@@ -679,7 +679,6 @@ Resolve **one** staff user (the `users` table — firm staff, not clients) from 
 
 **Blocked columns** — never SELECTed, never addressable via `fields`:
 - `password`, `password_hash`, `reset_token`, `reset_expires` (credential material)
-- `user_custom_tab` (per-user UI state blob, no automation value)
 
 The SELECT is an explicit whitelist rather than `SELECT *` (which `lookup_appointment` uses on `appts`) precisely because `users` carries credential columns — a sensitive column added to the table later cannot auto-leak into workflow output, it has to be opted into `RETURNED_COLUMNS`.
 

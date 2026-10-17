@@ -80,8 +80,8 @@ maybe('mailbox S2P on real MySQL', () => {
     await q('DELETE FROM users WHERE user IN (?)', [[READER, SU, SENDER]]);
     await q('DELETE FROM cases WHERE case_id IN (?)', [['CaseA1', 'CaseB2']]);
     const user = (id, auth, roles) => q(
-      `INSERT INTO users (user, username, user_type, user_name, user_fname, user_lname, user_initials, user_auth, ringcentral, user_custom_tab, roles)
-       VALUES (?, ?, 1, ?, 'f', 'l', 'xx', ?, 0, '{}', ?)`, [id, 'u' + id, 'User ' + id, auth, roles]);
+      `INSERT INTO users (user, username, user_type, user_name, user_fname, user_lname, user_initials, user_auth, ringcentral, roles)
+       VALUES (?, ?, 1, ?, 'f', 'l', 'xx', ?, 0, ?)`, [id, 'u' + id, 'User ' + id, auth, roles]);
     await user(READER, 'authorized', 'staff');
     await user(SU, 'authorized', 'it,admin,form_dev,su');
     await user(SENDER, 'authorized', 'staff');

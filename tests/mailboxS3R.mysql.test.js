@@ -71,8 +71,8 @@ maybe('mailbox S3-R on real MySQL', () => {
     for (const t of ['mailboxes', 'channel_grants', 'mail_messages', 'mail_read_state', 'inbox_views']) await q(`DELETE FROM ${t}`);
     await q('DELETE FROM users WHERE user IN (1, 6, 12)');
     const user = (id, auth, roles) => q(
-      `INSERT INTO users (user, username, user_type, user_name, user_fname, user_lname, user_initials, user_auth, ringcentral, user_custom_tab, roles)
-       VALUES (?, ?, 1, ?, 'f', 'l', 'xx', ?, 0, '{}', ?)`, [id, 'u' + id, 'User ' + id, auth, roles]);
+      `INSERT INTO users (user, username, user_type, user_name, user_fname, user_lname, user_initials, user_auth, ringcentral, roles)
+       VALUES (?, ?, 1, ?, 'f', 'l', 'xx', ?, 0, ?)`, [id, 'u' + id, 'User ' + id, auth, roles]);
     await user(SS, 'authorized', 'staff,attorney');
     await user(SU, 'authorized', 'it,admin,form_dev,su');
     await user(AREADER, 'authorized', 'staff');

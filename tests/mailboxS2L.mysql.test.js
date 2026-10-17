@@ -78,8 +78,8 @@ maybe('mailbox S2-L on real MySQL', () => {
     jest.spyOn(console, 'warn').mockImplementation(() => {});
     for (const t of ['mailboxes', 'channel_grants', 'mail_messages', 'mail_read_state', 'inbox_views']) await q(`DELETE FROM ${t}`);
     await q('DELETE FROM users WHERE user = ?', [SU]);
-    await q(`INSERT INTO users (user, username, user_type, user_name, user_fname, user_lname, user_initials, user_auth, ringcentral, user_custom_tab, roles)
-             VALUES (?, 'u6', 1, 'User 6', 'f', 'l', 'xx', 'authorized', 0, '{}', 'it,su')`, [SU]);
+    await q(`INSERT INTO users (user, username, user_type, user_name, user_fname, user_lname, user_initials, user_auth, ringcentral, roles)
+             VALUES (?, 'u6', 1, 'User 6', 'f', 'l', 'xx', 'authorized', 0, 'it,su')`, [SU]);
     await q(`INSERT INTO mailboxes (id, address, domain, imap_host, imap_user, imap_secret, ingest_folders, ingest_state, ingest_enabled, active) VALUES
       (2, 'stuart@firm.test', 'firm.test', 'imap.gmail.com', 'u', 'ENCv1:fake', ?, ?, 1, 1),
       (5, 'pilot@firm.test', 'firm.test', 'gcam1191.siteground.biz', 'u', 'ENCv1:fake', ?, ?, 0, 1)`,

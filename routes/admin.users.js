@@ -62,8 +62,8 @@ const ALLOWED_AUTH = ['authorized', 'disabled'];
 const { ROLE_MEMBERS } = require('../lib/capabilities');
 const DEFAULT_ROLES = 'staff';
 
-// Fields an SU may edit via PATCH. user_custom_tab / task_remind_freq /
-// freebusy_calendar_ids deliberately excluded (own tools / DB console).
+// Fields an SU may edit via PATCH. task_remind_freq / freebusy_calendar_ids
+// deliberately excluded (own tools / DB console).
 const PATCH_WHITELIST = [
   'username', 'user_fname', 'user_lname', 'user_name', 'user_real_name',
   'user_initials', 'user_auth', 'user_type', 'email', 'phone',
@@ -317,17 +317,20 @@ router.post('/api/admin/users', ...superuserOnlyFor(TOOL), async (req, res) => {
     const hash = password ? await bcrypt.hash(password, BCRYPT_ROUNDS) : null;
 
     // Every NOT NULL column supplied explicitly — the session sql_mode is
-    // relaxed but we don't lean on implicit defaults here. user_custom_tab is
-    // json NOT NULL: '"null"' string parses as the JSON null scalar, matching
-    // existing rows that render as null in the API.
+    // relaxed but we don't lean on implicit defaults here. One exception, on
+    // purpose (ui-custom S5e-3): the retired custom-tab column is no longer
+    // named, so this INSERT works before and after
+    // scripts/uiCustomS5e3DropCustomTab.js drops it. Until then the relaxed
+    // mode fills it with its implicit default, the JSON null scalar — what
+    // this INSERT wrote explicitly before (measured on 8.4.11).
     const [r] = await req.db.query(
       `INSERT INTO users
          (username, user_type, user_real_name, user_name, user_fname, user_lname,
           user_initials, user_auth, roles, email, phone, default_phone, default_email,
-          allow_sms, ringcentral, does_appts, user_gcal_id, user_custom_tab,
+          allow_sms, ringcentral, does_appts, user_gcal_id,
           password_hash,
           password)          -- TODO: REMOVE when dropping plaintext password column
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'null',
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
           ?,
           ?)                 -- TODO: REMOVE when dropping plaintext password column
       `,
