@@ -369,6 +369,16 @@ deferred until the budget shows it's needed.
 `users.user_custom_tab` drop, S5e-3; the workspace URL's deferred levels have
 their own entry further down.)
 
+- **Per-role firm layouts.** `ui_config.role` is reserved (writes refuse
+  anything but `''`), kept so a firm layout per role can slot in as one more
+  step — shipped → firm → role → user — through the same merge rule, with no
+  other change. Deferred while there was no role model; roles exist since
+  access A2b/A3, so this is now a plain feature decision.
+- **A framed outside page.** Links open a new window, never embedded; Fred
+  will allow an embedded view only for a concrete need, and then only with a
+  permanent banner naming the domain and saying it is outside YisraCase, a
+  sandboxed iframe, and an automatic new-window fallback for sites that
+  refuse framing.
 - **Firm items opening as a tab.** A user's own tool / view button may open in
   the button tab (`present:'tab'`, S5c-b); a firm item is modal-only — the
   validator refuses `present:'tab'` at the firm tier ("not available yet",

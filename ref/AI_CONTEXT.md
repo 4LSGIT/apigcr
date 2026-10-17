@@ -1695,6 +1695,10 @@ lists are server-managed (a deleted firm/user item id never comes back —
 layouts and shortcuts point at ids). Strict validator `lib/uiConfigShape.js`
 (linear regexes, timing-tested); `services/uiConfigService.js`;
 `routes/api.uiConfig.js`; delivered to the shell in `/api/firm-data` `ui`.
+Boundary: scalar firm facts with server-side consumers (logo, site URL,
+phone) stay in `app_settings` `fe-*` / `lib/firmConfig.js`; structured
+UI-layout documents live here. No tenant column by design: under the
+DB-per-tenant plan (ref/plans.md) firm scope simply becomes the tenant's.
 
 **Invariants.**
 - Visibility only: every hide — deny, firm hide, `visible_to`, a user's
@@ -1737,6 +1741,11 @@ layouts and shortcuts point at ids). Strict validator `lib/uiConfigShape.js`
   left out (the wsurl drill restore depends on `elementsOf(id).more/.admin`
   and refuses an unplaced tile); the More firm row draws only while the firm
   has no `placed.more`.
+- Layout entries are `{item}`, `{break}` (Home and the grids) and `{label}`
+  (sidebar) ONLY: no pixel spacing and no stored column counts — how many
+  tiles fit a row is CSS's call per viewport. The one extension the design
+  allows is a per-list density preset; anything else is a design decision
+  first.
 - All (`all`) is GUARANTEED in Home's icon row and in Ctrl-K (ruling
   2026-10-16): undeniable, and the resolver puts it back whatever a layout
   says; the sidebar's All is an ordinary, removable item.
