@@ -172,6 +172,10 @@
         homeIcons: iconRow('home'),
         moreIcons: iconRow('more'),
         adminIcons: iconRow('admin'),
+        // A custom page (ui-custom S6c-5, buildPages below): its grid and its
+        // icon row take the hubs' grammar, drawn as neutrals (never mounted).
+        page: grid('page'),
+        pageIcons: iconRow('page'),
       };
       function iconRow(page) {
         return {
@@ -293,7 +297,9 @@
       //     visible_to, entitlement denies (a user: id can't be denied) and
       //     the undeniable rules do not touch them. See userItems below. A
       //     button may be a DRAWER (S5b): listed, placed and bound like any
-      //     other; exec opens its menu (see Drawers below).
+      //     other; exec opens its menu (see Drawers below). A firm item or a
+      //     user's button may be a PAGE (S6c-5, { type:'page' }): exec opens
+      //     its tab (Pages below); its tiles live in that tier's layout.pages.
       // Each entry: { id, group, label, labels, icon } — labels = label +
       // surfaceLabels, what the matcher reads. group = the item's origin:
       // its sidebar section, else Home, else the grid it is on, else More
@@ -473,19 +479,28 @@
         }
         return { type: 'drawer', items: out };
       }
+      /** A page's action (S6c-5, firm items and a user's buttons alike) →
+       *  { type:'page' }, or null: no other key (lib/uiConfigShape.js
+       *  ACTION_SHAPES.page). Its contents are the tier's layout.pages[id]. */
+      function cleanPage(a) {
+        return isObj(a) && a.type === 'page' && onlyKeys(a, ['type']) ? { type: 'page' } : null;
+      }
       /** One launcher item (firm: idRe FIRM_ID_RE; a user's own button:
        *  USER_ID_RE — the same grammar, lib/uiConfigShape.js cleanItems) →
        *  its clean copy, or null. mine: a user's own button — a drawer action
-       *  (S5b) and a tool / view opening as a tab (S5c-b) are allowed. */
+       *  (S5b) and a tool / view opening as a tab (S5c-b) are allowed. A page
+       *  (S6c-5) is allowed at both tiers. */
       function cleanItem(it, idRe, mine) {
         if (!isObj(it) || !onlyKeys(it, ['id', 'label', 'icon', 'action'])) return null;
         if (typeof it.id !== 'string' || !idRe.test(it.id)) return null;
         var label = cleanLabel(it.label);
         if (label == null || typeof it.icon !== 'string' || !ICON_RE.test(it.icon)) return null;
         var dr = mine && isObj(it.action) && it.action.type === 'drawer' ? cleanDrawer(it.action) : null;
-        if (!dr && !firmTarget(it.action, mine ? USER_ACTIONS : FIRM_ACTIONS)) return null;
+        var pg = cleanPage(it.action);
+        if (!dr && !pg && !firmTarget(it.action, mine ? USER_ACTIONS : FIRM_ACTIONS)) return null;
         var a = it.action, ca;
         if (dr) ca = dr;
+        else if (pg) ca = pg;
         else if (a.type === 'url') ca = { type: 'url', href: a.href, present: a.present };
         else {
           ca = { type: a.type, key: a.key, present: a.present };
@@ -693,6 +708,7 @@
         hidePass(hide, firm.renames);
         renderFirmRow();
         layoutPass(firm.locked);
+        buildPages();
         refreshDrawer();
         syncButtonTabs();
         try { window.dispatchEvent(new CustomEvent('ycLauncherAccess')); } catch (_) { /* no CustomEvent */ }
@@ -922,8 +938,9 @@
       var LAYOUT_SURFACES = { home: true, sidebar: true, homeIcons: true, more: true, moreIcons: true, admin: true, adminIcons: true };
       var USER_SURFACES = { home: true, sidebar: true, homeIcons: true };   // lib/uiConfigShape.js LAYOUT_SURFACES
       var BREAK_SURFACES = { home: true, more: true, admin: true };         // lib/uiConfigShape.js BREAK_SURFACES
-      var ICON_SURFACES = { homeIcons: true, moreIcons: true, adminIcons: true };
-      var PAGE_OF = { homeIcons: 'home', moreIcons: 'more', adminIcons: 'admin' };   // an icon row's page
+      var ICON_SURFACES = { homeIcons: true, moreIcons: true, adminIcons: true, pageIcons: true };
+      var PAGE_OF = { homeIcons: 'home', moreIcons: 'more', adminIcons: 'admin', pageIcons: 'page' };   // an icon row's page
+      var GRID_SURFACES = { more: true, admin: true, page: true };               // .big-button tiles (page = a custom page's grid, S6c-5)
       var GUARANTEED = { homeIcons: ['all'] };                              // lib/uiConfigShape.js GUARANTEED
       var LAYOUT_CAP = 200;   // entries read per list (the server caps at 100)
 
@@ -1124,7 +1141,7 @@
       // once and kept up to date.
       function neutral(R, surface, entry) {
         var id = entry.id, n = R.neutral[id];
-        var icons = !!ICON_SURFACES[surface], grid = surface === 'more' || surface === 'admin';
+        var icons = !!ICON_SURFACES[surface], grid = !!GRID_SURFACES[surface];
         if (!n) {
           var el;
           // a panel item on a grid page: the stage opens it in place (S6c-4)
@@ -1163,7 +1180,8 @@
         if (b.firstChild.className !== cls) b.firstChild.className = cls;
         if (icons) { setAttr(b, 'title', label); setAttr(b, 'aria-label', label); } else setText(b.lastChild, label);
         if (surface === 'sidebar') {
-          setAttr(b, 'data-tab', typeof it.tab === 'string' ? it.tab : null);
+          // a PAGE item's row carries its page tab (S6c-5), so updateSidebarActive lights it there
+          setAttr(b, 'data-tab', isPage(entry) ? pageTabId(id) : typeof it.tab === 'string' ? it.tab : null);
           setAttr(b, 'data-tab-also', typeof it.tabAlso === 'string' ? it.tabAlso : null);
           setAttr(b, 'title', it.title != null ? String(it.title) : label);
         }
@@ -1245,6 +1263,165 @@
         for (var sf in LAYOUT_SURFACES) {
           try { applyLayout(sf, locked); } catch (err) { warn(sf + ': layout failed — ' + (err && err.message)); }
         }
+      }
+
+      // ── Pages (ui-custom S6c-5) ────────────────────────────────────────
+      // A PAGE is a firm item or a user's own button whose action is
+      // { type:'page' }: a main tab of its own, like More Features and Admin,
+      // holding a heading, big tiles and an icon row — a .tab-main.yc-hub
+      // inside #ycPages (after the hub tabs, before the panel stage), so the
+      // drill script, openMainTab, currentMainTabId and the stage treat it as
+      // one more hub: a panel tile on it drills THIS page onto the stage
+      // (per-page memory), its strip shows only ITS tiles' pills.
+      //   - Contents: the tier's layout document — ui.firm.layout.pages[id]
+      //     for a firm page, ui.user.layout.pages[id] for a user's —
+      //     { tiles: [{item}|{break}], icons: [{item}] }. A page has NO base:
+      //     its stored lists ARE the page (no merge rule, no removed list).
+      //     An item not in this user's effective registry is not drawn
+      //     (denied, firm-hidden, role-restricted, gated: a su tool placed on
+      //     a page is unreachable for a non-su by every path), an item once,
+      //     ≤ LAYOUT_CAP entries read. Every tile is a NEUTRAL (neutral()):
+      //     a panel item's carries its data-target and opens in place; any
+      //     other calls exec(id). Labels are text nodes, icons via ycIcon.
+      //   - Built by applyAccess (buildPages) and re-run safely: a run with
+      //     the same content changes nothing (nodes are made once and kept,
+      //     like applyLayout's); a changed tile set drops the page's built
+      //     strip (rebuilt now if drilled in). A page item that is no longer
+      //     effective, or no longer a page, loses its tab: if you were on it,
+      //     Home opens first (a page deleted while open goes to Home); its
+      //     drill memory is forgotten.
+      //   - The tab id is opaque and per session: ycPage-N by first sight of
+      //     the item id (pageTabId), never a name. A sidebar neutral of the
+      //     page carries it as data-tab (the highlight); exec(pageId) opens
+      //     it; the WORKSPACE URL never writes it (v1, Fred's ruling Q4: F5 on
+      //     your own page lands on Home) and refuses it as an ?open= head.
+      //   - At most PAGE_TABS_MAX page tabs per tier (the arc's item cap);
+      //     the rest are listed and openable nowhere, with a console error.
+      //   - The egg-row CSS and the hubs' phone rules key on .yc-hub /
+      //     .page-egg-row / .page-egg (index.html's style blocks).
+      var PAGE_TABS_MAX = 50;
+      var PAGE_TAB_ID = Object.create(null), pageTabN = 0;
+      var PAGES = Object.create(null);   // page item id → { el, h1, icons: [i, i], text, row, cur: { tiles, icons }, R: { tiles, icons }, key }
+      var pagesWarned = false;
+      function isPage(entry) {
+        var a = entry && (entry.action || entry.userAction);
+        return !!(a && a.type === 'page');
+      }
+      /** The page tab id for a page item: assigned on first sight, kept for the session. */
+      function pageTabId(id) { return PAGE_TAB_ID[id] || (PAGE_TAB_ID[id] = 'ycPage-' + (++pageTabN)); }
+      /** The effective page items, firm pages first (EFFECTIVE's order), each tier capped. */
+      function pageEntries() {
+        var firm = [], mine = [];
+        EFFECTIVE.forEach(function (e) {
+          if (!isPage(e)) return;
+          var list = e.action ? firm : mine;
+          if (list.length < PAGE_TABS_MAX) list.push(e);
+          else warn('page "' + e.id + '" has no tab: at most ' + PAGE_TABS_MAX + ' pages per tier');
+        });
+        return firm.concat(mine);
+      }
+      /** The built page tabs' ids, in pageEntries() order (exec's routing). */
+      function pageTabIds() {
+        return pageEntries().filter(function (e) { return !!PAGES[e.id]; }).map(function (e) { return PAGES[e.id].el.id; });
+      }
+      function pageDoc(entry) {
+        var ui = STATE && isObj(STATE.ui) ? STATE.ui : {};
+        var tier = entry.action ? ui.firm : ui.user;
+        var pages = isObj(tier) && isObj(tier.layout) && isObj(tier.layout.pages) ? tier.layout.pages : null;
+        return pages && hasOwn(pages, entry.id) && isObj(pages[entry.id]) ? pages[entry.id] : {};
+      }
+      // A page's list → entries { kind:'item', id } | { kind:'break' }: effective items once, breaks on the grid only.
+      function pageList(list, surface, byId) {
+        var out = [], seen = Object.create(null);
+        if (Object.prototype.toString.call(list) !== '[object Array]') return out;
+        for (var i = 0; i < list.length && i < LAYOUT_CAP; i++) {
+          var e = layoutEntry(list[i], surface === 'page' ? 'more' : 'moreIcons');
+          if (!e) continue;
+          if (e.kind === 'item') {
+            if (e.id in seen || !(e.id in byId)) continue;
+            seen[e.id] = true;
+          }
+          out.push(e);
+        }
+        return out;
+      }
+      function makePage(entry) {
+        var el = document.createElement('div');
+        el.className = 'tab-main yc-hub';
+        el.id = pageTabId(entry.id);
+        el.setAttribute('data-yc-page', entry.id);
+        el.style.display = 'none';
+        var h1 = document.createElement('h1'), i1 = document.createElement('i'), i2 = document.createElement('i');
+        var text = document.createTextNode('');
+        h1.appendChild(i1); h1.appendChild(text); h1.appendChild(i2);
+        el.appendChild(h1);
+        var row = document.createElement('div');
+        row.className = 'page-egg-row';
+        el.appendChild(row);
+        return { el: el, h1: h1, icons: [i1, i2], text: text, row: row, cur: { tiles: [], icons: [] }, R: { tiles: { neutral: {}, user: {} }, icons: { neutral: {}, user: {} } }, key: null };
+      }
+      // Lay one part of a page out: the nodes wanted, in order, replacing the
+      // ones the last pass placed (parent: the page div before the egg row for
+      // the tiles, the egg row for the icons). → whether anything moved.
+      function layoutPagePart(pg, part, rows, byId) {
+        var surface = part === 'tiles' ? 'page' : 'pageIcons', R = pg.R[part], want = [], breaks = 0;
+        rows.forEach(function (e) {
+          var pair = e.kind === 'item' ? neutral(R, surface, byId[e.id]) : userNode(R, surface, 'break', breaks++);
+          if (pair.ws) want.push(pair.ws);
+          for (var j = 0; j < pair.els.length; j++) want.push(pair.els[j]);
+        });
+        var cur = pg.cur[part], same = cur.length === want.length;
+        for (var i = 0; same && i < cur.length; i++) same = cur[i] === want[i];
+        if (same) return false;
+        var parent = part === 'tiles' ? pg.el : pg.row, ref = part === 'tiles' ? pg.row : null;
+        cur.forEach(function (node) { if (node.parentNode === parent) parent.removeChild(node); });
+        var frag = document.createDocumentFragment();
+        want.forEach(function (node) { frag.appendChild(node); });
+        parent.insertBefore(frag, ref);
+        pg.cur[part] = want;
+        return true;
+      }
+      function buildPages() {
+        var host = typeof document !== 'undefined' ? document.getElementById('ycPages') : null;
+        var entries = pageEntries();
+        if (!host) {
+          if (entries.length && !pagesWarned) { pagesWarned = true; warn('no #ycPages on this page: pages are not built'); }
+          return;
+        }
+        var byId = Object.create(null), live = Object.create(null);
+        EFFECTIVE.forEach(function (e) { byId[e.id] = e; });
+        entries.forEach(function (e) { live[e.id] = true; });
+        // pages gone (not effective, no longer a page): Home first when on one
+        Object.keys(PAGES).forEach(function (id) {
+          if (live[id]) return;
+          var pg = PAGES[id];
+          var cur = typeof window.currentMainTabId === 'function' ? window.currentMainTabId() : null;
+          if (cur === pg.el.id && typeof window.openMainTab === 'function') window.openMainTab('tabHome');
+          if (typeof window.exitDrillMode === 'function') window.exitDrillMode(pg.el);
+          if (pg.el.parentNode) pg.el.parentNode.removeChild(pg.el);
+          delete PAGES[id];
+        });
+        entries.forEach(function (entry) {
+          var pg = PAGES[entry.id];
+          if (!pg) { pg = PAGES[entry.id] = makePage(entry); host.appendChild(pg.el); }
+          var label = String(entry.label), cls = iconClass(entry.icon);
+          setText(pg.text, ' ' + label + ' ');
+          pg.icons.forEach(function (i) { if (i.className !== cls) i.className = cls; });
+          var doc = pageDoc(entry);
+          var tiles = pageList(doc.tiles, 'page', byId), icons = pageList(doc.icons, 'pageIcons', byId);
+          var moved = layoutPagePart(pg, 'tiles', tiles, byId);
+          layoutPagePart(pg, 'icons', icons, byId);
+          // the strip is built from the tiles' text and icons: a different set, label or icon → rebuild
+          var key = JSON.stringify(tiles.map(function (e) { return e.kind === 'item' ? [e.id, byId[e.id].label, byId[e.id].icon] : '|'; }));
+          if (key !== pg.key || moved) {
+            pg.key = key;
+            var strip = pg.el.querySelector(':scope > .feature-strip');
+            if (strip) {
+              strip.parentNode.removeChild(strip);
+              if (pg.el.classList.contains('drill-active') && typeof window.syncDrillState === 'function') window.syncDrillState(pg.el);
+            }
+          }
+        });
       }
 
 
@@ -1545,7 +1722,9 @@
       /** The effective registry (see above); [] before login. A copy. */
       function effectiveRegistry() {
         return EFFECTIVE.map(function (e) {
-          return { id: e.id, group: e.group, label: e.label, labels: e.labels.slice(), icon: e.icon };
+          var o = { id: e.id, group: e.group, label: e.label, labels: e.labels.slice(), icon: e.icon };
+          if (isPage(e)) o.page = true;   // a firm page / one of the user's pages (S6c-5)
+          return o;
         });
       }
 
@@ -1565,14 +1744,18 @@
       // A GRID item (a More / Admin tile — ui-custom S6c-4, the panel stage)
       // is opened from the page you are looking at when that page shows a
       // tile for it (its default tile, or a neutral the firm placed there);
-      // else from the first page that does — More, then Admin (later firm
-      // pages, then user pages); else by its own default tile, hidden on
-      // its page (a firm-unplaced tile still opens its panel, with no pill
-      // lit). opts.page names a page to try first (the WORKSPACE URL restore:
+      // else from the first page that does — More, then Admin, then the firm
+      // pages, then the user's own (S6c-5); else by its own default tile,
+      // hidden on its page (a firm-unplaced tile still opens its panel, with
+      // no pill lit). opts.page names a page to try first (the WORKSPACE URL restore:
       // tabAdmin~adminUsers must reopen on Admin even when Users also sits
       // on More). A neutral panel tile is clicked like a default one — it has
       // no exec listener (see neutral()); an ACTION item's neutral calls exec
       // itself, so it is never a routing target: its default tile is.
+      //
+      // A PAGE item (S6c-5, firm or the user's own) opens its tab:
+      // openMainTab(its ycPage-N) — refused, loudly, when the tab was not
+      // built (no #ycPages, or past the per-tier cap).
       //
       // A firm item's action is dispatched declaratively — re-validated
       // first, so a bad one never navigates — 'window' →
@@ -1625,6 +1808,12 @@
         if (isDrawer(entry)) return openDrawer(entry, opts && opts.from && opts.from.nodeType === 1 ? opts.from : null);
         closeDrawer(false);
         var act = entry.action || entry.userAction;
+        if (isPage(entry)) {
+          var pg = PAGES[id];
+          if (!pg || !pg.el.isConnected) { warn('exec("' + id + '"): its page has no tab on this page'); return false; }
+          window.openMainTab(pg.el.id);
+          return true;
+        }
         if (act) {
           var t = firmTarget(act, entry.action ? FIRM_ACTIONS : USER_ACTIONS);
           if (!t) { warn('exec("' + id + '"): its action breaks the ' + (entry.action ? 'firm item' : 'button') + ' rules — refused'); return false; }
@@ -1659,13 +1848,14 @@
         return true;
       }
       // The grid tile exec clicks for id, { tab, el }: the first page in the
-      // order [opts.page, the active tab, More, Admin] that SHOWS one — its
-      // default tile `def` (on `home`, when not firm-unplaced) or a neutral
-      // panel tile ([data-yc-shortcut=id][data-target], the only neutral kind
-      // exec may click) — else the default tile on its own page, hidden.
+      // order [opts.page, the active tab, More, Admin, the firm pages, the
+      // user's pages (S6c-5)] that SHOWS one — its default tile `def` (on
+      // `home`, when not firm-unplaced) or a neutral panel tile
+      // ([data-yc-shortcut=id][data-target], the only neutral kind exec may
+      // click) — else the default tile on its own page, hidden.
       function gridTileFor(id, def, home, first) {
         var cur = typeof window.currentMainTabId === 'function' ? window.currentMainTabId() : null;
-        var pages = [first, cur, TAB_OF.more, TAB_OF.admin], seen = {};
+        var pages = [first, cur, TAB_OF.more, TAB_OF.admin].concat(pageTabIds()), seen = {};
         for (var i = 0; i < pages.length; i++) {
           var tabId = pages[i];
           if (!tabId || seen[tabId]) continue;
@@ -3179,12 +3369,24 @@
     #ycLayoutEditor .ymb-icon-prev { flex: 0 0 auto; width: 2em; text-align: center; font-size: var(--fs-lg); color: var(--accent-2); }
     #ycLayoutEditor .ymb-id-line { margin-top: 8px; overflow-wrap: anywhere; }
     #ycLayoutEditor .ymb-id-line:empty { display: none; }
-    /* A drawer's contents in the button form (S5b): rows like the lists above. */
+    /* A list's (drawer's) contents in the button form (S5b): rows like the lists above. */
     #ycLayoutEditor .ymb-refs { list-style: none; margin: 4px 0 0; padding: 0; }
     #ycLayoutEditor .ymb-refs .yle-row { background: var(--surface); }
     #ycLayoutEditor .ymb-refs-none { margin-top: 4px; }
     #ycLayoutEditor .ymb-refs-none[hidden] { display: none; }
     #ycLayoutEditor .ymb-refs-field .yle-picker { background: var(--surface); }
+    /* Pages (S6c-5): a page's arrange box under My buttons, and the Firm pages pane's blocks — the
+       same section markup as Home's, framed like the button form. */
+    #ycLayoutEditor .ymb-arrange, #ycLayoutEditor .yle-page-block {
+      margin-top: 12px; padding: 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-2);
+    }
+    #ycLayoutEditor .ymb-arrange[hidden] { display: none; }
+    #ycLayoutEditor .ymb-arrange-title, #ycLayoutEditor .yle-page-title { flex: 1 1 auto; margin: 0; font-size: var(--fs); font-weight: 700; overflow-wrap: anywhere; }
+    #ycLayoutEditor .yle-page-title i { color: var(--accent-2); }
+    #ycLayoutEditor .ymb-arrange-hint { margin: 4px 0 0; }
+    #ycLayoutEditor .yle-page-sec { margin-top: 10px; }
+    #ycLayoutEditor .yle-page-sec .yle-row, #ycLayoutEditor .yle-page-sec .yle-picker { background: var(--surface); }
+    #ycLayoutEditor .yle-no-pages { margin-top: 8px; overflow-wrap: anywhere; }
     @media (max-width: 768px) {
       #ycLayoutEditor { padding: 0; }
       #ycLayoutEditor .yle-box { max-width: none; max-height: none; height: 100%; border: 0; border-radius: 0; }
@@ -5653,7 +5855,12 @@
   </div>
 
 
-<div id="tabMore" class="tab-main">
+<!-- The two shipped HUBS and, after them, the custom pages (#ycPages). A hub /
+     page is a .tab-main.yc-hub: a heading, big tiles as DIRECT children, an
+     icon row — the drill script, the phone CSS and the pill strip key on
+     that shape (ui-custom S6c-5; the class is yc-hub, not the design's
+     yc-page: /js/ycPager.js owns .yc-page in this very document). -->
+<div id="tabMore" class="tab-main yc-hub">
   <h1><i class="fa-solid fa-grip"></i> More Features <i class="fa-solid fa-grip"></i></h1>
   <!-- The grid: rendered from FEATURE_REGISTRY + DEFAULT_LAYOUTS.more
        (public/js/featureRegistry.js) — the layout rule and the row notes live
@@ -5670,7 +5877,7 @@
   <div class="more-egg-row"><script>ycLauncher.mount('moreIcons')</script></div>
 </div>
   
-<div id="tabAdmin" class="tab-main" data-all-icons='<i class="fa-solid fa-arrow-left"></i><i class="fa-solid fa-mug-hot"></i>'>
+<div id="tabAdmin" class="tab-main yc-hub" data-all-icons='<i class="fa-solid fa-arrow-left"></i><i class="fa-solid fa-mug-hot"></i>'>
   <h1><i class="fa-solid fa-mug-hot"></i> Admin <i class="fa-solid fa-mug-hot"></i></h1>
   <!-- The grid: rendered from FEATURE_REGISTRY + DEFAULT_LAYOUTS.admin
        (public/js/featureRegistry.js) — layout rule and row notes live there;
@@ -5683,12 +5890,23 @@
 
   <div id="sequencesDiv" style="display:none"></div>
 </div>
+<!-- ══ Custom pages (ui-custom S6c-5) ═════════════════════════════════════
+     The firm's pages and the user's own (items of kind { type:'page' }) are
+     built HERE by ycLauncher.applyAccess (buildPages): one
+     <div class="tab-main yc-hub" id="ycPage-N" data-yc-page="<item id>"> per
+     effective page item — a heading, neutral tiles (direct children) and a
+     .page-egg-row — rebuilt in place on every applyAccess, removed when the
+     item goes (Home opens first when you were on it). The id is per session
+     and opaque; the WORKSPACE URL never writes it (F5 on a page lands on
+     Home, Fred's ruling). Empty as shipped: no whitespace in it, so it takes
+     no space. Before the stage, so an open panel follows the active page. -->
+<div id="ycPages"></div>
 <!-- ══ The panel stage (ui-custom S6c-4) ══════════════════════════════════
      Every More / Admin panel (the lazy iframes behind the grid tiles) lives
      HERE, in one container, never inside a page tab. A panel is one element,
      so it can be opened from any page that holds a tile for it (the firm's
-     layout may put Users on More, a firm or user page may hold Automations
-     beside it), and it NEVER moves: moving an <iframe> in the DOM destroys
+     layout may put Users on More, a firm or user page (#ycPages, S6c-5)
+     may hold Automations beside it), and it NEVER moves: moving an <iframe> in the DOM destroys
      its browsing context and reloads it, losing unsaved work (a Form Builder
      draft, an open automation). Switching pages or panels only toggles
      display. The stage shows ONE panel — the one the active page last opened
@@ -5861,16 +6079,19 @@
   /* The icon rows — Casey's paw under More's grid, All under Home's, Admin's
      empty by default (ui-custom S6b, S6c; see the markup): icon-only, muted
      until hover or focus. One look. A row holding nothing takes no space. */
-  .more-egg-row, .home-egg-row, .admin-egg-row { text-align:center; margin:14px 0 4px; }
-  .more-egg-row:empty, .home-egg-row:empty, .admin-egg-row:empty { display:none; }
-  /* #tabMore / #tabHome / #tabAdmin: the id outranks style.css's dark-theme
-     button rule (0,7,2), which would otherwise paint the icon a grey box */
-  #tabMore .more-egg, #tabHome .home-egg, #tabAdmin .admin-egg { background:transparent; border:0; box-shadow:none; padding:4px 8px; cursor:pointer; color:var(--text-muted); opacity:.45; font-size:14px; }
+  .more-egg-row, .home-egg-row, .admin-egg-row, .page-egg-row { text-align:center; margin:14px 0 4px; }
+  .more-egg-row:empty, .home-egg-row:empty, .admin-egg-row:empty, .page-egg-row:empty { display:none; }
+  /* #tabMore / #tabHome / #tabAdmin / #ycPages (the custom pages, S6c-5): the
+     id outranks style.css's dark-theme button rule (0,7,2), which would
+     otherwise paint the icon a grey box */
+  #tabMore .more-egg, #tabHome .home-egg, #tabAdmin .admin-egg, #ycPages .page-egg { background:transparent; border:0; box-shadow:none; padding:4px 8px; cursor:pointer; color:var(--text-muted); opacity:.45; font-size:14px; }
   #tabMore .more-egg:hover, #tabMore .more-egg:focus-visible,
   #tabHome .home-egg:hover, #tabHome .home-egg:focus-visible,
-  #tabAdmin .admin-egg:hover, #tabAdmin .admin-egg:focus-visible { opacity:1; color:var(--accent-2); background:transparent; }
+  #tabAdmin .admin-egg:hover, #tabAdmin .admin-egg:focus-visible,
+  #ycPages .page-egg:hover, #ycPages .page-egg:focus-visible { opacity:1; color:var(--accent-2); background:transparent; }
   .drill-active > .more-egg-row { display:none; }
   .drill-active > .admin-egg-row { display:none; }
+  .drill-active > .page-egg-row { display:none; }
   .drill-active .feature-strip { display:flex; }
   .drill-active > .big-button, .drill-active > br { display:none; }
   .pill-button {
@@ -5895,7 +6116,15 @@
      whole shell by 2px. (More's have no border, so the rule is a no-op there.) */
   #ycPanels > div > iframe { box-sizing: border-box; }
 
-  /* ── Hubs on a phone ──────────────────────────────────────────────────
+  /* A tile's label is DB text on a custom page (ui-custom S6c-5: 40 characters,
+     no break opportunity guaranteed — and a firm or user page may put one in
+     the right-hand column at any width): wrap inside the 200px tile rather
+     than run past it. The firm row's rule above did this for More's firm
+     tiles; every shipped registry label has spaces, so the default grids
+     render exactly as before (the S6c-5 pixel diff). */
+  .yc-hub > .big-button { overflow-wrap: anywhere; }
+
+  /* ── Hubs on a phone ── (.yc-hub: More, Admin and every custom page, S6c-5)
      Grid: the desktop tiles are 200px each, so a phone got ONE per line —
      24 tiles = about 1,900px of scrolling. Here they size like the Home
      tiles: three across, fixed height, label wrapping inside. The row <br>s
@@ -5908,12 +6137,13 @@
      not a page scroll wrapped around an iframe scroll. The active pill is
      scrolled into view by syncDrillState(). */
   @media (max-width: 768px) {
-    #tabMore > .big-button, #tabAdmin > .big-button {
+    /* (0,2,0): outranks style.css's .big-button, the only other rule on these properties */
+    .yc-hub > .big-button {
       width: calc((100% - 30px) / 3); height: 104px; margin: 3px 2px;
       padding: 8px 4px; box-sizing: border-box; vertical-align: top;
       white-space: normal; overflow-wrap: anywhere; font-size: var(--fs-sm);
     }
-    #tabMore > br, #tabAdmin > br { display: none; }
+    .yc-hub > br { display: none; }
 
     .drill-active > h1 { display: none; }
     .feature-strip {
@@ -6207,8 +6437,8 @@
   //   tab div (HTML string), default: back-arrow + grip.
   //
   // The stage, and the drill is PAGE-scoped (ui-custom S6c-4): the page a
-  // tile sits on (btn.closest('.tab-main') — More, Admin, later a firm or user
-  // page) is the drill's context, not the tile's data-exclusive-group (kept
+  // tile sits on (btn.closest('.tab-main') — More, Admin, a firm or user page
+  // in #ycPages since S6c-5) is the drill's context, not the tile's data-exclusive-group (kept
   // in the markup for the pills; it names nothing any more). Each page
   // remembers the panel it last opened (drillMemory), so More can be drilled
   // into Automations while Admin is drilled into Users, and arriving back on
@@ -7654,8 +7884,9 @@ async function initAuth() {
        be a main tab (.tab-main, not a file) that this user's launcher offers
        (ycLauncher's effective registry), else Home — so a non-SU never lands
        on tabAdmin, and a denied tab stays closed. The button tab
-       (#tabUserItem, ui-custom S5c-b) is never written nor restored: a
-       reload there lands on Home.
+       (#tabUserItem, ui-custom S5c-b) and the custom pages (#ycPages,
+       ui-custom S6c-5) are never written nor restored: a reload there lands
+       on Home.
 
        Boot params (loadUserContext), and what each one is allowed to do:
          files, open   this block: parsed and validated as above
@@ -7714,7 +7945,11 @@ async function initAuth() {
      *  item's, whichever page it was opened from). */
     var wsPanelRest = {};
     /** The drill PAGES the URL can name, and the launcher surface each one's
-     *  default tiles are mounted on (ycLauncher.elementsOf(id)[surface]). */
+     *  default tiles are mounted on (ycLauncher.elementsOf(id)[surface]). The
+     *  custom pages (ui-custom S6c-5, #ycPages) are deliberately NOT here:
+     *  the URL never names one (v1, Fred's ruling Q4), so their open panel
+     *  is never a rest and a pane's report while one is active is remembered
+     *  (wsPanelRest) but synced only once a hub shows that panel. */
     var WS_DRILL_SURFACE = { tabMore: "more", tabAdmin: "admin" };
 
     /**
@@ -7925,6 +8160,8 @@ async function initAuth() {
       if (id === "tabUserItem") return false;
       const el = document.getElementById(id);
       if (!el || !el.classList.contains("tab-main") || el.classList.contains("file")) return false;
+      // a custom page (ui-custom S6c-5): per-session id, never restored (v1)
+      if (el.hasAttribute("data-yc-page")) return false;
       const L = window.ycLauncher;
       if (!L || typeof L.isReady !== "function" || !L.isReady()) return false;
       if (id === "tabAll") return true;
@@ -7981,8 +8218,13 @@ async function initAuth() {
         // Nor the button tab (ui-custom S5c-b, window.ycButtonTabs): its only
         // name is the button's id, made from the button's NAME, and the URL
         // carries ids only — so a reload there lands on Home (wsMainTabAllowed
-        // refuses it too).
-        const emit = cur && cur !== "tabHome" && cur !== "tabUserItem" && cur.indexOf("file-div") !== 0;
+        // refuses it too). Nor a custom page (ui-custom S6c-5, #ycPages
+        // data-yc-page: the firm's / the user's own): its tab id is per
+        // session and its item id is a NAME — Fred's ruling Q4, v1: F5 on
+        // your own page lands on Home.
+        const curEl = cur ? E(cur) : null;
+        const emit = cur && cur !== "tabHome" && cur !== "tabUserItem" && cur.indexOf("file-div") !== 0
+          && !(curEl && curEl.hasAttribute("data-yc-page"));
         if (emit) {
           const rest = wsTabRest(cur);
           u.searchParams.set("open", rest ? cur + "~" + rest : cur);

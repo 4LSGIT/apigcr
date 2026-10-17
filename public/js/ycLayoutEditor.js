@@ -95,16 +95,31 @@
  * placements and bindings in the same session (it asks first when it has
  * any). Save sends up to three documents, items first; see save().
  *
- * Drawers (ui-custom S5b): a button may be a DRAWER — { type:'drawer', items:
- * [id…] }, a menu of up to 30 other items the shell opens beside the tile /
- * row that opened it. It is one more kind in the same form ("A drawer"), and
- * its contents are an ordered list there: add (the "find a feature" picker
- * over the editor's effective registry, minus drawers — one level deep — and
- * minus what the drawer already holds), remove, ↑ / ↓. A drawer is placed and
- * bound like any button. A button inside a drawer can't become a drawer, and
- * its id is frozen once a drawer holds it (as when placed or bound). Deleting
- * a button drops it from every drawer too, in the same session (the delete
- * prompt names them), so the items document never names a deleted button.
+ * Drawers (ui-custom S5b; called a LIST in every string the user reads since
+ * S6c-5 — the stored type stays `drawer`, ids and types being API surface): a
+ * button may be a DRAWER — { type:'drawer', items: [id…] }, a menu of up to
+ * 30 other items the shell opens beside the tile / row that opened it. It is
+ * one more kind in the same form ("A list"), and its contents are an ordered
+ * list there: add (the "find a feature" picker over the editor's effective
+ * registry, minus drawers — one level deep — and minus what the drawer
+ * already holds), remove, ↑ / ↓. A drawer is placed and bound like any
+ * button. A button inside a drawer can't become a drawer, and its id is
+ * frozen once a drawer holds it (as when placed or bound). Deleting a button
+ * drops it from every drawer too, in the same session (the delete prompt
+ * names them), so the items document never names a deleted button.
+ *
+ * Pages (ui-custom S6c-5): a button may be a PAGE — { type:'page' } — a tab
+ * of tiles like More Features. The kind is one more in the form ("A page";
+ * name and icon only); the row's "Arrange…" opens the page's two lists under
+ * the buttons — Tiles (the grid grammar: items and row breaks, ≤100) and
+ * Small buttons (≤12) — built with buildSection over the pseudo-surfaces
+ * pageSf(id, 'tiles') / pageSf(id, 'icons') and driven by the same handlers
+ * as Home's; the lists live in the user's `layout.pages[id]` (session():
+ * o.pages), saved with the layout document (items first, so the page exists
+ * before its entry). A page never holds itself; a button on a page is tagged
+ * "On “<page>”"; deleting a button takes it off every page, deleting a page
+ * drops its entry (dropId's cascade), and the prompt says so. The dots: a
+ * page's tiles are arranged under My buttons, so they light that tab.
  *
  * Tabs (ui-custom S5c-b): a tool or saved view button "Opens in" a dialog
  * (large / compact) or A TAB — present:'tab', the shell's button tab
@@ -122,9 +137,13 @@
  * "Arrange pages and defaults…"), drawn here in the top document like the
  * icon picker. It edits the firm's `layout` document (scope firm, one
  * versioned document): the firm default of Home + its icon row and the
- * sidebar, and the More Features and Admin pages + their icon rows (firm-only
- * surfaces, Fred's ruling) — three tabs (FIRM_PANES; firm pages join it in
- * S6c-5). Same session core and rules as above, with the firm's document as
+ * sidebar, the More Features and Admin pages + their icon rows (firm-only
+ * surfaces, Fred's ruling), and — S6c-5 — the firm's own PAGES (the Firm
+ * pages tab: one block per firm item of kind page, from the catalogue, with
+ * its Tiles and Small buttons sections over `layout.pages['firm:…']`;
+ * open({ scope:'firm', section:'pages', page }) lands on one block, which is
+ * firm.html's "Arrange its tiles…" on a saved Page item) — four tabs
+ * (FIRM_PANES). Same session core and rules as above, with the firm's document as
  * the edited layer over the shipped DEFAULT_LAYOUTS; nothing is locked
  * against the firm itself, except All in Home's icon row (GUARANTEED). The
  * catalogue: the shell's computeEffective as a superuser sees it with the
@@ -143,14 +162,14 @@
  *
  * window.ycLayoutEditor = { open, close, isOpen, isDirty, session, shortcutSession, reservedProblem,
  *                           itemSession, makeUserId, buttonProblems, firmCatalog,
- *                           FIRM_SURFACES, GUARANTEED }
+ *                           FIRM_SURFACES, GUARANTEED, pageSf, PAGE_PARTS }
  *   session(o) is the editor's pure core (no DOM; the panel drives one):
  *   o = { stored, effective, locked, base, registry, groups, firm?, surfaces?,
- *   pass?, seed? } — see session().
+ *   pass?, seed?, pages? } — see session().
  *   shortcutSession(o) is the Keyboard shortcuts tab's, itemSession(o) My
  *   buttons': see there.
  *   open({ section: 'shortcuts' | 'buttons' }) opens on that tab (default: the layout);
- *   open({ scope: 'firm', section?: 'home' | 'more' | 'admin', from? }) the firm mode.
+ *   open({ scope: 'firm', section?: 'home' | 'more' | 'admin' | 'pages', page?, from? }) the firm mode.
  */
 (function () {
   'use strict';
@@ -180,7 +199,7 @@
     moreIcons: 'More Features’ small buttons', admin: 'Admin', adminIcons: 'Admin’s small buttons' };
   var CAP = 100;          // lib/uiConfigShape.js CAPS.placed / CAPS.removed
   var ICON_CAP = 12;      // lib/uiConfigShape.js CAPS.icons (an icon row's placed list)
-  function capOf(sf) { return ICON_SF[sf] ? ICON_CAP : CAP; }
+  function capOf(sf) { var pg = pageOf(sf); return (pg ? pg.part === 'icons' : ICON_SF[sf]) ? ICON_CAP : CAP; }
   var LABEL_MAX = 40;     // lib/uiConfigShape.js LABEL_MAX
   var ICON_RE = YI.RE;    // bare slug = solid, or solid: / regular: / brands: + slug (lib/uiConfigShape.js ICON_RE)
   var CONTROL_RE = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/;
@@ -211,15 +230,33 @@
   }
 
   // The stored document, with anything malformed left out (the resolver
-  // ignores the same things) — always { placed: {…}, removed: {…} }, plus a
-  // stored `pages` map carried as it is (the seam for S6c-5's pages; the
-  // server refuses one until then).
+  // ignores the same things) — always { placed: {…}, removed: {…} }, plus
+  // `pages` when stored (ui-custom S6c-5): { <pageId>: { tiles?, icons? } },
+  // a page's tiles with the grid grammar, its icons with an icon row's
+  // (lib/uiConfigShape.js PAGE_PARTS). A page is a pseudo-surface pair here,
+  // pageSf(id, part) = 'page:<id>:tiles' | 'page:<id>:icons'.
   function copyEntry(e, sf) {
     if (!isObj(e)) return null;
     if (typeof e.item === 'string' && e.item) return { item: e.item };
     if (e.break === true && BREAK_SF[sf]) return { break: true };
     if (typeof e.label === 'string' && sf === 'sidebar') return { label: e.label };
     return null;
+  }
+  var PAGE_PARTS = { tiles: 'more', icons: 'moreIcons' };   // lib/uiConfigShape.js PAGE_PARTS: the grammar each list borrows
+  var PAGE_SF_RE = /^page:(.+):(tiles|icons)$/;
+  function pageSf(id, part) { return 'page:' + id + ':' + part; }
+  /** 'page:<id>:<part>' → { id, part }, else null. */
+  function pageOf(sf) {
+    var m = typeof sf === 'string' ? PAGE_SF_RE.exec(sf) : null;
+    return m ? { id: m[1], part: m[2] } : null;
+  }
+  function copyPage(p) {
+    var out = {};
+    if (!isObj(p)) return out;
+    for (var part in PAGE_PARTS) {
+      if (isArr(p[part])) out[part] = p[part].map(function (e) { return copyEntry(e, PAGE_PARTS[part]); }).filter(Boolean);
+    }
+    return out;
   }
   function normalize(doc, surfaces) {
     var out = { placed: {}, removed: {} };
@@ -232,7 +269,10 @@
         out.removed[sf] = doc.removed[sf].filter(function (id) { return typeof id === 'string'; });
       }
     });
-    if (isObj(doc.pages)) out.pages = JSON.parse(JSON.stringify(doc.pages));
+    if (isObj(doc.pages)) {
+      out.pages = {};
+      for (var id in doc.pages) if (hasOwn(doc.pages, id) && isObj(doc.pages[id])) out.pages[id] = copyPage(doc.pages[id]);
+    }
     return out;
   }
   function entryOf(r) {
@@ -262,6 +302,19 @@
    *                More firm row, S6c-3): a break, then those of the ids that
    *                are effective and not shown yet, closing the list. An
    *                edit writes them as placed entries, where they then are.
+   *   o.pages      [id…] — this tier's PAGE items (ui-custom S6c-5: the
+   *                firm's firm:… pages, or the user's own user:… ones). Each
+   *                is two pseudo-surfaces, pageSf(id, 'tiles') and
+   *                pageSf(id, 'icons'), edited with the same calls as a
+   *                surface (view / candidates / move / remove / add /
+   *                addBreak / room / mode) over the stored `pages[id]`: a
+   *                page has NO base, so its lists ARE the page (no hide, no
+   *                reset — every row is 'remove'); items not effective are
+   *                kept unseen (carry); a page can't hold itself. A stored
+   *                page whose item is not in o.pages rides through as stored.
+   *                retarget(list, g, pages) replaces the set (a page button
+   *                added or deleted before Save); dropId(id) drops the page's
+   *                own entry AND the id from every other page (the cascade).
    * Every edit returns true, or false when it is refused (nothing changes).
    */
   function session(o) {
@@ -271,6 +324,7 @@
     var stored = normalize(o.stored, SFS.concat(PS));
     var firmDoc = isObj(o.firm) ? o.firm : null;
     var seed = isObj(o.seed) ? o.seed : {};
+    var pageIds = isArr(o.pages) ? o.pages.filter(function (id) { return typeof id === 'string'; }) : [];
     // eff / byId / groups: the items the editor can show. retarget() replaces
     // them while the panel is open — the My buttons tab (S5a) adds, renames
     // and deletes the user's own buttons before they are saved.
@@ -388,12 +442,117 @@
       settle(sf);
       return true;
     }
+
+    // ── Pages (S6c-5) ── working state per page id: mode 'stored' (written as
+    // stored), 'edited' (the lists below), 'dropped' (its item was deleted:
+    // left out); a list is null when absent (an empty page shows nothing).
+    var PG = {};
+    var storedPages = isObj(stored.pages) ? stored.pages : {};
+    function freshPage(id) {
+      var sp = hasOwn(storedPages, id) ? storedPages[id] : {};
+      return { mode: 'stored', tiles: isArr(sp.tiles) ? sp.tiles.slice() : null, icons: isArr(sp.icons) ? sp.icons.slice() : null };
+    }
+    function pageState(id) { return PG[id] || (PG[id] = freshPage(id)); }
+    function pageCap(part) { return part === 'icons' ? ICON_CAP : CAP; }
+    // the list as the shell draws it: effective items once, breaks on the tiles
+    function pageRows(id, part) {
+      var list = pageState(id)[part], out = [], seen = Object.create(null);
+      (isArr(list) ? list : []).forEach(function (e) {
+        if (!isObj(e)) return;
+        if (typeof e.item === 'string') {
+          if (e.item in seen || !(e.item in byId)) return;
+          seen[e.item] = true;
+          out.push({ kind: 'item', id: e.item });
+        } else if (e.break === true && part === 'tiles') out.push({ kind: 'break' });
+      });
+      return out;
+    }
+    function pageSig(id) {
+      var st = pageState(id);
+      return canonical({ tiles: st.tiles, icons: st.icons });
+    }
+    function storedPageSig(id) {
+      var sp = hasOwn(storedPages, id) ? storedPages[id] : {};
+      return canonical({ tiles: isArr(sp.tiles) ? sp.tiles : null, icons: isArr(sp.icons) ? sp.icons : null });
+    }
+    // edited back to what is stored → stored again (never while a dropped id is named there)
+    function settlePage(id) {
+      var st = PG[id];
+      if (!st || st.mode !== 'edited') return;
+      for (var d in dropped) if (pageNames(id, d)) return;
+      if (pageSig(id) === storedPageSig(id)) PG[id] = freshPage(id);
+    }
+    function pageNames(id, ref) {
+      var st = pageState(id);
+      return ['tiles', 'icons'].some(function (part) { return isArr(st[part]) && indexOfItem(st[part], ref) >= 0; });
+    }
+    function commitPage(id, part, rows) {
+      var st = pageState(id), next = {};
+      next.mode = 'edited';
+      next.tiles = st.tiles; next.icons = st.icons;
+      next[part] = carry(st[part], rows.map(entryOf));
+      PG[id] = next;
+      settlePage(id);
+      return true;
+    }
+    function pageSizeAfter(id, part, rows) { return carry(pageState(id)[part], rows.map(entryOf)).length; }
+    /** The page ids this session edits, in order; dropped ones out. */
+    function livePages() { return pageIds.filter(function (id) { return !(PG[id] && PG[id].mode === 'dropped'); }); }
+    var pageApi = {
+      view: function (pg) {
+        return pageRows(pg.id, pg.part).map(function (r) {
+          if (r.kind !== 'item') return { kind: 'break', act: 'remove' };
+          var v = entryView(pg.part === 'tiles' ? 'more' : 'moreIcons', byId[r.id]);
+          v.kind = 'item'; v.base = false; v.locked = false; v.always = false; v.firm = /^firm:/.test(r.id); v.act = 'remove';
+          return v;
+        });
+      },
+      candidates: function (pg, query) {
+        var vis = visibleIds(pageRows(pg.id, pg.part));
+        var list = eff.filter(function (e) { return !(e.id in vis) && e.id !== pg.id; });   // a page never holds itself
+        if (String(query == null ? '' : query).replace(/\s+/g, '')) {
+          return [{ group: null, items: L.rank(query, list).map(function (e) { return entryView('more', e); }) }];
+        }
+        var order = groups.slice();
+        list.forEach(function (e) { if (order.indexOf(e.group) < 0) order.push(e.group); });
+        return order.map(function (g) {
+          return { group: g, items: list.filter(function (e) { return e.group === g; }).map(function (e) { return entryView('more', e); }) };
+        }).filter(function (g) { return g.items.length; });
+      },
+      room: function (pg) { return pageCap(pg.part) - pageSizeAfter(pg.id, pg.part, pageRows(pg.id, pg.part)); },
+      move: function (pg, i, d) {
+        var rows = pageRows(pg.id, pg.part), j = i + d;
+        if (!(i >= 0 && i < rows.length && j >= 0 && j < rows.length) || (d !== 1 && d !== -1)) return false;
+        var t = rows[i]; rows[i] = rows[j]; rows[j] = t;
+        return commitPage(pg.id, pg.part, rows);
+      },
+      remove: function (pg, i) {
+        var rows = pageRows(pg.id, pg.part);
+        if (!rows[i]) return false;
+        rows.splice(i, 1);
+        return commitPage(pg.id, pg.part, rows);
+      },
+      add: function (pg, id) {
+        var rows = pageRows(pg.id, pg.part);
+        if (!(id in byId) || id === pg.id || visibleIds(rows)[id]) return false;
+        rows.push({ kind: 'item', id: id });
+        if (pageSizeAfter(pg.id, pg.part, rows) > pageCap(pg.part)) return false;
+        return commitPage(pg.id, pg.part, rows);
+      },
+      addBreak: function (pg) {
+        if (pg.part !== 'tiles') return false;
+        var rows = pageRows(pg.id, 'tiles');
+        rows.push({ kind: 'break' });
+        if (pageSizeAfter(pg.id, 'tiles', rows) > CAP) return false;
+        return commitPage(pg.id, 'tiles', rows);
+      },
+    };
     function without(list, id) { return list.filter(function (x) { return x !== id; }); }
     function displayLabel(sf, e) {
       var it = hasOwn(reg, e.id) && isObj(reg[e.id]) ? reg[e.id] : null;
       // a surface label (Bills → Billing on Home) only where the default
       // element shows it: a base item that the firm has not renamed
-      if (it && isObj(it.surfaceLabels) && it.surfaceLabels[sf] != null && e.label === it.label && e.id in defaultIds[sf]) {
+      if (it && isObj(it.surfaceLabels) && it.surfaceLabels[sf] != null && e.label === it.label && defaultIds[sf] && e.id in defaultIds[sf]) {
         return String(it.surfaceLabels[sf]);
       }
       return String(e.label);
@@ -417,6 +576,8 @@
        *  the firm locked, or one always on this surface — All in Home's icon
        *  row: no hide), 'remove' (anything the user added). */
       view: function (sf) {
+        var pg = pageOf(sf);
+        if (pg) return pageApi.view(pg);
         var baseIds = baseIdsOf(sf);
         return resolved(sf).map(function (r) {
           if (r.kind !== 'item') return r.kind === 'label' ? { kind: 'label', text: r.text, act: 'remove' } : { kind: 'break', act: 'remove' };
@@ -433,6 +594,7 @@
       /** Default items the user hid here (effective, not locked), base order
        *  (the base the edited layer inherits: the firm's step, S6c-3). */
       hidden: function (sf) {
+        if (pageOf(sf)) return [];   // a page has no base: nothing is ever hidden on it
         var rm = Object.create(null), vis = visibleIds(resolved(sf)), out = [];
         S[sf].removed.forEach(function (id) { rm[id] = true; });
         baseRows(sf).forEach(function (e) {
@@ -447,6 +609,8 @@
        *  A query ranks them with the All tab's matcher (one flat group);
        *  without one they are grouped like All. → [{ group, items: [view] }] */
       candidates: function (sf, query) {
+        var pg = pageOf(sf);
+        if (pg) return pageApi.candidates(pg, query);
         var vis = visibleIds(resolved(sf));
         var list = eff.filter(function (e) { return !(e.id in vis); });
         if (String(query == null ? '' : query).replace(/\s+/g, '')) {
@@ -463,12 +627,30 @@
       where: function (id) {
         return SFS.filter(function (sf) { return !!visibleIds(resolved(sf))[id]; });
       },
+      /** The pages (ids, this session's order) whose tiles or icons show id (S6c-5). */
+      pagesHolding: function (id) {
+        return livePages().filter(function (p) { return !!visibleIds(pageRows(p, 'tiles'))[id] || !!visibleIds(pageRows(p, 'icons'))[id]; });
+      },
+      /** This tier's pages as edited now: [id…] (dropped ones out). */
+      pages: function () { return livePages(); },
+      /** What is dirty: the surfaces (Home / sidebar…), the pages — the panel's tab dots. */
+      dirtyParts: function () {
+        var surfaces = SFS.some(function (sf) { return S[sf].mode !== 'stored'; });
+        var pages = Object.keys(PG).some(function (id) { return PG[id].mode !== 'stored'; });
+        return { surfaces: surfaces, pages: pages };
+      },
       /** A new effective registry (and group order) — the panel's own
        *  buttons changed (S5a). Nothing stored or edited changes. */
       // …and a surface edited back to what it was becomes the stored one again
       // under the new registry (S5c-b review N1: a replace() undone by
       // deleting the new button, settled while the old id was out of it).
-      retarget: function (list, g) { setEffective(list, g); SFS.forEach(settle); return true; },
+      retarget: function (list, g, pages) {
+        setEffective(list, g);
+        if (isArr(pages)) pageIds = pages.filter(function (id) { return typeof id === 'string'; });
+        SFS.forEach(settle);
+        Object.keys(PG).forEach(settlePage);
+        return true;
+      },
       /** A button the user deleted (S5a): drop every placement and removal
        *  of id on both surfaces — a surface that held it becomes edited —
        *  so no dangling reference is written. → whether anything changed. */
@@ -476,6 +658,17 @@
         var any = false;
         if (typeof id !== 'string') return false;
         dropped[id] = true;
+        // the cascade (S6c-5): the page's own entry goes, and the id leaves every other page
+        if (hasOwn(storedPages, id) || hasOwn(PG, id)) { pageState(id); PG[id].mode = 'dropped'; any = true; }
+        pageIds.concat(Object.keys(storedPages)).forEach(function (p) {
+          if (p === id || (PG[p] && PG[p].mode === 'dropped') || !pageNames(p, id)) return;
+          var st = pageState(p), next = { mode: 'edited', tiles: st.tiles, icons: st.icons };
+          ['tiles', 'icons'].forEach(function (part) {
+            if (isArr(st[part])) next[part] = st[part].filter(function (e) { return e.item !== id; });
+          });
+          PG[p] = next;
+          any = true;
+        });
         SFS.forEach(function (sf) {
           var st = S[sf];
           var placed = st.mode === 'stored' ? (hasOwn(stored.placed, sf) ? stored.placed[sf] : null) : st.placed;
@@ -520,16 +713,19 @@
         return out;
       },
       /** Room left on sf (entries Save could still add). */
-      room: function (sf) { return capOf(sf) - sizeAfter(sf, resolved(sf)); },
-      mode: function (sf) { return S[sf].mode; },
+      room: function (sf) { var pg = pageOf(sf); return pg ? pageApi.room(pg) : capOf(sf) - sizeAfter(sf, resolved(sf)); },
+      mode: function (sf) { var pg = pageOf(sf); return pg ? pageState(pg.id).mode : S[sf].mode; },
 
       move: function (sf, i, d) {
+        var pg = pageOf(sf);
+        if (pg) return pageApi.move(pg, i, d);
         var rows = resolved(sf), j = i + d;
         if (!(i >= 0 && i < rows.length && j >= 0 && j < rows.length) || (d !== 1 && d !== -1)) return false;
         var t = rows[i]; rows[i] = rows[j]; rows[j] = t;
         return commit(sf, rows, S[sf].removed.slice());
       },
       hide: function (sf, i) {
+        if (pageOf(sf)) return false;
         var rows = resolved(sf), r = rows[i];
         if (!r || r.kind !== 'item' || !(r.id in baseIdsOf(sf)) || r.id in locked || r.id in guaranteed[sf]) return false;
         var removed = S[sf].removed.slice();
@@ -541,6 +737,8 @@
         return commit(sf, rows, removed);
       },
       remove: function (sf, i) {
+        var pg = pageOf(sf);
+        if (pg) return pageApi.remove(pg, i);
         var rows = resolved(sf), r = rows[i];
         if (!r || (r.kind === 'item' && (r.id in baseIdsOf(sf) || r.id in guaranteed[sf]))) return false;
         rows.splice(i, 1);
@@ -554,6 +752,8 @@
         return commit(sf, rows, removed);
       },
       add: function (sf, id) {
+        var pg = pageOf(sf);
+        if (pg) return pageApi.add(pg, id);
         var rows = resolved(sf);
         if (!(id in byId) || visibleIds(rows)[id]) return false;
         rows.push({ kind: 'item', id: id });
@@ -563,6 +763,8 @@
       /** A row break at the end of sf (default Home; a grid only). */
       addBreak: function (sf) {
         sf = sf == null ? 'home' : sf;
+        var pg = pageOf(sf);
+        if (pg) return pageApi.addBreak(pg);
         if (!BREAK_SF[sf] || !hasOwn(S, sf)) return false;
         var rows = resolved(sf);
         rows.push({ kind: 'break' });
@@ -577,13 +779,14 @@
         return commit('sidebar', rows, S.sidebar.removed.slice());
       },
       setLabel: function (sf, i, text) {
+        if (pageOf(sf)) return false;
         var rows = resolved(sf);
         if (!rows[i] || rows[i].kind !== 'label' || labelProblem(text)) return false;
         rows[i] = { kind: 'label', text: text.trim() };
         return commit(sf, rows, S[sf].removed.slice());
       },
       reset: function (sf) {
-        if (!hasOwn(S, sf)) return false;
+        if (pageOf(sf) || !hasOwn(S, sf)) return false;
         S[sf] = { mode: 'reset', placed: null, removed: [] };
         settle(sf);
         return true;
@@ -609,7 +812,26 @@
           if (hasOwn(stored.placed, sf)) out.placed[sf] = stored.placed[sf].map(function (e) { return copyEntry(e, sf); });
           if (hasOwn(stored.removed, sf)) out.removed[sf] = stored.removed[sf].slice();
         });
-        if (stored.pages) out.pages = JSON.parse(JSON.stringify(stored.pages));   // S6c-5's seam: as stored
+        // the pages (S6c-5): a stored page as stored or as edited, a dropped
+        // one left out, a page edited into being written; a page whose two
+        // lists are absent is written as {} (an empty page). The key stays
+        // whenever it was stored, so an untouched document round-trips.
+        var pages = {}, anyPage = false;
+        var ids = Object.keys(storedPages);
+        pageIds.forEach(function (id) { if (ids.indexOf(id) < 0) ids.push(id); });
+        ids.forEach(function (id) {
+          var st = PG[id];
+          if (st && st.mode === 'dropped') return;
+          var src = st && st.mode === 'edited' ? st : (hasOwn(storedPages, id) ? { tiles: isArr(storedPages[id].tiles) ? storedPages[id].tiles : null, icons: isArr(storedPages[id].icons) ? storedPages[id].icons : null } : null);
+          if (!src) return;   // a page item with nothing stored and nothing edited: no entry
+          var pgOut = {};
+          ['tiles', 'icons'].forEach(function (part) {
+            if (isArr(src[part])) pgOut[part] = src[part].map(function (e) { return copyEntry(e, PAGE_PARTS[part]); }).filter(Boolean);
+          });
+          pages[id] = pgOut;
+          anyPage = true;
+        });
+        if (anyPage || stored.pages) out.pages = pages;
         return out;
       },
       isDirty: function () { return canonical(api.doc()) !== canonical(stored); },
@@ -793,7 +1015,7 @@
   var USER_ID_RE = /^user:[a-z0-9-]{1,40}$/;      // lib/uiConfigShape.js USER_ID_RE
   var TOOL_KEY_RE = /^[a-z0-9-]{1,80}$/;          // routes/api.tools.js TOOL_KEY_RE
   var VIEW_KEY_RE = /^[a-z][a-z0-9_]{2,59}$/;     // lib/uiConfigShape.js VIEW_KEY_RE
-  var MB_KINDS = ['view', 'tool', 'url', 'drawer'];
+  var MB_KINDS = ['view', 'tool', 'url', 'drawer', 'page'];   // 'drawer' reads "List" everywhere the user sees it (S6c-5); 'page' is a page of tiles
   var DRAWER_CAP = 30;                            // lib/uiConfigShape.js CAPS.drawer
   var TAB_KEEP = 3;                               // index.html ycButtonTabs MAX: pages kept open
   var MINE = 'Mine';                              // ycLauncher's group for them
@@ -814,12 +1036,13 @@
     }
     return id;
   }
-  /** Every user: id anywhere in v (a layout or shortcuts document). */
+  /** Every user: id anywhere in v (a layout or shortcuts document) — values
+   *  and object KEYS (a layout's pages map is keyed by page id, S6c-5). */
   function userIdsIn(v, out) {
     out = out || Object.create(null);
     if (typeof v === 'string') { if (USER_ID_RE.test(v)) out[v] = true; return out; }
     if (isArr(v)) v.forEach(function (x) { userIdsIn(x, out); });
-    else if (isObj(v)) for (var k in v) if (hasOwn(v, k)) userIdsIn(v[k], out);
+    else if (isObj(v)) for (var k in v) if (hasOwn(v, k)) { if (USER_ID_RE.test(k)) out[k] = true; userIdsIn(v[k], out); }
     return out;
   }
   /** The field problems of a button form: { label?, icon?, key?, href? }. */
@@ -828,7 +1051,8 @@
     var lp = labelProblem(f.label);
     if (lp) p.label = lp === 'Type a label' ? 'Give it a name' : lp;
     if (!ICON_RE.test(String(f.icon == null ? '' : f.icon).trim())) p.icon = 'Choose an icon';
-    if (f.type === 'url') {
+    if (f.type === 'page') { /* a page: name and icon only; its tiles are arranged on its row (S6c-5) */ }
+    else if (f.type === 'url') {
       var h = String(f.href == null ? '' : f.href).trim();
       if (!h) p.href = 'Type the address';
       else if (h.length > HREF_MAX) p.href = 'At most ' + HREF_MAX + ' characters';
@@ -840,8 +1064,8 @@
       if (!(f.type === 'tool' ? TOOL_KEY_RE : VIEW_KEY_RE).test(k)) p.key = f.type === 'tool' ? 'Choose a tool' : 'Choose a saved view';
     } else if (f.type === 'drawer') {
       var refs = isArr(f.refs) ? f.refs : [];
-      if (refs.length > DRAWER_CAP) p.refs = 'A drawer holds at most ' + DRAWER_CAP + ' items';
-      else if (refs.some(function (r, i) { return typeof r !== 'string' || refs.indexOf(r) !== i; })) p.refs = 'Each item can be in the drawer once';
+      if (refs.length > DRAWER_CAP) p.refs = 'A list holds at most ' + DRAWER_CAP + ' items';
+      else if (refs.some(function (r, i) { return typeof r !== 'string' || refs.indexOf(r) !== i; })) p.refs = 'Each item can be in the list once';
     } else p.type = 'Choose what it opens';
     return p;
   }
@@ -890,6 +1114,7 @@
 
     function itemOf(r) {
       if (r.kept) return r.orig;
+      if (r.type === 'page') return { id: r.id, label: String(r.label).trim(), icon: String(r.icon).trim(), action: { type: 'page' } };
       if (r.type === 'drawer') {
         return { id: r.id, label: String(r.label).trim(), icon: String(r.icon).trim(), action: { type: 'drawer', items: (r.refs || []).slice() } };
       }
@@ -933,9 +1158,10 @@
     }
     function summary(r) {
       if (r.kept) return 'Can’t be edited here (it breaks today’s rules); it is kept as it is';
+      if (r.type === 'page') return 'Page · a tab of tiles';
       if (r.type === 'drawer') {
         var n = (r.refs || []).length;
-        return 'Drawer · ' + (n ? n + (n === 1 ? ' item' : ' items') : 'empty');
+        return 'List · ' + (n ? n + (n === 1 ? ' item' : ' items') : 'empty');
       }
       if (r.type === 'url') {
         var h = String(r.href).trim();
@@ -953,10 +1179,10 @@
         // holds can't become one
         var drawerIds = Object.create(null);
         R.forEach(function (x) { if (x !== r && !x.kept && x.type === 'drawer') drawerIds[x.id] = true; });
-        if (r && f.refs.indexOf(r.id) >= 0) p.refs = 'A drawer can’t hold itself';
-        else if (f.refs.some(function (id) { return id in drawerIds; })) p.refs = 'A drawer can’t hold another drawer';
+        if (r && f.refs.indexOf(r.id) >= 0) p.refs = 'A list can’t hold itself';
+        else if (f.refs.some(function (id) { return id in drawerIds; })) p.refs = 'A list can’t hold another list';
         var inside = r ? holders(r.id).filter(function (x) { return x !== r; }) : [];
-        if (inside.length) p.type = 'It is inside the drawer “' + inside[0].label + '”: a drawer can’t go inside a drawer. Take it out of that drawer first.';
+        if (inside.length) p.type = 'It is inside the list “' + inside[0].label + '”: a list can’t go inside a list. Take it out of that list first.';
       }
       if (Object.keys(p).length) return p;
       // the shell's own grammar has the last word (a root-relative link to a
@@ -969,7 +1195,7 @@
           ? { href: String(f.href).trim().charAt(0) === '/'
             ? 'That page only works inside YisraCase: make a Tool or Saved view button for it instead'
             : 'That isn’t a usable https:// address' }
-          : f.type === 'drawer' ? { refs: 'Those items can’t be in a drawer' } : { key: 'That choice can’t be used' };
+          : f.type === 'drawer' ? { refs: 'Those items can’t be in a list' } : f.type === 'page' ? { label: 'That page can’t be made' } : { key: 'That choice can’t be used' };
       }
       return null;
     }
@@ -987,7 +1213,7 @@
 
     var api = {
       /** The rows as shown: [{ id, label, icon, type, summary, kept, saved,
-       *  inDrawers: [drawer label…] }]. */
+       *  inDrawers: [list label…] }]. */
       list: function () {
         return R.map(function (r) {
           return {
@@ -1043,7 +1269,7 @@
         var t = R[i]; R[i] = R[j]; R[j] = t;
         return true;
       },
-      /** A button deleted (S5b): drop id from every drawer. → how many held it. */
+      /** A button deleted (S5b): drop id from every list (drawer). → how many held it. */
       dropRef: function (id) {
         var n = 0;
         R.forEach(function (r) {
@@ -1053,10 +1279,10 @@
         });
         return n;
       },
-      /** The drawers' ids (one level deep: none of them can go in a drawer). */
+      /** The lists' (drawers') ids (one level deep: none of them can go in a list). */
       drawerIds: function () { return R.filter(function (r) { return !r.kept && r.type === 'drawer'; }).map(function (r) { return r.id; }); },
-      /** What a drawer can take: the entries of `effective` (an effective
-       *  registry) that are not drawers and not in `refs`, grouped like All
+      /** What a list (drawer) can take: the entries of `effective` (an effective
+       *  registry) that are not lists and not in `refs`, grouped like All
        *  (`groups` order) — or one ranked group for a query (rank: the All
        *  tab's matcher). → [{ group, items: [{ id, label, icon, group }] }] */
       drawerCandidates: function (effective, groups, refsNow, query, rank) {
@@ -1079,12 +1305,16 @@
       storedIds: function () { return Object.keys(storedIds); },
       retired: function () { return retired.slice(); },
       /** Effective-registry entries for the buttons the shell would list —
-       *  group Mine, in order (a kept one is listed by nobody). */
+       *  group Mine, in order (a kept one is listed by nobody); a page says so. */
       entries: function () {
         return R.filter(function (r) { return !r.kept; }).map(function (r) {
-          return { id: r.id, group: MINE, label: r.label, labels: [r.label], icon: r.icon };
+          var e = { id: r.id, group: MINE, label: r.label, labels: [r.label], icon: r.icon };
+          if (r.type === 'page') e.page = true;
+          return e;
         });
       },
+      /** The ids of the buttons that are pages (S6c-5), in order. */
+      pageIds: function () { return R.filter(function (r) { return !r.kept && r.type === 'page'; }).map(function (r) { return r.id; }); },
       /** The document Save writes: { items } (`retired` is the server's). */
       doc: function () { return { items: R.map(itemOf) }; },
       isDirty: function () { return canonical(api.doc().items) !== canonical(storedItems); },
@@ -1105,10 +1335,16 @@
     var ro = isObj(ui) && isObj(ui.firm) && isObj(ui.firm.registry_overrides) ? ui.firm.registry_overrides : {};
     var list = L.computeEffective({ isAdmin: true, roles: ['su'], denied: [], ui: { firm: { registry_overrides: ro } } });
     var mine = list.filter(function (e) { return !USER_ID_RE.test(e.id); });
+    var isPg = function (e) { return !!(e.action && e.action.type === 'page'); };
     return {
-      entries: mine.map(function (e) { return { id: e.id, group: e.group, label: e.label, labels: e.labels.slice(), icon: e.icon }; }),
+      entries: mine.map(function (e) {
+        var o = { id: e.id, group: e.group, label: e.label, labels: e.labels.slice(), icon: e.icon };
+        if (isPg(e)) o.page = true;
+        return o;
+      }),
       groups: (list.groups || []).filter(function (g) { return mine.some(function (e) { return e.group === g; }); }),
       seed: mine.filter(function (e) { return !!e.action; }).map(function (e) { return e.id; }),
+      pages: mine.filter(isPg).map(function (e) { return e.id; }),   // the firm's pages (S6c-5), in order
     };
   }
 
@@ -1118,7 +1354,7 @@
       session: session, labelProblem: labelProblem, canonical: canonical,
       shortcutSession: shortcutSession, reservedProblem: reservedProblem,
       itemSession: itemSession, makeUserId: makeUserId, buttonProblems: buttonProblems,
-      firmCatalog: firmCatalog, FIRM_SURFACES: FIRM_SURFACES, GUARANTEED: GUARANTEED,
+      firmCatalog: firmCatalog, FIRM_SURFACES: FIRM_SURFACES, GUARANTEED: GUARANTEED, pageSf: pageSf, PAGE_PARTS: PAGE_PARTS,
     };
     return;
   }
@@ -1149,7 +1385,17 @@
       intro: 'The More Features page for everyone: the tiles left to right, a row break starts a new row. Your firm\u2019s own items go wherever you put them.' },
     { id: 'admin', label: 'Admin', icon: 'mug-hot', surfaces: ['admin', 'adminIcons'],
       intro: 'The Admin page for everyone who sees it. Each person still sees only the tiles they are allowed to open.' },
-  ];   // firm pages (S6c-5) join as a pane of their own
+    // the firm's pages (S6c-5): one block per firm page item, built by buildFirmPages
+    { id: 'pages', label: 'Firm pages', icon: 'layer-group', surfaces: [],
+      intro: 'Your firm\u2019s own pages: each is a tab of tiles like More Features, for everyone who sees it. ' +
+        'A page\u2019s name, icon and who sees it are set in the Firm tab (Firm items, Who sees what); here you arrange what is on it.' },
+  ];
+  var NO_FIRM_PAGES = 'No firm pages yet. Add one in the Firm tab\u2019s Firm items (kind Page), save there, then arrange its tiles here.';
+  var PAGE_PART_NAME = { tiles: 'Tiles', icons: 'Small buttons' };
+  var PAGE_PART_HINT = {
+    tiles: 'The page\u2019s big tiles, left to right; a row break starts a new row. A panel opens on the page itself; anything else opens where it always does.',
+    icons: 'The small round buttons under the tiles (up to 12).',
+  };
   var FIRM_HINT = {
     homeIcons: 'The small round buttons under the Home tiles. All always stays here.',
     moreIcons: 'The small round buttons under the More Features tiles (Casey\u2019s paw).',
@@ -1161,10 +1407,23 @@
   var FIRM_DENIED = 'Arranging the firm\u2019s pages needs the firm-settings permission.';
   function panes() { return scope === 'firm' ? FIRM_PANES.map(function (p) { return p.id; }) : PANES; }
   function liveSurfaces() { return scope === 'firm' ? FIRM_SURFACES : SURFACES; }
+  /** Every layout section the panel holds right now: the surfaces plus the
+   *  page pseudo-surfaces built for this opening (S6c-5). */
+  function builtSurfaces() {
+    if (!root) return [];
+    return Array.prototype.map.call(root.querySelectorAll('.yle-sec[data-sf]'), function (n) { return n.getAttribute('data-sf'); })
+      .filter(function (sf) { return sf !== 'shortcuts' && sf !== 'buttons'; });
+  }
   function paneOf(sf) {
+    if (pageOf(sf)) return scope === 'firm' ? 'pages' : 'buttons';
     if (scope !== 'firm') return PANE_OF[sf] || (SURFACES.indexOf(sf) >= 0 ? 'layout' : sf);
     for (var i = 0; i < FIRM_PANES.length; i++) if (FIRM_PANES[i].surfaces.indexOf(sf) >= 0) return FIRM_PANES[i].id;
     return FIRM_PANES[0].id;
+  }
+  /** A section's title: a surface's NAME, a page part's PAGE_PART_NAME. */
+  function sfName(sf) {
+    var pg = pageOf(sf);
+    return pg ? PAGE_PART_NAME[pg.part] : NAME[sf];
   }
   function anyDirty() { return !!((sess && sess.isDirty()) || (scs && scs.isDirty()) || (its && its.isDirty())); }
 
@@ -1254,6 +1513,7 @@
         p.hidden = i > 0;
         p.appendChild(el('p', 'yc-hint yle-intro', fp.intro + ' Nothing changes until you Save.'));
         fp.surfaces.forEach(function (sf) { p.appendChild(buildSection(sf)); });
+        if (fp.id === 'pages') p.appendChild(el('div', 'yle-firm-pages'));   // filled per opening (buildFirmPages)
         body.appendChild(p);
       });
     } else {
@@ -1301,26 +1561,32 @@
     root.addEventListener('click', function (e) { if (e.target === root && downOnBackdrop) requestClose(); });
   }
 
+  // A page's two sections (S6c-5, sf = pageSf(id, part)) take the same markup
+  // with no Reset and no "Hidden on this surface" (a page has no base).
   function buildSection(sf) {
-    var sec = el('section', 'yle-sec');
+    var pg = pageOf(sf), icons = pg ? pg.part === 'icons' : !!ICON_SF[sf];
+    var sec = el('section', 'yle-sec' + (pg ? ' yle-page-sec' : ''));
     sec.setAttribute('data-sf', sf);
     var head = el('div', 'yle-sec-head');
-    head.appendChild(el('h3', null, NAME[sf]));
-    head.appendChild(btn('yle-reset', 'reset', null, 'rotate-left', scope === 'firm' ? 'Reset to standard'
-      : sf === 'home' ? 'Reset Home to default' : 'Reset sidebar to default'));
+    head.appendChild(el('h3', null, sfName(sf)));
+    if (!pg) {
+      head.appendChild(btn('yle-reset', 'reset', null, 'rotate-left', scope === 'firm' ? 'Reset to standard'
+        : sf === 'home' ? 'Reset Home to default' : 'Reset sidebar to default'));
+    }
     sec.appendChild(head);
-    if (scope === 'firm' && FIRM_HINT[sf]) sec.appendChild(el('p', 'yc-hint yle-sec-hint', FIRM_HINT[sf]));
+    if (pg) sec.appendChild(el('p', 'yc-hint yle-sec-hint', PAGE_PART_HINT[pg.part]));
+    else if (scope === 'firm' && FIRM_HINT[sf]) sec.appendChild(el('p', 'yc-hint yle-sec-hint', FIRM_HINT[sf]));
     var errs = el('ul', 'yle-errs');
     errs.setAttribute('role', 'alert');
     errs.hidden = true;
     sec.appendChild(errs);
     var rows = el('ol', 'yle-rows');
-    rows.setAttribute('aria-label', NAME[sf] + ' layout');
+    rows.setAttribute('aria-label', sfName(sf) + ' layout');
     sec.appendChild(rows);
 
     var adds = el('div', 'yle-adds');
-    adds.appendChild(btn('yle-add', 'pick', null, 'plus', ICON_SF[sf] ? 'Add a small button' : 'Add a shortcut'));
-    if (BREAK_SF[sf]) adds.appendChild(btn('yle-add', 'add-break', null, 'grip-lines', 'Add a row break'));
+    adds.appendChild(btn('yle-add', 'pick', null, 'plus', icons ? 'Add a small button' : pg ? 'Add a tile' : 'Add a shortcut'));
+    if (BREAK_SF[sf] || (pg && pg.part === 'tiles')) adds.appendChild(btn('yle-add', 'add-break', null, 'grip-lines', 'Add a row break'));
     else if (sf === 'sidebar') adds.appendChild(btn('yle-add', 'label-open', null, 'heading', 'Add a section label'));
     adds.appendChild(el('span', 'yc-hint yle-room'));
     sec.appendChild(adds);
@@ -1345,14 +1611,16 @@
       sec.appendChild(la);
     }
 
-    sec.appendChild(buildPicker(sf, scope === 'firm' ? 'Add to ' + NAME[sf]
+    sec.appendChild(buildPicker(sf, pg ? 'Add to the page' : scope === 'firm' ? 'Add to ' + NAME[sf]
       : 'Add a shortcut to ' + (sf === 'home' ? 'Home' : 'the sidebar')));
 
-    var hw = el('div', 'yle-hidden-wrap');
-    hw.appendChild(el('h4', null, 'Hidden on this surface'));
-    hw.appendChild(el('ul', 'yle-hidden'));
-    hw.appendChild(el('div', 'yc-hint yle-hidden-none', 'Nothing hidden.'));
-    sec.appendChild(hw);
+    if (!pg) {
+      var hw = el('div', 'yle-hidden-wrap');
+      hw.appendChild(el('h4', null, 'Hidden on this surface'));
+      hw.appendChild(el('ul', 'yle-hidden'));
+      hw.appendChild(el('div', 'yc-hint yle-hidden-none', 'Nothing hidden.'));
+      sec.appendChild(hw);
+    }
     return sec;
   }
 
@@ -1435,7 +1703,7 @@
 
   // My buttons (S5a): the list, then the add / edit form (one form, hidden
   // until "Add a button" or a row's edit button opens it).
-  var MB_TYPES = { view: 'A saved view', tool: 'A tool', url: 'A link to a website', drawer: 'A drawer (a menu of other items)' };
+  var MB_TYPES = { view: 'A saved view', tool: 'A tool', url: 'A link to a website', drawer: 'A list (a menu of other items)', page: 'A page (a tab of tiles, like More Features)' };
   var PICKERS_FAIL = 'Couldn’t load the lists of tools and saved views. Link buttons still work; for the others, close and open the editor again later.';
   // The tool / view lists (GET /api/ui-config/pickers — keys and titles
   // only), read once per opening, the first time My buttons is shown: the
@@ -1489,9 +1757,9 @@
     head.appendChild(el('h3', null, 'My buttons'));
     sec.appendChild(head);
     sec.appendChild(el('p', 'yc-hint ymb-intro',
-      'Your own buttons: a saved view, a tool, or a link to another website. Only you see them. They are listed in All ' +
-      'and Ctrl+K under Mine; put them on your Home or sidebar, or give them a keyboard shortcut. A link always opens ' +
-      'in a new window, never inside YisraCase.'));
+      'Your own buttons: a saved view, a tool, a link to another website, a list (a small menu of other items) or a page ' +
+      '(a tab of tiles, like More Features). Only you see them. They are listed in All and Ctrl+K under Mine; put them on ' +
+      'your Home or sidebar, or give them a keyboard shortcut. A link always opens in a new window, never inside YisraCase.'));
     var errs = el('ul', 'yle-errs');
     errs.setAttribute('role', 'alert');
     errs.hidden = true;
@@ -1543,25 +1811,31 @@
     });
     field(form, 'size', 'Opens in', sizeSel, 'A dialog opens over the app: large for a working page, compact for something small. ' +
       'A tab opens like the app\u2019s own tabs; up to ' + TAB_KEEP + ' stay open at once, so switching back keeps your place.');
-    // a drawer's contents (S5b): an ordered list, the picker to add to it
+    // a page (S6c-5): nothing more in the form — its tiles are arranged from its row
+    var pw = el('div', 'ymb-field ymb-page-field');
+    pw.setAttribute('data-field', 'page');
+    pw.appendChild(el('div', 'yc-hint', 'A tab of your own, like More Features, with its own tiles and small buttons. ' +
+      'Add it, then press Arrange\u2026 on its row to choose what is on it. Reloading the page while you are on it brings you back to Home.'));
+    form.appendChild(pw);
+    // a list's (drawer's) contents (S5b): an ordered list, the picker to add to it
     var rw = el('div', 'ymb-field ymb-refs-field');
     rw.setAttribute('data-field', 'refs');
-    rw.appendChild(el('div', 'yc-flabel', 'In the drawer'));
+    rw.appendChild(el('div', 'yc-flabel', 'In the list'));
     var rl = el('ol', 'ymb-refs');
-    rl.setAttribute('aria-label', 'In the drawer');
+    rl.setAttribute('aria-label', 'In the list');
     rw.appendChild(rl);
     rw.appendChild(el('div', 'yc-hint ymb-refs-none', 'Nothing in it yet.'));
     var ra = el('div', 'yle-adds');
-    var rp = btn('yle-add', 'mb-ref-pick', null, 'plus', 'Add to the drawer');
+    var rp = btn('yle-add', 'mb-ref-pick', null, 'plus', 'Add to the list');
     rp.id = 'ymb_refs';
     ra.appendChild(rp);
     ra.appendChild(el('span', 'yc-hint yle-room ymb-refs-room'));
     rw.appendChild(ra);
-    rw.appendChild(el('div', 'yc-hint', 'Up to ' + DRAWER_CAP + ' items: features, your firm\u2019s items or your other buttons (not another drawer). It opens as a small menu beside its tile.'));
+    rw.appendChild(el('div', 'yc-hint', 'Up to ' + DRAWER_CAP + ' items: features, your firm\u2019s items or your other buttons (not another list). It opens as a small menu beside its tile.'));
     var rfe = el('div', 'yle-field-err');
     rfe.setAttribute('data-err', 'refs');
     rw.appendChild(rfe);
-    rw.appendChild(buildPicker('drawer', 'Add to this drawer'));
+    rw.appendChild(buildPicker('drawer', 'Add to this list'));
     form.appendChild(rw);
     form.appendChild(el('div', 'yc-hint ymb-id-line'));
     var frow = el('div', 'ysc-add-row');
@@ -1569,6 +1843,17 @@
     frow.appendChild(btn('yle-add-cancel', 'mb-cancel', null, null, 'Cancel'));
     form.appendChild(frow);
     sec.appendChild(form);
+    // a page's tiles and small buttons (S6c-5): opened by Arrange… on its row,
+    // one page at a time; its two sections are built per page (openArrange)
+    var ar = el('div', 'ymb-arrange');
+    ar.hidden = true;
+    var ah = el('div', 'yle-sec-head');
+    ah.appendChild(el('h4', 'ymb-arrange-title'));
+    ah.appendChild(btn('yle-add-cancel', 'mb-arrange-done', null, null, 'Done'));
+    ar.appendChild(ah);
+    ar.appendChild(el('p', 'yc-hint ymb-arrange-hint', 'What this page shows. Nothing changes until you Save.'));
+    ar.appendChild(el('div', 'ymb-arrange-secs'));
+    sec.appendChild(ar);
     return sec;
   }
 
@@ -1637,6 +1922,7 @@
 
   function renderHidden(sf) {
     var sec = secOf(sf), ul = sec.querySelector('.yle-hidden');
+    if (!ul) return;   // a page's section (S6c-5): nothing is ever hidden on a page
     ul.textContent = '';
     var hid = sess.hidden(sf);
     hid.forEach(function (h) {
@@ -1659,8 +1945,8 @@
     var list = pk.querySelector('.yle-pick-list');
     list.textContent = '';
     var q = pk.querySelector('.yle-pick-q').value;
-    // the drawer picker (S5b, in the My buttons form): the editor's registry
-    // minus drawers, what the drawer already holds and the button being edited
+    // the list (drawer) picker (S5b, in the My buttons form): the editor's registry
+    // minus lists, what the list already holds and the button being edited
     var held = !mbForm ? [] : mbForm.i >= 0 ? mbForm.refs.concat(its.ids()[mbForm.i]) : mbForm.refs;
     var groups = sf === 'shortcuts' ? scs.candidates(q)
       : sf === 'buttons' ? its.drawerCandidates(editorEffective(), editorGroups(), held, q, L.rank)
@@ -1691,7 +1977,7 @@
     renderHidden(sf);
     renderPicker(sf);
     var sec = secOf(sf), room = sess.room(sf);
-    sec.querySelector('.yle-room').textContent = room <= 0 ? 'This surface is full (' + capOf(sf) + ' entries).' : '';
+    sec.querySelector('.yle-room').textContent = room <= 0 ? (pageOf(sf) ? 'This page is full (' : 'This surface is full (') + capOf(sf) + ' entries).' : '';
     sec.querySelectorAll('.yle-adds [data-act]').forEach(function (b) { b.disabled = room <= 0; });
   }
   // ── The Keyboard shortcuts tab ──
@@ -1810,7 +2096,7 @@
   }
   function retargetAll() {
     var eff = editorEffective(), g = editorGroups();
-    if (sess) sess.retarget(eff, g);
+    if (sess) sess.retarget(eff, g, its ? its.pageIds() : []);
     if (scs) scs.retarget(eff, g);
   }
   // The ids the user's layout and shortcuts name — stored (as read at open)
@@ -1840,10 +2126,11 @@
       main.appendChild(el('span', 'yle-name', b.label));
       if (!b.saved) main.appendChild(el('span', 'yle-tag', 'New'));
       main.appendChild(el('span', 'yc-hint ymb-sum', b.summary));
-      var on = b.kept ? [] : sess.where(b.id), combos = scs.combosOf(b.id);
-      if (on.length || combos.length || b.inDrawers.length) {
+      var on = b.kept ? [] : sess.where(b.id), combos = scs.combosOf(b.id), onPages = b.kept ? [] : sess.pagesHolding(b.id);
+      if (on.length || combos.length || b.inDrawers.length || onPages.length) {
         var wh = el('span', 'ymb-where');
         on.forEach(function (sf) { wh.appendChild(el('span', 'yle-tag', sf === 'home' ? 'On Home' : 'On sidebar')); });
+        onPages.forEach(function (pid) { wh.appendChild(el('span', 'yle-tag', 'On \u201c' + pageLabel(pid) + '\u201d')); });
         b.inDrawers.forEach(function (n) { wh.appendChild(el('span', 'yle-tag', 'In \u201c' + n + '\u201d')); });
         combos.forEach(function (t) { wh.appendChild(el('kbd', 'ysc-kbd', t)); });
         main.appendChild(wh);
@@ -1856,6 +2143,11 @@
       dn.disabled = i === list.length - 1;
       acts.appendChild(up);
       acts.appendChild(dn);
+      if (!b.kept && b.type === 'page') {   // a page's tiles (S6c-5)
+        var arr = btn('ymb-arrange-btn', 'mb-arrange', 'Arrange the tiles of ' + b.label, 'table-cells-large', 'Arrange\u2026');
+        arr.disabled = !!(mbArrange && mbArrange.id === b.id);
+        acts.appendChild(arr);
+      }
       if (!b.kept) acts.appendChild(btn('ymb-edit', 'mb-edit', 'Edit ' + b.label, 'pen'));
       acts.appendChild(btn('yle-remove', 'mb-del', 'Delete ' + b.label, 'trash'));
       li.appendChild(acts);
@@ -1874,6 +2166,47 @@
     var room = its.room();
     sec.querySelector('.yle-room').textContent = room <= 0 ? 'You have the most buttons there can be (' + MB_CAP + ').' : '';
     sec.querySelector('[data-act="mb-open"]').disabled = room <= 0 || !!mbForm;
+    renderArrange();
+  }
+  // ── A page's tiles (S6c-5) ── the arrange box under the buttons list: the
+  // page's two sections (pageSf(id, 'tiles') / 'icons'), driven by the same
+  // handlers as Home's. One page at a time; a deleted page closes it.
+  var mbArrange = null;      // { id } while a page is being arranged
+  function pageLabel(id) {
+    var eff = editorEffective();
+    for (var i = 0; i < eff.length; i++) if (eff[i].id === id) return String(eff[i].label);
+    return id;
+  }
+  function arrangeEl() { return mbSec().querySelector('.ymb-arrange'); }
+  function openArrange(id) {
+    var box = arrangeEl(), secs = box.querySelector('.ymb-arrange-secs');
+    mbArrange = { id: id };
+    secs.textContent = '';
+    ['tiles', 'icons'].forEach(function (part) { secs.appendChild(buildSection(pageSf(id, part))); });
+    box.hidden = false;
+    renderArrange();
+    renderButtons();
+    box.scrollIntoView && box.scrollIntoView({ block: 'nearest' });
+    var first = secs.querySelector('.yle-rows button:not(:disabled)') || secs.querySelector('[data-act="pick"]');
+    if (first) first.focus();
+  }
+  function closeArrange(focus) {
+    var was = mbArrange, box = arrangeEl();
+    mbArrange = null;
+    if (box) { box.hidden = true; box.querySelector('.ymb-arrange-secs').textContent = ''; }
+    renderButtons();
+    if (focus && was) {
+      var b = mbSec().querySelector('.ymb-row[data-id="' + was.id + '"] [data-act="mb-arrange"]');
+      (b || mbSec().querySelector('[data-act="mb-open"]')).focus();
+    }
+  }
+  function renderArrange() {
+    var box = arrangeEl();
+    if (!box) return;
+    if (mbArrange && (!its || its.pageIds().indexOf(mbArrange.id) < 0)) { closeArrange(false); return; }   // the page is gone
+    if (!mbArrange) { box.hidden = true; return; }
+    box.querySelector('.ymb-arrange-title').textContent = 'Arrange \u201c' + pageLabel(mbArrange.id) + '\u201d';
+    ['tiles', 'icons'].forEach(function (part) { if (secOf(pageSf(mbArrange.id, part))) renderSection(pageSf(mbArrange.id, part)); });
   }
   function formEl() { return mbSec().querySelector('.ymb-form'); }
   function fval(id) { return mbSec().querySelector('#ymb_' + id).value; }
@@ -1907,6 +2240,7 @@
     f.querySelector('[data-field="key"]').hidden = !modal;
     f.querySelector('[data-field="size"]').hidden = !modal;
     f.querySelector('[data-field="href"]').hidden = type !== 'url';
+    f.querySelector('[data-field="page"]').hidden = type !== 'page';
     f.querySelector('[data-field="refs"]').hidden = type !== 'drawer';
     if (type !== 'drawer') f.querySelector('[data-field="refs"] .yle-picker').hidden = true;
   }
@@ -1933,7 +2267,7 @@
       main.appendChild(el('span', 'yle-name', v.label));
       if (!v.ok) {
         var tag = el('span', 'yle-tag', 'Unavailable');
-        tag.title = 'Not available to you right now: the drawer leaves it out. It is kept until you remove it.';
+        tag.title = 'Not available to you right now: the list leaves it out. It is kept until you remove it.';
         main.appendChild(tag);
       }
       li.appendChild(main);
@@ -1944,13 +2278,13 @@
       dn.disabled = i === refs.length - 1;
       acts.appendChild(up);
       acts.appendChild(dn);
-      acts.appendChild(btn('yle-remove', 'mb-ref-del', 'Take ' + v.label + ' out of the drawer', 'xmark'));
+      acts.appendChild(btn('yle-remove', 'mb-ref-del', 'Take ' + v.label + ' out of the list', 'xmark'));
       li.appendChild(acts);
       ol.appendChild(li);
     });
     f.querySelector('.ymb-refs-none').hidden = refs.length > 0;
     var full = refs.length >= DRAWER_CAP;
-    f.querySelector('.ymb-refs-room').textContent = full ? 'The drawer is full (' + DRAWER_CAP + ' items).' : '';
+    f.querySelector('.ymb-refs-room').textContent = full ? 'The list is full (' + DRAWER_CAP + ' items).' : '';
     f.querySelector('[data-act="mb-ref-pick"]').disabled = full;
     if (full) f.querySelector('[data-field="refs"] .yle-picker').hidden = true;
     renderPicker('buttons');
@@ -2047,7 +2381,7 @@
     retargetAll();
     SURFACES.forEach(renderSection);
     renderShortcuts();
-    renderButtons();
+    renderButtons();   // renders the open arrange box too
     renderStatus();
   }
   function commitForm() {
@@ -2072,13 +2406,15 @@
     var b = its.list()[i];
     if (!b) return;
     var on = b.kept ? [] : sess.where(b.id), combos = scs.combosOf(b.id), drawers = b.inDrawers;
+    var onPages = b.kept ? [] : sess.pagesHolding(b.id);
     var go = function () {
       if (!its || its.list()[i] == null || its.list()[i].id !== b.id) return;
       var id = its.remove(i);
       if (id == null) return;
-      sess.dropId(id);
+      sess.dropId(id);                 // its placements, its own page entry, and off every other page (S6c-5)
       scs.dropId(id);
-      its.dropRef(id);                 // out of every drawer too (S5b)
+      its.dropRef(id);                 // out of every list too (S5b)
+      if (mbArrange && mbArrange.id === id) closeArrange(false);
       if (mbForm) {
         // the open form follows its own row (or closes with it), and a drawer
         // being edited lets go of the deleted button
@@ -2093,12 +2429,15 @@
       var left = mbSec().querySelectorAll('.ymb-row [data-act="mb-del"]');
       (left[Math.min(i, left.length - 1)] || mbSec().querySelector('[data-act="mb-open"]')).focus();
     };
-    if (!on.length && !combos.length && !drawers.length) { go(); return; }
+    var isPg = b.type === 'page';
+    if (!on.length && !combos.length && !drawers.length && !onPages.length && !isPg) { go(); return; }
     var where = [];
     if (on.length) where.push('it’s on your ' + on.map(function (sf) { return sf === 'home' ? 'Home' : 'sidebar'; }).join(' and '));
-    if (drawers.length) where.push((on.length ? '' : 'it’s ') + 'in your drawer' + (drawers.length > 1 ? 's ' : ' ') + drawers.map(function (n) { return '“' + n + '”'; }).join(', '));
-    if (combos.length) where.push((on.length || drawers.length ? '' : 'it’s ') + 'bound to ' + combos.join(', '));
-    ask('Delete “' + b.label + '”? Note: ' + where.join(' and ') + '. Deleting it takes it off there too.', 'Delete', 'Keep it')
+    if (onPages.length) where.push((on.length ? '' : 'it’s ') + 'on your page' + (onPages.length > 1 ? 's ' : ' ') + onPages.map(function (p) { return '“' + pageLabel(p) + '”'; }).join(', '));
+    if (drawers.length) where.push((on.length || onPages.length ? '' : 'it’s ') + 'in your list' + (drawers.length > 1 ? 's ' : ' ') + drawers.map(function (n) { return '“' + n + '”'; }).join(', '));
+    if (combos.length) where.push((on.length || drawers.length || onPages.length ? '' : 'it’s ') + 'bound to ' + combos.join(', '));
+    var note = where.length ? ' Note: ' + where.join(' and ') + '. Deleting it takes it off there too.' : '';
+    ask('Delete “' + b.label + '”?' + note + (isPg ? ' The page’s own tiles go with it.' : ''), 'Delete', 'Keep it')
       .then(function (yes) { if (yes && !saving) go(); });
   }
   function placeButton(i, sf) {
@@ -2132,12 +2471,14 @@
     // a held bad label, or an open button form, keeps Save clickable: the
     // click says what to finish
     root.querySelector('.yle-save').disabled = (!dirty && !Object.keys(labelErr).length && !mbForm) || saving;
-    var dots = { layout: !!(sess && sess.isDirty()), shortcuts: !!(scs && scs.isDirty()), buttons: !!(its && its.isDirty()) };
+    var parts = sess ? sess.dirtyParts() : { surfaces: false, pages: false };
+    // a page's tiles are arranged under My buttons (S6c-5): their dot sits there
+    var dots = { layout: parts.surfaces, shortcuts: !!(scs && scs.isDirty()), buttons: !!(its && its.isDirty()) || parts.pages };
     if (scope === 'firm') {
       // a firm tab's dot: one of its surfaces differs from what is stored
       dots = {};
       FIRM_PANES.forEach(function (fp) {
-        dots[fp.id] = !!sess && fp.surfaces.some(function (sf) { return sess.mode(sf) !== 'stored'; });
+        dots[fp.id] = fp.id === 'pages' ? parts.pages : !!sess && fp.surfaces.some(function (sf) { return sess.mode(sf) !== 'stored'; });
       });
     }
     root.querySelectorAll('.yle-tab').forEach(function (t) {
@@ -2145,7 +2486,7 @@
     });
   }
   function render() {
-    liveSurfaces().forEach(renderSection);
+    builtSurfaces().forEach(renderSection);
     if (scope !== 'firm') {
       renderShortcuts();
       renderButtons();
@@ -2165,7 +2506,7 @@
     banner('');
     var cf = root.querySelector('.yle-conflict');
     if (cf) cf.hidden = true;
-    liveSurfaces().concat(scope === 'firm' ? [] : ['shortcuts', 'buttons']).forEach(function (sf) {
+    builtSurfaces().concat(scope === 'firm' ? [] : ['shortcuts', 'buttons']).forEach(function (sf) {
       var u = secOf(sf).querySelector('.yle-errs');
       u.textContent = '';
       u.hidden = true;
@@ -2181,6 +2522,9 @@
       // (\b: placed.home never matches placed.homeIcons — I is a word character)
       var hit = key === 'layout' ? /^(?:placed|removed)\.(home|sidebar|homeIcons|more|moreIcons|admin|adminIcons)\b/.exec(String(m))
         : [null, PANE_OF[key]];
+      // a page's list (S6c-5): under that page's section when it is built (an open arrange box / the Firm pages pane)
+      var pm = key === 'layout' && !hit ? /^pages\.([^.\s]+)\.(tiles|icons)\b/.exec(String(m)) : null;
+      if (pm) hit = [null, pageSf(pm[1], pm[2])];
       if (hit && !secOf(hit[1])) hit = null;   // a surface this panel doesn't show: the banner
       if (hit) {
         var u = secOf(hit[1]).querySelector('.yle-errs');
@@ -2220,7 +2564,8 @@
 
   function edited(sf) {
     labelErr = Object.keys(labelErr).reduce(function (o, k) { if (k.indexOf(sf + ':') !== 0) o[k] = labelErr[k]; return o; }, {});
-    renderSection(sf);
+    // a page's part under My buttons (S6c-5): the rows' "On “page”" tags follow, so the whole tab redraws (its arrange box included)
+    if (pageOf(sf) && scope !== 'firm') renderButtons(); else renderSection(sf);
     renderStatus();
   }
 
@@ -2240,6 +2585,8 @@
       case 'mb-cancel': closeForm(true); return;
       case 'mb-icon-pick': pickIcon(b); return;
       case 'mb-commit': commitForm(); return;
+      case 'mb-arrange': openArrange(b.closest('.ymb-row').getAttribute('data-id')); return;
+      case 'mb-arrange-done': closeArrange(true); return;
       case 'mb-edit': case 'mb-del': case 'mb-up': case 'mb-down': case 'mb-home': case 'mb-sidebar': {
         var mi = Number(b.closest('.ymb-row').getAttribute('data-i'));
         if (act === 'mb-edit') openForm(mi);
@@ -2649,17 +2996,21 @@
     mbForm = null;
     sess = null;
     scs = null;
+    mbArrange = null;
     storedRefs = userIdsIn([storedOf(ui), shortcutsOf(ui)]);
     its = newItemSession(itemsOf(ui));
     sessOpts = {
       stored: storedOf(ui), effective: editorEffective(), locked: lockedOf(ui), firm: firmLayoutOf(ui),
       base: window.DEFAULT_LAYOUTS || {}, registry: window.FEATURE_REGISTRY || {}, groups: editorGroups(),
+      pages: its.pageIds(),
     };
     sess = session(sessOpts);
     scs = newShortcutSession(shortcutsOf(ui));
     scAdd = null;
     root.querySelector('.ymb-form').hidden = true;
     root.querySelector('.ysc-add').hidden = true;
+    var ab = arrangeEl();
+    if (ab) { ab.hidden = true; ab.querySelector('.ymb-arrange-secs').textContent = ''; }
     labelErr = {};
     saving = false;
     clearErrors();
@@ -2684,6 +3035,7 @@
     scs = null;
     its = null;
     mbForm = null;
+    mbArrange = null;
     opening++;
     scAdd = null;
     labelErr = {};
@@ -2801,7 +3153,7 @@
       // what saved is the new stored state: the buttons first (the other
       // tabs' item list follows them), then the layout and shortcuts
       if (hasOwn(saved, 'items')) its = newItemSession(saved.items);
-      if (hasOwn(saved, 'layout')) { sessOpts.stored = saved.layout; sessOpts.effective = editorEffective(); sessOpts.groups = editorGroups(); sess = session(sessOpts); }
+      if (hasOwn(saved, 'layout')) { sessOpts.stored = saved.layout; sessOpts.effective = editorEffective(); sessOpts.groups = editorGroups(); sessOpts.pages = its.pageIds(); sess = session(sessOpts); }
       if (hasOwn(saved, 'shortcuts')) scs = newShortcutSession(saved.shortcuts);
       if (hasOwn(saved, 'layout')) storedRefs = userIdsIn([saved.layout, storedRefs ? Object.keys(storedRefs) : []]);
       if (hasOwn(saved, 'shortcuts')) storedRefs = userIdsIn([saved.shortcuts, storedRefs ? Object.keys(storedRefs) : []]);
@@ -2841,7 +3193,7 @@
   // built, is rebuilt for the firm (never while either is open).
   function openFirm(opts) {
     if (isOpen()) {
-      if (scope === 'firm' && opts.section) showPane(opts.section);
+      if (scope === 'firm' && opts.section) { showPane(opts.section); if (opts.page) showFirmPage(opts.page); }
       return Promise.resolve(scope === 'firm');
     }
     if (loading) return loading;
@@ -2857,6 +3209,7 @@
         var fv = isObj(r.firm_versions) ? r.firm_versions : null;
         build('firm');
         showFirm(fresh, fv && hasOwn(fv, 'layout') ? fv.layout : undefined, from, opts.section);
+        if (opts.page) showFirmPage(opts.page);
         return true;
       })
       .catch(function (e) {
@@ -2881,8 +3234,10 @@
     sessOpts = {
       stored: firmLayoutOf(ui), effective: cat.entries, locked: [], base: window.DEFAULT_LAYOUTS || {},
       registry: window.FEATURE_REGISTRY || {}, groups: cat.groups, surfaces: FIRM_SURFACES, pass: [], seed: { more: cat.seed },
+      pages: cat.pages,
     };
     sess = session(sessOpts);
+    buildFirmPages(cat);
     clearErrors();
     root.querySelectorAll('.yle-picker, .yle-label-add').forEach(function (n) { n.hidden = true; });
     freeze(false);
@@ -2894,6 +3249,37 @@
     window.addEventListener('beforeunload', onBeforeUnload);
     var first = root.querySelector('.yle-pane:not([hidden]) .yle-rows button:not(:disabled)') || root.querySelector('.yle-cancel');
     if (first) first.focus();
+  }
+  // The Firm pages pane (S6c-5): one block per firm page (the catalogue's
+  // pages, in order) — its icon and name, a note on where its identity is
+  // set, then its two sections. Built per opening; the sections are driven
+  // by the same handlers as every other.
+  function buildFirmPages(cat) {
+    var host = root.querySelector('.yle-firm-pages');
+    if (!host) return;
+    host.textContent = '';
+    if (!cat.pages.length) { host.appendChild(el('div', 'yc-hint yle-no-pages', NO_FIRM_PAGES)); return; }
+    cat.pages.forEach(function (id) {
+      var e = null;
+      for (var i = 0; i < cat.entries.length; i++) if (cat.entries[i].id === id) e = cat.entries[i];
+      var blk = el('section', 'yle-page-block');
+      blk.setAttribute('data-page', id);
+      var h = el('h3', 'yle-page-title');
+      h.appendChild(iconEl(e ? e.icon : ''));
+      h.appendChild(document.createTextNode(' ' + (e ? String(e.label) : id)));
+      blk.appendChild(h);
+      ['tiles', 'icons'].forEach(function (part) { blk.appendChild(buildSection(pageSf(id, part))); });
+      host.appendChild(blk);
+    });
+  }
+  /** Scroll the Firm pages pane to one page's block and focus its first control. */
+  function showFirmPage(id) {
+    var blk = root.querySelector('.yle-page-block[data-page="' + String(id).replace(/"/g, '') + '"]');
+    if (!blk) return false;
+    blk.scrollIntoView && blk.scrollIntoView({ block: 'start' });
+    var first = blk.querySelector('.yle-rows button:not(:disabled)') || blk.querySelector('[data-act="pick"]');
+    if (first) first.focus();
+    return true;
   }
   // After a 409: the firm's arrangement as it is now, every edit here dropped
   // (the button says so). A failed read keeps the panel as it was.
@@ -2999,7 +3385,7 @@
     session: session, labelProblem: labelProblem, canonical: canonical,
     shortcutSession: shortcutSession, reservedProblem: reservedProblem,
     itemSession: itemSession, makeUserId: makeUserId, buttonProblems: buttonProblems,
-    firmCatalog: firmCatalog, FIRM_SURFACES: FIRM_SURFACES, GUARANTEED: GUARANTEED,
+    firmCatalog: firmCatalog, FIRM_SURFACES: FIRM_SURFACES, GUARANTEED: GUARANTEED, pageSf: pageSf, PAGE_PARTS: PAGE_PARTS,
     scope: function () { return scope; },
   };
 })();

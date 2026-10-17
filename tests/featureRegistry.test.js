@@ -57,9 +57,9 @@ const ICON_ROWS = ['homeIcons', 'moreIcons', 'adminIcons'];
 
 /** The markup of one tab-main div in the raw page, up to the next tab-main. */
 function tabDiv(id) {
-  const a = RAW.indexOf(`<div id="${id}" class="tab-main"`);
+  const a = RAW.indexOf(`<div id="${id}" class="tab-main`);
   if (a < 0) throw new Error('no tab-main ' + id);
-  const b = RAW.indexOf('class="tab-main"', a + 20);
+  const b = RAW.indexOf('class="tab-main', a + 20);
   return RAW.slice(a, b < 0 ? undefined : b);
 }
 
@@ -103,7 +103,7 @@ describe('the registry data', () => {
     // the stage: one container after the hubs, closed before the drill CSS
     const a = RAW.indexOf('<div id="ycPanels" style="display:none">');
     const b = RAW.indexOf('<style>\n  /* Drill-in pill strip for big-button tabs */', a);
-    expect(a).toBeGreaterThan(RAW.indexOf('<div id="tabAdmin" class="tab-main"'));
+    expect(a).toBeGreaterThan(RAW.indexOf('<div id="tabAdmin" class="tab-main yc-hub"'));
     expect(b).toBeGreaterThan(a);
     const stage = RAW.slice(a, b);
     expect(stage).not.toMatch(/class="tab-main/);
@@ -145,7 +145,7 @@ describe('the registry data', () => {
   test('every sidebar data-tab / data-tab-also names a real tab; dialogs have none', () => {
     for (const e of LAY.sidebar.filter((x) => x.item)) {
       const it = REG[e.item];
-      for (const t of [it.tab, it.tabAlso].filter(Boolean)) expect([e.item, RAW.includes(`<div id="${t}" class="tab-main"`)]).toEqual([e.item, true]);
+      for (const t of [it.tab, it.tabAlso].filter(Boolean)) expect([e.item, new RegExp(`<div id="${t}" class="tab-main( yc-hub)?"`).test(RAW)]).toEqual([e.item, true]);
     }
     // the highlight rule: an item that opens a dialog must never be lit
     expect(REG.newClient.tab).toBeUndefined();
@@ -168,9 +168,9 @@ describe('the mounts in public/index.html', () => {
     expect(RAW).toContain(`<div class="home-grid"><script>ycLauncher.mount('home')</script></div>`);
     // the icon rows (S6c) mount inside their .<page>-egg-row divs, right under each grid
     within('homeIcons', '<div class="home-egg-row">', '<div class="home-search">');
-    within('more', '<div id="tabMore" class="tab-main">', '<div class="more-egg-row">');
+    within('more', '<div id="tabMore" class="tab-main yc-hub">', '<div class="more-egg-row">');
     within('moreIcons', '<div class="more-egg-row">', '<div id="formSimpleDiv"');
-    within('admin', '<div id="tabAdmin" class="tab-main"', '<div class="admin-egg-row">');
+    within('admin', '<div id="tabAdmin" class="tab-main yc-hub"', '<div class="admin-egg-row">');
     within('adminIcons', '<div class="admin-egg-row">', '<div id="sequencesDiv"');
     for (const row of ['home', 'more', 'admin']) expect(RAW).toContain(`<div class="${row}-egg-row"><script>ycLauncher.mount('${row}Icons')</script></div>`);
     // the renderer is defined before the first mount; the boot runs after the last

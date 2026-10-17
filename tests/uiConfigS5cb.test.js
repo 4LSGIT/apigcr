@@ -101,7 +101,7 @@ describe('firm items stay modal-only (v1)', () => {
     expect(shape.USER_ACTION_SHAPES.tool.present).toEqual(['modal', 'tab']);
     expect(shape.USER_ACTION_SHAPES.view.present).toEqual(['modal', 'tab']);
     expect(shape.USER_ACTION_SHAPES.url.present).toEqual(['window']);
-    expect(Object.keys(shape.USER_ACTION_SHAPES)).toEqual(['url', 'tool', 'view', 'drawer']);
+    expect(Object.keys(shape.USER_ACTION_SHAPES)).toEqual(['url', 'tool', 'view', 'page', 'drawer']);   // page: S6c-5
   });
 });
 

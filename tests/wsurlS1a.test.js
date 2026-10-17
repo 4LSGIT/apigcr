@@ -198,6 +198,7 @@ const SHELL_DOM = `<!DOCTYPE html><html><body>
   <div id="tabMore" class="tab-main" style="display:none"><div id="automationsDiv"><iframe id="panelFrame"></iframe></div></div>
   <div id="tabAdmin" class="tab-main" style="display:none"></div>
   <div id="tabSettings" class="tab-main" style="display:none"></div>
+  <div id="ycPages"><div id="ycPage-1" class="tab-main yc-hub" data-yc-page="user:desk" style="display:none"><h1>Desk</h1></div></div>
   <div id="file-div1" class="tab-main file" style="display:block"><iframe id="f1"></iframe></div>
   <div id="file-div2" class="tab-main file" style="display:none"><iframe id="f2"></iframe></div>
   <div class="swal2-container"><iframe id="swalFrame"></iframe></div>
@@ -372,6 +373,8 @@ describe('shell ?open= — wsOpenTarget / wsMainTabAllowed (fail closed)', () =>
     ['file-div2', { tab: 'tabHome', rest: '' }],             // a .file
     ['sbAdmin', { tab: 'tabHome', rest: '' }],               // not a .tab-main
     ['automationsDiv', { tab: 'tabHome', rest: '' }],
+    ['ycPage-1', { tab: 'tabHome', rest: '' }],              // a custom page (S6c-5): never restored (v1)
+    ['ycPage-1~x', { tab: 'tabHome', rest: '' }],
     ['nope', { tab: 'tabHome', rest: '' }],
     ['', { tab: 'tabHome', rest: '' }],
     ['file:1', { file: 1 }],
@@ -389,6 +392,27 @@ describe('shell ?open= — wsOpenTarget / wsMainTabAllowed (fail closed)', () =>
     launcher(w, { su: false });
     expect(w.ycLauncher.effectiveRegistry().some((it) => it.id === 'adminEtch')).toBe(true);
     expect(w.wsOpenTarget('tabAdmin').tab).toBe('tabHome');
+  });
+
+  test('a custom page (ui-custom S6c-5) is never an ?open= head, SU or not, and is never written: on it the URL carries no open= at all (F5 → Home)', () => {
+    const { w, show } = shell();
+    launcher(w, { su: true });
+    // the page item is effective and — modelling a launcher whose elementsOf ever returned the page's sidebar
+    // neutral (data-tab = its tab id) — the generic sidebar door would open: the explicit refusal must hold anyway
+    const row = w.document.createElement('a'); row.dataset.tab = 'ycPage-1';
+    const base = w.ycLauncher.elementsOf;
+    w.ycLauncher.effectiveRegistry = () => [{ id: 'user:desk', page: true }, { id: 'cases' }];
+    w.ycLauncher.elementsOf = (id) => (id === 'user:desk' ? { sidebar: row } : base(id));
+    expect(w.wsOpenTarget('ycPage-1')).toEqual({ tab: 'tabHome', rest: '' });
+    expect(w.wsMainTabAllowed('ycPage-1')).toBe(false);
+    expect(w.wsMainTabAllowed('tabCases')).toBe(true);                       // the door itself still works
+    show('ycPage-1');
+    expect(w.currentMainTabId()).toBe('ycPage-1');
+    const u = new w.URL(w.currentOpenFilesUrl());
+    expect(u.searchParams.get('open')).toBe(null);
+    expect(u.searchParams.get('files')).toBe('cABCD2345~documents,p1405');   // the files still ride
+    show('tabCases');
+    expect(new w.URL(w.currentOpenFilesUrl()).searchParams.get('open')).toBe('tabCases');
   });
 
   test('launcher not ready → Home for everything but Home', () => {

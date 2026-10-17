@@ -220,7 +220,7 @@ catalog; `…:icon-picker-search`, Brands with a 60-character query that matches
 nothing — both also fail when the picker's card or its grid goes sideways,
 `m.boxes`),
 `…:buttons-form-error` (a refused link's message) and `…:buttons-drawer`
-(a drawer's contents with its picker open)) and a drawer (ui-custom S5b: one
+(a list's — a drawer's — contents with its picker open)) and a drawer (ui-custom S5b; "List" in the UI since S6c-5: one
 of those buttons is a drawer with a 39-character name holding the long user
 and firm labels, a role-restricted firm item (listed: the fixture user is su) and
 an unknown id (dropped), pinned to Home and
@@ -229,7 +229,19 @@ the sidebar row, `tab:tabHome:drawer-sidebar`, a sheet at phone width; both also
 fail when the menu's list goes sideways, `m.boxes`) and a button that opens as a
 tab (ui-custom S5c-b: a saved view with a 39-character name, opened through
 `ycLauncher.exec` — `tab:tabUserItem`, the button tab, which also fails when its
-heading goes sideways, `m.boxes`)) —
+heading goes sideways, `m.boxes`), and two PAGES (ui-custom S6c-5): the firm's
+`firm:ops` (a firm item of kind page, `visible_to` it / admin — the fixture
+user is su; a tile for it on More's last row; its tiles in
+`ui.firm.layout.pages`: three panels incl. Users and YisraCase Config, a
+break, three firm items among them the 40-character unbroken label; icons My
+Tasks + Casey) and the user's `user:my-desk` (in `ui.user.items`, on Home and
+the sidebar; its tiles in `ui.user.layout.pages`: Manuals (open to every
+role: what a staff run drills), two panels from different hubs, the tab button, the list, the link, the long tool, the firm page, a su
+tool for the gate; icons Casey, All, My Tasks) — surveyed by ITEM id as
+`page:<id>` (the page's grid; its tab id is per session, so the tabs pass skips
+page tabs) and `page:<id>:drilled` (its first panel open on the page itself);
+`wsurl.js` (p1–p5) proves the URL never names a page, the in-place panel, the
+same Automations iframe from More and the page, and the staff view) —
 enough to fill the tables
 that tend to overflow and to put every conditional Overview / Case Details box
 on screen. The mock ignores

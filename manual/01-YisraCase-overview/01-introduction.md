@@ -120,8 +120,8 @@ anything else. Its **Keyboard shortcuts** tab gives any feature a key
 combination of your own, such as **⌃⌘T** (**Ctrl+Alt+T** on Windows) for
 Tasks; the Ctrl+K search shows each feature's combination beside its name. Its
 **My buttons** tab makes buttons of your own: a saved view, a tool, a link to
-another website, or a drawer that opens a small menu of several, listed under
-**Mine** in All and the search. See
+another website, a list that opens a small menu of several, or a page of tiles
+like More Features, listed under **Mine** in All and the search. See
 [Your own launcher](15-your-launcher.md).
 
 ### On a phone

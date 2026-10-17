@@ -41,15 +41,15 @@ describe('a drawer: one more kind of user button', () => {
     expect(r.value.items[1]).toEqual({ id: 'user:box', label: 'My box', icon: 'box-open', action: { type: 'drawer', items: ['cases', 'firm:payroll', 'user:leads', 'moreDocuments'] } });
     expect(I({ items: [D([])] }).value.items[0].action).toEqual({ type: 'drawer', items: [] });
     expect(shape.CAPS.drawer).toBe(30);
-    expect(Object.keys(shape.USER_ACTION_SHAPES)).toEqual(['url', 'tool', 'view', 'drawer']);
-    expect(Object.keys(shape.ACTION_SHAPES)).toEqual(['url', 'tool', 'view']);
+    expect(Object.keys(shape.USER_ACTION_SHAPES)).toEqual(['url', 'tool', 'view', 'page', 'drawer']);   // page: S6c-5
+    expect(Object.keys(shape.ACTION_SHAPES)).toEqual(['url', 'tool', 'view', 'page']);   // page: S6c-5 (firm pages)
   });
 
   test('refused for a firm item: the firm grammar and its message are unchanged', () => {
     const ro = (d) => shape.validate('firm', 'registry_overrides', d);
-    expect(ro({ items: [D(['cases'], { id: 'firm:box' })] }).errors).toEqual(['items[0]: action.type must be one of url, tool, view']);
+    expect(ro({ items: [D(['cases'], { id: 'firm:box' })] }).errors).toEqual(['items[0]: action.type must be one of url, tool, view, page']);   // page at both tiers: S6c-5
     // a user document names the new kind in its message
-    expect(errs(I({ items: [{ ...VIEW, action: { type: 'iframe', present: 'modal' } }] }))).toBe('items[0]: action.type must be one of url, tool, view, drawer');
+    expect(errs(I({ items: [{ ...VIEW, action: { type: 'iframe', present: 'modal' } }] }))).toBe('items[0]: action.type must be one of url, tool, view, page, drawer');
   });
 
   test('no present, no size, no other field', () => {

@@ -11,7 +11,8 @@
  *     tiers: a break on a grid, a label on the sidebar, an icon row takes
  *     { item } only and at most 12 (refused at the length check); a firm
  *     document names registry / firm ids, a user's may name its own buttons.
- *   - `pages` is RESERVED (S6c-5): refused, never stored.
+ *   - `pages` (S6c-5) is this tier's page contents: keys of the scope's own
+ *     id shape only (the full grammar: tests/uiConfigS6c5.test.js).
  *   - `all` is guaranteed in Home's icon row: removed.homeIcons may not name it.
  *   - Documents saved before S6c normalize to themselves (a differential over
  *     the old user grammar), and the flat removed form stays refused.
@@ -101,16 +102,13 @@ describe('the firm layout key and the surfaces', () => {
     expect(errs(U({ placed: { home: [{ item: 'bad id' }] } }))).toMatch(/placed\.home\[0\]: not an item id/);
   });
 
-  test('pages is reserved: refused with its own message, both scopes, whatever it holds', () => {
-    for (const v of [{}, { 'firm:ops': { tiles: [], icons: [] } }, null, 1]) {
-      for (const scope of ['firm', 'user']) {
-        const r = shape.validate(scope, 'layout', { pages: v });
-        expect(r.ok).toBe(false);
-        expect(r.errors).toEqual(['pages is not available yet (firm and user pages come later)']);
-      }
-    }
-    // the rest of a document carrying it is still read (one refusal names everything wrong)
-    expect(errs(F({ pages: {}, placed: { more: 'x' } }))).toBe('pages is not available yet (firm and user pages come later) | placed.more must be an array');
+  test('pages (S6c-5): a tier names only its own pages; a bad map is one refusal; the rest of the document is still read', () => {
+    expect(F({ pages: {} }).value).toEqual({ placed: {}, removed: {}, pages: {} });
+    expect(F({ pages: { 'firm:ops': { tiles: [], icons: [] } } }).value.pages).toEqual({ 'firm:ops': { tiles: [], icons: [] } });
+    expect(errs(F({ pages: { 'user:ops': {} } }))).toBe('pages.user:ops: not a firm page id (firm:…)');
+    expect(errs(U({ pages: { 'firm:ops': {} } }))).toBe('pages.firm:ops: not one of your page ids (user:…)');
+    for (const v of [null, 1, []]) expect(errs(F({ pages: v }))).toBe('pages must be an object { <page id>: { tiles?, icons? } }');
+    expect(errs(F({ pages: 1, placed: { more: 'x' } }))).toBe('placed.more must be an array | pages must be an object { <page id>: { tiles?, icons? } }');
     expect(errs(F({ foo: 1 }))).toBe('layout: unknown field "foo"');
   });
 
@@ -205,10 +203,10 @@ describe('write(): the firm layout is versioned like registry_overrides (scripte
     expect(db.writes()).toEqual([]);
   });
 
-  test('refusals: staff (no firm.settings) 403; a reserved pages key, a user id in a firm list, a removal of all → 400 with errors; nothing written', async () => {
+  test('refusals: staff (no firm.settings) 403; a user page in the firm\'s pages, a user id in a firm list, a removal of all → 400 with errors; nothing written', async () => {
     const db = txDb(null);
     await expect(svc.write(db, { scope: 'firm', config_key: 'layout', config: MORE }, staff)).rejects.toMatchObject({ status: 403 });
-    for (const bad of [{ pages: {} }, { placed: { home: [{ item: 'user:x' }] } }, { removed: { homeIcons: ['all'] } }, { placed: { adminIcons: [{ break: true }] } }]) {
+    for (const bad of [{ pages: { 'user:x': {} } }, { placed: { home: [{ item: 'user:x' }] } }, { removed: { homeIcons: ['all'] } }, { placed: { adminIcons: [{ break: true }] } }]) {
       const e = await svc.write(db, { scope: 'firm', config_key: 'layout', config: bad }, admin).catch((x) => x);
       expect([bad, e.status, Array.isArray(e.errors) && e.errors.length > 0]).toEqual([bad, 400, true]);
     }
