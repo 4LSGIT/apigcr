@@ -363,6 +363,42 @@ deferred until the budget shows it's needed.
   current is filter-agnostic); other pickers keyed on does_appts were not
   audited for the same silent fallback.
 
+## From the ui-customization arc (2026-10-17) — deferred
+
+(The arc's other leftovers sit above: the Firm tab's unseen deny rows and the
+`users.user_custom_tab` drop, S5e-3; the workspace URL's deferred levels have
+their own entry further down.)
+
+- **Firm items opening as a tab.** A user's own tool / view button may open in
+  the button tab (`present:'tab'`, S5c-b); a firm item is modal-only — the
+  validator refuses `present:'tab'` at the firm tier ("not available yet",
+  `lib/uiConfigShape.js` TAB_NOT_YET). Lifting it: accept it in the firm's
+  ACTION_SHAPES, an "Opens in" choice on firm.html's tool / view rows, and
+  `exec`'s firm path handing it to `window.ycButtonTabs` like a user's.
+- **Retire `data-exclusive-group`.** Since S6c-4 the drill is page-scoped
+  (`closest('.tab-main')`), and nothing reads the attribute; the launcher's
+  mount still writes it on every panel tile and `ensureStrip` copies it onto
+  each pill, and `public/js/ycAll.js`'s header still says the drill machinery
+  uses it. Drop the attribute, the pill copy and the stale comments
+  (`featureRegistry.js`'s `target, group` note too). Inventory by both
+  spellings, `data-exclusive-group` and `exclusiveGroup` (the dataset form).
+- **Page entries whose page is gone** (S6c-5 review). Deleting a firm page
+  item in firm.html, or changing its kind, leaves its `layout.pages['firm:…']`
+  entry: the firm editor carries entries it has no page for as stored, and
+  the shell ignores them. `retired` means such an id never comes back, so it
+  is harmless, but each one counts toward the 50-key cap (a firm that fills
+  it can no longer save its layout) and History's View lists it by raw id.
+  The same holds for a user's page button changed to another kind (a deleted
+  one cascades). Fix: each editor drops, at its next save, the entries whose
+  key is not one of its pages — accepting that a button changed away from a
+  page and back starts empty.
+- **The survey shoots one panel on two hubs once.** `survey.js`'s panel loop
+  lists `#tabMore > [data-target], #tabAdmin > [data-target]`; a panel the
+  firm layout puts on both hubs (Users, in the fixture since S6c-1+2) is
+  recorded twice as `panel:usersDiv`, and the second shot overwrites the first
+  (`panel_usersDiv`). Name the hub in the key and the shot when it is not the
+  panel's own.
+
 ## SaaS-readiness (deferred indefinitely)
 
 Abstractions that would matter for offering YC to a second firm. Not relevant to 4LSG-only operation. Each can be picked up independently when a second customer is real.
