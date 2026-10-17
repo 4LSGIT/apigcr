@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-10-16T14:40:24.581Z
+-- Generated: 2026-10-17T22:42:59.528Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:85912779591dc4e031acc9fe0be4e578
+-- Fingerprint: sha256:2f517ff196882d33a9adb888ed907286
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -3818,7 +3818,6 @@ CREATE TABLE `users` (
   `password_hash` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `reset_token` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin DEFAULT NULL COMMENT 'password-reset bearer; 22-char base62 via lib/token, legacy 64-hex; _bin: case-sensitive',
   `reset_expires` datetime DEFAULT NULL,
-  `user_custom_tab` json NOT NULL,
   `does_appts` tinyint(1) NOT NULL DEFAULT '0',
   `freebusy_calendar_ids` json DEFAULT NULL,
   `user_gcal_id` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'provider secondary calendar id (firm Google account)',
