@@ -561,7 +561,7 @@ describe('the editor: drawers in My buttons (for real)', () => {
     expect(t.refsShown()).toEqual(['firm:clio', 'user:leads']);
     t.commit();
     const row = t.rowOf('Daily');
-    expect(row.querySelector('.ymb-sum').textContent).toBe('Drawer · 2 items');
+    expect(row.querySelector('.ymb-sum').textContent).toBe('List · 2 items');   // a drawer reads "List" since S6c-5
     expect([...t.rowOf('My leads').querySelectorAll('.yle-tag')].map((x) => x.textContent)).toEqual(['In “Daily”']);
     await t.save();
     const doc = t.server.puts[0].body.config;
@@ -595,7 +595,7 @@ describe('the editor: drawers in My buttons (for real)', () => {
     t.act('My leads', 'mb-edit').click();
     t.fill({ type: 'drawer' });
     t.commit();
-    expect(t.fieldErr('type')).toMatch(/inside the drawer “My box”: a drawer can’t go inside a drawer/);
+    expect(t.fieldErr('type')).toMatch(/inside the list “My box”: a list can’t go inside a list/);
     // converting it would also never offer itself in the picker
     t.form().querySelector('[data-act="mb-ref-pick"]').click();
     expect(t.pickable()).not.toContain('user:leads');
@@ -603,11 +603,11 @@ describe('the editor: drawers in My buttons (for real)', () => {
     t.mb().querySelector('[data-act="mb-cancel"]').click();
     // the core refuses a drawer ref outright (the picker never offers one)
     const p = t.w.ycLayoutEditor.itemSession({ stored: { items: [DRAWER(['tasks']), DRAWER([], { id: 'user:b2' })] }, clean: t.w.ycLauncher.cleanUserItem });
-    expect(p.update(1, { label: 'B2', icon: 'box', type: 'drawer', refs: ['user:box'] }).problems.refs).toBe('A drawer can’t hold another drawer');
-    expect(p.update(1, { label: 'B2', icon: 'box', type: 'drawer', refs: ['user:b2'] }).problems.refs).toBe('A drawer can’t hold itself');
-    expect(p.update(1, { label: 'B2', icon: 'box', type: 'drawer', refs: ['tasks', 'tasks'] }).problems.refs).toBe('Each item can be in the drawer once');
+    expect(p.update(1, { label: 'B2', icon: 'box', type: 'drawer', refs: ['user:box'] }).problems.refs).toBe('A list can’t hold another list');
+    expect(p.update(1, { label: 'B2', icon: 'box', type: 'drawer', refs: ['user:b2'] }).problems.refs).toBe('A list can’t hold itself');
+    expect(p.update(1, { label: 'B2', icon: 'box', type: 'drawer', refs: ['tasks', 'tasks'] }).problems.refs).toBe('Each item can be in the list once');
     const many = Array.from({ length: 31 }, (_, i) => 'item' + i);
-    expect(p.update(1, { label: 'B2', icon: 'box', type: 'drawer', refs: many }).problems.refs).toBe('A drawer holds at most 30 items');
+    expect(p.update(1, { label: 'B2', icon: 'box', type: 'drawer', refs: many }).problems.refs).toBe('A list holds at most 30 items');
     expect(p.update(1, { label: 'B2', icon: 'box', type: 'drawer', refs: many.slice(0, 30) }).ok).toBe(true);
   });
 
@@ -622,7 +622,7 @@ describe('the editor: drawers in My buttons (for real)', () => {
     expect(t.form().querySelector('[data-act="mb-ref-pick"]').disabled).toBe(false);
     t.pickRef('moreLandingPages');
     expect([t.refsShown().length, t.form().querySelector('[data-act="mb-ref-pick"]').disabled, t.picker().hidden,
-      t.form().querySelector('.ymb-refs-room').textContent]).toEqual([30, true, true, 'The drawer is full (30 items).']);
+      t.form().querySelector('.ymb-refs-room').textContent]).toEqual([30, true, true, 'The list is full (30 items).']);
   });
 
   test('a new button\'s id freezes once a drawer holds it; a new button never takes an id a drawer names', async () => {
@@ -648,9 +648,9 @@ describe('the editor: drawers in My buttons (for real)', () => {
     await t.openEditor();
     t.act('My leads', 'mb-del').click();
     await t.flush();
-    expect(asked).toEqual(['Delete “My leads”? Note: it’s in your drawers “My box”, “Two”. Deleting it takes it off there too.']);
-    expect(t.rowOf('My box').querySelector('.ymb-sum').textContent).toBe('Drawer · 1 item');
-    expect(t.rowOf('Two').querySelector('.ymb-sum').textContent).toBe('Drawer · empty');
+    expect(asked).toEqual(['Delete “My leads”? Note: it’s in your lists “My box”, “Two”. Deleting it takes it off there too.']);
+    expect(t.rowOf('My box').querySelector('.ymb-sum').textContent).toBe('List · 1 item');
+    expect(t.rowOf('Two').querySelector('.ymb-sum').textContent).toBe('List · empty');
     await t.save();
     expect(JSON.stringify(t.server.puts[0].body.config)).not.toMatch(/user:leads/);
     expect(t.server.user().items.retired).toEqual(['user:leads']);

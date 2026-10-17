@@ -204,8 +204,13 @@
 // "Arrange pages and defaults…" → window.top.ycLayoutEditor.open({ scope:
 // 'firm' }), the shell's layout editor in its firm mode, drawn over the whole
 // app like the icon picker. It edits ANOTHER firm document, `layout` (Home,
-// the sidebar, the More Features and Admin pages and their small buttons),
-// with its own load, base and save — never this page's Save. History lists
+// the sidebar, the More Features and Admin pages and their small buttons, and
+// — S6c-5 — the tiles of the firm's own PAGES), with its own load, base and
+// save — never this page's Save. A firm item may be a PAGE (kind Page, action
+// { type:'page' }): a tab of tiles like More Features for everyone who sees
+// it; its name, icon and Who sees what live here, its tiles in the layout —
+// the row's "Arrange its tiles…" opens the editor on it (section 'pages',
+// page: its id), for SAVED pages only (the editor reads saved settings). History lists
 // either document (a switch at its top); restoring a `layout` version sends
 // the newest version id the list shows as its base (a save since → 409) and
 // hands the restored document to the shell the same way.
@@ -303,7 +308,7 @@ const FIRM_ID_RE = /^firm:[a-z0-9-]{1,40}$/;  // lib/uiConfigShape FIRM_ID_RE
 const CONTROL_RE = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/;
 const LABEL_MAX = 40;
 const HREF_MAX = 2000;
-const EDIT_TYPES = { url: 'Link', tool: 'Tool', view: 'Saved view' };
+const EDIT_TYPES = { url: 'Link', tool: 'Tool', view: 'Saved view', page: 'Page' };   // page: ui-custom S6c-5
 const EMPTY_DOC = Object.freeze({ hidden: [], locked: [], renames: {}, items: [] });
 
 function labelProblem(v, optional) {
@@ -407,13 +412,14 @@ function docFromForm(stored, form, catalog) {
     if (row.kept) return row.orig;
     const orig = isObj(row.orig) ? row.orig : {};
     const oa = isObj(orig.action) && orig.action.type === row.type ? orig.action : null;
-    const action = row.type === 'url'
+    // a page (S6c-5) carries nothing but its type: its tiles are in the layout document
+    const action = row.type === 'page' ? { type: 'page' } : row.type === 'url'
       ? { ...(oa || {}), type: 'url', href: String(row.href ?? '').trim(), present: (oa && oa.present) || 'window' }
       : { ...(oa || {}), type: row.type, key: row.key || '', present: (oa && oa.present) || 'modal' };
     // The dialog size (S3.3) is optional, absent = large: compact is written
     // as 'compact'; large stays ABSENT unless the stored action named a size
     // (so a document saved before sizes existed round-trips unchanged).
-    if (row.type !== 'url') {
+    if (row.type !== 'url' && row.type !== 'page') {
       if (row.size === 'compact') action.size = 'compact';
       else if (oa && Object.prototype.hasOwnProperty.call(oa, 'size')) action.size = 'large';
       else delete action.size;
@@ -459,7 +465,7 @@ function formProblems(form) {
   form.items.forEach((r, i) => {
     if (r.kept) return;
     const p = labelProblem(r.label) || iconProblem(r.icon)
-      || (r.type === 'url' ? hrefProblem(r.href) : (r.key ? null : `choose a ${r.type === 'tool' ? 'tool' : 'saved view'}`));
+      || (r.type === 'url' ? hrefProblem(r.href) : r.type === 'page' ? null : (r.key ? null : `choose a ${r.type === 'tool' ? 'tool' : 'saved view'}`));
     if (p) { out.rows[i] = p; out.count++; }
   });
   for (const id of Object.keys(form.renames)) {
@@ -516,6 +522,24 @@ function layoutParts(doc, nameOf) {
     }
     if (Array.isArray(removed[sf]) && removed[sf].length) bits.push('hidden: ' + removed[sf].map(nameOf).join(', '));
     if (bits.length) parts.push([title, bits.join(' · ')]);
+  }
+  // the firm's pages (S6c-5): tiles row by row, then the small buttons
+  const pages = isObj(d.pages) ? d.pages : {};
+  for (const id of Object.keys(pages)) {
+    const pg = isObj(pages[id]) ? pages[id] : {};
+    const bits = [];
+    if (Array.isArray(pg.tiles)) {
+      const groups = [[]];
+      for (const e of pg.tiles) {
+        if (!isObj(e)) continue;
+        if (typeof e.item === 'string') groups[groups.length - 1].push(nameOf(e.item));
+        else if (e.break === true) groups.push([]);
+      }
+      const live = groups.filter((g) => g.length);
+      bits.push(live.map((g, i) => (live.length > 1 ? `Row ${i + 1}: ` : '') + g.join(', ')).join('; ') || 'nothing');
+    }
+    if (Array.isArray(pg.icons)) bits.push('small buttons: ' + (pg.icons.filter((e) => isObj(e) && typeof e.item === 'string').map((e) => nameOf(e.item)).join(', ') || 'none'));
+    parts.push([`Page “${nameOf(id)}”`, bits.join(' · ') || 'nothing']);
   }
   return parts.length ? parts : [['Arrangement', 'The app’s standard layout everywhere']];
 }
@@ -704,9 +728,10 @@ const LauncherSection = {
       <div class="fm-block">
         <h3>Pages and defaults</h3>
         <span class="yc-hint">Arrange the <b>More Features</b> and <b>Admin</b> pages for everyone — the order of the
-          tiles, where a row breaks, where your firm items sit, the small buttons under them — and the <b>Home</b> and
-          <b>sidebar</b> everyone starts from. It opens over the app and saves on its own (not with this page's Save),
-          from the settings as saved: save a new firm item here first to place it.</span>
+          tiles, where a row breaks, where your firm items sit, the small buttons under them — the <b>Home</b> and
+          <b>sidebar</b> everyone starts from, and the tiles of your firm's own <b>pages</b>. It opens over the app and
+          saves on its own (not with this page's Save), from the settings as saved: save a new firm item here first to
+          place it.</span>
         <div style="margin-top:8px"><button type="button" class="btn btn-outline btn-sm" data-act="arrange"><i class="fa-solid fa-table-cells-large"></i> Arrange pages and defaults…</button></div>
       </div>
       <div class="fm-block">
@@ -723,8 +748,9 @@ const LauncherSection = {
       <div class="fm-block">
         <h3>Firm items</h3>
         <span class="yc-hint">Your own launcher entries, listed under <b>Firm</b> in All and found by the Ctrl-K search.
-          A <b>link</b> opens in a new window; a <b>tool</b> or <b>saved view</b> opens over the app. An item's id is
-          made from its first label and never changes after it is saved.</span>
+          A <b>link</b> opens in a new window; a <b>tool</b> or <b>saved view</b> opens over the app; a <b>page</b> is a
+          tab of tiles like More Features, for everyone who sees it (<b>Who sees what</b> below) — save it, then arrange
+          its tiles. An item's id is made from its first label and never changes after it is saved.</span>
         <div class="fm-items" id="fm-items">${this.itemsHtml()}</div>
         <div style="margin-top:8px"><button type="button" class="btn btn-outline btn-sm" data-act="add-item"><i class="fa-solid fa-plus"></i> Add item</button></div>
       </div>
@@ -770,7 +796,12 @@ const LauncherSection = {
     const pre = `fi${i}`;
     const typeSel = Object.keys(EDIT_TYPES).map((t) => `<option value="${t}" ${r.type === t ? 'selected' : ''}>${EDIT_TYPES[t]}</option>`).join('');
     let target;
-    if (r.type === 'url') {
+    if (r.type === 'page') {
+      target = `<span class="yc-flabel">A page of tiles</span>
+        <span class="yc-hint">A tab of its own, like More Features, for everyone who sees it. ${r.saved
+          ? 'Its tiles are arranged in the editor:' : 'Save it first, then arrange its tiles:'}</span>
+        <div style="margin-top:6px"><button type="button" class="btn btn-outline btn-sm" data-act="arrange-page" ${r.saved ? '' : 'disabled'}><i class="fa-solid fa-table-cells-large"></i> Arrange its tiles…</button></div>`;
+    } else if (r.type === 'url') {
       target = `<label class="yc-flabel" for="${pre}-href">Address</label>
         <input type="text" id="${pre}-href" data-f="href" maxlength="2000" placeholder="https://… or /path" value="${esc(r.href)}">
         <span class="yc-hint">Opens in a new window.</span>`;
@@ -888,7 +919,7 @@ const LauncherSection = {
     if (!row || t.tagName !== 'SELECT') return;
     if (t.dataset.f === 'type') {
       row.type = t.value;
-      if (row.type === 'url') row.key = ''; else { row.href = ''; row.key = ''; }
+      if (row.type === 'url') row.key = ''; else { row.href = ''; row.key = ''; }   // a page keeps neither
       this.redrawItems(`#fi${i}-type`);
     } else if (t.dataset.f === 'key') {
       row.key = t.value;
@@ -916,6 +947,7 @@ const LauncherSection = {
     else if (act === 'down' && i < rows.length - 1) { [rows[i + 1], rows[i]] = [rows[i], rows[i + 1]]; st.srv = null; this.redrawItems(); }
     else if (act === 'del') { rows.splice(i, 1); st.srv = null; this.redrawItems(); }
     else if (act === 'icon') return this.pickIcon(b, rows[i]);
+    else if (act === 'arrange-page') return this.openArrange(b, rows[i].saved ? rows[i].id : null);
     else return;
     this.changed();
   },
@@ -947,16 +979,19 @@ const LauncherSection = {
    *  It works from the SAVED firm settings: with unsaved edits here, it asks
    *  first. A refusal (no permission, a failed read) is the editor's own
    *  toast. */
-  async openArrange(b) {
+  // pageId (S6c-5): a SAVED firm page's id — the editor opens on its block in
+  // the Firm pages tab (an unsaved page has no tiles to arrange yet).
+  async openArrange(b, pageId) {
     const ed = window.top && window.top.ycLayoutEditor;
     if (!ed || typeof ed.open !== 'function') {
       banner('The arrangement editor is not reachable from here — open this page from YisraCase (More → YisraCase Config).');
       return false;
     }
+    if (pageId === null) return false;
     if (RegistryDoc.dirty() && !(await ask('Arrange pages and defaults?',
       'This page has unsaved changes. The arrangement works from the saved settings, so a new firm item appears there once you Save here. Open it anyway?', 'Open'))) return false;
     b.disabled = true;
-    try { return await ed.open({ scope: 'firm', from: b }); } finally { b.disabled = false; }
+    try { return await ed.open(pageId ? { scope: 'firm', section: 'pages', page: pageId, from: b } : { scope: 'firm', from: b }); } finally { b.disabled = false; }
   },
 
   // ── History ── of either firm document: registry_overrides (this page's),

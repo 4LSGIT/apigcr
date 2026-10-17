@@ -189,7 +189,7 @@ describe('2. icon rows: the surfaces and their markup', () => {
     expect((html.match(/id="sbAll"/g) || []).length).toBe(1);
     expect((html.match(/id="homeAll"/g) || []).length).toBe(1);
     // an empty icon row takes no space; a drilled-in Admin hides its row like More's
-    expect(EGG_CSS).toMatch(/\.more-egg-row:empty, \.home-egg-row:empty, \.admin-egg-row:empty \{ display:none; \}/);
+    expect(EGG_CSS).toMatch(/\.more-egg-row:empty, \.home-egg-row:empty, \.admin-egg-row:empty, \.page-egg-row:empty \{ display:none; \}/);
     expect(EGG_CSS).toMatch(/\.drill-active > \.admin-egg-row \{ display:none; \}/);
   });
 

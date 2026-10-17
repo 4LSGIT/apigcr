@@ -23,7 +23,7 @@
  *      mount, the All tab, ycAll.js, ycLayoutEditor.js) over an API whose
  *      every call runs the REAL services/uiConfigService on an in-memory store
  *      (tests/helpers/uiConfigStore.js): no can_edit_firm → nothing opens;
- *      three tabs, seven sections; Fred's scenario by clicks → ONE PUT
+ *      four tabs (the fourth, Firm pages, is S6c-5's), seven sections; Fred's scenario by clicks → ONE PUT
  *      { scope:'firm', config_key:'layout', base } → the shell repaints with no
  *      reload (the More grid in its new order, the firm row gone); a second
  *      session saving first → 409, edits kept, Reload discards them for the
@@ -443,12 +443,12 @@ describe('3. the panel, firm mode, for real', () => {
     expect(t.toasts).toEqual(['Couldn’t load the firm’s arrangement; try again.']);
   });
 
-  test('opens on three tabs and seven sections; More lists the grid then the firm row (tagged Firm); All is "Always here"; nothing to save', async () => {
+  test('opens on four tabs (Firm pages joined in S6c-5) and seven surface sections; More lists the grid then the firm row (tagged Firm); All is "Always here"; nothing to save', async () => {
     t = await boot({ store: await seedClio(makeStore()) });
     expect(await firmOpen(t)).toBe(true);
     expect(t.panel().getAttribute('data-scope')).toBe('firm');
     expect(t.d.getElementById('yleTitle').textContent.trim()).toBe('Arrange pages and defaults for everyone');
-    expect([...t.panel().querySelectorAll('.yle-tab')].map((b) => b.getAttribute('data-pane'))).toEqual(['home', 'more', 'admin']);
+    expect([...t.panel().querySelectorAll('.yle-tab')].map((b) => b.getAttribute('data-pane'))).toEqual(['home', 'more', 'admin', 'pages']);
     expect([...t.panel().querySelectorAll('.yle-sec')].map((s) => s.getAttribute('data-sf'))).toEqual(['home', 'homeIcons', 'sidebar', 'more', 'moreIcons', 'admin', 'adminIcons']);
     expect(t.panel().querySelector('#ylePane_home').hidden).toBe(false);
     expect(t.panel().querySelector('#ylePane_more').hidden).toBe(true);

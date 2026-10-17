@@ -189,7 +189,7 @@ describe('user: refs — a user\'s layout and shortcuts may name a button; the f
     expect(ro({ items: [F, F] }).errors).toEqual(['items[1]: duplicate id firm:payroll']);
     expect(ro({ items: Array.from({ length: 51 }, (_, i) => ({ ...F, id: 'firm:f' + i })) }).errors).toEqual(['items: at most 50 entries']);
     expect(ro({ items: [{ ...F, action: { type: 'action', present: 'modal' } }] }).errors)
-      .toEqual(['items[0]: action.type must be one of url, tool, view (there is no action kind: a firm action is a tool item)']);
+      .toEqual(['items[0]: action.type must be one of url, tool, view, page (there is no action kind: a firm action is a tool item)']);   // page: S6c-5
     expect(ro({ retired: ['firm:payroll'], items: [F] }).errors)
       .toEqual(['items[0]: firm:payroll belonged to a deleted item and is retired — a new item needs a new id']);
     expect(ro({ items: [F], retired: ['firm:old'] }).value).toEqual({ hidden: [], locked: [], renames: {}, items: [F], retired: ['firm:old'] });

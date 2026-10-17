@@ -82,7 +82,8 @@ describe('1. the markup and the CSS', () => {
       const stage = d.getElementById('ycPanels');
       expect(stage.classList.contains('tab-main')).toBe(false);
       expect(stage.style.display).toBe('none');
-      expect(stage.previousElementSibling.id).toBe('tabAdmin');
+      expect(stage.previousElementSibling.id).toBe('ycPages');                       // the custom pages' container (S6c-5), then the stage
+      expect(stage.previousElementSibling.previousElementSibling.id).toBe('tabAdmin');
       expect([...stage.children].map((c) => c.id).sort()).toEqual([...TARGETS].sort());
       for (const id of TARGETS) {
         const p = d.getElementById(id);
@@ -101,8 +102,9 @@ describe('1. the markup and the CSS', () => {
     expect(DRILL_CSS).toMatch(/#ycPanels > div > iframe \{\s*height: calc\(100vh - var\(--header-h\) - 46px\) !important;\s*height: calc\(100dvh - var\(--header-h\) - 46px\) !important;\s*\}/);
     expect(DRILL_CSS).toMatch(/#ycPanels > div \{ margin-top: 0 !important; \}/);
     for (const css of STYLES) expect(css).not.toMatch(/#tab(More|Admin) > div/);
-    // the grid rules still select the tiles in their pages
-    expect(DRILL_CSS).toMatch(/#tabMore > \.big-button, #tabAdmin > \.big-button \{/);
+    // the grid rules still select the tiles in their pages (keyed on the hubs' shared class since S6c-5)
+    expect(DRILL_CSS).toMatch(/\.yc-hub > \.big-button \{/);
+    expect(DRILL_CSS).toMatch(/\.yc-hub > br \{ display: none; \}/);
     expect(DRILL_CSS).toMatch(/\.drill-active > \.big-button, \.drill-active > br \{ display:none; \}/);
   });
 });
