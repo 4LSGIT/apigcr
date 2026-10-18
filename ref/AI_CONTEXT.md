@@ -1919,9 +1919,9 @@ Tests: `settingsRegistry`, `settingsInventory`, `settingsAutomationGuard`,
 dedicated editor (duplicates refused, a removal asks); System draws runtime
 state as text, never controls.
 
-## 33. ASK YISRACASE — READ-ONLY CONVERSATIONAL ASSISTANT
+## 33. ASK YISRAI — READ-ONLY CONVERSATIONAL ASSISTANT
 
-**Surface.** More → Ask YisraCase (`public/assistant.html`), staff JWT only.
+**Surface.** More → Ask YisrAI (`public/assistant.html`), staff JWT only.
 `POST /api/assistant/plan {question,history}` returns a direct answer/refusal or
 a plan; the UI immediately sends its ticket to `POST /api/assistant/execute`.
 There is deliberately no confirmation for read-only operations. Plans are

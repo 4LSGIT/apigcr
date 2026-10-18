@@ -1,9 +1,9 @@
-# Ask YisraCase
+# Ask YisrAI
 
-Ask YisraCase is the firm's read-only conversational assistant. It can answer
+Ask YisrAI is the firm's read-only conversational assistant. It can answer
 questions about firm records, how YisraCase itself works, general knowledge,
 and current weather. Find it at
-**More → Ask YisraCase**.
+**More → Ask YisrAI**.
 
 ## Asking a question
 

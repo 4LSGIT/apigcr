@@ -84,9 +84,20 @@ describe('the registry data', () => {
     expect(new Set(keys).size).toBe(keys.length);
   });
 
-  test('Ask YisraCase and Simple Forms have distinct launcher icons', () => {
-    expect(REG.moreSimpleForms.icon).toBe('wand-magic-sparkles');
-    expect(REG.moreAssistant.icon).toBe('comments');
+  test('Ask YisrAI keeps the magic wand while Simple Forms uses the editor icon', () => {
+    expect(REG.moreSimpleForms.icon).toBe('square-pen');
+    expect(REG.moreAssistant.icon).toBe('wand-magic-sparkles');
+    expect(REG.moreAssistant.label).toBe('Ask YisrAI');
+  });
+
+  test('the shipped More grid has no row over four items and YisrAI stands alone last', () => {
+    const rows = [[]];
+    for (const entry of LAY.more) {
+      if (entry.break) rows.push([]);
+      else if (entry.item) rows[rows.length - 1].push(entry.item);
+    }
+    expect(Math.max(...rows.map((row) => row.length))).toBeLessThanOrEqual(4);
+    expect(rows[rows.length - 1]).toEqual(['moreAssistant']);
   });
 
   test('every item is placed on a surface (bar the S6b extras), ids are camelCase, grid ids carry their prefix', () => {

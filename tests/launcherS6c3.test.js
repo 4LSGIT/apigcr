@@ -152,12 +152,13 @@ describe('1. the firm mode\'s core (pure)', () => {
     expect(v[v.length - 3]).toEqual({ kind: 'break', act: 'remove' });
   });
 
-  test('Fred\'s scenario: Get Clio Code moved up into row 5, the trailing break removed → rows of four, written as More\'s full list; valid; the renderer draws exactly that', () => {
+  test('Fred\'s scenario: Get Clio Code moved up into row 5, the trailing firm break removed → rows of four plus YisrAI; valid; the renderer draws exactly that', () => {
     const s = firmSess(null);
     let at = viewKeys(s, 'more').indexOf('firm:clio-code');
-    // up past row 6 (four tiles) and the break above it → the end of row 5
-    for (let n = 0; n < 6; n++) { expect(s.move('more', at, -1)).toBe(true); at--; }
-    expect(rowsOf(viewKeys(s, 'more')).map((r) => r.length)).toEqual([4, 4, 4, 4, 4, 4, 1]);
+    // up past YisrAI, its break, row 6 (four tiles), and the break above it
+    // → the end of row 5
+    for (let n = 0; n < 8; n++) { expect(s.move('more', at, -1)).toBe(true); at--; }
+    expect(rowsOf(viewKeys(s, 'more')).map((r) => r.length)).toEqual([4, 4, 4, 4, 4, 4, 1, 1]);
     // the break the seed added now sits before Payroll: take Payroll off More, then the trailing break
     const keys = viewKeys(s, 'more');
     expect(s.remove('more', keys.indexOf('firm:payroll'))).toBe(true);
@@ -167,8 +168,9 @@ describe('1. the firm mode\'s core (pure)', () => {
     expect(Object.keys(doc.placed)).toEqual(['more']);
     expect(doc.removed).toEqual({});
     const rows = rowsOf(doc.placed.more.map((e) => (e.break ? '|' : e.item)));
-    expect(rows.map((r) => r.length)).toEqual([4, 4, 4, 4, 4, 4]);
+    expect(rows.map((r) => r.length)).toEqual([4, 4, 4, 4, 4, 4, 1]);
     expect(rows[4]).toEqual(['moreAvailability', 'moreBooking', 'moreCourtPreview', 'firm:clio-code']);
+    expect(rows[6]).toEqual(['moreAssistant']);
     expect(firmValid(doc)).toEqual({ ok: true, errors: [], same: true });
     expect(drawn('more', doc)).toEqual(viewKeys(s, 'more'));
     expect(s.isDirty()).toBe(true);
@@ -475,12 +477,12 @@ describe('3. the panel, firm mode, for real', () => {
     expect(t.panel().querySelector('.ysc-sec, .ymb-sec')).toBe(null);
   });
 
-  test('Fred\'s scenario by clicks: rows of four with Get Clio Code in row 5 → ONE PUT with the base → stored, versioned, and the shell repaints with no reload (firm row gone)', async () => {
+  test('Fred\'s scenario by clicks: rows of four with Get Clio Code in row 5 and YisrAI alone → ONE PUT with the base → stored, versioned, and the shell repaints with no reload (firm row gone)', async () => {
     t = await boot({ store: await seedClio(makeStore()) });
     expect(t.grid('tabMore').slice(-3)).toEqual(['|', 'Get Clio Code', 'Payroll']);       // today: the firm row
     await firmOpen(t, { section: 'more' });
     expect(t.panel().querySelector('#ylePane_more').hidden).toBe(false);
-    for (let n = 0; n < 6; n++) t.click(t.rowNamed('more', 'Get Clio Code').querySelector('[data-act="up"]'));
+    for (let n = 0; n < 8; n++) t.click(t.rowNamed('more', 'Get Clio Code').querySelector('[data-act="up"]'));
     t.click(t.rowNamed('more', 'Payroll').querySelector('[data-act="remove"]'));
     const rows = [...t.sec('more').querySelectorAll('.yle-rows > .yle-row')];
     t.click(rows[rows.length - 1].querySelector('[data-act="remove"]'));                  // the trailing break
@@ -492,13 +494,14 @@ describe('3. the panel, firm mode, for real', () => {
     expect([puts[0].body.scope, puts[0].body.config_key, puts[0].body.base]).toEqual(['firm', 'layout', null]);   // no layout row yet: base null
     const stored = t.store.doc('firm', 0, 'layout');
     expect(Object.keys(stored.placed)).toEqual(['more']);
-    expect(rowsOfGrid(stored.placed.more.map((e) => (e.break ? '|' : e.item)))).toEqual([4, 4, 4, 4, 4, 4]);
+    expect(rowsOfGrid(stored.placed.more.map((e) => (e.break ? '|' : e.item)))).toEqual([4, 4, 4, 4, 4, 4, 1]);
     expect(t.store.versions.filter((v) => v.config_key === 'layout')).toHaveLength(1);
     expect(t.w.firmData.ui.firm.layout).toEqual(stored);
     expect(t.w.ycLayoutEditor.isOpen()).toBe(false);
     const g = t.grid('tabMore');
-    expect(rowsOf(g).map((r) => r.length)).toEqual([4, 4, 4, 4, 4, 4]);
+    expect(rowsOf(g).map((r) => r.length)).toEqual([4, 4, 4, 4, 4, 4, 1]);
     expect(rowsOf(g)[4][3]).toBe('Get Clio Code');
+    expect(rowsOf(g)[6]).toEqual(['Ask YisrAI']);
     expect(g).not.toContain('Payroll');
     expect(t.d.querySelectorAll('#tabMore [data-yc-firm-row]')).toHaveLength(0);
     expect(t.toasts.slice(-1)).toEqual(['Saved — everyone gets the new arrangement as they load YisraCase']);

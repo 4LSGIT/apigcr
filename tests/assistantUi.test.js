@@ -7,7 +7,7 @@ const ROOT = path.join(__dirname, '..');
 const html = fs.readFileSync(path.join(ROOT, 'public/assistant.html'), 'utf8');
 const route = fs.readFileSync(path.join(ROOT, 'routes/api.assistant.js'), 'utf8');
 
-describe('Ask YisraCase UI wiring', () => {
+describe('Ask YisrAI UI wiring', () => {
   test('its inline script parses as JavaScript', () => {
     const scripts = [...html.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/gi)]
       .map((m) => m[1]).filter((s) => s.trim());
@@ -32,7 +32,7 @@ describe('Ask YisraCase UI wiring', () => {
   });
 
   test('shows the wand-writing animation during planning and execution', () => {
-    expect(html).toContain('<h1><i class="fa-solid fa-comments"></i> Ask YisraCase</h1>');
+    expect(html).toContain('<h1><i class="fa-solid fa-wand-magic-sparkles"></i> Ask YisrAI</h1>');
     expect(html).toContain('class="thinking-wand"');
     expect(html).toContain('@keyframes wandWrite');
     expect(html).toContain("type: 'thinking'");

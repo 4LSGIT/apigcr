@@ -83,7 +83,7 @@ const IMAGE_MEDIA_TYPES = new Set([
 // model (one passed to computeCostCents but absent from this map) yields a
 // null cost rather than a wrong number.
 const MODEL_PRICING = {
-  // Ask YisraCase (verified against the Claude API docs, 2026-10-18).
+  // Ask YisrAI (verified against the Claude API docs, 2026-10-18).
   'claude-opus-5':             { in: 5, out: 25 },
   'claude-sonnet-4-6':         { in: 3, out: 15 },
   'claude-haiku-4-5-20251001': { in: 1, out: 5  },

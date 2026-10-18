@@ -445,14 +445,14 @@ describe('4. the two-level resolver: shipped → firm → user', () => {
   test('the firm step is the base of the user step: a firm More layout is what a user sees (More is firm-only); firm placements read as default', () => {
     const firm = { placed: { more: [{ item: 'moreReports' }, { item: 'firm:clio' }, { break: true }, { item: 'moreManuals' }] }, removed: { more: ['moreViews'] } };
     const out = R('more', { firm });
-    expect(shape_(out).slice(0, 4)).toEqual(['moreReports', 'firm:clio', '|', 'moreManuals']);
+    expect(shape_(out).slice(0, 5)).toEqual(['moreReports', 'moreAssistant', 'firm:clio', '|', 'moreManuals']);
     expect(shape_(out)).not.toContain('moreViews');
     expect(shape_(out).filter((x) => x !== '|').sort()).toEqual([...placed('more').filter((k) => k !== 'moreViews'), 'firm:clio'].sort());
     expect(new Set(out.map((e) => e.origin))).toEqual(new Set(['default']));
     // the user step over it: a user document naming More is ignored by the renderer (firm-only), but the resolver is one rule — a caller
     // passing one gets the merge; what matters here is that the firm's order IS the base
     // (a partial user list: the firm-base items neither placed nor removed slot in by the merge rule, moreReports first)
-    expect(shape_(R('more', { firm, user: { placed: { more: [{ item: 'moreManuals' }] } } })).slice(0, 3)).toEqual(['moreReports', 'firm:clio', 'moreManuals']);
+    expect(shape_(R('more', { firm, user: { placed: { more: [{ item: 'moreManuals' }] } } })).slice(0, 4)).toEqual(['moreReports', 'moreAssistant', 'firm:clio', 'moreManuals']);
   });
 
   test('ruling 4: a firm Home change only ADDS for a user who already arranged Home; a fresh user gets the firm\'s order', () => {
@@ -509,6 +509,7 @@ describe('5. the renderer under a firm layout, for real', () => {
     { item: 'moreCaseConfig' }, { item: 'moreChecklists' }, { item: 'moreAutomations' }, { item: 'moreViews' }, { break: true },
     { item: 'moreAvailability' }, { item: 'moreBooking' }, { item: 'moreCourtPreview' }, { item: 'firm:payroll' }, { break: true },
     { item: 'moreCampaigns' }, { item: 'moreRedirects' }, { item: 'moreLandingPages' }, { item: 'moreReports' }, { break: true },
+    { item: 'moreAssistant' }, { break: true },
     { item: 'adminUsers' },
   ] } };
 
@@ -529,11 +530,12 @@ describe('5. the renderer under a firm layout, for real', () => {
     const before = t.defaults();
     t.L.applyAccess({ ...SU, ui: ui({ firm: MORE, ro: { items: [FIRM_URL] } }) });
     const rows = t.seen('more').join(' ').split(' | ').map((r) => r.split(' '));
-    expect(rows.map((r) => r.length)).toEqual([4, 4, 4, 4, 4, 4, 1]);
+    expect(rows.map((r) => r.length)).toEqual([4, 4, 4, 4, 4, 4, 1, 1]);
     expect(rows[4]).toEqual(['moreAvailability', 'moreBooking', 'moreCourtPreview', '+firm:payroll']);
-    expect(rows[6]).toEqual(['+adminUsers']);
+    expect(rows[6]).toEqual(['moreAssistant']);
+    expect(rows[7]).toEqual(['+adminUsers']);
     // a firm break on a grid is two <br> elements, never a .home-break
-    expect(t.nodesOf('more').filter((n) => n.tagName === 'BR')).toHaveLength(12);
+    expect(t.nodesOf('more').filter((n) => n.tagName === 'BR')).toHaveLength(14);
     expect(t.d.querySelectorAll('#tabMore .home-break, #tabAdmin .home-break')).toHaveLength(0);
     for (const id of placed('more')) expect(t.L.elementsOf(id).more).toBe(before[id].more);
     expect(t.d.querySelectorAll('#tabMore > [data-yc-firm-row]')).toHaveLength(0);   // §4.3 step 4: placed.more replaces the firm row

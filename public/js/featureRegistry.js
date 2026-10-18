@@ -225,7 +225,7 @@ window.FEATURE_REGISTRY = {
   // tabs / repeaters / code. Its "Open in Form Builder" button clicks the
   // formBuilderDiv tile, so BOTH stay in the "more" exclusive group.
   moreSimpleForms: {
-    label: 'Simple Forms', icon: 'wand-magic-sparkles', target: 'formSimpleDiv', group: 'more',
+    label: 'Simple Forms', icon: 'square-pen', target: 'formSimpleDiv', group: 'more',
     hoverAnim: 'fa-bounce', styleVars: '--fa-animation-duration:1.3s',
   },
   moreFormBuilder: {
@@ -289,7 +289,7 @@ window.FEATURE_REGISTRY = {
     hoverAnim: 'fa-shake', styleVars: '--fa-animation-duration:0.6s',
   },
   moreAssistant: {
-    label: 'Ask YisraCase', icon: 'comments', target: 'assistantDiv', group: 'more',
+    label: 'Ask YisrAI', icon: 'wand-magic-sparkles', target: 'assistantDiv', group: 'more',
     hoverAnim: 'fa-beat', styleVars: '--fa-beat-scale:1.10; --fa-animation-duration:1.4s',
   },
   moreCampaigns: {
@@ -494,9 +494,9 @@ window.DEFAULT_LAYOUTS = {
     // itself, and the saved views you read it back through.
     { item: 'moreCaseConfig' }, { item: 'moreChecklists' }, { item: 'moreAutomations' }, { item: 'moreViews' },
     { break: true },
-    // When things happen, plus the read-only assistant that can search across
-    // them. Ask YisraCase fills the fourth slot Get Clio Code left behind.
-    { item: 'moreAvailability' }, { item: 'moreBooking' }, { item: 'moreCourtPreview' }, { item: 'moreAssistant' },
+    // When things happen: what can be booked, when, and the court email as it
+    // will go out.
+    { item: 'moreAvailability' }, { item: 'moreBooking' }, { item: 'moreCourtPreview' },
     { break: true },
     // What goes out, and what comes back as numbers: the message, the page it
     // lands on, the links that get there, and the reporting over all of it.
@@ -504,6 +504,10 @@ window.DEFAULT_LAYOUTS = {
     // outreach — but it belongs with "look at the result" more than with any
     // other row here.
     { item: 'moreCampaigns' }, { item: 'moreRedirects' }, { item: 'moreLandingPages' }, { item: 'moreReports' },
+    { break: true },
+    // YisrAI stands alone: the assistant is a cross-system entry point and its
+    // future action mode does not belong to any one More-feature subsystem.
+    { item: 'moreAssistant' },
   ],
 
   // More's icon row: Casey's paw (its markup, byte for byte, is the item's).
