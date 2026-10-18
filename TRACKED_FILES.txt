@@ -21,6 +21,7 @@ lib/apiKeys.js
 lib/appBuild.js
 lib/auditShape.js
 lib/auth.formDev.js
+lib/auth.impersonation.js
 lib/auth.jwtOrApiKey.js
 lib/auth.readonly.js
 lib/auth.requireAuth.js
@@ -649,6 +650,7 @@ routes/api.forms.js
 routes/api.gcal.js
 routes/api.gcontacts.js
 routes/api.hooks.js
+routes/api.impersonation.js
 routes/api.intake.js
 routes/api.intake.petition.js
 routes/api.issueReports.js
@@ -1287,6 +1289,7 @@ tests/hookSpoolReplay.mysql.test.js
 tests/hookTransforms.test.js
 tests/hooksGate.test.js
 tests/iconPickerS6a.test.js
+tests/impersonation.test.js
 tests/ingestRuleService.duplicate.test.js
 tests/ingestRuleService.transformFailure.test.js
 tests/ingestService.evaluatorFailure.test.js

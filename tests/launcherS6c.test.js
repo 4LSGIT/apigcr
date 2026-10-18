@@ -6,7 +6,8 @@
  * and Fred's rulings on §6.
  *
  *   1. GATES: every Admin tile carries the gate its routes enforce (`gate:
- *      'su'` on the twelve superuserOnly tools, none on Etch — a static page),
+ *      'su'` on the eleven superuserOnly tools, users.impersonate on Users,
+ *      none on Etch — a static page),
  *      pinned as a set; the Admin PAGE item carries none (its visibility is the
  *      firm's visible_to). computeEffective applies a gate with the user's
  *      roles by lib/capabilities' rule — the shell's CAP_ROOT / ROLE_CAPS copies
@@ -78,7 +79,8 @@ const EGG_CSS = (() => { const h = STYLES.filter((s) => s.includes('.home-egg-ro
 const PAW = '<div class="more-egg-row"><button type="button" class="more-egg" onclick="toggleMascot()" title="Casey the YisraCat" aria-label="Casey the YisraCat"><i class="fa-solid fa-paw" aria-hidden="true"></i></button></div>';
 const HOME_ALL = '<div class="home-egg-row"><button type="button" id="homeAll" class="home-egg" onclick="openMainTab(\'tabAll\')" title="All features" aria-label="All features"><i class="fa-solid fa-table-cells" aria-hidden="true"></i></button></div>';
 const SU_TILES = ['adminReadonlyKeys', 'adminApiKeys', 'adminCtaLinks', 'adminDbConsole', 'adminConnections', 'adminApiTester', 'adminTools',
-  'adminScratch', 'adminUsers', 'adminSystemAlerts', 'adminSupportInbox', 'adminMailboxes'];
+  'adminScratch', 'adminSystemAlerts', 'adminSupportInbox', 'adminMailboxes'];
+const CAP_TILES = ['adminUsers'];
 const SURFACES = ['home', 'sidebar', 'homeIcons', 'more', 'moreIcons', 'admin', 'adminIcons'];
 const FIRM_URL = { id: 'firm:payroll', label: 'Payroll', icon: 'money-check', action: { type: 'url', href: 'https://payroll.example.com/', present: 'window' } };
 const ui = ({ layout, firm, ro } = {}) => ({ firm: { ...(ro ? { registry_overrides: ro } : {}), ...(firm ? { layout: firm } : {}) }, user: layout ? { layout } : {} });
@@ -86,14 +88,15 @@ const SU = { isAdmin: true, roles: ['su'], denied: [] };
 
 // ─────────────────────────────────────────────────────────────────────────
 describe('1. gates', () => {
-  test('the Admin tiles: gate su on the twelve superuserOnly tools, none on Etch; the Admin page item has none; nothing else is gated', () => {
+  test('the Admin tiles: superuser tools use su, Users uses its capability, Etch and the Admin page are open', () => {
     const gated = Object.keys(REG).filter((k) => REG[k].gate !== undefined);
-    expect(gated.sort()).toEqual([...SU_TILES].sort());
-    for (const k of gated) expect([k, REG[k].gate]).toEqual([k, 'su']);
+    expect(gated.sort()).toEqual([...SU_TILES, ...CAP_TILES].sort());
+    for (const k of SU_TILES) expect([k, REG[k].gate]).toEqual([k, 'su']);
+    expect(REG.adminUsers.gate).toBe('users.impersonate');
     expect(REG.adminEtch.gate).toBeUndefined();
     expect(REG.admin.gate).toBeUndefined();
     // the classification covers every Admin grid tile but Etch
-    expect(placed('admin').filter((k) => k !== 'adminEtch').sort()).toEqual([...SU_TILES].sort());
+    expect(placed('admin').filter((k) => k !== 'adminEtch').sort()).toEqual([...SU_TILES, ...CAP_TILES].sort());
   });
 
   test('the shell\'s CAP_ROOT / ROLE_CAPS are lib/capabilities, verbatim', () => {
@@ -140,14 +143,14 @@ describe('1. gates', () => {
       t.L.applyAccess({ isAdmin: false, roles: ['it'], denied: [], ui: ui({ ro: { visible_to: { admin: ['it', 'admin'] } } }) });
       const tiles = [...t.d.querySelectorAll('#tabAdmin > .big-button')];
       expect(tiles).toHaveLength(13);
-      expect(tiles.filter((b) => t.shown(b)).map((b) => b.textContent.trim())).toEqual(['Etch']);
+      expect(tiles.filter((b) => t.shown(b)).map((b) => b.textContent.trim())).toEqual(['Etch', 'Users']);
       for (const id of SU_TILES) expect([id, t.L.elementsOf(id).admin.hasAttribute('data-yc-denied'), t.L.elementsOf(id).admin.style.display]).toEqual([id, true, '']);
       expect(t.d.getElementById('sbAdmin').hasAttribute('data-yc-denied')).toBe(false);   // the page item is theirs
       // drilled in, the strip has no su pill
       t.w.openMainTab('tabAdmin');
       t.L.elementsOf('adminEtch').admin.click();   // a dialog tile: no drill; build the strip through a panel-less path instead
       t.w.ensureStrip(t.d.getElementById('tabAdmin'));
-      expect([...t.d.querySelectorAll('#tabAdmin > .feature-strip .pill-button')].map((p) => p.textContent.trim())).toEqual(['All', 'Etch']);
+      expect([...t.d.querySelectorAll('#tabAdmin > .feature-strip .pill-button')].map((p) => p.textContent.trim())).toEqual(['All', 'Etch', 'Users']);
       // staff with the live rule: the page item hidden too; su: nothing hidden
       t.L.applyAccess({ roles: ['staff'] });
       expect(t.d.getElementById('sbAdmin').hasAttribute('data-yc-denied')).toBe(true);
@@ -165,7 +168,7 @@ describe('1. gates', () => {
     expect(ids(VL.computeEffective({ isAdmin: false, roles: ['staff'], ui: ui({ ro }) }))).not.toContain('admin');
     const it = VL.computeEffective({ isAdmin: false, roles: ['it'], ui: ui({ ro }) });
     expect(ids(it)).toContain('admin');
-    expect(ids(it.filter((e) => e.group === 'Admin'))).toEqual(['adminEtch']);
+    expect(ids(it.filter((e) => e.group === 'Admin'))).toEqual(['adminEtch', 'adminUsers']);
     expect(ids(VL.computeEffective({ isAdmin: false, roles: ['su'], ui: ui({ ro }) }).filter((e) => e.group === 'Admin'))).toEqual(placed('admin'));
   });
 });
@@ -545,7 +548,7 @@ describe('5. the renderer under a firm layout, for real', () => {
     expect(t.errors).toEqual([]);
   });
 
-  test('an Admin item placed on More opens its panel IN PLACE on More (S6c-4: the neutral carries data-target, no group); a non-su never gets the tile', () => {
+  test('Users placed on More opens in place there, and IT keeps its capability-gated tile', () => {
     t.L.applyAccess({ ...SU, ui: ui({ firm: MORE }) });
     t.w.openMainTab('tabMore');
     const n = t.d.querySelector('#tabMore > .big-button[data-yc-shortcut="adminUsers"]');
@@ -556,8 +559,7 @@ describe('5. the renderer under a firm layout, for real', () => {
     // the Admin tile is still the one element of adminUsers; More's neutral is not in elementsOf
     expect(Object.keys(t.L.elementsOf('adminUsers'))).toEqual(['admin']);
     t.L.applyAccess({ isAdmin: false, roles: ['it'] });
-    expect(t.d.querySelector('#tabMore > .big-button[data-yc-shortcut="adminUsers"]')).toBeNull();
-    expect(t.seen('more')).not.toContain('+adminUsers');
+    expect(t.d.querySelector('#tabMore > .big-button[data-yc-shortcut="adminUsers"]')).not.toBeNull();
   });
 
   test('a firm-removed tile stays in the DOM hidden by data-yc-unplaced (never style.display), gets no pill, and exec still opens its panel', () => {

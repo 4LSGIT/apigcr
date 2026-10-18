@@ -379,19 +379,19 @@ describe('3. access', () => {
     }
   });
 
-  test('a gated (su) panel placed on a page is unreachable for a non-su by every path: not drawn, no pill, exec refuses; the page itself shows what they may open', () => {
+  test('a gated (su) panel is unreachable for IT, while capability-gated Users remains available', () => {
     t = boot();
     t.L.applyAccess({ ...IT, ui: ui() });
     const pg = t.pageOf('user:desk');
-    expect(t.tiles(pg)).toEqual(['moreAutomations', 'adminUsers', '|', 'user:leads-tab', 'user:box', 'user:court'].filter((k) => k !== 'adminUsers'));
+    expect(t.tiles(pg)).toEqual(['moreAutomations', 'adminUsers', '|', 'user:leads-tab', 'user:box', 'user:court']);
     expect(pg.querySelector('[data-yc-shortcut="adminDbConsole"]')).toBe(null);
-    expect(pg.querySelector('[data-yc-shortcut="adminUsers"]')).toBe(null);
+    expect(pg.querySelector('[data-yc-shortcut="adminUsers"]')).not.toBe(null);
     pg.querySelector('[data-yc-shortcut="moreAutomations"]').click();
     expect(t.pills(pg)).not.toContain('dbConsoleDiv');
-    expect(t.pills(pg)).not.toContain('usersDiv');
+    expect(t.pills(pg)).toContain('usersDiv');
     expect(t.L.exec('adminDbConsole')).toBe(false);
-    expect(t.L.exec('adminUsers', { page: pg.id })).toBe(false);
-    expect(t.onStage()).toEqual(['automationsDiv']);
+    expect(t.L.exec('adminUsers', { page: pg.id })).toBe(true);
+    expect(t.onStage()).toEqual(['usersDiv']);
     expect(t.errors.filter((e) => !/not in this user's launcher/.test(e))).toEqual([]);
   });
 

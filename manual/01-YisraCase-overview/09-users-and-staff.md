@@ -122,9 +122,22 @@ Every log entry records `log_by` — the user ID of whoever (or whatever process
 
 ## Managing Users
 
-User accounts are managed from the Admin tab (**Admin → Users (SU)**). For
+User accounts are managed from the Admin tab (**Admin → Users**). For
 security, passwords are hashed with bcrypt into `password_hash` and are never
 stored or displayed in plain text. Password resets go through `reset_token` /
 `reset_expires` rather than an admin ever seeing a password.
 
 Staff members can update their own name, username, email, phone, and communication preferences from their profile page without needing admin access. Password changes go through a separate reset flow.
+
+### IT View as
+
+Users with the `it` or `su` role can choose **View as** beside an active,
+non-privileged human user. This opens a 30-minute session in the current tab
+using that user's roles, entitlements, launcher layout, and preferences. The
+original IT login remains active in other tabs and is restored by the warning
+button in the header.
+
+View-as sessions are read-only across the API. They cannot target the
+automation account, the current account, a disabled account, or another user
+holding `it` or `su`. Starting a session is recorded in `admin_audit_log` with
+`tool = 'view_as'` and both actor and target identities.

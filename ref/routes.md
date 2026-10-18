@@ -1,7 +1,7 @@
 # Routes
 
-_Generated 2026-10-18T07:18:55.020Z_  
-_795 routes total — DELETE: 65, GET: 334, PATCH: 57, POST: 299, PUT: 37, _ALL: 3_
+_Generated 2026-10-18T18:16:48.491Z_  
+_797 routes total — DELETE: 65, GET: 335, PATCH: 57, POST: 300, PUT: 37, _ALL: 3_
 
 ## Global middleware chain
 
@@ -400,6 +400,8 @@ _795 routes total — DELETE: 65, GET: 334, PATCH: 57, POST: 299, PUT: 37, _ALL:
 | DELETE | `/api/hooks/targets/:id` | `staffAuth` | — |
 | PUT | `/api/hooks/targets/:id` | `staffAuth` | — |
 | POST | `/api/hooks/test-transform` | `staffAuth` | — |
+| GET | `/api/impersonation/users` | `staffAuth` | — |
+| POST | `/api/impersonation/users/:id/start` | `staffAuth` | — |
 | POST | `/api/intake/case` | `jwtOrApiKey` | — |
 | POST | `/api/intake/contact` | `jwtOrApiKey` | — |
 | POST | `/api/intake/petition` | `jwtOrApiKey` | — |
@@ -1065,4 +1067,4 @@ _795 routes total — DELETE: 65, GET: 334, PATCH: 57, POST: 299, PUT: 37, _ALL:
 
 ---
 
-_795 routes total — DELETE: 65, GET: 334, PATCH: 57, POST: 299, PUT: 37, _ALL: 3_
+_797 routes total — DELETE: 65, GET: 335, PATCH: 57, POST: 300, PUT: 37, _ALL: 3_

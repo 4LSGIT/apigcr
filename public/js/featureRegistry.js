@@ -356,8 +356,8 @@ window.FEATURE_REGISTRY = {
     hoverAnim: 'fa-fade', styleVars: '--fa-animation-duration:1.6s',
   },
   adminUsers: {
-    label: 'Users (SU)', icon: 'users-gear', target: 'usersDiv', group: 'admin',
-    gate: 'su',
+    label: 'Users', icon: 'users-gear', target: 'usersDiv', group: 'admin',
+    gate: 'users.impersonate',
     hoverAnim: 'fa-spin', styleVars: '--fa-animation-duration:3s',
   },
   adminSystemAlerts: {

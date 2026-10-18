@@ -117,6 +117,7 @@ describe('capability registry', () => {
     expect(shape).toEqual({
       'firm.settings': false,
       'users.manage': true,
+      'users.impersonate': false,
       'automations.manage': false,
       'archives.purge': false,
       'comms.read_all': false,

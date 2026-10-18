@@ -578,13 +578,13 @@ describe('the boot wiring (review fixes): loadFirmData + loadUserContext, extrac
     const t = await luc('admin,it', ['cases', 'moreAutomations'], { firm: { registry_overrides: ro } });
     const eff = t.L.effectiveRegistry().map((e) => e.id);
     expect(t.L.isReady()).toBe(true);
-    expect(eff.filter((id) => GATED.has(id))).toEqual([]);
+    expect(eff.filter((id) => REG[id] && REG[id].gate === 'su')).toEqual([]);
     expect(eff).not.toContain('cases');
     const c = t.L.elementsOf('cases');
     expect([t.shown(c.sidebar), t.shown(c.home), t.shown(t.L.elementsOf('moreAutomations').more)]).toEqual([false, false, false]);
     // it/admin: the Admin page is theirs (visible_to), with the one tile they can use
     expect(t.shown(t.d.getElementById('sbAdmin'))).toBe(true);
-    expect(eff.filter((id) => id.startsWith('admin'))).toEqual(['admin', 'adminEtch']);
+    expect(eff.filter((id) => id.startsWith('admin'))).toEqual(['admin', 'adminEtch', 'adminUsers']);
     t.close();
     // staff: the firm's visible_to leaves them out — no Admin row, no Admin page item
     const s = await luc('staff', [], { firm: { registry_overrides: ro } });

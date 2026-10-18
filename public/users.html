@@ -68,10 +68,10 @@
 <div class="panel">
   <h2>
     Users
-    <button style="float:right;" onclick="openForm(null)">+ Add user</button>
+    <button id="addUserBtn" style="float:right;" onclick="openForm(null)">+ Add user</button>
     <button class="ghost small" style="float:right;margin-right:8px;margin-top:2px;" onclick="loadUsers()">Refresh</button>
   </h2>
-  <div class="muted" style="margin-bottom:8px;">
+  <div class="muted" id="usersHelp" style="margin-bottom:8px;">
     Users are never deleted — rows are referenced across the system. Use Disable instead.
     Disabling clears passwords immediately; an already-issued login session can persist up to 24h.
   </div>
@@ -145,6 +145,12 @@
   function viewerId() {
     try { return P.firmData?.currentUser?.user ?? null; } catch (_) { return null; }
   }
+  function canViewAs(u) {
+    const roles = rolesOf(u.roles);
+    return u.user !== 0 && u.user !== viewerId() &&
+      String(u.user_auth || "").startsWith("authorized") &&
+      !roles.includes("it") && !roles.includes("su");
+  }
 
   function init() {
     document.getElementById("rolesRow").insertAdjacentHTML("beforeend", ROLE_MEMBERS.map(r =>
@@ -187,6 +193,7 @@
   }
 
   function pwBadge(u) {
+    if (u.has_hash === undefined) return `<span class="muted">—</span>`;
     if (u.has_hash) return `<span class="badge auth">set</span>` +
       (u.reset_pending ? ` <span class="badge other" title="reset link pending">reset</span>` : "");
     return `<span class="badge nopw">none</span>`;
@@ -207,7 +214,14 @@
           `<option value="${esc(l.phone_number)}">${esc(l.display_name ? l.display_name + " — " + l.phone_number : l.phone_number)}</option>`
         ).join("");
 
-      const data = await P.apiSend("/api/admin/users", "GET");
+      const canManage = viewerIsSU();
+      document.getElementById("addUserBtn").style.display = canManage ? "" : "none";
+      document.getElementById("formPanel").style.display = canManage
+        ? document.getElementById("formPanel").style.display : "none";
+      document.getElementById("usersHelp").textContent = canManage
+        ? "Users are never deleted — rows are referenced across the system. Use Disable instead. Disabling clears passwords immediately; an already-issued login session can persist up to 24h. View as opens a read-only diagnostic session in this tab."
+        : "View as opens a read-only 30-minute diagnostic session in this tab. Other tabs remain logged in as you.";
+      const data = await P.apiSend(canManage ? "/api/admin/users" : "/api/impersonation/users", "GET");
       USERS = data.users || [];
       if (!USERS.length) {
         tbody.innerHTML = `<tr><td colspan="10" class="muted" style="text-align:center;padding:20px;">No users.</td></tr>`;
@@ -216,15 +230,19 @@
       tbody.innerHTML = USERS.map(u => {
         const isAutomations = u.user === 0;
         const isDisabled = u.user_auth === "disabled";
+        const viewAs = canViewAs(u)
+          ? `<button class="small" onclick="viewAsUser(${u.user})">View as</button>`
+          : "";
         const actions = isAutomations
           ? `<span class="muted">system</span>`
-          : `
+          : (canManage ? `
             <button class="ghost small" onclick="openForm(${u.user})">Edit</button>
             <button class="ghost small" onclick="setPassword(${u.user})">Set PW</button>
             ${isDisabled
               ? `<button class="small" onclick="enableUser(${u.user})">Enable</button>`
               : `<button class="danger small" onclick="disableUser(${u.user})">Disable</button>`}
-          `;
+            ${viewAs}
+          ` : (viewAs || `<span class="muted">unavailable</span>`));
         return `
           <tr class="${isDisabled ? "disabled" : ""}">
             <td>${u.user}</td>
@@ -360,6 +378,21 @@
   }
 
   // ── row actions ────────────────────────────────────────────────────────────
+
+  async function viewAsUser(id) {
+    const u = USERS.find(x => x.user === id);
+    if (!u || !canViewAs(u)) return;
+    if (!confirm(
+      `View the app as ${u.user_name || u.username}?\n\n` +
+      `This opens a read-only 30-minute session in this tab. Other tabs remain logged in as you.`
+    )) return;
+    try {
+      const data = await P.apiSend(`/api/impersonation/users/${id}/start`, "POST");
+      P.startViewAs(data.token);
+    } catch (err) {
+      alert("View as failed: " + err.message);
+    }
+  }
 
   async function setPassword(id) {
     const u = USERS.find(x => x.user === id);

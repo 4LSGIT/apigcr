@@ -429,7 +429,7 @@ describe('2. the user panel, for real', () => {
     t.pick(TS, 'user:leads-tab');
     t.pick(TS, 'user:my-box');
     t.pick(IS, 'casey');
-    expect(t.names(TS)).toEqual(['Automations', 'Users (SU)', '|', 'Leads tab', 'My box']);
+    expect(t.names(TS)).toEqual(['Automations', 'Users', '|', 'Leads tab', 'My box']);
     expect(t.names(IS)).toEqual(['Casey']);
     expect(t.names(TS)).toEqual(t.names(TS));
     expect([...t.sec(TS).querySelectorAll('.yle-rows .yle-tag')].map((x) => x.textContent)).toEqual(['Added', 'Added', 'Added', 'Added']);
@@ -546,7 +546,7 @@ describe('3. the firm mode: the Firm pages pane', () => {
     t.pick(TS, 'firm:clio-code');
     t.click(t.sec(TS).querySelector('[data-act="add-break"]'));
     t.pick(P('firm:ops', 'icons'), 'myTasks');
-    expect(t.names(TS)).toEqual(['Manuals', 'Users (SU)', 'Get Clio Code', '|']);
+    expect(t.names(TS)).toEqual(['Manuals', 'Users', 'Get Clio Code', '|']);
     expect([t.dot('pages'), t.dot('more'), t.dot('home')]).toEqual([true, false, false]);
     await t.save();
     const puts = t.api.calls.filter((c) => c.method === 'PUT');
@@ -650,6 +650,6 @@ describe('4. firm.html: the Page kind', () => {
     const rows = t.$$('.fm-ver');
     t.fire(rows[0].querySelector('[data-ver-act="view"]'));
     await t.flush();
-    expect(rows[0].querySelector('.fm-ver-view').textContent).toBe('Page “Operations”Row 1: Manuals; Row 2: Users (SU) · small buttons: Casey');
+    expect(rows[0].querySelector('.fm-ver-view').textContent).toBe('Page “Operations”Row 1: Manuals; Row 2: Users · small buttons: Casey');
   });
 });

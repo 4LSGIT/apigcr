@@ -328,7 +328,7 @@
       // An unknown gate fails CLOSED for everyone, su included (hidden, with a
       // console error — a typo must be seen, never silently open). Visibility
       // only: the route still refuses.
-      var CAP_ROOT = { 'firm.settings': false, 'users.manage': true, 'automations.manage': false, 'archives.purge': false,
+      var CAP_ROOT = { 'firm.settings': false, 'users.manage': true, 'users.impersonate': false, 'automations.manage': false, 'archives.purge': false,
         'comms.read_all': false, 'templates.code': false, 'tools.author': true, 'system.settings': false };
       var ROLE_CAPS = { admin: ['firm.settings', 'automations.manage', 'archives.purge'], attorney: ['comms.read_all'],
         form_dev: ['templates.code'], staff: [], automation: [] };
@@ -2609,6 +2609,11 @@
       margin-left: 6px;
     }
     #appHeader .hdr-btn-icon i { font-size: 15px; }
+    #appHeader .hdr-view-as {
+      background: var(--warn-soft); color: var(--warn-on-soft);
+      border-color: var(--warn); font-weight: 600; white-space: nowrap;
+    }
+    #appHeader .hdr-view-as:hover { background: var(--warn-soft); opacity: 0.85; }
     #appHeader .hdr-logout { color: var(--danger); }
     #appHeader .hdr-logout:hover { background: var(--danger-soft); }
 
@@ -2984,6 +2989,9 @@
     </div>
     <div class="hdr-spacer"></div>
     <div class="hdr-right" id="hdrUserArea" style="display:none">
+      <button class="hdr-btn hdr-view-as" id="hdrViewAs" onclick="exitViewAs()" style="display:none" title="Exit the read-only View-as session">
+        <i class="fa-solid fa-user-secret"></i><span id="hdrViewAsText">View as</span>
+      </button>
       <span class="hdr-greeting" onclick="openMainTab('tabSettings')" title="Settings">Hi, <b id="myNameIs"></b>!</span>
       <button class="hdr-btn" onclick="openTasksTab({assigned_to:user.user,status:'Incomplete',defer:'active'})" title="My Tasks">
         <i class="fa-solid fa-list"></i><span>My Tasks</span><span class="hdr-badge" id="hdrTasksBadge" style="display:none">0</span>
@@ -6753,7 +6761,16 @@
       jwt: null,
       loginInProgress: null
     };
-    AUTH_STATE.jwt = localStorage.getItem("jwt");
+    const VIEW_AS_STORAGE_KEY = "yc_view_as_jwt";
+    let viewAsToken = null;
+    try { viewAsToken = sessionStorage.getItem(VIEW_AS_STORAGE_KEY); } catch (_) { }
+    if (viewAsToken && isJwtExpired(viewAsToken)) {
+      try { sessionStorage.removeItem(VIEW_AS_STORAGE_KEY); } catch (_) { }
+      viewAsToken = null;
+    }
+    // Diagnostic identity is tab-local.  The original login remains untouched
+    // in localStorage, so other tabs stay as IT and Exit can simply reload it.
+    AUTH_STATE.jwt = viewAsToken || localStorage.getItem("jwt");
     // Prefill the re-login modal across page loads: login() only caches the
     // username in memory, so a reload/new tab/PWA relaunch used to reach
     // loginBlocking() with an empty field. The stale jwt still carries it
@@ -6776,6 +6793,27 @@
       if (!payload || !payload.exp) return true;
       return payload.exp < Math.floor(Date.now() / 1000);
     }
+
+    function activeViewAs() {
+      const p = getJwtPayload(window.AUTH_STATE && AUTH_STATE.jwt);
+      return p && p.view_as === true && p.act ? p : null;
+    }
+
+    function startViewAs(token) {
+      const p = getJwtPayload(token);
+      if (!p || p.view_as !== true || !p.act || isJwtExpired(token)) {
+        throw new Error("The server returned an invalid View-as session");
+      }
+      sessionStorage.setItem(VIEW_AS_STORAGE_KEY, token);
+      location.assign('/');
+    }
+
+    function exitViewAs() {
+      try { sessionStorage.removeItem(VIEW_AS_STORAGE_KEY); } catch (_) { }
+      location.assign('/');
+    }
+    window.startViewAs = startViewAs;
+    window.exitViewAs = exitViewAs;
 
 
     /**
@@ -6876,6 +6914,11 @@
           // Cancelled prompt → fall through; the 401 surfaces as a normal
           // ApiError to the calling tool.
         } else {
+          if (activeViewAs()) {
+            try { sessionStorage.removeItem(VIEW_AS_STORAGE_KEY); } catch (_) { }
+            location.assign('/');
+            throw new Error('View-as session ended');
+          }
           await loginBlocking();
           options.headers.Authorization = `Bearer ${window.AUTH_STATE.jwt}`;
           res = await fetch(url, options);
@@ -7165,6 +7208,8 @@ async function login(username, password) {
       // Cache username for next login's prefill; password is never stored.
       AUTH_STATE.username = username;
       AUTH_STATE.jwt = data.token;
+      // An explicit login always leaves diagnostic mode.
+      try { sessionStorage.removeItem(VIEW_AS_STORAGE_KEY); } catch (_) { }
       localStorage.setItem("jwt", data.token);
       return data.token;
     } finally {
@@ -7312,6 +7357,13 @@ async function initAuth() {
   try {
     await loadFirmData();
   } catch (err) {
+    // Never prompt for the target user's password.  A stale/revoked View-as
+    // token falls back to the original IT login on a clean reload.
+    if (activeViewAs()) {
+      try { sessionStorage.removeItem(VIEW_AS_STORAGE_KEY); } catch (_) { }
+      location.assign('/');
+      return;
+    }
     Toast.fire({ icon: 'warning', title: 'Session expired, please log in again', timer: 2000 });
     localStorage.removeItem("jwt");
     AUTH_STATE.jwt = null;
@@ -7332,6 +7384,12 @@ async function initAuth() {
       // user and users are already set as aliases to firmData by initAuth()
       E("myNameIs").innerHTML = user.user_name || "";
       E("hdrUserArea").style.display = "flex";
+      // `typeof` keeps the extracted loadUserContext test harnesses (which run
+      // this function without the auth-state block) faithful and standalone.
+      const viewAs = typeof activeViewAs === "function" ? activeViewAs() : null;
+      const viewAsButton = E("hdrViewAs");
+      if (viewAsButton) viewAsButton.style.display = viewAs ? "flex" : "none";
+      if (viewAs && E("hdrViewAsText")) E("hdrViewAsText").textContent = `Viewing ${user.user_name || user.username} · Exit`;
       startFirmClock();
       E("appSidebar").style.display = "flex";
       // The su signal (the su role only — user_auth is authn, A2b): the
@@ -7510,6 +7568,9 @@ async function initAuth() {
       // SU step-up: elevation dies with the session.
       try {
         sessionStorage.removeItem("su_elev");
+      } catch (_) { }
+      try {
+        sessionStorage.removeItem(VIEW_AS_STORAGE_KEY);
       } catch (_) { }
 
       if (window.AUTH_STATE) {
