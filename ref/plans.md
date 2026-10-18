@@ -318,9 +318,6 @@ deferred until the budget shows it's needed.
   orphans up when an item is deleted. (b) role / firm deny rows written through
   the API (0 live 2026-10-16) still hide items while the editor says "Everyone"
   — add a read-only "also hidden by an older rule" note if any ever appear.
-- **sbAdmin widening**: the Admin sidebar stays su-only until the first
-  firm-grade admin tile exists (the CFG-3 firm tab) — then widen
-  tile-by-tile, not by taxonomy.
 - **Require scopes on new yck_ mints**: today omitted scopes = NULL =
   legacy full surface; flip to required once the existing integrations are
   scoped.
