@@ -99,7 +99,7 @@ function core() {
 const { L: VL, E: VE, REG, LAY } = core();
 const CAT = J(VE.firmCatalog({ firm: { registry_overrides: RO } }));
 const firmSess = (stored, o = {}) => VE.session({
-  stored, effective: CAT.entries, locked: [], base: LAY, registry: REG, groups: CAT.groups,
+  stored, effective: CAT.entries, locked: [], lockedForUsers: RO.locked, base: LAY, registry: REG, groups: CAT.groups,
   surfaces: FIRM_SURFACES, pass: [], seed: { more: CAT.seed }, ...o,
 });
 const viewKeys = (s, sf) => J(s.view(sf)).map(key);
@@ -142,6 +142,10 @@ describe('1. the firm mode\'s core (pure)', () => {
     }
     expect(s.isDirty()).toBe(false);
     expect(J(s.doc())).toEqual({ placed: {}, removed: {} });
+    // Firm admins get a warning, not a disabled control: the lock constrains
+    // users' personal layouts, not the firm's own default.
+    const bills = J(s.view('home')).find((r) => r.id === 'bills');
+    expect([bills.locked, bills.lockedForUsers, bills.act]).toEqual([false, true, 'hide']);
     // the seeded rows are the firm's own (tag Firm, removable)
     const v = J(s.view('more'));
     expect(v.slice(-2).map((r) => [r.id, r.firm, r.act])).toEqual([['firm:clio-code', true, 'remove'], ['firm:payroll', true, 'remove']]);
@@ -421,7 +425,7 @@ async function boot({ store = makeStore(), canEdit = true, auth = ADMIN, access 
 }
 const firmOpen = async (t, o = {}) => { const ok = await t.w.ycLayoutEditor.open({ scope: 'firm', ...o }); await t.flush(); return ok; };
 const seedClio = async (store) => {   // the firm's items, saved through the real service (registry_overrides)
-  await require('../services/uiConfigService').write(store.db, { scope: 'firm', config_key: 'registry_overrides', config: { hidden: [], locked: [], renames: {}, items: [CLIO, PAYROLL] } }, ADMIN);
+  await require('../services/uiConfigService').write(store.db, { scope: 'firm', config_key: 'registry_overrides', config: { hidden: [], locked: ['bills'], renames: {}, items: [CLIO, PAYROLL] } }, ADMIN);
   return store;
 };
 const rowsOfGrid = (keys) => rowsOf(keys).map((r) => r.length);
@@ -452,6 +456,9 @@ describe('3. the panel, firm mode, for real', () => {
     expect([...t.panel().querySelectorAll('.yle-sec')].map((s) => s.getAttribute('data-sf'))).toEqual(['home', 'homeIcons', 'sidebar', 'more', 'moreIcons', 'admin', 'adminIcons']);
     expect(t.panel().querySelector('#ylePane_home').hidden).toBe(false);
     expect(t.panel().querySelector('#ylePane_more').hidden).toBe(true);
+    const bills = t.rowNamed('home', 'Billing');
+    expect(bills.querySelector('.yle-tag').textContent.trim()).toBe('Locked for users');
+    expect(bills.querySelector('[data-act="hide"]').disabled).toBe(false);
     const more = t.names('more');
     expect(more.slice(-3)).toEqual(['|', 'Get Clio Code', 'Payroll']);
     expect(t.rowNamed('more', 'Get Clio Code').querySelector('.yle-tag').textContent).toBe('Firm');
