@@ -13,6 +13,7 @@ const reportService = require('./reportService');
 const commsSearch = require('./commsArchiveSearch');
 const knowledge = require('./assistantKnowledgeService');
 const weather = require('./assistantWeatherService');
+const attachmentService = require('./assistantAttachmentService');
 const { auditAdminAction } = require('../lib/auth.superuser');
 const { validateSql } = require('../lib/reportSchema/validator');
 const ticket = require('../lib/assistantTicket');
@@ -199,17 +200,23 @@ function trimEvidence(evidence) {
   return current;
 }
 
-async function plan(db, { question, history, userId } = {}) {
+async function plan(db, { question, history, userId, modelMode, temporaryAttachments, documentIds } = {}) {
   const q = String(question || '').trim();
   if (!q) throw httpError(400, 'Ask a question first');
   if (q.length > MAX_QUESTION) throw httpError(400, `Question is too long (${MAX_QUESTION} character limit)`);
   const hist = cleanHistory(history);
-  const contextual = contextualAnswer(q, hist);
-  if (contextual) return { outcome: 'answer', answer: contextual, suggestions: [], callId: null };
+  const mode = attachmentService.modelMode(modelMode);
+  const attached = await attachmentService.preparePlan(db, {
+    temporary: temporaryAttachments, documentIds,
+  });
+  const contextual = attached.claims.length ? null : contextualAnswer(q, hist);
+  if (contextual) return { outcome: 'answer', answer: contextual, suggestions: [], callId: null, model_mode: mode };
   const ai = await aiService.call(db, {
     promptKey: 'assistant_plan',
     userInput: `CURRENT TIME:\n${new Date().toISOString()} (server UTC; user timezone is Asia/Jerusalem)\n\n` +
-      `CONVERSATION:\n${historyText(hist)}\n\nCURRENT QUESTION:\n${q}`,
+      `CONVERSATION:\n${historyText(hist)}\n\nATTACHED FILES:\n${attached.description}\n\nCURRENT QUESTION:\n${q}`,
+    attachments: attached.blocks,
+    model: attachmentService.modelForMode(mode),
     outputType: 'json', timeout_ms: PLAN_TIMEOUT_MS,
     consumerRef: `assistant_plan:u${Number(userId) || 0}`,
     logContent: false,
@@ -219,19 +226,22 @@ async function plan(db, { question, history, userId } = {}) {
   if (raw.action === 'answer') {
     const answer = String(raw.answer || '').trim();
     if (!answer) throw httpError(422, 'The assistant returned an empty answer');
-    return { outcome: 'answer', answer, suggestions: normalizeSuggestions(raw.suggestions || raw.suggestion), callId: ai.callId };
+    return { outcome: 'answer', answer, suggestions: normalizeSuggestions(raw.suggestions || raw.suggestion), callId: ai.callId, model_mode: mode };
   }
   if (raw.action === 'refuse') {
     return {
       outcome: 'refused',
       reason: String(raw.reason || 'The available records cannot answer that safely.'),
       suggestions: normalizeSuggestions(raw.suggestions || raw.suggestion),
-      callId: ai.callId,
+      callId: ai.callId, model_mode: mode,
     };
   }
   const built = validatePlan(raw);
-  const signed = ticket.sign({ v: 1, uid: Number(userId), question: q, history: hist, plan: { action: 'query', ...built } });
-  return { outcome: 'plan', ...built, ticket: signed, callId: ai.callId };
+  const signed = ticket.sign({
+    v: 1, uid: Number(userId), question: q, history: hist, model_mode: mode,
+    attachments: attached.claims, plan: { action: 'query', ...built },
+  });
+  return { outcome: 'plan', ...built, ticket: signed, callId: ai.callId, model_mode: mode };
 }
 
 function firstValue(row, keys) {
@@ -281,10 +291,15 @@ function validateTicket(payload, userId) {
   }
   const question = String(payload.question || '').trim();
   if (!question || question.length > MAX_QUESTION) throw httpError(400, 'The query plan has an invalid question');
-  return { question, history: cleanHistory(payload.history), plan: validatePlan(payload.plan), repairs: Number(payload.repairs) || 0 };
+  return {
+    question, history: cleanHistory(payload.history), plan: validatePlan(payload.plan),
+    repairs: Number(payload.repairs) || 0,
+    modelMode: attachmentService.modelMode(payload.model_mode),
+    attachments: Array.isArray(payload.attachments) ? payload.attachments : [],
+  };
 }
 
-async function repairRejectedPlan(db, approved, failedQuery, failure, userId) {
+async function repairRejectedPlan(db, approved, failedQuery, failure, userId, attached) {
   const collation = /illegal mix of collations/i.test(failure);
   const guidance = collation
     ? 'Put BOTH sides of every text equality in COLLATE utf8mb4_general_ci.'
@@ -296,6 +311,8 @@ async function repairRejectedPlan(db, approved, failedQuery, failure, userId) {
       `A sql.read step was rejected by the read-only executor. Return a complete replacement plan. ${guidance}\n\n` +
       `SAFE FAILURE CATEGORY:\n${collation ? 'legacy text collation mismatch' : 'query plan estimated too much work'}\n\n` +
       `FAILED STEP:\n${JSON.stringify(failedQuery)}`,
+    attachments: attached.blocks,
+    model: attachmentService.modelForMode(approved.modelMode),
     outputType: 'json', timeout_ms: PLAN_TIMEOUT_MS,
     consumerRef: `assistant_plan_repair:u${Number(userId) || 0}`,
     logContent: false,
@@ -305,13 +322,14 @@ async function repairRejectedPlan(db, approved, failedQuery, failure, userId) {
   try { built = validatePlan(ai.json || {}); } catch (_) { return null; }
   const signed = ticket.sign({
     v: 1, uid: Number(userId), question: approved.question, history: approved.history,
-    repairs: approved.repairs + 1, plan: { action: 'query', ...built },
+    repairs: approved.repairs + 1, model_mode: approved.modelMode,
+    attachments: approved.attachments, plan: { action: 'query', ...built },
   });
   return {
     outcome: 'plan', notice: collation
       ? 'I corrected a legacy text-collation mismatch and retried the search.'
       : 'I narrowed an overly expensive query and retried the search.',
-    ...built, ticket: signed, callId: ai.callId,
+    ...built, ticket: signed, callId: ai.callId, model_mode: approved.modelMode,
   };
 }
 
@@ -328,9 +346,10 @@ function sourceFor(evidence, citation) {
   };
 }
 
-async function execute(db, { signedTicket, userId, auth } = {}) {
+async function execute(db, { signedTicket, userId, auth, temporaryAttachments } = {}) {
   const decoded = ticket.verify(signedTicket);
   const approved = validateTicket(decoded, userId);
+  const attached = await attachmentService.prepareExecution(db, approved.attachments, temporaryAttachments);
   const evidence = [];
   for (const query of approved.plan.steps) {
     let rows, rowCount, truncated = false;
@@ -364,7 +383,7 @@ async function execute(db, { signedTicket, userId, auth } = {}) {
         const failure = String(err && err.message);
         const repairable = /illegal mix of collations|query plan estimates too much work/i.test(failure);
         if (approved.repairs < 1 && repairable) {
-          const repaired = await repairRejectedPlan(db, approved, query, failure, userId);
+          const repaired = await repairRejectedPlan(db, approved, query, failure, userId, attached);
           if (repaired) return repaired;
         }
         throw err;
@@ -382,7 +401,9 @@ async function execute(db, { signedTicket, userId, auth } = {}) {
   const ai = await aiService.call(db, {
     promptKey: 'assistant_answer',
     userInput: `CONVERSATION:\n${historyText(approved.history)}\n\nQUESTION:\n${approved.question}\n\n` +
-      `APPROVED QUERY PLAN:\n${approved.plan.summary}\n\nEVIDENCE (row_number is array position + 1):\n${JSON.stringify(evidence)}`,
+      `ATTACHED FILES:\n${attached.description}\n\nAPPROVED QUERY PLAN:\n${approved.plan.summary}\n\nEVIDENCE (row_number is array position + 1):\n${JSON.stringify(evidence)}`,
+    attachments: attached.blocks,
+    model: attachmentService.modelForMode(approved.modelMode),
     outputType: 'json', timeout_ms: ANSWER_TIMEOUT_MS,
     consumerRef: `assistant_answer:u${Number(userId) || 0}`,
     logContent: false,
@@ -399,7 +420,7 @@ async function execute(db, { signedTicket, userId, auth } = {}) {
     entities: actionsForEvidence(evidence),
     sources,
     steps: evidence.map((q) => ({ id: q.id, kind: q.kind, purpose: q.purpose, row_count: q.row_count, returned: q.rows.length, truncated: q.truncated || !!q.truncated_for_ai })),
-    callId: ai.callId,
+    callId: ai.callId, model_mode: approved.modelMode,
   };
 }
 

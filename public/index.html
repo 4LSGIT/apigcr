@@ -6680,6 +6680,29 @@
         catch (_) {}
       }
     })();
+    // Ask YisrAI deep link: /?open=tabMore~moreAssistant&ask=<question>.
+    // Product decision: the raw question may be shared in a URL, with the
+    // privacy warning documented in the manual. Capture it once, then scrub
+    // `ask` synchronously before authentication/API fetches begin. It is
+    // prefilling only: the assistant never auto-runs a question from a GET.
+    let assistantUrlDraft = null;
+    (() => {
+      const open = String(params.open || '').split('~');
+      const raw = typeof params.ask === 'string' ? params.ask.trim() : '';
+      if (open[0] === 'tabMore' && open[1] === 'moreAssistant' && raw && raw.length <= 2000) assistantUrlDraft = raw;
+      if (Object.prototype.hasOwnProperty.call(params, 'ask')) {
+        const u = new URL(window.location);
+        u.searchParams.delete('ask');
+        delete params.ask;
+        try { history.replaceState(null, '', u.pathname + (u.searchParams.toString() ? '?' + u.searchParams.toString() : '') + u.hash); }
+        catch (_) {}
+      }
+    })();
+    window.ycTakeAssistantDraft = function () {
+      const draft = assistantUrlDraft;
+      assistantUrlDraft = null;
+      return draft;
+    };
     // Top-level state used across tab handlers
     user = {};
     // The Logs tab's page size — and only the Logs tab's, since the other

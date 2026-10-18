@@ -1,7 +1,7 @@
 # Routes
 
-_Generated 2026-10-18T20:53:09.058Z_  
-_799 routes total — DELETE: 65, GET: 335, PATCH: 57, POST: 302, PUT: 37, _ALL: 3_
+_Generated 2026-10-18T23:41:03.926Z_  
+_805 routes total — DELETE: 66, GET: 337, PATCH: 58, POST: 304, PUT: 37, _ALL: 3_
 
 ## Global middleware chain
 
@@ -85,6 +85,12 @@ _799 routes total — DELETE: 65, GET: 335, PATCH: 57, POST: 302, PUT: 37, _ALL:
 | DELETE | `/api/assets/:id` | `jwtOrApiKey` | — |
 | PATCH | `/api/assets/:id` | `jwtOrApiKey` | — |
 | GET | `/api/assets/collections` | `jwtOrApiKey` | — |
+| GET | `/api/assistant/chats` | `jwtOrApiKey`, `staffOnly` | — |
+| POST | `/api/assistant/chats` | `jwtOrApiKey`, `staffOnly` | — |
+| DELETE | `/api/assistant/chats/:id(\d+)` | `jwtOrApiKey`, `staffOnly` | — |
+| GET | `/api/assistant/chats/:id(\d+)` | `jwtOrApiKey`, `staffOnly` | — |
+| PATCH | `/api/assistant/chats/:id(\d+)` | `jwtOrApiKey`, `staffOnly` | — |
+| POST | `/api/assistant/chats/:id(\d+)/messages` | `jwtOrApiKey`, `staffOnly` | — |
 | POST | `/api/assistant/execute` | `jwtOrApiKey`, `staffOnly` | — |
 | POST | `/api/assistant/plan` | `jwtOrApiKey`, `staffOnly` | — |
 | POST | `/api/auth/change-password` | `jwtOrApiKey` | — |
@@ -1069,4 +1075,4 @@ _799 routes total — DELETE: 65, GET: 335, PATCH: 57, POST: 302, PUT: 37, _ALL:
 
 ---
 
-_799 routes total — DELETE: 65, GET: 335, PATCH: 57, POST: 302, PUT: 37, _ALL: 3_
+_805 routes total — DELETE: 66, GET: 337, PATCH: 58, POST: 304, PUT: 37, _ALL: 3_

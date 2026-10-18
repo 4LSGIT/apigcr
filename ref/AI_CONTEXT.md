@@ -1922,7 +1922,8 @@ state as text, never controls.
 ## 33. ASK YISRAI — READ-ONLY CONVERSATIONAL ASSISTANT
 
 **Surface.** More → Ask YisrAI (`public/assistant.html`), staff JWT only.
-`POST /api/assistant/plan {question,history}` returns a direct answer/refusal or
+`POST /api/assistant/plan {question,history,model_mode,temporary_attachments?,document_ids?}`
+returns a direct answer/refusal or
 a plan; the UI immediately sends its ticket to `POST /api/assistant/execute`.
 There is deliberately no confirmation for read-only operations. Plans are
 HMAC-signed with `JWT_SECRET`, expire after 20 minutes and are bound to the
@@ -1948,8 +1949,10 @@ SSN/EIN, DOB, tokens, attachments and delivery metadata. `comms.search` calls
 restricted-media rules and snippet caps. `manual.search` reads only shipped
 manual Markdown. Planner SQL explicitly collates both sides of text equalities
 to `utf8mb4_general_ci`, insulating generated joins from legacy general/unicode
-schema drift. Both passes use `claude-opus-5`; its 5/25 USD-per-MTok pricing is
-registered in `aiService` so the normal call ledger remains accurate. Assistant
+schema drift. `model_mode` is server-allowlisted: `better_quality` maps to
+`claude-opus-5`, while `faster_speed` maps to `claude-sonnet-4-6`; arbitrary
+provider model ids never cross the browser contract. The normal AI call ledger
+records the resolved model and remains cost-aware. Assistant
 SQL is retained in `report_runs` for developer diagnosis. If a SQL step hits
 MySQL's illegal-mix error or the EXPLAIN workload gate, the planner gets one
 repair attempt and the UI automatically executes the corrected signed plan.
@@ -1965,14 +1968,41 @@ Another read round requires another user message and newly signed plan: text fou
 email/log/call never autonomously authors the next query. Both model calls use
 `logContent:false`; `ai_calls` keeps usage/cost/status, not client content.
 
-**State.** No schema or server session table. The visible short conversation is
-page-memory; the approval ticket carries only question, short history and plan.
-This makes the first slice deployable without a migration and means refresh =
-new chat by design.
+**State/history.** `assistant_chats` and `assistant_chat_messages` hold the 30
+most recently touched chats per `users.user`; every CRUD statement includes the
+authenticated user ownership boundary. Messages store displayed text and the
+assistant's structured citation/entity/suggestion payload, never SQL (that
+remains in `report_runs`). The model still receives at most the latest eight
+messages. The UI recommends a new chat at four user turns, while allowing the
+person to continue. Migration:
+`ref/migrations/2026-10-19_yisrai_chat_history.sql`.
+
+**Attachments.** `assistantAttachmentService` accepts at most four PDFs/images
+and 6 MB decoded bytes in aggregate, keeping the request under the app's 10 MB
+JSON ceiling. Browser-selected bytes are transient: the browser sends base64
+to plan and execute, the signed ticket binds SHA-256/name/media type, and chat
+history stores metadata only. Existing files arrive as numeric document ids;
+the service loads active rows through `documentService` and
+`documentSourceService` and binds `rev`/`content_hash`, refusing execution if
+the file changed after planning. Both AI passes receive the files under
+`aiService`'s attachment injection guard. **Save to case** is deliberately not
+a model operation: an explicit user click reuses `/api/documents/upload-link`
+→ direct browser-to-Dropbox upload → `/api/documents/upload-commit`.
+
+**Question deep links.** `/?open=tabMore%7EmoreAssistant&ask=<encoded question>`
+captures a maximum-2,000-character draft in the shell, synchronously removes
+`ask` from the address bar before auth/API fetches, and exposes it through the
+one-shot `ycTakeAssistantDraft()`. The assistant assigns it only to
+`textarea.value`; it never executes from a GET. Raw question URLs are an
+accepted product risk and the operator manual warns that the original URL may
+remain in browser/email/chat/proxy/server history. The canonical workspace URL
+continues to contain IDs only.
 
 **Pointers.** `services/assistantService.js`,
-`services/assistantKnowledgeService.js`, `lib/assistantTicket.js`,
+`services/assistantKnowledgeService.js`, `services/assistantChatService.js`,
+`services/assistantAttachmentService.js`, `lib/assistantTicket.js`,
 `services/assistantWeatherService.js`,
 `lib/aiPrompts/assistantPlan.js`, `lib/aiPrompts/assistantAnswer.js`,
 `routes/api.assistant.js`. Operator docs: manual 05/17. Tests:
-`assistantService`, `assistantTicket`, plus `featureRegistry` and manual coverage.
+`assistantService`, `assistantAttachmentService`, `assistantTicket`, plus
+`featureRegistry` and manual coverage.

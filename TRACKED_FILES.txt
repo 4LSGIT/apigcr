@@ -583,6 +583,7 @@ ref/migrations/2026-10-16_ui_custom_s6c_config_key_comment.sql
 ref/migrations/2026-10-17_comms_summaries_skip_reason_comment.sql
 ref/migrations/2026-10-17_ui_custom_s5e3_drop_user_custom_tab.sql
 ref/migrations/2026-10-18_settings_arc.sql
+ref/migrations/2026-10-19_yisrai_chat_history.sql
 ref/migrations/S1_notes_migration.sql
 ref/migrations/documents_s1.sql
 ref/migrations/documents_s2.sql
@@ -908,6 +909,8 @@ services/aiMatchService.js
 services/aiService.js
 services/apptService.js
 services/assetService.js
+services/assistantAttachmentService.js
+services/assistantChatService.js
 services/assistantKnowledgeService.js
 services/assistantService.js
 services/assistantWeatherService.js
@@ -1066,6 +1069,8 @@ tests/apptService.typeKey.test.js
 tests/apptTypeKey.patch.test.js
 tests/apptsSearch.picker.test.js
 tests/assignPickersActive.test.js
+tests/assistantAttachmentService.test.js
+tests/assistantChatService.test.js
 tests/assistantService.test.js
 tests/assistantTicket.test.js
 tests/assistantUi.test.js

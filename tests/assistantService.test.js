@@ -112,6 +112,29 @@ describe('assistant read-plan boundary', () => {
     }
   });
 
+  test('a temporary attachment and product model mode are bound into the plan', async () => {
+    const old = process.env.JWT_SECRET;
+    process.env.JWT_SECRET = 'assistant-service-test-secret';
+    const spy = jest.spyOn(aiService, 'call').mockResolvedValue({
+      ok: true, callId: 11, json: { action: 'answer', answer: 'The attached notice sets a hearing.', suggestions: [] },
+    });
+    try {
+      const out = await svc.plan({}, {
+        question: 'What is this?', history: [], userId: 7, modelMode: 'faster_speed',
+        temporaryAttachments: [{ name: 'notice.pdf', media_type: 'application/pdf', data_base64: Buffer.from('pdf').toString('base64') }],
+      });
+      expect(out).toMatchObject({ outcome: 'answer', model_mode: 'faster_speed' });
+      expect(spy.mock.calls[0][1]).toMatchObject({
+        model: 'claude-sonnet-4-6',
+        attachments: [{ type: 'document', media_type: 'application/pdf', data_base64: expect.any(String) }],
+      });
+    } finally {
+      spy.mockRestore();
+      if (old === undefined) delete process.env.JWT_SECRET;
+      else process.env.JWT_SECRET = old;
+    }
+  });
+
   test('executes an approved SQL ticket and resolves citations against real rows', async () => {
     const old = process.env.JWT_SECRET;
     process.env.JWT_SECRET = 'assistant-service-test-secret';

@@ -26,11 +26,41 @@ affects a deadline, filing, client communication,
 or other consequential decision. The assistant can misunderstand incomplete or
 ambiguous records.
 
+## Models and files
+
+The model selector offers two product-level choices:
+
+- **Better quality** uses Claude Opus.
+- **Faster speed** uses Claude Sonnet.
+
+The selected mode applies to both planning and answering and is remembered with
+the chat. Provider model identifiers are controlled by the server rather than
+accepted from the browser.
+
+**Attach file** adds up to four temporary PDF or image files to the next
+question. All attachments together must be 6 MB or less. Temporary files are
+sent for that question but are not silently registered as firm documents and
+their bytes are not stored in chat history. The message history retains only
+the filenames and sizes.
+
+**YisraCase document** searches the existing Documents registry and attaches a
+PDF or image by its stable document id. YisrAI reloads the file through the
+normal document source and refuses to continue if the document changed between
+planning and answering.
+
+A temporary attachment has a separate **Save to case** control. Choosing it,
+then choosing a case, is the explicit filing action: the browser uploads the
+original file through the established Dropbox upload flow and YisraCase
+registers and links the resulting document to that case. Merely attaching or
+asking about a file does not save it.
+
 ## What read-only means
 
-The initial version cannot change anything. It cannot send email, edit a
-contact, create a task, fill a form, or create a workflow. It runs through the
-same SELECT-only database connection and validation used by Reports, with
+Assistant searches cannot change anything. YisrAI cannot send email, edit a
+contact, create a task, fill a form, or create a workflow. The separate,
+user-invoked **Save to case** attachment control is the one current write; it
+uses the existing Documents upload API rather than a model-authored action.
+Searches run through the same SELECT-only database connection and validation used by Reports, with
 tighter limits for conversational use.
 
 It also cannot expose passwords, credentials, bearer tokens, SSNs/EINs, dates
@@ -51,13 +81,37 @@ pass the same validation and execution limits.
 
 ## Conversation and follow-ups
 
-The visible conversation stays in the browser for the current page session.
-The latest few user and assistant messages are included as context for a
-follow-up. Query result text is sent only to the answering model; it is treated
-as untrusted data and cannot autonomously author another query. To investigate
-further, ask another question and approve its new plan. Short follow-ups such
-as “what day of the week is it?” resolve against the date or record most
-recently discussed when that reference is unambiguous.
+Chats are private to the signed-in user. **Recent chats** keeps the 30 most
+recently used conversations and lets their owner reopen or delete them. The
+latest eight user and assistant messages are included as context for a
+follow-up. Older visible messages are history, not model context, so YisrAI
+suggests starting a fresh chat after the fourth question. For best results,
+keep one chat about one person, matter, or task.
+
+Query result text is sent only to the answering model; it is treated as
+untrusted data and cannot autonomously author another query. To investigate
+further, ask another question; read-only searches run automatically. Short
+follow-ups such as “what day of the week is it?” resolve against the date or
+record most recently discussed when that reference is unambiguous.
+
+Attached file content is also untrusted data. Instructions printed in a PDF or
+image cannot authorize another query, save the file, or perform an action.
+
+## Links that prefill a question
+
+An internal link can open YisrAI with a draft question in the composer:
+
+`/?open=tabMore%7EmoreAssistant&ask=Which+341+meetings+are+coming+up%3F`
+
+The question is filled in but **never run automatically**. The `ask` parameter
+is removed from the address bar as soon as the shell captures it.
+
+The original link can nevertheless remain in browser history, messaging or
+email systems, server/proxy request logs, screenshots, and any place where the
+link was pasted. Avoid names, contact details, medical or financial information,
+or other sensitive client facts in a shared YisrAI link. Anyone creating or
+sharing such a link is responsible for deciding whether its question is safe to
+put in a URL.
 
 ## Future actions
 

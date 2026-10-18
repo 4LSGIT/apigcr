@@ -12,6 +12,8 @@
   body { margin: 0; background: var(--page-bg); color: var(--text); font: 14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
   .app { max-width: 960px; margin: 0 auto; min-height: 100vh; display: flex; flex-direction: column; padding: 18px; }
   header { display: flex; justify-content: space-between; gap: 16px; align-items: start; margin-bottom: 14px; }
+  .header-actions { display: flex; gap: 7px; flex-wrap: wrap; justify-content: end; }
+  .model-select { border: 1px solid var(--border); border-radius: 7px; padding: 7px 9px; background: var(--surface); color: var(--text); font: inherit; }
   h1 { margin: 0; font-size: 21px; }
   .sub { color: var(--text-muted); margin-top: 3px; font-size: 13px; }
   button { border: 0; border-radius: 7px; padding: 8px 13px; cursor: pointer; font: inherit; background: var(--accent); color: var(--accent-text); }
@@ -56,8 +58,35 @@
   .thinking-line { display: block; width: 0; height: 2px; margin-top: 3px; border-radius: 2px; background: var(--accent); animation: writeLine 1.7s ease-in-out infinite; }
   .composer { position: sticky; bottom: 0; background: var(--page-bg); padding: 10px 0 4px; }
   .compose-box { display: flex; gap: 8px; align-items: end; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 8px; box-shadow: 0 -4px 18px color-mix(in srgb, #000 7%, transparent); }
+  .attach-tools { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin: 0 2px 7px; }
+  .attach-tools button { padding: 5px 8px; font-size: 12px; }
+  .attachment-list { display: flex; gap: 5px; flex-wrap: wrap; min-width: 0; }
+  .attachment-chip { display: inline-flex; align-items: center; gap: 5px; max-width: 260px; padding: 3px 7px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); color: var(--text-muted); font-size: 11px; }
+  .attachment-chip .attachment-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .attachment-chip button { padding: 0 2px; border: 0; background: transparent; color: var(--text-muted); }
+  .message-attachments { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
+  .message-attachments .attachment-chip { background: color-mix(in srgb, var(--surface) 75%, transparent); }
+  .save-file { color: var(--accent) !important; }
+  .picker-backdrop { position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; padding: 18px; background: color-mix(in srgb, #000 42%, transparent); }
+  .picker-backdrop[hidden] { display: none; }
+  .picker-card { width: min(620px, 100%); max-height: min(650px, 88vh); display: flex; flex-direction: column; gap: 9px; border: 1px solid var(--border); border-radius: 12px; padding: 14px; background: var(--page-bg); box-shadow: 0 18px 60px #0005; }
+  .picker-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .picker-head button { padding: 5px 8px; }
+  #pickerSearch { width: 100%; border: 1px solid var(--border); border-radius: 7px; padding: 9px; background: var(--surface); color: var(--text); font: inherit; }
+  .picker-results { overflow: auto; display: grid; gap: 5px; }
+  .picker-row { text-align: left; border: 1px solid var(--border); background: var(--surface); color: var(--text); }
+  .picker-row small { display: block; color: var(--text-muted); margin-top: 2px; }
   textarea { flex: 1; min-height: 44px; max-height: 160px; resize: none; border: 0; outline: 0; padding: 7px; background: transparent; color: var(--text); font: inherit; }
   .notice { text-align: center; color: var(--text-muted); font-size: 11px; margin-top: 5px; }
+  .history-panel { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 10px; margin-bottom: 12px; }
+  .history-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 7px; }
+  .history-list { display: grid; gap: 5px; }
+  .history-row { display: flex; gap: 6px; }
+  .history-open { flex: 1; text-align: left; background: transparent; color: var(--text); border: 1px solid var(--border); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .history-delete { background: transparent; color: var(--danger); border: 1px solid var(--border); }
+  .history-empty { color: var(--text-muted); padding: 8px; }
+  .long-chat { display: flex; align-items: center; justify-content: center; gap: 8px; color: var(--text-muted); font-size: 12px; margin-bottom: 7px; }
+  .long-chat button { padding: 4px 8px; background: transparent; color: var(--accent); border: 1px solid var(--border); }
   .spin { animation: spin 1s linear infinite; }
   @keyframes spin { to { transform: rotate(360deg); } }
   @keyframes wandWrite { 0%,100% { transform: rotate(-18deg) translateY(0); } 45% { transform: rotate(8deg) translate(5px,2px); } 70% { transform: rotate(-5deg) translate(2px,-1px); } }
@@ -71,15 +100,44 @@
   <header>
     <div><h1><i class="fa-solid fa-wand-magic-sparkles"></i> Ask YisrAI</h1>
       <div class="sub">Ask about people, matters, activity, appointments, tasks, communications, or how YisraCase works.</div></div>
-    <button class="ghost" id="clearBtn" type="button"><i class="fa-solid fa-rotate-left"></i> New chat</button>
+    <div class="header-actions">
+      <select class="model-select" id="modelMode" aria-label="YisrAI model mode" title="Choose quality or speed">
+        <option value="better_quality">Better quality</option>
+        <option value="faster_speed">Faster speed</option>
+      </select>
+      <button class="ghost" id="historyBtn" type="button"><i class="fa-solid fa-clock-rotate-left"></i> Recent chats</button>
+      <button class="ghost" id="clearBtn" type="button"><i class="fa-solid fa-rotate-left"></i> New chat</button>
+    </div>
   </header>
+  <section class="history-panel" id="historyPanel" hidden>
+    <div class="history-head"><b>Recent chats</b><button class="ghost" id="historyClose" type="button">Close</button></div>
+    <div class="history-list" id="historyList"></div>
+  </section>
   <main id="chat"></main>
   <div class="composer">
+    <div class="long-chat" id="longChat" hidden>
+      <span>For best results, keep each chat about one person, matter, or task.</span>
+      <button type="button" id="longChatNew">Start a new chat</button>
+    </div>
+    <div class="attach-tools">
+      <button class="ghost" id="attachBtn" type="button"><i class="fa-solid fa-paperclip"></i> Attach file</button>
+      <button class="ghost" id="documentBtn" type="button"><i class="fa-solid fa-folder-open"></i> YisraCase document</button>
+      <input id="fileInput" type="file" accept="application/pdf,image/png,image/jpeg,image/gif,image/webp" multiple hidden>
+      <div class="attachment-list" id="attachmentList"></div>
+    </div>
     <div class="compose-box">
       <textarea id="question" maxlength="2000" rows="1" placeholder="Ask YisrAI anything…"></textarea>
       <button id="sendBtn" type="button" title="Send"><i class="fa-solid fa-arrow-up"></i></button>
     </div>
     <div class="notice">Read-only searches run automatically. Answers can be wrong—open the cited records when it matters. Future actions will require explicit review.</div>
+  </div>
+</div>
+<div class="picker-backdrop" id="pickerBackdrop" hidden>
+  <div class="picker-card" role="dialog" aria-modal="true" aria-labelledby="pickerTitle">
+    <div class="picker-head"><b id="pickerTitle">Choose</b><button class="ghost" id="pickerClose" type="button" aria-label="Close"><i class="fa-solid fa-xmark"></i></button></div>
+    <div class="sub" id="pickerHint"></div>
+    <input id="pickerSearch" type="search" maxlength="120">
+    <div class="picker-results" id="pickerResults"></div>
   </div>
 </div>
 <script>
@@ -88,8 +146,26 @@ const P = window.parent;
 const chat = document.getElementById('chat');
 const input = document.getElementById('question');
 const sendBtn = document.getElementById('sendBtn');
+const historyPanel = document.getElementById('historyPanel');
+const historyList = document.getElementById('historyList');
+const longChat = document.getElementById('longChat');
+const modelMode = document.getElementById('modelMode');
+const fileInput = document.getElementById('fileInput');
+const attachmentList = document.getElementById('attachmentList');
+const pickerBackdrop = document.getElementById('pickerBackdrop');
+const pickerSearch = document.getElementById('pickerSearch');
+const pickerResults = document.getElementById('pickerResults');
 let history = [];
 let busy = false;
+let currentChatId = null;
+let historyAvailable = true;
+let pendingAttachments = [];
+let picker = null;
+let pickerTimer = null;
+let pickerSeq = 0;
+
+const MAX_ATTACHMENTS = 4;
+const MAX_ATTACHMENT_BYTES = 6 * 1024 * 1024;
 
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const kindLabel = (k) => k === 'manual.search' ? 'Manual' : k === 'comms.search' ? 'Calls' : k === 'weather.lookup' ? 'Weather' : 'Data';
@@ -109,6 +185,20 @@ function actionHtml(action) {
   return `<button data-open-kind="${esc(action.kind)}" data-open-id="${esc(action.id)}" data-open-label="${esc(action.label)}"><i class="fa-solid ${icon}"></i> Open ${noun}: ${esc(action.label)}</button>`;
 }
 
+function bytesLabel(size) {
+  const n = Number(size) || 0;
+  return n >= 1024 * 1024 ? `${(n / (1024 * 1024)).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`;
+}
+
+function attachmentIcon(att) { return att.kind === 'document' ? 'fa-folder-open' : 'fa-paperclip'; }
+
+function messageAttachmentsHtml(items, messageIndex) {
+  if (!Array.isArray(items) || !items.length) return '';
+  return `<div class="message-attachments">${items.map((att, attachmentIndex) =>
+    `<span class="attachment-chip"><i class="fa-solid ${attachmentIcon(att)}"></i><span class="attachment-name">${esc(att.name || 'Attachment')}</span>${att.saved_document_id ? `<span title="Saved to case"><i class="fa-solid fa-check"></i></span>` : att.kind === 'temporary' && att.file ? `<button class="save-file" type="button" data-save-message="${messageIndex}" data-save-attachment="${attachmentIndex}" title="Save to case"><i class="fa-solid fa-folder-plus"></i> Save to case</button>` : ''}</span>`
+  ).join('')}</div>`;
+}
+
 function emptyHtml() {
   return `<div class="empty"><i class="fa-regular fa-comments"></i>
     <b>What do you want to know?</b><div>I’ll search the available read-only sources and show the records behind the answer.</div>
@@ -120,9 +210,10 @@ function emptyHtml() {
 }
 
 function render() {
+  longChat.hidden = history.filter((m) => m.role === 'user').length < 4;
   if (!history.length) { chat.innerHTML = emptyHtml(); bindExamples(); return; }
   chat.innerHTML = history.map((m, i) => {
-    if (m.role === 'user') return `<div class="msg user">${esc(m.text)}</div>`;
+    if (m.role === 'user') return `<div class="msg user">${esc(m.text)}${messageAttachmentsHtml(m.attachments, i)}</div>`;
     if (m.type === 'thinking') return `<div class="msg assistant">${thinkingHtml(m.text)}</div>`;
     const entities = Array.isArray(m.entities) && m.entities.length ? `<div class="record-links"><b>Open records</b><div class="source-actions">${m.entities.map(actionHtml).join('')}</div></div>` : '';
     const sources = Array.isArray(m.sources) && m.sources.length ? `<div class="sources"><b>Sources</b>${m.sources.map((s) =>
@@ -132,6 +223,11 @@ function render() {
   }).join('');
   chat.querySelectorAll('[data-follow]').forEach((b) => b.addEventListener('click', () => { input.value = b.dataset.follow; input.focus(); }));
   chat.querySelectorAll('[data-open-kind]').forEach((b) => b.addEventListener('click', () => openEntity(b.dataset.openKind, b.dataset.openId, b.dataset.openLabel)));
+  chat.querySelectorAll('[data-save-message]').forEach((b) => b.addEventListener('click', () => {
+    const message = history[Number(b.dataset.saveMessage)];
+    const att = message && Array.isArray(message.attachments) ? message.attachments[Number(b.dataset.saveAttachment)] : null;
+    if (att && att.file) openCasePicker(att, message);
+  }));
   chat.scrollTop = chat.scrollHeight;
 }
 
@@ -150,26 +246,264 @@ function publicHistory() {
 }
 
 async function api(path, body) {
-  const r = await P.apiSend(path, 'POST', body);
+  const method = arguments.length > 2 ? arguments[2] : 'POST';
+  const r = await P.apiSend(path, method, body);
   if (!r || r.status === 'error') throw new Error((r && (r.message || r.error)) || 'Request failed');
   return r;
+}
+
+function renderPendingAttachments() {
+  attachmentList.innerHTML = pendingAttachments.map((att, i) =>
+    `<span class="attachment-chip"><i class="fa-solid ${attachmentIcon(att)}"></i><span class="attachment-name">${esc(att.name)}</span><span>${esc(bytesLabel(att.size))}</span>${att.saved_document_id ? '<i class="fa-solid fa-check" title="Saved to case"></i>' : att.kind === 'temporary' ? `<button class="save-file" type="button" data-save-pending="${i}" title="Save to case"><i class="fa-solid fa-folder-plus"></i></button>` : ''}<button type="button" data-remove-attachment="${i}" title="Remove"><i class="fa-solid fa-xmark"></i></button></span>`
+  ).join('');
+  attachmentList.querySelectorAll('[data-remove-attachment]').forEach((b) => b.addEventListener('click', () => {
+    pendingAttachments.splice(Number(b.dataset.removeAttachment), 1);
+    renderPendingAttachments();
+  }));
+  attachmentList.querySelectorAll('[data-save-pending]').forEach((b) => b.addEventListener('click', () => {
+    const att = pendingAttachments[Number(b.dataset.savePending)];
+    if (att && att.file) openCasePicker(att, null);
+  }));
+}
+
+function attachmentRoom(size) {
+  if (pendingAttachments.length >= MAX_ATTACHMENTS) throw new Error(`Attach no more than ${MAX_ATTACHMENTS} files`);
+  const total = pendingAttachments.reduce((sum, item) => sum + (Number(item.size) || 0), 0) + Number(size || 0);
+  if (total > MAX_ATTACHMENT_BYTES) throw new Error('Attachments must total 6 MB or less');
+}
+
+function fileMediaType(file) {
+  const mime = String(file && file.type || '').toLowerCase();
+  if (['application/pdf', 'image/png', 'image/jpeg', 'image/gif', 'image/webp'].includes(mime)) return mime;
+  throw new Error(`${file && file.name || 'That file'} is not a supported PDF or image`);
+}
+
+function fileBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || '').split(',').pop() || '');
+    reader.onerror = () => reject(new Error(`Could not read ${file.name}`));
+    reader.readAsDataURL(file);
+  });
+}
+
+async function requestAttachments(items) {
+  const temporary = [];
+  const documentIds = [];
+  for (const att of items) {
+    if (att.kind === 'document') documentIds.push(att.id);
+    else temporary.push({ name: att.name, media_type: att.media_type, data_base64: await fileBase64(att.file) });
+  }
+  return { temporary, documentIds };
+}
+
+function closePicker() {
+  picker = null;
+  pickerSeq++;
+  pickerBackdrop.hidden = true;
+  pickerResults.innerHTML = '';
+  pickerSearch.value = '';
+}
+
+function openPicker(config) {
+  picker = config;
+  document.getElementById('pickerTitle').textContent = config.title;
+  document.getElementById('pickerHint').textContent = config.hint || '';
+  pickerSearch.placeholder = config.placeholder || 'Search…';
+  pickerBackdrop.hidden = false;
+  pickerSearch.value = '';
+  pickerResults.innerHTML = '<div class="history-empty">Type to search.</div>';
+  pickerSearch.focus();
+}
+
+function openDocumentPicker() {
+  if (busy) return;
+  openPicker({
+    mode: 'document', title: 'Choose a YisraCase document',
+    hint: 'The original stays in Documents. YisrAI reads it for this question.',
+    placeholder: 'Search document names, titles, types, or tags…',
+  });
+}
+
+function openCasePicker(att, message) {
+  if (busy) return;
+  openPicker({
+    mode: 'case', title: `Save “${att.name}” to a case`,
+    hint: 'The file will be uploaded to the case’s Dropbox folder and registered in Documents.',
+    placeholder: 'Case number, caption, or client name…', att, message,
+  });
+}
+
+async function searchPicker() {
+  const active = picker;
+  const q = pickerSearch.value.trim();
+  const seq = ++pickerSeq;
+  if (!active || !q) { pickerResults.innerHTML = '<div class="history-empty">Type to search.</div>'; return; }
+  pickerResults.innerHTML = '<div class="history-empty">Searching…</div>';
+  try {
+    if (active.mode === 'document') {
+      const r = await api('/api/documents', { q, ext: 'pdf,png,jpg,jpeg,gif,webp', status: 'active', limit: 20 }, 'GET');
+      if (seq !== pickerSeq || picker !== active) return;
+      const rows = Array.isArray(r.documents) ? r.documents : [];
+      pickerResults.innerHTML = rows.length ? rows.map((d) => `<button class="picker-row" type="button" data-document-id="${esc(d.id)}"><b>${esc(d.title || d.name)}</b><small>${esc([`#${d.id}`, d.doc_type, d.ext && String(d.ext).toUpperCase(), bytesLabel(d.size)].filter(Boolean).join(' · '))}</small></button>`).join('') : '<div class="history-empty">No supported documents found.</div>';
+      pickerResults.querySelectorAll('[data-document-id]').forEach((b) => b.addEventListener('click', () => {
+        const d = rows.find((row) => String(row.id) === b.dataset.documentId);
+        if (!d) return;
+        try { attachmentRoom(d.size); } catch (e) { pickerResults.innerHTML = `<div class="history-empty">${esc(e.message)}</div>`; return; }
+        if (!pendingAttachments.some((a) => a.kind === 'document' && String(a.id) === String(d.id))) {
+          pendingAttachments.push({ kind: 'document', id: Number(d.id), name: d.title || d.name, size: Number(d.size) || 0, media_type: d.mime || '' });
+        }
+        closePicker();
+        renderPendingAttachments();
+      }));
+    } else {
+      const r = await api('/api/cases/search', { q, limit: 20 }, 'GET');
+      if (seq !== pickerSeq || picker !== active) return;
+      const rows = Array.isArray(r.cases) ? r.cases : [];
+      pickerResults.innerHTML = rows.length ? rows.map((c) => `<button class="picker-row" type="button" data-case-id="${esc(c.case_id)}"><b>${esc(c.case_number_full || c.case_number || '(no case number)')}</b><small>${esc([c.case_id, c.case_type, c.case_stage, c.primary_contact_name].filter(Boolean).join(' · '))}</small></button>`).join('') : '<div class="history-empty">No matching cases.</div>';
+      pickerResults.querySelectorAll('[data-case-id]').forEach((b) => b.addEventListener('click', () => {
+        const c = rows.find((row) => String(row.case_id) === b.dataset.caseId);
+        if (c) saveAttachmentToCase(active.att, active.message, c);
+      }));
+    }
+  } catch (e) { if (seq === pickerSeq) pickerResults.innerHTML = `<div class="history-empty">${esc(e.message || 'Search failed.')}</div>`; }
+}
+
+function putToDropbox(url, file) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', url);
+    xhr.setRequestHeader('Content-Type', 'application/octet-stream');
+    xhr.onload = () => {
+      if (xhr.status !== 200) return reject(new Error(`Upload to Dropbox failed (${xhr.status})`));
+      try { resolve(JSON.parse(xhr.responseText)); } catch (_) { resolve(null); }
+    };
+    xhr.onerror = () => reject(new Error('Network error uploading to Dropbox'));
+    xhr.send(file);
+  });
+}
+
+async function saveAttachmentToCase(att, message, caseRow) {
+  const label = caseRow.case_number_full || caseRow.case_number || caseRow.case_id;
+  pickerResults.innerHTML = `<div class="history-empty"><i class="fa-solid fa-spinner spin"></i> Saving to ${esc(label)}…</div>`;
+  try {
+    const issued = await api('/api/documents/upload-link', { case_id: caseRow.case_id, filename: att.name });
+    if (!issued.link || !issued.ticket) throw new Error('The server did not return an upload destination');
+    const meta = await putToDropbox(issued.link, att.file);
+    const saved = await api('/api/documents/upload-commit', { ticket: issued.ticket, external_id: meta && meta.id });
+    att.saved_document_id = saved.document && saved.document.id;
+    closePicker();
+    history.push({ role: 'assistant', text: `Saved ${att.name} to ${label}.${issued.note ? ` ${issued.note}` : ''}` });
+    renderPendingAttachments();
+    render();
+  } catch (e) { pickerResults.innerHTML = `<div class="history-empty">Could not save the file: ${esc(e.message)}</div>`; }
+}
+
+function savedAttachmentMeta(items) {
+  return (Array.isArray(items) ? items : []).map((att) => ({
+    kind: att.kind, name: att.name, size: att.size, ...(att.kind === 'document' ? { id: att.id } : {}),
+  }));
+}
+
+async function saveUserMessage(question, attachments) {
+  if (!historyAvailable) return;
+  const payload = { attachments: savedAttachmentMeta(attachments), model_mode: modelMode.value };
+  try {
+    if (currentChatId) await api(`/api/assistant/chats/${currentChatId}/messages`, { role: 'user', text: question, payload });
+    else {
+      const r = await api('/api/assistant/chats', { question, model_mode: modelMode.value, payload });
+      currentChatId = Number(r.chat && r.chat.id) || null;
+    }
+  } catch (e) {
+    historyAvailable = false;
+    console.warn('[YisrAI history] user message was not saved:', e && e.message);
+  }
+}
+
+async function saveAssistantMessage(message) {
+  if (!historyAvailable || !currentChatId || !message || message.error) return;
+  const payload = {
+    entities: message.entities || [], sources: message.sources || [], suggestions: message.suggestions || [], meta: message.meta || '',
+  };
+  try {
+    await api(`/api/assistant/chats/${currentChatId}/messages`, { role: 'assistant', text: message.text, payload });
+  } catch (e) { console.warn('[YisrAI history] answer was not saved:', e && e.message); }
+}
+
+function newChat() {
+  if (busy) return;
+  history = [];
+  currentChatId = null;
+  pendingAttachments = [];
+  renderPendingAttachments();
+  historyPanel.hidden = true;
+  render();
+  input.focus();
+}
+
+async function showRecentChats() {
+  historyPanel.hidden = false;
+  historyList.innerHTML = '<div class="history-empty">Loading…</div>';
+  try {
+    const r = await api('/api/assistant/chats', null, 'GET');
+    const rows = Array.isArray(r.chats) ? r.chats : [];
+    historyList.innerHTML = rows.length ? rows.map((c) => `<div class="history-row"><button class="history-open" data-chat="${esc(c.id)}">${esc(c.title)}</button><button class="history-delete" data-delete-chat="${esc(c.id)}" title="Delete chat"><i class="fa-solid fa-trash"></i></button></div>`).join('') : '<div class="history-empty">No saved chats yet.</div>';
+    historyList.querySelectorAll('[data-chat]').forEach((b) => b.addEventListener('click', () => openSavedChat(b.dataset.chat)));
+    historyList.querySelectorAll('[data-delete-chat]').forEach((b) => b.addEventListener('click', () => deleteSavedChat(b.dataset.deleteChat)));
+  } catch (e) {
+    historyList.innerHTML = `<div class="history-empty">${esc(e.message || 'Could not load recent chats.')}</div>`;
+  }
+}
+
+async function openSavedChat(id) {
+  if (busy || !/^\d+$/.test(String(id))) return;
+  try {
+    const r = await api(`/api/assistant/chats/${id}`, null, 'GET');
+    const messages = Array.isArray(r.chat && r.chat.messages) ? r.chat.messages : [];
+    history = messages.map((m) => ({ role: m.role === 'assistant' ? 'assistant' : 'user', text: String(m.text || ''), ...(m.payload && typeof m.payload === 'object' ? m.payload : {}) }));
+    currentChatId = Number(r.chat.id);
+    modelMode.value = r.chat.model_mode === 'faster_speed' ? 'faster_speed' : 'better_quality';
+    historyPanel.hidden = true;
+    render();
+    input.focus();
+  } catch (e) { historyList.innerHTML = `<div class="history-empty">${esc(e.message || 'Could not open that chat.')}</div>`; }
+}
+
+async function deleteSavedChat(id) {
+  if (busy || !/^\d+$/.test(String(id))) return;
+  try {
+    await api(`/api/assistant/chats/${id}`, null, 'DELETE');
+    if (Number(id) === currentChatId) newChat();
+    await showRecentChats();
+  } catch (e) { historyList.innerHTML = `<div class="history-empty">${esc(e.message || 'Could not delete that chat.')}</div>`; }
 }
 
 async function ask() {
   const question = input.value.trim();
   if (!question || busy) return;
-  const context = publicHistory();
-  history.push({ role: 'user', text: question });
-  input.value = '';
   setBusy(true);
+  const context = publicHistory();
+  const turnAttachments = pendingAttachments.slice();
+  let attachmentRequest;
+  try { attachmentRequest = await requestAttachments(turnAttachments); }
+  catch (e) { history.push({ role: 'assistant', text: e.message || String(e), error: true }); setBusy(false); render(); return; }
+  history.push({ role: 'user', text: question, attachments: turnAttachments });
+  const savingUser = saveUserMessage(question, turnAttachments);
+  pendingAttachments = [];
+  renderPendingAttachments();
+  input.value = '';
   history.push({ role: 'assistant', type: 'thinking', text: 'Reading your question…' });
   render();
   try {
-    let r = await api('/api/assistant/plan', { question, history: context });
+    let r = await api('/api/assistant/plan', {
+      question, history: context, model_mode: modelMode.value,
+      temporary_attachments: attachmentRequest.temporary,
+      document_ids: attachmentRequest.documentIds,
+    });
     if (r.outcome === 'plan') {
       history[history.length - 1].text = 'Searching firm records and writing your answer…';
       render();
-      r = await executeAutomatically(r.ticket);
+      r = await executeAutomatically(r.ticket, attachmentRequest.temporary);
     }
     history.pop();
     if (r.outcome === 'refused') history.push({ role: 'assistant', text: r.reason, suggestions: r.suggestions || [] });
@@ -177,16 +511,18 @@ async function ask() {
       role: 'assistant', text: r.answer, entities: r.entities || [], sources: r.sources || [], suggestions: r.suggestions || [],
       meta: (r.steps || []).map((q) => `${q.id}: ${q.row_count} row${q.row_count === 1 ? '' : 's'}`).join(' · '),
     });
+    await savingUser;
+    await saveAssistantMessage(history[history.length - 1]);
   } catch (e) {
     history.pop();
     history.push({ role: 'assistant', text: e.message || String(e), error: true });
   } finally { setBusy(false); render(); }
 }
 
-async function executeAutomatically(initialTicket) {
+async function executeAutomatically(initialTicket, temporaryAttachments) {
   let ticket = initialTicket;
   for (let attempt = 0; attempt < 2; attempt++) {
-    const r = await api('/api/assistant/execute', { ticket });
+    const r = await api('/api/assistant/execute', { ticket, temporary_attachments: temporaryAttachments });
     if (r.outcome !== 'plan') return r;
     ticket = r.ticket;
     history[history.length - 1].text = r.notice || 'Narrowing the search and trying again…';
@@ -195,13 +531,51 @@ async function executeAutomatically(initialTicket) {
   throw new Error('The read-only search could not be made safe and efficient automatically.');
 }
 
-function setBusy(value) { busy = value; sendBtn.disabled = value; input.disabled = value; }
+function setBusy(value) {
+  busy = value;
+  [sendBtn, input, modelMode, document.getElementById('attachBtn'), document.getElementById('documentBtn')].forEach((el) => { el.disabled = value; });
+}
 function bindExamples() { chat.querySelectorAll('[data-example]').forEach((b) => b.addEventListener('click', () => { input.value = b.dataset.example; ask(); })); }
 input.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); ask(); } });
 input.addEventListener('input', () => { input.style.height = 'auto'; input.style.height = `${Math.min(input.scrollHeight, 160)}px`; });
 sendBtn.addEventListener('click', ask);
-document.getElementById('clearBtn').addEventListener('click', () => { if (!busy) { history = []; render(); input.focus(); } });
-(function waitForParent() { if (P && P.apiSend) { render(); input.focus(); } else setTimeout(waitForParent, 100); })();
+document.getElementById('attachBtn').addEventListener('click', () => fileInput.click());
+document.getElementById('documentBtn').addEventListener('click', openDocumentPicker);
+fileInput.addEventListener('change', () => {
+  try {
+    for (const file of [...fileInput.files]) {
+      const mediaType = fileMediaType(file);
+      attachmentRoom(file.size);
+      pendingAttachments.push({ kind: 'temporary', name: file.name, size: file.size, media_type: mediaType, file });
+    }
+    renderPendingAttachments();
+  } catch (e) { history.push({ role: 'assistant', text: e.message || String(e), error: true }); render(); }
+  fileInput.value = '';
+});
+modelMode.addEventListener('change', async () => {
+  if (!currentChatId || busy) return;
+  try { await api(`/api/assistant/chats/${currentChatId}`, { model_mode: modelMode.value }, 'PATCH'); }
+  catch (e) { history.push({ role: 'assistant', text: `Could not change model mode: ${e.message}`, error: true }); render(); }
+});
+pickerSearch.addEventListener('input', () => {
+  if (pickerTimer) clearTimeout(pickerTimer);
+  pickerTimer = setTimeout(searchPicker, 250);
+});
+document.getElementById('pickerClose').addEventListener('click', closePicker);
+pickerBackdrop.addEventListener('click', (e) => { if (e.target === pickerBackdrop) closePicker(); });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !pickerBackdrop.hidden) closePicker(); });
+document.getElementById('clearBtn').addEventListener('click', newChat);
+document.getElementById('longChatNew').addEventListener('click', newChat);
+document.getElementById('historyBtn').addEventListener('click', showRecentChats);
+document.getElementById('historyClose').addEventListener('click', () => { historyPanel.hidden = true; });
+(function waitForParent() {
+  if (P && P.apiSend) {
+    render();
+    const draft = typeof P.ycTakeAssistantDraft === 'function' ? P.ycTakeAssistantDraft() : null;
+    if (draft) input.value = String(draft).slice(0, 2000);
+    input.focus();
+  } else setTimeout(waitForParent, 100);
+})();
 </script>
 </body>
 </html>
