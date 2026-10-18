@@ -6,7 +6,7 @@
  * document grammar: lib/uiConfigShape.js; DDL: ref/migrations/2026-10-16_ui_custom_s31_ui_config.sql.
  *
  *   GET /api/ui-config  → { status, firm: { <config_key>: config }, user: { … },
- *                           can_edit_firm [, firm_versions] }
+ *                           can_edit_firm, can_edit_system [, firm_versions] }
  *       for the caller. Staff JWT only — no API keys: a user layer needs a user.
  *       (The shell boots from /api/firm-data `ui`, built by the same
  *       uiConfigService.readFor; this route is for editors.) can_edit_firm =
@@ -14,7 +14,10 @@
  *       firm gates below use. The Config shell shows its Firm tab from it; a
  *       client never re-derives a capability from roles. firm_versions (only
  *       when can_edit_firm) = { <firm config_key>: newest version id | null } —
- *       the `base` the editor sends back.
+ *       the `base` the editor sends back. can_edit_system = can(req.auth,
+ *       'system.settings') (settings arc, 2026-10): the Config shell reveals its
+ *       System tab from it, as it does the Firm tab from can_edit_firm (it / su
+ *       hold system.settings; admin does not).
  *   PUT /api/ui-config  body { scope, config_key, config, role? }
  *       → { status, scope, config_key, config (the stored, normalized document),
  *           changed, versioned }
@@ -104,7 +107,8 @@ router.get('/api/ui-config', staff, async (req, res) => {
     // older base — a spurious 409 on the next save. The other order paired an
     // older document with the newer base, and that save silently overwrote.
     const firmVersions = canEditFirm ? await svc.firmVersionIds(req.db) : null;
-    const out = { status: 'success', ...(await svc.readFor(req.db, req.auth.userId)), can_edit_firm: canEditFirm };
+    const out = { status: 'success', ...(await svc.readFor(req.db, req.auth.userId)), can_edit_firm: canEditFirm,
+      can_edit_system: can(req.auth, 'system.settings') };
     if (canEditFirm) out.firm_versions = firmVersions;
     res.json(out);
   } catch (err) { fail(res, 'GET /api/ui-config', err); }

@@ -50,7 +50,11 @@ but deliberately never kills the link.
 
 ## Lifecycle
 
-Links always expire (default 3 days for once, 30 for repeatable). You don't
+Links always expire (default 3 days for once, 30 for repeatable). The defaults
+are the **Link defaults** block on this page (`cta_default_timeout_once` /
+`_repeatable`; IT / SU — the *system settings* permission): a duration with a
+unit (`30m`, `12h`, `3d`, `2w`), at most 365 days; blank means the built-in 3d /
+30d. A value the server cannot read is refused when you save it. You don't
 re-mint when one lapses: `PATCH /api/cta/:id` extends the expiry, raises
 `max_uses`, disables (kill switch) or re-enables. Re-enabling a used link
 whose plan failed re-runs the **whole** plan on the next click — check its

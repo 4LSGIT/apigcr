@@ -37,7 +37,7 @@ The type list is configurable and currently includes values like:
 - Hearing
 - Internal
 
-Choosing **Other** lets you type a one-off type. The blessed list lives in a settings row (`fe-event_types`, a JSON array in app settings) — an administrator can add or remove types there and the dropdown updates everywhere with no deployment.
+Choosing **Other** lets you type a one-off type. The blessed list lives in a settings row (`fe-event_types`, a JSON array in app settings) — an administrator edits it in **YisraCase Config → Lists** (*Event types (legacy list)*) and the dropdown updates everywhere with no deployment. (The event form itself offers the calendar-type registry's types; this list is its fallback, and the new-event dialog and the Events tab filter read it.)
 
 ---
 
@@ -76,7 +76,7 @@ When a hearing is adjourned, the system does **not** edit the old event's date. 
 
 Superseded rows are hidden from event lists by default. The case and contact Events tabs (which show every status) still show the 31 historical duplicate rows the July 2026 cleanup marked, because those are Canceled and always were; what the lists hide is a superseded row that would otherwise *look* live. `GET /api/events?include_superseded=1` shows everything.
 
-**Singleton types.** Some item types can only have one live occurrence per case at a time — a confirmation hearing, a 341 meeting, the standard bankruptcy deadlines. For those, creating a new event automatically supersedes the previous live one on the same case (the two can be linked by case id or by docket; both count as the same case). This is the registry's `singleton` flag and it is switched on with the `unified_singleton_enabled` setting (`1` = on; write `0`, not blank, to turn it off). While it is off, creating a second confirmation hearing on a case simply creates a second event, as before.
+**Singleton types.** Some item types can only have one live occurrence per case at a time — a confirmation hearing, a 341 meeting, the standard bankruptcy deadlines. For those, creating a new event automatically supersedes the previous live one on the same case (the two can be linked by case id or by docket; both count as the same case). This is the registry's `singleton` flag.
 
 #### If a supersession is wrong
 

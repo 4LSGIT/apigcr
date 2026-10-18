@@ -56,7 +56,9 @@ jest.mock('../lib/domainEvents', () => ({
 }));
 jest.mock('../lib/firmConfig', () => {
   const real = jest.requireActual('../lib/firmConfig');
-  return { ...real, cfg: jest.fn(() => null) };   // singleton flag OFF throughout
+  // Every config read is null. (It once held the singleton flag off; that flag
+  // retired at '1' in the settings arc — supersession is always on now.)
+  return { ...real, cfg: jest.fn(() => null) };
 });
 
 const eventService     = require('../services/eventService');

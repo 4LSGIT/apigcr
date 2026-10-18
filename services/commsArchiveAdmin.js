@@ -8,7 +8,7 @@
  * SU always passes (users.roles `su` member, read from the DB through
  * mailboxService.isSuperuser — never from the JWT's claim). Otherwise the
  * caller's users.user id must be listed in app_settings
- * `comms_archive_admins` (CSV of ids; is_editable 0 → SU console only),
+ * `comms_archive_admins` (CSV of ids; registry kind 'access' → SU console only),
  * read UNCACHED on every request, AND the user must still be
  * user_auth = 'authorized' in the DB (checked per request — a deactivated
  * user's still-valid JWT is refused). Parsed strictly: digits only; anything

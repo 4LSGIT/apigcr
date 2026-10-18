@@ -22,7 +22,15 @@
  * server's errors[] inline; client checks block a save; history view +
  * restore; the icon class only from a valid slug; the dirty guards.
  *
- * Mutation-checked (see the S3.2 worker report).
+ * Settings arc (2026-10): the firm's settings sections, drawn by the REAL
+ * public/js/ycSettingRows.js (inlined where the page loads it), against
+ * tests/helpers/settingsApiFake.js — the settings API contract, metadata and
+ * validation from the REAL lib/settingsRegistry.js. Locks: one GET per load;
+ * the sections in order (settings, then Launcher, then Who sees what); the
+ * page Save composes them with the Launcher; refused rows; the dirty guards;
+ * automation variables (add, 409); the Dropbox folder-templates editor.
+ *
+ * Mutation-checked (see the S3.2 worker report; the settings arc's W3 report).
  *
  * Run:  npx jest tests/firmTab.test.js
  */
@@ -35,6 +43,8 @@ const { JSDOM, VirtualConsole } = require('jsdom');
 const { rawShellHtml } = require('./helpers/shellHtml');
 const shape = require('../lib/uiConfigShape');
 const entSvc = require('../services/entitlementService');
+const reg = require('../lib/settingsRegistry');
+const { makeSettingsApi } = require('./helpers/settingsApiFake');
 
 const ROOT = path.join(__dirname, '..');
 const RAW = rawShellHtml();
@@ -48,15 +58,38 @@ const RENDERER_SRC = RAW.match(/<script id="ycLauncher">([\s\S]*?)<\/script>/)[1
 const DENIED_CSS = RAW.match(/<style>\[data-yc-denied\][^<]*<\/style>/)[0];
 const CCM_HTML = fs.readFileSync(path.join(ROOT, 'public/caseConfigManager.html'), 'utf8');
 const FIRM_HTML = fs.readFileSync(path.join(ROOT, 'public/caseconfig/firm.html'), 'utf8');
+// The settings rows (settings arc): the page loads them by tag — inlined here.
+const ROWS_SRC = fs.readFileSync(path.join(ROOT, 'public/js/ycSettingRows.js'), 'utf8');
+const ROWS_TAG = '<script src="/js/ycSettingRows.js"></script>';
 // External scripts / sheets (CDN, themeSync) are not loaded in jsdom anyway; drop them.
-const strip = (html) => html.replace(/<script src=[^>]*><\/script>/g, '').replace(/<link [^>]*>/g, '');
+const strip = (html) => html.replace(ROWS_TAG, () => `<script>${ROWS_SRC}</script>`)
+  .replace(/<script src=[^>]*><\/script>/g, '').replace(/<link [^>]*>/g, '');
+
+// The firm's stored settings (registered keys; the rest have no row yet) and
+// one automation variable — what GET /api/app-settings?home=firm serves.
+// Stored as a person typed it in the DB console: compact, one stage's keys in
+// another order — never what the editor would write — so "untouched hands
+// back the stored string byte for byte" is observable.
+const DT_VALUE = '{"open": {"subfolders": [" Docs", "Court  Filings"], "default": "  01 Open {{case_type}} "},'
+  + ' "closed": {"default": "Z Closed", "subfolders": []},'
+  + ' "archive": {"default": "Archive", "Bankruptcy": "  BK {{case_number}}"}}';   // a per-case-type template (caseService)
+const SETTING_VALUES = {
+  firm_name: 'Acme Law PLLC', firm_email: 'office@acme.example', 'fe-firm_phone': '3135551212',
+  firm_address: '["123 Main St.", "Detroit, MI 48201"]', email_automations: 'auto@acme.example',
+  office_alerts_to: '1,9', billing_tasks_to: '9', manage_cutoff_min: '120', manage_allow_cancel: '1',
+  dropbox_case_folder_templates: DT_VALUE, dropbox_unsorted_uploads_path: ' 00 Unsorted ',
+  esign_test_mode: '1', esign_reminder_seq_id: '4',
+};
+const VARIABLES = [{ key: 'intake_greeting', value: 'Hi {{first}},\nthanks for calling.', type: 'template', label: 'Intake greeting' }];
 
 const flush = async (n = 20) => { for (let i = 0; i < n; i++) await new Promise((r) => setTimeout(r, 0)); };
 const clone = (x) => JSON.parse(JSON.stringify(x));
 
 // ── the in-memory server ─────────────────────────────────────────────────
-function makeBackend({ doc = null, canEdit = true, lenient = false, getFails = null, failWith = {}, toolTitle = 'Appt Form', denies = [] } = {}) {
+function makeBackend({ doc = null, canEdit = true, lenient = false, getFails = null, failWith = {}, toolTitle = 'Appt Form', denies = [], settings = {} } = {}) {
   const st = { doc: doc ? clone(doc) : null, versions: [], nextId: 1, calls: [], denies: clone(denies), nextDeny: 100 };
+  // the settings API (settings arc): its own fake, the same call log
+  st.settings = makeSettingsApi({ values: SETTING_VALUES, variables: VARIABLES, caps: { firm: canEdit, system: false }, ...settings });
   if (st.doc) st.versions.push({ id: st.nextId++, config: clone(st.doc), saved_by: 1, saved_by_name: 'Alex', saved_at: '2026-10-14T10:00:00Z' });
   const err = (status, message, errors) => {
     const e = new Error(message); e.name = 'ApiError'; e.status = status; e.body = { status: 'error', message, ...(errors ? { errors } : {}) }; return e;
@@ -128,6 +161,7 @@ function makeBackend({ doc = null, canEdit = true, lenient = false, getFails = n
       const base = payload && Object.prototype.hasOwnProperty.call(payload, 'base') ? payload.base : undefined;
       return { status: 'success', scope: 'firm', config_key: 'registry_overrides', ...write(clone(v.config), base), restored_from: v.id };
     }
+    if (/^\/api\/app-settings|^\/api\/credentials$|^\/sequences\/templates$/.test(endpoint.split('?')[0])) return st.settings.api(endpoint, method, payload);
     throw new Error('unscripted ' + key);
   }
   return { api, st };
@@ -200,7 +234,7 @@ describe('Config shell: the Firm tab is shown only on can_edit_firm', () => {
     expect(mid.document.getElementById('subpage-panel-firm').classList.contains('active')).toBe(false);
     expect(mid.document.getElementById('tabnav-types').classList.contains('active')).toBe(true);
     expect([...mid.document.querySelectorAll('.tab-nav-btn')].filter((b) => !b.hidden).map((b) => b.id))
-      .toEqual(['tabnav-types', 'tabnav-pipelines', 'tabnav-fields', 'tabnav-caltypes']);
+      .toEqual(['tabnav-types', 'tabnav-pipelines', 'tabnav-fields', 'tabnav-contactroles', 'tabnav-caltypes', 'tabnav-lists']);   // settings arc: + Contact Roles, Lists (System is gated too)
     expect(backend.st.calls.map((c) => c.endpoint)).toEqual(['/api/ui-config']);
   });
 
@@ -753,7 +787,7 @@ describe('S3.4: Who sees what', () => {
     expect(Object.values(F.ROLE_LABELS)).toEqual(['Admin', 'Attorney', 'Staff', 'IT', 'Form dev', 'Automation']);
   });
 
-  test('rows: every registry item plus the saved firm items, grouped like All; Settings and Help locked on Everyone; a second section in the TOC', async () => {
+  test('rows: every registry item plus the saved firm items, grouped like All; Settings and Help locked on Everyone; a section in the TOC', async () => {
     const t = await boot({ doc: DOC });
     const titles = t.$$('#fm-sec-who .fm-group-title').map((e) => e.textContent);
     expect(titles).toEqual(['Records', 'Actions', 'Settings', 'More actions', 'More', 'Firm', 'Admin']);   // More actions: S6b
@@ -765,7 +799,7 @@ describe('S3.4: Who sees what', () => {
       expect([id, sel.disabled, sel.value, !!whoRow(t.firm, id).querySelector('[data-people]')]).toEqual([id, true, 'all', false]);
     }
     expect(t.$('#fm-toc').hidden).toBe(false);
-    expect(t.$$('#fm-toc a').map((a) => a.textContent)).toEqual(['Launcher', 'Who sees what']);
+    expect(t.$$('#fm-toc a').map((a) => a.textContent).slice(-2)).toEqual(['Launcher', 'Who sees what']);   // after the settings sections (settings arc)
     expect(t.F.WhoSection.isDirty()).toBe(false);
   });
 
@@ -1052,5 +1086,290 @@ describe('S6a: firm items choose their icon in the shell\'s picker', () => {
     await mid.onTopbarSave();
     await flush();
     expect(backend.st.doc.items[0]).toEqual({ id: 'firm:code', label: 'Code', icon: 'brands:github', action: { type: 'url', href: 'https://github.com/', present: 'window' } });
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// Settings arc (2026-10): the firm's settings sections — the app_settings keys
+// whose editor home is this tab, drawn by public/js/ycSettingRows.js from ONE
+// GET /api/app-settings?home=firm per load.
+describe('settings arc: the firm settings sections', () => {
+  const USERS = [
+    { user: 0, user_name: 'Automations', user_type: 0, active: true },
+    { user: 1, user_name: 'Stuart', user_type: 1, active: true },
+    { user: 3, user_name: 'Rivka', user_type: 1, active: true },
+    { user: 5, user_name: 'Rena', user_type: 1, active: true },
+    { user: 9, user_name: 'Former', user_type: 1, active: false },
+  ];
+  const srow = (t, k) => t.firm.document.querySelector(`.ycsr-row[data-key="${k}"]`);
+  const sctl = (t, k) => srow(t, k).querySelector('.ycsr-main input[type=text], .ycsr-main textarea, .ycsr-main select');
+  const sstatus = (t, k) => srow(t, k).querySelector('.ycsr-status').textContent;
+  const settingsGets = (t) => t.backend.st.calls.filter((c) => c.method === 'GET' && c.endpoint.startsWith('/api/app-settings')).map((c) => c.endpoint);
+  const save = async (t) => { await t.mid.onTopbarSave(); await flush(); };
+  const section = (t, id) => t.F.SETTINGS_SECTIONS.find((s) => s.id === id);
+
+  test('pins: the page\'s copy of SECTIONS.firm is the registry\'s; its variable types are the route\'s SETTING_TYPES; the module is loaded by its tag', async () => {
+    const t = await boot({ users: USERS });
+    expect(clone(t.F.FIRM_SETTING_SECTIONS)).toEqual(clone(reg.SECTIONS.firm));
+    const route = fs.readFileSync(path.join(ROOT, 'routes/api.appSettings.js'), 'utf8').match(/const SETTING_TYPES = \[([^\]]*)\]/);
+    expect(route).not.toBeNull();
+    const routeTypes = route[1].match(/'([a-z_]+)'/g).map((s) => s.slice(1, -1));
+    expect(t.F.SETTING_TYPES.map(([k]) => k)).toEqual(routeTypes);
+    expect([...t.$('#fm-var-type').options].map((o) => o.value)).toEqual(routeTypes);
+    expect(FIRM_HTML.split(ROWS_TAG)).toHaveLength(2);
+    expect(typeof t.firm.ycSettingRows.create).toBe('function');
+  });
+
+  test('one GET per load; the sections in page order — the settings, then Launcher, then Who sees what; every firm row in its own section', async () => {
+    const t = await boot({ users: USERS });
+    expect(settingsGets(t)).toEqual(['/api/app-settings?home=firm']);
+    expect(t.$$('#fm-sections > .fm-section').map((s) => s.id))
+      .toEqual([...reg.SECTIONS.firm.map((s) => 'fm-sec-' + s.id), 'fm-sec-launcher', 'fm-sec-who']);
+    expect(t.$$('#fm-toc a').map((a) => a.textContent)).toEqual([...reg.SECTIONS.firm.map((s) => s.title), 'Launcher', 'Who sees what']);
+    expect(t.$('#fm-sec-identity h2').textContent.trim()).toBe('Firm identity');
+    const served = t.backend.st.settings.served().filter((r) => r.home === 'firm');
+    for (const s of reg.SECTIONS.firm) {
+      expect([s.id, t.$$(`#fm-sec-${s.id} .ycsr-row`).map((r) => r.dataset.key)]).toEqual([s.id, served.filter((r) => r.section === s.id).map((r) => r.key)]);
+    }
+    expect(t.$$('.ycsr-row')).toHaveLength(served.length);
+    expect(served.filter((r) => r.registered).map((r) => r.key).sort())
+      .toEqual(Object.keys(reg.SETTINGS).filter((k) => reg.SETTINGS[k].home === 'firm').sort());
+    // the shell's staff list feeds the pickers (keep-current: the inactive assignee stays, labelled)
+    expect([...sctl(t, 'billing_tasks_to').options].map((o) => o.textContent)).toEqual(['— none —', 'Former (inactive)', 'Stuart', 'Rivka', 'Rena']);
+    expect([...srow(t, 'office_alerts_to').querySelectorAll('.ycsr-chip')].map((c) => c.firstChild.textContent)).toEqual(['Stuart', 'Former (inactive)']);
+    // the sequence list once (the E-Sign reminder row); this tab has no credential row
+    expect(sctl(t, 'esign_reminder_seq_id').value).toBe('4');
+    expect(t.backend.st.calls.filter((c) => c.endpoint === '/sequences/templates')).toHaveLength(1);
+    expect(t.backend.st.calls.filter((c) => c.endpoint === '/api/credentials')).toHaveLength(0);
+    expect([t.F.Page.dirty(), t.saveBtnShown(), t.$('#fm-sec-identity .fm-sec-status').textContent]).toEqual([false, false, 'All changes saved']);
+    // a clean Refresh: one more GET, no question asked
+    t.firm.confirm = () => { throw new Error('asked'); };
+    t.mid.onTopbarRefresh();
+    await flush();
+    expect(settingsGets(t)).toEqual(['/api/app-settings?home=firm', '/api/app-settings?home=firm']);
+  });
+
+  test('Save composes with the Launcher: a dirty settings row and a dirty Launcher both save — each its own write, the settings first; all clean after', async () => {
+    const t = await boot({ users: USERS });
+    t.setVal(sctl(t, 'firm_name'), '  Acme Law, PLLC ');
+    expect([t.$('#fm-sec-identity .fm-sec-status').textContent, t.saveBtnShown()]).toEqual(['Unsaved changes', true]);
+    t.tick('bills', true);
+    await save(t);
+    expect(puts(t.backend).map((c) => [c.endpoint, c.endpoint === '/api/ui-config' ? c.payload.config.hidden : c.payload]))
+      .toEqual([['/api/app-settings/firm_name', { value: '  Acme Law, PLLC ' }], ['/api/ui-config', ['bills']]]);
+    expect([t.backend.st.settings.value('firm_name'), t.backend.st.doc.hidden]).toEqual(['  Acme Law, PLLC ', ['bills']]);
+    expect([t.F.Page.dirty(), t.saveBtnShown(), t.$('#fm-banner').hidden, sstatus(t, 'firm_name')]).toEqual([false, false, true, 'Saved']);
+    expect(t.$('#fm-sec-identity .fm-sec-status').textContent).toBe('All changes saved');
+    expect(sctl(t, 'firm_name').value).toBe('  Acme Law, PLLC ');
+    // a settings section alone, then two sections at once — only the dirty keys, in page order
+    t.setVal(sctl(t, 'manage_cutoff_min'), '90');
+    t.setVal(sctl(t, 'email_automations'), 'robot@acme.example');
+    await save(t);
+    expect(puts(t.backend).slice(2).map((c) => [c.endpoint, c.payload.value]))
+      .toEqual([['/api/app-settings/email_automations', 'robot@acme.example'], ['/api/app-settings/manage_cutoff_min', '90']]);
+    expect(t.F.Page.dirty()).toBe(false);
+  });
+
+  test('fe-* keys saved through the page → the shell re-reads firmData once (settings.html\'s saveSetting rule); other keys never', async () => {
+    const t = await boot({ users: USERS });
+    let n = 0;
+    t.top.loadFirmData = () => { n++; };
+    t.setVal(sctl(t, 'firm_name'), 'Acme');
+    await save(t);
+    expect(n).toBe(0);
+    t.setVal(sctl(t, 'fe-firm_phone'), '3135550000');
+    t.setVal(sctl(t, 'fe-firm_site_url'), 'https://acme.example');
+    await save(t);
+    expect([n, t.backend.st.settings.value('fe-firm_phone'), t.backend.st.settings.value('fe-firm_site_url')]).toEqual([1, '3135550000', 'https://acme.example']);
+  });
+
+  test('a row the server refuses: its sentence on the row, its section on the banner; the other sections and the Launcher still save', async () => {
+    const t = await boot({ users: USERS });
+    t.setVal(sctl(t, 'firm_email'), 'not-an-email');
+    t.setVal(sctl(t, 'email_automations'), 'robot@acme.example');
+    t.tick('bills', true);
+    await save(t);
+    expect(sstatus(t, 'firm_email')).toBe('must be a valid email address');
+    expect(t.$('#fm-banner').textContent).toBe('Firm identity: a setting was not saved — the reason is on it.');
+    expect([t.backend.st.settings.value('email_automations'), t.backend.st.doc.hidden]).toEqual(['robot@acme.example', ['bills']]);
+    expect([t.F.Page.dirty(), t.saveBtnShown(), sctl(t, 'firm_email').value, t.backend.st.settings.value('firm_email')])
+      .toEqual([true, true, 'not-an-email', 'office@acme.example']);
+    expect(t.$('#fm-sec-identity .fm-sec-status').textContent).toBe('Unsaved changes');
+    t.setVal(sctl(t, 'firm_email'), 'billing@acme.example');
+    await save(t);
+    expect([t.$('#fm-banner').hidden, t.F.Page.dirty(), t.backend.st.settings.value('firm_email')]).toEqual([true, false, 'billing@acme.example']);
+  });
+
+  test('a 403 on a settings save (permission gone since load): the server\'s sentence on the row, the session message on the banner, the Launcher\'s own message kept', async () => {
+    const t = await boot({ users: USERS, failWith: { 'PUT /api/ui-config': 409 } });
+    t.backend.st.settings.st.caps.firm = false;
+    t.setVal(sctl(t, 'firm_name'), 'Acme');
+    t.setVal(sctl(t, 'sms_staff_from'), '313 555 0000');
+    t.tick('bills', true);
+    await save(t);
+    expect(sstatus(t, 'firm_name')).toBe('Changing Firm name needs the firm.settings permission');
+    expect(sstatus(t, 'sms_staff_from')).toBe('Changing Staff SMS from needs the firm.settings permission');
+    expect(t.$('#fm-banner').textContent).toBe(`Firm identity and Senders: 2 settings were not saved — the reason is on each. ${t.F.SESSION_MSG} ${t.F.CONFLICT_MSG}`);
+    expect([t.F.Page.dirty(), t.F.LauncherSection.isDirty()]).toEqual([true, true]);
+  });
+
+  test('the dirty guards cover the settings: Refresh asks first; a tab return never reloads over an edit; a page unload is held', async () => {
+    const t = await boot({ users: USERS });
+    t.setVal(sctl(t, 'dropbox_unsorted_uploads_path'), '  01 Unsorted');
+    let asked = 0;
+    t.firm.confirm = () => { asked++; return false; };
+    t.mid.onTopbarRefresh();
+    await flush();
+    expect([asked, settingsGets(t).length, t.F.Page.dirty()]).toEqual([1, 1, true]);
+    t.mid.switchSubPage('types'); t.mid.switchSubPage('firm');
+    await flush();
+    expect([settingsGets(t).length, sctl(t, 'dropbox_unsorted_uploads_path').value]).toEqual([1, '  01 Unsorted']);
+    const ev = new t.firm.Event('beforeunload', { cancelable: true });
+    t.firm.dispatchEvent(ev);
+    expect(ev.defaultPrevented).toBe(true);
+    t.firm.confirm = () => { asked++; return true; };
+    t.mid.onTopbarRefresh();
+    await flush();
+    expect([asked, settingsGets(t).length, t.F.Page.dirty(), sctl(t, 'dropbox_unsorted_uploads_path').value]).toEqual([2, 2, false, ' 00 Unsorted ']);
+    const ev2 = new t.firm.Event('beforeunload', { cancelable: true });
+    t.firm.dispatchEvent(ev2);
+    expect(ev2.defaultPrevented).toBe(false);
+  });
+
+  test('History and restore through the page: the confirm is the page\'s; the row follows', async () => {
+    const t = await boot({ users: USERS });
+    t.setVal(sctl(t, 'manage_cutoff_min'), '45');
+    await save(t);
+    t.fire(srow(t, 'manage_cutoff_min').querySelector('[data-ycsr="history"]'), 'click');
+    await flush();
+    const line = srow(t, 'manage_cutoff_min').querySelector('.ycsr-ver-line').textContent;
+    expect(line).toMatch(/^changed “120” → “45” by Alex, .+, in the app$/);
+    const asked = [];
+    t.firm.confirm = (m) => { asked.push(m); return true; };
+    t.fire(srow(t, 'manage_cutoff_min').querySelector('[data-ycsr="restore"]'), 'click');
+    await flush();
+    expect(asked).toEqual(['Restore this value?\n\nManage cutoff (min) goes back to “120” — a new entry in History.']);
+    expect([t.backend.st.settings.value('manage_cutoff_min'), sctl(t, 'manage_cutoff_min').value, t.F.Page.dirty()]).toEqual(['120', '120', false]);
+    // the Launcher's History is untouched by the rows' own
+    expect(t.$('#fm-history').hidden).toBe(true);
+  });
+
+  test('automation variables: listed with the hint; Add → POST → listed, the form cleared; a registered key → 409, the server\'s sentence, nothing added', async () => {
+    const t = await boot({ users: USERS });
+    expect(t.$('#fm-sec-variables .fm-block > .yc-hint').textContent)
+      .toMatch(/workflows read them with get_setting \/ get_settings and may change them with set_setting/);
+    expect(t.$$('#fm-sec-variables .ycsr-row').map((r) => r.dataset.key)).toEqual(['intake_greeting']);
+    expect([sctl(t, 'intake_greeting').tagName, sctl(t, 'intake_greeting').value]).toEqual(['TEXTAREA', 'Hi {{first}},\nthanks for calling.']);
+    t.setVal(t.$('#fm-var-key'), '  clio_firm_id ');
+    t.setVal(t.$('#fm-var-type'), 'number');
+    t.setVal(t.$('#fm-var-label'), 'Clio firm id');
+    t.setVal(t.$('#fm-var-value'), ' 42 ');
+    t.fire(t.$('#fm-var-add'), 'click');
+    await flush();
+    expect(t.backend.st.calls.filter((c) => c.method === 'POST').map((c) => c.payload))
+      .toEqual([{ key: 'clio_firm_id', type: 'number', label: 'Clio firm id', description: null, value: ' 42 ' }]);
+    expect(t.$$('#fm-sec-variables .ycsr-row').map((r) => r.dataset.key)).toEqual(['intake_greeting', 'clio_firm_id']);
+    expect([sctl(t, 'clio_firm_id').value, srow(t, 'clio_firm_id').querySelector('.yc-flabel').textContent]).toEqual([' 42 ', 'Clio firm id']);
+    expect([t.$('#fm-var-status').textContent, t.$('#fm-var-status').className]).toEqual(['Added “clio_firm_id” — it is listed above.', 'fm-var-status ok']);
+    expect(['fm-var-key', 'fm-var-label', 'fm-var-desc', 'fm-var-value'].map((id) => t.$('#' + id).value)).toEqual(['', '', '', '']);
+    expect([t.$('#fm-var-type').value, t.F.Page.dirty()]).toEqual(['string', false]);
+    // a row like any other: validated by its own type on save
+    t.setVal(sctl(t, 'clio_firm_id'), 'x');
+    await save(t);
+    expect(sstatus(t, 'clio_firm_id')).toBe('must be a number');
+    expect(t.$('#fm-banner').textContent).toBe('Automation variables: a setting was not saved — the reason is on it.');
+    t.setVal(sctl(t, 'clio_firm_id'), '43');
+    await save(t);
+    expect(t.backend.st.settings.value('clio_firm_id')).toBe('43');
+    // a registered key → 409, the server's sentence; nothing added; the key kept for a fix
+    t.setVal(t.$('#fm-var-key'), 'firm_name');
+    t.fire(t.$('#fm-var-add'), 'click');
+    await flush();
+    expect([t.$('#fm-var-status').textContent, t.$('#fm-var-status').className])
+      .toEqual(['"firm_name" is a registered setting — change it in Config → Firm', 'fm-var-status err']);
+    expect([t.$$('#fm-sec-variables .ycsr-row').length, t.$('#fm-var-key').value]).toEqual([2, 'firm_name']);
+  });
+
+  test('no variables yet: said so; the first one added replaces the line', async () => {
+    const t = await boot({ users: USERS, settings: { variables: [] } });
+    expect(t.$('#fm-sec-variables .ycsr-empty').textContent).toBe('No automation variables yet.');
+    t.setVal(t.$('#fm-var-key'), 'first_var');
+    t.fire(t.$('#fm-var-add'), 'click');
+    await flush();
+    expect([t.$('#fm-sec-variables .ycsr-empty'), t.$$('#fm-sec-variables .ycsr-row').map((r) => r.dataset.key)]).toEqual([null, ['first_var']]);
+    expect(t.backend.st.settings.value('first_var')).toBe('');
+  });
+
+  test('Dropbox folder templates: settings.html\'s editor — stage names fixed, spaces as dots, kept byte for byte; untouched is clean', async () => {
+    const t = await boot({ users: USERS });
+    const r = () => srow(t, 'dropbox_case_folder_templates');
+    expect([...r().querySelectorAll('.fm-dt-stage h4')].map((h) => h.textContent)).toEqual(['open', 'closed', 'archive']);
+    // stage names are text, not inputs: every input is a path or a subfolder
+    expect([...r().querySelectorAll('input')].map((i) => (i.dataset.dtPath !== undefined ? 'path' : i.dataset.dtSub !== undefined ? 'sub' : 'other')))
+      .toEqual(['path', 'sub', 'sub', 'path', 'path']);
+    expect(r().querySelector('[data-dt-path="0"]').value).toBe('  01 Open {{case_type}} ');
+    const prev0 = r().querySelector('[data-dt-pathprev="0"]');
+    expect([prev0.textContent, prev0.querySelectorAll('.fm-dt-dot').length]).toEqual(['··01·Open·{{case_type}}·', 5]);
+    expect([...r().querySelectorAll('[data-dt-sub]')].map((i) => i.value)).toEqual([' Docs', 'Court  Filings']);
+    expect([...r().querySelectorAll('[data-dt-subprev]')].map((p) => [p.hidden, p.textContent])).toEqual([[false, '·Docs'], [false, 'Court··Filings']]);
+    expect(r().querySelector('label.yc-flabel').htmlFor).toBe(r().querySelector('[data-dt-path="0"]').id);
+    // a stage's per-case-type template: shown (read-only), carried through every save untouched
+    expect([...r().querySelectorAll('[data-dt-extra]')].map((e) => e.textContent)).toEqual(['Bankruptcy: ··BK·{{case_number}}']);
+    expect([t.F.Page.dirty(), section(t, 'dropbox').view.value('dropbox_case_folder_templates')]).toEqual([false, DT_VALUE]);
+    // an edit and its revert: clean again (the stored string, byte for byte)
+    t.setVal(r().querySelector('[data-dt-path="2"]'), 'Archive2');
+    expect(t.F.Page.dirty()).toBe(true);
+    t.setVal(r().querySelector('[data-dt-path="2"]'), 'Archive');
+    expect([t.F.Page.dirty(), section(t, 'dropbox').view.value('dropbox_case_folder_templates')]).toEqual([false, DT_VALUE]);
+    // edits: a trailing space on closed's path, a subfolder for closed, a reorder in open
+    t.setVal(r().querySelector('[data-dt-path="1"]'), 'Z Closed ');
+    t.fire(r().querySelector('[data-dt-addsub="1"]'), 'click');
+    expect(t.firm.document.activeElement).toBe(r().querySelector('[data-dt-sub="1:0"]'));
+    t.setVal(r().querySelector('[data-dt-sub="1:0"]'), '  Old  files');
+    expect(r().querySelector('[data-dt-subprev="1:0"]').textContent).toBe('··Old··files');
+    t.fire(r().querySelector('[data-dt-subdown="0:0"]'), 'click');
+    expect([...r().querySelectorAll('[data-dt-sub^="0:"]')].map((i) => i.value)).toEqual(['Court  Filings', ' Docs']);
+    await save(t);
+    const want = JSON.stringify({                       // each stage's keys keep their stored order
+      open: { subfolders: ['Court  Filings', ' Docs'], default: '  01 Open {{case_type}} ' },
+      closed: { default: 'Z Closed ', subfolders: ['  Old  files'] },
+      archive: { default: 'Archive', Bankruptcy: '  BK {{case_number}}' },
+    }, null, 2);
+    expect(puts(t.backend).map((c) => [c.endpoint, c.payload.value])).toEqual([['/api/app-settings/dropbox_case_folder_templates', want]]);
+    expect(t.backend.st.settings.value('dropbox_case_folder_templates')).toBe(want);
+    expect([t.F.Page.dirty(), r().querySelector('[data-dt-path="1"]').value, sstatus(t, 'dropbox_case_folder_templates')]).toEqual([false, 'Z Closed ', 'Saved']);
+  });
+
+  test('Dropbox folder templates: settings.html\'s checks block the save (the reason on the row); another shape gets the raw JSON textarea', async () => {
+    const t = await boot({ users: USERS });
+    const r = () => srow(t, 'dropbox_case_folder_templates');
+    t.fire(r().querySelector('[data-dt-addsub="0"]'), 'click');
+    await save(t);
+    expect([puts(t.backend).length, sstatus(t, 'dropbox_case_folder_templates')]).toEqual([0, 'Subfolder names cannot be empty (under "open")']);
+    expect(t.$('#fm-banner').textContent).toBe('Dropbox filing: a setting was not saved — the reason is on it.');
+    t.setVal(r().querySelector('[data-dt-sub="0:2"]'), ' Docs');
+    await save(t);
+    expect(sstatus(t, 'dropbox_case_folder_templates')).toBe('Duplicate subfolders under "open"');
+    t.fire(r().querySelector('[data-dt-subdel="0:2"]'), 'click');
+    t.setVal(r().querySelector('[data-dt-path="1"]'), '  ');
+    await save(t);
+    expect([puts(t.backend).length, sstatus(t, 'dropbox_case_folder_templates')]).toEqual([0, 'Path for "closed" cannot be empty']);
+    // a stored value of another shape: the row's json textarea, verbatim
+    const t2 = await boot({ users: USERS, settings: { values: { ...SETTING_VALUES, dropbox_case_folder_templates: ' ["not", "stages"] ' } } });
+    const el = sctl(t2, 'dropbox_case_folder_templates');
+    expect([el.tagName, el.value, srow(t2, 'dropbox_case_folder_templates').querySelector('.fm-dt')]).toEqual(['TEXTAREA', ' ["not", "stages"] ', null]);
+    expect(t2.F.dtParse('{"a":{"default":"x","subfolders":[1]}}')).toBeNull();
+    expect(t2.F.dtParse('{}')).toBeNull();
+  });
+
+  test('the settings GET failing: each settings section says so (403 → the session message); the Launcher still loads and saves', async () => {
+    const t = await boot({ users: USERS, failWith: { 'GET /api/app-settings': 403 } });
+    expect(settingsGets(t)).toHaveLength(1);
+    for (const s of reg.SECTIONS.firm) expect([s.id, t.$(`#fm-sec-${s.id} .empty-state`).textContent]).toEqual([s.id, t.F.SESSION_MSG]);
+    expect(t.$('#fm-banner').hidden).toBe(true);
+    t.tick('bills', true);
+    await save(t);
+    expect(puts(t.backend).map((c) => c.endpoint)).toEqual(['/api/ui-config']);
+    expect(t.F.Page.dirty()).toBe(false);
   });
 });

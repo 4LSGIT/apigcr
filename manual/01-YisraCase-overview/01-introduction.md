@@ -65,7 +65,7 @@ YisraCase is organized into tabs down the left sidebar, in this order.
 | **Bills** | Billing records *(placeholder; full feature in progress)* |
 | **Pipeline Board** | Where every case sits by stage and lane — see [Pipelines](13-pipelines.md) |
 | **Admin** | Firm administration. Hidden unless your account has the authorization for it |
-| **More Features** | Everything else, including **Settings** (personal and firm settings — also one click on "Hi, *your name*!" at the top) — see below |
+| **More Features** | Everything else, including **Settings** (your own account, password, signature, and who can reach which mailbox and phone line — also one click on "Hi, *your name*!" at the top) — see below |
 | **All** | Every feature you have, in one searchable list — see *Finding any feature* below |
 
 Opening any record takes you to a detail page that shows everything connected to it: related contacts or cases, appointments, tasks, and the full activity log.
@@ -76,8 +76,12 @@ Most of this manual's smaller systems don't have a sidebar tab of their own —
 they live behind **More Features**, and the section READMEs refer to that as
 "the **More** menu." What you'll find there:
 
-- **Settings** — personal and firm settings (it had its own sidebar tab until
-  Comms took that place).
+- **Settings** — your own: account, booking calendars, password, email
+  signature, **My access** (which mailboxes and phone lines you can read, send
+  from or manage) and, if you manage one, **Manage access** (it had its own
+  sidebar tab until Comms took that place). Firm-wide settings live in
+  **YisraCase Config** — see
+  [Firm and system settings](../05-Subsystems/15-firm-and-system-settings.md).
 - **Staff tools** — Reports, Views, Documents, Video Manager, Redirects Manager,
   Asset Manager, Form Builder, Form Inbox, Campaigns, YisraCase Config, Court
   Preview, Feature Requests, Support Inbox, Signatures, Automations, Manuals

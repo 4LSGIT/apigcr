@@ -922,7 +922,7 @@ describe('appt / event readers — visibility fence', () => {
 // ─────────────────────────────────────────────────────────────
 // Lead-source vocabulary changes (Slice 3c)
 //
-// `fe-lead_sources` is an app_settings row edited in settings.html, and every
+// `fe-lead_sources` is an app_settings row edited in YisraCase Config → Lists, and every
 // open case file subscribes to it so its datalist stays current. The subscriber
 // used to answer by calling syncLeadSourceList(c), which ALSO writes the input's
 // value from the stored row — so editing the vocabulary in one window reached

@@ -149,12 +149,19 @@
     .unmapped-list th { text-align: left; font-size: 10px; text-transform: uppercase; color: var(--text-muted); padding: 4px 6px; border-bottom: 1px solid var(--border); }
     .unmapped-list td { padding: 4px 6px; border-bottom: 1px solid var(--page-bg); }
 
+    /* Read-only (the Config handshake): every write control carries .cc-w;
+       the active switches stay, disabled, to show their state; a dialog
+       opened to look has no chip-remove crosses. */
+    body.cc-ro .cc-w { display: none; }
+    body.cc-ro .tgl .slider { cursor: default; }
+    body.cc-ro .cc-form .chips .chip i { display: none; }
+
     ::-webkit-scrollbar { width: 4px; height: 4px; }
     ::-webkit-scrollbar-track { background: transparent; }
     ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
   </style>
 </head>
-<body>
+<body class="cc-ro">
 
 <div class="toolbar">
   <i class="fa-solid fa-circle-info"></i>
@@ -170,7 +177,7 @@
     <option value="other">Other</option>
   </select>
   <label><input type="checkbox" id="f-inactive" onchange="render()"> show inactive</label>
-  <button class="btn btn-primary btn-sm" onclick="openEditor(null)"><i class="fa-solid fa-plus"></i> New Type</button>
+  <button class="btn btn-primary btn-sm cc-w" onclick="openEditor(null)"><i class="fa-solid fa-plus"></i> New Type</button>
 </div>
 
 <div id="wrap">
@@ -215,12 +222,52 @@
 //     The pickers pass the case's type, so a BK-scoped type hides on a Civil
 //     Litigation case.
 //
-// Shell protocol: P.apiSend relay; lifecycle hooks onShow/onRefresh/onNew
-// exposed on window; topbar buttons via P.setTopbarButtons.
+// Read-only: the Config handshake (settings arc §3b) — see ccApplyAccess.
+//
+// Shell protocol: P.apiSend relay; lifecycle hooks onShow/onRefresh/onNew/
+// onAccess exposed on window; topbar buttons via P.setTopbarButtons.
 // ═══════════════════════════════════════════════════════════════
 
 const P = window.parent;
-const api = (...args) => P.apiSend(...args);
+
+// ── Read-only (the Config handshake, settings arc §3b) ─────────
+// ONE idiom. ccCanEdit is true only when the shell says so — P.configCanEdit
+// === true at init, or onAccess({ canEdit: true }) later; anything else is
+// read-only (fail closed — the server is the authority either way).
+// Read-only =
+//   · body.cc-ro hides every write control (.cc-w): New Type, Mint type…,
+//     the options editor's Add / Save / Delete and its new-option row, the
+//     editor's case-type Add;
+//   · ccLock() disables every form control a render draws (the active
+//     switches keep showing their state);
+//   · ccView() opens the type editor and the picker options to LOOK: inputs
+//     disabled, no Save / Delete;
+//   · api() refuses every non-GET call, so no stray or hidden control writes.
+// The filters, a row's details and the unmapped list still work.
+let ccCanEdit = false;
+const CC_RO_MSG = 'Read-only — changing YisraCase Config needs the admin permission.';
+const ccIsRead = (method) => method == null || /^(GET|HEAD)$/i.test(String(method));
+function ccApplyAccess(canEdit) {
+  const next = canEdit === true;
+  const changed = next !== ccCanEdit;
+  ccCanEdit = next;
+  document.body.classList.toggle('cc-ro', !next);
+  if (changed && loaded) render();
+}
+function onAccess(access) { ccApplyAccess(access && access.canEdit); }
+function ccLock(root) {
+  if (ccCanEdit || !root) return;
+  root.querySelectorAll('input, select, textarea').forEach(el => { el.disabled = true; });
+}
+function ccView(opts) {
+  if (ccCanEdit) return opts;
+  return { ...opts, showConfirmButton: false, showDenyButton: false, cancelButtonText: 'Close',
+    didOpen: (...a) => { if (opts.didOpen) opts.didOpen(...a); ccLock(Swal.getHtmlContainer()); } };
+}
+
+const api = (...args) => (ccCanEdit || ccIsRead(args[1]))
+  ? P.apiSend(...args)
+  : Promise.reject(new Error(CC_RO_MSG));
 const E = id => document.getElementById(id);
 const Toast = Swal.mixin({ toast: true, position: 'top-end', showConfirmButton: false, timer: 2800 });
 
@@ -326,7 +373,7 @@ window.showUnmapped = function () {
       <td><b>${esc(g.label)}</b></td>
       <td style="text-align:right">${g.events.length} ev · ${g.appts.length} ap</td>
       <td style="font-size:11px;color:var(--text-muted)">${detail}</td>
-      <td><button type="button" class="btn btn-primary btn-sm" data-mint="${i}"><i class="fa-solid fa-wand-magic-sparkles"></i> Mint type…</button></td>
+      <td><button type="button" class="btn btn-primary btn-sm cc-w" data-mint="${i}"><i class="fa-solid fa-wand-magic-sparkles"></i> Mint type…</button></td>
     </tr>`;
   }).join('');
   const nb = ((d.no_label && d.no_label.events) || 0) + ((d.no_label && d.no_label.appts) || 0);
@@ -424,6 +471,7 @@ function render() {
       <th class="t-num">#</th><th>Label</th><th>Key</th><th class="t-c">Single</th><th>Blocks</th><th class="t-c">Client</th>
       <th class="t-num">Len</th><th class="t-c">Remind</th><th>Picker options</th><th>Case types</th><th class="t-c">Aliases</th><th class="t-c">Refs</th><th class="t-c">Active</th>
     </tr></thead><tbody>${body}</tbody></table>`;
+  ccLock(host);
 }
 window.render = render;
 
@@ -547,7 +595,7 @@ async function openEditor(key, prefill) {
     <div class="checks" id="ed-casetypes">
       ${ctOpts.map(c => `<label><input type="checkbox" value="${esc(c)}" ${ctSet.has(c.toLowerCase()) ? 'checked' : ''}> ${esc(c)}</label>`).join('')}
     </div>
-    <div class="addrow"><input type="text" id="ed-ct-add" placeholder="add a case type not listed…"><button type="button" class="btn btn-outline btn-sm" id="ed-ct-btn">Add</button></div>
+    <div class="addrow cc-w"><input type="text" id="ed-ct-add" placeholder="add a case type not listed…"><button type="button" class="btn btn-outline btn-sm" id="ed-ct-btn">Add</button></div>
 
     <label>Approaching reminders (days before) <span style="color:var(--text-muted);text-transform:none;font-weight:400">— empty = none</span></label>
     <div class="chips" id="ed-offsets">
@@ -567,8 +615,8 @@ async function openEditor(key, prefill) {
     ${isNew ? '' : `<div class="hint" style="margin-top:10px">References: events ${refs.events} · appts ${refs.appts} · booking views ${refs.booking_views} · court matches ${refs.ai_match_types}</div>`}
   </div>`;
 
-  const { isConfirmed, isDenied, value } = await Swal.fire({
-    title: isNew ? 'New calendar type' : `Edit ${t.label}`,
+  const { isConfirmed, isDenied, value } = await Swal.fire(ccView({
+    title: isNew ? 'New calendar type' : `${ccCanEdit ? 'Edit' : 'View'} ${t.label}`,
     customClass: { popup: 'yc-popup-wide' },
     html,
     showCancelButton: true,
@@ -643,7 +691,7 @@ async function openEditor(key, prefill) {
         return false;
       }
     },
-  });
+  }));
 
   if (isConfirmed) {
     Toast.fire({ icon: 'success', title: isNew ? 'Type created' : 'Saved' });
@@ -746,15 +794,15 @@ async function openOptions(key) {
       <td><input type="number" value="${o.sort_order}" data-f="sort_order" style="width:56px"></td>
       <td class="t-c"><input type="checkbox" data-f="active" ${o.active ? 'checked' : ''}></td>
       <td class="t-c" style="white-space:nowrap">
-        <button type="button" class="btn btn-outline btn-sm" data-act="save" title="Save"><i class="fa-solid fa-floppy-disk"></i></button>
-        <button type="button" class="btn btn-outline btn-sm" data-act="del" title="Delete"><i class="fa-solid fa-trash"></i></button>
+        <button type="button" class="btn btn-outline btn-sm cc-w" data-act="save" title="Save"><i class="fa-solid fa-floppy-disk"></i></button>
+        <button type="button" class="btn btn-outline btn-sm cc-w" data-act="del" title="Delete"><i class="fa-solid fa-trash"></i></button>
       </td></tr>`;
   const html = () => `<div class="cc-form">
     <div class="hint" style="margin-bottom:8px">One row per length. Surfaces: <b>new</b> = new-client dialog, <b>f/u</b> = follow-up dialog (case / contact / calendar / shell).
       Picker text is the label override or "<b>${esc(t.label)}</b>", plus the length. The saved appointment always carries the type label.</div>
     <table class="opts"><thead><tr><th>Min</th><th>Label override</th><th>Surfaces</th><th>Sort</th><th class="t-c">Active</th><th></th></tr></thead>
     <tbody>${(t.options || []).map(rowHtml).join('')}
-      <tr class="new" data-id="">
+      <tr class="new cc-w" data-id="">
         <td><input type="number" min="1" max="1440" placeholder="${t.default_length ?? ''}" data-f="length"></td>
         <td><input type="text" maxlength="80" placeholder="(optional)" data-f="label"></td>
         <td>${sfBoxes('new', [])}</td>
@@ -772,7 +820,7 @@ async function openOptions(key) {
     active:     tr.querySelector('[data-f=active]').checked ? 1 : 0,
   });
 
-  await Swal.fire({
+  await Swal.fire(ccView({
     title: `Picker options — ${t.label}`,
     customClass: { popup: 'yc-popup-wide' },
     html: html(),
@@ -801,13 +849,14 @@ async function openOptions(key) {
         } catch (e) { msg(e.message || 'Failed', true); }
       });
     },
-  });
+  }));
   await reload();
 }
 window.openOptions = openOptions;
 
 // ── Lifecycle ──────────────────────────────────────────────────
 async function init() {
+  ccApplyAccess(P.configCanEdit);
   P.setTopbarButtons({ new: true, refresh: true });
   await reload();
 }
@@ -816,6 +865,7 @@ function onHide()    {}
 function onRefresh() { reload(); }
 function onNew()     { openEditor(null); }
 window.onShow = onShow; window.onHide = onHide; window.onRefresh = onRefresh; window.onNew = onNew;
+window.onAccess = onAccess;
 
 // ── Boot ───────────────────────────────────────────────────────
 (function waitForShell() {

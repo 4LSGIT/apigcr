@@ -204,6 +204,10 @@ the same **Move to another pipeline** dialog as the case page, for moves the dra
 
 ### YisraCase Config → Pipelines (admin)
 
+Changing pipelines needs the *firm settings* permission (admin, IT, SU); everyone
+else sees this tab read-only — a banner says so, the arrows, toggles and add / delete
+buttons are gone, and a stage's or requirement's dialog opens to view.
+
 Create and edit pipelines and stages: order, keys, labels, bucket mapping, lane, terminal,
 client visibility, the default rec text. Each stage expands to its requirements sub-editor
 (the detector list is pulled from the running system, so new detectors appear automatically).
@@ -326,7 +330,8 @@ visible), `POST /api/cases/:id/pipeline/advance`, `POST /api/cases/:id/pipeline/
 (`{ template_id, stage_id, note? }` — membership write + advance; `pipelineService.movePipeline`),
 `POST` / `DELETE
 /api/cases/:id/pipeline/requirements/:key/override`, `GET /api/pipeline-board`, and the
-`/api/pipeline-admin/*` CRUD (templates, stages, reorder, requirements, detectors, usage).
+`/api/pipeline-admin/*` CRUD (templates, stages, reorder, requirements, detectors, usage —
+reads `jwtOrApiKey`, writes `requireAuth({ can:'firm.settings', allowApiKey:true })`).
 
 **Frozen contracts** (other arcs build on these): the resolved-requirement shape; the event
 detector's selector shape `{source, kind_or_type, want, which}`; the `projected` payload key; the

@@ -26,8 +26,13 @@
  *   (no DELETE — the Contact Roles type editor this clones offers none, and a
  *    def's key may already have data under it from S2 on; deactivate instead)
  *
- * AUTH: jwtOrApiKey on every route — identical to /api/contact-role-types,
- * the editor this one is cloned from (no superuser gate).
+ * AUTH: reads (GET) are jwtOrApiKey — any staff. Every write (POST / PATCH,
+ * reconcile included) is requireAuth({ audience:'staff', can:'firm.settings',
+ * allowApiKey:true }) — YisraCase Config vocabulary writes need the
+ * firm.settings capability (admin / it / su; settings arc, Fred 2026-10-17),
+ * the same gate as the contact-role-TYPE writes. Machine keys: NULL-scope
+ * keys and the internal key pass; a scoped key needs firm.settings in its
+ * scopes (a route:/ scope does not stand in for it).
  *
  * AUDIT (S3): every successful mutation writes an admin_audit_log row
  * (tool 'field_defs') — fire-and-forget, an audit failure never breaks the
@@ -50,11 +55,15 @@
 const express = require('express');
 const router = express.Router();
 const jwtOrApiKey = require('../lib/auth.jwtOrApiKey');
+const requireAuth = require('../lib/auth.requireAuth');
 const svc = require('../services/fieldDefService');
 const reconciler = require('../services/fieldDefReconciler');
 const { auditAdminAction } = require('../lib/auth.superuser');
 
 const TOOL = 'field_defs';   // admin_audit_log tag
+
+// Config vocabulary writes: the firm.settings capability (see AUTH above).
+const firmSettingsWrite = requireAuth({ audience: 'staff', can: 'firm.settings', allowApiKey: true });
 
 /** Who / where, for this request's audit row and the reconcile it triggers. */
 function actorOf(req) {
@@ -101,7 +110,7 @@ router.get('/api/field-defs/usage', jwtOrApiKey, async (req, res) => {
 });
 
 // ─── POST /api/field-defs ───
-router.post('/api/field-defs', jwtOrApiKey, async (req, res) => {
+router.post('/api/field-defs', firmSettingsWrite, async (req, res) => {
   try {
     const result = await svc.createDef(req.db, req.body || {}, { actor: actorOf(req) });
     audit(req, 'create', { ...result, body: req.body || {} });
@@ -110,7 +119,7 @@ router.post('/api/field-defs', jwtOrApiKey, async (req, res) => {
 });
 
 // ─── PATCH /api/field-defs/:id ───
-router.patch('/api/field-defs/:id', jwtOrApiKey, async (req, res) => {
+router.patch('/api/field-defs/:id', firmSettingsWrite, async (req, res) => {
   try {
     const result = await svc.updateDef(req.db, req.params.id, req.body || {}, { actor: actorOf(req) });
     audit(req, 'update', { ...result, patch: req.body || {} });
@@ -119,7 +128,7 @@ router.patch('/api/field-defs/:id', jwtOrApiKey, async (req, res) => {
 });
 
 // ─── POST /api/field-defs/:id/deactivate ───
-router.post('/api/field-defs/:id/deactivate', jwtOrApiKey, async (req, res) => {
+router.post('/api/field-defs/:id/deactivate', firmSettingsWrite, async (req, res) => {
   try {
     const result = await svc.setActive(req.db, req.params.id, false, { actor: actorOf(req) });
     audit(req, 'deactivate', result);
@@ -128,7 +137,7 @@ router.post('/api/field-defs/:id/deactivate', jwtOrApiKey, async (req, res) => {
 });
 
 // ─── POST /api/field-defs/:id/reactivate ───
-router.post('/api/field-defs/:id/reactivate', jwtOrApiKey, async (req, res) => {
+router.post('/api/field-defs/:id/reactivate', firmSettingsWrite, async (req, res) => {
   try {
     const result = await svc.setActive(req.db, req.params.id, true, { actor: actorOf(req) });
     audit(req, 'reactivate', result);
@@ -141,7 +150,7 @@ router.post('/api/field-defs/:id/reactivate', jwtOrApiKey, async (req, res) => {
 // 200 ok / noop / dry_run · 409 lock still busy after the reconciler's retry ·
 // 500 a statement failed — `result.failed` carries the statement and MySQL's
 // error code; the full engine message goes to the system alert, not here.
-router.post('/api/field-defs/reconcile', jwtOrApiKey, async (req, res) => {
+router.post('/api/field-defs/reconcile', firmSettingsWrite, async (req, res) => {
   try {
     const result = await reconciler.reconcile(req.db, {
       trigger: 'manual', actor: actorOf(req), dryRun: !!(req.body && req.body.dry_run),

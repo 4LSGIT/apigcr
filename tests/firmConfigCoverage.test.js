@@ -207,10 +207,14 @@ describe('firmConfig registry coverage', () => {
     expect(missing).toEqual([]);
   });
 
-  test('the flag U6b nearly lost is registered (the regression this file exists for)', () => {
-    expect(REGISTRY).toHaveProperty('unified_singleton_enabled');
-    // …and is really read by the singleton writer, so the guard has a subject.
-    expect(LITERAL.some((c) => c.key === 'unified_singleton_enabled')).toBe(true);
+  test('the flag U6b nearly lost has retired: unregistered, and no reader left behind', () => {
+    // unified_singleton_enabled retired at its final value '1' in the settings
+    // arc (2026-10): the singleton writers always supersede now. Retiring a
+    // registry key is the same contract in reverse — a reader left behind
+    // would throw at call time — so both halves are pinned (THE GUARD above
+    // is what fails on a straggler; this names the case it exists for).
+    expect(REGISTRY).not.toHaveProperty('unified_singleton_enabled');
+    expect(LITERAL.some((c) => c.key === 'unified_singleton_enabled')).toBe(false);
   });
 
   test('every registry entry is a descriptor object (env / legacyEnv or empty)', () => {

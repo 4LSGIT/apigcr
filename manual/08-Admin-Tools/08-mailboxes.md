@@ -217,9 +217,17 @@ Click **Access** on a row. Each person gets any mix of:
   checked against mailbox access (and the automations user cannot hold one).
 - A **Manage** holder who is not a superuser may change who has access to that
   box, its display name and its colour — nothing else; host, login, secret, send
-  credential, folders and Active stay superuser-only. The server enforces
-  this today, but the Mailboxes tile is superuser-only, so they have no
-  screen for it yet (the comms hub itself is in the sidebar now).
+  credential, folders and Active stay superuser-only. Their screen for the
+  grants is **Settings → Manage access** (More → Settings): one card per box
+  or line they manage, with the same ticks, **Remove** and an **Add** row
+  (active staff not already on it). It needs no elevation — a Manage grant is
+  the authority, not a superuser bypass. Unticking your own Manage asks first
+  and the card then disappears. The display name and colour have no screen for
+  them yet: the server allows the change, but the Mailboxes tile is
+  superuser-only.
+- Everyone sees what they hold in **Settings → My access**: each mailbox and
+  line with Read / Send / Manage, *via role (attorney)* where the attorney
+  role — not a grant — gives the read.
 
 Every change — mailbox or grant — is recorded in `admin_audit_log` under the
 tool `mailboxes`.
@@ -644,6 +652,10 @@ Phone-line access works like mailbox access: click **Access** on a line in
   own default line (Stuart → his line, Shoshana → hers, Rena → hers).
 - **Automations are never checked**: workflow, sequence, campaign and
   reminder texts go out from any line, as before.
+- A non-superuser with **Manage** on a line edits its access in **Settings →
+  Manage access**, as for mailboxes — but only for a line they can also
+  **Read**: the list behind that screen holds the lines a person reads, so a
+  send- or manage-only grant does not show there (no one holds one today).
 
 ### Do-not-transcribe — Connections → Phone Lines, or Comms → Phone
 

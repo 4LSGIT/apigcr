@@ -5,23 +5,30 @@
  * (routes/api.appSettings.js; ref/ACCESS_CONTROL_DESIGN.md §3.2–3, §3.6,
  * §8 Q3). The first staff-route mount of requireAuth.
  *
+ * Since the settings arc (2026-10) the capability is decided PER KEY in the
+ * handler (lib/settingsRegistry.js: fe-firm_phone is a firm key, so
+ * firm.settings), after a requireAuth({ audience:'staff', allowApiKey:true })
+ * mount; the per-key rules are tests/appSettingsRegistry.test.js. This file
+ * keeps the A4 matrix on one firm key.
+ *
  * WHAT IS LOCKED
  *   - PUT /api/app-settings/:key and POST /api/app-settings: staff / attorney
- *     / form_dev JWTs → 403 and the handler never runs (no app_settings
- *     query); admin / it / su → through. The legacy 'authorized - SU'
- *     string alone → 403 since A2b (a claim, not a credential).
- *   - x-api-key callers pass the gate (machine trust, Q3): PUT writes; POST
- *     still refuses them in its own handler (automation never mints keys).
+ *     / form_dev JWTs → 403 naming the permission, and no app_settings query
+ *     runs; admin / it / su → through. The legacy 'authorized - SU' string
+ *     alone → 403 since A2b (a claim, not a credential).
+ *   - x-api-key callers pass (machine trust, Q3): PUT writes; POST still
+ *     refuses them in its own handler (automation never mints keys).
  *   - Portal (aud:'contact') token / no credentials → 401 on writes.
  *   - GET stays on jwtOrApiKey: a plain staff JWT reads.
- *   - Audit parity: a denied write leaves one jwt_api_audit_log row
- *     (auth_type 'jwt', status 'unauthorized'), as the role gate does.
+ *   - Audit parity: a denied write leaves a jwt_api_audit_log row
+ *     (auth_type 'jwt', status 'unauthorized'), as the role gate does — beside
+ *     the mount's 'authorized' row, since the refusal is the handler's.
  *
- * HARNESS: the REAL router, requireAuth, jwtOrApiKey and capabilities on an
- * in-process express app (as tests/formrender.extappearance.test.js), with a
- * regex-scripted req.db. Nothing is mocked; the internal api key comes from
- * env INTERNAL_API_KEY via firmConfig's env fallback (firmConfig never opens
- * a DB under jest).
+ * HARNESS: the REAL router, requireAuth, jwtOrApiKey, capabilities and
+ * lib/withTransaction on an in-process express app (as
+ * tests/formrender.extappearance.test.js), with a regex-scripted req.db. Nothing
+ * is mocked; the internal api key comes from env INTERNAL_API_KEY via
+ * firmConfig's env fallback (firmConfig never opens a DB under jest).
  *
  * Run: npx jest tests/appSettingsGate.test.js
  */
@@ -34,6 +41,8 @@ const express = require('express');
 const http = require('http');
 const jwt = require('jsonwebtoken');
 
+const { withTransaction } = require('../lib/withTransaction');
+
 const SECRET = process.env.JWT_SECRET;
 const flush = () => new Promise(r => setImmediate(r));
 
@@ -43,24 +52,28 @@ const flush = () => new Promise(r => setImmediate(r));
 
 function makeDb() {
   const calls = [];
-  const row = { key: 'fe-firm_phone', value: '555-0100', updated_at: '2026-10-14' };
-  return {
-    calls,
-    query: async (sql, params) => {
-      const norm = String(sql).replace(/\s+/g, ' ').trim();
-      calls.push({ sql: norm, params: params || [] });
-      if (/jwt_api_audit_log/.test(norm)) return [{ affectedRows: 1 }];
-      if (/FROM api_keys WHERE key_hash/.test(norm)) return [[]];
-      if (/^SELECT is_editable, is_secret, `type` FROM app_settings/.test(norm)) {
-        return [[{ is_editable: 1, is_secret: 0, type: 'phone' }]];
-      }
-      if (/^UPDATE app_settings/.test(norm)) return [{ affectedRows: 1 }];
-      if (/^INSERT INTO app_settings/.test(norm)) return [{ affectedRows: 1 }];
-      if (/FROM app_settings WHERE is_editable = 1 AND is_secret = 0/.test(norm)) return [[row]];
-      if (/FROM app_settings WHERE `key` = \?/.test(norm)) return [[row]];
-      throw new Error('unscripted query: ' + norm);
-    },
+  const row = { key: 'fe-firm_phone', value: '555-0100', is_secret: 0, is_editable: 1, type: 'phone', updated_at: '2026-10-14' };
+  const query = async (sql, params) => {
+    const norm = String(sql).replace(/\s+/g, ' ').trim();
+    calls.push({ sql: norm, params: params || [] });
+    if (/jwt_api_audit_log/.test(norm)) return [{ affectedRows: 1 }];
+    if (/FROM api_keys WHERE key_hash/.test(norm)) return [[]];
+    if (/^UPDATE app_settings/.test(norm)) return [{ affectedRows: 1 }];
+    if (/^INSERT INTO app_settings/.test(norm)) return [{ affectedRows: 1 }];
+    if (/FROM app_settings WHERE `key` IN \(\?\)/.test(norm)) return [[row]];   // GET
+    if (/FROM app_settings WHERE `key` = \?/.test(norm)) {
+      return [norm.includes('`key` = ? FOR UPDATE') || params[0] === row.key ? [row] : []];
+    }
+    throw new Error('unscripted query: ' + norm);
   };
+  const db = {
+    calls,
+    query,
+    getConnection: async () => ({ query, beginTransaction: async () => {}, commit: async () => {},
+      rollback: async () => {}, release: () => {}, destroy: () => {} }),
+  };
+  db.withTransaction = (fn, opts) => withTransaction(db, fn, opts);
+  return db;
 }
 
 function appWith(db) {
@@ -101,7 +114,8 @@ const tok = (claims = {}) => jwt.sign(Object.assign(
 const bearer = (claims) => ({ authorization: 'Bearer ' + tok(claims) });
 
 const settingsQueries = db => db.calls.filter(c => /app_settings/.test(c.sql));
-const writes = db => db.calls.filter(c => /^(UPDATE|INSERT INTO) app_settings/.test(c.sql));
+const writes = db => db.calls.filter(c => /^(UPDATE app_settings SET|INSERT INTO app_settings \()/.test(c.sql));
+const versioned = db => db.calls.filter(c => /^INSERT INTO app_settings_versions/.test(c.sql));
 
 const PUT = (headers) => call('PUT', '/api/app-settings/fe-firm_phone',
   { headers, body: { value: '555-0199' } });
@@ -112,19 +126,19 @@ const POST = (headers) => call('POST', '/api/app-settings',
 // Denied: non-holders
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe('non-holders are refused before the handler runs', () => {
+describe('non-holders are refused before any app_settings query', () => {
   for (const roles of [['staff'], ['staff', 'attorney'], ['form_dev'], []]) {
     test(`roles ${JSON.stringify(roles)}: PUT → 403, no app_settings query`, async () => {
       const r = await PUT(bearer({ roles }));
       expect(r.status).toBe(403);
-      expect(r.body).toEqual({ error: 'Forbidden' });
+      expect(r.body).toEqual({ status: 'error', message: 'Changing Firm phone needs the firm.settings permission' });
       expect(settingsQueries(r.db)).toHaveLength(0);
     });
 
     test(`roles ${JSON.stringify(roles)}: POST → 403, no app_settings query`, async () => {
       const r = await POST(bearer({ roles }));
       expect(r.status).toBe(403);
-      expect(r.body).toEqual({ error: 'Forbidden' });
+      expect(r.body).toEqual({ status: 'error', message: 'Creating a setting needs the firm.settings permission' });
       expect(settingsQueries(r.db)).toHaveLength(0);
     });
   }
@@ -136,16 +150,15 @@ describe('non-holders are refused before the handler runs', () => {
     expect(r.status).toBe(403);
   });
 
-  test('a denied write leaves one jwt/unauthorized audit row (role-gate parity)', async () => {
+  test('a denied write leaves a jwt/unauthorized audit row (role-gate parity), after the mount\'s authorized one', async () => {
     const r = await PUT(bearer({ roles: ['staff'] }));
     await flush();
     const audit = r.db.calls.filter(c => /jwt_api_audit_log/.test(c.sql));
-    expect(audit).toHaveLength(1);
     // (route, method, headers, query, body, ip, ua, auth_type, username, status)
-    expect(audit[0].params[0]).toBe('/api/app-settings/fe-firm_phone');
-    expect(audit[0].params[7]).toBe('jwt');
-    expect(audit[0].params[8]).toBe('sb');
-    expect(audit[0].params[9]).toBe('unauthorized');
+    expect(audit.map(a => a.params[9])).toEqual(['authorized', 'unauthorized']);
+    expect(audit[1].params[0]).toBe('/api/app-settings/fe-firm_phone');
+    expect(audit[1].params[7]).toBe('jwt');
+    expect(audit[1].params[8]).toBe('sb');
   });
 });
 
@@ -161,19 +174,21 @@ describe('firm.settings holders write', () => {
     'admin+staff': { roles: ['staff', 'admin'] },
   };
   for (const [name, claims] of Object.entries(holders)) {
-    test(`${name}: PUT → 200, row updated`, async () => {
+    test(`${name}: PUT → 200, row updated (and versioned)`, async () => {
       const r = await PUT(bearer(claims));
       expect(r.status).toBe(200);
       expect(r.body.status).toBe('success');
       expect(writes(r.db)).toHaveLength(1);
       expect(writes(r.db)[0].params).toEqual(['555-0199', 'fe-firm_phone']);
+      expect(versioned(r.db)).toHaveLength(1);
     });
 
-    test(`${name}: POST → 201, row inserted`, async () => {
+    test(`${name}: POST → 201, row inserted (and versioned)`, async () => {
       const r = await POST(bearer(claims));
       expect(r.status).toBe(201);
       expect(writes(r.db)).toHaveLength(1);
-      expect(writes(r.db)[0].sql).toMatch(/^INSERT INTO app_settings/);
+      expect(writes(r.db)[0].sql).toMatch(/^INSERT INTO app_settings \(/);
+      expect(versioned(r.db)).toHaveLength(1);
     });
   }
 
@@ -256,7 +271,7 @@ describe('GET /api/app-settings stays on jwtOrApiKey', () => {
   test('plain staff JWT reads', async () => {
     const r = await call('GET', '/api/app-settings', { headers: bearer({ roles: ['staff'] }) });
     expect(r.status).toBe(200);
-    expect(r.body.settings).toHaveLength(1);
+    expect(r.body.settings.find(s => s.key === 'fe-firm_phone')).toMatchObject({ value: '555-0100', can_edit: false });
   });
 
   test('legacy no-roles staff JWT reads', async () => {

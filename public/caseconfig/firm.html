@@ -8,6 +8,8 @@
   <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
   <link rel="stylesheet" href="/theme.css">
   <script src="/themeSync.js"></script>
+  <!-- the settings rows (settings arc): the firm's settings sections draw with it -->
+  <script src="/js/ycSettingRows.js"></script>
   <style>
     /* ══════════════════════════════════════════════
        FIRM SUB-PAGE — self-contained styles (house pattern: theme.css tokens,
@@ -140,6 +142,43 @@
     .fm-ver-view dt:first-child { margin-top: 0; }
     .fm-ver-view dd { margin: 2px 0 0 0; color: var(--text-2); overflow-wrap: anywhere; }
 
+    /* Settings sections (settings arc): the rows are /js/ycSettingRows.js's
+       (its own .ycsr styles, injected once); here only this page's parts —
+       the Dropbox folder-templates editor and the Add-a-variable form. */
+    .fm-dt { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+    .fm-dt > .yc-hint { margin: 0; }
+    .fm-dt .fm-dt-warn { color: var(--warn); }
+    .fm-dt-list { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+    .fm-dt-stage { border: 1px solid var(--border); border-radius: 8px; padding: 10px; background: var(--page-bg); min-width: 0; }
+    .fm-dt-stage h4 {
+      font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em;
+      color: var(--accent-2); margin-bottom: 6px; overflow-wrap: anywhere;
+    }
+    .fm-dt-stage .fm-dt-subs-label, .fm-dt-extra { margin-top: 10px; }
+    .fm-dt-sub { display: flex; align-items: flex-start; gap: 4px; margin-bottom: 4px; min-width: 0; }
+    .fm-dt-sub-in { flex: 1 1 auto; min-width: 0; }
+    .fm-dt-sub .btn { flex: 0 0 auto; }
+    .fm-dt-prev {
+      font-family: var(--mono, ui-monospace, Menlo, monospace); font-size: 11px; color: var(--text-muted);
+      margin: 3px 0 0 2px; white-space: pre-wrap; overflow-wrap: anywhere;
+    }
+    .fm-dt-prev[hidden] { display: none; }
+    .fm-dt-dot { color: var(--warn); }
+    .fm-var-add h3 { font-size: 13px; font-weight: 700; margin-bottom: 6px; }
+    .fm-var-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 12px; margin-bottom: 8px; }
+    .fm-var-grid > div { min-width: 0; }
+    .fm-section input[type=text].fm-mono { font-family: var(--mono, ui-monospace, Menlo, monospace); font-size: 12px; }
+    .fm-section textarea.fm-var-value {
+      display: block; width: 100%; min-width: 0; padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px;
+      font-family: var(--mono, ui-monospace, Menlo, monospace); font-size: 12px; background: var(--page-bg); color: var(--text);
+      outline: none; resize: vertical;
+    }
+    .fm-section textarea.fm-var-value:focus { border-color: var(--info); }
+    .fm-var-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin-top: 8px; }
+    .fm-var-status { font-size: 12px; flex: 1 1 12em; min-width: 0; overflow-wrap: anywhere; }
+    .fm-var-status.err { color: var(--danger); }
+    .fm-var-status.ok { color: var(--ok); }
+
     .empty-state {
       display: flex; flex-direction: column; align-items: center; justify-content: center;
       padding: 40px 10px; color: var(--text-muted); gap: 10px; text-align: center;
@@ -157,6 +196,7 @@
       .fm-item-grid { grid-template-columns: minmax(0, 1fr); }
       .fm-who-row { grid-template-columns: 22px minmax(0, 1fr); }
       .fm-who-row .fm-who-mode { grid-column: 2 / -1; }
+      .fm-var-grid { grid-template-columns: minmax(0, 1fr); }
     }
     @media (min-width: 641px) and (max-width: 900px) {
       .fm-item-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -171,8 +211,10 @@
 
 <div id="wrap">
   <div class="fm-page">
-    <p class="fm-intro">Settings that apply to <b>everyone at the firm</b>. Only staff with the firm-settings
-      permission (the admin, IT and SU roles) see this tab, and the server checks that permission on every save.</p>
+    <p class="fm-intro">Settings that apply to <b>everyone at the firm</b>: the firm's identity, its senders, who is
+      notified, client self-service, Dropbox filing, e-sign, automation variables and the launcher. Only staff with the
+      firm-settings permission (the admin, IT and SU roles) see this tab, and the server checks that permission on every
+      save. Values are saved exactly as typed — leading and trailing spaces are kept on purpose.</p>
     <div class="fm-banner" id="fm-banner" role="alert" hidden></div>
     <nav class="fm-toc" id="fm-toc" hidden></nav>
     <div id="fm-sections"></div>
@@ -181,17 +223,33 @@
 
 <script>
 // ═══════════════════════════════════════════════════════════════
-// FIRM SUB-PAGE (Config shell → Firm) — ui-custom S3.2
+// FIRM SUB-PAGE (Config shell → Firm) — ui-custom S3.2; settings arc 2026-10
 //
 // The CFG-3 firm surface: firm-wide settings, as a HOST OF SECTIONS. Each
 // section is one object in SECTIONS below:
 //   { id, title, icon, mount(body, head), load(), isDirty(), save() }
 // The page owns the shell protocol (topbar Save/Refresh, the dirty guard,
 // the 403 session message, the banner); a section owns its own form. Adding a
-// section (the settings arc: app_settings firm sections, the entitlements
-// editor) is purely additive — a new object, nothing else changes.
+// section (the entitlements editor, say) is purely additive — a new object,
+// nothing else changes. Page order: the firm's SETTINGS sections first, then
+// Launcher, then Who sees what.
 //
-// Section 1, Launcher: the firm registry_overrides document of ui_config
+// The settings sections (settings arc): the app_settings keys whose editor
+// home is this tab (lib/settingsRegistry.js, home 'firm'), one section per
+// SECTIONS.firm entry — identity, senders, routing, booking, dropbox, esign,
+// and the automation variables (the UNREGISTERED rows a person created, plus
+// an Add form). Drawn by /js/ycSettingRows.js from ONE GET
+// /api/app-settings?home=firm per load, each row saved on its own (PUT
+// /api/app-settings/:key, verbatim) with History + restore per row. Details:
+// "SECTIONS: the firm's settings" below.
+//
+// PAGE SAVE: every dirty section saves, in page order. A settings section's
+// rows are independent writes, so a row it fails to save (its reason on the
+// row, the section named on the banner) does not stop the next section; the
+// launcher document is ONE write shared by two sections (below) — a failure
+// there stops, as it always has.
+//
+// The Launcher section: the firm registry_overrides document of ui_config
 // (PUT /api/ui-config scope firm; grammar lib/uiConfigShape.js). A FORM, never
 // JSON: hide (checkbox = hidden), rename, firm items. Fields it does not edit
 // (locked — which user layouts obey since S4a, but which has no editor yet —
@@ -215,7 +273,7 @@
 // the newest version id the list shows as its base (a save since → 409) and
 // hands the restored document to the shell the same way.
 //
-// Section 2, Who sees what (ui-custom S3.4): the SAME document's visible_to
+// The Who sees what section (ui-custom S3.4): the SAME document's visible_to
 // (role scoping: Everyone, or Hidden except for ticked roles — su always),
 // plus per-user hides, which are entitlement_denies rows at scope user and
 // write at once through /api/entitlements, outside the page Save.
@@ -236,7 +294,8 @@
 // Shell protocol: P.apiSend relay; P.setTopbarButtons; lifecycle hooks
 // onShow / onHide / onSave / onRefresh on this window; the launcher via the
 // Config shell's bridge getters (P.ycLauncher, P.FEATURE_REGISTRY,
-// P.DEFAULT_LAYOUTS, P.firmData — live views of index.html's).
+// P.DEFAULT_LAYOUTS, P.firmData — live views of index.html's; P.firmData.users
+// is also the staff list of the settings rows' user pickers).
 // ═══════════════════════════════════════════════════════════════
 
 const P = window.parent;
@@ -1470,9 +1529,370 @@ const WhoSection = {
 };
 
 // ═══════════════════════════════════════════════════════════════
+// SECTIONS: the firm's settings (settings arc, 2026-10)
+// ═══════════════════════════════════════════════════════════════
+// The app_settings keys whose ONE editor is this tab (lib/settingsRegistry.js,
+// home 'firm'), a section per SECTIONS.firm entry. GET /api/app-settings
+// ?home=firm serves every row with its registry metadata (label, description,
+// type, posture, env fallback, can_edit); this page only places rows by their
+// `section` and hands each section's rows to /js/ycSettingRows.js, which draws
+// the controls and saves each changed key on its own (PUT
+// /api/app-settings/:key, the value verbatim). SettingsData makes the GET once
+// for every settings section of a load (like RegistryDoc for the launcher's
+// two), and shares one lookups loader (the sequence / credential lists).
+//
+// Automation variables (section 'variables'): the UNREGISTERED rows a person
+// created — listed like any row (type = the row's own DB type), plus the Add
+// form (POST /api/app-settings; a registered key is refused 409 and the
+// server's sentence is shown). Workflows read them with get_setting /
+// get_settings and may write them with set_setting.
+//
+// Dropbox folder templates (dropbox_case_folder_templates, editor
+// 'dropboxTemplates'): dropboxTemplatesEditor below, ported from settings.html.
+
+// lib/settingsRegistry.js SECTIONS.firm, in order (tests/firmTab.test.js pins
+// this copy to it: the page cannot require server code).
+const FIRM_SETTING_SECTIONS = [
+  { id: 'identity',  title: 'Firm identity',                 icon: 'building' },
+  { id: 'senders',   title: 'Senders',                       icon: 'paper-plane' },
+  { id: 'routing',   title: 'Notifications & routing',       icon: 'route' },
+  { id: 'booking',   title: 'Client self-service & booking', icon: 'calendar-check' },
+  { id: 'dropbox',   title: 'Dropbox filing',                icon: 'folder-tree' },
+  { id: 'esign',     title: 'E-Sign',                        icon: 'file-signature' },
+  { id: 'variables', title: 'Automation variables',          icon: 'code' },
+];
+// routes/api.appSettings.js SETTING_TYPES, in order (pinned the same way): the
+// types a new variable may have, with settings.html's descriptions.
+const SETTING_TYPES = [
+  ['string', 'string (anything, single line)'], ['template', 'template (anything, multi-line)'], ['number', 'number'],
+  ['bool', 'bool (on/off)'], ['email', 'email'], ['csv', 'csv (comma-separated list)'], ['phone', 'phone'],
+  ['url', 'url'], ['json', 'json'], ['json_array', 'json_array'], ['date', 'date'],
+];
+
+const firmUsers = () => (P.firmData && Array.isArray(P.firmData.users) ? P.firmData.users : []);
+
+const SettingsData = {
+  inflight: null,
+  /** GET /api/app-settings?home=firm once for every settings section loading
+   *  at the same time → { rows, lookups }. */
+  load() {
+    if (!this.inflight) {
+      this.inflight = api('/api/app-settings?home=firm').then((r) => {
+        const rows = (Array.isArray(r && r.settings) ? r.settings : []).filter((x) => isObj(x) && x.home === 'firm');
+        const known = new Set(FIRM_SETTING_SECTIONS.map((s) => s.id));
+        const lost = rows.filter((x) => !known.has(x.section)).map((x) => x.key);
+        if (lost.length) console.warn('[firm] settings in a section this page does not know — not shown:', lost.join(', '));
+        return { rows, lookups: window.ycSettingRows ? window.ycSettingRows.lookups(api) : null };
+      }).finally(() => { this.inflight = null; });
+    }
+    return this.inflight;
+  },
+};
+
+/** A variable POST /api/app-settings created → the ROW the rows view draws. */
+function variableRow(s) {
+  return { exists: true, registered: false, kind: 'variable', home: 'firm', section: 'variables', options: null,
+    edit: 'ui', editor: null, env: null, can_edit: true, category: null, sort_order: null, updated_at: null,
+    ...s, label: s.label || s.key, value: typeof s.value === 'string' ? s.value : '', type: s.type || 'string' };
+}
+
+// ── Dropbox folder templates (editor 'dropboxTemplates') ──
+// Ported from settings.html (dtRender / dtBind / dtSave / dtInit, dotPreview):
+// { <stage>: { default: <path template>, subfolders: [<name>, …] } }. Stage
+// keys are a code contract (looked up by name): fixed here — add or remove a
+// stage from the DB console. WHITESPACE IS LOAD-BEARING (manual sort order):
+// values are kept byte for byte and every space is previewed as a dot. A
+// stored value of any other shape → null → the row falls back to its json
+// textarea (settings.html's raw fallback). A stage's other fields — the
+// per-case-type templates services/caseService.js resolves first
+// (stage["Type:Subtype"], stage["Type"]) — are shown read-only and ride
+// through a save untouched (settings.html's save rebuilt each stage as
+// { default, subfolders } and dropped them). Untouched, the editor hands back
+// the stored string.
+function dtParse(raw) {
+  let map;
+  try { map = JSON.parse(raw); } catch (_) { return null; }
+  if (!isObj(map) || !Object.keys(map).length) return null;
+  const ok = Object.keys(map).every((k) => isObj(map[k]) && typeof map[k].default === 'string'
+    && (map[k].subfolders === undefined || (Array.isArray(map[k].subfolders) && map[k].subfolders.every((x) => typeof x === 'string'))));
+  if (!ok) return null;
+  return { map, stages: Object.keys(map).map((stage) => ({ stage, path: map[stage].default, subs: (map[stage].subfolders || []).slice() })) };
+}
+/** v drawn into el with every space as a dot — DOM nodes, never markup. */
+function dotPreviewInto(el, v) {
+  el.textContent = '';
+  String(v ?? '').split(' ').forEach((part, i) => {
+    if (i) { const d = document.createElement('span'); d.className = 'fm-dt-dot'; d.textContent = '·'; el.appendChild(d); }
+    if (part) el.appendChild(document.createTextNode(part));
+  });
+}
+const DT_NOTABLE_SPACING = /^\s|\s\s|\s$/;   // a subfolder's preview shows only then (settings.html)
+
+function dropboxTemplatesEditor(row, ctx) {
+  const parsed = dtParse(row.value);
+  if (!parsed) return null;
+  const orig = parsed.map, stages = parsed.stages, pre = ctx.id;
+  const box = document.createElement('div');
+  box.className = 'fm-dt';
+  box.innerHTML = `<span class="yc-hint fm-dt-warn">Spaces in folder names are <b>load-bearing</b> (manual sort order) and
+      are shown under each name as <span class="fm-dt-dot">·</span> dots. They are kept exactly on save.</span>
+    <span class="yc-hint">Placeholders like <code>{{case_type}}</code> are filled in when the folder is created. Stage names
+      are fixed — add or remove a stage from the DB console.</span>
+    <div class="fm-dt-list"></div>`;
+  const list = box.querySelector('.fm-dt-list');
+
+  function render(focusSel) {
+    list.textContent = '';
+    stages.forEach((st, si) => {
+      const card = document.createElement('div');
+      card.className = 'fm-dt-stage';
+      card.innerHTML = `<h4></h4>
+        <label class="yc-flabel" for="${pre}-p${si}">Folder path template</label>
+        <input type="text" class="ycsr-mono" id="${pre}-p${si}" data-dt-path="${si}" spellcheck="false" autocomplete="off">
+        <div class="fm-dt-prev" data-dt-pathprev="${si}"></div>
+        <span class="yc-flabel fm-dt-subs-label">Subfolders</span>
+        <div class="fm-dt-subs"></div>
+        <button type="button" class="btn btn-outline btn-sm" data-dt-addsub="${si}"><i class="fa-solid fa-plus"></i> Subfolder</button>`;
+      card.querySelector('h4').textContent = st.stage;
+      card.querySelector('[data-dt-path]').value = st.path;            // verbatim, never markup
+      dotPreviewInto(card.querySelector('[data-dt-pathprev]'), st.path);
+      const extras = Object.keys(orig[st.stage]).filter((k) => k !== 'default' && k !== 'subfolders');
+      if (extras.length) {
+        const ex = document.createElement('div');
+        ex.className = 'fm-dt-extra';
+        ex.innerHTML = `<span class="yc-flabel">Per case type</span>
+          <span class="yc-hint">Used instead of the path above for these case types. Kept exactly as they are — change them from the DB console.</span>`;
+        extras.forEach((k) => {
+          const v = orig[st.stage][k];
+          const line = document.createElement('div');
+          line.className = 'fm-dt-prev';
+          line.setAttribute('data-dt-extra', k);
+          line.appendChild(document.createTextNode(k + ': '));
+          const val = document.createElement('span');
+          if (typeof v === 'string') dotPreviewInto(val, v); else val.textContent = JSON.stringify(v);
+          line.appendChild(val);
+          ex.appendChild(line);
+        });
+        card.insertBefore(ex, card.querySelector('.fm-dt-subs-label'));
+      }
+      const subs = card.querySelector('.fm-dt-subs');
+      st.subs.forEach((sub, bi) => {
+        const r = document.createElement('div');
+        r.className = 'fm-dt-sub';
+        r.innerHTML = `<div class="fm-dt-sub-in">
+            <input type="text" class="ycsr-mono" data-dt-sub="${si}:${bi}" placeholder="Subfolder name" spellcheck="false" autocomplete="off">
+            <div class="fm-dt-prev" data-dt-subprev="${si}:${bi}"></div></div>
+          <button type="button" class="btn btn-outline btn-sm" data-dt-subup="${si}:${bi}" title="Move up" aria-label="Move up" ${bi === 0 ? 'disabled' : ''}>↑</button>
+          <button type="button" class="btn btn-outline btn-sm" data-dt-subdown="${si}:${bi}" title="Move down" aria-label="Move down" ${bi === st.subs.length - 1 ? 'disabled' : ''}>↓</button>
+          <button type="button" class="btn btn-outline btn-sm" data-dt-subdel="${si}:${bi}" title="Delete subfolder" aria-label="Delete subfolder">✕</button>`;
+        const inp = r.querySelector('input');
+        inp.value = sub;                                                // verbatim, never markup
+        inp.setAttribute('aria-label', `Subfolder ${bi + 1} of ${st.stage}`);
+        const prev = r.querySelector('.fm-dt-prev');
+        prev.hidden = !DT_NOTABLE_SPACING.test(sub);
+        dotPreviewInto(prev, sub);
+        subs.appendChild(r);
+      });
+      list.appendChild(card);
+    });
+    if (focusSel) { const f = list.querySelector(focusSel); if (f) f.focus(); }
+  }
+
+  list.addEventListener('input', (ev) => {
+    const t = ev.target;
+    if (t.dataset.dtPath !== undefined) {
+      const si = Number(t.dataset.dtPath);
+      stages[si].path = t.value;                                        // verbatim — no trim
+      dotPreviewInto(list.querySelector(`[data-dt-pathprev="${si}"]`), t.value);
+      ctx.changed();
+    } else if (t.dataset.dtSub !== undefined) {
+      const [si, bi] = t.dataset.dtSub.split(':').map(Number);
+      stages[si].subs[bi] = t.value;                                    // verbatim — no trim
+      const prev = list.querySelector(`[data-dt-subprev="${si}:${bi}"]`);
+      prev.hidden = !DT_NOTABLE_SPACING.test(t.value);
+      dotPreviewInto(prev, t.value);
+      ctx.changed();
+    }
+  });
+  list.addEventListener('click', (ev) => {
+    const b = ev.target.closest('button');
+    if (!b || b.disabled) return;
+    const d = b.dataset;
+    const at = (v) => v.split(':').map(Number);
+    const swap = (arr, i, j) => { if (j < 0 || j >= arr.length) return false; [arr[i], arr[j]] = [arr[j], arr[i]]; return true; };
+    let focus = null;
+    if (d.dtAddsub !== undefined) {
+      const si = Number(d.dtAddsub);
+      stages[si].subs.push('');
+      focus = `[data-dt-sub="${si}:${stages[si].subs.length - 1}"]`;
+    } else if (d.dtSubup !== undefined) {
+      const [si, bi] = at(d.dtSubup);
+      if (!swap(stages[si].subs, bi, bi - 1)) return;
+      focus = `[data-dt-sub="${si}:${bi - 1}"]`;
+    } else if (d.dtSubdown !== undefined) {
+      const [si, bi] = at(d.dtSubdown);
+      if (!swap(stages[si].subs, bi, bi + 1)) return;
+      focus = `[data-dt-sub="${si}:${bi + 1}"]`;
+    } else if (d.dtSubdel !== undefined) {
+      const [si, bi] = at(d.dtSubdel);
+      stages[si].subs.splice(bi, 1);
+    } else return;
+    render(focus);
+    ctx.changed();
+  });
+
+  /** The editor → the stored shape: each stage's own fields kept, its path and
+   *  subfolders from the form (subfolders written when it had them, or has some). */
+  function build() {
+    const out = {};
+    stages.forEach((st) => {
+      const o = { ...orig[st.stage], default: st.path };
+      if (st.subs.length || Object.prototype.hasOwnProperty.call(orig[st.stage], 'subfolders')) o.subfolders = st.subs.slice();
+      out[st.stage] = o;
+    });
+    return out;
+  }
+  render();
+  return {
+    el: box,
+    focusId: `${pre}-p0`,
+    // Untouched (key-order-insensitively) → the stored string byte for byte;
+    // changed → pretty-printed, so the row stays readable in the DB console.
+    get() { const o = build(); return canonical(o) === canonical(orig) ? row.value : JSON.stringify(o, null, 2); },
+    problem() {
+      for (const st of stages) {
+        if (!st.path.trim()) return `Path for "${st.stage}" cannot be empty`;
+        if (st.subs.some((x) => !x.trim())) return `Subfolder names cannot be empty (under "${st.stage}")`;
+        if (new Set(st.subs).size !== st.subs.length) return `Duplicate subfolders under "${st.stage}"`;
+      }
+      return null;
+    },
+  };
+}
+
+const VARIABLES_HINT = 'Firm-wide values for your automations: workflows read them with <code>get_setting</code> / '
+  + '<code>get_settings</code> and may change them with <code>set_setting</code>. A variable\'s key is permanent — it is '
+  + 'never renamed or deleted here. Settings the code itself reads are in the sections above, never here.';
+
+/** One settings section (a SECTIONS.firm entry). */
+function settingsSection(def) {
+  return {
+    id: def.id, title: def.title, icon: def.icon,
+    independent: true,         // its rows save one by one: a failure here does not stop the page's other sections
+    st: { loaded: false, error: null, lastSave: null },
+    body: null, head: null, view: null,
+
+    mount(body, head) { this.body = body; this.head = head; },
+
+    async load() {
+      let data;
+      try { data = await SettingsData.load(); } catch (e) { return this.fail(errText(e, 'Could not load the firm settings')); }
+      if (!window.ycSettingRows) return this.fail('The settings editor did not load — reload the page.');
+      this.st.loaded = true;
+      this.st.error = null;
+      this.st.lastSave = null;
+      this.render(data.rows.filter((r) => r.section === this.id), data.lookups);
+    },
+    fail(msg) {
+      Object.assign(this.st, { loaded: false, error: msg, lastSave: null });
+      this.view = null;
+      this.body.innerHTML = '<div class="empty-state"><i class="fa-solid fa-triangle-exclamation"></i><div></div></div>';
+      this.body.querySelector('.empty-state > div').textContent = msg;
+      this.status();
+    },
+
+    render(rows, lookups) {
+      this.body.innerHTML = `<div class="fm-block">${this.id === 'variables' ? `<span class="yc-hint">${VARIABLES_HINT}</span>` : ''}
+        <div class="fm-set-rows"></div></div>`;
+      this.view = window.ycSettingRows.create({
+        container: this.body.querySelector('.fm-set-rows'),
+        rows, api, users: firmUsers, lookups: lookups || undefined,
+        editors: { dropboxTemplates: dropboxTemplatesEditor },
+        confirm: (title, text) => ask(title, text, 'Restore'),
+        empty: this.id === 'variables' ? 'No automation variables yet.' : 'Nothing to set here.',
+        onDirty: () => { this.status(); Page.syncTopbar(); },
+      });
+      if (this.id === 'variables') this.mountAddForm();
+      this.status();
+    },
+
+    isDirty() { return !!(this.view && this.view.isDirty()); },
+    async save() {
+      if (!this.view) return true;
+      this.st.lastSave = await this.view.save();
+      this.status();
+      return this.st.lastSave.ok;
+    },
+    status() {
+      const el = this.head.querySelector('.fm-sec-status');
+      if (!this.view) { el.textContent = ''; el.classList.remove('dirty'); return; }
+      const d = this.view.isDirty();
+      el.textContent = d ? 'Unsaved changes' : 'All changes saved';
+      el.classList.toggle('dirty', d);
+    },
+
+    // ── Add a variable (section 'variables' only) ──
+    mountAddForm() {
+      const f = document.createElement('div');
+      f.className = 'fm-block fm-var-add';
+      f.innerHTML = `<h3>Add a variable</h3>
+        <div class="fm-var-grid">
+          <div><label class="yc-flabel" for="fm-var-key">Key</label>
+            <input type="text" id="fm-var-key" class="fm-mono" maxlength="100" placeholder="my_new_variable" spellcheck="false" autocomplete="off">
+            <span class="yc-hint">Letters, digits, _ and -, starting with a letter or digit. Permanent.</span></div>
+          <div><label class="yc-flabel" for="fm-var-type">Type</label>
+            <select id="fm-var-type">${SETTING_TYPES.map(([t, l]) => `<option value="${t}">${esc(l)}</option>`).join('')}</select>
+            <span class="yc-hint">How the value is checked on every save.</span></div>
+          <div><label class="yc-flabel" for="fm-var-label">Label</label>
+            <input type="text" id="fm-var-label" maxlength="100" placeholder="(optional)"></div>
+          <div><label class="yc-flabel" for="fm-var-desc">Description</label>
+            <input type="text" id="fm-var-desc" maxlength="500" placeholder="(optional — shown under the label)"></div>
+        </div>
+        <label class="yc-flabel" for="fm-var-value">Initial value</label>
+        <textarea id="fm-var-value" class="fm-var-value" rows="2" spellcheck="false"></textarea>
+        <span class="yc-hint">Saved exactly as typed.</span>
+        <div class="fm-var-foot">
+          <button type="button" class="btn btn-primary btn-sm" id="fm-var-add"><i class="fa-solid fa-plus"></i> Add variable</button>
+          <span class="fm-var-status" id="fm-var-status" role="status"></span></div>`;
+      this.body.appendChild(f);
+      E('fm-var-add').addEventListener('click', () => this.addVariable());
+    },
+    async addVariable() {
+      const btn = E('fm-var-add'), out = E('fm-var-status');
+      const body = {
+        key: E('fm-var-key').value.trim(),
+        type: E('fm-var-type').value,
+        label: E('fm-var-label').value.trim() || null,
+        description: E('fm-var-desc').value.trim() || null,
+        value: E('fm-var-value').value,                       // VERBATIM — never trimmed
+      };
+      btn.disabled = true;
+      out.className = 'fm-var-status';
+      out.textContent = 'Adding…';
+      try {
+        const r = await api('/api/app-settings', 'POST', body);
+        const s = isObj(r && r.setting) ? r.setting : body;
+        this.view.addRow(variableRow(s));
+        ['fm-var-key', 'fm-var-label', 'fm-var-desc', 'fm-var-value'].forEach((id) => { E(id).value = ''; });
+        E('fm-var-type').value = 'string';
+        out.className = 'fm-var-status ok';
+        out.textContent = `Added “${s.key}” — it is listed above.`;
+      } catch (e) {
+        // the server's sentence (a registered key → 409 naming its home); 403 → the session message
+        out.className = 'fm-var-status err';
+        out.textContent = e && e.status === 403 ? SESSION_MSG : ((e && e.message) || 'Could not add the variable');
+      } finally {
+        btn.disabled = false;
+      }
+    },
+  };
+}
+const SETTINGS_SECTIONS = FIRM_SETTING_SECTIONS.map(settingsSection);
+
+// ═══════════════════════════════════════════════════════════════
 // PAGE — the section host + the shell protocol
 // ═══════════════════════════════════════════════════════════════
-const SECTIONS = [LauncherSection, WhoSection];
+const SECTIONS = [...SETTINGS_SECTIONS, LauncherSection, WhoSection];
 RegistryDoc.sections = [LauncherSection, WhoSection];   // the two that edit registry_overrides, in apply order
 
 const Page = {
@@ -1511,12 +1931,27 @@ const Page = {
     this.saving = true;
     this.syncTopbar();
     banner(null);
+    const notSaved = [];     // settings sections with a row the server refused
+    let savedSettings = false;
     try {
-      for (const s of SECTIONS) if (s.isDirty() && !(await s.save())) break;
+      for (const s of SECTIONS) {
+        if (!s.isDirty()) continue;
+        const ok = await s.save();
+        if (s.independent) { if (ok) savedSettings = true; else notSaved.push(s); continue; }
+        if (!ok) break;      // the launcher document: one write for two sections — stop, as before
+      }
     } finally {
       this.saving = false;
       this.syncTopbar();
     }
+    if (notSaved.length) {
+      const n = notSaved.reduce((a, s) => a + s.st.lastSave.failed.length, 0);
+      const refused = notSaved.some((s) => Object.values(s.st.lastSave.errors).some((x) => x.status === 403));
+      const msg = `${notSaved.map((s) => s.title).join(' and ')}: ${n === 1 ? 'a setting was' : n + ' settings were'} not saved — `
+        + `the reason is on ${n === 1 ? 'it' : 'each'}.` + (refused ? ' ' + SESSION_MSG : '');
+      const prev = E('fm-banner').hidden ? '' : E('fm-banner').textContent;   // the launcher's own message, if any
+      banner(prev && !msg.includes(prev) ? msg + ' ' + prev : msg);
+    } else if (savedSettings) toast('success', 'Saved');
   },
 };
 
@@ -1547,10 +1982,12 @@ window.addEventListener('beforeunload', (e) => {
   return '';
 });
 
-// Test / debug handle: the pure parts of the Launcher section.
+// Test / debug handle: the pure parts of the sections.
 window.FirmPage = { Page, SECTIONS, LauncherSection, canonical, makeId, slugOf, formFromDoc, docFromForm,
   relabelRow, formProblems, placeErrors, launcherCatalog, refreshShell, firmIdsIn, SESSION_MSG, CONFLICT_MSG, layoutParts,
-  RegistryDoc, WhoSection, whoCatalog, visFromDoc, visApply, STORE_ROLES, ROLE_LABELS, SU_TIP };
+  RegistryDoc, WhoSection, whoCatalog, visFromDoc, visApply, STORE_ROLES, ROLE_LABELS, SU_TIP,
+  SettingsData, SETTINGS_SECTIONS, FIRM_SETTING_SECTIONS, SETTING_TYPES, variableRow, dtParse, dotPreviewInto,
+  dropboxTemplatesEditor };
 
 // ── Boot ───────────────────────────────────────────────────────
 (function waitForShell() {

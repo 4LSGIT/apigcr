@@ -122,6 +122,11 @@ function makeDb(seedEvents = [], { cases = [] } = {}) {
     }
     if (/FROM tasks/i.test(flat)) return [[]];
     if (/^UPDATE events SET event_gcal/i.test(flat)) return [{ affectedRows: 1 }];
+    // Singleton supersession (always on since the settings arc retired the
+    // unified_singleton_enabled flag): createEvent resolves the link's case,
+    // then reads the live priors. No case, no priors here.
+    if (/^SELECT case_id, case_number, case_number_full FROM cases WHERE/i.test(flat)) return [[]];
+    if (/^SELECT e\.event_id, .* FROM events e WHERE .* e\.superseded_by_event_id IS NULL/i.test(flat)) return [[]];
     if (/FROM events/i.test(flat)) return [[]];               // findDuplicateEvent
     unmatched.push(flat);
     return [[]];

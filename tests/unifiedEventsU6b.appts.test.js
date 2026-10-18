@@ -1,7 +1,7 @@
 // tests/unifiedEventsU6b.appts.test.js
 //
 /**
- * Unified Events U6b — the appt side of A3a + the flagged singleton.
+ * Unified Events U6b — the appt side of A3a + the registry singleton.
  *
  *   ANCHOR (A3a)     case_id wins · a docket resolves to its case (adopted as
  *                    case_id) or stays a 'case_number' anchor · contact-only
@@ -12,11 +12,10 @@
  *                    (cancelSequences, the GCal contact lookup, reminder
  *                    enrollment) and NOTHING else; the creation log carries
  *                    Clientless=true; the envelopes anchor honestly
- *   FLAG OFF         byte-for-byte today's behaviour: the '341 Meeting'
- *                    STRING block runs (pointer-path lookup and all), the
- *                    conn query list is pinned as an explicit sequence, and
- *                    the ONLY additions anywhere are the two INSERT binds
- *   FLAG ON          registry singleton: priors BY QUERY across both anchor
+ *   SINGLETON        always on (its rollout flag unified_singleton_enabled
+ *                    retired at '1' in the settings arc, 2026-10, and with it
+ *                    the flag-off '341 Meeting' STRING block and its two
+ *                    byte-for-byte pins). Registry singleton: priors BY QUERY across both anchor
  *                    forms (the stale-pointer fixture proves the pointer is
  *                    not consulted), guarded tombstones, lineage stamp,
  *                    meeting_341 §4 projection, calendar.rescheduled per
@@ -25,8 +24,9 @@
  *
  * Stub posture mirrors tests/apptService.typeKey.test.js (SQL-routing db,
  * `unmatched` recorded and asserted empty; registry PRIMED from the seed).
- * The flag rides the same firmConfig mock shape as
- * tests/unifiedEventsU6a.supersede.test.js (global.__U6B_FLAG__).
+ * firmConfig is mocked as in tests/unifiedEventsU6a.supersede.test.js: the
+ * RETIRED flag answers '0' (a stale row), so a reader left behind would
+ * switch supersession off and fail the singleton tests.
  *
  * Run:  npx jest tests/unifiedEventsU6b.appts.test.js
  */
@@ -60,7 +60,7 @@ jest.mock('../lib/domainEvents', () => ({
 jest.mock('../lib/alerting', () => ({ alert: jest.fn(() => Promise.resolve()) }));
 jest.mock('../lib/firmConfig', () => {
   const real = jest.requireActual('../lib/firmConfig');
-  return { ...real, cfg: jest.fn((k) => (k === 'unified_singleton_enabled' ? global.__U6B_FLAG__ : null)) };
+  return { ...real, cfg: jest.fn((k) => (k === 'unified_singleton_enabled' ? '0' : null)) };
 });
 
 const apptService         = require('../services/apptService');
@@ -204,7 +204,6 @@ beforeAll(() => calendarTypeService._primeCache(SEED));
 afterAll(() => calendarTypeService.invalidate());
 beforeEach(() => {
   jest.clearAllMocks();
-  global.__U6B_FLAG__ = null;                 // flag OFF unless the test says
   jest.spyOn(console, 'log').mockImplementation(() => {});
   jest.spyOn(console, 'warn').mockImplementation(() => {});
   jest.spyOn(console, 'error').mockImplementation(() => {});
@@ -212,7 +211,7 @@ beforeEach(() => {
 afterEach(() => { console.log.mockRestore(); console.warn.mockRestore(); console.error.mockRestore(); });
 
 // ─────────────────────────────────────────────────────────────────────────────
-describe('A3a anchor rules (flag off — the anchor is NOT flag-gated)', () => {
+describe('A3a anchor rules', () => {
   test("case_id given → ('case', case_id); no docket resolution query anywhere", async () => {
     const db = makeDb([], { cases: [CASE_X] });
     await apptService.createAppt(db, { ...BASE, appt_type: 'Consultation', case_id: 'X1CASEID' });
@@ -284,7 +283,7 @@ describe('A3a anchor rules (flag off — the anchor is NOT flag-gated)', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-describe('client-less side effects (flag off)', () => {
+describe('client-less side effects', () => {
   const create = (db) => apptService.createAppt(db, {
     appt_length: 30, appt_platform: 'telephone', appt_date: '2026-09-10 14:00',
     appt_type: 'Consultation', case_id: 'X1CASEID', actingUserId: 3,
@@ -348,59 +347,7 @@ describe('client-less side effects (flag off)', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-describe('flag OFF — byte-for-byte today (the string block, pinned)', () => {
-  test('341 with a Scheduled prior: the exact conn query sequence, pointer path and all', async () => {
-    const prior = { appt_id: 500, appt_client_id: CONTACT_ID, appt_case_id: 'X1CASEID', appt_type: '341 Meeting',
-                    type_key: 'meeting_341', appt_status: 'Scheduled', appt_gcal: 'g500', appt_gcal_user: null,
-                    appt_with: 1, appt_date: '2026-09-01 10:00:00' };
-    const db = makeDb([prior], { cases: [{ ...CASE_X, '341_appt_id': 500 }] });
-    const r = await apptService.createAppt(db, { ...BASE, appt_type: '341 Meeting', case_id: 'X1CASEID' });
-    await flush();
-
-    // The transactional core, as an explicit ordered sequence. The ONLY U6b
-    // delta inside it is the two extra INSERT binds — asserted separately.
-    const seq = db.connCalls.map((c) => c.sql);
-    expect(seq).toHaveLength(5);
-    expect(seq[0]).toMatch(/^INSERT INTO appts/);
-    expect(seq[1]).toMatch(/^SELECT appt_client_id, appt_case_id, appt_type, appt_date/);     // insertApptLog
-    expect(seq[2]).toMatch(/JOIN appts a ON a\.appt_id = c\.`341_appt_id`/);                  // pointer-path lookup
-    expect(seq[3]).toBe(`UPDATE appts SET appt_status = 'Rescheduled' WHERE appt_id = ?`);    // UNGUARDED, verbatim
-    expect(seq[4]).toMatch(/^UPDATE cases SET case_341_current = \?, `341_appt_id` = \?/);
-    // Nothing from the singleton path leaked in.
-    expect(seq.some((s) => /SELECT a\.\* FROM appts a/.test(s))).toBe(false);
-    expect(seq.some((s) => /SELECT case_id, case_number/.test(s))).toBe(false);
-    // (2026-09-09) The Ch11-cascade chapter flatten is the ONE cases query the
-    // enrollment path is allowed — everything else on cases stays forbidden.
-    expect(db.poolCalls.some((c) =>
-      /FROM cases/.test(c.sql) && !/^SELECT case_chapter FROM cases WHERE case_id/.test(c.sql)
-    )).toBe(false);
-
-    // Supersession outcome + the LEGACY reason strings, byte-identical.
-    expect(db.rows.get(500).appt_status).toBe('Rescheduled');
-    expect(r.superseded).toEqual([500]);
-    expect(sequenceEngine.cancelByApptId).toHaveBeenCalledWith(db, 500, '341_superseded');
-    const supLog = logCalls().find((c) => c.data && c.data.Reason);
-    expect(supLog.data.Reason).toBe('341_superseded');
-    // No calendar.rescheduled — the string block has never emitted one.
-    expect(calEmitNames()).toEqual(['calendar.scheduled']);
-    expect(cfg).toHaveBeenCalledWith('unified_singleton_enabled');
-    expect(db.unmatched).toEqual([]);
-  });
-
-  test('the successor is NOT lineage-stamped by the string block (pre-U6b behaviour)', async () => {
-    const prior = { appt_id: 500, appt_client_id: CONTACT_ID, appt_case_id: 'X1CASEID', appt_type: '341 Meeting',
-                    type_key: 'meeting_341', appt_status: 'Scheduled', appt_gcal: '', appt_gcal_user: null,
-                    appt_with: 1, appt_date: '2026-09-01 10:00:00' };
-    const db = makeDb([prior], { cases: [{ ...CASE_X, '341_appt_id': 500 }] });
-    const r = await apptService.createAppt(db, { ...BASE, appt_type: '341 Meeting', case_id: 'X1CASEID' });
-    await flush();
-    expect(db.rows.get(r.appt_id).rescheduled_from_appt_id).toBeNull();
-  });
-});
-
-// ─────────────────────────────────────────────────────────────────────────────
-describe('flag ON — registry singleton (v0.5 §3.4.2)', () => {
-  beforeEach(() => { global.__U6B_FLAG__ = '1'; });
+describe('registry singleton (v0.5 §3.4.2) — always on', () => {
 
   const PRIORS = [
     // (a) case-linked prior. The cases fixture's pointer names a DIFFERENT
@@ -440,7 +387,9 @@ describe('flag ON — registry singleton (v0.5 §3.4.2)', () => {
     expect(db.rows.get(503).appt_status).toBe('Rescheduled');   // was already
     expect(db.rows.get(504).appt_status).toBe('Scheduled');     // different type — untouched
 
-    // The pointer path is GONE under the flag.
+    // The pointer path is GONE (the retired string block's), and the retired
+    // flag is never read (the mock would answer '0').
+    expect(cfg).not.toHaveBeenCalledWith('unified_singleton_enabled');
     expect(db.connCalls.some((c) => /341_appt_id`\s*!=/.test(c.sql) || /JOIN appts a ON/.test(c.sql))).toBe(false);
     // Guarded tombstone form.
     const tombs = db.connCalls.filter((c) => /^UPDATE appts SET appt_status = 'Rescheduled'/.test(c.sql));
@@ -492,6 +441,20 @@ describe('flag ON — registry singleton (v0.5 §3.4.2)', () => {
     expect(db.poolCalls.filter((c) => /FROM cases WHERE case_number = \?/.test(c.sql))).toHaveLength(1);
   });
 
+  // The inverse of a retired U2 pin (tests/apptService.typeKey.test.js "the
+  // key alone does NOT trigger supersession — only the string does"): with the
+  // string block gone, the KEY decides and the label is irrelevant.
+  test('keyed on type_key, not the label: appt_type \'341\' + type_key meeting_341 supersedes and projects', async () => {
+    const db = makeDb([PRIORS[0]], { cases: [STALE_CASE] });
+    const r = await apptService.createAppt(db, { ...BASE, appt_type: '341', type_key: 'meeting_341', case_id: 'X1CASEID' });
+    await flush();
+    expect(db.rows.get(r.appt_id).type_key).toBe('meeting_341');
+    expect(r.superseded).toEqual([501]);
+    expect(db.rows.get(501).appt_status).toBe('Rescheduled');
+    expect(db.byCaseId.get('X1CASEID')['341_appt_id']).toBe(r.appt_id);
+    expect(db.unmatched).toEqual([]);
+  });
+
   test('a 341 with NO priors still projects (the mirror tracks the live 341, not the supersession)', async () => {
     const db = makeDb([], { cases: [STALE_CASE] });
     const r = await apptService.createAppt(db, { ...BASE, appt_type: '341 Meeting', case_id: 'X1CASEID' });
@@ -537,7 +500,7 @@ describe('flag ON — registry singleton (v0.5 §3.4.2)', () => {
     expect(console.warn).toHaveBeenCalledWith(expect.stringMatching(/singleton: appt \d+ \(meeting_341\) found 2 prior live rows/));
   });
 
-  test('registry blip under the flag: fail-soft — no supersession, no crash, appt still created', async () => {
+  test('registry blip: fail-soft — no supersession, no crash, appt still created', async () => {
     calendarTypeService.invalidate();
     const db = makeDb(PRIORS, { cases: [STALE_CASE] });
     // The registry read hits the stub and finds no calendar_item_types route →

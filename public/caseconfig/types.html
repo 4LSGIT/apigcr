@@ -88,19 +88,22 @@
     .spin { animation: spin 0.8s linear infinite; display: inline-block; }
     @keyframes spin { to { transform: rotate(360deg); } }
 
+    /* Read-only (the Config handshake): every write control carries .cc-w. */
+    body.cc-ro .cc-w { display: none; }
+
     ::-webkit-scrollbar { width: 4px; height: 4px; }
     ::-webkit-scrollbar-track { background: transparent; }
     ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
   </style>
 </head>
-<body>
+<body class="cc-ro">
 
 <div class="toolbar">
   <i class="fa-solid fa-circle-info"></i>
   <span>The one editor for the <b>fe-case_types</b> vocabulary (the old Settings-page copy is gone).
         Renames can update pipeline templates; existing cases always keep their old value.</span>
   <span style="flex:1"></span>
-  <button class="btn btn-primary" onclick="addType()"><i class="fa-solid fa-plus"></i> New Type</button>
+  <button class="btn btn-primary cc-w" onclick="addType()"><i class="fa-solid fa-plus"></i> New Type</button>
 </div>
 
 <div id="list">
@@ -131,12 +134,36 @@
 // Delete flow:  blocked while templates still reference the name;
 //   cases referencing it only warn (they keep the old string).
 //
+// Read-only: the Config handshake (settings arc §3b) — see ccApplyAccess.
+//
 // Shell protocol: P.apiSend relay; lifecycle hooks onShow/onRefresh/
-// onNew exposed on window; topbar buttons via P.setTopbarButtons.
+// onNew/onAccess exposed on window; topbar buttons via P.setTopbarButtons.
 // ═══════════════════════════════════════════════════════════════
 
 const P = window.parent;
-const api = (...args) => P.apiSend(...args);
+
+// ── Read-only (the Config handshake, settings arc §3b) ─────────
+// ONE idiom. ccCanEdit is true only when the shell says so — P.configCanEdit
+// === true at init, or onAccess({ canEdit: true }) later; anything else is
+// read-only (fail closed — the server is the authority either way).
+// Read-only = body.cc-ro, which hides every write control (.cc-w), AND api()
+// refuses every non-GET call, so no stray or hidden control can write.
+// Viewing (the list itself) is untouched.
+let ccCanEdit = false;
+const CC_RO_MSG = 'Read-only — changing YisraCase Config needs the admin permission.';
+const ccIsRead = (method) => method == null || /^(GET|HEAD)$/i.test(String(method));
+function ccApplyAccess(canEdit) {
+  const next = canEdit === true;
+  const changed = next !== ccCanEdit;
+  ccCanEdit = next;
+  document.body.classList.toggle('cc-ro', !next);
+  if (changed && loaded) render();
+}
+function onAccess(access) { ccApplyAccess(access && access.canEdit); }
+
+const api = (...args) => (ccCanEdit || ccIsRead(args[1]))
+  ? P.apiSend(...args)
+  : Promise.reject(new Error(CC_RO_MSG));
 const E = id => document.getElementById(id);
 const Toast = Swal.mixin({ toast: true, position: 'top-end', showConfirmButton: false, timer: 2500 });
 
@@ -170,7 +197,7 @@ async function putBlob(state) {
   const obj = {};
   state.forEach(t => { obj[t.name] = t.subs.slice(); });   // key insertion order preserved
   await api('/api/app-settings/fe-case_types', 'PUT', { value: JSON.stringify(obj) });
-  // Refresh dropdown sources shell-wide (same call settings.html makes).
+  // Refresh dropdown sources shell-wide (the shell's firmData re-read).
   try { window.top.loadFirmData?.(); } catch (_) {}
 }
 
@@ -223,7 +250,7 @@ function render() {
   if (!types.length) {
     host.innerHTML = `<div class="empty-state"><i class="fa-solid fa-tags"></i>
       <div>No case types yet</div>
-      <button class="btn btn-primary" onclick="addType()"><i class="fa-solid fa-plus"></i> New Type</button></div>`;
+      <button class="btn btn-primary cc-w" onclick="addType()"><i class="fa-solid fa-plus"></i> New Type</button></div>`;
     return;
   }
   host.innerHTML = types.map((t, ti) => `
@@ -232,20 +259,20 @@ function render() {
         <div class="type-name">${esc(t.name)}
           <span class="type-meta">${t.subs.length ? t.subs.length + ' subtype' + (t.subs.length === 1 ? '' : 's') : 'no subtypes'}</span>
         </div>
-        <button class="icon-btn" title="Rename type"    onclick="renameType(${ti})"><i class="fa-solid fa-pen"></i></button>
-        <button class="icon-btn" title="Move up"        onclick="moveType(${ti},-1)"><i class="fa-solid fa-arrow-up"></i></button>
-        <button class="icon-btn" title="Move down"      onclick="moveType(${ti},1)"><i class="fa-solid fa-arrow-down"></i></button>
-        <button class="icon-btn del" title="Delete type" onclick="deleteType(${ti})"><i class="fa-solid fa-xmark"></i></button>
+        <button class="icon-btn cc-w" title="Rename type"    onclick="renameType(${ti})"><i class="fa-solid fa-pen"></i></button>
+        <button class="icon-btn cc-w" title="Move up"        onclick="moveType(${ti},-1)"><i class="fa-solid fa-arrow-up"></i></button>
+        <button class="icon-btn cc-w" title="Move down"      onclick="moveType(${ti},1)"><i class="fa-solid fa-arrow-down"></i></button>
+        <button class="icon-btn del cc-w" title="Delete type" onclick="deleteType(${ti})"><i class="fa-solid fa-xmark"></i></button>
       </div>
       ${t.subs.map((s, si) => `
         <div class="sub-row">
           <div class="sub-name">${esc(s)}</div>
-          <button class="icon-btn" title="Rename subtype"    onclick="renameSub(${ti},${si})"><i class="fa-solid fa-pen"></i></button>
-          <button class="icon-btn" title="Move up"           onclick="moveSub(${ti},${si},-1)"><i class="fa-solid fa-arrow-up"></i></button>
-          <button class="icon-btn" title="Move down"         onclick="moveSub(${ti},${si},1)"><i class="fa-solid fa-arrow-down"></i></button>
-          <button class="icon-btn del" title="Delete subtype" onclick="deleteSub(${ti},${si})"><i class="fa-solid fa-xmark"></i></button>
+          <button class="icon-btn cc-w" title="Rename subtype"    onclick="renameSub(${ti},${si})"><i class="fa-solid fa-pen"></i></button>
+          <button class="icon-btn cc-w" title="Move up"           onclick="moveSub(${ti},${si},-1)"><i class="fa-solid fa-arrow-up"></i></button>
+          <button class="icon-btn cc-w" title="Move down"         onclick="moveSub(${ti},${si},1)"><i class="fa-solid fa-arrow-down"></i></button>
+          <button class="icon-btn del cc-w" title="Delete subtype" onclick="deleteSub(${ti},${si})"><i class="fa-solid fa-xmark"></i></button>
         </div>`).join('')}
-      <div class="add-sub">
+      <div class="add-sub cc-w">
         <button class="btn btn-outline" onclick="addSub(${ti})"><i class="fa-solid fa-plus"></i> Subtype</button>
       </div>
     </div>
@@ -523,6 +550,7 @@ window.moveSub = moveSub;
 // ── Lifecycle ──────────────────────────────────────────────────
 
 async function init() {
+  ccApplyAccess(P.configCanEdit);
   P.setTopbarButtons({ new: true, refresh: true });
   await reload();
 }
@@ -547,6 +575,7 @@ window.onShow = onShow;
 window.onHide = onHide;
 window.onRefresh = onRefresh;
 window.onNew = onNew;
+window.onAccess = onAccess;
 
 // ── Boot ───────────────────────────────────────────────────────
 (function waitForShell() {

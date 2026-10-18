@@ -3,17 +3,27 @@
  *
  * Tests for routes/api.appSettings.js — validateByType.
  *
+ * Since the settings arc (2026-10) the validators live in
+ * lib/settingsRegistry.js (TYPE_VALIDATORS / validateByType) and the route
+ * re-exports the registry's own function — pinned below, so this file keeps
+ * testing what the route runs. (The registry's picker types and enum:
+ * tests/settingsRegistry.test.js.)
+ *
  * The contract: validation is PERMISSIVE, runs on a trimmed working copy,
  * NEVER mutates, and blank always passes (blank = unset must never be
  * un-blankable). string / template / NULL / unknown types are verbatim.
- * public/settings.html mirrors these rules client-side — if a rule changes
- * here, change it there too.
+ * The client editors mirror these rules — if a rule changes here, change
+ * them there too.
  *
  * Run:
  *   npx jest tests/apiAppSettings.validate.test.js
  */
 
 const { validateByType } = require('../routes/api.appSettings');
+
+test('the route validates with the registry\'s own validateByType', () => {
+  expect(validateByType).toBe(require('../lib/settingsRegistry').validateByType);
+});
 
 const ok = (t, v) => expect(validateByType(t, v)).toBe(true);
 const no = (t, v) => expect(typeof validateByType(t, v)).toBe('string');

@@ -409,10 +409,10 @@ const RESOLVERS = Object.freeze({
 /**
  * The firm's mailing address as trimmed, non-empty lines.
  *
- * Setting `firm_address` is type `json_array` — validated as an array both
- * client-side (settings.html VALIDATORS) and server-side (api.appSettings
- * TYPE_VALIDATORS) — but array-ness is all either one checks, so coerce and
- * filter here rather than trusting the elements. Unset / malformed → [].
+ * Setting `firm_address` is type `json_array` — validated as an array by
+ * PUT /api/app-settings (lib/settingsRegistry.js TYPE_VALIDATORS) — but
+ * array-ness is all it checks, so coerce and filter here rather than
+ * trusting the elements. Unset / malformed → [].
  *
  * @returns {string[]}
  */

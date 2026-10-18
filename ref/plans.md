@@ -4,39 +4,63 @@ Living doc. Deferred work, design ideas, and known cleanups — not active devel
 
 ---
 
-## Settings vs Config (2026-09-24)
+## Settings vs Config (ratified 2026-09-24; built by the settings arc, 2026-10)
 
-Two operator surfaces, ratified:
+Two operator surfaces:
 
-- **My Settings** (settings.html, slimmed): personal — account, password,
-  signature.
-- **YisraCase Config** (caseConfigManager.html, renamed from "Case Config"): every
-  firm-wide vocabulary editor as a first-class tab — types/subtypes, pipelines,
-  calendar types, custom fields (CFG-1), contact roles (CFG-2), eventually contact
-  relation types. Rule of admission: **Config gets definitions that have no manager of
-  their own** — checklists and form templates are content with their own authoring
-  surfaces and stay there. One editor per setting, never two (CFG-1 deletes the
-  settings.html Case Types editor: it writes fe-case_types with no usage check or
-  template repoint, unlike caseconfig/types.html — a live footgun, not just clutter).
+- **My Settings** (settings.html): personal only — account (with booking
+  calendars), password, signature, **My access** (the caller's mailbox and
+  phone-line access) and **Manage access** (a grant editor for the channels
+  where the caller holds a real `can_manage` grant).
+- **YisraCase Config** (caseConfigManager.html): the firm-wide editors —
+  vocabulary tabs (Types & Subtypes, Pipelines, Custom Fields, Contact Roles,
+  Calendar Types, Lists), read-only for anyone without `firm.settings`; the
+  **Firm** tab (`firm.settings`: the firm's settings, Launcher, Who sees what);
+  the **System** tab (`system.settings`: it + su). Rule of admission: Config
+  gets definitions that have no manager of their own; one editor per setting,
+  never two.
 
-PENDING (parallel session; do not bake in):
-- CFG-3: which app_settings category sections move into the Config shell's **Firm**
-  tab (it exists since ui-custom S3.2: public/caseconfig/firm.html, a host of
-  sections shown on GET /api/ui-config `can_edit_firm`; Launcher is its first
-  section), and how tool-grouped settings split between tool managers and that
-  tab. The role tier exists: since access A4, PUT/POST /api/app-settings* are
-  `requireAuth({audience:'staff', can:'firm.settings', allowApiKey:true})`
-  (routes/api.appSettings.js; GET stays jwtOrApiKey; per-row `is_editable` still
-  applies), so moving knobs into the Firm tab needs no new gate.
-- Machine-state rows (sweep watermarks, counters, rc_subscriptions…) are a fourth
-  kind — automation-minted runtime state hiding behind is_editable=0, which ALSO means
-  "SU-only boundary" (landing_hosts). Likely: separate flag + read-only diagnostics
-  view. Don't design against is_editable semantics meanwhile.
-- Collision, settled (Fred, 2026-10-15): the ui-custom firm editor and the Config
-  shell are ONE surface — the Config shell's Firm tab. ui-custom owns its Launcher
-  and Who sees what sections (the latter is the entitlements editor: per-user
-  denies, plus role scoping through ui_config `visible_to` — ui-custom S3.4); the
-  settings arc adds its own sections there.
+`lib/settingsRegistry.js` gives every app_settings key its kind and its ONE
+editor home (AI_CONTEXT §32). A new key is a registry entry in the same slice.
+
+Deferred from the arc:
+- **Automations' information security — its own arc** (Fred, 2026-10-17). Any
+  staff member can author and test-run workflows (`POST /workflows/test-step`
+  is plain jwtOrApiKey), so every internal function is a staff-wide surface:
+  get_setting reads any non-secret setting, query_db reads its allow-listed
+  tables, records leak into execution logs. The settings arc closed only the
+  app_settings WRITE path (a registered key needs `automation: true` in the
+  registry). Making workflows admin-only is the easy way out Fred does not
+  want.
+- **The comms knobs' home.** The comms arc picks it; until then the
+  registry's home `comms` renders in the System tab.
+- **Interim access lists → capabilities (access A6).** `comms_archive_admins`
+  / `comms_eval_reviewers` are registered kind `access` (SU console only, no
+  editor). `archives.purge` exists and admin holds it.
+- **YC 3.0 provisioning seeds.** The registry's kind IS tenancy open decision
+  16's classification: firm / vocab = tenant-configured, system =
+  platform-provisioned, state = starts empty, secret = per-tenant credentials.
+  A per-key seed value lands with the provisioning slice — never 4LSG's
+  values. `app_url` / `landing_hosts` / `landing_redirect` become
+  `tenant_hosts` data then, not settings.
+- **Rollout flags still at their final value** (kept, Fred 2026-10-17):
+  `landing_redirect` (the instant revert until `tenant_hosts`),
+  `trustee_validation_live` (the dry-run switch). Kill switches stay:
+  `cloud_tasks_enabled`, `documents_sync_enabled`, `court_ingest_live`,
+  `portal_live`, the comms modes.
+- **Manage access for a line held without Read.** settings.html lists
+  phone lines from `GET /api/phone-lines/readable` (by `can_read` grant for a
+  non-attorney), so a send- or manage-only line grant shows in neither My
+  access nor Manage access (none exists today; only SU manages lines).
+  Fix: an any-grant phone listing for the caller.
+- **`quo_api_key` → a credentials row** like `comms_stt_credential_id`;
+  `rc_token` / `rc_subscriptions` go with the RingCentral retirement.
+- **The legacy `settings` table** has no reader (AUDIT_TENANCY §B4): drop it.
+- **`fe-*` shipping.** Every `fe-` row ships to every staff browser through
+  `/api/firm-data`; a registry flag could replace the prefix (YC 3.0).
+- **Terminology layer** (YC 3.0: the case / matter label map) — a future
+  Firm-tab section; a structured document, so ui_config-shaped, not
+  app_settings scalars.
 
 ---
 
@@ -237,9 +261,9 @@ time-limited), never a bypass account.
 ### Prerequisite arcs (finish before tenancy implementation starts)
 
 Custom-fields pilot (supplies the per-tenant schema manifest, invariant 7),
-settings/config split (defines what provisioning seeds — audit §B4's 48
-firm-config keys are the raw inventory; no single registry enumerates the
-settings surface today, which is itself a finding), access-control arc
+settings/config split (done 2026-10: `lib/settingsRegistry.js` enumerates
+every app_settings key the code reads with its kind — the classification
+provisioning seeds from; see "Settings vs Config" above), access-control arc
 (roles/membership = the auth half of invariant 1-2; scoped keys = webhook/RO
 tenant binding). Infra intent, **gated on funding approval**: Cloud Run
 `min_instances=1`. The Cloud SQL migration is done (2026-10-13,
@@ -291,9 +315,11 @@ deferred until the budget shows it's needed.
     (ui-custom S3.3b, 2026-10-15) (§3-12).
 13. Heartbeat per-tenant vs platform (§3-13).
 14. Provider-console webhook URL inventory at migration time (§3-14).
-15. GCS per-tenant buckets vs prefixes (§3-15). 16. Freeze §B4's
-    firm/platform key classification against the ratified settings/config
-    taxonomy (§3-16). 17. External health probing; `/api/version` reads
+15. GCS per-tenant buckets vs prefixes (§3-15). 16. **RESOLVED 2026-10-17**
+    (§3-16): the classification is `lib/settingsRegistry.js`'s `kind` per
+    key (firm / vocab tenant-configured, system platform-provisioned, state,
+    secret, access, retired), reviewed key by key against the live table.
+    17. External health probing; `/api/version` reads
     tenant data (§3-17 + §E4).
 
 ---

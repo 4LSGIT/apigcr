@@ -189,19 +189,24 @@
     .req-count-badge { font-size: 9px; font-weight: 700; padding: 0 5px; border-radius: 8px;
       background: var(--accent-soft); color: var(--info-dark); margin-left: 3px; }
 
+    /* Read-only (the Config handshake): every write control carries .cc-w;
+       the active switches stay, disabled, to show their state. */
+    body.cc-ro .cc-w { display: none; }
+    body.cc-ro .tgl .slider { cursor: default; }
+
     ::-webkit-scrollbar { width: 4px; height: 4px; }
     ::-webkit-scrollbar-track { background: transparent; }
     ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
   </style>
 </head>
-<body>
+<body class="cc-ro">
 
 <!-- ── Left: template list ── -->
 <div class="panel-left">
   <div class="panel-left-head">
     <i class="fa-solid fa-timeline"></i> Templates
     <span style="flex:1"></span>
-    <button class="btn btn-primary btn-sm" onclick="newTemplate()"><i class="fa-solid fa-plus"></i> New</button>
+    <button class="btn btn-primary btn-sm cc-w" onclick="newTemplate()"><i class="fa-solid fa-plus"></i> New</button>
   </div>
   <div id="tpl-list">
     <div class="empty-state"><i class="fa-solid fa-spinner spin"></i><div>Loading…</div></div>
@@ -262,12 +267,51 @@
 //     surface through the Toast). Stage deletion 409s while requirements
 //     exist — the dialog says to delete them first.
 //
-// Shell protocol: P.apiSend relay; onShow/onRefresh/onNew hooks;
+// Read-only: the Config handshake (settings arc §3b) — see ccApplyAccess.
+//
+// Shell protocol: P.apiSend relay; onShow/onRefresh/onNew/onAccess hooks;
 // topbar buttons via P.setTopbarButtons.
 // ═══════════════════════════════════════════════════════════════
 
 const P = window.parent;
-const api = (...args) => P.apiSend(...args);
+
+// ── Read-only (the Config handshake, settings arc §3b) ─────────
+// ONE idiom. ccCanEdit is true only when the shell says so — P.configCanEdit
+// === true at init, or onAccess({ canEdit: true }) later; anything else is
+// read-only (fail closed — the server is the authority either way).
+// Read-only =
+//   · body.cc-ro hides every write control (.cc-w): New / Edit / Delete /
+//     + Stage / + Requirement, the reorder arrows and drag handles;
+//   · ccLock() disables every form control a render draws (the active
+//     switches keep showing their state);
+//   · ccView() opens the stage / requirement dialogs to LOOK: inputs
+//     disabled, no confirm button;
+//   · api() refuses every non-GET call, so no stray or hidden control writes.
+// Selecting a template and opening a stage's requirements still work.
+let ccCanEdit = false;
+const CC_RO_MSG = 'Read-only — changing YisraCase Config needs the admin permission.';
+const ccIsRead = (method) => method == null || /^(GET|HEAD)$/i.test(String(method));
+function ccApplyAccess(canEdit) {
+  const next = canEdit === true;
+  const changed = next !== ccCanEdit;
+  ccCanEdit = next;
+  document.body.classList.toggle('cc-ro', !next);
+  if (changed && activeTpl) renderEditor();
+}
+function onAccess(access) { ccApplyAccess(access && access.canEdit); }
+function ccLock(root) {
+  if (ccCanEdit || !root) return;
+  root.querySelectorAll('input, select, textarea').forEach(el => { el.disabled = true; });
+}
+function ccView(opts) {
+  if (ccCanEdit) return opts;
+  return { ...opts, showConfirmButton: false, showDenyButton: false, cancelButtonText: 'Close',
+    didOpen: (...a) => { if (opts.didOpen) opts.didOpen(...a); ccLock(Swal.getHtmlContainer()); } };
+}
+
+const api = (...args) => (ccCanEdit || ccIsRead(args[1]))
+  ? P.apiSend(...args)
+  : Promise.reject(new Error(CC_RO_MSG));
 const E = id => document.getElementById(id);
 const Toast = Swal.mixin({ toast: true, position: 'top-end', showConfirmButton: false, timer: 2500 });
 
@@ -396,9 +440,9 @@ function renderEditor() {
       ${t.active ? '' : '<span class="badge badge-inactive">inactive</span>'}
     </div>
     <span style="flex:1"></span>
-    <button class="btn btn-outline btn-sm" onclick="editTemplate()"><i class="fa-solid fa-pen"></i> Edit</button>
-    <button class="btn btn-outline btn-sm" onclick="deleteTemplate()"><i class="fa-solid fa-trash"></i> Delete</button>
-    <button class="btn btn-primary btn-sm" onclick="stageDialog(null)"><i class="fa-solid fa-plus"></i> Stage</button>
+    <button class="btn btn-outline btn-sm cc-w" onclick="editTemplate()"><i class="fa-solid fa-pen"></i> Edit</button>
+    <button class="btn btn-outline btn-sm cc-w" onclick="deleteTemplate()"><i class="fa-solid fa-trash"></i> Delete</button>
+    <button class="btn btn-primary btn-sm cc-w" onclick="stageDialog(null)"><i class="fa-solid fa-plus"></i> Stage</button>
     <div class="sub">
       ${t.case_type ? esc(t.case_type) + (t.case_subtype ? ': ' + esc(t.case_subtype) : '') : '(no type)'}
       ${t.description ? ' — ' + esc(t.description) : ''}
@@ -408,7 +452,7 @@ function renderEditor() {
   if (!stages.length) {
     wrap.innerHTML = `<div class="empty-state"><i class="fa-solid fa-list-ol"></i>
       <div>No stages yet</div>
-      <button class="btn btn-primary" onclick="stageDialog(null)"><i class="fa-solid fa-plus"></i> Add Stage</button></div>`;
+      <button class="btn btn-primary cc-w" onclick="stageDialog(null)"><i class="fa-solid fa-plus"></i> Add Stage</button></div>`;
     return;
   }
 
@@ -424,7 +468,7 @@ function renderEditor() {
       <tbody id="stage-tbody">
         ${stages.map((s, i) => `
           <tr data-stage-id="${s.id}" class="${s.active ? '' : 'inactive'}${isOfframp(s) ? ' offramp' : ''}">
-            <td><span class="drag-handle" title="Drag to reorder"><i class="fa-solid fa-grip-vertical"></i></span></td>
+            <td><span class="drag-handle cc-w" title="Drag to reorder"><i class="fa-solid fa-grip-vertical"></i></span></td>
             <td>${s.stage_number}</td>
             <td><span class="st-key">${esc(s.stage_key)}${Number(s.log_count) > 0
                   ? `<i class="fa-solid fa-lock" title="Key locked — ${s.log_count} history row(s) reference it"></i>` : ''}</span></td>
@@ -444,16 +488,16 @@ function renderEditor() {
             </td>
             <td style="white-space:nowrap;text-align:right">
               <button class="icon-btn" title="Requirements (${Number(s.req_count) || 0})" onclick="toggleReqs(${s.id})"><i class="fa-solid fa-list-check"></i>${Number(s.req_count) > 0 ? `<span class="req-count-badge">${s.req_count}</span>` : ''}</button>
-              <button class="icon-btn" title="Move up"   onclick="nudgeStage(${i},-1)"><i class="fa-solid fa-arrow-up"></i></button>
-              <button class="icon-btn" title="Move down" onclick="nudgeStage(${i},1)"><i class="fa-solid fa-arrow-down"></i></button>
-              <button class="icon-btn" title="Edit"      onclick="stageDialog(${s.id})"><i class="fa-solid fa-pen"></i></button>
-              <button class="icon-btn del" title="Delete" onclick="deleteStage(${s.id})"><i class="fa-solid fa-xmark"></i></button>
+              <button class="icon-btn cc-w" title="Move up"   onclick="nudgeStage(${i},-1)"><i class="fa-solid fa-arrow-up"></i></button>
+              <button class="icon-btn cc-w" title="Move down" onclick="nudgeStage(${i},1)"><i class="fa-solid fa-arrow-down"></i></button>
+              <button class="icon-btn" title="${ccCanEdit ? 'Edit' : 'View'}" onclick="stageDialog(${s.id})"><i class="fa-solid fa-${ccCanEdit ? 'pen' : 'eye'}"></i></button>
+              <button class="icon-btn del cc-w" title="Delete" onclick="deleteStage(${s.id})"><i class="fa-solid fa-xmark"></i></button>
             </td>
           </tr>${openReqStageId === s.id ? reqSubRowHtml(s) : ''}`).join('')}
       </tbody>
     </table>
     <div style="font-size:11px;color:var(--text-muted);margin-top:8px">
-      Drag rows (or use ↑↓) to reorder. Locked keys (<i class="fa-solid fa-lock" style="color:var(--warn)"></i>)
+      <span class="cc-w">Drag rows (or use ↑↓) to reorder.</span> Locked keys (<i class="fa-solid fa-lock" style="color:var(--warn)"></i>)
       are referenced by case history and can't change — edit the labels instead.
       <span class="badge badge-offramp">off-ramp</span> stages are reachable from anywhere and are never
       shown as a case's next step; only <b>main</b> stages are projected as upcoming. Ordering off-ramps
@@ -477,6 +521,7 @@ function renderEditor() {
       },
     });
   }
+  ccLock(wrap);
 }
 
 // ── Reorder ────────────────────────────────────────────────────
@@ -755,14 +800,14 @@ async function stageDialog(stageId) {
   if (stageId && !s) return;
   const locked = !!(stageId && Number(s.log_count) > 0);
 
-  const { isConfirmed, value } = await Swal.fire({
-    title: stageId ? `Edit stage "${s.stage_key}"` : 'New stage',
+  const { isConfirmed, value } = await Swal.fire(ccView({
+    title: stageId ? `${ccCanEdit ? 'Edit' : 'View'} stage "${s.stage_key}"` : 'New stage',
     html: stageFormHtml(s || {}),
     width: 600, showCancelButton: true,
     confirmButtonText: stageId ? 'Save' : 'Create',
     focusConfirm: false,
     preConfirm: () => gatherStageForm(locked),
-  });
+  }));
   if (!isConfirmed || !value) return;
 
   try {
@@ -882,10 +927,10 @@ function reqSubRowHtml(stage) {
                   onchange="toggleReqActive(${stage.id}, ${r.id}, this)"><span class="slider"></span></label>
               </td>
               <td style="white-space:nowrap;text-align:right">
-                <button class="icon-btn" title="Move up"   onclick="nudgeReq(${stage.id}, ${i}, -1)"><i class="fa-solid fa-arrow-up"></i></button>
-                <button class="icon-btn" title="Move down" onclick="nudgeReq(${stage.id}, ${i}, 1)"><i class="fa-solid fa-arrow-down"></i></button>
-                <button class="icon-btn" title="Edit"      onclick="reqDialog(${stage.id}, ${r.id})"><i class="fa-solid fa-pen"></i></button>
-                <button class="icon-btn del" title="Delete" onclick="deleteReq(${stage.id}, ${r.id})"><i class="fa-solid fa-xmark"></i></button>
+                <button class="icon-btn cc-w" title="Move up"   onclick="nudgeReq(${stage.id}, ${i}, -1)"><i class="fa-solid fa-arrow-up"></i></button>
+                <button class="icon-btn cc-w" title="Move down" onclick="nudgeReq(${stage.id}, ${i}, 1)"><i class="fa-solid fa-arrow-down"></i></button>
+                <button class="icon-btn" title="${ccCanEdit ? 'Edit' : 'View'}" onclick="reqDialog(${stage.id}, ${r.id})"><i class="fa-solid fa-${ccCanEdit ? 'pen' : 'eye'}"></i></button>
+                <button class="icon-btn del cc-w" title="Delete" onclick="deleteReq(${stage.id}, ${r.id})"><i class="fa-solid fa-xmark"></i></button>
               </td>
             </tr>`).join('')}
         </tbody>
@@ -896,7 +941,7 @@ function reqSubRowHtml(stage) {
       <div class="req-head">
         <i class="fa-solid fa-list-check"></i> Requirements — ${esc(stage.internal_label)}
         <span style="flex:1"></span>
-        <button class="btn btn-primary btn-sm" onclick="reqDialog(${stage.id}, null)"><i class="fa-solid fa-plus"></i> Requirement</button>
+        <button class="btn btn-primary btn-sm cc-w" onclick="reqDialog(${stage.id}, null)"><i class="fa-solid fa-plus"></i> Requirement</button>
       </div>
       ${body}
       <div style="font-size:10.5px;color:var(--text-muted);margin-top:6px">
@@ -1038,15 +1083,15 @@ async function reqDialog(stageId, reqId) {
   if (reqId && !r) return;
   const locked = !!(reqId && Number(r.override_count) > 0);
 
-  const { isConfirmed, value } = await Swal.fire({
-    title: reqId ? `Edit requirement "${r.requirement_key}"` : 'New requirement',
+  const { isConfirmed, value } = await Swal.fire(ccView({
+    title: reqId ? `${ccCanEdit ? 'Edit' : 'View'} requirement "${r.requirement_key}"` : 'New requirement',
     html: reqFormHtml(r || {}),
     width: 620, showCancelButton: true,
     confirmButtonText: reqId ? 'Save' : 'Create',
     focusConfirm: false,
     didOpen: () => rfDetectorHint(E('rf-detector')),
     preConfirm: () => gatherReqForm(locked),
-  });
+  }));
   if (!isConfirmed || !value) return;
 
   try {
@@ -1117,6 +1162,7 @@ window.nudgeReq = nudgeReq;
 // ── Lifecycle ──────────────────────────────────────────────────
 
 async function init() {
+  ccApplyAccess(P.configCanEdit);
   P.setTopbarButtons({ new: true, refresh: true });
   loadTypesMap();   // fire-and-forget — datalists only
   loadDetectors();  // fire-and-forget — detector picker + config hints (R2)
@@ -1148,6 +1194,7 @@ window.onShow = onShow;
 window.onHide = onHide;
 window.onRefresh = onRefresh;
 window.onNew = onNew;
+window.onAccess = onAccess;
 
 // ── Boot ───────────────────────────────────────────────────────
 (function waitForShell() {

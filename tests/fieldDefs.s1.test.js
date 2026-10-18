@@ -22,20 +22,28 @@
  *      before any UPDATE is issued.
  *   5. CACHE: listActive does not re-query until bump() (or a mutation, or
  *      the TTL); a bump during an in-flight load is not overwritten by it.
- *   6. ROUTES: inventory; the same auth middleware stack as the contact-role-
- *      type routes; 400/404/409 mapping; 500 never leaks DB text.
+ *   6. ROUTES: inventory; the same auth posture as the contact-role-type
+ *      routes (reads jwtOrApiKey, writes the firm.settings gate — settings
+ *      arc); 400/404/409 mapping; 500 never leaks DB text.
  *   7. caseconfig/fields.html: inline scripts parse; the UI's key regex /
  *      type list / validation map are pinned equal to the service's.
  *
  * No real MySQL in this repo's test run: the db is the house dispatch-on-SQL-
  * text stub (an in-memory registry world), never scripted result arrays. The
- * module under test is the real one; only lib/auth.jwtOrApiKey is mocked.
+ * module under test is the real one; only the auth middleware
+ * (lib/auth.jwtOrApiKey, lib/auth.requireAuth) is mocked.
  */
 
 'use strict';
 
 jest.mock('../lib/auth.jwtOrApiKey', () =>
   jest.fn((req, _res, next) => { req.auth = { userId: 6 }; next(); }));
+// The firm.settings write gate on the Config vocabulary writes (settings arc,
+// 2026-10-17) is lib/auth.requireAuth — stubbed here the same way, tagged with
+// its mount options so a test can pin them. The gate's real behaviour is
+// tests/vocabWriteGates.test.js's subject.
+jest.mock('../lib/auth.requireAuth', () => jest.fn((opts) => Object.assign(
+  (req, _res, next) => { req.auth = { userId: 6 }; next(); }, { gateOpts: opts })));
 // S3: mutations fire the column reconciler after bump(). Its behavior is
 // tests/customFields.s3.test.js's subject; here it would only run DDL reads
 // against the registry world.
@@ -556,15 +564,17 @@ describe('routes/api.fieldDefs.js', () => {
     ]);
   });
 
-  test('gating is exactly the contact-role-type routes\' middleware stack', () => {
-    const roleTypeStacks = routesOf(rolesRouter)
-      .filter(r => r.path.startsWith('/api/contact-role-types'))
-      .map(r => r.middleware);
-    expect(roleTypeStacks).toHaveLength(3);
-    const reference = roleTypeStacks[0];
-    for (const s of roleTypeStacks) expect(s).toEqual(reference);
-    expect(reference).toEqual([jwtOrApiKey]);
-    for (const r of routesOf(router)) expect(r.middleware).toEqual(reference);
+  test('gating is the contact-role-type routes\' posture: reads jwtOrApiKey, writes the firm.settings gate', () => {
+    // Settings arc (2026-10-17): Config vocabulary WRITES need firm.settings
+    // (requireAuth, stubbed above and tagged with its mount options); reads
+    // stay any-staff.
+    const FIRM_GATE = { audience: 'staff', can: 'firm.settings', allowApiKey: true };
+    const postureOf = r => (r.methods.includes('get')
+      ? (r.middleware.length === 1 && r.middleware[0] === jwtOrApiKey ? 'read' : 'other')
+      : (r.middleware.length === 1 && JSON.stringify(r.middleware[0].gateOpts) === JSON.stringify(FIRM_GATE) ? 'write' : 'other'));
+    const roleTypes = routesOf(rolesRouter).filter(r => r.path.startsWith('/api/contact-role-types'));
+    expect(roleTypes.map(r => `${r.methods.join(',')} ${postureOf(r)}`)).toEqual(['get read', 'post write', 'put write']);
+    expect(routesOf(router).map(postureOf)).toEqual(['read', 'read', 'write', 'write', 'write', 'write', 'write']);
   });
 
   let server, base, db;

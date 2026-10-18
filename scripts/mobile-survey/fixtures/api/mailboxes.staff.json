@@ -1,0 +1,51 @@
+{
+ "status": "success",
+ "viewer": {
+  "su": false
+ },
+ "mailboxes": [
+  {
+   "id": 1,
+   "address": "billing@example-firm.test",
+   "domain": "example-firm.test",
+   "display_name": "Billing",
+   "color": "#2f6fd1",
+   "active": true,
+   "access": {
+    "can_read": true,
+    "can_send": true,
+    "can_manage": true,
+    "su": false
+   }
+  },
+  {
+   "id": 2,
+   "address": "intake-and-new-client-enquiries-overlong-address@example-firm.test",
+   "domain": "example-firm.test",
+   "display_name": "Intake \u2014 new client enquiries, a deliberately overlong shared-box display name",
+   "color": "#c2410c",
+   "active": true,
+   "access": {
+    "can_read": true,
+    "can_send": false,
+    "can_manage": false,
+    "su": false,
+    "role": "attorney"
+   }
+  },
+  {
+   "id": 3,
+   "address": "old-box@example-firm.test",
+   "domain": "example-firm.test",
+   "display_name": "Old box",
+   "color": "#64748b",
+   "active": false,
+   "access": {
+    "can_read": true,
+    "can_send": false,
+    "can_manage": false,
+    "su": false
+   }
+  }
+ ]
+}

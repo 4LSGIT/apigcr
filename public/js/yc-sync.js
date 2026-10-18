@@ -769,8 +769,9 @@
        handles the message, and that includes the WRITING shell: `emit`
        dispatches locally before it hits the wire, so index.html's `setting:*`
        subscriber updates that realm's `firmData.settings` on the echo. The
-       create handler in settings.html not calling `loadFirmData()` (unlike its
-       PUT siblings) therefore stops mattering for any frame that is open.
+       create handler in caseconfig/firm.html (Automation variables) not
+       calling `loadFirmData()` therefore does not matter for any frame that
+       is open.
 
        Fails closed on a non-string value, same as the PUT matcher: the route
        refuses non-strings with a 400, so that shape can only come from a
@@ -781,6 +782,31 @@
       if (!s || typeof s.key !== 'string' || !s.key) return null;
       if (typeof s.value !== 'string') return null;
       return [{ addr: 'setting:' + s.key, fields: { value: s.value } }];
+    }, ['POST']],
+
+    /* app_settings RESTORE (settings arc, 2026-10). POST
+       /api/app-settings/:key/restore puts a key's value back to what it was
+       before one of its versions (app_settings_versions) — a write on the same
+       `setting:<key>` entity as the PUT, through a route the PUT matcher cannot
+       see: that pattern is anchored at the key, so `/restore` never reaches it.
+       The response is the PUT's own (`{status, setting: {key, value,
+       updated_at}}` — routes/api.appSettings.js), so the getter is the PUT's:
+       the RAW stored string as `value`, never parsed. An unchanged restore
+       answers the same shape with the current value and announces it again —
+       harmless, emits are idempotent.
+
+       The address comes from the URL, like the PUT's (same key charset, same
+       NOT-DECODED note). POST-only: the route has no other verb, and the 4th
+       element says so rather than leaning on that.
+
+       Fails closed on a non-string value, same as the PUT matcher: the route
+       never answers one (it refuses non-strings with a 400 and stores only
+       strings), so that shape can only come from a future/altered response,
+       and broadcasting an object would silently change every subscriber's
+       contract. */
+    [/^\/api\/app-settings\/([A-Za-z0-9_.\-]+)\/restore$/,   'setting', function (r) {
+      return r && r.setting && typeof r.setting.value === 'string'
+        ? { value: r.setting.value } : null;
     }, ['POST']],
 
     /* Contact phone / email REVIVE (Slice 2c) — the SECOND transfer endpoint.

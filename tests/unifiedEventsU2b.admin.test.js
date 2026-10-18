@@ -19,6 +19,12 @@
 'use strict';
 
 jest.mock('../lib/auth.jwtOrApiKey', () => jest.fn((req, res, next) => { req.auth = { userId: 9 }; next(); }));
+// The firm.settings write gate on the Config vocabulary writes (settings arc,
+// 2026-10-17) is lib/auth.requireAuth — stubbed here the same way, tagged with
+// its mount options so a test can pin them. The gate's real behaviour is
+// tests/vocabWriteGates.test.js's subject.
+jest.mock('../lib/auth.requireAuth', () => jest.fn((opts) => Object.assign(
+  (req, _res, next) => { req.auth = { userId: 9 }; next(); }, { gateOpts: opts })));
 
 const express = require('express');
 const calendarTypeService = require('../services/calendarTypeService');

@@ -1,0 +1,433 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>System</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+  <link rel="stylesheet" href="/theme.css">
+  <script src="/themeSync.js"></script>
+  <!-- the settings rows (settings arc): every editable section draws with it -->
+  <script src="/js/ycSettingRows.js"></script>
+  <style>
+    /* ══════════════════════════════════════════════
+       SYSTEM SUB-PAGE — self-contained styles (house pattern: theme.css
+       tokens, no style.css). Labels and hints by CLASS only: .yc-flabel /
+       .yc-hint are the pane-local copies caseconfig/firm.html carries
+       (AI_CONTEXT §12). Block layout: the page scrolls inside #wrap, no flex
+       column (so no overflow on a flex child).
+       ══════════════════════════════════════════════ */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      font-size: 14px; color: var(--text); background: var(--page-bg); overflow: hidden;
+    }
+    .yc-flabel { display: block; font-size: var(--fs-sm); font-weight: 700; color: var(--text); margin: 0 0 4px; }
+    .yc-hint { display: block; font-size: var(--fs-xs); font-weight: 400; color: var(--text-muted); margin-top: 4px; line-height: 1.45; }
+
+    .btn {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 6px 12px; border-radius: 6px; border: none;
+      font-size: 12px; font-weight: 500; cursor: pointer; font-family: inherit;
+      transition: all 0.15s; white-space: nowrap;
+    }
+    .btn-primary { background: var(--accent); color: var(--accent-text); }
+    .btn-primary:hover { background: var(--accent-dark); }
+    .btn-outline { background: var(--page-bg); border: 1px solid var(--border); color: var(--text-2); }
+    .btn-outline:hover { background: var(--border); }
+    .btn-sm { padding: 4px 9px; font-size: 11px; }
+    .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    #wrap { height: 100%; overflow: auto; padding: 16px; }
+    .sy-page { max-width: 980px; margin: 0 auto; display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+    .sy-intro { font-size: 13px; color: var(--text-2); line-height: 1.5; }
+    .sy-toc { display: flex; flex-wrap: wrap; gap: 6px; }
+    .sy-toc[hidden] { display: none; }
+    .sy-banner {
+      border-radius: 8px; padding: 10px 12px; font-size: 13px; line-height: 1.45;
+      background: var(--danger-soft); color: var(--danger-on-soft); border: 1px solid var(--danger);
+      overflow-wrap: anywhere;
+    }
+    .sy-banner[hidden] { display: none; }
+
+    .sy-section { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; min-width: 0; }
+    .sy-sec-head {
+      display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px;
+      padding: 12px 14px; border-bottom: 1px solid var(--border);
+    }
+    .sy-sec-head h2 { font-size: 15px; font-weight: 700; display: flex; align-items: center; gap: 8px; min-width: 0; overflow-wrap: anywhere; }
+    .sy-sec-head h2 i { color: var(--text-muted); }
+    .sy-sec-status { font-size: 12px; color: var(--text-muted); flex: 1 1 auto; min-width: 0; }
+    .sy-sec-status.dirty { color: var(--warn); font-weight: 600; }
+    .sy-sec-body { padding: 14px; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+    .sy-sec-body > .yc-hint { margin: 0; }
+
+    /* Runtime state: drawn here, not by the rows — read-only by construction. */
+    .sy-state-row {
+      display: grid; grid-template-columns: minmax(0, 1fr); gap: 4px 16px;
+      padding: 10px 0; border-bottom: 1px solid var(--border); min-width: 0;
+    }
+    .sy-state-row:last-child { border-bottom: none; }
+    .sy-state-info, .sy-state-main { min-width: 0; }
+    .sy-key { display: block; font-family: var(--mono, ui-monospace, Menlo, monospace); font-size: 11px; color: var(--text-muted); overflow-wrap: anywhere; }
+    .sy-val {
+      font-family: var(--mono, ui-monospace, Menlo, monospace); font-size: 12px; line-height: 1.45;
+      white-space: pre-wrap; overflow-wrap: anywhere; max-height: 18em; overflow: auto;
+      padding: 6px 8px; background: var(--surface-2); border-radius: 6px; color: var(--text);
+    }
+    .sy-val.blank { font-family: inherit; color: var(--text-muted); font-style: italic; }
+    @media (min-width: 720px) { .sy-state-row { grid-template-columns: minmax(11em, 2fr) minmax(0, 3fr); } }
+
+    .empty-state {
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      padding: 40px 10px; color: var(--text-muted); gap: 10px; text-align: center;
+    }
+    .empty-state i { font-size: 32px; opacity: 0.25; }
+    .spin { animation: spin 0.8s linear infinite; display: inline-block; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    @media (max-width: 640px) {
+      #wrap { padding: 10px; }
+      .sy-sec-body { padding: 10px; }
+    }
+
+    ::-webkit-scrollbar { width: 4px; height: 4px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+  </style>
+</head>
+<body>
+
+<div id="wrap">
+  <div class="sy-page">
+    <p class="sy-intro">IT's settings: how this deployment is wired (its address and storage buckets), the kill
+      switches, alert thresholds, the Connections credentials the integrations use, the comms engine's knobs (here until
+      the comms tools get a settings page of their own), and the runtime state the app keeps. Only staff with the
+      system-settings permission (IT and SU) see this tab, and the server checks it on every read and save. A firm
+      admin's settings — identity, senders, routing, booking, Dropbox, e-sign — are on the <b>Firm</b> tab. Values are
+      saved exactly as typed.</p>
+    <div class="sy-banner" id="sy-banner" role="alert" hidden></div>
+    <nav class="sy-toc" id="sy-toc" hidden></nav>
+    <div id="sy-sections"><div class="empty-state"><i class="fa-solid fa-spinner spin"></i><div>Loading…</div></div></div>
+  </div>
+</div>
+
+<script>
+// ═══════════════════════════════════════════════════════════════
+// SYSTEM SUB-PAGE (Config shell → System) — settings arc, 2026-10
+//
+// The app_settings keys whose ONE editor is this tab (lib/settingsRegistry.js,
+// homes 'system' and 'comms' — comms until the comms arc gives its knobs a
+// home of their own). ONE GET /api/app-settings?home=system,comms per load
+// serves every row with its registry metadata (label, description, type,
+// posture, env fallback, can_edit) and the sections of both homes; this page
+// draws a section per SECTIONS.system entry plus SECTIONS.comms, in the
+// order: the system sections, the comms section, and runtime state last.
+//
+//   · Editable sections: /js/ycSettingRows.js draws the rows (the control per
+//     type, the credential pickers from ONE GET /api/credentials shared by
+//     every section, History + restore) and saves each changed key on its own
+//     (PUT /api/app-settings/:key, verbatim). A row with edit posture
+//     'console' shows read-only with "changed from the SU db console".
+//   · Runtime state (section 'state'): drawn HERE, as plain text, never
+//     handed to the rows — read-only by construction (the server refuses a
+//     state write anyway). A value that parses as a JSON object / array is
+//     pretty-printed.
+//
+// GATE: the tab is the shell's 'system' gate (can_edit_system from GET
+// /api/ui-config) — read-only never applies to the TAB (onAccess is a no-op);
+// each ROW follows its own can_edit. AUTHORITY is the server's: read and write
+// both need system.settings. A caller without it gets 403 on a write and, on
+// the GET, caps.system false with no system rows — both show the session
+// message (a session that predates a permissions change), never empty sections.
+//
+// PAGE SAVE: every dirty section saves, in page order; a row the server
+// refuses keeps its edit and shows the server's sentence, the banner names its
+// section, and the next section still saves (the rows are independent writes).
+// Refresh / a tab return never discard edits silently (Refresh asks; a tab
+// return reloads only when clean); an app reload or close with unsaved edits is
+// held (beforeunload).
+//
+// Shell protocol: P.apiSend relay; P.setTopbarButtons (Save while dirty,
+// Refresh); hooks onShow / onHide / onSave / onRefresh / onAccess on this
+// window; P.firmData.users is the staff list of any user picker.
+// ═══════════════════════════════════════════════════════════════
+
+const P = window.parent;
+const api = (...args) => P.apiSend(...args);
+const E = id => document.getElementById(id);
+const Toast = window.Swal ? Swal.mixin({ toast: true, position: 'top-end', showConfirmButton: false, timer: 3200 }) : null;
+
+function esc(s) {
+  return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+function toast(icon, title) { if (Toast) Toast.fire({ icon, title }); }
+async function ask(title, text, confirmText) {
+  if (window.Swal) {
+    const r = await Swal.fire({ icon: 'question', title, text, showCancelButton: true, confirmButtonText: confirmText || 'OK' });
+    return !!r.isConfirmed;
+  }
+  return window.confirm(title + '\n\n' + text);
+}
+const isObj = (o) => o !== null && typeof o === 'object' && !Array.isArray(o);
+
+// firm.html's sentence: a 403 here is a session without system.settings
+// (a role changed since sign-in, or a legacy token) — never a generic error.
+const SESSION_MSG = 'Your session predates a permissions change — sign out and back in.';
+function errText(e, what) {
+  if (e && e.status === 403) return SESSION_MSG;
+  return (what ? what + ': ' : '') + ((e && e.message) || 'request failed');
+}
+function banner(msg) {
+  const b = E('sy-banner');
+  if (!msg) { b.hidden = true; b.textContent = ''; return; }
+  b.textContent = msg;
+  b.hidden = false;
+}
+
+const HOMES = 'system,comms';
+const STATE = 'state';
+const SECTION_HINTS = {
+  comms: 'The comms engine\'s knobs, shown here until the comms tools get a settings page of their own. Most are changed from the SU db console.',
+  state: 'Written by the app itself — watermarks, heartbeats, counters and latches. Shown for diagnosis; nobody changes them here.',
+};
+
+/** The GET's sections → the page's order: the system sections (state
+ *  excepted), then the comms section(s), then runtime state. */
+function sectionOrder(sections) {
+  const of = (home) => (isObj(sections) && Array.isArray(sections[home]) ? sections[home] : [])
+    .filter((s) => isObj(s) && typeof s.id === 'string')
+    .map((s) => ({ id: s.id, title: String(s.title ?? s.id), icon: String(s.icon ?? 'gear'), home }));
+  const sys = of('system');
+  return [...sys.filter((s) => s.id !== STATE), ...of('comms'), ...sys.filter((s) => s.id === STATE)];
+}
+
+const firmUsers = () => (P.firmData && Array.isArray(P.firmData.users) ? P.firmData.users : []);
+
+// ── A value as a person reads it (runtime state) ──
+function fmtWhen(ts) {
+  if (ts == null || ts === '') return '';
+  const d = new Date(ts);
+  return isNaN(d) ? String(ts) : d.toLocaleString('en-US', { year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+}
+/** JSON objects / arrays pretty-printed; anything else exactly as stored. */
+function stateText(v) {
+  const s = String(v);
+  try {
+    const o = JSON.parse(s);
+    if (o !== null && typeof o === 'object') return JSON.stringify(o, null, 2);
+  } catch (_) { /* not JSON: as stored */ }
+  return s;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// SECTIONS
+// ═══════════════════════════════════════════════════════════════
+/** An editable section: its rows drawn and saved by ycSettingRows. */
+function rowsSection(def, rows, lookups) {
+  return {
+    ...def, view: null, head: null, lastSave: null,
+    mount(body, head) {
+      this.head = head;
+      if (SECTION_HINTS[def.id]) body.appendChild(Object.assign(document.createElement('span'), { className: 'yc-hint', textContent: SECTION_HINTS[def.id] }));
+      const host = document.createElement('div');
+      host.className = 'sy-rows';
+      body.appendChild(host);
+      this.view = window.ycSettingRows.create({
+        container: host, rows, api, users: firmUsers, lookups,
+        confirm: (title, text) => ask(title, text, 'Restore'),
+        empty: 'Nothing to set here.',
+        onDirty: () => { this.status(); Page.syncTopbar(); },
+      });
+      this.status();
+    },
+    isDirty() { return !!(this.view && this.view.isDirty()); },
+    async save() {
+      this.lastSave = await this.view.save();
+      this.status();
+      return this.lastSave.ok;
+    },
+    status() {
+      const el = this.head.querySelector('.sy-sec-status');
+      const d = this.isDirty();
+      el.textContent = d ? 'Unsaved changes' : 'All changes saved';
+      el.classList.toggle('dirty', d);
+    },
+  };
+}
+
+/** Runtime state: label, key, description and the value as text. No
+ *  control, no save — nothing here can write. */
+function stateSection(def, rows) {
+  return {
+    ...def,
+    mount(body, head) {
+      head.querySelector('.sy-sec-status').textContent = 'Read-only';
+      body.appendChild(Object.assign(document.createElement('span'), { className: 'yc-hint', textContent: SECTION_HINTS.state }));
+      const host = document.createElement('div');
+      host.className = 'sy-state';
+      if (!rows.length) host.appendChild(Object.assign(document.createElement('div'), { className: 'yc-hint', textContent: 'Nothing recorded.' }));
+      rows.forEach((r) => {
+        const row = document.createElement('div');
+        row.className = 'sy-state-row';
+        row.setAttribute('data-key', r.key);
+        const info = document.createElement('div');
+        info.className = 'sy-state-info';
+        info.appendChild(Object.assign(document.createElement('span'), { className: 'yc-flabel', textContent: r.label || r.key }));
+        info.appendChild(Object.assign(document.createElement('code'), { className: 'sy-key', textContent: r.key }));
+        if (r.description) info.appendChild(Object.assign(document.createElement('span'), { className: 'yc-hint', textContent: r.description }));
+        const main = document.createElement('div');
+        main.className = 'sy-state-main';
+        const val = document.createElement('div');
+        if (r.exists === false || r.value == null) Object.assign(val, { className: 'sy-val blank', textContent: 'Not set — nothing has written it yet.' });
+        else if (String(r.value) === '') Object.assign(val, { className: 'sy-val blank', textContent: '(blank)' });
+        else Object.assign(val, { className: 'sy-val', textContent: stateText(r.value) });   // text, never markup
+        main.appendChild(val);
+        if (r.updated_at) main.appendChild(Object.assign(document.createElement('span'), { className: 'yc-hint', textContent: 'Updated ' + fmtWhen(r.updated_at) }));
+        row.appendChild(info);
+        row.appendChild(main);
+        host.appendChild(row);
+      });
+      body.appendChild(host);
+    },
+    isDirty() { return false; },
+    async save() { return true; },
+    status() {},
+  };
+}
+
+// ═══════════════════════════════════════════════════════════════
+// PAGE — one GET per load, the section host, the shell protocol
+// ═══════════════════════════════════════════════════════════════
+const Page = {
+  sections: [], loaded: false, saving: false, inflight: null,
+  dirty() { return this.sections.some((s) => s.isDirty()); },
+  syncTopbar() { P.setTopbarButtons({ save: this.dirty() && !this.saving, refresh: true }); },
+
+  load() {
+    if (!this.inflight) this.inflight = this.loadOnce().finally(() => { this.inflight = null; });
+    return this.inflight;
+  },
+  async loadOnce() {
+    banner(null);
+    let r;
+    try { r = await api('/api/app-settings?home=' + HOMES); }
+    catch (e) { return this.fail(errText(e, 'Could not load the system settings')); }
+    // The GET answers any staff; for a caller without system.settings it
+    // serves no system rows and says caps.system false — the session message.
+    if (!isObj(r) || !isObj(r.caps) || r.caps.system !== true) return this.fail(SESSION_MSG);
+    if (!window.ycSettingRows) return this.fail('The settings editor did not load — reload the page.');
+    const rows = (Array.isArray(r.settings) ? r.settings : []).filter((x) => isObj(x) && (x.home === 'system' || x.home === 'comms'));
+    const defs = sectionOrder(r.sections);
+    const known = new Set(defs.map((d) => d.home + ':' + d.id));
+    const lost = rows.filter((x) => !known.has(x.home + ':' + x.section)).map((x) => x.key);
+    if (lost.length) console.warn('[system] settings in a section this page does not know — not shown:', lost.join(', '));
+    const lookups = window.ycSettingRows.lookups(api);         // one credential list for every section
+    this.sections = defs.map((d) => {
+      const mine = rows.filter((x) => x.home === d.home && x.section === d.id);
+      return d.id === STATE && d.home === 'system' ? stateSection(d, mine) : rowsSection(d, mine, lookups);
+    });
+    this.mount();
+    this.loaded = true;
+    this.syncTopbar();
+  },
+  fail(msg) {
+    this.sections = [];
+    this.loaded = false;
+    E('sy-toc').hidden = true;
+    E('sy-toc').textContent = '';
+    E('sy-sections').innerHTML = '<div class="empty-state"><i class="fa-solid fa-triangle-exclamation"></i><div></div></div>';
+    E('sy-sections').querySelector('.empty-state > div').textContent = msg;
+    banner(msg);
+    this.syncTopbar();
+  },
+  mount() {
+    const host = E('sy-sections');
+    host.innerHTML = this.sections.map((s) => `
+      <section class="sy-section" id="sy-sec-${esc(s.id)}" data-home="${esc(s.home)}">
+        <header class="sy-sec-head"><h2><i class="fa-solid fa-${esc(s.icon)}"></i> <span></span></h2>
+          <span class="sy-sec-status"></span></header>
+        <div class="sy-sec-body"></div>
+      </section>`).join('');
+    const toc = E('sy-toc');
+    toc.textContent = '';
+    this.sections.forEach((s, i) => {
+      const el = host.children[i];
+      el.querySelector('h2 span').textContent = s.title;
+      s.mount(el.querySelector('.sy-sec-body'), el.querySelector('.sy-sec-head'));
+      const a = document.createElement('a');
+      a.className = 'btn btn-outline btn-sm';
+      a.href = '#sy-sec-' + s.id;
+      a.textContent = s.title;
+      toc.appendChild(a);
+    });
+    toc.hidden = this.sections.length < 2;
+  },
+
+  async save() {
+    if (this.saving || !this.dirty()) return;
+    this.saving = true;
+    this.syncTopbar();
+    banner(null);
+    const notSaved = [];
+    let saved = false;
+    try {
+      for (const s of this.sections) {
+        if (!s.isDirty()) continue;
+        if (await s.save()) saved = true; else notSaved.push(s);
+      }
+    } finally {
+      this.saving = false;
+      this.syncTopbar();
+    }
+    if (notSaved.length) {
+      const n = notSaved.reduce((a, s) => a + s.lastSave.failed.length, 0);
+      const refused = notSaved.some((s) => Object.values(s.lastSave.errors).some((x) => x.status === 403));
+      banner(`${notSaved.map((s) => s.title).join(' and ')}: ${n === 1 ? 'a setting was' : n + ' settings were'} not saved — `
+        + `the reason is on ${n === 1 ? 'it' : 'each'}.` + (refused ? ' ' + SESSION_MSG : ''));
+    } else if (saved) toast('success', 'Saved');
+  },
+};
+
+// ── Lifecycle ──────────────────────────────────────────────────
+async function init() {
+  P.setTopbarButtons({ refresh: true });
+  await Page.load();
+}
+// Coming back to the tab reloads — never over unsaved edits (firm.html idiom).
+function onShow()    { Page.syncTopbar(); if (Page.loaded && !Page.dirty()) Page.load(); }
+function onHide()    {}
+function onSave()    { return Page.save(); }
+function onRefresh() {
+  if (Page.dirty() && !confirm('Discard unsaved system settings?')) return;
+  return Page.load();
+}
+// A gated tab is never read-only (settings arc §3b): every row follows its
+// own can_edit from the server, whatever the Config answer.
+function onAccess()  {}
+window.onShow = onShow; window.onHide = onHide; window.onSave = onSave; window.onRefresh = onRefresh; window.onAccess = onAccess;
+
+// The shell keeps this frame alive across tab switches (it hides, never
+// unloads); a reload or close of the whole app loses edits, so ask first.
+window.addEventListener('beforeunload', (e) => {
+  if (!Page.dirty()) return;
+  e.preventDefault();
+  e.returnValue = '';
+  return '';
+});
+
+// Test / debug handle.
+window.SystemPage = { Page, sectionOrder, stateText, SESSION_MSG, SECTION_HINTS };
+
+// ── Boot ───────────────────────────────────────────────────────
+(function waitForShell() {
+  if (P && typeof P.apiSend === 'function' && typeof P.setTopbarButtons === 'function') {
+    return init();
+  }
+  setTimeout(waitForShell, 50);
+})();
+</script>
+</body>
+</html>

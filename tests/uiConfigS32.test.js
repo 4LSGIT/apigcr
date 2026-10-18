@@ -4,7 +4,9 @@
  * ui-custom S3.2 — the server side of the Firm tab (routes/api.uiConfig.js +
  * services/uiConfigService.js), on a scripted stub DB:
  *   - GET /api/ui-config's can_edit_firm = lib/capabilities can(firm.settings),
- *     across roles (and a legacy token with no roles claim → false);
+ *     across roles (and a legacy token with no roles claim → false); and
+ *     can_edit_system = can(system.settings) the same way (settings arc:
+ *     it / su only — admin does not hold it);
  *   - the versions / view / restore auth matrix: no firm.settings →
  *     403 with nothing but the audit row touched; API key / no token → 401
  *     (pickers too — since ui-custom S5a any staff user reads it, so it is
@@ -134,7 +136,26 @@ describe('GET /api/ui-config — can_edit_firm', () => {
     const db = makeDb({ uiRows: [{ scope: 'firm', user_id: 0, config_key: 'registry_overrides', config: { hidden: ['bills'] } }] });
     const r = await call('GET', '/api/ui-config', { headers: tok(['admin']), db });
     expect(r.body).toEqual({ status: 'success', firm: { registry_overrides: { hidden: ['bills'] } }, user: {}, can_edit_firm: true,
+      can_edit_system: false,
       firm_versions: { registry_overrides: null, layout: null } });   // layout: the firm's default layout key (S6c)
+  });
+});
+
+describe('GET /api/ui-config — can_edit_system (settings arc)', () => {
+  test('true exactly for the system.settings holders (it / su), false for admin and everyone else', async () => {
+    const cases = [[['it'], true], [['su'], true], [['staff', 'it'], true], [['admin'], false], [['staff', 'admin'], false],
+      [['staff'], false], [['attorney'], false], [['form_dev'], false], [['automation'], false], [[], false]];
+    for (const [roles, want] of cases) {
+      const r = await call('GET', '/api/ui-config', { headers: tok(roles), db: makeDb() });
+      expect([roles, r.status, r.body.can_edit_system]).toEqual([roles, 200, want]);
+    }
+  });
+
+  test('a legacy token with no roles claim reads false; the flag adds no read (the same can() as the routes)', async () => {
+    const db = makeDb();
+    const r = await call('GET', '/api/ui-config', { headers: tok(undefined), db });
+    expect([r.status, r.body.can_edit_system]).toEqual([200, false]);
+    expect(notAudit(db).map((c) => c.sql).every((q) => /FROM ui_config/.test(q))).toBe(true);
   });
 });
 

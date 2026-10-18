@@ -4,11 +4,21 @@
  * Contact Roles API (role-forms slice)
  * routes/api.contactRoles.js
  *
- * Role TYPE catalog (backs the settings.html "Contact Roles" editor):
+ * Role TYPE catalog (backs YisraCase Config → Contact Roles,
+ * public/caseconfig/contactRoles.html):
  *   GET    /api/contact-role-types              catalog (?include_inactive=)
  *   POST   /api/contact-role-types              create (role_code immutable after)
  *   PUT    /api/contact-role-types/:code        label / sort_order / active / attrs_schema
  *   (no DELETE — contact_roles rows reference codes with no FK; deactivate instead)
+ *
+ * AUTH: the GET and every per-contact route below are jwtOrApiKey — any
+ * staff (a contact's roles are record data any staff edits). The two
+ * role-TYPE writes (POST, PUT) are requireAuth({ audience:'staff',
+ * can:'firm.settings', allowApiKey:true }): the type catalog is YisraCase
+ * Config vocabulary, and its writes need the firm.settings capability
+ * (admin / it / su; settings arc, Fred 2026-10-17). Machine keys: NULL-scope
+ * keys and the internal key pass; a scoped key needs firm.settings in its
+ * scopes.
  *
  * Per-contact role rows (backs the contact-form "Roles" section):
  *   GET    /api/contacts/:id/roles              all rows incl. inactive
@@ -33,7 +43,11 @@
 const express = require('express');
 const router  = express.Router();
 const jwtOrApiKey = require('../lib/auth.jwtOrApiKey');
+const requireAuth = require('../lib/auth.requireAuth');
 const roleSvc = require('../services/contactRoleService');
+
+// Role-TYPE catalog writes: the firm.settings capability (see AUTH above).
+const firmSettingsWrite = requireAuth({ audience: 'staff', can: 'firm.settings', allowApiKey: true });
 
 
 // ─────────────────────────────────────────────────────────────
@@ -118,7 +132,7 @@ router.get('/api/contact-role-types', jwtOrApiKey, async (req, res) => {
 });
 
 // ─── POST /api/contact-role-types ───
-router.post('/api/contact-role-types', jwtOrApiKey, async (req, res) => {
+router.post('/api/contact-role-types', firmSettingsWrite, async (req, res) => {
   try {
     const result = await roleSvc.createRoleType(req.db, req.body);
     res.status(201).json({ status: 'success', ...result });
@@ -137,7 +151,7 @@ router.post('/api/contact-role-types', jwtOrApiKey, async (req, res) => {
 // a rename would orphan all of them at once. A body that tries is a 400
 // here AND in the service (defense in depth: the service guard covers any
 // future caller that skips this route).
-router.put('/api/contact-role-types/:code', jwtOrApiKey, async (req, res) => {
+router.put('/api/contact-role-types/:code', firmSettingsWrite, async (req, res) => {
   try {
     const body = req.body || {};
     if (body.role_code !== undefined && String(body.role_code).trim() !== req.params.code) {

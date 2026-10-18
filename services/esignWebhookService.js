@@ -53,45 +53,36 @@ const WEBHOOK_TOKEN_KEY = 'esign_webhook_token';
  * app_settings key holding Zoho's webhook secret key (the one Zoho shows in
  * its webhook configuration UI). EMPTY = HMAC verification is OFF entirely —
  * the endpoint runs on the URL token alone, exactly as it did before this
- * feature existed. Setting it arms verification in whatever mode
- * WEBHOOK_HMAC_MODE_KEY selects.
- */
-const WEBHOOK_SECRET_KEY = 'esign_webhook_secret';
-
-/**
- * app_settings key selecting the HMAC posture once a secret is set:
+ * feature existed. SET = verification is ENFORCED: a delivery whose signature
+ * is missing, uncomputable (no raw body) or wrong is REJECTED with 401.
  *
- *   'enforce'        — a delivery whose signature is missing, uncomputable
- *                      (no raw body) or wrong is REJECTED with 401.
- *   anything else    — LOG-ONLY: verification runs and its verdict is logged,
- *   (incl. unset)      but no delivery is ever rejected for it.
- *
- * Log-only WAS the deliberate default while the signature header was still
- * unverified — the header name and encoding came from Zoho's documentation
- * rather than a captured request, and arming 'enforce' on an untested
- * assumption would have silently stopped ALL inbound signing status (the
- * endpoint fails closed) until nightly reconciliation caught up.
- *
- * THAT ROLLOUT IS COMPLETE. 'enforce' has been live since 2026-08-02T11:23Z
- * and is confirmed against real deliveries:
+ * There is no log-only mode any more. It existed while the signature header
+ * was still unverified (the header name and encoding came from Zoho's
+ * documentation, not a captured request), behind an `esign_webhook_hmac_mode`
+ * setting; that rollout completed — 'enforce' went live 2026-08-02T11:23Z and
+ * is confirmed against real deliveries:
  *
  *   2026-08-02T21:30:24Z  hmac mode=enforce ok=true reason=match
  *   2026-08-15T21:19:35Z  hmac mode=enforce ok=true reason=match
  *
- * So SIGNATURE_HEADER's spelling and its base64 encoding are observed fact
- * now, not documentation.
+ * — and the mode setting retired at 'enforce' in the settings arc (2026-10;
+ * lib/settingsRegistry.js keeps the key as 'retired' so it is never reused).
+ * SIGNATURE_HEADER's spelling and its base64 encoding are observed fact.
  *
- * Do NOT drop this back to log-only to "fix" a suspected webhook outage. That
- * discards working protection, and it has been the first thing reached for
- * twice — tasks 1077 (2026-07-27) and 1114 (2026-08-15), both false alarms
- * where the channel was healthy and the detector was wrong. Diagnose from the
- * [ESIGN WEBHOOK] log lines instead: no lines AT ALL means Zoho stopped
- * calling, which nothing in this file can cause.
+ * Do NOT blank the secret to "fix" a suspected webhook outage. That discards
+ * working protection, and weakening the check has been the first thing
+ * reached for twice — tasks 1077 (2026-07-27) and 1114 (2026-08-15), both
+ * false alarms where the channel was healthy and the detector was wrong.
+ * Diagnose from the [ESIGN WEBHOOK] log lines instead: no lines AT ALL means
+ * Zoho stopped calling, which nothing in this file can cause.
  *
- * If the secret is ever rotated the rollout runs again: set the new secret →
- * watch the logs report 'match' on a real delivery → flip back to 'enforce'.
+ * Rotating the secret: change it in Zoho and here together. Until both sides
+ * agree every delivery 401s (`hmac REJECTED … reason=signature_mismatch` in
+ * the log) and none stamps WEBHOOK_LAST_SEEN_KEY: nightly reconciliation
+ * catches the rows up, and its dead-channel check (lib/internal_functions/
+ * esign.js) sees the silence.
  */
-const WEBHOOK_HMAC_MODE_KEY = 'esign_webhook_hmac_mode';
+const WEBHOOK_SECRET_KEY = 'esign_webhook_secret';
 
 /**
  * app_settings key holding the ISO-8601 UTC timestamp of the last delivery
@@ -130,7 +121,7 @@ const WEBHOOK_LAST_SEEN_KEY = 'esign_webhook_last_seen_at';
 /**
  * The header Zoho signs deliveries with: base64(HMAC-SHA256(secret, rawBody)).
  * OBSERVED on live deliveries, not merely documented — see
- * WEBHOOK_HMAC_MODE_KEY for the confirming log lines. Express lower-cases
+ * WEBHOOK_SECRET_KEY for the confirming log lines. Express lower-cases
  * incoming header names; req.get() is case-insensitive anyway. Kept here so
  * the route and the tests share one spelling.
  */
@@ -315,40 +306,37 @@ async function verifyToken(db, presented) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Read the HMAC config. One query, both keys; missing rows tolerated (feature
- * simply off until the migration runs — code-before-SQL is inert by design).
+ * Read the HMAC config: the secret alone decides. Missing row or blank value
+ * = verification off (code-before-SQL is inert by design); set = enforce.
  * Same direct-read posture as getWebhookToken (see its comment).
  *
- * @returns {Promise<{secret:string|null, mode:'off'|'log'|'enforce'}>}
+ * @returns {Promise<{secret:string|null, mode:'off'|'enforce'}>}
  */
 async function getHmacConfig(db) {
   const [rows] = await db.query(
-    'SELECT `key`, `value` FROM app_settings WHERE `key` IN (?, ?)',
-    [WEBHOOK_SECRET_KEY, WEBHOOK_HMAC_MODE_KEY]
+    'SELECT `value` FROM app_settings WHERE `key` = ? LIMIT 1',
+    [WEBHOOK_SECRET_KEY]
   );
-  let secret = null;
-  let modeRaw = '';
-  for (const r of rows || []) {
-    if (r.key === WEBHOOK_SECRET_KEY) secret = r.value == null ? null : String(r.value).trim() || null;
-    if (r.key === WEBHOOK_HMAC_MODE_KEY) modeRaw = r.value == null ? '' : String(r.value).trim();
-  }
+  const row = (rows || [])[0];
+  const secret = row && row.value != null ? String(row.value).trim() || null : null;
   if (!secret) return { secret: null, mode: 'off' };
-  return { secret, mode: modeRaw === 'enforce' ? 'enforce' : 'log' };
+  return { secret, mode: 'enforce' };
 }
 
 /**
  * Verify a delivery's signature against the configured secret.
  *
- * Never throws for a bad input — every outcome is a verdict object, because
- * the ROUTE decides what a verdict costs (log mode: nothing; enforce mode:
- * a 401). A config-read failure is reported as its own reason so enforce mode
- * fails CLOSED on it, matching verifyToken's 'token_unreadable' posture.
+ * Never throws for a bad input — every outcome is a verdict object, and the
+ * ROUTE turns it into a response: mode 'off' (no secret) passes, mode
+ * 'enforce' with ok:false is a 401. A config-read failure is reported as its
+ * own reason, in mode 'enforce', so it fails CLOSED, matching verifyToken's
+ * 'token_unreadable' posture.
  *
  * Diagnostic courtesy (the 9011 lesson — make the wrong assumption visible in
  * one look): on a base64 mismatch the HEX digest is also compared, and a hex
- * match is reported as its own reason. If Zoho turns out to encode the
- * signature as hex rather than base64, the very first log-mode line says so
- * instead of leaving a generic mismatch to bisect.
+ * match is reported as its own reason. If Zoho ever switched to hex encoding,
+ * the rejection's log line says so instead of leaving a generic mismatch to
+ * bisect.
  *
  * @param {object} db
  * @param {object} o
@@ -357,7 +345,7 @@ async function getHmacConfig(db) {
  *   round-trips correctly for any valid-UTF-8 payload but not for invalid
  *   sequences — callers with access to the wire Buffer should pass it.
  * @param {string|null} o.signature presented X-ZS-WEBHOOK-SIGNATURE value
- * @returns {Promise<{mode:'off'|'log'|'enforce', ok:boolean, reason:string, presented?:string, expected?:string}>}
+ * @returns {Promise<{mode:'off'|'enforce', ok:boolean, reason:string, presented?:string, expected?:string}>}
  */
 async function evaluateHmac(db, { rawBody = null, signature = null } = {}) {
   let cfg;
@@ -1139,7 +1127,6 @@ module.exports = {
   safeEqual,
   WEBHOOK_TOKEN_KEY,
   WEBHOOK_SECRET_KEY,
-  WEBHOOK_HMAC_MODE_KEY,
   WEBHOOK_LAST_SEEN_KEY,
   _announceFiling,
   _declineReason,

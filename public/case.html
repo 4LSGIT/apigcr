@@ -1832,7 +1832,8 @@ function getLeadSourceOptions() {
  * This used to be one function doing two unrelated things — write the input's
  * VALUE from the case row, and rebuild the datalist's OPTIONS from firmData —
  * and the `setting:fe-lead_sources` subscriber called it for the options half.
- * So editing the lead-source vocabulary in settings.html, in any window,
+ * So editing the lead-source vocabulary (then in settings.html, now YisraCase
+ * Config → Lists), in any window,
  * reached into every open case file and overwrote whatever was in the Lead
  * Source box with the stored value: an unsaved edit, typed and not yet blurred,
  * silently reverted. The bus paints everywhere else are fenced on focus and
@@ -3407,7 +3408,7 @@ document.addEventListener('visibilitychange', ycRefreshIfStale);
 
 /* ── Settings readers (sync bus) ─────────────────────────────────────────────
    The two Overview vocabularies that come from app_settings rather than from
-   the case row. Editing them in settings.html used to strand every open case
+   the case row. Editing them in a settings editor used to strand every open case
    file on the old list until reload — the dropdown you were looking at simply
    did not have the type you had just created.
 

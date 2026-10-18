@@ -122,6 +122,7 @@ describe('capability registry', () => {
       'comms.read_all': false,
       'templates.code': false,
       'tools.author': true,
+      'system.settings': false,
     });
   });
 

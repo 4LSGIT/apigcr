@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-10-17T23:24:39.673Z
+-- Generated: 2026-10-18T07:19:02.055Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:e6ea14c3eb1dc51a9aecfc5a5a8bf755
+-- Fingerprint: sha256:a3bc37a934aca0ffec13fc0bf04439ca
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -214,17 +214,34 @@ CREATE TABLE `api_saved_requests` (
 
 DROP TABLE IF EXISTS `app_settings`;
 CREATE TABLE `app_settings` (
-  `key` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `key` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL COMMENT 'The setting''s name; the primary key. utf8mb4_general_ci PAD SPACE: a lookup ignores case and trailing spaces (WHERE `key` = ''Firm_Name '' reads the firm_name row), and two keys that differ only so cannot coexist. lib/settingsRegistry.js matches keys exactly, so code that judges a key by name compares the row''s own key with it byte for byte (routes/api.appSettings.js, set_setting / get_setting).',
   `value` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci,
   `is_secret` tinyint(1) NOT NULL DEFAULT '0' COMMENT 'never returned by any settings API',
-  `is_editable` tinyint(1) NOT NULL DEFAULT '0' COMMENT 'exposed in settings.html',
-  `category` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `label` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `description` varchar(500) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `type` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `sort_order` int DEFAULT NULL,
+  `is_editable` tinyint(1) NOT NULL DEFAULT '0' COMMENT 'UNREGISTERED rows only (keys not in lib/settingsRegistry.js, the automation variables): 1 = listed and editable in YisraCase Config, Firm tab, Automation variables; 0 = served by no settings API. Ignored for a registered key: its edit posture comes from the registry.',
+  `category` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'UNREGISTERED rows only: the grouping shown with an automation variable. A registered key takes its section from lib/settingsRegistry.js; this column is ignored for it.',
+  `label` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'UNREGISTERED rows only: display label (blank = the key). Registered keys take theirs from lib/settingsRegistry.js.',
+  `description` varchar(500) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'UNREGISTERED rows only: the operator hint. Registered keys take theirs from lib/settingsRegistry.js.',
+  `type` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'UNREGISTERED rows only: the validator type (string, template, number, bool, email, csv, phone, url, json, json_array, date; anything else is stored verbatim). A registered key validates by its lib/settingsRegistry.js type.',
+  `sort_order` int DEFAULT NULL COMMENT 'UNREGISTERED rows only: the order among the automation variables. Registered keys take theirs from lib/settingsRegistry.js.',
   `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='Key / value settings. lib/settingsRegistry.js owns every key the code reads (kind, editor home, type, label, edit posture); for those rows only key, value, is_secret and updated_at carry meaning. The metadata columns describe UNREGISTERED rows: the automation variables created in YisraCase Config, Firm tab. Value history: app_settings_versions.';
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `app_settings_versions`
+--
+
+DROP TABLE IF EXISTS `app_settings_versions`;
+CREATE TABLE `app_settings_versions` (
+  `id` int unsigned NOT NULL,
+  `setting_key` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL COMMENT 'app_settings.key the change was to (no foreign key: the history outlives a deleted row)',
+  `old_value` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci COMMENT 'The value before this change; NULL = there was no row (a create, or the first write of a registered key) or it held NULL. Restore puts this back (NULL as an empty string).',
+  `new_value` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci COMMENT 'The value this change stored.',
+  `changed_by` tinyint DEFAULT NULL COMMENT 'users.user of the staff JWT that made the change; NULL = a machine key (x-api-key)',
+  `changed_via` varchar(16) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL COMMENT 'ui (staff PUT) | api_key (machine PUT) | create (POST) | restore. App-validated.',
+  `changed_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT 'When the change was made.'
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='Change history of app_settings values: one row per value change made through routes/api.appSettings.js (PUT, POST create, restore), written in the same transaction as the change; none when a save left the value unchanged. Never holds a secret: those routes never write one. Writes made elsewhere (automation set_setting / update_db, runtime state, key rotation, the SU db console) are not recorded.';
 
 -- --------------------------------------------------------
 
@@ -4080,6 +4097,13 @@ ALTER TABLE `app_settings`
   ADD PRIMARY KEY (`key`);
 
 --
+-- Indexes for table `app_settings_versions`
+--
+ALTER TABLE `app_settings_versions`
+  ADD PRIMARY KEY (`id`),
+  ADD KEY `idx_app_settings_versions_key` (`setting_key`,`id`);
+
+--
 -- Indexes for table `appts`
 --
 ALTER TABLE `appts`
@@ -5312,6 +5336,12 @@ ALTER TABLE `api_keys`
 --
 ALTER TABLE `api_saved_requests`
   MODIFY `id` int NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `app_settings_versions`
+--
+ALTER TABLE `app_settings_versions`
+  MODIFY `id` int unsigned NOT NULL AUTO_INCREMENT;
 
 --
 -- AUTO_INCREMENT for table `appts`

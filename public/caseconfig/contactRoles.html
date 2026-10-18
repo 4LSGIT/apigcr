@@ -1,0 +1,549 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Contact Roles</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+  <link rel="stylesheet" href="/theme.css">
+  <script src="/themeSync.js"></script>
+  <style>
+    /* ══════════════════════════════════════════════
+       CONTACT ROLES SUB-PAGE — self-contained styles.
+       Shared tokens duplicated from the shell (house pattern); the card
+       layout is the settings.html role-type editor's, moved here (CFG-2).
+       ══════════════════════════════════════════════ */
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    [hidden] { display: none !important; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      font-size: 14px; color: var(--text); background: var(--page-bg);
+      display: flex; flex-direction: column; height: 100vh; overflow: hidden;
+    }
+
+    /* ── Labels + hints — ONE look (AI_CONTEXT §12) ─────────────────────
+       Same values as firm.html / ctaManager.html: this pane loads neither
+       style.css nor scripts.js, so the classes are declared here. Only
+       display / margins are local — they are layout, not the look. */
+    .yc-flabel { display: block; font-size: var(--fs-sm); font-weight: 700; color: var(--text); margin: 0 0 4px; }
+    .yc-hint { display: block; font-size: var(--fs-xs); font-weight: 400; color: var(--text-muted); margin-top: 4px; line-height: 1.45; }
+
+    .btn {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 6px 14px; border-radius: 6px; border: none;
+      font-size: 12px; font-weight: 500; cursor: pointer;
+      transition: all 0.15s; white-space: nowrap;
+    }
+    .btn-primary { background: var(--accent); color: var(--accent-text); }
+    .btn-primary:hover { background: var(--accent-dark); }
+    .btn-outline { background: var(--page-bg); border: 1px solid var(--border); color: var(--text-2); }
+    .btn-outline:hover { background: var(--border); }
+    .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+    .btn.tiny { padding: 3px 9px; font-size: 11px; }
+    .btn-row { margin-top: 10px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+
+    .toolbar {
+      background: var(--surface); border-bottom: 1px solid var(--border);
+      padding: 10px 16px; display: flex; align-items: center; gap: 10px; flex-shrink: 0;
+      font-size: 12px; color: var(--text-2); flex-wrap: wrap;
+    }
+    .toolbar i.fa-circle-info { color: var(--text-muted); }
+    .toolbar .tb-text { flex: 1 1 260px; min-width: 0; }
+    .toolbar .tb-count { color: var(--text-muted); white-space: nowrap; }
+
+    #scroller { flex: 1; overflow-y: auto; padding: 16px; }
+    #crList, #addCard, .note-warn { max-width: 860px; }
+
+    input[type=text], input[type=number], select {
+      font-size: 13px; padding: 5px 8px; border: 1px solid var(--border);
+      border-radius: 6px; background: var(--surface); color: var(--text); font-family: inherit;
+    }
+    input[type=text] { width: 100%; }
+    input:focus, select:focus { outline: none; border-color: var(--accent); }
+    input:disabled, select:disabled { background: var(--surface-2); color: var(--text-2); cursor: default; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+
+    .note-warn { font-size: 11.5px; color: var(--warn); margin: 0 0 12px; }
+
+    /* ── One role type ── */
+    .cr-type {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 10px; margin-bottom: 10px; padding: 10px 12px;
+    }
+    .cr-type.cr-inactive { opacity: .6; }
+    .cr-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .cr-head input[type=text] { flex: 1; min-width: 140px; width: auto; }
+    .cr-head .cr-code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 11.5px; color: var(--text-2); background: var(--surface-2);
+      border: 1px solid var(--border); border-radius: 5px; padding: 2px 6px;
+      white-space: nowrap;
+    }
+    .cr-head input.cr-sort { flex: none; width: 64px; }
+    .cr-count { color: var(--text-muted); font-size: 11px; white-space: nowrap; }
+    .toggle-row { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-2); cursor: pointer; }
+    .toggle-row input[type=checkbox] { width: 15px; height: 15px; accent-color: var(--accent); cursor: pointer; }
+    .toggle-row input[type=checkbox]:disabled { cursor: default; }
+
+    .cr-fields { margin: 10px 0 0 14px; }
+    .cr-field {
+      display: grid; grid-template-columns: 1fr 1fr auto auto; gap: 6px 10px;
+      align-items: start; padding: 8px 0; border-bottom: 1px dashed var(--border);
+    }
+    .cr-field:last-of-type { border-bottom: none; }
+    .cr-field .fcol { display: flex; flex-direction: column; min-width: 0; }
+    .cr-field .fcol .yc-flabel { margin-top: 6px; }
+    .cr-field .fcol .yc-flabel:first-child { margin-top: 0; }
+    .cr-field .fbtns { display: flex; gap: 4px; padding-top: 20px; }
+    .cr-field .toggle-row { padding-top: 22px; }
+
+    .icon-btn {
+      border: 1px solid var(--border); background: var(--surface);
+      border-radius: 6px; width: 24px; height: 24px; cursor: pointer;
+      display: inline-flex; align-items: center; justify-content: center;
+      color: var(--text-2); font-size: 11px; flex-shrink: 0; transition: all 0.12s;
+    }
+    .icon-btn:hover { background: var(--page-bg); }
+    .icon-btn.del:hover { background: var(--danger-soft); color: var(--danger); border-color: var(--danger); }
+
+    .status { font-size: 12px; }
+    .status.ok { color: var(--ok); }
+    .status.err { color: var(--danger); }
+    .cr-type > .status { display: block; margin-top: 4px; }
+    .cr-type > .status:empty { display: none; }
+
+    #addCard {
+      background: var(--surface); border: 1px dashed var(--border);
+      border-radius: 10px; margin-top: 16px; padding: 12px 14px;
+    }
+    #addCard h3 { font-size: 13px; margin-bottom: 8px; }
+    .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 14px; }
+
+    .empty-state {
+      display: flex; flex-direction: column; align-items: center;
+      color: var(--text-muted); gap: 10px; text-align: center; padding: 40px 0;
+    }
+    .empty-state i { font-size: 36px; opacity: 0.25; }
+    .load-err { color: var(--danger); font-size: 12.5px; }
+
+    .spin { animation: spin 0.8s linear infinite; display: inline-block; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    @media (max-width: 640px) { .cr-field { grid-template-columns: 1fr 1fr; } }
+    @media (max-width: 480px) {
+      #scroller { padding: 10px; }
+      .toolbar { padding: 8px 10px; }
+      .cr-fields { margin-left: 0; }
+      .cr-field { grid-template-columns: 1fr; }
+      .cr-field .fbtns, .cr-field .toggle-row { padding-top: 0; }
+      .grid2 { grid-template-columns: 1fr; }
+    }
+
+    ::-webkit-scrollbar { width: 4px; height: 4px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+  </style>
+</head>
+<body>
+
+<div class="toolbar">
+  <i class="fa-solid fa-circle-info"></i>
+  <span class="tb-text">Role types power the contact form's Roles section, the Contacts-tab role filter, and every
+        role consumer (trustee roster, judge resolution). The fields of a type define its structured attributes.</span>
+  <span class="tb-count" id="crHint"></span>
+  <button class="btn btn-primary" type="button" id="crNewBtn" hidden><i class="fa-solid fa-plus"></i> New Role Type</button>
+</div>
+
+<div id="scroller">
+  <p class="note-warn"><i class="fa-solid fa-triangle-exclamation"></i>
+    <b>The code is permanent.</b> Every contact holding a role references it, and consumers reference it in code —
+    deactivate a type instead of renaming or deleting it.</p>
+
+  <div id="crList">
+    <div class="empty-state"><i class="fa-solid fa-spinner spin"></i><div>Loading…</div></div>
+  </div>
+
+  <div id="addCard" hidden>
+    <h3>Add Role Type</h3>
+    <div class="grid2">
+      <div>
+        <label class="yc-flabel" for="crNewCode">Code</label>
+        <input type="text" id="crNewCode" class="mono" maxlength="40" placeholder="mediator" autocomplete="off">
+        <span class="yc-hint">Permanent — a–z, 0–9 and _ only.</span>
+      </div>
+      <div>
+        <label class="yc-flabel" for="crNewLabel">Label</label>
+        <input type="text" id="crNewLabel" maxlength="60" placeholder="Mediator" autocomplete="off">
+      </div>
+    </div>
+    <div class="btn-row">
+      <button class="btn btn-primary" type="button" id="crAdd"><i class="fa-solid fa-plus"></i> Add Role Type</button>
+      <span class="status" id="crAddStatus"></span>
+    </div>
+  </div>
+</div>
+
+<script>
+"use strict";
+// ═══════════════════════════════════════════════════════════════
+// CONTACT ROLES SUB-PAGE (YisraCase Config manager) — CFG-2
+//
+// The role-type editor over GET/POST/PUT /api/contact-role-types, moved
+// here from settings.html (My Settings is personal-only since the
+// settings arc). Unlike an app_settings editor, each role type is its own
+// DB row (contact_role_types) with its own route — so Save is PER TYPE,
+// on the type's own card, and the route's validation errors (the
+// attrs_schema vocabulary validator joins every problem with '; ')
+// surface VERBATIM in that type's status line. The shell's topbar carries
+// New (→ the Add card) and Refresh only; there is no topbar Save, the
+// caseconfig/fields.html precedent (also a per-card editor).
+//
+// attrs_schema field vocabulary: { key, label, type, required?, options?,
+// placeholder? }, type ∈ text | url | number | select | multi_select.
+// OPTIONS AND NUMBER IDENTITY: the trustee chapter options are the
+// NUMBERS [7, 11, 12, 13] — a '7' string would break trusteeMatch rule 0.
+// The options box therefore parses numeric-looking CSV tokens as numbers
+// (7, 11 → numbers; ch7 → string), and accepts a raw JSON array
+// (starts with '[') as the lossless escape hatch. Options that would be
+// ambiguous in CSV form (a STRING that looks numeric, or contains a
+// comma) are DISPLAYED as JSON so a load→save round trip never
+// changes a type.
+//
+// READ-ONLY (settings arc §3b): writing role types needs firm.settings
+// (the routes enforce it). The shell exposes P.configCanEdit (true /
+// false / null = not known yet) and calls window.onAccess({ canEdit })
+// when it learns the answer. Anything but true is read-only — fail closed
+// for the UI; the server is the authority either way. Read-only means the
+// Add card, every Save, the field editors' inputs and buttons are
+// disabled or absent, and every write path refuses on its own too; Show /
+// Hide fields (viewing) still works.
+//
+// Shell protocol: P.apiSend relay; lifecycle hooks onShow / onHide /
+// onRefresh / onNew / onAccess on window; topbar via P.setTopbarButtons
+// (New + Refresh — the shell hides New while read-only).
+// ═══════════════════════════════════════════════════════════════
+
+const P = window.parent;
+const api = (...args) => P.apiSend(...args);
+const E = id => document.getElementById(id);
+
+function esc(s) {
+  return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+
+function setStatus(id, msg, ok) {
+  const el = E(id);
+  if (!el) return;
+  el.textContent = msg;
+  el.className = 'status ' + (ok ? 'ok' : 'err');
+  if (ok) setTimeout(() => { if (el.textContent === msg) el.textContent = ''; }, 3000);
+}
+
+// ── Access ─────────────────────────────────────────────────────
+let crCanEdit = false;   // fail closed until the shell says true
+
+function crShellCanEdit() {
+  try { return P.configCanEdit === true; } catch (_) { return false; }
+}
+
+/** Page-level write controls. The topbar is the shell's to mask (§3b) —
+ *  this page may be a hidden tab when onAccess arrives, so it never
+ *  touches the topbar from here. */
+function crApplyAccess() {
+  E('addCard').hidden = !crCanEdit;
+  E('crNewBtn').hidden = !crCanEdit;
+}
+
+function onAccess(a) {
+  crCanEdit = !!(a && a.canEdit === true);
+  crApplyAccess();
+  crRender();
+}
+
+/* ════════════════ CONTACT ROLES EDITOR ════════════════ */
+
+let crState = null; // [{ role_code, label, sort_order, active, fields:[…]|null, _open, _dirty }]
+
+const CR_TYPES = ['text', 'url', 'number', 'select', 'multi_select'];
+
+function crParseOptions(raw) {
+  const s = String(raw || '').trim();
+  if (!s) return null;
+  if (s.startsWith('[')) {
+    const arr = JSON.parse(s); // throws → surfaced by the caller
+    if (!Array.isArray(arr)) throw new Error('options JSON must be an array');
+    return arr;
+  }
+  return s.split(',').map(t => t.trim()).filter(t => t !== '')
+    .map(t => (/^-?\d+(\.\d+)?$/.test(t) ? Number(t) : t));
+}
+
+function crOptionsDisplay(opts) {
+  if (!Array.isArray(opts) || !opts.length) return '';
+  const ambiguous = opts.some(o =>
+    typeof o === 'string' && (/^-?\d+(\.\d+)?$/.test(o.trim()) || o.includes(',')));
+  return ambiguous ? JSON.stringify(opts) : opts.map(String).join(', ');
+}
+
+function crRender() {
+  const host = E('crList');
+  if (!crState) return;
+  E('crHint').textContent = `${crState.length} role type${crState.length === 1 ? '' : 's'}`;
+  if (!crState.length) { host.innerHTML = '<p class="yc-hint">No role types yet.</p>'; return; }
+  const ro = !crCanEdit;
+  const dis = ro ? ' disabled' : '';
+  host.innerHTML = crState.map((t, ti) => {
+    const fields = t.fields || [];
+    const fieldRows = fields.map((f, fi) => {
+      const id = p => `cr-${ti}-${fi}-${p}`;
+      const isSel = f.type === 'select' || f.type === 'multi_select';
+      return `
+      <div class="cr-field">
+        <div class="fcol">
+          <label class="yc-flabel" for="${id('key')}">Key</label>
+          <input type="text" class="mono" id="${id('key')}" data-cr-f="${ti}:${fi}:key" value="${esc(f.key || '')}" maxlength="40" placeholder="zoom_link"${dis}>
+          <span class="yc-hint">Permanent-ish — stored attrs keep old keys.</span>
+          <label class="yc-flabel" for="${id('label')}">Label</label>
+          <input type="text" id="${id('label')}" data-cr-f="${ti}:${fi}:label" value="${esc(f.label || '')}" placeholder="341 Zoom link"${dis}>
+        </div>
+        <div class="fcol">
+          <label class="yc-flabel" for="${id('type')}">Type</label>
+          <select id="${id('type')}" data-cr-f="${ti}:${fi}:type"${dis}>
+            ${CR_TYPES.map(x => `<option value="${x}" ${f.type === x ? 'selected' : ''}>${x}</option>`).join('')}
+          </select>
+          <label class="yc-flabel" for="${id('options')}">Options</label>
+          <input type="text" class="mono" id="${id('options')}" data-cr-f="${ti}:${fi}:options" value="${esc(f._optionsRaw !== undefined ? f._optionsRaw : crOptionsDisplay(f.options))}"
+                 placeholder="7, 11, 12, 13" ${isSel && !ro ? '' : 'disabled'}>
+          <span class="yc-hint">Select types — comma-separated (numbers stay numbers), or a JSON array.</span>
+          <label class="yc-flabel" for="${id('placeholder')}">Placeholder</label>
+          <input type="text" id="${id('placeholder')}" data-cr-f="${ti}:${fi}:placeholder" value="${esc(f.placeholder || '')}"${dis}>
+        </div>
+        <label class="toggle-row">
+          <input type="checkbox" data-cr-f="${ti}:${fi}:required" ${f.required ? 'checked' : ''}${dis}>
+          <span>Required</span>
+        </label>
+        ${ro ? '<span></span>' : `<div class="fbtns">
+          <button type="button" class="icon-btn" data-cr-fup="${ti}:${fi}" title="Move up">↑</button>
+          <button type="button" class="icon-btn" data-cr-fdown="${ti}:${fi}" title="Move down">↓</button>
+          <button type="button" class="icon-btn del" data-cr-fdel="${ti}:${fi}" title="Remove field">✕</button>
+        </div>`}
+      </div>`;
+    }).join('');
+    const fieldsTail = ro
+      ? (fields.length ? '' : '<span class="yc-hint">No structured fields.</span>')
+      : `<button type="button" class="btn tiny btn-outline" data-cr-fadd="${ti}" style="margin-top:6px">+ Add Field</button>`;
+    return `
+    <div class="cr-type ${t.active ? '' : 'cr-inactive'}">
+      <div class="cr-head">
+        <input type="text" data-cr-label="${ti}" value="${esc(t.label)}" maxlength="60" title="Label" aria-label="Label"${dis}>
+        <span class="cr-code" title="role_code — permanent">${esc(t.role_code)}</span>
+        <input type="number" class="cr-sort" data-cr-sort="${ti}" value="${t.sort_order | 0}" title="Sort order" aria-label="Sort order"${dis}>
+        <label class="toggle-row"><input type="checkbox" data-cr-active="${ti}" ${t.active ? 'checked' : ''}${dis}><span>Active</span></label>
+        <span class="cr-count">${fields.length} field${fields.length === 1 ? '' : 's'}</span>
+        <button type="button" class="btn tiny btn-outline" data-cr-toggle="${ti}">${t._open ? 'Hide fields' : (ro ? 'Show fields' : 'Edit fields')}</button>
+        ${ro ? '' : `<button type="button" class="btn tiny btn-primary" data-cr-save="${ti}" ${t._dirty ? '' : 'disabled'}>Save</button>`}
+      </div>
+      <span class="status" id="crStatus${ti}"></span>
+      ${t._open ? `<div class="cr-fields">${fieldRows}${fieldsTail}</div>` : ''}
+    </div>`;
+  }).join('');
+}
+
+function crMarkDirty(ti) { crState[ti]._dirty = true; const b = document.querySelector(`[data-cr-save="${ti}"]`); if (b) b.disabled = false; }
+
+function crBind() {
+  const host = E('crList');
+  host.addEventListener('input', e => {
+    if (!crCanEdit || !crState) return;   // read-only: nothing on the page is a draft
+    const el = e.target, d = el.dataset;
+    if (d.crLabel !== undefined) { crState[+d.crLabel].label = el.value; crMarkDirty(+d.crLabel); }
+    else if (d.crSort !== undefined) { crState[+d.crSort].sort_order = parseInt(el.value, 10) || 0; crMarkDirty(+d.crSort); }
+    else if (d.crActive !== undefined) { crState[+d.crActive].active = el.checked ? 1 : 0; crMarkDirty(+d.crActive); }
+    else if (d.crF !== undefined) {
+      const [ti, fi, prop] = d.crF.split(':');
+      const f = crState[+ti].fields[+fi];
+      if (prop === 'required') f.required = el.checked;
+      else if (prop === 'options') f._optionsRaw = el.value; // parsed at save
+      else f[prop] = el.value;
+      if (prop === 'type') { crMarkDirty(+ti); crRender(); return; } // re-render enables/disables options
+      crMarkDirty(+ti);
+    }
+  });
+  host.addEventListener('click', e => {
+    const b = e.target.closest('button'); if (!b || !crState) return;
+    const d = b.dataset;
+    const swap = (arr, i, j) => { if (j < 0 || j >= arr.length) return false; [arr[i], arr[j]] = [arr[j], arr[i]]; return true; };
+    if (d.crToggle !== undefined) {   // viewing — allowed read-only
+      const t = crState[+d.crToggle];
+      t._open = !t._open;
+      if (t._open && !t.fields) t.fields = [];
+      crRender();
+      return;
+    }
+    if (!crCanEdit) return;           // everything below writes (or drafts a write)
+    if (d.crSave !== undefined) {
+      crSave(+d.crSave);
+    } else if (d.crFadd !== undefined) {
+      crState[+d.crFadd].fields.push({ key: '', label: '', type: 'text' });
+      crMarkDirty(+d.crFadd); crRender();
+    } else if (d.crFup !== undefined) {
+      const [ti, fi] = d.crFup.split(':').map(Number);
+      if (swap(crState[ti].fields, fi, fi - 1)) { crMarkDirty(ti); crRender(); }
+    } else if (d.crFdown !== undefined) {
+      const [ti, fi] = d.crFdown.split(':').map(Number);
+      if (swap(crState[ti].fields, fi, fi + 1)) { crMarkDirty(ti); crRender(); }
+    } else if (d.crFdel !== undefined) {
+      const [ti, fi] = d.crFdel.split(':').map(Number);
+      crState[ti].fields.splice(fi, 1);
+      crMarkDirty(ti); crRender();
+    }
+  });
+}
+
+/** crState field row → wire-shape attrs_schema entry. Throws on bad
+ *  options JSON; everything else the ROUTE validates (authoritative). */
+function crFieldOut(f) {
+  const out = { key: String(f.key || '').trim(), label: String(f.label || '').trim(), type: f.type };
+  if (f.required) out.required = true;
+  if (f.type === 'select' || f.type === 'multi_select') {
+    const raw = f._optionsRaw !== undefined ? f._optionsRaw : crOptionsDisplay(f.options);
+    out.options = crParseOptions(raw) || [];
+  }
+  const ph = String(f.placeholder || '').trim();
+  if (ph) out.placeholder = ph;
+  return out;
+}
+
+async function crSave(ti) {
+  if (!crCanEdit) return;
+  const t = crState[ti];
+  const sid = 'crStatus' + ti;
+  let schema;
+  try {
+    schema = (t.fields && t.fields.length) ? t.fields.map(crFieldOut) : null;
+  } catch (e) {
+    return setStatus(sid, 'options: ' + (e.message || 'invalid'), false);
+  }
+  const btn = document.querySelector(`[data-cr-save="${ti}"]`);
+  if (btn) btn.disabled = true;
+  try {
+    await api(`/api/contact-role-types/${encodeURIComponent(t.role_code)}`, 'PUT', {
+      label: t.label, sort_order: t.sort_order | 0, active: t.active ? 1 : 0,
+      attrs_schema: schema,
+    });
+    // Re-adopt the wire shape so the next save diff starts from what the
+    // server accepted (options text re-parsed, empty list → null).
+    t.fields = schema || [];
+    t.fields.forEach(f => { delete f._optionsRaw; });
+    t._dirty = false;
+    crRender(); // BEFORE setStatus — crRender rebuilds the (empty) status span
+    setStatus(sid, `"${t.role_code}" saved`, true);
+  } catch (e2) {
+    if (btn) btn.disabled = false;
+    // Route validation errors verbatim — the whole point of per-type saves.
+    setStatus(sid, e2.message || 'Failed to save', false);
+  }
+}
+
+async function crCreate() {
+  if (!crCanEdit) return;
+  const code = E('crNewCode').value.trim();
+  const label = E('crNewLabel').value.trim();
+  try {
+    await api('/api/contact-role-types', 'POST', { role_code: code, label });
+    E('crNewCode').value = ''; E('crNewLabel').value = '';
+    setStatus('crAddStatus', `"${code}" created — add its fields above`, true);
+    await crInit({ keepDirty: true });   // the reload never costs another type's unsaved edits
+  } catch (e) {
+    setStatus('crAddStatus', e.message || 'Failed to create', false);
+  }
+}
+
+let crLoaded = false;
+let crLoadTok = 0;   // drops an out-of-order list response (refresh mashed twice)
+
+/** (Re)load the catalog. Open cards stay open; with keepDirty, a type
+ *  holding unsaved edits keeps them (the server copy is not adopted). */
+async function crInit({ keepDirty = false } = {}) {
+  const tok = ++crLoadTok;
+  try {
+    const data = await api('/api/contact-role-types?include_inactive=true', 'GET');
+    if (tok !== crLoadTok) return;
+    const prev = new Map((crState || []).map(t => [t.role_code, t]));
+    crState = (data.types || []).map(t => {
+      const old = prev.get(t.role_code);
+      if (keepDirty && old && old._dirty) return old;
+      return {
+        role_code: t.role_code,
+        label: t.label,
+        sort_order: t.sort_order | 0,
+        active: t.active ? 1 : 0,
+        fields: Array.isArray(t.attrs_schema) ? t.attrs_schema.map(f => ({ ...f })) : null,
+        _open: !!(old && old._open), _dirty: false,
+      };
+    });
+    crLoaded = true;
+    crRender();
+  } catch (err) {
+    if (tok !== crLoadTok) return;
+    E('crList').innerHTML = `<p class="load-err">Failed to load role types: ${esc(err.message || err)}</p>`;
+  }
+}
+
+function crDirty() { return !!(crState && crState.some(t => t._dirty)); }
+
+// ── Lifecycle ──────────────────────────────────────────────────
+function init() {
+  crCanEdit = crShellCanEdit();
+  crApplyAccess();
+  P.setTopbarButtons({ new: true, refresh: true });
+  E('crAdd').addEventListener('click', crCreate);
+  E('crNewBtn').addEventListener('click', onNew);
+  crBind();
+  crInit();
+}
+
+// Coming back to the tab reloads — never over unsaved edits (fields.html idiom).
+function onShow() {
+  P.setTopbarButtons({ new: true, refresh: true });
+  if (crLoaded && !crDirty()) crInit();
+}
+function onHide() {}
+function onRefresh() {
+  if (crDirty() && !confirm('Discard unsaved contact-role edits?')) return;
+  crInit();
+}
+function onNew() {
+  if (!crCanEdit) return;
+  E('addCard').scrollIntoView({ behavior: 'smooth', block: 'center' });
+  E('crNewCode').focus();
+}
+
+window.onShow = onShow;
+window.onHide = onHide;
+window.onRefresh = onRefresh;
+window.onNew = onNew;
+window.onAccess = onAccess;
+
+// The Config shell keeps this frame alive across tab switches (it hides,
+// never unloads), so edits survive them. What loses them is a reload or
+// close of the whole app — the browser asks first (firm.html idiom).
+window.addEventListener('beforeunload', (e) => {
+  if (!crDirty()) return;
+  e.preventDefault();
+  e.returnValue = '';
+  return '';
+});
+
+// ── Boot ───────────────────────────────────────────────────────
+(function waitForShell() {
+  if (P && typeof P.apiSend === 'function' && typeof P.setTopbarButtons === 'function') {
+    return init();
+  }
+  setTimeout(waitForShell, 50);
+})();
+</script>
+</body>
+</html>

@@ -957,7 +957,7 @@ Example:
 
 #### `update_db`
 
-Parameterized UPDATE from a JSON descriptor — no raw SQL. Whitelisted tables only (app_settings, rw_scratch, tasks, checkitems, checklists, case_relate, contact_phones, contact_emails, contact_addresses). WHERE is mandatory, restricted to identity columns, and LIKE is excluded. max_rows defaults to 1 — the UPDATE is REFUSED if the where clause matches more rows than that. PK / auto_increment / generated / created_at / updated_at columns are never settable. From ingest-rule actions and hook targets use the flat set_column/set_value + where_column/where_value form — their params_mapping does not recurse into nested objects.
+Parameterized UPDATE from a JSON descriptor — no raw SQL. Whitelisted tables only (app_settings, rw_scratch, tasks, checkitems, checklists, case_relate, contact_phones, contact_emails, contact_addresses). On app_settings the same rule as set_setting: never a secret, and a registered setting only where the settings registry allows automation. WHERE is mandatory, restricted to identity columns, and LIKE is excluded. max_rows defaults to 1 — the UPDATE is REFUSED if the where clause matches more rows than that. PK / auto_increment / generated / created_at / updated_at columns are never settable. From ingest-rule actions and hook targets use the flat set_column/set_value + where_column/where_value form — their params_mapping does not recurse into nested objects.
 
 | Param | Type | Required | Description |
 |---|---|---|---|
@@ -1680,15 +1680,19 @@ Nightly drift sweep: pushes YisraCase contacts whose row changed since last sync
 
 ### Settings
 
-Reading and writing `app_settings`. Secret rows are refused — `get_setting` throws on an `is_secret` key rather than returning it.
+Reading and writing `app_settings`. What automation may touch is decided by the settings registry (`lib/settingsRegistry.js`, the one list of keys the code knows), never by a row's `is_editable` flag:
+
+- **Secrets are never read or written** — a key is a secret when the registry says so (kind `secret`) *or* its row has `is_secret = 1`, so a mis-set flag cannot expose a registered secret.
+- **Writes** (`set_setting`, and `update_db` on `app_settings`) reach a *registered* setting only when its registry entry allows automation — today that is `clio_login_code` alone (the phone-ingest rule that captures the Clio 2FA code). Every other registered setting is changed in its editor (YisraCase Config, Portal Manager, CTA Links) or the SU db console. *Unregistered* non-secret rows — automation variables a person created — stay writable.
+- **Reads** (`get_setting`, `get_settings`) work for any non-secret key, registered or not.
 
 #### `get_setting`
 
-Read app_settings.value for a non-secret key. Throws on unknown key or is_secret row. Optionally stores the value in a workflow variable via output_var.
+Read app_settings.value for a non-secret key. Throws on an unknown key or a secret (a registered secret or an is_secret row). Optionally stores the value in a workflow variable via output_var.
 
 | Param | Type | Required | Description |
 |---|---|---|---|
-| `key` | string | yes (placeholderAllowed) | app_settings.key. Must exist and must not be is_secret. Runtime rejects a non-string key. |
+| `key` | string | yes (placeholderAllowed) | app_settings.key. Must exist and must not be a secret. Runtime rejects a non-string key. |
 | `output_var` | string | optional | Store the value in this workflow variable. |
 
 Example:
@@ -1701,11 +1705,11 @@ Example:
 
 #### `get_settings`
 
-Read multiple non-secret app_settings in one call; returns a {key: value} map. ALL-OR-NOTHING: throws (listing every offender) if any requested key is unknown or is_secret. With output_var, individual values are reachable via {{var.key_name}}.
+Read multiple non-secret app_settings in one call; returns a {key: value} map. ALL-OR-NOTHING: throws (listing every offender) if any requested key is unknown or a secret (a registered secret or an is_secret row). With output_var, individual values are reachable via {{var.key_name}}.
 
 | Param | Type | Required | Description |
 |---|---|---|---|
-| `keys` | string | yes (placeholderAllowed) | Comma-separated app_settings keys. Every key must exist and must not be is_secret. A placeholder resolving to an array also works at runtime. |
+| `keys` | string | yes (placeholderAllowed) | Comma-separated app_settings keys. Every key must exist and must not be a secret. A placeholder resolving to an array also works at runtime. |
 | `output_var` | string | optional | Store the whole {key: value} map in this workflow variable. |
 
 Example:
@@ -1718,11 +1722,11 @@ Example:
 
 #### `set_setting`
 
-Write app_settings.value for an EXISTING, non-secret key. Value stored verbatim (no trimming). Refuses is_secret rows and unknown keys. Ignores is_editable — that flag governs the human settings.html editor, not automation.
+Write app_settings.value for an EXISTING key automation may write: an unregistered non-secret row (an automation variable), or a registered setting whose registry entry allows automation (lib/settingsRegistry.js — today clio_login_code only). Value stored verbatim (no trimming). Refuses secrets, every other registered setting, and unknown keys.
 
 | Param | Type | Required | Description |
 |---|---|---|---|
-| `key` | string | yes (placeholderAllowed) | app_settings.key. Must already exist and must not be is_secret. Runtime rejects a non-string key. |
+| `key` | string | yes (placeholderAllowed) | app_settings.key. Must already exist, must not be a secret, and a registered setting must allow automation. Runtime rejects a non-string key. |
 | `value` | string | yes (placeholderAllowed, multiline) | New value, stored VERBATIM. Numbers/booleans are stringified; objects/arrays are rejected — JSON.stringify them first. |
 
 Example:

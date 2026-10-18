@@ -12,8 +12,10 @@
  *                   the PREDECESSOR as data. Every precondition is a 409, and
  *                   a lost race (affectedRows 0) is a 409 too.
  *
- *   singleton       flag-guarded in createEvent. OFF → zero extra queries, no
- *                   pointer, byte-for-byte the pre-U6a create. ON → a new live
+ *   singleton       always on in createEvent (its rollout flag
+ *                   unified_singleton_enabled retired at '1' in the settings
+ *                   arc, 2026-10 — the flag-off tests went with it; a stale
+ *                   '0' row can no longer turn it off). A new live
  *                   row for a singleton (anchor, type_key) supersedes every
  *                   prior live row with the same RESOLVED identity — so the
  *                   live cross-form pair shape (event 94 'case'/ayx7GJ7j vs
@@ -42,9 +44,12 @@ jest.mock('../lib/domainEvents', () => ({
   runAsAction:  (_ruleId, fn) => fn(),
   MAX_DEPTH:    4,
 }));
+// Every config read is null — except the RETIRED singleton flag, which answers
+// '0' (a stale row): nothing may read it, and if anything did, supersession
+// would switch off and the tests below would fail.
 jest.mock('../lib/firmConfig', () => {
   const real = jest.requireActual('../lib/firmConfig');
-  return { ...real, cfg: jest.fn((k) => (k === 'unified_singleton_enabled' ? global.__U6A_FLAG__ : null)) };
+  return { ...real, cfg: jest.fn((k) => (k === 'unified_singleton_enabled' ? '0' : null)) };
 });
 
 const eventService        = require('../services/eventService');
@@ -71,7 +76,6 @@ beforeAll(() => calendarTypeService._primeCache(SEED));
 afterAll(() => calendarTypeService.invalidate());
 beforeEach(() => {
   jest.clearAllMocks();
-  global.__U6A_FLAG__ = null;
   jest.spyOn(console, 'log').mockImplementation(() => {});
   jest.spyOn(console, 'warn').mockImplementation(() => {});
   jest.spyOn(console, 'error').mockImplementation(() => {});
@@ -231,32 +235,18 @@ describe('singleton in createEvent', () => {
     event_date: '2026-10-05', event_time: '10:00:00', event_all_day: 0, event_length: 60, ...o,
   });
 
-  test('FLAG OFF (absent): zero extra queries, no pointer, no rescheduled emit — the pre-U6a create', async () => {
-    global.__U6A_FLAG__ = null;
+  // The two FLAG OFF pins (absent / '0' → the pre-U6a create, zero extra
+  // queries) were removed with the flag: that path no longer exists.
+  test('always on: the retired flag is never read, and a stale \'0\' cannot switch supersession off', async () => {
     const db = makeEventsDb({ events: [prior()], cases: CASES });
-    const { event_id } = await eventService.createEvent(db, {
-      ...CREATE, event_link_type: 'case_number', event_link_id: '26-47542',
-    });
+    const { event_id } = await eventService.createEvent(db, { ...CREATE, event_link_type: 'case', event_link_id: 'ayx7GJ7j' });
     await flush();
-    // Exactly the pre-U6a statement list: does_appts guard? (no event_with → none), INSERT, getEvent.
-    expect(db.calls.map((c) => c.sql.split(' ')[0])).toEqual(['INSERT', 'SELECT']);
-    expect(db.events.get(94).superseded_by_event_id).toBeNull();
-    expect(emitNames()).toEqual(['calendar.scheduled']);
-    expect(cfg).toHaveBeenCalledWith('unified_singleton_enabled');
-    expect(event_id).toBeGreaterThan(94);
+    expect(cfg).not.toHaveBeenCalledWith('unified_singleton_enabled');
+    expect(db.events.get(94).superseded_by_event_id).toBe(event_id);
+    expect(emitNames()).toEqual(['calendar.scheduled', 'calendar.rescheduled']);
   });
 
-  test("FLAG '0' behaves like absent", async () => {
-    global.__U6A_FLAG__ = '0';
-    const db = makeEventsDb({ events: [prior()], cases: CASES });
-    await eventService.createEvent(db, { ...CREATE, event_link_type: 'case', event_link_id: 'ayx7GJ7j' });
-    await flush();
-    expect(db.calls.map((c) => c.sql.split(' ')[0])).toEqual(['INSERT', 'SELECT']);
-    expect(db.events.get(94).superseded_by_event_id).toBeNull();
-  });
-
-  test("FLAG ON: the cross-form pair collapses — 'case_number' create supersedes the prior 'case' row (event 94 / 152 shape)", async () => {
-    global.__U6A_FLAG__ = '1';
+  test("the cross-form pair collapses — 'case_number' create supersedes the prior 'case' row (event 94 / 152 shape)", async () => {
     const db = makeEventsDb({ events: [prior({ event_gcal: 'gcal_94' })], cases: CASES, tasks: { '94': [701] } });
     const { event_id } = await eventService.createEvent(db, {
       ...CREATE, event_link_type: 'case_number', event_link_id: '26-47542', source: 'court',
@@ -292,16 +282,14 @@ describe('singleton in createEvent', () => {
     expect(db.unmatched).toEqual([]);
   });
 
-  test("FLAG ON: the reverse form too — a 'case' create supersedes a prior 'case_number' row", async () => {
-    global.__U6A_FLAG__ = '1';
+  test("the reverse form too — a 'case' create supersedes a prior 'case_number' row", async () => {
     const db = makeEventsDb({ events: [prior({ event_link_type: 'case_number', event_link_id: '26-47542-mlo' })], cases: CASES });
     const { event_id } = await eventService.createEvent(db, { ...CREATE, event_link_type: 'case', event_link_id: 'ayx7GJ7j' });
     await flush();
     expect(db.events.get(94).superseded_by_event_id).toBe(event_id);
   });
 
-  test('FLAG ON: a prior on a DIFFERENT case is not touched', async () => {
-    global.__U6A_FLAG__ = '1';
+  test('a prior on a DIFFERENT case is not touched', async () => {
     const db = makeEventsDb({ events: [prior({ event_link_id: 'SUTCdsPn' })], cases: CASES });
     await eventService.createEvent(db, { ...CREATE, event_link_type: 'case', event_link_id: 'ayx7GJ7j' });
     await flush();
@@ -309,16 +297,14 @@ describe('singleton in createEvent', () => {
     expect(emitNames()).toEqual(['calendar.scheduled']);
   });
 
-  test('FLAG ON: a prior of a different type_key on the same case is not touched', async () => {
-    global.__U6A_FLAG__ = '1';
+  test('a prior of a different type_key on the same case is not touched', async () => {
     const db = makeEventsDb({ events: [prior({ event_type: 'Show Cause', type_key: 'show_cause' })], cases: CASES });
     await eventService.createEvent(db, { ...CREATE, event_link_type: 'case', event_link_id: 'ayx7GJ7j' });
     await flush();
     expect(db.events.get(94).superseded_by_event_id).toBeNull();
   });
 
-  test('FLAG ON: already-dead priors (Canceled, or already pointered) are not re-superseded', async () => {
-    global.__U6A_FLAG__ = '1';
+  test('already-dead priors (Canceled, or already pointered) are not re-superseded', async () => {
     const db = makeEventsDb({ events: [
       prior({ event_id: 94, event_status: 'Canceled' }),
       prior({ event_id: 95, superseded_by_event_id: 94, supersede_reason: 'duplicate' }),
@@ -330,8 +316,7 @@ describe('singleton in createEvent', () => {
     expect(emitNames()).toEqual(['calendar.scheduled']);
   });
 
-  test('FLAG ON: >1 prior live rows (the live 7-pair shape) — all superseded, one warning naming them', async () => {
-    global.__U6A_FLAG__ = '1';
+  test('>1 prior live rows (the live 7-pair shape) — all superseded, one warning naming them', async () => {
     const db = makeEventsDb({ events: [
       prior({ event_id: 94 }),
       prior({ event_id: 152, event_link_type: 'case_number', event_link_id: '26-47542', event_date: '2026-10-06' }),
@@ -344,8 +329,7 @@ describe('singleton in createEvent', () => {
     expect(emitNames()).toEqual(['calendar.scheduled', 'calendar.rescheduled', 'calendar.rescheduled']);
   });
 
-  test('FLAG ON: no link → no check, no priors query', async () => {
-    global.__U6A_FLAG__ = '1';
+  test('no link → no check, no priors query', async () => {
     const db = makeEventsDb({ events: [prior({ event_link_type: null, event_link_id: null })], cases: CASES });
     await eventService.createEvent(db, { ...CREATE });     // unlinked
     await flush();
@@ -353,8 +337,7 @@ describe('singleton in createEvent', () => {
     expect(db.events.get(94).superseded_by_event_id).toBeNull();
   });
 
-  test('FLAG ON: singleton=0 type → no check', async () => {
-    global.__U6A_FLAG__ = '1';
+  test('singleton=0 type → no check', async () => {
     const seedRow = SEED.find((r) => r.singleton === 0 && r.kind !== 'meeting');
     const db = makeEventsDb({ events: [prior({ event_type: seedRow.label, type_key: seedRow.type_key, kind: seedRow.kind })], cases: CASES });
     await eventService.createEvent(db, { ...CREATE, event_type: seedRow.label, event_link_type: 'case', event_link_id: 'ayx7GJ7j' });
@@ -363,8 +346,7 @@ describe('singleton in createEvent', () => {
     expect(db.events.get(94).superseded_by_event_id).toBeNull();
   });
 
-  test('FLAG ON: contact-linked identity is the raw (link_type, link_id, type_key)', async () => {
-    global.__U6A_FLAG__ = '1';
+  test('contact-linked identity is the raw (link_type, link_id, type_key)', async () => {
     const db = makeEventsDb({ events: [prior({ event_link_type: 'contact', event_link_id: '77' })], cases: CASES });
     const { event_id } = await eventService.createEvent(db, { ...CREATE, event_link_type: 'contact', event_link_id: '77' });
     await flush();
@@ -374,16 +356,14 @@ describe('singleton in createEvent', () => {
     expect(priors.params.slice(0, 2)).toEqual(['contact', '77']);
   });
 
-  test('FLAG ON: unresolved docket falls back to raw docket equality', async () => {
-    global.__U6A_FLAG__ = '1';
+  test('unresolved docket falls back to raw docket equality', async () => {
     const db = makeEventsDb({ events: [prior({ event_link_type: 'case_number', event_link_id: '99-00000' })], cases: CASES });
     const { event_id } = await eventService.createEvent(db, { ...CREATE, event_link_type: 'case_number', event_link_id: '99-00000' });
     await flush();
     expect(db.events.get(94).superseded_by_event_id).toBe(event_id);
   });
 
-  test('FLAG ON: dedupe wins first — same slot returns deduped:true, no INSERT, no supersede, no emit', async () => {
-    global.__U6A_FLAG__ = '1';
+  test('dedupe wins first — same slot returns deduped:true, no INSERT, no supersede, no emit', async () => {
     const db = makeEventsDb({ events: [prior({ event_date: '2026-11-02' })], cases: CASES });   // same slot as CREATE
     const r = await eventService.createEvent(db, { ...CREATE, event_link_type: 'case', event_link_id: 'ayx7GJ7j', dedupe: true });
     await flush();
@@ -395,8 +375,7 @@ describe('singleton in createEvent', () => {
     expect(db.events.get(94).superseded_by_event_id).toBeNull();
   });
 
-  test('FLAG ON: a supersede failure never fails the create (row already committed)', async () => {
-    global.__U6A_FLAG__ = '1';
+  test('a supersede failure never fails the create (row already committed)', async () => {
     const db = makeEventsDb({ events: [prior()], cases: CASES });
     const orig = db.query;
     db.query = async (sql, params) => {

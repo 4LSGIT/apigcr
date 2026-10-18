@@ -385,6 +385,13 @@
       </div>
     </details>
 
+    <!-- ── LINK DEFAULTS: the settings registry's home for cta_default_timeout_once /
+         _repeatable (home 'cta', written with system.settings). Loaded when opened. -->
+    <details class="instructions" id="cta-defaults">
+      <summary>Link defaults</summary>
+      <div class="body" id="defaults-region"><div class="loading">Loading…</div></div>
+    </details>
+
     <!-- ── LIST ─────────────────────────────────────────────────── -->
     <section id="view-list">
       <div class="toolbar">
@@ -814,6 +821,7 @@ function setView(v) {
   state.view = v;
   for (const id of ['list', 'detail', 'mint', 'receipt']) E('view-' + id).hidden = id !== v;
   E('instructions').hidden = v === 'receipt';
+  E('cta-defaults').hidden = v === 'receipt';
   document.querySelector('.panel-host').scrollTop = 0;
 }
 
@@ -1994,7 +2002,7 @@ function renderMint() {
             <option value="duration"${d.expiry_kind === 'duration' ? ' selected' : ''}>After a duration</option>
             <option value="at"${d.expiry_kind === 'at' ? ' selected' : ''}>At a date and time</option>
           </select>
-          <span class="yc-hint">Links always expire. Defaults: settings <code>cta_default_timeout_once</code> / <code>_repeatable</code> (3d / 30d unless changed). Max 365 days. Extend later without re-minting.</span>
+          <span class="yc-hint">Links always expire. The firm defaults are in <button type="button" class="linklike" data-act="open-defaults">Link defaults</button> at the top of this page (3d / 30d unless changed). Max 365 days. Extend later without re-minting.</span>
         </div>
         <div class="fld"${d.expiry_kind === 'duration' ? '' : ' hidden'}>
           <label class="yc-flabel" for="m-timeout">Duration</label>
@@ -3080,6 +3088,7 @@ function onMintClick(e) {
     case 'dry': structural = false; runMint(true); break;
     case 'mint': structural = false; confirmMint(); break;
     case 'copy': structural = false; copyText(b.dataset.text, b.dataset.msg); break;
+    case 'open-defaults': structural = false; openDefaults(); break;
     case 'dismiss-note': state.draftNote = null; break;
     default: structural = false;
   }
@@ -3451,6 +3460,180 @@ async function onReceiptClick(e) {
   }
 }
 
+// ── LINK DEFAULTS ───────────────────────────────────────────
+// The two app_settings keys ctaService.resolveExpiry reads when a link is
+// minted without an expiry. Registry (lib/settingsRegistry.js): home 'cta',
+// type duration (a number and a unit, validated server-side; stored
+// verbatim), written with system.settings; GET /api/app-settings?home=cta serves them with
+// can_edit / exists. Loaded when the block is first opened, so the pane's
+// boot makes no extra call.
+const DEFAULT_KEYS = ['cta_default_timeout_once', 'cta_default_timeout_repeatable'];
+/** Mirror of ctaService FALLBACK_TIMEOUT: what a mint uses when the setting is unset, blank or unusable. */
+const DEFAULT_FALLBACK = { cta_default_timeout_once: '3d', cta_default_timeout_repeatable: '30d' };
+const MAX_DEFAULT_MS = 365 * 864e5;   // ctaService MAX_EXPIRY_MS
+/** The ms library's units (ctaService parses these settings with ms()). */
+const DUR_UNITS = {
+  ms: 1, msec: 1, msecs: 1, millisecond: 1, milliseconds: 1,
+  s: 1e3, sec: 1e3, secs: 1e3, second: 1e3, seconds: 1e3,
+  m: 6e4, min: 6e4, mins: 6e4, minute: 6e4, minutes: 6e4,
+  h: 36e5, hr: 36e5, hrs: 36e5, hour: 36e5, hours: 36e5,
+  d: 864e5, day: 864e5, days: 864e5,
+  w: 6048e5, week: 6048e5, weeks: 6048e5,
+  y: 315576e5, yr: 315576e5, yrs: 315576e5, year: 315576e5, years: 315576e5,
+};
+/**
+ * A HINT mirror of ms(): the duration in ms, or NaN. Narrower on purpose —
+ * a unit is required: to ms a bare number is milliseconds, so "3" would mint
+ * links that expire at once (the mint only refuses <= 0).
+ */
+function durationMs(v) {
+  const m = /^(-?(?:\d+)?\.?\d+) *([a-z]+)$/i.exec(String(v).trim());
+  if (!m) return NaN;
+  const unit = DUR_UNITS[m[2].toLowerCase()];
+  return unit ? parseFloat(m[1]) * unit : NaN;
+}
+/** Why a typed default would not be used at mint time, or null. Blank = the built-in default. */
+function durationProblem(v) {
+  if (v === '') return null;
+  // The server's save rule (settingsRegistry duration): digits, an optional
+  // decimal part, a unit — stricter than what ms() would parse at mint time.
+  if (!/^\d+(\.\d+)?\s*[a-z]+$/i.test(String(v).trim())) return 'Use a number and a unit, like 30m, 12h, 3d or 2w';
+  const n = durationMs(v);
+  if (!Number.isFinite(n)) return 'Use a number and a unit, like 30m, 12h, 3d or 2w';
+  if (n <= 0) return 'Must be longer than zero';
+  if (n > MAX_DEFAULT_MS) return 'At most 365 days';
+  return null;
+}
+
+const defaultsState = { loaded: false, busy: false, saving: false, err: null, rows: {} };
+const defaultRowValue = (row) => (row && row.value != null ? String(row.value) : '');
+const defaultEditable = (k) => !!(defaultsState.rows[k] && defaultsState.rows[k].can_edit === true);
+
+async function loadDefaults() {
+  const st = defaultsState;
+  st.busy = true;
+  st.err = null;
+  renderDefaults();
+  try {
+    const data = await api('/api/app-settings?home=cta', 'GET');
+    st.rows = {};
+    for (const r of (data && data.settings) || []) if (DEFAULT_KEYS.includes(r.key)) st.rows[r.key] = r;
+    st.loaded = true;
+  } catch (err) {
+    st.err = err;
+  } finally {
+    st.busy = false;
+  }
+  renderDefaults();
+}
+function ensureDefaults() {
+  const st = defaultsState;
+  if (!st.loaded && !st.busy) loadDefaults();
+}
+/** The mint hint's "Link defaults" link: open the block, load it, bring it into view. */
+function openDefaults() {
+  const d = E('cta-defaults');
+  d.open = true;
+  ensureDefaults();
+  d.scrollIntoView({ block: 'start' });
+}
+
+function renderDefaults() {
+  const st = defaultsState;
+  const region = E('defaults-region');
+  if (st.err) {
+    region.innerHTML = `<div class="inline-error">${esc(st.err.message || 'Could not load the link defaults')}<br>
+      <button class="btn small" type="button" data-act="retry-defaults">Retry</button></div>`;
+    return;
+  }
+  if (!st.loaded) { region.innerHTML = '<div class="loading">Loading…</div>'; return; }
+  const shown = DEFAULT_KEYS.filter((k) => st.rows[k]);
+  if (!shown.length) { region.innerHTML = '<p>No link defaults are available to you.</p>'; return; }
+  const anyEdit = shown.some(defaultEditable);
+  region.innerHTML = `
+    <p>How long a link lasts when it is minted without an expiry — the builder's "Firm default for the mode",
+      and workflow links that give none.</p>
+    <div class="fgrid">${shown.map((k) => {
+      const row = st.rows[k];
+      return `<div class="fld">
+        <label class="yc-flabel" for="d-${esc(k)}">${esc(row.label || k)}${row.exists === false ? ' <span class="tag">not set</span>' : ''}</label>
+        <input type="text" id="d-${esc(k)}" data-dkey="${esc(k)}" value="${esc(defaultRowValue(row))}" placeholder="${esc(DEFAULT_FALLBACK[k])}"
+               autocomplete="off" spellcheck="false"${defaultEditable(k) ? '' : ' disabled'}>
+        <span class="yc-hint">${esc(row.description || '')} Not set or blank = ${esc(DEFAULT_FALLBACK[k])}. <code>${esc(k)}</code></span>
+        <span class="field-err" data-derr="${esc(k)}" hidden></span>
+      </div>`;
+    }).join('')}</div>
+    ${anyEdit
+      ? `<div class="btn-row" style="margin-top:10px">
+          <button class="btn primary" type="button" data-act="save-defaults" disabled>Save defaults</button>
+          <span class="status-line" id="defaults-status"></span>
+        </div>`
+      : '<span class="yc-hint">Read-only — changing the link defaults needs the system settings permission (IT / SU).</span>'}`;
+}
+
+/** Typed values that differ from what is stored, for the keys this caller may write. */
+function defaultEdits() {
+  const out = [];
+  for (const k of DEFAULT_KEYS) {
+    const el = E('d-' + k);
+    if (!el || !defaultEditable(k)) continue;
+    const v = el.value.trim();
+    if (v !== defaultRowValue(defaultsState.rows[k])) out.push([k, v]);
+  }
+  return out;
+}
+function onDefaultsInput(e) {
+  const k = e.target.dataset && e.target.dataset.dkey;
+  if (!k) return;
+  const errEl = document.querySelector(`#defaults-region [data-derr="${k}"]`);
+  if (errEl) { errEl.hidden = true; errEl.textContent = ''; }
+  const btn = document.querySelector('#defaults-region [data-act="save-defaults"]');
+  if (btn) btn.disabled = defaultsState.saving || !defaultEdits().length;
+}
+function onDefaultsClick(e) {
+  const b = e.target.closest('[data-act]');
+  if (!b || b.disabled) return;
+  if (b.dataset.act === 'retry-defaults') return loadDefaults();
+  if (b.dataset.act === 'save-defaults') return saveDefaults();
+}
+
+async function saveDefaults() {
+  const st = defaultsState;
+  if (st.saving || !st.loaded) return;
+  const edits = defaultEdits();
+  if (!edits.length) return;
+  // Every problem is shown before anything is written.
+  let bad = false;
+  for (const [k, v] of edits) {
+    const why = durationProblem(v);
+    if (!why) continue;
+    bad = true;
+    const errEl = document.querySelector(`#defaults-region [data-derr="${k}"]`);
+    if (errEl) { errEl.textContent = why; errEl.hidden = false; }
+  }
+  if (bad) return;
+  const btn = document.querySelector('#defaults-region [data-act="save-defaults"]');
+  const status = E('defaults-status');
+  st.saving = true;
+  if (btn) btn.disabled = true;
+  if (status) { status.textContent = 'Saving…'; status.classList.remove('danger-text'); }
+  try {
+    for (const [k, v] of edits) {
+      const res = await api(`/api/app-settings/${encodeURIComponent(k)}`, 'PUT', { value: v });
+      const saved = res && res.setting ? res.setting : { value: v };
+      st.rows[k] = { ...st.rows[k], value: saved.value, updated_at: saved.updated_at, exists: true };
+    }
+    st.saving = false;
+    renderDefaults();
+    showToast('Link defaults saved');
+  } catch (err) {
+    // The server's words (403 without system.settings, 400 …); typed values stay.
+    st.saving = false;
+    if (status) { status.textContent = err.message || 'Save failed'; status.classList.add('danger-text'); }
+    if (btn) btn.disabled = !defaultEdits().length;
+  }
+}
+
 // ── Navigation ──────────────────────────────────────────────
 function goList() {
   state.detail = null;
@@ -3537,6 +3720,10 @@ function init() {
   new MutationObserver(() => paintEmailFrames()).observe(mint, { childList: true, subtree: true });
 
   E('receipt-region').addEventListener('click', onReceiptClick);
+
+  E('cta-defaults').addEventListener('toggle', () => { if (E('cta-defaults').open) ensureDefaults(); });
+  E('defaults-region').addEventListener('input', onDefaultsInput);
+  E('defaults-region').addEventListener('click', onDefaultsClick);
 
   E('patch-cancel').addEventListener('click', closePatch);
   E('patch-save').addEventListener('click', savePatch);

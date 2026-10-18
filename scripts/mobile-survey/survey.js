@@ -223,6 +223,12 @@ async function walk(page, W, record) {
     await page.screenshot({ path: file });
     return file;
   };
+  // Who the mock answers as (server.js PERSONA): 'staff' for the surfaces a
+  // staff-only user sees differently (Config read-only, My access tables and a
+  // Manage access card); every step that flips it flips it back.
+  const persona = (p) => page.evaluate((p) => fetch('/__mock/persona', {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ persona: p }),
+  }), p);
 
   if (ONLY.has('tabs')) {
     // data-tab-also: tabs reached from a hub rather than their own sidebar item
@@ -235,6 +241,36 @@ async function walk(page, W, record) {
     for (const t of tabs) {
       await page.evaluate((t) => openMainTab(t), t); await sleep(1500);
       await record(`tab:${t}`, await measure(page, await frameOf(page, VISIBLE_TAB_FRAME)), await shot('tab_' + t));
+    }
+
+    // Settings (settings arc): My access and Manage access as a staff member
+    // (fixtures/api/mailboxes.staff.json, phone-lines/readable.staff.json — a
+    // grant with Manage, an attorney "via role" row, an inactive box; the card's
+    // grants from mailboxes/1/grants.json). The fixture user is a superuser, so the
+    // plain pass above shows only the one-line superuser note. Each section opened
+    // (the accordion keeps one open), then the persona and the pane are put back.
+    if (tabs.includes('tabSettings')) {
+      await persona('staff');
+      await page.evaluate(() => openMainTab('tabSettings')); await sleep(600);
+      let sf = await frameOf(page, VISIBLE_TAB_FRAME);
+      if (sf) {
+        await sf.evaluate(() => location.reload()); await sleep(2500);
+        sf = await frameOf(page, VISIBLE_TAB_FRAME);
+        for (const [key, sec] of [['my-access', 'myAccessSection'], ['manage-access', 'manageAccessSection']]) {
+          const opened = await sf.evaluate((sec) => {
+            const el = document.getElementById(sec);
+            if (!el || el.hidden) return false;
+            if (el.classList.contains('collapsed')) el.querySelector('.sec-head').click();
+            el.scrollIntoView();
+            return !el.classList.contains('collapsed');
+          }, sec); await sleep(500);
+          const m = await measure(page, sf);
+          if (!opened) m.boxes = [{ sel: `#${sec} (did not open for the staff persona)`, missing: true }];
+          await record(`tab:tabSettings:${key}`, m, await shot('tab_settings_' + key));
+        }
+      }
+      await persona('su');
+      if (sf) { await sf.evaluate(() => location.reload()); await sleep(1500); }
     }
 
     // The custom pages (ui-custom S6c-5): the firm's (fixture: firm:ops, restricted to
@@ -610,6 +646,70 @@ async function walk(page, W, record) {
           const hm = await measure(page, fr);
           await record('panel:caseConfigDiv:firm-history-layout', hm, await shot('panel_caseconfig_firm_history_layout'));
         }
+      }
+      // Settings arc: the Firm tab's settings — a setting's History open
+      // (fixtures/api/app-settings/firm_name/history.json: an overlong name) —
+      // then every other Config sub-tab as the holder (Contact Roles, Lists,
+      // System and the vocabulary tabs; a tab that does not open is a FAILURE),
+      // then the staff persona: Config read-only (the banner, write controls
+      // gone) on the vocabulary tabs, and back.
+      if (id === 'caseConfigDiv' && fr) {
+        const ff = page.frames().find((f) => /caseconfig\/firm\.html/.test(f.url()));
+        await fr.evaluate(() => switchSubPage('firm')); await sleep(600);
+        const histOk = !!ff && await ff.evaluate(async () => {
+          const b = document.querySelector('[data-key="firm_name"] [data-ycsr="history"]');
+          if (!b) return false;
+          b.click();
+          await new Promise((r) => setTimeout(r, 800));
+          b.closest('[data-key]').scrollIntoView();
+          return b.getAttribute('aria-expanded') === 'true';
+        }); await sleep(400);
+        const hm = await measure(page, fr);
+        if (!histOk) hm.boxes = [{ sel: '[data-key="firm_name"] History (did not open)', missing: true }];
+        await record('panel:caseConfigDiv:firm-setting-history', hm, await shot('panel_caseconfig_firm_setting_history'));
+
+        const subs = await fr.evaluate(() => SUB_PAGES.map((p) => p.id).filter((x) => x !== 'firm'));
+        const openSub = async (sub) => {
+          const ok = await fr.evaluate((x) => {
+            switchSubPage(x);
+            const b = document.getElementById('tabnav-' + x);
+            return !!b && !b.hidden && b.classList.contains('active');
+          }, sub);
+          await sleep(1500);
+          return ok;
+        };
+        for (const sub of subs) {
+          const ok = await openSub(sub);
+          const m = await measure(page, fr);
+          if (!ok) m.boxes = [{ sel: `#tabnav-${sub} (the ${sub} tab did not open)`, missing: true }];
+          await record('panel:caseConfigDiv:' + sub, m, await shot('panel_caseconfig_' + sub));
+        }
+
+        await persona('staff');
+        await fr.evaluate(() => location.reload()); await sleep(2500);
+        for (const sub of subs.filter((x) => x !== 'system')) {
+          const ok = await openSub(sub);
+          const banner = await fr.evaluate(() => { const b = document.getElementById('ro-banner'); return !!b && !b.hidden; });
+          const m = await measure(page, fr);
+          if (!ok || !banner) m.boxes = [{ sel: `${sub} read-only (${ok ? 'no banner' : 'tab did not open'})`, missing: true }];
+          await record('panel:caseConfigDiv:readonly:' + sub, m, await shot('panel_caseconfig_readonly_' + sub));
+        }
+        await persona('su');
+        await fr.evaluate(() => location.reload()); await sleep(2000);
+      }
+      // Portal Manager → Settings (the portal's settings home: the three emails /
+      // callback-task keys, PUT-only saves), fixtures/api/app-settings.json
+      if (id === 'portalManagerDiv' && fr) {
+        await fr.evaluate(() => switchSubPage('settings')); await sleep(1500);
+        await record('panel:portalManagerDiv:settings', await measure(page, fr), await shot('panel_portal_manager_settings'));
+      }
+      // CTA Links → Link defaults (opened: it loads on first open)
+      if (id === 'ctaLinksDiv' && fr) {
+        const ok = await fr.evaluate(() => { const d = document.getElementById('cta-defaults'); if (!d || d.hidden) return false; d.open = true; d.scrollIntoView(); return true; });
+        await sleep(1200);
+        const m = await measure(page, fr);
+        if (!ok) m.boxes = [{ sel: '#cta-defaults (not shown)', missing: true }];
+        await record('panel:ctaLinksDiv:defaults', m, await shot('panel_cta_links_defaults'));
       }
     }
   }

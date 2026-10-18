@@ -41,9 +41,13 @@
  * immutable key, locked kind, referenced row, resolver collision); anything
  * else is a 500 with a generic message.
  *
- * AUTH: jwtOrApiKey — the house norm for admin surfaces (booking views, pages,
- * redirects, pipeline admin all match). No superuser gate: staff with shell
- * access ARE the audience for Case Config. Revisit if the shell grows roles.
+ * AUTH: reads (GET) are jwtOrApiKey — any staff (the Config shell renders
+ * read-only for non-holders). Every write (POST / PUT / DELETE) is
+ * requireAuth({ audience:'staff', can:'firm.settings', allowApiKey:true }) —
+ * YisraCase Config vocabulary writes need the firm.settings capability
+ * (admin / it / su; settings arc, Fred 2026-10-17). Machine keys: NULL-scope
+ * keys and the internal key pass; a scoped key needs firm.settings in its
+ * scopes (a route:/ scope does not stand in for it).
  *
  * Auto-mounted from routes/ (server.js readdir loop). Distinct
  * /api/calendar-types-admin prefix; the read route is /api/calendar-types
@@ -58,7 +62,11 @@
 const express = require('express');
 const router = express.Router();
 const jwtOrApiKey = require('../lib/auth.jwtOrApiKey');
+const requireAuth = require('../lib/auth.requireAuth');
 const svc = require('../services/calendarTypeAdminService');
+
+// Config vocabulary writes: the firm.settings capability (see AUTH above).
+const firmSettingsWrite = requireAuth({ audience: 'staff', can: 'firm.settings', allowApiKey: true });
 
 function fail(res, tag, err) {
   const status = (typeof err.status === 'number' && err.status >= 400 && err.status < 600) ? err.status : 500;
@@ -97,21 +105,21 @@ router.get('/api/calendar-types-admin/:type_key', jwtOrApiKey, async (req, res) 
   } catch (err) { fail(res, 'get', err); }
 });
 
-router.post('/api/calendar-types-admin', jwtOrApiKey, async (req, res) => {
+router.post('/api/calendar-types-admin', firmSettingsWrite, async (req, res) => {
   try {
     const type = await svc.createType(req.db, req.body || {});
     res.status(201).json({ status: 'success', type });
   } catch (err) { fail(res, 'create', err); }
 });
 
-router.put('/api/calendar-types-admin/:type_key', jwtOrApiKey, async (req, res) => {
+router.put('/api/calendar-types-admin/:type_key', firmSettingsWrite, async (req, res) => {
   try {
     const type = await svc.updateType(req.db, String(req.params.type_key), req.body || {});
     res.json({ status: 'success', type });
   } catch (err) { fail(res, 'update', err); }
 });
 
-router.delete('/api/calendar-types-admin/:type_key', jwtOrApiKey, async (req, res) => {
+router.delete('/api/calendar-types-admin/:type_key', firmSettingsWrite, async (req, res) => {
   try {
     const out = await svc.deleteType(req.db, String(req.params.type_key));
     res.json({ status: 'success', ...out });
@@ -130,7 +138,7 @@ router.delete('/api/calendar-types-admin/:type_key', jwtOrApiKey, async (req, re
 // The only endpoint in this file that writes a table other than the registry.
 // See services/calendarTypeAdminService.adoptUnmapped for why it pins
 // events.event_updated_at and why it invalidates nothing.
-router.post('/api/calendar-types-admin/:type_key/adopt-unmapped', jwtOrApiKey, async (req, res) => {
+router.post('/api/calendar-types-admin/:type_key/adopt-unmapped', firmSettingsWrite, async (req, res) => {
   try {
     const out = await svc.adoptUnmapped(req.db, String(req.params.type_key), (req.body || {}).raw_label);
     res.json({ status: 'success', ...out });
@@ -139,21 +147,21 @@ router.post('/api/calendar-types-admin/:type_key/adopt-unmapped', jwtOrApiKey, a
 
 // ── Options ──────────────────────────────────────────────────────────────────
 
-router.post('/api/calendar-types-admin/:type_key/options', jwtOrApiKey, async (req, res) => {
+router.post('/api/calendar-types-admin/:type_key/options', firmSettingsWrite, async (req, res) => {
   try {
     const option = await svc.createOption(req.db, String(req.params.type_key), req.body || {});
     res.status(201).json({ status: 'success', option });
   } catch (err) { fail(res, 'createOption', err); }
 });
 
-router.put('/api/calendar-types-admin/options/:id', jwtOrApiKey, async (req, res) => {
+router.put('/api/calendar-types-admin/options/:id', firmSettingsWrite, async (req, res) => {
   try {
     const option = await svc.updateOption(req.db, req.params.id, req.body || {});
     res.json({ status: 'success', option });
   } catch (err) { fail(res, 'updateOption', err); }
 });
 
-router.delete('/api/calendar-types-admin/options/:id', jwtOrApiKey, async (req, res) => {
+router.delete('/api/calendar-types-admin/options/:id', firmSettingsWrite, async (req, res) => {
   try {
     const out = await svc.deleteOption(req.db, req.params.id);
     res.json({ status: 'success', ...out });

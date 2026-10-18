@@ -490,8 +490,8 @@
   // BOTH shapes must be recognized. /b/<slug> is a permanent route alias for
   // the same handler (routes/booking.js, 2026-08-16) and is the shape the
   // house convention puts in SMS copy — campaign.html offers it in the
-  // merge-field dropdown. manage_fallback_url is is_editable=1, so a staff
-  // member can paste either shape in. If this parser only knew /book/, a
+  // merge-field dropdown. manage_fallback_url is edited in Config → Firm
+  // (lib/settingsRegistry.js), so an admin can paste either shape in. If this parser only knew /book/, a
   // /b/ fallback pointing at the very view that just failed would slip past
   // the self-loop guard below and hand the visitor a CTA back to this same
   // dead page. Keep the alternation in sync with BOOK_ROUTE_RE in

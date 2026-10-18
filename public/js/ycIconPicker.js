@@ -14,8 +14,8 @@
  *   ycIconPicker.isOpen() → boolean; ycIconPicker.close() cancels.
  *
  * ONE implementation, hosted by the shell (index.html loads this file after
- * ycIcon.js). Panes in same-origin iframes (caseconfig/firm.html,
- * settings.html) call window.top.ycIconPicker.open(...): the dialog is drawn
+ * ycIcon.js). Panes in same-origin iframes (caseconfig/firm.html) call
+ * window.top.ycIconPicker.open(...): the dialog is drawn
  * in the TOP document — full-bleed at phone width, never boxed inside a
  * frame — and the promise resolves into the caller's realm as usual.
  *

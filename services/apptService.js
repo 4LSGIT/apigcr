@@ -25,9 +25,6 @@ const { DateTime } = require('luxon');
 const { alert } = require('../lib/alerting');
 const { generateToken } = require('../lib/token');
 const domainEvents = require('../lib/domainEvents');
-// U6b — the singleton flag (v0.5 §3.4.2). Read at CALL time, exactly as
-// eventService reads it: absent from app_settings = off.
-const { cfg } = require('../lib/firmConfig');
 // U2 — the item-type registry (calendar_item_types). Resolves appt_type free
 // text to type_key at WRITE time; fail-soft (registry read failure → NULL
 // key, never a failed create).
@@ -1211,13 +1208,13 @@ async function applyApptLinkPatch(db, apptId, fields) {
  *     rescheduled_from_appt_id when hook_rescheduled_from names a predecessor,
  *     and the A3a anchor pair appt_link_type/appt_link_id — U6b)
  *   - Log entry
- *   - Flag `unified_singleton_enabled` OFF: if 341 Meeting (string match):
- *     supersede prior 341 via the case pointer + UPDATE cases.case_341_current
- *   - Flag ON: registry singleton policy (v0.5 §3.4.2) — prior live rows for
+ *   - Registry singleton policy (v0.5 §3.4.2) — prior live rows for
  *     (resolved case, type_key) found BY QUERY across both anchor forms,
  *     tombstoned + lineage-stamped; cases.case_341_current / 341_appt_id
  *     written as a §4 projection for meeting_341 (this function is their
- *     SINGLE WRITER)
+ *     SINGLE WRITER). Always on: the `unified_singleton_enabled` rollout flag
+ *     and the legacy '341 Meeting' string block it switched to retired in the
+ *     settings arc (2026-10).
  *
  * Post-commit (non-blocking):
  *   - 341 supersession: cancel old appt's automation + GCal-delete + log
@@ -1354,9 +1351,9 @@ async function createAppt(db, {
   // read is cached (60s) and fail-soft — a registry failure yields NULL, never
   // a failed booking; the post-deploy `type_key IS NULL` gate finds stragglers.
   //
-  // appt_type is written UNCHANGED (label canonicalization is U5). The 341
-  // block below still keys on the STRING '341 Meeting' — that becomes the
-  // registry's `singleton` at U6, behind a flag. Do not switch it here.
+  // appt_type is written UNCHANGED (label canonicalization is U5). The
+  // singleton block below keys on the resolved type_key and the registry's
+  // `singleton` bit (U6b), never on the label string.
   // ────────────────────────────────────────────────────────────
   const typeKeyVal = (await calendarTypeService.resolveForCreate(db, type_key, appt_type)).type_key;
 
@@ -1404,16 +1401,13 @@ async function createAppt(db, {
   }
 
   // ────────────────────────────────────────────────────────────
-  // U6b — SINGLETON PRE-RESOLUTION (v0.5 §3.4.2, A4). Flag read at CALL time
-  // (settings tab can flip it live); registry read on the POOL before the
-  // transaction (same rule as resolveForCreate, U2 R1.1). Both fail-soft:
-  // flag off or registry unreadable → singletonType stays null and the
-  // legacy string block below is the whole behaviour (flag off) or nothing
-  // supersedes (flag on + registry blip — the 60s cache makes this a sliver).
+  // U6b — SINGLETON PRE-RESOLUTION (v0.5 §3.4.2, A4). Registry read on the
+  // POOL before the transaction (same rule as resolveForCreate, U2 R1.1).
+  // Fail-soft: registry unreadable → singletonType stays null and nothing
+  // supersedes (a registry blip — the 60s cache makes this a sliver).
   // ────────────────────────────────────────────────────────────
-  const singletonOn = cfg('unified_singleton_enabled') === '1';
   let singletonType = null;
-  if (singletonOn && typeKeyVal) {
+  if (typeKeyVal) {
     try {
       const t = await calendarTypeService.getType(db, typeKeyVal);
       if (t && Number(t.singleton) === 1) singletonType = t;
@@ -1425,11 +1419,10 @@ async function createAppt(db, {
   // If any of these fail, we don't want the appt to exist.
   // Post-commit side effects (sequences, GCal, etc.) are fire-and-forget.
   // ────────────────────────────────────────────────────────────
-  const { apptId, supersededAppts, singletonMode } = await db.withTransaction(async (conn) => {
+  const { apptId, supersededAppts } = await db.withTransaction(async (conn) => {
     let apptId;
-    // Superseded priors. Legacy string block → at most one ({ appt_id,
-    // appt_gcal, appt_gcal_user, appt_with }); U6b singleton path → 0..n FULL
-    // rows (the calendar.rescheduled envelope needs the whole predecessor).
+    // Superseded priors: 0..n FULL rows (the calendar.rescheduled envelope
+    // needs the whole predecessor).
     const supersededAppts = [];
 
     // 1) INSERT appointment — includes both local and UTC times.
@@ -1476,136 +1469,98 @@ async function createAppt(db, {
     if (!contact_id) logExtras.Clientless = 'true';
     await insertApptLog(conn, apptId, actingUserId, logExtras, source);
 
-    // 3) One live row per (anchor, type_key) — TWO implementations, switched
-    //    by `unified_singleton_enabled` (v0.5 §3.4.2 / A4):
-    //
-    //    FLAG ON  → registry policy. The prior live row is found BY QUERY
-    //               (never through the cases.341_appt_id pointer — the pointer
-    //               is a §4 projection and can be stale), across BOTH anchor
-    //               forms: case-linked priors AND docket-linked priors whose
-    //               docket belongs to the same case. Identity is (resolved
-    //               case, type_key); a contact-only appt or an unresolved
-    //               docket has no case and gets NO check.
-    //    FLAG OFF → today's '341 Meeting' string block, byte-for-byte,
-    //               including its pointer-path lookup. NOT deleted — deletion
-    //               is U10's, after the projection question is settled.
-    if (singletonOn) {
-      if (singletonType && case_id) {
-        // 3a) Docket expansion for the identity query — this case's docket
-        //     forms, from the anchor resolution above or one PK read here.
-        let caseRow = resolvedCaseRow;
-        if (!caseRow) {
-          [[caseRow]] = await conn.query(
-            'SELECT case_id, case_number, case_number_full FROM cases WHERE case_id = ? LIMIT 1',
-            [case_id]
-          );
-        }
-        const dockets = [];
-        for (const v of [caseRow && caseRow.case_number, caseRow && caseRow.case_number_full]) {
-          const s = v != null ? String(v).trim() : '';
-          if (s && !dockets.includes(s)) dockets.push(s);
-        }
-
-        // 3b) Prior live rows, by query. Full rows: the post-commit
-        //     calendar.rescheduled envelope publishes the predecessor.
-        //     rescheduleAppt's predecessor is already 'Rescheduled' by the
-        //     time this runs and so is naturally absent — same outcome as the
-        //     string block's appt_status === 'Scheduled' guard.
-        const priors = await _singletonPriorAppts(conn, {
-          caseId:        String(case_id),
-          dockets,
-          typeKey:       typeKeyVal,
-          excludeApptId: apptId,
-        });
-        if (priors.length > 1) {
-          console.warn(
-            `[APPT SERVICE] singleton: appt ${apptId} (${typeKeyVal}) found ${priors.length} prior live rows ` +
-            `[${priors.map(p => p.appt_id).join(', ')}] — superseding all of them`
-          );
-        }
-        for (const prior of priors) {
-          // Guarded, so a concurrent resolve/cancel between the SELECT and
-          // here loses cleanly rather than being overwritten.
-          const [res] = await conn.query(
-            `UPDATE appts SET appt_status = 'Rescheduled' WHERE appt_id = ? AND appt_status = 'Scheduled'`,
-            [prior.appt_id]
-          );
-          if (res && res.affectedRows === 1) supersededAppts.push(prior);
-        }
-
-        // 3c) Lineage (v0.5 §3.4): stamp the successor with its predecessor
-        //     unless the caller already named one (rescheduleAppt / rebook
-        //     pass hook_rescheduled_from, persisted in the INSERT). With >1
-        //     priors (shouldn't happen; warned above) the latest row wins.
-        if (supersededAppts.length && rescheduledFromApptId == null) {
-          const predecessorId = Math.max(...supersededAppts.map(p => Number(p.appt_id)));
-          await conn.query(
-            `UPDATE appts SET rescheduled_from_appt_id = ? WHERE appt_id = ? AND rescheduled_from_appt_id IS NULL`,
-            [predecessorId, apptId]
-          );
-        }
-      }
-
-      // 3d) §4 PROJECTION — cases.case_341_current / 341_appt_id.
-      //
-      //     THIS FUNCTION IS THE SINGLE WRITER of those two columns (v0.5 §4;
-      //     courtExecutor explicitly forbids them; U10 decides their fate).
-      //     Identical statement to the string block's, now conditioned on the
-      //     registry KEY rather than the label string, and independent of
-      //     whether a prior existed — the columns mirror the live 341, full
-      //     stop. Requires a resolved case (a docket-anchored 341 with no
-      //     case yet has nowhere to project; the mirror catches up when the
-      //     341 is rewritten against the real case).
-      if (typeKeyVal === 'meeting_341' && case_id) {
-        await conn.query(
-          'UPDATE cases SET case_341_current = ?, `341_appt_id` = ? WHERE case_id = ?',
-          [appt_date, apptId, case_id]
+    // 3) One live row per (anchor, type_key) — registry policy (v0.5 §3.4.2
+    //    / A4). The prior live row is found BY QUERY (never through the
+    //    cases.341_appt_id pointer — the pointer is a §4 projection and can
+    //    be stale), across BOTH anchor forms: case-linked priors AND
+    //    docket-linked priors whose docket belongs to the same case. Identity
+    //    is (resolved case, type_key); a contact-only appt or an unresolved
+    //    docket has no case and gets NO check. (The legacy '341 Meeting'
+    //    string block this replaced was the flag-off path of
+    //    `unified_singleton_enabled`; both retired in the settings arc.)
+    if (singletonType && case_id) {
+      // 3a) Docket expansion for the identity query — this case's docket
+      //     forms, from the anchor resolution above or one PK read here.
+      let caseRow = resolvedCaseRow;
+      if (!caseRow) {
+        [[caseRow]] = await conn.query(
+          'SELECT case_id, case_number, case_number_full FROM cases WHERE case_id = ? LIMIT 1',
+          [case_id]
         );
       }
-    } else if (appt_type === '341 Meeting' && case_id) {
-      // 3a) Find the prior 341 (if any) and mark Rescheduled — but only if
-      //     it's still 'Scheduled'. rescheduleAppt may have already handled
-      //     teardown if it's the caller; in that case the prior is already
-      //     Rescheduled and we skip the inner UPDATE + post-commit work.
-      const [[prior]] = await conn.query(
-        `SELECT a.appt_id, a.appt_gcal, a.appt_gcal_user, a.appt_with, a.appt_status
-         FROM cases c
-         JOIN appts a ON a.appt_id = c.\`341_appt_id\`
-         WHERE c.case_id = ? AND c.\`341_appt_id\` != 0 AND c.\`341_appt_id\` != ?
-         LIMIT 1`,
-        [case_id, apptId]
-      );
-      if (prior && prior.appt_status === 'Scheduled') {
-        await conn.query(
-          `UPDATE appts SET appt_status = 'Rescheduled' WHERE appt_id = ?`,
+      const dockets = [];
+      for (const v of [caseRow && caseRow.case_number, caseRow && caseRow.case_number_full]) {
+        const s = v != null ? String(v).trim() : '';
+        if (s && !dockets.includes(s)) dockets.push(s);
+      }
+
+      // 3b) Prior live rows, by query. Full rows: the post-commit
+      //     calendar.rescheduled envelope publishes the predecessor.
+      //     rescheduleAppt's predecessor is already 'Rescheduled' by the
+      //     time this runs and so is naturally absent — same outcome as the
+      //     string block's appt_status === 'Scheduled' guard.
+      const priors = await _singletonPriorAppts(conn, {
+        caseId:        String(case_id),
+        dockets,
+        typeKey:       typeKeyVal,
+        excludeApptId: apptId,
+      });
+      if (priors.length > 1) {
+        console.warn(
+          `[APPT SERVICE] singleton: appt ${apptId} (${typeKeyVal}) found ${priors.length} prior live rows ` +
+          `[${priors.map(p => p.appt_id).join(', ')}] — superseding all of them`
+        );
+      }
+      for (const prior of priors) {
+        // Guarded, so a concurrent resolve/cancel between the SELECT and
+        // here loses cleanly rather than being overwritten.
+        const [res] = await conn.query(
+          `UPDATE appts SET appt_status = 'Rescheduled' WHERE appt_id = ? AND appt_status = 'Scheduled'`,
           [prior.appt_id]
         );
-        supersededAppts.push({
-          appt_id:        prior.appt_id,
-          appt_gcal:      prior.appt_gcal,
-          appt_gcal_user: prior.appt_gcal_user,
-          appt_with:      prior.appt_with,
-        });
+        if (res && res.affectedRows === 1) supersededAppts.push(prior);
       }
 
-      // 3b) Point the case at the new 341
+      // 3c) Lineage (v0.5 §3.4): stamp the successor with its predecessor
+      //     unless the caller already named one (rescheduleAppt / rebook
+      //     pass hook_rescheduled_from, persisted in the INSERT). With >1
+      //     priors (shouldn't happen; warned above) the latest row wins.
+      if (supersededAppts.length && rescheduledFromApptId == null) {
+        const predecessorId = Math.max(...supersededAppts.map(p => Number(p.appt_id)));
+        await conn.query(
+          `UPDATE appts SET rescheduled_from_appt_id = ? WHERE appt_id = ? AND rescheduled_from_appt_id IS NULL`,
+          [predecessorId, apptId]
+        );
+      }
+    }
+
+    // 3d) §4 PROJECTION — cases.case_341_current / 341_appt_id.
+    //
+    //     THIS FUNCTION IS THE SINGLE WRITER of those two columns (v0.5 §4;
+    //     courtExecutor explicitly forbids them; U10 decides their fate).
+    //     The retired string block's statement, conditioned on the
+    //     registry KEY rather than the label string, and independent of
+    //     whether a prior existed — the columns mirror the live 341, full
+    //     stop. Requires a resolved case (a docket-anchored 341 with no
+    //     case yet has nowhere to project; the mirror catches up when the
+    //     341 is rewritten against the real case).
+    if (typeKeyVal === 'meeting_341' && case_id) {
       await conn.query(
         'UPDATE cases SET case_341_current = ?, `341_appt_id` = ? WHERE case_id = ?',
         [appt_date, apptId, case_id]
       );
     }
 
-    return { apptId, supersededAppts, singletonMode: singletonOn };
+    return { apptId, supersededAppts };
   }).catch(err => {
     console.error('[APPT SERVICE] createAppt core writes failed:', err.message);
     throw err;
   });
 
-  // 3c) Post-commit supersession side effects (non-blocking). One loop for
-  //     both modes: the legacy string block fills at most one entry with
-  //     reason '341_superseded' (byte-identical to pre-U6b); the singleton
-  //     path fills 0..n with the type-neutral 'singleton_superseded'.
-  const supersedeReason = singletonMode ? 'singleton_superseded' : '341_superseded';
+  // 3c) Post-commit supersession side effects (non-blocking), once per
+  //     superseded prior, with the type-neutral reason 'singleton_superseded'
+  //     (the retired string block's '341_superseded' is history only).
+  const supersedeReason = 'singleton_superseded';
   for (const supersededAppt of supersededAppts) {
     cancelApptAutomation(db, supersededAppt.appt_id, supersedeReason)
       .catch(err => console.error('[APPT SERVICE] cancelApptAutomation (supersession) failed:', err.message));
@@ -1745,27 +1700,24 @@ async function createAppt(db, {
 
   // 9c) U6b — calendar.rescheduled, once per singleton predecessor, AFTER
   //     calendar.scheduled: a rule sees "new row exists" before "old row
-  //     superseded" (same ordering U6a fixed on the events side). Emitted
-  //     ONLY from the singleton path — the flag-off string block emits
-  //     nothing here, exactly as it never has. The appt.rescheduled twin is
-  //     deliberately NOT emitted: that name means "successor created by
-  //     rescheduleAppt", and a singleton supersession is a different cause.
-  if (singletonMode) {
-    for (const p of supersededAppts) {
-      domainEvents.emit(db, 'calendar.rescheduled',
-        _calendarEnvelope({ ...p, appt_status: 'Rescheduled' }, {
-          source, actingUserId,
-          extra: { via: 'singleton', superseded_by: apptId, reason: 'rescheduled' },
-        }));
-    }
+  //     superseded" (same ordering U6a fixed on the events side). The
+  //     appt.rescheduled twin is deliberately NOT emitted: that name means
+  //     "successor created by rescheduleAppt", and a singleton supersession
+  //     is a different cause.
+  for (const p of supersededAppts) {
+    domainEvents.emit(db, 'calendar.rescheduled',
+      _calendarEnvelope({ ...p, appt_status: 'Rescheduled' }, {
+        source, actingUserId,
+        extra: { via: 'singleton', superseded_by: apptId, reason: 'rescheduled' },
+      }));
   }
 
   return {
     appt_id: apptId,
     appt,
     appt_date_utc: apptDateUTC,
-    // U6b (additive) — priors this create superseded (singleton path, or the
-    // legacy 341 block's one). The calendarWriteService facade returns these.
+    // U6b (additive) — priors this create superseded (the singleton block).
+    // The calendarWriteService facade returns these.
     superseded: supersededAppts.map(p => Number(p.appt_id)),
   };
 }

@@ -23,9 +23,10 @@ Launcher section changes it for **everyone at the firm** in three ways:
 | **Firm items** | Adds the firm's own entries — a link, a tool, a saved view or a **page** — as tiles on More Features, under **Firm** in All, and in Ctrl-K. |
 | **Arrange** | Sets out the **More Features** and **Admin** pages, the **Home** and **sidebar** everyone starts from, and the tiles of the firm's own pages (see [Arranging pages and defaults](#arranging-pages-and-defaults)). |
 
-The Firm tab is a page of sections. **Launcher** is the first; **Who sees what**
-(below) decides which roles and people see each item. Firm-wide settings from
-other areas join them as sections of their own.
+The Firm tab is a page of sections: the firm's settings first (see
+[Firm and system settings](15-firm-and-system-settings.md)), then **Launcher**
+and **Who sees what** (below), which decides which roles and people see each
+item.
 
 ## Hiding is decluttering, not security
 

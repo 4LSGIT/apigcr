@@ -616,7 +616,12 @@ via `{{this.output.*}}` and `set_vars`. Catalog: `GET /workflows/functions`
 `query_db` is the guarded generic read: JSON descriptor, allowlisted tables,
 parameterized ops only, sensitive tables/columns blocked, limit clamps at
 1000 silently. `update_db`/`insert_db` (db.js) carry per-table
-allow/block maps (e.g. checklists blocks `kind`).
+allow/block maps (e.g. checklists blocks `kind`). app_settings (§32):
+`set_setting` / `update_db` write a REGISTERED key only when
+lib/settingsRegistry.js marks it `automation: true` (today `clio_login_code`
+only), an unregistered non-secret row (an automation variable) freely; a
+secret — registry kind or row flag — is never read or written by
+get_setting / get_settings / set_setting / update_db.
 
 ## 6. WORKFLOW ENGINE
 
@@ -786,11 +791,13 @@ trailing colons. Set in four places that must move together: style.css
 `.input-label` (carries the note), scripts.js dialog CSS (`.ncf-`/`.na-`/
 `.ne-`/`.cad-`/`.oad-` labels + `.yc-flabel` for inline labels), tasks.html
 `.tk-dlg-grid`, and pane-local copies on theme.css-only Admin panes
-(ctaManager.html and caseconfig/firm.html declare `.yc-flabel`/`.yc-hint`
-with these values, and connections.html scoped to its `#noTxDialog` —
-style.css and scripts.js don't load there). Known divergence:
-toolManager.html styles labels as `.field label` (uppercase 11px
-`--text-muted`) — a different look. Hoisting `.yc-flabel`/`.yc-hint` into
+(ctaManager.html, caseconfig/firm.html, caseconfig/contactRoles.html and
+settings.html's My access / Manage access sections declare
+`.yc-flabel`/`.yc-hint` with these values, and connections.html scoped to its
+`#noTxDialog` — style.css and scripts.js don't load there). Known divergences:
+toolManager.html styles labels as `.field label` and portaladmin/portalSettings.html
+as plain `label` + `.hint` (uppercase 11px `--text-muted`), and settings.html's
+older sections keep `label.fld` — a different look. Hoisting `.yc-flabel`/`.yc-hint` into
 theme.css would collapse this to one definition (plans.md).
 
 **Hints (help text under a field, a dialog's explanatory note):** one look —
@@ -866,7 +873,7 @@ tiles or `firm:` ids. The panels live on the stage (`#ycPanels`, below);
 a stage pane to the active page when it has a tile for the panel, else the
 first drill page that has. Leaves: case.html, contact.html, comms.html, and two drill-panel
 panes, automationManager.html + caseConfigManager.html (a gated sub-tab —
-Config's Firm — is taken at boot but opened only after its reveal, and only
+Config's Firm or System — is taken at boot but opened only after its reveal, and only
 if the default is still showing). A new pane: load ycSubTab.js; report from its one
 switch; take once AFTER the content deciding which choices are visible;
 restore by clicking / calling its own switch; never throw on a token. Server:
@@ -1552,8 +1559,13 @@ DISABLED user is never SU). Capabilities: lib/capabilities.js CAPABILITIES
 (root-grade vs firm-grade; `su` passes all, `it` passes non-root, others via
 ROLE_CAPS) + `can(auth, cap)`; gate expression
 `requireAuth({audience:'staff', can:'<capability>', allowApiKey:true})`.
-Mounted today: firm.settings (app-settings writes), automations.manage
-(/api/hooks management + pages create-hook). Roles UI: users pane
+Mounted today: firm.settings (ui-config firm writes, entitlements, the Config
+vocabulary writes — field-defs, calendar-types-admin, pipeline-admin,
+contact-role-types — and app-settings writes of firm / portal / config keys),
+system.settings (app-settings writes AND reads of system / comms / cta keys —
+it + su; admin does not hold it), automations.manage (/api/hooks management +
+pages create-hook). app-settings decides the capability PER KEY from its
+registry home (§32). Roles UI: users pane
 (su grants/revokes need an SU caller; nobody removes their own su).
 
 **Entitlements (launcher denies).** `entitlement_denies` (deny-only rows;
@@ -1655,8 +1667,9 @@ palette live in `public/js/ycAll.js`, whose single keydown dispatcher also
 runs user shortcuts (the All tab never lists `all` itself; the palette does);
 the personal editor is `public/js/ycLayoutEditor.js` (All > Customize my
 launcher; its lists are the user step over the firm's `layout`); the firm
-editor is the Config shell's Firm tab (`public/caseconfig/firm.html`:
-Launcher + Who sees what, History over both firm documents), whose "Arrange
+editor is the Config shell's Firm tab (`public/caseconfig/firm.html`: the
+firm's settings sections (§32), then Launcher + Who sees what, History over
+both firm documents), whose "Arrange
 pages and defaults…" opens the same `ycLayoutEditor` in firm mode
 (`open({ scope:'firm' })`, drawn in the top document; edits the firm `layout`
 over all seven surfaces and the firm's pages, ONE PUT with `base`, 409 →
@@ -1791,3 +1804,117 @@ DB-per-tenant plan (ref/plans.md) firm scope simply becomes the tenant's.
 `tests/launcherS*.test.js` (pages: `launcherS6c5`, `launcherS6c5editor`),
 `tests/uiConfigS*.test.js` (`uiConfigS6c5`), `tests/firmTab.test.js`,
 `tests/themePrefsS5d.test.js`.
+
+## 32. SETTINGS — REGISTRY, HOMES, CONFIG SHELL (settings arc, Oct 2026)
+## ═══════════════════════════════════════════════════════════════
+
+**What.** `lib/settingsRegistry.js` is the one list of `app_settings` keys the
+code knows (code, not config — the capabilities / featureRegistry pattern):
+per key its `kind` (firm · vocab · system · secret · state · access ·
+retired), ONE editor `home`, `section`, `type` (the validator + control:
+string, template, number, bool, email, csv, phone, url, json, json_array,
+date, enum + `options`, and the picker types user · user_csv · credential ·
+sequence, plus duration), `edit` posture (`ui` | `console`), `env` (the
+firmConfig fallback), `editor` (a dedicated editor renders it), `required`
+(blank refused) and `automation: true` (automation may write it). The row in
+`app_settings` keeps only the VALUE; its category / label / description /
+type / sort_order / is_editable columns describe UNREGISTERED rows only — the
+"automation variables" a person creates in the Firm tab. A new key = a
+registry entry in the same slice (tests/settingsInventory fails otherwise).
+Kind is also the YC 3.0 provisioning classification (plans.md open decision
+16): firm / vocab tenant-configured, system platform-provisioned, state
+starts empty, secret per-tenant credentials.
+
+**Homes → capabilities (derived, never per key — `HOME_CAPS`).** firm (Config
+→ Firm), portal (Portal Manager → Settings), config (Config vocabulary tabs:
+Lists; Types & Subtypes for `fe-case_types`) — read any staff, write
+`firm.settings`; cta (CTA Links → Link defaults) — read any staff, write
+`system.settings`; system and comms (Config → System; comms until the comms
+arc gives its knobs a home) — read AND write `system.settings` (it + su);
+console — never served (secrets, the interim access lists
+`comms_archive_admins` / `comms_eval_reviewers`, retired keys). A row whose
+`is_secret = 1` is a secret whatever the registry says (`isSecret`).
+
+**API** (`routes/api.appSettings.js`). GET `/api/app-settings[?home=]` (any
+staff) → `{ caps: { firm, system }, sections, settings: [ROW] }`: every
+registered key the caller may read — with `exists:false, value:null` when it
+has no row — plus the unregistered editable non-secret rows as home firm /
+section `variables`; `can_edit` computed server-side. PUT `/:key {value}`:
+staff mount, then the home's write capability per key (a machine key is gated
+by that capability on the mount — a scoped key passes on the capability
+alone), console posture / state / secret → 403, `reg.validate` → 400, a
+missing registered row is INSERTed, an unchanged value writes nothing.
+POST (create an automation variable, firm.settings JWT only) refuses a
+registered key (409 naming its home). History: every human write and its
+`app_settings_versions` row (key, old, new, changed_by, changed_via ui ·
+api_key · create · restore) commit in ONE transaction; GET `/:key/history`
+(the write capability) and POST `/:key/restore {version_id}` (puts back that
+version's OLD value; same checks as PUT). Secrets are never written there:
+the routes never write a secret. `firmConfig.invalidate()` after a change.
+The restore route is on the sync bus (yc-sync MATCHERS, `setting:<key>`).
+
+**Automation (§5).** set_setting / update_db: a registered key only with
+`automation: true` (today `clio_login_code`, written by phone-ingest rule 4 —
+verified the sole automation writer, 2026-10-17); unregistered non-secret
+rows freely; secrets never (reads too). Automations' wider information
+security is its own arc (plans.md).
+
+**Config shell** (`caseConfigManager.html`). Tabs: Types & Subtypes,
+Pipelines, Custom Fields, Contact Roles, Calendar Types, Lists, Firm (gate
+`firm`), System (gate `system`). ONE `GET /api/ui-config` answers both gates
+(`GATE_FLAGS`: can_edit_firm, can_edit_system — revealed only on `=== true`)
+and `P.configCanEdit` (a getter: true / false, null while pending or when the
+probe failed). Every loaded sub-page gets `window.onAccess({ canEdit })` when
+the answer arrives, a later-loading one from its iframe load. Vocabulary
+sub-pages start read-only (`<body class="cc-ro">`), apply
+`ccApplyAccess(P.configCanEdit)` at init and in `onAccess`, hide write
+controls (`.cc-w`), disable what they render (`ccLock`), open detail dialogs
+view-only (`ccView`) and refuse every non-GET in their `api()` while
+read-only; the shell hides topbar Save / New / Delete and shows the read-only
+banner on ungated tabs. The server is the authority: vocabulary writes are
+`requireAuth({ can:'firm.settings', allowApiKey:true })` (§30).
+
+**My Settings** (`settings.html`) is personal only — account (+ booking
+calendars), password, signature, **My access** (`GET /api/mailboxes` +
+`GET /api/phone-lines/readable`: Read / Send / Manage, "via role" for the
+attorney read bypass) and **Manage access** (for a non-SU `can_manage` grant:
+the channel grant routes, no elevation — a grant is the authority). It calls
+no settings API.
+
+**Invariants.**
+- One editor per setting: the registry's `home` is the only place a key is
+  edited; the generic row renderer is `public/js/ycSettingRows.js`.
+- Values are stored VERBATIM (Dropbox folder names carry load-bearing
+  spaces); validators check a trimmed copy, never mutate; blank always passes
+  a type — `required` is the only way to refuse blank.
+- Metadata of a registered key comes from code; never read it from the DB.
+- **Keys are exact; the column is not.** `app_settings.key` is
+  utf8mb4_general_ci PAD SPACE — `WHERE key = 'Firm_Name '` reads the
+  firm_name row — while the registry matches exactly, so an unknown spelling
+  is gated as an automation variable. Anything that judges a key by name and
+  then acts on the row it reads compares the row's own `key` with the asked
+  one byte for byte: the per-key routes 404 another spelling, set_setting /
+  get_setting refuse it as missing, POST refuses a key that folds onto a
+  registered one (`registeredSpelling`); get_settings and update_db's guard
+  judge the row's own key. Missing this let an alias walk past every
+  per-key gate (review F1, 2026-10-18). The column comment says so.
+- Retired keys stay registered (`kind: 'retired'`) so a name is never reused.
+  `unified_singleton_enabled` (singleton supersession always on) and
+  `esign_webhook_hmac_mode` (a set webhook secret always enforces) retired in
+  this arc; their rows are deleted post-deploy by
+  `scripts/settingsArcMigrate.js --stage2` (deleting first would read as off
+  to the old build).
+
+**Pointers.** Migration: `scripts/settingsArcMigrate.js` (stage 1 before the
+deploy: `app_settings_versions`, column comments, `pabbly_internal_url`
+secret, the two probe rows — and a NO-GO while a retired flag is off its
+final value; stage 2 after) + `ref/migrations/2026-10-18_settings_arc.sql`.
+Operator docs: manual 05/15 (Firm and system settings), 05/16 (Contact
+roles), 08/08 (Manage access), 06/02 (portal settings), 08/07 (Link defaults).
+Tests: `settingsRegistry`, `settingsInventory`, `settingsAutomationGuard`,
+`appSettingsRegistry`, `appSettingsGate`, `settingsArcMigrate`,
+`vocabWriteGates`, `configShellAccess`, `configReadOnly`, `mySettings`,
+`contactRolesConfig`, `settingsToolHomes`, `ycSettingRows`, `firmTab`,
+`configSystemTab`, `configListsTab`. Lists draws `fe-event_types` with a
+dedicated editor (duplicates refused, a removal asks); System draws runtime
+state as text, never controls.

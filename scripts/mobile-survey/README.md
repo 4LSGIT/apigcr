@@ -132,6 +132,30 @@ repo root does — the `text/html; charset=UTF-8` header matters, because
   pre-seeded in `require.cache` with a pass-through while the router loads,
   then the cache is restored. The Manuals panel therefore surveys real
   chapters — a manual edit can fail the gate.
+- `GET /api/app-settings` (settings arc): `fixtures/api/app-settings.json` —
+  generated from `lib/settingsRegistry.js` with synthetic values: every home
+  and section, overlong values, whitespace-padded Dropbox paths, rows with no
+  value, two automation variables — filtered by `?home=` the way the route
+  does; `…/:key/history` per key (`app-settings/firm_name/history.json`);
+  PUT and restore echo. `credentials.json` feeds the System tab's credential
+  pickers (and the API Tester's).
+- `POST /__mock/persona { persona }` — who the mock answers as: `su` (the
+  default, the fixture user) or `staff`, a staff-only user: `GET
+  /api/ui-config` says neither gate, the settings API serves no system /
+  comms rows and nothing editable, and a fixture with a `.staff` twin
+  (`fixtures/api/<path>.staff.json` — `mailboxes`, `phone-lines/readable`)
+  answers from the twin. The survey flips it around the steps that need it
+  and puts it back.
+
+**Settings surfaces (settings arc).** Settings' My access and Manage access
+as the staff persona (`tab:tabSettings:my-access` / `:manage-access` — a
+Manage grant, an attorney *via role* row, an inactive box, the card's grants
+from `mailboxes/1/grants.json`); the Firm tab's setting History
+(`panel:caseConfigDiv:firm-setting-history`); every other Config sub-tab as
+the holder (`panel:caseConfigDiv:<id>` — Contact Roles, Lists, System and the
+vocabulary tabs; a tab that does not open is a failure); the vocabulary tabs
+read-only as staff (`panel:caseConfigDiv:readonly:<id>` — a missing banner is
+a failure); Portal Manager → Settings; CTA Links → Link defaults.
 
 Fixtures cover one case (`TESTCASE1`) with two contacts, appointments, log
 rows, an alert, a custom-field value and a pipeline (`cases/TESTCASE1/pipeline`),

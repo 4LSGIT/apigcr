@@ -450,6 +450,12 @@ const http = require('http');
 
 jest.mock('../lib/auth.jwtOrApiKey', () =>
   jest.fn((req, _res, next) => { req.auth = { userId: 6 }; next(); }));
+// The firm.settings write gate on the Config vocabulary writes (settings arc,
+// 2026-10-17) is lib/auth.requireAuth — stubbed here the same way, tagged with
+// its mount options so a test can pin them. The gate's real behaviour is
+// tests/vocabWriteGates.test.js's subject.
+jest.mock('../lib/auth.requireAuth', () => jest.fn((opts) => Object.assign(
+  (req, _res, next) => { req.auth = { userId: 6 }; next(); }, { gateOpts: opts })));
 
 /** In-memory role-world db: two contacts, one trustee row owned by 210. */
 function routeDb() {
@@ -720,9 +726,21 @@ describe('role-forms UI surfaces — inline scripts parse', () => {
     expect(html.indexOf('id="rolesSection"')).toBeGreaterThan(html.indexOf('</form>'));
   });
 
-  test('settings.html parses and carries the role-type editor contract', () => {
+  // Settings arc (W4): settings.html is personal only — the role-type editor
+  // left it for its one home in YisraCase Config (CFG-2). The editor's own
+  // contract is pinned where it lives now.
+  test('settings.html parses and no longer carries the role-type editor', () => {
     const html = checkInlineScripts('public/settings.html');
-    expect(html).toMatch(/id="contactRolesSection"/);
+    expect(html).not.toMatch(/id="contactRolesSection"/);
+    expect(html).not.toMatch(/\/api\/contact-role-types/);
+    expect(html).not.toMatch(/The code is permanent/);
+  });
+
+  // The editor moved to YisraCase Config (settings arc CFG-2); its behaviour
+  // is driven in jsdom by tests/contactRolesConfig.test.js.
+  test('caseconfig/contactRoles.html parses and carries the role-type editor contract', () => {
+    const html = checkInlineScripts('public/caseconfig/contactRoles.html');
+    expect(html).toMatch(/id="crList"/);
     expect(html).toMatch(/\/api\/contact-role-types/);        // the TABLE routes, not app_settings
     expect(html).toMatch(/The code is permanent/);
   });

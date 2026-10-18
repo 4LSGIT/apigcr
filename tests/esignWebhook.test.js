@@ -36,6 +36,9 @@ jest.mock('../services/esignFilingService', () => ({
 jest.mock('../services/esignAlertService', () => ({
   raiseTask: jest.fn(async () => ({ ok: true, taskId: 777 })),
   resolveAlertAssignee: jest.fn(async () => 22),
+  // The webhook ROUTE (routes/api.esign.js — the hmac-gate route tests below)
+  // auto-resolves the dead-channel task on every admitted delivery.
+  resolveTask: jest.fn(async () => ({ ok: true })),
 }));
 
 jest.mock('../services/logService', () => ({
@@ -200,17 +203,25 @@ describe('hmac verification', () => {
   const sigHex = (secret, body) =>
     crypto.createHmac('sha256', secret).update(body, 'utf8').digest('hex');
 
-  /** db serving the two-key IN query for hmac config (plus token reads). */
-  function hmacDb({ secret = SECRET, mode = 'log' } = {}) {
+  /**
+   * db serving the secret read for hmac config (plus token reads). A row of
+   * the RETIRED esign_webhook_hmac_mode key (settings arc, 2026-10 — rows
+   * deleted only after the deploy) is served to any query that asks for it,
+   * as the live table would: `staleMode` proves nothing reads it any more.
+   * null = no row.
+   */
+  function hmacDb({ secret = SECRET, staleMode = 'log' } = {}) {
+    const RETIRED = 'esign_webhook_hmac_mode';
+    const table = { [svc.WEBHOOK_SECRET_KEY]: secret, [RETIRED]: staleMode };
     return {
-      query: jest.fn(async (sql, params) => {
-        if (/`key`\s+IN/i.test(sql)) {
-          const rows = [];
-          if (secret !== undefined) rows.push({ key: svc.WEBHOOK_SECRET_KEY, value: secret });
-          if (mode !== undefined) rows.push({ key: svc.WEBHOOK_HMAC_MODE_KEY, value: mode });
-          return [rows];
+      query: jest.fn(async (sql, params = []) => {
+        if (/FROM app_settings/i.test(sql)) {
+          const keys = params.flat().filter((k) => Object.prototype.hasOwnProperty.call(table, k));
+          if (keys.length) {
+            return [keys.filter((k) => table[k] != null).map((k) => ({ key: k, value: table[k] }))];
+          }
+          return [[{ value: TOKEN }]];
         }
-        if (/FROM app_settings/i.test(sql)) return [[{ value: TOKEN }]];
         return [[]];
       }),
     };
@@ -230,14 +241,27 @@ describe('hmac verification', () => {
 
   test('valid base64 signature matches', async () => {
     const out = await svc.evaluateHmac(hmacDb(), { rawBody: BODY, signature: sigB64(SECRET, BODY) });
-    expect(out).toEqual({ mode: 'log', ok: true, reason: 'match' });
+    expect(out).toEqual({ mode: 'enforce', ok: true, reason: 'match' });
   });
 
-  test('mode setting "enforce" is reported; anything else is log', async () => {
-    const good = sigB64(SECRET, BODY);
-    expect((await svc.evaluateHmac(hmacDb({ mode: 'enforce' }), { rawBody: BODY, signature: good })).mode).toBe('enforce');
-    expect((await svc.evaluateHmac(hmacDb({ mode: '' }), { rawBody: BODY, signature: good })).mode).toBe('log');
-    expect((await svc.evaluateHmac(hmacDb({ mode: 'garbage' }), { rawBody: BODY, signature: good })).mode).toBe('log');
+  // Settings arc (2026-10): esign_webhook_hmac_mode retired at 'enforce'. The
+  // log-only mode no longer exists — this replaces the old "'enforce' is
+  // reported; anything else is log" pin. A set secret ALWAYS enforces, and a
+  // leftover mode row of any value is never read.
+  test('a set secret always enforces; a leftover esign_webhook_hmac_mode row is never read', async () => {
+    for (const staleMode of ['log', '', 'garbage', 'enforce', null]) {
+      const db = hmacDb({ staleMode });
+      const good = await svc.evaluateHmac(db, { rawBody: BODY, signature: sigB64(SECRET, BODY) });
+      expect(good).toEqual({ mode: 'enforce', ok: true, reason: 'match' });
+      const bad = await svc.evaluateHmac(db, { rawBody: BODY, signature: 'AAAA'.repeat(11) });
+      expect(bad).toMatchObject({ mode: 'enforce', ok: false, reason: 'signature_mismatch' });
+      const none = await svc.evaluateHmac(db, { rawBody: BODY, signature: null });
+      expect(none).toEqual({ mode: 'enforce', ok: false, reason: 'signature_missing' });
+      for (const [sql, params] of db.query.mock.calls) {
+        expect(String(sql) + JSON.stringify(params || [])).not.toMatch(/hmac_mode/);
+      }
+    }
+    expect(svc).not.toHaveProperty('WEBHOOK_HMAC_MODE_KEY');
   });
 
   test('wrong signature → signature_mismatch with truncated diagnostics', async () => {
@@ -277,7 +301,7 @@ describe('hmac verification', () => {
     const buf = Buffer.from(BODY, 'utf8');
     const sig = crypto.createHmac('sha256', SECRET).update(buf).digest('base64');
     const out = await svc.evaluateHmac(hmacDb(), { rawBody: buf, signature: sig });
-    expect(out).toEqual({ mode: 'log', ok: true, reason: 'match' });
+    expect(out).toEqual({ mode: 'enforce', ok: true, reason: 'match' });
   });
 
   test('invalid-UTF-8 bytes: Buffer matches where the decoded string could not', async () => {
@@ -308,11 +332,102 @@ describe('hmac verification', () => {
     expect(out.reason).toBe('config_unreadable');
   });
 
-  test('getHmacConfig trims and maps values', async () => {
-    expect(await svc.getHmacConfig(hmacDb({ secret: `  ${SECRET}  `, mode: ' enforce ' })))
+  test('getHmacConfig trims; the secret alone decides off vs enforce', async () => {
+    expect(await svc.getHmacConfig(hmacDb({ secret: `  ${SECRET}  `, staleMode: 'log' })))
       .toEqual({ secret: SECRET, mode: 'enforce' });
-    expect(await svc.getHmacConfig(hmacDb({ secret: '   ', mode: 'enforce' })))
+    expect(await svc.getHmacConfig(hmacDb({ secret: '   ', staleMode: 'enforce' })))
       .toEqual({ secret: null, mode: 'off' });
+    expect(await svc.getHmacConfig(hmacDb({ secret: null })))
+      .toEqual({ secret: null, mode: 'off' });
+  });
+});
+
+// ─────────────────────────────────────────────────────────────
+// The ROUTE turns the verdict into a response (routes/api.esign.js). Since the
+// mode setting retired (settings arc, 2026-10), a set secret means a missing
+// or wrong signature is ALWAYS a 401 — whatever a leftover mode row says —
+// and an empty secret still disables verification (the URL token gates).
+describe('webhook route: the hmac gate', () => {
+  const crypto = require('crypto');
+  const http = require('http');
+  const express = require('express');
+  const router = require('../routes/api.esign');
+  const SECRET = 'zoho-webhook-secret-key';
+  const BODY = JSON.stringify(zohoBody());
+  const sig = (body) => crypto.createHmac('sha256', SECRET).update(body, 'utf8').digest('base64');
+
+  function routeDb({ secret = SECRET, staleMode = 'log' } = {}) {
+    const values = {
+      [svc.WEBHOOK_TOKEN_KEY]: TOKEN,
+      [svc.WEBHOOK_SECRET_KEY]: secret,
+      esign_webhook_hmac_mode: staleMode,      // retired; must never be read (null = no row)
+    };
+    const calls = [];
+    return {
+      calls,
+      query: jest.fn(async (sql, params = []) => {
+        calls.push({ sql: String(sql), params });
+        if (/^\s*INSERT INTO app_settings/i.test(sql)) return [{ affectedRows: 1 }];
+        if (/FROM app_settings/i.test(sql)) {
+          const keys = params.flat().filter((k) => values[k] != null);
+          return [keys.map((k) => ({ key: k, value: values[k] }))];
+        }
+        return [[]];
+      }),
+    };
+  }
+
+  function post(db, { signature } = {}) {
+    const app = express();
+    app.use((req, _res, next) => { req.db = db; next(); });
+    app.use(router);
+    return new Promise((resolve, reject) => {
+      const server = app.listen(0, () => {
+        const headers = { 'content-type': 'text/plain' };
+        if (signature !== undefined) headers[svc.SIGNATURE_HEADER] = signature;
+        const req = http.request({
+          port: server.address().port, method: 'POST', headers,
+          path: `${router.WEBHOOK_PATH}?token=${TOKEN}`,
+        }, (res) => {
+          let data = '';
+          res.on('data', (c) => (data += c));
+          res.on('end', async () => {
+            server.close();
+            // let the post-response pipeline settle before the mocks reset
+            for (let i = 0; i < 5; i++) await new Promise((r) => setImmediate(r));
+            resolve({ status: res.statusCode, body: JSON.parse(data || '{}') });
+          });
+        });
+        req.on('error', (e) => { server.close(); reject(e); });
+        req.write(BODY);
+        req.end();
+      });
+    });
+  }
+  const heartbeats = (db) => db.calls.filter((c) => /INSERT INTO app_settings/i.test(c.sql));
+
+  test('secret set: a wrong or missing signature is rejected (401, no heartbeat) whatever a leftover mode row says', async () => {
+    for (const staleMode of ['log', '', 'garbage', null]) {
+      for (const signature of ['AAAA'.repeat(11), undefined]) {
+        const db = routeDb({ staleMode });
+        const r = await post(db, { signature });
+        expect(r).toEqual({ status: 401, body: { status: 'error' } });
+        expect(heartbeats(db)).toEqual([]);
+      }
+    }
+  });
+
+  test('secret set: the right signature is admitted (200 + heartbeat)', async () => {
+    const db = routeDb();
+    const r = await post(db, { signature: sig(BODY) });
+    expect(r).toEqual({ status: 200, body: { status: 'received' } });
+    expect(heartbeats(db)).toHaveLength(1);
+  });
+
+  test('secret empty: verification stays off — no signature is admitted on the token alone', async () => {
+    const db = routeDb({ secret: '' });
+    const r = await post(db, { signature: undefined });
+    expect(r).toEqual({ status: 200, body: { status: 'received' } });
   });
 });
 

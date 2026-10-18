@@ -959,6 +959,103 @@ describe('_sniff — app-settings create', () => {
 });
 
 // ─────────────────────────────────────────────────────────────
+// The app-settings RESTORE matcher (settings arc, 2026-10)
+//
+// POST /api/app-settings/:key/restore answers exactly like the PUT
+// ({status, setting: {key, value, updated_at}}), so it announces exactly like
+// the PUT: setting:<key> with the RAW stored string, from the URL's key.
+// ─────────────────────────────────────────────────────────────
+
+describe('_sniff — app-settings restore', () => {
+  function spy(w, addr = 'setting:*') {
+    const seen = [];
+    w.YC.on(addr, '*', (f, m) => seen.push({ addr: m.addr, fields: f, origin: m.origin }));
+    return seen;
+  }
+
+  test('POST /api/app-settings/:key/restore emits setting:<key> with the raw string', () => {
+    const w = mkWindow();
+    const seen = spy(w, 'setting:fe-firm_phone');
+    w.YC._sniff('POST', '/api/app-settings/fe-firm_phone/restore', {
+      status: 'success',
+      setting: { key: 'fe-firm_phone', value: ' 2484179800 ', updated_at: '2026-10-18T12:00:00.000Z' },
+    });
+    expect(seen).toEqual([{
+      addr: 'setting:fe-firm_phone',
+      fields: { value: ' 2484179800 ' },
+      origin: 'auto:POST /api/app-settings/fe-firm_phone/restore',
+    }]);
+  });
+
+  test('the value is not parsed, and a blank restore (a NULL old value) still emits', () => {
+    const w = mkWindow();
+    const seen = spy(w);
+    w.YC._sniff('POST', '/api/app-settings/fe-event_types/restore', { setting: { key: 'fe-event_types', value: '["Hearing"]' } });
+    w.YC._sniff('POST', '/api/app-settings/firm_name/restore', { setting: { key: 'firm_name', value: '' } });
+    expect(seen.map((s) => [s.addr, s.fields])).toEqual([
+      ['setting:fe-event_types', { value: '["Hearing"]' }],
+      ['setting:firm_name', { value: '' }],
+    ]);
+  });
+
+  test('a non-string / absent value, or no setting at all, emits nothing (fail closed, as the PUT)', () => {
+    const w = mkWindow();
+    const seen = spy(w);
+    for (const value of [{ a: 1 }, null, 42, undefined, ['x']]) {
+      w.YC._sniff('POST', '/api/app-settings/fe-x/restore', { setting: { key: 'fe-x', value } });
+    }
+    w.YC._sniff('POST', '/api/app-settings/fe-x/restore', { status: 'success' });
+    w.YC._sniff('POST', '/api/app-settings/fe-x/restore', null);
+    expect(seen).toEqual([]);
+  });
+
+  test('POST-only: PUT / PATCH / DELETE / GET on the restore path emit nothing', () => {
+    const w = mkWindow();
+    const seen = spy(w);
+    const body = { setting: { key: 'fe-x', value: 'v' } };
+    for (const m of ['PUT', 'PATCH', 'DELETE', 'GET']) w.YC._sniff(m, '/api/app-settings/fe-x/restore', body);
+    expect(seen).toEqual([]);
+  });
+
+  test('the per-key, create and restore matchers do not poach each other', () => {
+    const w = mkWindow();
+    const seen = spy(w);
+    w.YC._sniff('PUT',  '/api/app-settings/fe-a',         { setting: { key: 'fe-a', value: '1' } });
+    w.YC._sniff('POST', '/api/app-settings',              { setting: { key: 'fe-b', value: '2' } });
+    w.YC._sniff('POST', '/api/app-settings/fe-c/restore', { setting: { key: 'fe-c', value: '3' } });
+    w.YC._sniff('POST', '/api/app-settings/fe-d',         { setting: { key: 'fe-d', value: '4' } });          // no such route
+    w.YC._sniff('POST', '/api/app-settings/fe-e/restore/x', { setting: { key: 'fe-e', value: '5' } });      // anchored
+    w.YC._sniff('POST', '/api/app-settings/fe-f/history',  { setting: { key: 'fe-f', value: '6' } });       // a GET route
+    expect(seen.map((s) => [s.addr, s.fields.value, s.origin])).toEqual([
+      ['setting:fe-a', '1', 'auto:PUT /api/app-settings/fe-a'],
+      ['setting:fe-b', '2', 'auto:POST /api/app-settings'],
+      ['setting:fe-c', '3', 'auto:POST /api/app-settings/fe-c/restore'],
+    ]);
+  });
+
+  test('the address comes from the URL (key charset as the PUT matcher\'s)', () => {
+    const w = mkWindow();
+    const seen = spy(w);
+    for (const key of ['dropbox_unsorted_uploads_path', 'fe-lead_sources', 'some.dotted.key']) {
+      w.YC._sniff('POST', '/api/app-settings/' + key + '/restore', { setting: { key: 'ignored', value: 'v' } });
+    }
+    expect(seen.map((s) => s.addr)).toEqual([
+      'setting:dropbox_unsorted_uploads_path', 'setting:fe-lead_sources', 'setting:some.dotted.key',
+    ]);
+  });
+
+  test('a restore crosses windows like any other setting write', async () => {
+    const a = mkWindow();
+    const b = mkWindow();
+    const seenB = [];
+    b.YC.on('setting:firm_email', '*', (f) => seenB.push(f));
+    a.YC._sniff('POST', '/api/app-settings/firm_email/restore', { setting: { key: 'firm_email', value: 'office@example.com' } });
+    await settle();
+    expect(seenB).toEqual([{ value: 'office@example.com' }]);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────
 // The revive matchers (Slice 2c) — the SECOND transfer endpoint
 //
 // contact-form.html has two 409-force flows. The aggregate form save

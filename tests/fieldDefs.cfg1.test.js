@@ -16,9 +16,11 @@
  *      carries the identical WHERE predicate). The badge and the 409 can
  *      therefore never disagree.
  *   3. settings.html NO LONGER carries the Case Types or Custom Fields
- *      editors; fe-case_types is excluded from the generic firm-settings
- *      rows (CUSTOM → 'caseConfig' → `continue`); the pointer notes exist;
- *      Event Types is parked as the legacy fallback list, still functional.
+ *      editors. Since the settings arc (W4) it carries no firm-wide editor at
+ *      all: no generic firm-settings rows a key could fall back into, no
+ *      app-settings read, one pointer to YisraCase Config; the legacy Event
+ *      Types list left with the rest (the registry homes fe-event_types in
+ *      Config → Lists).
  *   4. RENAME: the shell and the More button say "YisraCase Config".
  *
  * Same harness family as tests/fieldDefs.s1.test.js: dispatch-on-SQL-text
@@ -186,38 +188,36 @@ describe('GET /api/field-defs/usage', () => {
 // 4. settings.html — the deletions and the park
 // ─────────────────────────────────────────────────────────────
 
-describe('settings.html after CFG-1', () => {
+// Settings arc (W4): settings.html became personal only — tests/mySettings.test.js
+// pins it behaviourally; these keep CFG-1's intent (one editor per setting).
+describe('settings.html after CFG-1 (and the settings arc)', () => {
   const html = fs.readFileSync(path.join(ROOT, 'public/settings.html'), 'utf8');
+  const POINTER = /Firm-wide settings live in <b>YisraCase Config<\/b> \(More → YisraCase Config\)/;
 
   test('the Case Types editor is gone, with a pointer', () => {
     expect(html).not.toMatch(/id="caseTypesSection"/);
     expect(html).not.toMatch(/function ctInit/);
     expect(html).not.toMatch(/Save Case Types/);
-    expect(html).toMatch(/Case Types moved to <b>YisraCase Config/);
+    expect(html).toMatch(POINTER);
   });
 
   test('the Custom Fields editor is gone, with a pointer', () => {
     expect(html).not.toMatch(/id="customFieldsSection"/);
     expect(html).not.toMatch(/function cfInit/);
     expect(html).not.toMatch(/\/api\/field-defs/);
-    expect(html).toMatch(/Custom Fields moved to <b>YisraCase Config/);
+    expect(html).toMatch(POINTER);
   });
 
-  test('fe-case_types can NOT fall back into the generic firm-settings rows', () => {
-    // The CUSTOM map claims the key…
-    expect(html).toMatch(/'fe-case_types':\s*'caseConfig'/);
-    // …and the boot loop drops it before settingRow() can render it.
-    expect(html).toMatch(/if \(custom === 'caseConfig'\)\s*continue;/);
+  test('fe-case_types (or any setting) can NOT be edited here: no generic rows, no app-settings read', () => {
+    expect(html).not.toMatch(/\/api\/app-settings/);
+    expect(html).not.toMatch(/function settingRow|id="dynSections"/);
+    expect(html).not.toMatch(/fe-case_types/);
   });
 
-  test('Event Types is parked as the legacy fallback list — and still works', () => {
-    expect(html).toMatch(/Event Types \(legacy fallback list\)/);
-    expect(html).toMatch(/only<\/b> when the calendar-type registry is unreachable or empty/);
-    expect(html).toMatch(/YisraCase Config → Calendar Types/);
-    // Still live in degraded mode: the editor, its save and its init survive.
-    expect(html).toMatch(/id="eventTypesSection"/);
-    expect(html).toMatch(/function etInit/);
-    expect(html).toMatch(/api\('\/api\/app-settings\/fe-event_types', 'PUT'/);
+  test('the legacy Event Types list left with the rest; the registry homes it in Config → Lists', () => {
+    expect(html).not.toMatch(/id="eventTypesSection"/);
+    expect(html).not.toMatch(/function etInit/);
+    expect(require('../lib/settingsRegistry').SETTINGS['fe-event_types']).toMatchObject({ home: 'config', section: 'lists' });
   });
 });
 

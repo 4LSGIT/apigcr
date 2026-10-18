@@ -5,7 +5,7 @@ committed as `ref/UNIFIED_EVENTS_DESIGN_V0_4.md` in `4d13cbf` and removed once t
 all of it — `git show 4d13cbf:ref/UNIFIED_EVENTS_DESIGN_V0_4.md` for the text E0a and E1 were
 built against. v0.4's section numbers are preserved here, so its cites still resolve.
 
-**Status: RATIFIED 2026-09-01; U1–U6b shipped the same day (§7). `unified_singleton_enabled` still OFF.** Every gate in the
+**Status: RATIFIED 2026-09-01; U1–U6b shipped the same day (§7). Singleton supersession is always on (the registry's `singleton` flag decides).** Every gate in the
 2026-08-30 draft is ruled (§8.1); the remaining open items in §8.2 are work to schedule, not
 decisions to make. The registry is live: `calendar_item_types` (34 seeded rows) and `type_key` on
 both `appts` and `events`, backfilled and verified 2026-09-01 — and since U3 the COLUMN, not a
@@ -405,8 +405,8 @@ per-type reconcile become one rule in the U6 write API: if `type.singleton`, a n
 `rescheduled_from_appt_id` (appts). Identity for court-v2's "which existing item": singleton →
 `(anchor, type_key)`; else `(anchor, type_key, date)`. **This is the adjournment-identity answer
 from the SS worksheet.** `ai_match_types.collapse_same_date` stays as the pre-create dedup rule
-("same date ⇒ same item") applied before create-vs-supersede. Ships behind
-`app_settings.unified_singleton_enabled` (default off) until verified live.
+("same date ⇒ same item") applied before create-vs-supersede. Always on: the
+registry's `singleton` flag decides, for events and appointments alike.
 
 ### 3.5 Domain events from both services (A5)
 
@@ -678,7 +678,7 @@ code. Everything firm-specific is user-editable data: which types exist, labels,
 `singleton`, `blocks_default`, `client_attends`, lengths, `case_types`, **`surfaces`** (which UI
 offers which type — U2b), sequence cascade filters, trigger configs, court ingest mapping,
 pipeline stages. Remaining firm-specific hardcodes, fenced and scheduled: the `meeting_341` →
-`cases` projection (U10) and the legacy 341 string block (deleted after U10). The SaaS/general
+`cases` projection (U10). (The legacy 341 string block is gone: a `singleton` type supersedes by its key, never its label.) The SaaS/general
 angle rides on this line: the engine is case-type- and firm-agnostic; a firm is its tables.
 
 ### 8.2 Open — needs Fred

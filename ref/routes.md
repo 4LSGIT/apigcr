@@ -1,7 +1,7 @@
 # Routes
 
-_Generated 2026-10-16T17:30:38.760Z_  
-_793 routes total — DELETE: 65, GET: 333, PATCH: 57, POST: 298, PUT: 37, _ALL: 3_
+_Generated 2026-10-18T07:18:55.020Z_  
+_795 routes total — DELETE: 65, GET: 334, PATCH: 57, POST: 299, PUT: 37, _ALL: 3_
 
 ## Global middleware chain
 
@@ -69,7 +69,9 @@ _793 routes total — DELETE: 65, GET: 333, PATCH: 57, POST: 298, PUT: 37, _ALL:
 | POST | `/api/api-keys/rotate-internal` | `jwtOrApiKey`, `superuserCheck`, `elevationCheck`, `rateLimitMiddleware` | — |
 | GET | `/api/app-settings` | `jwtOrApiKey` | — |
 | POST | `/api/app-settings` | `staffAuth` | — |
-| PUT | `/api/app-settings/:key` | `staffAuth` | — |
+| PUT | `/api/app-settings/:key` | `perKeyGate` | — |
+| GET | `/api/app-settings/:key/history` | `perKeyGate` | — |
+| POST | `/api/app-settings/:key/restore` | `perKeyGate` | — |
 | GET | `/api/appts` | `jwtOrApiKey` | — |
 | POST | `/api/appts` | `jwtOrApiKey` | — |
 | GET | `/api/appts/:id` | `jwtOrApiKey` | — |
@@ -104,15 +106,15 @@ _793 routes total — DELETE: 65, GET: 333, PATCH: 57, POST: 298, PUT: 37, _ALL:
 | GET | `/api/calendar-range` | `jwtOrApiKey` | — |
 | GET | `/api/calendar-types` | `jwtOrApiKey` | — |
 | GET | `/api/calendar-types-admin` | `jwtOrApiKey` | — |
-| POST | `/api/calendar-types-admin` | `jwtOrApiKey` | — |
-| DELETE | `/api/calendar-types-admin/:type_key` | `jwtOrApiKey` | — |
+| POST | `/api/calendar-types-admin` | `staffAuth` | — |
+| DELETE | `/api/calendar-types-admin/:type_key` | `staffAuth` | — |
 | GET | `/api/calendar-types-admin/:type_key` | `jwtOrApiKey` | — |
-| PUT | `/api/calendar-types-admin/:type_key` | `jwtOrApiKey` | — |
-| POST | `/api/calendar-types-admin/:type_key/adopt-unmapped` | `jwtOrApiKey` | — |
-| POST | `/api/calendar-types-admin/:type_key/options` | `jwtOrApiKey` | — |
+| PUT | `/api/calendar-types-admin/:type_key` | `staffAuth` | — |
+| POST | `/api/calendar-types-admin/:type_key/adopt-unmapped` | `staffAuth` | — |
+| POST | `/api/calendar-types-admin/:type_key/options` | `staffAuth` | — |
 | GET | `/api/calendar-types-admin/case-types` | `jwtOrApiKey` | — |
-| DELETE | `/api/calendar-types-admin/options/:id` | `jwtOrApiKey` | — |
-| PUT | `/api/calendar-types-admin/options/:id` | `jwtOrApiKey` | — |
+| DELETE | `/api/calendar-types-admin/options/:id` | `staffAuth` | — |
+| PUT | `/api/calendar-types-admin/options/:id` | `staffAuth` | — |
 | GET | `/api/calendar-types-admin/unmapped` | `jwtOrApiKey` | — |
 | GET | `/api/calendar-types/options` | `jwtOrApiKey` | — |
 | GET | `/api/campaigns` | `jwtOrApiKey` | — |
@@ -181,8 +183,8 @@ _793 routes total — DELETE: 65, GET: 333, PATCH: 57, POST: 298, PUT: 37, _ALL:
 | DELETE | `/api/contact-relations/:id` | `jwtOrApiKey` | — |
 | PATCH | `/api/contact-relations/:id` | `jwtOrApiKey` | — |
 | GET | `/api/contact-role-types` | `jwtOrApiKey` | — |
-| POST | `/api/contact-role-types` | `jwtOrApiKey` | — |
-| PUT | `/api/contact-role-types/:code` | `jwtOrApiKey` | — |
+| POST | `/api/contact-role-types` | `staffAuth` | — |
+| PUT | `/api/contact-role-types/:code` | `staffAuth` | — |
 | GET | `/api/contacts` | `jwtOrApiKey` | — |
 | POST | `/api/contacts` | `jwtOrApiKey` | — |
 | GET | `/api/contacts/:id` | `jwtOrApiKey` | — |
@@ -335,11 +337,11 @@ _793 routes total — DELETE: 65, GET: 333, PATCH: 57, POST: 298, PUT: 37, _ALL:
 | POST | `/api/feature-requests/:id/comments` | `jwtOrApiKey` | — |
 | POST | `/api/feature-requests/:id/vote` | `jwtOrApiKey` | — |
 | GET | `/api/field-defs` | `jwtOrApiKey` | — |
-| POST | `/api/field-defs` | `jwtOrApiKey` | — |
-| PATCH | `/api/field-defs/:id` | `jwtOrApiKey` | — |
-| POST | `/api/field-defs/:id/deactivate` | `jwtOrApiKey` | — |
-| POST | `/api/field-defs/:id/reactivate` | `jwtOrApiKey` | — |
-| POST | `/api/field-defs/reconcile` | `jwtOrApiKey` | — |
+| POST | `/api/field-defs` | `staffAuth` | — |
+| PATCH | `/api/field-defs/:id` | `staffAuth` | — |
+| POST | `/api/field-defs/:id/deactivate` | `staffAuth` | — |
+| POST | `/api/field-defs/:id/reactivate` | `staffAuth` | — |
+| POST | `/api/field-defs/reconcile` | `staffAuth` | — |
 | GET | `/api/field-defs/usage` | `jwtOrApiKey` | — |
 | GET | `/api/firm-blocks` | `jwtOrApiKey` | — |
 | POST | `/api/firm-blocks` | `jwtOrApiKey` | — |
@@ -507,20 +509,20 @@ _793 routes total — DELETE: 65, GET: 333, PATCH: 57, POST: 298, PUT: 37, _ALL:
 | GET | `/api/phone-lines/readable` | `jwtOrApiKey`, `requireJwt` | — |
 | GET | `/api/phone-lines/sendable` | `jwtOrApiKey`, `requireJwt` | — |
 | GET | `/api/pipeline-admin/detectors` | `jwtOrApiKey` | — |
-| DELETE | `/api/pipeline-admin/requirements/:id` | `jwtOrApiKey` | — |
-| PUT | `/api/pipeline-admin/requirements/:id` | `jwtOrApiKey` | — |
-| DELETE | `/api/pipeline-admin/stages/:id` | `jwtOrApiKey` | — |
-| PUT | `/api/pipeline-admin/stages/:id` | `jwtOrApiKey` | — |
+| DELETE | `/api/pipeline-admin/requirements/:id` | `staffAuth` | — |
+| PUT | `/api/pipeline-admin/requirements/:id` | `staffAuth` | — |
+| DELETE | `/api/pipeline-admin/stages/:id` | `staffAuth` | — |
+| PUT | `/api/pipeline-admin/stages/:id` | `staffAuth` | — |
 | GET | `/api/pipeline-admin/stages/:id/requirements` | `jwtOrApiKey` | — |
-| POST | `/api/pipeline-admin/stages/:id/requirements` | `jwtOrApiKey` | — |
-| POST | `/api/pipeline-admin/stages/:id/requirements/reorder` | `jwtOrApiKey` | — |
+| POST | `/api/pipeline-admin/stages/:id/requirements` | `staffAuth` | — |
+| POST | `/api/pipeline-admin/stages/:id/requirements/reorder` | `staffAuth` | — |
 | GET | `/api/pipeline-admin/templates` | `jwtOrApiKey` | — |
-| POST | `/api/pipeline-admin/templates` | `jwtOrApiKey` | — |
-| DELETE | `/api/pipeline-admin/templates/:id` | `jwtOrApiKey` | — |
-| PUT | `/api/pipeline-admin/templates/:id` | `jwtOrApiKey` | — |
+| POST | `/api/pipeline-admin/templates` | `staffAuth` | — |
+| DELETE | `/api/pipeline-admin/templates/:id` | `staffAuth` | — |
+| PUT | `/api/pipeline-admin/templates/:id` | `staffAuth` | — |
 | GET | `/api/pipeline-admin/templates/:id/stages` | `jwtOrApiKey` | — |
-| POST | `/api/pipeline-admin/templates/:id/stages` | `jwtOrApiKey` | — |
-| POST | `/api/pipeline-admin/templates/:id/stages/reorder` | `jwtOrApiKey` | — |
+| POST | `/api/pipeline-admin/templates/:id/stages` | `staffAuth` | — |
+| POST | `/api/pipeline-admin/templates/:id/stages/reorder` | `staffAuth` | — |
 | GET | `/api/pipeline-admin/usage` | `jwtOrApiKey` | — |
 | GET | `/api/pipeline-board` | `jwtOrApiKey` | — |
 | GET | `/api/portal-access-admin/contacts` | `jwtOrApiKey` | — |
@@ -1063,4 +1065,4 @@ _793 routes total — DELETE: 65, GET: 333, PATCH: 57, POST: 298, PUT: 37, _ALL:
 
 ---
 
-_793 routes total — DELETE: 65, GET: 333, PATCH: 57, POST: 298, PUT: 37, _ALL: 3_
+_795 routes total — DELETE: 65, GET: 334, PATCH: 57, POST: 299, PUT: 37, _ALL: 3_

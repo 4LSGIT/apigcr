@@ -131,7 +131,7 @@ capabilities**:
 | Role | Meaning | Capabilities |
 |---|---|---|
 | `su` | root within the tenant (the YC role) | everything — nothing blocks it ever |
-| `it` | firm technical operator | **all firm-grade capabilities** (incl. `firm.settings` — Q2 yes), never root-grade |
+| `it` | firm technical operator | **all firm-grade capabilities** (incl. `firm.settings` — Q2 yes — and `system.settings`), never root-grade |
 | `admin` | firm administrator | `firm.settings`, `users.manage`*, `automations.manage`, `archives.purge`† |
 | `staff` | baseline employee | the implicit everything-not-gated surface (no registry entry needed in v2) |
 | `attorney` | legal read scope | `comms.read_all` (the existing mailbox/phone read bypass) |
@@ -149,6 +149,11 @@ nothing in this design forecloses either.
 never reorder/remove SET members), one `ROLE_CAPS` registry line, snapshot
 test updates. No route changes.
 
+`system.settings` (settings arc, 2026-10) is firm-grade but deliberately NOT
+in `admin`'s bundle: a firm admin edits the firm's settings (Config → Firm);
+IT edits the system's (Config → System — deployment switches, integration
+wiring, alert thresholds).
+
 \* `users.manage` stays SU-only in v2 (admin.users keeps
 `superuserOnlyFor('users')`); listed to show where it lands if delegated.
 Granting `su` is root-grade regardless.
@@ -165,7 +170,8 @@ gratuitous churn). `'authorized - SU'` and the phantom
   meaning and a `root: true|false` flag (§2.2). Seeded ONLY with proven
   demand: `firm.settings`, `tools.author` (root), `users.manage` (root in
   v2 — delegation later is a registry flip), `templates.code`,
-  `comms.read_all`, `archives.purge`, `automations.manage`. Growing it = a
+  `comms.read_all`, `archives.purge`, `automations.manage`, and — from the
+  settings arc — `system.settings`. Growing it = a
   code change + test snapshot (same deliberate-choice pattern as
   CTA_FN_DENYLIST). Shipped in A1 as `lib/capabilities.js`.
 - `ROLE_CAPS` — role → capability-set map (table above). `su` and `it` are
@@ -305,8 +311,14 @@ never accept the new enum beyond `startsWith('authorized')`.
    `requireAuth({ audience:'staff', can:'firm.settings' })` once A1 lands;
    until then `roles:['admin']` (su/it pass via bypass rules).
 3. **CFG-3 and the role-gated firm-settings editor are ONE surface**, gated
-   by `firm.settings`. `PUT/POST /api/app-settings*` gains that gate in
-   slice A4; per-row `is_editable`/`is_secret` semantics unchanged.
+   by `firm.settings` (Config → Firm). Since the settings arc the gate is
+   per KEY: `lib/settingsRegistry.js` gives each app_settings key one editor
+   home, and the home names the capability — firm / portal / config homes
+   write with `firm.settings`, cta with `system.settings` (all four read by
+   any staff); system / comms read AND write with `system.settings`; secrets,
+   interim access lists and retired keys are never served. A row's
+   `is_editable` governs only UNREGISTERED rows (automation variables);
+   `is_secret` still hides a row whatever the registry says.
 4. **Launcher resolution order: registry → firm → role → user.** The role
    step is additive later (ui-custom S3 ships firm+user with the role
    column sentinel-reserved); entitlement denies overlay the result and

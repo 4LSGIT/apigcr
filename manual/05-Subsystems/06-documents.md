@@ -90,7 +90,8 @@ job had that folder open. Pressing again will not help.
 
 ## The kill switch
 
-`documents_sync_enabled` in Settings. Anything other than exactly `1` stops the
+`documents_sync_enabled` — YisraCase Config → **System** → Switches (IT; see
+[Firm and System settings](15-firm-and-system-settings.md)). Anything other than exactly `1` stops the
 whole engine — no folders walked, no files registered, no re-linking.
 
 A red banner sits at the top of the panel whenever it is off, because a tidy

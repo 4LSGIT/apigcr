@@ -59,6 +59,17 @@
       border-radius: 6px; font-size: 13px; outline: none;
     }
     input[type=text]:focus { border-color: var(--info); }
+    select {
+      width: 100%; max-width: 100%; padding: 7px 9px; border: 1px solid var(--border);
+      border-radius: 6px; font-size: 13px; outline: none;
+    }
+    select:focus { border-color: var(--info); }
+    input:disabled, select:disabled { opacity: 0.7; cursor: default; }
+    .ro-note { font-size: 12px; color: var(--text-2); background: var(--surface-2);
+      border: 1px solid var(--border); border-radius: 6px; padding: 7px 9px; margin-bottom: 14px; }
+    .not-set { display: inline-block; margin-left: 6px; padding: 0 5px; font-size: 10px; font-weight: 600;
+      text-transform: none; letter-spacing: 0; color: var(--text-muted);
+      border: 1px dashed var(--border); border-radius: 4px; }
     .brand-preview {
       margin-top: 8px; padding: 10px; border: 1px dashed var(--border);
       border-radius: 8px; background: var(--surface-2); text-align: center;
@@ -66,7 +77,7 @@
     .brand-preview img { max-height: 80px; max-width: 100%; object-fit: contain; }
     .brand-preview .none { font-size: 11.5px; color: var(--text-muted); }
     .brand-row { display: flex; gap: 10px; align-items: flex-start; }
-    .brand-row > div:first-child { flex: 1; }
+    .brand-row > div:first-child { flex: 1; min-width: 0; }
     label { display: block; font-size: 11px; font-weight: 600; color: var(--text-2);
       margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.03em; }
     code { background: var(--page-bg); border-radius: 4px; padding: 1px 5px; font-size: 11.5px; }
@@ -83,8 +94,10 @@
 // ═══════════════════════════════════════════════════════════════
 // PORTAL SETTINGS SUB-PAGE (Portal Manager)
 //
-// Thin UI over the EXISTING generic app_settings API — no bespoke
-// backend. Values:
+// Thin UI over the generic app_settings API — no bespoke backend. The
+// settings registry (lib/settingsRegistry.js) homes every portal key HERE
+// (home 'portal': readable by any staff, written with firm.settings).
+// Values:
 //   portal_live             global kill switch. Enforcement lives in
 //                           lib/auth.requireAuth (contact branch: every
 //                           session-protected portal route — cases,
@@ -98,7 +111,27 @@
 //   portal_sms_monthly_cap  login-PIN SMS monthly cost cap (service
 //                           default 300 when the row is absent).
 //   portal_sms_counter      read-only usage JSON, shown if the row is
-//                           visible through the settings API.
+//                           visible through the settings API (registry:
+//                           system state — served to system.settings
+//                           holders only, so IT / SU see it, admins don't).
+//   portal_email_from       sender of portal login-code emails. Must be
+//                           one of the firm's sending addresses
+//                           (firmData.emailFrom = email_credentials) or
+//                           PIN emails fail. portalAuthService falls back
+//                           to email_default_from only while the row is
+//                           MISSING — a blank value is no sender at all,
+//                           so this page refuses blank, and asks before
+//                           saving an address that is not a sender.
+//   portal_callback_task_to the user the task of a portal callback request
+//                           is assigned to (portalCallbackService: not a
+//                           user id → the request fails). Picker: active
+//                           staff only; a stored inactive / unknown id
+//                           stays listed, selected and labelled (the D3b
+//                           keep-current rule) — never silently swapped.
+//   portal_docs_notify_to   recipient of the client-upload notification
+//                           email — portal uploads AND checklist upload
+//                           links (portalDocsService). Blank = those
+//                           emails off; the case log entry still writes.
 //   portal_logo_url         (S5.2) portal header/login logo. Blank =
 //                           fall back to the firm-wide fe-firm_logo_url.
 //   portal_favicon_url      (S5.2) portal favicon. Blank = use the
@@ -112,9 +145,15 @@
 //                           5-minute client cache — edits take up to
 //                           5 min to reach client browsers).
 //
-// Rows are created on first use via POST /api/app-settings when
-// missing (signed-in staff only — the API rejects api-key creation by
-// design). PUT thereafter.
+// Rows carry registry metadata (GET /api/app-settings):
+//   exists:false   a registered key with no row yet — shown "not set";
+//                  the code's default applies.
+//   can_edit:false the caller lacks firm.settings — the control renders
+//                  disabled with no Save, and every save function refuses
+//                  on its own too (the server is the authority).
+// Every save is PUT /api/app-settings/:key, which CREATES a missing
+// registered row; there is no POST fallback — POST /api/app-settings
+// refuses every registered key (409).
 // ═══════════════════════════════════════════════════════════════
 
 const P = window.parent;
@@ -135,6 +174,62 @@ async function load() {
   render();
 }
 
+/** The row's can_edit (registry edit 'ui' AND the caller holds firm.settings).
+ *  A key the API did not serve is not editable here. */
+function canEditKey(key) {
+  const row = settings[key];
+  return !!(row && row.can_edit === true);
+}
+/** A registered key with no row yet (the code's default applies). */
+function notSet(key) {
+  const row = settings[key];
+  return !!(row && row.exists === false);
+}
+const NOT_SET_TAG = '<span class="not-set">not set</span>';
+const PORTAL_KEYS = ['portal_live', 'portal_email_from', 'portal_sms_monthly_cap', 'portal_callback_task_to',
+  'portal_docs_notify_to', 'portal_logo_url', 'portal_favicon_url', 'portal_logo_href'];
+const rowVal = (key) => {
+  const row = settings[key];
+  return row && row.value != null ? String(row.value) : '';
+};
+const disIfRo = (key) => (canEditKey(key) ? '' : ' disabled');
+/** A field's Save button — only for a caller who may write the key. */
+function saveBtnHtml(key, onclick) {
+  return canEditKey(key)
+    ? `<button class="btn btn-primary" style="margin-top:19px" onclick="${onclick}"><i class="fa-solid fa-floppy-disk"></i> Save</button>`
+    : '';
+}
+
+/** The firm's sending addresses (email_credentials, via the shell's firmData). */
+function senderAddresses() {
+  const list = (P.firmData && P.firmData.emailFrom) || [];
+  return list.map((e) => String((e && e.email) || '').trim()).filter(Boolean);
+}
+
+/**
+ * The callback-assignee picker. New choices: active staff only (firmData
+ * `active`, a staff user_type, never user 0 — the assignee-picker filter of
+ * routes/api.firmData.js). The stored value is KEPT whatever filter
+ * excludes it — listed last, selected and named — so an unchanged save
+ * never silently re-points the task (D3b keep-current).
+ * @returns {{ html: string, kept: string|null }}  kept = why the current value is not a normal choice
+ */
+function callbackPicker(current) {
+  const users = (P.firmData && P.firmData.users) || [];
+  const active = users.filter((u) => Number(u.user) > 0 && u.user_type && u.active !== false);
+  const cur = String(current == null ? '' : current).trim();
+  let html = cur ? '' : '<option value="" selected disabled>— not set —</option>';
+  html += active.map((u) => `<option value="${esc(u.user)}"${String(u.user) === cur ? ' selected' : ''}>${esc(u.user_name || ('user #' + u.user))}</option>`).join('');
+  let kept = null;
+  if (cur && !active.some((u) => String(u.user) === cur)) {
+    const u = users.find((x) => String(x.user) === cur);
+    kept = !u ? 'not in the staff list' : (u.active === false ? 'inactive' : 'not assignable');
+    const name = u ? (u.user_name || ('user #' + u.user)) : ('user #' + cur);
+    html += `<option value="${esc(cur)}" selected>${esc(name)} (${kept})</option>`;
+  }
+  return { html, kept };
+}
+
 function isLive() {
   const row = settings['portal_live'];
   return !row || String(row.value ?? '').trim() !== '0';   // mirror of isPortalLive
@@ -150,6 +245,9 @@ function render() {
   const firmLogoRow = settings['fe-firm_logo_url'];
   const firmLogo = firmLogoRow && firmLogoRow.value ? String(firmLogoRow.value).trim() : '';
 
+  const readOnly = !PORTAL_KEYS.some(canEditKey);
+  const cb = callbackPicker(rowVal('portal_callback_task_to'));
+
   let counterHtml = '';
   if (counterRow && counterRow.value) {
     let pretty = counterRow.value;
@@ -158,6 +256,8 @@ function render() {
   }
 
   E('wrap').innerHTML = `
+    ${readOnly ? `<div class="ro-note"><i class="fa-solid fa-lock"></i>
+      Read-only — changing portal settings needs the admin permission.</div>` : ''}
     <div class="box">
       <h3><i class="fa-solid fa-power-off"></i> Portal availability</h3>
       <div class="status-line">
@@ -165,8 +265,9 @@ function render() {
           <i class="fa-solid fa-circle" style="font-size:9px"></i>
           ${live ? 'Portal is LIVE' : 'Portal is DOWN'}
         </span>
+        ${notSet('portal_live') ? `${NOT_SET_TAG}<span class="hint" style="margin:0">live by default</span>` : ''}
         <span style="flex:1"></span>
-        ${live
+        ${!canEditKey('portal_live') ? '' : live
           ? `<button class="btn btn-danger" onclick="setLive(false)"><i class="fa-solid fa-power-off"></i> Take portal down</button>`
           : `<button class="btn btn-success" onclick="setLive(true)"><i class="fa-solid fa-power-off"></i> Bring portal up</button>`}
       </div>
@@ -183,11 +284,11 @@ function render() {
 
     <div class="box">
       <h3><i class="fa-solid fa-comment-sms"></i> Login-code SMS cap</h3>
-      <label>Max login-PIN SMS sends per month</label>
+      <label for="sms-cap">Max login-PIN SMS sends per month${notSet('portal_sms_monthly_cap') ? NOT_SET_TAG : ''}</label>
       <div style="display:flex;gap:10px;align-items:center">
         <input type="number" id="sms-cap" min="0" step="1"
-               value="${esc(capRow ? capRow.value : '')}" placeholder="300 (default)">
-        <button class="btn btn-primary" onclick="saveCap()"><i class="fa-solid fa-floppy-disk"></i> Save</button>
+               value="${esc(capRow ? capRow.value : '')}" placeholder="300 (default)"${disIfRo('portal_sms_monthly_cap')}>
+        ${canEditKey('portal_sms_monthly_cap') ? `<button class="btn btn-primary" onclick="saveCap()"><i class="fa-solid fa-floppy-disk"></i> Save</button>` : ''}
       </div>
       <div class="hint">
         Cost guard on portal login codes sent by SMS (<code>portal_sms_monthly_cap</code>).
@@ -198,38 +299,82 @@ function render() {
     </div>
 
     <div class="box">
+      <h3><i class="fa-solid fa-envelope"></i> Emails &amp; callback tasks</h3>
+      <div class="brand-row">
+        <div>
+          <label for="pf-email-from">Login-code email sender${notSet('portal_email_from') ? NOT_SET_TAG : ''}</label>
+          <input type="text" id="pf-email-from" list="pf-senders" inputmode="email" autocomplete="off"
+                 value="${esc(rowVal('portal_email_from'))}" placeholder="Not set = the firm's default sender"${disIfRo('portal_email_from')}>
+          <datalist id="pf-senders">${senderAddresses().map((a) => `<option value="${esc(a)}">`).join('')}</datalist>
+        </div>
+        ${saveBtnHtml('portal_email_from', "savePortalEmail('emailFrom')")}
+      </div>
+      <div class="hint">
+        Portal login codes are emailed from this address (<code>portal_email_from</code>). It must be
+        one of the firm's sending addresses, or login emails fail. Not set = the firm's default
+        sender (<code>email_default_from</code>); it cannot be blanked once set.
+      </div>
+
+      <div class="brand-row" style="margin-top:14px">
+        <div>
+          <label for="pf-callback">Callback task assignee${notSet('portal_callback_task_to') ? NOT_SET_TAG : ''}</label>
+          <select id="pf-callback"${disIfRo('portal_callback_task_to')}>${cb.html}</select>
+        </div>
+        ${saveBtnHtml('portal_callback_task_to', 'saveCallbackAssignee()')}
+      </div>
+      ${cb.kept ? `<div class="warn-note"><i class="fa-solid fa-triangle-exclamation"></i>
+        The current assignee is ${esc(cb.kept)} — pick an active staff member, or callback tasks
+        go to someone who will not see them.</div>` : ''}
+      <div class="hint">
+        Gets the task created when a client asks for a call from the portal
+        (<code>portal_callback_task_to</code>). Active staff only. Not set = callback requests fail.
+      </div>
+
+      <div class="brand-row" style="margin-top:14px">
+        <div>
+          <label for="pf-notify-to">Upload notification recipient${notSet('portal_docs_notify_to') ? NOT_SET_TAG : ''}</label>
+          <input type="text" id="pf-notify-to" inputmode="email" autocomplete="off"
+                 value="${esc(rowVal('portal_docs_notify_to'))}" placeholder="Blank = no upload emails"${disIfRo('portal_docs_notify_to')}>
+        </div>
+        ${saveBtnHtml('portal_docs_notify_to', "savePortalEmail('notifyTo')")}
+      </div>
+      <div class="hint">
+        Emailed when a client uploads documents — through the portal or a checklist upload link
+        (<code>portal_docs_notify_to</code>). Blank = those emails are off; the case log entry is
+        still written.
+      </div>
+    </div>
+
+    <div class="box">
       <h3><i class="fa-solid fa-image"></i> Branding</h3>
       <div class="brand-row">
         <div>
-          <label>Portal logo URL</label>
+          <label for="brand-logo">Portal logo URL${notSet('portal_logo_url') ? NOT_SET_TAG : ''}</label>
           <input type="text" id="brand-logo" value="${esc(logoRow ? logoRow.value : '')}"
                  placeholder="Blank = firm-wide logo (${esc(firmLogo || 'not set')})"
-                 oninput="previewBrand('logo')">
+                 oninput="previewBrand('logo')"${disIfRo('portal_logo_url')}>
         </div>
-        <button class="btn btn-primary" style="margin-top:19px" onclick="saveBrand('logo')">
-          <i class="fa-solid fa-floppy-disk"></i> Save</button>
+        ${saveBtnHtml('portal_logo_url', "saveBrand('logo')")}
       </div>
       <div class="brand-preview" id="brand-logo-preview"></div>
 
       <div class="brand-row" style="margin-top:14px">
         <div>
-          <label>Favicon URL (browser-tab icon)</label>
+          <label for="brand-favicon">Favicon URL (browser-tab icon)${notSet('portal_favicon_url') ? NOT_SET_TAG : ''}</label>
           <input type="text" id="brand-favicon" value="${esc(favRow ? favRow.value : '')}"
-                 placeholder="Blank = use the logo" oninput="previewBrand('favicon')">
+                 placeholder="Blank = use the logo" oninput="previewBrand('favicon')"${disIfRo('portal_favicon_url')}>
         </div>
-        <button class="btn btn-primary" style="margin-top:19px" onclick="saveBrand('favicon')">
-          <i class="fa-solid fa-floppy-disk"></i> Save</button>
+        ${saveBtnHtml('portal_favicon_url', "saveBrand('favicon')")}
       </div>
       <div class="brand-preview" id="brand-favicon-preview"></div>
 
       <div class="brand-row" style="margin-top:14px">
         <div>
-          <label>Logo link (where clicking the logo goes)</label>
+          <label for="brand-href">Logo link (where clicking the logo goes)${notSet('portal_logo_href') ? NOT_SET_TAG : ''}</label>
           <input type="text" id="brand-href" value="${esc(hrefRow ? hrefRow.value : '')}"
-                 placeholder="Blank = portal home">
+                 placeholder="Blank = portal home"${disIfRo('portal_logo_href')}>
         </div>
-        <button class="btn btn-primary" style="margin-top:19px" onclick="saveBrand('href')">
-          <i class="fa-solid fa-floppy-disk"></i> Save</button>
+        ${saveBtnHtml('portal_logo_href', "saveBrand('href')")}
       </div>
       <div class="hint" style="margin-top:4px">
         Full http(s) URL (e.g. the firm website) or a portal path starting with
@@ -284,34 +429,15 @@ function previewBrand(kind) {
 window.previewBrand = previewBrand;
 
 const BRAND_FIELDS = {
-  logo: {
-    key: 'portal_logo_url', input: 'brand-logo', toast: 'Logo saved',
-    hrefOk: false,
-    meta: { category: 'Portal', label: 'Portal logo URL', type: 'text', sort_order: 60,
-      description: 'Logo shown in the client-portal header on every page including ' +
-        'login (served by the public GET /api/portal/branding). Blank = fall back ' +
-        'to the firm-wide fe-firm_logo_url. Renders 120px tall.' },
-  },
-  favicon: {
-    key: 'portal_favicon_url', input: 'brand-favicon', toast: 'Favicon saved',
-    hrefOk: false,
-    meta: { category: 'Portal', label: 'Portal favicon URL', type: 'text', sort_order: 70,
-      description: 'Browser-tab icon for the client portal (served by the public ' +
-        'GET /api/portal/branding). Blank = use the effective portal logo.' },
-  },
-  href: {
-    key: 'portal_logo_href', input: 'brand-href', toast: 'Logo link saved',
-    hrefOk: true,   // http(s) OR a single-'/' portal path
-    meta: { category: 'Portal', label: 'Portal logo link', type: 'text', sort_order: 80,
-      description: 'Where the client-portal header logo links (served by the public ' +
-        'GET /api/portal/branding). http(s) URL or a single-\'/\' site path. Blank = ' +
-        'default: portal home on signed-in pages, not clickable on login. Applies on ' +
-        'every page when set, login included.' },
-  },
+  logo:    { key: 'portal_logo_url',    input: 'brand-logo',    toast: 'Logo saved',      hrefOk: false },
+  favicon: { key: 'portal_favicon_url', input: 'brand-favicon', toast: 'Favicon saved',   hrefOk: false },
+  href:    { key: 'portal_logo_href',   input: 'brand-href',    toast: 'Logo link saved',
+             hrefOk: true },   // http(s) OR a single-'/' portal path
 };
 
 async function saveBrand(kind) {
   const f = BRAND_FIELDS[kind];
+  if (!f || !canEditKey(f.key)) return;
   const raw = E(f.input).value.trim();
   const ok = raw === '' ||
     /^https?:\/\//i.test(raw) ||
@@ -322,7 +448,7 @@ async function saveBrand(kind) {
       : 'Must be a full http(s) URL — or blank for the fallback' });
     return;
   }
-  await writeSetting(f.key, raw, f.meta);
+  if (!(await writeSetting(f.key, raw))) return;
   Toast.fire({ icon: 'success', title: f.toast });
   load();
 }
@@ -331,6 +457,7 @@ window.saveBrand = saveBrand;
 // ── portal_live ────────────────────────────────────────────────
 
 async function setLive(up) {
+  if (!canEditKey('portal_live')) return;
   if (!up) {
     const { isConfirmed } = await Swal.fire({
       icon: 'warning',
@@ -342,12 +469,7 @@ async function setLive(up) {
     });
     if (!isConfirmed) return;
   }
-  await writeSetting('portal_live', up ? '1' : '0', {
-    category: 'Portal', label: 'Portal live', type: 'bool', sort_order: 10,
-    description: 'Global client-portal kill switch: 1 = portal up, 0 = portal down ' +
-      '(logins refused with a friendly message; existing sessions rejected on next ' +
-      'request). Absent behaves as 1. Enforced in lib/auth.requireAuth + portal.auth.',
-  });
+  if (!(await writeSetting('portal_live', up ? '1' : '0'))) return;
   Toast.fire({ icon: 'success', title: up ? 'Portal is live' : 'Portal is down' });
   load();
 }
@@ -356,33 +478,85 @@ window.setLive = setLive;
 // ── portal_sms_monthly_cap ─────────────────────────────────────
 
 async function saveCap() {
+  if (!canEditKey('portal_sms_monthly_cap')) return;
   const raw = E('sms-cap').value.trim();
   if (raw === '' || !Number.isInteger(Number(raw)) || Number(raw) < 0) {
     Toast.fire({ icon: 'error', title: 'Cap must be a whole number ≥ 0' });
     return;
   }
-  await writeSetting('portal_sms_monthly_cap', String(Number(raw)), {
-    category: 'Portal', label: 'Portal SMS monthly cap', type: 'number', sort_order: 20,
-    description: 'Max portal login-PIN SMS sends per calendar month (cost guard). ' +
-      'When hit, SMS PINs silently stop until next month; email PINs unaffected.',
-  });
+  if (!(await writeSetting('portal_sms_monthly_cap', String(Number(raw))))) return;
   Toast.fire({ icon: 'success', title: 'SMS cap saved' });
   load();
 }
 window.saveCap = saveCap;
 
-// PUT; on 404 (row doesn't exist yet) create via POST then retry-free —
-// POST accepts the value inline. POST is signed-in-staff-only by API design.
-async function writeSetting(key, value, createMeta) {
+// ── portal_email_from / portal_docs_notify_to ──────────────────
+
+// Mirror of the registry's email check (lib/settingsRegistry.js
+// TYPE_VALIDATORS.email) — a hint only; the PUT validates again.
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const EMAIL_FIELDS = {
+  emailFrom: { key: 'portal_email_from',     input: 'pf-email-from', toast: 'Login-code sender saved',             blankOk: false },
+  notifyTo:  { key: 'portal_docs_notify_to', input: 'pf-notify-to',  toast: 'Upload notification recipient saved', blankOk: true },
+};
+
+async function savePortalEmail(kind) {
+  const f = EMAIL_FIELDS[kind];
+  if (!f || !canEditKey(f.key)) return;
+  const raw = E(f.input).value.trim();
+  if (raw === '' && !f.blankOk) {
+    Toast.fire({ icon: 'error', title: 'The sender cannot be blank — login-code emails would have no sender' });
+    return;
+  }
+  if (raw !== '' && !EMAIL_RE.test(raw)) {
+    Toast.fire({ icon: 'error', title: f.blankOk ? 'Must be a valid email address — or blank' : 'Must be a valid email address' });
+    return;
+  }
+  if (kind === 'emailFrom') {
+    const senders = senderAddresses();
+    if (senders.length && !senders.some((a) => a.toLowerCase() === raw.toLowerCase())) {
+      const { isConfirmed } = await Swal.fire({
+        icon: 'warning',
+        title: 'Not one of the firm\'s sending addresses',
+        html: `<div style="text-align:left">${esc(raw)} is not set up as a sending address, so portal
+          login-code emails from it will fail until it is.</div>`,
+        showCancelButton: true, confirmButtonText: 'Save anyway',
+      });
+      if (!isConfirmed) return;
+    }
+  }
+  if (!(await writeSetting(f.key, raw))) return;
+  Toast.fire({ icon: 'success', title: f.toast });
+  load();
+}
+window.savePortalEmail = savePortalEmail;
+
+// ── portal_callback_task_to ────────────────────────────────────
+
+async function saveCallbackAssignee() {
+  if (!canEditKey('portal_callback_task_to')) return;
+  const v = E('pf-callback').value;
+  if (!v) {
+    Toast.fire({ icon: 'error', title: 'Pick a staff member — callback requests fail without one' });
+    return;
+  }
+  if (!(await writeSetting('portal_callback_task_to', v))) return;
+  Toast.fire({ icon: 'success', title: 'Callback assignee saved' });
+  load();
+}
+window.saveCallbackAssignee = saveCallbackAssignee;
+
+// PUT only: it creates a missing registered row (settings arc). POST is not
+// a fallback — it refuses every registered key (409). The server's refusal
+// (403 without firm.settings, 400 failed validation) is toasted verbatim.
+// @returns {Promise<boolean>} true when the value was stored (or unchanged)
+async function writeSetting(key, value) {
   try {
     await api(`/api/app-settings/${key}`, 'PUT', { value });
+    return true;
   } catch (e) {
-    if (e.status === 404) {
-      await api('/api/app-settings', 'POST', Object.assign({ key, value }, createMeta));
-      return;
-    }
     Toast.fire({ icon: 'error', title: e.message });
-    throw e;
+    return false;
   }
 }
 

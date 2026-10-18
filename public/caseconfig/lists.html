@@ -1,0 +1,517 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Lists</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+  <link rel="stylesheet" href="/theme.css">
+  <script src="/themeSync.js"></script>
+  <!-- the settings rows (settings arc): the lists draw with it -->
+  <script src="/js/ycSettingRows.js"></script>
+  <style>
+    /* ══════════════════════════════════════════════
+       LISTS SUB-PAGE — self-contained styles (house pattern: theme.css
+       tokens, no style.css). Labels and hints by CLASS only: .yc-flabel /
+       .yc-hint are the pane-local copies caseconfig/firm.html carries
+       (AI_CONTEXT §12). Block layout: the page scrolls inside #wrap, no flex
+       column (so no overflow on a flex child).
+       ══════════════════════════════════════════════ */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      font-size: 14px; color: var(--text); background: var(--page-bg); overflow: hidden;
+    }
+    .yc-flabel { display: block; font-size: var(--fs-sm); font-weight: 700; color: var(--text); margin: 0 0 4px; }
+    .yc-hint { display: block; font-size: var(--fs-xs); font-weight: 400; color: var(--text-muted); margin-top: 4px; line-height: 1.45; }
+
+    .btn {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 6px 12px; border-radius: 6px; border: none;
+      font-size: 12px; font-weight: 500; cursor: pointer; font-family: inherit;
+      transition: all 0.15s; white-space: nowrap;
+    }
+    .btn-primary { background: var(--accent); color: var(--accent-text); }
+    .btn-primary:hover { background: var(--accent-dark); }
+    .btn-outline { background: var(--page-bg); border: 1px solid var(--border); color: var(--text-2); }
+    .btn-outline:hover { background: var(--border); }
+    .btn-sm { padding: 4px 9px; font-size: 11px; }
+    .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    #wrap { height: 100%; overflow: auto; padding: 16px; }
+    .ls-page { max-width: 980px; margin: 0 auto; display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+    .ls-intro { font-size: 13px; color: var(--text-2); line-height: 1.5; }
+    .ls-banner {
+      border-radius: 8px; padding: 10px 12px; font-size: 13px; line-height: 1.45;
+      background: var(--danger-soft); color: var(--danger-on-soft); border: 1px solid var(--danger);
+      overflow-wrap: anywhere;
+    }
+    .ls-banner[hidden] { display: none; }
+
+    .ls-section { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; min-width: 0; }
+    .ls-sec-head {
+      display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px;
+      padding: 12px 14px; border-bottom: 1px solid var(--border);
+    }
+    .ls-sec-head h2 { font-size: 15px; font-weight: 700; display: flex; align-items: center; gap: 8px; }
+    .ls-sec-head h2 i { color: var(--text-muted); }
+    .ls-sec-status { font-size: 12px; color: var(--text-muted); flex: 1 1 auto; min-width: 0; }
+    .ls-sec-status.dirty { color: var(--warn); font-weight: 600; }
+    .ls-sec-body { padding: 14px; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+    .ls-sec-body > .yc-hint { margin: 0; }
+
+    /* The event-types editor (fe-event_types), drawn inside its settings row. */
+    .ls-et { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+    .ls-et > .yc-hint { margin: 0; }
+    .ls-et .ls-et-warn { color: var(--warn); }
+    .ls-et-list { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+    .ls-et-item { display: flex; align-items: flex-start; gap: 4px; min-width: 0; }
+    .ls-et-in { flex: 1 1 auto; min-width: 0; }
+    .ls-et-item .btn { flex: 0 0 auto; }
+    .ls-et-ws { font-size: var(--fs-xs); color: var(--warn); margin-top: 2px; overflow-wrap: anywhere; }
+    .ls-et-ws[hidden] { display: none; }
+    .ls-et-none { font-size: 12px; color: var(--text-muted); }
+    .ls-et-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+    .ls-et-msg { font-size: 12px; color: var(--danger); flex: 1 1 10em; min-width: 0; overflow-wrap: anywhere; }
+
+    .empty-state {
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      padding: 40px 10px; color: var(--text-muted); gap: 10px; text-align: center;
+    }
+    .empty-state i { font-size: 32px; opacity: 0.25; }
+    .spin { animation: spin 0.8s linear infinite; display: inline-block; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* Read-only (the Config handshake): every write control carries .cc-w. */
+    body.cc-ro .cc-w { display: none; }
+
+    @media (max-width: 640px) {
+      #wrap { padding: 10px; }
+      .ls-sec-body { padding: 10px; }
+    }
+
+    ::-webkit-scrollbar { width: 4px; height: 4px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+  </style>
+</head>
+<body class="cc-ro">
+
+<div id="wrap">
+  <div class="ls-page">
+    <p class="ls-intro">The firm's short vocabulary lists. <b>Lead sources</b> are the suggestions offered on a case's
+      Lead Source field — suggestions only: the field still accepts free text. <b>Event types</b> are the list the
+      new-event dialog and the Events filter offer. Only staff with the firm-settings permission change them; everyone
+      else sees them read-only.</p>
+    <div class="ls-banner" id="ls-banner" role="alert" hidden></div>
+    <section class="ls-section" id="ls-sec-lists">
+      <header class="ls-sec-head"><h2><i class="fa-solid fa-list"></i> Lists</h2>
+        <span class="ls-sec-status" id="ls-status"></span></header>
+      <div class="ls-sec-body">
+        <div id="ls-rows"><div class="empty-state"><i class="fa-solid fa-spinner spin"></i><div>Loading…</div></div></div>
+        <span class="yc-hint" id="ls-pointer">Case types are not edited here: they are in the <b>Types &amp; Subtypes</b>
+          tab, which checks usage and repoints pipeline templates.</span>
+      </div>
+    </section>
+  </div>
+</div>
+
+<script>
+// ═══════════════════════════════════════════════════════════════
+// LISTS SUB-PAGE (Config shell → Lists) — settings arc, 2026-10
+//
+// A VOCABULARY tab: the app_settings keys of the config home's 'lists'
+// section (lib/settingsRegistry.js) — fe-lead_sources and fe-event_types.
+// ONE GET /api/app-settings?home=config per load; the rows are drawn by
+// /js/ycSettingRows.js and each changed key saves on its own (PUT
+// /api/app-settings/:key, verbatim) with History + restore per row. The
+// config home's other section ('types': fe-case_types) is NOT drawn here —
+// Types & Subtypes edits it (usage checks, template repointing); a pointer
+// line says so.
+//
+//   · fe-lead_sources: the module's json_array list (add / remove / reorder).
+//     Suggestions only — the case's Lead Source field accepts free text.
+//   · fe-event_types: a DEDICATED editor (eventTypesEditor, passed through
+//     the rows' `editors`; the registry names no editor for the key, so this
+//     page assigns 'eventTypes' to that one row) — settings.html's Event
+//     Types editor ported: add / rename / reorder / remove, a remove asks
+//     first, empty or duplicate names (trimmed, any case) block the save
+//     before any PUT, and the page Save asks before saving a stored name that
+//     is gone (renamed, or removed without that question): existing events
+//     keep their old value. Calendar Types is the event form's real
+//     vocabulary; this list is the new-event dialog's and the Events filter's,
+//     and the event form's fallback.
+//
+// After a save batch or a restore that wrote an fe-* key, ycSettingRows runs
+// the shell's window.top.loadFirmData() once (the shell's own surfaces —
+// the Events filter, the case Lead Source suggestions — re-read firmData).
+//
+// Read-only: the Config handshake (settings arc §3b) — see ccApplyAccess.
+// Read-only rows are handed to the rows module with can_edit false (text,
+// no control, no History), so nothing that writes is drawn at all.
+//
+// Shell protocol: P.apiSend relay (through api() only); P.setTopbarButtons
+// (Save while dirty, Refresh); hooks onShow / onHide / onSave / onRefresh /
+// onAccess on this window.
+// ═══════════════════════════════════════════════════════════════
+
+const P = window.parent;
+
+// ── Read-only (the Config handshake, settings arc §3b) ─────────
+// ONE idiom (types.html, pipelines.html, fields.html, calendarTypes.html).
+// ccCanEdit is true only when the shell says so — P.configCanEdit === true
+// at init, or onAccess({ canEdit: true }) later; anything else is read-only
+// (fail closed — the server is the authority either way). Read-only =
+//   · body.cc-ro hides every write control (.cc-w);
+//   · the rows are drawn with can_edit false: the values as text, no
+//     control, no History (rowsFor) — and ccLock() disables any form control
+//     that is drawn anyway;
+//   · api() refuses every non-GET call, so no stray or hidden control writes.
+let ccCanEdit = false;
+const CC_RO_MSG = 'Read-only — changing YisraCase Config needs the admin permission.';
+const ccIsRead = (method) => method == null || /^(GET|HEAD)$/i.test(String(method));
+function ccApplyAccess(canEdit) {
+  const next = canEdit === true;
+  const changed = next !== ccCanEdit;
+  ccCanEdit = next;
+  document.body.classList.toggle('cc-ro', !next);
+  if (changed && Page.loaded) Page.render();
+}
+function onAccess(access) { ccApplyAccess(access && access.canEdit); }
+function ccLock(root) {
+  if (ccCanEdit || !root) return;
+  root.querySelectorAll('input, select, textarea').forEach(el => { el.disabled = true; });
+}
+
+const api = (...args) => (ccCanEdit || ccIsRead(args[1]))
+  ? P.apiSend(...args)
+  : Promise.reject(new Error(CC_RO_MSG));
+const E = id => document.getElementById(id);
+const Toast = window.Swal ? Swal.mixin({ toast: true, position: 'top-end', showConfirmButton: false, timer: 3200 }) : null;
+
+function toast(icon, title) { if (Toast) Toast.fire({ icon, title }); }
+async function ask(title, text, confirmText) {
+  if (window.Swal) {
+    const r = await Swal.fire({ icon: 'question', title, text, showCancelButton: true, confirmButtonText: confirmText || 'OK' });
+    return !!r.isConfirmed;
+  }
+  return window.confirm(title + '\n\n' + text);
+}
+const isObj = (o) => o !== null && typeof o === 'object' && !Array.isArray(o);
+
+// firm.html's sentence: a 403 is a session whose permission changed since it
+// loaded (or a legacy token) — never a generic error.
+const SESSION_MSG = 'Your session predates a permissions change — sign out and back in.';
+function errText(e, what) {
+  if (e && e.status === 403) return SESSION_MSG;
+  return (what ? what + ': ' : '') + ((e && e.message) || 'request failed');
+}
+function banner(msg) {
+  const b = E('ls-banner');
+  if (!msg) { b.hidden = true; b.textContent = ''; return; }
+  b.textContent = msg;
+  b.hidden = false;
+}
+const firmUsers = () => (P.firmData && Array.isArray(P.firmData.users) ? P.firmData.users : []);
+
+// ═══════════════════════════════════════════════════════════════
+// EVENT TYPES (fe-event_types: ["Name", …]) — settings.html's editor, ported
+// ═══════════════════════════════════════════════════════════════
+const ET_KEY = 'fe-event_types';
+const ET = { current: null };    // the live editor: the page's Save asks it about gone names
+
+/** The stored value → its names, or null for a shape this editor cannot
+ *  read (the row then falls back to the type's own control). Blank → []. */
+function etParse(raw) {
+  const s = raw == null ? '' : String(raw);
+  if (s.trim() === '') return [];
+  let a;
+  try { a = JSON.parse(s); } catch (_) { return null; }
+  if (!Array.isArray(a) || a.some((x) => typeof x !== 'string' || /[\r\n]/.test(x))) return null;
+  return a;
+}
+const etNorm = (s) => String(s).trim().toLowerCase();
+
+function eventTypesEditor(row, ctx) {
+  const stored = row.value == null ? '' : String(row.value);
+  const orig = etParse(stored);
+  if (!orig) { ET.current = null; return null; }
+  const list = orig.slice();
+  const removed = new Set();     // stored names (trimmed) removed through the confirmed ✕
+  const box = document.createElement('div');
+  box.className = 'ls-et';
+  box.innerHTML = `<span class="yc-hint ls-et-warn">Renaming or removing an event type does <b>not</b> change existing
+      events — they keep their old value.</span>
+    <span class="yc-hint">The event form's real vocabulary is <b>Calendar Types</b> (its own tab here). This list is
+      what the new-event dialog and the Events filter offer, and what the event form falls back to when Calendar Types
+      cannot be read.</span>
+    <div class="ls-et-list"></div>
+    <div class="ls-et-foot"><button type="button" class="btn btn-outline btn-sm cc-w" data-et-add><i class="fa-solid fa-plus"></i> Add event type</button>
+      <span class="ls-et-msg" role="status"></span></div>`;
+  const listEl = box.querySelector('.ls-et-list');
+  const addBtn = box.querySelector('[data-et-add]');
+  const msg = box.querySelector('.ls-et-msg');
+
+  const same = () => list.length === orig.length && list.every((v, i) => v === orig[i]);
+  /** The first name listed twice (trimmed, any case), or null. */
+  function twice() {
+    const seen = new Set();
+    for (const v of list) {
+      const k = etNorm(v);
+      if (!k) continue;
+      if (seen.has(k)) return v.trim();
+      seen.add(k);
+    }
+    return null;
+  }
+  function problem() {
+    if (list.some((v) => v.trim() === '')) return 'Event type names cannot be empty — fill it in or remove it.';
+    const d = twice();
+    return d ? `“${d}” is listed twice — event type names must be unique.` : null;
+  }
+  function paintMsg() { const d = twice(); msg.textContent = d ? `“${d}” is listed twice.` : ''; }
+  function paintWs(badge, v) {
+    const h = window.ycSettingRows ? window.ycSettingRows.wsHint(v) : '';
+    badge.textContent = h;
+    badge.hidden = !h;
+  }
+
+  function render(focusAt) {
+    listEl.textContent = '';
+    addBtn.id = list.length ? '' : ctx.id;       // the row's label points at the first control
+    if (!addBtn.id) addBtn.removeAttribute('id');
+    if (!list.length) {
+      listEl.appendChild(Object.assign(document.createElement('div'), { className: 'ls-et-none', textContent: 'No event types — the app\'s built-in list applies.' }));
+    }
+    list.forEach((v, i) => {
+      const r = document.createElement('div');
+      r.className = 'ls-et-item';
+      r.innerHTML = `<div class="ls-et-in"><input type="text" data-et="${i}" placeholder="Event type name" spellcheck="false" autocomplete="off">
+          <div class="ls-et-ws"></div></div>
+        <button type="button" class="btn btn-outline btn-sm cc-w" data-et-up="${i}" title="Move up" ${i === 0 ? 'disabled' : ''}>↑</button>
+        <button type="button" class="btn btn-outline btn-sm cc-w" data-et-down="${i}" title="Move down" ${i === list.length - 1 ? 'disabled' : ''}>↓</button>
+        <button type="button" class="btn btn-outline btn-sm cc-w" data-et-del="${i}" title="Remove">✕</button>`;
+      const inp = r.querySelector('input');
+      inp.value = v;                                   // verbatim, never markup
+      inp.setAttribute('aria-label', `Event type ${i + 1}`);
+      if (i === 0) inp.id = ctx.id;
+      r.querySelector('[data-et-up]').setAttribute('aria-label', `Move event type ${i + 1} up`);
+      r.querySelector('[data-et-down]').setAttribute('aria-label', `Move event type ${i + 1} down`);
+      r.querySelector('[data-et-del]').setAttribute('aria-label', `Remove event type ${i + 1}`);
+      paintWs(r.querySelector('.ls-et-ws'), v);
+      listEl.appendChild(r);
+    });
+    if (focusAt != null) {
+      const f = listEl.querySelector(`[data-et="${focusAt}"]`);
+      if (f) f.focus();
+    }
+  }
+
+  listEl.addEventListener('input', (ev) => {
+    const t = ev.target, i = t.getAttribute('data-et');
+    if (i == null) return;
+    list[Number(i)] = t.value;                         // verbatim — no trim
+    paintWs(t.parentNode.querySelector('.ls-et-ws'), t.value);
+    paintMsg();
+    ctx.changed();
+  });
+  box.addEventListener('click', async (ev) => {
+    const b = ev.target.closest('button');
+    if (!b || b.disabled || !box.contains(b)) return;
+    const d = b.dataset;
+    let focus = null;
+    if (d.etAdd !== undefined) {
+      list.push('');
+      focus = list.length - 1;
+    } else if (d.etUp !== undefined || d.etDown !== undefined) {
+      const i = Number(d.etUp !== undefined ? d.etUp : d.etDown);
+      const j = d.etUp !== undefined ? i - 1 : i + 1;
+      if (j < 0 || j >= list.length) return;
+      [list[i], list[j]] = [list[j], list[i]];
+      focus = j;
+    } else if (d.etDel !== undefined) {
+      const i = Number(d.etDel), v = list[i];
+      if (v == null) return;
+      // A remove asks first (a blank entry has nothing to lose).
+      if (v.trim() !== '' && !(await ask('Remove this event type?',
+        `“${v.trim()}” is no longer offered in the new-event dialog or the Events filter once you save. `
+        + 'Existing events of this type keep it.', 'Remove'))) return;
+      if (list[i] !== v) return;                       // the list moved while the question was open
+      list.splice(i, 1);
+      if (orig.some((o) => o.trim() === v.trim())) removed.add(v.trim());
+    } else return;
+    render(focus);
+    paintMsg();
+    ctx.changed();
+  });
+  render(null);
+
+  const ed = {
+    el: box,
+    focusId: ctx.id,
+    /** Untouched → the stored string byte for byte; else the list as JSON. */
+    get() {
+      if (same()) return stored;
+      return list.length === 0 && stored.trim() === '' ? stored : JSON.stringify(list);
+    },
+    problem,
+    /** Stored names no longer listed and not removed through the ✕ question
+     *  (so: renamed, or edited away) — the page's Save asks about them. */
+    gone() {
+      const now = new Set(list.map((v) => v.trim()));
+      return [...new Set(orig.map((v) => v.trim()))].filter((n) => n && !now.has(n) && !removed.has(n));
+    },
+  };
+  ET.current = ed;
+  return ed;
+}
+
+const EDITORS = { eventTypes: eventTypesEditor };
+
+// ═══════════════════════════════════════════════════════════════
+// PAGE — one GET per load, the rows, the shell protocol
+// ═══════════════════════════════════════════════════════════════
+const Page = {
+  rows: [], view: null, loaded: false, saving: false, inflight: null,
+  dirty() { return !!(this.view && this.view.isDirty()); },
+  syncTopbar() { P.setTopbarButtons({ save: ccCanEdit && this.dirty() && !this.saving, refresh: true }); },
+
+  load() {
+    if (!this.inflight) this.inflight = this.loadOnce().finally(() => { this.inflight = null; });
+    return this.inflight;
+  },
+  async loadOnce() {
+    banner(null);
+    let r;
+    try { r = await api('/api/app-settings?home=config'); }
+    catch (e) { return this.fail(errText(e, 'Could not load the lists')); }
+    if (!window.ycSettingRows) return this.fail('The settings editor did not load — reload the page.');
+    // The config home's 'lists' section only: fe-case_types ('types') is
+    // edited in Types & Subtypes and is never drawn here.
+    this.rows = (Array.isArray(r && r.settings) ? r.settings : [])
+      .filter((x) => isObj(x) && x.home === 'config' && x.section === 'lists');
+    this.loaded = true;
+    this.render();
+  },
+  fail(msg) {
+    this.loaded = false;
+    this.view = null;
+    ET.current = null;
+    E('ls-rows').innerHTML = '<div class="empty-state"><i class="fa-solid fa-triangle-exclamation"></i><div></div></div>';
+    E('ls-rows').querySelector('.empty-state > div').textContent = msg;
+    banner(msg);
+    this.status();
+    this.syncTopbar();
+  },
+
+  /** The served rows as this page draws them: editable only while the
+   *  Config answer is true (and the server says can_edit); fe-event_types
+   *  through its dedicated editor. */
+  rowsFor() {
+    return this.rows.map((r) => ({
+      ...r,
+      can_edit: ccCanEdit && (r.can_edit === true || r.can_edit === 1),
+      editor: r.key === ET_KEY ? (r.editor || 'eventTypes') : r.editor,
+    }));
+  },
+  render() {
+    ET.current = null;
+    const host = E('ls-rows');
+    const rows = this.rowsFor();
+    if (!this.view) {
+      this.view = window.ycSettingRows.create({
+        container: host, rows, api, users: firmUsers, editors: EDITORS,
+        confirm: (title, text) => ask(title, text, 'Restore'),
+        empty: 'No lists to show.',
+        onDirty: () => { this.status(); this.syncTopbar(); },
+      });
+    } else {
+      this.view.setRows(rows);
+    }
+    ccLock(host);
+    this.status();
+    this.syncTopbar();
+  },
+  status() {
+    const el = E('ls-status');
+    const d = this.dirty();
+    el.textContent = !this.view ? '' : !ccCanEdit ? 'Read-only' : d ? 'Unsaved changes' : 'All changes saved';
+    el.classList.toggle('dirty', d);
+  },
+
+  async save() {
+    if (!ccCanEdit || !this.view || this.saving || !this.view.isDirty()) return;
+    // settings.html's question: a stored event type that is gone — renamed,
+    // or edited away — leaves existing events on the old value. (A ✕ remove
+    // asked already; a list the editor refuses is refused below, no PUT.)
+    const et = ET.current;
+    if (et && this.view.dirtyKeys().includes(ET_KEY) && !et.problem()) {
+      const gone = et.gone();
+      if (gone.length && !(await ask('Save the event types?',
+        `${gone.length === 1 ? 'This event type is' : 'These event types are'} renamed or removed: ${gone.join(', ')}. `
+        + 'Existing events keep their old value. Save anyway?', 'Save'))) return;
+    }
+    this.saving = true;
+    this.syncTopbar();
+    banner(null);
+    let res;
+    try { res = await this.view.save(); }
+    finally {
+      this.saving = false;
+      this.status();
+      this.syncTopbar();
+    }
+    if (!res.ok) {
+      const n = res.failed.length;
+      const refused = Object.values(res.errors).some((x) => x.status === 403);
+      banner(`Lists: ${n === 1 ? 'a list was' : n + ' lists were'} not saved — the reason is on ${n === 1 ? 'it' : 'each'}.`
+        + (refused ? ' ' + SESSION_MSG : ''));
+    } else if (res.saved.length) toast('success', 'Saved');
+  },
+};
+
+// ── Lifecycle ──────────────────────────────────────────────────
+async function init() {
+  ccApplyAccess(P.configCanEdit);
+  P.setTopbarButtons({ refresh: true });
+  await Page.load();
+}
+// Coming back to the tab reloads — never over unsaved edits (fields.html idiom).
+function onShow()    { Page.syncTopbar(); if (Page.loaded && !Page.dirty()) Page.load(); }
+function onHide()    {}
+function onSave()    { return Page.save(); }
+function onRefresh() {
+  if (Page.dirty() && !confirm('Discard unsaved list changes?')) return;
+  return Page.load();
+}
+
+window.onShow = onShow;
+window.onHide = onHide;
+window.onSave = onSave;
+window.onRefresh = onRefresh;
+window.onAccess = onAccess;
+
+// The shell keeps this frame alive across tab switches (it hides, never
+// unloads); a reload or close of the whole app loses edits, so ask first.
+window.addEventListener('beforeunload', (e) => {
+  if (!Page.dirty()) return;
+  e.preventDefault();
+  e.returnValue = '';
+  return '';
+});
+
+// Test / debug handle.
+window.ListsPage = { Page, api, ET, ET_KEY, etParse, eventTypesEditor, SESSION_MSG, CC_RO_MSG, canEdit: () => ccCanEdit };
+
+// ── Boot ───────────────────────────────────────────────────────
+(function waitForShell() {
+  if (P && typeof P.apiSend === 'function' && typeof P.setTopbarButtons === 'function') {
+    return init();
+  }
+  setTimeout(waitForShell, 50);
+})();
+</script>
+</body>
+</html>

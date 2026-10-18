@@ -11,8 +11,11 @@
  *   rescheduleAppt  the successor inherits the predecessor's type_key, even
  *                   when the predecessor's key does not equal what its label
  *                   resolves to (a PATCHed key survives the move — R2)
- *   341 block       still keys on the STRING '341 Meeting' (untouched until
- *                   U6): the prior 341 is superseded and the case pointer moves
+ *   (341 block)     its two U2-era pins ("still keys on the STRING '341
+ *                   Meeting'") were removed when the settings arc retired the
+ *                   unified_singleton_enabled flag and the string block with
+ *                   it; supersession is the registry singleton, keyed on
+ *                   type_key — tests/unifiedEventsU6b.appts.test.js
  *   envelopes       appt.attended / appt.no_show data carries type_key (R4)
  *   trigger_data    (U5) createAppt's pre_appt enrollment and markNoShow's
  *                   no_show enrollment FLATTEN type_key into trigger_data —
@@ -291,33 +294,6 @@ describe('rescheduleAppt — successor inherits the predecessor key (R2)', () =>
     const res = await apptService.rescheduleAppt(db, { appt_id: 501, newDate: '2026-09-10 14:00' });
     await flush();
     expect(db.rows.get(res.new_appt_id).type_key).toBe('ss_follow_up');
-  });
-});
-
-// ─────────────────────────────────────────────────────────────────────────────
-describe('341 block — unchanged this slice (string-keyed until U6)', () => {
-  test("a '341 Meeting' on a case supersedes the prior Scheduled 341 and moves the case pointer", async () => {
-    const db = makeDb(
-      [existingAppt({ appt_id: 601, appt_case_id: 'CASE0001', appt_type: '341 Meeting', type_key: 'meeting_341' })],
-      { cases: { CASE0001: { '341_appt_id': 601 } } }
-    );
-    const r = await apptService.createAppt(db, { ...BASE, case_id: 'CASE0001', appt_type: '341 Meeting' });
-    await flush();
-    expect(db.rows.get(601).appt_status).toBe('Rescheduled');
-    expect(db.caseRows.CASE0001['341_appt_id']).toBe(r.appt_id);
-    expect(db.rows.get(r.appt_id).type_key).toBe('meeting_341');
-    expect(db.unmatched).toEqual([]);
-  });
-
-  test("the key alone does NOT trigger supersession — only the string does (that flip is U6's, flag-guarded)", async () => {
-    const db = makeDb(
-      [existingAppt({ appt_id: 601, appt_case_id: 'CASE0001', appt_type: '341 Meeting', type_key: 'meeting_341' })],
-      { cases: { CASE0001: { '341_appt_id': 601 } } }
-    );
-    await apptService.createAppt(db, { ...BASE, case_id: 'CASE0001', appt_type: '341', type_key: 'meeting_341' });
-    await flush();
-    expect(db.rows.get(601).appt_status).toBe('Scheduled');            // untouched
-    expect(db.caseRows.CASE0001['341_appt_id']).toBe(601);
   });
 });
 

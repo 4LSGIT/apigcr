@@ -162,25 +162,28 @@
     .spin { animation: spin 0.8s linear infinite; display: inline-block; }
     @keyframes spin { to { transform: rotate(360deg); } }
 
+    /* Read-only (the Config handshake): every write control carries .cc-w. */
+    body.cc-ro .cc-w { display: none; }
+
     ::-webkit-scrollbar { width: 4px; height: 4px; }
     ::-webkit-scrollbar-track { background: transparent; }
     ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
   </style>
 </head>
-<body>
+<body class="cc-ro">
 
 <div class="toolbar">
   <i class="fa-solid fa-circle-info"></i>
   <span>Firm-defined fields on cases and contacts. <b>The key is permanent</b> — it becomes the
         storage name and the SQL column name; deactivate a field instead of renaming it. No delete.
-        Drag <i class="fa-solid fa-grip-vertical"></i> to reorder.</span>
+        <span class="cc-w">Drag <i class="fa-solid fa-grip-vertical"></i> to reorder.</span></span>
   <span style="flex:1"></span>
   <span class="status" id="cfListStatus"></span>
   <div class="entity-tabs" id="cfEntityTabs">
     <button class="etab active" data-cf-entity="case">Cases</button>
     <button class="etab" data-cf-entity="contact">Contacts</button>
   </div>
-  <button class="btn btn-primary" onclick="onNew()"><i class="fa-solid fa-plus"></i> New Field</button>
+  <button class="btn btn-primary cc-w" onclick="onNew()"><i class="fa-solid fa-plus"></i> New Field</button>
 </div>
 
 <div id="scroller">
@@ -188,7 +191,7 @@
     <div class="empty-state"><i class="fa-solid fa-spinner spin"></i><div>Loading…</div></div>
   </div>
 
-  <div id="addCard">
+  <div id="addCard" class="cc-w">
     <h3 id="cfAddLbl">Add Custom Field — Cases</h3>
     <div class="note-warn"><i class="fa-solid fa-triangle-exclamation"></i>
       Keys are permanent: once the field is created its key never changes.</div>
@@ -254,12 +257,46 @@
 // Errors (409 lock messages included) render verbatim in the inline
 // status spans — never a dialog.
 //
+// Read-only: the Config handshake (settings arc §3b) — see ccApplyAccess.
+//
 // Shell protocol: P.apiSend relay; lifecycle hooks onShow/onRefresh/
-// onNew exposed on window; topbar buttons via P.setTopbarButtons.
+// onNew/onAccess exposed on window; topbar buttons via P.setTopbarButtons.
 // ═══════════════════════════════════════════════════════════════
 
 const P = window.parent;
-const api = (...args) => P.apiSend(...args);
+
+// ── Read-only (the Config handshake, settings arc §3b) ─────────
+// ONE idiom. ccCanEdit is true only when the shell says so — P.configCanEdit
+// === true at init, or onAccess({ canEdit: true }) later; anything else is
+// read-only (fail closed — the server is the authority either way).
+// Read-only =
+//   · body.cc-ro hides every write control (.cc-w): New Field, the Add card,
+//     drag handles, the arrows, Deactivate / Reactivate, Save, the option
+//     Retire / arrows / remove / + Add Option, the default's Clear;
+//   · ccLock() disables every form control cfRender draws (label, type,
+//     options, validation, default, show_when) — the values stay readable;
+//   · a card's Edit toggle reads View: opening a card is how you see it;
+//   · api() refuses every non-GET call, so no stray or hidden control writes.
+// The entity tabs and View still work.
+let ccCanEdit = false;
+const CC_RO_MSG = 'Read-only — changing YisraCase Config needs the admin permission.';
+const ccIsRead = (method) => method == null || /^(GET|HEAD)$/i.test(String(method));
+function ccApplyAccess(canEdit) {
+  const next = canEdit === true;
+  const changed = next !== ccCanEdit;
+  ccCanEdit = next;
+  document.body.classList.toggle('cc-ro', !next);
+  if (changed && cfState) cfRender();
+}
+function onAccess(access) { ccApplyAccess(access && access.canEdit); }
+function ccLock(root) {
+  if (ccCanEdit || !root) return;
+  root.querySelectorAll('input, select, textarea').forEach(el => { el.disabled = true; });
+}
+
+const api = (...args) => (ccCanEdit || ccIsRead(args[1]))
+  ? P.apiSend(...args)
+  : Promise.reject(new Error(CC_RO_MSG));
 const E = id => document.getElementById(id);
 
 function esc(s) {
@@ -353,14 +390,14 @@ function cfEditorBody(t, i) {
         <input type="text" class="mono" data-cf-ov="${i}:${oi}" value="${esc(o.value)}" placeholder="value" ${frozen ? 'readonly' : ''}>
         <input type="text" data-cf-ol="${i}:${oi}" value="${esc(o.label)}" placeholder="Label">
         ${retired ? '<span class="chip chip-off">retired</span>' : ''}
-        ${o._persisted ? `<button class="btn tiny ${retired ? '' : 'btn-danger-outline'}" data-cf-oretire="${i}:${oi}"
+        ${o._persisted ? `<button class="btn tiny cc-w ${retired ? '' : 'btn-danger-outline'}" data-cf-oretire="${i}:${oi}"
             title="${retired ? 'Show this option in pickers again' : 'Hide from pickers; stored records keep it'}">${retired ? 'Reactivate' : 'Retire'}</button>` : ''}
-        <button class="icon-btn" data-cf-oup="${i}:${oi}" title="Move up">↑</button>
-        <button class="icon-btn" data-cf-odown="${i}:${oi}" title="Move down">↓</button>
-        ${frozen ? '' : `<button class="icon-btn del" data-cf-odel="${i}:${oi}" title="Remove option (the save is refused if records hold this value — retire instead)">✕</button>`}
+        <button class="icon-btn cc-w" data-cf-oup="${i}:${oi}" title="Move up">↑</button>
+        <button class="icon-btn cc-w" data-cf-odown="${i}:${oi}" title="Move down">↓</button>
+        ${frozen ? '' : `<button class="icon-btn del cc-w" data-cf-odel="${i}:${oi}" title="Remove option (the save is refused if records hold this value — retire instead)">✕</button>`}
       </div>`;
     }).join('')}
-    <button class="btn tiny btn-outline" data-cf-oadd="${i}">+ Add Option</button>`;
+    <button class="btn tiny btn-outline cc-w" data-cf-oadd="${i}">+ Add Option</button>`;
   const valid = [`<label class="toggle-row"><input type="checkbox" data-cf-v="${i}:required" ${v.required ? 'checked' : ''}><span>Required</span></label>`];
   if (t.field_type === 'text') {
     valid.push(numIn('max_len', 'Max length'));
@@ -402,7 +439,7 @@ function cfDefaultBody(t, i) {
       control = `<select class="cf-sel" multiple size="${Math.min(active.length, 4)}" data-cf-dv="${i}">
           ${active.map(o => `<option value="${esc(o.value)}"${picked.has(o.value) ? ' selected' : ''}>${esc(o.label || o.value)}</option>`).join('')}
         </select>
-        <button class="btn tiny btn-outline" data-cf-dvclear="${i}">Clear</button>`;
+        <button class="btn tiny btn-outline cc-w" data-cf-dvclear="${i}">Clear</button>`;
     } else {
       control = `<select class="cf-sel" data-cf-dv="${i}">
           <option value="">— none —</option>
@@ -570,7 +607,7 @@ function cfRender() {
     return `
     <div class="cf-card ${t.active ? '' : 'cf-inactive'}" data-cf-idx="${i}">
       <div class="cf-head">
-        <span class="drag-handle" draggable="true" data-cf-drag="${i}" title="Drag to reorder"><i class="fa-solid fa-grip-vertical"></i></span>
+        <span class="drag-handle cc-w" draggable="true" data-cf-drag="${i}" title="Drag to reorder"><i class="fa-solid fa-grip-vertical"></i></span>
         <input type="text" data-cf-label="${i}" value="${esc(t.label)}" maxlength="100" title="Label">
         <span class="cf-code" title="field_key — keys are permanent">${esc(t.field_key)}</span>
         <select class="cf-sel" data-cf-type="${i}" title="Type" ${locked ? 'disabled' : ''}>
@@ -582,11 +619,11 @@ function cfRender() {
         ${idxChip}
         <span class="cf-sortno" title="sort_order — set by position, drag to change">#${t.sort_order | 0}</span>
         <span class="chip ${t.active ? 'chip-muted' : 'chip-off'}">${t.active ? 'active' : 'inactive'}</span>
-        <button class="icon-btn" data-cf-up="${i}" title="Move up">↑</button>
-        <button class="icon-btn" data-cf-down="${i}" title="Move down">↓</button>
-        <button class="btn tiny btn-outline" data-cf-toggle="${i}">${t._open ? 'Hide' : 'Edit'}</button>
-        <button class="btn tiny ${t.active ? 'btn-danger-outline' : 'btn-outline'}" data-cf-act="${i}">${t.active ? 'Deactivate' : 'Reactivate'}</button>
-        <button class="btn tiny btn-primary" data-cf-save="${i}" ${t._dirty ? '' : 'disabled'}>Save</button>
+        <button class="icon-btn cc-w" data-cf-up="${i}" title="Move up">↑</button>
+        <button class="icon-btn cc-w" data-cf-down="${i}" title="Move down">↓</button>
+        <button class="btn tiny btn-outline" data-cf-toggle="${i}">${t._open ? 'Hide' : ccCanEdit ? 'Edit' : 'View'}</button>
+        <button class="btn tiny cc-w ${t.active ? 'btn-danger-outline' : 'btn-outline'}" data-cf-act="${i}">${t.active ? 'Deactivate' : 'Reactivate'}</button>
+        <button class="btn tiny btn-primary cc-w" data-cf-save="${i}" ${t._dirty ? '' : 'disabled'}>Save</button>
       </div>
       <span class="status" id="cfStatus${i}"></span>
       ${t._open ? `<div class="cf-fields">
@@ -597,6 +634,7 @@ function cfRender() {
       </div>` : ''}
     </div>`;
   }).join('');
+  ccLock(host);
 }
 
 function cfRenderNew() {
@@ -974,6 +1012,7 @@ async function cfLoad() {
 
 // ── Lifecycle ──────────────────────────────────────────────────
 function cfInit() {
+  ccApplyAccess(P.configCanEdit);
   P.setTopbarButtons({ new: true, refresh: true });
   cfNew = cfBlank();
   cfRenderNew();
@@ -1003,6 +1042,7 @@ window.onShow = onShow;
 window.onHide = onHide;
 window.onRefresh = onRefresh;
 window.onNew = onNew;
+window.onAccess = onAccess;
 window.cfCreate = cfCreate;
 
 // ── Boot ───────────────────────────────────────────────────────

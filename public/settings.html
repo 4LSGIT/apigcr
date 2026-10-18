@@ -83,84 +83,71 @@
   .status.err { color: var(--danger); }
 
   .note { color: var(--text-muted); font-size: 11.5px; margin: 0 0 10px; }
-  .note.warn { color: var(--warn); }
-
-  /* ── Event-type / folder-template rows ── */
-  .sub-row { display: flex; align-items: center; gap: 6px; margin-bottom: 5px; }
-  .sub-row input { flex: 1; }
-  .icon-btn {
-    background: none; border: 1px solid var(--border); color: var(--text-muted);
-    border-radius: 4px; width: 24px; height: 24px; cursor: pointer;
-    font-size: 12px; line-height: 1; flex: none;
-  }
-  .icon-btn:hover { border-color: var(--accent); color: var(--text); }
-  .icon-btn.del:hover { border-color: var(--danger); color: var(--danger); }
-
-  /* ── Scalar settings rows ── */
-  .scalar-row {
-    display: grid; grid-template-columns: 190px 1fr auto; gap: 10px;
-    align-items: center; padding: 9px 0; border-bottom: 1px solid var(--border);
-  }
-  .scalar-row:last-child { border-bottom: none; }
-  .scalar-row .lbl { font-size: 12.5px; }
-  .scalar-row .lbl .sub { display: block; color: var(--text-muted); font-size: 10.5px; font-family: ui-monospace, Menlo, monospace; }
-  .lbl .sub { display: block; color: var(--text-muted); font-size: 10.5px; font-family: ui-monospace, Menlo, monospace; }
-  .lbl .desc { display: block; color: var(--text-muted); font-size: 11px; margin-top: 2px; }
-  .toggle-row { display: inline-flex; align-items: center; gap: 7px; cursor: pointer; font-size: 12.5px; }
-  .toggle-row input[type=checkbox] { width: 15px; height: 15px; accent-color: var(--accent); cursor: pointer; }
-  .toggle-lbl { color: var(--text); }
-  .ws-badge {
-    display: none; color: var(--warn); font-size: 10.5px; margin-top: 2px;
-  }
-  .ws-badge.show { display: block; }
-  @media (max-width: 560px) { .scalar-row { grid-template-columns: 1fr; } }
-
   .loading { color: var(--text-muted); padding: 30px; text-align: center; }
 
-  /* ── Contact-role type editor (role-forms slice) ── */
-  .cr-type {
-    border: 1px solid var(--border); border-radius: 6px;
-    background: var(--page-bg); padding: 10px; margin-bottom: 8px;
-  }
-  .cr-type.cr-inactive { opacity: .6; }
-  .cr-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-  .cr-head input[type=text] { flex: 1; min-width: 140px; }
-  .cr-head .cr-code {
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-    font-size: 11.5px; color: var(--text-muted); white-space: nowrap;
-  }
-  .cr-head input.cr-sort { flex: none; width: 58px; }
-  .cr-count { color: var(--text-muted); font-size: 11px; white-space: nowrap; }
-  .cr-fields { margin: 10px 0 0 14px; }
-  .cr-field {
-    display: grid; grid-template-columns: 1fr 1fr auto auto; gap: 6px;
-    align-items: start; padding: 6px 0; border-bottom: 1px dashed var(--border);
-  }
-  .cr-field:last-of-type { border-bottom: none; }
-  .cr-field .fcol { display: flex; flex-direction: column; gap: 4px; }
-  .cr-field .fmini { font-size: 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: .05em; }
-  .cr-field select {
-    background: var(--page-bg); color: var(--text); border: 1px solid var(--border);
-    border-radius: 5px; padding: 6px 8px; font-size: 12px;
-  }
-  .cr-field .fbtns { display: flex; gap: 4px; padding-top: 16px; }
-  @media (max-width: 640px) { .cr-field { grid-template-columns: 1fr 1fr; } }
+  /* ── Labels + hints — ONE look (AI_CONTEXT §12) ─────────────────────────
+     Used by the access sections below. Same values as mailboxAdmin.html /
+     ctaManager.html / caseconfig/firm.html: theme.css-only panes declare
+     them locally (style.css and scripts.js don't load here). Only the
+     margins are local. The older sections above keep their `label.fld`. */
+  .yc-flabel { display: block; font-size: var(--fs-sm); font-weight: 700; color: var(--text); margin: 4px 0 4px; }
+  .yc-hint { display: block; font-size: var(--fs-xs); font-weight: 400; color: var(--text-muted); margin: 0 0 10px; line-height: 1.45; }
 
-  /* ── Dropbox template editor ── */
-  .tpl-stage {
+  /* ── My access / Manage access (settings arc) ───────────────────────────
+     Tables scroll inside their own box, never the page (320px up). */
+  .acc-table-box { overflow-x: auto; margin: 0 0 12px; }
+  table.acc { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  table.acc th {
+    text-align: left; font-weight: 600; font-size: 11px; color: var(--text-muted);
+    padding: 4px 6px; border-bottom: 1px solid var(--border);
+  }
+  table.acc td { padding: 6px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+  table.acc tbody tr:last-child td { border-bottom: none; }
+  table.acc .flag { text-align: center; width: 1%; white-space: nowrap; }
+  table.acc .flag.role { white-space: normal; min-width: 72px; }
+  table.acc .name { overflow-wrap: anywhere; }
+  .acc-sub { display: block; color: var(--text-muted); font-size: 11px; font-weight: 400; }
+  .acc-no, .acc-role, .acc-empty { color: var(--text-muted); }
+  .acc-yes { color: var(--ok); font-weight: 600; }
+  .badge {
+    display: inline-block; font-size: 10.5px; font-weight: 400; line-height: 1.5;
+    padding: 0 6px; border-radius: 8px; border: 1px solid var(--border); color: var(--text-muted);
+  }
+  .badge.off { color: var(--warn); border-color: var(--warn); }
+  .mg-card {
     border: 1px solid var(--border); border-radius: 6px;
     background: var(--page-bg); padding: 10px; margin-bottom: 10px;
   }
-  .tpl-stage h3 {
-    margin: 0 0 8px; font-size: 12px; font-weight: 600;
-    color: var(--accent-2); text-transform: uppercase; letter-spacing: .06em;
+  .mg-card h3 { margin: 0 0 6px; font-size: 12.5px; font-weight: 600; overflow-wrap: anywhere; }
+  .mg-msg { margin-bottom: 6px; }
+  .mg-msg:empty { display: none; }
+  .mg-add { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; }
+  /* Phone: a Manage access grant row stacks — the person on its own line, the
+     three ticks (labelled, the header is hidden) and Remove on the next — so
+     five columns never squeeze a name into a word-breaking sliver. */
+  @media (max-width: 560px) {
+    .mg-card table.acc, .mg-card table.acc tbody { display: block; width: 100%; }
+    .mg-card table.acc thead { display: none; }
+    .mg-card table.acc tr[data-grant] {
+      display: flex; flex-wrap: wrap; align-items: center;
+      gap: 6px 16px; padding: 8px 0; border-bottom: 1px solid var(--border);
+    }
+    .mg-card table.acc tbody tr[data-grant]:last-child { border-bottom: none; }
+    .mg-card table.acc tr[data-grant] td { display: block; border: 0; padding: 0; width: auto; min-width: 0; }
+    .mg-card table.acc tr[data-grant] td.name { flex: 1 0 100%; overflow-wrap: anywhere; }
+    .mg-card table.acc tr[data-grant] td.flag[data-label] { display: inline-flex; align-items: center; gap: 4px; }
+    .mg-card table.acc tr[data-grant] td.flag[data-label]::before {
+      content: attr(data-label); font-size: 11px; color: var(--text-muted);
+    }
+    .mg-card table.acc tr[data-grant] td:last-child { margin-left: auto; }
   }
-  .space-preview {
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-    font-size: 11px; color: var(--text-muted); margin: 3px 0 0 2px;
-    white-space: pre; overflow-x: auto;
+  .mg-add select {
+    min-width: 0; max-width: 100%; background: var(--page-bg); color: var(--text);
+    border: 1px solid var(--border); border-radius: 5px; padding: 5px 8px; font-size: 12.5px;
   }
-  .space-preview .dot { color: var(--warn); }
+  .mg-add label { display: inline-flex; align-items: center; gap: 4px; font-size: 12.5px; cursor: pointer; }
+
+  /* ── Raw text areas (booking calendars, signature) ── */
   textarea.raw {
     width: 100%; min-height: 180px; background: var(--page-bg); color: var(--text);
     border: 1px solid var(--border); border-radius: 5px; padding: 7px 9px;
@@ -270,129 +257,37 @@
       </div>
     </div>
 
-    <!-- ── Case Types — MOVED (CFG-1) ─────────────────────────── -->
-    <!-- The editor is YisraCase Config → Types & Subtypes
-         (caseconfig/types.html): it runs usage checks and offers the
-         template repoint; the copy that lived here wrote fe-case_types
-         blind and could strand pipeline templates. fe-case_types stays
-         excluded from the generic Firm Settings sections via CUSTOM
-         below — one editor per setting, never two. -->
-    <p class="note" style="padding:2px 4px">Case Types moved to <b>YisraCase Config → Types &amp; Subtypes</b> (More → YisraCase Config).</p>
-
-    <!-- ── Event Types (legacy fallback list) ─────────────────── -->
-    <!-- Parked here on purpose (CFG-1): NOT vocabulary. The calendar-type
-         registry (YisraCase Config → Calendar Types) is the primary;
-         eventform.html falls back to fe-event_types only when the registry
-         is unreachable/empty, and scripts.js still ships it via
-         /api/firm-data. Live in degraded mode — keep it functional. -->
-    <div class="section collapsed" id="eventTypesSection" style="display:none">
-      <div class="sec-head"><h2><span class="chev">▸</span>Event Types (legacy fallback list)</h2><span class="hint" id="etUpdated"></span></div>
+    <!-- ── My access (settings arc) ───────────────────────────── -->
+    <!-- Read-only: the caller's own mailbox + phone-line access, from the two
+         reads Comms uses (GET /api/mailboxes, GET /api/phone-lines/readable).
+         A superuser gets one line instead of the tables. -->
+    <div class="section collapsed" id="myAccessSection">
+      <div class="sec-head"><h2><span class="chev">▸</span>My access</h2><span class="hint" id="maHint"></span></div>
       <div class="sec-body">
-        <p class="note">This list is used <b>only</b> when the calendar-type registry is unreachable or empty —
-           the real event-type vocabulary lives in <b>YisraCase Config → Calendar Types</b>.</p>
-        <p class="note warn">Renaming or removing an event type does <b>not</b> update existing events — they keep their old value.</p>
-        <div id="etList"></div>
-        <button class="btn" id="etAdd">+ Add Event Type</button>
-        <div class="btn-row">
-          <button class="btn primary" id="etSave" disabled>Save Event Types</button>
-          <span class="status" id="etStatus"></span>
-        </div>
+        <p class="yc-hint">Your access to the firm's mailboxes and phone lines. <b>Read</b> — its mail, or its texts and calls, in Comms; <b>Send</b> — send as it; <b>Manage</b> — give other people access. A superuser or the channel's manager grants access.</p>
+        <div id="maBody"><p class="note">Loading…</p></div>
       </div>
     </div>
 
-    <!-- ── Contact Roles (role-forms slice) ───────────────────── -->
-    <!-- Structured editor over /api/contact-role-types — a TABLE, not an
-         app_settings key (the retired fe-trustees editor's successor
-         surface). Per-type Save; the route's validation errors are
-         surfaced verbatim. Always shown: the table always exists. -->
-    <div class="section collapsed" id="contactRolesSection">
-      <div class="sec-head"><h2><span class="chev">▸</span>Contact Roles</h2><span class="hint" id="crHint"></span></div>
+    <!-- ── Manage access (settings arc) ───────────────────────── -->
+    <!-- Only for a NON-superuser holding can_manage on at least one mailbox or
+         phone line: that channel's grants, edited through the same routes
+         Admin → Mailboxes and Connections → Phone Lines use. -->
+    <div class="section collapsed" id="manageAccessSection" hidden>
+      <div class="sec-head"><h2><span class="chev">▸</span>Manage access</h2><span class="hint" id="mgHint"></span></div>
       <div class="sec-body">
-        <p class="note">Role types power the contact form's Roles section, the Contacts-tab role filter, and every role consumer (trustee roster, judge resolution). Fields below define each role's structured attributes.</p>
-        <p class="note warn"><b>The code is permanent.</b> Every contact holding a role references it, and consumers reference it in code — deactivate a type instead of renaming or deleting it.</p>
-        <div id="crList"><p class="note">Loading…</p></div>
-        <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">
-          <label class="fld">Add Role Type</label>
-          <div class="grid2">
-            <div><label class="fld">Code (permanent — a–z, 0–9, _)</label><input type="text" id="crNewCode" class="mono" maxlength="40" placeholder="mediator"></div>
-            <div><label class="fld">Label</label><input type="text" id="crNewLabel" maxlength="60" placeholder="Mediator"></div>
-          </div>
-          <div class="btn-row">
-            <button class="btn" id="crAdd">+ Add Role Type</button>
-            <span class="status" id="crAddStatus"></span>
-          </div>
-        </div>
+        <p class="yc-hint">You manage who can use these. Ticks save as you go; a grant keeps at least one tick — <b>Remove</b> takes access away. Every change is recorded in the audit log.</p>
+        <div id="mgCards"></div>
       </div>
     </div>
 
-    <!-- ── Custom Fields — MOVED (CFG-1) ──────────────────────── -->
-    <!-- The editor is YisraCase Config → Fields
-         (caseconfig/fields.html) — it adds the usage badges, the option
-         retire toggle and drag ordering the S1 section here never had. -->
-    <p class="note" style="padding:2px 4px">Custom Fields moved to <b>YisraCase Config → Fields</b> (More → YisraCase Config).</p>
-
-    <!-- ── Dropbox Folder Templates ───────────────────────────── -->
-    <div class="section collapsed" id="dropboxTplSection" style="display:none">
-      <div class="sec-head"><h2><span class="chev">▸</span>Dropbox Folder Templates</h2><span class="hint" id="dtUpdated"></span></div>
-      <div class="sec-body">
-        <p class="note warn">Spaces in folder names are <b>load-bearing</b> (manual sort order) and shown below as <span class="dot" style="color:var(--warn)">·</span> dots. They are preserved exactly on save.</p>
-        <p class="note">Placeholders like <span class="mono">{{case_type}}</span> are substituted when the folder is created. Stage names are fixed — add/remove stages via the DB console.</p>
-        <div id="dtList"></div>
-        <div class="btn-row">
-          <button class="btn primary" id="dtSave" disabled>Save Folder Templates</button>
-          <span class="status" id="dtStatus"></span>
-        </div>
-      </div>
-    </div>
-
-    <!-- ── Firm Settings (dynamic, one section per category) ──────
-         Built at boot from GET /api/app-settings metadata (category,
-         label, description, type, sort_order). Keys handled by a custom
-         editor above never render here. -->
-    <div id="dynSections"></div>
-
-    <!-- ── Add Firm Setting ───────────────────────────────────────
-         POST /api/app-settings — the firm.settings capability (admin,
-         it, su, and machine keys; access A4). Created rows are
-         always is_editable=1 / is_secret=0 (secrets stay DB-console
-         only) and appear in their category section above immediately
-         (appended at the end until the next reload re-sorts). -->
-    <div class="section collapsed" id="addSettingSection">
-      <div class="sec-head"><h2><span class="chev">▸</span>Add Firm Setting</h2></div>
-      <div class="sec-body">
-        <p class="note">Creates a new firm setting (never a secret — those are created via the DB console only). Once created, it is editable above and readable/writable by automation via <span class="mono">get_setting</span> / <span class="mono">get_settings</span> / <span class="mono">set_setting</span>.</p>
-        <div class="grid2">
-          <div><label class="fld">Key *</label><input type="text" id="asKey" class="mono" placeholder="my_new_setting" spellcheck="false"></div>
-          <div><label class="fld">Label</label><input type="text" id="asLabel" placeholder="My New Setting"></div>
-          <div><label class="fld">Category</label><input type="text" id="asCategory" list="asCatList" placeholder="Other"><datalist id="asCatList"></datalist></div>
-          <div><label class="fld">Type</label>
-            <select id="asType">
-              <option value="string" selected>string (anything, single line)</option>
-              <option value="template">template (anything, multi-line)</option>
-              <option value="number">number</option>
-              <option value="bool">bool (on/off)</option>
-              <option value="email">email</option>
-              <option value="csv">csv (comma-separated list)</option>
-              <option value="phone">phone</option>
-              <option value="url">url</option>
-              <option value="json">json</option>
-              <option value="json_array">json_array</option>
-              <option value="date">date</option>
-            </select>
-          </div>
-          <div><label class="fld">Sort Order</label><input type="text" id="asSort" class="mono" inputmode="numeric" placeholder="(optional)"></div>
-          <div></div>
-        </div>
-        <label class="fld">Description</label>
-        <input type="text" id="asDesc" placeholder="(optional — shown under the label)">
-        <label class="fld">Initial Value</label>
-        <textarea id="asValue" class="raw" style="min-height:60px" spellcheck="false"></textarea>
-        <div class="btn-row">
-          <button class="btn primary" id="asCreate">Create Setting</button>
-          <span class="status" id="asStatus"></span>
-        </div>
-      </div>
-    </div>
+    <!-- ── Firm-wide settings: a pointer (settings arc) ───────── -->
+    <!-- This page is PERSONAL ONLY. Every firm-wide editor that lived here
+         (Event Types, Contact Roles, Dropbox Folder Templates, the Firm
+         Settings sections, Add Firm Setting) has its one home elsewhere —
+         lib/settingsRegistry.js names it per key. This page reads neither
+         the app-settings API nor the contact-role-types API. -->
+    <p class="note" id="firmPointer" style="padding:2px 4px">Firm-wide settings live in <b>YisraCase Config</b> (More → YisraCase Config): the <b>Firm</b> tab for admins, the <b>System</b> tab for IT, the vocabulary tabs for everyone. Your colours: <b>More → Theme</b>. Your buttons: <b>All → Customize my launcher</b>.</p>
 
   </div>
 </div>
@@ -403,64 +298,6 @@ const E = id => document.getElementById(id);
 // All shell pages expose window.top.apiSend(path, method, data?).
 const api = (path, method = 'GET', data) => window.top.apiSend(path, method, data);
 
-/* ── Custom editors: key → dedicated section above ──────────────
-   Everything else editable renders as a typed row in a dynamic
-   per-category section, driven entirely by server metadata
-   (category / label / description / type / sort_order).
-   'caseConfig' = edited ONLY in YisraCase Config (CFG-1): no section
-   here AND never a generic row below — a blind edit of fe-case_types
-   from this page strands pipeline templates (no usage check, no
-   template repoint). One editor per setting, never two. */
-const CUSTOM = {
-  'fe-case_types':                 'caseConfig',
-  'fe-event_types':                'eventTypes',
-  'dropbox_case_folder_templates': 'dropboxTpl'
-};
-
-// Deliberate section order; unknown categories append alphabetically after.
-const CATEGORY_ORDER = ['Firm Identity', 'Email', 'SMS', 'Booking', 'Court',
-                        'Dropbox', 'E-Sign', 'Alerts', 'System', 'Other'];
-
-/* Client-side pre-validation. MUST mirror TYPE_VALIDATORS in
-   routes/api.appSettings.js — the server is authoritative; this only
-   exists so mistakes are caught before the round trip. Checks run on a
-   trimmed copy; the SAVED value is always verbatim. Blank always passes. */
-const VALIDATORS = {
-  number: v => /^-?\d+(\.\d+)?$/.test(v.trim()) || 'must be a number',
-  bool:   v => /^[01]$/.test(v.trim()) || 'must be 1 or 0',
-  email:  v => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v.trim()) || 'must be a valid email address',
-  csv:    v => v.split(',').every(p => p.trim().length > 0) || 'comma-separated list, no empty entries',
-  phone:  v => (/^[+()\d\s.\-]+$/.test(v.trim()) && (v.match(/\d/g) || []).length >= 7)
-               || 'must be a phone number',
-  url:    v => { try { const u = new URL(v.trim());
-                       return (u.protocol === 'http:' || u.protocol === 'https:') || 'must be an http(s) URL'; }
-                 catch { return 'must be a valid URL (include https://)'; } },
-  json:   v => { try { JSON.parse(v); return true; }
-                 catch (e) { return 'not valid JSON: ' + e.message; } },
-  json_array: v => { try { return Array.isArray(JSON.parse(v)) || 'must be a JSON array'; }
-                     catch (e) { return 'not valid JSON: ' + e.message; } },
-  date:   v => { const s = v.trim();
-                 if (/^(0|off|false|no|none|null)$/i.test(s)) return true;
-                 if (/^\d{10}$/.test(s) || /^\d{13,}$/.test(s)) return true;
-                 return Number.isFinite(Date.parse(s)) || 'date / epoch ms / blank / off'; }
-};
-function validateByType(type, value) {
-  if (value.trim() === '') return true; // blank = unset
-  const fn = type && VALIDATORS[type];
-  return fn ? fn(value) : true;
-}
-
-function prettify(key) {
-  return key.replace(/^fe-/, '').replace(/[_-]+/g, ' ')
-    .replace(/\b\w/g, c => c.toUpperCase());
-}
-function fmtDate(ts) {
-  if (!ts) return '';
-  const d = new Date(ts);
-  return isNaN(d) ? '' : 'updated ' + d.toLocaleString('en-US', {
-    month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit'
-  });
-}
 function setStatus(id, msg, ok) {
   const el = E(id);
   el.textContent = msg;
@@ -654,401 +491,9 @@ async function savePassword() {
   }
 }
 
-/* ════════════════ EVENT TYPES EDITOR ════════════════
-   fe-event_types: ["Name", ...] */
-let etState = null;
-let etOriginal = [];
-
-function etMarkDirty() { E('etSave').disabled = false; }
-
-function etRender() {
-  E('etList').innerHTML = etState.map((s, i) => `
-    <div class="sub-row">
-      <input type="text" data-et="${i}" value="${esc(s)}" placeholder="Event type name">
-      <button class="icon-btn" data-et-up="${i}" title="Move up">↑</button>
-      <button class="icon-btn" data-et-down="${i}" title="Move down">↓</button>
-      <button class="icon-btn del" data-et-del="${i}" title="Delete">✕</button>
-    </div>`).join('');
-}
-
-function etBind() {
-  E('etList').addEventListener('input', e => {
-    if (e.target.dataset.et !== undefined) {
-      etState[+e.target.dataset.et] = e.target.value; // verbatim — no trim
-      etMarkDirty();
-    }
-  });
-  E('etList').addEventListener('click', e => {
-    const b = e.target.closest('button'); if (!b) return;
-    const d = b.dataset;
-    const swap = (i, j) => { if (j < 0 || j >= etState.length) return false; [etState[i], etState[j]] = [etState[j], etState[i]]; return true; };
-    let changed = false;
-    if (d.etUp !== undefined)        changed = swap(+d.etUp, +d.etUp - 1);
-    else if (d.etDown !== undefined) changed = swap(+d.etDown, +d.etDown + 1);
-    else if (d.etDel !== undefined)  { etState.splice(+d.etDel, 1); changed = true; }
-    if (changed) { etMarkDirty(); etRender(); }
-  });
-  E('etAdd').addEventListener('click', () => { etState.push(''); etMarkDirty(); etRender(); });
-}
-
-async function etSave() {
-  if (etState.some(s => !s.trim())) return setStatus('etStatus', 'Event type names cannot be empty', false);
-  if (new Set(etState).size !== etState.length) return setStatus('etStatus', 'Duplicate event types are not allowed', false);
-
-  const gone = etOriginal.filter(n => !etState.includes(n));
-  if (gone.length && !confirm(
-    `These event types were removed or renamed:\n  ${gone.join(', ')}\n\nExisting events keep their old value. Save anyway?`
-  )) return;
-
-  E('etSave').disabled = true;
-  try {
-    const data = await api('/api/app-settings/fe-event_types', 'PUT', { value: JSON.stringify(etState) });
-    etOriginal = etState.slice();
-    E('etUpdated').textContent = fmtDate(data.setting?.updated_at);
-    setStatus('etStatus', 'Event types saved', true);
-    window.top.loadFirmData?.();
-  } catch (e2) {
-    E('etSave').disabled = false;
-    setStatus('etStatus', e2.message || 'Failed to save', false);
-  }
-}
-
-function etInit(rawValue, updatedAt) {
-  let arr;
-  try { arr = JSON.parse(rawValue); } catch { arr = null; }
-  if (!Array.isArray(arr)) {
-    rawJsonAddRow('fe-event_types', rawValue, updatedAt, 'Event Types (raw — unexpected format)');
-    return;
-  }
-  etState = arr.map(String);
-  etOriginal = etState.slice();
-  E('etUpdated').textContent = fmtDate(updatedAt);
-  E('eventTypesSection').style.display = '';
-  etRender();
-  etBind();
-}
-
-/* ════════════════ DROPBOX FOLDER TEMPLATES ════════════════
-   dropbox_case_folder_templates: { stage: { default: path, subfolders: [] } }
-   Stage keys are a code contract (looked up by name) — read-only here.
-   WHITESPACE IS LOAD-BEARING: values kept verbatim, spaces previewed as dots. */
-let dtState = null; // [{ stage, path, subs: [] }]
-
-function dtMarkDirty() { E('dtSave').disabled = false; }
-
-function dotPreview(v) {
-  // escape, then mark every space visibly
-  return esc(v).replace(/ /g, '<span class="dot">·</span>');
-}
-
-function dtRender() {
-  const host = E('dtList');
-  host.innerHTML = '';
-  dtState.forEach((st, si) => {
-    const card = document.createElement('div');
-    card.className = 'tpl-stage';
-    card.innerHTML = `
-      <h3>${esc(st.stage)}</h3>
-      <label class="fld">Folder Path Template</label>
-      <input type="text" class="mono" data-dt-path="${si}" value="${esc(st.path)}">
-      <div class="space-preview" data-dt-pathprev="${si}">${dotPreview(st.path)}</div>
-      <label class="fld">Subfolders</label>
-      <div>
-        ${st.subs.map((sub, bi) => `
-          <div class="sub-row">
-            <div style="flex:1; min-width:0">
-              <input type="text" class="mono" data-dt-sub="${si}:${bi}" value="${esc(sub)}" placeholder="Subfolder name">
-              <div class="space-preview" data-dt-subprev="${si}:${bi}" style="${/^\s|\s{2,}|\s$/.test(sub) ? '' : 'display:none'}">${dotPreview(sub)}</div>
-            </div>
-            <button class="icon-btn" data-dt-subup="${si}:${bi}" title="Move up">↑</button>
-            <button class="icon-btn" data-dt-subdown="${si}:${bi}" title="Move down">↓</button>
-            <button class="icon-btn del" data-dt-subdel="${si}:${bi}" title="Delete subfolder">✕</button>
-          </div>`).join('')}
-        <button class="btn tiny" data-dt-addsub="${si}">+ Subfolder</button>
-      </div>`;
-    host.appendChild(card);
-  });
-}
-
-function dtBind() {
-  E('dtList').addEventListener('input', e => {
-    const inp = e.target;
-    if (inp.dataset.dtPath !== undefined) {
-      const si = +inp.dataset.dtPath;
-      dtState[si].path = inp.value; // verbatim — no trim
-      document.querySelector(`[data-dt-pathprev="${si}"]`).innerHTML = dotPreview(inp.value);
-      dtMarkDirty();
-    } else if (inp.dataset.dtSub !== undefined) {
-      const [si, bi] = inp.dataset.dtSub.split(':').map(Number);
-      dtState[si].subs[bi] = inp.value; // verbatim — no trim
-      const prev = document.querySelector(`[data-dt-subprev="${si}:${bi}"]`);
-      const show = /^\s|\s{2,}|\s$/.test(inp.value);
-      prev.style.display = show ? '' : 'none';
-      prev.innerHTML = dotPreview(inp.value);
-      dtMarkDirty();
-    }
-  });
-  E('dtList').addEventListener('click', e => {
-    const b = e.target.closest('button'); if (!b) return;
-    const d = b.dataset;
-    const swap = (arr, i, j) => { if (j < 0 || j >= arr.length) return false; [arr[i], arr[j]] = [arr[j], arr[i]]; return true; };
-    let changed = false;
-    if (d.dtAddsub !== undefined)       { dtState[+d.dtAddsub].subs.push(''); changed = true; }
-    else if (d.dtSubup !== undefined)   { const [si, bi] = d.dtSubup.split(':').map(Number);   changed = swap(dtState[si].subs, bi, bi - 1); }
-    else if (d.dtSubdown !== undefined) { const [si, bi] = d.dtSubdown.split(':').map(Number); changed = swap(dtState[si].subs, bi, bi + 1); }
-    else if (d.dtSubdel !== undefined)  { const [si, bi] = d.dtSubdel.split(':').map(Number);  dtState[si].subs.splice(bi, 1); changed = true; }
-    if (changed) { dtMarkDirty(); dtRender(); }
-  });
-}
-
-async function dtSave() {
-  for (const st of dtState) {
-    if (!st.path.trim()) return setStatus('dtStatus', `Path for "${st.stage}" cannot be empty`, false);
-    if (st.subs.some(x => !x.trim())) return setStatus('dtStatus', `Subfolder names cannot be empty (under "${st.stage}")`, false);
-    if (new Set(st.subs).size !== st.subs.length) return setStatus('dtStatus', `Duplicate subfolders under "${st.stage}"`, false);
-  }
-  const obj = {};
-  dtState.forEach(st => { obj[st.stage] = { default: st.path, subfolders: st.subs.slice() }; });
-
-  E('dtSave').disabled = true;
-  try {
-    // Pretty-printed so the row stays readable in the DB console.
-    const data = await api('/api/app-settings/dropbox_case_folder_templates', 'PUT', { value: JSON.stringify(obj, null, 2) });
-    E('dtUpdated').textContent = fmtDate(data.setting?.updated_at);
-    setStatus('dtStatus', 'Folder templates saved', true);
-  } catch (e2) {
-    E('dtSave').disabled = false;
-    setStatus('dtStatus', e2.message || 'Failed to save', false);
-  }
-}
-
-function dtInit(rawValue, updatedAt) {
-  let map;
-  try { map = JSON.parse(rawValue); } catch { map = null; }
-  const valid = map && !Array.isArray(map) && typeof map === 'object' &&
-    Object.values(map).every(v => v && typeof v === 'object' && typeof v.default === 'string');
-  if (!valid) {
-    rawJsonAddRow('dropbox_case_folder_templates', rawValue, updatedAt, 'Dropbox Folder Templates (raw — unexpected format)');
-    return;
-  }
-  dtState = Object.entries(map).map(([stage, cfg]) => ({
-    stage,
-    path: cfg.default,
-    subs: Array.isArray(cfg.subfolders) ? cfg.subfolders.map(String) : []
-  }));
-  E('dtUpdated').textContent = fmtDate(updatedAt);
-  E('dropboxTplSection').style.display = '';
-  dtRender();
-  dtBind();
-}
-
-/* ════════════════ DYNAMIC CATEGORY SECTIONS ════════════════
-   One collapsible section per app_settings.category, created on demand
-   in CATEGORY_ORDER (rows arrive pre-sorted from init). Every editable
-   key without a CUSTOM editor renders here as a typed row. Values are
-   saved VERBATIM — leading/trailing whitespace is load-bearing for
-   some values. */
-let scalarSeq = 0;
-let rowMeta = {};   // key → full row from GET (category, label, type, ...)
-
-const metaFor = key => rowMeta[key] || {};
-
-const _catBodies = {};
-function categoryBody(cat) {
-  if (_catBodies[cat]) return _catBodies[cat];
-  const sec = document.createElement('div');
-  sec.className = 'section collapsed';
-  sec.innerHTML = `
-    <div class="sec-head"><h2><span class="chev">▸</span>${esc(cat)}</h2></div>
-    <div class="sec-body">
-      <p class="note">Values are saved exactly as typed — leading/trailing spaces are preserved on purpose.</p>
-      <div class="cat-list"></div>
-    </div>`;
-  E('dynSections').appendChild(sec);
-  _catBodies[cat] = sec.querySelector('.cat-list');
-  return _catBodies[cat];
-}
-
-/* Shared save path: client-side type pre-check (server re-checks), PUT,
-   firmData refresh for fe-* keys. Value is sent VERBATIM. */
-async function saveSetting(key, rawValue, statusId, btn) {
-  const check = validateByType(metaFor(key).type, rawValue);
-  if (check !== true) return setStatus(statusId, check, false);
-  btn.disabled = true;
-  try {
-    await api('/api/app-settings/' + encodeURIComponent(key), 'PUT', { value: rawValue });
-    setStatus(statusId, 'Saved', true);
-    if (key.startsWith('fe-')) window.top.loadFirmData?.();
-  } catch (err) {
-    setStatus(statusId, err.message || 'Failed', false);
-  } finally {
-    btn.disabled = false;
-  }
-}
-
-function wsHint(v) {
-  const lead = (v.match(/^\s*/) || [''])[0].length;
-  const trail = (v.match(/\s*$/) || [''])[0].length;
-  if (!lead && !trail) return '';
-  const parts = [];
-  if (lead) parts.push(`${lead} leading space${lead > 1 ? 's' : ''}`);
-  if (trail) parts.push(`${trail} trailing space${trail > 1 ? 's' : ''}`);
-  return '⚠ ' + parts.join(', ') + ' — preserved on save';
-}
-
-function labelCell(key, label, description) {
-  return `${esc(label)}<span class="sub">${esc(key)}</span>` +
-    (description ? `<span class="desc">${esc(description)}</span>` : '');
-}
-
-/* Single-line values: string, number, email, csv, phone, url, date, bool. */
-function scalarAddRow(key, value, updatedAt, labelOverride) {
-  const id = 'sc' + (scalarSeq++);
-  const meta = metaFor(key);
-  const type = meta.type || 'string';
-  const label = labelOverride || meta.label || prettify(key);
-  const mono = ['url', 'csv', 'date', 'phone', 'number'].includes(type);
-  const inputAttrs = type === 'number' ? ' inputmode="decimal"' : '';
-
-  const row = document.createElement('div');
-  row.className = 'scalar-row';
-  row.innerHTML = `
-    <div class="lbl">${labelCell(key, label, meta.description)}</div>
-    <div>
-      ${type === 'bool'
-        ? `<label class="toggle-row"><input type="checkbox" id="${id}"> <span class="toggle-lbl" id="${id}lbl"></span></label>`
-        : `<input type="text" class="${mono ? 'mono' : ''}" id="${id}"${inputAttrs}>`}
-      <div class="ws-badge" id="${id}ws"></div>
-    </div>
-    <div style="text-align:right">
-      <button class="btn" id="${id}btn">Save</button>
-      <div class="status" id="${id}st" style="margin-top:3px"></div>
-      <div class="note" style="margin:2px 0 0">${fmtDate(updatedAt)}</div>
-    </div>`;
-  categoryBody(meta.category || 'Other').appendChild(row);
-
-  const inp = E(id);
-  const getVal = type === 'bool' ? () => (inp.checked ? '1' : '0') : () => inp.value;
-  if (type === 'bool') {
-    inp.checked = String(value ?? '').trim() === '1';
-    const paintLbl = () => { E(id + 'lbl').textContent = inp.checked ? 'On (1)' : 'Off (0)'; };
-    paintLbl();
-    inp.addEventListener('change', paintLbl);
-  } else {
-    inp.value = value ?? ''; // set via .value, never innerHTML — preserves everything
-    const updateWs = () => {
-      const h = wsHint(inp.value);
-      const b = E(id + 'ws');
-      b.textContent = h;
-      b.className = 'ws-badge' + (h ? ' show' : '');
-    };
-    updateWs();
-    inp.addEventListener('input', updateWs);
-  }
-  E(id + 'btn').addEventListener('click', () => saveSetting(key, getVal(), id + 'st', E(id + 'btn')));
-}
-
-/* Multi-line values: template, json, json_array — a textarea, because a
-   plain input silently destroys newlines on edit. Also the fallback
-   target when a custom editor meets an unexpected JSON shape. */
-function textareaAddRow(key, value, updatedAt, labelOverride) {
-  const id = 'ta' + (scalarSeq++);
-  const meta = metaFor(key);
-  const label = labelOverride || meta.label || prettify(key);
-  const row = document.createElement('div');
-  row.style.padding = '9px 0';
-  row.innerHTML = `
-    <div class="lbl" style="margin-bottom:5px">${labelCell(key, label, meta.description)}</div>
-    <textarea class="raw" id="${id}"></textarea>
-    <div class="btn-row">
-      <button class="btn" id="${id}btn">Save</button>
-      <span class="status" id="${id}st"></span>
-      <span class="note" style="margin:0">${fmtDate(updatedAt)}</span>
-    </div>`;
-  categoryBody(meta.category || 'Other').appendChild(row);
-  E(id).value = value ?? '';
-  E(id + 'btn').addEventListener('click', () => saveSetting(key, E(id).value, id + 'st', E(id + 'btn')));
-}
-
-/* Back-compat shim for the custom editors' unexpected-shape fallback.
-   Forces a JSON check even if the row's declared type is missing. */
-function rawJsonAddRow(key, value, updatedAt, label) {
-  if (!rowMeta[key]) rowMeta[key] = {};
-  if (!rowMeta[key].type) rowMeta[key].type = 'json';
-  textareaAddRow(key, value, updatedAt, label);
-}
-
-/* Route a row to its renderer by declared type. */
-function settingRow(row) {
-  const t = row.type || 'string';
-  if (t === 'template' || t === 'json' || t === 'json_array') {
-    textareaAddRow(row.key, row.value, row.updated_at);
-  } else {
-    scalarAddRow(row.key, row.value, row.updated_at);
-  }
-}
-
-/* ════════════════ ADD FIRM SETTING ════════════════
-   POST /api/app-settings — the server re-validates everything; the checks
-   here only save a round trip. Key rule and type vocabulary MUST mirror
-   routes/api.appSettings.js (KEY_RE / SETTING_TYPES). The initial value is
-   sent VERBATIM (whitespace invariant), same as every other save here. */
-const AS_KEY_RE = /^[a-zA-Z0-9][a-zA-Z0-9_\-]{0,99}$/;
-
-function asPopulateCategories(rows) {
-  // Deliberate order first, then any live categories not in the list.
-  const cats = [...new Set([...CATEGORY_ORDER, ...rows.map(r => r.category).filter(Boolean)])];
-  E('asCatList').innerHTML = cats.map(c => `<option value="${esc(c)}">`).join('');
-}
-
-async function createSetting() {
-  const key = E('asKey').value.trim();
-  if (!AS_KEY_RE.test(key)) {
-    return setStatus('asStatus',
-      'key: 1-100 chars of letters, digits, _ or -, starting with a letter or digit', false);
-  }
-  if (rowMeta[key]) {
-    return setStatus('asStatus', CUSTOM[key] === 'caseConfig'
-      ? `"${key}" already exists — edit it in YisraCase Config (More → YisraCase Config)`
-      : `"${key}" already exists — edit it in its section above`, false);
-  }
-  const type  = E('asType').value;
-  const value = E('asValue').value; // VERBATIM — no trimming
-  const check = validateByType(type, value);
-  if (check !== true) return setStatus('asStatus', 'value ' + check, false);
-  const sortRaw = E('asSort').value.trim();
-  if (sortRaw && !/^-?\d+$/.test(sortRaw)) {
-    return setStatus('asStatus', 'sort order must be an integer', false);
-  }
-
-  const body = {
-    key, type, value,
-    category:    E('asCategory').value.trim() || null,
-    label:       E('asLabel').value.trim() || null,
-    description: E('asDesc').value.trim() || null,
-    sort_order:  sortRaw ? Number(sortRaw) : null,
-  };
-
-  E('asCreate').disabled = true;
-  try {
-    const data = await api('/api/app-settings', 'POST', body);
-    const row = data.setting;
-    rowMeta[row.key] = row;
-    settingRow(row); // appended at the end of its category section; reload re-sorts
-    ['asKey', 'asLabel', 'asCategory', 'asDesc', 'asSort', 'asValue'].forEach(id => E(id).value = '');
-    E('asType').value = 'string';
-    setStatus('asStatus', `Created "${row.key}" — see its category section above`, true);
-  } catch (err) {
-    setStatus('asStatus', err.message || 'Failed to create setting', false);
-  } finally {
-    E('asCreate').disabled = false;
-  }
-}
-
 /* ════════════════ ACCORDION ════════════════
    All sections start collapsed; opening one closes the others.
-   Delegated so sections created after boot (dynamic categories)
-   participate without re-binding. */
+   One delegated listener on the document. */
 document.addEventListener('click', e => {
   const h = e.target.closest('.sec-head');
   if (!h) return;
@@ -1094,269 +539,316 @@ async function saveFreebusyCals() {
   E('fbSave').disabled = false;
 }
 
-/* ════════════════ CONTACT ROLES EDITOR (role-forms slice) ════════════════
-   Structured editor over GET/POST/PUT /api/contact-role-types. Unlike the
-   caseTypes/eventTypes editors (one app_settings blob, whole-blob save),
-   each role type is its own DB row with its own route — so Save is
-   PER TYPE, and the route's validation errors (the attrs_schema
-   vocabulary validator joins every problem with '; ') surface verbatim
-   in that type's status span.
+/* ════════════════ MY ACCESS / MANAGE ACCESS (settings arc) ════════════════
+   My access (read-only): what the caller can do on each mailbox and phone
+   line, from the two reads Comms uses — GET /api/mailboxes (viewer.su;
+   mailboxes[].access) and GET /api/phone-lines/readable (viewer.su; lines[]
+   carry the flags). services/mailboxService.js decides both. A row with
+   `role` reads through the attorney READ bypass (READ_BYPASS_ROLES), not a
+   grant: its Read cell says so; Send / Manage still come from a grant row. A
+   superuser gets one line instead (every channel, no grant needed).
+   /readable lists a non-attorney's lines by can_read grant only, so a line
+   granted Send or Manage WITHOUT Read does not show here (or below).
 
-   attrs_schema field vocabulary: { key, label, type, required?, options?,
-   placeholder? }, type ∈ text | url | number | select | multi_select.
-   OPTIONS AND NUMBER IDENTITY: the trustee chapter options are the
-   NUMBERS [7, 11, 12, 13] — a '7' string would break trusteeMatch rule 0.
-   The options box therefore parses numeric-looking CSV tokens as numbers
-   (7, 11 → numbers; ch7 → string), and accepts a raw JSON array
-   (starts with '[') as the lossless escape hatch. Options that would be
-   ambiguous in CSV form (a STRING that looks numeric, or contains a
-   comma) are DISPLAYED as JSON so a load→save round trip never
-   changes a type. */
+   Manage access: for a NON-superuser holding can_manage on at least one
+   channel. The role bypass never grants manage, so that flag always means a
+   real grant row. One card per such channel, over the routes Admin →
+   Mailboxes and Connections → Phone Lines use (routes/api.mailboxes.js,
+   routes/api.phoneComms.js — SU or can_manage; a manager writes through the
+   grant, no step-up). The routes PIN the channel from the URL, so no body
+   carries channel_type; bodies are what mailboxService.validateGrantBody
+   takes: POST {user, can_read, can_send, can_manage} (booleans), PATCH
+   {<flag>: boolean}. The server is the authority: its error text is shown
+   verbatim. A superuser manages grants in Admin, never here. */
 
-let crState = null; // [{ role_code, label, sort_order, active, fields:[…]|null, _open, _dirty }]
+const ACC_FLAGS = ['can_read', 'can_send', 'can_manage'];
+const ACC_FLAG_LABEL = { can_read: 'Read', can_send: 'Send', can_manage: 'Manage' };
+const ACC_KINDS = {
+  mailbox:    { base: '/api/mailboxes/',  noun: 'mailbox',    label: 'Mailbox' },
+  phone_line: { base: '/api/phone-lines/', noun: 'phone line', label: 'Phone line' },
+};
 
-const CR_TYPES = ['text', 'url', 'number', 'select', 'multi_select'];
+let _accSeq = 0;      // the newest loadMyAccess() run; an older one drops its answer
+let _mgChannels = []; // the channels the caller manages (cards below)
 
-function crParseOptions(raw) {
-  const s = String(raw || '').trim();
-  if (!s) return null;
-  if (s.startsWith('[')) {
-    const arr = JSON.parse(s); // throws → surfaced by the caller
-    if (!Array.isArray(arr)) throw new Error('options JSON must be an array');
-    return arr;
+/** The caller's users.user — the same source renderProfile reads. */
+function accMe() {
+  const u = window.top.firmData?.currentUser || window.top.user || {};
+  return Number(u.user);
+}
+
+/** Active staff for the Add picker — the assign-picker rule (routes/api.firmData.js
+ *  header; AI_CONTEXT §18): u.user_type && u.active !== false. User 0
+ *  (automations) can never hold a grant (mailboxService.createGrant). */
+function accStaff() {
+  const users = window.top.firmData?.users || [];
+  return users.filter(u => Number(u.user) > 0 && u.user_type && u.active !== false);
+}
+
+function accFmtPhone(n) {
+  const s = String(n ?? '');
+  return /^\d{10}$/.test(s) ? `(${s.slice(0, 3)}) ${s.slice(3, 6)}-${s.slice(6)}` : s;
+}
+
+// Both reads → one row shape.
+function accMailboxRow(m) {
+  const a = m.access || {};
+  return {
+    kind: 'mailbox', id: m.id,
+    title: m.display_name || m.address, sub: m.display_name ? m.address : '',
+    active: !!m.active,
+    can_read: a.can_read === true, can_send: a.can_send === true, can_manage: a.can_manage === true,
+    role: a.role || null,
+  };
+}
+function accLineRow(l) {
+  const pn = accFmtPhone(l.phone_number);
+  return {
+    kind: 'phone_line', id: l.id,
+    title: l.display_name || pn, sub: l.display_name ? pn : '',
+    active: !!l.active,
+    can_read: l.can_read === true, can_send: l.can_send === true, can_manage: l.can_manage === true,
+    role: l.role || null,
+  };
+}
+
+function accYesNo(on) {
+  return on ? '<span class="acc-yes">✓</span>' : '<span class="acc-no">—</span>';
+}
+
+function accPlural(n, one, many) { return `${n} ${n === 1 ? one : many}`; }
+
+function maTableHtml(heading, rows, empty) {
+  const head = `<div class="yc-flabel">${esc(heading)}</div>`;
+  if (!rows.length) return head + `<p class="note">${esc(empty)}</p>`;
+  const body = rows.map(r => `<tr data-ma="${esc(r.kind + ':' + r.id)}">
+      <td class="name">${esc(r.title)}${r.active ? '' : ' <span class="badge off">inactive</span>'}${r.sub ? `<span class="acc-sub">${esc(r.sub)}</span>` : ''}</td>
+      <td class="flag${r.role ? ' role' : ''}">${r.role ? `<span class="acc-role">via role (${esc(r.role)})</span>` : accYesNo(r.can_read)}</td>
+      <td class="flag">${accYesNo(r.can_send)}</td>
+      <td class="flag">${accYesNo(r.can_manage)}</td>
+    </tr>`).join('');
+  const role = rows.find(r => r.role);
+  return head + `<div class="acc-table-box"><table class="acc">
+      <thead><tr><th>Name</th><th class="flag">Read</th><th class="flag">Send</th><th class="flag">Manage</th></tr></thead>
+      <tbody>${body}</tbody></table></div>` +
+    (role ? `<p class="yc-hint">“via role”: your <b>${esc(role.role)}</b> role reads every one of these without a grant — it is not a grant; sending and managing still need one.</p>` : '');
+}
+
+async function loadMyAccess() {
+  const seq = ++_accSeq;
+  const [mb, ln] = await Promise.allSettled([api('/api/mailboxes'), api('/api/phone-lines/readable')]);
+  if (seq !== _accSeq) return;
+  const mbOk = mb.status === 'fulfilled', lnOk = ln.status === 'fulfilled';
+  const su = (mbOk && mb.value?.viewer?.su === true) || (lnOk && ln.value?.viewer?.su === true);
+  const boxes = mbOk && Array.isArray(mb.value?.mailboxes) ? mb.value.mailboxes.map(accMailboxRow) : [];
+  const lines = lnOk && Array.isArray(ln.value?.lines) ? ln.value.lines.map(accLineRow) : [];
+
+  if (su) {
+    E('maHint').textContent = 'superuser';
+    E('maBody').innerHTML = '<p class="note" id="maSu">You are a <b>superuser</b>: you can read, send from and manage every mailbox and phone line without a grant. Grants are managed in <b>Admin → Mailboxes</b> and <b>Admin → Connections → Phone Lines</b>.</p>';
+  } else {
+    const fail = (what, r) => `<div class="yc-flabel">${what}</div><p class="status err">Couldn't load your ${what.toLowerCase()}: ${esc(r.reason?.message || r.reason)}</p>`;
+    E('maHint').textContent = accPlural(boxes.length, 'mailbox', 'mailboxes') + ' · ' + accPlural(lines.length, 'phone line', 'phone lines');
+    E('maBody').innerHTML =
+      (mbOk ? maTableHtml('Mailboxes', boxes, 'No mailboxes are shared with you.') : fail('Mailboxes', mb)) +
+      (lnOk ? maTableHtml('Phone lines', lines, 'No phone lines are shared with you.') : fail('Phone lines', ln));
   }
-  return s.split(',').map(t => t.trim()).filter(t => t !== '')
-    .map(t => (/^-?\d+(\.\d+)?$/.test(t) ? Number(t) : t));
+  mgSetChannels(su ? [] : [...boxes, ...lines].filter(r => r.can_manage));
 }
 
-function crOptionsDisplay(opts) {
-  if (!Array.isArray(opts) || !opts.length) return '';
-  const ambiguous = opts.some(o =>
-    typeof o === 'string' && (/^-?\d+(\.\d+)?$/.test(o.trim()) || o.includes(',')));
-  return ambiguous ? JSON.stringify(opts) : opts.map(String).join(', ');
+/* ── Manage access ── */
+function mgSetChannels(rows) {
+  _mgChannels = rows.map(r => ({
+    ...r, key: r.kind + ':' + r.id, ...ACC_KINDS[r.kind],
+    grants: null, loadError: false, msg: '', msgOk: false,
+  }));
+  E('manageAccessSection').hidden = !_mgChannels.length;
+  E('mgHint').textContent = _mgChannels.length ? accPlural(_mgChannels.length, 'channel', 'channels') : '';
+  E('mgCards').innerHTML = '';
+  _mgChannels.forEach(ch => { mgRenderCard(ch); mgLoadGrants(ch); });
 }
 
-function crRender() {
-  const host = E('crList');
-  if (!crState) return;
-  if (!crState.length) { host.innerHTML = '<p class="note">No role types yet.</p>'; return; }
-  host.innerHTML = crState.map((t, ti) => {
-    const fields = t.fields || [];
-    const fieldRows = fields.map((f, fi) => `
-      <div class="cr-field">
-        <div class="fcol">
-          <span class="fmini">Key (permanent-ish — stored attrs keep old keys)</span>
-          <input type="text" class="mono" data-cr-f="${ti}:${fi}:key" value="${esc(f.key || '')}" maxlength="40" placeholder="zoom_link">
-          <span class="fmini">Label</span>
-          <input type="text" data-cr-f="${ti}:${fi}:label" value="${esc(f.label || '')}" placeholder="341 Zoom link">
-        </div>
-        <div class="fcol">
-          <span class="fmini">Type</span>
-          <select data-cr-f="${ti}:${fi}:type">
-            ${CR_TYPES.map(x => `<option value="${x}" ${f.type === x ? 'selected' : ''}>${x}</option>`).join('')}
-          </select>
-          <span class="fmini">Options (select types — CSV; numbers stay numbers; or JSON array)</span>
-          <input type="text" class="mono" data-cr-f="${ti}:${fi}:options" value="${esc(crOptionsDisplay(f.options))}"
-                 placeholder="7, 11, 12, 13" ${f.type === 'select' || f.type === 'multi_select' ? '' : 'disabled'}>
-          <span class="fmini">Placeholder</span>
-          <input type="text" data-cr-f="${ti}:${fi}:placeholder" value="${esc(f.placeholder || '')}">
-        </div>
-        <label class="toggle-row" style="padding-top:16px">
-          <input type="checkbox" data-cr-f="${ti}:${fi}:required" ${f.required ? 'checked' : ''}>
-          <span class="toggle-lbl">Required</span>
-        </label>
-        <div class="fbtns">
-          <button class="icon-btn" data-cr-fup="${ti}:${fi}" title="Move up">↑</button>
-          <button class="icon-btn" data-cr-fdown="${ti}:${fi}" title="Move down">↓</button>
-          <button class="icon-btn del" data-cr-fdel="${ti}:${fi}" title="Remove field">✕</button>
-        </div>
-      </div>`).join('');
-    return `
-    <div class="cr-type ${t.active ? '' : 'cr-inactive'}">
-      <div class="cr-head">
-        <input type="text" data-cr-label="${ti}" value="${esc(t.label)}" maxlength="60" title="Label">
-        <span class="cr-code" title="role_code — permanent">${esc(t.role_code)}</span>
-        <input type="number" class="cr-sort" data-cr-sort="${ti}" value="${t.sort_order | 0}" title="Sort order">
-        <label class="toggle-row"><input type="checkbox" data-cr-active="${ti}" ${t.active ? 'checked' : ''}><span class="toggle-lbl">Active</span></label>
-        <span class="cr-count">${fields.length} field${fields.length === 1 ? '' : 's'}</span>
-        <button class="btn tiny" data-cr-toggle="${ti}">${t._open ? 'Hide fields' : 'Edit fields'}</button>
-        <button class="btn tiny primary" data-cr-save="${ti}" ${t._dirty ? '' : 'disabled'}>Save</button>
-      </div>
-      <span class="status" id="crStatus${ti}"></span>
-      ${t._open ? `<div class="cr-fields">${fieldRows}
-        <button class="btn tiny" data-cr-fadd="${ti}" style="margin-top:6px">+ Add Field</button>
-      </div>` : ''}
-    </div>`;
-  }).join('');
+function mgGrantUrl(ch, grantId) {
+  return ch.base + encodeURIComponent(ch.id) + '/grants' + (grantId == null ? '' : '/' + encodeURIComponent(grantId));
 }
 
-function crMarkDirty(ti) { crState[ti]._dirty = true; const b = document.querySelector(`[data-cr-save="${ti}"]`); if (b) b.disabled = false; }
+function mgWho(g) { return g.user_name || g.username || ('user ' + g.user); }
 
-function crBind() {
-  const host = E('crList');
-  host.addEventListener('input', e => {
-    const el = e.target, d = el.dataset;
-    if (d.crLabel !== undefined) { crState[+d.crLabel].label = el.value; crMarkDirty(+d.crLabel); }
-    else if (d.crSort !== undefined) { crState[+d.crSort].sort_order = parseInt(el.value, 10) || 0; crMarkDirty(+d.crSort); }
-    else if (d.crActive !== undefined) { crState[+d.crActive].active = el.checked ? 1 : 0; crMarkDirty(+d.crActive); }
-    else if (d.crF !== undefined) {
-      const [ti, fi, prop] = d.crF.split(':');
-      const f = crState[+ti].fields[+fi];
-      if (prop === 'required') f.required = el.checked;
-      else if (prop === 'options') f._optionsRaw = el.value; // parsed at save
-      else f[prop] = el.value;
-      if (prop === 'type') { crMarkDirty(+ti); crRender(); return; } // re-render enables/disables options
-      crMarkDirty(+ti);
-    }
-  });
-  host.addEventListener('click', e => {
-    const b = e.target.closest('button'); if (!b) return;
-    const d = b.dataset;
-    const swap = (arr, i, j) => { if (j < 0 || j >= arr.length) return false; [arr[i], arr[j]] = [arr[j], arr[i]]; return true; };
-    if (d.crToggle !== undefined) {
-      const t = crState[+d.crToggle];
-      t._open = !t._open;
-      if (t._open && !t.fields) t.fields = [];
-      crRender();
-    } else if (d.crSave !== undefined) {
-      crSave(+d.crSave);
-    } else if (d.crFadd !== undefined) {
-      crState[+d.crFadd].fields.push({ key: '', label: '', type: 'text' });
-      crMarkDirty(+d.crFadd); crRender();
-    } else if (d.crFup !== undefined) {
-      const [ti, fi] = d.crFup.split(':').map(Number);
-      if (swap(crState[ti].fields, fi, fi - 1)) { crMarkDirty(ti); crRender(); }
-    } else if (d.crFdown !== undefined) {
-      const [ti, fi] = d.crFdown.split(':').map(Number);
-      if (swap(crState[ti].fields, fi, fi + 1)) { crMarkDirty(ti); crRender(); }
-    } else if (d.crFdel !== undefined) {
-      const [ti, fi] = d.crFdel.split(':').map(Number);
-      crState[ti].fields.splice(fi, 1);
-      crMarkDirty(ti); crRender();
-    }
-  });
+function mgCardHtml(ch) {
+  const me = accMe();
+  const grants = ch.grants || [];
+  const rows = ch.grants === null
+    ? `<tr><td colspan="5" class="acc-empty">${ch.loadError ? '—' : 'Loading…'}</td></tr>`
+    : grants.length
+      ? grants.map(g => `<tr data-grant="${esc(g.id)}">
+          <td class="name">${esc(mgWho(g))}${Number(g.user) === me ? ' <span class="badge">you</span>' : ''}${g.user_auth === 'disabled' ? ' <span class="badge off">disabled</span>' : ''}<span class="acc-sub">granted by ${esc(g.granted_by_username || ('user ' + g.granted_by))}</span></td>
+          ${ACC_FLAGS.map(f => `<td class="flag" data-label="${ACC_FLAG_LABEL[f]}"><input type="checkbox" data-mg-flag="${f}"${g[f] ? ' checked' : ''} aria-label="${ACC_FLAG_LABEL[f]} for ${esc(mgWho(g))}"></td>`).join('')}
+          <td class="flag"><button class="btn tiny danger" type="button" data-mg-act="remove">Remove</button></td>
+        </tr>`).join('')
+      : `<tr><td colspan="5" class="acc-empty">No one has a grant on this ${esc(ch.noun)}.</td></tr>`;
+  const taken = new Set(grants.map(g => Number(g.user)));
+  const choices = accStaff().filter(u => !taken.has(Number(u.user)));
+  const canAdd = ch.grants !== null && choices.length > 0;
+  const opts = choices.length
+    ? choices.map(u => `<option value="${esc(u.user)}">${esc(u.user_name || ('user ' + u.user))}</option>`).join('')
+    : '<option value="">No one left to add</option>';
+  return `<div class="mg-card" data-mg="${esc(ch.key)}">
+    <h3>${esc(ch.title)}${ch.active ? '' : ' <span class="badge off">inactive</span>'}<span class="acc-sub">${esc(ch.label)}${ch.sub ? ' · ' + esc(ch.sub) : ''}</span></h3>
+    <div class="status mg-msg ${ch.msgOk ? 'ok' : 'err'}" data-mg-msg>${esc(ch.msg)}</div>
+    <div class="acc-table-box"><table class="acc">
+      <thead><tr><th>Person</th><th class="flag">Read</th><th class="flag">Send</th><th class="flag">Manage</th><th class="flag"></th></tr></thead>
+      <tbody>${rows}</tbody></table></div>
+    <div class="mg-add">
+      <select data-mg-user aria-label="Person to give access to ${esc(ch.title)}"${canAdd ? '' : ' disabled'}>${opts}</select>
+      <label><input type="checkbox" data-mg-new="can_read" checked> Read</label>
+      <label><input type="checkbox" data-mg-new="can_send"> Send</label>
+      <label><input type="checkbox" data-mg-new="can_manage"> Manage</label>
+      <button class="btn tiny primary" type="button" data-mg-act="add"${canAdd ? '' : ' disabled'}>Add</button>
+    </div>
+  </div>`;
 }
 
-/** crState field row → wire-shape attrs_schema entry. Throws on bad
- *  options JSON; everything else the ROUTE validates (authoritative). */
-function crFieldOut(f) {
-  const out = { key: String(f.key || '').trim(), label: String(f.label || '').trim(), type: f.type };
-  if (f.required) out.required = true;
-  if (f.type === 'select' || f.type === 'multi_select') {
-    const raw = f._optionsRaw !== undefined ? f._optionsRaw : crOptionsDisplay(f.options);
-    out.options = crParseOptions(raw) || [];
-  }
-  const ph = String(f.placeholder || '').trim();
-  if (ph) out.placeholder = ph;
-  return out;
+function mgCardEl(ch) {
+  return [...E('mgCards').children].find(c => c.dataset.mg === ch.key) || null;
 }
 
-async function crSave(ti) {
-  const t = crState[ti];
-  const sid = 'crStatus' + ti;
-  let schema;
+function mgRenderCard(ch) {
+  const holder = document.createElement('div');
+  holder.innerHTML = mgCardHtml(ch);
+  const card = holder.firstElementChild;
+  const old = mgCardEl(ch);
+  if (old) old.replaceWith(card); else E('mgCards').appendChild(card);
+}
+
+/** The card's one message line; an ok one fades like setStatus. */
+function mgMsg(ch, msg, ok = false) {
+  ch.msg = msg || '';
+  ch.msgOk = !!ok;
+  const el = mgCardEl(ch)?.querySelector('[data-mg-msg]');
+  if (!el) return;
+  el.textContent = ch.msg;
+  el.className = 'status mg-msg ' + (ok ? 'ok' : 'err');
+  if (ok) setTimeout(() => { if (ch.msg === msg) mgMsg(ch, ''); }, 3000);
+}
+
+async function mgLoadGrants(ch) {
   try {
-    schema = (t.fields && t.fields.length) ? t.fields.map(crFieldOut) : null;
-  } catch (e) {
-    return setStatus(sid, 'options: ' + (e.message || 'invalid'), false);
-  }
-  const btn = document.querySelector(`[data-cr-save="${ti}"]`);
-  if (btn) btn.disabled = true;
-  try {
-    await api(`/api/contact-role-types/${encodeURIComponent(t.role_code)}`, 'PUT', {
-      label: t.label, sort_order: t.sort_order | 0, active: t.active ? 1 : 0,
-      attrs_schema: schema,
-    });
-    // Re-adopt the wire shape so the next save diff starts from what the
-    // server accepted (options text re-parsed, empty list → null).
-    t.fields = schema || [];
-    t.fields.forEach(f => { delete f._optionsRaw; });
-    t._dirty = false;
-    crRender(); // BEFORE setStatus — crRender rebuilds the (empty) status span
-    setStatus(sid, `"${t.role_code}" saved`, true);
-  } catch (e2) {
-    if (btn) btn.disabled = false;
-    // Route validation errors verbatim — the whole point of per-type saves.
-    setStatus(sid, e2.message || 'Failed to save', false);
-  }
-}
-
-async function crCreate() {
-  const code = E('crNewCode').value.trim();
-  const label = E('crNewLabel').value.trim();
-  try {
-    await api('/api/contact-role-types', 'POST', { role_code: code, label });
-    E('crNewCode').value = ''; E('crNewLabel').value = '';
-    setStatus('crAddStatus', `"${code}" created — add its fields above`, true);
-    await crInit();
-  } catch (e) {
-    setStatus('crAddStatus', e.message || 'Failed to create', false);
-  }
-}
-
-let crBound = false;
-async function crInit() {
-  try {
-    const data = await api('/api/contact-role-types?include_inactive=true', 'GET');
-    crState = (data.types || []).map(t => ({
-      role_code: t.role_code,
-      label: t.label,
-      sort_order: t.sort_order | 0,
-      active: t.active ? 1 : 0,
-      fields: Array.isArray(t.attrs_schema) ? t.attrs_schema.map(f => ({ ...f })) : null,
-      _open: false, _dirty: false,
-    }));
-    E('crHint').textContent = `${crState.length} role type${crState.length === 1 ? '' : 's'}`;
-    crRender();
-    if (!crBound) { crBind(); crBound = true; }
+    const data = await api(mgGrantUrl(ch));
+    if (!_mgChannels.includes(ch)) return; // superseded by a newer loadMyAccess()
+    ch.grants = Array.isArray(data?.grants) ? data.grants : [];
+    ch.loadError = false;
   } catch (err) {
-    E('crList').innerHTML = `<p class="note" style="color:var(--danger)">Failed to load role types: ${esc(err.message || err)}</p>`;
+    if (!_mgChannels.includes(ch)) return;
+    ch.grants = null;
+    ch.loadError = true;
+    ch.msg = "Couldn't load access: " + (err.message || err);
+    ch.msgOk = false;
   }
+  mgRenderCard(ch);
+}
+
+async function mgToggleFlag(ch, g, input) {
+  const flag = input.dataset.mgFlag;
+  const on = input.checked;
+  const next = { can_read: g.can_read, can_send: g.can_send, can_manage: g.can_manage, [flag]: on };
+  if (!ACC_FLAGS.some(f => next[f])) {
+    input.checked = true;
+    return mgMsg(ch, 'A grant keeps at least one box ticked — use Remove to take access away.');
+  }
+  const self = Number(g.user) === accMe();
+  if (self && flag === 'can_manage' && !on &&
+      !confirm(`Stop managing ${ch.title}? You can't give Manage back to yourself — a superuser or another manager would have to.`)) {
+    input.checked = true;
+    return;
+  }
+  mgMsg(ch, '');
+  input.disabled = true;
+  try {
+    const data = await api(mgGrantUrl(ch, g.id), 'PATCH', { [flag]: on });
+    Object.assign(g, data?.grant || next);
+    if (self) { loadMyAccess(); return; } // my own access changed: redraw both sections
+    mgMsg(ch, 'Access updated', true);
+  } catch (err) {
+    input.checked = !on;
+    mgMsg(ch, err.message || 'Update failed');
+  } finally {
+    input.disabled = false;
+  }
+}
+
+async function mgAddGrant(ch, btn) {
+  const card = mgCardEl(ch);
+  const user = card.querySelector('[data-mg-user]').value;
+  if (!user) return;
+  const body = { user: Number(user) };
+  for (const f of ACC_FLAGS) body[f] = card.querySelector(`[data-mg-new="${f}"]`).checked;
+  if (!ACC_FLAGS.some(f => body[f])) return mgMsg(ch, 'Tick at least one of Read, Send, Manage.');
+  mgMsg(ch, '');
+  btn.disabled = true;
+  try {
+    await api(mgGrantUrl(ch), 'POST', body);
+  } catch (err) {
+    mgMsg(ch, err.message || 'Grant failed');
+    btn.disabled = false;
+    return;
+  }
+  await mgLoadGrants(ch);
+  if (ch.grants !== null) mgMsg(ch, 'Access granted', true);
+}
+
+async function mgRemoveGrant(ch, g) {
+  const self = Number(g.user) === accMe();
+  if (!confirm(self
+    ? `Remove your own access to ${ch.title}? You lose Manage on it too.`
+    : `Remove ${mgWho(g)}'s access to ${ch.title}?`)) return;
+  mgMsg(ch, '');
+  try {
+    await api(mgGrantUrl(ch, g.id), 'DELETE');
+  } catch (err) {
+    mgMsg(ch, err.message || 'Remove failed');
+    return;
+  }
+  if (self) { loadMyAccess(); return; }
+  await mgLoadGrants(ch);
+  if (ch.grants !== null) mgMsg(ch, 'Access removed', true);
+}
+
+function mgFind(el) {
+  const card = el.closest('[data-mg]');
+  const ch = card ? _mgChannels.find(c => c.key === card.dataset.mg) : null;
+  const tr = el.closest('tr[data-grant]');
+  const g = ch && tr ? (ch.grants || []).find(x => String(x.id) === tr.dataset.grant) : null;
+  return { ch, g };
+}
+
+// Delegated, bound once: the cards are re-rendered in place.
+function mgBind() {
+  E('mgCards').addEventListener('change', e => {
+    const input = e.target.closest('input[data-mg-flag]');
+    if (!input) return;
+    const { ch, g } = mgFind(input);
+    if (ch && g) mgToggleFlag(ch, g, input);
+  });
+  E('mgCards').addEventListener('click', e => {
+    const b = e.target.closest('button[data-mg-act]');
+    if (!b) return;
+    const { ch, g } = mgFind(b);
+    if (!ch) return;
+    if (b.dataset.mgAct === 'add') mgAddGrant(ch, b);
+    else if (b.dataset.mgAct === 'remove' && g) mgRemoveGrant(ch, g);
+  });
 }
 
 /* ════════════════ BOOT ════════════════ */
-async function init() {
+function init() {
   renderProfile();
   loadMySignatures(); // self-only, fire-and-forget (same pattern as freebusy)
   E('profileSave').addEventListener('click', saveProfile);
   E('fbSave').addEventListener('click', saveFreebusyCals);
   loadFreebusyCals(); // self-only booking calendars (fire-and-forget)
   E('pwSave').addEventListener('click', savePassword);
-  E('etSave').addEventListener('click', etSave);
-  E('dtSave').addEventListener('click', dtSave);
-  E('asCreate').addEventListener('click', createSetting); // bound even if GET below fails
-  E('crAdd').addEventListener('click', crCreate);
-  crInit();            // contact role types (own table + routes, fire-and-forget)
-
-  try {
-    const data = await api('/api/app-settings');
-    const rows = data.settings || [];
-    rows.forEach(r => { rowMeta[r.key] = r; });
-    asPopulateCategories(rows);
-
-    // Deliberate category order (server orders alphabetically); then
-    // sort_order, then key. Sections are created in first-encounter order.
-    const catRank = c => {
-      const i = CATEGORY_ORDER.indexOf(c || 'Other');
-      return i === -1 ? 900 : i;
-    };
-    rows.sort((a, b) =>
-      catRank(a.category) - catRank(b.category) ||
-      String(a.category || '').localeCompare(String(b.category || '')) ||
-      ((a.sort_order ?? 999) - (b.sort_order ?? 999)) ||
-      a.key.localeCompare(b.key));
-
-    for (const row of rows) {
-      const custom = CUSTOM[row.key];
-      if (custom === 'retired')         continue; // decommissioned key — no editor
-      if (custom === 'caseConfig')      continue; // edited only in YisraCase Config — never a generic row
-      if (custom === 'eventTypes')      etInit(row.value, row.updated_at);
-      else if (custom === 'dropboxTpl') dtInit(row.value, row.updated_at);
-      else                              settingRow(row);
-    }
-  } catch (err) {
-    E('dynSections').innerHTML = `<p class="note" style="color:var(--danger)">Failed to load settings: ${esc(err.message || err)}</p>`;
-  }
+  mgBind();
+  loadMyAccess();     // my mailbox / phone-line access + the grants I manage (fire-and-forget)
 
   E('loading').style.display = 'none';
   E('content').style.display = '';

@@ -1,0 +1,34 @@
+{
+ "status": "success",
+ "mailbox_id": 1,
+ "grants": [
+  {
+   "id": 21,
+   "user": 1,
+   "username": "layout-test",
+   "user_name": "Alex Admin",
+   "user_auth": "authorized",
+   "channel_type": "mailbox",
+   "channel_id": 1,
+   "can_read": true,
+   "can_send": true,
+   "can_manage": true,
+   "granted_by": 1,
+   "granted_by_username": "Alex Admin"
+  },
+  {
+   "id": 22,
+   "user": 3,
+   "username": "pparalegal",
+   "user_name": "Bartholomew Maximilian Featherstonehaugh-Worthington III",
+   "user_auth": "disabled",
+   "channel_type": "mailbox",
+   "channel_id": 1,
+   "can_read": true,
+   "can_send": false,
+   "can_manage": false,
+   "granted_by": 1,
+   "granted_by_username": "Alex Admin (an overlong granter name to wrap)"
+  }
+ ]
+}

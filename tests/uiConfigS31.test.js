@@ -514,8 +514,9 @@ describe('routes/api.uiConfig.js — gates (no database reached)', () => {
     ] });
     const r = await call(uiRouter, 'GET', '/api/ui-config', { headers: tok(['staff']), db });
     expect(r.status).toBe(200);
-    // can_edit_firm: S3.2 (tests/uiConfigS32.test.js covers it across roles)
-    expect(r.body).toEqual({ status: 'success', firm: { registry_overrides: { hidden: ['bills'] } }, user: { shortcuts: { bindings: [] } }, can_edit_firm: false });
+    // can_edit_firm: S3.2, can_edit_system: settings arc (tests/uiConfigS32.test.js covers both across roles)
+    expect(r.body).toEqual({ status: 'success', firm: { registry_overrides: { hidden: ['bills'] } }, user: { shortcuts: { bindings: [] } },
+      can_edit_firm: false, can_edit_system: false });
     expect(db.calls.find((c) => /FROM ui_config/.test(c.sql)).params).toEqual([9]);
   });
 });

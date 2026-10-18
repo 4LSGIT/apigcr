@@ -2,6 +2,9 @@
 
 **Where:** More → **YisraCase Config** → the **Fields** tab (moved there from
 the Settings page in CFG-1 — one editor per setting, never two).
+**Who:** changing fields needs the *firm settings* permission (admin, IT, SU).
+Everyone else sees the tab read-only — a banner says so, and each card's
+**Edit** reads **View**.
 **Table:** `field_defs`.
 **Design:** `ref/CUSTOM_FIELDS_DESIGN.md` — a living doc; its §7 table says which
 parts of the feature have shipped. This chapter grows as they do.
@@ -327,9 +330,11 @@ The server enforces these; the screen just helps you meet them.
 
 ### API
 
-Every route is `jwtOrApiKey` — the same gate as `/api/contact-role-types`, the
-editor this one was cloned from. Envelope `{ status: 'success', … }` /
-`{ status: 'error', message }`.
+Reads are `jwtOrApiKey` (any staff). Every write — create, edit, deactivate,
+reactivate, reconcile — is `requireAuth({ audience:'staff', can:'firm.settings',
+allowApiKey:true })`, the same gate as `/api/contact-role-types`' writes, the
+editor this one was cloned from; a refusal is a 403 `{ error: 'Forbidden' }`.
+Envelope `{ status: 'success', … }` / `{ status: 'error', message }`.
 
 | Route | Does |
 |---|---|

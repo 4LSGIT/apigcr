@@ -36,7 +36,7 @@ const PAGES = {
 };
 const IDS = {
   automations: ['workflows', 'sequences', 'scheduledJobs', 'hooks', 'triggers', 'emailIngest', 'phoneIngest', 'courtReview', 'activity'],
-  caseConfig: ['types', 'pipelines', 'fields', 'caltypes', 'firm'],
+  caseConfig: ['types', 'pipelines', 'fields', 'contactroles', 'caltypes', 'lists', 'firm', 'system'],
 };
 
 function fnSrc(src, name) {
@@ -101,7 +101,7 @@ const activeOf = (w) => {
 const tabBtn = (w, id) => w.document.getElementById('tabnav-' + id);
 
 /** The leaf under a stub host that records reports and answers take(). */
-function stubbed(page, { held = null, uiConfig = { can_edit_firm: true }, hold = null } = {}) {
+function stubbed(page, { held = null, uiConfig = { can_edit_firm: true, can_edit_system: true }, hold = null } = {}) {
   const shell = new JSDOM('<!DOCTYPE html><html><body></body></html>',
     { url: 'https://app.4lsg.com/', runScripts: 'dangerously' }).window;
   const frame = shell.document.createElement('iframe');
@@ -111,7 +111,7 @@ function stubbed(page, { held = null, uiConfig = { can_edit_firm: true }, hold =
   let pending = held;
   shell.ycReportSubTab = (f, r) => reports.push([f === frame, r]);
   shell.ycTakeSubTab = (f) => { const r = f === frame ? pending : null; takes.push(r); pending = null; return r; };
-  // caseConfigManager's boot asks GET /api/ui-config (the Firm tab's gate)
+  // caseConfigManager's boot asks GET /api/ui-config (the Firm and System gates)
   let release;
   const gate = hold ? new Promise((r) => { release = r; }) : null;
   shell.apiSend = async (url) => {
@@ -138,7 +138,7 @@ describe.each(['automations', 'caseConfig'])('%s — the leaf', (page) => {
 
   test('a click on every sub-tab button reports its id; the default reports ""', async () => {
     const { w, reports } = stubbed(page);
-    await flush(w); await flush(w);                         // caseConfig: the Firm tab revealed
+    await flush(w); await flush(w);                         // caseConfig: the Firm + System tabs revealed
     for (const id of IDS[page]) {
       reports.length = 0;
       tabBtn(w, id).dispatchEvent(new w.MouseEvent('click', { bubbles: true }));   // the shipped inline onclick
@@ -194,36 +194,43 @@ describe('automationManager — the one switch', () => {
   });
 });
 
-describe('caseConfigManager — a gated sub-tab (Firm) waits for its reveal', () => {
-  test('held "firm": boots on the default, then opens Firm once the reveal shows it', async () => {
-    const { w, reports } = stubbed('caseConfig', { held: 'firm' });
+// Every gated sub-tab waits the same way; each is revealed by its OWN flag
+// (settings arc: System by can_edit_system, which admin does not hold).
+describe.each([
+  ['firm', 'can_edit_firm', 'can_edit_system'],
+  ['system', 'can_edit_system', 'can_edit_firm'],
+])('caseConfigManager — a gated sub-tab (%s) waits for its reveal', (gated, flag, otherFlag) => {
+  test(`held "${gated}": boots on the default, then opens it once the reveal shows it`, async () => {
+    const { w, reports } = stubbed('caseConfig', { held: gated, uiConfig: { [flag]: true } });
     expect(activeOf(w)).toBe('types');
     await flush(w); await flush(w);
-    expect(tabBtn(w, 'firm').hidden).toBe(false);
-    expect(activeOf(w)).toBe('firm');
-    expect(reports).toEqual([[true, ''], [true, 'firm']]);
+    expect(tabBtn(w, gated).hidden).toBe(false);
+    expect(activeOf(w)).toBe(gated);
+    expect(reports).toEqual([[true, ''], [true, gated]]);
   });
 
-  test('not revealed (can_edit_firm false, or the fetch fails): the default stays', async () => {
-    for (const uiConfig of [{ can_edit_firm: false }, new Error('500')]) {
-      const { w, reports } = stubbed('caseConfig', { held: 'firm', uiConfig });
+  test(`not revealed (${flag} false, only the OTHER gate's flag, or the fetch fails): the default stays`, async () => {
+    for (const uiConfig of [{ [flag]: false, [otherFlag]: true }, { [otherFlag]: true }, new Error('500')]) {
+      const { w, reports } = stubbed('caseConfig', { held: gated, uiConfig });
       await flush(w); await flush(w);
-      expect(tabBtn(w, 'firm').hidden).toBe(true);
+      expect(tabBtn(w, gated).hidden).toBe(true);
       expect(activeOf(w)).toBe('types');
       expect(reports).toEqual([[true, '']]);
     }
   });
 
-  test('the user moved before the reveal answered: they are not yanked to Firm', async () => {
-    const { w, reports, release } = stubbed('caseConfig', { held: 'firm', hold: true });
+  test(`the user moved before the reveal answered: they are not yanked to ${gated}`, async () => {
+    const { w, reports, release } = stubbed('caseConfig', { held: gated, hold: true });
     tabBtn(w, 'pipelines').dispatchEvent(new w.MouseEvent('click', { bubbles: true }));
     release();
     await flush(w); await flush(w); await flush(w);
-    expect(tabBtn(w, 'firm').hidden).toBe(false);
+    expect(tabBtn(w, gated).hidden).toBe(false);
     expect(activeOf(w)).toBe('pipelines');
     expect(reports).toEqual([[true, ''], [true, 'pipelines']]);
   });
+});
 
+describe('caseConfigManager — a non-gated sub-tab', () => {
   test('a non-gated held id never waits for the reveal', () => {
     const { w } = stubbed('caseConfig', { held: 'caltypes', hold: true });
     expect(activeOf(w)).toBe('caltypes');
@@ -254,7 +261,7 @@ function realShell() {
   w.eval(MODULE);
   w.__writes = [];
   w.history.replaceState = (s, t, url) => w.__writes.push(url);
-  w.apiSend = async (url) => (url === '/api/ui-config' ? { can_edit_firm: true } : {});
+  w.apiSend = async (url) => (url === '/api/ui-config' ? { can_edit_firm: true, can_edit_system: true } : {});
   w.eval(`
     var E = (id) => document.getElementById(id);
     var Toast = { fire() {} };
@@ -374,14 +381,14 @@ describe('the real shell + the real panes: drill → sub-tab → URL → restore
     expect(s.lastOpen()).toBe('tabMore~moreAutomations~activity');
   });
 
-  test('caseConfig: ?open=tabMore~moreCaseConfig~firm restores Firm after its reveal', async () => {
+  test.each(['firm', 'system'])('caseConfig: ?open=tabMore~moreCaseConfig~%s restores the gated tab after its reveal', async (gated) => {
     const s = realShell();
     s.w.enableWorkspaceUrlSync();
-    s.w.openMainTabOnBoot('tabMore', 'moreCaseConfig~firm');
+    s.w.openMainTabOnBoot('tabMore', `moreCaseConfig~${gated}`);
     const c = s.pane('cfgFrame');
     expect(activeOf(c)).toBe('types');                     // gated: waits for the reveal
     await flush(c); await flush(c); await s.flush();
-    expect(activeOf(c)).toBe('firm');
-    expect(s.lastOpen()).toBe('tabMore~moreCaseConfig~firm');
+    expect(activeOf(c)).toBe(gated);
+    expect(s.lastOpen()).toBe(`tabMore~moreCaseConfig~${gated}`);
   });
 });

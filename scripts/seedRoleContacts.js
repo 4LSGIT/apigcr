@@ -51,7 +51,8 @@
  *
  * --apply's FINAL OUTPUT is the updated fe-trustees JSON: the current
  * setting value plus a `contact_id` field per entry, printed for Fred to
- * paste into settings.html. The script does NOT write app_settings.
+ * paste into the settings editor of the day (spent: fe-trustees is retired,
+ * lib/settingsRegistry.js). The script does NOT write app_settings.
  */
 
 'use strict';
@@ -332,7 +333,7 @@ async function main(db) {
   // ── APPLY final output: the updated fe-trustees JSON ──
   if (APPLY) {
     const updated = roster.map((t, i) => ({ ...t, contact_id: entryContactIds[i] }));
-    console.log('\n=== UPDATED fe-trustees JSON — paste into settings.html ===');
+    console.log('\n=== UPDATED fe-trustees JSON (historical: the key is retired, no editor takes it) ===');
     console.log('=== (this script does NOT write app_settings)            ===\n');
     console.log(JSON.stringify(updated, null, 1));
   } else {

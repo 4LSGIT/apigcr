@@ -141,10 +141,11 @@ router.post(WEBHOOK_PATH, esignWebhookLimiter, rawTextFallback, async (req, res)
   // bytes (req.rawBody — captured by server.js's verify hooks; the text
   // fallback's string body IS the raw bytes), never over a re-serialization.
   //
-  // Mode semantics live in esignWebhookService (see WEBHOOK_HMAC_MODE_KEY):
-  // secret unset = off; 'enforce' rejects failures; anything else is log-only
-  // so the header's real-world shape can be observed before it is trusted to
-  // gate deliveries.
+  // Mode semantics live in esignWebhookService.getHmacConfig: secret unset =
+  // off (no verification); secret set = enforce (a missing or wrong signature
+  // is rejected). The observe-first log-only mode retired with
+  // esign_webhook_hmac_mode (settings arc, 2026-10) — enforce had been live
+  // since 2026-08.
   const body = req.body;
   const rawBody = typeof req.rawBody === 'string'
     ? req.rawBody
@@ -168,8 +169,7 @@ router.post(WEBHOOK_PATH, esignWebhookLimiter, rawTextFallback, async (req, res)
       console.warn(`[ESIGN WEBHOOK] hmac REJECTED delivery from ip=${req.ip}: ${detail}`);
       return res.status(401).json({ status: 'error' });
     }
-    // Log-only mode narrates every verdict; enforce mode narrates passes too,
-    // so a healthy hmac leaves the same evidence trail either way.
+    // Passes are narrated too, so a healthy hmac leaves an evidence trail.
     (hmac.ok ? console.log : console.warn)(`[ESIGN WEBHOOK] hmac ${detail}`);
   }
 
@@ -180,8 +180,8 @@ router.post(WEBHOOK_PATH, esignWebhookLimiter, rawTextFallback, async (req, res)
   // nightly reconcile's dead-channel alert keys off this timestamp: rows
   // moving in reconcile while this is stale means deliveries are being
   // rejected upstream (crossed token, hmac misconfig — the 2026-07-22
-  // outage). An enforce-mode hmac reject 401s above and deliberately does
-  // NOT stamp; a log-mode hmac failure proceeds and does. Fire-and-forget,
+  // outage). An hmac reject 401s above and deliberately does NOT stamp.
+  // Fire-and-forget,
   // mirroring stampHeartbeat in routes/process_jobs.js — a settings write
   // must never delay or break webhook processing.
   db.query(

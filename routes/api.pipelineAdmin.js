@@ -26,8 +26,16 @@
  * prefix — no collision with routes/api.pipeline.js (the frozen Slice B
  * read/advance routes) or anything else in routes/.
  *
- * Auth + envelope match routes/api.formTemplates.js: jwtOrApiKey on every
- * route; { status: 'success', ... } / { status: 'error', message }; service
+ * Auth: reads (GET) are jwtOrApiKey — any staff (the board and the case page
+ * read templates / stages through them). Every write (POST / PUT / DELETE,
+ * reorders included) is requireAuth({ audience:'staff', can:'firm.settings',
+ * allowApiKey:true }) — YisraCase Config vocabulary writes need the
+ * firm.settings capability (admin / it / su; settings arc, Fred 2026-10-17).
+ * Machine keys: NULL-scope keys and the internal key pass; a scoped key needs
+ * firm.settings in its scopes (a route:/ scope does not stand in for it).
+ *
+ * Envelope matches routes/api.formTemplates.js:
+ * { status: 'success', ... } / { status: 'error', message }; service
  * throws carry `.status` (400 validation, 404 unknown row, 409 business-rule
  * conflict — locked key, referenced row, duplicate-active template), anything
  * else is a 500.
@@ -38,7 +46,11 @@
 const express = require('express');
 const router = express.Router();
 const jwtOrApiKey = require('../lib/auth.jwtOrApiKey');
+const requireAuth = require('../lib/auth.requireAuth');
 const svc = require('../services/pipelineAdminService');
+
+// Config vocabulary writes: the firm.settings capability (see the header).
+const firmSettingsWrite = requireAuth({ audience: 'staff', can: 'firm.settings', allowApiKey: true });
 
 // Map a thrown service error to an HTTP response.
 function fail(res, tag, err) {
@@ -61,7 +73,7 @@ router.get('/api/pipeline-admin/templates', jwtOrApiKey, async (req, res) => {
   }
 });
 
-router.post('/api/pipeline-admin/templates', jwtOrApiKey, async (req, res) => {
+router.post('/api/pipeline-admin/templates', firmSettingsWrite, async (req, res) => {
   try {
     const template = await svc.createTemplate(req.db, req.body || {});
     res.status(201).json({ status: 'success', template });
@@ -70,7 +82,7 @@ router.post('/api/pipeline-admin/templates', jwtOrApiKey, async (req, res) => {
   }
 });
 
-router.put('/api/pipeline-admin/templates/:id', jwtOrApiKey, async (req, res) => {
+router.put('/api/pipeline-admin/templates/:id', firmSettingsWrite, async (req, res) => {
   try {
     const template = await svc.updateTemplate(req.db, req.params.id, req.body || {});
     res.json({ status: 'success', template });
@@ -79,7 +91,7 @@ router.put('/api/pipeline-admin/templates/:id', jwtOrApiKey, async (req, res) =>
   }
 });
 
-router.delete('/api/pipeline-admin/templates/:id', jwtOrApiKey, async (req, res) => {
+router.delete('/api/pipeline-admin/templates/:id', firmSettingsWrite, async (req, res) => {
   try {
     const result = await svc.deleteTemplate(req.db, req.params.id);
     res.json({ status: 'success', ...result });
@@ -102,7 +114,7 @@ router.get('/api/pipeline-admin/templates/:id/stages', jwtOrApiKey, async (req, 
   }
 });
 
-router.post('/api/pipeline-admin/templates/:id/stages', jwtOrApiKey, async (req, res) => {
+router.post('/api/pipeline-admin/templates/:id/stages', firmSettingsWrite, async (req, res) => {
   try {
     const stage = await svc.createStage(req.db, req.params.id, req.body || {});
     res.status(201).json({ status: 'success', stage });
@@ -113,7 +125,7 @@ router.post('/api/pipeline-admin/templates/:id/stages', jwtOrApiKey, async (req,
 
 // Registered before the bare /stages/:id verbs would matter if the paths could
 // shadow; they can't (extra literal segment), but keep reorder grouped here.
-router.post('/api/pipeline-admin/templates/:id/stages/reorder', jwtOrApiKey, async (req, res) => {
+router.post('/api/pipeline-admin/templates/:id/stages/reorder', firmSettingsWrite, async (req, res) => {
   try {
     const { stage_ids } = req.body || {};
     const payload = await svc.reorderStages(req.db, req.params.id, stage_ids);
@@ -123,7 +135,7 @@ router.post('/api/pipeline-admin/templates/:id/stages/reorder', jwtOrApiKey, asy
   }
 });
 
-router.put('/api/pipeline-admin/stages/:id', jwtOrApiKey, async (req, res) => {
+router.put('/api/pipeline-admin/stages/:id', firmSettingsWrite, async (req, res) => {
   try {
     const stage = await svc.updateStage(req.db, req.params.id, req.body || {});
     res.json({ status: 'success', stage });
@@ -132,7 +144,7 @@ router.put('/api/pipeline-admin/stages/:id', jwtOrApiKey, async (req, res) => {
   }
 });
 
-router.delete('/api/pipeline-admin/stages/:id', jwtOrApiKey, async (req, res) => {
+router.delete('/api/pipeline-admin/stages/:id', firmSettingsWrite, async (req, res) => {
   try {
     const result = await svc.deleteStage(req.db, req.params.id);
     res.json({ status: 'success', ...result });
@@ -166,7 +178,7 @@ router.get('/api/pipeline-admin/stages/:id/requirements', jwtOrApiKey, async (re
   }
 });
 
-router.post('/api/pipeline-admin/stages/:id/requirements', jwtOrApiKey, async (req, res) => {
+router.post('/api/pipeline-admin/stages/:id/requirements', firmSettingsWrite, async (req, res) => {
   try {
     const requirement = await svc.createRequirement(req.db, req.params.id, req.body || {});
     res.status(201).json({ status: 'success', requirement });
@@ -175,7 +187,7 @@ router.post('/api/pipeline-admin/stages/:id/requirements', jwtOrApiKey, async (r
   }
 });
 
-router.post('/api/pipeline-admin/stages/:id/requirements/reorder', jwtOrApiKey, async (req, res) => {
+router.post('/api/pipeline-admin/stages/:id/requirements/reorder', firmSettingsWrite, async (req, res) => {
   try {
     const { requirement_ids } = req.body || {};
     const payload = await svc.reorderRequirements(req.db, req.params.id, requirement_ids);
@@ -185,7 +197,7 @@ router.post('/api/pipeline-admin/stages/:id/requirements/reorder', jwtOrApiKey, 
   }
 });
 
-router.put('/api/pipeline-admin/requirements/:id', jwtOrApiKey, async (req, res) => {
+router.put('/api/pipeline-admin/requirements/:id', firmSettingsWrite, async (req, res) => {
   try {
     const requirement = await svc.updateRequirement(req.db, req.params.id, req.body || {});
     res.json({ status: 'success', requirement });
@@ -194,7 +206,7 @@ router.put('/api/pipeline-admin/requirements/:id', jwtOrApiKey, async (req, res)
   }
 });
 
-router.delete('/api/pipeline-admin/requirements/:id', jwtOrApiKey, async (req, res) => {
+router.delete('/api/pipeline-admin/requirements/:id', firmSettingsWrite, async (req, res) => {
   try {
     const result = await svc.deleteRequirement(req.db, req.params.id);
     res.json({ status: 'success', ...result });

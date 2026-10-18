@@ -1121,9 +1121,9 @@ async function getEvent(db, eventId) {
  * It does NOT hide superseded rows whose status is already terminal (the 31
  * E0a dedup tombstones are Canceled + 'duplicate'): case.html and
  * contact.html call this with status:'all', and those rows were visible under
- * "All" / "Canceled" before this slice. Hiding them would be an observable
- * change with the singleton flag off, which the U6a acceptance bar forbids
- * (Fred, 2026-09-01: option B). caseEventService — the §3.1 read layer — hides
+ * "All" / "Canceled" before this slice. Hiding them would have been an
+ * observable change to pre-U6a behaviour, which the U6a acceptance bar
+ * forbade (Fred, 2026-09-01: option B). caseEventService — the §3.1 read layer — hides
  * ALL superseded rows; that stricter contract is U9's to converge on when it
  * owns the tab. `includeSuperseded: true` disables the predicate entirely.
  */
@@ -1733,13 +1733,13 @@ async function createEvent(db, {
     }));
   }
 
-  // U6a — singleton supersession (v0.5 §3.4.2), FLAG-GUARDED. Read at call
-  // time so the settings tab can flip it live. Off → nothing below runs and
-  // this function is byte-for-byte its pre-U6a self (tests count the queries).
-  // Runs AFTER the calendar.scheduled emit so a rule sees "new row exists"
-  // before "old row superseded" — the successor is real before the chain
-  // points at it. Never throws: the row is already committed.
-  if (event && cfg('unified_singleton_enabled') === '1') {
+  // U6a — singleton supersession (v0.5 §3.4.2). Always on: its rollout flag
+  // (unified_singleton_enabled) retired at its final value '1' in the
+  // settings arc (2026-10). Runs AFTER the calendar.scheduled emit so a rule
+  // sees "new row exists" before "old row superseded" — the successor is
+  // real before the chain points at it. Never throws: the row is already
+  // committed.
+  if (event) {
     try {
       await _applySingleton(db, event, { actingUserId: createdBy || 0, source });
     } catch (err) {
@@ -2255,8 +2255,8 @@ async function cancelEvent(db, eventId, actingUserId = 0, { delete_gcal = true, 
 // availability, the digest, the ICS feed, both dedupe scans, and
 // courtExecutor's reschedule/cancel candidate queries — had to be taught a
 // second predicate it had never needed. courtExecutor's two never were, and
-// with the singleton flag ON that would have handed the court robot a dead
-// row as a live candidate. Setting the status makes all of them correct
+// with singleton supersession live that would have handed the court robot a
+// dead row as a live candidate. Setting the status makes all of them correct
 // without touching one of them.
 //
 // The pointer is UNCHANGED and still authoritative for identity: chain
@@ -2396,9 +2396,8 @@ async function supersedeEvent(db, {
 //
 // "One live row per (anchor, type_key)" is REGISTRY policy: when the resolved
 // type carries singleton=1, a freshly created row supersedes every prior live
-// row with the same identity. Flag-guarded by app_settings
-// `unified_singleton_enabled` (firmConfig), read at call time; off → the
-// block below is never entered and createEvent is byte-for-byte pre-U6a.
+// row with the same identity. Always on (its rollout flag
+// `unified_singleton_enabled` retired at '1' in the settings arc, 2026-10).
 //
 // IDENTITY. Resolved CASE + type_key when the row's link resolves to a case —
 // a 'case' link, or a 'case_number' docket that matches either docket column
@@ -2465,9 +2464,9 @@ async function _singletonPriors(db, row) {
 }
 
 /**
- * Apply singleton policy for a just-created row. Called by createEvent ONLY
- * when the flag is on; never throws out (a supersede failure must not fail a
- * create that already committed). Returns the superseded ids.
+ * Apply singleton policy for a just-created row. Called by createEvent for
+ * every created (non-deduped) row; never throws out (a supersede failure must
+ * not fail a create that already committed). Returns the superseded ids.
  */
 async function _applySingleton(db, row, { actingUserId = 0, source = null } = {}) {
   if (!row || row.type_key == null) return [];

@@ -246,15 +246,21 @@ rejected at save *and* hidden at render.
 
 ### Settings
 
+Every portal setting is edited in **More → Portal Manager → Settings** — its one
+editor (`lib/settingsRegistry.js` home `portal`). Changing them needs the *firm
+settings* permission (admin, IT, SU); without it the page shows them read-only.
+Saves are `PUT /api/app-settings/:key`, which also creates a setting's row the
+first time.
+
 | Key | What it does |
 |---|---|
-| `portal_live` | Master switch |
+| `portal_live` | Master switch (absent = live) |
 | `portal_logo_url`, `portal_logo_href`, `portal_favicon_url` | Login-page branding |
-| `portal_email_from` | Sender for PIN emails |
+| `portal_email_from` | Sender for PIN emails. **Cannot be blank** — the server refuses it: the default sender applies only when the setting is missing, never when it is blank, so a blank one would break every PIN email |
 | `portal_sms_monthly_cap` | Ceiling on PIN texts per month |
-| `portal_sms_counter` | `{ym, count, alerted_ym}` — the running total |
-| `portal_docs_notify_to`, `portal_docs_notify_from` | Who hears about a client upload |
-| `portal_callback_task_to` | Who gets the task from "Need a call?" |
+| `portal_sms_counter` | `{ym, count, alerted_ym}` — the running total; machine-managed, shown read-only to IT / SU |
+| `portal_docs_notify_to` | Who hears about a client upload (portal and checklist upload links). Blank = upload emails off; the case-log entry still writes. The sender is the firm's automations address |
+| `portal_callback_task_to` | Who gets the task from "Need a call?". **Cannot be blank** (callback requests fail without one); the picker offers active staff and keeps a stored inactive person selected, labelled |
 
 ### Tables
 

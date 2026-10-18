@@ -1,0 +1,31 @@
+{
+ "status": "success",
+ "viewer": {
+  "su": false
+ },
+ "lines": [
+  {
+   "id": 1,
+   "phone_number": "5555550100",
+   "display_name": "Main Line \u2014 front desk intake (overlong display name)",
+   "provider": "ringcentral",
+   "active": true,
+   "mms_capable": true,
+   "can_read": true,
+   "can_send": true,
+   "can_manage": false
+  },
+  {
+   "id": 2,
+   "phone_number": "5555550101",
+   "display_name": "Automations Outbound",
+   "provider": "quo",
+   "active": false,
+   "mms_capable": false,
+   "can_read": true,
+   "can_send": false,
+   "can_manage": false,
+   "role": "attorney"
+  }
+ ]
+}

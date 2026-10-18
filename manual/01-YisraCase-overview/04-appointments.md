@@ -110,7 +110,7 @@ Contact (optional attendee) ──────↗
 - Log entry written
 - Google Calendar event is deleted
 - Any active reminder sequences tied to this appointment are canceled
-- Optionally creates a follow-up task and/or sends a cancellation confirmation to the client. The task goes to whoever canceled; when an automation cancels with no staff member behind it (a Calendly cancellation, for example), it goes to the user in the **Default Task Assignee** setting (`default_task_assignee`, Settings → firm settings, Automations section). If that setting is empty, no task is created and IT gets an alert.
+- Optionally creates a follow-up task and/or sends a cancellation confirmation to the client. The task goes to whoever canceled; when an automation cancels with no staff member behind it (a Calendly cancellation, for example), it goes to the user in the **Default task assignee** setting (`default_task_assignee`, YisraCase Config → Firm → Notifications & routing). If that setting is empty, no task is created and IT gets an alert.
 - When an automation cancels (no staff member behind it — a Calendly cancellation, or a dismissed/closed case cancelling its future appointments), the appointment's provider gets a text: *"Appt canceled: client, type date. note"*. A staff member's own cancel sends no text; a client's cancel from their manage link goes through the office alert instead, which also texts the provider.
 
 ### Rescheduled — two modes
@@ -149,10 +149,7 @@ The confirmation messages include a private **manage link** (`4lsg.com/m/…`) t
 
 Some appointment types — most importantly the **341 Meeting** — are *singletons*: a case should have exactly one live one at a time. When a new singleton appointment is created for a case, any prior still-Scheduled appointment of the same type on that case is automatically marked **Rescheduled** (its calendar entries and reminder automation are torn down), and the new appointment records which one it replaced.
 
-Two implementations exist, switched by the `unified_singleton_enabled` setting:
-
-- **Off (current default):** the long-standing 341-specific behaviour — only the type named exactly "341 Meeting" supersedes, found through the case's stored 341 pointer.
-- **On:** any type marked `singleton` in the calendar type registry supersedes, found by querying the appointment table directly — including court-created, docket-anchored appointments on the same case. The `case_341_current` / `341_appt_id` columns on the case keep being maintained either way.
+Any type marked `singleton` in the calendar type registry supersedes — the type's key decides, not its label — found by querying the appointment table directly, including court-created, docket-anchored appointments on the same case. The `case_341_current` / `341_appt_id` columns on the case keep being maintained.
 
 #### If a supersession is wrong
 

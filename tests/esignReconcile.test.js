@@ -234,7 +234,7 @@ describe('dead-channel check — moved rows + webhook silence', () => {
     expect(task.dedupeKey).toBe('webhook-down');
     expect(task.desc).toMatch(/YC-ESIGN-0001: sent → signed/);
     expect(task.desc).toMatch(/EVER/);
-    expect(task.desc).toMatch(/esign_webhook_hmac_mode/);
+    expect(task.desc).toMatch(/hmac REJECTED' = the delivery's signature vs esign_webhook_secret/);
     expect(task.desc).toMatch(/esign_webhook_token/);
     expect(out.output.webhook_silence_alerted).toBe(true);
   });
@@ -402,7 +402,7 @@ describe('dead-channel check — moved rows + webhook silence', () => {
     expect(desc).toMatch(/ESIGN WEBHOOK/);            // the log filter
     expect(desc).toMatch(/Zoho Sign console/);        // "Zoho stopped calling"
     expect(desc).toMatch(/esign_webhook_token/);
-    expect(desc).toMatch(/esign_webhook_hmac_mode/);
+    expect(desc).not.toMatch(/esign_webhook_hmac_mode/);   // retired (settings arc)
     expect(desc).toMatch(/esign_webhook_secret/);
   });
 });

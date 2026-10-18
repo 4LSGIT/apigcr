@@ -21,6 +21,11 @@
 //                                    No state: the Firm tab (Config shell) can be
 //                                    clicked through, nothing persists. The GETs
 //                                    …/pickers, …/versions[/<id>] are plain fixtures.
+//   GET/PUT /api/app-settings[…]  -> fixtures/api/app-settings.json, filtered
+//                                    by ?home=; history per key; PUT / restore
+//                                    echo (see the route block below).
+//   POST /__mock/persona          -> { persona: 'su' | 'staff' } — who the mock
+//                                    answers as (see PERSONA below).
 //   GET /api/ui-config            -> fixtures/api/ui-config.json (can_edit_firm)
 //                                    with firm / user taken from firm-data.json's
 //                                    `ui`: one source for the layers, as in
@@ -66,11 +71,21 @@ function resolveDates(text) {
     new Date(Date.now() + (Number(off) || 0) * 86400000).toLocaleDateString('en-CA'));
 }
 
+// The persona the mock answers as (settings arc): 'su' — the fixture user,
+// a superuser holding every capability (the default); 'staff' — a staff-only
+// user: GET /api/ui-config says neither gate, the settings API serves no
+// system / comms rows and nothing editable, and a fixture with a `.staff`
+// twin (fixtures/api/<path>.staff.json — mailboxes, phone-lines/readable)
+// answers from the twin. Switched by POST /__mock/persona { persona }; the
+// survey flips it around the steps that need it and reloads the pane.
+let PERSONA = 'su';
+
 function fixtureFor(urlPath) {
   // '/api/cases/TESTCASE1' -> fixtures/api/cases/TESTCASE1.json
   const rel = urlPath.replace(/^\/(api|admin)\//, '');
   if (!rel || rel.includes('..')) return null;
-  const file = path.join(FIXTURES, 'api', rel + '.json');
+  const twin = PERSONA !== 'su' && path.join(FIXTURES, 'api', `${rel}.${PERSONA}.json`);
+  const file = twin && fs.existsSync(twin) ? twin : path.join(FIXTURES, 'api', rel + '.json');
   return fs.existsSync(file) ? JSON.parse(resolveDates(fs.readFileSync(file, 'utf8'))) : null;
 }
 
@@ -113,6 +128,12 @@ function createApp({ log = null } = {}) {
   const app = express();
 
   app.post('/login', (req, res) => res.json({ token: fakeJwt() }));
+  app.post('/__mock/persona', express.json(), (req, res) => {
+    const p = (req.body || {}).persona;
+    if (p !== 'su' && p !== 'staff') return res.status(400).json({ error: 'persona: su | staff' });
+    PERSONA = p;
+    res.json({ persona: PERSONA });
+  });
 
   app.use(manualsRouter());
 
@@ -123,7 +144,8 @@ function createApp({ log = null } = {}) {
   // The rest (can_edit_firm, …) comes from fixtures/api/ui-config.json.
   app.get('/api/ui-config', (req, res) => {
     const ui = readJson(path.join(FIXTURES, 'firm-data.json')).ui || {};
-    res.json({ ...fixtureFor('/api/ui-config'), firm: ui.firm || {}, user: ui.user || {} });
+    const staff = PERSONA === 'staff' ? { can_edit_firm: false, can_edit_system: false } : {};
+    res.json({ ...fixtureFor('/api/ui-config'), ...staff, firm: ui.firm || {}, user: ui.user || {} });
   });
 
   // ui-custom S3.2 — the Firm tab's two writes (stateless; see the header).
@@ -136,6 +158,38 @@ function createApp({ log = null } = {}) {
     if (!v || !v.version) return res.status(404).json({ status: 'error', message: 'Version not found' });
     res.json({ status: 'success', scope: 'firm', config_key: v.version.config_key, config: v.version.config,
       changed: true, versioned: true, restored_from: v.version.id });
+  });
+
+  // Settings arc — the settings API (routes/api.appSettings.js): GET serves
+  // fixtures/api/app-settings.json filtered by ?home= the way the route does
+  // (sections only for the homes served); PUT echoes the value; history is a
+  // plain per-key fixture (fixtures/api/app-settings/<key>/history.json, else
+  // none); restore answers that history's OLD value. Stateless, like the
+  // Firm tab's ui-config writes above.
+  app.get('/api/app-settings', (req, res) => {
+    const all = fixtureFor('/api/app-settings');
+    if (PERSONA === 'staff') {   // what the route serves a staff-only user: no system / comms rows, nothing editable
+      all.caps = { firm: false, system: false };
+      all.settings = all.settings.filter((r) => r.home !== 'system' && r.home !== 'comms').map((r) => ({ ...r, can_edit: false }));
+    }
+    const homes = String(req.query.home || '').split(',').map((h) => h.trim()).filter(Boolean);
+    const settings = homes.length ? all.settings.filter((r) => homes.includes(r.home)) : all.settings;
+    const sections = {};
+    for (const r of settings) sections[r.home] = all.sections[r.home];
+    res.json({ ...all, sections, settings });
+  });
+  app.get(/^\/api\/app-settings\/([^/]+)\/history$/, (req, res) => {
+    const h = fixtureFor(`/api/app-settings/${req.params[0]}/history`);
+    res.json(h || { status: 'success', key: req.params[0], versions: [] });
+  });
+  app.put(/^\/api\/app-settings\/([^/]+)$/, express.json(), (req, res) => {
+    res.json({ status: 'success', setting: { key: req.params[0], value: String((req.body || {}).value ?? ''), updated_at: new Date().toISOString() } });
+  });
+  app.post(/^\/api\/app-settings\/([^/]+)\/restore$/, express.json(), (req, res) => {
+    const h = fixtureFor(`/api/app-settings/${req.params[0]}/history`);
+    const v = h && h.versions.find((x) => x.id === Number((req.body || {}).version_id));
+    if (!v) return res.status(404).json({ status: 'error', message: 'Version not found' });
+    res.json({ status: 'success', setting: { key: req.params[0], value: v.old_value ?? '', updated_at: new Date().toISOString() } });
   });
 
   app.all(/^\/(api|admin)\//, (req, res) => {

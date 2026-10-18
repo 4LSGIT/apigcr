@@ -329,7 +329,7 @@
       // console error — a typo must be seen, never silently open). Visibility
       // only: the route still refuses.
       var CAP_ROOT = { 'firm.settings': false, 'users.manage': true, 'automations.manage': false, 'archives.purge': false,
-        'comms.read_all': false, 'templates.code': false, 'tools.author': true };
+        'comms.read_all': false, 'templates.code': false, 'tools.author': true, 'system.settings': false };
       var ROLE_CAPS = { admin: ['firm.settings', 'automations.manage', 'archives.purge'], attorney: ['comms.read_all'],
         form_dev: ['templates.code'], staff: [], automation: [] };
       function gatePasses(gate, opts) {
@@ -7036,7 +7036,9 @@ async function loadFirmData() {
 }
 
 /* ── Settings liveness (sync bus) ────────────────────────────────────────────
-   settings.html PUTs an app_settings row; the shell's apiSend sniffs it and
+   A settings editor (YisraCase Config's Firm / System / Lists tabs, Portal
+   Manager, CTA Links — public/js/ycSettingRows.js and kin) PUTs an
+   app_settings row (or restores one); the shell's apiSend sniffs it and
    the bus announces `setting:<key>` with the raw stored string. Keeping THIS
    realm's firmData.settings current matters for two populations that never
    see the message themselves:
@@ -7047,8 +7049,8 @@ async function loadFirmData() {
 
    No repaint work here — the shell's own surfaces that read these settings
    (the Cases-tab type filter, the events filter) are re-populated on their
-   existing paths, and settings.html still calls loadFirmData() after an fe-*
-   save. This subscriber is what makes the value correct IMMEDIATELY, and
+   existing paths, and the settings editors still call loadFirmData() after an
+   fe-* save. This subscriber is what makes the value correct IMMEDIATELY, and
    correct in every OTHER browser tab, where no loadFirmData() runs at all.
 
    §3.6: merges state, paints nothing, emits nothing. */

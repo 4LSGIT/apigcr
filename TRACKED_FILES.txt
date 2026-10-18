@@ -100,6 +100,7 @@ lib/routeFamilies.js
 lib/schemaDump.js
 lib/secretAtRest.js
 lib/sequenceEngine.js
+lib/settingsRegistry.js
 lib/shellLinks.js
 lib/signatureValidation.js
 lib/sqlGuard.js
@@ -185,6 +186,8 @@ manual/05-Subsystems/11-calendar-types.md
 manual/05-Subsystems/12-calendar-tab.md
 manual/05-Subsystems/13-custom-fields.md
 manual/05-Subsystems/14-firm-launcher.md
+manual/05-Subsystems/15-firm-and-system-settings.md
+manual/05-Subsystems/16-contact-roles.md
 manual/05-Subsystems/README.md
 manual/06-Client-Facing/01-overview.md
 manual/06-Client-Facing/02-client-portal.md
@@ -262,9 +265,12 @@ public/campaign.html
 public/case.html
 public/caseConfigManager.html
 public/caseconfig/calendarTypes.html
+public/caseconfig/contactRoles.html
 public/caseconfig/fields.html
 public/caseconfig/firm.html
+public/caseconfig/lists.html
 public/caseconfig/pipelines.html
+public/caseconfig/system.html
 public/caseconfig/types.html
 public/caseerror.html
 public/checklistView.html
@@ -344,6 +350,7 @@ public/js/ycIconPicker.js
 public/js/ycLayoutEditor.js
 public/js/ycNoTranscribe.js
 public/js/ycPager.js
+public/js/ycSettingRows.js
 public/js/ycSubTab.js
 public/mailboxAdmin.html
 public/manage.html
@@ -414,6 +421,7 @@ ref/UNIFIED_EVENTS_DESIGN_V0_5.md
 ref/YISRACASE_STORE_AND_BUS_DESIGN_V2.md
 ref/archive/2026-09-04_dbkq_cutover_runbook.md
 ref/archive/2026-09-04_dbkq_workflow_spec.md
+ref/archive/2026-10-17_settings_arc_spec.md
 ref/archive/AUTOMATION_VERSIONING_AUDIT.md
 ref/archive/AUTOMATION_VERSIONING_PLAN_V2_DELTA.md
 ref/archive/DB_MIGRATION_2026-10.md
@@ -567,6 +575,7 @@ ref/migrations/2026-10-16_ui_custom_s5e_custom_tabs_to_buttons.json
 ref/migrations/2026-10-16_ui_custom_s6c_config_key_comment.sql
 ref/migrations/2026-10-17_comms_summaries_skip_reason_comment.sql
 ref/migrations/2026-10-17_ui_custom_s5e3_drop_user_custom_tab.sql
+ref/migrations/2026-10-18_settings_arc.sql
 ref/migrations/S1_notes_migration.sql
 ref/migrations/documents_s1.sql
 ref/migrations/documents_s2.sql
@@ -797,6 +806,8 @@ scripts/mobile-survey/fixtures/api/admin/scratch.json
 scripts/mobile-survey/fixtures/api/admin/scratch/fred/demo_state.json
 scripts/mobile-survey/fixtures/api/admin/users.json
 scripts/mobile-survey/fixtures/api/api-keys.json
+scripts/mobile-survey/fixtures/api/app-settings.json
+scripts/mobile-survey/fixtures/api/app-settings/firm_name/history.json
 scripts/mobile-survey/fixtures/api/calendar-feed.json
 scripts/mobile-survey/fixtures/api/calendar-range.json
 scripts/mobile-survey/fixtures/api/cases/TESTCASE1.json
@@ -812,6 +823,7 @@ scripts/mobile-survey/fixtures/api/comms-archive/media/7103/url.json
 scripts/mobile-survey/fixtures/api/comms-archive/no-transcribe.json
 scripts/mobile-survey/fixtures/api/comms-archive/search.json
 scripts/mobile-survey/fixtures/api/contacts/9001.json
+scripts/mobile-survey/fixtures/api/credentials.json
 scripts/mobile-survey/fixtures/api/cta.json
 scripts/mobile-survey/fixtures/api/cta/10/executions.json
 scripts/mobile-survey/fixtures/api/cta/2/executions.json
@@ -828,6 +840,8 @@ scripts/mobile-survey/fixtures/api/mail/threads/t1%40example-firm.test.json
 scripts/mobile-survey/fixtures/api/mail/views.json
 scripts/mobile-survey/fixtures/api/mail/views/counts.json
 scripts/mobile-survey/fixtures/api/mailboxes.json
+scripts/mobile-survey/fixtures/api/mailboxes.staff.json
+scripts/mobile-survey/fixtures/api/mailboxes/1/grants.json
 scripts/mobile-survey/fixtures/api/pages.json
 scripts/mobile-survey/fixtures/api/pages/4.json
 scripts/mobile-survey/fixtures/api/phone-lines/1/calls.json
@@ -840,6 +854,7 @@ scripts/mobile-survey/fixtures/api/phone-lines/all/calls.json
 scripts/mobile-survey/fixtures/api/phone-lines/all/conversations.json
 scripts/mobile-survey/fixtures/api/phone-lines/all/conversations/5555550199.json
 scripts/mobile-survey/fixtures/api/phone-lines/readable.json
+scripts/mobile-survey/fixtures/api/phone-lines/readable.staff.json
 scripts/mobile-survey/fixtures/api/readonly-keys.json
 scripts/mobile-survey/fixtures/api/tasks.json
 scripts/mobile-survey/fixtures/api/ui-config.json
@@ -857,6 +872,7 @@ scripts/reviveScalarReplacedValues.js
 scripts/sec2ScrubAuditShapes.js
 scripts/secret-scan.js
 scripts/seedRoleContacts.js
+scripts/settingsArcMigrate.js
 scripts/sweep_validate_live.js
 scripts/test_availability.js
 scripts/test_court_revert.js
@@ -1029,6 +1045,7 @@ tests/apiCta.send.test.js
 tests/apiTools.routes.test.js
 tests/apikeys.k1.test.js
 tests/appSettingsGate.test.js
+tests/appSettingsRegistry.test.js
 tests/applyFeSetting.test.js
 tests/apptService.followUpTask.test.js
 tests/apptService.lineage.test.js
@@ -1088,10 +1105,15 @@ tests/commsTranscribe.migration.mysql.test.js
 tests/commsTranscribe.mysql.test.js
 tests/commsTranscribeAudio.test.js
 tests/commsTranscribeVendor.test.js
+tests/configListsTab.test.js
+tests/configReadOnly.test.js
+tests/configShellAccess.test.js
+tests/configSystemTab.test.js
 tests/contactOrgKind.test.js
 tests/contactRelationService.updateType.test.js
 tests/contactRoles.roleForms.test.js
 tests/contactRoles.slice456.test.js
+tests/contactRolesConfig.test.js
 tests/contactScalarValueDemote.test.js
 tests/contactTransferShapes.test.js
 tests/contactUi.sync.test.js
@@ -1246,6 +1268,7 @@ tests/helpers/mailboxS3World.js
 tests/helpers/phoneSPHWorld.js
 tests/helpers/renderSmoke.js
 tests/helpers/scriptGuard.js
+tests/helpers/settingsApiFake.js
 tests/helpers/shellHtml.js
 tests/helpers/toolShell.js
 tests/helpers/u6aEventsDb.js
@@ -1344,6 +1367,7 @@ tests/manualsRoute.test.js
 tests/mascotSkins.test.js
 tests/moduleLoad.smoke.test.js
 tests/multipartBody.test.js
+tests/mySettings.test.js
 tests/nameKeyOrgKind.test.js
 tests/orphanAdoptDialog.opts.test.js
 tests/pageLanding.landingAssets.test.js
@@ -1405,6 +1429,11 @@ tests/sequences.ensureDraft.test.js
 tests/sequences.recover.test.js
 tests/sequences.routeOrder.test.js
 tests/sessionKeysUi.test.js
+tests/settingsArcMigrate.test.js
+tests/settingsAutomationGuard.test.js
+tests/settingsInventory.test.js
+tests/settingsRegistry.test.js
+tests/settingsToolHomes.test.js
 tests/smtpAdapter.deliveryInfo.test.js
 tests/sqlGuard.secretTables.test.js
 tests/ssnModifiers.test.js
@@ -1477,6 +1506,7 @@ tests/versionDiff.test.js
 tests/versionPredicateCoverage.test.js
 tests/videoLanding.actionUrl.test.js
 tests/videoLanding.rateLimit.test.js
+tests/vocabWriteGates.test.js
 tests/workflowCancel.test.js
 tests/workflowEngine.cancelAndLoopGuard.test.js
 tests/workflows.editor.roundtrip.test.js
@@ -1496,5 +1526,6 @@ tests/wsurlSlinks.test.js
 tests/ycFrameFit.test.js
 tests/ycIconS6a.test.js
 tests/ycPager.test.js
+tests/ycSettingRows.test.js
 tests/ycSync.test.js
 views/v.html

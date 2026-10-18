@@ -39,7 +39,7 @@ Matched endpoints (read `MATCHERS` in yc-sync.js for the always-current list —
 | `/api/cases/:id/merge` | POST | `yc_refetch` to the **survivor only**; dry-run silent |
 | `/api/contacts/:id/booking-link` | POST | `{contact_token}` real value |
 | `/api/contact-phones` · `/api/contact-emails` | POST | `yc_refetch` to the revive donor (shape differs from the PATCH transfer — see the matcher comments; contract tests pin both producers) |
-| `/api/app-settings/:key` (PUT) · `/api/app-settings` (POST create) | | `setting:<key>` with `{value}` |
+| `/api/app-settings/:key` (PUT) · `/api/app-settings` (POST create) · `/api/app-settings/:key/restore` (POST) | | `setting:<key>` with `{value}` |
 | `/api/intake/contact` · `/api/intake/case` | POST | `yc_refetch` for `created`/`updated`; `found` is silent (writes nothing) |
 | `/api/appts…` (PATCH, attended/no-show, create, cancel, reschedule — reschedule emits **both** old and new ids) · `/api/events…` (PATCH, complete/cancel, create) | | `yc_refetch` markers |
 

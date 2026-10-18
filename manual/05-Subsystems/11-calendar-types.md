@@ -1,6 +1,7 @@
 # Calendar Types — the item-type registry and picker options
 
 **Where:** More → YisraCase Config → **Calendar Types** tab.
+**Who:** changing types needs the *firm settings* permission (admin, IT, SU). Everyone else sees the tab read-only: a banner says so, the add / edit / delete controls are gone and detail dialogs open to view.
 **Tables:** `calendar_item_types` (identity), `calendar_type_options` (what pickers offer).
 **Design:** `ref/UNIFIED_EVENTS_DESIGN_V0_5.md` §3.3 (A1). Shipped in Unified Events U2 (read layer) and U2b (this page + options).
 
@@ -191,3 +192,6 @@ PUT    /api/calendar-types-admin/options/:id
 DELETE /api/calendar-types-admin/options/:id
 POST   /api/calendar-types-admin/:type_key/adopt-unmapped   {raw_label} → counts
 ```
+
+Reads are `jwtOrApiKey`; every `calendar-types-admin` write is
+`requireAuth({ audience:'staff', can:'firm.settings', allowApiKey:true })`.
