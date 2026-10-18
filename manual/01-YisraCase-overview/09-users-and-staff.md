@@ -134,10 +134,12 @@ Staff members can update their own name, username, email, phone, and communicati
 Users with the `it` or `su` role can choose **View as** beside an active,
 non-privileged human user. This opens a 30-minute session in the current tab
 using that user's roles, entitlements, launcher layout, and preferences. The
-original IT login remains active in other tabs and is restored by the warning
-button in the header.
+original IT login remains active in other tabs and is restored by exiting from
+the View-as bar above the header.
 
-View-as sessions are read-only across the API. They cannot target the
-automation account, the current account, a disabled account, or another user
-holding `it` or `su`. Starting a session is recorded in `admin_audit_log` with
-`tool = 'view_as'` and both actor and target identities.
+Sessions start in **Read-only** mode. The top bar can switch between Read-only,
+where the server rejects every mutating request, and **Live**, where actions are
+performed with the selected user's permissions and attributed to that user.
+They cannot target the automation account, the current account, a disabled
+account, or another user holding `it` or `su`. Starting a session is recorded in
+`admin_audit_log` with `tool = 'view_as'` and both actor and target identities.

@@ -2419,7 +2419,7 @@
        then its page, filling the rest of the screen. Scoped by id: style.css's
        global iframe rule (100vh) loses to it. */
     #tabUserItem .yc-bt {
-      display: flex; flex-direction: column; height: calc(100vh - var(--header-h)); height: calc(100dvh - var(--header-h));
+      display: flex; flex-direction: column; height: calc(100vh - var(--header-h) - var(--view-as-offset, 0px)); height: calc(100dvh - var(--header-h) - var(--view-as-offset, 0px));
       min-width: 0; text-align: left;
     }
     #tabUserItem .yc-bt-head {
@@ -2466,11 +2466,11 @@
   <link rel="stylesheet" type="text/css" href="style.css" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <style>
-    .tab-main > iframe { display: block; height: calc(100vh - var(--header-h)); }
+    .tab-main > iframe { display: block; height: calc(100vh - var(--header-h) - var(--view-as-offset, 0px)); }
     /* dvh where supported: on a phone 100vh includes the area under the
        browser's own toolbars, so the frame's bottom sat behind them. Desktop
        dvh == vh. Older browsers drop this line and keep the one above. */
-    .tab-main > iframe { height: calc(100dvh - var(--header-h)); }
+    .tab-main > iframe { height: calc(100dvh - var(--header-h) - var(--view-as-offset, 0px)); }
 
     /* === HEADER + SIDEBAR === */
     /* Token definitions deleted — /theme.css is the single source of truth for
@@ -2479,8 +2479,9 @@
        --sidebar-hover→--hover, --sidebar-active-bg→--accent-soft,
        --logout-color→--danger, --logout-hover-bg→--danger-soft. */
     body {
+      --view-as-offset: 0px;
       margin: 0;
-      padding-top: var(--header-h);
+      padding-top: calc(var(--header-h) + var(--view-as-offset));
       padding-left: var(--sidebar-w);
       transition: padding-left 0.2s ease, background 0.2s ease, color 0.2s ease;
       background: var(--page-bg);
@@ -2488,10 +2489,33 @@
     }
     body.sidebar-skinny { --sidebar-w: var(--sidebar-skinny-w); }
     body.sidebar-hidden { padding-left: 0 !important; }
+    body.view-as-active { --view-as-offset: 44px; }
+
+    #viewAsBar {
+      position: fixed; inset: 0 0 auto 0; height: 44px; z-index: 120;
+      box-sizing: border-box; padding: 0 14px;
+      display: none; align-items: center; justify-content: space-between; gap: 12px;
+      background: var(--warn-soft); color: var(--warn-on-soft);
+      border-bottom: 1px solid var(--warn); font-size: 13px;
+    }
+    #viewAsBar .view-as-identity,
+    #viewAsBar .view-as-actions { display: flex; align-items: center; gap: 8px; min-width: 0; }
+    #viewAsBar .view-as-name { font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    #viewAsBar .view-as-actor { color: var(--text-muted); white-space: nowrap; }
+    #viewAsBar .view-as-toggle { display: flex; padding: 2px; border: 1px solid var(--warn); border-radius: 7px; background: var(--surface); }
+    #viewAsBar button {
+      border: 0; border-radius: 5px; min-height: 30px; padding: 0 11px;
+      background: transparent; color: var(--text); cursor: pointer; font: inherit; font-weight: 600;
+    }
+    #viewAsBar .view-as-mode.active { background: var(--warn); color: #111827; }
+    #viewAsBar[data-mode="live"] { background: var(--danger-soft); color: var(--danger); border-bottom-color: var(--danger); }
+    #viewAsBar[data-mode="live"] .view-as-toggle { border-color: var(--danger); }
+    #viewAsBar[data-mode="live"] .view-as-mode.active { background: var(--danger); color: #fff; }
+    #viewAsBar .view-as-exit { border: 1px solid currentColor; white-space: nowrap; }
 
     /* Header */
     #appHeader {
-      position: fixed; top: 0; left: 0; right: 0;
+      position: fixed; top: var(--view-as-offset); left: 0; right: 0;
       height: var(--header-h);
       background: var(--surface);
       border-bottom: 1px solid var(--border);
@@ -2609,11 +2633,6 @@
       margin-left: 6px;
     }
     #appHeader .hdr-btn-icon i { font-size: 15px; }
-    #appHeader .hdr-view-as {
-      background: var(--warn-soft); color: var(--warn-on-soft);
-      border-color: var(--warn); font-weight: 600; white-space: nowrap;
-    }
-    #appHeader .hdr-view-as:hover { background: var(--warn-soft); opacity: 0.85; }
     #appHeader .hdr-logout { color: var(--danger); }
     #appHeader .hdr-logout:hover { background: var(--danger-soft); }
 
@@ -2656,7 +2675,7 @@
 
     /* Sidebar */
     #appSidebar {
-      position: fixed; top: var(--header-h); left: 0; bottom: 0;
+      position: fixed; top: calc(var(--header-h) + var(--view-as-offset)); left: 0; bottom: 0;
       width: var(--sidebar-w);
       background: var(--sidebar-bg);
       border-right: 1px solid var(--border);
@@ -2878,7 +2897,7 @@
       body.sidebar-mobile-open #appSidebar { transform: translateX(0); }
       body.sidebar-mobile-open::after {
         content: ''; position: fixed;
-        top: var(--header-h); left: 0; right: 0; bottom: 0;
+        top: calc(var(--header-h) + var(--view-as-offset)); left: 0; right: 0; bottom: 0;
         background: var(--backdrop); z-index: 85;
       }
       #appHeader .hdr-hamburger { display: block !important; }
@@ -2906,6 +2925,9 @@
          hdrFit phone ladder (hdr-fit-p*, above) closes the rest. */
       #appHeader { padding: 0 10px; gap: 6px; }
       #appHeader .hdr-right { gap: 6px; }
+      #viewAsBar { padding: 0 8px; gap: 6px; }
+      #viewAsBar .view-as-actor { display: none; }
+      #viewAsBar button { padding: 0 8px; }
 
       /* List tables scroll inside their own box instead of widening the
          document. A wide table used to push the whole page sideways, so the
@@ -2956,7 +2978,7 @@
 
     /* Print */
     @media print {
-      #appHeader, #appSidebar { display: none !important; }
+      #viewAsBar, #appHeader, #appSidebar { display: none !important; }
       body { padding: 0 !important; }
     }
 
@@ -2966,6 +2988,20 @@
 </head>
 
 <body>
+  <section id="viewAsBar" aria-live="polite">
+    <div class="view-as-identity">
+      <i class="fa-solid fa-user-secret" aria-hidden="true"></i>
+      <span>Viewing as</span><span class="view-as-name" id="viewAsTarget"></span>
+      <span class="view-as-actor" id="viewAsActor"></span>
+    </div>
+    <div class="view-as-actions">
+      <div class="view-as-toggle" role="group" aria-label="View-as access mode">
+        <button class="view-as-mode" id="viewAsReadonly" onclick="setViewAsMode('readonly')" type="button">Read-only</button>
+        <button class="view-as-mode" id="viewAsLive" onclick="setViewAsMode('live')" type="button">Live</button>
+      </div>
+      <button class="view-as-exit" onclick="exitViewAs()" type="button" title="Return to your own account">Exit</button>
+    </div>
+  </section>
   <!-- ============ HEADER ============ -->
   <header id="appHeader">
     <button class="hdr-hamburger" onclick="toggleMobileSidebar()" aria-label="Menu">
@@ -2989,9 +3025,6 @@
     </div>
     <div class="hdr-spacer"></div>
     <div class="hdr-right" id="hdrUserArea" style="display:none">
-      <button class="hdr-btn hdr-view-as" id="hdrViewAs" onclick="exitViewAs()" style="display:none" title="Exit the read-only View-as session">
-        <i class="fa-solid fa-user-secret"></i><span id="hdrViewAsText">View as</span>
-      </button>
       <span class="hdr-greeting" onclick="openMainTab('tabSettings')" title="Settings">Hi, <b id="myNameIs"></b>!</span>
       <button class="hdr-btn" onclick="openTasksTab({assigned_to:user.user,status:'Incomplete',defer:'active'})" title="My Tasks">
         <i class="fa-solid fa-list"></i><span>My Tasks</span><span class="hdr-badge" id="hdrTasksBadge" style="display:none">0</span>
@@ -6163,8 +6196,8 @@
     /* 46px = the strip line (6px pads + ~34px pill). !important: the Admin
        panels set height:80vh and margin-top inline. */
     #ycPanels > div > iframe {
-      height: calc(100vh - var(--header-h) - 46px) !important;
-      height: calc(100dvh - var(--header-h) - 46px) !important;
+      height: calc(100vh - var(--header-h) - var(--view-as-offset, 0px) - 46px) !important;
+      height: calc(100dvh - var(--header-h) - var(--view-as-offset, 0px) - 46px) !important;
     }
     #ycPanels > div { margin-top: 0 !important; }
   }
@@ -6762,10 +6795,19 @@
       loginInProgress: null
     };
     const VIEW_AS_STORAGE_KEY = "yc_view_as_jwt";
+    const VIEW_AS_READONLY_KEY = "yc_view_as_readonly_jwt";
+    const VIEW_AS_LIVE_KEY = "yc_view_as_live_jwt";
+    function clearViewAsStorage() {
+      try {
+        sessionStorage.removeItem(VIEW_AS_STORAGE_KEY);
+        sessionStorage.removeItem(VIEW_AS_READONLY_KEY);
+        sessionStorage.removeItem(VIEW_AS_LIVE_KEY);
+      } catch (_) { }
+    }
     let viewAsToken = null;
     try { viewAsToken = sessionStorage.getItem(VIEW_AS_STORAGE_KEY); } catch (_) { }
     if (viewAsToken && isJwtExpired(viewAsToken)) {
-      try { sessionStorage.removeItem(VIEW_AS_STORAGE_KEY); } catch (_) { }
+      clearViewAsStorage();
       viewAsToken = null;
     }
     // Diagnostic identity is tab-local.  The original login remains untouched
@@ -6799,20 +6841,43 @@
       return p && p.view_as === true && p.act ? p : null;
     }
 
-    function startViewAs(token) {
+    function validViewAsToken(token, mode) {
       const p = getJwtPayload(token);
-      if (!p || p.view_as !== true || !p.act || isJwtExpired(token)) {
+      return !!(p && p.view_as === true && p.act && p.view_as_mode === mode && !isJwtExpired(token));
+    }
+
+    function startViewAs(session) {
+      const readonlyToken = session && (session.readonly_token || session.token);
+      const liveToken = session && session.live_token;
+      if (!validViewAsToken(readonlyToken, 'readonly') || !validViewAsToken(liveToken, 'live')) {
         throw new Error("The server returned an invalid View-as session");
       }
-      sessionStorage.setItem(VIEW_AS_STORAGE_KEY, token);
+      sessionStorage.setItem(VIEW_AS_READONLY_KEY, readonlyToken);
+      sessionStorage.setItem(VIEW_AS_LIVE_KEY, liveToken);
+      sessionStorage.setItem(VIEW_AS_STORAGE_KEY, readonlyToken);
       location.assign('/');
     }
 
+    function setViewAsMode(mode) {
+      if (mode !== 'readonly' && mode !== 'live') return;
+      const key = mode === 'readonly' ? VIEW_AS_READONLY_KEY : VIEW_AS_LIVE_KEY;
+      let token = null;
+      try { token = sessionStorage.getItem(key); } catch (_) { }
+      if (!validViewAsToken(token, mode)) {
+        clearViewAsStorage();
+        location.assign('/');
+        return;
+      }
+      sessionStorage.setItem(VIEW_AS_STORAGE_KEY, token);
+      location.reload();
+    }
+
     function exitViewAs() {
-      try { sessionStorage.removeItem(VIEW_AS_STORAGE_KEY); } catch (_) { }
+      clearViewAsStorage();
       location.assign('/');
     }
     window.startViewAs = startViewAs;
+    window.setViewAsMode = setViewAsMode;
     window.exitViewAs = exitViewAs;
 
 
@@ -6915,7 +6980,7 @@
           // ApiError to the calling tool.
         } else {
           if (activeViewAs()) {
-            try { sessionStorage.removeItem(VIEW_AS_STORAGE_KEY); } catch (_) { }
+            clearViewAsStorage();
             location.assign('/');
             throw new Error('View-as session ended');
           }
@@ -7209,7 +7274,7 @@ async function login(username, password) {
       AUTH_STATE.username = username;
       AUTH_STATE.jwt = data.token;
       // An explicit login always leaves diagnostic mode.
-      try { sessionStorage.removeItem(VIEW_AS_STORAGE_KEY); } catch (_) { }
+      clearViewAsStorage();
       localStorage.setItem("jwt", data.token);
       return data.token;
     } finally {
@@ -7360,7 +7425,7 @@ async function initAuth() {
     // Never prompt for the target user's password.  A stale/revoked View-as
     // token falls back to the original IT login on a clean reload.
     if (activeViewAs()) {
-      try { sessionStorage.removeItem(VIEW_AS_STORAGE_KEY); } catch (_) { }
+      clearViewAsStorage();
       location.assign('/');
       return;
     }
@@ -7387,9 +7452,23 @@ async function initAuth() {
       // `typeof` keeps the extracted loadUserContext test harnesses (which run
       // this function without the auth-state block) faithful and standalone.
       const viewAs = typeof activeViewAs === "function" ? activeViewAs() : null;
-      const viewAsButton = E("hdrViewAs");
-      if (viewAsButton) viewAsButton.style.display = viewAs ? "flex" : "none";
-      if (viewAs && E("hdrViewAsText")) E("hdrViewAsText").textContent = `Viewing ${user.user_name || user.username} · Exit`;
+      const viewAsBar = E("viewAsBar");
+      if (viewAsBar) viewAsBar.style.display = viewAs ? "flex" : "none";
+      if (viewAs) {
+        document.body.classList.add("view-as-active");
+        const mode = viewAs.view_as_mode === "live" ? "live" : "readonly";
+        if (viewAsBar) viewAsBar.dataset.mode = mode;
+        if (E("viewAsTarget")) E("viewAsTarget").textContent = user.user_name || user.username;
+        if (E("viewAsActor")) E("viewAsActor").textContent = `Started by ${viewAs.act.username}`;
+        [["viewAsReadonly", "readonly"], ["viewAsLive", "live"]].forEach(([id, value]) => {
+          const button = E(id);
+          if (!button) return;
+          button.classList.toggle("active", mode === value);
+          button.setAttribute("aria-pressed", mode === value ? "true" : "false");
+        });
+      } else {
+        document.body.classList.remove("view-as-active");
+      }
       startFirmClock();
       E("appSidebar").style.display = "flex";
       // The su signal (the su role only — user_auth is authn, A2b): the
@@ -7570,7 +7649,7 @@ async function initAuth() {
         sessionStorage.removeItem("su_elev");
       } catch (_) { }
       try {
-        sessionStorage.removeItem(VIEW_AS_STORAGE_KEY);
+        clearViewAsStorage();
       } catch (_) { }
 
       if (window.AUTH_STATE) {

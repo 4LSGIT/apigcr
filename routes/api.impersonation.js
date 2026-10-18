@@ -3,8 +3,8 @@
 // IT diagnostic "View as" sessions.  These are intentionally not password
 // resets and do not reuse a target's credentials.  The server mints a fresh,
 // short-lived JWT carrying the target identity plus an `act` claim naming the
-// initiating IT/SU.  auth.jwtOrApiKey and auth.requireAuth enforce GET/HEAD/
-// OPTIONS-only use for every such token.
+// initiating IT/SU. The server returns paired read-only/live tokens so the
+// top-bar toggle remains server-enforced. Sessions start read-only.
 
 'use strict';
 
@@ -92,29 +92,30 @@ router.post('/api/impersonation/users/:id/start', canViewAs, async (req, res) =>
       });
     }
 
-    const token = jwt.sign({
-      sub: target.user,
-      username: target.username,
-      user_type: target.user_type,
-      user_auth: target.user_auth,
-      aud: 'staff',
-      roles: rolesOf(target.roles),
+    const claims = {
+      sub: target.user, username: target.username,
+      user_type: target.user_type, user_auth: target.user_auth,
+      aud: 'staff', roles: rolesOf(target.roles),
       ver: parseInt(process.env.JWT_VERSION || 1),
       view_as: true,
       act: { sub: String(req.auth.userId), username: req.auth.username },
-    }, process.env.JWT_SECRET, { expiresIn: VIEW_AS_TTL });
+      iat: Math.floor(Date.now() / 1000),
+    };
+    const readonlyToken = jwt.sign({ ...claims, view_as_mode: 'readonly' }, process.env.JWT_SECRET, { expiresIn: VIEW_AS_TTL });
+    const liveToken = jwt.sign({ ...claims, view_as_mode: 'live' }, process.env.JWT_SECRET, { expiresIn: VIEW_AS_TTL });
 
     await audit(req, 'view_as_started', {
       target_user_id: target.user,
       target_username: target.username,
       ttl: VIEW_AS_TTL,
-      read_only: true,
+      initial_mode: 'readonly',
     });
     res.json({
-      status: 'success', token,
+      status: 'success', token: readonlyToken,
+      readonly_token: readonlyToken, live_token: liveToken,
+      initial_mode: 'readonly',
       target: { user: target.user, username: target.username, user_name: target.user_name },
       expires_in_seconds: 30 * 60,
-      read_only: true,
     });
   } catch (err) {
     console.error(`POST /api/impersonation/users/${id}/start error:`, err);

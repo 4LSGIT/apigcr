@@ -1,7 +1,7 @@
 // tests/impersonation.test.js
 //
 // IT View-as: capability gate, target guardrails, actor-bearing short JWT and
-// the read-only invariant across both staff auth middleware implementations.
+// explicit read-only/live modes across both staff auth middleware implementations.
 
 'use strict';
 
@@ -96,11 +96,17 @@ describe('IT View as', () => {
     const before = Math.floor(Date.now() / 1000);
     const r = await call('POST', '/api/impersonation/users/2/start', token());
     expect(r.status).toBe(200);
-    expect(r.body).toMatchObject({ read_only: true, expires_in_seconds: 1800 });
-    const p = jwt.verify(r.body.token, process.env.JWT_SECRET);
-    expect(p).toMatchObject({ sub: 2, username: 'staff', roles: ['staff'], view_as: true,
+    expect(r.body).toMatchObject({ initial_mode: 'readonly', expires_in_seconds: 1800 });
+    expect(r.body.token).toBe(r.body.readonly_token);
+    const readonly = jwt.verify(r.body.readonly_token, process.env.JWT_SECRET);
+    const live = jwt.verify(r.body.live_token, process.env.JWT_SECRET);
+    expect(readonly).toMatchObject({ sub: 2, username: 'staff', roles: ['staff'], view_as: true,
+      view_as_mode: 'readonly', act: { sub: '6', username: 'it' } });
+    expect(live).toMatchObject({ sub: 2, username: 'staff', roles: ['staff'], view_as: true,
+      view_as_mode: 'live',
       act: { sub: '6', username: 'it' } });
-    expect(p.exp).toBeLessThanOrEqual(before + 1801);
+    expect(readonly.exp).toBeLessThanOrEqual(before + 1801);
+    expect(live.exp).toBe(readonly.exp);
     const audit = r.db.calls.find(c => /admin_audit_log/.test(c.sql));
     expect(audit.params).toEqual(expect.arrayContaining(['view_as', 6, 'it', 'view_as_started']));
   });
@@ -111,10 +117,10 @@ describe('IT View as', () => {
     expect(r.body.token).toBeUndefined();
   });
 
-  test('View-as reads as the target but writes fail through both auth stacks', async () => {
+  test('Read-only View-as reads as target but rejects writes through both auth stacks', async () => {
     const view = token({
       sub: 2, username: 'staff', roles: ['staff'],
-      extra: { view_as: true, act: { sub: '6', username: 'it' } },
+      extra: { view_as: true, view_as_mode: 'readonly', act: { sub: '6', username: 'it' } },
     });
     const read = await call('GET', '/legacy-read', view);
     expect(read.status).toBe(200);
@@ -124,5 +130,23 @@ describe('IT View as', () => {
       expect(write.status).toBe(403);
       expect(write.body).toMatchObject({ code: 'view_as_read_only' });
     }
+  });
+
+  test('Live View-as permits writes through both auth stacks', async () => {
+    const extra = { view_as: true, view_as_mode: 'live', act: { sub: '6', username: 'it' } };
+    const view = token({ sub: 2, username: 'staff', roles: ['staff'], extra });
+    for (const path of ['/legacy-write', '/modern-write']) {
+      const write = await call('POST', path, view);
+      expect(write.status).toBe(200);
+      expect(write.body).toEqual({ wrote: true });
+    }
+  });
+
+  test('a pre-mode View-as token fails closed to read-only', async () => {
+    const view = token({
+      sub: 2, username: 'staff', roles: ['staff'],
+      extra: { view_as: true, act: { sub: '6', username: 'it' } },
+    });
+    expect((await call('POST', '/legacy-write', view)).body).toMatchObject({ code: 'view_as_read_only' });
   });
 });
