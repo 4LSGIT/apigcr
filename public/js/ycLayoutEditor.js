@@ -288,6 +288,8 @@
    *   o.stored     the user's stored layout document (or null)
    *   o.effective  this user's effective registry (ycLauncher.effectiveRegistry())
    *   o.locked     the firm's locked ids
+   *   o.lockedForUsers  ids to label "Locked for users" without locking this
+   *                     session's controls (firm mode)
    *   o.base       { home, sidebar } base layouts (DEFAULT_LAYOUTS)
    *   o.registry   FEATURE_REGISTRY (surface labels: Bills reads Billing on Home)
    *   o.groups     the All tab's group order (ycLauncher.groups())
@@ -339,6 +341,8 @@
     var locked = Object.create(null);
     (isArr(o.locked) ? o.locked : []).forEach(function (id) { if (typeof id === 'string') locked[id] = true; });
     var lockedList = Object.keys(locked);
+    var lockedForUsers = Object.create(null);
+    (isArr(o.lockedForUsers) ? o.lockedForUsers : []).forEach(function (id) { if (typeof id === 'string') lockedForUsers[id] = true; });
     var base = isObj(o.base) ? o.base : {};
     var reg = isObj(o.registry) ? o.registry : {};
     // defaultIds: the shipped layout's items (a surface label shows only on
@@ -503,7 +507,7 @@
         return pageRows(pg.id, pg.part).map(function (r) {
           if (r.kind !== 'item') return { kind: 'break', act: 'remove' };
           var v = entryView(pg.part === 'tiles' ? 'more' : 'moreIcons', byId[r.id]);
-          v.kind = 'item'; v.base = false; v.locked = false; v.always = false; v.firm = /^firm:/.test(r.id); v.act = 'remove';
+          v.kind = 'item'; v.base = false; v.locked = false; v.lockedForUsers = r.id in lockedForUsers; v.always = false; v.firm = /^firm:/.test(r.id); v.act = 'remove';
           return v;
         });
       },
@@ -571,7 +575,7 @@
 
     var api = {
       /** The surface as the user sees it: { kind:'item', id, label, icon,
-       *  base, locked, always, firm, act } | { kind:'break', act } | { kind:'label',
+       *  base, locked, lockedForUsers, always, firm, act } | { kind:'break', act } | { kind:'label',
        *  text, act }. act: 'hide' (a default item), 'locked' (a default item
        *  the firm locked, or one always on this surface — All in Home's icon
        *  row: no hide), 'remove' (anything the user added). */
@@ -585,6 +589,7 @@
           v.kind = 'item';
           v.base = r.id in baseIds;
           v.locked = r.id in locked;
+          v.lockedForUsers = r.id in lockedForUsers;
           v.always = r.id in guaranteed[sf];
           v.firm = /^firm:/.test(r.id);
           v.act = v.always ? 'locked' : v.base ? (v.locked ? 'locked' : 'hide') : 'remove';
@@ -1879,6 +1884,11 @@
           tag.appendChild(iconEl('lock'));
           tag.appendChild(document.createTextNode(' Locked'));
           main.appendChild(tag);
+        } else if (r.lockedForUsers) {
+          var userTag = el('span', 'yle-tag');
+          userTag.appendChild(iconEl('lock'));
+          userTag.appendChild(document.createTextNode(' Locked for users'));
+          main.appendChild(userTag);
         } else if (r.firm) main.appendChild(el('span', 'yle-tag', 'Firm'));
         else if (!r.base) main.appendChild(el('span', 'yle-tag', 'Added'));
         li.appendChild(main);
@@ -3232,7 +3242,7 @@
     firmBase = base;
     var cat = firmCatalog(ui);
     sessOpts = {
-      stored: firmLayoutOf(ui), effective: cat.entries, locked: [], base: window.DEFAULT_LAYOUTS || {},
+      stored: firmLayoutOf(ui), effective: cat.entries, locked: [], lockedForUsers: lockedOf(ui), base: window.DEFAULT_LAYOUTS || {},
       registry: window.FEATURE_REGISTRY || {}, groups: cat.groups, surfaces: FIRM_SURFACES, pass: [], seed: { more: cat.seed },
       pages: cat.pages,
     };

@@ -114,8 +114,10 @@ same buttons as each person's own editor
 remove one you added, **Add a shortcut** (on the small-button rows, **Add a
 small button**), **Add a row break** on Home, More Features and Admin, and
 **Add a section label** on the sidebar. Tags say **Firm** (one of your firm
-items) or **Added** (not there in the app's standard layout). A dot on a tab
-means it has unsaved changes.
+items), **Added** (not there in the app's standard layout), or **Locked for
+users** (people cannot hide that item in their own arrangement). The last tag
+is informational here: a firm admin can still move or hide the item while
+setting the firm's default. A dot on a tab means it has unsaved changes.
 
 - **The More Features list starts with the page as it is.** Until you save an
   arrangement of More Features, your firm items sit at its end, after a row
