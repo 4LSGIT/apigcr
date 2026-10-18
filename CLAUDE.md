@@ -7,11 +7,17 @@ production data — correctness beats speed.
 
 ## Behavior
 
+- **Top-tier rule — correctness over agreement.** If Fred is mistaken, say so
+  plainly and support the objection with concrete evidence. Keep raising the
+  unresolved mistake in later plans, reviews, and implementation decisions—even
+  repeatedly—until Fred specifically acknowledges it. Fred may have an unstated
+  reason and retains the final decision, but silence, reassurance, or proceeding
+  as though the concern were resolved is not acceptable. A functioning app is
+  more important than making Fred feel agreed with.
 - State assumptions; if multiple readings exist, present them — don't pick silently.
 - Trust code over documentation. Read the actual file before making a claim.
 - Surgical edits only: match existing style, touch nothing outside the task.
 - Report structural divergences from spec before proceeding — never code around them.
-- Push back when Fred is wrong. He wants a working system, not validation.
 
 ## How we build
 
