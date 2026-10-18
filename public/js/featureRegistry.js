@@ -288,6 +288,10 @@ window.FEATURE_REGISTRY = {
     label: 'Court Preview', icon: 'gavel', target: 'courtPreviewDiv', group: 'more',
     hoverAnim: 'fa-shake', styleVars: '--fa-animation-duration:0.6s',
   },
+  moreAssistant: {
+    label: 'Ask YisraCase', icon: 'comments', target: 'assistantDiv', group: 'more',
+    hoverAnim: 'fa-beat', styleVars: '--fa-beat-scale:1.10; --fa-animation-duration:1.4s',
+  },
   moreCampaigns: {
     label: 'Campaigns', icon: 'envelopes-bulk', target: 'campaignsDiv', group: 'more',
     hoverAnim: 'fa-shake', styleVars: '--fa-animation-duration:0.9s',
@@ -490,10 +494,9 @@ window.DEFAULT_LAYOUTS = {
     // itself, and the saved views you read it back through.
     { item: 'moreCaseConfig' }, { item: 'moreChecklists' }, { item: 'moreAutomations' }, { item: 'moreViews' },
     { break: true },
-    // When things happen: what can be booked, when, and the court email as it
-    // will go out. Three tiles since Get Clio Code left for the firm row
-    // (ui-custom S3.3b); S4's layouts settle the gap.
-    { item: 'moreAvailability' }, { item: 'moreBooking' }, { item: 'moreCourtPreview' },
+    // When things happen, plus the read-only assistant that can search across
+    // them. Ask YisraCase fills the fourth slot Get Clio Code left behind.
+    { item: 'moreAvailability' }, { item: 'moreBooking' }, { item: 'moreCourtPreview' }, { item: 'moreAssistant' },
     { break: true },
     // What goes out, and what comes back as numbers: the message, the page it
     // lands on, the links that get there, and the reporting over all of it.

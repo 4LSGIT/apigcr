@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ask YisraCase</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+<link rel="stylesheet" href="/theme.css">
+<script src="/themeSync.js"></script>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--page-bg); color: var(--text); font: 14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
+  .app { max-width: 960px; margin: 0 auto; min-height: 100vh; display: flex; flex-direction: column; padding: 18px; }
+  header { display: flex; justify-content: space-between; gap: 16px; align-items: start; margin-bottom: 14px; }
+  h1 { margin: 0; font-size: 21px; }
+  .sub { color: var(--text-muted); margin-top: 3px; font-size: 13px; }
+  button { border: 0; border-radius: 7px; padding: 8px 13px; cursor: pointer; font: inherit; background: var(--accent); color: var(--accent-text); }
+  button:hover { background: var(--accent-dark); }
+  button:disabled { opacity: .55; cursor: not-allowed; }
+  button.ghost { background: transparent; color: var(--text-muted); border: 1px solid var(--border); }
+  button.ghost:hover { color: var(--text); background: var(--surface); }
+  #chat { flex: 1; display: flex; flex-direction: column; gap: 12px; min-height: 350px; padding-bottom: 14px; }
+  .empty { margin: auto; max-width: 600px; text-align: center; color: var(--text-muted); padding: 45px 20px; }
+  .empty i { display: block; font-size: 36px; color: var(--accent); margin-bottom: 12px; }
+  .examples { display: flex; flex-wrap: wrap; gap: 7px; justify-content: center; margin-top: 16px; }
+  .examples button { background: var(--surface); color: var(--text); border: 1px solid var(--border); font-size: 12px; }
+  .msg { max-width: 85%; border-radius: 12px; padding: 11px 13px; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .msg.user { align-self: flex-end; background: var(--accent); color: var(--accent-text); }
+  .msg.assistant { align-self: flex-start; background: var(--surface); border: 1px solid var(--border); }
+  .msg.error { border-color: var(--danger); color: var(--danger); }
+  .meta { color: var(--text-muted); font-size: 11px; margin-top: 7px; }
+  .plan { align-self: stretch; background: var(--surface); border: 1px solid var(--accent); border-radius: 12px; padding: 13px; }
+  .plan-title { font-weight: 650; margin-bottom: 4px; }
+  .step { border-top: 1px solid var(--border); padding: 9px 0; }
+  .step:first-of-type { margin-top: 8px; }
+  .badge { display: inline-block; border-radius: 10px; padding: 1px 7px; margin-right: 6px; background: var(--page-bg); color: var(--text-muted); font-size: 10px; text-transform: uppercase; letter-spacing: .04em; }
+  details { margin-top: 5px; }
+  summary { color: var(--text-muted); cursor: pointer; font-size: 12px; }
+  pre { white-space: pre-wrap; overflow-wrap: anywhere; background: var(--page-bg); border: 1px solid var(--border); border-radius: 6px; padding: 8px; font: 11px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace; }
+  .plan-actions { display: flex; gap: 8px; align-items: center; margin-top: 9px; }
+  .sources { margin-top: 10px; border-top: 1px solid var(--border); padding-top: 8px; }
+  .source { margin-top: 8px; padding-bottom: 5px; }
+  .source-label { color: var(--accent); }
+  .source summary { color: var(--text-muted); }
+  .source-actions { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+  .source-actions button { padding: 4px 8px; background: transparent; color: var(--accent); border: 1px solid var(--border); font-size: 11px; }
+  .record-links { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--border); }
+  .follow { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 9px; }
+  .follow button { background: transparent; color: var(--accent); border: 1px solid var(--border); text-align: left; }
+  .thinking { display: flex; align-items: center; gap: 10px; min-width: 215px; }
+  .thinking-wand { position: relative; width: 27px; height: 27px; color: var(--accent); flex: 0 0 27px; animation: wandWrite 1.7s ease-in-out infinite; transform-origin: 35% 70%; }
+  .thinking-wand::before, .thinking-wand::after { content: ''; position: absolute; border-radius: 50%; background: currentColor; animation: sparkle 1.7s ease-in-out infinite; }
+  .thinking-wand::before { width: 4px; height: 4px; top: 0; right: 2px; }
+  .thinking-wand::after { width: 3px; height: 3px; top: 7px; right: 0; animation-delay: .35s; }
+  .thinking-copy { color: var(--text-muted); }
+  .thinking-line { display: block; width: 0; height: 2px; margin-top: 3px; border-radius: 2px; background: var(--accent); animation: writeLine 1.7s ease-in-out infinite; }
+  .composer { position: sticky; bottom: 0; background: var(--page-bg); padding: 10px 0 4px; }
+  .compose-box { display: flex; gap: 8px; align-items: end; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 8px; box-shadow: 0 -4px 18px color-mix(in srgb, #000 7%, transparent); }
+  textarea { flex: 1; min-height: 44px; max-height: 160px; resize: none; border: 0; outline: 0; padding: 7px; background: transparent; color: var(--text); font: inherit; }
+  .notice { text-align: center; color: var(--text-muted); font-size: 11px; margin-top: 5px; }
+  .spin { animation: spin 1s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @keyframes wandWrite { 0%,100% { transform: rotate(-18deg) translateY(0); } 45% { transform: rotate(8deg) translate(5px,2px); } 70% { transform: rotate(-5deg) translate(2px,-1px); } }
+  @keyframes sparkle { 0%,35%,100% { opacity: 0; transform: scale(.3); } 55%,75% { opacity: 1; transform: scale(1); } }
+  @keyframes writeLine { 0%,15% { width: 0; opacity: .35; } 70% { width: 100%; opacity: 1; } 100% { width: 100%; opacity: 0; } }
+  @media (max-width: 600px) { .app { padding: 12px; } .msg { max-width: 94%; } header .sub { max-width: 280px; } }
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <div><h1><i class="fa-solid fa-comments"></i> Ask YisraCase</h1>
+      <div class="sub">Ask about people, matters, activity, appointments, tasks, communications, or how YisraCase works.</div></div>
+    <button class="ghost" id="clearBtn" type="button"><i class="fa-solid fa-rotate-left"></i> New chat</button>
+  </header>
+  <main id="chat"></main>
+  <div class="composer">
+    <div class="compose-box">
+      <textarea id="question" maxlength="2000" rows="1" placeholder="Ask YisraCase anything…"></textarea>
+      <button id="sendBtn" type="button" title="Send"><i class="fa-solid fa-arrow-up"></i></button>
+    </div>
+    <div class="notice">Read-only searches run automatically. Answers can be wrong—open the cited records when it matters. Future actions will require explicit review.</div>
+  </div>
+</div>
+<script>
+'use strict';
+const P = window.parent;
+const chat = document.getElementById('chat');
+const input = document.getElementById('question');
+const sendBtn = document.getElementById('sendBtn');
+let history = [];
+let busy = false;
+
+const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const kindLabel = (k) => k === 'manual.search' ? 'Manual' : k === 'comms.search' ? 'Calls' : k === 'weather.lookup' ? 'Weather' : 'Data';
+
+function thinkingHtml(text) {
+  return `<div class="thinking"><span class="thinking-wand"><i class="fa-solid fa-wand-magic-sparkles"></i></span><span class="thinking-copy">${esc(text)}<span class="thinking-line"></span></span></div>`;
+}
+
+function suggestionsHtml(items) {
+  if (!Array.isArray(items) || !items.length) return '';
+  return `<div class="follow">${items.map((s) => `<button data-follow="${esc(s.query)}">${esc(s.label || s.query)}</button>`).join('')}</div>`;
+}
+
+function actionHtml(action) {
+  const icon = { case: 'fa-folder-open', contact: 'fa-user', appointment: 'fa-calendar-check', event: 'fa-calendar-day', task: 'fa-list-check' }[action.kind] || 'fa-arrow-up-right-from-square';
+  const noun = { case: 'case', contact: 'contact', appointment: 'appointment', event: 'event', task: 'task' }[action.kind] || 'record';
+  return `<button data-open-kind="${esc(action.kind)}" data-open-id="${esc(action.id)}" data-open-label="${esc(action.label)}"><i class="fa-solid ${icon}"></i> Open ${noun}: ${esc(action.label)}</button>`;
+}
+
+function emptyHtml() {
+  return `<div class="empty"><i class="fa-regular fa-comments"></i>
+    <b>What do you want to know?</b><div>I’ll search the available read-only sources and show the records behind the answer.</div>
+    <div class="examples">
+      <button data-example="What is the story with the person who emailed about tractors a few weeks ago?">Find a conversation</button>
+      <button data-example="Which open matters have appointments in the next two weeks?">Upcoming matters</button>
+      <button data-example="How do locked reports work?">How YisraCase works</button>
+    </div></div>`;
+}
+
+function render() {
+  if (!history.length) { chat.innerHTML = emptyHtml(); bindExamples(); return; }
+  chat.innerHTML = history.map((m, i) => {
+    if (m.role === 'user') return `<div class="msg user">${esc(m.text)}</div>`;
+    if (m.type === 'thinking') return `<div class="msg assistant">${thinkingHtml(m.text)}</div>`;
+    const entities = Array.isArray(m.entities) && m.entities.length ? `<div class="record-links"><b>Open records</b><div class="source-actions">${m.entities.map(actionHtml).join('')}</div></div>` : '';
+    const sources = Array.isArray(m.sources) && m.sources.length ? `<div class="sources"><b>Sources</b>${m.sources.map((s) =>
+      `<div class="source"><div class="source-label">${esc(s.label)} · ${esc(s.query_id)} row ${esc(s.row_number)}</div>${Array.isArray(s.actions) && s.actions.length ? `<div class="source-actions">${s.actions.map(actionHtml).join('')}</div>` : ''}<details><summary>View evidence row</summary><pre>${esc(JSON.stringify(s.row, null, 2))}</pre></details></div>`).join('')}</div>` : '';
+    const follow = suggestionsHtml(m.suggestions);
+    return `<div class="msg assistant${m.error ? ' error' : ''}">${esc(m.text)}${entities}${sources}${follow}${m.meta ? `<div class="meta">${esc(m.meta)}</div>` : ''}</div>`;
+  }).join('');
+  chat.querySelectorAll('[data-follow]').forEach((b) => b.addEventListener('click', () => { input.value = b.dataset.follow; input.focus(); }));
+  chat.querySelectorAll('[data-open-kind]').forEach((b) => b.addEventListener('click', () => openEntity(b.dataset.openKind, b.dataset.openId, b.dataset.openLabel)));
+  chat.scrollTop = chat.scrollHeight;
+}
+
+function openEntity(kind, id, label) {
+  try {
+    if (kind === 'case') P.addFile(label || id, 'case', String(id));
+    else if (kind === 'contact') P.addFile(label || id, 'client', String(id));
+    else if (kind === 'appointment') P.showAppt(id);
+    else if (kind === 'event') P.showEvent(id);
+    else if (kind === 'task') P.showTask(id);
+  } catch (_) { /* The links are useful only inside the YisraCase shell. */ }
+}
+
+function publicHistory() {
+  return history.filter((m) => m.type !== 'thinking').slice(-8).map((m) => ({ role: m.role, text: m.text }));
+}
+
+async function api(path, body) {
+  const r = await P.apiSend(path, 'POST', body);
+  if (!r || r.status === 'error') throw new Error((r && (r.message || r.error)) || 'Request failed');
+  return r;
+}
+
+async function ask() {
+  const question = input.value.trim();
+  if (!question || busy) return;
+  const context = publicHistory();
+  history.push({ role: 'user', text: question });
+  input.value = '';
+  setBusy(true);
+  history.push({ role: 'assistant', type: 'thinking', text: 'Reading your question…' });
+  render();
+  try {
+    let r = await api('/api/assistant/plan', { question, history: context });
+    if (r.outcome === 'plan') {
+      history[history.length - 1].text = 'Searching firm records and writing your answer…';
+      render();
+      r = await executeAutomatically(r.ticket);
+    }
+    history.pop();
+    if (r.outcome === 'refused') history.push({ role: 'assistant', text: r.reason, suggestions: r.suggestions || [] });
+    else history.push({
+      role: 'assistant', text: r.answer, entities: r.entities || [], sources: r.sources || [], suggestions: r.suggestions || [],
+      meta: (r.steps || []).map((q) => `${q.id}: ${q.row_count} row${q.row_count === 1 ? '' : 's'}`).join(' · '),
+    });
+  } catch (e) {
+    history.pop();
+    history.push({ role: 'assistant', text: e.message || String(e), error: true });
+  } finally { setBusy(false); render(); }
+}
+
+async function executeAutomatically(initialTicket) {
+  let ticket = initialTicket;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const r = await api('/api/assistant/execute', { ticket });
+    if (r.outcome !== 'plan') return r;
+    ticket = r.ticket;
+    history[history.length - 1].text = r.notice || 'Narrowing the search and trying again…';
+    render();
+  }
+  throw new Error('The read-only search could not be made safe and efficient automatically.');
+}
+
+function setBusy(value) { busy = value; sendBtn.disabled = value; input.disabled = value; }
+function bindExamples() { chat.querySelectorAll('[data-example]').forEach((b) => b.addEventListener('click', () => { input.value = b.dataset.example; ask(); })); }
+input.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); ask(); } });
+input.addEventListener('input', () => { input.style.height = 'auto'; input.style.height = `${Math.min(input.scrollHeight, 160)}px`; });
+sendBtn.addEventListener('click', ask);
+document.getElementById('clearBtn').addEventListener('click', () => { if (!busy) { history = []; render(); input.focus(); } });
+(function waitForParent() { if (P && P.apiSend) { render(); input.focus(); } else setTimeout(waitForParent, 100); })();
+</script>
+</body>
+</html>

@@ -1,7 +1,7 @@
 # Routes
 
-_Generated 2026-10-18T18:16:48.491Z_  
-_797 routes total — DELETE: 65, GET: 335, PATCH: 57, POST: 300, PUT: 37, _ALL: 3_
+_Generated 2026-10-18T20:53:09.058Z_  
+_799 routes total — DELETE: 65, GET: 335, PATCH: 57, POST: 302, PUT: 37, _ALL: 3_
 
 ## Global middleware chain
 
@@ -85,6 +85,8 @@ _797 routes total — DELETE: 65, GET: 335, PATCH: 57, POST: 300, PUT: 37, _ALL:
 | DELETE | `/api/assets/:id` | `jwtOrApiKey` | — |
 | PATCH | `/api/assets/:id` | `jwtOrApiKey` | — |
 | GET | `/api/assets/collections` | `jwtOrApiKey` | — |
+| POST | `/api/assistant/execute` | `jwtOrApiKey`, `staffOnly` | — |
+| POST | `/api/assistant/plan` | `jwtOrApiKey`, `staffOnly` | — |
 | POST | `/api/auth/change-password` | `jwtOrApiKey` | — |
 | POST | `/api/auth/update-profile` | `jwtOrApiKey` | — |
 | GET | `/api/availability` | `jwtOrApiKey` | — |
@@ -1067,4 +1069,4 @@ _797 routes total — DELETE: 65, GET: 335, PATCH: 57, POST: 300, PUT: 37, _ALL:
 
 ---
 
-_797 routes total — DELETE: 65, GET: 335, PATCH: 57, POST: 300, PUT: 37, _ALL: 3_
+_799 routes total — DELETE: 65, GET: 335, PATCH: 57, POST: 302, PUT: 37, _ALL: 3_

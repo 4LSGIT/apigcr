@@ -11,6 +11,8 @@ cloudbuild.yaml
 docs_review_2_2026-09-25.patch
 jest.config.js
 lib/actionDispatchers.js
+lib/aiPrompts/assistantAnswer.js
+lib/aiPrompts/assistantPlan.js
 lib/aiPrompts/commsSummary.js
 lib/aiPrompts/courtExtract.js
 lib/aiPrompts/echo.js
@@ -19,6 +21,7 @@ lib/aiPrompts/reportBuild.js
 lib/alerting.js
 lib/apiKeys.js
 lib/appBuild.js
+lib/assistantTicket.js
 lib/auditShape.js
 lib/auth.formDev.js
 lib/auth.impersonation.js
@@ -189,6 +192,7 @@ manual/05-Subsystems/13-custom-fields.md
 manual/05-Subsystems/14-firm-launcher.md
 manual/05-Subsystems/15-firm-and-system-settings.md
 manual/05-Subsystems/16-contact-roles.md
+manual/05-Subsystems/17-ask-yisracase.md
 manual/05-Subsystems/README.md
 manual/06-Client-Facing/01-overview.md
 manual/06-Client-Facing/02-client-portal.md
@@ -242,6 +246,7 @@ public/assets/streak/icon-512-dev.png
 public/assets/streak/icon-512.png
 public/assets/streak/icon-dev.svg
 public/assets/streak/icon.svg
+public/assistant.html
 public/automation/activity.html
 public/automation/automationsWidget.html
 public/automation/courtReview.html
@@ -613,6 +618,7 @@ routes/api.alertIt.js
 routes/api.appSettings.js
 routes/api.appts.js
 routes/api.assets.js
+routes/api.assistant.js
 routes/api.availability.js
 routes/api.bookingViews.js
 routes/api.calendarFeed.js
@@ -902,6 +908,9 @@ services/aiMatchService.js
 services/aiService.js
 services/apptService.js
 services/assetService.js
+services/assistantKnowledgeService.js
+services/assistantService.js
+services/assistantWeatherService.js
 services/availabilityService.js
 services/calendarService.js
 services/calendarTypeAdminService.js
@@ -1057,6 +1066,10 @@ tests/apptService.typeKey.test.js
 tests/apptTypeKey.patch.test.js
 tests/apptsSearch.picker.test.js
 tests/assignPickersActive.test.js
+tests/assistantService.test.js
+tests/assistantTicket.test.js
+tests/assistantUi.test.js
+tests/assistantWeatherService.test.js
 tests/auditShape.mysql.test.js
 tests/auditShape.test.js
 tests/autoGrow.test.js
@@ -1412,6 +1425,7 @@ tests/quoMessageTransform.test.js
 tests/refererRedaction.test.js
 tests/refreshonmiss.k3.test.js
 tests/reportSchemaDenylist.test.js
+tests/reportServiceAssistantLog.test.js
 tests/requirementService.test.js
 tests/scheduleResume.accel.test.js
 tests/scheduledJobs.doorbell.test.js

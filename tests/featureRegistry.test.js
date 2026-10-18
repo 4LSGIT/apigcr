@@ -84,6 +84,11 @@ describe('the registry data', () => {
     expect(new Set(keys).size).toBe(keys.length);
   });
 
+  test('Ask YisraCase and Simple Forms have distinct launcher icons', () => {
+    expect(REG.moreSimpleForms.icon).toBe('wand-magic-sparkles');
+    expect(REG.moreAssistant.icon).toBe('comments');
+  });
+
   test('every item is placed on a surface (bar the S6b extras), ids are camelCase, grid ids carry their prefix', () => {
     const placed = new Set(SURFACES.flatMap((s) => LAY[s].filter((e) => e.item).map((e) => e.item)));
     // ui-custom S6b: an item in NO default layout is listed by the effective

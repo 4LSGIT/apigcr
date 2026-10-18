@@ -382,13 +382,19 @@ async function execute(db, opts = {}) {
   const values = Array.isArray(opts.values) ? opts.values : [];
   const rowLimit = Math.max(1, Math.min(Number(opts.rowLimit) || DEFAULT_ROW_LIMIT, HARD_MAX_ROWS));
   const logMeta = opts.logMeta || {};
+  // Conversational searches can contain a client's name or words from a
+  // private communication. They still get a report_runs audit row, but the
+  // caller may suppress the statement text so those words do not become an
+  // ordinary reporting record. Saved reports and previews keep the historical
+  // default: full SQL.
+  const loggedSql = logMeta.log_sql === false ? '[omitted: conversational query]' : sql;
 
   // Re-validate at run time — a manifest edit may have retired a table since
   // this report was saved.
   const v = validateSql(sql, { expectedParams: opts.expectedParams });
   if (!v.ok) {
     logRun(db, {
-      ...logMeta, sql_text: sql, duration_ms: Date.now() - started,
+      ...logMeta, sql_text: loggedSql, duration_ms: Date.now() - started,
       status: "rejected_validation", error_text: `${v.error}${v.detail ? " — " + v.detail : ""}`,
     });
     throw err(400, v.error, v.detail);
@@ -409,7 +415,7 @@ async function execute(db, opts = {}) {
         estimatedRows = estimateRowsExamined(plan);
         if (estimatedRows > MAX_ESTIMATED_ROWS) {
           logRun(db, {
-            ...logMeta, sql_text: sql, duration_ms: Date.now() - started,
+            ...logMeta, sql_text: loggedSql, duration_ms: Date.now() - started,
             status: "rejected_too_large",
             error_text: `estimated ${estimatedRows} rows examined`,
           });
@@ -439,7 +445,7 @@ async function execute(db, opts = {}) {
       : null;
 
     logRun(db, {
-      ...logMeta, sql_text: sql, row_count: fullCount,
+      ...logMeta, sql_text: loggedSql, row_count: fullCount,
       duration_ms: Date.now() - started, status: "success",
     });
 
@@ -456,7 +462,7 @@ async function execute(db, opts = {}) {
       throw e; // already logged
     }
     logRun(db, {
-      ...logMeta, sql_text: sql, duration_ms: Date.now() - started,
+      ...logMeta, sql_text: loggedSql, duration_ms: Date.now() - started,
       status: "error", error_text: e.message,
     });
     throw err(400, e.message);

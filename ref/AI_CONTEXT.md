@@ -1918,3 +1918,61 @@ Tests: `settingsRegistry`, `settingsInventory`, `settingsAutomationGuard`,
 `configSystemTab`, `configListsTab`. Lists draws `fe-event_types` with a
 dedicated editor (duplicates refused, a removal asks); System draws runtime
 state as text, never controls.
+
+## 33. ASK YISRACASE — READ-ONLY CONVERSATIONAL ASSISTANT
+
+**Surface.** More → Ask YisraCase (`public/assistant.html`), staff JWT only.
+`POST /api/assistant/plan {question,history}` returns a direct answer/refusal or
+a plan; the UI immediately sends its ticket to `POST /api/assistant/execute`.
+There is deliberately no confirmation for read-only operations. Plans are
+HMAC-signed with `JWT_SECRET`, expire after 20 minutes and are bound to the
+issuing user, so review and execution may land on different Cloud Run instances
+without trusting client-returned SQL.
+
+**Operation vocabulary.** v1 enables `sql.read`, `manual.search`,
+`comms.search`, and `weather.lookup`. Weather is a narrow adapter that accepts
+only a location and constructs fixed Open-Meteo geocoding/forecast URLs in
+`assistantWeatherService`; it is not arbitrary web access. Unknown kinds fail
+closed. This is the extension seam for a
+future action phase: compose/send email, field/form writes and workflow draft/
+publish remain distinct operations and are NOT enabled by v1.
+
+**Separation invariant.** `assistant_plan` sees the question/history and the
+curated report schema, never rows. It emits the read plan. SQL is validated by
+the report validator at plan time, signed, revalidated from the ticket, then run
+through `reportService.execute` (SELECT-only pool, EXPLAIN/timeout/row caps and
+`report_runs` logging). The assistant layer additionally requires terminal
+LIMIT ≤50, bounds `log`/`email_log` by date and refuses conversational reads of
+SSN/EIN, DOB, tokens, attachments and delivery metadata. `comms.search` calls
+`commsArchiveSearch` with the staff auth object, preserving phone-line grants,
+restricted-media rules and snippet caps. `manual.search` reads only shipped
+manual Markdown. Planner SQL explicitly collates both sides of text equalities
+to `utf8mb4_general_ci`, insulating generated joins from legacy general/unicode
+schema drift. Both passes use `claude-opus-5`; its 5/25 USD-per-MTok pricing is
+registered in `aiService` so the normal call ledger remains accurate. Assistant
+SQL is retained in `report_runs` for developer diagnosis. If a SQL step hits
+MySQL's illegal-mix error or the EXPLAIN workload gate, the planner gets one
+repair attempt and the UI automatically executes the corrected signed plan.
+
+Rows go only to `assistant_answer`, whose contract has no operation/SQL shape;
+row text is untrusted data. It returns plain text plus `{query_id,row_number}`
+citations that the service resolves against actual returned rows. Those
+resolved rows also expose typed shell actions for stable `case_id`,
+`contact_id`, `appt_id`, `event_id`, and `task_id` aliases; the UI dispatches to
+`addFile`, `showAppt`, `showEvent`, or `showTask`. Follow-up suggestions are
+`{label,query}` objects so display prose is never copied as the next question.
+Another read round requires another user message and newly signed plan: text found in an
+email/log/call never autonomously authors the next query. Both model calls use
+`logContent:false`; `ai_calls` keeps usage/cost/status, not client content.
+
+**State.** No schema or server session table. The visible short conversation is
+page-memory; the approval ticket carries only question, short history and plan.
+This makes the first slice deployable without a migration and means refresh =
+new chat by design.
+
+**Pointers.** `services/assistantService.js`,
+`services/assistantKnowledgeService.js`, `lib/assistantTicket.js`,
+`services/assistantWeatherService.js`,
+`lib/aiPrompts/assistantPlan.js`, `lib/aiPrompts/assistantAnswer.js`,
+`routes/api.assistant.js`. Operator docs: manual 05/17. Tests:
+`assistantService`, `assistantTicket`, plus `featureRegistry` and manual coverage.
