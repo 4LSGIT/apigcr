@@ -62,6 +62,47 @@ function historyText(history) {
   return history.map((m) => `${m.role.toUpperCase()}: ${m.text}`).join('\n');
 }
 
+function normalizeViewer(value, userId) {
+  const uid = Number(userId);
+  if (!Number.isInteger(uid) || uid < 0) throw httpError(403, 'The assistant requires a valid signed-in staff user');
+  const source = value && Number(value.user_id) === uid ? value : {};
+  const roles = Array.isArray(source.roles)
+    ? source.roles
+    : String(source.roles || '').split(',');
+  return {
+    user_id: uid,
+    display_name: String(source.display_name || '').trim().slice(0, 100),
+    initials: String(source.initials || '').trim().slice(0, 10),
+    roles: roles.map((role) => String(role).trim()).filter(Boolean).slice(0, 10),
+  };
+}
+
+async function loadViewer(db, userId) {
+  const viewer = normalizeViewer(null, userId);
+  if (!db || typeof db.query !== 'function') throw httpError(500, 'The assistant could not resolve the signed-in staff user');
+  const [rows] = await db.query(
+    'SELECT user, user_name, user_initials, roles FROM users WHERE user = ? LIMIT 1',
+    [viewer.user_id]
+  );
+  const row = Array.isArray(rows) ? rows[0] : null;
+  if (!row || Number(row.user) !== viewer.user_id) {
+    throw httpError(403, 'The signed-in staff user no longer exists');
+  }
+  return normalizeViewer({
+    user_id: row.user,
+    display_name: row.user_name,
+    initials: row.user_initials,
+    roles: row.roles,
+  }, viewer.user_id);
+}
+
+function currentContext(viewer) {
+  return `CURRENT TIME:\n${new Date().toISOString()} (server UTC)\n` +
+    `${nowLocal().toISO()} (firm-local time; ${FIRM_TZ})\n` +
+    `The signed-in user's browser timezone is not authoritative for firm appointments.\n\n` +
+    `<current_staff server_verified="true">\n${JSON.stringify(viewer)}\n</current_staff>`;
+}
+
 function normalizeSuggestions(value) {
   const values = Array.isArray(value) ? [...value] : value == null ? [] : [value];
   const out = [];
@@ -225,11 +266,10 @@ async function plan(db, { question, history, userId, modelMode, temporaryAttachm
   });
   const contextual = attached.claims.length ? null : contextualAnswer(q, hist);
   if (contextual) return { outcome: 'answer', answer: contextual, suggestions: [], callId: null, model_mode: mode };
+  const viewer = await loadViewer(db, userId);
   const ai = await aiService.call(db, {
     promptKey: 'assistant_plan',
-    userInput: `CURRENT TIME:\n${new Date().toISOString()} (server UTC)\n` +
-      `${nowLocal().toISO()} (firm-local time; ${FIRM_TZ})\n` +
-      `The signed-in user's browser timezone is not authoritative for firm appointments.\n\n` +
+    userInput: `${currentContext(viewer)}\n\n` +
       `CONVERSATION:\n${historyText(hist)}\n\nATTACHED FILES:\n${attached.description}\n\nCURRENT QUESTION:\n${q}`,
     attachments: attached.blocks,
     model: attachmentService.modelForMode(mode),
@@ -255,7 +295,7 @@ async function plan(db, { question, history, userId, modelMode, temporaryAttachm
   const built = validatePlan(raw);
   const signed = ticket.sign({
     v: 1, uid: Number(userId), question: q, history: hist, model_mode: mode,
-    attachments: attached.claims, plan: { action: 'query', ...built },
+    viewer, attachments: attached.claims, plan: { action: 'query', ...built },
   });
   return { outcome: 'plan', ...built, ticket: signed, callId: ai.callId, model_mode: mode };
 }
@@ -310,6 +350,7 @@ function validateTicket(payload, userId) {
   return {
     question, history: cleanHistory(payload.history), plan: validatePlan(payload.plan),
     repairs: Number(payload.repairs) || 0,
+    viewer: normalizeViewer(payload.viewer, userId),
     modelMode: attachmentService.modelMode(payload.model_mode),
     attachments: Array.isArray(payload.attachments) ? payload.attachments : [],
   };
@@ -337,7 +378,7 @@ function repairFailure(failure) {
 async function repairRejectedPlan(db, approved, failedQuery, repair, userId, attached) {
   const ai = await aiService.call(db, {
     promptKey: 'assistant_plan',
-    userInput: `CURRENT TIME:\n${new Date().toISOString()} (server UTC; user timezone is Asia/Jerusalem)\n\n` +
+    userInput: `${currentContext(approved.viewer)}\n\n` +
       `CONVERSATION:\n${historyText(approved.history)}\n\nCURRENT QUESTION:\n${approved.question}\n\n` +
       `A sql.read step was rejected by the read-only executor. Return a complete replacement plan. ${repair.guidance}\n\n` +
       `SAFE FAILURE CATEGORY:\n${repair.category}\n\n` +
@@ -354,7 +395,7 @@ async function repairRejectedPlan(db, approved, failedQuery, repair, userId, att
   const signed = ticket.sign({
     v: 1, uid: Number(userId), question: approved.question, history: approved.history,
     repairs: approved.repairs + 1, model_mode: approved.modelMode,
-    attachments: approved.attachments, plan: { action: 'query', ...built },
+    viewer: approved.viewer, attachments: approved.attachments, plan: { action: 'query', ...built },
   });
   return {
     outcome: 'plan', notice: repair.notice,
@@ -435,7 +476,7 @@ async function execute(db, { signedTicket, userId, auth, temporaryAttachments } 
   trimEvidence(evidence);
   const ai = await aiService.call(db, {
     promptKey: 'assistant_answer',
-    userInput: `CONVERSATION:\n${historyText(approved.history)}\n\nQUESTION:\n${approved.question}\n\n` +
+    userInput: `${currentContext(approved.viewer)}\n\nCONVERSATION:\n${historyText(approved.history)}\n\nQUESTION:\n${approved.question}\n\n` +
       `ATTACHED FILES:\n${attached.description}\n\nAPPROVED QUERY PLAN:\n${approved.plan.summary}\n\nEVIDENCE (row_number is array position + 1):\n${JSON.stringify(evidence)}`,
     attachments: attached.blocks,
     model: attachmentService.modelForMode(approved.modelMode),
@@ -462,5 +503,5 @@ async function execute(db, { signedTicket, userId, auth, temporaryAttachments } 
 module.exports = {
   plan, execute, validatePlan, validateStep, cleanHistory, compactRows,
   normalizeSuggestions, contextualAnswer, actionsForRow, actionsForEvidence,
-  repairFailure, MAX_STEPS, MAX_ROWS, ASSISTANT_DENIED,
+  repairFailure, loadViewer, normalizeViewer, MAX_STEPS, MAX_ROWS, ASSISTANT_DENIED,
 };

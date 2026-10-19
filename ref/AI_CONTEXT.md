@@ -1973,6 +1973,16 @@ appointment Date values as firm-local so the answerer cannot mistake that
 transport marker for timezone data. Planning context includes both real UTC and
 the current firm-local instant.
 
+**Current-user semantics.** Before each non-deterministic planning call,
+`assistantService.loadViewer` resolves the JWT's `userId` against `users` and
+loads only `user`, `user_name`, `user_initials`, and `roles`. The resulting
+server-verified `<current_staff>` block is supplied to the planner, stored in
+the HMAC-signed ticket, and supplied again to a repaired plan and the answerer.
+The browser cannot submit a viewer identity. Planner rules bind I/me/my/mine to
+that numeric staff id (for example `appts.appt_with = user_id`), never a display
+name or a similarly named contact. Old in-flight tickets without the block
+remain executable and fall back to their already-bound ticket owner id.
+
 Rows go only to `assistant_answer`, whose contract has no operation/SQL shape;
 row text is untrusted data. It returns plain text plus `{query_id,row_number}`
 citations that the service resolves against actual returned rows. Those

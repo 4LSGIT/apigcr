@@ -14,6 +14,11 @@ Type naturally. Useful questions include:
 - “What happened recently on this case?”
 - “How do locked reports work?”
 
+YisrAI knows which staff user is asking from the signed-in session. First-person
+questions such as “What is my next appointment?”, “Show my open tasks”, or
+“Which calls did I handle?” use that exact staff ID. They do not match by name,
+and a similarly named contact is not treated as the signed-in staff member.
+
 Read-only searches run automatically. The assistant may search ordinary data,
 the phone-call archive, the YisraCase manual, or current weather. Generated SQL
 and its success or rejection are retained in the developer report-run log so a

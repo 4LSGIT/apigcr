@@ -11,6 +11,9 @@ const reportService = require('../services/reportService');
 const weatherService = require('../services/assistantWeatherService');
 
 const sql = (text, extra = {}) => ({ id: 'q1', kind: 'sql.read', purpose: 'Find the relevant rows', sql: text, ...extra });
+const staffDb = (overrides = {}) => ({
+  query: jest.fn().mockResolvedValue([[{ user: 7, user_name: 'Stuart Sandweiss', user_initials: 'SS', roles: 'staff,attorney', ...overrides }]]),
+});
 
 describe('assistant read-plan boundary', () => {
   test('accepts the three read-only operation kinds', () => {
@@ -113,10 +116,19 @@ describe('assistant read-plan boundary', () => {
       json: { action: 'query', summary: 'Find the contact', steps: [sql('SELECT contact_id, contact_name FROM contacts LIMIT 5')] },
     });
     try {
-      const made = await svc.plan({}, { question: 'Who is this?', history: [], userId: 7 });
+      const db = staffDb();
+      const made = await svc.plan(db, { question: 'Who is this?', history: [], userId: 7 });
       const decoded = assistantTicket.verify(made.ticket);
       expect(() => svc.validatePlan(decoded.plan)).not.toThrow();
       expect(decoded.uid).toBe(7);
+      expect(decoded.viewer).toEqual({
+        user_id: 7, display_name: 'Stuart Sandweiss', initials: 'SS', roles: ['staff', 'attorney'],
+      });
+      expect(db.query).toHaveBeenCalledWith(
+        'SELECT user, user_name, user_initials, roles FROM users WHERE user = ? LIMIT 1',
+        [7]
+      );
+      expect(spy.mock.calls[0][1].userInput).toMatch(/<current_staff server_verified="true">[\s\S]*"user_id":7[\s\S]*Stuart Sandweiss/);
     } finally {
       spy.mockRestore();
       if (old === undefined) delete process.env.JWT_SECRET;
@@ -131,7 +143,7 @@ describe('assistant read-plan boundary', () => {
       ok: true, callId: 11, json: { action: 'answer', answer: 'The attached notice sets a hearing.', suggestions: [] },
     });
     try {
-      const out = await svc.plan({}, {
+      const out = await svc.plan(staffDb(), {
         question: 'What is this?', history: [], userId: 7, modelMode: 'faster_speed',
         temporaryAttachments: [{ name: 'notice.pdf', media_type: 'application/pdf', data_base64: Buffer.from('pdf').toString('base64') }],
       });
@@ -274,12 +286,14 @@ describe('assistant knowledge and prompts', () => {
   });
 
   test('both assistant prompts are registered JSON prompts', () => {
-    expect(prompts.getPrompt('assistant_plan')).toMatchObject({ output_type: 'json', version: '3', model: 'claude-opus-5' });
-    expect(prompts.getPrompt('assistant_answer')).toMatchObject({ output_type: 'json', version: '3', model: 'claude-opus-5' });
+    expect(prompts.getPrompt('assistant_plan')).toMatchObject({ output_type: 'json', version: '4', model: 'claude-opus-5' });
+    expect(prompts.getPrompt('assistant_answer')).toMatchObject({ output_type: 'json', version: '4', model: 'claude-opus-5' });
     expect(prompts.getPrompt('assistant_plan').system).toMatch(/COLLATE utf8mb4_general_ci/);
     expect(prompts.getPrompt('assistant_plan').system).toMatch(/Never generate[\s\S]*x IN \(SELECT \.\.\. LIMIT n\)/);
     expect(prompts.getPrompt('assistant_plan').system).toMatch(/users\.roles[\s\S]*canonical role field/);
     expect(prompts.getPrompt('assistant_plan').system).toMatch(/DATE_FORMAT\(appt_date,[\s\S]*AS appt_date_local/);
     expect(prompts.getPrompt('assistant_answer').system).toMatch(/trailing Z[\s\S]*transport artifact/);
+    expect(prompts.getPrompt('assistant_plan').system).toMatch(/First-person references[\s\S]*exactly that user_id/);
+    expect(prompts.getPrompt('assistant_plan').system).toMatch(/My next appointment[\s\S]*appt_with/);
   });
 });
