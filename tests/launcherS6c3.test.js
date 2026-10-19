@@ -501,7 +501,7 @@ describe('3. the panel, firm mode, for real', () => {
     const g = t.grid('tabMore');
     expect(rowsOf(g).map((r) => r.length)).toEqual([4, 4, 4, 4, 4, 4, 1]);
     expect(rowsOf(g)[4][3]).toBe('Get Clio Code');
-    expect(rowsOf(g)[6]).toEqual(['Ask YisrAI']);
+    expect(rowsOf(g)[6]).toEqual(['Ask Casey']);
     expect(g).not.toContain('Payroll');
     expect(t.d.querySelectorAll('#tabMore [data-yc-firm-row]')).toHaveLength(0);
     expect(t.toasts.slice(-1)).toEqual(['Saved — everyone gets the new arrangement as they load YisraCase']);

@@ -1,9 +1,15 @@
-# Ask YisrAI
+# Ask Casey
 
-Ask YisrAI is the firm's read-only conversational assistant. It can answer
+Ask Casey is the user-facing name for the firm's YisrAI read-only assistant. It can answer
 questions about firm records, how YisraCase itself works, general knowledge,
-and current weather. Find it at
-**More → Ask YisrAI**.
+and current weather. Open it from the persistent **Ask Casey** button at the
+bottom of the left sidebar. **More → Ask Casey** opens the same assistant in a
+wider sidebar; it does not create a second chat or replace the workspace.
+
+The case, contact, appointment, or tool already on screen remains visible.
+Opening or collapsing Casey does not change the workspace URL, cancel a
+request, discard attachments, or reload the assistant. On a phone, the same
+assistant uses the full-width sidebar sheet.
 
 ## Asking a question
 
@@ -14,10 +20,19 @@ Type naturally. Useful questions include:
 - “What happened recently on this case?”
 - “How do locked reports work?”
 
-YisrAI knows which staff user is asking from the signed-in session. First-person
+Casey knows which staff user is asking from the signed-in session. First-person
 questions such as “What is my next appointment?”, “Show my open tasks”, or
 “Which calls did I handle?” use that exact staff ID. They do not match by name,
 and a similarly named contact is not treated as the signed-in staff member.
+
+The composer starts with a removable **current view** chip. When present, the
+question includes the canonical ID-only workspace snapshot and its parsed
+meaning. Remove the chip when the current screen is irrelevant. The snapshot
+is frozen when Send is pressed: moving to another screen while the answer is
+being prepared does not silently retarget the question. The server validates
+case/contact references and signs the snapshot into the same user-bound ticket
+as the read plan. Workspace context is evidence about what is on screen, not
+permission to read or change it.
 
 Read-only searches run automatically. The assistant may search ordinary data,
 the phone-call archive, the YisraCase manual, or current weather. Generated SQL
@@ -110,11 +125,18 @@ record most recently discussed when that reference is unambiguous.
 Attached file content is also untrusted data. Instructions printed in a PDF or
 image cannot authorize another query, save the file, or perform an action.
 
+When it is relevant, an answer can offer **Open Court Review**. This is a safe
+semantic destination, not model-supplied browser code: YisraCase checks the
+signed-in user's launcher access, opens Automations through the normal launcher,
+loads the tool if it is cold, selects Court Review, and waits for the child page
+to report ready.
+
 ## Links that prefill a question
 
-An internal link can open YisrAI with a draft question in the composer:
+An internal link can open Casey over an existing workspace with a draft
+question in the composer:
 
-`/?open=tabMore%7EmoreAssistant&ask=Which+341+meetings+are+coming+up%3F`
+`/?open=tabCases&ask=Which+341+meetings+are+coming+up%3F`
 
 The question is filled in but **never run automatically**. The `ask` parameter
 is removed from the address bar as soon as the shell captures it.

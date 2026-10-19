@@ -1,4 +1,4 @@
-// Attachments and model-mode policy for Ask YisrAI.
+// Attachments and model-mode policy for Ask Casey/YisrAI.
 // Temporary bytes live only in the browser request and Anthropic call. Existing
 // documents are resolved through the registry/source seam on every call.
 

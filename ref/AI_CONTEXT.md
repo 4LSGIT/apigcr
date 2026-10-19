@@ -1919,16 +1919,40 @@ Tests: `settingsRegistry`, `settingsInventory`, `settingsAutomationGuard`,
 dedicated editor (duplicates refused, a removal asks); System draws runtime
 state as text, never controls.
 
-## 33. ASK YISRAI — READ-ONLY CONVERSATIONAL ASSISTANT
+## 33. ASK CASEY / YISRAI — READ-ONLY CONVERSATIONAL ASSISTANT
 
-**Surface.** More → Ask YisrAI (`public/assistant.html`), staff JWT only.
-`POST /api/assistant/plan {question,history,model_mode,temporary_attachments?,document_ids?}`
+**Surface.** The persistent bottom-of-sidebar Ask Casey control and the
+secondary More/All item both open one stable `public/assistant.html` iframe.
+Compact/wide/mobile presentations change CSS classes only; the iframe is never
+moved or recreated. Opening/collapsing it does not call `openMainTab` or URL
+sync, so the active workspace and canonical `open=` target remain intact.
+Staff JWT only.
+`POST /api/assistant/plan {question,history,model_mode,temporary_attachments?,document_ids?,workspace_context?}`
 returns a direct answer/refusal or
 a plan; the UI immediately sends its ticket to `POST /api/assistant/execute`.
 There is deliberately no confirmation for read-only operations. Plans are
 HMAC-signed with `JWT_SECRET`, expire after 20 minutes and are bound to the
 issuing user, so review and execution may land on different Cloud Run instances
 without trusting client-returned SQL.
+
+**Workspace context.** `ycAssistantContext()` is a narrow collector over
+`currentOpenFilesUrl()` plus live shell labels; it does not reuse diagnostics.
+Its submitted `snapshot` contains only `v`, canonical `/index?files=&open=`,
+parsed file `{kind,id,rest}` records, and the parsed active file/tab. `ask=` and
+all other one-shot parameters are excluded; display labels remain outside the
+snapshot. The composer shows a removable chip and deep-clones the selection
+before its first await. `assistantService` re-parses the URL, requires the
+browser's parsed form to match, checks referenced case/contact rows, then signs
+the normalized snapshot into the user-bound plan ticket. Planning, the one
+repair pass, and answering receive that same immutable server-verified block.
+It is evidence, never authority.
+
+**Semantic navigation.** The first allowlisted destination is
+`automations.court_review`. The shell checks `moreAutomations` in the effective
+launcher registry, holds `courtReview` for the cold manager iframe, opens via
+`ycLauncher.exec`, and resolves only after `automationManager.html` reports its
+Court Review child loaded. An already-loaded manager uses the same narrow
+bridge. The assistant cannot submit selectors, coordinates, URLs, or script.
 
 **Operation vocabulary.** v1 enables `sql.read`, `manual.search`,
 `comms.search`, and `weather.lookup`. Weather is a narrow adapter that accepts
@@ -2015,7 +2039,8 @@ the file changed after planning. Both AI passes receive the files under
 a model operation: an explicit user click reuses `/api/documents/upload-link`
 → direct browser-to-Dropbox upload → `/api/documents/upload-commit`.
 
-**Question deep links.** `/?open=tabMore%7EmoreAssistant&ask=<encoded question>`
+**Question deep links.** `ask=<encoded question>` may accompany any canonical
+workspace `open=` target. It
 captures a maximum-2,000-character draft in the shell, synchronously removes
 `ask` from the address bar before auth/API fetches, and exposes it through the
 one-shot `ycTakeAssistantDraft()`. The assistant assigns it only to
@@ -2031,4 +2056,4 @@ continues to contain IDs only.
 `lib/aiPrompts/assistantPlan.js`, `lib/aiPrompts/assistantAnswer.js`,
 `routes/api.assistant.js`. Operator docs: manual 05/17. Tests:
 `assistantService`, `assistantAttachmentService`, `assistantTicket`, plus
-`featureRegistry` and manual coverage.
+`assistantSidebar`, `featureRegistry` and manual coverage.

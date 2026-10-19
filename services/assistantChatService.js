@@ -1,5 +1,5 @@
 // services/assistantChatService.js
-// User-private recent chat history for Ask YisrAI. This is convenience state,
+// User-private recent chat history for Ask Casey/YisrAI. This is convenience state,
 // not the query audit trail: SQL remains in report_runs.
 
 'use strict';

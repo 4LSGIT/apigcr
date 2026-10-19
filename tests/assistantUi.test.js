@@ -8,7 +8,7 @@ const html = fs.readFileSync(path.join(ROOT, 'public/assistant.html'), 'utf8');
 const route = fs.readFileSync(path.join(ROOT, 'routes/api.assistant.js'), 'utf8');
 const shell = fs.readFileSync(path.join(ROOT, 'public/index.html'), 'utf8');
 
-describe('Ask YisrAI UI wiring', () => {
+describe('Ask Casey UI wiring', () => {
   test('its inline script parses as JavaScript', () => {
     const scripts = [...html.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/gi)]
       .map((m) => m[1]).filter((s) => s.trim());
@@ -33,7 +33,7 @@ describe('Ask YisrAI UI wiring', () => {
   });
 
   test('shows the wand-writing animation during planning and execution', () => {
-    expect(html).toContain('<h1><i class="fa-solid fa-wand-magic-sparkles"></i> Ask YisrAI</h1>');
+    expect(html).toContain('<h1><i class="fa-solid fa-wand-magic-sparkles"></i> Ask Casey</h1>');
     expect(html).toContain('class="thinking-wand"');
     expect(html).toContain('@keyframes wandWrite');
     expect(html).toContain("type: 'thinking'");
@@ -59,16 +59,29 @@ describe('Ask YisrAI UI wiring', () => {
   test('the API exposes plan and execute as separate staff-only posts', () => {
     expect(route).toMatch(/router\.post\('\/api\/assistant\/plan', jwtOrApiKey, staffOnly/);
     expect(route).toMatch(/router\.post\('\/api\/assistant\/execute', jwtOrApiKey, staffOnly/);
+    expect(route).toContain('workspaceContext: req.body && req.body.workspace_context');
   });
 
   test('a one-shot ask URL only prefills the textarea and is scrubbed by the shell', () => {
-    expect(shell).toContain("open[0] === 'tabMore' && open[1] === 'moreAssistant'");
     expect(shell).toContain("raw.length <= 2000");
     expect(shell).toContain("u.searchParams.delete('ask')");
     expect(shell).toContain('window.ycTakeAssistantDraft = function ()');
     expect(html).toContain("P.ycTakeAssistantDraft()");
     expect(html).toContain('input.value = String(draft).slice(0, 2000)');
     expect(html).not.toMatch(/if \(draft\).*ask\(\)/);
+  });
+
+  test('shows removable frozen workspace context and submits only its snapshot', () => {
+    expect(html).toContain('id="contextList"');
+    expect(html).toContain("workspaceContext = captureWorkspaceContext()");
+    expect(html).toContain("workspaceContext = null; renderWorkspaceContext()");
+    expect(html).toContain('const turnContext = workspaceContext ? JSON.parse(JSON.stringify(workspaceContext)) : null');
+    expect(html).toContain('workspace_context: turnContext && turnContext.snapshot');
+  });
+
+  test('renders allowlisted semantic destination actions through the shell bridge', () => {
+    expect(html).toContain('data-destination="${esc(item.id)}"');
+    expect(html).toContain('P.ycAssistantNavigate(b.dataset.destination)');
   });
 
   test('recent chats are user-backed and long chats get a gentle new-chat prompt', () => {

@@ -1808,6 +1808,16 @@
         if (isDrawer(entry)) return openDrawer(entry, opts && opts.from && opts.from.nodeType === 1 ? opts.from : null);
         closeDrawer(false);
         var act = entry.action || entry.userAction;
+        // Shell overlays (currently Ask Casey) do not own the workspace. Run
+        // their real rendered control in place without first opening the page
+        // that happens to contain the secondary launcher tile.
+        if ((window.FEATURE_REGISTRY[id] || {}).overlay) {
+          var overlayEls = elementsOf(id);
+          var overlayEl = overlayEls.more || overlayEls.moreIcons || overlayEls.home || overlayEls.sidebar;
+          if (!overlayEl) { warn('exec("' + id + '"): overlay has no rendered element'); return false; }
+          overlayEl.click();
+          return true;
+        }
         if (isPage(entry)) {
           var pg = PAGES[id];
           if (!pg || !pg.el.isConnected) { warn('exec("' + id + '"): its page has no tab on this page'); return false; }
@@ -2489,6 +2499,8 @@
     }
     body.sidebar-skinny { --sidebar-w: var(--sidebar-skinny-w); }
     body.sidebar-hidden { padding-left: 0 !important; }
+    body.casey-sidebar-open { --sidebar-w: min(420px, 38vw); }
+    body.casey-sidebar-open.casey-expanded { --sidebar-w: min(640px, 52vw); }
     body.view-as-active { --view-as-offset: 44px; }
 
     #viewAsBar {
@@ -2825,6 +2837,29 @@
     }
     #appSidebar .sb-collapse-bar button:hover { background: var(--hover); color: var(--text); }
 
+    /* Ask Casey owns a stable iframe at the bottom of the sidebar DOM. Opening
+       changes layout only: the workspace tab/panel and its URL stay untouched. */
+    #askCaseyOpen {
+      margin: 0 8px 8px; border: 1px solid var(--accent); border-radius: 8px;
+      background: var(--accent-soft); color: var(--accent-on-soft); font-weight: 650;
+    }
+    #askCaseyOpen i { color: var(--accent-on-soft); }
+    #caseySidebar { display: none; flex: 1; min-height: 0; flex-direction: column; background: var(--page-bg); }
+    body.casey-sidebar-open #appSidebar > :not(#caseySidebar) { display: none !important; }
+    body.casey-sidebar-open #caseySidebar { display: flex; }
+    #caseySidebarHeader {
+      display: flex; align-items: center; gap: 6px; flex: 0 0 auto;
+      min-height: 46px; padding: 6px 8px; border-bottom: 1px solid var(--border);
+      background: var(--sidebar-bg);
+    }
+    #caseySidebarHeader button {
+      border: 0; border-radius: 6px; background: transparent; color: var(--text);
+      cursor: pointer; padding: 8px; font: inherit;
+    }
+    #caseySidebarHeader button:hover { background: var(--hover); }
+    #caseySidebarHeader .casey-collapse { flex: 1; text-align: left; font-weight: 700; }
+    #caseySidebar iframe { display: block; flex: 1; min-height: 0; width: 100%; border: 0; background: var(--page-bg); }
+
     /* Fast hover tooltip for icon-only (skinny) sidebar items.
        Rendered on <body> so it escapes the sidebar's overflow clipping. */
     #sbTip {
@@ -2889,12 +2924,14 @@
     /* Mobile */
     @media (max-width: 768px) {
       body { padding-left: 0; }
+      body.casey-sidebar-open { --sidebar-w: 100vw; }
       #appSidebar {
         transform: translateX(-100%);
         width: 240px !important;
         box-shadow: var(--shadow-drawer);
       }
       body.sidebar-mobile-open #appSidebar { transform: translateX(0); }
+      body.casey-sidebar-open #appSidebar { transform: translateX(0); width: 100vw !important; }
       body.sidebar-mobile-open::after {
         content: ''; position: fixed;
         top: calc(var(--header-h) + var(--view-as-offset)); left: 0; right: 0; bottom: 0;
@@ -3112,6 +3149,9 @@
          Home's icon row and Ctrl-K are the guarantee (Fred's ruling). -->
 
     <div class="sb-spacer"></div>
+    <div class="sb-item" id="askCaseyOpen" onclick="openCasey()" title="Ask Casey">
+      <i class="fa-solid fa-wand-magic-sparkles"></i><span>Ask Casey</span>
+    </div>
     <!-- Stamped by versionGuard.js from the /api/version deploy time it already
          fetches: "Ver b26.0808.1434". The text below is only the pre-fetch
          fallback (offline boot). Attribute value = prefix. -->
@@ -3124,6 +3164,17 @@
         <i class="fa-solid fa-arrow-left" id="sbSkinnyIcon"></i>
       </button>
     </div>
+    <section id="caseySidebar" aria-label="Ask Casey">
+      <div id="caseySidebarHeader">
+        <button type="button" class="casey-collapse" onclick="closeCasey()" title="Return to navigation">
+          <i class="fa-solid fa-chevron-left"></i> Ask Casey
+        </button>
+        <button type="button" onclick="toggleCaseyExpanded()" title="Toggle wider view" aria-label="Toggle wider Ask Casey view">
+          <i class="fa-solid fa-expand"></i>
+        </button>
+      </div>
+      <iframe id="caseyFrame" data-src="/assistant.html" title="Ask Casey"></iframe>
+    </section>
   </nav>
 
   <div id="tabHome" class="tab-main"><br><br>
@@ -6034,10 +6085,6 @@
   <div id="courtPreviewDiv" class="more-panel" style="display:none">
     <iframe data-src="/courtpreview.html"></iframe>
   </div>
-  <div id="assistantDiv" class="more-panel" style="display:none">
-    <iframe data-src="/assistant.html" title="Ask YisrAI"></iframe>
-  </div>
-
   <!-- What goes out, and what comes back as numbers -->
   <!-- Demoted from its own tab (tabCampaigns) — campaign.html reaches the shell
        via window.parent, which is still index.html from here. -->
@@ -6680,16 +6727,15 @@
         catch (_) {}
       }
     })();
-    // Ask YisrAI deep link: /?open=tabMore~moreAssistant&ask=<question>.
+    // Ask Casey deep link: `ask` can accompany any canonical workspace URL.
     // Product decision: the raw question may be shared in a URL, with the
     // privacy warning documented in the manual. Capture it once, then scrub
     // `ask` synchronously before authentication/API fetches begin. It is
     // prefilling only: the assistant never auto-runs a question from a GET.
     let assistantUrlDraft = null;
     (() => {
-      const open = String(params.open || '').split('~');
       const raw = typeof params.ask === 'string' ? params.ask.trim() : '';
-      if (open[0] === 'tabMore' && open[1] === 'moreAssistant' && raw && raw.length <= 2000) assistantUrlDraft = raw;
+      if (raw && raw.length <= 2000) assistantUrlDraft = raw;
       if (Object.prototype.hasOwnProperty.call(params, 'ask')) {
         const u = new URL(window.location);
         u.searchParams.delete('ask');
@@ -6813,6 +6859,116 @@
         });
       }
     }
+
+    // ── Ask Casey sidebar ────────────────────────────────────────────────
+    // One iframe, one controller, one browsing context. Compact/wide/mobile
+    // presentations are body classes only; collapse never removes or reloads
+    // the frame, so requests, drafts and temporary attachments keep running.
+    let caseySidebarPrior = null;
+    function openCasey(options) {
+      const frame = E('caseyFrame');
+      if (!frame) return false;
+      if (frame.dataset.src) {
+        frame.src = frame.dataset.src;
+        delete frame.dataset.src;
+      }
+      if (!document.body.classList.contains('casey-sidebar-open')) {
+        caseySidebarPrior = {
+          hidden: document.body.classList.contains('sidebar-hidden'),
+          skinny: document.body.classList.contains('sidebar-skinny'),
+          mobile: document.body.classList.contains('sidebar-mobile-open'),
+        };
+      }
+      document.body.classList.add('casey-sidebar-open');
+      document.body.classList.toggle('casey-expanded', !!(options && options.expanded));
+      document.body.classList.remove('sidebar-hidden', 'sidebar-skinny');
+      if (typeof matchMedia === 'function' && matchMedia('(max-width: 768px)').matches) document.body.classList.add('sidebar-mobile-open');
+      try { frame.contentWindow.focus(); } catch (_) {}
+      return true;
+    }
+
+    function closeCasey() {
+      document.body.classList.remove('casey-sidebar-open', 'casey-expanded', 'sidebar-mobile-open');
+      if (caseySidebarPrior) {
+        document.body.classList.toggle('sidebar-hidden', caseySidebarPrior.hidden);
+        document.body.classList.toggle('sidebar-skinny', caseySidebarPrior.skinny);
+        document.body.classList.toggle('sidebar-mobile-open', caseySidebarPrior.mobile);
+      }
+      caseySidebarPrior = null;
+      return true;
+    }
+
+    function toggleCaseyExpanded() {
+      if (!document.body.classList.contains('casey-sidebar-open')) return openCasey({ expanded: true });
+      document.body.classList.toggle('casey-expanded');
+      return true;
+    }
+
+    window.openCasey = openCasey;
+    window.closeCasey = closeCasey;
+    window.toggleCaseyExpanded = toggleCaseyExpanded;
+
+    // Semantic destinations only. The model/UI can name this id; the shell
+    // alone owns launcher ids, panel ids, held-rest tokens and readiness.
+    const YC_ASSISTANT_DESTINATIONS = Object.freeze({
+      'automations.court_review': Object.freeze({
+        launcher: 'moreAutomations', page: 'tabMore', panel: 'automationsDiv', rest: 'courtReview',
+      }),
+    });
+    let assistantNavigationPending = null;
+
+    window.ycAssistantChildReady = function (frameEl, detail) {
+      const pending = assistantNavigationPending;
+      if (!pending || frameEl !== pending.frame || !detail || detail.destination !== pending.destination) return false;
+      clearTimeout(pending.timer);
+      assistantNavigationPending = null;
+      pending.resolve({ destination: pending.destination, ready: true });
+      return true;
+    };
+
+    window.ycAssistantNavigate = function (destination) {
+      const spec = YC_ASSISTANT_DESTINATIONS[destination];
+      const L = window.ycLauncher;
+      if (!spec || !L || !L.isReady() || !L.effectiveRegistry().some((item) => item.id === spec.launcher)) {
+        return Promise.reject(new Error('That destination is not available to this signed-in user.'));
+      }
+      const panel = E(spec.panel);
+      const frame = panel && panel.querySelector(':scope > iframe');
+      if (!frame || !window.ycSubTab) return Promise.reject(new Error('That destination is not available.'));
+      if (assistantNavigationPending) {
+        clearTimeout(assistantNavigationPending.timer);
+        assistantNavigationPending.reject(new Error('A newer navigation request replaced this one.'));
+        assistantNavigationPending = null;
+      }
+      ycSubTab.host.hold(frame, spec.rest);
+      return new Promise(function (resolve, reject) {
+        const pending = { destination: destination, frame: frame, resolve: resolve, reject: reject };
+        pending.timer = setTimeout(function () {
+          if (assistantNavigationPending !== pending) return;
+          assistantNavigationPending = null;
+          reject(new Error('Court Review did not become ready in time.'));
+        }, 10000);
+        assistantNavigationPending = pending;
+        if (L.exec(spec.launcher, { page: spec.page }) !== true) {
+          clearTimeout(pending.timer);
+          assistantNavigationPending = null;
+          reject(new Error('That destination could not be opened.'));
+          return;
+        }
+        // An already-loaded manager consumed its boot hold long ago, so ask
+        // its narrow semantic bridge to switch now. A cold manager consumes
+        // the held rest during boot and reports ready after its child loads.
+        if (!frame.dataset.src) {
+          try {
+            const open = frame.contentWindow && frame.contentWindow.ycAssistantOpenDestination;
+            if (typeof open === 'function') {
+              ycSubTab.host.take(frame); // loaded manager: discard the cold-only hold
+              open(spec.rest);
+            }
+          } catch (_) {}
+        }
+      });
+    };
 
     // ---- Global auth state ----
     window.AUTH_STATE = {
@@ -7591,6 +7747,10 @@ async function initAuth() {
           console.error("[workspace] restore failed:", err);
         }
         enableWorkspaceUrlSync();
+        // Opening the assistant is a sidebar-only presentation change. Do it
+        // after workspace restoration so a prefilled link keeps its `open=`
+        // target and the context chip snapshots the finished workspace.
+        if (assistantUrlDraft) openCasey();
       })();
       if (params.tasks) {
         // Preload the tasks iframe (old behaviour preloaded the table data).
@@ -8400,6 +8560,59 @@ async function initAuth() {
       }
       return u.toString();
     }
+
+    /** Narrow, ID-only context for Ask Casey. This deliberately re-parses the
+     *  canonical workspace URL instead of borrowing the broad diagnostics
+     *  collector. Display text is returned separately and is never part of
+     *  canonical_url or the server-signed snapshot. */
+    window.ycAssistantContext = function () {
+      const canonical = new URL(currentOpenFilesUrl());
+      canonical.searchParams.delete('ask');
+      const kindOf = { c: 'case', p: 'contact', b: 'bill' };
+      const files = [];
+      const rawFiles = canonical.searchParams.get('files');
+      if (rawFiles) rawFiles.split(',').forEach(function (spec) {
+        const parts = spec.split('~');
+        const match = /^([cpb])([A-Za-z0-9_-]+)$/.exec(parts.shift() || '');
+        const rest = parts.join('~');
+        if (!match || (rest && (!window.ycSubTab || ycSubTab.normalize(rest) !== rest))) return;
+        files.push({ kind: kindOf[match[1]], id: match[2], rest: rest || '' });
+      });
+      const open = canonical.searchParams.get('open') || 'tabHome';
+      const fileMatch = /^file:(\d+)$/.exec(open);
+      let active;
+      if (fileMatch && files[Number(fileMatch[1])]) {
+        active = { kind: 'file', index: Number(fileMatch[1]), entity: files[Number(fileMatch[1])] };
+      } else {
+        const parts = open.split('~');
+        active = { kind: 'workspace', tab: parts.shift() || 'tabHome', rest: parts.join('~') };
+      }
+      let displayLabel = 'Current workspace';
+      if (active.kind === 'file') {
+        const button = document.querySelectorAll('#tabOpenFiles .file-button')[active.index];
+        displayLabel = button && button.title ? button.title : `${active.entity.kind} ${active.entity.id}`;
+      } else {
+        const names = {
+          tabHome: 'Home', tabCases: 'Cases', tabContacts: 'Contacts', tabAppts: 'Appointments',
+          tabCalendar: 'Calendar', tabEvents: 'Events', tabTasks: 'Tasks', tabComms: 'Comms',
+          tabLogs: 'Log', tabBills: 'Bills', tabPipeline: 'Pipeline Board', tabMore: 'More Features',
+          tabSettings: 'Settings', tabAdmin: 'Admin', tabAll: 'All features',
+        };
+        displayLabel = names[active.tab] || 'Current workspace';
+        if (active.tab === 'tabMore' && /^moreAutomations(?:~courtReview)?$/.test(active.rest)) {
+          displayLabel = active.rest.endsWith('~courtReview') ? 'Automations → Court Review' : 'Automations';
+        }
+      }
+      return {
+        snapshot: {
+          v: 1,
+          canonical_url: canonical.pathname + canonical.search,
+          files: files,
+          active: active,
+        },
+        display_label: displayLabel,
+      };
+    };
 
     // versionGuard.js reloads through this instead of location.reload().
     window.ycReloadUrl = currentOpenFilesUrl;

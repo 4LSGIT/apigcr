@@ -453,18 +453,34 @@ function switchSubPage(id) {
   // Lazy-load: copy data-src → src on first activation
   const iframe = document.getElementById(`subpage-${id}`);
   if (iframe && iframe.dataset.src) {
+    iframe.addEventListener('load', () => notifyAssistantDestinationReady(id), { once: true });
     iframe.src = iframe.dataset.src;
     delete iframe.dataset.src;
-    // NOTE: no boot-ready signal exists on this path. Sub-pages boot via
-    // their own waitForShell() poll, and (triggers.html excepted) their
-    // init() does NOT self-invoke onShow — so nothing tells the shell when
-    // a lazily-loaded page is ready. Anything that must reach the page
-    // post-boot has to poll for it (see drainPendingFocus below).
+    // Record-focus still polls for its page-specific hook, but the semantic
+    // assistant bridge below has an explicit child-load ready signal.
     return;
   }
 
   // Subsequent activations: iframe is already loaded, call onShow now.
   callSubPageHook(id, 'onShow');
+  notifyAssistantDestinationReady(id);
+}
+
+function notifyAssistantDestinationReady(id) {
+  if (id !== 'courtReview') return;
+  try {
+    if (window.parent && typeof window.parent.ycAssistantChildReady === 'function') {
+      window.parent.ycAssistantChildReady(window.frameElement, { destination: 'automations.court_review' });
+    }
+  } catch (_) { /* shell navigated or an older build */ }
+}
+
+// Narrow semantic bridge for an already-loaded manager. No selectors, DOM
+// paths or arbitrary sub-page ids cross the assistant boundary.
+function ycAssistantOpenDestination(rest) {
+  if (rest !== 'courtReview') return false;
+  switchSubPage('courtReview');
+  return true;
 }
 
 // ── Workspace URL: this page's sub-tab (S5c-a) ─────────────────
@@ -602,6 +618,7 @@ window.fdToggleLineWidget      = fdToggleLineWidget;
 window.fdParamSourceDatalistHtml = fdParamSourceDatalistHtml;
 window.setTopbarButtons    = setTopbarButtons;
 window.focusSubPageRecord  = focusSubPageRecord;
+window.ycAssistantOpenDestination = ycAssistantOpenDestination;
 window.esc                 = esc; // useful for sub-pages that want to match helper output
 
 // ── Boot ───────────────────────────────────────────────────────

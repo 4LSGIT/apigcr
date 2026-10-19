@@ -84,10 +84,11 @@ describe('the registry data', () => {
     expect(new Set(keys).size).toBe(keys.length);
   });
 
-  test('Ask YisrAI keeps the magic wand while Simple Forms uses the editor icon', () => {
+  test('Ask Casey keeps the magic wand while Simple Forms uses the editor icon', () => {
     expect(REG.moreSimpleForms.icon).toBe('square-pen');
     expect(REG.moreAssistant.icon).toBe('wand-magic-sparkles');
-    expect(REG.moreAssistant.label).toBe('Ask YisrAI');
+    expect(REG.moreAssistant.label).toBe('Ask Casey');
+    expect(REG.moreAssistant).toMatchObject({ overlay: true, onclick: 'openCasey({ expanded: true })' });
   });
 
   test('the shipped More grid has no row over four items and YisrAI stands alone last', () => {

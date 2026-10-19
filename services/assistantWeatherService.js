@@ -1,4 +1,4 @@
-// Narrow external-data adapter for Ask YisrAI. The model can request a
+// Narrow external-data adapter for Ask Casey/YisrAI. The model can request a
 // location name, but it never controls a URL: both hosts and all parameters
 // are constructed here. Open-Meteo needs no credential for its public tier;
 // deployments using a commercial plan can set OPEN_METEO_API_KEY and

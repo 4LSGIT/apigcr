@@ -289,7 +289,8 @@ window.FEATURE_REGISTRY = {
     hoverAnim: 'fa-shake', styleVars: '--fa-animation-duration:0.6s',
   },
   moreAssistant: {
-    label: 'Ask YisrAI', icon: 'wand-magic-sparkles', target: 'assistantDiv', group: 'more',
+    label: 'Ask Casey', icon: 'wand-magic-sparkles', onclick: 'openCasey({ expanded: true })',
+    overlay: true,
     hoverAnim: 'fa-beat', styleVars: '--fa-beat-scale:1.10; --fa-animation-duration:1.4s',
   },
   moreCampaigns: {

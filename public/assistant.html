@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Ask YisrAI</title>
+<title>Ask Casey</title>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
 <link rel="stylesheet" href="/theme.css">
 <script src="/themeSync.js"></script>
@@ -61,6 +61,11 @@
   .attach-tools { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin: 0 2px 7px; }
   .attach-tools button { padding: 5px 8px; font-size: 12px; }
   .attachment-list { display: flex; gap: 5px; flex-wrap: wrap; min-width: 0; }
+  .context-list { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; min-width: 0; }
+  .context-chip { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; padding: 4px 8px; border: 1px solid var(--accent); border-radius: 999px; background: var(--accent-soft); color: var(--accent-on-soft); font-size: 11px; }
+  .context-chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .context-chip button, .context-add { padding: 0 3px; border: 0; background: transparent; color: inherit; }
+  .message-context { margin-top: 7px; font-size: 10px; opacity: .82; }
   .attachment-chip { display: inline-flex; align-items: center; gap: 5px; max-width: 260px; padding: 3px 7px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); color: var(--text-muted); font-size: 11px; }
   .attachment-chip .attachment-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .attachment-chip button { padding: 0 2px; border: 0; background: transparent; color: var(--text-muted); }
@@ -98,7 +103,7 @@
 <body>
 <div class="app">
   <header>
-    <div><h1><i class="fa-solid fa-wand-magic-sparkles"></i> Ask YisrAI</h1>
+    <div><h1><i class="fa-solid fa-wand-magic-sparkles"></i> Ask Casey</h1>
       <div class="sub">Ask about people, matters, activity, appointments, tasks, communications, or how YisraCase works.</div></div>
     <div class="header-actions">
       <select class="model-select" id="modelMode" aria-label="YisrAI model mode" title="Choose quality or speed">
@@ -125,8 +130,9 @@
       <input id="fileInput" type="file" accept="application/pdf,image/png,image/jpeg,image/gif,image/webp" multiple hidden>
       <div class="attachment-list" id="attachmentList"></div>
     </div>
+    <div class="context-list" id="contextList" aria-live="polite"></div>
     <div class="compose-box">
-      <textarea id="question" maxlength="2000" rows="1" placeholder="Ask YisrAI anything…"></textarea>
+      <textarea id="question" maxlength="2000" rows="1" placeholder="Ask Casey anything…"></textarea>
       <button id="sendBtn" type="button" title="Send"><i class="fa-solid fa-arrow-up"></i></button>
     </div>
     <div class="notice">Read-only searches run automatically. Answers can be wrong—open the cited records when it matters. Future actions will require explicit review.</div>
@@ -152,6 +158,7 @@ const longChat = document.getElementById('longChat');
 const modelMode = document.getElementById('modelMode');
 const fileInput = document.getElementById('fileInput');
 const attachmentList = document.getElementById('attachmentList');
+const contextList = document.getElementById('contextList');
 const pickerBackdrop = document.getElementById('pickerBackdrop');
 const pickerSearch = document.getElementById('pickerSearch');
 const pickerResults = document.getElementById('pickerResults');
@@ -160,6 +167,7 @@ let busy = false;
 let currentChatId = null;
 let historyAvailable = true;
 let pendingAttachments = [];
+let workspaceContext = null;
 let picker = null;
 let pickerTimer = null;
 let pickerSeq = 0;
@@ -177,6 +185,15 @@ function thinkingHtml(text) {
 function suggestionsHtml(items) {
   if (!Array.isArray(items) || !items.length) return '';
   return `<div class="follow">${items.map((s) => `<button data-follow="${esc(s.query)}">${esc(s.label || s.query)}</button>`).join('')}</div>`;
+}
+
+function destinationsHtml(items) {
+  if (!Array.isArray(items) || !items.length) return '';
+  return `<div class="follow">${items.map((item) => `<button data-destination="${esc(item.id)}"><i class="fa-solid fa-location-arrow"></i> ${esc(item.label)}</button>`).join('')}</div>`;
+}
+
+function messageContextHtml(label) {
+  return label ? `<div class="message-context"><i class="fa-solid fa-window-maximize"></i> ${esc(label)}</div>` : '';
 }
 
 function actionHtml(action) {
@@ -213,16 +230,23 @@ function render() {
   longChat.hidden = history.filter((m) => m.role === 'user').length < 4;
   if (!history.length) { chat.innerHTML = emptyHtml(); bindExamples(); return; }
   chat.innerHTML = history.map((m, i) => {
-    if (m.role === 'user') return `<div class="msg user">${esc(m.text)}${messageAttachmentsHtml(m.attachments, i)}</div>`;
+    if (m.role === 'user') return `<div class="msg user">${esc(m.text)}${messageContextHtml(m.workspace_context_label)}${messageAttachmentsHtml(m.attachments, i)}</div>`;
     if (m.type === 'thinking') return `<div class="msg assistant">${thinkingHtml(m.text)}</div>`;
     const entities = Array.isArray(m.entities) && m.entities.length ? `<div class="record-links"><b>Open records</b><div class="source-actions">${m.entities.map(actionHtml).join('')}</div></div>` : '';
     const sources = Array.isArray(m.sources) && m.sources.length ? `<div class="sources"><b>Sources</b>${m.sources.map((s) =>
       `<div class="source"><div class="source-label">${esc(s.label)} · ${esc(s.query_id)} row ${esc(s.row_number)}</div>${Array.isArray(s.actions) && s.actions.length ? `<div class="source-actions">${s.actions.map(actionHtml).join('')}</div>` : ''}<details><summary>View evidence row</summary><pre>${esc(JSON.stringify(s.row, null, 2))}</pre></details></div>`).join('')}</div>` : '';
     const follow = suggestionsHtml(m.suggestions);
-    return `<div class="msg assistant${m.error ? ' error' : ''}">${esc(m.text)}${entities}${sources}${follow}${m.meta ? `<div class="meta">${esc(m.meta)}</div>` : ''}</div>`;
+    const destinations = destinationsHtml(m.destinations);
+    return `<div class="msg assistant${m.error ? ' error' : ''}">${esc(m.text)}${entities}${sources}${destinations}${follow}${m.meta ? `<div class="meta">${esc(m.meta)}</div>` : ''}</div>`;
   }).join('');
   chat.querySelectorAll('[data-follow]').forEach((b) => b.addEventListener('click', () => { input.value = b.dataset.follow; input.focus(); }));
   chat.querySelectorAll('[data-open-kind]').forEach((b) => b.addEventListener('click', () => openEntity(b.dataset.openKind, b.dataset.openId, b.dataset.openLabel)));
+  chat.querySelectorAll('[data-destination]').forEach((b) => b.addEventListener('click', async () => {
+    b.disabled = true;
+    try { await P.ycAssistantNavigate(b.dataset.destination); }
+    catch (e) { history.push({ role: 'assistant', text: e.message || 'That destination could not be opened.', error: true }); render(); }
+    finally { b.disabled = false; }
+  }));
   chat.querySelectorAll('[data-save-message]').forEach((b) => b.addEventListener('click', () => {
     const message = history[Number(b.dataset.saveMessage)];
     const att = message && Array.isArray(message.attachments) ? message.attachments[Number(b.dataset.saveAttachment)] : null;
@@ -264,6 +288,23 @@ function renderPendingAttachments() {
     const att = pendingAttachments[Number(b.dataset.savePending)];
     if (att && att.file) openCasePicker(att, null);
   }));
+}
+
+function captureWorkspaceContext() {
+  try {
+    const value = typeof P.ycAssistantContext === 'function' ? P.ycAssistantContext() : null;
+    return value && value.snapshot ? value : null;
+  } catch (_) { return null; }
+}
+
+function renderWorkspaceContext() {
+  if (!workspaceContext) {
+    contextList.innerHTML = '<button type="button" class="context-add ghost" id="addContext"><i class="fa-solid fa-plus"></i> Add current view</button>';
+    document.getElementById('addContext').addEventListener('click', () => { workspaceContext = captureWorkspaceContext(); renderWorkspaceContext(); });
+    return;
+  }
+  contextList.innerHTML = `<span class="context-chip"><i class="fa-solid fa-window-maximize"></i><span>${esc(workspaceContext.display_label || 'Current workspace')}</span><button type="button" id="removeContext" title="Remove workspace context" aria-label="Remove workspace context"><i class="fa-solid fa-xmark"></i></button></span>`;
+  document.getElementById('removeContext').addEventListener('click', () => { workspaceContext = null; renderWorkspaceContext(); });
 }
 
 function attachmentRoom(size) {
@@ -405,9 +446,10 @@ function savedAttachmentMeta(items) {
   }));
 }
 
-async function saveUserMessage(question, attachments) {
+async function saveUserMessage(question, attachments, turnContext) {
   if (!historyAvailable) return;
-  const payload = { attachments: savedAttachmentMeta(attachments), model_mode: modelMode.value };
+  const payload = { attachments: savedAttachmentMeta(attachments), model_mode: modelMode.value,
+    ...(turnContext ? { workspace_context: turnContext.snapshot, workspace_context_label: turnContext.display_label } : {}) };
   try {
     if (currentChatId) await api(`/api/assistant/chats/${currentChatId}/messages`, { role: 'user', text: question, payload });
     else {
@@ -423,7 +465,7 @@ async function saveUserMessage(question, attachments) {
 async function saveAssistantMessage(message) {
   if (!historyAvailable || !currentChatId || !message || message.error) return;
   const payload = {
-    entities: message.entities || [], sources: message.sources || [], suggestions: message.suggestions || [], meta: message.meta || '',
+    entities: message.entities || [], sources: message.sources || [], suggestions: message.suggestions || [], destinations: message.destinations || [], meta: message.meta || '',
   };
   try {
     await api(`/api/assistant/chats/${currentChatId}/messages`, { role: 'assistant', text: message.text, payload });
@@ -483,12 +525,15 @@ async function ask() {
   if (!question || busy) return;
   setBusy(true);
   const context = publicHistory();
+  // Freeze this turn before any await. Moving elsewhere while Casey works can
+  // change the next chip, never the signed snapshot for this question.
+  const turnContext = workspaceContext ? JSON.parse(JSON.stringify(workspaceContext)) : null;
   const turnAttachments = pendingAttachments.slice();
   let attachmentRequest;
   try { attachmentRequest = await requestAttachments(turnAttachments); }
   catch (e) { history.push({ role: 'assistant', text: e.message || String(e), error: true }); setBusy(false); render(); return; }
-  history.push({ role: 'user', text: question, attachments: turnAttachments });
-  const savingUser = saveUserMessage(question, turnAttachments);
+  history.push({ role: 'user', text: question, attachments: turnAttachments, workspace_context_label: turnContext && turnContext.display_label });
+  const savingUser = saveUserMessage(question, turnAttachments, turnContext);
   pendingAttachments = [];
   renderPendingAttachments();
   input.value = '';
@@ -499,6 +544,7 @@ async function ask() {
       question, history: context, model_mode: modelMode.value,
       temporary_attachments: attachmentRequest.temporary,
       document_ids: attachmentRequest.documentIds,
+      workspace_context: turnContext && turnContext.snapshot,
     });
     if (r.outcome === 'plan') {
       history[history.length - 1].text = 'Searching firm records and writing your answer…';
@@ -506,9 +552,9 @@ async function ask() {
       r = await executeAutomatically(r.ticket, attachmentRequest.temporary);
     }
     history.pop();
-    if (r.outcome === 'refused') history.push({ role: 'assistant', text: r.reason, suggestions: r.suggestions || [] });
+    if (r.outcome === 'refused') history.push({ role: 'assistant', text: r.reason, suggestions: r.suggestions || [], destinations: r.destinations || [] });
     else history.push({
-      role: 'assistant', text: r.answer, entities: r.entities || [], sources: r.sources || [], suggestions: r.suggestions || [],
+      role: 'assistant', text: r.answer, entities: r.entities || [], sources: r.sources || [], suggestions: r.suggestions || [], destinations: r.destinations || [],
       meta: (r.steps || []).map((q) => `${q.id}: ${q.row_count} row${q.row_count === 1 ? '' : 's'}`).join(' · '),
     });
     await savingUser;
@@ -516,7 +562,11 @@ async function ask() {
   } catch (e) {
     history.pop();
     history.push({ role: 'assistant', text: e.message || String(e), error: true });
-  } finally { setBusy(false); render(); }
+  } finally {
+    if (turnContext) workspaceContext = captureWorkspaceContext();
+    renderWorkspaceContext();
+    setBusy(false); render();
+  }
 }
 
 async function executeAutomatically(initialTicket, temporaryAttachments) {
@@ -570,6 +620,8 @@ document.getElementById('historyBtn').addEventListener('click', showRecentChats)
 document.getElementById('historyClose').addEventListener('click', () => { historyPanel.hidden = true; });
 (function waitForParent() {
   if (P && P.apiSend) {
+    workspaceContext = captureWorkspaceContext();
+    renderWorkspaceContext();
     render();
     const draft = typeof P.ycTakeAssistantDraft === 'function' ? P.ycTakeAssistantDraft() : null;
     if (draft) input.value = String(draft).slice(0, 2000);

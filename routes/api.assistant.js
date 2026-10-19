@@ -36,6 +36,7 @@ router.post('/api/assistant/plan', jwtOrApiKey, staffOnly, async (req, res) => {
       modelMode: req.body && req.body.model_mode,
       temporaryAttachments: req.body && req.body.temporary_attachments,
       documentIds: req.body && req.body.document_ids,
+      workspaceContext: req.body && req.body.workspace_context,
       userId: req.auth.userId,
     });
     res.json({ status: 'success', ...out });

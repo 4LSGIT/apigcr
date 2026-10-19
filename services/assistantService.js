@@ -31,6 +31,15 @@ const MAX_EVIDENCE_CHARS = 60000;
 const PLAN_TIMEOUT_MS = 60000;
 const ANSWER_TIMEOUT_MS = 60000;
 const MAX_SUGGESTIONS = 3;
+const MAX_WORKSPACE_FILES = 20;
+const WORKSPACE_TABS = new Set([
+  'tabHome', 'tabCases', 'tabContacts', 'tabAppts', 'tabCalendar', 'tabEvents',
+  'tabTasks', 'tabComms', 'tabLogs', 'tabBills', 'tabPipeline', 'tabMore',
+  'tabSettings', 'tabAdmin', 'tabAll',
+]);
+const ASSISTANT_DESTINATIONS = Object.freeze({
+  'automations.court_review': 'Open Court Review',
+});
 
 // Reports deliberately allow DOB/SSN for explicit staff reports. An open-ended
 // conversational assistant is a different surface: those values are never
@@ -96,11 +105,100 @@ async function loadViewer(db, userId) {
   }, viewer.user_id);
 }
 
-function currentContext(viewer) {
+function currentContext(viewer, workspace) {
   return `CURRENT TIME:\n${new Date().toISOString()} (server UTC)\n` +
     `${nowLocal().toISO()} (firm-local time; ${FIRM_TZ})\n` +
     `The signed-in user's browser timezone is not authoritative for firm appointments.\n\n` +
-    `<current_staff server_verified="true">\n${JSON.stringify(viewer)}\n</current_staff>`;
+    `<current_staff server_verified="true">\n${JSON.stringify(viewer)}\n</current_staff>` +
+    (workspace ? `\n\n<workspace_context server_verified="true" immutable_for_request="true">\n${JSON.stringify(workspace)}\n</workspace_context>` : '');
+}
+
+function workspaceRest(value) {
+  const text = String(value || '');
+  if (!text) return '';
+  if (text.length > 128) throw httpError(400, 'Workspace context has an invalid sub-view');
+  const parts = text.split('~');
+  if (parts.length > 4 || parts.some((part) => !/^[A-Za-z0-9_-]{1,32}$/.test(part))) {
+    throw httpError(400, 'Workspace context has an invalid sub-view');
+  }
+  return parts.join('~');
+}
+
+function parseWorkspaceFile(spec) {
+  const parts = String(spec || '').split('~');
+  const head = parts.shift() || '';
+  const match = /^([cpb])([A-Za-z0-9_-]{1,64})$/.exec(head);
+  if (!match) throw httpError(400, 'Workspace context has an invalid file reference');
+  const kinds = { c: 'case', p: 'contact', b: 'bill' };
+  const rest = workspaceRest(parts.join('~'));
+  if (match[1] === 'p') {
+    const id = Number(match[2]);
+    if (!/^\d+$/.test(match[2]) || !Number.isSafeInteger(id) || id < 0) throw httpError(400, 'Workspace context has an invalid contact reference');
+  }
+  return { kind: kinds[match[1]], id: match[2], rest };
+}
+
+function normalizeWorkspaceContext(raw) {
+  if (raw == null) return null;
+  if (!raw || typeof raw !== 'object' || Number(raw.v) !== 1 || typeof raw.canonical_url !== 'string') {
+    throw httpError(400, 'Workspace context is malformed');
+  }
+  if (!raw.canonical_url.startsWith('/') || raw.canonical_url.length > 4000) throw httpError(400, 'Workspace context has an invalid URL');
+  let url;
+  try { url = new URL(raw.canonical_url, 'https://workspace.invalid'); }
+  catch (_) { throw httpError(400, 'Workspace context has an invalid URL'); }
+  if (!['/', '/index.html'].includes(url.pathname) || url.hash) throw httpError(400, 'Workspace context has an invalid URL');
+  for (const key of url.searchParams.keys()) if (!['files', 'open'].includes(key)) throw httpError(400, 'Workspace context contains an unsupported URL parameter');
+  if (url.searchParams.getAll('files').length > 1 || url.searchParams.getAll('open').length > 1) throw httpError(400, 'Workspace context repeats a URL parameter');
+  const rawSpecs = (url.searchParams.get('files') || '').split(',').filter(Boolean);
+  if (rawSpecs.length > MAX_WORKSPACE_FILES) throw httpError(400, 'Workspace context has too many open files');
+  const files = rawSpecs.map(parseWorkspaceFile);
+  const open = url.searchParams.get('open') || 'tabHome';
+  const fileOpen = /^file:(\d+)$/.exec(open);
+  let active;
+  if (fileOpen) {
+    const index = Number(fileOpen[1]);
+    if (!Number.isSafeInteger(index) || !files[index]) throw httpError(400, 'Workspace context points to a missing open file');
+    active = { kind: 'file', index, entity: files[index] };
+  } else {
+    const parts = open.split('~');
+    const tab = parts.shift() || 'tabHome';
+    if (!WORKSPACE_TABS.has(tab)) throw httpError(400, 'Workspace context names an unavailable workspace tab');
+    active = { kind: 'workspace', tab, rest: workspaceRest(parts.join('~')) };
+  }
+  const normalized = { v: 1, canonical_url: url.pathname + url.search, files, active };
+  if (JSON.stringify(raw.files) !== JSON.stringify(files) || JSON.stringify(raw.active) !== JSON.stringify(active)) {
+    throw httpError(400, 'Workspace context does not match its canonical URL');
+  }
+  return normalized;
+}
+
+async function validateWorkspaceContext(db, raw) {
+  const workspace = normalizeWorkspaceContext(raw);
+  if (!workspace) return null;
+  const cases = [...new Set(workspace.files.filter((file) => file.kind === 'case').map((file) => file.id))];
+  const contacts = [...new Set(workspace.files.filter((file) => file.kind === 'contact').map((file) => Number(file.id)))];
+  if (cases.length) {
+    const [rows] = await db.query(`SELECT case_id FROM cases WHERE case_id IN (${cases.map(() => '?').join(',')})`, cases);
+    const found = new Set((rows || []).map((row) => String(row.case_id).toLowerCase()));
+    if (cases.some((id) => !found.has(String(id).toLowerCase()))) throw httpError(403, 'Workspace context includes a case that is unavailable');
+  }
+  if (contacts.length) {
+    const [rows] = await db.query(`SELECT contact_id FROM contacts WHERE contact_id IN (${contacts.map(() => '?').join(',')})`, contacts);
+    const found = new Set((rows || []).map((row) => Number(row.contact_id)));
+    if (contacts.some((id) => !found.has(id))) throw httpError(403, 'Workspace context includes a contact that is unavailable');
+  }
+  return workspace;
+}
+
+function normalizeDestinations(value) {
+  const out = [];
+  for (const item of Array.isArray(value) ? value : []) {
+    const id = String(item && item.id || '');
+    if (!ASSISTANT_DESTINATIONS[id] || out.some((entry) => entry.id === id)) continue;
+    out.push({ id, mode: 'take', label: String(item.label || ASSISTANT_DESTINATIONS[id]).trim().slice(0, 120) || ASSISTANT_DESTINATIONS[id] });
+  }
+  return out.slice(0, 2);
 }
 
 function normalizeSuggestions(value) {
@@ -255,7 +353,7 @@ function trimEvidence(evidence) {
   return current;
 }
 
-async function plan(db, { question, history, userId, modelMode, temporaryAttachments, documentIds } = {}) {
+async function plan(db, { question, history, userId, modelMode, temporaryAttachments, documentIds, workspaceContext } = {}) {
   const q = String(question || '').trim();
   if (!q) throw httpError(400, 'Ask a question first');
   if (q.length > MAX_QUESTION) throw httpError(400, `Question is too long (${MAX_QUESTION} character limit)`);
@@ -264,12 +362,13 @@ async function plan(db, { question, history, userId, modelMode, temporaryAttachm
   const attached = await attachmentService.preparePlan(db, {
     temporary: temporaryAttachments, documentIds,
   });
+  const workspace = await validateWorkspaceContext(db, workspaceContext);
   const contextual = attached.claims.length ? null : contextualAnswer(q, hist);
   if (contextual) return { outcome: 'answer', answer: contextual, suggestions: [], callId: null, model_mode: mode };
   const viewer = await loadViewer(db, userId);
   const ai = await aiService.call(db, {
     promptKey: 'assistant_plan',
-    userInput: `${currentContext(viewer)}\n\n` +
+    userInput: `${currentContext(viewer, workspace)}\n\n` +
       `CONVERSATION:\n${historyText(hist)}\n\nATTACHED FILES:\n${attached.description}\n\nCURRENT QUESTION:\n${q}`,
     attachments: attached.blocks,
     model: attachmentService.modelForMode(mode),
@@ -282,20 +381,21 @@ async function plan(db, { question, history, userId, modelMode, temporaryAttachm
   if (raw.action === 'answer') {
     const answer = String(raw.answer || '').trim();
     if (!answer) throw httpError(422, 'The assistant returned an empty answer');
-    return { outcome: 'answer', answer, suggestions: normalizeSuggestions(raw.suggestions || raw.suggestion), callId: ai.callId, model_mode: mode };
+    return { outcome: 'answer', answer, suggestions: normalizeSuggestions(raw.suggestions || raw.suggestion), destinations: normalizeDestinations(raw.destinations), callId: ai.callId, model_mode: mode };
   }
   if (raw.action === 'refuse') {
     return {
       outcome: 'refused',
       reason: String(raw.reason || 'The available records cannot answer that safely.'),
       suggestions: normalizeSuggestions(raw.suggestions || raw.suggestion),
+      destinations: normalizeDestinations(raw.destinations),
       callId: ai.callId, model_mode: mode,
     };
   }
   const built = validatePlan(raw);
   const signed = ticket.sign({
     v: 1, uid: Number(userId), question: q, history: hist, model_mode: mode,
-    viewer, attachments: attached.claims, plan: { action: 'query', ...built },
+    viewer, workspace, attachments: attached.claims, plan: { action: 'query', ...built },
   });
   return { outcome: 'plan', ...built, ticket: signed, callId: ai.callId, model_mode: mode };
 }
@@ -351,6 +451,7 @@ function validateTicket(payload, userId) {
     question, history: cleanHistory(payload.history), plan: validatePlan(payload.plan),
     repairs: Number(payload.repairs) || 0,
     viewer: normalizeViewer(payload.viewer, userId),
+    workspace: normalizeWorkspaceContext(payload.workspace),
     modelMode: attachmentService.modelMode(payload.model_mode),
     attachments: Array.isArray(payload.attachments) ? payload.attachments : [],
   };
@@ -378,7 +479,7 @@ function repairFailure(failure) {
 async function repairRejectedPlan(db, approved, failedQuery, repair, userId, attached) {
   const ai = await aiService.call(db, {
     promptKey: 'assistant_plan',
-    userInput: `${currentContext(approved.viewer)}\n\n` +
+    userInput: `${currentContext(approved.viewer, approved.workspace)}\n\n` +
       `CONVERSATION:\n${historyText(approved.history)}\n\nCURRENT QUESTION:\n${approved.question}\n\n` +
       `A sql.read step was rejected by the read-only executor. Return a complete replacement plan. ${repair.guidance}\n\n` +
       `SAFE FAILURE CATEGORY:\n${repair.category}\n\n` +
@@ -395,7 +496,7 @@ async function repairRejectedPlan(db, approved, failedQuery, repair, userId, att
   const signed = ticket.sign({
     v: 1, uid: Number(userId), question: approved.question, history: approved.history,
     repairs: approved.repairs + 1, model_mode: approved.modelMode,
-    viewer: approved.viewer, attachments: approved.attachments, plan: { action: 'query', ...built },
+    viewer: approved.viewer, workspace: approved.workspace, attachments: approved.attachments, plan: { action: 'query', ...built },
   });
   return {
     outcome: 'plan', notice: repair.notice,
@@ -476,7 +577,7 @@ async function execute(db, { signedTicket, userId, auth, temporaryAttachments } 
   trimEvidence(evidence);
   const ai = await aiService.call(db, {
     promptKey: 'assistant_answer',
-    userInput: `${currentContext(approved.viewer)}\n\nCONVERSATION:\n${historyText(approved.history)}\n\nQUESTION:\n${approved.question}\n\n` +
+    userInput: `${currentContext(approved.viewer, approved.workspace)}\n\nCONVERSATION:\n${historyText(approved.history)}\n\nQUESTION:\n${approved.question}\n\n` +
       `ATTACHED FILES:\n${attached.description}\n\nAPPROVED QUERY PLAN:\n${approved.plan.summary}\n\nEVIDENCE (row_number is array position + 1):\n${JSON.stringify(evidence)}`,
     attachments: attached.blocks,
     model: attachmentService.modelForMode(approved.modelMode),
@@ -493,6 +594,7 @@ async function execute(db, { signedTicket, userId, auth, temporaryAttachments } 
   return {
     answer,
     suggestions: normalizeSuggestions(body.suggestions || body.suggested_follow_up),
+    destinations: normalizeDestinations(body.destinations),
     entities: actionsForEvidence(evidence),
     sources,
     steps: evidence.map((q) => ({ id: q.id, kind: q.kind, purpose: q.purpose, row_count: q.row_count, returned: q.rows.length, truncated: q.truncated || !!q.truncated_for_ai })),
@@ -503,5 +605,6 @@ async function execute(db, { signedTicket, userId, auth, temporaryAttachments } 
 module.exports = {
   plan, execute, validatePlan, validateStep, cleanHistory, compactRows,
   normalizeSuggestions, contextualAnswer, actionsForRow, actionsForEvidence,
+  normalizeWorkspaceContext, validateWorkspaceContext, normalizeDestinations,
   repairFailure, loadViewer, normalizeViewer, MAX_STEPS, MAX_ROWS, ASSISTANT_DENIED,
 };

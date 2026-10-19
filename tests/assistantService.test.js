@@ -14,6 +14,15 @@ const sql = (text, extra = {}) => ({ id: 'q1', kind: 'sql.read', purpose: 'Find 
 const staffDb = (overrides = {}) => ({
   query: jest.fn().mockResolvedValue([[{ user: 7, user_name: 'Stuart Sandweiss', user_initials: 'SS', roles: 'staff,attorney', ...overrides }]]),
 });
+const WORKSPACE = {
+  v: 1,
+  canonical_url: '/?files=cCASE1234%7Edocuments%2Cp42&open=file%3A0',
+  files: [
+    { kind: 'case', id: 'CASE1234', rest: 'documents' },
+    { kind: 'contact', id: '42', rest: '' },
+  ],
+  active: { kind: 'file', index: 0, entity: { kind: 'case', id: 'CASE1234', rest: 'documents' } },
+};
 
 describe('assistant read-plan boundary', () => {
   test('accepts the three read-only operation kinds', () => {
@@ -54,6 +63,20 @@ describe('assistant read-plan boundary', () => {
     expect(h).toHaveLength(8);
     expect(h[0].role).toBe('user');
     expect(h[0].text).toHaveLength(2000);
+  });
+
+  test('workspace context must exactly match its canonical ID-only URL', () => {
+    expect(svc.normalizeWorkspaceContext(WORKSPACE)).toEqual(WORKSPACE);
+    expect(() => svc.normalizeWorkspaceContext({ ...WORKSPACE, canonical_url: '/?files=cOTHER123&open=file%3A0' }))
+      .toThrow(/does not match/);
+    expect(() => svc.normalizeWorkspaceContext({ ...WORKSPACE, canonical_url: '/?files=cCASE1234&ask=secret' }))
+      .toThrow(/unsupported URL parameter/);
+  });
+
+  test('workspace entity ids are checked before the model sees them', async () => {
+    const db = { query: jest.fn().mockResolvedValueOnce([[]]) };
+    await expect(svc.validateWorkspaceContext(db, WORKSPACE)).rejects.toThrow(/case that is unavailable/);
+    expect(db.query).toHaveBeenCalledWith('SELECT case_id FROM cases WHERE case_id IN (?)', ['CASE1234']);
   });
 
   test('labels appointment wall time separately from its real UTC twin', () => {
@@ -136,6 +159,36 @@ describe('assistant read-plan boundary', () => {
     }
   });
 
+  test('a validated workspace snapshot is signed and supplied consistently to planning', async () => {
+    const old = process.env.JWT_SECRET;
+    process.env.JWT_SECRET = 'assistant-service-test-secret';
+    const db = { query: jest.fn(async (query) => {
+      if (/FROM cases/.test(query)) return [[{ case_id: 'CASE1234' }]];
+      if (/FROM contacts/.test(query)) return [[{ contact_id: 42 }]];
+      return [[{ user: 7, user_name: 'Stuart Sandweiss', user_initials: 'SS', roles: 'staff' }]];
+    }) };
+    const spy = jest.spyOn(aiService, 'call').mockResolvedValue({
+      ok: true, callId: 31,
+      json: { action: 'query', summary: 'Use attached view', steps: [sql('SELECT case_id FROM cases LIMIT 1')] },
+    });
+    try {
+      const made = await svc.plan(db, { question: 'What am I looking at?', userId: 7, workspaceContext: WORKSPACE });
+      expect(assistantTicket.verify(made.ticket).workspace).toEqual(WORKSPACE);
+      expect(spy.mock.calls[0][1].userInput).toMatch(/<workspace_context server_verified="true" immutable_for_request="true">[\s\S]*CASE1234/);
+    } finally {
+      spy.mockRestore();
+      if (old === undefined) delete process.env.JWT_SECRET; else process.env.JWT_SECRET = old;
+    }
+  });
+
+  test('assistant destinations are a closed semantic allowlist', () => {
+    expect(svc.normalizeDestinations([
+      { id: 'automations.court_review', label: 'Take me there' },
+      { id: 'javascript:alert(1)', label: 'Bad' },
+      { id: 'automations.court_review', label: 'Duplicate' },
+    ])).toEqual([{ id: 'automations.court_review', mode: 'take', label: 'Take me there' }]);
+  });
+
   test('a temporary attachment and product model mode are bound into the plan', async () => {
     const old = process.env.JWT_SECRET;
     process.env.JWT_SECRET = 'assistant-service-test-secret';
@@ -165,7 +218,7 @@ describe('assistant read-plan boundary', () => {
     const plan = svc.validatePlan({ action: 'query', summary: 'Find the contact', steps: [
       sql('SELECT contact_id, contact_name FROM contacts LIMIT 5'),
     ] });
-    const signed = assistantTicket.sign({ v: 1, uid: 7, question: 'Who?', history: [], plan: { action: 'query', ...plan } });
+    const signed = assistantTicket.sign({ v: 1, uid: 7, question: 'Who?', history: [], workspace: WORKSPACE, plan: { action: 'query', ...plan } });
     const run = jest.spyOn(reportService, 'execute').mockResolvedValue({ rows: [{ contact_id: 9, contact_name: 'Ada' }], rowCount: 1, truncated: false });
     const answer = jest.spyOn(aiService, 'call').mockResolvedValue({
       ok: true, callId: 2,
@@ -179,6 +232,7 @@ describe('assistant read-plan boundary', () => {
       expect(out.sources[0]).toMatchObject({ query_id: 'q1', row_number: 1, row: { contact_id: '9', contact_name: 'Ada' } });
       expect(out.sources[0].actions).toEqual([{ kind: 'contact', id: '9', label: 'Ada' }]);
       expect(out.entities).toEqual([{ kind: 'contact', id: '9', label: 'Ada' }]);
+      expect(answer.mock.calls[0][1].userInput).toMatch(/<workspace_context server_verified="true" immutable_for_request="true">[\s\S]*CASE1234/);
     } finally {
       run.mockRestore();
       answer.mockRestore();
@@ -212,7 +266,7 @@ describe('assistant read-plan boundary', () => {
     const plan = svc.validatePlan({ action: 'query', summary: 'Find linked case', steps: [
       sql('SELECT c.case_id FROM cases c JOIN case_relate cr ON c.case_id = cr.case_relate_case_id LIMIT 5'),
     ] });
-    const signed = assistantTicket.sign({ v: 1, uid: 7, question: 'Find it', history: [], plan: { action: 'query', ...plan } });
+    const signed = assistantTicket.sign({ v: 1, uid: 7, question: 'Find it', history: [], workspace: WORKSPACE, plan: { action: 'query', ...plan } });
     const run = jest.spyOn(reportService, 'execute').mockRejectedValue(new Error("Illegal mix of collations (utf8mb4_general_ci,IMPLICIT) and (utf8mb4_unicode_ci,IMPLICIT) for operation '='"));
     const repair = jest.spyOn(aiService, 'call').mockResolvedValue({ ok: true, callId: 8, json: {
       action: 'query', summary: 'Retry the linked case lookup with an explicit collation', steps: [
@@ -223,7 +277,8 @@ describe('assistant read-plan boundary', () => {
       const out = await svc.execute({}, { signedTicket: signed, userId: 7, auth: { type: 'jwt', userId: 7 } });
       expect(out).toMatchObject({ outcome: 'plan', notice: expect.stringMatching(/collation mismatch/i) });
       expect(out.steps[0].sql).toMatch(/COLLATE utf8mb4_general_ci/);
-      expect(assistantTicket.verify(out.ticket).repairs).toBe(1);
+      expect(assistantTicket.verify(out.ticket)).toMatchObject({ repairs: 1, workspace: WORKSPACE });
+      expect(repair.mock.calls[0][1].userInput).toMatch(/<workspace_context server_verified="true" immutable_for_request="true">[\s\S]*CASE1234/);
     } finally {
       run.mockRestore(); repair.mockRestore();
       if (old === undefined) delete process.env.JWT_SECRET; else process.env.JWT_SECRET = old;
@@ -286,8 +341,8 @@ describe('assistant knowledge and prompts', () => {
   });
 
   test('both assistant prompts are registered JSON prompts', () => {
-    expect(prompts.getPrompt('assistant_plan')).toMatchObject({ output_type: 'json', version: '4', model: 'claude-opus-5' });
-    expect(prompts.getPrompt('assistant_answer')).toMatchObject({ output_type: 'json', version: '4', model: 'claude-opus-5' });
+    expect(prompts.getPrompt('assistant_plan')).toMatchObject({ output_type: 'json', version: '5', model: 'claude-opus-5' });
+    expect(prompts.getPrompt('assistant_answer')).toMatchObject({ output_type: 'json', version: '5', model: 'claude-opus-5' });
     expect(prompts.getPrompt('assistant_plan').system).toMatch(/COLLATE utf8mb4_general_ci/);
     expect(prompts.getPrompt('assistant_plan').system).toMatch(/Never generate[\s\S]*x IN \(SELECT \.\.\. LIMIT n\)/);
     expect(prompts.getPrompt('assistant_plan').system).toMatch(/users\.roles[\s\S]*canonical role field/);
