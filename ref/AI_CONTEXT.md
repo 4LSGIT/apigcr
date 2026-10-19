@@ -1960,6 +1960,19 @@ attempt and the UI automatically executes the corrected signed plan. The last
 case is rewritten as a direct ordered query or a JOIN to a limited derived
 table; raw database errors are not returned to staff after repair is exhausted.
 
+**Staff roles and appointment time.** `users.roles` is exposed to this curated
+surface and is the canonical answer to staff-role/capability questions;
+`user_auth` is only login status and `does_appts` is only provider eligibility.
+The planner must not infer a job title from calendar activity. `appts.appt_date`
+and generated `appt_end` are naive wall times in `FIRM_TIMEZONE` (normally
+America/Detroit), while `appt_date_utc` is the real UTC twin. Because the mysql2
+pool runs with `timezone: 'Z'`, a raw local DATETIME can reach Node as a Date
+whose ISO rendering misleadingly ends in `Z`. The planner uses `DATE_FORMAT`
+with `*_local` aliases for display; the evidence compactor also labels raw
+appointment Date values as firm-local so the answerer cannot mistake that
+transport marker for timezone data. Planning context includes both real UTC and
+the current firm-local instant.
+
 Rows go only to `assistant_answer`, whose contract has no operation/SQL shape;
 row text is untrusted data. It returns plain text plus `{query_id,row_number}`
 citations that the service resolves against actual returned rows. Those

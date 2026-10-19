@@ -14,6 +14,7 @@ const commsSearch = require('./commsArchiveSearch');
 const knowledge = require('./assistantKnowledgeService');
 const weather = require('./assistantWeatherService');
 const attachmentService = require('./assistantAttachmentService');
+const { FIRM_TZ, nowLocal } = require('./timezoneService');
 const { auditAdminAction } = require('../lib/auth.superuser');
 const { validateSql } = require('../lib/reportSchema/validator');
 const ticket = require('../lib/assistantTicket');
@@ -170,10 +171,23 @@ function validatePlan(raw) {
   };
 }
 
-function scalar(value, cap) {
+const APPT_LOCAL_DATETIME_KEYS = new Set([
+  'appt_date', 'appt_end', 'appt_date_local', 'appt_end_local',
+]);
+
+function scalar(value, cap, key = '') {
   if (value == null) return null;
   let text;
-  if (value instanceof Date) text = value.toISOString();
+  if (value instanceof Date) {
+    const iso = value.toISOString();
+    if (APPT_LOCAL_DATETIME_KEYS.has(String(key).toLowerCase())) {
+      text = `${iso.slice(0, 19).replace('T', ' ')} (firm-local wall time; ${FIRM_TZ}; not UTC)`;
+    } else if (String(key).toLowerCase() === 'appt_date_utc') {
+      text = `${iso} (UTC)`;
+    } else {
+      text = iso;
+    }
+  }
   else if (Buffer.isBuffer(value)) text = `[binary ${value.length} bytes]`;
   else if (typeof value === 'object') {
     try { text = JSON.stringify(value); } catch (_) { text = String(value); }
@@ -184,7 +198,7 @@ function scalar(value, cap) {
 function compactRows(rows, cellCap = MODEL_CELL_CHARS) {
   return (Array.isArray(rows) ? rows : []).map((row) => {
     const out = {};
-    for (const [key, value] of Object.entries(row || {})) out[key] = scalar(value, cellCap);
+    for (const [key, value] of Object.entries(row || {})) out[key] = scalar(value, cellCap, key);
     return out;
   });
 }
@@ -213,7 +227,9 @@ async function plan(db, { question, history, userId, modelMode, temporaryAttachm
   if (contextual) return { outcome: 'answer', answer: contextual, suggestions: [], callId: null, model_mode: mode };
   const ai = await aiService.call(db, {
     promptKey: 'assistant_plan',
-    userInput: `CURRENT TIME:\n${new Date().toISOString()} (server UTC; user timezone is Asia/Jerusalem)\n\n` +
+    userInput: `CURRENT TIME:\n${new Date().toISOString()} (server UTC)\n` +
+      `${nowLocal().toISO()} (firm-local time; ${FIRM_TZ})\n` +
+      `The signed-in user's browser timezone is not authoritative for firm appointments.\n\n` +
       `CONVERSATION:\n${historyText(hist)}\n\nATTACHED FILES:\n${attached.description}\n\nCURRENT QUESTION:\n${q}`,
     attachments: attached.blocks,
     model: attachmentService.modelForMode(mode),

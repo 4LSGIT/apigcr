@@ -26,6 +26,13 @@ affects a deadline, filing, client communication,
 or other consequential decision. The assistant can misunderstand incomplete or
 ambiguous records.
 
+Staff identity answers use the `roles` assigned in Admin → Users. Login status,
+the ability to host appointments, and calendar activity are not treated as a
+person's job title. Appointment starts and ends are shown in the firm's
+configured timezone (normally America/Detroit). The stored `appt_date` is that
+firm-local wall time; `appt_date_utc` is its separate real-UTC twin used for
+scheduling and integrations.
+
 ## Models and files
 
 The model selector offers two product-level choices:

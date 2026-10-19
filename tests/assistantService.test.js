@@ -53,6 +53,18 @@ describe('assistant read-plan boundary', () => {
     expect(h[0].text).toHaveLength(2000);
   });
 
+  test('labels appointment wall time separately from its real UTC twin', () => {
+    expect(svc.compactRows([{
+      appt_date: new Date('2026-10-27T10:00:00.000Z'),
+      appt_end: new Date('2026-10-27T10:10:00.000Z'),
+      appt_date_utc: new Date('2026-10-27T14:00:00.000Z'),
+    }])).toEqual([{
+      appt_date: '2026-10-27 10:00:00 (firm-local wall time; America/Detroit; not UTC)',
+      appt_end: '2026-10-27 10:10:00 (firm-local wall time; America/Detroit; not UTC)',
+      appt_date_utc: '2026-10-27T14:00:00.000Z (UTC)',
+    }]);
+  });
+
   test('answers an unambiguous weekday follow-up from conversation context without a query', async () => {
     const spy = jest.spyOn(aiService, 'call');
     const out = await svc.plan({}, {
@@ -262,9 +274,12 @@ describe('assistant knowledge and prompts', () => {
   });
 
   test('both assistant prompts are registered JSON prompts', () => {
-    expect(prompts.getPrompt('assistant_plan')).toMatchObject({ output_type: 'json', version: '2', model: 'claude-opus-5' });
-    expect(prompts.getPrompt('assistant_answer')).toMatchObject({ output_type: 'json', version: '2', model: 'claude-opus-5' });
+    expect(prompts.getPrompt('assistant_plan')).toMatchObject({ output_type: 'json', version: '3', model: 'claude-opus-5' });
+    expect(prompts.getPrompt('assistant_answer')).toMatchObject({ output_type: 'json', version: '3', model: 'claude-opus-5' });
     expect(prompts.getPrompt('assistant_plan').system).toMatch(/COLLATE utf8mb4_general_ci/);
     expect(prompts.getPrompt('assistant_plan').system).toMatch(/Never generate[\s\S]*x IN \(SELECT \.\.\. LIMIT n\)/);
+    expect(prompts.getPrompt('assistant_plan').system).toMatch(/users\.roles[\s\S]*canonical role field/);
+    expect(prompts.getPrompt('assistant_plan').system).toMatch(/DATE_FORMAT\(appt_date,[\s\S]*AS appt_date_local/);
+    expect(prompts.getPrompt('assistant_answer').system).toMatch(/trailing Z[\s\S]*transport artifact/);
   });
 });
