@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-10-18T07:19:02.055Z
+-- Generated: 2026-10-19T00:05:40.365Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:a3bc37a934aca0ffec13fc0bf04439ca
+-- Fingerprint: sha256:d058936a44f24b3a2bc1db66d26e9eb6
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -276,6 +276,38 @@ CREATE TABLE `appts` (
   `appt_view_id` int unsigned DEFAULT NULL COMMENT 'booking_views.id this appt was booked/rebooked through',
   `rescheduled_from_appt_id` int DEFAULT NULL COMMENT 'E0a atom: the appt this row replaced (reschedule or manage-page rebook). NULL = original booking, or pre-2026-08-27 row (not backfilled). No FK by convention (appts carries none).'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `assistant_chat_messages`
+--
+
+DROP TABLE IF EXISTS `assistant_chat_messages`;
+CREATE TABLE `assistant_chat_messages` (
+  `id` bigint unsigned NOT NULL,
+  `chat_id` bigint unsigned NOT NULL,
+  `role` enum('user','assistant') COLLATE utf8mb4_general_ci NOT NULL,
+  `message_text` mediumtext COLLATE utf8mb4_general_ci NOT NULL,
+  `payload` json DEFAULT NULL COMMENT 'assistant entities, citations, suggestions and compact query-count metadata; never SQL',
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='Ordered messages displayed in one user-private YisrAI chat';
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `assistant_chats`
+--
+
+DROP TABLE IF EXISTS `assistant_chats`;
+CREATE TABLE `assistant_chats` (
+  `id` bigint unsigned NOT NULL,
+  `user_id` tinyint NOT NULL COMMENT 'users.user; ownership boundary for every read/write',
+  `title` varchar(120) COLLATE utf8mb4_general_ci NOT NULL COMMENT 'first question, whitespace-normalized and truncated',
+  `model_mode` enum('better_quality','faster_speed') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'better_quality' COMMENT 'product-level model choice; provider model ids remain server-owned',
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='Ask YisrAI recent chats, private to the creating staff user';
 
 -- --------------------------------------------------------
 
@@ -4116,6 +4148,20 @@ ALTER TABLE `appts`
   ADD KEY `idx_appts_link` (`appt_link_type`,`appt_link_id`);
 
 --
+-- Indexes for table `assistant_chat_messages`
+--
+ALTER TABLE `assistant_chat_messages`
+  ADD PRIMARY KEY (`id`),
+  ADD KEY `idx_assistant_chat_messages_chat` (`chat_id`,`id`);
+
+--
+-- Indexes for table `assistant_chats`
+--
+ALTER TABLE `assistant_chats`
+  ADD PRIMARY KEY (`id`),
+  ADD KEY `idx_assistant_chats_user_recent` (`user_id`,`updated_at` DESC,`id` DESC);
+
+--
 -- Indexes for table `availability_blocks`
 --
 ALTER TABLE `availability_blocks`
@@ -5350,6 +5396,18 @@ ALTER TABLE `appts`
   MODIFY `appt_id` int NOT NULL AUTO_INCREMENT;
 
 --
+-- AUTO_INCREMENT for table `assistant_chat_messages`
+--
+ALTER TABLE `assistant_chat_messages`
+  MODIFY `id` bigint unsigned NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `assistant_chats`
+--
+ALTER TABLE `assistant_chats`
+  MODIFY `id` bigint unsigned NOT NULL AUTO_INCREMENT;
+
+--
 -- AUTO_INCREMENT for table `availability_blocks`
 --
 ALTER TABLE `availability_blocks`
@@ -6144,6 +6202,18 @@ ALTER TABLE `workflows`
 --
 ALTER TABLE `ai_match_types`
   ADD CONSTRAINT `fk_amt_set` FOREIGN KEY (`set_id`) REFERENCES `ai_match_sets` (`id`);
+
+--
+-- Constraints for table `assistant_chat_messages`
+--
+ALTER TABLE `assistant_chat_messages`
+  ADD CONSTRAINT `fk_assistant_chat_messages_chat` FOREIGN KEY (`chat_id`) REFERENCES `assistant_chats` (`id`) ON DELETE CASCADE;
+
+--
+-- Constraints for table `assistant_chats`
+--
+ALTER TABLE `assistant_chats`
+  ADD CONSTRAINT `fk_assistant_chats_user` FOREIGN KEY (`user_id`) REFERENCES `users` (`user`) ON DELETE CASCADE;
 
 --
 -- Constraints for table `campaign_contacts`

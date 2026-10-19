@@ -75,9 +75,10 @@ answer stable general-knowledge questions directly.
 
 The server—not a confirmation button—is the security boundary. It validates the
 signed plan again at execution, limits every result, rejects expensive plans,
-times out work, and records SQL runs and model cost. A collation mismatch or an
-over-expensive query gets one automatic planner repair; the replacement must
-pass the same validation and execution limits.
+times out work, and records SQL runs and model cost. A collation mismatch, an
+over-expensive query, or a query shape unsupported by the deployed MySQL
+version gets one automatic planner repair; the replacement must pass the same
+validation and execution limits.
 
 ## Conversation and follow-ups
 

@@ -299,17 +299,32 @@ function validateTicket(payload, userId) {
   };
 }
 
-async function repairRejectedPlan(db, approved, failedQuery, failure, userId, attached) {
-  const collation = /illegal mix of collations/i.test(failure);
-  const guidance = collation
-    ? 'Put BOTH sides of every text equality in COLLATE utf8mb4_general_ci.'
-    : 'Make the query substantially cheaper. Apply indexed date/type filters before joins, use a LIMITed derived candidate set before joining broad tables, and do not repeat the rejected join shape.';
+function repairFailure(failure) {
+  if (/illegal mix of collations/i.test(failure)) return {
+    category: 'legacy text collation mismatch',
+    guidance: 'Put BOTH sides of every text equality in COLLATE utf8mb4_general_ci.',
+    notice: 'I corrected a legacy text-collation mismatch and retried the search.',
+  };
+  if (/doesn'?t yet support.*LIMIT\s*&\s*IN\/ALL\/ANY\/SOME subquery/i.test(failure)) return {
+    category: 'database version rejects LIMIT inside an IN/ALL/ANY/SOME subquery',
+    guidance: 'Do not put LIMIT inside an IN, ALL, ANY, or SOME subquery. Replace that membership subquery with a JOIN to a limited derived table, or query the already-filtered source directly with ORDER BY and a terminal LIMIT.',
+    notice: 'I rewrote a query shape this database version does not support and retried the search.',
+  };
+  if (/query plan estimates too much work/i.test(failure)) return {
+    category: 'query plan estimated too much work',
+    guidance: 'Make the query substantially cheaper. Apply indexed date/type filters before joins, use a LIMITed derived candidate set before joining broad tables, and do not repeat the rejected join shape.',
+    notice: 'I narrowed an overly expensive query and retried the search.',
+  };
+  return null;
+}
+
+async function repairRejectedPlan(db, approved, failedQuery, repair, userId, attached) {
   const ai = await aiService.call(db, {
     promptKey: 'assistant_plan',
     userInput: `CURRENT TIME:\n${new Date().toISOString()} (server UTC; user timezone is Asia/Jerusalem)\n\n` +
       `CONVERSATION:\n${historyText(approved.history)}\n\nCURRENT QUESTION:\n${approved.question}\n\n` +
-      `A sql.read step was rejected by the read-only executor. Return a complete replacement plan. ${guidance}\n\n` +
-      `SAFE FAILURE CATEGORY:\n${collation ? 'legacy text collation mismatch' : 'query plan estimated too much work'}\n\n` +
+      `A sql.read step was rejected by the read-only executor. Return a complete replacement plan. ${repair.guidance}\n\n` +
+      `SAFE FAILURE CATEGORY:\n${repair.category}\n\n` +
       `FAILED STEP:\n${JSON.stringify(failedQuery)}`,
     attachments: attached.blocks,
     model: attachmentService.modelForMode(approved.modelMode),
@@ -326,9 +341,7 @@ async function repairRejectedPlan(db, approved, failedQuery, failure, userId, at
     attachments: approved.attachments, plan: { action: 'query', ...built },
   });
   return {
-    outcome: 'plan', notice: collation
-      ? 'I corrected a legacy text-collation mismatch and retried the search.'
-      : 'I narrowed an overly expensive query and retried the search.',
+    outcome: 'plan', notice: repair.notice,
     ...built, ticket: signed, callId: ai.callId, model_mode: approved.modelMode,
   };
 }
@@ -381,10 +394,16 @@ async function execute(db, { signedTicket, userId, auth, temporaryAttachments } 
         });
       } catch (err) {
         const failure = String(err && err.message);
-        const repairable = /illegal mix of collations|query plan estimates too much work/i.test(failure);
-        if (approved.repairs < 1 && repairable) {
-          const repaired = await repairRejectedPlan(db, approved, query, failure, userId, attached);
+        const repair = repairFailure(failure);
+        if (approved.repairs < 1 && repair) {
+          const repaired = await repairRejectedPlan(db, approved, query, repair, userId, attached);
           if (repaired) return repaired;
+        }
+        if (repair) {
+          throw httpError(422, 'The assistant could not repair this read-only search automatically. Try asking the question a different way.');
+        }
+        if (err && err.status === 400) {
+          throw httpError(422, 'The generated read-only search could not run. Try rephrasing the question; developers can inspect the saved query log.');
         }
         throw err;
       }
@@ -426,5 +445,6 @@ async function execute(db, { signedTicket, userId, auth, temporaryAttachments } 
 
 module.exports = {
   plan, execute, validatePlan, validateStep, cleanHistory, compactRows,
-  normalizeSuggestions, contextualAnswer, actionsForRow, actionsForEvidence, MAX_STEPS, MAX_ROWS, ASSISTANT_DENIED,
+  normalizeSuggestions, contextualAnswer, actionsForRow, actionsForEvidence,
+  repairFailure, MAX_STEPS, MAX_ROWS, ASSISTANT_DENIED,
 };

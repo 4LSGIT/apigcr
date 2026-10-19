@@ -228,6 +228,30 @@ describe('assistant read-plan boundary', () => {
       if (old === undefined) delete process.env.JWT_SECRET; else process.env.JWT_SECRET = old;
     }
   });
+
+  test('a MySQL limited-membership error is rewritten automatically', async () => {
+    const old = process.env.JWT_SECRET;
+    process.env.JWT_SECRET = 'assistant-service-test-secret';
+    const plan = svc.validatePlan({ action: 'query', summary: 'Read the latest messages', steps: [
+      sql('SELECT l.log_id FROM log l WHERE l.log_date >= DATE_SUB(NOW(), INTERVAL 30 DAY) AND l.log_id IN (SELECT x.log_id FROM log x WHERE x.log_date >= DATE_SUB(NOW(), INTERVAL 30 DAY) ORDER BY x.log_date DESC LIMIT 10) LIMIT 10'),
+    ] });
+    const signed = assistantTicket.sign({ v: 1, uid: 7, question: 'Check the 10 most recent SMS messages', history: [], plan: { action: 'query', ...plan } });
+    const run = jest.spyOn(reportService, 'execute').mockRejectedValue(new Error("This version of MySQL doesn't yet support 'LIMIT & IN/ALL/ANY/SOME subquery'"));
+    const repair = jest.spyOn(aiService, 'call').mockResolvedValue({ ok: true, callId: 10, json: {
+      action: 'query', summary: 'Read the latest messages directly', steps: [
+        sql('SELECT l.log_id FROM log l WHERE l.log_date >= DATE_SUB(NOW(), INTERVAL 30 DAY) ORDER BY l.log_date DESC LIMIT 10'),
+      ],
+    } });
+    try {
+      const out = await svc.execute({}, { signedTicket: signed, userId: 7, auth: { type: 'jwt', userId: 7 } });
+      expect(out).toMatchObject({ outcome: 'plan', notice: expect.stringMatching(/database version does not support/i) });
+      expect(repair.mock.calls[0][1].userInput).toMatch(/Do not put LIMIT inside an IN, ALL, ANY, or SOME subquery/);
+      expect(assistantTicket.verify(out.ticket).repairs).toBe(1);
+    } finally {
+      run.mockRestore(); repair.mockRestore();
+      if (old === undefined) delete process.env.JWT_SECRET; else process.env.JWT_SECRET = old;
+    }
+  });
 });
 
 describe('assistant knowledge and prompts', () => {
@@ -241,5 +265,6 @@ describe('assistant knowledge and prompts', () => {
     expect(prompts.getPrompt('assistant_plan')).toMatchObject({ output_type: 'json', version: '2', model: 'claude-opus-5' });
     expect(prompts.getPrompt('assistant_answer')).toMatchObject({ output_type: 'json', version: '2', model: 'claude-opus-5' });
     expect(prompts.getPrompt('assistant_plan').system).toMatch(/COLLATE utf8mb4_general_ci/);
+    expect(prompts.getPrompt('assistant_plan').system).toMatch(/Never generate[\s\S]*x IN \(SELECT \.\.\. LIMIT n\)/);
   });
 });

@@ -1954,8 +1954,11 @@ schema drift. `model_mode` is server-allowlisted: `better_quality` maps to
 provider model ids never cross the browser contract. The normal AI call ledger
 records the resolved model and remains cost-aware. Assistant
 SQL is retained in `report_runs` for developer diagnosis. If a SQL step hits
-MySQL's illegal-mix error or the EXPLAIN workload gate, the planner gets one
-repair attempt and the UI automatically executes the corrected signed plan.
+MySQL's illegal-mix error, the EXPLAIN workload gate, or the deployed server's
+`LIMIT & IN/ALL/ANY/SOME subquery` incompatibility, the planner gets one repair
+attempt and the UI automatically executes the corrected signed plan. The last
+case is rewritten as a direct ordered query or a JOIN to a limited derived
+table; raw database errors are not returned to staff after repair is exhausted.
 
 Rows go only to `assistant_answer`, whose contract has no operation/SQL shape;
 row text is untrusted data. It returns plain text plus `{query_id,row_number}`
