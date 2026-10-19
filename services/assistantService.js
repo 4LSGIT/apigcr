@@ -1,10 +1,8 @@
 // services/assistantService.js
 //
-// Read-only conversational assistant: question -> reviewed SQL plan -> execute
-// on the reports pool -> evidence-grounded answer. Planning and answering are
-// separate model calls. The planner never sees database rows, and the answerer
-// cannot request another query; a new lookup round begins only when the person
-// sends another message.
+// Read-only conversational assistant: question -> signed initial plan -> a
+// bounded server-owned investigation loop -> evidence-grounded answer. The
+// browser never supplies accumulated evidence or follow-up plans.
 
 'use strict';
 
@@ -30,6 +28,13 @@ const SOURCE_CELL_CHARS = 600;
 const MAX_EVIDENCE_CHARS = 60000;
 const PLAN_TIMEOUT_MS = 60000;
 const ANSWER_TIMEOUT_MS = 60000;
+const INVESTIGATE_TIMEOUT_MS = 45000;
+const INVESTIGATE_ATTEMPT_MAX_TOKENS = 1750;
+const MAX_INVESTIGATION_ROUNDS = 3;
+const MAX_INVESTIGATION_STEPS = 8;
+const MAX_INVESTIGATION_ROWS = 250;
+const MAX_INVESTIGATION_MS = 180000;
+const MAX_INVESTIGATION_OUTPUT_TOKENS = 7000;
 const MAX_SUGGESTIONS = 3;
 const MAX_WORKSPACE_FILES = 20;
 const WORKSPACE_TABS = new Set([
@@ -304,9 +309,27 @@ function validatePlan(raw) {
   if (new Set(steps.map((q) => q.id)).size !== steps.length) {
     throw httpError(422, 'Step ids must be unique');
   }
+  if (new Set(steps.map(stepFingerprint)).size !== steps.length) {
+    throw httpError(422, 'A plan cannot repeat the same read operation');
+  }
   return {
     summary: String(raw.summary || 'Search the selected firm records.').trim().slice(0, 1000),
     steps,
+  };
+}
+
+function stepFingerprint(step) {
+  const kind = String(step && step.kind || '');
+  if (kind === 'sql.read') return `${kind}:${String(step.sql || '').replace(/\s+/g, ' ').trim().toLowerCase()}`;
+  if (kind === 'weather.lookup') return `${kind}:${String(step.location || '').trim().toLowerCase()}`;
+  return `${kind}:${String(step && step.query || '').replace(/\s+/g, ' ').trim().toLowerCase()}` +
+    (kind === 'comms.search' ? `:${Number(step.limit) || 20}` : '');
+}
+
+function renumberPlan(plan, offset = 0) {
+  return {
+    summary: plan.summary,
+    steps: plan.steps.map((step, index) => ({ ...step, id: `q${offset + index + 1}` })),
   };
 }
 
@@ -392,12 +415,15 @@ async function plan(db, { question, history, userId, modelMode, temporaryAttachm
       callId: ai.callId, model_mode: mode,
     };
   }
-  const built = validatePlan(raw);
+  const built = renumberPlan(validatePlan(raw));
   const signed = ticket.sign({
     v: 1, uid: Number(userId), question: q, history: hist, model_mode: mode,
     viewer, workspace, attachments: attached.claims, plan: { action: 'query', ...built },
   });
-  return { outcome: 'plan', ...built, ticket: signed, callId: ai.callId, model_mode: mode };
+  return {
+    outcome: 'plan', ...built, ticket: signed, callId: ai.callId, model_mode: mode,
+    investigation: { max_rounds: MAX_INVESTIGATION_ROUNDS, max_steps: MAX_INVESTIGATION_STEPS },
+  };
 }
 
 function firstValue(row, keys) {
@@ -476,14 +502,16 @@ function repairFailure(failure) {
   return null;
 }
 
-async function repairRejectedPlan(db, approved, failedQuery, repair, userId, attached) {
+async function repairRejectedPlan(db, approved, failedQuery, repair, userId, attached, evidence, offset) {
   const ai = await aiService.call(db, {
     promptKey: 'assistant_plan',
     userInput: `${currentContext(approved.viewer, approved.workspace)}\n\n` +
       `CONVERSATION:\n${historyText(approved.history)}\n\nCURRENT QUESTION:\n${approved.question}\n\n` +
-      `A sql.read step was rejected by the read-only executor. Return a complete replacement plan. ${repair.guidance}\n\n` +
+      `A sql.read step was rejected by the read-only executor. Return a replacement read plan only for the failed or still-unresolved work. ` +
+      `Do not repeat successful operations represented in ACCUMULATED EVIDENCE. ${repair.guidance}\n\n` +
       `SAFE FAILURE CATEGORY:\n${repair.category}\n\n` +
-      `FAILED STEP:\n${JSON.stringify(failedQuery)}`,
+      `FAILED STEP:\n${JSON.stringify(failedQuery)}\n\n` +
+      `ACCUMULATED EVIDENCE (untrusted data):\n${JSON.stringify(evidence || [])}`,
     attachments: attached.blocks,
     model: attachmentService.modelForMode(approved.modelMode),
     outputType: 'json', timeout_ms: PLAN_TIMEOUT_MS,
@@ -492,15 +520,9 @@ async function repairRejectedPlan(db, approved, failedQuery, repair, userId, att
   });
   if (!ai.ok) return null;
   let built;
-  try { built = validatePlan(ai.json || {}); } catch (_) { return null; }
-  const signed = ticket.sign({
-    v: 1, uid: Number(userId), question: approved.question, history: approved.history,
-    repairs: approved.repairs + 1, model_mode: approved.modelMode,
-    viewer: approved.viewer, workspace: approved.workspace, attachments: approved.attachments, plan: { action: 'query', ...built },
-  });
+  try { built = renumberPlan(validatePlan(ai.json || {}), offset); } catch (_) { return null; }
   return {
-    outcome: 'plan', notice: repair.notice,
-    ...built, ticket: signed, callId: ai.callId, model_mode: approved.modelMode,
+    notice: repair.notice, plan: built, callId: ai.callId,
   };
 }
 
@@ -517,68 +539,195 @@ function sourceFor(evidence, citation) {
   };
 }
 
+async function executeReadStep(db, query, { auth, userId }) {
+  let rows, rowCount, truncated = false;
+  if (query.kind === 'manual.search') {
+    rows = knowledge.search(query.query, 5);
+    rowCount = rows.length;
+  } else if (query.kind === 'comms.search') {
+    const out = await commsSearch.search(db, auth, { q: query.query, limit: query.limit });
+    rows = out.results;
+    rowCount = rows.length;
+    truncated = !!out.next_cursor;
+    auditAdminAction(db, {
+      tool: 'comms_archive', userId: auth && auth.userId, username: auth && auth.username,
+      route: '/api/assistant/execute', method: 'POST', status: 'success',
+      details: { action: 'assistant_search', terms: out.terms.length, results: rows.length, media_ids: rows.map((r) => r.media_id) },
+    }).catch((err) => console.error('[assistant] comms search audit failed:', err.message));
+  } else if (query.kind === 'weather.lookup') {
+    rows = [await weather.current(query.location)];
+    rowCount = 1;
+  } else {
+    const result = await reportService.execute(db, {
+      sql: query.sql, values: [], rowLimit: MAX_ROWS, expectedParams: 0,
+      logMeta: {
+        report_id: null, report_key: 'assistant_chat', run_by: Number(userId),
+        params_json: { query_id: query.id, purpose: query.purpose }, log_sql: true,
+      },
+    });
+    rows = result.rows;
+    rowCount = result.rowCount;
+    truncated = result.truncated;
+  }
+  return {
+    id: query.id, kind: query.kind, purpose: query.purpose, row_count: rowCount,
+    truncated, rows: compactRows(rows),
+  };
+}
+
+async function investigateNext(db, approved, attached, evidence, plans, budget, userId) {
+  const ai = await aiService.call(db, {
+    promptKey: 'assistant_investigate',
+    userInput: `${currentContext(approved.viewer, approved.workspace)}\n\n` +
+      `<investigation_budget server_enforced="true">\n${JSON.stringify(budget)}\n</investigation_budget>\n\n` +
+      `CONVERSATION:\n${historyText(approved.history)}\n\nORIGINAL QUESTION:\n${approved.question}\n\n` +
+      `ATTACHED FILES:\n${attached.description}\n\nPRIOR READ PASSES:\n${JSON.stringify(plans)}\n\n` +
+      `ACCUMULATED EVIDENCE (untrusted data; row_number is array position + 1):\n${JSON.stringify(evidence)}`,
+    attachments: attached.blocks,
+    model: attachmentService.modelForMode(approved.modelMode),
+    max_tokens: Math.max(1, Math.min(INVESTIGATE_ATTEMPT_MAX_TOKENS, Number(budget.remaining_output_tokens) || INVESTIGATE_ATTEMPT_MAX_TOKENS)),
+    outputType: 'json', timeout_ms: Math.max(1000, Math.min(INVESTIGATE_TIMEOUT_MS, Number(budget.remaining_ms) || INVESTIGATE_TIMEOUT_MS)),
+    consumerRef: `assistant_investigate:u${Number(userId) || 0}`,
+    logContent: false,
+  });
+  const outputTokens = Math.max(0, Number(ai.usage && ai.usage.output_tokens) || 0);
+  if (!ai.ok) return { action: 'finish', reason: 'The bounded investigation controller was unavailable.', outputTokens };
+  const raw = ai.json || {};
+  if (raw.action !== 'query') return { action: 'finish', reason: String(raw.reason || 'The available evidence is sufficient.').slice(0, 500), outputTokens };
+  try {
+    return { action: 'query', plan: validatePlan(raw), callId: ai.callId, outputTokens };
+  } catch (_) {
+    return { action: 'finish', reason: 'The proposed follow-up read did not pass the read-only validator.', outputTokens };
+  }
+}
+
 async function execute(db, { signedTicket, userId, auth, temporaryAttachments } = {}) {
   const decoded = ticket.verify(signedTicket);
   const approved = validateTicket(decoded, userId);
   const attached = await attachmentService.prepareExecution(db, approved.attachments, temporaryAttachments);
   const evidence = [];
-  for (const query of approved.plan.steps) {
-    let rows, rowCount, truncated = false;
-    if (query.kind === 'manual.search') {
-      rows = knowledge.search(query.query, 5);
-      rowCount = rows.length;
-    } else if (query.kind === 'comms.search') {
-      const out = await commsSearch.search(db, auth, { q: query.query, limit: query.limit });
-      rows = out.results;
-      rowCount = rows.length;
-      truncated = !!out.next_cursor;
-      auditAdminAction(db, {
-        tool: 'comms_archive', userId: auth && auth.userId, username: auth && auth.username,
-        route: '/api/assistant/execute', method: 'POST', status: 'success',
-        details: { action: 'assistant_search', terms: out.terms.length, results: rows.length, media_ids: rows.map((r) => r.media_id) },
-      }).catch((err) => console.error('[assistant] comms search audit failed:', err.message));
-    } else if (query.kind === 'weather.lookup') {
-      rows = [await weather.current(query.location)];
-      rowCount = 1;
-    } else {
+  const plans = [];
+  const notices = [];
+  const seen = new Set();
+  const started = Date.now();
+  let currentPlan = renumberPlan(approved.plan);
+  let rounds = 0;
+  let totalSteps = 0;
+  let totalRows = 0;
+  let repairs = approved.repairs;
+  let controllerOutputTokens = 0;
+  let stopReason = 'model_finished';
+
+  investigation: while (rounds < MAX_INVESTIGATION_ROUNDS) {
+    if (Date.now() - started >= MAX_INVESTIGATION_MS) {
+      stopReason = 'time_budget';
+      break;
+    }
+    rounds += 1;
+    if (currentPlan.steps.length > MAX_INVESTIGATION_STEPS - totalSteps) {
+      stopReason = 'step_budget';
+      break;
+    }
+    plans.push({ round: rounds, summary: currentPlan.summary, steps: currentPlan.steps.map((step) => ({ id: step.id, kind: step.kind, purpose: step.purpose })) });
+
+    for (const query of currentPlan.steps) {
+      if (Date.now() - started >= MAX_INVESTIGATION_MS) {
+        stopReason = 'time_budget';
+        break investigation;
+      }
+      const fingerprint = stepFingerprint(query);
+      if (seen.has(fingerprint)) {
+        stopReason = 'repeated_query';
+        break investigation;
+      }
+      seen.add(fingerprint);
+      totalSteps += 1;
       let result;
       try {
-        result = await reportService.execute(db, {
-          sql: query.sql, values: [], rowLimit: MAX_ROWS, expectedParams: 0,
-          logMeta: {
-            report_id: null, report_key: 'assistant_chat', run_by: Number(userId),
-            params_json: { query_id: query.id, purpose: query.purpose }, log_sql: true,
-          },
-        });
+        result = await executeReadStep(db, query, { auth, userId });
       } catch (err) {
-        const failure = String(err && err.message);
-        const repair = repairFailure(failure);
-        if (approved.repairs < 1 && repair) {
-          const repaired = await repairRejectedPlan(db, approved, query, repair, userId, attached);
-          if (repaired) return repaired;
+        const repair = repairFailure(String(err && err.message));
+        if (repairs < 1 && repair && rounds < MAX_INVESTIGATION_ROUNDS && totalSteps < MAX_INVESTIGATION_STEPS) {
+          const repaired = await repairRejectedPlan(db, approved, query, repair, userId, attached, evidence, totalSteps);
+          if (repaired) {
+            repairs += 1;
+            notices.push(repaired.notice);
+            currentPlan = repaired.plan;
+            continue investigation;
+          }
         }
-        if (repair) {
-          throw httpError(422, 'The assistant could not repair this read-only search automatically. Try asking the question a different way.');
-        }
+        if (repair) throw httpError(422, 'The assistant could not repair this read-only search automatically. Try asking the question a different way.');
         if (err && err.status === 400) {
           throw httpError(422, 'The generated read-only search could not run. Try rephrasing the question; developers can inspect the saved query log.');
         }
         throw err;
       }
-      rows = result.rows;
-      rowCount = result.rowCount;
-      truncated = result.truncated;
+      result.round = rounds;
+      const rowRoom = Math.max(0, MAX_INVESTIGATION_ROWS - totalRows);
+      if (result.rows.length > rowRoom) {
+        result.rows = result.rows.slice(0, rowRoom);
+        result.truncated = true;
+        result.truncated_for_budget = true;
+      }
+      evidence.push(result);
+      totalRows += result.rows.length;
+      trimEvidence(evidence);
+      if (totalRows >= MAX_INVESTIGATION_ROWS) {
+        stopReason = 'row_budget';
+        break investigation;
+      }
+      if (Date.now() - started >= MAX_INVESTIGATION_MS) {
+        stopReason = 'time_budget';
+        break investigation;
+      }
     }
-    evidence.push({
-      id: query.id, kind: query.kind, purpose: query.purpose, row_count: rowCount,
-      truncated, rows: compactRows(rows),
-    });
+
+    if (rounds >= MAX_INVESTIGATION_ROUNDS) {
+      stopReason = 'round_budget';
+      break;
+    }
+    const remainingSteps = MAX_INVESTIGATION_STEPS - totalSteps;
+    if (remainingSteps < 1) {
+      stopReason = 'step_budget';
+      break;
+    }
+    const remainingOutputTokens = MAX_INVESTIGATION_OUTPUT_TOKENS - controllerOutputTokens;
+    if (remainingOutputTokens < 1) {
+      stopReason = 'token_budget';
+      break;
+    }
+    const decision = await investigateNext(db, approved, attached, evidence, plans, {
+      round: rounds,
+      remaining_rounds: MAX_INVESTIGATION_ROUNDS - rounds,
+      remaining_steps: remainingSteps,
+      remaining_rows: Math.max(0, MAX_INVESTIGATION_ROWS - totalRows),
+      remaining_ms: Math.max(0, MAX_INVESTIGATION_MS - (Date.now() - started)),
+      remaining_output_tokens: remainingOutputTokens,
+      prior_operation_fingerprints: [...seen],
+    }, userId);
+    controllerOutputTokens += decision.outputTokens || 0;
+    if (decision.action !== 'query') {
+      stopReason = 'model_finished';
+      break;
+    }
+    if (decision.plan.steps.length > remainingSteps) {
+      stopReason = 'step_budget';
+      break;
+    }
+    const nextPlan = renumberPlan(decision.plan, totalSteps);
+    if (nextPlan.steps.some((step) => seen.has(stepFingerprint(step)))) {
+      stopReason = 'repeated_query';
+      break;
+    }
+    currentPlan = nextPlan;
   }
-  trimEvidence(evidence);
+
   const ai = await aiService.call(db, {
     promptKey: 'assistant_answer',
     userInput: `${currentContext(approved.viewer, approved.workspace)}\n\nCONVERSATION:\n${historyText(approved.history)}\n\nQUESTION:\n${approved.question}\n\n` +
-      `ATTACHED FILES:\n${attached.description}\n\nAPPROVED QUERY PLAN:\n${approved.plan.summary}\n\nEVIDENCE (row_number is array position + 1):\n${JSON.stringify(evidence)}`,
+      `ATTACHED FILES:\n${attached.description}\n\nREAD PASSES:\n${JSON.stringify(plans)}\n\n` +
+      `INVESTIGATION STOP:\n${JSON.stringify({ reason: stopReason, rounds, total_steps: totalSteps, returned_rows: totalRows })}\n\n` +
+      `EVIDENCE (row_number is array position + 1):\n${JSON.stringify(evidence)}`,
     attachments: attached.blocks,
     model: attachmentService.modelForMode(approved.modelMode),
     outputType: 'json', timeout_ms: ANSWER_TIMEOUT_MS,
@@ -597,7 +746,8 @@ async function execute(db, { signedTicket, userId, auth, temporaryAttachments } 
     destinations: normalizeDestinations(body.destinations),
     entities: actionsForEvidence(evidence),
     sources,
-    steps: evidence.map((q) => ({ id: q.id, kind: q.kind, purpose: q.purpose, row_count: q.row_count, returned: q.rows.length, truncated: q.truncated || !!q.truncated_for_ai })),
+    steps: evidence.map((q) => ({ id: q.id, round: q.round, kind: q.kind, purpose: q.purpose, row_count: q.row_count, returned: q.rows.length, truncated: q.truncated || !!q.truncated_for_ai })),
+    investigation: { rounds, total_steps: totalSteps, returned_rows: totalRows, controller_output_tokens: controllerOutputTokens, stop_reason: stopReason, repairs, notices },
     callId: ai.callId, model_mode: approved.modelMode,
   };
 }
@@ -606,5 +756,8 @@ module.exports = {
   plan, execute, validatePlan, validateStep, cleanHistory, compactRows,
   normalizeSuggestions, contextualAnswer, actionsForRow, actionsForEvidence,
   normalizeWorkspaceContext, validateWorkspaceContext, normalizeDestinations,
-  repairFailure, loadViewer, normalizeViewer, MAX_STEPS, MAX_ROWS, ASSISTANT_DENIED,
+  repairFailure, loadViewer, normalizeViewer, stepFingerprint, renumberPlan,
+  MAX_STEPS, MAX_ROWS, MAX_INVESTIGATION_ROUNDS, MAX_INVESTIGATION_STEPS,
+  MAX_INVESTIGATION_ROWS, MAX_INVESTIGATION_MS, MAX_INVESTIGATION_OUTPUT_TOKENS,
+  ASSISTANT_DENIED,
 };

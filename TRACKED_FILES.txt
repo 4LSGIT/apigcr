@@ -13,6 +13,7 @@ docs_review_2_2026-09-25.patch
 jest.config.js
 lib/actionDispatchers.js
 lib/aiPrompts/assistantAnswer.js
+lib/aiPrompts/assistantInvestigate.js
 lib/aiPrompts/assistantPlan.js
 lib/aiPrompts/commsSummary.js
 lib/aiPrompts/courtExtract.js

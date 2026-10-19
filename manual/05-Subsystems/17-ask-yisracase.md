@@ -39,6 +39,14 @@ the phone-call archive, the YisraCase manual, or current weather. Generated SQL
 and its success or rejection are retained in the developer report-run log so a
 failed answer can be diagnosed without asking staff to review query syntax.
 
+For a question that needs another fact, Casey can make up to three bounded read
+passes in the same request. The server allows at most eight operations, 250
+returned rows, three minutes, and 7,000 investigation-controller output tokens
+(with separately capped repair and answer calls). Each pass must target a
+specific missing fact; an exact repeated operation stops the loop. If a budget
+ends first, the answer uses the evidence already found and must say what remains
+unknown. These automatic passes are reads only.
+
 After execution, the answer includes source rows for important claims. When a
 source contains a case, contact, appointment, event, or task id, visible buttons
 under the citation open those records directly in YisraCase. Open those sources when an answer
@@ -105,7 +113,8 @@ signed plan again at execution, limits every result, rejects expensive plans,
 times out work, and records SQL runs and model cost. A collation mismatch, an
 over-expensive query, or a query shape unsupported by the deployed MySQL
 version gets one automatic planner repair; the replacement must pass the same
-validation and execution limits.
+validation and execution limits. The repair remains inside the same bounded
+investigation and keeps the original signed staff and workspace context.
 
 ## Conversation and follow-ups
 
@@ -116,11 +125,13 @@ follow-up. Older visible messages are history, not model context, so YisrAI
 suggests starting a fresh chat after the fourth question. For best results,
 keep one chat about one person, matter, or task.
 
-Query result text is sent only to the answering model; it is treated as
-untrusted data and cannot autonomously author another query. To investigate
-further, ask another question; read-only searches run automatically. Short
-follow-ups such as “what day of the week is it?” resolve against the date or
-record most recently discussed when that reference is unambiguous.
+Query result text is untrusted data. A separate investigation controller may
+use it only to identify one fact still needed for the original question and
+request another operation through the same read-only validator and budgets.
+Instructions found in a database row, call, manual page, or attachment cannot
+authorize or redirect that pass. Short user follow-ups such as “what day of the
+week is it?” resolve against the date or record most recently discussed when
+that reference is unambiguous.
 
 Attached file content is also untrusted data. Instructions printed in a PDF or
 image cannot authorize another query, save the file, or perform an action.

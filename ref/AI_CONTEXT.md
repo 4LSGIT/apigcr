@@ -1962,9 +1962,10 @@ closed. This is the extension seam for a
 future action phase: compose/send email, field/form writes and workflow draft/
 publish remain distinct operations and are NOT enabled by v1.
 
-**Separation invariant.** `assistant_plan` sees the question/history and the
-curated report schema, never rows. It emits the read plan. SQL is validated by
-the report validator at plan time, signed, revalidated from the ticket, then run
+**Separation and bounded-loop invariant.** `assistant_plan` sees the
+question/history and curated report schema, never rows. It emits the initial
+read plan. SQL is validated by the report validator at plan time, signed,
+revalidated from the ticket, then run
 through `reportService.execute` (SELECT-only pool, EXPLAIN/timeout/row caps and
 `report_runs` logging). The assistant layer additionally requires terminal
 LIMIT ≤50, bounds `log`/`email_log` by date and refuses conversational reads of
@@ -1980,9 +1981,22 @@ records the resolved model and remains cost-aware. Assistant
 SQL is retained in `report_runs` for developer diagnosis. If a SQL step hits
 MySQL's illegal-mix error, the EXPLAIN workload gate, or the deployed server's
 `LIMIT & IN/ALL/ANY/SOME subquery` incompatibility, the planner gets one repair
-attempt and the UI automatically executes the corrected signed plan. The last
+attempt inside the same server request. The last
 case is rewritten as a direct ordered query or a JOIN to a limited derived
 table; raw database errors are not returned to staff after repair is exhausted.
+
+After each successful pass, `assistant_investigate` receives the immutable
+signed viewer/workspace context plus accumulated evidence marked as untrusted.
+It can return only `finish` or another read plan. Every follow-up is revalidated
+and assigned server-owned citation ids; normalized duplicate operations stop
+instead of running. The whole execute call owns the state—evidence and
+follow-up plans never round-trip through the browser. Hard budgets are three
+passes, eight attempted operations, 250 returned rows, 180 seconds, 7,000
+controller output tokens, the existing 60,000-character evidence cap, and one
+safe repair. The controller is also structurally limited to two calls; repair
+and answer retain their prompt-level 4,000/2,500 output caps. `assistant_answer`
+always writes the final response and is told the stop reason so it cannot imply
+an exhaustive search after a budget stop.
 
 **Staff roles and appointment time.** `users.roles` is exposed to this curated
 surface and is the canonical answer to staff-role/capability questions;
@@ -2001,7 +2015,7 @@ the current firm-local instant.
 `assistantService.loadViewer` resolves the JWT's `userId` against `users` and
 loads only `user`, `user_name`, `user_initials`, and `roles`. The resulting
 server-verified `<current_staff>` block is supplied to the planner, stored in
-the HMAC-signed ticket, and supplied again to a repaired plan and the answerer.
+the HMAC-signed ticket, and supplied again to investigation, repair, and answer.
 The browser cannot submit a viewer identity. Planner rules bind I/me/my/mine to
 that numeric staff id (for example `appts.appt_with = user_id`), never a display
 name or a similarly named contact. Old in-flight tickets without the block
@@ -2014,9 +2028,10 @@ resolved rows also expose typed shell actions for stable `case_id`,
 `contact_id`, `appt_id`, `event_id`, and `task_id` aliases; the UI dispatches to
 `addFile`, `showAppt`, `showEvent`, or `showTask`. Follow-up suggestions are
 `{label,query}` objects so display prose is never copied as the next question.
-Another read round requires another user message and newly signed plan: text found in an
-email/log/call never autonomously authors the next query. Both model calls use
-`logContent:false`; `ai_calls` keeps usage/cost/status, not client content.
+Text found in an email/log/call may be evidence for a bounded follow-up read but
+is never instructions and cannot expand the original question. Initial planning,
+investigation, and answering use `logContent:false`; `ai_calls` keeps
+usage/cost/status, not client content.
 
 **State/history.** `assistant_chats` and `assistant_chat_messages` hold the 30
 most recently touched chats per `users.user`; every CRUD statement includes the
@@ -2034,7 +2049,7 @@ to plan and execute, the signed ticket binds SHA-256/name/media type, and chat
 history stores metadata only. Existing files arrive as numeric document ids;
 the service loads active rows through `documentService` and
 `documentSourceService` and binds `rev`/`content_hash`, refusing execution if
-the file changed after planning. Both AI passes receive the files under
+the file changed after planning. All AI passes receive the files under
 `aiService`'s attachment injection guard. **Save to case** is deliberately not
 a model operation: an explicit user click reuses `/api/documents/upload-link`
 → direct browser-to-Dropbox upload → `/api/documents/upload-commit`.
@@ -2053,7 +2068,8 @@ continues to contain IDs only.
 `services/assistantKnowledgeService.js`, `services/assistantChatService.js`,
 `services/assistantAttachmentService.js`, `lib/assistantTicket.js`,
 `services/assistantWeatherService.js`,
-`lib/aiPrompts/assistantPlan.js`, `lib/aiPrompts/assistantAnswer.js`,
+`lib/aiPrompts/assistantPlan.js`, `lib/aiPrompts/assistantInvestigate.js`,
+`lib/aiPrompts/assistantAnswer.js`,
 `routes/api.assistant.js`. Operator docs: manual 05/17. Tests:
 `assistantService`, `assistantAttachmentService`, `assistantTicket`, plus
 `assistantSidebar`, `featureRegistry` and manual coverage.

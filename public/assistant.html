@@ -574,7 +574,10 @@ async function ask() {
       workspace_context: turnContext && turnContext.snapshot,
     });
     if (r.outcome === 'plan') {
-      history[history.length - 1].text = 'Searching firm records and writing your answer…';
+      const maxRounds = Number(r.investigation && r.investigation.max_rounds) || 1;
+      history[history.length - 1].text = maxRounds > 1
+        ? `Investigating in up to ${maxRounds} bounded read passes…`
+        : 'Searching firm records and writing your answer…';
       render();
       r = await executeAutomatically(r.ticket, attachmentRequest.temporary);
     }
@@ -582,7 +585,11 @@ async function ask() {
     if (r.outcome === 'refused') history.push({ role: 'assistant', text: r.reason, suggestions: r.suggestions || [], destinations: r.destinations || [] });
     else history.push({
       role: 'assistant', text: r.answer, entities: r.entities || [], sources: r.sources || [], suggestions: r.suggestions || [], destinations: r.destinations || [],
-      meta: (r.steps || []).map((q) => `${q.id}: ${q.row_count} row${q.row_count === 1 ? '' : 's'}`).join(' · '),
+      meta: [
+        r.investigation && Number(r.investigation.rounds) > 1 ? `${r.investigation.rounds} read passes` : '',
+        ...(r.investigation && Array.isArray(r.investigation.notices) ? r.investigation.notices : []),
+        ...(r.steps || []).map((q) => `${q.id}: ${q.row_count} row${q.row_count === 1 ? '' : 's'}`),
+      ].filter(Boolean).join(' · '),
     });
     await savingUser;
     await saveAssistantMessage(history[history.length - 1]);

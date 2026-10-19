@@ -37,7 +37,9 @@ describe('Ask Casey UI wiring', () => {
     expect(html).toContain('class="thinking-wand"');
     expect(html).toContain('@keyframes wandWrite');
     expect(html).toContain("type: 'thinking'");
-    expect(html).toContain('Searching firm records and writing your answer…');
+    expect(html).toContain('bounded read passes');
+    expect(html).toContain('read passes`');
+    expect(html).toContain('r.investigation.notices');
   });
 
   test('runs read plans automatically and retries one safe planner repair', () => {
