@@ -2,6 +2,7 @@
 .githooks/pre-commit
 .github/workflows/node.js.yml
 .gitignore
+AGENTS.md
 CLAUDE.md
 Dockerfile
 Dockerfile.base
@@ -94,6 +95,7 @@ lib/multipartBody.js
 lib/noteLimits.js
 lib/parseName.js
 lib/portalCardEngine.js
+lib/processAlertMeta.js
 lib/rateLimiter.js
 lib/rawBodyFallback.js
 lib/reportSchema/customFieldsAppendix.js
@@ -1424,6 +1426,7 @@ tests/portalDocsService.test.js
 tests/portalHome.test.js
 tests/portalNextSteps.test.js
 tests/prefillFieldsUi.test.js
+tests/processAlertMeta.test.js
 tests/processJobs.longJobConnection.test.js
 tests/processJobs.targeted.test.js
 tests/quoMessageTransform.test.js

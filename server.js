@@ -7,6 +7,7 @@ require("dotenv").config();
 const { alert } = require("./lib/alerting");
 
 const appBuild = require("./lib/appBuild");
+const { processAlertMeta } = require("./lib/processAlertMeta");
 const db = require("./startup/db");
 
 const app = express();
@@ -192,13 +193,15 @@ app.use(require("./lib/responseObserver")(db));
 // never routes those rejections to error middleware).
 if (!global.__ycProcessGuards) {
   global.__ycProcessGuards = true;
+  const processMeta = processAlertMeta({ build: appBuild.build });
   process.on("unhandledRejection", (reason) => {
     try {
       alert(db, {
         source: "app", kind: "unhandled_rejection", severity: "error",
-        group_key: "app:unhandled_rejection",
-        title: "Unhandled promise rejection",
+        group_key: processMeta.groupKey("unhandled_rejection"),
+        title: `[${processMeta.environment}] Unhandled promise rejection`,
         message: reason?.stack || String(reason),
+        context: processMeta.context,
       });
     } catch (_) {}
     console.error("[unhandledRejection]", reason);
@@ -208,9 +211,10 @@ if (!global.__ycProcessGuards) {
     try {
       alert(db, {
         source: "app", kind: "uncaught_exception", severity: "critical",
-        group_key: "app:uncaught_exception",
-        title: "Uncaught exception",
+        group_key: processMeta.groupKey("uncaught_exception"),
+        title: `[${processMeta.environment}] Uncaught exception`,
         message: err?.stack || String(err),
+        context: processMeta.context,
       });
     } catch (_) {}
     console.error("[uncaughtException]", err);

@@ -67,6 +67,13 @@ Fire-and-forget. Callers use it bare in error paths — including
 `unhandledRejection` and `uncaughtException` handlers in `server.js` — so it
 must never be the thing that fails.
 
+Process-level alerts include structured runtime context (`environment`, Cloud
+Run service/revision/instance when present, app build, PID, and Node version).
+Their group key also includes the environment, so a local-development failure
+cannot consume production's critical-alert throttle window. The title begins
+with `[environment]` so the distinction is visible in the collapsed alert list
+and critical-email subject, not only after opening the context block.
+
 ### The sweep
 
 `runErrorSweep(db, p)` runs every 15 minutes as the "Error Alert Sweep"
