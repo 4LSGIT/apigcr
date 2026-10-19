@@ -6,6 +6,7 @@ const { JSDOM } = require('jsdom');
 
 const ROOT = path.join(__dirname, '..');
 const SHELL = fs.readFileSync(path.join(ROOT, 'public/index.html'), 'utf8');
+const ASSISTANT = fs.readFileSync(path.join(ROOT, 'public/assistant.html'), 'utf8');
 const MANAGER = fs.readFileSync(path.join(ROOT, 'public/automationManager.html'), 'utf8');
 const SUBTAB = fs.readFileSync(path.join(ROOT, 'public/js/ycSubTab.js'), 'utf8');
 const NAVIGATION = SHELL.slice(
@@ -89,6 +90,44 @@ describe('Ask Casey sidebar host', () => {
       display_label: 'Ada Case',
     });
     expect(w.ycAssistantContext().snapshot.canonical_url).not.toContain('Ada');
+  });
+
+  test('workspace URL synchronization refreshes the long-lived assistant chip', () => {
+    const sync = fnSrc(SHELL, 'syncWorkspaceUrl');
+    expect(sync).toContain('history.replaceState(null, "", currentOpenFilesUrl())');
+    expect(sync).toContain('frame.contentWindow.ycAssistantRefreshContext');
+    expect(sync.indexOf('history.replaceState')).toBeLessThan(sync.indexOf('ycAssistantRefreshContext'));
+  });
+
+  test('send replaces a stale captured tab with the live contact unless the chip was removed', () => {
+    const dom = new JSDOM('<!doctype html><body></body>', { runScripts: 'outside-only' });
+    const w = dom.window;
+    const live = {
+      snapshot: {
+        v: 1,
+        canonical_url: '/?files=p1309&open=file%3A0',
+        files: [{ kind: 'contact', id: '1309', rest: '' }],
+        active: { kind: 'file', index: 0, entity: { kind: 'contact', id: '1309', rest: '' } },
+      },
+      display_label: 'Chardonnay',
+    };
+    w.workspaceContextAttached = true;
+    w.workspaceContext = { snapshot: { canonical_url: '/?open=tabCases' }, display_label: 'Cases' };
+    w.captureWorkspaceContext = jest.fn(() => live);
+    w.renderWorkspaceContext = jest.fn();
+    w.eval(`${fnSrc(ASSISTANT, 'refreshWorkspaceContext')}\n${fnSrc(ASSISTANT, 'freezeWorkspaceContextForTurn')}`);
+
+    const frozen = w.freezeWorkspaceContextForTurn();
+    expect(frozen).toEqual(live);
+    expect(w.workspaceContext).toEqual(live);
+    live.snapshot.files[0].id = 'changed-after-freeze';
+    expect(frozen.snapshot.files[0].id).toBe('1309');
+
+    w.workspaceContextAttached = false;
+    const calls = w.captureWorkspaceContext.mock.calls.length;
+    expect(w.freezeWorkspaceContextForTurn()).toBeNull();
+    expect(w.captureWorkspaceContext).toHaveBeenCalledTimes(calls);
+    dom.window.close();
   });
 
   test('mobile uses the same host as a full-width sheet', () => {

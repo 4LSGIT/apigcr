@@ -168,6 +168,9 @@ let currentChatId = null;
 let historyAvailable = true;
 let pendingAttachments = [];
 let workspaceContext = null;
+// Attachment intent is separate from the last captured value. A null value
+// can mean the shell is still restoring; only an explicit Remove turns it off.
+let workspaceContextAttached = true;
 let picker = null;
 let pickerTimer = null;
 let pickerSeq = 0;
@@ -298,14 +301,38 @@ function captureWorkspaceContext() {
 }
 
 function renderWorkspaceContext() {
-  if (!workspaceContext) {
+  if (!workspaceContextAttached || !workspaceContext) {
     contextList.innerHTML = '<button type="button" class="context-add ghost" id="addContext"><i class="fa-solid fa-plus"></i> Add current view</button>';
-    document.getElementById('addContext').addEventListener('click', () => { workspaceContext = captureWorkspaceContext(); renderWorkspaceContext(); });
+    document.getElementById('addContext').addEventListener('click', () => {
+      workspaceContextAttached = true;
+      refreshWorkspaceContext();
+    });
     return;
   }
   contextList.innerHTML = `<span class="context-chip"><i class="fa-solid fa-window-maximize"></i><span>${esc(workspaceContext.display_label || 'Current workspace')}</span><button type="button" id="removeContext" title="Remove workspace context" aria-label="Remove workspace context"><i class="fa-solid fa-xmark"></i></button></span>`;
-  document.getElementById('removeContext').addEventListener('click', () => { workspaceContext = null; renderWorkspaceContext(); });
+  document.getElementById('removeContext').addEventListener('click', () => {
+    workspaceContextAttached = false;
+    workspaceContext = null;
+    renderWorkspaceContext();
+  });
 }
+
+function refreshWorkspaceContext() {
+  if (!workspaceContextAttached) return null;
+  workspaceContext = captureWorkspaceContext();
+  renderWorkspaceContext();
+  return workspaceContext;
+}
+
+function freezeWorkspaceContextForTurn() {
+  // The shell can finish restoring, or the user can change records, long
+  // after this stable iframe first loaded. Re-read the live canonical view at
+  // the send boundary, then clone it before the first await.
+  const current = refreshWorkspaceContext();
+  return current ? JSON.parse(JSON.stringify(current)) : null;
+}
+
+window.ycAssistantRefreshContext = refreshWorkspaceContext;
 
 function attachmentRoom(size) {
   if (pendingAttachments.length >= MAX_ATTACHMENTS) throw new Error(`Attach no more than ${MAX_ATTACHMENTS} files`);
@@ -527,7 +554,7 @@ async function ask() {
   const context = publicHistory();
   // Freeze this turn before any await. Moving elsewhere while Casey works can
   // change the next chip, never the signed snapshot for this question.
-  const turnContext = workspaceContext ? JSON.parse(JSON.stringify(workspaceContext)) : null;
+  const turnContext = freezeWorkspaceContextForTurn();
   const turnAttachments = pendingAttachments.slice();
   let attachmentRequest;
   try { attachmentRequest = await requestAttachments(turnAttachments); }
@@ -563,8 +590,7 @@ async function ask() {
     history.pop();
     history.push({ role: 'assistant', text: e.message || String(e), error: true });
   } finally {
-    if (turnContext) workspaceContext = captureWorkspaceContext();
-    renderWorkspaceContext();
+    refreshWorkspaceContext();
     setBusy(false); render();
   }
 }
@@ -620,8 +646,7 @@ document.getElementById('historyBtn').addEventListener('click', showRecentChats)
 document.getElementById('historyClose').addEventListener('click', () => { historyPanel.hidden = true; });
 (function waitForParent() {
   if (P && P.apiSend) {
-    workspaceContext = captureWorkspaceContext();
-    renderWorkspaceContext();
+    refreshWorkspaceContext();
     render();
     const draft = typeof P.ycTakeAssistantDraft === 'function' ? P.ycTakeAssistantDraft() : null;
     if (draft) input.value = String(draft).slice(0, 2000);

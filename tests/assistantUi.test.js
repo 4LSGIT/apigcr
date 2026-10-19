@@ -73,10 +73,18 @@ describe('Ask Casey UI wiring', () => {
 
   test('shows removable frozen workspace context and submits only its snapshot', () => {
     expect(html).toContain('id="contextList"');
-    expect(html).toContain("workspaceContext = captureWorkspaceContext()");
-    expect(html).toContain("workspaceContext = null; renderWorkspaceContext()");
-    expect(html).toContain('const turnContext = workspaceContext ? JSON.parse(JSON.stringify(workspaceContext)) : null');
+    expect(html).toContain('let workspaceContextAttached = true');
+    expect(html).toContain('workspaceContextAttached = false');
+    expect(html).toContain('const turnContext = freezeWorkspaceContextForTurn()');
+    expect(html).toMatch(/function freezeWorkspaceContextForTurn\(\)[\s\S]*refreshWorkspaceContext\(\)[\s\S]*JSON\.parse\(JSON\.stringify\(current\)\)/);
     expect(html).toContain('workspace_context: turnContext && turnContext.snapshot');
+  });
+
+  test('refreshes an attached context when the canonical workspace changes', () => {
+    expect(html).toContain('window.ycAssistantRefreshContext = refreshWorkspaceContext');
+    expect(shell).toContain('frame.contentWindow.ycAssistantRefreshContext');
+    expect(shell.indexOf('history.replaceState(null, "", currentOpenFilesUrl())'))
+      .toBeLessThan(shell.indexOf('frame.contentWindow.ycAssistantRefreshContext'));
   });
 
   test('renders allowlisted semantic destination actions through the shell bridge', () => {

@@ -8160,6 +8160,14 @@ async function initAuth() {
         try {
           history.replaceState(null, "", currentOpenFilesUrl());
         } catch (_) {}
+        // Casey's iframe is deliberately long-lived. Keep its optional chip
+        // aligned with the canonical workspace as files/tabs change; the
+        // child preserves an explicit Remove and rechecks again at Send.
+        try {
+          const frame = E("caseyFrame");
+          const refresh = frame && frame.contentWindow && frame.contentWindow.ycAssistantRefreshContext;
+          if (typeof refresh === "function") refresh();
+        } catch (_) {}
       });
     }
 
