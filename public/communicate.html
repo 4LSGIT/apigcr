@@ -373,6 +373,11 @@ let quill = null;
 let mmsAttachmentUrl = null;
 let emailAttachmentUrl = null;
 let contactId = null;
+let caseId = null;
+const logScope = () => ({
+  link_type: 'contact', link_id: contactId,
+  ...(caseId ? { about_type: 'case', about_id: caseId } : {}),
+});
 
 // ═══════════════════════════════════════════════════════════════
 // QUILL — EmailImage BLOT (from campaign.html)
@@ -422,6 +427,7 @@ async function init() {
   }
 
   contactId = contact.contact_id;
+  caseId = P.communicationContext?.case_id || null;
   const phoneLines = firmData.phoneLines || [];
   const emailFrom = firmData.emailFrom || [];
   const currentUser = firmData.currentUser || {};
@@ -826,7 +832,7 @@ async function send(action) {
         if (mmsAttachmentUrl) smsLogData.attachment = mmsAttachmentUrl;
         await P.apiSend('/api/log', 'POST', {
           type: 'sms',
-          link_type: 'contact', link_id: contactId,
+          ...logScope(),
           data: JSON.stringify(smsLogData), direction: 'outgoing'
         });
       }
@@ -879,7 +885,7 @@ async function send(action) {
       if (action === 'logEmail') emailLogData.note = 'Logged without sending';
 
       await P.apiSend('/api/log', 'POST', {
-        type: 'email', link_type: 'contact', link_id: contactId,
+        type: 'email', ...logScope(),
         data: JSON.stringify(emailLogData), direction: 'outgoing'
       });
 
@@ -902,7 +908,7 @@ async function send(action) {
       processing();
 
       await P.apiSend('/api/log', 'POST', {
-        type: 'call', link_type: 'contact', link_id: contactId,
+        type: 'call', ...logScope(),
         data: JSON.stringify({ from, to, note }), direction: 'outgoing'
       });
 

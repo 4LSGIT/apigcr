@@ -346,7 +346,7 @@
     <div class="tab-row">
       <button data-ws-tab="info" class="tab active" onclick="openTab(this, 'tabInfo')"><i class="fa-solid fa-circle-info"></i> Client Information</button>
       <button data-ws-tab="rels" class="tab" onclick="openTab(this, 'tabRels')"><i class="fa-solid fa-people-arrows"></i> Relationships</button>
-      <button data-ws-tab="send" class="tab" onclick="openTab(this, 'tabSend')"><i class="fa-solid fa-comments"></i> Communication</button>
+      <button data-ws-tab="send" class="tab" onclick="openTab(this, 'tabSend'); if (!E('communicationsFrame').src) E('communicationsFrame').src = `entityCommunications.html?link_type=contact&amp;link_id=${encodeURIComponent(clientID)}`; else E('communicationsFrame').contentWindow?.reloadCommunications?.();"><i class="fa-solid fa-comments"></i> Communications</button>
       <button data-ws-tab="tasks" class="tab" id="tasksButton" onclick="openTab(this, 'tabTasks'); if (!E('tasksFrame').src) E('tasksFrame').src = `tasks.html?link_type=contact&link_id=${clientID}`; else E('tasksFrame').contentWindow?.reloadTasks?.();"><i class="fa-solid fa-clipboard"></i> Tasks</button>
       <!-- Notes & Lists widget — public/checklistView.html in entity mode.
            Same lazy-src / reload-on-re-entry idiom as tasksButton above. Note
@@ -387,7 +387,7 @@
   </div>
 
   <div id="tabSend" class="tab-content">
-    <iframe id="tabSendIframe"></iframe>
+    <iframe id="communicationsFrame" title="Contact communications"></iframe>
   </div>
 
 
@@ -777,7 +777,6 @@ function updateHeader() {
 // ── Iframe loading (called once on initial load) ────────────
 function loadIframes() {
   E('tabInfoIframe').src = `/forms/contact-form.html?contact_id=${clientID}`;
-  E('tabSendIframe').src = '/communicate.html';
 }
 
 // ── Table render functions ──────────────────────────────────

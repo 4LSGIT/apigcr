@@ -1,0 +1,703 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Communications</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+<link rel="stylesheet" href="/theme.css">
+<script src="/themeSync.js"></script>
+<script src="/js/vendor/purify-3.4.16.min.js"></script>
+<script src="/js/mailRender.js"></script>
+<style>
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body { margin: 0; min-height: 100%; background: var(--page-bg); color: var(--text); font-family: var(--ui); }
+  body { padding: 10px; }
+  [hidden] { display: none !important; }
+  button, input, select { font: inherit; }
+  .shell { max-width: 980px; margin: 0 auto; text-align: left; }
+  .toolbar { display: flex; flex-wrap: wrap; gap: 7px; align-items: end; padding: 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
+  .field { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+  .field.search { flex: 1 1 230px; }
+  .field label { color: var(--text-muted); font-size: var(--fs-xs); font-weight: 700; }
+  .field input, .field select { min-width: 0; height: var(--ctl-h); padding: 5px 8px; color: var(--text); background: var(--surface-2); border: 1px solid var(--border-strong); border-radius: 5px; }
+  .btn { min-height: var(--ctl-h); display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 5px 10px; color: var(--text); background: var(--surface-2); border: 1px solid var(--border-strong); border-radius: 5px; cursor: pointer; white-space: nowrap; }
+  .btn:hover { border-color: var(--accent); background: var(--hover); }
+  .btn:disabled { opacity: .55; cursor: not-allowed; }
+  .btn.primary { color: var(--accent-text); background: var(--accent); border-color: var(--accent); font-weight: 700; }
+  .status { min-height: 29px; display: flex; align-items: center; gap: 7px; padding: 6px 2px 4px; color: var(--text-muted); font-size: var(--fs-sm); }
+  .error { margin: 8px 0; padding: 9px 11px; color: var(--danger-on-soft); background: var(--danger-soft); border: 1px solid var(--danger); border-radius: 6px; }
+  .feed { display: flex; flex-direction: column; gap: 8px; }
+  .card { border: 1px solid var(--border); border-left: 4px solid var(--border-strong); border-radius: 8px; background: var(--surface); overflow: hidden; }
+  .card.email { border-left-color: var(--accent-2); }
+  .card.sms { border-left-color: var(--ok-fill); }
+  .card.call { border-left-color: var(--warn); }
+  .card.court { border-left-color: var(--danger); }
+  .card-head { width: 100%; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 9px; align-items: start; padding: 10px 11px; color: inherit; background: transparent; border: 0; cursor: pointer; text-align: left; }
+  .card-head:hover { background: var(--hover); }
+  .channel-icon { width: 26px; height: 26px; display: inline-flex; align-items: center; justify-content: center; color: var(--text-2); background: var(--surface-2); border: 1px solid var(--border); border-radius: 50%; }
+  .main { min-width: 0; }
+  .headline { display: flex; flex-wrap: wrap; gap: 5px 7px; align-items: baseline; }
+  .who { min-width: 0; font-weight: 700; overflow-wrap: anywhere; }
+  .subject { margin-top: 2px; color: var(--text-2); font-weight: 600; overflow-wrap: anywhere; }
+  .preview { margin-top: 3px; color: var(--text-muted); font-size: var(--fs-sm); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .when { color: var(--text-muted); font-size: var(--fs-xs); white-space: nowrap; }
+  .badge { display: inline-flex; align-items: center; padding: 1px 6px; border: 1px solid var(--border); border-radius: 999px; color: var(--text-muted); background: var(--surface-2); font-size: 11px; font-weight: 700; }
+  .badge.court { color: var(--danger-on-soft); background: var(--danger-soft); border-color: var(--danger); }
+  .details { padding: 0 11px 12px 46px; border-top: 1px solid var(--border); }
+  .meta { display: flex; flex-wrap: wrap; gap: 5px 14px; padding: 8px 0; color: var(--text-muted); font-size: var(--fs-sm); }
+  .copy { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.45; }
+  .summary { margin: 6px 0; padding: 8px 10px; background: var(--surface-2); border-radius: 5px; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .attachments { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
+  .attachment { max-width: 100%; display: inline-flex; flex-wrap: wrap; align-items: center; gap: 5px; overflow-wrap: anywhere; padding: 4px 7px; border: 1px solid var(--border); border-radius: 5px; background: var(--surface-2); font-size: var(--fs-sm); }
+  .attachment button { border: 0; padding: 0 3px; color: var(--accent); background: transparent; cursor: pointer; }
+  .archive-preview { display: block; max-width: min(360px, 100%); max-height: 260px; margin-top: 5px; border-radius: 5px; }
+  audio.archive-preview { width: min(360px, 100%); height: 36px; }
+  .actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 9px; }
+  .reply-box { margin-top: 9px; padding: 9px; border: 1px solid var(--accent); border-radius: 6px; background: var(--surface-2); }
+  .reply-box textarea { width: 100%; min-height: 100px; resize: vertical; padding: 7px; color: var(--text); background: var(--surface); border: 1px solid var(--border-strong); border-radius: 5px; }
+  .reply-meta { margin-bottom: 6px; color: var(--text-muted); font-size: var(--fs-sm); overflow-wrap: anywhere; }
+  .case-action { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 8px; }
+  .case-action select, .compose-bar select { min-height: var(--ctl-h); max-width: 100%; padding: 4px 7px; color: var(--text); background: var(--surface); border: 1px solid var(--border-strong); border-radius: 5px; }
+  .check-field { min-height: var(--ctl-h); display: inline-flex; align-items: center; gap: 6px; color: var(--text-2); font-size: var(--fs-sm); white-space: nowrap; }
+  .mail-frame { display: block; width: 100%; border: 1px solid var(--border); border-radius: 5px; background: #fff; }
+  .empty { padding: 42px 14px; color: var(--text-muted); text-align: center; }
+  .more { padding: 12px; text-align: center; }
+  .compose-bar { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+  .compose-frame { display: block; width: 100%; min-height: 760px; height: calc(100vh - 70px); border: 0; }
+  @media (max-width: 768px) {
+    body { padding: 6px; }
+    .toolbar { padding: 7px; gap: 5px; }
+    .field.search { flex-basis: 100%; order: -1; }
+    .field:not(.search) { flex: 1 1 calc(50% - 4px); }
+    .field select { width: 100%; }
+    .card-head { grid-template-columns: auto minmax(0, 1fr); padding: 9px 8px; }
+    .when { grid-column: 2; }
+    .details { padding: 0 8px 10px; }
+    .preview { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+    .compose-frame { min-height: 680px; }
+  }
+</style>
+</head>
+<body>
+<main class="shell">
+  <section id="history-view" aria-label="Communication history">
+    <div class="toolbar">
+      <div class="field search">
+        <label for="comms-q">Search</label>
+        <input id="comms-q" type="search" maxlength="200" placeholder="Search communications">
+      </div>
+      <div class="field">
+        <label for="comms-kind">Channel</label>
+        <select id="comms-kind">
+          <option value="all">All</option>
+          <option value="direct">Direct (email + phone)</option>
+          <option value="email">Email</option>
+          <option value="phone">Phone (texts + calls)</option>
+          <option value="sms">Texts</option>
+          <option value="call">Calls</option>
+          <option value="court">Court</option>
+        </select>
+      </div>
+      <label class="check-field" id="include-contacts-wrap" hidden><input id="include-contacts" type="checkbox"> Include contact communications</label>
+      <div class="field">
+        <label for="comms-direction">Direction</label>
+        <select id="comms-direction">
+          <option value="all">Any direction</option>
+          <option value="incoming">Incoming</option>
+          <option value="outgoing">Outgoing</option>
+        </select>
+      </div>
+      <button class="btn" id="comms-refresh" type="button" title="Refresh"><i class="fa-solid fa-rotate" aria-hidden="true"></i> Refresh</button>
+      <button class="btn primary" id="comms-compose-toggle" type="button" hidden><i class="fa-solid fa-pen" aria-hidden="true"></i> Send / log…</button>
+    </div>
+    <div class="status" id="comms-status" role="status" aria-live="polite"></div>
+    <div class="error" id="comms-error" role="alert" hidden></div>
+    <div class="feed" id="comms-feed"></div>
+    <div class="empty" id="comms-empty" hidden>No communications found for this record.</div>
+    <div class="more"><button class="btn" id="comms-more" type="button" hidden>Load older</button></div>
+  </section>
+  <section id="compose-view" hidden aria-label="Send or log a communication">
+    <div class="compose-bar">
+      <button class="btn" id="compose-back" type="button"><i class="fa-solid fa-arrow-left" aria-hidden="true"></i> Back to history</button>
+      <span>Send or log a communication</span>
+      <label id="compose-contact-wrap" hidden>Contact <select id="compose-contact"></select></label>
+    </div>
+    <iframe class="compose-frame" id="legacy-compose" title="Send or log a communication"></iframe>
+  </section>
+</main>
+<script>
+"use strict";
+
+const P = window.parent;
+const api = (...args) => P.apiSend(...args);
+const E = (id) => document.getElementById(id);
+const R = window.YCMailRender;
+const query = new URLSearchParams(location.search);
+const linkType = query.get('link_type');
+const linkId = query.get('link_id');
+const validScope = (linkType === 'contact' || linkType === 'case') && !!linkId;
+const endpoint = validScope
+  ? `/api/${linkType === 'contact' ? 'contacts' : 'cases'}/${encodeURIComponent(linkId)}/communications`
+  : null;
+
+const state = {
+  items: [], nextOffset: 0, hasMore: false, loading: false, seq: 0,
+  cases: null, contacts: null, fullMessages: new Map(),
+};
+
+function h(tag, attrs, ...kids) {
+  const el = document.createElement(tag);
+  for (const [key, value] of Object.entries(attrs || {})) {
+    if (value == null || value === false) continue;
+    if (key === 'className') el.className = value;
+    else if (key === 'dataset') Object.assign(el.dataset, value);
+    else if (key.startsWith('on') && typeof value === 'function') el.addEventListener(key.slice(2), value);
+    else el.setAttribute(key, value === true ? '' : String(value));
+  }
+  for (const kid of kids.flat()) {
+    if (kid == null || kid === false) continue;
+    el.append(kid instanceof Node ? kid : document.createTextNode(String(kid)));
+  }
+  return el;
+}
+
+const text = (value) => value == null ? '' : String(value);
+const first = (...values) => values.find((value) => value != null && String(value).trim() !== '');
+
+function itemKind(item) {
+  const raw = text(first(item.kind, item.channel, item.type, item.log_type)).toLowerCase().replace(/[ _-]+/g, '');
+  if (raw.includes('court')) return 'court';
+  if (raw.includes('sms') || raw.includes('mms') || raw.includes('text')) return 'sms';
+  if (raw.includes('call') || raw.includes('voicemail')) return 'call';
+  return 'email';
+}
+
+function directionOf(item) {
+  const raw = text(item.direction).toLowerCase();
+  return raw === 'outgoing' || raw === 'outbound' ? 'outgoing'
+    : raw === 'incoming' || raw === 'inbound' ? 'incoming' : '';
+}
+
+function participantOf(item) {
+  const p = first(item.participant_name, item.participant, item.contact_name, item.other_party,
+    item.phone && item.phone.other_party,
+    directionOf(item) === 'outgoing' ? item.to : item.from_addr,
+    directionOf(item) === 'outgoing' ? item.to_addr : item.from);
+  if (p && typeof p === 'object') return text(first(p.name, p.address, p.email, p.phone));
+  return text(p || 'Unknown participant');
+}
+
+function dateOf(item) {
+  const raw = first(item.at, item.occurred_at, item.timestamp, item.date, item.created_at, item.sent_at);
+  if (!raw) return '';
+  const date = new Date(raw);
+  return Number.isNaN(date.getTime()) ? text(raw) : new Intl.DateTimeFormat(undefined, {
+    year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit'
+  }).format(date);
+}
+
+function previewOf(item) {
+  return text(first(item.preview, item.snippet, item.summary,
+    item.archive && item.archive.summary,
+    item.phone && item.phone.body,
+    item.log && first(item.log.body, item.log.message, item.log.note),
+    item.body_text, item.message, item.note, item.call_status));
+}
+
+function subjectOf(item, kind) {
+  return text(first(item.subject, item.email && item.email.subject, item.log && item.log.subject, item.title,
+    kind === 'call' ? item.call_label : null,
+    kind === 'sms' ? 'Text message' : kind === 'court' ? 'Court email' : 'Email'));
+}
+
+function iconFor(kind) {
+  return kind === 'call' ? 'fa-phone' : kind === 'sms' ? 'fa-comment-sms' : kind === 'court' ? 'fa-scale-balanced' : 'fa-envelope';
+}
+
+function attachmentsOf(item) {
+  if (Array.isArray(item.attachments)) return item.attachments;
+  if (Array.isArray(item.files)) return item.files;
+  return [];
+}
+
+const caseLabel = (c) => text(first(c.case_number_full, c.case_number, c.case_id));
+
+async function entityCases() {
+  if (state.cases) return state.cases;
+  if (linkType === 'case') {
+    state.cases = [{ case_id: linkId, case_number: linkId }];
+    return state.cases;
+  }
+  const data = await api(`/api/contacts/${encodeURIComponent(linkId)}/cases`, 'GET');
+  state.cases = (Array.isArray(data && data.cases) ? data.cases : []).filter(c => c && c.case_id != null);
+  return state.cases;
+}
+
+function caseSelect(cases, selected) {
+  const select = h('select', { 'aria-label': 'Case' });
+  select.append(h('option', { value: '' }, 'Choose case…'));
+  for (const c of cases) select.append(h('option', { value: c.case_id }, caseLabel(c) || `Case ${c.case_id}`));
+  if (selected != null) select.value = String(selected);
+  return select;
+}
+
+async function loadFullMessage(item) {
+  const id = item && item.email && item.email.id;
+  if (!id) return null;
+  if (state.fullMessages.has(id)) return state.fullMessages.get(id);
+  const data = await api(`/api/mail/messages/${encodeURIComponent(id)}`, 'GET');
+  const message = data && (data.message || (Array.isArray(data.messages) ? data.messages[0] : null));
+  if (message) state.fullMessages.set(id, message);
+  return message || null;
+}
+
+function partUrl(message, attachment) {
+  return `/api/mailboxes/${encodeURIComponent(message.mailbox_id)}/messages/${encodeURIComponent(message.id)}/parts/${encodeURIComponent(attachment.part)}`;
+}
+
+async function downloadMailPart(message, attachment, button) {
+  if (button) button.disabled = true;
+  try {
+    const blob = await api(partUrl(message, attachment), 'GET', null, {}, { responseType: 'blob' });
+    const url = URL.createObjectURL(blob);
+    const link = h('a', { href: url, download: attachment.filename || `attachment-${attachment.part}` });
+    document.body.append(link); link.click(); link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 60_000);
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
+function putToDropbox(url, blob) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', url);
+    xhr.setRequestHeader('Content-Type', 'application/octet-stream');
+    xhr.onload = () => {
+      if (xhr.status !== 200) return reject(new Error(`Upload to Dropbox failed (${xhr.status})`));
+      try { resolve(JSON.parse(xhr.responseText)); } catch (_) { resolve(null); }
+    };
+    xhr.onerror = () => reject(new Error('Network error uploading to Dropbox'));
+    xhr.send(blob);
+  });
+}
+
+async function saveMailPart(message, attachment, caseId, button) {
+  if (!caseId) throw new Error('Choose a case first');
+  if (button) { button.disabled = true; button.textContent = 'Adding…'; }
+  const name = attachment.filename || `attachment-${attachment.part}`;
+  try {
+    const blob = await api(partUrl(message, attachment), 'GET', null, {}, { responseType: 'blob' });
+    const issued = await api('/api/documents/upload-link', 'POST', { case_id: caseId, filename: name });
+    if (!issued || !issued.link || !issued.ticket) throw new Error('The server did not return an upload link');
+    const meta = await putToDropbox(issued.link, blob);
+    await api('/api/documents/upload-commit', 'POST', { ticket: issued.ticket, external_id: meta && meta.id || undefined });
+    if (button) button.textContent = 'Added';
+  } catch (error) {
+    if (button) { button.disabled = false; button.textContent = `Failed: ${error.message}`; }
+    throw error;
+  }
+}
+
+async function archiveUrl(attachment) {
+  const data = await api(`/api/comms-archive/media/${encodeURIComponent(attachment.media_id)}/url`, 'GET');
+  const url = String(data && data.url || '');
+  if (!/^https:\/\/storage\.googleapis\.com\//.test(url)) throw new Error('Unexpected archive link');
+  return url;
+}
+
+function detailMeta(item) {
+  const rows = [];
+  const add = (label, value) => { if (value != null && String(value).trim()) rows.push(h('span', null, `${label}: ${text(value)}`)); };
+  add('From', first(item.from, item.from_addr, item.email && item.email.from, item.log && item.log.from, item.line));
+  add('To', first(item.to, item.to_addr, item.email && item.email.to, item.log && item.log.to));
+  add('Cc', item.email && item.email.cc);
+  add('Mailbox', first(item.mailbox_address, item.email && item.email.mailbox_address));
+  add('Phone line', first(item.phone_line_name, item.line_name, item.phone && item.phone.line_number));
+  const seconds = first(item.duration_s, item.phone && item.phone.duration_s);
+  add('Duration', first(item.duration, item.duration_label, seconds != null ? `${seconds}s` : null));
+  add('Sent by', first(item.sent_by_name, item.user_name));
+  return rows;
+}
+
+function legacyData(item) {
+  const raw = item && item.log && item.log.data;
+  if (!raw) return {};
+  if (typeof raw === 'object') return raw;
+  try {
+    const parsed = JSON.parse(String(raw));
+    return parsed && typeof parsed === 'object' ? parsed : { note: String(raw) };
+  } catch (_) {
+    return { note: String(raw) };
+  }
+}
+
+function archiveText(item, key) {
+  const archive = item && item.archive;
+  const value = archive && (archive[key] != null ? archive[key] : archive[`${key}_text`]);
+  if (value && typeof value === 'object') return text(first(value.text, value.body, value.summary, value.transcript));
+  return text(value);
+}
+
+function summaryOf(item) {
+  return text(first(item.summary, archiveText(item, 'summary'),
+    item.voicemail && first(item.voicemail.summary, item.voicemail.summary_text)));
+}
+
+function appendMessageBody(details, message, participant) {
+  if (!message || (!message.body_html && !message.body_text)) return false;
+  if (R) {
+    const built = R.createFrame(document, message, { title: `Message from ${participant}` });
+    details.append(built.frame);
+  } else {
+    details.append(h('div', { className: 'copy' }, message.body_text || 'Message body unavailable.'));
+  }
+  return true;
+}
+
+async function appendMailAttachments(details, message) {
+  const files = (Array.isArray(message && message.attachments) ? message.attachments : []).filter(a => !a.inline);
+  if (!files.length) return;
+  const cases = await entityCases().catch(() => []);
+  const wrap = h('div', { className: 'attachments' });
+  for (const attachment of files) {
+    const row = h('span', { className: 'attachment' },
+      h('i', { className: 'fa-solid fa-paperclip', 'aria-hidden': 'true' }),
+      h('span', null, attachment.filename || `Attachment ${attachment.part}`));
+    const download = h('button', { type: 'button', title: 'Download' }, h('i', { className: 'fa-solid fa-download', 'aria-hidden': 'true' }));
+    download.addEventListener('click', () => downloadMailPart(message, attachment, download).catch(error => { download.title = error.message; }));
+    row.append(download);
+    if (cases.length) {
+      const select = caseSelect(cases, linkType === 'case' ? linkId : null);
+      if (cases.length === 1) select.hidden = true;
+      const save = h('button', { type: 'button', title: 'Add this attachment to the selected case Documents' }, 'Add to Documents');
+      save.addEventListener('click', () => saveMailPart(message, attachment, select.value, save).catch(error => { save.title = error.message; }));
+      row.append(select, save);
+    }
+    wrap.append(row);
+  }
+  details.append(wrap);
+}
+
+async function appendArchiveAttachments(details, item) {
+  const files = attachmentsOf(item).filter(a => a && a.media_id);
+  if (!files.length) return false;
+  const wrap = h('div', { className: 'attachments' });
+  for (const attachment of files) {
+    const row = h('span', { className: 'attachment' },
+      h('i', { className: 'fa-solid fa-paperclip', 'aria-hidden': 'true' }),
+      `Phone attachment #${attachment.media_id}`);
+    wrap.append(row);
+    try {
+      const url = await archiveUrl(attachment);
+      if (attachment.view === 'image') {
+        row.append(h('img', { className: 'archive-preview', src: url, alt: `Phone attachment ${attachment.media_id}`, loading: 'lazy' }));
+      } else if (attachment.view === 'audio') {
+        row.append(h('audio', { className: 'archive-preview', src: url, controls: true, preload: 'metadata' }));
+      } else {
+        const open = h('button', { type: 'button' }, attachment.view === 'pdf' ? 'Open PDF' : 'Open');
+        open.addEventListener('click', () => window.open(url, '_blank', 'noopener'));
+        row.append(open);
+      }
+    } catch (error) {
+      row.append(h('span', { className: 'reply-meta' }, error.message || 'Could not open'));
+    }
+  }
+  details.append(wrap);
+  return true;
+}
+
+async function appendCaseTag(details, item) {
+  if (linkType !== 'contact' || item.legacy && !item.log_id || !(item.email && item.email.id) && !item.log_id) return;
+  const cases = await entityCases().catch(() => []);
+  if (!cases.length) return;
+  const select = caseSelect(cases, item.case_id);
+  const status = h('span', { className: 'reply-meta' }, item.case_id ? `Tagged to ${item.case_id}` : 'Not tagged to a case');
+  const save = h('button', { className: 'btn', type: 'button' }, item.case_id ? 'Change case tag' : 'Add case tag');
+  save.addEventListener('click', async () => {
+    if (!select.value) return;
+    save.disabled = true;
+    try {
+      if (item.email && item.email.id) {
+        const out = await api(`/api/mail/messages/${encodeURIComponent(item.email.id)}/case-link`, 'POST', { case_id: select.value });
+        if (out && out.log_id) item.log_id = out.log_id;
+      } else {
+        await api(`/api/log/${encodeURIComponent(item.log_id)}/about`, 'PUT', { about_type: 'case', about_id: select.value });
+      }
+      item.case_id = select.value;
+      status.textContent = `Tagged to ${caseLabel(cases.find(c => String(c.case_id) === String(select.value))) || select.value}`;
+      save.textContent = 'Change case tag';
+    } catch (error) {
+      status.textContent = `Could not tag: ${error.message}`;
+    } finally { save.disabled = false; }
+  });
+  details.append(h('div', { className: 'case-action' }, select, save, status));
+}
+
+async function appendReply(details, item) {
+  if (item.legacy) return;
+  const kind = itemKind(item);
+  const isMail = (kind === 'email' || kind === 'court') && item.email && item.email.id;
+  const isPhone = (kind === 'sms' || kind === 'call') && item.line_id && item.participant;
+  if (!isMail && !isPhone) return;
+  const actions = h('div', { className: 'actions' });
+  const button = h('button', { className: 'btn', type: 'button' },
+    h('i', { className: `fa-solid ${isMail ? 'fa-reply' : 'fa-comment-sms'}`, 'aria-hidden': 'true' }),
+    isMail ? ' Reply' : ' Text back');
+  actions.append(button);
+  details.append(actions);
+  button.addEventListener('click', async () => {
+    button.disabled = true;
+    let defaults = null;
+    try {
+      if (isMail) defaults = await api(`/api/mail/messages/${encodeURIComponent(item.email.id)}/reply`, 'GET', { all: 0 });
+      if (isMail && (!defaults || defaults.mailbox_id == null)) throw new Error('No sendable mailbox is available');
+      if (isMail && defaults.over_cap) throw new Error('The reply has too many recipients');
+      const recipients = isMail
+        ? (defaults.to || []).map(x => x.name ? `${x.name} <${x.email}>` : x.email).join(', ')
+        : item.participant;
+      const meta = h('div', { className: 'reply-meta' }, `${isMail ? 'Reply to' : 'Text'} ${recipients} from the same ${isMail ? 'mailbox' : 'phone line'}.`);
+      const body = h('textarea', { maxlength: isPhone ? '1000' : '20000', placeholder: isMail ? 'Write your reply' : 'Write your text' });
+      const status = h('span', { className: 'reply-meta' });
+      const send = h('button', { className: 'btn primary', type: 'button' }, 'Send');
+      const cancel = h('button', { className: 'btn', type: 'button' }, 'Cancel');
+      const box = h('div', { className: 'reply-box' }, meta, body, h('div', { className: 'actions' }, send, cancel, status));
+      actions.after(box);
+      button.hidden = true;
+      cancel.addEventListener('click', () => { box.remove(); button.hidden = false; button.disabled = false; });
+      send.addEventListener('click', async () => {
+        const message = body.value.trim();
+        if (!message) { status.textContent = 'Write a message first.'; return; }
+        send.disabled = true;
+        status.textContent = 'Sending…';
+        try {
+          if (isMail) {
+            const payload = {
+              mailbox_id: defaults.mailbox_id, to: defaults.to, subject: defaults.subject,
+              body_text: message, in_reply_to_message_fk: item.email.id, quote_original: true,
+            };
+            if (defaults.cc && defaults.cc.length) payload.cc = defaults.cc;
+            if (linkType === 'case') payload.case_id = linkId;
+            else if (item.case_id) payload.case_id = item.case_id;
+            await api('/api/mail/send', 'POST', payload);
+          } else {
+            await api(`/api/phone-lines/${encodeURIComponent(item.line_id)}/sms`, 'POST', { to: item.participant, message });
+          }
+          status.textContent = 'Sent'; body.disabled = true; cancel.textContent = 'Close';
+          setTimeout(() => loadFeed({ silent: true }), 1500);
+        } catch (error) {
+          status.textContent = `Not sent: ${error.message}`;
+        } finally { send.disabled = false; }
+      });
+      body.focus();
+    } catch (error) {
+      button.disabled = false;
+      button.textContent = `Reply unavailable: ${error.message}`;
+    }
+  });
+}
+
+async function expandCard(card, item, button) {
+  const old = card.querySelector('.details');
+  if (old) {
+    old.remove();
+    button.setAttribute('aria-expanded', 'false');
+    return;
+  }
+  const kind = itemKind(item);
+  const details = h('div', { className: 'details' });
+  const meta = detailMeta(item);
+  if (meta.length) details.append(h('div', { className: 'meta' }, meta));
+  const summary = summaryOf(item);
+  if (summary && summary !== previewOf(item)) {
+    details.append(h('div', { className: 'summary' }, summary));
+  }
+  let fullMessage = null;
+  if ((kind === 'email' || kind === 'court') && item.email && item.email.id) {
+    const loading = h('div', { className: 'meta' }, 'Loading message…');
+    details.append(loading);
+    try {
+      fullMessage = await loadFullMessage(item);
+      if (!card.isConnected) return;
+      loading.remove();
+      if (!appendMessageBody(details, fullMessage, participantOf(item))) details.append(h('div', { className: 'copy' }, previewOf(item)));
+      if (fullMessage) await appendMailAttachments(details, fullMessage);
+    } catch (error) {
+      loading.textContent = `Couldn't load the message: ${error && error.message ? error.message : 'Unknown error'}`;
+    }
+  } else if ((kind === 'email' || kind === 'court') && appendMessageBody(details, item, participantOf(item))) {
+    // The normalized feed may carry a body for legacy mail.
+  } else {
+    const log = legacyData(item);
+    const body = first(item.phone && item.phone.body, item.body_text, item.message, item.note,
+      log.body, log.message, log.note);
+    if (body) details.append(h('div', { className: 'copy' }, body));
+  }
+  const transcript = text(first(item.transcript, archiveText(item, 'transcript'),
+    item.voicemail && item.voicemail.transcript));
+  if (transcript && transcript !== item.body_text) {
+    details.append(h('div', { className: 'summary' }, h('strong', null, 'Transcript'), h('div', { className: 'copy' }, transcript)));
+  }
+  const archived = await appendArchiveAttachments(details, item);
+  const attachments = archived ? [] : attachmentsOf(item);
+  if (attachments.length && !fullMessage) {
+    details.append(h('div', { className: 'attachments' }, attachments.map((attachment) => {
+      const name = typeof attachment === 'string' ? attachment : first(attachment.filename, attachment.name, 'Attachment');
+      return h('span', { className: 'attachment' }, h('i', { className: 'fa-solid fa-paperclip', 'aria-hidden': 'true' }), ` ${text(name)}`);
+    })));
+  }
+  await appendCaseTag(details, item);
+  await appendReply(details, item);
+  if (!details.childNodes.length) details.append(h('div', { className: 'meta' }, 'No additional detail is available.'));
+  card.append(details);
+  button.setAttribute('aria-expanded', 'true');
+}
+
+function renderItem(item) {
+  const kind = itemKind(item);
+  const direction = directionOf(item);
+  const headline = h('div', { className: 'headline' },
+    h('span', { className: 'who' }, participantOf(item)),
+    direction ? h('span', { className: 'badge' }, direction === 'outgoing' ? 'Outgoing' : 'Incoming') : null,
+    kind === 'court' ? h('span', { className: 'badge court' }, 'Court') : null,
+    item.legacy ? h('span', { className: 'badge' }, 'Logged only') : null,
+    Number(item.attachment_count) > 0
+      ? h('span', { className: 'badge' }, h('i', { className: 'fa-solid fa-paperclip', 'aria-hidden': 'true' }), ` ${Number(item.attachment_count)}`)
+      : null,
+    item.contact && item.contact.contact_name ? h('span', { className: 'badge' }, item.contact.contact_name) : null,
+    item.case_number || item.case_id ? h('span', { className: 'badge' }, item.case_number || `Case ${item.case_id}`) : null);
+  const main = h('div', { className: 'main' }, headline,
+    h('div', { className: 'subject' }, subjectOf(item, kind)),
+    previewOf(item) ? h('div', { className: 'preview' }, previewOf(item)) : null);
+  const card = h('article', { className: `card ${kind}` });
+  const button = h('button', { className: 'card-head', type: 'button', 'aria-expanded': 'false' },
+    h('span', { className: 'channel-icon' }, h('i', { className: `fa-solid ${iconFor(kind)}`, 'aria-hidden': 'true' })),
+    main, h('time', { className: 'when' }, dateOf(item)));
+  button.addEventListener('click', () => { expandCard(card, item, button); });
+  card.append(button);
+  return card;
+}
+
+function render() {
+  E('comms-feed').replaceChildren(...state.items.map(renderItem));
+  E('comms-empty').hidden = state.loading || state.items.length !== 0;
+  E('comms-more').hidden = !state.hasMore;
+  E('comms-status').textContent = state.loading ? 'Loading…'
+    : `${state.items.length} communication${state.items.length === 1 ? '' : 's'} shown`;
+}
+
+async function loadFeed({ append = false, silent = false } = {}) {
+  if (!endpoint || (append && state.loading)) return;
+  const seq = ++state.seq;
+  state.loading = true;
+  E('comms-refresh').disabled = true;
+  E('comms-more').disabled = true;
+  E('comms-error').hidden = true;
+  if (!silent) render();
+  try {
+    const params = {
+      kind: E('comms-kind').value,
+      q: E('comms-q').value.trim(),
+      limit: 50,
+      offset: append ? state.nextOffset : 0,
+    };
+    if (E('comms-direction').value !== 'all') params.direction = E('comms-direction').value;
+    if (linkType === 'case' && E('include-contacts').checked) params.include_contacts = 1;
+    const data = await api(endpoint, 'GET', params);
+    if (seq !== state.seq) return;
+    const rows = Array.isArray(data && data.items) ? data.items : [];
+    state.items = append ? state.items.concat(rows) : rows;
+    state.nextOffset = Number(data && data.next_offset);
+    if (!Number.isFinite(state.nextOffset)) state.nextOffset = (append ? state.items.length - rows.length : 0) + rows.length;
+    state.hasMore = !!(data && data.has_more);
+  } catch (error) {
+    if (seq !== state.seq) return;
+    E('comms-error').textContent = `Couldn't load communications: ${error && error.message ? error.message : 'Unknown error'}`;
+    E('comms-error').hidden = false;
+    if (!append) state.items = [];
+    state.hasMore = false;
+  } finally {
+    if (seq === state.seq) {
+      state.loading = false;
+      E('comms-refresh').disabled = false;
+      E('comms-more').disabled = false;
+      render();
+    }
+  }
+}
+
+function mountLegacyComposer(contact) {
+  window.apiSend = P.apiSend;
+  window.firmData = P.firmData;
+  window.entityData = { ...(P.entityData || {}), contact };
+  window.communicationContext = linkType === 'case' ? { case_id: linkId } : null;
+  const frame = E('legacy-compose');
+  frame.removeAttribute('src');
+  setTimeout(() => { frame.src = '/communicate.html'; }, 0);
+}
+
+async function showComposer() {
+  if (linkType === 'contact') {
+    mountLegacyComposer(P.entityData && P.entityData.contact);
+    E('compose-contact-wrap').hidden = true;
+  } else {
+    E('compose-contact-wrap').hidden = false;
+    const select = E('compose-contact');
+    try {
+      if (!state.contacts) {
+        const data = await api(`/api/cases/${encodeURIComponent(linkId)}/contacts`, 'GET');
+        state.contacts = Array.isArray(data && data.contacts) ? data.contacts : [];
+      }
+      select.replaceChildren(...state.contacts.map(contact => h('option', { value: contact.contact_id },
+        `${contact.contact_name || `Contact ${contact.contact_id}`}${contact.relate_type ? ` — ${contact.relate_type}` : ''}`)));
+      if (!state.contacts.length) throw new Error('This case has no contacts to send to or log against.');
+      mountLegacyComposer(state.contacts[0]);
+    } catch (error) {
+      E('comms-error').textContent = error.message;
+      E('comms-error').hidden = false;
+      return;
+    }
+  }
+  E('history-view').hidden = true;
+  E('compose-view').hidden = false;
+}
+
+function hideComposer() {
+  E('compose-view').hidden = true;
+  E('history-view').hidden = false;
+  loadFeed({ silent: true });
+}
+
+let searchTimer = null;
+E('comms-q').addEventListener('input', () => {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => loadFeed(), 300);
+});
+E('comms-q').addEventListener('keydown', (event) => { if (event.key === 'Enter') { clearTimeout(searchTimer); loadFeed(); } });
+E('comms-kind').addEventListener('change', () => loadFeed());
+E('comms-direction').addEventListener('change', () => loadFeed());
+E('include-contacts').addEventListener('change', () => loadFeed());
+E('comms-refresh').addEventListener('click', () => loadFeed());
+E('comms-more').addEventListener('click', () => loadFeed({ append: true }));
+E('comms-compose-toggle').addEventListener('click', showComposer);
+E('compose-back').addEventListener('click', hideComposer);
+E('compose-contact').addEventListener('change', () => {
+  const contact = (state.contacts || []).find(x => String(x.contact_id) === E('compose-contact').value);
+  if (contact) mountLegacyComposer(contact);
+});
+E('comms-compose-toggle').hidden = !validScope;
+E('include-contacts-wrap').hidden = linkType !== 'case';
+
+window.reloadCommunications = () => loadFeed({ silent: true });
+window.ycBecameVisible = () => { if (!E('history-view').hidden) loadFeed({ silent: true }); };
+
+if (!validScope) {
+  E('comms-error').textContent = 'A contact or case is required to show communications.';
+  E('comms-error').hidden = false;
+} else {
+  loadFeed();
+}
+</script>
+</body>
+</html>

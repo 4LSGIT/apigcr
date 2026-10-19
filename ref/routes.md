@@ -1,7 +1,7 @@
 # Routes
 
 _Generated 2026-10-18T23:41:03.926Z_  
-_805 routes total — DELETE: 66, GET: 337, PATCH: 58, POST: 304, PUT: 37, _ALL: 3_
+_807 routes total — DELETE: 66, GET: 339, PATCH: 58, POST: 304, PUT: 37, _ALL: 3_
 
 ## Global middleware chain
 
@@ -137,6 +137,7 @@ _805 routes total — DELETE: 66, GET: 337, PATCH: 58, POST: 304, PUT: 37, _ALL:
 | GET | `/api/cases` | `jwtOrApiKey` | — |
 | GET | `/api/cases/:id` | `jwtOrApiKey` | — |
 | PATCH | `/api/cases/:id` | `jwtOrApiKey` | — |
+| GET | `/api/cases/:id/communications` | `jwtOrApiKey`, `requireJwt` | — |
 | GET | `/api/cases/:id/contacts` | `jwtOrApiKey` | — |
 | POST | `/api/cases/:id/contacts` | `jwtOrApiKey` | — |
 | DELETE | `/api/cases/:id/contacts/:contactId` | `jwtOrApiKey` | — |
@@ -201,6 +202,7 @@ _805 routes total — DELETE: 66, GET: 337, PATCH: 58, POST: 304, PUT: 37, _ALL:
 | GET | `/api/contacts/:id/appts` | `jwtOrApiKey` | — |
 | POST | `/api/contacts/:id/booking-link` | `jwtOrApiKey` | — |
 | GET | `/api/contacts/:id/cases` | `jwtOrApiKey` | — |
+| GET | `/api/contacts/:id/communications` | `jwtOrApiKey`, `requireJwt` | — |
 | GET | `/api/contacts/:id/emails` | `jwtOrApiKey` | — |
 | GET | `/api/contacts/:id/log` | `jwtOrApiKey` | — |
 | GET | `/api/contacts/:id/phones` | `jwtOrApiKey` | — |
@@ -1075,4 +1077,4 @@ _805 routes total — DELETE: 66, GET: 337, PATCH: 58, POST: 304, PUT: 37, _ALL:
 
 ---
 
-_805 routes total — DELETE: 66, GET: 337, PATCH: 58, POST: 304, PUT: 37, _ALL: 3_
+_807 routes total — DELETE: 66, GET: 339, PATCH: 58, POST: 304, PUT: 37, _ALL: 3_

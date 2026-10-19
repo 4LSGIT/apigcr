@@ -176,6 +176,9 @@
         <button data-ws-tab="esign" class="tab" id="esignButton" onclick="openTab(this, 'tabEsign'); if (!E('esignFrame').src) E('esignFrame').src = `esign/caseWidget.html?case_id=${caseID}`;">
           <i class="fa-solid fa-file-signature"></i> Signatures
         </button>
+        <button data-ws-tab="comms" class="tab" id="communicationsButton" onclick="openTab(this, 'tabComms'); if (!E('communicationsFrame').src) E('communicationsFrame').src = `entityCommunications.html?link_type=case&amp;link_id=${encodeURIComponent(caseID)}`; else E('communicationsFrame').contentWindow?.reloadCommunications?.();">
+          <i class="fa-solid fa-comments"></i> Communications
+        </button>
         <!-- Automations widget (sequences + workflows across the case's related
              contacts). Lazy iframe src on first open (esignButton idiom); on
              re-entry pushes a reload into the widget so the lists are fresh.
@@ -1155,6 +1158,11 @@
     <!-- Signatures widget (Phase 2C). src set lazily by the tab button. -->
     <div id="tabEsign" class="tab-content">
       <iframe id="esignFrame"></iframe>
+    </div>
+
+    <!-- Entity-scoped communications widget. src set lazily by the tab button. -->
+    <div id="tabComms" class="tab-content">
+      <iframe id="communicationsFrame" title="Case communications"></iframe>
     </div>
 
     <!-- Automations widget. src set lazily by the tab button. -->

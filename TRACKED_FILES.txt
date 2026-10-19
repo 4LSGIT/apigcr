@@ -296,6 +296,7 @@ public/docReq.html
 public/docs.html
 public/documents.html
 public/documents/generateForm.html
+public/entityCommunications.html
 public/esign/caseWidget.html
 public/esign/dashboard.html
 public/esign/esignActions.js
@@ -647,6 +648,7 @@ routes/api.dropbox.js
 routes/api.emailCredentials.js
 routes/api.emailIngest.js
 routes/api.entitlements.js
+routes/api.entityComms.js
 routes/api.esign.actions.js
 routes/api.esign.js
 routes/api.esign.templates.js
@@ -968,6 +970,7 @@ services/emailIngestSuppressionService.js
 services/emailIngestValidator.js
 services/emailService.js
 services/entitlementService.js
+services/entityCommsService.js
 services/esign/index.js
 services/esign/pdfFill.js
 services/esign/placements.js
@@ -1191,6 +1194,10 @@ tests/emitStageAged.test.js
 tests/ensureSqlProxy.test.js
 tests/entitlements.mysql.test.js
 tests/entitlements.test.js
+tests/entityCommsRoute.test.js
+tests/entityCommsService.test.js
+tests/entityCommunications.integration.test.js
+tests/entityCommunications.widget.test.js
 tests/escapeLike.test.js
 tests/esignActionsUi.test.js
 tests/esignAlert.test.js
