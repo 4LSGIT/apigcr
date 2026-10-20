@@ -340,6 +340,34 @@ async function normalizeActionDraft(db, value, evidence) {
   };
 }
 
+function unavailableTaskDraftAnswer() {
+  return 'I completed the read-only lookup, but I could not produce a valid task draft card. Nothing was saved. ' +
+    'Send “Draft that task again” to retry. When the draft card appears, review every field, click “Copy task details,” ' +
+    'open My Tasks, choose Add Task, paste the title and description, select the shown assignee and dates/link, and save it. ' +
+    'If the card still does not appear, create the task directly in My Tasks from the cited records below.';
+}
+
+async function repairActionDraft(db, approved, evidence, rejectedValue, rejection, userId) {
+  const ai = await aiService.call(db, {
+    promptKey: 'assistant_task_draft_repair',
+    userInput: `${currentContext(approved.viewer, approved.workspace)}\n\nCONVERSATION:\n${historyText(approved.history)}\n\n` +
+      `QUESTION:\n${approved.question}\n\nREJECTION:\n${String(rejection && rejection.message || 'The action_draft field was absent.')}\n\n` +
+      `REJECTED PROPOSAL:\n${JSON.stringify(rejectedValue == null ? null : rejectedValue)}\n\n` +
+      `EVIDENCE (row_number is array position + 1):\n${JSON.stringify(evidence)}`,
+    model: attachmentService.modelForMode(approved.modelMode),
+    outputType: 'json', timeout_ms: ANSWER_TIMEOUT_MS,
+    consumerRef: `assistant_task_draft_repair:u${Number(userId) || 0}`,
+    logContent: false,
+  });
+  if (!ai.ok) return null;
+  try {
+    const draft = await normalizeActionDraft(db, ai.json && ai.json.action_draft, evidence);
+    return draft || null;
+  } catch (_) {
+    return null;
+  }
+}
+
 function taskDraftRequested(question, history = []) {
   const priorUserText = cleanHistory(history)
     .filter((message) => message.role === 'user')
@@ -854,19 +882,30 @@ async function execute(db, { signedTicket, userId, auth, temporaryAttachments } 
   });
   if (!ai.ok) throw httpError(502, 'The assistant could not summarize the query results', ai.detail || ai.error);
   const body = ai.json || {};
-  const answer = String(body.answer || '').trim();
+  let answer = String(body.answer || '').trim();
   if (!answer) throw httpError(422, 'The assistant returned an empty answer');
   const citations = Array.isArray(body.citations) ? body.citations : [];
   const sources = citations.map((c) => sourceFor(evidence, c || {})).filter(Boolean).slice(0, 12);
+  const draftRequested = taskDraftRequested(approved.question, approved.history);
   let actionDraft = null;
-  try {
-    actionDraft = taskDraftRequested(approved.question, approved.history)
-      ? await normalizeActionDraft(db, body.action_draft, evidence)
-      : null;
-  } catch (_) {
-    // A malformed model proposal must never turn a valid read answer into an
-    // error. Drop it at the server boundary; the browser sees normalized
-    // drafts only and has no action executor in this slice.
+  let draftStatus = draftRequested ? 'unavailable' : 'not_requested';
+  if (draftRequested) {
+    let rejection = null;
+    try {
+      actionDraft = await normalizeActionDraft(db, body.action_draft, evidence);
+      if (!actionDraft) rejection = httpError(422, 'The action_draft field was absent');
+    } catch (err) {
+      rejection = err;
+    }
+    if (rejection) {
+      actionDraft = await repairActionDraft(db, approved, evidence, body.action_draft, rejection, userId);
+      draftStatus = actionDraft ? 'repaired' : 'unavailable';
+    } else {
+      draftStatus = 'ready';
+    }
+    // Never let prose claim that a card exists when the typed, server-validated
+    // payload that renders it is absent.
+    if (!actionDraft) answer = unavailableTaskDraftAnswer();
   }
   return {
     answer,
@@ -876,7 +915,7 @@ async function execute(db, { signedTicket, userId, auth, temporaryAttachments } 
     sources,
     ...(actionDraft ? { action_draft: actionDraft } : {}),
     steps: evidence.map((q) => ({ id: q.id, round: q.round, kind: q.kind, purpose: q.purpose, row_count: q.row_count, returned: q.rows.length, truncated: q.truncated || !!q.truncated_for_ai })),
-    investigation: { rounds, total_steps: totalSteps, returned_rows: totalRows, controller_output_tokens: controllerOutputTokens, stop_reason: stopReason, repairs, notices },
+    investigation: { rounds, total_steps: totalSteps, returned_rows: totalRows, controller_output_tokens: controllerOutputTokens, stop_reason: stopReason, repairs, notices, task_draft_status: draftStatus },
     callId: ai.callId, model_mode: approved.modelMode,
   };
 }
@@ -885,7 +924,7 @@ module.exports = {
   plan, execute, validatePlan, validateStep, cleanHistory, compactRows,
   normalizeSuggestions, contextualAnswer, actionsForRow, actionsForEvidence,
   normalizeWorkspaceContext, validateWorkspaceContext, normalizeDestinations,
-  normalizeActionDraft, taskDraftRequested,
+  normalizeActionDraft, taskDraftRequested, unavailableTaskDraftAnswer, repairActionDraft,
   repairFailure, loadViewer, normalizeViewer, stepFingerprint, renumberPlan,
   MAX_STEPS, MAX_ROWS, MAX_INVESTIGATION_ROUNDS, MAX_INVESTIGATION_STEPS,
   MAX_INVESTIGATION_ROWS, MAX_INVESTIGATION_MS, MAX_INVESTIGATION_OUTPUT_TOKENS,

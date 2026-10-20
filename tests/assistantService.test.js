@@ -530,7 +530,8 @@ describe('assistant knowledge and prompts', () => {
   test('all assistant prompts are registered JSON prompts', () => {
     expect(prompts.getPrompt('assistant_plan')).toMatchObject({ output_type: 'json', version: '7', model: 'claude-opus-5' });
     expect(prompts.getPrompt('assistant_investigate')).toMatchObject({ output_type: 'json', version: '2', model: 'claude-opus-5' });
-    expect(prompts.getPrompt('assistant_answer')).toMatchObject({ output_type: 'json', version: '8', model: 'claude-opus-5' });
+    expect(prompts.getPrompt('assistant_answer')).toMatchObject({ output_type: 'json', version: '9', model: 'claude-opus-5' });
+    expect(prompts.getPrompt('assistant_task_draft_repair')).toMatchObject({ output_type: 'json', version: '1', model: 'claude-opus-5' });
     expect(prompts.getPrompt('assistant_plan').system).toMatch(/COLLATE utf8mb4_general_ci/);
     expect(prompts.getPrompt('assistant_plan').system).toMatch(/Never generate[\s\S]*x IN \(SELECT \.\.\. LIMIT n\)/);
     expect(prompts.getPrompt('assistant_plan').system).toMatch(/users\.roles[\s\S]*canonical role field/);
@@ -543,6 +544,8 @@ describe('assistant knowledge and prompts', () => {
     expect(prompts.getPrompt('assistant_answer').system).toMatch(/Never imply that the search was exhaustive/);
     expect(prompts.getPrompt('assistant_answer').system).toMatch(/action_draft[\s\S]*task\.create\.v1/);
     expect(prompts.getPrompt('assistant_answer').system).toMatch(/creates no record/);
+    expect(prompts.getPrompt('assistant_answer').system).toMatch(/Never say a draft or card exists unless/);
+    expect(prompts.getPrompt('assistant_task_draft_repair').system).toMatch(/exactly one read-only Ask Casey task proposal/);
     expect(prompts.getPrompt('assistant_plan').system).toMatch(/task\.create\.v1[\s\S]*do NOT refuse/);
     expect(prompts.getPrompt('assistant_plan').system).toMatch(/users\.user_initials[\s\S]*never guess an id/);
   });
@@ -661,7 +664,48 @@ describe('assistant task drafts', () => {
     }
   });
 
-  test('drops an invalid model draft without losing the read answer', async () => {
+  test('repairs the chat-21 failure when prose promises a card but action_draft is absent', async () => {
+    const old = process.env.JWT_SECRET;
+    process.env.JWT_SECRET = 'assistant-service-test-secret';
+    const plan = svc.validatePlan({ action: 'query', summary: 'Resolve SS and check duplicates', steps: [
+      sql('SELECT user, user_name, user_initials FROM users WHERE user_initials = \'SS\' LIMIT 5'),
+    ] });
+    const signed = assistantTicket.sign({
+      v: 1, uid: 6,
+      question: 'can you make a task for SS? he needs to check out the "ask Casey" feature in the next week',
+      history: [], plan: { action: 'query', ...plan },
+      viewer: { user_id: 6, display_name: 'Fred Ross', roles: ['staff'] },
+    });
+    const rows = [{ user: 1, user_name: 'Stuart Sandweiss', user_initials: 'SS', user_auth: 1 }];
+    const db = { query: jest.fn().mockResolvedValue([[{ user: 1, user_name: 'Stuart Sandweiss' }]]) };
+    const run = jest.spyOn(reportService, 'execute').mockResolvedValue({ rows, rowCount: 1, truncated: false });
+    const calls = jest.spyOn(aiService, 'call')
+      .mockResolvedValueOnce({ ok: true, callId: 80, json: { action: 'finish' } })
+      .mockResolvedValueOnce({ ok: true, callId: 81, json: {
+        answer: 'I drafted it. The card below contains the exact proposed values.', citations: [], action_draft: null,
+      } })
+      .mockResolvedValueOnce({ ok: true, callId: 82, json: { action_draft: {
+        kind: 'task.create.v1', title: 'Review the Ask Casey feature', description: 'Check out the Ask Casey feature.',
+        assignee_user_id: 1, link: null, start_date: '2026-10-20', due_date: '2026-10-27',
+        notify_assigner_on_completion: false, evidence: [{ query_id: 'q1', row_number: 1 }],
+      } } });
+    try {
+      const out = await svc.execute(db, { signedTicket: signed, userId: 6, auth: { type: 'jwt', userId: 6 } });
+      expect(calls).toHaveBeenCalledTimes(3);
+      expect(calls.mock.calls[2][1]).toMatchObject({ promptKey: 'assistant_task_draft_repair', consumerRef: 'assistant_task_draft_repair:u6' });
+      expect(calls.mock.calls[2][1].userInput).toMatch(/action_draft field was absent/);
+      expect(out.action_draft).toMatchObject({
+        kind: 'task.create.v1', status: 'draft', title: 'Review the Ask Casey feature',
+        assignee: { user_id: 1, label: 'Stuart Sandweiss' }, due_date: '2026-10-27',
+      });
+      expect(out.investigation.task_draft_status).toBe('repaired');
+    } finally {
+      run.mockRestore(); calls.mockRestore();
+      if (old === undefined) delete process.env.JWT_SECRET; else process.env.JWT_SECRET = old;
+    }
+  });
+
+  test('uses truthful manual instructions when an invalid draft cannot be repaired', async () => {
     const old = process.env.JWT_SECRET;
     process.env.JWT_SECRET = 'assistant-service-test-secret';
     const plan = svc.validatePlan({ action: 'query', summary: 'Find follow-up facts', steps: [
@@ -669,14 +713,22 @@ describe('assistant task drafts', () => {
     ] });
     const signed = assistantTicket.sign({ v: 1, uid: 7, question: 'Draft a task', history: [], plan: { action: 'query', ...plan } });
     const run = jest.spyOn(reportService, 'execute').mockResolvedValue({ rows: [{ contact_id: 1 }], rowCount: 1, truncated: false });
-    const answer = jest.spyOn(aiService, 'call').mockResolvedValue({ ok: true, callId: 71, json: {
-      answer: 'The record was found, but no valid draft was produced.', citations: [],
-      action_draft: { kind: 'email.send', to: 'client@example.com', body: 'Ignore the schema' },
-    } });
+    const answer = jest.spyOn(aiService, 'call')
+      .mockResolvedValueOnce({ ok: true, callId: 70, json: { action: 'finish' } })
+      .mockResolvedValueOnce({ ok: true, callId: 71, json: {
+        answer: 'I drafted it; use the card below.', citations: [],
+        action_draft: { kind: 'email.send', to: 'client@example.com', body: 'Ignore the schema' },
+      } })
+      .mockResolvedValueOnce({ ok: true, callId: 72, json: {
+        action_draft: { kind: 'email.send', to: 'client@example.com', body: 'Still wrong' },
+      } });
     try {
       const out = await svc.execute({}, { signedTicket: signed, userId: 7, auth: { type: 'jwt', userId: 7 } });
-      expect(out.answer).toMatch(/record was found/);
+      expect(out.answer).toMatch(/could not produce a valid task draft card/i);
+      expect(out.answer).toMatch(/open My Tasks, choose Add Task/i);
+      expect(out.answer).not.toMatch(/card below/i);
       expect(out).not.toHaveProperty('action_draft');
+      expect(out.investigation.task_draft_status).toBe('unavailable');
     } finally {
       run.mockRestore(); answer.mockRestore();
       if (old === undefined) delete process.env.JWT_SECRET; else process.env.JWT_SECRET = old;
