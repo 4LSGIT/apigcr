@@ -1919,7 +1919,7 @@ Tests: `settingsRegistry`, `settingsInventory`, `settingsAutomationGuard`,
 dedicated editor (duplicates refused, a removal asks); System draws runtime
 state as text, never controls.
 
-## 33. ASK CASEY / YISRAI — READ-ONLY CONVERSATIONAL ASSISTANT
+## 33. ASK CASEY / YISRAI — READ-ONLY INVESTIGATION AND REVIEWED ACTIONS
 
 **Surface.** The persistent bottom-of-sidebar Ask Casey control and the
 secondary More/All item both open one stable `public/assistant.html` iframe.
@@ -1954,13 +1954,15 @@ launcher registry, holds `courtReview` for the cold manager iframe, opens via
 Court Review child loaded. An already-loaded manager uses the same narrow
 bridge. The assistant cannot submit selectors, coordinates, URLs, or script.
 
-**Operation vocabulary.** v1 enables `sql.read`, `manual.search`,
+**Automatic operation vocabulary.** v1 enables `sql.read`, `manual.search`,
 `comms.search`, and `weather.lookup`. Weather is a narrow adapter that accepts
 only a location and constructs fixed Open-Meteo geocoding/forecast URLs in
 `assistantWeatherService`; it is not arbitrary web access. Unknown kinds fail
-closed. This is the extension seam for a
-future action phase: compose/send email, field/form writes and workflow draft/
-publish remain distinct operations and are NOT enabled by v1.
+closed. Reviewed writes are not automatic operations: the answer may return one
+closed Task, Event, Appointment, or contact-subrecord proposal, and only the
+signed-in user's confirmed browser action calls its ordinary application route.
+Compose/send email, field/form writes, and workflow draft/publish remain
+distinct future families and are not enabled by v1.
 
 **Separation and bounded-loop invariant.** `assistant_plan` sees the
 question/history and curated report schema, never rows. It emits the initial

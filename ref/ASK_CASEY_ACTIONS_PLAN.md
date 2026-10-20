@@ -7,6 +7,43 @@ no-show, cancel, reschedule-now, and reschedule-later through the existing
 authenticated routes. A5 covers one reviewed phone/email/address subrecord
 create, narrow update, or history-preserving end. No general action executor is introduced.
 
+## Review briefing
+
+The shipped baseline is 26 proposal kinds across four reviewed families: the
+complete Task lifecycle, Event create/update/complete/cancel, the seven
+Appointment actions, and nine contact phone/email/address actions. Every family
+uses the same boundary: one
+closed, evidence-backed, server-normalized proposal; exact SweetAlert review;
+a fixed browser-owned route/method/body mapping; the ordinary authenticated
+route as the write authority; persisted success; and canonical sync behavior.
+No Casey execution endpoint, model-selected route, or model-selected actor
+exists.
+
+Deterministic tests cover the shipped contracts, but the review should not
+mistake that for completion of the operational program. The following remain
+open before wider rollout or before the higher-impact families that depend on
+them:
+
+- P0: a controlled live multi-round dependency-read test and a staff-fixture
+  smoke test spanning Task, Event, Appointment, and contact-subrecord review,
+  cancellation, success, history restoration, and canonical open-record behavior;
+- P1/P2/P3: decide when to extract the closed registries/review components,
+  complete the permission matrix, and extend stale-review protection beyond
+  the row-version/current-primary checks already shipped with A5;
+- P4/P5: durable idempotency and ambiguous-result/applied-result recovery before
+  any external send, enrollment, fan-out, workflow execution, or replay;
+- P6-P9: canonical sync inventory, privacy-safe action observability, the shared
+  adversarial contract kit, and accessible/explainable review states; and
+- P10: per-family rollout controls, ownership, dashboards, recovery playbooks,
+  rollback criteria, and controlled live smoke tests.
+
+Decisions requested in the upcoming review are: confirm the A6-A18 ordering;
+decide whether A6 relation removal and role removal ship with creation/update or
+as later sub-slices; choose the first low-impact A7 scalar fields; set the P1
+extraction point; and define the rollout bar for the first external-send or
+fan-out action. Destructive/admin/access/credential work, arbitrary tools,
+multi-action plans, and unattended execution remain outside this roadmap.
+
 ## Governing principle: actions run through the user
 
 The key design advantage of Casey actions is that **the user performs the
@@ -52,10 +89,10 @@ existing behavior. Adding cross-frame task propagation is a canonical Tasks/bus
 arc, not a special Casey action endpoint.
 
 This plan follows the shipped Ask Casey workspace-context and bounded
-autonomous-read slices. It covers one typed, server-validated **task proposal**
-rendered in the conversation and its reviewed A1 creation control. Merely
-returning the draft cannot save a task; only the user's explicit confirmation
-invokes the fixed, existing task route.
+autonomous-read slices. It now covers the shipped Task, Event, Appointment, and
+contact-subrecord proposal families plus the remaining A6-A18 and P0-P10
+roadmap. Merely returning any proposal changes nothing; only the user's explicit
+confirmation invokes that kind's fixed, existing application route.
 
 ## Read-loop release gate
 
@@ -65,8 +102,9 @@ readers can coexist in one investigation. It does not exercise the evidence →
 missing fact → follow-up read loop: the result reported one round and stopped
 with `model_finished`.
 
-Before enabling task drafts in production, run one live dependency test whose
-second lookup cannot be formed until the first result is known. A suitable
+Before wider production rollout of reviewed actions, run one live dependency
+test whose second lookup cannot be formed until the first result is known. This
+is still open; the deterministic action suites do not close it. A suitable
 prompt is:
 
 > Search phone and voicemail for the most recent mention of Mike's
@@ -89,7 +127,7 @@ If the communications result does not expose enough party information, that is
 a valid inconclusive result. Use a controlled test fixture for the release gate
 rather than weakening access or returning more transcript data.
 
-## Slice A0: task proposal, not task creation
+## Slice A0: task proposal, not task creation — shipped 2026-10-20
 
 ### User experience
 
@@ -98,7 +136,7 @@ one optional **Task draft** card. The card shows:
 
 - title and description;
 - proposed assignee;
-- optional contact, case, appointment, bill, or event link;
+- optional contact, case, appointment, or event link;
 - optional start and due dates;
 - completion-notification preference;
 - the evidence sources used to propose it; and
@@ -185,7 +223,7 @@ At A0 this card deliberately had no write control. A1 later added reviewed
 creation through the existing `POST /api/tasks` route and explicitly discloses
 its assignment/start/due notification behavior.
 
-## Required tests for A0
+## Shipped test contract for A0
 
 Service tests:
 
@@ -221,7 +259,7 @@ Run the focused assistant suites and the full scoped regression suite used by
 the preceding Ask Casey slices. The live dependency test above is a release
 gate, not a substitute for deterministic unit tests.
 
-## Slice A1: reviewed task creation
+## Slice A1: reviewed task creation — shipped 2026-10-20
 
 A1 adds **Review & create task** to a server-normalized draft. Selecting it
 first presents a SweetAlert confirmation containing the exact assignee, link,
@@ -245,7 +283,7 @@ unspecified completion notice defaults off for self-assignment and on for an
 assignment to someone else. The browser hard-codes `source:'Casey'`, never sends
 `from`, and leaves `send_assignment_email` omitted/true.
 
-## Slice A2: reviewed task lifecycle
+## Slice A2: reviewed task lifecycle — shipped 2026-10-20
 
 A2 adds five closed proposal kinds alongside creation:
 
@@ -268,13 +306,14 @@ single-flight behavior, inline retry, task-list/badge refresh, and persisted
 applied results follow A1. Reopening a saved chat therefore offers **Open task**
 rather than casually replaying the write.
 
-## Slice A3: reviewed Events lifecycle
+## Slice A3: reviewed Events lifecycle — shipped 2026-10-20
 
 A3 adds `event.create.v1`, `event.update.v1`, `event.complete.v1`, and
 `event.cancel.v1`. The browser maps them only to `POST /api/events`,
 `PATCH /api/events/:id`, `PATCH /api/events/:id/complete`, and
 `PATCH /api/events/:id/cancel`. There is no Event delete or reopen route, so no
-such proposal exists. Batch creation and Appointments remain out of scope.
+such proposal exists. Batch creation remains out of scope. Appointments were
+outside A3 and shipped separately under A4/A4.1.
 
 The traced native field contract is:
 
@@ -553,14 +592,16 @@ are gates before higher-impact families. None creates a general Casey executor.
 #### P0: Close current release gates
 
 Run the controlled multi-round dependency-read test described above. Add a
-staff-fixture smoke test for shipped Task, Event, and Appointment review, cancellation,
-success, history restoration, and canonical open-record behavior. Record the
-known repository-wide stale-test baseline separately from action regressions.
+staff-fixture smoke test for shipped Task, Event, Appointment, and contact-
+subrecord review, cancellation, success, history restoration, and canonical
+open-record behavior. Record the known repository-wide stale-test baseline
+separately from action regressions.
 
 #### P1: Closed action registry and shared review components
 
-After the third family establishes another concrete contract, extract only the
-repeated mechanics: known kind/version dispatch, strict extra-field rejection,
+Four families now establish the concrete pattern. Before A6, decide whether the
+duplication already justifies extraction; if so, extract only the repeated
+mechanics: known kind/version dispatch, strict extra-field rejection,
 evidence resolution, text-only value/side-effect rows, dialog single-flight,
 retry state, applied-result persistence, and canonical open-record links. The
 server registry normalizes proposals; the browser registry independently maps
@@ -578,11 +619,12 @@ insufficient roles, and permissions changing between proposal and click.
 #### P3: Optimistic concurrency and stale review protection
 
 Existing-record actions must protect the interval between server normalization
-and confirmation. Define a canonical version, updated-at value, or narrow
-before-value precondition for routes that lack one, and reject a write when the
-reviewed state has changed. This is required before scalar edits, relationship
-changes, pipeline transitions, publishing, and other operations where a stale
-review could overwrite someone else's work.
+and confirmation. A5 starts this pattern with server-owned row versions and
+reviewed current-primary preconditions. Extend it with a canonical version,
+updated-at value, or narrow before-value precondition for every route that lacks
+one, and reject a write when the reviewed state has changed. This is required
+before scalar edits, relationship changes, pipeline transitions, publishing,
+and other operations where a stale review could overwrite someone else's work.
 
 #### P4: Durable idempotency and ambiguous-result recovery
 

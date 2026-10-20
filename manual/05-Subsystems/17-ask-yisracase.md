@@ -1,8 +1,8 @@
 # Ask Casey
 
 Ask Casey is the user-facing name for the firm's YisrAI assistant. Its searches
-are read-only; its reviewed Task, Event, Appointment, and contact-subrecord actions are performed by the
-signed-in user after explicit review. It can answer
+are read-only; its reviewed Task, Event, Appointment, and contact-subrecord
+actions are performed by the signed-in user after explicit review. It can answer
 questions about firm records, how YisraCase itself works, general knowledge,
 and current weather. Open it from the persistent **Ask Casey** button at the
 bottom of the left sidebar. **More → Ask Casey** opens the same assistant in a
@@ -65,7 +65,9 @@ scheduling and integrations.
 
 ## Reviewed actions
 
-Ask Casey can prepare one evidence-backed task action for explicit review.
+Ask Casey can prepare one evidence-backed action for explicit review. Only one
+proposal appears in an answer. Task actions are described first; Event,
+Appointment, and contact-subrecord actions follow below.
 Ask naturally—for example, “Make a task for SS to review Ask Casey next
 week.” Casey should look up the active numeric staff ID behind initials or a
 name, verify any requested case/contact/appointment/event link, and return a
@@ -369,7 +371,7 @@ or other sensitive client facts in a shared YisrAI link. Anyone creating or
 sharing such a link is responsible for deciding whether its question is safe to
 put in a URL.
 
-## Future actions
+## Reviewed action kinds and future actions
 
 The plan format names every operation by type. Enabled executable operations
 remain read-only: `sql.read`, `manual.search`, `comms.search`, and the narrowly

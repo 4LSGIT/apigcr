@@ -5,8 +5,8 @@ Updated 2026-10-20. Start by reading `AGENTS.md`,
 
 ## Handoff checkpoint
 
-Hand off from the commit that ships reviewed contact phone/email/address actions
-on `main`. Tasks, Events, Appointments, and A5 contact subrecords are complete;
+Hand off from `ae5ac0a`, which ships reviewed contact phone/email/address
+actions on `main`. Tasks, Events, Appointments, and A5 contact subrecords are complete;
 do not redo those slices. The A5 run passed 275 focused assistant/chat/sync/
 concurrency tests and 313 native contact service/UI tests. The
 repository-wide Jest run has unrelated stale shell/layout assertions; continue
@@ -142,6 +142,15 @@ multi-action plans, and unattended execution are not merely “last.” They are
 outside the ordinary roadmap pending a separate product and threat-model
 decision.
 
+## Review readiness
+
+The deterministic shipped-family contracts are documented and tested, but P0
+is not yet closed: the live dependent second-read test and the staff-fixture
+smoke spanning all four shipped families remain explicit review/rollout gates.
+The review should also decide the A6 remove-operation split, initial A7 fields,
+P1 extraction timing, and the P4/P5/P10 bar before external sends or fan-out.
+The plan's **Review briefing** is the authoritative checklist.
+
 ## Immediate next slice
 
 Implement A6 contact relations and roles next. Trace the dedicated relation and
@@ -156,13 +165,14 @@ contact roles when their invariants or side effects differ.
 Read AGENTS.md, ref/ASK_CASEY_ACTIONS_PLAN.md,
 ref/ASK_CASEY_ACTIONS_HANDOFF.md, ref/AI_CONTEXT.md, and
 manual/05-Subsystems/17-ask-yisracase.md. Continue the Ask Casey actions arc
-from clean main after the reviewed contact-subrecords commit. Do not redo or
+from clean main at or after `ae5ac0a`. Do not redo or
 redesign the shipped Tasks, Events, Appointments, or A5 subrecord slices.
 
 Implement the next slice only: reviewed contact relation and contact-role
-actions through the existing authenticated dedicated routes. Do not
-add a Casey execution endpoint. Preserve one evidence-backed, server-normalized proposal; exact
-SweetAlert review; fixed browser route/method/body mapping; authenticated actor;
+actions through the existing authenticated dedicated routes. Do not add a
+Casey execution endpoint. Preserve one evidence-backed, server-normalized
+proposal; exact SweetAlert review; fixed browser route/method/body mapping;
+authenticated actor;
 single-flight/retry/history/open-record behavior; and canonical sync only.
 
 First trace the relation/role routes and services, every native UI caller,
