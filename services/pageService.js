@@ -9,7 +9,9 @@
  *
  * Conventions (enforced here, single source of truth):
  *   slug : lowercase ^[a-z0-9-]{1,100}$
- *   host : stored lowercase, no scheme, no port, NULL if unset
+ *   host : stored lowercase, no scheme, no port, NULL if unset; when set it
+ *          must be a registered landing host and never the app host
+ *          (assertHostAllowed)
  *   path : NULL for site root, else leading slash + no trailing slash ("/ch7")
  *          path without host is rejected (a path only means something on a
  *          mapped vanity domain — /p/:slug ignores it).
@@ -84,6 +86,7 @@ function validatePayload(body, { partial = false } = {}) {
   if (has('host')) {
     const host = normalizeHost(body.host);
     if (host !== null && !HOST_RE.test(host)) bad('host must be a bare hostname (no scheme, no port)');
+    assertHostAllowed(host);
     out.host = host;
   }
 
@@ -119,6 +122,32 @@ function validatePayload(body, { partial = false } = {}) {
   }
 
   return out;
+}
+
+/**
+ * pages.host BINDING: authored page HTML must never serve on the app origin,
+ * which holds every staff JWT in localStorage (AI_CONTEXT §3). A non-null
+ * host must therefore be a registered landing host — the same landing_hosts
+ * list, normalized the same way, that routes/pageLanding.js gates on (the
+ * middleware serves pinned pages ONLY on landing hosts) — and the app_url
+ * host is refused outright, even if it were misregistered in landing_hosts.
+ * Empty landing_hosts (origin separation off) = no host is accepted.
+ * Judged only when a write SETS host: a PATCH that leaves host alone (e.g.
+ * create-hook writing hook_slug) is not re-judged.
+ */
+function assertHostAllowed(host) {
+  if (host == null) return;
+  const { cfg, cfgList } = require('../lib/firmConfig');
+  const bad = (msg) => { const e = new Error(msg); e.status = 400; throw e; };
+
+  const appHost = normalizeHost(cfg('app_url') || 'https://app.4lsg.com');
+  if (host === appHost) bad(`host ${host} is the app host — pages never serve there`);
+
+  const landing = cfgList('landing_hosts').map(normalizeHost).filter(Boolean);
+  if (!landing.length) bad('host must be blank: no landing hosts are registered');
+  if (!landing.includes(host)) {
+    bad(`host must be a registered landing host (${landing.join(', ')}) — ask IT to register a new domain`);
+  }
 }
 
 /**

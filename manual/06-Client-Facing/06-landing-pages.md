@@ -10,8 +10,8 @@ so a new lead can create a contact, fire a text, or anything else a hook can do.
 
 - **Host a page** — paste in the page's HTML and publish it. It goes live at
   `app.4lsg.com/p/<slug>`.
-- **Use a custom domain** — point a marketing domain (e.g.
-  `offers.720debtfree.com`) at a page so the URL has no `/p/` in it.
+- **Use a custom domain** — pin a page to one of the firm's registered
+  public domains (e.g. `4lsg.com/ch7`) so the URL has no `/p/` in it.
 - **Capture form submissions** — a form on the page sends its fields into a
   YisraHook, which you wire up to do whatever you need (create the contact, text
   the office, etc.).
@@ -30,10 +30,11 @@ so a new lead can create a contact, fire a text, or anything else a hook can do.
    numbers, and hyphens. The page will live at `/p/<slug>`.
 3. **Status** — **Draft** while you're building it (a draft URL returns "not
    found" to the public), **Live** when it's ready to share.
-4. **Host** *(optional)* — a custom domain you've mapped to us (e.g.
-   `offers.720debtfree.com`). Leave blank to just use `app.4lsg.com/p/<slug>`.
+4. **Host** *(optional)* — one of the firm's registered public domains (e.g.
+   `4lsg.com`). Saving with any other host — including `app.4lsg.com` — is
+   refused. Leave blank to just use `/p/<slug>`.
 5. **Path** *(optional, custom-domain only)* — where on that domain the page
-   sits. Blank = the domain root; `/ch7` = `offers.720debtfree.com/ch7`.
+   sits. Blank = the domain root; `/ch7` = `4lsg.com/ch7`.
 6. **Thank-you** *(optional)* — where to send visitors after they submit the
    form. Can be a full URL or another page slug.
 7. **Hook** — the YisraHook that receives form submissions (see below).
@@ -62,11 +63,14 @@ decide what happens with a new lead.
 
 ## Going live on a custom domain
 
-To use a domain like `offers.720debtfree.com`, the domain has to be pointed at
-us first (a one-time DNS/proxy setup — ask IT). Once it's mapped, set that
-domain in the page's **Host** field and the page answers at the domain root (or
-the **Path** you set). Until the domain is mapped, the `app.4lsg.com/p/<slug>`
-URL always works.
+A page's **Host** must be one of the firm's registered public (landing)
+domains; the page then answers at that domain's root (or the **Path** you set).
+Pages never serve on `app.4lsg.com`, the staff app — that's where everyone's
+login lives, so the system refuses that host outright. A new domain has to be
+pointed at us **and** registered as a landing domain by IT before a page can
+use it. Today a pinned page answers only on the **first** registered domain:
+the others forward visitors to the first one before pins are checked. The
+`/p/<slug>` URL always works.
 
 ---
 

@@ -572,8 +572,10 @@ New raw `fetch` with a lifted token is a regression, not a pattern.
   Keep new logging/capture sites on this side of the line.
 - *No authored-executable MIME on the app origin:* operator-authored bytes
   never execute on app.4lsg.com. Authored page HTML serves only on
-  landing/vanity hosts (pageLanding host gate — never register the app host
-  as a vanity host); asset/video uploads serve from the GCS origin; the one
+  registered landing hosts — enforced in code: pageService refuses any
+  `pages.host` outside `landing_hosts` and the `app_url` host, and the
+  pageLanding host gate serves pinned pages on landing hosts only;
+  asset/video uploads serve from the GCS origin; the one
   app-origin route serving variable-mime bytes (documents raw) allowlists
   pdf/images by OUR extension map + nosniff, attachment otherwise — copy that
   pattern (api.documents.js RAW_INLINE_MIME) for any new byte-serving route.

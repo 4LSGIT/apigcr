@@ -67,10 +67,33 @@ const PAGES = {
   },
 };
 
+// Host+path PINNED rows (pages.host set). Before 2026-10-21 this stub
+// returned no hosts at all, so the pinned branches were never exercised —
+// and the non-landing one served a pin on ANY host (P0 #2 of the 2026-10-21
+// arc review). The app-host pins below are the attack shape: pageService now
+// refuses them at write, and the middleware must not serve them even if a
+// row like this exists. Pins use non-root paths on the landing host so the
+// existing '/'-is-dead locks still hold.
+const PINS = [
+  { id: 20, slug: 'pin-landing', host: '4lsg.com', path: '/pinned-page', status: 'live',
+    hook_slug: null, thankyou_url: null, html: '<h1>PIN_LANDING</h1>' },
+  { id: 21, slug: 'pin-app-root', host: 'app.4lsg.com', path: null, status: 'live',
+    hook_slug: null, thankyou_url: null, html: '<h1>PIN_APP_ROOT</h1>' },
+  { id: 22, slug: 'pin-app-login', host: 'app.4lsg.com', path: '/login', status: 'live',
+    hook_slug: null, thankyou_url: null, html: '<h1>PIN_APP_LOGIN</h1>' },
+  { id: 23, slug: 'pin-unregistered', host: 'offers.example.com', path: null, status: 'live',
+    hook_slug: null, thankyou_url: null, html: '<h1>PIN_UNREGISTERED</h1>' },
+];
+
 const db = {
   query: jest.fn(async (sql, params) => {
-    if (/SELECT DISTINCT host FROM pages/i.test(sql)) return [[]];
-    if (/FROM pages\s+WHERE host = \?/i.test(sql)) return [[]];
+    if (/SELECT DISTINCT host FROM pages/i.test(sql)) {
+      return [[...new Set(PINS.filter(r => r.status === 'live').map(r => r.host))].map(host => ({ host }))];
+    }
+    if (/FROM pages\s+WHERE host = \?/i.test(sql)) {
+      const row = PINS.find(r => r.status === 'live' && r.host === params[0] && r.path === params[1]);
+      return [row ? [row] : []];
+    }
     if (/FROM pages WHERE slug = \?/i.test(sql)) {
       const row = PAGES[String(params[0])];
       return [row ? [row] : []];
@@ -745,6 +768,69 @@ describe('secondary landing hosts canonicalize to landing_hosts[0]', () => {
         expect((await res.json()).probe).toBe(probe);
       }
     });
+  });
+});
+
+// ── pinned pages serve ONLY on landing hosts (P0 #2, 2026-10-21) ──────────
+describe('pinned pages serve ONLY on landing hosts', () => {
+  test('LOCK: an app-host pin at "/" never replaces the shell', async () => {
+    for (const method of ['GET', 'HEAD']) {
+      const res = await appHost('/', { method });
+      expect(res.status).toBe(200);
+      if (method === 'GET') expect(await res.text()).toBe('SHELL');
+    }
+  });
+
+  test('LOCK: an app-host pin never shadows an app route, GET or POST', async () => {
+    expect(await (await appHost('/login')).text()).toBe('LOGIN');
+    const post = await appHost('/', {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: 'name=x',
+    });
+    expect(post.status).not.toBe(303);
+    expect(await post.text()).not.toContain('PIN_APP');
+  });
+
+  test('LOCK: a client-claimed host cannot pull a non-landing pin onto the landing origin', async () => {
+    // Landing request (x-forwarded-host names 4lsg.com) whose effective
+    // host claims app.4lsg.com: the pin lookup must not use the claim.
+    for (const p of ['/', '/login']) {
+      const res = await fetch(base + p, {
+        redirect: 'manual',
+        headers: { 'x-original-host': 'app.4lsg.com', 'x-forwarded-host': '4lsg.com' },
+      });
+      expect(res.status).toBe(302);
+      expect(res.headers.get('location')).toBe(FIRM);
+    }
+  });
+
+  test('a pin on an unregistered host is inert (falls through, never served)', async () => {
+    const res = await onHost('offers.example.com', '/');
+    expect(await res.text()).not.toContain('PIN_UNREGISTERED');
+  });
+
+  test('a pin on the landing host still serves (GET) and submits (POST)', async () => {
+    const res = await landing('/pinned-page');
+    expect(res.status).toBe(200);
+    expect(await res.text()).toContain('PIN_LANDING');
+    const post = await landing('/pinned-page', {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: 'name=x',
+    });
+    expect(post.status).toBe(303);
+    expect(post.headers.get('location')).toBe('/pinned-page?submitted=1');
+  });
+
+  test('with landing_hosts empty, no pin serves anywhere', async () => {
+    process.env.LANDING_HOSTS = '';
+    try {
+      expect(await (await landing('/pinned-page')).text()).not.toContain('PIN_LANDING');
+      expect(await (await appHost('/')).text()).toBe('SHELL');
+    } finally {
+      process.env.LANDING_HOSTS = '4lsg.com';
+    }
   });
 });
 

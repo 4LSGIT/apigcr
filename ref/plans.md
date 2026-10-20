@@ -461,6 +461,8 @@ Active surfaces with known next steps.
 
 ## Feature plans
 
+- **Pinned pages on a second public domain (2026-10-21).** `pages.host` is bound to `landing_hosts` (pageService.assertHostAllowed), but the landing branch of `pageHostMiddleware` canonicalizes every GET on a non-first landing host to `landing_hosts[0]` BEFORE the pin lookup, so a page pinned to e.g. `www.4lsg.com` is accepted at write and never served by GET. No live row is affected (all 8 `pages` rows had `host` NULL on 2026-10-21). Pick one when a second marketing domain is wanted: refuse non-canonical hosts at write, or check pins before canonicalizing (still landing-origin only, so safe). Converges with YCv3 multi-site (`pages.site_id`).
+
 - **Opt-out system.** Four-step plan: (A) contact form toggles, (B) warn-but-don't-block on direct sends (Swal confirmation), (C) opted-out badges, (D) inbound STOP handler via YisraHook.
 
 - **Image library refactor.** Picker, upload dialog, delete, and the "Save to library" checkbox are duplicated across `campaign.html`, `communicate.html`, `sendingform.html` (some with `sf` prefix to avoid collision). Extract to a standalone iframe-loadable module — e.g. `/js/imageLibrary.js` exposing `imageLibrary.pickImage()`, `imageLibrary.uploadDialog({ accept, maxMB })`, `imageLibrary.deleteImage(id)`. Each consumer drops in a `<script>` tag and gets consistent behavior. Bundle these into the refactor:

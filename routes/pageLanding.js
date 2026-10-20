@@ -15,18 +15,18 @@
  *   Registered in server.js BEFORE express.static (see server.js edit) so a
  *   mapped domain's root request never falls into public/index.html. The
  *   middleware is a closure over the db pool because it runs before the
- *   req.db-attaching middleware. Three jobs since 2026-08-16 (origin
- *   separation — see the block comment above pageHostMiddleware):
- *     1. vanity host+path pages (the original job, unchanged),
- *     2. LANDING HOSTS (landing_hosts setting): serve ONLY the public
- *        allowlist + pages (prefix, root-slug, or pinned); dead-end all else,
- *     3. non-landing hosts: 302 the migrated public GET surface to the
- *        canonical landing host when landing_redirect = '1'.
+ *   req.db-attaching middleware. Two jobs (origin separation — see the
+ *   block comment above pageHostMiddleware):
+ *     1. LANDING HOSTS (landing_hosts setting): serve ONLY the public
+ *        allowlist + pages (prefix, root-slug, or host+path pinned);
+ *        dead-end all else,
+ *     2. non-landing hosts: never serve a page; 302 the migrated public GET
+ *        surface to the canonical landing host when landing_redirect = '1'.
  *
  *   Effective host = x-original-host header (set by the Cloudflare Worker /
  *   proxy in front of mapped domains) falling back to req.hostname
- *   (X-Forwarded-Host aware — trust proxy is 1). Unknown hosts next()
- *   immediately at zero DB cost via pageService's host cache.
+ *   (X-Forwarded-Host aware — trust proxy is 1). Non-landing hosts never
+ *   touch the DB here.
  *
  * Submission envelope (FLAT — deliberately not the {body,headers,...} shape
  * the /hooks/:slug HTTP receiver builds):
@@ -601,29 +601,21 @@ function pageHostMiddleware(db) {
       const isLanding = isLandingRequest(req, lHosts);
 
       if (!isLanding) {
-        // ── Non-landing host ────────────────────────────────────────────
-        // 1. Pre-existing vanity-page mechanism, unchanged: zero-DB-cost Set
-        //    lookup on the warm path; unknown host (i.e. all normal
-        //    app.4lsg.com traffic) falls straight through it.
-        if (await pageService.isKnownHost(db, host)) {
-          const path = pageService.normalizePath(req.path);
-          const page = await pageService.getLivePageByHostPath(db, host, path);
-          if (page) {
-            if (req.method === 'GET' || req.method === 'HEAD') {
-              return servePage(res, page);
-            }
-            if (req.method === 'POST') {
-              if (!req.db) req.db = db; // runs before the req.db middleware
-              return handleSubmit(req, res, page);
-            }
-            return res.status(405).set('Allow', 'GET, HEAD, POST').type('text').send('Method Not Allowed');
-          }
-        }
-        // 2. Origin-separation redirects: send the migrated public surface to
-        //    the canonical landing host, full query string intact (case_id
-        //    credentials in live SMS links ride req.originalUrl). 302, not
-        //    301: nothing may cache the mapping while it can still be
-        //    reverted by flipping landing_redirect to '0'.
+        // ── Non-landing host (app.4lsg.com and any unregistered host) ─────
+        // Authored page HTML NEVER serves here, pinned or not. This branch
+        // used to serve any live host+path pin first, on any host that had
+        // one — so any staff login could pin a page to the app host's '/'
+        // and replace the shell on the origin holding every staff JWT. Pins
+        // now bind to landing_hosts at write (pageService.assertHostAllowed)
+        // and serve only in the landing branch below; a pin on a host that is
+        // not (or no longer) a landing host is inert. Test-locked in
+        // tests/pageLanding.originsep.test.js.
+        //
+        // Origin-separation redirects: send the migrated public surface to
+        // the canonical landing host, full query string intact (case_id
+        // credentials in live SMS links ride req.originalUrl). 302, not
+        // 301: nothing may cache the mapping while it can still be
+        // reverted by flipping landing_redirect to '0'.
         if (
           lHosts.length &&
           redirectsEnabled() &&
@@ -671,8 +663,11 @@ function pageHostMiddleware(db) {
       // 2. Explicitly pinned host+path pages (the vanity mechanism) still
       //    win on a landing host — an explicit pin beats an implicit slug.
       //    isKnownHost is the zero-DB-cost gate: no pinned rows for this
-      //    host → no query spent on bot noise.
-      if (await pageService.isKnownHost(db, host)) {
+      //    host → no query spent on bot noise. `host` is effectiveHost(),
+      //    which a client can set (x-original-host), so the lookup is also
+      //    held to landing hosts: a pin on any other host — an old row, or
+      //    one whose host left landing_hosts — never serves, here or above.
+      if (lHosts.includes(host) && await pageService.isKnownHost(db, host)) {
         const pinned = await pageService.getLivePageByHostPath(
           db, host, pageService.normalizePath(req.path)
         );
