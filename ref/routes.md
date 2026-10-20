@@ -1,7 +1,7 @@
 # Routes
 
-_Generated 2026-10-18T23:41:03.926Z_  
-_807 routes total — DELETE: 66, GET: 339, PATCH: 58, POST: 304, PUT: 37, _ALL: 3_
+_Generated 2026-10-20T23:50:58.067Z_  
+_808 routes total — DELETE: 66, GET: 339, PATCH: 58, POST: 305, PUT: 37, _ALL: 3_
 
 ## Global middleware chain
 
@@ -410,6 +410,8 @@ _807 routes total — DELETE: 66, GET: 339, PATCH: 58, POST: 304, PUT: 37, _ALL:
 | DELETE | `/api/hooks/targets/:id` | `staffAuth` | — |
 | PUT | `/api/hooks/targets/:id` | `staffAuth` | — |
 | POST | `/api/hooks/test-transform` | `staffAuth` | — |
+| POST | `/api/impersonation/exit` | `markViewAsControl`, `jwtOrApiKey`, `requireViewAsSession` | — |
+| POST | `/api/impersonation/mode` | `markViewAsControl`, `jwtOrApiKey`, `requireViewAsSession` | — |
 | GET | `/api/impersonation/users` | `staffAuth` | — |
 | POST | `/api/impersonation/users/:id/start` | `staffAuth` | — |
 | POST | `/api/intake/case` | `jwtOrApiKey` | — |
@@ -697,7 +699,6 @@ _807 routes total — DELETE: 66, GET: 339, PATCH: 58, POST: 304, PUT: 37, _ALL:
 |--------|------|-------------|---------|
 | POST | `/auth/forgot-password` | `<anonymous>` | — |
 | GET | `/auth/oauth/callback` | — | — |
-| POST | `/auth/P_validate` | `<anonymous>` | — |
 | POST | `/auth/reset-password` | `<anonymous>` | — |
 | GET | `/auth/validate` | `jwtOrApiKey` | — |
 
@@ -1077,4 +1078,4 @@ _807 routes total — DELETE: 66, GET: 339, PATCH: 58, POST: 304, PUT: 37, _ALL:
 
 ---
 
-_807 routes total — DELETE: 66, GET: 339, PATCH: 58, POST: 304, PUT: 37, _ALL: 3_
+_808 routes total — DELETE: 66, GET: 339, PATCH: 58, POST: 305, PUT: 37, _ALL: 3_

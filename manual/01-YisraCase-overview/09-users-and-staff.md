@@ -134,12 +134,31 @@ Staff members can update their own name, username, email, phone, and communicati
 Users with the `it` or `su` role can choose **View as** beside an active,
 non-privileged human user. This opens a 30-minute session in the current tab
 using that user's roles, entitlements, launcher layout, and preferences. The
-original IT login remains active in other tabs and is restored by exiting from
-the View-as bar above the header.
+original login remains active in other tabs and is restored by **Exit** on the
+View-as bar above the header.
 
-Sessions start in **Read-only** mode. The top bar can switch between Read-only,
-where the server rejects every mutating request, and **Live**, where actions are
-performed with the selected user's permissions and attributed to that user.
-They cannot target the automation account, the current account, a disabled
-account, or another user holding `it` or `su`. Starting a session is recorded in
-`admin_audit_log` with `tool = 'view_as'` and both actor and target identities.
+Sessions always start in **Read-only** mode: the server rejects every mutating
+request, whatever the screen offers. **Live** mode, where actions run with the
+selected user's permissions, is **superuser-only** (Fred's ruling,
+2026-10-21): `it` gets read-only View-as and never sees the Live toggle; a
+`su` may switch to Live from the bar. The server decides Live from the
+superuser's own account at the moment of the switch, not from the session, so
+a demoted or disabled superuser cannot switch. Switching never extends the
+30 minutes, which count from the start.
+
+View as cannot target the automation account (user 0 or any account holding
+the `automation` role), the current account, a disabled account, or another
+user holding `it` or `su`, and a View-as session cannot start another one.
+
+**What is recorded.** `admin_audit_log` (`tool = 'view_as'`) gets a row,
+attributed to the real IT/SU user with the target in `details`, for each start
+(`view_as_started`), each switch (`view_as_live`, `view_as_readonly`), each
+refused Live switch (`view_as_live_rejected`), each refused target
+(`view_as_rejected_target`), and each exit (`view_as_exited`; best-effort, so
+a tab closed without Exit leaves no exit row and the session simply expires).
+What the session did is in `jwt_api_audit_log`: every request carries
+`auth_type = 'jwt_view_as'` (read-only) or `'jwt_view_as_live'`, and the
+username reads `target [by actor#id]`. Records the application itself writes
+during a Live session (notes, tasks, `created_by` and similar) are attributed
+to the selected user by design, so `jwt_api_audit_log` is where to look for
+who really acted.

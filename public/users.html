@@ -149,7 +149,7 @@
     const roles = rolesOf(u.roles);
     return u.user !== 0 && u.user !== viewerId() &&
       String(u.user_auth || "").startsWith("authorized") &&
-      !roles.includes("it") && !roles.includes("su");
+      !roles.includes("it") && !roles.includes("su") && !roles.includes("automation");
   }
 
   function init() {
@@ -219,8 +219,8 @@
       document.getElementById("formPanel").style.display = canManage
         ? document.getElementById("formPanel").style.display : "none";
       document.getElementById("usersHelp").textContent = canManage
-        ? "Users are never deleted — rows are referenced across the system. Use Disable instead. Disabling clears passwords immediately; an already-issued login session can persist up to 24h. View as opens a read-only diagnostic session in this tab, with an optional Live mode."
-        : "View as opens a read-only 30-minute diagnostic session in this tab, with an optional Live mode. Other tabs remain logged in as you.";
+        ? "Users are never deleted — rows are referenced across the system. Use Disable instead. Disabling clears passwords immediately; an already-issued login session can persist up to 24h. View as opens a read-only diagnostic session in this tab; superusers may switch it to Live (audited)."
+        : "View as opens a read-only 30-minute diagnostic session in this tab. Other tabs remain logged in as you.";
       const data = await P.apiSend(canManage ? "/api/admin/users" : "/api/impersonation/users", "GET");
       USERS = data.users || [];
       if (!USERS.length) {
@@ -384,11 +384,10 @@
     if (!u || !canViewAs(u)) return;
     if (!confirm(
       `View the app as ${u.user_name || u.username}?\n\n` +
-      `This opens a 30-minute read-only session in this tab. Use the top bar to switch to Live when you need to act as the user. Other tabs remain logged in as you.`
+      `This opens a 30-minute read-only session in this tab. Superusers can switch it to Live from the top bar to act as the user (audited). Other tabs remain logged in as you.`
     )) return;
     try {
-      const data = await P.apiSend(`/api/impersonation/users/${id}/start`, "POST");
-      P.startViewAs(data);
+      await P.startViewAs(id);
     } catch (err) {
       alert("View as failed: " + err.message);
     }

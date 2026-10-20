@@ -754,7 +754,6 @@ routes/scheduled_jobs.js
 routes/sequenceTypes.js
 routes/sequences.js
 routes/taskActions.js
-routes/temp_auth_validate.js
 routes/test_wf_advance.js
 routes/unplacehold.js
 routes/videoLanding.js

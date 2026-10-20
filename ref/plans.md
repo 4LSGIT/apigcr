@@ -517,6 +517,8 @@ Active surfaces with known next steps.
 
 - **Plaintext `password` column removal** on the users table — blocked on old frontend retirement.
 
+- **Plaintext `users.password`: order of the retirement** (View-as fix, 2026-10-21). Writers today: `auth.password.js` reset + change, `admin.users.js` set-password. Code readers: `/db` (`dbQuery.js` — LIVE: Pabbly Connect as `automations`, 75 calls 2026-08-03 → 2026-10-19 in `legacy_route_log`, one as `fred`), `/db64`, `/unplacehold`, the legacy `/dropbox/*` routes. (`/auth/P_validate` was deleted in the same fix: 0 calls since 2026-07-31.) Stopping the writes first does NOT retire anything — the stale plaintext keeps authenticating `/db` with the OLD password. So: (1) move the Pabbly `/db` flow off plaintext and delete the four reader routes; (2) stop all three writers in one slice; (3) Fred-run migration NULLs the column, then DROPs it after the drop-a-column sweep (code, schema objects, stored report/workflow/tool definitions, `lib/reportSchema/manifest.js` `users_password`).
+
 - **`/db` and raw-SQL endpoint kill** — blocked on old frontend retirement.
 
 - **`// TODO: REMOVE` markers** scattered across the codebase — clean sweep at the same time.

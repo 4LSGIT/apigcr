@@ -6976,14 +6976,15 @@
       jwt: null,
       loginInProgress: null
     };
+    // One tab-local View-as token. The server mints each mode's token on
+    // demand (POST /api/impersonation/mode); the two legacy paired-token keys
+    // are only cleared, for tabs that started a session before that change.
     const VIEW_AS_STORAGE_KEY = "yc_view_as_jwt";
-    const VIEW_AS_READONLY_KEY = "yc_view_as_readonly_jwt";
-    const VIEW_AS_LIVE_KEY = "yc_view_as_live_jwt";
+    const VIEW_AS_LEGACY_KEYS = ["yc_view_as_readonly_jwt", "yc_view_as_live_jwt"];
     function clearViewAsStorage() {
       try {
         sessionStorage.removeItem(VIEW_AS_STORAGE_KEY);
-        sessionStorage.removeItem(VIEW_AS_READONLY_KEY);
-        sessionStorage.removeItem(VIEW_AS_LIVE_KEY);
+        VIEW_AS_LEGACY_KEYS.forEach(k => sessionStorage.removeItem(k));
       } catch (_) { }
     }
     let viewAsToken = null;
@@ -7028,33 +7029,44 @@
       return !!(p && p.view_as === true && p.act && p.view_as_mode === mode && !isJwtExpired(token));
     }
 
-    function startViewAs(session) {
-      const readonlyToken = session && (session.readonly_token || session.token);
-      const liveToken = session && session.live_token;
-      if (!validViewAsToken(readonlyToken, 'readonly') || !validViewAsToken(liveToken, 'live')) {
+    // The shell makes the start request itself, so the minted token never
+    // passes through the Users pane (panes never hold a JWT — AI_CONTEXT §3).
+    async function startViewAs(userId) {
+      const session = await apiSend(`/api/impersonation/users/${Number(userId)}/start`, "POST");
+      const token = session && session.token;
+      if (!validViewAsToken(token, 'readonly')) {
         throw new Error("The server returned an invalid View-as session");
       }
-      sessionStorage.setItem(VIEW_AS_READONLY_KEY, readonlyToken);
-      sessionStorage.setItem(VIEW_AS_LIVE_KEY, liveToken);
-      sessionStorage.setItem(VIEW_AS_STORAGE_KEY, readonlyToken);
+      sessionStorage.setItem(VIEW_AS_STORAGE_KEY, token);
       location.assign('/');
     }
 
-    function setViewAsMode(mode) {
+    // Each switch is a server call: Live is minted only for an SU actor and
+    // every switch is audited. The new token keeps the session's expiry.
+    async function setViewAsMode(mode) {
       if (mode !== 'readonly' && mode !== 'live') return;
-      const key = mode === 'readonly' ? VIEW_AS_READONLY_KEY : VIEW_AS_LIVE_KEY;
-      let token = null;
-      try { token = sessionStorage.getItem(key); } catch (_) { }
-      if (!validViewAsToken(token, mode)) {
+      const current = activeViewAs();
+      if (!current) { clearViewAsStorage(); location.assign('/'); return; }
+      if (current.view_as_mode === mode) return;
+      let data;
+      try {
+        data = await apiSend("/api/impersonation/mode", "POST", { mode });
+      } catch (err) {
+        alert("Could not switch View-as mode: " + (err && err.message || err));
+        return;
+      }
+      if (!validViewAsToken(data && data.token, mode)) {
         clearViewAsStorage();
         location.assign('/');
         return;
       }
-      sessionStorage.setItem(VIEW_AS_STORAGE_KEY, token);
+      sessionStorage.setItem(VIEW_AS_STORAGE_KEY, data.token);
       location.reload();
     }
 
-    function exitViewAs() {
+    // The exit audit row is best-effort: the token is dropped whatever happens.
+    async function exitViewAs() {
+      try { if (activeViewAs()) await apiSend("/api/impersonation/exit", "POST"); } catch (_) { }
       clearViewAsStorage();
       location.assign('/');
     }
@@ -7642,6 +7654,8 @@ async function initAuth() {
         if (viewAsBar) viewAsBar.dataset.mode = mode;
         if (E("viewAsTarget")) E("viewAsTarget").textContent = user.user_name || user.username;
         if (E("viewAsActor")) E("viewAsActor").textContent = `Started by ${viewAs.act.username}`;
+        // Live is SU-only (server-enforced at mint); hide the toggle otherwise.
+        if (E("viewAsLive")) E("viewAsLive").style.display = viewAs.view_as_live_allowed === true ? "" : "none";
         [["viewAsReadonly", "readonly"], ["viewAsLive", "live"]].forEach(([id, value]) => {
           const button = E(id);
           if (!button) return;

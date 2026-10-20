@@ -564,8 +564,10 @@ the token to localStorage until the token-storage decision (ref/plans.md).
 New raw `fetch` with a lifted token is a regression, not a pattern.
 
 **Serving invariants (2026-10-05, verified):**
-- *No Authorization persistence:* the token exists in exactly one durable
-  place, localStorage `jwt`. Nothing logs or stores auth headers: the hook
+- *No Authorization persistence:* the login token's one durable place is
+  localStorage `jwt`; the shell also holds two tab-scoped sessionStorage
+  tokens — `su_elev` (SU step-up) and `yc_view_as_jwt` (View-as, below) —
+  and no pane ever receives either. Nothing logs or stores auth headers: the hook
   receiver strips `authorization`/`cookie`/`x-api-key` before persisting
   captures (api.hooks.js SENSITIVE_HEADER_DENYLIST), the apiTester audit log
   redacts the same set, the client diag ring records method/url/status only.
@@ -579,6 +581,23 @@ New raw `fetch` with a lifted token is a regression, not a pattern.
   app-origin route serving variable-mime bytes (documents raw) allowlists
   pdf/images by OUR extension map + nosniff, attachment otherwise — copy that
   pattern (api.documents.js RAW_INLINE_MIME) for any new byte-serving route.
+
+**View-as (IT diagnostic sessions):** `routes/api.impersonation.js` +
+`lib/auth.impersonation.js`. A 30-min staff JWT for the TARGET (its roles,
+entitlements, UI) plus `view_as: true`, `view_as_mode` and an RFC 8693 `act`
+claim naming the real IT/SU. Invariants: any `view_as` token is read-only
+(both auth stacks refuse non-GET, `code: view_as_read_only`) unless it holds
+`view_as_mode: 'live'` AND a well-formed `act` — fail closed. Start
+(`users.impersonate` = it+su) returns only the read-only token; Live is minted
+on demand by `POST /api/impersonation/mode`, SU-only by the ACTOR's DB row
+(Fred's ruling 2026-10-21), never extending `exp`; the two control routes
+(`/mode`, `/exit`) opt out of the read-only block via `markViewAsControl`.
+Targets: never user 0, disabled, self, or `it`/`su`/`automation` holders; no
+nesting. App attribution stays on the target by design — the actor is in
+`admin_audit_log` (`tool='view_as'`) and every `jwt_api_audit_log` row
+(`auth_type` `jwt_view_as[_live]`, username `target [by actor#id]`). The
+shell makes the start call itself so the token never reaches the Users pane.
+Operator view: `manual/01-YisraCase-overview/09-users-and-staff.md`.
 
 ## 4. REST API — CONVENTIONS
 

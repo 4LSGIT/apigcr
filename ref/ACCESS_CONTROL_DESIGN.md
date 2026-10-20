@@ -84,7 +84,7 @@ SU_STEPUP=0) → per-tool rate limit → `admin_audit_log` on every rejection.
 | mailboxService.isSuperuserDb (DB read, not JWT) | === SU string | capability read from DB (pattern stays) |
 | ADMIN_AUTH ×2 (issueReports, featureRequests) | phantom admin | replace with `can('firm.settings')` or kin |
 | admin.users.js | writes user_auth | gains roles write + new enum |
-| dbQuery / db64 / dropbox / unplacehold / temp_auth_validate | plaintext `users.password` + startsWith | legacy; never gain role semantics; retirement tracked in plans.md (blocked on Phase 6) |
+| dbQuery / db64 / dropbox / unplacehold | plaintext `users.password` + startsWith | legacy; never gain role semantics; retirement tracked in plans.md (blocked on Phase 6) |
 | internal_functions/users.js, reportSchema/manifest | expose/describe values | follow-on rename only |
 
 ### 1g. Gates currently missing (the demand side)
@@ -132,7 +132,7 @@ capabilities**:
 | Role | Meaning | Capabilities |
 |---|---|---|
 | `su` | root within the tenant (the YC role) | everything — nothing blocks it ever |
-| `it` | firm technical operator | **all firm-grade capabilities** (incl. `firm.settings` — Q2 yes — and `system.settings`), never root-grade |
+| `it` | firm technical operator | **all firm-grade capabilities** (incl. `firm.settings` — Q2 yes — `system.settings`, and `users.impersonate`: read-only View-as only, §2.9), never root-grade |
 | `admin` | firm administrator | `firm.settings`, `users.manage`*, `automations.manage`, `archives.purge`† |
 | `staff` | baseline employee | the implicit everything-not-gated surface (no registry entry needed in v2) |
 | `attorney` | legal read scope | `comms.read_all` (the existing mailbox/phone read bypass) |
@@ -172,7 +172,7 @@ gratuitous churn). `'authorized - SU'` and the phantom
   demand: `firm.settings`, `tools.author` (root), `users.manage` (root in
   v2 — delegation later is a registry flip), `templates.code`,
   `comms.read_all`, `archives.purge`, `automations.manage`, and — from the
-  settings arc — `system.settings`. Growing it = a
+  settings arc — `system.settings`; and `users.impersonate` (View-as, §2.9). Growing it = a
   code change + test snapshot (same deliberate-choice pattern as
   CTA_FN_DENYLIST). Shipped in A1 as `lib/capabilities.js`.
 - `ROLE_CAPS` — role → capability-set map (table above). `su` and `it` are
@@ -296,10 +296,26 @@ role") — this model keeps that true.
 
 ### 2.8 Target state for legacy authn
 Design states the target (retirement itself tracked in plans.md, blocked
-on Phase 6): dbQuery/db64/dropbox-legacy/unplacehold/temp_auth_validate
+on Phase 6): dbQuery/db64/dropbox-legacy/unplacehold
 retire → `users.password` (9 plaintext) and `tempusers` (2 plaintext) are
 DROPPED. Until then those routes stay frozen: never gain role semantics,
 never accept the new enum beyond `startsWith('authorized')`.
+
+### 2.9 View-as (`users.impersonate`) — Live is SU-only (Fred's ruling, 2026-10-21)
+`users.impersonate` (firm-grade, so `it` + `su`) opens a 30-minute
+**read-only** View-as session as an ordinary staff user (mechanics:
+AI_CONTEXT §3 View-as; operator view: manual 01/09). **Live** View-as —
+writes performed as the target — is root-grade in effect and is **SU-only**:
+`POST /api/impersonation/mode` mints a Live token only when the actor's DB
+row holds `su` (freshness rule, §2.3), never from a token claim. Not a
+capability flag: Live hangs on `su` itself, as the SU tools do. Consequences
+that are deliberate: no identity-route denylist under Live (su is root
+anyway — Fred, same ruling), so the takeover chain "IT goes Live → rewrites
+the target's email → password reset" is closed by `it` never reaching Live;
+the actor is stamped on every `jwt_api_audit_log` row and every switch/exit
+is in `admin_audit_log`, while app-level attribution stays on the target.
+Live switches do not ask for SU step-up (the elevation token is per-user
+and the View-as caller is the target) — revisit if Live use grows.
 
 ---
 
