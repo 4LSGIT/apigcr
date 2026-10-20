@@ -99,7 +99,8 @@ describe('1. the markup and the CSS', () => {
   test('the panel CSS targets the stage; no hub-scoped panel rule survives; the stage centres like a .tab-main', () => {
     expect(DRILL_CSS).toMatch(/#ycPanels \{ text-align: center; \}/);
     expect(DRILL_CSS).toMatch(/#ycPanels > div > iframe \{ box-sizing: border-box; \}/);
-    expect(DRILL_CSS).toMatch(/#ycPanels > div > iframe \{\s*height: calc\(100vh - var\(--header-h\) - 46px\) !important;\s*height: calc\(100dvh - var\(--header-h\) - 46px\) !important;\s*\}/);
+    // --view-as-offset: the View-as banner (2026-10-18) shrinks the stage like the header does
+    expect(DRILL_CSS).toMatch(/#ycPanels > div > iframe \{\s*height: calc\(100vh - var\(--header-h\) - var\(--view-as-offset, 0px\) - 46px\) !important;\s*height: calc\(100dvh - var\(--header-h\) - var\(--view-as-offset, 0px\) - 46px\) !important;\s*\}/);
     expect(DRILL_CSS).toMatch(/#ycPanels > div \{ margin-top: 0 !important; \}/);
     for (const css of STYLES) expect(css).not.toMatch(/#tab(More|Admin) > div/);
     // the grid rules still select the tiles in their pages (keyed on the hubs' shared class since S6c-5)

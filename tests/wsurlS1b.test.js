@@ -73,6 +73,7 @@ const VOCAB = {
     tabTimeline: 'timeline', checklists: 'checklists', tabTasks: 'tasks', tabDB: 'db',
     tabDocuments: 'documents', tabForms: 'forms', tabEsign: 'esign', tabAuto: 'auto', tabLog: 'log',
     tabInfo: 'ISSN', tabSend: 'send', tabCase: 'case', tab341: '341', tabDet: 'det',
+    tabComms: 'comms',   // Communications feed (2026-10-19); 'send' was taken by sending-form tabs
   },
   contact: {
     tabInfo: 'info', tabRels: 'rels', tabSend: 'send', tabTasks: 'tasks', tabNotes: 'notes',

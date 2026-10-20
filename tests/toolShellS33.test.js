@@ -435,7 +435,7 @@ describe('the More firm row', () => {
     const evil = { id: 'firm:evil', label: '<img src=x onerror=alert(1)>', icon: 'bug', action: { type: 'tool', key: 'x', present: 'modal' } };
     t.L.applyAccess({ ui: ui({ items: [FI.leads, FI.pay, evil, FI.clio] }) });
     const kids = [...more().children];
-    const lastReg = kids.indexOf(t.L.elementsOf('moreReports').more);
+    const lastReg = kids.indexOf(t.L.elementsOf('moreAssistant').more);   // the registry grid's last tile (YisrAI row, 2026-10-19)
     expect(kids.slice(lastReg + 1, lastReg + 7).map((n) => n.tagName + (n.getAttribute('data-yc-firm-row') || '')))
       .toEqual(['BR', 'BR', 'BUTTONfirm:leads', 'BUTTONfirm:pay', 'BUTTONfirm:evil', 'BUTTONfirm:clio']);
     expect(kids[lastReg + 7].className).toBe('more-egg-row');

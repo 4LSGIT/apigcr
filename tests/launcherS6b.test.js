@@ -455,7 +455,10 @@ describe('5. the S6b items: myTasks, logout, casey', () => {
       const eff = t.L.effectiveRegistry();
       expect(t.L.groups()).toContain('More actions');
       expect(t.L.rank('log out', eff)[0].id).toBe('logout');
-      expect(t.L.rank('casey', eff)[0].id).toBe('casey');
+      // 'casey' first matches the assistant tile (label "Ask Casey", 2026-10-19);
+      // the mascot item must still be in the results.
+      expect(t.L.rank('casey', eff)[0].id).toBe('moreAssistant');
+      expect(t.L.rank('casey', eff).map((r) => r.id)).toContain('casey');
       expect(t.L.rank('my tasks', eff)[0].id).toBe('myTasks');
     });
   });

@@ -72,12 +72,13 @@ describe('wiring: Comms is a sidebar tab, Settings lives in More Features', () =
     expect(HTML).toMatch(/<div id="tabSettings" class="tab-main">/);
   });
 
-  test('More Features: six rows of four, row 5 three since Get Clio Code left for the firm row (ui-custom S3.3b) — Settings in row 1 beside Theme, no Casey tile', () => {
+  test('More Features: row 5 three since Get Clio Code left for the firm row (ui-custom S3.3b), Ask Casey alone in row 7 (YisrAI, 2026-10-19) — Settings in row 1 beside Theme, no mascot tile', () => {
     const grid = noComments(between('<div id="tabMore" class="tab-main yc-hub">', '<div class="more-egg-row">'));
     const rows = grid.split(/\n\s*<br><br>\s*\n/).map((r) => (r.match(/<button class="big-button"[^>]*>[\s\S]*?<\/button>/g) || []).map((b) => b.replace(/<[^>]+>/g, '').trim()));
-    expect(rows.map((r) => r.length)).toEqual([4, 4, 4, 4, 3, 4]);
+    expect(rows.map((r) => r.length)).toEqual([4, 4, 4, 4, 3, 4, 1]);
     expect(rows[0]).toEqual(['Manuals', 'Settings', 'Theme', 'Feature Requests']);
     expect(rows[4]).toEqual(['Availability Manager', 'Booking Manager', 'Court Preview']);
+    expect(rows[6]).toEqual(['Ask Casey']);   // the assistant stands alone (featureRegistry DEFAULT_LAYOUTS.more)
     expect(grid).not.toMatch(/Get Clio Code|showClioCode/);   // a firm tool now (ref/tools/clio-code.html)
     expect(grid).toMatch(/<button class="big-button" onclick="openMainTab\('tabSettings'\)"/);
     expect(grid).not.toMatch(/fa-cat/);
