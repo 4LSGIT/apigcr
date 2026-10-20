@@ -528,10 +528,10 @@ describe('assistant knowledge and prompts', () => {
   });
 
   test('all assistant prompts are registered JSON prompts', () => {
-    expect(prompts.getPrompt('assistant_plan')).toMatchObject({ output_type: 'json', version: '9', model: 'claude-opus-5' });
+    expect(prompts.getPrompt('assistant_plan')).toMatchObject({ output_type: 'json', version: '10', model: 'claude-opus-5' });
     expect(prompts.getPrompt('assistant_investigate')).toMatchObject({ output_type: 'json', version: '2', model: 'claude-opus-5' });
-    expect(prompts.getPrompt('assistant_answer')).toMatchObject({ output_type: 'json', version: '11', model: 'claude-opus-5' });
-    expect(prompts.getPrompt('assistant_task_draft_repair')).toMatchObject({ output_type: 'json', version: '2', model: 'claude-opus-5' });
+    expect(prompts.getPrompt('assistant_answer')).toMatchObject({ output_type: 'json', version: '12', model: 'claude-opus-5' });
+    expect(prompts.getPrompt('assistant_task_draft_repair')).toMatchObject({ output_type: 'json', version: '3', model: 'claude-opus-5' });
     expect(prompts.getPrompt('assistant_plan').system).toMatch(/COLLATE utf8mb4_general_ci/);
     expect(prompts.getPrompt('assistant_plan').system).toMatch(/Never generate[\s\S]*x IN \(SELECT \.\.\. LIMIT n\)/);
     expect(prompts.getPrompt('assistant_plan').system).toMatch(/users\.roles[\s\S]*canonical role field/);
@@ -594,6 +594,22 @@ describe('assistant task drafts', () => {
       evidence: [{ query_id: 'q1', row_number: 1, label: 'Contact needing follow-up' }],
     });
     expect(db.query.mock.calls[1][0]).toMatch(/FROM contacts WHERE contact_id = \?/);
+  });
+
+  test('defaults completion notice by self-assignment and never invents a start date', async () => {
+    const proposal = {
+      kind: 'task.create.v1', title: 'Review Ask Casey', description: 'Try the feature and share feedback.',
+      assignee_user_id: 7, link: null, start_date: null, due_date: '2026-10-27',
+      evidence: [{ query_id: 'q1', row_number: 1 }],
+    };
+    const selfDb = { query: jest.fn().mockResolvedValue([[{ user: 7, user_name: 'Fred Ross' }]]) };
+    await expect(svc.normalizeActionDraft(selfDb, proposal, evidence, { currentUserId: 7 })).resolves.toMatchObject({
+      start_date: null, due_date: '2026-10-27', notify_assigner_on_completion: false,
+    });
+    const otherDb = { query: jest.fn().mockResolvedValue([[{ user: 7, user_name: 'Fred Ross' }]]) };
+    await expect(svc.normalizeActionDraft(otherDb, proposal, evidence, { currentUserId: 6 })).resolves.toMatchObject({
+      start_date: null, due_date: '2026-10-27', notify_assigner_on_completion: true,
+    });
   });
 
   test('normalizes the full existing-task lifecycle and resolves the target server-side', async () => {

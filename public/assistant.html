@@ -274,6 +274,7 @@ function taskCreateBody(draft) {
     notify: draft.notify_assigner_on_completion === true,
     link_type: draft.link ? draft.link.type : null,
     link_id: draft.link ? draft.link.id : null,
+    source: 'Casey',
   };
 }
 
@@ -318,14 +319,41 @@ function taskDraftConfirmation(draft) {
     'This writes the task to YisraCase using your account and may send assignment, start-date, and due-date notifications.';
 }
 
+async function confirmTaskDraft(draft) {
+  if (!(P.Swal && typeof P.Swal.fire === 'function')) throw new Error('The review dialog is unavailable. Nothing was changed.');
+  const result = await P.Swal.fire({
+    title: taskActionLabel(draft),
+    text: taskDraftConfirmation(draft),
+    icon: draft.kind === 'task.cancel.v1' ? 'warning' : 'question',
+    showCancelButton: true,
+    confirmButtonText: taskActionLabel(draft),
+    cancelButtonText: 'Keep proposal',
+    focusCancel: draft.kind === 'task.cancel.v1',
+    reverseButtons: true,
+    heightAuto: false,
+  });
+  return !!(result && result.isConfirmed);
+}
+
 async function executeTaskDraft(message) {
   const draft = message && message.action_draft;
-  if (!isTaskActionDraft(draft) || typeof draft.draft_id !== 'string' || !draft.draft_id || draft.executing) return;
+  if (!isTaskActionDraft(draft) || typeof draft.draft_id !== 'string' || !draft.draft_id || draft.executing || draft.reviewing) return;
   if (draft.status === 'applied' && draft.result_task_id) {
     P.showTask(draft.result_task_id);
     return;
   }
-  if (!window.confirm(taskDraftConfirmation(draft))) return;
+  draft.reviewing = true;
+  delete draft.action_error;
+  render();
+  try {
+    if (!await confirmTaskDraft(draft)) return;
+  } catch (e) {
+    draft.action_error = e.message || 'The review dialog could not be opened.';
+    return;
+  } finally {
+    draft.reviewing = false;
+    render();
+  }
   draft.executing = true;
   delete draft.action_error;
   render();
@@ -390,7 +418,7 @@ function hydrateActionDrafts() {
     status.className = 'action-draft-status';
     status.textContent = draft.status === 'applied' && draft.result_task_id
       ? `Applied — task #${draft.result_task_id}`
-      : draft.executing ? 'Applying…' : 'Proposal — not applied';
+      : draft.executing ? 'Applying…' : draft.reviewing ? 'Reviewing…' : 'Proposal — not applied';
     head.append(title, status);
 
     const fields = document.createElement('dl');
@@ -441,7 +469,7 @@ function hydrateActionDrafts() {
       create.type = 'button';
       create.textContent = draft.status === 'applied' && draft.result_task_id
         ? `Open task #${draft.result_task_id}` : `Review & ${taskActionLabel(draft).toLowerCase()}`;
-      create.disabled = !!draft.executing;
+      create.disabled = !!(draft.executing || draft.reviewing);
       create.addEventListener('click', () => executeTaskDraft(message));
     } else {
       warning.textContent = 'This older saved proposal cannot run directly. Ask Casey to prepare the action again.';
@@ -459,7 +487,7 @@ function hydrateActionDrafts() {
     discard.type = 'button';
     discard.className = 'ghost';
     discard.textContent = 'Discard';
-    discard.disabled = !!draft.executing;
+    discard.disabled = !!(draft.executing || draft.reviewing);
     discard.addEventListener('click', () => { delete message.action_draft; render(); });
     if (create) actions.append(create);
     actions.append(copy);

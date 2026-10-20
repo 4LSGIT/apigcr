@@ -221,7 +221,8 @@ gate, not a substitute for deterministic unit tests.
 ## Slice A1: reviewed task creation
 
 A1 adds **Review & create task** to a server-normalized draft. Selecting it
-first presents a confirmation containing the exact assignee, link, and dates.
+first presents a SweetAlert confirmation containing the exact assignee, link,
+and dates.
 Only an affirmative confirmation posts the normalized fields to the existing
 authenticated `POST /api/tasks` route. That established route stamps the
 signed-in user as assigner and uses the canonical task insert, audit, linking,
@@ -233,6 +234,13 @@ to **Created** and provides an ordinary task-open action; failure leaves the
 draft visible with an inline error. The confirmation plainly warns that task
 creation is immediate and can send assignment, start-date, and due-date
 notifications.
+
+Creation requires assignee, title, and a clear description to match the native
+Tasks UI. Start is optional/null and means not-before; it is never defaulted to
+the creation date. Due is optional but recommended for a stated deadline. An
+unspecified completion notice defaults off for self-assignment and on for an
+assignment to someone else. The browser hard-codes `source:'Casey'`, never sends
+`from`, and leaves `send_assignment_email` omitted/true.
 
 ## Slice A2: reviewed task lifecycle
 

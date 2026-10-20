@@ -81,7 +81,8 @@ completed or canceled task. To perform the action:
 1. Review the exact task, action, values, assignee, dates, link, and optional
    note shown on the card.
 2. Select the card's **Review & …** button.
-3. Read the confirmation warning and continue only if every value is correct.
+3. Read the YisraCase confirmation dialog and continue only if every value is
+   correct.
 
 The confirmed button calls the ordinary authenticated task route with only the
 reviewed, server-normalized fields. Creation uses `POST /api/tasks`; ordinary
@@ -92,6 +93,16 @@ assigner, and date changes may schedule or cancel reminders. **Copy details**
 remains available; **Discard** changes no YisraCase record. Casey cannot draft a
 bill-linked task because the legacy `bill` task-link enum has no verifiable bill
 record source.
+
+For creation, assignee, title, and a clear description are required (the API
+has a defensive empty-description fallback, but the native Tasks UI requires a
+description). Start is optional and means “not actionable before”; it stays
+blank unless the request actually specifies a start date. Creating today does
+not imply starting today. Due is optional but recommended when the request has
+a real deadline. When the user does not specify completion notification, Casey
+defaults it off for self-assignment and on when assigning somebody else. Link
+is optional. The browser fixes `source` to `Casey`, leaves assignment email at
+its normal enabled default, and never sends a model-selected assigner.
 
 This user-through-browser pattern is the core action boundary: Casey proposes
 the fixed fields, but the staff member's click sends the request from that

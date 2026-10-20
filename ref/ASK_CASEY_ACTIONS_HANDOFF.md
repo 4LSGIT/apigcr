@@ -8,7 +8,7 @@ Updated 2026-10-20. Start by reading `AGENTS.md`,
 Casey does not execute a model-selected tool. It produces one typed,
 evidence-backed, server-normalized proposal. Nothing changes when the card is
 rendered. The staff member clicks a fixed button in their authenticated browser,
-reviews an exact confirmation, and that browser calls the ordinary YisraCase
+reviews an exact SweetAlert confirmation, and that browser calls the ordinary YisraCase
 endpoint. The model never supplies the URL, method, auth, or arbitrary fields.
 
 Task create/update/complete/cancel/reopen/transfer are implemented. They map to
@@ -18,6 +18,13 @@ and notification semantics. Applied results are saved to assistant chat history
 to prevent casual replay after reopening. The Tasks API has no `yc-sync`
 matcher, so this slice preserves native Tasks behavior and refreshes the current
 badge/list best-effort. A canonical Tasks sync matcher remains a separate arc.
+
+Task creation requires assignee/title/description. Start is a not-before value,
+not the creation date, and remains null unless requested; due is optional but
+recommended for a real deadline. Unspecified completion notice defaults false
+for self-assignment and true otherwise. The fixed browser mapping adds
+`source:'Casey'`, omits `from` (authenticated user wins), and leaves assignment
+email enabled by omitting `send_assignment_email`.
 
 ## Recipe for every new action
 

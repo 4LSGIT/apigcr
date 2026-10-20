@@ -36,7 +36,7 @@ describe('Ask Casey UI wiring', () => {
   });
 
   test('renders reviewed task lifecycle actions through the existing tasks API', () => {
-    expect(html).toContain(": draft.executing ? 'Applying…' : 'Proposal — not applied'");
+    expect(html).toContain(": draft.executing ? 'Applying…' : draft.reviewing ? 'Reviewing…' : 'Proposal — not applied'");
     expect(html).toContain("'task.update.v1'");
     expect(html).toContain("'task.complete.v1'");
     expect(html).toContain("'task.cancel.v1'");
@@ -53,7 +53,9 @@ describe('Ask Casey UI wiring', () => {
     expect(html).toContain('...(r.action_draft ? { action_draft: r.action_draft } : {})');
     expect(html).toContain('...(message.action_draft ? { action_draft: message.action_draft } : {})');
     expect(html).toContain("return { path: '/api/tasks', method: 'POST', body: taskCreateBody(draft) }");
-    expect(html).toContain('window.confirm(taskDraftConfirmation(draft))');
+    expect(html).toContain("P.Swal.fire({");
+    expect(html).toContain('if (!await confirmTaskDraft(draft)) return');
+    expect(html).not.toContain('window.confirm(');
     expect(route).not.toContain('/api/assistant/actions');
   });
 
@@ -78,7 +80,7 @@ describe('Ask Casey UI wiring', () => {
       evidence: [{ query_id: 'q1', row_number: 1 }], ignored: 'never send me',
     })).toEqual({
       to: 1, title: 'Review Ask Casey', desc: 'Try it.', start: '2026-10-20', due: '2026-10-27',
-      notify: true, link_type: 'contact', link_id: '1001',
+      notify: true, link_type: 'contact', link_id: '1001', source: 'Casey',
     });
   });
 
@@ -86,13 +88,12 @@ describe('Ask Casey UI wiring', () => {
     const api = jest.fn().mockResolvedValue({ status: 'success', task_id: 77 });
     const render = jest.fn();
     const reloadTasks = jest.fn();
-    const P = { showTask: jest.fn(), tasksBadgeRefresh: jest.fn(), document: { getElementById: jest.fn(() => ({ contentWindow: { reloadTasks } })) } };
-    const window = { confirm: jest.fn().mockReturnValue(false) };
+    const P = { Swal: { fire: jest.fn().mockResolvedValue({ isConfirmed: false }) }, showTask: jest.fn(), tasksBadgeRefresh: jest.fn(), document: { getElementById: jest.fn(() => ({ contentWindow: { reloadTasks } })) } };
     const history = [];
     const saveAssistantMessage = jest.fn().mockResolvedValue();
-    const make = new Function('window', 'P', 'api', 'render', 'history', 'saveAssistantMessage',
-      `const TASK_ACTION_KINDS=new Set(['task.create.v1']);${fnSrc(html, 'isTaskActionDraft')};${fnSrc(html, 'taskCreateBody')};${fnSrc(html, 'taskUpdateBody')};${fnSrc(html, 'taskActionLabel')};${fnSrc(html, 'taskActionRequest')};${fnSrc(html, 'taskDraftText')};${fnSrc(html, 'taskDraftConfirmation')};async ${fnSrc(html, 'executeTaskDraft')};return executeTaskDraft;` // eslint-disable-line no-new-func
-    )(window, P, api, render, history, saveAssistantMessage);
+    const make = new Function('P', 'api', 'render', 'history', 'saveAssistantMessage',
+      `const TASK_ACTION_KINDS=new Set(['task.create.v1']);${fnSrc(html, 'isTaskActionDraft')};${fnSrc(html, 'taskCreateBody')};${fnSrc(html, 'taskUpdateBody')};${fnSrc(html, 'taskActionLabel')};${fnSrc(html, 'taskActionRequest')};${fnSrc(html, 'taskDraftText')};${fnSrc(html, 'taskDraftConfirmation')};async ${fnSrc(html, 'confirmTaskDraft')};async ${fnSrc(html, 'executeTaskDraft')};return executeTaskDraft;` // eslint-disable-line no-new-func
+    )(P, api, render, history, saveAssistantMessage);
     const message = { action_draft: {
       draft_id: 'draft-123', kind: 'task.create.v1', status: 'draft', title: 'Review Ask Casey', description: 'Try it.',
       assignee: { user_id: 1, label: 'Stuart' }, link: { type: 'contact', id: '1001', label: 'Fred' },
@@ -101,17 +102,21 @@ describe('Ask Casey UI wiring', () => {
 
     await make(message);
     expect(api).not.toHaveBeenCalled();
-    expect(render).not.toHaveBeenCalled();
+    expect(render).toHaveBeenCalledTimes(2);
+    expect(P.Swal.fire).toHaveBeenCalledWith(expect.objectContaining({
+      title: 'Create task', text: expect.stringContaining('Assigned to: Stuart'),
+      showCancelButton: true, confirmButtonText: 'Create task', cancelButtonText: 'Keep proposal',
+    }));
 
-    window.confirm.mockReturnValue(true);
+    P.Swal.fire.mockResolvedValue({ isConfirmed: true });
     await make(message);
     expect(api).toHaveBeenCalledTimes(1);
     expect(api).toHaveBeenCalledWith('/api/tasks', {
       to: 1, title: 'Review Ask Casey', desc: 'Try it.', start: '2026-10-20', due: '2026-10-27',
-      notify: false, link_type: 'contact', link_id: '1001',
+      notify: false, link_type: 'contact', link_id: '1001', source: 'Casey',
     }, 'POST');
     expect(message.action_draft).toMatchObject({ status: 'applied', result_task_id: 77, executing: false });
-    expect(render).toHaveBeenCalledTimes(2);
+    expect(render).toHaveBeenCalled();
     expect(history).toEqual([expect.objectContaining({
       text: 'Create task applied to task #77.',
       action_result: { kind: 'task.create.v1', draft_id: 'draft-123', task_id: 77 },
@@ -143,10 +148,10 @@ describe('Ask Casey UI wiring', () => {
     const render = jest.fn();
     const history = [];
     const saveAssistantMessage = jest.fn();
-    const window = { confirm: jest.fn().mockReturnValue(true) };
-    const make = new Function('window', 'P', 'api', 'render', 'history', 'saveAssistantMessage',
-      `const TASK_ACTION_KINDS=new Set(['task.create.v1']);${fnSrc(html, 'isTaskActionDraft')};${fnSrc(html, 'taskCreateBody')};${fnSrc(html, 'taskUpdateBody')};${fnSrc(html, 'taskActionLabel')};${fnSrc(html, 'taskActionRequest')};${fnSrc(html, 'taskDraftText')};${fnSrc(html, 'taskDraftConfirmation')};async ${fnSrc(html, 'executeTaskDraft')};return executeTaskDraft;` // eslint-disable-line no-new-func
-    )(window, { showTask: jest.fn() }, api, render, history, saveAssistantMessage);
+    const P = { Swal: { fire: jest.fn().mockResolvedValue({ isConfirmed: true }) }, showTask: jest.fn() };
+    const make = new Function('P', 'api', 'render', 'history', 'saveAssistantMessage',
+      `const TASK_ACTION_KINDS=new Set(['task.create.v1']);${fnSrc(html, 'isTaskActionDraft')};${fnSrc(html, 'taskCreateBody')};${fnSrc(html, 'taskUpdateBody')};${fnSrc(html, 'taskActionLabel')};${fnSrc(html, 'taskActionRequest')};${fnSrc(html, 'taskDraftText')};${fnSrc(html, 'taskDraftConfirmation')};async ${fnSrc(html, 'confirmTaskDraft')};async ${fnSrc(html, 'executeTaskDraft')};return executeTaskDraft;` // eslint-disable-line no-new-func
+    )(P, api, render, history, saveAssistantMessage);
     const message = { action_draft: {
       draft_id: 'draft-fail', kind: 'task.create.v1', status: 'draft', title: 'Try Casey', description: 'Review it.',
       assignee: { user_id: 1, label: 'Stuart' }, link: null, start_date: null, due_date: null,
@@ -154,6 +159,9 @@ describe('Ask Casey UI wiring', () => {
     } };
 
     const first = make(message);
+    expect(message.action_draft.reviewing).toBe(true);
+    await Promise.resolve();
+    await Promise.resolve();
     expect(message.action_draft.executing).toBe(true);
     await make(message);
     expect(api).toHaveBeenCalledTimes(1);

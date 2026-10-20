@@ -425,7 +425,7 @@ async function taskDraftLink(db, value) {
   };
 }
 
-async function normalizeActionDraft(db, value, evidence) {
+async function normalizeActionDraft(db, value, evidence, { currentUserId = null } = {}) {
   if (value == null) return null;
   if (!value || !TASK_ACTION_KINDS.has(value.kind)) throw httpError(422, 'Task action kind is unavailable');
   if (value.kind !== 'task.create.v1') return normalizeExistingTaskAction(db, value, evidence);
@@ -437,6 +437,10 @@ async function normalizeActionDraft(db, value, evidence) {
   if (value.notify_assigner_on_completion != null && typeof value.notify_assigner_on_completion !== 'boolean') {
     throw httpError(422, 'Task draft completion notification must be true or false');
   }
+  const viewerId = Number(currentUserId);
+  const notify = typeof value.notify_assigner_on_completion === 'boolean'
+    ? value.notify_assigner_on_completion
+    : Number.isSafeInteger(viewerId) && viewerId > 0 && viewerId !== assigneeId;
   const startDate = taskDraftDate(value.start_date, 'start date');
   const dueDate = taskDraftDate(value.due_date, 'due date');
   if (startDate && dueDate && dueDate < startDate) throw httpError(422, 'Task draft due date cannot precede its start date');
@@ -450,7 +454,7 @@ async function normalizeActionDraft(db, value, evidence) {
     link: await taskDraftLink(db, value.link),
     start_date: startDate,
     due_date: dueDate,
-    notify_assigner_on_completion: value.notify_assigner_on_completion === true,
+    notify_assigner_on_completion: notify,
     evidence: taskDraftEvidence(value.evidence, evidence),
   };
 }
@@ -475,7 +479,7 @@ async function repairActionDraft(db, approved, evidence, rejectedValue, rejectio
   });
   if (!ai.ok) return null;
   try {
-    const draft = await normalizeActionDraft(db, ai.json && ai.json.action_draft, evidence);
+    const draft = await normalizeActionDraft(db, ai.json && ai.json.action_draft, evidence, { currentUserId: userId });
     return draft || null;
   } catch (_) {
     return null;
@@ -1007,7 +1011,7 @@ async function execute(db, { signedTicket, userId, auth, temporaryAttachments } 
   if (draftRequested) {
     let rejection = null;
     try {
-      actionDraft = await normalizeActionDraft(db, body.action_draft, evidence);
+      actionDraft = await normalizeActionDraft(db, body.action_draft, evidence, { currentUserId: userId });
       if (!actionDraft) rejection = httpError(422, 'The action_draft field was absent');
     } catch (err) {
       rejection = err;

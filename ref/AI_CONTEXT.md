@@ -2057,12 +2057,20 @@ a model operation: an explicit user click reuses `/api/documents/upload-link`
 **Reviewed task lifecycle.** `assistant_answer` may return one evidence-backed,
 server-normalized create, update, complete, cancel, reopen, or transfer proposal.
 The card is inert and visibly marked not applied. Its fixed **Review & …**
-control shows the exact target and values, then maps only allowlisted fields to
+control opens the shell's SweetAlert confirmation with the exact target and
+values, then maps only allowlisted fields to
 the corresponding existing authenticated `/api/tasks` route. The route sees
 the signed-in user as actor and preserves canonical audit, linking, reminders,
 and notifications. The model cannot choose the endpoint, method, or extra
 fields. Applied results persist in chat history so reopening the chat does not
 offer the same write again.
+
+For `task.create.v1`, Casey requires assignee/title/description. Start is a
+not-before date and remains null unless requested; due is optional but suggested
+for a stated deadline. Completion notice defaults false for self-assignment and
+true otherwise unless explicitly specified. The fixed browser body stamps
+`source:'Casey'`, omits `from` so the route uses `req.auth.userId`, and omits
+`send_assignment_email` so canonical assignment email remains enabled.
 
 This is the governing Casey action pattern: the user performs the action by
 clicking a fixed control in their own authenticated browser. Prefer mapping
