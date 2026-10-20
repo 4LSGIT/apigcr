@@ -886,6 +886,7 @@ scripts/mobile-survey/server.js
 scripts/mobile-survey/survey.js
 scripts/mobile-survey/wsurl.js
 scripts/probe-db-connect.js
+scripts/reportGrantUserProvision.js
 scripts/reviveScalarReplacedValues.js
 scripts/sec2ScrubAuditShapes.js
 scripts/secret-scan.js
@@ -1448,6 +1449,7 @@ tests/refererRedaction.test.js
 tests/refreshonmiss.k3.test.js
 tests/reportSchemaDenylist.test.js
 tests/reportServiceAssistantLog.test.js
+tests/reportValidatorHardening.test.js
 tests/requirementService.test.js
 tests/scheduleResume.accel.test.js
 tests/scheduledJobs.doorbell.test.js

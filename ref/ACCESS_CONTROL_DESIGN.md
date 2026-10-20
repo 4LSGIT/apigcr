@@ -10,7 +10,8 @@ Every claim in §1–§5.7 verified 2026-10-14 against the live DB (RO key) and
 actual source — including where it contradicts the arc's boot prompt. Later
 additions carry their own date (§5.8–§5.10: 2026-10-15, source + the 8.4 twin;
 §2.6's firm-id vocabulary and §8 Q4's shipped editor: 2026-10-16, source —
-ui-custom S3.4).
+ui-custom S3.4; §5.7's two Ask Casey tables in SENSITIVE_TABLES and the
+validator word-scan note: 2026-10-21, source — validator-containment arc).
 
 ---
 
@@ -498,12 +499,18 @@ him and the SU console.
   `email_ingest_sources`. These hold live credentials; row-level
   (`is_secret`) splits are not expressible in a statement-regex guard, so
   the whole store stays SU-console-only.
-- `SENSITIVE_TABLES` (new — readable ONLY under the new scope):
+- `SENSITIVE_TABLES` (readable ONLY under the new scope):
   `jwt_api_audit_log`, `ai_calls`, `comms_transcripts`,
   `comms_no_transcribe`, `comms_summary_guides`, `admin_audit_log`,
-  `readonly_query_log`. Content tables: client communications, AI
-  prompts/replies, staff notes on calls (comms archive S3c), console
-  query texts, other sessions' SQL.
+  `readonly_query_log`, `assistant_chats`, `assistant_chat_messages`.
+  Content tables: client communications, AI prompts/replies, staff notes on
+  calls (comms archive S3c), console query texts, other sessions' SQL, and
+  (added with the validator-containment arc, 2026-10-21) Ask Casey chats —
+  each chat holds the verbatim evidence rows the assistant read plus its
+  answers, owner-scoped in the app but not on the RO endpoint. The report +
+  assistant SQL validator also refuses every name in this tier (and SECRET)
+  as a word anywhere in the statement — lib/reportSchema/validator.js sources
+  the lists from here, never re-listing them.
 - **`ai_spend` VIEW** (new, ordinary-readable): id, created_at,
   prompt_key, prompt_version, model, mode, output_type, consumer_ref,
   status, input_tokens, output_tokens, cost_cents, latency_ms — spend

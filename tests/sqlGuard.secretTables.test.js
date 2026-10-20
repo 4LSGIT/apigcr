@@ -16,7 +16,7 @@ describe("sqlGuard.touchesSecretTable", () => {
     // Adding a table here is an access decision — review the consumers.
     // SEC-3 split the old list in two (ACCESS_CONTROL_DESIGN §5.7).
     expect(SECRET_TABLES).toEqual(["app_settings", "email_ingest_sources"]);
-    expect(SENSITIVE_TABLES).toEqual(["jwt_api_audit_log", "ai_calls", "comms_transcripts", "comms_no_transcribe", "comms_summary_guides", "admin_audit_log", "readonly_query_log"]);
+    expect(SENSITIVE_TABLES).toEqual(["jwt_api_audit_log", "ai_calls", "comms_transcripts", "comms_no_transcribe", "comms_summary_guides", "admin_audit_log", "readonly_query_log", "assistant_chats", "assistant_chat_messages"]);
   });
 
   test.each([

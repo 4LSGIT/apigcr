@@ -784,4 +784,45 @@ role-convention item were confirmed done and dropped).
 
 ---
 
-*Last updated: 2026-10-18*
+## Report/assistant least-privilege DB user (ratified 2026-10-21, review Q1)
+
+The reports engine and Ask Casey run their SQL on `startup/dbReadonly` — the
+`yc_ro` MySQL user, which holds `SELECT` on the WHOLE schema. The app-layer
+report validator (`lib/reportSchema/validator.js`) was hardened in the
+validator-containment arc (2026-10-21) so its table allowlist and `*` ban can
+no longer be side-stepped by alternative join/statement spellings, with a
+whole-statement word-scan belt over the sqlGuard SECRET/SENSITIVE tiers (plus
+`assistant_chats` / `assistant_chat_messages`, moved to SENSITIVE that day).
+That closes the known holes, but the validator is still the ONLY barrier — a
+future gap in it is a breach, not a failed query.
+
+Fred ratified the real fix: a MySQL user whose privileges are **per-table and
+per-column**, generated from the manifest, replacing `yc_ro`'s schema-wide
+SELECT for reports+assistant. Tables outside `ALLOWED_TABLES` (app_settings,
+email_ingest_sources, the assistant chat tables, backups/junk) get no grant;
+`DENIED_COLUMNS` (password/password_hash/reset_*, the access tokens, the raw
+`custom` JSON bag) are withheld at the column level. Then a validator miss is a
+`SELECT command denied`, not a leak.
+
+- **Provisioning draft shipped:** `scripts/reportGrantUserProvision.js` —
+  ops-script conventions (one connection from `.env`, read-only CHECK default,
+  `--apply` asserts live state → writes → verifies from `SHOW GRANTS` → one
+  GO / NO-GO line). It enumerates each allowlisted table's real columns from
+  `information_schema` (so generated `cf_*` custom-field columns are covered),
+  minus `DENIED_COLUMNS`. The new user's name/password come from env only
+  (`REPORT_DB_USER` / `REPORT_DB_PASSWORD` / `REPORT_DB_HOST`), never a CLI arg,
+  never committed. Fred provisions it by hand; the arc did NOT run it.
+- **Still to do (separate slice, after provisioning):** point
+  `startup/dbReadonly` (reports + assistant) at the new credentials, deploy,
+  confirm a representative saved report and an assistant query still run; decide
+  whether the public `/api/readonly/sql` endpoint keeps `yc_ro` (its sqlGuard
+  tier gate is a different, intentional surface) or also moves. Keep the
+  app-layer validator regardless — defense in depth, and it still gives the
+  clean user-facing refusals.
+- **Maintenance coupling:** a new allowlisted table or a newly denied column
+  means re-running `--apply` (the grant set is generated, not hand-maintained).
+  Note this where the manifest is edited.
+
+---
+
+*Last updated: 2026-10-21*
