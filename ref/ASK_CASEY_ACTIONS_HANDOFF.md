@@ -3,6 +3,15 @@
 Updated 2026-10-20. Start by reading `AGENTS.md`,
 `ref/ASK_CASEY_ACTIONS_PLAN.md`, and the Ask Casey chapter in the manual.
 
+## Handoff checkpoint
+
+Hand off after commit `09bc6e9` (`Refine Casey task review defaults`) on
+`main`, pushed to `origin/main`. The worktree was clean and the scoped
+assistant/task/sync regression run passed 10 suites and 304 tests. Do not redo
+the Tasks slice. The repository-wide Jest run has unrelated stale shell/layout
+assertions; use the scoped regression set plus the native service/UI/bus suites
+for the action family being added.
+
 ## Shipped boundary
 
 Casey does not execute a model-selected tool. It produces one typed,
@@ -109,3 +118,59 @@ Events UI request bodies and the `yc-sync` event matchers, then write the closed
 schemas and deterministic tests. Keep one proposal per answer and retain the
 current bounded read limits; personality, larger autonomous investigations,
 and general-purpose action execution remain out of scope.
+
+Known Events facts to verify rather than rediscover from scratch:
+
+- `routes/api.events.js` exposes create, whitelisted update, complete, and
+  cancel. There is no delete or reopen route.
+- The route replaces any model-supplied `acting_user_id` with the authenticated
+  user; Casey must omit that field anyway.
+- Complete accepts an optional kind-validated `resolution`.
+- Cancel defaults `delete_gcal` to true and accepts an optional resolution;
+  those consequences must be explicit in the card and SweetAlert.
+- `public/js/yc-sync.js` already matches browser calls for event create,
+  update, complete, and cancel and emits canonical event refetch/create signals.
+- `/api/events/batch` is deliberately not matched and is out of scope for the
+  first Events slice. Keep the slice to one event action per proposal.
+
+## Copy-paste prompt for the next instance
+
+```text
+Read AGENTS.md, ref/ASK_CASEY_ACTIONS_PLAN.md,
+ref/ASK_CASEY_ACTIONS_HANDOFF.md, ref/AI_CONTEXT.md, and
+manual/05-Subsystems/17-ask-yisracase.md. Continue the Ask Casey actions arc
+from clean main at or after commit 09bc6e9. Do not redo or redesign the shipped
+Tasks lifecycle.
+
+Implement the next slice only: reviewed Events lifecycle actions—create,
+whitelisted update, complete, and cancel—through the existing authenticated
+/api/events routes. Do not add a Casey execution endpoint. Preserve the core
+boundary: Casey returns one closed, evidence-backed, server-normalized proposal;
+the signed-in user reviews it in the existing SweetAlert flow; a fixed browser
+mapping chooses the endpoint, method, and exact allowlisted body. The model must
+never choose those or acting_user_id.
+
+First trace routes/api.events.js, services/eventService.js, every native Events
+UI caller, and the event matchers/readers in public/js/yc-sync.js. Document
+required, optional, defaulted, and side-effecting fields before coding. Pay
+special attention to event kind/type rules, firm-local date/time semantics,
+links, reminders, Google Calendar behavior, completion resolution, and cancel's
+delete_gcal default. There is no Events delete/reopen route. Exclude batch
+creation, appointments, personality changes, broader autonomous reads, and all
+other action families.
+
+Require current evidence containing the exact event_id for existing-event
+actions, reload and validate the target server-side, reject extra fields, render
+all material values/side effects as text, prevent duplicate review dialogs and
+writes, leave failures retryable, persist applied results to prevent casual
+replay, and open the canonical event on success. Verify the existing yc-sync
+path end to end; fix only canonical endpoint/response/matcher behavior if a bus
+gap exists—never add a Casey-only emit.
+
+Add deterministic service and UI tests for schemas, stale/invalid state,
+confirmation cancellation, exact route/body mapping, SweetAlert review,
+single-flight behavior, failure/retry, history restoration, and bus propagation.
+Run the focused assistant tests plus the relevant Events service/UI/yc-sync
+suites. Update the manual, AI context, actions plan, and this handoff with the
+shipped contract and next recommended slice. Then commit and push.
+```
