@@ -23,6 +23,19 @@ describe('Ask Casey UI wiring', () => {
     expect(html).toContain('${esc(JSON.stringify(s.row, null, 2))}');
   });
 
+  test('renders task proposals as text-only unsaved drafts with local controls', () => {
+    expect(html).toContain("status.textContent = 'Draft — not saved'");
+    expect(html).toContain("copy.textContent = 'Copy details'");
+    expect(html).toContain("discard.textContent = 'Discard'");
+    expect(html).toContain('detail.textContent = String(value)');
+    expect(html).toContain('navigator.clipboard.writeText(taskDraftText(draft))');
+    expect(html).toContain('delete message.action_draft; render()');
+    expect(html).toContain('...(r.action_draft ? { action_draft: r.action_draft } : {})');
+    expect(html).toContain('...(message.action_draft ? { action_draft: message.action_draft } : {})');
+    expect(html).not.toContain('data-create-task');
+    expect(html).not.toContain("api('/api/tasks'");
+  });
+
   test('uses exact structured follow-up queries and shell-native record links', () => {
     expect(html).toContain('data-follow="${esc(s.query)}"');
     expect(html).toContain("P.addFile(label || id, 'case', String(id))");

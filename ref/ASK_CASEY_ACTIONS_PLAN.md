@@ -1,6 +1,7 @@
 # Ask Casey typed actions plan
 
-Status: implementation-ready design, no action writes enabled.
+Status: A0 implemented 2026-10-20; no action writes enabled. A1 remains design
+only.
 
 This plan follows the shipped Ask Casey workspace-context and bounded
 autonomous-read slices. It covers the next small slice only: a typed,
@@ -94,9 +95,9 @@ Add a narrow `normalizeActionDraft` validator with these rules:
 - require an integer assignee and resolve it through
   `taskService.findAssignableStaff` so inactive, unauthorized, and automation
   users cannot be proposed;
-- allow only the existing task link vocabulary: `contact`, `case`, `appt`,
-  `bill`, or `event`; verify the referenced record exists before returning the
-  draft;
+- allow `contact`, `case`, `appt`, or `event` links and verify the referenced
+  record exists before returning the draft; reject the legacy `bill` enum
+  member because YisraCase has no bill record table or endpoint to verify;
 - accept ISO date-only values or null, with impossible dates rejected;
 - require every evidence reference to resolve to accumulated evidence from the
   current signed request; and

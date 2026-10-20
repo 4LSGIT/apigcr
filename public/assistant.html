@@ -47,6 +47,14 @@
   .source-actions { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
   .source-actions button { padding: 4px 8px; background: transparent; color: var(--accent); border: 1px solid var(--border); font-size: 11px; }
   .record-links { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--border); }
+  .action-draft { margin-top: 12px; border: 1px solid var(--accent); border-radius: 10px; padding: 11px; background: var(--accent-soft); color: var(--text); white-space: normal; }
+  .action-draft-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+  .action-draft-status { color: var(--text-muted); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
+  .action-draft-grid { display: grid; grid-template-columns: minmax(90px, auto) 1fr; gap: 5px 10px; }
+  .action-draft-grid dt { color: var(--text-muted); }
+  .action-draft-grid dd { margin: 0; overflow-wrap: anywhere; }
+  .action-draft-actions { display: flex; gap: 7px; margin-top: 10px; }
+  .action-draft-actions button { padding: 5px 9px; font-size: 12px; }
   .follow { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 9px; }
   .follow button { background: transparent; color: var(--accent); border: 1px solid var(--border); text-align: left; }
   .thinking { display: flex; align-items: center; gap: 10px; min-width: 215px; }
@@ -219,6 +227,76 @@ function messageAttachmentsHtml(items, messageIndex) {
   ).join('')}</div>`;
 }
 
+function appendDraftField(list, label, value) {
+  if (value == null || value === '') return;
+  const term = document.createElement('dt');
+  term.textContent = label;
+  const detail = document.createElement('dd');
+  detail.textContent = String(value);
+  list.append(term, detail);
+}
+
+function taskDraftText(draft) {
+  const lines = [
+    `Task draft — not saved`,
+    `Title: ${draft.title}`,
+    `Description: ${draft.description || '—'}`,
+    `Assignee: ${draft.assignee && draft.assignee.label || '—'}`,
+    `Linked record: ${draft.link && `${draft.link.label} (${draft.link.type} ${draft.link.id})` || '—'}`,
+    `Start date: ${draft.start_date || '—'}`,
+    `Due date: ${draft.due_date || '—'}`,
+    `Notify assigner on completion: ${draft.notify_assigner_on_completion ? 'Yes' : 'No'}`,
+  ];
+  return lines.join('\n');
+}
+
+function hydrateActionDrafts() {
+  chat.querySelectorAll('[data-action-draft]').forEach((host) => {
+    const index = Number(host.dataset.actionDraft);
+    const message = history[index];
+    const draft = message && message.action_draft;
+    if (!draft || draft.kind !== 'task.create.v1') return;
+
+    const head = document.createElement('div');
+    head.className = 'action-draft-head';
+    const title = document.createElement('b');
+    title.textContent = 'Task draft';
+    const status = document.createElement('span');
+    status.className = 'action-draft-status';
+    status.textContent = 'Draft — not saved';
+    head.append(title, status);
+
+    const fields = document.createElement('dl');
+    fields.className = 'action-draft-grid';
+    appendDraftField(fields, 'Title', draft.title);
+    appendDraftField(fields, 'Description', draft.description);
+    appendDraftField(fields, 'Assignee', draft.assignee && draft.assignee.label);
+    appendDraftField(fields, 'Linked record', draft.link && `${draft.link.label} (${draft.link.type} ${draft.link.id})`);
+    appendDraftField(fields, 'Start date', draft.start_date);
+    appendDraftField(fields, 'Due date', draft.due_date);
+    appendDraftField(fields, 'Completion notice', draft.notify_assigner_on_completion ? 'Yes' : 'No');
+
+    const actions = document.createElement('div');
+    actions.className = 'action-draft-actions';
+    const copy = document.createElement('button');
+    copy.type = 'button';
+    copy.textContent = 'Copy details';
+    copy.addEventListener('click', async () => {
+      try {
+        await navigator.clipboard.writeText(taskDraftText(draft));
+        copy.textContent = 'Copied';
+      } catch (_) { copy.textContent = 'Copy failed'; }
+    });
+    const discard = document.createElement('button');
+    discard.type = 'button';
+    discard.className = 'ghost';
+    discard.textContent = 'Discard';
+    discard.addEventListener('click', () => { delete message.action_draft; render(); });
+    actions.append(copy, discard);
+    host.append(head, fields, actions);
+  });
+}
+
 function emptyHtml() {
   return `<div class="empty"><i class="fa-regular fa-comments"></i>
     <b>What do you want to know?</b><div>I’ll search the available read-only sources and show the records behind the answer.</div>
@@ -240,8 +318,10 @@ function render() {
       `<div class="source"><div class="source-label">${esc(s.label)} · ${esc(s.query_id)} row ${esc(s.row_number)}</div>${Array.isArray(s.actions) && s.actions.length ? `<div class="source-actions">${s.actions.map(actionHtml).join('')}</div>` : ''}<details><summary>View evidence row</summary><pre>${esc(JSON.stringify(s.row, null, 2))}</pre></details></div>`).join('')}</div>` : '';
     const follow = suggestionsHtml(m.suggestions);
     const destinations = destinationsHtml(m.destinations);
-    return `<div class="msg assistant${m.error ? ' error' : ''}">${esc(m.text)}${entities}${sources}${destinations}${follow}${m.meta ? `<div class="meta">${esc(m.meta)}</div>` : ''}</div>`;
+    const actionDraft = m.action_draft && m.action_draft.kind === 'task.create.v1' ? `<div class="action-draft" data-action-draft="${i}"></div>` : '';
+    return `<div class="msg assistant${m.error ? ' error' : ''}">${esc(m.text)}${actionDraft}${entities}${sources}${destinations}${follow}${m.meta ? `<div class="meta">${esc(m.meta)}</div>` : ''}</div>`;
   }).join('');
+  hydrateActionDrafts();
   chat.querySelectorAll('[data-follow]').forEach((b) => b.addEventListener('click', () => { input.value = b.dataset.follow; input.focus(); }));
   chat.querySelectorAll('[data-open-kind]').forEach((b) => b.addEventListener('click', () => openEntity(b.dataset.openKind, b.dataset.openId, b.dataset.openLabel)));
   chat.querySelectorAll('[data-destination]').forEach((b) => b.addEventListener('click', async () => {
@@ -493,6 +573,7 @@ async function saveAssistantMessage(message) {
   if (!historyAvailable || !currentChatId || !message || message.error) return;
   const payload = {
     entities: message.entities || [], sources: message.sources || [], suggestions: message.suggestions || [], destinations: message.destinations || [], meta: message.meta || '',
+    ...(message.action_draft ? { action_draft: message.action_draft } : {}),
   };
   try {
     await api(`/api/assistant/chats/${currentChatId}/messages`, { role: 'assistant', text: message.text, payload });
@@ -585,6 +666,7 @@ async function ask() {
     if (r.outcome === 'refused') history.push({ role: 'assistant', text: r.reason, suggestions: r.suggestions || [], destinations: r.destinations || [] });
     else history.push({
       role: 'assistant', text: r.answer, entities: r.entities || [], sources: r.sources || [], suggestions: r.suggestions || [], destinations: r.destinations || [],
+      ...(r.action_draft ? { action_draft: r.action_draft } : {}),
       meta: [
         r.investigation && Number(r.investigation.rounds) > 1 ? `${r.investigation.rounds} read passes` : '',
         ...(r.investigation && Array.isArray(r.investigation.notices) ? r.investigation.notices : []),

@@ -12,6 +12,7 @@ const commsSearch = require('./commsArchiveSearch');
 const knowledge = require('./assistantKnowledgeService');
 const weather = require('./assistantWeatherService');
 const attachmentService = require('./assistantAttachmentService');
+const taskService = require('./taskService');
 const { FIRM_TZ, nowLocal } = require('./timezoneService');
 const { auditAdminAction } = require('../lib/auth.superuser');
 const { validateSql } = require('../lib/reportSchema/validator');
@@ -44,6 +45,28 @@ const WORKSPACE_TABS = new Set([
 ]);
 const ASSISTANT_DESTINATIONS = Object.freeze({
   'automations.court_review': 'Open Court Review',
+});
+const TASK_DRAFT_KEYS = new Set([
+  'kind', 'title', 'description', 'assignee_user_id', 'link', 'start_date',
+  'due_date', 'notify_assigner_on_completion', 'evidence',
+]);
+const TASK_DRAFT_LINKS = Object.freeze({
+  contact: {
+    id: 'contact_id',
+    sql: 'SELECT contact_id, contact_name AS label FROM contacts WHERE contact_id = ? LIMIT 1',
+  },
+  case: {
+    id: 'case_id',
+    sql: 'SELECT case_id, case_number_full AS label FROM cases WHERE case_id = ? LIMIT 1',
+  },
+  appt: {
+    id: 'appt_id',
+    sql: 'SELECT appt_id, appt_type AS label FROM appts WHERE appt_id = ? LIMIT 1',
+  },
+  event: {
+    id: 'event_id',
+    sql: 'SELECT event_id, event_title AS label FROM events WHERE event_id = ? LIMIT 1',
+  },
 });
 
 // Reports deliberately allow DOB/SSN for explicit staff reports. An open-ended
@@ -229,6 +252,97 @@ function normalizeSuggestions(value) {
     if (out.length >= MAX_SUGGESTIONS) break;
   }
   return out;
+}
+
+function onlyKeys(value, allowed) {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    && Object.keys(value).every((key) => allowed.has(key));
+}
+
+function taskDraftDate(value, field) {
+  if (value == null || value === '') return null;
+  const text = String(value);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) throw httpError(422, `Task draft ${field} must be an ISO date`);
+  const date = new Date(`${text}T00:00:00Z`);
+  if (Number.isNaN(date.getTime()) || date.toISOString().slice(0, 10) !== text) {
+    throw httpError(422, `Task draft ${field} is not a real date`);
+  }
+  return text;
+}
+
+function taskDraftText(value, field, max, { required = false } = {}) {
+  const text = String(value == null ? '' : value).trim();
+  if (required && !text) throw httpError(422, `Task draft ${field} is required`);
+  if (text.length > max) throw httpError(422, `Task draft ${field} exceeds ${max} characters`);
+  return text;
+}
+
+function taskDraftEvidence(value, evidence) {
+  if (!Array.isArray(value) || !value.length || value.length > 8) {
+    throw httpError(422, 'A task draft needs 1-8 evidence references');
+  }
+  return value.map((ref) => {
+    if (!onlyKeys(ref, new Set(['query_id', 'row_number']))) throw httpError(422, 'Task draft evidence is malformed');
+    const source = sourceFor(evidence, ref);
+    if (!source) throw httpError(422, 'Task draft evidence is outside this investigation');
+    return { query_id: source.query_id, row_number: source.row_number, label: source.label };
+  });
+}
+
+async function taskDraftLink(db, value) {
+  if (value == null) return null;
+  if (!onlyKeys(value, new Set(['type', 'id']))) throw httpError(422, 'Task draft link is malformed');
+  const type = String(value.type || '');
+  if (type === 'bill') throw httpError(422, 'Bill-linked task drafts are unavailable because bills have no verifiable record source');
+  const resolver = TASK_DRAFT_LINKS[type];
+  if (!resolver) throw httpError(422, 'Task draft link type is unavailable');
+  const rawId = String(value.id == null ? '' : value.id).trim();
+  if (!rawId || rawId.length > 64 || !/^[A-Za-z0-9_-]+$/.test(rawId)) throw httpError(422, 'Task draft link id is invalid');
+  if (type !== 'case' && (!/^\d+$/.test(rawId) || !Number.isSafeInteger(Number(rawId)) || Number(rawId) < 1)) {
+    throw httpError(422, 'Task draft link id is invalid');
+  }
+  const id = type === 'case' ? rawId : Number(rawId);
+  const [rows] = await db.query(resolver.sql, [id]);
+  const row = Array.isArray(rows) ? rows[0] : null;
+  if (!row) throw httpError(422, 'Task draft linked record is unavailable');
+  return {
+    type,
+    id: String(row[resolver.id]),
+    label: taskDraftText(row.label, 'link label', 200) || `${type === 'appt' ? 'Appointment' : type[0].toUpperCase() + type.slice(1)} ${rawId}`,
+  };
+}
+
+async function normalizeActionDraft(db, value, evidence) {
+  if (value == null) return null;
+  if (!onlyKeys(value, TASK_DRAFT_KEYS)) throw httpError(422, 'Task draft contains unsupported fields');
+  if (value.kind !== 'task.create.v1') throw httpError(422, 'Task draft kind is unavailable');
+  const assigneeId = Number(value.assignee_user_id);
+  if (!Number.isInteger(assigneeId) || assigneeId < 0) throw httpError(422, 'Task draft assignee is invalid');
+  const assignee = await taskService.findAssignableStaff(db, assigneeId);
+  if (!assignee) throw httpError(422, 'Task draft assignee is unavailable');
+  if (value.notify_assigner_on_completion != null && typeof value.notify_assigner_on_completion !== 'boolean') {
+    throw httpError(422, 'Task draft completion notification must be true or false');
+  }
+  const startDate = taskDraftDate(value.start_date, 'start date');
+  const dueDate = taskDraftDate(value.due_date, 'due date');
+  if (startDate && dueDate && dueDate < startDate) throw httpError(422, 'Task draft due date cannot precede its start date');
+  return {
+    kind: 'task.create.v1',
+    status: 'draft',
+    title: taskDraftText(value.title, 'title', 100, { required: true }),
+    description: taskDraftText(value.description, 'description', 1000),
+    assignee: { user_id: Number(assignee.user), label: taskDraftText(assignee.user_name, 'assignee label', 100) || `User ${assigneeId}` },
+    link: await taskDraftLink(db, value.link),
+    start_date: startDate,
+    due_date: dueDate,
+    notify_assigner_on_completion: value.notify_assigner_on_completion === true,
+    evidence: taskDraftEvidence(value.evidence, evidence),
+  };
+}
+
+function taskDraftRequested(question) {
+  const text = String(question || '');
+  return /\b(?:task|to-do)\b/i.test(text) && /\b(?:draft|propose|prepare|create|make|add)\b/i.test(text);
 }
 
 function contextualAnswer(question, history) {
@@ -740,12 +854,23 @@ async function execute(db, { signedTicket, userId, auth, temporaryAttachments } 
   if (!answer) throw httpError(422, 'The assistant returned an empty answer');
   const citations = Array.isArray(body.citations) ? body.citations : [];
   const sources = citations.map((c) => sourceFor(evidence, c || {})).filter(Boolean).slice(0, 12);
+  let actionDraft = null;
+  try {
+    actionDraft = taskDraftRequested(approved.question)
+      ? await normalizeActionDraft(db, body.action_draft, evidence)
+      : null;
+  } catch (_) {
+    // A malformed model proposal must never turn a valid read answer into an
+    // error. Drop it at the server boundary; the browser sees normalized
+    // drafts only and has no action executor in this slice.
+  }
   return {
     answer,
     suggestions: normalizeSuggestions(body.suggestions || body.suggested_follow_up),
     destinations: normalizeDestinations(body.destinations),
     entities: actionsForEvidence(evidence),
     sources,
+    ...(actionDraft ? { action_draft: actionDraft } : {}),
     steps: evidence.map((q) => ({ id: q.id, round: q.round, kind: q.kind, purpose: q.purpose, row_count: q.row_count, returned: q.rows.length, truncated: q.truncated || !!q.truncated_for_ai })),
     investigation: { rounds, total_steps: totalSteps, returned_rows: totalRows, controller_output_tokens: controllerOutputTokens, stop_reason: stopReason, repairs, notices },
     callId: ai.callId, model_mode: approved.modelMode,
@@ -756,6 +881,7 @@ module.exports = {
   plan, execute, validatePlan, validateStep, cleanHistory, compactRows,
   normalizeSuggestions, contextualAnswer, actionsForRow, actionsForEvidence,
   normalizeWorkspaceContext, validateWorkspaceContext, normalizeDestinations,
+  normalizeActionDraft, taskDraftRequested,
   repairFailure, loadViewer, normalizeViewer, stepFingerprint, renumberPlan,
   MAX_STEPS, MAX_ROWS, MAX_INVESTIGATION_ROUNDS, MAX_INVESTIGATION_STEPS,
   MAX_INVESTIGATION_ROWS, MAX_INVESTIGATION_MS, MAX_INVESTIGATION_OUTPUT_TOKENS,

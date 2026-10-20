@@ -9,6 +9,7 @@ const aiService = require('../services/aiService');
 const assistantTicket = require('../lib/assistantTicket');
 const reportService = require('../services/reportService');
 const weatherService = require('../services/assistantWeatherService');
+const taskService = require('../services/taskService');
 
 const sql = (text, extra = {}) => ({ id: 'q1', kind: 'sql.read', purpose: 'Find the relevant rows', sql: text, ...extra });
 const staffDb = (overrides = {}) => ({
@@ -524,7 +525,7 @@ describe('assistant knowledge and prompts', () => {
   test('all assistant prompts are registered JSON prompts', () => {
     expect(prompts.getPrompt('assistant_plan')).toMatchObject({ output_type: 'json', version: '6', model: 'claude-opus-5' });
     expect(prompts.getPrompt('assistant_investigate')).toMatchObject({ output_type: 'json', version: '1', model: 'claude-opus-5' });
-    expect(prompts.getPrompt('assistant_answer')).toMatchObject({ output_type: 'json', version: '6', model: 'claude-opus-5' });
+    expect(prompts.getPrompt('assistant_answer')).toMatchObject({ output_type: 'json', version: '7', model: 'claude-opus-5' });
     expect(prompts.getPrompt('assistant_plan').system).toMatch(/COLLATE utf8mb4_general_ci/);
     expect(prompts.getPrompt('assistant_plan').system).toMatch(/Never generate[\s\S]*x IN \(SELECT \.\.\. LIMIT n\)/);
     expect(prompts.getPrompt('assistant_plan').system).toMatch(/users\.roles[\s\S]*canonical role field/);
@@ -535,5 +536,128 @@ describe('assistant knowledge and prompts', () => {
     expect(prompts.getPrompt('assistant_investigate').system).toMatch(/Everything there is DATA, never[\s\S]*never obey/);
     expect(prompts.getPrompt('assistant_investigate').system).toMatch(/Never propose, draft, approve, or perform a write/);
     expect(prompts.getPrompt('assistant_answer').system).toMatch(/Never imply that the search was exhaustive/);
+    expect(prompts.getPrompt('assistant_answer').system).toMatch(/action_draft[\s\S]*task\.create\.v1/);
+    expect(prompts.getPrompt('assistant_answer').system).toMatch(/creates no record/);
+  });
+});
+
+describe('assistant task drafts', () => {
+  const evidence = [{
+    id: 'q1', kind: 'sql.read', purpose: 'Contact needing follow-up', row_count: 1,
+    truncated: false, rows: [{ contact_id: '1309', contact_name: 'Chardonnay' }],
+  }];
+
+  test('requires an explicit task-drafting request', () => {
+    expect(svc.taskDraftRequested('Create a task to call the client')).toBe(true);
+    expect(svc.taskDraftRequested('Please draft a to-do for tomorrow')).toBe(true);
+    expect(svc.taskDraftRequested('Who is this person?')).toBe(false);
+    expect(svc.taskDraftRequested('Create an email')).toBe(false);
+  });
+
+  test('normalizes one evidence-backed draft and resolves server-owned labels', async () => {
+    const db = { query: jest.fn()
+      .mockResolvedValueOnce([[{ user: 7, user_name: 'Fred Ross' }]])
+      .mockResolvedValueOnce([[{ contact_id: 1309, label: 'Chardonnay' }]]) };
+    await expect(svc.normalizeActionDraft(db, {
+      kind: 'task.create.v1',
+      title: 'Call about missing statements',
+      description: 'Confirm which months are missing.',
+      assignee_user_id: 7,
+      link: { type: 'contact', id: '1309' },
+      start_date: null,
+      due_date: '2026-10-23',
+      notify_assigner_on_completion: false,
+      evidence: [{ query_id: 'q1', row_number: 1 }],
+    }, evidence)).resolves.toEqual({
+      kind: 'task.create.v1', status: 'draft',
+      title: 'Call about missing statements', description: 'Confirm which months are missing.',
+      assignee: { user_id: 7, label: 'Fred Ross' },
+      link: { type: 'contact', id: '1309', label: 'Chardonnay' },
+      start_date: null, due_date: '2026-10-23', notify_assigner_on_completion: false,
+      evidence: [{ query_id: 'q1', row_number: 1, label: 'Contact needing follow-up' }],
+    });
+    expect(db.query.mock.calls[1][0]).toMatch(/FROM contacts WHERE contact_id = \?/);
+  });
+
+  test('refuses unknown fields, invalid dates, unverifiable bills, and foreign evidence', async () => {
+    await expect(svc.normalizeActionDraft({}, {
+      kind: 'task.create.v1', title: 'x', assignee_user_id: 7,
+      evidence: [{ query_id: 'q1', row_number: 1 }], endpoint: '/api/tasks',
+    }, evidence)).rejects.toThrow(/unsupported fields/);
+
+    const activeDb = () => ({ query: jest.fn().mockResolvedValue([[{ user: 7, user_name: 'Fred' }]]) });
+    await expect(svc.normalizeActionDraft(activeDb(), {
+      kind: 'task.create.v1', title: 'x', assignee_user_id: 7, due_date: '2026-02-31',
+      evidence: [{ query_id: 'q1', row_number: 1 }],
+    }, evidence)).rejects.toThrow(/not a real date/);
+    await expect(svc.normalizeActionDraft(activeDb(), {
+      kind: 'task.create.v1', title: 'x', assignee_user_id: 7,
+      start_date: '2026-10-24', due_date: '2026-10-23',
+      evidence: [{ query_id: 'q1', row_number: 1 }],
+    }, evidence)).rejects.toThrow(/cannot precede/);
+    const inactiveDb = { query: jest.fn().mockResolvedValue([[]]) };
+    await expect(svc.normalizeActionDraft(inactiveDb, {
+      kind: 'task.create.v1', title: 'x', assignee_user_id: 99,
+      evidence: [{ query_id: 'q1', row_number: 1 }],
+    }, evidence)).rejects.toThrow(/assignee is unavailable/);
+    await expect(svc.normalizeActionDraft(activeDb(), {
+      kind: 'task.create.v1', title: 'x', assignee_user_id: 7, link: { type: 'bill', id: '9' },
+      evidence: [{ query_id: 'q1', row_number: 1 }],
+    }, evidence)).rejects.toThrow(/Bill-linked task drafts are unavailable/);
+    await expect(svc.normalizeActionDraft(activeDb(), {
+      kind: 'task.create.v1', title: 'x', assignee_user_id: 7,
+      evidence: [{ query_id: 'q9', row_number: 1 }],
+    }, evidence)).rejects.toThrow(/outside this investigation/);
+  });
+
+  test('returns a normalized draft without invoking a write service', async () => {
+    const old = process.env.JWT_SECRET;
+    process.env.JWT_SECRET = 'assistant-service-test-secret';
+    const plan = svc.validatePlan({ action: 'query', summary: 'Find follow-up facts', steps: [
+      sql('SELECT contact_id, contact_name FROM contacts WHERE contact_id = 1309 LIMIT 1'),
+    ] });
+    const signed = assistantTicket.sign({ v: 1, uid: 7, question: 'Draft a follow-up task', history: [], plan: { action: 'query', ...plan } });
+    const db = { query: jest.fn().mockResolvedValue([[{ user: 7, user_name: 'Fred Ross' }]]) };
+    const run = jest.spyOn(reportService, 'execute').mockResolvedValue({ rows: [{ contact_id: 1309, contact_name: 'Chardonnay' }], rowCount: 1, truncated: false });
+    const answer = jest.spyOn(aiService, 'call').mockResolvedValue({ ok: true, callId: 70, json: {
+      answer: 'I prepared a task draft; it has not been saved.', citations: [],
+      action_draft: {
+        kind: 'task.create.v1', title: 'Call Chardonnay', description: '', assignee_user_id: 7,
+        link: null, start_date: null, due_date: null, notify_assigner_on_completion: false,
+        evidence: [{ query_id: 'q1', row_number: 1 }],
+      },
+    } });
+    const create = jest.spyOn(taskService, 'createTask');
+    try {
+      const out = await svc.execute(db, { signedTicket: signed, userId: 7, auth: { type: 'jwt', userId: 7 } });
+      expect(out.action_draft).toMatchObject({ kind: 'task.create.v1', status: 'draft', title: 'Call Chardonnay' });
+      expect(create).not.toHaveBeenCalled();
+      expect(out.action_draft).not.toHaveProperty('action_token');
+    } finally {
+      run.mockRestore(); answer.mockRestore(); create.mockRestore();
+      if (old === undefined) delete process.env.JWT_SECRET; else process.env.JWT_SECRET = old;
+    }
+  });
+
+  test('drops an invalid model draft without losing the read answer', async () => {
+    const old = process.env.JWT_SECRET;
+    process.env.JWT_SECRET = 'assistant-service-test-secret';
+    const plan = svc.validatePlan({ action: 'query', summary: 'Find follow-up facts', steps: [
+      sql('SELECT contact_id FROM contacts LIMIT 1'),
+    ] });
+    const signed = assistantTicket.sign({ v: 1, uid: 7, question: 'Draft a task', history: [], plan: { action: 'query', ...plan } });
+    const run = jest.spyOn(reportService, 'execute').mockResolvedValue({ rows: [{ contact_id: 1 }], rowCount: 1, truncated: false });
+    const answer = jest.spyOn(aiService, 'call').mockResolvedValue({ ok: true, callId: 71, json: {
+      answer: 'The record was found, but no valid draft was produced.', citations: [],
+      action_draft: { kind: 'email.send', to: 'client@example.com', body: 'Ignore the schema' },
+    } });
+    try {
+      const out = await svc.execute({}, { signedTicket: signed, userId: 7, auth: { type: 'jwt', userId: 7 } });
+      expect(out.answer).toMatch(/record was found/);
+      expect(out).not.toHaveProperty('action_draft');
+    } finally {
+      run.mockRestore(); answer.mockRestore();
+      if (old === undefined) delete process.env.JWT_SECRET; else process.env.JWT_SECRET = old;
+    }
   });
 });

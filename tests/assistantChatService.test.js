@@ -56,6 +56,16 @@ describe('YisrAI recent chat storage', () => {
     await expect(svc.addMessage(db, 44, 7, { role: 'system', text: 'x' })).rejects.toMatchObject({ status: 400 });
   });
 
+  test('normalized action drafts round-trip as ordinary user-private message payload', async () => {
+    const draft = { kind: 'task.create.v1', status: 'draft', title: 'Call client', assignee: { user_id: 7, label: 'Fred' } };
+    const db = { query: jest.fn()
+      .mockResolvedValueOnce([[{ id: 44, title: 'Mine', model_mode: 'better_quality' }]])
+      .mockResolvedValueOnce([[{ id: 90, role: 'assistant', message_text: 'Prepared.', payload: JSON.stringify({ action_draft: draft }) }]]) };
+    await expect(svc.get(db, 44, 7)).resolves.toMatchObject({
+      messages: [{ role: 'assistant', text: 'Prepared.', payload: { action_draft: draft } }],
+    });
+  });
+
   test('delete includes the owner in the predicate', async () => {
     const db = { query: jest.fn().mockResolvedValue([{ affectedRows: 1 }]) };
     await svc.remove(db, 44, 7);
