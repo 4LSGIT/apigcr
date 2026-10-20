@@ -55,6 +55,9 @@
   .action-draft-grid dd { margin: 0; overflow-wrap: anywhere; }
   .action-draft-actions { display: flex; gap: 7px; margin-top: 10px; }
   .action-draft-actions button { padding: 5px 9px; font-size: 12px; }
+  .action-draft-next { margin-top: 10px; padding-top: 9px; border-top: 1px solid var(--border); color: var(--text-muted); }
+  .action-draft-next ol { margin: 5px 0 0; padding-left: 20px; }
+  .action-draft-next-warning { margin-top: 6px; font-size: 11px; }
   .follow { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 9px; }
   .follow button { background: transparent; color: var(--accent); border: 1px solid var(--border); text-align: left; }
   .thinking { display: flex; align-items: center; gap: 10px; min-width: 215px; }
@@ -276,6 +279,22 @@ function hydrateActionDrafts() {
     appendDraftField(fields, 'Due date', draft.due_date);
     appendDraftField(fields, 'Completion notice', draft.notify_assigner_on_completion ? 'Yes' : 'No');
 
+    const next = document.createElement('div');
+    next.className = 'action-draft-next';
+    const nextTitle = document.createElement('b');
+    nextTitle.textContent = 'To create this task in YisraCase:';
+    const steps = document.createElement('ol');
+    [
+      'Select Copy details below.',
+      'Open My Tasks, then select Create Task.',
+      'Choose the assignee and enter the reviewed title, description, dates, link, and completion-notice setting.',
+      'Select Assign only after confirming everything is correct.',
+    ].forEach((text) => { const item = document.createElement('li'); item.textContent = text; steps.append(item); });
+    const warning = document.createElement('div');
+    warning.className = 'action-draft-next-warning';
+    warning.textContent = 'Assign creates the record and may send assignment, start-date, and due-date notifications.';
+    next.append(nextTitle, steps, warning);
+
     const actions = document.createElement('div');
     actions.className = 'action-draft-actions';
     const copy = document.createElement('button');
@@ -293,7 +312,7 @@ function hydrateActionDrafts() {
     discard.textContent = 'Discard';
     discard.addEventListener('click', () => { delete message.action_draft; render(); });
     actions.append(copy, discard);
-    host.append(head, fields, actions);
+    host.append(head, fields, next, actions);
   });
 }
 

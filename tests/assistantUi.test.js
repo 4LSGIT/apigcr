@@ -28,6 +28,10 @@ describe('Ask Casey UI wiring', () => {
     expect(html).toContain("copy.textContent = 'Copy details'");
     expect(html).toContain("discard.textContent = 'Discard'");
     expect(html).toContain('detail.textContent = String(value)');
+    expect(html).toContain("nextTitle.textContent = 'To create this task in YisraCase:'");
+    expect(html).toContain("'Open My Tasks, then select Create Task.'");
+    expect(html).toContain("'Select Assign only after confirming everything is correct.'");
+    expect(html).toContain('may send assignment, start-date, and due-date notifications');
     expect(html).toContain('navigator.clipboard.writeText(taskDraftText(draft))');
     expect(html).toContain('delete message.action_draft; render()');
     expect(html).toContain('...(r.action_draft ? { action_draft: r.action_draft } : {})');

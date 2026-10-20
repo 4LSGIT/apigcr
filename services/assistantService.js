@@ -330,7 +330,7 @@ async function normalizeActionDraft(db, value, evidence) {
     kind: 'task.create.v1',
     status: 'draft',
     title: taskDraftText(value.title, 'title', 100, { required: true }),
-    description: taskDraftText(value.description, 'description', 1000),
+    description: taskDraftText(value.description, 'description', 1000, { required: true }),
     assignee: { user_id: Number(assignee.user), label: taskDraftText(assignee.user_name, 'assignee label', 100) || `User ${assigneeId}` },
     link: await taskDraftLink(db, value.link),
     start_date: startDate,
@@ -340,8 +340,12 @@ async function normalizeActionDraft(db, value, evidence) {
   };
 }
 
-function taskDraftRequested(question) {
-  const text = String(question || '');
+function taskDraftRequested(question, history = []) {
+  const priorUserText = cleanHistory(history)
+    .filter((message) => message.role === 'user')
+    .slice(-4)
+    .map((message) => message.text);
+  const text = [...priorUserText, String(question || '')].join('\n');
   return /\b(?:task|to-do)\b/i.test(text) && /\b(?:draft|propose|prepare|create|make|add)\b/i.test(text);
 }
 
@@ -856,7 +860,7 @@ async function execute(db, { signedTicket, userId, auth, temporaryAttachments } 
   const sources = citations.map((c) => sourceFor(evidence, c || {})).filter(Boolean).slice(0, 12);
   let actionDraft = null;
   try {
-    actionDraft = taskDraftRequested(approved.question)
+    actionDraft = taskDraftRequested(approved.question, approved.history)
       ? await normalizeActionDraft(db, body.action_draft, evidence)
       : null;
   } catch (_) {

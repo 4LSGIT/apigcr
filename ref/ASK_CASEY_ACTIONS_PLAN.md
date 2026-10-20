@@ -1,7 +1,7 @@
 # Ask Casey typed actions plan
 
-Status: A0 implemented 2026-10-20; no action writes enabled. A1 remains design
-only.
+Status: A0 and the A0.1 planner/continuity follow-up implemented 2026-10-20;
+no action writes enabled. A1 remains design only.
 
 This plan follows the shipped Ask Casey workspace-context and bounded
 autonomous-read slices. It covers the next small slice only: a typed,
@@ -60,6 +60,13 @@ The only controls in A0 are **Copy details** and **Discard**. There is no Save,
 Approve, Create, Send, or hidden auto-execution path. Starting a new chat,
 reopening history, collapsing the sidebar, or reloading the page must preserve
 the draft as conversation payload without changing application data.
+
+A0.1 makes an explicit task-draft request valid across the last four signed
+user turns, so a short follow-up that resolves a missing assignee/date/link can
+complete the pending draft. The planner must obtain those missing facts instead
+of refusing the request as a write. The card tells staff to copy the details,
+open **My Tasks → Create Task**, review the fields, and select **Assign**; it
+also warns that the human Assign step may send assignment/start/due notices.
 
 ### Typed model output
 

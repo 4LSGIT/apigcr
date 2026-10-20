@@ -1,6 +1,7 @@
 # Ask Casey
 
-Ask Casey is the user-facing name for the firm's YisrAI read-only assistant. It can answer
+Ask Casey is the user-facing name for the firm's YisrAI read-only assistant with
+one draft-only capability. It can answer
 questions about firm records, how YisraCase itself works, general knowledge,
 and current weather. Open it from the persistent **Ask Casey** button at the
 bottom of the left sidebar. **More → Ask Casey** opens the same assistant in a
@@ -61,6 +62,31 @@ configured timezone (normally America/Detroit). The stored `appt_date` is that
 firm-local wall time; `appt_date_utc` is its separate real-UTC twin used for
 scheduling and integrations.
 
+## Task drafts
+
+Ask Casey can prepare one evidence-backed task proposal without creating a
+task. Ask naturally—for example, “Make a task for SS to review Ask Casey next
+week.” Casey should look up the active numeric staff ID behind initials or a
+name, verify any requested case/contact/appointment/event link, and return a
+**Task draft — not saved** card. If a missing fact is supplied in a short
+follow-up, the recent conversation keeps the explicit task-draft request in
+scope.
+
+The card is not an approval and has no Save or Create action. It contains only
+**Copy details** and **Discard**. To create the task:
+
+1. Select **Copy details** on the draft.
+2. Open **My Tasks**, then select **Create Task**.
+3. Choose the assignee and enter the reviewed title, description, optional
+   start/due dates, optional link, and completion-notification setting.
+4. Select **Assign** only after confirming the values.
+
+The human **Assign** step is the write. It creates the record and may send the
+assignee an assignment message. A start date or due date may also schedule
+notifications. Discarding Casey's card changes no YisraCase record. Casey
+cannot draft a bill-linked task because the legacy `bill` task-link enum has no
+verifiable bill record source.
+
 ## Models and files
 
 The model selector offers two product-level choices:
@@ -91,8 +117,10 @@ asking about a file does not save it.
 
 ## What read-only means
 
-Assistant searches cannot change anything. YisrAI cannot send email, edit a
-contact, create a task, fill a form, or create a workflow. The separate,
+Assistant searches and task proposals cannot change anything. YisrAI cannot
+send email, edit a contact, save/create a task record, fill a form, or create a
+workflow. It can return the typed task draft described above; the staff member
+must manually review and assign it in My Tasks. The separate,
 user-invoked **Save to case** attachment control is the one current write; it
 uses the existing Documents upload API rather than a model-authored action.
 Searches run through the same SELECT-only database connection and validation used by Reports, with
@@ -161,9 +189,11 @@ put in a URL.
 
 ## Future actions
 
-The plan format names every operation by type. The only enabled types today are
-read operations: `sql.read`, `manual.search`, `comms.search`, and the narrowly
-scoped `weather.lookup` external read.
+The plan format names every operation by type. Enabled executable operations
+remain read-only: `sql.read`, `manual.search`, `comms.search`, and the narrowly
+scoped `weather.lookup` external read. The answer may additionally contain one
+server-validated `task.create.v1` proposal. It is display data, not an executor,
+and creates no record.
 
 Future action types can use a visible plan, signed approval and execution
 record, but they must be introduced separately. Read-only auto-run does not
