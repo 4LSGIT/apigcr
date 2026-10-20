@@ -72,6 +72,22 @@ function _toBit(v) {
   return v ? 1 : 0;
 }
 
+function _timestamp(v) {
+  if (v == null || v === '') return '';
+  const d = v instanceof Date ? v : new Date(v);
+  return Number.isNaN(d.getTime()) ? String(v) : d.toISOString();
+}
+
+async function _assertExpectedPrimary(conn, contactId, excludeId, expectedPrimaryId) {
+  if (expectedPrimaryId === undefined) return;
+  const [[row]] = await conn.query(
+    'SELECT id FROM contact_addresses WHERE contact_id = ? AND is_primary = 1 AND end_date IS NULL AND id <> ? LIMIT 1 FOR UPDATE',
+    [contactId, excludeId || 0]);
+  const actual = row ? Number(row.id) : null;
+  const expected = expectedPrimaryId == null || expectedPrimaryId === '' ? null : Number(expectedPrimaryId);
+  if (actual !== expected) throw new Error('Concurrent primary address change detected — refresh and retry');
+}
+
 /** Trim string-like input; preserve null/undefined as-is. */
 function _trim(v) {
   if (v == null) return v;
@@ -297,7 +313,7 @@ async function getContactAddress(db, addressId) {
  * @param {number}  [opts.createdBy=0]
  * @returns {Promise<{address: object, auto_promoted: boolean}>}
  */
-async function createContactAddress(db, contactId, fields = {}, { createdBy = 0 } = {}) {
+async function createContactAddress(db, contactId, fields = {}, { createdBy = 0, expectedPrimaryId } = {}) {
   // ─── Validation (pre-transaction) ───
   const validated = validateAddressRow(fields, { mode: 'insert' });
 
@@ -332,6 +348,7 @@ async function createContactAddress(db, contactId, fields = {}, { createdBy = 0 
 
     // 2. Demote existing primary-active if we're inserting as primary
     if (isPrimary === 1) {
+      await _assertExpectedPrimary(conn, cid, 0, expectedPrimaryId);
       await conn.query(
         `UPDATE contact_addresses
             SET is_primary = 0, updated_by = ?
@@ -418,7 +435,7 @@ async function createContactAddress(db, contactId, fields = {}, { createdBy = 0 
  * @param {number} [opts.updatedBy=0]
  * @returns {Promise<{ address: object }>}
  */
-async function updateContactAddress(db, addressId, fields, { updatedBy = 0 } = {}) {
+async function updateContactAddress(db, addressId, fields, { updatedBy = 0, expectedUpdatedAt, expectedPrimaryId } = {}) {
   if (!fields || !Object.keys(fields).length) {
     throw new Error('updateContactAddress requires at least one field');
   }
@@ -437,10 +454,13 @@ async function updateContactAddress(db, addressId, fields, { updatedBy = 0 } = {
   await db.withTransaction(async (conn) => {
 
     const [[current]] = await conn.query(
-      `SELECT * FROM contact_addresses WHERE id = ?`,
+      `SELECT * FROM contact_addresses WHERE id = ? FOR UPDATE`,
       [addressId]
     );
     if (!current) throw new Error(`Address ${addressId} not found`);
+    if (expectedUpdatedAt !== undefined && _timestamp(current.updated_at) !== _timestamp(expectedUpdatedAt)) {
+      throw new Error('Concurrent address update detected — refresh and retry');
+    }
 
     const becomingPrimary = 'is_primary' in incoming
       && incoming.is_primary === 1
@@ -454,6 +474,7 @@ async function updateContactAddress(db, addressId, fields, { updatedBy = 0 } = {
     }
 
     if (becomingPrimary && !beingEnded) {
+      await _assertExpectedPrimary(conn, current.contact_id, addressId, expectedPrimaryId);
       await conn.query(
         `UPDATE contact_addresses
             SET is_primary = 0, updated_by = ?

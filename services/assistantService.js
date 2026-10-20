@@ -17,6 +17,9 @@ const attachmentService = require('./assistantAttachmentService');
 const taskService = require('./taskService');
 const eventService = require('./eventService');
 const calendarTypeService = require('./calendarTypeService');
+const contactPhoneService = require('./contactPhoneService');
+const contactEmailService = require('./contactEmailService');
+const contactAddressService = require('./contactAddressService');
 const { FIRM_TZ, nowLocal, parseUserDateTime } = require('./timezoneService');
 const { auditAdminAction } = require('../lib/auth.superuser');
 const { validateSql } = require('../lib/reportSchema/validator');
@@ -90,6 +93,23 @@ const APPT_RESCHEDULE_KEYS = new Set([
   'kind', 'appt_id', 'new_date', 'note', 'sms', 'email', 'confirm_message', 'evidence',
 ]);
 const APPT_RESCHEDULE_LATER_KEYS = new Set(['kind', 'appt_id', 'note', 'create_task', 'evidence']);
+const CONTACT_SUBRECORD_ACTION_KINDS = new Set([
+  'contact.phone.create.v1', 'contact.phone.update.v1', 'contact.phone.end.v1',
+  'contact.email.create.v1', 'contact.email.update.v1', 'contact.email.end.v1',
+  'contact.address.create.v1', 'contact.address.update.v1', 'contact.address.end.v1',
+]);
+const CONTACT_PHONE_CREATE_KEYS = new Set(['kind', 'contact_id', 'phone', 'label', 'is_primary', 'sms_optout', 'mms_capable', 'start_date', 'notes', 'evidence']);
+const CONTACT_EMAIL_CREATE_KEYS = new Set(['kind', 'contact_id', 'email', 'label', 'is_primary', 'email_optout', 'start_date', 'notes', 'evidence']);
+const CONTACT_ADDRESS_CREATE_KEYS = new Set(['kind', 'contact_id', 'address1', 'address2', 'city', 'state', 'zip', 'country', 'label', 'is_primary', 'start_date', 'notes', 'evidence']);
+const CONTACT_PHONE_UPDATE_ACTION_KEYS = new Set(['kind', 'contact_id', 'phone_id', 'changes', 'evidence']);
+const CONTACT_EMAIL_UPDATE_ACTION_KEYS = new Set(['kind', 'contact_id', 'email_id', 'changes', 'evidence']);
+const CONTACT_ADDRESS_UPDATE_ACTION_KEYS = new Set(['kind', 'contact_id', 'address_id', 'changes', 'evidence']);
+const CONTACT_PHONE_END_KEYS = new Set(['kind', 'contact_id', 'phone_id', 'end_date', 'end_reason', 'evidence']);
+const CONTACT_EMAIL_END_KEYS = new Set(['kind', 'contact_id', 'email_id', 'end_date', 'end_reason', 'evidence']);
+const CONTACT_ADDRESS_END_KEYS = new Set(['kind', 'contact_id', 'address_id', 'end_date', 'end_reason', 'evidence']);
+const CONTACT_PHONE_UPDATE_KEYS = new Set(['label', 'is_primary', 'sms_optout', 'mms_capable', 'notes']);
+const CONTACT_EMAIL_UPDATE_KEYS = new Set(['label', 'is_primary', 'email_optout', 'notes']);
+const CONTACT_ADDRESS_UPDATE_KEYS = new Set(['address1', 'address2', 'city', 'state', 'zip', 'country', 'label', 'is_primary', 'notes']);
 const EVENT_CREATE_KEYS = new Set([
   'kind', 'event_type', 'event_title', 'event_date', 'event_time', 'event_all_day',
   'event_length', 'event_location', 'event_link', 'event_note', 'link', 'event_with',
@@ -824,6 +844,206 @@ async function normalizeApptAction(db, value, evidence) {
   throw httpError(422, 'Appointment action kind is unavailable');
 }
 
+const CONTACT_SUBRECORD_CONFIG = Object.freeze({
+  phone: {
+    idField: 'phone_id', valueField: 'phone', table: 'contact_phones', alias: 'cp', plural: 'phones',
+    createKeys: CONTACT_PHONE_CREATE_KEYS, updateActionKeys: CONTACT_PHONE_UPDATE_ACTION_KEYS,
+    endKeys: CONTACT_PHONE_END_KEYS, updateKeys: CONTACT_PHONE_UPDATE_KEYS,
+    validate: contactPhoneService.validatePhoneRow, get: contactPhoneService.getContactPhone,
+  },
+  email: {
+    idField: 'email_id', valueField: 'email', table: 'contact_emails', alias: 'ce', plural: 'emails',
+    createKeys: CONTACT_EMAIL_CREATE_KEYS, updateActionKeys: CONTACT_EMAIL_UPDATE_ACTION_KEYS,
+    endKeys: CONTACT_EMAIL_END_KEYS, updateKeys: CONTACT_EMAIL_UPDATE_KEYS,
+    validate: contactEmailService.validateEmailRow, get: contactEmailService.getContactEmail,
+  },
+  address: {
+    idField: 'address_id', valueField: null, table: 'contact_addresses', alias: 'ca', plural: 'addresses',
+    createKeys: CONTACT_ADDRESS_CREATE_KEYS, updateActionKeys: CONTACT_ADDRESS_UPDATE_ACTION_KEYS,
+    endKeys: CONTACT_ADDRESS_END_KEYS, updateKeys: CONTACT_ADDRESS_UPDATE_KEYS,
+    validate: contactAddressService.validateAddressRow, get: contactAddressService.getContactAddress,
+  },
+});
+
+function contactActionParts(kind) {
+  const match = /^contact\.(phone|email|address)\.(create|update|end)\.v1$/.exec(String(kind || ''));
+  if (!match) throw httpError(422, 'Contact subrecord action kind is unavailable');
+  return { family: match[1], operation: match[2], config: CONTACT_SUBRECORD_CONFIG[match[1]] };
+}
+
+function contactActionId(value, field) {
+  const id = Number(value);
+  if (!Number.isSafeInteger(id) || id < 1) throw httpError(422, `Contact subrecord action ${field} is invalid`);
+  return id;
+}
+
+function contactActionText(value, field, max, { required = false } = {}) {
+  const text = String(value == null ? '' : value).trim();
+  if (required && !text) throw httpError(422, `Contact subrecord action ${field} is required`);
+  if (text.length > max) throw httpError(422, `Contact subrecord action ${field} exceeds ${max} characters`);
+  return text;
+}
+
+function contactActionBool(value, field, fallback) {
+  if (value == null && fallback !== undefined) return fallback;
+  if (typeof value !== 'boolean') throw httpError(422, `Contact subrecord action ${field} must be true or false`);
+  return value;
+}
+
+function contactActionDate(value, field, { required = false } = {}) {
+  if (value == null || value === '') {
+    if (required) throw httpError(422, `Contact subrecord action ${field} is required`);
+    return null;
+  }
+  const text = String(value).trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) throw httpError(422, `Contact subrecord action ${field} must be an ISO firm-local date`);
+  const date = new Date(`${text}T00:00:00Z`);
+  if (Number.isNaN(date.getTime()) || date.toISOString().slice(0, 10) !== text) throw httpError(422, `Contact subrecord action ${field} is not a real date`);
+  return text;
+}
+
+function contactActionTimestamp(value) {
+  if (value == null || value === '') return null;
+  const date = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
+}
+
+function contactEvidenceSupports(refs, evidence, contactId, config, recordId = null) {
+  return refs.some((ref) => {
+    const query = evidence.find((item) => item && item.id === ref.query_id);
+    const row = query && Array.isArray(query.rows) ? query.rows[ref.row_number - 1] : null;
+    return row && Number(row.contact_id) === contactId
+      && (recordId == null || Number(row[config.idField]) === recordId);
+  });
+}
+
+async function contactActionContact(db, contactId) {
+  const [rows] = await db.query('SELECT contact_id, contact_name FROM contacts WHERE contact_id = ? LIMIT 1', [contactId]);
+  const row = Array.isArray(rows) ? rows[0] : null;
+  if (!row) throw httpError(422, 'Contact subrecord action parent contact is unavailable');
+  return { contact_id: Number(row.contact_id), label: contactActionText(row.contact_name, 'contact label', 200) || `Contact ${contactId}` };
+}
+
+function validateContactRecord(config, fields, mode) {
+  try { return config.validate(fields, { mode }); }
+  catch (err) { throw httpError(422, err && err.message ? err.message : 'Contact subrecord action fields are invalid'); }
+}
+
+function contactActionTarget(family, row, contact) {
+  const bit = (value) => value === 1 || value === true || value === '1';
+  const base = {
+    family, id: Number(row.id), contact, label: String(row.label || 'Other'),
+    is_primary: row.is_primary === 1 || row.is_primary === true || row.is_primary === '1',
+    start_date: taskStoredDate(row.start_date), end_date: taskStoredDate(row.end_date),
+    notes: String(row.notes || ''), expected_updated_at: contactActionTimestamp(row.updated_at),
+  };
+  if (!base.expected_updated_at) throw httpError(422, 'Contact subrecord action target has no usable concurrency version');
+  if (family === 'phone') return { ...base, phone: String(row.phone || ''), sms_optout: bit(row.sms_optout), mms_capable: bit(row.mms_capable) };
+  if (family === 'email') return { ...base, email: String(row.email || ''), email_optout: bit(row.email_optout) };
+  return { ...base, address1: String(row.address1 || ''), address2: String(row.address2 || ''), city: String(row.city || ''),
+    state: String(row.state || ''), zip: String(row.zip || ''), country: String(row.country || '') };
+}
+
+async function contactCreatePrimaryEffect(db, config, contactId, makePrimary) {
+  if (!makePrimary) return null;
+  const valueSql = config.valueField ? `${config.alias}.${config.valueField} AS value` :
+    `CONCAT_WS(', ', NULLIF(${config.alias}.address1, ''), NULLIF(${config.alias}.city, ''), NULLIF(${config.alias}.state, ''), NULLIF(${config.alias}.zip, '')) AS value`;
+  const [rows] = await db.query(
+    `SELECT ${config.alias}.id, ${valueSql}, ${config.alias}.label FROM ${config.table} ${config.alias} WHERE ${config.alias}.contact_id = ? AND ${config.alias}.is_primary = 1 AND ${config.alias}.end_date IS NULL LIMIT 1`,
+    [contactId]);
+  const row = Array.isArray(rows) ? rows[0] : null;
+  return row ? { id: Number(row.id), value: String(row.value || ''), label: String(row.label || 'Other') } : null;
+}
+
+async function normalizeContactSubrecordAction(db, value, evidence) {
+  const { family, operation, config } = contactActionParts(value.kind);
+  const allowed = operation === 'create' ? config.createKeys : operation === 'update' ? config.updateActionKeys : config.endKeys;
+  if (!onlyKeys(value, allowed)) throw httpError(422, 'Contact subrecord action contains unsupported fields');
+  const refs = taskDraftEvidence(value.evidence, evidence);
+  const contactId = contactActionId(value.contact_id, 'contact id');
+  if (operation === 'create') {
+    if (!contactEvidenceSupports(refs, evidence, contactId, config)) throw httpError(422, 'Contact subrecord action evidence does not identify the parent contact');
+    const contact = await contactActionContact(db, contactId);
+    const input = { ...value };
+    delete input.kind; delete input.contact_id; delete input.evidence;
+    if ('is_primary' in input) input.is_primary = contactActionBool(input.is_primary, 'primary value');
+    if ('sms_optout' in input) input.sms_optout = contactActionBool(input.sms_optout, 'SMS opt-out');
+    if ('mms_capable' in input) input.mms_capable = contactActionBool(input.mms_capable, 'MMS capability');
+    if ('email_optout' in input) input.email_optout = contactActionBool(input.email_optout, 'email opt-out');
+    if ('start_date' in input) {
+      input.start_date = contactActionDate(input.start_date, 'start date');
+      if (input.start_date && input.start_date > nowLocal().toFormat('yyyy-MM-dd')) throw httpError(422, 'Contact subrecord action start date cannot be in the future');
+    }
+    if ('notes' in input) input.notes = contactActionText(input.notes, 'notes', 5000);
+    const fields = validateContactRecord(config, input, 'insert');
+    if (family !== 'address') {
+      const [collisions] = await db.query(
+        `SELECT ${config.alias}.id, ${config.alias}.contact_id FROM ${config.table} ${config.alias} WHERE ${config.alias}.${config.valueField} = ? AND ${config.alias}.end_date IS NULL LIMIT 1`,
+        [fields[config.valueField]]);
+      if (Array.isArray(collisions) && collisions[0]) throw httpError(422, `That ${family} is already active on a contact; transfer is not available in this action`);
+      if (fields.start_date) {
+        const [overlaps] = await db.query(
+          `SELECT ${config.alias}.id FROM ${config.table} ${config.alias} WHERE ${config.alias}.${config.valueField} = ? AND (${config.alias}.start_date IS NULL OR ${config.alias}.start_date <= ?) AND (${config.alias}.end_date IS NULL OR ${config.alias}.end_date >= ?) AND NOT (${config.alias}.start_date IS NOT NULL AND ${config.alias}.end_date IS NOT NULL AND ${config.alias}.end_date < ${config.alias}.start_date) LIMIT 1`,
+          [fields[config.valueField], fields.start_date, fields.start_date]);
+        if (Array.isArray(overlaps) && overlaps[0]) throw httpError(422, `Contact subrecord action start date overlaps existing ${family} ownership history`);
+      } else {
+        const [nextRows] = await db.query(
+          `SELECT DATE_FORMAT(DATE_ADD(MAX(end_date), INTERVAL 1 DAY), '%Y-%m-%d') AS next_start FROM ${config.table} WHERE ${config.valueField} = ?`,
+          [fields[config.valueField]]);
+        fields.start_date = nextRows && nextRows[0] && nextRows[0].next_start ? String(nextRows[0].next_start) : null;
+      }
+    } else if (!fields.start_date) {
+      fields.start_date = nowLocal().toFormat('yyyy-MM-dd');
+    }
+    if (fields.is_primary === undefined) {
+      const [counts] = await db.query(`SELECT COUNT(*) AS row_count FROM ${config.table} WHERE contact_id = ?`, [contactId]);
+      fields.is_primary = Number(counts && counts[0] && counts[0].row_count) === 0 ? 1 : 0;
+    }
+    const makePrimary = fields.is_primary === 1;
+    return { draft_id: crypto.randomUUID(), kind: value.kind, status: 'draft', contact, family,
+      fields: { ...fields, is_primary: makePrimary }, demoted_primary: await contactCreatePrimaryEffect(db, config, contactId, makePrimary), evidence: refs };
+  }
+
+  const recordId = contactActionId(value[config.idField], config.idField.replace('_', ' '));
+  if (!contactEvidenceSupports(refs, evidence, contactId, config, recordId)) throw httpError(422, 'Contact subrecord action evidence does not identify the target record and parent contact');
+  const [contact, row] = await Promise.all([contactActionContact(db, contactId), config.get(db, recordId)]);
+  if (!row || Number(row.contact_id) !== contactId) throw httpError(422, 'Contact subrecord action target is unavailable on that contact');
+  if (row.end_date != null) throw httpError(422, 'Only an active contact subrecord can be updated or ended');
+  const target = contactActionTarget(family, row, contact);
+  if (operation === 'end') {
+    const endDate = contactActionDate(value.end_date, 'end date') || nowLocal().toFormat('yyyy-MM-dd');
+    if (endDate > nowLocal().toFormat('yyyy-MM-dd')) throw httpError(422, 'Contact subrecord action end date cannot be in the future');
+    if (target.start_date && endDate < target.start_date) throw httpError(422, 'Contact subrecord action end date cannot precede the start date');
+    return { draft_id: crypto.randomUUID(), kind: value.kind, status: 'draft', family, target,
+      changes: { end_date: endDate, end_reason: contactActionText(value.end_reason, 'end reason', 255, { required: true }) }, evidence: refs };
+  }
+
+  if (!onlyKeys(value.changes, config.updateKeys) || !Object.keys(value.changes || {}).length) throw httpError(422, 'Contact subrecord update contains unsupported fields or no changes');
+  const input = { ...value.changes };
+  for (const key of ['is_primary', 'sms_optout', 'mms_capable', 'email_optout']) {
+    if (key in input) input[key] = contactActionBool(input[key], key.replaceAll('_', ' '));
+  }
+  if ('is_primary' in input && input.is_primary !== true) throw httpError(422, 'Contact subrecord update may promote a primary record but cannot leave the contact without one');
+  if ('notes' in input) input.notes = contactActionText(input.notes, 'notes', 5000);
+  const changes = validateContactRecord(config, input, 'update');
+  for (const key of ['is_primary', 'sms_optout', 'mms_capable', 'email_optout']) if (key in changes) changes[key] = changes[key] === 1;
+  if (family === 'address') {
+    const merged = { ...target, ...changes };
+    if (![merged.address1, merged.city, merged.state, merged.zip].some((part) => String(part || '').trim())) {
+      throw httpError(422, 'Address update must retain at least one of address1, city, state, or zip');
+    }
+  }
+  const changed = Object.entries(changes).some(([key, next]) => String(target[key] ?? '') !== String(next ?? ''));
+  if (!changed) throw httpError(422, 'Contact subrecord update does not change any value');
+  let demotedPrimary = null;
+  if (changes.is_primary && !target.is_primary) {
+    demotedPrimary = await contactCreatePrimaryEffect(db, config, contactId, true);
+    if (demotedPrimary && demotedPrimary.id === target.id) demotedPrimary = null;
+  }
+  return { draft_id: crypto.randomUUID(), kind: value.kind, status: 'draft', family, target, changes,
+    demoted_primary: demotedPrimary, evidence: refs };
+}
+
 async function taskDraftLink(db, value) {
   if (value == null) return null;
   if (!onlyKeys(value, new Set(['type', 'id']))) throw httpError(422, 'Task draft link is malformed');
@@ -851,6 +1071,7 @@ async function normalizeActionDraft(db, value, evidence, { currentUserId = null 
   if (value == null) return null;
   if (value && EVENT_ACTION_KINDS.has(value.kind)) return normalizeEventAction(db, value, evidence);
   if (value && APPT_ACTION_KINDS.has(value.kind)) return normalizeApptAction(db, value, evidence);
+  if (value && CONTACT_SUBRECORD_ACTION_KINDS.has(value.kind)) return normalizeContactSubrecordAction(db, value, evidence);
   if (!value || !TASK_ACTION_KINDS.has(value.kind)) throw httpError(422, 'Action kind is unavailable');
   if (value.kind !== 'task.create.v1') return normalizeExistingTaskAction(db, value, evidence);
   if (!onlyKeys(value, TASK_CREATE_KEYS)) throw httpError(422, 'Task draft contains unsupported fields');
@@ -922,7 +1143,10 @@ function taskDraftRequested(question, history = []) {
     /\b(?:draft|propose|prepare|create|make|add|edit|update|change|complete|finish|done|cancel)\b/i.test(text);
   const appt = /\b(?:appt|appointment)\b/i.test(text) &&
     /\b(?:draft|propose|prepare|create|make|add|edit|update|change|attend|attended|no[ -]?show|cancel|reschedule)\b/i.test(text);
-  return task || event || appt;
+  const contactSubrecord = /\b(?:contact|client)\b/i.test(text) &&
+    /\b(?:phone|email|address)\b/i.test(text) &&
+    /\b(?:draft|propose|prepare|create|make|add|edit|update|change|end|deactivate|remove)\b/i.test(text);
+  return task || event || appt || contactSubrecord;
 }
 
 function contextualAnswer(question, history) {

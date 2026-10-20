@@ -242,10 +242,14 @@ function appendDraftField(list, label, value) {
 const TASK_ACTION_KINDS = new Set(['task.create.v1', 'task.update.v1', 'task.complete.v1', 'task.cancel.v1', 'task.reopen.v1', 'task.transfer.v1']);
 const EVENT_ACTION_KINDS = new Set(['event.create.v1', 'event.update.v1', 'event.complete.v1', 'event.cancel.v1']);
 const APPT_ACTION_KINDS = new Set(['appt.create.v1', 'appt.update.v1', 'appt.attended.v1', 'appt.no_show.v1', 'appt.cancel.v1', 'appt.reschedule.v1', 'appt.reschedule_later.v1']);
+const CONTACT_SUBRECORD_ACTION_KINDS = new Set(['contact.phone.create.v1', 'contact.phone.update.v1', 'contact.phone.end.v1',
+  'contact.email.create.v1', 'contact.email.update.v1', 'contact.email.end.v1',
+  'contact.address.create.v1', 'contact.address.update.v1', 'contact.address.end.v1']);
 function isTaskActionDraft(draft) { return !!(draft && TASK_ACTION_KINDS.has(draft.kind)); }
 function isEventActionDraft(draft) { return !!(draft && EVENT_ACTION_KINDS.has(draft.kind)); }
 function isApptActionDraft(draft) { return !!(draft && APPT_ACTION_KINDS.has(draft.kind)); }
-function isActionDraft(draft) { return isTaskActionDraft(draft) || isEventActionDraft(draft) || isApptActionDraft(draft); }
+function isContactSubrecordActionDraft(draft) { return !!(draft && CONTACT_SUBRECORD_ACTION_KINDS.has(draft.kind)); }
+function isActionDraft(draft) { return isTaskActionDraft(draft) || isEventActionDraft(draft) || isApptActionDraft(draft) || isContactSubrecordActionDraft(draft); }
 
 function taskDraftText(draft) {
   if (draft.kind === 'task.create.v1') return [
@@ -666,6 +670,170 @@ function applyApptActionResults(messages) {
   return messages;
 }
 
+function contactSubrecordActionLabel(draft) {
+  const family = draft.family || String(draft.kind || '').split('.')[1] || 'record';
+  const operation = String(draft.kind || '').split('.')[2];
+  return `${operation === 'create' ? 'Add' : operation === 'end' ? 'End' : 'Update'} contact ${family}`;
+}
+
+function contactAddressText(value) {
+  return [value.address1, value.address2, [value.city, value.state, value.zip].filter(Boolean).join(' '), value.country]
+    .filter((part) => part && String(part).trim()).join(', ') || 'Empty';
+}
+
+function contactSubrecordValue(family, value) {
+  return family === 'phone' ? value.phone : family === 'email' ? value.email : contactAddressText(value);
+}
+
+function contactSubrecordDraftText(draft) {
+  const lines = ['Contact subrecord action proposal — not applied', `Action: ${contactSubrecordActionLabel(draft)}`];
+  if (String(draft.kind).includes('.create.')) {
+    const f = draft.fields;
+    lines.push(`Contact: ${draft.contact.label} (#${draft.contact.contact_id})`,
+      `${draft.family[0].toUpperCase() + draft.family.slice(1)}: ${contactSubrecordValue(draft.family, f)}`,
+      `Label: ${f.label}`, `Primary: ${f.is_primary ? 'Yes' : 'No'}`, `Start date: ${f.start_date || 'Since forever (no prior ownership)'}`,
+      `Notes: ${f.notes || 'Empty'}`);
+    if (draft.family === 'phone') lines.push(`SMS opt-out: ${f.sms_optout ? 'Yes' : 'No'}`, `MMS capable: ${f.mms_capable ? 'Yes' : 'No'}`);
+    if (draft.family === 'email') lines.push(`Email opt-out: ${f.email_optout ? 'Yes' : 'No'}`);
+    lines.push(`Primary side effect: ${draft.demoted_primary ? `demote current ${draft.demoted_primary.label} primary ${draft.demoted_primary.value}` : 'no current primary will be demoted'}.`,
+      'Contact mirror / sync: the contact summary and open contact views refresh through the canonical route response.',
+      'Transfer / notification: no ownership transfer, message, email, or SMS is sent.');
+    return lines.join('\n');
+  }
+  const t = draft.target;
+  lines.push(`Contact: ${t.contact.label} (#${t.contact.contact_id})`,
+    `Current ${draft.family}: ${contactSubrecordValue(draft.family, t)}`, `Record id: ${t.id}`,
+    `Current label: ${t.label}`, `Current primary: ${t.is_primary ? 'Yes' : 'No'}`,
+    `Current start date: ${t.start_date || 'Unknown'}`, `Current notes: ${t.notes || 'Empty'}`);
+  if (draft.family === 'phone') lines.push(`Current SMS opt-out: ${t.sms_optout ? 'Yes' : 'No'}`, `Current MMS capable: ${t.mms_capable ? 'Yes' : 'No'}`);
+  if (draft.family === 'email') lines.push(`Current email opt-out: ${t.email_optout ? 'Yes' : 'No'}`);
+  if (String(draft.kind).includes('.end.')) {
+    lines.push(`End date: ${draft.changes.end_date}`, `End reason: ${draft.changes.end_reason}`,
+      `Primary side effect: ${t.is_primary ? 'this row loses primary status and the contact mirror is recomputed' : 'no primary row is demoted'}.`,
+      'Lifecycle effect: the row remains in history but becomes inactive; this is not a hard delete.');
+  } else {
+    Object.entries(draft.changes || {}).forEach(([key, value]) => {
+      const label = ({ address1: 'New address line 1', address2: 'New address line 2', city: 'New city', state: 'New state', zip: 'New ZIP', country: 'New country',
+        label: 'New label', is_primary: 'Make primary', sms_optout: 'New SMS opt-out', mms_capable: 'New MMS capability', email_optout: 'New email opt-out', notes: 'New complete notes' })[key] || key;
+      lines.push(`${label}: ${typeof value === 'boolean' ? (value ? 'Yes' : 'No') : (value || 'Clear')}`);
+    });
+    lines.push(`Primary side effect: ${draft.changes.is_primary && !t.is_primary
+      ? (draft.demoted_primary ? `demote ${draft.demoted_primary.label} primary ${draft.demoted_primary.value} and make this row primary` : 'make this row primary; no current primary was found')
+      : 'no other primary is changed'}.`);
+  }
+  lines.push('Concurrency: the write is rejected if this row changed after Casey prepared the proposal.',
+    'Transfer / notification: no ownership transfer, message, email, or SMS is sent.');
+  return lines.join('\n');
+}
+
+function contactSubrecordCreateBody(draft) {
+  const f = draft.fields;
+  let body;
+  if (draft.family === 'phone') body = { contact_id: draft.contact.contact_id, phone: f.phone, label: f.label,
+    is_primary: f.is_primary === true, sms_optout: f.sms_optout === 1 || f.sms_optout === true,
+    mms_capable: f.mms_capable === 1 || f.mms_capable === true, start_date: f.start_date || null, notes: f.notes || '' };
+  else if (draft.family === 'email') body = { contact_id: draft.contact.contact_id, email: f.email, label: f.label,
+    is_primary: f.is_primary === true, email_optout: f.email_optout === 1 || f.email_optout === true,
+    start_date: f.start_date || null, notes: f.notes || '' };
+  else body = { contact_id: draft.contact.contact_id, address1: f.address1, address2: f.address2, city: f.city,
+    state: f.state, zip: f.zip, country: f.country, label: f.label, is_primary: f.is_primary === true,
+    start_date: f.start_date || null, notes: f.notes || '' };
+  if (f.is_primary === true) body.expected_primary_id = draft.demoted_primary ? draft.demoted_primary.id : null;
+  return body;
+}
+
+function contactSubrecordActionRequest(draft) {
+  const plural = `${draft.family}${draft.family === 'address' ? 'es' : 's'}`;
+  const base = `/api/contact-${plural}`;
+  if (String(draft.kind).includes('.create.')) return { path: base, method: 'POST', body: contactSubrecordCreateBody(draft) };
+  const body = { expected_updated_at: draft.target.expected_updated_at };
+  if (String(draft.kind).includes('.end.')) {
+    body.end_date = draft.changes.end_date; body.end_reason = draft.changes.end_reason;
+  } else {
+    const allowed = draft.family === 'phone' ? ['label', 'is_primary', 'sms_optout', 'mms_capable', 'notes']
+      : draft.family === 'email' ? ['label', 'is_primary', 'email_optout', 'notes']
+        : ['address1', 'address2', 'city', 'state', 'zip', 'country', 'label', 'is_primary', 'notes'];
+    allowed.forEach((key) => { if (Object.prototype.hasOwnProperty.call(draft.changes || {}, key)) body[key] = draft.changes[key]; });
+    if (draft.changes && draft.changes.is_primary === true) body.expected_primary_id = draft.demoted_primary ? draft.demoted_primary.id : null;
+  }
+  return { path: `${base}/${draft.target.id}`, method: 'PATCH', body };
+}
+
+async function confirmContactSubrecordDraft(draft) {
+  if (!(P.Swal && typeof P.Swal.fire === 'function')) throw new Error('The review dialog is unavailable. Nothing was changed.');
+  const ending = String(draft.kind).includes('.end.');
+  const result = await P.Swal.fire({ title: contactSubrecordActionLabel(draft),
+    text: `${contactSubrecordDraftText(draft)}\n\nThis changes YisraCase immediately using your signed-in account.`,
+    icon: ending ? 'warning' : 'question', showCancelButton: true,
+    confirmButtonText: contactSubrecordActionLabel(draft), cancelButtonText: 'Keep proposal',
+    focusCancel: ending, reverseButtons: true, heightAuto: false });
+  return !!(result && result.isConfirmed);
+}
+
+async function executeContactSubrecordDraft(message) {
+  const draft = message && message.action_draft;
+  if (!isContactSubrecordActionDraft(draft) || typeof draft.draft_id !== 'string' || !draft.draft_id || draft.executing || draft.reviewing) return;
+  const contactId = Number(draft.contact && draft.contact.contact_id || draft.target && draft.target.contact && draft.target.contact.contact_id);
+  if (draft.status === 'applied' && draft.result_contact_id) { openEntity('contact', draft.result_contact_id, draft.result_contact_label); return; }
+  draft.reviewing = true; delete draft.action_error; render();
+  try { if (!await confirmContactSubrecordDraft(draft)) return; }
+  catch (e) { draft.action_error = e.message || 'The review dialog could not be opened.'; return; }
+  finally { draft.reviewing = false; render(); }
+  draft.executing = true; delete draft.action_error; render();
+  try {
+    const request = contactSubrecordActionRequest(draft); await api(request.path, request.body, request.method);
+    if (!Number.isSafeInteger(contactId) || contactId < 1) throw new Error('The contact action has no usable parent contact id');
+    const label = draft.contact ? draft.contact.label : draft.target.contact.label;
+    draft.status = 'applied'; draft.result_contact_id = contactId; draft.result_contact_label = label;
+    const resultMessage = { role: 'assistant', text: `${contactSubrecordActionLabel(draft)} applied to ${label}.`,
+      entities: [{ kind: 'contact', id: String(contactId), label }],
+      action_result: { kind: draft.kind, draft_id: draft.draft_id, contact_id: contactId, contact_label: label } };
+    history.push(resultMessage); await saveAssistantMessage(resultMessage); openEntity('contact', contactId, label);
+  } catch (e) { draft.action_error = e.message || 'The contact subrecord action could not be applied.'; }
+  finally { draft.executing = false; render(); }
+}
+
+function applyContactSubrecordActionResults(messages) {
+  const applied = new Map();
+  for (const message of Array.isArray(messages) ? messages : []) {
+    const result = message && message.action_result;
+    if (result && CONTACT_SUBRECORD_ACTION_KINDS.has(result.kind) && typeof result.draft_id === 'string'
+        && Number.isSafeInteger(Number(result.contact_id)) && Number(result.contact_id) > 0) applied.set(result.draft_id, result);
+  }
+  for (const message of Array.isArray(messages) ? messages : []) {
+    const draft = message && message.action_draft; const result = draft && applied.get(draft.draft_id);
+    if (result) { draft.status = 'applied'; draft.result_contact_id = Number(result.contact_id); draft.result_contact_label = String(result.contact_label || 'Contact'); }
+  }
+  return messages;
+}
+
+function hydrateContactSubrecordActionDraft(host, message, draft) {
+  const head = document.createElement('div'); head.className = 'action-draft-head';
+  const title = document.createElement('b'); title.textContent = 'Contact subrecord action';
+  const status = document.createElement('span'); status.className = 'action-draft-status';
+  status.textContent = draft.status === 'applied' && draft.result_contact_id ? `Applied — contact #${draft.result_contact_id}`
+    : draft.executing ? 'Applying…' : draft.reviewing ? 'Reviewing…' : 'Proposal — not applied';
+  head.append(title, status);
+  const fields = document.createElement('dl'); fields.className = 'action-draft-grid';
+  for (const line of contactSubrecordDraftText(draft).split('\n').slice(1)) { const split = line.indexOf(':');
+    appendDraftField(fields, split > 0 ? line.slice(0, split) : 'Effect', split > 0 ? line.slice(split + 1).trim() : line); }
+  const next = document.createElement('div'); next.className = 'action-draft-next';
+  const warning = document.createElement('div'); warning.className = 'action-draft-next-warning';
+  warning.textContent = draft.status === 'applied' ? `Applied to contact #${draft.result_contact_id} using your signed-in account.`
+    : 'Review every value, primary/mirror effect, consent setting, and lifecycle effect. Canceling writes nothing.';
+  next.append(warning);
+  if (draft.action_error) { const error = document.createElement('div'); error.className = 'action-draft-next-warning'; error.textContent = `Could not apply contact action: ${draft.action_error}`; next.append(error); }
+  const actions = document.createElement('div'); actions.className = 'action-draft-actions';
+  const apply = document.createElement('button'); apply.type = 'button';
+  apply.textContent = draft.status === 'applied' && draft.result_contact_id ? `Open contact #${draft.result_contact_id}` : `Review & ${contactSubrecordActionLabel(draft).toLowerCase()}`;
+  apply.disabled = !!(draft.executing || draft.reviewing); apply.addEventListener('click', () => executeContactSubrecordDraft(message));
+  const copy = document.createElement('button'); copy.type = 'button'; copy.textContent = 'Copy details';
+  copy.addEventListener('click', async () => { try { await navigator.clipboard.writeText(contactSubrecordDraftText(draft)); copy.textContent = 'Copied'; } catch (_) { copy.textContent = 'Copy failed'; } });
+  actions.append(apply, copy);
+  if (draft.status !== 'applied') { const discard = document.createElement('button'); discard.type = 'button'; discard.className = 'ghost'; discard.textContent = 'Discard'; discard.disabled = !!(draft.executing || draft.reviewing); discard.addEventListener('click', () => { delete message.action_draft; render(); }); actions.append(discard); }
+  host.append(head, fields, next, actions);
+}
+
 function hydrateApptActionDraft(host, message, draft) {
   const head = document.createElement('div'); head.className = 'action-draft-head';
   const title = document.createElement('b'); title.textContent = 'Appointment action';
@@ -726,6 +894,7 @@ function hydrateActionDrafts() {
     const index = Number(host.dataset.actionDraft);
     const message = history[index];
     const draft = message && message.action_draft;
+    if (isContactSubrecordActionDraft(draft)) { hydrateContactSubrecordActionDraft(host, message, draft); return; }
     if (isApptActionDraft(draft)) { hydrateApptActionDraft(host, message, draft); return; }
     if (isEventActionDraft(draft)) { hydrateEventActionDraft(host, message, draft); return; }
     if (!isTaskActionDraft(draft)) return;
@@ -1139,7 +1308,7 @@ async function openSavedChat(id) {
     const messages = Array.isArray(r.chat && r.chat.messages) ? r.chat.messages : [];
     const restored = messages.map((m) => ({ role: m.role === 'assistant' ? 'assistant' : 'user',
       text: String(m.text || ''), ...(m.payload && typeof m.payload === 'object' ? m.payload : {}) }));
-    history = applyApptActionResults(applyEventActionResults(applyTaskActionResults(restored)));
+    history = applyContactSubrecordActionResults(applyApptActionResults(applyEventActionResults(applyTaskActionResults(restored))));
     currentChatId = Number(r.chat.id);
     modelMode.value = r.chat.model_mode === 'faster_speed' ? 'faster_speed' : 'better_quality';
     historyPanel.hidden = true;

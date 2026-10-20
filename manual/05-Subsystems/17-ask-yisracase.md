@@ -1,7 +1,7 @@
 # Ask Casey
 
 Ask Casey is the user-facing name for the firm's YisrAI assistant. Its searches
-are read-only; its reviewed Task, Event, and Appointment actions are performed by the
+are read-only; its reviewed Task, Event, Appointment, and contact-subrecord actions are performed by the
 signed-in user after explicit review. It can answer
 questions about firm records, how YisraCase itself works, general knowledge,
 and current weather. Open it from the persistent **Ask Casey** button at the
@@ -222,6 +222,52 @@ and the normal Appointment sync bus refreshes open Appointment, Calendar,
 case, and contact views—including both predecessor and successor after a
 reschedule.
 
+### Contact phone, email, and address actions
+
+Casey can prepare one reviewed create, narrow update, or end action for one
+contact phone, email, or address row. It cannot use these actions to edit the
+contact's scalar identity fields, relations, or roles, and it cannot combine
+several rows in one proposal.
+
+Creation requires current evidence containing the exact parent `contact_id`.
+Phone and email values are normalized by the native services and cannot be
+force-transferred from another contact; an active ownership collision is
+rejected. Address creation requires at least one of street line 1, city,
+state, or ZIP. Native labels and defaults are preserved: opt-outs default off,
+MMS capability defaults on, country defaults to US, and the first-ever row in
+that family becomes primary unless the reviewed proposal says otherwise.
+An omitted phone/email start date is normalized to “since forever” when the
+value has no ownership history or the day after its latest ended window;
+addresses default to the current firm-local date. The exact result appears in
+the card.
+
+Making a new or existing row primary demotes the current active primary row
+and recomputes the contact's scalar phone, email, or address mirror. The card
+shows the current primary value that will be demoted. SMS/email opt-outs and
+MMS capability are consent or delivery settings, so Casey changes them only
+when the request states the value explicitly.
+
+Phone and email values themselves are immutable on the dedicated PATCH routes.
+A narrow update may change their label, notes, primary promotion, and relevant
+opt-out/MMS settings. Address updates may additionally change the address
+parts. `verified`, ownership start-date edits, force transfer, and explicit
+primary demotion are excluded.
+
+An end action records a non-future firm-local end date and required reason. It
+keeps the row in contact history and is not the irreversible DELETE route.
+Only active rows can be updated or ended. Existing actions require one current
+evidence row containing both the exact parent `contact_id` and exact
+`phone_id`, `email_id`, or `address_id`, then reload the row server-side.
+
+Each reviewed update/end carries the row's server-owned `updated_at` version;
+a primary-changing write also carries the reviewed current-primary identity.
+The canonical route locks and rejects the write if either changed after Casey
+prepared the proposal. Successful actions save their result in
+chat history and open the parent contact. Canonical `yc-sync` matchers announce
+create and PATCH responses to every open recipient contact; native forced
+phone/email transfers continue to announce the donor too. No Casey-only bus
+event or execution endpoint exists.
+
 ## Models and files
 
 The model selector offers two product-level choices:
@@ -253,8 +299,8 @@ asking about a file does not save it.
 ## What read-only means
 
 Assistant searches and action proposals cannot change anything by themselves.
-YisrAI cannot send email, edit a contact, fill a form, or create a workflow. It
-can return the typed Task, Event, or Appointment proposal described above; the signed-in
+YisrAI cannot send email, edit scalar contact identity fields, fill a form, or
+create a workflow. It can return the typed Task, Event, Appointment, or contact-subrecord proposal described above; the signed-in
 staff member must review and confirm the card before the ordinary application
 route performs it. The separate,
 user-invoked **Save to case** attachment control is another explicit write; it
@@ -333,7 +379,9 @@ server-validated `task.create.v1`, `task.update.v1`, `task.complete.v1`,
 may instead be one `event.create.v1`, `event.update.v1`, `event.complete.v1`,
 or `event.cancel.v1` proposal. It may instead be one `appt.create.v1`,
 `appt.update.v1`, `appt.attended.v1`, `appt.no_show.v1`, `appt.cancel.v1`,
-`appt.reschedule.v1`, or `appt.reschedule_later.v1` proposal. The proposal
+`appt.reschedule.v1`, or `appt.reschedule_later.v1` proposal. It may instead be
+one `contact.phone.*.v1`, `contact.email.*.v1`, or `contact.address.*.v1`
+create/update/end proposal described above. The proposal
 itself changes no record. A signed-in user can perform that exact action only
 through the card's explicit review and confirmation, which invokes the ordinary
 authenticated route for that record family.

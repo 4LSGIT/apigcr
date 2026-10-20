@@ -94,13 +94,13 @@ router.post('/api/contact-phones', jwtOrApiKey, async (req, res) => {
   try {
     const createdBy = resolveCreatedBy(req);
     const force     = parseBool(req.query.force);
-    const { contact_id, ...fields } = req.body || {};
+    const { contact_id, expected_primary_id, ...fields } = req.body || {};
 
     if (!contact_id) {
       return res.status(400).json({ status: 'error', message: 'contact_id is required' });
     }
 
-    const result = await phoneSvc.createContactPhone(req.db, contact_id, fields, { force, createdBy });
+    const result = await phoneSvc.createContactPhone(req.db, contact_id, fields, { force, createdBy, expectedPrimaryId: expected_primary_id });
     res.status(201).json({ status: 'success', ...result });
   } catch (err) {
     console.error('POST /api/contact-phones error:', err);
@@ -117,7 +117,8 @@ router.post('/api/contact-phones', jwtOrApiKey, async (req, res) => {
 router.patch('/api/contact-phones/:id', jwtOrApiKey, async (req, res) => {
   try {
     const updatedBy = resolveCreatedBy(req);
-    const result = await phoneSvc.updateContactPhone(req.db, req.params.id, req.body, { updatedBy });
+    const { expected_updated_at, expected_primary_id, ...fields } = req.body || {};
+    const result = await phoneSvc.updateContactPhone(req.db, req.params.id, fields, { updatedBy, expectedUpdatedAt: expected_updated_at, expectedPrimaryId: expected_primary_id });
     res.json({ status: 'success', ...result });
   } catch (err) {
     console.error('PATCH /api/contact-phones/:id error:', err);

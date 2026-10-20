@@ -824,18 +824,18 @@
        contacts matcher would read `undefined` and silently announce nothing.
        Verified against contactPhoneService/contactEmailService createContact*.
 
-       DONOR ONLY, deliberately. The RECIPIENT is the page that clicked Revive
-       and it already refetches twice (reviveRow's own GET, then the `form-saved`
-       refetch); a recipient emit would make that three, because contact.html's
-       `yc_refetch` branch has no `lastFormSavedAt`-style coalescing fence. A
-       recipient open in some OTHER frame falls under the recipient-aggregate
-       gap documented in design v2.2 — unchanged by this matcher.
-
-       No `/api/contact-addresses` matcher: addresses have no cross-contact
-       uniqueness, so that route has no `force` opt, no 409 path and no
-       `transferred_from` (contactAddressService.js:26). Nothing to announce. */
-    [/^\/api\/contact-phones$/, 'contact', reviveDonorGetter('phone'), ['POST']],
-    [/^\/api\/contact-emails$/, 'contact', reviveDonorGetter('email'), ['POST']],
+       Every successful create now announces the RECIPIENT too. The contact
+       page's echo fence coalesces the writing frame, while other open frames
+       finally learn that the aggregate changed. A forced phone/email transfer
+       additionally announces the donor. Address creates have no donor but use
+       the same recipient contract. PATCH responses carry the updated row and
+       likewise announce its parent contact. */
+    [/^\/api\/contact-phones$/, 'contact', contactSubrecordGetter('phone', true), ['POST']],
+    [/^\/api\/contact-emails$/, 'contact', contactSubrecordGetter('email', true), ['POST']],
+    [/^\/api\/contact-addresses$/, 'contact', contactSubrecordGetter('address', false), ['POST']],
+    [/^\/api\/contact-phones\/\d+$/, 'contact', contactSubrecordGetter('phone', false), ['PATCH']],
+    [/^\/api\/contact-emails\/\d+$/, 'contact', contactSubrecordGetter('email', false), ['PATCH']],
+    [/^\/api\/contact-addresses\/\d+$/, 'contact', contactSubrecordGetter('address', false), ['PATCH']],
 
     /* CONTACT CREATE (bus audit, Oct 2026). Parity with the intake matchers
        below: an intake-created contact announced, a NewContactForm one did
@@ -1230,32 +1230,24 @@
     return [{ addr: 'doclink:' + t + ':' + i, fields: { yc_refetch: 1 } }];
   }
 
-  /**
-   * Getter factory for the two revive endpoints — one shape, two row keys.
-   *
-   * @param   {string} rowKey 'phone' | 'email' — where the created row sits in
-   *                          the 201 body, and the only place the RECIPIENT id
-   *                          appears (there is no `:id` in the URL to capture).
-   * @returns {function(object): (Array|null)}
-   */
-  function reviveDonorGetter(rowKey) {
+  /** Getter for contact-subrecord create/update responses. The returned row
+   * owns the recipient id; phone/email force-create may also own a donor id. */
+  function contactSubrecordGetter(rowKey, includeDonor) {
     return function (r) {
-      var tf = r && r.transferred_from;
-      // Fail closed on the ARRAY shape: that is the aggregate PATCH path's
-      // payload, and seeing it here means the route's contract moved.
-      if (!tf || typeof tf !== 'object' || Array.isArray(tf)) return null;
-
-      var donor = tf.contact_id;
-      if (donor == null || donor === '') return null;
-
-      // Self-exclusion, defensive: the route rejects a same-contact collision
-      // as a 400 before it ever reaches the force path, so this should be
-      // unreachable — but a donor === recipient refetch would be pure noise.
-      var row = r[rowKey];
+      var row = r && r[rowKey];
       var recipient = row && row.contact_id;
-      if (recipient != null && String(recipient) === String(donor)) return null;
-
-      return [{ addr: 'contact:' + donor, fields: { yc_refetch: 1 } }];
+      var out = [];
+      if (recipient != null && recipient !== '') out.push({ addr: 'contact:' + recipient, fields: { yc_refetch: 1 } });
+      if (includeDonor) {
+        var tf = r && r.transferred_from;
+        if (tf && typeof tf === 'object' && !Array.isArray(tf)) {
+          var donor = tf.contact_id;
+          if (donor != null && donor !== '' && String(donor) !== String(recipient)) {
+            out.push({ addr: 'contact:' + donor, fields: { yc_refetch: 1 } });
+          }
+        }
+      }
+      return out.length ? out : null;
     };
   }
 

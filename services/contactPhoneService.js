@@ -80,6 +80,22 @@ function _toBit(v) {
   return v ? 1 : 0;
 }
 
+function _timestamp(v) {
+  if (v == null || v === '') return '';
+  const d = v instanceof Date ? v : new Date(v);
+  return Number.isNaN(d.getTime()) ? String(v) : d.toISOString();
+}
+
+async function _assertExpectedPrimary(conn, contactId, excludeId, expectedPrimaryId) {
+  if (expectedPrimaryId === undefined) return;
+  const [[row]] = await conn.query(
+    'SELECT id FROM contact_phones WHERE contact_id = ? AND is_primary = 1 AND end_date IS NULL AND id <> ? LIMIT 1 FOR UPDATE',
+    [contactId, excludeId || 0]);
+  const actual = row ? Number(row.id) : null;
+  const expected = expectedPrimaryId == null || expectedPrimaryId === '' ? null : Number(expectedPrimaryId);
+  if (actual !== expected) throw new Error('Concurrent primary phone change detected — refresh and retry');
+}
+
 /**
  * Format a DATE-ish value ('YYYY-MM-DD' string, ISO string, or a JS Date
  * as mysql2 returns for DATE columns) to 'YYYY-MM-DD', or null. Local
@@ -437,7 +453,7 @@ async function getContactPhone(db, phoneId) {
  * @param {number}  [opts.createdBy=0]      - users.user value, or 0 for system
  * @returns {Promise<{phone: object, auto_promoted: boolean, transferred_from?: object}>}
  */
-async function createContactPhone(db, contactId, fields = {}, { force = false, createdBy = 0 } = {}) {
+async function createContactPhone(db, contactId, fields = {}, { force = false, createdBy = 0, expectedPrimaryId } = {}) {
   // ─── Validation (pre-transaction) ───
   // validatePhoneRow throws on bad phone/label; preserves is_primary as
   // undefined when caller didn't set it, so auto-promote works below.
@@ -541,6 +557,7 @@ async function createContactPhone(db, contactId, fields = {}, { force = false, c
 
     // 3. Demote existing primary-active if we're inserting as primary
     if (isPrimary === 1) {
+      await _assertExpectedPrimary(conn, cid, 0, expectedPrimaryId);
       await conn.query(
         `UPDATE contact_phones
             SET is_primary = 0, updated_by = ?
@@ -643,7 +660,7 @@ async function createContactPhone(db, contactId, fields = {}, { force = false, c
  * @param {number} [opts.updatedBy=0]
  * @returns {Promise<{ phone: object }>}
  */
-async function updateContactPhone(db, phoneId, fields, { updatedBy = 0 } = {}) {
+async function updateContactPhone(db, phoneId, fields, { updatedBy = 0, expectedUpdatedAt, expectedPrimaryId } = {}) {
   if (!fields || !Object.keys(fields).length) {
     throw new Error('updateContactPhone requires at least one field');
   }
@@ -664,10 +681,13 @@ async function updateContactPhone(db, phoneId, fields, { updatedBy = 0 } = {}) {
 
     // Load current row
     const [[current]] = await conn.query(
-      `SELECT * FROM contact_phones WHERE id = ?`,
+      `SELECT * FROM contact_phones WHERE id = ? FOR UPDATE`,
       [phoneId]
     );
     if (!current) throw new Error(`Phone ${phoneId} not found`);
+    if (expectedUpdatedAt !== undefined && _timestamp(current.updated_at) !== _timestamp(expectedUpdatedAt)) {
+      throw new Error('Concurrent phone update detected — refresh and retry');
+    }
 
     // start_date guard (window integrity). Effective end = the incoming
     // end_date when this same PATCH sets it, else the stored one.
@@ -702,6 +722,7 @@ async function updateContactPhone(db, phoneId, fields, { updatedBy = 0 } = {}) {
     // 0→1 primary transition: demote any other primary-active row first.
     // Skip if this same row is being ended in the same call (already 0'd).
     if (becomingPrimary && !beingEnded) {
+      await _assertExpectedPrimary(conn, current.contact_id, phoneId, expectedPrimaryId);
       await conn.query(
         `UPDATE contact_phones
             SET is_primary = 0, updated_by = ?

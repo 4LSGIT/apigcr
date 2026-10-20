@@ -1989,9 +1989,9 @@ processing();
 })();
 
 /* ── Sync bus subscriber (public/js/yc-sync.js) ─────────────────────────────
-   One subscription for the page. SCALARS ONLY — `changes` from
-   PATCH /api/contacts/:id carries scalar columns; the phones/emails/addresses
-   aggregates never ride the bus and keep refreshing through form-saved.
+   One subscription for the page. Scalar `changes` from PATCH /api/contacts/:id
+   can merge directly. Phone/email/address routes carry `{yc_refetch:1}` because
+   their aggregate effects require a canonical refetch rather than a field merge.
 
    §3.6: THIS HANDLER MUST NEVER EMIT. Merge and paint, nothing else.
 

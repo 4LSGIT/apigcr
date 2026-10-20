@@ -79,6 +79,22 @@ function _toBit(v) {
   return v ? 1 : 0;
 }
 
+function _timestamp(v) {
+  if (v == null || v === '') return '';
+  const d = v instanceof Date ? v : new Date(v);
+  return Number.isNaN(d.getTime()) ? String(v) : d.toISOString();
+}
+
+async function _assertExpectedPrimary(conn, contactId, excludeId, expectedPrimaryId) {
+  if (expectedPrimaryId === undefined) return;
+  const [[row]] = await conn.query(
+    'SELECT id FROM contact_emails WHERE contact_id = ? AND is_primary = 1 AND end_date IS NULL AND id <> ? LIMIT 1 FOR UPDATE',
+    [contactId, excludeId || 0]);
+  const actual = row ? Number(row.id) : null;
+  const expected = expectedPrimaryId == null || expectedPrimaryId === '' ? null : Number(expectedPrimaryId);
+  if (actual !== expected) throw new Error('Concurrent primary email change detected — refresh and retry');
+}
+
 /**
  * Format a DATE-ish value ('YYYY-MM-DD' string, ISO string, or a JS Date
  * as mysql2 returns for DATE columns) to 'YYYY-MM-DD', or null.
@@ -396,7 +412,7 @@ async function getContactEmail(db, emailId) {
  * @param {number}  [opts.createdBy=0]
  * @returns {Promise<{email: object, auto_promoted: boolean, transferred_from?: object}>}
  */
-async function createContactEmail(db, contactId, fields = {}, { force = false, createdBy = 0 } = {}) {
+async function createContactEmail(db, contactId, fields = {}, { force = false, createdBy = 0, expectedPrimaryId } = {}) {
   // ─── Validation (pre-transaction) ───
   const validated = validateEmailRow(fields, { mode: 'insert' });
 
@@ -490,6 +506,7 @@ async function createContactEmail(db, contactId, fields = {}, { force = false, c
 
     // 3. Demote existing primary-active if we're inserting as primary
     if (isPrimary === 1) {
+      await _assertExpectedPrimary(conn, cid, 0, expectedPrimaryId);
       await conn.query(
         `UPDATE contact_emails
             SET is_primary = 0, updated_by = ?
@@ -586,7 +603,7 @@ async function createContactEmail(db, contactId, fields = {}, { force = false, c
  * @param {number} [opts.updatedBy=0]
  * @returns {Promise<{ email: object }>}
  */
-async function updateContactEmail(db, emailId, fields, { updatedBy = 0 } = {}) {
+async function updateContactEmail(db, emailId, fields, { updatedBy = 0, expectedUpdatedAt, expectedPrimaryId } = {}) {
   if (!fields || !Object.keys(fields).length) {
     throw new Error('updateContactEmail requires at least one field');
   }
@@ -604,10 +621,13 @@ async function updateContactEmail(db, emailId, fields, { updatedBy = 0 } = {}) {
   await db.withTransaction(async (conn) => {
 
     const [[current]] = await conn.query(
-      `SELECT * FROM contact_emails WHERE id = ?`,
+      `SELECT * FROM contact_emails WHERE id = ? FOR UPDATE`,
       [emailId]
     );
     if (!current) throw new Error(`Email ${emailId} not found`);
+    if (expectedUpdatedAt !== undefined && _timestamp(current.updated_at) !== _timestamp(expectedUpdatedAt)) {
+      throw new Error('Concurrent email update detected — refresh and retry');
+    }
 
     // start_date guard (window integrity). Effective end = the incoming
     // end_date when this same PATCH sets it, else the stored one.
@@ -635,6 +655,7 @@ async function updateContactEmail(db, emailId, fields, { updatedBy = 0 } = {}) {
     }
 
     if (becomingPrimary && !beingEnded) {
+      await _assertExpectedPrimary(conn, current.contact_id, emailId, expectedPrimaryId);
       await conn.query(
         `UPDATE contact_emails
             SET is_primary = 0, updated_by = ?

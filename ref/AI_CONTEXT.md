@@ -2163,6 +2163,38 @@ behavior mirror Tasks/Events. `yc-sync` already covers create, PATCH,
 attended/no-show, cancel, and both old/new reschedule IDs, so no bus code or
 Casey emit changed.
 
+**Reviewed contact subrecords (Ask Casey A5, 10-20).** Nine closed kinds cover
+create, narrow update, and history-preserving end for one phone, email, or address.
+Create evidence must contain exact `contact_id`; existing actions require one
+cited row containing that parent plus exact `phone_id`, `email_id`, or
+`address_id`. `assistantService` rejects extra fields, reloads the contact and
+active subrecord, normalizes through the native validators, and renders the
+complete value plus all primary/mirror, consent/delivery, and lifecycle effects.
+
+Phone/email create rejects active ownership collisions and never uses
+`?force=true`. Phone/email PATCH cannot change the value; narrow updates expose
+label, notes, primary promotion, and explicit SMS/email opt-out or MMS fields.
+Address update may also change address parts. Verified state, start-date edits,
+explicit primary demotion, reactivation, transfer, hard DELETE, scalar contact
+fields, and batch actions are excluded. End requires a non-future firm-local
+date and reason, sets lifecycle fields through PATCH, and preserves history.
+
+Primary creation/promotion shows and demotes the current primary, then the
+native service recomputes the scalar contact mirror. Update/end proposals carry
+a server-owned `updated_at` version; primary-changing writes also carry the
+reviewed current-primary ID, including explicit none. The canonical routes
+strip those values from field validation and pass optional service
+preconditions; locked stale reviews fail before UPDATE/demotion while native
+callers that omit them remain compatible.
+
+The browser owns all nine fixed `/api/contact-phones`, `/api/contact-emails`,
+and `/api/contact-addresses` POST/PATCH mappings. SweetAlert review,
+single-flight, retry, persisted result restoration, and opening the parent
+contact match prior families. Canonical `yc-sync` now emits recipient-contact
+refetch markers for every create/PATCH response and retains donor emission for
+native forced phone/email transfers. This fixes every caller; there is no Casey
+emit or executor.
+
 **Question deep links.** `ask=<encoded question>` may accompany any canonical
 workspace `open=` target. It
 captures a maximum-2,000-character draft in the shell, synchronously removes

@@ -326,6 +326,77 @@ describe('Ask Casey UI wiring', () => {
     expect(api).toHaveBeenCalledTimes(2);
   });
 
+  test('maps every contact subrecord action to one canonical route and exact allowlisted body', () => {
+    const request = new Function(`${fnSrc(html, 'contactSubrecordCreateBody')};${fnSrc(html, 'contactSubrecordActionRequest')};return contactSubrecordActionRequest;`)(); // eslint-disable-line no-new-func
+    const contact = { contact_id: 1309, label: 'Client' };
+    expect(request({ kind: 'contact.phone.create.v1', family: 'phone', contact, fields: { phone: '2485550100', label: 'Mobile', is_primary: true,
+      sms_optout: false, mms_capable: true, start_date: null, notes: '', verified: 1 } })).toEqual({ path: '/api/contact-phones', method: 'POST', body: {
+      contact_id: 1309, phone: '2485550100', label: 'Mobile', is_primary: true, sms_optout: false, mms_capable: true, start_date: null, notes: '', expected_primary_id: null } });
+    expect(request({ kind: 'contact.email.create.v1', family: 'email', contact, fields: { email: 'client@example.com', label: 'Personal', is_primary: false,
+      email_optout: true, start_date: '2026-01-01', notes: 'n' } })).toEqual({ path: '/api/contact-emails', method: 'POST', body: {
+      contact_id: 1309, email: 'client@example.com', label: 'Personal', is_primary: false, email_optout: true, start_date: '2026-01-01', notes: 'n' } });
+    expect(request({ kind: 'contact.address.create.v1', family: 'address', contact, fields: { address1: '1 Main', address2: '', city: 'Detroit', state: 'MI', zip: '48201',
+      country: 'US', label: 'Home', is_primary: true, start_date: null, notes: '' } })).toEqual({ path: '/api/contact-addresses', method: 'POST', body: {
+      contact_id: 1309, address1: '1 Main', address2: '', city: 'Detroit', state: 'MI', zip: '48201', country: 'US', label: 'Home', is_primary: true, start_date: null, notes: '', expected_primary_id: null } });
+    const target = { id: 21, expected_updated_at: '2026-10-20T10:00:00.000Z' };
+    expect(request({ kind: 'contact.phone.update.v1', family: 'phone', target, changes: { label: 'Work', sms_optout: true, ignored: 'x' } })).toEqual({
+      path: '/api/contact-phones/21', method: 'PATCH', body: { expected_updated_at: target.expected_updated_at, label: 'Work', sms_optout: true } });
+    expect(request({ kind: 'contact.email.update.v1', family: 'email', target, changes: { email_optout: true, notes: 'Stop' } })).toEqual({
+      path: '/api/contact-emails/21', method: 'PATCH', body: { expected_updated_at: target.expected_updated_at, email_optout: true, notes: 'Stop' } });
+    expect(request({ kind: 'contact.address.update.v1', family: 'address', target, demoted_primary: { id: 19 },
+      changes: { address1: '2 Main', city: 'Detroit', is_primary: true } })).toEqual({ path: '/api/contact-addresses/21', method: 'PATCH',
+      body: { expected_updated_at: target.expected_updated_at, address1: '2 Main', city: 'Detroit', is_primary: true, expected_primary_id: 19 } });
+    for (const family of ['phone', 'email', 'address']) expect(request({ kind: `contact.${family}.end.v1`, family, target,
+      changes: { end_date: '2026-10-20', end_reason: 'No longer used' } })).toEqual({ path: `/api/contact-${family}${family === 'address' ? 'es' : 's'}/21`, method: 'PATCH',
+      body: { expected_updated_at: target.expected_updated_at, end_date: '2026-10-20', end_reason: 'No longer used' } });
+  });
+
+  test('contact subrecord review is cancelable, single-flight, persisted, and opens the parent contact', async () => {
+    let resolveWrite;
+    const api = jest.fn(() => new Promise((resolve) => { resolveWrite = resolve; }));
+    const render = jest.fn(); const history = []; const saveAssistantMessage = jest.fn().mockResolvedValue(); const openEntity = jest.fn();
+    const P = { Swal: { fire: jest.fn().mockResolvedValue({ isConfirmed: false }) } };
+    const execute = new Function('P', 'api', 'render', 'history', 'saveAssistantMessage', 'openEntity',
+      `const CONTACT_SUBRECORD_ACTION_KINDS=new Set(['contact.phone.end.v1']);${fnSrc(html, 'isContactSubrecordActionDraft')};${fnSrc(html, 'contactSubrecordActionLabel')};${fnSrc(html, 'contactAddressText')};${fnSrc(html, 'contactSubrecordValue')};${fnSrc(html, 'contactSubrecordDraftText')};${fnSrc(html, 'contactSubrecordCreateBody')};${fnSrc(html, 'contactSubrecordActionRequest')};async ${fnSrc(html, 'confirmContactSubrecordDraft')};async ${fnSrc(html, 'executeContactSubrecordDraft')};return executeContactSubrecordDraft;` // eslint-disable-line no-new-func
+    )(P, api, render, history, saveAssistantMessage, openEntity);
+    const message = { action_draft: { draft_id: 'contact-1', kind: 'contact.phone.end.v1', family: 'phone', status: 'draft',
+      target: { id: 21, contact: { contact_id: 1309, label: 'Client' }, phone: '2485550100', label: 'Mobile', is_primary: true,
+        start_date: '2026-01-01', notes: '', sms_optout: false, mms_capable: true, expected_updated_at: '2026-10-20T10:00:00.000Z' },
+      changes: { end_date: '2026-10-20', end_reason: 'No longer used' } } };
+    await execute(message);
+    expect(api).not.toHaveBeenCalled();
+    expect(P.Swal.fire).toHaveBeenCalledWith(expect.objectContaining({ title: 'End contact phone', text: expect.stringContaining('not a hard delete'), showCancelButton: true }));
+    P.Swal.fire.mockResolvedValue({ isConfirmed: true });
+    const first = execute(message); await Promise.resolve(); await Promise.resolve();
+    await execute(message);
+    expect(api).toHaveBeenCalledTimes(1);
+    resolveWrite({ status: 'success', phone: { id: 21, contact_id: 1309 } }); await first;
+    expect(message.action_draft).toMatchObject({ status: 'applied', result_contact_id: 1309, executing: false });
+    expect(history[0].action_result).toEqual({ kind: 'contact.phone.end.v1', draft_id: 'contact-1', contact_id: 1309, contact_label: 'Client' });
+    expect(saveAssistantMessage).toHaveBeenCalledWith(history[0]);
+    expect(openEntity).toHaveBeenCalledWith('contact', 1309, 'Client');
+    await execute(message); expect(api).toHaveBeenCalledTimes(1);
+  });
+
+  test('failed contact writes stay retryable and saved results prevent replay', async () => {
+    const apply = new Function('CONTACT_SUBRECORD_ACTION_KINDS', `${fnSrc(html, 'applyContactSubrecordActionResults')};return applyContactSubrecordActionResults;`)(new Set(['contact.email.update.v1'])); // eslint-disable-line no-new-func
+    const messages = [{ action_draft: { draft_id: 'contact-2', kind: 'contact.email.update.v1', status: 'draft' } },
+      { action_result: { draft_id: 'contact-2', kind: 'contact.email.update.v1', contact_id: 1309, contact_label: 'Client' } }];
+    expect(apply(messages)[0].action_draft).toMatchObject({ status: 'applied', result_contact_id: 1309, result_contact_label: 'Client' });
+
+    const api = jest.fn().mockRejectedValue(new Error('Contact update failed')); const render = jest.fn();
+    const P = { Swal: { fire: jest.fn().mockResolvedValue({ isConfirmed: true }) } };
+    const execute = new Function('P', 'api', 'render', 'history', 'saveAssistantMessage', 'openEntity',
+      `const CONTACT_SUBRECORD_ACTION_KINDS=new Set(['contact.email.update.v1']);${fnSrc(html, 'isContactSubrecordActionDraft')};${fnSrc(html, 'contactSubrecordActionLabel')};${fnSrc(html, 'contactAddressText')};${fnSrc(html, 'contactSubrecordValue')};${fnSrc(html, 'contactSubrecordDraftText')};${fnSrc(html, 'contactSubrecordCreateBody')};${fnSrc(html, 'contactSubrecordActionRequest')};async ${fnSrc(html, 'confirmContactSubrecordDraft')};async ${fnSrc(html, 'executeContactSubrecordDraft')};return executeContactSubrecordDraft;` // eslint-disable-line no-new-func
+    )(P, api, render, [], jest.fn(), jest.fn());
+    const message = { action_draft: { draft_id: 'contact-fail', kind: 'contact.email.update.v1', family: 'email', status: 'draft',
+      target: { id: 22, contact: { contact_id: 1309, label: 'Client' }, email: 'client@example.com', label: 'Personal', is_primary: false,
+        start_date: '2026-01-01', notes: '', email_optout: false, expected_updated_at: '2026-10-20T10:00:00.000Z' }, changes: { label: 'Work' } } };
+    await execute(message);
+    expect(message.action_draft).toMatchObject({ status: 'draft', executing: false, action_error: 'Contact update failed' });
+    await execute(message); expect(api).toHaveBeenCalledTimes(2);
+  });
+
   test('uses exact structured follow-up queries and shell-native record links', () => {
     expect(html).toContain('data-follow="${esc(s.query)}"');
     expect(html).toContain("P.addFile(label || id, 'case', String(id))");

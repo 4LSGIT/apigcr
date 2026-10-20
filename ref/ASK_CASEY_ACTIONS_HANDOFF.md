@@ -5,15 +5,15 @@ Updated 2026-10-20. Start by reading `AGENTS.md`,
 
 ## Handoff checkpoint
 
-Hand off from the commit that ships reviewed Appointment lifecycle actions on
-`main`. Tasks, Events, and Appointments are complete; do not redo those slices.
-The A4/A4.1 run passed 261 focused assistant/chat/sync tests, 21 native
-Appointment route tests, and 273 Appointment service/calendar/UI tests. The
+Hand off from the commit that ships reviewed contact phone/email/address actions
+on `main`. Tasks, Events, Appointments, and A5 contact subrecords are complete;
+do not redo those slices. The A5 run passed 275 focused assistant/chat/sync/
+concurrency tests and 313 native contact service/UI tests. The
 repository-wide Jest run has unrelated stale shell/layout assertions; continue
 using the scoped regression set plus native suites for the family being added.
 
 `ref/ASK_CASEY_ACTIONS_PLAN.md` is the roadmap source of truth. It now lists
-the remaining action slices A5–A18, platform/release slices P0–P10, ordering,
+the remaining action slices A6–A18, platform/release slices P0–P10, ordering,
 release gates, review decisions, and work that is deliberately outside the
 ordinary Casey roadmap. Keep this handoff focused on the immediate next slice
 instead of copying and eventually drifting from that catalog.
@@ -81,6 +81,24 @@ All seven browser mappings are closed and routes own source/actor. Applied
 results persist. Existing `yc-sync` matchers already cover every route and both
 reschedule IDs, so no bus or Casey emit changed.
 
+Contact phone/email/address create, narrow update, and history-preserving end are
+implemented as nine closed kinds through `/api/contact-*`. Create cites the
+exact parent contact. Existing actions cite one row containing both parent and
+subrecord IDs, reload active state, and carry server-owned row-version and
+current-primary preconditions so the canonical service rejects stale review before writing.
+
+Phone/email values cannot be patched or force-transferred. Updates expose only
+label, notes, primary promotion, and explicit opt-out/MMS settings; addresses
+also expose address parts. End records a non-future date and required reason,
+preserving history. Hard DELETE, verified state, start-date edits, explicit
+primary demotion, reactivation, scalar fields, relations/roles, and batches are
+excluded. Review shows current/proposed values, consent settings, primary
+demotion and mirror effects, and that no message or ownership transfer occurs.
+
+Canonical sync was repaired for every caller: create/PATCH responses announce
+the recipient contact, while native force-transfer still announces its donor.
+There is no Casey emit. Success persists and opens the parent contact.
+
 ## Recipe for every new action
 
 1. Locate the exact existing user-facing endpoint and its native UI caller.
@@ -105,7 +123,7 @@ reschedule IDs, so no bus or Casey emit changed.
 ## Remaining roadmap
 
 Use the numbered catalog in the plan rather than expanding scope from this
-summary. In order, it covers contact subrecords; contact relations/roles;
+summary. In order, it covers contact relations/roles;
 narrow contact/case fields; case-contact membership; pipeline transitions;
 checklists; documents; forms; communication triage/drafts; external email/SMS;
 e-sign; reports; workflows; and sequences/triggers. Workflow creation is not
@@ -126,12 +144,11 @@ decision.
 
 ## Immediate next slice
 
-Implement A5 contact phone, email, and address records next, one subrecord
-family at a time. Trace each dedicated route/service/native UI caller and the
-contact-detail sync readers before fixing schemas. Start with create and narrow
-update; add remove/deactivate only after documenting whether it is destructive,
-how primary/preferred flags and duplicates behave, and how the root Contact
-view learns of the change. One proposal changes one subrecord.
+Implement A6 contact relations and roles next. Trace the dedicated relation and
+role routes/services, both directional native views, registries, permissions,
+uniqueness rules, lifecycle/remove behavior, audit, and sync readers before
+fixing schemas. Keep contact-to-contact relations separate from firm-defined
+contact roles when their invariants or side effects differ.
 
 ## Copy-paste prompt for the next instance
 
@@ -139,26 +156,25 @@ view learns of the change. One proposal changes one subrecord.
 Read AGENTS.md, ref/ASK_CASEY_ACTIONS_PLAN.md,
 ref/ASK_CASEY_ACTIONS_HANDOFF.md, ref/AI_CONTEXT.md, and
 manual/05-Subsystems/17-ask-yisracase.md. Continue the Ask Casey actions arc
-from clean main after the reviewed Appointments lifecycle commit. Do not redo
-or redesign the shipped Tasks, Events, or Appointments slices.
+from clean main after the reviewed contact-subrecords commit. Do not redo or
+redesign the shipped Tasks, Events, Appointments, or A5 subrecord slices.
 
-Implement the next slice only: reviewed contact phone, email, and address
-subrecord actions through the existing authenticated dedicated routes. Do not
+Implement the next slice only: reviewed contact relation and contact-role
+actions through the existing authenticated dedicated routes. Do not
 add a Casey execution endpoint. Preserve one evidence-backed, server-normalized proposal; exact
 SweetAlert review; fixed browser route/method/body mapping; authenticated actor;
 single-flight/retry/history/open-record behavior; and canonical sync only.
 
-First trace `routes/api.contactPhones.js`, `routes/api.contactEmails.js`,
-`routes/api.contactAddresses.js`, their services, every native UI caller, and
-the `yc-sync` contact matchers/readers. Document required/defaulted fields,
-normalization, duplicates, labels, primary/preferred behavior, removal versus
-deactivation, audit, reversibility, and parent-contact propagation before
-coding. Require exact parent/subrecord IDs in current evidence for existing
-actions and reload both server-side. Exclude contact relations/roles, scalar
-contact edits, batch actions, personality changes, broader reads, and all
-other action families.
+First trace the relation/role routes and services, every native UI caller,
+type registries, and `yc-sync` contact matchers/readers. Document direction,
+inverse labels, uniqueness, required/defaulted fields, status/lifecycle,
+permissions, audit, reversibility, and propagation to both contacts before
+coding. Require exact involved contact/relation/role IDs in current evidence
+and reload them server-side. Exclude firm-level type administration, scalar
+contact edits, case membership, batch actions, personality changes, broader
+reads, and all other action families.
 
 Add deterministic schema/state/UI/mapping/single-flight/retry/history/bus tests,
-run focused assistant plus native contact-subrecord suites, update the four action
+run focused assistant plus native relation/role suites, update the four action
 docs, then commit and push.
 ```

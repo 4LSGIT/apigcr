@@ -90,13 +90,13 @@ router.get('/api/contacts/:id/addresses', jwtOrApiKey, async (req, res) => {
 router.post('/api/contact-addresses', jwtOrApiKey, async (req, res) => {
   try {
     const createdBy = resolveCreatedBy(req);
-    const { contact_id, ...fields } = req.body || {};
+    const { contact_id, expected_primary_id, ...fields } = req.body || {};
 
     if (!contact_id) {
       return res.status(400).json({ status: 'error', message: 'contact_id is required' });
     }
 
-    const result = await addrSvc.createContactAddress(req.db, contact_id, fields, { createdBy });
+    const result = await addrSvc.createContactAddress(req.db, contact_id, fields, { createdBy, expectedPrimaryId: expected_primary_id });
     res.status(201).json({ status: 'success', ...result });
   } catch (err) {
     console.error('POST /api/contact-addresses error:', err);
@@ -110,7 +110,8 @@ router.post('/api/contact-addresses', jwtOrApiKey, async (req, res) => {
 router.patch('/api/contact-addresses/:id', jwtOrApiKey, async (req, res) => {
   try {
     const updatedBy = resolveCreatedBy(req);
-    const result = await addrSvc.updateContactAddress(req.db, req.params.id, req.body, { updatedBy });
+    const { expected_updated_at, expected_primary_id, ...fields } = req.body || {};
+    const result = await addrSvc.updateContactAddress(req.db, req.params.id, fields, { updatedBy, expectedUpdatedAt: expected_updated_at, expectedPrimaryId: expected_primary_id });
     res.json({ status: 'success', ...result });
   } catch (err) {
     console.error('PATCH /api/contact-addresses/:id error:', err);

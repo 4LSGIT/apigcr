@@ -1,10 +1,11 @@
 # Ask Casey typed actions plan
 
-Status: A0/A0.1, A1, A2, A3, A4, and A4.1 implemented 2026-10-20. A2 covers
+Status: A0/A0.1, A1, A2, A3, A4, A4.1, and A5 implemented 2026-10-20. A2 covers
 the complete Task lifecycle; A3 covers reviewed Event create/update/complete/
 cancel; A4/A4.1 cover reviewed Appointment create, narrow update, attended,
 no-show, cancel, reschedule-now, and reschedule-later through the existing
-authenticated routes. No general action executor is introduced.
+authenticated routes. A5 covers one reviewed phone/email/address subrecord
+create, narrow update, or history-preserving end. No general action executor is introduced.
 
 ## Governing principle: actions run through the user
 
@@ -384,14 +385,33 @@ Casey-specific emit changed. Applied results persist and reopen as **Open
 appointment**. Focused assistant/chat/sync, native route, Appointment service,
 Calendar, case/contact sync, and unified-events suites passed.
 
-#### A5: Contact phone, email, and address records
+#### A5: Contact phone, email, and address records — shipped 2026-10-20
 
-Ship one subrecord family at a time through the dedicated contact routes.
-Start with create and narrow update; add deactivate/delete only where the
-native operation is reversible or its impact is fully understood. Normalize
-labels, primary/preferred flags, and duplicate rules, and show the parent
-contact plus the complete value being changed. One proposal changes one
-subrecord. Verify that contact detail views receive the canonical sync marker.
+Nine closed kinds cover create, narrow update, and history-preserving end for exactly
+one phone, email, or address through `/api/contact-*`. Create requires current
+exact-parent evidence. Update/end require a single evidence row with the exact
+parent and subrecord IDs, then reload the active row. Phone/email ownership
+transfer, hard DELETE, verified state, reactivation, start-date edits, explicit
+primary demotion, scalar contact edits, and batch changes remain excluded.
+
+Phone/email updates expose label, notes, primary promotion, and their explicit
+opt-out/MMS fields; their values remain immutable. Address update exposes its
+parts, label, notes, and primary promotion. Create normalizes native labels,
+values, defaults, first-row auto-promotion, collision/ownership-window rules,
+and an exact non-future ownership start. End requires a non-future date and reason and keeps
+history. Review shows the complete value, before/after fields, consent values,
+current-primary demotion, mirror recomputation, and absence of messages or
+ownership transfer.
+
+P3 begins here: update/end carry server-owned `updated_at`; primary-changing
+writes also carry the reviewed current-primary ID (including explicit none).
+The canonical routes/services lock and reject stale state before writing.
+Native callers remain compatible because these preconditions are optional
+outside reviewed proposals.
+The canonical `yc-sync` matchers now announce phone/email/address create and
+PATCH recipients to all open contact readers, plus the existing donor marker
+for native forced phone/email transfers. No Casey-only emit exists. Applied
+results persist and open the parent contact.
 
 #### A6: Contact relations and roles
 
@@ -630,8 +650,8 @@ for external-side-effect incidents.
 
 ## Recommended execution order
 
-1. Close P0 and continue P2, P7, and P8 alongside the shipped A4/A4.1 contract.
-2. Implement A5–A8 with P3 in place; extract P1 only from demonstrated common
+1. Close P0 and continue P2, P7, and P8 alongside the shipped A4/A4.1/A5 contracts.
+2. Implement A6–A8 with P3 in place; extract P1 only from demonstrated common
    behavior, not as a speculative generic executor.
 3. Implement A9–A12 and complete the collection-sync portions of P6.
 4. Complete P4 and P5 before A14, A15, A17 execution, or A18 enrollment/replay;
@@ -640,7 +660,7 @@ for external-side-effect incidents.
    the ordinary roadmap until separately approved.
 
 For the upcoming review, the key decisions are whether this ordering is right,
-which low-impact scalar fields belong in A7, whether delete variants in A5/A6
+which low-impact scalar fields belong in A7, whether delete variants in A6
 should be deferred entirely, and what operational bar must be met before the
-first external-send or fan-out action. The immediate engineering slice is now
-A5 contact phone, email, and address records, one subrecord family at a time.
+first external-send or fan-out action. A5 deliberately excluded hard delete;
+the immediate engineering slice is now A6 contact relations and roles.

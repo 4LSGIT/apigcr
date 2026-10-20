@@ -531,10 +531,10 @@ describe('assistant knowledge and prompts', () => {
   });
 
   test('all assistant prompts are registered JSON prompts', () => {
-    expect(prompts.getPrompt('assistant_plan')).toMatchObject({ output_type: 'json', version: '12', model: 'claude-opus-5' });
+    expect(prompts.getPrompt('assistant_plan')).toMatchObject({ output_type: 'json', version: '13', model: 'claude-opus-5' });
     expect(prompts.getPrompt('assistant_investigate')).toMatchObject({ output_type: 'json', version: '2', model: 'claude-opus-5' });
-    expect(prompts.getPrompt('assistant_answer')).toMatchObject({ output_type: 'json', version: '14', model: 'claude-opus-5' });
-    expect(prompts.getPrompt('assistant_task_draft_repair')).toMatchObject({ output_type: 'json', version: '5', model: 'claude-opus-5' });
+    expect(prompts.getPrompt('assistant_answer')).toMatchObject({ output_type: 'json', version: '15', model: 'claude-opus-5' });
+    expect(prompts.getPrompt('assistant_task_draft_repair')).toMatchObject({ output_type: 'json', version: '6', model: 'claude-opus-5' });
     expect(prompts.getPrompt('assistant_plan').system).toMatch(/COLLATE utf8mb4_general_ci/);
     expect(prompts.getPrompt('assistant_plan').system).toMatch(/Never generate[\s\S]*x IN \(SELECT \.\.\. LIMIT n\)/);
     expect(prompts.getPrompt('assistant_plan').system).toMatch(/users\.roles[\s\S]*canonical role field/);
@@ -548,7 +548,7 @@ describe('assistant knowledge and prompts', () => {
     expect(prompts.getPrompt('assistant_answer').system).toMatch(/action_draft[\s\S]*task\.create\.v1/);
     expect(prompts.getPrompt('assistant_answer').system).toMatch(/changes no record/);
     expect(prompts.getPrompt('assistant_answer').system).toMatch(/Never say a card exists unless/);
-    expect(prompts.getPrompt('assistant_task_draft_repair').system).toMatch(/exactly one Ask Casey task, event, or appointment action proposal/);
+    expect(prompts.getPrompt('assistant_task_draft_repair').system).toMatch(/exactly one Ask Casey task, event, appointment, or contact-subrecord action proposal/);
     expect(prompts.getPrompt('assistant_plan').system).toMatch(/Reviewed task actions[\s\S]*do NOT refuse/);
     expect(prompts.getPrompt('assistant_plan').system).toMatch(/users\.user_initials[\s\S]*never guess an id/);
   });
@@ -658,6 +658,85 @@ describe('assistant appointment actions', () => {
     expect(svc.taskDraftRequested('Create an appointment for the client')).toBe(true);
     expect(svc.taskDraftRequested('Reschedule appt 55 to Tuesday')).toBe(true);
     expect(svc.taskDraftRequested('What appointments are next week?')).toBe(false);
+  });
+});
+
+describe('assistant contact subrecord actions', () => {
+  const contact = { contact_id: 1309, contact_name: 'Client Name' };
+  const phone = { id: 21, contact_id: 1309, phone: '2485550100', label: 'Mobile', is_primary: 1,
+    sms_optout: 0, mms_capable: 1, start_date: '2026-01-01', end_date: null, notes: 'Current note', updated_at: '2026-10-20T10:00:00.000Z' };
+  const email = { id: 22, contact_id: 1309, email: 'client@example.com', label: 'Personal', is_primary: 0,
+    email_optout: 0, start_date: '2026-01-01', end_date: null, notes: '', updated_at: '2026-10-20T10:00:00.000Z' };
+  const address = { id: 23, contact_id: 1309, address1: '123 Main St', address2: '', city: 'Detroit', state: 'MI', zip: '48201', country: 'US',
+    label: 'Home', is_primary: 1, start_date: '2026-01-01', end_date: null, notes: '', updated_at: '2026-10-20T10:00:00.000Z' };
+  const evidence = [{ id: 'q1', kind: 'sql.read', purpose: 'Exact contact rows', rows: [
+    { contact_id: 1309, contact_name: 'Client Name' },
+    { contact_id: 1309, phone_id: 21 }, { contact_id: 1309, email_id: 22 }, { contact_id: 1309, address_id: 23 },
+  ] }];
+  const ref = (row_number) => [{ query_id: 'q1', row_number }];
+  const dbFor = (row, table) => ({ query: jest.fn(async (sql) => {
+    if (/FROM contacts WHERE/.test(sql)) return [[contact]];
+    if (new RegExp(`FROM ${table} \\w+`).test(sql)) return [[row]];
+    throw new Error(`Unexpected SQL: ${sql}`);
+  }) });
+
+  test('normalizes closed phone, email, and address creates with native defaults and no transfer', async () => {
+    const createDb = (table) => ({ query: jest.fn(async (sql) => {
+      if (/FROM contacts WHERE/.test(sql)) return [[contact]];
+      if (/end_date IS NULL LIMIT 1/.test(sql)) return [[]];
+      if (/COUNT\(\*\) AS row_count/.test(sql)) return [[{ row_count: 0 }]];
+      if (sql.includes(`FROM ${table}`)) return [[]];
+      throw new Error(`Unexpected SQL: ${sql}`);
+    }) });
+    await expect(svc.normalizeActionDraft(createDb('contact_phones'), { kind: 'contact.phone.create.v1', contact_id: 1309,
+      phone: '(248) 555-0100', label: 'Mobile', notes: 'New', evidence: ref(1) }, evidence)).resolves.toMatchObject({
+      family: 'phone', contact: { contact_id: 1309, label: 'Client Name' }, fields: { phone: '2485550100', label: 'Mobile', is_primary: true, sms_optout: 0, mms_capable: 1, notes: 'New' },
+    });
+    await expect(svc.normalizeActionDraft(createDb('contact_emails'), { kind: 'contact.email.create.v1', contact_id: 1309,
+      email: ' Client@Example.COM ', label: 'Personal', email_optout: true, evidence: ref(1) }, evidence)).resolves.toMatchObject({
+      family: 'email', fields: { email: 'client@example.com', label: 'Personal', is_primary: true, email_optout: 1 },
+    });
+    await expect(svc.normalizeActionDraft(createDb('contact_addresses'), { kind: 'contact.address.create.v1', contact_id: 1309,
+      address1: '123 Main St', city: 'Detroit', state: 'MI', zip: '48201', label: 'Home', evidence: ref(1) }, evidence)).resolves.toMatchObject({
+      family: 'address', fields: { address1: '123 Main St', city: 'Detroit', state: 'MI', zip: '48201', country: 'US', label: 'Home', is_primary: true },
+    });
+  });
+
+  test('reloads active targets and normalizes narrow update and reversible end proposals', async () => {
+    await expect(svc.normalizeActionDraft(dbFor(phone, 'contact_phones'), { kind: 'contact.phone.update.v1', contact_id: 1309,
+      phone_id: 21, changes: { label: 'Work', sms_optout: true }, evidence: ref(2) }, evidence)).resolves.toMatchObject({
+      family: 'phone', target: { id: 21, phone: '2485550100', expected_updated_at: '2026-10-20T10:00:00.000Z' },
+      changes: { label: 'Work', sms_optout: true },
+    });
+    await expect(svc.normalizeActionDraft(dbFor(email, 'contact_emails'), { kind: 'contact.email.end.v1', contact_id: 1309,
+      email_id: 22, end_date: '2026-10-20', end_reason: 'No longer used', evidence: ref(3) }, evidence)).resolves.toMatchObject({
+      family: 'email', target: { id: 22, email: 'client@example.com' }, changes: { end_date: '2026-10-20', end_reason: 'No longer used' },
+    });
+    await expect(svc.normalizeActionDraft(dbFor(address, 'contact_addresses'), { kind: 'contact.address.update.v1', contact_id: 1309,
+      address_id: 23, changes: { address1: '125 Main St', notes: 'Corrected' }, evidence: ref(4) }, evidence)).resolves.toMatchObject({
+      family: 'address', target: { id: 23, address1: '123 Main St' }, changes: { address1: '125 Main St', notes: 'Corrected' },
+    });
+  });
+
+  test('rejects extra fields, wrong ids, inactive rows, transfer flags, explicit demotion, and hard delete kinds', async () => {
+    await expect(svc.normalizeActionDraft(dbFor(phone, 'contact_phones'), { kind: 'contact.phone.update.v1', contact_id: 1309,
+      phone_id: 21, changes: { phone: '2485559999' }, evidence: ref(2) }, evidence)).rejects.toThrow(/unsupported fields/);
+    await expect(svc.normalizeActionDraft({}, { kind: 'contact.phone.update.v1', contact_id: 1309,
+      phone_id: 99, changes: { label: 'Work' }, evidence: ref(2) }, evidence)).rejects.toThrow(/does not identify/);
+    await expect(svc.normalizeActionDraft(dbFor({ ...email, end_date: '2026-10-19' }, 'contact_emails'), { kind: 'contact.email.update.v1', contact_id: 1309,
+      email_id: 22, changes: { label: 'Work' }, evidence: ref(3) }, evidence)).rejects.toThrow(/Only an active/);
+    await expect(svc.normalizeActionDraft({}, { kind: 'contact.email.create.v1', contact_id: 1309, email: 'a@b.com', force: true,
+      evidence: ref(1) }, evidence)).rejects.toThrow(/unsupported fields/);
+    await expect(svc.normalizeActionDraft(dbFor(phone, 'contact_phones'), { kind: 'contact.phone.update.v1', contact_id: 1309,
+      phone_id: 21, changes: { is_primary: false }, evidence: ref(2) }, evidence)).rejects.toThrow(/cannot leave the contact without one/);
+    await expect(svc.normalizeActionDraft({}, { kind: 'contact.phone.delete.v1', contact_id: 1309, phone_id: 21,
+      evidence: ref(2) }, evidence)).rejects.toThrow(/Action kind is unavailable/);
+  });
+
+  test('detects an explicit contact subrecord request without confusing outbound email', () => {
+    expect(svc.taskDraftRequested('Add this phone to the contact')).toBe(true);
+    expect(svc.taskDraftRequested('Update the client email address')).toBe(true);
+    expect(svc.taskDraftRequested('Create an email')).toBe(false);
   });
 });
 

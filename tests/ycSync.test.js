@@ -1090,20 +1090,17 @@ describe('_sniff — revive matchers', () => {
     };
   }
 
-  test('POST /api/contact-phones?force=true announces the DONOR', () => {
+  test('POST /api/contact-phones?force=true announces recipient and donor', () => {
     const w = mkWindow();
     const seen = spy(w);
     w.YC._sniff('POST', '/api/contact-phones?force=true', phoneBody({
       transferred_from: { contact_id: 77, contact_name: 'Don', phone_id: 3 },
     }));
-    expect(seen).toEqual([{
-      addr: 'contact:77',
-      fields: { yc_refetch: 1 },
-      origin: 'auto:POST /api/contact-phones?force=true',
-    }]);
+    expect(seen.map((item) => item.addr)).toEqual(['contact:5', 'contact:77']);
+    expect(seen.every((item) => item.fields.yc_refetch === 1)).toBe(true);
   });
 
-  test('POST /api/contact-emails?force=true announces the DONOR', () => {
+  test('POST /api/contact-emails?force=true announces recipient and donor', () => {
     const w = mkWindow();
     const seen = spy(w);
     w.YC._sniff('POST', '/api/contact-emails?force=true', {
@@ -1111,11 +1108,7 @@ describe('_sniff — revive matchers', () => {
       auto_promoted: false,
       transferred_from: { contact_id: 88, contact_name: 'Eve', email_id: 2 },
     });
-    expect(seen).toEqual([{
-      addr: 'contact:88',
-      fields: { yc_refetch: 1 },
-      origin: 'auto:POST /api/contact-emails?force=true',
-    }]);
+    expect(seen.map((item) => item.addr)).toEqual(['contact:5', 'contact:88']);
   });
 
   test('the id key is `contact_id`, NOT `from_contact_id`', () => {
@@ -1125,7 +1118,7 @@ describe('_sniff — revive matchers', () => {
     const seen = spy(w);
     w.YC._sniff('POST', '/api/contact-phones?force=true',
                 phoneBody({ transferred_from: { from_contact_id: 77, phone_id: 3 } }));
-    expect(seen).toEqual([]);
+    expect(seen.map((item) => item.addr)).toEqual(['contact:5']);
   });
 
   test('the payload is TOP-LEVEL, not nested under `data`', () => {
@@ -1133,7 +1126,7 @@ describe('_sniff — revive matchers', () => {
     const seen = spy(w);
     w.YC._sniff('POST', '/api/contact-phones?force=true',
                 phoneBody({ data: { transferred_from: { contact_id: 77 } } }));
-    expect(seen).toEqual([]);
+    expect(seen.map((item) => item.addr)).toEqual(['contact:5']);
   });
 
   test('the ARRAY shape fails closed — that is the PATCH path\'s payload', () => {
@@ -1143,17 +1136,17 @@ describe('_sniff — revive matchers', () => {
     const seen = spy(w);
     w.YC._sniff('POST', '/api/contact-phones?force=true',
                 phoneBody({ transferred_from: [{ contact_id: 77 }] }));
-    expect(seen).toEqual([]);
+    expect(seen.map((item) => item.addr)).toEqual(['contact:5']);
   });
 
-  test('a PLAIN revive — no collision, no transfer — announces nothing', () => {
+  test('a plain revive announces each recipient', () => {
     // The common case by far: reviving a row nobody else holds. `force` is
     // never even reached, and there is no donor to tell.
     const w = mkWindow();
     const seen = spy(w);
     w.YC._sniff('POST', '/api/contact-phones', phoneBody());
     w.YC._sniff('POST', '/api/contact-emails', { email: { id: 4, contact_id: 5 }, auto_promoted: false });
-    expect(seen).toEqual([]);
+    expect(seen.map((item) => item.addr)).toEqual(['contact:5', 'contact:5']);
   });
 
   test('a malformed transferred_from is ignored, not thrown on', () => {
@@ -1162,7 +1155,7 @@ describe('_sniff — revive matchers', () => {
     for (const tf of [null, 'nope', 42, {}, { contact_id: null }, { contact_id: '' }]) {
       w.YC._sniff('POST', '/api/contact-phones?force=true', phoneBody({ transferred_from: tf }));
     }
-    expect(seen).toEqual([]);
+    expect(seen.map((item) => item.addr)).toEqual(Array(6).fill('contact:5'));
   });
 
   test('donor === recipient is excluded', () => {
@@ -1172,7 +1165,7 @@ describe('_sniff — revive matchers', () => {
     const seen = spy(w);
     w.YC._sniff('POST', '/api/contact-phones?force=true',
                 phoneBody({ transferred_from: { contact_id: 5 } }));
-    expect(seen).toEqual([]);
+    expect(seen.map((item) => item.addr)).toEqual(['contact:5']);
   });
 
   test('a missing row key does not block the donor emit', () => {
@@ -1185,27 +1178,25 @@ describe('_sniff — revive matchers', () => {
     expect(seen.map(s => s.addr)).toEqual(['contact:77']);
   });
 
-  test('the per-row PATCH and DELETE announce nothing — they cannot transfer', () => {
-    // routes/api.contactPhones.js never passes `force` to updateContactPhone,
-    // so PATCH has no transfer path. There is deliberately no matcher for it.
+  test('phone, email, and address PATCH announce their recipients while other verbs remain silent', () => {
     const w = mkWindow();
     const seen = spy(w);
     const body = phoneBody({ transferred_from: { contact_id: 77 } });
     w.YC._sniff('PATCH', '/api/contact-phones/9', body);
+    w.YC._sniff('PATCH', '/api/contact-emails/4', { email: { id: 4, contact_id: 6 } });
+    w.YC._sniff('PATCH', '/api/contact-addresses/3', { address: { id: 3, contact_id: 7 } });
     w.YC._sniff('PUT',   '/api/contact-phones',   body);
     w.YC._sniff('PATCH', '/api/contact-phones',   body);
     w.YC._sniff('GET',   '/api/contact-phones',   body);
-    expect(seen).toEqual([]);
+    expect(seen.map((item) => item.addr)).toEqual(['contact:5', 'contact:6', 'contact:7']);
   });
 
-  test('/api/contact-addresses is NOT matched — addresses cannot transfer', () => {
-    // No cross-contact uniqueness on addresses → no force opt, no 409 path, no
-    // transferred_from. A matcher there would be dead code pretending to help.
+  test('/api/contact-addresses announces its recipient and ignores a donor shape', () => {
     const w = mkWindow();
     const seen = spy(w);
     w.YC._sniff('POST', '/api/contact-addresses?force=true',
                 { address: { id: 1, contact_id: 5 }, transferred_from: { contact_id: 77 } });
-    expect(seen).toEqual([]);
+    expect(seen.map((item) => item.addr)).toEqual(['contact:5']);
   });
 
   test('the donor message reaches a contact:<donor> subscriber', () => {
@@ -1227,7 +1218,7 @@ describe('_sniff — revive matchers', () => {
                 phoneBody({ transferred_from: { contact_id: 77 } }));
     w.YC._sniff('POST', '/api/contact-emails?force=true',
                 { email: { id: 4, contact_id: 5 }, transferred_from: { contact_id: 77 } });
-    expect(seen.map(s => s.addr)).toEqual(['contact:77', 'contact:77']);
+    expect(seen.map(s => s.addr)).toEqual(['contact:5', 'contact:77', 'contact:5', 'contact:77']);
   });
 });
 
@@ -1499,7 +1490,7 @@ describe('_sniff — appt / event matchers', () => {
     w.YC._sniff('POST',  '/api/contact-phones?force=true',
                 { phone: { id: 1, contact_id: 5 }, transferred_from: { contact_id: 77 } });
     expect(cases).toEqual(['case:AAAA', 'case:AAAA', 'case:AAAA']);
-    expect(contacts).toEqual(['contact:5', 'contact:77']);
+    expect(contacts).toEqual(['contact:5', 'contact:5', 'contact:77']);
     expect(settings).toEqual(['setting:fe-case_types', 'setting:fe-x']);
   });
 });
@@ -1834,7 +1825,7 @@ describe('_sniff — every matcher in the table, no shadowing', () => {
     expect(seen).toEqual([
       'case:AAAA', 'contact:5', 'case:AAAA', 'case:AAAA', 'case:AAAA',
       'setting:fe-case_types', 'setting:fe-x',
-      'contact:77', 'contact:78',
+      'contact:5', 'contact:77', 'contact:5', 'contact:78',
       'appt:55', 'appt:55', 'appt:56', 'appt:57', 'appt:58', 'appt:59',
       'event:12', 'event:12', 'event:13',
       'contact:1002', 'case:CCCC',

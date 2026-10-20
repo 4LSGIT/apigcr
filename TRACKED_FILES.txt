@@ -1146,6 +1146,7 @@ tests/contactRoles.roleForms.test.js
 tests/contactRoles.slice456.test.js
 tests/contactRolesConfig.test.js
 tests/contactScalarValueDemote.test.js
+tests/contactSubrecordConcurrency.test.js
 tests/contactTransferShapes.test.js
 tests/contactUi.sync.test.js
 tests/control.flow.test.js
