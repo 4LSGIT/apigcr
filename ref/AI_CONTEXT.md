@@ -2054,6 +2054,30 @@ the file changed after planning. All AI passes receive the files under
 a model operation: an explicit user click reuses `/api/documents/upload-link`
 → direct browser-to-Dropbox upload → `/api/documents/upload-commit`.
 
+**Reviewed task creation.** `assistant_answer` may return one evidence-backed,
+server-normalized `task.create.v1` draft. The card itself is inert and visibly
+marked not saved. Its **Review & create task** control shows the exact assignee,
+link, and dates in a confirmation, then posts only the normalized fields to the
+existing authenticated `POST /api/tasks` route. That route stamps the signed-in
+user as assigner and preserves the canonical task audit, linking, and
+notification behavior. The model cannot choose the endpoint or add fields;
+task edits and every other assistant write remain unavailable.
+
+This is the governing Casey action pattern: the user performs the action by
+clicking a fixed control in their own authenticated browser. Prefer mapping
+normalized fields into an existing application endpoint so user permissions,
+actor identity, audit, and ordinary product semantics stay canonical. Treat a
+new Casey-specific action endpoint as an architectural exception that requires
+another design review, not the default way to add an action.
+
+Every new action review must also audit the sync/event bus. If the canonical
+write changes data visible in another frame or tab, its ordinary endpoint or
+service must provide the canonical bus/domain-event signal and response shape.
+Fix missing propagation for every caller; never add a Casey-only emit. The
+`/api/tasks` family currently has no `yc-sync` matcher, matching the native
+Tasks UI's established behavior; cross-frame task propagation belongs in a
+canonical Tasks/bus arc.
+
 **Question deep links.** `ask=<encoded question>` may accompany any canonical
 workspace `open=` target. It
 captures a maximum-2,000-character draft in the shell, synchronously removes

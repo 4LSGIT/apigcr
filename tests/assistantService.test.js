@@ -522,15 +522,15 @@ describe('assistant knowledge and prompts', () => {
     expect(rows.some((r) => /reports/i.test(`${r.title} ${r.manual_path}`))).toBe(true);
   });
 
-  test('manual search knows that Ask Casey task drafts are unsaved proposals', () => {
+  test('manual search knows that Ask Casey task drafts require explicit review', () => {
     const rows = knowledge.search('Ask Casey task draft', 5);
-    expect(rows.some((row) => /Ask Casey/i.test(row.title) && /draft only capability/i.test(row.excerpt))).toBe(true);
+    expect(rows.some((row) => /Ask Casey/i.test(row.title) && /explicit review/i.test(row.excerpt))).toBe(true);
   });
 
   test('all assistant prompts are registered JSON prompts', () => {
-    expect(prompts.getPrompt('assistant_plan')).toMatchObject({ output_type: 'json', version: '7', model: 'claude-opus-5' });
+    expect(prompts.getPrompt('assistant_plan')).toMatchObject({ output_type: 'json', version: '8', model: 'claude-opus-5' });
     expect(prompts.getPrompt('assistant_investigate')).toMatchObject({ output_type: 'json', version: '2', model: 'claude-opus-5' });
-    expect(prompts.getPrompt('assistant_answer')).toMatchObject({ output_type: 'json', version: '9', model: 'claude-opus-5' });
+    expect(prompts.getPrompt('assistant_answer')).toMatchObject({ output_type: 'json', version: '10', model: 'claude-opus-5' });
     expect(prompts.getPrompt('assistant_task_draft_repair')).toMatchObject({ output_type: 'json', version: '1', model: 'claude-opus-5' });
     expect(prompts.getPrompt('assistant_plan').system).toMatch(/COLLATE utf8mb4_general_ci/);
     expect(prompts.getPrompt('assistant_plan').system).toMatch(/Never generate[\s\S]*x IN \(SELECT \.\.\. LIMIT n\)/);
@@ -583,6 +583,7 @@ describe('assistant task drafts', () => {
       notify_assigner_on_completion: false,
       evidence: [{ query_id: 'q1', row_number: 1 }],
     }, evidence)).resolves.toEqual({
+      draft_id: expect.any(String),
       kind: 'task.create.v1', status: 'draft',
       title: 'Call about missing statements', description: 'Confirm which months are missing.',
       assignee: { user_id: 7, label: 'Fred Ross' },

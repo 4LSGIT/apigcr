@@ -6,6 +6,7 @@
 
 'use strict';
 
+const crypto = require('crypto');
 const aiService = require('./aiService');
 const reportService = require('./reportService');
 const commsSearch = require('./commsArchiveSearch');
@@ -327,6 +328,7 @@ async function normalizeActionDraft(db, value, evidence) {
   const dueDate = taskDraftDate(value.due_date, 'due date');
   if (startDate && dueDate && dueDate < startDate) throw httpError(422, 'Task draft due date cannot precede its start date');
   return {
+    draft_id: crypto.randomUUID(),
     kind: 'task.create.v1',
     status: 'draft',
     title: taskDraftText(value.title, 'title', 100, { required: true }),

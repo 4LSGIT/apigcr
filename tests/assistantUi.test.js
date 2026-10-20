@@ -8,6 +8,18 @@ const html = fs.readFileSync(path.join(ROOT, 'public/assistant.html'), 'utf8');
 const route = fs.readFileSync(path.join(ROOT, 'routes/api.assistant.js'), 'utf8');
 const shell = fs.readFileSync(path.join(ROOT, 'public/index.html'), 'utf8');
 
+function fnSrc(src, name) {
+  const match = new RegExp(`function\\s+${name}\\s*\\(`).exec(src);
+  if (!match) throw new Error(`function ${name} not found`);
+  const start = match.index;
+  let depth = 0;
+  for (let i = src.indexOf('{', start); i < src.length; i++) {
+    if (src[i] === '{') depth++;
+    else if (src[i] === '}' && --depth === 0) return src.slice(start, i + 1);
+  }
+  throw new Error(`function ${name} unbalanced`);
+}
+
 describe('Ask Casey UI wiring', () => {
   test('its inline script parses as JavaScript', () => {
     const scripts = [...html.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/gi)]
@@ -23,21 +35,117 @@ describe('Ask Casey UI wiring', () => {
     expect(html).toContain('${esc(JSON.stringify(s.row, null, 2))}');
   });
 
-  test('renders task proposals as text-only unsaved drafts with local controls', () => {
-    expect(html).toContain("status.textContent = 'Draft — not saved'");
+  test('renders task proposals with an explicit reviewed create action through the existing tasks API', () => {
+    expect(html).toContain(": draft.creating ? 'Creating…' : 'Draft — not saved'");
+    expect(html).toContain("'Review & create task'");
     expect(html).toContain("copy.textContent = 'Copy details'");
     expect(html).toContain("discard.textContent = 'Discard'");
     expect(html).toContain('detail.textContent = String(value)');
-    expect(html).toContain("nextTitle.textContent = 'To create this task in YisraCase:'");
-    expect(html).toContain("'Open My Tasks, then select Create Task.'");
-    expect(html).toContain("'Select Assign only after confirming everything is correct.'");
+    expect(html).toContain("'Before creating this task:'");
+    expect(html).toContain("'Confirm only if every value is correct. Cancel returns to this unchanged draft.'");
     expect(html).toContain('may send assignment, start-date, and due-date notifications');
     expect(html).toContain('navigator.clipboard.writeText(taskDraftText(draft))');
     expect(html).toContain('delete message.action_draft; render()');
     expect(html).toContain('...(r.action_draft ? { action_draft: r.action_draft } : {})');
     expect(html).toContain('...(message.action_draft ? { action_draft: message.action_draft } : {})');
-    expect(html).not.toContain('data-create-task');
-    expect(html).not.toContain("api('/api/tasks'");
+    expect(html).toContain("api('/api/tasks', taskCreateBody(draft))");
+    expect(html).toContain('window.confirm(taskDraftConfirmation(draft))');
+    expect(route).not.toContain('/api/assistant/actions');
+  });
+
+  test('maps only the validated draft fields into the normal task insert, including links', () => {
+    const bodyFn = new Function(`${fnSrc(html, 'taskCreateBody')}; return taskCreateBody;`)(); // eslint-disable-line no-new-func
+    expect(bodyFn({
+      kind: 'task.create.v1', title: 'Review Ask Casey', description: 'Try it.',
+      assignee: { user_id: 1, label: 'Stuart' }, start_date: '2026-10-20', due_date: '2026-10-27',
+      notify_assigner_on_completion: true, link: { type: 'contact', id: '1001', label: 'Fred' },
+      evidence: [{ query_id: 'q1', row_number: 1 }], ignored: 'never send me',
+    })).toEqual({
+      to: 1, title: 'Review Ask Casey', desc: 'Try it.', start: '2026-10-20', due: '2026-10-27',
+      notify: true, link_type: 'contact', link_id: '1001',
+    });
+  });
+
+  test('cancellation writes nothing; confirmation creates once and turns the control into Open task', async () => {
+    const api = jest.fn().mockResolvedValue({ status: 'success', task_id: 77 });
+    const render = jest.fn();
+    const reloadTasks = jest.fn();
+    const P = { showTask: jest.fn(), tasksBadgeRefresh: jest.fn(), document: { getElementById: jest.fn(() => ({ contentWindow: { reloadTasks } })) } };
+    const window = { confirm: jest.fn().mockReturnValue(false) };
+    const history = [];
+    const saveAssistantMessage = jest.fn().mockResolvedValue();
+    const make = new Function('window', 'P', 'api', 'render', 'history', 'saveAssistantMessage',
+      `${fnSrc(html, 'taskCreateBody')};${fnSrc(html, 'taskDraftConfirmation')};async ${fnSrc(html, 'createTaskFromDraft')};return createTaskFromDraft;` // eslint-disable-line no-new-func
+    )(window, P, api, render, history, saveAssistantMessage);
+    const message = { action_draft: {
+      draft_id: 'draft-123', kind: 'task.create.v1', status: 'draft', title: 'Review Ask Casey', description: 'Try it.',
+      assignee: { user_id: 1, label: 'Stuart' }, link: { type: 'contact', id: '1001', label: 'Fred' },
+      start_date: '2026-10-20', due_date: '2026-10-27', notify_assigner_on_completion: false,
+    } };
+
+    await make(message);
+    expect(api).not.toHaveBeenCalled();
+    expect(render).not.toHaveBeenCalled();
+
+    window.confirm.mockReturnValue(true);
+    await make(message);
+    expect(api).toHaveBeenCalledTimes(1);
+    expect(api).toHaveBeenCalledWith('/api/tasks', {
+      to: 1, title: 'Review Ask Casey', desc: 'Try it.', start: '2026-10-20', due: '2026-10-27',
+      notify: false, link_type: 'contact', link_id: '1001',
+    });
+    expect(message.action_draft).toMatchObject({ status: 'created', created_task_id: 77, creating: false });
+    expect(render).toHaveBeenCalledTimes(2);
+    expect(history).toEqual([expect.objectContaining({
+      text: 'Created task #77: Review Ask Casey',
+      action_result: { kind: 'task.create.v1', draft_id: 'draft-123', task_id: 77 },
+    })]);
+    expect(saveAssistantMessage).toHaveBeenCalledWith(history[0]);
+    expect(P.tasksBadgeRefresh).toHaveBeenCalledTimes(1);
+    expect(reloadTasks).toHaveBeenCalledTimes(1);
+
+    await make(message);
+    expect(api).toHaveBeenCalledTimes(1);
+    expect(P.showTask).toHaveBeenCalledWith(77);
+  });
+
+  test('a saved action result restores its exact draft as created without another task write', () => {
+    const apply = new Function(`${fnSrc(html, 'applyTaskActionResults')}; return applyTaskActionResults;`)(); // eslint-disable-line no-new-func
+    const messages = [
+      { action_draft: { draft_id: 'one', kind: 'task.create.v1', status: 'draft' } },
+      { action_draft: { draft_id: 'two', kind: 'task.create.v1', status: 'draft' } },
+      { action_result: { kind: 'task.create.v1', draft_id: 'one', task_id: 91 } },
+    ];
+    expect(apply(messages)).toBe(messages);
+    expect(messages[0].action_draft).toMatchObject({ status: 'created', created_task_id: 91 });
+    expect(messages[1].action_draft).toMatchObject({ status: 'draft' });
+  });
+
+  test('a task create is single-flight and a failed insert leaves a retryable inline error', async () => {
+    let rejectWrite;
+    const api = jest.fn(() => new Promise((_resolve, reject) => { rejectWrite = reject; }));
+    const render = jest.fn();
+    const history = [];
+    const saveAssistantMessage = jest.fn();
+    const window = { confirm: jest.fn().mockReturnValue(true) };
+    const make = new Function('window', 'P', 'api', 'render', 'history', 'saveAssistantMessage',
+      `${fnSrc(html, 'taskCreateBody')};${fnSrc(html, 'taskDraftConfirmation')};async ${fnSrc(html, 'createTaskFromDraft')};return createTaskFromDraft;` // eslint-disable-line no-new-func
+    )(window, { showTask: jest.fn() }, api, render, history, saveAssistantMessage);
+    const message = { action_draft: {
+      draft_id: 'draft-fail', kind: 'task.create.v1', status: 'draft', title: 'Try Casey', description: 'Review it.',
+      assignee: { user_id: 1, label: 'Stuart' }, link: null, start_date: null, due_date: null,
+      notify_assigner_on_completion: false,
+    } };
+
+    const first = make(message);
+    expect(message.action_draft.creating).toBe(true);
+    await make(message);
+    expect(api).toHaveBeenCalledTimes(1);
+    rejectWrite(new Error('Task insert failed'));
+    await first;
+    expect(message.action_draft).toMatchObject({ status: 'draft', creating: false, create_error: 'Task insert failed' });
+    expect(history).toEqual([]);
+    expect(saveAssistantMessage).not.toHaveBeenCalled();
   });
 
   test('uses exact structured follow-up queries and shell-native record links', () => {

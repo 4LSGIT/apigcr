@@ -1,13 +1,58 @@
 # Ask Casey typed actions plan
 
-Status: A0 and the A0.1 planner/continuity follow-up implemented 2026-10-20;
-no action writes enabled. A1 remains design only.
+Status: A0 and the A0.1 planner/continuity follow-up implemented 2026-10-20.
+A1 uses an explicitly confirmed card action through the existing authenticated
+task-creation route; no general action executor is introduced.
+
+## Governing principle: actions run through the user
+
+The key design advantage of Casey actions is that **the user performs the
+action**. Casey may assemble and validate a fixed proposal, but the write begins
+only when the staff member clicks its action button in their own authenticated
+browser. The browser calls the same established application endpoint used by
+the rest of YisraCase. Consequently:
+
+- the current user's auth and permissions—not model identity—authorize it;
+- the existing route identifies the actor and preserves ordinary audit,
+  validation, linking, notification, and error behavior;
+- the model cannot select a URL, HTTP method, or extra request field;
+- the card must show the exact values and material side effects before the
+  user's confirming click; and
+- canceling or merely displaying a proposal writes nothing.
+
+Before adding any Casey-specific action endpoint, stop and think twice. First
+ask whether a fixed button can safely map the normalized proposal into an
+existing user-facing endpoint. A new endpoint is justified only when the
+existing product has no suitable operation or cannot enforce the exact reviewed
+contract; convenience for Casey alone is not enough.
+
+### Sync/event-bus check for every action
+
+Running through the user's browser also means the ordinary YisraCase sync path
+must stay intact. For every proposed action, review the canonical endpoint and
+its response against `public/js/yc-sync.js` before shipping:
+
+- Does the write change an entity or derived collection that another open
+  frame or browser tab can display?
+- Does the existing endpoint already produce the response shape its bus matcher
+  needs, and do the relevant readers subscribe?
+- If the write is server-side or otherwise bypasses the browser sniff, does its
+  canonical service emit the corresponding domain/bus event?
+- Is the event a real value, a scoped refetch marker, or a set-change address?
+
+If propagation is required but missing, update the canonical endpoint/service
+and bus contract for every caller. Do not add a Casey-only emit: that would make
+the same underlying action synchronize differently depending on which UI
+button invoked it. The current `/api/tasks` family is intentionally absent from
+the sync-bus matcher inventory; A1 therefore preserves the native Tasks UI's
+existing behavior. Adding cross-frame task propagation is a canonical Tasks/bus
+arc, not a special Casey action endpoint.
 
 This plan follows the shipped Ask Casey workspace-context and bounded
-autonomous-read slices. It covers the next small slice only: a typed,
-server-validated **task proposal** rendered in the conversation. The proposal
-is a draft. It cannot save a task, change a record, send a message, schedule a
-reminder, or invoke an arbitrary application route.
+autonomous-read slices. It covers one typed, server-validated **task proposal**
+rendered in the conversation and its reviewed A1 creation control. Merely
+returning the draft cannot save a task; only the user's explicit confirmation
+invokes the fixed, existing task route.
 
 ## Read-loop release gate
 
@@ -173,42 +218,28 @@ Run the focused assistant suites and the full scoped regression suite used by
 the preceding Ask Casey slices. The live dependency test above is a release
 gate, not a substitute for deterministic unit tests.
 
-## Slice A1, deliberately separate: reviewed task creation
+## Slice A1: reviewed task creation
 
-A1 may add a Create button only after A0 has shipped and been observed. It must
-not treat the existing signed read ticket as write approval. Read tickets are
-replayable within their lifetime; a write needs a stateful, one-time approval
-record bound to:
+A1 adds **Review & create task** to a server-normalized draft. Selecting it
+first presents a confirmation containing the exact assignee, link, and dates.
+Only an affirmative confirmation posts the normalized fields to the existing
+authenticated `POST /api/tasks` route. That established route stamps the
+signed-in user as assigner and uses the canonical task insert, audit, linking,
+and notification behavior. The model cannot select an endpoint or add request
+fields, and no general assistant action endpoint or approval credential exists.
 
-- authenticated staff user;
-- exact normalized action JSON and a digest of it;
-- originating chat/message and workspace snapshot;
-- creation and short expiry times;
-- `pending`, `executing`, `succeeded`, `failed`, or `expired` state; and
-- the resulting task ID or a stable failure record.
-
-The review card must show the exact new task values (`before` is no task;
-`after` is the complete normalized task). Any edit invalidates the prior
-approval and requires server revalidation plus a fresh approval record.
-Execution atomically claims a pending record so retries cannot create a second
-task.
-
-Before A1, change the canonical task service to support an explicit,
-server-enforced notification policy. `send_assignment_email: false` is not
-enough: a start or due date currently schedules reminder email. The first
-reviewed write should use `notification_policy: none`; enabling assignment or
-reminder delivery is a later, separately visible choice.
-
-The eventual executor calls `taskService.createTask` directly after rechecking
-the assignee and linked entity. It does not call the broad public task route,
-accept arbitrary request-body fields, expose the returned action token, or let
-the model select an endpoint.
+The control disables while its request is in flight. Success changes the card
+to **Created** and provides an ordinary task-open action; failure leaves the
+draft visible with an inline error. The confirmation plainly warns that task
+creation is immediate and can send assignment, start-date, and due-date
+notifications.
 
 ## Explicitly deferred
 
-- actually creating, updating, completing, transferring, or deleting tasks;
+- updating, completing, transferring, or deleting tasks;
 - notes, contact/case field changes, forms, reports, and workflow drafts;
-- sending email or SMS, including task assignment and reminder email;
+- sending arbitrary email or SMS (normal task notifications remain part of the
+  existing task-creation behavior disclosed by the confirmation);
 - multiple-action plans or conditional execution;
 - personality changes;
 - broader or longer autonomous read budgets; and

@@ -146,7 +146,7 @@
       <textarea id="question" maxlength="2000" rows="1" placeholder="Ask Casey anything…"></textarea>
       <button id="sendBtn" type="button" title="Send"><i class="fa-solid fa-arrow-up"></i></button>
     </div>
-    <div class="notice">Read-only searches run automatically. Answers can be wrong—open the cited records when it matters. Future actions will require explicit review.</div>
+    <div class="notice">Read-only searches run automatically. Answers can be wrong—open the cited records when it matters. Task creation requires explicit review and confirmation.</div>
   </div>
 </div>
 <div class="picker-backdrop" id="pickerBackdrop" hidden>
@@ -253,12 +253,88 @@ function taskDraftText(draft) {
   return lines.join('\n');
 }
 
+function taskCreateBody(draft) {
+  return {
+    to: draft.assignee.user_id,
+    title: draft.title,
+    desc: draft.description || '',
+    start: draft.start_date || null,
+    due: draft.due_date || null,
+    notify: draft.notify_assigner_on_completion === true,
+    link_type: draft.link ? draft.link.type : null,
+    link_id: draft.link ? draft.link.id : null,
+  };
+}
+
+function taskDraftConfirmation(draft) {
+  const linked = draft.link ? `${draft.link.label} (${draft.link.type} ${draft.link.id})` : 'No linked record';
+  return `Create this task now?\n\n${draft.title}\nAssigned to: ${draft.assignee.label}\nLinked record: ${linked}\n` +
+    `Start: ${draft.start_date || '—'}\nDue: ${draft.due_date || '—'}\n\n` +
+    'This writes the task to YisraCase using your account and may send assignment, start-date, and due-date notifications.';
+}
+
+async function createTaskFromDraft(message) {
+  const draft = message && message.action_draft;
+  if (!draft || draft.kind !== 'task.create.v1' || typeof draft.draft_id !== 'string' || !draft.draft_id || draft.creating) return;
+  if (draft.status === 'created' && draft.created_task_id) {
+    P.showTask(draft.created_task_id);
+    return;
+  }
+  if (!window.confirm(taskDraftConfirmation(draft))) return;
+  draft.creating = true;
+  delete draft.create_error;
+  render();
+  try {
+    const made = await api('/api/tasks', taskCreateBody(draft));
+    const taskId = Number(made && made.task_id);
+    if (!Number.isSafeInteger(taskId) || taskId < 1) throw new Error('The task was created but its id was not returned');
+    draft.status = 'created';
+    draft.created_task_id = taskId;
+    try { P.tasksBadgeRefresh?.(); } catch (_) { /* badge refresh is best-effort */ }
+    try { P.document.getElementById('tasksFrame')?.contentWindow?.reloadTasks?.(); } catch (_) { /* cold or nested task view */ }
+    const resultMessage = {
+      role: 'assistant',
+      text: `Created task #${taskId}: ${draft.title}`,
+      entities: [{ kind: 'task', id: String(taskId), label: draft.title }],
+      action_result: { kind: 'task.create.v1', draft_id: draft.draft_id, task_id: taskId },
+    };
+    history.push(resultMessage);
+    await saveAssistantMessage(resultMessage);
+  } catch (e) {
+    draft.create_error = e.message || 'The task could not be created.';
+  } finally {
+    draft.creating = false;
+    render();
+  }
+}
+
+function applyTaskActionResults(messages) {
+  const created = new Map();
+  for (const message of Array.isArray(messages) ? messages : []) {
+    const result = message && message.action_result;
+    if (result && result.kind === 'task.create.v1' && typeof result.draft_id === 'string'
+        && Number.isSafeInteger(Number(result.task_id)) && Number(result.task_id) > 0) {
+      created.set(result.draft_id, Number(result.task_id));
+    }
+  }
+  for (const message of Array.isArray(messages) ? messages : []) {
+    const draft = message && message.action_draft;
+    const taskId = draft && created.get(draft.draft_id);
+    if (taskId) {
+      draft.status = 'created';
+      draft.created_task_id = taskId;
+    }
+  }
+  return messages;
+}
+
 function hydrateActionDrafts() {
   chat.querySelectorAll('[data-action-draft]').forEach((host) => {
     const index = Number(host.dataset.actionDraft);
     const message = history[index];
     const draft = message && message.action_draft;
     if (!draft || draft.kind !== 'task.create.v1') return;
+    const canCreate = typeof draft.draft_id === 'string' && !!draft.draft_id;
 
     const head = document.createElement('div');
     head.className = 'action-draft-head';
@@ -266,7 +342,9 @@ function hydrateActionDrafts() {
     title.textContent = 'Task draft';
     const status = document.createElement('span');
     status.className = 'action-draft-status';
-    status.textContent = 'Draft — not saved';
+    status.textContent = draft.status === 'created' && draft.created_task_id
+      ? `Created — task #${draft.created_task_id}`
+      : draft.creating ? 'Creating…' : 'Draft — not saved';
     head.append(title, status);
 
     const fields = document.createElement('dl');
@@ -282,21 +360,34 @@ function hydrateActionDrafts() {
     const next = document.createElement('div');
     next.className = 'action-draft-next';
     const nextTitle = document.createElement('b');
-    nextTitle.textContent = 'To create this task in YisraCase:';
+    nextTitle.textContent = draft.status === 'created' ? 'This task is now in YisraCase.'
+      : canCreate ? 'Before creating this task:' : 'Older saved draft';
     const steps = document.createElement('ol');
-    [
-      'Select Copy details below.',
-      'Open My Tasks, then select Create Task.',
-      'Choose the assignee and enter the reviewed title, description, dates, link, and completion-notice setting.',
-      'Select Assign only after confirming everything is correct.',
+    if (draft.status !== 'created' && canCreate) [
+      'Review the title, description, assignee, dates, linked record, and completion-notice setting above.',
+      'Select Review & create task.',
+      'Confirm only if every value is correct. Cancel returns to this unchanged draft.',
     ].forEach((text) => { const item = document.createElement('li'); item.textContent = text; steps.append(item); });
     const warning = document.createElement('div');
     warning.className = 'action-draft-next-warning';
-    warning.textContent = 'Assign creates the record and may send assignment, start-date, and due-date notifications.';
+    warning.textContent = draft.status === 'created'
+      ? `Created as task #${draft.created_task_id} using your signed-in account.`
+      : 'Creating writes the record immediately and may send assignment, start-date, and due-date notifications.';
     next.append(nextTitle, steps, warning);
 
     const actions = document.createElement('div');
     actions.className = 'action-draft-actions';
+    let create = null;
+    if (canCreate) {
+      create = document.createElement('button');
+      create.type = 'button';
+      create.textContent = draft.status === 'created' && draft.created_task_id
+        ? `Open task #${draft.created_task_id}` : 'Review & create task';
+      create.disabled = !!draft.creating;
+      create.addEventListener('click', () => createTaskFromDraft(message));
+    } else {
+      warning.textContent = 'This older saved draft cannot be created directly. Ask Casey to draft the task again for reviewed creation.';
+    }
     const copy = document.createElement('button');
     copy.type = 'button';
     copy.textContent = 'Copy details';
@@ -310,8 +401,17 @@ function hydrateActionDrafts() {
     discard.type = 'button';
     discard.className = 'ghost';
     discard.textContent = 'Discard';
+    discard.disabled = !!draft.creating;
     discard.addEventListener('click', () => { delete message.action_draft; render(); });
-    actions.append(copy, discard);
+    if (create) actions.append(create);
+    actions.append(copy);
+    if (draft.status !== 'created') actions.append(discard);
+    if (draft.create_error) {
+      const error = document.createElement('div');
+      error.className = 'action-draft-next-warning';
+      error.textContent = `Could not create task: ${draft.create_error}`;
+      next.append(error);
+    }
     host.append(head, fields, next, actions);
   });
 }
@@ -593,6 +693,7 @@ async function saveAssistantMessage(message) {
   const payload = {
     entities: message.entities || [], sources: message.sources || [], suggestions: message.suggestions || [], destinations: message.destinations || [], meta: message.meta || '',
     ...(message.action_draft ? { action_draft: message.action_draft } : {}),
+    ...(message.action_result ? { action_result: message.action_result } : {}),
   };
   try {
     await api(`/api/assistant/chats/${currentChatId}/messages`, { role: 'assistant', text: message.text, payload });
@@ -629,7 +730,7 @@ async function openSavedChat(id) {
   try {
     const r = await api(`/api/assistant/chats/${id}`, null, 'GET');
     const messages = Array.isArray(r.chat && r.chat.messages) ? r.chat.messages : [];
-    history = messages.map((m) => ({ role: m.role === 'assistant' ? 'assistant' : 'user', text: String(m.text || ''), ...(m.payload && typeof m.payload === 'object' ? m.payload : {}) }));
+    history = applyTaskActionResults(messages.map((m) => ({ role: m.role === 'assistant' ? 'assistant' : 'user', text: String(m.text || ''), ...(m.payload && typeof m.payload === 'object' ? m.payload : {}) })));
     currentChatId = Number(r.chat.id);
     modelMode.value = r.chat.model_mode === 'faster_speed' ? 'faster_speed' : 'better_quality';
     historyPanel.hidden = true;

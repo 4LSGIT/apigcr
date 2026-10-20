@@ -1,7 +1,8 @@
 # Ask Casey
 
-Ask Casey is the user-facing name for the firm's YisrAI read-only assistant with
-one draft-only capability. It can answer
+Ask Casey is the user-facing name for the firm's YisrAI assistant. Its searches
+are read-only; its one reviewed action is task creation performed by the
+signed-in user after explicit review. It can answer
 questions about firm records, how YisraCase itself works, general knowledge,
 and current weather. Open it from the persistent **Ask Casey** button at the
 bottom of the left sidebar. **More → Ask Casey** opens the same assistant in a
@@ -64,28 +65,42 @@ scheduling and integrations.
 
 ## Task drafts
 
-Ask Casey can prepare one evidence-backed task proposal without creating a
-task. Ask naturally—for example, “Make a task for SS to review Ask Casey next
+Ask Casey can prepare one evidence-backed task proposal for explicit review.
+Ask naturally—for example, “Make a task for SS to review Ask Casey next
 week.” Casey should look up the active numeric staff ID behind initials or a
 name, verify any requested case/contact/appointment/event link, and return a
 **Task draft — not saved** card. If a missing fact is supplied in a short
 follow-up, the recent conversation keeps the explicit task-draft request in
 scope.
 
-The card is not an approval and has no Save or Create action. It contains only
-**Copy details** and **Discard**. To create the task:
+The card is not an approval and does not create anything merely by appearing.
+To create the task:
 
-1. Select **Copy details** on the draft.
-2. Open **My Tasks**, then select **Create Task**.
-3. Choose the assignee and enter the reviewed title, description, optional
-   start/due dates, optional link, and completion-notification setting.
-4. Select **Assign** only after confirming the values.
+1. Review the title, description, assignee, optional start/due dates, optional
+   linked record, and completion-notification setting.
+2. Select **Review & create task**.
+3. Read the confirmation warning and continue only if every value is correct.
 
-The human **Assign** step is the write. It creates the record and may send the
-assignee an assignment message. A start date or due date may also schedule
-notifications. Discarding Casey's card changes no YisraCase record. Casey
-cannot draft a bill-linked task because the legacy `bill` task-link enum has no
-verifiable bill record source.
+The confirmed button calls the ordinary authenticated task-creation route with
+the reviewed, server-normalized fields. The signed-in staff user is the
+assigner. Creation may send the assignee an assignment message, and a start or
+due date may schedule notifications. **Copy details** remains available as a
+convenience; **Discard** changes no YisraCase record. Casey cannot draft a
+bill-linked task because the legacy `bill` task-link enum has no verifiable bill
+record source.
+
+This user-through-browser pattern is the core action boundary: Casey proposes
+the fixed fields, but the staff member's click sends the request from that
+person's authenticated browser. The existing application endpoint—not the
+model—enforces permissions, identifies the actor, writes the audit trail, and
+runs normal product behavior. A new Casey-specific action endpoint should be a
+last resort, considered only when no existing user-facing endpoint can safely
+perform the exact reviewed action.
+
+Each future action must also be checked against YisraCase's sync/event bus. If
+the canonical write affects data visible in another open frame or browser tab,
+the canonical operation—not Casey-specific code—must publish the normal update
+for every caller.
 
 ## Models and files
 
@@ -192,8 +207,10 @@ put in a URL.
 The plan format names every operation by type. Enabled executable operations
 remain read-only: `sql.read`, `manual.search`, `comms.search`, and the narrowly
 scoped `weather.lookup` external read. The answer may additionally contain one
-server-validated `task.create.v1` proposal. It is display data, not an executor,
-and creates no record.
+server-validated `task.create.v1` proposal. The proposal itself creates no
+record. A signed-in user can write that exact task only through the card's
+explicit review and confirmation, which invokes the ordinary authenticated
+task-creation route.
 
 Future action types can use a visible plan, signed approval and execution
 record, but they must be introduced separately. Read-only auto-run does not
