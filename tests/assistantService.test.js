@@ -528,10 +528,10 @@ describe('assistant knowledge and prompts', () => {
   });
 
   test('all assistant prompts are registered JSON prompts', () => {
-    expect(prompts.getPrompt('assistant_plan')).toMatchObject({ output_type: 'json', version: '8', model: 'claude-opus-5' });
+    expect(prompts.getPrompt('assistant_plan')).toMatchObject({ output_type: 'json', version: '9', model: 'claude-opus-5' });
     expect(prompts.getPrompt('assistant_investigate')).toMatchObject({ output_type: 'json', version: '2', model: 'claude-opus-5' });
-    expect(prompts.getPrompt('assistant_answer')).toMatchObject({ output_type: 'json', version: '10', model: 'claude-opus-5' });
-    expect(prompts.getPrompt('assistant_task_draft_repair')).toMatchObject({ output_type: 'json', version: '1', model: 'claude-opus-5' });
+    expect(prompts.getPrompt('assistant_answer')).toMatchObject({ output_type: 'json', version: '11', model: 'claude-opus-5' });
+    expect(prompts.getPrompt('assistant_task_draft_repair')).toMatchObject({ output_type: 'json', version: '2', model: 'claude-opus-5' });
     expect(prompts.getPrompt('assistant_plan').system).toMatch(/COLLATE utf8mb4_general_ci/);
     expect(prompts.getPrompt('assistant_plan').system).toMatch(/Never generate[\s\S]*x IN \(SELECT \.\.\. LIMIT n\)/);
     expect(prompts.getPrompt('assistant_plan').system).toMatch(/users\.roles[\s\S]*canonical role field/);
@@ -543,10 +543,10 @@ describe('assistant knowledge and prompts', () => {
     expect(prompts.getPrompt('assistant_investigate').system).toMatch(/Never emit an action draft/);
     expect(prompts.getPrompt('assistant_answer').system).toMatch(/Never imply that the search was exhaustive/);
     expect(prompts.getPrompt('assistant_answer').system).toMatch(/action_draft[\s\S]*task\.create\.v1/);
-    expect(prompts.getPrompt('assistant_answer').system).toMatch(/creates no record/);
-    expect(prompts.getPrompt('assistant_answer').system).toMatch(/Never say a draft or card exists unless/);
-    expect(prompts.getPrompt('assistant_task_draft_repair').system).toMatch(/exactly one read-only Ask Casey task proposal/);
-    expect(prompts.getPrompt('assistant_plan').system).toMatch(/task\.create\.v1[\s\S]*do NOT refuse/);
+    expect(prompts.getPrompt('assistant_answer').system).toMatch(/changes no record/);
+    expect(prompts.getPrompt('assistant_answer').system).toMatch(/Never say a card exists unless/);
+    expect(prompts.getPrompt('assistant_task_draft_repair').system).toMatch(/exactly one Ask Casey task-action proposal/);
+    expect(prompts.getPrompt('assistant_plan').system).toMatch(/Reviewed task actions[\s\S]*do NOT refuse/);
     expect(prompts.getPrompt('assistant_plan').system).toMatch(/users\.user_initials[\s\S]*never guess an id/);
   });
 });
@@ -560,6 +560,8 @@ describe('assistant task drafts', () => {
   test('requires an explicit task-drafting request', () => {
     expect(svc.taskDraftRequested('Create a task to call the client')).toBe(true);
     expect(svc.taskDraftRequested('Please draft a to-do for tomorrow')).toBe(true);
+    expect(svc.taskDraftRequested('Cancel task 44')).toBe(true);
+    expect(svc.taskDraftRequested('Reassign that task to SS')).toBe(true);
     expect(svc.taskDraftRequested('find him and look up his id', [
       { role: 'user', text: 'can you make a task for SS?' },
       { role: 'assistant', text: 'I need his active staff id first.' },
@@ -592,6 +594,57 @@ describe('assistant task drafts', () => {
       evidence: [{ query_id: 'q1', row_number: 1, label: 'Contact needing follow-up' }],
     });
     expect(db.query.mock.calls[1][0]).toMatch(/FROM contacts WHERE contact_id = \?/);
+  });
+
+  test('normalizes the full existing-task lifecycle and resolves the target server-side', async () => {
+    const taskEvidence = [{
+      id: 'q1', kind: 'sql.read', purpose: 'Exact task', row_count: 1, truncated: false,
+      rows: [{ task_id: 44, task_title: 'Call client', task_status: 'Pending' }],
+    }];
+    const get = jest.spyOn(taskService, 'getTask').mockResolvedValue({
+      id: 44, title: 'Call client', status: 'Pending', start: null, due: '2026-10-25',
+      to: { id: 1, name: 'Stuart' }, link: null,
+    });
+    try {
+      await expect(svc.normalizeActionDraft({}, {
+        kind: 'task.update.v1', task_id: 44,
+        changes: { title: 'Call client Tuesday', due_date: '2026-10-27', notify_assigner_on_completion: true },
+        evidence: [{ query_id: 'q1', row_number: 1 }],
+      }, taskEvidence)).resolves.toMatchObject({
+        kind: 'task.update.v1', status: 'draft', task: { task_id: 44, title: 'Call client', status: 'Pending' },
+        changes: { title: 'Call client Tuesday', due_date: '2026-10-27', notify_assigner_on_completion: true },
+      });
+      await expect(svc.normalizeActionDraft({}, {
+        kind: 'task.complete.v1', task_id: 44, note: 'Called', evidence: [{ query_id: 'q1', row_number: 1 }],
+      }, taskEvidence)).resolves.toMatchObject({ kind: 'task.complete.v1', note: 'Called', task: { task_id: 44 } });
+      await expect(svc.normalizeActionDraft({}, {
+        kind: 'task.cancel.v1', task_id: 44, note: '', evidence: [{ query_id: 'q1', row_number: 1 }],
+      }, taskEvidence)).resolves.toMatchObject({ kind: 'task.cancel.v1', note: '', task: { task_id: 44 } });
+
+      get.mockResolvedValueOnce({ id: 44, title: 'Call client', status: 'Completed', to: { id: 1, name: 'Stuart' } });
+      await expect(svc.normalizeActionDraft({}, {
+        kind: 'task.reopen.v1', task_id: 44, evidence: [{ query_id: 'q1', row_number: 1 }],
+      }, taskEvidence)).resolves.toMatchObject({ kind: 'task.reopen.v1', task: { task_id: 44, status: 'Completed' } });
+
+      const db = { query: jest.fn().mockResolvedValue([[{ user: 7, user_name: 'Fred Ross' }]]) };
+      await expect(svc.normalizeActionDraft(db, {
+        kind: 'task.transfer.v1', task_id: 44, assignee_user_id: 7,
+        evidence: [{ query_id: 'q1', row_number: 1 }],
+      }, taskEvidence)).resolves.toMatchObject({
+        kind: 'task.transfer.v1', task: { task_id: 44 }, assignee: { user_id: 7, label: 'Fred Ross' },
+      });
+    } finally { get.mockRestore(); }
+  });
+
+  test('rejects a task lifecycle action without exact target evidence or with arbitrary fields', async () => {
+    const taskEvidence = [{ id: 'q1', kind: 'sql.read', purpose: 'Other task', rows: [{ task_id: 45 }] }];
+    await expect(svc.normalizeActionDraft({}, {
+      kind: 'task.cancel.v1', task_id: 44, note: '', evidence: [{ query_id: 'q1', row_number: 1 }],
+    }, taskEvidence)).rejects.toThrow(/does not identify the target task/);
+    await expect(svc.normalizeActionDraft({}, {
+      kind: 'task.update.v1', task_id: 45, changes: { title: 'x', endpoint: '/api/tasks/45' },
+      evidence: [{ query_id: 'q1', row_number: 1 }],
+    }, taskEvidence)).rejects.toThrow(/unsupported fields/);
   });
 
   test('refuses unknown fields, invalid dates, unverifiable bills, and foreign evidence', async () => {
@@ -725,8 +778,8 @@ describe('assistant task drafts', () => {
       } });
     try {
       const out = await svc.execute({}, { signedTicket: signed, userId: 7, auth: { type: 'jwt', userId: 7 } });
-      expect(out.answer).toMatch(/could not produce a valid task draft card/i);
-      expect(out.answer).toMatch(/open My Tasks, choose Add Task/i);
+      expect(out.answer).toMatch(/could not produce a valid reviewed task-action card/i);
+      expect(out.answer).toMatch(/perform the change directly in My Tasks/i);
       expect(out.answer).not.toMatch(/card below/i);
       expect(out).not.toHaveProperty('action_draft');
       expect(out.investigation.task_draft_status).toBe('unavailable');

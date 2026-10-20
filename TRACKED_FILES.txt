@@ -407,6 +407,7 @@ ref/2026-09-04_dbkq_definition.v1.json
 ref/2026-09-06_dbkq_definition.v1.2.json
 ref/ACCESS_CONTROL_DESIGN.md
 ref/AI_CONTEXT.md
+ref/ASK_CASEY_ACTIONS_HANDOFF.md
 ref/ASK_CASEY_ACTIONS_PLAN.md
 ref/AUDIT_TENANCY.md
 ref/CHAT_DESIGN.md

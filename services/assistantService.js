@@ -1,8 +1,9 @@
 // services/assistantService.js
 //
-// Read-only conversational assistant: question -> signed initial plan -> a
-// bounded server-owned investigation loop -> evidence-grounded answer. The
-// browser never supplies accumulated evidence or follow-up plans.
+// Conversational assistant: question -> signed read plan -> bounded
+// server-owned investigation -> evidence-grounded answer and at most one typed
+// task-action proposal. The browser never supplies accumulated evidence or
+// follow-up plans; proposals change nothing until the signed-in user confirms.
 
 'use strict';
 
@@ -47,9 +48,21 @@ const WORKSPACE_TABS = new Set([
 const ASSISTANT_DESTINATIONS = Object.freeze({
   'automations.court_review': 'Open Court Review',
 });
-const TASK_DRAFT_KEYS = new Set([
+const TASK_CREATE_KEYS = new Set([
   'kind', 'title', 'description', 'assignee_user_id', 'link', 'start_date',
   'due_date', 'notify_assigner_on_completion', 'evidence',
+]);
+const TASK_TARGET_KEYS = new Set(['kind', 'task_id', 'evidence']);
+const TASK_NOTE_KEYS = new Set(['kind', 'task_id', 'note', 'evidence']);
+const TASK_TRANSFER_KEYS = new Set(['kind', 'task_id', 'assignee_user_id', 'evidence']);
+const TASK_UPDATE_KEYS = new Set(['kind', 'task_id', 'changes', 'evidence']);
+const TASK_UPDATE_CHANGE_KEYS = new Set([
+  'title', 'description', 'start_date', 'due_date',
+  'notify_assigner_on_completion', 'link',
+]);
+const TASK_ACTION_KINDS = new Set([
+  'task.create.v1', 'task.update.v1', 'task.complete.v1', 'task.cancel.v1',
+  'task.reopen.v1', 'task.transfer.v1',
 ]);
 const TASK_DRAFT_LINKS = Object.freeze({
   contact: {
@@ -290,6 +303,105 @@ function taskDraftEvidence(value, evidence) {
   });
 }
 
+function taskIdFromDraft(value) {
+  const id = Number(value);
+  if (!Number.isSafeInteger(id) || id < 1) throw httpError(422, 'Task action task id is invalid');
+  return id;
+}
+
+function evidenceSupportsTask(evidenceRefs, evidence, taskId) {
+  return evidenceRefs.some((ref) => {
+    const query = evidence.find((item) => item && item.id === ref.query_id);
+    const row = query && Array.isArray(query.rows) ? query.rows[ref.row_number - 1] : null;
+    return row && Number(row.task_id) === taskId;
+  });
+}
+
+function taskActionTarget(task) {
+  return {
+    task_id: Number(task.id),
+    title: taskDraftText(task.title, 'task title', 100) || `Task ${task.id}`,
+    status: String(task.status || ''),
+    assignee: task.to && task.to.id != null
+      ? { user_id: Number(task.to.id), label: taskDraftText(task.to.name, 'assignee label', 100) || `User ${task.to.id}` }
+      : null,
+  };
+}
+
+function taskStoredDate(value) {
+  if (!value) return null;
+  if (value instanceof Date && !Number.isNaN(value.getTime())) return value.toISOString().slice(0, 10);
+  const match = String(value).match(/^\d{4}-\d{2}-\d{2}/);
+  return match ? match[0] : null;
+}
+
+async function normalizeExistingTaskAction(db, value, evidence) {
+  const allowed = value.kind === 'task.update.v1' ? TASK_UPDATE_KEYS
+    : value.kind === 'task.transfer.v1' ? TASK_TRANSFER_KEYS
+    : value.kind === 'task.complete.v1' || value.kind === 'task.cancel.v1' ? TASK_NOTE_KEYS
+    : value.kind === 'task.reopen.v1' ? TASK_TARGET_KEYS : null;
+  if (!allowed || !onlyKeys(value, allowed)) throw httpError(422, 'Task action contains unsupported fields');
+  if (value.kind === 'task.update.v1' && !onlyKeys(value.changes, TASK_UPDATE_CHANGE_KEYS)) {
+    throw httpError(422, 'Task update contains unsupported fields');
+  }
+  const taskId = taskIdFromDraft(value.task_id);
+  const refs = taskDraftEvidence(value.evidence, evidence);
+  if (!evidenceSupportsTask(refs, evidence, taskId)) {
+    throw httpError(422, 'Task action evidence does not identify the target task');
+  }
+  const task = await taskService.getTask(db, taskId);
+  if (!task) throw httpError(422, 'Task action target is unavailable');
+  const base = {
+    draft_id: crypto.randomUUID(), kind: value.kind, status: 'draft',
+    task: taskActionTarget(task), evidence: refs,
+  };
+
+  if (value.kind === 'task.update.v1') {
+    if (!value.changes || !Object.keys(value.changes).length) throw httpError(422, 'Task update needs at least one change');
+    if (['Completed', 'Deleted'].includes(task.status)) throw httpError(422, `A ${task.status.toLowerCase()} task cannot be edited`);
+    const changes = {};
+    if ('title' in value.changes) changes.title = taskDraftText(value.changes.title, 'title', 100, { required: true });
+    if ('description' in value.changes) changes.description = taskDraftText(value.changes.description, 'description', 1000);
+    if ('start_date' in value.changes) changes.start_date = taskDraftDate(value.changes.start_date, 'start date');
+    if ('due_date' in value.changes) changes.due_date = taskDraftDate(value.changes.due_date, 'due date');
+    if ('notify_assigner_on_completion' in value.changes) {
+      if (typeof value.changes.notify_assigner_on_completion !== 'boolean') {
+        throw httpError(422, 'Task update completion notification must be true or false');
+      }
+      changes.notify_assigner_on_completion = value.changes.notify_assigner_on_completion;
+    }
+    if ('link' in value.changes) changes.link = await taskDraftLink(db, value.changes.link);
+    const start = 'start_date' in changes ? changes.start_date : taskStoredDate(task.start);
+    const due = 'due_date' in changes ? changes.due_date : taskStoredDate(task.due);
+    if (start && due && due < start) throw httpError(422, 'Task update due date cannot precede its start date');
+    return { ...base, changes };
+  }
+
+  if (value.kind === 'task.transfer.v1') {
+    if (['Completed', 'Deleted'].includes(task.status)) throw httpError(422, `A ${task.status.toLowerCase()} task cannot be transferred`);
+    const assigneeId = Number(value.assignee_user_id);
+    if (!Number.isInteger(assigneeId) || assigneeId < 1) throw httpError(422, 'Task transfer assignee is invalid');
+    const assignee = await taskService.findAssignableStaff(db, assigneeId);
+    if (!assignee) throw httpError(422, 'Task transfer assignee is unavailable');
+    if (Number(task.to && task.to.id) === assigneeId) throw httpError(422, 'Task is already assigned to that user');
+    return { ...base, assignee: { user_id: Number(assignee.user), label: taskDraftText(assignee.user_name, 'assignee label', 100) || `User ${assigneeId}` } };
+  }
+
+  if (value.kind === 'task.complete.v1' || value.kind === 'task.cancel.v1') {
+    if (value.kind === 'task.complete.v1' && task.status === 'Completed') throw httpError(422, 'Task is already completed');
+    if (value.kind === 'task.complete.v1' && task.status === 'Deleted') throw httpError(422, 'A deleted task cannot be completed');
+    if (value.kind === 'task.cancel.v1' && task.status === 'Deleted') throw httpError(422, 'Task is already canceled');
+    return { ...base, note: taskDraftText(value.note, 'note', 500) };
+  }
+
+  if (value.kind === 'task.reopen.v1') {
+    if (!['Completed', 'Deleted'].includes(task.status)) throw httpError(422, 'Only completed or canceled tasks can be reopened');
+    return base;
+  }
+
+  throw httpError(422, 'Task action kind is unavailable');
+}
+
 async function taskDraftLink(db, value) {
   if (value == null) return null;
   if (!onlyKeys(value, new Set(['type', 'id']))) throw httpError(422, 'Task draft link is malformed');
@@ -315,8 +427,9 @@ async function taskDraftLink(db, value) {
 
 async function normalizeActionDraft(db, value, evidence) {
   if (value == null) return null;
-  if (!onlyKeys(value, TASK_DRAFT_KEYS)) throw httpError(422, 'Task draft contains unsupported fields');
-  if (value.kind !== 'task.create.v1') throw httpError(422, 'Task draft kind is unavailable');
+  if (!value || !TASK_ACTION_KINDS.has(value.kind)) throw httpError(422, 'Task action kind is unavailable');
+  if (value.kind !== 'task.create.v1') return normalizeExistingTaskAction(db, value, evidence);
+  if (!onlyKeys(value, TASK_CREATE_KEYS)) throw httpError(422, 'Task draft contains unsupported fields');
   const assigneeId = Number(value.assignee_user_id);
   if (!Number.isInteger(assigneeId) || assigneeId < 0) throw httpError(422, 'Task draft assignee is invalid');
   const assignee = await taskService.findAssignableStaff(db, assigneeId);
@@ -343,10 +456,9 @@ async function normalizeActionDraft(db, value, evidence) {
 }
 
 function unavailableTaskDraftAnswer() {
-  return 'I completed the read-only lookup, but I could not produce a valid task draft card. Nothing was saved. ' +
-    'Send “Draft that task again” to retry. When the draft card appears, review every field, click “Copy task details,” ' +
-    'open My Tasks, choose Add Task, paste the title and description, select the shown assignee and dates/link, and save it. ' +
-    'If the card still does not appear, create the task directly in My Tasks from the cited records below.';
+  return 'I completed the lookup, but I could not produce a valid reviewed task-action card. Nothing was changed. ' +
+    'Ask me to prepare that task action again. If the card still does not appear, open the cited task and perform the ' +
+    'change directly in My Tasks.';
 }
 
 async function repairActionDraft(db, approved, evidence, rejectedValue, rejection, userId) {
@@ -376,7 +488,8 @@ function taskDraftRequested(question, history = []) {
     .slice(-4)
     .map((message) => message.text);
   const text = [...priorUserText, String(question || '')].join('\n');
-  return /\b(?:task|to-do)\b/i.test(text) && /\b(?:draft|propose|prepare|create|make|add)\b/i.test(text);
+  return /\b(?:task|to-do)\b/i.test(text) &&
+    /\b(?:draft|propose|prepare|create|make|add|edit|update|change|complete|finish|done|cancel|delete|remove|reopen|restore|transfer|reassign|assign)\b/i.test(text);
 }
 
 function contextualAnswer(question, history) {

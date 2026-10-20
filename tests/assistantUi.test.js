@@ -35,22 +35,38 @@ describe('Ask Casey UI wiring', () => {
     expect(html).toContain('${esc(JSON.stringify(s.row, null, 2))}');
   });
 
-  test('renders task proposals with an explicit reviewed create action through the existing tasks API', () => {
-    expect(html).toContain(": draft.creating ? 'Creating…' : 'Draft — not saved'");
-    expect(html).toContain("'Review & create task'");
+  test('renders reviewed task lifecycle actions through the existing tasks API', () => {
+    expect(html).toContain(": draft.executing ? 'Applying…' : 'Proposal — not applied'");
+    expect(html).toContain("'task.update.v1'");
+    expect(html).toContain("'task.complete.v1'");
+    expect(html).toContain("'task.cancel.v1'");
+    expect(html).toContain("'task.reopen.v1'");
+    expect(html).toContain("'task.transfer.v1'");
     expect(html).toContain("copy.textContent = 'Copy details'");
     expect(html).toContain("discard.textContent = 'Discard'");
     expect(html).toContain('detail.textContent = String(value)');
-    expect(html).toContain("'Before creating this task:'");
+    expect(html).toContain("'Before applying this action:'");
     expect(html).toContain("'Confirm only if every value is correct. Cancel returns to this unchanged draft.'");
-    expect(html).toContain('may send assignment, start-date, and due-date notifications');
+    expect(html).toContain('Normal task notifications and reminders may run');
     expect(html).toContain('navigator.clipboard.writeText(taskDraftText(draft))');
     expect(html).toContain('delete message.action_draft; render()');
     expect(html).toContain('...(r.action_draft ? { action_draft: r.action_draft } : {})');
     expect(html).toContain('...(message.action_draft ? { action_draft: message.action_draft } : {})');
-    expect(html).toContain("api('/api/tasks', taskCreateBody(draft))");
+    expect(html).toContain("return { path: '/api/tasks', method: 'POST', body: taskCreateBody(draft) }");
     expect(html).toContain('window.confirm(taskDraftConfirmation(draft))');
     expect(route).not.toContain('/api/assistant/actions');
+  });
+
+  test('maps each task action to one fixed canonical route and closed request body', () => {
+    const request = new Function(`${fnSrc(html, 'taskCreateBody')};${fnSrc(html, 'taskUpdateBody')};${fnSrc(html, 'taskActionRequest')};return taskActionRequest;`)(); // eslint-disable-line no-new-func
+    const task = { task_id: 44, title: 'Old', status: 'Pending' };
+    expect(request({ kind: 'task.update.v1', task, changes: { title: 'New', due_date: null, link: null, ignored: 'x' } })).toEqual({
+      path: '/api/tasks/44', method: 'PATCH', body: { task_title: 'New', task_due: null, task_link: '', task_link_type: null, task_link_id: null },
+    });
+    expect(request({ kind: 'task.complete.v1', task, note: 'Finished' })).toEqual({ path: '/api/tasks/44/complete', method: 'PATCH', body: { note: 'Finished' } });
+    expect(request({ kind: 'task.cancel.v1', task, note: '' })).toEqual({ path: '/api/tasks/44/delete', method: 'PATCH', body: { note: '' } });
+    expect(request({ kind: 'task.reopen.v1', task })).toEqual({ path: '/api/tasks/44/reopen', method: 'PATCH', body: {} });
+    expect(request({ kind: 'task.transfer.v1', task, assignee: { user_id: 7, label: 'Fred' } })).toEqual({ path: '/api/tasks/44/transfer', method: 'PATCH', body: { to: 7 } });
   });
 
   test('maps only the validated draft fields into the normal task insert, including links', () => {
@@ -75,7 +91,7 @@ describe('Ask Casey UI wiring', () => {
     const history = [];
     const saveAssistantMessage = jest.fn().mockResolvedValue();
     const make = new Function('window', 'P', 'api', 'render', 'history', 'saveAssistantMessage',
-      `${fnSrc(html, 'taskCreateBody')};${fnSrc(html, 'taskDraftConfirmation')};async ${fnSrc(html, 'createTaskFromDraft')};return createTaskFromDraft;` // eslint-disable-line no-new-func
+      `const TASK_ACTION_KINDS=new Set(['task.create.v1']);${fnSrc(html, 'isTaskActionDraft')};${fnSrc(html, 'taskCreateBody')};${fnSrc(html, 'taskUpdateBody')};${fnSrc(html, 'taskActionLabel')};${fnSrc(html, 'taskActionRequest')};${fnSrc(html, 'taskDraftText')};${fnSrc(html, 'taskDraftConfirmation')};async ${fnSrc(html, 'executeTaskDraft')};return executeTaskDraft;` // eslint-disable-line no-new-func
     )(window, P, api, render, history, saveAssistantMessage);
     const message = { action_draft: {
       draft_id: 'draft-123', kind: 'task.create.v1', status: 'draft', title: 'Review Ask Casey', description: 'Try it.',
@@ -93,11 +109,11 @@ describe('Ask Casey UI wiring', () => {
     expect(api).toHaveBeenCalledWith('/api/tasks', {
       to: 1, title: 'Review Ask Casey', desc: 'Try it.', start: '2026-10-20', due: '2026-10-27',
       notify: false, link_type: 'contact', link_id: '1001',
-    });
-    expect(message.action_draft).toMatchObject({ status: 'created', created_task_id: 77, creating: false });
+    }, 'POST');
+    expect(message.action_draft).toMatchObject({ status: 'applied', result_task_id: 77, executing: false });
     expect(render).toHaveBeenCalledTimes(2);
     expect(history).toEqual([expect.objectContaining({
-      text: 'Created task #77: Review Ask Casey',
+      text: 'Create task applied to task #77.',
       action_result: { kind: 'task.create.v1', draft_id: 'draft-123', task_id: 77 },
     })]);
     expect(saveAssistantMessage).toHaveBeenCalledWith(history[0]);
@@ -109,15 +125,15 @@ describe('Ask Casey UI wiring', () => {
     expect(P.showTask).toHaveBeenCalledWith(77);
   });
 
-  test('a saved action result restores its exact draft as created without another task write', () => {
-    const apply = new Function(`${fnSrc(html, 'applyTaskActionResults')}; return applyTaskActionResults;`)(); // eslint-disable-line no-new-func
+  test('a saved action result restores its exact proposal as applied without another write', () => {
+    const apply = new Function(`const TASK_ACTION_KINDS=new Set(['task.create.v1','task.cancel.v1']);${fnSrc(html, 'applyTaskActionResults')}; return applyTaskActionResults;`)(); // eslint-disable-line no-new-func
     const messages = [
       { action_draft: { draft_id: 'one', kind: 'task.create.v1', status: 'draft' } },
       { action_draft: { draft_id: 'two', kind: 'task.create.v1', status: 'draft' } },
       { action_result: { kind: 'task.create.v1', draft_id: 'one', task_id: 91 } },
     ];
     expect(apply(messages)).toBe(messages);
-    expect(messages[0].action_draft).toMatchObject({ status: 'created', created_task_id: 91 });
+    expect(messages[0].action_draft).toMatchObject({ status: 'applied', result_task_id: 91 });
     expect(messages[1].action_draft).toMatchObject({ status: 'draft' });
   });
 
@@ -129,7 +145,7 @@ describe('Ask Casey UI wiring', () => {
     const saveAssistantMessage = jest.fn();
     const window = { confirm: jest.fn().mockReturnValue(true) };
     const make = new Function('window', 'P', 'api', 'render', 'history', 'saveAssistantMessage',
-      `${fnSrc(html, 'taskCreateBody')};${fnSrc(html, 'taskDraftConfirmation')};async ${fnSrc(html, 'createTaskFromDraft')};return createTaskFromDraft;` // eslint-disable-line no-new-func
+      `const TASK_ACTION_KINDS=new Set(['task.create.v1']);${fnSrc(html, 'isTaskActionDraft')};${fnSrc(html, 'taskCreateBody')};${fnSrc(html, 'taskUpdateBody')};${fnSrc(html, 'taskActionLabel')};${fnSrc(html, 'taskActionRequest')};${fnSrc(html, 'taskDraftText')};${fnSrc(html, 'taskDraftConfirmation')};async ${fnSrc(html, 'executeTaskDraft')};return executeTaskDraft;` // eslint-disable-line no-new-func
     )(window, { showTask: jest.fn() }, api, render, history, saveAssistantMessage);
     const message = { action_draft: {
       draft_id: 'draft-fail', kind: 'task.create.v1', status: 'draft', title: 'Try Casey', description: 'Review it.',
@@ -138,12 +154,12 @@ describe('Ask Casey UI wiring', () => {
     } };
 
     const first = make(message);
-    expect(message.action_draft.creating).toBe(true);
+    expect(message.action_draft.executing).toBe(true);
     await make(message);
     expect(api).toHaveBeenCalledTimes(1);
     rejectWrite(new Error('Task insert failed'));
     await first;
-    expect(message.action_draft).toMatchObject({ status: 'draft', creating: false, create_error: 'Task insert failed' });
+    expect(message.action_draft).toMatchObject({ status: 'draft', executing: false, action_error: 'Task insert failed' });
     expect(history).toEqual([]);
     expect(saveAssistantMessage).not.toHaveBeenCalled();
   });

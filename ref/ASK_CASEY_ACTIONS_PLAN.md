@@ -1,8 +1,8 @@
 # Ask Casey typed actions plan
 
-Status: A0 and the A0.1 planner/continuity follow-up implemented 2026-10-20.
-A1 uses an explicitly confirmed card action through the existing authenticated
-task-creation route; no general action executor is introduced.
+Status: A0/A0.1, A1, and A2 implemented 2026-10-20. A2 covers the complete
+task lifecycle through explicitly confirmed card actions and existing
+authenticated task routes; no general action executor is introduced.
 
 ## Governing principle: actions run through the user
 
@@ -178,9 +178,9 @@ into HTML. The card is part of the single existing assistant instance, so it
 must survive sidebar expand/collapse and must not change the canonical
 workspace URL.
 
-Do not use the existing generic `POST /api/tasks` route from the browser. Its
-defaults can send an assignment email, and suppressing that email still does
-not suppress start/due reminder scheduling.
+At A0 this card deliberately had no write control. A1 later added reviewed
+creation through the existing `POST /api/tasks` route and explicitly discloses
+its assignment/start/due notification behavior.
 
 ## Required tests for A0
 
@@ -234,9 +234,31 @@ draft visible with an inline error. The confirmation plainly warns that task
 creation is immediate and can send assignment, start-date, and due-date
 notifications.
 
+## Slice A2: reviewed task lifecycle
+
+A2 adds five closed proposal kinds alongside creation:
+
+- `task.update.v1` maps only requested editable fields to
+  `PATCH /api/tasks/:id`;
+- `task.complete.v1` maps an optional note to
+  `PATCH /api/tasks/:id/complete`;
+- `task.cancel.v1` maps an optional note to the reversible soft-delete route
+  `PATCH /api/tasks/:id/delete`;
+- `task.reopen.v1` maps to `PATCH /api/tasks/:id/reopen`; and
+- `task.transfer.v1` maps the validated active assignee to
+  `PATCH /api/tasks/:id/transfer` so canonical transfer audit and notification
+  behavior are preserved.
+
+Every existing-task proposal must cite current evidence containing the exact
+`task_id`. The server reloads that task, validates its current status, resolves
+new assignees and links, and rejects extra fields. The browser owns a fixed
+kind-to-route/method/body mapping; the model owns none of those. Confirmation,
+single-flight behavior, inline retry, task-list/badge refresh, and persisted
+applied results follow A1. Reopening a saved chat therefore offers **Open task**
+rather than casually replaying the write.
+
 ## Explicitly deferred
 
-- updating, completing, transferring, or deleting tasks;
 - notes, contact/case field changes, forms, reports, and workflow drafts;
 - sending arbitrary email or SMS (normal task notifications remain part of the
   existing task-creation behavior disclosed by the confirmation);

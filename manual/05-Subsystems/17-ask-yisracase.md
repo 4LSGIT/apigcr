@@ -1,7 +1,7 @@
 # Ask Casey
 
 Ask Casey is the user-facing name for the firm's YisrAI assistant. Its searches
-are read-only; its one reviewed action is task creation performed by the
+are read-only; its reviewed task actions are performed by the
 signed-in user after explicit review. It can answer
 questions about firm records, how YisraCase itself works, general knowledge,
 and current weather. Open it from the persistent **Ask Casey** button at the
@@ -63,9 +63,9 @@ configured timezone (normally America/Detroit). The stored `appt_date` is that
 firm-local wall time; `appt_date_utc` is its separate real-UTC twin used for
 scheduling and integrations.
 
-## Task drafts
+## Reviewed task actions
 
-Ask Casey can prepare one evidence-backed task proposal for explicit review.
+Ask Casey can prepare one evidence-backed task action for explicit review.
 Ask naturally—for example, “Make a task for SS to review Ask Casey next
 week.” Casey should look up the active numeric staff ID behind initials or a
 name, verify any requested case/contact/appointment/event link, and return a
@@ -73,19 +73,23 @@ name, verify any requested case/contact/appointment/event link, and return a
 follow-up, the recent conversation keeps the explicit task-draft request in
 scope.
 
-The card is not an approval and does not create anything merely by appearing.
-To create the task:
+The card is not an approval and changes nothing merely by appearing. Casey can
+propose creating, editing, completing, canceling, reopening, or transferring a
+task. Cancel is YisraCase's reversible soft-delete; reopening restores a
+completed or canceled task. To perform the action:
 
-1. Review the title, description, assignee, optional start/due dates, optional
-   linked record, and completion-notification setting.
-2. Select **Review & create task**.
+1. Review the exact task, action, values, assignee, dates, link, and optional
+   note shown on the card.
+2. Select the card's **Review & …** button.
 3. Read the confirmation warning and continue only if every value is correct.
 
-The confirmed button calls the ordinary authenticated task-creation route with
-the reviewed, server-normalized fields. The signed-in staff user is the
-assigner. Creation may send the assignee an assignment message, and a start or
-due date may schedule notifications. **Copy details** remains available as a
-convenience; **Discard** changes no YisraCase record. Casey cannot draft a
+The confirmed button calls the ordinary authenticated task route with only the
+reviewed, server-normalized fields. Creation uses `POST /api/tasks`; ordinary
+edits use `PATCH /api/tasks/:id`; complete, cancel, reopen, and transfer use
+their established transition routes. The signed-in staff user remains the
+actor. Creation and transfer may notify an assignee, completion may notify the
+assigner, and date changes may schedule or cancel reminders. **Copy details**
+remains available; **Discard** changes no YisraCase record. Casey cannot draft a
 bill-linked task because the legacy `bill` task-link enum has no verifiable bill
 record source.
 
@@ -207,10 +211,11 @@ put in a URL.
 The plan format names every operation by type. Enabled executable operations
 remain read-only: `sql.read`, `manual.search`, `comms.search`, and the narrowly
 scoped `weather.lookup` external read. The answer may additionally contain one
-server-validated `task.create.v1` proposal. The proposal itself creates no
-record. A signed-in user can write that exact task only through the card's
-explicit review and confirmation, which invokes the ordinary authenticated
-task-creation route.
+server-validated `task.create.v1`, `task.update.v1`, `task.complete.v1`,
+`task.cancel.v1`, `task.reopen.v1`, or `task.transfer.v1` proposal. The proposal
+itself changes no record. A signed-in user can perform that exact action only
+through the card's explicit review and confirmation, which invokes the ordinary
+authenticated task route.
 
 Future action types can use a visible plan, signed approval and execution
 record, but they must be introduced separately. Read-only auto-run does not

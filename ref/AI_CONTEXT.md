@@ -2054,14 +2054,15 @@ the file changed after planning. All AI passes receive the files under
 a model operation: an explicit user click reuses `/api/documents/upload-link`
 → direct browser-to-Dropbox upload → `/api/documents/upload-commit`.
 
-**Reviewed task creation.** `assistant_answer` may return one evidence-backed,
-server-normalized `task.create.v1` draft. The card itself is inert and visibly
-marked not saved. Its **Review & create task** control shows the exact assignee,
-link, and dates in a confirmation, then posts only the normalized fields to the
-existing authenticated `POST /api/tasks` route. That route stamps the signed-in
-user as assigner and preserves the canonical task audit, linking, and
-notification behavior. The model cannot choose the endpoint or add fields;
-task edits and every other assistant write remain unavailable.
+**Reviewed task lifecycle.** `assistant_answer` may return one evidence-backed,
+server-normalized create, update, complete, cancel, reopen, or transfer proposal.
+The card is inert and visibly marked not applied. Its fixed **Review & …**
+control shows the exact target and values, then maps only allowlisted fields to
+the corresponding existing authenticated `/api/tasks` route. The route sees
+the signed-in user as actor and preserves canonical audit, linking, reminders,
+and notifications. The model cannot choose the endpoint, method, or extra
+fields. Applied results persist in chat history so reopening the chat does not
+offer the same write again.
 
 This is the governing Casey action pattern: the user performs the action by
 clicking a fixed control in their own authenticated browser. Prefer mapping
