@@ -5,12 +5,12 @@ Updated 2026-10-20. Start by reading `AGENTS.md`,
 
 ## Handoff checkpoint
 
-Hand off after commit `09bc6e9` (`Refine Casey task review defaults`) on
-`main`, pushed to `origin/main`. The worktree was clean and the scoped
-assistant/task/sync regression run passed 10 suites and 304 tests. Do not redo
-the Tasks slice. The repository-wide Jest run has unrelated stale shell/layout
-assertions; use the scoped regression set plus the native service/UI/bus suites
-for the action family being added.
+Hand off from the commit that ships reviewed Events lifecycle actions on
+`main`. Tasks and Events are complete; do not redo either slice. The scoped A3
+run passed the focused assistant/sync suites and the native Event service/UI
+suites. The repository-wide Jest run has unrelated stale shell/layout
+assertions; continue using the scoped regression set plus the native suites for
+the action family being added.
 
 ## Shipped boundary
 
@@ -35,6 +35,28 @@ for self-assignment and true otherwise. The fixed browser mapping adds
 `source:'Casey'`, omits `from` (authenticated user wins), and leaves assignment
 email enabled by omitting `send_assignment_email`.
 
+Event create/update/complete/cancel are implemented through the existing
+`/api/events` routes. There is no Casey executor, Event delete/reopen, batch
+create, or Appointment action. Create requires type/title/firm-local date/
+all-day and time when timed. Optional duration, location, URL, note,
+creation-time link, availability scope, and reminder are all normalized and
+displayed. Known types resolve to their canonical registry label/key/kind;
+custom types are `other`; meeting kinds are refused. All-day clears time and
+duration and uses firm-wide scope.
+
+Update exposes only type/title/date/time/all-day/duration/location/URL/note/
+scope/reminder. Link identity, status, resolution, kind/type key, calendar
+selection, dedupe, `skip_gcal`, and actor are excluded. Existing actions cite
+the exact `event_id`, then reload and require Scheduled/non-superseded state.
+Complete/cancel normalize per-kind resolution. Cancel defaults
+`delete_gcal:true`. Cards and SweetAlerts state Google Calendar recreation/
+retention/deletion and reminder-task effects.
+
+Applied Event results persist and reopen as **Open event**. The canonical
+`yc-sync` matchers already cover all four routes and the Events/Calendar/case/
+contact readers subscribe to `event:*`, so no bus code changed and no Casey
+emit exists.
+
 ## Recipe for every new action
 
 1. Locate the exact existing user-facing endpoint and its native UI caller.
@@ -58,54 +80,49 @@ email enabled by omitting `send_assignment_email`.
 
 ## Recommended order, lowest to highest complexity
 
-1. **Events lifecycle.** Add create/update/complete/cancel using the existing
-   `/api/events` routes. This most closely matches Tasks, and `yc-sync` already
-   has event create/update/transition matchers. Freeze exact event types, dates,
-   ownership, link values, and completion/cancel semantics.
-
-2. **Appointments lifecycle.** Add create, edit, attended, no-show, cancel, then
+1. **Appointments lifecycle.** Add create, edit, attended, no-show, cancel, then
    reschedule through `/api/appts*`. Matchers already exist, but calendar
    writes, provider/time validation, reminders, and cancellation/reschedule
    notices make this more complex than Events. Show timezone and every notice
    consequence in confirmation.
 
-3. **Contact subrecords, one family at a time.** Phone, email, address, relation,
+2. **Contact subrecords, one family at a time.** Phone, email, address, relation,
    and role add/edit/deactivate/delete already have dedicated routes. Start with
    additive and reversible operations. For each family, check whether the root
    contact view sees a bus update; add canonical matcher/response support if it
    does not. Never bundle multiple subrecords into one proposal initially.
 
-4. **Scalar contact and case edits.** Use `PATCH /api/contacts/:id` and
+3. **Scalar contact and case edits.** Use `PATCH /api/contacts/:id` and
    `PATCH /api/cases/:id`, whose root matchers already exist. Do not expose the
    routes' broad payloads. Ship narrow field families with before/after display,
    optimistic-concurrency or stale-value checks, and explicit exclusions for
    identity, access, merge, docket, and other high-impact fields.
 
-5. **Case relationships and pipeline transitions.** Add/remove/change a case
+4. **Case relationships and pipeline transitions.** Add/remove/change a case
    contact and advance/move pipeline using their dedicated routes. `yc-sync`
    already understands these paths, including set-change markers. Complexity
    comes from primary-contact invariants, pipeline requirements, overrides,
    notes, and downstream automation; show blockers and effects before confirm.
 
-6. **Documents and form drafts.** Prefer draft/save-to-case actions before
+5. **Documents and form drafts.** Prefer draft/save-to-case actions before
    deletion, movement, submission, or publication. Browser uploads are
    multi-step and file bytes never belong in a model action. Require exact
    destination, filename/template, overwrite behavior, and a canonical bus
    decision for document collections.
 
-7. **Outbound communications.** Separate compose/draft from send. Sending mail,
+6. **Outbound communications.** Separate compose/draft from send. Sending mail,
    SMS, CTA, campaigns, or signature requests is an irreversible external side
    effect: show exact recipients, channel/from identity, subject/body,
    attachments, schedule, and audience count. Require a fresh send confirmation
    and preserve the endpoint's delivery/audit semantics.
 
-8. **Reports, workflows, and automations.** Draft and preview first; save,
+7. **Reports, workflows, and automations.** Draft and preview first; save,
    publish, run, cancel, or resume are separate kinds. These can fan out into
    many writes or external calls and need versioning, validation, dry-run data,
    permission gates, and domain-event review. Never allow arbitrary workflow
    step JSON from the model.
 
-9. **Destructive/admin actions last.** Case/contact merge, file purge, credential
+8. **Destructive/admin actions last.** Case/contact merge, file purge, credential
    changes, access controls, Court Review force-apply, and similar operations
    need dedicated designs, stronger re-auth/confirmation, impact previews, and
    explicit rollback stories. They should not inherit authority from ordinary
@@ -113,25 +130,13 @@ email enabled by omitting `send_assignment_email`.
 
 ## Immediate next slice
 
-Implement Events lifecycle first. Before changing prompts, trace the native
-Events UI request bodies and the `yc-sync` event matchers, then write the closed
-schemas and deterministic tests. Keep one proposal per answer and retain the
-current bounded read limits; personality, larger autonomous investigations,
-and general-purpose action execution remain out of scope.
-
-Known Events facts to verify rather than rediscover from scratch:
-
-- `routes/api.events.js` exposes create, whitelisted update, complete, and
-  cancel. There is no delete or reopen route.
-- The route replaces any model-supplied `acting_user_id` with the authenticated
-  user; Casey must omit that field anyway.
-- Complete accepts an optional kind-validated `resolution`.
-- Cancel defaults `delete_gcal` to true and accepts an optional resolution;
-  those consequences must be explicit in the card and SweetAlert.
-- `public/js/yc-sync.js` already matches browser calls for event create,
-  update, complete, and cancel and emits canonical event refetch/create signals.
-- `/api/events/batch` is deliberately not matched and is out of scope for the
-  first Events slice. Keep the slice to one event action per proposal.
+Implement Appointments lifecycle next, one reviewed transition at a time. Trace
+`routes/api.appts.js`, `services/apptService.js`, every native Appointment UI
+caller, scheduling/notification/calendar side effects, and the existing
+`yc-sync` matchers before fixing schemas. Start with create/edit/attended/
+no-show/cancel; treat reschedule as a separate higher-impact contract if its
+successor/predecessor and notice semantics do not fit cleanly in the first
+slice. Keep one proposal per answer and the current bounded read limits.
 
 ## Copy-paste prompt for the next instance
 
@@ -139,38 +144,23 @@ Known Events facts to verify rather than rediscover from scratch:
 Read AGENTS.md, ref/ASK_CASEY_ACTIONS_PLAN.md,
 ref/ASK_CASEY_ACTIONS_HANDOFF.md, ref/AI_CONTEXT.md, and
 manual/05-Subsystems/17-ask-yisracase.md. Continue the Ask Casey actions arc
-from clean main at or after commit 09bc6e9. Do not redo or redesign the shipped
-Tasks lifecycle.
+from clean main after the reviewed Events lifecycle commit. Do not redo or
+redesign the shipped Tasks or Events slices.
 
-Implement the next slice only: reviewed Events lifecycle actions—create,
-whitelisted update, complete, and cancel—through the existing authenticated
-/api/events routes. Do not add a Casey execution endpoint. Preserve the core
-boundary: Casey returns one closed, evidence-backed, server-normalized proposal;
-the signed-in user reviews it in the existing SweetAlert flow; a fixed browser
-mapping chooses the endpoint, method, and exact allowlisted body. The model must
-never choose those or acting_user_id.
+Implement the next slice only: reviewed Appointments lifecycle actions through
+the existing authenticated `/api/appts*` routes. Do not add a Casey execution
+endpoint. Preserve one evidence-backed, server-normalized proposal; exact
+SweetAlert review; fixed browser route/method/body mapping; authenticated actor;
+single-flight/retry/history/open-record behavior; and canonical sync only.
 
-First trace routes/api.events.js, services/eventService.js, every native Events
-UI caller, and the event matchers/readers in public/js/yc-sync.js. Document
-required, optional, defaulted, and side-effecting fields before coding. Pay
-special attention to event kind/type rules, firm-local date/time semantics,
-links, reminders, Google Calendar behavior, completion resolution, and cancel's
-delete_gcal default. There is no Events delete/reopen route. Exclude batch
-creation, appointments, personality changes, broader autonomous reads, and all
-other action families.
+First trace the Appointment routes, service, all native UI callers, and bus
+readers. Document provider/type/length rules, firm-local/UTC twins, links,
+availability, Google Calendar writes, reminders, attendee notices, cancellation
+and reschedule effects, and reversibility before coding. Require exact appt_id
+evidence and a server reload for existing actions. Exclude batch actions, Events,
+personality changes, broader autonomous reads, and other action families.
 
-Require current evidence containing the exact event_id for existing-event
-actions, reload and validate the target server-side, reject extra fields, render
-all material values/side effects as text, prevent duplicate review dialogs and
-writes, leave failures retryable, persist applied results to prevent casual
-replay, and open the canonical event on success. Verify the existing yc-sync
-path end to end; fix only canonical endpoint/response/matcher behavior if a bus
-gap exists—never add a Casey-only emit.
-
-Add deterministic service and UI tests for schemas, stale/invalid state,
-confirmation cancellation, exact route/body mapping, SweetAlert review,
-single-flight behavior, failure/retry, history restoration, and bus propagation.
-Run the focused assistant tests plus the relevant Events service/UI/yc-sync
-suites. Update the manual, AI context, actions plan, and this handoff with the
-shipped contract and next recommended slice. Then commit and push.
+Add deterministic schema/state/UI/mapping/single-flight/retry/history/bus tests,
+run focused assistant plus native Appointment suites, update the four action
+docs, then commit and push.
 ```

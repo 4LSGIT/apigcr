@@ -240,7 +240,10 @@ function appendDraftField(list, label, value) {
 }
 
 const TASK_ACTION_KINDS = new Set(['task.create.v1', 'task.update.v1', 'task.complete.v1', 'task.cancel.v1', 'task.reopen.v1', 'task.transfer.v1']);
+const EVENT_ACTION_KINDS = new Set(['event.create.v1', 'event.update.v1', 'event.complete.v1', 'event.cancel.v1']);
 function isTaskActionDraft(draft) { return !!(draft && TASK_ACTION_KINDS.has(draft.kind)); }
+function isEventActionDraft(draft) { return !!(draft && EVENT_ACTION_KINDS.has(draft.kind)); }
+function isActionDraft(draft) { return isTaskActionDraft(draft) || isEventActionDraft(draft); }
 
 function taskDraftText(draft) {
   if (draft.kind === 'task.create.v1') return [
@@ -402,11 +405,167 @@ function applyTaskActionResults(messages) {
   return messages;
 }
 
+function eventActionLabel(draft) {
+  return ({ 'event.create.v1': 'Create event', 'event.update.v1': 'Update event',
+    'event.complete.v1': 'Complete event', 'event.cancel.v1': 'Cancel event' })[draft.kind] || 'Apply event action';
+}
+
+function eventTypeText(type) { return type && type.event_type != null ? `${type.event_type} (${type.kind})` : 'Clear type / unclassified'; }
+function eventProviderText(provider) { return provider ? provider.label : 'Everyone (firm-wide)'; }
+function eventReminderText(reminder) { return reminder ? `${reminder.label} on ${reminder.date}` : 'None'; }
+
+function eventDraftText(draft) {
+  const event = draft.event;
+  const lines = ['Event action proposal — not applied', `Action: ${eventActionLabel(draft)}`];
+  if (draft.kind === 'event.create.v1') {
+    lines.push(`Title: ${draft.event_title}`, `Type / kind: ${eventTypeText(draft.type)}`,
+      `Firm-local date: ${draft.event_date}`, `Firm-local time: ${draft.event_all_day ? 'All day' : draft.event_time}`,
+      `Length: ${draft.event_length == null ? 'Default 60 minutes' : `${draft.event_length} minutes`}`,
+      `Linked record: ${draft.link ? `${draft.link.label} (${draft.link.type} ${draft.link.id})` : 'None'}`,
+      `Blocks availability for: ${eventProviderText(draft.event_with)}`, `Reminder task: ${eventReminderText(draft.reminder)}`,
+      `Location: ${draft.event_location || '—'}`, `URL / link: ${draft.event_link || '—'}`, `Note: ${draft.event_note || '—'}`,
+      'Google Calendar: creation will be attempted on the firm default calendar.');
+  } else {
+    lines.push(`Event: #${event.event_id} — ${event.title}`, `Current status: ${event.status}`,
+      `Current type / kind: ${event.type || '—'} (${event.kind})`, `Current date/time: ${event.date}${event.all_day ? ' · All day' : ` · ${event.time}`}`);
+    if (draft.kind === 'event.update.v1') Object.entries(draft.changes || {}).forEach(([key, value]) => {
+      const label = { type: 'Type / kind', event_title: 'Title', event_date: 'Firm-local date', event_time: 'Firm-local time',
+        event_all_day: 'All day', event_length: 'Length (minutes)', event_location: 'Location', event_link: 'URL / link',
+        event_note: 'Note', event_with: 'Blocks availability for', reminder: 'Reminder task' }[key] || key;
+      const shown = key === 'type' ? eventTypeText(value) : key === 'event_with' ? eventProviderText(value)
+        : key === 'reminder' ? eventReminderText(value) : typeof value === 'boolean' ? (value ? 'Yes' : 'No')
+          : value == null ? 'Clear' : value;
+      lines.push(`${label}: ${shown}`);
+    });
+    if (draft.kind === 'event.complete.v1') lines.push(`Completion resolution: ${draft.resolution}`,
+      'Google Calendar: the existing entry is kept as a past event.', 'Reminder tasks: active reminders will be canceled.');
+    if (draft.kind === 'event.cancel.v1') lines.push(`Cancellation resolution: ${draft.resolution}`,
+      `Google Calendar: ${draft.delete_gcal ? 'the existing entry will be deleted when present' : 'the existing entry will be kept'}.`,
+      'Reminder tasks: active reminders will be canceled.');
+    if (draft.kind === 'event.update.v1') lines.push('Google Calendar: title, date, time, all-day, length, location, or URL changes recreate the calendar entry when it is synced. Type, note, and availability-scope changes do not rewrite an existing Google entry.',
+      'Reminder task: including a reminder change cancels active event reminders before optionally creating the reviewed replacement.');
+  }
+  return lines.join('\n');
+}
+
+function eventCreateBody(draft) {
+  const body = {
+    event_type: draft.type.event_type, event_title: draft.event_title, event_date: draft.event_date,
+    event_time: draft.event_all_day ? null : draft.event_time, event_all_day: draft.event_all_day ? 1 : 0,
+    event_length: draft.event_all_day ? null : draft.event_length, event_location: draft.event_location,
+    event_link: draft.event_link, event_note: draft.event_note,
+    event_with: draft.event_with ? draft.event_with.user_id : null,
+  };
+  if (draft.link) { body.event_link_type = draft.link.type; body.event_link_id = draft.link.id; }
+  if (draft.reminder) body.reminder = { to: draft.reminder.to, date: draft.reminder.date };
+  return body;
+}
+
+function eventUpdateBody(draft) {
+  const body = {};
+  const changes = draft.changes || {};
+  if ('type' in changes) body.event_type = changes.type.event_type;
+  for (const key of ['event_title', 'event_date', 'event_time', 'event_length', 'event_location', 'event_link', 'event_note']) {
+    if (key in changes) body[key] = changes[key];
+  }
+  if ('event_all_day' in changes) body.event_all_day = changes.event_all_day ? 1 : 0;
+  if ('event_with' in changes) body.event_with = changes.event_with ? changes.event_with.user_id : null;
+  if ('reminder' in changes) body.reminder = changes.reminder ? { to: changes.reminder.to, date: changes.reminder.date } : null;
+  return body;
+}
+
+function eventActionRequest(draft) {
+  if (draft.kind === 'event.create.v1') return { path: '/api/events', method: 'POST', body: eventCreateBody(draft) };
+  const id = draft.event.event_id;
+  if (draft.kind === 'event.update.v1') return { path: `/api/events/${id}`, method: 'PATCH', body: eventUpdateBody(draft) };
+  if (draft.kind === 'event.complete.v1') return { path: `/api/events/${id}/complete`, method: 'PATCH', body: { resolution: draft.resolution } };
+  if (draft.kind === 'event.cancel.v1') return { path: `/api/events/${id}/cancel`, method: 'PATCH', body: { delete_gcal: draft.delete_gcal, resolution: draft.resolution } };
+  throw new Error('Unsupported event action');
+}
+
+async function confirmEventDraft(draft) {
+  if (!(P.Swal && typeof P.Swal.fire === 'function')) throw new Error('The review dialog is unavailable. Nothing was changed.');
+  const result = await P.Swal.fire({
+    title: eventActionLabel(draft), text: `${eventDraftText(draft)}\n\nThis changes YisraCase immediately using your signed-in account.`,
+    icon: draft.kind === 'event.cancel.v1' ? 'warning' : 'question', showCancelButton: true,
+    confirmButtonText: eventActionLabel(draft), cancelButtonText: 'Keep proposal',
+    focusCancel: draft.kind === 'event.cancel.v1', reverseButtons: true, heightAuto: false,
+  });
+  return !!(result && result.isConfirmed);
+}
+
+async function executeEventDraft(message) {
+  const draft = message && message.action_draft;
+  if (!isEventActionDraft(draft) || typeof draft.draft_id !== 'string' || !draft.draft_id || draft.executing || draft.reviewing) return;
+  if (draft.status === 'applied' && draft.result_event_id) { P.showEvent(draft.result_event_id); return; }
+  draft.reviewing = true; delete draft.action_error; render();
+  try { if (!await confirmEventDraft(draft)) return; }
+  catch (e) { draft.action_error = e.message || 'The review dialog could not be opened.'; return; }
+  finally { draft.reviewing = false; render(); }
+  draft.executing = true; delete draft.action_error; render();
+  try {
+    const request = eventActionRequest(draft);
+    const result = await api(request.path, request.body, request.method);
+    const eventId = draft.kind === 'event.create.v1' ? Number(result && result.data && result.data.event_id) : Number(draft.event && draft.event.event_id);
+    if (!Number.isSafeInteger(eventId) || eventId < 1) throw new Error('The event action did not return a usable event id');
+    draft.status = 'applied'; draft.result_event_id = eventId;
+    const resultMessage = { role: 'assistant', text: `${eventActionLabel(draft)} applied to event #${eventId}.`,
+      entities: [{ kind: 'event', id: String(eventId), label: draft.kind === 'event.create.v1' ? draft.event_title : draft.event.title }],
+      action_result: { kind: draft.kind, draft_id: draft.draft_id, event_id: eventId } };
+    history.push(resultMessage); await saveAssistantMessage(resultMessage);
+    P.showEvent(eventId);
+  } catch (e) { draft.action_error = e.message || 'The event action could not be applied.'; }
+  finally { draft.executing = false; render(); }
+}
+
+function applyEventActionResults(messages) {
+  const applied = new Map();
+  for (const message of Array.isArray(messages) ? messages : []) {
+    const result = message && message.action_result;
+    if (result && EVENT_ACTION_KINDS.has(result.kind) && typeof result.draft_id === 'string'
+        && Number.isSafeInteger(Number(result.event_id)) && Number(result.event_id) > 0) applied.set(result.draft_id, Number(result.event_id));
+  }
+  for (const message of Array.isArray(messages) ? messages : []) {
+    const draft = message && message.action_draft; const eventId = draft && applied.get(draft.draft_id);
+    if (eventId) { draft.status = 'applied'; draft.result_event_id = eventId; }
+  }
+  return messages;
+}
+
+function hydrateEventActionDraft(host, message, draft) {
+  const head = document.createElement('div'); head.className = 'action-draft-head';
+  const title = document.createElement('b'); title.textContent = 'Event action';
+  const status = document.createElement('span'); status.className = 'action-draft-status';
+  status.textContent = draft.status === 'applied' && draft.result_event_id ? `Applied — event #${draft.result_event_id}`
+    : draft.executing ? 'Applying…' : draft.reviewing ? 'Reviewing…' : 'Proposal — not applied';
+  head.append(title, status);
+  const fields = document.createElement('dl'); fields.className = 'action-draft-grid';
+  for (const line of eventDraftText(draft).split('\n').slice(1)) {
+    const split = line.indexOf(':'); appendDraftField(fields, split > 0 ? line.slice(0, split) : 'Effect', split > 0 ? line.slice(split + 1).trim() : line);
+  }
+  const next = document.createElement('div'); next.className = 'action-draft-next';
+  const warning = document.createElement('div'); warning.className = 'action-draft-next-warning';
+  warning.textContent = draft.status === 'applied' ? `Applied to event #${draft.result_event_id} using your signed-in account.`
+    : 'Review every value and side effect. Canceling the dialog writes nothing.';
+  next.append(warning);
+  if (draft.action_error) { const error = document.createElement('div'); error.className = 'action-draft-next-warning'; error.textContent = `Could not apply event action: ${draft.action_error}`; next.append(error); }
+  const actions = document.createElement('div'); actions.className = 'action-draft-actions';
+  const apply = document.createElement('button'); apply.type = 'button';
+  apply.textContent = draft.status === 'applied' && draft.result_event_id ? `Open event #${draft.result_event_id}` : `Review & ${eventActionLabel(draft).toLowerCase()}`;
+  apply.disabled = !!(draft.executing || draft.reviewing); apply.addEventListener('click', () => executeEventDraft(message));
+  const copy = document.createElement('button'); copy.type = 'button'; copy.textContent = 'Copy details';
+  copy.addEventListener('click', async () => { try { await navigator.clipboard.writeText(eventDraftText(draft)); copy.textContent = 'Copied'; } catch (_) { copy.textContent = 'Copy failed'; } });
+  actions.append(apply, copy);
+  if (draft.status !== 'applied') { const discard = document.createElement('button'); discard.type = 'button'; discard.className = 'ghost'; discard.textContent = 'Discard'; discard.disabled = !!(draft.executing || draft.reviewing); discard.addEventListener('click', () => { delete message.action_draft; render(); }); actions.append(discard); }
+  host.append(head, fields, next, actions);
+}
+
 function hydrateActionDrafts() {
   chat.querySelectorAll('[data-action-draft]').forEach((host) => {
     const index = Number(host.dataset.actionDraft);
     const message = history[index];
     const draft = message && message.action_draft;
+    if (isEventActionDraft(draft)) { hydrateEventActionDraft(host, message, draft); return; }
     if (!isTaskActionDraft(draft)) return;
     const canCreate = typeof draft.draft_id === 'string' && !!draft.draft_id;
 
@@ -523,7 +682,7 @@ function render() {
       `<div class="source"><div class="source-label">${esc(s.label)} · ${esc(s.query_id)} row ${esc(s.row_number)}</div>${Array.isArray(s.actions) && s.actions.length ? `<div class="source-actions">${s.actions.map(actionHtml).join('')}</div>` : ''}<details><summary>View evidence row</summary><pre>${esc(JSON.stringify(s.row, null, 2))}</pre></details></div>`).join('')}</div>` : '';
     const follow = suggestionsHtml(m.suggestions);
     const destinations = destinationsHtml(m.destinations);
-    const actionDraft = isTaskActionDraft(m.action_draft) ? `<div class="action-draft" data-action-draft="${i}"></div>` : '';
+    const actionDraft = isActionDraft(m.action_draft) ? `<div class="action-draft" data-action-draft="${i}"></div>` : '';
     return `<div class="msg assistant${m.error ? ' error' : ''}">${esc(m.text)}${actionDraft}${entities}${sources}${destinations}${follow}${m.meta ? `<div class="meta">${esc(m.meta)}</div>` : ''}</div>`;
   }).join('');
   hydrateActionDrafts();
@@ -816,7 +975,7 @@ async function openSavedChat(id) {
   try {
     const r = await api(`/api/assistant/chats/${id}`, null, 'GET');
     const messages = Array.isArray(r.chat && r.chat.messages) ? r.chat.messages : [];
-    history = applyTaskActionResults(messages.map((m) => ({ role: m.role === 'assistant' ? 'assistant' : 'user', text: String(m.text || ''), ...(m.payload && typeof m.payload === 'object' ? m.payload : {}) })));
+    history = applyEventActionResults(applyTaskActionResults(messages.map((m) => ({ role: m.role === 'assistant' ? 'assistant' : 'user', text: String(m.text || ''), ...(m.payload && typeof m.payload === 'object' ? m.payload : {}) }))));
     currentChatId = Number(r.chat.id);
     modelMode.value = r.chat.model_mode === 'faster_speed' ? 'faster_speed' : 'better_quality';
     historyPanel.hidden = true;

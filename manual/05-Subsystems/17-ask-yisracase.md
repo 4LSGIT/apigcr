@@ -1,7 +1,7 @@
 # Ask Casey
 
 Ask Casey is the user-facing name for the firm's YisrAI assistant. Its searches
-are read-only; its reviewed task actions are performed by the
+are read-only; its reviewed Task and Event actions are performed by the
 signed-in user after explicit review. It can answer
 questions about firm records, how YisraCase itself works, general knowledge,
 and current weather. Open it from the persistent **Ask Casey** button at the
@@ -63,7 +63,7 @@ configured timezone (normally America/Detroit). The stored `appt_date` is that
 firm-local wall time; `appt_date_utc` is its separate real-UTC twin used for
 scheduling and integrations.
 
-## Reviewed task actions
+## Reviewed actions
 
 Ask Casey can prepare one evidence-backed task action for explicit review.
 Ask naturally—for example, “Make a task for SS to review Ask Casey next
@@ -117,6 +117,53 @@ the canonical write affects data visible in another open frame or browser tab,
 the canonical operation—not Casey-specific code—must publish the normal update
 for every caller.
 
+### Event actions
+
+Casey can also prepare one reviewed Event action: create, update allowed Event
+fields, complete, or cancel. It cannot delete or reopen an Event because the
+Events API has no such route, and it cannot use this card to create a batch or
+an Appointment.
+
+An Event creation card requires a title, type, firm-local date, and an explicit
+all-day choice. A timed Event also requires a firm-local time. Times are wall
+times in the firm's configured timezone (normally America/Detroit), not UTC;
+the card rejects `Z` and numeric timezone suffixes. Optional values are a
+1–1,440-minute duration, location, URL, note, one verified case/contact/docket
+link, availability scope, and one reminder task. For a timed Event with no
+duration, Google Calendar uses 60 minutes. An all-day Event has no time or
+duration and uses firm-wide availability scope.
+
+The type is resolved against the Calendar Item Type registry. A known type is
+shown with its canonical label and kind. A custom type is shown as `other`.
+Meeting types belong to Appointments and are not available through an Event
+card. The linked case, contact, or docket is fixed at creation; updating an
+Event cannot move it to another record. Availability scope is shown as
+firm-wide, nobody, or one verified appointment provider. A reminder is shown
+with its exact assignee and date and creates a normal Task linked to the Event.
+
+For update, complete, and cancel, the evidence must contain the exact
+`event_id`. Casey reloads the Event before returning the card and accepts only
+a current Scheduled Event that has not been superseded. Update is limited to
+type, title, date, time, all-day, duration, location, URL, note, availability
+scope, and reminder. Complete records `met` for a deadline by default and
+`held` for other kinds; a deadline may instead be marked `moot`. Staff do not
+mark a deadline `missed` through this action—the calendar sweep owns that
+outcome. Cancel records `cancelled` by default; a deadline may instead be
+marked `moot`.
+
+The card and confirmation spell out calendar and reminder effects. Creation
+attempts to add the Event to the firm's default Google Calendar. Updating its
+title, date, time, all-day setting, duration, location, or URL recreates an
+existing synced entry; changing type, note, or availability scope does not
+rewrite that Google entry. Completing keeps the past Google entry. Canceling
+deletes it by default unless the reviewed card explicitly says it will be kept.
+Completing or canceling also cancels active reminder Tasks for the Event.
+
+After a successful action, Casey opens the ordinary Event view. The result is
+saved with the chat, so reopening the conversation offers **Open event** rather
+than the same write again. The normal Events sync bus refreshes other open
+Events, Calendar, case, and contact views.
+
 ## Models and files
 
 The model selector offers two product-level choices:
@@ -147,11 +194,12 @@ asking about a file does not save it.
 
 ## What read-only means
 
-Assistant searches and task proposals cannot change anything. YisrAI cannot
-send email, edit a contact, save/create a task record, fill a form, or create a
-workflow. It can return the typed task draft described above; the staff member
-must manually review and assign it in My Tasks. The separate,
-user-invoked **Save to case** attachment control is the one current write; it
+Assistant searches and action proposals cannot change anything by themselves.
+YisrAI cannot send email, edit a contact, fill a form, or create a workflow. It
+can return the typed Task or Event proposal described above; the signed-in
+staff member must review and confirm the card before the ordinary application
+route performs it. The separate,
+user-invoked **Save to case** attachment control is another explicit write; it
 uses the existing Documents upload API rather than a model-authored action.
 Searches run through the same SELECT-only database connection and validation used by Reports, with
 tighter limits for conversational use.
@@ -224,7 +272,8 @@ remain read-only: `sql.read`, `manual.search`, `comms.search`, and the narrowly
 scoped `weather.lookup` external read. The answer may additionally contain one
 server-validated `task.create.v1`, `task.update.v1`, `task.complete.v1`,
 `task.cancel.v1`, `task.reopen.v1`, or `task.transfer.v1` proposal. The proposal
-itself changes no record. A signed-in user can perform that exact action only
+may instead be one `event.create.v1`, `event.update.v1`, `event.complete.v1`,
+or `event.cancel.v1` proposal. The proposal itself changes no record. A signed-in user can perform that exact action only
 through the card's explicit review and confirmation, which invokes the ordinary
 authenticated task route.
 

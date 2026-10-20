@@ -1,8 +1,8 @@
 # Ask Casey typed actions plan
 
-Status: A0/A0.1, A1, and A2 implemented 2026-10-20. A2 covers the complete
-task lifecycle through explicitly confirmed card actions and existing
-authenticated task routes; no general action executor is introduced.
+Status: A0/A0.1, A1, A2, and A3 implemented 2026-10-20. A2 covers the complete
+task lifecycle; A3 covers reviewed Event create/update/complete/cancel through
+the existing authenticated routes. No general action executor is introduced.
 
 ## Governing principle: actions run through the user
 
@@ -265,9 +265,59 @@ single-flight behavior, inline retry, task-list/badge refresh, and persisted
 applied results follow A1. Reopening a saved chat therefore offers **Open task**
 rather than casually replaying the write.
 
+## Slice A3: reviewed Events lifecycle
+
+A3 adds `event.create.v1`, `event.update.v1`, `event.complete.v1`, and
+`event.cancel.v1`. The browser maps them only to `POST /api/events`,
+`PATCH /api/events/:id`, `PATCH /api/events/:id/complete`, and
+`PATCH /api/events/:id/cancel`. There is no Event delete or reopen route, so no
+such proposal exists. Batch creation and Appointments remain out of scope.
+
+The traced native field contract is:
+
+- create requires a nonblank title, real firm-local date, explicit all-day
+  choice, and a nonblank type for Casey; a timed proposal also requires a
+  firm-local `HH:MM[:SS]` time. Type is resolved through the calendar-item
+  registry; meeting kinds are rejected because they belong to Appointments;
+  known types return their canonical label/key/kind, while custom types are
+  explicitly shown as `other`;
+- optional create fields are duration (1–1,440 minutes), location, URL, note,
+  one verified creation-time link (`case`, `contact`, or `case_number`),
+  availability scope, and one reminder task. All-day events normalize time and
+  duration to null and availability scope to firm-wide. A null duration on a
+  timed Google event means the service's 60-minute default;
+- availability scope defaults to null/firm-wide, `0` means blocks nobody, and
+  a positive id must resolve to a current appointment provider. A reminder
+  requires an assignable staff id and a non-past firm-local date; creating or
+  replacing it uses the normal linked Task behavior;
+- update permits only type, title, date, time, all-day, duration, location,
+  URL, note, availability scope, and reminder. Link identity is immutable after
+  create. Status, resolution, calendar selection, dedupe, `skip_gcal`, kind,
+  `type_key`, and actor attribution are never model-controlled;
+- existing-event proposals require current evidence containing the exact
+  `event_id`; the server reloads it and accepts only Scheduled,
+  non-superseded targets. Complete defaults to `met` for deadlines and `held`
+  otherwise; a reviewed deadline completion may instead be `moot`, while the
+  nightly sweep—not a staff action—owns `missed`. Cancel defaults to `cancelled` and `delete_gcal:true`; only a
+  deadline may use `moot` on cancel; and
+- create attempts Google Calendar creation on the canonical default calendar.
+  Updates to title/date/time/all-day/duration/location/URL recreate a synced
+  entry; type/note/availability-scope changes do not rewrite an existing Google
+  entry. Complete keeps the past entry. Cancel deletes it by default. Complete
+  and cancel cancel active Event reminder tasks.
+
+The card and SweetAlert render every normalized value plus those side effects
+as text. Review and write are single-flight; cancellation writes nothing;
+failures leave the proposal retryable. A successful result is persisted in chat
+history and reopening offers **Open event**. The existing `yc-sync` create,
+update, complete, and cancel matchers already turn the canonical browser calls
+into `event:<id>` refetch markers consumed by the Events tab, Calendar, and
+case/contact readers, so A3 required no Casey-specific or canonical bus change.
+
 ## Explicitly deferred
 
-- notes, contact/case field changes, forms, reports, and workflow drafts;
+- Appointments lifecycle actions; notes, contact/case field changes, forms,
+  reports, and workflow drafts;
 - sending arbitrary email or SMS (normal task notifications remain part of the
   existing task-creation behavior disclosed by the confirmation);
 - multiple-action plans or conditional execution;

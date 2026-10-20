@@ -10,6 +10,8 @@ const assistantTicket = require('../lib/assistantTicket');
 const reportService = require('../services/reportService');
 const weatherService = require('../services/assistantWeatherService');
 const taskService = require('../services/taskService');
+const eventService = require('../services/eventService');
+const calendarTypeService = require('../services/calendarTypeService');
 
 const sql = (text, extra = {}) => ({ id: 'q1', kind: 'sql.read', purpose: 'Find the relevant rows', sql: text, ...extra });
 const staffDb = (overrides = {}) => ({
@@ -528,10 +530,10 @@ describe('assistant knowledge and prompts', () => {
   });
 
   test('all assistant prompts are registered JSON prompts', () => {
-    expect(prompts.getPrompt('assistant_plan')).toMatchObject({ output_type: 'json', version: '10', model: 'claude-opus-5' });
+    expect(prompts.getPrompt('assistant_plan')).toMatchObject({ output_type: 'json', version: '11', model: 'claude-opus-5' });
     expect(prompts.getPrompt('assistant_investigate')).toMatchObject({ output_type: 'json', version: '2', model: 'claude-opus-5' });
-    expect(prompts.getPrompt('assistant_answer')).toMatchObject({ output_type: 'json', version: '12', model: 'claude-opus-5' });
-    expect(prompts.getPrompt('assistant_task_draft_repair')).toMatchObject({ output_type: 'json', version: '3', model: 'claude-opus-5' });
+    expect(prompts.getPrompt('assistant_answer')).toMatchObject({ output_type: 'json', version: '13', model: 'claude-opus-5' });
+    expect(prompts.getPrompt('assistant_task_draft_repair')).toMatchObject({ output_type: 'json', version: '4', model: 'claude-opus-5' });
     expect(prompts.getPrompt('assistant_plan').system).toMatch(/COLLATE utf8mb4_general_ci/);
     expect(prompts.getPrompt('assistant_plan').system).toMatch(/Never generate[\s\S]*x IN \(SELECT \.\.\. LIMIT n\)/);
     expect(prompts.getPrompt('assistant_plan').system).toMatch(/users\.roles[\s\S]*canonical role field/);
@@ -545,7 +547,7 @@ describe('assistant knowledge and prompts', () => {
     expect(prompts.getPrompt('assistant_answer').system).toMatch(/action_draft[\s\S]*task\.create\.v1/);
     expect(prompts.getPrompt('assistant_answer').system).toMatch(/changes no record/);
     expect(prompts.getPrompt('assistant_answer').system).toMatch(/Never say a card exists unless/);
-    expect(prompts.getPrompt('assistant_task_draft_repair').system).toMatch(/exactly one Ask Casey task-action proposal/);
+    expect(prompts.getPrompt('assistant_task_draft_repair').system).toMatch(/exactly one Ask Casey task-or-event action proposal/);
     expect(prompts.getPrompt('assistant_plan').system).toMatch(/Reviewed task actions[\s\S]*do NOT refuse/);
     expect(prompts.getPrompt('assistant_plan').system).toMatch(/users\.user_initials[\s\S]*never guess an id/);
   });
@@ -794,8 +796,8 @@ describe('assistant task drafts', () => {
       } });
     try {
       const out = await svc.execute({}, { signedTicket: signed, userId: 7, auth: { type: 'jwt', userId: 7 } });
-      expect(out.answer).toMatch(/could not produce a valid reviewed task-action card/i);
-      expect(out.answer).toMatch(/perform the change directly in My Tasks/i);
+      expect(out.answer).toMatch(/could not produce a valid reviewed action card/i);
+      expect(out.answer).toMatch(/perform the change directly in YisraCase/i);
       expect(out.answer).not.toMatch(/card below/i);
       expect(out).not.toHaveProperty('action_draft');
       expect(out.investigation.task_draft_status).toBe('unavailable');
@@ -803,5 +805,94 @@ describe('assistant task drafts', () => {
       run.mockRestore(); answer.mockRestore();
       if (old === undefined) delete process.env.JWT_SECRET; else process.env.JWT_SECRET = old;
     }
+  });
+});
+
+describe('assistant event actions', () => {
+  const evidence = [{
+    id: 'q1', kind: 'sql.read', purpose: 'Exact event', row_count: 1, truncated: false,
+    rows: [{ event_id: 42, event_title: 'Confirmation hearing', event_status: 'Scheduled', kind: 'hearing' }],
+  }];
+  let resolveType;
+  let getType;
+
+  beforeEach(() => {
+    resolveType = jest.spyOn(calendarTypeService, 'resolveForCreate').mockResolvedValue({ type_key: 'hearing', kind: 'hearing', matched: 'label' });
+    getType = jest.spyOn(calendarTypeService, 'getType').mockResolvedValue({ type_key: 'hearing', label: 'Hearing', kind: 'hearing', active: 1 });
+  });
+  afterEach(() => { resolveType.mockRestore(); getType.mockRestore(); });
+
+  test('normalizes create fields, firm-local time, verified links, provider scope, and reminder side effects', async () => {
+    const db = { query: jest.fn()
+      .mockResolvedValueOnce([[{ user: 8, user_name: 'Provider' }]])
+      .mockResolvedValueOnce([[{ case_id: 'C1', label: '26-10001' }]]) };
+    const assignee = jest.spyOn(taskService, 'findAssignableStaff').mockResolvedValue({ user: 7, user_name: 'Fred' });
+    const create = jest.spyOn(eventService, 'createEvent');
+    try {
+      await expect(svc.normalizeActionDraft(db, {
+        kind: 'event.create.v1', event_type: 'hearing', event_title: 'Confirmation hearing',
+        event_date: '2026-10-27', event_time: '09:30', event_all_day: false, event_length: 45,
+        event_location: 'Courtroom 1', event_link: 'https://court.example/hearing', event_note: 'Bring order.',
+        link: { type: 'case', id: 'C1' }, event_with: 8, reminder: { to: 7, date: '2026-10-26' },
+        evidence: [{ query_id: 'q1', row_number: 1 }],
+      }, evidence)).resolves.toMatchObject({
+        kind: 'event.create.v1', status: 'draft', type: { event_type: 'Hearing', type_key: 'hearing', kind: 'hearing' },
+        event_date: '2026-10-27', event_time: '09:30:00', event_all_day: false, event_length: 45,
+        link: { type: 'case', id: 'C1', label: '26-10001' }, event_with: { user_id: 8, label: 'Provider' },
+        reminder: { to: 7, date: '2026-10-26', label: 'Fred' },
+      });
+      expect(db.query.mock.calls[0][0]).toMatch(/does_appts = 1/);
+      expect(db.query.mock.calls[1][0]).toMatch(/FROM cases/);
+      expect(create).not.toHaveBeenCalled();
+    } finally { assignee.mockRestore(); create.mockRestore(); }
+  });
+
+  test('normalizes the update/complete/cancel lifecycle from a fresh server target', async () => {
+    const get = jest.spyOn(eventService, 'getEvent').mockResolvedValue({
+      event_id: 42, event_title: 'Confirmation hearing', event_status: 'Scheduled', kind: 'hearing', event_type: 'Hearing',
+      event_date: '2026-10-27', event_time: '09:30:00', event_all_day: 0, event_gcal: 'g1', superseded_by_event_id: null,
+    });
+    try {
+      await expect(svc.normalizeActionDraft({}, { kind: 'event.update.v1', event_id: 42,
+        changes: { event_title: 'Continued confirmation hearing', event_date: '2026-10-28', event_time: '10:00' },
+        evidence: [{ query_id: 'q1', row_number: 1 }] }, evidence)).resolves.toMatchObject({
+        kind: 'event.update.v1', event: { event_id: 42, status: 'Scheduled', google_calendar: 'synced' },
+        changes: { event_title: 'Continued confirmation hearing', event_date: '2026-10-28', event_time: '10:00:00', event_all_day: false },
+      });
+      await expect(svc.normalizeActionDraft({}, { kind: 'event.complete.v1', event_id: 42,
+        evidence: [{ query_id: 'q1', row_number: 1 }] }, evidence)).resolves.toMatchObject({ resolution: 'held' });
+      await expect(svc.normalizeActionDraft({}, { kind: 'event.cancel.v1', event_id: 42,
+        evidence: [{ query_id: 'q1', row_number: 1 }] }, evidence)).resolves.toMatchObject({ resolution: 'cancelled', delete_gcal: true });
+    } finally { get.mockRestore(); }
+  });
+
+  test('rejects extra fields, missing exact-id evidence, stale targets, meeting types, and invalid resolution', async () => {
+    await expect(svc.normalizeActionDraft({}, { kind: 'event.create.v1', event_type: 'Hearing', event_title: 'H',
+      event_date: '2026-10-27', event_time: null, event_all_day: true, endpoint: '/api/events',
+      evidence: [{ query_id: 'q1', row_number: 1 }] }, evidence)).rejects.toThrow(/unsupported fields/);
+    const get = jest.spyOn(eventService, 'getEvent').mockResolvedValue({ event_id: 42, event_title: 'H', event_status: 'Completed', kind: 'hearing', event_date: '2026-10-27' });
+    try {
+      await expect(svc.normalizeActionDraft({}, { kind: 'event.cancel.v1', event_id: 41,
+        evidence: [{ query_id: 'q1', row_number: 1 }] }, evidence)).rejects.toThrow(/does not identify/);
+      await expect(svc.normalizeActionDraft({}, { kind: 'event.update.v1', event_id: 42, changes: { event_note: 'x' },
+        evidence: [{ query_id: 'q1', row_number: 1 }] }, evidence)).rejects.toThrow(/Only a current Scheduled event/);
+      get.mockResolvedValueOnce({ event_id: 42, event_title: 'H', event_status: 'Scheduled', kind: 'hearing', event_date: '2026-10-27' });
+      await expect(svc.normalizeActionDraft({}, { kind: 'event.complete.v1', event_id: 42, resolution: 'met',
+        evidence: [{ query_id: 'q1', row_number: 1 }] }, evidence)).rejects.toThrow(/resolution is invalid/);
+      get.mockResolvedValueOnce({ event_id: 42, event_title: 'Deadline', event_status: 'Scheduled', kind: 'deadline', event_date: '2026-10-27' });
+      await expect(svc.normalizeActionDraft({}, { kind: 'event.complete.v1', event_id: 42, resolution: 'missed',
+        evidence: [{ query_id: 'q1', row_number: 1 }] }, evidence)).rejects.toThrow(/calendar sweep/);
+      resolveType.mockResolvedValueOnce({ type_key: 'meeting', kind: 'meeting', matched: 'label' });
+      await expect(svc.normalizeActionDraft({}, { kind: 'event.create.v1', event_type: 'Consultation', event_title: 'Consult',
+        event_date: '2026-10-27', event_time: null, event_all_day: true,
+        evidence: [{ query_id: 'q1', row_number: 1 }] }, evidence)).rejects.toThrow(/Appointments/);
+    } finally { get.mockRestore(); }
+  });
+
+  test('detects explicit event requests but not unsupported event reopen language alone', () => {
+    expect(svc.taskDraftRequested('Create an event for the confirmation hearing')).toBe(true);
+    expect(svc.taskDraftRequested('Update event 42')).toBe(true);
+    expect(svc.taskDraftRequested('What events are next week?')).toBe(false);
+    expect(svc.taskDraftRequested('Reopen event 42')).toBe(false);
   });
 });

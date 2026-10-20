@@ -15,6 +15,8 @@ const knowledge = require('./assistantKnowledgeService');
 const weather = require('./assistantWeatherService');
 const attachmentService = require('./assistantAttachmentService');
 const taskService = require('./taskService');
+const eventService = require('./eventService');
+const calendarTypeService = require('./calendarTypeService');
 const { FIRM_TZ, nowLocal } = require('./timezoneService');
 const { auditAdminAction } = require('../lib/auth.superuser');
 const { validateSql } = require('../lib/reportSchema/validator');
@@ -63,6 +65,20 @@ const TASK_UPDATE_CHANGE_KEYS = new Set([
 const TASK_ACTION_KINDS = new Set([
   'task.create.v1', 'task.update.v1', 'task.complete.v1', 'task.cancel.v1',
   'task.reopen.v1', 'task.transfer.v1',
+]);
+const EVENT_ACTION_KINDS = new Set([
+  'event.create.v1', 'event.update.v1', 'event.complete.v1', 'event.cancel.v1',
+]);
+const EVENT_CREATE_KEYS = new Set([
+  'kind', 'event_type', 'event_title', 'event_date', 'event_time', 'event_all_day',
+  'event_length', 'event_location', 'event_link', 'event_note', 'link', 'event_with',
+  'reminder', 'evidence',
+]);
+const EVENT_UPDATE_KEYS = new Set(['kind', 'event_id', 'changes', 'evidence']);
+const EVENT_TRANSITION_KEYS = new Set(['kind', 'event_id', 'resolution', 'delete_gcal', 'evidence']);
+const EVENT_UPDATE_CHANGE_KEYS = new Set([
+  'event_type', 'event_title', 'event_date', 'event_time', 'event_all_day',
+  'event_length', 'event_location', 'event_link', 'event_note', 'event_with', 'reminder',
 ]);
 const TASK_DRAFT_LINKS = Object.freeze({
   contact: {
@@ -402,6 +418,199 @@ async function normalizeExistingTaskAction(db, value, evidence) {
   throw httpError(422, 'Task action kind is unavailable');
 }
 
+function eventDraftText(value, field, max, { required = false } = {}) {
+  const text = String(value == null ? '' : value).trim();
+  if (required && !text) throw httpError(422, `Event action ${field} is required`);
+  if (text.length > max) throw httpError(422, `Event action ${field} exceeds ${max} characters`);
+  return text || null;
+}
+
+function eventDraftDate(value, field) {
+  if (value == null || value === '') return null;
+  const text = String(value);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) throw httpError(422, `Event action ${field} must be an ISO firm-local date`);
+  const date = new Date(`${text}T00:00:00Z`);
+  if (Number.isNaN(date.getTime()) || date.toISOString().slice(0, 10) !== text) {
+    throw httpError(422, `Event action ${field} is not a real date`);
+  }
+  return text;
+}
+
+function eventDraftTime(value, field = 'time') {
+  if (value == null || value === '') return null;
+  const text = String(value).trim();
+  if (/[Zz]$|[+-]\d{2}:?\d{2}$/.test(text)) throw httpError(422, `Event action ${field} must be firm-local without a timezone suffix`);
+  const match = /^(\d{2}):(\d{2})(?::(\d{2}))?$/.exec(text);
+  if (!match || Number(match[1]) > 23 || Number(match[2]) > 59 || Number(match[3] || 0) > 59) {
+    throw httpError(422, `Event action ${field} must be HH:MM or HH:MM:SS`);
+  }
+  return `${match[1]}:${match[2]}:${match[3] || '00'}`;
+}
+
+function eventDraftId(value) {
+  const id = Number(value);
+  if (!Number.isSafeInteger(id) || id < 1) throw httpError(422, 'Event action event id is invalid');
+  return id;
+}
+
+function evidenceSupportsEvent(evidenceRefs, evidence, eventId) {
+  return evidenceRefs.some((ref) => {
+    const query = evidence.find((item) => item && item.id === ref.query_id);
+    const row = query && Array.isArray(query.rows) ? query.rows[ref.row_number - 1] : null;
+    return row && Number(row.event_id) === eventId;
+  });
+}
+
+async function eventDraftType(db, value, { required = true } = {}) {
+  const requested = eventDraftText(value, 'type', 60, { required });
+  if (!requested) return { event_type: null, type_key: null, kind: null };
+  const resolved = await calendarTypeService.resolveForCreate(db, null, requested);
+  if (resolved.kind === 'meeting') throw httpError(422, 'Meeting types belong to Appointments, not Events');
+  if (!resolved.type_key) return { event_type: requested, type_key: null, kind: 'other' };
+  const row = await calendarTypeService.getType(db, resolved.type_key);
+  if (!row || row.active !== 1) throw httpError(422, 'Event type is unavailable');
+  return { event_type: row.label, type_key: row.type_key, kind: row.kind };
+}
+
+async function eventDraftLink(db, value) {
+  if (value == null) return null;
+  if (!onlyKeys(value, new Set(['type', 'id']))) throw httpError(422, 'Event action link is malformed');
+  const type = String(value.type || '');
+  if (!['case', 'contact', 'case_number'].includes(type)) throw httpError(422, 'Event action link type is unavailable');
+  const raw = String(value.id == null ? '' : value.id).trim();
+  if (!raw || raw.length > 20) throw httpError(422, 'Event action link id is invalid');
+  let rows;
+  if (type === 'case') {
+    [rows] = await db.query('SELECT case_id, case_number_full AS label FROM cases WHERE case_id = ? LIMIT 1', [raw]);
+  } else if (type === 'contact') {
+    if (!/^\d+$/.test(raw) || !Number.isSafeInteger(Number(raw)) || Number(raw) < 1) throw httpError(422, 'Event action contact link id is invalid');
+    [rows] = await db.query('SELECT contact_id, contact_name AS label FROM contacts WHERE contact_id = ? LIMIT 1', [Number(raw)]);
+  } else {
+    [rows] = await db.query('SELECT case_id, COALESCE(case_number_full, case_number) AS label FROM cases WHERE case_number = ? OR case_number_full = ? LIMIT 1', [raw, raw]);
+  }
+  const row = Array.isArray(rows) ? rows[0] : null;
+  if (!row) throw httpError(422, 'Event action linked record is unavailable');
+  return { type, id: raw, label: eventDraftText(row.label, 'link label', 200) || raw };
+}
+
+async function eventDraftProvider(db, value) {
+  if (value == null || value === '') return { user_id: null, label: 'Everyone (firm-wide)' };
+  const id = Number(value);
+  if (!Number.isInteger(id) || id < 0) throw httpError(422, 'Event action calendar scope is invalid');
+  if (id === 0) return { user_id: 0, label: "Nobody (doesn't block availability)" };
+  const [rows] = await db.query('SELECT user, user_name FROM users WHERE user = ? AND does_appts = 1 LIMIT 1', [id]);
+  const row = Array.isArray(rows) ? rows[0] : null;
+  if (!row) throw httpError(422, 'Event action calendar provider is unavailable');
+  return { user_id: Number(row.user), label: eventDraftText(row.user_name, 'provider label', 100) || `User ${id}` };
+}
+
+async function eventDraftReminder(db, value) {
+  if (value == null) return null;
+  if (!onlyKeys(value, new Set(['to', 'date']))) throw httpError(422, 'Event action reminder is malformed');
+  const to = Number(value.to);
+  if (!Number.isInteger(to) || to < 1) throw httpError(422, 'Event action reminder assignee is invalid');
+  const assignee = await taskService.findAssignableStaff(db, to);
+  if (!assignee) throw httpError(422, 'Event action reminder assignee is unavailable');
+  const date = eventDraftDate(value.date, 'reminder date');
+  if (!date) throw httpError(422, 'Event action reminder date is required');
+  if (date < nowLocal().toFormat('yyyy-MM-dd')) throw httpError(422, 'Event action reminder date cannot be in the past');
+  return { to: Number(assignee.user), date, label: taskDraftText(assignee.user_name, 'reminder assignee label', 100) || `User ${to}` };
+}
+
+function eventDraftLength(value) {
+  if (value == null || value === '') return null;
+  const length = Number(value);
+  if (!Number.isInteger(length) || length < 1 || length > 1440) throw httpError(422, 'Event action length must be 1-1440 minutes');
+  return length;
+}
+
+async function normalizeEventFields(db, value, { partial = false } = {}) {
+  const out = {};
+  if (!partial || 'event_type' in value) out.type = await eventDraftType(db, value.event_type, { required: !partial });
+  if (!partial || 'event_title' in value) out.event_title = eventDraftText(value.event_title, 'title', 200, { required: true });
+  if (!partial || 'event_date' in value) out.event_date = eventDraftDate(value.event_date, 'date');
+  if (!partial && !out.event_date) throw httpError(422, 'Event action date is required');
+  if ('event_all_day' in value || !partial) {
+    if (typeof value.event_all_day !== 'boolean') throw httpError(422, 'Event action all-day value must be true or false');
+    out.event_all_day = value.event_all_day;
+  }
+  if ('event_time' in value || !partial) out.event_time = eventDraftTime(value.event_time);
+  if ('event_length' in value || !partial) out.event_length = eventDraftLength(value.event_length);
+  const allDay = 'event_all_day' in out ? out.event_all_day : null;
+  if (allDay === true) {
+    out.event_time = null;
+    out.event_length = null;
+  }
+  if (!partial && allDay === false && !out.event_time) throw httpError(422, 'A timed event requires a firm-local time');
+  if ('event_location' in value || !partial) out.event_location = eventDraftText(value.event_location, 'location', 255);
+  if ('event_link' in value || !partial) out.event_link = eventDraftText(value.event_link, 'URL/link', 500);
+  if ('event_note' in value || !partial) out.event_note = eventDraftText(value.event_note, 'note', 10000);
+  if (allDay === true) out.event_with = { user_id: null, label: 'Everyone (firm-wide)' };
+  else if ('event_with' in value || !partial) out.event_with = await eventDraftProvider(db, value.event_with);
+  if ('reminder' in value || !partial) out.reminder = await eventDraftReminder(db, value.reminder);
+  return out;
+}
+
+function eventActionTarget(event) {
+  return {
+    event_id: Number(event.event_id), title: String(event.event_title || `Event ${event.event_id}`),
+    status: String(event.event_status || ''), type: event.event_type == null ? null : String(event.event_type),
+    kind: event.kind == null ? 'other' : String(event.kind), date: taskStoredDate(event.event_date),
+    time: eventDraftTime(event.event_time), all_day: event.event_all_day === 1 || event.event_all_day === true || event.event_all_day === '1',
+    google_calendar: event.event_gcal ? 'synced' : (event.event_calendar_id === 'none' ? 'opted_out' : 'not_synced'),
+  };
+}
+
+async function normalizeEventAction(db, value, evidence) {
+  const allowed = value.kind === 'event.create.v1' ? EVENT_CREATE_KEYS
+    : value.kind === 'event.update.v1' ? EVENT_UPDATE_KEYS : EVENT_TRANSITION_KEYS;
+  if (!onlyKeys(value, allowed)) throw httpError(422, 'Event action contains unsupported fields');
+  const refs = taskDraftEvidence(value.evidence, evidence);
+  if (value.kind === 'event.create.v1') {
+    const fields = await normalizeEventFields(db, value);
+    return { draft_id: crypto.randomUUID(), kind: value.kind, status: 'draft', ...fields,
+      link: await eventDraftLink(db, value.link), evidence: refs };
+  }
+  const eventId = eventDraftId(value.event_id);
+  if (!evidenceSupportsEvent(refs, evidence, eventId)) throw httpError(422, 'Event action evidence does not identify the target event');
+  const event = await eventService.getEvent(db, eventId);
+  if (!event) throw httpError(422, 'Event action target is unavailable');
+  if (event.event_status !== 'Scheduled' || event.superseded_by_event_id != null) {
+    throw httpError(422, `Only a current Scheduled event can be ${value.kind === 'event.update.v1' ? 'updated' : value.kind.includes('complete') ? 'completed' : 'canceled'}`);
+  }
+  const base = { draft_id: crypto.randomUUID(), kind: value.kind, status: 'draft', event: eventActionTarget(event), evidence: refs };
+  if (value.kind === 'event.update.v1') {
+    if (!onlyKeys(value.changes, EVENT_UPDATE_CHANGE_KEYS) || !Object.keys(value.changes || {}).length) throw httpError(422, 'Event update contains unsupported fields or no changes');
+    const changes = await normalizeEventFields(db, value.changes, { partial: true });
+    if ('event_time' in changes && !('event_all_day' in changes)) {
+      changes.event_all_day = changes.event_time == null;
+      if (changes.event_all_day) {
+        changes.event_length = null;
+        changes.event_with = { user_id: null, label: 'Everyone (firm-wide)' };
+      }
+    }
+    if ('event_all_day' in changes && changes.event_all_day === false && !('event_time' in changes) && !event.event_time) {
+      throw httpError(422, 'Changing an all-day event to timed requires a firm-local time');
+    }
+    if ('event_length' in changes && event.event_all_day && changes.event_all_day !== false) {
+      throw httpError(422, 'An all-day event cannot have a duration unless it is changed to timed');
+    }
+    return { ...base, changes };
+  }
+  const resolution = value.resolution == null || value.resolution === ''
+    ? eventService._defaultResolution(value.kind === 'event.complete.v1' ? 'Completed' : 'Canceled', event.kind)
+    : String(value.resolution);
+  try { eventService._validateResolution(resolution, value.kind === 'event.complete.v1' ? 'Completed' : 'Canceled', event.kind, { prefix: 'Ask Casey' }); }
+  catch (_) { throw httpError(422, 'Event action resolution is invalid for this event kind'); }
+  if (value.kind === 'event.complete.v1') {
+    if (resolution === 'missed') throw httpError(422, 'Missed deadlines are resolved by the calendar sweep, not a reviewed completion action');
+    if ('delete_gcal' in value) throw httpError(422, 'Event completion cannot choose Google Calendar deletion');
+    return { ...base, resolution };
+  }
+  if ('delete_gcal' in value && typeof value.delete_gcal !== 'boolean') throw httpError(422, 'Event cancel delete_gcal must be true or false');
+  return { ...base, resolution, delete_gcal: value.delete_gcal !== false };
+}
+
 async function taskDraftLink(db, value) {
   if (value == null) return null;
   if (!onlyKeys(value, new Set(['type', 'id']))) throw httpError(422, 'Task draft link is malformed');
@@ -427,7 +636,8 @@ async function taskDraftLink(db, value) {
 
 async function normalizeActionDraft(db, value, evidence, { currentUserId = null } = {}) {
   if (value == null) return null;
-  if (!value || !TASK_ACTION_KINDS.has(value.kind)) throw httpError(422, 'Task action kind is unavailable');
+  if (value && EVENT_ACTION_KINDS.has(value.kind)) return normalizeEventAction(db, value, evidence);
+  if (!value || !TASK_ACTION_KINDS.has(value.kind)) throw httpError(422, 'Action kind is unavailable');
   if (value.kind !== 'task.create.v1') return normalizeExistingTaskAction(db, value, evidence);
   if (!onlyKeys(value, TASK_CREATE_KEYS)) throw httpError(422, 'Task draft contains unsupported fields');
   const assigneeId = Number(value.assignee_user_id);
@@ -460,9 +670,9 @@ async function normalizeActionDraft(db, value, evidence, { currentUserId = null 
 }
 
 function unavailableTaskDraftAnswer() {
-  return 'I completed the lookup, but I could not produce a valid reviewed task-action card. Nothing was changed. ' +
-    'Ask me to prepare that task action again. If the card still does not appear, open the cited task and perform the ' +
-    'change directly in My Tasks.';
+  return 'I completed the lookup, but I could not produce a valid reviewed action card. Nothing was changed. ' +
+    'Ask me to prepare that action again. If the card still does not appear, open the cited record and perform the ' +
+    'change directly in YisraCase.';
 }
 
 async function repairActionDraft(db, approved, evidence, rejectedValue, rejection, userId) {
@@ -492,8 +702,11 @@ function taskDraftRequested(question, history = []) {
     .slice(-4)
     .map((message) => message.text);
   const text = [...priorUserText, String(question || '')].join('\n');
-  return /\b(?:task|to-do)\b/i.test(text) &&
+  const task = /\b(?:task|to-do)\b/i.test(text) &&
     /\b(?:draft|propose|prepare|create|make|add|edit|update|change|complete|finish|done|cancel|delete|remove|reopen|restore|transfer|reassign|assign)\b/i.test(text);
+  const event = /\bevent\b/i.test(text) &&
+    /\b(?:draft|propose|prepare|create|make|add|edit|update|change|complete|finish|done|cancel)\b/i.test(text);
+  return task || event;
 }
 
 function contextualAnswer(question, history) {
@@ -1034,7 +1247,8 @@ async function execute(db, { signedTicket, userId, auth, temporaryAttachments } 
     sources,
     ...(actionDraft ? { action_draft: actionDraft } : {}),
     steps: evidence.map((q) => ({ id: q.id, round: q.round, kind: q.kind, purpose: q.purpose, row_count: q.row_count, returned: q.rows.length, truncated: q.truncated || !!q.truncated_for_ai })),
-    investigation: { rounds, total_steps: totalSteps, returned_rows: totalRows, controller_output_tokens: controllerOutputTokens, stop_reason: stopReason, repairs, notices, task_draft_status: draftStatus },
+    investigation: { rounds, total_steps: totalSteps, returned_rows: totalRows, controller_output_tokens: controllerOutputTokens, stop_reason: stopReason, repairs, notices,
+      action_draft_status: draftStatus, task_draft_status: draftStatus },
     callId: ai.callId, model_mode: approved.modelMode,
   };
 }

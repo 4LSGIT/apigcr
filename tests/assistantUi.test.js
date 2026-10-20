@@ -172,6 +172,75 @@ describe('Ask Casey UI wiring', () => {
     expect(saveAssistantMessage).not.toHaveBeenCalled();
   });
 
+  test('maps every event action to the canonical route with an exact allowlisted body', () => {
+    const request = new Function(`${fnSrc(html, 'eventCreateBody')};${fnSrc(html, 'eventUpdateBody')};${fnSrc(html, 'eventActionRequest')};return eventActionRequest;`)(); // eslint-disable-line no-new-func
+    const create = { kind: 'event.create.v1', type: { event_type: 'Hearing', kind: 'hearing' }, event_title: 'Confirmation hearing',
+      event_date: '2026-10-27', event_time: '09:30:00', event_all_day: false, event_length: 45,
+      event_location: 'Court', event_link: null, event_note: 'Bring order', link: { type: 'case', id: 'C1', label: '26-1' },
+      event_with: { user_id: 8, label: 'Provider' }, reminder: { to: 7, date: '2026-10-26', label: 'Fred' }, ignored: 'never send' };
+    expect(request(create)).toEqual({ path: '/api/events', method: 'POST', body: {
+      event_type: 'Hearing', event_title: 'Confirmation hearing', event_date: '2026-10-27', event_time: '09:30:00',
+      event_all_day: 0, event_length: 45, event_location: 'Court', event_link: null, event_note: 'Bring order', event_with: 8,
+      event_link_type: 'case', event_link_id: 'C1', reminder: { to: 7, date: '2026-10-26' },
+    } });
+    const event = { event_id: 42, title: 'H', status: 'Scheduled' };
+    expect(request({ kind: 'event.update.v1', event, changes: { event_title: 'New', event_all_day: true, event_time: null,
+      event_with: { user_id: 0, label: 'Nobody' }, reminder: null, ignored: 'x' } })).toEqual({
+      path: '/api/events/42', method: 'PATCH', body: { event_title: 'New', event_all_day: 1, event_time: null, event_with: 0, reminder: null },
+    });
+    expect(request({ kind: 'event.complete.v1', event, resolution: 'held' })).toEqual({ path: '/api/events/42/complete', method: 'PATCH', body: { resolution: 'held' } });
+    expect(request({ kind: 'event.cancel.v1', event, resolution: 'cancelled', delete_gcal: true })).toEqual({ path: '/api/events/42/cancel', method: 'PATCH', body: { delete_gcal: true, resolution: 'cancelled' } });
+  });
+
+  test('event SweetAlert cancellation writes nothing; confirmation is single-flight, persists, and opens the event', async () => {
+    let resolveWrite;
+    const api = jest.fn(() => new Promise((resolve) => { resolveWrite = resolve; }));
+    const render = jest.fn(); const history = []; const saveAssistantMessage = jest.fn().mockResolvedValue();
+    const P = { Swal: { fire: jest.fn().mockResolvedValue({ isConfirmed: false }) }, showEvent: jest.fn() };
+    const make = new Function('P', 'api', 'render', 'history', 'saveAssistantMessage',
+      `const EVENT_ACTION_KINDS=new Set(['event.cancel.v1']);${fnSrc(html, 'isEventActionDraft')};${fnSrc(html, 'eventActionLabel')};${fnSrc(html, 'eventTypeText')};${fnSrc(html, 'eventProviderText')};${fnSrc(html, 'eventReminderText')};${fnSrc(html, 'eventDraftText')};${fnSrc(html, 'eventCreateBody')};${fnSrc(html, 'eventUpdateBody')};${fnSrc(html, 'eventActionRequest')};async ${fnSrc(html, 'confirmEventDraft')};async ${fnSrc(html, 'executeEventDraft')};return executeEventDraft;` // eslint-disable-line no-new-func
+    )(P, api, render, history, saveAssistantMessage);
+    const message = { action_draft: { draft_id: 'event-1', kind: 'event.cancel.v1', status: 'draft',
+      event: { event_id: 42, title: 'Hearing', status: 'Scheduled', type: 'Hearing', kind: 'hearing', date: '2026-10-27', time: '09:30:00', all_day: false },
+      resolution: 'cancelled', delete_gcal: true } };
+    await make(message);
+    expect(api).not.toHaveBeenCalled();
+    expect(P.Swal.fire).toHaveBeenCalledWith(expect.objectContaining({ title: 'Cancel event', text: expect.stringContaining('the existing entry will be deleted'), showCancelButton: true }));
+
+    P.Swal.fire.mockResolvedValue({ isConfirmed: true });
+    const first = make(message); await Promise.resolve(); await Promise.resolve();
+    await make(message);
+    expect(api).toHaveBeenCalledTimes(1);
+    expect(api).toHaveBeenCalledWith('/api/events/42/cancel', { delete_gcal: true, resolution: 'cancelled' }, 'PATCH');
+    resolveWrite({ status: 'success', data: { event_id: 42 } }); await first;
+    expect(message.action_draft).toMatchObject({ status: 'applied', result_event_id: 42, executing: false });
+    expect(history[0].action_result).toEqual({ kind: 'event.cancel.v1', draft_id: 'event-1', event_id: 42 });
+    expect(saveAssistantMessage).toHaveBeenCalledWith(history[0]);
+    expect(P.showEvent).toHaveBeenCalledWith(42);
+    await make(message);
+    expect(api).toHaveBeenCalledTimes(1);
+  });
+
+  test('failed event writes stay retryable and saved results prevent history replay', async () => {
+    const apply = new Function('EVENT_ACTION_KINDS', `${fnSrc(html, 'applyEventActionResults')};return applyEventActionResults;`)(new Set(['event.update.v1'])); // eslint-disable-line no-new-func
+    const messages = [{ action_draft: { draft_id: 'event-2', kind: 'event.update.v1', status: 'draft' } },
+      { action_result: { draft_id: 'event-2', kind: 'event.update.v1', event_id: 42 } }];
+    expect(apply(messages)[0].action_draft).toMatchObject({ status: 'applied', result_event_id: 42 });
+
+    const api = jest.fn().mockRejectedValue(new Error('Event update failed')); const render = jest.fn();
+    const P = { Swal: { fire: jest.fn().mockResolvedValue({ isConfirmed: true }) }, showEvent: jest.fn() };
+    const make = new Function('P', 'api', 'render', 'history', 'saveAssistantMessage',
+      `const EVENT_ACTION_KINDS=new Set(['event.update.v1']);${fnSrc(html, 'isEventActionDraft')};${fnSrc(html, 'eventActionLabel')};${fnSrc(html, 'eventTypeText')};${fnSrc(html, 'eventProviderText')};${fnSrc(html, 'eventReminderText')};${fnSrc(html, 'eventDraftText')};${fnSrc(html, 'eventCreateBody')};${fnSrc(html, 'eventUpdateBody')};${fnSrc(html, 'eventActionRequest')};async ${fnSrc(html, 'confirmEventDraft')};async ${fnSrc(html, 'executeEventDraft')};return executeEventDraft;` // eslint-disable-line no-new-func
+    )(P, api, render, [], jest.fn());
+    const message = { action_draft: { draft_id: 'event-fail', kind: 'event.update.v1', status: 'draft',
+      event: { event_id: 42, title: 'H', status: 'Scheduled', type: 'Hearing', kind: 'hearing', date: '2026-10-27', time: null, all_day: true },
+      changes: { event_note: 'Updated' } } };
+    await make(message);
+    expect(message.action_draft).toMatchObject({ status: 'draft', executing: false, action_error: 'Event update failed' });
+    await make(message);
+    expect(api).toHaveBeenCalledTimes(2);
+  });
+
   test('uses exact structured follow-up queries and shell-native record links', () => {
     expect(html).toContain('data-follow="${esc(s.query)}"');
     expect(html).toContain("P.addFile(label || id, 'case', String(id))");

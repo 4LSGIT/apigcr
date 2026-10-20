@@ -1291,6 +1291,21 @@ describe('_sniff — appt / event matchers', () => {
     expect(seen.every(s => JSON.stringify(s.fields) === JSON.stringify(MARKER))).toBe(true);
   });
 
+  test('reviewed Casey event routes use the canonical event bus contract end to end', () => {
+    const w = mkWindow();
+    const seen = spy(w);
+    w.YC._sniff('POST', '/api/events', { status: 'success', data: { event_id: 80 } });
+    w.YC._sniff('PATCH', '/api/events/80', { status: 'success', data: { event_id: 80 } });
+    w.YC._sniff('PATCH', '/api/events/80/complete', { status: 'success', data: { event_id: 80 } });
+    w.YC._sniff('PATCH', '/api/events/80/cancel', { status: 'success', data: { event_id: 80 } });
+    expect(seen).toEqual([
+      { addr: 'event:80', fields: MARKER, origin: 'auto:POST /api/events' },
+      { addr: 'event:80', fields: MARKER, origin: 'auto:PATCH /api/events/80' },
+      { addr: 'event:80', fields: MARKER, origin: 'auto:PATCH /api/events/80/complete' },
+      { addr: 'event:80', fields: MARKER, origin: 'auto:PATCH /api/events/80/cancel' },
+    ]);
+  });
+
   test('the id comes from the URL where the URL has one', () => {
     const w = mkWindow();
     const seen = spy(w);

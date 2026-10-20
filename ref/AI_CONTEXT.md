@@ -2087,6 +2087,41 @@ Fix missing propagation for every caller; never add a Casey-only emit. The
 Tasks UI's established behavior; cross-frame task propagation belongs in a
 canonical Tasks/bus arc.
 
+**Reviewed Events lifecycle (Ask Casey A3, 10-20).** `assistant_answer` may
+also return one `event.create.v1`, `event.update.v1`, `event.complete.v1`, or
+`event.cancel.v1`. `assistantService` rejects extra fields, resolves the Event
+type to a canonical label/key/kind, refuses meeting kinds, validates firm-local
+ISO date/time, resolves creation-time links/providers/reminder assignees, and
+requires 1–8 current evidence references. Existing-event actions additionally
+need a cited row containing the exact `event_id`; the service reloads the row
+and accepts only Scheduled, non-superseded targets.
+
+Create requires type/title/date/all-day and a time when timed. Optional duration
+is 1–1,440 minutes; null means the Event service's 60-minute Google default.
+All-day normalizes time/duration to null and scope to firm-wide. Link is one
+verified `case|contact|case_number` pair and is never updateable. Scope is null
+(all providers), `0` (none), or a verified `does_appts` user. Reminder is null
+or an assignable user plus a non-past firm-local date and uses the canonical
+linked-Task side effect. Update exposes only type/title/date/time/all-day/
+duration/location/URL/note/scope/reminder—not status, resolution, kind,
+`type_key`, calendar id, dedupe, `skip_gcal`, link identity, or actor.
+
+Complete and cancel use their dedicated `/api/events/:id/*` routes. Resolution
+is server-defaulted and displayed (`deadline` complete → `met`, other complete
+→ `held`, cancel → `cancelled`); only allowed staff-facing per-kind values
+survive (`missed` remains sweep-owned). Cancel
+also defaults and displays `delete_gcal:true`. The card/SweetAlert describes
+Google Calendar and reminder effects. The browser fixes the four route/method/
+body mappings and never sends `acting_user_id`; the authenticated Events route
+stamps the actor. Single-flight/retry/history-result behavior mirrors Tasks,
+and success opens `showEvent`.
+
+No bus change was needed. `public/js/yc-sync.js` already maps the canonical
+create/update/complete/cancel calls to `event:<id>` refetch markers, and the
+Events tab, Calendar, case, and contact readers already subscribe. There is no
+Casey emit. Event batch, delete/reopen, Appointments, and calendar selection are
+not part of A3.
+
 **Question deep links.** `ask=<encoded question>` may accompany any canonical
 workspace `open=` target. It
 captures a maximum-2,000-character draft in the shell, synchronously removes
