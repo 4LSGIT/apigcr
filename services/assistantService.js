@@ -17,7 +17,7 @@ const attachmentService = require('./assistantAttachmentService');
 const taskService = require('./taskService');
 const eventService = require('./eventService');
 const calendarTypeService = require('./calendarTypeService');
-const { FIRM_TZ, nowLocal } = require('./timezoneService');
+const { FIRM_TZ, nowLocal, parseUserDateTime } = require('./timezoneService');
 const { auditAdminAction } = require('../lib/auth.superuser');
 const { validateSql } = require('../lib/reportSchema/validator');
 const ticket = require('../lib/assistantTicket');
@@ -69,6 +69,27 @@ const TASK_ACTION_KINDS = new Set([
 const EVENT_ACTION_KINDS = new Set([
   'event.create.v1', 'event.update.v1', 'event.complete.v1', 'event.cancel.v1',
 ]);
+const APPT_ACTION_KINDS = new Set([
+  'appt.create.v1', 'appt.update.v1', 'appt.attended.v1', 'appt.no_show.v1',
+  'appt.cancel.v1', 'appt.reschedule.v1', 'appt.reschedule_later.v1',
+]);
+const APPT_CREATE_KEYS = new Set([
+  'kind', 'contact_id', 'case_id', 'appt_type', 'appt_length', 'appt_platform',
+  'appt_date', 'appt_with', 'note', 'confirm_sms', 'confirm_email',
+  'confirm_message', 'evidence',
+]);
+const APPT_UPDATE_KEYS = new Set(['kind', 'appt_id', 'changes', 'evidence']);
+const APPT_UPDATE_CHANGE_KEYS = new Set(['note', 'case_id']);
+const APPT_NOTE_KEYS = new Set(['kind', 'appt_id', 'note', 'evidence']);
+const APPT_NO_SHOW_KEYS = new Set(['kind', 'appt_id', 'note', 'enroll', 'evidence']);
+const APPT_CANCEL_KEYS = new Set([
+  'kind', 'appt_id', 'note', 'sms', 'email', 'confirm_message', 'cancel_gcal',
+  'create_task', 'evidence',
+]);
+const APPT_RESCHEDULE_KEYS = new Set([
+  'kind', 'appt_id', 'new_date', 'note', 'sms', 'email', 'confirm_message', 'evidence',
+]);
+const APPT_RESCHEDULE_LATER_KEYS = new Set(['kind', 'appt_id', 'note', 'create_task', 'evidence']);
 const EVENT_CREATE_KEYS = new Set([
   'kind', 'event_type', 'event_title', 'event_date', 'event_time', 'event_all_day',
   'event_length', 'event_location', 'event_link', 'event_note', 'link', 'event_with',
@@ -611,6 +632,198 @@ async function normalizeEventAction(db, value, evidence) {
   return { ...base, resolution, delete_gcal: value.delete_gcal !== false };
 }
 
+function apptActionId(value) {
+  const id = Number(value);
+  if (!Number.isSafeInteger(id) || id < 1) throw httpError(422, 'Appointment action appointment id is invalid');
+  return id;
+}
+
+function evidenceSupportsAppt(evidenceRefs, evidence, apptId) {
+  return evidenceRefs.some((ref) => {
+    const query = evidence.find((item) => item && item.id === ref.query_id);
+    const row = query && Array.isArray(query.rows) ? query.rows[ref.row_number - 1] : null;
+    return row && Number(row.appt_id) === apptId;
+  });
+}
+
+function apptActionText(value, field, max, { required = false } = {}) {
+  const text = String(value == null ? '' : value).trim();
+  if (required && !text) throw httpError(422, `Appointment action ${field} is required`);
+  if (text.length > max) throw httpError(422, `Appointment action ${field} exceeds ${max} characters`);
+  return text;
+}
+
+function apptActionDateTime(value, field = 'date/time') {
+  const text = String(value == null ? '' : value).trim();
+  if (!/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(?::\d{2})?$/.test(text) || /[Zz]|[+-]\d{2}:?\d{2}$/.test(text)) {
+    throw httpError(422, `Appointment action ${field} must be a firm-local YYYY-MM-DD HH:MM[:SS] value`);
+  }
+  let instant;
+  try { instant = parseUserDateTime(text); }
+  catch (_) { throw httpError(422, `Appointment action ${field} is not a real firm-local date/time`); }
+  if (!instant) throw httpError(422, `Appointment action ${field} is invalid`);
+  const normalized = text.replace('T', ' ') + (text.length === 16 ? ':00' : '');
+  if (instant.getTime() <= nowLocal().toUTC().toMillis()) throw httpError(422, `Appointment action ${field} must be in the future`);
+  return normalized;
+}
+
+async function apptActionType(db, value) {
+  const requested = apptActionText(value, 'type', 100, { required: true });
+  const resolved = await calendarTypeService.resolveForCreate(db, null, requested);
+  if (!resolved.type_key) throw httpError(422, 'Appointment action type must be an active meeting type');
+  const row = await calendarTypeService.getType(db, resolved.type_key);
+  if (!row || row.active !== 1 || row.kind !== 'meeting') throw httpError(422, 'Appointment action type must be an active meeting type');
+  return { appt_type: row.label, type_key: row.type_key, singleton: row.singleton === 1 };
+}
+
+async function apptActionProvider(db, value) {
+  const id = Number(value);
+  if (!Number.isInteger(id) || id < 1) throw httpError(422, 'Appointment action provider is invalid');
+  const [rows] = await db.query('SELECT user, user_name FROM users WHERE user = ? AND does_appts = 1 AND user_auth = 1 LIMIT 1', [id]);
+  const row = Array.isArray(rows) ? rows[0] : null;
+  if (!row) throw httpError(422, 'Appointment action provider is unavailable');
+  return { user_id: Number(row.user), label: apptActionText(row.user_name, 'provider label', 100) || `User ${id}` };
+}
+
+async function apptActionContact(db, value) {
+  const id = Number(value);
+  if (!Number.isSafeInteger(id) || id < 1) throw httpError(422, 'Appointment action contact is invalid');
+  const [rows] = await db.query('SELECT contact_id, contact_name FROM contacts WHERE contact_id = ? LIMIT 1', [id]);
+  const row = Array.isArray(rows) ? rows[0] : null;
+  if (!row) throw httpError(422, 'Appointment action contact is unavailable');
+  return { contact_id: Number(row.contact_id), label: apptActionText(row.contact_name, 'contact label', 200) || `Contact ${id}` };
+}
+
+async function apptActionCase(db, value) {
+  if (value == null || value === '') return null;
+  const id = String(value).trim();
+  if (!id || id.length > 64 || !/^[A-Za-z0-9_-]+$/.test(id)) throw httpError(422, 'Appointment action case is invalid');
+  const [rows] = await db.query('SELECT case_id, COALESCE(case_number_full, case_number) AS label FROM cases WHERE case_id = ? LIMIT 1', [id]);
+  const row = Array.isArray(rows) ? rows[0] : null;
+  if (!row) throw httpError(422, 'Appointment action case is unavailable');
+  return { case_id: String(row.case_id), label: apptActionText(row.label, 'case label', 200) || id };
+}
+
+async function assertApptContactCaseLink(db, contact, caseRecord) {
+  if (!caseRecord) return;
+  if (!contact) throw httpError(422, 'Appointment action cannot link a case without a selected contact');
+  const [rows] = await db.query(
+    'SELECT case_relate_id FROM case_relate WHERE case_relate_case_id = ? AND case_relate_client_id = ? LIMIT 1',
+    [caseRecord.case_id, contact.contact_id]);
+  if (!Array.isArray(rows) || !rows[0]) throw httpError(422, 'Appointment action case is not linked to the selected contact');
+}
+
+function apptActionBool(value, field, fallback = false) {
+  if (value == null) return fallback;
+  if (typeof value !== 'boolean') throw httpError(422, `Appointment action ${field} must be true or false`);
+  return value;
+}
+
+function apptActionMessageFields(value, { cancel = false } = {}) {
+  const sms = apptActionBool(value.sms ?? value.confirm_sms, 'SMS confirmation');
+  const email = apptActionBool(value.email ?? value.confirm_email, 'email confirmation');
+  const confirmMessage = apptActionText(value.confirm_message, 'confirmation message', 2000);
+  if ((sms || email) && !confirmMessage) throw httpError(422, 'Appointment action confirmation message is required when sending SMS or email');
+  return { [cancel ? 'sms' : 'confirm_sms']: sms, [cancel ? 'email' : 'confirm_email']: email, confirm_message: confirmMessage };
+}
+
+function apptActionTarget(row) {
+  const date = row.appt_date instanceof Date ? row.appt_date.toISOString().slice(0, 19).replace('T', ' ') : String(row.appt_date || '').slice(0, 19).replace('T', ' ');
+  return {
+    appt_id: Number(row.appt_id), status: String(row.appt_status || ''), type: String(row.appt_type || ''),
+    date, length: Number(row.appt_length) || null, platform: String(row.appt_platform || ''),
+    note: String(row.appt_note || ''),
+    contact: row.appt_client_id == null ? null : { contact_id: Number(row.appt_client_id), label: String(row.contact_name || `Contact ${row.appt_client_id}`) },
+    case: row.appt_case_id ? { case_id: String(row.appt_case_id), label: String(row.case_number_display || row.appt_case_id) } : null,
+    provider: row.appt_with == null ? null : { user_id: Number(row.appt_with), label: String(row.user_name || `User ${row.appt_with}`) },
+    google_calendar: { firm: !!row.appt_gcal, provider: !!row.appt_gcal_user },
+  };
+}
+
+async function loadApptActionTarget(db, apptId) {
+  const [rows] = await db.query(
+    `SELECT a.appt_id, a.appt_client_id, a.appt_case_id, a.appt_type, a.appt_length, a.appt_note,
+            a.appt_platform, a.appt_status, a.appt_date, a.appt_with, a.appt_gcal,
+            a.appt_gcal_user, a.rescheduled_from_appt_id, c.contact_name,
+            COALESCE(cs.case_number_full, cs.case_number) AS case_number_display,
+            u.user_name
+       FROM appts a
+       LEFT JOIN contacts c ON c.contact_id = a.appt_client_id
+       LEFT JOIN cases cs ON cs.case_id = a.appt_case_id
+       LEFT JOIN users u ON u.user = a.appt_with
+      WHERE a.appt_id = ? LIMIT 1`, [apptId]);
+  return Array.isArray(rows) ? rows[0] : null;
+}
+
+function assertApptStatus(kind, status) {
+  const allowed = {
+    'appt.update.v1': ['Scheduled'],
+    'appt.attended.v1': ['Scheduled', 'No Show'],
+    'appt.no_show.v1': ['Scheduled', 'Attended'],
+    'appt.cancel.v1': ['Scheduled', 'Attended', 'No Show'],
+    'appt.reschedule.v1': ['Scheduled', 'Attended', 'No Show'],
+    'appt.reschedule_later.v1': ['Scheduled', 'Attended', 'No Show'],
+  }[kind] || [];
+  if (!allowed.includes(status)) throw httpError(422, `An appointment with status ${status || 'unknown'} cannot be used for this action`);
+}
+
+async function normalizeApptAction(db, value, evidence) {
+  const allowed = value.kind === 'appt.create.v1' ? APPT_CREATE_KEYS
+    : value.kind === 'appt.update.v1' ? APPT_UPDATE_KEYS
+      : value.kind === 'appt.no_show.v1' ? APPT_NO_SHOW_KEYS
+        : value.kind === 'appt.cancel.v1' ? APPT_CANCEL_KEYS
+          : value.kind === 'appt.reschedule.v1' ? APPT_RESCHEDULE_KEYS
+            : value.kind === 'appt.reschedule_later.v1' ? APPT_RESCHEDULE_LATER_KEYS : APPT_NOTE_KEYS;
+  if (!onlyKeys(value, allowed)) throw httpError(422, 'Appointment action contains unsupported fields');
+  const refs = taskDraftEvidence(value.evidence, evidence);
+  if (value.kind === 'appt.create.v1') {
+    const length = Number(value.appt_length);
+    if (!Number.isInteger(length) || length < 1 || length > 1440) throw httpError(422, 'Appointment action length must be 1-1440 minutes');
+    const messages = apptActionMessageFields(value);
+    const contact = await apptActionContact(db, value.contact_id);
+    const caseRecord = await apptActionCase(db, value.case_id);
+    await assertApptContactCaseLink(db, contact, caseRecord);
+    return {
+      draft_id: crypto.randomUUID(), kind: value.kind, status: 'draft', firm_timezone: FIRM_TZ,
+      contact, case: caseRecord,
+      type: await apptActionType(db, value.appt_type), appt_length: length,
+      appt_platform: apptActionText(value.appt_platform, 'platform', 255, { required: true }),
+      appt_date: apptActionDateTime(value.appt_date), provider: await apptActionProvider(db, value.appt_with),
+      note: apptActionText(value.note, 'note', 10000), ...messages, evidence: refs,
+    };
+  }
+  const apptId = apptActionId(value.appt_id);
+  if (!evidenceSupportsAppt(refs, evidence, apptId)) throw httpError(422, 'Appointment action evidence does not identify the target appointment');
+  const row = await loadApptActionTarget(db, apptId);
+  if (!row) throw httpError(422, 'Appointment action target is unavailable');
+  assertApptStatus(value.kind, String(row.appt_status || ''));
+  const base = { draft_id: crypto.randomUUID(), kind: value.kind, status: 'draft', firm_timezone: FIRM_TZ, appt: apptActionTarget(row), evidence: refs };
+  if (value.kind === 'appt.update.v1') {
+    if (!onlyKeys(value.changes, APPT_UPDATE_CHANGE_KEYS) || !Object.keys(value.changes || {}).length) throw httpError(422, 'Appointment update contains unsupported fields or no changes');
+    const changes = {};
+    if ('note' in value.changes) changes.note = apptActionText(value.changes.note, 'note', 10000);
+    if ('case_id' in value.changes) {
+      changes.case = await apptActionCase(db, value.changes.case_id);
+      await assertApptContactCaseLink(db, base.appt.contact, changes.case);
+    }
+    return { ...base, changes };
+  }
+  const note = apptActionText(value.note, 'note', 10000);
+  if (value.kind === 'appt.attended.v1') return { ...base, note };
+  if (value.kind === 'appt.no_show.v1') return { ...base, note, enroll: apptActionBool(value.enroll, 'no-show enrollment') };
+  if (value.kind === 'appt.cancel.v1') return { ...base, note, ...apptActionMessageFields(value, { cancel: true }),
+    cancel_gcal: apptActionBool(value.cancel_gcal, 'Google Calendar deletion', true),
+    create_task: apptActionBool(value.create_task, 'follow-up task') };
+  if (value.kind === 'appt.reschedule.v1') {
+    const newDate = apptActionDateTime(value.new_date, 'new date/time');
+    if (newDate === base.appt.date) throw httpError(422, 'Appointment reschedule requires a different date/time');
+    return { ...base, new_date: newDate, note, ...apptActionMessageFields(value, { cancel: true }) };
+  }
+  if (value.kind === 'appt.reschedule_later.v1') return { ...base, note,
+    create_task: apptActionBool(value.create_task, 'follow-up task') };
+  throw httpError(422, 'Appointment action kind is unavailable');
+}
+
 async function taskDraftLink(db, value) {
   if (value == null) return null;
   if (!onlyKeys(value, new Set(['type', 'id']))) throw httpError(422, 'Task draft link is malformed');
@@ -637,6 +850,7 @@ async function taskDraftLink(db, value) {
 async function normalizeActionDraft(db, value, evidence, { currentUserId = null } = {}) {
   if (value == null) return null;
   if (value && EVENT_ACTION_KINDS.has(value.kind)) return normalizeEventAction(db, value, evidence);
+  if (value && APPT_ACTION_KINDS.has(value.kind)) return normalizeApptAction(db, value, evidence);
   if (!value || !TASK_ACTION_KINDS.has(value.kind)) throw httpError(422, 'Action kind is unavailable');
   if (value.kind !== 'task.create.v1') return normalizeExistingTaskAction(db, value, evidence);
   if (!onlyKeys(value, TASK_CREATE_KEYS)) throw httpError(422, 'Task draft contains unsupported fields');
@@ -706,7 +920,9 @@ function taskDraftRequested(question, history = []) {
     /\b(?:draft|propose|prepare|create|make|add|edit|update|change|complete|finish|done|cancel|delete|remove|reopen|restore|transfer|reassign|assign)\b/i.test(text);
   const event = /\bevent\b/i.test(text) &&
     /\b(?:draft|propose|prepare|create|make|add|edit|update|change|complete|finish|done|cancel)\b/i.test(text);
-  return task || event;
+  const appt = /\b(?:appt|appointment)\b/i.test(text) &&
+    /\b(?:draft|propose|prepare|create|make|add|edit|update|change|attend|attended|no[ -]?show|cancel|reschedule)\b/i.test(text);
+  return task || event || appt;
 }
 
 function contextualAnswer(question, history) {

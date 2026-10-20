@@ -1,7 +1,7 @@
 # Ask Casey
 
 Ask Casey is the user-facing name for the firm's YisrAI assistant. Its searches
-are read-only; its reviewed Task and Event actions are performed by the
+are read-only; its reviewed Task, Event, and Appointment actions are performed by the
 signed-in user after explicit review. It can answer
 questions about firm records, how YisraCase itself works, general knowledge,
 and current weather. Open it from the persistent **Ask Casey** button at the
@@ -121,8 +121,7 @@ for every caller.
 
 Casey can also prepare one reviewed Event action: create, update allowed Event
 fields, complete, or cancel. It cannot delete or reopen an Event because the
-Events API has no such route, and it cannot use this card to create a batch or
-an Appointment.
+Events API has no such route, and it cannot use this card to create a batch.
 
 An Event creation card requires a title, type, firm-local date, and an explicit
 all-day choice. A timed Event also requires a firm-local time. Times are wall
@@ -164,6 +163,65 @@ saved with the chat, so reopening the conversation offers **Open event** rather
 than the same write again. The normal Events sync bus refreshes other open
 Events, Calendar, case, and contact views.
 
+### Appointment actions
+
+Casey can prepare one reviewed Appointment action: create, narrow update,
+attended, no-show, cancel, reschedule to a new slot, or mark for rescheduling
+later. Appointment and Event actions remain different contracts even though
+both appear on the calendar.
+
+Creation requires an existing client contact, active meeting type, length,
+platform/location, future firm-local date and time, and active appointment
+provider. A case linked to that contact and a note are optional. The card displays the firm's timezone,
+exact provider, client, case, type key, duration, and whether the type is a
+singleton. It also shows any requested client SMS/email confirmation and its
+exact message. Confirmation messages default off.
+
+Creating an Appointment attempts to create both a firm Google Calendar entry
+and a provider-calendar entry when that provider has a separate calendar. The
+firm entry includes the client attendee, but Google update emails are disabled.
+Creation cancels active no-show sequences and enrolls normal pre-appointment
+automation. A singleton meeting type may supersede an existing live
+Appointment for that case and remove the old calendar entries; the card says
+so before confirmation.
+
+For an existing Appointment, current evidence must contain its exact
+`appt_id`. Casey reloads the record and its contact, case, provider, status,
+time, and calendar state before returning the card. Canceled and Rescheduled
+Appointments are terminal. Attended and No Show can correct one another;
+cancel or reschedule may also follow either status, matching the native UI.
+
+The generic Appointment PATCH endpoint does not update Google Calendar or
+appointment automation. Casey therefore limits ordinary update to replacing
+the complete note or changing/removing the case link; a new case must be linked
+to the Appointment's contact. A date/time change uses
+the dedicated reschedule operation. Type, length, platform, provider, status,
+calendar identifiers, reference IDs, and actor/source fields cannot be sent
+through the update card.
+
+No-show enrollment defaults off. When reviewed on, it may start the normal
+no-show sequence; an eligible intake case may also move to its no-show pipeline
+stage. Attended and no-show cancel Appointment automation but keep existing
+calendar entries. Cancel defaults to deleting both calendar entries and not
+creating a follow-up Task. Optional cancellation SMS/email and optional
+follow-up Task are displayed explicitly.
+
+Reschedule-now marks the old Appointment Rescheduled, removes its calendar
+entries and automation, and creates a lineage-linked successor with the same
+client, case, type, length, platform, and provider at the reviewed new time.
+The successor receives new calendar entries and automation, and optional
+client confirmation can be reviewed. Reschedule-later creates no successor;
+it removes the old calendar entries and automation and may create the reviewed
+follow-up Task. A successful reschedule-now opens the successor; other actions
+open the affected Appointment.
+
+The browser maps each fixed proposal kind to the ordinary authenticated
+`/api/appts*` route and exact allowlisted body. It never accepts a route,
+method, source, or acting user from the model. Results are saved with the chat,
+and the normal Appointment sync bus refreshes open Appointment, Calendar,
+case, and contact views—including both predecessor and successor after a
+reschedule.
+
 ## Models and files
 
 The model selector offers two product-level choices:
@@ -196,7 +254,7 @@ asking about a file does not save it.
 
 Assistant searches and action proposals cannot change anything by themselves.
 YisrAI cannot send email, edit a contact, fill a form, or create a workflow. It
-can return the typed Task or Event proposal described above; the signed-in
+can return the typed Task, Event, or Appointment proposal described above; the signed-in
 staff member must review and confirm the card before the ordinary application
 route performs it. The separate,
 user-invoked **Save to case** attachment control is another explicit write; it
@@ -273,9 +331,12 @@ scoped `weather.lookup` external read. The answer may additionally contain one
 server-validated `task.create.v1`, `task.update.v1`, `task.complete.v1`,
 `task.cancel.v1`, `task.reopen.v1`, or `task.transfer.v1` proposal. The proposal
 may instead be one `event.create.v1`, `event.update.v1`, `event.complete.v1`,
-or `event.cancel.v1` proposal. The proposal itself changes no record. A signed-in user can perform that exact action only
+or `event.cancel.v1` proposal. It may instead be one `appt.create.v1`,
+`appt.update.v1`, `appt.attended.v1`, `appt.no_show.v1`, `appt.cancel.v1`,
+`appt.reschedule.v1`, or `appt.reschedule_later.v1` proposal. The proposal
+itself changes no record. A signed-in user can perform that exact action only
 through the card's explicit review and confirmation, which invokes the ordinary
-authenticated task route.
+authenticated route for that record family.
 
 Future action types can use a visible plan, signed approval and execution
 record, but they must be introduced separately. Read-only auto-run does not

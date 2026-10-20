@@ -11,6 +11,7 @@ const reportService = require('../services/reportService');
 const weatherService = require('../services/assistantWeatherService');
 const taskService = require('../services/taskService');
 const eventService = require('../services/eventService');
+const apptService = require('../services/apptService');
 const calendarTypeService = require('../services/calendarTypeService');
 
 const sql = (text, extra = {}) => ({ id: 'q1', kind: 'sql.read', purpose: 'Find the relevant rows', sql: text, ...extra });
@@ -530,10 +531,10 @@ describe('assistant knowledge and prompts', () => {
   });
 
   test('all assistant prompts are registered JSON prompts', () => {
-    expect(prompts.getPrompt('assistant_plan')).toMatchObject({ output_type: 'json', version: '11', model: 'claude-opus-5' });
+    expect(prompts.getPrompt('assistant_plan')).toMatchObject({ output_type: 'json', version: '12', model: 'claude-opus-5' });
     expect(prompts.getPrompt('assistant_investigate')).toMatchObject({ output_type: 'json', version: '2', model: 'claude-opus-5' });
-    expect(prompts.getPrompt('assistant_answer')).toMatchObject({ output_type: 'json', version: '13', model: 'claude-opus-5' });
-    expect(prompts.getPrompt('assistant_task_draft_repair')).toMatchObject({ output_type: 'json', version: '4', model: 'claude-opus-5' });
+    expect(prompts.getPrompt('assistant_answer')).toMatchObject({ output_type: 'json', version: '14', model: 'claude-opus-5' });
+    expect(prompts.getPrompt('assistant_task_draft_repair')).toMatchObject({ output_type: 'json', version: '5', model: 'claude-opus-5' });
     expect(prompts.getPrompt('assistant_plan').system).toMatch(/COLLATE utf8mb4_general_ci/);
     expect(prompts.getPrompt('assistant_plan').system).toMatch(/Never generate[\s\S]*x IN \(SELECT \.\.\. LIMIT n\)/);
     expect(prompts.getPrompt('assistant_plan').system).toMatch(/users\.roles[\s\S]*canonical role field/);
@@ -547,9 +548,116 @@ describe('assistant knowledge and prompts', () => {
     expect(prompts.getPrompt('assistant_answer').system).toMatch(/action_draft[\s\S]*task\.create\.v1/);
     expect(prompts.getPrompt('assistant_answer').system).toMatch(/changes no record/);
     expect(prompts.getPrompt('assistant_answer').system).toMatch(/Never say a card exists unless/);
-    expect(prompts.getPrompt('assistant_task_draft_repair').system).toMatch(/exactly one Ask Casey task-or-event action proposal/);
+    expect(prompts.getPrompt('assistant_task_draft_repair').system).toMatch(/exactly one Ask Casey task, event, or appointment action proposal/);
     expect(prompts.getPrompt('assistant_plan').system).toMatch(/Reviewed task actions[\s\S]*do NOT refuse/);
     expect(prompts.getPrompt('assistant_plan').system).toMatch(/users\.user_initials[\s\S]*never guess an id/);
+  });
+});
+
+describe('assistant appointment actions', () => {
+  const evidence = [{ id: 'q1', kind: 'sql.read', purpose: 'Exact appointment', rows: [{ appt_id: 55, appt_status: 'Scheduled' }] }];
+  const target = { appt_id: 55, appt_client_id: 1309, appt_case_id: 'C1', appt_type: 'Consultation', appt_length: 60,
+    appt_platform: 'Telephone', appt_status: 'Scheduled', appt_date: '2026-10-27 09:30:00', appt_with: 7,
+    appt_note: 'Existing note', appt_gcal: 'firm-gcal', appt_gcal_user: 'user-gcal', contact_name: 'Client', case_number_display: '26-1', user_name: 'Fred' };
+  let resolveType;
+  let getType;
+
+  beforeEach(() => {
+    resolveType = jest.spyOn(calendarTypeService, 'resolveForCreate').mockResolvedValue({ type_key: 'consult', kind: 'meeting' });
+    getType = jest.spyOn(calendarTypeService, 'getType').mockResolvedValue({ type_key: 'consult', label: 'Consultation', kind: 'meeting', active: 1, singleton: 0 });
+  });
+  afterEach(() => { resolveType.mockRestore(); getType.mockRestore(); });
+
+  test('normalizes create through verified contact, case, meeting type, provider, and firm-local time without writing', async () => {
+    const db = { query: jest.fn(async (sql) => {
+      if (/FROM contacts/.test(sql)) return [[{ contact_id: 1309, contact_name: 'Client' }]];
+      if (/FROM cases/.test(sql)) return [[{ case_id: 'C1', label: '26-1' }]];
+      if (/FROM case_relate/.test(sql)) return [[{ case_relate_id: 88 }]];
+      if (/FROM users/.test(sql)) return [[{ user: 7, user_name: 'Fred' }]];
+      throw new Error(`Unexpected SQL: ${sql}`);
+    }) };
+    const write = jest.spyOn(apptService, 'createAppt');
+    try {
+      await expect(svc.normalizeActionDraft(db, { kind: 'appt.create.v1', contact_id: 1309, case_id: 'C1',
+        appt_type: 'Consultation', appt_length: 60, appt_platform: 'Telephone', appt_date: '2026-10-27 09:30',
+        appt_with: 7, note: 'Bring documents', confirm_sms: true, confirm_email: false,
+        confirm_message: 'Your appointment is confirmed.', evidence: [{ query_id: 'q1', row_number: 1 }] }, evidence)).resolves.toMatchObject({
+        kind: 'appt.create.v1', status: 'draft', contact: { contact_id: 1309, label: 'Client' },
+        case: { case_id: 'C1', label: '26-1' }, type: { appt_type: 'Consultation', type_key: 'consult', singleton: false },
+        appt_length: 60, appt_date: '2026-10-27 09:30:00', provider: { user_id: 7, label: 'Fred' },
+        confirm_sms: true, confirm_email: false, confirm_message: 'Your appointment is confirmed.',
+      });
+      expect(write).not.toHaveBeenCalled();
+    } finally { write.mockRestore(); }
+  });
+
+  test('normalizes every existing appointment transition from a reloaded current target', async () => {
+    const db = { query: jest.fn().mockResolvedValue([[target]]) };
+    const ref = [{ query_id: 'q1', row_number: 1 }];
+    await expect(svc.normalizeActionDraft(db, { kind: 'appt.update.v1', appt_id: 55,
+      changes: { note: 'Replacement note' }, evidence: ref }, evidence)).resolves.toMatchObject({
+      kind: 'appt.update.v1', appt: { appt_id: 55, note: 'Existing note' }, changes: { note: 'Replacement note' },
+    });
+    await expect(svc.normalizeActionDraft(db, { kind: 'appt.attended.v1', appt_id: 55, note: 'Held', evidence: ref }, evidence))
+      .resolves.toMatchObject({ kind: 'appt.attended.v1', appt: { appt_id: 55, status: 'Scheduled' }, note: 'Held' });
+    await expect(svc.normalizeActionDraft(db, { kind: 'appt.no_show.v1', appt_id: 55, note: '', enroll: true, evidence: ref }, evidence))
+      .resolves.toMatchObject({ kind: 'appt.no_show.v1', enroll: true });
+    await expect(svc.normalizeActionDraft(db, { kind: 'appt.cancel.v1', appt_id: 55, note: '', sms: false, email: false,
+      cancel_gcal: true, create_task: false, evidence: ref }, evidence)).resolves.toMatchObject({ kind: 'appt.cancel.v1', cancel_gcal: true, create_task: false });
+    await expect(svc.normalizeActionDraft(db, { kind: 'appt.reschedule.v1', appt_id: 55, new_date: '2026-10-28 10:00',
+      note: '', sms: false, email: false, evidence: ref }, evidence)).resolves.toMatchObject({ kind: 'appt.reschedule.v1', new_date: '2026-10-28 10:00:00' });
+    await expect(svc.normalizeActionDraft(db, { kind: 'appt.reschedule_later.v1', appt_id: 55, note: '', create_task: true,
+      evidence: ref }, evidence)).resolves.toMatchObject({ kind: 'appt.reschedule_later.v1', create_task: true });
+  });
+
+  test('keeps update narrow and rejects extra fields, wrong evidence, stale states, invalid types, and unreviewed messages', async () => {
+    const ref = [{ query_id: 'q1', row_number: 1 }];
+    await expect(svc.normalizeActionDraft({ query: jest.fn().mockResolvedValue([[target]]) },
+      { kind: 'appt.update.v1', appt_id: 55, changes: { appt_date: '2026-10-30 10:00' }, evidence: ref }, evidence))
+      .rejects.toThrow(/unsupported fields/);
+    await expect(svc.normalizeActionDraft({}, { kind: 'appt.cancel.v1', appt_id: 54, evidence: ref }, evidence))
+      .rejects.toThrow(/does not identify/);
+    await expect(svc.normalizeActionDraft({ query: jest.fn().mockResolvedValue([[{ ...target, appt_status: 'Canceled' }]]) },
+      { kind: 'appt.cancel.v1', appt_id: 55, evidence: ref }, evidence)).rejects.toThrow(/status Canceled/);
+    resolveType.mockResolvedValueOnce({ type_key: 'hearing', kind: 'hearing' });
+    getType.mockResolvedValueOnce({ type_key: 'hearing', label: 'Hearing', kind: 'hearing', active: 1 });
+    const db = { query: jest.fn(async (sql) => /FROM contacts/.test(sql) ? [[{ contact_id: 1309, contact_name: 'Client' }]]
+      : /FROM users/.test(sql) ? [[{ user: 7, user_name: 'Fred' }]] : [[]]) };
+    await expect(svc.normalizeActionDraft(db, { kind: 'appt.create.v1', contact_id: 1309, appt_type: 'Hearing',
+      appt_length: 60, appt_platform: 'Court', appt_date: '2026-10-27 09:30', appt_with: 7,
+      evidence: ref }, evidence)).rejects.toThrow(/active meeting type/);
+    await expect(svc.normalizeActionDraft({ query: jest.fn().mockResolvedValue([[target]]) }, { kind: 'appt.cancel.v1', appt_id: 55,
+      sms: true, evidence: ref }, evidence)).rejects.toThrow(/confirmation message is required/);
+  });
+
+  test('rejects a create proposal whose selected case is not linked to its contact', async () => {
+    const db = { query: jest.fn(async (sql) => {
+      if (/FROM contacts/.test(sql)) return [[{ contact_id: 1309, contact_name: 'Client' }]];
+      if (/FROM cases/.test(sql)) return [[{ case_id: 'C1', label: '26-1' }]];
+      if (/FROM case_relate/.test(sql)) return [[]];
+      throw new Error(`Unexpected SQL: ${sql}`);
+    }) };
+    await expect(svc.normalizeActionDraft(db, { kind: 'appt.create.v1', contact_id: 1309, case_id: 'C1',
+      appt_type: 'Consultation', appt_length: 60, appt_platform: 'Telephone', appt_date: '2026-10-27 09:30',
+      appt_with: 7, evidence: [{ query_id: 'q1', row_number: 1 }] }, evidence)).rejects.toThrow(/not linked to the selected contact/);
+  });
+
+  test('rejects an update that links a case unrelated to the appointment contact', async () => {
+    const db = { query: jest.fn(async (sql) => {
+      if (/FROM appts/.test(sql)) return [[target]];
+      if (/FROM cases/.test(sql)) return [[{ case_id: 'C2', label: '26-2' }]];
+      if (/FROM case_relate/.test(sql)) return [[]];
+      throw new Error(`Unexpected SQL: ${sql}`);
+    }) };
+    await expect(svc.normalizeActionDraft(db, { kind: 'appt.update.v1', appt_id: 55,
+      changes: { case_id: 'C2' }, evidence: [{ query_id: 'q1', row_number: 1 }] }, evidence))
+      .rejects.toThrow(/not linked to the selected contact/);
+  });
+
+  test('detects appointment action requests including reschedule', () => {
+    expect(svc.taskDraftRequested('Create an appointment for the client')).toBe(true);
+    expect(svc.taskDraftRequested('Reschedule appt 55 to Tuesday')).toBe(true);
+    expect(svc.taskDraftRequested('What appointments are next week?')).toBe(false);
   });
 });
 

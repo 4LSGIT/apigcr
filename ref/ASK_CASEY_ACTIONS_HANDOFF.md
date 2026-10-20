@@ -5,12 +5,18 @@ Updated 2026-10-20. Start by reading `AGENTS.md`,
 
 ## Handoff checkpoint
 
-Hand off from the commit that ships reviewed Events lifecycle actions on
-`main`. Tasks and Events are complete; do not redo either slice. The scoped A3
-run passed the focused assistant/sync suites and the native Event service/UI
-suites. The repository-wide Jest run has unrelated stale shell/layout
-assertions; continue using the scoped regression set plus the native suites for
-the action family being added.
+Hand off from the commit that ships reviewed Appointment lifecycle actions on
+`main`. Tasks, Events, and Appointments are complete; do not redo those slices.
+The A4/A4.1 run passed 261 focused assistant/chat/sync tests, 21 native
+Appointment route tests, and 273 Appointment service/calendar/UI tests. The
+repository-wide Jest run has unrelated stale shell/layout assertions; continue
+using the scoped regression set plus native suites for the family being added.
+
+`ref/ASK_CASEY_ACTIONS_PLAN.md` is the roadmap source of truth. It now lists
+the remaining action slices A5–A18, platform/release slices P0–P10, ordering,
+release gates, review decisions, and work that is deliberately outside the
+ordinary Casey roadmap. Keep this handoff focused on the immediate next slice
+instead of copying and eventually drifting from that catalog.
 
 ## Shipped boundary
 
@@ -36,8 +42,8 @@ for self-assignment and true otherwise. The fixed browser mapping adds
 email enabled by omitting `send_assignment_email`.
 
 Event create/update/complete/cancel are implemented through the existing
-`/api/events` routes. There is no Casey executor, Event delete/reopen, batch
-create, or Appointment action. Create requires type/title/firm-local date/
+`/api/events` routes. There is no Casey executor, Event delete/reopen, or batch
+create. Create requires type/title/firm-local date/
 all-day and time when timed. Optional duration, location, URL, note,
 creation-time link, availability scope, and reminder are all normalized and
 displayed. Known types resolve to their canonical registry label/key/kind;
@@ -56,6 +62,24 @@ Applied Event results persist and reopen as **Open event**. The canonical
 `yc-sync` matchers already cover all four routes and the Events/Calendar/case/
 contact readers subscribe to `event:*`, so no bus code changed and no Casey
 emit exists.
+
+Appointment create/narrow-update/attended/no-show/cancel/reschedule-now/
+reschedule-later are implemented through `/api/appts*`. Create resolves a
+verified contact, optional case linked to that contact, active meeting type,
+active appointment provider, 1–1,440 minute length, platform, future firm-local time, note, and
+optional reviewed SMS/email confirmation. It displays firm/provider calendar,
+pre-appointment/no-show automation, and singleton-supersession effects.
+
+Existing proposals cite the exact `appt_id` and reload joined current state.
+Canceled/Rescheduled are terminal. PATCH is limited to note and case link
+because the broad canonical route does not resync calendar or automation;
+date/time uses reschedule and type/length/platform/provider remain excluded.
+No-show defaults enrollment off. Cancel defaults calendar deletion on and
+follow-up task off. Reschedule-now opens the lineage-linked successor;
+reschedule-later creates none and may create the reviewed follow-up Task.
+All seven browser mappings are closed and routes own source/actor. Applied
+results persist. Existing `yc-sync` matchers already cover every route and both
+reschedule IDs, so no bus or Casey emit changed.
 
 ## Recipe for every new action
 
@@ -78,65 +102,36 @@ emit exists.
    mapping, double-click protection, failure/retry, history replay prevention,
    permissions, side effects, and bus behavior.
 
-## Recommended order, lowest to highest complexity
+## Remaining roadmap
 
-1. **Appointments lifecycle.** Add create, edit, attended, no-show, cancel, then
-   reschedule through `/api/appts*`. Matchers already exist, but calendar
-   writes, provider/time validation, reminders, and cancellation/reschedule
-   notices make this more complex than Events. Show timezone and every notice
-   consequence in confirmation.
+Use the numbered catalog in the plan rather than expanding scope from this
+summary. In order, it covers contact subrecords; contact relations/roles;
+narrow contact/case fields; case-contact membership; pipeline transitions;
+checklists; documents; forms; communication triage/drafts; external email/SMS;
+e-sign; reports; workflows; and sequences/triggers. Workflow creation is not
+one action: disabled draft, validation/preview, versioned save, publish, start,
+and execution controls are separate releases with different risk gates.
 
-2. **Contact subrecords, one family at a time.** Phone, email, address, relation,
-   and role add/edit/deactivate/delete already have dedicated routes. Start with
-   additive and reversible operations. For each family, check whether the root
-   contact view sees a bus update; add canonical matcher/response support if it
-   does not. Never bundle multiple subrecords into one proposal initially.
+The plan also makes non-action work explicit: current live release gates, a
+closed action registry and shared review UI, permission mapping, optimistic
+concurrency, durable idempotency, applied-result recovery, canonical sync
+coverage, privacy-safe audit/observability, a reusable adversarial test kit,
+accessibility/explainability, and controlled rollout. Do not defer these until
+after all action families; follow the gates in the plan.
 
-3. **Scalar contact and case edits.** Use `PATCH /api/contacts/:id` and
-   `PATCH /api/cases/:id`, whose root matchers already exist. Do not expose the
-   routes' broad payloads. Ship narrow field families with before/after display,
-   optimistic-concurrency or stale-value checks, and explicit exclusions for
-   identity, access, merge, docket, and other high-impact fields.
-
-4. **Case relationships and pipeline transitions.** Add/remove/change a case
-   contact and advance/move pipeline using their dedicated routes. `yc-sync`
-   already understands these paths, including set-change markers. Complexity
-   comes from primary-contact invariants, pipeline requirements, overrides,
-   notes, and downstream automation; show blockers and effects before confirm.
-
-5. **Documents and form drafts.** Prefer draft/save-to-case actions before
-   deletion, movement, submission, or publication. Browser uploads are
-   multi-step and file bytes never belong in a model action. Require exact
-   destination, filename/template, overwrite behavior, and a canonical bus
-   decision for document collections.
-
-6. **Outbound communications.** Separate compose/draft from send. Sending mail,
-   SMS, CTA, campaigns, or signature requests is an irreversible external side
-   effect: show exact recipients, channel/from identity, subject/body,
-   attachments, schedule, and audience count. Require a fresh send confirmation
-   and preserve the endpoint's delivery/audit semantics.
-
-7. **Reports, workflows, and automations.** Draft and preview first; save,
-   publish, run, cancel, or resume are separate kinds. These can fan out into
-   many writes or external calls and need versioning, validation, dry-run data,
-   permission gates, and domain-event review. Never allow arbitrary workflow
-   step JSON from the model.
-
-8. **Destructive/admin actions last.** Case/contact merge, file purge, credential
-   changes, access controls, Court Review force-apply, and similar operations
-   need dedicated designs, stronger re-auth/confirmation, impact previews, and
-   explicit rollback stories. They should not inherit authority from ordinary
-   Casey action support.
+Bulk/destructive/admin/access/credential changes, arbitrary tools or endpoints,
+multi-action plans, and unattended execution are not merely “last.” They are
+outside the ordinary roadmap pending a separate product and threat-model
+decision.
 
 ## Immediate next slice
 
-Implement Appointments lifecycle next, one reviewed transition at a time. Trace
-`routes/api.appts.js`, `services/apptService.js`, every native Appointment UI
-caller, scheduling/notification/calendar side effects, and the existing
-`yc-sync` matchers before fixing schemas. Start with create/edit/attended/
-no-show/cancel; treat reschedule as a separate higher-impact contract if its
-successor/predecessor and notice semantics do not fit cleanly in the first
-slice. Keep one proposal per answer and the current bounded read limits.
+Implement A5 contact phone, email, and address records next, one subrecord
+family at a time. Trace each dedicated route/service/native UI caller and the
+contact-detail sync readers before fixing schemas. Start with create and narrow
+update; add remove/deactivate only after documenting whether it is destructive,
+how primary/preferred flags and duplicates behave, and how the root Contact
+view learns of the change. One proposal changes one subrecord.
 
 ## Copy-paste prompt for the next instance
 
@@ -144,23 +139,26 @@ slice. Keep one proposal per answer and the current bounded read limits.
 Read AGENTS.md, ref/ASK_CASEY_ACTIONS_PLAN.md,
 ref/ASK_CASEY_ACTIONS_HANDOFF.md, ref/AI_CONTEXT.md, and
 manual/05-Subsystems/17-ask-yisracase.md. Continue the Ask Casey actions arc
-from clean main after the reviewed Events lifecycle commit. Do not redo or
-redesign the shipped Tasks or Events slices.
+from clean main after the reviewed Appointments lifecycle commit. Do not redo
+or redesign the shipped Tasks, Events, or Appointments slices.
 
-Implement the next slice only: reviewed Appointments lifecycle actions through
-the existing authenticated `/api/appts*` routes. Do not add a Casey execution
-endpoint. Preserve one evidence-backed, server-normalized proposal; exact
+Implement the next slice only: reviewed contact phone, email, and address
+subrecord actions through the existing authenticated dedicated routes. Do not
+add a Casey execution endpoint. Preserve one evidence-backed, server-normalized proposal; exact
 SweetAlert review; fixed browser route/method/body mapping; authenticated actor;
 single-flight/retry/history/open-record behavior; and canonical sync only.
 
-First trace the Appointment routes, service, all native UI callers, and bus
-readers. Document provider/type/length rules, firm-local/UTC twins, links,
-availability, Google Calendar writes, reminders, attendee notices, cancellation
-and reschedule effects, and reversibility before coding. Require exact appt_id
-evidence and a server reload for existing actions. Exclude batch actions, Events,
-personality changes, broader autonomous reads, and other action families.
+First trace `routes/api.contactPhones.js`, `routes/api.contactEmails.js`,
+`routes/api.contactAddresses.js`, their services, every native UI caller, and
+the `yc-sync` contact matchers/readers. Document required/defaulted fields,
+normalization, duplicates, labels, primary/preferred behavior, removal versus
+deactivation, audit, reversibility, and parent-contact propagation before
+coding. Require exact parent/subrecord IDs in current evidence for existing
+actions and reload both server-side. Exclude contact relations/roles, scalar
+contact edits, batch actions, personality changes, broader reads, and all
+other action families.
 
 Add deterministic schema/state/UI/mapping/single-flight/retry/history/bus tests,
-run focused assistant plus native Appointment suites, update the four action
+run focused assistant plus native contact-subrecord suites, update the four action
 docs, then commit and push.
 ```

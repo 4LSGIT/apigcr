@@ -2119,8 +2119,49 @@ and success opens `showEvent`.
 No bus change was needed. `public/js/yc-sync.js` already maps the canonical
 create/update/complete/cancel calls to `event:<id>` refetch markers, and the
 Events tab, Calendar, case, and contact readers already subscribe. There is no
-Casey emit. Event batch, delete/reopen, Appointments, and calendar selection are
-not part of A3.
+Casey emit. Event batch, delete/reopen, and calendar selection are not part of
+A3; Appointments use the separate A4 contract below.
+
+**Reviewed Appointments lifecycle (Ask Casey A4/A4.1, 10-20).** Seven closed
+kinds are enabled: `appt.create.v1`, `appt.update.v1`, `appt.attended.v1`,
+`appt.no_show.v1`, `appt.cancel.v1`, `appt.reschedule.v1`, and
+`appt.reschedule_later.v1`. `assistantService` rejects extra fields, requires
+1–8 current evidence references, resolves contacts/cases/provider/type labels
+again, accepts only an active registry `meeting` type and active `does_appts`
+provider, and validates future firm-local `YYYY-MM-DD HH:MM[:SS]` without a
+timezone suffix. Create additionally requires contact, 1–1,440 minute length,
+platform, and time; a case linked to that contact, note, and reviewed SMS/email
+confirmation are optional. The normalized type carries the server-owned `type_key` and
+singleton flag.
+
+Existing actions need evidence containing the exact `appt_id`; the service
+reloads joined current status/contact/case/provider/calendar state. Canceled
+and Rescheduled are terminal. Attended and No Show can correct one another;
+cancel and either reschedule form also accept those native correction states.
+The broad canonical PATCH does not update calendars or automation, so Casey's
+update body is intentionally limited to `appt_note` and `appt_case_id`; a new
+case link is verified against the Appointment contact.
+Date/time changes use the reschedule service; type, length, platform, provider,
+status, GCal/ref/view/hook fields, `source`, and actor are excluded.
+
+No-show defaults `enroll:false` and the review states possible no-show sequence
+and intake-pipeline effects. Cancel defaults `cancel_gcal:true`,
+`create_task:false`, and both outbound channels off; a chosen channel requires
+the exact displayed message. Reschedule-now retires the predecessor, removes
+old firm/provider calendar entries and automation, creates a lineage-linked
+successor with new calendar/automation, optionally confirms the client, and
+opens the successor. Reschedule-later creates no successor, removes calendar/
+automation, and optionally creates the reviewed follow-up Task. Create review
+also discloses firm/provider calendar attempts, no-show cancellation,
+pre-appointment enrollment, and registry singleton supersession.
+
+The browser owns seven fixed kind→route/method/body mappings through the
+ordinary `/api/appts*` routes. Routes stamp authenticated actor and
+`source:'staff'`; neither comes from the model. SweetAlert review, dialog/write
+single-flight, retryable errors, persisted results, and canonical open-record
+behavior mirror Tasks/Events. `yc-sync` already covers create, PATCH,
+attended/no-show, cancel, and both old/new reschedule IDs, so no bus code or
+Casey emit changed.
 
 **Question deep links.** `ask=<encoded question>` may accompany any canonical
 workspace `open=` target. It

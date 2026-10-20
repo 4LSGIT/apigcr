@@ -1,8 +1,10 @@
 # Ask Casey typed actions plan
 
-Status: A0/A0.1, A1, A2, and A3 implemented 2026-10-20. A2 covers the complete
-task lifecycle; A3 covers reviewed Event create/update/complete/cancel through
-the existing authenticated routes. No general action executor is introduced.
+Status: A0/A0.1, A1, A2, A3, A4, and A4.1 implemented 2026-10-20. A2 covers
+the complete Task lifecycle; A3 covers reviewed Event create/update/complete/
+cancel; A4/A4.1 cover reviewed Appointment create, narrow update, attended,
+no-show, cancel, reschedule-now, and reschedule-later through the existing
+authenticated routes. No general action executor is introduced.
 
 ## Governing principle: actions run through the user
 
@@ -314,16 +316,331 @@ update, complete, and cancel matchers already turn the canonical browser calls
 into `event:<id>` refetch markers consumed by the Events tab, Calendar, and
 case/contact readers, so A3 required no Casey-specific or canonical bus change.
 
-## Explicitly deferred
+## Roadmap
 
-- Appointments lifecycle actions; notes, contact/case field changes, forms,
-  reports, and workflow drafts;
-- sending arbitrary email or SMS (normal task notifications remain part of the
-  existing task-creation behavior disclosed by the confirmation);
-- multiple-action plans or conditional execution;
-- personality changes;
-- broader or longer autonomous read budgets; and
-- any general-purpose tool/API/URL invocation chosen by the model.
+This is the source of truth for the actions arc. A
+listed slice is a direction, not permission to expose every field accepted by
+the named route. Each slice starts by tracing the canonical route, service,
+native callers, permissions, audit, side effects, response, and sync readers.
+It then chooses a smaller closed contract. Each slice retains one proposal per
+answer and the governing user-through-browser boundary above.
 
-These are separate slices with their own schemas, review language, permission
-checks, idempotency, audits, and rollback behavior.
+The sequence is deliberate: finish common, reversible record work before
+external sends, fan-out, configuration, or destructive operations. A slice may
+be split again when tracing reveals materially different side effects. It must
+not be combined with its neighbors merely to reduce the number of releases.
+
+### Action slices
+
+#### A4: Appointments core lifecycle — shipped 2026-10-20
+
+Separate proposal kinds implement create, whitelisted edit, attended, no-show,
+and cancel through the existing `/api/appts*` routes. Provider/type rules,
+duration, firm-local/UTC semantics, contact/case linkage, automation, Google Calendar,
+attendee/staff notices, and cancellation effects are reflected in the closed
+schemas and review. Existing actions require current exact-`appt_id` evidence
+and a server reload; review identifies everyone who may be notified.
+
+#### A4.1: Appointment reschedule — shipped 2026-10-20
+
+Reschedule remains its own higher-impact contract within the same release. The
+canonical route creates a successor or marks the predecessor for later,
+retires/links the old row, moves calendar entries, and can send different
+notices from an ordinary edit. Review shows old/new slots, provider,
+participants, case/contact linkage, calendar effects, and every notice. It is never
+implemented as a generic appointment patch.
+
+The shipped contract has seven proposal kinds: `appt.create.v1`,
+`appt.update.v1`, `appt.attended.v1`, `appt.no_show.v1`, `appt.cancel.v1`,
+`appt.reschedule.v1`, and `appt.reschedule_later.v1`. Create requires a
+verified contact, active meeting type, 1–1,440 minute length, platform, future
+firm-local date/time, and active appointment provider; optional case linked to
+that contact, note, and reviewed SMS/email confirmation are supported. The server resolves the
+canonical type key and labels; the browser alone maps the normalized proposal
+to `/api/appts*`, and the route supplies `source:'staff'` and authenticated
+actor identity.
+
+The generic PATCH route does not update Google Calendar or appointment
+automation. A4 therefore limits update to complete-note replacement and case
+link change; date/time changes use reschedule, while type/length/platform/
+provider changes remain excluded. Existing actions require current evidence
+with the exact `appt_id`, reload the target, and reject terminal Canceled or
+Rescheduled state. Attended and no-show can correct one another; cancel and
+either reschedule form also accept Attended/No Show because the native UI does.
+
+No-show defaults enrollment off and states its possible sequence/pipeline
+effects. Cancel defaults Google Calendar deletion on and follow-up task off;
+optional client SMS/email requires the exact reviewed message. Reschedule-now
+retires the predecessor, deletes its firm/provider calendar entries and
+automation, creates a lineage-linked successor, re-creates calendars and
+automation, and opens the successor. Reschedule-later creates no successor,
+deletes calendar entries/automation, and may create the reviewed follow-up
+task. Create also discloses firm/provider calendar attempts, reminder-sequence
+enrollment, no-show-sequence cancellation, and singleton supersession.
+
+The canonical `yc-sync` matchers already cover create, narrow update,
+attended, no-show, cancel, and both reschedule result IDs, so no bus or
+Casey-specific emit changed. Applied results persist and reopen as **Open
+appointment**. Focused assistant/chat/sync, native route, Appointment service,
+Calendar, case/contact sync, and unified-events suites passed.
+
+#### A5: Contact phone, email, and address records
+
+Ship one subrecord family at a time through the dedicated contact routes.
+Start with create and narrow update; add deactivate/delete only where the
+native operation is reversible or its impact is fully understood. Normalize
+labels, primary/preferred flags, and duplicate rules, and show the parent
+contact plus the complete value being changed. One proposal changes one
+subrecord. Verify that contact detail views receive the canonical sync marker.
+
+#### A6: Contact relations and roles
+
+Add relation and role create/update/remove separately from scalar contact
+editing. Resolve both ends and the role/type registry on the server, protect
+directionality and uniqueness rules, and display the relationship in plain
+language. Firm-level role-type administration is not part of this slice.
+
+#### A7: Narrow scalar contact and case edits
+
+Expose small field groups rather than the broad bodies accepted by
+`PATCH /api/contacts/:id` and `PATCH /api/cases/:id`. Every proposal shows
+before and after values and carries a server-owned stale-value/version check
+through confirmation. Start with low-impact descriptive fields. Identity,
+access, merge, docket, intake ownership, and pipeline state remain excluded.
+
+#### A8: Case-contact membership
+
+Add, remove, or change one case/contact membership through the dedicated case
+contact routes. Preserve primary-contact, role, and last-contact invariants;
+show both records, old and new role, and any primary-contact effect. This is
+separate from both contact roles and scalar case editing because it changes a
+set and can alter downstream addressing.
+
+#### A9: Case pipeline transitions and requirement overrides
+
+Add advance and explicit move as different proposal kinds. The proposal must
+show the current and destination stages, unmet requirements, downstream
+automation, and any note or notification effect. Requirement override and
+override removal are a later sub-slice with their own reason and permission
+contract; Casey must never manufacture or conceal a blocker.
+
+#### A10: Checklists and checklist items
+
+Start with creating a checklist or one item and updating/completing one item.
+Template expansion, upsert-many, reorder, and deletion remain separate because
+they can create or affect many records. Resolve the parent entity and template
+server-side, display generated item counts, and verify collection-level sync.
+
+#### A11: Documents
+
+Begin with metadata-only register/link/update operations whose file already
+exists in the browser-controlled upload flow. Upload bytes, signed upload URLs,
+and provider credentials never become model output. Generation, sharing,
+relinking, external-store sync, unlinking, replacement, and deletion are each
+separate higher-impact sub-slices with exact destination, filename/template,
+overwrite, link, recipient, and external-provider effects shown in review.
+
+#### A12: Forms and form templates
+
+Start with a form draft or prefill and save/link it to a resolved record.
+Submission, PDF filing, template editing, publishing, visibility changes,
+version restore, and deletion are separate proposal kinds and later releases.
+Render the template/version, destination, material answers, overwrite behavior,
+and whether the operation makes anything client-visible.
+
+#### A13: Message triage and communication drafts
+
+Low-risk communication work comes first: mark a known message read/unread,
+link one message to a case, or prepare a non-sent email/SMS draft where a
+canonical draft operation exists. A draft must be visibly non-sent. Never
+reinterpret an endpoint that sends immediately as a draft endpoint.
+
+#### A14: Outbound email and SMS
+
+Sending is an irreversible external side effect and is not an extension of a
+draft slice. Use distinct proposal kinds for email and SMS/MMS through their
+canonical routes. Review the resolved from identity, exact recipients, subject
+and body, attachments/media, schedule, link/audit destination, opt-out or
+consent constraints, and audience count. Require a fresh send confirmation,
+strong idempotency, and an unambiguous delivered/queued/failed result.
+
+#### A15: E-signature lifecycle
+
+Separate send, remind, resend, recall, and mark-satisfied-externally. Resolve
+the envelope, template/file, signers, routing order, message, expiration, and
+case/document links server-side. Show all recipients and external effects.
+File bytes remain browser-owned, and recall or external satisfaction requires
+especially clear finality and stale-state checks.
+
+#### A16: Reports
+
+Start with a report draft and preview. Save, update, run, export, share/lock,
+and delete are different proposal kinds. Server validation owns the allowed
+data source, filters, columns, scope, and limits; the model cannot supply query
+text. Review potentially large result/export scopes and access implications
+before executing or sharing.
+
+#### A17: Workflow definitions and executions
+
+Split the family into independently releasable steps: draft a disabled
+workflow from a closed step registry; validate/preview it; save the disabled
+draft; edit one versioned definition; publish; start; and cancel/resume one
+known execution. Duplicate, capture, reorder, test-step, bulk creation, and
+delete remain separate. Never accept arbitrary workflow step JSON, code, URLs,
+credentials, or model-selected tools. Publishing and starting require an
+impact preview covering triggers, scope, estimated fan-out, writes, external
+calls, rollback/compensation, and version.
+
+#### A18: Sequences and trigger rules
+
+Treat communication sequences and event triggers separately from workflows,
+even where their editors look similar. Draft/preview a template or rule first;
+then versioned save, publish, enroll, cancel, recover, fire-next, enable, and
+replay as individual kinds. Enrollment and replay require an exact audience or
+event, step schedule, channel effects, fan-out count, and idempotency plan.
+Bulk enrollment and arbitrary captured steps are not initial contracts.
+
+### Secondary action candidates
+
+The route inventory also exposes useful but lower-priority candidates. Add
+them to the relevant family only after native behavior is traced: document
+share/relink and sync controls; e-sign reminder/resend; form-submission PDF
+filing and linking; mail views and trusted-image settings; report locks;
+workflow/sequence duplication and capture; and appointment/pipeline override
+utilities. Their existence in the API is not itself a reason to expose them to
+Casey.
+
+### Not on the ordinary action roadmap
+
+These need a dedicated product and threat-model decision before they can become
+planned implementation slices:
+
+- case/contact merge, permanent file or record deletion, and bulk mutation;
+- credentials, OAuth, API keys, impersonation, user/access/entitlement changes,
+  portal administration, and firm-wide settings;
+- arbitrary database writes, code, SQL, URLs, endpoint selection, or tool/API
+  invocation chosen by the model;
+- Court Review force-apply and comparable legal-decision overrides;
+- conditional or multi-action plans, unattended/background execution, and
+  autonomous retries of writes; and
+- personality changes or broader/longer autonomous read budgets.
+
+## Platform and release slices (work besides adding actions)
+
+These are first-class roadmap items. Some run beside an action family; others
+are gates before higher-impact families. None creates a general Casey executor.
+
+#### P0: Close current release gates
+
+Run the controlled multi-round dependency-read test described above. Add a
+staff-fixture smoke test for shipped Task, Event, and Appointment review, cancellation,
+success, history restoration, and canonical open-record behavior. Record the
+known repository-wide stale-test baseline separately from action regressions.
+
+#### P1: Closed action registry and shared review components
+
+After the third family establishes another concrete contract, extract only the
+repeated mechanics: known kind/version dispatch, strict extra-field rejection,
+evidence resolution, text-only value/side-effect rows, dialog single-flight,
+retry state, applied-result persistence, and canonical open-record links. The
+server registry normalizes proposals; the browser registry independently maps
+each known kind to its fixed route/method/body. Neither registry accepts a URL,
+method, selector, handler, arbitrary body, or actor from model output.
+
+#### P2: Permission and capability matrix
+
+Inventory route authentication, role/capability checks, row-level/firm scope,
+and native UI visibility for every proposed kind. Normalize only what the
+current signed-in user may review, but keep the canonical write route as the
+final authority. Add negative tests for cross-firm IDs, inactive records,
+insufficient roles, and permissions changing between proposal and click.
+
+#### P3: Optimistic concurrency and stale review protection
+
+Existing-record actions must protect the interval between server normalization
+and confirmation. Define a canonical version, updated-at value, or narrow
+before-value precondition for routes that lack one, and reject a write when the
+reviewed state has changed. This is required before scalar edits, relationship
+changes, pipeline transitions, publishing, and other operations where a stale
+review could overwrite someone else's work.
+
+#### P4: Durable idempotency and ambiguous-result recovery
+
+Browser single-flight prevents double-clicks but does not solve a timeout after
+the server committed. Add canonical, user-scoped idempotency support to create,
+send, enroll, start, replay, and fan-out operations before exposing the risky
+families. Reconciliation must distinguish not-applied, applied, and unknown;
+it must never blindly retry an unknown send. The key is browser/server-owned,
+not model-chosen, and the same protection should benefit native callers where
+appropriate.
+
+#### P5: Durable applied-result persistence
+
+Make success restoration resilient when the canonical write succeeds but chat
+history persistence fails. Preserve the canonical result needed to reopen the
+record, retry result persistence without replaying the write, and reconcile on
+chat reopen. Define retention and migration behavior for old kind versions and
+legacy messages. Never store auth/session credentials or raw sensitive
+evidence in the action payload.
+
+#### P6: Canonical sync coverage program
+
+Maintain a route-to-entity matcher/reader matrix and deterministic propagation
+tests for every family. Close the known canonical Tasks bus gap as its own
+native Tasks/`yc-sync` slice if cross-frame refresh is desired. Cover
+server-side writers that browser fetch sniffing cannot observe with domain
+events at the canonical service—not Casey-only emissions—and define scoped
+set-change markers for collections.
+
+#### P7: Audit and observability
+
+Verify that every canonical action records the authenticated actor and ordinary
+audit event. Add privacy-safe correlation and metrics for proposal accepted or
+rejected, review opened, user canceled, write attempted, succeeded, failed, or
+reconciled, plus latency and action kind/version. Do not log message bodies,
+session keys, auth headers, raw evidence, or sensitive field values. Alert on
+duplicate/ambiguous writes and sustained validation or sync failures.
+
+#### P8: Reusable contract and adversarial test kit
+
+Provide shared deterministic fixtures/assertions for strict schemas, exact
+evidence IDs, stale and unauthorized state, safe text rendering, confirmation
+cancellation, exact route/method/body mapping, single-flight, failure/retry,
+ambiguous outcomes, history restoration, open-record behavior, and bus
+propagation. Add prompt-injection and malicious-value cases and a route contract
+test that fails if a canonical endpoint changes incompatibly.
+
+#### P9: Review UX, accessibility, and explainability
+
+Standardize compact before/after rows, firm-timezone labels, side-effect and
+irreversibility warnings, large-recipient/fan-out summaries, loading/error/
+unknown-result states, keyboard/focus behavior, mobile layout, and screen-reader
+labels. Add an action-kind catalog so staff can tell what Casey can propose and
+why a refused action is unavailable. Keep every material value inspectable as
+text before confirmation.
+
+#### P10: Rollout, operations, and governance
+
+Add per-family feature flags and a kill switch, start with a small staff cohort,
+and define owner, dashboards, support/recovery playbook, rollback criteria, and
+manual/training updates. Each release needs permission-negative tests, native
+route regression tests, canonical sync tests, and a controlled live smoke test.
+Higher-impact families require explicit security/privacy review and an owner
+for external-side-effect incidents.
+
+## Recommended execution order
+
+1. Close P0 and continue P2, P7, and P8 alongside the shipped A4/A4.1 contract.
+2. Implement A5–A8 with P3 in place; extract P1 only from demonstrated common
+   behavior, not as a speculative generic executor.
+3. Implement A9–A12 and complete the collection-sync portions of P6.
+4. Complete P4 and P5 before A14, A15, A17 execution, or A18 enrollment/replay;
+   A13 draft/triage and A16 draft/preview can proceed earlier.
+5. Expand via P10 gates. Keep destructive/admin/bulk/autonomous work outside
+   the ordinary roadmap until separately approved.
+
+For the upcoming review, the key decisions are whether this ordering is right,
+which low-impact scalar fields belong in A7, whether delete variants in A5/A6
+should be deferred entirely, and what operational bar must be met before the
+first external-send or fan-out action. The immediate engineering slice is now
+A5 contact phone, email, and address records, one subrecord family at a time.

@@ -241,6 +241,91 @@ describe('Ask Casey UI wiring', () => {
     expect(api).toHaveBeenCalledTimes(2);
   });
 
+  test('maps every appointment action to one canonical route and exact allowlisted body', () => {
+    const request = new Function(`${fnSrc(html, 'apptCreateBody')};${fnSrc(html, 'apptActionRequest')};return apptActionRequest;`)(); // eslint-disable-line no-new-func
+    const create = { kind: 'appt.create.v1', contact: { contact_id: 1309 }, case: { case_id: 'C1' },
+      type: { appt_type: 'Consultation', type_key: 'consult' }, appt_length: 60, appt_platform: 'Telephone',
+      appt_date: '2026-10-27 09:30:00', provider: { user_id: 7 }, note: 'Bring documents', confirm_sms: true,
+      confirm_email: false, confirm_message: 'Confirmed', ignored: 'never send' };
+    expect(request(create)).toEqual({ path: '/api/appts', method: 'POST', body: { contact_id: 1309, case_id: 'C1',
+      appt_type: 'Consultation', type_key: 'consult', appt_length: 60, appt_platform: 'Telephone',
+      appt_date: '2026-10-27 09:30:00', appt_with: 7, note: 'Bring documents', confirm_sms: true,
+      confirm_email: false, confirm_message: 'Confirmed' } });
+    const appt = { appt_id: 55 };
+    expect(request({ kind: 'appt.update.v1', appt, changes: { note: 'New note', case: null, ignored: 'x' } }))
+      .toEqual({ path: '/api/appts/55', method: 'PATCH', body: { appt_note: 'New note', appt_case_id: '' } });
+    expect(request({ kind: 'appt.attended.v1', appt, note: 'Held' })).toEqual({ path: '/api/appts/55/attended', method: 'POST', body: { note: 'Held' } });
+    expect(request({ kind: 'appt.no_show.v1', appt, note: '', enroll: true })).toEqual({ path: '/api/appts/55/no-show', method: 'POST', body: { note: '', enroll: true } });
+    expect(request({ kind: 'appt.cancel.v1', appt, note: '', sms: false, email: false, cancel_gcal: true, create_task: false }))
+      .toEqual({ path: '/api/appts/cancel', method: 'POST', body: { appt: 55, note: '', sms: false, email: false, confirm_message: '', cancel_gcal: true, create_task: false } });
+    expect(request({ kind: 'appt.reschedule.v1', appt, new_date: '2026-10-28 10:00:00', note: '', sms: true, email: false, confirm_message: 'Moved' }))
+      .toEqual({ path: '/api/appts/reschedule', method: 'POST', body: { appt: 55, newDate: '2026-10-28 10:00:00', note: '', sms: true, email: false, msg: 'Moved' } });
+    expect(request({ kind: 'appt.reschedule_later.v1', appt, note: 'Call', create_task: true }))
+      .toEqual({ path: '/api/appts/reschedule', method: 'POST', body: { appt: 55, note: 'Call', rescheduleLater: true, createTask: true } });
+  });
+
+  test('appointment update review text shows current and proposed material values', () => {
+    const reviewText = new Function(`${fnSrc(html, 'apptActionLabel')};${fnSrc(html, 'apptChannelsText')};${fnSrc(html, 'apptDraftText')};return apptDraftText;`)(); // eslint-disable-line no-new-func
+    const text = reviewText({ kind: 'appt.update.v1', firm_timezone: 'Asia/Jerusalem',
+      appt: { appt_id: 55, type: 'Consultation', status: 'Scheduled', date: '2026-10-27 09:30:00', note: 'Existing note',
+        contact: { label: 'Client' }, case: { label: '26-1' }, provider: { label: 'Fred' }, google_calendar: { firm: true, provider: false } },
+      changes: { note: 'Replacement note' } });
+    expect(text).toMatch(/Current complete note: Existing note/);
+    expect(text).toMatch(/New complete note: Replacement note/);
+    expect(text).toMatch(/Calendar \/ automation: unchanged/);
+  });
+
+  test('appointment review cancellation writes nothing; confirmation is single-flight, persists, and opens the canonical result', async () => {
+    let resolveWrite;
+    const api = jest.fn(() => new Promise((resolve) => { resolveWrite = resolve; }));
+    const render = jest.fn(); const history = []; const saveAssistantMessage = jest.fn().mockResolvedValue();
+    const P = { Swal: { fire: jest.fn().mockResolvedValue({ isConfirmed: false }) }, showAppt: jest.fn() };
+    const execute = new Function('P', 'api', 'render', 'history', 'saveAssistantMessage',
+      `const APPT_ACTION_KINDS=new Set(['appt.reschedule.v1']);${fnSrc(html, 'isApptActionDraft')};${fnSrc(html, 'apptActionLabel')};${fnSrc(html, 'apptChannelsText')};${fnSrc(html, 'apptDraftText')};${fnSrc(html, 'apptCreateBody')};${fnSrc(html, 'apptActionRequest')};async ${fnSrc(html, 'confirmApptDraft')};async ${fnSrc(html, 'executeApptDraft')};return executeApptDraft;` // eslint-disable-line no-new-func
+    )(P, api, render, history, saveAssistantMessage);
+    const message = { action_draft: { draft_id: 'appt-1', kind: 'appt.reschedule.v1', status: 'draft',
+      appt: { appt_id: 55, type: 'Consultation', status: 'Scheduled', date: '2026-10-27 09:30:00', note: 'Existing note', contact: { label: 'Client' }, case: null,
+        provider: { label: 'Fred' }, google_calendar: { firm: true, provider: true } },
+      new_date: '2026-10-28 10:00:00', note: '', sms: false, email: false, confirm_message: '' } };
+    await execute(message);
+    expect(api).not.toHaveBeenCalled();
+    expect(P.Swal.fire).toHaveBeenCalledWith(expect.objectContaining({ title: 'Reschedule appointment',
+      text: expect.stringContaining('a successor with the same client'), showCancelButton: true }));
+
+    P.Swal.fire.mockResolvedValue({ isConfirmed: true });
+    const first = execute(message); await Promise.resolve(); await Promise.resolve();
+    await execute(message);
+    expect(api).toHaveBeenCalledTimes(1);
+    resolveWrite({ status: 'success', appt_id: 55, new_appt_id: 56 }); await first;
+    expect(message.action_draft).toMatchObject({ status: 'applied', result_appt_id: 56, executing: false });
+    expect(history[0].action_result).toEqual({ kind: 'appt.reschedule.v1', draft_id: 'appt-1', appt_id: 56 });
+    expect(saveAssistantMessage).toHaveBeenCalledWith(history[0]);
+    expect(P.showAppt).toHaveBeenCalledWith(56);
+    await execute(message);
+    expect(api).toHaveBeenCalledTimes(1);
+  });
+
+  test('failed appointment writes stay retryable and saved results prevent replay', async () => {
+    const apply = new Function('APPT_ACTION_KINDS', `${fnSrc(html, 'applyApptActionResults')};return applyApptActionResults;`)(new Set(['appt.cancel.v1'])); // eslint-disable-line no-new-func
+    const messages = [{ action_draft: { draft_id: 'appt-2', kind: 'appt.cancel.v1', status: 'draft' } },
+      { action_result: { draft_id: 'appt-2', kind: 'appt.cancel.v1', appt_id: 55 } }];
+    expect(apply(messages)[0].action_draft).toMatchObject({ status: 'applied', result_appt_id: 55 });
+
+    const api = jest.fn().mockRejectedValue(new Error('Appointment cancel failed')); const render = jest.fn();
+    const P = { Swal: { fire: jest.fn().mockResolvedValue({ isConfirmed: true }) }, showAppt: jest.fn() };
+    const execute = new Function('P', 'api', 'render', 'history', 'saveAssistantMessage',
+      `const APPT_ACTION_KINDS=new Set(['appt.cancel.v1']);${fnSrc(html, 'isApptActionDraft')};${fnSrc(html, 'apptActionLabel')};${fnSrc(html, 'apptChannelsText')};${fnSrc(html, 'apptDraftText')};${fnSrc(html, 'apptCreateBody')};${fnSrc(html, 'apptActionRequest')};async ${fnSrc(html, 'confirmApptDraft')};async ${fnSrc(html, 'executeApptDraft')};return executeApptDraft;` // eslint-disable-line no-new-func
+    )(P, api, render, [], jest.fn());
+    const message = { action_draft: { draft_id: 'appt-fail', kind: 'appt.cancel.v1', status: 'draft',
+      appt: { appt_id: 55, type: 'Consultation', status: 'Scheduled', date: '2026-10-27 09:30:00', contact: { label: 'Client' }, case: null,
+        provider: { label: 'Fred' }, google_calendar: { firm: true, provider: false } }, note: '', sms: false, email: false,
+      confirm_message: '', cancel_gcal: true, create_task: false } };
+    await execute(message);
+    expect(message.action_draft).toMatchObject({ status: 'draft', executing: false, action_error: 'Appointment cancel failed' });
+    await execute(message);
+    expect(api).toHaveBeenCalledTimes(2);
+  });
+
   test('uses exact structured follow-up queries and shell-native record links', () => {
     expect(html).toContain('data-follow="${esc(s.query)}"');
     expect(html).toContain("P.addFile(label || id, 'case', String(id))");
