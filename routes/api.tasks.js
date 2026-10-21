@@ -19,6 +19,7 @@ const express     = require('express');
 const router      = express.Router();
 const jwtOrApiKey = require('../lib/auth.jwtOrApiKey');
 const taskService = require('../services/taskService');
+const { idempotentRequest, sendIdempotencyError } = require('../lib/requestIdempotency');
 
 /**
  * Optional free-text note on complete / delete. Clamped (not rejected) at 500
@@ -98,23 +99,29 @@ router.post('/api/tasks', jwtOrApiKey, async (req, res) => {
   }
 
   try {
-    const result = await taskService.createTask(req.db, {
-      from:      req.auth?.userId || req.body.from,
-      to:        req.body.to,
-      title:     req.body.title,
-      desc:      req.body.desc   || '',
-      start:     req.body.start  || null,
-      due:       req.body.due    || null,
-      notify:    req.body.notify || false,
-      link_type: req.body.link_type || null,
-      link_id:   req.body.link_id   || null,
-      source:                req.body.source || null,
-      send_assignment_email: req.body.send_assignment_email !== false
-    });
+    // Optional `Idempotency-Key` header: a repeat of the same key replays the
+    // first create's result instead of making a second task. A caller that
+    // sends no key is unaffected (lib/requestIdempotency.js).
+    const { value: result, replayed } = await idempotentRequest(req, 'tasks.create', () =>
+      taskService.createTask(req.db, {
+        from:      req.auth?.userId || req.body.from,
+        to:        req.body.to,
+        title:     req.body.title,
+        desc:      req.body.desc   || '',
+        start:     req.body.start  || null,
+        due:       req.body.due    || null,
+        notify:    req.body.notify || false,
+        link_type: req.body.link_type || null,
+        link_id:   req.body.link_id   || null,
+        source:                req.body.source || null,
+        send_assignment_email: req.body.send_assignment_email !== false
+      })
+    );
     // `...result` now spreads { task_id, action_token, action_url } — the action
     // token ships in the response to any authed caller that just created the task.
-    res.json({ status: 'success', title: 'Task Created', message: 'Task successfully created', ...result });
+    res.json({ status: 'success', title: 'Task Created', message: 'Task successfully created', ...result, ...(replayed ? { replayed: true } : {}) });
   } catch (err) {
+    if (sendIdempotencyError(res, err)) return;
     console.error('POST /api/tasks error:', err);
     res.status(500).json({ status: 'error', message: err.message });
   }

@@ -28,6 +28,7 @@ const jwtOrApiKey  = require('../lib/auth.jwtOrApiKey');
 const apptService  = require('../services/apptService');
 const calendarTypeService = require('../services/calendarTypeService');   // U2 — type_key on PATCH
 const { escapeLike } = require('../lib/escapeLike');
+const { idempotentRequest, sendIdempotencyError } = require('../lib/requestIdempotency');
 
 // ─── LIST ───
 router.get('/api/appts', jwtOrApiKey, async (req, res) => {
@@ -308,18 +309,26 @@ router.patch('/api/appts/:id', jwtOrApiKey, async (req, res) => {
 // ─── CREATE ───
 router.post('/api/appts', jwtOrApiKey, async (req, res) => {
   try {
-    const result = await apptService.createAppt(req.db, {
-      ...req.body,
-      actingUserId: req.auth?.userId || 0,
-      source:       'staff'   // after spread — staff shell, body can't override
-    });
+    // Optional `Idempotency-Key` header — see lib/requestIdempotency.js. The
+    // claim is committed before createAppt opens its own transaction, so a
+    // second tab's submission is refused rather than booked twice (this create
+    // also syncs Google Calendar and can enrol a sequence post-commit).
+    const { value: result, replayed } = await idempotentRequest(req, 'appts.create', () =>
+      apptService.createAppt(req.db, {
+        ...req.body,
+        actingUserId: req.auth?.userId || 0,
+        source:       'staff'   // after spread — staff shell, body can't override
+      })
+    );
     res.json({
       status: 'success',
       title:  'Appointment Created!',
       message: `Appointment #${result.appt_id} created`,
-      data:   result
+      data:   result,
+      ...(replayed ? { replayed: true } : {})
     });
   } catch (err) {
+    if (sendIdempotencyError(res, err)) return;
     console.error('POST /api/appts error:', err);
     res.status(400).json({ status: 'error', title: 'Error', message: err.message });
   }

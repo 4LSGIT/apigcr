@@ -25,6 +25,7 @@ const router       = express.Router();
 const jwtOrApiKey  = require('../lib/auth.jwtOrApiKey');
 const eventService = require('../services/eventService');
 const { checkNoteLengths } = require('../lib/noteLimits');
+const { idempotentRequest, sendIdempotencyError } = require('../lib/requestIdempotency');
 
 // ─── LIST ─────────────────────────────────────────────────────────────────────
 router.get('/api/events', jwtOrApiKey, async (req, res) => {
@@ -67,17 +68,24 @@ router.get('/api/events/:id(\\d+)', jwtOrApiKey, async (req, res) => {
 // ─── CREATE ───────────────────────────────────────────────────────────────────
 router.post('/api/events', jwtOrApiKey, async (req, res) => {
   try {
-    const result = await eventService.createEvent(req.db, {
-      ...req.body,
-      acting_user_id: req.auth?.userId ?? req.body.acting_user_id,
-    });
+    // Optional `Idempotency-Key` header — see lib/requestIdempotency.js. The
+    // key rides in the header only, so nothing in the body can set it and it
+    // cannot change what this route writes, only whether it writes twice.
+    const { value: result, replayed } = await idempotentRequest(req, 'events.create', () =>
+      eventService.createEvent(req.db, {
+        ...req.body,
+        acting_user_id: req.auth?.userId ?? req.body.acting_user_id,
+      })
+    );
     res.json({
       status:  'success',
       title:   'Event Created!',
       message: `Event #${result.event_id} created`,
       data:    result.event,
+      ...(replayed ? { replayed: true } : {}),
     });
   } catch (err) {
+    if (sendIdempotencyError(res, err)) return;
     console.error('POST /api/events error:', err);
     res.status(400).json({ status: 'error', title: 'Error', message: err.message });
   }

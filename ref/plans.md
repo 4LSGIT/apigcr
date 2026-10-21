@@ -505,6 +505,24 @@ failed-send dispatch are live; wf 54 sends the notices.)
   either route through the registry or state the direct-require as deliberate
   in the sweep headers + COMMS_ARCHIVE_DESIGN §6.
 
+## From the Ask Casey arc — P4 idempotency follow-ups (2026-10-22)
+
+The migration ran live on 2026-10-22 and `request_idempotency` is in
+`ref/database.sql`, so these are open follow-ups, not blocked ones:
+
+- **`request_idempotency.idem_key` belongs in `tests/schemaCollationBin.test.js`'s
+  `BIN_COLUMNS`.** The column is deliberately `utf8mb4_bin` (an opaque token; under
+  general_ci two keys differing only in case would collide into a false replay), and
+  that lint is where the deliberate `_bin` columns are declared.
+  `ref/SCHEMA_CONVENTIONS.md` states the general_ci rule without mentioning the
+  `_bin` exception the test enforces — fix that line in the same slice.
+- **Nothing prunes the table.** Rows are tiny and the firm has four users, so there
+  is no pressure; `idx_request_idempotency_created` exists so an age sweep can delete
+  by `created_at` whenever one is wanted.
+- **Ambiguous-result observability is deliberately out of P4-minimal.** A settle that
+  cannot record (`recorded:false`) and the `unknown` outcome only `console.error`
+  today. P7 asks for an alert on duplicate/ambiguous writes; that is where it belongs.
+
 ## From the Ask Casey arc (fix package 2026-10-21, P2 inventory 2026-10-22) — deferred
 
 (The actions arc's own roadmap is `ref/ASK_CASEY_ACTIONS_PLAN.md`; these are

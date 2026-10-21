@@ -20,6 +20,7 @@ const express      = require('express');
 const router       = express.Router();
 const jwtOrApiKey  = require('../lib/auth.jwtOrApiKey');
 const emailSvc     = require('../services/contactEmailService');
+const { idempotentRequest, sendIdempotencyError } = require('../lib/requestIdempotency');
 
 
 // ─────────────────────────────────────────────────────────────
@@ -93,9 +94,15 @@ router.post('/api/contact-emails', jwtOrApiKey, async (req, res) => {
       return res.status(400).json({ status: 'error', message: 'contact_id is required' });
     }
 
-    const result = await emailSvc.createContactEmail(req.db, contact_id, fields, { force, createdBy, expectedPrimaryId: expected_primary_id });
-    res.status(201).json({ status: 'success', ...result });
+    // Optional `Idempotency-Key` header: a repeat of the same key replays the
+    // first create's response instead of inserting a second row. Header only —
+    // nothing in the body can set it (lib/requestIdempotency.js).
+    const { value: result, replayed } = await idempotentRequest(req, 'contact_emails.create', () =>
+      emailSvc.createContactEmail(req.db, contact_id, fields, { force, createdBy, expectedPrimaryId: expected_primary_id })
+    );
+    res.status(201).json({ status: 'success', ...result, ...(replayed ? { replayed: true } : {}) });
   } catch (err) {
+    if (sendIdempotencyError(res, err)) return;
     console.error('POST /api/contact-emails error:', err);
     const status = mapErrorStatus(err);
     const body = { status: 'error', message: err.message };
