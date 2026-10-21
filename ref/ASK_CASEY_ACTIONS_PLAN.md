@@ -136,6 +136,14 @@ existing user-facing endpoint. A new endpoint is justified only when the
 existing product has no suitable operation or cannot enforce the exact reviewed
 contract; convenience for Casey alone is not enough.
 
+This is an idea, not a prohibition (Fred, 2026-10-22). The test to apply is
+whether the endpoint would **perform the legal action**: that must stay with
+the user's ordinary route, triggered by the user's own click. An endpoint that
+only records or reconciles what the user already did — P5's applied ledger is
+the worked example — writes no business record and is ordinary engineering.
+"Almost every action" is the standard: the exceptions are bookkeeping, never a
+second way to write business records.
+
 ### Sync/event-bus check for every action
 
 Running through the user's browser also means the ordinary YisraCase sync path
@@ -770,27 +778,34 @@ Pulled ahead of A6 (course correction 2). The interim required-save + loud
 failure shipped with the fix package; the server-side applied state below is
 still to build.
 
-**Open design question, not yet ruled.** A durable applied ledger wants a place
-to write "draft X was applied, result Y" that does not depend on the chat
-message saving. The two candidates are not equivalent:
+**RULED — Fred, 2026-10-22: a ledger endpoint is allowed.** "No new endpoints"
+is an idea, not a rule; what is load-bearing is that *almost* every action
+Casey takes is an ordinary legal action of the user, performed through the
+route the rest of YisraCase uses and triggered by the user — just from outside
+the ordinary UI. An endpoint that only records that the user performed an
+action does not perform one, so it is ordinary engineering. The test in
+`tests/assistantUi.test.js` that today spells this as "`routes/api.assistant.js`
+contains no `/api/assistant/actions`" must therefore be RE-PINNED, not deleted,
+when the ledger lands: the invariant to assert is that no assistant endpoint
+performs a business write (it requires no write service and calls none of their
+write functions). Deleting the assertion would retire the guarantee instead of
+restating it.
 
-1. *A Casey-specific ledger endpoint* (claim before the write, record after).
-   It gives the cleanest not-applied / applied / unknown trichotomy, but it
-   contradicts "no Casey execution endpoint": `tests/assistantUi.test.js`
-   asserts `routes/api.assistant.js` contains no `/api/assistant/actions`, and
-   the governing principle says to think twice before any Casey-only action
-   endpoint. A ledger writes no business record, so the contradiction is
-   arguably nominal — but it is the plan's own line, and crossing it is Fred's
-   call, not a slice's.
-2. *Canonical idempotency as the ledger* (P4). The create routes accept a
-   user-scoped key and store key → result themselves; the durable applied state
-   is then a canonical facility native callers share, and no Casey-only
-   endpoint exists. The gap is that it covers creates, not the update/complete/
-   cancel kinds, and a reopened card must still not re-POST to discover an
-   earlier result (writing from history is forbidden).
+The ledger is the preferred shape, because it gives the full
+not-applied / applied / unknown trichotomy for every kind rather than only for
+creates. Design for the slice:
 
-Until this is ruled, P5 stops at the shipped interim. P4's canonical
-idempotency (option 2's half) can proceed on its own.
+- key it on the server-minted `draft_id` — already a uuid from the normalizer,
+  already user-scoped, already not model-chosen;
+- claim before the canonical write, record the canonical result after;
+- on chat reopen the ledger, not the chat payload, is the source of applied
+  truth;
+- an in_flight row with no result is `unknown` and must never offer a retry.
+  Reuse P4's vocabulary and outcome names rather than inventing a second set.
+
+P4's canonical idempotency stays as the creates-side protection; the two
+compose, and P4 landed first (`3eb7a99`). Until the ledger slice is built, P5
+rests at the shipped interim (required marker save + loud failure).
 
 Make success restoration resilient when the canonical write succeeds but chat
 history persistence fails. Preserve the canonical result needed to reopen the
