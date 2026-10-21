@@ -94,6 +94,14 @@ router.patch('/api/users/:id/freebusy-calendars', jwtOrApiKey, async (req, res) 
   if (!Number.isInteger(id) || id <= 0) {
     return res.status(400).json({ status: 'error', message: 'invalid user id' });
   }
+  // Self or su only (arc review 2026-10-21 side finding): the one caller is
+  // My Settings editing the signed-in user's own list; su edits anyone via
+  // the Users screen's path. API keys have no self, so they are refused —
+  // machine edits go through the SU admin PATCH if ever needed.
+  const { isSuperuser } = require('../lib/auth.superuser');
+  if (req.auth.type !== 'jwt' || (Number(req.auth.userId) !== id && !isSuperuser(req.auth))) {
+    return res.status(403).json({ status: 'error', message: 'you may only edit your own freebusy calendars' });
+  }
   let { calendar_ids } = req.body || {};
   if (!Array.isArray(calendar_ids)) {
     return res.status(400).json({ status: 'error', message: 'calendar_ids must be an array of strings' });
