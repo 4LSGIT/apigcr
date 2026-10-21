@@ -436,7 +436,7 @@ describe('GET /api/app-settings — per caller', () => {
     expect(keys.indexOf('esign_credit_alert_threshold')).toBeLessThan(keys.indexOf('first_var'));   // variables close the firm home
     expect(keys.indexOf('zz_var')).toBeLessThan(keys.indexOf('portal_live'));
     expect(keys.indexOf('cta_default_timeout_repeatable')).toBeLessThan(keys.indexOf('app_url'));   // cta before system
-    expect(keys[keys.length - 1]).toBe('phone_delivery_sync_enabled');                              // comms last, sort 70 (phone-delivery S1)
+    expect(keys[keys.length - 1]).toBe('phone_delivery_failed_workflow_id');                        // comms last, sort 71 (phone-delivery S3c)
   });
 
   test('?home filters (comma-separated, repeatable); only the asked homes are read', async () => {

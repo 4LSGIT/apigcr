@@ -1,6 +1,6 @@
 # Phone Outbound Delivery — design
 
-**Arc:** phone-delivery · **Status:** S1 live 2026-10-21 (first tick verified: 11 recovered, 40 stamped, 3 real failures surfaced); S2 cut over 2026-10-21 (hook 22 → wf_phone_delivery_ping, wf19 deactivated; status-transition ping proven live same day); S3 live 2026-10-21 (comms.html thread chip); S3b built 2026-10-21 (entity-feeds badge + buildIngestEvent passes the send time as createLogEntry's `date`, so recovered texts land on the log when they were SENT — patch pending apply); S4 (backfill) runbook issued, not run; S5 not started
+**Arc:** phone-delivery · **Status:** S1 live 2026-10-21 (first tick verified: 11 recovered, 40 stamped, 3 real failures surfaced); S2 cut over 2026-10-21 (hook 22 → wf_phone_delivery_ping, wf19 deactivated; status-transition ping proven live same day); S3 live 2026-10-21 (comms.html thread chip); S3b built 2026-10-21 (entity-feeds badge + buildIngestEvent passes the send time as createLogEntry's `date`, so recovered texts land on the log when they were SENT — patch pending apply); S4 run + verified 2026-10-21 (638 texts recovered May→Oct, logged at send time, Layer 3 skipped on all 638); S3c built 2026-10-21 (failed-send → workflow dispatch, patch pending apply; off until the setting names a workflow); S5 (digest, Quo) not started
 **Scope:** OUTBOUND SMS/MMS only — recovering texts the ingest never saw, and
 learning/display of per-message delivery status. Inbound parsing stays where it
 is (see §9 Q3).
@@ -221,8 +221,22 @@ migration rule.
   one-shot `scheduled_jobs` row) with explicit `{since:'2026-05-20',
   until:…}` params, paged by month to respect the rate group. Recovers the
   ~630 missing texts and stamps history.
-- **S5 — later / separate ruling.** Failed-texts daily digest to SS+Shoshana
-  (query on the new columns); Quo `listOutbound` when its API is confirmed.
+- **S3c — failed-send dispatch (ruled yes 2026-10-21).** When a LIVE run
+  transitions a row's verdict to `failed` (fresh verdict or null→failed —
+  never a re-check no-op, never a failed→failed code refinement, never the
+  backfill, same reasoning as §6), the sync starts the workflow named by
+  `app_settings.phone_delivery_failed_workflow_id` (blank = off) through
+  `actionDispatchers.dispatchWorkflow` — the standard hook-target path, so
+  inactive/unpublished refusals, init_data capture and the queued start all
+  behave exactly as a hook dispatch. Init data:
+  `{kind:'sms_delivery_failed', provider, provider_ref, to, from, body, ts,
+  reason, code}`. The WORKFLOW owns the action (task, email, nothing) — code
+  never hardcodes one. Known noise shape: a chronically unreachable number
+  re-fails on every new send (new row = new transition), so the workflow
+  should expect weekly repeats per client.
+- **S5 — later.** Failed-texts daily digest (query on the new columns) as the
+  grouped alternative if the S3c dispatch proves noisy; Quo `listOutbound`
+  when its API is confirmed.
 
 ---
 

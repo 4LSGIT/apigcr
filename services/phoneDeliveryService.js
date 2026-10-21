@@ -53,6 +53,7 @@ const phoneService = require('./phoneService');
 const { alert, acquireLock } = require('./commsArchiveCommon');
 
 const ENABLED_KEY = 'phone_delivery_sync_enabled';
+const FAILED_WF_KEY = 'phone_delivery_failed_workflow_id';
 const LOCK_EXPR = "CONCAT('phone_outbound_sync:', DATABASE())";
 const WINDOW_HOURS = 48;
 const MAX_PAGES = 10;          // per group per run; a backfill passes its own
@@ -145,6 +146,15 @@ async function runSync(db, opts = {}) {
   out.enabled = (await getSetting(db, ENABLED_KEY)) === '1';
   if (!out.enabled) { out.skipped = `${ENABLED_KEY} is not "1"`; return out; }
 
+  // S3c — failed-send dispatch: the workflow started when a text's verdict
+  // TRANSITIONS to failed (blank / non-numeric = off). The workflow decides
+  // the action (task, email…) in the builder — code never hardcodes one.
+  // Fired by LIVE runs only: a backfill raising months-old failures would be
+  // retroactive noise, the same reasoning as skipping Layer 3 (§6).
+  const failedWfId = out.backfill ? null : (Number(await getSetting(db, FAILED_WF_KEY)) || null);
+  out.dispatched = 0;
+  out.dispatch_errors = 0;
+
   out.since = _iso(opts.since, now - WINDOW_HOURS * 3_600_000);
   out.until = _iso(opts.until, now);
   if (out.since >= out.until) throw new Error(`empty window: since ${out.since} >= until ${out.until}`);
@@ -165,7 +175,7 @@ async function runSync(db, opts = {}) {
       if (!adapter || !adapter.capabilities?.outboundSync || typeof adapter.listOutbound !== 'function') continue;
       out.groups += 1;
       try {
-        await _syncGroup(db, adapter, g, out, { maxPages });
+        await _syncGroup(db, adapter, g, out, { maxPages, failedWfId });
       } catch (err) {
         // NO_AUTH and anything else unexpected for this group: record, alert,
         // move on to the next group.
@@ -187,7 +197,7 @@ async function runSync(db, opts = {}) {
   return out;
 }
 
-async function _syncGroup(db, adapter, g, out, { maxPages }) {
+async function _syncGroup(db, adapter, g, out, { maxPages, failedWfId }) {
   const phoneIngestService = require('./phoneIngestService');   // lazy require (convention)
   for (let page = 1; page <= maxPages; page++) {
     const res = await adapter.listOutbound(db, {
@@ -248,6 +258,34 @@ async function _syncGroup(db, adapter, g, out, { maxPages }) {
           [next.state, next.reason, next.code, g.provider, r.provider_ref]
         );
         out.stamped += 1;
+
+        // S3c — dispatch EXACTLY on the transition into failed: a later run
+        // re-reading the same verdict is a no-op write (never reaches here),
+        // and a failed→failed code refinement is not a second failure. The
+        // dispatcher handles inactive / unpublished targets itself (refuse or
+        // capture); a dispatch failure never stops the window.
+        const wasFailed = (row && row.delivery_state) === 'failed';
+        if (failedWfId && next.state === 'failed' && !wasFailed) {
+          try {
+            const { dispatchWorkflow } = require('../lib/actionDispatchers');   // lazy require (convention)
+            const d = await dispatchWorkflow({ id: null }, { workflow_id: failedWfId }, {
+              kind: 'sms_delivery_failed',
+              provider: g.provider,
+              provider_ref: r.provider_ref,
+              to: r.to,
+              from: r.from,
+              body: r.body,
+              ts: r.ts,
+              reason: next.reason,
+              code: next.code,
+            }, db);
+            if (d && d.status === 'success') out.dispatched += 1;
+            else { out.dispatch_errors += 1; out.errors.push(`failed-dispatch wf${failedWfId}/${r.provider_ref}: ${(d && d.error) || 'refused'}`); }
+          } catch (err) {
+            out.dispatch_errors += 1;
+            out.errors.push(`failed-dispatch wf${failedWfId}/${r.provider_ref}: ${err.message}`);
+          }
+        }
       }
     }
 
@@ -262,6 +300,7 @@ module.exports = {
   stampDecision,
   buildIngestEvent,
   ENABLED_KEY,
+  FAILED_WF_KEY,
   LOCK_EXPR,
   WINDOW_HOURS,
 };

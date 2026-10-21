@@ -23,9 +23,15 @@
 
 jest.mock('../services/settingsService', () => ({ getSetting: jest.fn() }));
 jest.mock('../services/phoneIngestService', () => ({ ingestPhoneEvent: jest.fn() }));
+jest.mock('../lib/actionDispatchers', () => ({ dispatchWorkflow: jest.fn() }));
 
 const settingsService = require('../services/settingsService');
 const phoneIngestService = require('../services/phoneIngestService');
+const actionDispatchers = require('../lib/actionDispatchers');
+
+/** Key-sensitive settings stub: keys absent from the map read as NULL (unset). */
+const setSettings = (map) =>
+  settingsService.getSetting.mockImplementation(async (_db, k) => (k in map ? map[k] : null));
 const rc = require('../services/adapters/phone/ringcentral');
 const phoneService = require('../services/phoneService');
 const svc = require('../services/phoneDeliveryService');
@@ -252,13 +258,13 @@ describe('runSync', () => {
   });
 
   test('locked elsewhere → skipped', async () => {
-    settingsService.getSetting.mockResolvedValue('1');
+    setSettings({ [svc.ENABLED_KEY]: '1' });
     const out = await svc.runSync(makeDb({ locked: true }));
     expect(out.skipped).toBe('locked');
   });
 
   test('unknown ref → ingested live (rules fire); known changed → stamped; unchanged → no write', async () => {
-    settingsService.getSetting.mockResolvedValue('1');
+    setSettings({ [svc.ENABLED_KEY]: '1' });
     phoneIngestService.ingestPhoneEvent.mockResolvedValue({ log_id: 1 });
     const existing = [
       { id: 7, provider_ref: 'ref-known-changed', delivery_state: 'sent', delivery_reason: null, delivery_code: null },
@@ -289,7 +295,7 @@ describe('runSync', () => {
   });
 
   test('backfill run: skipAutomation="backfill" and the event carries the marker (design §6)', async () => {
-    settingsService.getSetting.mockResolvedValue('1');
+    setSettings({ [svc.ENABLED_KEY]: '1' });
     phoneIngestService.ingestPhoneEvent.mockResolvedValue({ log_id: 1 });
     const adapter = fixtureAdapter([{ records: [OUT_REC({ provider_ref: 'old-1' })] }]);
     arm(adapter);
@@ -301,14 +307,14 @@ describe('runSync', () => {
   });
 
   test('429 parks the group; a non-200 alerts and never reaches the next page', async () => {
-    settingsService.getSetting.mockResolvedValue('1');
+    setSettings({ [svc.ENABLED_KEY]: '1' });
     const adapter429 = fixtureAdapter([{ status: 429, records: [] }]);
     arm(adapter429);
     let out = await svc.runSync(makeDb());
     expect([out.fetch_errors, out.pages]).toEqual([1, 0]);
 
     jest.clearAllMocks(); getAdapterSpy.mockRestore();
-    settingsService.getSetting.mockResolvedValue('1');
+    setSettings({ [svc.ENABLED_KEY]: '1' });
     const adapter500 = fixtureAdapter([{ status: 500, errorText: 'boom', records: [] }]);
     arm(adapter500);
     const db = makeDb();
@@ -318,8 +324,65 @@ describe('runSync', () => {
     expect(db.calls.some(([s]) => /system_alerts/.test(s))).toBe(true);
   });
 
+  test('S3c failed-dispatch: fired exactly on the TRANSITION into failed, never on re-checks, refinements or backfill', async () => {
+    const FAILED = { state: 'failed', reason: 'unreachable', provider_code: 'SMS-CAR-411' };
+    const WF = { [svc.ENABLED_KEY]: '1', [svc.FAILED_WF_KEY]: '53' };
+    phoneIngestService.ingestPhoneEvent.mockResolvedValue({ log_id: 1 });
+    actionDispatchers.dispatchWorkflow.mockResolvedValue({ status: 'success' });
+
+    // a) fresh row straight to failed (null → failed IS a transition) → one dispatch, pinned payload
+    setSettings(WF);
+    arm(fixtureAdapter([{ records: [OUT_REC({ provider_ref: 'f-1', delivery: FAILED })] }]));
+    let out = await svc.runSync(makeDb());
+    expect([out.dispatched, out.dispatch_errors]).toEqual([1, 0]);
+    expect(actionDispatchers.dispatchWorkflow).toHaveBeenCalledTimes(1);
+    const [tgt, cfg, init] = actionDispatchers.dispatchWorkflow.mock.calls[0];
+    expect(cfg).toEqual({ workflow_id: 53 });
+    expect(init).toEqual({
+      kind: 'sms_delivery_failed', provider: 'ringcentral', provider_ref: 'f-1',
+      to: '2482405969', from: '2485592400', body: 'b', ts: '2026-10-20T00:00:00.000Z',
+      reason: 'unreachable', code: 'SMS-CAR-411',
+    });
+
+    // b) already failed, code refined → stamped but NOT a second failure
+    jest.clearAllMocks(); getAdapterSpy.mockRestore();
+    setSettings(WF);
+    actionDispatchers.dispatchWorkflow.mockResolvedValue({ status: 'success' });
+    const failedRow = { id: 7, provider_ref: 'f-1', delivery_state: 'failed', delivery_reason: 'unreachable', delivery_code: null };
+    arm(fixtureAdapter([{ records: [OUT_REC({ provider_ref: 'f-1', delivery: FAILED })] }]));
+    out = await svc.runSync(makeDb({ existingRows: [failedRow] }));
+    expect([out.stamped, out.dispatched]).toEqual([1, 0]);
+    expect(actionDispatchers.dispatchWorkflow).not.toHaveBeenCalled();
+
+    // c) backfill never dispatches, even on a fresh failed verdict
+    jest.clearAllMocks(); getAdapterSpy.mockRestore();
+    setSettings(WF);
+    phoneIngestService.ingestPhoneEvent.mockResolvedValue({ log_id: 1 });
+    arm(fixtureAdapter([{ records: [OUT_REC({ provider_ref: 'f-2', delivery: FAILED })] }]));
+    out = await svc.runSync(makeDb(), { since: '2026-05-20T00:00:00Z', until: '2026-06-01T00:00:00Z', backfill: true });
+    expect([out.stamped, out.dispatched]).toEqual([1, 0]);
+    expect(actionDispatchers.dispatchWorkflow).not.toHaveBeenCalled();
+
+    // d) setting blank = off; e) a refused dispatch is counted, never thrown
+    jest.clearAllMocks(); getAdapterSpy.mockRestore();
+    setSettings({ [svc.ENABLED_KEY]: '1' });
+    phoneIngestService.ingestPhoneEvent.mockResolvedValue({ log_id: 1 });
+    arm(fixtureAdapter([{ records: [OUT_REC({ provider_ref: 'f-3', delivery: FAILED })] }]));
+    out = await svc.runSync(makeDb());
+    expect(actionDispatchers.dispatchWorkflow).not.toHaveBeenCalled();
+
+    jest.clearAllMocks(); getAdapterSpy.mockRestore();
+    setSettings(WF);
+    phoneIngestService.ingestPhoneEvent.mockResolvedValue({ log_id: 1 });
+    actionDispatchers.dispatchWorkflow.mockResolvedValue({ status: 'failed', error: 'workflow #53 is inactive' });
+    arm(fixtureAdapter([{ records: [OUT_REC({ provider_ref: 'f-4', delivery: FAILED })] }]));
+    out = await svc.runSync(makeDb());
+    expect([out.dispatched, out.dispatch_errors]).toEqual([0, 1]);
+    expect(out.errors[0]).toMatch(/failed-dispatch wf53.*inactive/);
+  });
+
   test('one bad record never stops the window', async () => {
-    settingsService.getSetting.mockResolvedValue('1');
+    setSettings({ [svc.ENABLED_KEY]: '1' });
     phoneIngestService.ingestPhoneEvent
       .mockRejectedValueOnce(new Error('INVALID_LOG_LINK_ID'))
       .mockResolvedValue({ log_id: 2 });
