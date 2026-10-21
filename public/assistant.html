@@ -372,7 +372,7 @@ function taskUpdateBody(draft) {
 }
 
 function taskActionRequest(draft) {
-  if (draft.kind === 'task.create.v1') return { path: '/api/tasks', method: 'POST', body: taskCreateBody(draft) };
+  if (draft.kind === 'task.create.v1') return { path: '/api/tasks', method: 'POST', body: taskCreateBody(draft), idempotent: true };
   const id = draft.task.task_id;
   if (draft.kind === 'task.update.v1') return { path: `/api/tasks/${id}`, method: 'PATCH', body: taskUpdateBody(draft) };
   if (draft.kind === 'task.complete.v1') return { path: `/api/tasks/${id}/complete`, method: 'PATCH', body: { note: draft.note || '' } };
@@ -467,7 +467,7 @@ function eventUpdateBody(draft) {
 }
 
 function eventActionRequest(draft) {
-  if (draft.kind === 'event.create.v1') return { path: '/api/events', method: 'POST', body: eventCreateBody(draft) };
+  if (draft.kind === 'event.create.v1') return { path: '/api/events', method: 'POST', body: eventCreateBody(draft), idempotent: true };
   const id = draft.event.event_id;
   if (draft.kind === 'event.update.v1') return { path: `/api/events/${id}`, method: 'PATCH', body: eventUpdateBody(draft) };
   if (draft.kind === 'event.complete.v1') return { path: `/api/events/${id}/complete`, method: 'PATCH', body: { resolution: draft.resolution } };
@@ -544,7 +544,7 @@ function apptCreateBody(draft) {
 }
 
 function apptActionRequest(draft) {
-  if (draft.kind === 'appt.create.v1') return { path: '/api/appts', method: 'POST', body: apptCreateBody(draft) };
+  if (draft.kind === 'appt.create.v1') return { path: '/api/appts', method: 'POST', body: apptCreateBody(draft), idempotent: true };
   const id = draft.appt.appt_id;
   if (draft.kind === 'appt.update.v1') {
     const body = {};
@@ -646,7 +646,7 @@ function contactSubrecordCreateBody(draft) {
 function contactSubrecordActionRequest(draft) {
   const plural = `${draft.family}${draft.family === 'address' ? 'es' : 's'}`;
   const base = `/api/contact-${plural}`;
-  if (String(draft.kind).includes('.create.')) return { path: base, method: 'POST', body: contactSubrecordCreateBody(draft) };
+  if (String(draft.kind).includes('.create.')) return { path: base, method: 'POST', body: contactSubrecordCreateBody(draft), idempotent: true };
   const body = { expected_updated_at: draft.target.expected_updated_at };
   if (String(draft.kind).includes('.end.')) {
     // end_reason is varchar(40) and the relaxed sql_mode truncates silently;
@@ -764,6 +764,8 @@ async function executeActionDraft(message) {
   const draft = message && message.action_draft;
   const family = actionFamily(draft);
   if (!family || typeof draft.draft_id !== 'string' || !draft.draft_id || draft.executing || draft.reviewing) return;
+  // Ambiguous outcome: the write may have landed. Never offer it again.
+  if (draft.ambiguous_error && draft.status !== 'applied') return;
   if (draft.status === 'applied' && actionAppliedId(family, draft)) { family.open(draft); return; }
   const stale = actionDraftStale(draft);
   if (stale) { draft.action_error = stale; render(); return; }
@@ -776,13 +778,25 @@ async function executeActionDraft(message) {
   draft.executing = true; delete draft.action_error; render();
   try {
     const request = family.request(draft);
-    const result = await api(request.path, request.body, request.method);
+    // Idempotency (P4). A create carries the server-minted draft_id as its
+    // Idempotency-Key: stable across retries of THIS card, unique per
+    // proposal, user-scoped, and never model-chosen. The canonical route
+    // stores key -> result, so a second tab or a timeout after the server
+    // committed replays the first result instead of creating a second record.
+    // A key is sent only where the route honours one; the other kinds are
+    // not creates and cannot duplicate a record.
+    const result = request.idempotent
+      ? await api(request.path, request.body, request.method, { 'Idempotency-Key': draft.draft_id })
+      : await api(request.path, request.body, request.method);
     const payload = family.result(draft, result);
     draft.status = 'applied';
+    if (result && result.replayed === true) draft.replayed = true;
     markActionApplied(family, draft, payload);
     const resultMessage = {
       role: 'assistant',
-      text: `${family.label(draft)} applied to ${family.resultText(payload)}.`,
+      text: draft.replayed
+        ? `${family.label(draft)} had already been applied to ${family.resultText(payload)}; nothing was created a second time.`
+        : `${family.label(draft)} applied to ${family.resultText(payload)}.`,
       entities: [family.entity(draft, payload)],
       action_result: { kind: draft.kind, draft_id: draft.draft_id, ...payload },
     };
@@ -790,7 +804,17 @@ async function executeActionDraft(message) {
     await recordActionResult(draft, resultMessage);
     if (family.afterApply) family.afterApply(draft, payload); else family.open(draft);
   } catch (e) {
-    draft.action_error = e.message || family.failure;
+    // An ambiguous outcome is not a retryable error. The server took the claim
+    // but never recorded a result, so the write MAY have landed; offering the
+    // button again is exactly the double-apply the key exists to prevent.
+    const outcome = e && e.status === 409 && e.body && e.body.idempotency && e.body.idempotency.outcome;
+    if (outcome === 'unknown') {
+      draft.ambiguous_error = `This may already have been applied: the server claimed the request but never recorded its result (${e.message || 'no result recorded'}). Open the record and check before asking Casey to prepare it again. Do not apply this card again.`;
+    } else if (outcome === 'in_flight') {
+      draft.action_error = 'The same request is still being applied. Wait a moment, then check the record before trying again.';
+    } else {
+      draft.action_error = e.message || family.failure;
+    }
   } finally {
     draft.executing = false; render();
   }
@@ -860,7 +884,8 @@ function hydrateActionDraft(family, host, message, draft) {
   const title = document.createElement('b'); title.textContent = family.title;
   const status = document.createElement('span'); status.className = 'action-draft-status';
   status.textContent = applied ? `Applied — ${family.noun} #${appliedId}`
-    : actionDraftStale(draft) ? 'Expired — not applied' : draft.executing ? 'Applying…' : draft.reviewing ? 'Reviewing…' : 'Proposal — not applied';
+    : draft.ambiguous_error ? 'Outcome unknown — check the record'
+      : actionDraftStale(draft) ? 'Expired — not applied' : draft.executing ? 'Applying…' : draft.reviewing ? 'Reviewing…' : 'Proposal — not applied';
   head.append(title, status);
 
   const fields = document.createElement('dl'); fields.className = 'action-draft-grid';
@@ -885,7 +910,10 @@ function hydrateActionDraft(family, host, message, draft) {
   next.append(warning);
 
   const actions = document.createElement('div'); actions.className = 'action-draft-actions';
-  if (canApply) {
+  // An ambiguous result (the claim was taken, no result recorded) removes the
+  // write control outright: the record may already exist, so the only safe
+  // next step is to look.
+  if (canApply && !draft.ambiguous_error) {
     const apply = document.createElement('button'); apply.type = 'button';
     apply.textContent = applied ? `Open ${family.noun} #${appliedId}` : `Review & ${family.label(draft).toLowerCase()}`;
     apply.disabled = !!(draft.executing || draft.reviewing);
@@ -909,6 +937,11 @@ function hydrateActionDraft(family, host, message, draft) {
     const error = document.createElement('div'); error.className = 'action-draft-next-warning';
     error.textContent = `Could not apply ${family.errorNoun}: ${draft.action_error}`;
     next.append(error);
+  }
+  if (draft.ambiguous_error) {
+    const ambiguous = document.createElement('div'); ambiguous.className = 'action-draft-next-warning';
+    ambiguous.textContent = draft.ambiguous_error;
+    next.append(ambiguous);
   }
   appendMarkerError(next, draft);
   host.append(head, fields, next, actions);
@@ -979,9 +1012,9 @@ function publicHistory() {
   return history.filter((m) => m.type !== 'thinking').slice(-8).map((m) => ({ role: m.role, text: m.text }));
 }
 
-async function api(path, body) {
-  const method = arguments.length > 2 ? arguments[2] : 'POST';
-  const r = await P.apiSend(path, method, body);
+async function api(path, body, method, headers) {
+  if (arguments.length <= 2) method = 'POST';
+  const r = await P.apiSend(path, method, body, headers || {});
   if (!r || r.status === 'error') throw new Error((r && (r.message || r.error)) || 'Request failed');
   return r;
 }

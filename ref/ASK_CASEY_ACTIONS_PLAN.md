@@ -772,6 +772,31 @@ it must never blindly retry an unknown send. The key is browser/server-owned,
 not model-chosen, and the same protection should benefit native callers where
 appropriate.
 
+**Shipped for creates, both halves.** Server (`3eb7a99`): an optional
+`Idempotency-Key` header on the six create routes, one server-chosen scope
+each, backed by `request_idempotency`. No key means the old behaviour and zero
+extra queries, so native callers are untouched; the key can never change what a
+route writes, only whether it writes twice. The claim is committed before the
+operation's own transaction — inside it, the claim could not fence a second tab
+— and `withIdempotency` refuses a transaction connection outright. A failed
+operation releases the claim, so the key stays reusable.
+
+Browser: a create sends its server-minted `draft_id` as the key — stable across
+retries of that card, unique per proposal, never model-chosen — and only a
+create sends one, because no other kind can duplicate a record. The three
+outcomes reach the card as three different states: a `replayed` response
+restores the applied state and says the record already existed rather than
+reporting a second create; a fresh `in_flight` 409 is an ordinary retryable
+error; and an `unknown` 409 (claim taken, no result recorded) **removes the
+write control from the card entirely** and tells the user to open the record,
+because offering it again is the double-apply the key exists to prevent. The
+card keeps Copy and Discard in that state — reading and dismissing are always
+safe.
+
+Still open from P4's full scope: sends, enrollment, starts, replays and
+fan-out are not wired (their families are not built yet), and an ambiguous
+outcome is only logged server-side, not alerted — that belongs to P7.
+
 #### P5: Durable applied-result persistence
 
 Pulled ahead of A6 (course correction 2). The interim required-save + loud

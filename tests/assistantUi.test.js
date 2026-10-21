@@ -62,7 +62,7 @@ const ACTION_FNS = ['appendDraftField', 'appendDraftFieldsFromText', 'actionDraf
   'contactSubrecordActionLabel', 'contactAddressText', 'contactSubrecordValue', 'contactSubrecordDraftText',
   'contactSubrecordCreateBody', 'contactSubrecordActionRequest', 'contactSubrecordActionResult',
   'actionFamily', 'isActionDraft', 'actionAppliedId', 'markActionApplied', 'confirmActionDraft',
-  'executeActionDraft', 'applyActionResults'];
+  'executeActionDraft', 'applyActionResults', 'hydrateActionDraft'];
 
 function actionSandbox(deps = {}) {
   const registry = constSrc(html, 'ACTION_FAMILIES');
@@ -74,9 +74,9 @@ function actionSandbox(deps = {}) {
     constSrc(html, 'APPT_ACTION_KINDS'), constSrc(html, 'CONTACT_SUBRECORD_ACTION_KINDS'),
     ...ACTION_FNS.map((name) => fnSrcAuto(html, name)),
     registry,
-    'return { executeActionDraft, applyActionResults, actionFamily, isActionDraft };',
+    'return { executeActionDraft, applyActionResults, actionFamily, isActionDraft, hydrateActionDraft };',
   ].join('\n');
-  const supplied = { P: {}, api: jest.fn(), render: jest.fn(), history: [], saveAssistantMessage: jest.fn(), openEntity: jest.fn(), input: { value: '', focus: jest.fn() }, ...deps };
+  const supplied = { P: {}, api: jest.fn(), render: jest.fn(), history: [], saveAssistantMessage: jest.fn(), openEntity: jest.fn(), input: { value: '', focus: jest.fn() }, document: undefined, navigator: undefined, ...deps };
   const names = Object.keys(supplied);
   return new Function(...names, src)(...names.map((name) => supplied[name])); // eslint-disable-line no-new-func
 }
@@ -113,7 +113,7 @@ describe('Ask Casey UI wiring', () => {
     expect(html).toContain('delete message.action_draft; render()');
     expect(html).toContain('...(r.action_draft ? { action_draft: { ...r.action_draft, received_at: Date.now() } } : {})');
     expect(html).toContain('...(message.action_draft ? { action_draft: message.action_draft } : {})');
-    expect(html).toContain("return { path: '/api/tasks', method: 'POST', body: taskCreateBody(draft) }");
+    expect(html).toContain("return { path: '/api/tasks', method: 'POST', body: taskCreateBody(draft), idempotent: true }");
     expect(html).toContain("P.Swal.fire({");
     expect(html).toContain('if (!await confirmActionDraft(family, draft)) return');
     expect(html).not.toContain('window.confirm(');
@@ -173,7 +173,7 @@ describe('Ask Casey UI wiring', () => {
     expect(api).toHaveBeenCalledWith('/api/tasks', {
       to: 1, title: 'Review Ask Casey', desc: 'Try it.', start: '2026-10-20', due: '2026-10-27',
       notify: false, link_type: 'contact', link_id: '1001', source: 'Casey',
-    }, 'POST');
+    }, 'POST', { 'Idempotency-Key': 'draft-123' });
     expect(message.action_draft).toMatchObject({ status: 'applied', result_task_id: 77, executing: false });
     expect(render).toHaveBeenCalled();
     expect(history).toEqual([expect.objectContaining({
@@ -247,7 +247,7 @@ describe('Ask Casey UI wiring', () => {
       event_date: '2026-10-27', event_time: '09:30:00', event_all_day: false, event_length: 45,
       event_location: 'Court', event_link: null, event_note: 'Bring order', link: { type: 'case', id: 'C1', label: '26-1' },
       event_with: { user_id: 8, label: 'Provider' }, reminder: { to: 7, date: '2026-10-26', label: 'Fred' }, ignored: 'never send' };
-    expect(request(create)).toEqual({ path: '/api/events', method: 'POST', body: {
+    expect(request(create)).toEqual({ idempotent: true, path: '/api/events', method: 'POST', body: {
       event_type: 'Hearing', event_title: 'Confirmation hearing', event_date: '2026-10-27', event_time: '09:30:00',
       event_all_day: 0, event_length: 45, event_location: 'Court', event_link: null, event_note: 'Bring order', event_with: 8,
       event_link_type: 'case', event_link_id: 'C1', reminder: { to: 7, date: '2026-10-26' },
@@ -312,7 +312,7 @@ describe('Ask Casey UI wiring', () => {
       type: { appt_type: 'Consultation', type_key: 'consult' }, appt_length: 60, appt_platform: 'Telephone',
       appt_date: '2026-10-27 09:30:00', provider: { user_id: 7 }, note: 'Bring documents', confirm_sms: true,
       confirm_email: false, confirm_message: 'Confirmed', ignored: 'never send' };
-    expect(request(create)).toEqual({ path: '/api/appts', method: 'POST', body: { contact_id: 1309, case_id: 'C1',
+    expect(request(create)).toEqual({ idempotent: true, path: '/api/appts', method: 'POST', body: { contact_id: 1309, case_id: 'C1',
       appt_type: 'Consultation', type_key: 'consult', appt_length: 60, appt_platform: 'Telephone',
       appt_date: '2026-10-27 09:30:00', appt_with: 7, note: 'Bring documents', confirm_sms: false,
       confirm_email: false, confirm_message: '' } });
@@ -391,13 +391,13 @@ describe('Ask Casey UI wiring', () => {
     const request = new Function(`${fnSrc(html, 'contactSubrecordCreateBody')};${fnSrc(html, 'contactSubrecordActionRequest')};return contactSubrecordActionRequest;`)(); // eslint-disable-line no-new-func
     const contact = { contact_id: 1309, label: 'Client' };
     expect(request({ kind: 'contact.phone.create.v1', family: 'phone', contact, fields: { phone: '2485550100', label: 'Mobile', is_primary: true,
-      sms_optout: false, mms_capable: true, start_date: null, notes: '', verified: 1 } })).toEqual({ path: '/api/contact-phones', method: 'POST', body: {
+      sms_optout: false, mms_capable: true, start_date: null, notes: '', verified: 1 } })).toEqual({ idempotent: true, path: '/api/contact-phones', method: 'POST', body: {
       contact_id: 1309, phone: '2485550100', label: 'Mobile', is_primary: true, sms_optout: false, mms_capable: true, start_date: null, notes: '', expected_primary_id: null } });
     expect(request({ kind: 'contact.email.create.v1', family: 'email', contact, fields: { email: 'client@example.com', label: 'Personal', is_primary: false,
-      email_optout: true, start_date: '2026-01-01', notes: 'n' } })).toEqual({ path: '/api/contact-emails', method: 'POST', body: {
+      email_optout: true, start_date: '2026-01-01', notes: 'n' } })).toEqual({ idempotent: true, path: '/api/contact-emails', method: 'POST', body: {
       contact_id: 1309, email: 'client@example.com', label: 'Personal', is_primary: false, email_optout: true, start_date: '2026-01-01', notes: 'n' } });
     expect(request({ kind: 'contact.address.create.v1', family: 'address', contact, fields: { address1: '1 Main', address2: '', city: 'Detroit', state: 'MI', zip: '48201',
-      country: 'US', label: 'Home', is_primary: true, start_date: null, notes: '' } })).toEqual({ path: '/api/contact-addresses', method: 'POST', body: {
+      country: 'US', label: 'Home', is_primary: true, start_date: null, notes: '' } })).toEqual({ idempotent: true, path: '/api/contact-addresses', method: 'POST', body: {
       contact_id: 1309, address1: '1 Main', address2: '', city: 'Detroit', state: 'MI', zip: '48201', country: 'US', label: 'Home', is_primary: true, start_date: null, notes: '', expected_primary_id: null } });
     const target = { id: 21, expected_updated_at: '2026-10-20T10:00:00.000Z' };
     expect(request({ kind: 'contact.phone.update.v1', family: 'phone', target, changes: { label: 'Work', sms_optout: true, ignored: 'x' } })).toEqual({
@@ -671,6 +671,100 @@ describe('Ask Casey action freshness and applied-marker durability (review fix p
     expect(() => request({ kind: 'contact.phone.end.v1', family: 'phone', target, changes: { end_date: '2026-10-20', end_reason: 'x'.repeat(41) } }))
       .toThrow(/40 characters/);
     expect(request({ kind: 'contact.phone.end.v1', family: 'phone', target, changes: { end_date: '2026-10-20', end_reason: 'x'.repeat(40) } }).body.end_reason).toHaveLength(40);
+  });
+
+  test('a create carries its draft_id as the idempotency key; nothing else carries one', async () => {
+    const api = jest.fn().mockResolvedValue({ status: 'success', task_id: 5 });
+    const P = { Swal: { fire: jest.fn().mockResolvedValue({ isConfirmed: true }) }, showTask: jest.fn(),
+      tasksBadgeRefresh: jest.fn(), document: { getElementById: jest.fn(() => null) } };
+    const execute = actionSandbox({ P, api, saveAssistantMessage: jest.fn().mockResolvedValue() }).executeActionDraft;
+
+    await execute(draft({ received_at: Date.now() }));
+    expect(api).toHaveBeenLastCalledWith('/api/tasks', expect.any(Object), 'POST', { 'Idempotency-Key': 'd-1' });
+
+    // A non-create cannot duplicate a record, so it sends no key — and no
+    // fourth argument at all, so its call is unchanged.
+    const complete = { action_draft: { draft_id: 'd-2', kind: 'task.complete.v1', status: 'draft', received_at: Date.now(),
+      task: { task_id: 44, title: 'T', status: 'Pending' }, note: '' } };
+    await execute(complete);
+    expect(api).toHaveBeenLastCalledWith('/api/tasks/44/complete', { note: '' }, 'PATCH');
+    expect(api.mock.calls[1]).toHaveLength(3);
+  });
+
+  test('a retry of the same card reuses its key; a replay reports no second record', async () => {
+    const api = jest.fn()
+      .mockRejectedValueOnce(new Error('network died'))
+      .mockResolvedValueOnce({ status: 'success', task_id: 5, replayed: true });
+    const P = { Swal: { fire: jest.fn().mockResolvedValue({ isConfirmed: true }) }, showTask: jest.fn(),
+      tasksBadgeRefresh: jest.fn(), document: { getElementById: jest.fn(() => null) } };
+    const history = [];
+    const execute = actionSandbox({ P, api, history, saveAssistantMessage: jest.fn().mockResolvedValue() }).executeActionDraft;
+    const message = draft({ received_at: Date.now() });
+
+    await execute(message);
+    expect(message.action_draft.action_error).toBe('network died');
+    await execute(message);
+    // Same key both times: a retry must not look like a new intent.
+    expect(api.mock.calls[0][3]).toEqual({ 'Idempotency-Key': 'd-1' });
+    expect(api.mock.calls[1][3]).toEqual({ 'Idempotency-Key': 'd-1' });
+    expect(message.action_draft).toMatchObject({ status: 'applied', result_task_id: 5, replayed: true });
+    expect(history[0].text).toBe('Create task had already been applied to task #5; nothing was created a second time.');
+  });
+
+  test('an ambiguous 409 never offers the write again; an in-flight 409 stays retryable', async () => {
+    const ambiguous = Object.assign(new Error('no result recorded'), {
+      status: 409, body: { idempotency: { outcome: 'unknown' } } });
+    const api = jest.fn().mockRejectedValue(ambiguous);
+    const P = { Swal: { fire: jest.fn().mockResolvedValue({ isConfirmed: true }) }, showTask: jest.fn() };
+    const execute = actionSandbox({ P, api, saveAssistantMessage: jest.fn() }).executeActionDraft;
+    const message = draft({ received_at: Date.now() });
+
+    await execute(message);
+    expect(message.action_draft.ambiguous_error).toMatch(/may already have been applied[\s\S]*Do not apply this card again/);
+    expect(message.action_draft).not.toHaveProperty('action_error');
+    expect(message.action_draft.status).toBe('draft');
+    // The write is refused from then on, even if something calls it again.
+    await execute(message);
+    expect(api).toHaveBeenCalledTimes(1);
+
+    const busy = Object.assign(new Error('still applying'), {
+      status: 409, body: { idempotency: { outcome: 'in_flight' } } });
+    const api2 = jest.fn().mockRejectedValue(busy);
+    const execute2 = actionSandbox({ P, api: api2, saveAssistantMessage: jest.fn() }).executeActionDraft;
+    const retryable = draft({ received_at: Date.now() });
+    await execute2(retryable);
+    expect(retryable.action_draft.action_error).toMatch(/still being applied/);
+    expect(retryable.action_draft).not.toHaveProperty('ambiguous_error');
+    await execute2(retryable);
+    expect(api2).toHaveBeenCalledTimes(2);
+  });
+
+  test('the card itself removes the write control once the outcome is unknown', () => {
+    const { JSDOM } = require('jsdom');
+    const dom = new JSDOM('<!doctype html><div id="host"></div>');
+    const { document } = dom.window;
+    const { hydrateActionDraft, actionFamily } = actionSandbox({ document, navigator: dom.window.navigator });
+    const family = actionFamily({ kind: 'task.create.v1' });
+    const buttons = (host) => [...host.querySelectorAll('button')].map((b) => b.textContent);
+
+    // Control: a fresh card offers the write.
+    const fresh = draft({ received_at: Date.now() });
+    const host1 = document.createElement('div');
+    hydrateActionDraft(family, host1, fresh, fresh.action_draft);
+    expect(buttons(host1)).toContain('Review & create task');
+    expect(host1.querySelector('.action-draft-status').textContent).toBe('Proposal — not applied');
+
+    // Ambiguous: no write control at all, and the chip says so rather than
+    // claiming the proposal was not applied.
+    const unknown = draft({ received_at: Date.now(), ambiguous_error: 'This may already have been applied: check the record.' });
+    const host2 = document.createElement('div');
+    hydrateActionDraft(family, host2, unknown, unknown.action_draft);
+    expect(buttons(host2)).not.toContain('Review & create task');
+    expect(buttons(host2).some((t) => /^Review &/.test(t))).toBe(false);
+    expect(host2.querySelector('.action-draft-status').textContent).toBe('Outcome unknown — check the record');
+    expect(host2.textContent).toContain('This may already have been applied: check the record.');
+    // Copy and Discard remain: reading and dismissing are always safe.
+    expect(buttons(host2)).toEqual(['Copy details', 'Discard']);
   });
 
   test('appointment review text never offers a client send', () => {
