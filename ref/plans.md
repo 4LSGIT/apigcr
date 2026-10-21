@@ -558,6 +558,16 @@ and the two marked LIVE BUG are worth landing whether or not A17 ever ships.)
   version-materialization insert, and `POST /workflows/test-step` — a gate on
   one of those is a gate on none of them.
 
+  One scoping detail for whoever builds it, verified 2026-10-22: the
+  save-time `type`-key guard lives in `validateInternalFunctionConfig`, which
+  only the four step-writing routes call (`POST /workflows/:id/steps`,
+  `POST /workflows/bulk`, `PUT` and `PATCH .../steps/:stepNumber`). Two paths
+  insert into `workflow_steps` **without** it — `ensureDraft`'s draft fork and
+  `POST /workflows/:id/duplicate` — because both copy existing rows. Harmless
+  today (no stored row carries the key, and `b087fa5` makes a stored one inert
+  at dispatch), but a gate keyed on `step.type` has to re-check those two, which
+  is the same bypass shape as the config override itself.
+
   **And the gate is an authoring control, not containment.** It limits who can
   INTRODUCE a code step, not who can run one: `POST /workflows/:id/start` is
   `jwtOrApiKey` too, and every trigger, hook and ingest path starts workflows
@@ -589,6 +599,15 @@ and the two marked LIVE BUG are worth landing whether or not A17 ever ships.)
   `b087fa5`: `resolve()` takes an opt-in
   `escape:'json'` that both serialized-config call sites pass, and plain-text
   callers are untouched.
+- **A route-harness test for the two save-time `type`-key guards.** `b087fa5`
+  pins them with source assertions (`routes/sequences.js` `validateStepConfig`,
+  `routes/workflows.js` `validateInternalFunctionConfig`) rather than
+  behaviourally, because both are reached only through a route. The behavioural
+  coverage sits where the exploit shape is — the sequence dispatch path and the
+  resolver round trip, both through the real engine — but a source assertion
+  cannot catch a fifth builder added later or a `jobData.type = …` mutation
+  after construction. Worth a supertest-shaped harness when one of these routes
+  next needs touching.
 - **No optimistic concurrency on any automation definition write.** Workflow
   and sequence steps are addressed by `step_number` (a position), and no
   step-mutating route or publish route takes an expected-base token. Two
