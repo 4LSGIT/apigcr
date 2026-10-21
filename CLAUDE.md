@@ -103,6 +103,11 @@ Gates beyond Commands & gates below, every model:
   edit step failed — verify the NEW text is on disk before acting on it
   (two silent no-op edits shipped past green runs, 2026-10-14: a mutation
   that never applied and a doc edit whose landing commit claimed it). Complete files (not fragments) for non-trivial edits.
+  Mutation loops on a tree holding UNCOMMITTED slice work restore with
+  cp-backups and verify each restore (diff against the backup) — never
+  `git checkout --`: it cannot restore an untracked file and silently
+  reverts a tracked one to HEAD, wiping the slice's own edits (bitten
+  2026-10-21: two files reverted mid-arc, rebuilt from authored content).
 - The Bash tool runs zsh: an unquoted `$VAR` holding a list does NOT
   word-split, so `for f in $FILES` runs once and `jest $T` gets one arg.
   Use an array or a literal list, and in a mutation loop assert the
@@ -140,6 +145,11 @@ Gates beyond Commands & gates below, every model:
   of what you sent never equals what you read back. wf50 (2026-10-14): a
   correct draft failed its check on key order alone and was discarded. A
   dry-run harness must store JSON the way MySQL does, or it can't catch this.
+  And a dry-run STUB's request/response shapes come from the route source,
+  never from memory — a stub modelled on the author's own assumption mirrors
+  the author's bug and passes what production refuses. Phone-delivery S2
+  (2026-10-21): the SU db console takes `{query}`, the readonly endpoint
+  `{sql}`; the stub accepted the wrong key, 4/4 dry-runs green, live run 400.
 
 ## Living documentation — the standing rule
 

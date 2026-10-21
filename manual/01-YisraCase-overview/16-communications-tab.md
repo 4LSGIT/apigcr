@@ -135,6 +135,36 @@ it.
 
 ---
 
+## Texts that didn't arrive
+
+An outbound text whose phone carrier reported a failure wears a red
+**Not delivered** badge on these feeds, and a red "Not delivered — …" line on
+its bubble in Comms → Phone. The tooltip carries the reason in plain words:
+
+- *this number can't receive texts* — a landline, a disconnected number, or
+  one blocking texts. Reach the client another way.
+- *the recipient opted out (STOP)* — don't text them again unless they
+  re-consent; call instead.
+- *a carrier spam filter blocked the message wording* — reword it and resend,
+  or call.
+- *our sending number was flagged* — stop texting and tell IT.
+
+Delivery status arrives from the carrier minutes after a send, so a
+just-sent text shows nothing at first; most texts simply never get a mark.
+Statuses are stamped by an automatic sync (every 10 minutes, plus instantly
+when the provider reports a change) — see the design doc
+`ref/PHONE_DELIVERY_DESIGN.md` for the machinery.
+
+Each NEW failure also sends two automatic emails: a plain-words one to Stuart
+and a technical one to IT. That notice is an ordinary workflow (**Failed SMS
+workflow**, id 54) — edit it in the workflow builder to change wording or
+recipients; the Config → System setting **Failed-text workflow** says which
+workflow runs (blank switches the emails off). The same unreachable client
+fails again on every new send, so a weekly reminder to a dead number means a
+weekly email until someone fixes the number on the contact.
+
+---
+
 ## Related chapters
 
 - [The activity log](06-activity-log.md) — where Logged-only items come from.

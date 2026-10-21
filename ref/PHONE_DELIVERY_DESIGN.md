@@ -1,6 +1,11 @@
 # Phone Outbound Delivery — design
 
-**Arc:** phone-delivery · **Status:** S1 live 2026-10-21 (first tick verified: 11 recovered, 40 stamped, 3 real failures surfaced); S2 cut over 2026-10-21 (hook 22 → wf_phone_delivery_ping, wf19 deactivated; status-transition ping proven live same day); S3 live 2026-10-21 (comms.html thread chip); S3b built 2026-10-21 (entity-feeds badge + buildIngestEvent passes the send time as createLogEntry's `date`, so recovered texts land on the log when they were SENT — patch pending apply); S4 run + verified 2026-10-21 (638 texts recovered May→Oct, logged at send time, Layer 3 skipped on all 638); S3c built 2026-10-21 (failed-send → workflow dispatch, patch pending apply; off until the setting names a workflow); S5 (digest, Quo) not started
+**Arc:** phone-delivery · **Status:** CLOSED 2026-10-21, all live: S1 sync →
+S2 cutover (wf19 retired, status-transition ping proven) → S3/S3b chips on
+both surfaces → S4 backfill (638 texts recovered May→Oct, logged at send
+time, Layer 3 skipped on all 638) → S3c failed-send dispatch (wf 54: plain
+email to SS + technical to IT, live-fired on a real failure same day). S5
+(digest, Quo read side) and the other deferrals live in ref/plans.md.
 **Scope:** OUTBOUND SMS/MMS only — recovering texts the ingest never saw, and
 learning/display of per-message delivery status. Inbound parsing stays where it
 is (see §9 Q3).
@@ -274,9 +279,9 @@ late should fire exactly what it would have fired on time.
 > coherent "ingest parsing into drivers" arc should take both;
 > (c) nothing in S1–S5 depends on it. Filed in ref/plans.md at S2 close.
 
-**Open for Fred:** who tells SS about the failing payment-reminder template
-(spam-content flags risk the sending number itself — SMS-UP-431) and the
-client's unreachable number; and whether S5's digest is wanted at all.
+Resolved at close: SS now hears about every new failure through wf 54's
+email; the digest stays a deferral in ref/plans.md, built only if the
+per-failure emails get loud.
 
 ---
 

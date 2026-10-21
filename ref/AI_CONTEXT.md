@@ -1489,12 +1489,42 @@ enough: add it to the provider's map too.**
 3. **`phone_event_log` forensic catch-all** — ALWAYS, idempotent upsert.
 4. **Layer 2 suppression** — LOG WRITE only (design call 1A); never halts
    the surrounding workflow. `output.suppressed` surfaced for branching.
-5. **Layer 3 rules** — ALWAYS, independent of suppression and log outcome.
-6. Conditional `createLogEntry`; exactly one `phone_ingest_executions` row
-   (`logged|suppressed|error|duplicate`).
+5. **Layer 3 rules** — ALWAYS, independent of suppression and log outcome —
+   unless the CALLER skips it explicitly (`ingestPhoneEvent(db, event,
+   { skipAutomation: '<reason>' })`, used by the delivery backfill; recorded
+   in the executions row as `metadata.automation.skipped`). Never inferred
+   from event age: a late provider redelivery still fires its rules.
+6. Conditional `createLogEntry` (`event.date` = the provider timestamp, so a
+   recovered text logs at its SEND time); exactly one
+   `phone_ingest_executions` row (`logged|suppressed|error|duplicate`).
+
+### Outbound delivery sync (phone-delivery arc, 2026-10)
+Design + vocabulary: `ref/PHONE_DELIVERY_DESIGN.md` (read before touching).
+`services/phoneDeliveryService.runSync` (skin `fns.phone_outbound_sync`,
+denylisted for CTA) lists each provider's OUTBOUND SMS through the adapter
+READ side — `capabilities.outboundSync` + `adapter.listOutbound()`, reached
+only via `phoneService.getAdapter()` — ingests whatever the webhooks dropped
+(idempotent on the `(provider, provider_ref)` key) and stamps
+`phone_event_log.delivery_state/_reason/_code/_checked_at`. Invariants:
+- **Window, not watermark**: each run re-lists now−48h; writes only on a
+  changed verdict; terminal states (`failed`/`delivered`) never downgrade.
+- **Hook 22 (`rc-message-out`) carries NO message data** since S2 — any SMS
+  change event (new or status transition) just dispatches
+  `wf_phone_delivery_ping` (wf 53), which pokes the sync; wf 19 is retired.
+  All RC vocabulary (messageStatus, SMS-* codes) lives in the adapter only.
+- **Failed-send dispatch (S3c)**: a verdict TRANSITIONING to `failed` on a
+  LIVE run starts the workflow named by
+  `app_settings.phone_delivery_failed_workflow_id` (blank = off; wf 54 live:
+  plain-words email to SS + technical email to IT) via
+  `actionDispatchers.dispatchWorkflow` — once per transition, never on
+  re-checks, refinements, or backfills.
+- Display: `threadItem.delivery` (Comms → Phone bubbles) and
+  `entityComms` `phone.delivery` (case/contact feeds) — raw provider code is
+  tooltip-only; only the adapter may interpret it.
 
 ### Tables
-`phone_event_log`, `phone_ingest_rules`, `phone_ingest_rule_actions`,
+`phone_event_log` (+ the delivery_* columns — their COMMENTs carry the
+vocabulary), `phone_ingest_rules`, `phone_ingest_rule_actions`,
 `phone_log_suppressions`, `phone_ingest_executions`. The firm-number cache
 has a reset hook (`resetFirmNumberCache`) re-exported through the internal
 function registry for tests.

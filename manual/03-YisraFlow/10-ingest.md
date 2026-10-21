@@ -215,6 +215,12 @@ All management routes are `jwtOrApiKey` and audited; the receiver is not.
    it as new.
 5. **Firm-to-firm mail is skipped on email but only *matchable* on phone.**
    Don't expect a `skipped_firm_to_firm` row on the phone side.
+5b. **A `logged` execution whose metadata says `automation.skipped:
+   "backfill"` fired no rules on purpose.** The phone delivery sync's
+   backfill ingests old texts with layer 3 explicitly skipped (months-old
+   events must not fire today's automations); the executions row records why.
+   Live sync recoveries fire layer 3 exactly like webhook deliveries
+   (AI_CONTEXT §28, ref/PHONE_DELIVERY_DESIGN.md §6).
 6. **Body matching is full-text and can be expensive.** Prefer a header or
    sender condition first; `body` is there for when nothing else identifies
    the message.

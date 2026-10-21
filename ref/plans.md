@@ -478,6 +478,33 @@ The case / contact Communications tab (AI_CONTEXT §20, manual
   whether `/api/log` should share the feed's fallback suppression (a log row
   whose source sits in an unreadable mailbox is hidden in the feed but listed
   on the Log tab).
+## From the phone-delivery arc (2026-10-21, arc closed) — deferred
+
+(Design + vocabulary: `ref/PHONE_DELIVERY_DESIGN.md`. S1–S4 and the S3c
+failed-send dispatch are live; wf 54 sends the notices.)
+
+- **Failed-texts daily digest** — one grouped email from the
+  `phone_event_log.delivery_*` columns, the noise-free alternative if wf 54's
+  per-failure emails get loud (the known shape: a chronically unreachable
+  number fails again on every weekly reminder). Build only if asked.
+- **Quo read side** — `quo.listOutbound` + `capabilities.outboundSync: true`
+  once Quo's API is confirmed to expose delivery status for listing; the core
+  sync needs zero changes. Today a failed Quo send is invisible (hook 16
+  fires on `message.delivered` only).
+- **Inbound parsing into adapters** — the DB-stored hook transforms (16/17/21)
+  still carry per-provider parsing + hardcoded line maps; a future
+  "ingest parsing into drivers" arc should move phone AND email sides together
+  (`adapter.parseWebhook`). Ruled out of the phone-delivery arc 2026-10-21.
+- **Per-number dispatch cooldown** — if the weekly-repeat emails annoy before
+  the digest exists, a small `(to, reason)` cooldown in the S3c dispatch is
+  the surgical fix.
+- **Archive sweeps bypass the adapter registry** — `commsArchiveSweep.js` and
+  `commsArchiveMediaSweep.js` lazy-require `adapters/phone/*` directly instead
+  of `phoneService.getAdapter()`, and the archive read functions are not
+  declared in `capabilities`. Flagged to the comms-archive arc 2026-10-14;
+  either route through the registry or state the direct-require as deliberate
+  in the sweep headers + COMMS_ARCHIVE_DESIGN §6.
+
 ## From the Ask Casey fix package (2026-10-21) — deferred
 
 (The actions arc's own roadmap is `ref/ASK_CASEY_ACTIONS_PLAN.md`; these are
