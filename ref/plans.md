@@ -520,6 +520,132 @@ failed-send dispatch are live; wf 54 sends the notices.)
 - **Nothing prunes `assistant_action_ledger`** either: rows are kept until the
   user is deleted (FK cascade), by design. Same shape as the
   `request_idempotency` note below, and a single age sweep could serve both.
+## From the Casey automation-authoring planning session (2026-10-22) — native-side
+
+(The slice plan is A17/A18 + P11-P13 in `ref/ASK_CASEY_ACTIONS_PLAN.md`. These
+are canonical defects and gaps that session measured; none is a Casey slice,
+and the two marked LIVE BUG are worth landing whether or not A17 ever ships.)
+
+- **A staff JWT can obtain server-side code execution through the ordinary
+  workflow editor.** `lib/job_executor.js` runs a `custom_code` step as
+  `new vm.Script(code).runInNewContext({input, console}, {timeout})`, and
+  Node's `vm` is not a security boundary: `input` is a host-realm object, so
+  `input.constructor.constructor('return process')()` hands back the real
+  `process` with a working `mainModule.require`. Verified empirically against a
+  replica of that sandbox (2026-10-22): `{reached:"object", pid:true,
+  canRequire:"function"}`. From there `process.env` carries the database
+  credentials, so a code step bypasses the report validator's table allowlist,
+  the `yc_report` least-privilege grants and the SENSITIVE-table gating the
+  access-control arc built. Practically this is held by trust in eight
+  employees rather than by a boundary, and it has been true since code steps
+  shipped — a trust-boundary fact to decide about, not an incident.
+  Proportionate options, cheapest first: (a) gate the `custom_code` step
+  **type** behind `automations.manage` — which already exists, is described as
+  covering workflows, and is held by `admin`/`it`/`su`, two of eight users —
+  leaving the other step types open; (b) additionally refuse the type for
+  machine keys; (c) replace `vm` with a real isolate if code steps ever need to
+  be authored by anything but a trusted human.
+
+  Two things make the gate harder to scope than one line. **The shortest path
+  to execution is not the editor**: `POST /workflows/test-step`
+  (`jwtOrApiKey`, `dry_run` defaulting to **false**) runs a step straight from
+  the request body — no workflow id, no save, no publish, nothing persisted
+  beyond logs — and accepts `custom_code`. A gate on the step-writing routes
+  alone would miss it entirely. The writers to cover together are
+  `POST /workflows/:id/steps`, `POST /workflows/bulk`, `PUT` and `PATCH
+  /workflows/:id/steps/:stepNumber`, `POST /workflows/:id/duplicate` (it can
+  move an existing code step into a workflow with a broader trigger), the
+  version-materialization insert, and `POST /workflows/test-step` — a gate on
+  one of those is a gate on none of them.
+
+  **And the gate is an authoring control, not containment.** It limits who can
+  INTRODUCE a code step, not who can run one: `POST /workflows/:id/start` is
+  `jwtOrApiKey` too, and every trigger, hook and ingest path starts workflows
+  whose code steps already exist. Containment means a real sandbox (an isolate
+  or a separate runtime) or retiring `custom_code`. The gate should not be
+  mistaken for a fix. This finding is why A17 refuses to let Casey compose
+  code at all.
+- **LIVE BUG — a `type` key inside a sequence `action_config` redirects the
+  step.** `sequenceEngine.executeStep` builds `jobData = { type:
+  'internal_function', ...resolvedConfig }`, so the spread wins:
+  `"type":"custom_code"` runs `vm` code and `"type":"webhook"` takes
+  `job_executor`'s webhook path, on a step whose `action_type` says `sms`.
+  `validateStepConfig` blocks neither. Not an escalation today (staff can
+  already author `custom_code` workflow steps) but it voids the `action_type`
+  enum's apparent guarantee and any "author only sms steps" contract. **FIXED** in
+  `b087fa5`: `type` is pinned last in all THREE
+  dispatch payload builders — sequence engine, workflow engine, and
+  `POST /workflows/test-step` — and both save paths refuse the key. The first
+  instance was fixed alone; the other two came from grepping the pattern.
+- **LIVE BUG — the sequence resolver substitutes unescaped values into JSON.**
+  `executeStep` does `JSON.stringify(action_config)` -> `resolverService.resolve`
+  -> `JSON.parse`, and `replacePlaceholders` writes `String(value)` straight
+  into the JSON text. A resolved value containing a double quote breaks the
+  parse; the catch leaves the step running with its config **entirely
+  unresolved**, so a client SMS or email body goes out full of literal
+  `{{...}}`. Measured 2026-10-22: no `contacts` row currently holds a quote in
+  `contact_name`/`contact_fname`/`contact_lname`, and live active templates do
+  interpolate exactly those fields — so this was unexploded, not safe. **FIXED** in
+  `b087fa5`: `resolve()` takes an opt-in
+  `escape:'json'` that both serialized-config call sites pass, and plain-text
+  callers are untouched.
+- **No optimistic concurrency on any automation definition write.** Workflow
+  and sequence steps are addressed by `step_number` (a position), and no
+  step-mutating route or publish route takes an expected-base token. Two
+  editors are last-write-wins, a PUT from a stale view lands on whichever step
+  now occupies that slot, and a publish can include edits made after the
+  publisher read `draft-diff`. This is the wf27 scar as a route property; P11
+  in the Casey plan specifies the fix, which the human editor needs too.
+- **Automation step saves are not validation authorities.** An unknown or
+  misspelled `function_name` passes save on a workflow step; undeclared param
+  keys are never rejected; `params: null` skips validation; `error_policy.strategy`
+  is unvalidated (any string behaves as `ignore`); sequence
+  `sms`/`email`/`task`/`internal_function` steps get no param validation at
+  all; and publish re-runs shape and branch-target checks but never params or
+  function existence.
+- **`POST /executions/:id/resume` is neither state-guarded nor atomic.** It
+  refuses only `active|processing|delayed`, so `completed` and `held`
+  executions are resumable; it never checks `workflows.active`; and a plain
+  SELECT is followed by an unguarded `UPDATE … SET status='active'`, so two
+  concurrent resumes both pass. Casey's A17.8 excludes resume until this is
+  fixed.
+- **`DELETE /workflows/:id` cannot delete a workflow that ever ran.**
+  `fk_workflow_executions_workflow` is `ON DELETE RESTRICT`, so the delete
+  rolls back as a 500 — the route comment claims executions are kept for
+  history. It also checks no hook target, trigger-rule action, sequence step or
+  form definition that references the id.
+- **Sequence enrollment has no idempotency and a racy duplicate guard.**
+  `POST /sequences/enroll` takes no `Idempotency-Key`; the duplicate guard is
+  SELECT-then-INSERT over `(contact, template, appt_id, signing_request_id)`
+  with no unique constraint; a scheduling throw after the enrollment INSERT
+  leaves an active enrollment with no job (alerting flags it ~15 min later);
+  and every engine error, `ALREADY_ENROLLED` included, surfaces as an HTTP 500
+  whose `err.code` is dropped. `scheduleStepJob` is likewise check-then-insert
+  with no unique index on `idempotency_key`.
+- **Sequence step firing can re-send.** `executeStep` has no "already sent this
+  step" check and `recoverStuckJobs` returns a job sitting in `running` for
+  over 15 minutes to pending, so an SMS or email can go twice. Only
+  `start_workflow` steps are retry-safe
+  (`findPriorStartWorkflowResult`).
+- **Trigger rules have no draft, version or history model.** Edits are live on
+  save, `updateRule` DELETEs and reinserts every action row with new ids,
+  `match_config`/`transform_config` structure and `code` syntax are
+  unvalidated, target workflows/templates are not checked for existence or
+  publication, there is no row lock, and replay re-dispatches with no
+  idempotency (the stale sweep can dispatch a rule's actions twice). Giving
+  trigger rules the workflow/sequence draft-publish model is the native arc
+  that would unblock Casey authoring them at all.
+- **`workflow_execution_steps` under-records.** `attempts` is never written
+  (always 0), the enum's `skipped`/`delayed` values are never used, and
+  `executeStep` hardcodes `success: true` on any non-throwing return — so a
+  function returning `{success:false}` (12 sites in `esign.js`, `reports.js`,
+  `system.js`) is stored as a success row with the failure inside
+  `output_data`.
+- **No automation route is on the sync bus.** No workflow, execution, step,
+  sequence, enrollment or trigger route appears in `yc-sync.js` MATCHERS, so a
+  definition or enrollment write is silent to every other open frame including
+  a contact's Automations tab. A canonical automations/bus slice would close
+  it; the Casey plan deliberately adds no Casey-only emit.
 
 ## From the Ask Casey arc — P4 idempotency follow-ups (2026-10-22)
 

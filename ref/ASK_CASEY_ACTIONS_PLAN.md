@@ -8,6 +8,9 @@ authenticated routes. A5 covers one reviewed phone/email/address subrecord
 create, narrow update, or history-preserving end. No general action executor is introduced.
 The 2026-10-21 independent-review fix package (branch `fix/casey`) amends this
 plan — see **Course corrections** below; where they conflict, it wins.
+The automation-authoring family (A17 workflows, A18 sequences and trigger
+rules) was planned in a dedicated session on 2026-10-22 and now carries slice
+contracts and three platform prerequisites (P11-P13); nothing in it is built.
 
 ## Review briefing
 
@@ -101,8 +104,9 @@ he rules):
   2026-10-21 review's "questionable for a four-user firm" framing is
   superseded. A17/A18 stay on the roadmap; their detailed plan (and A15's
   place) comes out of a dedicated Casey planning session with Fred — nothing
-  past A14 is SCHEDULED until that session happens, but do not treat them as
-  dropped.
+  that session ran
+  2026-10-22: its rulings and the resulting slice plan are in A17/A18 below,
+  and A15 keeps its place after A14.
 - Draft lifetime — expire vs click-time revalidation: default is expiry (15-min
   TTL + no write from history) for the existing families; new families add
   click-time revalidation per correction 1.
@@ -621,23 +625,602 @@ before executing or sharing.
 
 #### A17: Workflow definitions and executions
 
-Split the family into independently releasable steps: draft a disabled
-workflow from a closed step registry; validate/preview it; save the disabled
-draft; edit one versioned definition; publish; start; and cancel/resume one
-known execution. Duplicate, capture, reorder, test-step, bulk creation, and
-delete remain separate. Never accept arbitrary workflow step JSON, code, URLs,
-credentials, or model-selected tools. Publishing and starting require an
-impact preview covering triggers, scope, estimated fan-out, writes, external
-calls, rollback/compensation, and version.
+Planned 2026-10-22 in a dedicated session; the rulings block follows. Twelve
+independently releasable slices (A17.0-A17.8, with A17.4a-A17.4c) sit behind
+three platform prerequisites (P11-P13). Authoring targets the **YCv2 editors that ship
+today**, not YCv3.
+
+**A17/A18 rulings — Fred, 2026-10-22 planning session.**
+
+1. **Read-only explanation ships first, as its own slice** (A17.0), before any
+   authoring write.
+2. **Authoring targets YCv2's current editors**, not YCv3.
+3. **Publish stays a separate step from drafting** — allowed, but never folded
+   into the slice that writes the draft (A17.6, A18.3).
+4. **All staff may use it for now.** This widens nothing: every workflow,
+   sequence and trigger route is already open to any authorized staff JWT, and
+   `automations.manage` gates only hooks and pages. Casey's write slices must
+   read **one** per-family flag so that gating them to `automations.manage` —
+   or to whatever automations role control lands on — is a one-line change
+   later.
+5. **Casey must explain a run**, not only a definition: what went wrong, what
+   to do about it, and the usual responses (A17.1, A18.0).
+6. **Code steps**: Casey never authors a `custom_code` body, but it does
+   explain how to add one, insert an inert **stub** step, and hand over
+   copyable code for the user to paste (A17.4c). The rules reference that makes
+   this trustworthy is part of that slice.
+7. **Webhook steps are allowed** (A17.4b). They are the best-validated step
+   type in the system and run through the correct outbound-auth path; the
+   earlier blanket exclusion was wrong. The narrow part is the destination and
+   the credential, not the step type.
+8. **`query_db` authoring is planned**, not deferred (A17.4a).
+9. **Casey may read `custom_code` bodies** (Fred, 2026-10-22). P12 therefore
+   redacts webhook URLs and resolved payloads but not code. This is what makes
+   A17.0/A17.1 able to explain and debug the 41 live code steps, which is most
+   of the "debug and explain" goal.
+10. **P11 may tighten the human editor** — rejecting an unknown
+    `function_name` at save, and a `type` key in a sequence `action_config` —
+    confirmed by Fred, 2026-10-22.
+11. **P12 is the typed Casey read kind**, not a widened Reports manifest
+    (Fred, 2026-10-22).
+12. **Trigger rules get an audit trail and a stale-write guard, not
+    draft/publish** (Fred delegated the call, 2026-10-22). Reasoning in
+    *Trigger rules* under A18.
+
+**Defaults recorded for this family** (each stands until Fred rules otherwise):
+
+- P12 read surface: a typed Casey read kind, **not** a widened Reports
+  manifest.
+- `custom_code` bodies and webhook URLs are **redacted** in what Casey reads.
+- Casey may publish a draft containing steps it did not author and cannot
+  explain, after showing them redacted and taking an explicit acknowledgment.
+- New-workflow drafting (A17.3) ships before editing an existing workflow
+  (A17.4).
+- `query_db` authoring is **deferred** to a later sub-slice, not excluded
+  forever.
+- Trigger-rule authoring is **deferred** pending a native draft/publish model
+  for trigger rules; Casey gets explain and dry-run only.
+
+**A15 (e-signature) keeps its place, after A14.** It is not part of
+automation authoring and has no dependency on A17/A18: every A15 action —
+send, remind, resend, recall, mark-satisfied-externally — is an irreversible
+external send, so it inherits A14's resolved-recipient preview, idempotency
+and unambiguous-outcome machinery and should follow it directly.
+
+**The measured ground** (live DB + code, 2026-10-22). The plan fits these
+numbers, not an imagined subsystem:
+
+- 42 workflows, 24 sequence templates, 23 trigger rules, 37 hooks. The largest
+  workflow is 50 steps / 38 KB of step config; the largest single step config
+  is 20 KB.
+- Of the ~330 steps on live published versions: 71 `evaluate_condition`, 41
+  `custom_code`, 34 `query_db`, 32 `set_next`, 30 `send_email`, 24 `webhook`,
+  13 `create_task`, then a long tail. **A17's "never arbitrary code, URLs,
+  credentials" rule therefore excludes a large share of what the firm actually
+  runs** (see *What Casey cannot author*). That is a scope fact to state out
+  loud, not a reason to loosen the rule.
+- Every human publish on record is IT's: 42 workflow versions and 10 sequence
+  versions, the rest being the 2026-08-18 backfill and two seeds. Casey
+  authoring makes the six staff-only users first-time automation authors.
+- 90-day run health: 7,694 `completed`, 11 `completed_with_errors`, 4 `failed`,
+  4 `cancelled`, 2 `held`; ten distinct failing (workflow, step) pairs at 1-2
+  occurrences each. **Hard failure is rare — "it ran and did the wrong thing"
+  is the common question**, which is why A17.1 reconstructs branches and skip
+  reasons rather than only reading `error_message`.
+- Sequence step log, 90 days: 268 `sent`, 83 skipped `unschedulable`, 41
+  `step_condition_failed`, 2 `fire_guard_failed`, 2 `failed`. The skip-reason
+  vocabulary *is* the sequence debugging surface.
+
+**Where the write authority is, measured.** Every workflow, execution,
+sequence and trigger route is `jwtOrApiKey` and nothing else: no role,
+capability or SU gate exists on any of them (`automations.manage` is defined
+as "Manage workflows, sequences and trigger rules" but is mounted only on
+`/api/hooks` and `/api/pages` — a known follow-up, `ref/plans.md`). So A17/A18
+inherit no authorization from the route, and the P2 finding generalizes: on
+this family the canonical route is **not** a validation authority either.
+Measured gaps, all on the human path too:
+
+- An unknown or misspelled `function_name` passes save on a workflow step (no
+  `__meta` found means permissive); it fails only at run time.
+- Undeclared param keys are never rejected, `params: null` skips validation,
+  and `error_policy.strategy` is not validated at all (any string behaves as
+  `ignore`).
+- Sequence `sms`/`email`/`task`/`internal_function` steps get **no** param
+  validation: no `function_name` check, no `__meta` check.
+- Publish re-runs shape and branch-target validation but **not** `__meta` param
+  validation, and never checks that a `function_name` exists.
+- No step-mutating route and no publish route has any optimistic-concurrency
+  check. Steps are addressed by `step_number`, which is a *position*, so a PUT
+  from a stale view lands on whichever step now occupies that slot — the wf27
+  scar as a live route property.
+
+P11 closes these in the canonical route, for both paths, before any A17 write.
+
+**What Casey cannot author (initial contract).** Excluded by construction: a
+`custom_code` **body** (A17.4c adds an inert stub plus copyable code instead),
+every function carrying a `credential_id` or a fetched URL, `update_db` /
+`insert_db` / `set_setting` (generic writes), `create_cta` (mints public bearer
+links with nested step plans), `start_workflow` and `enroll_sequence` (chained
+fan-out), the esign `on_signed`/`on_declined` targets, and every EXTERNAL-SEND
+function (`send_sms`, `send_email`, `send_mms`, `esign_*`, the digests and
+sweeps) until A14's send machinery exists.
+
+`__meta` records no side-effect class for any of the 104 registry functions,
+and the CTA-eligible set is far too wide to stand in for one (it still admits
+`update_db`, `insert_db`, `set_setting` and the senders), so **A17 needs its
+own allowlist with a side-effect class per function**. Casey explains every
+step; it authors only allowlisted ones, and says so plainly when a step is
+outside its allowlist.
+
+All three step *types* are reachable: `internal_function` (A17.4),
+`query_db` as its bounded special case (A17.4a), `webhook` under a narrow
+destination-and-credential contract (A17.4b), and `custom_code` as a stub the
+user fills (A17.4c). What stays closed is the model composing code, inventing
+a destination, or choosing a credential for a new host.
+
+**Sync bus.** No workflow, execution, step, sequence, enrollment or trigger
+route appears in `public/js/yc-sync.js` MATCHERS; the bus header classes
+workflows as server-side writers outside it. A Casey draft-step write is
+therefore invisible to an editor open in another frame — and so is a human's.
+Per the standing rule this slice adds **no Casey-only emit**: the protection is
+P11's server-enforced expected-base precondition, which refuses the stale write
+on either path. A canonical automations/bus slice is filed to `ref/plans.md`.
+
+---
+
+**A17.0: Explain a workflow (read-only).** Fred's first slice, 2026-10-22.
+
+Casey answers "what does this workflow do", "who gets notified", "what happens
+if step 7 fails", "what starts this". No proposal, no `action_draft`, no write
+of any kind — so it needs no freshness, idempotency or permission contract
+beyond the existing read limits. Depends on P12 (the read surface) and reads
+better with P13 (the open-workflow id).
+
+Renders, per step: number, label, type, function, a param digest, the branch
+targets resolved into plain language, the error policy as the engine actually
+applies it, and the side-effect class. Plus the inbound references — which
+hooks, trigger rules, forms, CTA plans, sequence steps or parent workflows can
+start it — because "what starts this" is unanswerable from the definition
+alone. Where the check lives: the P12 read service (projection, redaction,
+caps); nothing else can be wrong here.
+
+**A17.1: Explain a run (read-only).** Fred's addition, 2026-10-22: "explain a
+run, like what went wrong, based on that how to fix, usual responses".
+
+Reads one execution: its pinned version's definition, the
+`workflow_execution_steps` history, `init_data` versus final `variables`,
+`cancel_reason`, any pending `workflow_resume` job and its `data.nextStep`,
+pending `decision_requests`, and the `system_alerts` rows for that run. Output
+is: what ran in order, where control actually went, what diverged from the
+author's apparent intent, the likely cause, and the fix **as instructions to
+the human** — this slice proposes nothing.
+
+Six engine traps the explainer must encode, each measured in code rather than
+taken from the manual:
+
+1. `executeStep` hardcodes `success: true` on any non-throwing return, so a
+   function that returns `{success:false}` is recorded as a **success** row
+   with the failure inside `output_data`. There are 12 such return sites
+   (`esign.js`, `reports.js`, `system.js`). Reading `status` alone misreports
+   these runs. (`manual/03-YisraFlow/08-error-policies.md` claims
+   `success:false` counts as a failure — filed as doc debt.)
+2. Retries run for **every** strategy while `attempt <= max_retries`, before
+   the strategy is consulted; `abort` with `max_retries: 2` does retry. The
+   same chapter says otherwise — filed.
+3. `workflow_execution_steps.attempts` is never written (always 0), so retry
+   counts cannot be read from history.
+4. `output_data` is NULL on failure; `resolved_config` is the pre-execution
+   config, so `set_vars` entries referencing `{{this.*}}` appear blank there by
+   design.
+5. Unresolved workflow placeholders become `''` **silently**, and workflow
+   templating has no modifiers, so `{{x|default:y}}` and `{{contacts.col}}`
+   both resolve to empty. A blank value in `resolved_config` is the single most
+   likely cause of a "ran but did nothing" report.
+6. `completed_with_errors` means *any* history row failed, including rows from
+   before a resume.
+
+Also carries the ten real failure shapes measured above (missing required
+param, webhook 401, provider timeout, Dropbox 409 conflict, unknown column in a
+code step, already-enrolled) as a curated known-cause catalog. The catalog is
+**curated guidance grounded in a manual chapter plus the specific stored row**,
+not model invention: "usual responses" that Casey makes up are worse than none.
+
+**A17.2: Validate and preview an authored step without saving.**
+
+Reuses `POST /workflows/test-step` with `dry_run` only, to show the resolved
+config and the unresolved placeholders before anything is stored. **Live mode
+is excluded explicitly and permanently for Casey**, and the reason is stronger
+than side effects: that route takes a whole step from the request body with
+`dry_run` defaulting to **false**, accepts `custom_code`, and runs it with no
+workflow id, no save, no publish and nothing persisted beyond logs. Given the
+escapable sandbox below, it is the **shortest path to server-side execution in
+the application** — shorter than the editor. Casey must send `dry_run: true`
+explicitly, and the kind must be unable to express anything else. Dry-run has
+zero side effects, so this stays a read-shaped slice.
+
+**A17.3: Draft a new, never-published workflow (the first write).**
+
+The safest possible first write: a workflow born `current_version = 0` can be
+started by nothing — every dispatch site refuses v0 — and has no inbound
+references and no in-flight runs. One proposal creates the workflow
+(`POST /workflows`) and appends its allowlisted steps; nothing publishes.
+
+Review shows every step's full param list as text, the plain-language
+behaviour, the side-effect class of each function, and that **nothing runs
+until a human publishes**. Click-time freshness per correction 1: re-read at
+click time and refuse if the name now collides or the workflow already exists.
+Idempotency: `draft_id` as `Idempotency-Key` (P4 covers six create routes
+today, so this extends `requestIdempotency` to `POST /workflows` — canonical
+and user-scoped, benefiting native callers). Descriptor:
+`ACTION_FAMILIES.workflow_draft`, with `appliedKey` `wf_draft`, `open()` to the
+Automations workflow editor, and `danger: false` (nothing can run).
+
+**A17.4: Insert or edit one step in an existing workflow's draft.**
+
+Higher impact than A17.3 because the workflow may be published and running.
+Separate kinds for insert and narrow edit:
+
+- Insert writes through `POST /workflows/:id/steps` with `stepNumber`, so the
+  **server** performs the branch-target remap; the proposal's own targets are
+  authored against post-insert numbering, and review names every target the
+  remap rewrites plus every warning it emits.
+- Edit covers `label`, `note` and the param values of an already-allowlisted
+  function. Never `type`, never `function_name`, never a branch target, never
+  `error_policy` in this slice.
+
+Both carry P11's expected-base precondition — editing version, step count and a
+**key-order-insensitive** per-step fingerprint (wf50: MySQL re-orders JSON keys
+on write, so a byte comparison of what you sent never matches what you read
+back). The precondition is the wf27 scar made structural: a proposal built
+against a 31-step base is refused by the route against a 39-step draft rather
+than applied at the wrong position. Where the check lives: **the canonical
+route** (P11), because the human editor has the identical hazard; Casey's
+normalizer re-checks at proposal time, and the browser re-reads at click time.
+
+Note the precondition also fences a replay: a second apply sees a changed base
+and is refused. That is weaker than an idempotency key only in the unknown-
+outcome case, so the slice still sends one and reuses P4's three-outcome
+vocabulary.
+
+**A17.4a: `query_db` steps.** Fred, 2026-10-22: promoted from a deferred
+option to a planned slice.
+
+`query_db`'s "SQL" is a JSON structure (`from`, `select`, `where`, `join`)
+over a 19-table allowlist with blocked columns, not raw SQL, and the function
+is read-only — a wrong query returns wrong data rather than writing anything.
+It is also the gateway to the dominant live pattern: `query_db` then
+`evaluate_condition` then act, 105 of the ~330 live steps between them.
+
+One cost to budget: array and object params carry **no element schema**
+today, so `select` / `where` / `join` contents are validated only at run time.
+Casey's normalizer therefore builds the structure field by field — table from
+the allowlist, columns checked against the table, operators from a closed set
+— or P11 adds the element schema. The model never supplies a query string.
+
+**A17.4b: `webhook` steps.** Fred, 2026-10-22: "it's very standard, and should
+be allowed." Correct, and the earlier blanket exclusion was wrong. Measured:
+
+- `validateWebhookConfig` makes the webhook step the **best-validated** step
+  type in the system — the URL is parsed, the method checked, the
+  `credential_id` verified against `credentials`, and `timeout_ms` capped at
+  120 s. By contrast an `internal_function` step accepts a function name that
+  does not exist, and `custom_code` is not validated at all.
+- Execution goes through `lib/webhookExecutor.executeWebhook`, which uses the
+  async `buildHeadersForCredential` — the load-bearing outbound-auth
+  invariant, satisfied — and honours `timeout_ms` (30 s default, 120 s cap).
+  (The comment in `sequenceEngine` claiming the workflow path has no
+  credential injection and a hardcoded 10 s timeout is stale; filed.)
+
+So the contract is narrow rather than absent:
+
+- **The URL is literal and never invented by the model.** It comes from the
+  user's own message or from a host already present in an existing step or
+  credential — the evidence rule applied to destinations. A `{{templated}}`
+  URL is refused outright: unresolved workflow placeholders blank silently, so
+  `{{base}}/hook` can resolve to `/hook` and the real destination is not
+  reviewable.
+- **Auth comes only from a named credential the user picks.** Casey writes no
+  literal header values, because that is where raw secrets get pasted, and it
+  never pairs a *new* host with an existing credential — reusing an existing
+  (host, credential) pair is fine. CLAUDE.md classes webhook URLs as
+  secret-bearing, so a URL that embeds its own token stays the user's to
+  supply, never Casey's to compose.
+- Method from a closed set; `timeout_ms` defaulted well below the 120 s cap,
+  because a long hang on a CPU-throttled background step is its own hazard.
+- Review shows the full URL, the method, the credential **label** (never its
+  value), the body with placeholders resolved by A17.2's dry run, the timeout,
+  that the call leaves the firm, and the step's retry behaviour — retries fire
+  for every strategy, so a non-idempotent third-party endpoint can be hit
+  twice.
+
+**A17.4c: code-step scaffold and copyable code.** Fred, 2026-10-22: Casey
+should explain how to add a code step, be able to add a blank one, know all the
+rules, and hand the user copyable code to paste.
+
+Casey never authors a `custom_code` **body** as a write, and the reason is
+stronger than reviewability. **Measured 2026-10-22: the code sandbox is
+escapable.** `lib/job_executor.js` runs a step's code with
+`new vm.Script(code).runInNewContext({input, console}, {timeout})`, and
+Node's `vm` is not a security boundary — `input` is a host-realm object, so
+`input.constructor.constructor('return process')()` returns the real
+`process`, with a working `mainModule.require`. Verified empirically against a
+replica of that exact sandbox: `{reached:"object", pid:true,
+canRequire:"function"}`.
+
+So a code step is arbitrary server-side execution on the Cloud Run instance —
+it can reach `process.env` (database credentials, API keys), require
+`child_process`, and bypass every table tier and SENSITIVE-table gate the
+access-control arc built. It is not, as an earlier draft of this section
+claimed, a pure function of its inputs.
+
+That makes model-authored code a qualitative change in threat model rather
+than a quantitative one: Casey's inputs include transcripts, emails, documents
+and SQL rows, which this plan already treats as untrusted and
+prompt-injectable, so authoring code would put injectable content on a path to
+server-side code execution. Today the risk is held by trust in four people,
+not by a boundary. If Fred ever wants real code authoring it needs its own
+arc: a genuine sandbox (an isolate or a separate runtime), SU-only, and its
+own threat model — not a slice here.
+
+Two consequences worth stating, because they bound what any future gate buys.
+First, the declared step type was not a reliable selector at all: all three
+dispatch payload builders spread a step's config AFTER its `type`, so a step
+saved and validated as `internal_function` executed as `custom_code` — on the
+workflow side, the sequence side, and in `test-step`. Fixed in the
+dispatch/resolver slice, and it means a control keyed on the declared type was
+side-steppable through the config until now. Second, a gate on authoring is
+not containment: it limits who may INTRODUCE a code step, not who may run one,
+since `POST /workflows/:id/start` is open to any staff JWT and every trigger,
+hook and ingest path starts workflows whose code steps already exist.
+Containment means a real sandbox or retiring `custom_code`.
+
+**Fred has twice said he is not convinced code authoring should be excluded,
+and retains the call.** This section records the evidence rather than the
+preference: the blocker is the escapable sandbox, and it is fixable
+independently of Casey. The related finding — that any staff JWT can obtain
+server-side execution through the ordinary editor and, more directly, through
+`test-step` — is filed to `ref/plans.md` with the full list of routes a gate
+would have to cover.
+
+Instead:
+
+- **It adds the step as an inert stub**, not an empty one. An empty `code`
+  throws at run time (`Custom code job missing "code"`), so a genuinely blank
+  step would fail if published before the user pastes anything. The stub
+  carries a comment and `return { success: true };`, so publishing it early is
+  a no-op rather than a failure. Review states that the step does nothing until
+  the user pastes code, and that **any** later change to a `custom_code`
+  step's config is classified structural
+  ([`lib/versionDiff.js`](../lib/versionDiff.js) always), so the paste forces a
+  structural publish and in-flight runs cannot be migrated onto it.
+- **It hands over the code as a copyable snippet in the chat**, rendered in a
+  `<pre>` with its own copy button — a descriptor-level addition to the card,
+  which already has a Copy affordance. This is not an action: nothing is
+  written, so it needs no freshness, idempotency or permission contract, and it
+  works the moment A17.0 ships.
+- **It knows the rules.** This is the slice's real content, and `manual.search`
+  cannot carry it: five ~1,200-character excerpts out of a 122 KB chapter
+  cannot convey a sandbox contract. The slice adds one compact, curated code-step
+  reference that Casey reads reliably, pinning at minimum: the sandbox is
+  `{input, console}` only — no `require`, no `fetch`, no `process`; the return
+  contract and the fact that a non-throwing return is recorded as a **success**
+  row whatever it contains; that workflow templating has no modifiers and
+  blanks unresolved tokens silently; the timeout and the Cloud Run throttling
+  trap that makes pure-CPU code fail in a background step while the identical
+  work succeeds through an in-request route; and that step renumbering never
+  rewrites a `next_step` written inside code.
+
+One caveat to state plainly rather than imply away: handing over code for a
+human to paste is the same injection path as authoring it, only slower, and
+its safety rests entirely on the reader actually auditing the JavaScript. That
+is a reasonable bet for a developer and a poor one for a legal secretary. The
+rules reference exists partly so the reader *can* audit it; the card carries an
+explicit warning; and if code steps are gated per the `ref/plans.md` finding,
+this flow should sit behind the same gate.
+
+Even so this is the best value-per-risk slice in the family: it writes nothing
+but a stub, and with ruling 9 it serves the 41 live code steps that authoring
+will never touch.
+
+**A17.5: Branch targets and control flow.**
+
+Its own slice because this is where the engine's edges are: literal step
+numbers in `BRANCH_TARGET_PARAMS`, the sentinels (`end`/`cancel`/`fail`/null),
+`foreach.end_step` having to exceed its own step, the pause-free-cycle check
+publish enforces via Tarjan SCC, and the fact that renumbering never rewrites
+`custom_code` `next_step` or non-literal targets (both are warnings only).
+Casey must never author a non-literal target.
+
+**A17.6: Publish a draft.** Fred, 2026-10-22: publish is allowed but stays its
+own step.
+
+Reads `GET /workflows/:id/draft-diff`, then writes `POST
+/workflows/:id/publish`. Review **is** the required impact preview: the
+classification (`content_only` vs `structural`) and the reasons, the per-step
+diff, validation errors and warnings, the in-flight execution count and
+stranded versions, the inbound references (what can start this), the external
+calls and sends the draft contains, the estimated fan-out, and the plain
+statement that **no rollback route exists** — restoring a previous version
+means rebuilding a draft step by step.
+
+Fixed rules: `migrate_in_flight` is always false for Casey, never offered.
+Publish carries an expected-draft-version and draft fingerprint (P11), so a
+draft edited after the preview cannot be published blind — today the route
+takes no such token and a publish can include edits made after the publisher
+read the diff. A draft may contain steps Casey did not author and cannot
+explain (`custom_code`, `webhook`); options for Fred are (a) refuse to publish
+such a draft, (b) publish it after showing those steps redacted and requiring
+an explicit acknowledgment. Default: **(b)**, because refusing would make Casey
+useless on exactly the firm's real workflows.
+
+**A17.7: Start a workflow.**
+
+An irreversible fan-out, not an extension of publish: `POST
+/workflows/:id/start` has no idempotency or dedup today, so every call creates
+another execution, and the advance is detached. Requires the P4 extension and
+an impact preview covering the triggers the run can fan out to, its external
+calls, and its estimated writes. Review requires a fresh confirmation.
+
+**A17.8: Cancel one known execution.**
+
+Cancel only. The cancel route already guards terminal state properly (one
+transaction, a status-guarded UPDATE limited to
+`active|processing|delayed|held`, pending resume jobs deleted, pending
+decisions cancelled, paired tasks dismissed) and is the one execution route
+that does. **Resume is excluded**: it refuses only `active|processing|delayed`
+— so `completed` and `held` runs are resumable — it does not check
+`workflows.active`, and it is not atomic (a plain SELECT followed by an
+unguarded UPDATE, so two concurrent resumes both pass). Resume becomes
+proposable only after the route is made atomic and state-guarded, which is a
+canonical fix filed to `ref/plans.md`, not a Casey slice.
 
 #### A18: Sequences and trigger rules
 
-Treat communication sequences and event triggers separately from workflows,
-even where their editors look similar. Draft/preview a template or rule first;
-then versioned save, publish, enroll, cancel, recover, fire-next, enable, and
-replay as individual kinds. Enrollment and replay require an exact audience or
-event, step schedule, channel effects, fan-out count, and idempotency plan.
-Bulk enrollment and arbitrary captured steps are not initial contracts.
+Planned 2026-10-22 with A17. Sequences keep the draft/publish model workflows
+have, so A18.0-A18.3 mirror A17 closely. **Trigger rules do not**, and that
+changes the plan — see *Trigger rules* below.
+
+**A18.0: Explain a sequence template or an enrollment run (read-only).**
+
+Mirrors A17.0/A17.1 over `sequence_templates`, `sequence_steps` and
+`sequence_step_log`. The payload is different in kind: the sequence question is
+almost never "what errored" (2 failed rows in 90 days) but "why didn't this
+send", whose answer is the skip-reason vocabulary — `unschedulable` (83),
+`step_condition_failed` (41), `fire_guard_failed`, `condition_failed`,
+`enrollment_not_active`, `held_step_skipped` — plus the check chain that
+produced it: enrollment active, then template condition (failing **cancels**
+the enrollment), then fire guard, then step condition (failing **skips** the
+step). Also reads the cascade: which template won for a type, and why, from
+`sequence_template_types.priority_fields` scoring against `filters`.
+
+Two sequence-specific traps the explainer must encode:
+
+- Resolution is a `JSON.stringify` -> resolve -> `JSON.parse` round trip, and
+  substituted values are **not** JSON-escaped. A value containing a double
+  quote breaks the parse, the error is caught, and the step runs with its
+  config **entirely unresolved** — a client-facing SMS or email body full of
+  literal `{{...}}`. Measured: no current contact row carries a quote in
+  `contact_name`/`contact_fname`/`contact_lname`, so this has not fired, and
+  live active templates do interpolate exactly those fields. Filed as a live
+  bug (see *Prerequisites*).
+- An absolute-`delay` placeholder that resolves empty throws inside
+  *scheduling*, not action execution, so `error_policy` never sees it and the
+  enrollment wedges (active with no pending job). `lib/alerting` flags that
+  shape after ~15 minutes.
+
+**A18.1: Preview an enrollment (read-only).**
+
+`POST /sequences/preview` is a zero-side-effect preview that already returns
+the enrollment verdict and, per step, `computed_time`, `would_skip`,
+`condition_error`, `timing_error`, `resolved_config`, `unresolved` and an
+action summary. It is the single best read in either subsystem and should be
+exposed early — it answers "what will this actually do to this client" without
+writing anything.
+
+**A18.2: Draft one sequence step.**
+
+`sms`, `email` and `task` action types only, from the A17 allowlist, into the
+template's draft. Blocked on P11 for two reasons beyond the shared ones:
+
+- Sequence step saves validate **nothing** for these action types — no
+  `function_name` check, no `__meta` check.
+- `executeStep` builds `jobData = { type: 'internal_function',
+  ...resolvedConfig }`, so a `type` key **inside** `action_config` wins the
+  spread and redirects the step: `"type":"custom_code"` runs `vm` code,
+  `"type":"webhook"` takes the executor's webhook path, and `validateStepConfig`
+  blocks neither. Any "Casey may only author sms steps" contract is void until
+  the route rejects a `type` key. Verified in code 2026-10-22.
+
+Sequences have no step-to-step variables and no `set_vars`, so a sequence step
+proposal is simpler than a workflow one; its timing is the hard part (seven
+types, two of them appointment-anchored and silently `unschedulable` once
+their window passes).
+
+**A18.3: Publish a sequence template draft.**
+
+Same impact preview as A17.6, with the sequence classifier's stricter rule
+noted in review: content-only means an `action_config` change on an unchanged
+`sms`/`email`/`task` step and nothing else — `action_type`, `timing`,
+`condition`, `fire_guard`, `error_policy`, webhook/`start_workflow` config,
+numbering and the template-level condition are all structural. Publishing
+repoints `active` enrollments only and does not rewrite queued jobs.
+
+**A18.4: Enroll a contact. Deferred past A14.**
+
+Enrollment is an external-send fan-out and inherits A14's bar (resolved
+preview, explicit recipients, strong idempotency, an unambiguous outcome). The
+route is not ready either: `POST /sequences/enroll` has no idempotency key, its
+duplicate guard is a racy SELECT-then-INSERT with no unique constraint, a
+scheduling throw after the enrollment INSERT leaves an active enrollment with
+no job, and every engine error including `ALREADY_ENROLLED` comes back as an
+HTTP 500 whose `err.code` is not surfaced. Those are canonical fixes, filed to
+`ref/plans.md`; none is a Casey slice.
+
+Also note for any later enrollment work: step firing has no "already sent this
+step" check, and `recoverStuckJobs` resets a job sitting in `running` for over
+15 minutes back to pending, so an SMS or email **can** re-send. Only
+`start_workflow` steps are retry-safe.
+
+**Trigger rules: explain only, authoring deferred.**
+
+The A18 text above assumed trigger rules could be drafted and published like
+sequences. Measured, they cannot:
+
+- There is **no draft and no versioning**. An edit is live the moment it is
+  saved, with no cache in between. There is no definition-history table, so an
+  edit cannot even be described after the fact.
+- `updateRule` DELETEs every `trigger_rule_actions` row and reinserts them with
+  new ids, in one transaction, and the editor always sends the full `actions`
+  array — the behaviour CLAUDE.md records. A partial PUT without `actions`
+  leaves the rows alone.
+- `match_config` and `transform_config` structure, code syntax, and whether a
+  target workflow or template exists or is published are **not** validated.
+- `code` mode runs in `node:vm` with a 15 s timeout, savable by any staff JWT.
+- There is no concurrency check at all: `getRule` runs outside the transaction
+  with no row lock.
+- Replay re-dispatches for real with no idempotency, and the stale sweep
+  re-runs `processEvent` in full, so actions can dispatch twice.
+
+So Casey gets **explain and dry-run only** for trigger rules: read a rule, read
+`trigger_executions` and `trigger_execution_rules`, explain why a rule did or
+did not match, and use `POST /api/triggers/test` and `/test-draft` (match and
+transform only, no actions). Authoring a trigger rule waits for trigger rules
+to get a draft/publish model, which is a **native automations arc, not a Casey
+slice**. Reported rather than coded around, per the standing rule.
+
+**Decision (Fred delegated it, 2026-10-22): do not build draft/publish for
+trigger rules. Build an audit trail and a stale-write guard instead.**
+
+The reason workflows and sequences have versioning is to protect *in-flight
+runs* — an execution or enrollment is long-lived and pins its version. A
+trigger rule has no in-flight representation: it matches and dispatches
+synchronously at the emitting service's post-commit point, and whatever it
+starts is a downstream automation pinned to its own version. So version
+pinning buys trigger rules almost nothing, and it is the most expensive thing
+on the menu. (One small window remains: `domain_event_queue` holds pending
+events drained by a Cloud Task, so an event queued before an edit is matched
+against the edited rule — seconds to minutes, plus the 15-minute stale sweep.
+Real, but not worth a versioning model.)
+
+What trigger rules actually lack is **auditability and revert**: an edit is
+live on save, `updateRule` replaces every action row, and no history survives,
+so nobody can say what a rule looked like yesterday. Two cheap pieces fix
+that and are enough to let Casey author them under the same contract as
+workflows:
+
+- an append-only change log — the rule's fields and its action set, before and
+  after, written inside `updateRule`'s existing transaction, with the actor;
+  this gives both the review diff and a manual revert path;
+- a row lock plus an expected-`updated_at` precondition on the rule, matching
+  P11's shape, so a stale write is refused rather than applied.
+
+Rule churn says this matters: the ten most recently edited rules were all
+touched between 2026-10-09 and 2026-10-20, so trigger rules are edited *more*
+actively than workflows, and explain-only would be a real loss. Until those
+two pieces exist, Casey stays on explain and dry-run (`POST /api/triggers/test`
+and `/test-draft`); once they do, trigger-rule authoring becomes an A18 slice
+on the same expected-base recipe, with `code` mode excluded for the same
+sandbox reason as `custom_code`.
 
 ### Secondary action candidates
 
@@ -906,6 +1489,111 @@ route regression tests, canonical sync tests, and a controlled live smoke test.
 Higher-impact families require explicit security/privacy review and an owner
 for external-side-effect incidents.
 
+#### P11: Canonical automation preconditions and step validation
+
+The prerequisite for every A17/A18 write, and a fix to the human editor's
+identical hazards. All of it lands in the canonical routes, because Casey's
+normalizer cannot be the authority for a route the native editor also uses.
+
+**Expected-base preconditions.** Add an optional precondition to the
+step-mutating routes (`POST|PUT|PATCH|DELETE /workflows/:id/steps*`, the
+reorder route, the sequence equivalents) and to both publish routes: the
+expected editing version, the expected step count, and a per-step fingerprint
+computed **key-order-insensitively** (sort keys, then stringify — wf50, where a
+correct draft was discarded over MySQL's JSON key re-ordering alone). A write
+whose base does not match is refused, not applied at the shifted position.
+Optional for native callers so the editors keep working unchanged; **required**
+on every Casey proposal. This is the wf27 scar turned into a route property:
+assert the base before writing.
+
+**Close the save-time validation gaps**, on both paths:
+
+- reject an unknown `function_name` (today no `__meta` means permissive);
+- reject undeclared param keys, including `_`-prefixed ones, which the engine
+  otherwise overwrites or passes through;
+- validate `params: null` instead of skipping;
+- enforce the `error_policy.strategy` enum;
+- run the workflow `__meta` validation on sequence `sms`/`email`/`task`/
+  `internal_function` steps, which validate nothing today;
+- **reject a `type` key inside a sequence `action_config`** (A18.2);
+- re-run param validation at publish, which today checks shape and branch
+  targets but never params or function existence.
+
+One structural divergence to rule on: a human can today save a step naming a
+function that does not exist, and rejecting that changes the human path.
+Validate only the fields being written, so an existing step whose function was
+since renamed can still have its label edited; a PUT that rewrites the whole
+step is validated whole. Reported for Fred's ruling rather than coded around.
+
+Mutation-check every new assertion against a real engine, not mocks — the
+family's SQL predicates and row types are exactly where `appt.create.v1`
+shipped dead (course correction 5).
+
+#### P12: Automation read surface for Casey
+
+Casey can read **no** automation definition or run today. Of the automation
+tables only `sequence_enrollments` is on the Reports manifest allowlist
+(`lib/reportSchema/manifest.js`), and the allowlist is enforced twice: by the
+report validator and by per-column SELECT grants held by the least-privilege
+`yc_report` MySQL account. Every A17/A18 slice, including the read-only ones,
+depends on closing that.
+
+Two shapes, and the choice is Fred's:
+
+- **(a) Widen the Reports manifest.** Cheapest to build, but the manifest is
+  shared with Reports and the AI report builder, so it would expose workflow
+  definitions, run payloads and trigger config to every staff report; it
+  carries no redaction layer; and it needs a grant re-provision run
+  (`scripts/reportGrantUserProvision.js`) plus prompt-context changes.
+- **(b) A new typed assistant read kind**, id-keyed and served by a projection
+  service: `automation.definition` (one workflow or sequence template, draft or
+  an explicit version), `automation.run` (one execution or enrollment with its
+  step history), `automation.list` (bounded id/name/active/version/step_count),
+  and `automation.references` (what can start a given workflow — from
+  `hook_targets`, `trigger_rule_actions`, form definitions, CTA plans and
+  sequence steps). A read kind is not a new endpoint: it is another step kind
+  inside the existing `/api/assistant/execute` route.
+
+**Recommended: (b)**, because redaction is impossible in (a). The projection
+must elide `custom_code` bodies (digest, length and first line only), webhook
+URLs (credential label, method and a host digest — CLAUDE.md treats webhook
+URLs as secrets), literal header values, and the resolved payloads in
+`workflow_execution_steps.resolved_config` / `output_data` and
+`sequence_step_log.action_config_resolved`, which hold resolved headers, client
+PII and third-party response bodies. Rows must alias `workflow_id`,
+`step_number`, `execution_id`, `template_id` and `enrollment_id` so the
+existing evidence rule (the cited row carries the exact id) works for the later
+write kinds. Whether Casey may ever see a `custom_code` body is a separate
+ruling; default **redacted**, which costs some debugging power.
+
+**Budgets make the projection mandatory, not cosmetic.** The read loop allows 3
+rounds, 8 steps, 250 rows, 50 rows per query, 3,000 characters per cell and
+60,000 characters of evidence in total; the answer call is capped at 2,500
+output tokens. The largest live workflow is 38 KB of step config across 50
+steps, so a raw definition nearly fills the evidence budget and leaves no room
+for its run history — and a 2,500-token answer cannot emit a whole definition
+at all. Hence: summarized projections for reading, and **step-at-a-time
+proposals** for authoring (A17.3-A17.5). Authoring may also need its own model
+call with its own cap rather than riding the answer call.
+
+Also to settle here: the draft heuristic `taskDraftRequested` contains no
+workflow or sequence nouns, so no automation proposal can be produced until it
+does; and the assistant's typed output is enforced only by prompt text plus the
+server normalizers (`aiService.call` sends no JSON schema and no tools), so the
+normalizer carries the whole burden for every new kind.
+
+#### P13: Workspace context for automations
+
+The Automation Manager reports only its sub-tab (`open=tabMore~
+moreAutomations~workflows`); `wsReportSubPage` drops anything after the sub-tab
+id, so **Casey cannot tell which workflow, sequence or execution is open**.
+"Explain this workflow" is unanswerable without it. Three small changes, the
+same shape the case/contact ids already use: the sub-page reports the open id,
+the server parses that segment, and it verifies the id exists before signing it
+into the ticket. Add the matching `automations.workflow` / `automations.sequence`
+destinations so Casey can link the user back to what it explained — today the
+only automation destination is `automations.court_review`.
+
 ## Recommended execution order
 
 0. The 2026-10-21 fix package landed (`7c8f225`); the P1 browser extraction
@@ -917,7 +1605,13 @@ for external-side-effect incidents.
 3. Implement A9–A12 and complete the collection-sync portions of P6.
 4. Complete P4 and P5 before A14, A15, A17 execution, or A18 enrollment/replay;
    A13 draft/triage and A16 draft/preview can proceed earlier.
-5. Expand via P10 gates. Keep destructive/admin/bulk/autonomous work outside
+5. The automation-authoring track runs on its own prerequisites, not behind
+   A6-A16. P12 (the read surface) and P13 (workspace context) gate the
+   read-only slices A17.0, A17.1, A18.0 and A18.1, which need no write
+   machinery and can ship alongside A6-A8. P11 gates every A17/A18 write;
+   A17.6 and A18.3 publish additionally need P3 generalized. A17.7 start and
+   A18.4 enrollment stay behind A14's send machinery.
+6. Expand via P10 gates. Keep destructive/admin/bulk/autonomous work outside
    the ordinary roadmap until separately approved.
 
 For the upcoming review, the key decisions are whether this ordering is right,
