@@ -12,8 +12,16 @@ function fnSrc(src, name) {
   const match = new RegExp(`function\\s+${name}\\s*\\(`).exec(src);
   if (!match) throw new Error(`function ${name} not found`);
   const start = match.index;
+  // Skip the parameter list by paren depth: a destructured default
+  // ({ required = false } = {}) holds braces of its own.
+  let parens = 0;
+  let body = match.index + match[0].length - 1;
+  for (; body < src.length; body++) {
+    if (src[body] === '(') parens++;
+    else if (src[body] === ')' && --parens === 0) break;
+  }
   let depth = 0;
-  for (let i = src.indexOf('{', start); i < src.length; i++) {
+  for (let i = src.indexOf('{', body); i < src.length; i++) {
     if (src[i] === '{') depth++;
     else if (src[i] === '}' && --depth === 0) return src.slice(start, i + 1);
   }
@@ -50,7 +58,7 @@ describe('Ask Casey UI wiring', () => {
     expect(html).toContain('Normal task notifications and reminders may run');
     expect(html).toContain('navigator.clipboard.writeText(taskDraftText(draft))');
     expect(html).toContain('delete message.action_draft; render()');
-    expect(html).toContain('...(r.action_draft ? { action_draft: r.action_draft } : {})');
+    expect(html).toContain('...(r.action_draft ? { action_draft: { ...r.action_draft, received_at: Date.now() } } : {})');
     expect(html).toContain('...(message.action_draft ? { action_draft: message.action_draft } : {})');
     expect(html).toContain("return { path: '/api/tasks', method: 'POST', body: taskCreateBody(draft) }");
     expect(html).toContain("P.Swal.fire({");
@@ -92,7 +100,7 @@ describe('Ask Casey UI wiring', () => {
     const history = [];
     const saveAssistantMessage = jest.fn().mockResolvedValue();
     const make = new Function('P', 'api', 'render', 'history', 'saveAssistantMessage',
-      `const TASK_ACTION_KINDS=new Set(['task.create.v1']);${fnSrc(html, 'isTaskActionDraft')};${fnSrc(html, 'taskCreateBody')};${fnSrc(html, 'taskUpdateBody')};${fnSrc(html, 'taskActionLabel')};${fnSrc(html, 'taskActionRequest')};${fnSrc(html, 'taskDraftText')};${fnSrc(html, 'taskDraftConfirmation')};async ${fnSrc(html, 'confirmTaskDraft')};async ${fnSrc(html, 'executeTaskDraft')};return executeTaskDraft;` // eslint-disable-line no-new-func
+      `const TASK_ACTION_KINDS=new Set(['task.create.v1']);${fnSrc(html, 'isTaskActionDraft')};${fnSrc(html, 'taskCreateBody')};${fnSrc(html, 'taskUpdateBody')};${fnSrc(html, 'taskActionLabel')};${fnSrc(html, 'taskActionRequest')};${fnSrc(html, 'taskDraftText')};${fnSrc(html, 'taskDraftConfirmation')};async ${fnSrc(html, 'confirmTaskDraft')};const ACTION_DRAFT_TTL_MS=15*60*1000;${fnSrc(html, 'actionDraftStale')};async ${fnSrc(html, 'recordActionResult')};async ${fnSrc(html, 'executeTaskDraft')};return executeTaskDraft;` // eslint-disable-line no-new-func
     )(P, api, render, history, saveAssistantMessage);
     const message = { action_draft: {
       draft_id: 'draft-123', kind: 'task.create.v1', status: 'draft', title: 'Review Ask Casey', description: 'Try it.',
@@ -121,7 +129,7 @@ describe('Ask Casey UI wiring', () => {
       text: 'Create task applied to task #77.',
       action_result: { kind: 'task.create.v1', draft_id: 'draft-123', task_id: 77 },
     })]);
-    expect(saveAssistantMessage).toHaveBeenCalledWith(history[0]);
+    expect(saveAssistantMessage).toHaveBeenCalledWith(history[0], { required: true });
     expect(P.tasksBadgeRefresh).toHaveBeenCalledTimes(1);
     expect(reloadTasks).toHaveBeenCalledTimes(1);
 
@@ -150,7 +158,7 @@ describe('Ask Casey UI wiring', () => {
     const saveAssistantMessage = jest.fn();
     const P = { Swal: { fire: jest.fn().mockResolvedValue({ isConfirmed: true }) }, showTask: jest.fn() };
     const make = new Function('P', 'api', 'render', 'history', 'saveAssistantMessage',
-      `const TASK_ACTION_KINDS=new Set(['task.create.v1']);${fnSrc(html, 'isTaskActionDraft')};${fnSrc(html, 'taskCreateBody')};${fnSrc(html, 'taskUpdateBody')};${fnSrc(html, 'taskActionLabel')};${fnSrc(html, 'taskActionRequest')};${fnSrc(html, 'taskDraftText')};${fnSrc(html, 'taskDraftConfirmation')};async ${fnSrc(html, 'confirmTaskDraft')};async ${fnSrc(html, 'executeTaskDraft')};return executeTaskDraft;` // eslint-disable-line no-new-func
+      `const TASK_ACTION_KINDS=new Set(['task.create.v1']);${fnSrc(html, 'isTaskActionDraft')};${fnSrc(html, 'taskCreateBody')};${fnSrc(html, 'taskUpdateBody')};${fnSrc(html, 'taskActionLabel')};${fnSrc(html, 'taskActionRequest')};${fnSrc(html, 'taskDraftText')};${fnSrc(html, 'taskDraftConfirmation')};async ${fnSrc(html, 'confirmTaskDraft')};const ACTION_DRAFT_TTL_MS=15*60*1000;${fnSrc(html, 'actionDraftStale')};async ${fnSrc(html, 'recordActionResult')};async ${fnSrc(html, 'executeTaskDraft')};return executeTaskDraft;` // eslint-disable-line no-new-func
     )(P, api, render, history, saveAssistantMessage);
     const message = { action_draft: {
       draft_id: 'draft-fail', kind: 'task.create.v1', status: 'draft', title: 'Try Casey', description: 'Review it.',
@@ -198,7 +206,7 @@ describe('Ask Casey UI wiring', () => {
     const render = jest.fn(); const history = []; const saveAssistantMessage = jest.fn().mockResolvedValue();
     const P = { Swal: { fire: jest.fn().mockResolvedValue({ isConfirmed: false }) }, showEvent: jest.fn() };
     const make = new Function('P', 'api', 'render', 'history', 'saveAssistantMessage',
-      `const EVENT_ACTION_KINDS=new Set(['event.cancel.v1']);${fnSrc(html, 'isEventActionDraft')};${fnSrc(html, 'eventActionLabel')};${fnSrc(html, 'eventTypeText')};${fnSrc(html, 'eventProviderText')};${fnSrc(html, 'eventReminderText')};${fnSrc(html, 'eventDraftText')};${fnSrc(html, 'eventCreateBody')};${fnSrc(html, 'eventUpdateBody')};${fnSrc(html, 'eventActionRequest')};async ${fnSrc(html, 'confirmEventDraft')};async ${fnSrc(html, 'executeEventDraft')};return executeEventDraft;` // eslint-disable-line no-new-func
+      `const EVENT_ACTION_KINDS=new Set(['event.cancel.v1']);${fnSrc(html, 'isEventActionDraft')};${fnSrc(html, 'eventActionLabel')};${fnSrc(html, 'eventTypeText')};${fnSrc(html, 'eventProviderText')};${fnSrc(html, 'eventReminderText')};${fnSrc(html, 'eventDraftText')};${fnSrc(html, 'eventCreateBody')};${fnSrc(html, 'eventUpdateBody')};${fnSrc(html, 'eventActionRequest')};async ${fnSrc(html, 'confirmEventDraft')};const ACTION_DRAFT_TTL_MS=15*60*1000;${fnSrc(html, 'actionDraftStale')};async ${fnSrc(html, 'recordActionResult')};async ${fnSrc(html, 'executeEventDraft')};return executeEventDraft;` // eslint-disable-line no-new-func
     )(P, api, render, history, saveAssistantMessage);
     const message = { action_draft: { draft_id: 'event-1', kind: 'event.cancel.v1', status: 'draft',
       event: { event_id: 42, title: 'Hearing', status: 'Scheduled', type: 'Hearing', kind: 'hearing', date: '2026-10-27', time: '09:30:00', all_day: false },
@@ -215,7 +223,7 @@ describe('Ask Casey UI wiring', () => {
     resolveWrite({ status: 'success', data: { event_id: 42 } }); await first;
     expect(message.action_draft).toMatchObject({ status: 'applied', result_event_id: 42, executing: false });
     expect(history[0].action_result).toEqual({ kind: 'event.cancel.v1', draft_id: 'event-1', event_id: 42 });
-    expect(saveAssistantMessage).toHaveBeenCalledWith(history[0]);
+    expect(saveAssistantMessage).toHaveBeenCalledWith(history[0], { required: true });
     expect(P.showEvent).toHaveBeenCalledWith(42);
     await make(message);
     expect(api).toHaveBeenCalledTimes(1);
@@ -230,7 +238,7 @@ describe('Ask Casey UI wiring', () => {
     const api = jest.fn().mockRejectedValue(new Error('Event update failed')); const render = jest.fn();
     const P = { Swal: { fire: jest.fn().mockResolvedValue({ isConfirmed: true }) }, showEvent: jest.fn() };
     const make = new Function('P', 'api', 'render', 'history', 'saveAssistantMessage',
-      `const EVENT_ACTION_KINDS=new Set(['event.update.v1']);${fnSrc(html, 'isEventActionDraft')};${fnSrc(html, 'eventActionLabel')};${fnSrc(html, 'eventTypeText')};${fnSrc(html, 'eventProviderText')};${fnSrc(html, 'eventReminderText')};${fnSrc(html, 'eventDraftText')};${fnSrc(html, 'eventCreateBody')};${fnSrc(html, 'eventUpdateBody')};${fnSrc(html, 'eventActionRequest')};async ${fnSrc(html, 'confirmEventDraft')};async ${fnSrc(html, 'executeEventDraft')};return executeEventDraft;` // eslint-disable-line no-new-func
+      `const EVENT_ACTION_KINDS=new Set(['event.update.v1']);${fnSrc(html, 'isEventActionDraft')};${fnSrc(html, 'eventActionLabel')};${fnSrc(html, 'eventTypeText')};${fnSrc(html, 'eventProviderText')};${fnSrc(html, 'eventReminderText')};${fnSrc(html, 'eventDraftText')};${fnSrc(html, 'eventCreateBody')};${fnSrc(html, 'eventUpdateBody')};${fnSrc(html, 'eventActionRequest')};async ${fnSrc(html, 'confirmEventDraft')};const ACTION_DRAFT_TTL_MS=15*60*1000;${fnSrc(html, 'actionDraftStale')};async ${fnSrc(html, 'recordActionResult')};async ${fnSrc(html, 'executeEventDraft')};return executeEventDraft;` // eslint-disable-line no-new-func
     )(P, api, render, [], jest.fn());
     const message = { action_draft: { draft_id: 'event-fail', kind: 'event.update.v1', status: 'draft',
       event: { event_id: 42, title: 'H', status: 'Scheduled', type: 'Hearing', kind: 'hearing', date: '2026-10-27', time: null, all_day: true },
@@ -249,17 +257,17 @@ describe('Ask Casey UI wiring', () => {
       confirm_email: false, confirm_message: 'Confirmed', ignored: 'never send' };
     expect(request(create)).toEqual({ path: '/api/appts', method: 'POST', body: { contact_id: 1309, case_id: 'C1',
       appt_type: 'Consultation', type_key: 'consult', appt_length: 60, appt_platform: 'Telephone',
-      appt_date: '2026-10-27 09:30:00', appt_with: 7, note: 'Bring documents', confirm_sms: true,
-      confirm_email: false, confirm_message: 'Confirmed' } });
+      appt_date: '2026-10-27 09:30:00', appt_with: 7, note: 'Bring documents', confirm_sms: false,
+      confirm_email: false, confirm_message: '' } });
     const appt = { appt_id: 55 };
     expect(request({ kind: 'appt.update.v1', appt, changes: { note: 'New note', case: null, ignored: 'x' } }))
       .toEqual({ path: '/api/appts/55', method: 'PATCH', body: { appt_note: 'New note', appt_case_id: '' } });
     expect(request({ kind: 'appt.attended.v1', appt, note: 'Held' })).toEqual({ path: '/api/appts/55/attended', method: 'POST', body: { note: 'Held' } });
     expect(request({ kind: 'appt.no_show.v1', appt, note: '', enroll: true })).toEqual({ path: '/api/appts/55/no-show', method: 'POST', body: { note: '', enroll: true } });
-    expect(request({ kind: 'appt.cancel.v1', appt, note: '', sms: false, email: false, cancel_gcal: true, create_task: false }))
+    expect(request({ kind: 'appt.cancel.v1', appt, note: '', sms: true, email: true, confirm_message: 'Hi {{contacts.contact_ssn}}', cancel_gcal: true, create_task: false }))
       .toEqual({ path: '/api/appts/cancel', method: 'POST', body: { appt: 55, note: '', sms: false, email: false, confirm_message: '', cancel_gcal: true, create_task: false } });
     expect(request({ kind: 'appt.reschedule.v1', appt, new_date: '2026-10-28 10:00:00', note: '', sms: true, email: false, confirm_message: 'Moved' }))
-      .toEqual({ path: '/api/appts/reschedule', method: 'POST', body: { appt: 55, newDate: '2026-10-28 10:00:00', note: '', sms: true, email: false, msg: 'Moved' } });
+      .toEqual({ path: '/api/appts/reschedule', method: 'POST', body: { appt: 55, newDate: '2026-10-28 10:00:00', note: '', sms: false, email: false, msg: '' } });
     expect(request({ kind: 'appt.reschedule_later.v1', appt, note: 'Call', create_task: true }))
       .toEqual({ path: '/api/appts/reschedule', method: 'POST', body: { appt: 55, note: 'Call', rescheduleLater: true, createTask: true } });
   });
@@ -281,7 +289,7 @@ describe('Ask Casey UI wiring', () => {
     const render = jest.fn(); const history = []; const saveAssistantMessage = jest.fn().mockResolvedValue();
     const P = { Swal: { fire: jest.fn().mockResolvedValue({ isConfirmed: false }) }, showAppt: jest.fn() };
     const execute = new Function('P', 'api', 'render', 'history', 'saveAssistantMessage',
-      `const APPT_ACTION_KINDS=new Set(['appt.reschedule.v1']);${fnSrc(html, 'isApptActionDraft')};${fnSrc(html, 'apptActionLabel')};${fnSrc(html, 'apptChannelsText')};${fnSrc(html, 'apptDraftText')};${fnSrc(html, 'apptCreateBody')};${fnSrc(html, 'apptActionRequest')};async ${fnSrc(html, 'confirmApptDraft')};async ${fnSrc(html, 'executeApptDraft')};return executeApptDraft;` // eslint-disable-line no-new-func
+      `const APPT_ACTION_KINDS=new Set(['appt.reschedule.v1']);${fnSrc(html, 'isApptActionDraft')};${fnSrc(html, 'apptActionLabel')};${fnSrc(html, 'apptChannelsText')};${fnSrc(html, 'apptDraftText')};${fnSrc(html, 'apptCreateBody')};${fnSrc(html, 'apptActionRequest')};async ${fnSrc(html, 'confirmApptDraft')};const ACTION_DRAFT_TTL_MS=15*60*1000;${fnSrc(html, 'actionDraftStale')};async ${fnSrc(html, 'recordActionResult')};async ${fnSrc(html, 'executeApptDraft')};return executeApptDraft;` // eslint-disable-line no-new-func
     )(P, api, render, history, saveAssistantMessage);
     const message = { action_draft: { draft_id: 'appt-1', kind: 'appt.reschedule.v1', status: 'draft',
       appt: { appt_id: 55, type: 'Consultation', status: 'Scheduled', date: '2026-10-27 09:30:00', note: 'Existing note', contact: { label: 'Client' }, case: null,
@@ -299,7 +307,7 @@ describe('Ask Casey UI wiring', () => {
     resolveWrite({ status: 'success', appt_id: 55, new_appt_id: 56 }); await first;
     expect(message.action_draft).toMatchObject({ status: 'applied', result_appt_id: 56, executing: false });
     expect(history[0].action_result).toEqual({ kind: 'appt.reschedule.v1', draft_id: 'appt-1', appt_id: 56 });
-    expect(saveAssistantMessage).toHaveBeenCalledWith(history[0]);
+    expect(saveAssistantMessage).toHaveBeenCalledWith(history[0], { required: true });
     expect(P.showAppt).toHaveBeenCalledWith(56);
     await execute(message);
     expect(api).toHaveBeenCalledTimes(1);
@@ -314,7 +322,7 @@ describe('Ask Casey UI wiring', () => {
     const api = jest.fn().mockRejectedValue(new Error('Appointment cancel failed')); const render = jest.fn();
     const P = { Swal: { fire: jest.fn().mockResolvedValue({ isConfirmed: true }) }, showAppt: jest.fn() };
     const execute = new Function('P', 'api', 'render', 'history', 'saveAssistantMessage',
-      `const APPT_ACTION_KINDS=new Set(['appt.cancel.v1']);${fnSrc(html, 'isApptActionDraft')};${fnSrc(html, 'apptActionLabel')};${fnSrc(html, 'apptChannelsText')};${fnSrc(html, 'apptDraftText')};${fnSrc(html, 'apptCreateBody')};${fnSrc(html, 'apptActionRequest')};async ${fnSrc(html, 'confirmApptDraft')};async ${fnSrc(html, 'executeApptDraft')};return executeApptDraft;` // eslint-disable-line no-new-func
+      `const APPT_ACTION_KINDS=new Set(['appt.cancel.v1']);${fnSrc(html, 'isApptActionDraft')};${fnSrc(html, 'apptActionLabel')};${fnSrc(html, 'apptChannelsText')};${fnSrc(html, 'apptDraftText')};${fnSrc(html, 'apptCreateBody')};${fnSrc(html, 'apptActionRequest')};async ${fnSrc(html, 'confirmApptDraft')};const ACTION_DRAFT_TTL_MS=15*60*1000;${fnSrc(html, 'actionDraftStale')};async ${fnSrc(html, 'recordActionResult')};async ${fnSrc(html, 'executeApptDraft')};return executeApptDraft;` // eslint-disable-line no-new-func
     )(P, api, render, [], jest.fn());
     const message = { action_draft: { draft_id: 'appt-fail', kind: 'appt.cancel.v1', status: 'draft',
       appt: { appt_id: 55, type: 'Consultation', status: 'Scheduled', date: '2026-10-27 09:30:00', contact: { label: 'Client' }, case: null,
@@ -357,7 +365,7 @@ describe('Ask Casey UI wiring', () => {
     const render = jest.fn(); const history = []; const saveAssistantMessage = jest.fn().mockResolvedValue(); const openEntity = jest.fn();
     const P = { Swal: { fire: jest.fn().mockResolvedValue({ isConfirmed: false }) } };
     const execute = new Function('P', 'api', 'render', 'history', 'saveAssistantMessage', 'openEntity',
-      `const CONTACT_SUBRECORD_ACTION_KINDS=new Set(['contact.phone.end.v1']);${fnSrc(html, 'isContactSubrecordActionDraft')};${fnSrc(html, 'contactSubrecordActionLabel')};${fnSrc(html, 'contactAddressText')};${fnSrc(html, 'contactSubrecordValue')};${fnSrc(html, 'contactSubrecordDraftText')};${fnSrc(html, 'contactSubrecordCreateBody')};${fnSrc(html, 'contactSubrecordActionRequest')};async ${fnSrc(html, 'confirmContactSubrecordDraft')};async ${fnSrc(html, 'executeContactSubrecordDraft')};return executeContactSubrecordDraft;` // eslint-disable-line no-new-func
+      `const CONTACT_SUBRECORD_ACTION_KINDS=new Set(['contact.phone.end.v1']);${fnSrc(html, 'isContactSubrecordActionDraft')};${fnSrc(html, 'contactSubrecordActionLabel')};${fnSrc(html, 'contactAddressText')};${fnSrc(html, 'contactSubrecordValue')};${fnSrc(html, 'contactSubrecordDraftText')};${fnSrc(html, 'contactSubrecordCreateBody')};${fnSrc(html, 'contactSubrecordActionRequest')};async ${fnSrc(html, 'confirmContactSubrecordDraft')};const ACTION_DRAFT_TTL_MS=15*60*1000;${fnSrc(html, 'actionDraftStale')};async ${fnSrc(html, 'recordActionResult')};async ${fnSrc(html, 'executeContactSubrecordDraft')};return executeContactSubrecordDraft;` // eslint-disable-line no-new-func
     )(P, api, render, history, saveAssistantMessage, openEntity);
     const message = { action_draft: { draft_id: 'contact-1', kind: 'contact.phone.end.v1', family: 'phone', status: 'draft',
       target: { id: 21, contact: { contact_id: 1309, label: 'Client' }, phone: '2485550100', label: 'Mobile', is_primary: true,
@@ -373,7 +381,7 @@ describe('Ask Casey UI wiring', () => {
     resolveWrite({ status: 'success', phone: { id: 21, contact_id: 1309 } }); await first;
     expect(message.action_draft).toMatchObject({ status: 'applied', result_contact_id: 1309, executing: false });
     expect(history[0].action_result).toEqual({ kind: 'contact.phone.end.v1', draft_id: 'contact-1', contact_id: 1309, contact_label: 'Client' });
-    expect(saveAssistantMessage).toHaveBeenCalledWith(history[0]);
+    expect(saveAssistantMessage).toHaveBeenCalledWith(history[0], { required: true });
     expect(openEntity).toHaveBeenCalledWith('contact', 1309, 'Client');
     await execute(message); expect(api).toHaveBeenCalledTimes(1);
   });
@@ -387,7 +395,7 @@ describe('Ask Casey UI wiring', () => {
     const api = jest.fn().mockRejectedValue(new Error('Contact update failed')); const render = jest.fn();
     const P = { Swal: { fire: jest.fn().mockResolvedValue({ isConfirmed: true }) } };
     const execute = new Function('P', 'api', 'render', 'history', 'saveAssistantMessage', 'openEntity',
-      `const CONTACT_SUBRECORD_ACTION_KINDS=new Set(['contact.email.update.v1']);${fnSrc(html, 'isContactSubrecordActionDraft')};${fnSrc(html, 'contactSubrecordActionLabel')};${fnSrc(html, 'contactAddressText')};${fnSrc(html, 'contactSubrecordValue')};${fnSrc(html, 'contactSubrecordDraftText')};${fnSrc(html, 'contactSubrecordCreateBody')};${fnSrc(html, 'contactSubrecordActionRequest')};async ${fnSrc(html, 'confirmContactSubrecordDraft')};async ${fnSrc(html, 'executeContactSubrecordDraft')};return executeContactSubrecordDraft;` // eslint-disable-line no-new-func
+      `const CONTACT_SUBRECORD_ACTION_KINDS=new Set(['contact.email.update.v1']);${fnSrc(html, 'isContactSubrecordActionDraft')};${fnSrc(html, 'contactSubrecordActionLabel')};${fnSrc(html, 'contactAddressText')};${fnSrc(html, 'contactSubrecordValue')};${fnSrc(html, 'contactSubrecordDraftText')};${fnSrc(html, 'contactSubrecordCreateBody')};${fnSrc(html, 'contactSubrecordActionRequest')};async ${fnSrc(html, 'confirmContactSubrecordDraft')};const ACTION_DRAFT_TTL_MS=15*60*1000;${fnSrc(html, 'actionDraftStale')};async ${fnSrc(html, 'recordActionResult')};async ${fnSrc(html, 'executeContactSubrecordDraft')};return executeContactSubrecordDraft;` // eslint-disable-line no-new-func
     )(P, api, render, [], jest.fn(), jest.fn());
     const message = { action_draft: { draft_id: 'contact-fail', kind: 'contact.email.update.v1', family: 'email', status: 'draft',
       target: { id: 22, contact: { contact_id: 1309, label: 'Client' }, email: 'client@example.com', label: 'Personal', is_primary: false,
@@ -487,5 +495,102 @@ describe('Ask Casey UI wiring', () => {
     expect(html).toContain('Save to case');
     expect(html).toContain("'/api/documents/upload-link'");
     expect(html).toContain("'/api/documents/upload-commit'");
+  });
+});
+
+describe('Ask Casey action freshness and applied-marker durability (review fix package 2026-10-21)', () => {
+  const H = (kinds) => `const TASK_ACTION_KINDS=new Set(${JSON.stringify(kinds)});const ACTION_DRAFT_TTL_MS=15*60*1000;${fnSrc(html, 'actionDraftStale')};async ${fnSrc(html, 'recordActionResult')};${fnSrc(html, 'isTaskActionDraft')};${fnSrc(html, 'taskCreateBody')};${fnSrc(html, 'taskUpdateBody')};${fnSrc(html, 'taskActionLabel')};${fnSrc(html, 'taskActionRequest')};${fnSrc(html, 'taskDraftText')};${fnSrc(html, 'taskDraftConfirmation')};async ${fnSrc(html, 'confirmTaskDraft')};async ${fnSrc(html, 'executeTaskDraft')};return executeTaskDraft;`;
+  const draft = (extra = {}) => ({ action_draft: { draft_id: 'd-1', kind: 'task.create.v1', status: 'draft', title: 'Call', description: 'Call the client.',
+    assignee: { user_id: 1, label: 'Stuart' }, link: null, start_date: null, due_date: null, notify_assigner_on_completion: false, ...extra } });
+  const harness = (P, api, saveAssistantMessage) => new Function('P', 'api', 'render', 'history', 'saveAssistantMessage', H(['task.create.v1']))( // eslint-disable-line no-new-func
+    P, api, jest.fn(), [], saveAssistantMessage);
+
+  test('a card reopened from history or past its TTL never writes; it asks for a fresh proposal', async () => {
+    const api = jest.fn().mockResolvedValue({ status: 'success', task_id: 5 });
+    const P = { Swal: { fire: jest.fn().mockResolvedValue({ isConfirmed: true }) }, showTask: jest.fn() };
+    const execute = harness(P, api, jest.fn().mockResolvedValue());
+    const restored = draft({ restored: true });
+    await execute(restored);
+    expect(restored.action_draft.action_error).toMatch(/reopened from saved history/);
+    const old = draft({ received_at: Date.now() - 16 * 60 * 1000 });
+    await execute(old);
+    expect(old.action_draft.action_error).toMatch(/more than 15 minutes old/);
+    expect(P.Swal.fire).not.toHaveBeenCalled();
+    expect(api).not.toHaveBeenCalled();
+  });
+
+  test('a card that expires while its review dialog is open writes nothing', async () => {
+    const api = jest.fn().mockResolvedValue({ status: 'success', task_id: 5 });
+    const message = draft({ received_at: Date.now() });
+    const P = { Swal: { fire: jest.fn(async () => { message.action_draft.received_at = Date.now() - 16 * 60 * 1000; return { isConfirmed: true }; }) }, showTask: jest.fn() };
+    await harness(P, api, jest.fn().mockResolvedValue())(message);
+    expect(P.Swal.fire).toHaveBeenCalledTimes(1);
+    expect(api).not.toHaveBeenCalled();
+    expect(message.action_draft).toMatchObject({ status: 'draft', action_error: expect.stringMatching(/15 minutes old/) });
+  });
+
+  test('a fresh card writes once; its button stays blocked until the applied marker is saved', async () => {
+    let resolveSave;
+    const save = jest.fn(() => new Promise((resolve) => { resolveSave = resolve; }));
+    const api = jest.fn().mockResolvedValue({ status: 'success', task_id: 5 });
+    const P = { Swal: { fire: jest.fn().mockResolvedValue({ isConfirmed: true }) }, showTask: jest.fn() };
+    const message = draft({ received_at: Date.now() });
+    const running = harness(P, api, save)(message);
+    for (let i = 0; i < 6; i++) await Promise.resolve();
+    expect(api).toHaveBeenCalledTimes(1);
+    expect(message.action_draft).toMatchObject({ status: 'applied', executing: true });
+    resolveSave();
+    await running;
+    expect(message.action_draft).toMatchObject({ status: 'applied', executing: false });
+    expect(message.action_draft).not.toHaveProperty('marker_error');
+  });
+
+  test('when the applied marker cannot be saved the user is told loudly; the write is not repeated', async () => {
+    const api = jest.fn().mockResolvedValue({ status: 'success', task_id: 5 });
+    const P = { Swal: { fire: jest.fn().mockResolvedValue({ isConfirmed: true }) }, showTask: jest.fn() };
+    const message = draft({ received_at: Date.now() });
+    await harness(P, api, jest.fn().mockRejectedValue(new Error('chat history is unavailable')))(message);
+    expect(api).toHaveBeenCalledTimes(1);
+    expect(message.action_draft.status).toBe('applied');
+    expect(message.action_draft.marker_error).toMatch(/WAS applied[\s\S]*Do not apply it again/);
+    expect(P.Swal.fire).toHaveBeenLastCalledWith(expect.objectContaining({ icon: 'warning', title: 'Applied, but not recorded' }));
+    expect(message.action_draft).not.toHaveProperty('action_error');
+  });
+
+  test('a required save throws (after one retry) instead of swallowing; an ordinary save still only warns', async () => {
+    const make = (api, chatId, available = true) => new Function('api', 'currentChatId', 'historyAvailable', `async ${fnSrc(html, 'saveAssistantMessage')}; return saveAssistantMessage;`)(api, chatId, available); // eslint-disable-line no-new-func
+    const failing = jest.fn().mockRejectedValue(new Error('500'));
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      await expect(make(failing, 9)({ text: 'Applied.' }, { required: true })).rejects.toThrow('500');
+      expect(failing).toHaveBeenCalledTimes(2);
+      await expect(make(jest.fn(), null)({ text: 'Applied.' }, { required: true })).rejects.toThrow(/unavailable/);
+      await expect(make(jest.fn(), 9, false)({ text: 'Applied.' }, { required: true })).rejects.toThrow(/unavailable/);
+      await expect(make(failing, 9)({ text: 'Answer.' })).resolves.toBeUndefined();
+      const flaky = jest.fn().mockRejectedValueOnce(new Error('blip')).mockResolvedValueOnce({ status: 'success' });
+      await expect(make(flaky, 9)({ text: 'Applied.' }, { required: true })).resolves.toBeUndefined();
+      expect(flaky).toHaveBeenCalledTimes(2);
+    } finally { warn.mockRestore(); }
+  });
+
+  test('a reopened chat marks every unapplied proposal as restored; answers are stamped when they arrive', () => {
+    expect(fnSrc(html, 'openSavedChat')).toContain("history.forEach((m) => { if (m.action_draft && m.action_draft.status !== 'applied') m.action_draft.restored = true; });");
+    const stale = new Function(`const ACTION_DRAFT_TTL_MS=15*60*1000;${fnSrc(html, 'actionDraftStale')};return actionDraftStale;`)(); // eslint-disable-line no-new-func
+    expect(stale({ status: 'draft', received_at: Date.now() })).toBe('');
+    expect(stale({ status: 'applied', restored: true })).toBe('');
+    expect(stale({ status: 'draft', restored: true })).toMatch(/history/);
+  });
+
+  test('an end reason longer than the stored 40 characters is never sent', () => {
+    const request = new Function(`${fnSrc(html, 'contactSubrecordCreateBody')};${fnSrc(html, 'contactSubrecordActionRequest')};return contactSubrecordActionRequest;`)(); // eslint-disable-line no-new-func
+    const target = { id: 21, expected_updated_at: '2026-10-20T10:00:00.000Z' };
+    expect(() => request({ kind: 'contact.phone.end.v1', family: 'phone', target, changes: { end_date: '2026-10-20', end_reason: 'x'.repeat(41) } }))
+      .toThrow(/40 characters/);
+    expect(request({ kind: 'contact.phone.end.v1', family: 'phone', target, changes: { end_date: '2026-10-20', end_reason: 'x'.repeat(40) } }).body.end_reason).toHaveLength(40);
+  });
+
+  test('appointment review text never offers a client send', () => {
+    const channels = new Function(`${fnSrc(html, 'apptChannelsText')};return apptChannelsText;`)(); // eslint-disable-line no-new-func
+    expect(channels({ confirm_sms: true, confirm_message: 'Hi {{contacts.contact_ssn}}' })).toMatch(/^None — Ask Casey does not send/);
   });
 });

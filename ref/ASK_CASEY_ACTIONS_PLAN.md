@@ -6,6 +6,8 @@ cancel; A4/A4.1 cover reviewed Appointment create, narrow update, attended,
 no-show, cancel, reschedule-now, and reschedule-later through the existing
 authenticated routes. A5 covers one reviewed phone/email/address subrecord
 create, narrow update, or history-preserving end. No general action executor is introduced.
+The 2026-10-21 independent-review fix package (branch `fix/casey`) amends this
+plan — see **Course corrections** below; where they conflict, it wins.
 
 ## Review briefing
 
@@ -43,6 +45,65 @@ as later sub-slices; choose the first low-impact A7 scalar fields; set the P1
 extraction point; and define the rollout bar for the first external-send or
 fan-out action. Destructive/admin/access/credential work, arbitrary tools,
 multi-action plans, and unattended execution remain outside this roadmap.
+
+## Course corrections from the independent review (2026-10-21)
+
+The review (Fable-consolidated, six Opus reviewers) found the per-family
+reviewed-action pattern right and consistently applied, and these gaps. The
+fix package on `fix/casey` addressed what is marked SHIPPED; the rest is now
+part of this plan.
+
+1. **Click-time freshness is a required recipe step for every new family
+   (A6 onward).** Proposal-time validation alone let a stale card replay a
+   write. Each new kind must either re-read its target at click time through a
+   canonical read route and refuse when the reviewed state changed, or carry a
+   server-checked precondition (P3). SHIPPED interim for the four existing
+   families: a card is offered for writing only within 15 minutes of arriving
+   and never when reopened from saved history (it re-asks instead), re-checked
+   after the review dialog; `apptService` now refuses repeat cancel/reschedule
+   for every caller with a conditional status UPDATE.
+2. **P5 and minimal P4 come before A6.** SHIPPED interim: the applied marker is
+   saved as a required write (one retry); the card's button stays disabled until
+   it settles and a failure is shown loudly. Still to build: durable
+   server-side applied state (P5) and a browser/server idempotency key on
+   creates (P4) — two tabs can still double-apply a create.
+3. **No client sends inside A4 until A14.** SHIPPED: appointment create/cancel/
+   reschedule proposals force SMS/email off and drop the model-authored message
+   in the normalizer and again in the browser body. The confirmation path
+   resolves `{{…}}` placeholders (`contacts.contact_ssn` resolves since the
+   2026-09-24 ruling), so model-authored client text waits for A14's resolved
+   preview, explicit recipients, and idempotency.
+4. **P1 extraction is next, before A6.** Four ~150-line families already live
+   in `public/assistant.html`; thirteen more are planned. Extract the repeated
+   mechanics (freshness, single-flight, marker persistence, review rows) first.
+5. **Real-MySQL harness for normalizer SQL.** `appt.create.v1` shipped dead
+   (`user_auth = 1` against a varchar) because the unit suite mocked the users
+   query. SHIPPED: the predicate now reuses `taskService.findAssignableStaff`'s,
+   and the gated `tests/assistantNormalizer.mysql.test.js` runs normalizer SQL
+   on a real engine. Every new family adds its predicates there.
+6. Also SHIPPED: `end_reason` capped at its `varchar(40)` width in browser and
+   server (relaxed sql_mode would truncate silently); Casey address creates
+   leave `start_date` NULL like the native path; the forced action-draft repair
+   no longer fires on questions about a record and never replaces a real
+   answer; the firm monthly spend cap `assistant_ai_monthly_cap_cents`; chat
+   rate limit and per-chat message cap; server identity/workspace blocks moved
+   to the system prompt segment; the denied-column scan ignores string literals.
+
+**Defaults pending Fred's ruling** (he answered "idk"; each default stands until
+he rules):
+- A15 (e-signature), A17 (workflows), A18 (sequences/trigger rules): questionable
+  for a four-user firm. Default: not scheduled; nothing past A14 is planned
+  until Fred picks which, if any, he wants.
+- Draft lifetime — expire vs click-time revalidation: default is expiry (15-min
+  TTL + no write from history) for the existing families; new families add
+  click-time revalidation per correction 1.
+- `end_reason`: default is free text capped at 40 characters. Alternatives:
+  widen the columns (migration) or map to the native codes (`ended` /
+  `replaced` / `transferred`) with the text in notes.
+- Casey tasks land in the machine-Notices preset via `source:'Casey'`; the
+  completion-notice default differs from the native form. Default: unchanged.
+- Opus remains the `better_quality` default model.
+- A6 remove variants: the review recommends deferring them; default deferred.
 
 ## Governing principle: actions run through the user
 
@@ -395,7 +456,8 @@ The shipped contract has seven proposal kinds: `appt.create.v1`,
 `appt.reschedule.v1`, and `appt.reschedule_later.v1`. Create requires a
 verified contact, active meeting type, 1–1,440 minute length, platform, future
 firm-local date/time, and active appointment provider; optional case linked to
-that contact, note, and reviewed SMS/email confirmation are supported. The server resolves the
+that contact and note are supported. Client SMS/email is forced off (course
+correction 3). The server resolves the
 canonical type key and labels; the browser alone maps the normalized proposal
 to `/api/appts*`, and the route supplies `source:'staff'` and authenticated
 actor identity.
@@ -410,7 +472,7 @@ either reschedule form also accept Attended/No Show because the native UI does.
 
 No-show defaults enrollment off and states its possible sequence/pipeline
 effects. Cancel defaults Google Calendar deletion on and follow-up task off;
-optional client SMS/email requires the exact reviewed message. Reschedule-now
+it sends nothing to the client (course correction 3). Reschedule-now
 retires the predecessor, deletes its firm/provider calendar entries and
 automation, creates a lineage-linked successor, re-creates calendars and
 automation, and opens the successor. Reschedule-later creates no successor,
@@ -437,8 +499,9 @@ Phone/email updates expose label, notes, primary promotion, and their explicit
 opt-out/MMS fields; their values remain immutable. Address update exposes its
 parts, label, notes, and primary promotion. Create normalizes native labels,
 values, defaults, first-row auto-promotion, collision/ownership-window rules,
-and an exact non-future ownership start. End requires a non-future date and reason and keeps
-history. Review shows the complete value, before/after fields, consent values,
+and an exact non-future ownership start (an address with no stated start keeps
+NULL, "since forever", as natively). End requires a non-future date and a reason of
+at most 40 characters (the column width) and keeps history. Review shows the complete value, before/after fields, consent values,
 current-primary demotion, mirror recomputation, and absence of messages or
 ownership transfer.
 
@@ -628,6 +691,9 @@ and other operations where a stale review could overwrite someone else's work.
 
 #### P4: Durable idempotency and ambiguous-result recovery
 
+Pulled ahead of A6 in its minimal form (an idempotency key on creates) by the
+2026-10-21 review — course correction 2.
+
 Browser single-flight prevents double-clicks but does not solve a timeout after
 the server committed. Add canonical, user-scoped idempotency support to create,
 send, enroll, start, replay, and fan-out operations before exposing the risky
@@ -637,6 +703,10 @@ not model-chosen, and the same protection should benefit native callers where
 appropriate.
 
 #### P5: Durable applied-result persistence
+
+Pulled ahead of A6 (course correction 2). The interim required-save + loud
+failure shipped with the fix package; the server-side applied state below is
+still to build.
 
 Make success restoration resilient when the canonical write succeeds but chat
 history persistence fails. Preserve the canonical result needed to reopen the
@@ -692,6 +762,8 @@ for external-side-effect incidents.
 
 ## Recommended execution order
 
+0. Land the 2026-10-21 fix package, then P1 extraction, then minimal P4 + P5
+   (course corrections 2 and 4) — all before A6.
 1. Close P0 and continue P2, P7, and P8 alongside the shipped A4/A4.1/A5 contracts.
 2. Implement A6–A8 with P3 in place; extract P1 only from demonstrated common
    behavior, not as a speculative generic executor.
@@ -705,4 +777,5 @@ For the upcoming review, the key decisions are whether this ordering is right,
 which low-impact scalar fields belong in A7, whether delete variants in A6
 should be deferred entirely, and what operational bar must be met before the
 first external-send or fan-out action. A5 deliberately excluded hard delete;
-the immediate engineering slice is now A6 contact relations and roles.
+after the fix package, P1 extraction and minimal P4/P5, the next action slice
+is A6 contact relations and roles.

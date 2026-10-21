@@ -117,7 +117,7 @@
     <div><h1><i class="fa-solid fa-wand-magic-sparkles"></i> Ask Casey</h1>
       <div class="sub">Ask about people, matters, activity, appointments, tasks, communications, or how YisraCase works.</div></div>
     <div class="header-actions">
-      <select class="model-select" id="modelMode" aria-label="YisrAI model mode" title="Choose quality or speed">
+      <select class="model-select" id="modelMode" aria-label="Ask Casey model mode" title="Choose quality or speed">
         <option value="better_quality">Better quality</option>
         <option value="faster_speed">Faster speed</option>
       </select>
@@ -251,6 +251,63 @@ function isApptActionDraft(draft) { return !!(draft && APPT_ACTION_KINDS.has(dra
 function isContactSubrecordActionDraft(draft) { return !!(draft && CONTACT_SUBRECORD_ACTION_KINDS.has(draft.kind)); }
 function isActionDraft(draft) { return isTaskActionDraft(draft) || isEventActionDraft(draft) || isApptActionDraft(draft) || isContactSubrecordActionDraft(draft); }
 
+// Draft freshness. Casey normalizes a proposal against the records as they
+// stood when it answered; nothing re-checks them at click time. So a card
+// offers its write only while that is recent: one reopened from saved history,
+// or older than ACTION_DRAFT_TTL_MS, must be prepared again (the server then
+// re-reads current state). Checked when the card renders, on click, and again
+// after the review dialog closes (a dialog can sit open). The canonical routes
+// keep their own guards (appointment status, contact row versions).
+const ACTION_DRAFT_TTL_MS = 15 * 60 * 1000;
+
+function actionDraftStale(draft) {
+  if (!draft || draft.status === 'applied') return '';
+  if (draft.restored) return 'This proposal was reopened from saved history, so it may no longer match the records. Ask Casey to prepare it again.';
+  const received = Number(draft.received_at);
+  if (Number.isFinite(received) && received > 0 && Date.now() - received > ACTION_DRAFT_TTL_MS) {
+    return 'This proposal is more than 15 minutes old, so it may no longer match the records. Ask Casey to prepare it again.';
+  }
+  return '';
+}
+
+function askCaseyAgain(message) {
+  const index = history.indexOf(message);
+  for (let i = index - 1; i >= 0; i--) {
+    if (history[i] && history[i].role === 'user') { input.value = String(history[i].text || '').slice(0, 2000); break; }
+  }
+  input.focus();
+}
+
+// A stale card keeps its values visible but its button only re-asks.
+function hydrateStaleDraft(next, apply, message, draft) {
+  const stale = actionDraftStale(draft);
+  if (!stale) return false;
+  const note = document.createElement('div'); note.className = 'action-draft-next-warning'; note.textContent = stale;
+  next.append(note);
+  apply.textContent = 'Ask Casey again';
+  apply.addEventListener('click', () => askCaseyAgain(message));
+  return true;
+}
+
+function appendMarkerError(next, draft) {
+  if (!draft.marker_error) return;
+  const error = document.createElement('div'); error.className = 'action-draft-next-warning'; error.textContent = draft.marker_error;
+  next.append(error);
+}
+
+// The applied marker is what stops a reopened chat from offering the write
+// again, so its save must not fail silently. The card's button stays disabled
+// (executing) until this settles; a failure is told to the user, loudly.
+async function recordActionResult(draft, resultMessage) {
+  try {
+    await saveAssistantMessage(resultMessage, { required: true });
+  } catch (e) {
+    draft.marker_error = `This action WAS applied, but Casey could not record that in this chat (${e && e.message || 'save failed'}). Do not apply it again — open the record to check the change.`;
+    try { if (P.Swal && typeof P.Swal.fire === 'function') P.Swal.fire({ icon: 'warning', title: 'Applied, but not recorded', text: draft.marker_error, heightAuto: false }); }
+    catch (_) { /* the card shows the same text */ }
+  }
+}
+
 function taskDraftText(draft) {
   if (draft.kind === 'task.create.v1') return [
     'Task creation proposal — not applied', `Title: ${draft.title}`, `Description: ${draft.description || '—'}`,
@@ -351,6 +408,8 @@ async function executeTaskDraft(message) {
     P.showTask(draft.result_task_id);
     return;
   }
+  const stale = actionDraftStale(draft);
+  if (stale) { draft.action_error = stale; render(); return; }
   draft.reviewing = true;
   delete draft.action_error;
   render();
@@ -363,6 +422,8 @@ async function executeTaskDraft(message) {
     draft.reviewing = false;
     render();
   }
+  const expired = actionDraftStale(draft);
+  if (expired) { draft.action_error = expired; render(); return; }
   draft.executing = true;
   delete draft.action_error;
   render();
@@ -382,7 +443,7 @@ async function executeTaskDraft(message) {
       action_result: { kind: draft.kind, draft_id: draft.draft_id, task_id: taskId },
     };
     history.push(resultMessage);
-    await saveAssistantMessage(resultMessage);
+    await recordActionResult(draft, resultMessage);
   } catch (e) {
     draft.action_error = e.message || 'The task action could not be applied.';
   } finally {
@@ -504,10 +565,14 @@ async function executeEventDraft(message) {
   const draft = message && message.action_draft;
   if (!isEventActionDraft(draft) || typeof draft.draft_id !== 'string' || !draft.draft_id || draft.executing || draft.reviewing) return;
   if (draft.status === 'applied' && draft.result_event_id) { P.showEvent(draft.result_event_id); return; }
+  const stale = actionDraftStale(draft);
+  if (stale) { draft.action_error = stale; render(); return; }
   draft.reviewing = true; delete draft.action_error; render();
   try { if (!await confirmEventDraft(draft)) return; }
   catch (e) { draft.action_error = e.message || 'The review dialog could not be opened.'; return; }
   finally { draft.reviewing = false; render(); }
+  const expired = actionDraftStale(draft);
+  if (expired) { draft.action_error = expired; render(); return; }
   draft.executing = true; delete draft.action_error; render();
   try {
     const request = eventActionRequest(draft);
@@ -518,7 +583,7 @@ async function executeEventDraft(message) {
     const resultMessage = { role: 'assistant', text: `${eventActionLabel(draft)} applied to event #${eventId}.`,
       entities: [{ kind: 'event', id: String(eventId), label: draft.kind === 'event.create.v1' ? draft.event_title : draft.event.title }],
       action_result: { kind: draft.kind, draft_id: draft.draft_id, event_id: eventId } };
-    history.push(resultMessage); await saveAssistantMessage(resultMessage);
+    history.push(resultMessage); await recordActionResult(draft, resultMessage);
     P.showEvent(eventId);
   } catch (e) { draft.action_error = e.message || 'The event action could not be applied.'; }
   finally { draft.executing = false; render(); }
@@ -545,10 +610,9 @@ function apptActionLabel(draft) {
 }
 
 function apptChannelsText(draft) {
-  const channels = [];
-  if (draft.confirm_sms || draft.sms) channels.push('SMS');
-  if (draft.confirm_email || draft.email) channels.push('email');
-  return channels.length ? `${channels.join(' and ')} — ${draft.confirm_message}` : 'None';
+  // Ask Casey sends no client SMS/email (until the A14 send bar exists); the
+  // request bodies below send false whatever an older saved draft carries.
+  return 'None — Ask Casey does not send client SMS or email; send any confirmation from the appointment itself';
 }
 
 function apptDraftText(draft) {
@@ -598,8 +662,7 @@ function apptCreateBody(draft) {
   return { contact_id: draft.contact.contact_id, case_id: draft.case ? draft.case.case_id : '',
     appt_type: draft.type.appt_type, type_key: draft.type.type_key, appt_length: draft.appt_length,
     appt_platform: draft.appt_platform, appt_date: draft.appt_date, appt_with: draft.provider.user_id,
-    note: draft.note || '', confirm_sms: draft.confirm_sms === true, confirm_email: draft.confirm_email === true,
-    confirm_message: draft.confirm_message || '' };
+    note: draft.note || '', confirm_sms: false, confirm_email: false, confirm_message: '' };
 }
 
 function apptActionRequest(draft) {
@@ -614,10 +677,10 @@ function apptActionRequest(draft) {
   if (draft.kind === 'appt.attended.v1') return { path: `/api/appts/${id}/attended`, method: 'POST', body: { note: draft.note || '' } };
   if (draft.kind === 'appt.no_show.v1') return { path: `/api/appts/${id}/no-show`, method: 'POST', body: { note: draft.note || '', enroll: draft.enroll === true } };
   if (draft.kind === 'appt.cancel.v1') return { path: '/api/appts/cancel', method: 'POST', body: { appt: id, note: draft.note || '',
-    sms: draft.sms === true, email: draft.email === true, confirm_message: draft.confirm_message || '',
+    sms: false, email: false, confirm_message: '',
     cancel_gcal: draft.cancel_gcal !== false, create_task: draft.create_task === true } };
   if (draft.kind === 'appt.reschedule.v1') return { path: '/api/appts/reschedule', method: 'POST', body: { appt: id,
-    newDate: draft.new_date, note: draft.note || '', sms: draft.sms === true, email: draft.email === true, msg: draft.confirm_message || '' } };
+    newDate: draft.new_date, note: draft.note || '', sms: false, email: false, msg: '' } };
   if (draft.kind === 'appt.reschedule_later.v1') return { path: '/api/appts/reschedule', method: 'POST', body: { appt: id,
     note: draft.note || '', rescheduleLater: true, createTask: draft.create_task === true } };
   throw new Error('Unsupported appointment action');
@@ -637,10 +700,14 @@ async function executeApptDraft(message) {
   const draft = message && message.action_draft;
   if (!isApptActionDraft(draft) || typeof draft.draft_id !== 'string' || !draft.draft_id || draft.executing || draft.reviewing) return;
   if (draft.status === 'applied' && draft.result_appt_id) { P.showAppt(draft.result_appt_id); return; }
+  const stale = actionDraftStale(draft);
+  if (stale) { draft.action_error = stale; render(); return; }
   draft.reviewing = true; delete draft.action_error; render();
   try { if (!await confirmApptDraft(draft)) return; }
   catch (e) { draft.action_error = e.message || 'The review dialog could not be opened.'; return; }
   finally { draft.reviewing = false; render(); }
+  const expired = actionDraftStale(draft);
+  if (expired) { draft.action_error = expired; render(); return; }
   draft.executing = true; delete draft.action_error; render();
   try {
     const request = apptActionRequest(draft); const result = await api(request.path, request.body, request.method);
@@ -651,7 +718,7 @@ async function executeApptDraft(message) {
     const resultMessage = { role: 'assistant', text: `${apptActionLabel(draft)} applied to appointment #${apptId}.`,
       entities: [{ kind: 'appointment', id: String(apptId), label: `${draft.kind === 'appt.create.v1' ? draft.type.appt_type : draft.appt.type} #${apptId}` }],
       action_result: { kind: draft.kind, draft_id: draft.draft_id, appt_id: apptId } };
-    history.push(resultMessage); await saveAssistantMessage(resultMessage); P.showAppt(apptId);
+    history.push(resultMessage); await recordActionResult(draft, resultMessage); P.showAppt(apptId);
   } catch (e) { draft.action_error = e.message || 'The appointment action could not be applied.'; }
   finally { draft.executing = false; render(); }
 }
@@ -748,6 +815,9 @@ function contactSubrecordActionRequest(draft) {
   if (String(draft.kind).includes('.create.')) return { path: base, method: 'POST', body: contactSubrecordCreateBody(draft) };
   const body = { expected_updated_at: draft.target.expected_updated_at };
   if (String(draft.kind).includes('.end.')) {
+    // end_reason is varchar(40) and the relaxed sql_mode truncates silently;
+    // never send text longer than what will be stored.
+    if (String(draft.changes.end_reason || '').length > 40) throw new Error('The end reason is longer than the 40 characters YisraCase stores. Ask Casey to prepare it again with a shorter reason.');
     body.end_date = draft.changes.end_date; body.end_reason = draft.changes.end_reason;
   } else {
     const allowed = draft.family === 'phone' ? ['label', 'is_primary', 'sms_optout', 'mms_capable', 'notes']
@@ -775,10 +845,14 @@ async function executeContactSubrecordDraft(message) {
   if (!isContactSubrecordActionDraft(draft) || typeof draft.draft_id !== 'string' || !draft.draft_id || draft.executing || draft.reviewing) return;
   const contactId = Number(draft.contact && draft.contact.contact_id || draft.target && draft.target.contact && draft.target.contact.contact_id);
   if (draft.status === 'applied' && draft.result_contact_id) { openEntity('contact', draft.result_contact_id, draft.result_contact_label); return; }
+  const stale = actionDraftStale(draft);
+  if (stale) { draft.action_error = stale; render(); return; }
   draft.reviewing = true; delete draft.action_error; render();
   try { if (!await confirmContactSubrecordDraft(draft)) return; }
   catch (e) { draft.action_error = e.message || 'The review dialog could not be opened.'; return; }
   finally { draft.reviewing = false; render(); }
+  const expired = actionDraftStale(draft);
+  if (expired) { draft.action_error = expired; render(); return; }
   draft.executing = true; delete draft.action_error; render();
   try {
     const request = contactSubrecordActionRequest(draft); await api(request.path, request.body, request.method);
@@ -788,7 +862,7 @@ async function executeContactSubrecordDraft(message) {
     const resultMessage = { role: 'assistant', text: `${contactSubrecordActionLabel(draft)} applied to ${label}.`,
       entities: [{ kind: 'contact', id: String(contactId), label }],
       action_result: { kind: draft.kind, draft_id: draft.draft_id, contact_id: contactId, contact_label: label } };
-    history.push(resultMessage); await saveAssistantMessage(resultMessage); openEntity('contact', contactId, label);
+    history.push(resultMessage); await recordActionResult(draft, resultMessage); openEntity('contact', contactId, label);
   } catch (e) { draft.action_error = e.message || 'The contact subrecord action could not be applied.'; }
   finally { draft.executing = false; render(); }
 }
@@ -812,7 +886,7 @@ function hydrateContactSubrecordActionDraft(host, message, draft) {
   const title = document.createElement('b'); title.textContent = 'Contact subrecord action';
   const status = document.createElement('span'); status.className = 'action-draft-status';
   status.textContent = draft.status === 'applied' && draft.result_contact_id ? `Applied — contact #${draft.result_contact_id}`
-    : draft.executing ? 'Applying…' : draft.reviewing ? 'Reviewing…' : 'Proposal — not applied';
+    : actionDraftStale(draft) ? 'Expired — not applied' : draft.executing ? 'Applying…' : draft.reviewing ? 'Reviewing…' : 'Proposal — not applied';
   head.append(title, status);
   const fields = document.createElement('dl'); fields.className = 'action-draft-grid';
   for (const line of contactSubrecordDraftText(draft).split('\n').slice(1)) { const split = line.indexOf(':');
@@ -823,10 +897,11 @@ function hydrateContactSubrecordActionDraft(host, message, draft) {
     : 'Review every value, primary/mirror effect, consent setting, and lifecycle effect. Canceling writes nothing.';
   next.append(warning);
   if (draft.action_error) { const error = document.createElement('div'); error.className = 'action-draft-next-warning'; error.textContent = `Could not apply contact action: ${draft.action_error}`; next.append(error); }
+  appendMarkerError(next, draft);
   const actions = document.createElement('div'); actions.className = 'action-draft-actions';
   const apply = document.createElement('button'); apply.type = 'button';
   apply.textContent = draft.status === 'applied' && draft.result_contact_id ? `Open contact #${draft.result_contact_id}` : `Review & ${contactSubrecordActionLabel(draft).toLowerCase()}`;
-  apply.disabled = !!(draft.executing || draft.reviewing); apply.addEventListener('click', () => executeContactSubrecordDraft(message));
+  apply.disabled = !!(draft.executing || draft.reviewing); if (!hydrateStaleDraft(next, apply, message, draft)) apply.addEventListener('click', () => executeContactSubrecordDraft(message));
   const copy = document.createElement('button'); copy.type = 'button'; copy.textContent = 'Copy details';
   copy.addEventListener('click', async () => { try { await navigator.clipboard.writeText(contactSubrecordDraftText(draft)); copy.textContent = 'Copied'; } catch (_) { copy.textContent = 'Copy failed'; } });
   actions.append(apply, copy);
@@ -839,7 +914,7 @@ function hydrateApptActionDraft(host, message, draft) {
   const title = document.createElement('b'); title.textContent = 'Appointment action';
   const status = document.createElement('span'); status.className = 'action-draft-status';
   status.textContent = draft.status === 'applied' && draft.result_appt_id ? `Applied — appointment #${draft.result_appt_id}`
-    : draft.executing ? 'Applying…' : draft.reviewing ? 'Reviewing…' : 'Proposal — not applied';
+    : actionDraftStale(draft) ? 'Expired — not applied' : draft.executing ? 'Applying…' : draft.reviewing ? 'Reviewing…' : 'Proposal — not applied';
   head.append(title, status);
   const fields = document.createElement('dl'); fields.className = 'action-draft-grid';
   for (const line of apptDraftText(draft).split('\n').slice(1)) { const split = line.indexOf(':');
@@ -850,10 +925,11 @@ function hydrateApptActionDraft(host, message, draft) {
     : 'Review every value, recipient, calendar effect, and automation effect. Canceling the dialog writes nothing.';
   next.append(warning);
   if (draft.action_error) { const error = document.createElement('div'); error.className = 'action-draft-next-warning'; error.textContent = `Could not apply appointment action: ${draft.action_error}`; next.append(error); }
+  appendMarkerError(next, draft);
   const actions = document.createElement('div'); actions.className = 'action-draft-actions';
   const apply = document.createElement('button'); apply.type = 'button';
   apply.textContent = draft.status === 'applied' && draft.result_appt_id ? `Open appointment #${draft.result_appt_id}` : `Review & ${apptActionLabel(draft).toLowerCase()}`;
-  apply.disabled = !!(draft.executing || draft.reviewing); apply.addEventListener('click', () => executeApptDraft(message));
+  apply.disabled = !!(draft.executing || draft.reviewing); if (!hydrateStaleDraft(next, apply, message, draft)) apply.addEventListener('click', () => executeApptDraft(message));
   const copy = document.createElement('button'); copy.type = 'button'; copy.textContent = 'Copy details';
   copy.addEventListener('click', async () => { try { await navigator.clipboard.writeText(apptDraftText(draft)); copy.textContent = 'Copied'; } catch (_) { copy.textContent = 'Copy failed'; } });
   actions.append(apply, copy);
@@ -866,7 +942,7 @@ function hydrateEventActionDraft(host, message, draft) {
   const title = document.createElement('b'); title.textContent = 'Event action';
   const status = document.createElement('span'); status.className = 'action-draft-status';
   status.textContent = draft.status === 'applied' && draft.result_event_id ? `Applied — event #${draft.result_event_id}`
-    : draft.executing ? 'Applying…' : draft.reviewing ? 'Reviewing…' : 'Proposal — not applied';
+    : actionDraftStale(draft) ? 'Expired — not applied' : draft.executing ? 'Applying…' : draft.reviewing ? 'Reviewing…' : 'Proposal — not applied';
   head.append(title, status);
   const fields = document.createElement('dl'); fields.className = 'action-draft-grid';
   for (const line of eventDraftText(draft).split('\n').slice(1)) {
@@ -878,10 +954,11 @@ function hydrateEventActionDraft(host, message, draft) {
     : 'Review every value and side effect. Canceling the dialog writes nothing.';
   next.append(warning);
   if (draft.action_error) { const error = document.createElement('div'); error.className = 'action-draft-next-warning'; error.textContent = `Could not apply event action: ${draft.action_error}`; next.append(error); }
+  appendMarkerError(next, draft);
   const actions = document.createElement('div'); actions.className = 'action-draft-actions';
   const apply = document.createElement('button'); apply.type = 'button';
   apply.textContent = draft.status === 'applied' && draft.result_event_id ? `Open event #${draft.result_event_id}` : `Review & ${eventActionLabel(draft).toLowerCase()}`;
-  apply.disabled = !!(draft.executing || draft.reviewing); apply.addEventListener('click', () => executeEventDraft(message));
+  apply.disabled = !!(draft.executing || draft.reviewing); if (!hydrateStaleDraft(next, apply, message, draft)) apply.addEventListener('click', () => executeEventDraft(message));
   const copy = document.createElement('button'); copy.type = 'button'; copy.textContent = 'Copy details';
   copy.addEventListener('click', async () => { try { await navigator.clipboard.writeText(eventDraftText(draft)); copy.textContent = 'Copied'; } catch (_) { copy.textContent = 'Copy failed'; } });
   actions.append(apply, copy);
@@ -908,7 +985,7 @@ function hydrateActionDrafts() {
     status.className = 'action-draft-status';
     status.textContent = draft.status === 'applied' && draft.result_task_id
       ? `Applied — task #${draft.result_task_id}`
-      : draft.executing ? 'Applying…' : draft.reviewing ? 'Reviewing…' : 'Proposal — not applied';
+      : actionDraftStale(draft) ? 'Expired — not applied' : draft.executing ? 'Applying…' : draft.reviewing ? 'Reviewing…' : 'Proposal — not applied';
     head.append(title, status);
 
     const fields = document.createElement('dl');
@@ -960,7 +1037,7 @@ function hydrateActionDrafts() {
       create.textContent = draft.status === 'applied' && draft.result_task_id
         ? `Open task #${draft.result_task_id}` : `Review & ${taskActionLabel(draft).toLowerCase()}`;
       create.disabled = !!(draft.executing || draft.reviewing);
-      create.addEventListener('click', () => executeTaskDraft(message));
+      if (!hydrateStaleDraft(next, create, message, draft)) create.addEventListener('click', () => executeTaskDraft(message));
     } else {
       warning.textContent = 'This older saved proposal cannot run directly. Ask Casey to prepare the action again.';
     }
@@ -988,6 +1065,7 @@ function hydrateActionDrafts() {
       error.textContent = `Could not apply task action: ${draft.action_error}`;
       next.append(error);
     }
+    appendMarkerError(next, draft);
     host.append(head, fields, next, actions);
   });
 }
@@ -1163,7 +1241,7 @@ function openDocumentPicker() {
   if (busy) return;
   openPicker({
     mode: 'document', title: 'Choose a YisraCase document',
-    hint: 'The original stays in Documents. YisrAI reads it for this question.',
+    hint: 'The original stays in Documents. Casey reads it for this question.',
     placeholder: 'Search document names, titles, types, or tags…',
   });
 }
@@ -1264,16 +1342,21 @@ async function saveUserMessage(question, attachments, turnContext) {
   }
 }
 
-async function saveAssistantMessage(message) {
+async function saveAssistantMessage(message, { required = false } = {}) {
+  if (required && (!historyAvailable || !currentChatId)) throw new Error('chat history is unavailable');
   if (!historyAvailable || !currentChatId || !message || message.error) return;
   const payload = {
     entities: message.entities || [], sources: message.sources || [], suggestions: message.suggestions || [], destinations: message.destinations || [], meta: message.meta || '',
     ...(message.action_draft ? { action_draft: message.action_draft } : {}),
     ...(message.action_result ? { action_result: message.action_result } : {}),
   };
+  const send = () => api(`/api/assistant/chats/${currentChatId}/messages`, { role: 'assistant', text: message.text, payload });
   try {
-    await api(`/api/assistant/chats/${currentChatId}/messages`, { role: 'assistant', text: message.text, payload });
-  } catch (e) { console.warn('[YisrAI history] answer was not saved:', e && e.message); }
+    await send();
+  } catch (e) {
+    if (!required) { console.warn('[YisrAI history] answer was not saved:', e && e.message); return; }
+    await send(); // one retry; a second failure reaches the caller
+  }
 }
 
 function newChat() {
@@ -1309,6 +1392,8 @@ async function openSavedChat(id) {
     const restored = messages.map((m) => ({ role: m.role === 'assistant' ? 'assistant' : 'user',
       text: String(m.text || ''), ...(m.payload && typeof m.payload === 'object' ? m.payload : {}) }));
     history = applyContactSubrecordActionResults(applyApptActionResults(applyEventActionResults(applyTaskActionResults(restored))));
+    // A reopened proposal is never offered for writing (actionDraftStale).
+    history.forEach((m) => { if (m.action_draft && m.action_draft.status !== 'applied') m.action_draft.restored = true; });
     currentChatId = Number(r.chat.id);
     modelMode.value = r.chat.model_mode === 'faster_speed' ? 'faster_speed' : 'better_quality';
     historyPanel.hidden = true;
@@ -1364,7 +1449,7 @@ async function ask() {
     if (r.outcome === 'refused') history.push({ role: 'assistant', text: r.reason, suggestions: r.suggestions || [], destinations: r.destinations || [] });
     else history.push({
       role: 'assistant', text: r.answer, entities: r.entities || [], sources: r.sources || [], suggestions: r.suggestions || [], destinations: r.destinations || [],
-      ...(r.action_draft ? { action_draft: r.action_draft } : {}),
+      ...(r.action_draft ? { action_draft: { ...r.action_draft, received_at: Date.now() } } : {}),
       meta: [
         r.investigation && Number(r.investigation.rounds) > 1 ? `${r.investigation.rounds} read passes` : '',
         ...(r.investigation && Array.isArray(r.investigation.notices) ? r.investigation.notices : []),

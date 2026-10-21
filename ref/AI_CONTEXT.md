@@ -2003,8 +2003,10 @@ snapshot. The composer shows a removable chip and deep-clones the selection
 before its first await. `assistantService` re-parses the URL, requires the
 browser's parsed form to match, checks referenced case/contact rows, then signs
 the normalized snapshot into the user-bound plan ticket. Planning, the one
-repair pass, and answering receive that same immutable server-verified block.
-It is evidence, never authority.
+repair pass, investigation, and answering receive that same immutable
+server-verified block in the SYSTEM segment (`aiService` `systemAppend`,
+after `{{var}}` substitution), never inside `<untrusted_user_input>`, so text
+typed into the question cannot forge it. It is evidence, never authority.
 
 **Semantic navigation.** The first allowlisted destination is
 `automations.court_review`. The shell checks `moreAutomations` in the effective
@@ -2023,14 +2025,23 @@ signed-in user's confirmed browser action calls its ordinary application route.
 Compose/send email, field/form writes, and workflow draft/publish remain
 distinct future families and are not enabled by v1.
 
-**Separation and bounded-loop invariant.** `assistant_plan` sees the
-question/history and curated report schema, never rows. It emits the initial
-read plan. SQL is validated by the report validator at plan time, signed,
+**Bounded-loop invariant.** The first `assistant_plan` call sees the
+question/history and curated report schema, not rows, and emits the initial
+read plan. Rows are NOT kept from planning afterwards: the one-shot plan repair
+and `assistant_investigate` receive the accumulated evidence (marked
+untrusted) by design. So row text can steer which further READS run — within
+the hard budgets below, each read re-validated — but it can never cause a
+write: writes exist only as reviewed proposals the signed-in user confirms in
+the browser. The read boundary is the shared report validator (and the
+`yc_ro` pool behind it) plus this layer's own checks; it is only as strong as
+that validator. SQL is validated by the report validator at plan time, signed,
 revalidated from the ticket, then run
 through `reportService.execute` (SELECT-only pool, EXPLAIN/timeout/row caps and
 `report_runs` logging). The assistant layer additionally requires terminal
 LIMIT ≤50, bounds `log`/`email_log` by date and refuses conversational reads of
-SSN/EIN, DOB, tokens, attachments and delivery metadata. `comms.search` calls
+SSN/EIN, DOB, tokens, attachments and delivery metadata (`ASSISTANT_DENIED`,
+scanned with string-literal contents blanked — a `LIKE '%password%'` search
+passes, the column name bare/backticked/in comments does not). `comms.search` calls
 `commsArchiveSearch` with the staff auth object, preserving phone-line grants,
 restricted-media rules and snippet caps. `manual.search` reads only shipped
 manual Markdown. Planner SQL explicitly collates both sides of text equalities
@@ -2075,15 +2086,17 @@ the current firm-local instant.
 **Current-user semantics.** Before each non-deterministic planning call,
 `assistantService.loadViewer` resolves the JWT's `userId` against `users` and
 loads only `user`, `user_name`, `user_initials`, and `roles`. The resulting
-server-verified `<current_staff>` block is supplied to the planner, stored in
-the HMAC-signed ticket, and supplied again to investigation, repair, and answer.
+server-verified `<current_staff>` block is supplied to the planner (system
+segment, as above), stored in the HMAC-signed ticket, and supplied again to
+investigation, repair, and answer.
 The browser cannot submit a viewer identity. Planner rules bind I/me/my/mine to
 that numeric staff id (for example `appts.appt_with = user_id`), never a display
 name or a similarly named contact. Old in-flight tickets without the block
 remain executable and fall back to their already-bound ticket owner id.
 
-Rows go only to `assistant_answer`, whose contract has no operation/SQL shape;
-row text is untrusted data. It returns plain text plus `{query_id,row_number}`
+Rows reach `assistant_answer` (whose contract has no operation/SQL shape) and,
+as untrusted evidence, the investigation controller and plan repair (read plans
+only); row text is data, never instructions. It returns plain text plus `{query_id,row_number}`
 citations that the service resolves against actual returned rows. Those
 resolved rows also expose typed shell actions for stable `case_id`,
 `contact_id`, `appt_id`, `event_id`, and `task_id` aliases; the UI dispatches to
@@ -2100,8 +2113,19 @@ authenticated user ownership boundary. Messages store displayed text and the
 assistant's structured citation/entity/suggestion payload, never SQL (that
 remains in `report_runs`). The model still receives at most the latest eight
 messages. The UI recommends a new chat at four user turns, while allowing the
-person to continue. Migration:
+person to continue. A chat holds at most 200 messages (an applied-action
+marker gets 20 more so a result is never refused); the chat routes share a
+per-user 600/hour limiter. Migration:
 `ref/migrations/2026-10-19_yisrai_chat_history.sql`.
+
+**Spend and rate limits.** `assistant_ai_monthly_cap_cents` (registry: System
+→ Integrations, console-edited) is the firm ceiling: `plan` and `execute` sum
+month-to-date (UTC) `ai_calls.cost_cents` for `consumer_ref LIKE 'assistant\_%'`
+before any model call and refuse with 429 at the cap. Missing/blank = code
+default 20000 ($200); present but not a whole number = 0 (fail closed, as the
+comms cap). One request in flight can overshoot by its own cost. Plan/execute
+limiters (30/60 per hour) are per-process, so the cap — not they — is the
+cross-instance bound. Opus stays the `better_quality` default (Fred to rule).
 
 **Attachments.** `assistantAttachmentService` accepts at most four PDFs/images
 and 6 MB decoded bytes in aggregate, keeping the request under the app's 10 MB
@@ -2177,6 +2201,18 @@ body mappings and never sends `acting_user_id`; the authenticated Events route
 stamps the actor. Single-flight/retry/history-result behavior mirrors Tasks,
 and success opens `showEvent`.
 
+**Card freshness and applied markers (all families).** Validation runs when
+Casey answers; nothing re-reads the target at click time. A card therefore
+offers its write only while fresh: the browser stamps `received_at` when the
+answer arrives, and a card older than 15 minutes, or any unapplied card
+reopened from saved history (`restored`), shows **Ask Casey again** instead
+(checked at render, on click, and again after the review dialog). Canonical
+routes keep their own guards (appointment status, contact row versions). The
+applied-result message is saved with `required:true` (one retry); the button
+stays disabled until it settles, and a failure is shown loudly on the card and
+in a warning dialog — the write is never repeated. Durable server-side applied
+state and idempotency keys are plan items P4/P5.
+
 No bus change was needed. `public/js/yc-sync.js` already maps the canonical
 create/update/complete/cancel calls to `event:<id>` refetch markers, and the
 Events tab, Calendar, case, and contact readers already subscribe. There is no
@@ -2188,11 +2224,16 @@ kinds are enabled: `appt.create.v1`, `appt.update.v1`, `appt.attended.v1`,
 `appt.no_show.v1`, `appt.cancel.v1`, `appt.reschedule.v1`, and
 `appt.reschedule_later.v1`. `assistantService` rejects extra fields, requires
 1–8 current evidence references, resolves contacts/cases/provider/type labels
-again, accepts only an active registry `meeting` type and active `does_appts`
-provider, and validates future firm-local `YYYY-MM-DD HH:MM[:SS]` without a
+again, accepts only an active registry `meeting` type and an active `does_appts`
+provider (`user_auth LIKE 'authorized%' AND user_type <> 0`, the
+`taskService.findAssignableStaff` predicate — `user_auth` is a varchar), and validates future firm-local `YYYY-MM-DD HH:MM[:SS]` without a
 timezone suffix. Create additionally requires contact, 1–1,440 minute length,
-platform, and time; a case linked to that contact, note, and reviewed SMS/email
-confirmation are optional. The normalized type carries the server-owned `type_key` and
+platform, and time; a case linked to that contact and a note are optional.
+**Casey sends no client SMS/email:** the normalizer forces
+`confirm_sms/confirm_email` (`sms/email` on cancel/reschedule) false and drops
+`confirm_message` whatever the model asked, and the browser maps them false
+again — model-authored text through a `{{…}}`-resolving send path is held until
+the plan's A14 bar (resolved preview, explicit recipients, idempotency). The normalized type carries the server-owned `type_key` and
 singleton flag.
 
 Existing actions need evidence containing the exact `appt_id`; the service
@@ -2206,12 +2247,11 @@ Date/time changes use the reschedule service; type, length, platform, provider,
 status, GCal/ref/view/hook fields, `source`, and actor are excluded.
 
 No-show defaults `enroll:false` and the review states possible no-show sequence
-and intake-pipeline effects. Cancel defaults `cancel_gcal:true`,
-`create_task:false`, and both outbound channels off; a chosen channel requires
-the exact displayed message. Reschedule-now retires the predecessor, removes
+and intake-pipeline effects. Cancel defaults `cancel_gcal:true` and
+`create_task:false`; it sends nothing to the client. Reschedule-now retires the predecessor, removes
 old firm/provider calendar entries and automation, creates a lineage-linked
-successor with new calendar/automation, optionally confirms the client, and
-opens the successor. Reschedule-later creates no successor, removes calendar/
+successor with new calendar/automation, and opens the successor (no client
+message). Reschedule-later creates no successor, removes calendar/
 automation, and optionally creates the reviewed follow-up Task. Create review
 also discloses firm/provider calendar attempts, no-show cancellation,
 pre-appointment enrollment, and registry singleton supersession.
@@ -2220,7 +2260,11 @@ The browser owns seven fixed kind→route/method/body mappings through the
 ordinary `/api/appts*` routes. Routes stamp authenticated actor and
 `source:'staff'`; neither comes from the model. SweetAlert review, dialog/write
 single-flight, retryable errors, persisted results, and canonical open-record
-behavior mirror Tasks/Events. `yc-sync` already covers create, PATCH,
+behavior mirror Tasks/Events. `apptService` refuses repeats for every caller:
+`cancelAppt` on a Canceled row and `rescheduleAppt`/`rescheduleLater` on a
+Rescheduled row throw 409 `appt_status_conflict`, and the status UPDATE is
+conditional so a racing duplicate changes nothing (no second successor or
+client notice). `yc-sync` already covers create, PATCH,
 attended/no-show, cancel, and both old/new reschedule IDs, so no bus code or
 Casey emit changed.
 
@@ -2237,8 +2281,11 @@ Phone/email create rejects active ownership collisions and never uses
 label, notes, primary promotion, and explicit SMS/email opt-out or MMS fields.
 Address update may also change address parts. Verified state, start-date edits,
 explicit primary demotion, reactivation, transfer, hard DELETE, scalar contact
-fields, and batch actions are excluded. End requires a non-future firm-local
-date and reason, sets lifecycle fields through PATCH, and preserves history.
+fields, and batch actions are excluded. An address created with no stated
+start keeps `start_date` NULL ("since forever"), as the native path does. End
+requires a non-future firm-local date and a reason of at most 40 characters
+(the `varchar(40)` width — relaxed sql_mode would truncate silently; browser
+and server both refuse longer), sets lifecycle fields through PATCH, and preserves history.
 
 Primary creation/promotion shows and demotes the current primary, then the
 native service recomputes the scalar contact mirror. Update/end proposals carry

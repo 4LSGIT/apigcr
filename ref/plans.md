@@ -478,6 +478,23 @@ The case / contact Communications tab (AI_CONTEXT §20, manual
   whether `/api/log` should share the feed's fallback suppression (a log row
   whose source sits in an unreadable mailbox is hidden in the feed but listed
   on the Log tab).
+## From the Ask Casey fix package (2026-10-21) — deferred
+
+(The actions arc's own roadmap is `ref/ASK_CASEY_ACTIONS_PLAN.md`; these are
+the native-side leftovers it surfaced.)
+
+- **Appointment routes answer a status conflict as 500.** `apptService` now
+  throws `status:409, code:'appt_status_conflict'` for a repeat cancel /
+  reschedule / reschedule-later, but `routes/api.appts.js` maps every
+  non-"not found" error to 500 (the message still reaches the user). Map
+  `err.status` like the PATCH route already does.
+- **The generic `PATCH /api/appts/:id` writes `appt_status` raw.** Its allowlist
+  includes `appt_status` (shared with `update_appointment`), so a PATCH can
+  un-tombstone a Rescheduled row that already has a successor, with no
+  automation or calendar effect. Not guarded in the fix package: the PATCH has
+  no transition service to put a guard in, and native callers use it for
+  corrections. Decide whether `appt_status` should leave that allowlist
+  (transitions only through the dedicated routes).
 
 ## SaaS-readiness (deferred indefinitely)
 

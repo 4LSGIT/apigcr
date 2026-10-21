@@ -41,7 +41,7 @@ function mimeParts(mediaType) {
   const mime = String(mediaType || '').toLowerCase();
   if (mime === 'application/pdf') return { type: 'document', media_type: mime };
   if (['image/png', 'image/jpeg', 'image/gif', 'image/webp'].includes(mime)) return { type: 'image', media_type: mime };
-  throw httpError(400, 'YisrAI attachments must be PDF, PNG, JPEG, GIF, or WebP files');
+  throw httpError(400, 'Ask Casey attachments must be PDF, PNG, JPEG, GIF, or WebP files');
 }
 
 function decodedBase64(data) {
@@ -76,7 +76,7 @@ async function documentItem(db, rawId, expected) {
   const parts = mimeParts(MIME_BY_EXT[ext]);
   const declared = Number(row.size);
   if (!Number.isFinite(declared) || declared < 1) throw httpError(422, `${safeName(row.name || row.title)} has no usable file size`);
-  if (declared > MAX_TOTAL_BYTES) throw httpError(413, `${safeName(row.name || row.title)} is too large for YisrAI`);
+  if (declared > MAX_TOTAL_BYTES) throw httpError(413, `${safeName(row.name || row.title)} is too large for Ask Casey`);
   if (expected && (String(expected.rev || '') !== String(row.rev || '') || String(expected.content_hash || '') !== String(row.content_hash || ''))) {
     throw httpError(409, `${safeName(row.name || row.title)} changed after the search was planned; ask again with the current file`);
   }
@@ -103,7 +103,7 @@ async function documentItem(db, rawId, expected) {
 function assertBudget(items) {
   if (items.length > MAX_ATTACHMENTS) throw httpError(400, `Attach no more than ${MAX_ATTACHMENTS} files`);
   const total = items.reduce((sum, item) => sum + item.size, 0);
-  if (total > MAX_TOTAL_BYTES) throw httpError(413, 'YisrAI attachments must total 6 MB or less');
+  if (total > MAX_TOTAL_BYTES) throw httpError(413, 'Ask Casey attachments must total 6 MB or less');
 }
 
 async function preparePlan(db, { temporary, documentIds } = {}) {

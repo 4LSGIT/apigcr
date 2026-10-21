@@ -86,6 +86,15 @@ completed or canceled task. To perform the action:
 3. Read the YisraCase confirmation dialog and continue only if every value is
    correct.
 
+A card is offered for writing only while it is fresh. Casey checks the records
+when it answers, not when you click, so a card more than 15 minutes old, or any
+unapplied card in a chat reopened from **Recent chats**, shows **Ask Casey
+again** instead: it puts your earlier question back in the composer so Casey
+can prepare the action against the records as they are now. After a write
+succeeds, Casey saves "applied" with the chat before the button frees up; if
+that save fails, the card and a warning dialog say the action WAS applied and
+must not be repeated.
+
 The confirmed button calls the ordinary authenticated task route with only the
 reviewed, server-normalized fields. Creation uses `POST /api/tasks`; ordinary
 edits use `PATCH /api/tasks/:id`; complete, cancel, reopen, and transfer use
@@ -176,8 +185,9 @@ Creation requires an existing client contact, active meeting type, length,
 platform/location, future firm-local date and time, and active appointment
 provider. A case linked to that contact and a note are optional. The card displays the firm's timezone,
 exact provider, client, case, type key, duration, and whether the type is a
-singleton. It also shows any requested client SMS/email confirmation and its
-exact message. Confirmation messages default off.
+singleton. Casey does not send the client an SMS or email from any appointment
+card: the card says so, and the request it sends has confirmation turned off.
+Send any confirmation from the appointment itself.
 
 Creating an Appointment attempts to create both a firm Google Calendar entry
 and a provider-calendar entry when that provider has a separate calendar. The
@@ -205,14 +215,17 @@ No-show enrollment defaults off. When reviewed on, it may start the normal
 no-show sequence; an eligible intake case may also move to its no-show pipeline
 stage. Attended and no-show cancel Appointment automation but keep existing
 calendar entries. Cancel defaults to deleting both calendar entries and not
-creating a follow-up Task. Optional cancellation SMS/email and optional
-follow-up Task are displayed explicitly.
+creating a follow-up Task. No cancellation SMS/email is sent; the optional
+follow-up Task is displayed explicitly. Canceling an appointment that is
+already Canceled, or rescheduling one that is already Rescheduled, is refused
+for every caller (Casey card, native form, second tab), so a repeat never sends
+a second notice or creates a second successor.
 
 Reschedule-now marks the old Appointment Rescheduled, removes its calendar
 entries and automation, and creates a lineage-linked successor with the same
 client, case, type, length, platform, and provider at the reviewed new time.
-The successor receives new calendar entries and automation, and optional
-client confirmation can be reviewed. Reschedule-later creates no successor;
+The successor receives new calendar entries and automation; no client message
+is sent. Reschedule-later creates no successor;
 it removes the old calendar entries and automation and may create the reviewed
 follow-up Task. A successful reschedule-now opens the successor; other actions
 open the affected Appointment.
@@ -239,9 +252,9 @@ state, or ZIP. Native labels and defaults are preserved: opt-outs default off,
 MMS capability defaults on, country defaults to US, and the first-ever row in
 that family becomes primary unless the reviewed proposal says otherwise.
 An omitted phone/email start date is normalized to “since forever” when the
-value has no ownership history or the day after its latest ended window;
-addresses default to the current firm-local date. The exact result appears in
-the card.
+value has no ownership history or the day after its latest ended window; an
+address with no stated start keeps none (“since forever”), as the native form
+does. The exact result appears in the card.
 
 Making a new or existing row primary demotes the current active primary row
 and recomputes the contact's scalar phone, email, or address mirror. The card
@@ -255,7 +268,9 @@ opt-out/MMS settings. Address updates may additionally change the address
 parts. `verified`, ownership start-date edits, force transfer, and explicit
 primary demotion are excluded.
 
-An end action records a non-future firm-local end date and required reason. It
+An end action records a non-future firm-local end date and a required reason of
+at most 40 characters (the stored field's width; a longer reason is refused
+rather than cut short). It
 keeps the row in contact history and is not the irreversible DELETE route.
 Only active rows can be updated or ended. Existing actions require one current
 evidence row containing both the exact parent `contact_id` and exact
@@ -281,6 +296,11 @@ The selected mode applies to both planning and answering and is remembered with
 the chat. Provider model identifiers are controlled by the server rather than
 accepted from the browser.
 
+The firm has a monthly Ask Casey spending limit
+(`assistant_ai_monthly_cap_cents`, set from the SU db console; unset means
+$200). When the month's Casey model spend reaches it, new questions are refused
+until the next month or until the limit is raised.
+
 **Attach file** adds up to four temporary PDF or image files to the next
 question. All attachments together must be 6 MB or less. Temporary files are
 sent for that question but are not silently registered as firm documents and
@@ -288,7 +308,7 @@ their bytes are not stored in chat history. The message history retains only
 the filenames and sizes.
 
 **YisraCase document** searches the existing Documents registry and attaches a
-PDF or image by its stable document id. YisrAI reloads the file through the
+PDF or image by its stable document id. Casey reloads the file through the
 normal document source and refuses to continue if the document changed between
 planning and answering.
 
@@ -301,7 +321,7 @@ asking about a file does not save it.
 ## What read-only means
 
 Assistant searches and action proposals cannot change anything by themselves.
-YisrAI cannot send email, edit scalar contact identity fields, fill a form, or
+Casey cannot send email or SMS, edit scalar contact identity fields, fill a form, or
 create a workflow. It can return the typed Task, Event, Appointment, or contact-subrecord proposal described above; the signed-in
 staff member must review and confirm the card before the ordinary application
 route performs it. The separate,
@@ -310,8 +330,12 @@ uses the existing Documents upload API rather than a model-authored action.
 Searches run through the same SELECT-only database connection and validation used by Reports, with
 tighter limits for conversational use.
 
-It also cannot expose passwords, credentials, bearer tokens, SSNs/EINs, dates
-of birth, raw custom-field JSON, email attachments, or delivery metadata.
+Casey's searches refuse to name passwords, credentials, bearer tokens,
+SSNs/EINs, dates of birth, raw custom-field JSON, email attachments, or
+delivery metadata. These are checks on the query text made by the application
+(Casey's own list plus the Reports validator), not database permissions: the
+read-only database account behind Reports and Casey can read the whole schema,
+so the checks are the boundary.
 Phone-call and voicemail searches go through the existing archive permission
 checks, so a person cannot discover a call they are not allowed to open.
 
@@ -330,16 +354,21 @@ investigation and keeps the original signed staff and workspace context.
 
 ## Conversation and follow-ups
 
-Chats are private to the signed-in user. **Recent chats** keeps the 30 most
-recently used conversations and lets their owner reopen or delete them. The
+In YisraCase, chats are private to the signed-in user: **Recent chats** keeps
+the 30 most recently used conversations and lets only their owner reopen or
+delete them. They are ordinary database rows, so developer read-only database
+keys can also read them. One chat holds up to 200 messages; start a new chat
+after that. The
 latest eight user and assistant messages are included as context for a
-follow-up. Older visible messages are history, not model context, so YisrAI
+follow-up. Older visible messages are history, not model context, so Casey
 suggests starting a fresh chat after the fourth question. For best results,
 keep one chat about one person, matter, or task.
 
-Query result text is untrusted data. A separate investigation controller may
-use it only to identify one fact still needed for the original question and
-request another operation through the same read-only validator and budgets.
+Query result text is untrusted data. The investigation controller (and the
+one automatic query repair) see it, so a row's text can influence which further
+READ Casey makes — always through the same read-only validator and budgets,
+never a write. The controller may use it only to identify one fact still
+needed for the original question.
 Instructions found in a database row, call, manual page, or attachment cannot
 authorize or redirect that pass. Short user follow-ups such as “what day of the
 week is it?” resolve against the date or record most recently discussed when
@@ -367,7 +396,7 @@ is removed from the address bar as soon as the shell captures it.
 The original link can nevertheless remain in browser history, messaging or
 email systems, server/proxy request logs, screenshots, and any place where the
 link was pasted. Avoid names, contact details, medical or financial information,
-or other sensitive client facts in a shared YisrAI link. Anyone creating or
+or other sensitive client facts in a shared Ask Casey link. Anyone creating or
 sharing such a link is responsible for deciding whether its question is safe to
 put in a URL.
 

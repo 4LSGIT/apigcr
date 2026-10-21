@@ -408,7 +408,6 @@ ref/2026-09-04_dbkq_definition.v1.json
 ref/2026-09-06_dbkq_definition.v1.2.json
 ref/ACCESS_CONTROL_DESIGN.md
 ref/AI_CONTEXT.md
-ref/ASK_CASEY_ACTIONS_HANDOFF.md
 ref/ASK_CASEY_ACTIONS_PLAN.md
 ref/AUDIT_TENANCY.md
 ref/CHAT_DESIGN.md
@@ -1077,11 +1076,13 @@ tests/apptService.followUpTask.test.js
 tests/apptService.lineage.test.js
 tests/apptService.providerCancelNotice.test.js
 tests/apptService.typeKey.test.js
+tests/apptStatusGuards.test.js
 tests/apptTypeKey.patch.test.js
 tests/apptsSearch.picker.test.js
 tests/assignPickersActive.test.js
 tests/assistantAttachmentService.test.js
 tests/assistantChatService.test.js
+tests/assistantNormalizer.mysql.test.js
 tests/assistantService.test.js
 tests/assistantSidebar.test.js
 tests/assistantTicket.test.js

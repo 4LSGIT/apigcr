@@ -7,6 +7,10 @@ Reference material that lives next to the code. Three tiers:
   hook). **Never hand-edit.**
 - `routes.md` — auto-generated route inventory (`node scripts/updateRoutes.js`).
 - `SCHEMA_CONVENTIONS.md`, `plans.md`, `SETUP_cloud_tasks.md` — living reference.
+- `ASK_CASEY_ACTIONS_PLAN.md` — roadmap of the open Ask Casey actions arc
+  (action slices A*, platform slices P*, release gates, rulings pending). Moves
+  to `archive/` when the arc closes; its worker paste-prompts live in
+  gitignored `local/`.
 - `INFRA_GCP.md` — the Google Cloud setup that lives nowhere in git (service
   config, Cloud SQL, schedulers, queues), its rebuild runbook, the
   maintenance-mode procedure, and new-machine setup for local development.

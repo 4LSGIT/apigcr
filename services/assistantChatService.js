@@ -8,6 +8,11 @@ const MAX_CHATS = 30;
 const MAX_TITLE = 120;
 const MAX_MESSAGE = 20000;
 const MAX_PAYLOAD = 100000;
+// Per-chat ceiling (each question saves two messages). An applied-action
+// marker (payload.action_result) gets headroom past it: refusing that write
+// would leave an applied card looking unapplied.
+const MAX_CHAT_MESSAGES = 200;
+const ACTION_RESULT_HEADROOM = 20;
 const MODEL_MODES = new Set(['better_quality', 'faster_speed']);
 
 function httpError(status, message) {
@@ -144,6 +149,10 @@ async function addMessage(db, id, userId, { role, text, payload } = {}) {
   const safeText = messageText(text);
   const json = payloadJson(payload);
   const chat = await owned(db, id, userId);
+  const [[count]] = await db.query('SELECT COUNT(*) AS n FROM assistant_chat_messages WHERE chat_id = ?', [chat.id]);
+  const isActionResult = !!(payload && typeof payload === 'object' && payload.action_result);
+  const limit = MAX_CHAT_MESSAGES + (isActionResult ? ACTION_RESULT_HEADROOM : 0);
+  if (Number(count && count.n) >= limit) throw httpError(409, 'This chat is full. Start a new chat to keep asking.');
   await db.query(
     'INSERT INTO assistant_chat_messages (chat_id, role, message_text, payload) VALUES (?, ?, ?, ?)',
     [chat.id, safeRole, safeText, json]
@@ -159,5 +168,5 @@ async function remove(db, id, userId) {
 
 module.exports = {
   list, get, create, addMessage, setModelMode, remove, titleFor, parsePayload, modelMode,
-  MAX_CHATS, MAX_MESSAGE, MAX_PAYLOAD,
+  MAX_CHATS, MAX_MESSAGE, MAX_PAYLOAD, MAX_CHAT_MESSAGES, ACTION_RESULT_HEADROOM,
 };

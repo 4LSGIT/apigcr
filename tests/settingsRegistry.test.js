@@ -40,6 +40,7 @@ describe('classification snapshot', () => {
     "alert_last_sweep_at": "state system state console date",
     "alert_recipients": "firm firm routing ui csv",
     "app_url": "system system platform console url",
+    "assistant_ai_monthly_cap_cents": "firm system integrations console number",
     "billing_tasks_to": "firm firm routing ui user",
     "calendly_webhook_signing_key": "secret console console ui string",
     "clio_login_code": "state system state console string auto",

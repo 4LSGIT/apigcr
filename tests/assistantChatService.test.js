@@ -48,11 +48,12 @@ describe('YisrAI recent chat storage', () => {
   test('assistant payload is bounded JSON and ownership is rechecked', async () => {
     const db = { query: jest.fn()
       .mockResolvedValueOnce([[{ id: 44, title: 'Mine' }]])
+      .mockResolvedValueOnce([[{ n: 3 }]])
       .mockResolvedValueOnce([{ affectedRows: 1 }])
       .mockResolvedValueOnce([{ affectedRows: 1 }]) };
     await svc.addMessage(db, 44, 7, { role: 'assistant', text: 'Ada.', payload: { entities: [{ kind: 'contact', id: '9' }] } });
     expect(db.query.mock.calls[0][1]).toEqual([44, 7]);
-    expect(db.query.mock.calls[1][1]).toEqual([44, 'assistant', 'Ada.', '{"entities":[{"kind":"contact","id":"9"}]}']);
+    expect(db.query.mock.calls[2][1]).toEqual([44, 'assistant', 'Ada.', '{"entities":[{"kind":"contact","id":"9"}]}']);
     await expect(svc.addMessage(db, 44, 7, { role: 'system', text: 'x' })).rejects.toMatchObject({ status: 400 });
   });
 
@@ -64,6 +65,27 @@ describe('YisrAI recent chat storage', () => {
     await expect(svc.get(db, 44, 7)).resolves.toMatchObject({
       messages: [{ role: 'assistant', text: 'Prepared.', payload: { action_draft: draft } }],
     });
+  });
+
+  test('a full chat refuses more messages but still records an applied-action marker within its headroom', async () => {
+    const dbAt = (n) => ({ query: jest.fn(async (sql) => {
+      if (/FROM assistant_chats/.test(sql)) return [[{ id: 44, title: 'Mine' }]];
+      if (/COUNT\(\*\) AS n FROM assistant_chat_messages/.test(sql)) return [[{ n }]];
+      return [{ affectedRows: 1 }];
+    }) });
+    const full = svc.MAX_CHAT_MESSAGES;
+    const inserts = (db) => db.query.mock.calls.filter(([sql]) => /INSERT INTO assistant_chat_messages/.test(sql)).length;
+    let db = dbAt(full);
+    await expect(svc.addMessage(db, 44, 7, { role: 'user', text: 'One more?' })).rejects.toMatchObject({ status: 409 });
+    expect(inserts(db)).toBe(0);
+    db = dbAt(full - 1);
+    await svc.addMessage(db, 44, 7, { role: 'user', text: 'Last one' });
+    expect(inserts(db)).toBe(1);
+    db = dbAt(full);
+    await svc.addMessage(db, 44, 7, { role: 'assistant', text: 'Applied.', payload: { action_result: { kind: 'task.create.v1', draft_id: 'd', task_id: 9 } } });
+    expect(inserts(db)).toBe(1);
+    db = dbAt(full + svc.ACTION_RESULT_HEADROOM);
+    await expect(svc.addMessage(db, 44, 7, { role: 'assistant', text: 'Applied.', payload: { action_result: { kind: 'task.create.v1', draft_id: 'd', task_id: 9 } } })).rejects.toMatchObject({ status: 409 });
   });
 
   test('delete includes the owner in the predicate', async () => {

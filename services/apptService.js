@@ -2087,6 +2087,27 @@ async function createFollowUpTask(db, { appt, actingUserId, title, outcome, note
  *   - Cancel contact-level no_show sequences
  *   - Optional: follow-up task, SMS/email confirmation, GCal delete
  */
+// ── Status guards for the transition services ─────────────────────────────
+// A repeated call against an appointment that already made the transition
+// (a stale review card, a second tab, a double-submitted form, a replayed
+// request) must not run the side effects again — a second cancel would
+// re-send the client cancellation and re-run teardown; a second reschedule of
+// the same row would create a SECOND successor. The pre-read refuses the
+// obvious case; the UPDATE is conditional on the same predicate so two racing
+// callers cannot both pass (affectedRows 0 = someone else got there first).
+// Corrections the native UI offers stay allowed: cancel from Attended / No
+// Show / Rescheduled, reschedule from Canceled / Attended / No Show.
+function apptStatusConflict(message) {
+  const e = new Error(message);
+  e.status = 409;
+  e.code = 'appt_status_conflict';
+  return e;
+}
+
+function assertTransitionApplied(result, message) {
+  if (!result || Number(result.affectedRows) < 1) throw apptStatusConflict(message);
+}
+
 async function cancelAppt(db, {
   appt_id,
   note            = '',
@@ -2106,20 +2127,21 @@ async function cancelAppt(db, {
   const appt = await fetchApptWithContact(db, appt_id);
   if (!appt) throw new Error('Appointment not found');
   if (appt.appt_status === 'Canceled') {
-    throw new Error('Appointment is already Canceled');
+    throw apptStatusConflict('Appointment is already Canceled');
   }
 
   // Capture prior status for the log's From field
   const priorStatus = appt.appt_status;
 
-  // 1) Update status
-  await db.query(
+  // 1) Update status — conditional, so a racing second cancel changes nothing
+  const [canceled] = await db.query(
     `UPDATE appts
      SET appt_status = 'Canceled',
          appt_note   = CONCAT(IFNULL(appt_note,''), ?)
-     WHERE appt_id = ?`,
+     WHERE appt_id = ? AND appt_status <> 'Canceled'`,
     [note ? ` ${note}` : '', appt_id]
   );
+  assertTransitionApplied(canceled, 'Appointment is already Canceled');
 
   // 2) Cancel appt-scoped automation (workflow + pre_appt/iss_intake)
   cancelApptAutomation(db, appt_id, 'appointment_cancelled')
@@ -2264,15 +2286,22 @@ async function rescheduleAppt(db, {
   // 1) Fetch old appointment
   const [[oldAppt]] = await db.query('SELECT * FROM appts WHERE appt_id = ?', [appt_id]);
   if (!oldAppt) throw new Error('Original appointment not found');
+  // A Rescheduled row is a tombstone (or a reschedule-later intent flag): moving
+  // it again would mint a second successor for one booking.
+  if (oldAppt.appt_status === 'Rescheduled') {
+    throw apptStatusConflict('Appointment is already Rescheduled');
+  }
 
-  // 2) Mark old as Rescheduled
-  await db.query(
+  // 2) Mark old as Rescheduled — conditional, so a racing second reschedule
+  //    stops here before creating another successor
+  const [retired] = await db.query(
     `UPDATE appts
      SET appt_status = 'Rescheduled',
          appt_note   = CONCAT(IFNULL(appt_note,''), ?)
-     WHERE appt_id = ?`,
+     WHERE appt_id = ? AND appt_status <> 'Rescheduled'`,
     [note ? ` ${note}` : '', appt_id]
   );
+  assertTransitionApplied(retired, 'Appointment is already Rescheduled');
 
   // 3) Cancel old appt's automation (workflow + pre_appt/iss_intake sequences).
   //    Non-blocking — createAppt below proceeds regardless.
@@ -2389,19 +2418,23 @@ async function rescheduleLater(db, {
   if (!appt_id) throw new Error('rescheduleLater requires appt_id');
 
   const [[appt]] = await db.query(
-    'SELECT appt_id, appt_client_id, appt_case_id, appt_type, type_key, appt_gcal, appt_gcal_user, appt_with, appt_view_id, appt_date FROM appts WHERE appt_id = ?',
+    'SELECT appt_id, appt_client_id, appt_case_id, appt_type, type_key, appt_gcal, appt_gcal_user, appt_with, appt_view_id, appt_date, appt_status FROM appts WHERE appt_id = ?',
     [appt_id]
   );
   if (!appt) throw new Error('Appointment not found');
+  if (appt.appt_status === 'Rescheduled') {
+    throw apptStatusConflict('Appointment is already Rescheduled');
+  }
 
-  // 1) Update status
-  await db.query(
+  // 1) Update status — conditional (see the status-guard note above cancelAppt)
+  const [flagged] = await db.query(
     `UPDATE appts
      SET appt_status = 'Rescheduled',
          appt_note   = CONCAT(IFNULL(appt_note,''), ?)
-     WHERE appt_id = ?`,
+     WHERE appt_id = ? AND appt_status <> 'Rescheduled'`,
     [note ? ` ${note}` : '', appt_id]
   );
+  assertTransitionApplied(flagged, 'Appointment is already Rescheduled');
 
   // 2) Cancel appt-scoped automation
   cancelApptAutomation(db, appt_id, 'appointment_rescheduled_later')

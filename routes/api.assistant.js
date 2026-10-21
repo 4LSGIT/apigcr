@@ -11,6 +11,17 @@ const chats = require('../services/assistantChatService');
 
 const planLimited = makeLimiter(60 * 60 * 1000, 30);
 const executeLimited = makeLimiter(60 * 60 * 1000, 60);
+// Chat-history reads/writes: generous for real use (each question saves two
+// messages; applying a card saves one more), a ceiling against a runaway
+// client. Per-process like every makeLimiter (× instance count).
+const chatLimited = makeLimiter(60 * 60 * 1000, 600);
+
+function chatRate(req, res, next) {
+  if (chatLimited(`u${req.auth.userId}`)) {
+    return res.status(429).json({ status: 'error', message: 'Too many chat-history requests this hour. Try again later.' });
+  }
+  return next();
+}
 
 function staffOnly(req, res, next) {
   if (req.auth && req.auth.type === 'jwt' && req.auth.userId != null) return next();
@@ -58,13 +69,13 @@ router.post('/api/assistant/execute', jwtOrApiKey, staffOnly, async (req, res) =
   } catch (err) { fail(res, 'execute', err); }
 });
 
-router.get('/api/assistant/chats', jwtOrApiKey, staffOnly, async (req, res) => {
+router.get('/api/assistant/chats', jwtOrApiKey, staffOnly, chatRate, async (req, res) => {
   try {
     res.json({ status: 'success', chats: await chats.list(req.db, req.auth.userId) });
   } catch (err) { fail(res, 'list chats', err); }
 });
 
-router.post('/api/assistant/chats', jwtOrApiKey, staffOnly, async (req, res) => {
+router.post('/api/assistant/chats', jwtOrApiKey, staffOnly, chatRate, async (req, res) => {
   try {
     const chat = await chats.create(req.db, {
       userId: req.auth.userId,
@@ -76,27 +87,27 @@ router.post('/api/assistant/chats', jwtOrApiKey, staffOnly, async (req, res) => 
   } catch (err) { fail(res, 'create chat', err); }
 });
 
-router.get('/api/assistant/chats/:id(\\d+)', jwtOrApiKey, staffOnly, async (req, res) => {
+router.get('/api/assistant/chats/:id(\\d+)', jwtOrApiKey, staffOnly, chatRate, async (req, res) => {
   try {
     res.json({ status: 'success', chat: await chats.get(req.db, req.params.id, req.auth.userId) });
   } catch (err) { fail(res, 'get chat', err); }
 });
 
-router.post('/api/assistant/chats/:id(\\d+)/messages', jwtOrApiKey, staffOnly, async (req, res) => {
+router.post('/api/assistant/chats/:id(\\d+)/messages', jwtOrApiKey, staffOnly, chatRate, async (req, res) => {
   try {
     await chats.addMessage(req.db, req.params.id, req.auth.userId, req.body || {});
     res.status(201).json({ status: 'success' });
   } catch (err) { fail(res, 'add chat message', err); }
 });
 
-router.patch('/api/assistant/chats/:id(\\d+)', jwtOrApiKey, staffOnly, async (req, res) => {
+router.patch('/api/assistant/chats/:id(\\d+)', jwtOrApiKey, staffOnly, chatRate, async (req, res) => {
   try {
     const chat = await chats.setModelMode(req.db, req.params.id, req.auth.userId, req.body && req.body.model_mode);
     res.json({ status: 'success', chat });
   } catch (err) { fail(res, 'set chat model mode', err); }
 });
 
-router.delete('/api/assistant/chats/:id(\\d+)', jwtOrApiKey, staffOnly, async (req, res) => {
+router.delete('/api/assistant/chats/:id(\\d+)', jwtOrApiKey, staffOnly, chatRate, async (req, res) => {
   try {
     await chats.remove(req.db, req.params.id, req.auth.userId);
     res.json({ status: 'success' });
