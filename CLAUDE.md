@@ -85,6 +85,23 @@ picks per task:
      browser gates at once (mobile survey, mockup screenshots) crashed it
      (2026-10-13). The manager serializes browser-heavy runs across workers
      and checks free disk before a long one.
+   - **Two sessions never run a suite at the same time**, whatever the gate's
+     slot counts allow. `heavy-gate.sh` offers 3 cpu slots because 3 × 2
+     workers fits 10 cores, but this suite is not SAFE at that concurrency and
+     the failures do not look like contention: load-sensitive suites time out
+     on jest's 5s default (`caseUi.detTab`'s async boot tests, `mailboxS3.send`)
+     or a worker dies and reports empty error bodies. Both read as a broken
+     commit, so the cost is a wrong conclusion about your own code — a land
+     NO-GO on a clean commit, or a bisect chasing a phantom. Bitten three times
+     in one evening (2026-10-22) by two sessions each obeying the gate. A land
+     is now EXCLUSIVE in the script (it takes every cpu slot, Fred's go
+     2026-10-22), which closes the land-beside-a-suite case; the rest is on the
+     humans and the managers. Before any full run, `heavy-gate.sh status` —
+     and if a peer holds a cpu slot, wait or ask, don't start.
+     NOTE: `local/` is gitignored, so heavy-gate.sh and land.sh are NOT
+     version-controlled. A change to either leaves no git trace and reaches
+     every worktree instantly (they invoke it by absolute path), so say so in
+     your report — nobody can find it in a diff.
    - Suite TEST COUNTS are environment-conditional (same commit measured
      ±3 tests across worktrees) — compare before/after figures within one
      environment only, never across.
