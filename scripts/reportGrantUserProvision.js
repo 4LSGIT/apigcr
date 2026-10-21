@@ -41,17 +41,26 @@
  *   REPORT_DB_USER=<name> \
  *     node scripts/reportGrantUserProvision.js            # CHECK — read-only plan
  *
- *   REPORT_DB_USER=<name> REPORT_DB_PASSWORD=<secret> REPORT_DB_HOST='<egress-ip>' \
+ *   REPORT_DB_USER=<name> REPORT_DB_PASSWORD=<secret> \
+ *     admin_user=root admin_password=<root pw> \
  *     node scripts/reportGrantUserProvision.js --apply    # create + grant + verify
  *
- * The connection is the admin `.env` user (it must hold GRANT OPTION + the
- * privileges it delegates — run it as the account `npm run db:ref` already uses,
- * elevated, or point the four admin_* overrides at a privileged login). The NEW
- * user's name and password come from env only — NEVER a CLI arg (shell history)
- * and NEVER committed. `REPORT_DB_HOST` is the host part of the account
- * (`'<user>'@'<host>'`): on Cloud SQL this is the Cloud Run egress IP, matching
- * how `yc_ro` is scoped (see startup/dbReadonly's removal notes). Defaults to
- * '%' only in CHECK so the plan is printable without it.
+ *   ... --apply --rotate     # the account already exists: set the NEW password
+ *                            # (CREATE USER IF NOT EXISTS silently KEEPS the old
+ *                            # one, so a plain --apply refuses an existing user)
+ *
+ * The connection is the admin `.env` login or the admin_* overrides — CREATE
+ * USER / GRANT OPTION are global privileges the app user (`yc_app`) does not
+ * hold, so point admin_user/admin_password at root through the Auth Proxy.
+ * The NEW user's name and password come from env only — NEVER a CLI arg
+ * (shell history) and NEVER committed. `REPORT_DB_HOST` is the host half of
+ * the ACCOUNT name (`'<user>'@'<host>'`), not a server address, and defaults
+ * to '%': Cloud Run reaches Cloud SQL over the connector socket and presents
+ * as `cloudsqlproxy~…` (ref/INFRA_GCP.md §1/§5 — the service has no fixed
+ * egress IP), so an IP-bound account would never match a production
+ * connection. '%' matches how `yc_ro` is scoped (AI_CONTEXT); exposure is
+ * unchanged — the instance takes connections only from the connector and the
+ * one authorized network, and the account is password-protected.
  *
  * ── CONVENTIONS (CLAUDE.md "A migration that needs a session") ─────────────────
  * One connection from .env, read-only CHECK by default, --apply asserts live
@@ -121,8 +130,38 @@ function grantStatements(plan, db, account) {
 }
 
 /**
+ * Create the account, or rotate its password when it already exists.
+ * CREATE USER IF NOT EXISTS silently KEEPS an existing account's password, so
+ * an --apply against an existing account would leave the old secret live while
+ * the operator believes the new one is set. Fail closed: an existing account
+ * is a NO-GO unless --rotate was asked for, and --rotate on a missing account
+ * is a NO-GO too (a typo must not quietly create a second user).
+ * The probe reads mysql.user, which the privileged admin login (required for
+ * CREATE USER anyway) can see.
+ */
+async function ensureAccount(conn, { account, userName, userHost, password, rotate }) {
+  const [[row]] = await conn.query(
+    'SELECT COUNT(*) AS n FROM mysql.user WHERE user = ? AND host = ?',
+    [userName, userHost]
+  );
+  const exists = Number(row.n) > 0;
+  if (exists && !rotate) {
+    return { ok: false, reason: `${account} already exists — CREATE USER IF NOT EXISTS would silently keep its OLD password. Re-run with --rotate to set the new one.` };
+  }
+  if (!exists && rotate) {
+    return { ok: false, reason: `${account} does not exist — --rotate only rotates an existing account. Run --apply without it to create.` };
+  }
+  if (exists) {
+    await conn.query(`ALTER USER ${account} IDENTIFIED BY ?`, [password]);
+    return { ok: true, did: 'ALTER USER (password rotated)' };
+  }
+  await conn.query(`CREATE USER IF NOT EXISTS ${account} IDENTIFIED BY ?`, [password]);
+  return { ok: true, did: 'CREATE USER' };
+}
+
+/**
  * @param {object} conn  mysql2 promise connection (admin)
- * @param {object} opts  { apply, db, userName, userHost, password }
+ * @param {object} opts  { apply, db, userName, userHost, password, rotate }
  */
 async function run(conn, opts) {
   const { apply, db, userName, userHost } = opts;
@@ -148,7 +187,7 @@ async function run(conn, opts) {
     console.log(`  ${p.table}: ${p.columns.length} col(s)${w}`);
   }
   console.log('\nStatements that WOULD run on --apply:');
-  console.log(`  CREATE USER IF NOT EXISTS ${account} IDENTIFIED BY <REPORT_DB_PASSWORD>;`);
+  console.log(`  CREATE USER IF NOT EXISTS ${account} IDENTIFIED BY <REPORT_DB_PASSWORD>;   -- or ALTER USER … with --rotate`);
   console.log(`  REVOKE ALL PRIVILEGES, GRANT OPTION FROM ${account};`);
   for (const g of grants) console.log(`  ${g}`);
   console.log('  FLUSH PRIVILEGES;\n');
@@ -171,12 +210,13 @@ async function run(conn, opts) {
     return { ok: false };
   }
 
-  // Apply. Create (idempotent), strip everything, re-grant the plan, flush.
-  await conn.query(
-    `CREATE USER IF NOT EXISTS ${account} IDENTIFIED BY ?`,
-    [opts.password]
-  );
-  console.log(`✓ CREATE USER ${account} (idempotent)`);
+  // Apply. Create or rotate, strip everything, re-grant the plan, flush.
+  const made = await ensureAccount(conn, { account, userName, userHost, password: opts.password, rotate: opts.rotate });
+  if (!made.ok) {
+    console.log(`\nNO-GO — ${made.reason}`);
+    return { ok: false };
+  }
+  console.log(`✓ ${made.did} ${account}`);
   await conn.query(`REVOKE ALL PRIVILEGES, GRANT OPTION FROM ${account}`);
   console.log(`✓ REVOKE ALL from ${account}`);
   for (const g of grants) await conn.query(g);
@@ -220,8 +260,9 @@ if (require.main === module) {
   const mysql = require('mysql2');
   const apply = process.argv.includes('--apply');
 
+  const rotate = process.argv.includes('--rotate');
   const userName = process.env.REPORT_DB_USER;
-  const userHost = process.env.REPORT_DB_HOST || (apply ? null : '%');
+  const userHost = process.env.REPORT_DB_HOST || '%';   // account host half — see USAGE
   const password = process.env.REPORT_DB_PASSWORD || null;
 
   // Admin connection: default to the .env app login; allow admin_* overrides for
@@ -235,7 +276,6 @@ if (require.main === module) {
     let conn;
     try {
       if (!userName) throw new Error('set REPORT_DB_USER to the grant user name (env only, not a CLI arg)');
-      if (apply && !userHost) throw new Error('--apply needs REPORT_DB_HOST (the account host, e.g. the egress IP)');
       for (const [k, v] of Object.entries({ host: adminHost, user: adminUser, password: adminPass, database: db })) {
         if (!v) throw new Error(`missing admin connection env "${k}" (is .env present?)`);
       }
@@ -254,7 +294,7 @@ if (require.main === module) {
           database: db, timezone: 'Z', connectTimeout: 15_000,
         })
         .promise();
-      const r = await run(conn, { apply, db, userName, userHost, password });
+      const r = await run(conn, { apply, db, userName, userHost, password, rotate });
       process.exitCode = r.ok ? 0 : 1;
     } catch (err) {
       console.log(`\n${err.message}\n\nNO-GO — could not ${conn ? 'finish' : 'start'}. Nothing was changed unless a ✓ line says so.`);
@@ -265,4 +305,4 @@ if (require.main === module) {
   })();
 }
 
-module.exports = { buildPlan, grantStatements, run };
+module.exports = { buildPlan, grantStatements, ensureAccount, run };

@@ -1,7 +1,9 @@
 // startup/dbReadonly.js
 //
 // Dedicated mysql2 pool using the obfuscated read-only MySQL user
-// (SELECT-only grants, IP-bound to Cloud Run egress). Separate from
+// (SELECT-only grants; account host '%' — Cloud SQL connections arrive via
+// the connector as cloudsqlproxy~…, the service has no fixed egress IP, so
+// an IP-bound account would never match: ref/INFRA_GCP.md §1). Separate from
 // the main pool in startup/db.js so the grant boundary cannot be
 // bypassed by accident.
 //
@@ -147,7 +149,7 @@ module.exports = promisePool;
 //      --     WHERE User NOT IN ('root','<main app user>','mysql.sys',
 //      --                        'mysql.session','mysql.infoschema');
 //      -- Then for each:
-//      --   DROP USER '<obfuscated>'@'<egress-ip>';
+//      --   DROP USER '<obfuscated>'@'%';
 //      FLUSH PRIVILEGES;
 //
 // 6. REMOVE the AI-CONTEXT section. Delete "## 22. AI SESSION DB ACCESS
