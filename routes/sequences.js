@@ -219,6 +219,19 @@ async function validateStepConfig(db, action_type, action_config) {
   if (action_config == null || typeof action_config !== 'object' || Array.isArray(action_config)) {
     return { status: 400, error: 'action_config must be a JSON object' };
   }
+  // `type` is the job executor's dispatch selector. sms/email/task/
+  // internal_function steps run through executeJob as internal_function, so a
+  // `type` key inside action_config used to redirect the step to custom_code
+  // or webhook. The engine now pins `type` last; this refuses the key outright
+  // so a step cannot carry a misleading one. No live step has ever had one
+  // (checked 2026-10-22), so nothing is grandfathered.
+  if (Object.prototype.hasOwnProperty.call(action_config, 'type')) {
+    return {
+      status: 400,
+      error: 'action_config must not contain a "type" key',
+      message: 'The step\'s action_type selects the dispatch; a "type" key inside action_config is not honoured.'
+    };
+  }
 
   if (action_type === 'webhook') {
     const { url, method, credential_id, headers, body, timeout_ms } = action_config;

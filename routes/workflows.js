@@ -237,6 +237,21 @@ const validateInternalFunctionParams = internalFunctions.__validateFunctionParam
  * existing permissive behavior).
  */
 function validateInternalFunctionConfig(stepType, config) {
+  // Type-INDEPENDENT guard first. `type` is executeJob's dispatch selector, so
+  // a `type` key inside step.config used to override workflow_steps.type: a
+  // step saved and validated as internal_function executed as custom_code.
+  // This lives here, ahead of the early return, because it is the one helper
+  // every step writer already calls (insert, bulk, PUT, PATCH) — one choke
+  // point rather than four. No live step has ever carried the key (checked
+  // 2026-10-22), so nothing is grandfathered.
+  if (config != null && typeof config === 'object' &&
+      Object.prototype.hasOwnProperty.call(config, 'type')) {
+    return {
+      status: 400,
+      error: 'step.config must not contain a "type" key',
+      message: 'step.type selects the dispatch; a "type" key inside config is not honoured.'
+    };
+  }
   if (stepType !== 'internal_function') return null;
   if (config == null || typeof config !== 'object') return null;
   return validateInternalFunctionParams(config.function_name, config.params);
@@ -2903,8 +2918,10 @@ router.post("/workflows/test-step", jwtOrApiKey, async (req, res) => {
   const policyRetries  = Number(errorPolicy.max_retries) || 0;
   const retriesSkipped = policyRetries > 0;
 
-  // Build job data
-  const jobData = { type: step.type, ...resolvedConfig };
+  // Build job data. `type` LAST — see lib/workflow_engine.js: a config.type
+  // would otherwise override the declared step type, which also means any
+  // gate keyed on step.type could be side-stepped through the config.
+  const jobData = { ...resolvedConfig, type: step.type };
 
   // Inject _variables for evaluate_condition
   if (step.type === "internal_function" && resolvedConfig.params) {

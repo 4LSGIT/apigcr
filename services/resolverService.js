@@ -356,7 +356,23 @@ function scanExpressionRefs(text) {
 // Core resolver
 // ─────────────────────────────────────────────────────────────
 
-async function resolve({ db, text, refs = {}, strict = false }) {
+// A resolved value is substituted into `text` verbatim. When the caller's
+// `text` is SERIALIZED JSON (the sequence engine stringifies a step's
+// action_config, resolves, then parses it back), a value containing a quote,
+// a backslash or a newline breaks the parse — and the caller's catch then runs
+// the step with its config ENTIRELY unresolved, i.e. a client message full of
+// literal {{...}}. `escape: 'json'` escapes each substituted value for a JSON
+// string context so that cannot happen. Plain-text callers (campaign bodies,
+// portal cards, esign prefill, POST /resolve) pass nothing and are unaffected.
+function escapeForJsonString(s) {
+  const encoded = JSON.stringify(s);   // '"a\"b"'
+  return encoded.slice(1, -1);         //  'a\"b'
+}
+
+async function resolve({ db, text, refs = {}, strict = false, escape = null }) {
+  if (escape !== null && escape !== 'json') {
+    throw new Error(`resolve: unsupported escape mode ${JSON.stringify(escape)}`);
+  }
   if (!text || typeof text !== 'string') {
     return { status: 'success', text: text ?? '', unresolved: [] };
   }
@@ -649,8 +665,11 @@ async function resolve({ db, text, refs = {}, strict = false }) {
   const output = replacePlaceholders(text, match => {
     const inner    = match.slice(2, -2);
     const resolved = resolveContent(inner);
-    if (resolved === null) unresolved.add(match);
-    return resolved;
+    if (resolved === null) {
+      unresolved.add(match);
+      return null;   // replacePlaceholders keeps the literal {{...}}
+    }
+    return escape === 'json' ? escapeForJsonString(resolved) : resolved;
   });
 
   const status = unresolved.size === 0
