@@ -160,6 +160,24 @@ async function ensureAccount(conn, { account, userName, userHost, password, rota
 }
 
 /**
+ * SHOW GRANTS lines → the targeted REVOKE statements that undo them.
+ * `GRANT USAGE ON *.*` is the account's existence, not a privilege — skipped.
+ * Any line that is not a plain `GRANT … ON … TO` (e.g. a role grant) is
+ * refused loudly rather than guessed at.
+ */
+function grantsToRevokes(lines, account) {
+  const out = [];
+  for (const line of lines) {
+    const l = String(line).trim().replace(/;$/, '');
+    if (/^GRANT USAGE ON \*\.\*/i.test(l)) continue;
+    const m = /^GRANT (.+) ON (.+) TO /i.exec(l);
+    if (!m) throw new Error(`cannot build a REVOKE for unexpected grant line: ${l}`);
+    out.push(`REVOKE ${m[1]} ON ${m[2]} FROM ${account}`);
+  }
+  return out;
+}
+
+/**
  * @param {object} conn  mysql2 promise connection (admin)
  * @param {object} opts  { apply, db, userName, userHost, password, rotate }
  */
@@ -188,7 +206,9 @@ async function run(conn, opts) {
   }
   console.log('\nStatements that WOULD run on --apply:');
   console.log(`  CREATE USER IF NOT EXISTS ${account} IDENTIFIED BY <REPORT_DB_PASSWORD>;   -- or ALTER USER … with --rotate`);
-  console.log(`  REVOKE ALL PRIVILEGES, GRANT OPTION FROM ${account};`);
+  console.log(`  -- for an EXISTING account: one targeted REVOKE per SHOW GRANTS line`);
+  console.log(`  -- (never the global REVOKE ALL: Cloud SQL's root lacks rights on the`);
+  console.log(`  --  internal sys/mysql schemas, so a global revoke is refused)`);
   for (const g of grants) console.log(`  ${g}`);
   console.log('  FLUSH PRIVILEGES;\n');
 
@@ -217,8 +237,19 @@ async function run(conn, opts) {
     return { ok: false };
   }
   console.log(`✓ ${made.did} ${account}`);
-  await conn.query(`REVOKE ALL PRIVILEGES, GRANT OPTION FROM ${account}`);
-  console.log(`✓ REVOKE ALL from ${account}`);
+  // Strip the account's existing grants TARGETED, never globally: the global
+  // `REVOKE ALL PRIVILEGES, GRANT OPTION` statement spans every schema
+  // including sys/mysql, where Cloud SQL's root has no rights, so Cloud SQL
+  // refuses it ("Access denied for AuthId `root`@`%` to database 'sys'" —
+  // bitten live 2026-10-22). A just-created account holds only USAGE: skip.
+  if (made.did === 'CREATE USER') {
+    console.log('✓ fresh account — nothing to revoke');
+  } else {
+    const [shownBefore] = await conn.query(`SHOW GRANTS FOR ${account}`);
+    const revokes = grantsToRevokes(shownBefore.map((r) => Object.values(r)[0]), account);
+    for (const rv of revokes) await conn.query(rv);
+    console.log(`✓ REVOKE ${revokes.length} existing grant line(s) from ${account}`);
+  }
   for (const g of grants) await conn.query(g);
   console.log(`✓ GRANT SELECT per column on ${plan.length} tables`);
   await conn.query('FLUSH PRIVILEGES');
@@ -305,4 +336,4 @@ if (require.main === module) {
   })();
 }
 
-module.exports = { buildPlan, grantStatements, ensureAccount, run };
+module.exports = { buildPlan, grantStatements, grantsToRevokes, ensureAccount, run };

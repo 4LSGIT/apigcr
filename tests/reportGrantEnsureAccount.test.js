@@ -58,3 +58,29 @@ describe('ensureAccount', () => {
     expect(mutated(c, /^(CREATE|ALTER) USER/)).toBe(false);
   });
 });
+
+const { grantsToRevokes } = require('../scripts/reportGrantUserProvision');
+
+describe('grantsToRevokes (targeted, never global — Cloud SQL root cannot run REVOKE ALL)', () => {
+  const ACCT = "'yc_report'@'%'";
+
+  test('USAGE is skipped; real grants become matching REVOKEs', () => {
+    const out = grantsToRevokes([
+      "GRANT USAGE ON *.* TO `yc_report`@`%`",
+      "GRANT SELECT (`a`, `b`) ON `db1`.`t1` TO `yc_report`@`%`",
+      "GRANT SELECT ON `db1`.`t2` TO `yc_report`@`%`;",
+    ], ACCT);
+    expect(out).toEqual([
+      "REVOKE SELECT (`a`, `b`) ON `db1`.`t1` FROM 'yc_report'@'%'",
+      "REVOKE SELECT ON `db1`.`t2` FROM 'yc_report'@'%'",
+    ]);
+  });
+
+  test('a fresh account (USAGE only) revokes nothing', () => {
+    expect(grantsToRevokes(["GRANT USAGE ON *.* TO `yc_report`@`%`"], ACCT)).toEqual([]);
+  });
+
+  test('an unrecognized grant line throws instead of guessing', () => {
+    expect(() => grantsToRevokes(['GRANT `some_role` TO `yc_report`@`%`'], ACCT)).toThrow(/unexpected grant line/);
+  });
+});
