@@ -3281,7 +3281,11 @@
     }
     #ycPalette .yc-pal-item i { flex: 0 0 auto; width: 1.25em; text-align: center; color: var(--text-muted); }
     #ycPalette .yc-pal-item span { min-width: 0; overflow-wrap: anywhere; }
-    #ycPalette .yc-pal-item .yc-pal-group { margin-left: auto; padding-left: 8px; font-size: var(--fs-xs); color: var(--text-muted); white-space: nowrap; }
+    /* flex: 0 0 auto is load-bearing: the generic `span` rule above gives every
+       span min-width: 0, which let this nowrap tag's BOX shrink while its text
+       painted past the list edge (320/375 survey overflow, 2026-10-21). The
+       tag stays rigid; the wrapping label span absorbs the squeeze. */
+    #ycPalette .yc-pal-item .yc-pal-group { flex: 0 0 auto; margin-left: auto; padding-left: 8px; font-size: var(--fs-xs); color: var(--text-muted); white-space: nowrap; }
     /* the user's keyboard shortcuts for a row (S4c) */
     #ycPalette .yc-pal-item .yc-pal-keys { flex: 0 0 auto; display: inline-flex; gap: 4px; margin-left: auto; }
     #ycPalette .yc-pal-item .yc-pal-keys + .yc-pal-group { margin-left: 0; }
@@ -3296,6 +3300,13 @@
     @media (max-width: 768px) {
       #ycPalette { padding-top: 8px; }
       #ycPalette .yc-pal-foot { display: none; }
+    }
+    /* Phones have no hardware keyboard: the shortcut chips are dead weight
+       there, and their rigid kbd row (flex: 0 0 auto) squeezes the wrapping
+       label on narrow rows. Pure phone-UX trim — the 320/375 overflow itself
+       was the group tag's shrunken box (fixed above). */
+    @media (max-width: 480px) {
+      #ycPalette .yc-pal-keys { display: none; }
     }
 
     /* All's "Customize my launcher" button (ui-custom S4b). */
