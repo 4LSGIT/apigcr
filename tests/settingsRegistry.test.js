@@ -125,6 +125,7 @@ describe('classification snapshot', () => {
     "min_client_build": "system system platform ui date",
     "office_alerts_to": "firm firm routing ui user_csv",
     "pabbly_internal_url": "secret console console ui url",
+    "phone_delivery_sync_enabled": "firm comms comms ui bool",
     "portal_callback_task_to": "firm portal portal ui user required",
     "portal_docs_notify_to": "firm portal portal ui email",
     "portal_email_from": "firm portal portal ui email required",

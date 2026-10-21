@@ -191,7 +191,10 @@ async function fetchSigned(url, { timeoutMs } = {}) {
 
 module.exports = {
   displayName: 'Quo',
-  capabilities: { sms: true, mms: false },
+  // outboundSync stays false until Quo's API is confirmed to expose delivery
+  // status for listing (ref/PHONE_DELIVERY_DESIGN.md §2) — hook 16 only logs
+  // message.delivered today, so a failed Quo send is invisible.
+  capabilities: { sms: true, mms: false, outboundSync: false },
   credentialRequirements: { type: 'api_key' },
   formHints: {
     provider_id: {

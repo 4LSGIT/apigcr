@@ -1,6 +1,6 @@
 # Phone Outbound Delivery — design
 
-**Arc:** phone-delivery · **Status:** design ratified 2026-10-14, S1 not started
+**Arc:** phone-delivery · **Status:** S1 built 2026-10-21 (patch pending apply; migration via scripts/phoneDeliveryS1DeliveryColumns.js pending run), S2–S5 not started
 **Scope:** OUTBOUND SMS/MMS only — recovering texts the ingest never saw, and
 learning/display of per-message delivery status. Inbound parsing stays where it
 is (see §9 Q3).
@@ -68,7 +68,10 @@ exists ONLY inside the adapter file.
   the normalized vocabulary (§3). Groups `phone_lines` by
   `(provider, credential_id)` — RC's two lines share extension 55880693 and
   one credential, so one RC listing covers both; grouping by line would
-  double-fetch.
+  double-fetch. The core reaches adapters through
+  `phoneService.getAdapter(provider)` (S1) — the registry stays the one
+  dispatch point; a service requiring `adapters/phone/<p>` directly is the
+  drift §8 flags.
 - **Driver** (`services/adapters/phone/ringcentral.js` gains
   `listOutbound()`): lists
   `GET /restapi/v1.0/account/~/extension/~/message-store?messageType=SMS&direction=Outbound&dateFrom&dateTo&page&perPage=100`
@@ -97,7 +100,9 @@ inserts via `ingestPhoneEvent`, which already dedupes on it (MTH-2).
 - `GET_LOCK(CONCAT('phone_outbound_sync:', DATABASE()), 0)` — skip, don't
   queue, when a run is live (archive-sweep pattern).
 - Gate setting `phone_delivery_sync_enabled` ('1' to run), read via
-  `settingsService.getSetting` (pattern: `comms_archive_enabled`).
+  `settingsService.getSetting` (pattern: `comms_archive_enabled`), registered
+  in `lib/settingsRegistry.js` (firm/comms/bool — a new app_settings key means
+  a registry entry in the same slice; the inventory test enforces it).
 - Alert severity per the house convention: transient (timeout/429/5xx) AND
   first occurrence for its credential → `warning`; repeated or non-transient
   → `error`.
@@ -209,6 +214,9 @@ migration rule.
   `delivery {state, reason}`; comms.html bubble chip for `failed`
   ("Not delivered — can't receive texts / blocked as spam / opted out"),
   tooltip carries `delivery_code`. Thread bubbles only; list rows unchanged.
+  Second surface since 2026-10-17: `entityCommsService.loadPhone` reads
+  `phone_event_log` for the case/contact comms feeds — its SMS items gain the
+  same `delivery` fields as S3b (same columns, one more SELECT list + chip).
 - **S4 — backfill.** `phone_outbound_sync` run by hand (SU console /
   one-shot `scheduled_jobs` row) with explicit `{since:'2026-05-20',
   until:…}` params, paged by month to respect the rate group. Recovers the

@@ -273,11 +273,23 @@ function credentialMatchesRequirements(cred, requirements) {
   return true;
 }
 
+/**
+ * Registry accessor — service-side dispatch to a provider adapter goes through
+ * HERE, never via require('./adapters/phone/<p>') from another service: one
+ * whitelist, one place capability flags mean anything (phone-delivery S1;
+ * the archive sweeps' direct requires predate this and are flagged drift).
+ * Returns null for an unknown provider.
+ */
+function getAdapter(provider) {
+  return ADAPTERS[provider] || null;
+}
+
 module.exports = {
   sendSms,
   sendMms,
   getProviderMetadata,
   credentialMatchesRequirements,
+  getAdapter,
 
   // Exposed for the admin Phone Lines tab: VALID_PROVIDERS for route
   // validation. Read-only — do not mutate.

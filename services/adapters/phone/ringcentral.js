@@ -334,9 +334,138 @@ async function findSessionRecordings(db, { credentialId, telephonySessionId, aro
   return { status: 200, recordings: [...seen.values()], records: records.length, rawRecords: raw.length, rate, errorText: null };
 }
 
+// ─── OUTBOUND DELIVERY SYNC (phone-delivery S1 — ref/PHONE_DELIVERY_DESIGN.md) ──
+//
+// Read side for services/phoneDeliveryService.js. Same endpoint family as
+// listVoicemails (message-store list — probed LIGHT rate group 2026-10-14; the
+// sync re-checks each response's rate.group and parks on 429). Everything
+// RingCentral-shaped — messageStatus words, SMS-* error codes, +1 phones, the
+// synthetic text/plain attachment — is translated HERE; the core service and
+// the UI only ever see the normalized vocabulary below.
+
+/**
+ * RC messageStatus → normalized delivery state (design §3).
+ * Unknown statuses map to 'pending' (not yet terminal — the next window
+ * re-checks) so a provider vocabulary surprise can never fabricate a verdict.
+ */
+const DELIVERY_STATE = Object.freeze({
+  Queued: 'pending',
+  Sent: 'sent',
+  Delivered: 'delivered',
+  SendingFailed: 'failed',
+  DeliveryFailed: 'failed',
+});
+
+/**
+ * RC deliveryErrorCode → normalized failure reason (design §3; source:
+ * developers.ringcentral.com/guide/messaging/sms/sms-errors). Codes not
+ * listed → 'unknown'.
+ */
+const DELIVERY_REASON = Object.freeze({
+  'SMS-RC-410': 'unreachable', 'SMS-UP-410': 'unreachable',
+  'SMS-CAR-400': 'unreachable', 'SMS-CAR-411': 'unreachable', 'SMS-CAR-412': 'unreachable',
+  'SMS-RC-413': 'opted_out', 'SMS-UP-413': 'opted_out', 'SMS-CAR-413': 'opted_out',
+  'SMS-RC-430': 'spam_content', 'SMS-UP-430': 'spam_content', 'SMS-UP-433': 'spam_content',
+  'SMS-UP-431': 'sender_flagged',
+});
+
+/** Strip a +1 from a 12-char +1NNNNNNNNNN; anything else passes through (wf19 step-3 semantics). */
+function _norm10(v) {
+  if (v == null) return '';
+  const s = String(v);
+  return (s.length === 12 && s.charAt(0) === '+' && s.charAt(1) === '1' && /^\d{10}$/.test(s.slice(2)))
+    ? s.slice(2)
+    : s;
+}
+
+/** messageStatus + deliveryErrorCode → { state, reason, provider_code }. */
+function _mapDelivery(messageStatus, code) {
+  const state = DELIVERY_STATE[messageStatus] || 'pending';
+  const provider_code = code != null && String(code).trim() !== '' ? String(code).trim() : null;
+  return {
+    state,
+    reason: state === 'failed' ? (DELIVERY_REASON[provider_code] || 'unknown') : null,
+    provider_code,
+  };
+}
+
+/**
+ * One RC message-store record → NormalizedOutbound (design §3), or null for a
+ * record the sync must not touch (not SMS / not Outbound / no id). The
+ * deliveryErrorCode has been seen record-level and per-`to` entry depending
+ * on RC product line — read both, record-level first.
+ */
+function _mapOutboundRecord(rec) {
+  if (!rec || rec.id == null) return null;
+  if (rec.type !== 'SMS' || rec.direction !== 'Outbound') return null;
+  const to0 = Array.isArray(rec.to) ? (rec.to[0] || {}) : {};
+  const attachments = (Array.isArray(rec.attachments) ? rec.attachments : [])
+    .filter(a => !(a && a.type === 'Text' && a.contentType === 'text/plain'))
+    .map(a => ({
+      id: a && a.id != null ? String(a.id) : '',
+      type: a && a.type != null ? String(a.type) : '',
+      contentType: a && a.contentType != null ? String(a.contentType) : '',
+    }));
+  return {
+    provider: 'ringcentral',
+    provider_ref: String(rec.id),
+    from: _norm10(rec.from && rec.from.phoneNumber),
+    to: _norm10(to0.phoneNumber),
+    body: rec.subject != null ? String(rec.subject) : '',
+    ts: rec.creationTime != null ? String(rec.creationTime) : '',
+    conversation_id: rec.conversation && rec.conversation.id != null ? String(rec.conversation.id) : '',
+    attachments,
+    delivery: _mapDelivery(rec.messageStatus, rec.deliveryErrorCode ?? to0.deliveryErrorCode),
+  };
+}
+
+/**
+ * List the extension's OUTBOUND SMS in a window — message-store, LIGHT rate
+ * group (same endpoint family as listVoicemails). Newest first, paged.
+ * Returns { status, records: [NormalizedOutbound], page, totalPages, rate,
+ * errorText }; never throws on an HTTP status (NO_AUTH before sending).
+ * Records RC returns that are not Outbound SMS are dropped here, counted by
+ * nobody — the query already filters, so a dropped record is shape drift the
+ * next failed stamp surfaces.
+ */
+async function listOutbound(db, { credentialId, sinceISO, untilISO, page = 1, perPage = 100, timeoutMs }) {
+  const q = new URLSearchParams({
+    messageType: 'SMS',
+    direction: 'Outbound',
+    dateFrom: new Date(sinceISO).toISOString(),
+    dateTo: new Date(untilISO).toISOString(),
+    perPage: String(perPage),
+    page: String(page),
+  });
+  const url = `${RC_PLATFORM}/restapi/v1.0/account/~/extension/~/message-store?${q}`;
+  const headers = await _authHeaders(db, credentialId, url);
+  const res = await fetch(url, { headers, signal: AbortSignal.timeout(_ms(timeoutMs, CALL_LOG_TIMEOUT_MS)) });
+  const rate = _rateInfo(res);
+  let text = '';
+  try { text = await res.text(); } catch (_) { /* body gone */ }
+  if (res.status !== 200) {
+    return { status: res.status, records: [], page, totalPages: null, rate, errorText: text.slice(0, 300) };
+  }
+  let json = null;
+  try { json = JSON.parse(text); } catch (_) {
+    return { status: 200, records: [], page, totalPages: null, rate, errorText: 'unparseable 200 body' };
+  }
+  const raw = Array.isArray(json && json.records) ? json.records : [];
+  const records = raw.map(_mapOutboundRecord).filter(Boolean);
+  const paging = json && json.paging ? json.paging : {};
+  return {
+    status: 200,
+    records,
+    page: Number(paging.page) || page,
+    totalPages: Number.isFinite(Number(paging.totalPages)) ? Number(paging.totalPages) : null,
+    rate,
+    errorText: null,
+  };
+}
+
 module.exports = {
   displayName: 'RingCentral',
-  capabilities: { sms: true, mms: true },
+  capabilities: { sms: true, mms: true, outboundSync: true },
   credentialRequirements: { type: 'oauth2', oauth_status: 'connected' },
   formHints: {
     provider_id: {
@@ -350,4 +479,9 @@ module.exports = {
   fetchMessageAttachment,
   findSessionRecordings,
   listVoicemails,
+  listOutbound,
+  // Exported for testing — the RC→normalized translation tables
+  _mapDelivery,
+  _mapOutboundRecord,
+  _norm10,
 };

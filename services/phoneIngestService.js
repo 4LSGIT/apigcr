@@ -238,6 +238,12 @@ function _buildMetadata(suppression, automation) {
   if (automation && automation.parseWarnings && automation.parseWarnings.length) {
     m._parse_warnings = automation.parseWarnings;
   }
+  if (automation && automation.skipped) {
+    // Layer 3 never ran — the caller skipped it (phone-delivery backfill).
+    // Recorded so the executions trail distinguishes "no rules matched" from
+    // "rules were not consulted" (ref/PHONE_DELIVERY_DESIGN.md §6).
+    m.automation = { skipped: automation.skipped };
+  }
   return Object.keys(m).length ? m : null;
 }
 
@@ -249,10 +255,20 @@ function _buildMetadata(suppression, automation) {
  *
  * @param {object} db
  * @param {object} event  - the create_log params object (top level)
+ * @param {object} [opts]
+ * @param {string|false} [opts.skipAutomation=false]
+ *        A non-empty string skips Layer 3 (automation rules) entirely and
+ *        records WHY in the executions row's metadata.automation.skipped —
+ *        used by the phone-delivery backfill ('backfill'), where firing
+ *        months-old rules would be retroactive automation
+ *        (ref/PHONE_DELIVERY_DESIGN.md §6). EXPLICIT per call, never inferred
+ *        from event age: a legitimately late provider redelivery must still
+ *        fire its rules. Layers 1/2 (enrichment, suppression) and the log
+ *        write are unaffected.
  * @returns {Promise<object>}  the `output` block (NOT wrapped in {success,...};
  *                             the phone_log skin wraps it).
  */
-async function ingestPhoneEvent(db, event) {
+async function ingestPhoneEvent(db, event, opts = {}) {
   const logService = require('./logService');
 
   const p = event || {};
@@ -442,21 +458,32 @@ async function ingestPhoneEvent(db, event) {
   //   rule_id/rule_action_id null (nothing matched — nothing got to run);
   //   'rule_evaluation' is outside the dispatchable action set.
   let automation;
-  try {
-    automation = await phoneIngestRuleService.evaluateRules(db, p);
-  } catch (autoErr) {
-    console.error('[phone_log] Layer 3 evaluateRules threw:', autoErr.message);
+  if (opts.skipAutomation) {
+    // Layer 3 skipped by the CALLER (backfill) — not an outage, not a
+    // suppression. The executions row still writes, and its metadata says why.
     automation = {
       matchedRuleIds: [],
-      actionOutcomes: [{
-        rule_id:        null,
-        rule_action_id: null,
-        action_type:    'rule_evaluation',
-        status:         'failed',
-        error:          `evaluateRules threw: ${autoErr.message}`,
-      }],
-      parseWarnings: [`evaluateRules threw: ${autoErr.message}`],
+      actionOutcomes: [],
+      parseWarnings: [],
+      skipped: String(opts.skipAutomation),
     };
+  } else {
+    try {
+      automation = await phoneIngestRuleService.evaluateRules(db, p);
+    } catch (autoErr) {
+      console.error('[phone_log] Layer 3 evaluateRules threw:', autoErr.message);
+      automation = {
+        matchedRuleIds: [],
+        actionOutcomes: [{
+          rule_id:        null,
+          rule_action_id: null,
+          action_type:    'rule_evaluation',
+          status:         'failed',
+          error:          `evaluateRules threw: ${autoErr.message}`,
+        }],
+        parseWarnings: [`evaluateRules threw: ${autoErr.message}`],
+      };
+    }
   }
 
   if (suppressed) {

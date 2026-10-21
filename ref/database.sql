@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-10-19T00:05:40.365Z
+-- Generated: 2026-10-21T06:59:05.898Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:d058936a44f24b3a2bc1db66d26e9eb6
+-- Fingerprint: sha256:2e92a14ab61c2adc58c056b8289d177d
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -2635,7 +2635,11 @@ CREATE TABLE `phone_event_log` (
   `suppressed_by` json DEFAULT NULL,
   `log_id` int DEFAULT NULL,
   `raw_extra` json DEFAULT NULL,
-  `processed_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP
+  `processed_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `delivery_state` varchar(12) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'outbound delivery, normalized by phoneDeliveryService: pending|sent|delivered|failed. NULL = incoming row, call, or never synced. Vocabulary: ref/PHONE_DELIVERY_DESIGN.md §3',
+  `delivery_reason` varchar(16) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'failure reason (delivery_state=failed): unreachable|opted_out|spam_content|sender_flagged|unknown',
+  `delivery_code` varchar(32) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'raw provider error code (e.g. SMS-CAR-411). Tooltip/forensics only — only the provider adapter may interpret it',
+  `delivery_checked_at` datetime DEFAULT NULL COMMENT 'last phone_outbound_sync stamp (UTC)'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- --------------------------------------------------------
@@ -4857,6 +4861,7 @@ ALTER TABLE `phone_event_log`
   ADD UNIQUE KEY `ux_phone_event_provider_ref` (`provider`,`provider_ref`),
   ADD KEY `idx_phone_event_other_party` (`other_party`),
   ADD KEY `idx_phone_event_processed_at` (`processed_at`),
+  ADD KEY `idx_phone_event_delivery` (`delivery_state`,`processed_at`),
   ADD KEY `idx_phone_event_line` (`line_number`,`processed_at`);
 
 --
