@@ -1,4 +1,4 @@
-// routes/api.assistant.js — staff-facing read-only conversational assistant.
+// routes/api.assistant.js — staff conversation and recording-only action receipts.
 
 'use strict';
 
@@ -8,6 +8,7 @@ const jwtOrApiKey = require('../lib/auth.jwtOrApiKey');
 const { makeLimiter } = require('../lib/rateLimiter');
 const svc = require('../services/assistantService');
 const chats = require('../services/assistantChatService');
+const ledger = require('../services/assistantActionLedger');
 
 const planLimited = makeLimiter(60 * 60 * 1000, 30);
 const executeLimited = makeLimiter(60 * 60 * 1000, 60);
@@ -65,6 +66,10 @@ router.post('/api/assistant/execute', jwtOrApiKey, staffOnly, async (req, res) =
       auth: req.auth,
       temporaryAttachments: req.body && req.body.temporary_attachments,
     });
+    // Older browser builds still use chat markers and cannot claim receipts.
+    if (out.action_draft && req.body && req.body.action_ledger_version === 1) {
+      await ledger.issue(req.db, req.auth.userId, out.action_draft);
+    }
     res.json({ status: 'success', outcome: 'answer', ...out });
   } catch (err) { fail(res, 'execute', err); }
 });
@@ -114,4 +119,19 @@ router.delete('/api/assistant/chats/:id(\\d+)', jwtOrApiKey, staffOnly, chatRate
   } catch (err) { fail(res, 'delete chat', err); }
 });
 
+// These endpoints only record/reconcile user actions; they never call a
+// business writer. Authentication and user scope come from the staff JWT.
+router.post('/api/assistant/actions/reconcile', jwtOrApiKey, staffOnly, chatRate, async (req, res) => {
+  try { res.json({ status: 'success', actions: await ledger.read(req.db, req.auth.userId, req.body && req.body.draft_ids) }); }
+  catch (err) { fail(res, 'reconcile actions', err); }
+});
+router.post('/api/assistant/actions/:draftId/claim', jwtOrApiKey, staffOnly, chatRate, async (req, res) => {
+  try { res.json({ status: 'success', ...await ledger.claim(req.db, req.auth.userId, req.params.draftId) }); }
+  catch (err) { fail(res, 'claim action', err); }
+});
+router.post('/api/assistant/actions/:draftId/result', jwtOrApiKey, staffOnly, chatRate, async (req, res) => {
+  try { res.json({ status: 'success', ...await ledger.record(req.db, req.auth.userId, req.params.draftId,
+    req.body && req.body.claim_token, req.body && req.body.result) }); }
+  catch (err) { fail(res, 'record action', err); }
+});
 module.exports = router;

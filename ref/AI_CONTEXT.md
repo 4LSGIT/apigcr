@@ -2177,8 +2177,8 @@ values, then maps only allowlisted fields to
 the corresponding existing authenticated `/api/tasks` route. The route sees
 the signed-in user as actor and preserves canonical audit, linking, reminders,
 and notifications. The model cannot choose the endpoint, method, or extra
-fields. Applied results persist in chat history so reopening the chat does not
-offer the same write again.
+fields. Applied results reconcile from the user-scoped durable ledger on
+reopen; legacy proposals without a ledger row retain chat-result restoration.
 
 For `task.create.v1`, Casey requires assignee/title/description. Start is a
 not-before date and remains null unless requested; due is optional but suggested
@@ -2240,8 +2240,30 @@ reopened from saved history (`restored`), shows **Ask Casey again** instead
 routes keep their own guards (appointment status, contact row versions). The
 applied-result message is saved with `required:true` (one retry); the button
 stays disabled until it settles, and a failure is shown loudly on the card and
-in a warning dialog — the write is never repeated. Durable server-side applied
-state and idempotency keys are plan items P4/P5.
+in a warning dialog — the write is never repeated. P4's six canonical create
+routes also accept the draft UUID as their user-scoped Idempotency-Key.
+
+**Durable action receipts (P5).** `assistantActionLedger` registers only the
+server-normalized UUID/kind/actor before returning a proposal to a browser
+that opts in with `action_ledger_version:1`. Older browser builds receive no
+ledger row and retain legacy chat markers during backend-first rollout. The browser
+claims through `/api/assistant/actions/:draftId/claim` before calling its
+canonical route, then records only the canonical task/event/appointment/contact
+ID through `:draftId/result`. These routes perform no business writes. Claims
+are autocommitted on the pool, outside the canonical transaction; neither a
+business rollback nor an uncertain response frees them. A claim without a
+receipt is always `unknown` and never offers another write, even when fresh.
+`/api/assistant/actions/reconcile` scopes reads to the signed-in user; ledger
+rows override chat markers and inline applied flags. Missing rows retain legacy
+marker restoration, but cannot be claimed. Old kind versions remain readable
+receipts and unsupported cards stay inert. Receipts contain no action values,
+auth/session credentials or raw evidence; the claim's receipt capability lives
+only in browser memory, excluded from chat serialization. Receipt persistence
+retries once and offers **Retry saving result** without replaying the write.
+All ledger rows are retained until user deletion, independently of chat pruning
+or deletion; there is no time-based sweep. Rollback reverts frontend, then
+backend, and keeps the table and receipts. Migration: `scripts/caseyP5Ledger.js` (CHECK
+by default; SQL must precede backend, then frontend).
 
 No bus change was needed. `public/js/yc-sync.js` already maps the canonical
 create/update/complete/cancel calls to `event:<id>` refetch markers, and the

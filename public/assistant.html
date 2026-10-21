@@ -54,7 +54,8 @@
   .action-draft-grid dt { color: var(--text-muted); }
   .action-draft-grid dd { margin: 0; overflow-wrap: anywhere; }
   .action-draft-actions { display: flex; gap: 7px; margin-top: 10px; }
-  .action-draft-actions button { padding: 5px 9px; font-size: 12px; }
+  .action-draft-actions button, .action-draft-retry { padding: 5px 9px; font-size: 12px; }
+  .action-draft-retry { margin-top: 6px; }
   .action-draft-next { margin-top: 10px; padding-top: 9px; border-top: 1px solid var(--border); color: var(--text-muted); }
   .action-draft-next ol { margin: 5px 0 0; padding-left: 20px; }
   .action-draft-next-warning { margin-top: 6px; font-size: 11px; }
@@ -299,14 +300,38 @@ function appendMarkerError(next, draft) {
   if (!draft.marker_error) return;
   const error = document.createElement('div'); error.className = 'action-draft-next-warning'; error.textContent = draft.marker_error;
   next.append(error);
+  if (draft.__ledgerReceipt) {
+    const retry = document.createElement('button'); retry.type = 'button';
+    retry.className = 'action-draft-retry';
+    retry.textContent = 'Retry saving result';
+    retry.addEventListener('click', async () => {
+      if (draft.executing) return;
+      draft.executing = true; render();
+      try { await recordActionResult(draft, draft.__ledgerReceipt.message); }
+      finally { draft.executing = false; render(); }
+    });
+    next.append(retry);
+  }
 }
 
-// The applied marker is what stops a reopened chat from offering the write
-// again, so its save must not fail silently. The card's button stays disabled
-// (executing) until this settles; a failure is told to the user, loudly.
+// Persist the ledger receipt before the compatibility chat marker. The card
+// stays disabled until both attempts settle; receipt failures remain retryable
+// without executing the canonical write again.
 async function recordActionResult(draft, resultMessage) {
   try {
+    if (draft.__ledgerReceipt) {
+      const pending = draft.__ledgerReceipt;
+      const receipt = { claim_token: pending.token,
+        result: { [pending.field]: Number(resultMessage.action_result[pending.field]) } };
+      // Retry only persistence, never the canonical write. A repeat receipt is
+      // immutable and value-identical; the server handles lost acknowledgements.
+      try { await api(`/api/assistant/actions/${draft.draft_id}/result`, receipt, 'POST'); }
+      catch (_) { await api(`/api/assistant/actions/${draft.draft_id}/result`, receipt, 'POST'); }
+      pending.saved = true;
+    }
     await saveAssistantMessage(resultMessage, { required: true });
+    delete draft.marker_error;
+    delete draft.__ledgerReceipt;
   } catch (e) {
     draft.marker_error = `This action WAS applied, but Casey could not record that in this chat (${e && e.message || 'save failed'}). Do not apply it again — open the record to check the change.`;
     try { if (P.Swal && typeof P.Swal.fire === 'function') P.Swal.fire({ icon: 'warning', title: 'Applied, but not recorded', text: draft.marker_error, heightAuto: false }); }
@@ -765,7 +790,7 @@ async function executeActionDraft(message) {
   const family = actionFamily(draft);
   if (!family || typeof draft.draft_id !== 'string' || !draft.draft_id || draft.executing || draft.reviewing) return;
   // Ambiguous outcome: the write may have landed. Never offer it again.
-  if (draft.ambiguous_error && draft.status !== 'applied') return;
+  if ((draft.ambiguous_error || draft.refusal_error) && draft.status !== 'applied') return;
   if (draft.status === 'applied' && actionAppliedId(family, draft)) { family.open(draft); return; }
   const stale = actionDraftStale(draft);
   if (stale) { draft.action_error = stale; render(); return; }
@@ -776,8 +801,23 @@ async function executeActionDraft(message) {
   const expired = actionDraftStale(draft);
   if (expired) { draft.action_error = expired; render(); return; }
   draft.executing = true; delete draft.action_error; render();
+  let claimed = false;
   try {
     const request = family.request(draft);
+    const claim = await api(`/api/assistant/actions/${draft.draft_id}/claim`, {}, 'POST');
+    if (claim.outcome === 'applied' && claim.result) {
+      draft.status = 'applied'; draft.replayed = true;
+      markActionApplied(family, draft, claim.result);
+      if (family.afterApply) family.afterApply(draft, claim.result); else family.open(draft);
+      return;
+    }
+    if (claim.claimed !== true || claim.outcome !== 'in_flight' || typeof claim.claim_token !== 'string') {
+      draft.ambiguous_error = 'This may already have been applied: the server claimed the request but never recorded its result. Open the record and check before asking Casey to prepare it again. Do not apply this card again.';
+      return;
+    }
+    claimed = true;
+    // Never serialize this receipt capability into chat or model history.
+    Object.defineProperty(draft, '__ledgerReceipt', { value: { token: claim.claim_token, field: family.idField }, configurable: true });
     // Idempotency (P4). A create carries the server-minted draft_id as its
     // Idempotency-Key: stable across retries of THIS card, unique per
     // proposal, user-scoped, and never model-chosen. The canonical route
@@ -800,6 +840,7 @@ async function executeActionDraft(message) {
       entities: [family.entity(draft, payload)],
       action_result: { kind: draft.kind, draft_id: draft.draft_id, ...payload },
     };
+    draft.__ledgerReceipt.message = resultMessage;
     history.push(resultMessage);
     await recordActionResult(draft, resultMessage);
     if (family.afterApply) family.afterApply(draft, payload); else family.open(draft);
@@ -808,10 +849,23 @@ async function executeActionDraft(message) {
     // but never recorded a result, so the write MAY have landed; offering the
     // button again is exactly the double-apply the key exists to prevent.
     const outcome = e && e.status === 409 && e.body && e.body.idempotency && e.body.idempotency.outcome;
-    if (outcome === 'unknown') {
+    // A 4xx is the server having READ the request and refused it, so nothing
+    // was written and saying "this may have been applied" would be false — it
+    // would send staff hunting for a record that does not exist. The claim is
+    // still spent, so the card cannot be re-run either way; it says what
+    // actually happened instead. 5xx and a dead socket stay ambiguous, and so
+    // does a 409: appointment status conflicts surface as 500 and the A5 stale
+    // preconditions as 409, but a conflict answered by a route we have not
+    // audited could still have written. Only a refusal we can read is certain.
+    const refused = claimed && e && e.status >= 400 && e.status < 500 && e.status !== 409;
+    if (refused) {
+      draft.refusal_error = `The server refused this (${e.message || `HTTP ${e.status}`}). Nothing was written. Ask Casey to prepare the action again.`;
+    } else if (claimed || outcome === 'unknown') {
       draft.ambiguous_error = `This may already have been applied: the server claimed the request but never recorded its result (${e.message || 'no result recorded'}). Open the record and check before asking Casey to prepare it again. Do not apply this card again.`;
     } else if (outcome === 'in_flight') {
       draft.action_error = 'The same request is still being applied. Wait a moment, then check the record before trying again.';
+    } else if (!e.status || e.status >= 500) {
+      draft.ambiguous_error = 'The claim outcome is unknown. Nothing further was sent by this card. Open the record and check before asking Casey to prepare it again. Do not apply this card again.';
     } else {
       draft.action_error = e.message || family.failure;
     }
@@ -820,9 +874,9 @@ async function executeActionDraft(message) {
   }
 }
 
-// Restoring a saved chat: a stored action_result is what tells a reopened card
-// it was already applied, so the card offers Open rather than the write.
-function applyActionResults(messages) {
+// The ledger is authoritative on reopen. Only legacy drafts with no ledger
+// row fall back to action_result chat markers.
+function applyActionResults(messages, ledger = []) {
   const list = Array.isArray(messages) ? messages : [];
   const applied = new Map();
   for (const message of list) {
@@ -833,10 +887,26 @@ function applyActionResults(messages) {
       applied.set(result.draft_id, { family, result });
     }
   }
+  const receipts = new Map(ledger.map(row => [row.draft_id, row]));
   for (const message of list) {
     const draft = message && message.action_draft;
-    const hit = draft && applied.get(draft.draft_id);
-    if (hit) { draft.status = 'applied'; markActionApplied(hit.family, draft, hit.result); }
+    if (!draft) continue;
+    const row = receipts.get(draft.draft_id);
+    // A ledger row overrides both payload markers AND inline applied flags.
+    // No row means a legacy message: retain P4's existing marker restoration.
+    if (row) {
+      const family = actionFamily(draft);
+      if (family) delete draft[family.appliedKey];
+      draft.status = 'draft'; delete draft.ambiguous_error; delete draft.refusal_error;
+      if (row.kind === draft.kind && row.outcome === 'applied' && family && row.result) {
+        draft.status = 'applied'; markActionApplied(family, draft, row.result);
+      } else if (row.outcome !== 'not-applied' || row.kind !== draft.kind) {
+        draft.ambiguous_error = 'This may already have been applied: the server claimed the request but never recorded its result. Open the record and check before asking Casey to prepare it again. Do not apply this card again.';
+      }
+      continue;
+    }
+    const hit = applied.get(draft.draft_id);
+    if (hit && hit.result.kind === draft.kind) { draft.status = 'applied'; markActionApplied(hit.family, draft, hit.result); }
   }
   return messages;
 }
@@ -885,6 +955,7 @@ function hydrateActionDraft(family, host, message, draft) {
   const status = document.createElement('span'); status.className = 'action-draft-status';
   status.textContent = applied ? `Applied — ${family.noun} #${appliedId}`
     : draft.ambiguous_error ? 'Outcome unknown — check the record'
+      : draft.refusal_error ? 'Refused — nothing written'
       : actionDraftStale(draft) ? 'Expired — not applied' : draft.executing ? 'Applying…' : draft.reviewing ? 'Reviewing…' : 'Proposal — not applied';
   head.append(title, status);
 
@@ -913,7 +984,7 @@ function hydrateActionDraft(family, host, message, draft) {
   // An ambiguous result (the claim was taken, no result recorded) removes the
   // write control outright: the record may already exist, so the only safe
   // next step is to look.
-  if (canApply && !draft.ambiguous_error) {
+  if (canApply && !draft.ambiguous_error && !draft.refusal_error) {
     const apply = document.createElement('button'); apply.type = 'button';
     apply.textContent = applied ? `Open ${family.noun} #${appliedId}` : `Review & ${family.label(draft).toLowerCase()}`;
     apply.disabled = !!(draft.executing || draft.reviewing);
@@ -937,6 +1008,11 @@ function hydrateActionDraft(family, host, message, draft) {
     const error = document.createElement('div'); error.className = 'action-draft-next-warning';
     error.textContent = `Could not apply ${family.errorNoun}: ${draft.action_error}`;
     next.append(error);
+  }
+  if (draft.refusal_error) {
+    const refusal = document.createElement('div'); refusal.className = 'action-draft-next-warning';
+    refusal.textContent = draft.refusal_error;
+    next.append(refusal);
   }
   if (draft.ambiguous_error) {
     const ambiguous = document.createElement('div'); ambiguous.className = 'action-draft-next-warning';
@@ -1278,7 +1354,12 @@ async function openSavedChat(id) {
     const messages = Array.isArray(r.chat && r.chat.messages) ? r.chat.messages : [];
     const restored = messages.map((m) => ({ role: m.role === 'assistant' ? 'assistant' : 'user',
       text: String(m.text || ''), ...(m.payload && typeof m.payload === 'object' ? m.payload : {}) }));
-    history = applyActionResults(restored);
+    const draftIds = [...new Set(restored.map(m => m.action_draft && m.action_draft.draft_id).filter(id =>
+      typeof id === 'string' && /^[0-9a-f-]{36}$/.test(id)))];
+    const reconciled = draftIds.length
+      ? await api('/api/assistant/actions/reconcile', { draft_ids: draftIds }, 'POST') : { actions: [] };
+    if (!Array.isArray(reconciled.actions)) throw new Error('Could not reconcile applied actions');
+    history = applyActionResults(restored, reconciled.actions);
     // A reopened proposal is never offered for writing (actionDraftStale).
     history.forEach((m) => { if (m.action_draft && m.action_draft.status !== 'applied') m.action_draft.restored = true; });
     currentChatId = Number(r.chat.id);
@@ -1357,7 +1438,7 @@ async function ask() {
 async function executeAutomatically(initialTicket, temporaryAttachments) {
   let ticket = initialTicket;
   for (let attempt = 0; attempt < 2; attempt++) {
-    const r = await api('/api/assistant/execute', { ticket, temporary_attachments: temporaryAttachments });
+    const r = await api('/api/assistant/execute', { ticket, temporary_attachments: temporaryAttachments, action_ledger_version: 1 });
     if (r.outcome !== 'plan') return r;
     ticket = r.ticket;
     history[history.length - 1].text = r.notice || 'Narrowing the search and trying again…';

@@ -786,12 +786,11 @@ retries of that card, unique per proposal, never model-chosen — and only a
 create sends one, because no other kind can duplicate a record. The three
 outcomes reach the card as three different states: a `replayed` response
 restores the applied state and says the record already existed rather than
-reporting a second create; a fresh `in_flight` 409 is an ordinary retryable
-error; and an `unknown` 409 (claim taken, no result recorded) **removes the
-write control from the card entirely** and tells the user to open the record,
-because offering it again is the double-apply the key exists to prevent. The
-card keeps Copy and Discard in that state — reading and dismissing are always
-safe.
+reporting a second create. The canonical P4 facility distinguishes a fresh
+`in_flight` 409 from a stale `unknown` 409. With P5, either response after a
+ledger claim leaves the card unknown: **the write control is removed entirely**
+and the user is told to open the record, because offering it again could apply
+the action twice. Copy and Discard remain available.
 
 Still open from P4's full scope: sends, enrollment, starts, replays and
 fan-out are not wired (their families are not built yet), and an ambiguous
@@ -800,8 +799,8 @@ outcome is only logged server-side, not alerted — that belongs to P7.
 #### P5: Durable applied-result persistence
 
 Pulled ahead of A6 (course correction 2). The interim required-save + loud
-failure shipped with the fix package; the server-side applied state below is
-still to build.
+failure shipped with the fix package. The P5 implementation uses the recording
+ledger described below; its SQL must be applied before backend/frontend deployment.
 
 **RULED — Fred, 2026-10-22: a ledger endpoint is allowed.** "No new endpoints"
 is an idea, not a rule; what is load-bearing is that *almost* every action
@@ -814,7 +813,8 @@ contains no `/api/assistant/actions`" must therefore be RE-PINNED, not deleted,
 when the ledger lands: the invariant to assert is that no assistant endpoint
 performs a business write (it requires no write service and calls none of their
 write functions). Deleting the assertion would retire the guarantee instead of
-restating it.
+restating it. That re-pin shipped with the ledger: the assertion now reads the
+route for any of the six canonical write services.
 
 The ledger is the preferred shape, because it gives the full
 not-applied / applied / unknown trichotomy for every kind rather than only for
@@ -829,8 +829,30 @@ creates. Design for the slice:
   Reuse P4's vocabulary and outcome names rather than inventing a second set.
 
 P4's canonical idempotency stays as the creates-side protection; the two
-compose, and P4 landed first (`3eb7a99`). Until the ledger slice is built, P5
-rests at the shipped interim (required marker save + loud failure).
+compose, and P4 landed first (`3eb7a99`). The ledger registers server-issued drafts before returning them, claims on the
+pool before the browser's canonical request, and records only canonical record
+IDs. A claim is never taken over or automatically freed, and a claim without a
+receipt stays `in_flight` — which the ledger reports as `unknown` — because the
+browser cannot certify a rollback. Receipt-only retries do not repeat the
+write. Rows survive chat deletion and all kind-version changes until the user
+is deleted. Legacy messages without rows retain chat marker restoration;
+unsupported kinds stay inert. See `assistantActionLedger` and
+`scripts/caseyP5Ledger.js` for the recording/retention contract.
+
+**The card distinguishes a refusal from an unknown outcome, the ledger does
+not.** When the canonical route answers a 4xx other than 409, it read the
+request and refused it, so nothing was written; the card says exactly that and
+asks for a fresh proposal, rather than claiming the action may have been
+applied and sending staff to hunt for a record that does not exist. A 409 and
+anything 5xx or socket-dead stay ambiguous on purpose: appointment status
+conflicts reach the browser as 500 (`ref/plans.md`) and the A5 stale
+preconditions as 409, and a conflict from an unaudited route could still have
+written. The claim is spent either way, so neither state ever offers the write
+again. The ledger row, however, is still `in_flight` after a refusal, so
+**reopening that chat shows the conservative unknown wording instead of the
+refusal** — the row cannot express "claimed, then refused" without a third
+status. Filed in `ref/plans.md`; it costs a misleading message on reopen, never
+a write.
 
 Make success restoration resilient when the canonical write succeeds but chat
 history persistence fails. Preserve the canonical result needed to reopen the

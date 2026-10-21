@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-10-21T17:12:44.880Z
+-- Generated: 2026-10-21T20:32:36.796Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:77d5f8ea56e2e48bc8786bc9524416a0
+-- Fingerprint: sha256:4df863b38660c8366dce8f0b054abf84
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -276,6 +276,24 @@ CREATE TABLE `appts` (
   `appt_view_id` int unsigned DEFAULT NULL COMMENT 'booking_views.id this appt was booked/rebooked through',
   `rescheduled_from_appt_id` int DEFAULT NULL COMMENT 'E0a atom: the appt this row replaced (reschedule or manage-page rebook). NULL = original booking, or pre-2026-08-27 row (not backfilled). No FK by convention (appts carries none).'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `assistant_action_ledger`
+--
+
+DROP TABLE IF EXISTS `assistant_action_ledger`;
+CREATE TABLE `assistant_action_ledger` (
+  `user_id` tinyint NOT NULL,
+  `draft_id` char(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL COMMENT 'Server-minted UUID v4; user-scoped, never model-chosen',
+  `kind` varchar(64) COLLATE utf8mb4_general_ci NOT NULL COMMENT 'Closed versioned action kind; old versions remain readable',
+  `status` enum('in_flight','applied') COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'NULL is not-applied; in_flight without result is unknown forever, never retry',
+  `claim_token` char(36) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL COMMENT 'Receipt capability, not a session credential; never included in chat payload',
+  `result` json DEFAULT NULL COMMENT 'Only the canonical task/event/appt/contact numeric id; no evidence or credentials',
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='Applied-result receipts; retained until actor deletion, independently of chat retention';
 
 -- --------------------------------------------------------
 
@@ -4170,6 +4188,12 @@ ALTER TABLE `appts`
   ADD KEY `idx_appts_link` (`appt_link_type`,`appt_link_id`);
 
 --
+-- Indexes for table `assistant_action_ledger`
+--
+ALTER TABLE `assistant_action_ledger`
+  ADD PRIMARY KEY (`user_id`,`draft_id`);
+
+--
 -- Indexes for table `assistant_chat_messages`
 --
 ALTER TABLE `assistant_chat_messages`
@@ -6239,6 +6263,12 @@ ALTER TABLE `workflows`
 --
 ALTER TABLE `ai_match_types`
   ADD CONSTRAINT `fk_amt_set` FOREIGN KEY (`set_id`) REFERENCES `ai_match_sets` (`id`);
+
+--
+-- Constraints for table `assistant_action_ledger`
+--
+ALTER TABLE `assistant_action_ledger`
+  ADD CONSTRAINT `fk_assistant_action_ledger_user` FOREIGN KEY (`user_id`) REFERENCES `users` (`user`) ON DELETE CASCADE;
 
 --
 -- Constraints for table `assistant_chat_messages`

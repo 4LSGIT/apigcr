@@ -781,6 +781,7 @@ scripts/buildFaIconCatalog.js
 scripts/calendarTypeOptionsSeed.js
 scripts/calendarTypeSeed.js
 scripts/caseyP4Idempotency.js
+scripts/caseyP5Ledger.js
 scripts/checkThemePresets.js
 scripts/cleanup_court_event_dupes_2026_07.js
 scripts/commsArchive/eval/review-tool.html
@@ -923,6 +924,7 @@ services/aiMatchService.js
 services/aiService.js
 services/apptService.js
 services/assetService.js
+services/assistantActionLedger.js
 services/assistantAttachmentService.js
 services/assistantChatService.js
 services/assistantKnowledgeService.js
@@ -1087,6 +1089,7 @@ tests/apptStatusGuards.test.js
 tests/apptTypeKey.patch.test.js
 tests/apptsSearch.picker.test.js
 tests/assignPickersActive.test.js
+tests/assistantActionLedger.mysql.test.js
 tests/assistantAttachmentService.test.js
 tests/assistantChatService.test.js
 tests/assistantNormalizer.mysql.test.js

@@ -505,6 +505,22 @@ failed-send dispatch are live; wf 54 sends the notices.)
   either route through the registry or state the direct-require as deliberate
   in the sweep headers + COMMS_ARCHIVE_DESIGN §6.
 
+## From the Ask Casey arc — P5 ledger follow-ups (2026-10-22)
+
+- **A refused claim reads as `unknown` when the chat is reopened.**
+  `assistant_action_ledger.status` is `enum('in_flight','applied')` with NULL
+  meaning not-applied, so a row cannot express "claimed, then refused". The
+  card gets this right in the session it happened in (a 4xx other than 409 is
+  reported as a refusal that wrote nothing), but the row stays `in_flight`, so
+  a reopen falls back to the conservative "this may already have been applied"
+  wording. Costs a misleading message, never a write — the claim is spent
+  either way and no state offers the write again. A third status would fix it
+  and needs a migration; not worth one on its own, so fold it into the next
+  ledger migration if there is one.
+- **Nothing prunes `assistant_action_ledger`** either: rows are kept until the
+  user is deleted (FK cascade), by design. Same shape as the
+  `request_idempotency` note below, and a single age sweep could serve both.
+
 ## From the Ask Casey arc — P4 idempotency follow-ups (2026-10-22)
 
 The migration ran live on 2026-10-22 and `request_idempotency` is in

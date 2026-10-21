@@ -77,6 +77,12 @@ function actionSandbox(deps = {}) {
     'return { executeActionDraft, applyActionResults, actionFamily, isActionDraft, hydrateActionDraft };',
   ].join('\n');
   const supplied = { P: {}, api: jest.fn(), render: jest.fn(), history: [], saveAssistantMessage: jest.fn(), openEntity: jest.fn(), input: { value: '', focus: jest.fn() }, document: undefined, navigator: undefined, ...deps };
+  const canonicalApi = supplied.api;
+  const ledgerApi = deps.ledgerApi || (async (path) => path.endsWith('/claim')
+    ? { outcome: 'in_flight', claimed: true, claim_token: 'receipt-test-token' } : { outcome: 'applied' });
+  supplied.api = (path, ...args) => path.startsWith('/api/assistant/actions/')
+    ? ledgerApi(path, ...args) : canonicalApi(path, ...args);
+  delete supplied.ledgerApi;
   const names = Object.keys(supplied);
   return new Function(...names, src)(...names.map((name) => supplied[name])); // eslint-disable-line no-new-func
 }
@@ -117,7 +123,19 @@ describe('Ask Casey UI wiring', () => {
     expect(html).toContain("P.Swal.fire({");
     expect(html).toContain('if (!await confirmActionDraft(family, draft)) return');
     expect(html).not.toContain('window.confirm(');
-    expect(route).not.toContain('/api/assistant/actions');
+    // Recording endpoints are allowed; business writes remain canonical.
+    expect(route).not.toMatch(/(?:require\s*\([^)]*|\b)(?:taskService|eventService|apptService|contactPhoneService|contactEmailService|contactAddressService)\b/);
+    const writers = [
+      'createTask', 'updateTask', 'completeTask', 'deleteTask', 'reopenTask', 'transferTask',
+      'scheduleDueReminder', 'cancelDueReminder', 'scheduleStartReminder', 'cancelStartReminder', 'logTaskEvent',
+      'createEvent', 'updateEvent', 'completeEvent', 'cancelEvent', 'supersedeEvent', '_applySingleton',
+      'spawnReminderTask', 'cancelReminderTasks', 'sendEventDigest',
+      'createAppt', 'markAttended', 'markNoShow', 'cancelAppt', 'rescheduleAppt', 'rescheduleLater',
+      'cancelApptAutomation', 'insertApptLog', 'applyApptLinkPatch', 'applyApptTypePatch',
+      'notifyStaffOfClientAction', 'notifyProviderOfUnattendedCancel',
+      ...['Phone', 'Email', 'Address'].flatMap(f => ['createContact', 'updateContact', 'deleteContact', 'setPrimaryContact'].map(v => `${v}${f}`)),
+    ];
+    expect(route).not.toMatch(new RegExp(`\\b(?:${writers.join('|')})\\s*\\(`));
   });
 
   test('maps each task action to one fixed canonical route and closed request body', () => {
@@ -213,7 +231,7 @@ describe('Ask Casey UI wiring', () => {
     expect(unknown.action_draft.status).toBe('draft');
   });
 
-  test('a task create is single-flight and a failed insert leaves a retryable inline error', async () => {
+  test('a task create is single-flight and a failed insert leaves an unknown outcome', async () => {
     let rejectWrite;
     const api = jest.fn(() => new Promise((_resolve, reject) => { rejectWrite = reject; }));
     const render = jest.fn();
@@ -236,7 +254,7 @@ describe('Ask Casey UI wiring', () => {
     expect(api).toHaveBeenCalledTimes(1);
     rejectWrite(new Error('Task insert failed'));
     await first;
-    expect(message.action_draft).toMatchObject({ status: 'draft', executing: false, action_error: 'Task insert failed' });
+    expect(message.action_draft).toMatchObject({ status: 'draft', executing: false, ambiguous_error: expect.stringContaining('Do not apply this card again') });
     expect(history).toEqual([]);
     expect(saveAssistantMessage).not.toHaveBeenCalled();
   });
@@ -288,7 +306,7 @@ describe('Ask Casey UI wiring', () => {
     expect(api).toHaveBeenCalledTimes(1);
   });
 
-  test('failed event writes stay retryable and saved results prevent history replay', async () => {
+  test('failed event writes remain unknown and saved results prevent history replay', async () => {
     const apply = actionSandbox().applyActionResults;
     const messages = [{ action_draft: { draft_id: 'event-2', kind: 'event.update.v1', status: 'draft' } },
       { action_result: { draft_id: 'event-2', kind: 'event.update.v1', event_id: 42 } }];
@@ -301,9 +319,9 @@ describe('Ask Casey UI wiring', () => {
       event: { event_id: 42, title: 'H', status: 'Scheduled', type: 'Hearing', kind: 'hearing', date: '2026-10-27', time: null, all_day: true },
       changes: { event_note: 'Updated' } } };
     await make(message);
-    expect(message.action_draft).toMatchObject({ status: 'draft', executing: false, action_error: 'Event update failed' });
+    expect(message.action_draft).toMatchObject({ status: 'draft', executing: false, ambiguous_error: expect.stringContaining('Do not apply this card again') });
     await make(message);
-    expect(api).toHaveBeenCalledTimes(2);
+    expect(api).toHaveBeenCalledTimes(1);
   });
 
   test('maps every appointment action to one canonical route and exact allowlisted body', () => {
@@ -368,7 +386,7 @@ describe('Ask Casey UI wiring', () => {
     expect(api).toHaveBeenCalledTimes(1);
   });
 
-  test('failed appointment writes stay retryable and saved results prevent replay', async () => {
+  test('failed appointment writes remain unknown and saved results prevent replay', async () => {
     const apply = actionSandbox().applyActionResults;
     const messages = [{ action_draft: { draft_id: 'appt-2', kind: 'appt.cancel.v1', status: 'draft' } },
       { action_result: { draft_id: 'appt-2', kind: 'appt.cancel.v1', appt_id: 55 } }];
@@ -382,9 +400,9 @@ describe('Ask Casey UI wiring', () => {
         provider: { label: 'Fred' }, google_calendar: { firm: true, provider: false } }, note: '', sms: false, email: false,
       confirm_message: '', cancel_gcal: true, create_task: false } };
     await execute(message);
-    expect(message.action_draft).toMatchObject({ status: 'draft', executing: false, action_error: 'Appointment cancel failed' });
+    expect(message.action_draft).toMatchObject({ status: 'draft', executing: false, ambiguous_error: expect.stringContaining('Do not apply this card again') });
     await execute(message);
-    expect(api).toHaveBeenCalledTimes(2);
+    expect(api).toHaveBeenCalledTimes(1);
   });
 
   test('maps every contact subrecord action to one canonical route and exact allowlisted body', () => {
@@ -437,7 +455,7 @@ describe('Ask Casey UI wiring', () => {
     await execute(message); expect(api).toHaveBeenCalledTimes(1);
   });
 
-  test('failed contact writes stay retryable and saved results prevent replay', async () => {
+  test('failed contact writes remain unknown and saved results prevent replay', async () => {
     const apply = actionSandbox().applyActionResults;
     const messages = [{ action_draft: { draft_id: 'contact-2', kind: 'contact.email.update.v1', status: 'draft' } },
       { action_result: { draft_id: 'contact-2', kind: 'contact.email.update.v1', contact_id: 1309, contact_label: 'Client' } }];
@@ -450,8 +468,8 @@ describe('Ask Casey UI wiring', () => {
       target: { id: 22, contact: { contact_id: 1309, label: 'Client' }, email: 'client@example.com', label: 'Personal', is_primary: false,
         start_date: '2026-01-01', notes: '', email_optout: false, expected_updated_at: '2026-10-20T10:00:00.000Z' }, changes: { label: 'Work' } } };
     await execute(message);
-    expect(message.action_draft).toMatchObject({ status: 'draft', executing: false, action_error: 'Contact update failed' });
-    await execute(message); expect(api).toHaveBeenCalledTimes(2);
+    expect(message.action_draft).toMatchObject({ status: 'draft', executing: false, ambiguous_error: expect.stringContaining('Do not apply this card again') });
+    await execute(message); expect(api).toHaveBeenCalledTimes(1);
   });
 
   test('uses exact structured follow-up queries and shell-native record links', () => {
@@ -691,9 +709,8 @@ describe('Ask Casey action freshness and applied-marker durability (review fix p
     expect(api.mock.calls[1]).toHaveLength(3);
   });
 
-  test('a retry of the same card reuses its key; a replay reports no second record', async () => {
+  test('a P4 replay reports no second record and an applied card never writes again', async () => {
     const api = jest.fn()
-      .mockRejectedValueOnce(new Error('network died'))
       .mockResolvedValueOnce({ status: 'success', task_id: 5, replayed: true });
     const P = { Swal: { fire: jest.fn().mockResolvedValue({ isConfirmed: true }) }, showTask: jest.fn(),
       tasksBadgeRefresh: jest.fn(), document: { getElementById: jest.fn(() => null) } };
@@ -702,16 +719,14 @@ describe('Ask Casey action freshness and applied-marker durability (review fix p
     const message = draft({ received_at: Date.now() });
 
     await execute(message);
-    expect(message.action_draft.action_error).toBe('network died');
     await execute(message);
-    // Same key both times: a retry must not look like a new intent.
+    expect(api).toHaveBeenCalledTimes(1);
     expect(api.mock.calls[0][3]).toEqual({ 'Idempotency-Key': 'd-1' });
-    expect(api.mock.calls[1][3]).toEqual({ 'Idempotency-Key': 'd-1' });
     expect(message.action_draft).toMatchObject({ status: 'applied', result_task_id: 5, replayed: true });
     expect(history[0].text).toBe('Create task had already been applied to task #5; nothing was created a second time.');
   });
 
-  test('an ambiguous 409 never offers the write again; an in-flight 409 stays retryable', async () => {
+  test('canonical unknown and in-flight outcomes both keep the ledger claim fenced', async () => {
     const ambiguous = Object.assign(new Error('no result recorded'), {
       status: 409, body: { idempotency: { outcome: 'unknown' } } });
     const api = jest.fn().mockRejectedValue(ambiguous);
@@ -733,10 +748,10 @@ describe('Ask Casey action freshness and applied-marker durability (review fix p
     const execute2 = actionSandbox({ P, api: api2, saveAssistantMessage: jest.fn() }).executeActionDraft;
     const retryable = draft({ received_at: Date.now() });
     await execute2(retryable);
-    expect(retryable.action_draft.action_error).toMatch(/still being applied/);
-    expect(retryable.action_draft).not.toHaveProperty('ambiguous_error');
+    expect(retryable.action_draft.ambiguous_error).toMatch(/Do not apply this card again/);
+    expect(retryable.action_draft).not.toHaveProperty('action_error');
     await execute2(retryable);
-    expect(api2).toHaveBeenCalledTimes(2);
+    expect(api2).toHaveBeenCalledTimes(1);
   });
 
   test('the card itself removes the write control once the outcome is unknown', () => {
@@ -767,8 +782,204 @@ describe('Ask Casey action freshness and applied-marker durability (review fix p
     expect(buttons(host2)).toEqual(['Copy details', 'Discard']);
   });
 
+  test('a refusal the server could read is reported as a refusal, not as an unknown outcome', async () => {
+    // The claim succeeded, then the canonical route REFUSED with a 4xx it had
+    // read. Nothing was written, so claiming it might have been would send
+    // staff hunting for a record that does not exist. The claim is spent
+    // either way, so the card still offers no write.
+    const refusals = [
+      [400, 'Task title is required'],
+      [403, 'Not permitted'],
+      [404, 'Task 44 not found'],
+      [422, 'Event is already Completed'],
+    ];
+    for (const [status, message] of refusals) {
+      const api = jest.fn(async (path) => {
+        if (path.includes('/claim')) return { outcome: 'in_flight', claimed: true, claim_token: 'tok-1' };
+        throw Object.assign(new Error(message), { status, body: { message } });
+      });
+      const P = { Swal: { fire: jest.fn().mockResolvedValue({ isConfirmed: true }) }, showTask: jest.fn() };
+      const execute = actionSandbox({ P, api, saveAssistantMessage: jest.fn() }).executeActionDraft;
+      const message_ = draft({ received_at: Date.now() });
+
+      await execute(message_);
+      expect(message_.action_draft.refusal_error).toBe(
+        `The server refused this (${message}). Nothing was written. Ask Casey to prepare the action again.`);
+      expect(message_.action_draft).not.toHaveProperty('ambiguous_error');
+      expect(message_.action_draft.status).toBe('draft');
+      // Spent claim: no second attempt, ever.
+      await execute(message_);
+      expect(api.mock.calls.filter(([p]) => !p.includes('/claim'))).toHaveLength(1);
+    }
+
+    // A 409 and anything 5xx or socket-dead stay AMBIGUOUS: appointment status
+    // conflicts reach the browser as 500 and the A5 stale preconditions as
+    // 409, and a conflict from a route we have not audited could still have
+    // written. Only a refusal we can read is certain.
+    for (const status of [409, 500, 503, undefined]) {
+      const api = jest.fn(async (path) => {
+        if (path.includes('/claim')) return { outcome: 'in_flight', claimed: true, claim_token: 'tok-2' };
+        throw Object.assign(new Error('conflict'), status ? { status } : {});
+      });
+      const P = { Swal: { fire: jest.fn().mockResolvedValue({ isConfirmed: true }) }, showTask: jest.fn() };
+      const execute = actionSandbox({ P, api, saveAssistantMessage: jest.fn() }).executeActionDraft;
+      const message_ = draft({ received_at: Date.now() });
+      await execute(message_);
+      expect(message_.action_draft.ambiguous_error).toMatch(/may already have been applied/);
+      expect(message_.action_draft).not.toHaveProperty('refusal_error');
+    }
+  });
+
+  test('a refused card shows the refusal and no write control', () => {
+    const { JSDOM } = require('jsdom');
+    const dom = new JSDOM('<!doctype html><div></div>');
+    const { document } = dom.window;
+    const { hydrateActionDraft, actionFamily } = actionSandbox({ document, navigator: dom.window.navigator });
+    const family = actionFamily({ kind: 'task.create.v1' });
+    const refused = draft({ received_at: Date.now(), refusal_error: 'The server refused this (nope). Nothing was written. Ask Casey to prepare the action again.' });
+    const host = document.createElement('div');
+    hydrateActionDraft(family, host, refused, refused.action_draft);
+
+    expect(host.querySelector('.action-draft-status').textContent).toBe('Refused — nothing written');
+    expect(host.textContent).toContain('The server refused this (nope).');
+    expect(host.textContent).not.toContain('may already have been applied');
+    expect([...host.querySelectorAll('button')].map((b) => b.textContent)).toEqual(['Copy details', 'Discard']);
+  });
+
+  test('the retry-receipt button is sized like the other card buttons', () => {
+    // It lives in the warning block beside the error it belongs to, so it is
+    // outside `.action-draft-actions button` and needs its own metrics.
+    expect(html).toContain("retry.className = 'action-draft-retry'");
+    expect(html).toMatch(/\.action-draft-actions button, \.action-draft-retry \{[^}]*font-size: 12px/);
+  });
+
   test('appointment review text never offers a client send', () => {
     const channels = new Function(`${fnSrc(html, 'apptChannelsText')};return apptChannelsText;`)(); // eslint-disable-line no-new-func
     expect(channels({ confirm_sms: true, confirm_message: 'Hi {{contacts.contact_ssn}}' })).toMatch(/^None — Ask Casey does not send/);
   });
+});
+
+describe('P5 durable applied-result ledger', () => {
+  const message = () => ({ action_draft: { draft_id: '147eb0a1-9f77-4de0-8f18-119665bcda0b',
+    kind: 'task.create.v1', status: 'draft', title: 'T', description: 'D', assignee: { user_id: 6, label: 'F' }, received_at: Date.now() } });
+  const parent = () => ({ Swal: { fire: jest.fn().mockResolvedValue({ isConfirmed: true }) },
+    showTask: jest.fn(), tasksBadgeRefresh: jest.fn() });
+
+  test('claim precedes the canonical write; receipt survives a chat save failure and excludes payload secrets', async () => {
+    const calls = [];
+    const ledgerApi = jest.fn(async (path, body) => {
+      calls.push(path.endsWith('/claim') ? 'claim' : 'receipt');
+      return path.endsWith('/claim') ? { outcome: 'in_flight', claimed: true, claim_token: 'private-receipt' } : { outcome: 'applied' };
+    });
+    const api = jest.fn(async () => { calls.push('write'); return { task_id: 71 }; });
+    const save = jest.fn(async () => { calls.push('chat'); throw new Error('offline'); });
+    const m = message();
+    await actionSandbox({ P: parent(), api, ledgerApi, saveAssistantMessage: save }).executeActionDraft(m);
+    expect({ calls, receipt: ledgerApi.mock.calls[1][1], draft: JSON.parse(JSON.stringify(m.action_draft)) }).toEqual({
+      calls: ['claim', 'write', 'receipt', 'chat'],
+      receipt: { claim_token: 'private-receipt', result: { task_id: 71 } },
+      draft: expect.objectContaining({ status: 'applied', result_task_id: 71, marker_error: expect.any(String) }),
+    });
+    expect(JSON.stringify(m)).not.toContain('private-receipt');
+  });
+
+  test('unknown claim and lost claim acknowledgement never reach a canonical writer', async () => {
+    for (const reply of [{ outcome: 'unknown' }, new Error('lost acknowledgement')]) {
+      const api = jest.fn(); const m = message();
+      const ledgerApi = jest.fn(async () => { if (reply instanceof Error) throw reply; return reply; });
+      const execute = actionSandbox({ P: parent(), api, ledgerApi }).executeActionDraft;
+      await execute(m); await execute(m);
+      expect({ writes: api.mock.calls.length, claims: ledgerApi.mock.calls.length, warning: m.action_draft.ambiguous_error })
+        .toEqual({ writes: 0, claims: 1, warning: expect.stringContaining('Do not apply this card again') });
+    }
+  });
+
+  test('an applied claim restores the record id without a canonical write', async () => {
+    const api = jest.fn(); const m = message();
+    const ledgerApi = jest.fn(async () => ({ outcome: 'applied', result: { task_id: 81 } }));
+    await actionSandbox({ P: parent(), api, ledgerApi }).executeActionDraft(m);
+    expect({ writes: api.mock.calls.length, status: m.action_draft.status, id: m.action_draft.result_task_id })
+      .toEqual({ writes: 0, status: 'applied', id: 81 });
+  });
+
+  test('receipt retries never repeat the canonical write; a retry button only saves the result', async () => {
+    const { JSDOM } = require('jsdom'); const dom = new JSDOM('<main></main>');
+    const api = jest.fn().mockResolvedValue({ task_id: 73 });
+    let fail = true;
+    const ledgerApi = jest.fn(async path => {
+      if (path.endsWith('/claim')) return { outcome: 'in_flight', claimed: true, claim_token: 'receipt' };
+      if (fail) throw new Error('receipt unavailable');
+      return { outcome: 'applied' };
+    });
+    const save = jest.fn(); const m = message();
+    const box = actionSandbox({ P: parent(), api, ledgerApi, saveAssistantMessage: save, document: dom.window.document });
+    await box.executeActionDraft(m);
+    const host = dom.window.document.querySelector('main');
+    box.hydrateActionDraft(box.actionFamily(m.action_draft), host, m, m.action_draft);
+    const retry = [...host.querySelectorAll('button')].find(b => b.textContent === 'Retry saving result');
+    expect({ writes: api.mock.calls.length, receiptAttempts: ledgerApi.mock.calls.length - 1, retry: !!retry, chat: save.mock.calls.length })
+      .toEqual({ writes: 1, receiptAttempts: 2, retry: true, chat: 0 });
+    fail = false; retry.click();
+    await new Promise(resolve => setImmediate(resolve));
+    expect({ writes: api.mock.calls.length, receiptAttempts: ledgerApi.mock.calls.length - 1, chat: save.mock.calls.length,
+      error: m.action_draft.marker_error, capability: m.action_draft.__ledgerReceipt })
+      .toEqual({ writes: 1, receiptAttempts: 3, chat: 1, error: undefined, capability: undefined });
+    dom.window.close();
+  });
+
+  test('ledger overrides payload markers; missing rows preserve legacy results and old kinds stay inert', () => {
+    const box = actionSandbox();
+    const drafts = ['applied', 'unknown', 'not-applied', 'legacy'].map(key => ({ action_draft: {
+      draft_id: key, kind: 'task.create.v1', status: 'applied', result_task_id: 999 } }));
+    const messages = [...drafts, ...drafts.map(m => ({ action_result: { draft_id: m.action_draft.draft_id, kind: 'task.create.v1', task_id: 999 } }))];
+    const restored = box.applyActionResults(messages, [
+      { draft_id: 'applied', kind: 'task.create.v1', outcome: 'applied', result: { task_id: 82 } },
+      { draft_id: 'unknown', kind: 'task.create.v1', outcome: 'unknown' },
+      { draft_id: 'not-applied', kind: 'task.create.v1', outcome: 'not-applied' },
+    ]);
+    expect(restored.slice(0, 4).map(m => [m.action_draft.status, m.action_draft.result_task_id, !!m.action_draft.ambiguous_error]))
+      .toEqual([['applied', 82, false], ['draft', undefined, true], ['draft', undefined, false], ['applied', 999, false]]);
+    expect(box.actionFamily({ kind: 'task.create.v0' })).toBeNull();
+  });
+});
+
+test('opening saved history reconciles receipts before rendering and fails closed when reconciliation is unavailable', async () => {
+  const id = '147eb0a1-9f77-4de0-8f18-119665bcda0b';
+  for (const unavailable of [false, true]) {
+    const api = jest.fn(async path => {
+      if (path === '/api/assistant/chats/42') return { chat: { id: 42, messages: [{ role: 'assistant', text: 'Prepared', payload: {
+        action_draft: { draft_id: id, kind: 'task.create.v1', status: 'draft' },
+      } }] } };
+      if (unavailable) throw new Error('reconciliation unavailable');
+      return { actions: [{ draft_id: id, kind: 'task.create.v1', outcome: 'applied', result: { task_id: 83 } }] };
+    });
+    const render = jest.fn(); const historyList = { innerHTML: '' };
+    const open = new Function('api', 'applyActionResults', 'render', 'historyList', `
+      let history = []; let currentChatId = null; const busy = false;
+      const modelMode = {}; const historyPanel = {}; const input = { focus() {} };
+      const esc = value => value;
+      ${fnSrcAuto(html, 'openSavedChat')}
+      return { openSavedChat, messages: () => history };
+    `)(api, actionSandbox().applyActionResults, render, historyList);
+    await open.openSavedChat(42);
+    expect({ requests: api.mock.calls, renders: render.mock.calls.length,
+      messages: open.messages(), error: historyList.innerHTML }).toEqual({
+      requests: [['/api/assistant/chats/42', null, 'GET'], ['/api/assistant/actions/reconcile', { draft_ids: [id] }, 'POST']],
+      renders: unavailable ? 0 : 1,
+      messages: unavailable ? [] : [{ role: 'assistant', text: 'Prepared', action_draft: {
+        draft_id: id, kind: 'task.create.v1', status: 'applied', result_task_id: 83,
+      } }],
+      error: unavailable ? '<div class="history-empty">reconciliation unavailable</div>' : '',
+    });
+  }
+});
+
+test('the browser requests ledger-backed drafts on each automatic read attempt', async () => {
+  const api = jest.fn().mockResolvedValue({ outcome: 'answer' });
+  const execute = new Function('api', `const history = []; function render() {};
+    ${fnSrcAuto(html, 'executeAutomatically')}; return executeAutomatically;`)(api);
+  await execute('read-ticket', []);
+  expect(api.mock.calls).toEqual([['/api/assistant/execute', {
+    ticket: 'read-ticket', temporary_attachments: [], action_ledger_version: 1,
+  }]]);
 });
