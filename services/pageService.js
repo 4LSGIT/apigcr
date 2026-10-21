@@ -145,8 +145,13 @@ function assertHostAllowed(host) {
 
   const landing = cfgList('landing_hosts').map(normalizeHost).filter(Boolean);
   if (!landing.length) bad('host must be blank: no landing hosts are registered');
-  if (!landing.includes(host)) {
-    bad(`host must be a registered landing host (${landing.join(', ')}) — ask IT to register a new domain`);
+  // Only the FIRST (canonical) landing host serves pins: pageHostMiddleware
+  // canonicalizes every GET on a secondary landing host to landing_hosts[0]
+  // BEFORE the pin lookup, so a pin on a secondary host would save and never
+  // serve. Refuse it at write (Fred's ruling 2026-10-22); revisit with YCv3
+  // site binding (ref/plans.md "Pinned pages on a second public domain").
+  if (host !== landing[0]) {
+    bad(`host must be the canonical landing host (${landing[0]}) — secondary landing hosts redirect before pins are looked up`);
   }
 }
 

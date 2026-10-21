@@ -91,9 +91,16 @@ part of this plan.
 
 **Defaults pending Fred's ruling** (he answered "idk"; each default stands until
 he rules):
-- A15 (e-signature), A17 (workflows), A18 (sequences/trigger rules): questionable
-  for a four-user firm. Default: not scheduled; nothing past A14 is planned
-  until Fred picks which, if any, he wants.
+- A15 (e-signature), A17 (workflows), A18 (sequences/trigger rules): RULED —
+  Fred, 2026-10-22: workflow/sequence authoring is the STRATEGIC CORE of the
+  Casey integration, not an optional extra ("90% of the reason to have an AI
+  integration": Casey creating, editing, debugging and explaining the
+  template-driven automations for non-dev users, especially under YCv3). The
+  2026-10-21 review's "questionable for a four-user firm" framing is
+  superseded. A17/A18 stay on the roadmap; their detailed plan (and A15's
+  place) comes out of a dedicated Casey planning session with Fred — nothing
+  past A14 is SCHEDULED until that session happens, but do not treat them as
+  dropped.
 - Draft lifetime — expire vs click-time revalidation: default is expiry (15-min
   TTL + no write from history) for the existing families; new families add
   click-time revalidation per correction 1.

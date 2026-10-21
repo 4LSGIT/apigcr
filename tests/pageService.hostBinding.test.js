@@ -95,16 +95,21 @@ describe('create refuses a host outside landing_hosts', () => {
   });
 });
 
-describe('create accepts registered landing hosts and host-less pages', () => {
+describe('create accepts ONLY the canonical landing host, and host-less pages', () => {
   test.each([
     ['the canonical landing host', '4lsg.com', '4lsg.com'],
-    ['a secondary landing host', 'www.4lsg.com', 'www.4lsg.com'],
     ['a landing host pasted as a URL', 'HTTPS://4LSG.com:443/x', '4lsg.com'],
   ])('%s', async (_label, host, stored) => {
     const db = fakeDb();
     await create(db, { host, path: '/ch7' });
     expect(db.writes).toHaveLength(1);
     expect(db.writes[0].params[0].host).toBe(stored);
+  });
+
+  test('a SECONDARY landing host is refused at write (Fred 2026-10-22): its GETs redirect to the canonical host before pins are looked up, so the pin would save and never serve', async () => {
+    const db = fakeDb();
+    await expect(create(db, { host: 'www.4lsg.com', path: '/ch7' })).rejects.toMatchObject({ status: 400 });
+    expect(db.writes).toHaveLength(0);
   });
 
   test('no host (the /p/<slug> + root-slug case every live row uses)', async () => {

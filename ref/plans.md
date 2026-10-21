@@ -471,7 +471,7 @@ The case / contact Communications tab (AI_CONTEXT §20, manual
   later, with phone numbers but no case). Needs a pending-send record the
   webhook can claim (line + to + body + window) to stamp
   `log_about_type='case'`.
-- **Ruling pending: gate Logged-only rows?** Logged-only feed rows mirror the
+- **RULED (Fred, 2026-10-22): accept for now.** Logged-only rows stay ungated (parity with the Log tab, four trusted staff); make the real call inside a future roles/access arc. The `/api/log` fallback-suppression alignment below stays wanted, low priority. Original question kept for that arc: Logged-only feed rows mirror the
   Log tab's exposure — no mailbox / phone-line grant check — while
   source-backed rows are grant-gated. Fred to rule whether Logged-only email /
   sms / call rows should be gated (and how, given they have no channel), and
@@ -532,7 +532,7 @@ Active surfaces with known next steps.
 
 ## Feature plans
 
-- **Pinned pages on a second public domain (2026-10-21).** `pages.host` is bound to `landing_hosts` (pageService.assertHostAllowed), but the landing branch of `pageHostMiddleware` canonicalizes every GET on a non-first landing host to `landing_hosts[0]` BEFORE the pin lookup, so a page pinned to e.g. `www.4lsg.com` is accepted at write and never served by GET. No live row is affected (all 8 `pages` rows had `host` NULL on 2026-10-21). Pick one when a second marketing domain is wanted: refuse non-canonical hosts at write, or check pins before canonicalizing (still landing-origin only, so safe). Converges with YCv3 multi-site (`pages.site_id`).
+- **Pinned pages on a second public domain (2026-10-21).** `pages.host` is bound to `landing_hosts` (pageService.assertHostAllowed), but the landing branch of `pageHostMiddleware` canonicalizes every GET on a non-first landing host to `landing_hosts[0]` BEFORE the pin lookup, so a page pinned to e.g. `www.4lsg.com` is accepted at write and never served by GET. No live row is affected (all 8 `pages` rows had `host` NULL on 2026-10-21). RULED (Fred, 2026-10-22): refuse non-canonical hosts at write — done in `pageService.assertHostAllowed` (only `landing_hosts[0]` is accepted). Revisit — check pins before canonicalizing — when a second marketing domain is wanted; converges with YCv3 multi-site (`pages.site_id`).
 - **YisraMail direction (review 2026-10-21; Fred: yes, future plan, nothing
   started).** YisraMail is a bulk **transport** — an email adapter /
   credential carrying `bulk_ok` (`ref/MAILBOX_SYSTEM_DESIGN.md` §4.2: specified,
@@ -549,9 +549,10 @@ Active surfaces with known next steps.
   hub for humans), non-`bulk_ok` credentials refused above the cap, a
   campaign-send capability (every campaign route is plain `jwtOrApiKey`: any
   staff login sends as any firm address), and opt-out checks in the sequence
-  send path (sequences check none). **Cap size pending Fred — check live
-  campaign sizes first** (`campaigns.contact_count`; court-closure notices
-  plausibly exceed ~50); configurable per firm.
+  send path (sequences check none). **Cap RULED (Fred, 2026-10-22): 50
+  default, firm-configurable** — live `campaigns.contact_count` was checked
+  first: the largest campaign ever sent is 12 contacts, so 50 touches no real
+  use today.
 
 - **Opt-out system.** Four-step plan: (A) contact form toggles, (B) warn-but-don't-block on direct sends (Swal confirmation), (C) opted-out badges, (D) inbound STOP handler via YisraHook.
 
@@ -605,7 +606,7 @@ Active surfaces with known next steps.
 
 ## Security cleanups (mostly blocked on legacy frontend retirement)
 
-- **Plaintext `users.password`: order of the retirement** (View-as fix, 2026-10-21; the column-drop gate in CLAUDE.md applies at the end). Writers today: `auth.password.js` reset + change, `admin.users.js` set-password. Code readers: `/db` (`dbQuery.js` — LIVE: Pabbly Connect as `automations`, 75 calls 2026-08-03 → 2026-10-19 in `legacy_route_log`, one as `fred`), `/db64`, `/unplacehold`, the legacy `/dropbox/*` routes. (`/auth/P_validate` was deleted in the same fix: 0 calls since 2026-07-31.) Stopping the writes first does NOT retire anything — the stale plaintext keeps authenticating `/db` with the OLD password. So: (1) move the Pabbly `/db` flow off plaintext and delete the four reader routes; (2) stop all three writers in one slice; (3) Fred-run migration NULLs the column, then DROPs it after the drop-a-column sweep (code, schema objects, stored report/workflow/tool definitions, `lib/reportSchema/manifest.js` `users_password`).
+- **Plaintext `users.password`: order of the retirement** (View-as fix, 2026-10-21; RULED go — Fred, 2026-10-22: proceed; Fred switches the Pabbly connection's auth to an API key as step 1's opener, then the slices below; the column-drop gate in CLAUDE.md applies at the end). Writers today: `auth.password.js` reset + change, `admin.users.js` set-password. Code readers: `/db` (`dbQuery.js` — LIVE: Pabbly Connect as `automations`, 75 calls 2026-08-03 → 2026-10-19 in `legacy_route_log`, one as `fred`), `/db64`, `/unplacehold`, the legacy `/dropbox/*` routes. (`/auth/P_validate` was deleted in the same fix: 0 calls since 2026-07-31.) Stopping the writes first does NOT retire anything — the stale plaintext keeps authenticating `/db` with the OLD password. So: (1) move the Pabbly `/db` flow off plaintext and delete the four reader routes; (2) stop all three writers in one slice; (3) Fred-run migration NULLs the column, then DROPs it after the drop-a-column sweep (code, schema objects, stored report/workflow/tool definitions, `lib/reportSchema/manifest.js` `users_password`).
 
 - **`/db` and raw-SQL endpoint kill** — blocked on old frontend retirement.
 
