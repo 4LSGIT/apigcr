@@ -28,6 +28,59 @@ function fnSrc(src, name) {
   throw new Error(`function ${name} unbalanced`);
 }
 
+function fnSrcAuto(src, name) {
+  const body = fnSrc(src, name);
+  return new RegExp(`async\\s+function\\s+${name}\\s*\\(`).test(src) ? `async ${body}` : body;
+}
+
+// `const NAME = …;` — the terminating semicolon at bracket depth 0. Used for
+// the kind Sets and for ACTION_FAMILIES, the browser's action registry.
+function constSrc(src, name) {
+  const match = new RegExp(`const\\s+${name}\\s*=`).exec(src);
+  if (!match) throw new Error(`const ${name} not found`);
+  let depth = 0;
+  for (let i = match.index; i < src.length; i++) {
+    const c = src[i];
+    if ('([{'.includes(c)) depth++;
+    else if (')]}'.includes(c)) depth--;
+    else if (c === ';' && depth === 0) return src.slice(match.index, i + 1);
+  }
+  throw new Error(`const ${name} unterminated`);
+}
+
+// The whole action region, rebuilt from the page's own source: the four
+// families' builders, the registry, and the one shared engine. Every
+// behavioural test below runs the real functions out of assistant.html —
+// nothing here re-implements them.
+const ACTION_FNS = ['appendDraftField', 'appendDraftFieldsFromText', 'actionDraftStale', 'askCaseyAgain',
+  'hydrateStaleDraft', 'appendMarkerError', 'recordActionResult',
+  'taskCreateBody', 'taskUpdateBody', 'taskActionLabel', 'taskActionRequest', 'taskDraftText',
+  'taskDraftConfirmation', 'taskActionResult', 'taskDraftFields',
+  'eventActionLabel', 'eventTypeText', 'eventProviderText', 'eventReminderText', 'eventDraftText',
+  'eventCreateBody', 'eventUpdateBody', 'eventActionRequest', 'eventActionResult',
+  'apptActionLabel', 'apptChannelsText', 'apptDraftText', 'apptCreateBody', 'apptActionRequest', 'apptActionResult',
+  'contactSubrecordActionLabel', 'contactAddressText', 'contactSubrecordValue', 'contactSubrecordDraftText',
+  'contactSubrecordCreateBody', 'contactSubrecordActionRequest', 'contactSubrecordActionResult',
+  'actionFamily', 'isActionDraft', 'actionAppliedId', 'markActionApplied', 'confirmActionDraft',
+  'executeActionDraft', 'applyActionResults'];
+
+function actionSandbox(deps = {}) {
+  const registry = constSrc(html, 'ACTION_FAMILIES');
+  expect(registry.endsWith('];')).toBe(true);
+  expect(registry).toContain("id: 'task'");
+  const src = [
+    'const ACTION_DRAFT_TTL_MS=15*60*1000;',
+    constSrc(html, 'TASK_ACTION_KINDS'), constSrc(html, 'EVENT_ACTION_KINDS'),
+    constSrc(html, 'APPT_ACTION_KINDS'), constSrc(html, 'CONTACT_SUBRECORD_ACTION_KINDS'),
+    ...ACTION_FNS.map((name) => fnSrcAuto(html, name)),
+    registry,
+    'return { executeActionDraft, applyActionResults, actionFamily, isActionDraft };',
+  ].join('\n');
+  const supplied = { P: {}, api: jest.fn(), render: jest.fn(), history: [], saveAssistantMessage: jest.fn(), openEntity: jest.fn(), input: { value: '', focus: jest.fn() }, ...deps };
+  const names = Object.keys(supplied);
+  return new Function(...names, src)(...names.map((name) => supplied[name])); // eslint-disable-line no-new-func
+}
+
 describe('Ask Casey UI wiring', () => {
   test('its inline script parses as JavaScript', () => {
     const scripts = [...html.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/gi)]
@@ -56,13 +109,13 @@ describe('Ask Casey UI wiring', () => {
     expect(html).toContain("'Before applying this action:'");
     expect(html).toContain("'Confirm only if every value is correct. Cancel returns to this unchanged draft.'");
     expect(html).toContain('Normal task notifications and reminders may run');
-    expect(html).toContain('navigator.clipboard.writeText(taskDraftText(draft))');
+    expect(html).toContain('navigator.clipboard.writeText(family.text(draft))');
     expect(html).toContain('delete message.action_draft; render()');
     expect(html).toContain('...(r.action_draft ? { action_draft: { ...r.action_draft, received_at: Date.now() } } : {})');
     expect(html).toContain('...(message.action_draft ? { action_draft: message.action_draft } : {})');
     expect(html).toContain("return { path: '/api/tasks', method: 'POST', body: taskCreateBody(draft) }");
     expect(html).toContain("P.Swal.fire({");
-    expect(html).toContain('if (!await confirmTaskDraft(draft)) return');
+    expect(html).toContain('if (!await confirmActionDraft(family, draft)) return');
     expect(html).not.toContain('window.confirm(');
     expect(route).not.toContain('/api/assistant/actions');
   });
@@ -99,9 +152,7 @@ describe('Ask Casey UI wiring', () => {
     const P = { Swal: { fire: jest.fn().mockResolvedValue({ isConfirmed: false }) }, showTask: jest.fn(), tasksBadgeRefresh: jest.fn(), document: { getElementById: jest.fn(() => ({ contentWindow: { reloadTasks } })) } };
     const history = [];
     const saveAssistantMessage = jest.fn().mockResolvedValue();
-    const make = new Function('P', 'api', 'render', 'history', 'saveAssistantMessage',
-      `const TASK_ACTION_KINDS=new Set(['task.create.v1']);${fnSrc(html, 'isTaskActionDraft')};${fnSrc(html, 'taskCreateBody')};${fnSrc(html, 'taskUpdateBody')};${fnSrc(html, 'taskActionLabel')};${fnSrc(html, 'taskActionRequest')};${fnSrc(html, 'taskDraftText')};${fnSrc(html, 'taskDraftConfirmation')};async ${fnSrc(html, 'confirmTaskDraft')};const ACTION_DRAFT_TTL_MS=15*60*1000;${fnSrc(html, 'actionDraftStale')};async ${fnSrc(html, 'recordActionResult')};async ${fnSrc(html, 'executeTaskDraft')};return executeTaskDraft;` // eslint-disable-line no-new-func
-    )(P, api, render, history, saveAssistantMessage);
+    const make = actionSandbox({ P, api, render, history, saveAssistantMessage }).executeActionDraft;
     const message = { action_draft: {
       draft_id: 'draft-123', kind: 'task.create.v1', status: 'draft', title: 'Review Ask Casey', description: 'Try it.',
       assignee: { user_id: 1, label: 'Stuart' }, link: { type: 'contact', id: '1001', label: 'Fred' },
@@ -139,7 +190,7 @@ describe('Ask Casey UI wiring', () => {
   });
 
   test('a saved action result restores its exact proposal as applied without another write', () => {
-    const apply = new Function(`const TASK_ACTION_KINDS=new Set(['task.create.v1','task.cancel.v1']);${fnSrc(html, 'applyTaskActionResults')}; return applyTaskActionResults;`)(); // eslint-disable-line no-new-func
+    const apply = actionSandbox().applyActionResults;
     const messages = [
       { action_draft: { draft_id: 'one', kind: 'task.create.v1', status: 'draft' } },
       { action_draft: { draft_id: 'two', kind: 'task.create.v1', status: 'draft' } },
@@ -148,6 +199,18 @@ describe('Ask Casey UI wiring', () => {
     expect(apply(messages)).toBe(messages);
     expect(messages[0].action_draft).toMatchObject({ status: 'applied', result_task_id: 91 });
     expect(messages[1].action_draft).toMatchObject({ status: 'draft' });
+
+    // A stored result with no usable id must be IGNORED, not half-applied: a
+    // draft marked applied with a NaN id reads as unapplied to the card, which
+    // would then offer the write a second time.
+    for (const broken of [{ task_id: 0 }, { task_id: null }, { task_id: 'nine' }, {}]) {
+      const one = { action_draft: { draft_id: 'three', kind: 'task.create.v1', status: 'draft' } };
+      apply([one, { action_result: { kind: 'task.create.v1', draft_id: 'three', ...broken } }]);
+      expect(one.action_draft).toEqual({ draft_id: 'three', kind: 'task.create.v1', status: 'draft' });
+    }
+    const unknown = { action_draft: { draft_id: 'four', kind: 'task.create.v1', status: 'draft' } };
+    apply([unknown, { action_result: { kind: 'task.delete.v1', draft_id: 'four', task_id: 5 } }]);
+    expect(unknown.action_draft.status).toBe('draft');
   });
 
   test('a task create is single-flight and a failed insert leaves a retryable inline error', async () => {
@@ -157,9 +220,7 @@ describe('Ask Casey UI wiring', () => {
     const history = [];
     const saveAssistantMessage = jest.fn();
     const P = { Swal: { fire: jest.fn().mockResolvedValue({ isConfirmed: true }) }, showTask: jest.fn() };
-    const make = new Function('P', 'api', 'render', 'history', 'saveAssistantMessage',
-      `const TASK_ACTION_KINDS=new Set(['task.create.v1']);${fnSrc(html, 'isTaskActionDraft')};${fnSrc(html, 'taskCreateBody')};${fnSrc(html, 'taskUpdateBody')};${fnSrc(html, 'taskActionLabel')};${fnSrc(html, 'taskActionRequest')};${fnSrc(html, 'taskDraftText')};${fnSrc(html, 'taskDraftConfirmation')};async ${fnSrc(html, 'confirmTaskDraft')};const ACTION_DRAFT_TTL_MS=15*60*1000;${fnSrc(html, 'actionDraftStale')};async ${fnSrc(html, 'recordActionResult')};async ${fnSrc(html, 'executeTaskDraft')};return executeTaskDraft;` // eslint-disable-line no-new-func
-    )(P, api, render, history, saveAssistantMessage);
+    const make = actionSandbox({ P, api, render, history, saveAssistantMessage }).executeActionDraft;
     const message = { action_draft: {
       draft_id: 'draft-fail', kind: 'task.create.v1', status: 'draft', title: 'Try Casey', description: 'Review it.',
       assignee: { user_id: 1, label: 'Stuart' }, link: null, start_date: null, due_date: null,
@@ -205,9 +266,7 @@ describe('Ask Casey UI wiring', () => {
     const api = jest.fn(() => new Promise((resolve) => { resolveWrite = resolve; }));
     const render = jest.fn(); const history = []; const saveAssistantMessage = jest.fn().mockResolvedValue();
     const P = { Swal: { fire: jest.fn().mockResolvedValue({ isConfirmed: false }) }, showEvent: jest.fn() };
-    const make = new Function('P', 'api', 'render', 'history', 'saveAssistantMessage',
-      `const EVENT_ACTION_KINDS=new Set(['event.cancel.v1']);${fnSrc(html, 'isEventActionDraft')};${fnSrc(html, 'eventActionLabel')};${fnSrc(html, 'eventTypeText')};${fnSrc(html, 'eventProviderText')};${fnSrc(html, 'eventReminderText')};${fnSrc(html, 'eventDraftText')};${fnSrc(html, 'eventCreateBody')};${fnSrc(html, 'eventUpdateBody')};${fnSrc(html, 'eventActionRequest')};async ${fnSrc(html, 'confirmEventDraft')};const ACTION_DRAFT_TTL_MS=15*60*1000;${fnSrc(html, 'actionDraftStale')};async ${fnSrc(html, 'recordActionResult')};async ${fnSrc(html, 'executeEventDraft')};return executeEventDraft;` // eslint-disable-line no-new-func
-    )(P, api, render, history, saveAssistantMessage);
+    const make = actionSandbox({ P, api, render, history, saveAssistantMessage }).executeActionDraft;
     const message = { action_draft: { draft_id: 'event-1', kind: 'event.cancel.v1', status: 'draft',
       event: { event_id: 42, title: 'Hearing', status: 'Scheduled', type: 'Hearing', kind: 'hearing', date: '2026-10-27', time: '09:30:00', all_day: false },
       resolution: 'cancelled', delete_gcal: true } };
@@ -230,16 +289,14 @@ describe('Ask Casey UI wiring', () => {
   });
 
   test('failed event writes stay retryable and saved results prevent history replay', async () => {
-    const apply = new Function('EVENT_ACTION_KINDS', `${fnSrc(html, 'applyEventActionResults')};return applyEventActionResults;`)(new Set(['event.update.v1'])); // eslint-disable-line no-new-func
+    const apply = actionSandbox().applyActionResults;
     const messages = [{ action_draft: { draft_id: 'event-2', kind: 'event.update.v1', status: 'draft' } },
       { action_result: { draft_id: 'event-2', kind: 'event.update.v1', event_id: 42 } }];
     expect(apply(messages)[0].action_draft).toMatchObject({ status: 'applied', result_event_id: 42 });
 
     const api = jest.fn().mockRejectedValue(new Error('Event update failed')); const render = jest.fn();
     const P = { Swal: { fire: jest.fn().mockResolvedValue({ isConfirmed: true }) }, showEvent: jest.fn() };
-    const make = new Function('P', 'api', 'render', 'history', 'saveAssistantMessage',
-      `const EVENT_ACTION_KINDS=new Set(['event.update.v1']);${fnSrc(html, 'isEventActionDraft')};${fnSrc(html, 'eventActionLabel')};${fnSrc(html, 'eventTypeText')};${fnSrc(html, 'eventProviderText')};${fnSrc(html, 'eventReminderText')};${fnSrc(html, 'eventDraftText')};${fnSrc(html, 'eventCreateBody')};${fnSrc(html, 'eventUpdateBody')};${fnSrc(html, 'eventActionRequest')};async ${fnSrc(html, 'confirmEventDraft')};const ACTION_DRAFT_TTL_MS=15*60*1000;${fnSrc(html, 'actionDraftStale')};async ${fnSrc(html, 'recordActionResult')};async ${fnSrc(html, 'executeEventDraft')};return executeEventDraft;` // eslint-disable-line no-new-func
-    )(P, api, render, [], jest.fn());
+    const make = actionSandbox({ P, api, render }).executeActionDraft;
     const message = { action_draft: { draft_id: 'event-fail', kind: 'event.update.v1', status: 'draft',
       event: { event_id: 42, title: 'H', status: 'Scheduled', type: 'Hearing', kind: 'hearing', date: '2026-10-27', time: null, all_day: true },
       changes: { event_note: 'Updated' } } };
@@ -288,9 +345,7 @@ describe('Ask Casey UI wiring', () => {
     const api = jest.fn(() => new Promise((resolve) => { resolveWrite = resolve; }));
     const render = jest.fn(); const history = []; const saveAssistantMessage = jest.fn().mockResolvedValue();
     const P = { Swal: { fire: jest.fn().mockResolvedValue({ isConfirmed: false }) }, showAppt: jest.fn() };
-    const execute = new Function('P', 'api', 'render', 'history', 'saveAssistantMessage',
-      `const APPT_ACTION_KINDS=new Set(['appt.reschedule.v1']);${fnSrc(html, 'isApptActionDraft')};${fnSrc(html, 'apptActionLabel')};${fnSrc(html, 'apptChannelsText')};${fnSrc(html, 'apptDraftText')};${fnSrc(html, 'apptCreateBody')};${fnSrc(html, 'apptActionRequest')};async ${fnSrc(html, 'confirmApptDraft')};const ACTION_DRAFT_TTL_MS=15*60*1000;${fnSrc(html, 'actionDraftStale')};async ${fnSrc(html, 'recordActionResult')};async ${fnSrc(html, 'executeApptDraft')};return executeApptDraft;` // eslint-disable-line no-new-func
-    )(P, api, render, history, saveAssistantMessage);
+    const execute = actionSandbox({ P, api, render, history, saveAssistantMessage }).executeActionDraft;
     const message = { action_draft: { draft_id: 'appt-1', kind: 'appt.reschedule.v1', status: 'draft',
       appt: { appt_id: 55, type: 'Consultation', status: 'Scheduled', date: '2026-10-27 09:30:00', note: 'Existing note', contact: { label: 'Client' }, case: null,
         provider: { label: 'Fred' }, google_calendar: { firm: true, provider: true } },
@@ -314,16 +369,14 @@ describe('Ask Casey UI wiring', () => {
   });
 
   test('failed appointment writes stay retryable and saved results prevent replay', async () => {
-    const apply = new Function('APPT_ACTION_KINDS', `${fnSrc(html, 'applyApptActionResults')};return applyApptActionResults;`)(new Set(['appt.cancel.v1'])); // eslint-disable-line no-new-func
+    const apply = actionSandbox().applyActionResults;
     const messages = [{ action_draft: { draft_id: 'appt-2', kind: 'appt.cancel.v1', status: 'draft' } },
       { action_result: { draft_id: 'appt-2', kind: 'appt.cancel.v1', appt_id: 55 } }];
     expect(apply(messages)[0].action_draft).toMatchObject({ status: 'applied', result_appt_id: 55 });
 
     const api = jest.fn().mockRejectedValue(new Error('Appointment cancel failed')); const render = jest.fn();
     const P = { Swal: { fire: jest.fn().mockResolvedValue({ isConfirmed: true }) }, showAppt: jest.fn() };
-    const execute = new Function('P', 'api', 'render', 'history', 'saveAssistantMessage',
-      `const APPT_ACTION_KINDS=new Set(['appt.cancel.v1']);${fnSrc(html, 'isApptActionDraft')};${fnSrc(html, 'apptActionLabel')};${fnSrc(html, 'apptChannelsText')};${fnSrc(html, 'apptDraftText')};${fnSrc(html, 'apptCreateBody')};${fnSrc(html, 'apptActionRequest')};async ${fnSrc(html, 'confirmApptDraft')};const ACTION_DRAFT_TTL_MS=15*60*1000;${fnSrc(html, 'actionDraftStale')};async ${fnSrc(html, 'recordActionResult')};async ${fnSrc(html, 'executeApptDraft')};return executeApptDraft;` // eslint-disable-line no-new-func
-    )(P, api, render, [], jest.fn());
+    const execute = actionSandbox({ P, api, render }).executeActionDraft;
     const message = { action_draft: { draft_id: 'appt-fail', kind: 'appt.cancel.v1', status: 'draft',
       appt: { appt_id: 55, type: 'Consultation', status: 'Scheduled', date: '2026-10-27 09:30:00', contact: { label: 'Client' }, case: null,
         provider: { label: 'Fred' }, google_calendar: { firm: true, provider: false } }, note: '', sms: false, email: false,
@@ -364,9 +417,7 @@ describe('Ask Casey UI wiring', () => {
     const api = jest.fn(() => new Promise((resolve) => { resolveWrite = resolve; }));
     const render = jest.fn(); const history = []; const saveAssistantMessage = jest.fn().mockResolvedValue(); const openEntity = jest.fn();
     const P = { Swal: { fire: jest.fn().mockResolvedValue({ isConfirmed: false }) } };
-    const execute = new Function('P', 'api', 'render', 'history', 'saveAssistantMessage', 'openEntity',
-      `const CONTACT_SUBRECORD_ACTION_KINDS=new Set(['contact.phone.end.v1']);${fnSrc(html, 'isContactSubrecordActionDraft')};${fnSrc(html, 'contactSubrecordActionLabel')};${fnSrc(html, 'contactAddressText')};${fnSrc(html, 'contactSubrecordValue')};${fnSrc(html, 'contactSubrecordDraftText')};${fnSrc(html, 'contactSubrecordCreateBody')};${fnSrc(html, 'contactSubrecordActionRequest')};async ${fnSrc(html, 'confirmContactSubrecordDraft')};const ACTION_DRAFT_TTL_MS=15*60*1000;${fnSrc(html, 'actionDraftStale')};async ${fnSrc(html, 'recordActionResult')};async ${fnSrc(html, 'executeContactSubrecordDraft')};return executeContactSubrecordDraft;` // eslint-disable-line no-new-func
-    )(P, api, render, history, saveAssistantMessage, openEntity);
+    const execute = actionSandbox({ P, api, render, history, saveAssistantMessage, openEntity }).executeActionDraft;
     const message = { action_draft: { draft_id: 'contact-1', kind: 'contact.phone.end.v1', family: 'phone', status: 'draft',
       target: { id: 21, contact: { contact_id: 1309, label: 'Client' }, phone: '2485550100', label: 'Mobile', is_primary: true,
         start_date: '2026-01-01', notes: '', sms_optout: false, mms_capable: true, expected_updated_at: '2026-10-20T10:00:00.000Z' },
@@ -387,16 +438,14 @@ describe('Ask Casey UI wiring', () => {
   });
 
   test('failed contact writes stay retryable and saved results prevent replay', async () => {
-    const apply = new Function('CONTACT_SUBRECORD_ACTION_KINDS', `${fnSrc(html, 'applyContactSubrecordActionResults')};return applyContactSubrecordActionResults;`)(new Set(['contact.email.update.v1'])); // eslint-disable-line no-new-func
+    const apply = actionSandbox().applyActionResults;
     const messages = [{ action_draft: { draft_id: 'contact-2', kind: 'contact.email.update.v1', status: 'draft' } },
       { action_result: { draft_id: 'contact-2', kind: 'contact.email.update.v1', contact_id: 1309, contact_label: 'Client' } }];
     expect(apply(messages)[0].action_draft).toMatchObject({ status: 'applied', result_contact_id: 1309, result_contact_label: 'Client' });
 
     const api = jest.fn().mockRejectedValue(new Error('Contact update failed')); const render = jest.fn();
     const P = { Swal: { fire: jest.fn().mockResolvedValue({ isConfirmed: true }) } };
-    const execute = new Function('P', 'api', 'render', 'history', 'saveAssistantMessage', 'openEntity',
-      `const CONTACT_SUBRECORD_ACTION_KINDS=new Set(['contact.email.update.v1']);${fnSrc(html, 'isContactSubrecordActionDraft')};${fnSrc(html, 'contactSubrecordActionLabel')};${fnSrc(html, 'contactAddressText')};${fnSrc(html, 'contactSubrecordValue')};${fnSrc(html, 'contactSubrecordDraftText')};${fnSrc(html, 'contactSubrecordCreateBody')};${fnSrc(html, 'contactSubrecordActionRequest')};async ${fnSrc(html, 'confirmContactSubrecordDraft')};const ACTION_DRAFT_TTL_MS=15*60*1000;${fnSrc(html, 'actionDraftStale')};async ${fnSrc(html, 'recordActionResult')};async ${fnSrc(html, 'executeContactSubrecordDraft')};return executeContactSubrecordDraft;` // eslint-disable-line no-new-func
-    )(P, api, render, [], jest.fn(), jest.fn());
+    const execute = actionSandbox({ P, api, render }).executeActionDraft;
     const message = { action_draft: { draft_id: 'contact-fail', kind: 'contact.email.update.v1', family: 'email', status: 'draft',
       target: { id: 22, contact: { contact_id: 1309, label: 'Client' }, email: 'client@example.com', label: 'Personal', is_primary: false,
         start_date: '2026-01-01', notes: '', email_optout: false, expected_updated_at: '2026-10-20T10:00:00.000Z' }, changes: { label: 'Work' } } };
@@ -499,11 +548,9 @@ describe('Ask Casey UI wiring', () => {
 });
 
 describe('Ask Casey action freshness and applied-marker durability (review fix package 2026-10-21)', () => {
-  const H = (kinds) => `const TASK_ACTION_KINDS=new Set(${JSON.stringify(kinds)});const ACTION_DRAFT_TTL_MS=15*60*1000;${fnSrc(html, 'actionDraftStale')};async ${fnSrc(html, 'recordActionResult')};${fnSrc(html, 'isTaskActionDraft')};${fnSrc(html, 'taskCreateBody')};${fnSrc(html, 'taskUpdateBody')};${fnSrc(html, 'taskActionLabel')};${fnSrc(html, 'taskActionRequest')};${fnSrc(html, 'taskDraftText')};${fnSrc(html, 'taskDraftConfirmation')};async ${fnSrc(html, 'confirmTaskDraft')};async ${fnSrc(html, 'executeTaskDraft')};return executeTaskDraft;`;
   const draft = (extra = {}) => ({ action_draft: { draft_id: 'd-1', kind: 'task.create.v1', status: 'draft', title: 'Call', description: 'Call the client.',
     assignee: { user_id: 1, label: 'Stuart' }, link: null, start_date: null, due_date: null, notify_assigner_on_completion: false, ...extra } });
-  const harness = (P, api, saveAssistantMessage) => new Function('P', 'api', 'render', 'history', 'saveAssistantMessage', H(['task.create.v1']))( // eslint-disable-line no-new-func
-    P, api, jest.fn(), [], saveAssistantMessage);
+  const harness = (P, api, saveAssistantMessage) => actionSandbox({ P, api, saveAssistantMessage }).executeActionDraft;
 
   test('a card reopened from history or past its TTL never writes; it asks for a fresh proposal', async () => {
     const api = jest.fn().mockResolvedValue({ status: 'success', task_id: 5 });
@@ -555,6 +602,43 @@ describe('Ask Casey action freshness and applied-marker durability (review fix p
     expect(message.action_draft.marker_error).toMatch(/WAS applied[\s\S]*Do not apply it again/);
     expect(P.Swal.fire).toHaveBeenLastCalledWith(expect.objectContaining({ icon: 'warning', title: 'Applied, but not recorded' }));
     expect(message.action_draft).not.toHaveProperty('action_error');
+  });
+
+  test('the action registry is closed and complete: every family carries the mechanics the shared engine calls', () => {
+    const { actionFamily, isActionDraft, executeActionDraft } = actionSandbox();
+    const kinds = [
+      ['task.create.v1', 'task', 'task', 'task_id', 'result_task_id'],
+      ['task.transfer.v1', 'task', 'task', 'task_id', 'result_task_id'],
+      ['event.cancel.v1', 'event', 'event', 'event_id', 'result_event_id'],
+      ['appt.reschedule_later.v1', 'appt', 'appointment', 'appt_id', 'result_appt_id'],
+      ['contact.address.end.v1', 'contact', 'contact', 'contact_id', 'result_contact_id'],
+    ];
+    for (const [kind, id, noun, idField, appliedKey] of kinds) {
+      const family = actionFamily({ kind });
+      expect(family).toBeTruthy();
+      expect([family.id, family.noun, family.idField, family.appliedKey]).toEqual([id, noun, idField, appliedKey]);
+      // Everything the engine and the card reach for, per family.
+      for (const member of ['kinds', 'title', 'errorNoun', 'label', 'text', 'request', 'result', 'danger',
+        'resultText', 'entity', 'failure', 'reviewWarning', 'open']) expect(family[member]).toBeTruthy();
+    }
+    // One kind resolves to exactly one family, and ids/result keys are not shared.
+    const families = kinds.map(([kind]) => actionFamily({ kind }));
+    const all = [...new Set(families)];
+    const everyKind = all.flatMap((family) => [...family.kinds]);
+    expect(everyKind).toHaveLength(26);
+    expect(new Set(everyKind).size).toBe(26);
+    expect(new Set(all.map((f) => f.appliedKey)).size).toBe(all.length);
+
+    // An unknown or model-invented kind has no family and is inert everywhere.
+    for (const kind of ['task.delete.v1', 'contact.merge.v1', 'task.create.v2', '', undefined]) {
+      expect(actionFamily({ kind })).toBe(null);
+      expect(isActionDraft({ kind })).toBe(false);
+    }
+    expect(actionFamily(null)).toBe(null);
+    const api = jest.fn();
+    const sandbox = actionSandbox({ api, P: { Swal: { fire: jest.fn() } } });
+    return sandbox.executeActionDraft({ action_draft: { draft_id: 'x', kind: 'task.delete.v1', status: 'draft' } })
+      .then(() => { expect(api).not.toHaveBeenCalled(); expect(executeActionDraft).toBeInstanceOf(Function); });
   });
 
   test('a required save throws (after one retry) instead of swallowing; an ordinary save still only warns', async () => {

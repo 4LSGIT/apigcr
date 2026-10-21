@@ -76,6 +76,8 @@ part of this plan.
 4. **P1 extraction is next, before A6.** Four ~150-line families already live
    in `public/assistant.html`; thirteen more are planned. Extract the repeated
    mechanics (freshness, single-flight, marker persistence, review rows) first.
+   SHIPPED for the browser: one `ACTION_FAMILIES` registry and one shared
+   engine — see P1 below.
 5. **Real-MySQL harness for normalizer SQL.** `appt.create.v1` shipped dead
    (`user_auth = 1` against a varchar) because the unit suite mocked the users
    query. SHIPPED: the predicate now reuses `taskService.findAssignableStaff`'s,
@@ -667,16 +669,38 @@ subrecord review, cancellation, success, history restoration, and canonical
 open-record behavior. Record the known repository-wide stale-test baseline
 separately from action regressions.
 
-#### P1: Closed action registry and shared review components
+#### P1: Closed action registry and shared review components — browser side shipped
 
-Four families now establish the concrete pattern. Before A6, decide whether the
-duplication already justifies extraction; if so, extract only the repeated
-mechanics: known kind/version dispatch, strict extra-field rejection,
-evidence resolution, text-only value/side-effect rows, dialog single-flight,
-retry state, applied-result persistence, and canonical open-record links. The
-server registry normalizes proposals; the browser registry independently maps
-each known kind to its fixed route/method/body. Neither registry accepts a URL,
-method, selector, handler, arbitrary body, or actor from model output.
+The duplication did justify extraction: four copies of the same ~150 lines, with
+thirteen more families planned. The browser side now has one registry and one
+engine in `public/assistant.html`:
+
+- `ACTION_FAMILIES` is the registry. One descriptor per family carries its
+  kinds, its label/text/body builders, its result reader, its applied-marker
+  key, its review warning, and how to open its record. `actionFamily(draft)`
+  resolves a kind to exactly one descriptor, and an unknown kind resolves to
+  none — such a draft is inert in the engine, the card and the renderer.
+- `executeActionDraft`, `confirmActionDraft`, `applyActionResults` and
+  `hydrateActionDraft` are the shared mechanics: freshness at render, click and
+  again after the dialog closes; review and write single-flight; the required
+  applied-marker save; retry state; the canonical open-record link; and
+  text-only value rows. The per-kind route/method/body mapping stays written out
+  by hand, per kind, inside each family's own `request` builder.
+- A family's descriptor is the only thing a new action family adds to the
+  mechanics. A6 is a descriptor plus its own builders, not another copy of the
+  engine.
+
+Deliberately NOT done: moving the region into a `public/js/` module. The pane
+loads one inline script, which several tests and the shell's frozen-binding
+rules rely on; a separate file buys reuse no second page needs yet. Revisit if a
+second surface ever renders action cards.
+
+The server registry (one normalizer dispatch per kind in `assistantService`)
+already exists as a switch and was NOT touched by this slice. Neither registry
+accepts a URL, method, selector, handler, arbitrary body, or actor from model
+output; `tests/assistantUi.test.js` pins the registry's shape, the 26 kinds, the
+uniqueness of each family's applied-marker key, and the inertness of an
+unknown kind.
 
 #### P2: Permission and capability matrix
 
@@ -714,6 +738,28 @@ appropriate.
 Pulled ahead of A6 (course correction 2). The interim required-save + loud
 failure shipped with the fix package; the server-side applied state below is
 still to build.
+
+**Open design question, not yet ruled.** A durable applied ledger wants a place
+to write "draft X was applied, result Y" that does not depend on the chat
+message saving. The two candidates are not equivalent:
+
+1. *A Casey-specific ledger endpoint* (claim before the write, record after).
+   It gives the cleanest not-applied / applied / unknown trichotomy, but it
+   contradicts "no Casey execution endpoint": `tests/assistantUi.test.js`
+   asserts `routes/api.assistant.js` contains no `/api/assistant/actions`, and
+   the governing principle says to think twice before any Casey-only action
+   endpoint. A ledger writes no business record, so the contradiction is
+   arguably nominal — but it is the plan's own line, and crossing it is Fred's
+   call, not a slice's.
+2. *Canonical idempotency as the ledger* (P4). The create routes accept a
+   user-scoped key and store key → result themselves; the durable applied state
+   is then a canonical facility native callers share, and no Casey-only
+   endpoint exists. The gap is that it covers creates, not the update/complete/
+   cancel kinds, and a reopened card must still not re-POST to discover an
+   earlier result (writing from history is forbidden).
+
+Until this is ruled, P5 stops at the shipped interim. P4's canonical
+idempotency (option 2's half) can proceed on its own.
 
 Make success restoration resilient when the canonical write succeeds but chat
 history persistence fails. Preserve the canonical result needed to reopen the
@@ -769,8 +815,9 @@ for external-side-effect incidents.
 
 ## Recommended execution order
 
-0. Land the 2026-10-21 fix package, then P1 extraction, then minimal P4 + P5
-   (course corrections 2 and 4) — all before A6.
+0. The 2026-10-21 fix package landed (`7c8f225`); the P1 browser extraction
+   landed after it. Next are minimal P4 and P5 (course correction 2), both
+   before A6 — P5 pending the ruling recorded in its section.
 1. Close P0 and continue P2, P7, and P8 alongside the shipped A4/A4.1/A5 contracts.
 2. Implement A6–A8 with P3 in place; extract P1 only from demonstrated common
    behavior, not as a speculative generic executor.

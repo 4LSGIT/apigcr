@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-10-21T06:59:05.898Z
+-- Generated: 2026-10-21T17:12:44.880Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:2e92a14ab61c2adc58c056b8289d177d
+-- Fingerprint: sha256:77d5f8ea56e2e48bc8786bc9524416a0
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -3085,6 +3085,24 @@ CREATE TABLE `report_runs` (
 -- --------------------------------------------------------
 
 --
+-- Table structure for table `request_idempotency`
+--
+
+DROP TABLE IF EXISTS `request_idempotency`;
+CREATE TABLE `request_idempotency` (
+  `id` bigint unsigned NOT NULL,
+  `user_id` tinyint NOT NULL COMMENT 'users.user of the acting staff member; 0 (Automations) when the request carries no staff user, e.g. an x-api-key caller. Part of the unique key: one user can never replay another user''s result',
+  `scope` varchar(64) COLLATE utf8mb4_general_ci NOT NULL COMMENT 'operation name, one fixed literal chosen server-side per route (tasks.create, appts.create, ...). Never read from the request, so a caller cannot aim a key at another operation',
+  `idem_key` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL COMMENT 'opaque key from the Idempotency-Key request header. utf8mb4_bin (not the table default general_ci) because it is a token, never a join key: two keys differing only in case must stay two keys. App-validated to 8-100 chars of [A-Za-z0-9._:-] before any write — sql_mode is relaxed, so a longer key would store TRUNCATED and alias two keys into one false replay',
+  `status` enum('in_flight','applied') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'in_flight' COMMENT 'in_flight = claimed, outcome not yet known; applied = the operation committed and `result` holds its canonical response. An operation that FAILED deletes its row, so the key is reusable. A row left in_flight (process died between claim and settle) is the UNKNOWN outcome: a repeat is refused 409 and the row is never taken over — a takeover is the double-apply this table exists to prevent',
+  `result` json DEFAULT NULL COMMENT 'the canonical route result, replayed value-for-value to a repeat of the same key (MySQL re-orders JSON object keys on write, so the replayed bytes are not identical - compare key-order-insensitively). Never auth/session material and never raw sensitive evidence',
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT 'claim time, then settle time. The in_flight staleness window is measured from it SERVER-side (TIMESTAMPDIFF against NOW()), never in JS'
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='Request idempotency claims: makes a wired create exactly-once per caller-minted key. lib/requestIdempotency.js';
+
+-- --------------------------------------------------------
+
+--
 -- Table structure for table `ringcentral_temp`
 --
 
@@ -5021,6 +5039,14 @@ ALTER TABLE `report_runs`
   ADD KEY `idx_created` (`created_at`);
 
 --
+-- Indexes for table `request_idempotency`
+--
+ALTER TABLE `request_idempotency`
+  ADD PRIMARY KEY (`id`),
+  ADD UNIQUE KEY `uq_request_idempotency_actor_scope_key` (`user_id`,`scope`,`idem_key`),
+  ADD KEY `idx_request_idempotency_created` (`created_at`);
+
+--
 -- Indexes for table `ringcentral_temp`
 --
 ALTER TABLE `ringcentral_temp`
@@ -5977,6 +6003,12 @@ ALTER TABLE `report_runs`
   MODIFY `id` bigint unsigned NOT NULL AUTO_INCREMENT;
 
 --
+-- AUTO_INCREMENT for table `request_idempotency`
+--
+ALTER TABLE `request_idempotency`
+  MODIFY `id` bigint unsigned NOT NULL AUTO_INCREMENT;
+
+--
 -- AUTO_INCREMENT for table `ringcentral_temp`
 --
 ALTER TABLE `ringcentral_temp`
@@ -6332,6 +6364,12 @@ ALTER TABLE `readonly_api_keys`
 --
 ALTER TABLE `readonly_query_log`
   ADD CONSTRAINT `fk_rqlog_key` FOREIGN KEY (`api_key_id`) REFERENCES `readonly_api_keys` (`id`) ON DELETE CASCADE;
+
+--
+-- Constraints for table `request_idempotency`
+--
+ALTER TABLE `request_idempotency`
+  ADD CONSTRAINT `fk_request_idempotency_user` FOREIGN KEY (`user_id`) REFERENCES `users` (`user`) ON DELETE CASCADE;
 
 --
 -- Constraints for table `sequence_enrollments`

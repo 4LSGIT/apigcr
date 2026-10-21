@@ -245,11 +245,17 @@ const APPT_ACTION_KINDS = new Set(['appt.create.v1', 'appt.update.v1', 'appt.att
 const CONTACT_SUBRECORD_ACTION_KINDS = new Set(['contact.phone.create.v1', 'contact.phone.update.v1', 'contact.phone.end.v1',
   'contact.email.create.v1', 'contact.email.update.v1', 'contact.email.end.v1',
   'contact.address.create.v1', 'contact.address.update.v1', 'contact.address.end.v1']);
-function isTaskActionDraft(draft) { return !!(draft && TASK_ACTION_KINDS.has(draft.kind)); }
-function isEventActionDraft(draft) { return !!(draft && EVENT_ACTION_KINDS.has(draft.kind)); }
-function isApptActionDraft(draft) { return !!(draft && APPT_ACTION_KINDS.has(draft.kind)); }
-function isContactSubrecordActionDraft(draft) { return !!(draft && CONTACT_SUBRECORD_ACTION_KINDS.has(draft.kind)); }
-function isActionDraft(draft) { return isTaskActionDraft(draft) || isEventActionDraft(draft) || isApptActionDraft(draft) || isContactSubrecordActionDraft(draft); }
+// The browser's action registry. ACTION_FAMILIES (below, after each family's
+// own body/text builders) is the one place that maps a known kind to its fixed
+// route, method and body; one shared engine owns the mechanics every family
+// repeats — freshness, review single-flight, applied-marker persistence, the
+// card. A family is a descriptor, never a URL, selector or handler from the
+// model: an unknown kind resolves to no family and is inert everywhere.
+function actionFamily(draft) {
+  const kind = draft && draft.kind;
+  return (kind && ACTION_FAMILIES.find((family) => family.kinds.has(kind))) || null;
+}
+function isActionDraft(draft) { return !!actionFamily(draft); }
 
 // Draft freshness. Casey normalizes a proposal against the records as they
 // stood when it answered; nothing re-checks them at click time. So a card
@@ -385,91 +391,10 @@ function taskDraftConfirmation(draft) {
     'This writes the task to YisraCase using your account and may send assignment, start-date, and due-date notifications.';
 }
 
-async function confirmTaskDraft(draft) {
-  if (!(P.Swal && typeof P.Swal.fire === 'function')) throw new Error('The review dialog is unavailable. Nothing was changed.');
-  const result = await P.Swal.fire({
-    title: taskActionLabel(draft),
-    text: taskDraftConfirmation(draft),
-    icon: draft.kind === 'task.cancel.v1' ? 'warning' : 'question',
-    showCancelButton: true,
-    confirmButtonText: taskActionLabel(draft),
-    cancelButtonText: 'Keep proposal',
-    focusCancel: draft.kind === 'task.cancel.v1',
-    reverseButtons: true,
-    heightAuto: false,
-  });
-  return !!(result && result.isConfirmed);
-}
-
-async function executeTaskDraft(message) {
-  const draft = message && message.action_draft;
-  if (!isTaskActionDraft(draft) || typeof draft.draft_id !== 'string' || !draft.draft_id || draft.executing || draft.reviewing) return;
-  if (draft.status === 'applied' && draft.result_task_id) {
-    P.showTask(draft.result_task_id);
-    return;
-  }
-  const stale = actionDraftStale(draft);
-  if (stale) { draft.action_error = stale; render(); return; }
-  draft.reviewing = true;
-  delete draft.action_error;
-  render();
-  try {
-    if (!await confirmTaskDraft(draft)) return;
-  } catch (e) {
-    draft.action_error = e.message || 'The review dialog could not be opened.';
-    return;
-  } finally {
-    draft.reviewing = false;
-    render();
-  }
-  const expired = actionDraftStale(draft);
-  if (expired) { draft.action_error = expired; render(); return; }
-  draft.executing = true;
-  delete draft.action_error;
-  render();
-  try {
-    const request = taskActionRequest(draft);
-    const result = await api(request.path, request.body, request.method);
-    const taskId = draft.kind === 'task.create.v1' ? Number(result && result.task_id) : Number(draft.task && draft.task.task_id);
-    if (!Number.isSafeInteger(taskId) || taskId < 1) throw new Error('The task action did not return a usable task id');
-    draft.status = 'applied';
-    draft.result_task_id = taskId;
-    try { P.tasksBadgeRefresh?.(); } catch (_) { /* badge refresh is best-effort */ }
-    try { P.document.getElementById('tasksFrame')?.contentWindow?.reloadTasks?.(); } catch (_) { /* cold or nested task view */ }
-    const resultMessage = {
-      role: 'assistant',
-      text: `${taskActionLabel(draft)} applied to task #${taskId}.`,
-      entities: [{ kind: 'task', id: String(taskId), label: draft.kind === 'task.create.v1' ? draft.title : draft.task.title }],
-      action_result: { kind: draft.kind, draft_id: draft.draft_id, task_id: taskId },
-    };
-    history.push(resultMessage);
-    await recordActionResult(draft, resultMessage);
-  } catch (e) {
-    draft.action_error = e.message || 'The task action could not be applied.';
-  } finally {
-    draft.executing = false;
-    render();
-  }
-}
-
-function applyTaskActionResults(messages) {
-  const applied = new Map();
-  for (const message of Array.isArray(messages) ? messages : []) {
-    const result = message && message.action_result;
-    if (result && TASK_ACTION_KINDS.has(result.kind) && typeof result.draft_id === 'string'
-        && Number.isSafeInteger(Number(result.task_id)) && Number(result.task_id) > 0) {
-      applied.set(result.draft_id, Number(result.task_id));
-    }
-  }
-  for (const message of Array.isArray(messages) ? messages : []) {
-    const draft = message && message.action_draft;
-    const taskId = draft && applied.get(draft.draft_id);
-    if (taskId) {
-      draft.status = 'applied';
-      draft.result_task_id = taskId;
-    }
-  }
-  return messages;
+function taskActionResult(draft, result) {
+  const taskId = draft.kind === 'task.create.v1' ? Number(result && result.task_id) : Number(draft.task && draft.task.task_id);
+  if (!Number.isSafeInteger(taskId) || taskId < 1) throw new Error('The task action did not return a usable task id');
+  return { task_id: taskId };
 }
 
 function eventActionLabel(draft) {
@@ -550,57 +475,10 @@ function eventActionRequest(draft) {
   throw new Error('Unsupported event action');
 }
 
-async function confirmEventDraft(draft) {
-  if (!(P.Swal && typeof P.Swal.fire === 'function')) throw new Error('The review dialog is unavailable. Nothing was changed.');
-  const result = await P.Swal.fire({
-    title: eventActionLabel(draft), text: `${eventDraftText(draft)}\n\nThis changes YisraCase immediately using your signed-in account.`,
-    icon: draft.kind === 'event.cancel.v1' ? 'warning' : 'question', showCancelButton: true,
-    confirmButtonText: eventActionLabel(draft), cancelButtonText: 'Keep proposal',
-    focusCancel: draft.kind === 'event.cancel.v1', reverseButtons: true, heightAuto: false,
-  });
-  return !!(result && result.isConfirmed);
-}
-
-async function executeEventDraft(message) {
-  const draft = message && message.action_draft;
-  if (!isEventActionDraft(draft) || typeof draft.draft_id !== 'string' || !draft.draft_id || draft.executing || draft.reviewing) return;
-  if (draft.status === 'applied' && draft.result_event_id) { P.showEvent(draft.result_event_id); return; }
-  const stale = actionDraftStale(draft);
-  if (stale) { draft.action_error = stale; render(); return; }
-  draft.reviewing = true; delete draft.action_error; render();
-  try { if (!await confirmEventDraft(draft)) return; }
-  catch (e) { draft.action_error = e.message || 'The review dialog could not be opened.'; return; }
-  finally { draft.reviewing = false; render(); }
-  const expired = actionDraftStale(draft);
-  if (expired) { draft.action_error = expired; render(); return; }
-  draft.executing = true; delete draft.action_error; render();
-  try {
-    const request = eventActionRequest(draft);
-    const result = await api(request.path, request.body, request.method);
-    const eventId = draft.kind === 'event.create.v1' ? Number(result && result.data && result.data.event_id) : Number(draft.event && draft.event.event_id);
-    if (!Number.isSafeInteger(eventId) || eventId < 1) throw new Error('The event action did not return a usable event id');
-    draft.status = 'applied'; draft.result_event_id = eventId;
-    const resultMessage = { role: 'assistant', text: `${eventActionLabel(draft)} applied to event #${eventId}.`,
-      entities: [{ kind: 'event', id: String(eventId), label: draft.kind === 'event.create.v1' ? draft.event_title : draft.event.title }],
-      action_result: { kind: draft.kind, draft_id: draft.draft_id, event_id: eventId } };
-    history.push(resultMessage); await recordActionResult(draft, resultMessage);
-    P.showEvent(eventId);
-  } catch (e) { draft.action_error = e.message || 'The event action could not be applied.'; }
-  finally { draft.executing = false; render(); }
-}
-
-function applyEventActionResults(messages) {
-  const applied = new Map();
-  for (const message of Array.isArray(messages) ? messages : []) {
-    const result = message && message.action_result;
-    if (result && EVENT_ACTION_KINDS.has(result.kind) && typeof result.draft_id === 'string'
-        && Number.isSafeInteger(Number(result.event_id)) && Number(result.event_id) > 0) applied.set(result.draft_id, Number(result.event_id));
-  }
-  for (const message of Array.isArray(messages) ? messages : []) {
-    const draft = message && message.action_draft; const eventId = draft && applied.get(draft.draft_id);
-    if (eventId) { draft.status = 'applied'; draft.result_event_id = eventId; }
-  }
-  return messages;
+function eventActionResult(draft, result) {
+  const eventId = draft.kind === 'event.create.v1' ? Number(result && result.data && result.data.event_id) : Number(draft.event && draft.event.event_id);
+  if (!Number.isSafeInteger(eventId) || eventId < 1) throw new Error('The event action did not return a usable event id');
+  return { event_id: eventId };
 }
 
 function apptActionLabel(draft) {
@@ -686,55 +564,11 @@ function apptActionRequest(draft) {
   throw new Error('Unsupported appointment action');
 }
 
-async function confirmApptDraft(draft) {
-  if (!(P.Swal && typeof P.Swal.fire === 'function')) throw new Error('The review dialog is unavailable. Nothing was changed.');
-  const result = await P.Swal.fire({ title: apptActionLabel(draft),
-    text: `${apptDraftText(draft)}\n\nThis changes YisraCase immediately using your signed-in account.`,
-    icon: ['appt.cancel.v1', 'appt.reschedule.v1', 'appt.reschedule_later.v1'].includes(draft.kind) ? 'warning' : 'question',
-    showCancelButton: true, confirmButtonText: apptActionLabel(draft), cancelButtonText: 'Keep proposal',
-    focusCancel: ['appt.cancel.v1', 'appt.reschedule.v1', 'appt.reschedule_later.v1'].includes(draft.kind), reverseButtons: true, heightAuto: false });
-  return !!(result && result.isConfirmed);
-}
-
-async function executeApptDraft(message) {
-  const draft = message && message.action_draft;
-  if (!isApptActionDraft(draft) || typeof draft.draft_id !== 'string' || !draft.draft_id || draft.executing || draft.reviewing) return;
-  if (draft.status === 'applied' && draft.result_appt_id) { P.showAppt(draft.result_appt_id); return; }
-  const stale = actionDraftStale(draft);
-  if (stale) { draft.action_error = stale; render(); return; }
-  draft.reviewing = true; delete draft.action_error; render();
-  try { if (!await confirmApptDraft(draft)) return; }
-  catch (e) { draft.action_error = e.message || 'The review dialog could not be opened.'; return; }
-  finally { draft.reviewing = false; render(); }
-  const expired = actionDraftStale(draft);
-  if (expired) { draft.action_error = expired; render(); return; }
-  draft.executing = true; delete draft.action_error; render();
-  try {
-    const request = apptActionRequest(draft); const result = await api(request.path, request.body, request.method);
-    const apptId = draft.kind === 'appt.create.v1' ? Number(result && result.data && result.data.appt_id)
-      : draft.kind === 'appt.reschedule.v1' ? Number(result && result.new_appt_id) : Number(draft.appt && draft.appt.appt_id);
-    if (!Number.isSafeInteger(apptId) || apptId < 1) throw new Error('The appointment action did not return a usable appointment id');
-    draft.status = 'applied'; draft.result_appt_id = apptId;
-    const resultMessage = { role: 'assistant', text: `${apptActionLabel(draft)} applied to appointment #${apptId}.`,
-      entities: [{ kind: 'appointment', id: String(apptId), label: `${draft.kind === 'appt.create.v1' ? draft.type.appt_type : draft.appt.type} #${apptId}` }],
-      action_result: { kind: draft.kind, draft_id: draft.draft_id, appt_id: apptId } };
-    history.push(resultMessage); await recordActionResult(draft, resultMessage); P.showAppt(apptId);
-  } catch (e) { draft.action_error = e.message || 'The appointment action could not be applied.'; }
-  finally { draft.executing = false; render(); }
-}
-
-function applyApptActionResults(messages) {
-  const applied = new Map();
-  for (const message of Array.isArray(messages) ? messages : []) {
-    const result = message && message.action_result;
-    if (result && APPT_ACTION_KINDS.has(result.kind) && typeof result.draft_id === 'string'
-        && Number.isSafeInteger(Number(result.appt_id)) && Number(result.appt_id) > 0) applied.set(result.draft_id, Number(result.appt_id));
-  }
-  for (const message of Array.isArray(messages) ? messages : []) {
-    const draft = message && message.action_draft; const apptId = draft && applied.get(draft.draft_id);
-    if (apptId) { draft.status = 'applied'; draft.result_appt_id = apptId; }
-  }
-  return messages;
+function apptActionResult(draft, result) {
+  const apptId = draft.kind === 'appt.create.v1' ? Number(result && result.data && result.data.appt_id)
+    : draft.kind === 'appt.reschedule.v1' ? Number(result && result.new_appt_id) : Number(draft.appt && draft.appt.appt_id);
+  if (!Number.isSafeInteger(apptId) || apptId < 1) throw new Error('The appointment action did not return a usable appointment id');
+  return { appt_id: apptId };
 }
 
 function contactSubrecordActionLabel(draft) {
@@ -829,140 +663,254 @@ function contactSubrecordActionRequest(draft) {
   return { path: `${base}/${draft.target.id}`, method: 'PATCH', body };
 }
 
-async function confirmContactSubrecordDraft(draft) {
+function contactSubrecordActionResult(draft) {
+  const contactId = Number(draft.contact && draft.contact.contact_id || draft.target && draft.target.contact && draft.target.contact.contact_id);
+  if (!Number.isSafeInteger(contactId) || contactId < 1) throw new Error('The contact action has no usable parent contact id');
+  return { contact_id: contactId, contact_label: draft.contact ? draft.contact.label : draft.target.contact.label };
+}
+
+// One descriptor per shipped family. `request` is the only mapping to a
+// canonical route, and it is written here, per kind, by hand: nothing in a
+// descriptor comes from model output. Adding a family means adding a
+// descriptor and its own body/text builders — never another copy of the
+// engine below.
+const ACTION_FAMILIES = [
+  {
+    id: 'task', kinds: TASK_ACTION_KINDS, title: 'Task action', noun: 'task', errorNoun: 'task action',
+    label: taskActionLabel, text: taskDraftText, request: taskActionRequest, result: taskActionResult,
+    idField: 'task_id', appliedKey: 'result_task_id',
+    confirmText: (draft) => taskDraftConfirmation(draft),
+    danger: (draft) => draft.kind === 'task.cancel.v1',
+    resultText: (payload) => `task #${payload.task_id}`,
+    entity: (draft, payload) => ({ kind: 'task', id: String(payload.task_id), label: draft.kind === 'task.create.v1' ? draft.title : draft.task.title }),
+    failure: 'The task action could not be applied.',
+    reviewWarning: 'Applying changes YisraCase immediately. Normal task notifications and reminders may run.',
+    steps: true, fields: taskDraftFields,
+    open: (draft) => P.showTask(draft.result_task_id),
+    afterApply: () => {
+      try { P.tasksBadgeRefresh?.(); } catch (_) { /* badge refresh is best-effort */ }
+      try { P.document.getElementById('tasksFrame')?.contentWindow?.reloadTasks?.(); } catch (_) { /* cold or nested task view */ }
+    },
+  },
+  {
+    id: 'event', kinds: EVENT_ACTION_KINDS, title: 'Event action', noun: 'event', errorNoun: 'event action',
+    label: eventActionLabel, text: eventDraftText, request: eventActionRequest, result: eventActionResult,
+    idField: 'event_id', appliedKey: 'result_event_id',
+    danger: (draft) => draft.kind === 'event.cancel.v1',
+    resultText: (payload) => `event #${payload.event_id}`,
+    entity: (draft, payload) => ({ kind: 'event', id: String(payload.event_id), label: draft.kind === 'event.create.v1' ? draft.event_title : draft.event.title }),
+    failure: 'The event action could not be applied.',
+    reviewWarning: 'Review every value and side effect. Canceling the dialog writes nothing.',
+    open: (draft) => P.showEvent(draft.result_event_id),
+  },
+  {
+    id: 'appt', kinds: APPT_ACTION_KINDS, title: 'Appointment action', noun: 'appointment', errorNoun: 'appointment action',
+    label: apptActionLabel, text: apptDraftText, request: apptActionRequest, result: apptActionResult,
+    idField: 'appt_id', appliedKey: 'result_appt_id',
+    danger: (draft) => ['appt.cancel.v1', 'appt.reschedule.v1', 'appt.reschedule_later.v1'].includes(draft.kind),
+    resultText: (payload) => `appointment #${payload.appt_id}`,
+    entity: (draft, payload) => ({ kind: 'appointment', id: String(payload.appt_id), label: `${draft.kind === 'appt.create.v1' ? draft.type.appt_type : draft.appt.type} #${payload.appt_id}` }),
+    failure: 'The appointment action could not be applied.',
+    reviewWarning: 'Review every value, recipient, calendar effect, and automation effect. Canceling the dialog writes nothing.',
+    open: (draft) => P.showAppt(draft.result_appt_id),
+  },
+  {
+    id: 'contact', kinds: CONTACT_SUBRECORD_ACTION_KINDS, title: 'Contact subrecord action', noun: 'contact', errorNoun: 'contact action',
+    label: contactSubrecordActionLabel, text: contactSubrecordDraftText, request: contactSubrecordActionRequest,
+    result: contactSubrecordActionResult, idField: 'contact_id', appliedKey: 'result_contact_id',
+    danger: (draft) => String(draft.kind).includes('.end.'),
+    resultText: (payload) => String(payload.contact_label),
+    entity: (draft, payload) => ({ kind: 'contact', id: String(payload.contact_id), label: payload.contact_label }),
+    failure: 'The contact subrecord action could not be applied.',
+    reviewWarning: 'Review every value, primary/mirror effect, consent setting, and lifecycle effect. Canceling writes nothing.',
+    markApplied: (draft, payload) => {
+      draft.result_contact_id = Number(payload.contact_id);
+      draft.result_contact_label = String(payload.contact_label || 'Contact');
+    },
+    open: (draft) => openEntity('contact', draft.result_contact_id, draft.result_contact_label),
+  },
+];
+
+function actionAppliedId(family, draft) { return Number(draft[family.appliedKey]) || 0; }
+
+function markActionApplied(family, draft, payload) {
+  if (family.markApplied) { family.markApplied(draft, payload); return; }
+  draft[family.appliedKey] = Number(payload[family.idField]);
+}
+
+async function confirmActionDraft(family, draft) {
   if (!(P.Swal && typeof P.Swal.fire === 'function')) throw new Error('The review dialog is unavailable. Nothing was changed.');
-  const ending = String(draft.kind).includes('.end.');
-  const result = await P.Swal.fire({ title: contactSubrecordActionLabel(draft),
-    text: `${contactSubrecordDraftText(draft)}\n\nThis changes YisraCase immediately using your signed-in account.`,
-    icon: ending ? 'warning' : 'question', showCancelButton: true,
-    confirmButtonText: contactSubrecordActionLabel(draft), cancelButtonText: 'Keep proposal',
-    focusCancel: ending, reverseButtons: true, heightAuto: false });
+  const danger = !!family.danger(draft);
+  const result = await P.Swal.fire({
+    title: family.label(draft),
+    text: family.confirmText ? family.confirmText(draft)
+      : `${family.text(draft)}\n\nThis changes YisraCase immediately using your signed-in account.`,
+    icon: danger ? 'warning' : 'question',
+    showCancelButton: true,
+    confirmButtonText: family.label(draft),
+    cancelButtonText: 'Keep proposal',
+    focusCancel: danger,
+    reverseButtons: true,
+    heightAuto: false,
+  });
   return !!(result && result.isConfirmed);
 }
 
-async function executeContactSubrecordDraft(message) {
+// The shared write path for every family: an applied card only opens its
+// record; a stale one never writes; review and write are single-flight;
+// freshness is re-checked after the dialog closes; the applied marker is
+// persisted before the record is opened.
+async function executeActionDraft(message) {
   const draft = message && message.action_draft;
-  if (!isContactSubrecordActionDraft(draft) || typeof draft.draft_id !== 'string' || !draft.draft_id || draft.executing || draft.reviewing) return;
-  const contactId = Number(draft.contact && draft.contact.contact_id || draft.target && draft.target.contact && draft.target.contact.contact_id);
-  if (draft.status === 'applied' && draft.result_contact_id) { openEntity('contact', draft.result_contact_id, draft.result_contact_label); return; }
+  const family = actionFamily(draft);
+  if (!family || typeof draft.draft_id !== 'string' || !draft.draft_id || draft.executing || draft.reviewing) return;
+  if (draft.status === 'applied' && actionAppliedId(family, draft)) { family.open(draft); return; }
   const stale = actionDraftStale(draft);
   if (stale) { draft.action_error = stale; render(); return; }
   draft.reviewing = true; delete draft.action_error; render();
-  try { if (!await confirmContactSubrecordDraft(draft)) return; }
+  try { if (!await confirmActionDraft(family, draft)) return; }
   catch (e) { draft.action_error = e.message || 'The review dialog could not be opened.'; return; }
   finally { draft.reviewing = false; render(); }
   const expired = actionDraftStale(draft);
   if (expired) { draft.action_error = expired; render(); return; }
   draft.executing = true; delete draft.action_error; render();
   try {
-    const request = contactSubrecordActionRequest(draft); await api(request.path, request.body, request.method);
-    if (!Number.isSafeInteger(contactId) || contactId < 1) throw new Error('The contact action has no usable parent contact id');
-    const label = draft.contact ? draft.contact.label : draft.target.contact.label;
-    draft.status = 'applied'; draft.result_contact_id = contactId; draft.result_contact_label = label;
-    const resultMessage = { role: 'assistant', text: `${contactSubrecordActionLabel(draft)} applied to ${label}.`,
-      entities: [{ kind: 'contact', id: String(contactId), label }],
-      action_result: { kind: draft.kind, draft_id: draft.draft_id, contact_id: contactId, contact_label: label } };
-    history.push(resultMessage); await recordActionResult(draft, resultMessage); openEntity('contact', contactId, label);
-  } catch (e) { draft.action_error = e.message || 'The contact subrecord action could not be applied.'; }
-  finally { draft.executing = false; render(); }
+    const request = family.request(draft);
+    const result = await api(request.path, request.body, request.method);
+    const payload = family.result(draft, result);
+    draft.status = 'applied';
+    markActionApplied(family, draft, payload);
+    const resultMessage = {
+      role: 'assistant',
+      text: `${family.label(draft)} applied to ${family.resultText(payload)}.`,
+      entities: [family.entity(draft, payload)],
+      action_result: { kind: draft.kind, draft_id: draft.draft_id, ...payload },
+    };
+    history.push(resultMessage);
+    await recordActionResult(draft, resultMessage);
+    if (family.afterApply) family.afterApply(draft, payload); else family.open(draft);
+  } catch (e) {
+    draft.action_error = e.message || family.failure;
+  } finally {
+    draft.executing = false; render();
+  }
 }
 
-function applyContactSubrecordActionResults(messages) {
+// Restoring a saved chat: a stored action_result is what tells a reopened card
+// it was already applied, so the card offers Open rather than the write.
+function applyActionResults(messages) {
+  const list = Array.isArray(messages) ? messages : [];
   const applied = new Map();
-  for (const message of Array.isArray(messages) ? messages : []) {
+  for (const message of list) {
     const result = message && message.action_result;
-    if (result && CONTACT_SUBRECORD_ACTION_KINDS.has(result.kind) && typeof result.draft_id === 'string'
-        && Number.isSafeInteger(Number(result.contact_id)) && Number(result.contact_id) > 0) applied.set(result.draft_id, result);
+    const family = actionFamily(result);
+    if (family && typeof result.draft_id === 'string'
+        && Number.isSafeInteger(Number(result[family.idField])) && Number(result[family.idField]) > 0) {
+      applied.set(result.draft_id, { family, result });
+    }
   }
-  for (const message of Array.isArray(messages) ? messages : []) {
-    const draft = message && message.action_draft; const result = draft && applied.get(draft.draft_id);
-    if (result) { draft.status = 'applied'; draft.result_contact_id = Number(result.contact_id); draft.result_contact_label = String(result.contact_label || 'Contact'); }
+  for (const message of list) {
+    const draft = message && message.action_draft;
+    const hit = draft && applied.get(draft.draft_id);
+    if (hit) { draft.status = 'applied'; markActionApplied(hit.family, draft, hit.result); }
   }
   return messages;
 }
 
-function hydrateContactSubrecordActionDraft(host, message, draft) {
-  const head = document.createElement('div'); head.className = 'action-draft-head';
-  const title = document.createElement('b'); title.textContent = 'Contact subrecord action';
-  const status = document.createElement('span'); status.className = 'action-draft-status';
-  status.textContent = draft.status === 'applied' && draft.result_contact_id ? `Applied — contact #${draft.result_contact_id}`
-    : actionDraftStale(draft) ? 'Expired — not applied' : draft.executing ? 'Applying…' : draft.reviewing ? 'Reviewing…' : 'Proposal — not applied';
-  head.append(title, status);
-  const fields = document.createElement('dl'); fields.className = 'action-draft-grid';
-  for (const line of contactSubrecordDraftText(draft).split('\n').slice(1)) { const split = line.indexOf(':');
-    appendDraftField(fields, split > 0 ? line.slice(0, split) : 'Effect', split > 0 ? line.slice(split + 1).trim() : line); }
-  const next = document.createElement('div'); next.className = 'action-draft-next';
-  const warning = document.createElement('div'); warning.className = 'action-draft-next-warning';
-  warning.textContent = draft.status === 'applied' ? `Applied to contact #${draft.result_contact_id} using your signed-in account.`
-    : 'Review every value, primary/mirror effect, consent setting, and lifecycle effect. Canceling writes nothing.';
-  next.append(warning);
-  if (draft.action_error) { const error = document.createElement('div'); error.className = 'action-draft-next-warning'; error.textContent = `Could not apply contact action: ${draft.action_error}`; next.append(error); }
-  appendMarkerError(next, draft);
-  const actions = document.createElement('div'); actions.className = 'action-draft-actions';
-  const apply = document.createElement('button'); apply.type = 'button';
-  apply.textContent = draft.status === 'applied' && draft.result_contact_id ? `Open contact #${draft.result_contact_id}` : `Review & ${contactSubrecordActionLabel(draft).toLowerCase()}`;
-  apply.disabled = !!(draft.executing || draft.reviewing); if (!hydrateStaleDraft(next, apply, message, draft)) apply.addEventListener('click', () => executeContactSubrecordDraft(message));
-  const copy = document.createElement('button'); copy.type = 'button'; copy.textContent = 'Copy details';
-  copy.addEventListener('click', async () => { try { await navigator.clipboard.writeText(contactSubrecordDraftText(draft)); copy.textContent = 'Copied'; } catch (_) { copy.textContent = 'Copy failed'; } });
-  actions.append(apply, copy);
-  if (draft.status !== 'applied') { const discard = document.createElement('button'); discard.type = 'button'; discard.className = 'ghost'; discard.textContent = 'Discard'; discard.disabled = !!(draft.executing || draft.reviewing); discard.addEventListener('click', () => { delete message.action_draft; render(); }); actions.append(discard); }
-  host.append(head, fields, next, actions);
-}
-
-function hydrateApptActionDraft(host, message, draft) {
-  const head = document.createElement('div'); head.className = 'action-draft-head';
-  const title = document.createElement('b'); title.textContent = 'Appointment action';
-  const status = document.createElement('span'); status.className = 'action-draft-status';
-  status.textContent = draft.status === 'applied' && draft.result_appt_id ? `Applied — appointment #${draft.result_appt_id}`
-    : actionDraftStale(draft) ? 'Expired — not applied' : draft.executing ? 'Applying…' : draft.reviewing ? 'Reviewing…' : 'Proposal — not applied';
-  head.append(title, status);
-  const fields = document.createElement('dl'); fields.className = 'action-draft-grid';
-  for (const line of apptDraftText(draft).split('\n').slice(1)) { const split = line.indexOf(':');
-    appendDraftField(fields, split > 0 ? line.slice(0, split) : 'Effect', split > 0 ? line.slice(split + 1).trim() : line); }
-  const next = document.createElement('div'); next.className = 'action-draft-next';
-  const warning = document.createElement('div'); warning.className = 'action-draft-next-warning';
-  warning.textContent = draft.status === 'applied' ? `Applied to appointment #${draft.result_appt_id} using your signed-in account.`
-    : 'Review every value, recipient, calendar effect, and automation effect. Canceling the dialog writes nothing.';
-  next.append(warning);
-  if (draft.action_error) { const error = document.createElement('div'); error.className = 'action-draft-next-warning'; error.textContent = `Could not apply appointment action: ${draft.action_error}`; next.append(error); }
-  appendMarkerError(next, draft);
-  const actions = document.createElement('div'); actions.className = 'action-draft-actions';
-  const apply = document.createElement('button'); apply.type = 'button';
-  apply.textContent = draft.status === 'applied' && draft.result_appt_id ? `Open appointment #${draft.result_appt_id}` : `Review & ${apptActionLabel(draft).toLowerCase()}`;
-  apply.disabled = !!(draft.executing || draft.reviewing); if (!hydrateStaleDraft(next, apply, message, draft)) apply.addEventListener('click', () => executeApptDraft(message));
-  const copy = document.createElement('button'); copy.type = 'button'; copy.textContent = 'Copy details';
-  copy.addEventListener('click', async () => { try { await navigator.clipboard.writeText(apptDraftText(draft)); copy.textContent = 'Copied'; } catch (_) { copy.textContent = 'Copy failed'; } });
-  actions.append(apply, copy);
-  if (draft.status !== 'applied') { const discard = document.createElement('button'); discard.type = 'button'; discard.className = 'ghost'; discard.textContent = 'Discard'; discard.disabled = !!(draft.executing || draft.reviewing); discard.addEventListener('click', () => { delete message.action_draft; render(); }); actions.append(discard); }
-  host.append(head, fields, next, actions);
-}
-
-function hydrateEventActionDraft(host, message, draft) {
-  const head = document.createElement('div'); head.className = 'action-draft-head';
-  const title = document.createElement('b'); title.textContent = 'Event action';
-  const status = document.createElement('span'); status.className = 'action-draft-status';
-  status.textContent = draft.status === 'applied' && draft.result_event_id ? `Applied — event #${draft.result_event_id}`
-    : actionDraftStale(draft) ? 'Expired — not applied' : draft.executing ? 'Applying…' : draft.reviewing ? 'Reviewing…' : 'Proposal — not applied';
-  head.append(title, status);
-  const fields = document.createElement('dl'); fields.className = 'action-draft-grid';
-  for (const line of eventDraftText(draft).split('\n').slice(1)) {
-    const split = line.indexOf(':'); appendDraftField(fields, split > 0 ? line.slice(0, split) : 'Effect', split > 0 ? line.slice(split + 1).trim() : line);
+// Every value a family renders is one line of its own proposal text, split on
+// the first colon and written with textContent — model text never becomes
+// markup, a label or a handler.
+function appendDraftFieldsFromText(fields, text) {
+  for (const line of text.split('\n').slice(1)) {
+    const split = line.indexOf(':');
+    appendDraftField(fields, split > 0 ? line.slice(0, split) : 'Effect', split > 0 ? line.slice(split + 1).trim() : line);
   }
+}
+
+function taskDraftFields(fields, draft) {
+  appendDraftField(fields, 'Action', taskActionLabel(draft));
+  if (draft.kind === 'task.create.v1') {
+    appendDraftField(fields, 'Title', draft.title); appendDraftField(fields, 'Description', draft.description);
+    appendDraftField(fields, 'Assignee', draft.assignee && draft.assignee.label);
+    appendDraftField(fields, 'Linked record', draft.link && `${draft.link.label} (${draft.link.type} ${draft.link.id})`);
+    appendDraftField(fields, 'Start date', draft.start_date); appendDraftField(fields, 'Due date', draft.due_date);
+    appendDraftField(fields, 'Completion notice', draft.notify_assigner_on_completion ? 'Yes' : 'No');
+  } else {
+    appendDraftField(fields, 'Task', `#${draft.task.task_id} — ${draft.task.title}`);
+    appendDraftField(fields, 'Current status', draft.task.status);
+    if (draft.kind === 'task.update.v1') Object.entries(draft.changes || {}).forEach(([key, value]) => {
+      const label = { title: 'New title', description: 'New description', start_date: 'New start date', due_date: 'New due date',
+        notify_assigner_on_completion: 'Completion notice', link: 'New linked record' }[key] || key;
+      appendDraftField(fields, label, key === 'link' ? (value ? `${value.label} (${value.type} ${value.id})` : 'Remove link')
+        : typeof value === 'boolean' ? (value ? 'Yes' : 'No') : (value == null ? 'Clear' : value));
+    });
+    if (draft.kind === 'task.transfer.v1') appendDraftField(fields, 'New assignee', draft.assignee.label);
+    if (draft.note) appendDraftField(fields, 'Note', draft.note);
+  }
+}
+
+// The shared review card. A proposal saved before draft ids existed has no
+// write control at all: it can only be asked for again.
+function hydrateActionDraft(family, host, message, draft) {
+  const appliedId = actionAppliedId(family, draft);
+  const applied = draft.status === 'applied' && !!appliedId;
+  const canApply = typeof draft.draft_id === 'string' && !!draft.draft_id;
+
+  const head = document.createElement('div'); head.className = 'action-draft-head';
+  const title = document.createElement('b'); title.textContent = family.title;
+  const status = document.createElement('span'); status.className = 'action-draft-status';
+  status.textContent = applied ? `Applied — ${family.noun} #${appliedId}`
+    : actionDraftStale(draft) ? 'Expired — not applied' : draft.executing ? 'Applying…' : draft.reviewing ? 'Reviewing…' : 'Proposal — not applied';
+  head.append(title, status);
+
+  const fields = document.createElement('dl'); fields.className = 'action-draft-grid';
+  if (family.fields) family.fields(fields, draft); else appendDraftFieldsFromText(fields, family.text(draft));
+
   const next = document.createElement('div'); next.className = 'action-draft-next';
   const warning = document.createElement('div'); warning.className = 'action-draft-next-warning';
-  warning.textContent = draft.status === 'applied' ? `Applied to event #${draft.result_event_id} using your signed-in account.`
-    : 'Review every value and side effect. Canceling the dialog writes nothing.';
+  warning.textContent = applied ? `Applied to ${family.noun} #${appliedId} using your signed-in account.` : family.reviewWarning;
+  if (family.steps) {
+    const nextTitle = document.createElement('b');
+    nextTitle.textContent = applied ? 'This action has been applied in YisraCase.'
+      : canApply ? 'Before applying this action:' : 'Older saved proposal';
+    const steps = document.createElement('ol');
+    if (!applied && canApply) [
+      `Review the exact ${family.noun}, action, and values above.`,
+      `Select Review & ${family.label(draft).toLowerCase()}.`,
+      'Confirm only if every value is correct. Cancel returns to this unchanged draft.',
+    ].forEach((text) => { const item = document.createElement('li'); item.textContent = text; steps.append(item); });
+    next.append(nextTitle, steps);
+  }
+  if (!canApply) warning.textContent = 'This older saved proposal cannot run directly. Ask Casey to prepare the action again.';
   next.append(warning);
-  if (draft.action_error) { const error = document.createElement('div'); error.className = 'action-draft-next-warning'; error.textContent = `Could not apply event action: ${draft.action_error}`; next.append(error); }
-  appendMarkerError(next, draft);
+
   const actions = document.createElement('div'); actions.className = 'action-draft-actions';
-  const apply = document.createElement('button'); apply.type = 'button';
-  apply.textContent = draft.status === 'applied' && draft.result_event_id ? `Open event #${draft.result_event_id}` : `Review & ${eventActionLabel(draft).toLowerCase()}`;
-  apply.disabled = !!(draft.executing || draft.reviewing); if (!hydrateStaleDraft(next, apply, message, draft)) apply.addEventListener('click', () => executeEventDraft(message));
+  if (canApply) {
+    const apply = document.createElement('button'); apply.type = 'button';
+    apply.textContent = applied ? `Open ${family.noun} #${appliedId}` : `Review & ${family.label(draft).toLowerCase()}`;
+    apply.disabled = !!(draft.executing || draft.reviewing);
+    if (!hydrateStaleDraft(next, apply, message, draft)) apply.addEventListener('click', () => executeActionDraft(message));
+    actions.append(apply);
+  }
   const copy = document.createElement('button'); copy.type = 'button'; copy.textContent = 'Copy details';
-  copy.addEventListener('click', async () => { try { await navigator.clipboard.writeText(eventDraftText(draft)); copy.textContent = 'Copied'; } catch (_) { copy.textContent = 'Copy failed'; } });
-  actions.append(apply, copy);
-  if (draft.status !== 'applied') { const discard = document.createElement('button'); discard.type = 'button'; discard.className = 'ghost'; discard.textContent = 'Discard'; discard.disabled = !!(draft.executing || draft.reviewing); discard.addEventListener('click', () => { delete message.action_draft; render(); }); actions.append(discard); }
+  copy.addEventListener('click', async () => {
+    try { await navigator.clipboard.writeText(family.text(draft)); copy.textContent = 'Copied'; }
+    catch (_) { copy.textContent = 'Copy failed'; }
+  });
+  actions.append(copy);
+  if (!applied) {
+    const discard = document.createElement('button'); discard.type = 'button'; discard.className = 'ghost';
+    discard.textContent = 'Discard'; discard.disabled = !!(draft.executing || draft.reviewing);
+    discard.addEventListener('click', () => { delete message.action_draft; render(); });
+    actions.append(discard);
+  }
+
+  if (draft.action_error) {
+    const error = document.createElement('div'); error.className = 'action-draft-next-warning';
+    error.textContent = `Could not apply ${family.errorNoun}: ${draft.action_error}`;
+    next.append(error);
+  }
+  appendMarkerError(next, draft);
   host.append(head, fields, next, actions);
 }
 
@@ -971,102 +919,8 @@ function hydrateActionDrafts() {
     const index = Number(host.dataset.actionDraft);
     const message = history[index];
     const draft = message && message.action_draft;
-    if (isContactSubrecordActionDraft(draft)) { hydrateContactSubrecordActionDraft(host, message, draft); return; }
-    if (isApptActionDraft(draft)) { hydrateApptActionDraft(host, message, draft); return; }
-    if (isEventActionDraft(draft)) { hydrateEventActionDraft(host, message, draft); return; }
-    if (!isTaskActionDraft(draft)) return;
-    const canCreate = typeof draft.draft_id === 'string' && !!draft.draft_id;
-
-    const head = document.createElement('div');
-    head.className = 'action-draft-head';
-    const title = document.createElement('b');
-    title.textContent = 'Task action';
-    const status = document.createElement('span');
-    status.className = 'action-draft-status';
-    status.textContent = draft.status === 'applied' && draft.result_task_id
-      ? `Applied — task #${draft.result_task_id}`
-      : actionDraftStale(draft) ? 'Expired — not applied' : draft.executing ? 'Applying…' : draft.reviewing ? 'Reviewing…' : 'Proposal — not applied';
-    head.append(title, status);
-
-    const fields = document.createElement('dl');
-    fields.className = 'action-draft-grid';
-    appendDraftField(fields, 'Action', taskActionLabel(draft));
-    if (draft.kind === 'task.create.v1') {
-      appendDraftField(fields, 'Title', draft.title); appendDraftField(fields, 'Description', draft.description);
-      appendDraftField(fields, 'Assignee', draft.assignee && draft.assignee.label);
-      appendDraftField(fields, 'Linked record', draft.link && `${draft.link.label} (${draft.link.type} ${draft.link.id})`);
-      appendDraftField(fields, 'Start date', draft.start_date); appendDraftField(fields, 'Due date', draft.due_date);
-      appendDraftField(fields, 'Completion notice', draft.notify_assigner_on_completion ? 'Yes' : 'No');
-    } else {
-      appendDraftField(fields, 'Task', `#${draft.task.task_id} — ${draft.task.title}`);
-      appendDraftField(fields, 'Current status', draft.task.status);
-      if (draft.kind === 'task.update.v1') Object.entries(draft.changes || {}).forEach(([key, value]) => {
-        const label = { title: 'New title', description: 'New description', start_date: 'New start date', due_date: 'New due date',
-          notify_assigner_on_completion: 'Completion notice', link: 'New linked record' }[key] || key;
-        appendDraftField(fields, label, key === 'link' ? (value ? `${value.label} (${value.type} ${value.id})` : 'Remove link')
-          : typeof value === 'boolean' ? (value ? 'Yes' : 'No') : (value == null ? 'Clear' : value));
-      });
-      if (draft.kind === 'task.transfer.v1') appendDraftField(fields, 'New assignee', draft.assignee.label);
-      if (draft.note) appendDraftField(fields, 'Note', draft.note);
-    }
-
-    const next = document.createElement('div');
-    next.className = 'action-draft-next';
-    const nextTitle = document.createElement('b');
-    nextTitle.textContent = draft.status === 'applied' ? 'This action has been applied in YisraCase.'
-      : canCreate ? 'Before applying this action:' : 'Older saved proposal';
-    const steps = document.createElement('ol');
-    if (draft.status !== 'applied' && canCreate) [
-      'Review the exact task, action, and values above.',
-      `Select Review & ${taskActionLabel(draft).toLowerCase()}.`,
-      'Confirm only if every value is correct. Cancel returns to this unchanged draft.',
-    ].forEach((text) => { const item = document.createElement('li'); item.textContent = text; steps.append(item); });
-    const warning = document.createElement('div');
-    warning.className = 'action-draft-next-warning';
-    warning.textContent = draft.status === 'applied'
-      ? `Applied to task #${draft.result_task_id} using your signed-in account.`
-      : 'Applying changes YisraCase immediately. Normal task notifications and reminders may run.';
-    next.append(nextTitle, steps, warning);
-
-    const actions = document.createElement('div');
-    actions.className = 'action-draft-actions';
-    let create = null;
-    if (canCreate) {
-      create = document.createElement('button');
-      create.type = 'button';
-      create.textContent = draft.status === 'applied' && draft.result_task_id
-        ? `Open task #${draft.result_task_id}` : `Review & ${taskActionLabel(draft).toLowerCase()}`;
-      create.disabled = !!(draft.executing || draft.reviewing);
-      if (!hydrateStaleDraft(next, create, message, draft)) create.addEventListener('click', () => executeTaskDraft(message));
-    } else {
-      warning.textContent = 'This older saved proposal cannot run directly. Ask Casey to prepare the action again.';
-    }
-    const copy = document.createElement('button');
-    copy.type = 'button';
-    copy.textContent = 'Copy details';
-    copy.addEventListener('click', async () => {
-      try {
-        await navigator.clipboard.writeText(taskDraftText(draft));
-        copy.textContent = 'Copied';
-      } catch (_) { copy.textContent = 'Copy failed'; }
-    });
-    const discard = document.createElement('button');
-    discard.type = 'button';
-    discard.className = 'ghost';
-    discard.textContent = 'Discard';
-    discard.disabled = !!(draft.executing || draft.reviewing);
-    discard.addEventListener('click', () => { delete message.action_draft; render(); });
-    if (create) actions.append(create);
-    actions.append(copy);
-    if (draft.status !== 'applied') actions.append(discard);
-    if (draft.action_error) {
-      const error = document.createElement('div');
-      error.className = 'action-draft-next-warning';
-      error.textContent = `Could not apply task action: ${draft.action_error}`;
-      next.append(error);
-    }
-    appendMarkerError(next, draft);
-    host.append(head, fields, next, actions);
+    const family = actionFamily(draft);
+    if (family) hydrateActionDraft(family, host, message, draft);
   });
 }
 
@@ -1391,7 +1245,7 @@ async function openSavedChat(id) {
     const messages = Array.isArray(r.chat && r.chat.messages) ? r.chat.messages : [];
     const restored = messages.map((m) => ({ role: m.role === 'assistant' ? 'assistant' : 'user',
       text: String(m.text || ''), ...(m.payload && typeof m.payload === 'object' ? m.payload : {}) }));
-    history = applyContactSubrecordActionResults(applyApptActionResults(applyEventActionResults(applyTaskActionResults(restored))));
+    history = applyActionResults(restored);
     // A reopened proposal is never offered for writing (actionDraftStale).
     history.forEach((m) => { if (m.action_draft && m.action_draft.status !== 'applied') m.action_draft.restored = true; });
     currentChatId = Number(r.chat.id);
