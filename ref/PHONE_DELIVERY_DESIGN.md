@@ -1,6 +1,6 @@
 # Phone Outbound Delivery — design
 
-**Arc:** phone-delivery · **Status:** S1 live 2026-10-21 (first tick verified: 11 recovered, 40 stamped, 3 real failures surfaced); S2 cut over 2026-10-21 (hook 22 → wf_phone_delivery_ping, wf19 deactivated); S3–S5 not started
+**Arc:** phone-delivery · **Status:** S1 live 2026-10-21 (first tick verified: 11 recovered, 40 stamped, 3 real failures surfaced); S2 cut over 2026-10-21 (hook 22 → wf_phone_delivery_ping, wf19 deactivated; status-transition ping proven live same day); S3 built 2026-10-21 (comms.html thread chip — patch pending apply); S3b (entity feeds), S4 (backfill), S5 not started
 **Scope:** OUTBOUND SMS/MMS only — recovering texts the ingest never saw, and
 learning/display of per-message delivery status. Inbound parsing stays where it
 is (see §9 Q3).

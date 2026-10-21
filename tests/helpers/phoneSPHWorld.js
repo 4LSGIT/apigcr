@@ -49,12 +49,12 @@ const withKind = (group) => [group, group.replace(' GROUP BY other_party', `${SM
 const groupTail = (sql, group) => withKind(group).flatMap((g) => [`${g} ORDER BY last_id DESC LIMIT ?`, `${g} HAVING MAX(id) < ? ORDER BY last_id DESC LIMIT ?`]).includes(sql);
 const CONVO_GROUP = "SELECT other_party, MAX(id) AS last_id, COUNT(*) AS n FROM phone_event_log FORCE INDEX (idx_phone_event_line) WHERE line_number = ? AND suppressed = 0 AND other_party IS NOT NULL GROUP BY other_party";
 const CONVO_LATEST = "SELECT id, event_type, direction, body, processed_at, line_number, JSON_UNQUOTE(JSON_EXTRACT(raw_extra, '$.ts')) AS ts, JSON_UNQUOTE(JSON_EXTRACT(raw_extra, '$.started_at')) AS started_at, JSON_UNQUOTE(JSON_EXTRACT(raw_extra, '$.ended_at')) AS ended_at, JSON_UNQUOTE(JSON_EXTRACT(raw_extra, '$.provider_status')) AS provider_status FROM phone_event_log WHERE id IN (?)";
-const MSGS = "SELECT id, event_type, direction, body, processed_at, log_id, JSON_UNQUOTE(JSON_EXTRACT(raw_extra, '$.ts')) AS ts, JSON_UNQUOTE(JSON_EXTRACT(raw_extra, '$.started_at')) AS started_at, JSON_UNQUOTE(JSON_EXTRACT(raw_extra, '$.ended_at')) AS ended_at, JSON_UNQUOTE(JSON_EXTRACT(raw_extra, '$.provider_status')) AS provider_status FROM phone_event_log WHERE line_number = ? AND other_party = ? AND suppressed = 0";
+const MSGS = "SELECT id, event_type, direction, body, processed_at, log_id, delivery_state, delivery_reason, delivery_code, JSON_UNQUOTE(JSON_EXTRACT(raw_extra, '$.ts')) AS ts, JSON_UNQUOTE(JSON_EXTRACT(raw_extra, '$.started_at')) AS started_at, JSON_UNQUOTE(JSON_EXTRACT(raw_extra, '$.ended_at')) AS ended_at, JSON_UNQUOTE(JSON_EXTRACT(raw_extra, '$.provider_status')) AS provider_status FROM phone_event_log WHERE line_number = ? AND other_party = ? AND suppressed = 0";
 const CALLS = "SELECT id, direction, other_party, processed_at, log_id, JSON_UNQUOTE(JSON_EXTRACT(raw_extra, '$.started_at')) AS started_at, JSON_UNQUOTE(JSON_EXTRACT(raw_extra, '$.ended_at')) AS ended_at, JSON_UNQUOTE(JSON_EXTRACT(raw_extra, '$.provider_status')) AS provider_status FROM phone_event_log FORCE INDEX (idx_phone_event_line) WHERE line_number = ? AND event_type = 'call' AND suppressed = 0";
 const JSONS = "JSON_UNQUOTE(JSON_EXTRACT(raw_extra, '$.ts')) AS ts, JSON_UNQUOTE(JSON_EXTRACT(raw_extra, '$.started_at')) AS started_at, JSON_UNQUOTE(JSON_EXTRACT(raw_extra, '$.ended_at')) AS ended_at, JSON_UNQUOTE(JSON_EXTRACT(raw_extra, '$.provider_status')) AS provider_status";
 // All numbers (every readable line at once)
 const ALL_GROUP = "SELECT other_party, MAX(id) AS last_id, COUNT(*) AS n, GROUP_CONCAT(DISTINCT line_number ORDER BY line_number SEPARATOR ',') AS line_numbers FROM phone_event_log e WHERE line_number IN (?) AND suppressed = 0 AND other_party IS NOT NULL AND NOT EXISTS (SELECT 1 FROM phone_lines pl WHERE pl.phone_number = e.other_party) GROUP BY other_party";
-const ALL_MSGS = `SELECT id, event_type, direction, body, processed_at, log_id, line_number, ${JSONS} FROM phone_event_log WHERE other_party = ? AND line_number IN (?) AND suppressed = 0`;
+const ALL_MSGS = `SELECT id, event_type, direction, body, processed_at, log_id, line_number, delivery_state, delivery_reason, delivery_code, ${JSONS} FROM phone_event_log WHERE other_party = ? AND line_number IN (?) AND suppressed = 0`;
 const ALL_USED = 'SELECT DISTINCT line_number FROM phone_event_log WHERE other_party = ? AND line_number IN (?) AND suppressed = 0';
 const ALL_CALLS = "SELECT id, direction, other_party, processed_at, log_id, line_number, JSON_UNQUOTE(JSON_EXTRACT(raw_extra, '$.started_at')) AS started_at, JSON_UNQUOTE(JSON_EXTRACT(raw_extra, '$.ended_at')) AS ended_at, JSON_UNQUOTE(JSON_EXTRACT(raw_extra, '$.provider_status')) AS provider_status FROM phone_event_log WHERE line_number IN (?) AND event_type = 'call' AND suppressed = 0";
 const KEYSET = ' AND (processed_at < ? OR (processed_at = ? AND id < ?))';
@@ -424,6 +424,7 @@ function makeWorld() {
       rows.sort(desc);
       return [rows.slice(0, Number(p[ks ? 5 : 2])).map(e => ({
         id: e.id, event_type: e.event_type, direction: e.direction, body: e.body, processed_at: new Date(e.processed_at), log_id: e.log_id,
+        delivery_state: e.delivery_state ?? null, delivery_reason: e.delivery_reason ?? null, delivery_code: e.delivery_code ?? null,
         ts: json(e, 'ts'), started_at: json(e, 'started_at'), ended_at: json(e, 'ended_at'), provider_status: json(e, 'provider_status'),
       }))];
     }
@@ -468,6 +469,7 @@ function makeWorld() {
       rows.sort(desc);
       return [rows.slice(0, Number(p[ks ? 5 : 2])).map(e => ({
         id: e.id, event_type: e.event_type, direction: e.direction, body: e.body, processed_at: new Date(e.processed_at), log_id: e.log_id, line_number: lineOf(e),
+        delivery_state: e.delivery_state ?? null, delivery_reason: e.delivery_reason ?? null, delivery_code: e.delivery_code ?? null,
         ts: json(e, 'ts'), started_at: json(e, 'started_at'), ended_at: json(e, 'ended_at'), provider_status: json(e, 'provider_status'),
       }))];
     }

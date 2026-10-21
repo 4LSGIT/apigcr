@@ -546,6 +546,8 @@
   .ca-thumb img { display: block; max-width: 160px; max-height: 160px; min-width: 40px; min-height: 40px; object-fit: contain; border-radius: 5px; }
   .ca-file { white-space: normal; text-align: left; max-width: 100%; overflow-wrap: anywhere; }
   .ca-note { display: block; font-style: italic; opacity: 0.85; white-space: normal; }
+  /* Delivery-failed line on an outbound bubble (phone-delivery S3) */
+  .bub .ph-fail { color: var(--danger); font-style: normal; font-weight: 600; opacity: 1; margin-top: 3px; }
   .ca-wrap > .ca-note { margin-top: 4px; }
   a.btn { text-decoration: none; }
   .modal.ca-tx { max-width: 720px; display: flex; flex-direction: column; max-height: calc(100vh - 48px); }
@@ -3959,6 +3961,24 @@ function callBubble(m) {
     phBubbleFoot(m));
 }
 
+/** Why an outbound text failed, in words staff can act on (phone-delivery S3; vocabulary: ref/PHONE_DELIVERY_DESIGN.md §3). */
+const PH_FAIL_REASON = {
+  unreachable: "this number can't receive texts",
+  opted_out: 'the recipient opted out of our texts (STOP)',
+  spam_content: 'a carrier spam filter blocked the message wording',
+  sender_flagged: 'our sending number was flagged — tell IT',
+};
+
+/** The delivery-failed line on an outbound bubble; the raw provider code rides the tooltip. */
+function phFailNote(m) {
+  const d = m.delivery;
+  if (!d || d.state !== 'failed') return null;
+  return h('span', {
+    className: 'ca-note ph-fail',
+    title: d.code ? `Provider code ${d.code}` : undefined,
+  }, icon('fa-triangle-exclamation'), ` Not delivered — ${PH_FAIL_REASON[d.reason] || 'the carrier reported a failure'}`);
+}
+
 /** A text: its words, its archived files (images inline, the rest as chips), its time. */
 function smsBubble(m) {
   const atts = Array.isArray(m.attachments) ? m.attachments : [];
@@ -3973,6 +3993,7 @@ function smsBubble(m) {
     live.length ? h('div', { className: 'ca-atts' }, ...live.map(caAttachment)) : null,
     ...atts.filter((x) => x.purged).map((x) => caTombstone(x, 'Attachment')),
     note,
+    phFailNote(m),
     phBubbleFoot(m));
 }
 

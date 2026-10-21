@@ -332,6 +332,12 @@ function threadItem(r) {
       body: r.body == null ? '' : String(r.body),
       at: eventAt(r.ts, r.processed_at),
       logged: r.log_id != null,
+      // Outbound delivery verdict (phone-delivery S3) — null until the sync
+      // has stamped the row (incoming rows and calls stay null forever).
+      // Vocabulary: ref/PHONE_DELIVERY_DESIGN.md §3; code is tooltip-only.
+      delivery: r.delivery_state
+        ? { state: r.delivery_state, reason: r.delivery_reason || null, code: r.delivery_code || null }
+        : null,
     };
 }
 
@@ -642,6 +648,7 @@ async function listMessages(db, line, party, query = {}) {
   params.push(limit + 1);
   const [rows] = await db.query(
     `SELECT id, event_type, direction, body, processed_at, log_id,
+            delivery_state, delivery_reason, delivery_code,
             JSON_UNQUOTE(JSON_EXTRACT(raw_extra, '$.ts')) AS ts,
             JSON_UNQUOTE(JSON_EXTRACT(raw_extra, '$.started_at')) AS started_at,
             JSON_UNQUOTE(JSON_EXTRACT(raw_extra, '$.ended_at')) AS ended_at,
@@ -794,6 +801,7 @@ async function listAllMessages(db, userId, party, query = {}) {
   params.push(limit + 1);
   const [rows] = await db.query(
     `SELECT id, event_type, direction, body, processed_at, log_id, line_number,
+            delivery_state, delivery_reason, delivery_code,
             JSON_UNQUOTE(JSON_EXTRACT(raw_extra, '$.ts')) AS ts,
             JSON_UNQUOTE(JSON_EXTRACT(raw_extra, '$.started_at')) AS started_at,
             JSON_UNQUOTE(JSON_EXTRACT(raw_extra, '$.ended_at')) AS ended_at,

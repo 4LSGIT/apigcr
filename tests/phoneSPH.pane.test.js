@@ -196,6 +196,38 @@ describe('comms.html — Phone tab', () => {
     expect(window.__pwned).toBeUndefined();
   });
 
+  test('a failed outbound text carries the delivery chip (phone-delivery S3); everything else shows none', async () => {
+    const thread = {
+      other_party: '3135550001', contact: null, next_cursor: null,
+      messages: [
+        { id: 60, kind: 'sms', direction: 'outgoing', body: 'please call us', at: '2026-10-08T13:00:00.000Z', logged: true,
+          delivery: { state: 'failed', reason: 'unreachable', code: 'SMS-CAR-411' } },
+        { id: 61, kind: 'sms', direction: 'outgoing', body: 'second try', at: '2026-10-08T13:05:00.000Z', logged: true,
+          delivery: { state: 'failed', reason: 'definitely_new_reason', code: null } },
+        { id: 62, kind: 'sms', direction: 'outgoing', body: 'went through', at: '2026-10-08T13:10:00.000Z', logged: true,
+          delivery: { state: 'delivered', reason: null, code: null } },
+        { id: 63, kind: 'sms', direction: 'incoming', body: 'got it', at: '2026-10-08T13:15:00.000Z', logged: true, delivery: null },
+      ],
+    };
+    const env = await bootComms({ over: { 'GET /api/phone-lines/1/conversations/3135550001': () => fresh(thread) } });
+    await openPhone(env);
+    const { doc, window, errors } = env;
+    doc.querySelector('#ph-list .msg').click();
+    await tick(window, 60);
+    expect(errors).toEqual([]);
+    const chipOf = (id) => doc.querySelector(`#ph-body .bub[data-id="${id}"] .ph-fail`);
+    expect(chipOf('60').textContent).toContain("Not delivered — this number can't receive texts");
+    expect(chipOf('60').title).toBe('Provider code SMS-CAR-411');           // raw code: tooltip only
+    expect(chipOf('60').textContent).not.toContain('SMS-CAR-411');
+    // an unknown reason degrades to the generic line, never breaks the bubble
+    expect(chipOf('61').textContent).toContain('Not delivered — the carrier reported a failure');
+    expect(chipOf('61').title).toBe('');
+    // delivered and incoming texts carry no chip, and the words still render
+    expect(chipOf('62')).toBeNull();
+    expect(chipOf('63')).toBeNull();
+    expect(doc.querySelector('#ph-body .bub[data-id="62"]').textContent).toContain('went through');
+  });
+
   test('compose: shown on a can_send + active line for a textable number; hidden (with a reason) otherwise', async () => {
     const env = await bootComms();
     await openPhone(env);

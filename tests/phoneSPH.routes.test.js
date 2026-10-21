@@ -303,7 +303,7 @@ describe('reads', () => {
       duration_s: 85, status: 'completed', unanswered: false, missed: false,
     });
     const row4 = W.T.phone_event_log.find((e) => e.id === 4);
-    expect(t.messages[1]).toEqual({ id: 4, kind: 'sms', direction: 'incoming', body: 'P2 texts', at: JSON.parse(row4.raw_extra).ts, logged: false });
+    expect(t.messages[1]).toEqual({ id: 4, kind: 'sms', direction: 'incoming', body: 'P2 texts', at: JSON.parse(row4.raw_extra).ts, logged: false, delivery: null });
     // nobody answered OUR call: unanswered, but only an incoming one is "missed"
     expect(t.messages[2]).toMatchObject({ kind: 'call', status: 'no-answer', unanswered: true, missed: false, duration_s: 40, at: '2026-10-01T12:20:00.000Z' });
     // line 6 ↔ P1 is one missed call; line 6 ↔ P4 one call with no direction and no times
@@ -315,6 +315,21 @@ describe('reads', () => {
     for (const l of [1, 6]) {
       expect((await call('GET', `/api/phone-lines/${l}/conversations/${S.P4}`, { t: T.su() })).json.messages.some((m) => m.id === 6)).toBe(false);
     }
+  });
+
+  test('delivery verdict rides the thread item (phone-delivery S3): stamped rows carry it, everything else is null', async () => {
+    const S = SPH_SEED(W);
+    W.sms(S.L1, S.P1, 'outgoing', { body: 'did not arrive', delivery_state: 'failed', delivery_reason: 'unreachable', delivery_code: 'SMS-CAR-411' });
+    W.sms(S.L1, S.P1, 'outgoing', { body: 'arrived fine', delivery_state: 'delivered' });
+    const t = (await call('GET', `/api/phone-lines/1/conversations/${S.P1}`, { t: T.su() })).json;
+    const by = (b) => t.messages.find((m) => m.body === b);
+    expect(by('did not arrive').delivery).toEqual({ state: 'failed', reason: 'unreachable', code: 'SMS-CAR-411' });
+    expect(by('arrived fine').delivery).toEqual({ state: 'delivered', reason: null, code: null });
+    expect(by('reply to P1').delivery).toBeNull();        // outbound, never stamped
+    expect(by('hello from P1').delivery).toBeNull();      // incoming — never stamped by design
+    // All numbers thread carries it identically
+    const a = (await call('GET', `/api/phone-lines/all/conversations/${S.P1}`, { t: T.su() })).json;
+    expect(a.messages.find((m) => m.body === 'did not arrive').delivery.reason).toBe('unreachable');
   });
 
   test('a mixed conversation pages on (processed_at, id) across texts and calls', async () => {
