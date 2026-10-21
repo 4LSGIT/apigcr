@@ -102,6 +102,11 @@ function buildIngestEvent(r, { backfill = false } = {}) {
     by: 0,
     link_type: 'phone',
     link_id: r.to,
+    // The text's REAL send time (S3b/S4): createLogEntry stamps log_date from
+    // it (UTC → firm-local), so a recovered text lands on the log when it was
+    // sent — essential for the backfill, where ingest-time dating would spray
+    // months-old texts onto today's case and contact feeds.
+    date: r.ts || null,
     data: { direction: 'outgoing', attachments: r.attachments },
     extra: {
       ts: r.ts,

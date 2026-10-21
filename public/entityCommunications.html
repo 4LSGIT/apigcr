@@ -44,6 +44,8 @@
   .when { color: var(--text-muted); font-size: var(--fs-xs); white-space: nowrap; }
   .badge { display: inline-flex; align-items: center; padding: 1px 6px; border: 1px solid var(--border); border-radius: 999px; color: var(--text-muted); background: var(--surface-2); font-size: 11px; font-weight: 700; }
   .badge.court { color: var(--danger-on-soft); background: var(--danger-soft); border-color: var(--danger); }
+  /* Delivery-failed badge on an outbound text (phone-delivery S3b) */
+  .badge.fail { color: var(--danger-on-soft); background: var(--danger-soft); border-color: var(--danger); }
   .details { padding: 0 11px 12px 46px; border-top: 1px solid var(--border); }
   .meta { display: flex; flex-wrap: wrap; gap: 5px 14px; padding: 8px 0; color: var(--text-muted); font-size: var(--fs-sm); }
   .copy { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.45; }
@@ -213,6 +215,25 @@ function subjectOf(item, kind) {
 
 function iconFor(kind) {
   return kind === 'call' ? 'fa-phone' : kind === 'sms' ? 'fa-comment-sms' : kind === 'court' ? 'fa-scale-balanced' : 'fa-envelope';
+}
+
+/** Why an outbound text failed (phone-delivery S3b) — same words as Comms → Phone; vocabulary: ref/PHONE_DELIVERY_DESIGN.md §3. */
+const FAIL_REASON = {
+  unreachable: "this number can't receive texts",
+  opted_out: 'the recipient opted out of our texts (STOP)',
+  spam_content: 'a carrier spam filter blocked the message wording',
+  sender_flagged: 'our sending number was flagged — tell IT',
+};
+
+/** The "Not delivered" badge for a failed outbound text; the reason sentence and raw provider code ride the tooltip. */
+function failBadge(item) {
+  const d = item.phone && item.phone.delivery;
+  if (!d || d.state !== 'failed') return null;
+  const why = FAIL_REASON[d.reason] || 'the carrier reported a failure';
+  return h('span', {
+    className: 'badge fail',
+    title: `Not delivered — ${why}${d.code ? ` (provider code ${d.code})` : ''}`,
+  }, h('i', { className: 'fa-solid fa-triangle-exclamation', 'aria-hidden': 'true' }), ' Not delivered');
 }
 
 function attachmentsOf(item) {
@@ -573,6 +594,7 @@ function renderItem(item) {
     h('span', { className: 'who' }, participantOf(item)),
     direction ? h('span', { className: 'badge' }, direction === 'outgoing' ? 'Outgoing' : 'Incoming') : null,
     kind === 'court' ? h('span', { className: 'badge court' }, 'Court') : null,
+    failBadge(item),
     item.legacy ? h('span', { className: 'badge' }, 'Logged only') : null,
     Number(item.attachment_count) > 0
       ? h('span', { className: 'badge' }, h('i', { className: 'fa-solid fa-paperclip', 'aria-hidden': 'true' }), ` ${Number(item.attachment_count)}`)

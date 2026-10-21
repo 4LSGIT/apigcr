@@ -76,6 +76,31 @@ describe('entity communications widget', () => {
     dom.window.close();
   });
 
+  test('a failed outbound text wears the Not delivered badge; the reason and provider code ride the tooltip (phone-delivery S3b)', async () => {
+    const { dom } = boot([
+      { id: 6, kind: 'sms', direction: 'outgoing', at: '2026-10-19T10:00:00Z', participant: '3135550001',
+        preview: 'please call us', phone: { event_id: 6, line_number: '2485550100', body: 'please call us',
+          delivery: { state: 'failed', reason: 'unreachable', code: 'SMS-CAR-411' } } },
+      { id: 7, kind: 'sms', direction: 'outgoing', at: '2026-10-19T10:01:00Z', participant: '3135550001',
+        preview: 'went through', phone: { event_id: 7, line_number: '2485550100', body: 'went through',
+          delivery: { state: 'delivered', reason: null, code: null } } },
+      { id: 8, kind: 'sms', direction: 'incoming', at: '2026-10-19T10:02:00Z', participant: '3135550001',
+        preview: 'got it', phone: { event_id: 8, line_number: '2485550100', body: 'got it', delivery: null } },
+    ]);
+    await settle();
+    await settle();
+    const cards = [...dom.window.document.querySelectorAll('.card.sms')];
+    expect(cards).toHaveLength(3);
+    const badges = cards.map(c => c.querySelector('.badge.fail'));
+    expect(badges[0]).not.toBeNull();
+    expect(badges[0].textContent).toContain('Not delivered');
+    expect(badges[0].title).toBe("Not delivered — this number can't receive texts (provider code SMS-CAR-411)");
+    expect(badges[0].textContent).not.toContain('SMS-CAR-411');   // raw code: tooltip only
+    expect(badges[1]).toBeNull();   // delivered → no badge
+    expect(badges[2]).toBeNull();   // incoming / unstamped → no badge
+    dom.window.close();
+  });
+
   test('sends channel and direction filters and exposes the contact composer', async () => {
     const { dom, apiSend } = boot();
     await settle();

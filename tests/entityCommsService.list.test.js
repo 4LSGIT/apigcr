@@ -101,7 +101,8 @@ function world() {
     { id: 305, line_number: '2485550199', other_party: '3135550001', log_id: 106, processed_at: utc('2026-10-10 11:03:00'), event_type: 'call' },
     { id: 306, line_number: '2485550100', other_party: '3135550002', log_id: null, processed_at: utc('2026-10-10 11:04:00') },
     { id: 307, line_number: '2485550100', other_party: '3135550001', log_id: null, processed_at: utc('2026-09-15 15:00:00') },
-  ].map(r => ({ event_type: 'sms', direction: 'incoming', body: `text ${r.id}`, raw_extra: null, suppressed: 0, ...r }));
+  ].map(r => ({ event_type: 'sms', direction: 'incoming', body: `text ${r.id}`, raw_extra: null, suppressed: 0,
+    delivery_state: null, delivery_reason: null, delivery_code: null, ...r }));
   return { contacts, relate, emails, phones, logs, mail, phone };
 }
 
@@ -253,6 +254,19 @@ describe('case feed — Include contact communications', () => {
 });
 
 describe('contact feed', () => {
+  test('a stamped outbound text carries the delivery verdict; unstamped rows carry null (phone-delivery S3b)', async () => {
+    const w = world();
+    w.phone.push({
+      id: 308, event_type: 'sms', direction: 'outgoing', body: 'text 308', raw_extra: null, suppressed: 0,
+      line_number: '2485550100', other_party: '3135550001', log_id: null, processed_at: utc('2026-10-10 11:05:00'),
+      delivery_state: 'failed', delivery_reason: 'unreachable', delivery_code: 'SMS-CAR-411',
+    });
+    const out = await svc.list(fakeDb(w), USER, 'contact', 9, { kind: 'phone' });
+    const by = (id) => out.items.find(i => i.key === `phone:${id}`);
+    expect(by(308).phone.delivery).toEqual({ state: 'failed', reason: 'unreachable', code: 'SMS-CAR-411' });
+    expect(by(301).phone.delivery).toBeNull();   // never stamped → null, never a fabricated verdict
+  });
+
   test('ownership windows apply to mysql2-shaped identity rows (NULL start = since forever)', async () => {
     const out = await svc.list(fakeDb(world()), USER, 'contact', 9, { kind: 'phone' });
     expect(keys(out)).toEqual(['phone:301', 'phone:302', 'phone:304']);

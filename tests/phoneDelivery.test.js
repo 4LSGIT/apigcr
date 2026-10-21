@@ -167,6 +167,7 @@ describe('buildIngestEvent', () => {
       type: 'sms', direction: 'outgoing',
       from: '2485592400', to: '2482405969', message: 'hello', by: 0,
       link_type: 'phone', link_id: '2482405969',
+      date: R.ts,   // the SEND time — createLogEntry stamps log_date from it (S3b/S4)
       data: { direction: 'outgoing', attachments: R.attachments },
       extra: {
         ts: R.ts, line: '2485592400', provider: 'ringcentral',

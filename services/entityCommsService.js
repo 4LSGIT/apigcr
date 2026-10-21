@@ -397,7 +397,8 @@ async function loadPhone(db, userId, entity, identities, assoc) {
   const lineByNumber = new Map(lines.filter(x => x.phone_number).map(x => [String(x.phone_number), x]));
   if (!lineByNumber.size) return [];
   const [rows] = await db.query(
-    `SELECT id, event_type, direction, body, processed_at, other_party, line_number, raw_extra, log_id
+    `SELECT id, event_type, direction, body, processed_at, other_party, line_number, raw_extra, log_id,
+            delivery_state, delivery_reason, delivery_code
        FROM phone_event_log
       WHERE line_number IN (?) AND suppressed = 0`,
     [[...lineByNumber.keys()]]
@@ -433,6 +434,11 @@ async function loadPhone(db, userId, entity, identities, assoc) {
         event_id: Number(r.id), line_id: Number(line.id), line_number: String(r.line_number),
         body: kind === 'sms' ? String(r.body || '') : null,
         duration_s: f.duration, status: f.status, missed: f.missed,
+        // Outbound delivery verdict (phone-delivery S3b) — same shape as the
+        // Comms pane's threadItem.delivery; null until the sync stamps the row.
+        delivery: r.delivery_state
+          ? { state: r.delivery_state, reason: r.delivery_reason || null, code: r.delivery_code || null }
+          : null,
       },
     });
   }
