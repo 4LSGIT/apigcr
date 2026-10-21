@@ -229,7 +229,12 @@ migration rule.
 - **S3c — failed-send dispatch (ruled yes 2026-10-21).** When a LIVE run
   transitions a row's verdict to `failed` (fresh verdict or null→failed —
   never a re-check no-op, never a failed→failed code refinement, never the
-  backfill, same reasoning as §6), the sync starts the workflow named by
+  backfill, same reasoning as §6 — and NEVER when the failed text's recipient
+  is one of the firm's own lines, active or not (S3c-b loop guard, 2026-10-21:
+  wf 54 itself texts a staff line, so dispatching on a failed notification
+  would send another at status-ping speed; firm-to-firm failures stay visible
+  as chips and count as `dispatch_skipped_firm`)), the sync starts the
+  workflow named by
   `app_settings.phone_delivery_failed_workflow_id` (blank = off) through
   `actionDispatchers.dispatchWorkflow` — the standard hook-target path, so
   inactive/unpublished refusals, init_data capture and the queued start all

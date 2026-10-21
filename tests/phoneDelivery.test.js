@@ -192,14 +192,17 @@ describe('buildIngestEvent', () => {
 // ─── runSync orchestration over a scripted db ───────────────────────────────
 
 /** Scripted db: recognizes the few statements by text; records every call. */
-function makeDb({ existingRows = [], locked = false } = {}) {
+function makeDb({ existingRows = [], locked = false, firmLines = null } = {}) {
   const calls = [];
   const db = {
     calls,
     async query(sql, params) {
       calls.push([sql, params]);
-      if (/FROM phone_lines/.test(sql)) {
+      if (/SELECT provider, credential_id/.test(sql)) {
         return [[{ provider: 'ringcentral', credential_id: 9 }, { provider: 'quo', credential_id: 10 }]];
+      }
+      if (/SELECT phone_number FROM phone_lines/.test(sql)) {
+        return [(firmLines || ['2485592400', '2486213656']).map(phone_number => ({ phone_number }))];
       }
       if (/FROM phone_event_log/.test(sql)) return [existingRows];
       if (/INSERT (IGNORE )?INTO system_alerts/.test(sql)) return [{ affectedRows: 1, insertId: 1 }];
@@ -379,6 +382,19 @@ describe('runSync', () => {
     out = await svc.runSync(makeDb());
     expect([out.dispatched, out.dispatch_errors]).toEqual([0, 1]);
     expect(out.errors[0]).toMatch(/failed-dispatch wf53.*inactive/);
+
+    // f) LOOP GUARD (S3c-b): a failed text whose recipient is a firm's own
+    // line never dispatches — the notification workflow texts staff lines,
+    // and dispatching on a failed notification would send another, forever.
+    jest.clearAllMocks(); getAdapterSpy.mockRestore();
+    setSettings(WF);
+    phoneIngestService.ingestPhoneEvent.mockResolvedValue({ log_id: 1 });
+    actionDispatchers.dispatchWorkflow.mockResolvedValue({ status: 'success' });
+    arm(fixtureAdapter([{ records: [OUT_REC({ provider_ref: 'f-5', to: '2485592400', delivery: FAILED })] }]));
+    out = await svc.runSync(makeDb({ firmLines: ['2485592400', '2486213656'] }));
+    expect([out.dispatched, out.dispatch_skipped_firm]).toEqual([0, 1]);
+    expect(actionDispatchers.dispatchWorkflow).not.toHaveBeenCalled();
+    expect(out.stamped).toBe(1);   // the verdict still stamps — only the dispatch is withheld
   });
 
   test('one bad record never stops the window', async () => {

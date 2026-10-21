@@ -170,12 +170,21 @@ async function runSync(db, opts = {}) {
         WHERE active = 1 AND credential_id IS NOT NULL
         GROUP BY provider, credential_id`
     );
+    // S3c-b loop guard: a failed text whose RECIPIENT is one of the firm's own
+    // lines never dispatches. The notification workflow itself texts a staff
+    // line — if that notification ever failed (a spam filter on its wording is
+    // the proven class), dispatching on it would send another, at status-ping
+    // speed: a runaway loop. ALL lines, active or not — a text to a retired
+    // line must not loop either. Visible as out.dispatch_skipped_firm.
+    const [lineRows] = await db.query(`SELECT phone_number FROM phone_lines`);
+    const firmLines = new Set(lineRows.map(l => String(l.phone_number)));
+    out.dispatch_skipped_firm = 0;
     for (const g of groups) {
       const adapter = phoneService.getAdapter(g.provider);
       if (!adapter || !adapter.capabilities?.outboundSync || typeof adapter.listOutbound !== 'function') continue;
       out.groups += 1;
       try {
-        await _syncGroup(db, adapter, g, out, { maxPages, failedWfId });
+        await _syncGroup(db, adapter, g, out, { maxPages, failedWfId, firmLines });
       } catch (err) {
         // NO_AUTH and anything else unexpected for this group: record, alert,
         // move on to the next group.
@@ -197,7 +206,7 @@ async function runSync(db, opts = {}) {
   return out;
 }
 
-async function _syncGroup(db, adapter, g, out, { maxPages, failedWfId }) {
+async function _syncGroup(db, adapter, g, out, { maxPages, failedWfId, firmLines }) {
   const phoneIngestService = require('./phoneIngestService');   // lazy require (convention)
   for (let page = 1; page <= maxPages; page++) {
     const res = await adapter.listOutbound(db, {
@@ -265,7 +274,9 @@ async function _syncGroup(db, adapter, g, out, { maxPages, failedWfId }) {
         // dispatcher handles inactive / unpublished targets itself (refuse or
         // capture); a dispatch failure never stops the window.
         const wasFailed = (row && row.delivery_state) === 'failed';
-        if (failedWfId && next.state === 'failed' && !wasFailed) {
+        if (failedWfId && next.state === 'failed' && !wasFailed && firmLines && firmLines.has(r.to)) {
+          out.dispatch_skipped_firm += 1;   // firm-to-firm failure: chips + email digest territory, never a dispatch (loop guard)
+        } else if (failedWfId && next.state === 'failed' && !wasFailed) {
           try {
             const { dispatchWorkflow } = require('../lib/actionDispatchers');   // lazy require (convention)
             const d = await dispatchWorkflow({ id: null }, { workflow_id: failedWfId }, {
