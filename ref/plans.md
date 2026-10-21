@@ -599,15 +599,11 @@ and the two marked LIVE BUG are worth landing whether or not A17 ever ships.)
   `b087fa5`: `resolve()` takes an opt-in
   `escape:'json'` that both serialized-config call sites pass, and plain-text
   callers are untouched.
-- **A route-harness test for the two save-time `type`-key guards.** `b087fa5`
-  pins them with source assertions (`routes/sequences.js` `validateStepConfig`,
-  `routes/workflows.js` `validateInternalFunctionConfig`) rather than
-  behaviourally, because both are reached only through a route. The behavioural
-  coverage sits where the exploit shape is — the sequence dispatch path and the
-  resolver round trip, both through the real engine — but a source assertion
-  cannot catch a fifth builder added later or a `jobData.type = …` mutation
-  after construction. Worth a supertest-shaped harness when one of these routes
-  next needs touching.
+- **A route-harness test for the SEQUENCE `type`-key guard.**
+  `tests/workflows.codeStepGate.test.js` now pins the workflow half by request
+  on both POST and PATCH; `routes/sequences.js` `validateStepConfig` is still
+  source-asserted only. Same harness idiom applies when a sequence route next
+  needs touching.
 - **No optimistic concurrency on any automation definition write.** Workflow
   and sequence steps are addressed by `step_number` (a position), and no
   step-mutating route or publish route takes an expected-base token. Two

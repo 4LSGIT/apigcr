@@ -2,6 +2,7 @@
 const express = require("express");
 const router = express.Router();
 const jwtOrApiKey = require("../lib/auth.jwtOrApiKey");
+const { can } = require("../lib/capabilities");
 const {
   advanceWorkflow,
   executeSingleStep,
@@ -236,6 +237,41 @@ const validateInternalFunctionParams = internalFunctions.__validateFunctionParam
  * Skips silently for non-`internal_function` step types (those preserve
  * existing permissive behavior).
  */
+// ─────────────────────────────────────────────────────────────
+// custom_code capability gate.
+//
+// A custom_code step is arbitrary server-side execution, not a sandboxed
+// expression: lib/job_executor runs it with vm.runInNewContext, and Node's vm
+// is not a security boundary — the host realm is reachable through the
+// sandbox's own `input` object, and process.env carries the DB credentials.
+// So INTRODUCING one is gated on automations.manage ('Manage workflows,
+// sequences and trigger rules'; su / it / admin), which is what that
+// capability was defined for.
+//
+// Scope, deliberately: only the paths that take a step type FROM THE REQUEST.
+// ensureDraft's draft fork and POST /workflows/:id/duplicate COPY stored rows,
+// so they introduce no new code — and gating the fork would stop a non-holder
+// editing any step of a workflow that merely contains a code step, which is
+// several live workflows. A stored key cannot redirect dispatch either (the
+// type-last fix), so copying is inert.
+//
+// This gates AUTHORING, never execution: POST /workflows/:id/start is
+// jwtOrApiKey, and every trigger, hook and ingest path starts workflows whose
+// code steps already exist. Containment is a real sandbox or retiring
+// custom_code — see ref/plans.md.
+//
+// Returns null when allowed, or { status, error, message }.
+// ─────────────────────────────────────────────────────────────
+function refuseCodeStepWithoutCapability(auth, stepType) {
+  if (stepType !== 'custom_code') return null;
+  if (can(auth, 'automations.manage')) return null;
+  return {
+    status: 403,
+    error: 'custom_code steps require the automations.manage capability',
+    message: 'A code step runs arbitrary server-side code. Ask an administrator to add it, or use an internal_function or webhook step.'
+  };
+}
+
 function validateInternalFunctionConfig(stepType, config) {
   // Type-INDEPENDENT guard first. `type` is executeJob's dispatch selector, so
   // a `type` key inside step.config used to override workflow_steps.type: a
@@ -1540,6 +1576,8 @@ router.post("/workflows/:id/steps", jwtOrApiKey, async (req, res) => {
 
   // Timing-extensions slice — validate wait_for / schedule_resume params
   {
+    const codeRefusal = refuseCodeStepWithoutCapability(req.auth, type);
+    if (codeRefusal) return res.status(codeRefusal.status).json(codeRefusal);
     const v = validateInternalFunctionConfig(type, config);
     if (v) return res.status(v.status).json({ error: v.error, message: v.message });
   }
@@ -1687,6 +1725,8 @@ router.post("/workflows/bulk", jwtOrApiKey, async (req, res) => {
 
     // Timing-extensions slice — validate wait_for / schedule_resume params
     {
+      const codeRefusal = refuseCodeStepWithoutCapability(req.auth, step.type);
+      if (codeRefusal) return res.status(codeRefusal.status).json(codeRefusal);
       const v = validateInternalFunctionConfig(step.type, step.config);
       if (v) return res.status(v.status).json({
         error: `Step ${i + 1}: ${v.error}`,
@@ -2221,6 +2261,8 @@ router.put("/workflows/:id/steps/:stepNumber", jwtOrApiKey, async (req, res) => 
 
   // Timing-extensions slice — validate wait_for / schedule_resume params
   {
+    const codeRefusal = refuseCodeStepWithoutCapability(req.auth, type);
+    if (codeRefusal) return res.status(codeRefusal.status).json(codeRefusal);
     const v = validateInternalFunctionConfig(type, config);
     if (v) return res.status(v.status).json({ error: v.error, message: v.message });
   }
@@ -2380,6 +2422,13 @@ router.patch("/workflows/:id/steps/:stepNumber", jwtOrApiKey, async (req, res) =
         configToCheck = typeof rows[0].config === 'string'
           ? JSON.parse(rows[0].config)
           : rows[0].config;
+      }
+      // Inside the transaction callback, so it returns the route's `respond`
+      // shape rather than touching res — the surrounding validators do the
+      // same, and calling res here would double-respond after `outcome`.
+      const codeRefusal = refuseCodeStepWithoutCapability(req.auth, typeToCheck);
+      if (codeRefusal) {
+        return { respond: { status: codeRefusal.status, body: { error: codeRefusal.error, message: codeRefusal.message } } };
       }
       const v = validateInternalFunctionConfig(typeToCheck, configToCheck);
       if (v) {
@@ -2844,6 +2893,9 @@ router.post("/workflows/test-step", jwtOrApiKey, async (req, res) => {
   if (!step || !step.type || !step.config) {
     return res.status(400).json({ error: "step.type and step.config are required" });
   }
+
+  const codeRefusal = refuseCodeStepWithoutCapability(req.auth, step.type);
+  if (codeRefusal) return res.status(codeRefusal.status).json(codeRefusal);
 
   const VALID_TYPES = ["webhook", "internal_function", "custom_code"];
   if (!VALID_TYPES.includes(step.type)) {
