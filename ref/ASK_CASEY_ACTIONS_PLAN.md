@@ -702,13 +702,44 @@ output; `tests/assistantUi.test.js` pins the registry's shape, the 26 kinds, the
 uniqueness of each family's applied-marker key, and the inertness of an
 unknown kind.
 
-#### P2: Permission and capability matrix
+#### P2: Permission and capability matrix — inventoried 2026-10-22
 
-Inventory route authentication, role/capability checks, row-level/firm scope,
-and native UI visibility for every proposed kind. Normalize only what the
-current signed-in user may review, but keep the canonical write route as the
-final authority. Add negative tests for cross-firm IDs, inactive records,
-insufficient roles, and permissions changing between proposal and click.
+Inventory route authentication, role/capability checks, row-level scope, and
+native UI visibility for every proposed kind. Normalize only what the current
+signed-in user may review, but keep the canonical write route as the final
+authority. Add negative tests for foreign-parent IDs, inactive records, and
+state or permissions changing between proposal and click.
+
+The executable matrix is `tests/caseyActionPermissions.test.js`; it carries the
+route table as data, so a moved route fails a test rather than drifting
+silently. What the inventory established, for all 26 shipped kinds:
+
+- **Authentication is identical everywhere and there is no authorization.**
+  Every one of the 22 route mounts behind the 26 kinds is `jwtOrApiKey` and
+  nothing else: a staff-audience JWT whose `user_auth` starts with
+  `authorized` (a varchar prefix test, not a flag), or a machine key subject to
+  its route scopes. No route file mounts a role, capability or superuser gate.
+  The one authorization-shaped refusal in the stack is read-only View-as.
+- **There is no firm/tenant axis.** The schema has no `firm_id` or `tenant_id`,
+  so "cross-firm" has no expression here; the row constraints that exist are
+  the normalizer's (evidence must name the exact id, the parent must match, the
+  link must exist) plus the A5 subrecord preconditions.
+- **The write route is NOT a validation authority for assignee or provider
+  eligibility, and mostly not for terminal state.** `taskService.createTask`
+  contains no SELECT at all and never looks `to` up in `users`;
+  `apptService.createAppt` never checks `appt_with`. The governing principle
+  above says the existing route "preserves ordinary validation" — for these
+  fields that is false, and the normalizer's proposal-time check is the only
+  one. The 15-minute TTL and the no-write-from-history rule bound the exposure
+  window; they do not close it. The contact-subrecord family is the exception:
+  its `expected_updated_at` / `expected_primary_id` preconditions make the
+  route the authority, which is what P3 should generalize.
+
+The specific gaps are filed in `ref/plans.md` (Ask Casey arc section). Two of
+them — appointment attended/no-show and event field edits on a dead row — are
+cases where the route is merely as permissive as the native UI, so they belong
+to P3's click-time precondition rather than to a service guard that would also
+change the human path.
 
 #### P3: Optimistic concurrency and stale review protection
 

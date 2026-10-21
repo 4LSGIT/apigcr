@@ -505,11 +505,49 @@ failed-send dispatch are live; wf 54 sends the notices.)
   either route through the registry or state the direct-require as deliberate
   in the sweep headers + COMMS_ARCHIVE_DESIGN §6.
 
-## From the Ask Casey fix package (2026-10-21) — deferred
+## From the Ask Casey arc (fix package 2026-10-21, P2 inventory 2026-10-22) — deferred
 
 (The actions arc's own roadmap is `ref/ASK_CASEY_ACTIONS_PLAN.md`; these are
 the native-side leftovers it surfaced.)
 
+- **The write route validates no assignee and no provider** (P2 inventory,
+  2026-10-22). `taskService.createTask` has no SELECT in it: `to` is never
+  looked up, so a disabled, offboarded or nonexistent user id is written to
+  `task_to` by any caller, Casey's card or the native form alike (measured on a
+  real engine: `to: <disabled>` and `to: 987` both succeed). `createAppt` does
+  not check `appt_with` either. For Casey this means assignee eligibility is
+  checked only when the proposal is built, and a staff change inside the card's
+  15-minute window is invisible at click time. Fix belongs in the canonical
+  services (reuse `taskService.findAssignableStaff`'s predicate — the same one
+  the `user_auth = 1` bug taught us to share), which also closes it for native
+  callers.
+- **`assistantService.eventDraftProvider` accepts a disabled provider.** It
+  filters on `does_appts = 1` only, with no `user_auth` / `user_type` test,
+  unlike `APPT_PROVIDER_SQL` next to it; `public/eventform.html` filters both,
+  so Casey can propose an availability scope staff cannot choose by hand.
+- **Event complete/cancel accept non-Scheduled and superseded rows.**
+  `eventService.completeEvent` refuses only "already Completed" and
+  `cancelEvent` only "already Canceled"; neither reads
+  `superseded_by_event_id`. So a Canceled event can be flipped to Completed
+  with resolution `held` (cancelling its reminder tasks and emitting
+  `calendar.resolved`) — a transition the native UI never offers, because
+  case/contact/index only show Complete and Cancel on a Scheduled event.
+- **`taskService.updateTask` has no terminal-state guard.** Only the
+  `task_due` → status recompute is guarded, so title/description/start/link can
+  be edited on a Completed or Deleted task; `tasks.html` offers Edit only while
+  the task is open.
+- **Appointment attended/no-show accept terminal rows.** `markAttended` /
+  `markNoShow` guard only the same-status repeat, so a *Rescheduled*
+  predecessor can be marked No Show — and since an `appts` predecessor's only
+  supersession marker is its status, that erases the tombstone and the row
+  counts as live again. The native path reaches the same transitions but only
+  behind its "Status Correction" confirmation. Candidate for P3 (a card-carried
+  precondition) rather than a service guard, since a guard would also block the
+  native correction.
+- **The A5 row-version precondition has one-second resolution.**
+  `contact_phones.updated_at` is a `timestamp` with no fractional seconds, so
+  two updates inside the same wall-clock second are byte-identical and a change
+  made in the same second as the proposal's read passes the check.
 - **Appointment routes answer a status conflict as 500.** `apptService` now
   throws `status:409, code:'appt_status_conflict'` for a repeat cancel /
   reschedule / reschedule-later, but `routes/api.appts.js` maps every
