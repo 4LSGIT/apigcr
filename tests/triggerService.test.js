@@ -30,6 +30,13 @@
 process.env.CREDENTIALS_ENCRYPTION_KEY =
   process.env.CREDENTIALS_ENCRYPTION_KEY || 'x'.repeat(64);
 
+// triggerService reads TRIGGER_CODE_TIMEOUT_MS once, at module load. The
+// production default (15 s) made the M7 while(true) test wait 15 s of wall
+// clock; the invariant — the vm timeout kills the loop — holds at any value.
+// 500 ms still leaves the file's trivial code-mode scripts ~100x headroom on
+// a loaded machine. Must be set BEFORE the require below.
+process.env.TRIGGER_CODE_TIMEOUT_MS = '500';
+
 // Mocked hook engine: lets 'hook' actions succeed/fail/RE-EMIT without
 // loading the real delivery machinery. Re-emission through here is how the
 // end-to-end loop test drives the depth guard.

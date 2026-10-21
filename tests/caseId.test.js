@@ -58,14 +58,17 @@ describe("generateCaseId", () => {
   });
 
   test("shape: 8 chars, alphabet-only, no ILOU/lowercase/-/_, never all-digit", () => {
-    for (const id of ids) {
-      expect(id).toHaveLength(8);
-      for (const ch of id) expect(ALPHABET.includes(ch)).toBe(true);
-      expect(id).not.toMatch(/[ILOU]/);
-      expect(id).not.toMatch(/[a-z]/);
-      expect(id).not.toMatch(/[-_]/);
-      expect(id).not.toMatch(/^\d+$/);
-    }
+    // One aggregate assertion: per-id/per-char expects were ~280k matcher
+    // calls and most of this file's runtime. A failure names how many ids
+    // broke and shows the first few.
+    const bad = ids.filter((id) =>
+      id.length !== 8 ||
+      [...id].some((ch) => !ALPHABET.includes(ch)) ||
+      /[ILOU]/.test(id) ||
+      /[a-z]/.test(id) ||
+      /[-_]/.test(id) ||
+      /^\d+$/.test(id));
+    expect({ count: bad.length, first: bad.slice(0, 5) }).toEqual({ count: 0, first: [] });
   });
 
   test("all-digit ids are rejected and regenerated (deterministic)", () => {

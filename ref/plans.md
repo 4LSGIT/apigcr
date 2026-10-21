@@ -322,6 +322,32 @@ deferred until the budget shows it's needed.
     17. External health probing; `/api/version` reads
     tenant data (§3-17 + §E4).
 
+### Domains & starter websites (ratified with amendments 2026-10-21)
+
+The "YCv3 — Domains and Starter Websites" plan (resolution order = today's
+`routes/pageLanding.js`; links minted from config) is ratified with six
+amendments, which bind every slice that touches hosts:
+1. **The portal never serves on the pages origin.** `/api/portal/verify-pin`
+   mints a token the portal keeps in localStorage, which staff-authored page
+   JS on the same origin could read. Constraint: a token-minting role never
+   serves authored content — portal on the app host or a third origin.
+2. **Pages bind to registered public hosts.** `pages.host` must be a
+   registered public (landing / `tenant_hosts` pages-role) host, never the app
+   host. The v2 fix (POST /api/pages host check + `pageHostMiddleware`'s
+   non-landing branch) is the 2026-10-21 review's P0 #2, its own slice.
+3. **The platform host stays the canonical app origin.** Custom app domains
+   later, as additional hosts, never alias-redirects: OAuth redirect URIs and
+   `targetMatchesAppUrl` pin one hostname.
+4. **A dedicated callback host** for machine traffic (Cloud Tasks and the
+   hook spool target `cfg('app_url')` today — `lib/hookSpool.js`).
+5. **Per-site page binding.** Multi-site needs `pages.site_id` (today every
+   root slug serves on every public host), and token links mint on the
+   primary site's canonical host.
+6. **Registrable-domain separation for public sites.** Tenant pages under
+   `*.p.yisracase.com` share a registrable domain with the app hosts (the
+   same-site cookie trap): get `p.yisracase.com` onto the Public Suffix List,
+   or serve public sites from a separate registrable domain.
+
 ---
 
 ## From the access-control arc (2026-10-14) — deferred
@@ -490,6 +516,25 @@ Active surfaces with known next steps.
 ## Feature plans
 
 - **Pinned pages on a second public domain (2026-10-21).** `pages.host` is bound to `landing_hosts` (pageService.assertHostAllowed), but the landing branch of `pageHostMiddleware` canonicalizes every GET on a non-first landing host to `landing_hosts[0]` BEFORE the pin lookup, so a page pinned to e.g. `www.4lsg.com` is accepted at write and never served by GET. No live row is affected (all 8 `pages` rows had `host` NULL on 2026-10-21). Pick one when a second marketing domain is wanted: refuse non-canonical hosts at write, or check pins before canonicalizing (still landing-origin only, so safe). Converges with YCv3 multi-site (`pages.site_id`).
+- **YisraMail direction (review 2026-10-21; Fred: yes, future plan, nothing
+  started).** YisraMail is a bulk **transport** — an email adapter /
+  credential carrying `bulk_ok` (`ref/MAILBOX_SYSTEM_DESIGN.md` §4.2: specified,
+  never built) — plus campaign-audience → **sequence enrollment**. It is NOT a
+  third flow engine: steps, waits, conditions, holds, dedup and versioned
+  enrollments already exist in sequences, and a parallel engine contradicts
+  "one event bus" (YC 3.0 direction above). Today campaigns bypass the mailbox
+  system entirely (no grants, no Sent copy, no budget; the sender is free text
+  matched to `email_credentials`). First slice — **campaign hardening**:
+  recipient cap enforced in `campaignService.createCampaign` (API keys reach
+  `POST /api/campaigns`, so a UI-only cap is none), counted against
+  `mailboxSendService`'s budget via `transportOf` / `checkBudget` (today one
+  300-contact SMTP campaign spends the whole 300/day smtp budget and locks the
+  hub for humans), non-`bulk_ok` credentials refused above the cap, a
+  campaign-send capability (every campaign route is plain `jwtOrApiKey`: any
+  staff login sends as any firm address), and opt-out checks in the sequence
+  send path (sequences check none). **Cap size pending Fred — check live
+  campaign sizes first** (`campaigns.contact_count`; court-closure notices
+  plausibly exceed ~50); configurable per firm.
 
 - **Opt-out system.** Four-step plan: (A) contact form toggles, (B) warn-but-don't-block on direct sends (Swal confirmation), (C) opted-out badges, (D) inbound STOP handler via YisraHook.
 
@@ -543,9 +588,7 @@ Active surfaces with known next steps.
 
 ## Security cleanups (mostly blocked on legacy frontend retirement)
 
-- **Plaintext `password` column removal** on the users table — blocked on old frontend retirement.
-
-- **Plaintext `users.password`: order of the retirement** (View-as fix, 2026-10-21). Writers today: `auth.password.js` reset + change, `admin.users.js` set-password. Code readers: `/db` (`dbQuery.js` — LIVE: Pabbly Connect as `automations`, 75 calls 2026-08-03 → 2026-10-19 in `legacy_route_log`, one as `fred`), `/db64`, `/unplacehold`, the legacy `/dropbox/*` routes. (`/auth/P_validate` was deleted in the same fix: 0 calls since 2026-07-31.) Stopping the writes first does NOT retire anything — the stale plaintext keeps authenticating `/db` with the OLD password. So: (1) move the Pabbly `/db` flow off plaintext and delete the four reader routes; (2) stop all three writers in one slice; (3) Fred-run migration NULLs the column, then DROPs it after the drop-a-column sweep (code, schema objects, stored report/workflow/tool definitions, `lib/reportSchema/manifest.js` `users_password`).
+- **Plaintext `users.password`: order of the retirement** (View-as fix, 2026-10-21; the column-drop gate in CLAUDE.md applies at the end). Writers today: `auth.password.js` reset + change, `admin.users.js` set-password. Code readers: `/db` (`dbQuery.js` — LIVE: Pabbly Connect as `automations`, 75 calls 2026-08-03 → 2026-10-19 in `legacy_route_log`, one as `fred`), `/db64`, `/unplacehold`, the legacy `/dropbox/*` routes. (`/auth/P_validate` was deleted in the same fix: 0 calls since 2026-07-31.) Stopping the writes first does NOT retire anything — the stale plaintext keeps authenticating `/db` with the OLD password. So: (1) move the Pabbly `/db` flow off plaintext and delete the four reader routes; (2) stop all three writers in one slice; (3) Fred-run migration NULLs the column, then DROPs it after the drop-a-column sweep (code, schema objects, stored report/workflow/tool definitions, `lib/reportSchema/manifest.js` `users_password`).
 
 - **`/db` and raw-SQL endpoint kill** — blocked on old frontend retirement.
 
@@ -671,6 +714,28 @@ Active surfaces with known next steps.
 ---
 
 ## Hygiene
+
+- **Test-suite governance arc (Phases 2–4 of the 2026-10-18 test-suite review;
+  independent review's verdict 2026-10-21: adopt with amendments).** Phase 1's
+  first pass shipped 2026-10-21 (trigger vm timeout, Dropbox backoff on a fake
+  clock, caseId aggregation, wsurl microtask tick); still open from it: phone-search / form auto-advance
+  fake timers, the comms wall-clock benchmark, the mascot clock (entry
+  below). Remaining: (2) lanes + truthful scripts — dependency-gated suites
+  (37 mysql, 3 Chromium/PDF, 1 Dovecot) out of ordinary discovery, each lane
+  with a command, owner and cadence (the mysql suites run on no schedule
+  today); (3) consolidate ONE feature family through an assertion-to-risk map;
+  (4) runtime budgets per lane, a reason required for any new real-time test,
+  flaky tests tracked as owned defects. Constraints: the default `npm test`
+  stays the FULL suite; `land.sh` (the real gate — GitHub CI is advisory,
+  cloudbuild runs no tests), `local/heavy-gate.sh` and CLAUDE.md change
+  together in one slice; inventory/governance tests (settingsInventory,
+  manualReadmeCoverage, CTA eligible-set, ctaInputs, scriptGuard) and
+  CLAUDE.md-required timing guards are exempt from pruning (redesign a timing
+  guard as a scaling ratio, never move it out); lanes are separate config
+  files, not jest `projects` (a bare `npx jest` collects every project);
+  pruning a slice-named suite must be mutation-proven and update every doc
+  that cites the file. Review: `local/to review/TEST_SUITE_INDEPENDENT_REVIEW_2026-10-18.md`
+  (gitignored).
 
 - **Mid-width table exposure beyond the fixtures (ui-custom H3, 2026-10-15).** H3 gave
   Events / Calendar list (shell) and case People / Appointments their own scroll box at

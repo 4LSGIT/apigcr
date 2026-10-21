@@ -446,7 +446,6 @@ ref/archive/ORIGIN_SEPARATION_ROLLOUT.md
 ref/archive/ORIGIN_SEPARATION_WORKER_PROMPT.md
 ref/archive/RIDER_D_VIDEO_CONTACT_PARAM_OPTIONS.md
 ref/archive/RIDER_E_PUBLIC_SURFACE_SWEEP.md
-ref/archive/TEST_SUITE_INDEPENDENT_REVIEW_2026-10-18.md
 ref/archive/X2_DESIGN_AMENDMENTS.md
 ref/archive/files.md
 ref/archive/legacy-trap-schema.sql

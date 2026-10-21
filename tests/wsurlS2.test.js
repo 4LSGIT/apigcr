@@ -98,8 +98,14 @@ const DOM = `<!DOCTYPE html><html><body>
   <div id="strayDiv"><iframe id="strayFrame"></iframe></div>
 </body></html>`;
 
+// Every window shell() opens is closed after its test: ~20 jsdom shells per
+// run otherwise stay alive until the worker exits.
+const OPEN = [];
+afterEach(() => { while (OPEN.length) OPEN.pop().close(); });
+
 function shell({ su = true, denied = [] } = {}) {
   const dom = new JSDOM(DOM, { url: 'https://app.4lsg.com/', runScripts: 'outside-only' });
+  OPEN.push(dom.window);
   const w = dom.window;
   const d = w.document;
   w.eval(MODULE);
@@ -191,7 +197,11 @@ function shell({ su = true, denied = [] } = {}) {
       return true;
     },
   };
-  const tick = () => new Promise((r) => w.setTimeout(r, 0));
+  // syncWorkspaceUrl queues its replaceState with queueMicrotask (jsdom's is
+  // Node's queue), so one awaited microtask lands it — no timer, no window
+  // clock. Were the write ever moved onto a timer, these tests fail rather
+  // than wait.
+  const tick = () => Promise.resolve();
   const lastOpen = () => new w.URL(w.__writes[w.__writes.length - 1]).searchParams.get('open');
   // What a page remembers (a tile click on it), then the stage as the active
   // tab sees it: shown only while that page is the one on screen.

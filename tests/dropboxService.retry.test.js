@@ -63,6 +63,27 @@ function abortError() {
   return e;
 }
 
+/**
+ * Run `call` with the backoff sleeps on Jest's fake clock, so the retry tests
+ * prove the policy without waiting it out in wall time (1 s + 3 s + jitter
+ * per exhausted call). Date is faked too, so `elapsed` is the backoff the
+ * service actually scheduled. Microtasks stay real: the fetch/credential
+ * stubs settle on them between timers.
+ */
+async function onFakeClock(call) {
+  jest.useFakeTimers({ doNotFake: ['nextTick', 'queueMicrotask'] });
+  try {
+    const startedAt = Date.now();
+    const settled = call().then((value) => ({ value }), (error) => ({ error }));
+    await jest.runAllTimersAsync();
+    const out = await settled;
+    out.elapsed = Date.now() - startedAt;
+    return out;
+  } finally {
+    jest.useRealTimers();
+  }
+}
+
 let realFetch;
 beforeAll(() => { realFetch = global.fetch; });
 afterAll(() => { global.fetch = realFetch; });
@@ -97,8 +118,10 @@ describe('_rpc retry policy (via public callers)', () => {
       .mockRejectedValueOnce(abortError())
       .mockResolvedValueOnce(jsonRes(200, { entries: [{ '.tag': 'file', name: 'a.pdf' }], cursor: 'c2', has_more: false }));
 
-    const page = await dropbox.listFolderContinue(db, { cursor: 'c1', credentialId: 8 });
+    const { value: page, error } = await onFakeClock(
+      () => dropbox.listFolderContinue(db, { cursor: 'c1', credentialId: 8 }));
 
+    expect(error).toBeUndefined();
     expect(global.fetch).toHaveBeenCalledTimes(2);
     expect(page.cursor).toBe('c2');
     expect(page.entries).toHaveLength(1);
@@ -114,20 +137,25 @@ describe('_rpc retry policy (via public callers)', () => {
       .mockResolvedValueOnce(res429)
       .mockResolvedValueOnce(jsonRes(200, { entries: [], cursor: 'c9', has_more: false }));
 
-    const page = await dropbox.listFolderContinue(db, { cursor: 'c1', credentialId: 8 });
+    const { value: page, error, elapsed } = await onFakeClock(
+      () => dropbox.listFolderContinue(db, { cursor: 'c1', credentialId: 8 }));
+    expect(error).toBeUndefined();
     expect(global.fetch).toHaveBeenCalledTimes(2);
     expect(page.cursor).toBe('c9');
+    // Retry-After: 0 replaced the 1 s first backoff; only the <250 ms jitter remains.
+    expect(elapsed).toBeLessThan(1000);
   });
 
   it('gives up after RETRY_ATTEMPTS, not RETRY_ATTEMPTS retries', async () => {
     global.fetch = jest.fn().mockRejectedValue(abortError());
 
-    await expect(dropbox.listFolderContinue(db, { cursor: 'c1', credentialId: 8 }))
-      .rejects.toThrow(/list_folder\/continue/);
+    const { error } = await onFakeClock(
+      () => dropbox.listFolderContinue(db, { cursor: 'c1', credentialId: 8 }));
+    expect(error && error.message).toMatch(/list_folder\/continue/);
 
     // 3 attempts total, not 3 retries on top of the first.
     expect(global.fetch).toHaveBeenCalledTimes(3);
-  }, 30000);
+  });
 
   it('names the TIMEOUT when our own AbortController is what fired', async () => {
     // The pre-fix message was "failed: This operation was aborted", which

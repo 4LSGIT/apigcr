@@ -110,7 +110,10 @@ Gates beyond Commands & gates below, every model:
   worker's loop never backed up or restored, so mutations piled up; a
   manager's `jest $T` ran 3 suites of 7 and looked green).
 - New test assertions are mutation-checked (break the code, watch the test
-  fail); no mocking the module under test; real-engine harnesses preferred.
+  fail); no mocking the module under test; real-engine harnesses preferred —
+  and required for a service's SQL predicates and the row types it reads
+  (mysql2 returns DATE as a `Date`): mocked queries shipped `user_auth = 1`
+  vs `'authorized'` and a Date-vs-string window compare green (Oct 2026).
 - Retiring a VALUE (an enum string, a magic constant): inventory by the
   COLUMN/claim name, never the literal — comparison idioms
   (indexOf('SU'), startsWith) don't contain the literal. Two frontend SU
@@ -200,7 +203,7 @@ Mechanics: AI_CONTEXT §22 (`v` is string-only — stringify JSON yourself).
 
 ## Commands & gates
 
-- `npm test` — jest; the whole suite runs in well under a minute. Run before and after any change; CI runs the same.
+- `npm test` — jest; the whole suite takes ~2 min (100–120 s measured Oct 2026; `land.sh` runs it as `npx jest --maxWorkers=2`). Run before and after any change; CI runs the same.
   Behavioural suites that animate (the mascot's) must fast-forward their own clock rather than wait in wall
   clock — one such file put the whole run at 70s before it did. See the header of `tests/mascotSkins.test.js`.
 - `node --check <file>` on every modified JS file, including inline `<script>` blocks extracted from HTML.
