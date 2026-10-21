@@ -604,6 +604,31 @@ and the two marked LIVE BUG are worth landing whether or not A17 ever ships.)
   on both POST and PATCH; `routes/sequences.js` `validateStepConfig` is still
   source-asserted only. Same harness idiom applies when a sequence route next
   needs touching.
+- **Registry primitives would absorb about half the 41 live code steps.**
+  Measured 2026-10-22 across the published versions: 8 bodies are under 400
+  bytes and 20 under 1 KB, only 2 touch `next_step`, while 22 build HTML, 17
+  munge strings, 17 iterate and 12 do date work. Reading them, the same helpers
+  are duplicated verbatim across workflows — a null-safe string coalesce
+  (`String(v==null?'':v).trim()`, with `'null'`/`'undefined'` mapped to empty)
+  recurs in wf28/37/47 and more, and an identical `MM/DD/YYYY` +
+  `YYYY-MM-DD` parser appears in wf23 and wf25 character for character. Others
+  are one-liners wearing a code step: "Map template → chapter" is a 236-byte key
+  map, "Split docs_missing into a list" is split/trim/filter, "rounds++" is a
+  counter. Candidate primitives, roughly in value order:
+  1. a **template renderer** — the biggest win, because 22 of 41 are composing
+     email or notice bodies in code, and they do so largely because workflow
+     templating has NO modifiers and blanks unresolved tokens silently
+     (`{{x|default:y}}` resolves to `''`), so there is no declarative way to
+     build a body today;
+  2. a null-safe coalesce/trim;
+  3. a date parse/format/shift (the `shift(input.filed, 14)` pattern);
+  4. a key-map lookup;
+  5. a list split/trim/filter.
+  Worth doing on code-quality grounds alone — testable, explainable, no sandbox
+  involved — and it shrinks the attack surface of the vm escape as a side
+  effect. It does NOT retire `custom_code`: the remainder is genuinely bespoke
+  (wf27's 19.5 KB formatter, the 7-way Clio command router, the multi-field
+  e-sign reshaping), so the execution-boundary question stays live either way.
 - **No optimistic concurrency on any automation definition write.** Workflow
   and sequence steps are addressed by `step_number` (a position), and no
   step-mutating route or publish route takes an expected-base token. Two

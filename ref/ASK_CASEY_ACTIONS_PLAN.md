@@ -1047,11 +1047,41 @@ Fixed rules: `migrate_in_flight` is always false for Casey, never offered.
 Publish carries an expected-draft-version and draft fingerprint (P11), so a
 draft edited after the preview cannot be published blind — today the route
 takes no such token and a publish can include edits made after the publisher
-read the diff. A draft may contain steps Casey did not author and cannot
-explain (`custom_code`, `webhook`); options for Fred are (a) refuse to publish
-such a draft, (b) publish it after showing those steps redacted and requiring
-an explicit acknowledgment. Default: **(b)**, because refusing would make Casey
-useless on exactly the firm's real workflows.
+read the diff. **RULED — Fred, 2026-10-22: Casey may not publish a version containing a
+`custom_code` step.** It may build the draft; a human publishes it. This
+supersedes the earlier default of publishing with an acknowledgment, and it is
+narrow on purpose: it names `custom_code` only. A `webhook` step is reviewable
+and authorable (A17.4b), so a draft containing one still publishes.
+
+**What that rule does and does not buy, because the difference matters.** It is
+a review control, not a boundary. An unpublished code step already executes by
+two paths, both open to any staff JWT:
+
+- `POST /workflows/:id/start` accepts `use_draft` (query param or wrapped
+  body) and runs the **draft** — that is the editor's Run button, built so
+  authors can test before publishing; and
+- `POST /workflows/test-step` needs no workflow and no save at all, with
+  `dry_run` defaulting to **false**.
+
+So "cannot publish" is not "cannot run", and a publish gate on its own would
+read as safety while leaving the two shorter paths open. The rule therefore
+travels with two companions, without which it is decorative: A17.7 applies the
+same refusal to **starting**, and A17.2 keeps `test-step` dry-run-only for
+Casey permanently.
+
+**Where the check lives.** Not in the route — `POST /workflows/:id/publish`
+must keep working for humans, who have to be able to publish code workflows.
+So it lives where this family's other preconditions live: the normalizer
+refuses to mint a publish proposal when the target version carries a code step
+(it already re-reads the target at proposal time), and the browser re-reads at
+click time per course correction 1. That makes it a Casey-scoped rule, which
+is worth saying plainly given P2's finding that the route is often not an
+authority.
+
+**Known limit, not chased:** the predicate is direct. A workflow Casey
+publishes may `start_workflow` into one that has code steps, or a trigger may.
+Transitive closure is unbounded here and the firm's workflows chain heavily,
+so one hop would be arbitrary. Recorded rather than papered over.
 
 **A17.7: Start a workflow.**
 
@@ -1060,6 +1090,13 @@ An irreversible fan-out, not an extension of publish: `POST
 another execution, and the advance is detached. Requires the P4 extension and
 an impact preview covering the triggers the run can fan out to, its external
 calls, and its estimated writes. Review requires a fresh confirmation.
+
+**The A17.6 code-step refusal applies here too** (Fred, 2026-10-22): Casey may
+not start a version carrying a `custom_code` step, and that explicitly includes
+the draft — the route takes `use_draft`, so a draft runs on demand and starting
+is the path a publish refusal would otherwise leave open. Casey never sends
+`use_draft` at all: running an unpublished draft is an author's own test, not a
+reviewed action.
 
 **A17.8: Cancel one known execution.**
 
