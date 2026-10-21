@@ -280,7 +280,15 @@ SELECT id, slug, status, filter_passed,
 
 Expect: status `delivered`, `filter_passed = 1`, `direction = "incoming"`.
 
-#### Test 2 — Outbound SMS (and the inbound dedupe path on rc-message-out)
+#### Test 2 — Outbound SMS (and the inbound path on rc-message-out)
+
+Since phone-delivery S2 (ref/PHONE_DELIVERY_DESIGN.md §5), `rc-message-out`
+carries no message data at all: every passing event — new message OR status
+transition, either direction — just dispatches `wf_phone_delivery_ping`,
+which pokes `phone_outbound_sync`. The sync lists the message-store window
+through the RC adapter, ingests anything missing, and stamps delivery status
+(`phone_event_log.delivery_*`). The old per-event fetch workflow
+(`wf_rc_message_out`, wf 19) is deactivated.
 
 From the RingCentral desktop or mobile app, send a text from one of the RC lines to an external phone.
 
@@ -293,14 +301,17 @@ SELECT log_id, log_type, log_direction, log_from, log_to,
  ORDER BY log_id DESC LIMIT 5;
 ```
 
-Expect: `log_type='sms'`, `log_direction='outgoing'`. **Exactly one** new log row.
+Expect: `log_type='sms'`, `log_direction='outgoing'`. **Exactly one** new log
+row — written by the sync, not by a per-event fetch. The matching
+`phone_event_log` row gains `delivery_state` ('sent' at first; 'delivered' or
+'failed' once RC's status transition pings the hook again or the next
+10-minute tick re-checks).
 
 Then check what happens on inbound: have someone text Stuart's line again, then look at both hooks' executions:
 
 ```sql
 SELECT id, slug, status, filter_passed,
-       JSON_EXTRACT(transform_output, '$.direction') AS direction,
-       JSON_EXTRACT(transform_output, '$.needs_fetch') AS needs_fetch,
+       JSON_EXTRACT(transform_output, '$.ping') AS ping,
        created_at
   FROM hook_executions
  WHERE slug IN ('rc-message-in', 'rc-message-out')
@@ -310,8 +321,8 @@ SELECT id, slug, status, filter_passed,
 
 What you should see for a single inbound SMS:
 
-- One `rc-message-in` execution: `delivered`, `direction = "incoming"`, `needs_fetch = false`. This is the path that creates the log row.
-- One `rc-message-out` execution: `delivered`, `direction = "incoming"` (resolved by wf 15 after the message-store fetch), `needs_fetch = true`. **No second log row** — wf 15 step 3 dedupes on `direction` and terminates this execution before `create_log` runs.
+- One `rc-message-in` execution: `delivered`. This is the path that creates the log row.
+- One `rc-message-out` execution: `delivered`, `ping = "phone_outbound_sync"` — the catch-all fires for inbound too, and the ping is harmless: the sync lists **Outbound only**, so there is **no second log row**.
 
 Confirm the dedupe worked:
 
