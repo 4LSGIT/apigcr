@@ -9,6 +9,15 @@
  * POST /api/log            create manual entry (note, call log, etc.)
  * PUT  /api/log/:id/about  set or clear the about-link (About-link S2)
  *
+ * Communication date (log-comm-date): POST accepts an optional `date` — when
+ * the logged call/text/email actually happened, so an entry made days later
+ * still sorts and filters by that day. Parsed by parseUserDateTime (naive
+ * values are FIRM time; an explicit Z/offset is honoured), never handed to
+ * createLogEntry as a string: its own parser reads a naive SQL-style value as
+ * UTC. Future dates are refused. The real entry time survives in
+ * log_extra.logged_at — `log` has no created-at column. GET accepts
+ * `sort=asc|desc` (log_date, newest first by default).
+ *
  * Phase 3 Slice 1: POST accepts optional `extra` (JSON object) for IT-facing
  * fields kept separate from the user-facing log_data blob.
  *
@@ -25,9 +34,29 @@ const express    = require('express');
 const router     = express.Router();
 const jwtOrApiKey = require('../lib/auth.jwtOrApiKey');
 const logService = require('../services/logService');
+const { parseUserDateTime } = require('../services/timezoneService');
 
 // Slice 1: whitelist for the new case_relate_filter query param.
 const VALID_RELATE_FILTERS = new Set(['default', 'all', 'none']);
+const VALID_SORTS = new Set(['asc', 'desc']);
+
+// A communication date this far past the server clock is refused, not
+// clamped: it is a typo, and a future row would sit atop every log for good.
+// The slack absorbs browser/server clock skew on a "now" the form sent.
+const FUTURE_SLACK_MS = 2 * 60 * 1000;
+
+// `extra` as an object to merge into, whatever shape the caller sent;
+// createLogEntry coerces the result exactly as it would the original.
+function extraObject(extra) {
+  if (extra && typeof extra === 'object' && !Array.isArray(extra)) return { ...extra };
+  if (typeof extra === 'string' && extra !== '') {
+    try {
+      const parsed = JSON.parse(extra);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed;
+    } catch { /* not JSON — dropped, as createLogEntry would */ }
+  }
+  return {};
+}
 
 // ─── LIST ───
 router.get('/api/log', jwtOrApiKey, async (req, res) => {
@@ -58,6 +87,14 @@ router.get('/api/log', jwtOrApiKey, async (req, res) => {
       });
     }
 
+    const sort = req.query.sort || 'desc';
+    if (!VALID_SORTS.has(sort)) {
+      return res.status(400).json({
+        status: 'error',
+        message: `Invalid sort: "${sort}". Must be one of: asc, desc.`
+      });
+    }
+
     const result = await logService.listLog(req.db, {
       link_type: req.query.link_type,
       link_id:   req.query.link_id,
@@ -69,6 +106,7 @@ router.get('/api/log', jwtOrApiKey, async (req, res) => {
       to_date:   toDate,
       by: req.query.by || null,
       case_relate_filter: caseRelateFilter,
+      sort,
       limit:     req.query.limit  || 50,
       offset:    req.query.offset || 0
     });
@@ -190,15 +228,31 @@ router.get('/api/log/:id', jwtOrApiKey, async (req, res) => {
 // ─── CREATE ───
 router.post('/api/log', jwtOrApiKey, async (req, res) => {
   const { type, link_type, link_id, about_type, about_id, data, extra,
-          from, to, subject, message, direction } = req.body;
+          from, to, subject, message, direction, date } = req.body;
 
   if (!type) return res.status(400).json({ status: 'error', message: 'type is required' });
+
+  let when = null;
+  let extraOut = extra;
+  if (date != null && date !== '') {
+    try {
+      when = parseUserDateTime(String(date));
+    } catch (err) {
+      return res.status(400).json({ status: 'error', message: err.message });
+    }
+    if (!when) return res.status(400).json({ status: 'error', message: 'date is empty' });
+    if (when.getTime() > Date.now() + FUTURE_SLACK_MS) {
+      return res.status(400).json({ status: 'error', message: 'date cannot be in the future' });
+    }
+    extraOut = { ...extraObject(extra), logged_at: new Date().toISOString() };
+  }
 
   try {
     const result = await logService.createLogEntry(req.db, {
       type, link_type, link_id, about_type, about_id,
       by: req.auth?.userId || 0,
-      data, extra, from, to, subject, message, direction
+      data, extra: extraOut, from, to, subject, message, direction,
+      date: when
     });
     res.json({ status: 'success', ...result });
   } catch (err) {

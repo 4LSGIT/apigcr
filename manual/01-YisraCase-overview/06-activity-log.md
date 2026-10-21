@@ -22,6 +22,8 @@ Log entries are created automatically for:
 
 Manual log entries can also be written for any interaction worth recording — the "Log Without Sending" and "Log Call" options on a contact's Communication tab are the usual entry point.
 
+Logging after the fact is expected: **Log Call** has a **When** field (defaults to now) and a **Direction** chooser — *Incoming* swaps the From and To rows so the caller's number is the From — and **Log Without Sending** asks when the text or email happened before it logs. The entry then dates, sorts and filters by that time, not by when it was typed. A future time is refused.
+
 ---
 
 ## Log Entry Fields
@@ -29,7 +31,7 @@ Manual log entries can also be written for any interaction worth recording — t
 | Field | Description |
 |---|---|
 | Type | Category of the entry. Drives how the entry is displayed and filtered. |
-| Date | When the event occurred, in firm local time |
+| Date | When the event occurred, in firm local time. For an entry logged after the fact it is the time staff gave; the moment it was actually typed stays in its details (`logged_at`, behind the ⓘ icon). |
 | By | Which staff member (or automated process) created the entry |
 | Link | What this entry belongs to: contact, case, appt, task, event, phone or email (`bill` is in the enum but unused) |
 | About | An optional *secondary* attribution — the same set of types. "Logged on the contact, about the case." |
@@ -70,7 +72,7 @@ of rows each.
 
 The log appears on both the **contact** detail page and the **case** detail page. Entries linked directly to the case, and entries linked to any of the case's contacts, all appear together on the case record. This gives you a unified view of everything that has happened in the context of a matter.
 
-The most recent 200 entries are shown by default, sorted newest first. You can filter by type, direction, date range, or keyword search within the log content.
+The most recent 200 entries are shown by default, sorted newest first — click the **Date/Time** header to flip to oldest first (an export follows the same order). You can filter by type, direction, date range, or keyword search within the log content.
 
 ---
 

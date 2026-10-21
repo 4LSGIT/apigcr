@@ -1090,7 +1090,14 @@ entityCommsService.js`). Invariants:
 `communicate.html` — the classic composer, now nested in the feed behind
 **Send / log…** (contact: the page's contact; case: a contact picker): SMS /
 Email (Quill) / Log Call panels; log-without-sending options; posts to
-`/internal/sms|mms|email/send` + `/api/log`. `window.communicationContext.
+`/internal/sms|mms|email/send` + `/api/log`. After-the-fact logging: Log Call
+has Direction (incoming swaps the From/To rows; typed `from`/`to` are sent so
+the feed can name the party) and When; log-without-sending prompts for when.
+A changed time goes as `date` (naive = firm time, via `parseUserDateTime`) →
+`log_date`; future refused; the typing time lands in `log_extra.logged_at`.
+Untouched = no `date`, server NOW(). Log tables flip order from the Date/Time
+header (`GET /api/log?sort=asc`); every log_date ORDER BY has a log_id
+tiebreak. `window.communicationContext.
 case_id` (set by the feed on a case) stamps its manual logs
 `about_type='case'`. `sendingform.html` (case2): modular doc-request actions,
 server-side assembly via `POST /api/compose-docs-message`, Docs Needed →

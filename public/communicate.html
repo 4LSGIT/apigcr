@@ -73,7 +73,8 @@
     }
     .comm-row select,
     .comm-row input[type="text"],
-    .comm-row input[type="email"] {
+    .comm-row input[type="email"],
+    .comm-row input[type="datetime-local"] {
       flex: 1;
       /* min-width:0 — a flex item's default floor is its min-content width,
          and a sender option like "Automations ((248) 621-3656)" is wider
@@ -338,12 +339,27 @@
 <div class="comm-panel" id="panel-call">
   <div class="comm-form">
     <div class="comm-row">
-      <label>From:</label>
-      <select id="call-from"></select>
+      <label for="call-direction">Direction:</label>
+      <select id="call-direction" onchange="syncCallDirection()">
+        <option value="outgoing">Outgoing (we called them)</option>
+        <option value="incoming">Incoming (they called us)</option>
+      </select>
+    </div>
+    <!-- The two parties swap places with the direction: outgoing reads
+         From = our line, To = their number; incoming the reverse. -->
+    <div id="call-parties">
+      <div class="comm-row" id="call-line-row">
+        <label for="call-line" id="call-line-label">From:</label>
+        <select id="call-line"></select>
+      </div>
+      <div class="comm-row" id="call-party-row">
+        <label for="call-party" id="call-party-label">To:</label>
+        <input type="text" id="call-party" maxlength="14" placeholder="(000) 000-0000">
+      </div>
     </div>
     <div class="comm-row">
-      <label>To:</label>
-      <input type="text" id="call-to" maxlength="14" placeholder="(000) 000-0000">
+      <label for="call-when">When:</label>
+      <input type="datetime-local" id="call-when" oninput="this.dataset.touched = '1'">
     </div>
     <div class="comm-row">
       <label>Note:</label>
@@ -445,8 +461,8 @@ async function init() {
   });
   if (currentUser.default_phone) smsSel.value = currentUser.default_phone;
 
-  // ── Populate Call "From" (same lines) ──
-  const callSel = E('call-from');
+  // ── Populate the Call tab's firm line (same lines) ──
+  const callSel = E('call-line');
   phoneLines.forEach(l => {
     const label = l.display_name
       ? `${l.display_name} (${fmtPhone(l.phone_number)})`
@@ -504,7 +520,8 @@ async function init() {
     ? contact.contact_phone.replace(/(\d{3})(\d{3})(\d{4})/, '($1) $2-$3')
     : '';
   E('sms-to').value = phoneFmt;
-  E('call-to').value = phoneFmt;
+  E('call-party').value = phoneFmt;
+  resetCallWhen();
   E('email-to').value = contact.contact_email || '';
 
   // ── SMS sender change → MMS visibility ──
@@ -567,6 +584,67 @@ function showTab(tab) {
   document.querySelectorAll('.comm-panel').forEach(p => p.classList.remove('active'));
   E('tab-btn-' + tab).classList.add('active');
   E('panel-' + tab).classList.add('active');
+  if (tab === 'call') resetCallWhen(false);
+}
+
+// ═══════════════════════════════════════════════════════════════
+// LOGGED-AFTER-THE-FACT: DIRECTION + WHEN
+// ═══════════════════════════════════════════════════════════════
+
+// Flip the Call tab's parties to match the direction: outgoing = our line
+// calls their number; incoming = their number calls our line.
+function syncCallDirection() {
+  const incoming = E('call-direction').value === 'incoming';
+  const parties = E('call-parties');
+  const lineRow = E('call-line-row');
+  const partyRow = E('call-party-row');
+  if (incoming) parties.insertBefore(partyRow, lineRow);
+  else parties.insertBefore(lineRow, partyRow);
+  E('call-line-label').textContent = incoming ? 'To:' : 'From:';
+  E('call-party-label').textContent = incoming ? 'From:' : 'To:';
+}
+
+// Firm-local "now" as a datetime-local value (YYYY-MM-DDTHH:MM). The firm
+// zone, not the browser's: the server reads a naive value as firm time.
+function firmNowLocal() {
+  const tz = P.firmData?.firmTimezone || 'America/Detroit';
+  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-CA', {
+    timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hourCycle: 'h23'
+  }).formatToParts(new Date()).map(p => [p.type, p.value]));
+  return `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}`;
+}
+
+// Re-default the Call tab's When to now. An edit the user made is kept
+// unless `force` (after a successful log). Untouched means "now": no date
+// is sent and the server stamps the row itself.
+function resetCallWhen(force = true) {
+  const el = E('call-when');
+  const now = firmNowLocal();
+  el.max = now;
+  if (force || !el.dataset.touched) {
+    el.value = now;
+    delete el.dataset.touched;
+  }
+}
+
+// When a Log-Without-Sending text/email happened. Resolves to undefined on
+// cancel, null for "now" (left as offered), else the chosen datetime-local
+// value.
+async function askLoggedWhen() {
+  const now = firmNowLocal();
+  const r = await Swal.fire({
+    title: 'When did this happen?',
+    input: 'datetime-local',
+    inputValue: now,
+    inputAttributes: { max: now },
+    showCancelButton: true,
+    confirmButtonText: 'Log',
+    inputValidator: (v) => !v ? 'Pick a date and time'
+      : v > firmNowLocal() ? 'That is in the future' : undefined
+  });
+  if (!r.isConfirmed) return undefined;
+  return r.value === now ? null : r.value;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -797,6 +875,12 @@ async function send(action) {
       if (to.length !== 10) return Toast.fire({ icon: 'warning', title: 'Enter a valid 10-digit phone number' });
       if (!body && !mmsAttachmentUrl) return Toast.fire({ icon: 'warning', title: 'Enter a message or attach an image' });
 
+      let when = null;
+      if (action === 'logSms') {
+        when = await askLoggedWhen();
+        if (when === undefined) return;
+      }
+
       processing();
 
       // Send
@@ -833,7 +917,8 @@ async function send(action) {
         await P.apiSend('/api/log', 'POST', {
           type: 'sms',
           ...logScope(),
-          data: JSON.stringify(smsLogData), direction: 'outgoing'
+          data: JSON.stringify(smsLogData), direction: 'outgoing',
+          ...(when ? { date: when } : {})
         });
       }
 
@@ -854,6 +939,12 @@ async function send(action) {
       if (!to) return Toast.fire({ icon: 'warning', title: 'Enter a recipient email' });
       if (!subject) return Toast.fire({ icon: 'warning', title: 'Enter a subject' });
       if (!textBody) return Toast.fire({ icon: 'warning', title: 'Enter a message body' });
+
+      let when = null;
+      if (action === 'logEmail') {
+        when = await askLoggedWhen();
+        if (when === undefined) return;
+      }
 
       processing();
 
@@ -886,7 +977,8 @@ async function send(action) {
 
       await P.apiSend('/api/log', 'POST', {
         type: 'email', ...logScope(),
-        data: JSON.stringify(emailLogData), direction: 'outgoing'
+        data: JSON.stringify(emailLogData), direction: 'outgoing',
+        ...(when ? { date: when } : {})
       });
 
       Swal.close();
@@ -897,24 +989,36 @@ async function send(action) {
       removeEmailAttachment();
 
     } else if (action === 'call') {
-      const from = E('call-from').value;
-      const to = E('call-to').value.replace(/\D/g, '');
+      const direction = E('call-direction').value === 'incoming' ? 'incoming' : 'outgoing';
+      const line = E('call-line').value;
+      const party = E('call-party').value.replace(/\D/g, '');
       const note = E('call-note').value.trim();
+      const whenEl = E('call-when');
+      const when = whenEl.dataset.touched ? whenEl.value : null;
 
-      if (!from) return Toast.fire({ icon: 'warning', title: 'Select a phone line' });
-      if (to.length !== 10) return Toast.fire({ icon: 'warning', title: 'Enter a valid 10-digit phone number' });
+      if (!line) return Toast.fire({ icon: 'warning', title: 'Select a phone line' });
+      if (party.length !== 10) return Toast.fire({ icon: 'warning', title: 'Enter a valid 10-digit phone number' });
       if (!note) return Toast.fire({ icon: 'warning', title: 'Enter a call note' });
+      if (whenEl.dataset.touched && !when) return Toast.fire({ icon: 'warning', title: 'Pick when the call happened' });
+      if (when && when > firmNowLocal()) return Toast.fire({ icon: 'warning', title: 'The call time is in the future' });
+
+      const from = direction === 'incoming' ? party : line;
+      const to = direction === 'incoming' ? line : party;
 
       processing();
 
+      // from/to also go as typed params: the log_from/log_to columns are what
+      // the Communications feed reads to name the other party.
       await P.apiSend('/api/log', 'POST', {
         type: 'call', ...logScope(),
-        data: JSON.stringify({ from, to, note }), direction: 'outgoing'
+        data: JSON.stringify({ from, to, note }), direction, from, to,
+        ...(when ? { date: when } : {})
       });
 
       Swal.close();
       Toast.fire({ icon: 'success', title: 'Call logged!' });
       E('call-note').value = '';
+      resetCallWhen();
     }
   } catch (err) {
     Swal.close();

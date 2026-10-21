@@ -5776,7 +5776,7 @@
       <tr>
         <th>Log ID:</th>
         <th>Type:</th>
-        <th>Date/Time:</th>
+        <th><button type="button" class="log-sort" onclick="toggleLogDateSort(this)" title="Newest first. Click for oldest first">Date/Time: <i class="fa-solid fa-sort-down"></i></button></th>
         <th>Link:</th>
         <th>Data:</th>
         <th>User:</th>
@@ -5824,7 +5824,7 @@
       if (time === "After")   { params.from_date = date1; }
       if (time === "On")      { params.from_date = date1; params.to_date = date1; }
       if (time === "Between") { params.from_date = date1; params.to_date = date2; }
-      return params;
+      return Object.assign(params, logSortParams());
     }
 
     function exportLog() {

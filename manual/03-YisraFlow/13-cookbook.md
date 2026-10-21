@@ -987,7 +987,7 @@ The `POST /api/email/ingest` endpoint is the external entrypoint for inbound (an
 
 **Auto-log default.** Every non-firm-to-firm, non-duplicate ingest produces one `log` row via `logService.createLogEntry` with `link_type='email'`, `link_id=<other party's email>`, `direction=<inferred>`. IT-facing forensics (source, message_id, cc list, auth verdicts, envelope.date) ride along in `log_extra`. Surfaces in `case`/`contact` via the Phase-A date-windowed `contact_emails` EXISTS join — no change to readers needed.
 
-**`log_date`.** The `log` row's `log_date` is `NOW()` at ingest time (logService doesn't accept an override). The original RFC `Date:` header lives in `log_extra.envelope_date` for cases where the difference matters (forwarded-from-archive scenarios).
+**`log_date`.** The `log` row's `log_date` is `NOW()` at ingest time (this path passes no `date`; `createLogEntry`'s optional `date` is used by the mailbox hub and by staff logging after the fact). The original RFC `Date:` header lives in `log_extra.envelope_date` for cases where the difference matters (forwarded-from-archive scenarios).
 
 **Forensic continuity.** The four legacy `email_log` writers ([routes/logs.js](../../routes/logs.js), [adapters/email/pabbly.js](../../services/adapters/email/pabbly.js), [adapters/email/smtp.js](../../services/adapters/email/smtp.js), [adapters/email/gmail.js](../../services/adapters/email/gmail.js)) all stamp `source` in their INSERTs: `gmail-firm`, `outbound-pabbly`, `outbound-smtp`, `outbound-gmail` respectively. The composite UNIQUE means same RFC message_id from different sources is no longer a duplicate.
 

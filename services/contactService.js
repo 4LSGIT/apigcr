@@ -2112,7 +2112,7 @@ async function getContact(db, contactId, include = '', { logLimit = DEFAULT_LOG_
        LEFT JOIN contacts ab_ct ON l.log_about_type = 'contact'
                                AND ab_ct.contact_id = l.log_about_id
        WHERE ${whereFragment}
-       ORDER BY l.log_date DESC
+       ORDER BY l.log_date DESC, l.log_id DESC
        LIMIT ?`,
       [...logWhereParams, logLimit]
     );

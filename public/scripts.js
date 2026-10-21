@@ -565,6 +565,18 @@ function ycFiltersToggle(btn) {
        have that problem. */
     #logTableFoot { padding: 0.6em 0; }
 
+    /* Date/Time header order toggle (toggleLogDateSort): reads as header text.
+       0-2-0 beats style.css's 0-0-1 control rule whatever the load order. */
+    .logTable .log-sort {
+      font: inherit;
+      color: inherit;
+      background: none;
+      border: 0;
+      padding: 0;
+      cursor: pointer;
+      text-align: left;
+    }
+
     /* Scoped reset for the export dialog — neutralises style.css's global
        \`input { width: 200px; ... }\` rule, which would otherwise stretch the
        radio buttons and number inputs. That rule is not a bare \`input\`: it
@@ -701,6 +713,27 @@ function logHasExtras(extra) {
   if (typeof extra === 'object') return Object.keys(extra).length > 0;
   const s = String(extra).trim();
   return s !== '' && s !== '{}';
+}
+
+/* ── Log date order (log-comm-date) ────────────────────────────────────────
+   The Date/Time header of every log table (index, case, contact) toggles
+   newest-first <-> oldest-first. log_date is when the communication happened,
+   so this is "sort by communication date". Each page's getLogFilterParams
+   merges logSortParams(), so the CSV export follows the on-screen order.
+   State is per document: scripts.js loads once per frame. */
+let logSortDir = 'desc';
+
+function logSortParams() {
+  return logSortDir === 'asc' ? { sort: 'asc' } : {};
+}
+
+function toggleLogDateSort(btn) {
+  logSortDir = logSortDir === 'asc' ? 'desc' : 'asc';
+  const asc = logSortDir === 'asc';
+  btn.title = asc ? 'Oldest first. Click for newest first' : 'Newest first. Click for oldest first';
+  const icon = btn.querySelector('i');
+  if (icon) icon.className = asc ? 'fa-solid fa-sort-up' : 'fa-solid fa-sort-down';
+  tabLogGet(0);
 }
 
 function logExtrasIcon(entry) {

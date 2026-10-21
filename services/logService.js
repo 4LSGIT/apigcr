@@ -102,6 +102,17 @@
  *     the other lands in exactly the same stored form.
  *   - Backs the update_log internal function (lib/internal_functions/log.js).
  *
+ * Communication date (log-comm-date):
+ *   - log_date is when the communication HAPPENED, not when the row was
+ *     written: ingest passes the message time, and POST /api/log now passes a
+ *     staff-chosen date for a call or a log-without-sending made after the
+ *     fact. So every ORDER BY on log_date carries a log_id tiebreak — backdated
+ *     entries share instants (a date-only value is firm midnight), and offset
+ *     paging over a tied sort repeats and skips rows. idx_log_date serves both
+ *     directions with no filesort (InnoDB appends the PK to the key).
+ *   - listLog accepts sort 'asc' | 'desc' (default 'desc'), whitelisted here
+ *     as well as in the route — it is interpolated into the SQL.
+ *
  * Usage:
  *   const logService = require('../services/logService');
  *   const entries = await logService.listLog(db, { link_type: 'contact', link_id: 123 });
@@ -562,8 +573,10 @@ async function listLog(db, {
   link_type = null, link_id = null, type = null, types = null,
   q = null, direction = null, from_date = null, to_date = null, by=null,
   case_relate_filter = 'default',
+  sort = 'desc',
   limit = 50, offset = 0
 } = {}) {
+  const dir = sort === 'asc' ? 'ASC' : 'DESC';
 
   const where = [];
   const params = [];
@@ -708,7 +721,7 @@ async function listLog(db, {
    LEFT JOIN contacts ab_ct ON l.log_about_type = 'contact'
                            AND ab_ct.contact_id = l.log_about_id
    ${whereSQL}
-   ORDER BY l.log_date DESC
+   ORDER BY l.log_date ${dir}, l.log_id ${dir}
    LIMIT ? OFFSET ?`,
     [...params, parseInt(limit), parseInt(offset)],
   );
