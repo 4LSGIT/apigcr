@@ -140,6 +140,7 @@ manual/01-YisraCase-overview/12-sync-bus.md
 manual/01-YisraCase-overview/13-pipelines.md
 manual/01-YisraCase-overview/14-workspace-url.md
 manual/01-YisraCase-overview/15-your-launcher.md
+manual/01-YisraCase-overview/16-communications-tab.md
 manual/01-YisraCase-overview/README.md
 manual/02-YisraForms/01-overview.md
 manual/02-YisraForms/02-creating-a-form.md
@@ -828,6 +829,7 @@ scripts/mobile-survey/fixtures/api/app-settings/firm_name/history.json
 scripts/mobile-survey/fixtures/api/calendar-feed.json
 scripts/mobile-survey/fixtures/api/calendar-range.json
 scripts/mobile-survey/fixtures/api/cases/TESTCASE1.json
+scripts/mobile-survey/fixtures/api/cases/TESTCASE1/communications.json
 scripts/mobile-survey/fixtures/api/cases/TESTCASE1/pipeline.json
 scripts/mobile-survey/fixtures/api/comms-archive/admin.json
 scripts/mobile-survey/fixtures/api/comms-archive/health.json
@@ -840,6 +842,7 @@ scripts/mobile-survey/fixtures/api/comms-archive/media/7103/url.json
 scripts/mobile-survey/fixtures/api/comms-archive/no-transcribe.json
 scripts/mobile-survey/fixtures/api/comms-archive/search.json
 scripts/mobile-survey/fixtures/api/contacts/9001.json
+scripts/mobile-survey/fixtures/api/contacts/9001/communications.json
 scripts/mobile-survey/fixtures/api/credentials.json
 scripts/mobile-survey/fixtures/api/cta.json
 scripts/mobile-survey/fixtures/api/cta/10/executions.json
@@ -1201,6 +1204,7 @@ tests/ensureSqlProxy.test.js
 tests/entitlements.mysql.test.js
 tests/entitlements.test.js
 tests/entityCommsRoute.test.js
+tests/entityCommsService.list.test.js
 tests/entityCommsService.test.js
 tests/entityCommunications.integration.test.js
 tests/entityCommunications.widget.test.js

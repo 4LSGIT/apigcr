@@ -1052,9 +1052,47 @@ body across. Generic `update_db` blocks flipping `kind`.
 
 ## 20. COMMUNICATION UI
 
-`communicate.html` (contact2 tabSend iframe): SMS / Email (Quill) / Log
-Call panels; log-without-sending options; posts to `/internal/sms|mms|email/
-send` + `/api/log`. `sendingform.html` (case2): modular doc-request actions,
+**Entity Communications feed** (operator view: manual/01-YisraCase-overview/
+16-communications-tab.md). `public/entityCommunications.html` is the iframe in
+contact.html `tabSend` (ws token `send`) and case.html `tabComms` (token
+`comms`), lazy-sourced on first open, `reloadCommunications()` on re-entry,
+waitForParent boot. Backed by `GET /api/contacts|cases/:id/communications`
+(routes/api.entityComms.js — JWT only, no API keys; `services/
+entityCommsService.js`). Invariants:
+- **Two row kinds.** Source-backed = `mail_messages` (readable mailbox, or a
+  readable alias whose `sliceMatchJs` admits the row) + `phone_event_log`
+  (readable line) — grant-gated through `mailboxService.listReadable`.
+  Logged-only (`legacy: true`) = `log` rows of type email/sms/call/court email
+  with no source; they carry the Log tab's exposure, NO channel grant check
+  (Fred's ruling on gating them is pending — ref/plans.md).
+- **Fallback suppression** is grant-blind: a log row with a source anywhere
+  (`mail_messages.log_id`, `phone_event_log.log_id`, or a stored copy whose
+  message_id/provider_id equals `log_extra.message_id`) never renders as
+  Logged-only — else the log is a side door around the grant. `/api/log`
+  does not share this rule.
+- **Contact scope** = identity match (participants / `other_party`) inside the
+  `contact_phones`/`contact_emails` ownership window on the firm-local day;
+  the window dates are read through `DATE_FORMAT` (a raw DATE is a JS Date —
+  `dayOf` normalizes both; an unreadable bound fails closed; NULL = open).
+- **Case scope** is strict by default: the case-scope arm of
+  `_buildCaseLogWhere` (no related-contact merge) + sources bridged by those
+  log_ids, their message keys, and `mail_sends.case_id`. `include_contacts=1`
+  adds the Primary/Secondary/Other contacts' contact scope (never Bystander —
+  the Log tab default).
+- Court = a mail item whose log row is `court email`, or the Logged-only row
+  itself; in practice all court mail is Logged-only (ingest writes no store
+  copy). A real SMS sent from a case is absent from the strict feed: the
+  provider webhook writes its log without case context (plans.md bridge).
+- Search (`q`) runs server-side over normalized fields (`searchFields`) plus a
+  digits-only phone match — never the item JSON. Filtering and paging happen
+  in JS after loading every readable row (plans.md performance entry).
+
+`communicate.html` — the classic composer, now nested in the feed behind
+**Send / log…** (contact: the page's contact; case: a contact picker): SMS /
+Email (Quill) / Log Call panels; log-without-sending options; posts to
+`/internal/sms|mms|email/send` + `/api/log`. `window.communicationContext.
+case_id` (set by the feed on a case) stamps its manual logs
+`about_type='case'`. `sendingform.html` (case2): modular doc-request actions,
 server-side assembly via `POST /api/compose-docs-message`, Docs Needed →
 `/checklists/upsert-items`.
 

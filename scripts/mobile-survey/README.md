@@ -159,7 +159,11 @@ a failure); Portal Manager → Settings; CTA Links → Link defaults.
 
 Fixtures cover one case (`TESTCASE1`) with two contacts, appointments, log
 rows, an alert, a custom-field value and a pipeline (`cases/TESTCASE1/pipeline`),
-one contact (`9001`), tasks, documents, a one-field registry
+one contact (`9001`), the case and contact Communications feeds
+(`cases/TESTCASE1/communications`, `contacts/9001/communications` — a
+source email with an unbroken subject and overlong address, a Logged-only court
+notice with an unbroken URL, a text, a call, a Logged-only email, Load older on),
+tasks, documents, a one-field registry
 (`field-defs`) and a CTA list covering every link state (`cta`, plus
 `cta/2/executions` and — for clicker inputs, declarations and submitted
 values — `cta/10/executions` for browsing a detail by hand), two mailboxes

@@ -201,7 +201,7 @@ function previewOf(item) {
   return text(first(item.preview, item.snippet, item.summary,
     item.archive && item.archive.summary,
     item.phone && item.phone.body,
-    item.log && first(item.log.body, item.log.message, item.log.note),
+    loggedBodyOf(item),
     item.body_text, item.message, item.note, item.call_status));
 }
 
@@ -331,6 +331,19 @@ function legacyData(item) {
   } catch (_) {
     return { note: String(raw) };
   }
+}
+
+// A Logged-only row's body. log_data's key case differs by writer (email
+// ingest: `Message`; SMS / court: `message`; the composer: `body`), so the
+// lookup is case-blind; the row's own log message is the fallback.
+function loggedBodyOf(item) {
+  if (!item || !item.log) return null;
+  const byKey = new Map();
+  for (const [key, value] of Object.entries(legacyData(item))) {
+    const k = key.toLowerCase();
+    if (!byKey.has(k) && value != null && typeof value !== 'object' && String(value).trim() !== '') byKey.set(k, String(value));
+  }
+  return first(byKey.get('message'), byKey.get('body'), item.log.message, byKey.get('note')) || null;
 }
 
 function archiveText(item, key) {
@@ -529,9 +542,8 @@ async function expandCard(card, item, button) {
   } else if ((kind === 'email' || kind === 'court') && appendMessageBody(details, item, participantOf(item))) {
     // The normalized feed may carry a body for legacy mail.
   } else {
-    const log = legacyData(item);
     const body = first(item.phone && item.phone.body, item.body_text, item.message, item.note,
-      log.body, log.message, log.note);
+      loggedBodyOf(item));
     if (body) details.append(h('div', { className: 'copy' }, body));
   }
   const transcript = text(first(item.transcript, archiveText(item, 'transcript'),
@@ -588,7 +600,7 @@ function render() {
 }
 
 async function loadFeed({ append = false, silent = false } = {}) {
-  if (!endpoint || (append && state.loading)) return;
+  if (!endpoint || !P.apiSend || (append && state.loading)) return;
   const seq = ++state.seq;
   state.loading = true;
   E('comms-refresh').disabled = true;
@@ -692,12 +704,17 @@ E('include-contacts-wrap').hidden = linkType !== 'case';
 window.reloadCommunications = () => loadFeed({ silent: true });
 window.ycBecameVisible = () => { if (!E('history-view').hidden) loadFeed({ silent: true }); };
 
-if (!validScope) {
-  E('comms-error').textContent = 'A contact or case is required to show communications.';
-  E('comms-error').hidden = false;
-} else {
-  loadFeed();
-}
+// Boot — the standard iframe pattern: wait for the hosting page's apiSend
+// relay (case.html / contact.html restore this tab during their own boot).
+(function waitForParent() {
+  if (!validScope) {
+    E('comms-error').textContent = 'A contact or case is required to show communications.';
+    E('comms-error').hidden = false;
+    return;
+  }
+  if (P.apiSend) return loadFeed();
+  setTimeout(waitForParent, 100);
+})();
 </script>
 </body>
 </html>

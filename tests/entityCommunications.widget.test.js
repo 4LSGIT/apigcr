@@ -7,7 +7,7 @@ const { JSDOM } = require('jsdom');
 const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'entityCommunications.html'), 'utf8');
 const settle = () => new Promise(resolve => setTimeout(resolve, 0));
 
-function boot(items = [], { type = 'contact', id = '42', contacts = [], responder = null } = {}) {
+function boot(items = [], { type = 'contact', id = '42', contacts = [], responder = null, parentReady = true } = {}) {
   const apiSend = jest.fn(async (url, method, body) => {
     if (responder) {
       const answer = await responder(url, method, body);
@@ -20,7 +20,7 @@ function boot(items = [], { type = 'contact', id = '42', contacts = [], responde
     runScripts: 'dangerously',
     url: `https://example.test/entityCommunications.html?link_type=${type}&link_id=${id}`,
     beforeParse(window) {
-      window.apiSend = apiSend;
+      if (parentReady) window.apiSend = apiSend;
       window.firmData = { id: 1 };
       window.entityData = { contact: { contact_id: 42 } };
     },
@@ -29,6 +29,37 @@ function boot(items = [], { type = 'contact', id = '42', contacts = [], responde
 }
 
 describe('entity communications widget', () => {
+  test('boots with the waitForParent poll: no call until the host relays apiSend', async () => {
+    const { dom, apiSend } = boot([], { parentReady: false });
+    await settle();
+    expect(apiSend).not.toHaveBeenCalled();
+    expect(dom.window.document.getElementById('comms-error').hidden).toBe(true);
+    dom.window.apiSend = apiSend;
+    await new Promise(resolve => setTimeout(resolve, 150));
+    await settle();
+    expect(apiSend).toHaveBeenCalledWith('/api/contacts/42/communications', 'GET', expect.objectContaining({ offset: 0 }));
+    dom.window.close();
+  });
+
+  test.each([
+    ['ingested email: capitalised Message key', { Message: 'Body from the Message key', To: 'x', From: 'y' }, null, 'Body from the Message key'],
+    ['composer email: body key', { body: 'Body from the body key', note: 'Logged without sending' }, null, 'Body from the body key'],
+    ['no body in log_data: the log message', { To: 'x' }, 'Body from the log message', 'Body from the log message'],
+  ])('a Logged-only row shows its body when expanded (%s)', async (_label, data, message, expected) => {
+    const { dom } = boot([{
+      key: 'log:9', id: 9, kind: 'email', direction: 'incoming', at: '2026-10-19T10:00:00Z', legacy: true,
+      participant: 'sender@example.com', preview: '', log_id: 9,
+      log: { type: 'email', from: 'sender@example.com', to: null, subject: 'Hello', message, data },
+    }]);
+    await settle(); await settle();
+    const d = dom.window.document;
+    expect(d.querySelector('.card .preview').textContent).toBe(expected);
+    d.querySelector('.card-head').click();
+    await settle(); await settle();
+    expect(d.querySelector('.details .copy').textContent).toBe(expected);
+    dom.window.close();
+  });
+
   test('loads the scoped feed and renders API text as text, not markup', async () => {
     const { dom, apiSend } = boot([{
       id: 5, kind: 'sms', direction: 'incoming', at: '2026-10-19T10:00:00Z',

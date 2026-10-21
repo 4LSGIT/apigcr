@@ -77,13 +77,33 @@ function parseJson(v, fallback = null) {
   try { return JSON.parse(v); } catch (_) { return fallback; }
 }
 
-/** Inclusive ownership dates, evaluated in the firm's local calendar. */
+/**
+ * A contact_phones / contact_emails DATE bound as 'YYYY-MM-DD'. The readers
+ * below select it through DATE_FORMAT, so it normally arrives as that string;
+ * a raw DATE column reaches JS from mysql2 as a Date at UTC midnight (the app
+ * pool runs timezone 'Z', no dateStrings), whose String() is "Wed Jan 01 …" —
+ * comparing THAT against an ISO day silently failed every start bound and
+ * passed every end bound. Returns undefined for a value it cannot read.
+ */
+function dayOf(v) {
+  if (v == null) return null;
+  if (v instanceof Date) return Number.isNaN(v.getTime()) ? undefined : v.toISOString().slice(0, 10);
+  const m = /^(\d{4}-\d{2}-\d{2})/.exec(String(v));
+  return m ? m[1] : undefined;
+}
+
+/**
+ * Inclusive ownership dates, evaluated in the firm's local calendar. A NULL
+ * bound is open ("since forever" / "still owned"); an unreadable bound fails
+ * closed rather than attributing a stranger's traffic to the contact.
+ */
 function dateInWindow(at, row) {
   const d = toDate(at);
   if (!d) return false;
   const day = utcToLocal(d).toISODate();
-  const start = row.start_date == null ? null : String(row.start_date).slice(0, 10);
-  const end = row.end_date == null ? null : String(row.end_date).slice(0, 10);
+  const start = dayOf(row.start_date);
+  const end = dayOf(row.end_date);
+  if (start === undefined || end === undefined) return false;
   return (!start || start <= day) && (!end || end >= day);
 }
 
@@ -108,13 +128,63 @@ function normalizeLogKind(type) {
   return type === 'court email' ? 'court' : type;
 }
 
+/**
+ * The body of a Logged-only row's log_data. The writers disagree on the key's
+ * case: email ingest stores `Message` (capitalised), SMS/court logs
+ * `message`, the manual composer `body` — so look it up case-blind, a real
+ * body before the composer's `note`.
+ */
+function logDataBody(data) {
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return null;
+  const byKey = new Map();
+  for (const [k, v] of Object.entries(data)) {
+    const key = k.toLowerCase();
+    if (!byKey.has(key) && v != null && typeof v !== 'object' && String(v).trim() !== '') byKey.set(key, String(v));
+  }
+  return byKey.get('message') || byKey.get('body') || byKey.get('note') || null;
+}
+
+const KIND_SEARCH_LABEL = {
+  email: 'email', court: 'court email', sms: 'text sms', call: 'call phone',
+};
+
+/**
+ * What a search can hit: the fields a person reads on the card or in its
+ * detail (participants, subject, preview/body, numbers and addresses, channel
+ * and direction labels) — never JSON key names, ids or timestamps.
+ */
+function searchFields(item) {
+  const e = item.email || {};
+  const p = item.phone || {};
+  const l = item.log || {};
+  return [
+    KIND_SEARCH_LABEL[item.kind] || item.kind, item.direction,
+    item.participant, item.contact && item.contact.contact_name, item.case_id,
+    item.preview, item.call_status,
+    e.subject, e.from, e.to, e.cc, e.mailbox_address,
+    p.line_number, p.body, p.status,
+    l.subject, l.from, l.to, l.message, logDataBody(l.data),
+  ].filter(v => v != null && v !== '').map(String);
+}
+
+/** Digits of a phone-shaped query (≥4 digits, phone punctuation only), else null. */
+function phoneDigits(q) {
+  if (!/^[\d\s()+.-]+$/.test(q)) return null;
+  let digits = q.replace(/\D/g, '');
+  if (digits.length === 11 && digits.startsWith('1')) digits = digits.slice(1);
+  return digits.length >= 4 ? digits : null;
+}
+
 function itemMatches(item, f) {
   if (f.kind === 'phone' && item.kind !== 'sms' && item.kind !== 'call') return false;
   if (f.kind === 'direct' && !['email', 'sms', 'call'].includes(item.kind)) return false;
   if (!['all', 'phone', 'direct'].includes(f.kind) && item.kind !== f.kind) return false;
   if (f.direction && item.direction !== f.direction) return false;
   if (!f.qLower) return true;
-  return JSON.stringify(item).toLowerCase().includes(f.qLower);
+  const fields = searchFields(item);
+  if (fields.some(v => v.toLowerCase().includes(f.qLower))) return true;
+  const digits = phoneDigits(f.qLower);
+  return digits != null && fields.some(v => v.replace(/\D/g, '').includes(digits));
 }
 
 function dedupeMail(rows) {
@@ -148,16 +218,24 @@ async function loadEntity(db, type, id) {
 }
 
 async function contactIdentities(db, contactId) {
+  // DATE_FORMAT: dateInWindow compares ISO days; see dayOf.
   const [emails] = await db.query(
-    'SELECT email, start_date, end_date FROM contact_emails WHERE contact_id = ?', [contactId]);
+    `SELECT email, DATE_FORMAT(start_date, '%Y-%m-%d') AS start_date, DATE_FORMAT(end_date, '%Y-%m-%d') AS end_date
+       FROM contact_emails WHERE contact_id = ?`, [contactId]);
   const [phones] = await db.query(
-    'SELECT phone, start_date, end_date FROM contact_phones WHERE contact_id = ?', [contactId]);
+    `SELECT phone, DATE_FORMAT(start_date, '%Y-%m-%d') AS start_date, DATE_FORMAT(end_date, '%Y-%m-%d') AS end_date
+       FROM contact_phones WHERE contact_id = ?`, [contactId]);
   return {
     emails: emails.map(r => ({ ...r, email: String(r.email || '').toLowerCase() })),
     phones: phones.map(r => ({ ...r, phone: String(r.phone || '') })),
   };
 }
 
+/**
+ * The contacts "Include contact communications" widens a case feed to — the
+ * Log tab's default relate filter (logService._buildCaseLogWhere 'default':
+ * Primary/Secondary/Other), so a Bystander's traffic stays off the case.
+ */
 async function relatedCaseContacts(db, caseId) {
   const [rows] = await db.query(
     `SELECT c.contact_id, c.contact_name, c.contact_phone, c.contact_email,
@@ -165,7 +243,8 @@ async function relatedCaseContacts(db, caseId) {
        FROM case_relate cr
        JOIN contacts c ON c.contact_id = cr.case_relate_client_id
       WHERE cr.case_relate_case_id = ?
-      ORDER BY FIELD(cr.case_relate_type, 'Primary','Secondary','Other','Bystander'), c.contact_name`,
+        AND cr.case_relate_type IN ('Primary','Secondary','Other')
+      ORDER BY FIELD(cr.case_relate_type, 'Primary','Secondary','Other'), c.contact_name`,
     [caseId]
   );
   return rows.map(r => ({
@@ -365,6 +444,8 @@ function legacyItem(r) {
   const direction = DIRECTIONS.has(r.log_direction) ? r.log_direction : null;
   const from = r.log_from || null;
   const to = r.log_to || null;
+  const data = parseJson(r.log_data, {});
+  const message = r.log_message == null || String(r.log_message) === '' ? null : String(r.log_message);
   return {
     key: `log:${r.log_id}`,
     id: Number(r.log_id),
@@ -373,15 +454,14 @@ function legacyItem(r) {
     at: iso(localToUTC(r.log_date)),
     direction,
     participant: direction === 'incoming' ? from : (to || r.log_link_id || null),
-    preview: String(r.log_message || ''),
+    preview: message || logDataBody(data) || '',
     log_id: Number(r.log_id),
     legacy: true,
     contact: r.entity_contact || null,
     case_id: r.log_about_type === 'case' ? String(r.log_about_id) : null,
     log: {
       type: r.log_type, from, to, subject: r.log_subject || null,
-      message: r.log_message == null ? null : String(r.log_message),
-      data: parseJson(r.log_data, {}),
+      message, data,
     },
   };
 }
@@ -532,6 +612,8 @@ module.exports = {
   aliasAdmits,
   participantEmails,
   dateInWindow,
+  dayOf,
+  logDataBody,
   dedupeMail,
   normalizeLogKind,
   itemMatches,

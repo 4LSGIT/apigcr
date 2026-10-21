@@ -425,6 +425,34 @@ workspace URL's deferred levels have their own entry further down.)
     does). A deep key sort is enough; the S6c-3 reviewer showed the launcher
     suites already pass that way.
 
+## From the communications-feeds arc (2026-10-19) — deferred
+
+The case / contact Communications tab (AI_CONTEXT §20, manual
+01-YisraCase-overview/16-communications-tab.md). Known limits:
+
+- **Feed performance — move filter and page into SQL.** Every request loads
+  ALL readable `mail_messages` rows and ALL `phone_event_log` rows on readable
+  lines into memory (3.7 MB per request, measured by the 5edc88d review), then
+  identity-matches, filters, searches, sorts and offset-pages in JS. The
+  bridge lookups run unindexed: EXPLAIN (2026-10-21) shows type ALL on
+  `mail_messages.log_id`, `phone_event_log.log_id` (~11k rows),
+  `email_ingest_executions.log_id` (~32k rows) and `mail_sends.case_id`.
+  Rework: push the case/contact predicates, kind/direction and a keyset page
+  into SQL, and add those four indexes (migration first).
+- **Webhook SMS case-association bridge.** A real text sent from a case's
+  Send / log… is absent from the strict case feed: the send writes no
+  frontend log (the provider webhook — wf 18 / 19 — writes it, ~5–30 s
+  later, with phone numbers but no case). Needs a pending-send record the
+  webhook can claim (line + to + body + window) to stamp
+  `log_about_type='case'`.
+- **Ruling pending: gate Logged-only rows?** Logged-only feed rows mirror the
+  Log tab's exposure — no mailbox / phone-line grant check — while
+  source-backed rows are grant-gated. Fred to rule whether Logged-only email /
+  sms / call rows should be gated (and how, given they have no channel), and
+  whether `/api/log` should share the feed's fallback suppression (a log row
+  whose source sits in an unreadable mailbox is hidden in the feed but listed
+  on the Log tab).
+
 ## SaaS-readiness (deferred indefinitely)
 
 Abstractions that would matter for offering YC to a second firm. Not relevant to 4LSG-only operation. Each can be picked up independently when a second customer is real.

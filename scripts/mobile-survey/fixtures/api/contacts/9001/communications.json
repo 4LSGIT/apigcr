@@ -1,0 +1,148 @@
+{
+ "status": "success",
+ "entity": {
+  "type": "contact",
+  "id": 9001
+ },
+ "include_contacts": false,
+ "items": [
+  {
+   "key": "email:mid:c1@example-firm.test",
+   "id": 4101,
+   "kind": "email",
+   "at": "{{TODAY}}T14:05:00.000Z",
+   "direction": "incoming",
+   "participant": "jane.testcase.with.a.very.long.mailbox.name@example-client.test",
+   "preview": "Attached are the pay stubs you asked for, plus the 2025 return and the bank statements for the last six months.",
+   "log_id": 8101,
+   "legacy": false,
+   "contact": {
+    "contact_id": 9001,
+    "contact_name": "Jane Testcase"
+   },
+   "case_id": "TESTCASE1",
+   "attachment_count": 3,
+   "email": {
+    "id": 4101,
+    "mailbox_id": 1,
+    "mailbox_address": "intake@example-firm.test",
+    "thread_key": "t1@example-firm.test",
+    "message_id": "c1@example-firm.test",
+    "subject": "Documents_for_the_chapter_7_filing_paystubs_tax_return_bank_statements_ALL_ATTACHED_PLEASE_CONFIRM_RECEIPT",
+    "from": "Jane Testcase <jane.testcase.with.a.very.long.mailbox.name@example-client.test>",
+    "to": "intake@example-firm.test",
+    "cc": null,
+    "attachment_count": 3,
+    "unread": true
+   }
+  },
+  {
+   "key": "log:8102",
+   "id": 8102,
+   "kind": "court",
+   "at": "{{TODAY}}T13:00:00.000Z",
+   "direction": "incoming",
+   "participant": "courtmail@example-court.test",
+   "preview": "NOTICE OF ELECTRONIC FILING — U.S. Bankruptcy Court, Eastern District. Docket entry 12: Order confirming meeting of creditors https://ecf.example-court.test/cgi-bin/DktRpt.pl?caseNumber=26-99999&documentNumber=12&attachment=0",
+   "log_id": 8102,
+   "legacy": true,
+   "contact": null,
+   "case_id": "TESTCASE1",
+   "log": {
+    "type": "court email",
+    "from": "courtmail@example-court.test",
+    "to": null,
+    "subject": "26-99999 Order Confirming Meeting of Creditors",
+    "message": null,
+    "data": {
+     "message": "NOTICE OF ELECTRONIC FILING — Docket entry 12.",
+     "subject": "26-99999 Order Confirming Meeting of Creditors"
+    }
+   }
+  },
+  {
+   "key": "phone:5101",
+   "id": 5101,
+   "kind": "sms",
+   "at": "{{TODAY}}T12:30:00.000Z",
+   "sort_at": "{{TODAY}}T12:30:00.000Z",
+   "direction": "outgoing",
+   "participant": "5555550199",
+   "preview": "Here is the upload link: https://example-firm.test/portal/upload/aVeryLongUnbrokenTokenThatShouldWrapInsideTheCardAndNotPushThePageSideways0123456789",
+   "log_id": 8103,
+   "legacy": false,
+   "contact": {
+    "contact_id": 9001,
+    "contact_name": "Jane Testcase"
+   },
+   "line_id": 1,
+   "duration_s": null,
+   "call_status": null,
+   "phone": {
+    "event_id": 5101,
+    "line_id": 1,
+    "line_number": "5555550100",
+    "body": "Here is the upload link.",
+    "duration_s": null,
+    "status": null,
+    "missed": false
+   }
+  },
+  {
+   "key": "phone:5102",
+   "id": 5102,
+   "kind": "call",
+   "at": "{{TODAY}}T11:00:00.000Z",
+   "sort_at": "{{TODAY}}T11:00:00.000Z",
+   "direction": "incoming",
+   "participant": "5555550199",
+   "preview": "completed · 312s",
+   "log_id": 8104,
+   "legacy": false,
+   "contact": {
+    "contact_id": 9001,
+    "contact_name": "Jane Testcase"
+   },
+   "line_id": 1,
+   "duration_s": 312,
+   "call_status": "completed",
+   "phone": {
+    "event_id": 5102,
+    "line_id": 1,
+    "line_number": "5555550100",
+    "body": null,
+    "duration_s": 312,
+    "status": "completed",
+    "missed": false
+   }
+  },
+  {
+   "key": "log:8105",
+   "id": 8105,
+   "kind": "email",
+   "at": "{{TODAY-1}}T16:00:00.000Z",
+   "direction": "outgoing",
+   "participant": "jane.testcase@example-client.test",
+   "preview": "Logged from the composer: we received your documents and will file next week.",
+   "log_id": 8105,
+   "legacy": true,
+   "contact": null,
+   "case_id": null,
+   "log": {
+    "type": "email",
+    "from": "intake@example-firm.test",
+    "to": "jane.testcase@example-client.test",
+    "subject": "We received your documents",
+    "message": "Logged from the composer: we received your documents and will file next week.",
+    "data": {
+     "To": "jane.testcase@example-client.test",
+     "From": "intake@example-firm.test",
+     "Message": "Logged from the composer: we received your documents and will file next week.",
+     "Subject": "We received your documents"
+    }
+   }
+  }
+ ],
+ "next_offset": 5,
+ "has_more": true
+}
