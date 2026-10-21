@@ -45,6 +45,7 @@ describe('classification snapshot', () => {
     "calendly_webhook_signing_key": "secret console console ui string",
     "clio_login_code": "state system state console string auto",
     "cloud_tasks_enabled": "system system platform ui bool",
+    "custom_code_child_process": "system system platform ui bool",
     "comms_ai_monthly_cap_cents": "firm comms comms console number",
     "comms_archive_admins": "access console console ui user_csv",
     "comms_archive_bucket": "system system platform console string",

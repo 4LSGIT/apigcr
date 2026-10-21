@@ -43,7 +43,11 @@ picks per task:
    2026-10-13 (U9b P1–P3, three slices planned→landed→deployed in a day):
    - One git worktree + branch per worker off the agreed base commit
      (`git worktree add ../apigcr-pN -b <slice> <base>`; symlink
-     node_modules from the main checkout). Non-overlapping file lanes,
+     node_modules AND .env from the main checkout, doc-only worktrees
+     included — without .env the pre-commit hook degrades quietly, and
+     `updateRoutes` reports a FAILURE that reads on a landing as though the
+     auto-generated `ref/routes.md` had broken when nothing has drifted,
+     2026-10-22). Non-overlapping file lanes,
      fixed in the boot prompt; a worker wanting another lane's file routes
      the finding to its owner via the manager — never a drive-by edit.
    - Workers commit on their branch (`--no-verify` — worktrees lack .env,
@@ -120,6 +124,36 @@ Gates beyond Commands & gates below, every model:
   edit step failed — verify the NEW text is on disk before acting on it
   (two silent no-op edits shipped past green runs, 2026-10-14: a mutation
   that never applied and a doc edit whose landing commit claimed it). Complete files (not fragments) for non-trivial edits.
+  A write can also be undone by something that runs AFTER it: a `--require`
+  preload clearing `process.mainModule` was reverted a moment later by node
+  assigning it, so the hardening shipped inert and read fine (2026-10-22).
+  Assert the state at the moment it has to hold, not at the moment you set it.
+- An assertion that can only run once the thing it guards has already failed
+  is not a gate — the sibling of "a harness that PRINTS an anomaly". A probe
+  checked `env` only inside `if (escapeReached)`, which is false precisely
+  BECAUSE the guard works, so a mutation restoring `env: process.env` passed
+  unnoticed (2026-10-22). Assert the property directly; if it cannot be
+  observed from where you are standing, assert the value that establishes it.
+- **The full suite's real constraint is free MEMORY, not cores**, and
+  `local/heavy-gate.sh`'s slots don't model it: 3 cpu + 1 land reads as
+  "three concurrent suites are fine", and they are not. Starved of memory,
+  load-sensitive suites time out on the 5s default (`caseUi.detTab`'s async
+  boots, `mailboxS0`) and jest workers die outright — failing tests with
+  EMPTY error bodies, in suites unrelated to your change, that pass alone and
+  pass on main. A whole run can take SIGKILL (exit 137). Two diagnostic
+  rules, because this cost two sessions four wrong conclusions about their own
+  code in one evening (2026-10-22):
+  - **Check headroom before a full run, and suspect the desktop first.**
+    Measured that evening: Chrome with 4 profiles and ~100 tabs held 11.3 GB
+    of the machine's 24. That, not the other session, was the main consumer —
+    we spent an hour blaming each other's jest runs. `vm_stat` and
+    `ps -eo rss=,comm=` take a second; ask Fred to close windows if it's tight.
+  - **Still never run two suites at once across sessions.** A land is
+    exclusive against cpu: hand the machine over explicitly and wait for the
+    GO. Concurrency alone was enough to produce the same symptoms once the
+    desktop had taken its share.
+  - A failing suite that passes alone AND passes on main is evidence about the
+    machine, not about the branch. Don't "fix" it; measure memory.
   Mutation loops on a tree holding UNCOMMITTED slice work restore with
   cp-backups and verify each restore (diff against the backup) — never
   `git checkout --`: it cannot restore an untracked file and silently
@@ -260,6 +294,7 @@ These five are the ones that have actually bitten:
 
 The rest, in no particular order:
 
+- **`custom_code` workflow steps run in a forked child, never in this process** (`lib/customCodeRunner.js` + `lib/customCodeHarden.js`). `vm` is not a security boundary: a sandbox holding any host object is walked back with `input.constructor.constructor('return process')()`, and in-process that reached `process.env` and the DB credentials for anyone who could save or test a step. The child gets `env:{}`, no reachable host object in the context (input arrives as JSON parsed inside it), no `mainModule` to require through (cleared on `setImmediate` — a `--require` preload runs BEFORE node assigns it, so clearing it synchronously is undone), and refused sockets. Never move execution back in-process, and never put a host object in that sandbox. It is blast-radius reduction, NOT containment — the child keeps outbound network, so Cloud Run's metadata server is still reachable; an isolate or egress restriction is the real fix (`ref/plans.md`). A step's return value crosses by a tagged round trip that preserves Dates and non-finite numbers, because `{{this.x}}` resolves against it.
 - Dockets: `case_number` / `case_number_full` are opaque free text server-side. Docket-shape parsing is BK-specific and lives client-side ONLY. The server stores opaque strings and collision-checks by equality — never parse or validate docket shape server-side.
 - Collation: `documents.external_id` and `case_folder_cache.folder_external_id` are `utf8mb4_bin` (case-sensitive Dropbox IDs — load-bearing). `court_ai_log.message_id` and `email_log.message_id` are both `utf8mb4_general_ci` (verified live 2026-10-05); the explicit `COLLATE` clauses on the court-side joins are no-ops kept as insurance against re-divergence.
 - Timezone: the firm zone is `America/Detroit` — env var `FIRM_TIMEZONE` (`FIRM_TZ` is the JS identifier it's read into, six module-scope captures); the DB pool runs UTC; `appt_date` is firm-local naive. Use `CONVERT_TZ`/`DATE_FORMAT`; Luxon server-side.

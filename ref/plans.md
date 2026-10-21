@@ -505,6 +505,38 @@ failed-send dispatch are live; wf 54 sends the notices.)
   either route through the registry or state the direct-require as deliberate
   in the sweep headers + COMMS_ARCHIVE_DESIGN §6.
 
+## custom_code containment — what the child process does NOT close (2026-10-22)
+
+Execution moved into a forked, scrubbed child (CLAUDE.md's invariant list has
+the shape). That removes `process.env` — the DB credentials — from the escape
+path and costs legitimate steps nothing, because all 97 live steps are pure
+transforms (verified: none references `process`, `require`, `constructor` or
+`global`; the one `process` hit is the word in a comment and the `require`
+hits are English prose in string literals). It is **blast-radius reduction,
+not containment**, and the difference matters for any decision that leans on
+it:
+
+- **The child keeps outbound network, so the instance metadata server is still
+  reachable.** On Cloud Run that hands out a service-account access token,
+  which is plausibly worth more than the database password already removed.
+  `lib/customCodeHarden.js` refuses sockets, DNS and the `child_process`
+  pivot from the module loader, which raises the cost but is monkey-patching,
+  not a boundary — native bindings it does not cover remain.
+- **The real fix is one of two things**: an isolate where no host-realm object
+  is reachable at all (`isolated-vm`, a native dependency — the Dockerfile is
+  `node:24-slim`, so this needs build tooling or a prebuilt binary), or egress
+  restriction on the child. Neither is worth it while code steps are pure
+  transforms; both become necessary the moment one is not.
+- **So "a code step is harmless by construction" is NOT true today**, and no
+  authoring decision should be justified by the child boundary alone. The
+  honest claim is that the worst case fell from "the database" to "whatever an
+  escaped script can reach over the network from this instance".
+- The parent's kill timer (`CUSTOM_CODE_KILL_GRACE_MS`) is a backstop with no
+  behavioural test: nothing reachable from the sandbox today can outlive the
+  vm timeout, so only the option value is asserted. If an async escape ever
+  becomes reachable, that timer is what catches it and it should get a real
+  test then.
+
 ## From the Ask Casey arc — P5 ledger follow-ups (2026-10-22)
 
 - **A refused claim reads as `unknown` when the chat is reopened.**
