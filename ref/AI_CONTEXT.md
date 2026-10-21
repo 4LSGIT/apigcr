@@ -1097,7 +1097,8 @@ A changed time goes as `date` (naive = firm time, via `parseUserDateTime`) →
 `log_date`; future refused; the typing time lands in `log_extra.logged_at`.
 Untouched = no `date`, server NOW(). Log tables flip order from the Date/Time
 header (`GET /api/log?sort=asc`); every log_date ORDER BY has a log_id
-tiebreak. `window.communicationContext.
+tiebreak. The case/contact Log tab's Add Log note is one shared dialog,
+scripts.js `AddLogDialog`, with the same When contract. `window.communicationContext.
 case_id` (set by the feed on a case) stamps its manual logs
 `about_type='case'`. `sendingform.html` (case2): modular doc-request actions,
 server-side assembly via `POST /api/compose-docs-message`, Docs Needed →

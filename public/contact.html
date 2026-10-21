@@ -646,27 +646,9 @@ E('tabLogType').addEventListener('change', syncLogDirectionFilterVisibility);
 syncLogDirectionFilterVisibility();
 
 
-async function addLog() {
-  Swal.fire({
-    title: "Add Log:",
-    html: `<textarea id="addLogText" style="height:60px;width:300px;resize:none;"></textarea>`,
-    showCancelButton: true,
-    confirmButtonText: 'Log',
-    showLoaderOnConfirm: true,
-    preConfirm: async () => {
-      const text = E("addLogText").value;
-      if (!text) { Swal.showValidationMessage("Please add a log message"); return false; }
-      try {
-        await P.apiSend("/api/log", "POST", {
-          type: "note", link_type: "contact", link_id: clientID, data: text
-        });
-        Toast.fire({ icon: "success", title: "Logged!" });
-        tabLogGet(0);
-      } catch (err) {
-        Toast.fire({ icon: "error", title: "Error", text: err.message });
-      }
-    }
-  });
+// The dialog (with its When field) is shared with case.html: scripts.js.
+function addLog() {
+  AddLogDialog("contact", clientID, () => tabLogGet(0));
 }
   </script>
 

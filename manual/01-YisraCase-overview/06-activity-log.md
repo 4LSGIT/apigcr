@@ -22,7 +22,7 @@ Log entries are created automatically for:
 
 Manual log entries can also be written for any interaction worth recording — the "Log Without Sending" and "Log Call" options on a contact's Communication tab are the usual entry point.
 
-Logging after the fact is expected: **Log Call** has a **When** field (defaults to now) and a **Direction** chooser — *Incoming* swaps the From and To rows so the caller's number is the From — and **Log Without Sending** asks when the text or email happened before it logs. The entry then dates, sorts and filters by that time, not by when it was typed. A future time is refused.
+Logging after the fact is expected: **Log Call** has a **When** field (defaults to now) and a **Direction** chooser — *Incoming* swaps the From and To rows so the caller's number is the From — **Log Without Sending** asks when the text or email happened before it logs, and the **Add Log** note on a case or contact Log tab has a **When** field too. The entry then dates, sorts and filters by that time, not by when it was typed. A future time is refused.
 
 ---
 

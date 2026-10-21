@@ -736,6 +736,53 @@ function toggleLogDateSort(btn) {
   tabLogGet(0);
 }
 
+/* Firm-local "now" as a datetime-local value (YYYY-MM-DDTHH:MM). The firm
+   zone, not the browser's: POST /api/log reads a naive date as firm time.
+   communicate.html keeps its own copy (it does not load this file). */
+function firmNowLocalInput() {
+  const fd = window.firmData || (typeof P !== 'undefined' && P.firmData) || {};
+  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-CA', {
+    timeZone: fd.firmTimezone || 'America/Detroit', year: 'numeric', month: '2-digit',
+    day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23'
+  }).formatToParts(new Date()).map(p => [p.type, p.value]));
+  return `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}`;
+}
+
+/* Add Log — the case and contact Log tabs' manual note. A note may be logged
+   after the fact: When defaults to now; left as offered, no date is sent and
+   the server stamps the row, a changed time goes as `date` (firm-local; the
+   server refuses a future one and keeps the typing time in log_extra.logged_at). */
+function AddLogDialog(linkType, linkId, onDone) {
+  const now = firmNowLocalInput();
+  return Swal.fire({
+    title: 'Add Log:',
+    customClass: { htmlContainer: 'alg-html' },
+    html: `<textarea id="addLogText" class="alg-text"></textarea>
+           <div class="alg-when"><label for="addLogWhen" class="yc-flabel">When</label>
+           <input type="datetime-local" id="addLogWhen" value="${now}" max="${now}"></div>`,
+    showCancelButton: true,
+    confirmButtonText: 'Log',
+    showLoaderOnConfirm: true,
+    preConfirm: async () => {
+      const text = E('addLogText').value;
+      const when = E('addLogWhen').value;
+      if (!text) { Swal.showValidationMessage('Please add a log message'); return false; }
+      if (!when) { Swal.showValidationMessage('Pick when this happened'); return false; }
+      if (when > firmNowLocalInput()) { Swal.showValidationMessage('That is in the future'); return false; }
+      try {
+        await P.apiSend('/api/log', 'POST', {
+          type: 'note', link_type: linkType, link_id: linkId, data: text,
+          ...(when !== now ? { date: when } : {})
+        });
+        Toast.fire({ icon: 'success', title: 'Logged!' });
+        if (onDone) onDone();
+      } catch (err) {
+        Toast.fire({ icon: 'error', title: 'Error', text: err.message });
+      }
+    }
+  });
+}
+
 function logExtrasIcon(entry) {
   if (!logHasExtras(entry.log_extra)) return '';
   return ` <i class="fa-solid fa-circle-info" title="View details"
@@ -816,6 +863,12 @@ function logAboutBadge(entry, refreshExpr, hasPrimaryLink = true) {
     .lab-kind-row { display: flex; gap: 1.2em; text-align: left; margin: 0 0 0.5em; font-size: 0.95em; }
     .lab-chosen { font-size: 0.85em; color: var(--text-2, #555); margin-top: 0.35em; text-align: left; }
     .lab-chosen:empty { display: none; }
+    /* AddLogDialog. The input rule goes through .swal2-html-container (0-3-1)
+       to beat style.css's 0-2-1 width:200px control rule, which loads after. */
+    .alg-text { display: block; width: 100%; box-sizing: border-box; height: 5em; resize: vertical; }
+    .alg-when { display: flex; align-items: center; gap: 0.5em; margin-top: 0.6em; text-align: left; }
+    .alg-when .yc-flabel { margin-right: 0; }
+    .swal2-html-container.alg-html input[type="datetime-local"] { flex: 1; min-width: 0; width: auto; }
   `;
   document.head.appendChild(style);
 })();

@@ -1375,6 +1375,7 @@ tests/launcherS6c4.test.js
 tests/launcherS6c5.test.js
 tests/launcherS6c5editor.test.js
 tests/likeEscapeSites.test.js
+tests/logCommDate.addLog.test.js
 tests/logCommDate.mysql.test.js
 tests/logCommDate.pane.test.js
 tests/logCommDate.routes.test.js
