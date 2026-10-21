@@ -939,14 +939,14 @@ email_ingest_sources, the assistant chat tables, backups/junk) get no grant;
   falls back to the dbReadonly pool with a loud boot line
   (`[dbReport] … RUNNING ON THE BROAD dbReadonly POOL`). The app-layer
   validator stays regardless — defense in depth and clean refusals.
-- **Still to do (Fred, one env update):** add `user_report=yc_report` +
-  `password_report=<the provisioned secret>` to the Cloud Run service
-  (`--update-env-vars`, NEVER `--set-env-vars` — that wipes the rest) and to
-  the local `.env`; then verify: the boot log shows
-  `[dbReport] reports+assistant pool on least-privilege account yc_report`
-  and NOT the fallback line, a representative saved report runs, an assistant
-  question runs, and a `ycro_` key still reads `rw_scratch` (proves the
-  readonly pool untouched).
+- **DONE 2026-10-22 — the switch is live and verified.** Fred set
+  `user_report` / `password_report` on the Cloud Run service
+  (`--update-env-vars`) and in `.env`; verified: boot log shows the
+  least-privilege line (not the fallback), a saved report runs, an assistant
+  question runs, and a `ycro_` key still reads `rw_scratch` (readonly pool
+  untouched). Any future validator miss on the report/assistant surface is
+  now a `SELECT command denied`. Maintenance coupling below is the one live
+  obligation left.
 - **Maintenance coupling:** a new allowlisted table or a newly denied column
   means re-running `--apply` (the grant set is generated, not hand-maintained).
   Note this where the manifest is edited.
