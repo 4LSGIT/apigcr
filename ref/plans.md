@@ -925,13 +925,28 @@ email_ingest_sources, the assistant chat tables, backups/junk) get no grant;
   minus `DENIED_COLUMNS`. The new user's name/password come from env only
   (`REPORT_DB_USER` / `REPORT_DB_PASSWORD` / `REPORT_DB_HOST`), never a CLI arg,
   never committed. Fred provisions it by hand; the arc did NOT run it.
-- **Still to do (separate slice, after provisioning):** point
-  `startup/dbReadonly` (reports + assistant) at the new credentials, deploy,
-  confirm a representative saved report and an assistant query still run; decide
-  whether the public `/api/readonly/sql` endpoint keeps `yc_ro` (its sqlGuard
-  tier gate is a different, intentional surface) or also moves. Keep the
-  app-layer validator regardless — defense in depth, and it still gives the
-  clean user-facing refusals.
+- **Provisioned live 2026-10-22** (`'yc_report'@'%'`, GO: 21 tables / 392
+  columns, secrets withheld). Two Cloud SQL lessons baked into the script the
+  same day: the account host is `%` (connector presents as `cloudsqlproxy~…`,
+  no fixed egress IP) and revokes are TARGETED per SHOW GRANTS line — Cloud
+  SQL's root cannot run the global `REVOKE ALL` (no rights on `sys`).
+- **Pool split shipped (same date):** `startup/dbReport.js` carries
+  reports+assistant (`services/reportService.js` requires it); the public
+  `/api/readonly/sql` endpoint STAYS on `startup/dbReadonly`/`yc_ro` BY
+  DESIGN — its SU-minted keys are sqlGuard-tiered and legitimately read
+  outside the report manifest (`rw_scratch`, information_schema). Until the
+  `user_report` / `password_report` env vars exist on the service, dbReport
+  falls back to the dbReadonly pool with a loud boot line
+  (`[dbReport] … RUNNING ON THE BROAD dbReadonly POOL`). The app-layer
+  validator stays regardless — defense in depth and clean refusals.
+- **Still to do (Fred, one env update):** add `user_report=yc_report` +
+  `password_report=<the provisioned secret>` to the Cloud Run service
+  (`--update-env-vars`, NEVER `--set-env-vars` — that wipes the rest) and to
+  the local `.env`; then verify: the boot log shows
+  `[dbReport] reports+assistant pool on least-privilege account yc_report`
+  and NOT the fallback line, a representative saved report runs, an assistant
+  question runs, and a `ycro_` key still reads `rw_scratch` (proves the
+  readonly pool untouched).
 - **Maintenance coupling:** a new allowlisted table or a newly denied column
   means re-running `--apply` (the grant set is generated, not hand-maintained).
   Note this where the manifest is edited.

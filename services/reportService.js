@@ -62,7 +62,10 @@
 // no such column) and never restored from them — restoring an old version of
 // a locked definition must not silently unlock it.
 
-const roPool = require("../startup/dbReadonly");
+// Least-privilege pool (yc_report: per-column SELECT on the manifest tables
+// only). Falls back to dbReadonly with a loud boot line until the
+// user_report / password_report env vars are set — see startup/dbReport.js.
+const roPool = require("../startup/dbReport");
 const {
   validateSql, validateParams, sanitizeViz, sanitizeColumnsMeta,
 } = require("../lib/reportSchema/validator");

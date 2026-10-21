@@ -1053,6 +1053,7 @@ services/videoService.js
 services/workflowExecutionService.js
 startup/db.js
 startup/dbReadonly.js
+startup/dbReport.js
 startup/init.js
 tests/accessA2SuRole.test.js
 tests/accessA2bCollapse.test.js
@@ -1180,6 +1181,7 @@ tests/customFields.s6.test.js
 tests/customView.rowExpand.test.js
 tests/dbConsoleSplitSql.test.js
 tests/dbPoolIdleRecycling.test.js
+tests/dbReportPool.test.js
 tests/dbTarget.test.js
 tests/dbTransientRetry.test.js
 tests/dbkqV12Polish.test.js
