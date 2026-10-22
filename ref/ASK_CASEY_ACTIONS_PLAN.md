@@ -873,7 +873,13 @@ code step, already-enrolled) as a curated known-cause catalog. The catalog is
 **curated guidance grounded in a manual chapter plus the specific stored row**,
 not model invention: "usual responses" that Casey makes up are worse than none.
 
-**A17.2: Validate and preview an authored step without saving.**
+**A17.2: Validate and preview an authored step without saving. SHIPPED
+2026-10-22** — as the `automation.preview_step` read kind: the dry-run core is
+extracted to `services/stepPreviewService.js` and shared with test-step's
+dry_run branch (response unchanged); the kind has no field that can select
+live execution, the capability gate (now `lib/codeStepGate.js`, shared) runs
+inside the service with the session's auth, and this.* phantom variables are
+stripped exactly as the route strips them. Original spec:
 
 Reuses `POST /workflows/test-step` with `dry_run` only, to show the resolved
 config and the unresolved placeholders before anything is stored. **Live mode

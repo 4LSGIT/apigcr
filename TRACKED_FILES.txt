@@ -38,6 +38,7 @@ lib/capabilities.js
 lib/caseId.js
 lib/caseRoleResolver.js
 lib/checklistStatus.js
+lib/codeStepGate.js
 lib/contactMirror.js
 lib/courtCitation.js
 lib/courtResolve.js
@@ -1052,6 +1053,7 @@ services/ringcentralService.js
 services/searchService.js
 services/settingsService.js
 services/smsService.js
+services/stepPreviewService.js
 services/storageService.js
 services/taskService.js
 services/templateRenderService.js

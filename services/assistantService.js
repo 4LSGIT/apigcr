@@ -1462,6 +1462,30 @@ function validateStep(query, index) {
   if (kind === 'automation.references') {
     return { id, kind, purpose, ...exactlyOneId('workflow_id', 'sequence_template_id', 'workflow_id or sequence_template_id') };
   }
+  // A17.2 — dry-run preview of an authored step. The kind CANNOT express live
+  // execution: there is no dry_run field to set, and the executor only ever
+  // calls the resolve-only core. Size caps mirror the preview service's.
+  if (kind === 'automation.preview_step') {
+    const stepType = query.step_type;
+    if (stepType !== 'webhook' && stepType !== 'internal_function' && stepType !== 'custom_code') {
+      throw httpError(422, `Step ${id} preview step_type must be webhook, internal_function or custom_code`);
+    }
+    if (query.config == null || typeof query.config !== 'object' || Array.isArray(query.config)) {
+      throw httpError(422, `Step ${id} preview needs a config object`);
+    }
+    let configJson;
+    try { configJson = JSON.stringify(query.config); } catch (_) { throw httpError(422, `Step ${id} preview config is not serializable`); }
+    if (configJson.length > 20000) throw httpError(422, `Step ${id} preview config exceeds 20000 characters of JSON`);
+    const out = { id, kind, purpose, step_type: stepType, config: query.config };
+    if (query.variables !== undefined) {
+      if (query.variables == null || typeof query.variables !== 'object' || Array.isArray(query.variables)) {
+        throw httpError(422, `Step ${id} preview variables must be a JSON object`);
+      }
+      if (JSON.stringify(query.variables).length > 8000) throw httpError(422, `Step ${id} preview variables exceed 8000 characters of JSON`);
+      out.variables = query.variables;
+    }
+    return out;
+  }
   if (kind !== 'sql.read') throw httpError(422, `Step ${id} uses an unavailable operation: ${kind}`);
   const sql = String(query.sql || '').trim();
   if (!sql || sql.length > MAX_SQL) throw httpError(422, `Query ${id} is empty or too long`);
@@ -1516,6 +1540,7 @@ function stepFingerprint(step) {
   if (kind === 'automation.run') return `${kind}:${step.execution_id !== undefined ? `x${Number(step.execution_id)}` : `e${Number(step.enrollment_id)}`}`;
   if (kind === 'automation.references') return `${kind}:${step.workflow_id !== undefined ? `w${Number(step.workflow_id)}` : `s${Number(step.sequence_template_id)}`}`;
   if (kind === 'automation.list') return `${kind}:${step.type || 'workflows'}:${String(step.query || '').trim().toLowerCase()}:${Number(step.limit) || 50}`;
+  if (kind === 'automation.preview_step') return `${kind}:${step.step_type}:${JSON.stringify(step.config)}:${JSON.stringify(step.variables || {})}`;
   return `${kind}:${String(step && step.query || '').replace(/\s+/g, ' ').trim().toLowerCase()}` +
     (kind === 'comms.search' ? `:${Number(step.limit) || 20}` : '');
 }
@@ -1773,6 +1798,13 @@ async function executeReadStep(db, query, { auth, userId }) {
   } else if (query.kind === 'weather.lookup') {
     rows = [await weather.current(query.location)];
     rowCount = 1;
+  } else if (query.kind === 'automation.preview_step') {
+    // Dry run only, by construction; the same capability gate as test-step
+    // runs inside the service with this session's auth.
+    rows = require('./stepPreviewService').previewRows({
+      auth, step_type: query.step_type, config: query.config, variables: query.variables || {},
+    });
+    rowCount = rows.length;
   } else if (query.kind === 'automation.list' || query.kind === 'automation.definition'
           || query.kind === 'automation.run' || query.kind === 'automation.references') {
     // Typed projections on the app pool (the report pool's grants exclude the

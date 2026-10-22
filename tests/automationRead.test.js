@@ -287,6 +287,54 @@ describe('the read-step validator and fingerprints know the four kinds', () => {
   });
 });
 
+describe('A17.2 — automation.preview_step is a dry run by construction', () => {
+  const preview = require(path.join(__dirname, '..', 'services', 'stepPreviewService'));
+  const STAFF = { type: 'jwt', userId: 2, roles: ['staff'] };
+  const ADMIN = { type: 'jwt', userId: 1, roles: ['admin', 'staff'] };
+
+  test('resolves placeholders, flags unresolved ones, and validates params — executing nothing', () => {
+    const rows = preview.previewRows({ auth: STAFF, step_type: 'internal_function',
+      config: { function_name: 'send_sms', params: { to: '{{contact_phone}}', message: 'Hi {{contact_fname}}' } },
+      variables: { contact_phone: '2485550100' } });
+    expect(rows).toHaveLength(1);
+    const r = rows[0];
+    expect(r.dry_run).toBe(1);
+    expect(JSON.parse(r.resolved_config).params.to).toBe('2485550100');
+    expect(r.unresolved_placeholders).toBe('{{contact_fname}}');
+    // An explicitly-empty variable is NOT flagged; an unset one is.
+    const empty = preview.previewRows({ auth: STAFF, step_type: 'internal_function',
+      config: { function_name: 'send_sms', params: { to: '{{x}}' } }, variables: { x: '' } });
+    expect(empty[0].unresolved_placeholders).toBeNull();
+  });
+
+  test('the capability gate holds: staff cannot preview a standard code step; safe is open', () => {
+    expect(() => preview.previewRows({ auth: STAFF, step_type: 'custom_code', config: { code: '1;' } }))
+      .toThrow(/automations\.manage/);
+    expect(preview.previewRows({ auth: STAFF, step_type: 'custom_code',
+      config: { code: '1;', code_mode: 'safe' } })[0].dry_run).toBe(1);
+    expect(preview.previewRows({ auth: ADMIN, step_type: 'custom_code', config: { code: '1;' } })[0].dry_run).toBe(1);
+  });
+
+  test('a webhook preview notes credential injection without resolving it, and this.* variables are stripped', () => {
+    const rows = preview.previewRows({ auth: STAFF, step_type: 'webhook',
+      config: { url: 'https://x.example.com', method: 'POST', credential_id: 3, body: { v: '{{this.output.x}}' } },
+      variables: { 'this.output.x': 'phantom' } });
+    expect(rows[0].credential_note).toMatch(/injected at send time/);
+    // The phantom this.* variable was stripped, so the token stays unresolved.
+    expect(rows[0].unresolved_placeholders).toContain('{{this.output.x}}');
+  });
+
+  test('the validator caps and shapes the kind; the fingerprint distinguishes configs', () => {
+    const step = (over) => svc.validateStep({ id: 'q1', purpose: 'p', kind: 'automation.preview_step', ...over }, 0);
+    expect(step({ step_type: 'webhook', config: { url: 'x' } })).toMatchObject({ kind: 'automation.preview_step' });
+    expect(() => step({ step_type: 'trigger', config: {} })).toThrow(/step_type must be/);
+    expect(() => step({ step_type: 'webhook' })).toThrow(/needs a config object/);
+    expect(() => step({ step_type: 'webhook', config: { big: 'x'.repeat(20001) } })).toThrow(/exceeds 20000/);
+    expect(svc.stepFingerprint({ kind: 'automation.preview_step', step_type: 'webhook', config: { a: 1 } }))
+      .not.toBe(svc.stepFingerprint({ kind: 'automation.preview_step', step_type: 'webhook', config: { a: 2 } }));
+  });
+});
+
 describe('A17.1 — the run-explainer rides only with automation evidence', () => {
   const approved = { viewer: { user_id: 7, display_name: 'S', initials: 'S', roles: ['staff'] }, workspace: null };
 
@@ -328,12 +376,13 @@ describe('both read-planning prompts teach every read kind (the S3b lesson, read
   // The validator is the authority on which kinds exist; both prompts must
   // name each one, or the stage that is blind will refuse what the other runs.
   const READ_KINDS = ['sql.read', 'manual.search', 'comms.search', 'weather.lookup',
-    'automation.list', 'automation.definition', 'automation.run', 'automation.references'];
+    'automation.list', 'automation.definition', 'automation.run', 'automation.references',
+    'automation.preview_step'];
 
   test('the inventory matches the validator', () => {
     for (const kind of READ_KINDS.filter((k) => k !== 'sql.read')) {
       expect(() => svc.validateStep({ id: 'q1', kind, purpose: 'p', query: 'xx', location: 'xx',
-        workflow_id: 1, execution_id: 1 }, 0)).not.toThrow();
+        workflow_id: 1, execution_id: 1, step_type: 'internal_function', config: { function_name: 'noop' } }, 0)).not.toThrow();
     }
     expect(() => svc.validateStep({ id: 'q1', kind: 'automation.unknown', purpose: 'p' }, 0))
       .toThrow(/unavailable operation/);

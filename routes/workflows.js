@@ -238,48 +238,23 @@ const validateInternalFunctionParams = internalFunctions.__validateFunctionParam
  * existing permissive behavior).
  */
 // ─────────────────────────────────────────────────────────────
-// custom_code capability gate.
+// custom_code capability gate — the standard/safe policy and its reasoning
+// live in lib/codeStepGate.js (moved in A17.2 so the preview service shares
+// it without importing this router).
 //
-// A STANDARD-mode custom_code step is arbitrary server-side execution, not a
-// sandboxed expression: lib/job_executor runs it with vm.runInNewContext, and
-// Node's vm is not a security boundary — the host realm is reachable through
-// the sandbox's own `input` object, and process.env carries the DB
-// credentials. So INTRODUCING one is gated on automations.manage ('Manage
-// workflows, sequences and trigger rules'; su / it / admin), which is what
-// that capability was defined for.
-//
-// SAFE mode (config.code_mode === 'safe', QuickJS guest engine — see
-// lib/safeCodeRunner.js) is open to ALL staff (Fred's ruling, 2026-10-22): the
-// body runs where an escape finds no host realm, no process and no network, so
-// a safe step is not arbitrary server-side execution. Only the literal string
-// 'safe' passes ungated — absent means standard, and any other value is
-// treated as standard here (the config validator 400s it anyway), so the gate
-// fails closed. A wider automations role model is its own arc (ref/plans.md).
-//
-// Scope, deliberately: only the paths that take a step type FROM THE REQUEST.
-// ensureDraft's draft fork and POST /workflows/:id/duplicate COPY stored rows,
-// so they introduce no new code — and gating the fork would stop a non-holder
-// editing any step of a workflow that merely contains a code step, which is
-// several live workflows. A stored key cannot redirect dispatch either (the
-// type-last fix), so copying is inert.
+// Scope here, deliberately: only the paths that take a step type FROM THE
+// REQUEST. ensureDraft's draft fork and POST /workflows/:id/duplicate COPY
+// stored rows, so they introduce no new code — and gating the fork would stop
+// a non-holder editing any step of a workflow that merely contains a code
+// step, which is several live workflows. A stored key cannot redirect
+// dispatch either (the type-last fix), so copying is inert.
 //
 // This gates AUTHORING, never execution: POST /workflows/:id/start is
 // jwtOrApiKey, and every trigger, hook and ingest path starts workflows whose
 // code steps already exist. Containment is a real sandbox or retiring
 // custom_code — see ref/plans.md.
-//
-// Returns null when allowed, or { status, error, message }.
 // ─────────────────────────────────────────────────────────────
-function refuseCodeStepWithoutCapability(auth, stepType, config) {
-  if (stepType !== 'custom_code') return null;
-  if (config != null && typeof config === 'object' && config.code_mode === 'safe') return null;
-  if (can(auth, 'automations.manage')) return null;
-  return {
-    status: 403,
-    error: 'standard custom_code steps require the automations.manage capability',
-    message: 'A standard code step runs arbitrary server-side code. Use a safe-mode code step (mode "safe"), an internal_function or a webhook step — or ask an administrator.'
-  };
-}
+const { refuseCodeStepWithoutCapability } = require("../lib/codeStepGate");
 
 function validateInternalFunctionConfig(stepType, config) {
   // Type-INDEPENDENT guard first. `type` is executeJob's dispatch selector, so
@@ -2940,52 +2915,17 @@ router.post("/workflows/test-step", jwtOrApiKey, async (req, res) => {
     try { errorPolicy = JSON.parse(errorPolicy); } catch { errorPolicy = { strategy: "ignore" }; }
   }
 
-  const context = {
-    variables,
-    this: {},
-    env: {
-      executionId: env.executionId ?? "test",
-      stepNumber:  env.stepNumber  ?? 1,
-      now:         new Date().toISOString(),
-      ...env
-    }
-  };
-
-  // Resolve placeholders in config
-  const resolvedConfig = resolvePlaceholders(config, context);
+  // The dry-run core is shared with Casey's automation.preview_step read kind
+  // (services/stepPreviewService.js); the live path below keeps using the
+  // context and resolvedConfig it returns. Response shape unchanged.
+  const { context, resolvedConfig, preview } =
+    require("../services/stepPreviewService").buildStepPreview({ step, config, variables, env });
 
   // ── Dry run: resolve-only preview. No executeJob call, no side effects
   // for any step type. Always 200 — validation problems are surfaced as
   // data, not errors, so the author still sees the resolved view.
   if (dry_run) {
-    const out = {
-      success:         true,
-      dry_run:         true,
-      resolved_config: resolvedConfig,
-      // Tokens in the ORIGINAL config that resolve to null (unknown variable,
-      // this.* pre-execution, unknown env helper). Cannot scan resolvedConfig —
-      // resolvePlaceholders blanks unresolved tokens to '' (resolveSingle
-      // returns null, replace callback does `?? ''`), so tokens never survive
-      // resolution. Probing the original tokens via resolveSingle also
-      // correctly distinguishes an unset variable (null → flagged) from a
-      // variable explicitly set to empty string ('' → not flagged).
-      unresolved_placeholders: [...new Set(
-        [...JSON.stringify(config).matchAll(/\{\{([^{}]+)\}\}/g)].map(m => m[1].trim())
-      )].filter(k => resolveSingle(k, context) == null).map(k => `{{${k}}}`),
-    };
-
-    if (step.type === "internal_function") {
-      const vErr = validateInternalFunctionParams(config.function_name, resolvedConfig.params);
-      if (vErr) out.validation_error = vErr.error;
-    }
-
-    // NEVER resolve or echo credential headers here — that would leak
-    // secrets into the preview. Just note that injection happens at send.
-    if (step.type === "webhook" && (config.credential_id || resolvedConfig.credential_id)) {
-      out.credential_note = "Credential headers are injected at send time and are not shown in preview.";
-    }
-
-    return res.json(out);
+    return res.json({ success: true, dry_run: true, ...preview });
   }
 
   // ── Live run. The tester never honors retry backoff — a 3×30s policy
