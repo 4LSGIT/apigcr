@@ -1,8 +1,8 @@
 # The Communications Tab
 
-Every contact and every case has a **Communications** tab: one newest-first
-feed of the emails, texts, calls and court mail that belong to that record,
-with search, channel and direction filters, and the actions you need on each
+Every contact and every case has a **Communications** tab: one feed (newest
+first, or oldest first) of the emails, texts, calls and court mail that belong
+to that record, with search, channel, direction and date filters, and the actions you need on each
 item (open, reply, text back, file an attachment, tag a case). The contact's
 tab sits where the old Send tab was; the case's tab is its own top-level tab.
 
@@ -97,6 +97,11 @@ sent text on the case permanently, open it on the contact's feed and use
 - **Channel**: All, Direct (email + texts + calls, no court), Email, Phone
   (texts + calls), Texts, Calls, Court.
 - **Direction**: incoming or outgoing.
+- **From date / To date**: only items that happened on or between those days
+  (the firm's calendar day; either end may be left blank). A call or note
+  logged after the fact counts on the day it was given, not the day it was
+  typed.
+- **Order**: newest first (the default) or oldest first.
 - **Search** matches what you can read on the item: the participant and contact
   name, subject, preview / body text, addresses and phone numbers, and the
   channel and direction words ("text", "call", "court", "incoming"…). A
@@ -105,6 +110,10 @@ sent text on the case permanently, open it on the contact's feed and use
   body (only the preview), attachments, or call transcripts.
 
 The feed loads 50 items at a time; **Load older** fetches the next page.
+
+An item whose time was set by hand (Log Call's When, the time Log Without
+Sending asks for) also shows, under its date, when it was really typed:
+*entered Oct 22, 2026, 3:10 PM*.
 
 ---
 

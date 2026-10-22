@@ -31,7 +31,7 @@ Logging after the fact is expected: **Log Call** has a **When** field (defaults 
 | Field | Description |
 |---|---|
 | Type | Category of the entry. Drives how the entry is displayed and filtered. |
-| Date | When the event occurred, in firm local time. For an entry logged after the fact it is the time staff gave; the moment it was actually typed stays in its details (`logged_at`, behind the ⓘ icon). |
+| Date | When the event occurred, in firm local time. For an entry logged after the fact it is the time staff gave, and a second line under it — *entered Oct 22, 2026, 3:10 PM* — says when it was really typed (also in the export's **Entered (if backdated)** column and the entry's details as `logged_at`). |
 | By | Which staff member (or automated process) created the entry |
 | Link | What this entry belongs to: contact, case, appt, task, event, phone or email (`bill` is in the enum but unused) |
 | About | An optional *secondary* attribution — the same set of types. "Logged on the contact, about the case." |
@@ -79,6 +79,8 @@ The most recent 200 entries are shown by default, sorted newest first — click 
 ## Log as Audit Trail
 
 Because log *content* is never modified, the log serves as a reliable audit trail. If there is ever a question about what was communicated to a client, when a status was changed, or who took an action, the log is the authoritative record.
+
+One distinction matters for *when*. Automated entries (status changes, sent and received messages, appointments, tasks) are stamped by the system and their date is when it happened. A manual entry's date is the time staff gave it, which may be earlier than when it was typed — that is what logging after the fact is for. Such an entry says so: its date carries an *entered …* line with the real time it was written, and no screen can change that time. To prove when the firm *recorded* something, read the *entered* line, or the date itself when there is none.
 
 The automation system also writes log entries when workflows and sequences execute actions, so automated communications are recorded the same way manual ones are. Automated entries show "System" as the author.
 

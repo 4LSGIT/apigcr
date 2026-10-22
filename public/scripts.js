@@ -783,6 +783,49 @@ function AddLogDialog(linkType, linkId, onDone) {
   });
 }
 
+/* When a backdated log row was really typed: log_extra.logged_at (an ISO
+   instant), written only when staff gave the entry a time by hand (POST
+   /api/log `date`). A Date, or null for every other row. */
+function logEnteredAt(entry) {
+  let x = entry && entry.log_extra;
+  if (typeof x === 'string') { try { x = JSON.parse(x); } catch { return null; } }
+  if (!x || typeof x !== 'object' || !x.logged_at) return null;
+  const d = new Date(x.logged_at);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+/* An instant as firm-local parts (the log's dates are firm wall clock). */
+function firmParts(d) {
+  const fd = window.firmData || (typeof P !== 'undefined' && P.firmData) || {};
+  return Object.fromEntries(new Intl.DateTimeFormat('en-US', {
+    timeZone: fd.firmTimezone || 'America/Detroit', year: 'numeric', month: '2-digit',
+    day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23'
+  }).formatToParts(d).map(p => [p.type, p.value]));
+}
+
+/* The Date/Time cell of every log table. A backdated row gets a second,
+   muted line saying when it was really typed — the date above it is the time
+   staff gave it, so without this a backdated row reads as recorded on time. */
+function logDateHtml(entry) {
+  const date = escText(entry.formatted_date);
+  const at = logEnteredAt(entry);
+  if (!at) return date;
+  const fd = window.firmData || (typeof P !== 'undefined' && P.firmData) || {};
+  const shown = new Intl.DateTimeFormat('en-US', {
+    timeZone: fd.firmTimezone || 'America/Detroit', year: 'numeric', month: 'short',
+    day: 'numeric', hour: 'numeric', minute: '2-digit'
+  }).format(at);
+  return `${date}<span class="yc-hint log-entered" title="Its time was set by hand; this is when it was typed into the log">entered ${escText(shown)}</span>`;
+}
+
+/* CSV: the Entered column, firm-local YYYY-MM-DD HH:MM; empty unless backdated. */
+function logEnteredCsv(entry) {
+  const at = logEnteredAt(entry);
+  if (!at) return '';
+  const p = firmParts(at);
+  return `${p.year}-${p.month}-${p.day} ${p.hour}:${p.minute}`;
+}
+
 function logExtrasIcon(entry) {
   if (!logHasExtras(entry.log_extra)) return '';
   return ` <i class="fa-solid fa-circle-info" title="View details"
@@ -863,6 +906,8 @@ function logAboutBadge(entry, refreshExpr, hasPrimaryLink = true) {
     .lab-kind-row { display: flex; gap: 1.2em; text-align: left; margin: 0 0 0.5em; font-size: 0.95em; }
     .lab-chosen { font-size: 0.85em; color: var(--text-2, #555); margin-top: 0.35em; text-align: left; }
     .lab-chosen:empty { display: none; }
+    /* logDateHtml's "entered …" line under a hand-set date. */
+    .logTable .log-entered { display: block; font-style: italic; }
     /* AddLogDialog. The input rule goes through .swal2-html-container (0-3-1)
        to beat style.css's 0-2-1 width:200px control rule, which loads after. */
     .alg-text { display: block; width: 100%; box-sizing: border-box; height: 5em; resize: vertical; }
@@ -1221,6 +1266,7 @@ const LOG_CSV_COLUMNS = [
   { key: 'log_id',         label: 'Log ID' },
   { key: 'formatted_date', label: 'Date/Time' },
   { key: 'log_date',       label: 'Date (ISO)' },
+  { key: 'entered',        label: 'Entered (if backdated)', get: logEnteredCsv },
   { key: 'log_type',       label: 'Type' },
   { key: 'log_direction',  label: 'Direction' },
   { key: 'log_link_type',  label: 'Link Type' },
@@ -1251,7 +1297,7 @@ function csvEscape(v) {
 function buildLogCsv(rows) {
   const header = LOG_CSV_COLUMNS.map(c => csvEscape(c.label)).join(',');
   const lines = rows.map(r =>
-    LOG_CSV_COLUMNS.map(c => csvEscape(r[c.key])).join(',')
+    LOG_CSV_COLUMNS.map(c => csvEscape(c.get ? c.get(r) : r[c.key])).join(',')
   );
   return '\ufeff' + header + '\r\n' + lines.join('\r\n');
 }

@@ -9,6 +9,12 @@
  * at that log row. Interactive channel grants are always resolved through
  * mailboxService; a log row must never become a way around a mailbox/line
  * grant.
+ *
+ * Dates (log-comm-date): from_date / to_date are inclusive FIRM-local days
+ * matched against each item's `at` (the time the card shows), and sort is
+ * asc | desc on the same sort key as before. A log row backdated by hand
+ * carries log_extra.logged_at; the item exposes it as entered_at so the card
+ * can say when it was really typed.
  */
 
 const mbx = require('./mailboxService');
@@ -16,7 +22,8 @@ const mailRead = require('./mailbox/mailReadService');
 const logService = require('./logService');
 const archiveView = require('./commsArchiveView');
 const { inferDirection, firmDomains } = require('./emailIngestService');
-const { utcToLocal, localToUTC } = require('./timezoneService');
+const { DateTime } = require('luxon');
+const { utcToLocal, localToUTC, FIRM_TZ } = require('./timezoneService');
 
 const KINDS = new Set(['all', 'direct', 'email', 'phone', 'sms', 'call', 'court']);
 const DIRECTIONS = new Set(['incoming', 'outgoing']);
@@ -51,7 +58,20 @@ function parseQuery(query = {}) {
       && ![false, 0, '0', 'false'].includes(query.include_contacts)) {
     throw httpError(400, 'include_contacts must be true or false');
   }
-  return { kind, direction, q, qLower: q.toLowerCase(), limit: Math.min(rawLimit, LIMIT_MAX), offset: rawOffset, includeContacts };
+  const day = (name) => {
+    const v = query[name];
+    if (v == null || v === '') return null;
+    const s = String(v).trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(s) || !DateTime.fromISO(s, { zone: FIRM_TZ }).isValid) {
+      throw httpError(400, `${name} must be a date (YYYY-MM-DD)`);
+    }
+    return s;
+  };
+  const fromDay = day('from_date');
+  const toDay = day('to_date');
+  const sort = query.sort == null || query.sort === '' ? 'desc' : String(query.sort).trim().toLowerCase();
+  if (sort !== 'asc' && sort !== 'desc') throw httpError(400, 'sort must be asc or desc');
+  return { kind, direction, q, qLower: q.toLowerCase(), limit: Math.min(rawLimit, LIMIT_MAX), offset: rawOffset, includeContacts, fromDate: fromDay, toDate: toDay, sort };
 }
 
 function toDate(v) {
@@ -180,6 +200,13 @@ function itemMatches(item, f) {
   if (f.kind === 'direct' && !['email', 'sms', 'call'].includes(item.kind)) return false;
   if (!['all', 'phone', 'direct'].includes(f.kind) && item.kind !== f.kind) return false;
   if (f.direction && item.direction !== f.direction) return false;
+  if (f.fromDate || f.toDate) {
+    const at = toDate(item.at);
+    if (!at) return false;
+    const day = utcToLocal(at).toISODate();
+    if (f.fromDate && day < f.fromDate) return false;
+    if (f.toDate && day > f.toDate) return false;
+  }
   if (!f.qLower) return true;
   const fields = searchFields(item);
   if (fields.some(v => v.toLowerCase().includes(f.qLower))) return true;
@@ -452,12 +479,16 @@ function legacyItem(r) {
   const to = r.log_to || null;
   const data = parseJson(r.log_data, {});
   const message = r.log_message == null || String(r.log_message) === '' ? null : String(r.log_message);
+  const extra = parseJson(r.log_extra, null);
+  const entered = extra && typeof extra === 'object' ? toDate(extra.logged_at) : null;
   return {
     key: `log:${r.log_id}`,
     id: Number(r.log_id),
     kind,
     // log_date is a firm-local wall clock read by mysql2 as if UTC.
     at: iso(localToUTC(r.log_date)),
+    // Set only when staff gave the entry a time by hand (POST /api/log date).
+    entered_at: entered ? entered.toISOString() : null,
     direction,
     participant: direction === 'incoming' ? from : (to || r.log_link_id || null),
     preview: message || logDataBody(data) || '',
@@ -584,7 +615,8 @@ async function list(db, auth, type, id, query = {}) {
     .sort((a, b) => {
       const am = toDate(a.sort_at || a.at)?.getTime() || 0;
       const bm = toDate(b.sort_at || b.at)?.getTime() || 0;
-      return bm - am || String(b.key).localeCompare(String(a.key));
+      const newestFirst = bm - am || String(b.key).localeCompare(String(a.key));
+      return filters.sort === 'asc' ? -newestFirst : newestFirst;
     });
   const page = all.slice(filters.offset, filters.offset + filters.limit);
   // Archive decoration is deliberately after both grant scoping and the page

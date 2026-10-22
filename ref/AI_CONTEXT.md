@@ -1086,6 +1086,16 @@ entityCommsService.js`). Invariants:
 - Search (`q`) runs server-side over normalized fields (`searchFields`) plus a
   digits-only phone match — never the item JSON. Filtering and paging happen
   in JS after loading every readable row (plans.md performance entry).
+- `from_date`/`to_date` (inclusive YYYY-MM-DD) match the FIRM-local day of
+  each item's `at` — not the UTC day; `sort=asc` reverses the sort exactly.
+  Logged-only items carry `entered_at` (= `log_extra.logged_at`, set only on a
+  hand-dated row); the card shows it as "entered …", and the log tables'
+  Date/Time cell does the same (scripts.js `logDateHtml`; CSV column
+  "Entered (if backdated)") — a backdated row never reads as recorded on time.
+  Only POST /api/log stamps logged_at. The engine's create_log / phone_log
+  forward params wholesale to createLogEntry, so a step passing `date` would
+  backdate with NO marker — no live workflow/sequence/trigger definition does
+  (checked 2026-10-22); keep it that way or stamp it there too.
 
 `communicate.html` — the classic composer, now nested in the feed behind
 **Send / log…** (contact: the page's contact; case: a contact picker): SMS /

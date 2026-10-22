@@ -615,7 +615,7 @@ async function tabLogGet(offset) {
         const extrasIcon = logExtrasIcon(entry);
         // About-link S3: badge / add-link affordance (shared helper in scripts.js).
         const aboutBadge = logAboutBadge(entry, "() => tabLogGet(0)", !!link);
-        row.innerHTML = `<td>${entry.log_id}</td><td>${escText(entry.log_type)}${dirIcon}</td><td>${escText(entry.formatted_date)}</td><td><div style="min-width:10em;max-width:16em;overflow-wrap:anywhere">${typeIcon}${link}${aboutBadge}</div></td><td>${cell_data}</td><td>${escText(entry.by_name||entry.log_by||"")}${extrasIcon}</td>`;
+        row.innerHTML = `<td>${entry.log_id}</td><td>${escText(entry.log_type)}${dirIcon}</td><td>${logDateHtml(entry)}</td><td><div style="min-width:10em;max-width:16em;overflow-wrap:anywhere">${typeIcon}${link}${aboutBadge}</div></td><td>${cell_data}</td><td>${escText(entry.by_name||entry.log_by||"")}${extrasIcon}</td>`;
       });
       // Slice B.4: unified footer
       renderLogFooter(foot, data, limit, offset,

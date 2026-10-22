@@ -41,7 +41,9 @@
   .who { min-width: 0; font-weight: 700; overflow-wrap: anywhere; }
   .subject { margin-top: 2px; color: var(--text-2); font-weight: 600; overflow-wrap: anywhere; }
   .preview { margin-top: 3px; color: var(--text-muted); font-size: var(--fs-sm); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .when { color: var(--text-muted); font-size: var(--fs-xs); white-space: nowrap; }
+  .when { color: var(--text-muted); font-size: var(--fs-xs); white-space: nowrap; text-align: right; }
+  /* A log row given its time by hand: when it was really typed. */
+  .when .entered { display: block; font-style: italic; }
   .badge { display: inline-flex; align-items: center; padding: 1px 6px; border: 1px solid var(--border); border-radius: 999px; color: var(--text-muted); background: var(--surface-2); font-size: 11px; font-weight: 700; }
   .badge.court { color: var(--danger-on-soft); background: var(--danger-soft); border-color: var(--danger); }
   /* Delivery-failed badge on an outbound text (phone-delivery S3b) */
@@ -102,6 +104,21 @@
         </select>
       </div>
       <label class="check-field" id="include-contacts-wrap" hidden><input id="include-contacts" type="checkbox"> Include contact communications</label>
+      <div class="field">
+        <label for="comms-from">From date</label>
+        <input id="comms-from" type="date">
+      </div>
+      <div class="field">
+        <label for="comms-to">To date</label>
+        <input id="comms-to" type="date">
+      </div>
+      <div class="field">
+        <label for="comms-order">Order</label>
+        <select id="comms-order">
+          <option value="desc">Newest first</option>
+          <option value="asc">Oldest first</option>
+        </select>
+      </div>
       <div class="field">
         <label for="comms-direction">Direction</label>
         <select id="comms-direction">
@@ -587,6 +604,17 @@ async function expandCard(card, item, button) {
   button.setAttribute('aria-expanded', 'true');
 }
 
+/** "entered Oct 22, 2026, 3:10 PM" for a log row backdated by hand, in the same format as the card's date. */
+function enteredOf(item) {
+  if (!item.entered_at) return null;
+  const date = new Date(item.entered_at);
+  if (Number.isNaN(date.getTime())) return null;
+  const at = new Intl.DateTimeFormat(undefined, {
+    year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit'
+  }).format(date);
+  return h('span', { className: 'entered', title: 'Its time was set by hand; this is when it was typed into the log' }, `entered ${at}`);
+}
+
 function renderItem(item) {
   const kind = itemKind(item);
   const direction = directionOf(item);
@@ -607,7 +635,7 @@ function renderItem(item) {
   const card = h('article', { className: `card ${kind}` });
   const button = h('button', { className: 'card-head', type: 'button', 'aria-expanded': 'false' },
     h('span', { className: 'channel-icon' }, h('i', { className: `fa-solid ${iconFor(kind)}`, 'aria-hidden': 'true' })),
-    main, h('time', { className: 'when' }, dateOf(item)));
+    main, h('span', { className: 'when' }, h('time', {}, dateOf(item)), enteredOf(item)));
   button.addEventListener('click', () => { expandCard(card, item, button); });
   card.append(button);
   return card;
@@ -637,6 +665,9 @@ async function loadFeed({ append = false, silent = false } = {}) {
       offset: append ? state.nextOffset : 0,
     };
     if (E('comms-direction').value !== 'all') params.direction = E('comms-direction').value;
+    if (E('comms-from').value) params.from_date = E('comms-from').value;
+    if (E('comms-to').value) params.to_date = E('comms-to').value;
+    if (E('comms-order').value === 'asc') params.sort = 'asc';
     if (linkType === 'case' && E('include-contacts').checked) params.include_contacts = 1;
     const data = await api(endpoint, 'GET', params);
     if (seq !== state.seq) return;
@@ -711,6 +742,9 @@ E('comms-q').addEventListener('input', () => {
 E('comms-q').addEventListener('keydown', (event) => { if (event.key === 'Enter') { clearTimeout(searchTimer); loadFeed(); } });
 E('comms-kind').addEventListener('change', () => loadFeed());
 E('comms-direction').addEventListener('change', () => loadFeed());
+E('comms-from').addEventListener('change', () => loadFeed());
+E('comms-to').addEventListener('change', () => loadFeed());
+E('comms-order').addEventListener('change', () => loadFeed());
 E('include-contacts').addEventListener('change', () => loadFeed());
 E('comms-refresh').addEventListener('click', () => loadFeed());
 E('comms-more').addEventListener('click', () => loadFeed({ append: true }));

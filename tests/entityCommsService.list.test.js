@@ -293,3 +293,66 @@ describe('contact feed', () => {
       .toEqual(['phone:301', 'phone:302', 'phone:304']);
   });
 });
+
+// log-comm-date: the Communications tab's date range, order, and the
+// backdated-entry marker's field. Two rows straddle a FIRM-day boundary that
+// is not the UTC one: mail 207 at 02:30Z Oct 9 is 10:30 PM Oct 8 in Detroit,
+// so a range computed on the UTC day would misfile it.
+describe('date range, order and entered_at (log-comm-date)', () => {
+  const LOGGED_AT = '2026-10-12T14:05:00.000Z';
+  function datedWorld() {
+    const w = world();
+    // log_date is firm wall clock (mysql2 reads it as if UTC): 11:30 PM Oct 8.
+    w.logs.push({
+      log_id: 121, log_type: 'call', scopes: ['contact:9'], log_date: utc('2026-10-08 23:30:00'), log_direction: 'incoming',
+      log_link_type: 'contact', log_link_id: '9', log_about_type: null, log_about_id: null,
+      log_from: '3135550001', log_to: '2485550100', log_subject: null, log_message: 'called about the suit',
+      log_data: null, log_extra: JSON.stringify({ logged_at: LOGGED_AT }),
+    });
+    w.mail.push({ provider_id: null, folder: 'INBOX', gmail_labels: '[]', thread_key: null, cc_addrs: null,
+      subject: 'Late one', snippet: 'late', attachments: '[]',
+      id: 207, mailbox_id: 1, log_id: null, message_id: 'm207@x', from_addr: 'jane@client.test', to_addrs: 'staff@firm.test',
+      date: utc('2026-10-09 02:30:00'), ingested_at: utc('2026-10-09 02:30:00') });
+    return w;
+  }
+  const list = (q) => svc.list(fakeDb(datedWorld()), USER, 'contact', 9, q);
+
+  test('a one-day range takes the firm day, not the UTC day', async () => {
+    expect(keys(await list({ from_date: '2026-10-08', to_date: '2026-10-08' }))).toEqual(['email:mid:m207@x', 'log:121']);
+    expect((await list({ from_date: '2026-10-09', to_date: '2026-10-09' })).items).toEqual([]);
+  });
+
+  test('open-ended ranges are inclusive on their one bound', async () => {
+    const since10 = keys(await list({ from_date: '2026-10-10' }));
+    expect(since10).not.toContain('log:121');
+    expect(since10).not.toContain('email:mid:m207@x');
+    expect(since10).toContain('email:mid:m201@x');
+    // (phone 307, Sep 15, predates Jane's ownership of the number: windowed out regardless)
+    expect(keys(await list({ to_date: '2026-10-08' }))).toEqual(['email:mid:m207@x', 'log:121']);
+  });
+
+  test('sort=asc is the exact reverse of the default order', async () => {
+    const desc = (await list({ limit: 100 })).items.map((x) => x.key);
+    const asc = (await list({ sort: 'asc', limit: 100 })).items.map((x) => x.key);
+    expect(desc.length).toBeGreaterThan(3);
+    expect(asc).toEqual([...desc].reverse());
+    // the backdated call sorts by its given time (03:30Z Oct 9), just after mail 207 (02:30Z)
+    expect(desc.slice(-2)).toEqual(['log:121', 'email:mid:m207@x']);
+  });
+
+  test('a backdated log row carries entered_at; nothing else does', async () => {
+    const items = (await list({ limit: 100 })).items;
+    expect(items.find((x) => x.key === 'log:121').entered_at).toBe(LOGGED_AT);
+    for (const x of items.filter((i) => i.key !== 'log:121')) expect(x.entered_at == null).toBe(true);
+  });
+
+  test.each([
+    [{ from_date: '2026-13-01' }, /from_date/],
+    [{ to_date: '10/08/2026' }, /to_date/],
+    [{ from_date: '2026-10-08T00:00' }, /from_date/],
+    [{ sort: 'up' }, /sort/],
+  ])('parseQuery refuses %j', (q, msg) => {
+    expect(() => svc.parseQuery(q)).toThrow(msg);
+    try { svc.parseQuery(q); } catch (e) { expect(e.status).toBe(400); }
+  });
+});
