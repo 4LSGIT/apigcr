@@ -1096,6 +1096,7 @@ tests/assistantActionLedger.mysql.test.js
 tests/assistantAttachmentService.test.js
 tests/assistantChatService.test.js
 tests/assistantNormalizer.mysql.test.js
+tests/assistantPromptKinds.test.js
 tests/assistantService.test.js
 tests/assistantSidebar.test.js
 tests/assistantTicket.test.js

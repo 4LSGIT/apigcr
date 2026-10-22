@@ -1319,7 +1319,9 @@ function taskDraftRequested(question, history = []) {
   const contactSubrecord = /\b(?:contact|client)\b/i.test(text) &&
     /\b(?:phone|email|address)\b/i.test(text) &&
     /\b(?:draft|propose|prepare|create|make|add|edit|update|change|end|deactivate|remove)\b/i.test(request);
-  return task || event || appt || contactSubrecord;
+  const job = /\bjob\b/i.test(text) &&
+    /\b(?:schedule|create|make|propose|prepare|set up)\b/i.test(request);
+  return task || event || appt || contactSubrecord || job;
 }
 
 function contextualAnswer(question, history) {

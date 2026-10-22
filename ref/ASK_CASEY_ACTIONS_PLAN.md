@@ -684,6 +684,15 @@ today**, not YCv3.
     route idempotency wired so the card's draft_id dedupes the create.
     Workflow-STEP code authoring is deliberately NOT this: it stays with
     A17.4c behind the A17 ladder (A17.0 read-only explain first).
+    **Shipped lesson (same day): a kind must be taught to EVERY model stage.**
+    S3 taught only the ANSWER prompt; the PLAN prompt enumerates the reviewed
+    families and says "Unlisted writes remain unavailable", so the planner
+    refused "schedule a job" an hour after the capability landed — and a
+    manual-search hit one turn later made the model claim the opposite, then
+    refuse again (assistant_chat_messages chat 26). Fixed by teaching plan /
+    repair / investigate and the forced-draft heuristic;
+    `tests/assistantPromptKinds.test.js` now asserts every shipped kind
+    against every stage, so the next family cannot repeat this.
 
 **Defaults recorded for this family** (each stands until Fred rules otherwise):
 
