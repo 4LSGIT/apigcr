@@ -403,8 +403,13 @@ put in a URL.
 ## Reviewed action kinds and future actions
 
 The plan format names every operation by type. Enabled executable operations
-remain read-only: `sql.read`, `manual.search`, `comms.search`, and the narrowly
-scoped `weather.lookup` external read. The answer may additionally contain one
+remain read-only: `sql.read`, `manual.search`, `comms.search`, the narrowly
+scoped `weather.lookup` external read, and the typed automation reads —
+`automation.list`, `automation.definition`, `automation.run`, and
+`automation.references` — which let Casey explain a workflow or one of its
+runs. Those projections redact webhook URLs to method + host + credential
+label and omit resolved payloads; code-step bodies are readable so Casey can
+explain them. The answer may additionally contain one
 server-validated `task.create.v1`, `task.update.v1`, `task.complete.v1`,
 `task.cancel.v1`, `task.reopen.v1`, or `task.transfer.v1` proposal. The proposal
 may instead be one `event.create.v1`, `event.update.v1`, `event.complete.v1`,

@@ -1605,7 +1605,19 @@ shipped dead (course correction 5).
 
 #### P12: Automation read surface for Casey
 
-Casey can read **no** automation definition or run today. Of the automation
+**P12a (the workflow half) SHIPPED 2026-10-22** as shape (b) below:
+`automation.list` / `automation.definition` / `automation.run` /
+`automation.references`, typed read kinds in the existing execute loop, served
+by `services/automationReadService.js` with the redaction this section
+specifies (code bodies readable per ruling 9). The sequence half
+(`sequence_templates` / enrollments / `sequence_step_log`) is **P12b, still
+open** — until it lands Casey can read no sequence definition or enrollment.
+One drift found while building: nothing in the forms code references a
+workflow, so the "form definitions" starter named below does not exist;
+`automation.references` covers hooks, trigger rules, sequence steps, parent
+workflows and CTA links.
+
+Casey could read **no** automation definition or run before P12a. Of the automation
 tables only `sequence_enrollments` is on the Reports manifest allowlist
 (`lib/reportSchema/manifest.js`), and the allowlist is enforced twice: by the
 report validator and by per-column SELECT grants held by the least-privilege
@@ -1637,8 +1649,9 @@ URLs as secrets), literal header values, and the resolved payloads in
 PII and third-party response bodies. Rows must alias `workflow_id`,
 `step_number`, `execution_id`, `template_id` and `enrollment_id` so the
 existing evidence rule (the cited row carries the exact id) works for the later
-write kinds. Whether Casey may ever see a `custom_code` body is a separate
-ruling; default **redacted**, which costs some debugging power.
+write kinds. Code bodies: ruling 9 (2026-10-22) settled it — Casey MAY read
+`custom_code` bodies (capped per cell), which is what makes explaining the
+live code steps possible; webhook URLs and resolved payloads stay redacted.
 
 **Budgets make the projection mandatory, not cosmetic.** The read loop allows 3
 rounds, 8 steps, 250 rows, 50 rows per query, 3,000 characters per cell and

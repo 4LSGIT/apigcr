@@ -1422,6 +1422,36 @@ function validateStep(query, index) {
     if (location.length < 2 || location.length > 120) throw httpError(422, `Step ${id} needs a 2-120 character weather location`);
     return { id, kind, purpose, location };
   }
+  // Automation read kinds (P12a — workflows; the projection and its redaction
+  // live in services/automationReadService.js). Typed and id-keyed: the model
+  // never writes SQL against the automation tables.
+  if (kind === 'automation.list') {
+    const search = String(query.query || '').trim();
+    if (search.length > 120) throw httpError(422, `Step ${id} automation.list query is over 120 characters`);
+    const limit = Math.max(1, Math.min(Number(query.limit) || 50, 50));
+    return { id, kind, purpose, query: search, limit };
+  }
+  if (kind === 'automation.definition') {
+    const workflowId = Number(query.workflow_id);
+    if (!Number.isSafeInteger(workflowId) || workflowId < 1) throw httpError(422, `Step ${id} needs a positive workflow_id`);
+    const out = { id, kind, purpose, workflow_id: workflowId };
+    if (query.version !== undefined) {
+      const version = Number(query.version);
+      if (!Number.isSafeInteger(version) || version < 0) throw httpError(422, `Step ${id} version must be a non-negative integer`);
+      out.version = version;
+    }
+    return out;
+  }
+  if (kind === 'automation.run') {
+    const executionId = Number(query.execution_id);
+    if (!Number.isSafeInteger(executionId) || executionId < 1) throw httpError(422, `Step ${id} needs a positive execution_id`);
+    return { id, kind, purpose, execution_id: executionId };
+  }
+  if (kind === 'automation.references') {
+    const workflowId = Number(query.workflow_id);
+    if (!Number.isSafeInteger(workflowId) || workflowId < 1) throw httpError(422, `Step ${id} needs a positive workflow_id`);
+    return { id, kind, purpose, workflow_id: workflowId };
+  }
   if (kind !== 'sql.read') throw httpError(422, `Step ${id} uses an unavailable operation: ${kind}`);
   const sql = String(query.sql || '').trim();
   if (!sql || sql.length > MAX_SQL) throw httpError(422, `Query ${id} is empty or too long`);
@@ -1472,6 +1502,10 @@ function stepFingerprint(step) {
   const kind = String(step && step.kind || '');
   if (kind === 'sql.read') return `${kind}:${String(step.sql || '').replace(/\s+/g, ' ').trim().toLowerCase()}`;
   if (kind === 'weather.lookup') return `${kind}:${String(step.location || '').trim().toLowerCase()}`;
+  if (kind === 'automation.definition') return `${kind}:${Number(step.workflow_id)}:${step.version === undefined ? 'current' : Number(step.version)}`;
+  if (kind === 'automation.run') return `${kind}:${Number(step.execution_id)}`;
+  if (kind === 'automation.references') return `${kind}:${Number(step.workflow_id)}`;
+  if (kind === 'automation.list') return `${kind}:${String(step.query || '').trim().toLowerCase()}:${Number(step.limit) || 50}`;
   return `${kind}:${String(step && step.query || '').replace(/\s+/g, ' ').trim().toLowerCase()}` +
     (kind === 'comms.search' ? `:${Number(step.limit) || 20}` : '');
 }
@@ -1708,6 +1742,16 @@ async function executeReadStep(db, query, { auth, userId }) {
   } else if (query.kind === 'weather.lookup') {
     rows = [await weather.current(query.location)];
     rowCount = 1;
+  } else if (query.kind === 'automation.list' || query.kind === 'automation.definition'
+          || query.kind === 'automation.run' || query.kind === 'automation.references') {
+    // Typed projections on the app pool (the report pool's grants exclude the
+    // automation tables on purpose); redaction lives in the service.
+    const automation = require('./automationReadService');
+    if (query.kind === 'automation.list') rows = await automation.list(db, { query: query.query, limit: query.limit });
+    else if (query.kind === 'automation.definition') rows = await automation.definition(db, { workflow_id: query.workflow_id, version: query.version });
+    else if (query.kind === 'automation.run') rows = await automation.run(db, { execution_id: query.execution_id });
+    else rows = await automation.references(db, { workflow_id: query.workflow_id });
+    rowCount = rows.length;
   } else {
     const result = await reportService.execute(db, {
       sql: query.sql, values: [], rowLimit: MAX_ROWS, expectedParams: 0,

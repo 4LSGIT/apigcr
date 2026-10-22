@@ -2064,8 +2064,15 @@ launcher registry, holds `courtReview` for the cold manager iframe, opens via
 Court Review child loaded. An already-loaded manager uses the same narrow
 bridge. The assistant cannot submit selectors, coordinates, URLs, or script.
 
-**Automatic operation vocabulary.** v1 enables `sql.read`, `manual.search`,
-`comms.search`, and `weather.lookup`. Weather is a narrow adapter that accepts
+**Automatic operation vocabulary.** Enabled kinds: `sql.read`, `manual.search`,
+`comms.search`, `weather.lookup`, and the typed automation reads (P12a,
+workflows half): `automation.list` / `automation.definition` / `automation.run`
+/ `automation.references`, served by `services/automationReadService.js` on the
+app pool — the report pool's grants exclude the automation tables on purpose,
+so the projection is the only path and carries the redaction (webhook URLs →
+method + host + credential label; `resolved_config` never selected;
+`output_data` verdict keys only; code bodies readable per the 2026-10-22
+ruling). Weather is a narrow adapter that accepts
 only a location and constructs fixed Open-Meteo geocoding/forecast URLs in
 `assistantWeatherService`; it is not arbitrary web access. Unknown kinds fail
 closed. Reviewed writes are not automatic operations: the answer may return one
