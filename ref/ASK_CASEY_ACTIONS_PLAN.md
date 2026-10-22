@@ -693,6 +693,15 @@ today**, not YCv3.
     repair / investigate and the forced-draft heuristic;
     `tests/assistantPromptKinds.test.js` now asserts every shipped kind
     against every stage, so the next family cannot repeat this.
+    **Second lesson, same test (chat 27):** the planner's direct
+    `{"action":"answer"}` shape has NO action_draft slot, so a planner that
+    answers an action request directly produces confident, cardless prose
+    ("approve it through the review card") — the stage that can emit the card
+    never runs. Fixed twice over: the plan prompt now says ALWAYS plan for a
+    job request (as the other families already did), and `plan()` carries a
+    server backstop converting a direct answer into a one-step carrier plan
+    whenever `taskDraftRequested` is true — prompt-rule compliance is no
+    longer the only thing standing between a request and its card.
 
 **Defaults recorded for this family** (each stands until Fred rules otherwise):
 

@@ -1589,6 +1589,27 @@ async function plan(db, { question, history, userId, modelMode, temporaryAttachm
   if (raw.action === 'answer') {
     const answer = String(raw.answer || '').trim();
     if (!answer) throw httpError(422, 'The assistant returned an empty answer');
+    // A direct planner answer has NO action_draft slot: only the execute
+    // flow's answer stage can emit the reviewed card (and repair a rejected
+    // one). The prompt tells the model to always return a query plan for an
+    // action request; this is the server backstop for the turn it does not.
+    // Found live (2026-10-22, chat 27): two safe-code-job requests answered
+    // as confident prose — "approve it through the review card" — with no
+    // card anywhere, because the planner answered directly. The carrier is
+    // one cheap typed read; the card, not the rows, is the point.
+    if (taskDraftRequested(q, hist)) {
+      const carrier = renumberPlan(validatePlan({
+        action: 'query',
+        summary: 'Prepare the requested reviewed action card.',
+        steps: [{ id: 'q1', kind: 'automation.list', limit: 5,
+          purpose: 'Carrier read — the reviewed action card is produced by the answer stage' }],
+      }));
+      const signed = ticket.sign({
+        v: 1, uid: Number(userId), question: q, history: hist, model_mode: mode,
+        viewer, workspace, attachments: attached.claims, plan: { action: 'query', ...carrier },
+      });
+      return { outcome: 'plan', ...carrier, ticket: signed, callId: ai.callId, model_mode: mode };
+    }
     return { outcome: 'answer', answer, suggestions: normalizeSuggestions(raw.suggestions || raw.suggestion), destinations: normalizeDestinations(raw.destinations), callId: ai.callId, model_mode: mode };
   }
   if (raw.action === 'refuse') {

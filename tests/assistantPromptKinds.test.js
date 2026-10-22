@@ -94,3 +94,50 @@ describe('a job request forces the draft-required path like the other families',
     expect(svc.taskDraftRequested('What jobs are scheduled for tonight?')).toBe(false);
   });
 });
+
+describe('a direct planner answer cannot swallow an action request (chat-27 live bug, 2026-10-22)', () => {
+  // The planner's {"action":"answer"} shape has NO action_draft slot: only the
+  // execute flow's answer stage can emit (and repair) the reviewed card. The
+  // prompt says always plan for an action request; this pins the SERVER
+  // backstop that converts a direct answer into a one-step carrier plan when
+  // the model skips the rule — found live as two confident, cardless
+  // "approve it through the review card" answers.
+  const svc = require(path.join(REPO, 'services', 'assistantService'));
+  const aiService = require(path.join(REPO, 'services', 'aiService'));
+  const staffDb = () => ({
+    query: jest.fn().mockResolvedValue([[{ user: 7, user_name: 'Stuart Sandweiss', user_initials: 'SS', roles: 'staff' }]]),
+  });
+  const OLD_SECRET = process.env.JWT_SECRET;
+  beforeAll(() => { process.env.JWT_SECRET = process.env.JWT_SECRET || 'prompt-kinds-test-secret'; });
+  afterAll(() => { process.env.JWT_SECRET = OLD_SECRET; });
+  afterEach(() => jest.restoreAllMocks());
+
+  test('an action request the planner answers directly becomes a carrier plan with a ticket', async () => {
+    jest.spyOn(aiService, 'call').mockResolvedValue({ ok: true, callId: 1,
+      json: { action: 'answer', answer: 'Here is a job you can approve on the review card.' } });
+    const made = await svc.plan(staffDb(), {
+      question: 'Schedule a job in 10 minutes that computes X from input Y', history: [], userId: 7 });
+    expect(made.outcome).toBe('plan');
+    expect(made.steps).toHaveLength(1);
+    expect(made.steps[0]).toMatchObject({ kind: 'automation.list' });
+    expect(typeof made.ticket).toBe('string');
+    expect(made.ticket.length).toBeGreaterThan(20);
+  });
+
+  test('a plain question keeps the direct answer', async () => {
+    jest.spyOn(aiService, 'call').mockResolvedValue({ ok: true, callId: 1,
+      json: { action: 'answer', answer: 'That date is a Thursday.' } });
+    const made = await svc.plan(staffDb(), {
+      question: 'What day of the week is 2026-11-05?', history: [], userId: 7 });
+    expect(made.outcome).toBe('answer');
+    expect(made.answer).toBe('That date is a Thursday.');
+  });
+
+  test('the plan prompt no longer invites the cardless path for jobs', () => {
+    const planPrompt = fsRead('lib/aiPrompts/assistantPlan.js');
+    expect(planPrompt).not.toMatch(/action=answer directly/);
+    expect(planPrompt).toMatch(/ALWAYS return a query plan for a safe-code-job request/);
+  });
+});
+
+function fsRead(p) { return require('fs').readFileSync(path.join(REPO, p), 'utf8'); }
