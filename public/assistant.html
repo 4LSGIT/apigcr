@@ -806,6 +806,46 @@ function workflowDraftResult(draft, result) {
   return { workflow_id: id };
 }
 
+// Hooks (A19.0). The card creates an INBOUND hook born INACTIVE with one
+// internal target (an existing workflow or sequence template). The request
+// pins active:0 and never carries a slug — the server generates the endpoint,
+// and the card never echoes a URL or key. Activation, auth, filters and HTTP
+// targets stay in the Hooks editor.
+const HOOK_ACTION_KINDS = new Set(['hook.create.v1']);
+
+function hookCreateLabel() { return 'Create inactive hook'; }
+
+function hookTargetText(draft) {
+  const t = draft.target || {};
+  return t.kind === 'workflow'
+    ? `workflow #${t.workflow_id} "${t.label}"${t.published ? '' : ' (UNPUBLISHED — the hook will fire into nothing until it is published)'}`
+    : `sequence template #${t.sequence_template_id} "${t.label}"`;
+}
+
+function hookCreateText(draft) {
+  return ['Hook proposal — not applied', `Name: ${draft.name}`,
+    `Description: ${draft.description || 'Empty'}`,
+    `Target: starts ${hookTargetText(draft)}`,
+    'The hook is created INACTIVE: nothing can fire through it until you activate it in More → Automations → Hooks, where the endpoint URL and any authentication are set up. No URL or key is shown here.',
+  ].join('\n');
+}
+
+function hookCreateRequest(draft) {
+  const t = draft.target;
+  const target = t.kind === 'workflow'
+    ? { name: `→ ${t.label}`, target_type: 'workflow', config: { workflow_id: t.workflow_id }, active: 1 }
+    : { name: `→ ${t.label}`, target_type: 'sequence', config: { template_id: t.sequence_template_id }, active: 1 };
+  const body = { name: draft.name, active: 0, targets: [target] };
+  if (draft.description) body.description = draft.description;
+  return { path: '/api/hooks', method: 'POST', body, idempotent: true };
+}
+
+function hookCreateResult(draft, result) {
+  const id = Number(result && result.id);
+  if (!Number.isSafeInteger(id) || id < 1) throw new Error('The hook action returned no usable hook id');
+  return { hook_id: id };
+}
+
 // One descriptor per shipped family. `request` is the only mapping to a
 // canonical route, and it is written here, per kind, by hand: nothing in a
 // descriptor comes from model output. Adding a family means adding a
@@ -890,6 +930,19 @@ const ACTION_FAMILIES = [
     open: (draft) => openAutomationRecord('automations.workflow', draft.result_workflow_id,
       `Draft workflow #${draft.result_workflow_id}`,
       'Find it under More → Automations → Workflows. It stays unpublished until you publish it there.'),
+  },
+  {
+    id: 'hook', kinds: HOOK_ACTION_KINDS, title: 'Hook', noun: 'hook', errorNoun: 'hook action',
+    label: hookCreateLabel, text: hookCreateText, request: hookCreateRequest, result: hookCreateResult,
+    idField: 'hook_id', appliedKey: 'result_hook_id',
+    danger: () => false,
+    resultText: (payload) => `inactive hook #${payload.hook_id}`,
+    entity: (draft, payload) => ({ kind: 'hook', id: String(payload.hook_id), label: `${draft.name} #${payload.hook_id} (inactive)` }),
+    failure: 'The hook could not be created.',
+    reviewWarning: 'This creates an INACTIVE inbound hook — nothing can fire through it until you activate it in the Hooks editor, where its endpoint and authentication live. Requires the automations.manage capability. Canceling writes nothing.',
+    open: (draft) => openAutomationRecord('automations.hook', draft.result_hook_id,
+      `Hook #${draft.result_hook_id}`,
+      'Find it under More → Automations → Hooks. It stays inactive until you activate it there.'),
   },
 ];
 

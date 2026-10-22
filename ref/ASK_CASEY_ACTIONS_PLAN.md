@@ -1257,6 +1257,23 @@ noted in review: content-only means an `action_config` change on an unchanged
 numbering and the template-level condition are all structural. Publishing
 repoints `active` enrollments only and does not rewrite queued jobs.
 
+**A19.0: Create an inactive hook with one internal target. SHIPPED
+2026-10-22** (Fred's ask: "make a hook to trigger something"). Kind
+`hook.create.v1` on the card engine: one reviewed card creates an inbound hook
+BORN INACTIVE (`active: 0`, pinned by the fixed request builder and accepted
+by the extended `POST /api/hooks`, which now takes `active` + inline
+`targets` validated with the target route's own rules and created in one
+idempotent transaction — the card's draft_id cannot mint a second endpoint).
+The single target points at an EXISTING workflow or sequence template,
+verified at proposal time (an unpublished target workflow is allowed but
+flagged on the card). The card never composes or echoes a slug, key, or URL —
+slugs are server-generated, and activation, auth, filters, transforms and
+HTTP targets stay in the Hooks editor. The route's `automations.manage` gate
+stands, so the card applies only for admin/IT/SU; the permission matrix (29
+kinds) documents it as the one capability-gated-for-everyone kind. Per-family
+flag `casey_hook_authoring_enabled` (ruling 4). The applied card deep-links to
+the hook (`automations.hook`).
+
 **A18.4: Enroll a contact. Deferred past A14.**
 
 Enrollment is an external-send fan-out and inherits A14's bar (resolved

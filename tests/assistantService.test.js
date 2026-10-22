@@ -556,7 +556,10 @@ describe('assistant knowledge and prompts', () => {
     expect(prompts.getPrompt('assistant_answer').system).toMatch(/action_draft[\s\S]*task\.create\.v1/);
     expect(prompts.getPrompt('assistant_answer').system).toMatch(/changes no record/);
     expect(prompts.getPrompt('assistant_answer').system).toMatch(/Never say a card exists unless/);
-    expect(prompts.getPrompt('assistant_task_draft_repair').system).toMatch(/exactly one Ask Casey task, event, appointment, contact-subrecord, safe-code-job, or workflow-draft action proposal/);
+    // The family list itself is pinned per-kind in tests/assistantPromptKinds;
+    // this only asserts the repair prompt is registered and shaped — the exact
+    // enumeration broke on three family additions in one day (2026-10-22).
+    expect(prompts.getPrompt('assistant_task_draft_repair').system).toMatch(/You repair exactly one Ask Casey [\w\s,-]+ action proposal/);
     expect(prompts.getPrompt('assistant_plan').system).toMatch(/Reviewed task actions[\s\S]*do NOT refuse/);
     expect(prompts.getPrompt('assistant_plan').system).toMatch(/users\.user_initials[\s\S]*never guess an id/);
   });

@@ -35,6 +35,7 @@ const jwtOrApiKey = require('../lib/auth.jwtOrApiKey');
 const requireAuth = require('../lib/auth.requireAuth');
 const { can } = require('../lib/capabilities');
 const hookService = require('../services/hookService');
+const { idempotentRequest, sendIdempotencyError } = require('../lib/requestIdempotency');
 const actionDispatchers = require('../lib/actionDispatchers');
 const internalFunctions = require('../lib/internal_functions'); // __validateParamsMapping
 const { listTransforms } = require('../services/hookTransforms');
@@ -431,8 +432,23 @@ router.get('/api/hooks/:id', manageHooks, async (req, res) => {
 router.post('/api/hooks', manageHooks, async (req, res) => {
   try {
     const { slug, name, description, auth_type, auth_config,
-            filter_mode, filter_config, transform_mode, transform_config } = req.body;
+            filter_mode, filter_config, transform_mode, transform_config,
+            active, targets } = req.body;
     if (!name) return res.status(400).json({ status: 'error', message: 'name is required' });
+
+    // Optional inline targets (A19.0): validated UP FRONT with the same rules
+    // as POST /api/hooks/:hookId/targets, created in the same transaction as
+    // the hook — one idempotent request births the whole thing (Casey's hook
+    // card sends its draft_id as the Idempotency-Key, so a retry cannot mint
+    // a second inbound endpoint).
+    const inlineTargets = targets === undefined ? [] : targets;
+    if (!Array.isArray(inlineTargets) || inlineTargets.length > 5) {
+      return res.status(400).json({ status: 'error', message: 'targets must be an array of at most 5' });
+    }
+    for (let i = 0; i < inlineTargets.length; i++) {
+      const vErr = validateTargetPayload(inlineTargets[i], { isUpdate: false });
+      if (vErr) return res.status(400).json({ status: 'error', message: `targets[${i}]: ${vErr}` });
+    }
 
     const data = {};
     if (slug) data.slug = slug;
@@ -444,11 +460,42 @@ router.post('/api/hooks', manageHooks, async (req, res) => {
     if (filter_config !== undefined) data.filter_config = JSON.stringify(filter_config);
     if (transform_mode) data.transform_mode = transform_mode;
     if (transform_config !== undefined) data.transform_config = JSON.stringify(transform_config);
+    // active is accepted explicitly so a caller can create a hook DARK
+    // (Casey's card always does; the human activates in the editor).
+    if (active !== undefined) data.active = active ? 1 : 0;
     data.last_modified_by = req.auth.userId;
 
-    const id = await hookService.createHook(req.db, data);
-    res.json({ status: 'success', id });
+    const { value: created, replayed } = await idempotentRequest(req, 'hooks.create', async () => {
+      if (!inlineTargets.length) {
+        const id = await hookService.createHook(req.db, data);
+        return { id, target_ids: [] };
+      }
+      return req.db.withTransaction(async (conn) => {
+        const id = await hookService.createHook(conn, data);
+        const target_ids = [];
+        for (let i = 0; i < inlineTargets.length; i++) {
+          const t = inlineTargets[i];
+          const tData = { name: t.name, target_type: t.target_type || 'http' };
+          if (t.url !== undefined && t.url !== null && t.url !== '') tData.url = t.url;
+          if (t.method) tData.method = t.method;
+          if (t.headers !== undefined) tData.headers = JSON.stringify(t.headers);
+          if (t.credential_id !== undefined && t.credential_id !== null && t.credential_id !== '') tData.credential_id = t.credential_id;
+          if (t.body_mode) tData.body_mode = t.body_mode;
+          if (t.body_template !== undefined) tData.body_template = t.body_template;
+          if (t.config !== undefined) tData.config = t.config == null ? null : JSON.stringify(t.config);
+          if (t.position !== undefined) tData.position = t.position; else tData.position = i;
+          if (t.conditions !== undefined) tData.conditions = JSON.stringify(t.conditions);
+          if (t.transform_mode) tData.transform_mode = t.transform_mode;
+          if (t.transform_config !== undefined) tData.transform_config = JSON.stringify(t.transform_config);
+          if (t.active !== undefined) tData.active = t.active ? 1 : 0;
+          target_ids.push(await hookService.createTarget(conn, id, tData));
+        }
+        return { id, target_ids };
+      });
+    });
+    res.json({ status: 'success', ...created, ...(replayed ? { replayed: true } : {}) });
   } catch (err) {
+    if (sendIdempotencyError(res, err)) return;
     console.error('[hook] create error:', err);
     if (err.code === 'ER_DUP_ENTRY') {
       return res.status(409).json({ status: 'error', message: 'A hook with this slug already exists' });

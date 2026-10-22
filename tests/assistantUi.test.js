@@ -63,6 +63,7 @@ const ACTION_FNS = ['appendDraftField', 'appendDraftFieldsFromText', 'actionDraf
   'contactSubrecordCreateBody', 'contactSubrecordActionRequest', 'contactSubrecordActionResult',
   'jobActionLabel', 'jobScheduleText', 'jobDraftText', 'jobActionRequest', 'jobActionResult',
   'workflowDraftLabel', 'workflowDraftStepLine', 'workflowDraftText', 'workflowDraftRequest', 'workflowDraftResult',
+  'hookCreateLabel', 'hookTargetText', 'hookCreateText', 'hookCreateRequest', 'hookCreateResult',
   'openAutomationRecord',
   'actionFamily', 'isActionDraft', 'actionAppliedId', 'markActionApplied', 'confirmActionDraft',
   'executeActionDraft', 'applyActionResults', 'hydrateActionDraft'];
@@ -75,7 +76,7 @@ function actionSandbox(deps = {}) {
     'const ACTION_DRAFT_TTL_MS=15*60*1000;',
     constSrc(html, 'TASK_ACTION_KINDS'), constSrc(html, 'EVENT_ACTION_KINDS'),
     constSrc(html, 'APPT_ACTION_KINDS'), constSrc(html, 'CONTACT_SUBRECORD_ACTION_KINDS'),
-    constSrc(html, 'JOB_ACTION_KINDS'), constSrc(html, 'WORKFLOW_ACTION_KINDS'),
+    constSrc(html, 'JOB_ACTION_KINDS'), constSrc(html, 'WORKFLOW_ACTION_KINDS'), constSrc(html, 'HOOK_ACTION_KINDS'),
     ...ACTION_FNS.map((name) => fnSrcAuto(html, name)),
     registry,
     'return { executeActionDraft, applyActionResults, actionFamily, isActionDraft, hydrateActionDraft };',
@@ -281,6 +282,35 @@ describe('Ask Casey UI wiring', () => {
     // Applying the card takes the user RIGHT TO the draft (Fred, 2026-10-22):
     // the open handler deep-links through the shell with the applied id.
     expect(P.ycAssistantNavigate).toHaveBeenCalledWith('automations.workflow', { id: 61 });
+  });
+
+  test('a hook card pins active:0, never carries a slug or URL, and deep-links to the created hook', async () => {
+    const api = jest.fn().mockResolvedValue({ status: 'success', id: 12, target_ids: [30] });
+    const render = jest.fn();
+    const P = { Swal: { fire: jest.fn().mockResolvedValue({ isConfirmed: true }) },
+      ycAssistantNavigate: jest.fn().mockResolvedValue({ ready: true }) };
+    const history = [];
+    const saveAssistantMessage = jest.fn().mockResolvedValue();
+    const make = actionSandbox({ P, api, render, history, saveAssistantMessage }).executeActionDraft;
+    const message = { action_draft: {
+      draft_id: 'hook-draft-1', kind: 'hook.create.v1', status: 'draft',
+      name: 'Site form → intake', description: 'd',
+      target: { kind: 'workflow', workflow_id: 27, label: 'static site hit', published: 1 },
+      evidence: [],
+    } };
+    await make(message);
+    expect(P.Swal.fire).toHaveBeenCalledWith(expect.objectContaining({
+      title: 'Create inactive hook',
+      text: expect.stringContaining('created INACTIVE'),
+    }));
+    expect(api).toHaveBeenCalledWith('/api/hooks', {
+      name: 'Site form → intake', description: 'd', active: 0,
+      targets: [{ name: '→ static site hit', target_type: 'workflow', config: { workflow_id: 27 }, active: 1 }],
+    }, 'POST', { 'Idempotency-Key': 'hook-draft-1' });
+    const sent = JSON.stringify(api.mock.calls[0][1]);
+    expect(sent).not.toMatch(/slug|url|key/i);
+    expect(message.action_draft).toMatchObject({ status: 'applied', result_hook_id: 12 });
+    expect(P.ycAssistantNavigate).toHaveBeenCalledWith('automations.hook', { id: 12 });
   });
 
   test('a saved action result restores its exact proposal as applied without another write', () => {

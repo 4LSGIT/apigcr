@@ -12,13 +12,13 @@
  * THE BOUNDARY BEING TESTED (plan, "Governing principle"): Casey proposes, the
  * staff member's own browser performs the write through the ordinary
  * authenticated route, and "the existing route ... is the final authority".
- * These tests ask that claim two questions for all 28 shipped kinds:
+ * These tests ask that claim two questions for all 29 shipped kinds:
  *   1. what does the route actually gate on?  (section 1 — no DB needed)
  *   2. where is the normalizer stricter than the route, i.e. where is the
  *      route NOT an authority at all?        (section 2 — real MySQL)
  *
  * MEASURED FACTS THIS FILE LOCKS
- *   · Every one of the 28 kinds maps to a route gated by lib/auth.jwtOrApiKey
+ *   · Every one of the 29 kinds maps to a route gated by lib/auth.jwtOrApiKey
  *     and NOTHING else: authentication (staff-audience JWT whose user_auth
  *     starts 'authorized'), no role, no capability, no row/firm scope. The
  *     one nuance is job.code_safe.create.v1 (safe-mode S3): its route carries
@@ -104,6 +104,7 @@ const KINDS = [
   { kind: 'contact.address.end.v1', method: 'PATCH', path: '/api/contact-addresses/1' },
   { kind: 'job.code_safe.create.v1', method: 'POST', path: '/scheduled-jobs' },
   { kind: 'workflow.draft.v1', method: 'POST', path: '/workflows/bulk' },
+  { kind: 'hook.create.v1', method: 'POST', path: '/api/hooks' },
 ];
 
 // The six original families' route files carry NO capability gate at all
@@ -112,7 +113,7 @@ const KINDS = [
 // STANDARD-mode code (safe-mode S2), which the job family never sends.
 const CAPABILITY_FREE_ROUTE_FILES = ['routes/api.tasks.js', 'routes/api.events.js', 'routes/api.appts.js',
   'routes/api.contactPhones.js', 'routes/api.contactEmails.js', 'routes/api.contactAddresses.js'];
-const ROUTE_FILES = [...CAPABILITY_FREE_ROUTE_FILES, 'routes/scheduled_jobs.js', 'routes/workflows.js'];
+const ROUTE_FILES = [...CAPABILITY_FREE_ROUTE_FILES, 'routes/scheduled_jobs.js', 'routes/workflows.js', 'routes/api.hooks.js'];
 
 // ── Shared HTTP harness: the real routers behind the real jwtOrApiKey ──────
 // Both sections drive the SAME routers. Section 1 hands them a stub req.db
@@ -163,22 +164,22 @@ function call(a, { method, path: urlPath }, headers = {}, body = {}) {
 const bearer = (t) => ({ authorization: `Bearer ${t}` });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// SECTION 1 — the route-level gate, for all 28 kinds (no database)
+// SECTION 1 — the route-level gate, for all 29 kinds (no database)
 // ═══════════════════════════════════════════════════════════════════════════
 
-describe('P2 — what the canonical write route gates on (all 28 shipped kinds)', () => {
+describe('P2 — what the canonical write route gates on (all 29 shipped kinds)', () => {
   const OLD_SECRET = process.env.JWT_SECRET;
   beforeAll(() => { process.env.JWT_SECRET = SECRET; });
   afterAll(() => { process.env.JWT_SECRET = OLD_SECRET; });
 
   const app = appWith;
 
-  test('the 28 kinds cover 24 distinct route+method mounts', () => {
-    expect(KINDS).toHaveLength(28);
-    expect(new Set(KINDS.map((k) => `${k.method} ${k.path}`)).size).toBe(24);
+  test('the 29 kinds cover 25 distinct route+method mounts', () => {
+    expect(KINDS).toHaveLength(29);
+    expect(new Set(KINDS.map((k) => `${k.method} ${k.path}`)).size).toBe(25);
   });
 
-  test('no token: every kind is 401 — authentication is required for all 28', async () => {
+  test('no token: every kind is 401 — authentication is required for all 29', async () => {
     const a = app();
     for (const k of KINDS) {
       const res = await call(a, k);
@@ -234,7 +235,7 @@ describe('P2 — what the canonical write route gates on (all 28 shipped kinds)'
     expect([401, 403]).not.toContain(res.status);
   });
 
-  // THE ROLE QUESTION. There is no role or capability gate on any of the 28:
+  // THE ROLE QUESTION. There is no role or capability gate on any of the 29:
   // a user holding only `staff` (no admin / it / su, no capability) reaches
   // every handler. Proven per family by observing the canonical service call.
   describe('no role or capability gate: a roleless-but-staff token reaches the handler', () => {
@@ -276,6 +277,19 @@ describe('P2 — what the canonical write route gates on (all 28 shipped kinds)'
   // only. The family's fixed request builder pins code_mode 'safe', so the
   // kind's actual request clears it rolelessly; a plain-staff standard body is
   // refused. Both sides pinned behaviourally so neither can drift silently.
+  // hook.create.v1 is the ONE kind whose route requires a capability for its
+  // whole surface: hooks mint inbound endpoints, and api.hooks.js is gated on
+  // automations.manage (requireAuth) by design. The card therefore applies
+  // only for admin/IT/SU; a plain staff click is a clean refusal, not a write.
+  test('hook.create.v1: capability-gated for everyone below automations.manage', async () => {
+    const a = app();
+    const body = { name: 'h', active: 0, targets: [{ name: 't', target_type: 'workflow', config: { workflow_id: 1 } }] };
+    const staff = await call(a, { method: 'POST', path: '/api/hooks' }, bearer(token({ roles: ['staff'] })), body);
+    expect(staff.status).toBe(403);
+    const admin = await call(a, { method: 'POST', path: '/api/hooks' }, bearer(token({ roles: ['admin', 'staff'] })), body);
+    expect([401, 403]).not.toContain(admin.status);
+  });
+
   test('job.code_safe.create.v1: safe body is roleless, standard body is capability-gated', async () => {
     const a = app();
     const base = { type: 'one_time', job_type: 'custom_code', code: '1;', delay: '10m' };

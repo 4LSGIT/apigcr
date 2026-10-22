@@ -122,6 +122,17 @@ const JOB_CODE_MAX_INPUT_JSON_CHARS = 10000;
 // safe-mode code; webhook steps are A17.4b's narrower contract, query_db is
 // A17.4a — both refused here by name.
 const WORKFLOW_ACTION_KINDS = new Set(['workflow.draft.v1']);
+
+// Hook authoring (A19.0, Fred's ask 2026-10-22: "make a hook to trigger
+// something"). One card creates an INBOUND hook born INACTIVE with exactly one
+// internal target pointing at an EXISTING workflow or sequence template —
+// nothing can fire through it until a human activates it in the Hooks editor,
+// where the endpoint URL and any auth also live (the card never composes or
+// echoes a slug, key, or URL; slugs are server-generated). HTTP targets,
+// filters and transforms stay human-only.
+const HOOK_ACTION_KINDS = new Set(['hook.create.v1']);
+const HOOK_CREATE_KEYS = new Set(['kind', 'name', 'description', 'target', 'evidence']);
+const HOOK_TARGET_KEYS = new Set(['kind', 'workflow_id', 'sequence_template_id']);
 const WORKFLOW_DRAFT_KEYS = new Set(['kind', 'name', 'description', 'steps', 'evidence']);
 const WORKFLOW_DRAFT_STEP_KEYS = new Set(['type', 'label', 'note', 'config', 'error_policy']);
 const WORKFLOW_DRAFT_POLICY_KEYS = new Set(['strategy', 'max_retries', 'backoff_seconds']);
@@ -1332,8 +1343,51 @@ async function normalizeWorkflowDraftAction(db, value, evidence) {
   };
 }
 
+async function normalizeHookCreateAction(db, value, evidence) {
+  if (require('../lib/firmConfig').cfg('casey_hook_authoring_enabled') === '0') {
+    throw httpError(422, 'Action kind is unavailable');
+  }
+  if (!onlyKeys(value, HOOK_CREATE_KEYS)) throw httpError(422, 'Hook draft contains unsupported fields');
+  const name = String(value.name == null ? '' : value.name).trim();
+  if (!name) throw httpError(422, 'Hook draft name is required');
+  if (name.length > 200) throw httpError(422, 'Hook draft name exceeds 200 characters');
+  const description = String(value.description == null ? '' : value.description).trim();
+  if (description.length > 1000) throw httpError(422, 'Hook draft description exceeds 1000 characters');
+  const target = value.target;
+  if (!target || typeof target !== 'object' || !onlyKeys(target, HOOK_TARGET_KEYS)) {
+    throw httpError(422, 'Hook draft needs a target object with kind and one id');
+  }
+  let normalizedTarget;
+  if (target.kind === 'workflow') {
+    const id = Number(target.workflow_id);
+    if (!Number.isSafeInteger(id) || id < 1) throw httpError(422, 'Hook draft target needs a positive workflow_id');
+    const [[wf]] = await db.query('SELECT id, name, active, current_version FROM workflows WHERE id = ?', [id]);
+    if (!wf) throw httpError(422, `Hook draft target workflow ${id} does not exist`);
+    normalizedTarget = { kind: 'workflow', workflow_id: id, label: wf.name,
+      published: Number(wf.current_version) > 0 ? 1 : 0 };
+  } else if (target.kind === 'sequence') {
+    const id = Number(target.sequence_template_id);
+    if (!Number.isSafeInteger(id) || id < 1) throw httpError(422, 'Hook draft target needs a positive sequence_template_id');
+    const [[tpl]] = await db.query('SELECT id, name, active FROM sequence_templates WHERE id = ?', [id]);
+    if (!tpl) throw httpError(422, `Hook draft target sequence template ${id} does not exist`);
+    normalizedTarget = { kind: 'sequence', sequence_template_id: id, label: tpl.name, published: 1 };
+  } else {
+    throw httpError(422, 'Hook draft target kind must be "workflow" or "sequence" — HTTP targets are not authorable');
+  }
+  return {
+    draft_id: crypto.randomUUID(),
+    kind: 'hook.create.v1',
+    status: 'draft',
+    name,
+    description,
+    target: normalizedTarget,
+    evidence: jobDraftEvidence(value.evidence, evidence),
+  };
+}
+
 async function normalizeActionDraft(db, value, evidence, { currentUserId = null } = {}) {
   if (value == null) return null;
+  if (value && HOOK_ACTION_KINDS.has(value.kind)) return normalizeHookCreateAction(db, value, evidence);
   if (value && WORKFLOW_ACTION_KINDS.has(value.kind)) return normalizeWorkflowDraftAction(db, value, evidence);
   if (value && JOB_ACTION_KINDS.has(value.kind)) return normalizeJobCodeAction(db, value, evidence);
   if (value && EVENT_ACTION_KINDS.has(value.kind)) return normalizeEventAction(db, value, evidence);
@@ -1449,7 +1503,9 @@ function taskDraftRequested(question, history = []) {
     /\b(?:schedule|create|make|propose|prepare|set up)\b/i.test(request);
   const workflow = /\bworkflow\b/i.test(text) &&
     /\b(?:draft|create|make|build|compose|propose|prepare|set up)\b/i.test(request);
-  return task || event || appt || contactSubrecord || job || workflow;
+  const hook = /\b(?:hook|webhook endpoint|inbound endpoint)\b/i.test(text) &&
+    /\b(?:create|make|add|build|set up|propose|prepare)\b/i.test(request);
+  return task || event || appt || contactSubrecord || job || workflow || hook;
 }
 
 function contextualAnswer(question, history) {

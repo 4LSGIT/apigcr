@@ -47,6 +47,7 @@ const PLAN_FAMILY_MARKERS = {
   contact: 'Reviewed contact phone, email, and address subrecord actions are available',
   job: 'reviewed safe code job action is available',
   workflow: 'reviewed workflow-draft action is available',
+  hook: 'reviewed hook action is available',
 };
 
 describe('every shipped action kind is taught to every model stage', () => {
@@ -108,6 +109,11 @@ describe('a job request forces the draft-required path like the other families',
     expect(svc.taskDraftRequested('What jobs are scheduled for tonight?')).toBe(false);
     expect(svc.taskDraftRequested('Build a workflow that chases missing documents')).toBe(true);
     expect(svc.taskDraftRequested('What does workflow 27 do?')).toBe(false);
+    // A hook-only phrase (no other family noun), so the hook clause itself is
+    // what passes it — 'make a hook for workflow 27' would ride the workflow
+    // clause and prove nothing.
+    expect(svc.taskDraftRequested('Set up a hook for inbound site form submissions')).toBe(true);
+    expect(svc.taskDraftRequested('What hooks do we have?')).toBe(false);
   });
 });
 

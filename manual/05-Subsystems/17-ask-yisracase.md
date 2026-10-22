@@ -425,7 +425,13 @@ instead be one `workflow.draft.v1` proposal: a complete but NEVER-PUBLISHED
 workflow (version 0 — nothing can start it until a human publishes it in the
 editor), with steps limited to the authoring allowlist (control flow, record
 lookups, task/event/log creation) plus safe-mode code; senders, webhooks and
-database writes are not authorable and Casey says which steps to add by hand. The card
+database writes are not authorable and Casey says which steps to add by hand.
+It may instead be one `hook.create.v1` proposal: an inbound hook created
+INACTIVE with one internal target pointing at an existing workflow or sequence
+template. Nothing fires through it until a human activates it in the Hooks
+editor, where the endpoint URL and authentication live — the card never shows
+a slug, key, or URL. Creating hooks requires the automations.manage
+capability, so this card applies only for admin, IT, or SU users. The card
 shows the full code for review, the browser pins the safe engine in the
 request, and the system off switch is the `casey_code_actions_enabled`
 setting. The proposal

@@ -1128,6 +1128,7 @@ tests/caseUi.stepsPanel.test.js
 tests/caseUi.sync.test.js
 tests/caseUi.timeline.test.js
 tests/caseyActionPermissions.test.js
+tests/caseyHookCreate.test.js
 tests/caseyJobCodeAction.test.js
 tests/caseyWorkflowDraft.test.js
 tests/checklistView.autoGrow.test.js
