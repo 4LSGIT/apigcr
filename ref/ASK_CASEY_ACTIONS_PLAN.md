@@ -1614,13 +1614,15 @@ shipped dead (course correction 5).
 
 #### P12: Automation read surface for Casey
 
-**P12a (the workflow half) SHIPPED 2026-10-22** as shape (b) below:
+**P12 SHIPPED 2026-10-22, both halves,** as shape (b) below:
 `automation.list` / `automation.definition` / `automation.run` /
 `automation.references`, typed read kinds in the existing execute loop, served
 by `services/automationReadService.js` with the redaction this section
-specifies (code bodies readable per ruling 9). The sequence half
-(`sequence_templates` / enrollments / `sequence_step_log`) is **P12b, still
-open** — until it lands Casey can read no sequence definition or enrollment.
+specifies (code bodies readable per ruling 9). P12a = workflows; P12b (same
+day) = sequences: the same four kinds take `sequence_template_id` /
+`enrollment_id`, `sequence_step_log.action_config_resolved` is never selected,
+and sequence references match a starter by exact `template_id` or by
+`template_type` equal to the template's type.
 One drift found while building: nothing in the forms code references a
 workflow, so the "form definitions" starter named below does not exist;
 `automation.references` covers hooks, trigger rules, sequence steps, parent

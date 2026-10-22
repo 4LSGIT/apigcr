@@ -167,6 +167,85 @@ describe('automation.references — every starter source', () => {
   });
 });
 
+describe('P12b — the sequence half carries the same redaction', () => {
+  const seqDb = () => dbOf([
+    [/FROM sequence_templates WHERE id/, [{ id: 5, name: 'No-show chase', type: 'no_show', active: 1,
+      description: 'd', current_version: 4, draft_version: 5 }]],
+    [/FROM credentials/, [{ id: 3, name: 'Clio OAuth' }]],
+    [/FROM sequence_steps WHERE template_id/, [
+      { step_number: 1, action_type: 'sms', action_config: JSON.stringify({ to: '{{contact_phone}}', message: 'Hi {{contact_fname}}' }),
+        timing: JSON.stringify({ delay_days: 0 }), condition: null, fire_guard: null, error_policy: null },
+      { step_number: 2, action_type: 'webhook', action_config: JSON.stringify({ url: SECRET_URL, method: 'POST', credential_id: 3 }),
+        timing: JSON.stringify({ delay_days: 1 }), condition: null, fire_guard: null, error_policy: null },
+    ]],
+  ]);
+
+  test('sequence definition: sms templates readable, webhook URL redacted, timing kept', async () => {
+    const rows = await automation.definition(seqDb(), { sequence_template_id: 5 });
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toMatchObject({ sequence_template_id: 5, template_name: 'No-show chase', version: 4, is_draft: 0 });
+    expect(JSON.parse(rows[0].action_config).message).toBe('Hi {{contact_fname}}');
+    expect(JSON.parse(rows[0].timing)).toEqual({ delay_days: 0 });
+    const hook = JSON.parse(rows[1].action_config);
+    expect(JSON.stringify(rows)).not.toContain('SECRET-TOKEN');
+    expect(hook.url_host).toBe('hooks.example.com');
+    expect(hook.credential).toBe('Clio OAuth');
+  });
+
+  test('enrollment run: action_config_resolved never selected, output verdict-only, pending step listed', async () => {
+    const d = dbOf([
+      [/FROM sequence_enrollments e/, [{ enrollment_id: 90, sequence_template_id: 5, template_name: 'No-show chase',
+        template_version: 4, status: 'active', contact_id: 9, appt_id: 44, current_step: 2, total_steps: 3,
+        cancel_reason: null, enrolled_at: 'a', completed_at: null, trigger_data: JSON.stringify({ appt_id: 44 }) }]],
+      [/FROM sequence_step_log/, [
+        { step_number: 1, step_id: 71, status: 'sent', skip_reason: null, error_message: null, duration_ms: 20,
+          scheduled_at: 's', executed_at: 'e',
+          output_data: JSON.stringify({ success: true, resolved_body: 'Hi Jane PII' }) },
+      ]],
+      [/FROM scheduled_jobs/, [{ job_id: 12, job_status: 'pending', scheduled_time: 't2' }]],
+    ]);
+    const rows = await automation.run(d, { enrollment_id: 90 });
+    for (const q of d.seen) expect(q.sql).not.toMatch(/action_config_resolved/);
+    expect(JSON.stringify(rows)).not.toContain('Hi Jane');
+    expect(rows[0]).toMatchObject({ row: 'enrollment', enrollment_id: 90, status: 'active' });
+    expect(JSON.parse(rows.find((r) => r.row === 'step').output_verdict)).toEqual({ success: true });
+    expect(rows.find((r) => r.row === 'pending_step')).toMatchObject({ job_id: 12 });
+  });
+
+  test('sequence references match by exact id AND by template type', async () => {
+    const d = dbOf([
+      [/FROM sequence_templates WHERE id/, [{ id: 5, type: 'no_show' }]],
+      [/FROM hook_targets/, [
+        { target_id: 1, target_name: 'byid', target_active: 1, hook_id: 4, hook_name: 'H1',
+          config: JSON.stringify({ template_id: 5 }) },
+        { target_id: 2, target_name: 'bytype', target_active: 1, hook_id: 6, hook_name: 'H2',
+          config: JSON.stringify({ template_type: 'no_show' }) },
+        { target_id: 3, target_name: 'other', target_active: 1, hook_id: 7, hook_name: 'H3',
+          config: JSON.stringify({ template_type: 'welcome' }) },
+      ]],
+      [/FROM trigger_rule_actions/, []],
+      [/FROM workflow_steps s JOIN workflows w/, [
+        { parent_id: 50, step_number: 2, version: 3, parent_name: 'P', current_version: 3,
+          config: JSON.stringify({ function_name: 'enroll_sequence', params: { template_type: 'no_show' } }) },
+      ]],
+      [/FROM cta_links/, []],
+    ]);
+    const rows = await automation.references(d, { sequence_template_id: 5 });
+    const hooks = rows.filter((r) => r.source === 'hook');
+    expect(hooks).toHaveLength(2);
+    expect(hooks[0].detail).toMatch(/by id/);
+    expect(hooks[1].detail).toMatch(/by type "no_show"/);
+    expect(rows.filter((r) => r.source === 'workflow_step')).toHaveLength(1);
+  });
+
+  test('automation.list type sequences returns the template inventory', async () => {
+    const d = dbOf([[/FROM sequence_templates t/, [{ sequence_template_id: 5, name: 'No-show chase',
+      template_type: 'no_show', active: 1, current_version: 4, draft_version: null, description: 'd', step_count: 3 }]]]);
+    const rows = await automation.list(d, { type: 'sequences', limit: 10 });
+    expect(rows[0]).toMatchObject({ sequence_template_id: 5, template_type: 'no_show', active: true });
+  });
+});
+
 describe('the read-step validator and fingerprints know the four kinds', () => {
   const step = (over) => svc.validateStep({ purpose: 'p', ...over }, 0);
 
@@ -181,9 +260,21 @@ describe('the read-step validator and fingerprints know the four kinds', () => {
       .toMatchObject({ execution_id: 500 });
     expect(step({ id: 'q1', kind: 'automation.references', workflow_id: 27 }))
       .toMatchObject({ workflow_id: 27 });
-    expect(() => step({ id: 'q1', kind: 'automation.definition' })).toThrow(/positive workflow_id/);
+    expect(() => step({ id: 'q1', kind: 'automation.definition' })).toThrow(/exactly one of workflow_id or sequence_template_id/);
     expect(() => step({ id: 'q1', kind: 'automation.run', execution_id: 'DROP TABLE' })).toThrow(/positive execution_id/);
     expect(() => step({ id: 'q1', kind: 'automation.nope' })).toThrow(/unavailable operation/);
+    // The sequence half (P12b): each kind takes the sequence id instead —
+    // exactly one, never both.
+    expect(step({ id: 'q1', kind: 'automation.definition', sequence_template_id: 5 }))
+      .toMatchObject({ sequence_template_id: 5 });
+    expect(step({ id: 'q1', kind: 'automation.run', enrollment_id: 9 })).toMatchObject({ enrollment_id: 9 });
+    expect(step({ id: 'q1', kind: 'automation.references', sequence_template_id: 5 }))
+      .toMatchObject({ sequence_template_id: 5 });
+    expect(step({ id: 'q1', kind: 'automation.list', type: 'sequences' })).toMatchObject({ type: 'sequences' });
+    expect(() => step({ id: 'q1', kind: 'automation.definition', workflow_id: 1, sequence_template_id: 5 }))
+      .toThrow(/exactly one/);
+    expect(() => step({ id: 'q1', kind: 'automation.run', execution_id: 1, enrollment_id: 9 })).toThrow(/exactly one/);
+    expect(() => step({ id: 'q1', kind: 'automation.list', type: 'everything' })).toThrow(/workflows" or "sequences/);
   });
 
   test('fingerprints distinguish targets so a plan cannot repeat one read', () => {

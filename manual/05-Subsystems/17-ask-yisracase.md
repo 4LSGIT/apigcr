@@ -406,8 +406,8 @@ The plan format names every operation by type. Enabled executable operations
 remain read-only: `sql.read`, `manual.search`, `comms.search`, the narrowly
 scoped `weather.lookup` external read, and the typed automation reads —
 `automation.list`, `automation.definition`, `automation.run`, and
-`automation.references` — which let Casey explain a workflow or one of its
-runs. Those projections redact webhook URLs to method + host + credential
+`automation.references` — which let Casey explain a workflow or sequence, one
+of its runs or enrollments, and what can start or enroll it. Those projections redact webhook URLs to method + host + credential
 label and omit resolved payloads; code-step bodies are readable so Casey can
 explain them. The answer may additionally contain one
 server-validated `task.create.v1`, `task.update.v1`, `task.complete.v1`,

@@ -2065,12 +2065,15 @@ Court Review child loaded. An already-loaded manager uses the same narrow
 bridge. The assistant cannot submit selectors, coordinates, URLs, or script.
 
 **Automatic operation vocabulary.** Enabled kinds: `sql.read`, `manual.search`,
-`comms.search`, `weather.lookup`, and the typed automation reads (P12a,
-workflows half): `automation.list` / `automation.definition` / `automation.run`
-/ `automation.references`, served by `services/automationReadService.js` on the
+`comms.search`, `weather.lookup`, and the typed automation reads (P12,
+workflows AND sequences): `automation.list` / `automation.definition` /
+`automation.run` / `automation.references`, each taking a workflow id or a
+sequence template / enrollment id, served by
+`services/automationReadService.js` on the
 app pool — the report pool's grants exclude the automation tables on purpose,
 so the projection is the only path and carries the redaction (webhook URLs →
-method + host + credential label; `resolved_config` never selected;
+method + host + credential label; `resolved_config` and
+`action_config_resolved` never selected;
 `output_data` verdict keys only; code bodies readable per the 2026-10-22
 ruling). Weather is a narrow adapter that accepts
 only a location and constructs fixed Open-Meteo geocoding/forecast URLs in
