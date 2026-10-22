@@ -70,9 +70,13 @@ picks per task:
      amends so the hook regenerates them over the combined tree (rebase runs
      no hook), runs full jest (skip only for doc-only), pushes, and ends on
      one GO / NO-GO. The slot queues the next lander; `heavy-gate.sh status`
-     shows who holds it. Never `git reset --soft origin/main` to dodge a
-     conflict: the commit still sits on its old base, so the recommit reverts
-     whatever landed since. Do NOT broadcast push notices: a peer message
+     shows who holds it. Squash with `git reset --soft $(git merge-base HEAD
+     origin/main)`, never `git reset --soft origin/main` — not to squash, not
+     to dodge a conflict: from a branch on an older base the recommit reverts
+     whatever landed since, and the rebase can't see it (2026-10-22, caught
+     only in the commit stat). `land.sh` refuses a commit that undoes a
+     landed one; a `git revert` passes, a deliberate hand-undo is named with
+     `--undoes <sha>`. Do NOT broadcast push notices: a peer message
      wakes every idle session for a full turn. Message only a session whose
      files you touched.
    - A hand-off patch is cut from `git merge-base HEAD origin/main` after a
