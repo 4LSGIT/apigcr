@@ -708,7 +708,8 @@ scheduling. Routes: `GET /isWorkday` (no auth), `POST /nextBusinessDay`,
 Unified `scheduled_jobs` queue, index (status, scheduled_time), drained by
 `/process-jobs`. Scheduling types: `one_time`, `recurring` (cron,
 `max_executions`/`expires_at`); execution flavors in `data.type`: `webhook`,
-`internal_function`, `custom_code` (vm sandbox, 5s). Engine-internal:
+`internal_function`, `custom_code` (vm, or QuickJS/WASM guest when config has
+`code_mode:'safe'`; 60s default timeout — lib/job_executor). Engine-internal:
 `workflow_resume`, `sequence_step` (hidden from list unless
 `?internal=true`). App-managed: `task_due_reminder`, `task_daily_digest`,
 `hook_retry` (3 attempts, 120s backoff), `campaign_send`, `mail_sent_read_seed`

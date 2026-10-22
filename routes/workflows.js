@@ -240,13 +240,19 @@ const validateInternalFunctionParams = internalFunctions.__validateFunctionParam
 // ─────────────────────────────────────────────────────────────
 // custom_code capability gate.
 //
-// A custom_code step is arbitrary server-side execution, not a sandboxed
-// expression: lib/job_executor runs it with vm.runInNewContext, and Node's vm
-// is not a security boundary — the host realm is reachable through the
-// sandbox's own `input` object, and process.env carries the DB credentials.
-// So INTRODUCING one is gated on automations.manage ('Manage workflows,
-// sequences and trigger rules'; su / it / admin), which is what that
-// capability was defined for.
+// A STANDARD-mode custom_code step is arbitrary server-side execution, not a
+// sandboxed expression: lib/job_executor runs it with vm.runInNewContext, and
+// Node's vm is not a security boundary — the host realm is reachable through
+// the sandbox's own `input` object, and process.env carries the DB
+// credentials. So INTRODUCING one is gated on automations.manage ('Manage
+// workflows, sequences and trigger rules'; su / it / admin), which is what
+// that capability was defined for.
+//
+// SAFE mode (config.code_mode === 'safe', QuickJS guest engine — see
+// lib/safeCodeRunner.js) is contained and does not need this gate on security
+// grounds, but the gate deliberately still covers BOTH modes: relaxing it for
+// safe steps is a separate ruling for the Casey authoring slice, not a side
+// effect of the engine landing.
 //
 // Scope, deliberately: only the paths that take a step type FROM THE REQUEST.
 // ensureDraft's draft fork and POST /workflows/:id/duplicate COPY stored rows,
@@ -286,6 +292,20 @@ function validateInternalFunctionConfig(stepType, config) {
       status: 400,
       error: 'step.config must not contain a "type" key',
       message: 'step.type selects the dispatch; a "type" key inside config is not honoured.'
+    };
+  }
+  // custom_code mode key. 'safe' = QuickJS guest engine, 'standard' (or
+  // absent) = the vm path. Validated here for author feedback; the dispatch in
+  // lib/job_executor re-checks and FAILS CLOSED, so a row that dodges this
+  // (draft fork, duplicate — they copy stored rows) still cannot select a
+  // nonexistent mode at run time.
+  if (stepType === 'custom_code' && config != null && typeof config === 'object' &&
+      config.code_mode !== undefined &&
+      config.code_mode !== 'standard' && config.code_mode !== 'safe') {
+    return {
+      status: 400,
+      error: 'code_mode must be "standard" or "safe"',
+      message: 'A custom_code step\'s code_mode selects the engine: "safe" (sandboxed QuickJS) or "standard" (full JS). Omit it for standard.'
     };
   }
   if (stepType !== 'internal_function') return null;

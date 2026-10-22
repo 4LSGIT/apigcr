@@ -645,10 +645,11 @@ today**, not YCv3.
    later.
 5. **Casey must explain a run**, not only a definition: what went wrong, what
    to do about it, and the usual responses (A17.1, A18.0).
-6. **Code steps**: Casey never authors a `custom_code` body, but it does
-   explain how to add one, insert an inert **stub** step, and hand over
+6. **Code steps**: Casey never authors a STANDARD-mode `custom_code` body, but
+   it does explain how to add one, insert an inert **stub** step, and hand over
    copyable code for the user to paste (A17.4c). The rules reference that makes
-   this trustworthy is part of that slice.
+   this trustworthy is part of that slice. Safe-mode bodies are a later
+   revision — ruling 13.
 7. **Webhook steps are allowed** (A17.4b). They are the best-validated step
    type in the system and run through the correct outbound-auth path; the
    earlier blanket exclusion was wrong. The narrow part is the destination and
@@ -666,6 +667,16 @@ today**, not YCv3.
 12. **Trigger rules get an audit trail and a stale-write guard, not
     draft/publish** (Fred delegated the call, 2026-10-22). Reasoning in
     *Trigger rules* under A18.
+13. **Safe-mode code authoring is GO** (Fred, 2026-10-22, safe-mode session):
+    with `code_mode:'safe'` landed (QuickJS/WASM guest engine inside the
+    scrubbed child — `lib/safeCodeRunner.js`, dispatch failing closed on every
+    execution path), Casey may author SAFE-mode bodies. The "never composes
+    code" rule now scopes to STANDARD mode, which keeps the A17.4c stub +
+    copyable treatment. The authoring slice still ships under the A17 review
+    contract (show-before-save, A17.2 dry-run): containment makes an escape
+    find nothing — it does not make a wrong output or its downstream sends
+    harmless. Fred's stated goal is Casey authoring complete automations,
+    safely.
 
 **Defaults recorded for this family** (each stands until Fred rules otherwise):
 
@@ -737,7 +748,8 @@ Measured gaps, all on the human path too:
 P11 closes these in the canonical route, for both paths, before any A17 write.
 
 **What Casey cannot author (initial contract).** Excluded by construction: a
-`custom_code` **body** (A17.4c adds an inert stub plus copyable code instead),
+STANDARD-mode `custom_code` **body** (A17.4c adds an inert stub plus copyable
+code instead; safe-mode bodies are ruling 13's later revision),
 every function carrying a `credential_id` or a fetched URL, `update_db` /
 `insert_db` / `set_setting` (generic writes), `create_cta` (mints public bearer
 links with nested step plans), `start_workflow` and `enroll_sequence` (chained
@@ -755,8 +767,9 @@ outside its allowlist.
 All three step *types* are reachable: `internal_function` (A17.4),
 `query_db` as its bounded special case (A17.4a), `webhook` under a narrow
 destination-and-credential contract (A17.4b), and `custom_code` as a stub the
-user fills (A17.4c). What stays closed is the model composing code, inventing
-a destination, or choosing a credential for a new host.
+user fills (A17.4c) or, since ruling 13, a safe-mode body Casey writes. What
+stays closed is the model composing STANDARD-mode code, inventing a
+destination, or choosing a credential for a new host.
 
 **Sync bus.** No workflow, execution, step, sequence, enrollment or trigger
 route appears in `public/js/yc-sync.js` MATCHERS; the bus header classes
@@ -937,9 +950,17 @@ So the contract is narrow rather than absent:
 should explain how to add a code step, be able to add a blank one, know all the
 rules, and hand the user copyable code to paste.
 
-Casey never authors a `custom_code` **body** as a write, and the reason is
-stronger than reviewability. **Measured 2026-10-22: the code sandbox is
-escapable.** `lib/job_executor.js` runs a step's code with
+**Revised 2026-10-22 (ruling 13):** everything below describes STANDARD mode
+(`code_mode` absent or `'standard'`), and it is why Casey never authors one.
+The safe-mode engine has since landed: `code_mode:'safe'` runs the body in a
+QuickJS/WASM guest (`lib/safeCodeRunner.js`) — no host realm, no network, no
+`Intl`, time and memory limits, dispatch failing closed on every execution
+path including test-step. Casey authoring safe-mode bodies is approved and is
+its own slice under the usual review contract.
+
+Casey never authors a STANDARD `custom_code` **body** as a write, and the
+reason is stronger than reviewability. **Measured 2026-10-22: the standard
+code sandbox is escapable.** `lib/job_executor.js` runs a step's code with
 `new vm.Script(code).runInNewContext({input, console}, {timeout})`, and
 Node's `vm` is not a security boundary — `input` is a host-realm object, so
 `input.constructor.constructor('return process')()` returns the real

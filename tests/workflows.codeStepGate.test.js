@@ -161,6 +161,34 @@ describe('the gate blocks nothing it should not', () => {
   });
 });
 
+describe('step.config code_mode must be a real mode (safe-mode slice)', () => {
+  // 'safe' = QuickJS guest engine, 'standard'/absent = the vm path. The
+  // dispatch in lib/job_executor fails closed on an unknown mode too
+  // (tests/safeCodeMode.test.js); this pins the author-facing refusal at the
+  // step-writer choke point.
+  test('an unknown code_mode is refused at save, even for a capability holder', async () => {
+    mockAuth = SU;
+    const r = await send('POST', '/workflows/5/steps', {
+      type: 'custom_code', config: { code: '1;', code_mode: 'nope' },
+    });
+    expect(r.status).toBe(400);
+    expect(r.body.error).toMatch(/code_mode/);
+  });
+
+  test('both real modes, and an absent one, pass the validator', async () => {
+    mockAuth = SU;
+    for (const config of [{ code: '1;', code_mode: 'safe' },
+                          { code: '1;', code_mode: 'standard' },
+                          { code: '1;' }]) {
+      const r = await send('POST', '/workflows/5/steps', { type: 'custom_code', config });
+      // Past the gate and the validator is the claim; the throwing db stub
+      // fails the request later, which is not this test's business.
+      expect(r.status).not.toBe(400);
+      expect(r.status).not.toBe(403);
+    }
+  });
+});
+
 describe('step.config may not carry a `type` key (behavioural, b087fa5)', () => {
   // Previously pinned only by a source assertion. The defect: executeJob's
   // payload spread config AFTER the type, so a step saved and VALIDATED as

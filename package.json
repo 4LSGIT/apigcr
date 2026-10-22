@@ -46,7 +46,8 @@
     "nodemailer": "^10.0.13",
     "pdf-lib": "1.17.1",
     "pdf-parse": "^1.1.4",
-    "puppeteer-core": "25.3.0"
+    "puppeteer-core": "25.3.0",
+    "quickjs-emscripten": "^0.32.0"
   },
   "devDependencies": {
     "jest": "^30.4.2",

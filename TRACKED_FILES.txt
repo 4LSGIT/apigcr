@@ -108,6 +108,7 @@ lib/reportSchema/validator.js
 lib/requestIdempotency.js
 lib/responseObserver.js
 lib/routeFamilies.js
+lib/safeCodeRunner.js
 lib/schemaDump.js
 lib/secretAtRest.js
 lib/sequenceEngine.js
@@ -1483,6 +1484,7 @@ tests/reportValidatorHardening.test.js
 tests/requestIdempotency.mysql.test.js
 tests/requestIdempotency.test.js
 tests/requirementService.test.js
+tests/safeCodeMode.test.js
 tests/scheduleResume.accel.test.js
 tests/scheduledJobs.doorbell.test.js
 tests/scheduledJobs.sequenceStepGuard.test.js

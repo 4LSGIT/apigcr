@@ -549,21 +549,28 @@ it:
   `getBuiltinModule` too would be another round of the same game; the
   conclusion is that monkey-patching is the wrong tool, not that it needs one
   more patch.
-- **The real fix is a guest engine, and QuickJS compiled to WebAssembly is the
-  candidate** (same investigation): no module loader, no Node objects, no
-  fetch, no filesystem, no host callbacks, with time and memory limits, kept
-  inside the existing killable child. Feasibility checked — all 97 stored
-  bodies compile, and ten synthetic behaviours pass — with one real blocker:
-  that build has **no `Intl`**, and the current published wf27/33/49/50 use
-  `Intl.DateTimeFormat` while wf27/45/54 call locale `Date` methods. So the
-  first slice is NEW Casey-authored steps on a versioned safe mode, every
-  execution path (test-step and draft starts included) routed through one
-  mode-aware executor with no caller-selectable fallback to Node `vm`, and the
-  41 steps in current published versions left where they are. Supply date and
-  locale values through inputs or a reviewed pure formatter rather than an
-  ad-hoc Intl polyfill. `isolated-vm` remains the alternative (a native
-  dependency on `node:24-slim`), and egress restriction on the child is the
-  orthogonal mitigation that closes the metadata server whichever engine wins.
+- **The real fix is a guest engine, and the first slice LANDED 2026-10-22**
+  (Fred's go, same day): a `custom_code` step's config may carry
+  `code_mode:'safe'`, which runs the body in QuickJS compiled to WebAssembly
+  (`quickjs-emscripten`, `lib/safeCodeRunner.js`) inside the existing scrubbed
+  killable child — no module loader, no Node objects, no fetch, no filesystem,
+  no host callbacks, with time and memory limits and the same
+  input/console/final-expression/`__cc`-transport contract as the vm path.
+  The dispatch in `lib/job_executor` is the one choke point every execution
+  path arrives at (workflow engine, test-step, scheduled jobs) and FAILS
+  CLOSED: safe ignores the child-process flag, an unknown mode throws, and
+  there is no caller-selectable fallback to Node `vm`. The 97 stored standard
+  bodies are untouched (absent mode = standard). Remaining, in order: the
+  editor UI mode picker; the Casey safe-mode authoring slice (ruling 13 in
+  `ref/ASK_CASEY_ACTIONS_PLAN.md` — approved, not yet built); whether safe
+  steps stay behind `automations.manage` (deliberately unchanged this slice);
+  migrating the 41 published standard steps, still blocked on **no `Intl`** in
+  the QuickJS build (published wf27/33/49/50 use `Intl.DateTimeFormat`,
+  wf27/45/54 call locale `Date` methods — supply date/locale values through
+  inputs or a reviewed pure formatter, not an ad-hoc polyfill). `isolated-vm`
+  remains the fallback engine if Intl ever matters more than avoiding a native
+  dependency, and egress restriction on the child is the orthogonal mitigation
+  that closes the metadata server for STANDARD mode.
 - **So "a code step is harmless by construction" is NOT true today**, and no
   authoring decision should be justified by the child boundary alone. The
   honest claim is that the worst case fell from "the database" to "whatever an
