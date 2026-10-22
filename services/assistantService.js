@@ -93,6 +93,21 @@ const APPT_RESCHEDULE_KEYS = new Set([
   'kind', 'appt_id', 'new_date', 'note', 'sms', 'email', 'confirm_message', 'evidence',
 ]);
 const APPT_RESCHEDULE_LATER_KEYS = new Set(['kind', 'appt_id', 'note', 'create_task', 'evidence']);
+// Safe code jobs (safe-mode S3, Fred ruling 2026-10-22 = Casey plan ruling 13).
+// The ONE automation-authoring kind shipped so far, deliberately the smallest:
+// a one-time scheduled job whose body runs in the QuickJS guest engine
+// (lib/safeCodeRunner.js) — no network, no DB, no host realm — so a reviewed,
+// user-applied card is not server-side execution capability. Workflow-step
+// authoring stays behind the A17 ladder (A17.0 read-only explain first).
+// code_mode is NOT a draft field: the browser's request builder pins 'safe',
+// and the route refuses standard mode without automations.manage anyway.
+const JOB_ACTION_KINDS = new Set(['job.code_safe.create.v1']);
+const JOB_CODE_CREATE_KEYS = new Set([
+  'kind', 'name', 'description', 'code', 'input', 'delay', 'scheduled_time', 'evidence',
+]);
+const JOB_CODE_MAX_CODE_CHARS = 20000;
+const JOB_CODE_MAX_INPUT_JSON_CHARS = 10000;
+
 const CONTACT_SUBRECORD_ACTION_KINDS = new Set([
   'contact.phone.create.v1', 'contact.phone.update.v1', 'contact.phone.end.v1',
   'contact.email.create.v1', 'contact.email.update.v1', 'contact.email.end.v1',
@@ -1126,8 +1141,76 @@ async function taskDraftLink(db, value) {
   };
 }
 
+// Evidence for a job draft is OPTIONAL (0-8 refs): a pure transform job can be
+// authored from the user's words alone, with the review card as the control.
+// When refs are cited they are validated exactly like every other family's.
+function jobDraftEvidence(value, evidence) {
+  if (value == null || (Array.isArray(value) && !value.length)) return [];
+  if (!Array.isArray(value) || value.length > 8) throw httpError(422, 'A job draft cites 0-8 evidence references');
+  return value.map((ref) => {
+    if (!onlyKeys(ref, new Set(['query_id', 'row_number']))) throw httpError(422, 'Job draft evidence is malformed');
+    const source = sourceFor(evidence, ref);
+    if (!source) throw httpError(422, 'Job draft evidence is outside this investigation');
+    return { query_id: source.query_id, row_number: source.row_number, label: source.label };
+  });
+}
+
+function normalizeJobCodeAction(db, value, evidence) {
+  // Ruling 4's per-family off switch: dark means the kind does not exist.
+  if (require('../lib/firmConfig').cfg('casey_code_actions_enabled') === '0') {
+    throw httpError(422, 'Action kind is unavailable');
+  }
+  if (!onlyKeys(value, JOB_CODE_CREATE_KEYS)) throw httpError(422, 'Job draft contains unsupported fields');
+  const name = String(value.name == null ? '' : value.name).trim();
+  if (!name) throw httpError(422, 'Job draft name is required');
+  if (name.length > 200) throw httpError(422, 'Job draft name exceeds 200 characters');
+  const description = String(value.description == null ? '' : value.description).trim();
+  if (description.length > 1000) throw httpError(422, 'Job draft description exceeds 1000 characters');
+  if (typeof value.code !== 'string' || !value.code.trim()) throw httpError(422, 'Job draft code is required');
+  if (value.code.length > JOB_CODE_MAX_CODE_CHARS) {
+    throw httpError(422, `Job draft code exceeds ${JOB_CODE_MAX_CODE_CHARS} characters`);
+  }
+  let input = value.input === undefined ? {} : value.input;
+  if (input === null || typeof input !== 'object' || Array.isArray(input)) {
+    throw httpError(422, 'Job draft input must be a JSON object');
+  }
+  let inputJson;
+  try { inputJson = JSON.stringify(input); } catch (_) { throw httpError(422, 'Job draft input is not serializable'); }
+  if (inputJson.length > JOB_CODE_MAX_INPUT_JSON_CHARS) {
+    throw httpError(422, `Job draft input exceeds ${JOB_CODE_MAX_INPUT_JSON_CHARS} characters of JSON`);
+  }
+  input = JSON.parse(inputJson);
+  const hasDelay = value.delay !== undefined;
+  const hasTime = value.scheduled_time !== undefined;
+  if (hasDelay === hasTime) throw httpError(422, 'Job draft needs exactly one of delay or scheduled_time');
+  const schedule = {};
+  if (hasDelay) {
+    if (typeof value.delay !== 'string' || !/^\d{1,4}(s|m|h|d)$/.test(value.delay.trim())) {
+      throw httpError(422, 'Job draft delay must look like "30s", "10m", "2h" or "1d"');
+    }
+    schedule.delay = value.delay.trim();
+  } else {
+    const at = new Date(value.scheduled_time);
+    if (!(at instanceof Date) || isNaN(at.getTime())) throw httpError(422, 'Job draft scheduled_time is not a valid datetime');
+    if (at.getTime() <= Date.now()) throw httpError(422, 'Job draft scheduled_time is in the past');
+    schedule.scheduled_time = at.toISOString();
+  }
+  return {
+    draft_id: crypto.randomUUID(),
+    kind: 'job.code_safe.create.v1',
+    status: 'draft',
+    name,
+    description,
+    code: value.code,
+    input,
+    schedule,
+    evidence: jobDraftEvidence(value.evidence, evidence),
+  };
+}
+
 async function normalizeActionDraft(db, value, evidence, { currentUserId = null } = {}) {
   if (value == null) return null;
+  if (value && JOB_ACTION_KINDS.has(value.kind)) return normalizeJobCodeAction(db, value, evidence);
   if (value && EVENT_ACTION_KINDS.has(value.kind)) return normalizeEventAction(db, value, evidence);
   if (value && APPT_ACTION_KINDS.has(value.kind)) return normalizeApptAction(db, value, evidence);
   if (value && CONTACT_SUBRECORD_ACTION_KINDS.has(value.kind)) return normalizeContactSubrecordAction(db, value, evidence);

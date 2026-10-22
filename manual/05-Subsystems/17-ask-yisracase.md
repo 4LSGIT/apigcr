@@ -412,7 +412,13 @@ or `event.cancel.v1` proposal. It may instead be one `appt.create.v1`,
 `appt.update.v1`, `appt.attended.v1`, `appt.no_show.v1`, `appt.cancel.v1`,
 `appt.reschedule.v1`, or `appt.reschedule_later.v1` proposal. It may instead be
 one `contact.phone.*.v1`, `contact.email.*.v1`, or `contact.address.*.v1`
-create/update/end proposal described above. The proposal
+create/update/end proposal described above. It may instead be one
+`job.code_safe.create.v1` proposal: a one-time scheduled job whose JavaScript
+body runs in safe mode (the isolated QuickJS engine — no network, no database,
+no email/SMS; see the workflows chapter's `custom_code` section). The card
+shows the full code for review, the browser pins the safe engine in the
+request, and the system off switch is the `casey_code_actions_enabled`
+setting. The proposal
 itself changes no record. A signed-in user can perform that exact action only
 through the card's explicit review and confirmation, which invokes the ordinary
 authenticated route for that record family.

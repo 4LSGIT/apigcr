@@ -676,7 +676,14 @@ today**, not YCv3.
     contract (show-before-save, A17.2 dry-run): containment makes an escape
     find nothing — it does not make a wrong output or its downstream sends
     harmless. Fred's stated goal is Casey authoring complete automations,
-    safely.
+    safely. **First kind shipped same day (safe-mode S3):**
+    `job.code_safe.create.v1` — a ONE-TIME safe-mode scheduled job through
+    `POST /scheduled-jobs` on the P1 card engine, with the safe engine pinned
+    in the fixed request builder, optional evidence (0-8 refs), the
+    `casey_code_actions_enabled` off switch (ruling 4's per-family flag), and
+    route idempotency wired so the card's draft_id dedupes the create.
+    Workflow-STEP code authoring is deliberately NOT this: it stays with
+    A17.4c behind the A17 ladder (A17.0 read-only explain first).
 
 **Defaults recorded for this family** (each stands until Fred rules otherwise):
 

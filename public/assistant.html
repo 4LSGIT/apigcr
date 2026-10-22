@@ -694,6 +694,51 @@ function contactSubrecordActionResult(draft) {
   return { contact_id: contactId, contact_label: draft.contact ? draft.contact.label : draft.target.contact.label };
 }
 
+// Safe code jobs (safe-mode S3). The body runs ONCE in the QuickJS guest
+// engine (no network, no DB, no host realm), so the reviewed card schedules a
+// computation, not server-side execution capability. code_mode is pinned
+// 'safe' HERE, in the fixed request builder — it is not a draft field and the
+// model cannot choose it; the route separately refuses standard mode without
+// automations.manage.
+const JOB_ACTION_KINDS = new Set(['job.code_safe.create.v1']);
+
+function jobActionLabel() { return 'Schedule safe code job'; }
+
+function jobScheduleText(draft) {
+  const s = draft.schedule || {};
+  if (s.delay) return `${s.delay} after you apply it`;
+  if (s.scheduled_time) { try { return new Date(s.scheduled_time).toLocaleString(); } catch (_) { return String(s.scheduled_time); } }
+  return 'Unknown';
+}
+
+function jobDraftText(draft) {
+  return ['Safe code job proposal — not applied', `Name: ${draft.name}`,
+    `Description: ${draft.description || 'Empty'}`,
+    `Runs: once, ${jobScheduleText(draft)}`,
+    `Input: ${JSON.stringify(draft.input || {})}`,
+    'Code (runs in an isolated sandbox — no network, no database, no email/SMS, no file access):',
+    String(draft.code || ''),
+    'Result: the script\'s final expression is recorded on the job\'s run history; nothing else is written.',
+  ].join('\n');
+}
+
+function jobActionRequest(draft) {
+  const body = {
+    type: 'one_time', job_type: 'custom_code', code_mode: 'safe',
+    name: draft.name, code: draft.code, input: draft.input || {},
+  };
+  if (draft.description) body.description = draft.description;
+  if (draft.schedule && draft.schedule.delay) body.delay = draft.schedule.delay;
+  else body.scheduled_time = draft.schedule.scheduled_time;
+  return { path: '/scheduled-jobs', method: 'POST', body, idempotent: true };
+}
+
+function jobActionResult(draft, result) {
+  const id = Number(result && result.id);
+  if (!Number.isSafeInteger(id) || id < 1) throw new Error('The job action returned no usable job id');
+  return { job_id: id, scheduled_time: (result && result.scheduled_time) || null };
+}
+
 // One descriptor per shipped family. `request` is the only mapping to a
 // canonical route, and it is written here, per kind, by hand: nothing in a
 // descriptor comes from model output. Adding a family means adding a
@@ -753,6 +798,23 @@ const ACTION_FAMILIES = [
       draft.result_contact_label = String(payload.contact_label || 'Contact');
     },
     open: (draft) => openEntity('contact', draft.result_contact_id, draft.result_contact_label),
+  },
+  {
+    id: 'job', kinds: JOB_ACTION_KINDS, title: 'Safe code job', noun: 'scheduled job', errorNoun: 'job action',
+    label: jobActionLabel, text: jobDraftText, request: jobActionRequest, result: jobActionResult,
+    idField: 'job_id', appliedKey: 'result_job_id',
+    danger: () => false,
+    resultText: (payload) => `scheduled job #${payload.job_id}`,
+    entity: (draft, payload) => ({ kind: 'job', id: String(payload.job_id), label: `${draft.name} #${payload.job_id}` }),
+    failure: 'The job action could not be applied.',
+    reviewWarning: 'The code runs once in an isolated sandbox: no network, no database, no email or SMS, no records read or written. Review it line by line anyway — a wrong computation is still wrong. Canceling writes nothing.',
+    open: (draft) => {
+      // No in-shell deep link to one scheduled job exists; say where it lives.
+      try {
+        P.Swal?.fire({ icon: 'info', title: `Scheduled job #${draft.result_job_id}`,
+          text: 'Find it under More → Automations → Scheduled Jobs.', heightAuto: false });
+      } catch (_) { /* outside the shell the chat line already names the id */ }
+    },
   },
 ];
 

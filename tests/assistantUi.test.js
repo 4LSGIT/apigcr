@@ -61,6 +61,7 @@ const ACTION_FNS = ['appendDraftField', 'appendDraftFieldsFromText', 'actionDraf
   'apptActionLabel', 'apptChannelsText', 'apptDraftText', 'apptCreateBody', 'apptActionRequest', 'apptActionResult',
   'contactSubrecordActionLabel', 'contactAddressText', 'contactSubrecordValue', 'contactSubrecordDraftText',
   'contactSubrecordCreateBody', 'contactSubrecordActionRequest', 'contactSubrecordActionResult',
+  'jobActionLabel', 'jobScheduleText', 'jobDraftText', 'jobActionRequest', 'jobActionResult',
   'actionFamily', 'isActionDraft', 'actionAppliedId', 'markActionApplied', 'confirmActionDraft',
   'executeActionDraft', 'applyActionResults', 'hydrateActionDraft'];
 
@@ -72,6 +73,7 @@ function actionSandbox(deps = {}) {
     'const ACTION_DRAFT_TTL_MS=15*60*1000;',
     constSrc(html, 'TASK_ACTION_KINDS'), constSrc(html, 'EVENT_ACTION_KINDS'),
     constSrc(html, 'APPT_ACTION_KINDS'), constSrc(html, 'CONTACT_SUBRECORD_ACTION_KINDS'),
+    constSrc(html, 'JOB_ACTION_KINDS'),
     ...ACTION_FNS.map((name) => fnSrcAuto(html, name)),
     registry,
     'return { executeActionDraft, applyActionResults, actionFamily, isActionDraft, hydrateActionDraft };',
@@ -205,6 +207,36 @@ describe('Ask Casey UI wiring', () => {
     await make(message);
     expect(api).toHaveBeenCalledTimes(1);
     expect(P.showTask).toHaveBeenCalledWith(77);
+  });
+
+  test('a safe code job card pins code_mode safe in the fixed request — the model cannot choose the engine', async () => {
+    const api = jest.fn().mockResolvedValue({ id: 91, scheduled_time: '2026-10-23T00:00:00.000Z' });
+    const render = jest.fn();
+    const P = { Swal: { fire: jest.fn().mockResolvedValue({ isConfirmed: true }) } };
+    const history = [];
+    const saveAssistantMessage = jest.fn().mockResolvedValue();
+    const make = actionSandbox({ P, api, render, history, saveAssistantMessage }).executeActionDraft;
+    const message = { action_draft: {
+      draft_id: 'job-draft-1', kind: 'job.code_safe.create.v1', status: 'draft',
+      name: 'Deadline math', description: 'Computes the 30-day deadline',
+      code: 'input.a + 1;', input: { a: 1 }, schedule: { delay: '10m' }, evidence: [],
+    } };
+
+    await make(message);
+    expect(P.Swal.fire).toHaveBeenCalledWith(expect.objectContaining({
+      title: 'Schedule safe code job',
+      text: expect.stringContaining('isolated sandbox'),
+    }));
+    expect(api).toHaveBeenCalledWith('/scheduled-jobs', {
+      type: 'one_time', job_type: 'custom_code', code_mode: 'safe',
+      name: 'Deadline math', description: 'Computes the 30-day deadline',
+      code: 'input.a + 1;', input: { a: 1 }, delay: '10m',
+    }, 'POST', { 'Idempotency-Key': 'job-draft-1' });
+    expect(message.action_draft).toMatchObject({ status: 'applied', result_job_id: 91, executing: false });
+    expect(history).toEqual([expect.objectContaining({
+      text: 'Schedule safe code job applied to scheduled job #91.',
+      action_result: { kind: 'job.code_safe.create.v1', draft_id: 'job-draft-1', job_id: 91, scheduled_time: '2026-10-23T00:00:00.000Z' },
+    })]);
   });
 
   test('a saved action result restores its exact proposal as applied without another write', () => {

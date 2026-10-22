@@ -566,9 +566,11 @@ it:
   test-step, AND `POST /scheduled-jobs` + `PATCH /scheduled-jobs/:id`, which
   S2 found entirely UNGATED — the scheduled-jobs writer had been missed by the
   original gate slice); both editors (workflows + scheduled jobs) grew a Mode
-  picker, new steps defaulting to safe. Remaining, in order: the Casey
-  safe-mode authoring slice (ruling 13 in `ref/ASK_CASEY_ACTIONS_PLAN.md` —
-  approved, not yet built);
+  picker, new steps defaulting to safe. S3 (same day): the first Casey
+  authoring kind shipped — `job.code_safe.create.v1`, a one-time safe-mode
+  scheduled job on the P1 card engine (ruling 13 in
+  `ref/ASK_CASEY_ACTIONS_PLAN.md` has the scope; workflow-STEP code authoring
+  stays with A17.4c behind the A17 ladder). Remaining:
   migrating the 41 published standard steps, still blocked on **no `Intl`** in
   the QuickJS build (published wf27/33/49/50 use `Intl.DateTimeFormat`,
   wf27/45/54 call locale `Date` methods — supply date/locale values through

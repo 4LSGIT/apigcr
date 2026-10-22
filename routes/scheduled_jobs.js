@@ -7,6 +7,7 @@ const { CronExpressionParser } = require("cron-parser"); // resume → next futu
 const internalFunctions = require("../lib/internal_functions"); // __validateFunctionParams (Slice 5)
 const { can } = require("../lib/capabilities");
 const { escapeLike } = require("../lib/escapeLike");
+const { idempotentRequest, sendIdempotencyError } = require("../lib/requestIdempotency");
 
 // Helper: parse delay string to milliseconds
 function parseDelay(delayStr) {
@@ -234,51 +235,60 @@ router.post("/scheduled-jobs", jwtOrApiKey, async (req, res) => {
   // --------------
 
   try {
-    const [result] = await db.query(
-      `
-      INSERT INTO scheduled_jobs
-      (type, scheduled_time, status, name, description, data, recurrence_rule, max_attempts, backoff_seconds, max_executions, expires_at)
-      VALUES (?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?)
-      `,
-      [
-        type,
-        finalScheduledTime,
-        name || `${job_type} job`,
-        (typeof description === 'string' && description.trim()) ? description.trim() : null,
-        JSON.stringify(jobData),
-        type === "recurring" ? recurrence_rule : null,
-        max_attempts,
-        backoff_seconds,
-        max_executions ? parseInt(max_executions) : null,
-        finalExpiresAt || null,
-      ]
-    );
+    // Optional `Idempotency-Key` header: a repeat of the same key replays the
+    // first create's result instead of making a second job (the Ask Casey
+    // job family sends its draft_id here). A caller that sends no key is
+    // completely unaffected (lib/requestIdempotency.js).
+    const { value: created, replayed } = await idempotentRequest(req, 'scheduled_jobs.create', async () => {
+      const [result] = await db.query(
+        `
+        INSERT INTO scheduled_jobs
+        (type, scheduled_time, status, name, description, data, recurrence_rule, max_attempts, backoff_seconds, max_executions, expires_at)
+        VALUES (?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?)
+        `,
+        [
+          type,
+          finalScheduledTime,
+          name || `${job_type} job`,
+          (typeof description === 'string' && description.trim()) ? description.trim() : null,
+          JSON.stringify(jobData),
+          type === "recurring" ? recurrence_rule : null,
+          max_attempts,
+          backoff_seconds,
+          max_executions ? parseInt(max_executions) : null,
+          finalExpiresAt || null,
+        ]
+      );
 
-    // Cloud Tasks accelerator (2026-08-23): the default scheduled_time here
-    // is now+5s and the documented `delay` param accepts "30s" — API-created
-    // one_time jobs can land squarely in the 0–60s cron dead zone. Ring the
-    // doorbell for near-immediate ones. Recurring rows are NEVER enqueued:
-    // the row id is immortal and rescheduled in place, which fights named-
-    // task retention (lib/taskQueue.js header §3a). Awaited — never rejects,
-    // bounded ≤15s; failure just means the row rides the cron.
-    if (type === 'one_time') {
-      const { enqueueJobDispatch, ACCEL_WINDOW_MS } = require('../lib/taskQueue');
-      const dueMs = finalScheduledTime.getTime();
-      if (Number.isFinite(dueMs) && dueMs <= Date.now() + ACCEL_WINDOW_MS) {
-        await enqueueJobDispatch(result.insertId, dueMs);
+      // Cloud Tasks accelerator (2026-08-23): the default scheduled_time here
+      // is now+5s and the documented `delay` param accepts "30s" — API-created
+      // one_time jobs can land squarely in the 0–60s cron dead zone. Ring the
+      // doorbell for near-immediate ones. Recurring rows are NEVER enqueued:
+      // the row id is immortal and rescheduled in place, which fights named-
+      // task retention (lib/taskQueue.js header §3a). Awaited — never rejects,
+      // bounded ≤15s; failure just means the row rides the cron.
+      if (type === 'one_time') {
+        const { enqueueJobDispatch, ACCEL_WINDOW_MS } = require('../lib/taskQueue');
+        const dueMs = finalScheduledTime.getTime();
+        if (Number.isFinite(dueMs) && dueMs <= Date.now() + ACCEL_WINDOW_MS) {
+          await enqueueJobDispatch(result.insertId, dueMs);
+        }
       }
-    }
 
-    res.status(201).json({
-      id: result.insertId,
-      message: "Job created",
-      scheduled_time: finalScheduledTime.toISOString(),
-      type,
-      job_type,
-      max_executions: max_executions ? parseInt(max_executions) : null,
-      expires_at: finalExpiresAt ? finalExpiresAt.toISOString() : null,
+      return {
+        id: result.insertId,
+        message: "Job created",
+        scheduled_time: finalScheduledTime.toISOString(),
+        type,
+        job_type,
+        max_executions: max_executions ? parseInt(max_executions) : null,
+        expires_at: finalExpiresAt ? finalExpiresAt.toISOString() : null,
+      };
     });
+
+    res.status(201).json({ ...created, ...(replayed ? { replayed: true } : {}) });
   } catch (err) {
+    if (sendIdempotencyError(res, err)) return;
     console.error("Failed to create job:", err);
     res.status(500).json({ error: "Failed to create job", detail: err.message });
   }
