@@ -4928,6 +4928,9 @@ window.onNew     = onNew;
 window.onFocusRecord = (payload) => {
   const id = payload && payload.id;
   if (id == null) return;
+  // record:'workflow' is an assistant deep link to the workflow ITSELF (the
+  // applied card's id); the bare shape stays the Activity execution viewer.
+  if (payload.record === 'workflow') { selectWorkflow(id); return; }
   viewWorkflowExecution(id);
 };
 

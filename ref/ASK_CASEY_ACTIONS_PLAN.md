@@ -1274,6 +1274,18 @@ kinds) documents it as the one capability-gated-for-everyone kind. Per-family
 flag `casey_hook_authoring_enabled` (ruling 4). The applied card deep-links to
 the hook (`automations.hook`).
 
+**A19.1 (same day, from Fred's live test):** the card gains an OPTIONAL
+user-chosen `slug` (validated `[a-z0-9-]{3,100}`, collision-checked, shown on
+the card; absent, the server still generates one — the model may never invent
+one) and an optional `param_map` — up to 10 workflow-variable ← envelope-path
+entries (paths under body/query/headers/meta only) normalized into declarative
+mapper rules on the target, reviewable line by line, never code. Also fixed:
+the applied card's deep link opened the Activity EXECUTION viewer with the
+record's id (workflow-56's card opened execution #56) — the focus payload now
+carries a record kind that routes to the pane's own record opener; and
+`automation.definition` falls back to `draft_version` when `current_version`
+is 0, so Casey stops misreading unpublished workflows as empty.
+
 **A18.4: Enroll a contact. Deferred past A14.**
 
 Enrollment is an external-send fan-out and inherits A14's bar (resolved

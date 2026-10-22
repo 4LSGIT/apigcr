@@ -823,11 +823,18 @@ function hookTargetText(draft) {
 }
 
 function hookCreateText(draft) {
-  return ['Hook proposal — not applied', `Name: ${draft.name}`,
+  const lines = ['Hook proposal — not applied', `Name: ${draft.name}`,
     `Description: ${draft.description || 'Empty'}`,
-    `Target: starts ${hookTargetText(draft)}`,
-    'The hook is created INACTIVE: nothing can fire through it until you activate it in More → Automations → Hooks, where the endpoint URL and any authentication are set up. No URL or key is shown here.',
-  ].join('\n');
+    `Endpoint slug: ${draft.slug || '(server-generated at random)'}`,
+    `Target: starts ${hookTargetText(draft)}`];
+  if (draft.param_map) {
+    lines.push('Input mapping (workflow variable ← request field):');
+    for (const [to, from] of Object.entries(draft.param_map)) lines.push(`  ${to} ← ${from}`);
+  } else {
+    lines.push('No input mapping: the target receives the raw request envelope (body/query/headers/meta).');
+  }
+  lines.push('The hook is created INACTIVE: nothing can fire through it until you activate it in More → Automations → Hooks, where the full endpoint URL and any authentication are set up. No URL or key is shown here.');
+  return lines.join('\n');
 }
 
 function hookCreateRequest(draft) {
@@ -835,7 +842,14 @@ function hookCreateRequest(draft) {
   const target = t.kind === 'workflow'
     ? { name: `→ ${t.label}`, target_type: 'workflow', config: { workflow_id: t.workflow_id }, active: 1 }
     : { name: `→ ${t.label}`, target_type: 'sequence', config: { template_id: t.sequence_template_id }, active: 1 };
+  if (draft.param_map) {
+    // Declarative mapper rules only — the reviewed lines above are exactly
+    // what runs; there is no code slot here.
+    target.transform_mode = 'mapper';
+    target.transform_config = Object.entries(draft.param_map).map(([to, from]) => ({ to, from }));
+  }
   const body = { name: draft.name, active: 0, targets: [target] };
+  if (draft.slug) body.slug = draft.slug;
   if (draft.description) body.description = draft.description;
   return { path: '/api/hooks', method: 'POST', body, idempotent: true };
 }

@@ -156,12 +156,18 @@ describe('Automations → Court Review semantic navigation proof', () => {
     const map = MANAGER.slice(MANAGER.indexOf('const ASSISTANT_DESTINATION_BY_SUB'), MANAGER.indexOf('function notifyAssistantDestinationReady'));
     w.focusCalls = [];
     w.switchCalls = [];
-    w.eval(`${subPages}\n${map}\n${fnSrc(MANAGER, 'ycAssistantOpenDestination')}\n` +
+    const recordMap = MANAGER.slice(MANAGER.indexOf('const ASSISTANT_RECORD_BY_SUB'), MANAGER.indexOf('function ycAssistantOpenDestination'));
+    w.eval(`${subPages}\n${map}\n${recordMap}\n${fnSrc(MANAGER, 'ycAssistantOpenDestination')}\n` +
       'function focusSubPageRecord(id, payload) { focusCalls.push([id, payload]); return true; }\n' +
       'function switchSubPage(id) { switchCalls.push(id); }\n' +
       'window.open_ = ycAssistantOpenDestination;');
+    // The focus payload carries the RECORD kind, so the pane opens the
+    // workflow/hook itself — not the Activity execution viewer (live bug:
+    // the applied workflow-56 card opened execution #56).
     expect(w.open_('workflows~61')).toBe(true);
-    expect(w.focusCalls).toEqual([['workflows', { id: 61 }]]);
+    expect(w.focusCalls).toEqual([['workflows', { id: 61, record: 'workflow' }]]);
+    expect(w.open_('hooks~43')).toBe(true);
+    expect(w.focusCalls[1]).toEqual(['hooks', { id: 43, record: 'hook' }]);
     expect(w.open_('courtReview')).toBe(true);
     expect(w.switchCalls).toEqual(['courtReview']);
     // Not in the destination map, malformed ids, and unknown tokens all fail closed.

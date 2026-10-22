@@ -294,7 +294,8 @@ describe('Ask Casey UI wiring', () => {
     const make = actionSandbox({ P, api, render, history, saveAssistantMessage }).executeActionDraft;
     const message = { action_draft: {
       draft_id: 'hook-draft-1', kind: 'hook.create.v1', status: 'draft',
-      name: 'Site form → intake', description: 'd',
+      name: 'Site form → intake', description: 'd', slug: 'test-cyan-tuna-44',
+      param_map: { contact_id: 'query.contact_id' },
       target: { kind: 'workflow', workflow_id: 27, label: 'static site hit', published: 1 },
       evidence: [],
     } };
@@ -303,12 +304,17 @@ describe('Ask Casey UI wiring', () => {
       title: 'Create inactive hook',
       text: expect.stringContaining('created INACTIVE'),
     }));
+    // The review text shows the mapping lines and the chosen slug.
+    expect(P.Swal.fire.mock.calls[0][0].text).toContain('contact_id ← query.contact_id');
+    expect(P.Swal.fire.mock.calls[0][0].text).toContain('test-cyan-tuna-44');
     expect(api).toHaveBeenCalledWith('/api/hooks', {
-      name: 'Site form → intake', description: 'd', active: 0,
-      targets: [{ name: '→ static site hit', target_type: 'workflow', config: { workflow_id: 27 }, active: 1 }],
+      name: 'Site form → intake', description: 'd', active: 0, slug: 'test-cyan-tuna-44',
+      targets: [{ name: '→ static site hit', target_type: 'workflow', config: { workflow_id: 27 }, active: 1,
+        transform_mode: 'mapper',
+        transform_config: [{ to: 'contact_id', from: 'query.contact_id' }] }],
     }, 'POST', { 'Idempotency-Key': 'hook-draft-1' });
     const sent = JSON.stringify(api.mock.calls[0][1]);
-    expect(sent).not.toMatch(/slug|url|key/i);
+    expect(sent).not.toMatch(/"url"|api_key|auth_config/i);
     expect(message.action_draft).toMatchObject({ status: 'applied', result_hook_id: 12 });
     expect(P.ycAssistantNavigate).toHaveBeenCalledWith('automations.hook', { id: 12 });
   });

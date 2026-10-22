@@ -70,11 +70,42 @@ describe('the hook normalizer', () => {
       draft({ target: { kind: 'http' } }), []))
       .rejects.toThrow(/HTTP targets are not authorable|target object/);
     await expect(normalizeActionDraft(dbWith({}),
-      draft({ slug: 'my-endpoint' }), []))
+      draft({ auth_type: 'none' }), []))
       .rejects.toThrow(/unsupported fields/);
     await expect(normalizeActionDraft(dbWith({}),
       draft({ target: { kind: 'workflow', workflow_id: 27, url: 'https://x' } }), []))
       .rejects.toThrow(/target object/);
+  });
+
+  test('A19.1: a user-chosen slug is validated and collision-checked; the server generates one otherwise', async () => {
+    const db = dbWith({ workflow: { id: 27, name: 'W', active: 1, current_version: 8 } });
+    db.query.mockImplementation(async (sql) => {
+      if (/FROM workflows WHERE id/.test(sql)) return [[{ id: 27, name: 'W', active: 1, current_version: 8 }]];
+      if (/FROM hooks WHERE slug/.test(sql)) return [[]];
+      throw new Error(`db touched: ${sql}`);
+    });
+    const out = await normalizeActionDraft(db, draft({ slug: 'Test-Cyan-Tuna-44' }), []);
+    expect(out.slug).toBe('test-cyan-tuna-44');
+    await expect(normalizeActionDraft(db, draft({ slug: 'no spaces!' }), []))
+      .rejects.toThrow(/slug must be/);
+    db.query.mockImplementation(async (sql) => {
+      if (/FROM workflows WHERE id/.test(sql)) return [[{ id: 27, name: 'W', active: 1, current_version: 8 }]];
+      if (/FROM hooks WHERE slug/.test(sql)) return [[{ id: 9 }]];
+      throw new Error(`db touched: ${sql}`);
+    });
+    await expect(normalizeActionDraft(db, draft({ slug: 'taken-slug' }), []))
+      .rejects.toThrow(/already exists \(#9\)/);
+  });
+
+  test('A19.1: param_map takes only plain variables from envelope dot paths', async () => {
+    const db = dbWith({ workflow: { id: 27, name: 'W', active: 1, current_version: 8 } });
+    const out = await normalizeActionDraft(db,
+      draft({ param_map: { contact_id: 'query.contact_id', source: 'meta.slug' } }), []);
+    expect(out.param_map).toEqual({ contact_id: 'query.contact_id', source: 'meta.slug' });
+    for (const bad of [{ 'x y': 'query.a' }, { x: 'process.env' }, { x: 'query..a' }, { x: 42 }]) {
+      await expect(normalizeActionDraft(db, draft({ param_map: bad }), []))
+        .rejects.toThrow(/param_map/);
+    }
   });
 
   test('the family off switch makes the kind not exist', async () => {

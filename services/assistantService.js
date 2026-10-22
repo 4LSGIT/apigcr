@@ -131,8 +131,16 @@ const WORKFLOW_ACTION_KINDS = new Set(['workflow.draft.v1']);
 // echoes a slug, key, or URL; slugs are server-generated). HTTP targets,
 // filters and transforms stay human-only.
 const HOOK_ACTION_KINDS = new Set(['hook.create.v1']);
-const HOOK_CREATE_KEYS = new Set(['kind', 'name', 'description', 'target', 'evidence']);
+const HOOK_CREATE_KEYS = new Set(['kind', 'name', 'description', 'slug', 'target', 'param_map', 'evidence']);
 const HOOK_TARGET_KEYS = new Set(['kind', 'workflow_id', 'sequence_template_id']);
+// A19.1: the slug is OPTIONAL and user-driven (Fred asked to name his
+// endpoint); absent, the server generates one. param_map is a flat
+// workflow-variable ← envelope-path map (the receive envelope is
+// { body, headers, query, method, meta }) that becomes declarative mapper
+// rules on the target — reviewable line by line, never code.
+const HOOK_SLUG_RE = /^[a-z0-9][a-z0-9-]{2,99}$/;
+const HOOK_MAP_TO_RE = /^[A-Za-z_][A-Za-z0-9_]{0,63}$/;
+const HOOK_MAP_FROM_RE = /^(?:body|query|headers|meta)(?:\.[A-Za-z0-9_-]+){0,6}$/;
 const WORKFLOW_DRAFT_KEYS = new Set(['kind', 'name', 'description', 'steps', 'evidence']);
 const WORKFLOW_DRAFT_STEP_KEYS = new Set(['type', 'label', 'note', 'config', 'error_policy']);
 const WORKFLOW_DRAFT_POLICY_KEYS = new Set(['strategy', 'max_retries', 'backoff_seconds']);
@@ -1374,12 +1382,40 @@ async function normalizeHookCreateAction(db, value, evidence) {
   } else {
     throw httpError(422, 'Hook draft target kind must be "workflow" or "sequence" — HTTP targets are not authorable');
   }
+  let slug;
+  if (value.slug !== undefined) {
+    slug = String(value.slug).trim().toLowerCase();
+    if (!HOOK_SLUG_RE.test(slug)) {
+      throw httpError(422, 'Hook draft slug must be 3-100 characters of lowercase letters, digits and hyphens');
+    }
+    const [[clash]] = await db.query('SELECT id FROM hooks WHERE slug = ?', [slug]);
+    if (clash) throw httpError(422, `A hook with slug "${slug}" already exists (#${clash.id}) — pick another`);
+  }
+  let paramMap;
+  if (value.param_map !== undefined) {
+    const entries = value.param_map;
+    if (entries == null || typeof entries !== 'object' || Array.isArray(entries)) {
+      throw httpError(422, 'Hook draft param_map must be an object of variable: envelope-path');
+    }
+    const pairs = Object.entries(entries);
+    if (!pairs.length || pairs.length > 10) throw httpError(422, 'Hook draft param_map takes 1-10 entries');
+    paramMap = {};
+    for (const [to, from] of pairs) {
+      if (!HOOK_MAP_TO_RE.test(to)) throw httpError(422, `Hook draft param_map variable "${to}" is not a plain variable name`);
+      if (typeof from !== 'string' || !HOOK_MAP_FROM_RE.test(from)) {
+        throw httpError(422, `Hook draft param_map path for "${to}" must be a dot path under body/query/headers/meta`);
+      }
+      paramMap[to] = from;
+    }
+  }
   return {
     draft_id: crypto.randomUUID(),
     kind: 'hook.create.v1',
     status: 'draft',
     name,
     description,
+    ...(slug !== undefined ? { slug } : {}),
+    ...(paramMap !== undefined ? { param_map: paramMap } : {}),
     target: normalizedTarget,
     evidence: jobDraftEvidence(value.evidence, evidence),
   };

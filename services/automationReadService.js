@@ -148,7 +148,10 @@ async function sequenceDefinition(db, { sequence_template_id, version }) {
   const [[tpl]] = await db.query(
     'SELECT id, name, type, active, description, current_version, draft_version FROM sequence_templates WHERE id = ?', [id]);
   if (!tpl) throw err(404, `sequence template ${id} does not exist`);
-  const effective = version === undefined ? Number(tpl.current_version) : posIntOrZero(version);
+  let effective = version === undefined ? Number(tpl.current_version) : posIntOrZero(version);
+  if (version === undefined && effective === 0 && tpl.draft_version != null) {
+    effective = Number(tpl.draft_version);
+  }
   const credentialNames = await credentialNameMap(db);
   const [steps] = await db.query(
     `SELECT step_number, action_type, action_config, timing, \`condition\`, fire_guard, error_policy
@@ -180,7 +183,15 @@ async function definition(db, { workflow_id, sequence_template_id, version } = {
   const [[wf]] = await db.query(
     'SELECT id, name, active, description, current_version, draft_version FROM workflows WHERE id = ?', [id]);
   if (!wf) throw err(404, `workflow ${id} does not exist`);
-  const effective = version === undefined ? Number(wf.current_version) : posIntOrZero(version);
+  // An UNPUBLISHED workflow has current_version 0 and its steps live at
+  // draft_version — reading "version 0" returns nothing and misled a live
+  // explanation (chat 41, 2026-10-22: "it has 3 steps! look again"). With no
+  // explicit version, fall back to the draft so the definition always shows
+  // what exists.
+  let effective = version === undefined ? Number(wf.current_version) : posIntOrZero(version);
+  if (version === undefined && effective === 0 && wf.draft_version != null) {
+    effective = Number(wf.draft_version);
+  }
   const credentialNames = await credentialNameMap(db);
   const [steps] = await db.query(
     `SELECT step_number, label, note, type, config, error_policy

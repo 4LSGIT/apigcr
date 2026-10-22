@@ -79,6 +79,22 @@ describe('automation.definition — the step projection and its redaction', () =
     expect(rows).toHaveLength(3);
   });
 
+  test('an UNPUBLISHED workflow (current_version 0) falls back to its draft steps', async () => {
+    // Live failure (chat 41): reading version 0 returned "no steps" and the
+    // model argued the workflow was empty when its draft had three steps.
+    const d = dbOf([
+      [/FROM workflows WHERE id/, [{ id: 56, name: 'Chase', active: 1, description: 'd', current_version: 0, draft_version: 1 }]],
+      [/FROM credentials/, []],
+      [/FROM workflow_steps WHERE workflow_id/, (sql, params) => params[1] === 1
+        ? [{ step_number: 1, label: null, note: null, type: 'internal_function',
+            config: JSON.stringify({ function_name: 'noop', params: {} }), error_policy: null }]
+        : []],
+    ]);
+    const rows = await automation.definition(d, { workflow_id: 56 });
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ version: 1, is_draft: 1 });
+  });
+
   test('a missing workflow or empty version is a shaped error, not an empty success', async () => {
     const empty = dbOf([
       [/FROM workflows WHERE id/, []],
