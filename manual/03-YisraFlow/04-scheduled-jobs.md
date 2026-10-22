@@ -47,7 +47,7 @@ For `one_time` and `recurring` jobs, the *actual execution flavor* is stored in 
 |---|---|
 | `webhook` | HTTP request to any URL |
 | `internal_function` | Calls a built-in function from `lib/internal_functions/` |
-| `custom_code` | Runs a JS snippet in a sandboxed VM (5s timeout, no DB, no network) |
+| `custom_code` | Runs a JS snippet (no DB, 60s default timeout). `data.code_mode` `"safe"` = isolated QuickJS engine, any staff; `"standard"` or absent = full JS, needs automations.manage. See the [workflows chapter](02-workflows.md) |
 | `campaign_send` | Sends one campaign message to one contact (system-created via Campaign Manager) |
 | `task_due_reminder` | Sends a single task due-date reminder (system-created via taskService) |
 | `task_start_reminder` | Fires at 8am on a deferred task's **start** date — the moment it becomes live, and the assignee's first notice since the assignment email (system-created via taskService). Same skip rules as `task_due_reminder`. See [Tasks](../01-YisraCase-overview/05-tasks.md) |

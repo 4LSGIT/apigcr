@@ -560,10 +560,15 @@ it:
   path arrives at (workflow engine, test-step, scheduled jobs) and FAILS
   CLOSED: safe ignores the child-process flag, an unknown mode throws, and
   there is no caller-selectable fallback to Node `vm`. The 97 stored standard
-  bodies are untouched (absent mode = standard). Remaining, in order: the
-  editor UI mode picker; the Casey safe-mode authoring slice (ruling 13 in
-  `ref/ASK_CASEY_ACTIONS_PLAN.md` — approved, not yet built); whether safe
-  steps stay behind `automations.manage` (deliberately unchanged this slice);
+  bodies are untouched (absent mode = standard). S2 (same day, Fred's ruling):
+  SAFE steps are open to ALL staff — the `automations.manage` gate now covers
+  only standard mode, on every code writer (the workflow step routes,
+  test-step, AND `POST /scheduled-jobs` + `PATCH /scheduled-jobs/:id`, which
+  S2 found entirely UNGATED — the scheduled-jobs writer had been missed by the
+  original gate slice); both editors (workflows + scheduled jobs) grew a Mode
+  picker, new steps defaulting to safe. Remaining, in order: the Casey
+  safe-mode authoring slice (ruling 13 in `ref/ASK_CASEY_ACTIONS_PLAN.md` —
+  approved, not yet built);
   migrating the 41 published standard steps, still blocked on **no `Intl`** in
   the QuickJS build (published wf27/33/49/50 use `Intl.DateTimeFormat`,
   wf27/45/54 call locale `Date` methods — supply date/locale values through
@@ -632,7 +637,11 @@ and the two marked LIVE BUG are worth landing whether or not A17 ever ships.)
   /workflows/:id/steps/:stepNumber`, `POST /workflows/:id/duplicate` (it can
   move an existing code step into a workflow with a broader trigger), the
   version-materialization insert, and `POST /workflows/test-step` — a gate on
-  one of those is a gate on none of them.
+  one of those is a gate on none of them. Proven again by safe-mode S2
+  (2026-10-22): `POST /scheduled-jobs` and `PATCH /scheduled-jobs/:id` also
+  take a custom_code payload into the same executor and were NOT covered by
+  the original gate slice — closed in S2 with the same policy (safe open to
+  all staff, standard behind the capability).
 
   One scoping detail for whoever builds it, verified 2026-10-22: the
   save-time `type`-key guard lives in `validateInternalFunctionConfig`, which

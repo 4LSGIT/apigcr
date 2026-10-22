@@ -1988,7 +1988,7 @@ function wfStepCardHTML(step, idx, edges, ctx) {
   let main = step.type, sub = '';
   if (step.type === 'internal_function') { main = cfg.function_name || 'function'; sub = cfg.params?.to || cfg.params?.url || ''; }
   else if (step.type === 'webhook')      { main = cfg.url ? trimUrl(cfg.url) : 'Webhook'; sub = cfg.method || 'GET'; }
-  else if (step.type === 'custom_code')  { main = 'Custom Code'; sub = (cfg.code || '').slice(0, 40); }
+  else if (step.type === 'custom_code')  { main = cfg.code_mode === 'safe' ? 'Custom Code (safe)' : 'Custom Code'; sub = (cfg.code || '').slice(0, 40); }
   // Label/note slice — an authored label wins the headline; the derived
   // heuristic drops to the sub line so the technical detail stays visible.
   if (step.label) { sub = main + (sub ? ` · ${sub}` : ''); main = step.label; }
@@ -2192,10 +2192,24 @@ function wfRenderConfigFields(type, cfg) {
       <div id="e-fn-body">${wfRenderInternalFnBody(currentFn, cfg.params || {})}</div>
       <div class="field"><label>set_vars (JSON)</label><textarea id="e-setvars" rows="3">${cfg.set_vars ? JSON.stringify(cfg.set_vars, null, 2) : ''}</textarea></div>`;
   }
-  if (type === 'custom_code') return `${toggle}
+  if (type === 'custom_code') {
+    // Mode: absent on an EXISTING step (it has code) means standard — that is
+    // what the step has always run as; a brand-new step defaults to safe.
+    const codeMode = cfg.code_mode === 'safe' ? 'safe'
+      : cfg.code_mode === 'standard' ? 'standard'
+      : (cfg.code ? 'standard' : 'safe');
+    return `${toggle}
+    <div class="field"><label>Mode</label>
+      <select id="e-codemode">
+        <option value="safe" ${codeMode === 'safe' ? 'selected' : ''}>Safe — sandboxed (recommended)</option>
+        <option value="standard" ${codeMode === 'standard' ? 'selected' : ''}>Standard — full JS (admin only)</option>
+      </select>
+      <div style="font-size:11px;color:var(--text-muted);margin-top:3px">Safe runs in an isolated engine: no network, no require, no Intl — pass dates and locale values in via Input. Standard needs the automations.manage capability.</div>
+    </div>
     <div class="field"><label>Code</label><textarea id="e-code" rows="10">${esc(cfg.code || '')}</textarea></div>
     <div class="field"><label>Input (JSON)</label><textarea id="e-input" rows="3">${cfg.input ? JSON.stringify(cfg.input, null, 2) : '{}'}</textarea></div>
     <div class="field"><label>set_vars (JSON)</label><textarea id="e-setvars" rows="3">${cfg.set_vars ? JSON.stringify(cfg.set_vars, null, 2) : ''}</textarea></div>`;
+  }
   return toggle;
 }
 
@@ -2751,6 +2765,13 @@ function wfGatherConfig(type) {
     if (input === 'ERROR' || sv === 'ERROR') return null;
     const cfg = _wfSeedFromOrig('custom_code');
     cfg.code = val('e-code');
+    // Mode is written when it says anything beyond the absent-means-standard
+    // default, or when the stored config already carried the key (the seed
+    // brings it in). A no-change save of a pre-mode step must round-trip
+    // byte-identical — the editor never rewrites configs it merely displays
+    // (tests/workflows.editor.roundtrip.test.js pins that).
+    const codeModeSel = val('e-codemode') === 'standard' ? 'standard' : 'safe';
+    if (codeModeSel === 'safe' || 'code_mode' in cfg) cfg.code_mode = codeModeSel;
     cfg.input = input;
     if (sv) cfg.set_vars = sv; else delete cfg.set_vars;
     return cfg;
@@ -4694,7 +4715,7 @@ function _wfExplainStep(step) {
     `;
   } else if (step.type === 'custom_code') {
     const preview = (cfg.code || '').slice(0, 200);
-    body = `<div class="ex-line"><b>Run custom JavaScript</b></div><pre class="ex-code">${_wfEsc(preview)}${(cfg.code || '').length > 200 ? '\n…' : ''}</pre>`;
+    body = `<div class="ex-line"><b>Run custom JavaScript${cfg.code_mode === 'safe' ? ' (safe mode — sandboxed)' : ''}</b></div><pre class="ex-code">${_wfEsc(preview)}${(cfg.code || '').length > 200 ? '\n…' : ''}</pre>`;
   } else if (step.type === 'internal_function') {
     const fn = cfg.function_name;
     const explainer = _wfExplainers[fn];

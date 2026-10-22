@@ -249,10 +249,12 @@ const validateInternalFunctionParams = internalFunctions.__validateFunctionParam
 // that capability was defined for.
 //
 // SAFE mode (config.code_mode === 'safe', QuickJS guest engine — see
-// lib/safeCodeRunner.js) is contained and does not need this gate on security
-// grounds, but the gate deliberately still covers BOTH modes: relaxing it for
-// safe steps is a separate ruling for the Casey authoring slice, not a side
-// effect of the engine landing.
+// lib/safeCodeRunner.js) is open to ALL staff (Fred's ruling, 2026-10-22): the
+// body runs where an escape finds no host realm, no process and no network, so
+// a safe step is not arbitrary server-side execution. Only the literal string
+// 'safe' passes ungated — absent means standard, and any other value is
+// treated as standard here (the config validator 400s it anyway), so the gate
+// fails closed. A wider automations role model is its own arc (ref/plans.md).
 //
 // Scope, deliberately: only the paths that take a step type FROM THE REQUEST.
 // ensureDraft's draft fork and POST /workflows/:id/duplicate COPY stored rows,
@@ -268,13 +270,14 @@ const validateInternalFunctionParams = internalFunctions.__validateFunctionParam
 //
 // Returns null when allowed, or { status, error, message }.
 // ─────────────────────────────────────────────────────────────
-function refuseCodeStepWithoutCapability(auth, stepType) {
+function refuseCodeStepWithoutCapability(auth, stepType, config) {
   if (stepType !== 'custom_code') return null;
+  if (config != null && typeof config === 'object' && config.code_mode === 'safe') return null;
   if (can(auth, 'automations.manage')) return null;
   return {
     status: 403,
-    error: 'custom_code steps require the automations.manage capability',
-    message: 'A code step runs arbitrary server-side code. Ask an administrator to add it, or use an internal_function or webhook step.'
+    error: 'standard custom_code steps require the automations.manage capability',
+    message: 'A standard code step runs arbitrary server-side code. Use a safe-mode code step (mode "safe"), an internal_function or a webhook step — or ask an administrator.'
   };
 }
 
@@ -1596,7 +1599,7 @@ router.post("/workflows/:id/steps", jwtOrApiKey, async (req, res) => {
 
   // Timing-extensions slice — validate wait_for / schedule_resume params
   {
-    const codeRefusal = refuseCodeStepWithoutCapability(req.auth, type);
+    const codeRefusal = refuseCodeStepWithoutCapability(req.auth, type, config);
     if (codeRefusal) return res.status(codeRefusal.status).json(codeRefusal);
     const v = validateInternalFunctionConfig(type, config);
     if (v) return res.status(v.status).json({ error: v.error, message: v.message });
@@ -1745,7 +1748,7 @@ router.post("/workflows/bulk", jwtOrApiKey, async (req, res) => {
 
     // Timing-extensions slice — validate wait_for / schedule_resume params
     {
-      const codeRefusal = refuseCodeStepWithoutCapability(req.auth, step.type);
+      const codeRefusal = refuseCodeStepWithoutCapability(req.auth, step.type, step.config);
       if (codeRefusal) return res.status(codeRefusal.status).json(codeRefusal);
       const v = validateInternalFunctionConfig(step.type, step.config);
       if (v) return res.status(v.status).json({
@@ -2281,7 +2284,7 @@ router.put("/workflows/:id/steps/:stepNumber", jwtOrApiKey, async (req, res) => 
 
   // Timing-extensions slice — validate wait_for / schedule_resume params
   {
-    const codeRefusal = refuseCodeStepWithoutCapability(req.auth, type);
+    const codeRefusal = refuseCodeStepWithoutCapability(req.auth, type, config);
     if (codeRefusal) return res.status(codeRefusal.status).json(codeRefusal);
     const v = validateInternalFunctionConfig(type, config);
     if (v) return res.status(v.status).json({ error: v.error, message: v.message });
@@ -2446,7 +2449,7 @@ router.patch("/workflows/:id/steps/:stepNumber", jwtOrApiKey, async (req, res) =
       // Inside the transaction callback, so it returns the route's `respond`
       // shape rather than touching res — the surrounding validators do the
       // same, and calling res here would double-respond after `outcome`.
-      const codeRefusal = refuseCodeStepWithoutCapability(req.auth, typeToCheck);
+      const codeRefusal = refuseCodeStepWithoutCapability(req.auth, typeToCheck, configToCheck);
       if (codeRefusal) {
         return { respond: { status: codeRefusal.status, body: { error: codeRefusal.error, message: codeRefusal.message } } };
       }
@@ -2914,9 +2917,6 @@ router.post("/workflows/test-step", jwtOrApiKey, async (req, res) => {
     return res.status(400).json({ error: "step.type and step.config are required" });
   }
 
-  const codeRefusal = refuseCodeStepWithoutCapability(req.auth, step.type);
-  if (codeRefusal) return res.status(codeRefusal.status).json(codeRefusal);
-
   const VALID_TYPES = ["webhook", "internal_function", "custom_code"];
   if (!VALID_TYPES.includes(step.type)) {
     return res.status(400).json({ error: `Invalid step type: ${step.type}` });
@@ -2928,6 +2928,11 @@ router.post("/workflows/test-step", jwtOrApiKey, async (req, res) => {
     try { config = JSON.parse(config); }
     catch { return res.status(400).json({ error: "step.config is not valid JSON" }); }
   }
+
+  // After the parse, so the gate reads code_mode from the object form — a
+  // string-bodied safe step must not be refused as standard.
+  const codeRefusal = refuseCodeStepWithoutCapability(req.auth, step.type, config);
+  if (codeRefusal) return res.status(codeRefusal.status).json(codeRefusal);
 
   // Parse error_policy if present
   let errorPolicy = step.error_policy || { strategy: "ignore" };

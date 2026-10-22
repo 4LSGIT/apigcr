@@ -632,8 +632,14 @@ async function jobNew() {
         <div id="sj-timeout-wrap" class="sj-field" style="display:none"><span class="sj-label">Timeout (ms)</span>
           <input id="sj-timeout" class="sj-el" type="number" min="1" max="120000" value="30000">
           <div class="sj-note">Default 30000, max 120000.</div></div>
+        <div id="sj-code-mode-wrap" class="sj-field" style="display:none"><span class="sj-label">Mode</span>
+          <select id="sj-code-mode" class="sj-el">
+            <option value="safe">Safe — sandboxed (recommended)</option>
+            <option value="standard">Standard — full JS (admin only)</option>
+          </select></div>
         <div id="sj-code-wrap" class="sj-field" style="display:none"><span class="sj-label">Code</span>
-          <textarea id="sj-code" class="sj-el" style="min-height:80px" placeholder="const result = input.x + input.y; result;"></textarea></div>
+          <textarea id="sj-code" class="sj-el" style="min-height:80px" placeholder="const result = input.x + input.y; result;"></textarea>
+          <div style="font-size:11px;color:var(--text-muted);margin-top:3px">Safe mode runs in an isolated engine: no network, no require, no Intl — pass dates in via the job input. Standard needs the automations.manage capability.</div></div>
         <hr class="sj-divider">
         <div class="sj-row">
           <div class="sj-field"><span class="sj-label">Delay from now</span>
@@ -748,6 +754,7 @@ async function jobNew() {
         }
       } else if (job_type === 'custom_code') {
         payload.code = document.getElementById('sj-code').value;
+        payload.code_mode = document.getElementById('sj-code-mode').value === 'standard' ? 'standard' : 'safe';
       }
 
       if (type === 'recurring') {
@@ -782,6 +789,7 @@ function sjToggleFields() {
   show('sj-method-wrap',       jobType === 'webhook');
   show('sj-cred-wrap',         jobType === 'webhook');
   show('sj-timeout-wrap',      jobType === 'webhook');
+  show('sj-code-mode-wrap',    jobType === 'custom_code');
   show('sj-code-wrap',         jobType === 'custom_code');
   show('sj-recurring-fields',  schedType === 'recurring');
   // Hide warning when leaving webhook — fields are about to disappear so
@@ -1240,7 +1248,7 @@ async function jobView(id) {
                `<strong>Timeout:</strong> ${esc(timeoutLabel)}`;
     }
     else if (jobType === 'custom_code')
-      config = `<strong>Code:</strong> <pre style="background:var(--surface-2);padding:6px 8px;border-radius:4px;font-size:11px;margin:4px 0;max-height:120px;overflow:auto">${esc((jobData.code || '').slice(0, 500))}</pre>`;
+      config = `<strong>Code${jobData.code_mode === 'safe' ? ' (safe mode)' : ''}:</strong> <pre style="background:var(--surface-2);padding:6px 8px;border-radius:4px;font-size:11px;margin:4px 0;max-height:120px;overflow:auto">${esc((jobData.code || '').slice(0, 500))}</pre>`;
 
     let body = `<div style="text-align:left;font-size:13px;line-height:1.7">
       <strong>Name:</strong> ${esc(data.name || '(unnamed)')}<br>

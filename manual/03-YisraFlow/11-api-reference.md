@@ -184,7 +184,7 @@ The shrinkage check is the only place a PUT can 409 — adding fields, reorderin
 
 `POST /scheduled-jobs` body — see chapter 4 for full shapes. Key fields:
 - `type` — `one_time` or `recurring`
-- `job_type` — `webhook`, `internal_function`, `custom_code` (translates to `data.type`)
+- `job_type` — `webhook`, `internal_function`, `custom_code` (translates to `data.type`; for `custom_code`, `code_mode` `"safe"` is open to all staff, `"standard"`/absent needs automations.manage)
 - Either `delay` (`"30s"`, `"10m"`, `"2h"`, `"1d"`) or `scheduled_time` (ISO)
 - For `recurring`: `recurrence_rule`, optional `max_executions`, `expires_at`
 

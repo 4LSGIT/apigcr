@@ -5,6 +5,7 @@ const jwtOrApiKey = require("../lib/auth.jwtOrApiKey");
 const ms = require("ms"); //  for parsing "5m", "2h", etc.
 const { CronExpressionParser } = require("cron-parser"); // resume → next future tick
 const internalFunctions = require("../lib/internal_functions"); // __validateFunctionParams (Slice 5)
+const { can } = require("../lib/capabilities");
 const { escapeLike } = require("../lib/escapeLike");
 
 // Helper: parse delay string to milliseconds
@@ -81,6 +82,29 @@ async function validateWebhookJobData(db, data) {
   return null;
 }
 
+// custom_code gate, mirroring routes/workflows.js refuseCodeStepWithoutCapability.
+// This writer was the hole in the original gate (found 2026-10-22, safe-mode
+// S2): POST /scheduled-jobs and PATCH /scheduled-jobs/:id both accepted a
+// custom_code payload from any staff JWT while the workflow writers were
+// gated — and both execute through the same lib/job_executor. Same policy as
+// workflows: SAFE mode (code_mode 'safe', QuickJS guest engine —
+// lib/safeCodeRunner.js) is open to all staff per Fred's 2026-10-22 ruling;
+// STANDARD (absent or 'standard') is arbitrary server-side execution and
+// needs automations.manage. Only the literal 'safe' passes ungated; an
+// unknown value is a 400, so the gate fails closed.
+function refuseStandardCodeJob(auth, code_mode) {
+  if (code_mode !== undefined && code_mode !== 'standard' && code_mode !== 'safe') {
+    return { status: 400, error: 'code_mode must be "standard" or "safe"' };
+  }
+  if (code_mode === 'safe') return null;
+  if (can(auth, 'automations.manage')) return null;
+  return {
+    status: 403,
+    error: 'standard custom_code jobs require the automations.manage capability',
+    message: 'A standard code job runs arbitrary server-side code. Use code_mode "safe", an internal_function or a webhook job — or ask an administrator.'
+  };
+}
+
 router.post("/scheduled-jobs", jwtOrApiKey, async (req, res) => {
   const db = req.db;
   const {
@@ -102,7 +126,7 @@ router.post("/scheduled-jobs", jwtOrApiKey, async (req, res) => {
     credential_id,                                     // webhook (optional, FK → credentials.id)
     timeout_ms,                                        // webhook (optional, capped at 120000ms)
     function_name, params = {},                        // internal_function
-    code, input = {},                                  // custom_code
+    code, input = {}, code_mode,                       // custom_code
   } = req.body;
 
   // --------------
@@ -164,8 +188,11 @@ router.post("/scheduled-jobs", jwtOrApiKey, async (req, res) => {
     if (v) return res.status(v.status || 400).json({ error: v.error });
   } else if (job_type === "custom_code") {
     if (!code) return res.status(400).json({ error: "code is required" });
+    const g = refuseStandardCodeJob(req.auth, code_mode);
+    if (g) return res.status(g.status).json({ error: g.error, message: g.message });
     jobData.code = code;
     jobData.input = input;
+    if (code_mode !== undefined) jobData.code_mode = code_mode;
   }
 
   // --------------
@@ -593,9 +620,16 @@ router.patch("/scheduled-jobs/:id", jwtOrApiKey, async (req, res) => {
       const v = await validateWebhookJobData(db, data);
       if (v) return res.status(v.status).json({ error: v.error });
 
+      // custom_code data payloads are gated like the create route: a PATCH
+      // replaces the whole data object, so it is a code writer too.
+      if (data && typeof data === 'object' && data.type === 'custom_code') {
+        const g = refuseStandardCodeJob(req.auth, data.code_mode);
+        if (g) return res.status(g.status).json({ error: g.error, message: g.message });
+      }
+
       // Slice 5 — validate internal_function job data (function_name presence
       // + metadata-driven param validation shared with the workflow routes).
-      // Other data types (custom_code, unknown) keep permissive pass-through.
+      // Unknown data types keep permissive pass-through.
       if (data && typeof data === 'object' && data.type === 'internal_function') {
         const fn = data.function_name;
         if (!fn || typeof fn !== 'string' || !fn.trim()) {

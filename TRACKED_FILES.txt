@@ -1486,6 +1486,7 @@ tests/requestIdempotency.test.js
 tests/requirementService.test.js
 tests/safeCodeMode.test.js
 tests/scheduleResume.accel.test.js
+tests/scheduledJobs.codeGate.test.js
 tests/scheduledJobs.doorbell.test.js
 tests/scheduledJobs.sequenceStepGuard.test.js
 tests/schemaCollationBin.test.js

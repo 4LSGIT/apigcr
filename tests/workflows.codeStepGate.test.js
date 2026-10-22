@@ -111,6 +111,8 @@ function send(method, urlPath, payload) {
 }
 
 const CODE_STEP = { type: 'custom_code', config: { code: 'return { ok: 1 };' } };
+const STANDARD_CODE_STEP = { type: 'custom_code', config: { code: '1;', code_mode: 'standard' } };
+const SAFE_CODE_STEP     = { type: 'custom_code', config: { code: '1;', code_mode: 'safe' } };
 const FN_STEP   = { type: 'internal_function', config: { function_name: 'noop', params: {} } };
 
 // Every route that takes a step type from the request body.
@@ -140,6 +142,48 @@ describe('custom_code is refused without automations.manage', () => {
     mockAuth = SCOPED_KEY;
     const r = await send('POST', '/workflows/test-step', { step: CODE_STEP });
     expect(r.status).toBe(403);
+  });
+});
+
+describe('safe-mode code steps are open to all staff (Fred ruling 2026-10-22)', () => {
+  // code_mode:'safe' runs in the QuickJS guest engine, where an escape finds
+  // no host realm — so the capability gate covers only STANDARD mode. Absent
+  // means standard (CODE_STEP above), so the open path needs the literal key.
+  test.each(WRITERS)('%s %s lets plain staff write a SAFE code step', async (m, path, wrap) => {
+    mockAuth = STAFF;
+    const r = await send(m, path, wrap(SAFE_CODE_STEP));
+    expect(r.status).not.toBe(403);
+    expect(r.status).not.toBe(400);
+  });
+
+  test('POST /workflows/test-step lets plain staff run a SAFE step', async () => {
+    mockAuth = STAFF;
+    const r = await send('POST', '/workflows/test-step', { step: SAFE_CODE_STEP, variables: {}, env: {}, dry_run: true });
+    expect(r.status).not.toBe(403);
+  });
+
+  test('a string-bodied SAFE step on test-step is not refused as standard', async () => {
+    // The gate runs after the config parse — a step whose config arrives as a
+    // JSON string (the documented body shape) must read its mode.
+    mockAuth = STAFF;
+    const r = await send('POST', '/workflows/test-step', {
+      step: { type: 'custom_code', config: JSON.stringify({ code: '1;', code_mode: 'safe' }) },
+      variables: {}, env: {}, dry_run: true,
+    });
+    expect(r.status).not.toBe(403);
+  });
+
+  test('an EXPLICIT standard step is still refused for staff', async () => {
+    mockAuth = STAFF;
+    const r = await send('POST', '/workflows/5/steps', STANDARD_CODE_STEP);
+    expect(r.status).toBe(403);
+    expect(r.body.error).toMatch(/automations\.manage/);
+  });
+
+  test('a scoped machine key may write a SAFE step too', async () => {
+    mockAuth = SCOPED_KEY;
+    const r = await send('POST', '/workflows/test-step', { step: SAFE_CODE_STEP, dry_run: true });
+    expect(r.status).not.toBe(403);
   });
 });
 

@@ -166,12 +166,18 @@ Runs a built-in function. See [05-internal-functions.md](05-internal-functions.m
 ```
 
 #### `custom_code`
-JS snippet in a sandboxed VM. **No network access. No DB access. 5-second timeout. No retry safety.** The "nuclear option" — prefer adding a function under `lib/internal_functions/` instead, but it's there for one-off data shaping.
+JS snippet. Two modes, picked with the editor's **Mode** select (`code_mode` in the config):
+
+- **Safe** (`"safe"` — recommended, the default for new steps) — runs in an isolated QuickJS engine. No network, no DB, no `require`, and no `Intl` — pass dates and locale-formatted values in via `input`. Any staff member can add one.
+- **Standard** (`"standard"`, or the key absent — every step from before modes existed) — full JavaScript in the server's Node VM. Requires the **automations.manage** capability (admin / IT / SU). Prefer adding a function under `lib/internal_functions/` instead.
+
+Both modes: no DB access, 60-second default timeout (`timeout_ms` in the config overrides, capped at 5 minutes), no retry safety, `input` and `console.log` in scope.
 
 ```json
 {
   "code": "const total = input.values.reduce((a, b) => a + b, 0); total;",
-  "input": { "values": [1, 2, 3] }
+  "input": { "values": [1, 2, 3] },
+  "code_mode": "safe"
 }
 ```
 
