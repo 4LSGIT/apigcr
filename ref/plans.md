@@ -505,6 +505,24 @@ failed-send dispatch are live; wf 54 sends the notices.)
   either route through the registry or state the direct-require as deliberate
   in the sweep headers + COMMS_ARCHIVE_DESIGN §6.
 
+## From the log-comm-date arc (2026-10-22, arc closed) — deferred
+
+(Live: eab6b88, a170bf1, ac49dac. Manual: 01-YisraCase-overview/06-activity-log
+and 16-communications-tab; AI_CONTEXT §20.)
+
+- **comms.html date filtering** — held by Fred 2026-10-22. Its Mail and Phone
+  views page by keyset over plan-pinned index walks (phoneCommsService header,
+  mailReadService), so a date range must join each walk's plan and be proven
+  with EXPLAIN; manual call logs never appear there anyway. Build when someone
+  needs date search in Mail or Phone.
+- **Engine-written backdates are unmarked** — create_log / phone_log forward
+  their params wholesale to createLogEntry, so a step passing `date` writes a
+  backdated row with no log_extra.logged_at and no "entered" marker. No live
+  definition does (checked 2026-10-22). If one ever should, stamp logged_at in
+  those shims, or strip `date` there.
+- **Log Call tab overhangs 1px at 320px** in communicate.html's tab bar
+  (pre-existing; identical on the pre-arc page). Cosmetic.
+
 ## custom_code containment — what the child process does NOT close (2026-10-22)
 
 Execution moved into a forked, scrubbed child (CLAUDE.md's invariant list has
