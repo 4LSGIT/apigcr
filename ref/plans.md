@@ -522,11 +522,30 @@ it:
   `lib/customCodeHarden.js` refuses sockets, DNS and the `child_process`
   pivot from the module loader, which raises the cost but is monkey-patching,
   not a boundary — native bindings it does not cover remain.
-- **The real fix is one of two things**: an isolate where no host-realm object
-  is reachable at all (`isolated-vm`, a native dependency — the Dockerfile is
-  `node:24-slim`, so this needs build tooling or a prebuilt binary), or egress
-  restriction on the child. Neither is worth it while code steps are pure
-  transforms; both become necessary the moment one is not.
+- **The module-loader denial is BYPASSED, demonstrated 2026-10-22.** Under the
+  exact preload, a probe obtained
+  `process.getBuiltinModule('child_process').execFile` and
+  `process.getBuiltinModule('fs').readFileSync` — the Node 22+ accessor, which
+  never goes through `Module._load`. So `require` is closed and the capability
+  is not. Evidence: `local/casey-code-investigation/report.txt`. Patching
+  `getBuiltinModule` too would be another round of the same game; the
+  conclusion is that monkey-patching is the wrong tool, not that it needs one
+  more patch.
+- **The real fix is a guest engine, and QuickJS compiled to WebAssembly is the
+  candidate** (same investigation): no module loader, no Node objects, no
+  fetch, no filesystem, no host callbacks, with time and memory limits, kept
+  inside the existing killable child. Feasibility checked — all 97 stored
+  bodies compile, and ten synthetic behaviours pass — with one real blocker:
+  that build has **no `Intl`**, and the current published wf27/33/49/50 use
+  `Intl.DateTimeFormat` while wf27/45/54 call locale `Date` methods. So the
+  first slice is NEW Casey-authored steps on a versioned safe mode, every
+  execution path (test-step and draft starts included) routed through one
+  mode-aware executor with no caller-selectable fallback to Node `vm`, and the
+  41 steps in current published versions left where they are. Supply date and
+  locale values through inputs or a reviewed pure formatter rather than an
+  ad-hoc Intl polyfill. `isolated-vm` remains the alternative (a native
+  dependency on `node:24-slim`), and egress restriction on the child is the
+  orthogonal mitigation that closes the metadata server whichever engine wins.
 - **So "a code step is harmless by construction" is NOT true today**, and no
   authoring decision should be justified by the child boundary alone. The
   honest claim is that the worst case fell from "the database" to "whatever an
