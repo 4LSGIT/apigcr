@@ -78,6 +78,19 @@ describe('every shipped action kind is taught to every model stage', () => {
     }
   });
 
+  test('the ACTION LEDGER accepts every kind — it is a registry too, found the hard way', () => {
+    // Third enumeration, third live failure (2026-10-22): the P5 ledger's
+    // KINDS map is built from template literals, so the arc-wide grep for the
+    // kind strings never saw it, and issue() refused the job kind at proposal
+    // time with 'Unavailable action kind' — AFTER the prompts and normalizer
+    // all knew it. Inventory by the claim, not the literal.
+    const ledger = require(path.join(REPO, 'services', 'assistantActionLedger'));
+    for (const kind of kinds) {
+      expect({ kind, inLedger: ledger.KINDS.has(kind) }).toEqual({ kind, inLedger: true });
+      expect(typeof ledger.KINDS.get(kind)).toBe('string');
+    }
+  });
+
   test('the INVESTIGATE prompt does not enumerate families more narrowly than the plan', () => {
     // It only needs to not contradict: the old text said "task or event
     // proposal", which read as an exhaustive list to the model.
