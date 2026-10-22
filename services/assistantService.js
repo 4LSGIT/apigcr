@@ -1985,13 +1985,28 @@ async function investigateNext(db, approved, attached, evidence, plans, budget, 
 // automation evidence (lib/aiPrompts/automationRunExplainer.js) — the six
 // measured engine traps and the curated cause catalog cost tokens only on
 // automation questions.
+function hasAutomationEvidence(evidence) {
+  return (Array.isArray(evidence) ? evidence : [])
+    .some((q) => String(q && q.kind || '').startsWith('automation.'));
+}
+
 function answerSystemAppend(approved, evidence) {
   const base = currentContext(approved.viewer, approved.workspace);
-  const hasAutomation = (Array.isArray(evidence) ? evidence : [])
-    .some((q) => String(q && q.kind || '').startsWith('automation.'));
-  if (!hasAutomation) return base;
+  if (!hasAutomationEvidence(evidence)) return base;
   const { AUTOMATION_RUN_EXPLAINER } = require('../lib/aiPrompts/automationRunExplainer');
   return `${base}\n${AUTOMATION_RUN_EXPLAINER}`;
+}
+
+// The answer prompt registers max_tokens 2500, which every record answer fits
+// inside — and a workflow.draft.v1 card does NOT: its steps array plus the
+// prose truncated the JSON mid-stream, aiService stamped json_parse, and the
+// user saw "The assistant request failed" twice (live, 2026-10-22 15:11 UTC,
+// alert 2008). Same philosophy as the automation round budget: the bigger
+// ceiling is paid only when automation evidence is in play.
+const ANSWER_MAX_TOKENS_AUTOMATION = 8000;
+
+function answerMaxTokens(evidence) {
+  return hasAutomationEvidence(evidence) ? ANSWER_MAX_TOKENS_AUTOMATION : undefined;
 }
 
 async function execute(db, { signedTicket, userId, auth, temporaryAttachments } = {}) {
@@ -2141,6 +2156,9 @@ async function execute(db, { signedTicket, userId, auth, temporaryAttachments } 
     attachments: attached.blocks,
     model: attachmentService.modelForMode(approved.modelMode),
     outputType: 'json', timeout_ms: ANSWER_TIMEOUT_MS,
+    // undefined keeps the prompt's registered cap (2500) for every
+    // non-automation answer.
+    max_tokens: answerMaxTokens(evidence),
     consumerRef: `assistant_answer:u${Number(userId) || 0}`,
     logContent: false,
   });
@@ -2192,7 +2210,7 @@ module.exports = {
   normalizeSuggestions, contextualAnswer, actionsForRow, actionsForEvidence,
   normalizeWorkspaceContext, validateWorkspaceContext, normalizeDestinations,
   normalizeActionDraft, taskDraftRequested, unavailableTaskDraftAnswer, repairActionDraft,
-  repairFailure, loadViewer, normalizeViewer, stepFingerprint, renumberPlan, answerSystemAppend,
+  repairFailure, loadViewer, normalizeViewer, stepFingerprint, renumberPlan, answerSystemAppend, answerMaxTokens,
   MAX_STEPS, MAX_ROWS, MAX_INVESTIGATION_ROUNDS, MAX_INVESTIGATION_STEPS,
   MAX_INVESTIGATION_ROWS, MAX_INVESTIGATION_MS, MAX_INVESTIGATION_OUTPUT_TOKENS,
   ASSISTANT_DENIED,

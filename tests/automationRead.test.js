@@ -351,6 +351,46 @@ describe('A17.1 — the run-explainer rides only with automation evidence', () =
     expect(withAutomation.indexOf('current_staff')).toBeLessThan(withAutomation.indexOf('AUTOMATION RUN READING RULES'));
   });
 
+  test('automation evidence raises the answer output ceiling — a workflow card cannot fit in 2500 tokens', () => {
+    // Live failure 2026-10-22 15:11 UTC (alert 2008): the answer prompt's
+    // registered cap truncated a workflow.draft.v1 card's JSON mid-stream,
+    // aiService stamped json_parse, and the user saw the generic 502 twice.
+    expect(svc.answerMaxTokens([{ kind: 'sql.read', rows: [] }])).toBeUndefined();
+    expect(svc.answerMaxTokens([{ kind: 'automation.definition', rows: [] }])).toBeGreaterThanOrEqual(8000);
+  });
+
+  test('the raised ceiling is WIRED into the answer call (plan → execute, automation carrier)', async () => {
+    const aiService = require(path.join(__dirname, '..', 'services', 'aiService'));
+    const OLD_SECRET = process.env.JWT_SECRET;
+    process.env.JWT_SECRET = process.env.JWT_SECRET || 'automation-read-test-secret';
+    const db = {
+      query: jest.fn(async (sql) => {
+        if (/FROM users WHERE user/.test(sql)) return [[{ user: 7, user_name: 'S S', user_initials: 'SS', roles: 'staff' }]];
+        if (/FROM workflows w/.test(sql)) return [[{ workflow_id: 1, name: 'W', active: 1, current_version: 1, draft_version: null, description: '', step_count: 1 }]];
+        return [[]];
+      }),
+    };
+    const spy = jest.spyOn(aiService, 'call')
+      // plan(): direct answer to an action request → server backstop makes the
+      // automation.list carrier plan.
+      .mockResolvedValueOnce({ ok: true, callId: 1, json: { action: 'answer', answer: 'Card on the way.' } })
+      // execute(): the investigate controller finishes...
+      .mockResolvedValueOnce({ ok: true, callId: 2, json: { action: 'finish', reason: 'enough' } })
+      // ...and the answer call returns a minimal valid answer.
+      .mockResolvedValueOnce({ ok: true, callId: 3, json: { answer: 'Done.', suggestions: [], action_draft: null } });
+    try {
+      const made = await svc.plan(db, { question: 'Build a workflow that chases missing documents', history: [], userId: 7 });
+      expect(made.outcome).toBe('plan');
+      await svc.execute(db, { signedTicket: made.ticket, userId: 7, auth: { type: 'jwt', userId: 7, roles: ['staff'] } });
+      const answerCall = spy.mock.calls.find(([, opts]) => opts.promptKey === 'assistant_answer');
+      expect(answerCall).toBeDefined();
+      expect(answerCall[1].max_tokens).toBe(8000);
+    } finally {
+      process.env.JWT_SECRET = OLD_SECRET;
+      spy.mockRestore();
+    }
+  });
+
   test('the rules carry the six measured traps and the output contract', () => {
     const { AUTOMATION_RUN_EXPLAINER } = require(path.join(__dirname, '..', 'lib', 'aiPrompts', 'automationRunExplainer'));
     for (const marker of [
