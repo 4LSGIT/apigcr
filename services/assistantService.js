@@ -1250,8 +1250,14 @@ async function normalizeWorkflowDraftAction(db, value, evidence) {
   const { CASEY_AUTHORABLE_FUNCTIONS } = require('../lib/caseyAutomationAllowlist');
   const steps = value.steps.map((step, index) => {
     const at = `step ${index + 1}`;
-    if (!step || typeof step !== 'object' || !onlyKeys(step, WORKFLOW_DRAFT_STEP_KEYS)) {
-      throw httpError(422, `Workflow draft ${at} carries unsupported fields`);
+    if (!step || typeof step !== 'object') throw httpError(422, `Workflow draft ${at} is malformed`);
+    // step_number is accepted and IGNORED: array order is authoritative (the
+    // bulk route numbers by position), and P12's evidence rows show
+    // step_number, so models copy it in. Everything else unknown is refused
+    // BY NAME, so the repair stage can actually fix it.
+    const unknownKeys = Object.keys(step).filter((k) => k !== 'step_number' && !WORKFLOW_DRAFT_STEP_KEYS.has(k));
+    if (unknownKeys.length) {
+      throw httpError(422, `Workflow draft ${at} carries unsupported fields: ${unknownKeys.join(', ')} — remove them`);
     }
     const label = String(step.label == null ? '' : step.label).trim().slice(0, 100);
     const note = String(step.note == null ? '' : step.note).trim().slice(0, 1000);
@@ -1398,7 +1404,8 @@ async function repairActionDraft(db, approved, evidence, rejectedValue, rejectio
   try {
     const draft = await normalizeActionDraft(db, ai.json && ai.json.action_draft, evidence, { currentUserId: userId });
     return draft || null;
-  } catch (_) {
+  } catch (err) {
+    console.error(`[assistant] repaired action draft rejected again: ${err && err.message}`);
     return null;
   }
 }
@@ -2180,8 +2187,13 @@ async function execute(db, { signedTicket, userId, auth, temporaryAttachments } 
       rejection = err;
     }
     if (rejection) {
+      // The kind and the rejection message are diagnosable from logs; the
+      // draft body is NOT logged (it can carry client data). Added after a
+      // live no-card failure whose cause was invisible (2026-10-22).
+      console.error(`[assistant] action draft rejected (kind=${body.action_draft && body.action_draft.kind}): ${rejection.message}`);
       actionDraft = await repairActionDraft(db, approved, evidence, body.action_draft, rejection, userId);
       draftStatus = actionDraft ? 'repaired' : 'unavailable';
+      if (!actionDraft) console.error(`[assistant] action draft repair also failed (kind=${body.action_draft && body.action_draft.kind})`);
     } else {
       draftStatus = 'ready';
     }

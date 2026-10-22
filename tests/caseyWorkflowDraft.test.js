@@ -87,6 +87,34 @@ describe('the workflow-draft normalizer', () => {
     }), [])).rejects.toThrow(/must not contain a "type" key/);
   });
 
+  test('step_number is accepted and ignored; other unknown keys are refused BY NAME', async () => {
+    // P12 evidence rows carry step_number, so models copy it in — live
+    // no-card failure, 2026-10-22. Array order stays authoritative.
+    const out = await normalizeActionDraft(dbNoCollision, draft({
+      steps: [{ step_number: 1, type: 'internal_function',
+        config: { function_name: 'noop', params: {} } }],
+    }), []);
+    expect(out.steps[0]).toMatchObject({ type: 'internal_function' });
+    expect('step_number' in out.steps[0]).toBe(false);
+    await expect(normalizeActionDraft(dbNoCollision, draft({
+      steps: [{ type: 'internal_function', mystery_key: 1,
+        config: { function_name: 'noop', params: {} } }],
+    }), [])).rejects.toThrow(/unsupported fields: mystery_key/);
+  });
+
+  test('the answer prompt teaches the real validator params — generated, not hand-written', () => {
+    // wait_for's nextStep and schedule_resume's resumeAt are camelCase params
+    // no model can guess; the reference is generated from __meta so it cannot
+    // drift from the validators.
+    const system = require(path.join(__dirname, '..', 'lib', 'aiPrompts', 'assistantAnswer')).system;
+    expect(system).toMatch(/AUTHORABLE FUNCTION PARAMS/);
+    expect(system).toMatch(/wait_for \(none\).*nextStep!:integer/);
+    expect(system).toMatch(/schedule_resume \(none\).*resumeAt!:/);
+    for (const name of CASEY_AUTHORABLE_FUNCTIONS.keys()) {
+      expect({ name, taught: new RegExp(`\\n  ${name} \\(`).test(system) }).toEqual({ name, taught: true });
+    }
+  });
+
   test('a name collision is refused at proposal time, naming the existing workflow', async () => {
     const dbCollision = { query: async () => [[{ id: 27 }]] };
     await expect(normalizeActionDraft(dbCollision, draft(), []))
