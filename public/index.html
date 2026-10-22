@@ -6925,6 +6925,22 @@
       'automations.court_review': Object.freeze({
         launcher: 'moreAutomations', page: 'tabMore', panel: 'automationsDiv', rest: 'courtReview',
       }),
+      // Record deep links (applied Casey cards): `sub` names the manager
+      // sub-page, and the rest token is built HERE as `<sub>~<id>` from a
+      // shell-validated positive integer. The id is data; the token grammar
+      // and every launcher/panel id stay the shell's own vocabulary. These
+      // ids are NOT offered to the model (normalizeDestinations allows only
+      // court_review) — they are called by the assistant pane's own fixed
+      // open() handlers with ids from applied server responses.
+      'automations.workflow': Object.freeze({
+        launcher: 'moreAutomations', page: 'tabMore', panel: 'automationsDiv', sub: 'workflows',
+      }),
+      'automations.job': Object.freeze({
+        launcher: 'moreAutomations', page: 'tabMore', panel: 'automationsDiv', sub: 'scheduledJobs',
+      }),
+      'automations.hook': Object.freeze({
+        launcher: 'moreAutomations', page: 'tabMore', panel: 'automationsDiv', sub: 'hooks',
+      }),
     });
     let assistantNavigationPending = null;
 
@@ -6937,11 +6953,19 @@
       return true;
     };
 
-    window.ycAssistantNavigate = function (destination) {
+    window.ycAssistantNavigate = function (destination, params) {
       const spec = YC_ASSISTANT_DESTINATIONS[destination];
       const L = window.ycLauncher;
       if (!spec || !L || !L.isReady() || !L.effectiveRegistry().some((item) => item.id === spec.launcher)) {
         return Promise.reject(new Error('That destination is not available to this signed-in user.'));
+      }
+      let rest = spec.rest;
+      if (spec.sub) {
+        const id = params == null ? NaN : Number(params.id);
+        if (!Number.isSafeInteger(id) || id < 1) {
+          return Promise.reject(new Error('That record link is malformed.'));
+        }
+        rest = spec.sub + '~' + id;
       }
       const panel = E(spec.panel);
       const frame = panel && panel.querySelector(':scope > iframe');
@@ -6951,13 +6975,13 @@
         assistantNavigationPending.reject(new Error('A newer navigation request replaced this one.'));
         assistantNavigationPending = null;
       }
-      ycSubTab.host.hold(frame, spec.rest);
+      ycSubTab.host.hold(frame, rest);
       return new Promise(function (resolve, reject) {
         const pending = { destination: destination, frame: frame, resolve: resolve, reject: reject };
         pending.timer = setTimeout(function () {
           if (assistantNavigationPending !== pending) return;
           assistantNavigationPending = null;
-          reject(new Error('Court Review did not become ready in time.'));
+          reject(new Error('The destination did not become ready in time.'));
         }, 10000);
         assistantNavigationPending = pending;
         if (L.exec(spec.launcher, { page: spec.page }) !== true) {
@@ -6974,7 +6998,7 @@
             const open = frame.contentWindow && frame.contentWindow.ycAssistantOpenDestination;
             if (typeof open === 'function') {
               ycSubTab.host.take(frame); // loaded manager: discard the cold-only hold
-              open(spec.rest);
+              open(rest);
             }
           } catch (_) {}
         }

@@ -466,20 +466,43 @@ function switchSubPage(id) {
   notifyAssistantDestinationReady(id);
 }
 
+// The sub-pages the assistant may land on, each mapped to its shell-side
+// destination id. The grammar stays narrow: a rest token is `<sub-page id>`
+// or `<sub-page id>~<digits>`; the id is only ever handed to the sub-page's
+// own onFocusRecord hook (the T4 deep-link machinery below) — no selectors,
+// DOM paths or arbitrary ids cross the assistant boundary.
+const ASSISTANT_DESTINATION_BY_SUB = Object.freeze({
+  courtReview: 'automations.court_review',
+  workflows: 'automations.workflow',
+  scheduledJobs: 'automations.job',
+  hooks: 'automations.hook',
+});
+
+function parseAssistantRest(rest) {
+  const parts = String(rest == null ? '' : rest).split('~');
+  const page = SUB_PAGES.find(p => p.id === parts[0]);
+  if (!page || !ASSISTANT_DESTINATION_BY_SUB[page.id]) return null;
+  if (parts[1] === undefined) return { pageId: page.id, id: null };
+  if (!/^\d{1,10}$/.test(parts[1])) return null;
+  return { pageId: page.id, id: Number(parts[1]) };
+}
+
 function notifyAssistantDestinationReady(id) {
-  if (id !== 'courtReview') return;
+  const destination = ASSISTANT_DESTINATION_BY_SUB[id];
+  if (!destination) return;
   try {
     if (window.parent && typeof window.parent.ycAssistantChildReady === 'function') {
-      window.parent.ycAssistantChildReady(window.frameElement, { destination: 'automations.court_review' });
+      window.parent.ycAssistantChildReady(window.frameElement, { destination });
     }
   } catch (_) { /* shell navigated or an older build */ }
 }
 
-// Narrow semantic bridge for an already-loaded manager. No selectors, DOM
-// paths or arbitrary sub-page ids cross the assistant boundary.
+// Narrow semantic bridge for an already-loaded manager.
 function ycAssistantOpenDestination(rest) {
-  if (rest !== 'courtReview') return false;
-  switchSubPage('courtReview');
+  const parsed = parseAssistantRest(rest);
+  if (!parsed) return false;
+  if (parsed.id != null) focusSubPageRecord(parsed.pageId, { id: parsed.id });
+  else switchSubPage(parsed.pageId);
   return true;
 }
 
@@ -502,8 +525,14 @@ function wsReportSubPage(id) {
  *  names a sub-page, else the default. Never throws on a token. */
 function wsBootSubPage() {
   const held = window.ycSubTab ? ycSubTab.leaf.take() : null;
-  const token = String(held == null ? '' : held).split('~')[0];
-  const page = SUB_PAGES.find(p => p.id === token);
+  const parts = String(held == null ? '' : held).split('~');
+  const page = SUB_PAGES.find(p => p.id === parts[0]);
+  // A held `<sub>~<digits>` (an assistant record deep link on a COLD manager)
+  // queues the focus payload; the boot switch drains it through the same T4
+  // machinery a warm navigation uses.
+  if (page && parts[1] !== undefined && /^\d{1,10}$/.test(parts[1]) && ASSISTANT_DESTINATION_BY_SUB[page.id]) {
+    pendingFocus[page.id] = { id: Number(parts[1]) };
+  }
   return page ? page.id : SUB_PAGES[0].id;
 }
 
@@ -623,7 +652,14 @@ window.esc                 = esc; // useful for sub-pages that want to match hel
 
 // ── Boot ───────────────────────────────────────────────────────
 renderShellStructure();
-switchSubPage(wsBootSubPage());
+{
+  const bootPage = wsBootSubPage();
+  switchSubPage(bootPage);
+  // A cold-boot deep link queued its payload in wsBootSubPage; the sub-page
+  // iframe is only now starting to load, and the drain polls for its
+  // onFocusRecord hook exactly as a warm focus does.
+  drainPendingFocus(bootPage);
+}
 </script>
 
 </body>

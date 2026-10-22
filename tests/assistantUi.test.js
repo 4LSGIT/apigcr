@@ -63,6 +63,7 @@ const ACTION_FNS = ['appendDraftField', 'appendDraftFieldsFromText', 'actionDraf
   'contactSubrecordCreateBody', 'contactSubrecordActionRequest', 'contactSubrecordActionResult',
   'jobActionLabel', 'jobScheduleText', 'jobDraftText', 'jobActionRequest', 'jobActionResult',
   'workflowDraftLabel', 'workflowDraftStepLine', 'workflowDraftText', 'workflowDraftRequest', 'workflowDraftResult',
+  'openAutomationRecord',
   'actionFamily', 'isActionDraft', 'actionAppliedId', 'markActionApplied', 'confirmActionDraft',
   'executeActionDraft', 'applyActionResults', 'hydrateActionDraft'];
 
@@ -243,7 +244,8 @@ describe('Ask Casey UI wiring', () => {
   test('a workflow draft card pins safe mode on code steps and strips side_effect annotations', async () => {
     const api = jest.fn().mockResolvedValue({ success: true, workflowId: 61, name: 'Deadline chase', stepCount: 2 });
     const render = jest.fn();
-    const P = { Swal: { fire: jest.fn().mockResolvedValue({ isConfirmed: true }) } };
+    const P = { Swal: { fire: jest.fn().mockResolvedValue({ isConfirmed: true }) },
+      ycAssistantNavigate: jest.fn().mockResolvedValue({ ready: true }) };
     const history = [];
     const saveAssistantMessage = jest.fn().mockResolvedValue();
     const make = actionSandbox({ P, api, render, history, saveAssistantMessage }).executeActionDraft;
@@ -276,6 +278,9 @@ describe('Ask Casey UI wiring', () => {
     expect(history).toEqual([expect.objectContaining({
       text: 'Create draft workflow applied to draft workflow #61.',
     })]);
+    // Applying the card takes the user RIGHT TO the draft (Fred, 2026-10-22):
+    // the open handler deep-links through the shell with the applied id.
+    expect(P.ycAssistantNavigate).toHaveBeenCalledWith('automations.workflow', { id: 61 });
   });
 
   test('a saved action result restores its exact proposal as applied without another write', () => {

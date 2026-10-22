@@ -138,15 +138,38 @@ describe('Ask Casey sidebar host', () => {
 describe('Automations → Court Review semantic navigation proof', () => {
   test('the shell registry is allowlisted and holds the cold rest before launcher execution', () => {
     expect(SHELL).toContain("'automations.court_review': Object.freeze({");
-    expect(SHELL.indexOf('ycSubTab.host.hold(frame, spec.rest)')).toBeLessThan(SHELL.indexOf('L.exec(spec.launcher, { page: spec.page })'));
+    expect(SHELL.indexOf('ycSubTab.host.hold(frame, rest)')).toBeLessThan(SHELL.indexOf('L.exec(spec.launcher, { page: spec.page })'));
     expect(SHELL).toContain("L.effectiveRegistry().some((item) => item.id === spec.launcher)");
   });
 
   test('the manager reports child load readiness and exposes only its narrow bridge', () => {
     expect(MANAGER).toContain("iframe.addEventListener('load', () => notifyAssistantDestinationReady(id), { once: true })");
-    expect(MANAGER).toContain("{ destination: 'automations.court_review' }");
-    expect(MANAGER).toContain("if (rest !== 'courtReview') return false");
+    expect(MANAGER).toContain('ASSISTANT_DESTINATION_BY_SUB');
+    expect(MANAGER).toContain('const parsed = parseAssistantRest(rest);');
     expect(MANAGER).toContain('window.ycAssistantOpenDestination = ycAssistantOpenDestination');
+  });
+
+  test('the manager bridge parses only its narrow token grammar and routes ids to the T4 focus', () => {
+    const dom = new JSDOM('<!doctype html>', { runScripts: 'outside-only' });
+    const w = dom.window;
+    const subPages = MANAGER.slice(MANAGER.indexOf('const SUB_PAGES = ['), MANAGER.indexOf('// ── Shell state'));
+    const map = MANAGER.slice(MANAGER.indexOf('const ASSISTANT_DESTINATION_BY_SUB'), MANAGER.indexOf('function notifyAssistantDestinationReady'));
+    w.focusCalls = [];
+    w.switchCalls = [];
+    w.eval(`${subPages}\n${map}\n${fnSrc(MANAGER, 'ycAssistantOpenDestination')}\n` +
+      'function focusSubPageRecord(id, payload) { focusCalls.push([id, payload]); return true; }\n' +
+      'function switchSubPage(id) { switchCalls.push(id); }\n' +
+      'window.open_ = ycAssistantOpenDestination;');
+    expect(w.open_('workflows~61')).toBe(true);
+    expect(w.focusCalls).toEqual([['workflows', { id: 61 }]]);
+    expect(w.open_('courtReview')).toBe(true);
+    expect(w.switchCalls).toEqual(['courtReview']);
+    // Not in the destination map, malformed ids, and unknown tokens all fail closed.
+    expect(w.open_('triggers')).toBe(false);
+    expect(w.open_('workflows~61x')).toBe(false);
+    expect(w.open_('workflows~')).toBe(false);
+    expect(w.open_('evil~1')).toBe(false);
+    dom.window.close();
   });
 
   function navigationWorld(cold) {
@@ -192,6 +215,24 @@ describe('Automations → Court Review semantic navigation proof', () => {
     await expect(t.w.ycAssistantNavigate('automations.court_review')).resolves.toMatchObject({ ready: true });
     expect(opened).toBe('courtReview');
     expect(t.w.ycSubTab.host.take(t.frame)).toBeNull();
+    t.dom.window.close();
+  });
+
+  test('a record deep link holds <sub>~<id> and resolves on its own destination handshake', async () => {
+    const t = navigationWorld(true);
+    const promise = t.w.ycAssistantNavigate('automations.workflow', { id: 61 });
+    expect(t.w.ycSubTab.host.lastRest(t.frame)).toBe('workflows~61');
+    expect(t.w.ycAssistantChildReady(t.frame, { destination: 'automations.workflow' })).toBe(true);
+    await expect(promise).resolves.toEqual({ destination: 'automations.workflow', ready: true });
+    t.dom.window.close();
+  });
+
+  test('a malformed record id rejects before the launcher runs — the id is shell-validated', async () => {
+    const t = navigationWorld(false);
+    for (const params of [undefined, {}, { id: 0 }, { id: '61; DROP' }, { id: 1.5 }]) {
+      await expect(t.w.ycAssistantNavigate('automations.workflow', params)).rejects.toThrow(/malformed/);
+    }
+    expect(t.exec).not.toHaveBeenCalled();
     t.dom.window.close();
   });
 

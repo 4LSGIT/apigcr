@@ -784,6 +784,22 @@ function workflowDraftRequest(draft) {
   return { path: '/workflows/bulk', method: 'POST', body, idempotent: true };
 }
 
+// Applied automation cards deep-link to their record through the shell's
+// semantic navigation (Fred, 2026-10-22: "take the user right there"). The
+// destination ids and token grammar are the SHELL's; this passes only the
+// applied record's numeric id. The info dialog stays as the fallback when the
+// shell or the destination is unavailable.
+function openAutomationRecord(destination, id, title, fallbackText) {
+  const fallback = () => {
+    try { P.Swal?.fire({ icon: 'info', title, text: fallbackText, heightAuto: false }); }
+    catch (_) { /* outside the shell the chat line already names the id */ }
+  };
+  try {
+    if (typeof P.ycAssistantNavigate !== 'function') return fallback();
+    P.ycAssistantNavigate(destination, { id }).catch(fallback);
+  } catch (_) { fallback(); }
+}
+
 function workflowDraftResult(draft, result) {
   const id = Number(result && result.workflowId);
   if (!Number.isSafeInteger(id) || id < 1) throw new Error('The workflow draft returned no usable workflow id');
@@ -859,13 +875,8 @@ const ACTION_FAMILIES = [
     entity: (draft, payload) => ({ kind: 'job', id: String(payload.job_id), label: `${draft.name} #${payload.job_id}` }),
     failure: 'The job action could not be applied.',
     reviewWarning: 'The code runs once in an isolated sandbox: no network, no database, no email or SMS, no records read or written. Review it line by line anyway — a wrong computation is still wrong. Canceling writes nothing.',
-    open: (draft) => {
-      // No in-shell deep link to one scheduled job exists; say where it lives.
-      try {
-        P.Swal?.fire({ icon: 'info', title: `Scheduled job #${draft.result_job_id}`,
-          text: 'Find it under More → Automations → Scheduled Jobs.', heightAuto: false });
-      } catch (_) { /* outside the shell the chat line already names the id */ }
-    },
+    open: (draft) => openAutomationRecord('automations.job', draft.result_job_id,
+      `Scheduled job #${draft.result_job_id}`, 'Find it under More → Automations → Scheduled Jobs.'),
   },
   {
     id: 'workflow', kinds: WORKFLOW_ACTION_KINDS, title: 'Workflow draft', noun: 'workflow draft', errorNoun: 'workflow draft',
@@ -876,12 +887,9 @@ const ACTION_FAMILIES = [
     entity: (draft, payload) => ({ kind: 'workflow', id: String(payload.workflow_id), label: `${draft.name} #${payload.workflow_id} (unpublished)` }),
     failure: 'The workflow draft could not be created.',
     reviewWarning: 'This creates an UNPUBLISHED workflow — version 0, which nothing can start. Review every step anyway: a human will later publish exactly what is written here. Canceling writes nothing.',
-    open: (draft) => {
-      try {
-        P.Swal?.fire({ icon: 'info', title: `Draft workflow #${draft.result_workflow_id}`,
-          text: 'Find it under More → Automations → Workflows. It stays unpublished until you publish it there.', heightAuto: false });
-      } catch (_) { /* outside the shell the chat line already names the id */ }
-    },
+    open: (draft) => openAutomationRecord('automations.workflow', draft.result_workflow_id,
+      `Draft workflow #${draft.result_workflow_id}`,
+      'Find it under More → Automations → Workflows. It stays unpublished until you publish it there.'),
   },
 ];
 
