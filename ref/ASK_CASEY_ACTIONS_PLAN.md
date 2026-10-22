@@ -806,7 +806,10 @@ on either path. A canonical automations/bus slice is filed to `ref/plans.md`.
 
 ---
 
-**A17.0: Explain a workflow (read-only).** Fred's first slice, 2026-10-22.
+**A17.0: Explain a workflow (read-only). SHIPPED 2026-10-22** — served by P12
+(the typed read surface renders exactly the per-step projection and inbound
+references this slice asks for) plus the plan-prompt guidance steering
+automation questions to those kinds. Original spec:
 
 Casey answers "what does this workflow do", "who gets notified", "what happens
 if step 7 fails", "what starts this". No proposal, no `action_draft`, no write
@@ -822,7 +825,14 @@ start it — because "what starts this" is unanswerable from the definition
 alone. Where the check lives: the P12 read service (projection, redaction,
 caps); nothing else can be wrong here.
 
-**A17.1: Explain a run (read-only).** Fred's addition, 2026-10-22: "explain a
+**A17.1: Explain a run (read-only). SHIPPED 2026-10-22** — `automation.run`
+(P12) carries the history; `lib/aiPrompts/automationRunExplainer.js` carries
+the six traps below and the curated cause catalog, appended to the answer
+stage ONLY when automation evidence was read (zero cost elsewhere); the two
+false manual claims (trap 1's and trap 2's) are corrected in
+`manual/03-YisraFlow/08-error-policies.md` in the same slice. Original spec:
+
+Fred's addition, 2026-10-22: "explain a
 run, like what went wrong, based on that how to fix, usual responses".
 
 Reads one execution: its pinned version's definition, the

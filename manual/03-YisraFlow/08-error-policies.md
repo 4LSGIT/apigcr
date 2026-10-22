@@ -62,7 +62,7 @@ Retries happen **synchronously inside `advanceWorkflow`**. A step with `max_retr
 |---|---|---|
 | `ignore` | Log step `failed`, continue to next step | Final status: `completed_with_errors` if any step failed under ignore |
 | `retry_then_ignore` | Same as `ignore` after retries | Same as `ignore` |
-| `abort` | Mark execution `failed`, stop | `failed` (immediate, no retries even if max_retries set) |
+| `abort` | Mark execution `failed`, stop | `failed` — but retries DO run first when `max_retries` is set: the engine retries for every strategy and only consults the strategy after the last attempt fails |
 | `retry_then_abort` | Mark execution `failed` after retries | `failed` |
 
 Aborted executions get their `cancel_reason` set to a description of the failing step.
@@ -143,7 +143,7 @@ If you have steps where this isn't the right call (charges, signed documents, an
 For both engines, a step is considered failed when:
 - The action throws an exception
 - For webhook steps: HTTP response is non-2xx
-- For workflow steps: `executeJob` returned `success: false` (or threw)
+- For workflow steps: `executeJob` **threw**. A function that *returns* `{ success: false, ... }` without throwing is recorded as a **success** row — the failure is visible only inside the step's output. Several registry functions return that shape, so never judge a step from its history `status` alone.
 - Resolver semantic errors (blocked column, unresolvable strict-mode placeholder) — propagated as throws
 
 **Not** counted as a failure:

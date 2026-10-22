@@ -1827,6 +1827,20 @@ async function investigateNext(db, approved, attached, evidence, plans, budget, 
   }
 }
 
+// The answer stage's system append: the server-verified viewer/workspace
+// context, plus the A17.1 run-explainer rules whenever the investigation read
+// automation evidence (lib/aiPrompts/automationRunExplainer.js) — the six
+// measured engine traps and the curated cause catalog cost tokens only on
+// automation questions.
+function answerSystemAppend(approved, evidence) {
+  const base = currentContext(approved.viewer, approved.workspace);
+  const hasAutomation = (Array.isArray(evidence) ? evidence : [])
+    .some((q) => String(q && q.kind || '').startsWith('automation.'));
+  if (!hasAutomation) return base;
+  const { AUTOMATION_RUN_EXPLAINER } = require('../lib/aiPrompts/automationRunExplainer');
+  return `${base}\n${AUTOMATION_RUN_EXPLAINER}`;
+}
+
 async function execute(db, { signedTicket, userId, auth, temporaryAttachments } = {}) {
   const decoded = ticket.verify(signedTicket);
   const approved = validateTicket(decoded, userId);
@@ -1951,7 +1965,9 @@ async function execute(db, { signedTicket, userId, auth, temporaryAttachments } 
 
   const ai = await aiService.call(db, {
     promptKey: 'assistant_answer',
-    systemAppend: currentContext(approved.viewer, approved.workspace),
+    // The run-explainer rules ride only when automation evidence was read —
+    // every other question pays nothing for them (A17.1).
+    systemAppend: answerSystemAppend(approved, evidence),
     userInput: `CONVERSATION:\n${historyText(approved.history)}\n\nQUESTION:\n${approved.question}\n\n` +
       `ATTACHED FILES:\n${attached.description}\n\nREAD PASSES:\n${JSON.stringify(plans)}\n\n` +
       `INVESTIGATION STOP:\n${JSON.stringify({ reason: stopReason, rounds, total_steps: totalSteps, returned_rows: totalRows })}\n\n` +
@@ -2010,7 +2026,7 @@ module.exports = {
   normalizeSuggestions, contextualAnswer, actionsForRow, actionsForEvidence,
   normalizeWorkspaceContext, validateWorkspaceContext, normalizeDestinations,
   normalizeActionDraft, taskDraftRequested, unavailableTaskDraftAnswer, repairActionDraft,
-  repairFailure, loadViewer, normalizeViewer, stepFingerprint, renumberPlan,
+  repairFailure, loadViewer, normalizeViewer, stepFingerprint, renumberPlan, answerSystemAppend,
   MAX_STEPS, MAX_ROWS, MAX_INVESTIGATION_ROUNDS, MAX_INVESTIGATION_STEPS,
   MAX_INVESTIGATION_ROWS, MAX_INVESTIGATION_MS, MAX_INVESTIGATION_OUTPUT_TOKENS,
   ASSISTANT_DENIED,

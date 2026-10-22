@@ -16,6 +16,7 @@ lib/aiPrompts/assistantAnswer.js
 lib/aiPrompts/assistantInvestigate.js
 lib/aiPrompts/assistantPlan.js
 lib/aiPrompts/assistantTaskDraftRepair.js
+lib/aiPrompts/automationRunExplainer.js
 lib/aiPrompts/commsSummary.js
 lib/aiPrompts/courtExtract.js
 lib/aiPrompts/echo.js

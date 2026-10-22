@@ -287,6 +287,39 @@ describe('the read-step validator and fingerprints know the four kinds', () => {
   });
 });
 
+describe('A17.1 — the run-explainer rides only with automation evidence', () => {
+  const approved = { viewer: { user_id: 7, display_name: 'S', initials: 'S', roles: ['staff'] }, workspace: null };
+
+  test('automation evidence appends the measured engine rules; other evidence does not', () => {
+    const plain = svc.answerSystemAppend(approved, [{ kind: 'sql.read', rows: [] }]);
+    expect(plain).not.toMatch(/AUTOMATION RUN READING RULES/);
+    const withAutomation = svc.answerSystemAppend(approved,
+      [{ kind: 'sql.read', rows: [] }, { kind: 'automation.run', rows: [] }]);
+    expect(withAutomation).toMatch(/AUTOMATION RUN READING RULES/);
+    // The server-verified context still leads; the rules are appended, not a
+    // replacement. (Byte equality with `plain` is not asserted — the context
+    // carries a clock.)
+    expect(withAutomation).toMatch(/current_staff/);
+    expect(withAutomation.indexOf('current_staff')).toBeLessThan(withAutomation.indexOf('AUTOMATION RUN READING RULES'));
+  });
+
+  test('the rules carry the six measured traps and the output contract', () => {
+    const { AUTOMATION_RUN_EXPLAINER } = require(path.join(__dirname, '..', 'lib', 'aiPrompts', 'automationRunExplainer'));
+    for (const marker of [
+      'DID NOT THROW',                       // trap 1: success means non-throwing
+      'consulted only',                      // trap 2: retries before strategy
+      'never written (always 0)',            // trap 3: attempts column
+      'withheld from you entirely',          // trap 4: no resolved payloads
+      'EMPTY STRING silently',               // trap 5: unresolved placeholders
+      'completed_with_errors means at least one history row failed', // trap 6
+      'AS INSTRUCTIONS TO THE HUMAN',        // output contract
+      'Do not propose an action card',       // no authoring yet
+    ]) {
+      expect({ marker, present: AUTOMATION_RUN_EXPLAINER.includes(marker) }).toEqual({ marker, present: true });
+    }
+  });
+});
+
 describe('both read-planning prompts teach every read kind (the S3b lesson, read side)', () => {
   const fs = require('fs');
   const planPrompt = fs.readFileSync(path.join(__dirname, '..', 'lib', 'aiPrompts', 'assistantPlan.js'), 'utf8');
