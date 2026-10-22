@@ -739,6 +739,57 @@ function jobActionResult(draft, result) {
   return { job_id: id, scheduled_time: (result && result.scheduled_time) || null };
 }
 
+// Workflow drafts (A17.3). The card creates a COMPLETE, NEVER-PUBLISHED
+// workflow: POST /workflows/bulk births it at version 0, which no dispatch
+// site will start — publishing stays a separate human act in the editor. The
+// request builder re-pins safe mode on every code step and strips the
+// normalizer's side_effect annotations; nothing in it comes from model output
+// except the reviewed values themselves.
+const WORKFLOW_ACTION_KINDS = new Set(['workflow.draft.v1']);
+
+function workflowDraftLabel() { return 'Create draft workflow'; }
+
+function workflowDraftStepLine(step, index) {
+  const head = `${index + 1}. [${step.type === 'custom_code' ? 'safe code' : step.config.function_name}]` +
+    `${step.label ? ` ${step.label}` : ''}${step.side_effect && step.side_effect !== 'none' ? ` (${step.side_effect})` : ''}`;
+  const body = step.type === 'custom_code'
+    ? `code: ${String(step.config.code || '')}`
+    : `params: ${JSON.stringify(step.config.params || {})}` +
+      (step.config.set_vars ? ` set_vars: ${JSON.stringify(step.config.set_vars)}` : '') +
+      (step.config.next_step !== undefined ? ` next_step: ${JSON.stringify(step.config.next_step)}` : '');
+  const policy = step.error_policy ? ` [on error: ${step.error_policy.strategy}${step.error_policy.max_retries ? `, ${step.error_policy.max_retries} retries` : ''}]` : '';
+  return `${head}${policy}\n   ${body}`;
+}
+
+function workflowDraftText(draft) {
+  return ['Workflow draft proposal — not applied', `Name: ${draft.name}`,
+    `Description: ${draft.description || 'Empty'}`,
+    `Steps (${draft.steps.length}):`,
+    ...draft.steps.map(workflowDraftStepLine),
+    'This creates an UNPUBLISHED workflow (version 0). Nothing can start it — no hook, trigger, or API call — until a human reviews and publishes it in the workflow editor.',
+  ].join('\n');
+}
+
+function workflowDraftRequest(draft) {
+  const steps = draft.steps.map((step) => {
+    const out = { type: step.type, config: step.type === 'custom_code'
+      ? { ...step.config, code_mode: 'safe' } : step.config };
+    if (step.label) out.label = step.label;
+    if (step.note) out.note = step.note;
+    if (step.error_policy) out.error_policy = step.error_policy;
+    return out;
+  });
+  const body = { name: draft.name, steps };
+  if (draft.description) body.description = draft.description;
+  return { path: '/workflows/bulk', method: 'POST', body, idempotent: true };
+}
+
+function workflowDraftResult(draft, result) {
+  const id = Number(result && result.workflowId);
+  if (!Number.isSafeInteger(id) || id < 1) throw new Error('The workflow draft returned no usable workflow id');
+  return { workflow_id: id };
+}
+
 // One descriptor per shipped family. `request` is the only mapping to a
 // canonical route, and it is written here, per kind, by hand: nothing in a
 // descriptor comes from model output. Adding a family means adding a
@@ -813,6 +864,22 @@ const ACTION_FAMILIES = [
       try {
         P.Swal?.fire({ icon: 'info', title: `Scheduled job #${draft.result_job_id}`,
           text: 'Find it under More → Automations → Scheduled Jobs.', heightAuto: false });
+      } catch (_) { /* outside the shell the chat line already names the id */ }
+    },
+  },
+  {
+    id: 'workflow', kinds: WORKFLOW_ACTION_KINDS, title: 'Workflow draft', noun: 'workflow draft', errorNoun: 'workflow draft',
+    label: workflowDraftLabel, text: workflowDraftText, request: workflowDraftRequest, result: workflowDraftResult,
+    idField: 'workflow_id', appliedKey: 'result_workflow_id',
+    danger: () => false,
+    resultText: (payload) => `draft workflow #${payload.workflow_id}`,
+    entity: (draft, payload) => ({ kind: 'workflow', id: String(payload.workflow_id), label: `${draft.name} #${payload.workflow_id} (unpublished)` }),
+    failure: 'The workflow draft could not be created.',
+    reviewWarning: 'This creates an UNPUBLISHED workflow — version 0, which nothing can start. Review every step anyway: a human will later publish exactly what is written here. Canceling writes nothing.',
+    open: (draft) => {
+      try {
+        P.Swal?.fire({ icon: 'info', title: `Draft workflow #${draft.result_workflow_id}`,
+          text: 'Find it under More → Automations → Workflows. It stays unpublished until you publish it there.', heightAuto: false });
       } catch (_) { /* outside the shell the chat line already names the id */ }
     },
   },

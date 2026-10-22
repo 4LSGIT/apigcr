@@ -46,6 +46,7 @@ const PLAN_FAMILY_MARKERS = {
   appt: 'Reviewed appointment actions are available',
   contact: 'Reviewed contact phone, email, and address subrecord actions are available',
   job: 'reviewed safe code job action is available',
+  workflow: 'reviewed workflow-draft action is available',
 };
 
 describe('every shipped action kind is taught to every model stage', () => {
@@ -105,6 +106,8 @@ describe('a job request forces the draft-required path like the other families',
     expect(svc.taskDraftRequested('Schedule a job in 10 minutes that computes X from input Y')).toBe(true);
     expect(svc.taskDraftRequested('Please set up a job tonight to total these amounts')).toBe(true);
     expect(svc.taskDraftRequested('What jobs are scheduled for tonight?')).toBe(false);
+    expect(svc.taskDraftRequested('Build a workflow that chases missing documents')).toBe(true);
+    expect(svc.taskDraftRequested('What does workflow 27 do?')).toBe(false);
   });
 });
 

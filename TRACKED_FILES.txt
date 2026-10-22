@@ -37,6 +37,7 @@ lib/blankDateToNull.js
 lib/capabilities.js
 lib/caseId.js
 lib/caseRoleResolver.js
+lib/caseyAutomationAllowlist.js
 lib/checklistStatus.js
 lib/codeStepGate.js
 lib/contactMirror.js
@@ -1128,6 +1129,7 @@ tests/caseUi.sync.test.js
 tests/caseUi.timeline.test.js
 tests/caseyActionPermissions.test.js
 tests/caseyJobCodeAction.test.js
+tests/caseyWorkflowDraft.test.js
 tests/checklistView.autoGrow.test.js
 tests/checklists.s1notes.test.js
 tests/clioTool.test.js

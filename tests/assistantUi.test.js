@@ -62,6 +62,7 @@ const ACTION_FNS = ['appendDraftField', 'appendDraftFieldsFromText', 'actionDraf
   'contactSubrecordActionLabel', 'contactAddressText', 'contactSubrecordValue', 'contactSubrecordDraftText',
   'contactSubrecordCreateBody', 'contactSubrecordActionRequest', 'contactSubrecordActionResult',
   'jobActionLabel', 'jobScheduleText', 'jobDraftText', 'jobActionRequest', 'jobActionResult',
+  'workflowDraftLabel', 'workflowDraftStepLine', 'workflowDraftText', 'workflowDraftRequest', 'workflowDraftResult',
   'actionFamily', 'isActionDraft', 'actionAppliedId', 'markActionApplied', 'confirmActionDraft',
   'executeActionDraft', 'applyActionResults', 'hydrateActionDraft'];
 
@@ -73,7 +74,7 @@ function actionSandbox(deps = {}) {
     'const ACTION_DRAFT_TTL_MS=15*60*1000;',
     constSrc(html, 'TASK_ACTION_KINDS'), constSrc(html, 'EVENT_ACTION_KINDS'),
     constSrc(html, 'APPT_ACTION_KINDS'), constSrc(html, 'CONTACT_SUBRECORD_ACTION_KINDS'),
-    constSrc(html, 'JOB_ACTION_KINDS'),
+    constSrc(html, 'JOB_ACTION_KINDS'), constSrc(html, 'WORKFLOW_ACTION_KINDS'),
     ...ACTION_FNS.map((name) => fnSrcAuto(html, name)),
     registry,
     'return { executeActionDraft, applyActionResults, actionFamily, isActionDraft, hydrateActionDraft };',
@@ -236,6 +237,44 @@ describe('Ask Casey UI wiring', () => {
     expect(history).toEqual([expect.objectContaining({
       text: 'Schedule safe code job applied to scheduled job #91.',
       action_result: { kind: 'job.code_safe.create.v1', draft_id: 'job-draft-1', job_id: 91, scheduled_time: '2026-10-23T00:00:00.000Z' },
+    })]);
+  });
+
+  test('a workflow draft card pins safe mode on code steps and strips side_effect annotations', async () => {
+    const api = jest.fn().mockResolvedValue({ success: true, workflowId: 61, name: 'Deadline chase', stepCount: 2 });
+    const render = jest.fn();
+    const P = { Swal: { fire: jest.fn().mockResolvedValue({ isConfirmed: true }) } };
+    const history = [];
+    const saveAssistantMessage = jest.fn().mockResolvedValue();
+    const make = actionSandbox({ P, api, render, history, saveAssistantMessage }).executeActionDraft;
+    const message = { action_draft: {
+      draft_id: 'wf-draft-1', kind: 'workflow.draft.v1', status: 'draft',
+      name: 'Deadline chase', description: 'd',
+      steps: [
+        { type: 'internal_function', label: 'Find contact', side_effect: 'read',
+          config: { function_name: 'lookup_contact', params: { contact_id: '{{contact_id}}' } } },
+        { type: 'custom_code', side_effect: 'safe-code', config: { code: 'input.a + 1;', input: { a: 1 } },
+          error_policy: { strategy: 'ignore' } },
+      ],
+      evidence: [],
+    } };
+    await make(message);
+    expect(P.Swal.fire).toHaveBeenCalledWith(expect.objectContaining({
+      title: 'Create draft workflow',
+      text: expect.stringContaining('UNPUBLISHED workflow (version 0)'),
+    }));
+    expect(api).toHaveBeenCalledWith('/workflows/bulk', {
+      name: 'Deadline chase', description: 'd',
+      steps: [
+        { type: 'internal_function', label: 'Find contact',
+          config: { function_name: 'lookup_contact', params: { contact_id: '{{contact_id}}' } } },
+        { type: 'custom_code', config: { code: 'input.a + 1;', input: { a: 1 }, code_mode: 'safe' },
+          error_policy: { strategy: 'ignore' } },
+      ],
+    }, 'POST', { 'Idempotency-Key': 'wf-draft-1' });
+    expect(message.action_draft).toMatchObject({ status: 'applied', result_workflow_id: 61 });
+    expect(history).toEqual([expect.objectContaining({
+      text: 'Create draft workflow applied to draft workflow #61.',
     })]);
   });
 

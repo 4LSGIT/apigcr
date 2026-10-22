@@ -40,6 +40,12 @@ const INVESTIGATE_TIMEOUT_MS = 45000;
 const INVESTIGATE_ATTEMPT_MAX_TOKENS = 1750;
 const MAX_INVESTIGATION_ROUNDS = 3;
 const MAX_INVESTIGATION_STEPS = 8;
+// Automation work (explaining or composing a workflow) legitimately needs
+// more passes than a record question — Fred, 2026-10-22. Rounds and steps are
+// the cheap knobs; the cost-bearing caps (rows, wall-clock, controller output
+// tokens) stay global, so a widened investigation reads more times, not more.
+const AUTOMATION_INVESTIGATION_ROUNDS = 5;
+const AUTOMATION_INVESTIGATION_STEPS = 14;
 const MAX_INVESTIGATION_ROWS = 250;
 const MAX_INVESTIGATION_MS = 180000;
 const MAX_INVESTIGATION_OUTPUT_TOKENS = 7000;
@@ -107,6 +113,21 @@ const JOB_CODE_CREATE_KEYS = new Set([
 ]);
 const JOB_CODE_MAX_CODE_CHARS = 20000;
 const JOB_CODE_MAX_INPUT_JSON_CHARS = 10000;
+
+// Workflow drafting (A17.3) — the first automation write. One card creates a
+// complete, NEVER-PUBLISHED workflow: POST /workflows/bulk births it at
+// current_version 0 with the steps as draft v1, and every dispatch site
+// refuses v0, so nothing can run it until a human publishes. Steps come only
+// from the authoring allowlist (lib/caseyAutomationAllowlist.js) plus
+// safe-mode code; webhook steps are A17.4b's narrower contract, query_db is
+// A17.4a — both refused here by name.
+const WORKFLOW_ACTION_KINDS = new Set(['workflow.draft.v1']);
+const WORKFLOW_DRAFT_KEYS = new Set(['kind', 'name', 'description', 'steps', 'evidence']);
+const WORKFLOW_DRAFT_STEP_KEYS = new Set(['type', 'label', 'note', 'config', 'error_policy']);
+const WORKFLOW_DRAFT_POLICY_KEYS = new Set(['strategy', 'max_retries', 'backoff_seconds']);
+const WORKFLOW_DRAFT_STRATEGIES = new Set(['ignore', 'abort', 'retry_then_ignore', 'retry_then_abort']);
+const WORKFLOW_DRAFT_MAX_STEPS = 20;
+const WORKFLOW_DRAFT_MAX_JSON = 60000;
 
 const CONTACT_SUBRECORD_ACTION_KINDS = new Set([
   'contact.phone.create.v1', 'contact.phone.update.v1', 'contact.phone.end.v1',
@@ -1208,8 +1229,106 @@ function normalizeJobCodeAction(db, value, evidence) {
   };
 }
 
+async function normalizeWorkflowDraftAction(db, value, evidence) {
+  if (require('../lib/firmConfig').cfg('casey_workflow_authoring_enabled') === '0') {
+    throw httpError(422, 'Action kind is unavailable');
+  }
+  if (!onlyKeys(value, WORKFLOW_DRAFT_KEYS)) throw httpError(422, 'Workflow draft contains unsupported fields');
+  let totalJson;
+  try { totalJson = JSON.stringify(value); } catch (_) { throw httpError(422, 'Workflow draft is not serializable'); }
+  if (totalJson.length > WORKFLOW_DRAFT_MAX_JSON) {
+    throw httpError(422, `Workflow draft exceeds ${WORKFLOW_DRAFT_MAX_JSON} characters of JSON`);
+  }
+  const name = String(value.name == null ? '' : value.name).trim();
+  if (!name) throw httpError(422, 'Workflow draft name is required');
+  if (name.length > 100) throw httpError(422, 'Workflow draft name exceeds 100 characters');
+  const description = String(value.description == null ? '' : value.description).trim();
+  if (description.length > 1000) throw httpError(422, 'Workflow draft description exceeds 1000 characters');
+  if (!Array.isArray(value.steps) || !value.steps.length || value.steps.length > WORKFLOW_DRAFT_MAX_STEPS) {
+    throw httpError(422, `Workflow draft needs 1-${WORKFLOW_DRAFT_MAX_STEPS} steps`);
+  }
+  const { CASEY_AUTHORABLE_FUNCTIONS } = require('../lib/caseyAutomationAllowlist');
+  const steps = value.steps.map((step, index) => {
+    const at = `step ${index + 1}`;
+    if (!step || typeof step !== 'object' || !onlyKeys(step, WORKFLOW_DRAFT_STEP_KEYS)) {
+      throw httpError(422, `Workflow draft ${at} carries unsupported fields`);
+    }
+    const label = String(step.label == null ? '' : step.label).trim().slice(0, 100);
+    const note = String(step.note == null ? '' : step.note).trim().slice(0, 1000);
+    const config = step.config;
+    if (config == null || typeof config !== 'object' || Array.isArray(config)) {
+      throw httpError(422, `Workflow draft ${at} needs a config object`);
+    }
+    if (Object.prototype.hasOwnProperty.call(config, 'type')) {
+      throw httpError(422, `Workflow draft ${at} config must not contain a "type" key`);
+    }
+    let out;
+    if (step.type === 'internal_function') {
+      const fn = config.function_name;
+      const sideEffect = CASEY_AUTHORABLE_FUNCTIONS.get(fn);
+      if (!sideEffect) {
+        throw httpError(422, `Workflow draft ${at}: "${fn}" is outside Casey's authoring allowlist — swap it for an allowed function or tell the user to add that step by hand`);
+      }
+      const vErr = require('../lib/internal_functions').__validateFunctionParams(fn, config.params);
+      if (vErr) throw httpError(422, `Workflow draft ${at}: ${vErr.error}`);
+      out = { type: 'internal_function', config, side_effect: sideEffect };
+    } else if (step.type === 'custom_code') {
+      if (config.code_mode !== undefined && config.code_mode !== 'safe') {
+        throw httpError(422, `Workflow draft ${at}: Casey composes only safe-mode code`);
+      }
+      if (typeof config.code !== 'string' || !config.code.trim()) throw httpError(422, `Workflow draft ${at}: code is required`);
+      if (config.code.length > JOB_CODE_MAX_CODE_CHARS) {
+        throw httpError(422, `Workflow draft ${at}: code exceeds ${JOB_CODE_MAX_CODE_CHARS} characters`);
+      }
+      const input = config.input === undefined ? undefined : config.input;
+      if (input !== undefined && (input === null || typeof input !== 'object' || Array.isArray(input))) {
+        throw httpError(422, `Workflow draft ${at}: input must be a JSON object`);
+      }
+      out = { type: 'custom_code', config: { ...config, code_mode: 'safe' }, side_effect: 'safe-code' };
+    } else if (step.type === 'webhook') {
+      throw httpError(422, `Workflow draft ${at}: Casey does not author webhook steps yet — tell the user to add it by hand after the draft is created`);
+    } else {
+      throw httpError(422, `Workflow draft ${at} has an unsupported type`);
+    }
+    if (step.error_policy !== undefined) {
+      const p = step.error_policy;
+      if (p == null || typeof p !== 'object' || !onlyKeys(p, WORKFLOW_DRAFT_POLICY_KEYS) ||
+          !WORKFLOW_DRAFT_STRATEGIES.has(p.strategy) ||
+          (p.max_retries !== undefined && (!Number.isInteger(p.max_retries) || p.max_retries < 0 || p.max_retries > 5)) ||
+          (p.backoff_seconds !== undefined && (!Number.isInteger(p.backoff_seconds) || p.backoff_seconds < 0 || p.backoff_seconds > 300))) {
+        throw httpError(422, `Workflow draft ${at} has an invalid error_policy`);
+      }
+      // Mirror the route's in-request retry-ladder budget, so a policy the
+      // card carries is never one the route will refuse at click time.
+      const { retryLadderSleepSec, RETRY_LADDER_BUDGET_SEC } = require('../lib/versionDiff');
+      if (retryLadderSleepSec(p) > RETRY_LADDER_BUDGET_SEC) {
+        throw httpError(422, `Workflow draft ${at}: the retry ladder exceeds the ${RETRY_LADDER_BUDGET_SEC}s budget — lower max_retries or backoff_seconds`);
+      }
+      out.error_policy = p;
+    }
+    if (label) out.label = label;
+    if (note) out.note = note;
+    return out;
+  });
+  // Proposal-time collision check (names are not DB-unique; a duplicate is
+  // operator confusion, not corruption). Click-time safety is the idempotent
+  // draft_id plus the 15-minute card TTL.
+  const [[existing]] = await db.query('SELECT id FROM workflows WHERE name = ? LIMIT 1', [name]);
+  if (existing) throw httpError(422, `A workflow named "${name}" already exists (#${existing.id}) — pick another name`);
+  return {
+    draft_id: crypto.randomUUID(),
+    kind: 'workflow.draft.v1',
+    status: 'draft',
+    name,
+    description,
+    steps,
+    evidence: jobDraftEvidence(value.evidence, evidence),
+  };
+}
+
 async function normalizeActionDraft(db, value, evidence, { currentUserId = null } = {}) {
   if (value == null) return null;
+  if (value && WORKFLOW_ACTION_KINDS.has(value.kind)) return normalizeWorkflowDraftAction(db, value, evidence);
   if (value && JOB_ACTION_KINDS.has(value.kind)) return normalizeJobCodeAction(db, value, evidence);
   if (value && EVENT_ACTION_KINDS.has(value.kind)) return normalizeEventAction(db, value, evidence);
   if (value && APPT_ACTION_KINDS.has(value.kind)) return normalizeApptAction(db, value, evidence);
@@ -1321,7 +1440,9 @@ function taskDraftRequested(question, history = []) {
     /\b(?:draft|propose|prepare|create|make|add|edit|update|change|end|deactivate|remove)\b/i.test(request);
   const job = /\bjob\b/i.test(text) &&
     /\b(?:schedule|create|make|propose|prepare|set up)\b/i.test(request);
-  return task || event || appt || contactSubrecord || job;
+  const workflow = /\bworkflow\b/i.test(text) &&
+    /\b(?:draft|create|make|build|compose|propose|prepare|set up)\b/i.test(request);
+  return task || event || appt || contactSubrecord || job || workflow;
 }
 
 function contextualAnswer(question, history) {
@@ -1891,13 +2012,25 @@ async function execute(db, { signedTicket, userId, auth, temporaryAttachments } 
   let controllerOutputTokens = 0;
   let stopReason = 'model_finished';
 
-  investigation: while (rounds < MAX_INVESTIGATION_ROUNDS) {
+  // The widened automation budget applies from the first plan that carries an
+  // automation.* step — including one the controller proposes mid-flight.
+  let maxRounds = MAX_INVESTIGATION_ROUNDS;
+  let maxSteps = MAX_INVESTIGATION_STEPS;
+  const widenForAutomation = (p) => {
+    if ((p.steps || []).some((s) => String(s.kind || '').startsWith('automation.'))) {
+      maxRounds = AUTOMATION_INVESTIGATION_ROUNDS;
+      maxSteps = AUTOMATION_INVESTIGATION_STEPS;
+    }
+  };
+  widenForAutomation(currentPlan);
+
+  investigation: while (rounds < maxRounds) {
     if (Date.now() - started >= MAX_INVESTIGATION_MS) {
       stopReason = 'time_budget';
       break;
     }
     rounds += 1;
-    if (currentPlan.steps.length > MAX_INVESTIGATION_STEPS - totalSteps) {
+    if (currentPlan.steps.length > maxSteps - totalSteps) {
       stopReason = 'step_budget';
       break;
     }
@@ -1920,7 +2053,7 @@ async function execute(db, { signedTicket, userId, auth, temporaryAttachments } 
         result = await executeReadStep(db, query, { auth, userId });
       } catch (err) {
         const repair = repairFailure(String(err && err.message));
-        if (repairs < 1 && repair && rounds < MAX_INVESTIGATION_ROUNDS && totalSteps < MAX_INVESTIGATION_STEPS) {
+        if (repairs < 1 && repair && rounds < maxRounds && totalSteps < maxSteps) {
           const repaired = await repairRejectedPlan(db, approved, query, repair, userId, attached, evidence, totalSteps);
           if (repaired) {
             repairs += 1;
@@ -1955,11 +2088,11 @@ async function execute(db, { signedTicket, userId, auth, temporaryAttachments } 
       }
     }
 
-    if (rounds >= MAX_INVESTIGATION_ROUNDS) {
+    if (rounds >= maxRounds) {
       stopReason = 'round_budget';
       break;
     }
-    const remainingSteps = MAX_INVESTIGATION_STEPS - totalSteps;
+    const remainingSteps = maxSteps - totalSteps;
     if (remainingSteps < 1) {
       stopReason = 'step_budget';
       break;
@@ -1971,7 +2104,7 @@ async function execute(db, { signedTicket, userId, auth, temporaryAttachments } 
     }
     const decision = await investigateNext(db, approved, attached, evidence, plans, {
       round: rounds,
-      remaining_rounds: MAX_INVESTIGATION_ROUNDS - rounds,
+      remaining_rounds: maxRounds - rounds,
       remaining_steps: remainingSteps,
       remaining_rows: Math.max(0, MAX_INVESTIGATION_ROWS - totalRows),
       remaining_ms: Math.max(0, MAX_INVESTIGATION_MS - (Date.now() - started)),
@@ -1992,6 +2125,7 @@ async function execute(db, { signedTicket, userId, auth, temporaryAttachments } 
       stopReason = 'repeated_query';
       break;
     }
+    widenForAutomation(nextPlan);
     currentPlan = nextPlan;
   }
 

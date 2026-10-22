@@ -420,7 +420,12 @@ one `contact.phone.*.v1`, `contact.email.*.v1`, or `contact.address.*.v1`
 create/update/end proposal described above. It may instead be one
 `job.code_safe.create.v1` proposal: a one-time scheduled job whose JavaScript
 body runs in safe mode (the isolated QuickJS engine — no network, no database,
-no email/SMS; see the workflows chapter's `custom_code` section). The card
+no email/SMS; see the workflows chapter's `custom_code` section). It may
+instead be one `workflow.draft.v1` proposal: a complete but NEVER-PUBLISHED
+workflow (version 0 — nothing can start it until a human publishes it in the
+editor), with steps limited to the authoring allowlist (control flow, record
+lookups, task/event/log creation) plus safe-mode code; senders, webhooks and
+database writes are not authorable and Casey says which steps to add by hand. The card
 shows the full code for review, the browser pins the safe engine in the
 request, and the system off switch is the `casey_code_actions_enabled`
 setting. The proposal

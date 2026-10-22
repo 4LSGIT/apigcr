@@ -892,7 +892,20 @@ the application** — shorter than the editor. Casey must send `dry_run: true`
 explicitly, and the kind must be unable to express anything else. Dry-run has
 zero side effects, so this stays a read-shaped slice.
 
-**A17.3: Draft a new, never-published workflow (the first write).**
+**A17.3: Draft a new, never-published workflow (the first write). SHIPPED
+2026-10-22** (Fred's GO) — kind `workflow.draft.v1` on the card engine:
+steps from `lib/caseyAutomationAllowlist.js` (23 functions with side-effect
+classes, snapshot-pinned; expansion is a deliberate review) plus safe-mode
+code steps; webhooks (A17.4b) and query_db (A17.4a) refused by name with
+add-by-hand guidance; `POST /workflows/bulk` wired into requestIdempotency;
+per-family flag `casey_workflow_authoring_enabled`; name collision checked at
+proposal time (names are not DB-unique — click-time safety is the idempotent
+draft_id + the 15-minute card TTL, a narrowing of this spec's click-time
+re-read, recorded deliberately). Same slice: the investigation budget widens
+to 5 rounds / 14 steps when a plan carries automation.* reads (Fred's ask —
+composing needs more passes; rows/time/token caps stay global), and the
+answer prompt must say when a budget starved the work instead of presenting
+it as complete. Original spec:
 
 The safest possible first write: a workflow born `current_version = 0` can be
 started by nothing — every dispatch site refuses v0 — and has no inbound

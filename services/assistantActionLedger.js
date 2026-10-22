@@ -14,6 +14,7 @@ const KINDS = new Map([
   ...['create', 'update', 'attended', 'no_show', 'cancel', 'reschedule', 'reschedule_later'].map(k => [`appt.${k}.v1`, 'appt_id']),
   ...['phone', 'email', 'address'].flatMap(f => ['create', 'update', 'end'].map(k => [`contact.${f}.${k}.v1`, 'contact_id'])),
   ['job.code_safe.create.v1', 'job_id'],
+  ['workflow.draft.v1', 'workflow_id'],
 ]);
 function fail(status, message) { const e = new Error(message); e.status = status; throw e; }
 function actor(userId) {

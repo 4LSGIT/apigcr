@@ -255,6 +255,7 @@ const validateInternalFunctionParams = internalFunctions.__validateFunctionParam
 // custom_code — see ref/plans.md.
 // ─────────────────────────────────────────────────────────────
 const { refuseCodeStepWithoutCapability } = require("../lib/codeStepGate");
+const { idempotentRequest, sendIdempotencyError } = require("../lib/requestIdempotency");
 
 function validateInternalFunctionConfig(stepType, config) {
   // Type-INDEPENDENT guard first. `type` is executeJob's dispatch selector, so
@@ -1776,6 +1777,12 @@ router.post("/workflows/bulk", jwtOrApiKey, async (req, res) => {
   }
 
   try {
+    // Optional `Idempotency-Key` header: a repeat of the same key replays the
+    // first create's result instead of making a second workflow (Casey's
+    // workflow.draft card sends its draft_id). A caller that sends no key is
+    // unaffected. The claim commits on the POOL before the transaction opens
+    // (lib/requestIdempotency.js).
+    const { value: created, replayed } = await idempotentRequest(req, 'workflows.bulk_create', async () => {
     const workflowId = await db.withTransaction(async (connection) => {
 
     // Versioning (S3, review D4a): imports land UNPUBLISHED — the workflow is
@@ -1813,14 +1820,18 @@ router.post("/workflows/bulk", jwtOrApiKey, async (req, res) => {
 
     console.log(`[WORKFLOW CREATED] id=${workflowId} steps=${steps.length}`);
 
-    return res.status(201).json({
+    return {
       success: true,
       workflowId,
       name: name.trim(),
       stepCount: steps.length
+    };
     });
 
+    return res.status(201).json({ ...created, ...(replayed ? { replayed: true } : {}) });
+
   } catch (err) {
+    if (sendIdempotencyError(res, err)) return;
     console.error("[WORKFLOW BULK CREATE ERROR]", err);
     return res.status(500).json({
       error: "Failed to create workflow",

@@ -44,6 +44,7 @@ describe('classification snapshot', () => {
     "billing_tasks_to": "firm firm routing ui user",
     "calendly_webhook_signing_key": "secret console console ui string",
     "casey_code_actions_enabled": "system system platform ui bool",
+    "casey_workflow_authoring_enabled": "system system platform ui bool",
     "clio_login_code": "state system state console string auto",
     "cloud_tasks_enabled": "system system platform ui bool",
     "custom_code_child_process": "system system platform ui bool",
