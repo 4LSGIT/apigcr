@@ -279,7 +279,26 @@ async function enrollmentRun(db, { enrollment_id }) {
   return rows;
 }
 
-async function run(db, { execution_id, enrollment_id } = {}) {
+async function run(db, { execution_id, enrollment_id, workflow_id, sequence_template_id } = {}) {
+  // "The latest run of workflow X" is the question a run explanation starts
+  // from, and the model has no other way to learn an execution id — the
+  // automation tables are outside the curated SQL on purpose. Found live
+  // (chat 44, 2026-10-22): asked why the last execution did nothing, the
+  // model could not fetch any history and inferred the cause from a task row.
+  if (workflow_id !== undefined) {
+    const wfId = posInt(workflow_id, 'workflow_id');
+    const [[latest]] = await db.query(
+      'SELECT id FROM workflow_executions WHERE workflow_id = ? ORDER BY id DESC LIMIT 1', [wfId]);
+    if (!latest) throw err(404, `workflow ${wfId} has no executions yet`);
+    return run(db, { execution_id: Number(latest.id) });
+  }
+  if (sequence_template_id !== undefined) {
+    const tplId = posInt(sequence_template_id, 'sequence_template_id');
+    const [[latest]] = await db.query(
+      'SELECT id FROM sequence_enrollments WHERE template_id = ? ORDER BY id DESC LIMIT 1', [tplId]);
+    if (!latest) throw err(404, `sequence template ${tplId} has no enrollments yet`);
+    return run(db, { enrollment_id: Number(latest.id) });
+  }
   if (enrollment_id !== undefined) return enrollmentRun(db, { enrollment_id });
   const id = posInt(execution_id, 'execution_id');
   const [[exec]] = await db.query(

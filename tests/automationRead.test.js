@@ -133,6 +133,32 @@ describe('automation.run — history without payloads', () => {
     expect(step1.output_redacted).toBe(1);
   });
 
+  test('P12c: workflow_id resolves the LATEST execution — "why did the last run do nothing" needs no known id', async () => {
+    // Live confusion (chat 44): with only id-keyed runs and the automation
+    // tables outside the curated SQL, the model had no path to the latest
+    // execution and inferred the cause from a task row.
+    const d = dbOf([
+      [/SELECT id FROM workflow_executions WHERE workflow_id/, [{ id: 15209 }]],
+      [/FROM workflow_executions e/, [{ execution_id: 15209, workflow_id: 57, workflow_name: 'Chase',
+        workflow_version: 1, status: 'delayed', contact_id: null, current_step_number: 2,
+        steps_executed_count: 1, created_at: 'c', completed_at: null, cancel_reason: null,
+        init_data: '{}', variables: '{}' }]],
+      [/FROM workflow_execution_steps/, []],
+      [/FROM scheduled_jobs/, []],
+    ]);
+    const rows = await automation.run(d, { workflow_id: 57 });
+    expect(rows[0]).toMatchObject({ row: 'execution', execution_id: 15209, status: 'delayed' });
+    const none = dbOf([[/SELECT id FROM workflow_executions WHERE workflow_id/, []]]);
+    await expect(automation.run(none, { workflow_id: 99 })).rejects.toThrow(/no executions yet/);
+    // The validator takes exactly one selector; fingerprints keep them apart.
+    expect(svc.validateStep({ id: 'q1', kind: 'automation.run', purpose: 'p', workflow_id: 57 }, 0))
+      .toMatchObject({ workflow_id: 57 });
+    expect(() => svc.validateStep({ id: 'q1', kind: 'automation.run', purpose: 'p', workflow_id: 57, execution_id: 1 }, 0))
+      .toThrow(/exactly one/);
+    expect(svc.stepFingerprint({ kind: 'automation.run', workflow_id: 57 }))
+      .not.toBe(svc.stepFingerprint({ kind: 'automation.run', execution_id: 57 }));
+  });
+
   test('the execution summary and a pending resume are rows of their own', async () => {
     const rows = await automation.run(db(), { execution_id: 500 });
     expect(rows[0]).toMatchObject({ row: 'execution', execution_id: 500, status: 'completed_with_errors' });
@@ -436,9 +462,16 @@ describe('both read-planning prompts teach every read kind (the S3b lesson, read
     'automation.preview_step'];
 
   test('the inventory matches the validator', () => {
+    // Per-kind minimal params — automation.run takes exactly ONE selector, so
+    // a shared bag with several ids would itself be invalid.
+    const PARAMS = {
+      'manual.search': { query: 'xx' }, 'comms.search': { query: 'xx' }, 'weather.lookup': { location: 'xx' },
+      'automation.list': {}, 'automation.definition': { workflow_id: 1 },
+      'automation.run': { execution_id: 1 }, 'automation.references': { workflow_id: 1 },
+      'automation.preview_step': { step_type: 'internal_function', config: { function_name: 'noop' } },
+    };
     for (const kind of READ_KINDS.filter((k) => k !== 'sql.read')) {
-      expect(() => svc.validateStep({ id: 'q1', kind, purpose: 'p', query: 'xx', location: 'xx',
-        workflow_id: 1, execution_id: 1, step_type: 'internal_function', config: { function_name: 'noop' } }, 0)).not.toThrow();
+      expect(() => svc.validateStep({ id: 'q1', kind, purpose: 'p', ...PARAMS[kind] }, 0)).not.toThrow();
     }
     expect(() => svc.validateStep({ id: 'q1', kind: 'automation.unknown', purpose: 'p' }, 0))
       .toThrow(/unavailable operation/);

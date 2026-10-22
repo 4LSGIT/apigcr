@@ -1677,7 +1677,14 @@ function validateStep(query, index) {
     return out;
   }
   if (kind === 'automation.run') {
-    return { id, kind, purpose, ...exactlyOneId('execution_id', 'enrollment_id', 'execution_id or enrollment_id') };
+    const keys = ['execution_id', 'enrollment_id', 'workflow_id', 'sequence_template_id']
+      .filter((k) => query[k] !== undefined);
+    if (keys.length !== 1) {
+      throw httpError(422, `Step ${id} needs exactly one of execution_id, enrollment_id, workflow_id (latest run), or sequence_template_id (latest enrollment)`);
+    }
+    const value = Number(query[keys[0]]);
+    if (!Number.isSafeInteger(value) || value < 1) throw httpError(422, `Step ${id} needs a positive ${keys[0]}`);
+    return { id, kind, purpose, [keys[0]]: value };
   }
   if (kind === 'automation.references') {
     return { id, kind, purpose, ...exactlyOneId('workflow_id', 'sequence_template_id', 'workflow_id or sequence_template_id') };
@@ -1757,7 +1764,12 @@ function stepFingerprint(step) {
   if (kind === 'sql.read') return `${kind}:${String(step.sql || '').replace(/\s+/g, ' ').trim().toLowerCase()}`;
   if (kind === 'weather.lookup') return `${kind}:${String(step.location || '').trim().toLowerCase()}`;
   if (kind === 'automation.definition') return `${kind}:${step.workflow_id !== undefined ? `w${Number(step.workflow_id)}` : `s${Number(step.sequence_template_id)}`}:${step.version === undefined ? 'current' : Number(step.version)}`;
-  if (kind === 'automation.run') return `${kind}:${step.execution_id !== undefined ? `x${Number(step.execution_id)}` : `e${Number(step.enrollment_id)}`}`;
+  if (kind === 'automation.run') {
+    if (step.execution_id !== undefined) return `${kind}:x${Number(step.execution_id)}`;
+    if (step.enrollment_id !== undefined) return `${kind}:e${Number(step.enrollment_id)}`;
+    if (step.workflow_id !== undefined) return `${kind}:wlatest${Number(step.workflow_id)}`;
+    return `${kind}:slatest${Number(step.sequence_template_id)}`;
+  }
   if (kind === 'automation.references') return `${kind}:${step.workflow_id !== undefined ? `w${Number(step.workflow_id)}` : `s${Number(step.sequence_template_id)}`}`;
   if (kind === 'automation.list') return `${kind}:${step.type || 'workflows'}:${String(step.query || '').trim().toLowerCase()}:${Number(step.limit) || 50}`;
   if (kind === 'automation.preview_step') return `${kind}:${step.step_type}:${JSON.stringify(step.config)}:${JSON.stringify(step.variables || {})}`;
@@ -2032,7 +2044,7 @@ async function executeReadStep(db, query, { auth, userId }) {
     const automation = require('./automationReadService');
     if (query.kind === 'automation.list') rows = await automation.list(db, { query: query.query, limit: query.limit, type: query.type });
     else if (query.kind === 'automation.definition') rows = await automation.definition(db, { workflow_id: query.workflow_id, sequence_template_id: query.sequence_template_id, version: query.version });
-    else if (query.kind === 'automation.run') rows = await automation.run(db, { execution_id: query.execution_id, enrollment_id: query.enrollment_id });
+    else if (query.kind === 'automation.run') rows = await automation.run(db, { execution_id: query.execution_id, enrollment_id: query.enrollment_id, workflow_id: query.workflow_id, sequence_template_id: query.sequence_template_id });
     else rows = await automation.references(db, { workflow_id: query.workflow_id, sequence_template_id: query.sequence_template_id });
     rowCount = rows.length;
   } else {
