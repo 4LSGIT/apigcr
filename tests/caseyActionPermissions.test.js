@@ -12,13 +12,13 @@
  * THE BOUNDARY BEING TESTED (plan, "Governing principle"): Casey proposes, the
  * staff member's own browser performs the write through the ordinary
  * authenticated route, and "the existing route ... is the final authority".
- * These tests ask that claim two questions for all 31 shipped kinds:
+ * These tests ask that claim two questions for all 32 shipped kinds:
  *   1. what does the route actually gate on?  (section 1 — no DB needed)
  *   2. where is the normalizer stricter than the route, i.e. where is the
  *      route NOT an authority at all?        (section 2 — real MySQL)
  *
  * MEASURED FACTS THIS FILE LOCKS
- *   · Every one of the 31 kinds maps to a route gated by lib/auth.jwtOrApiKey
+ *   · Every one of the 32 kinds maps to a route gated by lib/auth.jwtOrApiKey
  *     and NOTHING else: authentication (staff-audience JWT whose user_auth
  *     starts 'authorized'), no role, no capability, no row/firm scope. The
  *     one nuance is job.code_safe.create.v1 (safe-mode S3): its route carries
@@ -106,6 +106,7 @@ const KINDS = [
   { kind: 'workflow.draft.v1', method: 'POST', path: '/workflows/bulk' },
   { kind: 'workflow.step_insert.v1', method: 'POST', path: '/workflows/1/steps' },
   { kind: 'workflow.step_edit.v1', method: 'PATCH', path: '/workflows/1/steps/1' },
+  { kind: 'workflow.publish.v1', method: 'POST', path: '/workflows/1/publish' },
   { kind: 'hook.create.v1', method: 'POST', path: '/api/hooks' },
 ];
 
@@ -166,22 +167,22 @@ function call(a, { method, path: urlPath }, headers = {}, body = {}) {
 const bearer = (t) => ({ authorization: `Bearer ${t}` });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// SECTION 1 — the route-level gate, for all 31 kinds (no database)
+// SECTION 1 — the route-level gate, for all 32 kinds (no database)
 // ═══════════════════════════════════════════════════════════════════════════
 
-describe('P2 — what the canonical write route gates on (all 31 shipped kinds)', () => {
+describe('P2 — what the canonical write route gates on (all 32 shipped kinds)', () => {
   const OLD_SECRET = process.env.JWT_SECRET;
   beforeAll(() => { process.env.JWT_SECRET = SECRET; });
   afterAll(() => { process.env.JWT_SECRET = OLD_SECRET; });
 
   const app = appWith;
 
-  test('the 31 kinds cover 27 distinct route+method mounts', () => {
-    expect(KINDS).toHaveLength(31);
-    expect(new Set(KINDS.map((k) => `${k.method} ${k.path}`)).size).toBe(27);
+  test('the 32 kinds cover 28 distinct route+method mounts', () => {
+    expect(KINDS).toHaveLength(32);
+    expect(new Set(KINDS.map((k) => `${k.method} ${k.path}`)).size).toBe(28);
   });
 
-  test('no token: every kind is 401 — authentication is required for all 31', async () => {
+  test('no token: every kind is 401 — authentication is required for all 32', async () => {
     const a = app();
     for (const k of KINDS) {
       const res = await call(a, k);
@@ -237,7 +238,7 @@ describe('P2 — what the canonical write route gates on (all 31 shipped kinds)'
     expect([401, 403]).not.toContain(res.status);
   });
 
-  // THE ROLE QUESTION. There is no role or capability gate on any of the 31:
+  // THE ROLE QUESTION. There is no role or capability gate on any of the 32:
   // a user holding only `staff` (no admin / it / su, no capability) reaches
   // every handler. Proven per family by observing the canonical service call.
   describe('no role or capability gate: a roleless-but-staff token reaches the handler', () => {

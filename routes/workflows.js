@@ -14,7 +14,7 @@ const {
   captureRefusedStart,
 } = require("../lib/workflow_engine");
 const { executeJob } = require("../lib/job_executor");
-const { diffWorkflowSteps, validateWorkflowDraft, retryLadderSleepSec, RETRY_LADDER_BUDGET_SEC, stepFingerprint, BRANCH_TARGET_PARAMS, isTerminalSentinel } = require("../lib/versionDiff");
+const { diffWorkflowSteps, validateWorkflowDraft, retryLadderSleepSec, RETRY_LADDER_BUDGET_SEC, stepFingerprint, draftFingerprint, BRANCH_TARGET_PARAMS, isTerminalSentinel } = require("../lib/versionDiff");
 const { cancelWorkflowExecution, normalizeCancelReason } = require("../services/workflowExecutionService");
 // JSON columns may come back from mysql2 as either a string (unparsed)
 // or a parsed object depending on driver version/config. Normalize to a
@@ -1433,7 +1433,33 @@ router.post("/workflows/:id/publish", jwtOrApiKey, async (req, res) => {
     return res.status(400).json({ error: "Invalid workflow ID" });
   }
   const migrateInFlight = req.body?.migrate_in_flight === true;
+  const expectedBase = req.body ? req.body.expected_base : undefined;
   const publishedBy = (req.auth?.username || req.auth?.key_label || 'api').slice(0, 100);
+
+  // expected_base precondition, publish shape (P11, A17.6): the publisher
+  // states the draft it REVIEWED — {draft_version, step_count,
+  // draft_fingerprint} where the fingerprint is lib/versionDiff's
+  // draftFingerprint over every step — and the publish is refused with a
+  // structured 409 when the draft moved after the review. Without it, a
+  // publish can include edits made after the publisher read draft-diff.
+  // Optional for native callers (the editor is unchanged); required on every
+  // Casey publish proposal. Shape checked up front so a malformed object is a
+  // 400, never a silent pass.
+  if (expectedBase !== undefined) {
+    const err =
+      (expectedBase == null || typeof expectedBase !== 'object' || Array.isArray(expectedBase)) ? 'expected_base must be a JSON object'
+      : Object.keys(expectedBase).some((k) => !['draft_version', 'step_count', 'draft_fingerprint'].includes(k))
+        ? 'expected_base (publish) takes draft_version, step_count and draft_fingerprint only'
+      : (!Number.isInteger(expectedBase.draft_version) || expectedBase.draft_version < 1)
+        ? 'expected_base.draft_version must be a positive integer (publishing requires an existing draft)'
+      : (!Number.isInteger(expectedBase.step_count) || expectedBase.step_count < 0)
+        ? 'expected_base.step_count must be a non-negative integer'
+      : (expectedBase.draft_fingerprint !== undefined &&
+         (typeof expectedBase.draft_fingerprint !== 'string' || !/^[0-9a-f]{64}$/.test(expectedBase.draft_fingerprint)))
+        ? 'expected_base.draft_fingerprint must be a lowercase sha256 hex string'
+      : null;
+    if (err) return res.status(400).json({ error: err });
+  }
 
   try {
     const outcome = await db.withTransaction(async (connection) => {
@@ -1448,10 +1474,29 @@ router.post("/workflows/:id/publish", jwtOrApiKey, async (req, res) => {
       const draftV = wf.draft_version;
       const oldV = wf.current_version;
 
+      const conflict = (changed, expected, actual) => ({ respond: { status: 409, body: {
+        error: 'The draft changed since it was reviewed — re-read the diff and review again',
+        conflict: { changed, expected, actual },
+      } } });
+      if (expectedBase !== undefined && Number(draftV) !== expectedBase.draft_version) {
+        return conflict('draft_version', expectedBase.draft_version, Number(draftV));
+      }
+
       const [draftSteps] = await connection.query(
         `SELECT * FROM workflow_steps WHERE workflow_id = ? AND version = ? ORDER BY step_number ASC`,
         [workflowId, draftV]
       );
+      if (expectedBase !== undefined) {
+        if (draftSteps.length !== expectedBase.step_count) {
+          return conflict('step_count', expectedBase.step_count, draftSteps.length);
+        }
+        if (expectedBase.draft_fingerprint !== undefined) {
+          const actual = draftFingerprint(draftSteps);
+          if (actual !== expectedBase.draft_fingerprint) {
+            return conflict('draft_fingerprint', expectedBase.draft_fingerprint, actual);
+          }
+        }
+      }
       const validation = validateWorkflowDraft(draftSteps, {
         branchTargetParams: BRANCH_TARGET_PARAMS,
         isTerminalSentinel,

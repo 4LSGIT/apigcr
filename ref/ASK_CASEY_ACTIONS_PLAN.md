@@ -1135,7 +1135,30 @@ publish enforces via Tarjan SCC, and the fact that renumbering never rewrites
 `custom_code` `next_step` or non-literal targets (both are warnings only).
 Casey must never author a non-literal target.
 
-**A17.6: Publish a draft.** Fred, 2026-10-22: publish is allowed but stays its
+**A17.6: Publish a draft. SHIPPED 2026-10-25** — kind `workflow.publish.v1`
+on the card engine. The model supplies only `{workflow_id, evidence}`; the
+normalizer computes the entire impact preview onto the card (classification —
+`first_publish` when `current_version` is 0 — per-step diff capped at 30,
+structural reasons, validation warnings, in-flight and stranded run counts,
+inbound starters via `automation.references`, external/chaining effects with
+webhook URLs reduced to method + host so chat payloads never carry a
+secret-bearing URL, and the no-rollback statement). `migrate_in_flight` is
+pinned false in the fixed request builder and never offered.
+`POST /workflows/:id/publish` gained the P11 publish precondition: optional
+`expected_base {draft_version, step_count, draft_fingerprint}` — the
+fingerprint is `lib/versionDiff.draftFingerprint`, the ordered per-step
+fingerprints hashed together — checked inside the publish transaction, so a
+draft edited after the review 409s instead of publishing blind; the native
+editor is unchanged (it does not send the token yet — filed).
+**One strict reading flagged for Fred:** the code-step refusal below is
+applied to BOTH code modes — a draft containing a SAFE-mode code step (which
+Casey itself may author, ruling 13) is also not publishable through the card,
+because the ruling names the step type and was never revisited after safe
+mode landed. If Fred wants safe-mode drafts publishable by card, the
+narrowing is one predicate in `normalizeWorkflowPublishAction`. Until then
+Casey drafts safe-code workflows and a human publishes them. Original spec:
+
+Fred, 2026-10-22: publish is allowed but stays its
 own step.
 
 Reads `GET /workflows/:id/draft-diff`, then writes `POST

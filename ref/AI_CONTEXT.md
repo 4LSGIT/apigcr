@@ -47,6 +47,18 @@ body. Governing migrations in `ref/migrations/`.*
   `workflows.step_insert`). Tests: `tests/workflows.expectedBase.test.js`,
   `tests/caseyWorkflowStep.test.js`; plan: ref/ASK_CASEY_ACTIONS_PLAN.md
   A17.4/P11.
+- **Publish precondition + Casey publish card (A17.6, 10-25):**
+  `POST /workflows/:id/publish` takes an optional `expected_base`
+  `{draft_version, step_count, draft_fingerprint}` — the fingerprint is
+  `lib/versionDiff.draftFingerprint` (ordered per-step fingerprints hashed
+  together) — checked inside the publish transaction; a mismatch is the same
+  structured 409 as the step routes, so a draft edited after the publisher
+  read `draft-diff` cannot publish blind. Optional for native callers (the
+  editor does not send it yet — ref/plans.md); every Casey publish card
+  sends it, with `migrate_in_flight` pinned false. Casey's card refuses
+  drafts containing ANY custom_code step (both modes, strict reading of the
+  2026-10-22 ruling — flagged in the plan doc) and drafts with validation
+  errors. Tests: `tests/caseyWorkflowPublish.test.js`.
 - **Workspace context names the open automation (P13, 10-24):** the
   workflows/sequences sub-pages report their open record through the
   Automations manager (`ycSubRecordChanged`) into the workspace URL

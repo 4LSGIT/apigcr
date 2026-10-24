@@ -873,6 +873,67 @@ function workflowStepActionResult(draft, result) {
   return { workflow_id: id, step_number: Number(result.stepNumber) || null, remap: (result && result.remap) || null };
 }
 
+// Workflow publish (A17.6): the card IS the impact preview, server-computed.
+// The request pins migrate_in_flight:false (never offered to Casey) and
+// carries the whole-draft fingerprint, so a draft edited after this review is
+// refused by the route. Publishing is the one card whose apply makes
+// automation RUN — danger styling, and the text says there is no rollback
+// route (restoring an old version means rebuilding a draft by hand).
+const WORKFLOW_PUBLISH_ACTION_KINDS = new Set(['workflow.publish.v1']);
+
+function workflowPublishLabel() { return 'Publish workflow version'; }
+
+function workflowPublishChangeLine(change) {
+  if (change.kind === 'added') return `step ${change.step_number}: added`;
+  if (change.kind === 'removed') return `step ${change.step_number}: removed`;
+  return `step ${change.step_number}: modified${Array.isArray(change.fields) && change.fields.length ? ` (${change.fields.join(', ')})` : ''}`;
+}
+
+function workflowPublishText(draft) {
+  const wf = draft.workflow || {};
+  const pub = draft.publish || {};
+  const lines = ['Workflow publish proposal — not applied',
+    `Workflow: #${wf.workflow_id} "${wf.name}" — ${wf.active ? 'active' : 'INACTIVE'}`,
+    pub.from_version > 0
+      ? `Publishes draft v${pub.to_version} (${pub.step_count} steps) over live v${pub.from_version}`
+      : `FIRST PUBLISH: draft v${pub.to_version} (${pub.step_count} steps) becomes the live version — this workflow has never run before`,
+    `Change class: ${draft.classification}${(draft.structural_reasons || []).length ? ` — ${draft.structural_reasons.join('; ')}` : ''}`];
+  if ((draft.changes || []).length) {
+    lines.push(`Changes (${draft.changes.length}${draft.changes.length === 30 ? '+, truncated' : ''}):`);
+    for (const change of draft.changes) lines.push(`  ${workflowPublishChangeLine(change)}`);
+  }
+  if ((draft.validation_warnings || []).length) {
+    lines.push('Validation warnings (do not block, review them):');
+    for (const w of draft.validation_warnings) lines.push(`  ${w}`);
+  }
+  lines.push(`In-flight runs on v${pub.from_version}: ${draft.in_flight_count} — they FINISH ON THE OLD version (Casey never migrates runs). Runs stranded on older versions: ${draft.stranded_count}.`);
+  if ((draft.starters || []).length) {
+    lines.push('What can start this workflow once published:');
+    for (const s of draft.starters) lines.push(`  ${s.source}: "${s.name}"${s.active === 0 ? ' (inactive)' : ''}`);
+  } else {
+    lines.push('Nothing references this workflow — it starts only by hand or API call.');
+  }
+  if ((draft.effects || []).length) {
+    lines.push('External and chaining effects this version can produce when it runs:');
+    for (const e of draft.effects) lines.push(`  ${e}`);
+  }
+  lines.push('THERE IS NO ROLLBACK ROUTE: restoring a previous version means rebuilding a draft step by step.');
+  lines.push('If anyone edits the draft before you apply, the server refuses the publish and Casey must re-read it.');
+  return lines.join('\n');
+}
+
+function workflowPublishRequest(draft) {
+  const wfId = Number(draft.workflow && draft.workflow.workflow_id);
+  return { path: `/workflows/${wfId}/publish`, method: 'POST',
+    body: { migrate_in_flight: false, expected_base: draft.expected_base }, idempotent: false };
+}
+
+function workflowPublishResult(draft, result) {
+  const version = Number(result && result.published_version);
+  if (!Number.isSafeInteger(version) || version < 1) throw new Error('The publish returned no usable version');
+  return { workflow_id: Number(draft.workflow.workflow_id), published_version: version };
+}
+
 // Applied automation cards deep-link to their record through the shell's
 // semantic navigation (Fred, 2026-10-22: "take the user right there"). The
 // destination ids and token grammar are the SHELL's; this passes only the
@@ -1046,6 +1107,19 @@ const ACTION_FAMILIES = [
     open: (draft) => openAutomationRecord('automations.workflow', draft.result_step_workflow_id,
       `Workflow #${draft.result_step_workflow_id}`,
       'Find it under More → Automations → Workflows. The change sits in its draft until you publish there.'),
+  },
+  {
+    id: 'workflow_publish', kinds: WORKFLOW_PUBLISH_ACTION_KINDS, title: 'Workflow publish', noun: 'workflow publish', errorNoun: 'workflow publish',
+    label: workflowPublishLabel, text: workflowPublishText, request: workflowPublishRequest,
+    result: workflowPublishResult, idField: 'workflow_id', appliedKey: 'result_published_workflow_id',
+    danger: () => true,
+    resultText: (payload) => `workflow #${payload.workflow_id} v${payload.published_version} (now live)`,
+    entity: (draft, payload) => ({ kind: 'workflow', id: String(payload.workflow_id), label: `${draft.workflow.name} #${payload.workflow_id} v${payload.published_version} (published)` }),
+    failure: 'The workflow publish could not be applied.',
+    reviewWarning: 'Publishing makes this version WHAT RUNS: every hook, trigger and start call uses it from this moment, and no rollback route exists — restoring an older version means rebuilding a draft by hand. In-flight runs finish on the old version. Canceling writes nothing.',
+    open: (draft) => openAutomationRecord('automations.workflow', draft.result_published_workflow_id,
+      `Workflow #${draft.result_published_workflow_id}`,
+      'Find it under More → Automations → Workflows. The published version is now live.'),
   },
   {
     id: 'hook', kinds: HOOK_ACTION_KINDS, title: 'Hook', noun: 'hook', errorNoun: 'hook action',

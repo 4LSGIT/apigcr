@@ -716,14 +716,16 @@ and the two marked LIVE BUG are worth landing whether or not A17 ever ships.)
   effect. It does NOT retire `custom_code`: the remainder is genuinely bespoke
   (wf27's 19.5 KB formatter, the 7-way Clio command router, the multi-field
   e-sign reshaping), so the execution-boundary question stays live either way.
-- **No optimistic concurrency on SEQUENCE definition writes or on PUBLISH.**
-  The WORKFLOW step-mutating routes take an optional `expected_base`
-  precondition since A17.4 (2026-10-24; editing version + step count +
-  key-order-insensitive step fingerprint, refused as a structured 409). Still
-  open: the sequence step routes, and both publish routes — a publish can
-  still include edits made after the publisher read `draft-diff` (A17.6's
-  half). The native workflow editor does not SEND the precondition yet, so
-  human-vs-human stale writes remain possible there until it does.
+- **No optimistic concurrency on SEQUENCE definition writes.** The WORKFLOW
+  step-mutating routes take an optional `expected_base` precondition since
+  A17.4 (2026-10-24), and `POST /workflows/:id/publish` since A17.6
+  (2026-10-25: `{draft_version, step_count, draft_fingerprint}` — the
+  whole-draft hash — refused as a structured 409 inside the publish
+  transaction). Still open: the sequence step routes and the sequence publish
+  route (A18.2/A18.3's half). The native workflow editor does not SEND either
+  precondition yet, so human-vs-human stale writes and review-then-edit
+  publishes remain possible there until it does — wiring the editor to send
+  them is a small native slice.
 - **Automation step saves are not validation authorities — sequence half.**
   The workflow half closed with A17.4: unknown `function_name`, undeclared
   param keys, `params: null`, and `error_policy` shape/strategy are refused at

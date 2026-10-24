@@ -130,7 +130,15 @@ const JOB_CODE_MAX_INPUT_JSON_CHARS = 10000;
 // write with a 409 when the base no longer holds (the wf27 scar as a route
 // property). Never editable through these kinds: type, function_name, any
 // branch target, error_policy, webhook steps, standard-mode code.
-const WORKFLOW_ACTION_KINDS = new Set(['workflow.draft.v1', 'workflow.step_insert.v1', 'workflow.step_edit.v1']);
+// A17.6 adds publish: the reviewed card IS the impact preview (classification,
+// per-step diff, validation warnings, in-flight/stranded runs, what can start
+// it, its external effects, and the plain fact that no rollback route exists).
+// The card bakes a whole-draft fingerprint into expected_base, so a draft
+// edited after the review is refused by the route with a 409 — and Casey may
+// NOT publish a version containing ANY custom_code step (Fred's ruling,
+// 2026-10-22; applied strictly to both modes — see the flag in the plan doc).
+// migrate_in_flight is never offered and never sent.
+const WORKFLOW_ACTION_KINDS = new Set(['workflow.draft.v1', 'workflow.step_insert.v1', 'workflow.step_edit.v1', 'workflow.publish.v1']);
 
 // Hook authoring (A19.0, Fred's ask 2026-10-22: "make a hook to trigger
 // something"). One card creates an INBOUND hook born INACTIVE with exactly one
@@ -159,6 +167,13 @@ const WORKFLOW_DRAFT_MAX_JSON = 60000;
 const WORKFLOW_STEP_INSERT_KEYS = new Set(['kind', 'workflow_id', 'step_number', 'step', 'evidence']);
 const WORKFLOW_STEP_EDIT_KEYS = new Set(['kind', 'workflow_id', 'step_number', 'changes', 'evidence']);
 const WORKFLOW_STEP_EDIT_CHANGE_KEYS = new Set(['label', 'note', 'params', 'code', 'input']);
+const WORKFLOW_PUBLISH_KEYS = new Set(['kind', 'workflow_id', 'evidence']);
+// Functions whose presence in a draft the publish card must call out: they
+// leave the firm or fan out the moment a published version runs. Prefix
+// classes (send_/esign_) plus the named chain/write functions. This is CARD
+// DISCLOSURE, not an allowlist — humans may publish anything valid.
+const WORKFLOW_PUBLISH_EFFECT_RE = /^(?:send_|esign_)/;
+const WORKFLOW_PUBLISH_EFFECT_FNS = new Set(['enroll_sequence', 'start_workflow', 'create_cta', 'update_db', 'insert_db', 'set_setting']);
 
 const CONTACT_SUBRECORD_ACTION_KINDS = new Set([
   'contact.phone.create.v1', 'contact.phone.update.v1', 'contact.phone.end.v1',
@@ -1571,6 +1586,121 @@ async function normalizeWorkflowStepAction(db, value, evidence) {
   };
 }
 
+// A17.6: publish a workflow's draft. The model proposes only {workflow_id};
+// everything on the card — classification, diff, warnings, in-flight counts,
+// inbound references, external effects — is computed HERE from the live rows,
+// and the whole-draft fingerprint pins exactly what was reviewed. The route
+// re-checks that fingerprint inside the publish transaction (P11).
+async function normalizeWorkflowPublishAction(db, value, evidence) {
+  if (require('../lib/firmConfig').cfg('casey_workflow_authoring_enabled') === '0') {
+    throw httpError(422, 'Action kind is unavailable');
+  }
+  if (!onlyKeys(value, WORKFLOW_PUBLISH_KEYS)) throw httpError(422, 'Workflow publish contains unsupported fields');
+  const workflowId = Number(value.workflow_id);
+  if (!Number.isSafeInteger(workflowId) || workflowId < 1) {
+    throw httpError(422, 'Workflow publish needs a positive workflow_id');
+  }
+  const refs = jobDraftEvidence(value.evidence, evidence);
+  if (!refs.length || !evidenceSupportsAutomation(refs, evidence, workflowId)) {
+    throw httpError(422, 'Workflow publish evidence does not identify the target workflow — read it with automation.definition first');
+  }
+  const [[wf]] = await db.query(
+    'SELECT id, name, active, current_version, draft_version FROM workflows WHERE id = ?', [workflowId]);
+  if (!wf) throw httpError(422, `Workflow ${workflowId} is unavailable`);
+  if (wf.draft_version == null) {
+    throw httpError(422, `Workflow ${workflowId} has no unpublished changes — there is nothing to publish`);
+  }
+  const draftV = Number(wf.draft_version);
+  const oldV = Number(wf.current_version);
+  const [draftSteps] = await db.query(
+    `SELECT * FROM workflow_steps WHERE workflow_id = ? AND version = ? ORDER BY step_number ASC`,
+    [workflowId, draftV]);
+  if (!draftSteps.length) throw httpError(422, `Workflow ${workflowId}'s draft has no steps — publish would be refused`);
+
+  // RULED (Fred, 2026-10-22): Casey may not publish a version containing a
+  // custom_code step — a human publishes it in the editor. Applied to BOTH
+  // modes (strict reading; the ruling names the step type, and ruling 13's
+  // safe-mode revision never revisited publish). Flagged in the plan doc for
+  // a narrowing ruling if Fred wants safe-mode drafts publishable by card.
+  const codeSteps = draftSteps.filter((s) => s.type === 'custom_code').map((s) => s.step_number);
+  if (codeSteps.length) {
+    throw httpError(422, `Workflow ${workflowId}'s draft contains code step${codeSteps.length > 1 ? 's' : ''} ` +
+      `${codeSteps.join(', ')} — Casey does not publish versions with code steps; the user publishes in the workflow editor`);
+  }
+
+  const { diffWorkflowSteps, validateWorkflowDraft, draftFingerprint, BRANCH_TARGET_PARAMS, isTerminalSentinel } = require('../lib/versionDiff');
+  const opts = { branchTargetParams: BRANCH_TARGET_PARAMS, isTerminalSentinel };
+  const validation = validateWorkflowDraft(draftSteps, opts);
+  if (validation.errors.length) {
+    throw httpError(422, `Workflow ${workflowId}'s draft fails publish validation: ${validation.errors.join('; ')} — fix the draft first`);
+  }
+  const [currentSteps] = oldV > 0
+    ? await db.query(`SELECT * FROM workflow_steps WHERE workflow_id = ? AND version = ? ORDER BY step_number ASC`, [workflowId, oldV])
+    : [[]];
+  const diff = diffWorkflowSteps(currentSteps, draftSteps, opts);
+
+  const [inFlight] = await db.query(
+    `SELECT COUNT(*) AS n FROM workflow_executions
+      WHERE workflow_id = ? AND workflow_version = ? AND status IN ('active','delayed','held')`,
+    [workflowId, oldV]);
+  const [stranded] = await db.query(
+    `SELECT COUNT(*) AS n FROM workflow_executions
+      WHERE workflow_id = ? AND workflow_version NOT IN (?, ?) AND status IN ('active','delayed','held')`,
+    [workflowId, oldV, draftV]);
+
+  const referenceRows = await require('./automationReadService').references(db, { workflow_id: workflowId });
+  const starters = referenceRows
+    .filter((row) => row.source !== 'none')
+    .slice(0, 20)
+    .map((row) => ({ source: row.source, name: String(row.source_name || row.source_id || ''), active: row.active === null ? null : (row.active ? 1 : 0) }));
+
+  // External/chaining effects the published version can produce, for the
+  // card. Webhook URLs reduce to method + host (chat payloads never carry a
+  // secret-bearing URL); templated hosts say so.
+  const effects = [];
+  for (const s of draftSteps) {
+    const cfg = (() => { try { return typeof s.config === 'string' ? JSON.parse(s.config) : (s.config || {}); } catch (_) { return {}; } })();
+    if (s.type === 'webhook') {
+      let host = 'templated URL';
+      if (typeof cfg.url === 'string' && !/\{\{.*?\}\}/.test(cfg.url)) {
+        try { host = new URL(cfg.url).host; } catch (_) { host = 'unparseable URL'; }
+      }
+      effects.push(`step ${s.step_number}: webhook ${String(cfg.method || 'POST').toUpperCase()} → ${host}`);
+    } else if (s.type === 'internal_function' && typeof cfg.function_name === 'string' &&
+               (WORKFLOW_PUBLISH_EFFECT_RE.test(cfg.function_name) || WORKFLOW_PUBLISH_EFFECT_FNS.has(cfg.function_name))) {
+      effects.push(`step ${s.step_number}: ${cfg.function_name}`);
+    }
+    if (effects.length >= 20) break;
+  }
+
+  return {
+    draft_id: crypto.randomUUID(),
+    kind: 'workflow.publish.v1',
+    status: 'draft',
+    workflow: {
+      workflow_id: workflowId,
+      name: String(wf.name || `Workflow ${workflowId}`).slice(0, 200),
+      published: oldV > 0 ? 1 : 0,
+      active: wf.active ? 1 : 0,
+    },
+    publish: { from_version: oldV, to_version: draftV, step_count: draftSteps.length },
+    classification: oldV > 0 ? diff.classification : 'first_publish',
+    structural_reasons: (diff.structural_reasons || []).slice(0, 15),
+    changes: (diff.changes || []).slice(0, 30),
+    validation_warnings: (validation.warnings || []).slice(0, 15),
+    in_flight_count: Number(inFlight[0] && inFlight[0].n) || 0,
+    stranded_count: Number(stranded[0] && stranded[0].n) || 0,
+    starters,
+    effects,
+    expected_base: {
+      draft_version: draftV,
+      step_count: draftSteps.length,
+      draft_fingerprint: draftFingerprint(draftSteps),
+    },
+    evidence: refs,
+  };
+}
+
 async function normalizeHookCreateAction(db, value, evidence) {
   if (require('../lib/firmConfig').cfg('casey_hook_authoring_enabled') === '0') {
     throw httpError(422, 'Action kind is unavailable');
@@ -1645,9 +1775,9 @@ async function normalizeActionDraft(db, value, evidence, { currentUserId = null 
   if (value == null) return null;
   if (value && HOOK_ACTION_KINDS.has(value.kind)) return normalizeHookCreateAction(db, value, evidence);
   if (value && WORKFLOW_ACTION_KINDS.has(value.kind)) {
-    return value.kind === 'workflow.draft.v1'
-      ? normalizeWorkflowDraftAction(db, value, evidence)
-      : normalizeWorkflowStepAction(db, value, evidence);
+    if (value.kind === 'workflow.draft.v1') return normalizeWorkflowDraftAction(db, value, evidence);
+    if (value.kind === 'workflow.publish.v1') return normalizeWorkflowPublishAction(db, value, evidence);
+    return normalizeWorkflowStepAction(db, value, evidence);
   }
   if (value && JOB_ACTION_KINDS.has(value.kind)) return normalizeJobCodeAction(db, value, evidence);
   if (value && EVENT_ACTION_KINDS.has(value.kind)) return normalizeEventAction(db, value, evidence);
@@ -1762,7 +1892,7 @@ function taskDraftRequested(question, history = []) {
   const job = /\bjob\b/i.test(text) &&
     /\b(?:schedule|create|make|propose|prepare|set up)\b/i.test(request);
   const workflow = /\bworkflow\b/i.test(text) &&
-    /\b(?:draft|create|make|build|compose|propose|prepare|set up|insert|add|edit|update|change|fix|modify|tweak|adjust)\b/i.test(request);
+    /\b(?:draft|create|make|build|compose|propose|prepare|set up|insert|add|edit|update|change|fix|modify|tweak|adjust|publish|go live|activate the draft)\b/i.test(request);
   const hook = /\b(?:hook|webhook endpoint|inbound endpoint)\b/i.test(text) &&
     /\b(?:create|make|add|build|set up|propose|prepare)\b/i.test(request);
   return task || event || appt || contactSubrecord || job || workflow || hook;
