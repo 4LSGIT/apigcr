@@ -1150,13 +1150,13 @@ fingerprint is `lib/versionDiff.draftFingerprint`, the ordered per-step
 fingerprints hashed together — checked inside the publish transaction, so a
 draft edited after the review 409s instead of publishing blind; the native
 editor is unchanged (it does not send the token yet — filed).
-**One strict reading flagged for Fred:** the code-step refusal below is
-applied to BOTH code modes — a draft containing a SAFE-mode code step (which
-Casey itself may author, ruling 13) is also not publishable through the card,
-because the ruling names the step type and was never revisited after safe
-mode landed. If Fred wants safe-mode drafts publishable by card, the
-narrowing is one predicate in `normalizeWorkflowPublishAction`. Until then
-Casey drafts safe-code workflows and a human publishes them. Original spec:
+**RULED — Fred, 2026-10-25: safe-mode drafts ARE publishable by card.** The
+refusal is narrowed to STANDARD-mode code steps only (`code_mode` absent,
+`'standard'`, or unparseable config — fail closed). Safe-mode steps publish
+and are disclosed on the card like every other effect. This closes the loop
+ruling 13 opened: Casey can author a safe-code workflow, edit it, and walk
+the user to a reviewed publish. A17.7's start refusal, when built, follows
+the same mode-scoped rule. Original spec:
 
 Fred, 2026-10-22: publish is allowed but stays its
 own step.

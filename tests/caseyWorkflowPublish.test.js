@@ -140,13 +140,22 @@ describe('the workflow-publish normalizer', () => {
     expect(JSON.stringify(out)).not.toContain('SECRET');
   });
 
-  test('a draft containing a code step is refused by step number — either mode', async () => {
-    for (const cfg of [{ code: '1;', input: {} }, { code: '1;', input: {}, code_mode: 'safe' }]) {
+  test('a STANDARD-mode code step refuses by step number; unparseable config fails closed', async () => {
+    for (const config of ['{"code":"1;","input":{}}', '{"code":"1;","code_mode":"standard"}', 'not json{{{']) {
       const { db } = makeDb({ draftSteps: [...DRAFT_STEPS,
-        { step_number: 4, type: 'custom_code', label: null, note: null, config: JSON.stringify(cfg), error_policy: null }] });
+        { step_number: 4, type: 'custom_code', label: null, note: null, config, error_policy: null }] });
       await expect(normalizeActionDraft(db, publishDraft(), EVIDENCE))
-        .rejects.toThrow(/contains code step 4 — Casey does not publish versions with code steps/);
+        .rejects.toThrow(/contains standard-mode code step 4 — Casey does not publish versions with standard-mode code/);
     }
+  });
+
+  test('a SAFE-mode code step publishes and is disclosed on the card (Fred, 2026-10-25)', async () => {
+    const { db } = makeDb({ draftSteps: [...DRAFT_STEPS,
+      { step_number: 4, type: 'custom_code', label: null, note: null,
+        config: JSON.stringify({ code: '1;', input: {}, code_mode: 'safe' }), error_policy: null }] });
+    const out = await normalizeActionDraft(db, publishDraft(), EVIDENCE);
+    expect(out.publish.step_count).toBe(4);
+    expect(out.effects).toContain('step 4: safe-mode code (sandboxed — no network, no database)');
   });
 
   test('no draft, validation errors, bad evidence, and the off switch all refuse', async () => {

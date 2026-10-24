@@ -135,9 +135,9 @@ const JOB_CODE_MAX_INPUT_JSON_CHARS = 10000;
 // it, its external effects, and the plain fact that no rollback route exists).
 // The card bakes a whole-draft fingerprint into expected_base, so a draft
 // edited after the review is refused by the route with a 409 — and Casey may
-// NOT publish a version containing ANY custom_code step (Fred's ruling,
-// 2026-10-22; applied strictly to both modes — see the flag in the plan doc).
-// migrate_in_flight is never offered and never sent.
+// NOT publish a version containing a STANDARD-mode custom_code step (Fred's
+// ruling 2026-10-22, narrowed 2026-10-25: safe-mode steps publish and are
+// disclosed on the card). migrate_in_flight is never offered and never sent.
 const WORKFLOW_ACTION_KINDS = new Set(['workflow.draft.v1', 'workflow.step_insert.v1', 'workflow.step_edit.v1', 'workflow.publish.v1']);
 
 // Hook authoring (A19.0, Fred's ask 2026-10-22: "make a hook to trigger
@@ -1617,15 +1617,21 @@ async function normalizeWorkflowPublishAction(db, value, evidence) {
     [workflowId, draftV]);
   if (!draftSteps.length) throw httpError(422, `Workflow ${workflowId}'s draft has no steps — publish would be refused`);
 
-  // RULED (Fred, 2026-10-22): Casey may not publish a version containing a
-  // custom_code step — a human publishes it in the editor. Applied to BOTH
-  // modes (strict reading; the ruling names the step type, and ruling 13's
-  // safe-mode revision never revisited publish). Flagged in the plan doc for
-  // a narrowing ruling if Fred wants safe-mode drafts publishable by card.
-  const codeSteps = draftSteps.filter((s) => s.type === 'custom_code').map((s) => s.step_number);
-  if (codeSteps.length) {
-    throw httpError(422, `Workflow ${workflowId}'s draft contains code step${codeSteps.length > 1 ? 's' : ''} ` +
-      `${codeSteps.join(', ')} — Casey does not publish versions with code steps; the user publishes in the workflow editor`);
+  // RULED (Fred, 2026-10-22; narrowed 2026-10-25): Casey may not publish a
+  // version containing a STANDARD-mode custom_code step — arbitrary
+  // server-side JS a human must vouch for in the editor. SAFE-mode steps
+  // (the QuickJS boundary, ruling 13 — code Casey itself may author) publish
+  // through the card and are disclosed on it like every other effect.
+  const standardCodeSteps = draftSteps.filter((s) => {
+    if (s.type !== 'custom_code') return false;
+    try {
+      const cfg = typeof s.config === 'string' ? JSON.parse(s.config) : (s.config || {});
+      return cfg.code_mode !== 'safe';
+    } catch (_) { return true; } // unparseable config: fail closed as standard
+  }).map((s) => s.step_number);
+  if (standardCodeSteps.length) {
+    throw httpError(422, `Workflow ${workflowId}'s draft contains standard-mode code step${standardCodeSteps.length > 1 ? 's' : ''} ` +
+      `${standardCodeSteps.join(', ')} — Casey does not publish versions with standard-mode code; the user publishes in the workflow editor`);
   }
 
   const { diffWorkflowSteps, validateWorkflowDraft, draftFingerprint, BRANCH_TARGET_PARAMS, isTerminalSentinel } = require('../lib/versionDiff');
@@ -1666,6 +1672,10 @@ async function normalizeWorkflowPublishAction(db, value, evidence) {
         try { host = new URL(cfg.url).host; } catch (_) { host = 'unparseable URL'; }
       }
       effects.push(`step ${s.step_number}: webhook ${String(cfg.method || 'POST').toUpperCase()} → ${host}`);
+    } else if (s.type === 'custom_code') {
+      // Only safe-mode steps survive the gate above; still disclose them —
+      // publishing makes them run.
+      effects.push(`step ${s.step_number}: safe-mode code (sandboxed — no network, no database)`);
     } else if (s.type === 'internal_function' && typeof cfg.function_name === 'string' &&
                (WORKFLOW_PUBLISH_EFFECT_RE.test(cfg.function_name) || WORKFLOW_PUBLISH_EFFECT_FNS.has(cfg.function_name))) {
       effects.push(`step ${s.step_number}: ${cfg.function_name}`);
