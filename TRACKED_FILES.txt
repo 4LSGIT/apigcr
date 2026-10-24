@@ -848,6 +848,8 @@ scripts/mobile-survey/fixtures/api/comms-archive/media/7002/url.json
 scripts/mobile-survey/fixtures/api/comms-archive/media/7101/url.json
 scripts/mobile-survey/fixtures/api/comms-archive/media/7102/url.json
 scripts/mobile-survey/fixtures/api/comms-archive/media/7103/url.json
+scripts/mobile-survey/fixtures/api/comms-archive/media/97001/transcript.json
+scripts/mobile-survey/fixtures/api/comms-archive/media/97002/transcript.json
 scripts/mobile-survey/fixtures/api/comms-archive/no-transcribe.json
 scripts/mobile-survey/fixtures/api/comms-archive/search.json
 scripts/mobile-survey/fixtures/api/contacts/9001.json

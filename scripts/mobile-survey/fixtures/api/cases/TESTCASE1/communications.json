@@ -114,7 +114,53 @@
     "duration_s": 312,
     "status": "completed",
     "missed": false
+   },
+   "archive": {
+    "media_id": 97001,
+    "has_audio": true,
+    "has_transcript": true,
+    "summary_text": "Jane Testcase called to ask whether the pay stubs and the 2025 return she uploaded are enough to finish the means test, and was told one more bank statement is needed before the 341 meeting. She will upload it tonight and call back if the portal gives her trouble.",
+    "summary_model": "claude-haiku-5-5",
+    "restricted": false,
+    "extra": []
    }
+  },
+  {
+   "key": "phone:5103",
+   "id": 5103,
+   "kind": "call",
+   "at": "{{TODAY}}T09:30:00.000Z",
+   "sort_at": "{{TODAY}}T09:30:00.000Z",
+   "direction": "incoming",
+   "participant": "5555550199",
+   "preview": "no-answer",
+   "log_id": 8106,
+   "legacy": false,
+   "contact": {
+    "contact_id": 9001,
+    "contact_name": "Jane Testcase"
+   },
+   "line_id": 1,
+   "duration_s": null,
+   "call_status": "no-answer",
+   "phone": {
+    "event_id": 5103,
+    "line_id": 1,
+    "line_number": "5555550100",
+    "body": null,
+    "duration_s": null,
+    "status": "no-answer",
+    "missed": true
+   },
+   "voicemail": {
+    "media_id": 97002,
+    "provider": "quo",
+    "has_audio": true,
+    "has_transcript": true,
+    "summary_text": "Jane left a voicemail asking the office to call her back about the hearing date.",
+    "restricted": false
+   },
+   "case_id": "TESTCASE1"
   },
   {
    "key": "log:8105",
@@ -143,6 +189,6 @@
    }
   }
  ],
- "next_offset": 5,
+ "next_offset": 6,
  "has_more": true
 }

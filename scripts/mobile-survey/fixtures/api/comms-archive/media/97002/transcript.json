@@ -1,0 +1,9 @@
+{
+ "status": "success",
+ "media_id": 97002,
+ "label": "AI-generated — check the recording before relying on it",
+ "segments": [
+  { "s": "A", "a": 0, "b": 7.5, "t": "Hi, this is Jane Testcase. Could someone call me back about the hearing date? Thank you." }
+ ],
+ "text": null
+}

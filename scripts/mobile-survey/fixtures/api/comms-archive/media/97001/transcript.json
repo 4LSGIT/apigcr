@@ -1,0 +1,12 @@
+{
+ "status": "success",
+ "media_id": 97001,
+ "label": "AI-generated — check the recording before relying on it",
+ "segments": [
+  { "s": "A", "a": 0, "b": 6.2, "t": "Good afternoon, Legal Solutions Group, this is the office." },
+  { "s": "B", "a": 6.5, "b": 14.1, "t": "Hi, it's Jane Testcase. I uploaded the pay stubs and my 2025 return — is that everything you need for the means test?" },
+  { "s": "A", "a": 14.4, "b": 24.0, "t": "Almost. We still need one more bank statement, the September one, before the 341 meeting." },
+  { "s": "B", "a": 24.3, "b": 30.8, "t": "Okay, I'll upload it tonight. If the portal gives me trouble I'll call back." }
+ ],
+ "text": null
+}

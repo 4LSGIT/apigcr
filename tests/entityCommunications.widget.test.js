@@ -190,3 +190,325 @@ describe('entity communications widget', () => {
     dom.window.close();
   });
 });
+
+// ── Comms archive on call cards (entity-comms UI slice) ────────────────────
+describe('entity communications call archive', () => {
+  const call = (over = {}, phoneOver = {}) => ({
+    id: 12, kind: 'call', direction: 'outgoing', at: '2026-10-23T22:14:00Z',
+    participant: '3132130895', preview: 'Call connected · 70s', call_status: 'Call connected',
+    duration_s: 70, line_id: 3,
+    phone: { event_id: 12, line_id: 3, line_number: '2485592400', body: null, duration_s: 70, status: 'Call connected', missed: false, delivery: null, ...phoneOver },
+    ...over,
+  });
+
+  test('a call with no subject is labelled a phone call with its length — never "Email"', async () => {
+    const { dom } = boot([call()]);
+    await settle(); await settle();
+    const subject = dom.window.document.querySelector('.card.call .subject');
+    expect(subject.textContent).toBe('Phone call · 1:10');
+    expect(subject.textContent).not.toContain('Email');
+    dom.window.close();
+  });
+
+  test('a missed incoming call says so, and a legacy call log is still a phone call', async () => {
+    const { dom } = boot([
+      call({ id: 13, direction: 'incoming', duration_s: null }, { duration_s: null, status: 'no-answer', missed: true }),
+      { key: 'log:14', id: 14, kind: 'call', direction: 'outgoing', at: '2026-10-19T10:00:00Z', legacy: true,
+        participant: '3135550001', preview: '', log_id: 14, log: { type: 'call', from: null, to: '3135550001', subject: null, message: 'left word', data: {} } },
+    ]);
+    await settle(); await settle();
+    const subjects = [...dom.window.document.querySelectorAll('.card.call .subject')].map(x => x.textContent);
+    expect(subjects).toContain('Missed call');
+    expect(subjects).toContain('Phone call');
+    dom.window.close();
+  });
+
+  test('an archived call previews its AI summary, and expanding offers summary + label, Listen and Transcript', async () => {
+    const item = call({ archive: {
+      media_id: 7815, has_audio: true, has_transcript: true,
+      summary_text: 'Stuart called the client about the hearing.', summary_model: 'claude-haiku-5-5', restricted: false, extra: [],
+    } });
+    const minted = [];
+    const { dom } = boot([item], { responder: async (url) => {
+      if (url.startsWith('/api/comms-archive/media/7815/url')) { minted.push(url); return { url: 'https://storage.googleapis.com/x/y?sig=1', mime: 'audio/mpeg', inline: true, expires_in: 300 }; }
+      if (url === '/api/comms-archive/media/7815/transcript') return {
+        label: 'AI transcript — may contain mistakes',
+        segments: [{ s: 'A', a: 0, b: 3, t: '<b>Hello</b> this is Stuart' }, { s: 'B', a: 3.2, b: 6, t: 'Hi.' }],
+      };
+      return undefined;
+    } });
+    await settle(); await settle();
+    const d = dom.window.document;
+    const preview = d.querySelector('.card.call .preview');
+    expect(preview.textContent).toBe('AI summary: Stuart called the client about the hearing.');  // R8: the collapsed row says it is AI
+    expect(preview.title).toBe('AI-generated — check the recording before relying on it');
+    d.querySelector('.card-head').click();
+    await settle(); await settle();
+    const details = d.querySelector('.details');
+    expect(details.querySelector('.summary').textContent).toContain('Stuart called the client about the hearing.');
+    expect(details.querySelector('.summary .ai-note').textContent).toContain('AI-generated');
+    const listen = [...details.querySelectorAll('button')].find(x => /Listen/.test(x.textContent));
+    const tx = [...details.querySelectorAll('button')].find(x => /Transcript/.test(x.textContent));
+    expect(listen).toBeTruthy();
+    expect(tx).toBeTruthy();
+    listen.click();
+    await settle(); await settle();
+    expect(minted.length).toBe(1);
+    const audio = details.querySelector('.media-slot audio');
+    expect(audio).not.toBeNull();
+    expect(audio.getAttribute('src')).toBe('https://storage.googleapis.com/x/y?sig=1');
+    tx.click();
+    await settle(); await settle();
+    const block = details.querySelector('.tx-block');
+    expect(block).not.toBeNull();
+    expect(block.querySelector('.ai-note').textContent).toBe('AI transcript — may contain mistakes');
+    expect(block.textContent).toContain('<b>Hello</b> this is Stuart');  // vendor text stays text
+    expect(block.querySelector('b')).toBeNull();
+    expect(block.textContent).toContain('Speaker A');
+    tx.click();
+    await settle();
+    expect(details.querySelector('.tx-block')).toBeNull();
+    dom.window.close();
+  });
+
+  test('a signed URL off storage.googleapis.com is refused: the audio never gets a src', async () => {
+    const item = call({ archive: { media_id: 7815, has_audio: true, has_transcript: false, restricted: false, extra: [] } });
+    const { dom } = boot([item], { responder: async (url) => {
+      if (url.startsWith('/api/comms-archive/media/7815/url')) return { url: 'https://evil.example/x.mp3' };
+      return undefined;
+    } });
+    await settle(); await settle();
+    const d = dom.window.document;
+    d.querySelector('.card-head').click();
+    await settle(); await settle();
+    const listen = [...d.querySelectorAll('.details button')].find(x => /Listen/.test(x.textContent));
+    listen.click();
+    await settle(); await settle();
+    expect(d.querySelector('.media-slot audio')).toBeNull();
+    const slot = d.querySelector('.media-slot');
+    expect(slot.hidden).toBe(false);
+    expect(slot.textContent).toContain('Unexpected archive link');   // the error is visible, not a tooltip
+    dom.window.close();
+  });
+
+  test('a failed mint shows a visible note and the next click mints again', async () => {
+    const item = call({ archive: { media_id: 7815, has_audio: true, has_transcript: false, restricted: false, extra: [] } });
+    let mints = 0;
+    const { dom } = boot([item], { responder: async (url) => {
+      if (url.startsWith('/api/comms-archive/media/7815/url')) {
+        mints++;
+        if (mints === 1 || mints === 3) throw new Error('mint refused');
+        return { url: `https://storage.googleapis.com/x/y?sig=${mints}` };
+      }
+      return undefined;
+    } });
+    await settle(); await settle();
+    const d = dom.window.document;
+    d.querySelector('.card-head').click();
+    await settle(); await settle();
+    const listen = [...d.querySelectorAll('.details button')].find(x => /Listen/.test(x.textContent));
+    listen.click();
+    await settle(); await settle();
+    expect(mints).toBe(1);
+    expect(d.querySelector('.media-slot .archive-err').textContent).toContain('mint refused');
+    listen.click();
+    await settle(); await settle();
+    expect(mints).toBe(2);   // no src stuck: the retry minted afresh
+    const audio = d.querySelector('.media-slot audio');
+    expect(audio.getAttribute('src')).toBe('https://storage.googleapis.com/x/y?sig=2');
+    expect(d.querySelector('.media-slot .archive-err')).toBeNull();  // the success cleared the note
+
+    // The URL expires mid-life and the renew is refused (S1): the dead src is
+    // cleared — the NEXT click mints again instead of re-attaching a dead player.
+    audio.dispatchEvent(new dom.window.Event('error'));
+    await settle(); await settle();
+    expect(mints).toBe(3);                                  // the renew was attempted (and refused)
+    expect(audio.getAttribute('src')).toBeNull();           // and the dead src did not stick
+    expect(d.querySelector('.media-slot .archive-err').textContent).toContain('press Listen');
+    listen.click();
+    await settle(); await settle();
+    expect(mints).toBe(4);
+    expect(audio.getAttribute('src')).toBe('https://storage.googleapis.com/x/y?sig=4');
+    dom.window.close();
+  });
+
+  test('a second failure after a successful renew clears the dead src, and playback clears a stale note', async () => {
+    const item = call({ archive: { media_id: 7815, has_audio: true, has_transcript: false, restricted: false, extra: [] } });
+    let mints = 0;
+    let release;
+    const gate = new Promise(resolve => { release = resolve; });
+    const { dom } = boot([item], { responder: async (url) => {
+      if (url.startsWith('/api/comms-archive/media/7815/url')) {
+        mints++;
+        if (mints === 2) await gate;   // a renew still in flight
+        return { url: `https://storage.googleapis.com/x/y?sig=${mints}` };
+      }
+      return undefined;
+    } });
+    await settle(); await settle();
+    const d = dom.window.document;
+    d.querySelector('.card-head').click();
+    await settle(); await settle();
+    const listen = [...d.querySelectorAll('.details button')].find(x => /Listen/.test(x.textContent));
+    listen.click();
+    await settle(); await settle();
+    const audio = d.querySelector('.media-slot audio');
+    expect(audio.getAttribute('src')).toBe('https://storage.googleapis.com/x/y?sig=1');
+
+    audio.dispatchEvent(new dom.window.Event('error'));   // expiry → renew starts (held open)
+    await settle();
+    audio.dispatchEvent(new dom.window.Event('error'));   // second failure while renewed
+    await settle(); await settle();
+    expect(audio.getAttribute('src')).toBeNull();         // the dead src never sticks
+    const note = d.querySelector('.media-slot .archive-err');
+    expect(note.textContent).toContain('press Listen');
+
+    release();                                            // the in-flight renew wins after all
+    await settle(); await settle();
+    expect(audio.getAttribute('src')).toBe('https://storage.googleapis.com/x/y?sig=2');
+    expect(d.querySelector('.media-slot .archive-err')).not.toBeNull();  // the note is stale now…
+    audio.dispatchEvent(new dom.window.Event('playing'));
+    expect(d.querySelector('.media-slot .archive-err')).toBeNull();      // …and playback clears it
+    dom.window.close();
+  });
+
+  test('transcript-status notes use the Comms→Phone wording for every state', async () => {
+    const mk = (id, mediaId, transcript_status) => call({ id, archive: { media_id: mediaId, has_audio: true, has_transcript: false, transcript_status, restricted: false, extra: [] } });
+    const { dom } = boot([
+      mk(21, 801, { state: 'in_progress', reason: null }),
+      mk(22, 802, { state: 'failed', reason: null }),
+      mk(23, 803, { state: 'skipped', reason: 'over_cap' }),
+      mk(24, 804, { state: 'skipped', reason: null }),
+    ]);
+    await settle(); await settle();
+    const d = dom.window.document;
+    for (const head of d.querySelectorAll('.card-head')) head.click();
+    await settle(); await settle();
+    const notes = [...d.querySelectorAll('.details .archive-note')].map(x => x.textContent);
+    expect(notes).toContain('Transcript in progress — check back soon');
+    expect(notes).toContain('Transcription failed');
+    expect(notes).toContain('Not transcribed — too long');
+    expect(notes).toContain('Not transcribed');
+    dom.window.close();
+  });
+
+  test('a transcript answer without a label still gets the R8 label; a failed fetch is a visible error; double-click fetches once', async () => {
+    const item = call({ archive: { media_id: 7815, has_audio: false, has_transcript: true, restricted: false, extra: [] } });
+    let calls = 0;
+    const { dom } = boot([item], { responder: async (url) => {
+      if (url === '/api/comms-archive/media/7815/transcript') {
+        calls++;
+        if (calls === 1) throw new Error('No transcript for this item yet');
+        return { segments: [{ s: 'A', a: 0, b: 2, t: 'Hello.' }] };   // no label field
+      }
+      return undefined;
+    } });
+    await settle(); await settle();
+    const d = dom.window.document;
+    d.querySelector('.card-head').click();
+    await settle(); await settle();
+    const tx = [...d.querySelectorAll('.details button')].find(x => /Transcript/.test(x.textContent));
+    tx.click();
+    await settle(); await settle();
+    expect(calls).toBe(1);
+    expect(d.querySelector('.details .archive-err').textContent).toContain('No transcript for this item yet');
+    tx.click(); tx.click();   // the second synchronous click lands on a disabled button
+    await settle(); await settle();
+    expect(calls).toBe(2);
+    expect(d.querySelector('.details .archive-err')).toBeNull();      // the success cleared the error
+    expect(d.querySelector('.details .tx-block .ai-note').textContent)
+      .toBe('AI-generated — check the recording before relying on it');
+    dom.window.close();
+  });
+
+  test('a recording transcript and a voicemail transcript open independently on one call', async () => {
+    const item = call({
+      archive: { media_id: 7815, has_audio: false, has_transcript: true, restricted: false, extra: [] },
+      voicemail: { media_id: 901, provider: 'quo', has_audio: false, has_transcript: true, restricted: false },
+    });
+    const { dom } = boot([item], { responder: async (url) => {
+      if (url === '/api/comms-archive/media/7815/transcript') return { segments: [{ s: 'A', a: 0, b: 2, t: 'recording words' }] };
+      if (url === '/api/comms-archive/media/901/transcript') return { segments: [{ s: 'A', a: 0, b: 2, t: 'voicemail words' }] };
+      return undefined;
+    } });
+    await settle(); await settle();
+    const d = dom.window.document;
+    d.querySelector('.card-head').click();
+    await settle(); await settle();
+    const buttons = [...d.querySelectorAll('.details button')].filter(x => /Transcript/.test(x.textContent));
+    expect(buttons).toHaveLength(2);
+    buttons[0].click(); await settle(); await settle();
+    buttons[1].click(); await settle(); await settle();
+    const blocks = [...d.querySelectorAll('.details .tx-block')].map(x => x.textContent);
+    expect(blocks).toHaveLength(2);
+    expect(blocks.some(t => t.includes('recording words'))).toBe(true);
+    expect(blocks.some(t => t.includes('voicemail words'))).toBe(true);
+    buttons[0].click(); await settle();   // closing one leaves the other
+    const left = [...d.querySelectorAll('.details .tx-block')].map(x => x.textContent);
+    expect(left).toHaveLength(1);
+    expect(left[0]).toContain('voicemail words');
+    dom.window.close();
+  });
+
+  test('a voicemail on a missed call: labelled on the card, its row and summary in the details, transcript-status note shown', async () => {
+    const item = call({
+      id: 15, direction: 'incoming', duration_s: null,
+      archive: { media_id: 900, has_audio: true, has_transcript: false, transcript_status: { state: 'skipped', reason: 'short', est_s: 12 }, restricted: false, extra: [] },
+      voicemail: { media_id: 901, provider: 'quo', has_audio: true, has_transcript: true, summary_text: 'Left a message about documents.', restricted: false },
+    }, { duration_s: null, status: 'no-answer', missed: true });
+    const { dom } = boot([item]);
+    await settle(); await settle();
+    const d = dom.window.document;
+    expect(d.querySelector('.card.call .subject').textContent).toBe('Missed call · voicemail');
+    d.querySelector('.card-head').click();
+    await settle(); await settle();
+    const details = d.querySelector('.details');
+    expect(details.querySelector('.vm-chip').textContent).toContain('Voicemail');
+    expect(details.textContent).toContain('Left a message about documents.');
+    expect(details.textContent).toContain('Not transcribed — too short (about 12 s)');
+    expect(details.querySelector('.summary .ai-note')).not.toBeNull();
+    dom.window.close();
+  });
+
+  test('the Status meta row is a call thing — an expanded text does not grow one', async () => {
+    const { dom } = boot([
+      { id: 31, kind: 'sms', direction: 'incoming', at: '2026-10-19T10:00:00Z', participant: '3135550001',
+        preview: 'got it', phone: { event_id: 31, line_number: '2485550100', body: 'got it', status: 'delivered', delivery: null } },
+      call({ id: 32 }),
+    ]);
+    await settle(); await settle();
+    const d = dom.window.document;
+    for (const head of d.querySelectorAll('.card-head')) head.click();
+    await settle(); await settle();
+    const metaOf = (sel) => d.querySelector(`${sel} .details .meta`).textContent;
+    expect(metaOf('.card.sms')).not.toContain('Status:');
+    expect(metaOf('.card.call')).toContain('Status: Call connected');
+    dom.window.close();
+  });
+
+  test('a purged recording is a tombstone, not buttons', async () => {
+    const item = call({ archive: { media_id: 7815, purged: { at: '2026-10-20T10:00:00Z', by: 'Stuart', reason: 'client ask' } } });
+    const { dom } = boot([item]);
+    await settle(); await settle();
+    const d = dom.window.document;
+    d.querySelector('.card-head').click();
+    await settle(); await settle();
+    const details = d.querySelector('.details');
+    expect(details.querySelector('.tombstone').textContent).toContain('Recording purged');
+    expect(details.querySelector('.tombstone').textContent).toContain('client ask');
+    expect([...details.querySelectorAll('button')].find(x => /Listen/.test(x.textContent))).toBeUndefined();
+    dom.window.close();
+  });
+
+  test('the toolbar keeps Refresh and Send / log together in their own group beside Search', async () => {
+    const { dom } = boot();
+    await settle();
+    const d = dom.window.document;
+    const actions = d.querySelector('.topbar .bar-actions');
+    expect(actions).not.toBeNull();
+    expect(actions.querySelector('#comms-refresh')).not.toBeNull();
+    expect(actions.querySelector('#comms-compose-toggle')).not.toBeNull();
+    expect(d.querySelector('.toolbar #comms-compose-toggle')).toBeNull();
+    dom.window.close();
+  });
+});

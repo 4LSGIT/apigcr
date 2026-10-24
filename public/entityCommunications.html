@@ -16,6 +16,10 @@
   [hidden] { display: none !important; }
   button, input, select { font: inherit; }
   .shell { max-width: 980px; margin: 0 auto; text-align: left; }
+  /* Search + the two actions on their own row: the primary button never ends up
+     orphaned mid-filter. When the row is too narrow the PAIR wraps together. */
+  .topbar { display: flex; flex-wrap: wrap; gap: 7px; align-items: end; margin-bottom: 8px; }
+  .bar-actions { display: flex; gap: 7px; margin-left: auto; }
   .toolbar { display: flex; flex-wrap: wrap; gap: 7px; align-items: end; padding: 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
   .field { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
   .field.search { flex: 1 1 230px; }
@@ -52,6 +56,22 @@
   .meta { display: flex; flex-wrap: wrap; gap: 5px 14px; padding: 8px 0; color: var(--text-muted); font-size: var(--fs-sm); }
   .copy { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.45; }
   .summary { margin: 6px 0; padding: 8px 10px; background: var(--surface-2); border-radius: 5px; white-space: pre-wrap; overflow-wrap: anywhere; }
+  /* ── Comms archive on a call card: summary, Listen / Transcript, voicemail ──
+     Everything is built with text nodes; audio bytes come from 5-minute signed
+     URLs on storage.googleapis.com (minted + audited server-side), never this origin. */
+  .ai-note { display: block; margin-top: 3px; color: var(--text-muted); font-size: var(--fs-xs); font-style: italic; }
+  .preview .ai-mark { font-style: italic; }
+  .archive-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 8px; min-width: 0; }
+  .vm-chip { display: inline-flex; align-items: center; gap: 5px; font-size: var(--fs-sm); font-weight: 600; color: var(--text-2); }
+  .archive-note { display: block; margin-top: 4px; font-style: italic; color: var(--text-muted); font-size: var(--fs-sm); }
+  .archive-err { color: var(--danger); font-style: normal; }
+  .tombstone { display: block; margin-top: 5px; font-size: var(--fs-sm); font-style: italic; color: var(--text-muted); overflow-wrap: anywhere; }
+  .media-slot { display: block; margin-top: 6px; min-width: 0; }
+  .media-slot audio { display: block; width: min(360px, 100%); height: 36px; }
+  .tx-block { margin-top: 6px; border: 1px solid var(--border); border-radius: 5px; background: var(--page-bg); padding: 8px 10px; max-height: 320px; overflow-y: auto; font-size: var(--fs-sm); line-height: 1.5; }
+  .tx-block p { margin: 0 0 8px; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .tx-block .spk { font-weight: 700; margin-right: 6px; color: var(--text-2); }
+  .tx-block .ts { margin-right: 6px; font-variant-numeric: tabular-nums; color: var(--text-muted); font-size: var(--fs-xs); }
   .attachments { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
   .attachment { max-width: 100%; display: inline-flex; flex-wrap: wrap; align-items: center; gap: 5px; overflow-wrap: anywhere; padding: 4px 7px; border: 1px solid var(--border); border-radius: 5px; background: var(--surface-2); font-size: var(--fs-sm); }
   .attachment button { border: 0; padding: 0 3px; color: var(--accent); background: transparent; cursor: pointer; }
@@ -86,11 +106,17 @@
 <body>
 <main class="shell">
   <section id="history-view" aria-label="Communication history">
-    <div class="toolbar">
+    <div class="topbar">
       <div class="field search">
         <label for="comms-q">Search</label>
         <input id="comms-q" type="search" maxlength="200" placeholder="Search communications">
       </div>
+      <div class="bar-actions">
+        <button class="btn" id="comms-refresh" type="button" title="Refresh"><i class="fa-solid fa-rotate" aria-hidden="true"></i> Refresh</button>
+        <button class="btn primary" id="comms-compose-toggle" type="button" hidden><i class="fa-solid fa-pen" aria-hidden="true"></i> Send / log…</button>
+      </div>
+    </div>
+    <div class="toolbar">
       <div class="field">
         <label for="comms-kind">Channel</label>
         <select id="comms-kind">
@@ -127,8 +153,6 @@
           <option value="outgoing">Outgoing</option>
         </select>
       </div>
-      <button class="btn" id="comms-refresh" type="button" title="Refresh"><i class="fa-solid fa-rotate" aria-hidden="true"></i> Refresh</button>
-      <button class="btn primary" id="comms-compose-toggle" type="button" hidden><i class="fa-solid fa-pen" aria-hidden="true"></i> Send / log…</button>
     </div>
     <div class="status" id="comms-status" role="status" aria-live="polite"></div>
     <div class="error" id="comms-error" role="alert" hidden></div>
@@ -224,9 +248,32 @@ function previewOf(item) {
     item.body_text, item.message, item.note, item.call_status));
 }
 
+const clockOf = (sec) => { const n = Math.max(0, Math.floor(Number(sec) || 0)); return `${Math.floor(n / 60)}:${String(n % 60).padStart(2, '0')}`; };
+
+/**
+ * A call's best one-liner is its AI summary — marked as such (R8); the bare
+ * status when there is none (the subject already carries the duration).
+ */
+function previewInfo(item) {
+  if (itemKind(item) === 'call') {
+    const sum = text(summaryOf(item));
+    if (sum) return { text: sum, ai: true };
+    return { text: text(first(item.call_status, item.preview)), ai: false };
+  }
+  return { text: previewOf(item), ai: false };
+}
+
+/** What a call row is called — never "Email" (that fallback mislabelled every call). */
+function callLabel(item) {
+  const seconds = first(item.duration_s, item.phone && item.phone.duration_s);
+  let base = item.phone && item.phone.missed ? 'Missed call' : 'Phone call';
+  if (item.voicemail && !item.voicemail.purged) base += ' · voicemail';
+  return seconds != null ? `${base} · ${clockOf(seconds)}` : base;
+}
+
 function subjectOf(item, kind) {
   return text(first(item.subject, item.email && item.email.subject, item.log && item.log.subject, item.title,
-    kind === 'call' ? item.call_label : null,
+    kind === 'call' ? callLabel(item) : null,
     kind === 'sms' ? 'Text message' : kind === 'court' ? 'Court email' : 'Email'));
 }
 
@@ -338,11 +385,195 @@ async function saveMailPart(message, attachment, caseId, button) {
   }
 }
 
-async function archiveUrl(attachment) {
-  const data = await api(`/api/comms-archive/media/${encodeURIComponent(attachment.media_id)}/url`, 'GET');
+// ── Comms archive (calls + voicemails) ──────────────────────────────────
+// Bytes: GET /api/comms-archive/media/:id/url → a 5-minute signed URL on
+// storage.googleapis.com, minted after the server's grant check and audited
+// there. Only that host is ever put in a src. Mirrors comms.html's S4 pattern.
+const CA_AI_LABEL = 'AI-generated — check the recording before relying on it';
+const CA_URL_RE = /^https:\/\/storage\.googleapis\.com\//;
+const caPlayers = new Map(); // media_id → <audio> (a moved node keeps playing)
+
+async function mintMediaUrl(mediaId, { renew = false } = {}) {
+  const data = await api(`/api/comms-archive/media/${encodeURIComponent(mediaId)}/url${renew ? '?renew=1' : ''}`, 'GET');
   const url = String(data && data.url || '');
-  if (!/^https:\/\/storage\.googleapis\.com\//.test(url)) throw new Error('Unexpected archive link');
+  if (!CA_URL_RE.test(url)) throw new Error('Unexpected archive link');
   return url;
+}
+
+async function archiveUrl(attachment) {
+  return mintMediaUrl(attachment.media_id);
+}
+
+const caPlay = (a) => { try { const p = a.play(); if (p && typeof p.catch === 'function') p.catch(() => {}); } catch (_) { /* noop */ } };
+
+/** One <audio> per media id; an expired URL re-mints once (?renew=1) and resumes. */
+function caPlayer(mediaId) {
+  let a = caPlayers.get(mediaId);
+  if (a) return a;
+  a = h('audio', { controls: true, preload: 'metadata', referrerpolicy: 'no-referrer', dataset: { media: String(mediaId) } });
+  let renewed = false;
+  let resumeAt = null;
+  a.addEventListener('loadedmetadata', () => {
+    if (resumeAt != null) { try { a.currentTime = resumeAt; } catch (_) { /* before metadata */ } resumeAt = null; }
+  });
+  a.addEventListener('playing', () => {
+    renewed = false;
+    // A renew that lost a race with a reclick can leave a stale failure note
+    // beside a player that now works — playback starting proves it stale.
+    const p = a.parentElement;
+    if (p) for (const old of p.querySelectorAll('.archive-err')) old.remove();
+  });
+  a.addEventListener('error', async () => {
+    if (!a.getAttribute('src')) return;
+    // A dead src must never stick: listenTo only mints when there is none,
+    // so the failure paths clear it and the next Listen click starts fresh.
+    if (renewed) { a.removeAttribute('src'); playFailed(a); return; }
+    renewed = true;
+    resumeAt = a.currentTime || 0;
+    try {
+      a.setAttribute('src', await mintMediaUrl(mediaId, { renew: true }));
+      caPlay(a);
+    } catch (_) {
+      a.removeAttribute('src');
+      playFailed(a);
+    }
+  });
+  caPlayers.set(mediaId, a);
+  return a;
+}
+
+const errNote = (msg) => h('span', { className: 'archive-note archive-err' }, msg);
+
+/** One visible error line per container — a later success or retry clears it. */
+function showErr(container, msg) {
+  for (const old of container.querySelectorAll('.archive-err')) old.remove();
+  container.append(errNote(msg));
+}
+
+/** The player's URL died and could not be renewed: say so where the player sits. */
+function playFailed(a) {
+  const p = a.parentElement;
+  if (p) showErr(p, 'Could not play — press Listen to try again.');
+}
+
+async function listenTo(mediaId, slot, button) {
+  button.disabled = true;
+  try {
+    const a = caPlayer(mediaId);
+    if (!a.getAttribute('src')) a.setAttribute('src', await mintMediaUrl(mediaId));
+    slot.replaceChildren(a);
+    slot.hidden = false;
+    caPlay(a);
+  } catch (error) {
+    slot.replaceChildren(errNote(`Could not open the recording: ${error && error.message ? error.message : 'Unknown error'}`));
+    slot.hidden = false;
+  } finally { button.disabled = false; }
+}
+
+const speakerOf = (s) => { const c = /^ch(\d{1,2})$/.exec(String(s)); return c ? `Channel ${c[1]}` : `Speaker ${s}`; };
+
+/** The transcript, inline under the card (R8 label first; every word a text node). */
+async function toggleTranscript(mediaId, holder, button) {
+  const open = holder.querySelector('.tx-block');
+  if (open) { open.remove(); button.setAttribute('aria-expanded', 'false'); return; }
+  button.disabled = true;
+  try {
+    const t = await api(`/api/comms-archive/media/${encodeURIComponent(mediaId)}/transcript`, 'GET');
+    const segs = Array.isArray(t && t.segments) ? t.segments : [];
+    const rows = segs.length
+      ? segs.map(g => h('p', null,
+        g.a != null ? h('span', { className: 'ts' }, clockOf(g.a)) : null,
+        g.s != null ? h('span', { className: 'spk' }, speakerOf(g.s)) : null,
+        text(g.t || '')))
+      : [h('p', null, text(t && t.text || 'No speech was transcribed.'))];
+    for (const old of holder.querySelectorAll('.archive-err')) old.remove();
+    holder.append(h('div', { className: 'tx-block' },
+      h('div', { className: 'ai-note' }, text(t && t.label) || CA_AI_LABEL), ...rows));
+    button.setAttribute('aria-expanded', 'true');
+  } catch (error) {
+    showErr(holder, `Could not load the transcript: ${error && error.message ? error.message : 'Unknown error'}`);
+  } finally { button.disabled = false; }
+}
+
+/** Why there is no Transcript button — the server's transcript_status, same words as Comms → Phone. */
+function txStatusNote(info) {
+  const st = info && !info.has_transcript && info.transcript_status;
+  if (!st) return null;
+  let line;
+  if (st.state === 'in_progress') line = 'Transcript in progress — check back soon';
+  else if (st.state === 'failed') line = 'Transcription failed';
+  else if (st.state === 'skipped' && st.reason === 'short') {
+    const s = Number(st.est_s);
+    line = `Not transcribed — too short${st.est_s != null && Number.isFinite(s) ? ` (about ${s} s)` : ''}`;
+  } else if (st.state === 'skipped' && st.reason === 'over_cap') line = 'Not transcribed — too long';
+  else if (st.state === 'skipped') line = 'Not transcribed';
+  else return null;
+  return h('span', { className: 'archive-note' }, line);
+}
+
+/** The AI summary with its R8 label — on every rendered summary, no exception. */
+function summaryBlock(info) {
+  if (!info || !info.summary_text) return null;
+  return h('div', { className: 'summary' }, text(info.summary_text),
+    h('span', { className: 'ai-note' }, CA_AI_LABEL));
+}
+
+function tombstoneOf(info, what) {
+  const p = info && info.purged;
+  if (!p) return null;
+  const when = p.at ? new Date(p.at) : null;
+  const at = when && !Number.isNaN(when.getTime())
+    ? new Intl.DateTimeFormat(undefined, { year: 'numeric', month: 'short', day: 'numeric' }).format(when) : '';
+  return h('span', { className: 'tombstone' },
+    `${what} purged${at ? ` ${at}` : ''}${p.by ? ` by ${p.by}` : ''}${p.reason ? `: ${p.reason}` : ''}`);
+}
+
+/** Listen / Transcript (+ Restricted badge) for one recording or voicemail. */
+function mediaRow(info, { what, chip = null }) {
+  if (info.purged) return tombstoneOf(info, what);
+  const slot = h('span', { className: 'media-slot', hidden: true });
+  const parts = [info.media_id, ...(Array.isArray(info.extra) ? info.extra : [])];
+  const listenBtn = (id, label) => {
+    const b = h('button', { className: 'btn', type: 'button' },
+      h('i', { className: 'fa-solid fa-play', 'aria-hidden': 'true' }), ` ${label}`);
+    b.addEventListener('click', () => listenTo(id, slot, b));
+    return b;
+  };
+  const wrap = h('div', null);
+  let tx = null;
+  if (info.has_transcript) {
+    tx = h('button', { className: 'btn', type: 'button', 'aria-expanded': 'false' },
+      h('i', { className: 'fa-solid fa-align-left', 'aria-hidden': 'true' }), ' Transcript');
+    tx.addEventListener('click', () => toggleTranscript(info.media_id, wrap, tx));
+  }
+  wrap.append(h('div', { className: 'archive-row' },
+    chip ? h('span', { className: 'vm-chip' }, h('i', { className: 'fa-solid fa-voicemail', 'aria-hidden': 'true' }), ` ${chip}`) : null,
+    info.has_audio ? listenBtn(info.media_id, 'Listen') : null,
+    ...parts.slice(1).map((p, i) => listenBtn(p, `Part ${i + 2}`)),
+    tx,
+    info.restricted ? h('span', { className: 'badge', title: 'Only archive admins see this' }, 'Restricted') : null));
+  const note = txStatusNote(info);
+  if (note) wrap.append(note);
+  wrap.append(slot);
+  return wrap;
+}
+
+/** A call card's archive: recording summary + rows, then the voicemail and its summary. */
+function appendCallArchive(details, item) {
+  let any = false;
+  if (item.archive) {
+    const sb = summaryBlock(item.archive);
+    if (sb) { details.append(sb); any = true; }
+    const row = mediaRow(item.archive, { what: 'Recording' });
+    if (row) { details.append(row); any = true; }
+  }
+  if (item.voicemail) {
+    const row = mediaRow(item.voicemail, { what: 'Voicemail', chip: 'Voicemail' });
+    if (row) { details.append(row); any = true; }
+    const sb = summaryBlock(item.voicemail);
+    if (sb) { details.append(sb); any = true; }
+  }
+  return any;
 }
 
 function detailMeta(item) {
@@ -354,7 +585,8 @@ function detailMeta(item) {
   add('Mailbox', first(item.mailbox_address, item.email && item.email.mailbox_address));
   add('Phone line', first(item.phone_line_name, item.line_name, item.phone && item.phone.line_number));
   const seconds = first(item.duration_s, item.phone && item.phone.duration_s);
-  add('Duration', first(item.duration, item.duration_label, seconds != null ? `${seconds}s` : null));
+  add('Duration', first(item.duration, item.duration_label, seconds != null ? clockOf(seconds) : null));
+  if (itemKind(item) === 'call') add('Status', first(item.call_status, item.phone && item.phone.status));
   add('Sent by', first(item.sent_by_name, item.user_name));
   return rows;
 }
@@ -560,9 +792,12 @@ async function expandCard(card, item, button) {
   const details = h('div', { className: 'details' });
   const meta = detailMeta(item);
   if (meta.length) details.append(h('div', { className: 'meta' }, meta));
-  const summary = summaryOf(item);
-  if (summary && summary !== previewOf(item)) {
-    details.append(h('div', { className: 'summary' }, summary));
+  const archived = item.archive || item.voicemail;
+  if (archived) {
+    appendCallArchive(details, item);
+  } else {
+    const summary = summaryOf(item);
+    if (summary) details.append(h('div', { className: 'summary' }, summary));
   }
   let fullMessage = null;
   if ((kind === 'email' || kind === 'court') && item.email && item.email.id) {
@@ -584,13 +819,13 @@ async function expandCard(card, item, button) {
       loggedBodyOf(item));
     if (body) details.append(h('div', { className: 'copy' }, body));
   }
-  const transcript = text(first(item.transcript, archiveText(item, 'transcript'),
+  const transcript = archived ? '' : text(first(item.transcript, archiveText(item, 'transcript'),
     item.voicemail && item.voicemail.transcript));
   if (transcript && transcript !== item.body_text) {
     details.append(h('div', { className: 'summary' }, h('strong', null, 'Transcript'), h('div', { className: 'copy' }, transcript)));
   }
-  const archived = await appendArchiveAttachments(details, item);
-  const attachments = archived ? [] : attachmentsOf(item);
+  const archivedFiles = await appendArchiveAttachments(details, item);
+  const attachments = archivedFiles ? [] : attachmentsOf(item);
   if (attachments.length && !fullMessage) {
     details.append(h('div', { className: 'attachments' }, attachments.map((attachment) => {
       const name = typeof attachment === 'string' ? attachment : first(attachment.filename, attachment.name, 'Attachment');
@@ -629,9 +864,11 @@ function renderItem(item) {
       : null,
     item.contact && item.contact.contact_name ? h('span', { className: 'badge' }, item.contact.contact_name) : null,
     item.case_number || item.case_id ? h('span', { className: 'badge' }, item.case_number || `Case ${item.case_id}`) : null);
+  const pv = previewInfo(item);
   const main = h('div', { className: 'main' }, headline,
     h('div', { className: 'subject' }, subjectOf(item, kind)),
-    previewOf(item) ? h('div', { className: 'preview' }, previewOf(item)) : null);
+    pv.text ? h('div', { className: 'preview', title: pv.ai ? CA_AI_LABEL : null },
+      pv.ai ? h('span', { className: 'ai-mark' }, 'AI summary: ') : null, pv.text) : null);
   const card = h('article', { className: `card ${kind}` });
   const button = h('button', { className: 'card-head', type: 'button', 'aria-expanded': 'false' },
     h('span', { className: 'channel-icon' }, h('i', { className: `fa-solid ${iconFor(kind)}`, 'aria-hidden': 'true' })),
