@@ -112,8 +112,18 @@ function clip(text, at) {
   return `${a > 0 ? '…' : ''}${safeSlice(s, a, b).trim()}${b < s.length ? '…' : ''}`;
 }
 
-/** → {snippet, snippet_at, snippet_from} for one transcript row. */
+/**
+ * → {snippet, snippet_at, snippet_from} for one transcript row — or null when
+ * the row must leave the page. A summary the queue SKIPPED is not served
+ * anywhere (the view's hideSkippedSummaries rule; Fred 2026-10-25), so with
+ * summary_skipped the summary is never a snippet source, and a row with no
+ * hit in its visible text leaves the page — the match was the hidden summary.
+ * (Excluding such rows in the MATCH itself would need a second FULLTEXT index:
+ * an ALTER on comms_transcripts, the §5 landmine — so the page re-check does
+ * it, the same place that already drops re-queued and restricted rows.)
+ */
 function snippetOf(row, terms) {
+  const noSummary = !!Number(row.summary_skipped);
   let segs = row.segments;
   if (typeof segs === 'string') { try { segs = JSON.parse(segs); } catch (_) { segs = null; } }
   if (Array.isArray(segs)) {
@@ -126,12 +136,14 @@ function snippetOf(row, terms) {
       }
     }
   }
-  for (const [text, from] of [[row.summary_text, 'summary'], [row.full_text, 'transcript']]) {
+  for (const [text, from] of [[noSummary ? null : row.summary_text, 'summary'], [row.full_text, 'transcript']]) {
     if (text == null) continue;
     const norm = String(text).replace(/\s+/g, ' ').trim();
     const i = firstHit(norm, terms);
     if (i >= 0) return { snippet: clip(norm, i), snippet_at: null, snippet_from: from };
   }
+  // Nothing hit outside a hidden summary: the match was the summary — the row leaves the page.
+  if (noSummary) return null;
   // The index matched but no word prefix did here (a parser / normalisation edge): the opening only.
   const first = Array.isArray(segs) && segs.find(g => g && typeof g.t === 'string' && g.t.trim());
   if (first) return { snippet: clip(first.t, 0), snippet_at: Number.isFinite(Number(first.a)) ? Number(first.a) : null, snippet_from: 'transcript' };
@@ -201,23 +213,38 @@ async function search(db, auth, { q, lineId = null, cursor = null, limit } = {})
   // The text, for the page's rows only — re-checked (review A1): a row
   // restricted, purged or re-queued since the match gives no snippet and
   // leaves the page rather than leak a line of it.
-  const [texts] = await db.query(
-    `SELECT t.media_id, t.segments, t.summary_text, t.full_text
-       FROM comms_transcripts t JOIN comms_media m ON m.id = t.media_id AND m.state = 'archived'
-      WHERE t.media_id IN (?) AND t.state IN (?)${isAdmin ? '' : ' AND m.restricted = 0'}`,
-    [page.map(r => r.id), READABLE_STATES]);
+  let texts;
+  try {
+    [texts] = await db.query(
+      `SELECT t.media_id, t.segments, t.summary_text, t.full_text, (s.state = 'skipped') AS summary_skipped
+         FROM comms_transcripts t JOIN comms_media m ON m.id = t.media_id AND m.state = 'archived'
+         LEFT JOIN comms_summaries s ON s.transcript_id = t.id
+        WHERE t.media_id IN (?) AND t.state IN (?)${isAdmin ? '' : ' AND m.restricted = 0'}`,
+      [page.map(r => r.id), READABLE_STATES]);
+  } catch (err) {
+    // Pre-S3 (no comms_summaries): nothing is hidden, same tolerance as the view.
+    if (!err || err.code !== 'ER_NO_SUCH_TABLE') throw err;
+    [texts] = await db.query(
+      `SELECT t.media_id, t.segments, t.summary_text, t.full_text, 0 AS summary_skipped
+         FROM comms_transcripts t JOIN comms_media m ON m.id = t.media_id AND m.state = 'archived'
+        WHERE t.media_id IN (?) AND t.state IN (?)${isAdmin ? '' : ' AND m.restricted = 0'}`,
+      [page.map(r => r.id), READABLE_STATES]);
+  }
   const byId = new Map(texts.map(t => [Number(t.media_id), t]));
-  out.results = page.filter(r => byId.has(Number(r.id))).map((r) => ({
-    media_id: Number(r.id),
-    event_id: r.source_table === 'phone_event_log' ? Number(r.source_id) : null,
-    source_table: r.source_table,
-    line_id: r.channel_id == null ? null : Number(r.channel_id),
-    party: r.party == null ? null : String(r.party),
-    kind: r.kind,
-    captured_at: new Date(r.captured_at).toISOString(),
-    restricted: Number(r.restricted) === 1,
-    ...snippetOf(byId.get(Number(r.id)) || {}, tok.terms),
-  }));
+  out.results = page.filter(r => byId.has(Number(r.id))).map((r) => {
+    const snippet = snippetOf(byId.get(Number(r.id)) || {}, tok.terms);
+    return snippet && {
+      media_id: Number(r.id),
+      event_id: r.source_table === 'phone_event_log' ? Number(r.source_id) : null,
+      source_table: r.source_table,
+      line_id: r.channel_id == null ? null : Number(r.channel_id),
+      party: r.party == null ? null : String(r.party),
+      kind: r.kind,
+      captured_at: new Date(r.captured_at).toISOString(),
+      restricted: Number(r.restricted) === 1,
+      ...snippet,
+    };
+  }).filter(Boolean);
   if (rows.length > n) {
     const last = page[page.length - 1];
     out.next_cursor = `${new Date(last.captured_at).getTime()}.${last.id}`;

@@ -134,6 +134,10 @@ maybe('comms archive S6 transcript search on real MySQL', () => {
   let S;
   beforeEach(async () => {
     archiveRouter._resetSearchLimit();
+    // The search's skip gate LEFT JOINs comms_summaries (G9): a leftover copy
+    // from an aborted run holds transcript ids that restart on TRUNCATE —
+    // colliding rows would silently hide another test's snippet.
+    for (const t of ['comms_summaries', 'comms_redo']) await pool.query(`DROP TABLE IF EXISTS ${t}`);
     for (const t of ['comms_media', 'comms_transcripts', 'phone_event_log', 'phone_lines', 'users', 'admin_audit_log', 'jwt_api_audit_log', 'channel_grants']) {
       await pool.query(`TRUNCATE TABLE \`${t}\``);
     }
@@ -229,6 +233,36 @@ maybe('comms archive S6 transcript search on real MySQL', () => {
     await q("UPDATE comms_transcripts SET state = 'transcribed' WHERE media_id = ?", [m]);   // as _complete / the restore leave it
     expect(ids(await find({ q: 'zanzibar' }))).toEqual([m]);
     for (const t of ['comms_summaries', 'comms_redo']) await pool.query(`DROP TABLE IF EXISTS ${t}`);
+  });
+
+  test('G9 a summary the queue SKIPPED is never a snippet source: a summary-only match leaves the page; a spoken-word match shows only transcript text; done / no-queue-row summaries serve as before', async () => {
+    await pool.query('DROP TABLE IF EXISTS comms_summaries');
+    for (const st of schema.migrationStatements('2026-10-15_comms_s3_summaries.sql')) await pool.query(st);
+    // Push the transcript-id sequence away from the media ids: with both
+    // starting at 1 they line up row for row, and a join keyed on the WRONG
+    // id column would still pass.
+    await pool.query('ALTER TABLE comms_transcripts AUTO_INCREMENT = 70001');
+    const sum = (m, text) => q('UPDATE comms_transcripts SET summary_text = ? WHERE media_id = ?', [text, m]);
+    const tid = async (m) => (await q('SELECT id FROM comms_transcripts WHERE media_id = ?', [m]))[0].id;
+    const a = await rec('plain words about the meeting', { at: T0 + 500_000 });   // term ONLY in the skipped summary
+    await sum(a.m, 'the xylophone greeting-only call');
+    const b = await rec('a xylophone was discussed at length', { at: T0 + 510_000 });   // term in BOTH
+    await sum(b.m, 'xylophone summary text');
+    const c = await rec('plain words about nothing', { at: T0 + 520_000 });       // queue row done: served
+    await sum(c.m, 'a done xylophone summary');
+    const d = await rec('more plain words entirely', { at: T0 + 530_000 });       // no queue row (the eval set): served
+    await sum(d.m, 'an unqueued xylophone summary');
+    await q(`INSERT INTO comms_summaries (transcript_id, state, skip_reason) VALUES (?, 'skipped', 'no_speech'), (?, 'skipped', 'no_speech'), (?, 'done', NULL)`,
+      [await tid(a.m), await tid(b.m), await tid(c.m)]);
+    const r = await find({ q: 'xylophone' });
+    const got = new Map((r.json.results || []).map(x => [x.media_id, x]));
+    expect([...got.keys()].sort((x, y) => x - y)).toEqual([b.m, c.m, d.m]);       // A left the page
+    expect(got.get(b.m).snippet_from).toBe('transcript');
+    expect(got.get(b.m).snippet).toContain('discussed at length');
+    expect(got.get(c.m).snippet_from).toBe('summary');
+    expect(got.get(d.m).snippet_from).toBe('summary');
+    expect(JSON.stringify(r.json)).not.toMatch(/greeting-only|xylophone summary text/);   // hidden summaries never surface
+    await pool.query('DROP TABLE IF EXISTS comms_summaries');
   });
 
   test('G5 result fields: event_id is the call for a recording / Quo voicemail and NULL for an RC voicemail (source_table says why)', async () => {

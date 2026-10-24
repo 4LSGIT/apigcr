@@ -162,7 +162,10 @@ maybe('comms archive S4 on real MySQL', () => {
     archiveRouter._resetRedoLimit();
     archiveRouter._resetResummarizeLimit();
     _resetRateLimits();
-    for (const t of S2_TABLES) await pool.query(`DROP TABLE IF EXISTS ${t}`);
+    // comms_summaries rides along: it is S3's table (not the S2 runner's), and a
+    // leftover copy from an aborted run holds transcript ids that RESTART on the
+    // next rebuild — colliding rows silently hide another test's summary.
+    for (const t of [...S2_TABLES, 'comms_summaries']) await pool.query(`DROP TABLE IF EXISTS ${t}`);
     for (const t of ['comms_media', 'phone_event_log', 'phone_lines', 'users', 'admin_audit_log', 'channel_grants',
       'scheduled_jobs', 'job_results', 'system_alerts']) {
       await pool.query(`TRUNCATE TABLE \`${t}\``);
@@ -783,6 +786,74 @@ maybe('comms archive S4 on real MySQL', () => {
       expect(item.archive).toBeUndefined();
       expect(JSON.stringify(item)).not.toMatch(/transcript_status|short/);
     }
+  });
+
+  // S3's own queue table, from the live schema dump (the S3 migration also seeds
+  // settings and a job row — the view's skip gate needs only the table).
+  async function summariesTable() {
+    await pool.query('DROP TABLE IF EXISTS comms_summaries');
+    for (const s of schema.schemaFor(['comms_summaries']).creates) await pool.query(s);
+  }
+
+  test('X10 a summary the queue SKIPPED is not served — the transcript stays; no queue row or a pending redo keeps serving; the skipped text never reaches the audit', async () => {
+    await s2Tables();
+    const tr = async (mediaId, eventId, state, text, summary = null) => {
+      const [r] = await pool.query(`INSERT INTO comms_transcripts (media_id, phone_event_id, state, segments, full_text, summary_text, summary_model, summary)
+        VALUES (?, ?, ?, '[]', 'words', ?, 'claude-haiku-5-5', ?)`, [mediaId, eventId, state, text, summary == null ? null : JSON.stringify(summary)]);
+      return r.insertId;
+    };
+    // the QA shape: the redo put the row back to `transcribed`, the old text stayed —
+    // WITH an S3c note stamped into the summary JSON, which must hide with it
+    const tSkip = await tr(S.rec1, S.call1, 'transcribed', 'stale greeting-only summary',
+      { summary: 'x', guide: { note: 'a stamped note', note_by: 6, note_by_name: 'Fred S', requested_at: '2026-10-15T08:00:00Z', model: 'claude-haiku-5-5' } });
+    const tKept = await tr(S.quoVm, S.quoCall, 'summarized', 'kept voicemail summary');
+    // before comms_summaries exists (pre-S3 deploy): nothing is hidden
+    let m = byId((await get(`/api/phone-lines/all/conversations/${P}?limit=100`, { t: T.su() })).json.messages);
+    expect(m.get(S.call1).archive.summary_text).toBe('stale greeting-only summary');
+    await summariesTable();
+    await q(`INSERT INTO comms_summaries (transcript_id, state, skip_reason) VALUES (?, 'skipped', 'no_speech'), (?, 'done', NULL)`, [tSkip, tKept]);
+    await q('TRUNCATE TABLE admin_audit_log');
+    m = byId((await get(`/api/phone-lines/all/conversations/${P}?limit=100`, { t: T.su() })).json.messages);
+    // hidden: every summary field — the stamped note included — but the transcript stays readable
+    expect(m.get(S.call1).archive).toMatchObject({ has_transcript: true, summary_text: null, summary_model: null,
+      summary_note: null, summary_note_by: null });
+    expect(JSON.stringify(m.get(S.call1))).not.toMatch(/stale greeting-only|a stamped note/);
+    // a done row serves; so does a transcript with NO queue row at all (the eval set)
+    expect(m.get(S.quoCall).voicemail.summary_text).toBe('kept voicemail summary');
+    await q('DELETE FROM comms_summaries WHERE transcript_id = ?', [tKept]);
+    m = byId((await get(`/api/phone-lines/all/conversations/${P}?limit=100`, { t: T.su() })).json.messages);
+    expect(m.get(S.quoCall).voicemail.summary_text).toBe('kept voicemail summary');
+    // the view_summary audit counts only what was handed out: the kept one, never the skipped one
+    let a = [];
+    for (let i = 0; i < 50 && !a.length; i++) {
+      a = (await q("SELECT details FROM admin_audit_log WHERE tool = 'comms_archive'")).map(x => x.details);
+      if (!a.length) await new Promise(res => setTimeout(res, 20));
+    }
+    expect(a[0]).toEqual({ action: 'view_summary', media_ids: [S.quoVm] });
+    expect(a.every(x => !x.media_ids.includes(S.rec1))).toBe(true);
+    // a NEW request on the skipped row still shows as pending — the guide survives the hide
+    await guidesTable();
+    await q(`INSERT INTO comms_summary_guides (transcript_id, model, note, note_by, requested_at, requested_by, outcome)
+             VALUES (?, 'claude-haiku-5-5', NULL, NULL, '2026-10-25 09:00:00', 6, NULL)`, [tSkip]);
+    m = byId((await get(`/api/phone-lines/all/conversations/${P}?limit=100`, { t: T.su() })).json.messages);
+    expect(m.get(S.call1).archive).toMatchObject({ summary_text: null, summary_note: null,
+      summary_pending: true, summary_requested_at: '2026-10-25T09:00:00.000Z' });
+    await q('DELETE FROM comms_summary_guides WHERE transcript_id = ?', [tSkip]);
+    // a comms_summaries that stops matching the contract serves the summaries (logs loudly) rather than hiding every transcript
+    await pool.query('ALTER TABLE comms_summaries RENAME COLUMN state TO state_x');
+    m = byId((await get(`/api/phone-lines/all/conversations/${P}?limit=100`, { t: T.su() })).json.messages);
+    expect(m.get(S.call1).archive.summary_text).toBe('stale greeting-only summary');
+    expect(m.get(S.call1).archive.has_transcript).toBe(true);
+    await pool.query('ALTER TABLE comms_summaries RENAME COLUMN state_x TO state');
+    // a redo in flight (pending / calling) deliberately keeps showing the previous summary (S3c)
+    for (const st of ['pending', 'calling', 'failed']) {
+      await q("UPDATE comms_summaries SET state = ? WHERE transcript_id = ?", [st, tSkip]);
+      m = byId((await get(`/api/phone-lines/all/conversations/${P}?limit=100`, { t: T.su() })).json.messages);
+      expect([st, m.get(S.call1).archive.summary_text]).toEqual([st, 'stale greeting-only summary']);
+    }
+    await q("UPDATE comms_summaries SET state = 'skipped' WHERE transcript_id = ?", [tSkip]);
+    m = byId((await get(`/api/phone-lines/all/conversations/${P}?limit=100`, { t: T.su() })).json.messages);
+    expect(m.get(S.call1).archive.summary_text).toBe(null);
   });
 
   // ── P — purge's password re-check ───────────────────────────────────────

@@ -134,6 +134,7 @@ async function transcriptInfo(db, ids) {
       });
     }
     await attachGuides(db, out);
+    await hideSkippedSummaries(db, out);
   } catch (err) {
     if (err && err.code === 'ER_NO_SUCH_TABLE') return out;
     if (err && err.code === 'ER_BAD_FIELD_ERROR') {
@@ -143,6 +144,40 @@ async function transcriptInfo(db, ids) {
     throw err;
   }
   return out;
+}
+
+/**
+ * A summary the queue later SKIPPED is not served (QA 2026-10-24): the
+ * summary-mode redo flips comms_transcripts.state back to `transcribed`
+ * without clearing summary_text, and the sweep's skip never clears it either,
+ * so 98 no_speech-skipped calls kept showing their old text. The rows keep
+ * the text (cost is paid, nothing wrong is stored) — the VIEW is the gate.
+ * Only `skipped` hides: a pending / calling redo deliberately keeps showing
+ * the previous summary (S3c), and done / failed serve what they have.
+ * Missing comms_summaries (pre-S3 deploy) → nothing hidden, the guides'
+ * tolerance.
+ */
+async function hideSkippedSummaries(db, byMedia) {
+  const tids = [...byMedia.values()].filter(t => t.summary != null).map(t => t.tid);
+  if (!tids.length) return;
+  let rows;
+  try {
+    [rows] = await db.query(
+      "SELECT transcript_id FROM comms_summaries WHERE transcript_id IN (?) AND state = 'skipped'", [tids]);
+  } catch (err) {
+    if (err && err.code === 'ER_NO_SUCH_TABLE') return;
+    if (err && err.code === 'ER_BAD_FIELD_ERROR') {
+      // A sibling slice's schema must never take the view down: serve the
+      // summaries rather than hide every transcript, and say so loudly.
+      console.error('[commsArchiveView] comms_summaries does not match the skip-gate contract (transcript_id, state):', err.message);
+      return;
+    }
+    throw err;
+  }
+  const skipped = new Set(rows.map(r => Number(r.transcript_id)));
+  for (const t of byMedia.values()) {
+    if (skipped.has(t.tid)) { t.summary = null; t.model = null; t.stamp = null; }
+  }
 }
 
 /**

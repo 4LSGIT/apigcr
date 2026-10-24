@@ -86,7 +86,12 @@ maybe('S3 view_summary audit on real MySQL', () => {
     pool = mysql.createPool({ uri: URL_, connectionLimit: 8, timezone: 'Z' });
     pool.on('connection', (c) => { c.query(`SET SESSION sql_mode = '${PROD_SQL_MODE}'`); });
     await schema.build(pool, TABLES);
-    for (const t of ['comms_transcripts', 'comms_stt_jobs', 'comms_no_transcribe']) await pool.query(`DROP TABLE IF EXISTS ${t}`);
+    // comms_summaries included: this suite shares yc_comms_s3_test with
+    // commsSummarize.mysql, which creates that table and leaves it behind —
+    // its rows key on transcript ids that RESTART when the S2 runner rebuilds
+    // comms_transcripts here, and a colliding 'skipped' row silently hides a
+    // summary through the view's skip gate.
+    for (const t of ['comms_transcripts', 'comms_stt_jobs', 'comms_no_transcribe', 'comms_summaries']) await pool.query(`DROP TABLE IF EXISTS ${t}`);
     for (const f of ['2026-10-14_comms_media.sql', '2026-10-14_comms_s1b.sql']) {
       for (const s of schema.migrationStatements(f)) await pool.query(s);
     }
