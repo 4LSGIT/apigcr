@@ -14,7 +14,7 @@ const {
   captureRefusedStart,
 } = require("../lib/workflow_engine");
 const { executeJob } = require("../lib/job_executor");
-const { diffWorkflowSteps, validateWorkflowDraft, retryLadderSleepSec, RETRY_LADDER_BUDGET_SEC } = require("../lib/versionDiff");
+const { diffWorkflowSteps, validateWorkflowDraft, retryLadderSleepSec, RETRY_LADDER_BUDGET_SEC, stepFingerprint, BRANCH_TARGET_PARAMS, isTerminalSentinel } = require("../lib/versionDiff");
 const { cancelWorkflowExecution, normalizeCancelReason } = require("../services/workflowExecutionService");
 // JSON columns may come back from mysql2 as either a string (unparsed)
 // or a parsed object depending on driver version/config. Normalize to a
@@ -78,41 +78,11 @@ function validateTestInput(v) {
 // targets in params.branches[].then — an ARRAY, which this loop can't consume.
 // That form is walked separately below; `branches` must NOT be added here.
 //
-// STILL HAND-MAINTAINED, DELIBERATELY: this map is keyed by PARAM NAME, and
-// those differ per function in ways no flag can express (see the `value`
-// warning above), so unlike isControlStep() it can't be derived from __meta.
-// The invariant that IS enforced: every function carrying __meta.controlFlow
-// must appear here, asserted by tests/control.flow.test.js. Extra keys are
-// fine (wait_until_time has targets but isn't a control step); missing ones
-// break silently — a renumber leaves the target pointing at the old step.
-const BRANCH_TARGET_PARAMS = {
-  evaluate_condition: ['then', 'else'],
-  set_next:           ['value'],
-  schedule_resume:    ['nextStep', 'skipToStep'],
-  wait_for:           ['nextStep', 'skipToStep'],
-  wait_until_time:    ['nextStep'],
-  // foreach.end_step is the loop's EXIT target (the body's loop-back is a
-  // set_next, already covered by `value` above). Omitted until 2026-08, so
-  // every renumber silently left a foreach exit pointing at the old number.
-  foreach:            ['end_step'],
-  // request_decision.nextStep is the resume target after response/timeout
-  // (HITL slice, 2026-08). Note: decision_requests.resume_step on ALREADY-
-  // PAUSED executions is a frozen copy and is NOT remapped here — renumbering
-  // a workflow while a decision is pending leaves that execution resuming at
-  // the old number (same exposure every delayed execution already has via
-  // its scheduled workflow_resume job's nextStep).
-  request_decision:   ['nextStep'],
-};
-
-// Terminal sentinels are legitimate non-numeric targets — a renumber must leave
-// them alone SILENTLY, or every insert/delete on a workflow that ends a branch
-// emits a spurious "not auto-remapped" warning. Mirrors the accepted set in
-// lib/workflow_engine.normalizeNextStep(); 'null' is the deprecated alias kept
-// for wf41-era configs. Keep the two lists in step — tests/control.flow.test.js
-// asserts it.
-const TERMINAL_SENTINELS = new Set(['end', 'cancel', 'fail', 'null']);
-const isTerminalSentinel = v =>
-  typeof v === 'string' && TERMINAL_SENTINELS.has(v.trim().toLowerCase());
+// The map itself and the terminal-sentinel test moved to lib/versionDiff.js
+// (A17.4): Casey's step-edit normalizer needs them to refuse a branch-target
+// change, and importing a router into a service was the wrong direction.
+// They are required at the top of this file alongside the other versionDiff
+// exports; tests/control.flow.test.js pins them there now.
 
 async function remapBranchTargets(connection, workflowId, version, mapFn) {
   const [steps] = await connection.query(
@@ -411,7 +381,27 @@ async function validateStartWorkflowConfig(db, type, config) {
 //
 // Returns null on success, or { status, error } on failure.
 // ─────────────────────────────────────────────────────────────
+const VALID_ERROR_STRATEGIES = new Set(['ignore', 'abort', 'retry_then_abort', 'retry_then_ignore']);
+
 function validateErrorPolicyBudget(error_policy) {
+  // P11 closure (A17.4): the engine defaults any unrecognized strategy to
+  // `ignore` silently, so "strategy": "retry" saved clean and quietly never
+  // aborted. Live base is exactly the four values plus NULL (measured
+  // 2026-10-24) — nothing grandfathered. Shape first: a string/array policy
+  // stringifies into the column and the engine's `policy.strategy ||
+  // "ignore"` masks it.
+  if (error_policy != null) {
+    if (typeof error_policy !== 'object' || Array.isArray(error_policy)) {
+      return { status: 400, error: 'error_policy must be a JSON object or null' };
+    }
+    if (error_policy.strategy !== undefined && !VALID_ERROR_STRATEGIES.has(error_policy.strategy)) {
+      return {
+        status: 400,
+        error: `error_policy.strategy must be one of ${[...VALID_ERROR_STRATEGIES].join(', ')} ` +
+               `(got ${JSON.stringify(error_policy.strategy)}) — the engine treats anything else as "ignore"`,
+      };
+    }
+  }
   const ladderSec = retryLadderSleepSec(error_policy);
   if (ladderSec > RETRY_LADDER_BUDGET_SEC) {
     return {
@@ -496,6 +486,100 @@ async function ensureDraft(connection, workflowId) {
   );
 
   return draftVersion;
+}
+
+// ─────────────────────────────────────────────────────────────
+// expected_base precondition — P11 (A17.4, 2026-10-24)
+//
+// Optional on every step-mutating route; REQUIRED on every Casey step
+// proposal (the assistant normalizer always bakes one into the card, and the
+// browser's fixed request builder forwards it verbatim). The wf27 scar made
+// structural: steps are addressed by POSITION, so a write prepared against a
+// stale view lands on whichever step now occupies the slot. The precondition
+// refuses that write instead of applying it.
+//
+//   expected_base: {
+//     draft_version:    workflows.draft_version AS THE PROPOSER SAW IT
+//                       (null = no draft existed; the proposer read the
+//                       published steps),
+//     step_count:       how many steps the read version had,
+//     step_fingerprint: (optional) lib/versionDiff.stepFingerprint of the
+//                       step at the route's target position — the content
+//                       the reviewer actually looked at.
+//   }
+//
+// MUST run inside the route's transaction, BEFORE ensureDraft: it takes the
+// same parent-row FOR UPDATE lock (lock-ordering invariant preserved — the
+// parent workflows row is always first), so the compared draft_version cannot
+// change between the check and the write. The base is checked against the
+// version the proposer READ (draft if one existed, else current): when
+// ensureDraft then forks, the fork copies exactly those rows, so a verified
+// base stays verified on the new draft.
+//
+// Returns null when the base holds; { respond } with a 400 (bad shape) or a
+// structured 409 naming what changed when it does not.
+// ─────────────────────────────────────────────────────────────
+const EXPECTED_BASE_KEYS = new Set(['draft_version', 'step_count', 'step_fingerprint']);
+
+function expectedBaseShapeError(eb) {
+  if (eb == null || typeof eb !== 'object' || Array.isArray(eb)) return 'expected_base must be a JSON object';
+  const unknown = Object.keys(eb).filter((k) => !EXPECTED_BASE_KEYS.has(k));
+  if (unknown.length) return `expected_base has unknown keys: ${unknown.join(', ')}`;
+  if (!('draft_version' in eb) || !('step_count' in eb)) {
+    return 'expected_base needs draft_version (positive integer or null) and step_count';
+  }
+  if (eb.draft_version !== null && (!Number.isInteger(eb.draft_version) || eb.draft_version < 1)) {
+    return 'expected_base.draft_version must be a positive integer or null';
+  }
+  if (!Number.isInteger(eb.step_count) || eb.step_count < 0) {
+    return 'expected_base.step_count must be a non-negative integer';
+  }
+  if (eb.step_fingerprint !== undefined &&
+      (typeof eb.step_fingerprint !== 'string' || !/^[0-9a-f]{64}$/.test(eb.step_fingerprint))) {
+    return 'expected_base.step_fingerprint must be a lowercase sha256 hex string';
+  }
+  return null;
+}
+
+async function checkExpectedBase(connection, workflowId, expectedBase, { fingerprintStep = null } = {}) {
+  const shapeErr = expectedBaseShapeError(expectedBase);
+  if (shapeErr) return { respond: { status: 400, body: { error: shapeErr } } };
+  if (expectedBase.step_fingerprint !== undefined && !(Number.isInteger(fingerprintStep) && fingerprintStep > 0)) {
+    return { respond: { status: 400, body: { error: 'expected_base.step_fingerprint requires a target step position on this route' } } };
+  }
+  const [[wf]] = await connection.query(
+    `SELECT current_version, draft_version FROM workflows WHERE id = ? FOR UPDATE`,
+    [workflowId]
+  );
+  if (!wf) return { respond: { status: 404, body: { error: 'Workflow not found' } } };
+  const conflict = (changed, expected, actual) => ({ respond: { status: 409, body: {
+    error: 'The workflow changed since this edit was prepared — re-read it and rebuild the change against the current draft',
+    conflict: { changed, expected, actual },
+  } } });
+  const liveDraft = wf.draft_version == null ? null : Number(wf.draft_version);
+  if (liveDraft !== expectedBase.draft_version) {
+    return conflict('draft_version', expectedBase.draft_version, liveDraft);
+  }
+  const readVersion = liveDraft != null ? liveDraft : Number(wf.current_version);
+  const [[cnt]] = await connection.query(
+    `SELECT COUNT(*) AS n FROM workflow_steps WHERE workflow_id = ? AND version = ?`,
+    [workflowId, readVersion]
+  );
+  if (Number(cnt.n) !== expectedBase.step_count) {
+    return conflict('step_count', expectedBase.step_count, Number(cnt.n));
+  }
+  if (expectedBase.step_fingerprint !== undefined) {
+    const [[row]] = await connection.query(
+      `SELECT type, config, error_policy, label, note FROM workflow_steps WHERE workflow_id = ? AND version = ? AND step_number = ?`,
+      [workflowId, readVersion, fingerprintStep]
+    );
+    if (!row) return conflict('step_missing', expectedBase.step_fingerprint, null);
+    const actual = stepFingerprint(row);
+    if (actual !== expectedBase.step_fingerprint) {
+      return conflict('step_fingerprint', expectedBase.step_fingerprint, actual);
+    }
+  }
+  return null;
 }
 
 router.get('/workflows/functions', jwtOrApiKey, (req, res) => {
@@ -1559,7 +1643,7 @@ router.post("/workflows/:id/steps", jwtOrApiKey, async (req, res) => {
   // grows insert-at-position, wire the guard there too.
   const db = req.db;
   const { id } = req.params;
-  const { stepNumber, type, config, error_policy = null, label = null, note = null } = req.body;
+  const { stepNumber, type, config, error_policy = null, label = null, note = null, expected_base } = req.body;
 
   const workflowId = parseInt(id, 10);
   if (isNaN(workflowId) || workflowId <= 0) {
@@ -1600,7 +1684,24 @@ router.post("/workflows/:id/steps", jwtOrApiKey, async (req, res) => {
   }
 
   try {
+    // Optional `Idempotency-Key` header (P4, extended here for A17.4): a
+    // repeat of the same key replays the first insert's result instead of
+    // adding the step twice (Casey's step-insert card sends its draft_id).
+    // No key = unchanged behaviour. A refusal below (404/409/precondition)
+    // throws out of the claim, releasing it: the refusal wrote nothing, so
+    // the key stays usable by a corrected retry.
+    const { value: created, replayed } = await idempotentRequest(req, 'workflows.step_insert', async () => {
     const outcome = await db.withTransaction(async (connection) => {
+
+    // expected_base precondition (P11) — before ensureDraft, same parent lock.
+    // For an insert-at-position the fingerprint target is the DISPLACED
+    // occupant of that slot (what the reviewer saw there); an append has no
+    // target, so a fingerprint on one is a 400.
+    if (expected_base !== undefined) {
+      const base = await checkExpectedBase(connection, workflowId, expected_base,
+        { fingerprintStep: stepNumber ? parseInt(stepNumber, 10) : null });
+      if (base) return base;
+    }
 
     // Existence check + draft resolution in one — first edit after a publish
     // lazily forks the draft (see ensureDraft above).
@@ -1661,17 +1762,26 @@ router.post("/workflows/:id/steps", jwtOrApiKey, async (req, res) => {
       return { targetStep, remap };
     });
 
-    if (outcome.respond) return res.status(outcome.respond.status).json(outcome.respond.body);
+    if (outcome.respond) {
+      const refusal = new Error(`step insert refused (${outcome.respond.status})`);
+      refusal.respond = outcome.respond;
+      throw refusal;
+    }
 
-    res.status(201).json({
+    return {
       success: true,
       workflowId,
       stepNumber: outcome.targetStep,
       type,
       ...(outcome.remap ? { remap: outcome.remap } : {}),
       message: `Step ${outcome.targetStep} added to workflow ${workflowId}`
+    };
     });
+
+    res.status(201).json({ ...created, ...(replayed ? { replayed: true } : {}) });
   } catch (err) {
+    if (err && err.respond) return res.status(err.respond.status).json(err.respond.body);
+    if (sendIdempotencyError(res, err)) return;
     console.error("[ADD STEP] Failed:", err);
     res.status(500).json({ error: "Failed to add step", message: err.message });
   }
@@ -1909,6 +2019,7 @@ router.delete("/workflows/:id", jwtOrApiKey, async (req, res) => {
 router.delete("/workflows/:id/steps/:stepNumber", jwtOrApiKey, async (req, res) => {
   const db = req.db;
   const { id, stepNumber } = req.params;
+  const expected_base = req.body ? req.body.expected_base : undefined;
 
   const workflowId = parseInt(id, 10);
   const stepNum = parseInt(stepNumber, 10);
@@ -1919,6 +2030,12 @@ router.delete("/workflows/:id/steps/:stepNumber", jwtOrApiKey, async (req, res) 
 
   try {
     const outcome = await db.withTransaction(async (connection) => {
+
+    // expected_base precondition (P11) — before ensureDraft, same parent lock.
+    if (expected_base !== undefined) {
+      const base = await checkExpectedBase(connection, workflowId, expected_base, { fingerprintStep: stepNum });
+      if (base) return base;
+    }
 
     // Existence check + draft resolution in one — first edit after a publish
     // lazily forks the draft (see ensureDraft above).
@@ -1992,7 +2109,7 @@ router.delete("/workflows/:id/steps/:stepNumber", jwtOrApiKey, async (req, res) 
 router.patch("/workflows/:id/steps/reorder", jwtOrApiKey, async (req, res) => {
   const db = req.db;
   const { id } = req.params;
-  const { fromStep, toStep, order } = req.body;
+  const { fromStep, toStep, order, expected_base } = req.body;
 
   const workflowId = parseInt(id, 10);
   if (isNaN(workflowId) || workflowId <= 0) {
@@ -2001,6 +2118,14 @@ router.patch("/workflows/:id/steps/reorder", jwtOrApiKey, async (req, res) => {
 
   try {
     const outcome = await db.withTransaction(async (connection) => {
+
+    // expected_base precondition (P11) — before ensureDraft, same parent
+    // lock. No per-step fingerprint target on a reorder: draft_version +
+    // step_count are the meaningful base here.
+    if (expected_base !== undefined) {
+      const base = await checkExpectedBase(connection, workflowId, expected_base);
+      if (base) return base;
+    }
 
     // Existence check + draft resolution in one — first edit after a publish
     // lazily forks the draft (see ensureDraft above).
@@ -2252,7 +2377,7 @@ router.put("/workflows/:id", jwtOrApiKey, async (req, res) => {
 router.put("/workflows/:id/steps/:stepNumber", jwtOrApiKey, async (req, res) => {
   const db = req.db;
   const { id, stepNumber } = req.params;
-  const { type, config, error_policy, label, note } = req.body;
+  const { type, config, error_policy, label, note, expected_base } = req.body;
 
   const workflowId = parseInt(id, 10);
   const stepNum = parseInt(stepNumber, 10);
@@ -2296,6 +2421,12 @@ router.put("/workflows/:id/steps/:stepNumber", jwtOrApiKey, async (req, res) => 
 
   try {
     const outcome = await db.withTransaction(async (connection) => {
+
+    // expected_base precondition (P11) — before ensureDraft, same parent lock.
+    if (expected_base !== undefined) {
+      const base = await checkExpectedBase(connection, workflowId, expected_base, { fingerprintStep: stepNum });
+      if (base) return base;
+    }
 
     // Draft resolution (see ensureDraft above). Also serves as the workflow
     // existence check this route historically lacked.
@@ -2376,7 +2507,7 @@ router.put("/workflows/:id/steps/:stepNumber", jwtOrApiKey, async (req, res) => 
 router.patch("/workflows/:id/steps/:stepNumber", jwtOrApiKey, async (req, res) => {
   const db = req.db;
   const { id, stepNumber } = req.params;
-  const { type, config, error_policy, label, note } = req.body;
+  const { type, config, error_policy, label, note, expected_base } = req.body;
 
   const workflowId = parseInt(id, 10);
   const stepNum = parseInt(stepNumber, 10);
@@ -2385,7 +2516,7 @@ router.patch("/workflows/:id/steps/:stepNumber", jwtOrApiKey, async (req, res) =
     return res.status(400).json({ error: "Invalid workflow ID or step number" });
   }
 
-  // At least one field must be provided
+  // At least one field must be provided (expected_base alone is a check, not an edit)
   if (type === undefined && config === undefined && error_policy === undefined
       && label === undefined && note === undefined) {
     return res.status(400).json({ error: "At least one field is required" });
@@ -2401,6 +2532,12 @@ router.patch("/workflows/:id/steps/:stepNumber", jwtOrApiKey, async (req, res) =
 
   try {
     const outcome = await db.withTransaction(async (connection) => {
+
+    // expected_base precondition (P11) — before ensureDraft, same parent lock.
+    if (expected_base !== undefined) {
+      const base = await checkExpectedBase(connection, workflowId, expected_base, { fingerprintStep: stepNum });
+      if (base) return base;
+    }
 
     // Draft resolution (see ensureDraft above). Also serves as the workflow
     // existence check this route historically lacked.

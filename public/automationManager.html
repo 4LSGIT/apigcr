@@ -474,6 +474,7 @@ function switchSubPage(id) {
 const ASSISTANT_DESTINATION_BY_SUB = Object.freeze({
   courtReview: 'automations.court_review',
   workflows: 'automations.workflow',
+  sequences: 'automations.sequence',
   scheduledJobs: 'automations.job',
   hooks: 'automations.hook',
 });
@@ -504,7 +505,7 @@ function notifyAssistantDestinationReady(id) {
 // routes an id to the pane's own record opener instead. Found live
 // (2026-10-22): the applied workflow-56 card opened execution #56.
 const ASSISTANT_RECORD_BY_SUB = Object.freeze({
-  workflows: 'workflow', scheduledJobs: 'job', hooks: 'hook',
+  workflows: 'workflow', sequences: 'sequence', scheduledJobs: 'job', hooks: 'hook',
 });
 
 function ycAssistantOpenDestination(rest) {
@@ -516,20 +517,49 @@ function ycAssistantOpenDestination(rest) {
   return true;
 }
 
-// ── Workspace URL: this page's sub-tab (S5c-a) ─────────────────
+// ── Workspace URL: this page's sub-tab (S5c-a; record segment P13) ──────
 // This page is a ycSubTab leaf (public/js/ycSubTab.js) inside the shell's
 // More panel: its segment is the SUB_PAGES id of the shown sub-tab —
 // ?open=tabMore~moreAutomations~triggers. Ids are vocabulary, never data,
 // and a token is only ever COMPARED to SUB_PAGES ids, never put in a
-// selector. The sub-pages own no segment: anything after ours is dropped.
+// selector. Since P13 the workflows/sequences sub-pages ALSO own one
+// trailing segment: the open record's surrogate id, reported upward through
+// ycSubRecordChanged below — ?open=tabMore~moreAutomations~workflows~27.
+// That makes "explain this workflow" answerable (the assistant's workspace
+// context carries the id, server-verified) and makes a reload reopen the
+// record (wsBootSubPage already drains `<sub>~<digits>` into the T4 focus
+// machinery). Digits only, compared and forwarded — never a selector.
 //   REPORT   switchSubPage, the one switch, reports every switch; the
-//            default sub-tab reports '' (empty = default).
+//            default sub-tab with no open record reports '' (empty =
+//            default); a sub-tab with an open record reports `<sub>~<id>`.
 //   RESTORE  boot takes the rest the shell handed down, ONCE, and opens
 //            that sub-tab; an unknown token opens the default, silently.
 function wsReportSubPage(id) {
   if (!window.ycSubTab) return;
+  const rec = wsOpenRecordBySub[id];
+  if (rec) { ycSubTab.leaf.report(`${id}~${rec}`); return; }
   ycSubTab.leaf.report(id === SUB_PAGES[0].id ? '' : id);
 }
+
+// The sub-pages that own a record segment (P13). Scope is deliberate:
+// workflows and sequences are what Casey can read and explain (P12);
+// jobs/hooks/triggers can join when their read kinds exist.
+const WS_RECORD_SUBS = Object.freeze({ workflows: true, sequences: true });
+const wsOpenRecordBySub = {};
+
+// Called by a sub-page (child iframe) whenever its open record changes —
+// selectWorkflow / selectSeqTemplate on open or switch, the delete path on
+// clear. recordId is a positive surrogate id or null; anything else is
+// treated as null. Re-reports only when the sub-page is the visible one;
+// a background sub-page's state is picked up by its next switch-in.
+window.ycSubRecordChanged = function (frameEl, recordId) {
+  const page = SUB_PAGES.find(p => document.getElementById(`subpage-${p.id}`) === frameEl);
+  if (!page || !WS_RECORD_SUBS[page.id]) return;
+  const id = (recordId != null && /^\d{1,10}$/.test(String(recordId))) ? String(recordId) : null;
+  if (wsOpenRecordBySub[page.id] === id) return;
+  wsOpenRecordBySub[page.id] = id;
+  if (page.id === activeSubPageId) wsReportSubPage(page.id);
+};
 
 /** The sub-page id to boot on: the handed-down rest's first segment when it
  *  names a sub-page, else the default. Never throws on a token. */

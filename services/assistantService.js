@@ -121,7 +121,16 @@ const JOB_CODE_MAX_INPUT_JSON_CHARS = 10000;
 // from the authoring allowlist (lib/caseyAutomationAllowlist.js) plus
 // safe-mode code; webhook steps are A17.4b's narrower contract, query_db is
 // A17.4a — both refused here by name.
-const WORKFLOW_ACTION_KINDS = new Set(['workflow.draft.v1']);
+// A17.4 adds the first writes against an EXISTING workflow: insert one step
+// into its draft, or narrowly edit one draft step (label, note, the param
+// values of an allowlisted function, or a safe-mode code body). Higher impact
+// than drafting a new workflow — the target may be published and running — so
+// both kinds bake a server-computed expected_base (draft_version, step count,
+// target-step fingerprint) into the card, and the canonical route refuses the
+// write with a 409 when the base no longer holds (the wf27 scar as a route
+// property). Never editable through these kinds: type, function_name, any
+// branch target, error_policy, webhook steps, standard-mode code.
+const WORKFLOW_ACTION_KINDS = new Set(['workflow.draft.v1', 'workflow.step_insert.v1', 'workflow.step_edit.v1']);
 
 // Hook authoring (A19.0, Fred's ask 2026-10-22: "make a hook to trigger
 // something"). One card creates an INBOUND hook born INACTIVE with exactly one
@@ -147,6 +156,9 @@ const WORKFLOW_DRAFT_POLICY_KEYS = new Set(['strategy', 'max_retries', 'backoff_
 const WORKFLOW_DRAFT_STRATEGIES = new Set(['ignore', 'abort', 'retry_then_ignore', 'retry_then_abort']);
 const WORKFLOW_DRAFT_MAX_STEPS = 20;
 const WORKFLOW_DRAFT_MAX_JSON = 60000;
+const WORKFLOW_STEP_INSERT_KEYS = new Set(['kind', 'workflow_id', 'step_number', 'step', 'evidence']);
+const WORKFLOW_STEP_EDIT_KEYS = new Set(['kind', 'workflow_id', 'step_number', 'changes', 'evidence']);
+const WORKFLOW_STEP_EDIT_CHANGE_KEYS = new Set(['label', 'note', 'params', 'code', 'input']);
 
 const CONTACT_SUBRECORD_ACTION_KINDS = new Set([
   'contact.phone.create.v1', 'contact.phone.update.v1', 'contact.phone.end.v1',
@@ -365,6 +377,23 @@ function normalizeWorkspaceContext(raw) {
   if (JSON.stringify(raw.files) !== JSON.stringify(files) || JSON.stringify(raw.active) !== JSON.stringify(active)) {
     throw httpError(400, 'Workspace context does not match its canonical URL');
   }
+  // P13 — the Automations manager reports its open record as a trailing
+  // segment (?open=tabMore~moreAutomations~workflows~27), so "explain this
+  // workflow" is answerable. Derived HERE, deterministically from the
+  // canonical URL, so the signed ticket round trip (validateTicket →
+  // normalizeWorkspaceContext) reproduces it; it lives OUTSIDE `active`
+  // because the browser builds `active` itself and the equality check above
+  // compares the two byte for byte. Existence is verified by
+  // validateWorkspaceContext on the plan path, like cases and contacts.
+  if (active.kind === 'workspace' && active.tab === 'tabMore') {
+    const auto = /^moreAutomations~(workflows|sequences)~(\d{1,10})$/.exec(active.rest);
+    if (auto) {
+      normalized.automation = {
+        kind: auto[1] === 'workflows' ? 'workflow' : 'sequence_template',
+        id: Number(auto[2]),
+      };
+    }
+  }
   return normalized;
 }
 
@@ -382,6 +411,15 @@ async function validateWorkspaceContext(db, raw) {
     const [rows] = await db.query(`SELECT contact_id FROM contacts WHERE contact_id IN (${contacts.map(() => '?').join(',')})`, contacts);
     const found = new Set((rows || []).map((row) => Number(row.contact_id)));
     if (contacts.some((id) => !found.has(id))) throw httpError(403, 'Workspace context includes a contact that is unavailable');
+  }
+  // P13 — verify the open automation record exists before it is signed into
+  // the ticket, the same bar the open files meet. The label rides along so
+  // the model can say which workflow it is without a read round.
+  if (workspace.automation) {
+    const table = workspace.automation.kind === 'workflow' ? 'workflows' : 'sequence_templates';
+    const [[row]] = await db.query(`SELECT id, name FROM ${table} WHERE id = ?`, [workspace.automation.id]);
+    if (!row) throw httpError(403, 'Workspace context includes an automation record that is unavailable');
+    workspace.automation.label = String(row.name || '').slice(0, 200);
   }
   return workspace;
 }
@@ -1248,6 +1286,81 @@ function normalizeJobCodeAction(db, value, evidence) {
   };
 }
 
+// One authored step, normalized exactly as workflow.draft.v1 always has —
+// shared verbatim by the A17.3 draft (every step) and the A17.4 insert (its
+// one step). `at` is the error-message subject ("Workflow draft step 3",
+// "Inserted step"). Returns { type, config, side_effect, error_policy?,
+// label?, note? }; the side_effect annotation is for the card and is stripped
+// by the browser's request builder.
+function normalizeAuthoredStep(step, at) {
+  const { CASEY_AUTHORABLE_FUNCTIONS } = require('../lib/caseyAutomationAllowlist');
+  if (!step || typeof step !== 'object') throw httpError(422, `${at} is malformed`);
+  // step_number is accepted and IGNORED: array order / the proposal's own
+  // position field is authoritative, and P12's evidence rows show
+  // step_number, so models copy it in. Everything else unknown is refused
+  // BY NAME, so the repair stage can actually fix it.
+  const unknownKeys = Object.keys(step).filter((k) => k !== 'step_number' && !WORKFLOW_DRAFT_STEP_KEYS.has(k));
+  if (unknownKeys.length) {
+    throw httpError(422, `${at} carries unsupported fields: ${unknownKeys.join(', ')} — remove them`);
+  }
+  const label = String(step.label == null ? '' : step.label).trim().slice(0, 100);
+  const note = String(step.note == null ? '' : step.note).trim().slice(0, 1000);
+  const config = step.config;
+  if (config == null || typeof config !== 'object' || Array.isArray(config)) {
+    throw httpError(422, `${at} needs a config object`);
+  }
+  if (Object.prototype.hasOwnProperty.call(config, 'type')) {
+    throw httpError(422, `${at} config must not contain a "type" key`);
+  }
+  let out;
+  if (step.type === 'internal_function') {
+    const fn = config.function_name;
+    const sideEffect = CASEY_AUTHORABLE_FUNCTIONS.get(fn);
+    if (!sideEffect) {
+      throw httpError(422, `${at}: "${fn}" is outside Casey's authoring allowlist — swap it for an allowed function or tell the user to add that step by hand`);
+    }
+    const vErr = require('../lib/internal_functions').__validateFunctionParams(fn, config.params);
+    if (vErr) throw httpError(422, `${at}: ${vErr.error}`);
+    out = { type: 'internal_function', config, side_effect: sideEffect };
+  } else if (step.type === 'custom_code') {
+    if (config.code_mode !== undefined && config.code_mode !== 'safe') {
+      throw httpError(422, `${at}: Casey composes only safe-mode code`);
+    }
+    if (typeof config.code !== 'string' || !config.code.trim()) throw httpError(422, `${at}: code is required`);
+    if (config.code.length > JOB_CODE_MAX_CODE_CHARS) {
+      throw httpError(422, `${at}: code exceeds ${JOB_CODE_MAX_CODE_CHARS} characters`);
+    }
+    const input = config.input === undefined ? undefined : config.input;
+    if (input !== undefined && (input === null || typeof input !== 'object' || Array.isArray(input))) {
+      throw httpError(422, `${at}: input must be a JSON object`);
+    }
+    out = { type: 'custom_code', config: { ...config, code_mode: 'safe' }, side_effect: 'safe-code' };
+  } else if (step.type === 'webhook') {
+    throw httpError(422, `${at}: Casey does not author webhook steps yet — tell the user to add it by hand after the draft is created`);
+  } else {
+    throw httpError(422, `${at} has an unsupported type`);
+  }
+  if (step.error_policy !== undefined) {
+    const p = step.error_policy;
+    if (p == null || typeof p !== 'object' || !onlyKeys(p, WORKFLOW_DRAFT_POLICY_KEYS) ||
+        !WORKFLOW_DRAFT_STRATEGIES.has(p.strategy) ||
+        (p.max_retries !== undefined && (!Number.isInteger(p.max_retries) || p.max_retries < 0 || p.max_retries > 5)) ||
+        (p.backoff_seconds !== undefined && (!Number.isInteger(p.backoff_seconds) || p.backoff_seconds < 0 || p.backoff_seconds > 300))) {
+      throw httpError(422, `${at} has an invalid error_policy`);
+    }
+    // Mirror the route's in-request retry-ladder budget, so a policy the
+    // card carries is never one the route will refuse at click time.
+    const { retryLadderSleepSec, RETRY_LADDER_BUDGET_SEC } = require('../lib/versionDiff');
+    if (retryLadderSleepSec(p) > RETRY_LADDER_BUDGET_SEC) {
+      throw httpError(422, `${at}: the retry ladder exceeds the ${RETRY_LADDER_BUDGET_SEC}s budget — lower max_retries or backoff_seconds`);
+    }
+    out.error_policy = p;
+  }
+  if (label) out.label = label;
+  if (note) out.note = note;
+  return out;
+}
+
 async function normalizeWorkflowDraftAction(db, value, evidence) {
   if (require('../lib/firmConfig').cfg('casey_workflow_authoring_enabled') === '0') {
     throw httpError(422, 'Action kind is unavailable');
@@ -1266,75 +1379,7 @@ async function normalizeWorkflowDraftAction(db, value, evidence) {
   if (!Array.isArray(value.steps) || !value.steps.length || value.steps.length > WORKFLOW_DRAFT_MAX_STEPS) {
     throw httpError(422, `Workflow draft needs 1-${WORKFLOW_DRAFT_MAX_STEPS} steps`);
   }
-  const { CASEY_AUTHORABLE_FUNCTIONS } = require('../lib/caseyAutomationAllowlist');
-  const steps = value.steps.map((step, index) => {
-    const at = `step ${index + 1}`;
-    if (!step || typeof step !== 'object') throw httpError(422, `Workflow draft ${at} is malformed`);
-    // step_number is accepted and IGNORED: array order is authoritative (the
-    // bulk route numbers by position), and P12's evidence rows show
-    // step_number, so models copy it in. Everything else unknown is refused
-    // BY NAME, so the repair stage can actually fix it.
-    const unknownKeys = Object.keys(step).filter((k) => k !== 'step_number' && !WORKFLOW_DRAFT_STEP_KEYS.has(k));
-    if (unknownKeys.length) {
-      throw httpError(422, `Workflow draft ${at} carries unsupported fields: ${unknownKeys.join(', ')} — remove them`);
-    }
-    const label = String(step.label == null ? '' : step.label).trim().slice(0, 100);
-    const note = String(step.note == null ? '' : step.note).trim().slice(0, 1000);
-    const config = step.config;
-    if (config == null || typeof config !== 'object' || Array.isArray(config)) {
-      throw httpError(422, `Workflow draft ${at} needs a config object`);
-    }
-    if (Object.prototype.hasOwnProperty.call(config, 'type')) {
-      throw httpError(422, `Workflow draft ${at} config must not contain a "type" key`);
-    }
-    let out;
-    if (step.type === 'internal_function') {
-      const fn = config.function_name;
-      const sideEffect = CASEY_AUTHORABLE_FUNCTIONS.get(fn);
-      if (!sideEffect) {
-        throw httpError(422, `Workflow draft ${at}: "${fn}" is outside Casey's authoring allowlist — swap it for an allowed function or tell the user to add that step by hand`);
-      }
-      const vErr = require('../lib/internal_functions').__validateFunctionParams(fn, config.params);
-      if (vErr) throw httpError(422, `Workflow draft ${at}: ${vErr.error}`);
-      out = { type: 'internal_function', config, side_effect: sideEffect };
-    } else if (step.type === 'custom_code') {
-      if (config.code_mode !== undefined && config.code_mode !== 'safe') {
-        throw httpError(422, `Workflow draft ${at}: Casey composes only safe-mode code`);
-      }
-      if (typeof config.code !== 'string' || !config.code.trim()) throw httpError(422, `Workflow draft ${at}: code is required`);
-      if (config.code.length > JOB_CODE_MAX_CODE_CHARS) {
-        throw httpError(422, `Workflow draft ${at}: code exceeds ${JOB_CODE_MAX_CODE_CHARS} characters`);
-      }
-      const input = config.input === undefined ? undefined : config.input;
-      if (input !== undefined && (input === null || typeof input !== 'object' || Array.isArray(input))) {
-        throw httpError(422, `Workflow draft ${at}: input must be a JSON object`);
-      }
-      out = { type: 'custom_code', config: { ...config, code_mode: 'safe' }, side_effect: 'safe-code' };
-    } else if (step.type === 'webhook') {
-      throw httpError(422, `Workflow draft ${at}: Casey does not author webhook steps yet — tell the user to add it by hand after the draft is created`);
-    } else {
-      throw httpError(422, `Workflow draft ${at} has an unsupported type`);
-    }
-    if (step.error_policy !== undefined) {
-      const p = step.error_policy;
-      if (p == null || typeof p !== 'object' || !onlyKeys(p, WORKFLOW_DRAFT_POLICY_KEYS) ||
-          !WORKFLOW_DRAFT_STRATEGIES.has(p.strategy) ||
-          (p.max_retries !== undefined && (!Number.isInteger(p.max_retries) || p.max_retries < 0 || p.max_retries > 5)) ||
-          (p.backoff_seconds !== undefined && (!Number.isInteger(p.backoff_seconds) || p.backoff_seconds < 0 || p.backoff_seconds > 300))) {
-        throw httpError(422, `Workflow draft ${at} has an invalid error_policy`);
-      }
-      // Mirror the route's in-request retry-ladder budget, so a policy the
-      // card carries is never one the route will refuse at click time.
-      const { retryLadderSleepSec, RETRY_LADDER_BUDGET_SEC } = require('../lib/versionDiff');
-      if (retryLadderSleepSec(p) > RETRY_LADDER_BUDGET_SEC) {
-        throw httpError(422, `Workflow draft ${at}: the retry ladder exceeds the ${RETRY_LADDER_BUDGET_SEC}s budget — lower max_retries or backoff_seconds`);
-      }
-      out.error_policy = p;
-    }
-    if (label) out.label = label;
-    if (note) out.note = note;
-    return out;
-  });
+  const steps = value.steps.map((step, index) => normalizeAuthoredStep(step, `Workflow draft step ${index + 1}`));
   // Proposal-time collision check (names are not DB-unique; a duplicate is
   // operator confusion, not corruption). Click-time safety is the idempotent
   // draft_id plus the 15-minute card TTL.
@@ -1348,6 +1393,181 @@ async function normalizeWorkflowDraftAction(db, value, evidence) {
     description,
     steps,
     evidence: jobDraftEvidence(value.evidence, evidence),
+  };
+}
+
+function evidenceSupportsAutomation(evidenceRefs, evidence, workflowId) {
+  return evidenceRefs.some((ref) => {
+    const query = evidence.find((item) => item && item.id === ref.query_id);
+    const row = query && Array.isArray(query.rows) ? query.rows[ref.row_number - 1] : null;
+    return row && Number(row.workflow_id) === workflowId;
+  });
+}
+
+// A17.4: insert one step into an existing workflow's draft, or narrowly edit
+// one draft step. Both re-read the workflow and its edit-target steps at
+// proposal time and bake the expected_base (draft_version, step count, and
+// for a targeted step its content fingerprint) into the card; the canonical
+// route re-checks it inside the write transaction and refuses with a 409
+// when the base moved (P11). The 15-minute card TTL bounds the window; the
+// precondition closes it.
+async function normalizeWorkflowStepAction(db, value, evidence) {
+  if (require('../lib/firmConfig').cfg('casey_workflow_authoring_enabled') === '0') {
+    throw httpError(422, 'Action kind is unavailable');
+  }
+  const isInsert = value.kind === 'workflow.step_insert.v1';
+  if (!onlyKeys(value, isInsert ? WORKFLOW_STEP_INSERT_KEYS : WORKFLOW_STEP_EDIT_KEYS)) {
+    throw httpError(422, 'Workflow step action contains unsupported fields');
+  }
+  const workflowId = Number(value.workflow_id);
+  if (!Number.isSafeInteger(workflowId) || workflowId < 1) {
+    throw httpError(422, 'Workflow step action needs a positive workflow_id');
+  }
+  // Existing-record rule: the cited evidence must identify the exact target,
+  // same as every task/event/appt action — an id from the model's memory is
+  // not evidence.
+  const refs = jobDraftEvidence(value.evidence, evidence);
+  if (!refs.length || !evidenceSupportsAutomation(refs, evidence, workflowId)) {
+    throw httpError(422, 'Workflow step action evidence does not identify the target workflow — read it with automation.definition first');
+  }
+  const [[wf]] = await db.query(
+    'SELECT id, name, active, current_version, draft_version FROM workflows WHERE id = ?', [workflowId]);
+  if (!wf) throw httpError(422, `Workflow ${workflowId} is unavailable`);
+  const draftVersion = wf.draft_version == null ? null : Number(wf.draft_version);
+  const readVersion = draftVersion != null ? draftVersion : Number(wf.current_version);
+  const [steps] = await db.query(
+    `SELECT step_number, label, note, type, config, error_policy
+       FROM workflow_steps WHERE workflow_id = ? AND version = ? ORDER BY step_number`,
+    [workflowId, readVersion]);
+  const { stepFingerprint, parseMaybeJson, canonical, extractBranchTargets, BRANCH_TARGET_PARAMS } = require('../lib/versionDiff');
+  const workflow = {
+    workflow_id: workflowId,
+    name: String(wf.name || `Workflow ${workflowId}`).slice(0, 200),
+    published: Number(wf.current_version) > 0 ? 1 : 0,
+    active: wf.active ? 1 : 0,
+    has_draft: draftVersion != null ? 1 : 0,
+  };
+  const expectedBase = { draft_version: draftVersion, step_count: steps.length };
+  const base = { draft_id: crypto.randomUUID(), kind: value.kind, status: 'draft', workflow, evidence: refs };
+
+  if (isInsert) {
+    let position = null;
+    if (value.step_number !== undefined && value.step_number !== null) {
+      position = Number(value.step_number);
+      if (!Number.isSafeInteger(position) || position < 1 || position > steps.length + 1) {
+        throw httpError(422, `Workflow step insert position must be 1-${steps.length + 1} (the workflow's draft has ${steps.length} steps)`);
+      }
+      if (position === steps.length + 1) position = null; // appending by position IS an append
+    }
+    const step = normalizeAuthoredStep(value.step, 'Inserted step');
+    let displaces = null;
+    if (position != null) {
+      const occupant = steps[position - 1];
+      expectedBase.step_fingerprint = stepFingerprint(occupant);
+      const occCfg = parseMaybeJson(occupant.config);
+      displaces = {
+        step_number: occupant.step_number,
+        summary: occupant.label || (occCfg && occCfg.function_name) || occupant.type,
+      };
+    }
+    return { ...base, position, displaces, step, expected_base: expectedBase };
+  }
+
+  // Edit: one targeted step, narrow fields only.
+  const stepNumber = Number(value.step_number);
+  if (!Number.isSafeInteger(stepNumber) || stepNumber < 1 || stepNumber > steps.length) {
+    throw httpError(422, `Workflow step edit targets step ${value.step_number}, but the draft has ${steps.length} steps`);
+  }
+  const target = steps[stepNumber - 1];
+  const targetCfg = parseMaybeJson(target.config) || {};
+  expectedBase.step_fingerprint = stepFingerprint(target);
+  const changes = value.changes;
+  if (!changes || typeof changes !== 'object' || Array.isArray(changes) || !Object.keys(changes).length) {
+    throw httpError(422, 'Workflow step edit needs at least one change');
+  }
+  if (!onlyKeys(changes, WORKFLOW_STEP_EDIT_CHANGE_KEYS)) {
+    throw httpError(422, 'Workflow step edit contains unsupported change fields — only label, note, params, code, and input are editable');
+  }
+  const { CASEY_AUTHORABLE_FUNCTIONS } = require('../lib/caseyAutomationAllowlist');
+  const out = { changes: {}, before: {} };
+  let newConfig = null;
+  if (target.type === 'internal_function') {
+    const fn = targetCfg.function_name;
+    if (!CASEY_AUTHORABLE_FUNCTIONS.get(fn)) {
+      throw httpError(422, `Step ${stepNumber} runs "${fn}", which is outside Casey's authoring allowlist — tell the user to edit it by hand in the workflow editor`);
+    }
+    if ('code' in changes || 'input' in changes) {
+      throw httpError(422, `Step ${stepNumber} is not a code step — its behaviour is edited through params`);
+    }
+    if ('params' in changes) {
+      const params = changes.params;
+      if (params == null || typeof params !== 'object' || Array.isArray(params)) {
+        throw httpError(422, 'Workflow step edit params must be a JSON object');
+      }
+      const vErr = require('../lib/internal_functions').__validateFunctionParams(fn, params);
+      if (vErr) throw httpError(422, `Workflow step edit: ${vErr.error}`);
+      // Branch targets are A17.5's slice, not this one: an edit may change
+      // values, never where control goes. Compare the extracted target set
+      // canonically (flat params AND evaluate_condition branches[].then).
+      const oldTargets = extractBranchTargets(targetCfg, BRANCH_TARGET_PARAMS);
+      const newTargets = extractBranchTargets({ ...targetCfg, params }, BRANCH_TARGET_PARAMS);
+      if (canonical(oldTargets) !== canonical(newTargets)) {
+        throw httpError(422, 'Workflow step edit may not change a branch target (then/else/next-step values) — tell the user to rewire control flow in the workflow editor');
+      }
+      out.changes.params = params;
+      out.before.params = targetCfg.params == null ? null : targetCfg.params;
+      newConfig = { ...targetCfg, params };
+    }
+  } else if (target.type === 'custom_code') {
+    if (targetCfg.code_mode !== 'safe') {
+      throw httpError(422, `Step ${stepNumber} is a STANDARD-mode code step — Casey never edits those; the user pastes code by hand in the workflow editor`);
+    }
+    if ('params' in changes) throw httpError(422, `Step ${stepNumber} is a code step — it has no params`);
+    newConfig = { ...targetCfg };
+    if ('code' in changes) {
+      if (typeof changes.code !== 'string' || !changes.code.trim()) throw httpError(422, 'Workflow step edit code is required');
+      if (changes.code.length > JOB_CODE_MAX_CODE_CHARS) {
+        throw httpError(422, `Workflow step edit code exceeds ${JOB_CODE_MAX_CODE_CHARS} characters`);
+      }
+      out.changes.code = changes.code;
+      out.before.code = typeof targetCfg.code === 'string' ? targetCfg.code : '';
+      newConfig.code = changes.code;
+    }
+    if ('input' in changes) {
+      const input = changes.input;
+      if (input === null || typeof input !== 'object' || Array.isArray(input)) {
+        throw httpError(422, 'Workflow step edit input must be a JSON object');
+      }
+      out.changes.input = input;
+      out.before.input = targetCfg.input === undefined ? null : targetCfg.input;
+      newConfig.input = input;
+    }
+    if (newConfig) newConfig.code_mode = 'safe';
+    if (!('code' in changes) && !('input' in changes)) newConfig = null;
+  } else {
+    throw httpError(422, `Step ${stepNumber} is a ${target.type} step — Casey does not edit those; tell the user to change it in the workflow editor`);
+  }
+  if ('label' in changes) {
+    out.changes.label = taskDraftText(changes.label, 'step label', 100);
+    out.before.label = target.label || null;
+  }
+  if ('note' in changes) {
+    out.changes.note = taskDraftText(changes.note, 'step note', 1000);
+    out.before.note = target.note || null;
+  }
+  if (!Object.keys(out.changes).length) throw httpError(422, 'Workflow step edit needs at least one change');
+  const targetSummary = {
+    step_number: stepNumber,
+    type: target.type,
+    label: target.label || null,
+    ...(target.type === 'internal_function' ? { function_name: targetCfg.function_name } : {}),
+    ...(target.type === 'custom_code' ? { code_mode: 'safe' } : {}),
+  };
+  return {
+    ...base, step_number: stepNumber, target: targetSummary,
+    changes: out.changes, before: out.before,
+    ...(newConfig ? { new_config: newConfig } : {}),
+    expected_base: expectedBase,
   };
 }
 
@@ -1424,7 +1644,11 @@ async function normalizeHookCreateAction(db, value, evidence) {
 async function normalizeActionDraft(db, value, evidence, { currentUserId = null } = {}) {
   if (value == null) return null;
   if (value && HOOK_ACTION_KINDS.has(value.kind)) return normalizeHookCreateAction(db, value, evidence);
-  if (value && WORKFLOW_ACTION_KINDS.has(value.kind)) return normalizeWorkflowDraftAction(db, value, evidence);
+  if (value && WORKFLOW_ACTION_KINDS.has(value.kind)) {
+    return value.kind === 'workflow.draft.v1'
+      ? normalizeWorkflowDraftAction(db, value, evidence)
+      : normalizeWorkflowStepAction(db, value, evidence);
+  }
   if (value && JOB_ACTION_KINDS.has(value.kind)) return normalizeJobCodeAction(db, value, evidence);
   if (value && EVENT_ACTION_KINDS.has(value.kind)) return normalizeEventAction(db, value, evidence);
   if (value && APPT_ACTION_KINDS.has(value.kind)) return normalizeApptAction(db, value, evidence);
@@ -1538,7 +1762,7 @@ function taskDraftRequested(question, history = []) {
   const job = /\bjob\b/i.test(text) &&
     /\b(?:schedule|create|make|propose|prepare|set up)\b/i.test(request);
   const workflow = /\bworkflow\b/i.test(text) &&
-    /\b(?:draft|create|make|build|compose|propose|prepare|set up)\b/i.test(request);
+    /\b(?:draft|create|make|build|compose|propose|prepare|set up|insert|add|edit|update|change|fix|modify|tweak|adjust)\b/i.test(request);
   const hook = /\b(?:hook|webhook endpoint|inbound endpoint)\b/i.test(text) &&
     /\b(?:create|make|add|build|set up|propose|prepare)\b/i.test(request);
   return task || event || appt || contactSubrecord || job || workflow || hook;

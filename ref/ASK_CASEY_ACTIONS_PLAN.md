@@ -754,23 +754,33 @@ as "Manage workflows, sequences and trigger rules" but is mounted only on
 `/api/hooks` and `/api/pages` — a known follow-up, `ref/plans.md`). So A17/A18
 inherit no authorization from the route, and the P2 finding generalizes: on
 this family the canonical route is **not** a validation authority either.
-Measured gaps, all on the human path too:
+Measured gaps, all on the human path too. The WORKFLOW half closed with A17.4
+(2026-10-24, zero live rows grandfathered — measured first):
 
-- An unknown or misspelled `function_name` passes save on a workflow step (no
-  `__meta` found means permissive); it fails only at run time.
-- Undeclared param keys are never rejected, `params: null` skips validation,
-  and `error_policy.strategy` is not validated at all (any string behaves as
-  `ignore`).
+- CLOSED: an unknown or misspelled `function_name` is refused at save
+  (`lib/internal_functions` `validateInternalFunctionParams`); a registered
+  but meta-less function stays permissive (today all 104 carry `__meta`).
+- CLOSED: undeclared param keys are refused by name; `params: null` validates
+  as `{}` (required params fail at save, not run time);
+  `error_policy.strategy` must be one of the four values the engine honours,
+  and `error_policy` must be an object or null.
+- CLOSED: the step-mutating workflow routes (insert, PUT, PATCH, DELETE,
+  reorder) take an optional `expected_base` precondition — the editing
+  `draft_version`, step count, and a key-order-insensitive content fingerprint
+  of the target step (`lib/versionDiff.stepFingerprint`) — checked inside the
+  write transaction under the parent-row lock; a mismatch is a structured 409
+  naming what changed. Optional for native callers, required on every Casey
+  step proposal. This is the wf27 scar turned into a route property.
+
+Still open (the P11 remainder):
+
 - Sequence `sms`/`email`/`task`/`internal_function` steps get **no** param
-  validation: no `function_name` check, no `__meta` check.
+  validation: no `function_name` check, no `__meta` check (the `type`-key
+  refusal in `action_config` DID land, with the dispatch fix b087fa5). Blocks
+  A18.2.
 - Publish re-runs shape and branch-target validation but **not** `__meta` param
-  validation, and never checks that a `function_name` exists.
-- No step-mutating route and no publish route has any optimistic-concurrency
-  check. Steps are addressed by `step_number`, which is a *position*, so a PUT
-  from a stale view lands on whichever step now occupies that slot — the wf27
-  scar as a live route property.
-
-P11 closes these in the canonical route, for both paths, before any A17 write.
+  validation, and no publish route carries the expected-base precondition yet
+  (A17.6's half).
 
 **What Casey cannot author (initial contract).** Excluded by construction: a
 STANDARD-mode `custom_code` **body** (A17.4c adds an inert stub plus copyable
@@ -922,7 +932,26 @@ and user-scoped, benefiting native callers). Descriptor:
 `ACTION_FAMILIES.workflow_draft`, with `appliedKey` `wf_draft`, `open()` to the
 Automations workflow editor, and `danger: false` (nothing can run).
 
-**A17.4: Insert or edit one step in an existing workflow's draft.**
+**A17.4: Insert or edit one step in an existing workflow's draft. SHIPPED
+2026-10-24** — kinds `workflow.step_insert.v1` and `workflow.step_edit.v1` on
+the card engine, with the P11 workflow half folded in (the expected-base
+precondition on all five step-mutating routes plus the four save-time
+closures, all optional for native callers and required on Casey proposals;
+live data measured first, nothing grandfathered). Edit covers label, note,
+the param values of an allowlisted function, and — ruling 13 applied to
+editing — a SAFE-mode code body; branch-target invariance is enforced by
+comparing `extractBranchTargets` canonically, so then/else/next-step values
+cannot move. Insert reuses A17.3's per-step normalizer verbatim
+(`normalizeAuthoredStep`) and extends `requestIdempotency` to
+`POST /workflows/:id/steps` (scope `workflows.step_insert`; a refusal
+releases the claim). Evidence must carry the exact `workflow_id` — an
+`automation.definition` read in the same investigation. The card's
+precondition 409 renders as a refusal ("the workflow changed, nothing was
+written"), the one audited exception to the 409-stays-ambiguous rule.
+`BRANCH_TARGET_PARAMS` and the terminal sentinels moved to
+`lib/versionDiff.js` (the normalizer needed them; a service must not import a
+router). A17.4a (query_db), A17.4b (webhook) and A17.4c (standard-code
+scaffold) below remain unbuilt. Original spec:
 
 Higher impact than A17.3 because the workflow may be published and running.
 Separate kinds for insert and narrow edit:
@@ -1236,12 +1265,11 @@ template's draft. Blocked on P11 for two reasons beyond the shared ones:
 
 - Sequence step saves validate **nothing** for these action types — no
   `function_name` check, no `__meta` check.
-- `executeStep` builds `jobData = { type: 'internal_function',
-  ...resolvedConfig }`, so a `type` key **inside** `action_config` wins the
-  spread and redirects the step: `"type":"custom_code"` runs `vm` code,
-  `"type":"webhook"` takes the executor's webhook path, and `validateStepConfig`
-  blocks neither. Any "Casey may only author sms steps" contract is void until
-  the route rejects a `type` key. Verified in code 2026-10-22.
+- The `type`-key dispatch override is FIXED (b087fa5): the engine pins `type`
+  last in the executeJob payload and `routes/sequences.js` refuses a `type`
+  key inside `action_config` with a 400, so a stored row written around the
+  route cannot redirect the dispatch either. What A18.2 still waits for is
+  the missing param validation above (P11's sequence half).
 
 Sequences have no step-to-step variables and no `set_vars`, so a sequence step
 proposal is simpler than a workflow one; its timing is the hard part (seven
@@ -1632,6 +1660,17 @@ for external-side-effect incidents.
 
 #### P11: Canonical automation preconditions and step validation
 
+**Workflow half SHIPPED 2026-10-24 with A17.4** (expected-base precondition on
+the five step-mutating routes; unknown `function_name`, undeclared param keys,
+`params: null`, and the `error_policy` shape + strategy enum all refused at
+save — see the measured-gaps list above for exactly what closed and what
+remains). Open: the sequence half (sms/email/task/internal_function step
+validation) and the publish-route precondition, which ship with A18.2 and
+A17.6 respectively. Fred's ruling on the human-path divergence: validate only
+the fields being written — an existing step whose function was since renamed
+keeps its label editable; a PUT that rewrites the whole step is validated
+whole (implemented that way).
+
 The prerequisite for every A17/A18 write, and a fix to the human editor's
 identical hazards. All of it lands in the canonical routes, because Casey's
 normalizer cannot be the authority for a route the native editor also uses.
@@ -1738,17 +1777,26 @@ does; and the assistant's typed output is enforced only by prompt text plus the
 server normalizers (`aiService.call` sends no JSON schema and no tools), so the
 normalizer carries the whole burden for every new kind.
 
-#### P13: Workspace context for automations
+#### P13: Workspace context for automations — SHIPPED 2026-10-24 (with A17.4)
 
-The Automation Manager reports only its sub-tab (`open=tabMore~
-moreAutomations~workflows`); `wsReportSubPage` drops anything after the sub-tab
-id, so **Casey cannot tell which workflow, sequence or execution is open**.
-"Explain this workflow" is unanswerable without it. Three small changes, the
-same shape the case/contact ids already use: the sub-page reports the open id,
-the server parses that segment, and it verifies the id exists before signing it
-into the ticket. Add the matching `automations.workflow` / `automations.sequence`
-destinations so Casey can link the user back to what it explained — today the
-only automation destination is `automations.court_review`.
+The workflows and sequences sub-pages now report their open record to the
+manager shell (`ycSubRecordChanged`), which owns the workspace segment:
+`open=tabMore~moreAutomations~workflows~27`. `normalizeWorkspaceContext`
+derives `workspace.automation = {kind:"workflow"|"sequence_template", id}`
+deterministically from the canonical URL (outside `active`, so the browser's
+byte-compared `active` object and the signed-ticket round trip both survive),
+and `validateWorkspaceContext` verifies the record exists — a dead id is
+refused like a dead case file — and attaches its name as `label` on the plan
+path. "Explain this workflow" now resolves without asking. Free side effect:
+the segment rides the workspace URL, so a reload reopens the record through
+the existing `wsBootSubPage` deep-link restore; `automations.sequence` joined
+the shell's destination map and the sequences pane's `onFocusRecord` for the
+same reason. Deliberately NOT done: executions/jobs/hooks sub-pages don't
+report a record yet (their read kinds take explicit ids), and the
+model-offered answer-destination registry still carries only
+`automations.court_review` — destinations cannot carry a record id today, and
+applied cards already deep-link, so extending that grammar is its own small
+slice if explain-answers should link back to a specific record.
 
 ## Recommended execution order
 

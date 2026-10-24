@@ -25,6 +25,35 @@
 gaps above); everything else from the September delta pass is folded into the
 body. Governing migrations in `ref/migrations/`.*
 
+- **Workflow step routes: expected_base precondition + save-time closures
+  (A17.4, 10-24):** the five step-mutating routes in `routes/workflows.js`
+  (insert, PUT, PATCH, DELETE, reorder) take an optional `expected_base`
+  `{draft_version, step_count, step_fingerprint?}` checked inside the write
+  transaction under the parent-row `FOR UPDATE`; a mismatch is a structured
+  409 `{conflict:{changed, expected, actual}}` and nothing is written.
+  `draft_version` is `workflows.draft_version` as the proposer saw it (null =
+  read the published steps); the fingerprint is
+  `lib/versionDiff.stepFingerprint` — sha256 over `canonical()` of
+  {type, config, error_policy, label, note}, key-order-insensitive (MySQL
+  re-orders JSON keys on write). Optional for native callers; every Casey
+  step card sends it. Save-time, same slice: unknown `function_name`,
+  undeclared param keys, and `params:null` are refused by
+  `validateInternalFunctionParams` (shared with scheduled-jobs routes — a
+  deliberately-bogus test job like the old `no_such_function_alert_test` rows
+  can no longer be CREATED through the route); `error_policy` must be an
+  object with `strategy` in the engine's four values. `BRANCH_TARGET_PARAMS`
+  + terminal sentinels moved to `lib/versionDiff.js` (routes import them).
+  `POST /workflows/:id/steps` honours `Idempotency-Key` (scope
+  `workflows.step_insert`). Tests: `tests/workflows.expectedBase.test.js`,
+  `tests/caseyWorkflowStep.test.js`; plan: ref/ASK_CASEY_ACTIONS_PLAN.md
+  A17.4/P11.
+- **Workspace context names the open automation (P13, 10-24):** the
+  workflows/sequences sub-pages report their open record through the
+  Automations manager (`ycSubRecordChanged`) into the workspace URL
+  (`open=tabMore~moreAutomations~workflows~27`); `assistantService`
+  derives and verifies `workspace.automation {kind, id, label}` (403 on a
+  dead id, like a dead case file). The segment also restores the open record
+  on reload via the existing deep-link boot path.
 - **Court NEF dedupe + quiet empty-pool cancel (10-13):** `court_extract`
   claims sha256(normWs(subject)+'\n'+normWs(body)) in `court_email_hashes`
   BEFORE the AI call; a different message_id with an owned hash = duplicate

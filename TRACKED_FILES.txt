@@ -1131,6 +1131,7 @@ tests/caseyActionPermissions.test.js
 tests/caseyHookCreate.test.js
 tests/caseyJobCodeAction.test.js
 tests/caseyWorkflowDraft.test.js
+tests/caseyWorkflowStep.test.js
 tests/checklistView.autoGrow.test.js
 tests/checklists.s1notes.test.js
 tests/clioTool.test.js
@@ -1601,6 +1602,7 @@ tests/workflowEngine.cancelAndLoopGuard.test.js
 tests/workflows.codeStepGate.test.js
 tests/workflows.editor.roundtrip.test.js
 tests/workflows.ensureDraft.test.js
+tests/workflows.expectedBase.test.js
 tests/workflows.flowgraph.test.js
 tests/workflows.reorder.state.test.js
 tests/wsurlS0Injection.test.js

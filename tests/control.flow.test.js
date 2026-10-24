@@ -376,8 +376,10 @@ describe('workflow_engine isControlStep', () => {
   test('every control function has BRANCH_TARGET_PARAMS entries (renumber safety)', () => {
     // A control function whose step targets are not remapped breaks on every
     // insert/delete/reorder — silently, pointing at the old step number.
+    // The map lives in lib/versionDiff.js since A17.4 (routes/workflows.js
+    // and Casey's step-edit normalizer both import it from there).
     const src = require('fs').readFileSync(
-      require.resolve('../routes/workflows.js'), 'utf8');
+      require.resolve('../lib/versionDiff.js'), 'utf8');
     const block = src.match(/const BRANCH_TARGET_PARAMS = \{([\s\S]*?)\n\};/);
     expect(block).not.toBeNull();
     const remapped = [...block[1].matchAll(/^\s{2}(\w+):\s*\[/gm)].map(m => m[1]);
@@ -461,11 +463,12 @@ describe('workflow_engine normalizeNextStep', () => {
   });
 
   test('the renumber remap skips the SAME sentinel set (no spurious warnings)', () => {
-    // routes/workflows.js keeps its own copy (it never loads the engine).
-    // Drift here means every insert/delete on a workflow that ends a branch
-    // emits a bogus "not auto-remapped" warning.
+    // lib/versionDiff.js keeps its own copy (it never loads the engine; the
+    // set moved there from routes/workflows.js in A17.4). Drift here means
+    // every insert/delete on a workflow that ends a branch emits a bogus
+    // "not auto-remapped" warning.
     const src = require('fs').readFileSync(
-      require.resolve('../routes/workflows.js'), 'utf8');
+      require.resolve('../lib/versionDiff.js'), 'utf8');
     const block = src.match(/const TERMINAL_SENTINELS = new Set\(\[([^\]]*)\]\)/);
     expect(block).not.toBeNull();
     const listed = [...block[1].matchAll(/'([^']+)'/g)].map(m => m[1]).sort();
@@ -473,7 +476,9 @@ describe('workflow_engine normalizeNextStep', () => {
     for (const s of listed) {
       expect(normalizeNextStep(s).kind).not.toBe('invalid');
     }
-    expect(src).toMatch(/isTerminalSentinel\(v\)/);
-    expect(src).toMatch(/isTerminalSentinel\(bv\)/);
+    const routesSrc = require('fs').readFileSync(
+      require.resolve('../routes/workflows.js'), 'utf8');
+    expect(routesSrc).toMatch(/isTerminalSentinel\(v\)/);
+    expect(routesSrc).toMatch(/isTerminalSentinel\(bv\)/);
   });
 });

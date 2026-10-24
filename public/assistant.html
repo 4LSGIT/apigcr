@@ -784,6 +784,95 @@ function workflowDraftRequest(draft) {
   return { path: '/workflows/bulk', method: 'POST', body, idempotent: true };
 }
 
+// Workflow step insert/edit (A17.4): the first writes against an EXISTING
+// workflow. Both edit the DRAFT only — nothing runs until a human publishes —
+// and both carry the server-computed expected_base verbatim, so the canonical
+// route refuses the write with a structured 409 when the workflow changed
+// between review and click (the wf27 scar as a route property). The builder
+// maps fixed fields only; nothing in it comes from model output except the
+// reviewed values themselves.
+const WORKFLOW_STEP_ACTION_KINDS = new Set(['workflow.step_insert.v1', 'workflow.step_edit.v1']);
+
+function workflowStepActionLabel(draft) {
+  return draft.kind === 'workflow.step_insert.v1' ? 'Insert workflow step' : 'Edit workflow step';
+}
+
+function workflowStepWorkflowLine(draft) {
+  const wf = draft.workflow || {};
+  return `Workflow: #${wf.workflow_id} "${wf.name}" — ${wf.published ? 'PUBLISHED' : 'unpublished'}${wf.active ? ', active' : ', inactive'}`;
+}
+
+function workflowStepInsertText(draft) {
+  const lines = ['Workflow step insert proposal — not applied', workflowStepWorkflowLine(draft)];
+  if (draft.position != null) {
+    lines.push(`Position: step ${draft.position}${draft.displaces ? ` — current step ${draft.displaces.step_number} ("${draft.displaces.summary}") and every later step shift up by one; the server rewrites stored branch targets to follow and reports anything it could not rewrite` : ''}`);
+  } else {
+    lines.push('Position: appended as the last step');
+  }
+  const finalPosition = draft.position != null ? draft.position
+    : Number(draft.expected_base && draft.expected_base.step_count) + 1;
+  lines.push('New step:', workflowDraftStepLine(draft.step, finalPosition - 1));
+  lines.push('This edits the workflow\'s DRAFT only. Nothing changes in what runs until a human reviews and publishes the draft in the workflow editor.');
+  lines.push('If anyone changes this workflow before you apply, the server refuses the write and Casey must re-read it.');
+  return lines.join('\n');
+}
+
+function workflowStepEditValue(value) {
+  if (value == null) return '(empty)';
+  return typeof value === 'string' ? value : JSON.stringify(value);
+}
+
+function workflowStepEditText(draft) {
+  const t = draft.target || {};
+  const lines = ['Workflow step edit proposal — not applied', workflowStepWorkflowLine(draft),
+    `Step ${draft.step_number}: [${t.type === 'custom_code' ? 'safe code' : t.function_name}]${t.label ? ` ${t.label}` : ''}`];
+  for (const field of ['label', 'note', 'params', 'code', 'input']) {
+    if (!(field in (draft.changes || {}))) continue;
+    lines.push(`${field} — before: ${workflowStepEditValue(draft.before && draft.before[field])}`);
+    lines.push(`${field} — after: ${workflowStepEditValue(draft.changes[field])}`);
+  }
+  lines.push('Branch targets, the step\'s type and function, and its error policy are unchanged by construction.');
+  lines.push('This edits the workflow\'s DRAFT only. Nothing changes in what runs until a human reviews and publishes the draft in the workflow editor.');
+  lines.push('If anyone changes this workflow before you apply, the server refuses the write and Casey must re-read it.');
+  return lines.join('\n');
+}
+
+function workflowStepActionText(draft) {
+  return draft.kind === 'workflow.step_insert.v1' ? workflowStepInsertText(draft) : workflowStepEditText(draft);
+}
+
+function workflowStepActionRequest(draft) {
+  const wfId = Number(draft.workflow && draft.workflow.workflow_id);
+  if (draft.kind === 'workflow.step_insert.v1') {
+    const step = draft.step;
+    const body = {
+      type: step.type,
+      config: step.type === 'custom_code' ? { ...step.config, code_mode: 'safe' } : step.config,
+      expected_base: draft.expected_base,
+    };
+    if (step.label) body.label = step.label;
+    if (step.note) body.note = step.note;
+    if (step.error_policy) body.error_policy = step.error_policy;
+    if (draft.position != null) body.stepNumber = draft.position;
+    return { path: `/workflows/${wfId}/steps`, method: 'POST', body, idempotent: true };
+  }
+  const body = { expected_base: draft.expected_base };
+  if ('label' in (draft.changes || {})) body.label = draft.changes.label;
+  if ('note' in (draft.changes || {})) body.note = draft.changes.note;
+  if (draft.new_config) {
+    body.config = draft.target && draft.target.code_mode === 'safe'
+      ? { ...draft.new_config, code_mode: 'safe' }
+      : draft.new_config;
+  }
+  return { path: `/workflows/${wfId}/steps/${draft.step_number}`, method: 'PATCH', body, idempotent: false };
+}
+
+function workflowStepActionResult(draft, result) {
+  const id = Number(result && result.workflowId);
+  if (!Number.isSafeInteger(id) || id < 1) throw new Error('The workflow step action returned no usable workflow id');
+  return { workflow_id: id, step_number: Number(result.stepNumber) || null, remap: (result && result.remap) || null };
+}
+
 // Applied automation cards deep-link to their record through the shell's
 // semantic navigation (Fred, 2026-10-22: "take the user right there"). The
 // destination ids and token grammar are the SHELL's; this passes only the
@@ -946,6 +1035,19 @@ const ACTION_FAMILIES = [
       'Find it under More → Automations → Workflows. It stays unpublished until you publish it there.'),
   },
   {
+    id: 'workflow_step', kinds: WORKFLOW_STEP_ACTION_KINDS, title: 'Workflow step', noun: 'workflow step', errorNoun: 'workflow step action',
+    label: workflowStepActionLabel, text: workflowStepActionText, request: workflowStepActionRequest,
+    result: workflowStepActionResult, idField: 'workflow_id', appliedKey: 'result_step_workflow_id',
+    danger: () => false,
+    resultText: (payload) => `workflow #${payload.workflow_id}${payload.step_number ? ` step ${payload.step_number}` : ''} (draft)`,
+    entity: (draft, payload) => ({ kind: 'workflow', id: String(payload.workflow_id), label: `${draft.workflow.name} #${payload.workflow_id} (draft edited)` }),
+    failure: 'The workflow step action could not be applied.',
+    reviewWarning: 'This edits the workflow\'s DRAFT only — nothing runs until a human publishes it in the editor. Review every value anyway: a later publish ships exactly what is written here. If the workflow changed since this card was prepared, the server refuses the write. Canceling writes nothing.',
+    open: (draft) => openAutomationRecord('automations.workflow', draft.result_step_workflow_id,
+      `Workflow #${draft.result_step_workflow_id}`,
+      'Find it under More → Automations → Workflows. The change sits in its draft until you publish there.'),
+  },
+  {
     id: 'hook', kinds: HOOK_ACTION_KINDS, title: 'Hook', noun: 'hook', errorNoun: 'hook action',
     label: hookCreateLabel, text: hookCreateText, request: hookCreateRequest, result: hookCreateResult,
     idField: 'hook_id', appliedKey: 'result_hook_id',
@@ -1061,8 +1163,16 @@ async function executeActionDraft(message) {
     // does a 409: appointment status conflicts surface as 500 and the A5 stale
     // preconditions as 409, but a conflict answered by a route we have not
     // audited could still have written. Only a refusal we can read is certain.
+    // One audited exception to "409 stays ambiguous": the workflow routes'
+    // expected_base precondition (P11) answers 409 with a structured
+    // body.conflict BEFORE any write, so nothing was written and saying
+    // "may have been applied" would send staff hunting for a change that
+    // does not exist. No other route produces this shape.
+    const baseConflict = claimed && e && e.status === 409 && e.body && e.body.conflict && e.body.conflict.changed;
     const refused = claimed && e && e.status >= 400 && e.status < 500 && e.status !== 409;
-    if (refused) {
+    if (baseConflict) {
+      draft.refusal_error = 'The workflow changed since this card was prepared, so the server refused the write — nothing was changed. Ask Casey to read the workflow again and rebuild the proposal.';
+    } else if (refused) {
       draft.refusal_error = `The server refused this (${e.message || `HTTP ${e.status}`}). Nothing was written. Ask Casey to prepare the action again.`;
     } else if (claimed || outcome === 'unknown') {
       draft.ambiguous_error = `This may already have been applied: the server claimed the request but never recorded its result (${e.message || 'no result recorded'}). Open the record and check before asking Casey to prepare it again. Do not apply this card again.`;

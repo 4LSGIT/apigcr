@@ -15,6 +15,8 @@ const KINDS = new Map([
   ...['phone', 'email', 'address'].flatMap(f => ['create', 'update', 'end'].map(k => [`contact.${f}.${k}.v1`, 'contact_id'])),
   ['job.code_safe.create.v1', 'job_id'],
   ['workflow.draft.v1', 'workflow_id'],
+  ['workflow.step_insert.v1', 'workflow_id'],
+  ['workflow.step_edit.v1', 'workflow_id'],
   ['hook.create.v1', 'hook_id'],
 ]);
 function fail(status, message) { const e = new Error(message); e.status = status; throw e; }

@@ -1251,6 +1251,7 @@ async function selectSeqTemplate(id) {
   SEQ.activeTemplate   = SEQ.templates.find(t => t.id === id);
   SEQ.activeStepIdx    = null;
   SEQ.activeStepId     = null;
+  seqReportOpenRecord();
   renderSeqList();
   const t = document.getElementById('seq-canvas-title');
   t.textContent = seqTitleText(SEQ.activeTemplate);
@@ -4008,6 +4009,7 @@ async function seqDelete() {
     await api(`/sequences/templates/${SEQ.activeTemplateId}`, 'DELETE');
     SEQ.activeTemplateId = null;
     SEQ.activeTemplate = null;
+    seqReportOpenRecord();
     SEQ.steps = [];
     SEQ.activeStepIdx = null;
     SEQENROLL.offset = 0;
@@ -5402,15 +5404,31 @@ window.onHide    = onHide;
 window.onRefresh = onRefresh;
 window.onNew     = onNew;
 
+// P13 — tell the manager shell which sequence template is open, so the
+// workspace URL (and through it Casey's server-verified workspace context)
+// carries the id. The manager validates (digits only) and owns the report
+// upward; an older manager build without the hook makes this a silent no-op.
+function seqReportOpenRecord() {
+  try {
+    if (window.parent !== window && window.frameElement &&
+        typeof window.parent.ycSubRecordChanged === 'function') {
+      window.parent.ycSubRecordChanged(window.frameElement, SEQ.activeTemplateId);
+    }
+  } catch (_) { /* cross-origin or mid-navigation parent */ }
+}
+
 // T4 — Activity deep-link. Shell calls window.onFocusRecord({id}) after
 // switching to this tab. payload.id is an ENROLLMENT id — Activity's
 // normSequence translates from its step-log rows (trap T-3) because this
 // page's opener is enrollment-keyed. viewSequenceEnrollment is a Swal
 // modal fetching /sequences/enrollments/:id directly — no template
 // selection or list state needed.
+// record:'sequence' (P13 deep link / workspace-URL restore) opens the
+// TEMPLATE itself; the bare shape stays the Activity enrollment viewer.
 window.onFocusRecord = (payload) => {
   const id = payload && payload.id;
   if (id == null) return;
+  if (payload.record === 'sequence') { selectSeqTemplate(id); return; }
   viewSequenceEnrollment(id);
 };
 

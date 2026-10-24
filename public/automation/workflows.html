@@ -1497,6 +1497,7 @@ async function selectWorkflow(id) {
   WF.activeWf   = WF.workflows.find(w => w.id === id);
   WF.activeStepIdx = null;
   WF.activeStepId  = null;
+  wfReportOpenRecord();
   renderWfList();
   const t = document.getElementById('wf-canvas-title');
   t.textContent = WF.activeWf?.name || '';
@@ -3676,6 +3677,7 @@ async function wfDelete() {
     WFEX.total  = 0;
     WF.activeWfId = null;
     WF.activeWf = null;
+    wfReportOpenRecord();
     WF.steps = [];
     WF.activeStepIdx = null;
     const t = document.getElementById('wf-canvas-title');
@@ -4920,6 +4922,19 @@ window.onShow    = onShow;
 window.onHide    = onHide;
 window.onRefresh = onRefresh;
 window.onNew     = onNew;
+
+// P13 — tell the manager shell which workflow is open, so the workspace URL
+// (and through it Casey's server-verified workspace context) carries the id.
+// The manager validates (digits only) and owns the report upward; an older
+// manager build without the hook makes this a silent no-op.
+function wfReportOpenRecord() {
+  try {
+    if (window.parent !== window && window.frameElement &&
+        typeof window.parent.ycSubRecordChanged === 'function') {
+      window.parent.ycSubRecordChanged(window.frameElement, WF.activeWfId);
+    }
+  } catch (_) { /* cross-origin or mid-navigation parent */ }
+}
 
 // T4 — Activity deep-link. Shell calls window.onFocusRecord({id}) after
 // switching to this tab (polling until the page has booted). The execution

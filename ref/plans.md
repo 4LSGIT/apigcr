@@ -716,20 +716,20 @@ and the two marked LIVE BUG are worth landing whether or not A17 ever ships.)
   effect. It does NOT retire `custom_code`: the remainder is genuinely bespoke
   (wf27's 19.5 KB formatter, the 7-way Clio command router, the multi-field
   e-sign reshaping), so the execution-boundary question stays live either way.
-- **No optimistic concurrency on any automation definition write.** Workflow
-  and sequence steps are addressed by `step_number` (a position), and no
-  step-mutating route or publish route takes an expected-base token. Two
-  editors are last-write-wins, a PUT from a stale view lands on whichever step
-  now occupies that slot, and a publish can include edits made after the
-  publisher read `draft-diff`. This is the wf27 scar as a route property; P11
-  in the Casey plan specifies the fix, which the human editor needs too.
-- **Automation step saves are not validation authorities.** An unknown or
-  misspelled `function_name` passes save on a workflow step; undeclared param
-  keys are never rejected; `params: null` skips validation; `error_policy.strategy`
-  is unvalidated (any string behaves as `ignore`); sequence
-  `sms`/`email`/`task`/`internal_function` steps get no param validation at
-  all; and publish re-runs shape and branch-target checks but never params or
-  function existence.
+- **No optimistic concurrency on SEQUENCE definition writes or on PUBLISH.**
+  The WORKFLOW step-mutating routes take an optional `expected_base`
+  precondition since A17.4 (2026-10-24; editing version + step count +
+  key-order-insensitive step fingerprint, refused as a structured 409). Still
+  open: the sequence step routes, and both publish routes — a publish can
+  still include edits made after the publisher read `draft-diff` (A17.6's
+  half). The native workflow editor does not SEND the precondition yet, so
+  human-vs-human stale writes remain possible there until it does.
+- **Automation step saves are not validation authorities — sequence half.**
+  The workflow half closed with A17.4: unknown `function_name`, undeclared
+  param keys, `params: null`, and `error_policy` shape/strategy are refused at
+  save. Still open: sequence `sms`/`email`/`task`/`internal_function` steps
+  get no param validation at all (blocks Casey A18.2), and publish re-runs
+  shape and branch-target checks but never params or function existence.
 - **`POST /executions/:id/resume` is neither state-guarded nor atomic.** It
   refuses only `active|processing|delayed`, so `completed` and `held`
   executions are resumable; it never checks `workflows.active`; and a plain

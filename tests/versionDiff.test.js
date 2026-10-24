@@ -12,10 +12,11 @@
  * feature is uselessly disabled), and every control-flow-adjacent change MUST
  * classify structural.
  *
- * BRANCH_TARGET_PARAMS / TERMINAL_SENTINELS are extracted from
- * routes/workflows.js SOURCE (same technique as tests/control.flow.test.js)
- * so these tests exercise the exact production map — a param added to the map
- * automatically tightens the classifier here too.
+ * BRANCH_TARGET_PARAMS / isTerminalSentinel are the production exports from
+ * lib/versionDiff.js itself (they moved there from routes/workflows.js in
+ * A17.4, which is when the source-regex extraction this file used stopped
+ * finding them) — a param added to the map automatically tightens the
+ * classifier here too.
  *
  *   npx jest tests/versionDiff.test.js
  */
@@ -23,21 +24,7 @@
 const fs = require('fs');
 const path = require('path');
 
-const { diffWorkflowSteps, validateWorkflowDraft } = require('../lib/versionDiff');
-
-const wfSrc = fs.readFileSync(path.join(__dirname, '..', 'routes', 'workflows.js'), 'utf8');
-
-const mapMatch = wfSrc.match(/const BRANCH_TARGET_PARAMS = \{([\s\S]*?)\n\};/);
-if (!mapMatch) throw new Error('BRANCH_TARGET_PARAMS not found in routes/workflows.js');
-// eslint-disable-next-line no-eval
-const BRANCH_TARGET_PARAMS = eval('({' + mapMatch[1] + '})');
-
-const sentMatch = wfSrc.match(/const TERMINAL_SENTINELS = new Set\(\[([^\]]*)\]\)/);
-if (!sentMatch) throw new Error('TERMINAL_SENTINELS not found in routes/workflows.js');
-// eslint-disable-next-line no-eval
-const TERMINAL_SENTINELS = new Set(eval('[' + sentMatch[1] + ']'));
-const isTerminalSentinel = (v) =>
-  typeof v === 'string' && TERMINAL_SENTINELS.has(v.trim().toLowerCase());
+const { diffWorkflowSteps, validateWorkflowDraft, BRANCH_TARGET_PARAMS, isTerminalSentinel } = require('../lib/versionDiff');
 
 const OPTS = { branchTargetParams: BRANCH_TARGET_PARAMS, isTerminalSentinel };
 
