@@ -59,7 +59,7 @@ const CONFIG = {
 
   // Legacy side-job — to be removed; see inline notes
   clioForward: {
-    enabled:        true,
+    enabled:        false,
     fromAddress:    'notifications@clio.com',
     subjectPattern: /^Payment method submitted by (.+)$/,
     forwardTo:      'shoshana@metrodetroitbankruptcylaw.com'
