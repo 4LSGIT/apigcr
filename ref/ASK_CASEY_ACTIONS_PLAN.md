@@ -1414,6 +1414,76 @@ and `/test-draft`); once they do, trigger-rule authoring becomes an A18 slice
 on the same expected-base recipe, with `code` mode excluded for the same
 sandbox reason as `custom_code`.
 
+#### A20: Email and phone ingest rules
+
+Planned 2026-10-26 on Fred's ask ("sooner than later"); phone ingest rules are
+in scope with email — Fred: "practically the same", and it is: the
+`routes/api.phoneIngest.js` rule/rule-action/test-match/test-transform surface
+mirrors `routes/api.emailIngest.js` one-for-one. Ordering ruled the same day:
+A18.2 finishes first, then A20. Rungs A20.0/A20.1 are read-shaped and may land
+as one bundle under the 2026-10-26 gate-bundling rule (targeted suites per
+slice; one full suite, survey and land per bundle).
+
+**Measured ground (code + schema, 2026-10-26).** Ingest rules were nowhere in
+this plan before today, and Casey cannot even read them: `automationReadService`
+covers workflows (P12a) and sequences (P12b) only. The rules are live-on-save
+and unversioned (AI_CONTEXT §26: NOT covered by automation versioning) — the
+same property that deferred trigger-rule authoring — but with two differences
+that change the answer: `email_ingest_rules.active` exists (tinyint, **default
+1**, so a create must pin `active: 0` explicitly), and rule actions are per-row
+CRUD by id (`addAction`/`updateAction`/`deleteAction` in
+`emailIngestRuleService`), not the trigger-rules DELETE+REINSERT. Rules carry
+`updated_at` for an expected-base guard; actions carry none — whether an action
+write touches the parent rule's `updated_at` is a trace item for A20.2.
+`action_type` is `workflow|sequence|hook|internal_function|http`; `match_mode`
+is `conditions|code` and `transform_mode` `passthrough|mapper|code`. Rule
+`position` orders evaluation, so insertion position is part of review. The
+hard semantics (throwing match = non-match, NULL `match_config` = non-match,
+failed transform = matched but actions do not fire) and the three-layer model
+are in AI_CONTEXT §26-27 and `manual/03-YisraFlow/10-ingest.md`; the explainer
+grounds there, never in model memory. `email_ingest_sources` (live keys) stays
+out of every rung; `http` action configs get the P12 URL redaction on reads.
+
+**A20.0: Explain an ingest rule or an ingest execution (read-only).** Extends
+the P12 typed read kinds over `email_ingest_rules`/`phone_ingest_rules`, their
+action rows, and `email_ingest_executions`/`phone_ingest_executions` (plus the
+Layer-2 suppression tables, which decide only the structured log write). The
+run-explain payload is the ingest analog of A17.1: which rules matched and why,
+what the transform produced, which actions fired with what outcome, and the
+layer the message stopped at. `code`-mode match/transform bodies are readable
+per ruling 9's logic; `http` URLs and literal header values redacted.
+
+**A20.1: Preview a rule against a message (read-only).** The native
+`POST .../rules/test-match` and `.../rules/test-transform` endpoints are the
+dry-run surface, like A17.2's step preview: zero side effects, no actions run.
+The kind must be unable to express anything but those two endpoints.
+
+**A20.2: Author an ingest rule (the write).** Ruled 2026-10-26:
+**create-inactive is the draft/publish substitute** for this family — a rule
+born `active: 0` matches nothing and fires nothing, the same born-unrunnable
+property as A17.3's v0 workflow and A19.0's inactive hook; activation stays a
+human act in the native editor. Recorded contract defaults (each stands until
+Fred rules otherwise):
+
+- Create writes the rule inactive with `conditions` match mode and
+  `passthrough`/`mapper` transform only; Casey never composes `code`-mode
+  match or transform bodies (same `node:vm` reason as trigger rules).
+- Actions mirror A19.0's shape: target an EXISTING workflow or sequence
+  template (or hook), verified at proposal time; `internal_function` actions
+  come from the A17 allowlist; `http` actions follow A17.4b's webhook
+  contract (literal user-supplied URL, named credential, no model-invented
+  destination) or defer to a sub-slice.
+- Edits are limited to INACTIVE rules initially, with an
+  expected-`updated_at` precondition on the canonical route (optional for
+  native callers, required on Casey proposals — P11's shape). Editing an
+  ACTIVE rule is live-on-save with no change history, exactly the trigger-rule
+  hazard, so it waits for the same two cheap pieces the trigger decision
+  prescribes (append-only change log in the update transaction + the stale
+  guard) — or ships with them.
+- Per-family flag (ruling 4), one proposal per answer, exact-id evidence from
+  an A20.0 read, and the prompt-stage registry sweep
+  (`tests/assistantPromptKinds.test.js`) like every family.
+
 ### Secondary action candidates
 
 The route inventory also exposes useful but lower-priority candidates. Add
@@ -1837,7 +1907,9 @@ slice if explain-answers should link back to a specific record.
    read-only slices A17.0, A17.1, A18.0 and A18.1, which need no write
    machinery and can ship alongside A6-A8. P11 gates every A17/A18 write;
    A17.6 and A18.3 publish additionally need P3 generalized. A17.7 start and
-   A18.4 enrollment stay behind A14's send machinery.
+   A18.4 enrollment stay behind A14's send machinery. A20 (ingest rules)
+   follows A18.2 (Fred, 2026-10-26); its read rungs A20.0/A20.1 have no
+   prerequisite beyond the P12 pattern and may bundle.
 6. Expand via P10 gates. Keep destructive/admin/bulk/autonomous work outside
    the ordinary roadmap until separately approved.
 
