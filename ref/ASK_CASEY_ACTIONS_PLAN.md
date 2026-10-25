@@ -1473,16 +1473,33 @@ Fred rules otherwise):
   come from the A17 allowlist; `http` actions follow A17.4b's webhook
   contract (literal user-supplied URL, named credential, no model-invented
   destination) or defer to a sub-slice.
-- Edits are limited to INACTIVE rules initially, with an
+- Edits in THIS slice are limited to INACTIVE rules, with an
   expected-`updated_at` precondition on the canonical route (optional for
   native callers, required on Casey proposals — P11's shape). Editing an
-  ACTIVE rule is live-on-save with no change history, exactly the trigger-rule
-  hazard, so it waits for the same two cheap pieces the trigger decision
-  prescribes (append-only change log in the update transaction + the stale
-  guard) — or ships with them.
+  ACTIVE rule is A20.3.
 - Per-family flag (ruling 4), one proposal per answer, exact-id evidence from
   an A20.0 read, and the prompt-stage registry sweep
   (`tests/assistantPromptKinds.test.js`) like every family.
+
+**A20.3: Edit an active ingest rule.** Ruled its own slice (Fred, 2026-10-26:
+"it should also be able to edit — that's just its own slice"). An active-rule
+edit is live-on-save with no change history — exactly the trigger-rule hazard —
+so this slice ships WITH the two cheap pieces the trigger decision prescribes,
+built canonically so the native editor gets them too:
+
+- an append-only change log written inside `updateRule`/`updateAction`'s
+  existing transaction — the rule's fields and its action rows, before and
+  after, with the actor — giving both the review diff and a manual revert path;
+- the expected-`updated_at` stale guard from A20.2, now mandatory on every
+  Casey active-rule proposal (whether an action write bumps the parent rule's
+  `updated_at` is the A20.2 trace item; if not, the guard must cover actions
+  too).
+
+Review shows the live rule's before/after diff and says plainly that the edit
+takes effect immediately on matching mail/calls. Same exclusions as A20.2
+(`code` modes, model-invented destinations). Once this lands, trigger-rule
+authoring needs only its own copy of the same two pieces (the A18 trigger
+decision) — the recipes should match.
 
 ### Secondary action candidates
 
