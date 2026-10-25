@@ -186,6 +186,12 @@ row** (about 25 minutes) one **warning** naming the box and folder is recorded
 in system alerts (warnings ride the alert digest; they do not email on their
 own). The streak clears itself on the next good run. Usual causes: a changed
 password (re-enter the secret), a misspelt folder, or the mail server down.
+An `INCOMPLETE_FETCH` error is harmless: the server answered a message with
+flag updates instead of its contents (someone was reading it at that moment),
+nothing was stored, and the next run fetches it again. A streak whose last
+error names the ingest pipeline rather than the server — the same message
+failing every run — does NOT clear itself: the folder waits on that one
+message. That needs IT.
 Once the Apps Script ingest is retired and YisraCase is the only thing reading
 the Google inbox, that mailbox's streaks on folders that feed rules are
 recorded as **errors** (they email IT): its mail would otherwise reach no

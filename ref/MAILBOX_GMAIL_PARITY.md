@@ -1,6 +1,7 @@
 # MAILBOX_GMAIL_PARITY — Gmail IMAP pilot (S1-G): checklist, gate, parity window, retirement
 
-Status: LIVING RUNBOOK — 2026-10-09; All-Mail ruling 2026-10-11. Opened by slice S1-G of the mailbox arc
+Status: LIVING RUNBOOK — 2026-10-09; All-Mail ruling 2026-10-11; first close check 2026-10-25: NOT retired,
+the window re-opens at the FETCH-merge fix's deploy (§4). Opened by slice S1-G of the mailbox arc
 (`ref/MAILBOX_SYSTEM_DESIGN.md`); moves to `ref/archive/` when the Apps Script
 source retires (step 6). Companion script: `ref/MAILBOX_GMAIL_PARITY.console.js`.
 
@@ -285,7 +286,8 @@ adapter's key (401 → GAS stops, labels pile up).
 - Spot-check W1–W6 every few days; W4 (text) on day 1.
 
 ### Step 6 — at window close (separate session, only if §4 holds and §5 is decided)
-1. Re-home or consciously drop the GAS side jobs (§5).
+1. Re-home or consciously drop the GAS side jobs (§5). The docs@ relay cannot be re-homed
+   yet: §5 decides what this step does, and while the relay stays, steps 2–5 wait.
 2. Disable the Apps Script **time-based trigger** (Triggers → delete
    `forwardEmailsToIngest`). Code stays; `gmail-firm` row stays active (the
    worker owns it now; its `last_used_at` freezes — it is only stamped by HTTP
@@ -433,7 +435,9 @@ Class 2 must be 0 (or each row explained); class 3 is mail GAS posted that the
 worker never stored (Spam / Trash are outside All Mail; a draft; mail older
 than the step-3b baseline that a new reply re-threads — GAS re-posts whole
 threads); class 5 is mail GAS never posted (expected near 0: GAS posts
-inbound, sent and labelled mail alike).
+inbound, sent and labelled mail alike). Class 3 also holds a worker MISS that
+left an envelope-less row: the class-2 test matches stored rows by
+`provider_id`, which such a row lacks — **W2b** counts those, and must be 0.
 ```sql
 SELECT c.cls, COUNT(*) AS n
   FROM (
@@ -462,6 +466,20 @@ SELECT c.cls, COUNT(*) AS n
 CONVERT_TZ; outbound-* rows are UTC (scratch `docs/20261009_email_log_processed_at_tz`); restricting to
 rows FIRST logged in the window keeps GAS's whole-thread re-posts of old mail
 out of the count.)
+
+**W2b — envelope-less rows the worker stored** (a miss W2 files under class 3).
+Must be 0. Each one is a message the worker fetched without its data and will
+never revisit (the cursor is past it); before the FETCH-merge fix
+(imapTransport, FETCH ROWS ARE MERGED PER UID) a flag update arriving with
+the fetch did this. Repair: `scripts/mailboxRepairShellRows.js`.
+```sql
+SELECT m.id, m.uid, m.flags, m.ingested_at
+  FROM mail_messages m
+ WHERE m.mailbox_id = (SELECT id FROM mailboxes WHERE address = 'stuart@4lsg.com')
+   AND m.provider_id IS NULL AND m.message_id IS NULL AND m.from_addr IS NULL AND m.date IS NULL
+   AND m.ingested_at >= '<WINDOW_START_UTC>';
+```
+(`mail_messages.ingested_at` is UTC, like `<WINDOW_START_UTC>`.)
 
 **W3 — the one-feeder-only rows to read** (classes 2 and 5).
 ```sql
@@ -524,12 +542,48 @@ SELECT DATE(e.created_at) AS day_utc, COUNT(*) AS worker_first_with_rules,
 ## 4. Retirement criteria (all must hold)
 
 1. **~14 clean days**: W2 class 2 = 0 or every row explained by something
-   other than the worker; W5 (a) and (b) = 0; worker failures in W1 explained.
+   other than the worker; **W2b = 0**; W5 (a) and (b) = 0; worker failures in
+   W1 explained.
 2. **No text divergence on court mail**: W4 verdict PASS — or REVIEW with its
    classes (§2 G4) accepted by an explicit ruling.
 3. No open `mailbox_ingest_failing` / `mailbox_ingest_no_provider_id` /
    `mailbox_ingest_source_missing` alert for this mailbox.
 4. §5's decisions made and their prerequisites done.
+
+### Close check 2026-10-25 — not retired
+
+Window 2026-10-11 13:53:56Z → 2026-10-25. W1: no failures from either feeder
+through the check (~13:00Z). W2: 1583 both feeders, class 2 = 0, class 3 = 13, class 5 = 1 (a
+court notice only the worker logged). W5 (a) = 0. W5 (b) = 1, explained: a
+firm-internal test mail to it@mdbl, whose box emits under `mailbox-imap` —
+both copies firm-to-firm skipped. (An EXTERNAL mail addressed to both boxes
+would run Layer 3 twice; that predates the window and does not depend on GAS.)
+
+Two of the 13 class-3 rows were WORKER MISSES, caught by criterion 3 (alerts
+1854 and 1947, `mailbox_ingest_no_provider_id`) and not by criterion 1 as then
+written — hence W2b. One was a Chapter 13 trustee's email. imapflow had handed
+back a flag update for the message being fetched (the attorney reading or
+answering it during the tick) and the transport kept that row in place of the data — fixed
+in imapTransport (FETCH ROWS ARE MERGED PER UID); the two rows are repaired by
+`scripts/mailboxRepairShellRows.js`. The other 11 are the documented class-3
+kinds: two bounces gone from All Mail before the next tick, nine old messages
+of a re-posted thread.
+
+The same day, from 13:01Z, a second worker-only failure: the executions row
+of one message (a YisraCase task-summary email, an over-16-KB envelope with
+emoji) could not be written — `_truncateRawInput`'s fixed-offset cut split a
+surrogate pair, and MySQL refuses a lone surrogate in a JSON column
+(`ER_INVALID_JSON_TEXT`). The worker retries a failed emission, so All Mail
+stayed on that message tick after tick (alert 2089, `mailbox_ingest_failing`,
+a warning — no email). The Apps Script logged everything meanwhile. Fixed in
+emailIngestService (`_jsonColumnText`); the folder resumes on the first tick
+after the deploy. Both failures were covered only because the Apps Script was
+still running.
+
+**The window RE-OPENS at the fix's deploy** (Fred, 2026-10-25):
+`<WINDOW_START_UTC>` = the deploy time, ≥ 7 days, then W1–W6 with W2b, and W4
+over the whole new window. Retirement is further gated on the docs@ relay
+(§5).
 
 ## 5. Decisions
 
@@ -553,9 +607,34 @@ SELECT DATE(e.created_at) AS day_utc, COUNT(*) AS worker_first_with_rules,
   draft guard on its first run (step 3d).
 
 **Before step 6 (retirement):**
-- **GAS side jobs**: the Pabbly **docs@** relay (~60 messages / 30 days) and
-  the **Clio "Payment method submitted"** forward live only in the Apps Script
-  (`processOneMessage()`). Rebuild as ingest rules (their removal notes in
-  `ref/gas.js` spell it out) or drop consciously — before step 6.
+- **GAS side jobs** — both live only in the Apps Script (`processOneMessage()`):
+  - **Pabbly docs@ relay** (~60 messages / 30 days) — STAYS in the Apps Script
+    (ruling 2026-10-25) until YisraCase can hand docs@ attachments to the
+    Dropbox upload itself: the worker stores attachment STRUCTURE only (design
+    D1) and the Pabbly workflow needs the files. So step 6 as written (delete
+    the trigger) would stop the relay. Decide at step 6: (a) keep the Apps
+    Script running whole — both feeders, the worker in front; steps 2–5 wait;
+    or (b) a relay-only Apps Script — the ingest POST off, the relay kept. (b)
+    is a `ref/gas.js` change, not a config flip: the relay runs only after a
+    successful ingest POST today. The Gmail filter feeding `Trigger Label`
+    can then narrow to docs@.
+  - **Clio "Payment method submitted" forward** (6 in June–August 2026, none
+    since) — rebuilt as an ingest rule (ruling 2026-10-25), then
+    `CONFIG.clioForward.enabled = false` in the Apps Script AND in `ref/gas.js`
+    at the same sitting (until then the Apps Script's forward and the rule
+    would both send). The
+    rule copies rule 13 (*Convert Case -> SS*): match `from.email` equals
+    `notifications@clio.com` AND `subject` starts with
+    `Payment method submitted by `; transform passthrough; action
+    `internal_function` `forward_as_email` with params_mapping
+    `{"event": "$", "to": "'shoshana@metrodetroitbankruptcylaw.com'",
+    "from": "'automations@4lsg.com'", "subject_prefix": "''"}` (an empty
+    prefix keeps the subject as Clio sent it, as the Apps Script's forward
+    did). Test-match it on the six historical executions (2567, 3810, 8800,
+    12585, 13961, 14188) before arming. One difference: the Apps Script
+    forwards only a single-message thread, and Gmail threads a second notice
+    with the same subject (the same client submitting again) under the first
+    — the 2026-08-12 one was likely never forwarded. The rule forwards every
+    notice.
 - **Test-trigger replays** (`forwardTestTrigger()`) stop with the trigger;
   the function stays runnable by hand.

@@ -523,6 +523,47 @@ and 16-communications-tab; AI_CONTEXT §20.)
 - **Log Call tab overhangs 1px at 320px** in communicate.html's tab bar
   (pre-existing; identical on the pre-arc page). Cosmetic.
 
+## From the Gmail parity close check (2026-10-25) — deferred
+
+Found while deciding the Apps Script retirement (`ref/MAILBOX_GMAIL_PARITY.md`
+§4, close check). The two live defects are fixed (imapTransport FETCH ROWS ARE
+MERGED PER UID; emailIngestService `_jsonColumnText`); these are what they
+showed and the slice left alone:
+
+- **One poison message holds a mailbox folder — ruling needed before the
+  Apps Script retires.** The worker retries a failed emission on the same UID
+  every tick (at-least-once into a deduping pipeline, by design), so a message
+  whose pipeline write fails DETERMINISTICALLY stops its folder: nothing after
+  it is stored or emitted until code changes. The FETCH-merge fix adds a
+  second, deliberate way in: a UID the server never answers with data
+  (`INCOMPLETE_FETCH` every tick) holds the folder rather than be skipped —
+  fail closed, but the same quarantine question. 2026-10-25 13:01Z it was the
+  lone-surrogate write; the streak alert (`mailbox_ingest_failing`) fired at
+  the 5th tick as a warning — no email — and only the Apps Script kept the
+  log whole. Options: quarantine the UID after N failed emissions (store-only,
+  `error` alert naming it, cursor moves on, a re-emit tool for later), and/or
+  make the streak alert `error` sooner for a provider-keyed emitting folder.
+  `limits.soleFeederSources` (the step-6 rider) makes it `error` only once
+  the Apps Script is gone — too late to be the safety net.
+- **hookService stores a 512 KB SLICE of JSON TEXT in a JSON column.**
+  `hook_executions.raw_input` and `hooks.captured_sample` are `json`; the
+  oversized-payload path (`rawInputStr.slice(0, 512 * 1024)`, both the
+  capture and the received row) writes truncated text, which is never valid
+  JSON — MySQL refuses the INSERT (`ER_INVALID_JSON_TEXT`) for every payload
+  over 512 KB, so such a hook call fails at its first write. Fix the
+  emailIngestService way: a marker object (`_truncated`, size, string
+  `preview`) through a surrogate-safe writer. Untested live — no >512 KB hook
+  payload has been seen.
+- **phoneIngestService `_writeExecution` has no lone-surrogate guard.** Same
+  writer shape as email's before `_jsonColumnText`. It never truncates, so
+  only a malformed provider payload could hit it; port `_jsonColumnText` when
+  next touching it.
+- **`imapTransport.fetchPart` takes imapflow's first row for the UID**
+  (`fetchOne`): a flag update arriving before the data fails the identity
+  check, and the attachment request errors (a retry works — visible, not
+  silent). Fold its rows the fetchMessages way if it ever shows up in the
+  alerts.
+
 ## custom_code containment — what the child process does NOT close (2026-10-22)
 
 Execution moved into a forked, scrubbed child (CLAUDE.md's invariant list has
@@ -927,7 +968,7 @@ Active surfaces with known next steps.
 - **Comms polish — after S2P (2026-10-13; design §4.4 "As built (S2P)").** Left out on purpose:
   - **Task → email deep link**: the task created from an email (§E) does not link back to the message; needs a task link type or a URL scheme into the hub (and the hub's side: open-by-message-id deep link). Decide with the chat/deep-link work.
   - **Shared-inbox assignment / "done"** — design doc FIRST (coordinate with phone read state: both are "conversation state", per-user vs per-box semantics must be decided together). OQ4's attribution (mail_sends) is built; assignment is not.
-  - **A.4 retirement item — the one-time bridge UPDATE**: 57 live mailbox-2 rows (2026-10-13) are on the log through the Apps Script source but carry no `mail_messages.log_id` stamp, so `has_case`/`no_case` filters and viewCounts miss them while the S2P log-status line shows them bridged. At the Apps Script retirement (parity window close, ~2026-10-25), run the one-time stamp backfill (`UPDATE mail_messages m JOIN email_ingest_executions e ... SET m.log_id = e.log_id WHERE m.log_id IS NULL` keyed the priorLogId way) — then the filters agree with the display. Window rule forbade it in S2P.
+  - **A.4 retirement item — the one-time bridge UPDATE**: 57 live mailbox-2 rows (2026-10-13) are on the log through the Apps Script source but carry no `mail_messages.log_id` stamp, so `has_case`/`no_case` filters and viewCounts miss them while the S2P log-status line shows them bridged. At the Apps Script retirement (deferred by the 2026-10-25 close check — `ref/MAILBOX_GMAIL_PARITY.md` §4–§5), run the one-time stamp backfill (`UPDATE mail_messages m JOIN email_ingest_executions e ... SET m.log_id = e.log_id WHERE m.log_id IS NULL` keyed the priorLogId way) — then the filters agree with the display. Window rule forbade it in S2P.
 - **Comms phone tab — after v1 (S-PH, 2026-10-12; design §4.4 "As built (S-PH)").** Left out of v1 on purpose:
   - **Shell gate for phone-only users** (ruling 2026-10-12): the sidebar Comms entry and Home button show only when the user can read ≥ 1 mailbox or holds a mail `can_send` (`index.html` `commsBadgeSet` / `commsBadgeRefresh`, fed by `GET /api/mail/mailboxes`). A person whose only grant is on a PHONE line never sees Comms. Every phone user at launch already reads a mailbox. Fix with the phone unread/badge work below (same shell code): count readable lines (`GET /api/phone-lines/readable`) into the show decision.
   - **Unread / badge counts** for texts and calls (per-user read state, like `mail_read_state`); the Phone tab shows no counts today.

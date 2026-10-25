@@ -827,6 +827,7 @@ scripts/esign_e2e_check.js
 scripts/esign_zoho_smoke.js
 scripts/genTypeKeyBackfill.js
 scripts/gen_signatures.js
+scripts/mailboxRepairShellRows.js
 scripts/mobile-survey/README.md
 scripts/mobile-survey/commsDensity.js
 scripts/mobile-survey/fixtures/api/admin/scratch.json
@@ -1228,6 +1229,8 @@ tests/documentsUpload.routes.test.js
 tests/domainEventQueue.test.js
 tests/dropboxService.normalizePath.test.js
 tests/dropboxService.retry.test.js
+tests/emailIngestSurrogate.mysql.test.js
+tests/emailIngestSurrogate.test.js
 tests/emailservice.normalizebodies.test.js
 tests/emitStageAged.test.js
 tests/ensureSqlProxy.test.js
@@ -1331,6 +1334,7 @@ tests/helpers/commsArchiveSchema.js
 tests/helpers/ctaWorld.js
 tests/helpers/fakeGcs.js
 tests/helpers/homeLayoutBrowser.js
+tests/helpers/imapWire.js
 tests/helpers/mailRenderBrowser.js
 tests/helpers/mailboxS1World.js
 tests/helpers/mailboxS2World.js
@@ -1405,7 +1409,9 @@ tests/logService.updateLogLink.test.js
 tests/logservice.buildcaselogwhere.test.js
 tests/logservice.buildcontactlogwhere.test.js
 tests/machineKeyScopes.test.js
+tests/mailboxFetchMerge.test.js
 tests/mailboxGmailParity.console.test.js
+tests/mailboxRepairShellRows.mysql.test.js
 tests/mailboxS0.test.js
 tests/mailboxS1.ingest.test.js
 tests/mailboxS1.routes.test.js

@@ -296,6 +296,22 @@ function _truncateRawInput(body) {
 // caller passes something unusual like a Date.)
 const _JSON_COLS = new Set(['raw_input', 'metadata']);
 
+/**
+ * The JSON text written to a JSON column, every string in it made
+ * well-formed first (String.prototype.toWellFormed: a lone UTF-16 surrogate
+ * becomes U+FFFD). A lone surrogate — half an emoji, left by
+ * _truncateRawInput's fixed-offset cut, or arriving in a malformed message —
+ * is written by JSON.stringify as an escaped \udXXX, and MySQL's JSON parser
+ * refuses the WHOLE value ("The surrogate pair in string is invalid"), so the
+ * executions INSERT throws. Live 2026-10-25: a task-summary email to mailbox 2
+ * — its execution row failed on every tick, and the mailbox worker, which
+ * retries a failed emission, held its folder on that one message. Object
+ * keys are not touched (envelope field names and ASCII header names).
+ */
+function _jsonColumnText(v) {
+  return JSON.stringify(v, (_k, x) => (typeof x === 'string' ? x.toWellFormed() : x));
+}
+
 async function _writeExecution(db, fields) {
   const cols = [];
   const placeholders = [];
@@ -304,7 +320,7 @@ async function _writeExecution(db, fields) {
     cols.push(k);
     placeholders.push('?');
     if (_JSON_COLS.has(k) && v != null && typeof v === 'object') {
-      values.push(JSON.stringify(v));
+      values.push(_jsonColumnText(v));
     } else {
       values.push(v);
     }
@@ -796,6 +812,11 @@ module.exports = {
   // T7/F-8: exported for testing, mirroring phoneIngestService's existing
   // export of the same function. Pipeline-internal — no production caller.
   _buildMetadata,
+  // Exported for tests: the executions-row writer and its JSON text
+  // (lone-surrogate safety, _jsonColumnText).
+  _truncateRawInput,
+  _jsonColumnText,
+  _writeExecution,
 
   // Module-level constants useful to tests
   RAW_INPUT_LIMIT,

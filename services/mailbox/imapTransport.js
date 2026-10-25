@@ -121,6 +121,29 @@
  * rides the same FETCH as the flags (GMAIL LABELS), so this costs no round
  * trip. Gmail re-saves a draft as a NEW message (new UID, old one expunged)
  * every autosave; in All Mail that is a stream of throwaway UIDs.
+ *
+ * ── FETCH ROWS ARE MERGED PER UID ────────────────────────────────────────────
+ * imapflow's fetchAll / fetch hand back EVERY untagged FETCH that arrived
+ * while the command ran, not only the answer: an unsolicited flag update
+ * (another session reading or answering that message at that moment —
+ * `* n FETCH (UID u FLAGS (\Seen \Answered))`) is a row of its own for the
+ * SAME UID, and a server may split one message's answer over several rows
+ * (imapflow 2.3.0's own fetchOne note, its issue #426;
+ * tests/mailboxFetchMerge.test.js pins it through the real fetch command).
+ * Keyed last-wins, a flag update arriving after the data replaced it: an
+ * envelope-less row was stored, the provider-id guard kept it from emitting
+ * and the cursor moved past it for good (mailbox 2, 2026-10-16 and -20, one
+ * of them a Chapter 13 trustee's email; ref/MAILBOX_GMAIL_PARITY.md §4).
+ * So every row of a UID is folded into one (mergeFetchRows): an attribute a
+ * row carries wins over an earlier row's, an attribute it lacks never erases
+ * one. In fetchMessages() a UID whose merged row has no ENVELOPE got flag
+ * updates only — it is NOT fetched: the transport asks once more for just
+ * those UIDs, and if one still has no data (or is gone by then) it throws
+ * INCOMPLETE_FETCH (transient) rather than return it. The worker stores
+ * nothing from that batch and its cursor stays below it, so the next run
+ * fetches it again (and that run's SEARCH no longer lists an expunged one).
+ * A UID with no row at all is still simply absent (expunged between SEARCH
+ * and FETCH).
  */
 
 'use strict';
@@ -282,6 +305,26 @@ function normalizeMessageId(v) {
   if (v == null) return null;
   const s = String(v).trim().replace(/^<+/, '').replace(/>+$/, '').trim();
   return s || null;
+}
+
+/**
+ * imapflow FETCH rows → Map(uid → ONE row) — see FETCH ROWS ARE MERGED PER
+ * UID. Rows are folded in arrival order: an attribute a later row carries
+ * wins, one it lacks (undefined / null) never erases an earlier row's.
+ * `wanted` (a Set of UIDs) drops every other UID — unsolicited rows for other
+ * messages; a row without a positive integer UID names no message we asked
+ * for and is dropped.
+ */
+function mergeFetchRows(rows, wanted = null) {
+  const byUid = new Map();
+  for (const m of rows || []) {
+    const uid = Number(m && m.uid);
+    if (!Number.isInteger(uid) || uid <= 0 || (wanted && !wanted.has(uid))) continue;
+    const into = byUid.get(uid);
+    if (!into) { byUid.set(uid, { ...m, uid }); continue; }
+    for (const [k, v] of Object.entries(m)) if (v !== undefined && v !== null) into[k] = v;
+  }
+  return byUid;
 }
 
 /** True when this connection can be asked for X-GM-LABELS (see GMAIL LABELS). */
@@ -473,21 +516,31 @@ function makeSession(client, row, secret) {
      * providerId rides along on Gmail (imapflow fetches it unasked).
      */
     listMessageIds: guard(async () => {
-      const out = [];
+      // FETCH ROWS ARE MERGED PER UID (header): a flag update arriving
+      // mid-scan is a second row for its UID, not a second message. Folded as
+      // the rows stream, into the small shape only — All Mail is ~137k
+      // messages, so whole envelopes are never held.
+      const byUid = new Map();
       // No other command may run inside this loop (imapflow fetch contract).
       for await (const m of client.fetch('1:*', { uid: true, envelope: true }, { uid: true })) {
-        out.push({
-          uid: Number(m.uid),
-          messageId: normalizeMessageId(m.envelope && m.envelope.messageId),
-          providerId: providerIdOf(m),
-        });
+        const uid = Number(m && m.uid);
+        if (!Number.isInteger(uid) || uid <= 0) continue;
+        const cur = byUid.get(uid) || { uid, messageId: null, providerId: null };
+        const messageId = normalizeMessageId(m.envelope && m.envelope.messageId);
+        const providerId = providerIdOf(m);
+        if (messageId) cur.messageId = messageId;
+        if (providerId) cur.providerId = providerId;
+        byUid.set(uid, cur);
       }
-      return out.sort((a, b) => a.uid - b.uid);
+      return [...byUid.values()].sort((a, b) => a.uid - b.uid);
     }),
 
     /**
      * Full metadata + capped text bodies for the given UIDs, ascending. A UID
-     * the server no longer has is simply absent from the result. A draft —
+     * the server no longer has is simply absent from the result. A UID the
+     * server answered with flag updates only — on the FETCH and again on the
+     * one re-ask, or gone by the re-ask — throws INCOMPLETE_FETCH; it is never
+     * returned half-empty (FETCH ROWS ARE MERGED PER UID). A draft —
      * \Draft flag, or the Gmail \Draft label — comes back with `draft: true`
      * and no bodies (header doc).
      * `labels`: Gmail labels on X-GM-EXT-1 servers, else null (GMAIL LABELS).
@@ -503,10 +556,29 @@ function makeSession(client, row, secret) {
       if (labelsOn) query.labels = true; // the same FETCH: X-GM-LABELS is one more item
       const rows = await client.fetchAll(want.join(','), query, { uid: true });
 
-      const byUid = new Map();
-      // Unsolicited FETCH rows (flag changes from another session) can ride
-      // along — keep only what was asked for.
-      for (const m of rows) if (wanted.has(Number(m.uid))) byUid.set(Number(m.uid), m);
+      // FETCH ROWS ARE MERGED PER UID (header): unsolicited rows ride along —
+      // for other messages (dropped) and for these (folded in, never in place
+      // of the data).
+      const byUid = mergeFetchRows(rows, wanted);
+      const partial = [...byUid.keys()].filter(uid => !byUid.get(uid).envelope);
+      if (partial.length) {
+        // Flag updates only, no data: ask once more for just those UIDs.
+        const again = mergeFetchRows(
+          await client.fetchAll(partial.join(','), query, { uid: true }), new Set(partial)
+        );
+        const still = [];
+        for (const uid of partial) {
+          const m = again.get(uid);
+          if (m) byUid.set(uid, mergeFetchRows([byUid.get(uid), m]).get(uid));
+          if (!m || !byUid.get(uid).envelope) still.push(uid);
+        }
+        if (still.length) {
+          throw typedError('INCOMPLETE_FETCH',
+            `IMAP INCOMPLETE_FETCH: no message data for UID ${still.join(', ')} (flag updates only) — ` +
+            'not returned, so nothing is stored; the next run fetches it again',
+            { sanitized: true, transient: true, uids: still });
+        }
+      }
 
       const out = [];
       for (const uid of [...byUid.keys()].sort((a, b) => a - b)) {
@@ -571,8 +643,7 @@ function makeSession(client, row, secret) {
       if (!want.length) return [];
       const wanted = new Set(want);
       const rows = await client.fetchAll(want.join(','), { uid: true, labels: true }, { uid: true });
-      const byUid = new Map();
-      for (const m of rows) if (wanted.has(Number(m.uid))) byUid.set(Number(m.uid), m);
+      const byUid = mergeFetchRows(rows, wanted); // FETCH ROWS ARE MERGED PER UID (header)
       return [...byUid.keys()].sort((a, b) => a - b).map((uid) => {
         const m = byUid.get(uid);
         return { uid, providerId: providerIdOf(m), labels: labelsOf(m) };
@@ -788,6 +859,7 @@ module.exports = {
   SENT_NAMES,
   analyzeStructure,
   normalizeMessageId,
+  mergeFetchRows,
   providerIdKind,
   gmailHexId,
   gmailLabelsSupported,

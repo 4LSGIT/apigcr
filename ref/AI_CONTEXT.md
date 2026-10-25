@@ -1468,7 +1468,13 @@ GUARD: the `\Draft` flag OR the Gmail `\Draft` label — Gmail does not flag
 drafts in All Mail — and Gmail re-creates drafts per autosave). Gmail labels
 (X-GM-LABELS) are stored per row as a snapshot for the comms hub
 (`mail_messages.gmail_labels`, S2-L) and never ride the envelope; `\Draft`
-is the one label the worker acts on.
+is the one label the worker acts on. **imapflow FETCH rows are folded per
+UID** (`imapTransport.mergeFetchRows`, 2026-10-25): its results include
+unsolicited flag updates for the REQUESTED UID (someone reading or answering
+it mid-fetch); kept last-wins, one replaced the data and the worker stored an
+envelope-less row past its cursor. A UID still answered with flag updates
+only after one re-ask throws `INCOMPLETE_FETCH` — nothing from the batch is
+stored, the next tick fetches it again. Never key imapflow rows last-wins.
 Pilot, gate and retirement runbook: `ref/MAILBOX_GMAIL_PARITY.md`.
 Operators: manual/08-Admin-Tools/08-mailboxes.md.
 
@@ -1485,7 +1491,13 @@ Operators: manual/08-Admin-Tools/08-mailboxes.md.
 Then conditional `logService.createLogEntry` (skipped iff suppressed;
 `INVALID_LOG_LINK_ID` → `error` execution row that still carries Layer-3
 outcomes in metadata). One `email_ingest_executions` row on EVERY path,
-including auth failures (written by the route).
+including auth failures (written by the route). Its JSON columns
+(`raw_input`, `metadata`) go through `_jsonColumnText`: lone UTF-16
+surrogates become U+FFFD, because MySQL refuses an escaped lone surrogate
+anywhere in a JSON value and `_truncateRawInput`'s fixed-offset cut can split
+an emoji (2026-10-25). A refused execution row throws out of `ingestEmail`
+AFTER Layer 3 ran — the mailbox worker then retries that message every tick
+and its folder stops (`ref/plans.md`, Gmail parity close check).
 
 ### Direction & firm-to-firm
 `from.email` domain ∈ `EMAIL_DOMAINS` → `outgoing`, else `incoming`.
