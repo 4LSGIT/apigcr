@@ -1099,6 +1099,14 @@ Active surfaces with known next steps.
 
 ## Operational
 
+- **A workflow step that fails on EVERY run stays a warning.** `_scanWorkflows`
+  (lib/alerting.js) files an ignore-policy step failure inside a
+  completed_with_errors execution as `warning` — never emailed. wf27 step 44
+  (query_ai, website-lead triage) failed on all 4 leads 2026-10-23→26
+  ("aiService.call is not a function", a load-order cycle — fixed, CLAUDE.md
+  lazy-require line) and nobody was told. The alert convention says repeated
+  → error: escalate when the same (workflow, step) failed in N consecutive
+  executions (or N within a day), the sequence scanner likewise.
 - **WF27's decision-outcome notes are unlinked.** `logDecisionOutcome`
   (`lib/internal_functions/decisions.js`) links an outcome note to the
   execution's contact, but every WF27 ("static site hit") execution has
