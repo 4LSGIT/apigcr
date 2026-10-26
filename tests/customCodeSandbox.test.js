@@ -143,6 +143,21 @@ describe('custom_code runs in a scrubbed child process', () => {
       .rejects.toMatchObject({ code: 'CUSTOM_CODE_TIMEOUT' });
   });
 
+  // A function (or symbol) final value crosses with NO valueJson. Parsing that
+  // in the parent's IPC listener threw where nothing catches it, and
+  // server.js's uncaughtException handler exited the process — a one-request
+  // instance restart for any staff user via a safe-mode test-step. Unfixed,
+  // the promise never settles (finish() had already marked it), so these
+  // time out rather than pass.
+  test('a final value JSON cannot carry is a step error, in both engines', async () => {
+    for (const extra of [{}, { code_mode: 'safe' }]) {
+      await expect(executeJob(job('(function () {})', extra)))
+        .rejects.toThrow(/cannot be passed on/);
+      await expect(executeJob(job('Symbol("s")', extra)))
+        .rejects.toThrow(/cannot be passed on|could not be read|symbol/i);
+    }
+  }, 15000);
+
   test('undefined and a cyclic return are both handled, not silently changed', async () => {
     await expect(executeJob(job('undefined'))).resolves.toBeUndefined();
     await expect(executeJob(job('var a = {}; a.self = a; a;')))
