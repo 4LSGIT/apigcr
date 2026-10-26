@@ -68,6 +68,8 @@
   .action-draft-preview th, .action-draft-preview td { border: 1px solid var(--border); padding: 2px 5px; text-align: left; white-space: nowrap; }
   .action-draft-preview pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 11px; margin: 4px 0 0; }
   .follow { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 9px; }
+  .keep-going { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--border); color: var(--text-muted); font-size: 12px; white-space: normal; }
+  .keep-going button { display: block; margin-top: 7px; }
   .follow button { background: transparent; color: var(--accent); border: 1px solid var(--border); text-align: left; }
   .thinking { display: flex; align-items: center; gap: 10px; min-width: 215px; }
   .thinking-wand { position: relative; width: 27px; height: 27px; color: var(--accent); flex: 0 0 27px; animation: wandWrite 1.7s ease-in-out infinite; transform-origin: 35% 70%; }
@@ -288,7 +290,7 @@ function actionDraftStale(draft) {
 function askCaseyAgain(message) {
   const index = history.indexOf(message);
   for (let i = index - 1; i >= 0; i--) {
-    if (history[i] && history[i].role === 'user') { input.value = String(history[i].text || '').slice(0, 2000); break; }
+    if (history[i] && history[i].role === 'user' && !history[i].continuation) { input.value = String(history[i].text || '').slice(0, 2000); break; }
   }
   input.focus();
 }
@@ -1814,6 +1816,95 @@ function hydrateActionDrafts() {
   });
 }
 
+// R1 read-loop continuation. An answer whose investigation stopped on a
+// budget carries a sealed continuation (opaque — the browser can neither read
+// nor alter the evidence in it). One click grants ONE more budget and resumes
+// the same investigation; nothing continues unattended. The token lives only
+// in memory: it lasts 15 minutes and is never saved with the chat, so a
+// reopened chat offers "Ask Casey again" instead (the same rule as action
+// cards, which are never writable from history).
+const CONTINUATION_TTL_MS = 15 * 60 * 1000;
+const STOP_LABELS = { round_budget: 'read-pass limit', step_budget: 'read-step limit', row_budget: 'row limit', time_budget: 'time limit', token_budget: 'planning limit' };
+
+function compactInvestigation(inv) {
+  if (!inv || typeof inv !== 'object') return null;
+  return { stop_reason: String(inv.stop_reason || ''), continuable: !!inv.continuable, rounds: Number(inv.rounds) || 0,
+    total_steps: Number(inv.total_steps) || 0, returned_rows: Number(inv.returned_rows) || 0, grants: Number(inv.grants) || 0,
+    approx_cost_cents: Number(inv.approx_cost_cents) || 0 };
+}
+
+function keepGoingHtml(m, i) {
+  const inv = m.investigation;
+  if (!inv || !inv.continuable) return '';
+  const next = history[i + 1];
+  if (next && next.role === 'user' && next.continuation) return '<div class="keep-going">Continued below.</div>';
+  const label = STOP_LABELS[inv.stop_reason] || 'a budget limit';
+  const cost = inv.approx_cost_cents >= 1 ? `, about ${Math.round(inv.approx_cost_cents)}¢ of AI so far` : '';
+  const summary = `Casey stopped at the ${label} after ${inv.rounds} read pass${inv.rounds === 1 ? '' : 'es'} (${inv.total_steps} read${inv.total_steps === 1 ? '' : 's'}, ${inv.returned_rows} row${inv.returned_rows === 1 ? '' : 's'}${cost}${inv.grants ? `; continued ${inv.grants}×` : ''}).`;
+  const fresh = m.continuation && Number(m.continuation_received_at) > 0 && Date.now() - Number(m.continuation_received_at) <= CONTINUATION_TTL_MS;
+  if (fresh) {
+    return `<div class="keep-going">${esc(summary)} Keep going grants one more budget of the same size and continues from what has been read.<button type="button" data-keep-going="${i}"${busy ? ' disabled' : ''}><i class="fa-solid fa-forward"></i> Keep going</button></div>`;
+  }
+  const why = m.continuation_error || (m.continuation ? 'This investigation is more than 15 minutes old, so it can no longer be continued.' : 'An investigation reopened from saved history cannot be continued.');
+  return `<div class="keep-going">${esc(summary)} ${esc(why)}<button type="button" class="ghost" data-reask="${i}">Ask Casey again</button></div>`;
+}
+
+function answerMessage(r, extra = {}) {
+  return {
+    role: 'assistant', text: r.answer, entities: r.entities || [], sources: r.sources || [], suggestions: r.suggestions || [], destinations: r.destinations || [],
+    ...(r.action_draft ? { action_draft: { ...r.action_draft, received_at: Date.now() } } : {}),
+    ...(r.investigation ? { investigation: compactInvestigation(r.investigation) } : {}),
+    ...(r.continuation ? { continuation: r.continuation, continuation_received_at: Date.now(), continuation_chat: currentChatId } : {}),
+    meta: [
+      r.investigation && Number(r.investigation.rounds) > 1 ? `${r.investigation.rounds} read passes` : '',
+      r.investigation && Number(r.investigation.grants) > 0 ? `continued ${r.investigation.grants}×` : '',
+      ...(r.investigation && Array.isArray(r.investigation.notices) ? r.investigation.notices : []),
+      ...(r.steps || []).map((q) => `${q.id}: ${q.row_count} row${q.row_count === 1 ? '' : 's'}`),
+    ].filter(Boolean).join(' · '),
+    ...extra,
+  };
+}
+
+async function keepGoing(message) {
+  if (busy || !message || !message.continuation) return;
+  if (Date.now() - Number(message.continuation_received_at) > CONTINUATION_TTL_MS) { render(); return; }
+  setBusy(true);
+  const spent = message.continuation;
+  const turnAttachments = Array.isArray(message.turn_attachments) ? message.turn_attachments : [];
+  history.push({ role: 'user', text: 'Keep going', continuation: true });
+  // Saved only into the chat the continuation is bound to; a "Keep going" turn
+  // never creates a chat of its own.
+  const savingUser = historyAvailable && currentChatId && currentChatId === message.continuation_chat
+    ? saveUserMessage('Keep going', [], null, { continuation: true }) : Promise.resolve();
+  history.push({ role: 'assistant', type: 'thinking', text: 'Continuing the investigation from what Casey has read so far…' });
+  render();
+  try {
+    const attachmentRequest = await requestAttachments(turnAttachments);
+    const r = await api('/api/assistant/execute', {
+      continuation: spent, chat_id: message.continuation_chat || null,
+      temporary_attachments: attachmentRequest.temporary, action_ledger_version: 1,
+    });
+    message.continuation = null; // spent: the new answer carries its own
+    history.pop();
+    history.push(answerMessage(r, { turn_attachments: turnAttachments }));
+    await savingUser;
+    await saveAssistantMessage(history[history.length - 1]);
+  } catch (e) {
+    history.pop();
+    // Drop the marker turn so the original message offers its control again,
+    // or explains why it cannot.
+    if (history.length && history[history.length - 1].continuation) history.pop();
+    if (/no longer be continued|different (signed-in user|chat)/i.test(String(e && e.message))) {
+      message.continuation = null;
+      message.continuation_error = e.message;
+    } else {
+      history.push({ role: 'assistant', text: e.message || String(e), error: true });
+    }
+  } finally {
+    setBusy(false); render();
+  }
+}
+
 function emptyHtml() {
   return `<div class="empty"><i class="fa-regular fa-comments"></i>
     <b>What do you want to know?</b><div>I’ll search the available read-only sources and show the records behind the answer.</div>
@@ -1836,9 +1927,11 @@ function render() {
     const follow = suggestionsHtml(m.suggestions);
     const destinations = destinationsHtml(m.destinations);
     const actionDraft = isActionDraft(m.action_draft) ? `<div class="action-draft" data-action-draft="${i}"></div>` : '';
-    return `<div class="msg assistant${m.error ? ' error' : ''}">${esc(m.text)}${actionDraft}${entities}${sources}${destinations}${follow}${m.meta ? `<div class="meta">${esc(m.meta)}</div>` : ''}</div>`;
+    return `<div class="msg assistant${m.error ? ' error' : ''}">${esc(m.text)}${actionDraft}${entities}${sources}${destinations}${follow}${keepGoingHtml(m, i)}${m.meta ? `<div class="meta">${esc(m.meta)}</div>` : ''}</div>`;
   }).join('');
   hydrateActionDrafts();
+  chat.querySelectorAll('[data-keep-going]').forEach((b) => b.addEventListener('click', () => keepGoing(history[Number(b.dataset.keepGoing)])));
+  chat.querySelectorAll('[data-reask]').forEach((b) => b.addEventListener('click', () => askCaseyAgain(history[Number(b.dataset.reask)])));
   chat.querySelectorAll('[data-follow]').forEach((b) => b.addEventListener('click', () => { input.value = b.dataset.follow; input.focus(); }));
   chat.querySelectorAll('[data-open-kind]').forEach((b) => b.addEventListener('click', () => openEntity(b.dataset.openKind, b.dataset.openId, b.dataset.openLabel)));
   chat.querySelectorAll('[data-destination]').forEach((b) => b.addEventListener('click', async () => {
@@ -2071,10 +2164,10 @@ function savedAttachmentMeta(items) {
   }));
 }
 
-async function saveUserMessage(question, attachments, turnContext) {
+async function saveUserMessage(question, attachments, turnContext, extra = {}) {
   if (!historyAvailable) return;
   const payload = { attachments: savedAttachmentMeta(attachments), model_mode: modelMode.value,
-    ...(turnContext ? { workspace_context: turnContext.snapshot, workspace_context_label: turnContext.display_label } : {}) };
+    ...(turnContext ? { workspace_context: turnContext.snapshot, workspace_context_label: turnContext.display_label } : {}), ...extra };
   try {
     if (currentChatId) await api(`/api/assistant/chats/${currentChatId}/messages`, { role: 'user', text: question, payload });
     else {
@@ -2094,6 +2187,8 @@ async function saveAssistantMessage(message, { required = false } = {}) {
     entities: message.entities || [], sources: message.sources || [], suggestions: message.suggestions || [], destinations: message.destinations || [], meta: message.meta || '',
     ...(message.action_draft ? { action_draft: message.action_draft } : {}),
     ...(message.action_result ? { action_result: message.action_result } : {}),
+    // The stop reason and counts only — the sealed continuation is never saved.
+    ...(message.investigation ? { investigation: message.investigation } : {}),
   };
   const send = () => api(`/api/assistant/chats/${currentChatId}/messages`, { role: 'assistant', text: message.text, payload });
   try {
@@ -2193,19 +2288,13 @@ async function ask() {
         ? `Investigating in up to ${maxRounds} bounded read passes…`
         : 'Searching firm records and writing your answer…';
       render();
+      // The chat id must exist before execute: a continuation is bound to it.
+      await savingUser;
       r = await executeAutomatically(r.ticket, attachmentRequest.temporary);
     }
     history.pop();
     if (r.outcome === 'refused') history.push({ role: 'assistant', text: r.reason, suggestions: r.suggestions || [], destinations: r.destinations || [] });
-    else history.push({
-      role: 'assistant', text: r.answer, entities: r.entities || [], sources: r.sources || [], suggestions: r.suggestions || [], destinations: r.destinations || [],
-      ...(r.action_draft ? { action_draft: { ...r.action_draft, received_at: Date.now() } } : {}),
-      meta: [
-        r.investigation && Number(r.investigation.rounds) > 1 ? `${r.investigation.rounds} read passes` : '',
-        ...(r.investigation && Array.isArray(r.investigation.notices) ? r.investigation.notices : []),
-        ...(r.steps || []).map((q) => `${q.id}: ${q.row_count} row${q.row_count === 1 ? '' : 's'}`),
-      ].filter(Boolean).join(' · '),
-    });
+    else history.push(answerMessage(r, { turn_attachments: turnAttachments }));
     await savingUser;
     await saveAssistantMessage(history[history.length - 1]);
   } catch (e) {
@@ -2220,7 +2309,7 @@ async function ask() {
 async function executeAutomatically(initialTicket, temporaryAttachments) {
   let ticket = initialTicket;
   for (let attempt = 0; attempt < 2; attempt++) {
-    const r = await api('/api/assistant/execute', { ticket, temporary_attachments: temporaryAttachments, action_ledger_version: 1 });
+    const r = await api('/api/assistant/execute', { ticket, temporary_attachments: temporaryAttachments, action_ledger_version: 1, chat_id: currentChatId || null });
     if (r.outcome !== 'plan') return r;
     ticket = r.ticket;
     history[history.length - 1].text = r.notice || 'Narrowing the search and trying again…';

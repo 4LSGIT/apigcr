@@ -30,7 +30,7 @@ the technical parts**. The spectrum, in Fred's terms:
   documents, reports) and presenting it coherently. An investigation that
   stops on a budget is a defect against this goal, not a safety feature:
   Casey must at least be able to ask the user for more turns (ruling,
-  2026-10-26 — promoted to a planned slice).
+  2026-10-26 — shipped as plan slice R1, the Keep going control).
 - **YCv3** — helping set up, explain, and edit the config-based system YCv2 is
   moving toward. Constraint on YCv3 design itself: config formats are chosen
   to be Casey-authorable.
@@ -66,7 +66,6 @@ slices to be planned, not commitments to an order:
   integration, publishing.
 - **Read-loop continuation** — when an investigation stops on budget, the
   user can grant more turns (minimum bar, per Fred); a true "keep going"
-  continuation is the full shape (scratch debt key
-  `20261022_casey_budget_continuation` graduates to a slice).
+  continuation is the full shape. Shipped in full as plan slice R1.
 - **YCv3 config copilot** — carried as a design constraint into YCv3
   planning, so configs are born Casey-authorable.

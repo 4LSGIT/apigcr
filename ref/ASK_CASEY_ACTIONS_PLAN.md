@@ -1872,20 +1872,47 @@ takes effect immediately on matching mail/calls. Same exclusions as A20.2
 authoring needs only its own copy of the same two pieces (the A18 trigger
 decision) — the recipes should match.
 
-#### R1: Read-loop continuation
+#### R1: Read-loop continuation — SHIPPED
 
-Planned 2026-10-26 (Fred: "at least it should be able to ask for more
-turns"; ref/CASEY_VISION.md). An investigation that stops on its budget
-(rounds, steps, rows, evidence characters, or time) is a defect against the
-data-synthesis goal, not a safety feature. Minimum bar: when the loop stops
-on a budget rather than `model_finished`, the answer says which budget
-stopped it and offers a "keep going" control; the user's click grants one
-more budget's worth and the investigation resumes from its accumulated
-evidence instead of starting over. Full shape: true continuation across
-turns with the evidence carried forward under the same signed-request
-rules. Grants are per click and never automatic (no unattended
-continuation). Graduates the scratch debt key
-`docs/20261022_casey_budget_continuation` when it lands.
+Fred, 2026-10-26: "at least it should be able to ask for more turns"
+(ref/CASEY_VISION.md). An investigation that stops on its budget is a defect
+against the data-synthesis goal, not a safety feature, so the full shape
+ships: when the loop stops on a round, step, row, time, or controller-token
+budget rather than `model_finished`, the answer names the budget and what is
+still unknown, and the message carries a **Keep going** control. Each click
+grants one fresh budget of every kind (the automation widening sticks) and
+the SAME investigation resumes — original signed context, prior evidence,
+plan passes and operation fingerprints carried forward, steps a budget left
+unrun executed first, rounds and q-ids numbered globally, citations spanning
+every pass — across as many clicks as the user grants. Grants are per click,
+never automatic.
+
+- **Evidence is server-sealed, never client-supplied.** Evidence authorizes
+  action cards (the evidence rule), so the carried state travels as an
+  AES-256-GCM token (`lib/assistantContinuation.js`, key HKDF'd from
+  JWT_SECRET under its own label): a forged, tampered, wrong-key, or
+  plan-ticket token is refused before any read or model call; the token is
+  bound to the user and to the chat (`chat_id`, owner-checked), and the route
+  reads no evidence from the body. No migration: a server-held table was the
+  alternative and the stateless seal needs none.
+- **No grant cap** (the vision's default): runaway spend is mitigated by
+  per-click grants, the execute rate limit (60/hour), the firm monthly spend
+  cap checked on every continuation, the chat message cap, and visibility —
+  the control shows passes, reads, rows and the investigation's approximate
+  AI cost so far.
+- **Evidence ceiling** grows by `MAX_EVIDENCE_CHARS` (60k) per grant up to
+  360k characters (~110k tokens, well inside both model modes' 1M context);
+  past it the existing newest-first trim applies and is disclosed per step.
+  Per-cell 3,000 characters and the answer's max_tokens rules are unchanged.
+- **Freshness:** 15 minutes per seal (the action-card window, since a
+  continued answer may carry a card), sliding with each grant. The token is
+  never saved with the chat, so a reopened chat offers **Ask Casey again**
+  (the same rule as cards never being writable from history). The frozen
+  workspace context of the original question governs; navigating since does
+  not invalidate the continuation.
+- A controller truncated at its output ceiling is now `token_budget` (it was
+  reported as `model_finished`, measured live 2026-10-22); other controller
+  failures are `controller_unavailable`, disclosed but not continuable.
 
 ### Secondary action candidates
 

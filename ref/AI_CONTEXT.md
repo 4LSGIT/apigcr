@@ -42,6 +42,26 @@ body. Governing migrations in `ref/migrations/`.*
   wired scope where a failure does not free the key. Native callers without a
   key are unchanged. Off switch `casey_send_enabled`. Plan:
   ref/ASK_CASEY_ACTIONS_PLAN.md A14.
+- **Read-loop continuation (R1, 10-26):** a stop in
+  `assistantService.CONTINUABLE_STOPS` (round/step/row/time/token budget)
+  returns `continuation`, a token SEALED by `lib/assistantContinuation.js`
+  (AES-256-GCM, key HKDF'd from JWT_SECRET under its own label — never a valid
+  plan ticket, nor vice versa); `POST /api/assistant/execute`
+  `{continuation, chat_id}` spends it. Invariants: the evidence (which
+  authorizes action cards) and the original signed ticket context live only
+  inside the seal — the route reads neither from the body; bound to `uid` and
+  the chat (`chat_id`, owner-checked via `assistantChatService.owned`, null
+  when history is unavailable); 15-minute TTL, re-sealed per grant; each
+  grant is a full fresh budget (widening sticks), numbering (rounds, q-ids ≤
+  q999) is global, steps a budget left unrun (`pending`) run first; evidence
+  ceiling `MAX_EVIDENCE_CHARS × (grants+1)` up to
+  `MAX_CONTINUED_EVIDENCE_CHARS`. No grant cap by design — per click only,
+  through the same execute rate limit and firm spend cap; the control shows
+  cumulative `approx_cost_cents`. The token is never in the chat payload
+  (`investigation` summary only), so a reopened chat re-asks. A controller
+  truncated at max_tokens is `token_budget`; other controller failures are
+  `controller_unavailable` (both used to read as `model_finished`). Plan:
+  ref/ASK_CASEY_ACTIONS_PLAN.md R1; manual 05-Subsystems/17 "Keep going".
 - **Casey drafts and saves a report (A16, ruling 16, 10-27):** kind
   `report.draft.v1` → `POST /api/reports`. Reports has no structured spec (a
   definition IS SQL), so Casey writes the SQL; the authority is the Reports

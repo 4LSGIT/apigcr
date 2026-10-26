@@ -46,8 +46,29 @@ passes in the same request. The server allows at most eight operations, 250
 returned rows, three minutes, and 7,000 investigation-controller output tokens
 (with separately capped repair and answer calls). Each pass must target a
 specific missing fact; an exact repeated operation stops the loop. If a budget
-ends first, the answer uses the evidence already found and must say what remains
-unknown. These automatic passes are reads only.
+ends first, the answer uses the evidence already found, says which limit
+stopped it (read passes, read steps, rows, time, or the controller's planning
+limit) and what remains unknown. These automatic passes are reads only.
+
+### Keep going
+
+When a limit, rather than Casey's own judgment that the evidence is enough,
+ended the investigation, the answer shows a **Keep going** button with what was
+read so far (passes, reads, rows, and the approximate AI cost of this
+investigation). Each click grants exactly one more set of the same limits and
+continues the SAME investigation: Casey keeps everything already read, does not
+re-run earlier reads, numbers the new passes after the old ones, and writes a
+fresh answer whose sources can come from any pass. A continued answer can stop
+on a limit again and offer another Keep going; there is no fixed number of
+clicks, and nothing ever continues without one. Each continuation counts like a
+question against the hourly search limit, the chat's message limit, and the
+firm's monthly AI spending limit.
+
+The evidence travels sealed (encrypted and tamper-proof) in the page, so the
+browser can neither read nor change it, and only the same signed-in user, in
+the same chat, can continue it. A continuation lasts 15 minutes and is never
+saved with the chat: after that, or in a chat reopened from **Recent chats**,
+the button becomes **Ask Casey again**, which refills the original question.
 
 After execution, the answer includes source rows for important claims. When a
 source contains a case, contact, appointment, event, or task id, visible buttons

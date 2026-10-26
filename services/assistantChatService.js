@@ -167,6 +167,6 @@ async function remove(db, id, userId) {
 }
 
 module.exports = {
-  list, get, create, addMessage, setModelMode, remove, titleFor, parsePayload, modelMode,
+  list, get, owned, create, addMessage, setModelMode, remove, titleFor, parsePayload, modelMode,
   MAX_CHATS, MAX_MESSAGE, MAX_PAYLOAD, MAX_CHAT_MESSAGES, ACTION_RESULT_HEADROOM,
 };

@@ -1291,11 +1291,12 @@ test('opening saved history reconciles receipts before rendering and fails close
 
 test('the browser requests ledger-backed drafts on each automatic read attempt', async () => {
   const api = jest.fn().mockResolvedValue({ outcome: 'answer' });
-  const execute = new Function('api', `const history = []; function render() {};
+  const execute = new Function('api', `const history = []; function render() {}; const currentChatId = 41;
     ${fnSrcAuto(html, 'executeAutomatically')}; return executeAutomatically;`)(api);
   await execute('read-ticket', []);
+  // R1: the chat id rides along so a budget stop's continuation is bound to it.
   expect(api.mock.calls).toEqual([['/api/assistant/execute', {
-    ticket: 'read-ticket', temporary_attachments: [], action_ledger_version: 1,
+    ticket: 'read-ticket', temporary_attachments: [], action_ledger_version: 1, chat_id: 41,
   }]]);
 });
 
@@ -1501,5 +1502,84 @@ describe('A14 send cards (sms.send.v1 / email.send.v1)', () => {
     const done = smsDraft();
     applyActionResults([done], [{ draft_id: done.action_draft.draft_id, kind: 'sms.send.v1', outcome: 'applied', result: { contact_id: 1309 } }]);
     expect(done.action_draft).toMatchObject({ status: 'applied', result_send_contact_id: 1309 });
+  });
+});
+
+// R1 read-loop continuation: the Keep going control. The real functions run
+// out of assistant.html; api() and the history saves are the stubs.
+describe('R1 Keep going control', () => {
+  const KEEP_FNS = ['compactInvestigation', 'keepGoingHtml', 'answerMessage', 'keepGoing', 'askCaseyAgain', 'saveAssistantMessage'];
+  function keepSandbox(deps = {}) {
+    const supplied = {
+      history: [], busy: false, currentChatId: 41, historyAvailable: true, modelMode: { value: 'better_quality' },
+      api: jest.fn(), render: jest.fn(), setBusy: jest.fn(), saveUserMessage: jest.fn().mockResolvedValue(),
+      requestAttachments: jest.fn().mockResolvedValue({ temporary: [], documentIds: [] }),
+      input: { value: '', focus: jest.fn() }, ...deps,
+    };
+    const names = Object.keys(supplied);
+    const src = `${constSrc(html, 'esc')}\n${constSrc(html, 'CONTINUATION_TTL_MS')}\n${constSrc(html, 'STOP_LABELS')}\n` +
+      `${KEEP_FNS.map((name) => fnSrcAuto(html, name)).join('\n')}\nreturn { ${KEEP_FNS.join(', ')} };`;
+    return new Function(...names, src)(...names.map((name) => supplied[name])); // eslint-disable-line no-new-func
+  }
+  const INV = { stop_reason: 'round_budget', continuable: true, rounds: 3, total_steps: 3, returned_rows: 3, grants: 0, approx_cost_cents: 42 };
+  const answerAt = (extra = {}) => ({ role: 'assistant', text: 'Stopped early.', investigation: INV, ...extra });
+
+  test('a fresh continuation renders the Keep going button with the budget and the cost', () => {
+    const msg = answerAt({ continuation: 'c1.token', continuation_received_at: Date.now() });
+    const out = keepSandbox({ history: [msg] }).keepGoingHtml(msg, 0);
+    expect(out).toMatch(/read-pass limit after 3 read passes \(3 reads, 3 rows, about 42¢ of AI so far\)/);
+    expect(out).toMatch(/data-keep-going="0"/);
+  });
+
+  test('stale, reopened, already-continued and non-budget messages never offer it', () => {
+    const stale = answerAt({ continuation: 'c1.token', continuation_received_at: Date.now() - 16 * 60 * 1000 });
+    const reopened = answerAt();
+    const continued = answerAt({ continuation: 'c1.token', continuation_received_at: Date.now() });
+    const { keepGoingHtml } = keepSandbox({ history: [continued, { role: 'user', text: 'Keep going', continuation: true }] });
+    expect(keepGoingHtml(stale, 9)).toMatch(/more than 15 minutes old[\s\S]*data-reask/);
+    expect(keepGoingHtml(stale, 9)).not.toMatch(/data-keep-going/);
+    expect(keepGoingHtml(reopened, 9)).toMatch(/reopened from saved history[\s\S]*data-reask/);
+    expect(keepGoingHtml(continued, 0)).toBe('<div class="keep-going">Continued below.</div>');
+    expect(keepGoingHtml(answerAt({ investigation: { ...INV, continuable: false } }), 9)).toBe('');
+  });
+
+  test('the saved chat payload keeps the stop summary but never the sealed token', async () => {
+    const api = jest.fn().mockResolvedValue({ status: 'success' });
+    const { saveAssistantMessage } = keepSandbox({ api });
+    await saveAssistantMessage(answerAt({ continuation: 'c1.SECRET-SEALED', continuation_received_at: 1, turn_attachments: [{ file: {} }] }));
+    const payload = api.mock.calls[0][1].payload;
+    expect(payload.investigation).toEqual(INV);
+    expect(JSON.stringify(api.mock.calls)).not.toMatch(/SECRET-SEALED|turn_attachments/);
+  });
+
+  test('a click spends the continuation once, in its chat, and appends the resumed answer', async () => {
+    const history = [{ role: 'user', text: 'Who?' }, answerAt({ continuation: 'c1.old', continuation_received_at: Date.now(), continuation_chat: 41, turn_attachments: [] })];
+    const api = jest.fn().mockResolvedValue({ answer: 'Now complete.', continuation: 'c1.new', investigation: { ...INV, rounds: 6, grants: 1 }, steps: [] });
+    const saveUserMessage = jest.fn().mockResolvedValue();
+    const sandbox = keepSandbox({ history, api, saveUserMessage });
+    await sandbox.keepGoing(history[1]);
+    expect(api).toHaveBeenCalledWith('/api/assistant/execute', { continuation: 'c1.old', chat_id: 41, temporary_attachments: [], action_ledger_version: 1 });
+    expect(saveUserMessage).toHaveBeenCalledWith('Keep going', [], null, { continuation: true });
+    expect(history[1].continuation).toBeNull();
+    expect(history[2]).toEqual({ role: 'user', text: 'Keep going', continuation: true });
+    expect(history[3]).toMatchObject({ text: 'Now complete.', continuation: 'c1.new', investigation: { rounds: 6, grants: 1 } });
+    expect(history[3].meta).toMatch(/continued 1×/);
+  });
+
+  test('a refused continuation drops the marker and explains instead of re-offering', async () => {
+    const history = [{ role: 'user', text: 'Who?' }, answerAt({ continuation: 'c1.old', continuation_received_at: Date.now(), continuation_chat: 41 })];
+    const api = jest.fn().mockRejectedValue(new Error('This investigation can no longer be continued: a continuation lasts 15 minutes and does not survive reopening a saved chat. Ask Casey again.'));
+    const sandbox = keepSandbox({ history, api });
+    await sandbox.keepGoing(history[1]);
+    expect(history).toHaveLength(2);
+    expect(history[1].continuation).toBeNull();
+    expect(sandbox.keepGoingHtml(history[1], 1)).toMatch(/can no longer be continued[\s\S]*data-reask/);
+  });
+
+  test('Ask Casey again re-asks the original question, not the Keep going turn', () => {
+    const input = { value: '', focus: jest.fn() };
+    const history = [{ role: 'user', text: 'Original question?' }, answerAt(), { role: 'user', text: 'Keep going', continuation: true }, answerAt()];
+    keepSandbox({ history, input }).askCaseyAgain(history[3]);
+    expect(input.value).toBe('Original question?');
   });
 });

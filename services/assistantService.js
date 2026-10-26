@@ -3,7 +3,9 @@
 // Conversational assistant: question -> signed read plan -> bounded
 // server-owned investigation -> evidence-grounded answer and at most one typed
 // task-action proposal. The browser never supplies accumulated evidence or
-// follow-up plans; proposals change nothing until the signed-in user confirms.
+// follow-up plans (an R1 continuation carries them SEALED — it can neither read
+// nor alter them, lib/assistantContinuation.js); proposals change nothing until
+// the signed-in user confirms.
 
 'use strict';
 
@@ -24,6 +26,7 @@ const { FIRM_TZ, nowLocal, parseUserDateTime } = require('./timezoneService');
 const { auditAdminAction } = require('../lib/auth.superuser');
 const { validateSql } = require('../lib/reportSchema/validator');
 const ticket = require('../lib/assistantTicket');
+const continuation = require('../lib/assistantContinuation');
 
 const MAX_QUESTION = 2000;
 const MAX_HISTORY = 8;
@@ -49,6 +52,18 @@ const AUTOMATION_INVESTIGATION_STEPS = 14;
 const MAX_INVESTIGATION_ROWS = 250;
 const MAX_INVESTIGATION_MS = 180000;
 const MAX_INVESTIGATION_OUTPUT_TOKENS = 7000;
+// R1 read-loop continuation (Fred, 2026-10-26: "at least it should be able to
+// ask for more turns"). A stop on one of these budgets leaves work undone, so
+// the answer carries a sealed continuation the user may spend with one click
+// ("Keep going"): a FRESH budget of each kind (rounds, steps, rows, time,
+// controller tokens — widened for automation exactly as the first segment),
+// resuming from the accumulated, server-sealed evidence. Never automatic.
+const CONTINUABLE_STOPS = new Set(['round_budget', 'step_budget', 'row_budget', 'time_budget', 'token_budget']);
+// The evidence the controller and answerer see grows by one MAX_EVIDENCE_CHARS
+// per grant, to this ceiling (~110k tokens of JSON, a fraction of the 1M
+// context of both model modes). Past it, trimEvidence's newest-first trim
+// applies as before and the truncation is disclosed per step.
+const MAX_CONTINUED_EVIDENCE_CHARS = 360000;
 const MAX_SUGGESTIONS = 3;
 const MAX_WORKSPACE_FILES = 20;
 const WORKSPACE_TABS = new Set([
@@ -3095,7 +3110,8 @@ function validateStep(query, index) {
   const id = String(query.id || `q${index + 1}`).trim();
   const kind = String(query.kind || 'sql.read').trim();
   const purpose = String(query.purpose || '').trim();
-  if (!/^q[1-9][0-9]?$/.test(id)) throw httpError(422, `Step ${index + 1} needs an id like q1`);
+  // Three digits: a continued investigation keeps numbering past q99.
+  if (!/^q[1-9][0-9]{0,2}$/.test(id)) throw httpError(422, `Step ${index + 1} needs an id like q1`);
   if (!purpose || purpose.length > 500) throw httpError(422, `Query ${id} needs a short purpose`);
   if (kind === 'manual.search') {
     const search = String(query.query || '').trim();
@@ -3347,9 +3363,9 @@ function compactRows(rows, cellCap = MODEL_CELL_CHARS) {
   });
 }
 
-function trimEvidence(evidence) {
+function trimEvidence(evidence, cap = MAX_EVIDENCE_CHARS) {
   let current = evidence;
-  while (JSON.stringify(current).length > MAX_EVIDENCE_CHARS) {
+  while (JSON.stringify(current).length > cap) {
     const target = [...current].reverse().find((q) => q.rows.length > 1);
     if (!target) break;
     target.rows.pop();
@@ -3625,13 +3641,24 @@ async function investigateNext(db, approved, attached, evidence, plans, budget, 
     logContent: false,
   });
   const outputTokens = Math.max(0, Number(ai.usage && ai.usage.output_tokens) || 0);
-  if (!ai.ok) return { action: 'finish', reason: 'The bounded investigation controller was unavailable.', outputTokens };
+  const usage = ai.usage || null;
+  // A controller cut off at its output ceiling ran out of a budget; it did not
+  // decide the evidence was enough (live, 2026-10-22: 1,750-token truncations
+  // reported as model_finished, so the answer never said the work was starved).
+  if (!ai.ok) {
+    return { action: 'finish', reason: 'The bounded investigation controller was unavailable.', outputTokens, usage,
+      stop: ai.stopReason === 'max_tokens' ? 'token_budget'
+        // Its timeout is capped by the remaining wall-clock budget; a timeout
+        // under that cap is the time budget running out, not an outage.
+        : ai.error === 'timeout' && Number(budget.remaining_ms) < INVESTIGATE_TIMEOUT_MS ? 'time_budget'
+          : 'controller_unavailable' };
+  }
   const raw = ai.json || {};
-  if (raw.action !== 'query') return { action: 'finish', reason: String(raw.reason || 'The available evidence is sufficient.').slice(0, 500), outputTokens };
+  if (raw.action !== 'query') return { action: 'finish', reason: String(raw.reason || 'The available evidence is sufficient.').slice(0, 500), outputTokens, usage };
   try {
-    return { action: 'query', plan: validatePlan(raw), callId: ai.callId, outputTokens };
+    return { action: 'query', plan: validatePlan(raw), callId: ai.callId, outputTokens, usage };
   } catch (_) {
-    return { action: 'finish', reason: 'The proposed follow-up read did not pass the read-only validator.', outputTokens };
+    return { action: 'finish', reason: 'The proposed follow-up read did not pass the read-only validator.', outputTokens, usage };
   }
 }
 
@@ -3686,51 +3713,157 @@ function answerMaxTokens(evidence, approved = null) {
   return approved && reportDraftRequested(approved.question, approved.history) ? ANSWER_MAX_TOKENS_AUTOMATION : undefined;
 }
 
-async function execute(db, { signedTicket, userId, auth, temporaryAttachments } = {}) {
-  const decoded = ticket.verify(signedTicket);
-  const approved = validateTicket(decoded, userId);
+// R1: the chat a request belongs to, verified as the caller's own (404 for any
+// other user's chat). null when the browser has no saved chat (history
+// unavailable): a continuation sealed then is bound to "no chat" and only a
+// request naming no chat may spend it.
+async function boundChat(db, chatId, userId) {
+  if (chatId == null || chatId === '') return null;
+  const id = Number(chatId);
+  if (!Number.isSafeInteger(id) || id < 1) throw httpError(400, 'Invalid chat id');
+  await require('./assistantChatService').owned(db, id, userId);
+  return id;
+}
+
+// Opens a continuation and enforces its bindings: the same signed-in user, the
+// same chat. Its context is the ORIGINAL signed ticket payload, so question,
+// history, viewer, frozen workspace and attachment claims are exactly what the
+// first segment ran under — the browser supplies none of them, and none of the
+// evidence.
+function openContinuation(token, userId, chat) {
+  const state = continuation.open(token);
+  const gone = () => httpError(400, 'This investigation can no longer be continued. Ask Casey again.');
+  if (!state || state.v !== 1 || state.kind !== 'assistant_continuation') throw gone();
+  if (Number(state.uid) !== Number(userId)) throw httpError(403, 'This investigation belongs to a different signed-in user');
+  if ((state.chat == null ? null : Number(state.chat)) !== chat) throw httpError(403, 'This investigation belongs to a different chat');
+  const counts = ['grants', 'rounds', 'total_steps', 'returned_rows'];
+  if (!state.ctx || typeof state.ctx !== 'object' || !Array.isArray(state.evidence) || !Array.isArray(state.plans)
+      || !Array.isArray(state.seen) || counts.some((k) => !Number.isSafeInteger(state[k]) || state[k] < 0)) {
+    throw gone();
+  }
+  return state;
+}
+
+async function execute(db, { signedTicket, continuation: continuationToken, chatId, userId, auth, temporaryAttachments } = {}) {
+  const resuming = continuationToken != null && continuationToken !== '';
+  if (resuming && signedTicket) throw httpError(400, 'Send either a query plan or a continuation, not both');
+  const chat = await boundChat(db, chatId, userId);
+  let ctx;
+  let prior = null;
+  if (resuming) {
+    prior = openContinuation(continuationToken, userId, chat);
+    ctx = prior.ctx;
+  } else {
+    ctx = { ...ticket.verify(signedTicket) };
+    delete ctx.exp;
+  }
+  const approved = validateTicket(ctx, userId);
   await assertAssistantSpendAllowed(db);
   const attached = await attachmentService.prepareExecution(db, approved.attachments, temporaryAttachments);
-  const evidence = [];
-  const plans = [];
+  // A continuation resumes from the sealed state; numbering (rounds, q-ids,
+  // totals) is global across grants, every budget below is per segment.
+  const grants = prior ? prior.grants + 1 : 0;
+  const evidence = prior ? prior.evidence : [];
+  const plans = prior ? prior.plans : [];
   const notices = [];
-  const seen = new Set();
+  const seen = new Set(prior ? prior.seen.map(String) : []);
   const started = Date.now();
-  let currentPlan = renumberPlan(approved.plan);
-  let rounds = 0;
-  let totalSteps = 0;
-  let totalRows = 0;
-  let repairs = approved.repairs;
+  let rounds = prior ? prior.rounds : 0;
+  let totalSteps = prior ? prior.total_steps : 0;
+  let totalRows = prior ? prior.returned_rows : 0;
+  let segRounds = 0;
+  let segSteps = 0;
+  let segRows = 0;
+  let repairs = prior ? 0 : approved.repairs;
   let controllerOutputTokens = 0;
   let stopReason = 'model_finished';
+  // Steps validated and numbered but not yet run when a budget stopped the
+  // loop; a continuation runs them first rather than re-asking the controller.
+  let pending = null;
+  // Approximate model spend for this investigation (controller + answer calls,
+  // across grants), shown on the Keep going control: visibility, not a cap.
+  const model = attachmentService.modelForMode(approved.modelMode);
+  let costCents = prior ? Math.max(0, Number(prior.cost_cents) || 0) : 0;
+  const addCost = (usage) => {
+    if (usage) costCents += aiService.computeCostCents(usage.input_tokens, usage.output_tokens, model) || 0;
+  };
+  const evidenceCap = Math.min(MAX_EVIDENCE_CHARS * (grants + 1), MAX_CONTINUED_EVIDENCE_CHARS);
 
   // The widened automation budget applies from the first plan that carries an
-  // automation.* step — including one the controller proposes mid-flight.
+  // automation.* step — including one the controller proposes mid-flight —
+  // and stays widened for every later grant of the same investigation.
+  let widened = prior ? !!prior.widened : false;
   let maxRounds = MAX_INVESTIGATION_ROUNDS;
   let maxSteps = MAX_INVESTIGATION_STEPS;
   const widenForAutomation = (p) => {
-    if ((p.steps || []).some((s) => String(s.kind || '').startsWith('automation.'))) {
-      maxRounds = AUTOMATION_INVESTIGATION_ROUNDS;
-      maxSteps = AUTOMATION_INVESTIGATION_STEPS;
-    }
+    if (p && (p.steps || []).some((s) => String(s.kind || '').startsWith('automation.'))) widened = true;
+    maxRounds = widened ? AUTOMATION_INVESTIGATION_ROUNDS : MAX_INVESTIGATION_ROUNDS;
+    maxSteps = widened ? AUTOMATION_INVESTIGATION_STEPS : MAX_INVESTIGATION_STEPS;
   };
+  let currentPlan = null;
+  if (!prior) currentPlan = renumberPlan(approved.plan);
+  else if (prior.pending) currentPlan = renumberPlan(validatePlan({ action: 'query', ...prior.pending }), totalSteps);
   widenForAutomation(currentPlan);
 
-  investigation: while (rounds < maxRounds) {
+  // The controller's turn: after every round, and as the first move of a
+  // continuation that has no pending steps. Returns a stop reason, or null
+  // with currentPlan set to the next validated round.
+  const decideNext = async () => {
+    if (segRounds >= maxRounds) return 'round_budget';
+    const remainingSteps = maxSteps - segSteps;
+    if (remainingSteps < 1) return 'step_budget';
+    const remainingOutputTokens = MAX_INVESTIGATION_OUTPUT_TOKENS - controllerOutputTokens;
+    if (remainingOutputTokens < 1) return 'token_budget';
+    const decision = await investigateNext(db, approved, attached, evidence, plans, {
+      round: rounds,
+      remaining_rounds: maxRounds - segRounds,
+      remaining_steps: remainingSteps,
+      remaining_rows: Math.max(0, MAX_INVESTIGATION_ROWS - segRows),
+      remaining_ms: Math.max(0, MAX_INVESTIGATION_MS - (Date.now() - started)),
+      remaining_output_tokens: remainingOutputTokens,
+      prior_operation_fingerprints: [...seen],
+      ...(prior ? { continuation: { grant: grants, resumed_after_round: prior.rounds, prior_steps: prior.total_steps, prior_stop_reason: String(prior.stop_reason || '') } } : {}),
+    }, userId);
+    controllerOutputTokens += decision.outputTokens || 0;
+    addCost(decision.usage);
+    if (decision.action !== 'query') return decision.stop || 'model_finished';
+    if (decision.plan.steps.length > remainingSteps) {
+      pending = decision.plan;
+      return 'step_budget';
+    }
+    const nextPlan = renumberPlan(decision.plan, totalSteps);
+    if (nextPlan.steps.some((step) => seen.has(stepFingerprint(step)))) return 'repeated_query';
+    widenForAutomation(nextPlan);
+    currentPlan = nextPlan;
+    return null;
+  };
+
+  if (prior && !currentPlan) {
+    const stop = await decideNext();
+    if (stop) stopReason = stop;
+  }
+
+  investigation: while (currentPlan) {
     if (Date.now() - started >= MAX_INVESTIGATION_MS) {
       stopReason = 'time_budget';
+      pending = currentPlan;
       break;
     }
     rounds += 1;
-    if (currentPlan.steps.length > maxSteps - totalSteps) {
+    segRounds += 1;
+    if (currentPlan.steps.length > maxSteps - segSteps) {
       stopReason = 'step_budget';
+      pending = currentPlan;
       break;
     }
     plans.push({ round: rounds, summary: currentPlan.summary, steps: currentPlan.steps.map((step) => ({ id: step.id, kind: step.kind, purpose: step.purpose })) });
+    const unrun = (from) => (from < currentPlan.steps.length ? { summary: currentPlan.summary, steps: currentPlan.steps.slice(from) } : null);
 
-    for (const query of currentPlan.steps) {
+    for (let index = 0; index < currentPlan.steps.length; index++) {
+      const query = currentPlan.steps[index];
       if (Date.now() - started >= MAX_INVESTIGATION_MS) {
         stopReason = 'time_budget';
+        pending = unrun(index);
         break investigation;
       }
       const fingerprint = stepFingerprint(query);
@@ -3740,12 +3873,13 @@ async function execute(db, { signedTicket, userId, auth, temporaryAttachments } 
       }
       seen.add(fingerprint);
       totalSteps += 1;
+      segSteps += 1;
       let result;
       try {
         result = await executeReadStep(db, query, { auth, userId });
       } catch (err) {
         const repair = repairFailure(String(err && err.message));
-        if (repairs < 1 && repair && rounds < maxRounds && totalSteps < maxSteps) {
+        if (repairs < 1 && repair && segRounds < maxRounds && segSteps < maxSteps) {
           const repaired = await repairRejectedPlan(db, approved, query, repair, userId, attached, evidence, totalSteps);
           if (repaired) {
             repairs += 1;
@@ -3761,7 +3895,7 @@ async function execute(db, { signedTicket, userId, auth, temporaryAttachments } 
         throw err;
       }
       result.round = rounds;
-      const rowRoom = Math.max(0, MAX_INVESTIGATION_ROWS - totalRows);
+      const rowRoom = Math.max(0, MAX_INVESTIGATION_ROWS - segRows);
       if (result.rows.length > rowRoom) {
         result.rows = result.rows.slice(0, rowRoom);
         result.truncated = true;
@@ -3769,58 +3903,29 @@ async function execute(db, { signedTicket, userId, auth, temporaryAttachments } 
       }
       evidence.push(result);
       totalRows += result.rows.length;
-      trimEvidence(evidence);
-      if (totalRows >= MAX_INVESTIGATION_ROWS) {
+      segRows += result.rows.length;
+      trimEvidence(evidence, evidenceCap);
+      if (segRows >= MAX_INVESTIGATION_ROWS) {
         stopReason = 'row_budget';
+        pending = unrun(index + 1);
         break investigation;
       }
       if (Date.now() - started >= MAX_INVESTIGATION_MS) {
         stopReason = 'time_budget';
+        pending = unrun(index + 1);
         break investigation;
       }
     }
 
-    if (rounds >= maxRounds) {
-      stopReason = 'round_budget';
+    currentPlan = null;
+    const stop = await decideNext();
+    if (stop) {
+      stopReason = stop;
       break;
     }
-    const remainingSteps = maxSteps - totalSteps;
-    if (remainingSteps < 1) {
-      stopReason = 'step_budget';
-      break;
-    }
-    const remainingOutputTokens = MAX_INVESTIGATION_OUTPUT_TOKENS - controllerOutputTokens;
-    if (remainingOutputTokens < 1) {
-      stopReason = 'token_budget';
-      break;
-    }
-    const decision = await investigateNext(db, approved, attached, evidence, plans, {
-      round: rounds,
-      remaining_rounds: maxRounds - rounds,
-      remaining_steps: remainingSteps,
-      remaining_rows: Math.max(0, MAX_INVESTIGATION_ROWS - totalRows),
-      remaining_ms: Math.max(0, MAX_INVESTIGATION_MS - (Date.now() - started)),
-      remaining_output_tokens: remainingOutputTokens,
-      prior_operation_fingerprints: [...seen],
-    }, userId);
-    controllerOutputTokens += decision.outputTokens || 0;
-    if (decision.action !== 'query') {
-      stopReason = 'model_finished';
-      break;
-    }
-    if (decision.plan.steps.length > remainingSteps) {
-      stopReason = 'step_budget';
-      break;
-    }
-    const nextPlan = renumberPlan(decision.plan, totalSteps);
-    if (nextPlan.steps.some((step) => seen.has(stepFingerprint(step)))) {
-      stopReason = 'repeated_query';
-      break;
-    }
-    widenForAutomation(nextPlan);
-    currentPlan = nextPlan;
   }
 
+  const continuable = CONTINUABLE_STOPS.has(stopReason);
   const ai = await aiService.call(db, {
     promptKey: 'assistant_answer',
     // The run-explainer rules ride only when automation evidence was read —
@@ -3828,10 +3933,11 @@ async function execute(db, { signedTicket, userId, auth, temporaryAttachments } 
     systemAppend: answerSystemAppend(approved, evidence),
     userInput: `CONVERSATION:\n${historyText(approved.history)}\n\nQUESTION:\n${approved.question}\n\n` +
       `ATTACHED FILES:\n${attached.description}\n\nREAD PASSES:\n${JSON.stringify(plans)}\n\n` +
-      `INVESTIGATION STOP:\n${JSON.stringify({ reason: stopReason, rounds, total_steps: totalSteps, returned_rows: totalRows })}\n\n` +
+      `INVESTIGATION STOP:\n${JSON.stringify({ reason: stopReason, rounds, total_steps: totalSteps, returned_rows: totalRows,
+        keep_going_offered: continuable, continuation_grants: grants })}\n\n` +
       `EVIDENCE (row_number is array position + 1):\n${JSON.stringify(evidence)}`,
     attachments: attached.blocks,
-    model: attachmentService.modelForMode(approved.modelMode),
+    model,
     outputType: 'json', timeout_ms: ANSWER_TIMEOUT_MS,
     // undefined keeps the prompt's registered cap (2500) for every
     // non-automation answer.
@@ -3840,6 +3946,7 @@ async function execute(db, { signedTicket, userId, auth, temporaryAttachments } 
     logContent: false,
   });
   if (!ai.ok) throw httpError(502, 'The assistant could not summarize the query results', ai.detail || ai.error);
+  addCost(ai.usage);
   const body = ai.json || {};
   let answer = String(body.answer || '').trim();
   if (!answer) throw httpError(422, 'The assistant returned an empty answer');
@@ -3873,6 +3980,21 @@ async function execute(db, { signedTicket, userId, auth, temporaryAttachments } 
     // other answer is kept with the no-card notice appended.
     if (!actionDraft) answer = answerWithoutCard(answer);
   }
+
+  // Sealed only after a successful answer, only for a budget stop. A state
+  // too large to seal simply offers no control (logged; the answer stands).
+  let continuationOut = null;
+  if (continuable) {
+    try {
+      continuationOut = continuation.seal({
+        v: 1, kind: 'assistant_continuation', uid: Number(userId), chat, ctx,
+        grants, rounds, total_steps: totalSteps, returned_rows: totalRows, widened,
+        evidence, plans, seen: [...seen], pending, stop_reason: stopReason, cost_cents: costCents,
+      });
+    } catch (err) {
+      console.error('[assistant] continuation could not be sealed:', err.message);
+    }
+  }
   return {
     answer,
     suggestions: normalizeSuggestions(body.suggestions || body.suggested_follow_up),
@@ -3880,9 +4002,12 @@ async function execute(db, { signedTicket, userId, auth, temporaryAttachments } 
     entities: actionsForEvidence(evidence),
     sources,
     ...(actionDraft ? { action_draft: actionDraft } : {}),
+    ...(continuationOut ? { continuation: continuationOut } : {}),
     steps: evidence.map((q) => ({ id: q.id, round: q.round, kind: q.kind, purpose: q.purpose, row_count: q.row_count, returned: q.rows.length, truncated: q.truncated || !!q.truncated_for_ai })),
     investigation: { rounds, total_steps: totalSteps, returned_rows: totalRows, controller_output_tokens: controllerOutputTokens, stop_reason: stopReason, repairs, notices,
-      action_draft_status: draftStatus, task_draft_status: draftStatus },
+      action_draft_status: draftStatus, task_draft_status: draftStatus,
+      continuable: !!continuationOut, grants, approx_cost_cents: Math.round(costCents * 10) / 10,
+      segment: { rounds: segRounds, steps: segSteps, rows: segRows } },
     callId: ai.callId, model_mode: approved.modelMode,
   };
 }
@@ -3895,5 +4020,6 @@ module.exports = {
   repairFailure, loadViewer, normalizeViewer, stepFingerprint, renumberPlan, answerSystemAppend, answerMaxTokens,
   MAX_STEPS, MAX_ROWS, MAX_INVESTIGATION_ROUNDS, MAX_INVESTIGATION_STEPS,
   MAX_INVESTIGATION_ROWS, MAX_INVESTIGATION_MS, MAX_INVESTIGATION_OUTPUT_TOKENS,
+  MAX_EVIDENCE_CHARS, MAX_CONTINUED_EVIDENCE_CHARS, CONTINUABLE_STOPS,
   ASSISTANT_DENIED,
 };

@@ -62,6 +62,10 @@ router.post('/api/assistant/execute', jwtOrApiKey, staffOnly, async (req, res) =
   try {
     const out = await svc.execute(req.db, {
       signedTicket: req.body && req.body.ticket,
+      // R1: a sealed continuation (the user's "Keep going" click) and the chat
+      // it is bound to. Evidence is never read from the body.
+      continuation: req.body && req.body.continuation,
+      chatId: req.body && req.body.chat_id,
       userId: req.auth.userId,
       auth: req.auth,
       temporaryAttachments: req.body && req.body.temporary_attachments,

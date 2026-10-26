@@ -26,6 +26,7 @@ lib/aiPrompts/reportBuild.js
 lib/alerting.js
 lib/apiKeys.js
 lib/appBuild.js
+lib/assistantContinuation.js
 lib/assistantTicket.js
 lib/auditShape.js
 lib/auth.formDev.js
@@ -1116,6 +1117,8 @@ tests/assignPickersActive.test.js
 tests/assistantActionLedger.mysql.test.js
 tests/assistantAttachmentService.test.js
 tests/assistantChatService.test.js
+tests/assistantContinuation.mysql.test.js
+tests/assistantContinuation.test.js
 tests/assistantNormalizer.mysql.test.js
 tests/assistantPromptKinds.test.js
 tests/assistantService.test.js
