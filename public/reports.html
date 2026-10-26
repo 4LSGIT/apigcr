@@ -10,6 +10,8 @@
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.5.1/dist/chart.umd.min.js"></script>
 <script src="/js/reportCharts.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+<script src="/js/ycSubTab.js"></script>
+<script src="/js/csvSafe.js"></script>
 <!--
   public/reports.html — Reports engine UI (Slice 1).
 
@@ -377,7 +379,35 @@ function init() {
   }
 
   loadReports();
+
+  // A16 deep link (an applied Ask Casey report card, or any caller of the
+  // shell's 'reports.report' destination): a COLD pane takes the rest the
+  // shell held for it. Only `report~<digits>` is understood; anything else
+  // leaves the list as it is.
+  const held = window.ycSubTab ? ycSubTab.leaf.take() : null;
+  if (held != null) ycAssistantOpenDestination(held);
 }
+
+// ─── deep link: open one saved report (shell destination 'reports.report') ───
+//
+// The grammar stays narrow: `report~<digits>` and nothing else — the id is
+// handed to openReport, which reads it through GET /api/reports/:id like a
+// click on its card, lands on the run panel and runs it (CSV lives there).
+// The shell's readiness wait ends when the report has been opened (or its
+// open failed with the usual dialog).
+function ycAssistantOpenDestination(rest) {
+  const m = /^report~(\d{1,10})$/.exec(String(rest == null ? "" : rest));
+  if (!m) return false;
+  Promise.resolve(openReport(Number(m[1]))).catch(() => { /* openReport shows its own dialog */ }).then(() => {
+    try {
+      if (window.parent && typeof window.parent.ycAssistantChildReady === "function") {
+        window.parent.ycAssistantChildReady(window.frameElement, { destination: "reports.report" });
+      }
+    } catch (_) { /* shell navigated or an older build */ }
+  });
+  return true;
+}
+window.ycAssistantOpenDestination = ycAssistantOpenDestination;
 
 // ─── ownership / lock helpers (mirror services/reportService.js) ────────────
 
@@ -663,9 +693,11 @@ async function toggleSchema() {
       </div>
       <div class="caveat" style="margin-top:12px">
         <b>Not available to reports</b>
-        Client SSN and date of birth, staff passwords and reset tokens, and all
+        Staff passwords and reset tokens, client portal and link tokens, and all
         credential tables are blocked outright — a report cannot reference them
-        even indirectly.
+        even indirectly. Client SSN/EIN and date of birth ARE selectable: a
+        report that shows them prints real numbers, so prefer the last four
+        digits of an SSN unless the whole number is the point.
       </div>`;
     schemaLoaded = true;
   } catch (e) {
@@ -1016,17 +1048,19 @@ function closeRun() {
 
 // ─── CSV ─────────────────────────────────────────────────────────────────────
 
+// The whole file, every cell and header through the shared formula-injection
+// neutraliser (public/js/csvSafe.js). Headers too: a column alias is the
+// report author's text (a backticked alias can start with "=").
+function csvText(rows) {
+  const cols = Object.keys(rows[0]);
+  return [ycCsvSafe.line(cols)]
+    .concat(rows.map(r => ycCsvSafe.line(cols.map(c => r[c]))))
+    .join("\n");
+}
+
 function downloadCsv() {
   if (!lastRows || !lastRows.length) return;
-  const cols = Object.keys(lastRows[0]);
-  const cell = v => {
-    if (v === null || v === undefined) return "";
-    const s = typeof v === "object" ? JSON.stringify(v) : String(v);
-    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-  };
-  const csv = [cols.join(",")]
-    .concat(lastRows.map(r => cols.map(c => cell(r[c])).join(",")))
-    .join("\n");
+  const csv = csvText(lastRows);
 
   const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
   const a = document.createElement("a");

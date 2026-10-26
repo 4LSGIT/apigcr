@@ -377,6 +377,7 @@ function estimateRowsExamined(plan) {
  * @param {number} [opts.rowLimit]
  * @param {number} [opts.expectedParams]
  * @param {object} [opts.logMeta]    {report_id, report_key, run_by, params_json}
+ * @param {boolean} [opts.fieldOrigins]  fields also carry origin_table / origin_column
  * @returns {Promise<{rows, fields, rowCount, truncated, durationMs, estimatedRows}>}
  */
 async function execute(db, opts = {}) {
@@ -443,8 +444,16 @@ async function execute(db, opts = {}) {
     const truncated = isArray && fullCount > rowLimit;
     const payload = isArray && truncated ? rows.slice(0, rowLimit) : rows;
 
+    // opts.fieldOrigins (Ask Casey report drafts, A16): also return each
+    // output column's ORIGIN table/column as MySQL reports it — set for a
+    // direct column reference whatever its alias, empty for an expression.
+    // The card's stored preview masks by origin, so an alias cannot carry a
+    // full SSN or DOB into chat history. Off by default: every existing
+    // caller's response shape is unchanged.
     const fieldMeta = Array.isArray(fields)
-      ? fields.map((f) => ({ name: f.name, type: f.columnType }))
+      ? fields.map((f) => (opts.fieldOrigins
+          ? { name: f.name, type: f.columnType, origin_table: f.orgTable || "", origin_column: f.orgName || "" }
+          : { name: f.name, type: f.columnType }))
       : null;
 
     logRun(db, {

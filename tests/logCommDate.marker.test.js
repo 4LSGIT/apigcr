@@ -23,6 +23,9 @@ const { JSDOM } = require('jsdom');
 
 const read = (f) => fs.readFileSync(path.join(__dirname, '..', f), 'utf8');
 const SCRIPTS = read('public/scripts.js');
+// The pages that run the log export load the shared CSV neutraliser before
+// scripts.js (buildLogCsv builds every cell through it), so this harness does too.
+const CSV_SAFE = read('public/js/csvSafe.js');
 
 function fnSrc(src, name) {
   const m = new RegExp(`(?:async\\s+)?function\\s+${name}\\s*\\(`).exec(src);
@@ -76,7 +79,7 @@ function page(src, scope) {
   }
   w.apiSend = async () => ({ total: ENTRIES.length, entries: ENTRIES });
   w.firmData = { firmTimezone: 'America/Los_Angeles' };
-  w.eval(SWAL_STUB + '\n' + SCRIPTS + '\n' + PAGER + '\n' + scope + `
+  w.eval(SWAL_STUB + '\n' + CSV_SAFE + '\n' + SCRIPTS + '\n' + PAGER + '\n' + scope + `
     function getLogFilterParams() { return {}; } function exportLog() {}
     ${fnSrc(src, 'tabLogGet')}`);
   return w;

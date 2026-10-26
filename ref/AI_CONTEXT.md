@@ -42,6 +42,29 @@ body. Governing migrations in `ref/migrations/`.*
   wired scope where a failure does not free the key. Native callers without a
   key are unchanged. Off switch `casey_send_enabled`. Plan:
   ref/ASK_CASEY_ACTIONS_PLAN.md A14.
+- **Casey drafts and saves a report (A16, ruling 16, 10-27):** kind
+  `report.draft.v1` → `POST /api/reports`. Reports has no structured spec (a
+  definition IS SQL), so Casey writes the SQL; the authority is the Reports
+  engine, as for `sql.read`: the normalizer runs the create route's own
+  validators and previews through `reportService.execute` on the `yc_report`
+  pool (logged `assistant_report_draft`); the route re-validates on save.
+  Invariants: `contact_ssn` only inside `RIGHT(REGEXP_REPLACE(contact_ssn,
+  '[^0-9]',''),4)` unless the signed question names SSNs
+  (`assistantService.reportSsnUse`); the STORED card preview masks SSN/DOB by
+  column ORIGIN (`execute`'s opt-in `fieldOrigins`), hiding expression columns
+  when either is read in full — conversational reads still refuse both;
+  `report_key` is server-minted, kind/visibility/viz/source pinned by the
+  browser builder; `POST /api/reports` takes an optional `Idempotency-Key`
+  (`reports.create`). Shell destination `reports.report` {id} opens the run
+  panel (`reports.html` `ycAssistantOpenDestination` / `ycSubTab.leaf.take`),
+  where CSV export lives. Every human CSV export (Reports, views, the log
+  export, the SU db console's CSV and TSV Copy) builds its cells through
+  `public/js/csvSafe.js` (`= + - @` / tab / CR → `'` prefix; plain numbers
+  kept; headers too) — a new exporter goes through it
+  (`tests/csvSafe.test.js` fails on a private quoting routine). The report appendix
+  (`lib/aiPrompts/assistantReportDraft.js`, schema + SQL rules) and the larger
+  answer budget ride only `reportDraftRequested` turns. Off switch
+  `casey_report_authoring_enabled`. Plan: ref/ASK_CASEY_ACTIONS_PLAN.md A16.
 - **Opt-out follow-up (10-27): CTA send warns; the contact-level pair is
   dropped.** `POST /api/cta/:id/send` (SU manual send) takes the staff rule
   via `optoutGate`: a real send whose `to` has an opted-out ACTIVE row → 409

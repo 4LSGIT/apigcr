@@ -71,6 +71,7 @@ const ACTION_FNS = ['appendDraftField', 'appendDraftFieldsFromText', 'actionDraf
   'openAutomationRecord',
   'sendIsSms', 'sendActionLabel', 'sendRecipientLine', 'sendFactLines', 'sendDraftText', 'sendDraftFields', 'sendConfirmText', 'sendActionRequest',
   'sendPrecheck', 'sendActionResult', 'sendResultText', 'openSendRecord',
+  'reportDraftLabel', 'reportSsnText', 'reportCardText', 'reportDraftFields', 'reportConfirmText', 'reportDraftRequest', 'reportDraftResult',
   'actionFamily', 'isActionDraft', 'actionAppliedId', 'markActionApplied', 'confirmActionDraft',
   'executeActionDraft', 'applyActionResults', 'hydrateActionDraft'];
 
@@ -85,6 +86,7 @@ function actionSandbox(deps = {}) {
     constSrc(html, 'JOB_ACTION_KINDS'), constSrc(html, 'WORKFLOW_ACTION_KINDS'),
     constSrc(html, 'WORKFLOW_STEP_ACTION_KINDS'), constSrc(html, 'WORKFLOW_PUBLISH_ACTION_KINDS'),
     constSrc(html, 'HOOK_ACTION_KINDS'), constSrc(html, 'SEQUENCE_STEP_ACTION_KINDS'), constSrc(html, 'SEND_ACTION_KINDS'),
+    constSrc(html, 'REPORT_ACTION_KINDS'),
     constSrc(html, 'SEQUENCE_STEP_FUNCTIONS'), constSrc(html, 'SEQUENCE_STEP_ERROR_POLICY'),
     ...ACTION_FNS.map((name) => fnSrcAuto(html, name)),
     registry,
@@ -386,6 +388,90 @@ describe('Ask Casey UI wiring', () => {
     expect(sent).not.toMatch(/"url"|api_key|auth_config/i);
     expect(message.action_draft).toMatchObject({ status: 'applied', result_hook_id: 12 });
     expect(P.ycAssistantNavigate).toHaveBeenCalledWith('automations.hook', { id: 12 });
+  });
+
+  // A16: the browser posts EXACTLY the server-normalized definition, plus the
+  // builder's fixed fields — nothing from the model beyond the reviewed values.
+  // (The real-engine round trip normalizer → builder → route → stored row is
+  // tests/caseyReportDraft.mysql.test.js.)
+  const REPORT_DRAFT = () => ({
+    draft_id: 'report-draft-1', kind: 'report.draft.v1', status: 'draft', received_at: Date.now(),
+    definition: { report_key: 'casey_detroit_contacts_a1b2c3', title: 'Detroit contacts', category: 'Contacts',
+      description: 'Active contacts whose city is Detroit.', sql_text: "SELECT ct.contact_id, ct.contact_name AS client_name\nFROM contacts ct WHERE ct.contact_city = 'Detroit' ORDER BY ct.contact_name",
+      params: [], columns_meta: [{ key: 'client_name', label: 'Client' }], caveats: ['contact_city is the legacy field.'], row_limit: 1000 },
+    tables: ['contacts'], ssn: 'none', dob: false,
+    preview: { columns: [{ key: 'contact_id', label: 'contact_id' }, { key: 'client_name', label: 'Client' }],
+      rows: [[1, 'Pat One'], [2, 'Sam Two']], row_count: 2, truncated: false, more_columns: 0, bound_values: [] },
+    evidence: [],
+  });
+
+  test('a report card posts exactly the normalized definition with the fixed fields, keyed by its draft_id', async () => {
+    const api = jest.fn().mockResolvedValue({ status: 'success', report: { id: 21, report_key: 'casey_detroit_contacts_a1b2c3' } });
+    const P = { Swal: { fire: jest.fn().mockResolvedValue({ isConfirmed: true }) },
+      ycAssistantNavigate: jest.fn().mockResolvedValue({ ready: true }) };
+    const message = { action_draft: REPORT_DRAFT() };
+    const { executeActionDraft, actionFamily } = actionSandbox({ P, api, history: [], saveAssistantMessage: jest.fn().mockResolvedValue() });
+    const family = actionFamily(message.action_draft);
+    expect([family.id, family.idField, family.appliedKey, family.danger(message.action_draft)]).toEqual(['report', 'report_id', 'result_report_id', false]);
+    await executeActionDraft(message);
+    const d = REPORT_DRAFT().definition;
+    expect(api).toHaveBeenCalledTimes(1);
+    expect(api).toHaveBeenCalledWith('/api/reports', {
+      report_key: d.report_key, title: d.title, category: d.category, description: d.description,
+      sql_text: d.sql_text, params: d.params, columns_meta: d.columns_meta, caveats: d.caveats, row_limit: d.row_limit,
+      kind: 'report', visibility: 'shared', viz: { type: 'table' }, source: 'ai',
+    }, 'POST', { 'Idempotency-Key': 'report-draft-1' });
+    expect(message.action_draft).toMatchObject({ status: 'applied', result_report_id: 21 });
+    expect(P.ycAssistantNavigate).toHaveBeenCalledWith('reports.report', { id: 21 });
+    const dialog = P.Swal.fire.mock.calls[0][0];
+    expect(dialog.title).toBe('Save report');
+    expect(dialog.text).toContain('Rows now: 2 (row limit 1000)');
+    expect(dialog.text).toContain('contains client personal information');
+    expect(dialog.text).not.toMatch(/FULL Social Security/);
+  });
+
+  test('a full-SSN report card is danger-styled and warns before anything else', () => {
+    const { actionFamily } = actionSandbox({});
+    const draft = { ...REPORT_DRAFT(), ssn: 'full' };
+    const family = actionFamily(draft);
+    expect(family.danger(draft)).toBe(true);
+    expect(family.confirmText(draft)).toMatch(/^This report shows FULL Social Security \/ EIN numbers\./);
+    expect(family.text({ ...REPORT_DRAFT(), ssn: 'last4' })).toContain('SSN: last four digits only');
+  });
+
+  test('the report card renders its preview and SQL as text, and model text never becomes markup', () => {
+    const { JSDOM } = require('jsdom');
+    const dom = new JSDOM('<!doctype html><div id="host"></div>');
+    const { document } = dom.window;
+    const { hydrateActionDraft, actionFamily } = actionSandbox({ document, navigator: dom.window.navigator });
+    const d = REPORT_DRAFT();
+    d.definition.title = '<img src=x onerror=alert(1)>';
+    d.preview.rows = [[1, '<b>Pat</b>'], [2, null]];
+    d.preview.columns.push({ key: 'ssn_last4', label: 'SSN', masked: true });
+    d.preview.rows = d.preview.rows.map((r) => [...r, '(hidden in this preview)']);
+    const message = { action_draft: d };
+    const host = document.createElement('div');
+    hydrateActionDraft(actionFamily(d), host, message, d);
+    expect(host.querySelector('img')).toBe(null);
+    expect(host.querySelector('b.action-draft-head, .action-draft-head b').textContent).toBe('Report');
+    const cells = [...host.querySelectorAll('.action-draft-preview td')].map((td) => td.textContent);
+    expect(cells).toEqual(['1', '<b>Pat</b>', '(hidden in this preview)', '2', '', '(hidden in this preview)']);
+    expect([...host.querySelectorAll('.action-draft-preview th')].map((th) => th.textContent)).toEqual(['contact_id', 'Client', 'SSN']);
+    expect(host.textContent).toContain('SSN and date-of-birth values are hidden here');
+    expect(host.querySelector('details.action-draft-preview pre').textContent).toBe(d.definition.sql_text);
+    // The SQL is behind the disclosure, not repeated as field rows.
+    expect([...host.querySelectorAll('dt')].map((t) => t.textContent)).not.toContain('SQL');
+    expect([...host.querySelectorAll('button')].map((b) => b.textContent)).toContain('Review & save report');
+  });
+
+  test('a report card with no usable definition never reaches the route', async () => {
+    const api = jest.fn();
+    const P = { Swal: { fire: jest.fn().mockResolvedValue({ isConfirmed: true }) } };
+    const broken = REPORT_DRAFT(); broken.definition.sql_text = '';
+    const message = { action_draft: broken };
+    await actionSandbox({ P, api, history: [], saveAssistantMessage: jest.fn() }).executeActionDraft(message);
+    expect(api).not.toHaveBeenCalled();
+    expect(message.action_draft.status).not.toBe('applied');
   });
 
   test('a saved action result restores its exact proposal as applied without another write', () => {

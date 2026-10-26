@@ -2349,6 +2349,247 @@ async function normalizeHookCreateAction(db, value, evidence) {
   };
 }
 
+// ── A16 report drafts (ruling 16, Fred 2026-10-27) ───────────────────────
+//
+// One card SAVES one new report definition through POST /api/reports (the
+// Reports editor's own create route). Reports has no structured spec — a
+// definition IS SQL text — so Casey writes the SQL, exactly as the Reports AI
+// author and every staff member's editor do. The authority is the Reports
+// engine, as for sql.read: the create route's own validators run here
+// (validateParams, validateSql with the param count, sanitizeColumnsMeta),
+// then a preview executes through reportService.execute on the least-privilege
+// yc_report pool — the same core POST /api/reports/preview calls — so the card
+// shows the real row count and first rows. Nothing is written by proposing;
+// the user's Save click is the create, and the route re-validates everything.
+//
+// SSN (Fred's ruling 2, same day): contact_ssn may appear ONLY inside the
+// canonical last-4 expression REPORT_SSN_LAST4 — in the select list or a
+// filter — unless the user's OWN current question (the signed ticket's copy,
+// never the model's claim) names SSNs / social security; then the full number
+// is allowed and the card warns. The STORED card preview never carries a full
+// SSN or a DOB: columns whose origin is contact_ssn / contact_dob (or the
+// chat-denied email_log columns) are masked whatever their alias, and with a
+// full-SSN draft every SSN/EIN-shaped cell is masked too.
+const REPORT_ACTION_KINDS = new Set(['report.draft.v1']);
+const REPORT_DRAFT_KEYS = new Set(['kind', 'title', 'category', 'description', 'sql', 'params',
+  'columns_meta', 'caveats', 'row_limit', 'evidence']);
+const REPORT_DRAFT_CATEGORIES = ['Contacts', 'Cases', 'Appointments', 'Activity', 'Tasks', 'Campaigns', 'General'];
+// Widths of report_definitions (title varchar(150), category varchar(40)):
+// sql_mode is relaxed, so a longer value would be stored TRUNCATED — stored
+// would no longer be what the card showed. sql_text is TEXT.
+const REPORT_DRAFT_TITLE_MAX = 150;
+const REPORT_DRAFT_DESCRIPTION_MAX = 2000;
+const REPORT_DRAFT_SQL_MAX = 20000;
+const REPORT_DRAFT_MAX_PARAMS = 8;
+const REPORT_DRAFT_MAX_COLUMNS_META = 60;
+const REPORT_DRAFT_MAX_CAVEATS = 8;
+const REPORT_DRAFT_CAVEAT_MAX = 300;
+const REPORT_DRAFT_DEFAULT_ROW_LIMIT = 1000;
+const REPORT_DRAFT_MAX_ROW_LIMIT = 10000;   // reportService.HARD_MAX_ROWS
+const REPORT_PREVIEW_ROWS = 10;
+const REPORT_PREVIEW_MAX_COLUMNS = 40;
+const REPORT_PREVIEW_CELL_CHARS = 200;
+const REPORT_SSN_LAST4 = "RIGHT(REGEXP_REPLACE(contact_ssn,'[^0-9]',''),4)";
+// The canonical expression, matched on the RAW sql (literal contents exact)
+// and on the literal-blanked copy (blankStringLiterals keeps offsets), so a
+// match counts only where its two literals are real code — never text inside
+// some other string.
+const REPORT_SSN_QUAL = '(?:`?[A-Za-z_][A-Za-z0-9_]*`?\\s*\\.\\s*)?`?contact_ssn`?';
+const REPORT_SSN_LAST4_RAW_RE = new RegExp(`^RIGHT\\s*\\(\\s*REGEXP_REPLACE\\s*\\(\\s*${REPORT_SSN_QUAL}\\s*,\\s*'\\[\\^0-9\\]'\\s*,\\s*''\\s*\\)\\s*,\\s*4\\s*\\)$`, 'i');
+const REPORT_SSN_LAST4_BLANKED_RE = new RegExp(`RIGHT\\s*\\(\\s*REGEXP_REPLACE\\s*\\(\\s*${REPORT_SSN_QUAL}\\s*,\\s*' {6}'\\s*,\\s*''\\s*\\)\\s*,\\s*4\\s*\\)`, 'gi');
+const REPORT_SSN_QUESTION_RE = /\bssns?\b|\bsocial[\s-]+security\b/i;
+// Origins masked in the STORED preview, whatever the alias (mysql2 reports a
+// direct column reference's origin; an expression has none).
+const REPORT_PREVIEW_MASKED_ORIGINS = new Set(['contact_ssn', 'contact_dob', 'attachments', 'delivery_info']);
+
+// 'none' | 'last4' | 'full': how the SQL uses contact_ssn. Anything outside a
+// genuine canonical last-4 expression — a bare reference, a derived-table
+// column, an unterminated literal that defeats the blanker — is 'full'.
+function reportSsnUse(sql) {
+  const raw = String(sql || '');
+  const blanked = blankStringLiterals(raw);
+  let scan = blanked;
+  let last4 = false;
+  // blankStringLiterals returns the raw text when a literal is unterminated;
+  // then no match can be trusted, and any contact_ssn reads as full.
+  if (blanked !== raw) {
+    for (const m of blanked.matchAll(REPORT_SSN_LAST4_BLANKED_RE)) {
+      if (!REPORT_SSN_LAST4_RAW_RE.test(raw.slice(m.index, m.index + m[0].length))) continue;
+      scan = scan.slice(0, m.index) + ' '.repeat(m[0].length) + scan.slice(m.index + m[0].length);
+      last4 = true;
+    }
+  }
+  if (/\bcontact_ssn\b/i.test(scan)) return 'full';
+  return last4 ? 'last4' : 'none';
+}
+
+function reportDraftText(value, label, max, { required = false } = {}) {
+  if (value == null || value === '') {
+    if (required) throw httpError(422, `Report draft ${label} is required`);
+    return '';
+  }
+  if (typeof value !== 'string') throw httpError(422, `Report draft ${label} must be text`);
+  const text = value.trim();
+  if (required && !text) throw httpError(422, `Report draft ${label} is required`);
+  if (text.length > max) throw httpError(422, `Report draft ${label} exceeds ${max} characters`);
+  return text;
+}
+
+function reportPreviewCell(value, mask) {
+  if (value == null) return null;
+  if (mask === 'hidden') return '(hidden in this preview)';
+  let text;
+  if (value instanceof Date) text = Number.isNaN(value.getTime()) ? String(value) : value.toISOString().replace('T00:00:00.000Z', '').replace('.000Z', 'Z');
+  else if (Buffer.isBuffer(value)) text = '[binary]';
+  else if (typeof value === 'object') { try { text = JSON.stringify(value); } catch (_) { text = '[object]'; } }
+  else text = String(value);
+  if (mask === 'ssn' && /^[\d\s-]+$/.test(text) && text.replace(/\D/g, '').length === 9) {
+    text = `•••-••-${text.replace(/\D/g, '').slice(-4)}`;
+  }
+  return text.length > REPORT_PREVIEW_CELL_CHARS ? `${text.slice(0, REPORT_PREVIEW_CELL_CHARS)}…` : text;
+}
+
+function reportDraftKey(title) {
+  const slug = title.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 40).replace(/_+$/, '');
+  return `casey_${slug || 'report'}_${crypto.randomBytes(3).toString('hex')}`;
+}
+
+async function normalizeReportDraftAction(db, value, evidence, { currentUserId = null, question = '' } = {}) {
+  // Ruling 4's per-family off switch: dark means the kind does not exist.
+  if (require('../lib/firmConfig').cfg('casey_report_authoring_enabled') === '0') {
+    throw httpError(422, 'Action kind is unavailable');
+  }
+  if (!onlyKeys(value, REPORT_DRAFT_KEYS)) throw httpError(422, 'Report draft contains unsupported fields');
+  const { validateParams, sanitizeColumnsMeta } = require('../lib/reportSchema/validator');
+  const title = reportDraftText(value.title, 'title', REPORT_DRAFT_TITLE_MAX, { required: true });
+  const description = reportDraftText(value.description, 'description', REPORT_DRAFT_DESCRIPTION_MAX);
+  const category = value.category == null || value.category === '' ? 'General' : value.category;
+  if (!REPORT_DRAFT_CATEGORIES.includes(category)) {
+    throw httpError(422, `Report draft category must be one of ${REPORT_DRAFT_CATEGORIES.join(', ')}`);
+  }
+  const sql = reportDraftText(value.sql, 'sql', REPORT_DRAFT_SQL_MAX, { required: true });
+
+  const params = value.params == null ? [] : value.params;
+  if (!Array.isArray(params) || params.length > REPORT_DRAFT_MAX_PARAMS) {
+    throw httpError(422, `Report draft params must be an array of 0-${REPORT_DRAFT_MAX_PARAMS}`);
+  }
+  const pv = validateParams(params);
+  if (!pv.ok) throw httpError(422, `Report draft ${pv.error}`);
+  const cleanParams = params.map((p) => {
+    const out = { name: p.name, type: p.type };
+    if (p.label != null) out.label = reportDraftText(p.label, 'param label', 80);
+    if (p.default !== undefined && p.default !== null) {
+      if (typeof p.default !== 'string' && typeof p.default !== 'number') {
+        throw httpError(422, `Report draft param "${p.name}" default must be text or a number`);
+      }
+      out.default = p.default;
+    }
+    if (p.required != null) out.required = !!p.required;
+    return out;
+  });
+
+  // The create route's own SQL gate, with the declared param count.
+  const valid = validateSql(sql, { expectedParams: cleanParams.length });
+  if (!valid.ok) throw httpError(422, `Report draft SQL was refused: ${valid.error}${valid.detail ? ` — ${valid.detail}` : ''}`);
+  // Chat-denied names other than the SSN/DOB/email-log columns this kind
+  // handles by masking (validateSql already refuses the manifest's denied set).
+  const denied = ASSISTANT_DENIED.filter((name) => !REPORT_PREVIEW_MASKED_ORIGINS.has(name))
+    .find((name) => new RegExp(`\\b${name}\\b`, 'i').test(blankStringLiterals(sql)));
+  if (denied) throw httpError(422, `Report draft SQL names a field reports may not read: ${denied}`);
+
+  const ssn = reportSsnUse(sql);
+  if (ssn === 'full' && !REPORT_SSN_QUESTION_RE.test(String(question || ''))) {
+    throw httpError(422, `Report draft selects contact_ssn in full, but the user did not ask for SSNs. Use ONLY ${REPORT_SSN_LAST4} (alias it e.g. ssn_last4), in the select list and in any filter.`);
+  }
+
+  let rowLimit = REPORT_DRAFT_DEFAULT_ROW_LIMIT;
+  if (value.row_limit != null) {
+    rowLimit = Number(value.row_limit);
+    if (!Number.isInteger(rowLimit) || rowLimit < 1 || rowLimit > REPORT_DRAFT_MAX_ROW_LIMIT) {
+      throw httpError(422, `Report draft row_limit must be an integer 1-${REPORT_DRAFT_MAX_ROW_LIMIT}`);
+    }
+  }
+
+  const caveats = value.caveats == null ? [] : value.caveats;
+  if (!Array.isArray(caveats) || caveats.length > REPORT_DRAFT_MAX_CAVEATS) {
+    throw httpError(422, `Report draft caveats must be an array of 0-${REPORT_DRAFT_MAX_CAVEATS} strings`);
+  }
+  const cleanCaveats = caveats.map((c) => reportDraftText(c, 'caveat', REPORT_DRAFT_CAVEAT_MAX, { required: true }));
+
+  const metaIn = value.columns_meta == null ? [] : value.columns_meta;
+  if (!Array.isArray(metaIn) || metaIn.length > REPORT_DRAFT_MAX_COLUMNS_META) {
+    throw httpError(422, `Report draft columns_meta must be an array of 0-${REPORT_DRAFT_MAX_COLUMNS_META}`);
+  }
+
+  const refs = jobDraftEvidence(value.evidence, evidence);
+
+  // Preview: the real engine, the report pool, the definition's own defaults.
+  let values;
+  try { values = reportService.buildBindValues(cleanParams, {}); }
+  catch (err) { throw httpError(422, `Report draft cannot be previewed: ${err.message} — give every required param a default`); }
+  let result;
+  try {
+    result = await reportService.execute(db, {
+      sql, values, rowLimit, expectedParams: cleanParams.length, fieldOrigins: true,
+      logMeta: { report_id: null, report_key: 'assistant_report_draft', run_by: Number(currentUserId) || null,
+        params_json: { _source: 'casey_report_draft' } },
+    });
+  } catch (err) {
+    throw httpError(422, `Report draft preview failed: ${err.message}${err.detail ? ` — ${err.detail}` : ''}`);
+  }
+  const fields = Array.isArray(result.fields) ? result.fields : [];
+  if (!fields.length) throw httpError(422, 'Report draft preview returned no columns');
+  const names = fields.map((f) => f.name);
+  if (new Set(names.map((n) => n.toLowerCase())).size !== names.length) {
+    throw httpError(422, 'Report draft output columns must have distinct aliases');
+  }
+
+  // Stored == reviewed: the route would strip what this sanitizer warns
+  // about, so a warning refuses the card instead (the repair stage fixes it).
+  const cm = sanitizeColumnsMeta(metaIn, names);
+  if (cm.warnings.length) throw httpError(422, `Report draft columns_meta: ${cm.warnings.join(' ')}`);
+
+  // A draft that reads a masked column other than through the last-4 form
+  // hides every EXPRESSION column too (an expression has no origin, so
+  // DATE_FORMAT(contact_dob, …) or CONCAT(contact_ssn, …) cannot be told
+  // apart), and shape-masks SSN/EIN-looking cells in the rest.
+  const scanned = blankStringLiterals(sql);
+  const sensitive = ssn === 'full' || [...REPORT_PREVIEW_MASKED_ORIGINS]
+    .some((name) => name !== 'contact_ssn' && new RegExp(`\\b${name}\\b`, 'i').test(scanned));
+  const masks = fields.map((f) => {
+    const origin = String(f.origin_column || '').toLowerCase();
+    if (REPORT_PREVIEW_MASKED_ORIGINS.has(origin)) return 'hidden';
+    if (!sensitive) return null;
+    return origin ? 'ssn' : 'hidden';
+  });
+  const shownColumns = fields.slice(0, REPORT_PREVIEW_MAX_COLUMNS);
+  const labelFor = new Map(cm.columns_meta.filter((c) => c.label).map((c) => [c.key, c.label]));
+  const hiddenKeys = new Set(cm.columns_meta.filter((c) => c.hidden).map((c) => c.key));
+  const rows = Array.isArray(result.rows) ? result.rows : [];
+  return {
+    draft_id: crypto.randomUUID(),
+    kind: 'report.draft.v1',
+    status: 'draft',
+    definition: {
+      report_key: reportDraftKey(title), title, category, description, sql_text: sql,
+      params: cleanParams, columns_meta: cm.columns_meta, caveats: cleanCaveats, row_limit: rowLimit,
+    },
+    tables: valid.tables,
+    ssn,
+    dob: /\bcontact_dob\b/i.test(scanned),
+    preview: {
+      columns: shownColumns.map((f, i) => ({ key: f.name, label: labelFor.get(f.name) || f.name,
+        ...(hiddenKeys.has(f.name) ? { hidden: true } : {}), ...(masks[i] === 'hidden' ? { masked: true } : {}) })),
+      rows: rows.slice(0, REPORT_PREVIEW_ROWS).map((row) => shownColumns.map((f, i) => reportPreviewCell(row[f.name], masks[i]))),
+      row_count: Number(result.rowCount) || 0,
+      truncated: !!result.truncated,
+      more_columns: Math.max(0, fields.length - REPORT_PREVIEW_MAX_COLUMNS),
+      bound_values: values.map((v) => (v == null ? null : String(v))),
+    },
+    evidence: refs,
+  };
+}
+
 // ── A14 direct sends ──────────────────────────────────────────────────────
 
 function smsSegments(text) {
@@ -2560,8 +2801,9 @@ async function normalizeSendAction(db, value, evidence, { currentUserId = null }
     ssn_warning: sendMentionsSsn(`${value.subject}\n${value.body}`, `${subject}\n${body}`) };
 }
 
-async function normalizeActionDraft(db, value, evidence, { currentUserId = null } = {}) {
+async function normalizeActionDraft(db, value, evidence, { currentUserId = null, question = '' } = {}) {
   if (value == null) return null;
+  if (value && REPORT_ACTION_KINDS.has(value.kind)) return normalizeReportDraftAction(db, value, evidence, { currentUserId, question });
   if (value && SEND_ACTION_KINDS.has(value.kind)) return normalizeSendAction(db, value, evidence, { currentUserId });
   if (value && HOOK_ACTION_KINDS.has(value.kind)) return normalizeHookCreateAction(db, value, evidence);
   if (value && SEQUENCE_ACTION_KINDS.has(value.kind)) return normalizeSequenceStepInsertAction(db, value, evidence);
@@ -2623,9 +2865,10 @@ function answerWithoutCard(answer) {
 }
 
 async function repairActionDraft(db, approved, evidence, rejectedValue, rejection, userId) {
+  const reportTurn = (rejectedValue && rejectedValue.kind === 'report.draft.v1') || reportDraftRequested(approved.question, approved.history);
   const ai = await aiService.call(db, {
     promptKey: 'assistant_task_draft_repair',
-    systemAppend: currentContext(approved.viewer, approved.workspace),
+    systemAppend: reportTurn ? `${currentContext(approved.viewer, approved.workspace)}\n${reportAppendix()}` : currentContext(approved.viewer, approved.workspace),
     userInput: `CONVERSATION:\n${historyText(approved.history)}\n\n` +
       `QUESTION:\n${approved.question}\n\nREJECTION:\n${String(rejection && rejection.message || 'The action_draft field was absent.')}\n\n` +
       `REJECTED PROPOSAL:\n${JSON.stringify(rejectedValue == null ? null : rejectedValue)}\n\n` +
@@ -2633,11 +2876,14 @@ async function repairActionDraft(db, approved, evidence, rejectedValue, rejectio
     model: attachmentService.modelForMode(approved.modelMode),
     outputType: 'json', timeout_ms: ANSWER_TIMEOUT_MS,
     consumerRef: `assistant_task_draft_repair:u${Number(userId) || 0}`,
+    // The repair prompt registers 1000 output tokens; a report definition
+    // (SQL + columns_meta + caveats) needs more room to come back whole.
+    ...(reportTurn ? { max_tokens: 4000 } : {}),
     logContent: false,
   });
   if (!ai.ok) return null;
   try {
-    const draft = await normalizeActionDraft(db, ai.json && ai.json.action_draft, evidence, { currentUserId: userId });
+    const draft = await normalizeActionDraft(db, ai.json && ai.json.action_draft, evidence, { currentUserId: userId, question: approved.question });
     return draft || null;
   } catch (err) {
     console.error(`[assistant] repaired action draft rejected again: ${err && err.message}`);
@@ -2700,7 +2946,34 @@ function taskDraftRequested(question, history = []) {
     /\bwrite\b[^.?!\n]{0,40}\b(?:e-?mail|text message|sms|message)\s+to\b/i.test(request) ||
     /(?:^|[.!?]\s*|\b(?:please|you|to|and|then|go ahead and|let'?s|now)\s+)(?:e-?mail|text|sms|message)\s+(?!me\b|myself\b)\w/i.test(request);
   const send = !toSelf && sendVerb;
-  return task || event || appt || contactSubrecord || job || workflow || hook || sequence || send;
+  return task || event || appt || contactSubrecord || job || workflow || hook || sequence || send ||
+    reportDraftRequested(question, history);
+}
+
+// A16: a request to MAKE a report / an exportable list. The noun is the
+// artifact (report, CSV, spreadsheet, Excel, export — or a list paired with
+// download), the verb a making/exporting one in a request message. A plain
+// list question ("list my tasks", "show me the contacts in Oakland County")
+// stays a read answered in chat; so does any interrogative ("what reports do
+// we have?", "how do locked reports work?"). Also selects the answer stage's
+// report appendix (schema + SQL rules) and its larger output budget.
+const REPORT_DRAFT_NOUN = /\b(?:reports?|csv|spreadsheets?|excel|exports?|exportable)\b/i;
+const REPORT_DRAFT_LIST_DOWNLOAD = /\blists?\b[^.?!\n]{0,80}\bdownload(?:able)?\b|\bdownload(?:able)?\b[^.?!\n]{0,80}\blists?\b/i;
+const REPORT_DRAFT_VERB = /\b(?:draft|propose|prepare|create|make|build|set up|save|generate|pull|put together|export|download|give me|get|need|want)\b/i;
+// "Can reports export to CSV?" asks about the product; "Can I / you / we get
+// a CSV…" asks for one. A modal opener not followed by a person is a question.
+const REPORT_MODAL_QUESTION = /^\s*(?:can|could|will|would|should)\b(?!\s+(?:you|i|we|u)\b)/i;
+
+function reportDraftRequested(question, history = []) {
+  if (!actionRequestText(question) || REPORT_MODAL_QUESTION.test(String(question || ''))) return false;
+  const priorUserText = cleanHistory(history)
+    .filter((message) => message.role === 'user')
+    .slice(-4)
+    .map((message) => message.text);
+  const messages = [...priorUserText, String(question || '')];
+  const text = messages.join('\n');
+  const request = messages.map(actionRequestText).join('\n');
+  return (REPORT_DRAFT_NOUN.test(text) || REPORT_DRAFT_LIST_DOWNLOAD.test(text)) && REPORT_DRAFT_VERB.test(request);
 }
 
 function contextualAnswer(question, history) {
@@ -3381,8 +3654,16 @@ function hasIngestEvidence(evidence) {
       r && Object.keys(r).some((k) => /^(?:email|phone)_ingest_/.test(k))))));
 }
 
+// A16: the report appendix (SQL rules + the curated schema the Reports
+// validator enforces) rides the answer and repair stages ONLY when the turn
+// asks for a report — every other answer pays nothing for ~5k tokens of schema.
+function reportAppendix() {
+  return require('../lib/aiPrompts/assistantReportDraft').REPORT_DRAFT_APPENDIX;
+}
+
 function answerSystemAppend(approved, evidence) {
-  const base = currentContext(approved.viewer, approved.workspace);
+  const withReport = (text) => (reportDraftRequested(approved.question, approved.history) ? `${text}\n${reportAppendix()}` : text);
+  const base = withReport(currentContext(approved.viewer, approved.workspace));
   if (!hasAutomationEvidence(evidence)) return base;
   const { AUTOMATION_RUN_EXPLAINER, INGEST_RULE_EXPLAINER } = require('../lib/aiPrompts/automationRunExplainer');
   return hasIngestEvidence(evidence)
@@ -3398,8 +3679,11 @@ function answerSystemAppend(approved, evidence) {
 // ceiling is paid only when automation evidence is in play.
 const ANSWER_MAX_TOKENS_AUTOMATION = 8000;
 
-function answerMaxTokens(evidence) {
-  return hasAutomationEvidence(evidence) ? ANSWER_MAX_TOKENS_AUTOMATION : undefined;
+// A report draft (SQL + columns_meta + caveats beside the prose) rides the
+// same larger ceiling.
+function answerMaxTokens(evidence, approved = null) {
+  if (hasAutomationEvidence(evidence)) return ANSWER_MAX_TOKENS_AUTOMATION;
+  return approved && reportDraftRequested(approved.question, approved.history) ? ANSWER_MAX_TOKENS_AUTOMATION : undefined;
 }
 
 async function execute(db, { signedTicket, userId, auth, temporaryAttachments } = {}) {
@@ -3551,7 +3835,7 @@ async function execute(db, { signedTicket, userId, auth, temporaryAttachments } 
     outputType: 'json', timeout_ms: ANSWER_TIMEOUT_MS,
     // undefined keeps the prompt's registered cap (2500) for every
     // non-automation answer.
-    max_tokens: answerMaxTokens(evidence),
+    max_tokens: answerMaxTokens(evidence, approved),
     consumerRef: `assistant_answer:u${Number(userId) || 0}`,
     logContent: false,
   });
@@ -3567,7 +3851,7 @@ async function execute(db, { signedTicket, userId, auth, temporaryAttachments } 
   if (draftRequested) {
     let rejection = null;
     try {
-      actionDraft = await normalizeActionDraft(db, body.action_draft, evidence, { currentUserId: userId });
+      actionDraft = await normalizeActionDraft(db, body.action_draft, evidence, { currentUserId: userId, question: approved.question });
       if (!actionDraft) rejection = httpError(422, 'The action_draft field was absent');
     } catch (err) {
       rejection = err;
@@ -3607,7 +3891,7 @@ module.exports = {
   plan, execute, validatePlan, validateStep, cleanHistory, compactRows,
   normalizeSuggestions, contextualAnswer, actionsForRow, actionsForEvidence,
   normalizeWorkspaceContext, validateWorkspaceContext, normalizeDestinations,
-  normalizeActionDraft, taskDraftRequested, unavailableTaskDraftAnswer, repairActionDraft,
+  normalizeActionDraft, taskDraftRequested, reportDraftRequested, reportSsnUse, unavailableTaskDraftAnswer, repairActionDraft,
   repairFailure, loadViewer, normalizeViewer, stepFingerprint, renumberPlan, answerSystemAppend, answerMaxTokens,
   MAX_STEPS, MAX_ROWS, MAX_INVESTIGATION_ROUNDS, MAX_INVESTIGATION_STEPS,
   MAX_INVESTIGATION_ROWS, MAX_INVESTIGATION_MS, MAX_INVESTIGATION_OUTPUT_TOKENS,

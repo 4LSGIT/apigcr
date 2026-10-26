@@ -6,6 +6,7 @@
 <title>DB Console</title>
 <link rel="stylesheet" href="/theme.css">
 <script src="/themeSync.js"></script>
+<script src="/js/csvSafe.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
 <style>
   html, body { margin: 0; padding: 0; height: 100%; background: var(--page-bg); color: var(--text); font-family: -apple-system, Segoe UI, Roboto, sans-serif; font-size: 13px; }
@@ -791,12 +792,9 @@ function sortRows(rows, cols) {
 btnCsv.addEventListener("click", () => {
   if (!Array.isArray(lastRows) || !lastRows.length) return;
   const cols = lastFields?.length ? lastFields.map(f => f.name) : Object.keys(lastRows[0]);
-  const esc = (v) => {
-    if (v === null || v === undefined) return "";
-    const s = typeof v === "object" ? JSON.stringify(v) : String(v);
-    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-  };
-  const csv = [cols.map(esc).join(","), ...lastRows.map(r => cols.map(c => esc(r[c])).join(","))].join("\n");
+  // Every cell and header through the shared formula-injection neutraliser
+  // (public/js/csvSafe.js).
+  const csv = [ycCsvSafe.line(cols), ...lastRows.map(r => ycCsvSafe.line(cols.map(c => r[c])))].join("\n");
   const blob = new Blob([csv], { type: "text/csv" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
@@ -828,13 +826,9 @@ btnCopy.addEventListener("click", async () => {
   if (Array.isArray(lastRows)) {
     if (!lastRows.length) return;
     const cols = lastFields?.length ? lastFields.map(f => f.name) : Object.keys(lastRows[0]);
-    const cell = (v) => {
-      if (v === null || v === undefined) return "";
-      const s = typeof v === "object" ? JSON.stringify(v) : String(v);
-      // TSV is unquoted; sanitize tabs/newlines so we don't break the grid.
-      return s.replace(/\t/g, "    ").replace(/\r?\n/g, " ");
-    };
-    text = [cols.join("\t"), ...lastRows.map(r => cols.map(c => cell(r[c])).join("\t"))].join("\n");
+    // TSV is unquoted; ycCsvSafe.tsvLine neutralises formula cells (a pasted
+    // "=…" becomes a formula too) and flattens tabs/newlines so the grid holds.
+    text = [ycCsvSafe.tsvLine(cols), ...lastRows.map(r => ycCsvSafe.tsvLine(cols.map(c => r[c])))].join("\n");
     label = `Copied ${lastRows.length} row${lastRows.length === 1 ? "" : "s"} (TSV).`;
   } else {
     text = JSON.stringify(lastRows, null, 2);

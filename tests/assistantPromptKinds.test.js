@@ -51,6 +51,7 @@ const PLAN_FAMILY_MARKERS = {
   sequence: 'reviewed sequence-step action is available',
   sms: 'Reviewed direct-send actions are available',
   email: 'Reviewed direct-send actions are available',
+  report: 'A reviewed report-draft action is available',
 };
 
 describe('every shipped action kind is taught to every model stage', () => {
@@ -102,6 +103,7 @@ describe('every shipped action kind is taught to every model stage', () => {
     expect(investigatePrompt).toContain('task, event, appointment, contact subrecord, or safe code job');
     expect(investigatePrompt).toContain('sequence-step proposals');
     expect(investigatePrompt).toContain('and direct sends');
+    expect(investigatePrompt).toContain('and report drafts');
   });
 });
 
@@ -248,3 +250,59 @@ describe('A14 direct sends across the stages', () => {
 });
 
 function fsRead(p) { return require('fs').readFileSync(path.join(REPO, p), 'utf8'); }
+
+// A16 (ruling 16, Fred 2026-10-27): Casey drafts report SQL. A request to MAKE
+// a report / an exportable list forces the draft path; a plain list question
+// stays a read answered in chat; the answer and repair stages get the report
+// appendix (schema + SQL rules) only on a report turn.
+describe('A16 report drafts across the stages', () => {
+  const svc = require(path.join(REPO, 'services', 'assistantService'));
+
+  test('making / exporting a report or list forces the draft path; plain list questions do not', () => {
+    const forced = ['Make a report of contacts with chapter 7 cases filed this year',
+      'Can you export a list of contacts in Detroit?', 'Give me a spreadsheet of clients with 341s next month',
+      'Export the contacts with no email on file', 'Please put together a CSV of open cases by stage',
+      'Build me an Excel list of clients missing paystubs', 'I need a list I can download of every lead from October',
+      'Save this as a report', 'Can I get a CSV of every client with a 341 this month?', 'Could we pull a report of no-shows?',
+      'I need a spreadsheet of every Chapter 13 client'];
+    const notForced = ['List my tasks', 'Show me the contacts in Detroit', 'Which clients have a 341 next week?',
+      'What reports do we have?', 'How do locked reports work?', 'Email me the report', 'Tell me about the reports page',
+      'Give me the phone number for Jane Doe', 'List the open cases for Mike'];
+    for (const q of forced) {
+      expect({ q, forced: svc.taskDraftRequested(q) }).toEqual({ q, forced: true });
+      expect({ q, report: svc.reportDraftRequested(q) }).toEqual({ q, report: true });
+    }
+    for (const q of notForced) expect({ q, forced: svc.taskDraftRequested(q) }).toEqual({ q, forced: false });
+    // The report test stands alone too (it also selects the answer appendix):
+    // a question about making reports is not a request for one.
+    for (const q of ['How do I make a report?', 'Can reports export to CSV?', 'What does the export button do?']) {
+      expect({ q, report: svc.reportDraftRequested(q) }).toEqual({ q, report: false });
+    }
+  });
+
+  test('a pronoun follow-up keeps the report noun from the conversation', () => {
+    const history = [{ role: 'user', text: 'I want a report of contacts with no email' }, { role: 'assistant', text: 'Which cases?' }];
+    expect(svc.reportDraftRequested('Make it chapter 13 only', history)).toBe(true);
+    expect(svc.reportDraftRequested('How many are there?', history)).toBe(false);
+  });
+
+  test('the report appendix and the larger answer budget ride only report turns', () => {
+    const approved = (question) => ({ question, history: [], viewer: { user_id: 7, display_name: 'S', initials: 'SS', roles: 'staff' }, workspace: null });
+    const plain = svc.answerSystemAppend(approved('List my tasks'), [{ kind: 'sql.read', rows: [] }]);
+    const report = svc.answerSystemAppend(approved('Make a report of contacts in Detroit'), [{ kind: 'sql.read', rows: [] }]);
+    expect(plain).not.toMatch(/REPORT DRAFT RULES/);
+    expect(report).toMatch(/REPORT DRAFT RULES/);
+    expect(report).toMatch(/CURATED SCHEMA AND SEMANTICS/);
+    expect(report).toContain("RIGHT(REGEXP_REPLACE(contact_ssn,'[^0-9]',''),4)");
+    expect(svc.answerMaxTokens([{ kind: 'sql.read', rows: [] }], approved('List my tasks'))).toBeUndefined();
+    expect(svc.answerMaxTokens([{ kind: 'sql.read', rows: [] }], approved('Make a report of contacts in Detroit'))).toBeGreaterThanOrEqual(8000);
+  });
+
+  test('every stage teaches the kind, and the answer stage may emit SQL only in its sql field', () => {
+    expect(answerPrompt).toContain('{"kind":"report.draft.v1","title":"1-150 chars"');
+    expect(answerPrompt).toContain('Do not output SQL (except the sql field of a report.draft.v1 action_draft)');
+    expect(repairPrompt).toContain('- report.draft.v1: kind,title,category,description,sql,params,columns_meta,caveats,row_limit,evidence');
+    expect(planPrompt).toContain('Do not refuse a request to make, save or export a report');
+    expect(planPrompt).toContain('ALWAYS return a query plan for a report request');
+  });
+});

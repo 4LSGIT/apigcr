@@ -60,6 +60,13 @@
   .action-draft-next { margin-top: 10px; padding-top: 9px; border-top: 1px solid var(--border); color: var(--text-muted); }
   .action-draft-next ol { margin: 5px 0 0; padding-left: 20px; }
   .action-draft-next-warning { margin-top: 6px; font-size: 11px; }
+  /* A16 report preview + SQL: a full-width grid row that scrolls on its own,
+     so a wide preview never pushes the chat sideways (min-width:0 drops the
+     grid item's auto floor). */
+  .action-draft-preview { grid-column: 1 / -1; min-width: 0; overflow-x: auto; }
+  .action-draft-preview table { border-collapse: collapse; font-size: 11px; margin-top: 4px; }
+  .action-draft-preview th, .action-draft-preview td { border: 1px solid var(--border); padding: 2px 5px; text-align: left; white-space: nowrap; }
+  .action-draft-preview pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 11px; margin: 4px 0 0; }
   .follow { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 9px; }
   .follow button { background: transparent; color: var(--accent); border: 1px solid var(--border); text-align: left; }
   .thinking { display: flex; align-items: center; gap: 10px; min-width: 215px; }
@@ -1094,6 +1101,99 @@ function hookCreateResult(draft, result) {
   return { hook_id: id };
 }
 
+// Report drafts (A16, ruling 16). The card SAVES one report definition
+// through POST /api/reports — the Reports editor's own create route — with
+// the definition exactly as the server validated and previewed it. The model
+// chose none of the fixed fields below (kind, visibility, viz, source) and
+// never the report_key (server-minted). Saving runs nothing else; Run and
+// the CSV export live in Reports, where Open lands.
+const REPORT_ACTION_KINDS = new Set(['report.draft.v1']);
+
+function reportDraftLabel() { return 'Save report'; }
+
+function reportSsnText(draft) {
+  if (draft.ssn === 'full') return 'FULL Social Security / EIN numbers — the saved report and its CSV show the whole number';
+  if (draft.ssn === 'last4') return 'last four digits only';
+  return '';
+}
+
+function reportCardText(draft) {
+  const d = draft.definition || {};
+  const p = draft.preview || {};
+  // One line per fact (the card splits on newlines); the SQL goes last, whole.
+  const one = (t) => String(t == null ? '' : t).replace(/\s*\n\s*/g, ' ');
+  const params = (d.params || []).map((x) => `${x.label || x.name} (${x.type}${x.default != null ? `, default ${x.default}` : ''})`);
+  const cols = (p.columns || []).filter((c) => !c.hidden).map((c) => c.label || c.key);
+  const lines = ['Report draft — not saved', `Title: ${one(d.title)}`, `Category: ${d.category}`,
+    `Description: ${one(d.description) || 'Empty'}`,
+    `Reads: ${(draft.tables || []).join(', ')}`,
+    `Columns: ${cols.join(', ')}${p.more_columns ? ` (+${p.more_columns} more)` : ''}`];
+  if (params.length) lines.push(`Parameters: ${params.join('; ')}`);
+  lines.push(`Rows now: ${p.row_count}${p.truncated ? ` — the saved report shows the first ${d.row_limit}` : ''} (row limit ${d.row_limit})`);
+  if (draft.ssn && draft.ssn !== 'none') lines.push(`SSN: ${reportSsnText(draft)}`);
+  if (draft.dob) lines.push('Date of birth: included');
+  (d.caveats || []).forEach((c) => lines.push(`Caveat: ${one(c)}`));
+  lines.push('Privacy: an export of this report contains client personal information — handle the CSV as confidential client data.');
+  lines.push(`SQL: ${d.sql_text}`);
+  return lines.join('\n');
+}
+
+function reportDraftFields(fields, draft) {
+  const text = reportCardText(draft);
+  appendDraftFieldsFromText(fields, text.slice(0, text.indexOf('\nSQL: ')));
+  const p = draft.preview || {};
+  const shown = (p.columns || []).map((c, i) => ({ c, i })).filter(({ c }) => !c.hidden);
+  if (shown.length && Array.isArray(p.rows) && p.rows.length) {
+    const wrap = document.createElement('div'); wrap.className = 'action-draft-preview';
+    const caption = document.createElement('div'); caption.className = 'action-draft-next-warning';
+    caption.textContent = `First ${p.rows.length} of ${p.row_count} rows${shown.some(({ c }) => c.masked) || draft.ssn === 'full' || draft.dob ? ' — SSN and date-of-birth values are hidden here; the saved report shows them' : ''}`;
+    const table = document.createElement('table');
+    const head = document.createElement('tr');
+    shown.forEach(({ c }) => { const th = document.createElement('th'); th.textContent = c.label || c.key; head.append(th); });
+    table.append(head);
+    p.rows.forEach((row) => {
+      const tr = document.createElement('tr');
+      shown.forEach(({ i }) => { const td = document.createElement('td'); td.textContent = row[i] == null ? '' : String(row[i]); tr.append(td); });
+      table.append(tr);
+    });
+    wrap.append(caption, table);
+    fields.append(wrap);
+  }
+  const sql = document.createElement('details'); sql.className = 'action-draft-preview';
+  const summary = document.createElement('summary'); summary.textContent = 'Show the SQL';
+  const pre = document.createElement('pre'); pre.textContent = String((draft.definition || {}).sql_text || '');
+  sql.append(summary, pre);
+  fields.append(sql);
+}
+
+function reportConfirmText(draft) {
+  const head = draft.ssn === 'full'
+    ? 'This report shows FULL Social Security / EIN numbers. Anyone at the firm can run it and export them.\n\n' : '';
+  return `${head}${reportCardText(draft)}\n\nSaving adds this report to Reports for every staff member. It changes no client record and sends nothing.`;
+}
+
+function reportDraftRequest(draft) {
+  const d = draft.definition || {};
+  if (typeof d.report_key !== 'string' || !d.report_key || typeof d.sql_text !== 'string' || !d.sql_text) {
+    throw new Error('This report draft has no usable definition.');
+  }
+  const body = {
+    report_key: d.report_key, title: d.title, category: d.category, description: d.description || null,
+    sql_text: d.sql_text, params: d.params || [], columns_meta: d.columns_meta || [], caveats: d.caveats || [],
+    row_limit: d.row_limit,
+    // Fixed by this builder, never by the model: a plain shared report, drawn
+    // as a table (a list is not a chart), labelled AI-authored in Reports.
+    kind: 'report', visibility: 'shared', viz: { type: 'table' }, source: 'ai',
+  };
+  return { path: '/api/reports', method: 'POST', body, idempotent: true };
+}
+
+function reportDraftResult(draft, result) {
+  const id = Number(result && result.report && result.report.id);
+  if (!Number.isSafeInteger(id) || id < 1) throw new Error('The report save returned no usable report id');
+  return { report_id: id };
+}
+
 // Direct sends (A14, ruling 15). ONE text or ONE email, sent NOW, to the one
 // contact phone/email row the server resolved from the evidence. The body on
 // the card is the server's FULLY RESOLVED text and the request below sends
@@ -1361,6 +1461,20 @@ const ACTION_FAMILIES = [
     open: (draft) => openAutomationRecord('automations.hook', draft.result_hook_id,
       `Hook #${draft.result_hook_id}`,
       'Find it under More → Automations → Hooks. It stays inactive until you activate it there.'),
+  },
+  {
+    id: 'report', kinds: REPORT_ACTION_KINDS, title: 'Report', noun: 'report', errorNoun: 'report save',
+    label: reportDraftLabel, text: reportCardText, request: reportDraftRequest, result: reportDraftResult,
+    fields: reportDraftFields, confirmText: reportConfirmText,
+    idField: 'report_id', appliedKey: 'result_report_id',
+    danger: (draft) => draft.ssn === 'full',
+    resultText: (payload) => `report #${payload.report_id}`,
+    entity: (draft, payload) => ({ kind: 'report', id: String(payload.report_id), label: (draft.definition || {}).title || `Report #${payload.report_id}` }),
+    failure: 'The report could not be saved.',
+    reviewWarning: 'Saving adds this report to Reports, where every staff member can run it — and edit it unless it is locked. It changes no client record and sends nothing. Open it in Reports to run it and export the CSV; the file contains client personal information. Canceling saves nothing.',
+    open: (draft) => openAutomationRecord('reports.report', draft.result_report_id,
+      `Report #${draft.result_report_id}`,
+      'Find it under More → Reports. Run it there and use CSV to export.'),
   },
   {
     id: 'send', kinds: SEND_ACTION_KINDS, title: 'Send now', noun: 'send', errorNoun: 'send',
@@ -1748,6 +1862,7 @@ function openEntity(kind, id, label) {
     else if (kind === 'appointment') P.showAppt(id);
     else if (kind === 'event') P.showEvent(id);
     else if (kind === 'task') P.showTask(id);
+    else if (kind === 'report') openAutomationRecord('reports.report', Number(id), `Report #${id}`, 'Find it under More → Reports.');
   } catch (_) { /* The links are useful only inside the YisraCase shell. */ }
 }
 

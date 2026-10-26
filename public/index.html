@@ -2445,6 +2445,7 @@
     #tabUserItem .yc-bt-frame { flex: 1 1 auto; display: block; width: 100%; height: auto; min-height: 0; margin: 0; border: 0; }
     #tabUserItem .yc-bt-frame[hidden] { display: none; }
   </style>
+  <script src="/js/csvSafe.js"></script>
   <script src="/scripts.js"></script>
   <!-- Stale-tab guard: force-reloads this page when the server is running a newer
        build than the one this tab booted on. Started at the bottom of the boot
@@ -6943,6 +6944,13 @@
       }),
       'automations.hook': Object.freeze({
         launcher: 'moreAutomations', page: 'tabMore', panel: 'automationsDiv', sub: 'hooks',
+      }),
+      // A16: one saved report, opened on Reports' run panel (it auto-runs;
+      // Run and CSV export live there). reports.html takes `report~<id>` —
+      // cold through ycSubTab.leaf.take(), warm through its
+      // ycAssistantOpenDestination bridge — and reports ready.
+      'reports.report': Object.freeze({
+        launcher: 'moreReports', page: 'tabMore', panel: 'reportsDiv', sub: 'report',
       }),
     });
     let assistantNavigationPending = null;

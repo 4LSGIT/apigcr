@@ -12,13 +12,13 @@
  * THE BOUNDARY BEING TESTED (plan, "Governing principle"): Casey proposes, the
  * staff member's own browser performs the write through the ordinary
  * authenticated route, and "the existing route ... is the final authority".
- * These tests ask that claim two questions for all 35 shipped kinds:
+ * These tests ask that claim two questions for all 36 shipped kinds:
  *   1. what does the route actually gate on?  (section 1 — no DB needed)
  *   2. where is the normalizer stricter than the route, i.e. where is the
  *      route NOT an authority at all?        (section 2 — real MySQL)
  *
  * MEASURED FACTS THIS FILE LOCKS
- *   · Every one of the 35 kinds maps to a route gated by lib/auth.jwtOrApiKey
+ *   · Every one of the 36 kinds maps to a route gated by lib/auth.jwtOrApiKey
  *     and NOTHING else: authentication (staff-audience JWT whose user_auth
  *     starts 'authorized'), no role, no capability, no row/firm scope. The
  *     one nuance is job.code_safe.create.v1 (safe-mode S3): its route carries
@@ -111,6 +111,8 @@ const KINDS = [
   { kind: 'sequence.step_insert.v1', method: 'POST', path: '/sequences/templates/1/steps' },
   { kind: 'sms.send.v1', method: 'POST', path: '/api/phone-lines/3/sms' },
   { kind: 'email.send.v1', method: 'POST', path: '/api/mail/send' },
+  // A16: the Reports editor's own create route.
+  { kind: 'report.draft.v1', method: 'POST', path: '/api/reports' },
 ];
 
 // The six original families' route files carry NO capability gate at all
@@ -122,7 +124,10 @@ const CAPABILITY_FREE_ROUTE_FILES = ['routes/api.tasks.js', 'routes/api.events.j
 const ROUTE_FILES = [...CAPABILITY_FREE_ROUTE_FILES, 'routes/scheduled_jobs.js', 'routes/workflows.js', 'routes/api.hooks.js', 'routes/sequences.js',
   // A14: the comms hub's send routes — the one family whose route IS an
   // authorization seat (per-channel can_send grants, SU step-up), pinned below.
-  'routes/api.phoneComms.js', 'routes/api.mail.js'];
+  'routes/api.phoneComms.js', 'routes/api.mail.js',
+  // A16: Reports — writes need a JWT with a userId (requireUser: API keys are
+  // 403), no role or capability; the per-row lock lives in reportService.
+  'routes/api.reports.js'];
 
 // ── Shared HTTP harness: the real routers behind the real jwtOrApiKey ──────
 // Both sections drive the SAME routers. Section 1 hands them a stub req.db
@@ -173,22 +178,22 @@ function call(a, { method, path: urlPath }, headers = {}, body = {}) {
 const bearer = (t) => ({ authorization: `Bearer ${t}` });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// SECTION 1 — the route-level gate, for all 35 kinds (no database)
+// SECTION 1 — the route-level gate, for all 36 kinds (no database)
 // ═══════════════════════════════════════════════════════════════════════════
 
-describe('P2 — what the canonical write route gates on (all 35 shipped kinds)', () => {
+describe('P2 — what the canonical write route gates on (all 36 shipped kinds)', () => {
   const OLD_SECRET = process.env.JWT_SECRET;
   beforeAll(() => { process.env.JWT_SECRET = SECRET; });
   afterAll(() => { process.env.JWT_SECRET = OLD_SECRET; });
 
   const app = appWith;
 
-  test('the 35 kinds cover 31 distinct route+method mounts', () => {
-    expect(KINDS).toHaveLength(35);
-    expect(new Set(KINDS.map((k) => `${k.method} ${k.path}`)).size).toBe(31);
+  test('the 36 kinds cover 32 distinct route+method mounts', () => {
+    expect(KINDS).toHaveLength(36);
+    expect(new Set(KINDS.map((k) => `${k.method} ${k.path}`)).size).toBe(32);
   });
 
-  test('no token: every kind is 401 — authentication is required for all 35', async () => {
+  test('no token: every kind is 401 — authentication is required for all 36', async () => {
     const a = app();
     for (const k of KINDS) {
       const res = await call(a, k);
@@ -297,6 +302,24 @@ describe('P2 — what the canonical write route gates on (all 35 shipped kinds)'
     expect(staff.status).toBe(403);
     const admin = await call(a, { method: 'POST', path: '/api/hooks' }, bearer(token({ roles: ['admin', 'staff'] })), body);
     expect([401, 403]).not.toContain(admin.status);
+  });
+
+  // A16: POST /api/reports gates on a logged-in user and nothing else — a
+  // roleless staff token reaches createReport (any staff member may author a
+  // report, S3; API keys are refused by requireUser), and the service — not
+  // the route — owns the per-row lock, which a create never meets (new rows
+  // start unlocked). The card therefore widens nothing.
+  test('report.draft.v1: a roleless staff token reaches createReport', async () => {
+    const reportService = require(path.join(REPO, 'services/reportService'));
+    const spy = jest.spyOn(reportService, 'createReport').mockImplementation(async () => ({ id: 1 }));
+    try {
+      for (const roles of [['staff'], [], ['attorney']]) {
+        spy.mockClear();
+        const res = await call(app(), { method: 'POST', path: '/api/reports' }, bearer(token({ roles })), { report_key: 'x' });
+        expect({ roles: roles.join(',') || 'none', status: res.status, reached: spy.mock.calls.length })
+          .toEqual({ roles: roles.join(',') || 'none', status: 201, reached: 1 });
+      }
+    } finally { spy.mockRestore(); }
   });
 
   test('job.code_safe.create.v1: safe body is roleless, standard body is capability-gated', async () => {

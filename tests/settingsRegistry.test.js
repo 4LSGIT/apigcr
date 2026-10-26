@@ -45,6 +45,7 @@ describe('classification snapshot', () => {
     "calendly_webhook_signing_key": "secret console console ui string",
     "casey_code_actions_enabled": "system system platform ui bool",
     "casey_hook_authoring_enabled": "system system platform ui bool",
+    "casey_report_authoring_enabled": "system system platform ui bool",
     "casey_sequence_authoring_enabled": "system system platform ui bool",
     "casey_send_enabled": "system system platform ui bool",
     "casey_workflow_authoring_enabled": "system system platform ui bool",

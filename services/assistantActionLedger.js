@@ -24,6 +24,8 @@ const KINDS = new Map([
   // a durable numeric id of its own for an SMS); the card opens its comms.
   ['sms.send.v1', 'contact_id'],
   ['email.send.v1', 'contact_id'],
+  // A16: a saved report definition (POST /api/reports).
+  ['report.draft.v1', 'report_id'],
 ]);
 function fail(status, message) { const e = new Error(message); e.status = status; throw e; }
 function actor(userId) {

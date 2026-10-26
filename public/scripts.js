@@ -1285,19 +1285,16 @@ const LOG_CSV_COLUMNS = [
   { key: 'by_name',        label: 'By' },
 ];
 
-function csvEscape(v) {
-  if (v == null) return '';
-  let s = typeof v === 'object' ? JSON.stringify(v) : String(v);
-  if (/[",\r\n]/.test(s)) {
-    s = '"' + s.replace(/"/g, '""') + '"';
-  }
-  return s;
-}
-
+// Every cell and header goes through the shared formula-injection neutraliser
+// (public/js/csvSafe.js — = + - @ tab CR → leading ', plain numbers kept):
+// log subjects, messages and data are SMS / email text clients wrote. Each
+// page that calls exportLogCsv loads /js/csvSafe.js (case, contact, index —
+// pinned by tests/csvSafe.test.js); a page without it fails the export loudly
+// rather than writing raw cells.
 function buildLogCsv(rows) {
-  const header = LOG_CSV_COLUMNS.map(c => csvEscape(c.label)).join(',');
+  const header = ycCsvSafe.line(LOG_CSV_COLUMNS.map(c => c.label));
   const lines = rows.map(r =>
-    LOG_CSV_COLUMNS.map(c => csvEscape(c.get ? c.get(r) : r[c.key])).join(',')
+    ycCsvSafe.line(LOG_CSV_COLUMNS.map(c => (c.get ? c.get(r) : r[c.key])))
   );
   return '\ufeff' + header + '\r\n' + lines.join('\r\n');
 }

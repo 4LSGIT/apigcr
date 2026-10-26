@@ -947,6 +947,35 @@ process, was resolved by the code-bodies guest-engine slice, 2026-10-26.)
   limit below): the route's refusal is shown live, but reopening the chat
   shows the conservative wording.
 
+## From the Ask Casey arc — A16 report drafts (2026-10-27) — deferred
+
+- **The other report kinds.** Update (PUT, honouring the lock), run, lock /
+  unlock, delete and restore are separate reviewed kinds; only create ships.
+  Update needs a P3 precondition (`updated_at` or a version) — PUT today
+  overwrites whatever is there, after snapshotting it.
+- **Views.** Casey saves `kind:'report'` (Reports' run panel, where CSV
+  lives). A work list with clickable rows is a `kind:'view'` in
+  customView.html; offering it means teaching the views half of the
+  reportBuild prompt (actions, select params, the default/sentinel trap).
+- **A CSV control on the card itself.** Today the export is Reports' own CSV
+  button, one click after Open. A card control would call the canonical run
+  route and build the same CSV (through `public/js/csvSafe.js`).
+- **The Reports AI author's prompt still says SSN and DOB are "forbidden
+  outright"** (`lib/aiPrompts/reportBuild.js` refusal list) — stale since the
+  2026-09-24 ruling, and now contradicted by ruling 2 of 2026-10-27 (last-4 by
+  default, full when asked). Left unchanged: changing what the Reports Ask box
+  writes is outside A16.
+- **Reports does not report its open record to the workspace URL.** The
+  `reports.report` destination hands `report~<id>` down, but `reports.html`
+  never calls `ycSubTab.leaf.report`, so a reload does not reopen the report
+  and the assistant's workspace context cannot name it.
+- **Preview masking is by column origin plus a full-read rule.** A direct
+  `contact_ssn` / `contact_dob` column is masked whatever its alias; when the
+  SQL reads either in full, expression columns are hidden and SSN-shaped cells
+  masked. A derived-table column that MySQL reports with the derived alias as
+  its origin falls to the shape mask only. The definition itself is never
+  masked — by design.
+
 ## Recipient opt-out (ruling 2026-10-27) — follow-ups
 
 - **Portal login PIN is exempt by design** (`portalAuthService`: the client
@@ -1518,3 +1547,20 @@ email_ingest_sources, the assistant chat tables, backups/junk) get no grant;
 ---
 
 *Last updated: 2026-10-21*
+
+## Contact SSN last-4 in API responses (Fred idea, 2026-10-27)
+
+`GET /api/contacts/:id` is a `SELECT *`, so every contact load puts the full
+`contact_ssn` in the browser (Casey's A14 click-time recipient re-read included,
+which never shows it). Two steps:
+
+1. **Additive, safe any time:** add a derived last-4 field to contact responses —
+   strip non-digits first (`ssn.replace(/\D/g,'').slice(-4)`, `null` when empty;
+   stored formats vary, 14 of 151 carry dashes). Name it neutrally
+   (`tax_id_last4`): orgs keep their EIN in `contact_ssn`. Decide every route
+   that returns contact rows (lists, search, case contacts) in the same slice.
+2. **Breaking, opt-in:** full `contact_ssn` only when asked (e.g.
+   `?include=ssn`), after a sweep of every frontend reader of `contact_ssn` from
+   these responses (contact page SSN display/edit, forms prefill, sync-bus
+   `changes` diffs). Server-side template resolution (`{{contacts.contact_ssn}}`,
+   Form 121) reads the DB directly and is unaffected.

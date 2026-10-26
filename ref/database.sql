@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-10-21T20:32:36.796Z
+-- Generated: 2026-10-26T19:58:05.865Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:4df863b38660c8366dce8f0b054abf84
+-- Fingerprint: sha256:372ed029993eebaaa922190ad48f21af
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -1131,7 +1131,7 @@ CREATE TABLE `contact_emails` (
   `email` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `label` enum('Personal','Work','Other') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'Personal',
   `is_primary` tinyint(1) NOT NULL DEFAULT '0',
-  `email_optout` tinyint(1) NOT NULL DEFAULT '0',
+  `email_optout` tinyint(1) NOT NULL DEFAULT '0' COMMENT 'messaging consent: 1 = opted out of email. THE consent flag (services/optoutService.js); only the active row (end_date IS NULL) counts; automation refuses, staff sends warn',
   `verified` tinyint(1) NOT NULL DEFAULT '0',
   `start_date` date DEFAULT NULL,
   `end_date` date DEFAULT NULL,
@@ -1158,7 +1158,7 @@ CREATE TABLE `contact_phones` (
   `phone` char(10) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `label` enum('Mobile','Home','Work','Office','Fax','Other') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'Mobile',
   `is_primary` tinyint(1) NOT NULL DEFAULT '0',
-  `sms_optout` tinyint(1) NOT NULL DEFAULT '0',
+  `sms_optout` tinyint(1) NOT NULL DEFAULT '0' COMMENT 'messaging consent: 1 = opted out of SMS/MMS. THE consent flag (services/optoutService.js); only the active row (end_date IS NULL) counts; automation refuses, staff sends warn',
   `mms_capable` tinyint(1) NOT NULL DEFAULT '1',
   `verified` tinyint(1) NOT NULL DEFAULT '0',
   `start_date` date DEFAULT NULL,
@@ -1285,8 +1285,6 @@ CREATE TABLE `contacts` (
   `contact_email2` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `contact_created` datetime DEFAULT NULL,
   `contact_updated` timestamp NULL DEFAULT NULL,
-  `contact_sms_optout` tinyint(1) NOT NULL DEFAULT '0',
-  `contact_email_optout` tinyint(1) NOT NULL DEFAULT '0',
   `contact_token` char(32) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin DEFAULT NULL COMMENT 'opaque per-contact bearer: booking prefill + video attribution; 22-char base62 via lib/token, legacy 32-hex; _bin: case-sensitive',
   `portal_enabled` tinyint(1) NOT NULL DEFAULT '1',
   `portal_session_version` int NOT NULL DEFAULT '1',

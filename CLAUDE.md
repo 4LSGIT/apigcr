@@ -169,6 +169,13 @@ Gates beyond Commands & gates below, every model:
   iteration count and a clean tree after each restore (2026-10-15: a
   worker's loop never backed up or restored, so mutations piled up; a
   manager's `jest $T` ran 3 suites of 7 and looked green).
+- **On a dev machine, 127.0.0.1:3306 IS production.** Every app pool off
+  Cloud Run connects over TCP to the local Cloud SQL Auth Proxy
+  (`lib/dbTarget.js`), and worktrees symlink `.env`. A test that reaches a
+  real pool without mocking it (e.g. `reportService.execute` with no pool
+  stub) dials production — denied only by luck of the account it picked
+  (A16, 2026-10-27). Mock the pool or point the suite at a scratch MySQL on
+  another port; never assume jest is isolated because it doesn't load `.env`.
 - New test assertions are mutation-checked (break the code, watch the test
   fail); no mocking the module under test; real-engine harnesses preferred —
   and required for a service's SQL predicates and the row types it reads

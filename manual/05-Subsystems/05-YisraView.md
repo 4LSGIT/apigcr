@@ -20,7 +20,9 @@ The rule of thumb: **a report is a number, a view is a to-do list.**
 - **Click straight into a case or client** — the row opens it as a file, exactly
   as if you'd searched for it.
 - **Copy a value** — a docket number, a hearing dial-in link — with one click.
-- **Export to CSV**.
+- **Export to CSV**. A cell that would open as a spreadsheet formula (it
+  starts with `=`, `+`, `-` or `@` and is not a plain number) gets a leading
+  `'` so it opens as text.
 - **Put a view on your own Home or sidebar** as a button of yours, named and
   iconed however you like.
 

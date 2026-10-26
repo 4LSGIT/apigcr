@@ -49,7 +49,13 @@ relies on. See [Locking](#locking) below.
 3. If it has **filters**, they appear in a row above the result. Change them and
    press **Run**.
 4. Use the chart-type buttons above the chart to reshape it, **PNG** to save the
-   picture, or **CSV** to download the underlying rows.
+   picture, or **CSV** to download the underlying rows. A cell that a
+   spreadsheet would treat as a formula (it starts with `=`, `+`, `-` or `@`,
+   and is not a plain number) is saved with a leading `'`, so it opens as
+   text — contact names and notes are partly typed by clients, and a CSV must
+   never run anything when it is opened. Every CSV YisraCase hands you works
+   this way: views, the activity-log export, and the database console's CSV
+   and Copy.
 5. **Show the SQL** at the bottom reveals the query. You never have to trust a
    number you can't check.
 
@@ -136,6 +142,19 @@ that writes SQL would open a door for no benefit.
 
 **What can I report on?** — the button next to **Ask** — shows you the same
 curated table list the model gets.
+
+### Reports from Ask Casey
+
+Ask Casey can also draft a report ("make me an exportable list of contacts
+with …"). Casey writes the definition, the server checks it with the same
+validator and runs it on the same read-only connection, and Casey's card shows
+the row count and the first rows before you save. **Save** adds it here,
+labelled as AI-written, and the card's button opens it on this page, where it
+runs and **CSV** exports it. Unlike the **Ask** box above, Casey has read
+records during its lookup, so read a Casey report's SQL and caveats like any
+report you didn't write. Unless you asked for Social Security numbers, a
+Casey report shows only their last four digits. See the Ask Casey chapter,
+*Making a report or an exportable list*.
 
 ---
 

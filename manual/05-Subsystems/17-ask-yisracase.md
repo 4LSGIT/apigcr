@@ -332,6 +332,40 @@ It cannot be recalled.*
 
 The off switch is the `casey_send_enabled` setting.
 
+### Making a report or an exportable list
+
+Ask Casey can turn "a list of contacts with x, y and z" into a saved report
+you can export: ask it to *make a report*, *export a list*, or *give me a
+spreadsheet / CSV* of what you need. (A plain "list the open cases for Mike"
+is answered in the chat as usual — up to 50 rows — and Casey may offer to make
+it an exportable report.)
+
+- **What the card shows.** The report's title, category and description, the
+  tables it reads, its columns and any filters you can change when you run it,
+  how many rows it returns right now, the first rows, any caveats, and the
+  query itself behind **Show the SQL**. The rows come from actually running the
+  report, so what you see is what you will get.
+- **What Save does.** **Review & save report** saves ONE new report in
+  More → Reports. It changes no client record and sends nothing. Reports are
+  firm-wide: everyone can see and run it, and edit it unless someone locks it.
+  The report is labelled as AI-written in Reports.
+- **Exporting.** After saving, the card's button opens the report in Reports;
+  it runs immediately, and **CSV** there downloads the rows. The file contains
+  client personal information — treat it as confidential client data.
+- **Social Security numbers.** Unless you ask for SSNs, a report shows only
+  the last four digits. Ask for the numbers themselves ("…with their SSNs") and
+  the report shows them in full — the card and the confirmation then warn that
+  anyone at the firm can run it and export them. Dates of birth can be
+  included. The card's own preview hides SSN and date-of-birth values either
+  way (they are kept out of the chat history); the saved report shows them.
+- **When you click.** The save goes through the same Reports save a person
+  uses, which checks the query again. If the server refuses it, the card says
+  nothing was saved; ask Casey to prepare it again.
+
+Casey saves a plain report, not a work-list *view* with clickable rows, and
+does not yet change, run, lock or delete existing reports. The off switch is
+the `casey_report_authoring_enabled` setting.
+
 ## Models and files
 
 The model selector offers two product-level choices:
@@ -501,6 +535,11 @@ setting);
 Casey never adds email attachments. The same applies when Casey inserts or
 edits a step in an existing workflow, and the publish card names every send
 step and its recipient.
+It may instead be one `report.draft.v1` proposal: one new report definition,
+previewed on the card and saved to Reports only when you confirm (see *Making
+a report or an exportable list*); it is the one proposal whose content is a
+query, checked by the same report validator and run on the same read-only
+report connection as Casey's own lookups.
 It may instead be one `hook.create.v1` proposal: an inbound hook created
 INACTIVE with one internal target pointing at an existing workflow or sequence
 template. Nothing fires through it until a human activates it in the Hooks

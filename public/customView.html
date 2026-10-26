@@ -95,6 +95,7 @@
 <link rel="stylesheet" href="/theme.css">
 <script src="/themeSync.js"></script>
 <script src="/js/ycPager.js"></script>
+<script src="/js/csvSafe.js"></script>
 <style>
   * { box-sizing: border-box; }
   body {
@@ -806,15 +807,12 @@ document.addEventListener("keydown", (ev) => {
 function exportCsv() {
   if (!lastResult || !lastResult.rows) return;
   const cols = displayCols;
-  const csvCell = (v) => {
-    const s = v === null || v === undefined ? "" : String(v);
-    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-  };
-  const lines = [cols.map(c => csvCell(c.label)).join(",")];
+  // Every cell and header through the shared formula-injection neutraliser
+  // (public/js/csvSafe.js — = + - @ tab CR → leading ', plain numbers kept).
+  const lines = [ycCsvSafe.line(cols.map(c => c.label))];
   for (const row of sortedRows()) {
-    lines.push(cols.map(c =>
-      csvCell(c.format === "date" ? RC.shortDate(row[c.key] ?? "") : row[c.key])
-    ).join(","));
+    lines.push(ycCsvSafe.line(cols.map(c =>
+      c.format === "date" ? RC.shortDate(row[c.key] ?? "") : row[c.key])));
   }
   const blob = new Blob([lines.join("\n")], { type: "text/csv" });
   const a = document.createElement("a");

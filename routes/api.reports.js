@@ -15,7 +15,7 @@
  * GET    /api/reports/:id/versions/:v        — one archived version, full payload
  * POST   /api/reports/:id/versions/:v/restore— restore that version over the live definition
  * POST   /api/reports/:id/lock               — lock / unlock; body { locked: boolean }
- * POST   /api/reports                        — create
+ * POST   /api/reports                        — create (optional Idempotency-Key, scope reports.create)
  * PUT    /api/reports/:id                    — update (report_key immutable; snapshots first)
  * DELETE /api/reports/:id                    — delete (snapshots first)
  *
@@ -48,6 +48,7 @@ const svc = require("../services/reportService");
 const authorSvc = require("../services/reportAuthorService");
 const manifest = require("../lib/reportSchema/manifest");
 const { makeLimiter } = require("../lib/rateLimiter");
+const { idempotentRequest, sendIdempotencyError } = require("../lib/requestIdempotency");
 
 function fail(res, tag, e) {
   const status = e.status || 500;
@@ -378,11 +379,19 @@ router.post("/api/reports/:id(\\d+)/run", jwtOrApiKey, async (req, res) => {
 // Authoring (any logged-in user; the lock is enforced in the service)
 // ─────────────────────────────────────────────────────────────────────────────
 
+// Optional `Idempotency-Key` header (scope reports.create — lib/
+// requestIdempotency.js; Ask Casey A16 sends its card's draft_id). No key =
+// the old behaviour and zero extra queries, so the editor and the AI author's
+// Save are untouched. A key replays the first create's report instead of
+// writing a second definition; a refused create (bad SQL, duplicate key)
+// releases the claim, so the same key may be retried.
 router.post("/api/reports", jwtOrApiKey, requireUser, async (req, res) => {
   try {
-    const report = await svc.createReport(req.db, req.body || {}, actorOf(req));
-    res.status(201).json({ status: "success", report });
+    const { value: report, replayed } = await idempotentRequest(req, "reports.create",
+      () => svc.createReport(req.db, req.body || {}, actorOf(req)));
+    res.status(201).json({ status: "success", report, ...(replayed ? { replayed: true } : {}) });
   } catch (e) {
+    if (sendIdempotencyError(res, e)) return;
     fail(res, "create", e);
   }
 });

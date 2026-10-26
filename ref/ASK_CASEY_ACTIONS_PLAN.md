@@ -615,7 +615,7 @@ strong idempotency, and an unambiguous delivered/queued/failed result.
 comms hub's own routes, so the user's per-channel `can_send` grant, SU step-up,
 per-user send rate, daily mail budget and `admin_audit_log` row all apply
 unchanged. These are the one family whose route IS an authorization seat
-(P2 matrix: 35 kinds, 31 mounts).
+(P2 matrix: 36 kinds, 32 mounts since A16).
 
 - **Recipient:** never typed. One evidence row must carry the exact
   `contact_id` and `phone_id` / `email_id`; the normalizer reloads the row
@@ -688,13 +688,109 @@ case/document links server-side. Show all recipients and external effects.
 File bytes remain browser-owned, and recall or external satisfaction requires
 especially clear finality and stale-state checks.
 
-#### A16: Reports
+#### A16: Reports — SHIPPED 2026-10-27 (report draft + save; ruling 16)
 
-Start with a report draft and preview. Save, update, run, export, share/lock,
-and delete are different proposal kinds. Server validation owns the allowed
-data source, filters, columns, scope, and limits; the model cannot supply query
-text. Review potentially large result/export scopes and access implications
-before executing or sharing.
+Fred's ask (2026-10-27): a staff member asked for "a list of contacts with
+parameters x, y and z" — Casey produces it and the user exports it. Save,
+update, run, share/lock and delete remain distinct proposal kinds; the first
+one is shipped.
+
+**What Reports is, measured.** Reports has no structured spec: a definition
+IS SQL text (`report_definitions.sql_text` plus an ordered `params` array bound
+to `?` placeholders), and the only validator (`lib/reportSchema/validator`
+`validateSql`) validates SQL. Every staff JWT already authors and previews SQL
+by hand, the Reports AI author has a model write it, and Casey's `sql.read`
+runs model-written SQL through the same validator and the least-privilege
+`yc_report` pool (109 runs in 90 days, measured live 2026-10-26). Ruling 16
+follows: Casey drafts report SQL, and the Reports engine is the authority.
+Live ground (2026-10-26): 13 saved definitions (4 views, 1 AI-sourced, 12
+locked, none since 2026-08-31), the largest 2,570 characters; 73 saved-report
+runs in 90 days, the largest 711 rows. CSV export is browser-side from a saved
+report's Run (`reports.html` `downloadCsv`), not a server route, and is not
+logged — its use cannot be measured.
+
+**As shipped.** Kind `report.draft.v1` on the card engine →
+`POST /api/reports` (the Reports editor's own create route).
+
+- **The draft** carries exactly the create body — title, category,
+  description, sql, params, columns_meta, caveats, row_limit, 0-8 optional
+  evidence refs. The normalizer runs the create route's own validators
+  (`validateParams`, `validateSql` with the declared param count) plus the
+  chat-denied column names, then **previews** the definition through
+  `reportService.execute` — the core `POST /api/reports/preview` calls — on the
+  `yc_report` pool with the definition's own defaults (a required param with no
+  default refuses), logged to `report_runs` as `assistant_report_draft`.
+  `sanitizeColumnsMeta` runs against the columns the engine actually returned
+  and a warning refuses the card, so what is stored is what was reviewed.
+  Widths are capped at the columns' (title 150, category 40) because relaxed
+  sql_mode would truncate. An engine or validator error is a 422 the repair
+  stage reads.
+- **Server-fixed fields:** the `report_key` is minted server-side
+  (`casey_<slug>_<6 hex>`); the browser's fixed builder pins `kind:'report'`,
+  `visibility:'shared'`, `viz:{type:'table'}` and `source:'ai'`.
+- **The card** shows title, category, description, the tables read, the
+  columns, the parameters, the real row count (and whether the saved report's
+  row limit truncates it), the first 10 rows, caveats, the SSN / DOB lines, a
+  privacy line ("an export of this report contains client personal
+  information"), and the SQL behind a **Show the SQL** disclosure. Save is
+  danger-styled when the report shows full SSNs.
+- **SSN (Fred's ruling 2, same day):** `contact_ssn` appears only inside the
+  canonical last-4 expression `RIGHT(REGEXP_REPLACE(contact_ssn,'[^0-9]',''),4)`
+  — select list or filter — unless the user's OWN current question (the signed
+  ticket's copy, never a model field) names SSNs / social security; then the
+  full number is allowed and the card and dialog warn. The classifier
+  (`reportSsnUse`) counts a match only where its literals are real code; any
+  other reference — bare, a derived-table column, an unterminated literal — is
+  full. The STORED card preview never carries a full SSN or a DOB: a column
+  whose origin is `contact_ssn` / `contact_dob` (or the chat-denied
+  `attachments` / `delivery_info`) is masked whatever its alias
+  (`reportService.execute`'s opt-in `fieldOrigins`), and when the SQL reads one
+  of them in full every expression column is hidden and SSN-shaped cells are
+  masked. Casey's conversational reads still refuse `contact_ssn` /
+  `contact_dob` unchanged. `contact_dob` is selectable in a report draft (the
+  2026-09-24 ruling); the card says so.
+- **Idempotency:** `POST /api/reports` takes an optional `Idempotency-Key`
+  (scope `reports.create`, canonical — the editor and the AI author's Save are
+  unchanged without one); the card sends its `draft_id`; a refused create
+  releases the key.
+- **Click-time freshness (correction 1), deliberately narrowed** like A17.3:
+  the reviewed object is the new definition itself, which nothing else can
+  change, and the route re-validates the SQL against the current manifest at
+  click time; the 15-minute card TTL and the idempotent draft_id cover the
+  rest. No precheck read is added.
+- **Open in Reports:** the shell destination `reports.report` {id}
+  (`launcher moreReports`, rest `report~<id>`); `reports.html` takes the held
+  rest on a cold boot (`ycSubTab.leaf.take`) or through its
+  `ycAssistantOpenDestination` bridge when warm, opens the report on its run
+  panel (it auto-runs; **CSV** exports there) and reports ready. Usable by
+  any native caller of `ycAssistantNavigate`.
+- **Export mechanics:** the user's click on Reports' own **CSV** button —
+  Casey initiates nothing past the save. The same slice neutralises CSV
+  formula injection in every human export — Reports, views
+  (`customView.html`), the log export (`scripts.js` `buildLogCsv`) and the SU
+  db console's CSV and TSV Copy — through one helper, `public/js/csvSafe.js`
+  (a cell starting with `= + - @` / tab / CR is prefixed with `'`; plain
+  numbers keep their value; headers too).
+- **Access:** unchanged — any logged-in staff member may create a report
+  (`requireUser`; API keys 403), new rows start unlocked, the lock lives in
+  `reportService`; the P2 matrix now covers 36 kinds / 32 mounts.
+- **Heuristic:** `reportDraftRequested` — a report / CSV / spreadsheet / Excel
+  / export noun (or a list paired with download) plus a making verb in a
+  request message. "List my tasks" and "show me the contacts in Detroit" stay
+  reads answered in chat; interrogatives never force a draft. The same test
+  selects the report appendix (`lib/aiPrompts/assistantReportDraft.js`: SQL
+  rules + the curated schema) and the 8,000-token answer ceiling, so other
+  answers pay nothing for them.
+- **Sync bus:** no report route is in `yc-sync.js` MATCHERS for human or Casey
+  saves alike; no Casey-only emit was added.
+- **Off switch:** `casey_report_authoring_enabled` ('0' = the kind does not
+  exist).
+
+**Deliberate narrowings** (each filed in `ref/plans.md`): Casey saves a
+`kind:'report'` (opens in Reports, where CSV lives), not a `view` (the
+customView work list with clickable rows); no update / run / lock / delete /
+restore kinds yet; the card offers no CSV of its own (the export is Reports'
+button, one click after Open).
 
 #### A17: Workflow definitions and executions
 
@@ -791,6 +887,11 @@ today**, not YCv3.
     shipped the same day (*Send steps in drafts* under A17.6); the
     no-model-invented-fetched-URL rule stands (email `attachment_urls` stay
     refused).
+16. **Casey drafts report SQL** (Fred, 2026-10-27): the Reports engine's
+    validator + `yc_report` pool are the authority, as for sql.read; the "no
+    query text" sentence (f94a2f3, planning session) is struck for Reports.
+    Same day, the SSN rule: a report shows `contact_ssn` in full only when the
+    user's own question asks for SSNs, otherwise last-4 — shipped as A16.
 
 **Defaults recorded for this family** (each stands until Fred rules otherwise):
 
