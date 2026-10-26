@@ -1,5 +1,7 @@
 # Ask Casey typed actions plan
 
+The destination is `ref/CASEY_VISION.md`; this document is the mechanics.
+
 Status: A0/A0.1, A1, A2, A3, A4, A4.1, and A5 implemented 2026-10-20. A2 covers
 the complete Task lifecycle; A3 covers reviewed Event create/update/complete/
 cancel; A4/A4.1 cover reviewed Appointment create, narrow update, attended,
@@ -1764,6 +1766,21 @@ takes effect immediately on matching mail/calls. Same exclusions as A20.2
 (`code` modes, model-invented destinations). Once this lands, trigger-rule
 authoring needs only its own copy of the same two pieces (the A18 trigger
 decision) — the recipes should match.
+
+#### R1: Read-loop continuation
+
+Planned 2026-10-26 (Fred: "at least it should be able to ask for more
+turns"; ref/CASEY_VISION.md). An investigation that stops on its budget
+(rounds, steps, rows, evidence characters, or time) is a defect against the
+data-synthesis goal, not a safety feature. Minimum bar: when the loop stops
+on a budget rather than `model_finished`, the answer says which budget
+stopped it and offers a "keep going" control; the user's click grants one
+more budget's worth and the investigation resumes from its accumulated
+evidence instead of starting over. Full shape: true continuation across
+turns with the evidence carried forward under the same signed-request
+rules. Grants are per click and never automatic (no unattended
+continuation). Graduates the scratch debt key
+`docs/20261022_casey_budget_continuation` when it lands.
 
 ### Secondary action candidates
 

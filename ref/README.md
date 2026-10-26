@@ -7,6 +7,9 @@ Reference material that lives next to the code. Three tiers:
   hook). **Never hand-edit.**
 - `routes.md` — auto-generated route inventory (`node scripts/updateRoutes.js`).
 - `SCHEMA_CONVENTIONS.md`, `plans.md`, `SETUP_cloud_tasks.md` — living reference.
+- `CASEY_VISION.md` — the destination Ask Casey is built toward (Fred's
+  north star) and the standing default that the burden of proof sits on
+  excluding a capability. Governs *whether*; the actions plan governs *how*.
 - `ASK_CASEY_ACTIONS_PLAN.md` — roadmap of the open Ask Casey actions arc
   (action slices A*, platform slices P*, release gates, rulings pending). Moves
   to `archive/` when the arc closes; its worker paste-prompts live in
