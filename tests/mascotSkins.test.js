@@ -70,8 +70,10 @@
 //     until the action takes.
 //   · the mud patch radius — asserted the engine's full 70 when only 70-26=44
 //     is guaranteed; now 40.
-//   · the mud scatter — asserted min(gaps) < 10, a coin flip; now max(gaps) >
-//     30, which the unscattered case cannot reach.
+//   · the mud scatter — asserted min(gaps) < 10, a coin flip; then max(gaps) >
+//     30 on the real Math.random, still a dice roll; now the jitter draws are
+//     pinned and max(gaps) > 22, which the unscattered case cannot reach and
+//     the pinned scatter cannot miss.
 //   · the mud press anchor — pressed mud[0], sometimes out on its own; now the
 //     densest neighbourhood.
 // Every one of those was a test that had been passing on luck, not a
@@ -1590,6 +1592,28 @@ describe('mascot engine', () => {
         },
         acts: [['sit', 1]], lookAct: 'sit', lines: ['.'], svg: '<svg/>', css: []
       });
+      // PIN THE SCATTER, and only the scatter. The jitter is two rand() draws
+      // per print inside maybeTrail (x, then y); left to the real
+      // Math.random, the scatter assertion below was a dice roll that came up
+      // short about one run in two thousand (seen: max gap 29.698 against a
+      // threshold of 30, 2026-10-27 — a land NO-GO on a clean tree). So
+      // those draws — and nothing else; roaming, pauses and targets keep
+      // their real randomness — come from a fixed pattern: prints in runs of
+      // three at offset (-18,-18), then three at (+18,+18), and so on. r = 0
+      // gives exactly -j; 1 - 1e-12 gives j to within 4e-11.
+      // Picked out by the call stack (this stub ← rand ← maybeTrail), so a
+      // rename of either function would quietly hand the draws back to the
+      // dice; `trailDraws` below is asserted so that cannot pass unnoticed.
+      const realRandom = win.Math.random;
+      let trailDraws = 0;
+      win.Math.random = function () {
+        const st = new Error().stack.split('\n');
+        if (/\bat rand\b/.test(st[2]) && /\bat maybeTrail\b/.test(st[3])) {
+          const print = trailDraws++ >> 1;
+          return Math.floor(print / 3) % 2 ? 1 - 1e-12 : 0;
+        }
+        return realRandom();
+      };
       win.Mascot.setSkin('mudlark');
       win.Mascot.on();
       win.Mascot.speed(8);           // fast-forward: see the note at the top of this file
@@ -1618,25 +1642,31 @@ describe('mascot engine', () => {
         return { x: Number(m[1]), y: Number(m[2]) };
       };
       // SCATTER — asserted as an upper bound the unscattered case CANNOT
-      // reach, not as a short gap it merely usually beats.
+      // reach, against a scatter that is GUARANTEED to clear it.
       //
       // Unjittered, a gap is bounded: the drop fires the moment the pet is
       // `every` (10) from the last one, having moved at most one dt-capped
       // step first (engine clamps dt to 0.05, so WALK 200 → 10px). Ten plus
-      // ten is 20, full stop. A gap past 30 can therefore only have come from
-      // the jitter, whatever the frame timing did.
+      // ten is 20, and posOf reads ROUNDED transforms (each coordinate off by
+      // at most half a pixel, so a gap by at most √2): under 21.5, whatever
+      // the frame timing did. A gap past 22 can only have come from the jitter.
       //
-      // The old form asserted min(gaps) < 10 — "some pair landed closer than
-      // the spacing rule allows". True on average and false often enough to
-      // matter: jitter is rand(-18,18) PER AXIS on each print independently,
-      // so a gap is a 10px step plus a ~20px random vector, which usually
-      // LENGTHENS it. Every gap clearing 10 is an ordinary roll of the dice,
-      // and it came up on a clean tree. This direction cannot do that.
+      // And with the draws pinned above, at least one gap must clear it: where
+      // a run of three changes over, the offset moves by (36,36) — 50.9px —
+      // while the walk moved under 20 and rounding at most √2, so that gap is
+      // at least 29.4. 30 prints hold nine changeovers; any one suffices.
+      //
+      // History: min(gaps) < 10 was a coin flip (a 10px step plus a ~20px
+      // random vector usually LENGTHENS a gap); max(gaps) > 30 on the real
+      // Math.random was right about the bound and still a dice roll about the
+      // scatter — 30 prints unluckily close to their walk line is rare, not
+      // impossible. Both came up on a clean tree; this form cannot.
+      expect(trailDraws).toBeGreaterThanOrEqual(2 * mud.length);
       const gaps = mud.slice(1).map((p, i) => {
         const a = posOf(mud[i]), b = posOf(p);
         return Math.hypot(b.x - a.x, b.y - a.y);
       });
-      expect(Math.max(...gaps)).toBeGreaterThan(30);
+      expect(Math.max(...gaps)).toBeGreaterThan(22);
 
       // 40, not the engine's own 70. The press does not centre the patch on
       // the print you aimed at: it centres it on whichever print it FINDS

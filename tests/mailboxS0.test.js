@@ -1037,7 +1037,12 @@ describe('S3-R — alias boxes', () => {
 
   test('PATCH: connection / ingest / emit refused on an alias; alias_label SU-editable there (user labels only), refused elsewhere and for managers', async () => {
     const { parent, alias } = await seedParentAndAlias();
-    const patch = (id, body, t = SU()) => call('PATCH', `/api/mailboxes/${id}`, { t, elev: t === SU() ? ELEV() : undefined, body });
+    // No `t` = the SU path (token + elevation); a `t` = that caller, no elevation.
+    // NOT `t = SU()` then `t === SU()`: each SU() is a fresh jwt.sign whose iat
+    // is the current SECOND, so two calls straddling a second boundary differ,
+    // the SU request goes out with no elevation and answers 401 — a flake that
+    // grew with load (land NO-GO 2026-10-27).
+    const patch = (id, body, t) => call('PATCH', `/api/mailboxes/${id}`, { t: t || SU(), elev: t ? undefined : ELEV(), body });
     let r;
     for (const body of [{ ingest_enabled: true }, { imap_secret: 'pw' }, { imap_host: 'evil.test', imap_secret: 'pw' },
       { emit_source_name: 'gmail-firm', emit_id_kind: 'rfc' }]) {
@@ -1069,7 +1074,7 @@ describe('S3-R — alias boxes', () => {
   test('re-parent (SU): alias_of re-points to another real box and re-copies its connection; never cleared, never self / an alias / missing, never on a full box, never a manager\'s', async () => {
     const { parent, alias } = await seedParentAndAlias();
     const other = await seedMailbox({ address: 'billing@4lsg.com', imap_host: 'imap.migadu.com', imap_port: 993, imap_user: 'billing@4lsg.com' });
-    const patch = (id, body, t = SU()) => call('PATCH', `/api/mailboxes/${id}`, { t, elev: t === SU() ? ELEV() : undefined, body });
+    const patch = (id, body, t) => call('PATCH', `/api/mailboxes/${id}`, { t: t || SU(), elev: t ? undefined : ELEV(), body });   // see the alias PATCH test
     let r = await patch(alias, { alias_of: other });
     expect(r.status).toBe(200);
     expect(r.json.mailbox).toMatchObject({ alias_of: other, alias_of_address: 'billing@4lsg.com', imap_host: 'imap.migadu.com', imap_user: 'billing@4lsg.com', has_secret: false });
