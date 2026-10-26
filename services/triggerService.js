@@ -65,7 +65,7 @@
 
 'use strict';
 
-const vm = require('node:vm');
+const guestCode              = require('../lib/guestCode');
 const { evaluateConditions } = require('./hookFilter');
 const hookMapper             = require('./hookMapper');
 const actionDispatchers      = require('../lib/actionDispatchers');
@@ -612,14 +612,15 @@ const EVENT_TYPES = {
 
 const ACTION_TYPES = new Set(['workflow', 'sequence', 'internal_function', 'http', 'hook']);
 
-// Review M7: code mode runs in node:vm with a hard timeout. The bare context
-// (no process, require, fetch, console, timers) is defence-in-depth against
-// the env-reach problem, and the timeout stops a while(true) from parking the
-// event loop until Cloud Run kills the container. NOT a security boundary
-// against a determined attacker — `input` is a host object, so the
-// constructor walk-back reaches `process`. Authoring is therefore gated:
-// every route that accepts a code body needs automations.manage
-// (lib/triggerCodeGate.js, 2026-10-26); containment is ref/plans.md.
+// Review M7, as of 2026-10-26: code mode runs in the QuickJS guest engine
+// inside the scrubbed sandbox child (lib/guestCode.js), never in this process.
+// It used to run here under node:vm, which is not a boundary — `input` was a
+// host object, so the constructor walk-back reached `process`. The guest has
+// no process, require, fetch, timers or network, and a runaway body is
+// interrupted (or its child killed) instead of parking the event loop. The
+// authoring gate stays as it was (lib/triggerCodeGate.js: every route that
+// accepts a code body needs automations.manage) — relaxing it is Fred's call
+// after a soak (ref/plans.md).
 //
 // 2026-08-29: raised 200 -> 15000 and made it env-overridable, matching
 // job_executor's CUSTOM_CODE_TIMEOUT_MS idiom.
@@ -654,22 +655,21 @@ const CODE_TIMEOUT_MS = (() => {
   const raw = Number(process.env.TRIGGER_CODE_TIMEOUT_MS);
   return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 15000;
 })();
-function _runCode(code, envelope) {
-  const ctx = vm.createContext(Object.create(null));
-  ctx.input = envelope;
-  const script = new vm.Script(`(function(input){ ${code} \n})(input)`);
-  const startedAt = Date.now();
+// `opts.runCode` is the preview seam (guestCode.batchRunner); production
+// always runs guestCode.runBody. ASYNC: every caller awaits — an un-awaited
+// promise is truthy, which would make every code match a match.
+async function _runCode(code, envelope, { truthy = false, runCode = guestCode.runBody } = {}) {
   try {
-    return script.runInContext(ctx, { timeout: CODE_TIMEOUT_MS });
+    return await runCode(code, envelope, { timeoutMs: CODE_TIMEOUT_MS, truthy, label: 'trigger code' });
   } catch (err) {
-    // Same enrichment as job_executor's custom_code path: vm names the limit
-    // but not the actual elapsed wall time, which is the diagnostic that
-    // separates "slow code" from "starved instance". Both callers
+    // Same enrichment as job_executor's custom_code path: the guest names the
+    // limit and the elapsed wall time, which is the diagnostic that separates
+    // "slow code" from "starved instance". Both callers
     // (_evaluateMatch / _runTransform) interpolate err.message verbatim, so
     // this lands in trigger_executions.outcomes.warnings as-is.
-    if (/Script execution timed out/i.test(err.message || '')) {
+    if (err && err.code === 'GUEST_CODE_TIMEOUT') {
       const e = new Error(
-        `${err.message} (elapsed ${Date.now() - startedAt}ms). ` +
+        `${err.message}. ` +
         `A trivial script that exceeds this is almost always a throttled ` +
         `Cloud Run instance, not slow code — check whether the chain ran detached.`
       );
@@ -761,7 +761,7 @@ async function listActiveRulesForEvent(db, eventType) {
  * broken rule must never fire actions. Only the reporting changed — the
  * caller now records the reason and alerts on it.
  */
-function _evaluateMatch(rule, envelope) {
+async function _evaluateMatch(rule, envelope, { runCode } = {}) {
   let config = rule.match_config;
   if (typeof config === 'string') {
     try {
@@ -811,7 +811,7 @@ function _evaluateMatch(rule, envelope) {
       return { matched: false, error: `empty code on code match mode` };
     }
     try {
-      return { matched: !!_runCode(code, envelope), error: null };
+      return { matched: (await _runCode(code, envelope, { truthy: true, runCode })) === true, error: null };
     } catch (err) {
       console.warn(
         `[triggerService] rule ${rule.id} (${rule.name}) code error: ${err.message}`
@@ -834,7 +834,7 @@ function _evaluateMatch(rule, envelope) {
 /**
  * @returns {{ ok:true, output:object } | { ok:false, error:string }}
  */
-function _runTransform(rule, envelope) {
+async function _runTransform(rule, envelope, { runCode } = {}) {
   const mode = rule.transform_mode || 'passthrough';
 
   if (mode === 'passthrough') {
@@ -880,7 +880,7 @@ function _runTransform(rule, envelope) {
     const code = typeof config === 'string' ? config : config?.code;
     if (!code) return { ok: false, error: `empty code on code transform mode` };
     try {
-      const output = _runCode(code, envelope);
+      const output = await _runCode(code, envelope, { runCode });
       if (output == null || typeof output !== 'object') {
         return { ok: false, error: `code transform must return an object (got ${typeof output})` };
       }
@@ -1274,7 +1274,7 @@ async function processEvent(db, envelope) {
   const failedMatchRules = [];   // [{ rule, error }]
 
   for (const rule of rules) {
-    const mv = _evaluateMatch(rule, envelope);
+    const mv = await _evaluateMatch(rule, envelope);
     if (mv.error) {
       const w = `rule ${rule.id} (${rule.name}) match failed: ${mv.error} — rule did not run`;
       console.warn(`[triggerService] ${w}`);
@@ -1301,7 +1301,7 @@ async function processEvent(db, envelope) {
     // the ingest service: matched reflects MATCH.
     matchedRuleIds.push(rule.id);
 
-    const tr = _runTransform(rule, envelope);
+    const tr = await _runTransform(rule, envelope);
     if (tr.warnings && tr.warnings.length) {
       warnings.push(...tr.warnings.map(w => `rule ${rule.id} (${rule.name}) mapper: ${w}`));
     }
@@ -1497,7 +1497,7 @@ async function evaluateDryRun(db, envelope) {
   const report = [];
 
   for (const rule of rules) {
-    const mv = _evaluateMatch(rule, envelope);
+    const mv = await _evaluateMatch(rule, envelope);
     const entry = {
       rule_id: rule.id,
       name:    rule.name,
@@ -1509,7 +1509,7 @@ async function evaluateDryRun(db, envelope) {
       ...(mv.error ? { match_error: mv.error } : {}),
     };
     if (entry.matched) {
-      const tr = _runTransform(rule, envelope);
+      const tr = await _runTransform(rule, envelope);
       entry.transform_ok = tr.ok;
       if (!tr.ok) {
         entry.transform_error = tr.error;
@@ -1530,14 +1530,15 @@ async function evaluateDryRun(db, envelope) {
 /**
  * Evaluate a DRAFT (unsaved) match+transform config against one envelope —
  * the ingest test-match precedent (Slice 10A) applied to triggers: the T2
- * editor tests its CURRENT state without saving. Pure function, no DB, no
- * dispatch, no rows.
+ * editor tests its CURRENT state without saving. No DB, no dispatch, no rows.
+ * ASYNC since code mode runs in the guest engine (lib/guestCode.js) — the
+ * same engine the live path uses, so the editor's answer is production's.
  *
  * @param {{match_mode, match_config, transform_mode, transform_config}} draft
  * @param {object} envelope
- * @returns {{matched:boolean, match_error?:string, transform_ok?:boolean, transformed?:object, transform_error?:string}}
+ * @returns {Promise<{matched:boolean, match_error?:string, transform_ok?:boolean, transformed?:object, transform_error?:string}>}
  */
-function evaluateDraft(draft, envelope) {
+async function evaluateDraft(draft, envelope) {
   const rule = {
     id: 0,
     name: '(draft)',
@@ -1546,10 +1547,10 @@ function evaluateDraft(draft, envelope) {
     transform_mode:   draft.transform_mode || 'passthrough',
     transform_config: draft.transform_config ?? null,
   };
-  const mv = _evaluateMatch(rule, envelope);
+  const mv = await _evaluateMatch(rule, envelope);
   const out = { matched: mv.matched, ...(mv.error ? { match_error: mv.error } : {}) };
   if (out.matched) {
-    const tr = _runTransform(rule, envelope);
+    const tr = await _runTransform(rule, envelope);
     out.transform_ok = tr.ok;
     if (tr.ok) out.transformed = tr.output;
     else out.transform_error = tr.error;

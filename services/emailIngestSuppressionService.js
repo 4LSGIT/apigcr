@@ -19,8 +19,9 @@
  *
  * Match grammar
  *   - 'conditions' mode reuses services/hookFilter.evaluateConditions.
- *   - 'code' mode evaluates the rule's code body in
- *     `new Function('input', code)(envelope)` — mirrors hookService.runFilter.
+ *   - 'code' mode runs the rule's code body (a function body over `input`,
+ *     using `return`) in the QuickJS guest engine in the sandbox child —
+ *     lib/guestCode.js, 15 s limit (GUEST_CODE_TIMEOUT_MS). No Intl.
  *   - Throwing rules log a warning and count as non-match. Fail-safe:
  *     errors never suppress.
  *
@@ -44,6 +45,9 @@
  */
 
 const { evaluateConditions } = require('./hookFilter');
+// Code bodies run in the QuickJS guest engine in the sandbox child — never in
+// this process (lib/guestCode.js; CLAUDE.md custom_code invariant).
+const guestCode = require('../lib/guestCode');
 
 
 // ─────────────────────────────────────────────────────────────
@@ -75,7 +79,9 @@ async function listActiveSuppressions(db) {
 // to non-match with a warning.
 // ─────────────────────────────────────────────────────────────
 
-function _evaluateRule(rule, envelope) {
+// ASYNC: code mode awaits the guest. evaluateSuppressions awaits every call —
+// an un-awaited promise is truthy, which would suppress every message.
+async function _evaluateRule(rule, envelope) {
   // Parse config defensively. mysql2 returns JSON columns as objects
   // already, but a pre-stringified value can sneak in (e.g., if a rule
   // was inserted with the JSON wrapped in JSON_QUOTE() or via a tool
@@ -133,9 +139,9 @@ function _evaluateRule(rule, envelope) {
       return false;
     }
     try {
-      // eslint-disable-next-line no-new-func
-      const fn = new Function('input', code);
-      return !!fn(envelope);
+      return (await guestCode.runBody(code, envelope, {
+        timeoutMs: guestCode.DEFAULT_TIMEOUT_MS, truthy: true, label: 'emailIngestSuppression code',
+      })) === true;
     } catch (err) {
       console.warn(
         `[emailIngestSuppression] rule ${rule.id} (${rule.name}) ` +
@@ -202,7 +208,7 @@ async function evaluateSuppressions(db, envelope) {
 
   const matchedRuleIds = [];
   for (const rule of rules) {
-    if (_evaluateRule(rule, envelope)) matchedRuleIds.push(rule.id);
+    if (await _evaluateRule(rule, envelope)) matchedRuleIds.push(rule.id);
   }
 
   if (matchedRuleIds.length) {

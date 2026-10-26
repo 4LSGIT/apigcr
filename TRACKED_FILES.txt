@@ -54,6 +54,7 @@ lib/domainEvents.js
 lib/errorMiddleware.js
 lib/escapeLike.js
 lib/firmConfig.js
+lib/guestCode.js
 lib/hookSpool.js
 lib/ingestCodeGate.js
 lib/ingestSampleProjection.js
@@ -1155,6 +1156,8 @@ tests/checklistView.autoGrow.test.js
 tests/checklists.s1notes.test.js
 tests/clioTool.test.js
 tests/clioTool2.test.js
+tests/codeBodyParity.test.js
+tests/codeBodySites.guest.test.js
 tests/commsAdminTools.pane.test.js
 tests/commsArchive.lockNames.mysql.test.js
 tests/commsArchive.s1b.mysql.test.js
@@ -1345,6 +1348,7 @@ tests/formtemplates.d4schema.test.js
 tests/formtemplates.formdev.test.js
 tests/formtemplates.x1visibility.test.js
 tests/genTypeKeyBackfill.test.js
+tests/guestCode.test.js
 tests/helpers/bcPolyfill.js
 tests/helpers/caseySendProposalDb.js
 tests/helpers/commsArchiveSchema.js

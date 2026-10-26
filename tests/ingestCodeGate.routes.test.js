@@ -6,20 +6,26 @@
  * (lib/ingestCodeGate.js).
  *
  * WHY THIS SUITE EXISTS: ingest rule match/transform code and suppression
- * code run IN THIS PROCESS via `new Function('input', code)`, where `process`
- * — and process.env, with the DB credentials and JWT_SECRET — is reachable.
+ * code ran IN THIS PROCESS via `new Function('input', code)`, where `process`
+ * — and process.env, with the DB credentials and JWT_SECRET — was reachable.
  * Every ingest management route was plain jwtOrApiKey, so any staff JWT could
  * save a code rule or POST a code body to test-transform and read back
- * `process.env` in the response. A gate on one writer is a gate on none
- * (scheduledJobs.codeGate.test.js), so every code-accepting route is here,
- * both channels.
+ * `process.env` in the response. Since 2026-10-26 the bodies run in the
+ * QuickJS guest engine in the sandbox child (lib/guestCode.js) and find no
+ * `process` (the admin cases assert it), but the gate stays exactly as it
+ * was — relaxing it is Fred's call after a soak. A gate on one writer is a
+ * gate on none (scheduledJobs.codeGate.test.js), so every code-accepting
+ * route is here, both channels.
  *
  * HARNESS: the REAL routers and services on an ephemeral socket. Only
  * jwtOrApiKey is mocked (to set req.auth). req.db is a scripted stub that
  * serves the rows the routes read and RECORDS every statement, so a refusal
  * proves "nothing written" (no INSERT/UPDATE reached the db). "Nothing
- * executed" is proven directly: the code bodies bump a global counter, which
- * a refused request must leave untouched and an allowed one must bump.
+ * executed" is proven directly: every input a marked body is run against is
+ * counted at the guest engine's one entry point (guestCode.runBodies,
+ * observed — the real one still runs), which a refused request must leave at
+ * zero and an allowed one must bump. The bodies also bump the global they can
+ * see; the HOST global must stay untouched on every path (afterEach).
  */
 
 process.env.EMAIL_DOMAINS = '4lsg.com';
@@ -148,7 +154,10 @@ async function send(chName, method, urlPath, payload) {
   }
 }
 
-const hits = () => globalThis[HIT] || 0;
+const guestCode = require('../lib/guestCode');
+const realRunBodies = guestCode.runBodies;
+let guestRuns = 0;
+const hits = () => guestRuns;
 
 function expectRefused(r) {
   expect(r.status).toBe(403);
@@ -161,9 +170,14 @@ function expectRefused(r) {
 beforeAll(() => {
   jest.spyOn(console, 'warn').mockImplementation(() => {});
   jest.spyOn(console, 'error').mockImplementation(() => {});
+  jest.spyOn(guestCode, 'runBodies').mockImplementation(async (body, inputs, ...rest) => {
+    if (String(body).includes(HIT)) guestRuns += inputs.length;
+    return realRunBodies(body, inputs, ...rest);
+  });
 });
 afterAll(() => jest.restoreAllMocks());
-beforeEach(() => { delete globalThis[HIT]; });
+beforeEach(() => { delete globalThis[HIT]; guestRuns = 0; });
+afterEach(() => { expect(globalThis[HIT]).toBeUndefined(); });   // never the host's global
 
 describe.each(['email', 'phone'])('%s ingest — code bodies need automations.manage', (ch) => {
   const base = `/api/${ch}-ingest`;
@@ -183,7 +197,7 @@ describe.each(['email', 'phone'])('%s ingest — code bodies need automations.ma
       mockAuth = ADMIN;
       const r = await send(ch, 'POST', `${base}/rules/test-transform`, codeBody);
       expect(r.status).toBe(200);
-      expect(r.body.transform).toEqual({ ok: true, output: { leaked: 'object' } });
+      expect(r.body.transform).toEqual({ ok: true, output: { leaked: 'undefined' } });   // no process in the guest
       expect(hits()).toBe(1);
     });
 

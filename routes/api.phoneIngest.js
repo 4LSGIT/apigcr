@@ -33,9 +33,10 @@ const metaService          = require('../services/phoneIngestMetaService');
 const sampleService        = require('../services/phoneIngestSampleService');
 const rulePreview          = require('../services/ingestRulePreviewService');
 const ingestCodeGate = require('../lib/ingestCodeGate');
-// Code-mode bodies run in THIS process via new Function — every writer and
-// tester that accepts one refuses it without automations.manage
-// (lib/ingestCodeGate.js; CLAUDE.md, the custom_code invariant).
+// Code-mode bodies run in the QuickJS guest engine in the sandbox child
+// (lib/guestCode.js) — every writer and tester that accepts one still refuses
+// it without automations.manage (lib/ingestCodeGate.js; CLAUDE.md, the
+// custom_code invariant).
 
 
 // ─────────────────────────────────────────────────────────────

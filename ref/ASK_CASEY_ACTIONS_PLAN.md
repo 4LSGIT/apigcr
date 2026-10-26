@@ -1573,7 +1573,9 @@ sequences. Measured, they cannot:
   leaves the rows alone.
 - `match_config` and `transform_config` structure, code syntax, and whether a
   target workflow or template exists or is published are **not** validated.
-- `code` mode runs in `node:vm` with a 15 s timeout, savable by any staff JWT.
+- `code` mode runs in the QuickJS guest in the sandbox child (`lib/guestCode.js`)
+  with a 15 s limit; saving or test-drafting it needs `automations.manage`
+  (`lib/triggerCodeGate.js`).
 - There is no concurrency check at all: `getRule` runs outside the transaction
   with no row lock.
 - Replay re-dispatches for real with no idempotency, and the stale sweep
@@ -1713,9 +1715,11 @@ action what it WOULD do (workflow inactive/unpublished refusals, a sequence's
 missing contact id, a hook's state, an internal function's resolved params,
 an `http` host — never its URL). Deliberate narrowings: the kind previews a
 STORED rule only — it refuses every native body field, because a `code` body
-runs in this process via `new Function` and a model-supplied one would be
-model-composed code executing in-process (the native routes accept that only
-from holders of `automations.manage` — `lib/ingestCodeGate.js`); and it prepares an email
+then ran in this process via `new Function` and a model-supplied one would
+have been model-composed code executing in-process (the native routes accept
+that only from holders of `automations.manage` — `lib/ingestCodeGate.js`).
+Since 2026-10-26 code bodies run in the QuickJS guest (`lib/guestCode.js`);
+the narrowing stands until Fred rules otherwise (`ref/plans.md`); and it prepares an email
 envelope the way `evaluateRules` does (`body` = text || html), which the
 native tester does not on full-fidelity rows (filed). A20.2 adds draft
 (unsaved) conditions/mapper preview if it needs one — with a ReDoS answer for
@@ -1733,7 +1737,8 @@ Fred rules otherwise):
 
 - Create writes the rule inactive with `conditions` match mode and
   `passthrough`/`mapper` transform only; Casey never composes `code`-mode
-  match or transform bodies (same `node:vm` reason as trigger rules).
+  match or transform bodies (recorded when those bodies ran in-process; they
+  now run in the QuickJS guest — revisiting this default is Fred's call).
 - Actions mirror A19.0's shape: target an EXISTING workflow or sequence
   template (or hook), verified at proposal time; `internal_function` actions
   come from the A17 allowlist; `http` actions follow A17.4b's webhook

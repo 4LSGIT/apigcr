@@ -32,8 +32,9 @@
  *
  * Match grammar (mirrors Slice 2.1's suppression service exactly)
  *   - 'conditions' mode reuses services/hookFilter.evaluateConditions.
- *   - 'code' mode evaluates the rule's code body in
- *     `new Function('input', code)(envelope)`.
+ *   - 'code' mode runs the rule's code body (a function body over `input`,
+ *     using `return`) in the QuickJS guest engine in the sandbox child —
+ *     lib/guestCode.js, 15 s limit (GUEST_CODE_TIMEOUT_MS). No Intl.
  *   - Throwing match rules log a warning and count as NON-match (fail-safe:
  *     a broken rule never fires actions).
  *   - NULL match_config on conditions mode is treated as NON-match, NOT
@@ -45,7 +46,7 @@
  * Slice 2.3 scope — mirrors how Slice 2.1 inlined match-eval)
  *   - 'passthrough' → envelope unchanged.
  *   - 'mapper'      → hookMapper.executeMapper(transform_config, envelope).output
- *   - 'code'        → new Function('input', code)(envelope)
+ *   - 'code'        → the body in the guest engine (lib/guestCode.js)
  *   A throwing/failed transform → log warning, treat the rule as NON-firing
  *   (don't feed garbage to actions). The warning text is collected and
  *   surfaced to the caller so it can land in executions.metadata.
@@ -77,6 +78,10 @@
 
 const { evaluateConditions } = require('./hookFilter');
 const hookMapper = require('./hookMapper');
+// Code bodies run in the QuickJS guest engine in the sandbox child — never in
+// this process (lib/guestCode.js; CLAUDE.md custom_code invariant).
+const guestCode = require('../lib/guestCode');
+const _consoleWarn = (...args) => console.warn(...args);
 const actionDispatchers = require('../lib/actionDispatchers');
 // hookService is required for the 'hook' action type (cross-service call).
 // Circular-require check (Slice 2.3): hookService → lib/actionDispatchers →
@@ -152,7 +157,12 @@ async function listActiveRules(db) {
 /**
  * @returns {boolean} true if the rule matches the envelope.
  */
-function _evaluateMatch(rule, envelope) {
+// ASYNC: code mode awaits the guest. Every caller awaits — an un-awaited
+// promise is truthy, so a dropped await would make every rule match.
+// `warn` / `runCode` are the preview seams (ingestRulePreviewService): a
+// per-call warning sink, and guestCode.batchRunner for a whole corpus in one
+// child. Production passes neither.
+async function _evaluateMatch(rule, envelope, { warn = _consoleWarn, runCode = guestCode.runBody } = {}) {
   // Defensive JSON parse — mysql2 returns json columns as objects, but a
   // pre-stringified value can sneak in. Same guard as the suppression service.
   let config = rule.match_config;
@@ -160,7 +170,7 @@ function _evaluateMatch(rule, envelope) {
     try {
       config = JSON.parse(config);
     } catch (e) {
-      console.warn(
+      warn(
         `[emailIngestRule] rule ${rule.id} (${rule.name}): ` +
         `match_config is not parseable JSON — treating as non-match`
       );
@@ -171,7 +181,7 @@ function _evaluateMatch(rule, envelope) {
   if (rule.match_mode === 'conditions') {
     // NULL → non-match (NOT match-all). See module header + Slice 2.1.
     if (config == null) {
-      console.warn(
+      warn(
         `[emailIngestRule] rule ${rule.id} (${rule.name}): ` +
         `NULL match_config on conditions mode — treating as non-match. ` +
         `For an explicit always-match, use {operator:'and', conditions:[]}.`
@@ -181,7 +191,7 @@ function _evaluateMatch(rule, envelope) {
     try {
       return !!evaluateConditions(config, envelope);
     } catch (err) {
-      console.warn(
+      warn(
         `[emailIngestRule] rule ${rule.id} (${rule.name}) ` +
         `conditions error: ${err.message}`
       );
@@ -192,18 +202,18 @@ function _evaluateMatch(rule, envelope) {
   if (rule.match_mode === 'code') {
     const code = typeof config === 'string' ? config : config?.code;
     if (!code) {
-      console.warn(
+      warn(
         `[emailIngestRule] rule ${rule.id} (${rule.name}): ` +
         `empty code on code mode — treating as non-match`
       );
       return false;
     }
     try {
-      // eslint-disable-next-line no-new-func
-      const fn = new Function('input', code);
-      return !!fn(envelope);
+      return (await runCode(code, envelope, {
+        timeoutMs: guestCode.DEFAULT_TIMEOUT_MS, truthy: true, label: 'emailIngestRule code',
+      })) === true;
     } catch (err) {
-      console.warn(
+      warn(
         `[emailIngestRule] rule ${rule.id} (${rule.name}) ` +
         `code error: ${err.message}`
       );
@@ -211,7 +221,7 @@ function _evaluateMatch(rule, envelope) {
     }
   }
 
-  console.warn(
+  warn(
     `[emailIngestRule] rule ${rule.id} (${rule.name}): ` +
     `unknown match_mode '${rule.match_mode}' — treating as non-match`
   );
@@ -230,7 +240,7 @@ function _evaluateMatch(rule, envelope) {
  *   ok:false means the transform threw / failed — the caller treats the rule
  *   as non-firing and records the warning. (passthrough always succeeds.)
  */
-function _runTransform(rule, envelope) {
+async function _runTransform(rule, envelope, { warn = _consoleWarn, runCode = guestCode.runBody } = {}) {
   const mode = rule.transform_mode || 'passthrough';
 
   if (mode === 'passthrough') {
@@ -268,7 +278,7 @@ function _runTransform(rule, envelope) {
       // a warning string but do NOT fail the transform — the actions get the
       // partial output, same as a hook target would.
       if (errors && errors.length) {
-        console.warn(
+        warn(
           `[emailIngestRule] rule ${rule.id} (${rule.name}) mapper warnings: ` +
           errors.join('; ')
         );
@@ -285,9 +295,9 @@ function _runTransform(rule, envelope) {
       return { ok: false, error: `empty code on code transform mode` };
     }
     try {
-      // eslint-disable-next-line no-new-func
-      const fn = new Function('input', code);
-      const output = fn(envelope);
+      const output = await runCode(code, envelope, {
+        timeoutMs: guestCode.DEFAULT_TIMEOUT_MS, label: 'emailIngestRule code',
+      });
       if (output == null || typeof output !== 'object') {
         return {
           ok: false,
@@ -602,7 +612,7 @@ async function evaluateRules(db, envelope) {
 
   for (const rule of rules) {
     // 1. Match.
-    if (!_evaluateMatch(rule, envelope)) continue;
+    if (!(await _evaluateMatch(rule, envelope))) continue;
 
     // Rule matched (regardless of whether it has actions or its transform
     // succeeds). matched_rules reflects MATCH, so record it now and bump.
@@ -626,7 +636,7 @@ async function evaluateRules(db, envelope) {
     //    action_type 'transform' is outside the dispatchable set, which is
     //    deliberate: it can never collide with a real action's outcome.
     //    parseWarnings still carries the human-readable diagnostic.
-    const tr = _runTransform(rule, envelope);
+    const tr = await _runTransform(rule, envelope);
     if (!tr.ok) {
       const w = `rule ${rule.id} (${rule.name}) transform failed: ${tr.error} — actions skipped`;
       console.warn(`[emailIngestRule] ${w}`);

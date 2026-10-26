@@ -350,16 +350,16 @@ describe('dedup_key', () => {
 // ─────────────────────────────────────────────────────────────
 
 describe('match_error on the test surfaces', () => {
-  test('evaluateDraft reports WHY, not just matched:false', () => {
-    const out = triggerService.evaluateDraft(
+  test('evaluateDraft reports WHY, not just matched:false', async () => {
+    const out = await triggerService.evaluateDraft(
       { match_mode: 'code', match_config: { code: 'throw new Error("nope");' } },
       envelope());
     expect(out.matched).toBe(false);
     expect(out.match_error).toMatch(/match code threw: nope/);
   });
 
-  test('an honest non-match carries NO match_error', () => {
-    const out = triggerService.evaluateDraft(
+  test('an honest non-match carries NO match_error', async () => {
+    const out = await triggerService.evaluateDraft(
       { match_mode: 'conditions',
         match_config: { operator: 'and', conditions: [{ path: 'contact_id', op: 'equals', value: 999 }] } },
       envelope());
@@ -367,8 +367,8 @@ describe('match_error on the test surfaces', () => {
     expect(out.match_error).toBeUndefined();     // absent, not null
   });
 
-  test('the NULL-config ruling stays silent here too', () => {
-    const out = triggerService.evaluateDraft(
+  test('the NULL-config ruling stays silent here too', async () => {
+    const out = await triggerService.evaluateDraft(
       { match_mode: 'conditions', match_config: null }, envelope());
     expect(out.matched).toBe(false);
     expect(out.match_error).toBeUndefined();

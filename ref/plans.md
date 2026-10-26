@@ -632,33 +632,13 @@ it:
   remains the fallback engine if Intl ever matters more than avoiding a native
   dependency, and egress restriction on the child is the orthogonal mitigation
   that closes the metadata server for STANDARD mode.
-- **A second in-process class: `new Function` in ingest rules, suppressions
-  and hooks (2026-10-26).** Email/phone ingest rule match + transform, both
-  suppression services, and `hookService.runFilter` / `runTransform` run a
-  stored `code` body as `new Function('input', code)(input)` IN THE MAIN
-  PROCESS — no `vm`, no child, no hardening, so `process.env` (DB
-  credentials, `JWT_SECRET`, `CREDENTIALS_ENCRYPTION_KEY`) is one expression
-  away, on every inbound message and webhook. Authoring is gated
-  (`automations.manage`: hooks since B5, ingest since the 2026-10-26 hotfix,
-  `lib/ingestCodeGate.js`), which is an authoring control only — the same
-  caveat as the step gate below. Live today: 8 email rules + 1 phone rule with
-  a code transform, 1 email + 1 phone code suppression (2026-10-26). The fix
-  is the custom_code path's: run these bodies in the safe runner (QuickJS,
-  `lib/safeCodeRunner.js`) or the forked child — synchronous call sites today,
-  so a per-message async hop and its latency/timeout budget are part of the
-  design; then the gate can relax for safe bodies the way it did for steps.
-- **Trigger rules join that class (2026-10-26).** A trigger rule's `code`
-  match / transform runs IN THE MAIN PROCESS via `node:vm`
-  (`triggerService._runCode`) — a bare context, but the envelope passed in as
-  `input` is a host object, so `input.constructor.constructor('return
-  process')()` reaches `process.env` on every matching domain event. Authoring
-  is gated since the same-day hotfix (`lib/triggerCodeGate.js`: rule POST/PUT
-  and `test-draft` carrying code need `automations.manage`; before it every
-  trigger route was plain `jwtOrApiKey`, and `test-draft` returned what the
-  code computed). Live: 6 rules with a code transform, 0 with a code match,
-  all IT-authored (2026-10-26). Same fix as above — safe runner or child —
-  with the same synchronous-call-site cost: `_evaluateMatch` / `_runTransform`
-  are sync inside `processEvent`.
+- **The in-process code-body class is closed (2026-10-26).** Trigger rules
+  (`node:vm`), email/phone ingest rules, both suppression services and hook
+  filters/transforms (`new Function`) used to run stored `code` bodies in the
+  MAIN process. They now run in the QuickJS guest inside the scrubbed child
+  (`lib/guestCode.js`; CLAUDE.md invariant), with time, memory and
+  concurrency limits. What remains is in "From the code-bodies guest-engine
+  slice" below (the gates, and follow-ups).
 - **The child-process flag now fails closed (2026-10-26).** `job_executor`
   used `cfg('custom_code_child_process') === '1'`, so a missing or blanked
   row silently ran every standard step on the in-process `vm` path. Now only
@@ -674,6 +654,30 @@ it:
   vm timeout, so only the option value is asserted. If an async escape ever
   becomes reachable, that timer is what catches it and it should get a real
   test then.
+
+## From the code-bodies guest-engine slice (2026-10-26) — deferred
+
+- **Relax the `automations.manage` code gates — Fred's decision, after a
+  soak.** Trigger (`lib/triggerCodeGate.js`), ingest (`lib/ingestCodeGate.js`)
+  and hook (B5) code bodies now run in the QuickJS guest, the same boundary
+  that let SAFE `custom_code` steps open to all staff. The gates were kept
+  exactly as they were in the moving slice on purpose; whether (and when) to
+  open code authoring on these sites to all staff is Fred's call once the
+  guest has run live bodies for a while. Note a hook transform can still
+  read inbound headers and an `http` target can still send data out — opening
+  hooks is a data-flow decision, not only a sandbox one.
+- **Casey's ingest preview could take unsaved bodies.** It refuses them
+  because a model-composed body would have run in-process; that reason is
+  gone. A separate decision (it would also need the gate question above).
+- **test-match's syntax pre-check still uses V8's parser** (compile-only
+  `new Function`, never called) because its error text is pinned by
+  `tests/fixtures/ingestRuleTestRoutes.golden.json`. Switching it to the guest
+  parser changes that text — re-record the golden deliberately when doing it.
+- **One fork per code call (~40 ms locally, ~85 MB RSS per child).** Fine at
+  today's volume (a handful of calls per inbound event, capped at 4
+  concurrent children). If volume grows, a warm child that runs each body in
+  a fresh QuickJS runtime is the next step — not in-process QuickJS, which
+  would put a runaway back on the event loop.
 
 ## From the Ask Casey arc — P5 ledger follow-ups (2026-10-22)
 
@@ -882,28 +886,9 @@ and the two marked LIVE BUG are worth landing whether or not A17 ever ships.)
 ## From the Ask Casey arc — A20.0/A20.1 ingest reads (2026-10-26)
 
 Found while building Casey's ingest-rule read surface (plan A20). None is a
-Casey slice; the first is a security gap in the native editor.
+Casey slice. (The first one filed here, ingest `code` running in the main
+process, was resolved by the code-bodies guest-engine slice, 2026-10-26.)
 
-- **SECURITY — ingest `code` modes run in the main process.** Authoring is
-  GATED since the 2026-10-26 hotfix (`lib/ingestCodeGate.js`: rule and
-  suppression writes and test-match / test-transform carrying `code` need
-  `automations.manage`); containment is filed under "custom_code containment"
-  above. The finding as made: `email/phoneIngestRuleService._evaluateMatch`
-  / `_runTransform` and both suppression services run a `code` body as
-  `new Function('input', code)(envelope)` IN THIS PROCESS — no `vm`, no forked
-  child, no hardening; `process` is a global there. Every ingest management
-  route is plain `jwtOrApiKey` (`routes/api.emailIngest.js`,
-  `routes/api.phoneIngest.js`): rule and suppression create/update accept
-  `code` mode, and `POST .../rules/test-transform` runs a BODY-SUPPLIED code
-  transform and returns its output. Verified 2026-10-26 through the shared
-  core: a test-transform body returning `{probe: process.env.X}` came back
-  with the value — so any staff session can read the DB credentials,
-  `JWT_SECRET` and `CREDENTIALS_ENCRYPTION_KEY`, and stored code runs on every
-  inbound message. This is the 2026-10-22 `custom_code` finding's class with
-  less in the way (hooks run the same `new Function`, but their routes have
-  been `automations.manage`-gated since access B5). The gate was the cheapest
-  first step; moving execution to the safe runner or the forked child remains.
-  Casey's `automation.preview_ingest_rule` takes no rule body for this reason.
 - **The native ingest tester skips `evaluateRules`' email `body` derivation.**
   `evaluateRules` (and `evaluateSuppressions`) set `body = text || html || ''`
   before matching; test-match / test-transform evaluate the fetched envelope

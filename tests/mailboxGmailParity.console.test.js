@@ -93,7 +93,7 @@ function makeApi(msgs, calls) {
       return { status: 'success', preview: { text: svc.emitText(null, m.html).text, html: m.html } };
     }
     if (url === '/api/email-ingest/rules/test-transform' && method === 'POST') {
-      const tr = ruleSvc._runTransform({ id: 'test-transform', transform_mode: body.transform_mode, transform_config: body.transform_config }, body.input);
+      const tr = await ruleSvc._runTransform({ id: 'test-transform', transform_mode: body.transform_mode, transform_config: body.transform_config }, body.input);
       return { success: true, source: 'inline', input: body.input, transform: tr.ok ? { ok: true, output: tr.output } : { ok: false, error: tr.error } };
     }
     throw new Error(`unscripted ${method} ${url}`);

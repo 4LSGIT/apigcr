@@ -5,25 +5,29 @@
  * Trigger rule CODE bodies are gated on automations.manage
  * (lib/triggerCodeGate.js).
  *
- * WHY THIS SUITE EXISTS: a trigger rule's code match / code transform runs IN
- * THIS PROCESS under node:vm (triggerService._runCode), and vm is not a
- * boundary — `input` is a host object, so the constructor walk-back reaches
- * the real `process` and process.env (DB credentials, JWT_SECRET,
- * CREDENTIALS_ENCRYPTION_KEY). Every trigger route was plain jwtOrApiKey, so
- * any staff JWT could POST a code transform to /api/triggers/test-draft and
- * read process.env back in the response, or save one that runs on every
- * domain event. The admin cases below run that exact walk-back and get the
- * host's `process` — the hole is real, not theoretical. A gate on one writer
- * is a gate on none (scheduledJobs.codeGate.test.js), so every code-accepting
- * route is here.
+ * WHY THIS SUITE EXISTS: a trigger rule's code match / code transform ran IN
+ * THIS PROCESS under node:vm, and vm is not a boundary — `input` was a host
+ * object, so the constructor walk-back reached the real `process` and
+ * process.env (DB credentials, JWT_SECRET, CREDENTIALS_ENCRYPTION_KEY). Every
+ * trigger route was plain jwtOrApiKey, so any staff JWT could POST a code
+ * transform to /api/triggers/test-draft and read process.env back in the
+ * response, or save one that runs on every domain event. Since 2026-10-26 the
+ * body runs in the QuickJS guest engine in the sandbox child
+ * (lib/guestCode.js) and the admin cases below run that same walk-back and
+ * find NO process — but the gate stays exactly as it was (relaxing it is
+ * Fred's call after a soak). A gate on one writer is a gate on none
+ * (scheduledJobs.codeGate.test.js), so every code-accepting route is here.
  *
  * HARNESS (mirrors tests/ingestCodeGate.routes.test.js): the REAL router and
  * service on an ephemeral socket. Only jwtOrApiKey is mocked (to set
  * req.auth). req.db is a scripted stub that serves the rows the routes read
  * and RECORDS every statement, so a refusal proves "nothing written".
- * "Nothing executed" is proven directly: the code bodies walk out of the vm to
- * the host global and bump a counter there, which a refused request must leave
- * untouched and an allowed one must bump. No route exercised here dispatches
+ * "Nothing executed" is proven directly: every input a marked body is run
+ * against is counted at the guest engine's one entry point
+ * (guestCode.runBodies, observed — the real one still runs), which a
+ * refused request must leave at zero and an allowed one must bump. The bodies
+ * also try the walk-back to the host global; the host global must stay
+ * untouched on EVERY path (asserted after each test). No route exercised here dispatches
  * an action; the dispatch modules are mocked to FAIL the suite if anything
  * ever reaches them (the .env these suites load points at production).
  */
@@ -56,11 +60,12 @@ const LEGACY_KEY = { type: 'api_key', scopes: null };
 const ROUTE_KEY  = { type: 'api_key', scopes: ['route:/mailbox-ingest'] };
 
 const HIT = '__triggerCodeGateHit';
-// Walks out of the vm to the HOST global (the escape this gate exists for),
-// so the counter lives where the test can read it.
+// The walk-back the gate was built for: under node:vm it reached the HOST
+// global. In the guest engine it reaches only the guest's own global, so the
+// host counter below must never move (afterEach).
 const BUMP = `var __g = input.constructor.constructor("return globalThis")(); __g.${HIT} = (__g.${HIT} || 0) + 1;`;
 const MATCH_CODE = { code: `${BUMP} return true;` };
-const TRANSFORM_CODE = { code: `${BUMP} return { leaked: typeof input.constructor.constructor("return process")() };` };
+const TRANSFORM_CODE = { code: `${BUMP} return { leaked: input.constructor.constructor("return typeof process")() };` };
 const COND = { operator: 'and', conditions: [{ path: 'data.stage', op: 'equals', value: 'filed' }] };
 const MAPPER = [{ from: 'data.stage', to: 'stage' }];
 const ENVELOPE = { event: 'case.stage_advanced', case_id: 'C1', data: { stage: 'filed' }, extra: {} };
@@ -136,7 +141,12 @@ async function send(method, urlPath, payload) {
   }
 }
 
-const hits = () => globalThis[HIT] || 0;
+// Executions are counted at the engine entry point — the real runBodies still
+// runs (no mocking of the module under test), it is only observed.
+const guestCode = require('../lib/guestCode');
+const realRunBodies = guestCode.runBodies;
+let guestRuns = 0;
+const hits = () => guestRuns;
 
 function expectRefused(r) {
   expect(r.status).toBe(403);
@@ -150,10 +160,17 @@ function expectRefused(r) {
 beforeAll(() => {
   jest.spyOn(console, 'warn').mockImplementation(() => {});
   jest.spyOn(console, 'error').mockImplementation(() => {});
+  jest.spyOn(guestCode, 'runBodies').mockImplementation(async (body, inputs, ...rest) => {
+    if (String(body).includes(HIT)) guestRuns += inputs.length;
+    return realRunBodies(body, inputs, ...rest);
+  });
 });
 afterAll(() => jest.restoreAllMocks());
-beforeEach(() => { delete globalThis[HIT]; });
-afterEach(() => { expect(mockDispatchTouches).toEqual([]); });
+beforeEach(() => { delete globalThis[HIT]; guestRuns = 0; });
+afterEach(() => {
+  expect(mockDispatchTouches).toEqual([]);
+  expect(globalThis[HIT]).toBeUndefined();   // the walk-back never reached the host
+});
 
 describe('POST /api/triggers/test-draft', () => {
   const codeTransform = { envelope: ENVELOPE, match_mode: 'conditions', match_config: COND,
@@ -170,11 +187,11 @@ describe('POST /api/triggers/test-draft', () => {
     expect(hits()).toBe(0);
   });
 
-  test('admin + code transform: runs — and the walk-back reaches the host process (the hole)', async () => {
+  test('admin + code transform: runs — and the walk-back finds no host process (the hole is closed)', async () => {
     mockAuth = ADMIN;
     const r = await send('POST', '/api/triggers/test-draft', codeTransform);
     expect(r.status).toBe(200);
-    expect(r.body.result).toEqual({ matched: true, transform_ok: true, transformed: { leaked: 'object' } });
+    expect(r.body.result).toEqual({ matched: true, transform_ok: true, transformed: { leaked: 'undefined' } });
     expect(hits()).toBe(1);
     const m = await send('POST', '/api/triggers/test-draft', codeMatch);
     expect([m.status, m.body.result.matched]).toEqual([200, true]);

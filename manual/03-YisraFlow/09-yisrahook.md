@@ -115,7 +115,7 @@ API key mismatch returns 401. HMAC mismatch returns 401. Both write to the audit
 |---|---|---|
 | `none` | — | All events pass |
 | `conditions` | AND/OR group tree (see below) | Evaluated by `hookFilter.evaluateConditions` |
-| `code` | `{ "code": "return input.body.event === 'invoice.paid';" }` | Run as a `new Function(input)`. Truthy return = pass. |
+| `code` | `{ "code": "return input.body.event === 'invoice.paid';" }` | A function body over `input`, run in the isolated code engine (below). Truthy return = pass; a throw or timeout = filtered. |
 
 #### Conditions tree
 
@@ -151,7 +151,9 @@ Nested groups supported — a `condition` can itself be another `{ match, condit
 |---|---|---|
 | `passthrough` | — | The full input event, unchanged |
 | `mapper` | Array of rules | A new object built from the rules |
-| `code` | `{ "code": "return { ... };" }` | Whatever the function returns |
+| `code` | `{ "code": "return { ... };" }` | Whatever the function returns (a throw or timeout → `{}` plus an error, and delivery continues) |
+
+**Code filters and transforms** (hook- and target-level) run in an isolated JavaScript engine (QuickJS) in a separate, throwaway process — never inside the server. No `process`, `require`, `fetch`, timers, network or database, and **no `Intl`** (`toLocaleString` ignores `timeZone` silently — compute local times from UTC). `console.log` / `console.warn` reach the server log. 15 s and 64 MB per call (`GUEST_CODE_TIMEOUT_MS`). The dry-run test and the transform tester run the same engine as live deliveries.
 
 #### Mapper rules
 

@@ -42,12 +42,26 @@ body. Governing migrations in `ref/migrations/`.*
   wired scope where a failure does not free the key. Native callers without a
   key are unchanged. Off switch `casey_send_enabled`. Plan:
   ref/ASK_CASEY_ACTIONS_PLAN.md A14.
+- **Code bodies run in the QuickJS guest (10-26):** trigger match/transform,
+  email/phone ingest rule match/transform, both suppression services and hook
+  filter + hook/target transforms run through `lib/guestCode.js` — QuickJS in
+  the scrubbed sandbox child (`customCodeRunner` batch message), never
+  in-process; `vm` / `new Function` execution is gone from all of them, and
+  the previews/test endpoints use the same engine (test-match batches a whole
+  corpus into ONE child via `guestCode.batchRunner`). Invariants: every site
+  function is async and every caller awaits (match results compare
+  `=== true`); no fallback; failure = the site's own failure semantics;
+  limits 15 s wall / 64 MB / ≤ 4 concurrent children; no `Intl` (locale Date
+  methods silently ignore `timeZone`). The `automations.manage` gates
+  (`ingestCodeGate`, `triggerCodeGate`, hooks B5) are deliberately unchanged
+  — relaxing them is Fred's call after a soak (`ref/plans.md`). Cost: one
+  fork per call, ~40 ms locally. Detail: §16 / §26 / §27 / §28 "Code mode".
 - **Trigger code gate + child flag fails closed (hotfix, 10-26):** trigger
   rule POST/PUT and `test-draft` carrying a `code` match or transform refuse
   without `automations.manage` (`lib/triggerCodeGate.js`, 403
-  `missingCapability`); non-code modes stay open to all staff. Gate, not
-  containment: the bodies still run in-process under `node:vm` (§26 "Code
-  mode"). And `custom_code_child_process` now fails closed — only an explicit
+  `missingCapability`); non-code modes stay open to all staff. The bodies
+  now run in the QuickJS guest (entry above; §26 "Code mode"). And
+  `custom_code_child_process` now fails closed — only an explicit
   `'0'` selects the legacy in-process path; absent / blank / anything else
   runs the child (§10).
 - **Recipient opt-out (ruling 2026-10-27):** consent is the destination's
@@ -77,8 +91,8 @@ body. Governing migrations in `ref/migrations/`.*
 - **Ingest code gate (hotfix, 10-26):** every ingest route that accepts a
   `code` body — rule + suppression create/update, `test-match`,
   `test-transform`, both channels — refuses it without `automations.manage`
-  (403 `missingCapability`); non-code modes stay open to all staff. Gate, not
-  containment: the bodies still run in-process (§27 "Code mode").
+  (403 `missingCapability`); non-code modes stay open to all staff. The
+  bodies now run in the QuickJS guest (entry above; §27 "Code mode").
 - **Casey reads email/phone ingest rules (A20.0/A20.1, 10-26):** the P12
   kinds take `email_ingest_rule_id` / `phone_ingest_rule_id` (definition,
   references), `email_ingest_execution_id` / `phone_ingest_execution_id` or a
@@ -93,9 +107,9 @@ body. Governing migrations in `ref/migrations/`.*
   host + credential label. Ingest landmines found while building it:
   (1) every MATCH moves the rule's `updated_at` (the `match_count` bump is a
   row UPDATE), so it is not an edit stamp; action writes do not move it;
-  (2) `code` match/transform/suppression bodies run IN THIS PROCESS via
-  `new Function`, where `process.env` is reachable — every route that
-  accepts one now needs `automations.manage` (§27 "Code mode"); (3) a throwing match is
+  (2) `code` match/transform/suppression bodies ran IN THIS PROCESS via
+  `new Function` — now the QuickJS guest; every route that accepts one
+  needs `automations.manage` (§27 "Code mode"); (3) a throwing match is
   a console warning only, never recorded on the execution row; (4) email
   firm-to-firm mail runs Layer 3. Plan: ref/ASK_CASEY_ACTIONS_PLAN.md A20.
 - **Workflow step routes: expected_base precondition + save-time closures
@@ -1132,6 +1146,14 @@ the never-published/inactive gate at all four execution-creation sites;
 `hook_delivery_logs.status` includes 'captured'. Arming capture on a new
 workflow stores the payload as its sample instead of losing it.
 
+**Code mode:** a `code` filter, hook transform or target transform runs in
+the QuickJS guest in the sandbox child (`hookService.runFilter` /
+`runTransform` → `lib/guestCode.js`; async, every caller awaits). A filter
+that throws or times out = filtered with `filter_passed=0` + error; a
+transform that fails yields `{}` + an error and delivery continues (the hook's
+historical posture). Live bodies use `console.warn` — it still reaches the log
+as a warning. Authoring stays `automations.manage` (B5).
+
 Tables: `hooks`, `hook_targets`, `hook_executions` (raw_input capped 512KB),
 `hook_delivery_logs`, shared `credentials`. Files: `services/hookService.js`
 (+ hookTransforms/hookMapper/hookFilter), `routes/api.hooks.js`. UI:
@@ -1540,11 +1562,15 @@ events carry `depth+1` and the rule id on `chain`; events at
 limitation: workflow steps deferred through `scheduled_jobs` resume with a
 fresh ALS scope (depth resets) — acceptable, executor cadence throttles them.
 
-### Code mode — in-process, capability-gated
-A `code` match or transform runs IN THIS PROCESS via `node:vm`
-(`triggerService._runCode`), which is not a boundary: the envelope is a host
-object, so the constructor walk-back reaches `process.env`. So every route
-that ACCEPTS a code body requires `automations.manage`
+### Code mode — QuickJS guest, capability-gated
+A `code` match or transform runs in the QuickJS guest in the sandbox child
+(`triggerService._runCode` → `lib/guestCode.js`; it was `node:vm` in this
+process until 2026-10-26, where the envelope as a host object let the
+constructor walk-back reach `process.env`). Async: `_evaluateMatch` /
+`_runTransform` / `evaluateDraft` are awaited everywhere. 15 s wall
+(`TRIGGER_CODE_TIMEOUT_MS`), timeout error keeps the throttled-instance hint.
+No `Intl`. Every route that ACCEPTS a code body still requires
+`automations.manage`
 (`lib/triggerCodeGate.js`): rule POST/PUT that touch a code-mode side, and
 `test-draft` with any side not literally a non-code mode. Same invariants as
 §27 "Code mode": fail closed on mode (anything but `conditions` /
@@ -1552,7 +1578,8 @@ that ACCEPTS a code body requires `automations.manage`
 judged against the STORED mode for the side it touches; the native editor
 re-sends the whole rule, so a user without the capability cannot save any
 edit to a code-mode rule. `test` and `replay` take no code body (stored rules
-only) and stay open. Containment: `ref/plans.md` (custom_code containment).
+only) and stay open. The gate is unchanged by the engine move; relaxing it is
+Fred's decision after a soak (`ref/plans.md`).
 
 ### Replay
 `POST /api/triggers/replay` is execution_id-ONLY (review item S10): it
@@ -1657,12 +1684,20 @@ an emoji (2026-10-25). A refused execution row throws out of `ingestEmail`
 AFTER Layer 3 ran — the mailbox worker retries that message and, failing on
 it three ticks running, quarantines it (above).
 
-### Code mode — in-process, capability-gated
-Rule match/transform and suppression `code` bodies run IN THIS PROCESS as
-`new Function('input', code)(envelope)` (`*IngestRuleService._evaluateMatch` /
-`_runTransform`, `*IngestSuppressionService`) — no `vm`, no child; `process`
-and `process.env` are reachable. So every route that ACCEPTS a code body
-requires `automations.manage` (`lib/ingestCodeGate.js`, both channels): rule
+### Code mode — QuickJS guest, capability-gated
+Rule match/transform and suppression `code` bodies run in the QuickJS guest in
+the sandbox child (`*IngestRuleService._evaluateMatch` / `_runTransform`,
+`*IngestSuppressionService._evaluateRule` → `lib/guestCode.js`; until
+2026-10-26 they were `new Function('input', code)` in this process with
+`process.env` reachable and no time limit). All async and awaited by
+`evaluateRules` / `evaluateSuppressions`; 15 s wall (`GUEST_CODE_TIMEOUT_MS`);
+failure semantics unchanged (match/suppression → non-match + console warning,
+transform → matched + synthetic failed `transform` outcome, no actions). No
+`Intl`: email rule 24 (docs@ digest) computes Detroit time from UTC. The
+previews run the same engine — `test-match` batches its corpus into one child
+(`guestCode.batchRunner`), and Casey's preview captures warnings through a
+per-call `warn` sink, not a console patch. Every route that ACCEPTS a code
+body still requires `automations.manage` (`lib/ingestCodeGate.js`, both channels): rule
 and suppression POST/PUT that touch a code-mode side, and `test-match` /
 `test-transform` with a code body. Invariants: detection fails closed — any
 mode other than `conditions` (match) or `passthrough`/`mapper` (transform)
@@ -1671,8 +1706,9 @@ with a `code` key) counts whatever the mode says; a PUT that leaves both code
 sides untouched passes, but the native editors re-send the whole record, so a
 user without the capability cannot save any edit to a code-mode rule or
 suppression. `duplicate` ignores its body and stays open. Casey's
-`automation.preview_ingest_rule` previews stored rules only. Containment is
-`ref/plans.md` (custom_code containment). §28 shares all of this.
+`automation.preview_ingest_rule` previews stored rules only. The gate is
+unchanged by the engine move; relaxing it is Fred's decision after a soak
+(`ref/plans.md`). §28 shares all of this.
 
 ### Direction & firm-to-firm
 `from.email` domain ∈ `EMAIL_DOMAINS` → `outgoing`, else `incoming`.
@@ -1747,7 +1783,7 @@ enough: add it to the provider's map too.**
    `phone_ingest_executions` row (`logged|suppressed|error|duplicate`).
 
 ### Code mode
-Same services shape, same in-process `new Function`, same gate as §27
+Same services shape, same QuickJS guest engine, same gate as §27
 "Code mode" (`lib/ingestCodeGate.js` on `routes/api.phoneIngest.js`).
 
 ### Outbound delivery sync (phone-delivery arc, 2026-10)

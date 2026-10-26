@@ -173,9 +173,20 @@ Two endpoints, both non-destructive, both wired into the UI:
 `GET /api/{email,phone}-ingest/sample-events` gives you real recent events to
 test against, so you aren't hand-writing envelopes.
 
+**How code runs.** A `code` match, transform or suppression is a function
+body: `input` is the envelope (email) or event (phone), `return` gives the
+result. It runs in an isolated JavaScript engine (QuickJS) in a separate,
+throwaway process — the same engine for live mail and for both test
+endpoints. No `process`, `require`, `fetch`, timers, network or database, and
+**no `Intl`**: `toLocaleString` and friends ignore `timeZone` without an
+error, so compute firm-local (Detroit) times from the UTC value — the docs@
+digest rule does exactly that. 15 s and 64 MB per call; past either, a match
+or suppression counts as no-match and a transform fails (the rule still
+counts as matched, its actions don't fire).
+
 **Code mode needs `automations.manage` (admin / IT).** A `code` match,
-transform or suppression is JavaScript that runs inside the server process
-itself, so saving one — or testing a code body with either endpoint above —
+transform or suppression is author-supplied JavaScript, so saving one — or
+testing a code body with either endpoint above —
 is refused (403, "requires the automations.manage capability") for anyone
 without that capability. Conditions, mapper and passthrough editing and
 testing stay open to all staff. Because the editor saves the whole rule, a

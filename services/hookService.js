@@ -27,6 +27,11 @@
 const crypto = require('crypto');
 const { evaluateConditions } = require('./hookFilter');
 const { executeMapper, resolveBodyTemplate } = require('./hookMapper');
+// Code filters/transforms run in the QuickJS guest engine in the sandbox
+// child — never in this process (lib/guestCode.js; CLAUDE.md custom_code
+// invariant). They used to run here through `new Function`, with no time
+// limit, where `process.env` was simply a global.
+const guestCode = require('../lib/guestCode');
 // NOTE: hookTransforms is deliberately NOT imported here. Transform chains are
 // applied INSIDE hookMapper (executeMapper / resolveTemplate); hookService never
 // applies one directly. An unused destructured import of applyChain sat on this
@@ -266,10 +271,12 @@ function authenticateRequest(hook, req) {
 // ─────────────────────────────────────────────────────────────
 
 /**
- * Run the hook-level filter.
- * @returns {{ passed: boolean, error?: string }}
+ * Run the hook-level filter. ASYNC (code mode awaits the guest engine): every
+ * caller awaits — an un-awaited promise has no `.passed`, which reads as
+ * filtered, and a dropped await on the value would be truthy.
+ * @returns {Promise<{ passed: boolean, error?: string }>}
  */
-function runFilter(hook, input) {
+async function runFilter(hook, input) {
   const mode = hook.filter_mode;
   if (mode === 'none') return { passed: true };
 
@@ -287,9 +294,10 @@ function runFilter(hook, input) {
 
   if (mode === 'code') {
     try {
-      const fn = new Function('input', config?.code || config);
-      const result = fn(input);
-      return { passed: !!result };
+      const passed = (await guestCode.runBody(config?.code || config, input, {
+        timeoutMs: guestCode.DEFAULT_TIMEOUT_MS, truthy: true, label: 'hook filter code',
+      })) === true;
+      return { passed };
     } catch (err) {
       return { passed: false, error: `Filter code error: ${err.message}` };
     }
@@ -304,13 +312,14 @@ function runFilter(hook, input) {
 // ─────────────────────────────────────────────────────────────
 
 /**
- * Run a transform (hook-level or target-level).
+ * Run a transform (hook-level or target-level). ASYNC (code mode awaits the
+ * guest engine); every caller awaits.
  * @param {string} mode          - 'passthrough', 'mapper', 'code'
  * @param {*}      config        - the transform config (rules array, code string, or object with .code)
  * @param {object} input         - data to transform
- * @returns {{ output: object, errors: string[] }}
+ * @returns {Promise<{ output: object, errors: string[] }>}
  */
-function runTransform(mode, config, input) {
+async function runTransform(mode, config, input) {
   if (mode === 'passthrough' || !mode) {
     return { output: input, errors: [] };
   }
@@ -326,8 +335,9 @@ function runTransform(mode, config, input) {
   if (mode === 'code') {
     try {
       const code = typeof parsed === 'string' ? parsed : parsed?.code;
-      const fn = new Function('input', code);
-      const output = fn(input);
+      const output = await guestCode.runBody(code, input, {
+        timeoutMs: guestCode.DEFAULT_TIMEOUT_MS, label: 'hook transform code',
+      });
       return { output: output ?? {}, errors: [] };
     } catch (err) {
       return { output: {}, errors: [`Transform code error: ${err.message}`] };
@@ -497,7 +507,7 @@ function resolveParamsMapping(paramsMapping, targetOutput) {
 async function deliverToTarget(target, hookTransformOutput, db) {
   // Target-level transform applies to ALL target types — refines the data
   // before it's shaped for the specific delivery mechanism.
-  const { output: targetOutput } = runTransform(
+  const { output: targetOutput } = await runTransform(
     target.transform_mode,
     target.transform_config,
     hookTransformOutput
@@ -533,8 +543,8 @@ async function deliverToTarget(target, hookTransformOutput, db) {
  * Returned under `would_send` in the dry-run target result.
  * Handles all four target types.
  */
-function buildDryRunPreview(target, hookTransformOutput) {
-  const { output: targetOutput } = runTransform(
+async function buildDryRunPreview(target, hookTransformOutput) {
+  const { output: targetOutput } = await runTransform(
     target.transform_mode, target.transform_config, hookTransformOutput
   );
   const targetType = target.target_type || 'http';
@@ -766,7 +776,7 @@ async function executeHook(db, slug, input, { dryRun = false, hook: preloaded = 
   }
 
   // 3. Filter
-  const filterResult = runFilter(hook, input);
+  const filterResult = await runFilter(hook, input);
 
   if (!filterResult.passed) {
     if (!dryRun && executionId) {
@@ -783,7 +793,7 @@ async function executeHook(db, slug, input, { dryRun = false, hook: preloaded = 
   }
 
   // 4. Transform
-  const transformResult = runTransform(hook.transform_mode, hook.transform_config, input);
+  const transformResult = await runTransform(hook.transform_mode, hook.transform_config, input);
 
   if (!dryRun && executionId) {
     await db.query(
@@ -821,7 +831,7 @@ async function executeHook(db, slug, input, { dryRun = false, hook: preloaded = 
     }
 
     if (dryRun) {
-      const preview = buildDryRunPreview(target, transformResult.output);
+      const preview = await buildDryRunPreview(target, transformResult.output);
       targetResults[idx] = {
         target_id: target.id,
         name: target.name,

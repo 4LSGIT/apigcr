@@ -64,8 +64,8 @@ const VALID_TARGET_TYPES = ['http', 'workflow', 'sequence', 'internal_function']
 //
 // The hook receiver puts `req.headers` verbatim into `input.headers`, which
 // is then passed to filter / transform / target-delivery code. Transforms
-// in 'code' mode get full access to that input via `new Function('input',
-// code)`, which means a hook author with code-mode privileges could
+// in 'code' mode get full access to that input (the guest engine hands the
+// body the whole input), which means a hook author with code-mode privileges could
 // otherwise read any auth header from an inbound request and exfil it via
 // an HTTP target.
 //
@@ -923,19 +923,19 @@ router.post('/api/hooks/test-transform', manageHooks, async (req, res) => {
       },
     };
 
-    const safeRun = (mode, config, data) => {
-      try { return hookService.runTransform(mode, config, data); }
+    const safeRun = async (mode, config, data) => {
+      try { return await hookService.runTransform(mode, config, data); }
       catch (err) { return { output: {}, errors: [`Transform failed: ${err.message}`] }; }
     };
 
     let stageInput = input;
     let pre;
     if (pre_transform) {
-      pre = safeRun(pre_transform.transform_mode, pre_transform.transform_config, input);
+      pre = await safeRun(pre_transform.transform_mode, pre_transform.transform_config, input);
       stageInput = pre.output;
     }
 
-    const transform = safeRun(transform_mode, transform_config, stageInput);
+    const transform = await safeRun(transform_mode, transform_config, stageInput);
 
     const result = { input, ...(pre ? { pre } : {}), transform };
 

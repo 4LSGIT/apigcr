@@ -32,7 +32,7 @@ process.env.CREDENTIALS_ENCRYPTION_KEY =
 
 // triggerService reads TRIGGER_CODE_TIMEOUT_MS once, at module load. The
 // production default (15 s) made the M7 while(true) test wait 15 s of wall
-// clock; the invariant — the vm timeout kills the loop — holds at any value.
+// clock; the invariant — the guest's timeout interrupts the loop — holds at any value.
 // 500 ms still leaves the file's trivial code-mode scripts ~100x headroom on
 // a loaded machine. Must be set BEFORE the require below.
 process.env.TRIGGER_CODE_TIMEOUT_MS = '500';
@@ -287,23 +287,23 @@ test('SPLIT-PHASE: nested emissions carry root_id, and the budget accumulates on
 // Match / transform fail-safe rulings (pure, via evaluateDraft)
 // ─────────────────────────────────────────────────────────────
 
-test('NULL match_config on conditions mode is NON-match, not match-all', () => {
-  const out = triggerService.evaluateDraft(
+test('NULL match_config on conditions mode is NON-match, not match-all', async () => {
+  const out = await triggerService.evaluateDraft(
     { match_mode: 'conditions', match_config: null }, { event: 'x' });
   expect(out.matched).toBe(false);
 });
 
-test('explicit empty conditions IS match-all; throwing code is non-match', () => {
-  expect(triggerService.evaluateDraft(
+test('explicit empty conditions IS match-all; throwing code is non-match', async () => {
+  expect((await triggerService.evaluateDraft(
     { match_mode: 'conditions', match_config: { operator: 'and', conditions: [] } },
-    { event: 'x' }).matched).toBe(true);
-  expect(triggerService.evaluateDraft(
+    { event: 'x' })).matched).toBe(true);
+  expect((await triggerService.evaluateDraft(
     { match_mode: 'code', match_config: { code: 'return input.' } },   // SyntaxError
-    { event: 'x' }).matched).toBe(false);
+    { event: 'x' })).matched).toBe(false);
 });
 
-test('code sandbox: infinite loop is killed by the vm timeout (M7)', () => {
-  const out = triggerService.evaluateDraft(
+test('code sandbox: infinite loop is interrupted by the guest timeout (M7)', async () => {
+  const out = await triggerService.evaluateDraft(
     { match_mode: 'conditions', match_config: { operator: 'and', conditions: [] },
       transform_mode: 'code', transform_config: { code: 'while(true){}' } },
     { event: 'x' });
@@ -312,8 +312,8 @@ test('code sandbox: infinite loop is killed by the vm timeout (M7)', () => {
   expect(out.transform_error).toMatch(/timed out/i);
 });
 
-test('code sandbox has no process/require reach', () => {
-  const out = triggerService.evaluateDraft(
+test('code sandbox has no process/require reach', async () => {
+  const out = await triggerService.evaluateDraft(
     { match_mode: 'code', match_config: { code: 'return typeof process === "undefined" && typeof require === "undefined";' } },
     { event: 'x' });
   expect(out.matched).toBe(true);

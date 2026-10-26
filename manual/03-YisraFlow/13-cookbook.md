@@ -1001,7 +1001,7 @@ The suppression layer is an independent veto over the default `log` row written 
 
 **Pipeline position.** After firm-to-firm check, before `createLogEntry`. Duplicates and firm-to-firm hits short-circuit BEFORE suppression runs — no rule evaluation for emails the pipeline already isn't logging structurally.
 
-**Match grammar.** Reuses `services/hookFilter.evaluateConditions` for `match_mode='conditions'`, mirrors `hookService.runFilter`'s `new Function('input', code)(envelope)` for `match_mode='code'`. The match input is the canonical envelope **at the top level** — paths in `match_config.conditions[].path` are `from.email`, `subject`, `headers.message_id`, `to[0].email`, etc. NO `body.` prefix (the YisraHook receiver wraps inbound as `{body, headers, query, method, meta}`; the email-ingest endpoint does not).
+**Match grammar.** Reuses `services/hookFilter.evaluateConditions` for `match_mode='conditions'`, mirrors `hookService.runFilter` for `match_mode='code'` (a function body over `input`, run in the QuickJS guest engine — `lib/guestCode.js`). The match input is the canonical envelope **at the top level** — paths in `match_config.conditions[].path` are `from.email`, `subject`, `headers.message_id`, `to[0].email`, etc. NO `body.` prefix (the YisraHook receiver wraps inbound as `{body, headers, query, method, meta}`; the email-ingest endpoint does not).
 
 **Match semantics.** Boolean OR across active rules — any match wins. No ordering, no cascade. Rules that throw during evaluation log a warning and count as non-match (fail-safe: errors never suppress).
 
@@ -1076,8 +1076,8 @@ never re-fire actions.)
 
 **Rules.** `match_mode` is `conditions` (reuses `hookFilter.evaluateConditions`,
 same grammar as a hook filter — paths resolve against the envelope top level,
-e.g. `subject`, `from.email`) or `code` (a JS body run as
-`new Function('input', code)(envelope)`). A throwing match counts as non-match
+e.g. `subject`, `from.email`) or `code` (a JS function body over `input`, run
+in the QuickJS guest engine — `lib/guestCode.js`). A throwing match counts as non-match
 (fail-safe), and a NULL `match_config` on conditions mode is treated as
 non-match rather than match-all (an automation rule that silently fired on every
 email would almost always be a mistake — use `{"operator":"and","conditions":[]}`

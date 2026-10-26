@@ -18,16 +18,19 @@
 //
 // The kind is NARROWER than the native endpoints on purpose:
 //   - it previews a STORED rule only (by id). The native endpoints take an
-//     editor's unsaved match/transform body — including `code` mode, which
-//     runs in THIS process through `new Function` — so a model-supplied body
-//     would be model-composed code executing in-process. A stored rule's code
-//     already runs on every inbound message; previewing it widens nothing.
+//     editor's unsaved match/transform body — including `code` mode — so a
+//     model-supplied body would be model-composed code. Code now runs in the
+//     QuickJS guest engine in the sandbox child (lib/guestCode.js), the same
+//     engine production uses, but widening the kind to unsaved bodies is a
+//     separate decision; a stored rule's code already runs on every inbound
+//     message, so previewing it widens nothing.
 //   - email envelopes are prepared the way evaluateRules prepares them
 //     (`body` = text || html), which the native tester does not do on
 //     full-fidelity rows (filed: ref/plans.md, A20 follow-ups). The route
 //     adapters keep the native behavior unchanged.
 
 const actionDispatchers = require('../lib/actionDispatchers');
+const guestCode = require('../lib/guestCode');
 
 // Lazy, like the ingest services themselves (their CIRCULAR-DEPENDENCY NOTE):
 // the rule services pull hookService → actionDispatchers → engines.
@@ -161,10 +164,14 @@ function _validateMatchRequest(body) {
     // parse), THEN code = string-or-.code. A raw (non-JSON) code string
     // therefore never matches in production — reject it up front instead of
     // returning a misleading 0-match run. Then compile ONCE so a syntax
-    // error is a clean 400 instead of 0-matches-with-N-warnings. The
-    // compiled fn is DISCARDED — per-row evaluation still goes through
-    // _evaluateMatch so runtime semantics (error swallowing included) are
-    // byte-identical to production.
+    // error is a clean 400 instead of 0-matches-with-N-warnings. COMPILE
+    // ONLY: `new Function` builds the function and it is DISCARDED, never
+    // called — the body is not executed in this process. Per-row evaluation
+    // goes through _evaluateMatch, i.e. the guest engine production uses, so
+    // runtime semantics (error swallowing included) are production's. (V8's
+    // parser is kept for this pre-check because its message is pinned by
+    // the golden; a body V8 accepts and QuickJS rejects reports per row as a
+    // code error, exactly as it would live.)
     let cfg = match_config;
     if (typeof cfg === 'string') {
       try { cfg = JSON.parse(cfg); }
@@ -231,20 +238,40 @@ function _validateTransformRequest(body) {
 
 // Evaluate `rule` against each corpus row with the production matcher;
 // `prepare` (kind only) turns a fetched envelope into what evaluateRules sees.
-function _matchCorpus(ch, rule, rows, { prepare, observe } = {}) {
+// A code-mode rule's body is pre-run over the whole corpus in ONE sandbox
+// child (guestCode.batchRunner) and each row is then answered through the
+// production _evaluateMatch with that runner — one child instead of one per
+// row, same engine, same per-row semantics. The code is located exactly as
+// _evaluateMatch locates it; if that ever drifted, the runner simply runs the
+// uncovered call on its own (correct, only slower).
+async function _matchCorpus(ch, rule, rows, { prepare, observe } = {}) {
   const ruleService = ch.ruleService();
+  const envelopes = rows.map((r) => (prepare ? prepare(r) : r.envelope));
+  let runCode;
+  if (rule.match_mode === 'code') {
+    let cfg = rule.match_config;
+    let parsed = true;
+    if (typeof cfg === 'string') { try { cfg = JSON.parse(cfg); } catch (_) { parsed = false; } }
+    const code = parsed ? (typeof cfg === 'string' ? cfg : cfg?.code) : null;
+    if (code) {
+      runCode = await guestCode.batchRunner(code, envelopes, {
+        timeoutMs: guestCode.DEFAULT_TIMEOUT_MS, truthy: true, label: `${ch.name}IngestRule code`,
+      });
+    }
+  }
   const matches = [];
   const misses = [];
-  for (const r of rows) {
-    const envelope = prepare ? prepare(r) : r.envelope;
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i];
+    const envelope = envelopes[i];
     let matched;
     let note = null;
     if (observe) {
-      const seen = observe(() => ruleService._evaluateMatch(rule, envelope));
+      const seen = await observe((warn) => ruleService._evaluateMatch(rule, envelope, { warn, runCode }));
       matched = seen.value;
       note = seen.note;
     } else {
-      matched = ruleService._evaluateMatch(rule, envelope);
+      matched = await ruleService._evaluateMatch(rule, envelope, { runCode });
     }
     const label = ch.shape(r);
     const shaped = {
@@ -276,7 +303,7 @@ async function testMatch(db, channelName, body) {
   }
 
   const testRule = { id: 'test-match', name: '(editor)', match_mode: v.match_mode, match_config: v.match_config };
-  const { matches, misses } = _matchCorpus(ch, testRule, corpus.rows);
+  const { matches, misses } = await _matchCorpus(ch, testRule, corpus.rows);
 
   const out = {
     success:       true,
@@ -313,7 +340,7 @@ async function testTransform(db, channelName, body) {
   }
 
   const testRule = { id: 'test-transform', name: '(editor)', transform_mode: v.transform_mode, transform_config: v.transform_config };
-  const tr = ch.ruleService()._runTransform(testRule, envelope);
+  const tr = await ch.ruleService()._runTransform(testRule, envelope);
   const transform = tr.ok ? { ok: true, output: tr.output } : { ok: false, error: tr.error };
 
   const out = { success: true, source, input: envelope, transform };
@@ -353,19 +380,20 @@ function hostOf(url) {
 }
 
 // The production matcher/transformer report WHY a rule did not match (or a
-// mapper warning) only through console.warn — a throwing match is a silent
-// non-match in the stored record. Capture the text during the synchronous
-// call (nothing else can run inside it) and still forward it, so the logs
-// read exactly as they do for the native tester.
-function observeWarnings(fn) {
-  const original = console.warn;
+// mapper warning) only through a warning — a throwing match is a silent
+// non-match in the stored record. `fn` receives a warn sink to hand the
+// production function (its `warn` option); the text is captured AND still
+// forwarded to console.warn, so the logs read exactly as they do for the
+// native tester. A sink, not a console.warn patch: the call is async now (the
+// guest engine), and a patched global would capture whatever else warned
+// while it waited.
+async function observeWarnings(fn) {
   const seen = [];
-  console.warn = (...args) => {
+  const warn = (...args) => {
     seen.push(args.map((a) => (a instanceof Error ? a.message : String(a))).join(' '));
-    original.apply(console, args);
+    console.warn(...args);
   };
-  let value;
-  try { value = fn(); } finally { console.warn = original; }
+  const value = await fn(warn);
   const note = seen.length ? seen.join(' | ').replace(/\[(?:email|phone)IngestRule\]\s*/g, '').slice(0, NOTE_CHARS) : null;
   return { value, note };
 }
@@ -490,7 +518,7 @@ async function previewRows(db, { channel, rule_id, execution_id, sample, window 
     // conversion the execution finder uses.
     const { windowBound } = require('./automationReadService');
     const corpus = await ch.fetch(db, { limit, since: windowBound(window.since, false), until: windowBound(window.until, true) });
-    const { matches, misses } = _matchCorpus(ch, rule, corpus.rows, {
+    const { matches, misses } = await _matchCorpus(ch, rule, corpus.rows, {
       prepare: (r) => productionEnvelope(ch.name, r.envelope, { fidelity: r.fidelity }),
       observe: observeWarnings,
     });
@@ -536,11 +564,11 @@ async function previewRows(db, { channel, rule_id, execution_id, sample, window 
     source = { message_source: 'sample supplied in the question', fidelity: 'sample' };
   }
 
-  const match = observeWarnings(() => ruleService._evaluateMatch(rule, envelope));
+  const match = await observeWarnings((warn) => ruleService._evaluateMatch(rule, envelope, { warn }));
   // Exactly the live order: the transform runs only for a matching rule —
   // a stored code transform never runs on a message it would not see.
   const transform = match.value
-    ? observeWarnings(() => ruleService._runTransform(rule, envelope))
+    ? await observeWarnings((warn) => ruleService._runTransform(rule, envelope, { warn }))
     : { value: null, note: null };
   const tr = transform.value;
   const activeActions = actions.filter((a) => a.active).length;
