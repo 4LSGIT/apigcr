@@ -257,16 +257,16 @@ function processOneMessage(message, thread) {
   // LEGACY PABBLY RELAY for docs@4lsg.com — TO BE REMOVED IN A FUTURE PHASE
   //
   // What this does: forwards every email sent to docs@4lsg.com to a Pabbly
-  // workflow that handles attachment upload and case attribution. Uses the
-  // OLD payload shape (NOT the canonical envelope) because the Pabbly
-  // workflow was built around the old shape.
+  // workflow that sends ONE digest email per message (sender, subject,
+  // attachment names — this payload never carries file bytes; nothing is
+  // uploaded). Uses the OLD payload shape (NOT the canonical envelope)
+  // because the Pabbly workflow was built around the old shape.
   //
-  // How to remove (when the new system's rules layer handles docs@ natively):
-  //   1. Verify the new system has a rule matching envelope.recipient ==
-  //      'docs@4lsg.com' (or to[].email == 'docs@4lsg.com') that does case
-  //      attribution and attachment upload.
-  //   2. Run a parallel period: this Pabbly call AND the new rule both fire
-  //      for a week, check parity in case/log attribution.
+  // How to remove (ref/MAILBOX_GMAIL_PARITY.md §5, step 6):
+  //   1. The replacement is the ingest rule 'docs@ digest (replaces Pabbly)'
+  //      (ref/migrations/2026-10-26_docs_digest_rule.console.js).
+  //   2. Parallel period: this Pabbly call AND the rule (shadow recipient)
+  //      both send; then repoint the rule to the real recipient.
   //   3. Delete this if-block (the entire LEGACY PABBLY RELAY section).
   //   4. Set CONFIG.pabblyDocsRelay.enabled = false (or delete the block).
   //   5. Disable or delete the Pabbly workflow at

@@ -394,24 +394,31 @@ describe('budget and lock', () => {
 });
 
 describe('failures', () => {
-  test('a connect failure marks every folder; alerts once, at exactly N consecutive runs; success resets', async () => {
+  test('a connect failure marks every folder; the emitting folder alerts once at its threshold as an error, the store-only one later as a warning; success resets', async () => {
     S.addFolder('INBOX', 9, []);
     S.addFolder('Sent', 8, []);
     const id = primed({ INBOX: { emit_to_rules: true }, Sent: { emit_to_rules: false } },
       { INBOX: { uidvalidity: 9, last_uid: 0 }, Sent: { uidvalidity: 8, last_uid: 0 } });
     S.failConnect = Object.assign(new Error('IMAP AUTHENTICATIONFAILED: Authentication failed.'), { code: 'AUTHENTICATIONFAILED', imap: true, sanitized: true });
+    const E = svc.limits.alertAfterEmitting;
     const N = svc.limits.alertAfter;
+    expect(E).toBeLessThan(N);
+    const failing = () => alert.mock.calls.filter(c => c[1].kind === 'mailbox_ingest_failing').map(c => c[1]);
     for (let i = 1; i <= N + 1; i++) {
       await run();
-      const failing = alert.mock.calls.filter(c => c[1].kind === 'mailbox_ingest_failing');
-      expect(failing).toHaveLength(i >= N ? 1 : 0);
+      expect(failing()).toHaveLength((i >= E ? 1 : 0) + (i >= N ? 1 : 0));
     }
     const st = W.state(id);
     expect(st.INBOX.errors).toBe(N + 1);
     expect(st.Sent.errors).toBe(N + 1);
-    const a = alert.mock.calls.find(c => c[1].kind === 'mailbox_ingest_failing')[1];
-    expect(a).toMatchObject({ severity: 'warning', group_key: `app:mailbox_ingest_failing:${id}`, ref_table: 'mailboxes', ref_id: id });
-    expect(a.message).toMatch(/INBOX \(new\): 5 consecutive/);
+    const [first, second] = failing();
+    expect(first).toMatchObject({ severity: 'error', group_key: `app:mailbox_ingest_failing:${id}`, ref_table: 'mailboxes', ref_id: id });
+    expect(first.message).toBe(`INBOX (new): ${E} consecutive failed runs — IMAP AUTHENTICATIONFAILED: Authentication failed.`);
+    expect(second).toMatchObject({ severity: 'warning', group_key: `app:mailbox_ingest_failing:${id}` });
+    expect(second.message).toMatch(new RegExp(`^Sent \\(new\\): ${N} consecutive`));
+    // a connect failure names no message: nothing counts toward a quarantine
+    expect(st.INBOX.poison).toBeUndefined();
+    expect(alert.mock.calls.filter(c => c[1].kind === 'mailbox_ingest_quarantined')).toHaveLength(0);
 
     S.failConnect = null;
     await run();
@@ -419,8 +426,9 @@ describe('failures', () => {
     expect(W.state(id).INBOX.last_error).toBeUndefined();
     S.failConnect = Object.assign(new Error('IMAP ECONNRESET'), { code: 'ECONNRESET', imap: true, sanitized: true });
     alert.mockClear();
-    for (let i = 1; i <= N; i++) await run();
-    expect(alert.mock.calls.filter(c => c[1].kind === 'mailbox_ingest_failing')).toHaveLength(1);
+    for (let i = 1; i <= E; i++) await run();
+    expect(failing()).toHaveLength(1);
+    expect(failing()[0].severity).toBe('error');
   });
 
   test('a missing folder fails alone; the other folder still ingests', async () => {

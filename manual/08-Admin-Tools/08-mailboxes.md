@@ -181,21 +181,55 @@ mail server when someone opens it (anyone with **Read** on the box).
 ## When polling fails
 
 Each folder keeps its own record (`ingest_state` on the mailbox row): the
-last error, and how many runs in a row have failed. After **5 failed runs in a
-row** (about 25 minutes) one **warning** naming the box and folder is recorded
-in system alerts (warnings ride the alert digest; they do not email on their
-own). The streak clears itself on the next good run. Usual causes: a changed
-password (re-enter the secret), a misspelt folder, or the mail server down.
-An `INCOMPLETE_FETCH` error is harmless: the server answered a message with
-flag updates instead of its contents (someone was reading it at that moment),
-nothing was stored, and the next run fetches it again. A streak whose last
-error names the ingest pipeline rather than the server — the same message
-failing every run — does NOT clear itself: the folder waits on that one
-message. That needs IT.
-Once the Apps Script ingest is retired and YisraCase is the only thing reading
-the Google inbox, that mailbox's streaks on folders that feed rules are
-recorded as **errors** (they email IT): its mail would otherwise reach no
-rules at all.
+last error, and how many runs in a row have failed. The streak clears itself
+on the next good run. One alert per streak, naming the box and folder:
+
+- a folder that **feeds rules** (emit to rules on, under an active source):
+  an **error** after **3 failed runs in a row** (about 15 minutes) — it emails
+  IT, because while it fails its mail reaches no rule from YisraCase;
+- a **store-only** folder, or the history backfill: a **warning** after **5**
+  (about 25 minutes) — warnings ride the alert digest and do not email on
+  their own.
+
+Usual causes: a changed password (re-enter the secret), a misspelt folder, or
+the mail server down. An `INCOMPLETE_FETCH` error is usually harmless: the
+server answered a message with flag updates instead of its contents (someone
+was reading it at that moment), nothing was stored, and the next run fetches
+it again.
+
+### Quarantined messages
+
+A failure that belongs to ONE message — the ingest pipeline refusing it, or
+the server never sending it — would hold its folder: nothing after it is
+stored or emitted. So after **3 runs in a row failing on the same message**,
+YisraCase **quarantines** it: skips it for good and moves on, and records one
+**error** alert, *Mailbox ingest skipped a message*, naming the box, the
+folder, the message's UID and — when it got that far — its Message-ID. An
+outage (the mail server, the network or the database going away) never
+quarantines anything: those failures don't belong to a message.
+
+If a **second** message in the same folder fails the same way within a day,
+it is **held, not quarantined**: a fault that hits message after message is
+YisraCase's, not the mail's, and skipping each in turn would lose mail every
+15 minutes. The folder waits, and its failing-folder error alert says *held,
+not quarantined*. That needs IT straight away.
+
+A quarantined message's trip through the rules never completed: it may be
+missing from the case log, and its automations (court, Clio, the docs@
+digest) may not have run. To handle one:
+
+1. Find it in the mailbox. For the Google inbox, search Gmail for
+   `rfc822msgid:<the Message-ID from the alert>`. If it was stored before it
+   failed it also shows in Comms.
+2. Check the case log. If it isn't there, **Link to case** in Comms puts it on
+   a case's log (or log it by hand).
+3. Do by hand whatever else its rules should have done and didn't (a forward,
+   a court or Clio step).
+4. Send IT the alert: the failure is a bug (its last error names it), and
+   there is no re-emit button yet.
+
+The folder's record keeps its last 20 quarantined messages
+(`ingest_state.<folder>.quarantined`).
 
 **Emergency stop for rules:** setting the `mailbox-imap` row in
 `email_ingest_sources` to inactive stops every mailbox from emitting on the

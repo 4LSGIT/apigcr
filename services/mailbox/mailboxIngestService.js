@@ -106,11 +106,50 @@
  *
  * ── DELIVERY SEMANTICS ───────────────────────────────────────────────────────
  * The cursor advances only after the messages below it are durably stored and
- * emitted. A crash between store and emit leaves a row with log_id NULL above
- * the cursor; the retry re-emits it (the pipeline answers `duplicate` if it
- * had already run) — at-least-once into a deduping pipeline. Emission is in
- * no transaction (it runs external side effects); the only transaction here
- * is the re-key, which is pure DB (retries:1).
+ * emitted — or quarantined (POISON MESSAGES). A crash between store and emit
+ * leaves a row with log_id NULL above the cursor; the retry re-emits it (the
+ * pipeline answers `duplicate` if it had already run) — at-least-once into a
+ * deduping pipeline. Emission is in no transaction (it runs external side
+ * effects); the only transaction here is the re-key, which is pure DB
+ * (retries:1).
+ *
+ * ── POISON MESSAGES (quarantine) ─────────────────────────────────────────────
+ * At-least-once means a message whose processing throws is retried on the
+ * next tick — and a failure that is DETERMINISTIC then holds the folder for
+ * good: the cursor stays below the message, nothing after it is stored or
+ * emitted (live 2026-10-25: an executions row MySQL refused stalled mailbox
+ * 2's All Mail for an hour, covered only by the Apps Script). So the NEW pass
+ * remembers the UID it failed on — `ingest_state.<folder>.poison`
+ * {uid, attempts, first_at, last_error} — and after `limits.quarantineAfter`
+ * consecutive failures on that same UID it is QUARANTINED: appended to
+ * `quarantined` (the last `limits.quarantineKeep` kept), an ERROR alert names
+ * it (`mailbox_ingest_quarantined`), and from the next run on the pass skips
+ * it — no fetch, no store, no emission — and the cursor moves past. A row
+ * already stored stays as it is, log_id NULL. Its emission never completed —
+ * the rules may or may not have run (ingestEmail can throw after Layer 3) —
+ * so a human checks and finishes it (the alert says how). The failing UID is
+ * the message whose store or emission threw, or — for INCOMPLETE_FETCH — the
+ * lowest UID the server would not send. A pass that gets past the UID clears
+ * `poison`; a failure on another UID restarts the count; a failure that names
+ * no message (connect, login, folder, lock) or is an outage (isOutage: socket
+ * and DB-connection codes) neither counts nor clears. The backfill pass never
+ * quarantines: a message it cannot process holds the backfill, and its
+ * streak warns.
+ * THE BRAKE: a failure that is the code's or the schema's, not the message's
+ * (a bad deploy, a missed migration) fails EVERY message the same way, and
+ * would quarantine one per `quarantineAfter` ticks. So a UID whose failure has
+ * the same signature (errSignature: the error code, else its text) as a
+ * quarantine of this folder within `limits.quarantineBrakeMs` is HELD, not
+ * quarantined: `poison.held` says why, the folder stops, and its failure
+ * streak pages. A systemic failure costs one message, not one per 15 minutes.
+ *
+ * ── FAILURE STREAKS ──────────────────────────────────────────────────────────
+ * Every failed run of a folder adds to its streak (`errors`, cleared by the
+ * next good run). A folder that FEEDS THE RULES (emit_to_rules, under an
+ * active source) alerts at `limits.alertAfterEmitting` runs as an ERROR: its
+ * mail is reaching no rule from this worker. A store-only folder — and any
+ * backfill — alerts at `limits.alertAfter` runs as a warning. One alert per
+ * streak; a run that quarantines alerts as the quarantine instead.
  *
  * ── GMAIL LABELS (S2-L, design OQ5) ──────────────────────────────────────────
  * Every stored row carries `gmail_labels`: the X-GM-LABELS the transport
@@ -156,18 +195,14 @@ const DEFAULT_FOLDERS = Object.freeze({ INBOX: Object.freeze({ emit_to_rules: tr
 const limits = {
   defaultBudgetMs: 240_000,   // MAILBOX_INGEST_BUDGET_MS; ~4 min under a 5-min tick
   batchSize: 25,              // MAILBOX_INGEST_BATCH_SIZE; messages per IMAP fetch
-  alertAfter: 5,              // consecutive failed runs of one folder → one warning alert
+  alertAfter: 5,              // consecutive failed runs of a store-only folder (or backfill) → one warning
+  alertAfterEmitting: 3,      // … of a folder feeding the rules → one ERROR (FAILURE STREAKS)
+  quarantineAfter: 3,         // consecutive new-pass failures on the SAME uid → quarantined (POISON MESSAGES)
+  quarantineKeep: 20,         // quarantine records kept per folder in ingest_state
+  quarantineBrakeMs: 24 * 3600_000, // same-signature quarantine within this window → HOLD instead (THE BRAKE)
   heartbeatMs: 20_000,        // lock-connection ping (SiteGround wait_timeout is 60 s)
   rekeyEmitSlackMs: 10 * 60_000,
   idChunk: 500,
-  // Emit sources this worker is the SOLE feeder of. A failure streak on an
-  // emitting folder of a mailbox emitting under one of these means mail is
-  // not reaching the rules pipeline at all → the streak alert is 'error'
-  // (CLAUDE.md alert convention: repeated → error). Everything else stays
-  // 'warning' (another feeder still covers it, or a pilot). RETIREMENT FLIP
-  // (ref/MAILBOX_GMAIL_PARITY.md step 6): when the Apps Script trigger is
-  // disabled, this becomes ['gmail-firm'].
-  soleFeederSources: [],
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -211,6 +246,30 @@ function errText(err) {
   const msg = err && err.message ? String(err.message) : String(err);
   // Sanitized IMAP errors already lead with their code.
   return (msg.startsWith('IMAP ') ? msg : code + msg).replace(/\s+/g, ' ').slice(0, 300);
+}
+
+// A failure that says nothing about the message being processed — the network,
+// the IMAP server or the DB went away under it. Never counts toward a
+// quarantine (POISON MESSAGES): an outage must not cost us mail.
+const OUTAGE_CODES = new Set([
+  'ECONNRESET', 'ETIMEDOUT', 'EPIPE', 'ECONNREFUSED', 'EHOSTUNREACH', 'ENETUNREACH', 'EAI_AGAIN',
+  'ETIMEOUT', 'ESOCKET', 'CONNECT_TIMEOUT', 'GREETING_TIMEOUT', 'UPGRADE_TIMEOUT',
+  'NoConnection', 'EConnectionClosed', 'ETHROTTLE',
+  'PROTOCOL_CONNECTION_LOST', 'PROTOCOL_SEQUENCE_TIMEOUT', 'PROTOCOL_ENQUEUE_AFTER_FATAL_ERROR',
+  'ER_CON_COUNT_ERROR', 'ER_LOCK_WAIT_TIMEOUT', 'ER_LOCK_DEADLOCK', 'ER_QUERY_INTERRUPTED', 'ER_SERVER_SHUTDOWN',
+]);
+
+/** THE BRAKE's comparison key: the error code, else its class and normalized text. */
+function errSignature(err) {
+  if (err && err.code) return String(err.code).slice(0, 64);
+  return `${(err && err.name) || 'Error'}: ${errText(err)}`.slice(0, 160);
+}
+
+function isOutage(err) {
+  if (!err) return false;
+  if (err.code && OUTAGE_CODES.has(err.code)) return true;
+  if (err.imap === true && err.transient === true && err.code !== 'INCOMPLETE_FETCH') return true;
+  return err.fatal === true; // mysql2: the connection itself died (its closed-state error has no code)
 }
 
 function cut(v, n) {
@@ -880,6 +939,8 @@ function newSummary() {
     errors: 0,
     noProviderId: 0,
     draftsSkipped: 0,
+    quarantined: 0,
+    quarantineSkipped: 0,
     pipeline: {},
     emitDisabled: null,
     emitSources: {},
@@ -1009,15 +1070,27 @@ async function processMessage(ctx, mb, folder, cfg, st, m, pass, existing) {
   return inserted ? 'stored' : 'present';
 }
 
+/** This folder's quarantined UIDs under its current UIDVALIDITY (POISON MESSAGES). */
+function quarantinedUids(st) {
+  const out = new Set();
+  for (const q of Array.isArray(st && st.quarantined) ? st.quarantined : []) {
+    if (q && Number(q.uidvalidity) === Number(st.uidvalidity) && Number(q.uid) > 0) out.add(Number(q.uid));
+  }
+  return out;
+}
+
 /**
  * Process `uids` in the given order. `onBatch(last)` runs after each fully
  * processed batch (the caller advances + persists its cursor there, so a
  * crash replays at most one batch). Returns the last UID fully processed
  * (null if none). On failure, throws with err.progressUid set the same way,
- * so the caller can advance past the messages that did complete.
+ * so the caller can advance past the messages that did complete, and — when
+ * the failure belongs to one message — err.stuckUid (+ err.stuckMessageId)
+ * naming it (POISON MESSAGES). The new pass skips quarantined UIDs.
  */
 async function processUids(ctx, session, mb, folder, cfg, st, uids, pass, onBatch) {
   const { db, summary } = ctx;
+  const skip = pass === 'new' ? quarantinedUids(st) : new Set();
   let last = null;
   for (const batch of chunks(uids, batchSize())) {
     if (last != null) await onBatch(last);
@@ -1026,16 +1099,34 @@ async function processUids(ctx, session, mb, folder, cfg, st, uids, pass, onBatc
     const src = mb._emit && mb._emit.source;
     const emitting = cfg.emit_to_rules && src && src.active;
     const need = batch.filter(u => {
+      if (skip.has(u)) return false;
       const row = have.get(u);
       if (!row) return true;
       return pass === 'new' && emitting && row.log_id == null; // crash-window re-emit needs the body
     });
-    const fetched = need.length ? await session.fetchMessages(need) : [];
+    let fetched = [];
+    try {
+      if (need.length) fetched = await session.fetchMessages(need);
+    } catch (err) {
+      err.progressUid = last;
+      // The server would not send these messages: the lowest one holds the folder.
+      if (err.code === 'INCOMPLETE_FETCH' && Array.isArray(err.uids) && err.uids.length) {
+        err.stuckUid = Math.min(...err.uids.map(Number));
+      }
+      throw err;
+    }
     summary.fetched += fetched.length;
     ctx.folderStats.fetched += fetched.length;
     const byUid = new Map(fetched.map(m => [m.uid, m]));
     for (const uid of batch) {
       if (ctx.stop()) return { last, stopped: true };
+      if (skip.has(uid)) {
+        // QUARANTINED (header): not fetched, stored or emitted; the cursor moves past it.
+        summary.quarantineSkipped++;
+        ctx.folderStats.quarantine_skipped = (ctx.folderStats.quarantine_skipped || 0) + 1;
+        last = uid;
+        continue;
+      }
       const row = have.get(uid);
       const m = byUid.get(uid);
       try {
@@ -1052,6 +1143,11 @@ async function processUids(ctx, session, mb, folder, cfg, st, uids, pass, onBatc
         // else: already stored (nothing to do) or expunged between SEARCH and FETCH
       } catch (err) {
         err.progressUid = last;
+        if (!isOutage(err)) {
+          err.stuckUid = uid;
+          const mid = m && m.envelope && m.envelope.messageId;
+          if (mid) err.stuckMessageId = String(mid).slice(0, 255);
+        }
         throw err;
       }
       last = uid;
@@ -1083,6 +1179,7 @@ async function rekey(ctx, session, mb, folder, cfg, box, state) {
   };
   delete next.backfill_done_at;
   delete next.backfill_floor_uid;
+  delete next.poison; // its UID named a message under the old UIDVALIDITY
   if (cfg && cfg.backfill === false) {
     // BACKLOG POLICY: this folder never stored its history, so the re-key
     // must not store it now. Backfill only above the highest re-mapped UID —
@@ -1181,19 +1278,74 @@ async function newPass(ctx, session, mb, folder, cfg, state) {
   const lastUid = Number(st.last_uid) || 0;
   if (box.uidNext != null && box.uidNext <= lastUid + 1) return { stopped: false, openedAt };
   const uids = await session.searchUids(lastUid + 1);
-  if (!uids.length) return { stopped: false, openedAt };
+  if (!uids.length) { delete st.poison; return { stopped: false, openedAt }; } // nothing above the cursor — it's gone
   const onBatch = async (last) => {
     st.last_uid = Math.max(Number(st.last_uid) || 0, last);
+    clearPassedPoison(st);
     await writeState(db, mb.id, state);
   };
   try {
     const r = await processUids(ctx, session, mb, folder, cfg, st, uids, 'new', onBatch);
     if (r.last != null) st.last_uid = Math.max(Number(st.last_uid) || 0, r.last);
+    clearPassedPoison(st);
     return { stopped: r.stopped, openedAt };
   } catch (err) {
     if (err.progressUid != null) st.last_uid = Math.max(Number(st.last_uid) || 0, err.progressUid);
+    clearPassedPoison(st);
+    const q = trackPoison(ctx, st, err);
+    if (q) err.quarantined = q;
     throw err;
   }
+}
+
+/** The cursor got past the remembered failing UID: it was not poison after all. */
+function clearPassedPoison(st) {
+  if (st.poison && Number(st.poison.uid) <= (Number(st.last_uid) || 0)) delete st.poison;
+}
+
+/**
+ * POISON MESSAGES (header): count a new-pass failure against the message it
+ * names; on the limits.quarantineAfter-th consecutive failure on the same UID,
+ * quarantine it. A failure that names no message neither counts nor clears.
+ * @returns {object|null} the quarantine record, when this failure quarantined
+ */
+function trackPoison(ctx, st, err) {
+  const uid = Number(err && err.stuckUid);
+  if (!Number.isFinite(uid) || uid <= 0) return null;
+  const nowIso = new Date(ctx.now()).toISOString();
+  const uidvalidity = Number(st.uidvalidity);
+  const p = st.poison;
+  const same = !!p && Number(p.uid) === uid && Number(p.uidvalidity) === uidvalidity;
+  const next = same
+    ? { ...p, attempts: (Number(p.attempts) || 0) + 1 }
+    : { uid, uidvalidity, attempts: 1, first_at: nowIso };
+  next.last_error = errText(err);
+  next.last_at = nowIso;
+  if (err.stuckMessageId) next.message_id = err.stuckMessageId;
+  delete next.held;
+  if (next.attempts < limits.quarantineAfter) { st.poison = next; return null; }
+
+  const kept = Array.isArray(st.quarantined) ? st.quarantined : [];
+  const signature = errSignature(err);
+  const prior = kept.slice().reverse().find(q => q && q.signature === signature && Number(q.uid) !== uid &&
+    Date.parse(q.at) > ctx.now() - limits.quarantineBrakeMs);
+  if (prior) {
+    // THE BRAKE (header): the same failure again — the code's, not this message's.
+    next.held = `same failure (${signature}) as quarantined UID ${prior.uid} at ${prior.at}: held, not quarantined`;
+    st.poison = next;
+    return null;
+  }
+
+  delete st.poison;
+  const rec = {
+    uid, uidvalidity, attempts: next.attempts, first_at: next.first_at, at: nowIso,
+    error: next.last_error, signature, message_id: next.message_id || null,
+  };
+  st.quarantined = [...kept, rec].slice(-Math.max(1, limits.quarantineKeep));
+  st.quarantined_total = (Number(st.quarantined_total) || 0) + 1;
+  ctx.summary.quarantined++;
+  ctx.folderStats.quarantined = uid;
+  return rec;
 }
 
 async function backfillPass(ctx, session, mb, folder, cfg, state) {
@@ -1228,14 +1380,6 @@ async function backfillPass(ctx, session, mb, folder, cfg, state) {
   }
 }
 
-/** The failure-streak alert severity for one mailbox (limits.soleFeederSources). */
-function streakSeverity(mb, alerts) {
-  const name = mb && mb._emit && mb._emit.sourceName;
-  const sole = !!name && (limits.soleFeederSources || [])
-    .some(s => String(s).toLowerCase() === String(name).toLowerCase());
-  return sole && alerts.some(a => a.emits) && mb._emit.source ? 'error' : 'warning';
-}
-
 async function runMailbox(ctx, mb, phase) {
   const { db, summary } = ctx;
   const folders = folderConfig(mb.ingest_folders);
@@ -1245,11 +1389,24 @@ async function runMailbox(ctx, mb, phase) {
   if (phase === 'new') summary.mailboxes++;
 
   const alerts = [];
-  const emitsByFolder = new Map(targets.map(([f, c]) => [f, !!c.emit_to_rules]));
+  const quarantines = [];
+  // FAILURE STREAKS (header): a folder feeding the rules alerts sooner, as an error.
+  const src = mb._emit && mb._emit.source;
+  const emitsByFolder = new Map(targets.map(([f, c]) => [f, !!(c.emit_to_rules && src && src.active)]));
   const record = (folder, err) => {
     summary.errors++;
     const n = markError(state, folder, phase, err, new Date(ctx.now()).toISOString());
-    if (n === limits.alertAfter) alerts.push({ folder, phase, n, error: errText(err), emits: !!emitsByFolder.get(folder) });
+    const emits = phase === 'new' && !!emitsByFolder.get(folder);
+    if (err && err.quarantined) {
+      // Its own alert; and the quarantine settles this streak — a later failure starts a new one, and pages.
+      quarantines.push({ folder, emits, ...err.quarantined });
+      delete state[folder].errors;
+      return;
+    }
+    if (n === (emits ? limits.alertAfterEmitting : limits.alertAfter)) {
+      const held = phase === 'new' && state[folder].poison && state[folder].poison.held;
+      alerts.push({ folder, phase, n, error: errText(err) + (held ? ` (UID ${state[folder].poison.uid} ${held})` : ''), emits });
+    }
   };
   const noPidBefore = summary.noProviderId;
 
@@ -1302,13 +1459,32 @@ async function runMailbox(ctx, mb, phase) {
     }
   }
 
+  for (const q of quarantines) {
+    await sendAlert(db, {
+      kind: 'mailbox_ingest_quarantined',
+      group_key: `app:mailbox_ingest_quarantined:${mb.id}`,
+      dedup_key: `mailbox_ingest_quarantined:${mb.id}:${q.folder}:${q.uidvalidity}:${q.uid}`.slice(0, 255),
+      severity: 'error', // deterministic, and mail was skipped
+      title: `Mailbox ingest skipped a message: ${mb.address}`,
+      message: `${q.folder}: UID ${q.uid} failed ${q.attempts} runs in a row and is now quarantined — skipped for good, ` +
+        `so the folder moves on. Last error: ${q.error}` +
+        (q.message_id ? `\nMessage-ID: ${q.message_id} (Gmail search: rfc822msgid:${q.message_id})` : '') +
+        (q.emits ? `\nIts emission under '${mb._emit && mb._emit.sourceName}' never completed — its rules may not have run.` : '') +
+        '\nHandle it by hand: manual/08-Admin-Tools/08-mailboxes.md, "Quarantined messages".',
+      context: { mailbox_id: mb.id, ...q },
+      ref_table: 'mailboxes',
+      ref_id: mb.id,
+    });
+  }
+
   if (alerts.length) {
     await sendAlert(db, {
       kind: 'mailbox_ingest_failing',
       group_key: `app:mailbox_ingest_failing:${mb.id}`,
-      // degraded, not down (FreeBusy fail-open precedent) — unless this
-      // worker is the only feeder of the source those folders emit under.
-      severity: streakSeverity(mb, alerts),
+      // A folder feeding the rules: its mail reaches no rule from here →
+      // error. Store-only / backfill: degraded, not down (FreeBusy fail-open
+      // precedent) → warning.
+      severity: alerts.some(a => a.emits) ? 'error' : 'warning',
       title: `Mailbox ingest failing: ${mb.address}`,
       message: alerts.map(a => `${a.folder} (${a.phase}): ${a.n} consecutive failed runs — ${a.error}`).join('\n'),
       context: { mailbox_id: mb.id, folders: alerts },
@@ -1324,7 +1500,7 @@ async function runMailbox(ctx, mb, phase) {
       kind: 'mailbox_ingest_no_provider_id',
       group_key: `app:mailbox_ingest_no_provider_id:${mb.id}`,
       dedup_key: `mailbox_ingest_no_provider_id:${mb.id}:${day}`,
-      severity: streakSeverity(mb, [{ emits: true }]),
+      severity: 'error', // deterministic: this mail reaches no rule from here
       title: `Mailbox ingest: ${mb.address} stored mail it cannot emit`,
       message: `${noPid} new message(s) had no provider id, so they were stored but NOT emitted under ` +
         `'${mb._emit && mb._emit.sourceName}' (emit_id_kind provider never falls back to the RFC Message-ID). ` +

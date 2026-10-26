@@ -1,7 +1,7 @@
 # MAILBOX_GMAIL_PARITY — Gmail IMAP pilot (S1-G): checklist, gate, parity window, retirement
 
 Status: LIVING RUNBOOK — 2026-10-09; All-Mail ruling 2026-10-11; first close check 2026-10-25: NOT retired,
-the window re-opens at the FETCH-merge fix's deploy (§4). Opened by slice S1-G of the mailbox arc
+the window re-opens at the poison-message slice's deploy (§4). Opened by slice S1-G of the mailbox arc
 (`ref/MAILBOX_SYSTEM_DESIGN.md`); moves to `ref/archive/` when the Apps Script
 source retires (step 6). Companion script: `ref/MAILBOX_GMAIL_PARITY.console.js`.
 
@@ -286,17 +286,31 @@ adapter's key (401 → GAS stops, labels pile up).
 - Spot-check W1–W6 every few days; W4 (text) on day 1.
 
 ### Step 6 — at window close (separate session, only if §4 holds and §5 is decided)
-1. Re-home or consciously drop the GAS side jobs (§5). The docs@ relay cannot be re-homed
-   yet: §5 decides what this step does, and while the relay stays, steps 2–5 wait.
+1. The GAS side jobs are rules now (§5). Point the docs@ digest rule at its
+   real recipient: paste `ref/migrations/2026-10-26_docs_digest_repoint.console.js`
+   into an SU tab (asserts the shadow config, writes, re-reads; one GO line).
 2. Disable the Apps Script **time-based trigger** (Triggers → delete
    `forwardEmailsToIngest`). Code stays; `gmail-firm` row stays active (the
    worker owns it now; its `last_used_at` freezes — it is only stamped by HTTP
    auth).
-3. Severity rider: in `services/mailbox/mailboxIngestService.js` set
-   `limits.soleFeederSources: ['gmail-firm']` (one line; commit + deploy) —
-   All Mail failure streaks on this mailbox then alert `error`, not `warning`.
-4. AI_CONTEXT §27: ingest-source table → gmail-firm fed by the worker.
-5. Move this file + the console script to `ref/archive/`; delete the followup.
+3. Disable the Pabbly docs@ workflow (it receives nothing once the trigger is
+   off; disabled, a stray manual run cannot send a second digest).
+4. The A.4 bridge (ruled at S2P ratification, 2026-10-13; design §4.4 "KNOWN
+   (A.4)"): Comms' `has_case` / `no_case` filters and view counts read the
+   row's own `log_id` stamp, so this box's rows stored before step 4 that only
+   the Apps Script logged (~57 then) show their case on the log-status line
+   (the `source` path — mailReadService priorLogId's keys) but not in those
+   filters. One UPDATE stamps each such row with that live log id (write it
+   from priorLogId's join, CHECK count first); then confirm the filters and
+   counts pick them up. The ~103 unstamped PRE-window rows are a different
+   set: informational, no action.
+5. AI_CONTEXT §27: ingest-source table → gmail-firm fed by the worker.
+6. Move this file + the console script to `ref/archive/`; delete the followup.
+
+No severity flip: a folder feeding the rules pages after 3 failed runs as an
+`error` whatever else feeds its source, and a message failing three ticks
+running is quarantined (mailboxIngestService header, FAILURE STREAKS / POISON
+MESSAGES).
 
 ---
 
@@ -547,7 +561,8 @@ SELECT DATE(e.created_at) AS day_utc, COUNT(*) AS worker_first_with_rules,
 2. **No text divergence on court mail**: W4 verdict PASS — or REVIEW with its
    classes (§2 G4) accepted by an explicit ruling.
 3. No open `mailbox_ingest_failing` / `mailbox_ingest_no_provider_id` /
-   `mailbox_ingest_source_missing` alert for this mailbox.
+   `mailbox_ingest_source_missing` / `mailbox_ingest_quarantined` alert for
+   this mailbox.
 4. §5's decisions made and their prerequisites done.
 
 ### Close check 2026-10-25 — not retired
@@ -582,8 +597,13 @@ still running.
 
 **The window RE-OPENS at the fix's deploy** (Fred, 2026-10-25):
 `<WINDOW_START_UTC>` = the deploy time, ≥ 7 days, then W1–W6 with W2b, and W4
-over the whole new window. Retirement is further gated on the docs@ relay
-(§5).
+over the whole new window. Re-opened at 2026-10-25 14:00:11Z, then again at
+the poison-message slice's deploy (ruling 2026-10-26: that slice is built
+before retirement, so the window measures the build that retires the Apps
+Script). Since that slice the 13:01Z failure would cost one message, not the
+folder: on its third failing tick it is quarantined (error alert
+`mailbox_ingest_quarantined`) and All Mail moves on, and a folder feeding the
+rules pages as an `error` after 3 failed runs, not a warning after 5.
 
 ## 5. Decisions
 
@@ -608,30 +628,36 @@ over the whole new window. Retirement is further gated on the docs@ relay
 
 **Before step 6 (retirement):**
 - **GAS side jobs** — both live only in the Apps Script (`processOneMessage()`):
-  - **Pabbly docs@ relay** (~60 messages / 30 days) — STAYS in the Apps Script
-    (ruling 2026-10-25) until YisraCase can hand docs@ attachments to the
-    Dropbox upload itself: the worker stores attachment STRUCTURE only (design
-    D1) and the Pabbly workflow needs the files. So step 6 as written (delete
-    the trigger) would stop the relay. Decide at step 6: (a) keep the Apps
-    Script running whole — both feeders, the worker in front; steps 2–5 wait;
-    or (b) a relay-only Apps Script — the ingest POST off, the relay kept. (b)
-    is a `ref/gas.js` change, not a config flip: the relay runs only after a
-    successful ingest POST today. The Gmail filter feeding `Trigger Label`
-    can then narrow to docs@.
+  - **Pabbly docs@ relay** (~60 messages / 30 days) — the Pabbly workflow only
+    sends a DIGEST email per message: sender, subject, attachment names
+    (`buildLegacyPayload` never sends file bytes); nothing uploads to Dropbox
+    (Fred, 2026-10-26). Replaced by an ingest rule (ruling 2026-10-26),
+    `docs@ digest (replaces Pabbly)`: match `envelope.recipient` or `to.0.email`
+    equals `docs@4lsg.com`, AND `from.email` contains neither firm domain
+    (Layer 3 runs BEFORE the firm-to-firm skip, so the firm's own mail does
+    reach rules — this pair keeps it digest-free); transform `code` builds one
+    formatted email per message (HTML + text, every attachment listed, or
+    none, a case link when the client typed a case id); action
+    `internal_function` `send_email` from `automations@4lsg.com`. Created by
+    `ref/migrations/2026-10-26_docs_digest_rule.console.js` — inactive, proven
+    by test-match and test-transform on real executions, then armed — with a
+    SHADOW recipient (`it@4lsg.com`), so both digests arrive until step 6
+    points it at `shoshana@metrodetroitbankruptcylaw.com` (Fred, 2026-10-26;
+    the Pabbly digest goes to shoshana@ and rena@4lsg.com today). Uploading
+    docs@ attachments to Dropbox is a separate wanted feature, not a
+    retirement prerequisite (`ref/plans.md`).
   - **Clio "Payment method submitted" forward** (6 in June–August 2026, none
-    since) — rebuilt as an ingest rule (ruling 2026-10-25), then
-    `CONFIG.clioForward.enabled = false` in the Apps Script AND in `ref/gas.js`
-    at the same sitting (until then the Apps Script's forward and the rule
-    would both send). The
-    rule copies rule 13 (*Convert Case -> SS*): match `from.email` equals
+    since) — DONE 2026-10-25: ingest rule 23 (ruling 2026-10-25), and
+    `CONFIG.clioForward.enabled = false` in `ref/gas.js` (3a527c2) — the
+    deployed Apps Script must say the same, or both forward. Rule 23 copies
+    rule 13 (*Convert Case -> SS*): match `from.email` equals
     `notifications@clio.com` AND `subject` starts with
     `Payment method submitted by `; transform passthrough; action
-    `internal_function` `forward_as_email` with params_mapping
-    `{"event": "$", "to": "'shoshana@metrodetroitbankruptcylaw.com'",
-    "from": "'automations@4lsg.com'", "subject_prefix": "''"}` (an empty
-    prefix keeps the subject as Clio sent it, as the Apps Script's forward
-    did). Test-match it on the six historical executions (2567, 3810, 8800,
-    12585, 13961, 14188) before arming. One difference: the Apps Script
+    `internal_function` `forward_as_email` to
+    `shoshana@metrodetroitbankruptcylaw.com` from `automations@4lsg.com`, with
+    a `body_prefix` note and `subject_prefix` `Fwd: ` (accepted divergence:
+    the Apps Script kept Clio's bare subject). All six historical executions
+    (2567, 3810, 8800, 12585, 13961, 14188) satisfy it. One difference: the Apps Script
     forwards only a single-message thread, and Gmail threads a second notice
     with the same subject (the same client submitting again) under the first
     — the 2026-08-12 one was likely never forwarded. The rule forwards every

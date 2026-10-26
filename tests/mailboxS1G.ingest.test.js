@@ -2,8 +2,8 @@
 //
 /**
  * Mailbox system S1-G — Gmail second pilot: per-mailbox emission identity,
- * the provider-id guard, the backlog policy, provider-aware re-key and the
- * failure-severity rider (services/mailbox/mailboxIngestService.js).
+ * the provider-id guard, the backlog policy, provider-aware re-key and
+ * failure-streak severity (services/mailbox/mailboxIngestService.js).
  * Run: npx jest tests/mailboxS1G.ingest.test.js
  *
  * HARNESS: the S1 one (tests/helpers/mailboxS1World.js) — the REAL worker and
@@ -24,7 +24,7 @@
  *   - backfill:false ignored at first sight   → "backfill:false: first sight stores nothing old"
  *   - re-key floor ignored                    → "re-key of a backfill:false folder stores only above the floor"
  *   - planRekey ignores provider ids          → "provider ids re-map where Message-IDs are ambiguous"
- *   - soleFeederSources ignored               → "severity rider: …"
+ *   - streak severity ignores emit_to_rules    → "failure streaks: …only for folders feeding the rules"
  *   - buildEnvelope stops using emitText      → "previewEmission's text IS the emitted text"
  */
 
@@ -56,11 +56,10 @@ beforeEach(() => {
   transport.withMailbox.mockReset().mockImplementation(S.withMailbox);
   emailIngestService.ingestEmail.mockReset().mockImplementation(P.ingestEmail);
   alert.mockClear();
-  svc.limits.soleFeederSources = [];
   delete process.env.MAILBOX_INGEST_BATCH_SIZE;
   delete process.env.MAILBOX_INGEST_BUDGET_MS;
 });
-afterEach(() => { svc.limits.soleFeederSources = []; jest.restoreAllMocks(); });
+afterEach(() => jest.restoreAllMocks());
 
 const run = (opts) => svc.runIngest(W.db, opts);
 const SENT = '[Gmail]/Sent Mail';
@@ -165,7 +164,7 @@ describe('the provider-id guard', () => {
     expect(W.rows(id, 'INBOX').find(r => r.uid === 1).log_id).toBeNull();
     const a = alertsOf('mailbox_ingest_no_provider_id');
     expect(a).toHaveLength(1);
-    expect(a[0]).toMatchObject({ severity: 'warning', ref_table: 'mailboxes', ref_id: id });
+    expect(a[0]).toMatchObject({ severity: 'error', ref_table: 'mailboxes', ref_id: id });
     expect(a[0].dedup_key).toMatch(new RegExp(`^mailbox_ingest_no_provider_id:${id}:\\d{4}-\\d{2}-\\d{2}$`));
     // Not retried later: the cursor is past it.
     P.envelopes.length = 0;
@@ -389,38 +388,41 @@ describe('provider-aware re-key', () => {
   });
 });
 
-describe('severity rider (limits.soleFeederSources)', () => {
-  async function failFiveTimes() {
+describe('failure streaks (FAILURE STREAKS)', () => {
+  async function failRuns(n) {
     S.failConnect = Object.assign(new Error('IMAP AUTHENTICATIONFAILED'), { code: 'AUTHENTICATIONFAILED', imap: true, sanitized: true });
-    for (let i = 0; i < svc.limits.alertAfter; i++) await run();
+    for (let i = 0; i < n; i++) await run();
     return alertsOf('mailbox_ingest_failing');
   }
 
-  test('before retirement (default []): an INBOX streak on the Gmail box is a warning', async () => {
+  test('an INBOX feeding gmail-firm alerts at alertAfterEmitting runs, as an error', async () => {
     S.addFolder('INBOX', 9, []);
     S.addFolder(SENT, 9, []);
     gmailBox();
-    const a = await failFiveTimes();
+    expect(await failRuns(svc.limits.alertAfterEmitting - 1)).toHaveLength(0);
+    const a = await failRuns(1);
     expect(a).toHaveLength(1);
-    expect(a[0].severity).toBe('warning');
-  });
-
-  test("after the retirement flip (['gmail-firm']): the same streak is an error", async () => {
-    svc.limits.soleFeederSources = ['gmail-firm'];
-    S.addFolder('INBOX', 9, []);
-    S.addFolder(SENT, 9, []);
-    gmailBox();
-    const a = await failFiveTimes();
     expect(a[0].severity).toBe('error');
+    expect(a[0].message).toMatch(/^INBOX \(new\): 3 consecutive failed runs/);
   });
 
-  test('…but only for emitting folders and only for mailboxes emitting under that source', async () => {
-    svc.limits.soleFeederSources = ['gmail-firm'];
+  test('…only for folders feeding the rules: store-only folders wait for alertAfter and warn, whatever the source', async () => {
     S.addFolder(SENT, 9, []);
     gmailBox({}, { [SENT]: { emit_to_rules: false } });      // store-only box
-    W.addMailbox({ ingest_state: { INBOX: { uidvalidity: 9, last_uid: 0 } } }); // default source box
-    const a = await failFiveTimes();
+    W.addMailbox({ ingest_folders: { INBOX: { emit_to_rules: false } }, ingest_state: { INBOX: { uidvalidity: 9, last_uid: 0 } } });
+    expect(await failRuns(svc.limits.alertAfter - 1)).toHaveLength(0);
+    const a = await failRuns(1);
     expect(a.map(x => x.severity)).toEqual(['warning', 'warning']);
+  });
+
+  test('…and only under an ACTIVE source: an emitting folder whose source is off warns at alertAfter', async () => {
+    W.T.email_ingest_sources.find(s => s.name === 'gmail-firm').active = 0;
+    S.addFolder('INBOX', 9, []);
+    S.addFolder(SENT, 9, []);
+    gmailBox();
+    expect(await failRuns(svc.limits.alertAfter - 1)).toHaveLength(0);
+    const a = await failRuns(1);
+    expect(a.map(x => x.severity)).toEqual(['warning']);
   });
 });
 

@@ -30,7 +30,9 @@
  *      pipeline) and lib/alerting. The 10-16 tick replayed stores and emits the
  *      message; a UID answered with flag updates only, twice, stores nothing
  *      from its batch, holds the cursor, and is stored and emitted once on the
- *      next tick.
+ *      next tick; a UID the server NEVER sends is quarantined on the Nth tick
+ *      and the rest of its batch flows on the next (tests/mailboxPoison.test.js
+ *      covers the guard itself).
  *
  * Mutation-checked (break the code, watch the named test fail):
  *   - the ORIGINAL transport (last row per UID, no re-ask)   → "the 10-16 tick replayed …":
@@ -41,6 +43,7 @@
  *   - INCOMPLETE_FETCH never thrown (partial UIDs returned)   → "still flag updates only → INCOMPLETE_FETCH …",
  *       "gone by the re-ask → INCOMPLETE_FETCH too …", "flag updates only, twice: nothing from the batch …"
  *   - listMessageIds back to one entry per ROW                → "listMessageIds: one entry per UID …"
+ *   - processUids ignores the quarantine (no skip)           → "a UID the server never sends …"
  *   - fetchLabels back to last-wins                           → "fetchLabels keeps the labels …"
  * ("flags first, data second" passes under last-wins by construction — the
  * data row is last there; it pins that merging never drops data.)
@@ -239,7 +242,6 @@ describe('the worker over the real transport (mailbox 2, All Mail, emitting unde
     P = makePipeline(W);
     emailIngestService.ingestEmail.mockReset().mockImplementation(P.ingestEmail);
     alert.mockClear();
-    svc.limits.soleFeederSources = [];
     delete process.env.MAILBOX_INGEST_BATCH_SIZE;
     delete process.env.MAILBOX_INGEST_BUDGET_MS;
   });
@@ -302,5 +304,35 @@ describe('the worker over the real transport (mailbox 2, All Mail, emitting unde
     const st2 = W.state(id)[ALL];
     expect(st2.last_uid).toBe(UID + 1);
     expect(st2.errors).toBeUndefined();
+  });
+
+  test('a UID the server never sends: quarantined on the Nth tick (POISON MESSAGES), then the rest of its batch flows', async () => {
+    const id = box();
+    script.uids = [UID, UID + 1];
+    script.uidNext = UID + 2;
+    const N = svc.limits.quarantineAfter;
+    for (let i = 1; i <= N; i++) {
+      // every tick: flag updates only for UID, on the FETCH and on the re-ask
+      script.fetches = [[flagsLine(UID), dataLine(UID + 1, DEC2, 'other')], [flagsLine(UID)]];
+      await run();
+      expect(W.rows(id, ALL)).toHaveLength(0);
+      expect(W.state(id)[ALL].last_uid).toBe(UID - 1);
+    }
+    const st = W.state(id)[ALL];
+    expect(st.quarantined).toEqual([expect.objectContaining({ uid: UID, uidvalidity: 12, attempts: N, message_id: null })]);
+    expect(st.quarantined[0].error).toContain('INCOMPLETE_FETCH');
+    expect(alertsOf('mailbox_ingest_quarantined')).toHaveLength(1);
+    expect(alertsOf('mailbox_ingest_quarantined')[0]).toMatchObject({ severity: 'error' });
+
+    const before = calls('fetchAll').length;
+    script.fetches = [[dataLine(UID + 1, DEC2, 'other')]];
+    const s = await run();
+    expect(s).toMatchObject({ stored: 1, emitted: 1, errors: 0, quarantineSkipped: 1 });
+    const asked = calls('fetchAll').slice(before);
+    expect(asked).toHaveLength(1);
+    expect(String(asked[0][1])).toBe(String(UID + 1)); // the quarantined UID is never asked for again
+    expect(W.rows(id, ALL).map(r => [r.uid, r.provider_id])).toEqual([[UID + 1, HEX2]]);
+    expect(P.envelopes.map(e => e.headers.message_id)).toEqual([HEX2]);
+    expect(W.state(id)[ALL].last_uid).toBe(UID + 1);
   });
 });

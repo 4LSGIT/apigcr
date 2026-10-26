@@ -530,21 +530,34 @@ Found while deciding the Apps Script retirement (`ref/MAILBOX_GMAIL_PARITY.md`
 MERGED PER UID; emailIngestService `_jsonColumnText`); these are what they
 showed and the slice left alone:
 
-- **One poison message holds a mailbox folder — ruling needed before the
-  Apps Script retires.** The worker retries a failed emission on the same UID
-  every tick (at-least-once into a deduping pipeline, by design), so a message
-  whose pipeline write fails DETERMINISTICALLY stops its folder: nothing after
-  it is stored or emitted until code changes. The FETCH-merge fix adds a
-  second, deliberate way in: a UID the server never answers with data
-  (`INCOMPLETE_FETCH` every tick) holds the folder rather than be skipped —
-  fail closed, but the same quarantine question. 2026-10-25 13:01Z it was the
-  lone-surrogate write; the streak alert (`mailbox_ingest_failing`) fired at
-  the 5th tick as a warning — no email — and only the Apps Script kept the
-  log whole. Options: quarantine the UID after N failed emissions (store-only,
-  `error` alert naming it, cursor moves on, a re-emit tool for later), and/or
-  make the streak alert `error` sooner for a provider-keyed emitting folder.
-  `limits.soleFeederSources` (the step-6 rider) makes it `error` only once
-  the Apps Script is gone — too late to be the safety net.
+- **Quarantined mail has no re-emit tool.** Poison messages are now
+  quarantined (mailboxIngestService header, POISON MESSAGES — built
+  2026-10-26): after 3 consecutive failures on one UID the new pass skips it
+  for good and alerts. Its emission never completed (the rules may or may not
+  have run); a stored one sits in `mail_messages` with `log_id` NULL, and
+  staff finish it by hand (manual/08-Admin-Tools/08-mailboxes.md,
+  "Quarantined messages").
+  If quarantines happen in practice: an SU re-emit — (mailbox, folder, uid) →
+  re-fetch, emit once under the box's identity, stamp `log_id`, drop the
+  quarantine record.
+- **The backfill pass loses an emission that throws.** A re-key's backfill
+  emits only rows it INSERTS (`inserted && backfill_emit_after`), and
+  processMessage stores before it emits — so a pipeline throw leaves the row
+  stored with `log_id` NULL, the retry finds it present, and it is never
+  emitted (the error execution row is the only trace). Re-key windows only,
+  rare. Fix: in backfill, also re-emit a present row with `log_id` NULL whose
+  date is past `backfill_emit_after` (the new pass's crash-window rule).
+- **docs@ attachments → Dropbox** (wanted, Fred 2026-10-26; NOT a retirement
+  prerequisite). The Pabbly docs@ workflow only ever sent a digest email —
+  replaced by the `docs@ digest (replaces Pabbly)` ingest rule
+  (`ref/MAILBOX_GMAIL_PARITY.md` §5). Uploading the files needs their bytes:
+  the worker stores attachment STRUCTURE only (design D1); the on-demand part
+  route already streams one from IMAP. Shape: a rule action that, per
+  attachment, fetches the part and files it into the case's Dropbox folder —
+  the case from the sender's contact or an id in the subject (the digest
+  transform already parses one), unmatched → a review queue. The envelope's
+  attachment `url` is null from both feeders, so the action keys on the
+  stored row (mailbox, folder, uid, part) — worker-fed mail only.
 - **hookService stores a 512 KB SLICE of JSON TEXT in a JSON column.**
   `hook_executions.raw_input` and `hooks.captured_sample` are `json`; the
   oversized-payload path (`rawInputStr.slice(0, 512 * 1024)`, both the

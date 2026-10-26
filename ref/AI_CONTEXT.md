@@ -1512,6 +1512,18 @@ it mid-fetch); kept last-wins, one replaced the data and the worker stored an
 envelope-less row past its cursor. A UID still answered with flag updates
 only after one re-ask throws `INCOMPLETE_FETCH` — nothing from the batch is
 stored, the next tick fetches it again. Never key imapflow rows last-wins.
+**Poison messages are quarantined** (mailboxIngestService header, 2026-10-26):
+at-least-once retries a failing message every tick, so a DETERMINISTIC
+failure would hold its folder for good; the new pass counts consecutive
+failures per UID (`ingest_state.<folder>.poison`) and on the 3rd skips it for
+good (`.quarantined`, error alert `mailbox_ingest_quarantined`). An outage
+(socket / DB-connection codes, `isOutage`) never counts — it must not cost
+mail; backfill never quarantines. THE BRAKE: a failure with the same
+signature (error code, else class + text) as a quarantine of that folder in
+the last 24 h is HELD, not quarantined — a bad deploy or missed migration
+fails every message alike and would otherwise skip one per 15 min. Streaks: a folder feeding the rules pages
+(`mailbox_ingest_failing`, error) after 3 failed runs, store-only folders
+warn after 5.
 Pilot, gate and retirement runbook: `ref/MAILBOX_GMAIL_PARITY.md`.
 Operators: manual/08-Admin-Tools/08-mailboxes.md.
 
@@ -1533,8 +1545,8 @@ including auth failures (written by the route). Its JSON columns
 surrogates become U+FFFD, because MySQL refuses an escaped lone surrogate
 anywhere in a JSON value and `_truncateRawInput`'s fixed-offset cut can split
 an emoji (2026-10-25). A refused execution row throws out of `ingestEmail`
-AFTER Layer 3 ran — the mailbox worker then retries that message every tick
-and its folder stops (`ref/plans.md`, Gmail parity close check).
+AFTER Layer 3 ran — the mailbox worker retries that message and, failing on
+it three ticks running, quarantines it (above).
 
 ### Direction & firm-to-firm
 `from.email` domain ∈ `EMAIL_DOMAINS` → `outgoing`, else `incoming`.
