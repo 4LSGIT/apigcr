@@ -25,6 +25,11 @@
 gaps above); everything else from the September delta pass is folded into the
 body. Governing migrations in `ref/migrations/`.*
 
+- **Ingest code gate (hotfix, 10-26):** every ingest route that accepts a
+  `code` body — rule + suppression create/update, `test-match`,
+  `test-transform`, both channels — refuses it without `automations.manage`
+  (403 `missingCapability`); non-code modes stay open to all staff. Gate, not
+  containment: the bodies still run in-process (§27 "Code mode").
 - **Casey reads email/phone ingest rules (A20.0/A20.1, 10-26):** the P12
   kinds take `email_ingest_rule_id` / `phone_ingest_rule_id` (definition,
   references), `email_ingest_execution_id` / `phone_ingest_execution_id` or a
@@ -40,9 +45,8 @@ body. Governing migrations in `ref/migrations/`.*
   (1) every MATCH moves the rule's `updated_at` (the `match_count` bump is a
   row UPDATE), so it is not an edit stamp; action writes do not move it;
   (2) `code` match/transform/suppression bodies run IN THIS PROCESS via
-  `new Function` — and the ingest management routes, test-transform included,
-  are plain `jwtOrApiKey`, so any staff JWT can run code that reads
-  `process.env` (ref/plans.md, Ask Casey arc — A20); (3) a throwing match is
+  `new Function`, where `process.env` is reachable — every route that
+  accepts one now needs `automations.manage` (§27 "Code mode"); (3) a throwing match is
   a console warning only, never recorded on the execution row; (4) email
   firm-to-firm mail runs Layer 3. Plan: ref/ASK_CASEY_ACTIONS_PLAN.md A20.
 - **Workflow step routes: expected_base precondition + save-time closures
@@ -1568,6 +1572,23 @@ an emoji (2026-10-25). A refused execution row throws out of `ingestEmail`
 AFTER Layer 3 ran — the mailbox worker retries that message and, failing on
 it three ticks running, quarantines it (above).
 
+### Code mode — in-process, capability-gated
+Rule match/transform and suppression `code` bodies run IN THIS PROCESS as
+`new Function('input', code)(envelope)` (`*IngestRuleService._evaluateMatch` /
+`_runTransform`, `*IngestSuppressionService`) — no `vm`, no child; `process`
+and `process.env` are reachable. So every route that ACCEPTS a code body
+requires `automations.manage` (`lib/ingestCodeGate.js`, both channels): rule
+and suppression POST/PUT that touch a code-mode side, and `test-match` /
+`test-transform` with a code body. Invariants: detection fails closed — any
+mode other than `conditions` (match) or `passthrough`/`mapper` (transform)
+counts as code, and a write's config shaped like code (a string, or an object
+with a `code` key) counts whatever the mode says; a PUT that leaves both code
+sides untouched passes, but the native editors re-send the whole record, so a
+user without the capability cannot save any edit to a code-mode rule or
+suppression. `duplicate` ignores its body and stays open. Casey's
+`automation.preview_ingest_rule` previews stored rules only. Containment is
+`ref/plans.md` (custom_code containment). §28 shares all of this.
+
 ### Direction & firm-to-firm
 `from.email` domain ∈ `EMAIL_DOMAINS` → `outgoing`, else `incoming`.
 All addresses on firm domains → firm-to-firm: forensic row yes, structured
@@ -1639,6 +1660,10 @@ enough: add it to the provider's map too.**
 6. Conditional `createLogEntry` (`event.date` = the provider timestamp, so a
    recovered text logs at its SEND time); exactly one
    `phone_ingest_executions` row (`logged|suppressed|error|duplicate`).
+
+### Code mode
+Same services shape, same in-process `new Function`, same gate as §27
+"Code mode" (`lib/ingestCodeGate.js` on `routes/api.phoneIngest.js`).
 
 ### Outbound delivery sync (phone-delivery arc, 2026-10)
 Design + vocabulary: `ref/PHONE_DELIVERY_DESIGN.md` (read before touching).

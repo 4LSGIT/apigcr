@@ -43,6 +43,10 @@ const executionsService      = require('../services/emailIngestExecutionsService
 const metaService            = require('../services/emailIngestMetaService');
 const sampleService          = require('../services/emailIngestSampleService');
 const rulePreview            = require('../services/ingestRulePreviewService');
+const ingestCodeGate = require('../lib/ingestCodeGate');
+// Code-mode bodies run in THIS process via new Function — every writer and
+// tester that accepts one refuses it without automations.manage
+// (lib/ingestCodeGate.js; CLAUDE.md, the custom_code invariant).
 
 
 // ─────────────────────────────────────────────────────────────
@@ -294,6 +298,8 @@ router.get('/api/email-ingest/suppressions/:id', jwtOrApiKey, async (req, res) =
 
 router.post('/api/email-ingest/suppressions', jwtOrApiKey, async (req, res) => {
   try {
+    if (ingestCodeGate.sendRefusal(res, ingestCodeGate.refuseIngestCodeWithoutCapability(
+      req.auth, ingestCodeGate.suppressionWriteCarriesCode(req.body, null)))) return;
     const row = await suppressionService.create(req.db, req.body, req.auth.userId);
     auditEI(req, { details: { entity: 'suppression', entity_id: row.id, after: row } });
     res.status(201).json({ status: 'success', suppression: row });
@@ -308,6 +314,8 @@ router.put('/api/email-ingest/suppressions/:id', jwtOrApiKey, async (req, res) =
   try {
     const before = await suppressionService.getById(req.db, req.params.id);
     if (!before) return res.status(404).json({ status: 'error', message: 'Suppression not found' });
+    if (ingestCodeGate.sendRefusal(res, ingestCodeGate.refuseIngestCodeWithoutCapability(
+      req.auth, ingestCodeGate.suppressionWriteCarriesCode(req.body, before)))) return;
 
     const after = await suppressionService.update(req.db, req.params.id, req.body, req.auth.userId);
     auditEI(req, { details: { entity: 'suppression', entity_id: Number(req.params.id), before, after } });
@@ -361,6 +369,8 @@ router.get('/api/email-ingest/rules/:id', jwtOrApiKey, async (req, res) => {
 
 router.post('/api/email-ingest/rules', jwtOrApiKey, async (req, res) => {
   try {
+    if (ingestCodeGate.sendRefusal(res, ingestCodeGate.refuseIngestCodeWithoutCapability(
+      req.auth, ingestCodeGate.ruleWriteCarriesCode(req.body, null)))) return;
     const rule = await ruleService.createRule(req.db, req.body, req.auth.userId);
     auditEI(req, { details: { entity: 'rule', entity_id: rule.id, after: rule } });
     res.status(201).json({ status: 'success', rule });
@@ -375,6 +385,8 @@ router.put('/api/email-ingest/rules/:id', jwtOrApiKey, async (req, res) => {
   try {
     const before = await ruleService.getById(req.db, req.params.id);
     if (!before) return res.status(404).json({ status: 'error', message: 'Rule not found' });
+    if (ingestCodeGate.sendRefusal(res, ingestCodeGate.refuseIngestCodeWithoutCapability(
+      req.auth, ingestCodeGate.ruleWriteCarriesCode(req.body, before)))) return;
 
     const after = await ruleService.updateRule(req.db, req.params.id, req.body, req.auth.userId);
     auditEI(req, { details: { entity: 'rule', entity_id: Number(req.params.id), before, after } });
@@ -630,6 +642,8 @@ router.post('/api/email-ingest/rules/test-match', jwtOrApiKey, async (req, res) 
   // with Casey's automation.preview_ingest_rule; this response is unchanged —
   // pinned against a pre-extraction golden by tests/ingestRulePreview.routes.test.js.
   try {
+    if (ingestCodeGate.sendRefusal(res, ingestCodeGate.refuseIngestCodeWithoutCapability(
+      req.auth, ingestCodeGate.testMatchCarriesCode(req.body)))) return;
     const r = await rulePreview.testMatch(req.db, 'email', req.body || {});
     return res.status(r.status).json(r.body);
   } catch (err) {
@@ -680,6 +694,8 @@ router.post('/api/email-ingest/rules/test-transform', jwtOrApiKey, async (req, r
   // with Casey's automation.preview_ingest_rule; this response is unchanged —
   // pinned against a pre-extraction golden by tests/ingestRulePreview.routes.test.js.
   try {
+    if (ingestCodeGate.sendRefusal(res, ingestCodeGate.refuseIngestCodeWithoutCapability(
+      req.auth, ingestCodeGate.testTransformCarriesCode(req.body)))) return;
     const r = await rulePreview.testTransform(req.db, 'email', req.body || {});
     return res.status(r.status).json(r.body);
   } catch (err) {

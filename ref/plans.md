@@ -632,6 +632,21 @@ it:
   remains the fallback engine if Intl ever matters more than avoiding a native
   dependency, and egress restriction on the child is the orthogonal mitigation
   that closes the metadata server for STANDARD mode.
+- **A second in-process class: `new Function` in ingest rules, suppressions
+  and hooks (2026-10-26).** Email/phone ingest rule match + transform, both
+  suppression services, and `hookService.runFilter` / `runTransform` run a
+  stored `code` body as `new Function('input', code)(input)` IN THE MAIN
+  PROCESS — no `vm`, no child, no hardening, so `process.env` (DB
+  credentials, `JWT_SECRET`, `CREDENTIALS_ENCRYPTION_KEY`) is one expression
+  away, on every inbound message and webhook. Authoring is gated
+  (`automations.manage`: hooks since B5, ingest since the 2026-10-26 hotfix,
+  `lib/ingestCodeGate.js`), which is an authoring control only — the same
+  caveat as the step gate below. Live today: 8 email rules + 1 phone rule with
+  a code transform, 1 email + 1 phone code suppression (2026-10-26). The fix
+  is the custom_code path's: run these bodies in the safe runner (QuickJS,
+  `lib/safeCodeRunner.js`) or the forked child — synchronous call sites today,
+  so a per-message async hop and its latency/timeout budget are part of the
+  design; then the gate can relax for safe bodies the way it did for steps.
 - **So "a code step is harmless by construction" is NOT true today**, and no
   authoring decision should be justified by the child boundary alone. The
   honest claim is that the worst case fell from "the database" to "whatever an
@@ -853,8 +868,11 @@ and the two marked LIVE BUG are worth landing whether or not A17 ever ships.)
 Found while building Casey's ingest-rule read surface (plan A20). None is a
 Casey slice; the first is a security gap in the native editor.
 
-- **SECURITY — ingest `code` modes run in the main process, and their routes
-  are open to every staff JWT.** `email/phoneIngestRuleService._evaluateMatch`
+- **SECURITY — ingest `code` modes run in the main process.** Authoring is
+  GATED since the 2026-10-26 hotfix (`lib/ingestCodeGate.js`: rule and
+  suppression writes and test-match / test-transform carrying `code` need
+  `automations.manage`); containment is filed under "custom_code containment"
+  above. The finding as made: `email/phoneIngestRuleService._evaluateMatch`
   / `_runTransform` and both suppression services run a `code` body as
   `new Function('input', code)(envelope)` IN THIS PROCESS — no `vm`, no forked
   child, no hardening; `process` is a global there. Every ingest management
@@ -867,10 +885,8 @@ Casey slice; the first is a security gap in the native editor.
   `JWT_SECRET` and `CREDENTIALS_ENCRYPTION_KEY`, and stored code runs on every
   inbound message. This is the 2026-10-22 `custom_code` finding's class with
   less in the way (hooks run the same `new Function`, but their routes have
-  been `automations.manage`-gated since access B5). Cheapest first step: the
-  `automations.manage` gate on every ingest write that carries `code` mode and
-  on test-match / test-transform with a `code` body (the CLAUDE.md "every code
-  writer" rule); then move execution to the safe runner or the forked child.
+  been `automations.manage`-gated since access B5). The gate was the cheapest
+  first step; moving execution to the safe runner or the forked child remains.
   Casey's `automation.preview_ingest_rule` takes no rule body for this reason.
 - **The native ingest tester skips `evaluateRules`' email `body` derivation.**
   `evaluateRules` (and `evaluateSuppressions`) set `body = text || html || ''`

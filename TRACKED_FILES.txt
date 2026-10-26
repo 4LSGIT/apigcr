@@ -55,6 +55,7 @@ lib/errorMiddleware.js
 lib/escapeLike.js
 lib/firmConfig.js
 lib/hookSpool.js
+lib/ingestCodeGate.js
 lib/ingestSampleProjection.js
 lib/internal_functions/README.md
 lib/internal_functions/ai.js
@@ -1369,6 +1370,7 @@ tests/hookTransforms.test.js
 tests/hooksGate.test.js
 tests/iconPickerS6a.test.js
 tests/impersonation.test.js
+tests/ingestCodeGate.routes.test.js
 tests/ingestRulePreview.routes.test.js
 tests/ingestRuleService.duplicate.test.js
 tests/ingestRuleService.transformFailure.test.js

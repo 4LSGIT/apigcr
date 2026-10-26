@@ -1573,8 +1573,8 @@ missing contact id, a hook's state, an internal function's resolved params,
 an `http` host — never its URL). Deliberate narrowings: the kind previews a
 STORED rule only — it refuses every native body field, because a `code` body
 runs in this process via `new Function` and a model-supplied one would be
-model-composed code executing in-process (the native routes accept that from
-any staff JWT today — filed, `ref/plans.md`); and it prepares an email
+model-composed code executing in-process (the native routes accept that only
+from holders of `automations.manage` — `lib/ingestCodeGate.js`); and it prepares an email
 envelope the way `evaluateRules` does (`body` = text || html), which the
 native tester does not on full-fidelity rows (filed). A20.2 adds draft
 (unsaved) conditions/mapper preview if it needs one — with a ReDoS answer for

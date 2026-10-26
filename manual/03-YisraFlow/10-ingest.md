@@ -173,6 +173,15 @@ Two endpoints, both non-destructive, both wired into the UI:
 `GET /api/{email,phone}-ingest/sample-events` gives you real recent events to
 test against, so you aren't hand-writing envelopes.
 
+**Code mode needs `automations.manage` (admin / IT).** A `code` match,
+transform or suppression is JavaScript that runs inside the server process
+itself, so saving one — or testing a code body with either endpoint above —
+is refused (403, "requires the automations.manage capability") for anyone
+without that capability. Conditions, mapper and passthrough editing and
+testing stay open to all staff. Because the editor saves the whole rule, a
+staff user also can't save other edits (name, active, position) to a rule or
+suppression that is in code mode; ask an administrator.
+
 ### Management API
 
 Identical surface on both pipelines — substitute `email-ingest` or
@@ -196,6 +205,8 @@ Identical surface on both pipelines — substitute `email-ingest` or
 | `/api/{…}-ingest/rules/test-transform` | POST | Dry-run transform |
 
 All management routes are `jwtOrApiKey` and audited; the receiver is not.
+Writes and tests that carry `code` mode additionally need `automations.manage`
+(above).
 
 ### Common pitfalls
 
