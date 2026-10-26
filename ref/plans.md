@@ -896,7 +896,10 @@ and the two marked LIVE BUG are worth landing whether or not A17 ever ships.)
 
 Found while building Casey's ingest-rule read surface (plan A20). None is a
 Casey slice. (The first one filed here, ingest `code` running in the main
-process, was resolved by the code-bodies guest-engine slice, 2026-10-26.)
+process, was resolved by the code-bodies guest-engine slice, 2026-10-26; the
+`updated_at`-is-not-an-edit-stamp one by A20 slice 1, 2026-10-27 —
+`definition_updated_at` + the change log, with the landmine in both columns'
+COMMENTs.)
 
 - **The native ingest tester skips `evaluateRules`' email `body` derivation.**
   `evaluateRules` (and `evaluateSuppressions`) set `body = text || html || ''`
@@ -910,13 +913,13 @@ process, was resolved by the code-bodies guest-engine slice, 2026-10-26.)
   `productionEnvelope` in `testMatch` / `testTransform` too, and refresh the
   golden. The `emailIngestSampleService` header still says `body` is "a derived
   field the production matcher never sees" — false since the catalog-parity fix.
-- **A rule's `updated_at` moves on every match.** `_bumpMetrics` UPDATEs the
-  rule row and `ON UPDATE CURRENT_TIMESTAMP` fires (live: 16 of 18 matched
-  email rules show `updated_at = last_matched_at`). Action writes do not touch
-  it. Any expected-`updated_at` guard (A20.2/A20.3) is therefore spuriously
-  stale on busy rules and blind to action edits; give rules an edit stamp the
-  metrics bump does not move (or bump metrics with `updated_at = updated_at`),
-  and record the landmine as a schema COMMENT when that migration runs.
+- **Nothing reads the ingest rule change log yet** (A20 slice 1, 2026-10-27).
+  `{email,phone}_ingest_rule_changes` is written on every real rule / action
+  change, but no route or screen reads it — SU console / readonly SQL only. A
+  read route (gate it: automations.manage or SU — the rows carry what the rule
+  rows carry, minus the http redactions) and an editor "History" pane with a
+  "restore this version" action would make the revert path a click instead of
+  hand re-entry. No retention needed at ~10 edits/month.
 - **A throwing ingest match is fail-quiet.** It is a console warning only —
   no execution-row warning, no metric, no alert — where the trigger engine
   records the same case (AI_CONTEXT §26). A rule that silently throws on every

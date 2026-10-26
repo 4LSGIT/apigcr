@@ -48,6 +48,24 @@ body. Governing migrations in `ref/migrations/`.*
   wired scope where a failure does not free the key. Native callers without a
   key are unchanged. Off switch `casey_send_enabled`. Plan:
   ref/ASK_CASEY_ACTIONS_PLAN.md A14.
+- **Ingest rules: edit stamp + change log + stale-edit precondition (A20
+  slice 1, 10-27):** `{email,phone}_ingest_rules.definition_updated_at`
+  (DATETIME(3)) is THE edit stamp; `updated_at` moves on every match and is
+  not. Every rule / rule-action writer (create, update, delete, duplicate,
+  action add/update/delete) runs in ONE transaction:
+  lock the rule `FOR UPDATE` → optional `expected_base:
+  {definition_updated_at}` (P11's shape; stale → 409 `{error, conflict:
+  {changed, expected, actual}}`, nothing written) → write → if the
+  definition really changed (stored rows read back, key-order-blind), move
+  the stamp (`GREATEST(now, prev + 1 ms)`, `updated_at` assigned to itself)
+  and append `{email,phone}_ingest_rule_changes` (kind, actor user / key /
+  label, the rule WITH its actions before/after, `http` URL + literal header
+  values redacted, 256 KB per-side cap → size + sha256 marker). Invariants:
+  an action write moves its PARENT's stamp; the match bump never names the
+  stamp; a no-op save moves nothing; the log is append-only (a test greps for
+  an UPDATE/DELETE) and outlives its rule (no FK); lock order is rule then
+  action. `services/ingestRuleChangeLog.js`; migration
+  `scripts/ingestRuleEditStampAndChangeLog.js`. No read route yet. §27, §28.
 - **Read-loop continuation (R1, 10-26):** a stop in
   `assistantService.CONTINUABLE_STOPS` (round/step/row/time/token budget)
   returns `continuation`, a token SEALED by `lib/assistantContinuation.js`
@@ -184,7 +202,8 @@ body. Governing migrations in `ref/migrations/`.*
   `email_ingest_sources` is never read; `http` actions project as method +
   host + credential label. Ingest landmines found while building it:
   (1) every MATCH moves the rule's `updated_at` (the `match_count` bump is a
-  row UPDATE), so it is not an edit stamp; action writes do not move it;
+  row UPDATE), so it is not an edit stamp; action writes do not move it —
+  the edit stamp is `definition_updated_at` (A20 slice 1, entry above);
   (2) `code` match/transform/suppression bodies ran IN THIS PROCESS via
   `new Function` — now the QuickJS guest; every route that accepts one
   needs `automations.manage` (§27 "Code mode"); (3) a throwing match is
@@ -1788,6 +1807,19 @@ suppression. `duplicate` ignores its body and stays open. Casey's
 unchanged by the engine move; relaxing it is Fred's decision after a soak
 (`ref/plans.md`). §28 shares all of this.
 
+### Edit stamp, change log, stale-edit precondition
+A rule is live on save with no draft or version, so its edits are made
+auditable and guardable instead (A20 slice 1; §0 entry; operator view in
+`manual/03-YisraFlow/10-ingest.md` "Change history"):
+`email_ingest_rules.definition_updated_at` is the edit stamp — NEVER
+`updated_at`, which every match moves (both columns' COMMENTs say so) — and
+`email_ingest_rule_changes` the append-only history, both written only by
+`services/ingestRuleChangeLog.js` inside the edit's transaction. The rule and
+action write routes take an optional `expected_base: {definition_updated_at}`
+checked under the rule's `FOR UPDATE` lock, AFTER the code gate (refusal →
+shape 400 → service). Native callers send none and are unchanged (golden:
+`tests/fixtures/ingestNativeGolden.json`). §28 shares all of this.
+
 ### Direction & firm-to-firm
 `from.email` domain ∈ `EMAIL_DOMAINS` → `outgoing`, else `incoming`.
 All addresses on firm domains → firm-to-firm: forensic row yes, structured
@@ -1795,7 +1827,8 @@ log no.
 
 ### Tables
 `email_log`, `email_ingest_sources`, `email_ingest_rules`,
-`email_ingest_rule_actions`, `email_ingest_log_suppressions`,
+`email_ingest_rule_actions`, `email_ingest_rule_changes`,
+`email_ingest_log_suppressions`,
 `email_ingest_executions`. The `email_router_*` tables are DEAD (tear-out
 pending). Collation: `court_ai_log.message_id` and `email_log.message_id`
 are both `utf8mb4_general_ci` live (verified 2026-10-05) — the explicit
@@ -1864,6 +1897,10 @@ enough: add it to the provider's map too.**
 Same services shape, same QuickJS guest engine, same gate as §27
 "Code mode" (`lib/ingestCodeGate.js` on `routes/api.phoneIngest.js`).
 
+### Edit stamp, change log, precondition
+Same as §27: `phone_ingest_rules.definition_updated_at`,
+`phone_ingest_rule_changes`, `expected_base` on the same six writers.
+
 ### Outbound delivery sync (phone-delivery arc, 2026-10)
 Design + vocabulary: `ref/PHONE_DELIVERY_DESIGN.md` (read before touching).
 `services/phoneDeliveryService.runSync` (skin `fns.phone_outbound_sync`,
@@ -1891,6 +1928,7 @@ only via `phoneService.getAdapter()` — ingests whatever the webhooks dropped
 ### Tables
 `phone_event_log` (+ the delivery_* columns — their COMMENTs carry the
 vocabulary), `phone_ingest_rules`, `phone_ingest_rule_actions`,
+`phone_ingest_rule_changes`,
 `phone_log_suppressions`, `phone_ingest_executions`. The firm-number cache
 has a reset hook (`resetFirmNumberCache`) re-exported through the internal
 function registry for tests.

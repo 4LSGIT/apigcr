@@ -13,6 +13,8 @@
  *   YC_TEST_MYSQL_URL=mysql://root@127.0.0.1:3361/yc_a20_test npx jest tests/automationReadIngest.mysql.test.js --runInBand
  * The suite DELETEs and re-seeds the ingest, workflow, sequence, hook and
  * credential tables it uses, and creates the MySQL user a20_ro.
+ * beforeAll applies scripts/ingestRuleEditStampAndChangeLog.js (A20 slice 1 —
+ * the rule CRUD now reads definition_updated_at); a no-op once the dump has it.
  *
  * WHAT IS LOCKED
  *   - Redaction: an `http` action's URL and literal header values never reach
@@ -77,6 +79,15 @@ maybe('Casey ingest reads + preview on real MySQL', () => {
     const conn = { host: u.hostname, port: Number(u.port), database, timezone: 'Z', connectionLimit: 3 };
     root = mysql.createPool({ ...conn, user: decodeURIComponent(u.username), password: decodeURIComponent(u.password) });
     root.pool.on('connection', (c) => c.query(`SET SESSION sql_mode = '${PROD_SQL_MODE}'`));
+    // A20 slice 1: the rule services read definition_updated_at and write the
+    // change tables. Idempotent — ALREADY APPLIED once ref/database.sql carries it.
+    {
+      const mc = await root.getConnection();
+      try {
+        const r = await require('../scripts/ingestRuleEditStampAndChangeLog').run(mc, { apply: true, log: () => {} });
+        if (!r.ok) throw new Error(`ingest edit-stamp migration did not apply: ${r.line}`);
+      } finally { mc.release(); }
+    }
 
     // Dependents first (a dispatch that ever escaped the tripwires below would
     // leave rows here holding FKs on workflows).

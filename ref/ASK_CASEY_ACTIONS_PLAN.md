@@ -1778,10 +1778,26 @@ fire-and-forget `match_count`/`last_matched_at` bump is an UPDATE on the rule
 row, and `ON UPDATE CURRENT_TIMESTAMP` moves `updated_at` with it (live
 2026-10-26: 16 of the 18 email rules that ever matched, and 2 of 3 phone rules,
 have `updated_at` equal to `last_matched_at`). So `updated_at`
-is not "last edited", and an expected-`updated_at` guard on a busy rule
-(court emails: 940 matches) refuses spuriously whenever mail arrives between
-review and click — A20.2 needs an edit stamp that matching does not move, or a
-guard over the edited fields themselves, and must cover actions separately.
+is not "last edited", and a guard on it would refuse spuriously on a busy rule
+(court emails: 940 matches) whenever mail arrived between review and click.
+**The edit stamp, the change log and the precondition (slice 1 of the
+A20.2/A20.3 build, Fred's go 2026-10-27 for both schema changes)** are built
+canonically, ahead of any Casey kind, so the native editor gets them too:
+`definition_updated_at` (DATETIME(3)) on both rules tables is moved ONLY by a
+real definition change — the rule's own fields or any of its action rows
+(an action write moves its PARENT's stamp) — inside the edit's transaction,
+strictly increasing, never by a match; every such change appends a row to
+`email_ingest_rule_changes` / `phone_ingest_rule_changes` (kind, actor, the
+rule WITH its action rows before and after; `http` URL and literal header
+values redacted; append-only); and every rule / rule-action write route
+(rule PUT/DELETE, duplicate, action POST/PUT/DELETE) takes an optional
+`expected_base: { definition_updated_at }`, checked under the rule's
+`FOR UPDATE` lock — stale is P11's structured 409, nothing written. A save
+that changes nothing moves no stamp and logs nothing. Code:
+`services/ingestRuleChangeLog.js`; migration
+`scripts/ingestRuleEditStampAndChangeLog.js`
+(`ref/migrations/2026-10-27_ingest_rule_edit_stamp_change_log.sql`); no read
+route for the log yet (SU console / readonly SQL).
 `action_type` is `workflow|sequence|hook|internal_function|http`; `match_mode`
 is `conditions|code` and `transform_mode` `passthrough|mapper|code`. Rule
 `position` orders evaluation, so insertion position is part of review. The
@@ -1874,10 +1890,10 @@ Fred rules otherwise):
   come from the A17 allowlist; `http` actions follow A17.4b's webhook
   contract (literal user-supplied URL, named credential, no model-invented
   destination) or defer to a sub-slice.
-- Edits in THIS slice are limited to INACTIVE rules, with an
-  expected-`updated_at` precondition on the canonical route (optional for
-  native callers, required on Casey proposals — P11's shape). Editing an
-  ACTIVE rule is A20.3.
+- Edits in THIS slice are limited to INACTIVE rules, with the
+  `expected_base: { definition_updated_at }` precondition the canonical routes
+  take (optional for native callers, required on Casey proposals — P11's
+  shape). Editing an ACTIVE rule is A20.3.
 - Per-family flag (ruling 4), one proposal per answer, exact-id evidence from
   an A20.0 read, and the prompt-stage registry sweep
   (`tests/assistantPromptKinds.test.js`) like every family.
@@ -1885,16 +1901,15 @@ Fred rules otherwise):
 **A20.3: Edit an active ingest rule.** Ruled its own slice (Fred, 2026-10-26:
 "it should also be able to edit — that's just its own slice"). An active-rule
 edit is live-on-save with no change history — exactly the trigger-rule hazard —
-so this slice ships WITH the two cheap pieces the trigger decision prescribes,
-built canonically so the native editor gets them too:
+so it rests on the two cheap pieces the trigger decision prescribes — built
+canonically, ahead of the Casey kinds, in slice 1 (above):
 
-- an append-only change log written inside `updateRule`/`updateAction`'s
-  existing transaction — the rule's fields and its action rows, before and
+- the append-only change log, written inside every rule and rule-action
+  write's transaction — the rule's fields and its action rows, before and
   after, with the actor — giving both the review diff and a manual revert path;
-- the expected-`updated_at` stale guard from A20.2, now mandatory on every
-  Casey active-rule proposal (whether an action write bumps the parent rule's
-  `updated_at` is the A20.2 trace item; if not, the guard must cover actions
-  too).
+- the `definition_updated_at` precondition, mandatory on every Casey
+  active-rule proposal. An action write moves its parent rule's stamp, so the
+  one value guards the rule and all of its actions.
 
 Review shows the live rule's before/after diff and says plainly that the edit
 takes effect immediately on matching mail/calls. Same exclusions as A20.2

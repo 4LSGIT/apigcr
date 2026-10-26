@@ -609,6 +609,7 @@ ref/migrations/2026-10-21_phone_delivery_s1_delivery_columns.sql
 ref/migrations/2026-10-22_request_idempotency.sql
 ref/migrations/2026-10-26_docs_digest_repoint.console.js
 ref/migrations/2026-10-26_docs_digest_rule.console.js
+ref/migrations/2026-10-27_ingest_rule_edit_stamp_change_log.sql
 ref/migrations/2026-10-27_optout_contact_columns_drop.sql
 ref/migrations/S1_notes_migration.sql
 ref/migrations/documents_s1.sql
@@ -838,6 +839,7 @@ scripts/esign_e2e_check.js
 scripts/esign_zoho_smoke.js
 scripts/genTypeKeyBackfill.js
 scripts/gen_signatures.js
+scripts/ingestRuleEditStampAndChangeLog.js
 scripts/mailboxRepairShellRows.js
 scripts/mobile-survey/README.md
 scripts/mobile-survey/commsDensity.js
@@ -1032,6 +1034,7 @@ services/hookFilter.js
 services/hookMapper.js
 services/hookService.js
 services/hookTransforms.js
+services/ingestRuleChangeLog.js
 services/ingestRulePreviewService.js
 services/intakeService.js
 services/logService.js
@@ -1318,6 +1321,7 @@ tests/fixtures/comms_s2_audio/rc_cbr_mono_32k.mp3.head
 tests/fixtures/comms_s2_audio/tiny_1s.mp3.head
 tests/fixtures/comms_s2_audio/vbr_xing.mp3.head
 tests/fixtures/comms_s2_audio/vm.wav.head
+tests/fixtures/ingestNativeGolden.json
 tests/fixtures/ingestRuleTestRoutes.golden.json
 tests/fixtures/intake_cards_definition.json
 tests/fixtures/quick_notes_slice2_definition.json
@@ -1367,6 +1371,7 @@ tests/helpers/ctaWorld.js
 tests/helpers/fakeGcs.js
 tests/helpers/homeLayoutBrowser.js
 tests/helpers/imapWire.js
+tests/helpers/ingestNativeSequence.js
 tests/helpers/mailRenderBrowser.js
 tests/helpers/mailboxS1World.js
 tests/helpers/mailboxS2World.js
@@ -1396,6 +1401,9 @@ tests/hooksGate.test.js
 tests/iconPickerS6a.test.js
 tests/impersonation.test.js
 tests/ingestCodeGate.routes.test.js
+tests/ingestRuleChangeLog.mysql.test.js
+tests/ingestRuleChangeLog.test.js
+tests/ingestRuleEditStampMigration.test.js
 tests/ingestRulePreview.routes.test.js
 tests/ingestRuleService.duplicate.test.js
 tests/ingestRuleService.transformFailure.test.js

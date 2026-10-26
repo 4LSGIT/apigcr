@@ -132,6 +132,8 @@ Both pipelines share one rule shape (`email_ingest_rules` / `phone_ingest_rules`
 | `transform_mode` | `passthrough`, `mapper` (field mapping) or `code` (JS) |
 | `transform_config` | What the actions receive |
 | `match_count`, `last_matched_at` | Bumped on every match — the cheapest health check you have |
+| `updated_at` | Moves on every MATCH as well as every edit (the bump is a row update) — **not** "last edited" |
+| `definition_updated_at` | The edit stamp: moves only when the rule or one of its actions really changes |
 
 Actions hang off `*_ingest_rule_actions` and use the **same four dispatchers as
 YisraHook** (`lib/actionDispatchers.js`, extracted from `hookService` so the two
@@ -222,6 +224,31 @@ Identical surface on both pipelines — substitute `email-ingest` or
 All management routes are `jwtOrApiKey` and audited; the receiver is not.
 Writes and tests that carry `code` mode additionally need `automations.manage`
 (above).
+
+### Change history and the stale-edit check
+
+A rule edit is live the moment it is saved — there is no draft. So every real
+change to a rule or to one of its actions is written down, in the same
+transaction as the edit, in `email_ingest_rule_changes` /
+`phone_ingest_rule_changes`: what kind of change (`create`, `update`,
+`activate`, `deactivate`, `delete`, `duplicate`, `action_add`,
+`action_update`, `action_delete`), who made it, and the whole rule **with its
+actions** as it was before and after. That is how you answer "what did this
+rule look like last week?", and how you undo an edit by hand (re-enter the
+`before` values). A save that changes nothing writes nothing. Deleting a rule
+keeps its history. An `http` action's URL (host kept) and literal header
+values are blanked in the history, never in the action itself. There is no
+screen for it yet: an administrator reads it from the DB console.
+
+Every edit also moves the rule's `definition_updated_at` — a match never does.
+A caller that wants to be sure it is editing the version it looked at sends
+`expected_base: {"definition_updated_at": "<the value it read>"}` with any
+rule or action write (rule PUT/DELETE, duplicate, action POST/PUT/DELETE). If
+someone changed the rule since, the write is refused with **409** —
+`{"error": "...", "conflict": {"changed": "definition_updated_at",
+"expected": ..., "actual": ...}}` — and nothing is saved: re-read the rule and
+redo the change. The editor screens don't send it, so they behave exactly as
+before; Casey's ingest-rule edits will always send it.
 
 ### Common pitfalls
 

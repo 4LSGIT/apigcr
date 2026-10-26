@@ -12,6 +12,9 @@
  *     insert column list — they start fresh via column defaults
  *   - transform passthrough forces transform_config NULL
  *   - absent source → null, and no transaction is opened
+ *   - (A20 slice 1) the source is re-read UNDER its row lock inside the
+ *     transaction, and the copy gets one change-log row, kind 'duplicate',
+ *     duplicated_from_rule_id = the source, before NULL, after = the copy
  *   - NO validator round-trip (source rows already passed validation; the
  *     copy is byte-identical config)
  *
@@ -39,6 +42,8 @@ function makeFakeDb(tablePrefix, srcRule, srcActions) {
   const state = {
     ruleInsert: null,          // { sql, params }
     actionInserts: [],         // [{ sql, params }]
+    changeInserts: [],         // [{ sql, params }] — the change log
+    lockedSql: [],             // FOR UPDATE reads issued on the transaction
     txOpened: 0,
     newRuleId: 900,
   };
@@ -95,7 +100,13 @@ function makeFakeDb(tablePrefix, srcRule, srcActions) {
             state.actionInserts.push({ sql, params });
             return [{ insertId: 9001 + state.actionInserts.length - 1 }];
           }
-          throw new Error(`fake conn: unexpected query: ${sql}`);
+          if (sql.includes(`INSERT INTO ${tablePrefix}_rule_changes`)) {
+            state.changeInserts.push({ sql, params });
+            return [{ insertId: 1 }];
+          }
+          if (/^\s*(INSERT|UPDATE|DELETE)/i.test(sql)) throw new Error(`fake conn: unexpected write: ${sql}`);
+          if (/FOR UPDATE/.test(sql)) state.lockedSql.push(sql);
+          return db.query(sql, params);   // reads on the transaction
         },
       };
       return fn(conn);
@@ -163,6 +174,19 @@ describe.each([
     expect(out.name).toBe('Court FW: Fee Waiver Order (copy)');
     expect(out.actions).toHaveLength(2);
     expect(out.actions[0].rule_id).toBe(900);
+
+    // the source was locked inside the transaction, and the copy logged once
+    expect(db.state.lockedSql).toHaveLength(1);
+    expect(db.state.lockedSql[0]).toMatch(new RegExp(`FROM ${prefix}_rules WHERE id = \\? FOR UPDATE`));
+    expect(db.state.changeInserts).toHaveLength(1);
+    const ci = db.state.changeInserts[0].params;
+    // rule_id, change_kind, action_id, duplicated_from_rule_id, actor_user_id, actor_key_id, actor_label,
+    // definition_updated_at, before_json, after_json
+    expect(ci.slice(0, 7)).toEqual([900, 'duplicate', null, 42, 99, null, null]);
+    expect(ci[8]).toBeNull();
+    const after = JSON.parse(ci[9]);
+    expect(after.rule).toMatchObject({ id: 900, name: 'Court FW: Fee Waiver Order (copy)', active: 0 });
+    expect(after.actions.map(a => a.id)).toEqual([9001, 9002]);
   });
 
   test('absent source → null, no transaction opened', async () => {

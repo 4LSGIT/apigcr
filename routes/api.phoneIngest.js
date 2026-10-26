@@ -33,6 +33,14 @@ const metaService          = require('../services/phoneIngestMetaService');
 const sampleService        = require('../services/phoneIngestSampleService');
 const rulePreview          = require('../services/ingestRulePreviewService');
 const ingestCodeGate = require('../lib/ingestCodeGate');
+// The rule edit stamp + change log + stale-edit precondition (A20 slice 1):
+// services/ingestRuleChangeLog.js. Every rule / rule-action writer passes the
+// actor, and an OPTIONAL `expected_base: { definition_updated_at }` (P11's
+// shape, routes/workflows.js) — checked under the rule's row lock inside the
+// write's transaction; stale → 409 { error, conflict:{changed,expected,actual} },
+// nothing written. Native callers that send none behave as before. The code
+// gate stays first: refusal → shape check → service.
+const changeLog = require('../services/ingestRuleChangeLog');
 // Code-mode bodies run in the QuickJS guest engine in the sandbox child
 // (lib/guestCode.js) — every writer and tester that accepts one still refuses
 // it without automations.manage (lib/ingestCodeGate.js; CLAUDE.md, the
@@ -81,6 +89,30 @@ function _handleValidationError(err, res) {
     } else {
       res.status(400).json({ error: 'validation_failed', errors: errs });
     }
+    return true;
+  }
+  return false;
+}
+
+// The write options for a rule / rule-action service call: the actor, and the
+// optional expected_base. A malformed expected_base is a 400 here (returns
+// null, response sent) — after the code gate, before the service.
+function _ruleWriteOpts(req, res) {
+  const expectedBase = req.body ? req.body.expected_base : undefined;
+  if (expectedBase !== undefined) {
+    const message = changeLog.expectedBaseShapeError(expectedBase);
+    if (message) {
+      res.status(400).json({ error: 'validation_failed', field: 'expected_base', message });
+      return null;
+    }
+  }
+  return { actor: changeLog.actorFromAuth(req.auth), expectedBase };
+}
+
+// A stale expected_base → the structured 409. Returns true if handled.
+function _handleStaleDefinition(err, res) {
+  if (err && err.name === 'StaleDefinitionError') {
+    res.status(409).json(changeLog.conflictBody(err));
     return true;
   }
   return false;
@@ -187,7 +219,8 @@ router.post('/api/phone-ingest/rules', jwtOrApiKey, async (req, res) => {
   try {
     if (ingestCodeGate.sendRefusal(res, ingestCodeGate.refuseIngestCodeWithoutCapability(
       req.auth, ingestCodeGate.ruleWriteCarriesCode(req.body, null)))) return;
-    const rule = await ruleService.createRule(req.db, req.body, req.auth.userId);
+    const rule = await ruleService.createRule(req.db, req.body, req.auth.userId,
+      { actor: changeLog.actorFromAuth(req.auth) });
     auditPI(req, { details: { entity: 'rule', entity_id: rule.id, after: rule } });
     res.status(201).json({ status: 'success', rule });
   } catch (err) {
@@ -203,11 +236,14 @@ router.put('/api/phone-ingest/rules/:id', jwtOrApiKey, async (req, res) => {
     if (!before) return res.status(404).json({ status: 'error', message: 'Rule not found' });
     if (ingestCodeGate.sendRefusal(res, ingestCodeGate.refuseIngestCodeWithoutCapability(
       req.auth, ingestCodeGate.ruleWriteCarriesCode(req.body, before)))) return;
+    const opts = _ruleWriteOpts(req, res);
+    if (!opts) return;
 
-    const after = await ruleService.updateRule(req.db, req.params.id, req.body, req.auth.userId);
+    const after = await ruleService.updateRule(req.db, req.params.id, req.body, req.auth.userId, opts);
     auditPI(req, { details: { entity: 'rule', entity_id: Number(req.params.id), before, after } });
     res.json({ status: 'success', rule: after });
   } catch (err) {
+    if (_handleStaleDefinition(err, res)) return;
     if (_handleValidationError(err, res)) return;
     console.error('[phone-ingest] update rule error:', err);
     res.status(500).json({ status: 'error', message: err.message });
@@ -218,25 +254,32 @@ router.delete('/api/phone-ingest/rules/:id', jwtOrApiKey, async (req, res) => {
   try {
     const before = await ruleService.getById(req.db, req.params.id);
     if (!before) return res.status(404).json({ status: 'error', message: 'Rule not found' });
+    const opts = _ruleWriteOpts(req, res);
+    if (!opts) return;
 
-    await ruleService.deleteRule(req.db, req.params.id);
+    await ruleService.deleteRule(req.db, req.params.id, opts);
     auditPI(req, { details: { entity: 'rule', entity_id: Number(req.params.id), before } });
     res.status(204).end();
   } catch (err) {
+    if (_handleStaleDefinition(err, res)) return;
     console.error('[phone-ingest] delete rule error:', err);
     res.status(500).json({ status: 'error', message: err.message });
   }
 });
 
 // Deep-copy a rule + its actions. The copy is created INACTIVE with name
-// "<source> (copy)" — see ruleService.duplicateRule. Body is ignored.
+// "<source> (copy)" — see ruleService.duplicateRule. The body is ignored except
+// an optional expected_base, which guards the SOURCE rule.
 router.post('/api/phone-ingest/rules/:id/duplicate', jwtOrApiKey, async (req, res) => {
   try {
-    const rule = await ruleService.duplicateRule(req.db, req.params.id, req.auth.userId);
+    const opts = _ruleWriteOpts(req, res);
+    if (!opts) return;
+    const rule = await ruleService.duplicateRule(req.db, req.params.id, req.auth.userId, opts);
     if (!rule) return res.status(404).json({ status: 'error', message: 'Rule not found' });
     auditPI(req, { details: { entity: 'rule', entity_id: rule.id, duplicated_from: Number(req.params.id), after: rule } });
     res.status(201).json({ status: 'success', rule });
   } catch (err) {
+    if (_handleStaleDefinition(err, res)) return;
     console.error('[phone-ingest] duplicate rule error:', err);
     res.status(500).json({ status: 'error', message: err.message });
   }
@@ -249,11 +292,14 @@ router.post('/api/phone-ingest/rules/:id/duplicate', jwtOrApiKey, async (req, re
 
 router.post('/api/phone-ingest/rules/:id/actions', jwtOrApiKey, async (req, res) => {
   try {
-    const action = await ruleService.addAction(req.db, req.params.id, req.body);
+    const opts = _ruleWriteOpts(req, res);
+    if (!opts) return;
+    const action = await ruleService.addAction(req.db, req.params.id, req.body, opts);
     if (action === null) return res.status(404).json({ status: 'error', message: 'Rule not found' });
     auditPI(req, { details: { entity: 'rule_action', entity_id: action.id, rule_id: Number(req.params.id), after: action } });
     res.status(201).json({ status: 'success', action });
   } catch (err) {
+    if (_handleStaleDefinition(err, res)) return;
     if (_handleValidationError(err, res)) return;
     console.error('[phone-ingest] add action error:', err);
     res.status(500).json({ status: 'error', message: err.message });
@@ -264,11 +310,14 @@ router.put('/api/phone-ingest/rule-actions/:id', jwtOrApiKey, async (req, res) =
   try {
     const before = await ruleService.getActionById(req.db, req.params.id);
     if (!before) return res.status(404).json({ status: 'error', message: 'Action not found' });
+    const opts = _ruleWriteOpts(req, res);
+    if (!opts) return;
 
-    const after = await ruleService.updateAction(req.db, req.params.id, req.body);
+    const after = await ruleService.updateAction(req.db, req.params.id, req.body, opts);
     auditPI(req, { details: { entity: 'rule_action', entity_id: Number(req.params.id), before, after } });
     res.json({ status: 'success', action: after });
   } catch (err) {
+    if (_handleStaleDefinition(err, res)) return;
     if (_handleValidationError(err, res)) return;
     console.error('[phone-ingest] update action error:', err);
     res.status(500).json({ status: 'error', message: err.message });
@@ -279,11 +328,14 @@ router.delete('/api/phone-ingest/rule-actions/:id', jwtOrApiKey, async (req, res
   try {
     const before = await ruleService.getActionById(req.db, req.params.id);
     if (!before) return res.status(404).json({ status: 'error', message: 'Action not found' });
+    const opts = _ruleWriteOpts(req, res);
+    if (!opts) return;
 
-    await ruleService.deleteAction(req.db, req.params.id);
+    await ruleService.deleteAction(req.db, req.params.id, opts);
     auditPI(req, { details: { entity: 'rule_action', entity_id: Number(req.params.id), before } });
     res.status(204).end();
   } catch (err) {
+    if (_handleStaleDefinition(err, res)) return;
     console.error('[phone-ingest] delete action error:', err);
     res.status(500).json({ status: 'error', message: err.message });
   }

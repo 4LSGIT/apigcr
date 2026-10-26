@@ -658,13 +658,25 @@ function _toJsonColumn(v) {
 const _RULE_COLS =
   `id, name, description, active, position, match_mode, match_config,
    transform_mode, transform_config, match_count, last_matched_at,
-   last_modified_by, created_at, updated_at`;
+   last_modified_by, created_at, updated_at, definition_updated_at`;
 
 const _ACTION_COLS = `id, rule_id, name, position, active, action_type, config`;
 
+// The edit stamp, the change log and the stale-edit precondition
+// (services/ingestRuleChangeLog.js). Every writer below runs in ONE
+// transaction: lock the rule row FOR UPDATE → check opts.expectedBase → write
+// → when the definition really changed, move definition_updated_at and append
+// a phone_ingest_rule_changes row. A stale base throws StaleDefinitionError
+// (the route's 409) before anything is written. `opts` is optional: native
+// callers that pass nothing behave as before (plus the stamp and the log).
+//   opts.actor        changeLog.actorFromAuth(req.auth) — who, for the log
+//   opts.expectedBase { definition_updated_at } as the caller read it
+const changeLog = require('./ingestRuleChangeLog');
+const _T = changeLog.CHANNELS.phone;
+
 /**
- * All rules (active + inactive), each with an `actions` array (all actions for
- * the rule, active + inactive), ordered by position.
+ * All rules (active + inactive), each with an `actions` array (all actions
+ * for the rule, active + inactive), ordered by position.
  */
 async function listAll(db) {
   const [rules] = await db.query(
@@ -713,87 +725,122 @@ async function getById(db, id) {
 
 /**
  * Validate + INSERT a rule (no actions). Returns the row with actions: [].
+ * The INSERT's column default is the first edit stamp; logged as 'create'.
  * @throws {ValidationError}
  */
-async function createRule(db, payload, userId) {
+async function createRule(db, payload, userId, opts = {}) {
   const { errors } = _validator().validateRule(payload, true);
   if (errors.length) throw new ValidationError(errors);
 
+  const actor = changeLog.resolveActor(opts, userId);
   const transformMode = payload.transform_mode ?? 'passthrough';
-  const [r] = await db.query(
-    `INSERT INTO phone_ingest_rules
-       (name, description, active, position, match_mode, match_config,
-        transform_mode, transform_config, last_modified_by)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [
-      payload.name,
-      payload.description ?? null,
-      payload.active !== undefined ? (payload.active ? 1 : 0) : 1,
-      payload.position ?? 0,
-      payload.match_mode,
-      _toJsonColumn(payload.match_config),
-      transformMode,
-      transformMode === 'passthrough' ? null : _toJsonColumn(payload.transform_config),
-      userId ?? null,
-    ]
-  );
-  return getById(db, r.insertId);
+  return changeLog.tx(db, async (conn) => {
+    const [r] = await conn.query(
+      `INSERT INTO phone_ingest_rules
+         (name, description, active, position, match_mode, match_config,
+          transform_mode, transform_config, last_modified_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        payload.name,
+        payload.description ?? null,
+        payload.active !== undefined ? (payload.active ? 1 : 0) : 1,
+        payload.position ?? 0,
+        payload.match_mode,
+        _toJsonColumn(payload.match_config),
+        transformMode,
+        transformMode === 'passthrough' ? null : _toJsonColumn(payload.transform_config),
+        userId ?? null,
+      ]
+    );
+    const ruleId = r.insertId;
+    const created = await getById(conn, ruleId);
+    return changeLog.recordChange(conn, _T, {
+      ruleId, kind: 'create', actor, beforeRow: null, afterRow: created,
+      getRule: (c) => getById(c, ruleId), stampAlready: true,
+    });
+  });
 }
 
 /**
  * Partial rule update. Validates the merged record. Does NOT touch actions.
- * Returns the updated row, or null if absent.
+ * Returns the updated row, or null if absent. A save that changes nothing
+ * moves no stamp and logs nothing.
  * @throws {ValidationError}
+ * @throws {changeLog.StaleDefinitionError} opts.expectedBase is stale
  */
-async function updateRule(db, id, payload, userId) {
-  const existing = await getById(db, id);
-  if (!existing) return null;
+async function updateRule(db, id, payload, userId, opts = {}) {
+  const actor = changeLog.resolveActor(opts, userId);
+  return changeLog.tx(db, async (conn) => {
+    const locked = await changeLog.lockRule(conn, _T, id);
+    if (!locked) return null;
+    changeLog.assertExpectedBase(locked, opts.expectedBase);
+    const existing = await getById(conn, id);
+    if (!existing) return null;
 
-  const merged = {
-    name:             payload.name             !== undefined ? payload.name             : existing.name,
-    description:      payload.description      !== undefined ? payload.description      : existing.description,
-    active:           payload.active           !== undefined ? payload.active           : existing.active,
-    position:         payload.position         !== undefined ? payload.position         : existing.position,
-    match_mode:       payload.match_mode       !== undefined ? payload.match_mode       : existing.match_mode,
-    match_config:     payload.match_config     !== undefined ? payload.match_config     : existing.match_config,
-    transform_mode:   payload.transform_mode   !== undefined ? payload.transform_mode   : existing.transform_mode,
-    transform_config: payload.transform_config !== undefined ? payload.transform_config : existing.transform_config,
-  };
-  const { errors } = _validator().validateRule(merged, true);
-  if (errors.length) throw new ValidationError(errors);
+    const merged = {
+      name:             payload.name             !== undefined ? payload.name             : existing.name,
+      description:      payload.description      !== undefined ? payload.description      : existing.description,
+      active:           payload.active           !== undefined ? payload.active           : existing.active,
+      position:         payload.position         !== undefined ? payload.position         : existing.position,
+      match_mode:       payload.match_mode       !== undefined ? payload.match_mode       : existing.match_mode,
+      match_config:     payload.match_config     !== undefined ? payload.match_config     : existing.match_config,
+      transform_mode:   payload.transform_mode   !== undefined ? payload.transform_mode   : existing.transform_mode,
+      transform_config: payload.transform_config !== undefined ? payload.transform_config : existing.transform_config,
+    };
+    const { errors } = _validator().validateRule(merged, true);
+    if (errors.length) throw new ValidationError(errors);
 
-  const sets = [];
-  const vals = [];
-  if (payload.name             !== undefined) { sets.push('name = ?');             vals.push(payload.name); }
-  if (payload.description      !== undefined) { sets.push('description = ?');      vals.push(payload.description ?? null); }
-  if (payload.active           !== undefined) { sets.push('active = ?');           vals.push(payload.active ? 1 : 0); }
-  if (payload.position         !== undefined) { sets.push('position = ?');         vals.push(payload.position); }
-  if (payload.match_mode       !== undefined) { sets.push('match_mode = ?');       vals.push(payload.match_mode); }
-  if (payload.match_config     !== undefined) { sets.push('match_config = ?');     vals.push(_toJsonColumn(payload.match_config)); }
-  if (payload.transform_mode   !== undefined) { sets.push('transform_mode = ?');   vals.push(payload.transform_mode); }
-  if (payload.transform_config !== undefined) {
-    // passthrough forces NULL regardless of supplied value (validator already
-    // rejects a non-null config on passthrough, but be defensive).
-    const tmode = merged.transform_mode;
-    sets.push('transform_config = ?');
-    vals.push(tmode === 'passthrough' ? null : _toJsonColumn(payload.transform_config));
-  }
-  sets.push('last_modified_by = ?'); vals.push(userId ?? null);
+    const sets = [];
+    const vals = [];
+    if (payload.name             !== undefined) { sets.push('name = ?');             vals.push(payload.name); }
+    if (payload.description      !== undefined) { sets.push('description = ?');      vals.push(payload.description ?? null); }
+    if (payload.active           !== undefined) { sets.push('active = ?');           vals.push(payload.active ? 1 : 0); }
+    if (payload.position         !== undefined) { sets.push('position = ?');         vals.push(payload.position); }
+    if (payload.match_mode       !== undefined) { sets.push('match_mode = ?');       vals.push(payload.match_mode); }
+    if (payload.match_config     !== undefined) { sets.push('match_config = ?');     vals.push(_toJsonColumn(payload.match_config)); }
+    if (payload.transform_mode   !== undefined) { sets.push('transform_mode = ?');   vals.push(payload.transform_mode); }
+    if (payload.transform_config !== undefined) {
+      // passthrough forces NULL regardless of supplied value (validator already
+      // rejects a non-null config on passthrough, but be defensive).
+      const tmode = merged.transform_mode;
+      sets.push('transform_config = ?');
+      vals.push(tmode === 'passthrough' ? null : _toJsonColumn(payload.transform_config));
+    }
+    sets.push('last_modified_by = ?'); vals.push(userId ?? null);
 
-  vals.push(id);
-  await db.query(
-    `UPDATE phone_ingest_rules SET ${sets.join(', ')} WHERE id = ?`,
-    vals
-  );
-  return getById(db, id);
+    vals.push(id);
+    await conn.query(
+      `UPDATE phone_ingest_rules SET ${sets.join(', ')} WHERE id = ?`,
+      vals
+    );
+    const after = await getById(conn, id);
+    return changeLog.recordChange(conn, _T, {
+      ruleId: id, kind: 'update', actor, beforeRow: existing, afterRow: after,
+      getRule: (c) => getById(c, id),
+    });
+  });
 }
 
 /**
- * Hard delete a rule. Actions cascade via FK. Returns true if removed.
+ * Hard delete a rule. Actions cascade via FK. Returns true if removed. The
+ * log row (kind 'delete') keeps the rule and its actions as they were.
+ * @throws {changeLog.StaleDefinitionError} opts.expectedBase is stale
  */
-async function deleteRule(db, id) {
-  const [r] = await db.query(`DELETE FROM phone_ingest_rules WHERE id = ?`, [id]);
-  return r.affectedRows > 0;
+async function deleteRule(db, id, opts = {}) {
+  const actor = changeLog.resolveActor(opts, null);
+  return changeLog.tx(db, async (conn) => {
+    const locked = await changeLog.lockRule(conn, _T, id);
+    if (!locked) return false;
+    changeLog.assertExpectedBase(locked, opts.expectedBase);
+    const before = await getById(conn, id);
+    const [r] = await conn.query(`DELETE FROM phone_ingest_rules WHERE id = ?`, [id]);
+    if (r.affectedRows > 0) {
+      await changeLog.recordChange(conn, _T, {
+        ruleId: id, kind: 'delete', actor, beforeRow: before, afterRow: null, getRule: null,
+      });
+    }
+    return r.affectedRows > 0;
+  });
 }
 
 /**
@@ -806,18 +853,30 @@ async function deleteRule(db, id) {
  * Pipeline-owned columns (match_count, last_matched_at) start fresh via
  * column defaults — they are never copied.
  *
+ * Logged on the COPY as 'duplicate' (duplicated_from_rule_id = the source);
+ * the source is read under its lock, so opts.expectedBase guards it.
+ *
  * Returns the new rule (getById shape, actions included), or null if the
  * source rule is absent. Kept in sync with
  * emailIngestRuleService.duplicateRule — same shape, tables swapped.
  */
-async function duplicateRule(db, id, userId) {
-  const src = await getById(db, id);
-  if (!src) return null;
+async function duplicateRule(db, id, userId, opts = {}) {
+  const src0 = await getById(db, id);
+  if (!src0) return null;
 
-  const copyName = `${src.name} (copy)`.slice(0, 255);
-  const transformMode = src.transform_mode || 'passthrough';
+  const actor = changeLog.resolveActor(opts, userId);
+  return changeLog.tx(db, async (conn) => {
+    // Copy what is there UNDER the source's lock — the version the caller's
+    // expected_base names, not one an edit slipped in after the read above.
+    const locked = await changeLog.lockRule(conn, _T, id);
+    if (!locked) return null;
+    changeLog.assertExpectedBase(locked, opts.expectedBase);
+    const src = await getById(conn, id);
+    if (!src) return null;
 
-  const newId = await db.withTransaction(async (conn) => {
+    const copyName = `${src.name} (copy)`.slice(0, 255);
+    const transformMode = src.transform_mode || 'passthrough';
+
     const [r] = await conn.query(
       `INSERT INTO phone_ingest_rules
          (name, description, active, position, match_mode, match_config,
@@ -843,14 +902,16 @@ async function duplicateRule(db, id, userId) {
         [ruleId, a.name ?? null, a.position ?? 0, a.active ? 1 : 0, a.action_type, _toJsonColumn(a.config)]
       );
     }
-    return ruleId;
+    const copy = await getById(conn, ruleId);
+    return changeLog.recordChange(conn, _T, {
+      ruleId, kind: 'duplicate', duplicatedFrom: id, actor, beforeRow: null, afterRow: copy,
+      getRule: (c) => getById(c, ruleId), stampAlready: true,
+    });
   });
-
-  return getById(db, newId);
 }
 
 /**
- * Single action by id, or null.
+ * Single action by id (+ rule_id), or null.
  */
 async function getActionById(db, actionId) {
   const [[row]] = await db.query(
@@ -860,81 +921,142 @@ async function getActionById(db, actionId) {
   return row || null;
 }
 
+// The action row under its parent's lock (parent first — the lock order).
+// null when the action is gone or no longer under `ruleId`.
+async function _lockAction(conn, actionId, ruleId) {
+  const [[row]] = await conn.query(
+    `SELECT ${_ACTION_COLS} FROM phone_ingest_rule_actions WHERE id = ? FOR UPDATE`,
+    [actionId]
+  );
+  return row && Number(row.rule_id) === Number(ruleId) ? row : null;
+}
+
 /**
  * Add an action to a rule. Validates shape AND references (target exists +
  * active). Returns the created action, or null if the parent rule is absent.
+ * Moves the PARENT rule's edit stamp; logged as 'action_add'.
  * @throws {ValidationError}
+ * @throws {changeLog.StaleDefinitionError} opts.expectedBase is stale
  */
-async function addAction(db, ruleId, payload) {
-  const [[rule]] = await db.query(`SELECT id FROM phone_ingest_rules WHERE id = ?`, [ruleId]);
-  if (!rule) return null;
+async function addAction(db, ruleId, payload, opts = {}) {
+  const actor = changeLog.resolveActor(opts, null);
+  return changeLog.tx(db, async (conn) => {
+    const locked = await changeLog.lockRule(conn, _T, ruleId);
+    if (!locked) return null;
+    changeLog.assertExpectedBase(locked, opts.expectedBase);
 
-  const { errors } = _validator().validateAction(payload, true);
-  if (errors.length) throw new ValidationError(errors);
-  const ref = await _validator().validateActionReferences(db, payload.action_type, payload.config);
-  if (ref.errors.length) throw new ValidationError(ref.errors);
+    const { errors } = _validator().validateAction(payload, true);
+    if (errors.length) throw new ValidationError(errors);
+    const ref = await _validator().validateActionReferences(conn, payload.action_type, payload.config);
+    if (ref.errors.length) throw new ValidationError(ref.errors);
 
-  const [r] = await db.query(
-    `INSERT INTO phone_ingest_rule_actions
-       (rule_id, name, position, active, action_type, config)
-     VALUES (?, ?, ?, ?, ?, ?)`,
-    [
-      ruleId,
-      (typeof payload.name === 'string' && payload.name.trim()) ? payload.name.trim().slice(0, 100) : null,
-      payload.position ?? 0,
-      payload.active !== undefined ? (payload.active ? 1 : 0) : 1,
-      payload.action_type,
-      _toJsonColumn(payload.config),
-    ]
-  );
-  return getActionById(db, r.insertId);
+    const before = await getById(conn, ruleId);
+    const [r] = await conn.query(
+      `INSERT INTO phone_ingest_rule_actions
+         (rule_id, name, position, active, action_type, config)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [
+        ruleId,
+        (typeof payload.name === 'string' && payload.name.trim()) ? payload.name.trim().slice(0, 100) : null,
+        payload.position ?? 0,
+        payload.active !== undefined ? (payload.active ? 1 : 0) : 1,
+        payload.action_type,
+        _toJsonColumn(payload.config),
+      ]
+    );
+    const after = await getById(conn, ruleId);
+    await changeLog.recordChange(conn, _T, {
+      ruleId, kind: 'action_add', actionId: r.insertId, actor, beforeRow: before, afterRow: after,
+      getRule: (c) => getById(c, ruleId),
+    });
+    return getActionById(conn, r.insertId);
+  });
 }
 
 /**
  * Partial action update. Validates the merged record (shape + references).
- * Returns the updated action, or null if absent.
+ * Returns the updated action, or null if absent. A real change moves the
+ * PARENT rule's edit stamp; logged as 'action_update'.
  * @throws {ValidationError}
+ * @throws {changeLog.StaleDefinitionError} opts.expectedBase is stale
  */
-async function updateAction(db, actionId, payload) {
-  const existing = await getActionById(db, actionId);
-  if (!existing) return null;
+async function updateAction(db, actionId, payload, opts = {}) {
+  const pre = await getActionById(db, actionId);   // learn the parent to lock
+  if (!pre) return null;
 
-  const merged = {
-    action_type: payload.action_type !== undefined ? payload.action_type : existing.action_type,
-    config:      payload.config      !== undefined ? payload.config      : existing.config,
-    position:    payload.position    !== undefined ? payload.position    : existing.position,
-    active:      payload.active      !== undefined ? payload.active      : existing.active,
-    name:        payload.name        !== undefined ? payload.name        : existing.name,
-  };
-  const { errors } = _validator().validateAction(merged, true);
-  if (errors.length) throw new ValidationError(errors);
-  const ref = await _validator().validateActionReferences(db, merged.action_type, merged.config);
-  if (ref.errors.length) throw new ValidationError(ref.errors);
+  const actor = changeLog.resolveActor(opts, null);
+  return changeLog.tx(db, async (conn) => {
+    const locked = await changeLog.lockRule(conn, _T, pre.rule_id);
+    if (!locked) return null;
+    const existing = await _lockAction(conn, actionId, pre.rule_id);
+    if (!existing) return null;
+    changeLog.assertExpectedBase(locked, opts.expectedBase);
 
-  const sets = [];
-  const vals = [];
-  if (payload.action_type !== undefined) { sets.push('action_type = ?'); vals.push(payload.action_type); }
-  if (payload.name        !== undefined) { sets.push('name = ?');        vals.push((typeof payload.name === 'string' && payload.name.trim()) ? payload.name.trim().slice(0, 100) : null); }
-  if (payload.config      !== undefined) { sets.push('config = ?');      vals.push(_toJsonColumn(payload.config)); }
-  if (payload.position    !== undefined) { sets.push('position = ?');    vals.push(payload.position); }
-  if (payload.active      !== undefined) { sets.push('active = ?');      vals.push(payload.active ? 1 : 0); }
+    const merged = {
+      action_type: payload.action_type !== undefined ? payload.action_type : existing.action_type,
+      config:      payload.config      !== undefined ? payload.config      : existing.config,
+      position:    payload.position    !== undefined ? payload.position    : existing.position,
+      active:      payload.active      !== undefined ? payload.active      : existing.active,
+      name:        payload.name        !== undefined ? payload.name        : existing.name,
+    };
+    const { errors } = _validator().validateAction(merged, true);
+    if (errors.length) throw new ValidationError(errors);
+    const ref = await _validator().validateActionReferences(conn, merged.action_type, merged.config);
+    if (ref.errors.length) throw new ValidationError(ref.errors);
 
-  if (!sets.length) return existing; // nothing to change
+    const sets = [];
+    const vals = [];
+    if (payload.action_type !== undefined) { sets.push('action_type = ?'); vals.push(payload.action_type); }
+    if (payload.name        !== undefined) { sets.push('name = ?');        vals.push((typeof payload.name === 'string' && payload.name.trim()) ? payload.name.trim().slice(0, 100) : null); }
+    if (payload.config      !== undefined) { sets.push('config = ?');      vals.push(_toJsonColumn(payload.config)); }
+    if (payload.position    !== undefined) { sets.push('position = ?');    vals.push(payload.position); }
+    if (payload.active      !== undefined) { sets.push('active = ?');      vals.push(payload.active ? 1 : 0); }
 
-  vals.push(actionId);
-  await db.query(
-    `UPDATE phone_ingest_rule_actions SET ${sets.join(', ')} WHERE id = ?`,
-    vals
-  );
-  return getActionById(db, actionId);
+    if (!sets.length) return existing; // nothing to change
+
+    const before = await getById(conn, pre.rule_id);
+    vals.push(actionId);
+    await conn.query(
+      `UPDATE phone_ingest_rule_actions SET ${sets.join(', ')} WHERE id = ?`,
+      vals
+    );
+    const after = await getById(conn, pre.rule_id);
+    await changeLog.recordChange(conn, _T, {
+      ruleId: pre.rule_id, kind: 'action_update', actionId, actor, beforeRow: before, afterRow: after,
+      getRule: (c) => getById(c, pre.rule_id),
+    });
+    return getActionById(conn, actionId);
+  });
 }
 
 /**
- * Hard delete an action. Returns true if removed.
+ * Hard delete an action. Returns true if removed. Moves the PARENT rule's
+ * edit stamp; logged as 'action_delete'.
+ * @throws {changeLog.StaleDefinitionError} opts.expectedBase is stale
  */
-async function deleteAction(db, actionId) {
-  const [r] = await db.query(`DELETE FROM phone_ingest_rule_actions WHERE id = ?`, [actionId]);
-  return r.affectedRows > 0;
+async function deleteAction(db, actionId, opts = {}) {
+  const pre = await getActionById(db, actionId);   // learn the parent to lock
+  if (!pre) return false;
+
+  const actor = changeLog.resolveActor(opts, null);
+  return changeLog.tx(db, async (conn) => {
+    const locked = await changeLog.lockRule(conn, _T, pre.rule_id);
+    if (!locked) return false;
+    const existing = await _lockAction(conn, actionId, pre.rule_id);
+    if (!existing) return false;
+    changeLog.assertExpectedBase(locked, opts.expectedBase);
+
+    const before = await getById(conn, pre.rule_id);
+    const [r] = await conn.query(`DELETE FROM phone_ingest_rule_actions WHERE id = ?`, [actionId]);
+    if (r.affectedRows > 0) {
+      const after = await getById(conn, pre.rule_id);
+      await changeLog.recordChange(conn, _T, {
+        ruleId: pre.rule_id, kind: 'action_delete', actionId, actor, beforeRow: before, afterRow: after,
+        getRule: (c) => getById(c, pre.rule_id),
+      });
+    }
+    return r.affectedRows > 0;
+  });
 }
 
 

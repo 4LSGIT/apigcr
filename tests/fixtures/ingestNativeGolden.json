@@ -1,0 +1,909 @@
+{
+  "recorded_from": "2c1c86a (pre A20 slice 1) via scratchpad record_golden.js",
+  "channels": {
+    "email": [
+      {
+        "step": "create",
+        "status": 201,
+        "body": {
+          "status": "success",
+          "rule": {
+            "id": "#1",
+            "name": "email golden",
+            "description": "d",
+            "active": 0,
+            "position": 5,
+            "match_mode": "conditions",
+            "match_config": {
+              "operator": "and",
+              "conditions": [
+                {
+                  "op": "contains",
+                  "path": "subject",
+                  "value": "Golden"
+                }
+              ]
+            },
+            "transform_mode": "mapper",
+            "transform_config": [
+              {
+                "to": "title",
+                "from": "subject"
+              }
+            ],
+            "match_count": 0,
+            "last_matched_at": null,
+            "last_modified_by": 2,
+            "created_at": "<ts>",
+            "updated_at": "<ts>",
+            "actions": []
+          }
+        }
+      },
+      {
+        "step": "get",
+        "status": 200,
+        "body": {
+          "status": "success",
+          "rule": {
+            "id": "#1",
+            "name": "email golden",
+            "description": "d",
+            "active": 0,
+            "position": 5,
+            "match_mode": "conditions",
+            "match_config": {
+              "operator": "and",
+              "conditions": [
+                {
+                  "op": "contains",
+                  "path": "subject",
+                  "value": "Golden"
+                }
+              ]
+            },
+            "transform_mode": "mapper",
+            "transform_config": [
+              {
+                "to": "title",
+                "from": "subject"
+              }
+            ],
+            "match_count": 0,
+            "last_matched_at": null,
+            "last_modified_by": 2,
+            "created_at": "<ts>",
+            "updated_at": "<ts>",
+            "actions": []
+          }
+        }
+      },
+      {
+        "step": "update",
+        "status": 200,
+        "body": {
+          "status": "success",
+          "rule": {
+            "id": "#1",
+            "name": "email golden renamed",
+            "description": "d",
+            "active": 1,
+            "position": 5,
+            "match_mode": "conditions",
+            "match_config": {
+              "operator": "and",
+              "conditions": [
+                {
+                  "op": "contains",
+                  "path": "subject",
+                  "value": "Golden"
+                }
+              ]
+            },
+            "transform_mode": "mapper",
+            "transform_config": [
+              {
+                "to": "title",
+                "from": "subject"
+              }
+            ],
+            "match_count": 0,
+            "last_matched_at": null,
+            "last_modified_by": 2,
+            "created_at": "<ts>",
+            "updated_at": "<ts>",
+            "actions": []
+          }
+        }
+      },
+      {
+        "step": "update-noop",
+        "status": 200,
+        "body": {
+          "status": "success",
+          "rule": {
+            "id": "#1",
+            "name": "email golden renamed",
+            "description": "d",
+            "active": 1,
+            "position": 5,
+            "match_mode": "conditions",
+            "match_config": {
+              "operator": "and",
+              "conditions": [
+                {
+                  "op": "contains",
+                  "path": "subject",
+                  "value": "Golden"
+                }
+              ]
+            },
+            "transform_mode": "mapper",
+            "transform_config": [
+              {
+                "to": "title",
+                "from": "subject"
+              }
+            ],
+            "match_count": 0,
+            "last_matched_at": null,
+            "last_modified_by": 2,
+            "created_at": "<ts>",
+            "updated_at": "<ts>",
+            "actions": []
+          }
+        }
+      },
+      {
+        "step": "update-invalid",
+        "status": 403,
+        "body": {
+          "missingCapability": "automations.manage",
+          "error": "code-mode ingest rules and suppressions require the automations.manage capability",
+          "message": "Code mode runs arbitrary server-side code, so writing or testing it needs the automations.manage capability (admin / IT). Conditions, mapper and passthrough modes are open to all staff — or ask an administrator."
+        }
+      },
+      {
+        "step": "update-invalid-name",
+        "status": 400,
+        "body": {
+          "error": "validation_failed",
+          "field": "name",
+          "message": "required string, length 1-255"
+        }
+      },
+      {
+        "step": "update-missing",
+        "status": 404,
+        "body": {
+          "status": "error",
+          "message": "Rule not found"
+        }
+      },
+      {
+        "step": "action-add",
+        "status": 201,
+        "body": {
+          "status": "success",
+          "action": {
+            "id": "#1",
+            "rule_id": "#1",
+            "name": "wf",
+            "position": 0,
+            "active": 1,
+            "action_type": "workflow",
+            "config": {
+              "workflow_id": 31
+            }
+          }
+        }
+      },
+      {
+        "step": "action-add-badref",
+        "status": 400,
+        "body": {
+          "error": "validation_failed",
+          "field": "config.workflow_id",
+          "message": "workflow 987654 does not exist"
+        }
+      },
+      {
+        "step": "action-add-missing-rule",
+        "status": 404,
+        "body": {
+          "status": "error",
+          "message": "Rule not found"
+        }
+      },
+      {
+        "step": "action-update",
+        "status": 200,
+        "body": {
+          "status": "success",
+          "action": {
+            "id": "#1",
+            "rule_id": "#1",
+            "name": "wf2",
+            "position": 3,
+            "active": 1,
+            "action_type": "workflow",
+            "config": {
+              "workflow_id": 31
+            }
+          }
+        }
+      },
+      {
+        "step": "action-update-empty",
+        "status": 200,
+        "body": {
+          "status": "success",
+          "action": {
+            "id": "#1",
+            "rule_id": "#1",
+            "name": "wf2",
+            "position": 3,
+            "active": 1,
+            "action_type": "workflow",
+            "config": {
+              "workflow_id": 31
+            }
+          }
+        }
+      },
+      {
+        "step": "action-update-badref",
+        "status": 400,
+        "body": {
+          "error": "validation_failed",
+          "field": "config.workflow_id",
+          "message": "workflow 987654 does not exist"
+        }
+      },
+      {
+        "step": "action-update-missing",
+        "status": 404,
+        "body": {
+          "status": "error",
+          "message": "Action not found"
+        }
+      },
+      {
+        "step": "duplicate",
+        "status": 201,
+        "body": {
+          "status": "success",
+          "rule": {
+            "id": "#2",
+            "name": "email golden renamed (copy)",
+            "description": "d",
+            "active": 0,
+            "position": 5,
+            "match_mode": "conditions",
+            "match_config": {
+              "operator": "and",
+              "conditions": [
+                {
+                  "op": "contains",
+                  "path": "subject",
+                  "value": "Golden"
+                }
+              ]
+            },
+            "transform_mode": "mapper",
+            "transform_config": [
+              {
+                "to": "title",
+                "from": "subject"
+              }
+            ],
+            "match_count": 0,
+            "last_matched_at": null,
+            "last_modified_by": 2,
+            "created_at": "<ts>",
+            "updated_at": "<ts>",
+            "actions": [
+              {
+                "id": "#2",
+                "rule_id": "#2",
+                "name": "wf2",
+                "position": 3,
+                "active": 1,
+                "action_type": "workflow",
+                "config": {
+                  "workflow_id": 31
+                }
+              }
+            ]
+          }
+        }
+      },
+      {
+        "step": "duplicate-missing",
+        "status": 404,
+        "body": {
+          "status": "error",
+          "message": "Rule not found"
+        }
+      },
+      {
+        "step": "list",
+        "status": 200,
+        "body": {
+          "status": "success",
+          "rules": [
+            {
+              "id": "#1",
+              "name": "email golden renamed",
+              "description": "d",
+              "active": 1,
+              "position": 5,
+              "match_mode": "conditions",
+              "match_config": {
+                "operator": "and",
+                "conditions": [
+                  {
+                    "op": "contains",
+                    "path": "subject",
+                    "value": "Golden"
+                  }
+                ]
+              },
+              "transform_mode": "mapper",
+              "transform_config": [
+                {
+                  "to": "title",
+                  "from": "subject"
+                }
+              ],
+              "match_count": 0,
+              "last_matched_at": null,
+              "last_modified_by": 2,
+              "created_at": "<ts>",
+              "updated_at": "<ts>",
+              "actions": [
+                {
+                  "id": "#1",
+                  "rule_id": "#1",
+                  "name": "wf2",
+                  "position": 3,
+                  "active": 1,
+                  "action_type": "workflow",
+                  "config": {
+                    "workflow_id": 31
+                  }
+                }
+              ]
+            },
+            {
+              "id": "#2",
+              "name": "email golden renamed (copy)",
+              "description": "d",
+              "active": 0,
+              "position": 5,
+              "match_mode": "conditions",
+              "match_config": {
+                "operator": "and",
+                "conditions": [
+                  {
+                    "op": "contains",
+                    "path": "subject",
+                    "value": "Golden"
+                  }
+                ]
+              },
+              "transform_mode": "mapper",
+              "transform_config": [
+                {
+                  "to": "title",
+                  "from": "subject"
+                }
+              ],
+              "match_count": 0,
+              "last_matched_at": null,
+              "last_modified_by": 2,
+              "created_at": "<ts>",
+              "updated_at": "<ts>",
+              "actions": [
+                {
+                  "id": "#2",
+                  "rule_id": "#2",
+                  "name": "wf2",
+                  "position": 3,
+                  "active": 1,
+                  "action_type": "workflow",
+                  "config": {
+                    "workflow_id": 31
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "step": "action-delete",
+        "status": 204,
+        "body": null
+      },
+      {
+        "step": "action-delete-missing",
+        "status": 404,
+        "body": {
+          "status": "error",
+          "message": "Action not found"
+        }
+      },
+      {
+        "step": "delete-dup",
+        "status": 204,
+        "body": null
+      },
+      {
+        "step": "delete",
+        "status": 204,
+        "body": null
+      },
+      {
+        "step": "delete-missing",
+        "status": 404,
+        "body": {
+          "status": "error",
+          "message": "Rule not found"
+        }
+      }
+    ],
+    "phone": [
+      {
+        "step": "create",
+        "status": 201,
+        "body": {
+          "status": "success",
+          "rule": {
+            "id": "#1",
+            "name": "phone golden",
+            "description": "d",
+            "active": 0,
+            "position": 5,
+            "match_mode": "conditions",
+            "match_config": {
+              "operator": "and",
+              "conditions": [
+                {
+                  "op": "contains",
+                  "path": "subject",
+                  "value": "Golden"
+                }
+              ]
+            },
+            "transform_mode": "mapper",
+            "transform_config": [
+              {
+                "to": "title",
+                "from": "subject"
+              }
+            ],
+            "match_count": 0,
+            "last_matched_at": null,
+            "last_modified_by": 2,
+            "created_at": "<ts>",
+            "updated_at": "<ts>",
+            "actions": []
+          }
+        }
+      },
+      {
+        "step": "get",
+        "status": 200,
+        "body": {
+          "status": "success",
+          "rule": {
+            "id": "#1",
+            "name": "phone golden",
+            "description": "d",
+            "active": 0,
+            "position": 5,
+            "match_mode": "conditions",
+            "match_config": {
+              "operator": "and",
+              "conditions": [
+                {
+                  "op": "contains",
+                  "path": "subject",
+                  "value": "Golden"
+                }
+              ]
+            },
+            "transform_mode": "mapper",
+            "transform_config": [
+              {
+                "to": "title",
+                "from": "subject"
+              }
+            ],
+            "match_count": 0,
+            "last_matched_at": null,
+            "last_modified_by": 2,
+            "created_at": "<ts>",
+            "updated_at": "<ts>",
+            "actions": []
+          }
+        }
+      },
+      {
+        "step": "update",
+        "status": 200,
+        "body": {
+          "status": "success",
+          "rule": {
+            "id": "#1",
+            "name": "phone golden renamed",
+            "description": "d",
+            "active": 1,
+            "position": 5,
+            "match_mode": "conditions",
+            "match_config": {
+              "operator": "and",
+              "conditions": [
+                {
+                  "op": "contains",
+                  "path": "subject",
+                  "value": "Golden"
+                }
+              ]
+            },
+            "transform_mode": "mapper",
+            "transform_config": [
+              {
+                "to": "title",
+                "from": "subject"
+              }
+            ],
+            "match_count": 0,
+            "last_matched_at": null,
+            "last_modified_by": 2,
+            "created_at": "<ts>",
+            "updated_at": "<ts>",
+            "actions": []
+          }
+        }
+      },
+      {
+        "step": "update-noop",
+        "status": 200,
+        "body": {
+          "status": "success",
+          "rule": {
+            "id": "#1",
+            "name": "phone golden renamed",
+            "description": "d",
+            "active": 1,
+            "position": 5,
+            "match_mode": "conditions",
+            "match_config": {
+              "operator": "and",
+              "conditions": [
+                {
+                  "op": "contains",
+                  "path": "subject",
+                  "value": "Golden"
+                }
+              ]
+            },
+            "transform_mode": "mapper",
+            "transform_config": [
+              {
+                "to": "title",
+                "from": "subject"
+              }
+            ],
+            "match_count": 0,
+            "last_matched_at": null,
+            "last_modified_by": 2,
+            "created_at": "<ts>",
+            "updated_at": "<ts>",
+            "actions": []
+          }
+        }
+      },
+      {
+        "step": "update-invalid",
+        "status": 403,
+        "body": {
+          "missingCapability": "automations.manage",
+          "error": "code-mode ingest rules and suppressions require the automations.manage capability",
+          "message": "Code mode runs arbitrary server-side code, so writing or testing it needs the automations.manage capability (admin / IT). Conditions, mapper and passthrough modes are open to all staff — or ask an administrator."
+        }
+      },
+      {
+        "step": "update-invalid-name",
+        "status": 400,
+        "body": {
+          "error": "validation_failed",
+          "field": "name",
+          "message": "required string, length 1-255"
+        }
+      },
+      {
+        "step": "update-missing",
+        "status": 404,
+        "body": {
+          "status": "error",
+          "message": "Rule not found"
+        }
+      },
+      {
+        "step": "action-add",
+        "status": 201,
+        "body": {
+          "status": "success",
+          "action": {
+            "id": "#1",
+            "rule_id": "#1",
+            "name": "wf",
+            "position": 0,
+            "active": 1,
+            "action_type": "workflow",
+            "config": {
+              "workflow_id": 31
+            }
+          }
+        }
+      },
+      {
+        "step": "action-add-badref",
+        "status": 400,
+        "body": {
+          "error": "validation_failed",
+          "field": "config.workflow_id",
+          "message": "workflow 987654 does not exist"
+        }
+      },
+      {
+        "step": "action-add-missing-rule",
+        "status": 404,
+        "body": {
+          "status": "error",
+          "message": "Rule not found"
+        }
+      },
+      {
+        "step": "action-update",
+        "status": 200,
+        "body": {
+          "status": "success",
+          "action": {
+            "id": "#1",
+            "rule_id": "#1",
+            "name": "wf2",
+            "position": 3,
+            "active": 1,
+            "action_type": "workflow",
+            "config": {
+              "workflow_id": 31
+            }
+          }
+        }
+      },
+      {
+        "step": "action-update-empty",
+        "status": 200,
+        "body": {
+          "status": "success",
+          "action": {
+            "id": "#1",
+            "rule_id": "#1",
+            "name": "wf2",
+            "position": 3,
+            "active": 1,
+            "action_type": "workflow",
+            "config": {
+              "workflow_id": 31
+            }
+          }
+        }
+      },
+      {
+        "step": "action-update-badref",
+        "status": 400,
+        "body": {
+          "error": "validation_failed",
+          "field": "config.workflow_id",
+          "message": "workflow 987654 does not exist"
+        }
+      },
+      {
+        "step": "action-update-missing",
+        "status": 404,
+        "body": {
+          "status": "error",
+          "message": "Action not found"
+        }
+      },
+      {
+        "step": "duplicate",
+        "status": 201,
+        "body": {
+          "status": "success",
+          "rule": {
+            "id": "#2",
+            "name": "phone golden renamed (copy)",
+            "description": "d",
+            "active": 0,
+            "position": 5,
+            "match_mode": "conditions",
+            "match_config": {
+              "operator": "and",
+              "conditions": [
+                {
+                  "op": "contains",
+                  "path": "subject",
+                  "value": "Golden"
+                }
+              ]
+            },
+            "transform_mode": "mapper",
+            "transform_config": [
+              {
+                "to": "title",
+                "from": "subject"
+              }
+            ],
+            "match_count": 0,
+            "last_matched_at": null,
+            "last_modified_by": 2,
+            "created_at": "<ts>",
+            "updated_at": "<ts>",
+            "actions": [
+              {
+                "id": "#2",
+                "rule_id": "#2",
+                "name": "wf2",
+                "position": 3,
+                "active": 1,
+                "action_type": "workflow",
+                "config": {
+                  "workflow_id": 31
+                }
+              }
+            ]
+          }
+        }
+      },
+      {
+        "step": "duplicate-missing",
+        "status": 404,
+        "body": {
+          "status": "error",
+          "message": "Rule not found"
+        }
+      },
+      {
+        "step": "list",
+        "status": 200,
+        "body": {
+          "status": "success",
+          "rules": [
+            {
+              "id": "#1",
+              "name": "phone golden renamed",
+              "description": "d",
+              "active": 1,
+              "position": 5,
+              "match_mode": "conditions",
+              "match_config": {
+                "operator": "and",
+                "conditions": [
+                  {
+                    "op": "contains",
+                    "path": "subject",
+                    "value": "Golden"
+                  }
+                ]
+              },
+              "transform_mode": "mapper",
+              "transform_config": [
+                {
+                  "to": "title",
+                  "from": "subject"
+                }
+              ],
+              "match_count": 0,
+              "last_matched_at": null,
+              "last_modified_by": 2,
+              "created_at": "<ts>",
+              "updated_at": "<ts>",
+              "actions": [
+                {
+                  "id": "#1",
+                  "rule_id": "#1",
+                  "name": "wf2",
+                  "position": 3,
+                  "active": 1,
+                  "action_type": "workflow",
+                  "config": {
+                    "workflow_id": 31
+                  }
+                }
+              ]
+            },
+            {
+              "id": "#2",
+              "name": "phone golden renamed (copy)",
+              "description": "d",
+              "active": 0,
+              "position": 5,
+              "match_mode": "conditions",
+              "match_config": {
+                "operator": "and",
+                "conditions": [
+                  {
+                    "op": "contains",
+                    "path": "subject",
+                    "value": "Golden"
+                  }
+                ]
+              },
+              "transform_mode": "mapper",
+              "transform_config": [
+                {
+                  "to": "title",
+                  "from": "subject"
+                }
+              ],
+              "match_count": 0,
+              "last_matched_at": null,
+              "last_modified_by": 2,
+              "created_at": "<ts>",
+              "updated_at": "<ts>",
+              "actions": [
+                {
+                  "id": "#2",
+                  "rule_id": "#2",
+                  "name": "wf2",
+                  "position": 3,
+                  "active": 1,
+                  "action_type": "workflow",
+                  "config": {
+                    "workflow_id": 31
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "step": "action-delete",
+        "status": 204,
+        "body": null
+      },
+      {
+        "step": "action-delete-missing",
+        "status": 404,
+        "body": {
+          "status": "error",
+          "message": "Action not found"
+        }
+      },
+      {
+        "step": "delete-dup",
+        "status": 204,
+        "body": null
+      },
+      {
+        "step": "delete",
+        "status": 204,
+        "body": null
+      },
+      {
+        "step": "delete-missing",
+        "status": 404,
+        "body": {
+          "status": "error",
+          "message": "Rule not found"
+        }
+      }
+    ]
+  }
+}

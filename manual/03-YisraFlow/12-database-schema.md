@@ -36,10 +36,12 @@ All tables use `utf8mb4` / `utf8mb4_general_ci`, at both table and column level.
 | `credentials` | YisraHook + sequence webhook | 9 |
 | `email_ingest_sources` | Email Ingest — one row per adapter, carries its API key | 10 |
 | `email_ingest_rules` + `email_ingest_rule_actions` | Email Ingest — layer 3 automation | 10 |
+| `email_ingest_rule_changes` | Email Ingest — append-only history of every rule / action change | 10 |
 | `email_ingest_log_suppressions` | Email Ingest — layer 2 | 10 |
 | `email_ingest_executions` | Email Ingest — one row per event, every path | 10 |
 | `email_log` | Email Ingest — the forensic byte-level record | 10 |
 | `phone_ingest_rules` + `phone_ingest_rule_actions` | Phone Ingest — layer 3 | 10 |
+| `phone_ingest_rule_changes` | Phone Ingest — append-only rule / action history | 10 |
 | `phone_log_suppressions` | Phone Ingest — layer 2 | 10 |
 | `phone_ingest_executions` | Phone Ingest — one row per event | 10 |
 | `phone_event_log` | Phone Ingest — the forensic record | 10 |
