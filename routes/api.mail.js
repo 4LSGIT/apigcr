@@ -305,7 +305,8 @@ router.post('/api/mail/send', ...guard, async function sendMail(req, res) {
     // carries acknowledge_optout:true. Before the limiter and the idempotency
     // claim, so the confirm-and-resend is one send under the same key. The
     // body is validated here too (pure — a bad body is the same 400 it would
-    // be below); Casey's card never acknowledges, so it refuses.
+    // be below). Ask Casey's send card goes through the same confirm
+    // (public/js/optoutAck.js; ruling 17).
     const parsed = send.validateSendBody(body);
     const gate = await optout.optoutGate(req.db, {
       channel: 'email', dest: [...parsed.to, ...parsed.cc, ...parsed.bcc], acknowledged: parsed.acknowledge_optout,

@@ -176,7 +176,7 @@ test('a batch input that starts inside the budget is still cut at the budget, no
   expect(r[2].error.message).toMatch(/not evaluated/);
 });
 
-test('at most MAX_CHILDREN sandbox children run at once; the rest queue and still complete', async () => {
+test('at most MAX_CHILDREN sandbox children run at once (one lane: at most its share); the rest queue and still complete', async () => {
   const cp = require('child_process');
   const realFork = cp.fork;
   let live = 0;
@@ -190,10 +190,12 @@ test('at most MAX_CHILDREN sandbox children run at once; the rest queue and stil
   try {
     const n = guestCode.MAX_CHILDREN * 2 + 1;
     const body = 'var t = Date.now(); while (Date.now() - t < 150) {} return input.i;';
-    const out = await Promise.all(Array.from({ length: n }, (_, i) => runBody(body, { i })));
+    // The events lane: everything but the hooks reservation (lib/guestCode.js LANES;
+    // tests/guestCodeLanes.test.js pins the lanes themselves).
+    const out = await Promise.all(Array.from({ length: n }, (_, i) => runBody(body, { i }, { lane: 'events' })));
     expect(out).toEqual(Array.from({ length: n }, (_, i) => i));
     expect(spy).toHaveBeenCalledTimes(n);
-    expect(peak).toBeLessThanOrEqual(guestCode.MAX_CHILDREN);
+    expect(peak).toBeLessThanOrEqual(guestCode.MAX_CHILDREN - guestCode.RESERVED.hooks - guestCode.RESERVED.preview);
     expect(peak).toBeGreaterThan(1);
   } finally { spy.mockRestore(); }
 });

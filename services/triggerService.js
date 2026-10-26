@@ -655,12 +655,14 @@ const CODE_TIMEOUT_MS = (() => {
   const raw = Number(process.env.TRIGGER_CODE_TIMEOUT_MS);
   return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 15000;
 })();
-// `opts.runCode` is the preview seam (guestCode.batchRunner); production
-// always runs guestCode.runBody. ASYNC: every caller awaits — an un-awaited
+// `opts.runCode` is the preview seam (guestCode.laneRunner / batchRunner — a
+// preview pins its own lane over the one named here); production always runs
+// guestCode.runBody in the EVENTS lane, which hooks and previews cannot
+// starve (lib/guestCode.js LANES). ASYNC: every caller awaits — an un-awaited
 // promise is truthy, which would make every code match a match.
 async function _runCode(code, envelope, { truthy = false, runCode = guestCode.runBody } = {}) {
   try {
-    return await runCode(code, envelope, { timeoutMs: CODE_TIMEOUT_MS, truthy, label: 'trigger code' });
+    return await runCode(code, envelope, { timeoutMs: CODE_TIMEOUT_MS, truthy, label: 'trigger code', lane: guestCode.LANES.events });
   } catch (err) {
     // Same enrichment as job_executor's custom_code path: the guest names the
     // limit and the elapsed wall time, which is the diagnostic that separates
@@ -1495,9 +1497,11 @@ async function processEvent(db, envelope) {
 async function evaluateDryRun(db, envelope) {
   const rules = await listActiveRulesForEvent(db, envelope.event);
   const report = [];
+  // An editor test: the preview lane, never a production one.
+  const runCode = guestCode.laneRunner(guestCode.LANES.preview);
 
   for (const rule of rules) {
-    const mv = await _evaluateMatch(rule, envelope);
+    const mv = await _evaluateMatch(rule, envelope, { runCode });
     const entry = {
       rule_id: rule.id,
       name:    rule.name,
@@ -1509,7 +1513,7 @@ async function evaluateDryRun(db, envelope) {
       ...(mv.error ? { match_error: mv.error } : {}),
     };
     if (entry.matched) {
-      const tr = await _runTransform(rule, envelope);
+      const tr = await _runTransform(rule, envelope, { runCode });
       entry.transform_ok = tr.ok;
       if (!tr.ok) {
         entry.transform_error = tr.error;
@@ -1547,10 +1551,11 @@ async function evaluateDraft(draft, envelope) {
     transform_mode:   draft.transform_mode || 'passthrough',
     transform_config: draft.transform_config ?? null,
   };
-  const mv = await _evaluateMatch(rule, envelope);
+  const runCode = guestCode.laneRunner(guestCode.LANES.preview);   // editor test: preview lane
+  const mv = await _evaluateMatch(rule, envelope, { runCode });
   const out = { matched: mv.matched, ...(mv.error ? { match_error: mv.error } : {}) };
   if (out.matched) {
-    const tr = await _runTransform(rule, envelope);
+    const tr = await _runTransform(rule, envelope, { runCode });
     out.transform_ok = tr.ok;
     if (tr.ok) out.transformed = tr.output;
     else out.transform_error = tr.error;

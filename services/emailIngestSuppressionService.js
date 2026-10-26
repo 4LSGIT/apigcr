@@ -140,7 +140,7 @@ async function _evaluateRule(rule, envelope) {
     }
     try {
       return (await guestCode.runBody(code, envelope, {
-        timeoutMs: guestCode.DEFAULT_TIMEOUT_MS, truthy: true, label: 'emailIngestSuppression code',
+        timeoutMs: guestCode.DEFAULT_TIMEOUT_MS, truthy: true, label: 'emailIngestSuppression code', lane: guestCode.LANES.events,
       })) === true;
     } catch (err) {
       console.warn(

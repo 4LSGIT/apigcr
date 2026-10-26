@@ -247,7 +247,10 @@ function _validateTransformRequest(body) {
 async function _matchCorpus(ch, rule, rows, { prepare, observe } = {}) {
   const ruleService = ch.ruleService();
   const envelopes = rows.map((r) => (prepare ? prepare(r) : r.envelope));
-  let runCode;
+  // A preview never runs in a production lane: a non-code rule (or a code
+  // rule whose body _evaluateMatch locates differently) still evaluates
+  // through the preview lane.
+  let runCode = guestCode.laneRunner(guestCode.LANES.preview);
   if (rule.match_mode === 'code') {
     let cfg = rule.match_config;
     let parsed = true;
@@ -256,6 +259,7 @@ async function _matchCorpus(ch, rule, rows, { prepare, observe } = {}) {
     if (code) {
       runCode = await guestCode.batchRunner(code, envelopes, {
         timeoutMs: guestCode.DEFAULT_TIMEOUT_MS, truthy: true, label: `${ch.name}IngestRule code`,
+        lane: guestCode.LANES.preview,
       });
     }
   }
@@ -340,7 +344,7 @@ async function testTransform(db, channelName, body) {
   }
 
   const testRule = { id: 'test-transform', name: '(editor)', transform_mode: v.transform_mode, transform_config: v.transform_config };
-  const tr = await ch.ruleService()._runTransform(testRule, envelope);
+  const tr = await ch.ruleService()._runTransform(testRule, envelope, { runCode: guestCode.laneRunner(guestCode.LANES.preview) });
   const transform = tr.ok ? { ok: true, output: tr.output } : { ok: false, error: tr.error };
 
   const out = { success: true, source, input: envelope, transform };
@@ -564,11 +568,12 @@ async function previewRows(db, { channel, rule_id, execution_id, sample, window 
     source = { message_source: 'sample supplied in the question', fidelity: 'sample' };
   }
 
-  const match = await observeWarnings((warn) => ruleService._evaluateMatch(rule, envelope, { warn }));
+  const runCode = guestCode.laneRunner(guestCode.LANES.preview);   // a preview: never a production lane
+  const match = await observeWarnings((warn) => ruleService._evaluateMatch(rule, envelope, { warn, runCode }));
   // Exactly the live order: the transform runs only for a matching rule —
   // a stored code transform never runs on a message it would not see.
   const transform = match.value
-    ? await observeWarnings((warn) => ruleService._runTransform(rule, envelope, { warn }))
+    ? await observeWarnings((warn) => ruleService._runTransform(rule, envelope, { warn, runCode }))
     : { value: null, note: null };
   const tr = transform.value;
   const activeActions = actions.filter((a) => a.active).length;

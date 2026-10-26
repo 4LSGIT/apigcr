@@ -155,8 +155,10 @@ async function listActiveRules(db) {
 // ASYNC: code mode awaits the guest. Every caller awaits — an un-awaited
 // promise is truthy, so a dropped await would make every rule match.
 // `warn` / `runCode` are the preview seams (ingestRulePreviewService): a
-// per-call warning sink, and guestCode.batchRunner for a whole corpus in one
-// child. Production passes neither.
+// per-call warning sink, and guestCode.batchRunner (a whole corpus in one
+// child) or guestCode.laneRunner — either pins the PREVIEW lane over the
+// events lane named below. Production passes neither and runs in the events
+// lane, which hooks and previews cannot starve (lib/guestCode.js LANES).
 async function _evaluateMatch(rule, event, { warn = _consoleWarn, runCode = guestCode.runBody } = {}) {
   // Defensive JSON parse — mysql2 returns json columns as objects, but a
   // pre-stringified value can sneak in. Same guard as the suppression service.
@@ -205,7 +207,7 @@ async function _evaluateMatch(rule, event, { warn = _consoleWarn, runCode = gues
     }
     try {
       return (await runCode(code, event, {
-        timeoutMs: guestCode.DEFAULT_TIMEOUT_MS, truthy: true, label: 'phoneIngestRule code',
+        timeoutMs: guestCode.DEFAULT_TIMEOUT_MS, truthy: true, label: 'phoneIngestRule code', lane: guestCode.LANES.events,
       })) === true;
     } catch (err) {
       warn(
@@ -290,7 +292,7 @@ async function _runTransform(rule, event, { warn = _consoleWarn, runCode = guest
     }
     try {
       const output = await runCode(code, event, {
-        timeoutMs: guestCode.DEFAULT_TIMEOUT_MS, label: 'phoneIngestRule code',
+        timeoutMs: guestCode.DEFAULT_TIMEOUT_MS, label: 'phoneIngestRule code', lane: guestCode.LANES.events,
       });
       if (output == null || typeof output !== 'object') {
         return {

@@ -619,18 +619,27 @@ unchanged. These are the one family whose route IS an authorization seat
 
 - **Recipient:** never typed. One evidence row must carry the exact
   `contact_id` and `phone_id` / `email_id`; the normalizer reloads the row
-  (on that contact, `end_date IS NULL`) and refuses on consent — the row's
+  (on that contact, `end_date IS NULL`) and records its consent — the row's
   `sms_optout` / `email_optout`, the one consent flag every sender reads
-  (`services/optoutService.js`, ruling 2026-10-27). Measured live 2026-10-26: 1 of 1,113
+  (`services/optoutService.js`, ruling 2026-10-27) — as
+  `recipient.opted_out`. An opted-out recipient is NOT refused (ruling 17):
+  the card states "This recipient opted out of SMS|email" up front, as a
+  danger line and in the review dialog. Measured live 2026-10-26: 1 of 1,113
   active phones opted out, 0 of 1,108 emails. The email address is run
   through the mail route's own `parseRecipient`.
 - **Click-time freshness (correction 1):** the card's `precheck` re-reads
   `GET /api/contacts/:id` and `GET /api/contacts/:id/{phones|emails}` and
   refuses — before the ledger claim, so nothing is spent — when the row ended,
-  opted out, or its value / `updated_at` moved. A failed read leaves the card
-  retryable. An opt-out landing after the precheck is refused by the send
-  route itself (409 `opted_out`, before the idempotency claim): the card never
-  sends `acknowledge_optout`, so it reads the 409 as a refusal.
+  its opt-out state differs from the reviewed one (either way), or its value /
+  `updated_at` moved. A failed read leaves the card retryable.
+- **Opt-out acknowledgement (ruling 17):** the send goes through
+  `public/js/optoutAck.js`, exactly as Comms: the route answers 409
+  `opted_out` (before the limiter and the idempotency claim), the user's
+  explicit `confirm` resends ONCE with `acknowledge_optout:true` under the same
+  `Idempotency-Key`, and the route's `admin_audit_log` send row carries
+  `acknowledged_optout`. The fixed request builder never sets the flag; a
+  cancel reads "Cancelled — nothing was sent"; a second 409 after the
+  acknowledged resend is a refusal. Automation sends keep refusing.
 - **Sender:** a literal `line_id` / `mailbox_id` the user can send from
   (`mailboxService.getAccess` can_send + active line; `mailboxSendService
   .resolveIdentity` for a mailbox). Omitted → the user's ONLY explicit
@@ -673,9 +682,10 @@ bulk sends, and the email's composer Case field (`case_id` → case link) is
 NOT sent — a case only feeds placeholders. Appointment cards keep forcing
 their own confirmations off (course correction 3 unchanged): their routes
 resolve `{{…}}` after the click, so a client message is a separate send card.
-Each is filed in `ref/plans.md`. **Humans:** since the opt-out ruling
-(2026-10-27) both native routes WARN a person sending from Comms (409
-`opted_out` until `acknowledge_optout:true`); Casey cannot acknowledge.
+Each is filed in `ref/plans.md`. **Humans and Casey:** since the opt-out
+ruling (2026-10-27) both native routes WARN a person sending from Comms (409
+`opted_out` until `acknowledge_optout:true`), and Casey's card takes the same
+confirm (ruling 17).
 **Sync bus:** neither send route has a `yc-sync` matcher, for human
 and Casey sends alike (the record arrives later through the provider echo /
 mail ingest); no Casey-only emit was added.
@@ -713,8 +723,8 @@ logged — its use cannot be measured.
 `POST /api/reports` (the Reports editor's own create route).
 
 - **The draft** carries exactly the create body — title, category,
-  description, sql, params, columns_meta, caveats, row_limit, 0-8 optional
-  evidence refs. The normalizer runs the create route's own validators
+  description, sql, params, columns_meta, caveats, row_limit, an optional
+  `viz`, 0-8 optional evidence refs. The normalizer runs the create route's own validators
   (`validateParams`, `validateSql` with the declared param count) plus the
   chat-denied column names, then **previews** the definition through
   `reportService.execute` — the core `POST /api/reports/preview` calls — on the
@@ -725,9 +735,25 @@ logged — its use cannot be measured.
   Widths are capped at the columns' (title 150, category 40) because relaxed
   sql_mode would truncate. An engine or validator error is a 422 the repair
   stage reads.
+- **Display (`viz`, 2026-10-27 review):** the model may choose how the saved
+  report opens — the Reports engine's own chart enum (`validator.js`
+  `VIZ_TYPES` = `reportCharts.js` `CHART_TYPES`: table, bar, line, area, pie,
+  doughnut, combo, stat). Omitted → table. `assistantService.reportDraftViz`
+  refuses, with the allowed values for the repair stage, anything the route's
+  lenient `sanitizeViz` would drop or change (unknown fields, a series type /
+  axis / format outside the enum) and anything Reports could not draw from
+  the previewed result: x / y / series keys must be returned aliases, metric
+  columns numeric by the field type codes `reportCharts.profileColumns` uses,
+  a chart needs x and a metric, pie/doughnut exactly one metric, table no
+  other field. The card shows a **Display** line in the Reports editor's
+  words; the builder sends the server's normalized viz.
 - **Server-fixed fields:** the `report_key` is minted server-side
-  (`casey_<slug>_<6 hex>`); the browser's fixed builder pins `kind:'report'`,
-  `visibility:'shared'`, `viz:{type:'table'}` and `source:'ai'`.
+  (`casey_<slug>_<6 hex>`); the browser's fixed builder pins `kind:'report'`
+  (a view is a separate, undecided kind), `visibility:'shared'` and
+  `source:'ai'`. Visibility stays pinned on purpose: `reportService` stores
+  it but never enforces it (the private/shared model was rejected in S3 for
+  the lock), so a Casey-chosen `private` would promise privacy that does not
+  exist — the live access control is the lock.
 - **The card** shows title, category, description, the tables read, the
   columns, the parameters, the real row count (and whether the saved report's
   row limit truncates it), the first 10 rows, caveats, the SSN / DOB lines, a
@@ -892,6 +918,10 @@ today**, not YCv3.
     query text" sentence (f94a2f3, planning session) is struck for Reports.
     Same day, the SSN rule: a report shows `contact_ssn` in full only when the
     user's own question asks for SSNs, otherwise last-4 — shipped as A16.
+17. **Casey may acknowledge an opt-out** (Fred, 2026-10-27: "casey is like
+    the user"): the send card shows the opt-out up front and sends
+    acknowledge_optout only on the user's explicit confirm, exactly as Comms
+    does; automation sends still refuse.
 
 **Defaults recorded for this family** (each stands until Fred rules otherwise):
 

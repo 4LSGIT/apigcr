@@ -182,7 +182,11 @@ endpoints. No `process`, `require`, `fetch`, timers, network or database, and
 error, so compute firm-local (Detroit) times from the UTC value — the docs@
 digest rule does exactly that. 15 s and 64 MB per call; past either, a match
 or suppression counts as no-match and a transform fails (the rule still
-counts as matched, its actions don't fire).
+counts as matched, its actions don't fire). The same happens, with a "code
+sandbox busy" reason, when the server is so busy running other code that no
+sandbox frees up within 10 s — rare, logged, and raised as a system alert.
+Live mail runs ahead of hooks and of the test endpoints, which can never take
+its reserved share.
 
 **Code mode needs `automations.manage` (admin / IT).** A `code` match,
 transform or suppression is author-supplied JavaScript, so saving one — or

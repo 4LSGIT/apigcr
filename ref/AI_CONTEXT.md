@@ -29,9 +29,15 @@ body. Governing migrations in `ref/migrations/`.*
   `sms.send.v1` / `email.send.v1` drive `POST /api/phone-lines/:id/sms` and
   `POST /api/mail/send` from the card. Invariants: the recipient is one
   `contact_phones` / `contact_emails` row named by an evidence row
-  (contact_id + phone_id/email_id), active, and NOT opted out on the row
-  (`sms_optout`/`email_optout`) — re-read by the browser at click time, and
-  the send routes re-check it (the card never acknowledges, so it refuses);
+  (contact_id + phone_id/email_id), active; an opted-out row
+  (`sms_optout`/`email_optout`) is NOT refused (ruling 17, "casey is like the
+  user"): the draft carries `recipient.opted_out`, the card shows it up front,
+  and the send rides `public/js/optoutAck.js` like Comms — the route's 409
+  `opted_out`, the user's explicit confirm, ONE resend with
+  `acknowledge_optout:true` (never set by the builder), audited
+  `acknowledged_optout`; the browser re-reads the row at click time and
+  refuses if its opt-out state differs from the reviewed one; automation
+  sends still refuse;
   the body is resolved by `resolverService` (strict) at proposal time and the
   card sends exactly that
   text (neither route resolves placeholders); senders are a line/mailbox the
@@ -73,8 +79,11 @@ body. Governing migrations in `ref/migrations/`.*
   (`assistantService.reportSsnUse`); the STORED card preview masks SSN/DOB by
   column ORIGIN (`execute`'s opt-in `fieldOrigins`), hiding expression columns
   when either is read in full — conversational reads still refuse both;
-  `report_key` is server-minted, kind/visibility/viz/source pinned by the
-  browser builder; `POST /api/reports` takes an optional `Idempotency-Key`
+  `report_key` is server-minted; `viz` may be chosen from the Reports chart
+  enum, validated strictly against the previewed columns
+  (`assistantService.reportDraftViz` — whatever the lenient `sanitizeViz`
+  would drop refuses); kind/visibility/source pinned by the browser builder
+  (visibility is stored, never enforced — the lock is the access control); `POST /api/reports` takes an optional `Idempotency-Key`
   (`reports.create`). Shell destination `reports.report` {id} opens the run
   panel (`reports.html` `ycAssistantOpenDestination` / `ycSubTab.leaf.take`),
   where CSV export lives. Every human CSV export (Reports, views, the log
@@ -110,7 +119,16 @@ body. Governing migrations in `ref/migrations/`.*
   corpus into ONE child via `guestCode.batchRunner`). Invariants: every site
   function is async and every caller awaits (match results compare
   `=== true`); no fallback; failure = the site's own failure semantics;
-  limits 15 s wall / 64 MB / ≤ 4 concurrent children; no `Intl` (locale Date
+  limits 15 s wall / 64 MB / ≤ 4 concurrent children, split into LANES
+  (review 10-27): each call names `events` (triggers, ingest rules,
+  suppressions — reserved 2 of 4), `hooks` (live/replayed hook code —
+  reserved 1) or `preview` (editor tests, dry runs, rule previews,
+  `batchRunner` — the default, reserved 0, at most 1); a waiter past its
+  lane's queue-wait budget (`GUEST_CODE_QUEUE_WAIT_MS_<LANE>`, 10 s / 3 s /
+  5 s) or beyond its queue cap (`GUEST_CODE_MAX_QUEUE_<LANE>`) fails closed
+  (`GUEST_CODE_BUSY`, mapped by each site), logged, alerted
+  `guest_code_saturated:<lane>` (warning, error on a repeat within 30 min,
+  folded per minute; db injected by `startup/init.js`); no `Intl` (locale Date
   methods silently ignore `timeZone`). The `automations.manage` gates
   (`ingestCodeGate`, `triggerCodeGate`, hooks B5) are deliberately unchanged
   — relaxing them is Fred's call after a soak (`ref/plans.md`). Cost: one

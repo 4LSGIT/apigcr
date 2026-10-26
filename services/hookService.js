@@ -276,7 +276,7 @@ function authenticateRequest(hook, req) {
  * filtered, and a dropped await on the value would be truthy.
  * @returns {Promise<{ passed: boolean, error?: string }>}
  */
-async function runFilter(hook, input) {
+async function runFilter(hook, input, { lane = guestCode.LANES.hooks } = {}) {
   const mode = hook.filter_mode;
   if (mode === 'none') return { passed: true };
 
@@ -295,7 +295,7 @@ async function runFilter(hook, input) {
   if (mode === 'code') {
     try {
       const passed = (await guestCode.runBody(config?.code || config, input, {
-        timeoutMs: guestCode.DEFAULT_TIMEOUT_MS, truthy: true, label: 'hook filter code',
+        timeoutMs: guestCode.DEFAULT_TIMEOUT_MS, truthy: true, label: 'hook filter code', lane,
       })) === true;
       return { passed };
     } catch (err) {
@@ -317,9 +317,11 @@ async function runFilter(hook, input) {
  * @param {string} mode          - 'passthrough', 'mapper', 'code'
  * @param {*}      config        - the transform config (rules array, code string, or object with .code)
  * @param {object} input         - data to transform
+ * @param {{lane?:string}} [opts] - guest-code lane: 'hooks' (live, the default)
+ *                                  or 'preview' (dry runs, editor tests)
  * @returns {Promise<{ output: object, errors: string[] }>}
  */
-async function runTransform(mode, config, input) {
+async function runTransform(mode, config, input, { lane = guestCode.LANES.hooks } = {}) {
   if (mode === 'passthrough' || !mode) {
     return { output: input, errors: [] };
   }
@@ -336,7 +338,7 @@ async function runTransform(mode, config, input) {
     try {
       const code = typeof parsed === 'string' ? parsed : parsed?.code;
       const output = await guestCode.runBody(code, input, {
-        timeoutMs: guestCode.DEFAULT_TIMEOUT_MS, label: 'hook transform code',
+        timeoutMs: guestCode.DEFAULT_TIMEOUT_MS, label: 'hook transform code', lane,
       });
       return { output: output ?? {}, errors: [] };
     } catch (err) {
@@ -545,7 +547,8 @@ async function deliverToTarget(target, hookTransformOutput, db) {
  */
 async function buildDryRunPreview(target, hookTransformOutput) {
   const { output: targetOutput } = await runTransform(
-    target.transform_mode, target.transform_config, hookTransformOutput
+    target.transform_mode, target.transform_config, hookTransformOutput,
+    { lane: guestCode.LANES.preview }
   );
   const targetType = target.target_type || 'http';
   const targetConfig = parseTargetConfig(target);
@@ -775,8 +778,11 @@ async function executeHook(db, slug, input, { dryRun = false, hook: preloaded = 
     executionId = execResult.insertId;
   }
 
-  // 3. Filter
-  const filterResult = await runFilter(hook, input);
+  // 3. Filter. Code bodies run in the guest-code HOOKS lane (live and
+  // replayed events) or the PREVIEW lane (dry runs) — never the events lane
+  // triggers and ingest rules are guaranteed (lib/guestCode.js LANES).
+  const lane = dryRun ? guestCode.LANES.preview : guestCode.LANES.hooks;
+  const filterResult = await runFilter(hook, input, { lane });
 
   if (!filterResult.passed) {
     if (!dryRun && executionId) {
@@ -793,7 +799,7 @@ async function executeHook(db, slug, input, { dryRun = false, hook: preloaded = 
   }
 
   // 4. Transform
-  const transformResult = await runTransform(hook.transform_mode, hook.transform_config, input);
+  const transformResult = await runTransform(hook.transform_mode, hook.transform_config, input, { lane });
 
   if (!dryRun && executionId) {
     await db.query(

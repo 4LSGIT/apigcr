@@ -467,7 +467,8 @@ router.post('/api/phone-lines/:id/sms', jwtOrApiKey, requireJwt, async (req, res
     // Opt-out WARNS a staff sender (ruling 2026-10-27): 409 code 'opted_out'
     // until the body carries acknowledge_optout:true — checked before the
     // limiter and the idempotency claim, so the confirm-and-resend is one
-    // send and reuses its key. Casey's card never acknowledges, so it refuses.
+    // send and reuses its key. Ask Casey's send card goes through the same
+    // confirm (public/js/optoutAck.js; ruling 17).
     const gate = await optout.optoutGate(req.db, {
       channel: 'sms', dest: phone.normalizeTo(body.to).ten, acknowledged: body.acknowledge_optout,
     });

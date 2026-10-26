@@ -230,6 +230,19 @@ d('A16 report drafts on a real engine', () => {
       .rejects.toThrow(/distinct aliases/);
   });
 
+  test('viz is checked against the ENGINE\'s field types: COUNT(*) / SUM() are number columns, a text alias is not', async () => {
+    const sql = 'SELECT ct.contact_city AS city, COUNT(*) AS n, SUM(ct.contact_id) AS total FROM contacts ct GROUP BY ct.contact_city ORDER BY n DESC';
+    const out = await norm({ title: 'By city', sql, viz: { type: 'bar', x: 'city', series: [{ key: 'n' }, { key: 'total', type: 'line', axis: 'y1' }] } });
+    expect(out.definition.viz).toEqual({ type: 'bar', x: 'city', series: [{ key: 'n' }, { key: 'total', type: 'line', axis: 'y1' }] });
+    await expect(norm({ title: 'By city', sql, viz: { type: 'bar', x: 'city', y: 'city' } }))
+      .rejects.toThrow(/viz y "city" is not a number column, so Reports cannot plot it — number columns: n, total/);
+    await expect(norm({ title: 'By city', sql, viz: { type: 'pie', x: 'town', y: 'n' } }))
+      .rejects.toThrow(/viz x must name a returned column — the report's columns are city, n, total/);
+    await expect(norm({ title: 'By city', sql, viz: { type: 'heatmap', x: 'city', y: 'n' } }))
+      .rejects.toThrow(/viz type must be one of bar, line, area, pie, doughnut, combo, stat, table/);
+    expect((await norm({ title: 'By city', sql })).definition.viz).toEqual({ type: 'table' });
+  });
+
   // The SSN gate reads the SIGNED ticket's question — the execute path must
   // hand it to the normalizer (and to the repair stage). Model stages are
   // stubbed; the sql.read step and the preview run on the engine.
@@ -333,5 +346,20 @@ d('A16 report drafts on a real engine', () => {
     expect(run.status).toBe(200);
     expect(run.body.rowCount).toBe(out.preview.row_count);
     expect(run.body.rows.map((r) => r.ssn_last4)).toEqual(['6789', '6789', '4321']);
+
+    // A chart draft round-trips too: the stored viz is exactly the reviewed one.
+    const chart = await norm({
+      title: 'Contacts by city', category: 'Contacts', description: 'How many contacts per city.',
+      sql: 'SELECT ct.contact_city AS city, COUNT(*) AS n FROM contacts ct GROUP BY ct.contact_city ORDER BY n DESC',
+      viz: { type: 'pie', x: 'city', y: 'n', limit: 12 },
+    });
+    const chartReq = browserReportRequest()(chart);
+    expect(chartReq.body).toMatchObject({ viz: { type: 'pie', x: 'city', y: 'n', limit: 12 }, kind: 'report', visibility: 'shared', source: 'ai' });
+    const saved = await call(chartReq.method, chartReq.path, chartReq.body, { 'Idempotency-Key': chart.draft_id });
+    expect(saved.status).toBe(201);
+    expect(saved.body.report.vizWarning).toBeUndefined();
+    const [chartRow] = await q('SELECT viz, kind, visibility FROM report_definitions WHERE id = ?', [saved.body.report.id]);
+    expect(canon(chartRow.viz)).toEqual(canon(chart.definition.viz));
+    expect([chartRow.kind, chartRow.visibility]).toEqual(['report', 'shared']);
   });
 });

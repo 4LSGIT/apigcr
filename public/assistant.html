@@ -7,6 +7,7 @@
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
 <link rel="stylesheet" href="/theme.css">
 <script src="/themeSync.js"></script>
+<script src="/js/optoutAck.js"></script>
 <style>
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--page-bg); color: var(--text); font: 14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
@@ -60,6 +61,8 @@
   .action-draft-next { margin-top: 10px; padding-top: 9px; border-top: 1px solid var(--border); color: var(--text-muted); }
   .action-draft-next ol { margin: 5px 0 0; padding-left: 20px; }
   .action-draft-next-warning { margin-top: 6px; font-size: 11px; }
+  /* A14 / ruling 17: an opted-out send recipient, stated before anything else. */
+  .action-draft-danger { grid-column: 1 / -1; border-left: 3px solid var(--danger); padding: 4px 8px; color: var(--danger); font-weight: 600; }
   /* A16 report preview + SQL: a full-width grid row that scrolls on its own,
      so a wide preview never pushes the chat sideways (min-width:0 drops the
      grid item's auto floor). */
@@ -1119,6 +1122,26 @@ function reportSsnText(draft) {
   return '';
 }
 
+// The chart the saved report opens with, in the Reports editor's own words
+// (public/reports.html chartOptionsFor). Every value is the server's
+// normalized viz — exactly what POST /api/reports stores.
+function reportVizText(viz) {
+  const v = viz && typeof viz === 'object' ? viz : { type: 'table' };
+  if (v.type === 'table') return 'Table (no chart)';
+  const name = ({ bar: 'Bar chart', line: 'Line chart', area: 'Area chart', pie: 'Pie chart', doughnut: 'Donut chart',
+    combo: 'Combo chart', stat: 'Figures' })[v.type] || String(v.type);
+  const metrics = Array.isArray(v.series) && v.series.length
+    ? v.series.map((s) => `${s.label || s.key}${s.type ? ` as ${s.type}` : ''}${s.axis === 'y1' ? ' (right axis)' : ''}`)
+    : v.y ? [v.y] : [];
+  const parts = [name];
+  if (v.x) parts.push(`by ${v.x}`);
+  parts.push(metrics.length ? `of ${metrics.join(', ')}` : 'of every number column');
+  if (v.stacked) parts.push('stacked');
+  if (v.horizontal) parts.push('horizontal');
+  if (v.limit) parts.push(`top ${v.limit}`);
+  return `${parts.join(' ')} — switchable in Reports; the table and CSV are unchanged`;
+}
+
 function reportCardText(draft) {
   const d = draft.definition || {};
   const p = draft.preview || {};
@@ -1129,7 +1152,8 @@ function reportCardText(draft) {
   const lines = ['Report draft — not saved', `Title: ${one(d.title)}`, `Category: ${d.category}`,
     `Description: ${one(d.description) || 'Empty'}`,
     `Reads: ${(draft.tables || []).join(', ')}`,
-    `Columns: ${cols.join(', ')}${p.more_columns ? ` (+${p.more_columns} more)` : ''}`];
+    `Columns: ${cols.join(', ')}${p.more_columns ? ` (+${p.more_columns} more)` : ''}`,
+    `Display: ${one(reportVizText(d.viz))}`];
   if (params.length) lines.push(`Parameters: ${params.join('; ')}`);
   lines.push(`Rows now: ${p.row_count}${p.truncated ? ` — the saved report shows the first ${d.row_limit}` : ''} (row limit ${d.row_limit})`);
   if (draft.ssn && draft.ssn !== 'none') lines.push(`SSN: ${reportSsnText(draft)}`);
@@ -1179,13 +1203,24 @@ function reportDraftRequest(draft) {
   if (typeof d.report_key !== 'string' || !d.report_key || typeof d.sql_text !== 'string' || !d.sql_text) {
     throw new Error('This report draft has no usable definition.');
   }
+  // The chart hint is the SERVER's normalized viz (assistantService
+  // reportDraftViz — validated against the Reports enum and this result's
+  // columns); a draft without one is a table.
+  const viz = d.viz == null ? { type: 'table' } : d.viz;
+  if (!viz || typeof viz !== 'object' || Array.isArray(viz)
+      || !['bar', 'line', 'area', 'pie', 'doughnut', 'combo', 'stat', 'table'].includes(viz.type)) {
+    throw new Error('This report draft has no usable display setting.');
+  }
   const body = {
     report_key: d.report_key, title: d.title, category: d.category, description: d.description || null,
     sql_text: d.sql_text, params: d.params || [], columns_meta: d.columns_meta || [], caveats: d.caveats || [],
-    row_limit: d.row_limit,
-    // Fixed by this builder, never by the model: a plain shared report, drawn
-    // as a table (a list is not a chart), labelled AI-authored in Reports.
-    kind: 'report', visibility: 'shared', viz: { type: 'table' }, source: 'ai',
+    row_limit: d.row_limit, viz,
+    // Fixed by this builder, never by the model: a plain report (a VIEW is a
+    // separate, undecided kind), shared — the Reports engine stores visibility
+    // but never enforces it, so offering 'private' would promise privacy that
+    // does not exist (services/reportService.js KINDS / VISIBILITIES) —
+    // labelled AI-authored in Reports.
+    kind: 'report', visibility: 'shared', source: 'ai',
   };
   return { path: '/api/reports', method: 'POST', body, idempotent: true };
 }
@@ -1201,9 +1236,15 @@ function reportDraftResult(draft, result) {
 // the card is the server's FULLY RESOLVED text and the request below sends
 // exactly those bytes — neither route resolves placeholders. The recipient is
 // re-read through the canonical contact routes at click time (correction 1):
-// a row that ended, changed, or opted out since the card was prepared refuses
-// before anything is claimed or sent. The draft_id rides as Idempotency-Key;
-// a send whose outcome is unknown is never offered again.
+// a row that ended, changed, or whose opt-out flipped since the card was
+// prepared refuses before anything is claimed or sent. The draft_id rides as
+// Idempotency-Key; a send whose outcome is unknown is never offered again.
+// Opt-out (ruling 17, 2026-10-27: "casey is like the user"): an opted-out
+// recipient is shown UP FRONT (recipient.opted_out, the server's read of the
+// row) and the send goes through public/js/optoutAck.js exactly as Comms does
+// — the route answers 409 opted_out, the user's explicit confirm resends ONCE
+// with the acknowledge_optout flag, and the route audits acknowledged_optout. The
+// request builder never sets it.
 const SEND_ACTION_KINDS = new Set(['sms.send.v1', 'email.send.v1']);
 
 function sendIsSms(draft) { return draft.kind === 'sms.send.v1'; }
@@ -1216,12 +1257,17 @@ function sendRecipientLine(draft) {
   return `${r.contact_name} — ${value} (${r.label}${r.is_primary ? ', primary' : ''})`;
 }
 
+function sendOptoutText(draft) {
+  return `This recipient opted out of ${sendIsSms(draft) ? 'SMS' : 'email'}`;
+}
+
 // The fixed facts, one "Label: value" line each — every value is a server
 // field, never message text. The message itself is NOT among them: it can
 // hold any line ("Consent: ..."), so it is rendered apart, last, whole.
 function sendFactLines(draft) {
   const sms = sendIsSms(draft);
   const s = draft.sender || {};
+  const optedOut = !!(draft.recipient && draft.recipient.opted_out === true);
   const lines = [`To: ${sendRecipientLine(draft)}`,
     `${sms ? 'From line' : 'From'}: ${s.label}${s.defaulted ? ' (your only send grant)' : ''}`];
   if (draft.case) lines.push(`Case: ${draft.case.label} (placeholders only — the send is not filed to the case by this card)`);
@@ -1230,18 +1276,26 @@ function sendFactLines(draft) {
   if (draft.templated) lines.push('Placeholders: already filled in from the records — what you see is exactly what is sent');
   if (draft.ssn_warning) lines.push('WARNING: this message contains a Social Security number');
   lines.push(`Audience: one recipient. No attachments, cc/bcc, ${sms ? 'media' : 'reply threading'} or scheduling.`);
-  lines.push('Consent: checked — the recipient has not opted out; re-checked when you click.');
+  lines.push(optedOut
+    ? `Consent: OPTED OUT — ${sendOptoutText(draft).replace(/^This/, 'this')}. Sending asks you to confirm past the opt-out (as Comms does), and the send is recorded as an acknowledged opt-out.`
+    : 'Consent: checked — the recipient has not opted out; re-checked when you click.');
   lines.push(`Effect: sends NOW from your signed-in account under your own ${sms ? 'line' : 'mailbox'} access. It cannot be recalled.`);
   return lines;
 }
 
 function sendDraftText(draft) {
   const sms = sendIsSms(draft);
-  return [`${sms ? 'Text message' : 'Email'} proposal — not sent`, ...sendFactLines(draft),
+  const optedOut = !!(draft.recipient && draft.recipient.opted_out === true);
+  return [`${sms ? 'Text message' : 'Email'} proposal — not sent`, ...(optedOut ? [`WARNING: ${sendOptoutText(draft)}`] : []), ...sendFactLines(draft),
     `${sms ? 'Message' : 'Body'}, exactly as sent, between the rules:`, '────────', sms ? draft.message : draft.body, '────────'].join('\n');
 }
 
 function sendDraftFields(fields, draft) {
+  if (draft.recipient && draft.recipient.opted_out === true) {
+    const danger = document.createElement('div'); danger.className = 'action-draft-danger';
+    danger.textContent = sendOptoutText(draft);
+    fields.append(danger);
+  }
   appendDraftFieldsFromText(fields, ['', ...sendFactLines(draft)].join('\n'));
   const term = document.createElement('dt'); term.textContent = sendIsSms(draft) ? 'Message' : 'Body';
   const detail = document.createElement('dd'); detail.className = 'action-draft-message';
@@ -1252,7 +1306,8 @@ function sendDraftFields(fields, draft) {
 function sendConfirmText(draft) {
   const r = draft.recipient || {};
   const value = sendIsSms(draft) ? String(r.phone || '') : String(r.email || '');
-  return `This sends NOW to ${r.contact_name} ${value}. It cannot be recalled.\n\n${sendDraftText(draft)}`;
+  const optout = r.opted_out === true ? ` ${sendOptoutText(draft)} — you will be asked to confirm past the opt-out.` : '';
+  return `This sends NOW to ${r.contact_name} ${value}. It cannot be recalled.${optout}\n\n${sendDraftText(draft)}`;
 }
 
 function sendActionRequest(draft) {
@@ -1274,9 +1329,12 @@ function sendActionRequest(draft) {
 }
 
 // Click-time freshness through the canonical reads: the contact and its
-// active rows (consent is the row's opt-out flag, ruling 2026-10-27). Returns a refusal sentence, or '' when the
-// reviewed row still stands exactly as reviewed. The send route re-checks
-// consent itself and Casey never acknowledges an opt-out, so a race refuses.
+// active rows (consent is the row's opt-out flag, ruling 2026-10-27). Returns
+// a refusal sentence, or '' when the reviewed row still stands exactly as
+// reviewed — its opt-out state included: a card reviewed as "not opted out"
+// never sends to a row that opted out since (and the reverse), it refuses and
+// is prepared again with the current state up front. The send route re-checks
+// consent itself; a race past this read meets its 409 and the user's confirm.
 async function sendPrecheck(draft) {
   const sms = sendIsSms(draft);
   const r = draft.recipient || {};
@@ -1290,11 +1348,28 @@ async function sendPrecheck(draft) {
   const row = rows.find((x) => Number(x.id) === rowId);
   const stamp = row && row.updated_at ? new Date(row.updated_at).toISOString() : '';
   if (!row || row.end_date) return `That ${sms ? 'number' : 'address'} is no longer active on the contact. Nothing was sent.`;
-  if (Number(sms ? row.sms_optout : row.email_optout) === 1) return `That ${sms ? 'number' : 'address'} has opted out since this card was prepared. Nothing was sent.`;
+  const optedNow = Number(sms ? row.sms_optout : row.email_optout) === 1;
+  if (optedNow !== (r.opted_out === true)) {
+    return optedNow
+      ? `That ${sms ? 'number' : 'address'} has opted out since this card was prepared. Nothing was sent. Ask Casey to prepare it again — the new card shows the opt-out.`
+      : `That ${sms ? 'number' : 'address'} is no longer opted out — its consent changed since this card was prepared. Nothing was sent. Ask Casey to prepare it again.`;
+  }
   if (String(sms ? row.phone : row.email) !== String(sms ? r.phone : r.email) || stamp !== r.expected_updated_at) {
     return `That ${sms ? 'number' : 'address'} changed since this card was prepared. Nothing was sent. Ask Casey to prepare it again.`;
   }
   return '';
+}
+
+// The send itself, through the staff opt-out confirm (public/js/optoutAck.js,
+// loaded by this page): a 409 opted_out becomes window.confirm and, on OK, ONE
+// resend carrying the acknowledge_optout flag under the SAME Idempotency-Key (the
+// routes check opt-out before the idempotency claim, so the pair is one send).
+// Without the helper the 409 stays a refusal — failing safe.
+function sendActionDispatch(request, headers) {
+  if (typeof ycOptoutAck === 'undefined' || !ycOptoutAck || typeof ycOptoutAck.send !== 'function') {
+    return api(request.path, request.body, request.method, headers);
+  }
+  return ycOptoutAck.send((path, method, body, h) => api(path, body, method, h), request.path, request.method, request.body, headers);
 }
 
 function sendActionResult(draft, result) {
@@ -1486,10 +1561,12 @@ const ACTION_FAMILIES = [
     confirmText: sendConfirmText,
     danger: () => true,
     precheck: sendPrecheck,
+    dispatch: sendActionDispatch,
     // Both send routes answer 409 only BEFORE dispatch (inactive line, a box
-    // that cannot send, an opted-out recipient — code 'opted_out', which this
-    // card never acknowledges); their idempotency 409s carry body.idempotency
-    // and stay ambiguous.
+    // that cannot send, an opted-out recipient — code 'opted_out', which
+    // dispatch turns into the user's confirm; a second one after the
+    // acknowledged resend, or a cancel, is a refusal); their idempotency 409s
+    // carry body.idempotency and stay ambiguous.
     refusal409: true,
     resultText: sendResultText,
     appliedMessage: (draft, payload, replayed) => replayed
@@ -1590,7 +1667,9 @@ async function executeActionDraft(message) {
     // committed replays the first result instead of creating a second record.
     // A key is sent only where the route honours one; the other kinds are
     // not creates and cannot duplicate a record.
-    const result = request.idempotent
+    const result = family.dispatch
+      ? await family.dispatch(request, request.idempotent ? { 'Idempotency-Key': draft.draft_id } : undefined)
+      : request.idempotent
       ? await api(request.path, request.body, request.method, { 'Idempotency-Key': draft.draft_id })
       : await api(request.path, request.body, request.method);
     const payload = family.result(draft, result);
@@ -1629,12 +1708,17 @@ async function executeActionDraft(message) {
     // saying "may have been applied" would send staff hunting for a change
     // that does not exist. No other route produces this shape.
     const baseConflict = claimed && e && e.status === 409 && e.body && e.body.conflict && e.body.conflict.changed;
+    // The user cancelled the opt-out confirm (public/js/optoutAck.js): the
+    // route refused before anything was dispatched, so nothing was sent.
+    const optoutDeclined = claimed && e && e.optoutDeclined === true;
     // A family whose routes were audited to answer 409 only before any write
     // (refusal409: the send routes) reads a plain 409 as a refusal too; an
     // idempotency 409 (body.idempotency) stays ambiguous for every family.
     const refused = claimed && e && e.status >= 400 && e.status < 500
       && (e.status !== 409 || (family.refusal409 === true && !(e.body && e.body.idempotency)));
-    if (baseConflict) {
+    if (optoutDeclined) {
+      draft.refusal_error = `${e.message} Ask Casey to prepare it again if you change your mind.`;
+    } else if (baseConflict) {
       draft.refusal_error = family.conflictRefusal || 'The workflow changed since this card was prepared, so the server refused the write — nothing was changed. Ask Casey to read the workflow again and rebuild the proposal.';
     } else if (refused) {
       draft.refusal_error = `The server refused this (${e.message || `HTTP ${e.status}`}). Nothing was written. Ask Casey to prepare the action again.`;

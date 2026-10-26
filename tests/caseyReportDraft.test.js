@@ -14,7 +14,13 @@
  *   3. POST /api/reports honours an Idempotency-Key (scope reports.create): a
  *      retry replays the first report instead of creating a second one, a
  *      refused create releases the key, and no key means no extra query;
- *   4. the settings pair.
+ *   4. the settings pair;
+ *   5. the chart hint (viz, 2026-10-27 review): the Reports engine's own enum,
+ *      validated strictly against the previewed columns — accepted shapes are
+ *      exactly what the route's sanitizer stores AND what Reports' chart code
+ *      draws (no silent fallback); everything else refuses with the allowed
+ *      values; the browser builder sends the server's viz, kind / visibility
+ *      / source stay pinned.
  * The engine half — preview on real MySQL, the stored-preview masking, and the
  * normalizer → browser builder → route → stored-row round trip — is
  * tests/caseyReportDraft.mysql.test.js.
@@ -29,7 +35,7 @@ jest.mock('../startup/dbReport', () => ({
 
 const path = require('path');
 const svc = require(path.join(__dirname, '..', 'services', 'assistantService'));
-const { normalizeActionDraft, reportSsnUse } = svc;
+const { normalizeActionDraft, reportSsnUse, reportDraftViz } = svc;
 
 const untouchedDb = () => ({ query: jest.fn(async (sql) => { throw new Error(`db touched: ${sql}`); }),
   getConnection: jest.fn(async () => { throw new Error('db touched'); }) });
@@ -265,5 +271,142 @@ describe('the settings pair', () => {
     expect(() => cfg('casey_report_authoring_enabled')).not.toThrow();
     const { SETTINGS } = require(path.join(__dirname, '..', 'lib', 'settingsRegistry'));
     expect(SETTINGS.casey_report_authoring_enabled).toMatchObject({ kind: 'system', type: 'bool' });
+  });
+});
+
+describe('the chart hint (viz) — the Reports engine\'s own enum, strict', () => {
+  const RC = require('../public/js/reportCharts.js');
+  const { sanitizeViz } = require('../lib/reportSchema/validator');
+  // mysql2 field type codes: 253 VAR_STRING, 8 LONGLONG (COUNT), 246 NEWDECIMAL (SUM), 10 DATE.
+  const FIELDS = [{ name: 'stage', type: 253 }, { name: 'month', type: 10 }, { name: 'n', type: 8 }, { name: 'total', type: 246 }];
+  const ROWS = [{ stage: 'filed', month: '2026-09-01', n: 3, total: '10.50' }, { stage: 'open', month: '2026-10-01', n: 5, total: '2.00' }];
+  const profile = RC.profileColumns(ROWS, FIELDS);
+
+  test('the enum is Reports\' own: the server sanitizer and the chart code accept exactly these types', () => {
+    expect(svc.REPORT_VIZ_TYPES).toEqual(['bar', 'line', 'area', 'pie', 'doughnut', 'combo', 'stat', 'table']);
+    expect([...RC.CHART_TYPES].sort()).toEqual([...svc.REPORT_VIZ_TYPES].sort());
+    for (const type of svc.REPORT_VIZ_TYPES) expect(sanitizeViz({ type, y: 'n' }).viz).toMatchObject({ type });
+    expect(sanitizeViz({ type: 'scatter', y: 'n' }).viz).toBeNull();
+  });
+
+  test('"number column" means what Reports\' chart code means: the same field type codes, every one of 0-255', () => {
+    const drawnAsNumber = [];
+    for (let code = 0; code < 256; code++) {
+      if (RC.profileColumns([{ c: 1 }], [{ name: 'c', type: code }])[0].kind === 'number') drawnAsNumber.push(code);
+    }
+    expect([...svc.REPORT_VIZ_NUMERIC_TYPES].sort((a, b) => a - b)).toEqual(drawnAsNumber);
+  });
+
+  test.each([
+    [undefined, { type: 'table' }],
+    [null, { type: 'table' }],
+    [{ type: 'table' }, { type: 'table' }],
+    [{ type: 'bar', x: 'stage', y: 'n' }, { type: 'bar', x: 'stage', y: 'n' }],
+    [{ type: 'line', x: 'month', y: 'total', yLabel: 'Fees' }, { type: 'line', x: 'month', y: 'total', yLabel: 'Fees' }],
+    [{ type: 'area', x: 'month', series: [{ key: 'n' }, { key: 'total', label: 'Total' }], stacked: true },
+      { type: 'area', x: 'month', series: [{ key: 'n' }, { key: 'total', label: 'Total' }], stacked: true }],
+    [{ type: 'pie', x: 'stage', y: 'n', limit: 12 }, { type: 'pie', x: 'stage', y: 'n', limit: 12 }],
+    [{ type: 'doughnut', x: 'stage', series: [{ key: 'n', format: 'number' }] }, { type: 'doughnut', x: 'stage', series: [{ key: 'n', format: 'number' }] }],
+    [{ type: 'combo', x: 'month', series: [{ key: 'n', type: 'bar' }, { key: 'total', type: 'line', axis: 'y1', format: 'currency' }], y1Label: '$' },
+      { type: 'combo', x: 'month', series: [{ key: 'n', type: 'bar' }, { key: 'total', type: 'line', axis: 'y1', format: 'currency' }], y1Label: '$' }],
+    [{ type: 'stat' }, { type: 'stat' }],
+    [{ type: 'stat', series: [{ key: 'n', label: 'Cases' }] }, { type: 'stat', series: [{ key: 'n', label: 'Cases' }] }],
+    [{ type: 'bar', x: 'stage', y: 'n', horizontal: true, stacked: false }, { type: 'bar', x: 'stage', y: 'n', horizontal: true }],
+  ])('accepted: %j → stored as %j, which Reports draws as that very chart', (raw, stored) => {
+    const out = reportDraftViz(raw, FIELDS);
+    expect(out).toEqual(stored);
+    expect(sanitizeViz(out)).toEqual({ viz: stored, warning: null });            // what POST /api/reports keeps
+    const drawn = RC.normalizeViz(out, ROWS, profile);                            // no silent fallback to inferViz
+    expect(drawn && drawn.type).toBe(stored.type);
+    if (stored.x) expect(drawn.x).toBe(stored.x);
+    if (stored.y) expect(drawn.series.map((x) => x.key)).toEqual([stored.y]);
+    if (stored.series) expect(drawn.series.map((x) => x.key)).toEqual(stored.series.map((x) => x.key));
+  });
+
+  test.each([
+    ['x', /viz must be an object, e.g\. \{"type":"bar"/],
+    [[{ type: 'bar' }], /viz must be an object/],
+    [{ type: 'scatter', x: 'stage', y: 'n' }, /viz type must be one of bar, line, area, pie, doughnut, combo, stat, table/],
+    [{ type: 'Bar', x: 'stage', y: 'n' }, /viz type must be one of/],
+    [{ x: 'stage', y: 'n' }, /viz type must be one of/],
+    [{ type: 'bar', x: 'stage', y: 'n', color: 'red' }, /viz carries unsupported fields: color — it takes type, x, y, series, stacked, horizontal, xLabel, yLabel, y1Label, limit/],
+    [{ type: 'table', x: 'stage' }, /viz of type table takes no other fields/],
+    [{ type: 'bar', y: 'n' }, /viz of type bar needs x \(the label \/ category column\) — the report's columns are stage, month, n, total/],
+    [{ type: 'bar', x: 'stage' }, /viz of type bar needs y or series .* number columns: n, total/],
+    [{ type: 'bar', x: 'nope', y: 'n' }, /viz x must name a returned column — the report's columns are stage, month, n, total/],
+    [{ type: 'bar', x: 'stage', y: 'stage' }, /viz y "stage" is not a number column, so Reports cannot plot it — number columns: n, total/],
+    [{ type: 'line', x: 'month', series: [{ key: 'month' }] }, /viz series\[0\]\.key "month" is not a number column/],
+    [{ type: 'line', x: 'month', series: [{ key: 'ghost' }] }, /viz series\[0\]\.key must name a returned column/],
+    [{ type: 'line', x: 'month', series: [] }, /viz series must be an array of 1-12/],
+    [{ type: 'line', x: 'month', series: [{ key: 'n', colour: 'x' }] }, /viz series\[0\] carries unsupported fields: colour/],
+    [{ type: 'combo', x: 'month', series: [{ key: 'n', type: 'pie' }] }, /viz series\[0\]\.type must be one of bar, line, area/],
+    [{ type: 'combo', x: 'month', series: [{ key: 'n', axis: 'y2' }] }, /viz series\[0\]\.axis may only be "y1"/],
+    [{ type: 'line', x: 'month', series: [{ key: 'n', format: 'money' }] }, /viz series\[0\]\.format must be one of number, percent, currency, days, text, date/],
+    [{ type: 'pie', x: 'stage', series: [{ key: 'n' }, { key: 'total' }] }, /viz of type pie plots exactly one number column/],
+    [{ type: 'bar', x: 'stage', y: 'n', stacked: 'yes' }, /viz stacked must be true or false/],
+    [{ type: 'bar', x: 'stage', y: 'n', limit: '12' }, /viz limit must be an integer 1-1000/],
+    [{ type: 'bar', x: 'stage', y: 'n', yLabel: 5 }, /viz yLabel must be text up to 80/],
+  ])('refused with the allowed values: %j', (raw, msg) => {
+    let err = null;
+    try { reportDraftViz(raw, FIELDS); } catch (e) { err = e; }
+    expect(err).toMatchObject({ status: 422 });
+    expect(err.message).toMatch(msg);
+  });
+
+  test('stat with no number column in the result is refused (Reports would fall back silently)', () => {
+    expect(() => reportDraftViz({ type: 'stat' }, [{ name: 'stage', type: 253 }])).toThrow(/stat needs at least one number column/);
+  });
+
+  test('viz is a draft key the normalizer accepts; it refuses before the engine like the other fields', async () => {
+    await expect(normalizeActionDraft(untouchedDb(), draft({ vizz: { type: 'bar' } }), [], { question: 'Make a report' }))
+      .rejects.toThrow(/unsupported fields/);
+    // A valid key reaches the engine (here: the throwing pool) — viz is checked against the PREVIEWED columns.
+    await expect(normalizeActionDraft(untouchedDb(), draft({ viz: { type: 'bar', x: 'client_name', y: 'contact_id' } }), [], { question: 'Make a report' }))
+      .rejects.toThrow(/report pool touched|preview failed/);
+  });
+
+  describe('the browser: card line + fixed builder', () => {
+    const fs = require('fs');
+    const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'assistant.html'), 'utf8');
+    const fnSrc = (name) => {
+      const m = new RegExp(`function\\s+${name}\\s*\\(`).exec(html);
+      let parens = 0; let i = m.index + m[0].length - 1;
+      for (; i < html.length; i++) { if (html[i] === '(') parens++; else if (html[i] === ')' && --parens === 0) break; }
+      let depth = 0;
+      for (let j = html.indexOf('{', i); j < html.length; j++) {
+        if (html[j] === '{') depth++; else if (html[j] === '}' && --depth === 0) return html.slice(m.index, j + 1);
+      }
+      throw new Error(name);
+    };
+    // eslint-disable-next-line no-new-func
+    const { reportDraftRequest, reportVizText, reportCardText } = new Function(
+      `${fnSrc('reportVizText')}\n${fnSrc('reportSsnText')}\n${fnSrc('reportCardText')}\n${fnSrc('reportDraftRequest')}\nreturn { reportDraftRequest, reportVizText, reportCardText };`)();
+    const def = (viz) => ({ definition: { report_key: 'casey_x_abc123', title: 'T', category: 'Cases', description: '', sql_text: 'SELECT 1 AS n',
+      params: [], columns_meta: [], caveats: [], row_limit: 1000, ...(viz === undefined ? {} : { viz }) }, preview: { columns: [], row_count: 0 }, tables: [] });
+
+    test('the builder sends the server\'s viz; kind, visibility and source stay pinned; no viz = table', () => {
+      const viz = { type: 'combo', x: 'month', series: [{ key: 'n', type: 'bar' }, { key: 'total', type: 'line', axis: 'y1' }] };
+      expect(reportDraftRequest(def(viz)).body).toMatchObject({ viz, kind: 'report', visibility: 'shared', source: 'ai' });
+      expect(reportDraftRequest(def(undefined)).body.viz).toEqual({ type: 'table' });
+      expect(reportDraftRequest(def(null)).body.viz).toEqual({ type: 'table' });
+      // A tampered card carrying model-ish extras still cannot move the pinned fields.
+      const tampered = def({ type: 'bar', x: 'a', y: 'n' });
+      tampered.definition.kind = 'view'; tampered.definition.visibility = 'private'; tampered.definition.source = 'manual';
+      expect(reportDraftRequest(tampered).body).toMatchObject({ kind: 'report', visibility: 'shared', source: 'ai' });
+      expect(() => reportDraftRequest(def({ type: 'scatter' }))).toThrow(/no usable display setting/);
+      expect(() => reportDraftRequest(def('bar'))).toThrow(/no usable display setting/);
+    });
+
+    test('the card names the display in the Reports editor\'s words', () => {
+      expect(reportVizText({ type: 'table' })).toBe('Table (no chart)');
+      expect(reportVizText(undefined)).toBe('Table (no chart)');
+      expect(reportVizText({ type: 'bar', x: 'stage', y: 'n' })).toBe('Bar chart by stage of n — switchable in Reports; the table and CSV are unchanged');
+      expect(reportVizText({ type: 'doughnut', x: 'stage', y: 'n', limit: 12 })).toMatch(/^Donut chart by stage of n top 12 —/);
+      expect(reportVizText({ type: 'combo', x: 'month', series: [{ key: 'n', type: 'bar' }, { key: 'total', label: 'Total', type: 'line', axis: 'y1' }], stacked: true }))
+        .toMatch(/^Combo chart by month of n as bar, Total as line \(right axis\) stacked —/);
+      expect(reportVizText({ type: 'stat' })).toMatch(/^Figures of every number column —/);
+      expect(reportCardText(def({ type: 'line', x: 'month', y: 'n' })).split('\n')).toContain('Display: Line chart by month of n — switchable in Reports; the table and CSV are unchanged');
+      expect(reportCardText(def(undefined)).split('\n')).toContain('Display: Table (no chart)');
+    });
   });
 });

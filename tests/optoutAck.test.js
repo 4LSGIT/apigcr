@@ -2,7 +2,8 @@
  * tests/optoutAck.test.js — the staff-side half of the opt-out ruling
  * (2026-10-27): public/js/optoutAck.js turns a send route's 409 opted_out into
  * a confirm and ONE acknowledged resend, and every staff compose surface sends
- * through it. Casey's card must never use it (Casey refuses).
+ * through it — Ask Casey's send card included (ruling 17, 2026-10-27: "casey
+ * is like the user"); its builder never pre-sets the acknowledgement.
  *
  * The helper runs for real in a JSDOM window; the page wiring is pinned at the
  * source (every gated send call site) and, for the comms hub, by dispatch on
@@ -74,7 +75,7 @@ describe('ycOptoutAck.send', () => {
   });
 });
 
-describe('every staff send surface goes through the helper; Casey never does', () => {
+describe('every staff send surface goes through the helper — Ask Casey\'s card too', () => {
   const count = (s, re) => (s.match(re) || []).length;
 
   test('comms hub + entity comms: the two sends ride sendApi, nothing posts to a gated route directly', () => {
@@ -95,8 +96,14 @@ describe('every staff send surface goes through the helper; Casey never does', (
     }
   });
 
-  test('Ask Casey\'s page never acknowledges an opt-out', () => {
+  test('Ask Casey\'s page loads the helper and sends ONLY through it; nothing on the page sets acknowledge_optout itself', () => {
     const s = read('public/assistant.html');
-    expect(s).not.toMatch(/ycOptoutAck|optoutAck\.js|acknowledge_optout\s*:/);
+    expect(s.includes('<script src="/js/optoutAck.js"></script>')).toBe(true);
+    expect(count(s, /ycOptoutAck\.send\(/g)).toBe(1);
+    expect(s).toMatch(/dispatch: sendActionDispatch,/);
+    // The acknowledgement is the helper's alone (after the confirm), never a literal here.
+    expect(s).not.toMatch(/acknowledge_optout\s*:/);
+    expect(count(s, /\/api\/phone-lines\/\$\{line\}\/sms/g)).toBe(1);
+    expect(count(s, /'\/api\/mail\/send'/g)).toBe(1);
   });
 });

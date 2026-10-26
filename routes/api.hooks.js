@@ -924,7 +924,8 @@ router.post('/api/hooks/test-transform', manageHooks, async (req, res) => {
     };
 
     const safeRun = async (mode, config, data) => {
-      try { return await hookService.runTransform(mode, config, data); }
+      // An editor test: the guest-code preview lane, never the live hooks lane.
+      try { return await hookService.runTransform(mode, config, data, { lane: 'preview' }); }
       catch (err) { return { output: {}, errors: [`Transform failed: ${err.message}`] }; }
     };
 

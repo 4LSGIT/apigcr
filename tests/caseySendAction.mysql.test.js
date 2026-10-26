@@ -113,13 +113,15 @@ d('A14 direct sends: the normalizer\'s SQL on real MySQL', () => {
     expect((await norm(sms({ message: 'SSN {{contacts.contact_ssn}}' }))).ssn_warning).toBe(true);
   });
 
-  test('consent: the row\'s tinyint opt-out refuses on the engine, per channel', async () => {
+  test('consent: the row\'s tinyint opt-out is read on the engine, per channel, into recipient.opted_out (ruling 17)', async () => {
+    await expect(norm(sms())).resolves.toMatchObject({ recipient: { opted_out: false } });
     await q('UPDATE contact_phones SET sms_optout = 1 WHERE id = 12');
-    await expect(norm(sms())).rejects.toThrow(/opted out of SMS/);
+    await expect(norm(sms())).resolves.toMatchObject({ kind: 'sms.send.v1', recipient: { opted_out: true } });
+    await expect(norm(email())).resolves.toMatchObject({ recipient: { opted_out: false } });
     await q('UPDATE contact_phones SET sms_optout = 0 WHERE id = 12');
     await q('UPDATE contact_emails SET email_optout = 1 WHERE id = 13');
-    await expect(norm(email())).rejects.toThrow(/opted out of email/);
-    await expect(norm(sms())).resolves.toMatchObject({ kind: 'sms.send.v1' });
+    await expect(norm(email())).resolves.toMatchObject({ kind: 'email.send.v1', recipient: { opted_out: true } });
+    await expect(norm(sms())).resolves.toMatchObject({ kind: 'sms.send.v1', recipient: { opted_out: false } });
     await q('UPDATE contact_emails SET email_optout = 0 WHERE id = 13');
   });
 

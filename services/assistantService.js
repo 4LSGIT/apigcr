@@ -2387,7 +2387,22 @@ async function normalizeHookCreateAction(db, value, evidence) {
 // full-SSN draft every SSN/EIN-shaped cell is masked too.
 const REPORT_ACTION_KINDS = new Set(['report.draft.v1']);
 const REPORT_DRAFT_KEYS = new Set(['kind', 'title', 'category', 'description', 'sql', 'params',
-  'columns_meta', 'caveats', 'row_limit', 'evidence']);
+  'columns_meta', 'caveats', 'row_limit', 'viz', 'evidence']);
+// viz: the Reports chart hint, from the Reports engine's OWN enum
+// (lib/reportSchema/validator.js VIZ_TYPES / sanitizeViz — the create route's
+// sanitizer — and public/js/reportCharts.js CHART_TYPES). Omitted → a table.
+// The route's sanitizer is LENIENT (it strips what it does not recognise and
+// saves anyway); the card must show exactly what is stored, so anything it
+// would drop or that cannot draw refuses here and the repair stage fixes it.
+const REPORT_VIZ_TYPES = ['bar', 'line', 'area', 'pie', 'doughnut', 'combo', 'stat', 'table'];
+const REPORT_VIZ_CHARTS = new Set(['bar', 'line', 'area', 'pie', 'doughnut', 'combo']);
+const REPORT_VIZ_KEYS = ['type', 'x', 'y', 'series', 'stacked', 'horizontal', 'xLabel', 'yLabel', 'y1Label', 'limit'];
+const REPORT_VIZ_SERIES_KEYS = ['key', 'label', 'type', 'axis', 'format'];
+const REPORT_VIZ_SERIES_TYPES = ['bar', 'line', 'area'];
+const REPORT_VIZ_FORMATS = ['number', 'percent', 'currency', 'days', 'text', 'date'];
+// The mysql field type codes Reports draws as numbers when the result carries
+// metadata (public/js/reportCharts.js NUMERIC_TYPES — change both together).
+const REPORT_VIZ_NUMERIC_TYPES = new Set([0, 1, 2, 3, 4, 5, 8, 9, 13, 16, 246]);
 const REPORT_DRAFT_CATEGORIES = ['Contacts', 'Cases', 'Appointments', 'Activity', 'Tasks', 'Campaigns', 'General'];
 // Widths of report_definitions (title varchar(150), category varchar(40)):
 // sql_mode is relaxed, so a longer value would be stored TRUNCATED — stored
@@ -2462,6 +2477,72 @@ function reportPreviewCell(value, mask) {
     text = `•••-••-${text.replace(/\D/g, '').slice(-4)}`;
   }
   return text.length > REPORT_PREVIEW_CELL_CHARS ? `${text.slice(0, REPORT_PREVIEW_CELL_CHARS)}…` : text;
+}
+
+// The draft's chart hint → exactly what POST /api/reports stores (sanitizeViz),
+// refusing — with the allowed values, so the repair stage can fix it — anything
+// that sanitizer would drop, change or that Reports could not draw from this
+// result's columns.
+function reportDraftViz(raw, fields) {
+  if (raw == null) return { type: 'table' };
+  const bad = (msg) => httpError(422, `Report draft viz ${msg}`);
+  if (typeof raw !== 'object' || Array.isArray(raw)) {
+    throw bad('must be an object, e.g. {"type":"bar","x":"<label column>","y":"<number column>"} — or omit it for a table');
+  }
+  const unknown = Object.keys(raw).filter((k) => !REPORT_VIZ_KEYS.includes(k));
+  if (unknown.length) throw bad(`carries unsupported fields: ${unknown.join(', ')} — it takes ${REPORT_VIZ_KEYS.join(', ')}`);
+  if (typeof raw.type !== 'string' || !REPORT_VIZ_TYPES.includes(raw.type)) {
+    throw bad(`type must be one of ${REPORT_VIZ_TYPES.join(', ')}`);
+  }
+  const names = fields.map((f) => f.name);
+  const typeOf = new Map(fields.map((f) => [f.name, f.type]));
+  const cols = `the report's columns are ${names.join(', ')}`;
+  const numeric = names.filter((n) => REPORT_VIZ_NUMERIC_TYPES.has(typeOf.get(n)));
+  const column = (field, value, { metric = false } = {}) => {
+    if (typeof value !== 'string' || !names.includes(value)) throw bad(`${field} must name a returned column — ${cols}`);
+    if (metric && !numeric.includes(value)) {
+      throw bad(`${field} "${value}" is not a number column, so Reports cannot plot it — number columns: ${numeric.join(', ') || 'none'}`);
+    }
+  };
+  if (raw.type === 'table') {
+    if (Object.keys(raw).length > 1) throw bad('of type table takes no other fields');
+    return { type: 'table' };
+  }
+  for (const key of ['xLabel', 'yLabel', 'y1Label']) {
+    if (raw[key] != null && (typeof raw[key] !== 'string' || raw[key].length > 80)) throw bad(`${key} must be text up to 80 characters`);
+  }
+  for (const key of ['stacked', 'horizontal']) {
+    if (raw[key] != null && typeof raw[key] !== 'boolean') throw bad(`${key} must be true or false`);
+  }
+  if (raw.limit != null && (!Number.isInteger(raw.limit) || raw.limit < 1 || raw.limit > 1000)) throw bad('limit must be an integer 1-1000');
+  if (raw.x != null) column('x', raw.x);
+  if (raw.y != null) column('y', raw.y, { metric: true });
+  let seriesCount = 0;
+  if (raw.series != null) {
+    if (!Array.isArray(raw.series) || !raw.series.length || raw.series.length > 12) throw bad('series must be an array of 1-12 {key,label?,type?,axis?,format?}');
+    raw.series.forEach((item, i) => {
+      if (!item || typeof item !== 'object' || Array.isArray(item)) throw bad(`series[${i}] must be an object`);
+      const extra = Object.keys(item).filter((k) => !REPORT_VIZ_SERIES_KEYS.includes(k));
+      if (extra.length) throw bad(`series[${i}] carries unsupported fields: ${extra.join(', ')} — it takes ${REPORT_VIZ_SERIES_KEYS.join(', ')}`);
+      column(`series[${i}].key`, item.key, { metric: true });
+      if (item.label != null && (typeof item.label !== 'string' || item.label.length > 80)) throw bad(`series[${i}].label must be text up to 80 characters`);
+      if (item.type != null && !REPORT_VIZ_SERIES_TYPES.includes(item.type)) throw bad(`series[${i}].type must be one of ${REPORT_VIZ_SERIES_TYPES.join(', ')}`);
+      if (item.axis != null && item.axis !== 'y1') throw bad(`series[${i}].axis may only be "y1" (a second axis) — omit it for the main axis`);
+      if (item.format != null && !REPORT_VIZ_FORMATS.includes(item.format)) throw bad(`series[${i}].format must be one of ${REPORT_VIZ_FORMATS.join(', ')}`);
+    });
+    seriesCount = raw.series.length;
+  }
+  const metrics = seriesCount || (raw.y != null ? 1 : 0);
+  if (REPORT_VIZ_CHARTS.has(raw.type)) {
+    if (raw.x == null) throw bad(`of type ${raw.type} needs x (the label / category column) — ${cols}`);
+    if (!metrics) throw bad(`of type ${raw.type} needs y or series (the number column(s)) — number columns: ${numeric.join(', ') || 'none'}`);
+    if ((raw.type === 'pie' || raw.type === 'doughnut') && metrics > 1) throw bad(`of type ${raw.type} plots exactly one number column`);
+  }
+  if (raw.type === 'stat' && !metrics && !numeric.length) throw bad('of type stat needs at least one number column in the result');
+  const { sanitizeViz } = require('../lib/reportSchema/validator');
+  const sv = sanitizeViz(raw);
+  if (sv.warning || !sv.viz) throw bad(String(sv.warning || 'was refused by the Reports sanitizer'));
+  return sv.viz;
 }
 
 function reportDraftKey(title) {
@@ -2563,6 +2644,7 @@ async function normalizeReportDraftAction(db, value, evidence, { currentUserId =
   // about, so a warning refuses the card instead (the repair stage fixes it).
   const cm = sanitizeColumnsMeta(metaIn, names);
   if (cm.warnings.length) throw httpError(422, `Report draft columns_meta: ${cm.warnings.join(' ')}`);
+  const viz = reportDraftViz(value.viz, fields);
 
   // A draft that reads a masked column other than through the last-4 form
   // hides every EXPRESSION column too (an expression has no origin, so
@@ -2588,6 +2670,7 @@ async function normalizeReportDraftAction(db, value, evidence, { currentUserId =
     definition: {
       report_key: reportDraftKey(title), title, category, description, sql_text: sql,
       params: cleanParams, columns_meta: cm.columns_meta, caveats: cleanCaveats, row_limit: rowLimit,
+      viz,
     },
     tables: valid.tables,
     ssn,
@@ -2756,9 +2839,14 @@ async function normalizeSendAction(db, value, evidence, { currentUserId = null }
     throw httpError(422, `Send evidence must cite one row carrying both the exact contact_id and ${config.idField} (select ${config.table}.id AS ${config.idField} with contact_id)`);
   }
 
-  // The recipient row, reloaded: active, on this contact, consent intact.
-  // Consent is the row's flag (contact_*s.*_optout) — the one every sender
-  // reads (services/optoutService.js; ruling 2026-10-27).
+  // The recipient row, reloaded: active, on this contact. Consent is the
+  // row's flag (contact_*s.*_optout) — the one every sender reads
+  // (services/optoutService.js; ruling 2026-10-27). An opted-out recipient is
+  // NOT refused (ruling 17, 2026-10-27: "casey is like the user"): the draft
+  // records it so the card shows it UP FRONT, and the send route still answers
+  // 409 opted_out until the user's explicit confirm adds acknowledge_optout —
+  // the same confirm Comms uses (public/js/optoutAck.js). Automation sends
+  // still refuse (optoutService.assertNotOptedOut).
   const [[contact]] = await db.query(
     'SELECT contact_id, contact_name FROM contacts WHERE contact_id = ? LIMIT 1', [contactId]);
   if (!contact) throw httpError(422, 'Send recipient contact is unavailable');
@@ -2766,9 +2854,7 @@ async function normalizeSendAction(db, value, evidence, { currentUserId = null }
   if (!row || Number(row.contact_id) !== contactId) throw httpError(422, `Send recipient ${config.idField} ${recordId} is not on contact ${contactId}`);
   if (row.end_date != null) throw httpError(422, `Send recipient ${config.idField} ${recordId} has ended — only an active ${sms ? 'phone' : 'email'} can receive a send`);
   const bit = (v) => v === 1 || v === true || v === '1';
-  if (sms ? bit(row.sms_optout) : bit(row.email_optout)) {
-    throw httpError(422, `The recipient has opted out of ${sms ? 'SMS' : 'email'} — Casey does not send to an opted-out ${sms ? 'number' : 'address'}`);
-  }
+  const optedOut = sms ? bit(row.sms_optout) : bit(row.email_optout);
   const expectedUpdatedAt = contactActionTimestamp(row.updated_at);
   if (!expectedUpdatedAt) throw httpError(422, 'Send recipient row has no usable concurrency version');
   const contactName = contactActionText(contact.contact_name, 'contact label', 200) || `Contact ${contactId}`;
@@ -2783,6 +2869,7 @@ async function normalizeSendAction(db, value, evidence, { currentUserId = null }
     contact_id: contactId, contact_name: contactName, [config.idField]: recordId,
     [config.valueField]: value10, label: String(row.label || 'Other'),
     is_primary: bit(row.is_primary), expected_updated_at: expectedUpdatedAt,
+    opted_out: optedOut,
   };
 
   const caseRecord = await sendActionCase(db, value.case_id, refs, evidence, contactId);
@@ -4016,7 +4103,7 @@ module.exports = {
   plan, execute, validatePlan, validateStep, cleanHistory, compactRows,
   normalizeSuggestions, contextualAnswer, actionsForRow, actionsForEvidence,
   normalizeWorkspaceContext, validateWorkspaceContext, normalizeDestinations,
-  normalizeActionDraft, taskDraftRequested, reportDraftRequested, reportSsnUse, unavailableTaskDraftAnswer, repairActionDraft,
+  normalizeActionDraft, taskDraftRequested, reportDraftRequested, reportSsnUse, reportDraftViz, REPORT_VIZ_TYPES, REPORT_VIZ_NUMERIC_TYPES, unavailableTaskDraftAnswer, repairActionDraft,
   repairFailure, loadViewer, normalizeViewer, stepFingerprint, renumberPlan, answerSystemAppend, answerMaxTokens,
   MAX_STEPS, MAX_ROWS, MAX_INVESTIGATION_ROUNDS, MAX_INVESTIGATION_STEPS,
   MAX_INVESTIGATION_ROWS, MAX_INVESTIGATION_MS, MAX_INVESTIGATION_OUTPUT_TOKENS,

@@ -318,11 +318,16 @@ It cannot be recalled.*
 - **Who it goes to.** The recipient is always one of the contact's own active
   phone numbers or email addresses, found in Casey's lookup — never an address
   typed into the chat. The card names the person, the exact number or
-  address, and its label. A number or address that has opted out (the SMS /
-  email opt-out on that phone or email row) cannot be sent to: Casey says so
-  instead of preparing a card. Unlike a person sending from Comms, Casey is
-  never offered "send anyway" — if the opt-out lands after the card was
-  prepared, the send is refused and nothing goes out.
+  address, and its label.
+- **Opted-out recipients.** Casey works like you do in Comms: it can still
+  prepare a send to a number or address that has opted out (the SMS / email
+  opt-out on that phone or email row), and says so. The card shows *This
+  recipient opted out of SMS* (or *email*) in red at the top, before anything
+  else. When you confirm the send, you get the same "Send anyway?" question
+  Comms asks; **OK** sends it and the send is recorded as an acknowledged
+  opt-out, **Cancel** sends nothing. Send anyway only when the client asked
+  for the message. Automations (workflows, sequences) still never message an
+  opted-out recipient.
 - **Who it comes from.** A phone line or mailbox you can send from (your own
   send access in Comms). When you don't name one and you have exactly one,
   Casey uses it; otherwise it asks which.
@@ -339,8 +344,8 @@ It cannot be recalled.*
   case placeholders). An appointment card still never sends its own
   confirmation; ask for a separate send card or send it from the appointment.
 - **When you click.** Casey re-checks the number or address first; if it ended,
-  changed, or opted out since the card was prepared, nothing is sent and the
-  card says why. The send then goes through the same Comms send that a person
+  changed, or its opt-out changed since the card was prepared, nothing is sent
+  and the card says why (ask again — the new card shows the current opt-out). The send then goes through the same Comms send that a person
   uses — your send access, superuser password step-up, and the per-person send
   limit all apply.
 - **The result.** A sent card says *Sent* and **Open conversation** opens the
@@ -366,6 +371,13 @@ it an exportable report.)
   how many rows it returns right now, the first rows, any caveats, and the
   query itself behind **Show the SQL**. The rows come from actually running the
   report, so what you see is what you will get.
+- **Chart or table.** The **Display** line says how the report opens in
+  Reports: a table, or one of the Reports charts (bar, line, area, pie, donut,
+  combo, or figures) — ask for one ("…as a bar chart by month") or Casey picks
+  a chart when the result is plainly a breakdown or a trend. The chart is only
+  the starting view: Reports' chart switcher changes it, and the table and CSV
+  are the same either way. Casey always saves a shared report (Reports has no
+  private reports; use the lock to stop others editing it).
 - **What Save does.** **Review & save report** saves ONE new report in
   More → Reports. It changes no client record and sends nothing. Reports are
   firm-wide: everyone can see and run it, and edit it unless someone locks it.

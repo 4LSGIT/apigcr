@@ -1359,6 +1359,7 @@ tests/formtemplates.formdev.test.js
 tests/formtemplates.x1visibility.test.js
 tests/genTypeKeyBackfill.test.js
 tests/guestCode.test.js
+tests/guestCodeLanes.test.js
 tests/helpers/bcPolyfill.js
 tests/helpers/caseySendProposalDb.js
 tests/helpers/commsArchiveSchema.js

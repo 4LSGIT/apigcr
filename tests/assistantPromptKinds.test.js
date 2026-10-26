@@ -242,6 +242,17 @@ describe('A14 direct sends across the stages', () => {
     }
   });
 
+  test('ruling 17: every stage lets Casey propose a send to an opted-out recipient (the card warns, the user confirms); none forbids it', () => {
+    expect(answerPrompt).toContain('A recipient who OPTED OUT (sms_optout / email_optout on the row — the only');
+    expect(answerPrompt).toContain('card shows the opt-out up front and sends only after the user explicitly confirms past it');
+    expect(planPrompt).toContain('An opted-out recipient is still proposable');
+    expect(repairPrompt).toContain('an opted-out number is allowed (the card shows it and the user confirms past it)');
+    expect(repairPrompt).toContain('an opted-out address is allowed (the card shows it and the user');
+    for (const [stage, src] of Object.entries({ answer: answerPrompt, plan: planPrompt, repair: repairPrompt })) {
+      expect({ stage, old: /never propose a send to an opted-out|never to an opted-out/.test(src) }).toEqual({ stage, old: false });
+    }
+  });
+
   test('the appointment cards still force their own sends off (course correction 3 unchanged)', () => {
     expect(answerPrompt).toMatch(/always output confirm_sms\/confirm_email false and confirm_message "" \(the server forces this\)/);
     expect(repairPrompt).toContain('confirm_sms/confirm_email/sms/email are false and confirm_message is ""');
@@ -301,8 +312,13 @@ describe('A16 report drafts across the stages', () => {
   test('every stage teaches the kind, and the answer stage may emit SQL only in its sql field', () => {
     expect(answerPrompt).toContain('{"kind":"report.draft.v1","title":"1-150 chars"');
     expect(answerPrompt).toContain('Do not output SQL (except the sql field of a report.draft.v1 action_draft)');
-    expect(repairPrompt).toContain('- report.draft.v1: kind,title,category,description,sql,params,columns_meta,caveats,row_limit,evidence');
+    expect(repairPrompt).toContain('- report.draft.v1: kind,title,category,description,sql,params,columns_meta,caveats,row_limit,viz?,evidence');
     expect(planPrompt).toContain('Do not refuse a request to make, save or export a report');
+    // The chart hint: taught in the shape and in the appendix, with the Reports enum.
+    expect(answerPrompt).toContain('"viz":{"type":"table"} or e.g. {"type":"bar","x":"<label column>","y":"<number column>"} (optional)');
+    const appendix = require(path.join(REPO, 'lib', 'aiPrompts', 'assistantReportDraft')).REPORT_DRAFT_APPENDIX;
+    expect(appendix).toContain('table | bar | line | area | pie | doughnut | combo | stat (figures)');
+    expect(appendix).toContain('y / series keys must be NUMBER columns');
     expect(planPrompt).toContain('ALWAYS return a query plan for a report request');
   });
 });

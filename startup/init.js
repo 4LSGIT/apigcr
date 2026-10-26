@@ -35,6 +35,9 @@
 
 module.exports = async function init(db) {
   require('../lib/taskQueue').warmup();
+  // Guest-code saturation alerts (lib/guestCode.js): the module never opens a
+  // pool of its own, so the app's is handed over here. Synchronous, no I/O.
+  require('../lib/guestCode').setAlertDb(db);
   if (require('../lib/maintenance').isOn()) {
     console.warn('[maintenance] MAINTENANCE_MODE=1 — every route answers 503 except POST /hooks/:slug, which captures to the hook spool');
     // warmup() never rejects by contract; the catch keeps a future regression

@@ -9,8 +9,9 @@
 //
 // The server owns the rule (services/optoutService.js): a caller that never
 // goes through here simply does not send to an opted-out recipient, so
-// forgetting this helper fails safe. Ask Casey's send card deliberately does
-// NOT use it — Casey refuses an opted-out recipient.
+// forgetting this helper fails safe. Ask Casey's send card uses it too
+// (ruling 17, 2026-10-27: "casey is like the user") — its card shows the
+// opt-out up front, and this confirm is the user's explicit acknowledgement.
 //
 //   ycOptoutAck.send(apiSend, path, method, body[, headers[, opts]])
 //     → whatever apiSend resolves to. `opts.confirm(text)` replaces

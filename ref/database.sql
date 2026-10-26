@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-10-26T19:58:05.865Z
+-- Generated: 2026-10-26T23:41:13.141Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:372ed029993eebaaa922190ad48f21af
+-- Fingerprint: sha256:12d249552a011022aa5e54b5a614fad5
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -1884,6 +1884,28 @@ CREATE TABLE `email_ingest_rule_actions` (
 -- --------------------------------------------------------
 
 --
+-- Table structure for table `email_ingest_rule_changes`
+--
+
+DROP TABLE IF EXISTS `email_ingest_rule_changes`;
+CREATE TABLE `email_ingest_rule_changes` (
+  `id` bigint unsigned NOT NULL,
+  `rule_id` int unsigned NOT NULL COMMENT 'email_ingest_rules.id. No FK: the row outlives a deleted rule',
+  `change_kind` varchar(20) COLLATE utf8mb4_general_ci NOT NULL COMMENT 'create|update|activate|deactivate|delete|duplicate|action_add|action_update|action_delete (app-validated)',
+  `action_id` int unsigned DEFAULT NULL COMMENT 'the email_ingest_rule_actions row, for the action_* kinds',
+  `duplicated_from_rule_id` int unsigned DEFAULT NULL COMMENT 'duplicate: the source rule',
+  `actor_user_id` int DEFAULT NULL COMMENT 'users.user of a staff JWT; NULL for an API key',
+  `actor_key_id` int DEFAULT NULL COMMENT 'api_keys.id of a machine caller; NULL for staff and the internal key',
+  `actor_label` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'the username, or api_key:<label>',
+  `changed_at` datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  `definition_updated_at` datetime(3) DEFAULT NULL COMMENT 'the rule edit stamp AFTER this change; NULL for delete',
+  `before_json` json DEFAULT NULL COMMENT '{rule, actions} before; NULL for create and duplicate. http url and literal header values redacted; over 256 KB a size + sha256 marker',
+  `after_json` json DEFAULT NULL COMMENT '{rule, actions} after; NULL for delete. Same redaction and cap'
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='APPEND-ONLY change log of email ingest rule definitions: one row per real change (the rule fields or its action rows), before and after, with the actor, written inside the edit transaction (services/ingestRuleChangeLog.js). The app never UPDATEs or DELETEs a row.';
+
+-- --------------------------------------------------------
+
+--
 -- Table structure for table `email_ingest_rules`
 --
 
@@ -1902,7 +1924,8 @@ CREATE TABLE `email_ingest_rules` (
   `last_matched_at` datetime DEFAULT NULL,
   `last_modified_by` int DEFAULT NULL,
   `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+  `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT 'NOT an edit stamp: ON UPDATE moves it on every match (the match_count bump), and an action edit never moves it. The edit stamp is definition_updated_at.',
+  `definition_updated_at` datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) COMMENT 'THE EDIT STAMP: last real definition change (the rule fields or any of its action rows). Every match bumps updated_at; this column is the edit stamp. Set only by services/ingestRuleChangeLog.js, inside the edit transaction, strictly increasing; the stale-edit precondition (expected_base) compares it. Rows that predate 2026-10-27 were backfilled from updated_at (an upper bound on their last edit).'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- --------------------------------------------------------
@@ -2697,6 +2720,28 @@ CREATE TABLE `phone_ingest_rule_actions` (
 -- --------------------------------------------------------
 
 --
+-- Table structure for table `phone_ingest_rule_changes`
+--
+
+DROP TABLE IF EXISTS `phone_ingest_rule_changes`;
+CREATE TABLE `phone_ingest_rule_changes` (
+  `id` bigint unsigned NOT NULL,
+  `rule_id` int unsigned NOT NULL COMMENT 'phone_ingest_rules.id. No FK: the row outlives a deleted rule',
+  `change_kind` varchar(20) COLLATE utf8mb4_general_ci NOT NULL COMMENT 'create|update|activate|deactivate|delete|duplicate|action_add|action_update|action_delete (app-validated)',
+  `action_id` int unsigned DEFAULT NULL COMMENT 'the phone_ingest_rule_actions row, for the action_* kinds',
+  `duplicated_from_rule_id` int unsigned DEFAULT NULL COMMENT 'duplicate: the source rule',
+  `actor_user_id` int DEFAULT NULL COMMENT 'users.user of a staff JWT; NULL for an API key',
+  `actor_key_id` int DEFAULT NULL COMMENT 'api_keys.id of a machine caller; NULL for staff and the internal key',
+  `actor_label` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'the username, or api_key:<label>',
+  `changed_at` datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  `definition_updated_at` datetime(3) DEFAULT NULL COMMENT 'the rule edit stamp AFTER this change; NULL for delete',
+  `before_json` json DEFAULT NULL COMMENT '{rule, actions} before; NULL for create and duplicate. http url and literal header values redacted; over 256 KB a size + sha256 marker',
+  `after_json` json DEFAULT NULL COMMENT '{rule, actions} after; NULL for delete. Same redaction and cap'
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='APPEND-ONLY change log of phone ingest rule definitions: one row per real change (the rule fields or its action rows), before and after, with the actor, written inside the edit transaction (services/ingestRuleChangeLog.js). The app never UPDATEs or DELETEs a row.';
+
+-- --------------------------------------------------------
+
+--
 -- Table structure for table `phone_ingest_rules`
 --
 
@@ -2715,7 +2760,8 @@ CREATE TABLE `phone_ingest_rules` (
   `last_matched_at` datetime DEFAULT NULL,
   `last_modified_by` int DEFAULT NULL,
   `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+  `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT 'NOT an edit stamp: ON UPDATE moves it on every match (the match_count bump), and an action edit never moves it. The edit stamp is definition_updated_at.',
+  `definition_updated_at` datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) COMMENT 'THE EDIT STAMP: last real definition change (the rule fields or any of its action rows). Every match bumps updated_at; this column is the edit stamp. Set only by services/ingestRuleChangeLog.js, inside the edit transaction, strictly increasing; the stale-edit precondition (expected_base) compares it. Rows that predate 2026-10-27 were backfilled from updated_at (an upper bound on their last edit).'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- --------------------------------------------------------
@@ -4639,6 +4685,13 @@ ALTER TABLE `email_ingest_rule_actions`
   ADD KEY `idx_rule_position` (`rule_id`,`position`);
 
 --
+-- Indexes for table `email_ingest_rule_changes`
+--
+ALTER TABLE `email_ingest_rule_changes`
+  ADD PRIMARY KEY (`id`),
+  ADD KEY `idx_rule_changed` (`rule_id`,`changed_at`);
+
+--
 -- Indexes for table `email_ingest_rules`
 --
 ALTER TABLE `email_ingest_rules`
@@ -4920,6 +4973,13 @@ ALTER TABLE `phone_ingest_executions`
 ALTER TABLE `phone_ingest_rule_actions`
   ADD PRIMARY KEY (`id`),
   ADD KEY `idx_rule_position` (`rule_id`,`position`);
+
+--
+-- Indexes for table `phone_ingest_rule_changes`
+--
+ALTER TABLE `phone_ingest_rule_changes`
+  ADD PRIMARY KEY (`id`),
+  ADD KEY `idx_rule_changed` (`rule_id`,`changed_at`);
 
 --
 -- Indexes for table `phone_ingest_rules`
@@ -5713,6 +5773,12 @@ ALTER TABLE `email_ingest_rule_actions`
   MODIFY `id` int unsigned NOT NULL AUTO_INCREMENT;
 
 --
+-- AUTO_INCREMENT for table `email_ingest_rule_changes`
+--
+ALTER TABLE `email_ingest_rule_changes`
+  MODIFY `id` bigint unsigned NOT NULL AUTO_INCREMENT;
+
+--
 -- AUTO_INCREMENT for table `email_ingest_rules`
 --
 ALTER TABLE `email_ingest_rules`
@@ -5915,6 +5981,12 @@ ALTER TABLE `phone_ingest_executions`
 --
 ALTER TABLE `phone_ingest_rule_actions`
   MODIFY `id` int unsigned NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `phone_ingest_rule_changes`
+--
+ALTER TABLE `phone_ingest_rule_changes`
+  MODIFY `id` bigint unsigned NOT NULL AUTO_INCREMENT;
 
 --
 -- AUTO_INCREMENT for table `phone_ingest_rules`

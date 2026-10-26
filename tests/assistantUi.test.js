@@ -69,9 +69,9 @@ const ACTION_FNS = ['appendDraftField', 'appendDraftFieldsFromText', 'actionDraf
   'hookCreateLabel', 'hookTargetText', 'hookCreateText', 'hookCreateRequest', 'hookCreateResult',
   'sequenceStepActionLabel', 'sequenceStepParamValue', 'sequenceStepText', 'sequenceStepActionRequest', 'sequenceStepActionResult',
   'openAutomationRecord',
-  'sendIsSms', 'sendActionLabel', 'sendRecipientLine', 'sendFactLines', 'sendDraftText', 'sendDraftFields', 'sendConfirmText', 'sendActionRequest',
-  'sendPrecheck', 'sendActionResult', 'sendResultText', 'openSendRecord',
-  'reportDraftLabel', 'reportSsnText', 'reportCardText', 'reportDraftFields', 'reportConfirmText', 'reportDraftRequest', 'reportDraftResult',
+  'sendIsSms', 'sendActionLabel', 'sendRecipientLine', 'sendOptoutText', 'sendFactLines', 'sendDraftText', 'sendDraftFields', 'sendConfirmText', 'sendActionRequest',
+  'sendPrecheck', 'sendActionDispatch', 'sendActionResult', 'sendResultText', 'openSendRecord',
+  'reportDraftLabel', 'reportSsnText', 'reportVizText', 'reportCardText', 'reportDraftFields', 'reportConfirmText', 'reportDraftRequest', 'reportDraftResult',
   'actionFamily', 'isActionDraft', 'actionAppliedId', 'markActionApplied', 'confirmActionDraft',
   'executeActionDraft', 'applyActionResults', 'hydrateActionDraft'];
 
@@ -1328,7 +1328,19 @@ describe('A14 send cards (sms.send.v1 / email.send.v1)', () => {
       return undefined;
     };
   };
-  function run(message, { read = reads(), write = async () => ({ status: 'success', line_id: 3, to: '3135550001', result: { id: 'MSG1', status: 'queued' } }), confirm = true } = {}) {
+  // The page's opt-out helper, for real (public/js/optoutAck.js in a JSDOM
+  // window, as the page loads it); window.confirm answers `answer`.
+  function optoutHelper(answer) {
+    const { JSDOM } = require('jsdom');
+    const dom = new JSDOM('<!DOCTYPE html><html><body></body></html>', { runScripts: 'dangerously' });
+    dom.window.eval(fs.readFileSync(path.join(ROOT, 'public/js/optoutAck.js'), 'utf8'));
+    const asked = [];
+    dom.window.confirm = (t) => { asked.push(t); return answer; };
+    return { ycOptoutAck: dom.window.ycOptoutAck, asked };
+  }
+  const optedOut409 = () => Object.assign(new Error('Pat One (313) 555-0001 (contact #1309) has opted out of texts. Send anyway only if they asked for this message.'), {
+    status: 409, body: { status: 'error', code: 'opted_out', message: 'Pat One (313) 555-0001 (contact #1309) has opted out of texts. Send anyway only if they asked for this message.' } });
+  function run(message, { read = reads(), write = async () => ({ status: 'success', line_id: 3, to: '3135550001', result: { id: 'MSG1', status: 'queued' } }), confirm = true, optout } = {}) {
     const writes = []; const gets = []; const ledger = [];
     const api = jest.fn(async (path, body, method, headers) => {
       if (method === 'GET') { gets.push(path); const r = read(path); if (r === undefined) throw new Error(`unexpected read ${path}`); return r; }
@@ -1337,7 +1349,7 @@ describe('A14 send cards (sms.send.v1 / email.send.v1)', () => {
     const ledgerApi = jest.fn(async (path, body) => { ledger.push(path.endsWith('/claim') ? 'claim' : { receipt: body }); return path.endsWith('/claim') ? { outcome: 'in_flight', claimed: true, claim_token: 'tok-send' } : { outcome: 'applied' }; });
     const P = { Swal: { fire: jest.fn().mockResolvedValue({ isConfirmed: confirm }) }, addFile: jest.fn() };
     const history = [];
-    const sandbox = actionSandbox({ P, api, ledgerApi, history, saveAssistantMessage: jest.fn() });
+    const sandbox = actionSandbox({ P, api, ledgerApi, history, saveAssistantMessage: jest.fn(), ...(optout ? { ycOptoutAck: optout.ycOptoutAck } : {}) });
     return sandbox.executeActionDraft(message).then(() => ({ writes, gets, ledger, P, history, sandbox }));
   }
 
@@ -1379,14 +1391,54 @@ describe('A14 send cards (sms.send.v1 / email.send.v1)', () => {
     expect(m.action_draft.status).toBe('applied');
   });
 
-  test('a send route\'s 409 opted_out (a race past the precheck) is a refusal: ONE POST, never acknowledged, nothing resent', async () => {
+  // Ruling 17 ("casey is like the user"): the route's 409 opted_out meets the
+  // SAME confirm Comms uses; acknowledge_optout is sent only after it.
+  const ackWrite = async (path, body) => {
+    if (!body.acknowledge_optout) throw optedOut409();
+    return { status: 'success', line_id: 3, to: '3135550001', result: { id: 'MSG2', status: 'queued' } };
+  };
+  test('ruling 17: an opted-out recipient — the confirm says the server\'s words; OK → ONE acknowledged resend, same path and key; applied', async () => {
+    const m = smsDraft({ recipient: { ...smsDraft().action_draft.recipient, opted_out: true } });
+    const optout = optoutHelper(true);
+    const { writes, history } = await run(m, { read: reads({ phone: { sms_optout: 1 } }), write: ackWrite, optout });
+    expect(optout.asked).toEqual(['Pat One (313) 555-0001 (contact #1309) has opted out of texts. Send anyway only if they asked for this message.\n\nSend anyway?']);
+    expect(writes).toEqual([
+      { path: '/api/phone-lines/3/sms', method: 'POST', body: { to: '3135550001', message: 'Hi Pat, your hearing moved.' }, headers: { 'Idempotency-Key': m.action_draft.draft_id } },
+      { path: '/api/phone-lines/3/sms', method: 'POST', body: { to: '3135550001', message: 'Hi Pat, your hearing moved.', acknowledge_optout: true }, headers: { 'Idempotency-Key': m.action_draft.draft_id } },
+    ]);
+    expect(m.action_draft).toMatchObject({ status: 'applied', result_send_contact_id: 1309 });
+    expect(history[0].text).toMatch(/^Text to Pat One: contact #1309: accepted by the provider/);
+  });
+
+  test('ruling 17: no acknowledge without the confirm — Cancel sends nothing more and says so; nothing is "outcome unknown"', async () => {
+    const m = smsDraft({ recipient: { ...smsDraft().action_draft.recipient, opted_out: true } });
+    const optout = optoutHelper(false);
+    const { writes } = await run(m, { read: reads({ phone: { sms_optout: 1 } }), write: ackWrite, optout });
+    expect(optout.asked).toHaveLength(1);
+    expect(writes).toHaveLength(1);
+    expect(writes[0].body).not.toHaveProperty('acknowledge_optout');
+    expect(m.action_draft.refusal_error).toBe('Cancelled — nothing was sent (the recipient has opted out). Ask Casey to prepare it again if you change your mind.');
+    expect(m.action_draft).not.toHaveProperty('ambiguous_error');
+    expect(m.action_draft.status).toBe('draft');
+  });
+
+  test('ruling 17: the same confirm when the opt-out races past the precheck; a 409 AFTER acknowledging is a refusal, never a loop', async () => {
     const m = smsDraft();
-    const write = async () => {
-      const e = new Error('Pat One (313) 555-0001 (contact #1309) has opted out of texts. Send anyway only if they asked for this message.');
-      e.status = 409; e.body = { status: 'error', code: 'opted_out', acknowledge_with: 'acknowledge_optout' };
-      throw e;
-    };
-    const { writes } = await run(m, { write });
+    const optout = optoutHelper(true);
+    const raced = await run(m, { write: ackWrite, optout });
+    expect(optout.asked).toHaveLength(1);
+    expect(raced.writes.map((w) => w.body.acknowledge_optout === true)).toEqual([false, true]);
+    expect(m.action_draft.status).toBe('applied');
+    const again = smsDraft({ draft_id: '547eb0a1-9f77-4de0-8f18-119665bcda0b' });
+    const twice = await run(again, { write: async () => { throw optedOut409(); }, optout: optoutHelper(true) });
+    expect(twice.writes).toHaveLength(2);
+    expect(again.action_draft.refusal_error).toMatch(/^The server refused this \(Pat One .*opted out of texts/);
+    expect(again.action_draft).not.toHaveProperty('ambiguous_error');
+  });
+
+  test('without the helper (it failed to load) the 409 stays a refusal: ONE POST, never acknowledged — fails safe', async () => {
+    const m = smsDraft();
+    const { writes } = await run(m, { write: async () => { throw optedOut409(); } });
     expect(writes).toHaveLength(1);
     expect(writes[0].body).not.toHaveProperty('acknowledge_optout');
     expect(m.action_draft.refusal_error).toMatch(/^The server refused this \(Pat One .*opted out of texts/);
@@ -1411,6 +1463,15 @@ describe('A14 send cards (sms.send.v1 / email.send.v1)', () => {
     const e = emailDraft();
     const r = await run(e, { read: reads({ email: { email_optout: 1 } }) });
     expect(r.writes).toEqual([]); expect(e.action_draft.refusal_error).toMatch(/opted out/);
+    // Ruling 17: the reviewed opt-out state is part of what was reviewed.
+    const reviewedOpted = smsDraft({ recipient: { ...smsDraft().action_draft.recipient, opted_out: true } });
+    const cleared = await run(reviewedOpted, { read: reads({ phone: { sms_optout: 0 } }) });
+    expect([cleared.writes.length, cleared.ledger.length]).toEqual([0, 0]);
+    expect(reviewedOpted.action_draft.refusal_error).toMatch(/is no longer opted out — its consent changed since this card was prepared/);
+    const stillOpted = smsDraft({ recipient: { ...smsDraft().action_draft.recipient, opted_out: true } });
+    const ok = await run(stillOpted, { read: reads({ phone: { sms_optout: 1 } }), write: ackWrite, optout: optoutHelper(true) });
+    expect(ok.ledger[0]).toBe('claim');
+    expect(stillOpted.action_draft.status).toBe('applied');
     // A read that FAILS sends nothing and leaves the card retryable (nothing was claimed).
     const f = smsDraft();
     const failed = await run(f, { read: () => { throw new Error('offline'); } });
@@ -1450,9 +1511,12 @@ describe('A14 send cards (sms.send.v1 / email.send.v1)', () => {
     expect(history[0].text).toBe('This text to Pat One had already been sent; nothing was sent a second time.');
   });
 
-  test('the builder never sends template braces or a missing recipient', () => {
+  test('the builder never sends template braces or a missing recipient — and never acknowledge_optout, even for an opted-out card', () => {
     const { actionFamily } = actionSandbox();
     const family = actionFamily({ kind: 'sms.send.v1' });
+    const opted = (d) => ({ ...d, recipient: { ...d.recipient, opted_out: true } });
+    expect(family.request(opted(smsDraft().action_draft)).body).toEqual({ to: '3135550001', message: 'Hi Pat, your hearing moved.' });
+    expect(family.request(opted(emailDraft().action_draft)).body).toEqual({ mailbox_id: 5, to: ['pat@example.com'], subject: 'Your case', body_text: 'Dear Pat,\n\nSee you Tuesday.' });
     expect(() => family.request(smsDraft({ message: 'Hi {{contacts.contact_fname}}' }).action_draft)).toThrow(/no resolved text/);
     expect(() => family.request(emailDraft({ subject: 'Re {{cases.case_number}}' }).action_draft)).toThrow(/no resolved text/);
     expect(() => family.request(smsDraft({ message: '  ' }).action_draft)).toThrow(/no resolved text/);
@@ -1492,6 +1556,35 @@ describe('A14 send cards (sms.send.v1 / email.send.v1)', () => {
     expect(host2.querySelector('.action-draft-status').textContent).toBe('Sent — Pat One');
     expect(host2.textContent).not.toMatch(/send #1309/);
     expect([...host2.querySelectorAll('button')].map((b) => b.textContent)).toEqual(['Open conversation', 'Copy details']);
+  });
+
+  test('ruling 17: an opted-out card says so FIRST, in the danger style, in the facts and in the dialog', async () => {
+    const { JSDOM } = require('jsdom');
+    const dom = new JSDOM('<!doctype html><div></div>');
+    const { document } = dom.window;
+    const { hydrateActionDraft, actionFamily } = actionSandbox({ document, navigator: dom.window.navigator });
+    const opted = (d) => ({ action_draft: { ...d.action_draft, recipient: { ...d.action_draft.recipient, opted_out: true } } });
+    const sms = opted(smsDraft());
+    const host = document.createElement('div');
+    hydrateActionDraft(actionFamily({ kind: 'sms.send.v1' }), host, sms, sms.action_draft);
+    const grid = host.querySelector('dl.action-draft-grid');
+    expect(grid.firstElementChild.className).toBe('action-draft-danger');
+    expect(grid.firstElementChild.textContent).toBe('This recipient opted out of SMS');
+    const rows = [...host.querySelectorAll('dt')].map((dt) => [dt.textContent, dt.nextElementSibling.textContent]);
+    expect(rows.find(([k]) => k === 'Consent')[1]).toMatch(/^OPTED OUT — this recipient opted out of SMS\. Sending asks you to confirm past the opt-out/);
+    const email = opted(emailDraft());
+    const host2 = document.createElement('div');
+    hydrateActionDraft(actionFamily({ kind: 'email.send.v1' }), host2, email, email.action_draft);
+    expect(host2.querySelector('.action-draft-danger').textContent).toBe('This recipient opted out of email');
+    const plain = smsDraft();
+    const host3 = document.createElement('div');
+    hydrateActionDraft(actionFamily({ kind: 'sms.send.v1' }), host3, plain, plain.action_draft);
+    expect(host3.querySelector('.action-draft-danger')).toBeNull();
+    expect([...host3.querySelectorAll('dt')].map((dt) => [dt.textContent, dt.nextElementSibling.textContent]).find(([k]) => k === 'Consent')[1])
+      .toBe('checked — the recipient has not opted out; re-checked when you click.');
+    const cancelled = await run(opted(smsDraft()), { confirm: false });
+    const dialog = cancelled.P.Swal.fire.mock.calls[0][0];
+    expect(dialog.text).toMatch(/^This sends NOW to Pat One 3135550001\. It cannot be recalled\. This recipient opted out of SMS — you will be asked to confirm past the opt-out\.\n\nText message proposal — not sent\nWARNING: This recipient opted out of SMS\n/);
   });
 
   test('reopening a chat whose send claim never recorded shows the send\'s own unknown wording', () => {
