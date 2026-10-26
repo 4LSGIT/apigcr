@@ -46,11 +46,16 @@ const path = require('path');
 const { JSDOM } = require('jsdom');
 const { DateTime } = require('luxon');
 const ctaService = require('../services/ctaService');
+const optoutService = require('../services/optoutService');
+const { answerOptout } = require('./helpers/optoutFake');
 const logService = require('../services/logService');
 const internalFunctions = require('../lib/internal_functions');
 
 const ROOT = path.join(__dirname, '..');
 const HTML = fs.readFileSync(path.join(ROOT, 'public/ctaManager.html'), 'utf8');
+// The one src script the pane's behaviour needs (themeSync.js only themes):
+// the opted-out confirm-and-resend helper the real send rides.
+const OPTOUT = fs.readFileSync(path.join(ROOT, 'public/js/optoutAck.js'), 'utf8');
 const FIRM_TZ = 'America/Detroit';
 
 const DOMS = [];
@@ -125,6 +130,11 @@ async function boot({ handler }) {
   const errors = [];
   window.addEventListener('error', (e) => errors.push(String(e.error || e.message)));
   window.addEventListener('unhandledrejection', (e) => errors.push(String(e.reason)));
+  // fence: the page loads optoutAck.js itself (head, before the pane script).
+  expect(noComments).toMatch(/<script src="\/js\/optoutAck\.js"><\/script>[\s\S]*<script>\s*"use strict";/);
+  const lib = window.document.createElement('script');
+  lib.textContent = OPTOUT;
+  window.document.head.appendChild(lib);
   // A real <script> element, not window.eval: the pane is "use strict", and
   // strict EVAL code gets a private scope — as a classic script (the way the
   // browser runs it) its functions and consts live in the global scope.
@@ -916,6 +926,50 @@ describe('Send dialog', () => {
     expect(doc.getElementById('send-err').textContent).toBe('cta: only an active link can be sent — CTA 1 is used (not_active)');
     expect(doc.getElementById('send-backdrop').classList.contains('open')).toBe(true);
   });
+
+  // Ruling 2026-10-27: a real send to an opted-out recipient is WARNED — the
+  // route's 409 opted_out becomes a confirm (public/js/optoutAck.js) and, on
+  // OK, ONE resend carrying acknowledge_optout:true; Cancel sends nothing more.
+  // The 409 body is the REAL optoutService.optoutGate's, over a world where
+  // pat@example.com's active row is opted out — not a shape from memory.
+  const optoutWorld = {
+    async query(sql, p) {
+      const r = answerOptout(sql, p, { emails: [{ id: 3, contact_id: 900, email: 'pat@example.com', end_date: null, email_optout: 1 }], contacts: [{ contact_id: 900, contact_name: 'Pat One' }] });
+      if (r) return r;
+      throw new Error(`unscripted: ${sql}`);
+    },
+  };
+  const GATED = async (p) => {
+    if (!p.dry_run) {
+      const g = await optoutService.optoutGate(optoutWorld, { channel: p.channel, dest: p.to, acknowledged: p.acknowledge_optout });
+      if (g.refusal) throw apiError(g.refusal.status, g.refusal.body);
+    }
+    return OK(p);
+  };
+  for (const [answer, label] of [[true, 'OK resends ONCE with acknowledge_optout:true and closes'], [false, 'Cancel sends nothing more and the dialog stays open']]) {
+    test(`opted-out recipient: the confirm shows the server's words; ${label}`, async () => {
+      const { window, doc, sendCalls } = await boot2({ cta: fullRow({ id: 1 }), sendImpl: GATED });
+      const asked = [];
+      window.confirm = (t) => { asked.push(t); return answer; };
+      doc.querySelector('#detail-region [data-act="send"]').click();
+      setValue(window, doc.getElementById('s-to'), 'pat@example.com');
+      doc.getElementById('send-preview').click();               // a dry run is never gated
+      await tick(window);
+      expect(asked).toEqual([]);
+      doc.getElementById('send-go').click();
+      await tick(window);
+      expect(asked).toEqual([expect.stringMatching(/^Pat One pat@example\.com \(contact #900\) has opted out of email\..*\n\nSend anyway\?$/s)]);
+      if (answer) {
+        expect(sendCalls).toEqual([{ channel: 'email', to: 'pat@example.com', dry_run: true }, { channel: 'email', to: 'pat@example.com' }, { channel: 'email', to: 'pat@example.com', acknowledge_optout: true }]);
+        expect(doc.getElementById('send-backdrop').classList.contains('open')).toBe(false);
+        expect(doc.getElementById('toast').textContent).toBe('Sent by email to pat@example.com — logged on the link');
+      } else {
+        expect(sendCalls).toEqual([{ channel: 'email', to: 'pat@example.com', dry_run: true }, { channel: 'email', to: 'pat@example.com' }]);
+        expect(doc.getElementById('send-err').textContent).toBe('Cancelled — nothing was sent (the recipient has opted out).');
+        expect(doc.getElementById('send-backdrop').classList.contains('open')).toBe(true);
+      }
+    });
+  }
 
   test('from the receipt: Send… offers the custom template used at mint (it is stored nowhere else)', async () => {
     const sent = [];

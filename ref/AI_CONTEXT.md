@@ -42,6 +42,22 @@ body. Governing migrations in `ref/migrations/`.*
   wired scope where a failure does not free the key. Native callers without a
   key are unchanged. Off switch `casey_send_enabled`. Plan:
   ref/ASK_CASEY_ACTIONS_PLAN.md A14.
+- **Opt-out follow-up (10-27): CTA send warns; the contact-level pair is
+  dropped.** `POST /api/cta/:id/send` (SU manual send) takes the staff rule
+  via `optoutGate`: a real send whose `to` has an opted-out ACTIVE row → 409
+  `opted_out` (nothing sent or logged; refusal audited, tool `cta`) until
+  `acknowledge_optout:true` (a boolean — anything else is 400; the override's
+  contact ids land in the send audit); `dry_run` is never gated.
+  `ctaManager.html`'s Send rides `optoutAck.js`. The two retired contact-level
+  opt-out columns are dropped by `scripts/optoutContactColumnsDrop.js`
+  (Fred-run AFTER the code that stopped naming them is deployed — a DROP
+  inverts SQL → backend; record:
+  `ref/migrations/2026-10-27_optout_contact_columns_drop.sql`), which also
+  sets the schema COMMENTs naming `contact_phones.sms_optout` /
+  `contact_emails.email_optout` THE consent flag. Column grants (proved on
+  8.4.11): a DROP does not fail on `yc_report`'s per-column grant — the grant
+  stays ORPHANED in `mysql.columns_priv` (inert; it re-attaches to a later
+  column of the same name) until a re-provision or targeted REVOKE clears it.
 - **Code bodies run in the QuickJS guest (10-26):** trigger match/transform,
   email/phone ingest rule match/transform, both suppression services and hook
   filter + hook/target transforms run through `lib/guestCode.js` — QuickJS in
@@ -69,8 +85,8 @@ body. Governing migrations in `ref/migrations/`.*
   (at most one active row per number/address: `uk_phone_active` /
   `uk_email_active`) — read ONLY through `services/optoutService.js`
   (number → 10 digits as stored; every address-shaped token in an email
-  destination). `contacts.contact_sms_optout` / `contact_email_optout` are
-  RETIRED: no reader, no writer, drop pending (`ref/plans.md`). AUTOMATION
+  destination). These row flags are the only consent flags — the contact
+  row carries none (next entry). AUTOMATION
   REFUSES: `send_sms` / `send_mms` / `send_email` / `forward_as_*` throw
   `OptOutRefusal` (code `RECIPIENT_OPTED_OUT`); the workflow engine records
   the step `skipped` (reason in `error_message`, no retry, policy not
@@ -80,7 +96,8 @@ body. Governing migrations in `ref/migrations/`.*
   campaigns skip (`sms_optout` / `email_optout`); appt / booking / manage-page
   confirmations skip the channel (logged). STAFF ARE WARNED: `POST
   /api/phone-lines/:id/sms`, `POST /api/mail/send` (To+Cc+Bcc) and JWT
-  callers of `/internal/{sms,mms,email}/send` answer 409 `code:'opted_out'`
+  callers of `/internal/{sms,mms,email}/send` and the SU `POST
+  /api/cta/:id/send` answer 409 `code:'opted_out'`
   (gate before the rate limiter and the idempotency claim) until the body
   carries `acknowledge_optout:true` (literal true; audited / logged as an
   override); API-key callers of `/internal/*` get 422 and cannot acknowledge.

@@ -6,6 +6,7 @@
 <title>CTA Links</title>
 <link rel="stylesheet" href="/theme.css">
 <script src="/themeSync.js"></script>
+<script src="/js/optoutAck.js"></script>  <!-- opted-out recipient: confirm, then resend acknowledged -->
 <style>
   /* CTA Links (SU) — Admin-tab pane. CTA arc, manager-UI slice.
      Spec: ref/CTA_DESIGN.md (canonical) · operator model:
@@ -1476,7 +1477,9 @@ async function savePatch() {
 // POST /api/cta/:id/send. The server composes, sends, logs and audits; this
 // dialog only collects channel / to / from (/ subject / template, or the SMS
 // text) and shows the dry-run preview. Active links only — the server 409s
-// anything else.
+// anything else. The real send rides public/js/optoutAck.js: an opted-out
+// recipient's 409 becomes a confirm and one acknowledged resend (ruling
+// 2026-10-27); Cancel sends nothing.
 function fmtPhone(p) {
   const d = String(p || '').replace(/\D/g, '').slice(-10);
   return d.length === 10 ? `(${d.slice(0, 3)}) ${d.slice(3, 6)}-${d.slice(6)}` : String(p || '');
@@ -1646,7 +1649,7 @@ async function doSend() {
   const btn = E('send-go');
   btn.disabled = true;
   try {
-    const r = await api(`/api/cta/${sd.id}/send`, 'POST', body);
+    const r = await window.ycOptoutAck.send(api, `/api/cta/${sd.id}/send`, 'POST', body);
     closeSend();
     showToast(`Sent by ${r.channel === 'sms' ? 'SMS' : 'email'} to ${r.to}${r.log_id != null ? ' — logged on the link' : ''}`);
   } catch (err) {

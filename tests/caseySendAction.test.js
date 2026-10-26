@@ -18,8 +18,8 @@
  * WHAT IS PINNED (mutation-checked — the A14 report lists each mutation):
  *   recipient  only a row an evidence row names by BOTH contact_id and
  *              phone_id/email_id; reloaded; on that contact; active.
- *   consent    the row's sms_optout/email_optout AND the contact's
- *              contact_*_optout (campaignService's columns) each refuse.
+ *   consent    the row's sms_optout/email_optout refuses, per channel (the
+ *              only consent flag — ruling 2026-10-27).
  *   body       placeholders resolve strictly against the recipient (+ a cited,
  *              linked case); an unresolved one refuses; braces never survive;
  *              the card carries the RESOLVED text, trimmed exactly as the
@@ -100,17 +100,13 @@ describe('sms.send.v1', () => {
     await expect(norm(sms({ evidence: [{ query_id: 'q9', row_number: 1 }] }))).rejects.toThrow(/outside this investigation/);
   });
 
-  test('an ended row and a row-level opt-out each refuse; the retired contact-level column does not', async () => {
+  test('an ended row and a row-level opt-out each refuse', async () => {
     const ended = makeDb(); ended.T.contact_phones[0].end_date = '2026-10-01';
     await expect(norm(sms(), ended)).rejects.toThrow(/has ended/);
     const rowOpt = makeDb(); rowOpt.T.contact_phones[0].sms_optout = 1;
     await expect(norm(sms(), rowOpt)).rejects.toThrow(/opted out of SMS/);
-    // Ruling 2026-10-27: consent is the row's flag only — contacts.contact_sms_optout is never read.
-    const contactOpt = makeDb(); contactOpt.T.contacts[0].contact_sms_optout = 1;
-    await expect(norm(sms(), contactOpt)).resolves.toMatchObject({ kind: 'sms.send.v1' });
-    expect(contactOpt.seen.some((s) => /contact_sms_optout|contact_email_optout/.test(s))).toBe(false);
     // An EMAIL opt-out does not block a text.
-    const emailOpt = makeDb(); emailOpt.T.contacts[0].contact_email_optout = 1; emailOpt.T.contact_phones[0].email_optout = 1;
+    const emailOpt = makeDb(); emailOpt.T.contact_emails[0].email_optout = 1;
     await expect(norm(sms(), emailOpt)).resolves.toMatchObject({ kind: 'sms.send.v1' });
   });
 
@@ -189,11 +185,11 @@ describe('email.send.v1', () => {
     await expect(norm(email({ case_id: 'bad id!' }))).rejects.toThrow(/case_id is invalid/);
   });
 
-  test('consent: the row\'s email_optout refuses; the retired contact_email_optout does not', async () => {
+  test('consent: the row\'s email_optout refuses; an SMS opt-out does not block an email', async () => {
     const rowOpt = makeDb(); rowOpt.T.contact_emails[0].email_optout = 1;
     await expect(norm(email(), rowOpt)).rejects.toThrow(/opted out of email/);
-    const contactOpt = makeDb(); contactOpt.T.contacts[0].contact_email_optout = 1;
-    await expect(norm(email(), contactOpt)).resolves.toMatchObject({ kind: 'email.send.v1' });
+    const smsOpt = makeDb(); smsOpt.T.contact_phones[0].sms_optout = 1;
+    await expect(norm(email(), smsOpt)).resolves.toMatchObject({ kind: 'email.send.v1' });
   });
 
   test('the subject is one line, before AND after resolution; caps mirror the mail route', async () => {

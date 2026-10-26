@@ -17,7 +17,6 @@ A contact is a person. Every individual the firm has any relationship with — a
 | SSN | An ordinary field since the 2026-09-24 ruling — staff read it, reports can select it, templates can print it. The firm files Form 121; there is no point pretending otherwise. Two places still refuse it, and neither is about staff: the client portal (those values land in a client's browser) and automation event envelopes (they persist after the contact changes). The all-contacts list does not show it, which is a layout choice — that list shows very little. Org contacts keep their EIN in this same field. |
 | Tags | Free-form labels on the contact, used to filter the contact list. |
 | Notes | Free-text notes about the contact. |
-| Opt-outs | Retired: `contact_sms_optout` / `contact_email_optout` are no longer read by anything (drop pending, `ref/plans.md`). Consent is the per-row flag below. |
 | Type | What kind of contact this is (client, opposing party, and so on). |
 
 Not shown on the form but worth knowing about: `contact_token`, a per-contact

@@ -2502,8 +2502,7 @@ async function normalizeSendAction(db, value, evidence, { currentUserId = null }
 
   // The recipient row, reloaded: active, on this contact, consent intact.
   // Consent is the row's flag (contact_*s.*_optout) — the one every sender
-  // reads (services/optoutService.js); the contact-level contact_*_optout
-  // columns are retired (ruling 2026-10-27).
+  // reads (services/optoutService.js; ruling 2026-10-27).
   const [[contact]] = await db.query(
     'SELECT contact_id, contact_name FROM contacts WHERE contact_id = ? LIMIT 1', [contactId]);
   if (!contact) throw httpError(422, 'Send recipient contact is unavailable');

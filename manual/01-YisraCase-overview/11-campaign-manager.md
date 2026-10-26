@@ -100,9 +100,8 @@ Reusable uploaded images for email campaigns.
 
 Consent is `contact_phones.sms_optout` / `contact_emails.email_optout` on the
 ACTIVE row holding the number or address the campaign sends to
-(`services/optoutService.js`). The contact-level `contacts.contact_sms_optout` /
-`contact_email_optout` columns are retired — nothing reads them (their drop is
-pending in `ref/plans.md`).
+(`services/optoutService.js`). It is the only consent flag: the contact record
+itself carries none.
 
 ---
 

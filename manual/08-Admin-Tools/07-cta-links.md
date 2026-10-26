@@ -236,6 +236,11 @@ Like every SU tool it asks for your password first (elevation, 15 minutes).
   **Preview** shows exactly what would go out and sends nothing. A password
   is **never** sent; give it to the recipient another way. Only active links
   can be sent (used, disabled, cancelled, expired or exhausted → refused).
+  If the recipient's number or address has opted out (the flag on their
+  phone or email row), **Send** asks first — the warning names who opted out;
+  OK sends anyway (do that only when they asked for this message), Cancel
+  sends nothing. Preview never asks. The refusal and the override are both in
+  the audit log.
   When the link is attached to a case or contact, the send is logged there
   (an email row, or a note for an SMS — the SMS row itself arrives from the
   phone provider), and every send is in the admin audit log.

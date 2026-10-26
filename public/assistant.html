@@ -1172,8 +1172,7 @@ function sendActionRequest(draft) {
 }
 
 // Click-time freshness through the canonical reads: the contact and its
-// active rows (consent is the row's opt-out flag — the contact-level columns
-// are retired, ruling 2026-10-27). Returns a refusal sentence, or '' when the
+// active rows (consent is the row's opt-out flag, ruling 2026-10-27). Returns a refusal sentence, or '' when the
 // reviewed row still stands exactly as reviewed. The send route re-checks
 // consent itself and Casey never acknowledges an opt-out, so a race refuses.
 async function sendPrecheck(draft) {

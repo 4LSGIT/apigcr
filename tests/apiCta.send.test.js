@@ -23,6 +23,12 @@
  *   - Audit: every real attempt (ok, or error with the transport message);
  *     never the token or a password. dry_run sends/logs/audits nothing.
  *   - A password-protected link's password never appears in anything sent.
+ *   - Opt-out WARNS (ruling 2026-10-27, optoutService.optoutGate — the staff
+ *     rule of the Comms routes): a real send to a `to` whose ACTIVE
+ *     contact_emails / contact_phones row is opted out → 409 opted_out,
+ *     nothing sent or logged, the refusal audited; acknowledge_optout:true (a
+ *     boolean; anything else is a 400) sends and audits the overridden
+ *     contact ids. An ended row, a consenting row, and dry_run are not gated.
  *
  * HARNESS: the REAL superuserOnlyFor chain + REAL ctaService over
  * tests/helpers/ctaWorld.js (as tests/apiCta.routes.test.js). Mocked: the
@@ -428,5 +434,84 @@ describe('password, dry run, validation, unlinked', () => {
     expect(j.log_id).toBeNull();
     expect(logs()).toEqual([]);
     expect(sendAudits()).toHaveLength(1);
+  });
+});
+
+describe('opt-out (ruling 2026-10-27): staff are warned, not refused', () => {
+  beforeEach(() => {
+    W.contacts.set(900, { contact_id: 900, contact_name: 'Pat One' });
+    W.contacts.set(901, { contact_id: 901, contact_name: 'Sam Two' });
+    W.contactEmails = [
+      { id: 1, contact_id: 900, email: 'Pat@Example.com', end_date: null, email_optout: 1 },
+      { id: 2, contact_id: 901, email: 'sam@example.com', end_date: null, email_optout: 0 },
+      { id: 3, contact_id: 901, email: 'old@example.com', end_date: '2026-01-01', email_optout: 1 },
+    ];
+    W.contactPhones = [
+      { id: 1, contact_id: 900, phone: '3135550199', end_date: null, sms_optout: 1 },
+      { id: 2, contact_id: 901, phone: '3135550111', end_date: null, sms_optout: 0 },
+    ];
+  });
+
+  test('email: 409 opted_out with the server\'s words; nothing sent or logged; the refusal audited', async () => {
+    const m = await mint();
+    const r = await send(m.id, { channel: 'email', to: 'pat@example.com' });
+    expect(r.status).toBe(409);
+    const j = await r.json();
+    expect(j).toMatchObject({ code: 'opted_out', acknowledge_with: 'acknowledge_optout' });
+    expect(j.message).toMatch(/^Pat One pat@example\.com \(contact #900\) has opted out of email\. Send anyway only if/);
+    expect(j.opted_out).toEqual([{ channel: 'email', destination: 'pat@example.com', contact_id: 900, contact_name: 'Pat One', row_id: 1 }]);
+    expect(emailService.sendEmail).not.toHaveBeenCalled();
+    expect(logs()).toEqual([]);
+    const [a] = sendAudits();
+    expect(sendAudits()).toHaveLength(1);
+    expect(a).toMatchObject({ status: 'error', error_message: 'refused_opted_out' });
+    expect(a.details).toMatchObject({ channel: 'email', to: 'pat@example.com', opted_out: [900] });
+  });
+
+  test('sms: the 10-digit number is what is looked up (a formatted `to` matches); 409, nothing sent', async () => {
+    const m = await mint();
+    for (const to of ['(313) 555-0199', '+1 313 555 0199']) {
+      const r = await send(m.id, { channel: 'sms', to });
+      expect([to, r.status, (await r.json()).code]).toEqual([to, 409, 'opted_out']);
+    }
+    expect(phoneService.sendSms).not.toHaveBeenCalled();
+  });
+
+  test('acknowledge_optout:true sends, logs and audits the overridden contact ids; only a boolean is accepted', async () => {
+    const m = await mint();
+    for (const ack of ['true', 1]) {
+      const r = await send(m.id, { channel: 'email', to: 'pat@example.com', acknowledge_optout: ack });
+      expect([ack, r.status]).toEqual([ack, 400]);
+    }
+    expect((await send(m.id, { channel: 'email', to: 'pat@example.com', acknowledge_optout: false })).status).toBe(409);
+    expect(emailService.sendEmail).not.toHaveBeenCalled();
+    const r = await send(m.id, { channel: 'email', to: 'pat@example.com', acknowledge_optout: true });
+    expect(r.status).toBe(200);
+    expect((await r.json()).sent).toBe(true);
+    expect(emailService.sendEmail).toHaveBeenCalledTimes(1);
+    expect(logs()).toHaveLength(1);
+    const ok = sendAudits().filter((a) => a.status === 'ok');
+    expect(ok).toHaveLength(1);
+    expect(ok[0].details.acknowledged_optout).toEqual([900]);
+    const s = await send(m.id, { channel: 'sms', to: '3135550199', acknowledge_optout: true });
+    expect(s.status).toBe(200);
+    expect(phoneService.sendSms).toHaveBeenCalledTimes(1);
+  });
+
+  test('not gated: a consenting row, an ENDED opted-out row, an unknown address, and dry_run', async () => {
+    const m = await mint();
+    for (const body of [
+      { channel: 'email', to: 'sam@example.com' },
+      { channel: 'email', to: 'old@example.com' },
+      { channel: 'email', to: 'nobody@example.com' },
+      { channel: 'sms', to: '3135550111' },
+    ]) {
+      const r = await send(m.id, body);
+      expect([body, r.status]).toEqual([body, 200]);
+    }
+    expect(sendAudits().every((a) => a.status === 'ok' && !('acknowledged_optout' in a.details))).toBe(true);
+    const dry = await send(m.id, { channel: 'email', to: 'pat@example.com', dry_run: true });
+    expect(dry.status).toBe(200);
+    expect((await dry.json()).dry_run).toBe(true);
   });
 });

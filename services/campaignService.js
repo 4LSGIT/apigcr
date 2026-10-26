@@ -33,8 +33,7 @@ const phoneService = require('./phoneService');
 const emailService = require('./emailService');
 const { localToUTC } = require('./timezoneService');
 // Consent is the destination ROW's flag (contact_phones.sms_optout /
-// contact_emails.email_optout) — ruling 2026-10-27 retired the contact-level
-// contacts.contact_*_optout columns as a send input.
+// contact_emails.email_optout) — the only consent flag (ruling 2026-10-27).
 const optout = require('./optoutService');
 
 // ─────────────────────────────────────────────────────────────

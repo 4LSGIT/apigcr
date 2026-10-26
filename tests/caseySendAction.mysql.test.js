@@ -83,8 +83,8 @@ d('A14 direct sends: the normalizer\'s SQL on real MySQL', () => {
 
     await q(`INSERT INTO users (user, username, user_name, user_fname, user_lname, user_initials, user_auth, user_type, roles)
              VALUES (22, 'rena', 'Rena', 'R', 'G', 'RG', 'authorized', 1, 'staff'), (6, 'it', 'Fred', 'F', 'R', 'FR', 'authorized', 1, 'it,admin,su')`);
-    await q(`INSERT INTO contacts (contact_id, contact_name, contact_fname, contact_lname, contact_ssn, contact_sms_optout, contact_email_optout)
-             VALUES (1309, 'Pat One', 'Pat', 'One', '123-45-6789', 0, 0)`);
+    await q(`INSERT INTO contacts (contact_id, contact_name, contact_fname, contact_lname, contact_ssn)
+             VALUES (1309, 'Pat One', 'Pat', 'One', '123-45-6789')`);
     await q(`INSERT INTO contact_phones (id, contact_id, phone, label, is_primary, sms_optout) VALUES (12, 1309, '3135550001', 'Mobile', 1, 0)`);
     await q(`INSERT INTO contact_emails (id, contact_id, email, label, is_primary, email_optout) VALUES (13, 1309, 'pat@example.com', 'Personal', 1, 0)`);
     await q(`INSERT INTO cases (case_id, case_number, case_number_full) VALUES ('CASEA14', '26-40001', '2:26-bk-40001')`);
@@ -113,7 +113,7 @@ d('A14 direct sends: the normalizer\'s SQL on real MySQL', () => {
     expect((await norm(sms({ message: 'SSN {{contacts.contact_ssn}}' }))).ssn_warning).toBe(true);
   });
 
-  test('consent: the row\'s tinyint opt-out refuses on the engine; the retired contact-level column does not', async () => {
+  test('consent: the row\'s tinyint opt-out refuses on the engine, per channel', async () => {
     await q('UPDATE contact_phones SET sms_optout = 1 WHERE id = 12');
     await expect(norm(sms())).rejects.toThrow(/opted out of SMS/);
     await q('UPDATE contact_phones SET sms_optout = 0 WHERE id = 12');
@@ -121,11 +121,6 @@ d('A14 direct sends: the normalizer\'s SQL on real MySQL', () => {
     await expect(norm(email())).rejects.toThrow(/opted out of email/);
     await expect(norm(sms())).resolves.toMatchObject({ kind: 'sms.send.v1' });
     await q('UPDATE contact_emails SET email_optout = 0 WHERE id = 13');
-    // Ruling 2026-10-27: contacts.contact_*_optout is not consent any more.
-    await q('UPDATE contacts SET contact_sms_optout = 1, contact_email_optout = 1 WHERE contact_id = 1309');
-    await expect(norm(sms())).resolves.toMatchObject({ kind: 'sms.send.v1' });
-    await expect(norm(email())).resolves.toMatchObject({ kind: 'email.send.v1' });
-    await q('UPDATE contacts SET contact_sms_optout = 0, contact_email_optout = 0 WHERE contact_id = 1309');
   });
 
   test('an ended row and an unlinked case refuse', async () => {

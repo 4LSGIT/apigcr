@@ -4,10 +4,8 @@
  * Recipient opt-out — the ONE reader of messaging consent (ruling 2026-10-27).
  *
  * Consent lives on the ROW staff edit: contact_phones.sms_optout and
- * contact_emails.email_optout. The contact-level contacts.contact_sms_optout /
- * contact_email_optout columns are RETIRED — nothing writes them and nothing
- * may read them for a send decision (the column drop is its own slice,
- * ref/plans.md "Opt-out retirement").
+ * contact_emails.email_optout — the only consent flags. The contact row has
+ * none (its old pair was dropped: scripts/optoutContactColumnsDrop.js).
  *
  * A send knows a destination, not a contact, so the destination maps to rows:
  *   - SMS / MMS: the number normalized the way contactPhoneService stores it

@@ -621,8 +621,7 @@ unchanged. These are the one family whose route IS an authorization seat
   `contact_id` and `phone_id` / `email_id`; the normalizer reloads the row
   (on that contact, `end_date IS NULL`) and refuses on consent — the row's
   `sms_optout` / `email_optout`, the one consent flag every sender reads
-  (`services/optoutService.js`; the contact-level `contact_*_optout` columns
-  are retired, ruling 2026-10-27). Measured live 2026-10-26: 1 of 1,113
+  (`services/optoutService.js`, ruling 2026-10-27). Measured live 2026-10-26: 1 of 1,113
   active phones opted out, 0 of 1,108 emails. The email address is run
   through the mail route's own `parseRecipient`.
 - **Click-time freshness (correction 1):** the card's `precheck` re-reads

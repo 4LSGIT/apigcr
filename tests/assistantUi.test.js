@@ -1231,7 +1231,7 @@ describe('A14 send cards (sms.send.v1 / email.send.v1)', () => {
     subject: 'Your case', body: 'Dear Pat,\n\nSee you Tuesday.', templated: true, ssn_warning: false, case: null, evidence: [], ...over } });
   // The canonical reads the precheck makes, answering "unchanged" unless told otherwise.
   const reads = (over = {}) => {
-    const contact = { contact_id: 1309, contact_sms_optout: 0, contact_email_optout: 0, ...(over.contact || {}) };
+    const contact = { contact_id: 1309, ...(over.contact || {}) };
     const phone = { id: 12, phone: '3135550001', sms_optout: 0, end_date: null, updated_at: STAMP, ...(over.phone || {}) };
     const email = { id: 13, email: 'pat@example.com', email_optout: 0, end_date: null, updated_at: STAMP, ...(over.email || {}) };
     return (path) => {
@@ -1289,13 +1289,6 @@ describe('A14 send cards (sms.send.v1 / email.send.v1)', () => {
     expect(writes).toEqual([{ path: '/api/mail/send', method: 'POST',
       body: { mailbox_id: 5, to: ['pat@example.com'], subject: 'Your case', body_text: 'Dear Pat,\n\nSee you Tuesday.' },
       headers: { 'Idempotency-Key': m.action_draft.draft_id } }]);
-    expect(m.action_draft.status).toBe('applied');
-  });
-
-  test('the retired contact-level opt-out columns are not consent: only the row\'s flag refuses (ruling 2026-10-27)', async () => {
-    const m = smsDraft();
-    const { writes } = await run(m, { read: reads({ contact: { contact_sms_optout: 1, contact_email_optout: 1 } }) });
-    expect(writes).toHaveLength(1);
     expect(m.action_draft.status).toBe('applied');
   });
 

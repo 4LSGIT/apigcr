@@ -18,8 +18,8 @@ const STAMP = new Date('2026-10-26T10:00:00Z');
 function makeDb(over = {}) {
   const T = {
     contacts: [
-      { contact_id: 1309, contact_name: 'Pat One', contact_fname: 'Pat', contact_lname: 'One', contact_ssn: '123-45-6789', contact_sms_optout: 0, contact_email_optout: 0 },
-      { contact_id: 1400, contact_name: 'Other Person', contact_fname: 'Other', contact_lname: 'Person', contact_ssn: '', contact_sms_optout: 0, contact_email_optout: 0 },
+      { contact_id: 1309, contact_name: 'Pat One', contact_fname: 'Pat', contact_lname: 'One', contact_ssn: '123-45-6789' },
+      { contact_id: 1400, contact_name: 'Other Person', contact_fname: 'Other', contact_lname: 'Person', contact_ssn: '' },
     ],
     contact_phones: [{ id: 12, contact_id: 1309, phone: '3135550001', label: 'Mobile', is_primary: 1, sms_optout: 0, end_date: null, updated_at: STAMP }],
     contact_emails: [{ id: 13, contact_id: 1309, email: 'pat@example.com', label: 'Personal', is_primary: 1, email_optout: 0, end_date: null, updated_at: STAMP }],

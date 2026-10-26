@@ -86,7 +86,7 @@ function schemaFor(tables) {
 }
 
 // Contacts: 1 Pat (opted-out mobile + opted-out mixed-case email), 2 Sam
-// (consenting phone/email, but the RETIRED contact-level flags set), 3 Old
+// (consenting phone/email), 3 Old
 // (an ENDED opted-out row whose number/address now belongs to 4 New, active
 // and consenting).
 const PAT_PHONE = '3135550001';
@@ -112,11 +112,11 @@ d('opt-out on real MySQL', () => {
     for (const sql of creates) await q(sql);
     for (const sql of alters) await q(sql);
 
-    await q(`INSERT INTO contacts (contact_id, contact_name, contact_fname, contact_lname, contact_phone, contact_email, contact_sms_optout, contact_email_optout) VALUES
-      (1, 'Pat One', 'Pat', 'One', '${PAT_PHONE}', 'pat@example.com', 0, 0),
-      (2, 'Sam Two', 'Sam', 'Two', '${SAM_PHONE}', 'sam@example.com', 1, 1),
-      (3, 'Old Owner', 'Old', 'Owner', '', '', 0, 0),
-      (4, 'New Owner', 'New', 'Owner', '${SHARED_PHONE}', 'shared@example.com', 0, 0)`);
+    await q(`INSERT INTO contacts (contact_id, contact_name, contact_fname, contact_lname, contact_phone, contact_email) VALUES
+      (1, 'Pat One', 'Pat', 'One', '${PAT_PHONE}', 'pat@example.com'),
+      (2, 'Sam Two', 'Sam', 'Two', '${SAM_PHONE}', 'sam@example.com'),
+      (3, 'Old Owner', 'Old', 'Owner', '', ''),
+      (4, 'New Owner', 'New', 'Owner', '${SHARED_PHONE}', 'shared@example.com')`);
     await q(`INSERT INTO contact_phones (id, contact_id, phone, label, is_primary, sms_optout, end_date) VALUES
       (11, 1, '${PAT_PHONE}', 'Mobile', 1, 1, NULL),
       (12, 2, '${SAM_PHONE}', 'Mobile', 1, 0, NULL),
@@ -174,12 +174,6 @@ d('opt-out on real MySQL', () => {
       }
       expect(await optout.findOptedOut(pool, 'email', 'sam@example.com')).toEqual([]);
       expect(await optout.findOptedOut(pool, 'email', 'not-an-address')).toEqual([]);
-    });
-
-    test('the retired contact-level columns are never consent', async () => {
-      // Sam's contacts.contact_sms_optout / contact_email_optout are 1; his rows consent.
-      expect(await optout.findOptedOut(pool, 'sms', SAM_PHONE)).toEqual([]);
-      expect(await optout.findOptedOut(pool, 'email', 'sam@example.com')).toEqual([]);
     });
 
     test('the SQL-predicate twins agree with findOptedOut on the engine', async () => {
@@ -329,8 +323,8 @@ d('opt-out on real MySQL', () => {
   });
 
   // ───────────────────────────────────────────────────────────────────────
-  describe('campaigns read the row flag, never the contact-level columns', () => {
-    test('preview: Pat (row opt-out) is excluded; Sam (contact-level flags only) is NOT', async () => {
+  describe('campaigns read the row flag', () => {
+    test('preview: Pat (row opt-out) is excluded; Sam (consenting rows) is NOT', async () => {
       const sms = await campaignService.getFilteredContacts(pool, { channel: 'sms' });
       expect(sms.contacts.map((c) => c.contact_id).sort()).toEqual([2, 4]);
       expect(sms).toMatchObject({ total: 4, excluded: 2 });          // Pat opted out, Old has no phone
@@ -360,7 +354,7 @@ d('opt-out on real MySQL', () => {
   describe('automated confirmations skip an opted-out channel (logged, never alerted)', () => {
     const settle = async () => { for (let i = 0; i < 20; i++) await new Promise((r) => setImmediate(r)); };
 
-    test('appointment confirmation: Pat\'s opted-out SMS and email are skipped; Sam (contact-level flags only) gets both', async () => {
+    test('appointment confirmation: Pat\'s opted-out SMS and email are skipped; Sam (consenting rows) gets both', async () => {
       await apptService._sendApptConfirmation(pool, { contactId: 1, apptId: 5, sms: true, email: true, message: 'See you soon' });
       await settle();
       expect(sent).toEqual([]);

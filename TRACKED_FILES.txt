@@ -606,6 +606,7 @@ ref/migrations/2026-10-21_phone_delivery_s1_delivery_columns.sql
 ref/migrations/2026-10-22_request_idempotency.sql
 ref/migrations/2026-10-26_docs_digest_repoint.console.js
 ref/migrations/2026-10-26_docs_digest_rule.console.js
+ref/migrations/2026-10-27_optout_contact_columns_drop.sql
 ref/migrations/S1_notes_migration.sql
 ref/migrations/documents_s1.sql
 ref/migrations/documents_s2.sql
@@ -906,6 +907,7 @@ scripts/mobile-survey/manualOrdinals.js
 scripts/mobile-survey/server.js
 scripts/mobile-survey/survey.js
 scripts/mobile-survey/wsurl.js
+scripts/optoutContactColumnsDrop.js
 scripts/phoneDeliveryS1DeliveryColumns.js
 scripts/probe-db-connect.js
 scripts/reportGrantUserProvision.js
@@ -1481,6 +1483,7 @@ tests/nameKeyOrgKind.test.js
 tests/optout.mysql.test.js
 tests/optout.routes.test.js
 tests/optoutAck.test.js
+tests/optoutContactColumnsDrop.test.js
 tests/orphanAdoptDialog.opts.test.js
 tests/pageLanding.landingAssets.test.js
 tests/pageLanding.originsep.test.js

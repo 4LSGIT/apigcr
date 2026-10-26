@@ -54,7 +54,7 @@
  *                                   run, cancel = permanent)
  *   POST  /api/cta/:id/send         { channel: 'email'|'sms', to, from?,
  *                                   subject?, email_template?, sms_text?,
- *                                   dry_run? } —
+ *                                   dry_run?, acknowledge_optout? } —
  *                                   send an ACTIVE link (send slice,
  *                                   2026-10-08; see the handler's header)
  *
@@ -80,6 +80,7 @@ const express = require('express');
 const router = express.Router();
 const ctaService = require('../services/ctaService');
 const ctaLinks = require('../lib/ctaLinks');
+const optout = require('../services/optoutService');
 const { superuserOnlyFor, auditAdminAction } = require('../lib/auth.superuser');
 
 const TOOL = 'cta';   // admin_audit_log tag + SU rate-limit bucket
@@ -355,9 +356,17 @@ router.patch('/api/cta/:id', guard, async (req, res) => {
 //     token, never a password.
 //   dry_run: true → the composed message (subject/html/text, or text) and the
 //     resolved from; `to` optional; nothing sent, logged or audited.
+//   Opt-out WARNS (ruling 2026-10-27, the staff-route rule — optoutService.
+//     optoutGate, as POST /api/phone-lines/:id/sms and POST /api/mail/send):
+//     a real send to a `to` whose active contact_phones / contact_emails row is
+//     opted out is a 409 code 'opted_out' — nothing sent or logged, the
+//     refusal audited — until the body carries acknowledge_optout:true (a
+//     literal true; ctaManager.html's send rides public/js/optoutAck.js). The
+//     acknowledged send audits the overridden contact ids. dry_run is not
+//     gated: it sends nothing.
 //   No limiter beyond the SU guard's (elevation + per-tool rate limit).
 
-const SEND_KEYS = new Set(['channel', 'to', 'from', 'subject', 'email_template', 'sms_text', 'dry_run']);
+const SEND_KEYS = new Set(['channel', 'to', 'from', 'subject', 'email_template', 'sms_text', 'dry_run', 'acknowledge_optout']);
 const EMAIL_RE = /^[^\s@<>",;]+@[^\s@<>",;]+\.[^\s@<>",;]+$/;
 
 /** 10-digit NANP or null (phoneService.normalizeE164's acceptance, pre-checked for a clean 400). */
@@ -382,6 +391,9 @@ router.post('/api/cta/:id/send', guard, async (req, res) => {
     return res.status(400).json(errBody('cta: dry_run must be a boolean'));
   }
   const dryRun = body.dry_run === true;
+  if (body.acknowledge_optout != null && typeof body.acknowledge_optout !== 'boolean') {
+    return res.status(400).json(errBody('cta: acknowledge_optout must be a boolean'));
+  }
   for (const k of ['to', 'from', 'subject', 'email_template', 'sms_text']) {
     if (body[k] != null && typeof body[k] !== 'string') return res.status(400).json(errBody(`cta: ${k} must be a string`));
   }
@@ -447,6 +459,16 @@ router.post('/api/cta/:id/send', guard, async (req, res) => {
       template: msg.template,
       ...(channel === 'email' ? { subject: msg.subject } : {}),
     };
+
+    const gate = await optout.optoutGate(req.db, {
+      channel, dest: channel === 'sms' ? phone10(to) : to, acknowledged: body.acknowledge_optout,
+    });
+    if (gate.refusal) {
+      await audit(req, { ...auditBase, opted_out: gate.refusal.body.opted_out.map((r) => r.contact_id) },
+        { status: 'error', errorMessage: 'refused_opted_out' });
+      return res.status(gate.refusal.status).json(gate.refusal.body);
+    }
+    if (gate.overridden.length) auditBase.acknowledged_optout = gate.overridden.map((r) => r.contact_id);
 
     try {
       if (channel === 'email') {

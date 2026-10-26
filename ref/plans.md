@@ -373,6 +373,15 @@ amendments, which bind every slice that touches hosts:
 - **Require scopes on new yck_ mints**: today omitted scopes = NULL =
   legacy full surface; flip to required once the existing integrations are
   scoped.
+- **Session-key scopes for app settings** (Fred, 2026-10-27): add `ycro_` key
+  scopes (`lib/capabilities.js` `KEY_SCOPES`), e.g. `settings.read` /
+  `settings.write`, SU-minted like `sql.ro.sensitive`. Today `app_settings` is
+  denied to every key (`lib/sqlGuard` `SECRET_TABLES`), so AI sessions cannot
+  check even a non-secret setting (the 2026-10-27 opt-out sweep had to go to
+  the SU console). Contract: secrets stay excluded even with the scope
+  (`settingsRegistry.isSecret`); reads via a projection that never selects a
+  secret value, not raw SQL on the table; writes only through the
+  registry-governed editor route; audited; child keys never inherit write.
 - **connections.html reads P.AUTH_STATE.jwt** (SU-guard fallback) — the one
   pane besides liveHost violating "panes never read the token"; drop the
   fallback and read firmData.currentUser.roles only. (Graduated from
@@ -940,49 +949,6 @@ process, was resolved by the code-bodies guest-engine slice, 2026-10-26.)
 
 ## Recipient opt-out (ruling 2026-10-27) — follow-ups
 
-- **Drop `contacts.contact_sms_optout` / `contact_email_optout` (own slice,
-  needs Fred's go).** Retired by the ruling: consent is the active row's
-  `contact_phones.sms_optout` / `contact_emails.email_optout`, read only
-  through `services/optoutService.js`. Sweep done 2026-10-26 (CLAUDE.md
-  "Dropping a COLUMN"):
-  - *Live data:* all 1,106 contacts hold 0 in both columns — the drop loses
-    nothing.
-  - *Code:* no reader or writer left in services / routes / lib / public
-    except `lib/reportSchema/manifest.js` (the report builder still lists both
-    columns under `contacts`; remove them there — and re-run
-    `scripts/reportGrantUserProvision.js`, which derives column grants from the
-    manifest — before the DROP, or a report naming them fails). Test fixtures
-    that still create/seed them: `tests/caseySendAction.mysql.test.js` (INSERT
-    and the retirement assertion — it clones `ref/database.sql`, so it breaks
-    the moment the column is gone), `tests/helpers/caseySendProposalDb.js`,
-    `tests/assistantUi.test.js`, `tests/caseySendAction.test.js`. Writers: none
-    in code — only raw SQL (SU db console, the legacy `/db` family).
-  - *Schema objects:* none — no trigger (`after_contact_update`,
-    `contact_name_insert/update` do not name them), view, index or generated
-    column in `ref/database.sql` references either column.
-  - *Definitions in app tables:* zero hits for either name in
-    `report_definitions` (+`_versions`), `admin_saved_queries`,
-    `workflow_steps`, `workflow_versions`, `workflows.test_input`,
-    `sequence_steps`, `sequence_templates`, `sequence_template_versions`,
-    `trigger_rules`, `trigger_rule_actions`, `hooks`, `hook_targets`,
-    email/phone ingest rules + actions, `scheduled_jobs`, `field_defs`,
-    `campaigns`, `api_saved_requests`, `ui_config` (+`_versions`),
-    `form_template_versions`, `contract_templates`, `portal_cards`,
-    `cta_links`, `pages`, `tools` (+`tool_versions`), `booking_views`,
-    `checklists`, `pipeline_stage_requirements`, `log.log_data` (RO endpoint,
-    2026-10-26). NOT swept: `app_settings` (denied to every RO key — check from
-    the SU console before the drop).
-  - *Shape:* a node migration script on one connection with a low
-    `lock_wait_timeout` (CHECK by default, `--apply`), per CLAUDE.md — worked
-    example `scripts/customFieldsS5bDrop.js`.
-- **Schema COMMENTs for the drop slice's migration:**
-  `contact_phones.sms_optout` — "messaging consent: 1 = opted out of SMS/MMS.
-  THE consent flag (services/optoutService.js); only the active row
-  (end_date IS NULL) counts; automation refuses, staff sends warn";
-  `contact_emails.email_optout` — the same for email.
-- **`POST /api/cta/:id/send` is not gated** (SU-minted manual CTA send to a
-  free `to`). Warn like the other staff routes, or refuse? CTA *plans* that run
-  `send_sms` / `send_email` already refuse.
 - **Portal login PIN is exempt by design** (`portalAuthService`: the client
   typed that destination seconds ago and asked for the code; refusing locks
   them out of the portal). Confirm.
@@ -1536,6 +1502,18 @@ email_ingest_sources, the assistant chat tables, backups/junk) get no grant;
 - **Maintenance coupling:** a new allowlisted table or a newly denied column
   means re-running `--apply` (the grant set is generated, not hand-maintained).
   Note this where the manifest is edited.
+- **A dropped column leaves an orphaned grant** (proved on 8.4.11, opt-out
+  drop 2026-10-27). The grant set is read from the LIVE schema, so the
+  manifest's column list does not drive it, and a `DROP COLUMN` does NOT fail
+  on `yc_report`'s per-column grant: the DROP succeeds and the grant stays in
+  `mysql.columns_priv` / SHOW GRANTS, inert, until cleared — and it
+  re-attaches to any later column of the same name. `--apply --rotate` clears
+  it (its targeted REVOKE of the SHOW GRANTS line succeeds though the line
+  names a dropped column; the plan, read from information_schema, no longer
+  grants it), as does a root `REVOKE SELECT (<col>) ON <db>.<table> FROM
+  'yc_report'@'%'`. The contacts opt-out pair is orphaned this way once
+  `scripts/optoutContactColumnsDrop.js --apply` has run, until either clears
+  it.
 
 ---
 

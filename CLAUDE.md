@@ -185,6 +185,11 @@ Gates beyond Commands & gates below, every model:
   fails every UPDATE on the table) AND of the definitions stored in app
   tables (report SQL, workflow / sequence / trigger configs, tools, saved
   queries). Worked example: `scripts/uiCustomS5e3DropCustomTab.js`.
+  A DROP leaves any per-column GRANT orphaned in `mysql.columns_priv` (the
+  least-privilege `yc_report` account holds them) — harmless until a column
+  of the same name is re-added, which the old grant then covers at once.
+  Revoke it as root after the drop, or re-provision with `--rotate`
+  (`scripts/optoutContactColumnsDrop.js` header, 2026-10-27).
 - A harness that PRINTS an anomaly instead of asserting it is not a gate.
   UDS S4 (2026-09-23): a 288-check matrix logged leftover other-mode keys as
   a `note:` line. That residue WAS the bug, and it shipped through the gate,
