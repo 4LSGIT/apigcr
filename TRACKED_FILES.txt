@@ -1133,6 +1133,8 @@ tests/caseUi.timeline.test.js
 tests/caseyActionPermissions.test.js
 tests/caseyHookCreate.test.js
 tests/caseyJobCodeAction.test.js
+tests/caseySequenceStep.mysql.test.js
+tests/caseySequenceStep.test.js
 tests/caseyWorkflowDraft.test.js
 tests/caseyWorkflowPublish.test.js
 tests/caseyWorkflowStep.test.js
@@ -1524,8 +1526,10 @@ tests/sequenceEngine.conditions.test.js
 tests/sequenceEngine.dispatchAndEscape.test.js
 tests/sequences.editor.roundtrip.test.js
 tests/sequences.ensureDraft.test.js
+tests/sequences.expectedBase.mysql.test.js
 tests/sequences.recover.test.js
 tests/sequences.routeOrder.test.js
+tests/sequences.stepValidation.test.js
 tests/sessionKeysUi.test.js
 tests/settingsArcMigrate.test.js
 tests/settingsAutomationGuard.test.js

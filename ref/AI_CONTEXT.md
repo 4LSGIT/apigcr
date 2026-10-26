@@ -47,6 +47,43 @@ body. Governing migrations in `ref/migrations/`.*
   `workflows.step_insert`). Tests: `tests/workflows.expectedBase.test.js`,
   `tests/caseyWorkflowStep.test.js`; plan: ref/ASK_CASEY_ACTIONS_PLAN.md
   A17.4/P11.
+- **Sequence step routes: expected_base precondition + save-time
+  validation (P11 sequence half, 10-26):** the five step-mutating routes in
+  `routes/sequences.js` (insert, PUT, PATCH, DELETE, reorder) take the same
+  optional `expected_base` `{draft_version, step_count, step_fingerprint?}`
+  as the workflow routes — checked inside the write transaction under the
+  `sequence_templates` parent-row `FOR UPDATE`, before `ensureDraft`; a
+  mismatch is the same structured 409 and nothing is written. The fingerprint
+  is `lib/versionDiff.sequenceStepFingerprint` — sha256 over `canonical()` of
+  {action_type, action_config, timing, condition, fire_guard, error_policy};
+  every input is in the `GET /sequences/templates/:id` response. Save-time
+  (POST / PUT, and PATCH when it writes action_type or action_config):
+  `lib/internal_functions` `__validateSequenceFunctionStep` refuses, for
+  sms/email/task/internal_function, a missing / unknown / `__`-helper /
+  workflow-only `function_name` and runs `validateInternalFunctionParams`
+  (undeclared keys, params null as {}, required params). Publish and
+  draft-diff still run only `validateStepConfig` (re-checking params at
+  publish is open, ref/plans.md). Tests: `tests/sequences.stepValidation.test.js`,
+  gated real-engine `tests/sequences.expectedBase.mysql.test.js`; plan:
+  ref/ASK_CASEY_ACTIONS_PLAN.md P11.
+- **Casey sequence step insert (A18.2, 10-26):** kind
+  `sequence.step_insert.v1` — one `sms`/`email`/`task` step into a sequence
+  template's DRAFT via `POST /sequences/templates/:id/steps`, function pinned
+  per type by `lib/caseyAutomationAllowlist.js` `CASEY_SEQUENCE_AUTHORABLE`
+  (the senders are allowed here only, class `external-send`, ruling 14; the
+  workflow list stays sender-free). Invariants: the browser builder pins
+  function_name + the no-retry error policy and sends no condition/fire guard;
+  senders are literal (active `phone_lines` / `email_credentials`); `delay.at`
+  is a literal future datetime; all seven timing types, closed per type, no
+  `timezone` key; appointment-anchored types disclosed as silently skipping.
+  The route now honours `Idempotency-Key` (scope `sequences.step_insert`, a
+  refusal releases the claim). Flag `casey_sequence_authoring_enabled`.
+  Same slice: `validateInternalFunctionParams` (workflow steps, scheduled
+  jobs, Casey, CTA) refuses a non-own or `__`-prefixed registry name
+  (`toString`, `constructor`, `__getAllMeta`) as an unknown function — they
+  used to reach the meta-less permissive branch. Tests:
+  `tests/caseySequenceStep.test.js`, gated `tests/caseySequenceStep.mysql.test.js`;
+  plan: ref/ASK_CASEY_ACTIONS_PLAN.md A18.2.
 - **Publish precondition + Casey publish card (A17.6, 10-25):**
   `POST /workflows/:id/publish` takes an optional `expected_base`
   `{draft_version, step_count, draft_fingerprint}` — the fingerprint is

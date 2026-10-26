@@ -67,6 +67,7 @@ const ACTION_FNS = ['appendDraftField', 'appendDraftFieldsFromText', 'actionDraf
   'workflowStepEditText', 'workflowStepActionText', 'workflowStepActionRequest', 'workflowStepActionResult',
   'workflowPublishLabel', 'workflowPublishChangeLine', 'workflowPublishText', 'workflowPublishRequest', 'workflowPublishResult',
   'hookCreateLabel', 'hookTargetText', 'hookCreateText', 'hookCreateRequest', 'hookCreateResult',
+  'sequenceStepActionLabel', 'sequenceStepParamValue', 'sequenceStepText', 'sequenceStepActionRequest', 'sequenceStepActionResult',
   'openAutomationRecord',
   'actionFamily', 'isActionDraft', 'actionAppliedId', 'markActionApplied', 'confirmActionDraft',
   'executeActionDraft', 'applyActionResults', 'hydrateActionDraft'];
@@ -81,7 +82,8 @@ function actionSandbox(deps = {}) {
     constSrc(html, 'APPT_ACTION_KINDS'), constSrc(html, 'CONTACT_SUBRECORD_ACTION_KINDS'),
     constSrc(html, 'JOB_ACTION_KINDS'), constSrc(html, 'WORKFLOW_ACTION_KINDS'),
     constSrc(html, 'WORKFLOW_STEP_ACTION_KINDS'), constSrc(html, 'WORKFLOW_PUBLISH_ACTION_KINDS'),
-    constSrc(html, 'HOOK_ACTION_KINDS'),
+    constSrc(html, 'HOOK_ACTION_KINDS'), constSrc(html, 'SEQUENCE_STEP_ACTION_KINDS'),
+    constSrc(html, 'SEQUENCE_STEP_FUNCTIONS'), constSrc(html, 'SEQUENCE_STEP_ERROR_POLICY'),
     ...ACTION_FNS.map((name) => fnSrcAuto(html, name)),
     registry,
     'return { executeActionDraft, applyActionResults, actionFamily, isActionDraft, hydrateActionDraft };',
@@ -961,6 +963,54 @@ describe('Ask Casey action freshness and applied-marker durability (review fix p
     expect(host.textContent).toContain('The server refused this (nope).');
     expect(host.textContent).not.toContain('may already have been applied');
     expect([...host.querySelectorAll('button')].map((b) => b.textContent)).toEqual(['Copy details', 'Discard']);
+  });
+
+  // A18.2: the sequence step family through the SHARED engine — the function
+  // pinned by the browser (a draft lying about function_name is ignored), the
+  // draft_id as Idempotency-Key, a one-field receipt, and the route's
+  // precondition 409 rendered as the sequence's own refusal.
+  test('sequence step card: pinned function, idempotent POST, receipt, and the base-conflict refusal', async () => {
+    const seqMessage = () => ({ action_draft: {
+      draft_id: '247eb0a1-9f77-4de0-8f18-119665bcda0b', kind: 'sequence.step_insert.v1', status: 'draft', received_at: Date.now(),
+      template: { sequence_template_id: 12, name: 'No-Show Follow-Up', type: 'no_show', active: 1, published_version: 3, has_draft: 0, active_enrollments: 2 },
+      position: 2, displaces: { step_number: 2, summary: 'sms (send_sms)' },
+      step: { action_type: 'sms', function_name: 'update_db', side_effect: 'external-send',
+        params: { from: '2484179800', to: '{{contacts.contact_phone}}', message: 'Hi' }, timing: { type: 'immediate' } },
+      timing_text: 'Immediately', timing_notes: [], sender: 'office (2484179800)',
+      expected_base: { draft_version: null, step_count: 3, step_fingerprint: 'a'.repeat(64) },
+    } });
+    const writes = [];
+    const receipts = [];
+    const api = jest.fn(async (path, body, method, headers) => { writes.push({ path, body, method, headers }); return { success: true, stepId: 900, stepNumber: 2 }; });
+    const ledgerApi = jest.fn(async (path, body) => {
+      if (path.endsWith('/claim')) return { outcome: 'in_flight', claimed: true, claim_token: 'tok-seq' };
+      receipts.push(body); return { outcome: 'applied' };
+    });
+    const P = { Swal: { fire: jest.fn().mockResolvedValue({ isConfirmed: true }) }, ycAssistantNavigate: jest.fn().mockResolvedValue(true) };
+    const sandbox = actionSandbox({ P, api, ledgerApi, saveAssistantMessage: jest.fn() });
+    const m = seqMessage();
+    expect(sandbox.actionFamily(m.action_draft).id).toBe('sequence_step');
+    await sandbox.executeActionDraft(m);
+    expect(writes).toHaveLength(1);
+    expect(writes[0]).toMatchObject({ path: '/sequences/templates/12/steps', method: 'POST',
+      headers: { 'Idempotency-Key': m.action_draft.draft_id } });
+    expect(writes[0].body.action_config.function_name).toBe('send_sms');
+    expect(writes[0].body).toMatchObject({ step_number: 2, action_type: 'sms',
+      error_policy: { strategy: 'ignore', max_retries: 0, backoff_seconds: 5 }, expected_base: m.action_draft.expected_base });
+    expect('condition' in writes[0].body || 'fire_guard' in writes[0].body).toBe(false);
+    expect(receipts).toEqual([{ claim_token: 'tok-seq', result: { sequence_template_id: 12 } }]);
+    expect(m.action_draft.status).toBe('applied');
+    expect(P.ycAssistantNavigate).toHaveBeenCalledWith('automations.sequence', { id: 12 });
+    // An sms card is danger-styled: it messages clients once published.
+    expect(P.Swal.fire.mock.calls[0][0]).toMatchObject({ icon: 'warning', focusCancel: true });
+    expect(P.Swal.fire.mock.calls[0][0].text).toMatch(/TEXTS the client on every NEW enrollment/);
+
+    const refusedApi = jest.fn(async () => { throw Object.assign(new Error('changed'), { status: 409,
+      body: { conflict: { changed: 'step_fingerprint', expected: 'a', actual: 'b' } } }); });
+    const stale = seqMessage();
+    await actionSandbox({ P, api: refusedApi, ledgerApi, saveAssistantMessage: jest.fn() }).executeActionDraft(stale);
+    expect(stale.action_draft.refusal_error).toMatch(/^The sequence template changed since this card was prepared/);
+    expect(stale.action_draft).not.toHaveProperty('ambiguous_error');
   });
 
   test('the retry-receipt button is sized like the other card buttons', () => {

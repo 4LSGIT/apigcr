@@ -487,3 +487,47 @@ describe('sequences.html editor — hand-rolled branches keep-then-overwrite', (
     expect(cfg.params.message).toBeUndefined();
   });
 });
+
+// ─────────────────────────────────────────────────────────────
+// P11 sequence half: what the SHIPPED editor gathers passes the new
+// save-time validator (lib/internal_functions __validateSequenceFunctionStep,
+// run by the POST / PUT / PATCH step routes). The editor's own preservation
+// of out-of-schema params keys (`future_param` above) is the one shape the
+// validator now refuses by name — zero live steps carry one (measured
+// 2026-10-26), so that is pinned here as deliberate, not an accident.
+describe('sequences.html editor — gathered configs pass the P11 save validator', () => {
+  const validate = internalFunctions.__validateSequenceFunctionStep;
+
+  test.each([
+    ['sms', { function_name: 'send_sms', params: { from: '2485550100', to: '{{contacts.contact_phone}}', message: 'Hi {{contacts.contact_fname}}' }, set_vars: { sent: true }, _comment: 'kept' }],
+    ['email', { function_name: 'send_email', params: { from: 'info@example.com', to: '{{contacts.contact_email}}', subject: 'S', text: 'T', html: '<b>H</b>', include_signature: true,
+      attachment_urls: [{ url: 'https://example.com/fee.pdf', name: 'Fee.pdf' }] } }],
+  ])('%s branch: untouched gather validates clean', (actionType, stored) => {
+    const ed = makeBranchEditor(actionType, stored);
+    const cfg = ed.gather();
+    expect(ed.swalCalls).toEqual([]);
+    expect(validate(actionType, cfg)).toBeNull();
+  });
+
+  test('task branch (create_task delegate): untouched gather validates clean', () => {
+    const ed = makeTaskEditor({ title: 'Call {{contacts.contact_name}}', assigned_to: '{{trigger_data.appt_with}}', link_type: 'case', link_id: '{{trigger_data.case_id}}', source: 'seq_x' });
+    const cfg = ed.gather();
+    expect(ed.swalCalls).toEqual([]);
+    expect(validate('task', cfg)).toBeNull();
+  });
+
+  test('internal_function metadata body: gather validates clean', () => {
+    const ed = makeEditor('create_task', { title: 't', assigned_to: 6 });
+    expect(validate('internal_function', ed.gather())).toBeNull();
+  });
+
+  test('sms branch with blank required fields: the save is refused (it would throw at fire time)', () => {
+    const ed = makeBranchEditor('sms', { function_name: 'send_sms', params: { from: '', to: '', message: '' } });
+    expect(validate('sms', ed.gather())).toMatchObject({ status: 400, error: expect.stringMatching(/from is required/) });
+  });
+
+  test('a preserved out-of-schema params key is refused by name', () => {
+    const ed = makeBranchEditor('sms', { function_name: 'send_sms', params: { from: '2485550100', to: 'x', message: 'm', future_param: 'kept' } });
+    expect(validate('sms', ed.gather())).toMatchObject({ status: 400, error: expect.stringMatching(/undeclared key: future_param/) });
+  });
+});

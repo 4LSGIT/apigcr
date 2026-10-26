@@ -27,7 +27,9 @@ const express         = require('express');
 const router          = express.Router();
 const jwtOrApiKey     = require('../lib/auth.jwtOrApiKey');
 const { enrollContact, enrollContactByTemplateId, previewEnrollmentSteps, cancelSequences, validateTemplateFilters, scheduleFromStep, logStep, CONDITION_ERROR_REASONS, HELD_STEP_SKIPPED } = require('../lib/sequenceEngine');
-const { diffSequenceSteps, validateSequenceDraftShape, canonical, parseMaybeJson } = require('../lib/versionDiff');
+const { diffSequenceSteps, validateSequenceDraftShape, canonical, parseMaybeJson, sequenceStepFingerprint } = require('../lib/versionDiff');
+const internalFunctions = require('../lib/internal_functions'); // __validateSequenceFunctionStep (P11)
+const { idempotentRequest, sendIdempotencyError } = require('../lib/requestIdempotency'); // POST steps (A18.2)
 const toJson = v => v == null ? null : (typeof v === 'string' ? v : JSON.stringify(v));
 
 // Normalize the optional `type` column. As of Slice B, sequence_templates.type
@@ -201,9 +203,9 @@ function validateTiming(timing) {
 // or { status, error, message? } on failure — caller handles res.status(...).
 //
 // Validation depth differs by action_type:
-//   - sms / email / task / internal_function: no new field-level validation
-//     beyond action_type enum membership (preserves existing permissive
-//     behavior — those routes have been open-config since day one).
+//   - sms / email / task / internal_function: here, only the shape and the
+//     `type`-key refusal. The function_name / __meta param checks run in
+//     validateStepWrite below, on the step-WRITE routes only (P11).
 //   - webhook: URL, method, credential_id FK, headers/body shape, timeout_ms
 //   - start_workflow: workflow_id FK, init_data shape, tie_to_contact type,
 //     contact_id_override type
@@ -314,7 +316,128 @@ async function validateStepConfig(db, action_type, action_config) {
     return null;
   }
 
-  // sms / email / task / internal_function — no additional field validation.
+  // sms / email / task / internal_function — function checks live in
+  // validateStepWrite (step-write routes only).
+  return null;
+}
+
+// ─────────────────────────────────────────────────────────────
+// validateStepWrite — save-time validation for the step-WRITE routes
+// (POST / PUT / PATCH steps). P11 sequence half: validateStepConfig, then
+// the internal-function contract every sms/email/task/internal_function step
+// runs under (lib/internal_functions __validateSequenceFunctionStep — unknown
+// or workflow-only function_name, undeclared param keys, params null
+// validated as {}, required params).
+//
+// Deliberately NOT run by publish / draft-diff (_validateSequenceDraft keeps
+// calling validateStepConfig alone): re-running param validation at publish
+// is a separate P11 item with its own ruling. And the routes validate only
+// the fields being WRITTEN (Fred's ruling, P11): PUT and POST carry the whole
+// step, so it is validated whole; PATCH validates the action pair only when
+// action_type or action_config is in the body, so a timing / condition /
+// error_policy edit on a step whose function was since renamed still saves.
+// ─────────────────────────────────────────────────────────────
+async function validateStepWrite(db, action_type, action_config) {
+  const v = await validateStepConfig(db, action_type, action_config);
+  if (v) return v;
+  return internalFunctions.__validateSequenceFunctionStep(action_type, action_config);
+}
+
+// ─────────────────────────────────────────────────────────────
+// expected_base precondition — P11 sequence half
+//
+// The routes/workflows.js checkExpectedBase contract, on sequence templates:
+// optional on every step-mutating route (insert, PUT, PATCH, DELETE,
+// reorder) so the native editor is unchanged; required on every Casey
+// sequence-step proposal. Steps are addressed by POSITION, so a write
+// prepared against a stale view lands on whichever step now occupies the
+// slot (the wf27 scar); the precondition refuses it instead.
+//
+//   expected_base: {
+//     draft_version:    sequence_templates.draft_version AS THE PROPOSER SAW
+//                       IT (null = no draft existed; the proposer read the
+//                       published steps),
+//     step_count:       how many steps the read version had,
+//     step_fingerprint: (optional) lib/versionDiff.sequenceStepFingerprint of
+//                       the step at the route's target position.
+//   }
+//
+// GET /sequences/templates/:id carries every input: template.draft_version,
+// steps.length, and the parsed step rows the fingerprint hashes.
+//
+// MUST run inside the route's transaction, BEFORE ensureDraft: it takes the
+// same parent-row FOR UPDATE lock first (the lock-ordering invariant), so the
+// compared draft_version cannot move between check and write. The base is
+// checked against the version the proposer READ (draft if one existed, else
+// current); when ensureDraft then forks, the fork copies exactly those rows,
+// so a verified base stays verified on the new draft.
+//
+// The shape check mirrors routes/workflows.js expectedBaseShapeError (kept
+// duplicated, like the webhook validators, rather than moving shipped code).
+// Returns null when the base holds; { respond } with a 400 (bad shape), 404,
+// or a structured 409 naming what changed when it does not.
+// ─────────────────────────────────────────────────────────────
+const EXPECTED_BASE_KEYS = new Set(['draft_version', 'step_count', 'step_fingerprint']);
+
+function expectedBaseShapeError(eb) {
+  if (eb == null || typeof eb !== 'object' || Array.isArray(eb)) return 'expected_base must be a JSON object';
+  const unknown = Object.keys(eb).filter((k) => !EXPECTED_BASE_KEYS.has(k));
+  if (unknown.length) return `expected_base has unknown keys: ${unknown.join(', ')}`;
+  if (!('draft_version' in eb) || !('step_count' in eb)) {
+    return 'expected_base needs draft_version (positive integer or null) and step_count';
+  }
+  if (eb.draft_version !== null && (!Number.isInteger(eb.draft_version) || eb.draft_version < 1)) {
+    return 'expected_base.draft_version must be a positive integer or null';
+  }
+  if (!Number.isInteger(eb.step_count) || eb.step_count < 0) {
+    return 'expected_base.step_count must be a non-negative integer';
+  }
+  if (eb.step_fingerprint !== undefined &&
+      (typeof eb.step_fingerprint !== 'string' || !/^[0-9a-f]{64}$/.test(eb.step_fingerprint))) {
+    return 'expected_base.step_fingerprint must be a lowercase sha256 hex string';
+  }
+  return null;
+}
+
+async function checkExpectedBase(connection, templateId, expectedBase, { fingerprintStep = null } = {}) {
+  const shapeErr = expectedBaseShapeError(expectedBase);
+  if (shapeErr) return { respond: { status: 400, body: { error: shapeErr } } };
+  if (expectedBase.step_fingerprint !== undefined && !(Number.isInteger(fingerprintStep) && fingerprintStep > 0)) {
+    return { respond: { status: 400, body: { error: 'expected_base.step_fingerprint requires a target step position on this route' } } };
+  }
+  const [[t]] = await connection.query(
+    `SELECT current_version, draft_version FROM sequence_templates WHERE id = ? FOR UPDATE`,
+    [templateId]
+  );
+  if (!t) return { respond: { status: 404, body: { error: 'Template not found' } } };
+  const conflict = (changed, expected, actual) => ({ respond: { status: 409, body: {
+    error: 'The sequence changed since this edit was prepared — re-read it and rebuild the change against the current draft',
+    conflict: { changed, expected, actual },
+  } } });
+  const liveDraft = t.draft_version == null ? null : Number(t.draft_version);
+  if (liveDraft !== expectedBase.draft_version) {
+    return conflict('draft_version', expectedBase.draft_version, liveDraft);
+  }
+  const readVersion = liveDraft != null ? liveDraft : Number(t.current_version);
+  const [[cnt]] = await connection.query(
+    `SELECT COUNT(*) AS n FROM sequence_steps WHERE template_id = ? AND version = ?`,
+    [templateId, readVersion]
+  );
+  if (Number(cnt.n) !== expectedBase.step_count) {
+    return conflict('step_count', expectedBase.step_count, Number(cnt.n));
+  }
+  if (expectedBase.step_fingerprint !== undefined) {
+    const [[row]] = await connection.query(
+      `SELECT action_type, action_config, timing, \`condition\`, fire_guard, error_policy
+         FROM sequence_steps WHERE template_id = ? AND version = ? AND step_number = ?`,
+      [templateId, readVersion, fingerprintStep]
+    );
+    if (!row) return conflict('step_missing', expectedBase.step_fingerprint, null);
+    const actual = sequenceStepFingerprint(row);
+    if (actual !== expectedBase.step_fingerprint) {
+      return conflict('step_fingerprint', expectedBase.step_fingerprint, actual);
+    }
+  }
   return null;
 }
 
@@ -1125,7 +1248,7 @@ router.post('/sequences/templates/:id/duplicate', jwtOrApiKey, async (req, res) 
 router.post('/sequences/templates/:id/steps', jwtOrApiKey, async (req, res) => {
   const db         = req.db;
   const templateId = parseInt(req.params.id);
-  const { step_number, action_type, action_config, timing, condition, fire_guard, error_policy } = req.body;
+  const { step_number, action_type, action_config, timing, condition, fire_guard, error_policy, expected_base } = req.body;
 
   if (!action_type)  return res.status(400).json({ error: 'action_type is required' });
   if (!action_config) return res.status(400).json({ error: 'action_config is required' });
@@ -1137,14 +1260,33 @@ router.post('/sequences/templates/:id/steps', jwtOrApiKey, async (req, res) => {
     if (v) return res.status(v.status).json({ error: v.error, message: v.message });
   }
 
-  // Slice 3.3 — action_type enum + per-type config validation
+  // Slice 3.3 — action_type enum + per-type config validation; P11 — the
+  // internal-function contract (validateStepWrite). The whole step is being
+  // written, so it is validated whole.
   {
-    const v = await validateStepConfig(db, action_type, action_config);
+    const v = await validateStepWrite(db, action_type, action_config);
     if (v) return res.status(v.status).json({ error: v.error, message: v.message });
   }
 
   try {
+    // Optional `Idempotency-Key` header (P4, extended here for A18.2): a
+    // repeat of the same key replays the first insert's result instead of
+    // adding the step twice (Casey's sequence step-insert card sends its
+    // draft_id). No key = unchanged behaviour. A refusal below (404 /
+    // precondition 409) throws out of the claim, releasing it: the refusal
+    // wrote nothing, so the key stays usable by a corrected retry.
+    const { value: created, replayed } = await idempotentRequest(req, 'sequences.step_insert', async () => {
     const outcome = await db.withTransaction(async (connection) => {
+
+      // expected_base precondition (P11) — before ensureDraft, same parent
+      // lock. For an insert-at-position the fingerprint target is the
+      // DISPLACED occupant of that slot; an append has no target, so a
+      // fingerprint on one is a 400.
+      if (expected_base !== undefined) {
+        const base = await checkExpectedBase(connection, templateId, expected_base,
+          { fingerprintStep: step_number ? parseInt(step_number, 10) : null });
+        if (base) return base;
+      }
 
       // Existence check + edit-target version in one (S4: becomes ensureDraft).
       const editVersion = await ensureDraft(connection, templateId);
@@ -1180,11 +1322,19 @@ router.post('/sequences/templates/:id/steps', jwtOrApiKey, async (req, res) => {
       return { notFound: false, stepId: result.insertId, stepNumber: targetStep };
     });
 
-    if (outcome.notFound) {
-      return res.status(404).json({ error: 'Template not found' });
+    if (outcome.notFound) outcome.respond = { status: 404, body: { error: 'Template not found' } };
+    if (outcome.respond) {
+      const refusal = new Error(`sequence step insert refused (${outcome.respond.status})`);
+      refusal.respond = outcome.respond;
+      throw refusal;
     }
-    res.status(201).json({ success: true, stepId: outcome.stepId, stepNumber: outcome.stepNumber });
+    return { success: true, stepId: outcome.stepId, stepNumber: outcome.stepNumber };
+    });
+
+    res.status(201).json({ ...created, ...(replayed ? { replayed: true } : {}) });
   } catch (err) {
+    if (err && err.respond) return res.status(err.respond.status).json(err.respond.body);
+    if (sendIdempotencyError(res, err)) return;
     res.status(500).json({ error: 'Failed to add step', message: err.message });
   }
 });
@@ -1194,7 +1344,7 @@ router.put('/sequences/templates/:id/steps/:stepNumber', jwtOrApiKey, async (req
   const db         = req.db;
   const templateId = parseInt(req.params.id);
   const stepNum    = parseInt(req.params.stepNumber);
-  const { action_type, action_config, timing, condition, fire_guard, error_policy } = req.body;
+  const { action_type, action_config, timing, condition, fire_guard, error_policy, expected_base } = req.body;
 
   if (!action_type || !action_config || !timing) {
     return res.status(400).json({ error: 'action_type, action_config, and timing are required' });
@@ -1206,9 +1356,11 @@ router.put('/sequences/templates/:id/steps/:stepNumber', jwtOrApiKey, async (req
     if (v) return res.status(v.status).json({ error: v.error, message: v.message });
   }
 
-  // Slice 3.3 — action_type enum + per-type config validation
+  // Slice 3.3 — action_type enum + per-type config validation; P11 — the
+  // internal-function contract (validateStepWrite). The whole step is being
+  // written, so it is validated whole.
   {
-    const v = await validateStepConfig(db, action_type, action_config);
+    const v = await validateStepWrite(db, action_type, action_config);
     if (v) return res.status(v.status).json({ error: v.error, message: v.message });
   }
 
@@ -1218,6 +1370,11 @@ router.put('/sequences/templates/:id/steps/:stepNumber', jwtOrApiKey, async (req
     // was a no-op. Validators above stay OUTSIDE the tx body: withTransaction
     // retries the whole callback once on transient errors.
     const outcome = await db.withTransaction(async (connection) => {
+      // expected_base precondition (P11) — before ensureDraft, same parent lock.
+      if (expected_base !== undefined) {
+        const base = await checkExpectedBase(connection, templateId, expected_base, { fingerprintStep: stepNum });
+        if (base) return base;
+      }
       const editVersion = await ensureDraft(connection, templateId);
       if (editVersion == null) return { respond: { status: 404, body: { error: 'Template not found' } } };
 
@@ -1279,7 +1436,7 @@ router.put('/sequences/templates/:id/steps/:stepNumber', jwtOrApiKey, async (req
 router.patch('/sequences/templates/:id/steps/reorder', jwtOrApiKey, async (req, res) => {
   const db         = req.db;
   const templateId = parseInt(req.params.id);
-  const { fromStep, toStep, order } = req.body;
+  const { fromStep, toStep, order, expected_base } = req.body;
 
   if (!Number.isInteger(templateId) || templateId <= 0) {
     return res.status(400).json({ error: 'Invalid template ID' });
@@ -1292,6 +1449,14 @@ router.patch('/sequences/templates/:id/steps/reorder', jwtOrApiKey, async (req, 
 
   try {
     const outcome = await db.withTransaction(async (connection) => {
+
+      // expected_base precondition (P11) — before ensureDraft, same parent
+      // lock. No per-step fingerprint target on a reorder: draft_version +
+      // step_count are the meaningful base here.
+      if (expected_base !== undefined) {
+        const base = await checkExpectedBase(connection, templateId, expected_base);
+        if (base) return base;
+      }
 
       // Existence check + edit-target version in one (S4: becomes ensureDraft).
       const editVersion = await ensureDraft(connection, templateId);
@@ -1382,7 +1547,7 @@ router.patch('/sequences/templates/:id/steps/:stepNumber', jwtOrApiKey, async (r
   const db         = req.db;
   const templateId = parseInt(req.params.id);
   const stepNum    = parseInt(req.params.stepNumber);
-  const { action_type, action_config, timing, condition, fire_guard, error_policy } = req.body;
+  const { action_type, action_config, timing, condition, fire_guard, error_policy, expected_base } = req.body;
 
   const updates = [];
   const params  = [];
@@ -1394,6 +1559,7 @@ router.patch('/sequences/templates/:id/steps/:stepNumber', jwtOrApiKey, async (r
   if (fire_guard    !== undefined) { updates.push('fire_guard = ?');    params.push(fire_guard ? JSON.stringify(fire_guard) : null); }
   if (error_policy  !== undefined) { updates.push('error_policy = ?'); params.push(error_policy ? JSON.stringify(error_policy) : null); }
 
+  // (expected_base alone is a check, not an edit — still "Nothing to update".)
   if (!updates.length) return res.status(400).json({ error: 'Nothing to update' });
 
   // Validation reads the version the edit WILL land on — the draft if one
@@ -1434,12 +1600,17 @@ router.patch('/sequences/templates/:id/steps/:stepNumber', jwtOrApiKey, async (r
       }
     }
 
-    const v = await validateStepConfig(db, typeToCheck, configToCheck);
+    const v = await validateStepWrite(db, typeToCheck, configToCheck);
     if (v) return res.status(v.status).json({ error: v.error, message: v.message });
   }
 
   try {
     const outcome = await db.withTransaction(async (connection) => {
+      // expected_base precondition (P11) — before ensureDraft, same parent lock.
+      if (expected_base !== undefined) {
+        const base = await checkExpectedBase(connection, templateId, expected_base, { fingerprintStep: stepNum });
+        if (base) return base;
+      }
       const editVersion = await ensureDraft(connection, templateId);
       if (editVersion == null) return { respond: { status: 404, body: { error: 'Template not found' } } };
       const [r] = await connection.query(
@@ -1461,9 +1632,16 @@ router.delete('/sequences/templates/:id/steps/:stepNumber', jwtOrApiKey, async (
   const db         = req.db;
   const templateId = parseInt(req.params.id);
   const stepNum    = parseInt(req.params.stepNumber);
+  const expected_base = req.body ? req.body.expected_base : undefined;
 
   try {
     const outcome = await db.withTransaction(async (connection) => {
+
+      // expected_base precondition (P11) — before ensureDraft, same parent lock.
+      if (expected_base !== undefined) {
+        const base = await checkExpectedBase(connection, templateId, expected_base, { fingerprintStep: stepNum });
+        if (base) return base;
+      }
 
       // Edit-target version (S4: becomes ensureDraft).
       const editVersion = await ensureDraft(connection, templateId);
@@ -1487,6 +1665,7 @@ router.delete('/sequences/templates/:id/steps/:stepNumber', jwtOrApiKey, async (
       return { notFound: false };
     });
 
+    if (outcome.respond) return res.status(outcome.respond.status).json(outcome.respond.body);
     if (outcome.notFound) {
       return res.status(404).json({ error: 'Step not found' });
     }
@@ -2618,4 +2797,4 @@ module.exports = router;
 
 // Test-only handle (tests/sequences.ensureDraft.test.js) — mirrors
 // routes/workflows.js.
-router._test = { ensureDraft };
+router._test = { ensureDraft, checkExpectedBase, validateStepWrite };

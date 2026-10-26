@@ -757,22 +757,40 @@ and the two marked LIVE BUG are worth landing whether or not A17 ever ships.)
   effect. It does NOT retire `custom_code`: the remainder is genuinely bespoke
   (wf27's 19.5 KB formatter, the 7-way Clio command router, the multi-field
   e-sign reshaping), so the execution-boundary question stays live either way.
-- **No optimistic concurrency on SEQUENCE definition writes.** The WORKFLOW
+- **No optimistic concurrency on the SEQUENCE publish route.** The WORKFLOW
   step-mutating routes take an optional `expected_base` precondition since
-  A17.4 (2026-10-24), and `POST /workflows/:id/publish` since A17.6
+  A17.4 (2026-10-24), `POST /workflows/:id/publish` since A17.6
   (2026-10-25: `{draft_version, step_count, draft_fingerprint}` — the
   whole-draft hash — refused as a structured 409 inside the publish
-  transaction). Still open: the sequence step routes and the sequence publish
-  route (A18.2/A18.3's half). The native workflow editor does not SEND either
-  precondition yet, so human-vs-human stale writes and review-then-edit
-  publishes remain possible there until it does — wiring the editor to send
-  them is a small native slice.
-- **Automation step saves are not validation authorities — sequence half.**
-  The workflow half closed with A17.4: unknown `function_name`, undeclared
-  param keys, `params: null`, and `error_policy` shape/strategy are refused at
-  save. Still open: sequence `sms`/`email`/`task`/`internal_function` steps
-  get no param validation at all (blocks Casey A18.2), and publish re-runs
-  shape and branch-target checks but never params or function existence.
+  transaction), and the five SEQUENCE step-mutating routes since the P11
+  sequence half (2026-10-26, `lib/versionDiff.sequenceStepFingerprint`).
+  Still open: the sequence publish route (A18.3's half). Neither native
+  editor SENDS the precondition yet, so human-vs-human stale writes and
+  review-then-edit publishes remain possible there until it does — wiring
+  the editors to send it is a small native slice.
+- **Automation publish is not a param-validation authority.** Step saves are:
+  the workflow half closed with A17.4 (unknown `function_name`, undeclared
+  param keys, `params: null`, `error_policy` shape/strategy refused at save),
+  the sequence half on 2026-10-26 (`sms`/`email`/`task`/`internal_function`
+  steps: missing / unknown / workflow-only `function_name`, undeclared keys,
+  `params: null`, required params). Still open: publish (both engines) re-runs
+  shape / branch-target / `validateStepConfig` checks but never params or
+  function existence, so a draft step whose function was renamed after it was
+  saved publishes clean; and sequence `error_policy` is unvalidated at save
+  (the engine treats any strategy other than `abort` / `retry_then_abort` as
+  ignore — live rows hold `ignore`, `retry_then_ignore` or NULL).
+- **Casey sequence authoring (A18.2) — what it leaves open.** (1) Workflow-
+  draft send parity: ruling 14 (2026-10-26) allows `send_sms`/`send_email`
+  in SEQUENCE drafts only; the workflow allowlist stays sender-free until its
+  own slice, and A14 rises in priority. (2) `automation.definition` for a
+  sequence reads `current_version` by default even when a draft exists, so the
+  evidence Casey cites can show the published steps while the card inserts
+  into the draft (the card names the displaced DRAFT step and the base check
+  holds, so nothing lands wrong — but the model plans against the wrong list);
+  make the sequence read draft-aware (today both definition reads fall back to
+  the draft only for a never-published, v0 record). (3) Not authorable yet: editing or deleting a sequence step,
+  conditions, fire guards, error policies, internal_function / webhook /
+  start_workflow steps, and publish (A18.3).
 - **`POST /executions/:id/resume` is neither state-guarded nor atomic.** It
   refuses only `active|processing|delayed`, so `completed` and `held`
   executions are resumable; it never checks `workflows.active`; and a plain

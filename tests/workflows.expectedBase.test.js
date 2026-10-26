@@ -326,6 +326,23 @@ describe('save-time closures (P11)', () => {
     expect(r.body.error).toMatch(/Unknown function_name "create_tsak"/);
   });
 
+  // A18.2: an Object.prototype member or a `__` registry helper is callable
+  // off the registry object but is not an internal function. Each used to
+  // reach the meta-less permissive branch and save clean.
+  test('a registry helper or an Object.prototype member is refused as a function_name', async () => {
+    for (const name of ['toString', 'constructor', 'hasOwnProperty', '__getAllMeta', '__validateFunctionParams']) {
+      const r = await put({ type: 'internal_function', config: { function_name: name, params: {} } });
+      expect({ name, status: r.status }).toEqual({ name, status: 400 });
+      expect(r.body.error).toMatch(/Unknown function_name/);
+    }
+    const internalFunctions = require('../lib/internal_functions');
+    for (const name of ['toString', 'constructor', '__getAllMeta', '__getMeta']) {
+      expect(internalFunctions.__validateFunctionParams(name, {}))
+        .toMatchObject({ status: 400, error: expect.stringMatching(/Unknown function_name/) });
+    }
+    expect(internalFunctions.__validateFunctionParams('noop', {})).toBeNull();
+  });
+
   test('params: null no longer skips required-param validation', async () => {
     const r = await put({ type: 'internal_function', config: { function_name: 'create_task', params: null } });
     expect(r.status).toBe(400);

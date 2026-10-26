@@ -175,6 +175,40 @@ const WORKFLOW_PUBLISH_KEYS = new Set(['kind', 'workflow_id', 'evidence']);
 const WORKFLOW_PUBLISH_EFFECT_RE = /^(?:send_|esign_)/;
 const WORKFLOW_PUBLISH_EFFECT_FNS = new Set(['enroll_sequence', 'start_workflow', 'create_cta', 'update_db', 'insert_db', 'set_setting']);
 
+// A18.2: insert ONE step into an existing sequence template's DRAFT. Action
+// types sms / email / task only, the function PINNED per type
+// (lib/caseyAutomationAllowlist.js CASEY_SEQUENCE_AUTHORABLE — ruling 14
+// admits the two senders here as 'external-send'); the model writes the
+// params and the timing, never the function. Timing takes the engine's full
+// vocabulary (lib/sequenceEngine calculateStepTime) under two guardrails: an
+// absolute delay.at is a LITERAL datetime (a placeholder that resolves empty
+// throws inside scheduling and wedges the enrollment), and the two
+// appointment-anchored types are disclosed as silently skipping once their
+// window has passed. No condition, fire_guard, or error_policy is authored —
+// the browser's fixed builder pins the editor's no-retry policy (a retried
+// send can reach a client twice). Same expected_base precondition as A17.4,
+// and the route honours the card's draft_id as Idempotency-Key.
+const SEQUENCE_ACTION_KINDS = new Set(['sequence.step_insert.v1']);
+const SEQUENCE_STEP_INSERT_KEYS = new Set(['kind', 'sequence_template_id', 'step_number', 'action_type', 'action_config', 'timing', 'evidence']);
+const SEQUENCE_ACTION_CONFIG_KEYS = new Set(['function_name', 'params']);
+const SEQUENCE_STEP_MAX_PARAMS_JSON = 20000;
+// Every timing type the engine schedules, with the keys it reads (timezone is
+// deliberately absent: the card renders firm time, so a step in another zone
+// would review as the wrong hour). Pinned against the route's
+// ALLOWED_TIMING_TYPES by tests/caseySequenceStep.test.js.
+const SEQUENCE_TIMING_KEYS = Object.freeze({
+  immediate: [],
+  delay: ['value', 'unit', 'at', 'randomizeMinutes'],
+  next_business_day: ['timeOfDay', 'randomizeMinutes', 'minDaysAhead', 'maxDaysAhead', 'noSunday'],
+  business_days: ['value', 'timeOfDay', 'randomizeMinutes', 'minDaysAhead', 'noSunday'],
+  open_delay: ['delay', 'jitter', 'rollTime', 'dayWindow', 'noSunday'],
+  before_appt: ['hoursBack', 'sameTimeAsAnchor', 'timeOfDay', 'randomizeMinutes', 'minHoursBefore', 'maxDaysBack'],
+  before_appt_fixed: ['hoursBack'],
+});
+const SEQUENCE_DELAY_UNITS = { seconds: 1, minutes: 60, hours: 3600, days: 86400 };
+const SEQUENCE_MAX_DELAY_SECONDS = 366 * 86400;
+const SEQUENCE_HHMM_RE = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
+
 const CONTACT_SUBRECORD_ACTION_KINDS = new Set([
   'contact.phone.create.v1', 'contact.phone.update.v1', 'contact.phone.end.v1',
   'contact.email.create.v1', 'contact.email.update.v1', 'contact.email.end.v1',
@@ -1711,6 +1745,336 @@ async function normalizeWorkflowPublishAction(db, value, evidence) {
   };
 }
 
+// ── A18.2: sequence step insert ────────────────────────────────────────────
+
+function evidenceSupportsSequence(evidenceRefs, evidence, templateId) {
+  return evidenceRefs.some((ref) => {
+    const query = evidence.find((item) => item && item.id === ref.query_id);
+    const row = query && Array.isArray(query.rows) ? query.rows[ref.row_number - 1] : null;
+    return row && Number(row.sequence_template_id) === templateId;
+  });
+}
+
+function seqDuration(seconds) {
+  const s = Number(seconds);
+  const plural = (n, unit) => `${n} ${unit}${n === 1 ? '' : 's'}`;
+  if (s % 86400 === 0) return plural(s / 86400, 'day');
+  if (s % 3600 === 0) return plural(s / 3600, 'hour');
+  if (s % 60 === 0) return plural(s / 60, 'minute');
+  if (s < 60) return plural(Math.round(s), 'second');
+  return plural(Math.round(s / 60), 'minute');
+}
+
+function seqHours(hours) {
+  return seqDuration(Math.round(Number(hours) * 3600));
+}
+
+function seqFirmTime(date) {
+  return `${date.toLocaleString('en-US', { timeZone: FIRM_TZ, weekday: 'short', year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })} firm time`;
+}
+
+// One timing value, validated against the engine's vocabulary and rendered
+// in plain language. Returns { timing, text, notes } — notes are the card's
+// disclosures (anchoring, skips, firm-wide fixed moments).
+function normalizeSequenceTiming(raw) {
+  const fail = (msg) => { throw httpError(422, `Sequence step timing: ${msg}`); };
+  if (raw == null || typeof raw !== 'object' || Array.isArray(raw)) fail('must be an object with a type');
+  const type = raw.type;
+  if (!Object.prototype.hasOwnProperty.call(SEQUENCE_TIMING_KEYS, type)) {
+    fail(`type must be one of ${Object.keys(SEQUENCE_TIMING_KEYS).join(', ')}`);
+  }
+  const allowed = new Set(['type', ...SEQUENCE_TIMING_KEYS[type]]);
+  const unknown = Object.keys(raw).filter((k) => !allowed.has(k));
+  if (unknown.length) {
+    fail(`${type} does not take ${unknown.join(', ')}${unknown.includes('timezone') ? ' (steps always run on firm time)' : ''} — it takes ${[...allowed].slice(1).join(', ') || 'nothing else'}`);
+  }
+  const has = (k) => raw[k] !== undefined && raw[k] !== null;
+  const int = (k, lo, hi) => {
+    if (!has(k)) return undefined;
+    const n = raw[k];
+    if (!Number.isInteger(n) || n < lo || n > hi) fail(`${k} must be a whole number from ${lo} to ${hi}`);
+    return n;
+  };
+  const bool = (k) => {
+    if (!has(k)) return undefined;
+    if (typeof raw[k] !== 'boolean') fail(`${k} must be true or false`);
+    return raw[k];
+  };
+  const hhmm = (k, value = raw[k]) => {
+    if (value === undefined || value === null) return undefined;
+    if (typeof value !== 'string' || !SEQUENCE_HHMM_RE.test(value)) fail(`${k} must be a 24-hour HH:MM time like "09:30"`);
+    return value;
+  };
+  const timing = { type };
+  const notes = [];
+  let text;
+  const jitterText = (n) => (n ? `, randomized ±${n} min` : '');
+  const sundayText = (b) => (b ? ', never on a Sunday' : '');
+
+  if (type === 'immediate') {
+    text = 'Immediately (about 5 seconds after the previous step, or after enrollment for step 1)';
+  } else if (type === 'delay') {
+    const absolute = has('at');
+    if (absolute && (has('value') || has('unit'))) fail('delay takes either at (one fixed moment) or value + unit (relative), not both');
+    const rm = int('randomizeMinutes', 0, 1440);
+    if (rm !== undefined) timing.randomizeMinutes = rm;
+    if (absolute) {
+      if (typeof raw.at !== 'string' || !raw.at.trim()) fail('delay.at must be a datetime string');
+      // Ruling 14 guardrail: LITERAL only. A {{placeholder}} that resolves
+      // empty throws inside scheduling, where error_policy never sees it,
+      // and leaves the enrollment active with no job (the A18.0 trap).
+      if (raw.at.includes('{{')) fail('delay.at must be a literal datetime — Casey never writes a {{placeholder}} there, because one that resolves empty wedges the enrollment');
+      let at;
+      try { at = parseUserDateTime(raw.at); } catch (e) { fail(`delay.at: ${e.message}`); }
+      if (!at || isNaN(at.getTime())) fail('delay.at is not a valid datetime');
+      if (at.getTime() <= Date.now()) fail('delay.at is in the past — every enrollment would fire this step at once');
+      timing.at = raw.at.trim();
+      text = `At one fixed moment: ${seqFirmTime(at)}${jitterText(rm)}`;
+      notes.push('This is ONE fixed moment for every enrollment. An enrollment that reaches this step after that moment has passed fires it on the next scheduler tick — about a minute later.');
+    } else {
+      const unit = raw.unit;
+      if (!Object.prototype.hasOwnProperty.call(SEQUENCE_DELAY_UNITS, unit)) fail('delay.unit must be seconds, minutes, hours, or days');
+      const value = raw.value;
+      if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) fail('delay.value must be a positive number');
+      const seconds = value * SEQUENCE_DELAY_UNITS[unit];
+      if (seconds > SEQUENCE_MAX_DELAY_SECONDS) fail('delay is longer than 366 days');
+      Object.assign(timing, { value, unit });
+      text = `${seqDuration(seconds)} after the previous step (or after enrollment for step 1)${jitterText(rm)}`;
+    }
+  } else if (type === 'next_business_day' || type === 'business_days') {
+    let count = 1;
+    if (type === 'business_days') {
+      count = int('value', 1, 60);
+      if (count === undefined) fail('business_days needs value: how many business days (1-60)');
+      timing.value = count;
+    }
+    const tod = hhmm('timeOfDay') || '09:00';
+    timing.timeOfDay = tod;
+    const rm = int('randomizeMinutes', 0, 1440);
+    const minDays = int('minDaysAhead', 0, 30);
+    const maxDays = type === 'next_business_day' ? int('maxDaysAhead', 1, 60) : undefined;
+    const noSunday = bool('noSunday');
+    if (rm !== undefined) timing.randomizeMinutes = rm;
+    if (minDays !== undefined) timing.minDaysAhead = minDays;
+    if (maxDays !== undefined) timing.maxDaysAhead = maxDays;
+    if (noSunday !== undefined) timing.noSunday = noSunday;
+    text = `${type === 'next_business_day' ? 'The next business day' : `${count} business day${count === 1 ? '' : 's'} later`} at ${tod} firm time${jitterText(rm)}` +
+      `${minDays ? `, at least ${minDays} day${minDays === 1 ? '' : 's'} out` : ''}${sundayText(noSunday)}`;
+    notes.push('Business days skip Shabbos and Yom Tov.');
+  } else if (type === 'open_delay') {
+    let delaySeconds = 0;
+    if (has('delay')) {
+      const d = raw.delay;
+      if (typeof d !== 'object' || Array.isArray(d) || !onlyKeys(d, new Set(['value', 'unit']))) fail('open_delay.delay must be { value, unit }');
+      if (!Object.prototype.hasOwnProperty.call(SEQUENCE_DELAY_UNITS, d.unit)) fail('open_delay.delay.unit must be seconds, minutes, hours, or days');
+      if (typeof d.value !== 'number' || !Number.isFinite(d.value) || d.value < 0) fail('open_delay.delay.value must be zero or a positive number');
+      delaySeconds = d.value * SEQUENCE_DELAY_UNITS[d.unit];
+      if (delaySeconds > SEQUENCE_MAX_DELAY_SECONDS) fail('open_delay.delay is longer than 366 days');
+      timing.delay = { value: d.value, unit: d.unit };
+    }
+    const jitter = int('jitter', 0, 1440);
+    if (jitter !== undefined) timing.jitter = jitter;
+    const roll = hhmm('rollTime');
+    if (roll !== undefined) timing.rollTime = roll;
+    let windowText = '';
+    if (has('dayWindow')) {
+      const w = raw.dayWindow;
+      if (typeof w !== 'object' || Array.isArray(w) || !onlyKeys(w, new Set(['start', 'end'])) ||
+          !Number.isInteger(w.start) || !Number.isInteger(w.end) || w.start < 0 || w.end > 24 || w.start >= w.end) {
+        fail('open_delay.dayWindow must be { start, end } whole hours with 0 <= start < end <= 24');
+      }
+      timing.dayWindow = { start: w.start, end: w.end };
+      windowText = `; outside ${w.start}:00-${w.end}:00 it moves to ${roll || `${String(w.start).padStart(2, '0')}:00`}`;
+    }
+    const noSunday = bool('noSunday');
+    if (noSunday !== undefined) timing.noSunday = noSunday;
+    text = `${delaySeconds ? `${seqDuration(delaySeconds)}` : 'Right'} after the previous step (or after enrollment for step 1)${jitterText(jitter)}, ` +
+      `moved past Shabbos/Yom Tov to just after it ends${windowText}${sundayText(noSunday)}`;
+  } else {
+    // before_appt / before_appt_fixed — appointment-anchored.
+    const hb = raw.hoursBack;
+    if (typeof hb !== 'number' || !Number.isFinite(hb) || hb <= 0 || hb > 1440) fail(`${type}.hoursBack must be a positive number of hours (at most 1440)`);
+    timing.hoursBack = hb;
+    if (type === 'before_appt_fixed') {
+      text = `Exactly ${seqHours(hb)} before the appointment`;
+    } else {
+      const same = bool('sameTimeAsAnchor');
+      const tod = hhmm('timeOfDay');
+      const rm = int('randomizeMinutes', 0, 1440);
+      const maxBack = int('maxDaysBack', 1, 60);
+      let minBefore;
+      if (has('minHoursBefore')) {
+        minBefore = raw.minHoursBefore;
+        if (typeof minBefore !== 'number' || !Number.isFinite(minBefore) || minBefore <= 0 || minBefore > 1440) fail('before_appt.minHoursBefore must be a positive number of hours');
+        timing.minHoursBefore = minBefore;
+      }
+      if (same !== undefined) timing.sameTimeAsAnchor = same;
+      if (tod !== undefined) timing.timeOfDay = tod;
+      if (rm !== undefined) timing.randomizeMinutes = rm;
+      if (maxBack !== undefined) timing.maxDaysBack = maxBack;
+      if (same && tod) fail('before_appt takes sameTimeAsAnchor OR timeOfDay, not both');
+      const days = Math.ceil(hb / 24);
+      text = same
+        ? `${days} day${days === 1 ? '' : 's'} before the appointment, at the appointment's own time of day`
+        : `${seqHours(hb)} before the appointment${tod ? `, set to ${tod} firm time on that day` : ''}`;
+      text += `${jitterText(rm)}; moved earlier past Shabbos/Yom Tov (up to ${maxBack || 14} days back), never closer than ${seqHours(minBefore || 1)} to the appointment`;
+    }
+    notes.push('Appointment-anchored: the enrollment must carry the appointment time (trigger_data.appt_time), or this step cannot be scheduled.');
+    notes.push('If that slot has already passed when the enrollment reaches this step (a short-notice booking, for example), the step is SILENTLY SKIPPED as unschedulable — no message, no error.');
+  }
+  return { timing, text, notes };
+}
+
+async function normalizeSequenceStepInsertAction(db, value, evidence) {
+  if (require('../lib/firmConfig').cfg('casey_sequence_authoring_enabled') === '0') {
+    throw httpError(422, 'Action kind is unavailable');
+  }
+  const unknown = value && typeof value === 'object' ? Object.keys(value).filter((k) => !SEQUENCE_STEP_INSERT_KEYS.has(k)) : [];
+  if (unknown.length) {
+    throw httpError(422, `Sequence step insert carries unsupported fields: ${unknown.join(', ')} — it takes sequence_template_id, step_number, action_type, action_config, timing, evidence`);
+  }
+  const templateId = Number(value.sequence_template_id);
+  if (!Number.isSafeInteger(templateId) || templateId < 1) {
+    throw httpError(422, 'Sequence step insert needs a positive sequence_template_id');
+  }
+  const refs = jobDraftEvidence(value.evidence, evidence);
+  if (!refs.length || !evidenceSupportsSequence(refs, evidence, templateId)) {
+    throw httpError(422, 'Sequence step insert evidence does not identify the target template — read it with automation.definition (sequence_template_id) first');
+  }
+
+  // The allowlist first: the action type picks the PINNED function.
+  const { CASEY_SEQUENCE_AUTHORABLE } = require('../lib/caseyAutomationAllowlist');
+  const actionType = value.action_type;
+  const pinned = typeof actionType === 'string' && CASEY_SEQUENCE_AUTHORABLE.has(actionType) ? CASEY_SEQUENCE_AUTHORABLE.get(actionType) : null;
+  if (!pinned) {
+    throw httpError(422, `Sequence step action_type "${actionType}" is not authorable — Casey inserts sms, email, or task steps only; internal_function, webhook, and start_workflow steps are added by hand in the sequence editor`);
+  }
+  const cfg = value.action_config;
+  if (cfg == null || typeof cfg !== 'object' || Array.isArray(cfg)) {
+    throw httpError(422, 'Sequence step action_config must be an object holding params');
+  }
+  if (Object.prototype.hasOwnProperty.call(cfg, 'type')) {
+    throw httpError(422, 'Sequence step action_config must not contain a "type" key');
+  }
+  const cfgUnknown = Object.keys(cfg).filter((k) => !SEQUENCE_ACTION_CONFIG_KEYS.has(k));
+  if (cfgUnknown.length) {
+    throw httpError(422, `Sequence step action_config carries unsupported fields: ${cfgUnknown.join(', ')} — it takes params only`);
+  }
+  if (cfg.function_name !== undefined && cfg.function_name !== pinned.function_name) {
+    throw httpError(422, `A ${actionType} step always runs ${pinned.function_name} — omit function_name or set it to "${pinned.function_name}"`);
+  }
+  const params = cfg.params;
+  if (params == null || typeof params !== 'object' || Array.isArray(params)) {
+    throw httpError(422, 'Sequence step action_config.params must be a JSON object');
+  }
+  let paramsJson;
+  try { paramsJson = JSON.stringify(params); } catch (_) { throw httpError(422, 'Sequence step params are not serializable'); }
+  if (paramsJson.length > SEQUENCE_STEP_MAX_PARAMS_JSON) {
+    throw httpError(422, `Sequence step params exceed ${SEQUENCE_STEP_MAX_PARAMS_JSON} characters of JSON`);
+  }
+  // The exact checks the route runs (P11 sequence half), after the allowlist.
+  const vErr = require('../lib/internal_functions').__validateSequenceFunctionStep(actionType, { function_name: pinned.function_name, params });
+  if (vErr) throw httpError(422, `Sequence step: ${vErr.error}`);
+
+  // Sender and recipient-side guardrails (the evidence rule applied to
+  // identities): the sender is a LITERAL firm line or mailbox, never a
+  // placeholder the card cannot show resolved.
+  let sender = null;
+  let assignee = null;
+  if (actionType === 'sms') {
+    const from = String(params.from);
+    if (from.includes('{{')) throw httpError(422, 'An SMS step\'s from must be a literal firm line number, not a placeholder');
+    const [[line]] = await db.query('SELECT phone_number, display_name FROM phone_lines WHERE phone_number = ? AND active = 1 LIMIT 1', [from]);
+    if (!line) throw httpError(422, `SMS from "${from}" is not an active firm phone line — use one of the firm's 10-digit line numbers`);
+    sender = `${line.display_name || 'Line'} (${line.phone_number})`;
+  } else if (actionType === 'email') {
+    if (params.attachment_urls !== undefined) {
+      throw httpError(422, 'Casey does not author email attachments (attachment_urls are fetched at send time) — tell the user to add them by hand in the sequence editor');
+    }
+    const from = String(params.from);
+    if (from.includes('{{')) throw httpError(422, 'An email step\'s from must be a literal firm mailbox, not a placeholder');
+    const [[box]] = await db.query('SELECT email, from_name FROM email_credentials WHERE email = ? LIMIT 1', [from]);
+    if (!box) throw httpError(422, `Email from "${from}" is not a configured firm mailbox`);
+    sender = `${box.from_name ? `${box.from_name} ` : ''}<${box.email}>`;
+  } else {
+    const raw = params.assigned_to;
+    const literal = typeof raw === 'number' || (typeof raw === 'string' && /^\d+$/.test(raw.trim()));
+    if (literal) {
+      const staff = await taskService.findAssignableStaff(db, Number(raw));
+      if (!staff) throw httpError(422, `Task assignee ${raw} is not an active staff member`);
+      assignee = `${staff.user_name || `User ${staff.user}`} (#${staff.user})`;
+    } else {
+      assignee = `resolved per enrollment from ${String(raw)}`;
+    }
+  }
+
+  const timing = normalizeSequenceTiming(value.timing);
+
+  const [[tpl]] = await db.query(
+    'SELECT id, name, type, active, current_version, draft_version FROM sequence_templates WHERE id = ?', [templateId]);
+  if (!tpl) throw httpError(422, `Sequence template ${templateId} is unavailable`);
+  const draftVersion = tpl.draft_version == null ? null : Number(tpl.draft_version);
+  const currentVersion = Number(tpl.current_version);
+  // The EDITING version (the draft when one exists), as GET
+  // /sequences/templates/:id serves it and as the route's precondition reads
+  // it — not automation.definition's published default.
+  const readVersion = draftVersion != null ? draftVersion : currentVersion;
+  const [steps] = await db.query(
+    `SELECT step_number, action_type, action_config, timing, \`condition\`, fire_guard, error_policy
+       FROM sequence_steps WHERE template_id = ? AND version = ? ORDER BY step_number`,
+    [templateId, readVersion]);
+  const [[running]] = await db.query(
+    "SELECT COUNT(*) AS n FROM sequence_enrollments WHERE template_id = ? AND status = 'active'", [templateId]);
+
+  let position = null;
+  if (value.step_number !== undefined && value.step_number !== null) {
+    position = Number(value.step_number);
+    if (!Number.isSafeInteger(position) || position < 1 || position > steps.length + 1) {
+      throw httpError(422, `Sequence step insert position must be 1-${steps.length + 1} (the template's ${draftVersion != null ? 'draft' : 'current version'} has ${steps.length} steps)`);
+    }
+    if (position === steps.length + 1) position = null; // appending by position IS an append
+  }
+  const { sequenceStepFingerprint, parseMaybeJson } = require('../lib/versionDiff');
+  const expectedBase = { draft_version: draftVersion, step_count: steps.length };
+  let displaces = null;
+  if (position != null) {
+    const occupant = steps[position - 1];
+    expectedBase.step_fingerprint = sequenceStepFingerprint(occupant);
+    const occCfg = parseMaybeJson(occupant.action_config) || {};
+    displaces = { step_number: occupant.step_number, summary: `${occupant.action_type}${occCfg.function_name ? ` (${occCfg.function_name})` : ''}` };
+  }
+
+  return {
+    draft_id: crypto.randomUUID(),
+    kind: 'sequence.step_insert.v1',
+    status: 'draft',
+    template: {
+      sequence_template_id: templateId,
+      name: String(tpl.name || `Template ${templateId}`).slice(0, 200),
+      type: tpl.type == null ? null : String(tpl.type).slice(0, 100),
+      active: tpl.active ? 1 : 0,
+      published_version: currentVersion,
+      has_draft: draftVersion != null ? 1 : 0,
+      active_enrollments: Number(running && running.n) || 0,
+    },
+    position,
+    displaces,
+    step: {
+      action_type: actionType,
+      function_name: pinned.function_name,
+      side_effect: pinned.side_effect,
+      params,
+      timing: timing.timing,
+    },
+    timing_text: timing.text,
+    timing_notes: timing.notes,
+    ...(sender ? { sender } : {}),
+    ...(assignee ? { assignee } : {}),
+    expected_base: expectedBase,
+    evidence: refs,
+  };
+}
+
 async function normalizeHookCreateAction(db, value, evidence) {
   if (require('../lib/firmConfig').cfg('casey_hook_authoring_enabled') === '0') {
     throw httpError(422, 'Action kind is unavailable');
@@ -1784,6 +2148,7 @@ async function normalizeHookCreateAction(db, value, evidence) {
 async function normalizeActionDraft(db, value, evidence, { currentUserId = null } = {}) {
   if (value == null) return null;
   if (value && HOOK_ACTION_KINDS.has(value.kind)) return normalizeHookCreateAction(db, value, evidence);
+  if (value && SEQUENCE_ACTION_KINDS.has(value.kind)) return normalizeSequenceStepInsertAction(db, value, evidence);
   if (value && WORKFLOW_ACTION_KINDS.has(value.kind)) {
     if (value.kind === 'workflow.draft.v1') return normalizeWorkflowDraftAction(db, value, evidence);
     if (value.kind === 'workflow.publish.v1') return normalizeWorkflowPublishAction(db, value, evidence);
@@ -1905,7 +2270,12 @@ function taskDraftRequested(question, history = []) {
     /\b(?:draft|create|make|build|compose|propose|prepare|set up|insert|add|edit|update|change|fix|modify|tweak|adjust|publish|go live|activate the draft)\b/i.test(request);
   const hook = /\b(?:hook|webhook endpoint|inbound endpoint)\b/i.test(text) &&
     /\b(?:create|make|add|build|set up|propose|prepare)\b/i.test(request);
-  return task || event || appt || contactSubrecord || job || workflow || hook;
+  // A18.2: one step into a sequence template's draft. "drip" and "reminder
+  // sequence" are how staff name them; the verb set is insert-shaped (there
+  // is no sequence edit or publish kind yet).
+  const sequence = /\b(?:sequences?|sequence template|drip)\b/i.test(text) &&
+    /\b(?:draft|propose|prepare|insert|add|append|create|make|build|set up)\b/i.test(request);
+  return task || event || appt || contactSubrecord || job || workflow || hook || sequence;
 }
 
 function contextualAnswer(question, history) {

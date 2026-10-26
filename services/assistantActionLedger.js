@@ -19,6 +19,7 @@ const KINDS = new Map([
   ['workflow.step_edit.v1', 'workflow_id'],
   ['workflow.publish.v1', 'workflow_id'],
   ['hook.create.v1', 'hook_id'],
+  ['sequence.step_insert.v1', 'sequence_template_id'],
 ]);
 function fail(status, message) { const e = new Error(message); e.status = status; throw e; }
 function actor(userId) {

@@ -48,6 +48,7 @@ const PLAN_FAMILY_MARKERS = {
   job: 'reviewed safe code job action is available',
   workflow: 'reviewed workflow-draft action is available',
   hook: 'reviewed hook action is available',
+  sequence: 'reviewed sequence-step action is available',
 };
 
 describe('every shipped action kind is taught to every model stage', () => {
@@ -97,6 +98,7 @@ describe('every shipped action kind is taught to every model stage', () => {
     // It only needs to not contradict: the old text said "task or event
     // proposal", which read as an exhaustive list to the model.
     expect(investigatePrompt).toContain('task, event, appointment, contact subrecord, or safe code job');
+    expect(investigatePrompt).toContain('sequence-step proposals');
   });
 });
 
@@ -114,6 +116,10 @@ describe('a job request forces the draft-required path like the other families',
     // clause and prove nothing.
     expect(svc.taskDraftRequested('Set up a hook for inbound site form submissions')).toBe(true);
     expect(svc.taskDraftRequested('What hooks do we have?')).toBe(false);
+    // A18.2: a sequence-only phrase rides the sequence clause.
+    expect(svc.taskDraftRequested('Add a text reminder step to the no-show sequence')).toBe(true);
+    expect(svc.taskDraftRequested('Please insert an email into sequence 12 two days later')).toBe(true);
+    expect(svc.taskDraftRequested('Why did the no-show sequence skip step 3?')).toBe(false);
   });
 });
 

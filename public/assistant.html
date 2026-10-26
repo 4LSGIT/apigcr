@@ -934,6 +934,75 @@ function workflowPublishResult(draft, result) {
   return { workflow_id: Number(draft.workflow.workflow_id), published_version: version };
 }
 
+// Sequence step insert (A18.2): ONE sms / email / task step into an existing
+// sequence template's DRAFT. The function is pinned HERE per action type —
+// the draft's own function_name is never read — and the error policy is the
+// native editor's no-retry default (a retried send can reach a client twice);
+// no condition or fire guard is sent. The server-computed expected_base rides
+// verbatim, so the route refuses a stale card with a structured 409.
+const SEQUENCE_STEP_ACTION_KINDS = new Set(['sequence.step_insert.v1']);
+const SEQUENCE_STEP_FUNCTIONS = Object.freeze({ sms: 'send_sms', email: 'send_email', task: 'create_task' });
+const SEQUENCE_STEP_ERROR_POLICY = Object.freeze({ strategy: 'ignore', max_retries: 0, backoff_seconds: 5 });
+
+function sequenceStepActionLabel() { return 'Insert sequence step'; }
+
+function sequenceStepParamValue(value) {
+  return typeof value === 'string' ? value : JSON.stringify(value);
+}
+
+function sequenceStepText(draft) {
+  const t = draft.template || {};
+  const step = draft.step || {};
+  const fn = SEQUENCE_STEP_FUNCTIONS[step.action_type];
+  const lines = ['Sequence step insert proposal — not applied',
+    `Template: #${t.sequence_template_id} "${t.name}"${t.type ? ` (type ${t.type})` : ''} — ${t.active ? 'active' : 'INACTIVE'}, published v${t.published_version}${t.has_draft ? ', has an unpublished draft' : ''}`];
+  if (draft.position != null) {
+    lines.push(`Position: step ${draft.position}${draft.displaces ? ` — current step ${draft.displaces.step_number} (${draft.displaces.summary}) and every later step move down one place` : ''}`);
+  } else {
+    lines.push(`Position: appended as step ${Number(draft.expected_base && draft.expected_base.step_count) + 1}, the last step`);
+  }
+  lines.push(`Action: ${step.action_type} step — runs ${fn}${step.side_effect === 'external-send' ? ' (MESSAGES A CLIENT)' : ''}`);
+  if (draft.sender) lines.push(`Sender: ${draft.sender}`);
+  if (draft.assignee) lines.push(`Assignee: ${draft.assignee}`);
+  for (const [key, value] of Object.entries(step.params || {})) lines.push(`Param ${key}: ${sequenceStepParamValue(value)}`);
+  lines.push(`Timing: ${draft.timing_text}`);
+  for (const note of draft.timing_notes || []) lines.push(`Timing note: ${note}`);
+  lines.push(`On error: ${SEQUENCE_STEP_ERROR_POLICY.strategy}, no retries. No step condition and no fire guard — add those by hand in the sequence editor if needed.`);
+  lines.push('Draft only: this edits the template\'s DRAFT. Nothing runs until a human publishes the template in the sequence editor.');
+  lines.push(`Enrollments: the ${t.active_enrollments || 0} enrollment(s) already running stay on their version and never reach this step.`);
+  if (step.side_effect === 'external-send') {
+    lines.push(`Client messages: once a human publishes the template, this step ${step.action_type === 'sms' ? 'TEXTS' : 'EMAILS'} the client on every NEW enrollment that reaches it.`);
+  } else {
+    lines.push('Records: once a human publishes the template, this step creates a task on every NEW enrollment that reaches it.');
+  }
+  lines.push('Stale check: if anyone changes this template before you apply, the server refuses the write and Casey must re-read it.');
+  return lines.join('\n');
+}
+
+function sequenceStepActionRequest(draft) {
+  const step = draft.step || {};
+  const functionName = SEQUENCE_STEP_FUNCTIONS[step.action_type];
+  if (!functionName) throw new Error('This sequence step type cannot be applied from a card.');
+  const tplId = Number(draft.template && draft.template.sequence_template_id);
+  const body = {
+    action_type: step.action_type,
+    action_config: { function_name: functionName, params: step.params || {} },
+    timing: step.timing,
+    error_policy: { ...SEQUENCE_STEP_ERROR_POLICY },
+    expected_base: draft.expected_base,
+  };
+  if (draft.position != null) body.step_number = Number(draft.position);
+  return { path: `/sequences/templates/${tplId}/steps`, method: 'POST', body, idempotent: true };
+}
+
+function sequenceStepActionResult(draft, result) {
+  const stepNumber = Number(result && result.stepNumber);
+  if (!(result && result.success === true) || !Number.isSafeInteger(stepNumber) || stepNumber < 1) {
+    throw new Error('The sequence step action returned no usable step number');
+  }
+  return { sequence_template_id: Number(draft.template.sequence_template_id), step_number: stepNumber };
+}
+
 // Applied automation cards deep-link to their record through the shell's
 // semantic navigation (Fred, 2026-10-22: "take the user right there"). The
 // destination ids and token grammar are the SHELL's; this passes only the
@@ -1122,6 +1191,20 @@ const ACTION_FAMILIES = [
       'Find it under More → Automations → Workflows. The published version is now live.'),
   },
   {
+    id: 'sequence_step', kinds: SEQUENCE_STEP_ACTION_KINDS, title: 'Sequence step', noun: 'sequence step', errorNoun: 'sequence step action',
+    label: sequenceStepActionLabel, text: sequenceStepText, request: sequenceStepActionRequest,
+    result: sequenceStepActionResult, idField: 'sequence_template_id', appliedKey: 'result_step_template_id',
+    danger: (draft) => !!(draft.step && draft.step.side_effect === 'external-send'),
+    resultText: (payload) => `sequence template #${payload.sequence_template_id} step ${payload.step_number} (draft)`,
+    entity: (draft, payload) => ({ kind: 'sequence', id: String(payload.sequence_template_id), label: `${draft.template.name} #${payload.sequence_template_id} (draft edited)` }),
+    failure: 'The sequence step action could not be applied.',
+    conflictRefusal: 'The sequence template changed since this card was prepared, so the server refused the write — nothing was changed. Ask Casey to read the template again and rebuild the proposal.',
+    reviewWarning: 'This edits the sequence template\'s DRAFT only — nothing runs until a human publishes it in the sequence editor. Once published, an SMS or email step messages clients on every NEW enrollment that reaches it, so review the recipient, sender, wording and timing as if it were going out. If the template changed since this card was prepared, the server refuses the write. Canceling writes nothing.',
+    open: (draft) => openAutomationRecord('automations.sequence', draft.result_step_template_id,
+      `Sequence template #${draft.result_step_template_id}`,
+      'Find it under More → Automations → Sequences. The step sits in its draft until you publish there.'),
+  },
+  {
     id: 'hook', kinds: HOOK_ACTION_KINDS, title: 'Hook', noun: 'hook', errorNoun: 'hook action',
     label: hookCreateLabel, text: hookCreateText, request: hookCreateRequest, result: hookCreateResult,
     idField: 'hook_id', appliedKey: 'result_hook_id',
@@ -1237,15 +1320,15 @@ async function executeActionDraft(message) {
     // does a 409: appointment status conflicts surface as 500 and the A5 stale
     // preconditions as 409, but a conflict answered by a route we have not
     // audited could still have written. Only a refusal we can read is certain.
-    // One audited exception to "409 stays ambiguous": the workflow routes'
-    // expected_base precondition (P11) answers 409 with a structured
-    // body.conflict BEFORE any write, so nothing was written and saying
-    // "may have been applied" would send staff hunting for a change that
-    // does not exist. No other route produces this shape.
+    // One audited exception to "409 stays ambiguous": the workflow and
+    // sequence step routes' expected_base precondition (P11) answers 409 with
+    // a structured body.conflict BEFORE any write, so nothing was written and
+    // saying "may have been applied" would send staff hunting for a change
+    // that does not exist. No other route produces this shape.
     const baseConflict = claimed && e && e.status === 409 && e.body && e.body.conflict && e.body.conflict.changed;
     const refused = claimed && e && e.status >= 400 && e.status < 500 && e.status !== 409;
     if (baseConflict) {
-      draft.refusal_error = 'The workflow changed since this card was prepared, so the server refused the write — nothing was changed. Ask Casey to read the workflow again and rebuild the proposal.';
+      draft.refusal_error = family.conflictRefusal || 'The workflow changed since this card was prepared, so the server refused the write — nothing was changed. Ask Casey to read the workflow again and rebuild the proposal.';
     } else if (refused) {
       draft.refusal_error = `The server refused this (${e.message || `HTTP ${e.status}`}). Nothing was written. Ask Casey to prepare the action again.`;
     } else if (claimed || outcome === 'unknown') {

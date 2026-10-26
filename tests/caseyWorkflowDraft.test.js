@@ -142,6 +142,28 @@ describe('the allowlist snapshot — adding a function is a deliberate review', 
       expect({ name, real: typeof fns[name] === 'function' }).toEqual({ name, real: true });
     }
   });
+
+  // A18.2 / ruling 14: the SEQUENCE list is separate, keyed by action_type
+  // with the function pinned per type, and admits the two senders under the
+  // 'external-send' class. The workflow list above stays sender-free.
+  test('the sequence allowlist, exactly as reviewed — and it never leaks into the workflow list', () => {
+    const { CASEY_SEQUENCE_AUTHORABLE } = require(path.join(__dirname, '..', 'lib', 'caseyAutomationAllowlist'));
+    expect(Object.fromEntries(CASEY_SEQUENCE_AUTHORABLE)).toEqual({
+      sms: { function_name: 'send_sms', side_effect: 'external-send' },
+      email: { function_name: 'send_email', side_effect: 'external-send' },
+      task: { function_name: 'create_task', side_effect: 'internal-record' },
+    });
+    const fns = require(path.join(__dirname, '..', 'lib', 'internal_functions'));
+    for (const [type, { function_name: name }] of CASEY_SEQUENCE_AUTHORABLE) {
+      // Empty params fail on their own required params — never on the
+      // function itself being unknown or workflow-only for a sequence.
+      const v = fns.__validateSequenceFunctionStep(type, { function_name: name, params: {} });
+      expect({ type, name, real: typeof fns[name] === 'function', seqOk: !v || !/Unknown function_name|workflow-only/.test(v.error) })
+        .toEqual({ type, name, real: true, seqOk: true });
+    }
+    expect(CASEY_AUTHORABLE_FUNCTIONS.has('send_sms')).toBe(false);
+    expect(CASEY_AUTHORABLE_FUNCTIONS.has('send_email')).toBe(false);
+  });
 });
 
 describe('POST /workflows/bulk honours the Idempotency-Key the card sends', () => {

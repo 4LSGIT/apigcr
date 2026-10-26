@@ -702,6 +702,13 @@ today**, not YCv3.
     server backstop converting a direct answer into a one-step carrier plan
     whenever `taskDraftRequested` is true — prompt-rule compliance is no
     longer the only thing standing between a request and its card.
+14. **External-send sequence draft authoring is GO** (Fred, 2026-10-26):
+    `send_sms`/`send_email` are allowed in sequence drafts via a sequence
+    allowlist with an `external-send` class, disclosed on the card; the human
+    publish remains the review gate. The blanket external-send exclusion is
+    softened — workflow-draft parity is its own follow-up slice — and A14
+    rises in priority. All seven timing types are allowed with guardrails
+    (literal `at` only; appointment-anchored disclosed) rather than type bans.
 
 **Defaults recorded for this family** (each stands until Fred rules otherwise):
 
@@ -772,15 +779,28 @@ Measured gaps, all on the human path too. The WORKFLOW half closed with A17.4
   naming what changed. Optional for native callers, required on every Casey
   step proposal. This is the wf27 scar turned into a route property.
 
+The SEQUENCE half closed 2026-10-26 (zero live rows grandfathered — all 155
+sms/email/task/internal_function steps measured clean first):
+
+- CLOSED: sequence `sms`/`email`/`task`/`internal_function` steps — all four
+  dispatch as `executeJob` internal_function calls — are validated at save by
+  `lib/internal_functions` `__validateSequenceFunctionStep`: a missing,
+  unknown, `__`-helper or workflow-only `function_name` is refused, then
+  `validateInternalFunctionParams` (undeclared keys, `params: null` as {},
+  required params). POST / PUT validate the whole step; PATCH only when it
+  writes `action_type` / `action_config` (Fred's ruling). The `type`-key
+  refusal landed earlier with the dispatch fix b087fa5.
+- CLOSED: the five sequence step-mutating routes take the same optional
+  `expected_base` precondition (`lib/versionDiff.sequenceStepFingerprint`
+  over the six content columns), under the `sequence_templates` parent-row
+  lock, structured 409 on mismatch.
+
 Still open (the P11 remainder):
 
-- Sequence `sms`/`email`/`task`/`internal_function` steps get **no** param
-  validation: no `function_name` check, no `__meta` check (the `type`-key
-  refusal in `action_config` DID land, with the dispatch fix b087fa5). Blocks
-  A18.2.
-- Publish re-runs shape and branch-target validation but **not** `__meta` param
-  validation, and no publish route carries the expected-base precondition yet
-  (A17.6's half).
+- Publish (both engines) re-runs shape and branch-target validation but
+  **not** `__meta` param validation. The workflow publish route carries the
+  expected-base precondition (A17.6); the sequence publish route does not yet
+  (A18.3's half).
 
 **What Casey cannot author (initial contract).** Excluded by construction: a
 STANDARD-mode `custom_code` **body** (A17.4c adds an inert stub plus copyable
@@ -789,8 +809,10 @@ every function carrying a `credential_id` or a fetched URL, `update_db` /
 `insert_db` / `set_setting` (generic writes), `create_cta` (mints public bearer
 links with nested step plans), `start_workflow` and `enroll_sequence` (chained
 fan-out), the esign `on_signed`/`on_declined` targets, and every EXTERNAL-SEND
-function (`send_sms`, `send_email`, `send_mms`, `esign_*`, the digests and
-sweeps) until A14's send machinery exists.
+function in a WORKFLOW draft (`send_sms`, `send_email`, `send_mms`, `esign_*`,
+the digests and sweeps) until its own parity slice or A14's send machinery.
+The exception is ruling 14: a SEQUENCE draft step may run `send_sms` /
+`send_email` (A18.2), pinned per action type by the sequence allowlist.
 
 `__meta` records no side-effect class for any of the 104 registry functions,
 and the CTA-eligible set is far too wide to stand in for one (it still admits
@@ -1281,23 +1303,66 @@ action summary. It is the single best read in either subsystem and should be
 exposed early — it answers "what will this actually do to this client" without
 writing anything.
 
-**A18.2: Draft one sequence step.**
+**A18.2: Draft one sequence step. SHIPPED 2026-10-26** — kind
+`sequence.step_insert.v1` on the card engine: ONE `sms`, `email` or `task`
+step into an existing template's draft through `POST
+/sequences/templates/:id/steps`. The function is pinned per type by the
+sequence allowlist (`lib/caseyAutomationAllowlist.js`
+`CASEY_SEQUENCE_AUTHORABLE`, ruling 14): `sms` → `send_sms` and `email` →
+`send_email` under the side-effect class `external-send`, `task` →
+`create_task` (`internal-record`). The browser's fixed builder writes the
+function, the native editor's no-retry error policy (a retried send can reach
+a client twice) and no condition or fire guard; the model supplies params and
+timing only. The normalizer refuses a `type` key, any other `action_config`
+key, or a different `function_name`, then runs the route's own
+`__validateSequenceFunctionStep`. Guardrails beyond the route: the SMS sender
+is a literal active `phone_lines` number and the email sender a configured
+`email_credentials` mailbox (never a placeholder), email `attachment_urls` are
+refused (fetched at send time), and a literal task assignee must be active
+staff. Timing takes all seven engine types (`immediate`, relative or absolute
+`delay`, `next_business_day`, `business_days`, `open_delay`, `before_appt`,
+`before_appt_fixed`), each closed to the keys the engine reads, with no
+`timezone` key (the card renders firm time). Two guardrails replace type bans:
+an absolute `delay.at` is a literal future datetime, never a `{{placeholder}}`
+(one that resolves empty wedges the enrollment, A18.0); the
+appointment-anchored types are disclosed on the card and in the prompts as
+silently skipping once their slot has passed. Every value renders in plain
+language on the card. The card states that nothing runs until a human
+publishes the template, that enrollments already running stay on their version
+(an insert is structural, so publish cannot migrate them), and that an
+`sms`/`email` step messages clients from the first NEW enrollment after that
+publish — the human publish is the review gate for the send. Evidence must
+carry the exact `sequence_template_id` from an `automation.definition` read;
+the normalizer reads the editing version (draft, else published), bounds
+`step_number` to 1..count+1, and bakes `expected_base` (draft version, step
+count, the displaced step's `sequenceStepFingerprint`). The route's 409
+renders as a refusal ("the template changed, nothing was written"). The route
+honours the card's `draft_id` as `Idempotency-Key` (scope
+`sequences.step_insert`; a refusal releases the claim). Family flag
+`casey_sequence_authoring_enabled`. No Casey-only bus emit: no sequence route
+is in `public/js/yc-sync.js` MATCHERS, and the precondition is the protection.
+Its P11 prerequisites:
 
-`sms`, `email` and `task` action types only, from the A17 allowlist, into the
-template's draft. Blocked on P11 for two reasons beyond the shared ones:
-
-- Sequence step saves validate **nothing** for these action types — no
-  `function_name` check, no `__meta` check.
+- Sequence step saves validate the internal-function contract for these
+  action types (P11 sequence half, 2026-10-26): `function_name` existence,
+  workflow-only refusal, `__meta` params. The card's normalizer can call the
+  same `__validateSequenceFunctionStep` the routes run.
+- The step routes take the `expected_base` precondition; every A18.2 card
+  must send one, built from `GET /sequences/templates/:id`
+  (`template.draft_version`, `steps.length`, `sequenceStepFingerprint`).
 - The `type`-key dispatch override is FIXED (b087fa5): the engine pins `type`
   last in the executeJob payload and `routes/sequences.js` refuses a `type`
   key inside `action_config` with a 400, so a stored row written around the
-  route cannot redirect the dispatch either. What A18.2 still waits for is
-  the missing param validation above (P11's sequence half).
+  route cannot redirect the dispatch either.
 
 Sequences have no step-to-step variables and no `set_vars`, so a sequence step
 proposal is simpler than a workflow one; its timing is the hard part (seven
 types, two of them appointment-anchored and silently `unschedulable` once
-their window passes).
+their window passes — disclosed rather than banned, ruling 14). Measured
+2026-10-26: the 15 live `sms`/`email`/`task` steps use `immediate`, relative
+`delay`, `next_business_day` and `business_days`; across all 128 live steps
+the appointment-anchored types are 23 (all `internal_function` or webhook),
+and all 5 live absolute `delay.at` values are placeholders.
 
 **A18.3: Publish a sequence template draft.**
 
@@ -1774,9 +1839,11 @@ for external-side-effect incidents.
 the five step-mutating routes; unknown `function_name`, undeclared param keys,
 `params: null`, and the `error_policy` shape + strategy enum all refused at
 save — see the measured-gaps list above for exactly what closed and what
-remains). Open: the sequence half (sms/email/task/internal_function step
-validation) and the publish-route precondition, which ship with A18.2 and
-A17.6 respectively. Fred's ruling on the human-path divergence: validate only
+remains). **Sequence half SHIPPED 2026-10-26** (same precondition on the five
+sequence step routes; sms/email/task/internal_function step validation). The
+workflow publish precondition shipped with A17.6; open: the sequence publish
+precondition (A18.3) and param re-validation at publish (both engines).
+Fred's ruling on the human-path divergence: validate only
 the fields being written — an existing step whose function was since renamed
 keeps its label editable; a PUT that rewrites the whole step is validated
 whole (implemented that way).

@@ -12,13 +12,13 @@
  * THE BOUNDARY BEING TESTED (plan, "Governing principle"): Casey proposes, the
  * staff member's own browser performs the write through the ordinary
  * authenticated route, and "the existing route ... is the final authority".
- * These tests ask that claim two questions for all 32 shipped kinds:
+ * These tests ask that claim two questions for all 33 shipped kinds:
  *   1. what does the route actually gate on?  (section 1 — no DB needed)
  *   2. where is the normalizer stricter than the route, i.e. where is the
  *      route NOT an authority at all?        (section 2 — real MySQL)
  *
  * MEASURED FACTS THIS FILE LOCKS
- *   · Every one of the 32 kinds maps to a route gated by lib/auth.jwtOrApiKey
+ *   · Every one of the 33 kinds maps to a route gated by lib/auth.jwtOrApiKey
  *     and NOTHING else: authentication (staff-audience JWT whose user_auth
  *     starts 'authorized'), no role, no capability, no row/firm scope. The
  *     one nuance is job.code_safe.create.v1 (safe-mode S3): its route carries
@@ -108,6 +108,7 @@ const KINDS = [
   { kind: 'workflow.step_edit.v1', method: 'PATCH', path: '/workflows/1/steps/1' },
   { kind: 'workflow.publish.v1', method: 'POST', path: '/workflows/1/publish' },
   { kind: 'hook.create.v1', method: 'POST', path: '/api/hooks' },
+  { kind: 'sequence.step_insert.v1', method: 'POST', path: '/sequences/templates/1/steps' },
 ];
 
 // The six original families' route files carry NO capability gate at all
@@ -116,7 +117,7 @@ const KINDS = [
 // STANDARD-mode code (safe-mode S2), which the job family never sends.
 const CAPABILITY_FREE_ROUTE_FILES = ['routes/api.tasks.js', 'routes/api.events.js', 'routes/api.appts.js',
   'routes/api.contactPhones.js', 'routes/api.contactEmails.js', 'routes/api.contactAddresses.js'];
-const ROUTE_FILES = [...CAPABILITY_FREE_ROUTE_FILES, 'routes/scheduled_jobs.js', 'routes/workflows.js', 'routes/api.hooks.js'];
+const ROUTE_FILES = [...CAPABILITY_FREE_ROUTE_FILES, 'routes/scheduled_jobs.js', 'routes/workflows.js', 'routes/api.hooks.js', 'routes/sequences.js'];
 
 // ── Shared HTTP harness: the real routers behind the real jwtOrApiKey ──────
 // Both sections drive the SAME routers. Section 1 hands them a stub req.db
@@ -167,22 +168,22 @@ function call(a, { method, path: urlPath }, headers = {}, body = {}) {
 const bearer = (t) => ({ authorization: `Bearer ${t}` });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// SECTION 1 — the route-level gate, for all 32 kinds (no database)
+// SECTION 1 — the route-level gate, for all 33 kinds (no database)
 // ═══════════════════════════════════════════════════════════════════════════
 
-describe('P2 — what the canonical write route gates on (all 32 shipped kinds)', () => {
+describe('P2 — what the canonical write route gates on (all 33 shipped kinds)', () => {
   const OLD_SECRET = process.env.JWT_SECRET;
   beforeAll(() => { process.env.JWT_SECRET = SECRET; });
   afterAll(() => { process.env.JWT_SECRET = OLD_SECRET; });
 
   const app = appWith;
 
-  test('the 32 kinds cover 28 distinct route+method mounts', () => {
-    expect(KINDS).toHaveLength(32);
-    expect(new Set(KINDS.map((k) => `${k.method} ${k.path}`)).size).toBe(28);
+  test('the 33 kinds cover 29 distinct route+method mounts', () => {
+    expect(KINDS).toHaveLength(33);
+    expect(new Set(KINDS.map((k) => `${k.method} ${k.path}`)).size).toBe(29);
   });
 
-  test('no token: every kind is 401 — authentication is required for all 32', async () => {
+  test('no token: every kind is 401 — authentication is required for all 33', async () => {
     const a = app();
     for (const k of KINDS) {
       const res = await call(a, k);
@@ -238,7 +239,7 @@ describe('P2 — what the canonical write route gates on (all 32 shipped kinds)'
     expect([401, 403]).not.toContain(res.status);
   });
 
-  // THE ROLE QUESTION. There is no role or capability gate on any of the 32:
+  // THE ROLE QUESTION. There is no role or capability gate on any of the 33:
   // a user holding only `staff` (no admin / it / su, no capability) reaches
   // every handler. Proven per family by observing the canonical service call.
   describe('no role or capability gate: a roleless-but-staff token reaches the handler', () => {

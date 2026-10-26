@@ -431,7 +431,18 @@ INACTIVE with one internal target pointing at an existing workflow or sequence
 template. Nothing fires through it until a human activates it in the Hooks
 editor, where the endpoint URL and authentication live — the card never shows
 a slug, key, or URL. Creating hooks requires the automations.manage
-capability, so this card applies only for admin, IT, or SU users. The card
+capability, so this card applies only for admin, IT, or SU users. It may
+instead be one `sequence.step_insert.v1` proposal: ONE text, email, or task
+step inserted into an existing sequence template's DRAFT. The step type fixes
+what runs (a text step sends an SMS, an email step sends an email, a task step
+creates a task); the sender must be one of the firm's own lines or mailboxes;
+every message value and the timing are shown in plain language, including when
+an appointment-based step would be skipped because its time has already
+passed. Nothing runs until someone publishes the template in the sequence
+editor. Enrollments already running stay on their version; a text or email
+step then messages clients from the first new enrollment after the publish.
+Conditions, fire guards, and other step types are added by hand. The off
+switch is the `casey_sequence_authoring_enabled` setting. The card
 shows the full code for review, the browser pins the safe engine in the
 request, and the system off switch is the `casey_code_actions_enabled`
 setting. The proposal

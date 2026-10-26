@@ -75,6 +75,8 @@ In **Scheduled Jobs** (with *Internal* ticked) a `sequence_step` job can be edit
 
 Behind the scenes, `sms`/`email`/`task`/`internal_function` all run through `executeJob()` as `internal_function` calls under the hood. `webhook` and `start_workflow` are handled directly by the sequence engine (they have their own `executeWebhookAction` and `executeStartWorkflowAction` paths).
 
+**Save-time validation (sms / email / task / internal_function).** Because all four run as an internal-function call, saving one (add, replace, or a partial update that changes the action type or config) is checked against that function's contract: `action_config.function_name` must name a registered function that is not workflow-only, `params` may hold only the parameters the function declares (an extra or misspelled key is refused by name), and a required parameter that is missing or blank fails the save — not the send. A partial update that changes only timing, conditions, or the error policy is not re-checked, so a step whose function was later renamed can still be edited. Other top-level `action_config` keys (`set_vars`, `_comment`) are left alone.
+
 ### Six timing types
 
 | Type | Description | Example |
