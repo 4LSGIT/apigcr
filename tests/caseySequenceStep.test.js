@@ -12,9 +12,10 @@
  *      ruling 14); a draft naming another function, a `type` key, or any
  *      other action_config key is refused; params go through the route's own
  *      __validateSequenceFunctionStep AFTER the allowlist;
- *   3. the sender is a literal active firm line / configured mailbox, never a
- *      placeholder; email attachments are refused; a literal task assignee
- *      must be active staff;
+ *   3. the sender is a literal active firm line / configured mailbox, or a
+ *      placeholder from the engine's closed resolvable set (ruling 15);
+ *      email attachments are refused; a literal task assignee must be active
+ *      staff;
  *   4. timing takes all seven engine types, closed per type, with the two
  *      guardrails — a literal future delay.at only, and the appointment-
  *      anchored types disclosed as silently skipping — and every value
@@ -178,11 +179,43 @@ describe('sequence.step_insert.v1 — the allowlist and the action config', () =
       .rejects.toThrow(/required/);
   });
 
-  test('the SMS sender is a literal ACTIVE firm line; placeholders are refused', async () => {
-    await expect(normalizeActionDraft(seqDb(), smsDraft({ action_config: { params: { from: '{{users.default_phone}}', to: 'x', message: 'm' } } }), EVIDENCE))
-      .rejects.toThrow(/literal firm line number/);
+  test('the SMS sender is a literal ACTIVE firm line or a placeholder from the closed set (ruling 15)', async () => {
     await expect(normalizeActionDraft(seqDb(), smsDraft({ action_config: { params: { from: '2485550100', to: 'x', message: 'm' } } }), EVIDENCE))
       .rejects.toThrow(/not an active firm phone line/);
+    const literal = await normalizeActionDraft(seqDb(), smsDraft(), EVIDENCE);
+    expect(literal.sender).toBe('office (2484179800)');
+    expect(literal.sender_note).toBeUndefined();
+    // The live form (12 steps, 2026-10-27): shown verbatim, with the plain line.
+    const ph = await normalizeActionDraft(seqDb(), smsDraft({ action_config: { params: { from: '{{users.default_phone}}', to: 'x', message: 'm' } } }), EVIDENCE);
+    expect(ph.sender).toBe('{{users.default_phone}}');
+    expect(ph.sender_note).toMatch(/^sender resolved per enrollment — e\.g\. the enrolling user's default phone/);
+    expect(ph.sender_note).toMatch(/fails this step without sending/);
+    // Outside the closed set: other channels' forms, settings (no such
+    // namespace in a sequence), modifiers, partial strings, unseen trigger_data.
+    for (const from of ['{{users.default_email}}', '{{settings.sms_default_from}}', '{{users.default_phone|default:2484179800}}',
+      '1{{users.default_phone}}', '{{trigger_data.line}}', '{{contacts.contact_phone}}']) {
+      await expect(normalizeActionDraft(seqDb(), smsDraft({ action_config: { params: { from, to: 'x', message: 'm' } } }), EVIDENCE))
+        .rejects.toThrow(/a sender placeholder the sequence engine resolves: \{\{users\.default_phone\}\}/);
+    }
+  });
+
+  test('a {{trigger_data.X}} sender is admitted only when the template already sends from it on that channel', async () => {
+    const rows = [...STEP_ROWS.map((r) => ({ ...r })), { step_number: 4, action_type: 'internal_function',
+      action_config: { function_name: 'send_email', params: { from: '{{trigger_data.automationsFrom}}', to: 'billing@4lsg.com', subject: 'Failed', text: 'x' } },
+      timing: { type: 'immediate' }, condition: null, fire_guard: null, error_policy: null }];
+    const db = seqDb();
+    const base = db.query.getMockImplementation();
+    db.query.mockImplementation(async (sql, params) => (/FROM sequence_steps WHERE template_id/.test(sql) ? [rows] : base(sql, params)));
+    const email = (from) => smsDraft({ action_type: 'email', action_config: { params: { from, to: '{{contacts.contact_email}}', subject: 'S', text: 'T' } } });
+    const out = await normalizeActionDraft(db, email('{{trigger_data.automationsFrom}}'), EVIDENCE);
+    expect(out.sender).toBe('{{trigger_data.automationsFrom}}');
+    expect(out.sender_note).toMatch(/same sender this template's other email steps already use/);
+    // Same placeholder on the OTHER channel is not an echo.
+    await expect(normalizeActionDraft(db, smsDraft({ action_config: { params: { from: '{{trigger_data.automationsFrom}}', to: 'x', message: 'm' } } }), EVIDENCE))
+      .rejects.toThrow(/sender placeholder the sequence engine resolves/);
+    // Without the echo (the default template) it is refused.
+    await expect(normalizeActionDraft(seqDb(), email('{{trigger_data.automationsFrom}}'), EVIDENCE))
+      .rejects.toThrow(/sender placeholder the sequence engine resolves: \{\{users\.default_email\}\}/);
   });
 
   test('email: a configured mailbox sender, no attachments', async () => {
@@ -192,8 +225,11 @@ describe('sequence.step_insert.v1 — the allowlist and the action config', () =
     expect(out.sender).toBe('4LSG <office@4lsg.com>');
     await expect(normalizeActionDraft(seqDb(), email({ from: 'nobody@example.com', to: 'x', subject: 'S', text: 'T' }), EVIDENCE))
       .rejects.toThrow(/not a configured firm mailbox/);
-    await expect(normalizeActionDraft(seqDb(), email({ from: '{{trigger_data.automationsFrom}}', to: 'x', subject: 'S', text: 'T' }), EVIDENCE))
-      .rejects.toThrow(/literal firm mailbox/);
+    const ph = await normalizeActionDraft(seqDb(), email({ from: '{{users.default_email}}', to: 'x', subject: 'S', text: 'T' }), EVIDENCE);
+    expect(ph.sender).toBe('{{users.default_email}}');
+    expect(ph.sender_note).toMatch(/enrolling user's default email/);
+    await expect(normalizeActionDraft(seqDb(), email({ from: '{{users.default_email}}', to: 'x', subject: 'S', text: 'T', attachment_urls: ['https://x.example.com/a.pdf'] }), EVIDENCE))
+      .rejects.toThrow(/does not author email attachments/);
     await expect(normalizeActionDraft(seqDb(), email({ from: 'office@4lsg.com', to: 'x', subject: 'S', text: 'T', attachment_urls: ['https://x.example.com/a.pdf'] }), EVIDENCE))
       .rejects.toThrow(/does not author email attachments/);
   });

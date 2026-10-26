@@ -187,6 +187,26 @@ d('A18.2 sequence step insert on real MySQL', () => {
     await expect(task(0)).rejects.toThrow(/not an active staff member/);   // user_type 0
   });
 
+  // Ruling 15: the closed placeholder set, and the trigger_data echo read off
+  // the REAL action_config column — mysql2 hands it back parsed, keys
+  // re-ordered, which is exactly what the echo comparison has to survive.
+  test('placeholder senders: the closed set, and a trigger_data echo found in real stored JSON', async () => {
+    await seedTemplate(6);
+    const ph = await card(6, { action_config: { params: { from: '{{users.default_phone}}', to: '{{contacts.contact_phone}}', message: 'm' } } });
+    expect(ph.sender).toBe('{{users.default_phone}}');
+    expect(ph.sender_note).toMatch(/enrolling user's default phone/);
+    const email = (from) => card(6, { action_type: 'email', action_config: { params: { from, to: '{{contacts.contact_email}}', subject: 's', text: 't' } } });
+    await expect(email('{{trigger_data.automationsFrom}}')).rejects.toThrow(/sender placeholder the sequence engine resolves/);
+    await q(`INSERT INTO sequence_steps (template_id, version, step_number, action_type, action_config, timing, error_policy)
+             VALUES (6, 1, 4, 'internal_function', ?, '{"type":"immediate"}', NULL)`,
+    [JSON.stringify({ params: { text: 'x', subject: 'Failed', to: 'billing@4lsg.com', from: '{{trigger_data.automationsFrom}}' }, function_name: 'send_email' })]);
+    const [row] = await q('SELECT action_config FROM sequence_steps WHERE template_id = 6 AND step_number = 4');
+    expect(typeof row.action_config).toBe('object');                        // parsed by mysql2, not a string
+    const echoed = await email('{{trigger_data.automationsFrom}}');
+    expect(echoed.sender).toBe('{{trigger_data.automationsFrom}}');
+    expect(echoed.sender_note).toMatch(/other email steps already use/);
+  });
+
   test('the editing version is read (draft ?? current) and only ACTIVE enrollments are counted', async () => {
     await seedTemplate(2, { draft: true });
     await q(`INSERT INTO sequence_enrollments (template_id, template_version, contact_id, status, trigger_data, current_step)

@@ -709,6 +709,15 @@ today**, not YCv3.
     softened — workflow-draft parity is its own follow-up slice — and A14
     rises in priority. All seven timing types are allowed with guardrails
     (literal `at` only; appointment-anchored disclosed) rather than type bans.
+15. **Casey sends are GO** (Fred, 2026-10-27: "casey can use placeholder.
+    casey can send SMSs and emails!!! its a bad rule to say it cant. casey
+    actions are all read and approved by a user!"). The external-send
+    exclusion is struck; Casey may author send steps in workflow and sequence
+    drafts with placeholder senders from a closed resolvable set, and A14
+    direct send follows with a resolved preview + idempotency. The draft half
+    shipped the same day (*Send steps in drafts* under A17.6); the
+    no-model-invented-fetched-URL rule stands (email `attachment_urls` stay
+    refused).
 
 **Defaults recorded for this family** (each stands until Fred rules otherwise):
 
@@ -808,11 +817,13 @@ code instead; safe-mode bodies are ruling 13's later revision),
 every function carrying a `credential_id` or a fetched URL, `update_db` /
 `insert_db` / `set_setting` (generic writes), `create_cta` (mints public bearer
 links with nested step plans), `start_workflow` and `enroll_sequence` (chained
-fan-out), the esign `on_signed`/`on_declined` targets, and every EXTERNAL-SEND
-function in a WORKFLOW draft (`send_sms`, `send_email`, `send_mms`, `esign_*`,
-the digests and sweeps) until its own parity slice or A14's send machinery.
-The exception is ruling 14: a SEQUENCE draft step may run `send_sms` /
-`send_email` (A18.2), pinned per action type by the sequence allowlist.
+fan-out), the esign `on_signed`/`on_declined` targets, and the external senders
+other than `send_sms` / `send_email` (`send_mms` — its `attachment_url` is
+fetched — `esign_*`, forwards, the digests and sweeps). `send_sms` and
+`send_email` ARE authorable in workflow and sequence drafts (rulings 14 and
+15, class `external-send`), with the sender held to a literal firm line /
+mailbox or a placeholder from the engine's closed resolvable set, and email
+`attachment_urls` refused.
 
 `__meta` records no side-effect class for any of the 104 registry functions,
 and the CTA-eligible set is far too wide to stand in for one (it still admits
@@ -926,8 +937,10 @@ zero side effects, so this stays a read-shaped slice.
 
 **A17.3: Draft a new, never-published workflow (the first write). SHIPPED
 2026-10-22** (Fred's GO) — kind `workflow.draft.v1` on the card engine:
-steps from `lib/caseyAutomationAllowlist.js` (23 functions with side-effect
-classes, snapshot-pinned; expansion is a deliberate review) plus safe-mode
+steps from `lib/caseyAutomationAllowlist.js` (27 functions with side-effect
+classes since ruling 15 added `send_sms` / `send_email` (`external-send`) and
+`get_setting` / `get_settings` (`read`), snapshot-pinned;
+expansion is a deliberate review) plus safe-mode
 code steps; webhooks (A17.4b) and query_db (A17.4a) refused by name with
 add-by-hand guidance; `POST /workflows/bulk` wired into requestIdempotency;
 per-family flag `casey_workflow_authoring_enabled`; name collision checked at
@@ -1232,6 +1245,59 @@ publishes may `start_workflow` into one that has code steps, or a trigger may.
 Transitive closure is unbounded here and the firm's workflows chain heavily,
 so one hop would be arbitrary. Recorded rather than papered over.
 
+**Send steps in drafts — ruling 15's draft half. SHIPPED 2026-10-27.**
+`send_sms` / `send_email` join the workflow allowlist under class
+`external-send` (the sequence list's name), so `workflow.draft.v1`,
+`workflow.step_insert.v1` and `workflow.step_edit.v1` author and edit send
+steps; their params come from `__meta` like every allowlisted function
+(`attachment_urls` is neither taught nor accepted). The sender rule is per
+engine, because the two template differently, and closed in
+`lib/caseyAutomationAllowlist.js`:
+
+- **Literal** (both engines): an ACTIVE `phone_lines` number / a configured
+  `email_credentials` mailbox (one shared helper, real-engine tested).
+- **Sequence placeholders** (`CASEY_SEQUENCE_SENDER_PLACEHOLDERS`): the
+  resolver anchors `users` on the enrollment's trigger_data `user` → `user_id`
+  → `appt_with` and has no settings namespace, so the set is
+  `{{users.default_phone}}` (sms — 12 live steps) and `{{users.default_email}}`
+  (email); plus a `{{trigger_data.X}}` sender only when the same template's
+  editing version already sends from exactly it on that channel (live: template
+  28's `{{trigger_data.automationsFrom}}`, supplied by its enrolling workflow).
+- **Workflow placeholders** (`WORKFLOW_SENDER_SETTING_KEYS`): workflow
+  templating is variables-only with no modifiers, and an unresolved
+  placeholder blanks silently, so a sender placeholder must be a variable the
+  NEAREST earlier writer stored from a firm sender setting (the registry's
+  `senders` section by channel): `{{V}}` after `get_setting {key, output_var:V}`,
+  `{{V.key}}` after `get_settings {keys, output_var:V}` — the two live forms
+  (`{{settings.email_automations}}` ×7, `{{automationsFrom}}` ×4). The writer
+  may be a stored step or one EARLIER IN THE SAME DRAFT: `get_setting` /
+  `get_settings` are allowlisted as class `read` (manager ruling under ruling
+  15), so a new draft carries the canonical pair in one card —
+  `get_settings {keys: 'email_automations', output_var: 'settings'}` then a
+  send from `{{settings.email_automations}}`. The settings step itself may read
+  any key the functions' own contract allows, checked at proposal time with
+  their run-time rules: literal keys only, not a registry secret, an existing
+  `app_settings` row whose key matches byte for byte (the column is
+  general_ci), and not `is_secret` (key and is_secret are read, never the
+  value). Only the SENDER rule is restricted to the `senders` section.
+- An edit may keep a send step's stored sender and attachment list exactly as
+  stored; a changed one is held to the rule.
+
+What a sender that resolves to nothing does: neither engine sends from
+nothing. A blank workflow `from` makes `send_sms` / `send_email` throw
+"requires from"; an unresolved sequence placeholder stays literal and the
+send throws (no line / no mailbox for `{{…}}`). The step fails per its error
+policy and nothing is sent. Cards: every send step shows its sender (a
+placeholder verbatim plus the server's plain line on how it resolves) and
+"this step messages <recipient> when the workflow runs, after a human
+publishes it", danger-styled like the sequence card; the publish card's
+effects name each send as `external-send` with its recipient expression.
+Prompts (answer / plan / repair) teach sends as authorable;
+`tests/assistantPromptKinds.test.js` pins the old exclusion wording out of
+every stage. Opt-out is not checked by `send_sms` / `send_email` at run time
+(only `campaignService` honours `sms_optout` / `email_optout`) — true of
+human-authored send steps too, and an A14 input.
+
 **A17.7: Start a workflow.**
 
 An irreversible fan-out, not an extension of publish: `POST
@@ -1317,9 +1383,10 @@ timing only. The normalizer refuses a `type` key, any other `action_config`
 key, or a different `function_name`, then runs the route's own
 `__validateSequenceFunctionStep`. Guardrails beyond the route: the SMS sender
 is a literal active `phone_lines` number and the email sender a configured
-`email_credentials` mailbox (never a placeholder), email `attachment_urls` are
-refused (fetched at send time), and a literal task assignee must be active
-staff. Timing takes all seven engine types (`immediate`, relative or absolute
+`email_credentials` mailbox, or (ruling 15) a sender placeholder from the
+sequence engine's closed resolvable set — see *Send steps in drafts* under
+A17.6 — email `attachment_urls` are refused (fetched at send time), and a
+literal task assignee must be active staff. Timing takes all seven engine types (`immediate`, relative or absolute
 `delay`, `next_business_day`, `business_days`, `open_delay`, `before_appt`,
 `before_appt_fixed`), each closed to the keys the engine reads, with no
 `timezone` key (the card renders firm time). Two guardrails replace type bans:

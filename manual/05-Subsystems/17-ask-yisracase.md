@@ -438,8 +438,18 @@ no email/SMS; see the workflows chapter's `custom_code` section). It may
 instead be one `workflow.draft.v1` proposal: a complete but NEVER-PUBLISHED
 workflow (version 0 — nothing can start it until a human publishes it in the
 editor), with steps limited to the authoring allowlist (control flow, record
-lookups, task/event/log creation) plus safe-mode code; senders, webhooks and
-database writes are not authorable and Casey says which steps to add by hand.
+lookups, task/event/log creation, and text/email sends) plus safe-mode code;
+webhooks, MMS and e-signature sends, and database writes are not authorable
+and Casey says which steps to add by hand. A text or email step shows its
+sender and says who it messages once a human publishes the workflow; the card
+is styled as a warning. The sender is one of the firm's own lines or mailboxes,
+or a firm sender setting that an earlier step of the workflow reads (for
+example `{{settings.email_automations}}` after a step that reads the firm
+settings — Casey can add that settings step itself; it never reads a secret
+setting);
+Casey never adds email attachments. The same applies when Casey inserts or
+edits a step in an existing workflow, and the publish card names every send
+step and its recipient.
 It may instead be one `hook.create.v1` proposal: an inbound hook created
 INACTIVE with one internal target pointing at an existing workflow or sequence
 template. Nothing fires through it until a human activates it in the Hooks
@@ -449,7 +459,10 @@ capability, so this card applies only for admin, IT, or SU users. It may
 instead be one `sequence.step_insert.v1` proposal: ONE text, email, or task
 step inserted into an existing sequence template's DRAFT. The step type fixes
 what runs (a text step sends an SMS, an email step sends an email, a task step
-creates a task); the sender must be one of the firm's own lines or mailboxes;
+creates a task); the sender is one of the firm's own lines or mailboxes, or
+the enrolling user's own default phone or email (`{{users.default_phone}}` /
+`{{users.default_email}}`, shown on the card with a line explaining that it is
+filled in per enrollment);
 every message value and the timing are shown in plain language, including when
 an appointment-based step would be skipped because its time has already
 passed. Nothing runs until someone publishes the template in the sequence

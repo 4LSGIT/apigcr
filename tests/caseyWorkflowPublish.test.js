@@ -121,7 +121,8 @@ describe('the workflow-publish normalizer', () => {
     expect(out.changes.some((c) => c.kind === 'added' && c.step_number === 3)).toBe(true);
     expect(out.starters).toEqual([{ source: 'hook', name: 'Intake hook', active: 1 },
       { source: 'email_ingest_rule', name: 'court emails', active: 1 }]);
-    expect(out.effects).toEqual(['step 3: send_email']);
+    // Ruling 15: a send names its class and recipient, so the review says it messages people.
+    expect(out.effects).toEqual(['step 3: send_email — external-send: messages x@example.com every time this version runs']);
     expect(out.expected_base).toEqual({
       draft_version: 4, step_count: 3, draft_fingerprint: draftFingerprint(DRAFT_STEPS),
     });

@@ -749,6 +749,17 @@ const WORKFLOW_ACTION_KINDS = new Set(['workflow.draft.v1']);
 
 function workflowDraftLabel() { return 'Create draft workflow'; }
 
+// Ruling 15: an authored send step's disclosure — the sender (a placeholder
+// verbatim, with the server's plain line on how it resolves) and who the step
+// messages. The values are the normalizer's annotations, never model text.
+function workflowSendLines(send, indent) {
+  if (!send || send.side_effect !== 'external-send') return [];
+  const lines = [`${indent}Sender: ${send.sender}`];
+  if (send.sender_note) lines.push(`${indent}Sender note: ${send.sender_note}`);
+  lines.push(`${indent}EXTERNAL SEND: this step messages ${send.recipient} when the workflow runs, after a human publishes it.`);
+  return lines;
+}
+
 function workflowDraftStepLine(step, index) {
   const head = `${index + 1}. [${step.type === 'custom_code' ? 'safe code' : step.config.function_name}]` +
     `${step.label ? ` ${step.label}` : ''}${step.side_effect && step.side_effect !== 'none' ? ` (${step.side_effect})` : ''}`;
@@ -758,7 +769,7 @@ function workflowDraftStepLine(step, index) {
       (step.config.set_vars ? ` set_vars: ${JSON.stringify(step.config.set_vars)}` : '') +
       (step.config.next_step !== undefined ? ` next_step: ${JSON.stringify(step.config.next_step)}` : '');
   const policy = step.error_policy ? ` [on error: ${step.error_policy.strategy}${step.error_policy.max_retries ? `, ${step.error_policy.max_retries} retries` : ''}]` : '';
-  return `${head}${policy}\n   ${body}`;
+  return [`${head}${policy}\n   ${body}`, ...workflowSendLines(step, '   ')].join('\n');
 }
 
 function workflowDraftText(draft) {
@@ -831,6 +842,7 @@ function workflowStepEditText(draft) {
     lines.push(`${field} — before: ${workflowStepEditValue(draft.before && draft.before[field])}`);
     lines.push(`${field} — after: ${workflowStepEditValue(draft.changes[field])}`);
   }
+  lines.push(...workflowSendLines(draft.send, ''));
   lines.push('Branch targets, the step\'s type and function, and its error policy are unchanged by construction.');
   lines.push('This edits the workflow\'s DRAFT only. Nothing changes in what runs until a human reviews and publishes the draft in the workflow editor.');
   lines.push('If anyone changes this workflow before you apply, the server refuses the write and Casey must re-read it.');
@@ -963,6 +975,7 @@ function sequenceStepText(draft) {
   }
   lines.push(`Action: ${step.action_type} step — runs ${fn}${step.side_effect === 'external-send' ? ' (MESSAGES A CLIENT)' : ''}`);
   if (draft.sender) lines.push(`Sender: ${draft.sender}`);
+  if (draft.sender_note) lines.push(`Sender note: ${draft.sender_note}`);
   if (draft.assignee) lines.push(`Assignee: ${draft.assignee}`);
   for (const [key, value] of Object.entries(step.params || {})) lines.push(`Param ${key}: ${sequenceStepParamValue(value)}`);
   lines.push(`Timing: ${draft.timing_text}`);
@@ -1155,11 +1168,11 @@ const ACTION_FAMILIES = [
     id: 'workflow', kinds: WORKFLOW_ACTION_KINDS, title: 'Workflow draft', noun: 'workflow draft', errorNoun: 'workflow draft',
     label: workflowDraftLabel, text: workflowDraftText, request: workflowDraftRequest, result: workflowDraftResult,
     idField: 'workflow_id', appliedKey: 'result_workflow_id',
-    danger: () => false,
+    danger: (draft) => (draft.steps || []).some((step) => step.side_effect === 'external-send'),
     resultText: (payload) => `draft workflow #${payload.workflow_id}`,
     entity: (draft, payload) => ({ kind: 'workflow', id: String(payload.workflow_id), label: `${draft.name} #${payload.workflow_id} (unpublished)` }),
     failure: 'The workflow draft could not be created.',
-    reviewWarning: 'This creates an UNPUBLISHED workflow — version 0, which nothing can start. Review every step anyway: a human will later publish exactly what is written here. Canceling writes nothing.',
+    reviewWarning: 'This creates an UNPUBLISHED workflow — version 0, which nothing can start. Review every step anyway: a human will later publish exactly what is written here, and once published an SMS or email step messages its recipient every time the workflow runs — review the recipient, sender and wording as if it were going out. Canceling writes nothing.',
     open: (draft) => openAutomationRecord('automations.workflow', draft.result_workflow_id,
       `Draft workflow #${draft.result_workflow_id}`,
       'Find it under More → Automations → Workflows. It stays unpublished until you publish it there.'),
@@ -1168,11 +1181,11 @@ const ACTION_FAMILIES = [
     id: 'workflow_step', kinds: WORKFLOW_STEP_ACTION_KINDS, title: 'Workflow step', noun: 'workflow step', errorNoun: 'workflow step action',
     label: workflowStepActionLabel, text: workflowStepActionText, request: workflowStepActionRequest,
     result: workflowStepActionResult, idField: 'workflow_id', appliedKey: 'result_step_workflow_id',
-    danger: () => false,
+    danger: (draft) => !!((draft.step && draft.step.side_effect === 'external-send') || (draft.send && draft.send.side_effect === 'external-send')),
     resultText: (payload) => `workflow #${payload.workflow_id}${payload.step_number ? ` step ${payload.step_number}` : ''} (draft)`,
     entity: (draft, payload) => ({ kind: 'workflow', id: String(payload.workflow_id), label: `${draft.workflow.name} #${payload.workflow_id} (draft edited)` }),
     failure: 'The workflow step action could not be applied.',
-    reviewWarning: 'This edits the workflow\'s DRAFT only — nothing runs until a human publishes it in the editor. Review every value anyway: a later publish ships exactly what is written here. If the workflow changed since this card was prepared, the server refuses the write. Canceling writes nothing.',
+    reviewWarning: 'This edits the workflow\'s DRAFT only — nothing runs until a human publishes it in the editor. Review every value anyway: a later publish ships exactly what is written here, and an SMS or email step then messages its recipient every time the workflow runs. If the workflow changed since this card was prepared, the server refuses the write. Canceling writes nothing.',
     open: (draft) => openAutomationRecord('automations.workflow', draft.result_step_workflow_id,
       `Workflow #${draft.result_step_workflow_id}`,
       'Find it under More → Automations → Workflows. The change sits in its draft until you publish there.'),

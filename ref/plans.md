@@ -807,16 +807,14 @@ and the two marked LIVE BUG are worth landing whether or not A17 ever ships.)
   saved publishes clean; and sequence `error_policy` is unvalidated at save
   (the engine treats any strategy other than `abort` / `retry_then_abort` as
   ignore — live rows hold `ignore`, `retry_then_ignore` or NULL).
-- **Casey sequence authoring (A18.2) — what it leaves open.** (1) Workflow-
-  draft send parity: ruling 14 (2026-10-26) allows `send_sms`/`send_email`
-  in SEQUENCE drafts only; the workflow allowlist stays sender-free until its
-  own slice, and A14 rises in priority. (2) `automation.definition` for a
+- **Casey sequence authoring (A18.2) — what it leaves open.** (1)
+  `automation.definition` for a
   sequence reads `current_version` by default even when a draft exists, so the
   evidence Casey cites can show the published steps while the card inserts
   into the draft (the card names the displaced DRAFT step and the base check
   holds, so nothing lands wrong — but the model plans against the wrong list);
   make the sequence read draft-aware (today both definition reads fall back to
-  the draft only for a never-published, v0 record). (3) Not authorable yet: editing or deleting a sequence step,
+  the draft only for a never-published, v0 record). (2) Not authorable yet: editing or deleting a sequence step,
   conditions, fire guards, error policies, internal_function / webhook /
   start_workflow steps, and publish (A18.3).
 - **`POST /executions/:id/resume` is neither state-guarded nor atomic.** It

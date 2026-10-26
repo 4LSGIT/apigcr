@@ -102,6 +102,41 @@ describe('every shipped action kind is taught to every model stage', () => {
   });
 });
 
+// Ruling 15 (Fred, 2026-10-27): "casey can use placeholder. casey can send
+// SMSs and emails!!! its a bad rule to say it cant." A stage still teaching
+// the old exclusion is a stage that refuses — the job-kind lesson again.
+describe('ruling 15 — no stage still teaches the send exclusion', () => {
+  const OLD_WORDING = [
+    'any sender (SMS/email/MMS/esign)',
+    'senders, webhooks, query_db',
+    'senders, webhooks,\n    query_db',
+    'no webhook steps, no senders',
+    'never a placeholder, never invented',
+    'must be a literal firm line or mailbox',
+    'must be a literal firm line / mailbox the evidence shows (never a',
+    'must be a LITERAL firm line number / firm mailbox',
+  ];
+  const stages = { answer: answerPrompt, plan: planPrompt, repair: repairPrompt, investigate: investigatePrompt };
+
+  test('the old exclusion wording is gone from every stage', () => {
+    for (const [stage, src] of Object.entries(stages)) {
+      for (const phrase of OLD_WORDING) {
+        expect({ stage, phrase, present: src.includes(phrase) }).toEqual({ stage, phrase, present: false });
+      }
+    }
+  });
+
+  test('the answer and plan stages say sends are authorable, with the per-engine sender forms', () => {
+    expect(answerPrompt).toContain('Workflow sender rules');
+    expect(answerPrompt).toContain('Casey MAY author sends');
+    expect(answerPrompt).toContain('{{users.default_phone}} (sms) / {{users.default_email}} (email)');
+    expect(planPrompt).toContain('Casey MAY author sends');
+    expect(planPrompt).toContain('external sends send_sms/send_email');
+    expect(repairPrompt).toContain('send_sms/send_email ARE allowed');
+    expect(repairPrompt).toContain('{{users.default_phone}} (sms) / {{users.default_email}} (email)');
+  });
+});
+
 describe('a job request forces the draft-required path like the other families', () => {
   const svc = require(path.join(REPO, 'services', 'assistantService'));
 

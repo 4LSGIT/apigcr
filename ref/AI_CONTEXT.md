@@ -90,14 +90,34 @@ body. Governing migrations in `ref/migrations/`.*
   publish is open, ref/plans.md). Tests: `tests/sequences.stepValidation.test.js`,
   gated real-engine `tests/sequences.expectedBase.mysql.test.js`; plan:
   ref/ASK_CASEY_ACTIONS_PLAN.md P11.
+- **Casey authors send steps (ruling 15, 10-27):** `send_sms` /
+  `send_email` are on the WORKFLOW allowlist too (class `external-send`), so
+  workflow draft / step insert / step edit cards carry sends. Sender rule,
+  closed per engine in `lib/caseyAutomationAllowlist.js`: literal active
+  `phone_lines` / configured `email_credentials` (shared helper), or a
+  placeholder the engine resolves — sequence `{{users.default_phone}}` /
+  `{{users.default_email}}` or a `{{trigger_data.X}}` sender the template
+  already uses on that channel; workflow `{{V}}` / `{{V.key}}` where the
+  nearest earlier writer of V is `get_setting` / `get_settings` reading a
+  registry `senders`-section key (workflow templating is variables-only); the
+  writer may be stored or earlier in the same draft, since `get_setting` /
+  `get_settings` are allowlisted (`read`), their literal keys checked at
+  proposal time (exists byte-exact, not secret by registry or row). Email
+  `attachment_urls` refused; an edit may keep a stored sender/attachments.
+  Neither engine sends from an unresolved sender (the send throws). Cards
+  disclose sender + recipient, danger-styled; publish effects name sends
+  `external-send`. Tests: `tests/caseyWorkflowStep.test.js`,
+  `tests/caseyWorkflowDraft.test.js`, `tests/caseySequenceStep.test.js`, gated
+  `tests/caseyWorkflowSend.mysql.test.js`; plan: ref/ASK_CASEY_ACTIONS_PLAN.md
+  ruling 15 / *Send steps in drafts*.
 - **Casey sequence step insert (A18.2, 10-26):** kind
   `sequence.step_insert.v1` — one `sms`/`email`/`task` step into a sequence
   template's DRAFT via `POST /sequences/templates/:id/steps`, function pinned
   per type by `lib/caseyAutomationAllowlist.js` `CASEY_SEQUENCE_AUTHORABLE`
-  (the senders are allowed here only, class `external-send`, ruling 14; the
-  workflow list stays sender-free). Invariants: the browser builder pins
+  (the senders carry class `external-send`, ruling 14; since ruling 15 the
+  workflow list carries them too). Invariants: the browser builder pins
   function_name + the no-retry error policy and sends no condition/fire guard;
-  senders are literal (active `phone_lines` / `email_credentials`); `delay.at`
+  senders follow ruling 15's closed rule (entry above); `delay.at`
   is a literal future datetime; all seven timing types, closed per type, no
   `timezone` key; appointment-anchored types disclosed as silently skipping.
   The route now honours `Idempotency-Key` (scope `sequences.step_insert`, a

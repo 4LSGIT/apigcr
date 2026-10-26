@@ -62,7 +62,7 @@ const ACTION_FNS = ['appendDraftField', 'appendDraftFieldsFromText', 'actionDraf
   'contactSubrecordActionLabel', 'contactAddressText', 'contactSubrecordValue', 'contactSubrecordDraftText',
   'contactSubrecordCreateBody', 'contactSubrecordActionRequest', 'contactSubrecordActionResult',
   'jobActionLabel', 'jobScheduleText', 'jobDraftText', 'jobActionRequest', 'jobActionResult',
-  'workflowDraftLabel', 'workflowDraftStepLine', 'workflowDraftText', 'workflowDraftRequest', 'workflowDraftResult',
+  'workflowDraftLabel', 'workflowSendLines', 'workflowDraftStepLine', 'workflowDraftText', 'workflowDraftRequest', 'workflowDraftResult',
   'workflowStepActionLabel', 'workflowStepWorkflowLine', 'workflowStepInsertText', 'workflowStepEditValue',
   'workflowStepEditText', 'workflowStepActionText', 'workflowStepActionRequest', 'workflowStepActionResult',
   'workflowPublishLabel', 'workflowPublishChangeLine', 'workflowPublishText', 'workflowPublishRequest', 'workflowPublishResult',
@@ -289,6 +289,66 @@ describe('Ask Casey UI wiring', () => {
     // Applying the card takes the user RIGHT TO the draft (Fred, 2026-10-22):
     // the open handler deep-links through the shell with the applied id.
     expect(P.ycAssistantNavigate).toHaveBeenCalledWith('automations.workflow', { id: 61 });
+  });
+
+  // Ruling 15: a send step in a workflow card is disclosed — its sender (a
+  // placeholder verbatim plus the server's plain line) and who it messages —
+  // the card is danger-styled, and the request builders strip the
+  // annotations so only the reviewed config reaches the route.
+  test('workflow send steps: disclosure, danger styling, annotations stripped from the request', async () => {
+    const fire = jest.fn().mockResolvedValue({ isConfirmed: true });
+    const api = jest.fn().mockResolvedValue({ success: true, workflowId: 62, stepNumber: 3 });
+    const sandbox = actionSandbox({ P: { Swal: { fire } }, api, saveAssistantMessage: jest.fn() });
+    const sendStep = { type: 'internal_function', label: 'Mail', side_effect: 'external-send',
+      sender: '{{settings.email_automations}}', sender_note: 'sender resolved when the workflow runs — the firm sender setting "email_automations", read by step 1 (get_settings).',
+      recipient: '{{client_email}}',
+      config: { function_name: 'send_email', params: { from: '{{settings.email_automations}}', to: '{{client_email}}', subject: 'S', text: 'T' } } };
+    await sandbox.executeActionDraft({ action_draft: { draft_id: 'wf-send-1', kind: 'workflow.draft.v1', status: 'draft', name: 'Mailer', description: '', steps: [sendStep], evidence: [] } });
+    const dlg = fire.mock.calls[0][0];
+    expect(dlg).toMatchObject({ icon: 'warning', focusCancel: true });
+    expect(dlg.text).toContain('   Sender: {{settings.email_automations}}');
+    expect(dlg.text).toContain('   Sender note: sender resolved when the workflow runs');
+    expect(dlg.text).toContain('   EXTERNAL SEND: this step messages {{client_email}} when the workflow runs, after a human publishes it.');
+    expect(api.mock.calls[0][1].steps).toEqual([{ type: 'internal_function', label: 'Mail', config: sendStep.config }]);
+
+    // Insert: same disclosure, same stripping.
+    fire.mockClear(); api.mockClear();
+    await sandbox.executeActionDraft({ action_draft: { draft_id: 'wf-send-2', kind: 'workflow.step_insert.v1', status: 'draft', received_at: Date.now(),
+      workflow: { workflow_id: 62, name: 'Mailer', published: 1, active: 1, has_draft: 0 }, position: null, displaces: null,
+      step: { ...sendStep, sender: '4LSG <office@4lsg.com>', sender_note: undefined }, expected_base: { draft_version: null, step_count: 2 }, evidence: [] } });
+    expect(fire.mock.calls[0][0]).toMatchObject({ icon: 'warning' });
+    expect(fire.mock.calls[0][0].text).toContain('   Sender: 4LSG <office@4lsg.com>');
+    expect(fire.mock.calls[0][0].text).not.toContain('Sender note');
+    expect(Object.keys(api.mock.calls[0][1]).sort()).toEqual(['config', 'expected_base', 'label', 'type']);
+
+    // Edit: the top-level send disclosure renders on the edit card too.
+    fire.mockClear(); api.mockClear();
+    await sandbox.executeActionDraft({ action_draft: { draft_id: 'wf-send-3', kind: 'workflow.step_edit.v1', status: 'draft', received_at: Date.now(),
+      workflow: { workflow_id: 62, name: 'Mailer', published: 1, active: 1, has_draft: 1 }, step_number: 3,
+      target: { step_number: 3, type: 'internal_function', label: 'Mail', function_name: 'send_email' },
+      changes: { label: 'Mail them' }, before: { label: 'Mail' },
+      send: { side_effect: 'external-send', sender: 'it@4lsg.com (unchanged — as stored on this step)', recipient: '{{client_email}}' },
+      expected_base: { draft_version: 4, step_count: 3, step_fingerprint: 'b'.repeat(64) }, evidence: [] } });
+    expect(fire.mock.calls[0][0]).toMatchObject({ icon: 'warning' });
+    expect(fire.mock.calls[0][0].text).toContain('EXTERNAL SEND: this step messages {{client_email}} when the workflow runs, after a human publishes it.');
+    expect(api.mock.calls[0][1]).toEqual({ expected_base: { draft_version: 4, step_count: 3, step_fingerprint: 'b'.repeat(64) }, label: 'Mail them' });
+
+    // A draft with no send step keeps the plain question styling.
+    fire.mockClear();
+    await sandbox.executeActionDraft({ action_draft: { draft_id: 'wf-send-4', kind: 'workflow.draft.v1', status: 'draft', name: 'Quiet', description: '',
+      steps: [{ type: 'internal_function', side_effect: 'read', config: { function_name: 'lookup_contact', params: { contact_id: '1' } } }], evidence: [] } });
+    expect(fire.mock.calls[0][0]).toMatchObject({ icon: 'question' });
+    expect(fire.mock.calls[0][0].text).not.toContain('EXTERNAL SEND');
+  });
+
+  test('a sequence card shows a placeholder sender verbatim with its plain line', () => {
+    const { actionFamily } = actionSandbox({});
+    const draft_ = { kind: 'sequence.step_insert.v1', template: { sequence_template_id: 21, name: 'pre_appt', active: 1, published_version: 1, active_enrollments: 0 },
+      position: null, step: { action_type: 'sms', side_effect: 'external-send', params: { from: '{{users.default_phone}}', to: 'x', message: 'm' }, timing: { type: 'immediate' } },
+      timing_text: 'Immediately', timing_notes: [], sender: '{{users.default_phone}}',
+      sender_note: "sender resolved per enrollment — e.g. the enrolling user's default phone", expected_base: { step_count: 3 } };
+    const text = actionFamily(draft_).text(draft_);
+    expect(text).toContain('Sender: {{users.default_phone}}\nSender note: sender resolved per enrollment — e.g. the enrolling user\'s default phone');
   });
 
   test('a hook card pins active:0, never carries a slug or URL, and deep-links to the created hook', async () => {

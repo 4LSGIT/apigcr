@@ -1429,6 +1429,10 @@ async function normalizeWorkflowDraftAction(db, value, evidence) {
     throw httpError(422, `Workflow draft needs 1-${WORKFLOW_DRAFT_MAX_STEPS} steps`);
   }
   const steps = value.steps.map((step, index) => normalizeAuthoredStep(step, `Workflow draft step ${index + 1}`));
+  for (let i = 0; i < steps.length; i++) {
+    const prior = steps.slice(0, i).map((s, j) => ({ step_number: j + 1, type: s.type, config: s.config }));
+    await annotateWorkflowSendStep(db, steps[i], prior, `Workflow draft step ${i + 1}`);
+  }
   // Proposal-time collision check (names are not DB-unique; a duplicate is
   // operator confusion, not corruption). Click-time safety is the idempotent
   // draft_id plus the 15-minute card TTL.
@@ -1509,6 +1513,9 @@ async function normalizeWorkflowStepAction(db, value, evidence) {
       if (position === steps.length + 1) position = null; // appending by position IS an append
     }
     const step = normalizeAuthoredStep(value.step, 'Inserted step');
+    const before = position != null ? position - 1 : steps.length;
+    await annotateWorkflowSendStep(db, step, steps.slice(0, before).map((s) => ({
+      step_number: s.step_number, type: s.type, config: parseMaybeJson(s.config) || {} })), 'Inserted step');
     let displaces = null;
     if (position != null) {
       const occupant = steps[position - 1];
@@ -1540,11 +1547,13 @@ async function normalizeWorkflowStepAction(db, value, evidence) {
   const { CASEY_AUTHORABLE_FUNCTIONS } = require('../lib/caseyAutomationAllowlist');
   const out = { changes: {}, before: {} };
   let newConfig = null;
+  let send = null;
   if (target.type === 'internal_function') {
     const fn = targetCfg.function_name;
     if (!CASEY_AUTHORABLE_FUNCTIONS.get(fn)) {
       throw httpError(422, `Step ${stepNumber} runs "${fn}", which is outside Casey's authoring allowlist — tell the user to edit it by hand in the workflow editor`);
     }
+
     if ('code' in changes || 'input' in changes) {
       throw httpError(422, `Step ${stepNumber} is not a code step — its behaviour is edited through params`);
     }
@@ -1567,6 +1576,14 @@ async function normalizeWorkflowStepAction(db, value, evidence) {
       out.before.params = targetCfg.params == null ? null : targetCfg.params;
       newConfig = { ...targetCfg, params };
     }
+    // Ruling 15: a send step's card always discloses the send; a changed
+    // sender or attachment list is held to the authoring rule (after the
+    // meta validator, so a malformed params object fails on its own terms).
+    const storedParams = targetCfg.params || {};
+    if ('params' in changes) await checkWorkflowSettingsRead(db, fn, changes.params, 'Workflow step edit');
+    send = await workflowSendAnnotation(db, fn, 'params' in changes ? changes.params : storedParams,
+      steps.slice(0, stepNumber - 1).map((s) => ({ step_number: s.step_number, type: s.type, config: parseMaybeJson(s.config) || {} })),
+      'Workflow step edit', storedParams);
   } else if (target.type === 'custom_code') {
     if (targetCfg.code_mode !== 'safe') {
       throw httpError(422, `Step ${stepNumber} is a STANDARD-mode code step — Casey never edits those; the user pastes code by hand in the workflow editor`);
@@ -1616,6 +1633,7 @@ async function normalizeWorkflowStepAction(db, value, evidence) {
     ...base, step_number: stepNumber, target: targetSummary,
     changes: out.changes, before: out.before,
     ...(newConfig ? { new_config: newConfig } : {}),
+    ...(send ? { send } : {}),
     expected_base: expectedBase,
   };
 }
@@ -1712,7 +1730,11 @@ async function normalizeWorkflowPublishAction(db, value, evidence) {
       effects.push(`step ${s.step_number}: safe-mode code (sandboxed — no network, no database)`);
     } else if (s.type === 'internal_function' && typeof cfg.function_name === 'string' &&
                (WORKFLOW_PUBLISH_EFFECT_RE.test(cfg.function_name) || WORKFLOW_PUBLISH_EFFECT_FNS.has(cfg.function_name))) {
-      effects.push(`step ${s.step_number}: ${cfg.function_name}`);
+      // Ruling 15: a send names its class and its recipient expression, so the
+      // publish review says in words that this version messages people.
+      effects.push(/^send_/.test(cfg.function_name)
+        ? `step ${s.step_number}: ${cfg.function_name} — external-send: messages ${cfg.params && cfg.params.to != null ? (typeof cfg.params.to === 'string' ? cfg.params.to : JSON.stringify(cfg.params.to)).slice(0, 200) : '(no recipient set)'} every time this version runs`
+        : `step ${s.step_number}: ${cfg.function_name}`);
     }
     if (effects.length >= 20) break;
   }
@@ -1743,6 +1765,145 @@ async function normalizeWorkflowPublishAction(db, value, evidence) {
     },
     evidence: refs,
   };
+}
+
+// ── Ruling 15: authored send steps ────────────────────────────────────────
+//
+// A literal sender is an ACTIVE firm line (sms) or a configured mailbox
+// (email) — the same predicates for both engines.
+async function literalFirmSender(db, channel, from) {
+  if (channel === 'sms') {
+    const [[line]] = await db.query('SELECT phone_number, display_name FROM phone_lines WHERE phone_number = ? AND active = 1 LIMIT 1', [from]);
+    if (!line) throw httpError(422, `SMS from "${from}" is not an active firm phone line — use one of the firm's 10-digit line numbers`);
+    return `${line.display_name || 'Line'} (${line.phone_number})`;
+  }
+  const [[box]] = await db.query('SELECT email, from_name FROM email_credentials WHERE email = ? LIMIT 1', [from]);
+  if (!box) throw httpError(422, `Email from "${from}" is not a configured firm mailbox`);
+  return `${box.from_name ? `${box.from_name} ` : ''}<${box.email}>`;
+}
+
+const WORKFLOW_SEND_CHANNEL = Object.freeze({ send_sms: 'sms', send_email: 'email' });
+
+// Does this step store a value in workflow variable `name`? output_var (every
+// function that takes one), a config-level set_vars key, or set_var's name.
+function workflowStepWritesVar(step, name) {
+  const cfg = step.config || {};
+  const params = cfg.params || {};
+  return params.output_var === name ||
+    (cfg.set_vars != null && typeof cfg.set_vars === 'object' && Object.prototype.hasOwnProperty.call(cfg.set_vars, name)) ||
+    (cfg.function_name === 'set_var' && params.name === name);
+}
+
+// A workflow sender placeholder resolves only through a variable an EARLIER
+// step stored from a firm SENDER setting (lib/caseyAutomationAllowlist.js
+// WORKFLOW_SENDER_SETTING_KEYS — the workflow resolver has no settings or
+// tables namespace). The NEAREST earlier writer of the variable decides:
+// get_setting {key, output_var:V} → {{V}}; get_settings {keys, output_var:V}
+// → {{V.key}}. Returns the card's plain line, or null when not resolvable.
+function workflowSenderPlaceholder(channel, from, priorSteps) {
+  const m = /^\{\{([A-Za-z_$][\w$]*)(?:\.([A-Za-z_]\w*))?\}\}$/.exec(from);
+  if (!m) return null;
+  const [, root, key] = m;
+  const senderKeys = require('../lib/caseyAutomationAllowlist').WORKFLOW_SENDER_SETTING_KEYS[channel];
+  for (let i = priorSteps.length - 1; i >= 0; i--) {
+    const step = priorSteps[i];
+    if (!workflowStepWritesVar(step, root)) continue;
+    const cfg = step.config || {};
+    const params = cfg.params || {};
+    if (step.type !== 'internal_function' || params.output_var !== root) return null;
+    let settingKey = null;
+    if (cfg.function_name === 'get_setting' && key === undefined) {
+      settingKey = params.key;
+    } else if (cfg.function_name === 'get_settings' && key !== undefined) {
+      const keys = typeof params.keys === 'string' ? params.keys.split(',') : (Array.isArray(params.keys) ? params.keys : []);
+      if (keys.map((k) => String(k).trim()).includes(key)) settingKey = key;
+    }
+    if (typeof settingKey !== 'string' || !senderKeys.includes(settingKey)) return null;
+    return `sender resolved when the workflow runs — the firm sender setting "${settingKey}", read by step ${step.step_number} (${cfg.function_name}). ` +
+      `A run that has not passed step ${step.step_number}, or a blank setting, fails this step without sending.`;
+  }
+  return null;
+}
+
+// Annotates an authored workflow step that SENDS (ruling 15): the sender rule
+// (literal active line / configured mailbox, or the closed placeholder rule
+// above), the recipient expression verbatim, and the fetched-URL refusal
+// (email attachment_urls — no model-invented fetched URL). `stored` is the
+// step's current params on an edit: a sender or attachment list left exactly
+// as a human stored it is kept, not re-litigated. Returns null for a
+// non-send step.
+async function workflowSendAnnotation(db, fn, params, priorSteps, at, stored = null) {
+  const channel = WORKFLOW_SEND_CHANNEL[fn];
+  if (!channel) return null;
+  const p = params || {};
+  const { canonical } = require('../lib/versionDiff');
+  if (channel === 'email' && p.attachment_urls !== undefined &&
+      !(stored && canonical(stored.attachment_urls) === canonical(p.attachment_urls))) {
+    throw httpError(422, `${at}: Casey does not author email attachments (attachment_urls are fetched at send time) — tell the user to add them by hand in the workflow editor`);
+  }
+  const recipient = typeof p.to === 'string' ? p.to : JSON.stringify(p.to === undefined ? null : p.to);
+  const from = String(p.from);
+  if (stored && stored.from === p.from) {
+    return { side_effect: 'external-send', sender: `${p.from == null ? '(none set)' : from} (unchanged — as stored on this step)`, recipient };
+  }
+  if (!from.includes('{{')) {
+    return { side_effect: 'external-send', sender: await literalFirmSender(db, channel, from), recipient };
+  }
+  const note = workflowSenderPlaceholder(channel, from, priorSteps);
+  if (!note) {
+    const keys = require('../lib/caseyAutomationAllowlist').WORKFLOW_SENDER_SETTING_KEYS[channel];
+    throw httpError(422, `${at}: the ${fn} sender "${from}" would not resolve — workflow placeholders are variables only and blank silently. ` +
+      `Use ${channel === 'sms' ? 'an active firm line number' : 'a configured firm mailbox'}, or a variable an EARLIER get_setting / get_settings step stores from a firm sender setting (${keys.join(', ')}): {{var}} after get_setting, {{var.key}} after get_settings — in a new draft, author that settings step BEFORE the send`);
+  }
+  return { side_effect: 'external-send', sender: from, sender_note: note, recipient };
+}
+
+// get_setting / get_settings at PROPOSAL time, with the run-time contract:
+// every key a literal string (a placeholder key cannot be checked — Casey
+// writes literal keys), not a secret by the registry or by its row's
+// is_secret flag, and an existing row whose key matches byte for byte (the
+// column is general_ci, so `Email_Automations` would find the row — the
+// functions refuse that spelling at run time, and so does this). Reads key
+// and is_secret only, never a value.
+async function checkWorkflowSettingsRead(db, fn, params, at) {
+  if (fn !== 'get_setting' && fn !== 'get_settings') return;
+  const p = params || {};
+  let keys;
+  if (fn === 'get_setting') keys = [p.key];
+  else keys = typeof p.keys === 'string' ? p.keys.split(',') : (Array.isArray(p.keys) ? p.keys : [p.keys]);
+  keys = keys.map((k) => (typeof k === 'string' ? k.trim() : k));
+  if (keys.some((k) => typeof k !== 'string' || !k || k.includes('{{'))) {
+    throw httpError(422, `${at}: ${fn} keys must be literal setting names — Casey never writes a placeholder key`);
+  }
+  keys = [...new Set(keys)];
+  const registry = require('../lib/settingsRegistry');
+  const registeredSecret = keys.filter((k) => registry.isSecret(k, 0));
+  if (registeredSecret.length) {
+    throw httpError(422, `${at}: ${registeredSecret.join(', ')} ${registeredSecret.length > 1 ? 'are secrets' : 'is a secret'} and cannot be read by automation`);
+  }
+  const [rows] = await db.query('SELECT `key`, is_secret FROM app_settings WHERE `key` IN (?)', [keys]);
+  const exact = new Map((rows || []).filter((r) => keys.includes(r.key)).map((r) => [r.key, r]));
+  const missing = keys.filter((k) => !exact.has(k));
+  if (missing.length) {
+    throw httpError(422, `${at}: setting ${missing.join(', ')} does not exist (keys match exactly) — ${fn} would fail at run time`);
+  }
+  const rowSecret = keys.filter((k) => registry.isSecret(k, exact.get(k).is_secret));
+  if (rowSecret.length) {
+    throw httpError(422, `${at}: ${rowSecret.join(', ')} ${rowSecret.length > 1 ? 'are secrets' : 'is a secret'} and cannot be read by automation`);
+  }
+}
+
+// Runs the proposal-time checks that need the DB over a normalized step, in
+// place: the settings-read contract, then the send annotation.
+async function annotateWorkflowSendStep(db, step, priorSteps, at) {
+  if (step.type !== 'internal_function') return;
+  await checkWorkflowSettingsRead(db, step.config.function_name, step.config.params, at);
+  const ann = await workflowSendAnnotation(db, step.config.function_name, step.config.params, priorSteps, at);
+  if (ann) {
+    step.sender = ann.sender;
+    if (ann.sender_note) step.sender_note = ann.sender_note;
+    step.recipient = ann.recipient;
+  }
 }
 
 // ── A18.2: sequence step insert ────────────────────────────────────────────
@@ -1976,36 +2137,8 @@ async function normalizeSequenceStepInsertAction(db, value, evidence) {
   const vErr = require('../lib/internal_functions').__validateSequenceFunctionStep(actionType, { function_name: pinned.function_name, params });
   if (vErr) throw httpError(422, `Sequence step: ${vErr.error}`);
 
-  // Sender and recipient-side guardrails (the evidence rule applied to
-  // identities): the sender is a LITERAL firm line or mailbox, never a
-  // placeholder the card cannot show resolved.
-  let sender = null;
-  let assignee = null;
-  if (actionType === 'sms') {
-    const from = String(params.from);
-    if (from.includes('{{')) throw httpError(422, 'An SMS step\'s from must be a literal firm line number, not a placeholder');
-    const [[line]] = await db.query('SELECT phone_number, display_name FROM phone_lines WHERE phone_number = ? AND active = 1 LIMIT 1', [from]);
-    if (!line) throw httpError(422, `SMS from "${from}" is not an active firm phone line — use one of the firm's 10-digit line numbers`);
-    sender = `${line.display_name || 'Line'} (${line.phone_number})`;
-  } else if (actionType === 'email') {
-    if (params.attachment_urls !== undefined) {
-      throw httpError(422, 'Casey does not author email attachments (attachment_urls are fetched at send time) — tell the user to add them by hand in the sequence editor');
-    }
-    const from = String(params.from);
-    if (from.includes('{{')) throw httpError(422, 'An email step\'s from must be a literal firm mailbox, not a placeholder');
-    const [[box]] = await db.query('SELECT email, from_name FROM email_credentials WHERE email = ? LIMIT 1', [from]);
-    if (!box) throw httpError(422, `Email from "${from}" is not a configured firm mailbox`);
-    sender = `${box.from_name ? `${box.from_name} ` : ''}<${box.email}>`;
-  } else {
-    const raw = params.assigned_to;
-    const literal = typeof raw === 'number' || (typeof raw === 'string' && /^\d+$/.test(raw.trim()));
-    if (literal) {
-      const staff = await taskService.findAssignableStaff(db, Number(raw));
-      if (!staff) throw httpError(422, `Task assignee ${raw} is not an active staff member`);
-      assignee = `${staff.user_name || `User ${staff.user}`} (#${staff.user})`;
-    } else {
-      assignee = `resolved per enrollment from ${String(raw)}`;
-    }
+  if (actionType === 'email' && params.attachment_urls !== undefined) {
+    throw httpError(422, 'Casey does not author email attachments (attachment_urls are fetched at send time) — tell the user to add them by hand in the sequence editor');
   }
 
   const timing = normalizeSequenceTiming(value.timing);
@@ -2025,6 +2158,50 @@ async function normalizeSequenceStepInsertAction(db, value, evidence) {
     [templateId, readVersion]);
   const [[running]] = await db.query(
     "SELECT COUNT(*) AS n FROM sequence_enrollments WHERE template_id = ? AND status = 'active'", [templateId]);
+  const { sequenceStepFingerprint, parseMaybeJson } = require('../lib/versionDiff');
+
+  // Sender and recipient-side guardrails (the evidence rule applied to
+  // identities). Ruling 15: the sender is a literal active firm line /
+  // configured mailbox, or a placeholder from the sequence engine's CLOSED
+  // resolvable set (lib/caseyAutomationAllowlist.js
+  // CASEY_SEQUENCE_SENDER_PLACEHOLDERS), or a {{trigger_data.X}} sender this
+  // template's editing version already sends from on the same channel (the
+  // enroller supplies X; the card cannot verify an unseen key). The card
+  // shows a placeholder verbatim with the plain line saying how it resolves.
+  let sender = null;
+  let senderNote = null;
+  let assignee = null;
+  if (actionType === 'sms' || actionType === 'email') {
+    const from = String(params.from);
+    if (from.includes('{{')) {
+      const closed = require('../lib/caseyAutomationAllowlist').CASEY_SEQUENCE_SENDER_PLACEHOLDERS[actionType];
+      const echoed = /^\{\{trigger_data\.[A-Za-z_]\w*\}\}$/.test(from) && steps.some((s) => {
+        const c = parseMaybeJson(s.action_config) || {};
+        return c.function_name === pinned.function_name && c.params && c.params.from === from;
+      });
+      if (Object.prototype.hasOwnProperty.call(closed, from)) {
+        senderNote = closed[from];
+      } else if (echoed) {
+        senderNote = `sender resolved per enrollment from the enrollment's trigger_data — the same sender this template's other ${actionType} steps already use, so its enrollments supply it. An enrollment without it fails this step without sending.`;
+      } else {
+        throw httpError(422, `${actionType === 'sms' ? 'An SMS' : 'An email'} step's from must be ${actionType === 'sms' ? 'an active firm line number' : 'a configured firm mailbox'} or a sender placeholder the sequence engine resolves: ` +
+          `${Object.keys(closed).join(', ')}, or a {{trigger_data.…}} sender this template's other ${actionType} steps already use — "${from}" is none of these`);
+      }
+      sender = from;
+    } else {
+      sender = await literalFirmSender(db, actionType, from);
+    }
+  } else {
+    const raw = params.assigned_to;
+    const literal = typeof raw === 'number' || (typeof raw === 'string' && /^\d+$/.test(raw.trim()));
+    if (literal) {
+      const staff = await taskService.findAssignableStaff(db, Number(raw));
+      if (!staff) throw httpError(422, `Task assignee ${raw} is not an active staff member`);
+      assignee = `${staff.user_name || `User ${staff.user}`} (#${staff.user})`;
+    } else {
+      assignee = `resolved per enrollment from ${String(raw)}`;
+    }
+  }
 
   let position = null;
   if (value.step_number !== undefined && value.step_number !== null) {
@@ -2034,7 +2211,6 @@ async function normalizeSequenceStepInsertAction(db, value, evidence) {
     }
     if (position === steps.length + 1) position = null; // appending by position IS an append
   }
-  const { sequenceStepFingerprint, parseMaybeJson } = require('../lib/versionDiff');
   const expectedBase = { draft_version: draftVersion, step_count: steps.length };
   let displaces = null;
   if (position != null) {
@@ -2069,6 +2245,7 @@ async function normalizeSequenceStepInsertAction(db, value, evidence) {
     timing_text: timing.text,
     timing_notes: timing.notes,
     ...(sender ? { sender } : {}),
+    ...(senderNote ? { sender_note: senderNote } : {}),
     ...(assignee ? { assignee } : {}),
     expected_base: expectedBase,
     evidence: refs,

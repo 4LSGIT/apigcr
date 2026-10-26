@@ -32,7 +32,8 @@ const { normalizeActionDraft, normalizeWorkspaceContext, validateWorkspaceContex
 
 // Workflow 27: published v3, draft v4 with four steps (the draft is what the
 // proposer reads). Step 2 is an allowlisted branch; step 3 a safe code step;
-// step 4 a sender (off the allowlist).
+// step 4 send_mms (a sender still off the allowlist — its attachment_url is
+// fetched at send time; send_sms / send_email joined it under ruling 15).
 const WF_ROW = { id: 27, name: 'Deadline chase', active: 1, current_version: 3, draft_version: 4 };
 const STEP_ROWS = [
   { step_number: 1, type: 'internal_function', label: 'Find', note: null,
@@ -43,7 +44,7 @@ const STEP_ROWS = [
   { step_number: 3, type: 'custom_code', label: 'Compute', note: null,
     config: JSON.stringify({ code: 'input.a + input.b;', input: { a: 1, b: 2 }, code_mode: 'safe' }), error_policy: null },
   { step_number: 4, type: 'internal_function', label: 'Send', note: null,
-    config: JSON.stringify({ function_name: 'send_email', params: { to: 'x@example.com' } }), error_policy: null },
+    config: JSON.stringify({ function_name: 'send_mms', params: { to: '2485550100' } }), error_policy: null },
 ];
 
 function stepDb(over = {}) {
@@ -121,10 +122,10 @@ describe('workflow.step_insert.v1', () => {
       .rejects.toThrow(/does not identify the target workflow/);
   });
 
-  test('the inserted step rides the shared allowlist — a sender is refused by name', async () => {
+  test('the inserted step rides the shared allowlist — send_mms is refused by name', async () => {
     await expect(normalizeActionDraft(stepDb(), insertDraft({
-      step: { type: 'internal_function', config: { function_name: 'send_sms', params: {} } },
-    }), EVIDENCE)).rejects.toThrow(/"send_sms" is outside Casey's authoring allowlist/);
+      step: { type: 'internal_function', config: { function_name: 'send_mms', params: {} } },
+    }), EVIDENCE)).rejects.toThrow(/"send_mms" is outside Casey's authoring allowlist/);
   });
 
   test('the family off switch covers the step kinds too', async () => {
@@ -183,7 +184,7 @@ describe('workflow.step_edit.v1', () => {
 
   test('ineligible targets are refused by name: off-allowlist functions, standard code, webhooks', async () => {
     await expect(normalizeActionDraft(stepDb(), editDraft({ step_number: 4, changes: { label: 'x' } }), EVIDENCE))
-      .rejects.toThrow(/"send_email", which is outside Casey's authoring allowlist/);
+      .rejects.toThrow(/"send_mms", which is outside Casey's authoring allowlist/);
 
     const standardCodeDb = stepDb();
     const rows = STEP_ROWS.map((r) => r.step_number === 3
@@ -395,5 +396,129 @@ describe('end to end: card request shapes are the route\'s shapes', () => {
     expect(request.method).toBe('PATCH');
     const ok = await sendToRoute(request);
     expect(ok.status).toBe(200);
+  });
+});
+
+// Ruling 15 (Fred, 2026-10-27): Casey authors sends. The sender is a literal
+// active firm line / configured mailbox, or a placeholder the WORKFLOW
+// resolver can resolve: a variable the NEAREST earlier writer stored from a
+// firm sender setting (get_setting → {{V}}, get_settings → {{V.key}}). The
+// live forms: {{settings.email_automations}} ×7, {{automationsFrom}} ×4.
+describe('ruling 15 — workflow send steps (insert / edit)', () => {
+  const SEND_ROWS = [
+    { step_number: 1, type: 'internal_function', label: 'Settings', note: null,
+      config: { function_name: 'get_settings', params: { keys: 'billing_tasks_to, email_automations, sms_default_from', output_var: 'settings' } }, error_policy: null },
+    { step_number: 2, type: 'internal_function', label: 'One setting', note: null,
+      config: { function_name: 'get_setting', params: { key: 'email_automations', output_var: 'automationsFrom' } }, error_policy: null },
+    { step_number: 3, type: 'internal_function', label: 'Not a sender', note: null,
+      config: { function_name: 'get_settings', params: { keys: 'email_it', output_var: 'routing' } }, error_policy: null },
+    { step_number: 4, type: 'internal_function', label: 'Mail the client', note: null,
+      config: { function_name: 'send_email', params: { from: '{{settings.email_automations}}', to: '{{client_email}}', subject: 'Filed', text: 'Hi',
+        attachment_urls: ['https://storage.example.com/notice.pdf'] } }, error_policy: null },
+    { step_number: 5, type: 'internal_function', label: 'Overwrite', note: null,
+      config: { function_name: 'set_var', params: { name: 'settings', value: 'x' } }, error_policy: null },
+  ];
+  function sendDb(rows = SEND_ROWS) {
+    return { query: jest.fn(async (sql, params) => {
+      if (/SELECT id, name, active, current_version, draft_version FROM workflows/.test(sql)) return [[{ ...WF_ROW }]];
+      if (/FROM workflow_steps WHERE workflow_id = \? AND version = \?/.test(sql)) return [rows.map((r) => ({ ...r }))];
+      if (/FROM phone_lines/.test(sql)) return [params[0] === '2484179800' ? [{ phone_number: '2484179800', display_name: 'office' }] : []];
+      if (/FROM email_credentials/.test(sql)) return [params[0] === 'office@4lsg.com' ? [{ email: 'office@4lsg.com', from_name: '4LSG' }] : []];
+      if (/SELECT `key`, is_secret FROM app_settings/.test(sql)) {
+        return [[{ key: 'email_automations', is_secret: 0 }, { key: 'billing_tasks_to', is_secret: 0 }, { key: 'sms_default_from', is_secret: 0 }]
+          .filter((r) => params[0].includes(r.key))];
+      }
+      throw new Error(`db touched: ${sql}`);
+    }) };
+  }
+  const EVID = [{ id: 'q1', label: 'Workflow 27 definition', rows: [{ workflow_id: 27, row_number: 1 }] }];
+  const email = (from, extra = {}) => ({ type: 'internal_function', label: 'Mail',
+    config: { function_name: 'send_email', params: { from, to: '{{billingUser.email}}', subject: 'S', text: 'T', ...extra } } });
+  const sms = (from) => ({ type: 'internal_function', config: { function_name: 'send_sms', params: { from, to: '{{phone}}', message: 'Hi' } } });
+  const insert = (step, over = {}) => normalizeActionDraft(sendDb(), { kind: 'workflow.step_insert.v1', workflow_id: 27, step, evidence: CITE, ...over }, EVID);
+
+  test('a literal sender is looked up: active line / configured mailbox, annotated with the recipient', async () => {
+    const out = await insert(sms('2484179800'));
+    expect(out.step).toMatchObject({ side_effect: 'external-send', sender: 'office (2484179800)', recipient: '{{phone}}' });
+    expect(out.step.sender_note).toBeUndefined();
+    await expect(insert(sms('2485550100'))).rejects.toThrow(/not an active firm phone line/);
+    expect((await insert(email('office@4lsg.com'))).step.sender).toBe('4LSG <office@4lsg.com>');
+    await expect(insert(email('nobody@example.com'))).rejects.toThrow(/not a configured firm mailbox/);
+  });
+
+  test('{{V.key}} after get_settings and {{V}} after get_setting resolve — the live forms', async () => {
+    const a = await insert(email('{{settings.email_automations}}'), { step_number: 4 });
+    expect(a.step).toMatchObject({ sender: '{{settings.email_automations}}', recipient: '{{billingUser.email}}' });
+    expect(a.step.sender_note).toMatch(/firm sender setting "email_automations", read by step 1 \(get_settings\)/);
+    const b = await insert(email('{{automationsFrom}}'), { step_number: 4 });
+    expect(b.step.sender_note).toMatch(/"email_automations", read by step 2 \(get_setting\)/);
+    expect((await insert(sms('{{settings.sms_default_from}}'), { step_number: 4 })).step.sender_note).toMatch(/"sms_default_from"/);
+  });
+
+  test('a placeholder sender that would not resolve is refused', async () => {
+    const refused = /would not resolve — workflow placeholders are variables only/;
+    // No earlier writer: inserting BEFORE the get_settings step.
+    await expect(insert(email('{{settings.email_automations}}'), { step_number: 1 })).rejects.toThrow(refused);
+    // The nearest writer is set_var (step 5 overwrites `settings`), appended after it.
+    await expect(insert(email('{{settings.email_automations}}'))).rejects.toThrow(refused);
+    // A key the get_settings step does not read.
+    await expect(insert(email('{{settings.email_default_from}}'), { step_number: 4 })).rejects.toThrow(refused);
+    // A setting outside the registry's senders section (routing).
+    await expect(insert(email('{{routing.email_it}}'), { step_number: 4 })).rejects.toThrow(refused);
+    // The wrong channel: an email setting as an SMS sender.
+    await expect(insert(sms('{{settings.email_automations}}'), { step_number: 4 })).rejects.toThrow(refused);
+    // Shape mismatches: get_setting needs {{V}}, get_settings needs {{V.key}}.
+    await expect(insert(email('{{automationsFrom.email_automations}}'), { step_number: 4 })).rejects.toThrow(refused);
+    await expect(insert(email('{{settings}}'), { step_number: 4 })).rejects.toThrow(refused);
+    // Tables / modifiers / env — the sequence resolver's forms do not exist here.
+    for (const f of ['{{users.default_email}}', '{{settings.email_automations|default:x}}', 'x{{automationsFrom}}', '{{env.now}}']) {
+      await expect(insert(email(f), { step_number: 4 })).rejects.toThrow(refused);
+    }
+  });
+
+  test('the writer must store the setting through its OWN output_var — a set_vars alias is not the setting', async () => {
+    const rows = [{ step_number: 1, type: 'internal_function', label: 'Settings', note: null,
+      config: { function_name: 'get_settings', params: { keys: 'email_automations', output_var: 'raw' },
+        set_vars: { settings: '{{this.output}}' } }, error_policy: null }];
+    await expect(normalizeActionDraft(sendDb(rows), { kind: 'workflow.step_insert.v1', workflow_id: 27,
+      step: email('{{settings.email_automations}}'), evidence: CITE }, EVID)).rejects.toThrow(/would not resolve/);
+    expect((await normalizeActionDraft(sendDb(rows), { kind: 'workflow.step_insert.v1', workflow_id: 27,
+      step: email('{{raw.email_automations}}'), evidence: CITE }, EVID)).step.sender_note).toMatch(/read by step 1/);
+  });
+
+  test('email attachment_urls are never authored', async () => {
+    await expect(insert(email('office@4lsg.com', { attachment_urls: ['https://x.example.com/a.pdf'] })))
+      .rejects.toThrow(/does not author email attachments/);
+  });
+
+  test('edit: a send step discloses the send; a stored sender / attachment list may be kept, a changed one is held to the rule', async () => {
+    const edit = (changes) => normalizeActionDraft(sendDb(), { kind: 'workflow.step_edit.v1', workflow_id: 27, step_number: 4, changes, evidence: CITE }, EVID);
+    const stored = SEND_ROWS[3].config.params;
+    const labelOnly = await edit({ label: 'Mail them' });
+    expect(labelOnly.send).toEqual({ side_effect: 'external-send', sender: '{{settings.email_automations}} (unchanged — as stored on this step)', recipient: '{{client_email}}' });
+    const keep = await edit({ params: { ...stored, subject: 'Your case was filed' } });
+    expect(keep.send.sender).toMatch(/unchanged/);
+    expect(keep.new_config.params.attachment_urls).toEqual(stored.attachment_urls);
+    await expect(edit({ params: { ...stored, attachment_urls: ['https://evil.example.com/x.pdf'] } }))
+      .rejects.toThrow(/does not author email attachments/);
+    await expect(edit({ params: { ...stored, from: '{{settings.email_default_from}}' } })).rejects.toThrow(/would not resolve/);
+    const moved = await edit({ params: { ...stored, from: '{{automationsFrom}}' } });
+    expect(moved.send).toMatchObject({ sender: '{{automationsFrom}}', recipient: '{{client_email}}' });
+    expect(moved.send.sender_note).toMatch(/read by step 2/);
+    await expect(edit({ params: { ...stored, from: 'nobody@example.com' } })).rejects.toThrow(/not a configured firm mailbox/);
+  });
+
+  test('editing a stored get_settings step re-checks its keys; a secret is refused', async () => {
+    const edit = (params) => normalizeActionDraft(sendDb(), { kind: 'workflow.step_edit.v1', workflow_id: 27, step_number: 1,
+      changes: { params }, evidence: CITE }, EVID);
+    const ok = await edit({ keys: 'email_automations, billing_tasks_to', output_var: 'settings' });
+    expect(ok.new_config.params.keys).toBe('email_automations, billing_tasks_to');
+    expect(ok.send).toBeUndefined();
+    await expect(edit({ keys: 'email_automations, quo_api_key', output_var: 'settings' })).rejects.toThrow(/quo_api_key is a secret/);
+  });
+
+  test('a non-send edit carries no send disclosure', async () => {
+    const out = await normalizeActionDraft(stepDb(), editDraft(), EVIDENCE);
+    expect(out.send).toBeUndefined();
   });
 });
