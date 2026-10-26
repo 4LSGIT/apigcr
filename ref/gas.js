@@ -52,7 +52,7 @@ const CONFIG = {
 
   // Legacy side-job — to be removed; see inline notes
   pabblyDocsRelay: {
-    enabled:        true,
+    enabled:        false,
     // url: Script Property PABBLY_DOCS_RELAY_URL — see SECRETS below.
     triggerAddress: 'docs@4lsg.com'
   },
