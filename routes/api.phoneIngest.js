@@ -31,7 +31,7 @@ const ruleService          = require('../services/phoneIngestRuleService');
 const executionsService    = require('../services/phoneIngestExecutionsService');
 const metaService          = require('../services/phoneIngestMetaService');
 const sampleService        = require('../services/phoneIngestSampleService');
-const actionDispatchers    = require('../lib/actionDispatchers');
+const rulePreview          = require('../services/ingestRulePreviewService');
 
 
 // ─────────────────────────────────────────────────────────────
@@ -442,144 +442,12 @@ router.get('/api/phone-ingest/sample-events', jwtOrApiKey, async (req, res) => {
 // ─────────────────────────────────────────────────────────────
 
 router.post('/api/phone-ingest/rules/test-match', jwtOrApiKey, async (req, res) => {
+  // Core extracted to services/ingestRulePreviewService.js (A20.1), shared
+  // with Casey's automation.preview_ingest_rule; this response is unchanged —
+  // pinned against a pre-extraction golden by tests/ingestRulePreview.routes.test.js.
   try {
-    const body = req.body || {};
-    const { match_mode, match_config } = body;
-
-    // ── validation ──
-    if (match_mode !== 'conditions' && match_mode !== 'code') {
-      return res.status(400).json({ error: "match_mode must be 'conditions' or 'code'" });
-    }
-
-    let limit = 100;
-    if (body.limit !== undefined && body.limit !== null) {
-      const n = Number(body.limit);
-      if (!Number.isInteger(n) || n < 1) {
-        return res.status(400).json({ error: 'limit must be a positive integer' });
-      }
-      limit = Math.min(300, n);
-    }
-
-    let since;
-    if (body.since !== undefined && body.since !== null && body.since !== '') {
-      const d = new Date(body.since);
-      if (isNaN(d.getTime())) {
-        return res.status(400).json({ error: 'Invalid since datetime' });
-      }
-      since = body.since;
-    }
-
-    let until;
-    if (body.until !== undefined && body.until !== null && body.until !== '') {
-      const d = new Date(body.until);
-      if (isNaN(d.getTime())) {
-        return res.status(400).json({ error: 'Invalid until datetime' });
-      }
-      if (since !== undefined && d.getTime() < new Date(since).getTime()) {
-        return res.status(400).json({ error: 'until must be >= since — the range is backwards' });
-      }
-      until = body.until;
-    }
-
-    let execId;
-    if (body.exec_id !== undefined && body.exec_id !== null && body.exec_id !== '') {
-      const n = Number(body.exec_id);
-      if (!Number.isInteger(n) || n < 1) {
-        return res.status(400).json({ error: 'exec_id must be a positive integer' });
-      }
-      if (since !== undefined || until !== undefined) {
-        return res.status(400).json({ error: 'exec_id and since/until are mutually exclusive — target one execution or a date window, not both' });
-      }
-      execId = n; // limit is ignored in exec_id mode
-    }
-
-    const includeMisses = body.include_misses === true;
-
-    if (match_mode === 'conditions') {
-      // The production matcher treats a NULL conditions config as NON-match
-      // (never match-all), so testing one is pointless — reject with the
-      // explicit always-match shape instead.
-      if (match_config == null || typeof match_config !== 'object' || Array.isArray(match_config)) {
-        return res.status(400).json({
-          error: "conditions mode requires match_config to be an object — for an explicit always-match, use {operator:'and', conditions:[]}",
-        });
-      }
-    } else {
-      // code mode — extract the code string EXACTLY the way _evaluateMatch
-      // does: a string config is JSON.parse'd FIRST (the matcher's defensive
-      // parse), THEN code = string-or-.code. A raw (non-JSON) code string
-      // therefore never matches in production — reject it up front instead of
-      // returning a misleading 0-match run. Then compile ONCE so a syntax
-      // error is a clean 400 instead of 0-matches-with-N-warnings. The
-      // compiled fn is DISCARDED — per-row evaluation still goes through
-      // _evaluateMatch so runtime semantics (error swallowing included) are
-      // byte-identical to production.
-      let cfg = match_config;
-      if (typeof cfg === 'string') {
-        try { cfg = JSON.parse(cfg); }
-        catch {
-          return res.status(400).json({
-            error: "match_config string is not valid JSON — the production matcher would treat this as non-match on every event; send {code:'...'} instead",
-          });
-        }
-      }
-      const code = typeof cfg === 'string' ? cfg : cfg?.code;
-      if (!code || typeof code !== 'string' || !code.trim()) {
-        return res.status(400).json({ error: 'code mode requires a non-empty code string (match_config.code)' });
-      }
-      try {
-        // eslint-disable-next-line no-new-func
-        new Function('input', code);
-      } catch (err) {
-        return res.status(400).json({ error: `code does not compile: ${err.message}` });
-      }
-    }
-
-    // ── corpus + evaluation ──
-    // exec_id → that one execution. Otherwise the windowed corpus (which,
-    // unlike email, never had a status filter to widen).
-    const corpus = execId !== undefined
-      ? await sampleService.fetchEnvelopes(req.db, { exec_id: execId })
-      : await sampleService.fetchEnvelopes(req.db, { limit, since, until });
-
-    if (corpus.not_found) {
-      return res.status(404).json({
-        error: corpus.not_found === 'unparseable'
-          ? `execution #${execId} has no parseable raw_input — nothing to evaluate`
-          : `execution #${execId} not found`,
-      });
-    }
-
-    const { rows, unparseable_skipped } = corpus;
-    const testRule = { id: 'test-match', name: '(editor)', match_mode, match_config };
-    const matches = [];
-    const misses  = [];
-    for (const r of rows) {
-      const matched = ruleService._evaluateMatch(testRule, r.envelope);
-      const shaped = {
-        exec_id:  r.exec_id,
-        ts:       r.ts,
-        from:     (r.envelope && r.envelope.from != null) ? r.envelope.from : null,
-        label:    sampleService._testLabel(r.envelope, r.event_type, r.ts),
-        matched,
-        fidelity: r.fidelity,
-        status:   r.status,
-      };
-      (matched ? matches : misses).push(shaped);
-    }
-
-    const out = {
-      success:             true,
-      total:               rows.length,
-      matched_count:       matches.length,
-      unparseable_skipped: unparseable_skipped,
-      rows:                includeMisses ? matches.concat(misses) : matches,
-    };
-    if ((since !== undefined || until !== undefined) && corpus.window_total !== undefined) {
-      out.window_total = corpus.window_total;
-      out.truncated    = corpus.window_total > rows.length;
-    }
-    return res.json(out);
+    const r = await rulePreview.testMatch(req.db, 'phone', req.body || {});
+    return res.status(r.status).json(r.body);
   } catch (err) {
     console.error('[phone-ingest] test-match error:', err);
     res.status(500).json({ status: 'error', message: err.message });
@@ -624,80 +492,12 @@ router.post('/api/phone-ingest/rules/test-match', jwtOrApiKey, async (req, res) 
 // ─────────────────────────────────────────────────────────────
 
 router.post('/api/phone-ingest/rules/test-transform', jwtOrApiKey, async (req, res) => {
+  // Core extracted to services/ingestRulePreviewService.js (A20.1), shared
+  // with Casey's automation.preview_ingest_rule; this response is unchanged —
+  // pinned against a pre-extraction golden by tests/ingestRulePreview.routes.test.js.
   try {
-    const body = req.body || {};
-    const { transform_mode, transform_config } = body;
-
-    // ── validation (request shape only — transform failures are results) ──
-    if (typeof transform_mode !== 'string' || !transform_mode) {
-      return res.status(400).json({ error: 'transform_mode is required' });
-    }
-
-    const hasExec  = body.exec_id !== undefined && body.exec_id !== null && body.exec_id !== '';
-    const hasInput = body.input   !== undefined && body.input   !== null;
-    if (hasExec === hasInput) {
-      return res.status(400).json({ error: 'provide exactly one of exec_id (historical execution) or input (inline event object)' });
-    }
-
-    let execId;
-    if (hasExec) {
-      const n = Number(body.exec_id);
-      if (!Number.isInteger(n) || n < 1) {
-        return res.status(400).json({ error: 'exec_id must be a positive integer' });
-      }
-      execId = n;
-    } else if (typeof body.input !== 'object' || Array.isArray(body.input)) {
-      return res.status(400).json({ error: 'input must be a JSON object (the event to transform)' });
-    }
-
-    let paramsMappings;
-    if (body.params_mappings !== undefined && body.params_mappings !== null) {
-      if (!Array.isArray(body.params_mappings) || body.params_mappings.length > 20) {
-        return res.status(400).json({ error: 'params_mappings must be an array of at most 20 {label?, mapping} entries' });
-      }
-      for (const pm of body.params_mappings) {
-        if (pm == null || typeof pm !== 'object' || Array.isArray(pm)
-            || pm.mapping == null || typeof pm.mapping !== 'object' || Array.isArray(pm.mapping)) {
-          return res.status(400).json({ error: 'each params_mappings entry needs a mapping object' });
-        }
-      }
-      paramsMappings = body.params_mappings;
-    }
-
-    // ── envelope sourcing ──
-    let envelope, source;
-    if (execId !== undefined) {
-      const corpus = await sampleService.fetchEnvelopes(req.db, { exec_id: execId });
-      if (corpus.not_found) {
-        return res.status(404).json({
-          error: corpus.not_found === 'unparseable'
-            ? `execution #${execId} has no parseable raw_input — nothing to transform`
-            : `execution #${execId} not found`,
-        });
-      }
-      const row = corpus.rows[0];
-      envelope = row.envelope;
-      source   = { exec_id: row.exec_id, ts: row.ts, fidelity: row.fidelity, status: row.status };
-    } else {
-      envelope = body.input;
-      source   = 'inline';
-    }
-
-    // ── production runner ──
-    const testRule = { id: 'test-transform', name: '(editor)', transform_mode, transform_config };
-    const tr = ruleService._runTransform(testRule, envelope);
-    const transform = tr.ok ? { ok: true, output: tr.output } : { ok: false, error: tr.error };
-
-    const out = { success: true, source, input: envelope, transform };
-
-    if (tr.ok && paramsMappings) {
-      out.resolved_params = paramsMappings.map((pm, i) => ({
-        label:  (typeof pm.label === 'string' && pm.label) ? pm.label : `mapping #${i + 1}`,
-        params: actionDispatchers.resolveParamsMapping(pm.mapping, tr.output),
-      }));
-    }
-
-    return res.json(out);
+    const r = await rulePreview.testTransform(req.db, 'phone', req.body || {});
+    return res.status(r.status).json(r.body);
   } catch (err) {
     console.error('[phone-ingest] test-transform error:', err);
     res.status(500).json({ status: 'error', message: err.message });

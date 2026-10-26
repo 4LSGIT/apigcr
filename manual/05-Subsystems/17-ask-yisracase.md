@@ -409,7 +409,21 @@ scoped `weather.lookup` external read, and the typed automation reads —
 `automation.references` — which let Casey explain a workflow or sequence, one
 of its runs or enrollments, and what can start or enroll it. Those projections redact webhook URLs to method + host + credential
 label and omit resolved payloads; code-step bodies are readable so Casey can
-explain them. The answer may additionally contain one
+explain them.
+
+The same four reads cover the **email and phone ingest rules** (More →
+Automations → Email Ingest / Phone Ingest): Casey can list the rules and the
+log-suppression rules, read one rule with its actions and what each starts,
+find a message by sender, subject or phone number within a date range, and
+explain what happened to it — which rules matched, what each action did, and
+the layer where it stopped (a duplicate never reaches the rules; a suppressed
+message still fires them). A separate read, `automation.preview_ingest_rule`, is
+a dry run: it tests an EXISTING rule against a recorded message or a sample and
+reports whether it matches, why not (including a rule whose code throws, which
+the executions table never records), what its transform produces, and what each
+action would do — without starting anything, writing anything, or counting a
+match. Casey cannot create, edit, activate, or reorder ingest rules; it tells
+you what to change in the ingest editor. The answer may additionally contain one
 server-validated `task.create.v1`, `task.update.v1`, `task.complete.v1`,
 `task.cancel.v1`, `task.reopen.v1`, or `task.transfer.v1` proposal. The proposal
 may instead be one `event.create.v1`, `event.update.v1`, `event.complete.v1`,

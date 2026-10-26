@@ -25,6 +25,26 @@
 gaps above); everything else from the September delta pass is folded into the
 body. Governing migrations in `ref/migrations/`.*
 
+- **Casey reads email/phone ingest rules (A20.0/A20.1, 10-26):** the P12
+  kinds take `email_ingest_rule_id` / `phone_ingest_rule_id` (definition,
+  references), `email_ingest_execution_id` / `phone_ingest_execution_id` or a
+  rule id for its latest match (run), and six `automation.list` types (rules,
+  suppressions, an executions finder with firm-local `since`/`until`); the
+  dry-run kind `automation.preview_ingest_rule` evaluates a STORED rule only,
+  through `services/ingestRulePreviewService.js` — the same core the native
+  `POST /api/{email,phone}-ingest/rules/test-match|test-transform` routes now
+  call (responses unchanged, golden-pinned). Invariants: nothing in the
+  preview path calls `evaluateRules` (it dispatches and bumps metrics);
+  `email_ingest_sources` is never read; `http` actions project as method +
+  host + credential label. Ingest landmines found while building it:
+  (1) every MATCH moves the rule's `updated_at` (the `match_count` bump is a
+  row UPDATE), so it is not an edit stamp; action writes do not move it;
+  (2) `code` match/transform/suppression bodies run IN THIS PROCESS via
+  `new Function` — and the ingest management routes, test-transform included,
+  are plain `jwtOrApiKey`, so any staff JWT can run code that reads
+  `process.env` (ref/plans.md, Ask Casey arc — A20); (3) a throwing match is
+  a console warning only, never recorded on the execution row; (4) email
+  firm-to-firm mail runs Layer 3. Plan: ref/ASK_CASEY_ACTIONS_PLAN.md A20.
 - **Workflow step routes: expected_base precondition + save-time closures
   (A17.4, 10-24):** the five step-mutating routes in `routes/workflows.js`
   (insert, PUT, PATCH, DELETE, reorder) take an optional `expected_base`
@@ -2169,16 +2189,21 @@ bridge. The assistant cannot submit selectors, coordinates, URLs, or script.
 
 **Automatic operation vocabulary.** Enabled kinds: `sql.read`, `manual.search`,
 `comms.search`, `weather.lookup`, and the typed automation reads (P12,
-workflows AND sequences): `automation.list` / `automation.definition` /
-`automation.run` / `automation.references`, each taking a workflow id or a
-sequence template / enrollment id, served by
+workflows AND sequences; A20.0, email/phone ingest rules):
+`automation.list` / `automation.definition` / `automation.run` /
+`automation.references`, each taking a workflow id, a sequence template /
+enrollment id, or an ingest rule / execution id, served by
 `services/automationReadService.js` on the
 app pool — the report pool's grants exclude the automation tables on purpose,
-so the projection is the only path and carries the redaction (webhook URLs →
-method + host + credential label; `resolved_config` and
-`action_config_resolved` never selected;
-`output_data` verdict keys only; code bodies readable per the 2026-10-22
-ruling). Weather is a narrow adapter that accepts
+so the projection is the only path and carries the redaction (webhook and
+ingest `http` URLs → method + host + credential label; `resolved_config`,
+`action_config_resolved` and ingest `raw_input` never selected;
+`email_ingest_sources` never touched; `output_data` verdict keys only; code
+bodies readable per the 2026-10-22 ruling). Two dry-run kinds execute
+nothing: `automation.preview_step` (A17.2, `services/stepPreviewService.js`)
+and `automation.preview_ingest_rule` (A20.1, a STORED ingest rule's match and
+transform via `services/ingestRulePreviewService.js` — no dispatch, no
+execution row, no metrics bump, no rule body accepted). Weather is a narrow adapter that accepts
 only a location and constructs fixed Open-Meteo geocoding/forecast URLs in
 `assistantWeatherService`; it is not arbitrary web access. Unknown kinds fail
 closed. Reviewed writes are not automatic operations: the answer may return one

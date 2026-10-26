@@ -1022,6 +1022,7 @@ services/hookFilter.js
 services/hookMapper.js
 services/hookService.js
 services/hookTransforms.js
+services/ingestRulePreviewService.js
 services/intakeService.js
 services/logService.js
 services/mailbox/imapTransport.js
@@ -1116,6 +1117,7 @@ tests/auditShape.mysql.test.js
 tests/auditShape.test.js
 tests/autoGrow.test.js
 tests/automationRead.test.js
+tests/automationReadIngest.mysql.test.js
 tests/calendarEvents.appt.test.js
 tests/calendarEvents.event.test.js
 tests/calendarEvents.registry.test.js
@@ -1294,6 +1296,7 @@ tests/fixtures/comms_s2_audio/rc_cbr_mono_32k.mp3.head
 tests/fixtures/comms_s2_audio/tiny_1s.mp3.head
 tests/fixtures/comms_s2_audio/vbr_xing.mp3.head
 tests/fixtures/comms_s2_audio/vm.wav.head
+tests/fixtures/ingestRuleTestRoutes.golden.json
 tests/fixtures/intake_cards_definition.json
 tests/fixtures/quick_notes_slice2_definition.json
 tests/fixtures/slice26/issn_tabs_definition.json
@@ -1366,6 +1369,7 @@ tests/hookTransforms.test.js
 tests/hooksGate.test.js
 tests/iconPickerS6a.test.js
 tests/impersonation.test.js
+tests/ingestRulePreview.routes.test.js
 tests/ingestRuleService.duplicate.test.js
 tests/ingestRuleService.transformFailure.test.js
 tests/ingestService.evaluatorFailure.test.js

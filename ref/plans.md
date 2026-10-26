@@ -848,6 +848,60 @@ and the two marked LIVE BUG are worth landing whether or not A17 ever ships.)
   a contact's Automations tab. A canonical automations/bus slice would close
   it; the Casey plan deliberately adds no Casey-only emit.
 
+## From the Ask Casey arc — A20.0/A20.1 ingest reads (2026-10-26)
+
+Found while building Casey's ingest-rule read surface (plan A20). None is a
+Casey slice; the first is a security gap in the native editor.
+
+- **SECURITY — ingest `code` modes run in the main process, and their routes
+  are open to every staff JWT.** `email/phoneIngestRuleService._evaluateMatch`
+  / `_runTransform` and both suppression services run a `code` body as
+  `new Function('input', code)(envelope)` IN THIS PROCESS — no `vm`, no forked
+  child, no hardening; `process` is a global there. Every ingest management
+  route is plain `jwtOrApiKey` (`routes/api.emailIngest.js`,
+  `routes/api.phoneIngest.js`): rule and suppression create/update accept
+  `code` mode, and `POST .../rules/test-transform` runs a BODY-SUPPLIED code
+  transform and returns its output. Verified 2026-10-26 through the shared
+  core: a test-transform body returning `{probe: process.env.X}` came back
+  with the value — so any staff session can read the DB credentials,
+  `JWT_SECRET` and `CREDENTIALS_ENCRYPTION_KEY`, and stored code runs on every
+  inbound message. This is the 2026-10-22 `custom_code` finding's class with
+  less in the way (hooks run the same `new Function`, but their routes have
+  been `automations.manage`-gated since access B5). Cheapest first step: the
+  `automations.manage` gate on every ingest write that carries `code` mode and
+  on test-match / test-transform with a `code` body (the CLAUDE.md "every code
+  writer" rule); then move execution to the safe runner or the forked child.
+  Casey's `automation.preview_ingest_rule` takes no rule body for this reason.
+- **The native ingest tester skips `evaluateRules`' email `body` derivation.**
+  `evaluateRules` (and `evaluateSuppressions`) set `body = text || html || ''`
+  before matching; test-match / test-transform evaluate the fetched envelope
+  as-is, and a full-fidelity row's envelope is the wire object, which has no
+  `body` — so a `body` condition tests false on exactly the rows where
+  production matches it (pinned as found: `tests/ingestRulePreview.routes.test.js`
+  golden "body condition window", `tests/automationReadIngest.mysql.test.js`).
+  Casey's preview applies the derivation (`ingestRulePreviewService.
+  productionEnvelope`); the route adapters do not, to keep the golden. Fix: use
+  `productionEnvelope` in `testMatch` / `testTransform` too, and refresh the
+  golden. The `emailIngestSampleService` header still says `body` is "a derived
+  field the production matcher never sees" — false since the catalog-parity fix.
+- **A rule's `updated_at` moves on every match.** `_bumpMetrics` UPDATEs the
+  rule row and `ON UPDATE CURRENT_TIMESTAMP` fires (live: 16 of 18 matched
+  email rules show `updated_at = last_matched_at`). Action writes do not touch
+  it. Any expected-`updated_at` guard (A20.2/A20.3) is therefore spuriously
+  stale on busy rules and blind to action edits; give rules an edit stamp the
+  metrics bump does not move (or bump metrics with `updated_at = updated_at`),
+  and record the landmine as a schema COMMENT when that migration runs.
+- **A throwing ingest match is fail-quiet.** It is a console warning only —
+  no execution-row warning, no metric, no alert — where the trigger engine
+  records the same case (AI_CONTEXT §26). A rule that silently throws on every
+  message looks like a rule that never matches; consider recording it in
+  `_parse_warnings` and an outcome the alerting sweep already watches.
+- **A20.2 draft preview.** The preview kind evaluates stored rules only. If
+  authoring wants to dry-run an unsaved `conditions` / `mapper` draft, decide
+  first how a model-written `matches` operator or mapper `regex` transform is
+  kept linear (`new RegExp` on a staff-reachable path — CLAUDE.md's validator
+  regex rule).
+
 ## From the Ask Casey arc — P4 idempotency follow-ups (2026-10-22)
 
 The migration ran live on 2026-10-22 and `request_idempotency` is in

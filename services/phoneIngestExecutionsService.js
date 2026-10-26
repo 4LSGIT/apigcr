@@ -427,4 +427,7 @@ module.exports = {
   VALID_ACTION_STATUSES,
   DEFAULT_PAGE_SIZE,
   MAX_PAGE_SIZE,
+  // Reused by the Casey read surface (services/automationReadService.js, A20.0)
+  // so rule / action / suppression names hydrate one way.
+  _hydrateNames,
 };

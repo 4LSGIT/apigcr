@@ -2353,6 +2353,45 @@ function assistantDeniedColumn(sql) {
   return ASSISTANT_DENIED.find((name) => new RegExp(`\\b${name}\\b`, 'i').test(scanned)) || null;
 }
 
+// Automation read-kind vocabulary (P12; A20.0 added the ingest-rule family).
+// tests/automationRead.test.js READ_KINDS + tests/assistantPromptKinds.test.js
+// pin that every stage's prompt names what the validator accepts.
+const AUTOMATION_LIST_TYPES = ['workflows', 'sequences',
+  'email_ingest_rules', 'phone_ingest_rules', 'email_ingest_suppressions', 'phone_ingest_suppressions',
+  'email_ingest_executions', 'phone_ingest_executions'];
+const AUTOMATION_RECORD_KEYS = ['workflow_id', 'sequence_template_id', 'email_ingest_rule_id', 'phone_ingest_rule_id'];
+const AUTOMATION_RECORD_LABEL = 'workflow_id or sequence_template_id (or email_ingest_rule_id / phone_ingest_rule_id for an ingest rule)';
+// Fields of a native test-match/test-transform BODY. The preview kind refuses
+// every one: it evaluates the stored rule, never a supplied one.
+const INGEST_RULE_BODY_KEYS = ['match_mode', 'match_config', 'transform_mode', 'transform_config', 'code', 'rule', 'params_mappings'];
+const INGEST_BOUND_RE = /^\d{4}-\d{2}-\d{2}(?:[ T]\d{2}:\d{2}(?::\d{2})?(?:Z|[+-]\d{2}:\d{2})?)?$/;
+
+// A firm-local since/until pair (date-only or datetime; an explicit offset
+// wins). Kept as the validated strings — the projection converts them — so
+// the signed ticket carries exactly what the model asked for.
+function ingestWindow(source, id) {
+  const out = {};
+  for (const key of ['since', 'until']) {
+    if (source[key] === undefined || source[key] === null || source[key] === '') continue;
+    const text = String(source[key]).trim();
+    let parsed = null;
+    if (INGEST_BOUND_RE.test(text)) { try { parsed = parseUserDateTime(text); } catch (_) { parsed = null; } }
+    if (!parsed) throw httpError(422, `Step ${id} ${key} must be a firm-local date (YYYY-MM-DD) or datetime (YYYY-MM-DD HH:MM)`);
+    out[key] = text;
+  }
+  if (out.since && out.until && parseUserDateTime(out.until) < parseUserDateTime(out.since)) {
+    throw httpError(422, `Step ${id} until is before since`);
+  }
+  return out;
+}
+
+function recordFingerprint(step) {
+  if (step.workflow_id !== undefined) return `w${Number(step.workflow_id)}`;
+  if (step.email_ingest_rule_id !== undefined) return `ier${Number(step.email_ingest_rule_id)}`;
+  if (step.phone_ingest_rule_id !== undefined) return `ipr${Number(step.phone_ingest_rule_id)}`;
+  return `s${Number(step.sequence_template_id)}`;
+}
+
 function validateStep(query, index) {
   if (!query || typeof query !== 'object') throw httpError(422, `Step ${index + 1} is malformed`);
   const id = String(query.id || `q${index + 1}`).trim();
@@ -2379,11 +2418,10 @@ function validateStep(query, index) {
   // Automation read kinds (P12a — workflows; the projection and its redaction
   // live in services/automationReadService.js). Typed and id-keyed: the model
   // never writes SQL against the automation tables.
-  const exactlyOneId = (a, b, labels) => {
-    const hasA = query[a] !== undefined;
-    const hasB = query[b] !== undefined;
-    if (hasA === hasB) throw httpError(422, `Step ${id} needs exactly one of ${labels}`);
-    const key = hasA ? a : b;
+  const exactlyOneOf = (keys, labels) => {
+    const present = keys.filter((k) => query[k] !== undefined);
+    if (present.length !== 1) throw httpError(422, `Step ${id} needs exactly one of ${labels}`);
+    const key = present[0];
     const value = Number(query[key]);
     if (!Number.isSafeInteger(value) || value < 1) throw httpError(422, `Step ${id} needs a positive ${key}`);
     return { [key]: value };
@@ -2394,16 +2432,26 @@ function validateStep(query, index) {
     const limit = Math.max(1, Math.min(Number(query.limit) || 50, 50));
     const out = { id, kind, purpose, query: search, limit };
     if (query.type !== undefined) {
-      if (query.type !== 'workflows' && query.type !== 'sequences') {
-        throw httpError(422, `Step ${id} automation.list type must be "workflows" or "sequences"`);
+      if (!AUTOMATION_LIST_TYPES.includes(query.type)) {
+        throw httpError(422, `Step ${id} automation.list type must be "workflows" or "sequences" (or an ingest type: ${AUTOMATION_LIST_TYPES.slice(2).join(', ')})`);
       }
       out.type = query.type;
+    }
+    // A20.0: the execution finder takes an optional firm-local window.
+    if (query.since !== undefined || query.until !== undefined) {
+      if (!/_ingest_executions$/.test(String(out.type || ''))) {
+        throw httpError(422, `Step ${id} automation.list since/until apply only to the email_ingest_executions / phone_ingest_executions types`);
+      }
+      Object.assign(out, ingestWindow(query, id));
     }
     return out;
   }
   if (kind === 'automation.definition') {
-    const out = { id, kind, purpose, ...exactlyOneId('workflow_id', 'sequence_template_id', 'workflow_id or sequence_template_id') };
+    const out = { id, kind, purpose, ...exactlyOneOf(AUTOMATION_RECORD_KEYS, AUTOMATION_RECORD_LABEL) };
     if (query.version !== undefined) {
+      if (out.workflow_id === undefined && out.sequence_template_id === undefined) {
+        throw httpError(422, `Step ${id} version applies to workflows and sequences only — ingest rules are unversioned (live on save)`);
+      }
       const version = Number(query.version);
       if (!Number.isSafeInteger(version) || version < 0) throw httpError(422, `Step ${id} version must be a non-negative integer`);
       out.version = version;
@@ -2411,17 +2459,61 @@ function validateStep(query, index) {
     return out;
   }
   if (kind === 'automation.run') {
-    const keys = ['execution_id', 'enrollment_id', 'workflow_id', 'sequence_template_id']
+    const keys = ['execution_id', 'enrollment_id', 'workflow_id', 'sequence_template_id',
+      'email_ingest_execution_id', 'phone_ingest_execution_id', 'email_ingest_rule_id', 'phone_ingest_rule_id']
       .filter((k) => query[k] !== undefined);
     if (keys.length !== 1) {
-      throw httpError(422, `Step ${id} needs exactly one of execution_id, enrollment_id, workflow_id (latest run), or sequence_template_id (latest enrollment)`);
+      throw httpError(422, `Step ${id} needs exactly one of execution_id, enrollment_id, workflow_id (latest run), or sequence_template_id (latest enrollment) — or, for ingest, email_ingest_execution_id / phone_ingest_execution_id, or email_ingest_rule_id / phone_ingest_rule_id (that rule's latest matching execution)`);
     }
     const value = Number(query[keys[0]]);
     if (!Number.isSafeInteger(value) || value < 1) throw httpError(422, `Step ${id} needs a positive ${keys[0]}`);
     return { id, kind, purpose, [keys[0]]: value };
   }
   if (kind === 'automation.references') {
-    return { id, kind, purpose, ...exactlyOneId('workflow_id', 'sequence_template_id', 'workflow_id or sequence_template_id') };
+    return { id, kind, purpose, ...exactlyOneOf(AUTOMATION_RECORD_KEYS, AUTOMATION_RECORD_LABEL) };
+  }
+  // A20.1 — dry-run an existing ingest rule's match/transform against a
+  // message. It names a STORED rule only: there is no field that carries a
+  // match or transform body (an editor body in `code` mode would be
+  // model-composed code running in-process via new Function), and the executor
+  // only ever calls the side-effect-free preview core.
+  if (kind === 'automation.preview_ingest_rule') {
+    const ruleKeys = ['email_ingest_rule_id', 'phone_ingest_rule_id'].filter((k) => query[k] !== undefined);
+    if (ruleKeys.length !== 1) throw httpError(422, `Step ${id} needs exactly one of email_ingest_rule_id or phone_ingest_rule_id (an existing rule)`);
+    for (const k of INGEST_RULE_BODY_KEYS) {
+      if (query[k] !== undefined) throw httpError(422, `Step ${id} previews a STORED ingest rule only — it takes no ${k}`);
+    }
+    const channel = ruleKeys[0].startsWith('email') ? 'email' : 'phone';
+    const ruleId = Number(query[ruleKeys[0]]);
+    if (!Number.isSafeInteger(ruleId) || ruleId < 1) throw httpError(422, `Step ${id} needs a positive ${ruleKeys[0]}`);
+    const execKey = `${channel}_ingest_execution_id`;
+    const foreignExec = channel === 'email' ? 'phone_ingest_execution_id' : 'email_ingest_execution_id';
+    if (query[foreignExec] !== undefined) throw httpError(422, `Step ${id} cannot preview a ${channel} rule against a ${foreignExec.split('_')[0]} execution`);
+    const sources = [execKey, 'sample', 'window'].filter((k) => query[k] !== undefined);
+    if (sources.length !== 1) throw httpError(422, `Step ${id} needs exactly one message source: ${execKey}, sample, or window`);
+    const out = { id, kind, purpose, channel, [ruleKeys[0]]: ruleId };
+    if (sources[0] === execKey) {
+      const execId = Number(query[execKey]);
+      if (!Number.isSafeInteger(execId) || execId < 1) throw httpError(422, `Step ${id} needs a positive ${execKey}`);
+      out[execKey] = execId;
+    } else if (sources[0] === 'sample') {
+      if (query.sample == null || typeof query.sample !== 'object' || Array.isArray(query.sample)) {
+        throw httpError(422, `Step ${id} sample must be a JSON object shaped like the ${channel} envelope`);
+      }
+      let json;
+      try { json = JSON.stringify(query.sample); } catch (_) { throw httpError(422, `Step ${id} sample is not serializable`); }
+      if (json.length > 8000) throw httpError(422, `Step ${id} sample exceeds 8000 characters of JSON`);
+      out.sample = query.sample;
+    } else {
+      const w = query.window;
+      if (w == null || typeof w !== 'object' || Array.isArray(w)) throw httpError(422, `Step ${id} window must be an object {limit?, since?, until?}`);
+      const extra = Object.keys(w).filter((k) => !['limit', 'since', 'until'].includes(k));
+      if (extra.length) throw httpError(422, `Step ${id} window takes only limit, since, until`);
+      const limit = w.limit === undefined ? 20 : Number(w.limit);
+      if (!Number.isInteger(limit) || limit < 1 || limit > 40) throw httpError(422, `Step ${id} window limit must be 1-40`);
+      out.window = { limit, ...ingestWindow(w, id) };
+    }
+    return out;
   }
   // A17.2 — dry-run preview of an authored step. The kind CANNOT express live
   // execution: there is no dry_run field to set, and the executor only ever
@@ -2497,15 +2589,22 @@ function stepFingerprint(step) {
   const kind = String(step && step.kind || '');
   if (kind === 'sql.read') return `${kind}:${String(step.sql || '').replace(/\s+/g, ' ').trim().toLowerCase()}`;
   if (kind === 'weather.lookup') return `${kind}:${String(step.location || '').trim().toLowerCase()}`;
-  if (kind === 'automation.definition') return `${kind}:${step.workflow_id !== undefined ? `w${Number(step.workflow_id)}` : `s${Number(step.sequence_template_id)}`}:${step.version === undefined ? 'current' : Number(step.version)}`;
+  if (kind === 'automation.definition') return `${kind}:${recordFingerprint(step)}:${step.version === undefined ? 'current' : Number(step.version)}`;
   if (kind === 'automation.run') {
     if (step.execution_id !== undefined) return `${kind}:x${Number(step.execution_id)}`;
     if (step.enrollment_id !== undefined) return `${kind}:e${Number(step.enrollment_id)}`;
     if (step.workflow_id !== undefined) return `${kind}:wlatest${Number(step.workflow_id)}`;
+    if (step.email_ingest_execution_id !== undefined) return `${kind}:iex-email${Number(step.email_ingest_execution_id)}`;
+    if (step.phone_ingest_execution_id !== undefined) return `${kind}:iex-phone${Number(step.phone_ingest_execution_id)}`;
+    if (step.email_ingest_rule_id !== undefined) return `${kind}:irlatest-email${Number(step.email_ingest_rule_id)}`;
+    if (step.phone_ingest_rule_id !== undefined) return `${kind}:irlatest-phone${Number(step.phone_ingest_rule_id)}`;
     return `${kind}:slatest${Number(step.sequence_template_id)}`;
   }
-  if (kind === 'automation.references') return `${kind}:${step.workflow_id !== undefined ? `w${Number(step.workflow_id)}` : `s${Number(step.sequence_template_id)}`}`;
-  if (kind === 'automation.list') return `${kind}:${step.type || 'workflows'}:${String(step.query || '').trim().toLowerCase()}:${Number(step.limit) || 50}`;
+  if (kind === 'automation.references') return `${kind}:${recordFingerprint(step)}`;
+  if (kind === 'automation.list') return `${kind}:${step.type || 'workflows'}:${String(step.query || '').trim().toLowerCase()}:${Number(step.limit) || 50}:${step.since || ''}:${step.until || ''}`;
+  if (kind === 'automation.preview_ingest_rule') {
+    return `${kind}:${recordFingerprint(step)}:${JSON.stringify({ e: step.email_ingest_execution_id, p: step.phone_ingest_execution_id, s: step.sample, w: step.window })}`;
+  }
   if (kind === 'automation.preview_step') return `${kind}:${step.step_type}:${JSON.stringify(step.config)}:${JSON.stringify(step.variables || {})}`;
   return `${kind}:${String(step && step.query || '').replace(/\s+/g, ' ').trim().toLowerCase()}` +
     (kind === 'comms.search' ? `:${Number(step.limit) || 20}` : '');
@@ -2771,15 +2870,28 @@ async function executeReadStep(db, query, { auth, userId }) {
       auth, step_type: query.step_type, config: query.config, variables: query.variables || {},
     });
     rowCount = rows.length;
+  } else if (query.kind === 'automation.preview_ingest_rule') {
+    // A20.1 — match/transform evaluation of a STORED rule only, through the
+    // side-effect-free core the native test-match/test-transform share.
+    rows = await require('./ingestRulePreviewService').previewRows(db, {
+      channel: query.channel,
+      rule_id: query.email_ingest_rule_id !== undefined ? query.email_ingest_rule_id : query.phone_ingest_rule_id,
+      execution_id: query.email_ingest_execution_id !== undefined ? query.email_ingest_execution_id : query.phone_ingest_execution_id,
+      sample: query.sample, window: query.window,
+    });
+    rowCount = rows.length;
   } else if (query.kind === 'automation.list' || query.kind === 'automation.definition'
           || query.kind === 'automation.run' || query.kind === 'automation.references') {
     // Typed projections on the app pool (the report pool's grants exclude the
     // automation tables on purpose); redaction lives in the service.
     const automation = require('./automationReadService');
-    if (query.kind === 'automation.list') rows = await automation.list(db, { query: query.query, limit: query.limit, type: query.type });
-    else if (query.kind === 'automation.definition') rows = await automation.definition(db, { workflow_id: query.workflow_id, sequence_template_id: query.sequence_template_id, version: query.version });
-    else if (query.kind === 'automation.run') rows = await automation.run(db, { execution_id: query.execution_id, enrollment_id: query.enrollment_id, workflow_id: query.workflow_id, sequence_template_id: query.sequence_template_id });
-    else rows = await automation.references(db, { workflow_id: query.workflow_id, sequence_template_id: query.sequence_template_id });
+    const record = { workflow_id: query.workflow_id, sequence_template_id: query.sequence_template_id,
+      email_ingest_rule_id: query.email_ingest_rule_id, phone_ingest_rule_id: query.phone_ingest_rule_id };
+    if (query.kind === 'automation.list') rows = await automation.list(db, { query: query.query, limit: query.limit, type: query.type, since: query.since, until: query.until });
+    else if (query.kind === 'automation.definition') rows = await automation.definition(db, { ...record, version: query.version });
+    else if (query.kind === 'automation.run') rows = await automation.run(db, { ...record, execution_id: query.execution_id, enrollment_id: query.enrollment_id,
+      email_ingest_execution_id: query.email_ingest_execution_id, phone_ingest_execution_id: query.phone_ingest_execution_id });
+    else rows = await automation.references(db, record);
     rowCount = rows.length;
   } else {
     const result = await reportService.execute(db, {
@@ -2835,11 +2947,22 @@ function hasAutomationEvidence(evidence) {
     .some((q) => String(q && q.kind || '').startsWith('automation.'));
 }
 
+// A20.0: ingest evidence is an ingest-keyed row (every ingest projection row
+// carries an email_ingest_* / phone_ingest_* id — including an ingest starter
+// in a workflow's references) or an ingest preview.
+function hasIngestEvidence(evidence) {
+  return (Array.isArray(evidence) ? evidence : []).some((q) => q && (q.kind === 'automation.preview_ingest_rule'
+    || (String(q.kind || '').startsWith('automation.') && (q.rows || []).some((r) =>
+      r && Object.keys(r).some((k) => /^(?:email|phone)_ingest_/.test(k))))));
+}
+
 function answerSystemAppend(approved, evidence) {
   const base = currentContext(approved.viewer, approved.workspace);
   if (!hasAutomationEvidence(evidence)) return base;
-  const { AUTOMATION_RUN_EXPLAINER } = require('../lib/aiPrompts/automationRunExplainer');
-  return `${base}\n${AUTOMATION_RUN_EXPLAINER}`;
+  const { AUTOMATION_RUN_EXPLAINER, INGEST_RULE_EXPLAINER } = require('../lib/aiPrompts/automationRunExplainer');
+  return hasIngestEvidence(evidence)
+    ? `${base}\n${AUTOMATION_RUN_EXPLAINER}\n${INGEST_RULE_EXPLAINER}`
+    : `${base}\n${AUTOMATION_RUN_EXPLAINER}`;
 }
 
 // The answer prompt registers max_tokens 2500, which every record answer fits

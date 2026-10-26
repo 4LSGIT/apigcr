@@ -1,0 +1,1854 @@
+{
+  "email test-match no mode": {
+    "status": 400,
+    "body": {
+      "error": "match_mode must be 'conditions' or 'code'"
+    },
+    "queries": []
+  },
+  "email test-match bad mode": {
+    "status": 400,
+    "body": {
+      "error": "match_mode must be 'conditions' or 'code'"
+    },
+    "queries": []
+  },
+  "email test-match conditions null config": {
+    "status": 400,
+    "body": {
+      "error": "conditions mode requires match_config to be an object — for an explicit always-match, use {operator:'and', conditions:[]}"
+    },
+    "queries": []
+  },
+  "email test-match conditions array config": {
+    "status": 400,
+    "body": {
+      "error": "conditions mode requires match_config to be an object — for an explicit always-match, use {operator:'and', conditions:[]}"
+    },
+    "queries": []
+  },
+  "email test-match limit zero": {
+    "status": 400,
+    "body": {
+      "error": "limit must be a positive integer"
+    },
+    "queries": []
+  },
+  "email test-match limit fraction": {
+    "status": 400,
+    "body": {
+      "error": "limit must be a positive integer"
+    },
+    "queries": []
+  },
+  "email test-match limit clamped": {
+    "status": 200,
+    "body": {
+      "success": true,
+      "total": 2,
+      "matched_count": 1,
+      "rows": [
+        {
+          "exec_id": 101,
+          "ts": "2026-10-20T14:05:00.000Z",
+          "from": "ecf@mieb.uscourts.gov",
+          "label": "Notice of Hearing 26-40001",
+          "matched": true,
+          "fidelity": "full",
+          "status": "logged"
+        }
+      ]
+    },
+    "queries": [
+      {
+        "sql": "SELECT eie.id AS exec_id, eie.created_at AS created_at, eie.status AS status, eie.raw_input AS raw_input, el.from_email AS from_email, el.to_email AS to_email, el.subject AS subject, el.body AS body, el.source AS el_source, el.message_id AS el_mid, l.log_extra AS log_extra FROM email_ingest_executions eie JOIN email_log el ON el.id = eie.email_log_id LEFT JOIN log l ON l.log_id = eie.log_id WHERE eie.status != 'duplicate' AND eie.email_log_id IS NOT NULL ORDER BY eie.id DESC LIMIT ?",
+        "params": [
+          300
+        ]
+      }
+    ]
+  },
+  "email test-match bad since": {
+    "status": 400,
+    "body": {
+      "error": "Invalid since datetime"
+    },
+    "queries": []
+  },
+  "email test-match bad until": {
+    "status": 400,
+    "body": {
+      "error": "Invalid until datetime"
+    },
+    "queries": []
+  },
+  "email test-match backwards range": {
+    "status": 400,
+    "body": {
+      "error": "until must be >= since — the range is backwards"
+    },
+    "queries": []
+  },
+  "email test-match exec zero": {
+    "status": 400,
+    "body": {
+      "error": "exec_id must be a positive integer"
+    },
+    "queries": []
+  },
+  "email test-match exec plus since": {
+    "status": 400,
+    "body": {
+      "error": "exec_id and since/until are mutually exclusive — target one execution or a date window, not both"
+    },
+    "queries": []
+  },
+  "email test-match code non-json string": {
+    "status": 400,
+    "body": {
+      "error": "match_config string is not valid JSON — the production matcher would treat this as non-match on every event; send {code:'...'} instead"
+    },
+    "queries": []
+  },
+  "email test-match code empty": {
+    "status": 400,
+    "body": {
+      "error": "code mode requires a non-empty code string (match_config.code)"
+    },
+    "queries": []
+  },
+  "email test-match code no compile": {
+    "status": 400,
+    "body": {
+      "error": "code does not compile: Unexpected token '}'"
+    },
+    "queries": []
+  },
+  "email test-match window default": {
+    "status": 200,
+    "body": {
+      "success": true,
+      "total": 2,
+      "matched_count": 1,
+      "rows": [
+        {
+          "exec_id": 101,
+          "ts": "2026-10-20T14:05:00.000Z",
+          "from": "ecf@mieb.uscourts.gov",
+          "label": "Notice of Hearing 26-40001",
+          "matched": true,
+          "fidelity": "full",
+          "status": "logged"
+        }
+      ]
+    },
+    "queries": [
+      {
+        "sql": "SELECT eie.id AS exec_id, eie.created_at AS created_at, eie.status AS status, eie.raw_input AS raw_input, el.from_email AS from_email, el.to_email AS to_email, el.subject AS subject, el.body AS body, el.source AS el_source, el.message_id AS el_mid, l.log_extra AS log_extra FROM email_ingest_executions eie JOIN email_log el ON el.id = eie.email_log_id LEFT JOIN log l ON l.log_id = eie.log_id WHERE eie.status != 'duplicate' AND eie.email_log_id IS NOT NULL ORDER BY eie.id DESC LIMIT ?",
+        "params": [
+          100
+        ]
+      }
+    ]
+  },
+  "email test-match window with misses": {
+    "status": 200,
+    "body": {
+      "success": true,
+      "total": 2,
+      "matched_count": 1,
+      "rows": [
+        {
+          "exec_id": 101,
+          "ts": "2026-10-20T14:05:00.000Z",
+          "from": "ecf@mieb.uscourts.gov",
+          "label": "Notice of Hearing 26-40001",
+          "matched": true,
+          "fidelity": "full",
+          "status": "logged"
+        },
+        {
+          "exec_id": 102,
+          "ts": "2026-10-20T14:05:00.000Z",
+          "from": "news@vendor.example",
+          "label": "Weekly digest",
+          "matched": false,
+          "fidelity": "reconstructed",
+          "status": "skipped_suppression"
+        }
+      ]
+    },
+    "queries": [
+      {
+        "sql": "SELECT eie.id AS exec_id, eie.created_at AS created_at, eie.status AS status, eie.raw_input AS raw_input, el.from_email AS from_email, el.to_email AS to_email, el.subject AS subject, el.body AS body, el.source AS el_source, el.message_id AS el_mid, l.log_extra AS log_extra FROM email_ingest_executions eie JOIN email_log el ON el.id = eie.email_log_id LEFT JOIN log l ON l.log_id = eie.log_id WHERE eie.status != 'duplicate' AND eie.email_log_id IS NOT NULL ORDER BY eie.id DESC LIMIT ?",
+        "params": [
+          100
+        ]
+      }
+    ]
+  },
+  "email test-match phone-shaped window with misses": {
+    "status": 200,
+    "body": {
+      "success": true,
+      "total": 2,
+      "matched_count": 0,
+      "rows": [
+        {
+          "exec_id": 101,
+          "ts": "2026-10-20T14:05:00.000Z",
+          "from": "ecf@mieb.uscourts.gov",
+          "label": "Notice of Hearing 26-40001",
+          "matched": false,
+          "fidelity": "full",
+          "status": "logged"
+        },
+        {
+          "exec_id": 102,
+          "ts": "2026-10-20T14:05:00.000Z",
+          "from": "news@vendor.example",
+          "label": "Weekly digest",
+          "matched": false,
+          "fidelity": "reconstructed",
+          "status": "skipped_suppression"
+        }
+      ]
+    },
+    "queries": [
+      {
+        "sql": "SELECT eie.id AS exec_id, eie.created_at AS created_at, eie.status AS status, eie.raw_input AS raw_input, el.from_email AS from_email, el.to_email AS to_email, el.subject AS subject, el.body AS body, el.source AS el_source, el.message_id AS el_mid, l.log_extra AS log_extra FROM email_ingest_executions eie JOIN email_log el ON el.id = eie.email_log_id LEFT JOIN log l ON l.log_id = eie.log_id WHERE eie.status != 'duplicate' AND eie.email_log_id IS NOT NULL ORDER BY eie.id DESC LIMIT ?",
+        "params": [
+          100
+        ]
+      }
+    ]
+  },
+  "email test-match since window": {
+    "status": 200,
+    "body": {
+      "success": true,
+      "total": 2,
+      "matched_count": 1,
+      "rows": [
+        {
+          "exec_id": 101,
+          "ts": "2026-10-20T14:05:00.000Z",
+          "from": "ecf@mieb.uscourts.gov",
+          "label": "Notice of Hearing 26-40001",
+          "matched": true,
+          "fidelity": "full",
+          "status": "logged"
+        },
+        {
+          "exec_id": 102,
+          "ts": "2026-10-20T14:05:00.000Z",
+          "from": "news@vendor.example",
+          "label": "Weekly digest",
+          "matched": false,
+          "fidelity": "reconstructed",
+          "status": "skipped_suppression"
+        }
+      ],
+      "window_total": 7,
+      "truncated": true
+    },
+    "queries": [
+      {
+        "sql": "SELECT eie.id AS exec_id, eie.created_at AS created_at, eie.status AS status, eie.raw_input AS raw_input, el.from_email AS from_email, el.to_email AS to_email, el.subject AS subject, el.body AS body, el.source AS el_source, el.message_id AS el_mid, l.log_extra AS log_extra FROM email_ingest_executions eie JOIN email_log el ON el.id = eie.email_log_id LEFT JOIN log l ON l.log_id = eie.log_id WHERE eie.status != 'duplicate' AND eie.email_log_id IS NOT NULL AND eie.created_at >= ? ORDER BY eie.id ASC LIMIT ?",
+        "params": [
+          "2026-10-01 00:00:00",
+          100
+        ]
+      },
+      {
+        "sql": "SELECT COUNT(*) AS n FROM email_ingest_executions eie WHERE eie.status != 'duplicate' AND eie.email_log_id IS NOT NULL AND eie.created_at >= ?",
+        "params": [
+          "2026-10-01 00:00:00"
+        ]
+      }
+    ]
+  },
+  "email test-match until window": {
+    "status": 200,
+    "body": {
+      "success": true,
+      "total": 2,
+      "matched_count": 1,
+      "rows": [
+        {
+          "exec_id": 101,
+          "ts": "2026-10-20T14:05:00.000Z",
+          "from": "ecf@mieb.uscourts.gov",
+          "label": "Notice of Hearing 26-40001",
+          "matched": true,
+          "fidelity": "full",
+          "status": "logged"
+        }
+      ],
+      "window_total": 7,
+      "truncated": true
+    },
+    "queries": [
+      {
+        "sql": "SELECT eie.id AS exec_id, eie.created_at AS created_at, eie.status AS status, eie.raw_input AS raw_input, el.from_email AS from_email, el.to_email AS to_email, el.subject AS subject, el.body AS body, el.source AS el_source, el.message_id AS el_mid, l.log_extra AS log_extra FROM email_ingest_executions eie JOIN email_log el ON el.id = eie.email_log_id LEFT JOIN log l ON l.log_id = eie.log_id WHERE eie.status != 'duplicate' AND eie.email_log_id IS NOT NULL AND eie.created_at <= ? ORDER BY eie.id DESC LIMIT ?",
+        "params": [
+          "2026-10-25 00:00:00",
+          5
+        ]
+      },
+      {
+        "sql": "SELECT COUNT(*) AS n FROM email_ingest_executions eie WHERE eie.status != 'duplicate' AND eie.email_log_id IS NOT NULL AND eie.created_at <= ?",
+        "params": [
+          "2026-10-25 00:00:00"
+        ]
+      }
+    ]
+  },
+  "email test-match exec 101": {
+    "status": 200,
+    "body": {
+      "success": true,
+      "total": 1,
+      "matched_count": 1,
+      "rows": [
+        {
+          "exec_id": 101,
+          "ts": "2026-10-20T14:05:00.000Z",
+          "from": "ecf@mieb.uscourts.gov",
+          "label": "Notice of Hearing 26-40001",
+          "matched": true,
+          "fidelity": "full",
+          "status": "logged"
+        }
+      ]
+    },
+    "queries": [
+      {
+        "sql": "SELECT eie.id AS exec_id, eie.created_at AS created_at, eie.status AS status, eie.raw_input AS raw_input, el.id AS el_id, el.from_email AS from_email, el.to_email AS to_email, el.subject AS subject, el.body AS body, el.source AS el_source, el.message_id AS el_mid, l.log_extra AS log_extra FROM email_ingest_executions eie LEFT JOIN email_log el ON el.id = eie.email_log_id LEFT JOIN log l ON l.log_id = eie.log_id WHERE eie.id = ?",
+        "params": [
+          101
+        ]
+      }
+    ]
+  },
+  "email test-match exec 102": {
+    "status": 200,
+    "body": {
+      "success": true,
+      "total": 1,
+      "matched_count": 0,
+      "rows": [
+        {
+          "exec_id": 102,
+          "ts": "2026-10-20T14:05:00.000Z",
+          "from": "news@vendor.example",
+          "label": "Weekly digest",
+          "matched": false,
+          "fidelity": "reconstructed",
+          "status": "skipped_suppression"
+        }
+      ]
+    },
+    "queries": [
+      {
+        "sql": "SELECT eie.id AS exec_id, eie.created_at AS created_at, eie.status AS status, eie.raw_input AS raw_input, el.id AS el_id, el.from_email AS from_email, el.to_email AS to_email, el.subject AS subject, el.body AS body, el.source AS el_source, el.message_id AS el_mid, l.log_extra AS log_extra FROM email_ingest_executions eie LEFT JOIN email_log el ON el.id = eie.email_log_id LEFT JOIN log l ON l.log_id = eie.log_id WHERE eie.id = ?",
+        "params": [
+          102
+        ]
+      }
+    ]
+  },
+  "email test-match exec 103": {
+    "status": 404,
+    "body": {
+      "error": "execution #103 has no email_log row — nothing to reconstruct (auth/validation failures never produced one)"
+    },
+    "queries": [
+      {
+        "sql": "SELECT eie.id AS exec_id, eie.created_at AS created_at, eie.status AS status, eie.raw_input AS raw_input, el.id AS el_id, el.from_email AS from_email, el.to_email AS to_email, el.subject AS subject, el.body AS body, el.source AS el_source, el.message_id AS el_mid, l.log_extra AS log_extra FROM email_ingest_executions eie LEFT JOIN email_log el ON el.id = eie.email_log_id LEFT JOIN log l ON l.log_id = eie.log_id WHERE eie.id = ?",
+        "params": [
+          103
+        ]
+      }
+    ]
+  },
+  "email test-match exec 201": {
+    "status": 404,
+    "body": {
+      "error": "execution #201 not found"
+    },
+    "queries": [
+      {
+        "sql": "SELECT eie.id AS exec_id, eie.created_at AS created_at, eie.status AS status, eie.raw_input AS raw_input, el.id AS el_id, el.from_email AS from_email, el.to_email AS to_email, el.subject AS subject, el.body AS body, el.source AS el_source, el.message_id AS el_mid, l.log_extra AS log_extra FROM email_ingest_executions eie LEFT JOIN email_log el ON el.id = eie.email_log_id LEFT JOIN log l ON l.log_id = eie.log_id WHERE eie.id = ?",
+        "params": [
+          201
+        ]
+      }
+    ]
+  },
+  "email test-match exec 202": {
+    "status": 404,
+    "body": {
+      "error": "execution #202 not found"
+    },
+    "queries": [
+      {
+        "sql": "SELECT eie.id AS exec_id, eie.created_at AS created_at, eie.status AS status, eie.raw_input AS raw_input, el.id AS el_id, el.from_email AS from_email, el.to_email AS to_email, el.subject AS subject, el.body AS body, el.source AS el_source, el.message_id AS el_mid, l.log_extra AS log_extra FROM email_ingest_executions eie LEFT JOIN email_log el ON el.id = eie.email_log_id LEFT JOIN log l ON l.log_id = eie.log_id WHERE eie.id = ?",
+        "params": [
+          202
+        ]
+      }
+    ]
+  },
+  "email test-match exec missing": {
+    "status": 404,
+    "body": {
+      "error": "execution #404 not found"
+    },
+    "queries": [
+      {
+        "sql": "SELECT eie.id AS exec_id, eie.created_at AS created_at, eie.status AS status, eie.raw_input AS raw_input, el.id AS el_id, el.from_email AS from_email, el.to_email AS to_email, el.subject AS subject, el.body AS body, el.source AS el_source, el.message_id AS el_mid, l.log_extra AS log_extra FROM email_ingest_executions eie LEFT JOIN email_log el ON el.id = eie.email_log_id LEFT JOIN log l ON l.log_id = eie.log_id WHERE eie.id = ?",
+        "params": [
+          404
+        ]
+      }
+    ]
+  },
+  "email test-match body condition window": {
+    "status": 200,
+    "body": {
+      "success": true,
+      "total": 2,
+      "matched_count": 1,
+      "rows": [
+        {
+          "exec_id": 102,
+          "ts": "2026-10-20T14:05:00.000Z",
+          "from": "news@vendor.example",
+          "label": "Weekly digest",
+          "matched": true,
+          "fidelity": "reconstructed",
+          "status": "skipped_suppression"
+        },
+        {
+          "exec_id": 101,
+          "ts": "2026-10-20T14:05:00.000Z",
+          "from": "ecf@mieb.uscourts.gov",
+          "label": "Notice of Hearing 26-40001",
+          "matched": false,
+          "fidelity": "full",
+          "status": "logged"
+        }
+      ]
+    },
+    "queries": [
+      {
+        "sql": "SELECT eie.id AS exec_id, eie.created_at AS created_at, eie.status AS status, eie.raw_input AS raw_input, el.from_email AS from_email, el.to_email AS to_email, el.subject AS subject, el.body AS body, el.source AS el_source, el.message_id AS el_mid, l.log_extra AS log_extra FROM email_ingest_executions eie JOIN email_log el ON el.id = eie.email_log_id LEFT JOIN log l ON l.log_id = eie.log_id WHERE eie.status != 'duplicate' AND eie.email_log_id IS NOT NULL ORDER BY eie.id DESC LIMIT ?",
+        "params": [
+          100
+        ]
+      }
+    ]
+  },
+  "email test-match code window": {
+    "status": 200,
+    "body": {
+      "success": true,
+      "total": 2,
+      "matched_count": 2,
+      "rows": [
+        {
+          "exec_id": 101,
+          "ts": "2026-10-20T14:05:00.000Z",
+          "from": "ecf@mieb.uscourts.gov",
+          "label": "Notice of Hearing 26-40001",
+          "matched": true,
+          "fidelity": "full",
+          "status": "logged"
+        },
+        {
+          "exec_id": 102,
+          "ts": "2026-10-20T14:05:00.000Z",
+          "from": "news@vendor.example",
+          "label": "Weekly digest",
+          "matched": true,
+          "fidelity": "reconstructed",
+          "status": "skipped_suppression"
+        }
+      ]
+    },
+    "queries": [
+      {
+        "sql": "SELECT eie.id AS exec_id, eie.created_at AS created_at, eie.status AS status, eie.raw_input AS raw_input, el.from_email AS from_email, el.to_email AS to_email, el.subject AS subject, el.body AS body, el.source AS el_source, el.message_id AS el_mid, l.log_extra AS log_extra FROM email_ingest_executions eie JOIN email_log el ON el.id = eie.email_log_id LEFT JOIN log l ON l.log_id = eie.log_id WHERE eie.status != 'duplicate' AND eie.email_log_id IS NOT NULL ORDER BY eie.id DESC LIMIT ?",
+        "params": [
+          100
+        ]
+      }
+    ]
+  },
+  "email test-match code json string": {
+    "status": 200,
+    "body": {
+      "success": true,
+      "total": 2,
+      "matched_count": 2,
+      "rows": [
+        {
+          "exec_id": 101,
+          "ts": "2026-10-20T14:05:00.000Z",
+          "from": "ecf@mieb.uscourts.gov",
+          "label": "Notice of Hearing 26-40001",
+          "matched": true,
+          "fidelity": "full",
+          "status": "logged"
+        },
+        {
+          "exec_id": 102,
+          "ts": "2026-10-20T14:05:00.000Z",
+          "from": "news@vendor.example",
+          "label": "Weekly digest",
+          "matched": true,
+          "fidelity": "reconstructed",
+          "status": "skipped_suppression"
+        }
+      ]
+    },
+    "queries": [
+      {
+        "sql": "SELECT eie.id AS exec_id, eie.created_at AS created_at, eie.status AS status, eie.raw_input AS raw_input, el.from_email AS from_email, el.to_email AS to_email, el.subject AS subject, el.body AS body, el.source AS el_source, el.message_id AS el_mid, l.log_extra AS log_extra FROM email_ingest_executions eie JOIN email_log el ON el.id = eie.email_log_id LEFT JOIN log l ON l.log_id = eie.log_id WHERE eie.status != 'duplicate' AND eie.email_log_id IS NOT NULL ORDER BY eie.id DESC LIMIT ?",
+        "params": [
+          100
+        ]
+      }
+    ]
+  },
+  "email test-match code throws at runtime": {
+    "status": 200,
+    "body": {
+      "success": true,
+      "total": 2,
+      "matched_count": 0,
+      "rows": [
+        {
+          "exec_id": 101,
+          "ts": "2026-10-20T14:05:00.000Z",
+          "from": "ecf@mieb.uscourts.gov",
+          "label": "Notice of Hearing 26-40001",
+          "matched": false,
+          "fidelity": "full",
+          "status": "logged"
+        },
+        {
+          "exec_id": 102,
+          "ts": "2026-10-20T14:05:00.000Z",
+          "from": "news@vendor.example",
+          "label": "Weekly digest",
+          "matched": false,
+          "fidelity": "reconstructed",
+          "status": "skipped_suppression"
+        }
+      ]
+    },
+    "queries": [
+      {
+        "sql": "SELECT eie.id AS exec_id, eie.created_at AS created_at, eie.status AS status, eie.raw_input AS raw_input, el.from_email AS from_email, el.to_email AS to_email, el.subject AS subject, el.body AS body, el.source AS el_source, el.message_id AS el_mid, l.log_extra AS log_extra FROM email_ingest_executions eie JOIN email_log el ON el.id = eie.email_log_id LEFT JOIN log l ON l.log_id = eie.log_id WHERE eie.status != 'duplicate' AND eie.email_log_id IS NOT NULL ORDER BY eie.id DESC LIMIT ?",
+        "params": [
+          100
+        ]
+      }
+    ]
+  },
+  "email test-transform no mode": {
+    "status": 400,
+    "body": {
+      "error": "transform_mode is required"
+    },
+    "queries": []
+  },
+  "email test-transform neither source": {
+    "status": 400,
+    "body": {
+      "error": "provide exactly one of exec_id (historical execution) or input (inline event object)"
+    },
+    "queries": []
+  },
+  "email test-transform both sources": {
+    "status": 400,
+    "body": {
+      "error": "provide exactly one of exec_id (historical execution) or input (inline event object)"
+    },
+    "queries": []
+  },
+  "email test-transform exec zero": {
+    "status": 400,
+    "body": {
+      "error": "exec_id must be a positive integer"
+    },
+    "queries": []
+  },
+  "email test-transform input array": {
+    "status": 400,
+    "body": {
+      "error": "input must be a JSON object (the event to transform)"
+    },
+    "queries": []
+  },
+  "email test-transform input scalar": {
+    "status": 400,
+    "body": {
+      "error": "input must be a JSON object (the event to transform)"
+    },
+    "queries": []
+  },
+  "email test-transform mappings not array": {
+    "status": 400,
+    "body": {
+      "error": "params_mappings must be an array of at most 20 {label?, mapping} entries"
+    },
+    "queries": []
+  },
+  "email test-transform mappings too many": {
+    "status": 400,
+    "body": {
+      "error": "params_mappings must be an array of at most 20 {label?, mapping} entries"
+    },
+    "queries": []
+  },
+  "email test-transform mapping entry bad": {
+    "status": 400,
+    "body": {
+      "error": "each params_mappings entry needs a mapping object"
+    },
+    "queries": []
+  },
+  "email test-transform passthrough inline": {
+    "status": 200,
+    "body": {
+      "success": true,
+      "source": "inline",
+      "input": {
+        "subject": "S",
+        "n": 1
+      },
+      "transform": {
+        "ok": true,
+        "output": {
+          "subject": "S",
+          "n": 1
+        }
+      }
+    },
+    "queries": []
+  },
+  "email test-transform mapper inline + mappings": {
+    "status": 200,
+    "body": {
+      "success": true,
+      "source": "inline",
+      "input": {
+        "subject": "Hearing",
+        "message": "hello"
+      },
+      "transform": {
+        "ok": true,
+        "output": {
+          "title": "Hearing",
+          "text": "hello"
+        }
+      },
+      "resolved_params": [
+        {
+          "label": "court",
+          "params": {
+            "title": "Hearing",
+            "all": {
+              "title": "Hearing",
+              "text": "hello"
+            },
+            "fixed": "lit"
+          }
+        },
+        {
+          "label": "mapping #2",
+          "params": {
+            "t": "hello"
+          }
+        }
+      ]
+    },
+    "queries": []
+  },
+  "email test-transform mapper not array": {
+    "status": 200,
+    "body": {
+      "success": true,
+      "source": "inline",
+      "input": {},
+      "transform": {
+        "ok": false,
+        "error": "mapper transform_config must be an array of mapping rules"
+      }
+    },
+    "queries": []
+  },
+  "email test-transform mapper string config": {
+    "status": 200,
+    "body": {
+      "success": true,
+      "source": "inline",
+      "input": {
+        "subject": "x"
+      },
+      "transform": {
+        "ok": true,
+        "output": {
+          "title": "x"
+        }
+      }
+    },
+    "queries": []
+  },
+  "email test-transform mapper bad json string": {
+    "status": 200,
+    "body": {
+      "success": true,
+      "source": "inline",
+      "input": {},
+      "transform": {
+        "ok": false,
+        "error": "transform_config is not parseable JSON: Expected property name or '}' in JSON at position 1 (line 1 column 2)"
+      }
+    },
+    "queries": []
+  },
+  "email test-transform code ok": {
+    "status": 200,
+    "body": {
+      "success": true,
+      "source": "inline",
+      "input": {
+        "subject": "S"
+      },
+      "transform": {
+        "ok": true,
+        "output": {
+          "s": "S"
+        }
+      }
+    },
+    "queries": []
+  },
+  "email test-transform code returns scalar": {
+    "status": 200,
+    "body": {
+      "success": true,
+      "source": "inline",
+      "input": {},
+      "transform": {
+        "ok": false,
+        "error": "code transform must return an object (got number)"
+      }
+    },
+    "queries": []
+  },
+  "email test-transform code empty": {
+    "status": 200,
+    "body": {
+      "success": true,
+      "source": "inline",
+      "input": {},
+      "transform": {
+        "ok": false,
+        "error": "empty code on code transform mode"
+      }
+    },
+    "queries": []
+  },
+  "email test-transform code throws": {
+    "status": 200,
+    "body": {
+      "success": true,
+      "source": "inline",
+      "input": {},
+      "transform": {
+        "ok": false,
+        "error": "code transform threw: nope"
+      }
+    },
+    "queries": []
+  },
+  "email test-transform unknown mode": {
+    "status": 200,
+    "body": {
+      "success": true,
+      "source": "inline",
+      "input": {},
+      "transform": {
+        "ok": false,
+        "error": "unknown transform_mode 'xslt'"
+      }
+    },
+    "queries": []
+  },
+  "email test-transform exec 101": {
+    "status": 200,
+    "body": {
+      "success": true,
+      "source": {
+        "exec_id": 101,
+        "ts": "2026-10-20T14:05:00.000Z",
+        "fidelity": "full",
+        "status": "logged"
+      },
+      "input": {
+        "kind": "email",
+        "source": "gmail-firm",
+        "from": {
+          "email": "ecf@mieb.uscourts.gov",
+          "name": "MIEB"
+        },
+        "to": [
+          {
+            "email": "docs@4lsg.com",
+            "name": ""
+          }
+        ],
+        "subject": "Notice of Hearing 26-40001",
+        "headers": {
+          "message_id": "m-101",
+          "list_id": null
+        },
+        "text": "A hearing is set for 11/3."
+      },
+      "transform": {
+        "ok": true,
+        "output": {
+          "kind": "email",
+          "source": "gmail-firm",
+          "from": {
+            "email": "ecf@mieb.uscourts.gov",
+            "name": "MIEB"
+          },
+          "to": [
+            {
+              "email": "docs@4lsg.com",
+              "name": ""
+            }
+          ],
+          "subject": "Notice of Hearing 26-40001",
+          "headers": {
+            "message_id": "m-101",
+            "list_id": null
+          },
+          "text": "A hearing is set for 11/3."
+        }
+      }
+    },
+    "queries": [
+      {
+        "sql": "SELECT eie.id AS exec_id, eie.created_at AS created_at, eie.status AS status, eie.raw_input AS raw_input, el.id AS el_id, el.from_email AS from_email, el.to_email AS to_email, el.subject AS subject, el.body AS body, el.source AS el_source, el.message_id AS el_mid, l.log_extra AS log_extra FROM email_ingest_executions eie LEFT JOIN email_log el ON el.id = eie.email_log_id LEFT JOIN log l ON l.log_id = eie.log_id WHERE eie.id = ?",
+        "params": [
+          101
+        ]
+      }
+    ]
+  },
+  "email test-transform exec 102 mapper": {
+    "status": 200,
+    "body": {
+      "success": true,
+      "source": {
+        "exec_id": 102,
+        "ts": "2026-10-20T14:05:00.000Z",
+        "fidelity": "reconstructed",
+        "status": "skipped_suppression"
+      },
+      "input": {
+        "from": {
+          "email": "news@vendor.example"
+        },
+        "to": "stuart@4lsg.com",
+        "subject": "Weekly digest",
+        "body": "digest body",
+        "source": "gmail-firm",
+        "headers": {
+          "message_id": "m-102"
+        },
+        "auth": {
+          "spf": null,
+          "dkim": null,
+          "dmarc": null
+        }
+      },
+      "transform": {
+        "ok": true,
+        "output": {
+          "title": "Weekly digest"
+        }
+      },
+      "resolved_params": [
+        {
+          "label": "mapping #1",
+          "params": {
+            "t": "Weekly digest"
+          }
+        }
+      ]
+    },
+    "queries": [
+      {
+        "sql": "SELECT eie.id AS exec_id, eie.created_at AS created_at, eie.status AS status, eie.raw_input AS raw_input, el.id AS el_id, el.from_email AS from_email, el.to_email AS to_email, el.subject AS subject, el.body AS body, el.source AS el_source, el.message_id AS el_mid, l.log_extra AS log_extra FROM email_ingest_executions eie LEFT JOIN email_log el ON el.id = eie.email_log_id LEFT JOIN log l ON l.log_id = eie.log_id WHERE eie.id = ?",
+        "params": [
+          102
+        ]
+      }
+    ]
+  },
+  "email test-transform exec 103": {
+    "status": 404,
+    "body": {
+      "error": "execution #103 has no email_log row — nothing to reconstruct (auth/validation failures never produced one)"
+    },
+    "queries": [
+      {
+        "sql": "SELECT eie.id AS exec_id, eie.created_at AS created_at, eie.status AS status, eie.raw_input AS raw_input, el.id AS el_id, el.from_email AS from_email, el.to_email AS to_email, el.subject AS subject, el.body AS body, el.source AS el_source, el.message_id AS el_mid, l.log_extra AS log_extra FROM email_ingest_executions eie LEFT JOIN email_log el ON el.id = eie.email_log_id LEFT JOIN log l ON l.log_id = eie.log_id WHERE eie.id = ?",
+        "params": [
+          103
+        ]
+      }
+    ]
+  },
+  "email test-transform exec 201": {
+    "status": 404,
+    "body": {
+      "error": "execution #201 not found"
+    },
+    "queries": [
+      {
+        "sql": "SELECT eie.id AS exec_id, eie.created_at AS created_at, eie.status AS status, eie.raw_input AS raw_input, el.id AS el_id, el.from_email AS from_email, el.to_email AS to_email, el.subject AS subject, el.body AS body, el.source AS el_source, el.message_id AS el_mid, l.log_extra AS log_extra FROM email_ingest_executions eie LEFT JOIN email_log el ON el.id = eie.email_log_id LEFT JOIN log l ON l.log_id = eie.log_id WHERE eie.id = ?",
+        "params": [
+          201
+        ]
+      }
+    ]
+  },
+  "email test-transform exec 202": {
+    "status": 404,
+    "body": {
+      "error": "execution #202 not found"
+    },
+    "queries": [
+      {
+        "sql": "SELECT eie.id AS exec_id, eie.created_at AS created_at, eie.status AS status, eie.raw_input AS raw_input, el.id AS el_id, el.from_email AS from_email, el.to_email AS to_email, el.subject AS subject, el.body AS body, el.source AS el_source, el.message_id AS el_mid, l.log_extra AS log_extra FROM email_ingest_executions eie LEFT JOIN email_log el ON el.id = eie.email_log_id LEFT JOIN log l ON l.log_id = eie.log_id WHERE eie.id = ?",
+        "params": [
+          202
+        ]
+      }
+    ]
+  },
+  "email test-transform exec missing": {
+    "status": 404,
+    "body": {
+      "error": "execution #404 not found"
+    },
+    "queries": [
+      {
+        "sql": "SELECT eie.id AS exec_id, eie.created_at AS created_at, eie.status AS status, eie.raw_input AS raw_input, el.id AS el_id, el.from_email AS from_email, el.to_email AS to_email, el.subject AS subject, el.body AS body, el.source AS el_source, el.message_id AS el_mid, l.log_extra AS log_extra FROM email_ingest_executions eie LEFT JOIN email_log el ON el.id = eie.email_log_id LEFT JOIN log l ON l.log_id = eie.log_id WHERE eie.id = ?",
+        "params": [
+          404
+        ]
+      }
+    ]
+  },
+  "email test-transform mapping skipped on failure": {
+    "status": 200,
+    "body": {
+      "success": true,
+      "source": "inline",
+      "input": {},
+      "transform": {
+        "ok": false,
+        "error": "code transform threw: undefined"
+      }
+    },
+    "queries": []
+  },
+  "phone test-match no mode": {
+    "status": 400,
+    "body": {
+      "error": "match_mode must be 'conditions' or 'code'"
+    },
+    "queries": []
+  },
+  "phone test-match bad mode": {
+    "status": 400,
+    "body": {
+      "error": "match_mode must be 'conditions' or 'code'"
+    },
+    "queries": []
+  },
+  "phone test-match conditions null config": {
+    "status": 400,
+    "body": {
+      "error": "conditions mode requires match_config to be an object — for an explicit always-match, use {operator:'and', conditions:[]}"
+    },
+    "queries": []
+  },
+  "phone test-match conditions array config": {
+    "status": 400,
+    "body": {
+      "error": "conditions mode requires match_config to be an object — for an explicit always-match, use {operator:'and', conditions:[]}"
+    },
+    "queries": []
+  },
+  "phone test-match limit zero": {
+    "status": 400,
+    "body": {
+      "error": "limit must be a positive integer"
+    },
+    "queries": []
+  },
+  "phone test-match limit fraction": {
+    "status": 400,
+    "body": {
+      "error": "limit must be a positive integer"
+    },
+    "queries": []
+  },
+  "phone test-match limit clamped": {
+    "status": 200,
+    "body": {
+      "success": true,
+      "total": 2,
+      "matched_count": 0,
+      "unparseable_skipped": 1,
+      "rows": []
+    },
+    "queries": [
+      {
+        "sql": "SELECT e.id AS exec_id, e.raw_input, e.created_at, e.status, pel.event_type FROM phone_ingest_executions e JOIN phone_event_log pel ON pel.id = e.event_log_id WHERE e.raw_input IS NOT NULL ORDER BY e.id DESC LIMIT ?",
+        "params": [
+          300
+        ]
+      }
+    ]
+  },
+  "phone test-match bad since": {
+    "status": 400,
+    "body": {
+      "error": "Invalid since datetime"
+    },
+    "queries": []
+  },
+  "phone test-match bad until": {
+    "status": 400,
+    "body": {
+      "error": "Invalid until datetime"
+    },
+    "queries": []
+  },
+  "phone test-match backwards range": {
+    "status": 400,
+    "body": {
+      "error": "until must be >= since — the range is backwards"
+    },
+    "queries": []
+  },
+  "phone test-match exec zero": {
+    "status": 400,
+    "body": {
+      "error": "exec_id must be a positive integer"
+    },
+    "queries": []
+  },
+  "phone test-match exec plus since": {
+    "status": 400,
+    "body": {
+      "error": "exec_id and since/until are mutually exclusive — target one execution or a date window, not both"
+    },
+    "queries": []
+  },
+  "phone test-match code non-json string": {
+    "status": 400,
+    "body": {
+      "error": "match_config string is not valid JSON — the production matcher would treat this as non-match on every event; send {code:'...'} instead"
+    },
+    "queries": []
+  },
+  "phone test-match code empty": {
+    "status": 400,
+    "body": {
+      "error": "code mode requires a non-empty code string (match_config.code)"
+    },
+    "queries": []
+  },
+  "phone test-match code no compile": {
+    "status": 400,
+    "body": {
+      "error": "code does not compile: Unexpected token '}'"
+    },
+    "queries": []
+  },
+  "phone test-match window default": {
+    "status": 200,
+    "body": {
+      "success": true,
+      "total": 2,
+      "matched_count": 0,
+      "unparseable_skipped": 1,
+      "rows": []
+    },
+    "queries": [
+      {
+        "sql": "SELECT e.id AS exec_id, e.raw_input, e.created_at, e.status, pel.event_type FROM phone_ingest_executions e JOIN phone_event_log pel ON pel.id = e.event_log_id WHERE e.raw_input IS NOT NULL ORDER BY e.id DESC LIMIT ?",
+        "params": [
+          100
+        ]
+      }
+    ]
+  },
+  "phone test-match window with misses": {
+    "status": 200,
+    "body": {
+      "success": true,
+      "total": 2,
+      "matched_count": 0,
+      "unparseable_skipped": 1,
+      "rows": [
+        {
+          "exec_id": 201,
+          "ts": "2026-10-20T14:05:00.000Z",
+          "from": "2485550100",
+          "label": "sms · Is my hearing still on?",
+          "matched": false,
+          "fidelity": "full",
+          "status": "logged"
+        },
+        {
+          "exec_id": 203,
+          "ts": "2026-10-20T14:05:00.000Z",
+          "from": "3135550199",
+          "label": "call · 42s",
+          "matched": false,
+          "fidelity": "full",
+          "status": "suppressed"
+        }
+      ]
+    },
+    "queries": [
+      {
+        "sql": "SELECT e.id AS exec_id, e.raw_input, e.created_at, e.status, pel.event_type FROM phone_ingest_executions e JOIN phone_event_log pel ON pel.id = e.event_log_id WHERE e.raw_input IS NOT NULL ORDER BY e.id DESC LIMIT ?",
+        "params": [
+          100
+        ]
+      }
+    ]
+  },
+  "phone test-match phone-shaped window with misses": {
+    "status": 200,
+    "body": {
+      "success": true,
+      "total": 2,
+      "matched_count": 1,
+      "unparseable_skipped": 1,
+      "rows": [
+        {
+          "exec_id": 201,
+          "ts": "2026-10-20T14:05:00.000Z",
+          "from": "2485550100",
+          "label": "sms · Is my hearing still on?",
+          "matched": true,
+          "fidelity": "full",
+          "status": "logged"
+        },
+        {
+          "exec_id": 203,
+          "ts": "2026-10-20T14:05:00.000Z",
+          "from": "3135550199",
+          "label": "call · 42s",
+          "matched": false,
+          "fidelity": "full",
+          "status": "suppressed"
+        }
+      ]
+    },
+    "queries": [
+      {
+        "sql": "SELECT e.id AS exec_id, e.raw_input, e.created_at, e.status, pel.event_type FROM phone_ingest_executions e JOIN phone_event_log pel ON pel.id = e.event_log_id WHERE e.raw_input IS NOT NULL ORDER BY e.id DESC LIMIT ?",
+        "params": [
+          100
+        ]
+      }
+    ]
+  },
+  "phone test-match since window": {
+    "status": 200,
+    "body": {
+      "success": true,
+      "total": 2,
+      "matched_count": 0,
+      "unparseable_skipped": 1,
+      "rows": [
+        {
+          "exec_id": 201,
+          "ts": "2026-10-20T14:05:00.000Z",
+          "from": "2485550100",
+          "label": "sms · Is my hearing still on?",
+          "matched": false,
+          "fidelity": "full",
+          "status": "logged"
+        },
+        {
+          "exec_id": 203,
+          "ts": "2026-10-20T14:05:00.000Z",
+          "from": "3135550199",
+          "label": "call · 42s",
+          "matched": false,
+          "fidelity": "full",
+          "status": "suppressed"
+        }
+      ],
+      "window_total": 7,
+      "truncated": true
+    },
+    "queries": [
+      {
+        "sql": "SELECT e.id AS exec_id, e.raw_input, e.created_at, e.status, pel.event_type FROM phone_ingest_executions e JOIN phone_event_log pel ON pel.id = e.event_log_id WHERE e.raw_input IS NOT NULL AND e.created_at >= ? ORDER BY e.id ASC LIMIT ?",
+        "params": [
+          "2026-10-01 00:00:00",
+          100
+        ]
+      },
+      {
+        "sql": "SELECT COUNT(*) AS n FROM phone_ingest_executions e WHERE e.raw_input IS NOT NULL AND e.created_at >= ?",
+        "params": [
+          "2026-10-01 00:00:00"
+        ]
+      }
+    ]
+  },
+  "phone test-match until window": {
+    "status": 200,
+    "body": {
+      "success": true,
+      "total": 2,
+      "matched_count": 0,
+      "unparseable_skipped": 1,
+      "rows": [],
+      "window_total": 7,
+      "truncated": true
+    },
+    "queries": [
+      {
+        "sql": "SELECT e.id AS exec_id, e.raw_input, e.created_at, e.status, pel.event_type FROM phone_ingest_executions e JOIN phone_event_log pel ON pel.id = e.event_log_id WHERE e.raw_input IS NOT NULL AND e.created_at <= ? ORDER BY e.id DESC LIMIT ?",
+        "params": [
+          "2026-10-25 00:00:00",
+          5
+        ]
+      },
+      {
+        "sql": "SELECT COUNT(*) AS n FROM phone_ingest_executions e WHERE e.raw_input IS NOT NULL AND e.created_at <= ?",
+        "params": [
+          "2026-10-25 00:00:00"
+        ]
+      }
+    ]
+  },
+  "phone test-match exec 101": {
+    "status": 404,
+    "body": {
+      "error": "execution #101 not found"
+    },
+    "queries": [
+      {
+        "sql": "SELECT e.id AS exec_id, e.raw_input, e.created_at, e.status, pel.event_type FROM phone_ingest_executions e LEFT JOIN phone_event_log pel ON pel.id = e.event_log_id WHERE e.id = ?",
+        "params": [
+          101
+        ]
+      }
+    ]
+  },
+  "phone test-match exec 102": {
+    "status": 404,
+    "body": {
+      "error": "execution #102 not found"
+    },
+    "queries": [
+      {
+        "sql": "SELECT e.id AS exec_id, e.raw_input, e.created_at, e.status, pel.event_type FROM phone_ingest_executions e LEFT JOIN phone_event_log pel ON pel.id = e.event_log_id WHERE e.id = ?",
+        "params": [
+          102
+        ]
+      }
+    ]
+  },
+  "phone test-match exec 103": {
+    "status": 404,
+    "body": {
+      "error": "execution #103 not found"
+    },
+    "queries": [
+      {
+        "sql": "SELECT e.id AS exec_id, e.raw_input, e.created_at, e.status, pel.event_type FROM phone_ingest_executions e LEFT JOIN phone_event_log pel ON pel.id = e.event_log_id WHERE e.id = ?",
+        "params": [
+          103
+        ]
+      }
+    ]
+  },
+  "phone test-match exec 201": {
+    "status": 200,
+    "body": {
+      "success": true,
+      "total": 1,
+      "matched_count": 1,
+      "unparseable_skipped": 0,
+      "rows": [
+        {
+          "exec_id": 201,
+          "ts": "2026-10-20T14:05:00.000Z",
+          "from": "2485550100",
+          "label": "sms · Is my hearing still on?",
+          "matched": true,
+          "fidelity": "full",
+          "status": "logged"
+        }
+      ]
+    },
+    "queries": [
+      {
+        "sql": "SELECT e.id AS exec_id, e.raw_input, e.created_at, e.status, pel.event_type FROM phone_ingest_executions e LEFT JOIN phone_event_log pel ON pel.id = e.event_log_id WHERE e.id = ?",
+        "params": [
+          201
+        ]
+      }
+    ]
+  },
+  "phone test-match exec 202": {
+    "status": 404,
+    "body": {
+      "error": "execution #202 has no parseable raw_input — nothing to evaluate"
+    },
+    "queries": [
+      {
+        "sql": "SELECT e.id AS exec_id, e.raw_input, e.created_at, e.status, pel.event_type FROM phone_ingest_executions e LEFT JOIN phone_event_log pel ON pel.id = e.event_log_id WHERE e.id = ?",
+        "params": [
+          202
+        ]
+      }
+    ]
+  },
+  "phone test-match exec missing": {
+    "status": 404,
+    "body": {
+      "error": "execution #404 not found"
+    },
+    "queries": [
+      {
+        "sql": "SELECT e.id AS exec_id, e.raw_input, e.created_at, e.status, pel.event_type FROM phone_ingest_executions e LEFT JOIN phone_event_log pel ON pel.id = e.event_log_id WHERE e.id = ?",
+        "params": [
+          404
+        ]
+      }
+    ]
+  },
+  "phone test-match body condition window": {
+    "status": 200,
+    "body": {
+      "success": true,
+      "total": 2,
+      "matched_count": 0,
+      "unparseable_skipped": 1,
+      "rows": [
+        {
+          "exec_id": 201,
+          "ts": "2026-10-20T14:05:00.000Z",
+          "from": "2485550100",
+          "label": "sms · Is my hearing still on?",
+          "matched": false,
+          "fidelity": "full",
+          "status": "logged"
+        },
+        {
+          "exec_id": 203,
+          "ts": "2026-10-20T14:05:00.000Z",
+          "from": "3135550199",
+          "label": "call · 42s",
+          "matched": false,
+          "fidelity": "full",
+          "status": "suppressed"
+        }
+      ]
+    },
+    "queries": [
+      {
+        "sql": "SELECT e.id AS exec_id, e.raw_input, e.created_at, e.status, pel.event_type FROM phone_ingest_executions e JOIN phone_event_log pel ON pel.id = e.event_log_id WHERE e.raw_input IS NOT NULL ORDER BY e.id DESC LIMIT ?",
+        "params": [
+          100
+        ]
+      }
+    ]
+  },
+  "phone test-match code window": {
+    "status": 200,
+    "body": {
+      "success": true,
+      "total": 2,
+      "matched_count": 1,
+      "unparseable_skipped": 1,
+      "rows": [
+        {
+          "exec_id": 201,
+          "ts": "2026-10-20T14:05:00.000Z",
+          "from": "2485550100",
+          "label": "sms · Is my hearing still on?",
+          "matched": true,
+          "fidelity": "full",
+          "status": "logged"
+        },
+        {
+          "exec_id": 203,
+          "ts": "2026-10-20T14:05:00.000Z",
+          "from": "3135550199",
+          "label": "call · 42s",
+          "matched": false,
+          "fidelity": "full",
+          "status": "suppressed"
+        }
+      ]
+    },
+    "queries": [
+      {
+        "sql": "SELECT e.id AS exec_id, e.raw_input, e.created_at, e.status, pel.event_type FROM phone_ingest_executions e JOIN phone_event_log pel ON pel.id = e.event_log_id WHERE e.raw_input IS NOT NULL ORDER BY e.id DESC LIMIT ?",
+        "params": [
+          100
+        ]
+      }
+    ]
+  },
+  "phone test-match code json string": {
+    "status": 200,
+    "body": {
+      "success": true,
+      "total": 2,
+      "matched_count": 2,
+      "unparseable_skipped": 1,
+      "rows": [
+        {
+          "exec_id": 201,
+          "ts": "2026-10-20T14:05:00.000Z",
+          "from": "2485550100",
+          "label": "sms · Is my hearing still on?",
+          "matched": true,
+          "fidelity": "full",
+          "status": "logged"
+        },
+        {
+          "exec_id": 203,
+          "ts": "2026-10-20T14:05:00.000Z",
+          "from": "3135550199",
+          "label": "call · 42s",
+          "matched": true,
+          "fidelity": "full",
+          "status": "suppressed"
+        }
+      ]
+    },
+    "queries": [
+      {
+        "sql": "SELECT e.id AS exec_id, e.raw_input, e.created_at, e.status, pel.event_type FROM phone_ingest_executions e JOIN phone_event_log pel ON pel.id = e.event_log_id WHERE e.raw_input IS NOT NULL ORDER BY e.id DESC LIMIT ?",
+        "params": [
+          100
+        ]
+      }
+    ]
+  },
+  "phone test-match code throws at runtime": {
+    "status": 200,
+    "body": {
+      "success": true,
+      "total": 2,
+      "matched_count": 0,
+      "unparseable_skipped": 1,
+      "rows": [
+        {
+          "exec_id": 201,
+          "ts": "2026-10-20T14:05:00.000Z",
+          "from": "2485550100",
+          "label": "sms · Is my hearing still on?",
+          "matched": false,
+          "fidelity": "full",
+          "status": "logged"
+        },
+        {
+          "exec_id": 203,
+          "ts": "2026-10-20T14:05:00.000Z",
+          "from": "3135550199",
+          "label": "call · 42s",
+          "matched": false,
+          "fidelity": "full",
+          "status": "suppressed"
+        }
+      ]
+    },
+    "queries": [
+      {
+        "sql": "SELECT e.id AS exec_id, e.raw_input, e.created_at, e.status, pel.event_type FROM phone_ingest_executions e JOIN phone_event_log pel ON pel.id = e.event_log_id WHERE e.raw_input IS NOT NULL ORDER BY e.id DESC LIMIT ?",
+        "params": [
+          100
+        ]
+      }
+    ]
+  },
+  "phone test-transform no mode": {
+    "status": 400,
+    "body": {
+      "error": "transform_mode is required"
+    },
+    "queries": []
+  },
+  "phone test-transform neither source": {
+    "status": 400,
+    "body": {
+      "error": "provide exactly one of exec_id (historical execution) or input (inline event object)"
+    },
+    "queries": []
+  },
+  "phone test-transform both sources": {
+    "status": 400,
+    "body": {
+      "error": "provide exactly one of exec_id (historical execution) or input (inline event object)"
+    },
+    "queries": []
+  },
+  "phone test-transform exec zero": {
+    "status": 400,
+    "body": {
+      "error": "exec_id must be a positive integer"
+    },
+    "queries": []
+  },
+  "phone test-transform input array": {
+    "status": 400,
+    "body": {
+      "error": "input must be a JSON object (the event to transform)"
+    },
+    "queries": []
+  },
+  "phone test-transform input scalar": {
+    "status": 400,
+    "body": {
+      "error": "input must be a JSON object (the event to transform)"
+    },
+    "queries": []
+  },
+  "phone test-transform mappings not array": {
+    "status": 400,
+    "body": {
+      "error": "params_mappings must be an array of at most 20 {label?, mapping} entries"
+    },
+    "queries": []
+  },
+  "phone test-transform mappings too many": {
+    "status": 400,
+    "body": {
+      "error": "params_mappings must be an array of at most 20 {label?, mapping} entries"
+    },
+    "queries": []
+  },
+  "phone test-transform mapping entry bad": {
+    "status": 400,
+    "body": {
+      "error": "each params_mappings entry needs a mapping object"
+    },
+    "queries": []
+  },
+  "phone test-transform passthrough inline": {
+    "status": 200,
+    "body": {
+      "success": true,
+      "source": "inline",
+      "input": {
+        "subject": "S",
+        "n": 1
+      },
+      "transform": {
+        "ok": true,
+        "output": {
+          "subject": "S",
+          "n": 1
+        }
+      }
+    },
+    "queries": []
+  },
+  "phone test-transform mapper inline + mappings": {
+    "status": 200,
+    "body": {
+      "success": true,
+      "source": "inline",
+      "input": {
+        "subject": "Hearing",
+        "message": "hello"
+      },
+      "transform": {
+        "ok": true,
+        "output": {
+          "title": "Hearing",
+          "text": "hello"
+        }
+      },
+      "resolved_params": [
+        {
+          "label": "court",
+          "params": {
+            "title": "Hearing",
+            "all": {
+              "title": "Hearing",
+              "text": "hello"
+            },
+            "fixed": "lit"
+          }
+        },
+        {
+          "label": "mapping #2",
+          "params": {
+            "t": "hello"
+          }
+        }
+      ]
+    },
+    "queries": []
+  },
+  "phone test-transform mapper not array": {
+    "status": 200,
+    "body": {
+      "success": true,
+      "source": "inline",
+      "input": {},
+      "transform": {
+        "ok": false,
+        "error": "mapper transform_config must be an array of mapping rules"
+      }
+    },
+    "queries": []
+  },
+  "phone test-transform mapper string config": {
+    "status": 200,
+    "body": {
+      "success": true,
+      "source": "inline",
+      "input": {
+        "subject": "x"
+      },
+      "transform": {
+        "ok": true,
+        "output": {
+          "title": "x"
+        }
+      }
+    },
+    "queries": []
+  },
+  "phone test-transform mapper bad json string": {
+    "status": 200,
+    "body": {
+      "success": true,
+      "source": "inline",
+      "input": {},
+      "transform": {
+        "ok": false,
+        "error": "transform_config is not parseable JSON: Expected property name or '}' in JSON at position 1 (line 1 column 2)"
+      }
+    },
+    "queries": []
+  },
+  "phone test-transform code ok": {
+    "status": 200,
+    "body": {
+      "success": true,
+      "source": "inline",
+      "input": {
+        "subject": "S"
+      },
+      "transform": {
+        "ok": true,
+        "output": {
+          "s": "S"
+        }
+      }
+    },
+    "queries": []
+  },
+  "phone test-transform code returns scalar": {
+    "status": 200,
+    "body": {
+      "success": true,
+      "source": "inline",
+      "input": {},
+      "transform": {
+        "ok": false,
+        "error": "code transform must return an object (got number)"
+      }
+    },
+    "queries": []
+  },
+  "phone test-transform code empty": {
+    "status": 200,
+    "body": {
+      "success": true,
+      "source": "inline",
+      "input": {},
+      "transform": {
+        "ok": false,
+        "error": "empty code on code transform mode"
+      }
+    },
+    "queries": []
+  },
+  "phone test-transform code throws": {
+    "status": 200,
+    "body": {
+      "success": true,
+      "source": "inline",
+      "input": {},
+      "transform": {
+        "ok": false,
+        "error": "code transform threw: nope"
+      }
+    },
+    "queries": []
+  },
+  "phone test-transform unknown mode": {
+    "status": 200,
+    "body": {
+      "success": true,
+      "source": "inline",
+      "input": {},
+      "transform": {
+        "ok": false,
+        "error": "unknown transform_mode 'xslt'"
+      }
+    },
+    "queries": []
+  },
+  "phone test-transform exec 101": {
+    "status": 404,
+    "body": {
+      "error": "execution #101 not found"
+    },
+    "queries": [
+      {
+        "sql": "SELECT e.id AS exec_id, e.raw_input, e.created_at, e.status, pel.event_type FROM phone_ingest_executions e LEFT JOIN phone_event_log pel ON pel.id = e.event_log_id WHERE e.id = ?",
+        "params": [
+          101
+        ]
+      }
+    ]
+  },
+  "phone test-transform exec 102 mapper": {
+    "status": 404,
+    "body": {
+      "error": "execution #102 not found"
+    },
+    "queries": [
+      {
+        "sql": "SELECT e.id AS exec_id, e.raw_input, e.created_at, e.status, pel.event_type FROM phone_ingest_executions e LEFT JOIN phone_event_log pel ON pel.id = e.event_log_id WHERE e.id = ?",
+        "params": [
+          102
+        ]
+      }
+    ]
+  },
+  "phone test-transform exec 103": {
+    "status": 404,
+    "body": {
+      "error": "execution #103 not found"
+    },
+    "queries": [
+      {
+        "sql": "SELECT e.id AS exec_id, e.raw_input, e.created_at, e.status, pel.event_type FROM phone_ingest_executions e LEFT JOIN phone_event_log pel ON pel.id = e.event_log_id WHERE e.id = ?",
+        "params": [
+          103
+        ]
+      }
+    ]
+  },
+  "phone test-transform exec 201": {
+    "status": 200,
+    "body": {
+      "success": true,
+      "source": {
+        "exec_id": 201,
+        "ts": "2026-10-20T14:05:00.000Z",
+        "fidelity": "full",
+        "status": "logged"
+      },
+      "input": {
+        "type": "sms",
+        "from": "2485550100",
+        "to": "3135550199",
+        "message": "Is my hearing still on?",
+        "extra": {
+          "firmToFirm": false
+        },
+        "data": {}
+      },
+      "transform": {
+        "ok": true,
+        "output": {
+          "text": "Is my hearing still on?"
+        }
+      }
+    },
+    "queries": [
+      {
+        "sql": "SELECT e.id AS exec_id, e.raw_input, e.created_at, e.status, pel.event_type FROM phone_ingest_executions e LEFT JOIN phone_event_log pel ON pel.id = e.event_log_id WHERE e.id = ?",
+        "params": [
+          201
+        ]
+      }
+    ]
+  },
+  "phone test-transform exec 202": {
+    "status": 404,
+    "body": {
+      "error": "execution #202 has no parseable raw_input — nothing to transform"
+    },
+    "queries": [
+      {
+        "sql": "SELECT e.id AS exec_id, e.raw_input, e.created_at, e.status, pel.event_type FROM phone_ingest_executions e LEFT JOIN phone_event_log pel ON pel.id = e.event_log_id WHERE e.id = ?",
+        "params": [
+          202
+        ]
+      }
+    ]
+  },
+  "phone test-transform exec missing": {
+    "status": 404,
+    "body": {
+      "error": "execution #404 not found"
+    },
+    "queries": [
+      {
+        "sql": "SELECT e.id AS exec_id, e.raw_input, e.created_at, e.status, pel.event_type FROM phone_ingest_executions e LEFT JOIN phone_event_log pel ON pel.id = e.event_log_id WHERE e.id = ?",
+        "params": [
+          404
+        ]
+      }
+    ]
+  },
+  "phone test-transform mapping skipped on failure": {
+    "status": 200,
+    "body": {
+      "success": true,
+      "source": "inline",
+      "input": {},
+      "transform": {
+        "ok": false,
+        "error": "code transform threw: undefined"
+      }
+    },
+    "queries": []
+  }
+}

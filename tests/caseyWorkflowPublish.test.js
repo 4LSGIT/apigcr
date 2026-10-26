@@ -82,6 +82,12 @@ function makeDb(over = {}) {
     if (/FROM sequence_steps/.test(sql)) return [[]];
     if (/FROM workflow_steps s JOIN workflows w/.test(sql)) return [[]];
     if (/FROM cta_links/.test(sql)) return [[]];
+    // A20.0: ingest-rule workflow actions are starters too.
+    if (/FROM email_ingest_rule_actions a JOIN email_ingest_rules r/.test(sql)) {
+      return [[{ action_id: 12, action_name: 'start', action_active: 1, rule_id: 15, rule_name: 'court emails', rule_active: 1,
+        config: { workflow_id: state.wf.id } }]];
+    }
+    if (/FROM phone_ingest_rule_actions a JOIN phone_ingest_rules r/.test(sql)) return [[]];
     if (/UPDATE workflow_versions|UPDATE workflows SET current_version|UPDATE workflow_executions/.test(sql)) {
       state.writes.push(sql.trim().split('\n')[0].trim());
       return [{ affectedRows: 1 }];
@@ -113,7 +119,8 @@ describe('the workflow-publish normalizer', () => {
     });
     expect(out.structural_reasons.join(' ')).toMatch(/step 3 added/);
     expect(out.changes.some((c) => c.kind === 'added' && c.step_number === 3)).toBe(true);
-    expect(out.starters).toEqual([{ source: 'hook', name: 'Intake hook', active: 1 }]);
+    expect(out.starters).toEqual([{ source: 'hook', name: 'Intake hook', active: 1 },
+      { source: 'email_ingest_rule', name: 'court emails', active: 1 }]);
     expect(out.effects).toEqual(['step 3: send_email']);
     expect(out.expected_base).toEqual({
       draft_version: 4, step_count: 3, draft_fingerprint: draftFingerprint(DRAFT_STEPS),

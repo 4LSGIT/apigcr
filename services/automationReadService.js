@@ -28,8 +28,24 @@
 // verdict-only). The plan also names form definitions as a possible starter;
 // verified 2026-10-22: nothing in the forms code references a workflow, so
 // references() has no form source.
+//
+// A20.0 — email and phone INGEST RULES ride the same four kinds with their own
+// id keys (email_ingest_rule_id / phone_ingest_rule_id, email_ingest_execution_id
+// / phone_ingest_execution_id): definition = the rule + its action rows; run =
+// one execution's layer-by-layer outcome; list = rules, suppressions, or an
+// execution finder; references = what the rule's actions START (and the
+// workflow / sequence references gained ingest-rule actions as starters).
+// Same redaction: an `http` action is method + host + credential label (never
+// the URL or a header value); `code` match/transform bodies are readable
+// (ruling 9), split into ≤ CODE_PART_CHARS parts so a long one is not lost to
+// the per-cell cap. email_ingest_sources (live keys) is never touched — no
+// join, no column: the source NAME comes from email_log.source. raw_input is
+// never selected here (the preview kind reads envelopes through the sample
+// fetchers, services/ingestRulePreviewService.js).
 
+const { DateTime } = require('luxon');
 const { escapeLike } = require('../lib/escapeLike');
+const { FIRM_TZ } = require('./timezoneService');
 
 const MAX_LIST = 50;
 const CODE_CELL_CHARS = 2000;
@@ -100,7 +116,7 @@ async function credentialNameMap(db) {
   return new Map(rows.map((r) => [Number(r.id), String(r.name)]));
 }
 
-async function list(db, { query, limit, type } = {}) {
+async function list(db, { query, limit, type, since, until } = {}) {
   const cap = Math.max(1, Math.min(Number(limit) || MAX_LIST, MAX_LIST));
   const where = [];
   const params = [];
@@ -108,6 +124,8 @@ async function list(db, { query, limit, type } = {}) {
     where.push("name LIKE CONCAT('%', ?, '%')");
     params.push(escapeLike(String(query).trim()));
   }
+  const ingest = INGEST_LIST_TYPES[type];
+  if (ingest) return ingestList(db, ingest, { query, cap, since, until });
   if (type === 'sequences') {
     const [rows] = await db.query(
       `SELECT t.id AS sequence_template_id, t.name, t.type AS template_type, t.active,
@@ -177,7 +195,9 @@ async function sequenceDefinition(db, { sequence_template_id, version }) {
   }));
 }
 
-async function definition(db, { workflow_id, sequence_template_id, version } = {}) {
+async function definition(db, { workflow_id, sequence_template_id, email_ingest_rule_id, phone_ingest_rule_id, version } = {}) {
+  if (email_ingest_rule_id !== undefined) return ingestDefinition(db, INGEST.email, email_ingest_rule_id);
+  if (phone_ingest_rule_id !== undefined) return ingestDefinition(db, INGEST.phone, phone_ingest_rule_id);
   if (sequence_template_id !== undefined) return sequenceDefinition(db, { sequence_template_id, version });
   const id = posInt(workflow_id, 'workflow_id');
   const [[wf]] = await db.query(
@@ -279,7 +299,15 @@ async function enrollmentRun(db, { enrollment_id }) {
   return rows;
 }
 
-async function run(db, { execution_id, enrollment_id, workflow_id, sequence_template_id } = {}) {
+async function run(db, {
+  execution_id, enrollment_id, workflow_id, sequence_template_id,
+  email_ingest_execution_id, phone_ingest_execution_id, email_ingest_rule_id, phone_ingest_rule_id,
+} = {}) {
+  // A20.0: an ingest execution by id, or a rule's LATEST matching execution.
+  if (email_ingest_execution_id !== undefined) return ingestRun(db, INGEST.email, email_ingest_execution_id);
+  if (phone_ingest_execution_id !== undefined) return ingestRun(db, INGEST.phone, phone_ingest_execution_id);
+  if (email_ingest_rule_id !== undefined) return ingestLatestMatch(db, INGEST.email, email_ingest_rule_id);
+  if (phone_ingest_rule_id !== undefined) return ingestLatestMatch(db, INGEST.phone, phone_ingest_rule_id);
   // "The latest run of workflow X" is the question a run explanation starts
   // from, and the model has no other way to learn an execution id — the
   // automation tables are outside the curated SQL on purpose. Found live
@@ -437,14 +465,20 @@ async function sequenceReferences(db, { sequence_template_id }) {
       active: !(r.expires_at instanceof Date) || r.expires_at.getTime() > Date.now() });
   }
 
+  // A20.0: email / phone ingest-rule sequence actions enroll by the same
+  // template_id / template_type keys.
+  for (const r of await ingestStarters(db, 'sequence', matches)) rows.push({ ...r, sequence_template_id: id });
+
   if (!rows.length) {
     rows.push({ source: 'none', sequence_template_id: id, source_id: null, source_name: null,
-      detail: 'no hook, trigger rule, workflow step or CTA link enrolls this template; enrollments happen only by hand, API, or app-internal callers (e.g. appointment no-show handling)', active: null });
+      detail: 'no hook, trigger rule, ingest rule, workflow step or CTA link enrolls this template; enrollments happen only by hand, API, or app-internal callers (e.g. appointment no-show handling)', active: null });
   }
   return rows;
 }
 
-async function references(db, { workflow_id, sequence_template_id } = {}) {
+async function references(db, { workflow_id, sequence_template_id, email_ingest_rule_id, phone_ingest_rule_id } = {}) {
+  if (email_ingest_rule_id !== undefined) return ingestReferences(db, INGEST.email, email_ingest_rule_id);
+  if (phone_ingest_rule_id !== undefined) return ingestReferences(db, INGEST.phone, phone_ingest_rule_id);
   if (sequence_template_id !== undefined) return sequenceReferences(db, { sequence_template_id });
   const id = posInt(workflow_id, 'workflow_id');
   const rows = [];
@@ -521,11 +555,509 @@ async function references(db, { workflow_id, sequence_template_id } = {}) {
       active: !(r.expires_at instanceof Date) || r.expires_at.getTime() > Date.now() });
   }
 
+  // A20.0: email / phone ingest-rule workflow actions (config.workflow_id,
+  // number or numeric string — compared as text like the sources above).
+  const byWorkflowId = (config) => String((parseJson(config, {}) || {}).workflow_id) === idText;
+  for (const r of await ingestStarters(db, 'workflow', byWorkflowId)) rows.push({ ...r, workflow_id: id });
+
   if (!rows.length) {
     rows.push({ source: 'none', workflow_id: id, source_id: null, source_name: null,
-      detail: 'no hook, trigger rule, sequence step, parent workflow or CTA link names this workflow; it starts only by hand or API', active: null });
+      detail: 'no hook, trigger rule, ingest rule, sequence step, parent workflow or CTA link names this workflow; it starts only by hand or API', active: null });
   }
   return rows;
 }
 
-module.exports = { list, definition, run, references, projectStepConfig };
+// ─────────────────────────────────────────────────────────────
+// A20.0 — email and phone ingest rules (see the header)
+// ─────────────────────────────────────────────────────────────
+
+const INGEST = {
+  email: {
+    channel: 'email', rules: 'email_ingest_rules', actions: 'email_ingest_rule_actions',
+    executions: 'email_ingest_executions', suppressions: 'email_ingest_log_suppressions',
+    ruleKey: 'email_ingest_rule_id', execKey: 'email_ingest_execution_id', suppKey: 'email_ingest_suppression_id',
+    execService: () => require('./emailIngestExecutionsService'),
+  },
+  phone: {
+    channel: 'phone', rules: 'phone_ingest_rules', actions: 'phone_ingest_rule_actions',
+    executions: 'phone_ingest_executions', suppressions: 'phone_log_suppressions',
+    ruleKey: 'phone_ingest_rule_id', execKey: 'phone_ingest_execution_id', suppKey: 'phone_ingest_suppression_id',
+    execService: () => require('./phoneIngestExecutionsService'),
+  },
+};
+
+const INGEST_LIST_TYPES = {
+  email_ingest_rules: { ch: INGEST.email, what: 'rules' },
+  phone_ingest_rules: { ch: INGEST.phone, what: 'rules' },
+  email_ingest_suppressions: { ch: INGEST.email, what: 'suppressions' },
+  phone_ingest_suppressions: { ch: INGEST.phone, what: 'suppressions' },
+  email_ingest_executions: { ch: INGEST.email, what: 'executions' },
+  phone_ingest_executions: { ch: INGEST.phone, what: 'executions' },
+};
+
+// Live 2026-10-26: the largest stored code transform is 10,775 chars (rule 24);
+// 4 of the 8 code transforms exceed P12's 2,000-char cell. Parts keep each
+// cell under the 3,000-char evidence cap and the whole body readable.
+const CODE_PART_CHARS = 2500;
+const CODE_PARTS_MAX = 6;
+const INGEST_CONFIG_CHARS = 2500;
+
+function utcLiteral(date) {
+  return date.toISOString().slice(0, 19).replace('T', ' ');
+}
+
+function firmLocal(value) {
+  if (!(value instanceof Date) || Number.isNaN(value.getTime())) return null;
+  return `${DateTime.fromJSDate(value, { zone: 'utc' }).setZone(FIRM_TZ).toFormat('yyyy-LL-dd HH:mm:ss')} (${FIRM_TZ})`;
+}
+
+// since/until from the validated step: firm-local unless an offset is given;
+// a date-only `until` means the END of that firm-local day.
+function windowBound(value, end) {
+  if (value == null || value === '') return undefined;
+  const text = String(value).trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(text)) {
+    const day = DateTime.fromISO(text, { zone: FIRM_TZ });
+    if (!day.isValid) throw err(422, `invalid date ${text}`);
+    return (end ? day.endOf('day') : day.startOf('day')).toUTC().toJSDate();
+  }
+  return require('./timezoneService').parseUserDateTime(text);
+}
+
+// A stored match/transform config → one readable cell, plus code parts.
+function ingestConfigCell(mode, raw) {
+  const config = parseJson(raw, typeof raw === 'string' ? raw : null);
+  if (mode === 'code') {
+    const code = typeof config === 'string' ? config : (config && typeof config.code === 'string' ? config.code : null);
+    if (code != null) {
+      if (code.length <= CODE_PART_CHARS) return { cell: code, parts: [] };
+      const parts = [];
+      for (let i = 0; i < code.length && parts.length < CODE_PARTS_MAX; i += CODE_PART_CHARS) parts.push(code.slice(i, i + CODE_PART_CHARS));
+      const shown = parts.join('').length;
+      return {
+        cell: `[code body: ${code.length} chars in ${parts.length} code_part rows${shown < code.length ? `; the last ${code.length - shown} chars are not shown` : ''}]`,
+        parts,
+      };
+    }
+  }
+  return { cell: config == null ? null : capJson(config, INGEST_CONFIG_CHARS), parts: [] };
+}
+
+// An ingest action's stored config with the P12 redaction: `http` is a
+// WHITELIST (method, host, credential label, header KEY names, body mode and
+// template — never the URL or a header value); every other type keeps its keys
+// minus any url/headers (never read by those dispatchers, and possibly secret).
+function projectIngestActionConfig(actionType, rawConfig, credentialNames) {
+  const config = parseJson(rawConfig, {}) || {};
+  if (actionType === 'http') {
+    const out = projectStepConfig('webhook', {
+      url: config.url, method: config.method || 'POST', credential_id: config.credential_id,
+      headers: config.headers, timeout_ms: config.timeout_ms, body: config.body_template,
+    }, credentialNames);
+    if (config.body_mode !== undefined) out.body_mode = config.body_mode;
+    return out;
+  }
+  const out = {};
+  for (const [k, v] of Object.entries(config)) {
+    if (k === 'url' || k === 'headers') continue;
+    out[k] = v;
+  }
+  return out;
+}
+
+// What each action starts — names and live state of its target, batch-loaded.
+async function ingestTargets(db, actions, credentialNames) {
+  const cfg = new Map(actions.map((a) => [Number(a.id), parseJson(a.config, {}) || {}]));
+  const pick = (type, key) => [...new Set(actions.filter((a) => a.action_type === type)
+    .map((a) => cfg.get(Number(a.id))[key]).filter((v) => v != null && v !== ''))];
+  const inList = async (sql, list) => (list.length
+    ? (await db.query(sql.replace('(?)', `(${list.map(() => '?').join(',')})`), list))[0] : []);
+  const wfIds = pick('workflow', 'workflow_id').map(Number).filter((n) => Number.isSafeInteger(n) && n > 0);
+  const tplIds = pick('sequence', 'template_id').map(Number).filter((n) => Number.isSafeInteger(n) && n > 0);
+  const tplTypes = pick('sequence', 'template_type').map(String);
+  const slugs = pick('hook', 'slug').map(String);
+  const workflows = new Map((await inList('SELECT id, name, active, current_version FROM workflows WHERE id IN (?)', wfIds)).map((r) => [Number(r.id), r]));
+  const templates = new Map((await inList('SELECT id, name, active FROM sequence_templates WHERE id IN (?)', tplIds)).map((r) => [Number(r.id), r]));
+  const byType = new Map();
+  for (const r of await inList('SELECT id, name, type, active FROM sequence_templates WHERE type IN (?)', tplTypes)) {
+    if (!byType.has(String(r.type))) byType.set(String(r.type), []);
+    byType.get(String(r.type)).push(r);
+  }
+  const hooks = new Map((await inList('SELECT id, slug, name, active FROM hooks WHERE slug IN (?)', slugs)).map((r) => [String(r.slug), r]));
+
+  const out = new Map();
+  for (const a of actions) {
+    const c = cfg.get(Number(a.id));
+    let t;
+    if (a.action_type === 'workflow') {
+      const wf = workflows.get(Number(c.workflow_id));
+      t = wf
+        ? { target_kind: 'workflow', target_id: Number(wf.id), target_name: wf.name, target_active: !!wf.active,
+          detail: `starts workflow ${wf.id} "${wf.name}" (${wf.active ? 'active' : 'INACTIVE — dispatch is refused'}${Number(wf.current_version) ? `, published v${wf.current_version}` : ', never published — dispatch is refused'})` }
+        : { target_kind: 'workflow', target_id: c.workflow_id ?? null, target_name: null, target_active: false,
+          detail: `names workflow ${c.workflow_id}, which does not exist` };
+    } else if (a.action_type === 'sequence') {
+      if (c.template_id != null && c.template_id !== '') {
+        const tpl = templates.get(Number(c.template_id));
+        t = { target_kind: 'sequence_template', target_id: tpl ? Number(tpl.id) : c.template_id, target_name: tpl ? tpl.name : null,
+          target_active: !!(tpl && tpl.active),
+          detail: tpl ? `enrolls in sequence template ${tpl.id} "${tpl.name}" by id${tpl.active ? '' : ' (INACTIVE)'}` : `names sequence template ${c.template_id}, which does not exist` };
+      } else {
+        const list = byType.get(String(c.template_type)) || [];
+        const active = list.filter((r) => r.active);
+        t = { target_kind: 'sequence_type', target_id: null, target_name: String(c.template_type || ''), target_active: active.length > 0,
+          detail: `enrolls in the active template of type "${c.template_type}" (${active.length ? active.map((r) => `${r.id} "${r.name}"`).join(', ') : 'none active'})` };
+      }
+      t.detail += `; contact id read from the transform output at "${c.contact_id_field || 'contact_id'}"`;
+    } else if (a.action_type === 'hook') {
+      const h = hooks.get(String(c.slug || ''));
+      t = { target_kind: 'hook', target_id: h ? Number(h.id) : null, target_name: h ? h.name : String(c.slug || ''),
+        target_active: !!(h && h.active),
+        detail: h ? `re-enters hook ${h.id} "${h.name}" (slug ${h.slug}${h.active ? '' : ', INACTIVE'}) with the transform output as body` : `names hook slug "${c.slug}", which does not exist` };
+    } else if (a.action_type === 'internal_function') {
+      t = { target_kind: 'internal_function', target_id: null, target_name: c.function_name || null, target_active: null,
+        detail: `calls internal function ${c.function_name || '(none)'} with params mapped from the transform output` };
+    } else if (a.action_type === 'http') {
+      const cred = c.credential_id != null ? (credentialNames.get(Number(c.credential_id)) || `credential #${c.credential_id}`) : 'no credential';
+      t = { target_kind: 'http', target_id: null, target_name: hostOf(c.url), target_active: null,
+        detail: `sends ${String(c.method || 'POST').toUpperCase()} to host ${hostOf(c.url) || '(unparseable)'} [URL redacted] using ${cred}` };
+    } else {
+      t = { target_kind: String(a.action_type), target_id: null, target_name: null, target_active: null, detail: 'unknown action type' };
+    }
+    out.set(Number(a.id), t);
+  }
+  return out;
+}
+
+async function loadIngestRule(db, ch, id) {
+  const [[rule]] = await db.query(
+    `SELECT id, name, description, active, position, match_mode, match_config, transform_mode, transform_config,
+            match_count, last_matched_at, last_modified_by, created_at, updated_at
+       FROM ${ch.rules} WHERE id = ?`, [id]);
+  if (!rule) throw err(404, `${ch.channel} ingest rule ${id} does not exist`);
+  const [actions] = await db.query(
+    `SELECT id, name, position, active, action_type, config
+       FROM ${ch.actions} WHERE rule_id = ? ORDER BY position ASC, id ASC`, [id]);
+  return { rule, actions };
+}
+
+async function ingestDefinition(db, ch, ruleId) {
+  const id = posInt(ruleId, ch.ruleKey);
+  const { rule, actions } = await loadIngestRule(db, ch, id);
+  const [[order]] = await db.query(
+    `SELECT COUNT(*) AS n FROM ${ch.rules}
+      WHERE active = 1 AND (position < ? OR (position = ? AND id < ?))`, [rule.position, rule.position, id]);
+  const credentialNames = await credentialNameMap(db);
+  const targets = await ingestTargets(db, actions, credentialNames);
+  const match = ingestConfigCell(rule.match_mode, rule.match_config);
+  const transform = rule.transform_mode === 'passthrough' ? { cell: null, parts: [] } : ingestConfigCell(rule.transform_mode, rule.transform_config);
+  const notes = [];
+  if (!rule.active) notes.push('INACTIVE: live ingest never evaluates this rule');
+  if (rule.match_mode === 'conditions' && rule.match_config == null) notes.push('NULL match_config in conditions mode never matches (it is NOT match-all)');
+  if (!actions.some((a) => a.active)) notes.push('no active actions: a match is recorded but nothing fires');
+  const rows = [{
+    row: 'rule', channel: ch.channel, [ch.ruleKey]: id, name: rule.name,
+    description: rule.description == null ? null : String(rule.description).slice(0, 500),
+    active: !!rule.active, position: rule.position,
+    evaluation_order: rule.active ? Number(order.n) + 1 : null,
+    match_mode: rule.match_mode, match_config: match.cell,
+    transform_mode: rule.transform_mode, transform_config: transform.cell,
+    match_count: rule.match_count, last_matched_at: rule.last_matched_at,
+    updated_at: rule.updated_at, last_modified_by: rule.last_modified_by,
+    action_count: actions.length, active_action_count: actions.filter((a) => a.active).length,
+    notes: notes.length ? notes.join('; ') : null,
+  }];
+  for (const [field, cell] of [['match_config', match], ['transform_config', transform]]) {
+    cell.parts.forEach((part, i) => rows.push({
+      row: 'code_part', [ch.ruleKey]: id, field, part: i + 1, of: cell.parts.length, code: part,
+    }));
+  }
+  for (const a of actions) {
+    const t = targets.get(Number(a.id));
+    rows.push({
+      row: 'action', [ch.ruleKey]: id, rule_action_id: Number(a.id), name: a.name, position: a.position,
+      active: !!a.active, action_type: a.action_type,
+      config: capJson(projectIngestActionConfig(a.action_type, a.config, credentialNames), 2000),
+      target: t.detail,
+    });
+  }
+  return rows;
+}
+
+async function ingestReferences(db, ch, ruleId) {
+  const id = posInt(ruleId, ch.ruleKey);
+  const { rule, actions } = await loadIngestRule(db, ch, id);
+  const targets = await ingestTargets(db, actions, await credentialNameMap(db));
+  if (!actions.length) {
+    return [{ source: 'none', [ch.ruleKey]: id, rule_action_id: null, action_type: null, target_kind: null,
+      target_id: null, target_name: null, active: null,
+      detail: 'this rule has no actions — a match is recorded on the execution row and nothing starts' }];
+  }
+  return actions.map((a) => {
+    const t = targets.get(Number(a.id));
+    return {
+      source: 'ingest_rule_action', [ch.ruleKey]: id, rule_action_id: Number(a.id), action_type: a.action_type,
+      target_kind: t.target_kind, target_id: t.target_id, target_name: t.target_name,
+      target_active: t.target_active, active: !!(rule.active && a.active), detail: t.detail,
+    };
+  });
+}
+
+// Ingest-rule actions as STARTERS of a workflow / sequence template.
+async function ingestStarters(db, actionType, matches) {
+  const rows = [];
+  for (const ch of [INGEST.email, INGEST.phone]) {
+    const [found] = await db.query(
+      `SELECT a.id AS action_id, a.name AS action_name, a.active AS action_active, a.config,
+              r.id AS rule_id, r.name AS rule_name, r.active AS rule_active
+         FROM ${ch.actions} a JOIN ${ch.rules} r ON r.id = a.rule_id
+        WHERE a.action_type = ?`, [actionType]);
+    for (const r of found) {
+      const how = matches(r.config);
+      if (!how) continue;
+      rows.push({ source: `${ch.channel}_ingest_rule`, [ch.ruleKey]: Number(r.rule_id), source_id: Number(r.rule_id),
+        source_name: r.rule_name,
+        detail: `${ch.channel} ingest rule action #${r.action_id}${r.action_name ? ` "${r.action_name}"` : ''}${how === true ? '' : ` (${how})`}`,
+        active: !!(r.rule_active && r.action_active) });
+    }
+  }
+  return rows;
+}
+
+function ingestMeta(row) {
+  const m = parseJson(row.metadata, {});
+  return m && typeof m === 'object' && !Array.isArray(m) ? m : {};
+}
+
+function idList(v) {
+  return Array.isArray(v) ? v.map(Number).filter((n) => Number.isInteger(n)) : [];
+}
+
+function namedIds(ids, names) {
+  return ids.length ? ids.map((i) => `${i} "${names[i] ?? '(deleted)'}"`).join(', ') : null;
+}
+
+// Where a message stopped, by status — verified against
+// emailIngestService.ingestEmail / phoneIngestService.ingestPhoneEvent.
+function ingestPipeline(ch, row, meta) {
+  const status = row.status;
+  const ran = 'Layer 3 automation RAN (independent of suppression)';
+  if (ch.channel === 'email') {
+    switch (status) {
+      case 'auth_failed': return { layer3: 'did not run', pipeline: 'refused at the receiver (bad or missing source key): no forensic row, no layer ran' };
+      case 'validation_failed': return { layer3: 'did not run', pipeline: 'the envelope failed validation: no email_log row, no layer ran' };
+      case 'duplicate': return { layer3: 'did not run', pipeline: 'duplicate of an already-received (source, message_id): stopped at the forensic dedupe — suppression and automation did NOT run, so no rule could fire' };
+      case 'skipped_firm_to_firm': return { layer3: 'ran', pipeline: `firm-to-firm (every address on a firm domain): ${ran}; suppression was not evaluated and no structured log row was written` };
+      case 'skipped_suppression': return { layer3: 'ran', pipeline: `${ran}; a suppression rule matched, so the structured log row was NOT written (suppression hides, it does not cancel)` };
+      case 'logged': return { layer3: 'ran', pipeline: `${ran}; the structured log row was written` };
+      case 'error':
+        return Object.keys(meta).length
+          ? { layer3: 'ran', pipeline: `${ran}; the structured log write failed (see error) — the layer-3 outcomes below still stand` }
+          : { layer3: 'unknown', pipeline: 'errored without recording layer-3 outcomes: either before automation (email_log insert) or after it on an unexpected log failure, where actions may have fired unrecorded — see error' };
+      default: return { layer3: 'unknown', pipeline: `unrecognized status ${status}` };
+    }
+  }
+  if (meta.automation && meta.automation.skipped) {
+    return { layer3: `skipped by the caller (${meta.automation.skipped})`, pipeline: `layer 3 was deliberately not consulted (${meta.automation.skipped}) — not "no rule matched"; status ${status}` };
+  }
+  switch (status) {
+    case 'duplicate': return { layer3: 'did not run', pipeline: 'a true provider redelivery of an already-terminal event: suppression and automation did NOT re-run' };
+    case 'suppressed': return { layer3: 'ran', pipeline: `${ran}; a suppression rule matched, so no structured log row (firm-to-firm on phone is a suppression match field, not a status)` };
+    case 'logged': return { layer3: 'ran', pipeline: `${ran}; the structured log row was written` };
+    case 'error':
+      return Object.keys(meta).length
+        ? { layer3: 'ran', pipeline: `${ran}; the structured log write failed (see error)` }
+        : { layer3: 'unknown', pipeline: 'errored without recording layer-3 outcomes — see error' };
+    default: return { layer3: 'unknown', pipeline: `unrecognized status ${status}` };
+  }
+}
+
+async function ingestRun(db, ch, execId) {
+  const id = posInt(execId, ch.execKey);
+  const [[row]] = ch.channel === 'email'
+    ? await db.query(
+      `SELECT e.id, e.status, e.created_at, e.message_id, e.email_log_id, e.log_id, e.error, e.metadata,
+              e.action_failure_count, (e.remote_ip IS NULL) AS no_remote_ip,
+              el.source AS source_name, el.from_email, el.to_email, LEFT(el.subject, 300) AS subject
+         FROM email_ingest_executions e LEFT JOIN email_log el ON el.id = e.email_log_id
+        WHERE e.id = ?`, [id])
+    : await db.query(
+      `SELECT e.id, e.status, e.created_at, e.event_log_id, e.log_id, e.error, e.metadata, e.action_failure_count,
+              pel.provider, pel.event_type, pel.direction, pel.from_number, pel.to_number, pel.other_party, pel.line_number
+         FROM phone_ingest_executions e LEFT JOIN phone_event_log pel ON pel.id = e.event_log_id
+        WHERE e.id = ?`, [id]);
+  if (!row) throw err(404, `${ch.channel} ingest execution ${id} does not exist`);
+  const meta = ingestMeta(row);
+  const names = await ch.execService()._hydrateNames(db, [row]);
+  const matched = idList(meta.matched_rules);
+  const suppressed = idList(meta.suppressed_by);
+  const { layer3, pipeline } = ingestPipeline(ch, row, meta);
+  const head = {
+    row: 'execution', channel: ch.channel, [ch.execKey]: id, status: row.status,
+    created_at: row.created_at, created_local: firmLocal(row.created_at),
+    layer3, pipeline,
+    matched_rules: namedIds(matched, names.rules),
+    suppressed_by: namedIds(suppressed, names.suppressions),
+    action_failure_count: Number(row.action_failure_count) || 0,
+    parse_warnings: meta._parse_warnings ? capJson(meta._parse_warnings, 1000) : null,
+    log_id: row.log_id, error: row.error == null ? null : String(row.error).slice(0, 500),
+  };
+  if (ch.channel === 'email') {
+    Object.assign(head, {
+      email_log_id: row.email_log_id, source_name: row.source_name,
+      feeder: row.no_remote_ip ? 'in-process mailbox worker' : 'HTTP adapter',
+      message_id: row.message_id == null ? null : String(row.message_id).slice(0, 200),
+      is_test_replay: meta.is_test ? 1 : 0,
+      from_email: row.from_email, to_email: row.to_email, subject: row.subject,
+    });
+  } else {
+    Object.assign(head, {
+      event_log_id: row.event_log_id, provider: row.provider, event_type: row.event_type, direction: row.direction,
+      from_number: row.from_number, to_number: row.to_number, other_party: row.other_party, line_number: row.line_number,
+    });
+  }
+  if (row.status === 'duplicate') {
+    const [[orig]] = ch.channel === 'email'
+      ? await db.query(`SELECT id FROM email_ingest_executions WHERE email_log_id = ? AND status <> 'duplicate' ORDER BY id ASC LIMIT 1`, [row.email_log_id])
+      : await db.query(`SELECT id FROM phone_ingest_executions WHERE event_log_id = ? AND status <> 'duplicate' ORDER BY id ASC LIMIT 1`, [row.event_log_id]);
+    head.original_execution_id = orig ? Number(orig.id) : null;
+  }
+  const rows = [head];
+
+  const outcomes = Array.isArray(meta.action_outcomes) ? meta.action_outcomes : [];
+  let liveRules = new Map();
+  if (matched.length) {
+    const [found] = await db.query(
+      `SELECT id, active FROM ${ch.rules} WHERE id IN (${matched.map(() => '?').join(',')})`, matched);
+    liveRules = new Map(found.map((r) => [Number(r.id), !!r.active]));
+  }
+  for (const rid of matched) {
+    const own = outcomes.filter((o) => o && Number(o.rule_id) === rid);
+    const transformFailed = own.some((o) => o.action_type === 'transform');
+    rows.push({
+      row: 'matched_rule', [ch.execKey]: id, [ch.ruleKey]: rid, rule_name: names.rules[rid] ?? '(deleted)',
+      rule_active_now: liveRules.has(rid) ? liveRules.get(rid) : null,
+      result: transformFailed ? 'matched, but its transform FAILED — none of its actions ran'
+        : (own.length ? `matched; ${own.length} action outcome(s) below` : 'matched; it had no active actions, so nothing was dispatched'),
+    });
+  }
+  for (const o of outcomes) {
+    if (!o || typeof o !== 'object') continue;
+    const aid = o.rule_action_id == null ? null : Number(o.rule_action_id);
+    let meaning = null;
+    if (o.action_type === 'transform') meaning = 'synthetic outcome: the rule matched but its transform failed, so its actions were skipped';
+    else if (o.action_type === 'rule_evaluation') meaning = 'synthetic outcome: the rule evaluator itself threw (rule load / DB failure) — no rule was evaluated';
+    else if (o.status === 'skipped_test_envelope') meaning = 'a "-test-" replay envelope: workflow actions are deliberately not dispatched';
+    rows.push({
+      row: 'action_outcome', [ch.execKey]: id,
+      [ch.ruleKey]: o.rule_id == null ? null : Number(o.rule_id),
+      rule_action_id: aid, action_name: aid != null ? (names.rule_actions[aid] ?? null) : null,
+      action_type: o.action_type, status: o.status,
+      error: o.error == null ? null : String(o.error).slice(0, 500),
+      result: o.result === undefined ? null : capJson(o.result, 400),
+      meaning,
+    });
+  }
+  for (const sid of suppressed) {
+    rows.push({ row: 'suppression', [ch.execKey]: id, [ch.suppKey]: sid, name: names.suppressions[sid] ?? '(deleted)',
+      effect: 'Layer 2: decided only that the structured log row is not written; it never gates automation' });
+  }
+  return rows;
+}
+
+async function ingestLatestMatch(db, ch, ruleId) {
+  const id = posInt(ruleId, ch.ruleKey);
+  // Bound as a NUMBER: matched_rules holds JSON numbers, and a string param
+  // compares string-to-number and matches nothing (executionsService T8 note).
+  const [[latest]] = await db.query(
+    `SELECT id FROM ${ch.executions} WHERE ? MEMBER OF (metadata->'$.matched_rules') ORDER BY id DESC LIMIT 1`, [id]);
+  if (!latest) throw err(404, `${ch.channel} ingest rule ${id} has not matched any recorded execution`);
+  return ingestRun(db, ch, Number(latest.id));
+}
+
+async function ingestList(db, { ch, what }, { query, cap, since, until }) {
+  const search = query != null && String(query).trim() ? escapeLike(String(query).trim()) : null;
+  if (what === 'rules') {
+    const [rows] = await db.query(
+      `SELECT r.id AS ${ch.ruleKey}, r.name, r.active, r.position, r.match_mode, r.transform_mode,
+              r.match_count, r.last_matched_at, r.updated_at, LEFT(COALESCE(r.description, ''), 300) AS description,
+              (SELECT COUNT(*) FROM ${ch.actions} a WHERE a.rule_id = r.id) AS action_count,
+              (SELECT COUNT(*) FROM ${ch.actions} a WHERE a.rule_id = r.id AND a.active = 1) AS active_action_count
+         FROM ${ch.rules} r
+         ${search ? "WHERE r.name LIKE CONCAT('%', ?, '%')" : ''}
+        ORDER BY r.position ASC, r.id ASC LIMIT ${cap}`, search ? [search] : []);
+    return rows.map((r) => ({ ...r, channel: ch.channel, active: !!r.active }));
+  }
+  if (what === 'suppressions') {
+    const [rows] = await db.query(
+      `SELECT id, name, active, match_mode, match_config, match_count, last_matched_at,
+              LEFT(COALESCE(description, ''), 300) AS description
+         FROM ${ch.suppressions}
+         ${search ? "WHERE name LIKE CONCAT('%', ?, '%')" : ''}
+        ORDER BY id ASC LIMIT ${cap}`, search ? [search] : []);
+    return rows.map((r) => ({
+      channel: ch.channel, [ch.suppKey]: Number(r.id), name: r.name, active: !!r.active, match_mode: r.match_mode,
+      match_config: ingestConfigCell(r.match_mode, r.match_config).cell, match_count: r.match_count,
+      last_matched_at: r.last_matched_at, description: r.description,
+      effect: 'Layer 2: decides only whether the structured log row is written; it never gates automation',
+    }));
+  }
+  // Execution finder: newest first, optionally windowed (firm-local bounds)
+  // and searched (email: sender/subject via email_log; phone: other party).
+  const where = [];
+  const params = [];
+  const lo = windowBound(since, false);
+  const hi = windowBound(until, true);
+  if (lo) { where.push('e.created_at >= ?'); params.push(utcLiteral(lo)); }
+  if (hi) { where.push('e.created_at <= ?'); params.push(utcLiteral(hi)); }
+  if (ch.channel === 'email') {
+    if (search) {
+      where.push("(el.subject LIKE CONCAT('%', ?, '%') OR el.from_email LIKE CONCAT('%', ?, '%') OR el.to_email LIKE CONCAT('%', ?, '%'))");
+      params.push(search, search, search);
+    }
+    const [rows] = await db.query(
+      `SELECT e.id, e.created_at, e.status, e.email_log_id, e.metadata, e.action_failure_count,
+              el.source AS source_name, el.from_email, el.to_email, LEFT(el.subject, 200) AS subject
+         FROM email_ingest_executions e LEFT JOIN email_log el ON el.id = e.email_log_id
+         ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
+        ORDER BY e.id DESC LIMIT ${cap}`, params);
+    const names = await ch.execService()._hydrateNames(db, rows);
+    return rows.map((r) => {
+      const m = ingestMeta(r);
+      return {
+        channel: 'email', [ch.execKey]: Number(r.id), created_at: r.created_at, created_local: firmLocal(r.created_at),
+        status: r.status, source_name: r.source_name, from_email: r.from_email, to_email: r.to_email, subject: r.subject,
+        matched_rules: namedIds(idList(m.matched_rules), names.rules),
+        suppressed_by: namedIds(idList(m.suppressed_by), names.suppressions),
+        action_failure_count: Number(r.action_failure_count) || 0, is_test_replay: m.is_test ? 1 : 0,
+      };
+    });
+  }
+  if (search) {
+    where.push("(pel.other_party LIKE CONCAT('%', ?, '%') OR pel.from_number LIKE CONCAT('%', ?, '%') OR pel.to_number LIKE CONCAT('%', ?, '%'))");
+    params.push(search, search, search);
+  }
+  const [rows] = await db.query(
+    `SELECT e.id, e.created_at, e.status, e.event_log_id, e.metadata, e.action_failure_count,
+            pel.event_type, pel.direction, pel.other_party, pel.line_number
+       FROM phone_ingest_executions e LEFT JOIN phone_event_log pel ON pel.id = e.event_log_id
+       ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
+      ORDER BY e.id DESC LIMIT ${cap}`, params);
+  const names = await ch.execService()._hydrateNames(db, rows);
+  return rows.map((r) => {
+    const m = ingestMeta(r);
+    return {
+      channel: 'phone', [ch.execKey]: Number(r.id), created_at: r.created_at, created_local: firmLocal(r.created_at),
+      status: r.status, event_type: r.event_type, direction: r.direction, other_party: r.other_party, line_number: r.line_number,
+      matched_rules: namedIds(idList(m.matched_rules), names.rules),
+      suppressed_by: namedIds(idList(m.suppressed_by), names.suppressions),
+      action_failure_count: Number(r.action_failure_count) || 0,
+      layer3_skipped: m.automation && m.automation.skipped ? String(m.automation.skipped) : null,
+    };
+  });
+}
+
+module.exports = {
+  list, definition, run, references, projectStepConfig,
+  projectIngestActionConfig, ingestConfigCell, windowBound, INGEST_LIST_TYPES, CODE_PART_CHARS, CODE_PARTS_MAX,
+};

@@ -1498,8 +1498,17 @@ that change the answer: `email_ingest_rules.active` exists (tinyint, **default
 1**, so a create must pin `active: 0` explicitly), and rule actions are per-row
 CRUD by id (`addAction`/`updateAction`/`deleteAction` in
 `emailIngestRuleService`), not the trigger-rules DELETE+REINSERT. Rules carry
-`updated_at` for an expected-base guard; actions carry none — whether an action
-write touches the parent rule's `updated_at` is a trace item for A20.2.
+`updated_at`; actions carry none, and an action write does NOT touch the parent
+rule's `updated_at` (traced in A20.0, pinned on a real engine by
+`tests/automationReadIngest.mysql.test.js`) — while every MATCH does: the
+fire-and-forget `match_count`/`last_matched_at` bump is an UPDATE on the rule
+row, and `ON UPDATE CURRENT_TIMESTAMP` moves `updated_at` with it (live
+2026-10-26: 16 of the 18 email rules that ever matched, and 2 of 3 phone rules,
+have `updated_at` equal to `last_matched_at`). So `updated_at`
+is not "last edited", and an expected-`updated_at` guard on a busy rule
+(court emails: 940 matches) refuses spuriously whenever mail arrives between
+review and click — A20.2 needs an edit stamp that matching does not move, or a
+guard over the edited fields themselves, and must cover actions separately.
 `action_type` is `workflow|sequence|hook|internal_function|http`; `match_mode`
 is `conditions|code` and `transform_mode` `passthrough|mapper|code`. Rule
 `position` orders evaluation, so insertion position is part of review. The
@@ -1509,8 +1518,35 @@ are in AI_CONTEXT §26-27 and `manual/03-YisraFlow/10-ingest.md`; the explainer
 grounds there, never in model memory. `email_ingest_sources` (live keys) stays
 out of every rung; `http` action configs get the P12 URL redaction on reads.
 
-**A20.0: Explain an ingest rule or an ingest execution (read-only).** Extends
-the P12 typed read kinds over `email_ingest_rules`/`phone_ingest_rules`, their
+**A20.0: Explain an ingest rule or an ingest execution (read-only). SHIPPED
+2026-10-26** — the same four P12 kinds, new id keys (no new kind):
+`automation.definition` / `automation.references` take `email_ingest_rule_id`
+/ `phone_ingest_rule_id` (the rule, its action rows with each target's live
+state, and what each action starts); `automation.run` takes
+`email_ingest_execution_id` / `phone_ingest_execution_id` (status → the layer
+the message stopped at, matched rules by name, every action outcome with the
+synthetic `transform` / `rule_evaluation` / `skipped_test_envelope` meanings,
+suppressions, a duplicate's original) or a rule id for that rule's latest
+matching execution (`MEMBER OF`, numeric bind); `automation.list` gains six
+types — the rules, the suppressions (Layer-2 context), and an executions
+finder (sender/recipient/subject or phone-number search, firm-local
+`since`/`until`). Served by `services/automationReadService.js`, names hydrated
+through the executions services' own `_hydrateNames`. Redaction: `http` actions
+are method + host + credential label (a whitelist); other action types drop any
+`url`/`headers` key; `code` bodies are readable in ≤2,500-char `code_part`
+rows (the largest live body is 10,775 chars); `raw_input` is never selected and
+`email_ingest_sources` never touched (the source name comes from
+`email_log.source`). Ingest starters joined the workflow and sequence
+`automation.references` output (and so the publish card's impact preview).
+The reading rules live in `lib/aiPrompts/automationRunExplainer.js`
+`INGEST_RULE_EXPLAINER`, appended to the answer stage only when an ingest row
+or preview was read. Measured against the code, two of this section's
+semantics differ from the brief that framed it: a THROWING match is NOT
+recorded on the execution (console warning only — the trigger engine records
+it, ingest does not), and email firm-to-firm mail DOES run Layer 3 (only
+suppression and the log write are skipped). Original spec:
+
+Extends the P12 typed read kinds over `email_ingest_rules`/`phone_ingest_rules`, their
 action rows, and `email_ingest_executions`/`phone_ingest_executions` (plus the
 Layer-2 suppression tables, which decide only the structured log write). The
 run-explain payload is the ingest analog of A17.1: which rules matched and why,
@@ -1518,7 +1554,31 @@ what the transform produced, which actions fired with what outcome, and the
 layer the message stopped at. `code`-mode match/transform bodies are readable
 per ruling 9's logic; `http` URLs and literal header values redacted.
 
-**A20.1: Preview a rule against a message (read-only).** The native
+**A20.1: Preview a rule against a message (read-only). SHIPPED 2026-10-26** —
+kind `automation.preview_ingest_rule`. The four native endpoints' core moved to
+`services/ingestRulePreviewService.js` (route responses unchanged — pinned,
+queries included, against a golden recorded before the move:
+`tests/ingestRulePreview.routes.test.js`). The kind evaluates through the
+production `_evaluateMatch` / `_runTransform`, never `evaluateRules`: no
+dispatch, no execution row, no `match_count` bump (real-engine proof: a full
+row snapshot of every reachable table is unchanged, no write statement is
+issued, dispatch tripwires stay silent). Message source: exactly one of the
+channel's execution id (its recorded envelope via the sample fetchers), a
+`sample` object (≤ 8,000 chars), or a `window` (≤ 40 messages, firm-local
+bounds, match only). Output: matched + WHY not (the matcher's warning text,
+captured — a throwing match is otherwise invisible), the transform output
+(run only when the rule matches, exactly the live order), and per active
+action what it WOULD do (workflow inactive/unpublished refusals, a sequence's
+missing contact id, a hook's state, an internal function's resolved params,
+an `http` host — never its URL). Deliberate narrowings: the kind previews a
+STORED rule only — it refuses every native body field, because a `code` body
+runs in this process via `new Function` and a model-supplied one would be
+model-composed code executing in-process (the native routes accept that from
+any staff JWT today — filed, `ref/plans.md`); and it prepares an email
+envelope the way `evaluateRules` does (`body` = text || html), which the
+native tester does not on full-fidelity rows (filed). A20.2 adds draft
+(unsaved) conditions/mapper preview if it needs one — with a ReDoS answer for
+model-written `matches`/`regex` patterns first. Original spec: the native
 `POST .../rules/test-match` and `.../rules/test-transform` endpoints are the
 dry-run surface, like A17.2's step preview: zero side effects, no actions run.
 The kind must be unable to express anything but those two endpoints.
@@ -1900,7 +1960,8 @@ and sequence references match a starter by exact `template_id` or by
 One drift found while building: nothing in the forms code references a
 workflow, so the "form definitions" starter named below does not exist;
 `automation.references` covers hooks, trigger rules, sequence steps, parent
-workflows and CTA links.
+workflows, CTA links and (A20.0) email/phone ingest-rule actions. A20.0 put
+ingest rules on the same four kinds with their own id keys.
 
 Casey could read **no** automation definition or run before P12a. Of the automation
 tables only `sequence_enrollments` is on the Reports manifest allowlist
