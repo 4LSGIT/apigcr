@@ -255,6 +255,51 @@ describe('withIdempotency', () => {
     expect(ok).toHaveBeenCalledTimes(1);
   });
 
+  // A14 sends: a failure AFTER the provider was called may have delivered, so
+  // the send routes pass releaseOnRefusalOnly — only a status-bearing 4xx
+  // (raised before dispatch) gives the key back.
+  test('send rule: a 4xx refusal releases the claim; a 5xx / statusless failure KEEPS it, so the key never sends twice', async () => {
+    const { releaseOnRefusalOnly } = idem;
+    const spy = jest.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const pool = makePool();
+      const refused = jest.fn().mockRejectedValue(Object.assign(new Error('This phone line is inactive'), { status: 409 }));
+      await expect(withIdempotency(pool, { userId: USER, scope: 'phone_lines.sms_send', key: 'send-key-refused' }, refused,
+        { releaseOnError: releaseOnRefusalOnly })).rejects.toThrow('inactive');
+      expect(pool.rows).toEqual([]);                         // refusal: nothing went out, key reusable
+
+      for (const [key, err] of [
+        ['send-key-502', Object.assign(new Error('The message was not sent: Quo API 504'), { status: 502 })],
+        ['send-key-raw', new Error('socket hang up')],
+      ]) {
+        const fn = jest.fn().mockRejectedValue(err);
+        await expect(withIdempotency(pool, { userId: USER, scope: 'phone_lines.sms_send', key }, fn,
+          { releaseOnError: releaseOnRefusalOnly })).rejects.toThrow(err.message);
+        const row = pool.rows.find((r) => r.idem_key === key);
+        expect(row && row.status).toBe('in_flight');         // claim kept
+        const again = jest.fn().mockResolvedValue({ to: '3135550001' });
+        const repeat = withIdempotency(pool, { userId: USER, scope: 'phone_lines.sms_send', key }, again,
+          { releaseOnError: releaseOnRefusalOnly });
+        await expect(repeat).rejects.toMatchObject({ status: 409, idempotency: { outcome: 'in_flight' } });
+        expect(again).not.toHaveBeenCalled();                // never a second send
+      }
+      pool.backdate(IN_FLIGHT_STALE_SECONDS + 5);
+      await expect(withIdempotency(pool, { userId: USER, scope: 'phone_lines.sms_send', key: 'send-key-502' }, jest.fn(),
+        { releaseOnError: releaseOnRefusalOnly })).rejects.toMatchObject({ idempotency: { outcome: 'unknown' } });
+
+      expect([400, 401, 403, 404, 409, 429].every((s) => releaseOnRefusalOnly({ status: s }))).toBe(true);
+      expect([500, 502, 503, undefined, '400'].some((s) => releaseOnRefusalOnly({ status: s }))).toBe(false);
+      expect(releaseOnRefusalOnly(null)).toBe(false);
+    } finally { spy.mockRestore(); }
+  });
+
+  test('no release rule = the create behaviour: any failure releases', async () => {
+    const pool = makePool();
+    const boom = jest.fn().mockRejectedValue(Object.assign(new Error('db down'), { status: 503 }));
+    await expect(withIdempotency(pool, { userId: USER, scope: 'tasks.create', key: 'create-key-503' }, boom)).rejects.toThrow('db down');
+    expect(pool.rows).toEqual([]);
+  });
+
   test('a settle that fails does not fail the committed operation', async () => {
     const pool = makePool();
     pool.failSettle = true;

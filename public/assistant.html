@@ -53,6 +53,7 @@
   .action-draft-grid { display: grid; grid-template-columns: minmax(90px, auto) 1fr; gap: 5px 10px; }
   .action-draft-grid dt { color: var(--text-muted); }
   .action-draft-grid dd { margin: 0; overflow-wrap: anywhere; }
+  .action-draft-grid dd.action-draft-message { white-space: pre-wrap; border-left: 3px solid var(--accent); padding-left: 8px; }
   .action-draft-actions { display: flex; gap: 7px; margin-top: 10px; }
   .action-draft-actions button, .action-draft-retry { padding: 5px 9px; font-size: 12px; }
   .action-draft-retry { margin-top: 6px; }
@@ -513,9 +514,10 @@ function apptActionLabel(draft) {
 }
 
 function apptChannelsText(draft) {
-  // Ask Casey sends no client SMS/email (until the A14 send bar exists); the
-  // request bodies below send false whatever an older saved draft carries.
-  return 'None — Ask Casey does not send client SMS or email; send any confirmation from the appointment itself';
+  // An appointment card sends no client SMS/email (course correction 3 — a
+  // client message is a separate A14 send card); the request bodies below
+  // send false whatever an older saved draft carries.
+  return 'None — this appointment card sends no client SMS or email; send a confirmation from the appointment itself, or ask Casey for a separate send card';
 }
 
 function apptDraftText(draft) {
@@ -1092,6 +1094,137 @@ function hookCreateResult(draft, result) {
   return { hook_id: id };
 }
 
+// Direct sends (A14, ruling 15). ONE text or ONE email, sent NOW, to the one
+// contact phone/email row the server resolved from the evidence. The body on
+// the card is the server's FULLY RESOLVED text and the request below sends
+// exactly those bytes — neither route resolves placeholders. The recipient is
+// re-read through the canonical contact routes at click time (correction 1):
+// a row that ended, changed, or opted out since the card was prepared refuses
+// before anything is claimed or sent. The draft_id rides as Idempotency-Key;
+// a send whose outcome is unknown is never offered again.
+const SEND_ACTION_KINDS = new Set(['sms.send.v1', 'email.send.v1']);
+
+function sendIsSms(draft) { return draft.kind === 'sms.send.v1'; }
+
+function sendActionLabel(draft) { return sendIsSms(draft) ? 'Send text message' : 'Send email'; }
+
+function sendRecipientLine(draft) {
+  const r = draft.recipient || {};
+  const value = sendIsSms(draft) ? String(r.phone || '').replace(/^(\d{3})(\d{3})(\d{4})$/, '($1) $2-$3') : String(r.email || '');
+  return `${r.contact_name} — ${value} (${r.label}${r.is_primary ? ', primary' : ''})`;
+}
+
+// The fixed facts, one "Label: value" line each — every value is a server
+// field, never message text. The message itself is NOT among them: it can
+// hold any line ("Consent: ..."), so it is rendered apart, last, whole.
+function sendFactLines(draft) {
+  const sms = sendIsSms(draft);
+  const s = draft.sender || {};
+  const lines = [`To: ${sendRecipientLine(draft)}`,
+    `${sms ? 'From line' : 'From'}: ${s.label}${s.defaulted ? ' (your only send grant)' : ''}`];
+  if (draft.case) lines.push(`Case: ${draft.case.label} (placeholders only — the send is not filed to the case by this card)`);
+  if (!sms) lines.push(`Subject: ${draft.subject}`);
+  if (sms && draft.segments) lines.push(`Length: ${String(draft.message).length} characters, ${draft.segments.encoding}, about ${draft.segments.segments} SMS segment${draft.segments.segments === 1 ? '' : 's'}`);
+  if (draft.templated) lines.push('Placeholders: already filled in from the records — what you see is exactly what is sent');
+  if (draft.ssn_warning) lines.push('WARNING: this message contains a Social Security number');
+  lines.push(`Audience: one recipient. No attachments, cc/bcc, ${sms ? 'media' : 'reply threading'} or scheduling.`);
+  lines.push('Consent: checked — the recipient has not opted out; re-checked when you click.');
+  lines.push(`Effect: sends NOW from your signed-in account under your own ${sms ? 'line' : 'mailbox'} access. It cannot be recalled.`);
+  return lines;
+}
+
+function sendDraftText(draft) {
+  const sms = sendIsSms(draft);
+  return [`${sms ? 'Text message' : 'Email'} proposal — not sent`, ...sendFactLines(draft),
+    `${sms ? 'Message' : 'Body'}, exactly as sent, between the rules:`, '────────', sms ? draft.message : draft.body, '────────'].join('\n');
+}
+
+function sendDraftFields(fields, draft) {
+  appendDraftFieldsFromText(fields, ['', ...sendFactLines(draft)].join('\n'));
+  const term = document.createElement('dt'); term.textContent = sendIsSms(draft) ? 'Message' : 'Body';
+  const detail = document.createElement('dd'); detail.className = 'action-draft-message';
+  detail.textContent = String(sendIsSms(draft) ? draft.message : draft.body);
+  fields.append(term, detail);
+}
+
+function sendConfirmText(draft) {
+  const r = draft.recipient || {};
+  const value = sendIsSms(draft) ? String(r.phone || '') : String(r.email || '');
+  return `This sends NOW to ${r.contact_name} ${value}. It cannot be recalled.\n\n${sendDraftText(draft)}`;
+}
+
+function sendActionRequest(draft) {
+  const r = draft.recipient || {};
+  const s = draft.sender || {};
+  const text = sendIsSms(draft) ? draft.message : draft.body;
+  // Belt and braces: the server refuses unresolved text; a card carrying
+  // template braces anyway is never sent (subject included).
+  const braces = /\{\{|\}\}/;
+  if (typeof text !== 'string' || !text.trim() || braces.test(text) || braces.test(String(draft.subject || ''))) throw new Error('This send has no resolved text and cannot be applied from a card.');
+  if (sendIsSms(draft)) {
+    const line = Number(s.line_id);
+    if (!Number.isSafeInteger(line) || line < 1 || !/^\d{10}$/.test(String(r.phone || ''))) throw new Error('This text has no usable line or recipient.');
+    return { path: `/api/phone-lines/${line}/sms`, method: 'POST', body: { to: String(r.phone), message: text }, idempotent: true };
+  }
+  const mailbox = Number(s.mailbox_id);
+  if (!Number.isSafeInteger(mailbox) || mailbox < 1 || !r.email || typeof draft.subject !== 'string' || !draft.subject) throw new Error('This email has no usable mailbox, recipient or subject.');
+  return { path: '/api/mail/send', method: 'POST', body: { mailbox_id: mailbox, to: [String(r.email)], subject: draft.subject, body_text: text }, idempotent: true };
+}
+
+// Click-time freshness through the canonical reads: the contact (its
+// contact-level opt-outs, which campaignService honours) and the contact's
+// active rows. Returns a refusal sentence, or '' when the reviewed row still
+// stands exactly as reviewed.
+async function sendPrecheck(draft) {
+  const sms = sendIsSms(draft);
+  const r = draft.recipient || {};
+  const id = Number(r.contact_id);
+  const contact = await api(`/api/contacts/${id}`, null, 'GET');
+  const c = contact && contact.contact;
+  if (!c) return 'The recipient contact no longer exists. Nothing was sent.';
+  if (Number(sms ? c.contact_sms_optout : c.contact_email_optout) === 1) return `The recipient has opted out of ${sms ? 'SMS' : 'email'} since this card was prepared. Nothing was sent.`;
+  const list = await api(`/api/contacts/${id}/${sms ? 'phones' : 'emails'}`, null, 'GET');
+  const rows = (list && (sms ? list.phones : list.emails)) || [];
+  const rowId = Number(sms ? r.phone_id : r.email_id);
+  const row = rows.find((x) => Number(x.id) === rowId);
+  const stamp = row && row.updated_at ? new Date(row.updated_at).toISOString() : '';
+  if (!row || row.end_date) return `That ${sms ? 'number' : 'address'} is no longer active on the contact. Nothing was sent.`;
+  if (Number(sms ? row.sms_optout : row.email_optout) === 1) return `That ${sms ? 'number' : 'address'} has opted out since this card was prepared. Nothing was sent.`;
+  if (String(sms ? row.phone : row.email) !== String(sms ? r.phone : r.email) || stamp !== r.expected_updated_at) {
+    return `That ${sms ? 'number' : 'address'} changed since this card was prepared. Nothing was sent. Ask Casey to prepare it again.`;
+  }
+  return '';
+}
+
+function sendActionResult(draft, result) {
+  const contactId = Number(draft.recipient && draft.recipient.contact_id);
+  if (!(result && result.status === 'success') || !Number.isSafeInteger(contactId) || contactId < 1) throw new Error('The send returned no usable result');
+  if (sendIsSms(draft)) {
+    const provider = result.result && typeof result.result === 'object' ? result.result : {};
+    const state = provider.status || provider.messageStatus;
+    return { contact_id: contactId, line_id: Number(result.line_id) || null,
+      outcome: state ? `accepted by the provider (status ${String(state).slice(0, 40)})` : 'accepted by the provider',
+      provider_id: provider.id != null ? String(provider.id).slice(0, 100) : null };
+  }
+  const warnings = Array.isArray(result.warnings) ? result.warnings.map((w) => String(w && w.code || '')).filter(Boolean) : [];
+  return { contact_id: contactId, email_log_id: Number(result.email_log_id) || null,
+    outcome: warnings.includes('recipients_rejected') ? 'sent, but the mail server refused the recipient' : 'sent — the mail server accepted it',
+    provider_id: result.provider_message_id != null ? String(result.provider_message_id).slice(0, 200) : null,
+    warnings };
+}
+
+function sendResultText(payload) {
+  const ref = payload.email_log_id ? ` (email log #${payload.email_log_id})` : payload.provider_id ? ` (provider id ${payload.provider_id})` : '';
+  return `contact #${payload.contact_id}: ${payload.outcome || 'sent'}${ref}`;
+}
+
+// The applied card opens the contact on its Communications tab, where the
+// conversation lands once the provider echo / mail ingest records it.
+function openSendRecord(draft) {
+  try { P.addFile(draft.result_send_label || draft.recipient.contact_name, 'client', `${Number(draft.result_send_contact_id)}&tab=send`); }
+  catch (_) { /* outside the shell the chat line names the contact */ }
+}
+
 // One descriptor per shipped family. `request` is the only mapping to a
 // canonical route, and it is written here, per kind, by hand: nothing in a
 // descriptor comes from model output. Adding a family means adding a
@@ -1230,6 +1363,37 @@ const ACTION_FAMILIES = [
       `Hook #${draft.result_hook_id}`,
       'Find it under More → Automations → Hooks. It stays inactive until you activate it there.'),
   },
+  {
+    id: 'send', kinds: SEND_ACTION_KINDS, title: 'Send now', noun: 'send', errorNoun: 'send',
+    label: sendActionLabel, text: sendDraftText, request: sendActionRequest, result: sendActionResult,
+    fields: sendDraftFields,
+    idField: 'contact_id', appliedKey: 'result_send_contact_id',
+    confirmText: sendConfirmText,
+    danger: () => true,
+    precheck: sendPrecheck,
+    // Both send routes answer 409 only BEFORE dispatch (inactive line, a box
+    // that cannot send); their idempotency 409s carry body.idempotency and
+    // stay ambiguous.
+    refusal409: true,
+    resultText: sendResultText,
+    appliedMessage: (draft, payload, replayed) => replayed
+      ? `This ${sendIsSms(draft) ? 'text' : 'email'} to ${draft.recipient.contact_name} had already been sent; nothing was sent a second time.`
+      : `${sendIsSms(draft) ? 'Text' : 'Email'} to ${draft.recipient.contact_name}: ${sendResultText(payload)}.`,
+    entity: (draft, payload) => ({ kind: 'contact', id: String(payload.contact_id), label: draft.recipient.contact_name }),
+    failure: 'The send could not be applied.',
+    ambiguousText: (detail) => `Outcome unknown — the message may or may not have gone out${detail ? ` (${detail})` : ''}. Check the contact's Communications tab or the comms log before resending. Do not apply this card again.`,
+    appliedCopy: (draft) => ({
+      status: `Sent — ${draft.recipient ? draft.recipient.contact_name : 'contact'}`,
+      warning: `${sendIsSms(draft) ? 'Text' : 'Email'} sent to ${draft.recipient ? sendRecipientLine(draft) : 'the contact'} using your signed-in account. It cannot be recalled.`,
+      button: 'Open conversation',
+    }),
+    reviewWarning: 'This SENDS NOW — to a real client, from your own line or mailbox, and it cannot be recalled. Read the recipient and every word above: it is exactly what goes out. Canceling the dialog sends nothing.',
+    markApplied: (draft, payload) => {
+      draft.result_send_contact_id = Number(payload.contact_id);
+      draft.result_send_label = draft.recipient ? String(draft.recipient.contact_name || 'Contact') : 'Contact';
+    },
+    open: openSendRecord,
+  },
 ];
 
 function actionAppliedId(family, draft) { return Number(draft[family.appliedKey]) || 0; }
@@ -1277,6 +1441,15 @@ async function executeActionDraft(message) {
   const expired = actionDraftStale(draft);
   if (expired) { draft.action_error = expired; render(); return; }
   draft.executing = true; delete draft.action_error; render();
+  // Click-time freshness through canonical reads (a family that declares
+  // one): a reviewed target that changed refuses BEFORE the claim, so nothing
+  // was claimed or written; a read that fails leaves the card retryable.
+  if (family.precheck) {
+    let why = '';
+    try { why = await family.precheck(draft); }
+    catch (e) { draft.action_error = `Could not re-check the record before applying (${e && e.message || 'read failed'}). Nothing was sent or changed.`; draft.executing = false; render(); return; }
+    if (why) { draft.refusal_error = why; draft.executing = false; render(); return; }
+  }
   let claimed = false;
   try {
     const request = family.request(draft);
@@ -1310,7 +1483,8 @@ async function executeActionDraft(message) {
     markActionApplied(family, draft, payload);
     const resultMessage = {
       role: 'assistant',
-      text: draft.replayed
+      text: family.appliedMessage ? family.appliedMessage(draft, payload, !!draft.replayed)
+        : draft.replayed
         ? `${family.label(draft)} had already been applied to ${family.resultText(payload)}; nothing was created a second time.`
         : `${family.label(draft)} applied to ${family.resultText(payload)}.`,
       entities: [family.entity(draft, payload)],
@@ -1339,13 +1513,18 @@ async function executeActionDraft(message) {
     // saying "may have been applied" would send staff hunting for a change
     // that does not exist. No other route produces this shape.
     const baseConflict = claimed && e && e.status === 409 && e.body && e.body.conflict && e.body.conflict.changed;
-    const refused = claimed && e && e.status >= 400 && e.status < 500 && e.status !== 409;
+    // A family whose routes were audited to answer 409 only before any write
+    // (refusal409: the send routes) reads a plain 409 as a refusal too; an
+    // idempotency 409 (body.idempotency) stays ambiguous for every family.
+    const refused = claimed && e && e.status >= 400 && e.status < 500
+      && (e.status !== 409 || (family.refusal409 === true && !(e.body && e.body.idempotency)));
     if (baseConflict) {
       draft.refusal_error = family.conflictRefusal || 'The workflow changed since this card was prepared, so the server refused the write — nothing was changed. Ask Casey to read the workflow again and rebuild the proposal.';
     } else if (refused) {
       draft.refusal_error = `The server refused this (${e.message || `HTTP ${e.status}`}). Nothing was written. Ask Casey to prepare the action again.`;
     } else if (claimed || outcome === 'unknown') {
-      draft.ambiguous_error = `This may already have been applied: the server claimed the request but never recorded its result (${e.message || 'no result recorded'}). Open the record and check before asking Casey to prepare it again. Do not apply this card again.`;
+      draft.ambiguous_error = family.ambiguousText ? family.ambiguousText(e.message || '')
+        : `This may already have been applied: the server claimed the request but never recorded its result (${e.message || 'no result recorded'}). Open the record and check before asking Casey to prepare it again. Do not apply this card again.`;
     } else if (outcome === 'in_flight') {
       draft.action_error = 'The same request is still being applied. Wait a moment, then check the record before trying again.';
     } else if (!e.status || e.status >= 500) {
@@ -1385,7 +1564,8 @@ function applyActionResults(messages, ledger = []) {
       if (row.kind === draft.kind && row.outcome === 'applied' && family && row.result) {
         draft.status = 'applied'; markActionApplied(family, draft, row.result);
       } else if (row.outcome !== 'not-applied' || row.kind !== draft.kind) {
-        draft.ambiguous_error = 'This may already have been applied: the server claimed the request but never recorded its result. Open the record and check before asking Casey to prepare it again. Do not apply this card again.';
+        draft.ambiguous_error = family && family.ambiguousText ? family.ambiguousText('')
+          : 'This may already have been applied: the server claimed the request but never recorded its result. Open the record and check before asking Casey to prepare it again. Do not apply this card again.';
       }
       continue;
     }
@@ -1433,11 +1613,14 @@ function hydrateActionDraft(family, host, message, draft) {
   const appliedId = actionAppliedId(family, draft);
   const applied = draft.status === 'applied' && !!appliedId;
   const canApply = typeof draft.draft_id === 'string' && !!draft.draft_id;
+  // A family whose receipt is not its own record (a send's is the contact)
+  // words its applied state itself instead of "<noun> #<id>".
+  const appliedCopy = applied && family.appliedCopy ? family.appliedCopy(draft) : null;
 
   const head = document.createElement('div'); head.className = 'action-draft-head';
   const title = document.createElement('b'); title.textContent = family.title;
   const status = document.createElement('span'); status.className = 'action-draft-status';
-  status.textContent = applied ? `Applied — ${family.noun} #${appliedId}`
+  status.textContent = applied ? (appliedCopy ? appliedCopy.status : `Applied — ${family.noun} #${appliedId}`)
     : draft.ambiguous_error ? 'Outcome unknown — check the record'
       : draft.refusal_error ? 'Refused — nothing written'
       : actionDraftStale(draft) ? 'Expired — not applied' : draft.executing ? 'Applying…' : draft.reviewing ? 'Reviewing…' : 'Proposal — not applied';
@@ -1448,7 +1631,7 @@ function hydrateActionDraft(family, host, message, draft) {
 
   const next = document.createElement('div'); next.className = 'action-draft-next';
   const warning = document.createElement('div'); warning.className = 'action-draft-next-warning';
-  warning.textContent = applied ? `Applied to ${family.noun} #${appliedId} using your signed-in account.` : family.reviewWarning;
+  warning.textContent = applied ? (appliedCopy ? appliedCopy.warning : `Applied to ${family.noun} #${appliedId} using your signed-in account.`) : family.reviewWarning;
   if (family.steps) {
     const nextTitle = document.createElement('b');
     nextTitle.textContent = applied ? 'This action has been applied in YisraCase.'
@@ -1470,7 +1653,7 @@ function hydrateActionDraft(family, host, message, draft) {
   // next step is to look.
   if (canApply && !draft.ambiguous_error && !draft.refusal_error) {
     const apply = document.createElement('button'); apply.type = 'button';
-    apply.textContent = applied ? `Open ${family.noun} #${appliedId}` : `Review & ${family.label(draft).toLowerCase()}`;
+    apply.textContent = applied ? (appliedCopy ? appliedCopy.button : `Open ${family.noun} #${appliedId}`) : `Review & ${family.label(draft).toLowerCase()}`;
     apply.disabled = !!(draft.executing || draft.reviewing);
     if (!hydrateStaleDraft(next, apply, message, draft)) apply.addEventListener('click', () => executeActionDraft(message));
     actions.append(apply);

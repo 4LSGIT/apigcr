@@ -916,6 +916,35 @@ Casey slice; the first is a security gap in the native editor.
   kept linear (`new RegExp` on a staff-reachable path — CLAUDE.md's validator
   regex rule).
 
+## From the Ask Casey arc — A14 direct sends (2026-10-27) — deferred
+
+- **Native sends do not check opt-out (product/legal decision, Fred).**
+  `POST /api/phone-lines/:id/sms` and `POST /api/mail/send` send to an
+  opted-out number/address when a PERSON sends from Comms; so do the
+  workflow / sequence `send_sms` / `send_email` functions. Only
+  `campaignService` (contact-level `contact_*_optout`) and, since A14, Casey's
+  send cards (row-level AND contact-level) refuse. Nothing in the services
+  writes `contacts.contact_sms_optout` / `contact_email_optout`; the per-row
+  flags are what the contact form edits — so campaigns read the column that
+  never moves. Decide: which column is consent, and whether the hub routes
+  refuse or warn. Measured 2026-10-26: 1 opted-out active phone, 0 emails.
+- **Attachments / MMS, cc/bcc, reply threading, scheduled sends** for Casey
+  send cards — each its own reviewed shape (a fetched attachment URL still
+  stays model-uninventable).
+- **The email Case field.** The card does not send `case_id`, so a Casey email
+  is not case-linked by the hub's `mail_sent_case_link` path; offering it
+  means disclosing the case-link job on the card.
+- **Appointment confirmations through the A14 bar.** The appointment routes
+  resolve `confirm_message` placeholders after the click, so the appointment
+  cards keep forcing sends off (course correction 3). Either resolve on the
+  card and send the resolved text, or keep the separate send card.
+- **No `yc-sync` matcher for either send route** — an open Comms /
+  Communications view does not hear a send from another frame (human or
+  Casey); the record arrives later via the provider echo / mail ingest.
+- **A claimed-then-refused send reopens as "outcome unknown"** (the P5 ledger
+  limit below): the route's refusal is shown live, but reopening the chat
+  shows the conservative wording.
+
 ## From the Ask Casey arc — P4 idempotency follow-ups (2026-10-22)
 
 The migration ran live on 2026-10-22 and `request_idempotency` is in

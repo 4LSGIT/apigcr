@@ -49,6 +49,8 @@ const PLAN_FAMILY_MARKERS = {
   workflow: 'reviewed workflow-draft action is available',
   hook: 'reviewed hook action is available',
   sequence: 'reviewed sequence-step action is available',
+  sms: 'Reviewed direct-send actions are available',
+  email: 'Reviewed direct-send actions are available',
 };
 
 describe('every shipped action kind is taught to every model stage', () => {
@@ -99,6 +101,7 @@ describe('every shipped action kind is taught to every model stage', () => {
     // proposal", which read as an exhaustive list to the model.
     expect(investigatePrompt).toContain('task, event, appointment, contact subrecord, or safe code job');
     expect(investigatePrompt).toContain('sequence-step proposals');
+    expect(investigatePrompt).toContain('and direct sends');
   });
 });
 
@@ -200,6 +203,47 @@ describe('a direct planner answer cannot swallow an action request (chat-27 live
     const planPrompt = fsRead('lib/aiPrompts/assistantPlan.js');
     expect(planPrompt).not.toMatch(/action=answer directly/);
     expect(planPrompt).toMatch(/ALWAYS return a query plan for a safe-code-job request/);
+  });
+});
+
+// A14 (ruling 15): direct sends are taught to every stage, the forced-draft
+// heuristic fires on a request to message SOMEONE but not on one addressed to
+// the user, and the appointment cards' own send-forcing (course correction 3)
+// is untouched — a client message is a separate send card.
+describe('A14 direct sends across the stages', () => {
+  const svc = require(path.join(REPO, 'services', 'assistantService'));
+
+  test('send verbs force the draft path; questions and sends-to-me do not', () => {
+    const forced = ['Text the client that her hearing moved to Tuesday', 'Send Jane Doe an email with the 341 date',
+      'Email the client the hearing date', 'Please text Mike that we got his paystubs',
+      'Can you email Bob Smith about the missing documents?', 'Message the debtor and remind him to sign',
+      "Reply to the trustee's email", 'Write an email to the client about the 341'];
+    const notForced = ['Email me the list of open cases', 'Send me the list of clients with hearings', 'Text the list to me',
+      'Summarize the text messages from John', 'Find the email from the trustee about the 341',
+      'What should I text the client?', 'What did the client email about?', 'Show me the last emails from Jane',
+      'Who sent the last text?', 'Write a summary of the text'];
+    for (const q of forced) expect({ q, forced: svc.taskDraftRequested(q) }).toEqual({ q, forced: true });
+    for (const q of notForced) expect({ q, forced: svc.taskDraftRequested(q) }).toEqual({ q, forced: false });
+  });
+
+  test('every stage teaches sends as available, and no stage says Casey never sends', () => {
+    expect(answerPrompt).toContain('Direct-send rules (A14');
+    // The closed SHAPES, not just the names (a name alone appears in prose).
+    expect(answerPrompt).toContain('{"kind":"sms.send.v1","contact_id":1309,"phone_id":12,"line_id":6,"message":');
+    expect(answerPrompt).toContain('{"kind":"email.send.v1","contact_id":1309,"email_id":13,"mailbox_id":3,"subject":');
+    expect(answerPrompt).toContain('cannot be recalled');
+    expect(planPrompt).toContain('Do not refuse a request to text, email or message a client as a write');
+    expect(repairPrompt).toContain('- sms.send.v1: kind,contact_id,phone_id');
+    expect(repairPrompt).toContain('- email.send.v1: kind,contact_id,email_id');
+    for (const [stage, src] of Object.entries({ answer: answerPrompt, plan: planPrompt, repair: repairPrompt })) {
+      expect({ stage, old: /Ask Casey never sends client/.test(src) }).toEqual({ stage, old: false });
+    }
+  });
+
+  test('the appointment cards still force their own sends off (course correction 3 unchanged)', () => {
+    expect(answerPrompt).toMatch(/always output confirm_sms\/confirm_email false and confirm_message "" \(the server forces this\)/);
+    expect(repairPrompt).toContain('confirm_sms/confirm_email/sms/email are false and confirm_message is ""');
+    expect(serviceSrc).toContain('// Client SMS/email from an Ask Casey card is OFF');
   });
 });
 

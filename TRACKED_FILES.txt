@@ -1138,6 +1138,9 @@ tests/caseUi.timeline.test.js
 tests/caseyActionPermissions.test.js
 tests/caseyHookCreate.test.js
 tests/caseyJobCodeAction.test.js
+tests/caseySend.routes.test.js
+tests/caseySendAction.mysql.test.js
+tests/caseySendAction.test.js
 tests/caseySequenceStep.mysql.test.js
 tests/caseySequenceStep.test.js
 tests/caseyWorkflowDraft.test.js
@@ -1339,6 +1342,7 @@ tests/formtemplates.formdev.test.js
 tests/formtemplates.x1visibility.test.js
 tests/genTypeKeyBackfill.test.js
 tests/helpers/bcPolyfill.js
+tests/helpers/caseySendProposalDb.js
 tests/helpers/commsArchiveSchema.js
 tests/helpers/ctaWorld.js
 tests/helpers/fakeGcs.js

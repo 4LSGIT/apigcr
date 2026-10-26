@@ -77,6 +77,11 @@
  * 'phone_send' (sent / send_failed / rejected_no_elevation — line, length,
  * never the number or the text). Text only; the line must be active. Nothing
  * is written to phone_event_log — the provider's webhook echo is the record.
+ * An optional Idempotency-Key (scope phone_lines.sms_send, lib/requestIdempotency
+ * — the Ask Casey send card sends its draft_id) makes a repeat replay the first
+ * result instead of texting twice; a failure after dispatch KEEPS the claim
+ * (releaseOnRefusalOnly), so an ambiguous send is never re-sent under that key.
+ * No key = the old behaviour, untouched.
  */
 
 'use strict';
@@ -89,6 +94,7 @@ const { makeLimiter } = require('../lib/rateLimiter');
 const mbx = require('../services/mailboxService');
 const phone = require('../services/phoneCommsService');
 const archiveView = require('../services/commsArchiveView');
+const { idempotentRequest, sendIdempotencyError, releaseOnRefusalOnly } = require('../lib/requestIdempotency');
 
 const TOOL = 'phone_lines';
 const SEND_TOOL = 'phone_send';
@@ -461,10 +467,13 @@ router.post('/api/phone-lines/:id/sms', jwtOrApiKey, requireJwt, async (req, res
     if (sendLimited(`u${uid}`)) {
       return res.status(429).json({ status: 'error', message: 'Too many texts from you in a few minutes — wait a little and try again.' });
     }
-    const out = await phone.sendSms(req.db, line, body);
-    audit(req, 'sent', { ...meta, via: access.su ? 'su' : 'grant', length: out.length }, SEND_TOOL);
-    res.json({ status: 'success', line_id: id, to: out.to, result: out.result });
+    const { value: out, replayed } = await idempotentRequest(req, 'phone_lines.sms_send',
+      () => phone.sendSms(req.db, line, body), { releaseOnError: releaseOnRefusalOnly });
+    // A replay sent nothing, so it is not audited as a send.
+    if (!replayed) audit(req, 'sent', { ...meta, via: access.su ? 'su' : 'grant', length: out.length }, SEND_TOOL);
+    res.json({ status: 'success', line_id: id, to: out.to, result: out.result, ...(replayed ? { replayed: true } : {}) });
   } catch (err) {
+    if (sendIdempotencyError(res, err)) return;
     if (err && err.status === 502) audit(req, 'send_failed', meta, SEND_TOOL, err.message);
     sendError(res, 'POST /api/phone-lines/:id/sms', err);
   }

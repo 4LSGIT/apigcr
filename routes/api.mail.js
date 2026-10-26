@@ -53,6 +53,11 @@
  *            send rate · 502 the provider refused (nothing sent) · 401 elevation_required
  *            for an SU (the S0 rule: an SU-bypass WRITE needs step-up; apiSend prompts and
  *            retries — nothing was dispatched)
+ *            Optional Idempotency-Key header (scope mail.send, lib/requestIdempotency —
+ *            the Ask Casey send card sends its draft_id): a repeat replays the first
+ *            result (+ replayed:true) instead of sending twice; a failure after
+ *            dispatch KEEPS the claim (releaseOnRefusalOnly) → 409 in_flight/unknown,
+ *            never a second send. No key = the old behaviour, untouched.
  *
  * Auto-mounted (server.js readdirSync); req.db injected. UI: public/comms.html.
  * Service: services/mailbox/mailReadService.js. Spec: ref/MAILBOX_SYSTEM_DESIGN.md
@@ -82,6 +87,7 @@ const { makeLimiter } = require('../lib/rateLimiter');
 const svc = require('../services/mailbox/mailReadService');
 const send = require('../services/mailbox/mailboxSendService');
 const mbx = require('../services/mailboxService');
+const { idempotentRequest, sendIdempotencyError, releaseOnRefusalOnly } = require('../lib/requestIdempotency');
 
 // Per-USER send rate (S3), on top of the per-transport daily budget: a runaway
 // client loop or a stuck key, not a policy. Per Cloud Run instance like every
@@ -298,7 +304,10 @@ router.post('/api/mail/send', ...guard, async function sendMail(req, res) {
     if (sendLimited(`u${uid}`)) {
       return res.status(429).json({ status: 'error', message: 'Too many sends from you in a few minutes — wait a little and try again.' });
     }
-    const out = await send.sendFromMailbox(req.db, uid, body.mailbox_id, body);
+    const { value: out, replayed } = await idempotentRequest(req, 'mail.send',
+      () => send.sendFromMailbox(req.db, uid, body.mailbox_id, body), { releaseOnError: releaseOnRefusalOnly });
+    // A replay sent nothing, so it is not audited as a send.
+    if (replayed) return res.json({ status: 'success', ...out, replayed: true });
     auditSend(req, 'sent', {
       ...meta,
       email_log_id: out.email_log_id,
@@ -310,6 +319,7 @@ router.post('/api/mail/send', ...guard, async function sendMail(req, res) {
     });
     res.json({ status: 'success', ...out });
   } catch (err) {
+    if (sendIdempotencyError(res, err)) return;
     if (err && (err.status === 429 || err.status === 502)) {
       auditSend(req, err.status === 429 ? 'refused_budget' : 'send_failed', meta, err.message);
     }

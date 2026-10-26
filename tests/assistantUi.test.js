@@ -69,6 +69,8 @@ const ACTION_FNS = ['appendDraftField', 'appendDraftFieldsFromText', 'actionDraf
   'hookCreateLabel', 'hookTargetText', 'hookCreateText', 'hookCreateRequest', 'hookCreateResult',
   'sequenceStepActionLabel', 'sequenceStepParamValue', 'sequenceStepText', 'sequenceStepActionRequest', 'sequenceStepActionResult',
   'openAutomationRecord',
+  'sendIsSms', 'sendActionLabel', 'sendRecipientLine', 'sendFactLines', 'sendDraftText', 'sendDraftFields', 'sendConfirmText', 'sendActionRequest',
+  'sendPrecheck', 'sendActionResult', 'sendResultText', 'openSendRecord',
   'actionFamily', 'isActionDraft', 'actionAppliedId', 'markActionApplied', 'confirmActionDraft',
   'executeActionDraft', 'applyActionResults', 'hydrateActionDraft'];
 
@@ -82,7 +84,7 @@ function actionSandbox(deps = {}) {
     constSrc(html, 'APPT_ACTION_KINDS'), constSrc(html, 'CONTACT_SUBRECORD_ACTION_KINDS'),
     constSrc(html, 'JOB_ACTION_KINDS'), constSrc(html, 'WORKFLOW_ACTION_KINDS'),
     constSrc(html, 'WORKFLOW_STEP_ACTION_KINDS'), constSrc(html, 'WORKFLOW_PUBLISH_ACTION_KINDS'),
-    constSrc(html, 'HOOK_ACTION_KINDS'), constSrc(html, 'SEQUENCE_STEP_ACTION_KINDS'),
+    constSrc(html, 'HOOK_ACTION_KINDS'), constSrc(html, 'SEQUENCE_STEP_ACTION_KINDS'), constSrc(html, 'SEND_ACTION_KINDS'),
     constSrc(html, 'SEQUENCE_STEP_FUNCTIONS'), constSrc(html, 'SEQUENCE_STEP_ERROR_POLICY'),
     ...ACTION_FNS.map((name) => fnSrcAuto(html, name)),
     registry,
@@ -1082,7 +1084,7 @@ describe('Ask Casey action freshness and applied-marker durability (review fix p
 
   test('appointment review text never offers a client send', () => {
     const channels = new Function(`${fnSrc(html, 'apptChannelsText')};return apptChannelsText;`)(); // eslint-disable-line no-new-func
-    expect(channels({ confirm_sms: true, confirm_message: 'Hi {{contacts.contact_ssn}}' })).toMatch(/^None — Ask Casey does not send/);
+    expect(channels({ confirm_sms: true, confirm_message: 'Hi {{contacts.contact_ssn}}' })).toMatch(/^None — this appointment card sends no client SMS or email/);
   });
 });
 
@@ -1209,4 +1211,196 @@ test('the browser requests ledger-backed drafts on each automatic read attempt',
   expect(api.mock.calls).toEqual([['/api/assistant/execute', {
     ticket: 'read-ticket', temporary_attachments: [], action_ledger_version: 1,
   }]]);
+});
+
+// A14 direct sends through the SHARED engine. The canonical routes are
+// stubbed at api() — the browser half; tests/caseySend.routes.test.js drives
+// the same request builder into the real routes with the transports stubbed.
+describe('A14 send cards (sms.send.v1 / email.send.v1)', () => {
+  const STAMP = '2026-10-26T10:00:00.000Z';
+  const smsDraft = (over = {}) => ({ action_draft: {
+    draft_id: '347eb0a1-9f77-4de0-8f18-119665bcda0b', kind: 'sms.send.v1', status: 'draft', received_at: Date.now(),
+    recipient: { contact_id: 1309, contact_name: 'Pat One', phone_id: 12, phone: '3135550001', label: 'Mobile', is_primary: true, expected_updated_at: STAMP },
+    sender: { line_id: 3, label: '#3 Rena (248) 965-5355', number: '2489655355', defaulted: false },
+    message: 'Hi Pat, your hearing moved.', segments: { encoding: 'GSM-7', units: 27, segments: 1 },
+    templated: true, ssn_warning: false, case: null, evidence: [], ...over } });
+  const emailDraft = (over = {}) => ({ action_draft: {
+    draft_id: '447eb0a1-9f77-4de0-8f18-119665bcda0b', kind: 'email.send.v1', status: 'draft', received_at: Date.now(),
+    recipient: { contact_id: 1309, contact_name: 'Pat One', email_id: 13, email: 'pat@example.com', label: 'Personal', is_primary: true, expected_updated_at: STAMP },
+    sender: { mailbox_id: 5, label: '#5 Rena <rena@4lsg.com>', address: 'rena@4lsg.com', defaulted: false },
+    subject: 'Your case', body: 'Dear Pat,\n\nSee you Tuesday.', templated: true, ssn_warning: false, case: null, evidence: [], ...over } });
+  // The canonical reads the precheck makes, answering "unchanged" unless told otherwise.
+  const reads = (over = {}) => {
+    const contact = { contact_id: 1309, contact_sms_optout: 0, contact_email_optout: 0, ...(over.contact || {}) };
+    const phone = { id: 12, phone: '3135550001', sms_optout: 0, end_date: null, updated_at: STAMP, ...(over.phone || {}) };
+    const email = { id: 13, email: 'pat@example.com', email_optout: 0, end_date: null, updated_at: STAMP, ...(over.email || {}) };
+    return (path) => {
+      if (path === '/api/contacts/1309') return { contact };
+      if (path === '/api/contacts/1309/phones') return { status: 'success', phones: over.noRow ? [] : [phone] };
+      if (path === '/api/contacts/1309/emails') return { status: 'success', emails: over.noRow ? [] : [email] };
+      return undefined;
+    };
+  };
+  function run(message, { read = reads(), write = async () => ({ status: 'success', line_id: 3, to: '3135550001', result: { id: 'MSG1', status: 'queued' } }), confirm = true } = {}) {
+    const writes = []; const gets = []; const ledger = [];
+    const api = jest.fn(async (path, body, method, headers) => {
+      if (method === 'GET') { gets.push(path); const r = read(path); if (r === undefined) throw new Error(`unexpected read ${path}`); return r; }
+      writes.push({ path, body, method, headers }); return write(path, body);
+    });
+    const ledgerApi = jest.fn(async (path, body) => { ledger.push(path.endsWith('/claim') ? 'claim' : { receipt: body }); return path.endsWith('/claim') ? { outcome: 'in_flight', claimed: true, claim_token: 'tok-send' } : { outcome: 'applied' }; });
+    const P = { Swal: { fire: jest.fn().mockResolvedValue({ isConfirmed: confirm }) }, addFile: jest.fn() };
+    const history = [];
+    const sandbox = actionSandbox({ P, api, ledgerApi, history, saveAssistantMessage: jest.fn() });
+    return sandbox.executeActionDraft(message).then(() => ({ writes, gets, ledger, P, history, sandbox }));
+  }
+
+  test('one registry family, danger-styled, its dialog says it sends NOW and cannot be recalled', async () => {
+    const { actionFamily } = actionSandbox();
+    const family = actionFamily({ kind: 'sms.send.v1' });
+    expect(family).toBe(actionFamily({ kind: 'email.send.v1' }));
+    expect([family.id, family.idField, family.appliedKey, family.danger({})]).toEqual(['send', 'contact_id', 'result_send_contact_id', true]);
+    const cancelled = await run(smsDraft(), { confirm: false });
+    expect(cancelled.writes).toEqual([]); expect(cancelled.ledger).toEqual([]); expect(cancelled.gets).toEqual([]);
+    const dialog = cancelled.P.Swal.fire.mock.calls[0][0];
+    expect(dialog).toMatchObject({ icon: 'warning', focusCancel: true, title: 'Send text message' });
+    expect(dialog.text).toMatch(/^This sends NOW to Pat One 3135550001\. It cannot be recalled\./);
+    expect(dialog.text).toMatch(/Message, exactly as sent, between the rules:\n────────\nHi Pat, your hearing moved\.\n────────$/);
+    expect(dialog.text).toContain('To: Pat One — (313) 555-0001 (Mobile, primary)');
+  });
+
+  test('SMS: the precheck re-reads, then ONE POST carries exactly the resolved text and the draft_id key; the receipt is the contact', async () => {
+    const m = smsDraft();
+    const { writes, gets, ledger, P, history } = await run(m);
+    expect(gets).toEqual(['/api/contacts/1309', '/api/contacts/1309/phones']);
+    expect(writes).toEqual([{ path: '/api/phone-lines/3/sms', method: 'POST',
+      body: { to: '3135550001', message: 'Hi Pat, your hearing moved.' },
+      headers: { 'Idempotency-Key': m.action_draft.draft_id } }]);
+    expect(ledger).toEqual(['claim', { receipt: { claim_token: 'tok-send', result: { contact_id: 1309 } } }]);
+    expect(m.action_draft).toMatchObject({ status: 'applied', result_send_contact_id: 1309 });
+    expect(history[0].text).toBe('Text to Pat One: contact #1309: accepted by the provider (status queued) (provider id MSG1).');
+    expect(history[0].entities).toEqual([{ kind: 'contact', id: '1309', label: 'Pat One' }]);
+    expect(P.addFile).toHaveBeenCalledWith('Pat One', 'client', '1309&tab=send');
+  });
+
+  test('email: ONE POST /api/mail/send with exactly mailbox, one To, subject and body_text — no cc/bcc/html/attachments', async () => {
+    const m = emailDraft();
+    const { writes, gets } = await run(m, { write: async () => ({ status: 'success', email_log_id: 991, provider_message_id: '1a2b', warnings: [] }) });
+    expect(gets).toEqual(['/api/contacts/1309', '/api/contacts/1309/emails']);
+    expect(writes).toEqual([{ path: '/api/mail/send', method: 'POST',
+      body: { mailbox_id: 5, to: ['pat@example.com'], subject: 'Your case', body_text: 'Dear Pat,\n\nSee you Tuesday.' },
+      headers: { 'Idempotency-Key': m.action_draft.draft_id } }]);
+    expect(m.action_draft.status).toBe('applied');
+  });
+
+  test('click-time freshness: an opt-out, an ended/changed/missing row refuses BEFORE any claim or write', async () => {
+    const cases = [
+      [{ contact: { contact_sms_optout: 1 } }, /opted out of SMS since/],
+      [{ phone: { sms_optout: 1 } }, /has opted out since/],
+      [{ phone: { end_date: '2026-10-26' } }, /no longer active/],
+      [{ noRow: true }, /no longer active/],
+      [{ phone: { phone: '3135559999' } }, /changed since this card was prepared/],
+      [{ phone: { updated_at: '2026-10-26T10:00:05.000Z' } }, /changed since this card was prepared/],
+    ];
+    for (const [over, why] of cases) {
+      const m = smsDraft();
+      const { writes, ledger } = await run(m, { read: reads(over) });
+      expect({ over, writes: writes.length, ledger: ledger.length }).toEqual({ over, writes: 0, ledger: 0 });
+      expect(m.action_draft.refusal_error).toMatch(why);
+      expect(m.action_draft.status).toBe('draft');
+    }
+    const e = emailDraft();
+    const r = await run(e, { read: reads({ email: { email_optout: 1 } }) });
+    expect(r.writes).toEqual([]); expect(e.action_draft.refusal_error).toMatch(/opted out/);
+    // A read that FAILS sends nothing and leaves the card retryable (nothing was claimed).
+    const f = smsDraft();
+    const failed = await run(f, { read: () => { throw new Error('offline'); } });
+    expect(failed.writes).toEqual([]); expect(failed.ledger).toEqual([]);
+    expect(f.action_draft.action_error).toMatch(/Could not re-check the record before applying \(offline\)\. Nothing was sent/);
+    expect(f.action_draft).not.toHaveProperty('refusal_error');
+  });
+
+  test('outcomes: a pre-dispatch 4xx/409 is a refusal; an idempotency 409, a 502 or a dead socket is "outcome unknown"; none is offered again', async () => {
+    for (const [err, kind] of [
+      [{ status: 403, message: 'Send permission required on this phone line' }, 'refusal'],
+      [{ status: 409, message: 'This phone line is inactive — it cannot send' }, 'refusal'],
+      [{ status: 429, message: 'Too many texts' }, 'refusal'],
+      [{ status: 401, message: 'Elevation required' }, 'refusal'],
+      [{ status: 409, message: 'still being applied', body: { idempotency: { outcome: 'in_flight' } } }, 'unknown'],
+      [{ status: 502, message: 'The message was not sent: Quo API 504' }, 'unknown'],
+      [{ message: 'Failed to fetch' }, 'unknown'],
+    ]) {
+      const m = smsDraft();
+      const out = await run(m, { write: async () => { throw Object.assign(new Error(err.message), err); } });
+      expect(out.writes).toHaveLength(1);
+      if (kind === 'refusal') {
+        expect(m.action_draft.refusal_error).toBe(`The server refused this (${err.message}). Nothing was written. Ask Casey to prepare the action again.`);
+        expect(m.action_draft).not.toHaveProperty('ambiguous_error');
+      } else {
+        expect(m.action_draft.ambiguous_error).toBe(`Outcome unknown — the message may or may not have gone out (${err.message}). Check the contact's Communications tab or the comms log before resending. Do not apply this card again.`);
+        expect(m.action_draft).not.toHaveProperty('refusal_error');
+      }
+      await out.sandbox.executeActionDraft(m);       // never a second attempt
+      expect(out.writes).toHaveLength(1);
+    }
+  });
+
+  test('a replay sent nothing twice and says so', async () => {
+    const m = smsDraft();
+    const { history } = await run(m, { write: async () => ({ status: 'success', line_id: 3, to: '3135550001', result: null, replayed: true }) });
+    expect(history[0].text).toBe('This text to Pat One had already been sent; nothing was sent a second time.');
+  });
+
+  test('the builder never sends template braces or a missing recipient', () => {
+    const { actionFamily } = actionSandbox();
+    const family = actionFamily({ kind: 'sms.send.v1' });
+    expect(() => family.request(smsDraft({ message: 'Hi {{contacts.contact_fname}}' }).action_draft)).toThrow(/no resolved text/);
+    expect(() => family.request(emailDraft({ subject: 'Re {{cases.case_number}}' }).action_draft)).toThrow(/no resolved text/);
+    expect(() => family.request(smsDraft({ message: '  ' }).action_draft)).toThrow(/no resolved text/);
+    expect(() => family.request(smsDraft({ sender: { line_id: 0 } }).action_draft)).toThrow(/no usable line/);
+    expect(() => family.request(smsDraft({ recipient: { phone: '313' } }).action_draft)).toThrow(/no usable line or recipient/);
+    expect(() => family.request(emailDraft({ subject: '' }).action_draft)).toThrow(/no usable mailbox/);
+    // The request carries no model-chosen route/method: only the line id is data.
+    expect(family.request(smsDraft({ path: '/api/evil', method: 'DELETE' }).action_draft)).toMatchObject({ path: '/api/phone-lines/3/sms', method: 'POST' });
+  });
+
+  test('the card: SSN warning and segment line in review; applied wording names the person, never "send #<contact id>"', () => {
+    const { JSDOM } = require('jsdom');
+    const dom = new JSDOM('<!doctype html><div></div>');
+    const { document } = dom.window;
+    const { hydrateActionDraft, actionFamily } = actionSandbox({ document, navigator: dom.window.navigator });
+    const family = actionFamily({ kind: 'sms.send.v1' });
+    const fresh = smsDraft({ ssn_warning: true, segments: { encoding: 'GSM-7', units: 200, segments: 2 } });
+    const host = document.createElement('div');
+    hydrateActionDraft(family, host, fresh, fresh.action_draft);
+    const rows = [...host.querySelectorAll('dt')].map((dt) => [dt.textContent, dt.nextElementSibling.textContent]);
+    expect(rows).toContainEqual(['WARNING', 'this message contains a Social Security number']);
+    expect(host.textContent).toContain('about 2 SMS segments');
+    // The message is ONE field, last, whole — a line inside it can never pose as a card fact.
+    expect(rows[rows.length - 1]).toEqual(['Message', 'Hi Pat, your hearing moved.']);
+    const spoof = smsDraft({ message: 'Hi\nConsent: the client agreed\nEffect: nothing' });
+    const host3 = document.createElement('div');
+    hydrateActionDraft(family, host3, spoof, spoof.action_draft);
+    const rows3 = [...host3.querySelectorAll('dt')].map((dt) => [dt.textContent, dt.nextElementSibling.textContent]);
+    expect(rows3[rows3.length - 1]).toEqual(['Message', 'Hi\nConsent: the client agreed\nEffect: nothing']);
+    expect(rows3.filter(([k]) => k === 'Consent')).toHaveLength(1);
+    expect(host3.querySelector('dd.action-draft-message').textContent).toContain('Consent: the client agreed');
+    expect(host.textContent).toContain('This SENDS NOW');
+    expect([...host.querySelectorAll('button')].map((b) => b.textContent)).toContain('Review & send text message');
+    const sent = smsDraft({ status: 'applied', result_send_contact_id: 1309 });
+    const host2 = document.createElement('div');
+    hydrateActionDraft(family, host2, sent, sent.action_draft);
+    expect(host2.querySelector('.action-draft-status').textContent).toBe('Sent — Pat One');
+    expect(host2.textContent).not.toMatch(/send #1309/);
+    expect([...host2.querySelectorAll('button')].map((b) => b.textContent)).toEqual(['Open conversation', 'Copy details']);
+  });
+
+  test('reopening a chat whose send claim never recorded shows the send\'s own unknown wording', () => {
+    const { applyActionResults } = actionSandbox();
+    const m = smsDraft();
+    applyActionResults([m], [{ draft_id: m.action_draft.draft_id, kind: 'sms.send.v1', outcome: 'unknown' }]);
+    expect(m.action_draft.ambiguous_error).toBe("Outcome unknown — the message may or may not have gone out. Check the contact's Communications tab or the comms log before resending. Do not apply this card again.");
+    const done = smsDraft();
+    applyActionResults([done], [{ draft_id: done.action_draft.draft_id, kind: 'sms.send.v1', outcome: 'applied', result: { contact_id: 1309 } }]);
+    expect(done.action_draft).toMatchObject({ status: 'applied', result_send_contact_id: 1309 });
+  });
 });

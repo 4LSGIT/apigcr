@@ -51,7 +51,7 @@ suite('P5 ledger on real MySQL', () => {
       try { await op(); errors.push('accepted'); } catch (e) { errors.push(e.status || e.code); }
     }
     expect({ count: ledger.KINDS.size, outcomes: [...new Set(outcomes)], errors,
-      foreignRead: await ledger.read(db, 7, [d.draft_id]) }).toEqual({ count: 33, outcomes: ['not-applied'],
+      foreignRead: await ledger.read(db, 7, [d.draft_id]) }).toEqual({ count: 35, outcomes: ['not-applied'],
       errors: ['ER_DUP_ENTRY', 'ER_NO_REFERENCED_ROW_2', 400, 403, 400, 400, 404], foreignRead: [] });
   });
   test('committed claim fences two tabs, a business rollback cannot release it, and fresh or old claims remain unknown', async () => {

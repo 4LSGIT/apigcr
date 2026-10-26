@@ -25,6 +25,23 @@
 gaps above); everything else from the September delta pass is folded into the
 body. Governing migrations in `ref/migrations/`.*
 
+- **Casey sends one SMS / email (A14, ruling 15, 10-27):** kinds
+  `sms.send.v1` / `email.send.v1` drive `POST /api/phone-lines/:id/sms` and
+  `POST /api/mail/send` from the card. Invariants: the recipient is one
+  `contact_phones` / `contact_emails` row named by an evidence row
+  (contact_id + phone_id/email_id), active, and NOT opted out on the row
+  (`sms_optout`/`email_optout`) or the contact (`contact_*_optout`) —
+  re-read by the browser at click time; the body is resolved by
+  `resolverService` (strict) at proposal time and the card sends exactly that
+  text (neither route resolves placeholders); senders are a line/mailbox the
+  user can send from (the route stays the authority). Both routes take an
+  optional `Idempotency-Key` (`phone_lines.sms_send`, `mail.send`) with
+  `releaseOnRefusalOnly`: a send that fails after dispatch KEEPS its claim
+  (409 in_flight → unknown), only a pre-dispatch 4xx releases it — the one
+  wired scope where a failure does not free the key. Native callers without a
+  key are unchanged; neither route checks opt-out for a human (filed,
+  `ref/plans.md`). Off switch `casey_send_enabled`. Plan:
+  ref/ASK_CASEY_ACTIONS_PLAN.md A14.
 - **Ingest code gate (hotfix, 10-26):** every ingest route that accepts a
   `code` body — rule + suppression create/update, `test-match`,
   `test-transform`, both channels — refuses it without `automations.manage`

@@ -12,13 +12,13 @@
  * THE BOUNDARY BEING TESTED (plan, "Governing principle"): Casey proposes, the
  * staff member's own browser performs the write through the ordinary
  * authenticated route, and "the existing route ... is the final authority".
- * These tests ask that claim two questions for all 33 shipped kinds:
+ * These tests ask that claim two questions for all 35 shipped kinds:
  *   1. what does the route actually gate on?  (section 1 — no DB needed)
  *   2. where is the normalizer stricter than the route, i.e. where is the
  *      route NOT an authority at all?        (section 2 — real MySQL)
  *
  * MEASURED FACTS THIS FILE LOCKS
- *   · Every one of the 33 kinds maps to a route gated by lib/auth.jwtOrApiKey
+ *   · Every one of the 35 kinds maps to a route gated by lib/auth.jwtOrApiKey
  *     and NOTHING else: authentication (staff-audience JWT whose user_auth
  *     starts 'authorized'), no role, no capability, no row/firm scope. The
  *     one nuance is job.code_safe.create.v1 (safe-mode S3): its route carries
@@ -109,6 +109,8 @@ const KINDS = [
   { kind: 'workflow.publish.v1', method: 'POST', path: '/workflows/1/publish' },
   { kind: 'hook.create.v1', method: 'POST', path: '/api/hooks' },
   { kind: 'sequence.step_insert.v1', method: 'POST', path: '/sequences/templates/1/steps' },
+  { kind: 'sms.send.v1', method: 'POST', path: '/api/phone-lines/3/sms' },
+  { kind: 'email.send.v1', method: 'POST', path: '/api/mail/send' },
 ];
 
 // The six original families' route files carry NO capability gate at all
@@ -117,7 +119,10 @@ const KINDS = [
 // STANDARD-mode code (safe-mode S2), which the job family never sends.
 const CAPABILITY_FREE_ROUTE_FILES = ['routes/api.tasks.js', 'routes/api.events.js', 'routes/api.appts.js',
   'routes/api.contactPhones.js', 'routes/api.contactEmails.js', 'routes/api.contactAddresses.js'];
-const ROUTE_FILES = [...CAPABILITY_FREE_ROUTE_FILES, 'routes/scheduled_jobs.js', 'routes/workflows.js', 'routes/api.hooks.js', 'routes/sequences.js'];
+const ROUTE_FILES = [...CAPABILITY_FREE_ROUTE_FILES, 'routes/scheduled_jobs.js', 'routes/workflows.js', 'routes/api.hooks.js', 'routes/sequences.js',
+  // A14: the comms hub's send routes — the one family whose route IS an
+  // authorization seat (per-channel can_send grants, SU step-up), pinned below.
+  'routes/api.phoneComms.js', 'routes/api.mail.js'];
 
 // ── Shared HTTP harness: the real routers behind the real jwtOrApiKey ──────
 // Both sections drive the SAME routers. Section 1 hands them a stub req.db
@@ -168,22 +173,22 @@ function call(a, { method, path: urlPath }, headers = {}, body = {}) {
 const bearer = (t) => ({ authorization: `Bearer ${t}` });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// SECTION 1 — the route-level gate, for all 33 kinds (no database)
+// SECTION 1 — the route-level gate, for all 35 kinds (no database)
 // ═══════════════════════════════════════════════════════════════════════════
 
-describe('P2 — what the canonical write route gates on (all 33 shipped kinds)', () => {
+describe('P2 — what the canonical write route gates on (all 35 shipped kinds)', () => {
   const OLD_SECRET = process.env.JWT_SECRET;
   beforeAll(() => { process.env.JWT_SECRET = SECRET; });
   afterAll(() => { process.env.JWT_SECRET = OLD_SECRET; });
 
   const app = appWith;
 
-  test('the 33 kinds cover 29 distinct route+method mounts', () => {
-    expect(KINDS).toHaveLength(33);
-    expect(new Set(KINDS.map((k) => `${k.method} ${k.path}`)).size).toBe(29);
+  test('the 35 kinds cover 31 distinct route+method mounts', () => {
+    expect(KINDS).toHaveLength(35);
+    expect(new Set(KINDS.map((k) => `${k.method} ${k.path}`)).size).toBe(31);
   });
 
-  test('no token: every kind is 401 — authentication is required for all 33', async () => {
+  test('no token: every kind is 401 — authentication is required for all 35', async () => {
     const a = app();
     for (const k of KINDS) {
       const res = await call(a, k);
@@ -239,7 +244,7 @@ describe('P2 — what the canonical write route gates on (all 33 shipped kinds)'
     expect([401, 403]).not.toContain(res.status);
   });
 
-  // THE ROLE QUESTION. There is no role or capability gate on any of the 33:
+  // THE ROLE QUESTION. There is no role or capability gate on any of the first 33 (the two A14 send kinds are the per-channel exception, pinned below):
   // a user holding only `staff` (no admin / it / su, no capability) reaches
   // every handler. Proven per family by observing the canonical service call.
   describe('no role or capability gate: a roleless-but-staff token reaches the handler', () => {
@@ -304,6 +309,31 @@ describe('P2 — what the canonical write route gates on (all 33 shipped kinds)'
       bearer(token({ roles: ['staff'] })), base);
     expect(standard.status).toBe(403);
     expect(standard.body.error).toMatch(/automations\.manage/);
+  });
+
+  // A14: the send routes are the exception to "no authorization": each checks
+  // the caller's can_send grant on THAT line / mailbox (mailboxService.getAccess
+  // — the route, not the normalizer, is the authority), refuses x-api-key
+  // callers (humans only), and makes an SU step up before dispatch. A roleless
+  // staff token with no grant is refused — 404, no existence oracle — and
+  // nothing reaches the send services.
+  test('sms.send.v1 / email.send.v1: a staff token without a send grant is refused before any send', async () => {
+    const phoneComms = require(path.join(REPO, 'services/phoneCommsService'));
+    const mailSend = require(path.join(REPO, 'services/mailbox/mailboxSendService'));
+    const smsSpy = jest.spyOn(phoneComms, 'sendSms');
+    const emailSvc = require(path.join(REPO, 'services/emailService'));
+    const mailSpy = jest.spyOn(emailSvc, 'sendEmailDirect');
+    try {
+      const a = app();
+      const sms = await call(a, { method: 'POST', path: '/api/phone-lines/3/sms' }, bearer(token({ roles: ['staff'] })), { to: '3135550001', message: 'hi' });
+      expect(sms.status).toBe(404);
+      const mail = await call(a, { method: 'POST', path: '/api/mail/send' }, bearer(token({ roles: ['staff'] })),
+        { mailbox_id: 1, to: ['pat@example.com'], subject: 's', body_text: 'b' });
+      expect(mail.status).toBe(404);
+      expect(smsSpy).not.toHaveBeenCalled();
+      expect(mailSpy).not.toHaveBeenCalled();
+      expect(typeof mailSend.resolveIdentity).toBe('function');
+    } finally { smsSpy.mockRestore(); mailSpy.mockRestore(); }
   });
 
   // Row/firm scope: there is none to test, and this is why.

@@ -185,9 +185,10 @@ Creation requires an existing client contact, active meeting type, length,
 platform/location, future firm-local date and time, and active appointment
 provider. A case linked to that contact and a note are optional. The card displays the firm's timezone,
 exact provider, client, case, type key, duration, and whether the type is a
-singleton. Casey does not send the client an SMS or email from any appointment
-card: the card says so, and the request it sends has confirmation turned off.
-Send any confirmation from the appointment itself.
+singleton. An appointment card never sends the client an SMS or email itself:
+the card says so, and the request it sends has confirmation turned off. Send
+any confirmation from the appointment itself, or ask Casey for a separate
+text or email card (see *Sending a text or email*).
 
 Creating an Appointment attempts to create both a firm Google Calendar entry
 and a provider-calendar entry when that provider has a separate calendar. The
@@ -285,6 +286,50 @@ create and PATCH responses to every open recipient contact; native forced
 phone/email transfers continue to announce the donor too. No Casey-only bus
 event or execution endpoint exists.
 
+### Sending a text or email
+
+Ask Casey can send ONE text message or ONE email to ONE client, now, when you
+ask it to ("text Pat that her hearing moved", "email the client the 341
+date"). Every send is a card you read and confirm; nothing goes out until you
+click **Review & send** and confirm the dialog that says *This sends NOW to …
+It cannot be recalled.*
+
+- **Who it goes to.** The recipient is always one of the contact's own active
+  phone numbers or email addresses, found in Casey's lookup — never an address
+  typed into the chat. The card names the person, the exact number or
+  address, and its label. A number or address that has opted out (on the row,
+  or the contact-level SMS/email opt-out) cannot be sent to: Casey says so
+  instead of preparing a card.
+- **Who it comes from.** A phone line or mailbox you can send from (your own
+  send access in Comms). When you don't name one and you have exactly one,
+  Casey uses it; otherwise it asks which.
+- **What it says.** Casey may write placeholders such as
+  `{{contacts.contact_fname}}`; they are filled in BEFORE the card is shown,
+  and the card shows the finished text — exactly what is sent, word for word.
+  A placeholder that can't be filled in for this person stops the card. Texts
+  are plain text up to 1000 characters and the card shows roughly how many SMS
+  segments it will take; emails are a one-line subject and a plain-text body.
+  If the message contains a Social Security number the card warns you.
+- **What it doesn't do.** No attachments, pictures (MMS), cc/bcc, replies into
+  an existing thread, scheduled sends, or messages to several people. The
+  email is not filed to a case by the card (a case is only used to fill in
+  case placeholders). An appointment card still never sends its own
+  confirmation; ask for a separate send card or send it from the appointment.
+- **When you click.** Casey re-checks the number or address first; if it ended,
+  changed, or opted out since the card was prepared, nothing is sent and the
+  card says why. The send then goes through the same Comms send that a person
+  uses — your send access, superuser password step-up, and the per-person send
+  limit all apply.
+- **The result.** A sent card says *Sent* and **Open conversation** opens the
+  contact on its Communications tab (the text or email appears there once the
+  phone provider or mailbox records it). If the result is unclear — a timeout,
+  a provider error after the message left — the card says *Outcome unknown*
+  and offers no way to send again: check the Communications tab or the comms
+  log before asking Casey to send it again. A refusal you can read (no send
+  access, an inactive line, the send limit) says nothing was sent.
+
+The off switch is the `casey_send_enabled` setting.
+
 ## Models and files
 
 The model selector offers two product-level choices:
@@ -321,8 +366,9 @@ asking about a file does not save it.
 ## What read-only means
 
 Assistant searches and action proposals cannot change anything by themselves.
-Casey cannot send email or SMS, edit scalar contact identity fields, fill a form, or
-create a workflow. It can return the typed Task, Event, Appointment, or contact-subrecord proposal described above; the signed-in
+Casey cannot edit scalar contact identity fields or fill a form on its own. It
+can return the typed Task, Event, Appointment, contact-subrecord, send, or
+automation proposal described above; the signed-in
 staff member must review and confirm the card before the ordinary application
 route performs it. The separate,
 user-invoked **Save to case** attachment control is another explicit write; it
@@ -432,6 +478,9 @@ or `event.cancel.v1` proposal. It may instead be one `appt.create.v1`,
 `appt.reschedule.v1`, or `appt.reschedule_later.v1` proposal. It may instead be
 one `contact.phone.*.v1`, `contact.email.*.v1`, or `contact.address.*.v1`
 create/update/end proposal described above. It may instead be one
+`sms.send.v1` or `email.send.v1` proposal: one text or one email sent now to
+one contact row, with the fully resolved message on the card (see *Sending a
+text or email*). It may instead be one
 `job.code_safe.create.v1` proposal: a one-time scheduled job whose JavaScript
 body runs in safe mode (the isolated QuickJS engine — no network, no database,
 no email/SMS; see the workflows chapter's `custom_code` section). It may

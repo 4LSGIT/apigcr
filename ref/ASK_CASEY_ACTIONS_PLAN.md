@@ -598,7 +598,7 @@ link one message to a case, or prepare a non-sent email/SMS draft where a
 canonical draft operation exists. A draft must be visibly non-sent. Never
 reinterpret an endpoint that sends immediately as a draft endpoint.
 
-#### A14: Outbound email and SMS
+#### A14: Outbound email and SMS — SHIPPED 2026-10-27 (direct send, ruling 15)
 
 Sending is an irreversible external side effect and is not an extension of a
 draft slice. Use distinct proposal kinds for email and SMS/MMS through their
@@ -606,6 +606,75 @@ canonical routes. Review the resolved from identity, exact recipients, subject
 and body, attachments/media, schedule, link/audit destination, opt-out or
 consent constraints, and audience count. Require a fresh send confirmation,
 strong idempotency, and an unambiguous delivered/queued/failed result.
+
+**As shipped.** Two kinds on the P1 card engine, `sms.send.v1` →
+`POST /api/phone-lines/:id/sms` `{to, message}` and `email.send.v1` →
+`POST /api/mail/send` `{mailbox_id, to:[address], subject, body_text}` — the
+comms hub's own routes, so the user's per-channel `can_send` grant, SU step-up,
+per-user send rate, daily mail budget and `admin_audit_log` row all apply
+unchanged. These are the one family whose route IS an authorization seat
+(P2 matrix: 35 kinds, 31 mounts).
+
+- **Recipient:** never typed. One evidence row must carry the exact
+  `contact_id` and `phone_id` / `email_id`; the normalizer reloads the row
+  (on that contact, `end_date IS NULL`) and refuses on consent — the row's
+  `sms_optout` / `email_optout` OR the contact's `contact_sms_optout` /
+  `contact_email_optout` (the columns `campaignService` honours). Measured
+  live 2026-10-26: 1 of 1,113 active phones opted out, 0 of 1,108 emails, 0
+  contacts; nothing in the services writes the contact-level columns. The
+  email address is run through the mail route's own `parseRecipient`.
+- **Click-time freshness (correction 1):** the card's `precheck` re-reads
+  `GET /api/contacts/:id` and `GET /api/contacts/:id/{phones|emails}` and
+  refuses — before the ledger claim, so nothing is spent — when the row ended,
+  opted out, or its value / `updated_at` moved; a contact-level opt-out
+  refuses too. A failed read leaves the card retryable.
+- **Sender:** a literal `line_id` / `mailbox_id` the user can send from
+  (`mailboxService.getAccess` can_send + active line; `mailboxSendService
+  .resolveIdentity` for a mailbox). Omitted → the user's ONLY explicit
+  `channel_grants` send grant among sendable senders (an SU's bypass is not
+  a grant); otherwise refused with the list, for the repair stage. The route
+  stays the authority at click time.
+- **Body:** resolved at proposal time with `resolverService.resolve({strict})`
+  against `contacts` (+ `cases` when a cited, linked `case_id` is given); an
+  unresolved placeholder, a dotless `{{…}}`, or any surviving `{{` / `}}`
+  refuses. The card shows — and the fixed builder sends — exactly the
+  resolved text, trimmed/normalized the way the route would (SMS trim; email
+  CRLF→LF and trim; the subject one line before and after resolution).
+  Neither route re-resolves placeholders (traced to the adapters). Caps mirror
+  the routes: SMS 1000 characters (`phoneCommsService.validateMessage`, run
+  at proposal), subject 500, body 200,000 (pinned against `validateSendBody`).
+  The card shows an approximate segment count (GSM-7 160/153, UCS-2 70/67). A
+  resolved `{{contacts.contact_ssn}}` is allowed (2026-09-24 ruling) and the
+  card warns; so does any 3-2-4 number in the text.
+- **Idempotency:** both routes take an optional `Idempotency-Key` (scopes
+  `phone_lines.sms_send`, `mail.send`); the card sends its `draft_id`. Unlike
+  the creates, a failed send KEEPS its claim unless the route refused with a
+  4xx before dispatch (`releaseOnRefusalOnly`): a provider timeout / 5xx after
+  the call may have delivered, so the same key is 409 `in_flight` → `unknown`,
+  never a second provider call. A replay is not audited as a send.
+- **Outcome:** a 4xx or a plain 409 (inactive line, a box that cannot send —
+  audited: both routes 409 only before dispatch; `refusal409`) reads "refused —
+  nothing written". An idempotency 409, any 5xx or a dead socket reads
+  *Outcome unknown — check the contact's Communications tab or the comms log
+  before resending* and the write control is gone; reopening a chat whose
+  ledger row never got a receipt shows the same wording. Success shows
+  "accepted by the provider (status …)" (SMS — the provider's own status, no
+  YisraCase log id exists at send time) or "sent — the mail server accepted it
+  (email log #N)". The ledger receipt is the contact id; **Open conversation**
+  opens the contact on its Communications tab.
+- **Off switch:** `casey_send_enabled` ('0' = both kinds do not exist).
+
+**Deliberate narrowings:** no attachments, MMS/media, cc/bcc, HTML body,
+reply threading (`in_reply_to_message_fk`), scheduling, multi-recipient or
+bulk sends, and the email's composer Case field (`case_id` → case link) is
+NOT sent — a case only feeds placeholders. Appointment cards keep forcing
+their own confirmations off (course correction 3 unchanged): their routes
+resolve `{{…}}` after the click, so a client message is a separate send card.
+Each is filed in `ref/plans.md`. **Not changed for humans:** neither native
+route checks opt-out for a person sending from Comms — a product/legal call,
+filed. **Sync bus:** neither send route has a `yc-sync` matcher, for human
+and Casey sends alike (the record arrives later through the provider echo /
+mail ingest); no Casey-only emit was added.
 
 #### A15: E-signature lifecycle
 
@@ -1782,6 +1851,9 @@ silently. What the inventory established, for all 26 shipped kinds:
   `authorized` (a varchar prefix test, not a flag), or a machine key subject to
   its route scopes. No route file mounts a role, capability or superuser gate.
   The one authorization-shaped refusal in the stack is read-only View-as.
+  (Later families add exceptions: `hook.create.v1` needs `automations.manage`,
+  and A14's two send kinds reach the comms hub routes, which check the
+  caller's per-channel `can_send` grant and make an SU step up.)
 - **There is no firm/tenant axis.** The schema has no `firm_id` or `tenant_id`,
   so "cross-firm" has no expression here; the row constraints that exist are
   the normalizer's (evidence must name the exact id, the parent must match, the
@@ -1846,9 +1918,10 @@ ledger claim leaves the card unknown: **the write control is removed entirely**
 and the user is told to open the record, because offering it again could apply
 the action twice. Copy and Discard remain available.
 
-Still open from P4's full scope: sends, enrollment, starts, replays and
-fan-out are not wired (their families are not built yet), and an ambiguous
-outcome is only logged server-side, not alerted — that belongs to P7.
+Still open from P4's full scope: enrollment, starts, replays and fan-out are
+not wired (their families are not built yet), and an ambiguous outcome is only
+logged server-side, not alerted — that belongs to P7. Sends are wired (A14),
+with the stricter keep-the-claim-on-failure rule described there.
 
 #### P5: Durable applied-result persistence
 

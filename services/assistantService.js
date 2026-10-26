@@ -148,6 +148,30 @@ const WORKFLOW_ACTION_KINDS = new Set(['workflow.draft.v1', 'workflow.step_inser
 // echoes a slug, key, or URL; slugs are server-generated). HTTP targets,
 // filters and transforms stay human-only.
 const HOOK_ACTION_KINDS = new Set(['hook.create.v1']);
+
+// A14 direct sends (ruling 15, Fred 2026-10-27: "casey can send SMSs and
+// emails ... casey actions are all read and approved by a user"). ONE text or
+// ONE email to ONE recipient row, sent NOW through the comms hub's own routes
+// (POST /api/phone-lines/:id/sms, POST /api/mail/send) by the user's click.
+// The recipient is never typed: it is one contact_phones / contact_emails row
+// an evidence row names (contact_id + phone_id/email_id), reloaded active and
+// consent-checked here and again by the browser at click time. The body is
+// resolved HERE (resolverService, strict) and the card shows — and the fixed
+// request builder sends — exactly that resolved text; neither route resolves
+// placeholders. No attachments, cc/bcc, MMS, reply threading, or scheduling.
+const SEND_ACTION_KINDS = new Set(['sms.send.v1', 'email.send.v1']);
+const SMS_SEND_KEYS = new Set(['kind', 'contact_id', 'phone_id', 'line_id', 'message', 'case_id', 'evidence']);
+const EMAIL_SEND_KEYS = new Set(['kind', 'contact_id', 'email_id', 'mailbox_id', 'subject', 'body', 'case_id', 'evidence']);
+// Mirrors of services/mailbox/mailboxSendService.js SUBJECT_MAX / TEXT_MAX
+// (pinned against validateSendBody in tests/caseySendAction.test.js). The SMS
+// cap is phoneCommsService.SMS_MAX_CHARS, read directly.
+const EMAIL_SEND_SUBJECT_MAX = 500;
+const EMAIL_SEND_BODY_MAX = 200000;
+// GSM 03.38: the basic set costs one septet, the extension set two. Anything
+// else forces UCS-2 (70 / 67 code units per segment) — informational, the
+// provider segments for itself.
+const GSM7_BASIC = '@£$¥èéùìòÇ\nØø\rÅåΔ_ΦΓΛΩΠΨΣΘΞÆæßÉ !"#¤%&\'()*+,-./0123456789:;<=>?¡ABCDEFGHIJKLMNOPQRSTUVWXYZÄÖÑÜ§¿abcdefghijklmnopqrstuvwxyzäöñüà';
+const GSM7_EXTENDED = '^{}\\[~]|€\f';
 const HOOK_CREATE_KEYS = new Set(['kind', 'name', 'description', 'slug', 'target', 'param_map', 'evidence']);
 const HOOK_TARGET_KEYS = new Set(['kind', 'workflow_id', 'sequence_template_id']);
 // A19.1: the slug is OPTIONAL and user-driven (Fred asked to name his
@@ -927,13 +951,16 @@ function apptActionBool(value, field, fallback = false) {
   return value;
 }
 
-// Client SMS/email from an Ask Casey card is OFF until the plan's A14 bar
-// exists (resolved preview of the exact text, explicit recipients, fresh send
-// confirmation, idempotency). The message text is model-authored and the
-// confirmation path resolves {{…}} placeholders (contacts.contact_ssn
-// included), so a proposal can never carry a send: the flags are forced false
-// and the text dropped here, whatever the model asked for. The browser maps
-// the same fields to false again (assistant.html apptActionRequest).
+// Client SMS/email from an Ask Casey card is OFF on the APPOINTMENT cards
+// (course correction 3). A14's send cards (sms.send.v1 / email.send.v1) carry
+// the bar — resolved preview of the exact text, explicit recipient, fresh
+// confirmation, idempotency — but the appointment routes' confirmation path
+// resolves {{…}} itself after the click, so the user would approve text they
+// never saw resolved: the flags stay forced false and the text dropped here,
+// whatever the model asked for, and a client message is a separate send card.
+// The browser maps the same fields to false again (assistant.html
+// apptActionRequest). Routing appointment confirmations through the A14 bar
+// is filed in ref/plans.md.
 function apptActionMessageFields(value, { cancel = false } = {}) {
   apptActionBool(value.sms ?? value.confirm_sms, 'SMS confirmation');
   apptActionBool(value.email ?? value.confirm_email, 'email confirmation');
@@ -2322,8 +2349,220 @@ async function normalizeHookCreateAction(db, value, evidence) {
   };
 }
 
+// ── A14 direct sends ──────────────────────────────────────────────────────
+
+function smsSegments(text) {
+  let septets = 0;
+  let gsm = true;
+  for (const ch of String(text)) {
+    if (GSM7_BASIC.includes(ch)) septets += 1;
+    else if (GSM7_EXTENDED.includes(ch)) septets += 2;
+    else { gsm = false; break; }
+  }
+  if (gsm) return { encoding: 'GSM-7', units: septets, segments: septets <= 160 ? 1 : Math.ceil(septets / 153) };
+  const units = String(text).length; // UTF-16 code units, which UCS-2 segments count
+  return { encoding: 'UCS-2', units, segments: units <= 70 ? 1 : Math.ceil(units / 67) };
+}
+
+// The SSN warning (Fred: "i dont think its a secret" — allowed, but said
+// out loud on the card): a contact_ssn placeholder in what the model wrote,
+// or a 3-2-4 number in what will be sent.
+function sendMentionsSsn(raw, resolved) {
+  return /contact_ssn/i.test(String(raw)) || /\b\d{3}-\d{2}-\d{4}\b/.test(String(resolved));
+}
+
+/** Resolve one model-authored text against the recipient contact (+ case). Strict: anything unresolved refuses. */
+async function resolveSendText(db, text, refs, field) {
+  const { resolve } = require('./resolverService');
+  const out = await resolve({ db, text, refs, strict: true });
+  if (!out || out.status !== 'success') {
+    const missing = out && Array.isArray(out.unresolved) && out.unresolved.length ? out.unresolved.join(', ')
+      : (out && Array.isArray(out.errors) && out.errors.length ? out.errors.join('; ') : 'a placeholder');
+    throw httpError(422, `Send ${field} has placeholders that do not resolve for this recipient (${missing}) — write the value literally from the evidence or drop it; a send never goes out with a literal {{...}} or a blank`);
+  }
+  const resolved = String(out.text);
+  if (resolved.includes('{{') || resolved.includes('}}')) {
+    throw httpError(422, `Send ${field} still contains "{{" or "}}" after resolution — a send never carries template braces`);
+  }
+  return resolved;
+}
+
+async function sendActionCase(db, value, refs, evidence, contactId) {
+  if (value == null || value === '') return null;
+  const id = String(value).trim();
+  if (!id || id.length > 64 || !/^[A-Za-z0-9_-]+$/.test(id)) throw httpError(422, 'Send case_id is invalid');
+  const cited = refs.some((ref) => {
+    const query = evidence.find((item) => item && item.id === ref.query_id);
+    const row = query && Array.isArray(query.rows) ? query.rows[ref.row_number - 1] : null;
+    return row && String(row.case_id) === id;
+  });
+  if (!cited) throw httpError(422, 'Send case_id must appear in a cited evidence row');
+  const [rows] = await db.query(
+    `SELECT c.case_id, COALESCE(NULLIF(c.case_number_full, ''), NULLIF(c.case_number, ''), c.case_id) AS label
+       FROM cases c JOIN case_relate cr ON cr.case_relate_case_id = c.case_id
+      WHERE c.case_id = ? AND cr.case_relate_client_id = ? LIMIT 1`,
+    [id, contactId]);
+  const row = Array.isArray(rows) ? rows[0] : null;
+  if (!row) throw httpError(422, 'Send case is unavailable or not linked to the recipient contact');
+  return { case_id: String(row.case_id), label: String(row.label || id).slice(0, 200) };
+}
+
+const SEND_GRANTS_SQL = 'SELECT channel_id FROM channel_grants WHERE user = ? AND channel_type = ? AND can_send = 1';
+
+async function sendExplicitGrants(db, userId, channelType) {
+  const [rows] = await db.query(SEND_GRANTS_SQL, [Number(userId), channelType]);
+  return new Set((Array.isArray(rows) ? rows : []).map((r) => Number(r.channel_id)));
+}
+
+function formatTen(ten) {
+  const d = String(ten || '');
+  return /^\d{10}$/.test(d) ? `(${d.slice(0, 3)}) ${d.slice(3, 6)}-${d.slice(6)}` : d;
+}
+
+/**
+ * The SMS sender: an explicit line_id the user can send from (can_send via
+ * mailboxService.getAccess — the route re-checks it), active. Omitted → the
+ * user's ONLY explicit send grant among active lines; otherwise refused with
+ * the choices, so the repair stage can name one. Literal id, server label.
+ */
+async function sendSmsSender(db, userId, lineId) {
+  const mbx = require('./mailboxService');
+  const phone = require('./phoneCommsService');
+  const label = (l) => `#${l.id} ${l.display_name || 'line'} ${formatTen(l.phone_number)}`;
+  if (lineId === undefined || lineId === null) {
+    const sendable = (await mbx.listSendable(db, userId, 'phone_line')).filter((l) => l.active);
+    const granted = await sendExplicitGrants(db, userId, 'phone_line');
+    const mine = sendable.filter((l) => granted.has(Number(l.id)));
+    if (mine.length === 1) return { line_id: Number(mine[0].id), label: label(mine[0]), number: String(mine[0].phone_number), defaulted: true };
+    throw httpError(422, sendable.length
+      ? `SMS line_id is required — this user can send from: ${sendable.map(label).join('; ')}. Use the line the user named or the one the conversation is on`
+      : 'This user cannot send texts from any active firm line');
+  }
+  const id = Number(lineId);
+  if (!Number.isSafeInteger(id) || id < 1) throw httpError(422, 'SMS line_id is invalid');
+  const access = await mbx.getAccess(db, userId, 'phone_line', id);
+  if (!access.can_send) throw httpError(422, `The user cannot send from phone line ${id}`);
+  const line = await phone.loadLine(db, id);
+  if (!line) throw httpError(422, `Phone line ${id} does not exist`);
+  if (!line.active) throw httpError(422, `Phone line ${id} is inactive`);
+  return { line_id: id, label: label(line), number: String(line.phone_number), defaulted: false };
+}
+
+/** The email sender: mailboxSendService.resolveIdentity (can_send + a box that can send). Omitted → the only explicit grant. */
+async function sendEmailSender(db, userId, mailboxId) {
+  const sendSvc = require('./mailbox/mailboxSendService');
+  const label = (m) => `#${m.id} ${m.display_name ? `${m.display_name} <${m.address}>` : m.address}`;
+  let id = mailboxId;
+  let defaulted = false;
+  if (id === undefined || id === null) {
+    const { identities } = await sendSvc.listIdentities(db, userId);
+    const sendable = identities.filter((m) => m.sendable);
+    const granted = await sendExplicitGrants(db, userId, 'mailbox');
+    const mine = sendable.filter((m) => granted.has(Number(m.id)));
+    if (mine.length !== 1) {
+      throw httpError(422, sendable.length
+        ? `Email mailbox_id is required — this user can send as: ${sendable.map(label).join('; ')}. Use the mailbox the user named`
+        : 'This user cannot send email from any mailbox');
+    }
+    id = mine[0].id;
+    defaulted = true;
+  }
+  const n = Number(id);
+  if (!Number.isSafeInteger(n) || n < 1) throw httpError(422, 'Email mailbox_id is invalid');
+  let mailbox;
+  try {
+    ({ mailbox } = await sendSvc.resolveIdentity(db, userId, n));
+  } catch (err) {
+    if (err && Number.isInteger(err.status) && err.status < 500) throw httpError(422, `Mailbox ${n} cannot be used: ${err.message}`);
+    throw err;
+  }
+  return { mailbox_id: n, label: label(mailbox), address: String(mailbox.address), defaulted };
+}
+
+async function normalizeSendAction(db, value, evidence, { currentUserId = null } = {}) {
+  // Ruling 4's per-family off switch: dark means the kind does not exist.
+  if (require('../lib/firmConfig').cfg('casey_send_enabled') === '0') {
+    throw httpError(422, 'Action kind is unavailable');
+  }
+  const sms = value.kind === 'sms.send.v1';
+  const allowed = sms ? SMS_SEND_KEYS : EMAIL_SEND_KEYS;
+  const unknown = Object.keys(value).filter((k) => !allowed.has(k));
+  if (unknown.length) {
+    throw httpError(422, `${sms ? 'SMS' : 'Email'} send carries unsupported fields: ${unknown.join(', ')} — it takes ${[...allowed].filter((k) => k !== 'kind').join(', ')} (no attachments, cc/bcc, media, scheduling or free-typed recipients)`);
+  }
+  const userId = currentUserId == null || currentUserId === '' ? NaN : Number(currentUserId);
+  if (!Number.isSafeInteger(userId) || userId < 1) throw httpError(422, 'A send needs the signed-in staff user');
+  const config = CONTACT_SUBRECORD_CONFIG[sms ? 'phone' : 'email'];
+  const contactId = contactActionId(value.contact_id, 'contact id');
+  const recordId = contactActionId(value[config.idField], config.idField.replace('_', ' '));
+  const refs = taskDraftEvidence(value.evidence, evidence);
+  if (!contactEvidenceSupports(refs, evidence, contactId, config, recordId)) {
+    throw httpError(422, `Send evidence must cite one row carrying both the exact contact_id and ${config.idField} (select ${config.table}.id AS ${config.idField} with contact_id)`);
+  }
+
+  // The recipient row, reloaded: active, on this contact, consent intact.
+  // Consent is read where campaignService reads it (contacts.contact_*_optout)
+  // AND on the row the card addresses (contact_*s.*_optout) — either refuses.
+  const [[contact]] = await db.query(
+    'SELECT contact_id, contact_name, contact_sms_optout, contact_email_optout FROM contacts WHERE contact_id = ? LIMIT 1', [contactId]);
+  if (!contact) throw httpError(422, 'Send recipient contact is unavailable');
+  const row = await config.get(db, recordId);
+  if (!row || Number(row.contact_id) !== contactId) throw httpError(422, `Send recipient ${config.idField} ${recordId} is not on contact ${contactId}`);
+  if (row.end_date != null) throw httpError(422, `Send recipient ${config.idField} ${recordId} has ended — only an active ${sms ? 'phone' : 'email'} can receive a send`);
+  const bit = (v) => v === 1 || v === true || v === '1';
+  if (sms ? (bit(row.sms_optout) || bit(contact.contact_sms_optout)) : (bit(row.email_optout) || bit(contact.contact_email_optout))) {
+    throw httpError(422, `The recipient has opted out of ${sms ? 'SMS' : 'email'} — Casey does not send to an opted-out ${sms ? 'number' : 'address'}`);
+  }
+  const expectedUpdatedAt = contactActionTimestamp(row.updated_at);
+  if (!expectedUpdatedAt) throw httpError(422, 'Send recipient row has no usable concurrency version');
+  const contactName = contactActionText(contact.contact_name, 'contact label', 200) || `Contact ${contactId}`;
+  const value10 = String(row[config.valueField] || '');
+  if (sms && !/^\d{10}$/.test(value10)) throw httpError(422, 'Send recipient phone is not a 10-digit US number');
+  if (!sms) {
+    // The mail route's own recipient parser, so the card never offers an address it would refuse.
+    try { require('./mailbox/mailboxSendService').parseRecipient(value10, 'to'); }
+    catch (_) { throw httpError(422, 'Send recipient email is not an address the mail route accepts'); }
+  }
+  const recipient = {
+    contact_id: contactId, contact_name: contactName, [config.idField]: recordId,
+    [config.valueField]: value10, label: String(row.label || 'Other'),
+    is_primary: bit(row.is_primary), expected_updated_at: expectedUpdatedAt,
+  };
+
+  const caseRecord = await sendActionCase(db, value.case_id, refs, evidence, contactId);
+  const resolveRefs = { contacts: { contact_id: contactId }, ...(caseRecord ? { cases: { case_id: caseRecord.case_id } } : {}) };
+  const base = { draft_id: crypto.randomUUID(), kind: value.kind, status: 'draft', recipient, case: caseRecord, evidence: refs };
+
+  if (sms) {
+    if (typeof value.message !== 'string' || !value.message.trim()) throw httpError(422, 'SMS send message is required');
+    if (value.message.length > 5000) throw httpError(422, 'SMS send message is far over the SMS limit');
+    const resolved = (await resolveSendText(db, value.message, resolveRefs, 'message')).trim();
+    if (!resolved) throw httpError(422, 'SMS send message is empty once its placeholders resolve');
+    try { require('./phoneCommsService').validateMessage(resolved); } catch (err) { throw httpError(422, `SMS send ${err.message}`); }
+    const sender = await sendSmsSender(db, userId, value.line_id);
+    return { ...base, sender, message: resolved, segments: smsSegments(resolved),
+      templated: resolved !== value.message.trim(), ssn_warning: sendMentionsSsn(value.message, resolved) };
+  }
+
+  if (typeof value.subject !== 'string' || !value.subject.trim()) throw httpError(422, 'Email send subject is required');
+  if (/[\u0000-\u001f\u007f]/.test(value.subject)) throw httpError(422, 'Email send subject must be one line (no line breaks, tabs or control characters)');
+  if (typeof value.body !== 'string' || !value.body.trim()) throw httpError(422, 'Email send body is required');
+  const subject = (await resolveSendText(db, value.subject, resolveRefs, 'subject')).trim();
+  if (!subject) throw httpError(422, 'Email send subject is empty once its placeholders resolve');
+  if (/[\u0000-\u001f\u007f]/.test(subject)) throw httpError(422, 'Email send subject must stay one line once its placeholders resolve');
+  if (subject.length > EMAIL_SEND_SUBJECT_MAX) throw httpError(422, `Email send subject exceeds ${EMAIL_SEND_SUBJECT_MAX} characters`);
+  const body = (await resolveSendText(db, value.body.replace(/\r\n?/g, '\n'), resolveRefs, 'body')).replace(/\r\n?/g, '\n').trim();
+  if (!body) throw httpError(422, 'Email send body is empty once its placeholders resolve');
+  if (body.length > EMAIL_SEND_BODY_MAX) throw httpError(422, `Email send body exceeds ${EMAIL_SEND_BODY_MAX} characters`);
+  const sender = await sendEmailSender(db, userId, value.mailbox_id);
+  return { ...base, sender, subject, body,
+    templated: subject !== value.subject.trim() || body !== value.body.replace(/\r\n?/g, '\n').trim(),
+    ssn_warning: sendMentionsSsn(`${value.subject}\n${value.body}`, `${subject}\n${body}`) };
+}
+
 async function normalizeActionDraft(db, value, evidence, { currentUserId = null } = {}) {
   if (value == null) return null;
+  if (value && SEND_ACTION_KINDS.has(value.kind)) return normalizeSendAction(db, value, evidence, { currentUserId });
   if (value && HOOK_ACTION_KINDS.has(value.kind)) return normalizeHookCreateAction(db, value, evidence);
   if (value && SEQUENCE_ACTION_KINDS.has(value.kind)) return normalizeSequenceStepInsertAction(db, value, evidence);
   if (value && WORKFLOW_ACTION_KINDS.has(value.kind)) {
@@ -2452,7 +2691,16 @@ function taskDraftRequested(question, history = []) {
   // is no sequence edit or publish kind yet).
   const sequence = /\b(?:sequences?|sequence template|drip)\b/i.test(text) &&
     /\b(?:draft|propose|prepare|insert|add|append|create|make|build|set up)\b/i.test(request);
-  return task || event || appt || contactSubrecord || job || workflow || hook || sequence;
+  // A14: a send to someone. A send verb (or "text/email/message" used AS the
+  // verb) in a request message — but never one addressed to the user
+  // themselves ("email me the list", "text it to me"), which asks for no
+  // client send at all.
+  const toSelf = /\b(?:send|e-?mail|text|sms|message)\s+(?:it\s+|this\s+|that\s+|them\s+)?(?:over\s+)?(?:to\s+)?(?:me|myself)\b|\bto\s+(?:me|myself)\b/i.test(request);
+  const sendVerb = /\b(?:send|shoot|compose|reply)\b[^.?!\n]{0,40}\b(?:e-?mail|text|sms|message)\b/i.test(request) ||
+    /\bwrite\b[^.?!\n]{0,40}\b(?:e-?mail|text message|sms|message)\s+to\b/i.test(request) ||
+    /(?:^|[.!?]\s*|\b(?:please|you|to|and|then|go ahead and|let'?s|now)\s+)(?:e-?mail|text|sms|message)\s+(?!me\b|myself\b)\w/i.test(request);
+  const send = !toSelf && sendVerb;
+  return task || event || appt || contactSubrecord || job || workflow || hook || sequence || send;
 }
 
 function contextualAnswer(question, history) {
