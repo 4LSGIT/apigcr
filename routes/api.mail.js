@@ -86,6 +86,7 @@ const { auditAdminAction, verifyElevationToken, stepupEnabled } = require('../li
 const { makeLimiter } = require('../lib/rateLimiter');
 const svc = require('../services/mailbox/mailReadService');
 const send = require('../services/mailbox/mailboxSendService');
+const optout = require('../services/optoutService');
 const mbx = require('../services/mailboxService');
 const { idempotentRequest, sendIdempotencyError, releaseOnRefusalOnly } = require('../lib/requestIdempotency');
 
@@ -299,6 +300,20 @@ router.post('/api/mail/send', ...guard, async function sendMail(req, res) {
         code: 'elevation_required',
       });
     }
+    // Opt-out WARNS a staff sender (ruling 2026-10-27): 409 code 'opted_out'
+    // when any To/Cc/Bcc address's active row is opted out, until the body
+    // carries acknowledge_optout:true. Before the limiter and the idempotency
+    // claim, so the confirm-and-resend is one send under the same key. The
+    // body is validated here too (pure — a bad body is the same 400 it would
+    // be below); Casey's card never acknowledges, so it refuses.
+    const parsed = send.validateSendBody(body);
+    const gate = await optout.optoutGate(req.db, {
+      channel: 'email', dest: [...parsed.to, ...parsed.cc, ...parsed.bcc], acknowledged: parsed.acknowledge_optout,
+    });
+    if (gate.refusal) {
+      auditSend(req, 'refused_opted_out', meta);
+      return res.status(gate.refusal.status).json(gate.refusal.body);
+    }
     // Counted only once the caller may send: an SU's elevation prompt-and-retry
     // is one send, not two against the window.
     if (sendLimited(`u${uid}`)) {
@@ -316,6 +331,7 @@ router.post('/api/mail/send', ...guard, async function sendMail(req, res) {
       append: out.append.appended ? `appended:${out.append.folder}` : out.append.reason,
       read_seed_job: out.read_seed.job_id,
       warnings: out.warnings.map(w => w.code),
+      ...(gate.overridden.length ? { acknowledged_optout: gate.overridden.map((r) => r.contact_id) } : {}),
     });
     res.json({ status: 'success', ...out });
   } catch (err) {

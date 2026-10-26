@@ -612,6 +612,72 @@ describe('/internal/sms|mms/send — the staff-JWT grant gate (ruling 1)', () =>
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+describe('opt-out (ruling 2026-10-27): staff are WARNED, automation is REFUSED', () => {
+  const OPTED = '3135550009';
+  const optOut = () => {
+    W.T.contacts.push({ contact_id: 900, contact_name: 'Opted Client' });
+    W.T.contact_phones.push({ id: 90, contact_id: 900, phone: OPTED, end_date: null, sms_optout: 1 });
+  };
+  const sms = (line, t, body, extra = {}) => call('POST', `/api/phone-lines/${line}/sms`, { t, body, ...extra });
+  const internal = (kind, opts) => call('POST', `/internal/${kind}/send`, opts);
+  const audits = () => W.T.admin_audit_log.filter((x) => x.tool === 'phone_send').map((x) => [x.status, x.details && x.details.acknowledged_optout]);
+
+  test('comms hub: 409 opted_out names the contact, nothing dispatched, audited; only a literal true acknowledges', async () => {
+    optOut();
+    W.grant(RENA, 3, { can_read: true, can_send: true });
+    let r = await sms(3, T.rena(), { to: '+1 (313) 555-0009', message: 'Your hearing moved' });
+    expect(r.status).toBe(409);
+    expect(r.json).toMatchObject({ status: 'error', code: 'opted_out', acknowledge_with: 'acknowledge_optout',
+      opted_out: [{ channel: 'sms', destination: OPTED, contact_id: 900, contact_name: 'Opted Client', row_id: 90 }] });
+    expect(r.json.message).toMatch(/^Opted Client \(313\) 555-0009 \(contact #900\) has opted out of texts\. Send anyway only if they asked/);
+    for (const ack of ['true', 1, 'yes', false]) {
+      expect((await sms(3, T.rena(), { to: OPTED, message: 'x', acknowledge_optout: ack })).status).toBe(409);
+    }
+    expect(sent).toEqual([]);
+    r = await sms(3, T.rena(), { to: OPTED, message: 'Your hearing moved', acknowledge_optout: true });
+    expect(r.status).toBe(200);
+    expect(sent).toEqual([{ kind: 'sms', from: '2489655355', to: '+13135550009', message: 'Your hearing moved' }]);
+    expect(audits()).toEqual([...Array(5).fill(['refused_opted_out', undefined]), ['sent', [900]]]);
+  });
+
+  test('a consenting or ENDED-row number needs no acknowledgement and is not audited as one', async () => {
+    W.T.contact_phones.push({ id: 91, contact_id: 901, phone: '3135550008', end_date: '2026-01-01', sms_optout: 1 });
+    W.grant(RENA, 3, { can_read: true, can_send: true });
+    expect((await sms(3, T.rena(), { to: '3135550008', message: 'hi' })).status).toBe(200);
+    expect((await sms(3, T.rena(), { to: '3135550001', message: 'hi' })).status).toBe(200);
+    expect(audits()).toEqual([['sent', undefined], ['sent', undefined]]);
+  });
+
+  test('the gate runs before the rate limiter: warnings never use up the send window (the confirm-and-resend is one send)', async () => {
+    optOut();
+    W.grant(RENA, 3, { can_read: true, can_send: true });
+    for (let i = 0; i < router.SEND_RATE_MAX + 2; i++) {
+      expect((await sms(3, T.rena(), { to: OPTED, message: 'hi' })).status).toBe(409);
+    }
+    const r = await sms(3, T.rena(), { to: OPTED, message: 'hi', acknowledge_optout: true });
+    expect(r.status).toBe(200);
+    expect(sent).toHaveLength(1);
+  });
+
+  test('/internal/sms|mms: a staff JWT is warned the same way; an API key (automation) is REFUSED 422 even when it acknowledges', async () => {
+    optOut();
+    W.grant(RENA, 3, { can_read: true, can_send: true });
+    const smsBody = { from: '2489655355', to: OPTED, message: 'hi' };
+    const mmsBody = { from: '2489655355', to: OPTED, text: 'x', attachment_url: 'https://x.test/a.png' };
+    for (const [kind, body] of [['sms', smsBody], ['mms', mmsBody]]) {
+      let r = await internal(kind, { t: T.rena(), body });
+      expect([kind, r.status, r.json.code]).toEqual([kind, 409, 'opted_out']);
+      r = await internal(kind, { apiKey: process.env.INTERNAL_API_KEY, body: { ...body, acknowledge_optout: true } });
+      expect([kind, r.status, r.json.code]).toEqual([kind, 422, 'opted_out']);
+      expect(r.json.message).toMatch(/^Not sent — Opted Client .*Automation never messages an opted-out recipient/);
+      expect(sent).toEqual([]);
+    }
+    expect((await internal('sms', { t: T.rena(), body: { ...smsBody, acknowledge_optout: true } })).status).toBe(200);
+    expect((await internal('mms', { t: T.rena(), body: { ...mmsBody, acknowledge_optout: true } })).status).toBe(200);
+    expect(sent.map((x) => [x.kind, x.to])).toEqual([['sms', OPTED], ['mms', OPTED]]);
+  });
+});
+
 describe('grants on phone lines', () => {
   const grants = (line, method, opts) => call(method, `/api/phone-lines/${line}/grants${opts && opts.gid ? `/${opts.gid}` : ''}`, opts);
 

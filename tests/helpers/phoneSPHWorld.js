@@ -37,6 +37,7 @@
 
 'use strict';
 
+const { answerOptout } = require('./optoutFake');
 const norm = (sql) => String(sql).replace(/\s+/g, ' ').trim();
 const clone = (v) => structuredClone(v);
 
@@ -227,6 +228,10 @@ function makeWorld() {
     let p = params || [];
     statements.push({ sql, params: clone(p) });
     let m;
+
+    // ── services/optoutService (the send routes' opt-out gate) ──
+    const oo = answerOptout(sql, p, { phones: T.contact_phones, contacts: T.contacts });
+    if (oo) return oo;
 
     // ── search (slice PS): strip the list reads' predicate, keep it as a filter ──
     let rowOk = () => true;

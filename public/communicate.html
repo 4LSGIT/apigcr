@@ -11,6 +11,7 @@
   <script src="/js/videoInsert.js"></script>
   <script src="/js/assetpicker.js"></script>
   <script src="/js/phoneSendable.js"></script>
+  <script src="/js/optoutAck.js"></script>
   <link rel="stylesheet" href="/theme.css">
   <script src="/themeSync.js"></script>
   <style>
@@ -379,6 +380,9 @@
 // ═══════════════════════════════════════════════════════════════
 
 const P = window.parent;
+// Staff sends through /internal/*/send: an opted-out recipient's 409 becomes a
+// confirm and one acknowledged resend (public/js/optoutAck.js, ruling 2026-10-27).
+const optoutSend = (path, method, body) => window.ycOptoutAck.send((...a) => P.apiSend(...a), path, method, body);
 const E = (id) => document.getElementById(id);
 const Toast = Swal.mixin({
   toast: true, position: 'top-end', showConfirmButton: false,
@@ -889,11 +893,11 @@ async function send(action) {
         const mmsCapable = senderOpt?.dataset.mmsCapable === '1';
 
         if (mmsAttachmentUrl && mmsCapable) {
-          await P.apiSend('/internal/mms/send', 'POST', {
+          await optoutSend('/internal/mms/send', 'POST', {
             from, to, text: body, attachment_url: mmsAttachmentUrl
           });
         } else {
-          await P.apiSend('/internal/sms/send', 'POST', { from, to, message: body });
+          await optoutSend('/internal/sms/send', 'POST', { from, to, message: body });
         }
       }
 
@@ -967,7 +971,7 @@ async function send(action) {
           const name = emailAttachmentUrl.split('/').pop().split('?')[0] || 'attachment';
           emailPayload.attachment_urls = [{ url: emailAttachmentUrl, name }];
         }
-        await P.apiSend('/internal/email/send', 'POST', emailPayload);
+        await optoutSend('/internal/email/send', 'POST', emailPayload);
       }
 
       // Log

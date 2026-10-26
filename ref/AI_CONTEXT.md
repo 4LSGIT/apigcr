@@ -30,17 +30,17 @@ body. Governing migrations in `ref/migrations/`.*
   `POST /api/mail/send` from the card. Invariants: the recipient is one
   `contact_phones` / `contact_emails` row named by an evidence row
   (contact_id + phone_id/email_id), active, and NOT opted out on the row
-  (`sms_optout`/`email_optout`) or the contact (`contact_*_optout`) —
-  re-read by the browser at click time; the body is resolved by
-  `resolverService` (strict) at proposal time and the card sends exactly that
+  (`sms_optout`/`email_optout`) — re-read by the browser at click time, and
+  the send routes re-check it (the card never acknowledges, so it refuses);
+  the body is resolved by `resolverService` (strict) at proposal time and the
+  card sends exactly that
   text (neither route resolves placeholders); senders are a line/mailbox the
   user can send from (the route stays the authority). Both routes take an
   optional `Idempotency-Key` (`phone_lines.sms_send`, `mail.send`) with
   `releaseOnRefusalOnly`: a send that fails after dispatch KEEPS its claim
   (409 in_flight → unknown), only a pre-dispatch 4xx releases it — the one
   wired scope where a failure does not free the key. Native callers without a
-  key are unchanged; neither route checks opt-out for a human (filed,
-  `ref/plans.md`). Off switch `casey_send_enabled`. Plan:
+  key are unchanged. Off switch `casey_send_enabled`. Plan:
   ref/ASK_CASEY_ACTIONS_PLAN.md A14.
 - **Trigger code gate + child flag fails closed (hotfix, 10-26):** trigger
   rule POST/PUT and `test-draft` carrying a `code` match or transform refuse
@@ -50,6 +50,30 @@ body. Governing migrations in `ref/migrations/`.*
   mode"). And `custom_code_child_process` now fails closed — only an explicit
   `'0'` selects the legacy in-process path; absent / blank / anything else
   runs the child (§10).
+- **Recipient opt-out (ruling 2026-10-27):** consent is the destination's
+  ACTIVE row flag — `contact_phones.sms_optout` / `contact_emails.email_optout`
+  (at most one active row per number/address: `uk_phone_active` /
+  `uk_email_active`) — read ONLY through `services/optoutService.js`
+  (number → 10 digits as stored; every address-shaped token in an email
+  destination). `contacts.contact_sms_optout` / `contact_email_optout` are
+  RETIRED: no reader, no writer, drop pending (`ref/plans.md`). AUTOMATION
+  REFUSES: `send_sms` / `send_mms` / `send_email` / `forward_as_*` throw
+  `OptOutRefusal` (code `RECIPIENT_OPTED_OUT`); the workflow engine records
+  the step `skipped` (reason in `error_message`, no retry, policy not
+  consulted, run continues), the sequence engine logs `skipped` /
+  `recipient_opted_out` and advances — never `failed`, so the error sweep
+  stays quiet. `request_decision` counts an opted-out channel undeliverable;
+  campaigns skip (`sms_optout` / `email_optout`); appt / booking / manage-page
+  confirmations skip the channel (logged). STAFF ARE WARNED: `POST
+  /api/phone-lines/:id/sms`, `POST /api/mail/send` (To+Cc+Bcc) and JWT
+  callers of `/internal/{sms,mms,email}/send` answer 409 `code:'opted_out'`
+  (gate before the rate limiter and the idempotency claim) until the body
+  carries `acknowledge_optout:true` (literal true; audited / logged as an
+  override); API-key callers of `/internal/*` get 422 and cannot acknowledge.
+  `public/js/optoutAck.js` turns the 409 into a confirm + one resend on every
+  staff compose surface; a caller that ignores it simply does not send.
+  Exempt by design: the portal login PIN (client-requested, refusing locks
+  them out). Manual: 03-YisraFlow/08-error-policies.md, 08-Admin-Tools/08-mailboxes.md.
 - **Ingest code gate (hotfix, 10-26):** every ingest route that accepts a
   `code` body — rule + suppression create/update, `test-match`,
   `test-transform`, both channels — refuses it without `automations.manage`

@@ -50,6 +50,7 @@ const HTML = fs.readFileSync(path.join(ROOT, 'public/comms.html'), 'utf8');
 const PURIFY = fs.readFileSync(path.join(ROOT, 'public/js/vendor/purify-3.4.16.min.js'), 'utf8');
 const RENDER = fs.readFileSync(path.join(ROOT, 'public/js/mailRender.js'), 'utf8');
 const COLOR = fs.readFileSync(path.join(ROOT, 'public/js/mailboxColor.js'), 'utf8');
+const OPTOUT = fs.readFileSync(path.join(ROOT, 'public/js/optoutAck.js'), 'utf8');
 
 const DOMS = [];
 afterEach(() => { DOMS.splice(0).forEach((d) => { try { d.window.close(); } catch (_) { /* noop */ } }); });
@@ -109,7 +110,7 @@ async function boot({ handler, mailboxes = MB, before = null } = {}) {
   const errors = [];
   window.addEventListener('error', (e) => errors.push(String(e.error || e.message)));
   window.addEventListener('unhandledrejection', (e) => errors.push(String(e.reason)));
-  for (const src of [PURIFY, RENDER, COLOR, inline[0]]) {
+  for (const src of [PURIFY, RENDER, COLOR, OPTOUT, inline[0]]) {
     const sc = window.document.createElement('script');
     sc.textContent = src;
     window.document.body.appendChild(sc);
@@ -315,6 +316,32 @@ describe('compose (S3)', () => {
     expect(doc.getElementById('compose-backdrop').classList.contains('open')).toBe(false);
     await openCompose(window, doc);
     expect(doc.querySelector('.composer .cf-body').value).toBe('');                           // sent: nothing left to resend
+  });
+
+  test('opted-out recipient (ruling 2026-10-27): confirm with the server\'s words, then ONE acknowledged resend; Cancel keeps the composer', async () => {
+    for (const answer of [true, false]) {
+      const asked = [];
+      const optedOut = () => {
+        const e = new Error('c@x.test (contact #9) has opted out of email. Send anyway only if they asked for this message.');
+        e.status = 409; e.body = { status: 'error', code: 'opted_out', message: e.message };
+        return e;
+      };
+      const { window, doc, calls } = await boot({
+        handler: standard({ 'POST /api/mail/send': (p) => { if (p.acknowledge_optout !== true) throw optedOut(); return { status: 'success', from: 'billing@firm.test', warnings: [], case_link: null }; } }),
+        before: (w) => { w.confirm = (t) => { asked.push(t); return answer; }; },
+      });
+      await openCompose(window, doc);
+      type(window, input(doc, 'to'), 'c@x.test,');
+      const subj = doc.querySelector('.composer .cf-subject'); subj.value = 'S'; subj.dispatchEvent(new window.Event('input'));
+      const body = doc.querySelector('.composer .cf-body'); body.value = 'B'; body.dispatchEvent(new window.Event('input'));
+      doc.querySelector('.composer .send-btn').click();
+      await tick(window, 60);
+      expect(asked).toEqual([expect.stringMatching(/^c@x\.test \(contact #9\) has opted out of email\./)]);
+      const posts = calls.filter((c) => c.url === '/api/mail/send').map((c) => c.payload);
+      expect(posts.map((p) => p.acknowledge_optout)).toEqual(answer ? [undefined, true] : [undefined]);
+      expect(doc.getElementById('compose-backdrop').classList.contains('open')).toBe(!answer);
+      if (!answer) expect(doc.querySelector('.composer .modal-err').textContent).toMatch(/Cancelled — nothing was sent/);
+    }
   });
 
   test('a refused send keeps the composer, shows the server\'s words, re-enables Send', async () => {

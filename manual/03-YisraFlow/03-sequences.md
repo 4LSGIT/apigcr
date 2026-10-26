@@ -31,7 +31,7 @@ Cascade configuration is per-type — declared in the `sequence_template_types` 
 When something doesn't fire when you expected:
 1. Find the enrollment in the template's Enrollments tab. Status `cancelled` and `cancel_reason` will tell you why.
 2. If the enrollment is `active`, look at its step log — which step ran last, what was the result?
-3. If a step skipped, the `skip_reason` says which guard it failed (`condition_failed`, `fire_guard_failed`, `step_condition_failed`).
+3. If a step skipped, the `skip_reason` says which guard it failed (`condition_failed`, `fire_guard_failed`, `step_condition_failed`) — or `recipient_opted_out`: a message step whose recipient's phone / email row is marked opted out sends nothing, is logged skipped with the reason, is never retried, and the enrollment moves on to its next step whatever the error policy (an SMS opt-out does not stop the email and task steps; no alert is raised).
 4. If the enrollment is `active` but its step history shows **no pending step**, it is stuck: the last step ran, then scheduling the next one failed. A stuck enrollment raises a System Alert ("…enrollment N stuck — active with no pending step") within about half an hour, and the alert clears itself once the enrollment is recovered, cancelled or completed. Open the enrollment and use **Recover stuck enrollment**. Recovery puts the next step back on the schedule by its own timing rule, counted from now, instead of sending it on the spot. An appointment reminder (`before_appt` / `before_appt_fixed`) whose send time already passed while the enrollment was stuck is skipped (`unschedulable`), never sent late; the confirmation lists the skipped steps so you can follow up by hand. If nothing is left to send, the enrollment completes. Two timing rules still run right away, exactly as they do at enrollment: `immediate`, and a `delay` with a fixed `at` date that has already passed. To send any other placed step immediately, use **Fire Now** on it. If recovery itself fails twice with the same message, the step's timing or the enrollment's data is the problem — cancel the enrollment.
 
 ---
@@ -115,6 +115,7 @@ scheduled_jobs fires { type: 'sequence_step', enrollmentId, stepId }
         │                                           ERRORS → HOLD + alert, stop
         ├─ 5. Resolve placeholders in action_config (universal resolver)
         ├─ 6. Execute action (with retry per error_policy)
+        │     recipient opted out → skip (recipient_opted_out), no retry, schedule next
         ├─ 7. Log result to sequence_step_log
         └─ 8. Schedule next step (or complete enrollment if no more)
 ```

@@ -100,13 +100,15 @@ describe('sms.send.v1', () => {
     await expect(norm(sms({ evidence: [{ query_id: 'q9', row_number: 1 }] }))).rejects.toThrow(/outside this investigation/);
   });
 
-  test('an ended row, a row-level opt-out and a contact-level opt-out each refuse', async () => {
+  test('an ended row and a row-level opt-out each refuse; the retired contact-level column does not', async () => {
     const ended = makeDb(); ended.T.contact_phones[0].end_date = '2026-10-01';
     await expect(norm(sms(), ended)).rejects.toThrow(/has ended/);
     const rowOpt = makeDb(); rowOpt.T.contact_phones[0].sms_optout = 1;
     await expect(norm(sms(), rowOpt)).rejects.toThrow(/opted out of SMS/);
+    // Ruling 2026-10-27: consent is the row's flag only — contacts.contact_sms_optout is never read.
     const contactOpt = makeDb(); contactOpt.T.contacts[0].contact_sms_optout = 1;
-    await expect(norm(sms(), contactOpt)).rejects.toThrow(/opted out of SMS/);
+    await expect(norm(sms(), contactOpt)).resolves.toMatchObject({ kind: 'sms.send.v1' });
+    expect(contactOpt.seen.some((s) => /contact_sms_optout|contact_email_optout/.test(s))).toBe(false);
     // An EMAIL opt-out does not block a text.
     const emailOpt = makeDb(); emailOpt.T.contacts[0].contact_email_optout = 1; emailOpt.T.contact_phones[0].email_optout = 1;
     await expect(norm(sms(), emailOpt)).resolves.toMatchObject({ kind: 'sms.send.v1' });
@@ -187,11 +189,11 @@ describe('email.send.v1', () => {
     await expect(norm(email({ case_id: 'bad id!' }))).rejects.toThrow(/case_id is invalid/);
   });
 
-  test('consent: the row\'s email_optout and the contact\'s contact_email_optout each refuse', async () => {
+  test('consent: the row\'s email_optout refuses; the retired contact_email_optout does not', async () => {
     const rowOpt = makeDb(); rowOpt.T.contact_emails[0].email_optout = 1;
     await expect(norm(email(), rowOpt)).rejects.toThrow(/opted out of email/);
     const contactOpt = makeDb(); contactOpt.T.contacts[0].contact_email_optout = 1;
-    await expect(norm(email(), contactOpt)).rejects.toThrow(/opted out of email/);
+    await expect(norm(email(), contactOpt)).resolves.toMatchObject({ kind: 'email.send.v1' });
   });
 
   test('the subject is one line, before AND after resolution; caps mirror the mail route', async () => {

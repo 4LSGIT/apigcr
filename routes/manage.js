@@ -426,6 +426,13 @@ function fireManageSms(db, template, { contactId, apptId, kind }) {
       [contactId]
     );
     if (contact?.contact_phone && settings.sms_default_from) {
+      // An automated text never goes to an opted-out number (ruling
+      // 2026-10-27) — logged, not alerted: expected behaviour.
+      const optedOut = await require('../services/optoutService').findOptedOut(db, 'sms', contact.contact_phone);
+      if (optedOut.length) {
+        console.log(`[manage] ${kind} SMS skipped — contact ${contactId}'s number opted out (appt ${apptId})`);
+        return;
+      }
       await phoneService.sendSms(db, settings.sms_default_from, contact.contact_phone, message);
     }
   })().catch(err => alert(db, {
@@ -848,4 +855,5 @@ module.exports._test = {
   DEFAULT_ALLOW_CANCEL,
   DEFAULT_ALLOW_RESCHEDULE,
   DEFAULT_ALLOW_REBOOK,
+  fireManageSms,   // tests/optout.mysql.test.js — the opted-out number skip
 };

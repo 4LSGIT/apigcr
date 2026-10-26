@@ -902,12 +902,23 @@ async function sendApptConfirmation(db, { contactId, apptId, sms, email, message
       [contactId]
     );
 
-    if (sms && contact?.contact_phone && settings.sms_default_from) {
+    // An automated confirmation never goes to an opted-out recipient (ruling
+    // 2026-10-27): that channel is skipped, logged, not alerted — expected
+    // behaviour, not a fault.
+    const optout = require('./optoutService');
+    const smsOptedOut = !!(sms && contact?.contact_phone
+      && (await optout.findOptedOut(db, 'sms', contact.contact_phone)).length);
+    const emailOptedOut = !!(email && contact?.contact_email
+      && (await optout.findOptedOut(db, 'email', contact.contact_email)).length);
+    if (smsOptedOut)   console.log(`[APPT SERVICE] Confirmation SMS skipped — contact ${contactId}'s number opted out (appt ${apptId})`);
+    if (emailOptedOut) console.log(`[APPT SERVICE] Confirmation email skipped — contact ${contactId}'s address opted out (appt ${apptId})`);
+
+    if (sms && !smsOptedOut && contact?.contact_phone && settings.sms_default_from) {
       smsService.sendSms(db, settings.sms_default_from, contact.contact_phone, resolvedMessage)
         .catch(err => console.error('[APPT SERVICE] Confirmation SMS failed:', err.message));
     }
 
-    if (email && contact?.contact_email && settings.email_default_from) {
+    if (email && !emailOptedOut && contact?.contact_email && settings.email_default_from) {
       emailService.sendEmail(db, {
         from:    settings.email_default_from,
         to:      contact.contact_email,
@@ -2519,4 +2530,6 @@ module.exports = {
   // tests/calendarEvents.registry.test.js builds one envelope per source and
   // diffs the data.* path set against triggerService.CALENDAR_DATA_FIELDS.
   _calendarEnvelope,
+  // Opt-out test hook (tests/optout.mysql.test.js): the confirmation sender.
+  _sendApptConfirmation: sendApptConfirmation,
 };

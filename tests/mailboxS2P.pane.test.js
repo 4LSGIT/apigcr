@@ -39,6 +39,7 @@ const HTML = fs.readFileSync(path.join(ROOT, 'public/comms.html'), 'utf8');
 const PURIFY = fs.readFileSync(path.join(ROOT, 'public/js/vendor/purify-3.4.16.min.js'), 'utf8');
 const RENDER = fs.readFileSync(path.join(ROOT, 'public/js/mailRender.js'), 'utf8');
 const COLOR = fs.readFileSync(path.join(ROOT, 'public/js/mailboxColor.js'), 'utf8');
+const OPTOUT = fs.readFileSync(path.join(ROOT, 'public/js/optoutAck.js'), 'utf8'); // the send path's opt-out confirm
 
 const DOMS = [];
 afterEach(() => { DOMS.splice(0).forEach((d) => { try { d.window.close(); } catch (_) { /* noop */ } }); });
@@ -91,7 +92,7 @@ async function boot({ handler, width = 1024 } = {}) {
   const errors = [];
   window.addEventListener('error', (e) => errors.push(String(e.error || e.message)));
   window.addEventListener('unhandledrejection', (e) => errors.push(String(e.reason)));
-  for (const src of [PURIFY, RENDER, COLOR, inline[0]]) {
+  for (const src of [PURIFY, RENDER, COLOR, OPTOUT, inline[0]]) {
     const sc = window.document.createElement('script');
     sc.textContent = src;
     window.document.body.appendChild(sc);

@@ -2501,16 +2501,17 @@ async function normalizeSendAction(db, value, evidence, { currentUserId = null }
   }
 
   // The recipient row, reloaded: active, on this contact, consent intact.
-  // Consent is read where campaignService reads it (contacts.contact_*_optout)
-  // AND on the row the card addresses (contact_*s.*_optout) — either refuses.
+  // Consent is the row's flag (contact_*s.*_optout) — the one every sender
+  // reads (services/optoutService.js); the contact-level contact_*_optout
+  // columns are retired (ruling 2026-10-27).
   const [[contact]] = await db.query(
-    'SELECT contact_id, contact_name, contact_sms_optout, contact_email_optout FROM contacts WHERE contact_id = ? LIMIT 1', [contactId]);
+    'SELECT contact_id, contact_name FROM contacts WHERE contact_id = ? LIMIT 1', [contactId]);
   if (!contact) throw httpError(422, 'Send recipient contact is unavailable');
   const row = await config.get(db, recordId);
   if (!row || Number(row.contact_id) !== contactId) throw httpError(422, `Send recipient ${config.idField} ${recordId} is not on contact ${contactId}`);
   if (row.end_date != null) throw httpError(422, `Send recipient ${config.idField} ${recordId} has ended — only an active ${sms ? 'phone' : 'email'} can receive a send`);
   const bit = (v) => v === 1 || v === true || v === '1';
-  if (sms ? (bit(row.sms_optout) || bit(contact.contact_sms_optout)) : (bit(row.email_optout) || bit(contact.contact_email_optout))) {
+  if (sms ? bit(row.sms_optout) : bit(row.email_optout)) {
     throw httpError(422, `The recipient has opted out of ${sms ? 'SMS' : 'email'} — Casey does not send to an opted-out ${sms ? 'number' : 'address'}`);
   }
   const expectedUpdatedAt = contactActionTimestamp(row.updated_at);

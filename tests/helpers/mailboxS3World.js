@@ -24,6 +24,7 @@
 'use strict';
 
 const { makeWorld: makeS2World } = require('./mailboxS2World');
+const { answerOptout } = require('./optoutFake');
 
 const norm = (sql) => String(sql).replace(/\s+/g, ' ').trim();
 const ci = (a, b) => a != null && b != null && String(a).toLowerCase() === String(b).toLowerCase();
@@ -44,6 +45,8 @@ function makeWorld() {
   Object.assign(T, {
     email_credentials: [], email_log: [], scheduled_jobs: [], system_alerts: [], alert_state: [],
     admin_audit_log: [], app_settings: [],
+    // services/optoutService reads these (POST /api/mail/send's opt-out gate)
+    contact_emails: T.contact_emails || [],
   });
   const seq = { email_log: 0, scheduled_jobs: 0, system_alerts: 0, admin_audit_log: 0 };
 
@@ -76,6 +79,10 @@ function makeWorld() {
     const p = params || [];
     const rec = () => W.statements.push({ sql, params: clone(p) });
     let m;
+
+    // ── services/optoutService (the send route's opt-out gate) ──
+    const oo = answerOptout(sql, p, { emails: T.contact_emails, contacts: T.contacts || [] });
+    if (oo) { rec(); return oo; }
 
     // ── mailboxService.listSendable ──
     if (sql === `SELECT ${SENDABLE_COLS} FROM mailboxes m ORDER BY m.address ASC`) {

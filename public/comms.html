@@ -14,6 +14,7 @@
 <script src="/js/mailboxColor.js"></script>
 <script src="/js/ycNoTranscribe.js"></script>  <!-- admin-tools slot: the do-not-transcribe dialog -->
 <script src="/js/ycSubTab.js"></script>  <!-- the shell's workspace URL: this pane's tab (wsurl S3) -->
+<script src="/js/optoutAck.js"></script>  <!-- opted-out recipient: confirm, then resend acknowledged -->
 <style>
   /* Comms hub — mailbox-system arc, slices S2 (read) + S3 (compose / reply /
      Sent) + S-PH (the Phone tab: per-line texts + calls). Spec:
@@ -923,6 +924,9 @@
 // responseType 'blob' — a bare <a href> to the part route would 401.
 const P = window.parent;
 const api = (...args) => P.apiSend(...args);
+// The two sends ride this: an opted-out recipient's 409 becomes a confirm and
+// one acknowledged resend (public/js/optoutAck.js, ruling 2026-10-27).
+const sendApi = (path, method, body) => window.ycOptoutAck.send(api, path, method, body);
 const E = (id) => document.getElementById(id);
 const R = window.YCMailRender;
 
@@ -3117,7 +3121,7 @@ async function sendComposer(c) {
   c.ui.send.disabled = true;
   c.ui.send.replaceChildren(icon('fa-spinner'), 'Sending…');
   try {
-    const out = await api('/api/mail/send', 'POST', payload);
+    const out = await sendApi('/api/mail/send', 'POST', payload);
     c.sending = false; // sent: now it may close (closeComposer refuses one in flight)
     closeComposer(c, { keepDraft: false });
     const warn = ((out && out.warnings) || []).map((w) => w.message).filter(Boolean).join(' ');
@@ -4620,7 +4624,7 @@ function phWatchEcho(scope, party) {
 }
 
 async function phSendTo(line, party, text) {
-  return api(`/api/phone-lines/${line.id}/sms`, 'POST', { to: party, message: text });
+  return sendApi(`/api/phone-lines/${line.id}/sms`, 'POST', { to: party, message: text });
 }
 
 async function phoneSend() {

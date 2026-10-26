@@ -36,6 +36,7 @@ const PURIFY = fs.readFileSync(path.join(ROOT, 'public/js/vendor/purify-3.4.16.m
 const RENDER = fs.readFileSync(path.join(ROOT, 'public/js/mailRender.js'), 'utf8');
 const COLOR = fs.readFileSync(path.join(ROOT, 'public/js/mailboxColor.js'), 'utf8');
 const SENDABLE = fs.readFileSync(path.join(ROOT, 'public/js/phoneSendable.js'), 'utf8');
+const OPTOUT = fs.readFileSync(path.join(ROOT, 'public/js/optoutAck.js'), 'utf8');
 
 const DOMS = [];
 afterEach(() => { DOMS.splice(0).forEach((d) => { try { d.window.close(); } catch (_) { /* noop */ } }); });
@@ -140,7 +141,7 @@ function commsHandler(over = {}) {
     throw new Error(`unexpected ${method} ${url}`);
   };
 }
-const bootComms = (opts = {}) => bootPage({ url: 'https://app.4lsg.com/comms.html', html: COMMS, libs: [PURIFY, RENDER, COLOR], handler: commsHandler(opts.over), ...opts });
+const bootComms = (opts = {}) => bootPage({ url: 'https://app.4lsg.com/comms.html', html: COMMS, libs: [PURIFY, RENDER, COLOR, OPTOUT], handler: commsHandler(opts.over), ...opts });
 const phoneCalls = (calls) => calls.filter((c) => c.url && c.url.startsWith('/api/phone-lines'));
 
 async function openPhone(env) {
@@ -287,6 +288,41 @@ describe('comms.html — Phone tab', () => {
     expect(doc.querySelector('#ph-body .bub.pending')).toBeNull();
     expect([...doc.querySelectorAll('#ph-body .bub.out')].map((b) => b.dataset.id)).toEqual(['2', '20']);
   });
+
+  // Ruling 2026-10-27: a staff send to an opted-out number is WARNED — the
+  // route's 409 opted_out becomes a confirm (public/js/optoutAck.js) and, on
+  // OK, ONE resend carrying acknowledge_optout:true; Cancel sends nothing.
+  const optedOut409 = () => {
+    const e = new Error('Pat (313) 555-0001 (contact #12) has opted out of texts. Send anyway only if they asked for this message.');
+    e.status = 409; e.body = { status: 'error', code: 'opted_out', message: e.message, acknowledge_with: 'acknowledge_optout' };
+    return e;
+  };
+  for (const [answer, label] of [[true, 'OK resends ONCE with acknowledge_optout:true'], [false, 'Cancel sends nothing more and keeps the text']]) {
+    test(`opted-out number: the confirm shows the server's words; ${label}`, async () => {
+      const asked = [];
+      const env = await bootComms({
+        over: { 'POST /api/phone-lines/1/sms': (p) => { if (p.acknowledge_optout !== true) throw optedOut409(); return { status: 'success', to: p.to }; } },
+        before: (w) => { w.confirm = (t) => { asked.push(t); return answer; }; },
+      });
+      await openPhone(env);
+      const { doc, window, calls } = env;
+      doc.querySelector('#ph-list .msg[data-party="3135550001"]').click();
+      await tick(window, 60);
+      doc.getElementById('ph-text').value = 'hello';
+      doc.getElementById('ph-send').click();
+      await tick(window, 60);
+      expect(asked).toEqual([expect.stringMatching(/^Pat \(313\) 555-0001 \(contact #12\) has opted out of texts\..*\n\nSend anyway\?$/s)]);
+      const posts = calls.filter((c) => c.method === 'POST' && c.url === '/api/phone-lines/1/sms').map((c) => c.payload);
+      if (answer) {
+        expect(posts).toEqual([{ to: '3135550001', message: 'hello' }, { to: '3135550001', message: 'hello', acknowledge_optout: true }]);
+        expect(doc.getElementById('toast').textContent).toMatch(/Text sent/);
+      } else {
+        expect(posts).toEqual([{ to: '3135550001', message: 'hello' }]);
+        expect(doc.getElementById('toast').textContent).toMatch(/Not sent: Cancelled — nothing was sent \(the recipient has opted out\)/);
+        expect(doc.getElementById('ph-text').value).toBe('hello');
+      }
+    });
+  }
 
   test('a refused send says why and keeps the text', async () => {
     const env = await bootComms({ over: { 'POST /api/phone-lines/1/sms': () => { throw new Error('Send permission required on this phone line'); } } });

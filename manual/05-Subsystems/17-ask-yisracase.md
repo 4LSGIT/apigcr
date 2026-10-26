@@ -297,9 +297,11 @@ It cannot be recalled.*
 - **Who it goes to.** The recipient is always one of the contact's own active
   phone numbers or email addresses, found in Casey's lookup — never an address
   typed into the chat. The card names the person, the exact number or
-  address, and its label. A number or address that has opted out (on the row,
-  or the contact-level SMS/email opt-out) cannot be sent to: Casey says so
-  instead of preparing a card.
+  address, and its label. A number or address that has opted out (the SMS /
+  email opt-out on that phone or email row) cannot be sent to: Casey says so
+  instead of preparing a card. Unlike a person sending from Comms, Casey is
+  never offered "send anyway" — if the opt-out lands after the card was
+  prepared, the send is refused and nothing goes out.
 - **Who it comes from.** A phone line or mailbox you can send from (your own
   send access in Comms). When you don't name one and you have exactly one,
   Casey uses it; otherwise it asks which.

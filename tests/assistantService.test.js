@@ -539,9 +539,9 @@ describe('assistant knowledge and prompts', () => {
   });
 
   test('all assistant prompts are registered JSON prompts', () => {
-    expect(prompts.getPrompt('assistant_plan')).toMatchObject({ output_type: 'json', version: '18', model: 'claude-opus-5' });
-    expect(prompts.getPrompt('assistant_investigate')).toMatchObject({ output_type: 'json', version: '5', model: 'claude-opus-5' });
-    expect(prompts.getPrompt('assistant_answer')).toMatchObject({ output_type: 'json', version: '20', model: 'claude-opus-5' });
+    expect(prompts.getPrompt('assistant_plan')).toMatchObject({ output_type: 'json', version: '19', model: 'claude-opus-5' });
+    expect(prompts.getPrompt('assistant_investigate')).toMatchObject({ output_type: 'json', version: '6', model: 'claude-opus-5' });
+    expect(prompts.getPrompt('assistant_answer')).toMatchObject({ output_type: 'json', version: '21', model: 'claude-opus-5' });
     expect(prompts.getPrompt('assistant_task_draft_repair')).toMatchObject({ output_type: 'json', version: '11', model: 'claude-opus-5' });
     expect(prompts.getPrompt('assistant_plan').system).toMatch(/COLLATE utf8mb4_general_ci/);
     expect(prompts.getPrompt('assistant_plan').system).toMatch(/Never generate[\s\S]*x IN \(SELECT \.\.\. LIMIT n\)/);

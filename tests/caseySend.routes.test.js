@@ -243,6 +243,22 @@ describe('SMS: card → POST /api/phone-lines/:id/sms → Quo', () => {
     expect(world.W.T.admin_audit_log.filter((a) => a.tool === 'phone_send' && a.status === 'sent')).toHaveLength(1);
   });
 
+  test('an opt-out landing after the card was prepared: 409 opted_out BEFORE the claim, Quo never called; the key stays free', async () => {
+    const world = phoneWorld();
+    const draft = await assistant.normalizeActionDraft(proposalDb(world.W),
+      { kind: 'sms.send.v1', contact_id: 1309, phone_id: 12, line_id: 3, message: 'Hi', evidence: CITE }, EVID, { currentUserId: RENA });
+    world.W.T.contact_phones.push({ id: 12, contact_id: 1309, phone: '3135550001', end_date: null, sms_optout: 1 });
+    const request = sendActionRequest(draft);
+    expect(request.body).not.toHaveProperty('acknowledge_optout');   // the card never acknowledges
+    current = world;
+    const r = await post(request.path, request.body, tok(RENA), { 'Idempotency-Key': draft.draft_id });
+    expect(r.status).toBe(409);
+    expect(r.json).toMatchObject({ code: 'opted_out', opted_out: [{ contact_id: 1309 }] });
+    expect(r.json.idempotency).toBeUndefined();                     // the card reads it as a refusal, not "outcome unknown"
+    expect(quoCalls).toEqual([]);
+    expect(world.db.rows).toEqual([]);
+  });
+
   test('a provider failure after dispatch KEEPS the claim: the same key never reaches Quo again', async () => {
     const world = phoneWorld(); current = world;
     quoReply = () => ({ status: 504, body: { message: 'gateway timeout' } });
@@ -286,6 +302,22 @@ describe('email: card → POST /api/mail/send → SMTP', () => {
     W.grant(SENDER, 1, { read: 1, send: 1 });
     return { W, db: withSendStatements(W) };
   }
+
+  test('an opt-out landing after the card was prepared: 409 opted_out BEFORE the claim, nothing reaches SMTP', async () => {
+    const world = mailWorld();
+    const draft = await assistant.normalizeActionDraft(proposalDb(world.W),
+      { kind: 'email.send.v1', contact_id: 1309, email_id: 13, mailbox_id: 1, subject: 'Hi', body: 'Hello', evidence: CITE },
+      EVID, { currentUserId: SENDER });
+    world.W.T.contact_emails.push({ id: 13, contact_id: 1309, email: 'pat@example.com', end_date: null, email_optout: 1 });
+    current = world;
+    const request = sendActionRequest(draft);
+    const r = await post(request.path, request.body, tok(SENDER), { 'Idempotency-Key': draft.draft_id });
+    expect(r.status).toBe(409);
+    expect(r.json).toMatchObject({ code: 'opted_out', opted_out: [{ contact_id: 1309, destination: 'pat@example.com' }] });
+    expect(r.json.idempotency).toBeUndefined();
+    expect(mockSendMail).not.toHaveBeenCalled();
+    expect(world.db.rows).toEqual([]);
+  });
 
   test('SMTP receives exactly the subject and body the card showed; the key replays, one sendMail', async () => {
     const world = mailWorld();

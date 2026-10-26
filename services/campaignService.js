@@ -32,6 +32,10 @@ const { resolve }    = require('./resolverService');
 const phoneService = require('./phoneService');
 const emailService = require('./emailService');
 const { localToUTC } = require('./timezoneService');
+// Consent is the destination ROW's flag (contact_phones.sms_optout /
+// contact_emails.email_optout) — ruling 2026-10-27 retired the contact-level
+// contacts.contact_*_optout columns as a send input.
+const optout = require('./optoutService');
 
 // ─────────────────────────────────────────────────────────────
 // CONTACT SELECTION
@@ -62,9 +66,13 @@ async function getFilteredContacts(db, filters = {}) {
 
   // ── Build query ──
 
+  // The opt-out flags are the destination row's (optoutService's predicate,
+  // the same one executeSend re-checks per contact at send time).
   const selects = [
     'c.contact_id', 'c.contact_name', 'c.contact_phone', 'c.contact_email',
-    'c.contact_tags', 'c.contact_sms_optout', 'c.contact_email_optout'
+    'c.contact_tags',
+    `${optout.smsOptedOutSql('c.contact_phone')} AS sms_opted_out`,
+    `${optout.emailOptedOutSql('c.contact_email')} AS email_opted_out`
   ];
   const joins  = [];
   const wheres = [];
@@ -132,9 +140,9 @@ async function getFilteredContacts(db, filters = {}) {
 
   for (const c of allMatching) {
     if (channel === 'sms') {
-      if (!c.contact_phone || c.contact_sms_optout) { excluded++; continue; }
+      if (!c.contact_phone || Number(c.sms_opted_out) === 1) { excluded++; continue; }
     } else if (channel === 'email') {
-      if (!c.contact_email || c.contact_email_optout) { excluded++; continue; }
+      if (!c.contact_email || Number(c.email_opted_out) === 1) { excluded++; continue; }
     }
     contacts.push(c);
   }
@@ -552,7 +560,7 @@ async function executeSend(db, campaignId, contactId, jobMeta = {}) {
     // ── 3. Load contact ──
 
     const [[contact]] = await db.query(
-      'SELECT contact_id, contact_name, contact_phone, contact_email, contact_sms_optout, contact_email_optout FROM contacts WHERE contact_id = ?',
+      'SELECT contact_id, contact_name, contact_phone, contact_email FROM contacts WHERE contact_id = ?',
       [contactId]
     );
 
@@ -562,15 +570,15 @@ async function executeSend(db, campaignId, contactId, jobMeta = {}) {
       return { failed: true, reason: 'contact_not_found' };
     }
 
-    // ── 4. Check opt-out ──
+    // ── 4. Check opt-out — the destination row's flag, re-read at send time ──
 
-    if (campaign.type === 'sms' && contact.contact_sms_optout) {
+    if (campaign.type === 'sms' && (await optout.findOptedOut(db, 'sms', contact.contact_phone)).length) {
       await recordResult(db, campaignId, contactId, 'skipped', null, { reason: 'sms_optout' });
       await checkCompletion(db, campaignId);
       return { skipped: true, reason: 'sms_optout' };
     }
 
-    if (campaign.type === 'email' && contact.contact_email_optout) {
+    if (campaign.type === 'email' && (await optout.findOptedOut(db, 'email', contact.contact_email)).length) {
       await recordResult(db, campaignId, contactId, 'skipped', null, { reason: 'email_optout' });
       await checkCompletion(db, campaignId);
       return { skipped: true, reason: 'email_optout' };

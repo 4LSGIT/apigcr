@@ -9,6 +9,7 @@
 <script src="/themeSync.js"></script>
 <script src="/js/vendor/purify-3.4.16.min.js"></script>
 <script src="/js/mailRender.js"></script>
+<script src="/js/optoutAck.js"></script>
 <style>
   *, *::before, *::after { box-sizing: border-box; }
   html, body { margin: 0; min-height: 100%; background: var(--page-bg); color: var(--text); font-family: var(--ui); }
@@ -174,6 +175,9 @@
 
 const P = window.parent;
 const api = (...args) => P.apiSend(...args);
+// Replies ride this: an opted-out recipient's 409 becomes a confirm and one
+// acknowledged resend (public/js/optoutAck.js, ruling 2026-10-27).
+const sendApi = (path, method, body) => window.ycOptoutAck.send(api, path, method, body);
 const E = (id) => document.getElementById(id);
 const R = window.YCMailRender;
 const query = new URLSearchParams(location.search);
@@ -763,9 +767,9 @@ async function appendReply(details, item) {
             if (defaults.cc && defaults.cc.length) payload.cc = defaults.cc;
             if (linkType === 'case') payload.case_id = linkId;
             else if (item.case_id) payload.case_id = item.case_id;
-            await api('/api/mail/send', 'POST', payload);
+            await sendApi('/api/mail/send', 'POST', payload);
           } else {
-            await api(`/api/phone-lines/${encodeURIComponent(item.line_id)}/sms`, 'POST', { to: item.participant, message });
+            await sendApi(`/api/phone-lines/${encodeURIComponent(item.line_id)}/sms`, 'POST', { to: item.participant, message });
           }
           status.textContent = 'Sent'; body.disabled = true; cancel.textContent = 'Close';
           setTimeout(() => loadFeed({ silent: true }), 1500);

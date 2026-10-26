@@ -2,7 +2,7 @@
 //
 /**
  * Ask Casey A14 on REAL MySQL: every statement the direct-send normalizer
- * issues — the contact consent read (contact_*_optout, tinyint), the
+ * issues — the row consent read (contact_*s.*_optout, tinyint), the
  * subrecord reloads, resolverService's contacts⋈cases JOIN for placeholders,
  * the case-link predicate, the explicit-grant read, and the channel-access
  * SQL it reaches through mailboxService / phoneCommsService /
@@ -113,14 +113,19 @@ d('A14 direct sends: the normalizer\'s SQL on real MySQL', () => {
     expect((await norm(sms({ message: 'SSN {{contacts.contact_ssn}}' }))).ssn_warning).toBe(true);
   });
 
-  test('consent: tinyint opt-outs on the row and on the contact refuse on the engine', async () => {
+  test('consent: the row\'s tinyint opt-out refuses on the engine; the retired contact-level column does not', async () => {
     await q('UPDATE contact_phones SET sms_optout = 1 WHERE id = 12');
     await expect(norm(sms())).rejects.toThrow(/opted out of SMS/);
     await q('UPDATE contact_phones SET sms_optout = 0 WHERE id = 12');
-    await q('UPDATE contacts SET contact_email_optout = 1 WHERE contact_id = 1309');
+    await q('UPDATE contact_emails SET email_optout = 1 WHERE id = 13');
     await expect(norm(email())).rejects.toThrow(/opted out of email/);
     await expect(norm(sms())).resolves.toMatchObject({ kind: 'sms.send.v1' });
-    await q('UPDATE contacts SET contact_email_optout = 0 WHERE contact_id = 1309');
+    await q('UPDATE contact_emails SET email_optout = 0 WHERE id = 13');
+    // Ruling 2026-10-27: contacts.contact_*_optout is not consent any more.
+    await q('UPDATE contacts SET contact_sms_optout = 1, contact_email_optout = 1 WHERE contact_id = 1309');
+    await expect(norm(sms())).resolves.toMatchObject({ kind: 'sms.send.v1' });
+    await expect(norm(email())).resolves.toMatchObject({ kind: 'email.send.v1' });
+    await q('UPDATE contacts SET contact_sms_optout = 0, contact_email_optout = 0 WHERE contact_id = 1309');
   });
 
   test('an ended row and an unlinked case refuse', async () => {

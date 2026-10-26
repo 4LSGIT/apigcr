@@ -26,6 +26,8 @@ const path = require('path');
 const { JSDOM } = require('jsdom');
 
 const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'communicate.html'), 'utf8');
+// The page loads it with <script src>; JSDOM here fetches no external script.
+const OPTOUT = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'optoutAck.js'), 'utf8');
 const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 const LINE = '2485592400';
@@ -43,6 +45,7 @@ function boot({ whenAnswer = null } = {}) {
     runScripts: 'dangerously',
     url: 'https://example.test/communicate.html',
     beforeParse(window) {
+      window.eval(OPTOUT);
       window.apiSend = apiSend;
       window.firmData = {
         phoneLines: [{ phone_number: LINE, display_name: 'Main' }],

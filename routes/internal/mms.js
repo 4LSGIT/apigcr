@@ -17,6 +17,12 @@
  * send): phoneCommsService.staffSendGate, the same rule as the comms hub's
  * POST /api/phone-lines/:id/sms. API-key callers (automations, the internal
  * key) stay grant-blind (D6). Checked before anything is dispatched.
+ *
+ * OPT-OUT (ruling 2026-10-27, services/optoutService.js): an API-key caller is
+ * automation and is REFUSED (422 code 'opted_out') when the recipient's active
+ * row is opted out; a staff-JWT caller is WARNED — 409 code 'opted_out' until
+ * the body carries acknowledge_optout:true (public/js/optoutAck.js turns that
+ * into a confirm). Checked before anything is sent.
  */
 
 const express      = require('express');
@@ -24,6 +30,7 @@ const router       = express.Router();
 const jwtOrApiKey  = require('../../lib/auth.jwtOrApiKey');
 const phoneService = require('../../services/phoneService');
 const { staffSendGate } = require('../../services/phoneCommsService');
+const { optoutGate } = require('../../services/optoutService');
 
 router.post('/internal/mms/send', jwtOrApiKey, async (req, res) => {
   const { from, to, text, attachment_url } = req.body || {};
@@ -40,6 +47,12 @@ router.post('/internal/mms/send', jwtOrApiKey, async (req, res) => {
       const gate = await staffSendGate(req.db, req.auth.userId, from);
       if (!gate.ok) return res.status(gate.status).json({ status: 'error', message: gate.message });
     }
+    const opt = await optoutGate(req.db, {
+      channel: 'mms', dest: to, acknowledged: (req.body || {}).acknowledge_optout,
+      automation: !(req.auth && req.auth.type === 'jwt'),
+    });
+    if (opt.refusal) return res.status(opt.refusal.status).json(opt.refusal.body);
+    if (opt.overridden.length) console.log(`[internal/mms] user ${req.auth.userId} acknowledged opt-out for contact(s) ${opt.overridden.map((r) => r.contact_id).join(',')}`);
     const result = await phoneService.sendMms(req.db, from, to, text || '', attachment_url);
     res.json({ status: 'success', result });
   } catch (err) {

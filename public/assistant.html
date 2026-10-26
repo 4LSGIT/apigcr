@@ -1171,10 +1171,11 @@ function sendActionRequest(draft) {
   return { path: '/api/mail/send', method: 'POST', body: { mailbox_id: mailbox, to: [String(r.email)], subject: draft.subject, body_text: text }, idempotent: true };
 }
 
-// Click-time freshness through the canonical reads: the contact (its
-// contact-level opt-outs, which campaignService honours) and the contact's
-// active rows. Returns a refusal sentence, or '' when the reviewed row still
-// stands exactly as reviewed.
+// Click-time freshness through the canonical reads: the contact and its
+// active rows (consent is the row's opt-out flag — the contact-level columns
+// are retired, ruling 2026-10-27). Returns a refusal sentence, or '' when the
+// reviewed row still stands exactly as reviewed. The send route re-checks
+// consent itself and Casey never acknowledges an opt-out, so a race refuses.
 async function sendPrecheck(draft) {
   const sms = sendIsSms(draft);
   const r = draft.recipient || {};
@@ -1182,7 +1183,6 @@ async function sendPrecheck(draft) {
   const contact = await api(`/api/contacts/${id}`, null, 'GET');
   const c = contact && contact.contact;
   if (!c) return 'The recipient contact no longer exists. Nothing was sent.';
-  if (Number(sms ? c.contact_sms_optout : c.contact_email_optout) === 1) return `The recipient has opted out of ${sms ? 'SMS' : 'email'} since this card was prepared. Nothing was sent.`;
   const list = await api(`/api/contacts/${id}/${sms ? 'phones' : 'emails'}`, null, 'GET');
   const rows = (list && (sms ? list.phones : list.emails)) || [];
   const rowId = Number(sms ? r.phone_id : r.email_id);
@@ -1372,8 +1372,9 @@ const ACTION_FAMILIES = [
     danger: () => true,
     precheck: sendPrecheck,
     // Both send routes answer 409 only BEFORE dispatch (inactive line, a box
-    // that cannot send); their idempotency 409s carry body.idempotency and
-    // stay ambiguous.
+    // that cannot send, an opted-out recipient — code 'opted_out', which this
+    // card never acknowledges); their idempotency 409s carry body.idempotency
+    // and stay ambiguous.
     refusal409: true,
     resultText: sendResultText,
     appliedMessage: (draft, payload, replayed) => replayed

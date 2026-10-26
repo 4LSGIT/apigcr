@@ -36,6 +36,7 @@
  */
 'use strict';
 
+const { answerOptout } = require('./optoutFake');
 const norm = (sql) => sql.replace(/\s+/g, ' ').trim();
 
 /** Split at `word` (AND/OR) at paren depth 0, outside quotes. */
@@ -352,6 +353,11 @@ function makeCtaWorld() {
     if (/^SELECT `value` FROM app_settings WHERE `key` = \? LIMIT 1$/i.test(s)) {
       return [W.settings.has(params[0]) ? [{ value: W.settings.get(params[0]) }] : []];
     }
+    // services/optoutService (send_sms / send_email's automation gate). The
+    // world seeds no phone/email rows unless a test sets W.contactPhones /
+    // W.contactEmails.
+    const oo = answerOptout(s, params, { phones: W.contactPhones || [], emails: W.contactEmails || [], contacts: W.contacts });
+    if (oo) return oo;
     if (/FROM contacts WHERE contact_id = \?$/i.test(s)) {
       const c = W.contacts.get(Number(params[0]));
       return [c ? [{ ...c }] : []];

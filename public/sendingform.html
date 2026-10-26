@@ -16,6 +16,7 @@
   <script src="/js/videoInsert.js"></script>
   <script src="/js/assetpicker.js"></script>
   <script src="/js/phoneSendable.js"></script>
+  <script src="/js/optoutAck.js"></script>
   <style>
     .sf-form { max-width: 950px; margin: 0 auto; background: var(--surface); color: var(--text); padding: 20px; border-radius: 8px; box-shadow: var(--shadow); }
     .sf-contact-row { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 12px; }
@@ -213,6 +214,9 @@
 
 <script>
 const P = window.parent;
+// Staff sends through /internal/*/send: an opted-out recipient's 409 becomes a
+// confirm and one acknowledged resend (public/js/optoutAck.js, ruling 2026-10-27).
+const optoutSend = (path, method, body) => window.ycOptoutAck.send((...a) => P.apiSend(...a), path, method, body);
 const params = new URLSearchParams(location.search);
 const caseId = params.get('case_id');
 
@@ -619,8 +623,8 @@ async function send() {
       // ── PAYMENT OPTIONS ──
       if (action.type === 'payment_options') {
         for (const r of recipients) {
-          if (smsOn && r.phone) { await P.apiSend('/internal/sms/send', 'POST', { from: smsFrom, to: r.phone, message: PAYMENT_OPTIONS_TEXT }); successes.push(`Payment Options SMS → ${r.name}`); }
-          if (emailOn && r.email) { await P.apiSend('/internal/email/send', 'POST', withSig({ from: emailFrom, to: r.email, subject: 'Payment Options', html: PAYMENT_OPTIONS_HTML, text: PAYMENT_OPTIONS_TEXT })); successes.push(`Payment Options Email → ${r.name}`); }
+          if (smsOn && r.phone) { await optoutSend('/internal/sms/send', 'POST', { from: smsFrom, to: r.phone, message: PAYMENT_OPTIONS_TEXT }); successes.push(`Payment Options SMS → ${r.name}`); }
+          if (emailOn && r.email) { await optoutSend('/internal/email/send', 'POST', withSig({ from: emailFrom, to: r.email, subject: 'Payment Options', html: PAYMENT_OPTIONS_HTML, text: PAYMENT_OPTIONS_TEXT })); successes.push(`Payment Options Email → ${r.name}`); }
         }
       }
 
@@ -640,16 +644,16 @@ async function send() {
             if (action.mms_attachment) {
               const smsOpt = document.getElementById('smsFrom').selectedOptions[0];
               if (smsOpt?.dataset.mmsCapable === '1') {
-                await P.apiSend('/internal/mms/send', 'POST', {
+                await optoutSend('/internal/mms/send', 'POST', {
                   from: smsFrom, to: r.phone, text: recipSmsText, attachment_url: action.mms_attachment
                 });
                 successes.push(`Other MMS → ${r.name}`);
               } else if (recipSmsText) {
-                await P.apiSend('/internal/sms/send', 'POST', { from: smsFrom, to: r.phone, message: recipSmsText });
+                await optoutSend('/internal/sms/send', 'POST', { from: smsFrom, to: r.phone, message: recipSmsText });
                 successes.push(`Other SMS → ${r.name} (image skipped — not RC)`);
               }
             } else if (recipSmsText) {
-              await P.apiSend('/internal/sms/send', 'POST', { from: smsFrom, to: r.phone, message: recipSmsText });
+              await optoutSend('/internal/sms/send', 'POST', { from: smsFrom, to: r.phone, message: recipSmsText });
               successes.push(`Other SMS → ${r.name}`);
             }
           }
@@ -663,7 +667,7 @@ async function send() {
               const name = action.email_attachment.split('/').pop().split('?')[0] || 'attachment';
               emailPayload.attachment_urls = [{ url: action.email_attachment, name }];
             }
-            await P.apiSend('/internal/email/send', 'POST', withSig(emailPayload));
+            await optoutSend('/internal/email/send', 'POST', withSig(emailPayload));
             successes.push(`Other Email → ${r.name}`);
           }
         }

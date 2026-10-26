@@ -936,16 +936,6 @@ Casey slice; the first is a security gap in the native editor.
 
 ## From the Ask Casey arc — A14 direct sends (2026-10-27) — deferred
 
-- **Native sends do not check opt-out (product/legal decision, Fred).**
-  `POST /api/phone-lines/:id/sms` and `POST /api/mail/send` send to an
-  opted-out number/address when a PERSON sends from Comms; so do the
-  workflow / sequence `send_sms` / `send_email` functions. Only
-  `campaignService` (contact-level `contact_*_optout`) and, since A14, Casey's
-  send cards (row-level AND contact-level) refuse. Nothing in the services
-  writes `contacts.contact_sms_optout` / `contact_email_optout`; the per-row
-  flags are what the contact form edits — so campaigns read the column that
-  never moves. Decide: which column is consent, and whether the hub routes
-  refuse or warn. Measured 2026-10-26: 1 opted-out active phone, 0 emails.
 - **Attachments / MMS, cc/bcc, reply threading, scheduled sends** for Casey
   send cards — each its own reviewed shape (a fetched attachment URL still
   stays model-uninventable).
@@ -962,6 +952,69 @@ Casey slice; the first is a security gap in the native editor.
 - **A claimed-then-refused send reopens as "outcome unknown"** (the P5 ledger
   limit below): the route's refusal is shown live, but reopening the chat
   shows the conservative wording.
+
+## Recipient opt-out (ruling 2026-10-27) — follow-ups
+
+- **Drop `contacts.contact_sms_optout` / `contact_email_optout` (own slice,
+  needs Fred's go).** Retired by the ruling: consent is the active row's
+  `contact_phones.sms_optout` / `contact_emails.email_optout`, read only
+  through `services/optoutService.js`. Sweep done 2026-10-26 (CLAUDE.md
+  "Dropping a COLUMN"):
+  - *Live data:* all 1,106 contacts hold 0 in both columns — the drop loses
+    nothing.
+  - *Code:* no reader or writer left in services / routes / lib / public
+    except `lib/reportSchema/manifest.js` (the report builder still lists both
+    columns under `contacts`; remove them there — and re-run
+    `scripts/reportGrantUserProvision.js`, which derives column grants from the
+    manifest — before the DROP, or a report naming them fails). Test fixtures
+    that still create/seed them: `tests/caseySendAction.mysql.test.js` (INSERT
+    and the retirement assertion — it clones `ref/database.sql`, so it breaks
+    the moment the column is gone), `tests/helpers/caseySendProposalDb.js`,
+    `tests/assistantUi.test.js`, `tests/caseySendAction.test.js`. Writers: none
+    in code — only raw SQL (SU db console, the legacy `/db` family).
+  - *Schema objects:* none — no trigger (`after_contact_update`,
+    `contact_name_insert/update` do not name them), view, index or generated
+    column in `ref/database.sql` references either column.
+  - *Definitions in app tables:* zero hits for either name in
+    `report_definitions` (+`_versions`), `admin_saved_queries`,
+    `workflow_steps`, `workflow_versions`, `workflows.test_input`,
+    `sequence_steps`, `sequence_templates`, `sequence_template_versions`,
+    `trigger_rules`, `trigger_rule_actions`, `hooks`, `hook_targets`,
+    email/phone ingest rules + actions, `scheduled_jobs`, `field_defs`,
+    `campaigns`, `api_saved_requests`, `ui_config` (+`_versions`),
+    `form_template_versions`, `contract_templates`, `portal_cards`,
+    `cta_links`, `pages`, `tools` (+`tool_versions`), `booking_views`,
+    `checklists`, `pipeline_stage_requirements`, `log.log_data` (RO endpoint,
+    2026-10-26). NOT swept: `app_settings` (denied to every RO key — check from
+    the SU console before the drop).
+  - *Shape:* a node migration script on one connection with a low
+    `lock_wait_timeout` (CHECK by default, `--apply`), per CLAUDE.md — worked
+    example `scripts/customFieldsS5bDrop.js`.
+- **Schema COMMENTs for the drop slice's migration:**
+  `contact_phones.sms_optout` — "messaging consent: 1 = opted out of SMS/MMS.
+  THE consent flag (services/optoutService.js); only the active row
+  (end_date IS NULL) counts; automation refuses, staff sends warn";
+  `contact_emails.email_optout` — the same for email.
+- **`POST /api/cta/:id/send` is not gated** (SU-minted manual CTA send to a
+  free `to`). Warn like the other staff routes, or refuse? CTA *plans* that run
+  `send_sms` / `send_email` already refuse.
+- **Portal login PIN is exempt by design** (`portalAuthService`: the client
+  typed that destination seconds ago and asked for the code; refusing locks
+  them out of the portal). Confirm.
+- **Appointment confirmations skip silently-ish.** A staff-ticked
+  confirm SMS/email to an opted-out recipient is skipped with a log line only;
+  the appointment form could show the opt-out next to the confirm boxes.
+- **Inbound STOP does not set the flag.** A carrier STOP surfaces as
+  `phone_event_log.delivery_reason = 'opted_out'` on later sends, but nothing
+  sets `sms_optout`; an automation (or the STOP handler above) could.
+- **Sequence preview** (`previewEnrollmentSteps`) does not flag a step that
+  would skip for opt-out.
+- **Sending forms:** declining the opt-out confirm aborts the rest of that
+  action's recipients — the page's existing any-error-aborts-the-action
+  loop. Per-recipient error handling would fix both.
+- **Not gated on purpose:** e-sign reminders / requests (the provider sends),
+  the legacy `/ringcentral/send-sms` trap, and every staff/IT-recipient send
+  (alerts, digests, task notices, decision requests to a user).
 
 ## From the Ask Casey arc — P4 idempotency follow-ups (2026-10-22)
 
@@ -1089,13 +1142,12 @@ Active surfaces with known next steps.
   300-contact SMTP campaign spends the whole 300/day smtp budget and locks the
   hub for humans), non-`bulk_ok` credentials refused above the cap, a
   campaign-send capability (every campaign route is plain `jwtOrApiKey`: any
-  staff login sends as any firm address), and opt-out checks in the sequence
-  send path (sequences check none). **Cap RULED (Fred, 2026-10-22): 50
+  staff login sends as any firm address). **Cap RULED (Fred, 2026-10-22): 50
   default, firm-configurable** — live `campaigns.contact_count` was checked
   first: the largest campaign ever sent is 12 contacts, so 50 touches no real
   use today.
 
-- **Opt-out system.** Four-step plan: (A) contact form toggles, (B) warn-but-don't-block on direct sends (Swal confirmation), (C) opted-out badges, (D) inbound STOP handler via YisraHook.
+- **Opt-out system.** The row toggles (contact form) and the staff warn-but-don't-block on direct sends are live (ruling 2026-10-27 — see "Recipient opt-out" above). Left: opted-out badges on the contact / compose surfaces, and an inbound STOP handler via YisraHook.
 
 - **Image library refactor.** Picker, upload dialog, delete, and the "Save to library" checkbox are duplicated across `campaign.html`, `communicate.html`, `sendingform.html` (some with `sf` prefix to avoid collision). Extract to a standalone iframe-loadable module — e.g. `/js/imageLibrary.js` exposing `imageLibrary.pickImage()`, `imageLibrary.uploadDialog({ accept, maxMB })`, `imageLibrary.deleteImage(id)`. Each consumer drops in a `<script>` tag and gets consistent behavior. Bundle these into the refactor:
   - **File-type gating.** Email-attachment dialog (`campaign.html` ~line 1030) accepts PDFs/docs and offers "Save to library" — currently inserts the row but renders as a broken `<img>` in the picker. Either gate the checkbox to `image/*` MIME types, or rename the column/feature and teach the picker to render non-images with a file-type icon.

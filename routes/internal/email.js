@@ -5,7 +5,15 @@
  * POST /internal/email/send
  *
  * Thin HTTP wrapper around emailService.
- * Protected by jwtOrApiKey — internal use only.
+ * Protected by jwtOrApiKey — internal use only. Despite the path this is also
+ * a live STAFF send path (public/communicate.html, public/sendingform*.html).
+ *
+ * OPT-OUT (ruling 2026-10-27, services/optoutService.js): an API-key caller is
+ * automation and is REFUSED (422 code 'opted_out') when the active row of any
+ * address in `to` is opted out; a staff-JWT caller is WARNED — 409 code
+ * 'opted_out' until the body carries acknowledge_optout:true
+ * (public/js/optoutAck.js turns that into a confirm). Checked before anything
+ * is sent.
  *
  * Body:
  *   from         string  - must match a row in email_credentials
@@ -27,6 +35,7 @@ const express = require("express");
 const router = express.Router();
 const jwtOrApiKey = require("../../lib/auth.jwtOrApiKey");
 const emailService = require("../../services/emailService");
+const { optoutGate } = require("../../services/optoutService");
 
 router.post("/internal/email/send", jwtOrApiKey, async (req, res) => {
   const { from, to, subject, text, html, attachments, attachment_urls, signature } = req.body;
@@ -39,6 +48,12 @@ router.post("/internal/email/send", jwtOrApiKey, async (req, res) => {
   }
 
   try {
+    const opt = await optoutGate(req.db, {
+      channel: "email", dest: to, acknowledged: req.body.acknowledge_optout,
+      automation: !(req.auth && req.auth.type === "jwt"),
+    });
+    if (opt.refusal) return res.status(opt.refusal.status).json(opt.refusal.body);
+    if (opt.overridden.length) console.log(`[internal/email] user ${req.auth.userId} acknowledged opt-out for contact(s) ${opt.overridden.map((r) => r.contact_id).join(",")}`);
     const result = await emailService.sendEmail(req.db, {
       from, to, subject, text, html, attachments, attachment_urls,
       signature: signature === true

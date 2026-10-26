@@ -823,7 +823,17 @@ function fireSideEffects(db, view, { apptId, contactId, providerId, start }) {
         [contactId]
       );
 
-      if (view.confirm_sms && contact?.contact_phone && settings.sms_default_from) {
+      // Automated confirmations skip an opted-out recipient (ruling 2026-10-27)
+      // — logged, never alerted: expected behaviour, not a send failure.
+      const optout = require('../services/optoutService');
+      const smsOptedOut = !!(view.confirm_sms && contact?.contact_phone
+        && (await optout.findOptedOut(db, 'sms', contact.contact_phone)).length);
+      const emailOptedOut = !!(view.confirm_email && contact?.contact_email
+        && (await optout.findOptedOut(db, 'email', contact.contact_email)).length);
+      if (smsOptedOut)   console.log(`[booking] confirmation SMS skipped — contact ${contactId}'s number opted out (view=${view.slug} appt=${apptId})`);
+      if (emailOptedOut) console.log(`[booking] confirmation email skipped — contact ${contactId}'s address opted out (view=${view.slug} appt=${apptId})`);
+
+      if (view.confirm_sms && !smsOptedOut && contact?.contact_phone && settings.sms_default_from) {
         phoneService.sendSms(db, settings.sms_default_from, contact.contact_phone, message)
           .catch(err => alert(db, {
             source: 'app', kind: 'booking_confirm_sms_failed', severity: 'error',
@@ -832,7 +842,7 @@ function fireSideEffects(db, view, { apptId, contactId, providerId, start }) {
             message: `view=${view.slug} appt=${apptId} contact=${contactId}: ${err.message}`,
           }));
       }
-      if (view.confirm_email && contact?.contact_email && settings.email_default_from) {
+      if (view.confirm_email && !emailOptedOut && contact?.contact_email && settings.email_default_from) {
         emailService.sendEmail(db, {
           from:    settings.email_default_from,
           to:      contact.contact_email,
@@ -1012,3 +1022,6 @@ router.post('/api/contacts/:id/booking-link', jwtOrApiKey, async (req, res) => {
 });
 
 module.exports = router;
+// Test-only surface (tests/optout.mysql.test.js): the post-create side effects
+// (the confirmation's opted-out skip). Rides along on the router export.
+module.exports._test = { fireSideEffects };

@@ -1292,9 +1292,29 @@ describe('A14 send cards (sms.send.v1 / email.send.v1)', () => {
     expect(m.action_draft.status).toBe('applied');
   });
 
+  test('the retired contact-level opt-out columns are not consent: only the row\'s flag refuses (ruling 2026-10-27)', async () => {
+    const m = smsDraft();
+    const { writes } = await run(m, { read: reads({ contact: { contact_sms_optout: 1, contact_email_optout: 1 } }) });
+    expect(writes).toHaveLength(1);
+    expect(m.action_draft.status).toBe('applied');
+  });
+
+  test('a send route\'s 409 opted_out (a race past the precheck) is a refusal: ONE POST, never acknowledged, nothing resent', async () => {
+    const m = smsDraft();
+    const write = async () => {
+      const e = new Error('Pat One (313) 555-0001 (contact #1309) has opted out of texts. Send anyway only if they asked for this message.');
+      e.status = 409; e.body = { status: 'error', code: 'opted_out', acknowledge_with: 'acknowledge_optout' };
+      throw e;
+    };
+    const { writes } = await run(m, { write });
+    expect(writes).toHaveLength(1);
+    expect(writes[0].body).not.toHaveProperty('acknowledge_optout');
+    expect(m.action_draft.refusal_error).toMatch(/^The server refused this \(Pat One .*opted out of texts/);
+    expect(m.action_draft.ambiguous_error).toBeUndefined();
+  });
+
   test('click-time freshness: an opt-out, an ended/changed/missing row refuses BEFORE any claim or write', async () => {
     const cases = [
-      [{ contact: { contact_sms_optout: 1 } }, /opted out of SMS since/],
       [{ phone: { sms_optout: 1 } }, /has opted out since/],
       [{ phone: { end_date: '2026-10-26' } }, /no longer active/],
       [{ noRow: true }, /no longer active/],

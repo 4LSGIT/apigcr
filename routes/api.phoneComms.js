@@ -95,6 +95,7 @@ const mbx = require('../services/mailboxService');
 const phone = require('../services/phoneCommsService');
 const archiveView = require('../services/commsArchiveView');
 const { idempotentRequest, sendIdempotencyError, releaseOnRefusalOnly } = require('../lib/requestIdempotency');
+const optout = require('../services/optoutService');
 
 const TOOL = 'phone_lines';
 const SEND_TOOL = 'phone_send';
@@ -463,6 +464,17 @@ router.post('/api/phone-lines/:id/sms', jwtOrApiKey, requireJwt, async (req, res
     // step-up on a WRITE — checked before anything is dispatched, so
     // apiSend's prompt-and-retry can never send twice.
     if (access.su && !isElevated(req)) return rejectNoElevation(req, res, SEND_TOOL, meta);
+    // Opt-out WARNS a staff sender (ruling 2026-10-27): 409 code 'opted_out'
+    // until the body carries acknowledge_optout:true — checked before the
+    // limiter and the idempotency claim, so the confirm-and-resend is one
+    // send and reuses its key. Casey's card never acknowledges, so it refuses.
+    const gate = await optout.optoutGate(req.db, {
+      channel: 'sms', dest: phone.normalizeTo(body.to).ten, acknowledged: body.acknowledge_optout,
+    });
+    if (gate.refusal) {
+      audit(req, 'refused_opted_out', meta, SEND_TOOL);
+      return res.status(gate.refusal.status).json(gate.refusal.body);
+    }
     // Counted only once the caller may send (an SU's prompt-and-retry is one send).
     if (sendLimited(`u${uid}`)) {
       return res.status(429).json({ status: 'error', message: 'Too many texts from you in a few minutes — wait a little and try again.' });
@@ -470,7 +482,12 @@ router.post('/api/phone-lines/:id/sms', jwtOrApiKey, requireJwt, async (req, res
     const { value: out, replayed } = await idempotentRequest(req, 'phone_lines.sms_send',
       () => phone.sendSms(req.db, line, body), { releaseOnError: releaseOnRefusalOnly });
     // A replay sent nothing, so it is not audited as a send.
-    if (!replayed) audit(req, 'sent', { ...meta, via: access.su ? 'su' : 'grant', length: out.length }, SEND_TOOL);
+    if (!replayed) {
+      audit(req, 'sent', {
+        ...meta, via: access.su ? 'su' : 'grant', length: out.length,
+        ...(gate.overridden.length ? { acknowledged_optout: gate.overridden.map((r) => r.contact_id) } : {}),
+      }, SEND_TOOL);
+    }
     res.json({ status: 'success', line_id: id, to: out.to, result: out.result, ...(replayed ? { replayed: true } : {}) });
   } catch (err) {
     if (sendIdempotencyError(res, err)) return;

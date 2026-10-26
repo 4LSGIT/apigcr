@@ -29,6 +29,7 @@ Pre-filled from the case's Primary and Secondary contacts. Phone and email field
 - **Method:** SMS and/or Email checkboxes (both default on)
 - **SMS from:** dropdown populated from `window.parent.firmData.phoneLines` (loaded once by the shell from `/api/firm-data`), then narrowed to the lines the current user may **send** from (`GET /api/phone-lines/sendable` — phone-line Access, Connections → Phone Lines; superusers keep every line), preselecting the user's `default_phone`. Since 2026-10-12 `/internal/sms/send` and `/internal/mms/send` refuse a staff user without Send on the `from` line (automations are not checked)
 - **Email from:** dropdown populated from `window.parent.firmData.emailFrom`, preselects the current user's `default_email`
+- **Opted-out recipients:** a send to a number or address marked opted out on the contact's phone / email row stops and asks first (ruling 2026-10-27) — **OK** sends anyway, **Cancel** skips it (reported as an error line for that action, and the rest of that action's recipients are not sent). Send anyway only when the client asked for the message.
 
 The form reads these from the parent's `firmData` object — it does not make its own API calls for phone lines, email senders, or user info. Providers other than RingCentral are labeled "(SMS only)" in the dropdown because MMS is RingCentral-only.
 

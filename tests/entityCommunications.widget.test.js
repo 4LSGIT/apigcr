@@ -5,6 +5,8 @@ const path = require('path');
 const { JSDOM } = require('jsdom');
 
 const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'entityCommunications.html'), 'utf8');
+// JSDOM loads no <script src>: the page's opt-out helper is evaluated by hand.
+const OPTOUT = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'optoutAck.js'), 'utf8');
 const settle = () => new Promise(resolve => setTimeout(resolve, 0));
 
 function boot(items = [], { type = 'contact', id = '42', contacts = [], responder = null, parentReady = true } = {}) {
@@ -20,6 +22,7 @@ function boot(items = [], { type = 'contact', id = '42', contacts = [], responde
     runScripts: 'dangerously',
     url: `https://example.test/entityCommunications.html?link_type=${type}&link_id=${id}`,
     beforeParse(window) {
+      window.eval(OPTOUT);
       if (parentReady) window.apiSend = apiSend;
       window.firmData = { id: 1 };
       window.entityData = { contact: { contact_id: 42 } };

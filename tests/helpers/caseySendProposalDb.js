@@ -34,7 +34,7 @@ function makeDb(over = {}) {
     async query(sql, p = []) {
       const s = String(sql).replace(/\s+/g, ' ').trim();
       seen.push(s);
-      if (s === 'SELECT contact_id, contact_name, contact_sms_optout, contact_email_optout FROM contacts WHERE contact_id = ? LIMIT 1') {
+      if (s === 'SELECT contact_id, contact_name FROM contacts WHERE contact_id = ? LIMIT 1') {
         return [T.contacts.filter((c) => c.contact_id === Number(p[0]))];
       }
       if (/FROM contact_phones cp .* WHERE cp\.id = \?$/.test(s)) return [T.contact_phones.filter((r) => r.id === Number(p[0]))];

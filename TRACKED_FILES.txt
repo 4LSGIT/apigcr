@@ -356,6 +356,7 @@ public/js/mascot/skins/roomba.js
 public/js/mascot/skins/snail.js
 public/js/mascot/skins/spider.js
 public/js/mascot/skins/ufo.js
+public/js/optoutAck.js
 public/js/phoneSendable.js
 public/js/reportCharts.js
 public/js/vendor/purify-3.4.16.min.js
@@ -1033,6 +1034,7 @@ services/mailbox/mailboxIngestService.js
 services/mailbox/mailboxSendService.js
 services/mailboxService.js
 services/oauthService.js
+services/optoutService.js
 services/pabblyService.js
 services/pageService.js
 services/pdfRenderService.js
@@ -1353,6 +1355,7 @@ tests/helpers/mailRenderBrowser.js
 tests/helpers/mailboxS1World.js
 tests/helpers/mailboxS2World.js
 tests/helpers/mailboxS3World.js
+tests/helpers/optoutFake.js
 tests/helpers/phoneSPHWorld.js
 tests/helpers/renderSmoke.js
 tests/helpers/scriptGuard.js
@@ -1470,6 +1473,9 @@ tests/moduleLoad.smoke.test.js
 tests/multipartBody.test.js
 tests/mySettings.test.js
 tests/nameKeyOrgKind.test.js
+tests/optout.mysql.test.js
+tests/optout.routes.test.js
+tests/optoutAck.test.js
 tests/orphanAdoptDialog.opts.test.js
 tests/pageLanding.landingAssets.test.js
 tests/pageLanding.originsep.test.js

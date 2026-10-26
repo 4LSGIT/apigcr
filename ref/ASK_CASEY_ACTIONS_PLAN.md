@@ -618,16 +618,18 @@ unchanged. These are the one family whose route IS an authorization seat
 - **Recipient:** never typed. One evidence row must carry the exact
   `contact_id` and `phone_id` / `email_id`; the normalizer reloads the row
   (on that contact, `end_date IS NULL`) and refuses on consent — the row's
-  `sms_optout` / `email_optout` OR the contact's `contact_sms_optout` /
-  `contact_email_optout` (the columns `campaignService` honours). Measured
-  live 2026-10-26: 1 of 1,113 active phones opted out, 0 of 1,108 emails, 0
-  contacts; nothing in the services writes the contact-level columns. The
-  email address is run through the mail route's own `parseRecipient`.
+  `sms_optout` / `email_optout`, the one consent flag every sender reads
+  (`services/optoutService.js`; the contact-level `contact_*_optout` columns
+  are retired, ruling 2026-10-27). Measured live 2026-10-26: 1 of 1,113
+  active phones opted out, 0 of 1,108 emails. The email address is run
+  through the mail route's own `parseRecipient`.
 - **Click-time freshness (correction 1):** the card's `precheck` re-reads
   `GET /api/contacts/:id` and `GET /api/contacts/:id/{phones|emails}` and
   refuses — before the ledger claim, so nothing is spent — when the row ended,
-  opted out, or its value / `updated_at` moved; a contact-level opt-out
-  refuses too. A failed read leaves the card retryable.
+  opted out, or its value / `updated_at` moved. A failed read leaves the card
+  retryable. An opt-out landing after the precheck is refused by the send
+  route itself (409 `opted_out`, before the idempotency claim): the card never
+  sends `acknowledge_optout`, so it reads the 409 as a refusal.
 - **Sender:** a literal `line_id` / `mailbox_id` the user can send from
   (`mailboxService.getAccess` can_send + active line; `mailboxSendService
   .resolveIdentity` for a mailbox). Omitted → the user's ONLY explicit
@@ -670,9 +672,10 @@ bulk sends, and the email's composer Case field (`case_id` → case link) is
 NOT sent — a case only feeds placeholders. Appointment cards keep forcing
 their own confirmations off (course correction 3 unchanged): their routes
 resolve `{{…}}` after the click, so a client message is a separate send card.
-Each is filed in `ref/plans.md`. **Not changed for humans:** neither native
-route checks opt-out for a person sending from Comms — a product/legal call,
-filed. **Sync bus:** neither send route has a `yc-sync` matcher, for human
+Each is filed in `ref/plans.md`. **Humans:** since the opt-out ruling
+(2026-10-27) both native routes WARN a person sending from Comms (409
+`opted_out` until `acknowledge_optout:true`); Casey cannot acknowledge.
+**Sync bus:** neither send route has a `yc-sync` matcher, for human
 and Casey sends alike (the record arrives later through the provider echo /
 mail ingest); no Casey-only emit was added.
 
@@ -1363,9 +1366,9 @@ publishes it", danger-styled like the sequence card; the publish card's
 effects name each send as `external-send` with its recipient expression.
 Prompts (answer / plan / repair) teach sends as authorable;
 `tests/assistantPromptKinds.test.js` pins the old exclusion wording out of
-every stage. Opt-out is not checked by `send_sms` / `send_email` at run time
-(only `campaignService` honours `sms_optout` / `email_optout`) — true of
-human-authored send steps too, and an A14 input.
+every stage. At run time `send_sms` / `send_email` refuse an opted-out
+recipient (ruling 2026-10-27) and the engine records the step skipped — for
+human-authored send steps too.
 
 **A17.7: Start a workflow.**
 

@@ -131,6 +131,9 @@ const CASE_ID_RE = /^[A-Za-z0-9_-]{1,20}$/; // mailReadService.caseLink's rule
 const BODY_KEYS = Object.freeze([
   'mailbox_id', 'to', 'cc', 'bcc', 'subject', 'body_text', 'body_html',
   'in_reply_to_message_fk', 'quote_original', 'signature', 'case_id',
+  // The staff sender's acknowledgement of an opted-out recipient — read by
+  // the route's opt-out gate (services/optoutService.js), nothing here.
+  'acknowledge_optout',
 ]);
 
 const EMAIL_RE = /^[^\s@<>()[\]\\,;:"]+@[^\s@<>()[\]\\,;:"]+\.[^\s@<>()[\]\\,;:"]+$/;
@@ -381,6 +384,7 @@ function validateSendBody(body) {
     ? null : toId(body.in_reply_to_message_fk, 'in_reply_to_message_fk');
   out.quote_original = has(body, 'quote_original') ? toBool(body.quote_original, 'quote_original') : true;
   out.signature = has(body, 'signature') ? toBool(body.signature, 'signature') : false;
+  out.acknowledge_optout = has(body, 'acknowledge_optout') ? toBool(body.acknowledge_optout, 'acknowledge_optout') : false;
   // S2P §G: the composer's optional Case field. Shape-checked here; existence
   // is checked against `cases` BEFORE dispatch (sendFromMailbox) — an unknown
   // case is a 400 and nothing leaves.

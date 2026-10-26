@@ -144,6 +144,14 @@ it.
 
 ---
 
+## Replying to someone who opted out
+
+Replies from this tab (and texts / emails from the contact's **Send** form)
+go through the same check as Comms: when the number or address is marked
+*opted out* on the contact's phone or email row, you are asked first — **OK**
+sends anyway, **Cancel** sends nothing. Send anyway only when the client asked
+for the message. See [Mailboxes → Sending mail](../08-Admin-Tools/08-mailboxes.md#sending-mail--comms).
+
 ## Texts that didn't arrive
 
 An outbound text whose phone carrier reported a failure wears a red
