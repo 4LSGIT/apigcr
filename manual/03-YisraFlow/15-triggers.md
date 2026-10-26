@@ -242,7 +242,9 @@ filter — which is the intended behaviour, not a silent half-match.
 - **NULL `match_config` on conditions mode is NON-match, not match-all.** The underlying `evaluateConditions(null, …)` returns true, which for an automation rule would silently fire on every event of that type.
 - **An explicit empty condition list IS match-all**: `{"operator":"and","conditions":[]}`. That's the supported way to say "every one of these events," and the editor confirms before saving an active one.
 
-Code mode runs in `node:vm` with a bare context (no `process`, `require`, `fetch`, `console`, timers) and a 200 ms timeout. The timeout is real protection against `while(true)` parking the event loop; the bare context is defence-in-depth, **not** a security boundary against a determined author.
+Code mode runs in `node:vm` with a bare context (no `process`, `require`, `fetch`, `console`, timers) and a 15 s timeout (`TRIGGER_CODE_TIMEOUT_MS`). The timeout is real protection against `while(true)` parking the event loop; the bare context is defence-in-depth, **not** a security boundary — the envelope handed in as `input` is a server object, so code can walk back from it to the server process itself.
+
+**Code mode needs `automations.manage` (admin / IT).** Because a `code` match or transform is JavaScript that runs inside the server process, saving a rule with one — or testing a code body in the editor's draft test (`test-draft`) — is refused (403, "requires the automations.manage capability") for anyone without that capability. Conditions, mapper and passthrough editing and testing stay open to all staff, and so do the dry run and Run live, which only run saved rules. Because the editor saves the whole rule, a staff user also can't save other edits (name, active, actions) to a rule that is in code mode; ask an administrator.
 
 ### Transform modes
 
@@ -454,12 +456,12 @@ Before U5 this matched `data.appt_type in [Initial Strategy Session, Strategy Se
 | `GET /api/triggers/rules` | jwt/api_key | List rules (`?event_type`), actions nested |
 | `GET /api/triggers/rules/:id` | jwt/api_key | One rule |
 | `GET /api/triggers/rules/:id/history` | jwt/api_key | Recent runs of this rule (`?limit`, default 20, max 100) |
-| `POST /api/triggers/rules` | jwt/api_key | Create (optional `actions` array) |
-| `PUT /api/triggers/rules/:id` | jwt/api_key | Partial update; `actions` if present REPLACES the set |
+| `POST /api/triggers/rules` | jwt/api_key (+ `automations.manage` for a code side) | Create (optional `actions` array) |
+| `PUT /api/triggers/rules/:id` | jwt/api_key (+ `automations.manage` when it touches a code side) | Partial update; `actions` if present REPLACES the set |
 | `DELETE /api/triggers/rules/:id` | jwt/api_key | Delete rule + actions (history survives) |
 | `GET /api/triggers/executions` | jwt/api_key | Log (`?event_type&status&case_id&contact_id&limit&before_id`) |
 | `GET /api/triggers/executions/:id` | jwt/api_key | Full row — envelope + outcomes |
 | `GET /api/triggers/samples/:event_type` | jwt/api_key | Recent envelopes for the field-discovery panel |
 | `POST /api/triggers/test` | jwt/api_key | Dry run vs saved rules — nothing dispatches |
-| `POST /api/triggers/test-draft` | jwt/api_key | Evaluate an UNSAVED config vs one envelope — nothing dispatches |
+| `POST /api/triggers/test-draft` | jwt/api_key (+ `automations.manage` unless both modes are non-code) | Evaluate an UNSAVED config vs one envelope — nothing dispatches |
 | `POST /api/triggers/replay` | jwt/api_key | **LIVE** re-processing of a recorded envelope (`execution_id` only) |

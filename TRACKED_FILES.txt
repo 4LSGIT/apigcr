@@ -123,6 +123,7 @@ lib/sqlGuard.js
 lib/ssrfGuard.js
 lib/taskQueue.js
 lib/token.js
+lib/triggerCodeGate.js
 lib/trusteeMatch.js
 lib/trusteeRoster.js
 lib/uiConfigShape.js
@@ -1571,6 +1572,7 @@ tests/test_report_author.sh
 tests/themePrefsS5d.test.js
 tests/token.test.js
 tests/toolShellS33.test.js
+tests/triggerCodeGate.routes.test.js
 tests/triggerService.matchFailure.test.js
 tests/triggerService.test.js
 tests/trusteeMatch.test.js

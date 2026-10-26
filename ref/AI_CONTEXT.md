@@ -42,6 +42,14 @@ body. Governing migrations in `ref/migrations/`.*
   key are unchanged; neither route checks opt-out for a human (filed,
   `ref/plans.md`). Off switch `casey_send_enabled`. Plan:
   ref/ASK_CASEY_ACTIONS_PLAN.md A14.
+- **Trigger code gate + child flag fails closed (hotfix, 10-26):** trigger
+  rule POST/PUT and `test-draft` carrying a `code` match or transform refuse
+  without `automations.manage` (`lib/triggerCodeGate.js`, 403
+  `missingCapability`); non-code modes stay open to all staff. Gate, not
+  containment: the bodies still run in-process under `node:vm` (§26 "Code
+  mode"). And `custom_code_child_process` now fails closed — only an explicit
+  `'0'` selects the legacy in-process path; absent / blank / anything else
+  runs the child (§10).
 - **Ingest code gate (hotfix, 10-26):** every ingest route that accepts a
   `code` body — rule + suppression create/update, `test-match`,
   `test-transform`, both channels — refuses it without `automations.manage`
@@ -849,7 +857,9 @@ Unified `scheduled_jobs` queue, index (status, scheduled_time), drained by
 `/process-jobs`. Scheduling types: `one_time`, `recurring` (cron,
 `max_executions`/`expires_at`); execution flavors in `data.type`: `webhook`,
 `internal_function`, `custom_code` (vm, or QuickJS/WASM guest when config has
-`code_mode:'safe'`; 60s default timeout — lib/job_executor). Engine-internal:
+`code_mode:'safe'`; 60s default timeout — lib/job_executor; a standard step's
+vm runs in the scrubbed child unless `custom_code_child_process` is
+explicitly `'0'` — absent fails closed to the child). Engine-internal:
 `workflow_resume`, `sequence_step` (hidden from list unless
 `?internal=true`). App-managed: `task_due_reminder`, `task_daily_digest`,
 `hook_retry` (3 attempts, 120s backoff), `campaign_send`, `mail_sent_read_seed`
@@ -1505,6 +1515,20 @@ events carry `depth+1` and the rule id on `chain`; events at
 `depth >= MAX_DEPTH` are dropped with a `depth_capped` row + alert. Known
 limitation: workflow steps deferred through `scheduled_jobs` resume with a
 fresh ALS scope (depth resets) — acceptable, executor cadence throttles them.
+
+### Code mode — in-process, capability-gated
+A `code` match or transform runs IN THIS PROCESS via `node:vm`
+(`triggerService._runCode`), which is not a boundary: the envelope is a host
+object, so the constructor walk-back reaches `process.env`. So every route
+that ACCEPTS a code body requires `automations.manage`
+(`lib/triggerCodeGate.js`): rule POST/PUT that touch a code-mode side, and
+`test-draft` with any side not literally a non-code mode. Same invariants as
+§27 "Code mode": fail closed on mode (anything but `conditions` /
+`passthrough` / `mapper` counts as code) and on code-shaped config; a PUT is
+judged against the STORED mode for the side it touches; the native editor
+re-sends the whole rule, so a user without the capability cannot save any
+edit to a code-mode rule. `test` and `replay` take no code body (stored rules
+only) and stay open. Containment: `ref/plans.md` (custom_code containment).
 
 ### Replay
 `POST /api/triggers/replay` is execution_id-ONLY (review item S10): it

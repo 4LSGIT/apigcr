@@ -14,10 +14,12 @@ const job = (code, extra = {}) => ({ id: 'test-job', data: { type: 'custom_code'
 
 jest.setTimeout(30000);
 
-// The boundary is behind `custom_code_child_process`, default OFF so the
-// switch can be measured on real throttled instances before it becomes the
-// default. cfg() reads the env var when no DB row overrides it, so the tests
-// select the path the same way production will.
+// The boundary is behind `custom_code_child_process`, which fails CLOSED:
+// only an explicit '0' selects the legacy in-process path; absent, blank or
+// anything else is the child (2026-10-26 — it used to be `=== '1'`, so a
+// missing row ran every standard step in-process). cfg() reads the env var
+// when no DB row overrides it, so the tests select the path the same way
+// production will.
 beforeEach(() => { process.env.CUSTOM_CODE_CHILD_PROCESS = '1'; });
 afterEach(() => { delete process.env.CUSTOM_CODE_CHILD_PROCESS; });
 
@@ -207,6 +209,38 @@ describe('the flag', () => {
       catch (e) { "threw"; }
     `));
     expect(walled).not.toBe('object');
+  });
+
+  test('fails closed: an absent row (or a blank one) with no env var runs the CHILD, not in-process', async () => {
+    // The live value is '1' today, but nothing guaranteed the row: a missing
+    // or blanked row used to fall through to null, and `=== '1'` sent every
+    // standard step to the escapable in-process path. Driven through the real
+    // firmConfig with a fake app_settings pool, so "absent" is a real absent
+    // row, not a stubbed cfg().
+    const firmConfig = require(path.join(__dirname, '..', 'lib', 'firmConfig'));
+    const probe = 'typeof input.constructor.constructor("return process")()';
+    const walledProbe = `
+      try { String(input.constructor.constructor("return typeof process")()); }
+      catch (e) { "threw"; }
+    `;
+    delete process.env.CUSTOM_CODE_CHILD_PROCESS;
+    try {
+      for (const rows of [[], [{ key: 'custom_code_child_process', value: '' }],
+        [{ key: 'custom_code_child_process', value: 'yes' }]]) {
+        firmConfig._test({ db: { query: async () => [rows] }, resetCache: true });
+        await firmConfig.prime();
+        expect(firmConfig.cfg('custom_code_child_process')).not.toBe('0');
+        const walled = await executeJob(job(walledProbe));
+        expect([rows, walled]).toEqual([rows, expect.stringMatching(/^(undefined|threw)$/)]);
+      }
+      // Only an explicit '0' row selects the legacy path — pinned so the
+      // rollback lever is known to still work.
+      firmConfig._test({ db: { query: async () => [[{ key: 'custom_code_child_process', value: '0' }]] }, resetCache: true });
+      await firmConfig.prime();
+      await expect(executeJob(job(probe))).resolves.toBe('object');
+    } finally {
+      firmConfig._test({ db: null, resetCache: true });
+    }
   });
 
   test('a blank value falls through to the env var, so the kill switch is 0 and not blank', () => {

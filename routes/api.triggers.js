@@ -21,6 +21,11 @@
  * routes/api.pipelineAdmin.js: jwtOrApiKey on every route;
  * { status:'success', ... } / { status:'error', message }; service throws
  * carry `.status` (400 validation, 404 unknown row), anything else 500.
+ *
+ * Code bodies: POST/PUT rules and test-draft that CARRY a code match or
+ * transform additionally need automations.manage (lib/triggerCodeGate.js —
+ * the code runs in THIS process under node:vm, which is not a boundary).
+ * /test and /replay take no code body: they run STORED rules only.
  */
 
 'use strict';
@@ -31,6 +36,10 @@ const router  = express.Router();
 const jwtOrApiKey    = require('../lib/auth.jwtOrApiKey');
 const triggerService = require('../services/triggerService');
 const domainEvents   = require('../lib/domainEvents');
+const triggerCodeGate = require('../lib/triggerCodeGate');
+// Code-mode bodies run in THIS process (node:vm, not a boundary) — every
+// writer and tester that accepts one refuses it without automations.manage
+// (lib/triggerCodeGate.js; CLAUDE.md, the custom_code invariant).
 
 function fail(res, err) {
   const status = err.status || 500;
@@ -113,6 +122,8 @@ router.get('/api/triggers/rules/:id/history', jwtOrApiKey, async (req, res) => {
 
 router.post('/api/triggers/rules', jwtOrApiKey, async (req, res) => {
   try {
+    if (triggerCodeGate.sendRefusal(res, triggerCodeGate.refuseTriggerCodeWithoutCapability(
+      req.auth, triggerCodeGate.ruleWriteCarriesCode(req.body, null)))) return;
     const rule = await triggerService.createRule(req.db, req.body || {}, {
       userId: actingUserId(req),
     });
@@ -122,6 +133,11 @@ router.post('/api/triggers/rules', jwtOrApiKey, async (req, res) => {
 
 router.put('/api/triggers/rules/:id', jwtOrApiKey, async (req, res) => {
   try {
+    // The stored row decides the mode a config-only edit will run under (404
+    // for an unknown id, before any judgement).
+    const before = await triggerService.getRule(req.db, req.params.id);
+    if (triggerCodeGate.sendRefusal(res, triggerCodeGate.refuseTriggerCodeWithoutCapability(
+      req.auth, triggerCodeGate.ruleWriteCarriesCode(req.body, before)))) return;
     const rule = await triggerService.updateRule(req.db, req.params.id, req.body || {}, {
       userId: actingUserId(req),
     });
@@ -230,6 +246,10 @@ router.post('/api/triggers/test', jwtOrApiKey, async (req, res) => {
 
 router.post('/api/triggers/test-draft', jwtOrApiKey, async (req, res) => {
   try {
+    // Before anything else — a refused draft reads nothing, not even the
+    // execution row its envelope would come from.
+    if (triggerCodeGate.sendRefusal(res, triggerCodeGate.refuseTriggerCodeWithoutCapability(
+      req.auth, triggerCodeGate.draftCarriesCode(req.body)))) return;
     const { envelope, execution_id, match_mode, match_config, transform_mode, transform_config } = req.body || {};
     let env = (envelope && typeof envelope === 'object') ? envelope : null;
     if (!env && execution_id) {

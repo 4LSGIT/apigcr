@@ -616,9 +616,10 @@ const ACTION_TYPES = new Set(['workflow', 'sequence', 'internal_function', 'http
 // (no process, require, fetch, console, timers) is defence-in-depth against
 // the env-reach problem, and the timeout stops a while(true) from parking the
 // event loop until Cloud Run kills the container. NOT a security boundary
-// against a determined attacker — the code-mode AUTH question is a
-// codebase-wide decision (this pattern exists in 9 other automation
-// surfaces) tracked separately.
+// against a determined attacker — `input` is a host object, so the
+// constructor walk-back reaches `process`. Authoring is therefore gated:
+// every route that accepts a code body needs automations.manage
+// (lib/triggerCodeGate.js, 2026-10-26); containment is ref/plans.md.
 //
 // 2026-08-29: raised 200 -> 15000 and made it env-overridable, matching
 // job_executor's CUSTOM_CODE_TIMEOUT_MS idiom.

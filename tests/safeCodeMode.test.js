@@ -24,15 +24,21 @@ describe('safe mode ignores the child-process flag — no fallback to vm exists'
     // host-shaped realm; in the guest there is no `process` in the universe.
     // With the flag off, the in-process vm path resolves it to the REAL
     // process (the pinned 'off is the legacy path' test proves exactly that),
-    // so 'no-process-anywhere' here proves the quickjs branch ran.
-    delete process.env.CUSTOM_CODE_CHILD_PROCESS; // default: off
-    const got = await executeJob(safeJob(`
-      var r;
-      try { r = typeof input.constructor.constructor("return process")(); }
-      catch (e) { r = "no-process-anywhere"; }
-      r;
-    `, { input: { a: 1 } }));
-    expect(got).toBe('no-process-anywhere');
+    // so 'no-process-anywhere' here proves the quickjs branch ran. OFF is the
+    // explicit '0': since 2026-10-26 an ABSENT flag means the child, whose
+    // vm would also answer 'no-process-anywhere' and so prove nothing here.
+    process.env.CUSTOM_CODE_CHILD_PROCESS = '0'; // explicit off: the legacy in-process path
+    try {
+      const got = await executeJob(safeJob(`
+        var r;
+        try { r = typeof input.constructor.constructor("return process")(); }
+        catch (e) { r = "no-process-anywhere"; }
+        r;
+      `, { input: { a: 1 } }));
+      expect(got).toBe('no-process-anywhere');
+    } finally {
+      delete process.env.CUSTOM_CODE_CHILD_PROCESS;
+    }
   });
 
   test('the guest universe has no Node or web capabilities at all', async () => {

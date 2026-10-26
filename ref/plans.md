@@ -647,6 +647,24 @@ it:
   `lib/safeCodeRunner.js`) or the forked child — synchronous call sites today,
   so a per-message async hop and its latency/timeout budget are part of the
   design; then the gate can relax for safe bodies the way it did for steps.
+- **Trigger rules join that class (2026-10-26).** A trigger rule's `code`
+  match / transform runs IN THE MAIN PROCESS via `node:vm`
+  (`triggerService._runCode`) — a bare context, but the envelope passed in as
+  `input` is a host object, so `input.constructor.constructor('return
+  process')()` reaches `process.env` on every matching domain event. Authoring
+  is gated since the same-day hotfix (`lib/triggerCodeGate.js`: rule POST/PUT
+  and `test-draft` carrying code need `automations.manage`; before it every
+  trigger route was plain `jwtOrApiKey`, and `test-draft` returned what the
+  code computed). Live: 6 rules with a code transform, 0 with a code match,
+  all IT-authored (2026-10-26). Same fix as above — safe runner or child —
+  with the same synchronous-call-site cost: `_evaluateMatch` / `_runTransform`
+  are sync inside `processEvent`.
+- **The child-process flag now fails closed (2026-10-26).** `job_executor`
+  used `cfg('custom_code_child_process') === '1'`, so a missing or blanked
+  row silently ran every standard step on the in-process `vm` path. Now only
+  an explicit `'0'` selects it. The legacy path itself still exists as the
+  rollback lever; deleting it (and the flag) is the remaining step once Fred
+  is satisfied the child has no rollback use left.
 - **So "a code step is harmless by construction" is NOT true today**, and no
   authoring decision should be justified by the child boundary alone. The
   honest claim is that the worst case fell from "the database" to "whatever an
