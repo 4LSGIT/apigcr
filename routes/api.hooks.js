@@ -142,7 +142,9 @@ const CATCHALL_SLUG = '_catchall';
  * 'received', queued), rings the Cloud Tasks doorbell
  * (taskQueue.enqueueHookExecutionDispatch → POST /process-hook-execution/:id,
  * routes/process_jobs.js) and answers {status:'received', slug} — about
- * 50–150 ms, no code body of ours in the way. lib/hookDrain runs filter,
+ * 50–150 ms, no code body of ours in the way; the doorbell RPC itself is
+ * capped at 1.5 s (taskQueue.HOOK_DOORBELL_DEADLINE_MS), so a slow Cloud
+ * Tasks costs latency the cron repays, never a late answer past RC's 3 s. lib/hookDrain runs filter,
  * transform and targets request-bound from that route, or from the 60 s
  * /process-jobs cron when the doorbell never landed. RingCentral requires the
  * 200 within 3000 ms and blacklists after ~10 min of late answers; a slow hook

@@ -286,7 +286,7 @@ describe('lib/taskQueue.warmup (boot-time, startup/init.js)', () => {
 
 describe('lib/taskQueue.enqueueHookExecutionDispatch (ack-first webhook receiver)', () => {
 
-  test('targets /process-hook-execution/:id with a bare he-{id} task name, same auth and deadline', async () => {
+  test('targets /process-hook-execution/:id with a bare he-{id} task name, same auth, a SHORT deadline', async () => {
     armEnv();
     const c = fakeClient();
     taskQueue._test({ client: c });
@@ -299,7 +299,11 @@ describe('lib/taskQueue.enqueueHookExecutionDispatch (ack-first webhook receiver
     expect(task.httpRequest.url).toBe('https://app.example.test/process-hook-execution/34748');
     expect(task.httpRequest.httpMethod).toBe('POST');
     expect(task.httpRequest.headers['x-api-key']).toBe('yci_test_key');
-    expect(callOpts).toEqual({ timeout: 15000 });
+    // A webhook sender waits on this call (RingCentral allows 3 s): the
+    // doorbell gives up well inside that; the row is durable, the cron drains it.
+    expect(callOpts).toEqual({ timeout: taskQueue.HOOK_DOORBELL_DEADLINE_MS });
+    expect(taskQueue.HOOK_DOORBELL_DEADLINE_MS).toBe(1500);
+    expect(taskQueue.HOOK_DOORBELL_DEADLINE_MS).toBeLessThanOrEqual(3000 / 2); // half of RC's 3 s window
     // One ring per row (a BUSY re-queue rides the cron, it never rings again)
     // and ids are never reused, so the bare name cannot collide with the
     // ~1h completed-name retention.
