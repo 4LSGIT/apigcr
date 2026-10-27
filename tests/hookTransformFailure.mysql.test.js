@@ -12,7 +12,12 @@
  *     delivers nothing;
  *   - a failed TARGET transform persists a 'failed' delivery-log row and a
  *     pending hook_retry job, and the execution reads 'partial';
- *   - the ACK-FIRST receiver (2026-10-28) end to end on the real table: the
+ *   - DEDUP (S3): on a hook with dedup_path, a redelivered provider event
+ *     (same body.uuid) is answered 200 and leaves NO second row; a different
+ *     uuid is a second row; the drain delivers the first exactly once; a hook
+ *     without a path records every delivery; a synchronous (kill-switch) run
+ *     stores dedup_key NULL;
+ *   - the ACK-FIRST receiver (2026-10-27) end to end on the real table: the
  *     webhook is answered 200 before any body runs and the row is QUEUED
  *     (received, claimed_at NULL); lib/hookDrain.drainOne claims it (attempts
  *     1, claimed_at set); a code filter that finds the sandbox busy RE-QUEUES
@@ -83,6 +88,15 @@ maybe('a failed hook transform on real MySQL', () => {
       password: decodeURIComponent(u.password), database, timezone: 'Z', connectionLimit: 4,
     });
     pool.pool.on('connection', (c) => c.query(`SET SESSION sql_mode = '${PROD_SQL_MODE}'`));
+    // S3 (dedup): the clone comes from ref/database.sql, which may predate the
+    // S3 columns; add exactly what the migration adds (its script is pinned by
+    // tests/hookDedupS3.test.js; here only the shape matters).
+    const [have] = await pool.query("SELECT COLUMN_NAME AS c FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'hook_executions' AND COLUMN_NAME = 'dedup_key'");
+    if (!have.length) {
+      await pool.query('ALTER TABLE hooks ADD COLUMN dedup_path VARCHAR(100) NULL DEFAULT NULL AFTER transform_config');
+      await pool.query('ALTER TABLE hook_executions ADD COLUMN dedup_key VARCHAR(191) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NULL DEFAULT NULL AFTER attempts');
+      await pool.query('ALTER TABLE hook_executions ADD UNIQUE KEY uq_hook_dedup (hook_id, dedup_key)');
+    }
     const app = express();
     app.use(express.json());
     app.use((req, res, next) => { req.db = pool; next(); });
@@ -117,7 +131,7 @@ maybe('a failed hook transform on real MySQL', () => {
     // The kill-switch path runs the row SYNCHRONOUSLY, so it is inserted CLAIMED
     // (attempts 1) and stamped completed_at: the drain can never take it, even
     // with no doorbell grace — the one guarantee that keeps a synchronous run
-    // from being run a second time by the cron (ack-first receiver, 2026-10-28).
+    // from being run a second time by the cron (ack-first receiver, 2026-10-27).
     const [claimRow] = await q('SELECT claimed_at IS NOT NULL AS claimed, completed_at IS NOT NULL AS completed, attempts FROM hook_executions WHERE id = ?', [rows[0].id]);
     expect(claimRow).toEqual({ claimed: 1, completed: 1, attempts: 1 });
     expect(await require('../lib/hookDrain').drainBatch(pool, { graceSeconds: 0 })).toEqual({ processed: 0, results: [], deferred: 0 });
@@ -202,6 +216,43 @@ maybe('a failed hook transform on real MySQL', () => {
     } finally {
       process.env.HOOK_ASYNC_ACK = '0';
       warn.mockRestore(); log.mockRestore();
+    }
+  });
+
+  test('dedup on body.uuid: a redelivery is answered 200 with no second row; a new uuid is a new row; the drain runs the first once', async () => {
+    const hookDrain = require('../lib/hookDrain');
+    await q(`INSERT INTO hooks (id, slug, name, auth_type, dedup_path) VALUES (4, 'rc-dedup', 'rc', 'none', 'body.uuid'), (5, 'rc-nodedup', 'rc', 'none', NULL)`);
+    await q(`INSERT INTO hook_targets (id, hook_id, target_type, name, position, config) VALUES (40, 4, 'workflow', 'wf', 0, ?), (50, 5, 'workflow', 'wf', 0, ?)`,
+      [JSON.stringify({ workflow_id: 7 }), JSON.stringify({ workflow_id: 7 })]);
+    process.env.HOOK_ASYNC_ACK = '1';
+    const log = jest.spyOn(console, 'log').mockImplementation(() => {});
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const ev = { uuid: '7d1e3a4b-0000-4000-8000-00000000abcd', event: '/x' };
+      const r1 = await fire('rc-dedup', ev);
+      const r2 = await fire('rc-dedup', ev);                              // Quo-style redelivery
+      const r3 = await fire('rc-dedup', { ...ev, uuid: '7d1e3a4b-0000-4000-8000-00000000abce' });
+      for (const r of [r1, r2, r3]) { expect(r.status).toBe(200); expect(await r.json()).toEqual({ status: 'received', slug: 'rc-dedup' }); }
+      const rows = await q("SELECT id, dedup_key, status FROM hook_executions WHERE slug = 'rc-dedup' ORDER BY id");
+      expect(rows.map((r) => r.dedup_key)).toEqual(['7d1e3a4b-0000-4000-8000-00000000abcd', '7d1e3a4b-0000-4000-8000-00000000abce']);
+      expect(warn.mock.calls.some((a) => /duplicate delivery of provider event 7d1e3a4b-0000-4000-8000-00000000abcd/.test(a[0]))).toBe(true);
+      // the drain delivers the first once; a redelivery after it ran is still a no-op
+      expect((await hookDrain.drainOne(pool, rows[0].id)).results[0].status).toBe('delivered');
+      expect((await fire('rc-dedup', ev)).status).toBe(200);
+      expect((await q("SELECT COUNT(*) AS n FROM hook_executions WHERE slug = 'rc-dedup'"))[0].n).toBe(2);
+      expect(mockDispatched.filter((d) => d.target_id === 40)).toHaveLength(1);
+      // no path → every delivery is a row
+      await fire('rc-nodedup', ev); await fire('rc-nodedup', ev);
+      expect(await q("SELECT dedup_key FROM hook_executions WHERE slug = 'rc-nodedup'")).toEqual([{ dedup_key: null }, { dedup_key: null }]);
+      // a synchronous run on the dedup hook stores NULL (an operator's deliberate re-run)
+      process.env.HOOK_ASYNC_ACK = '0';
+      await fire('rc-dedup', ev);
+      const [sync] = await q("SELECT dedup_key, claimed_at IS NOT NULL AS claimed FROM hook_executions WHERE slug = 'rc-dedup' ORDER BY id DESC LIMIT 1");
+      expect(sync).toEqual({ dedup_key: null, claimed: 1 });
+      expect((await q("SELECT COUNT(*) AS n FROM hook_executions WHERE slug = 'rc-dedup'"))[0].n).toBe(3);
+    } finally {
+      process.env.HOOK_ASYNC_ACK = '0';
+      log.mockRestore(); warn.mockRestore();
     }
   });
 });

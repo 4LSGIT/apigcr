@@ -85,6 +85,15 @@ maybe('hook spool: capture → replay on real MySQL', () => {
       password: decodeURIComponent(u.password), database, timezone: 'Z', connectionLimit: 4,
     });
     pool.pool.on('connection', (c) => c.query(`SET SESSION sql_mode = '${PROD_SQL_MODE}'`));
+    // S3 (dedup): a clone cut from a ref/database.sql that predates the S3
+    // columns gets exactly what the migration adds (shape only; the script
+    // itself is pinned by tests/hookDedupS3.test.js).
+    const [have] = await pool.query("SELECT COLUMN_NAME AS c FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'hook_executions' AND COLUMN_NAME = 'dedup_key'");
+    if (!have.length) {
+      await pool.query('ALTER TABLE hooks ADD COLUMN dedup_path VARCHAR(100) NULL DEFAULT NULL AFTER transform_config');
+      await pool.query('ALTER TABLE hook_executions ADD COLUMN dedup_key VARCHAR(191) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NULL DEFAULT NULL AFTER attempts');
+      await pool.query('ALTER TABLE hook_executions ADD UNIQUE KEY uq_hook_dedup (hook_id, dedup_key)');
+    }
     const app = express();
     // server.js order: gate → /hooks parser → (global parser) → req.db → routes
     app.use(maintenance.gate());
@@ -154,7 +163,7 @@ maybe('hook spool: capture → replay on real MySQL', () => {
     expect(rows).toHaveLength(1);
     expect(Number(rows[0].id)).toBe(Number(first.json.execution_id));
     // A replay runs its row SYNCHRONOUSLY, so it is inserted CLAIMED (ack-first
-    // receiver, 2026-10-28): the drain must never pick it up and run the
+    // receiver, 2026-10-27): the drain must never pick it up and run the
     // event a second time — even with no doorbell grace at all.
     const [claimRow] = await q('SELECT claimed_at IS NOT NULL AS claimed, completed_at IS NOT NULL AS completed, attempts, status FROM hook_executions WHERE id = ?', [rows[0].id]);
     expect(claimRow).toEqual({ claimed: 1, completed: 1, attempts: 1, status: 'delivered' });

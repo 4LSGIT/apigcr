@@ -137,7 +137,7 @@ const CATCHALL_SLUG = '_catchall';
  * Returns 200 to the sender — errors are logged internally — with one
  * exception, maintenance (below).
  *
- * ACK FIRST, WORK AFTER (async hook receiver S1, 2026-10-28). The normal path
+ * ACK FIRST, WORK AFTER (async hook receiver S1, 2026-10-27). The normal path
  * writes the event to hook_executions (hookService.recordExecution — status
  * 'received', queued), rings the Cloud Tasks doorbell
  * (taskQueue.enqueueHookExecutionDispatch → POST /process-hook-execution/:id,
@@ -279,8 +279,20 @@ router.post('/hooks/:slug', hookReceiveLimiter, async (req, res) => {
     // drains the row within a minute.
     if (asyncAckEnabled()) {
       try {
-        const { executionId } = await hookService.recordExecution(db, hook, slug, input);
-        await taskQueue.enqueueHookExecutionDispatch(executionId);
+        const rec = await hookService.recordExecution(db, hook, slug, input, { dedup: true });
+        if (rec.duplicate) {
+          // The provider sent this event again (hooks.dedup_path, S3). It is
+          // already recorded — and probably already ran — so: no row, no
+          // doorbell, the same 200 it got the first time. Quo redelivers a few
+          // times a week; RingCentral has not been seen to.
+          // console.warn, not log: a dedup_path that points at a non-unique
+          // field (an event type, a line number) would make EVERY later event
+          // a "duplicate" with no row and no Logs-tab trace — this line is the
+          // only evidence. (ref/plans.md: an operator-facing guard.)
+          console.warn(`[hook] ${slug}: duplicate delivery of provider event ${rec.dedupKey} — already recorded, nothing queued`);
+          return res.json({ status: 'received', slug });
+        }
+        await taskQueue.enqueueHookExecutionDispatch(rec.executionId);
         return res.json({ status: 'received', slug });
       } catch (err) {
         console.error(`[hook] could not record ${slug} (event NOT queued — nothing will run it):`, err);
@@ -290,7 +302,7 @@ router.post('/hooks/:slug', hookReceiveLimiter, async (req, res) => {
     }
 
     // Kill-switch path (`hook_async_ack` = '0') — the SPLIT-PHASE receiver
-    // (2026-08-24 → 2026-10-28): the FAST targets (workflow/sequence) are
+    // (2026-08-24 → 2026-10-27): the FAST targets (workflow/sequence) are
     // delivered BEFORE the response, request-bound at full CPU; http /
     // internal_function targets stay detached via the returned `detached`
     // promise. Kept as the rollback for the ack-first path, not as a mode to
@@ -336,6 +348,26 @@ function retryLater(res) {
 function asyncAckEnabled() {
   const { cfg } = require('../lib/firmConfig');
   return cfg('hook_async_ack') !== '0';
+}
+
+// hooks.dedup_path (S3): a dot-path into the received event naming the
+// provider's event id — `body.uuid` (RingCentral), `body.id` (Quo). Segments
+// are identifier-ish or array indexes; blank / null clears it. The receiver
+// resolves it with hookMapper.resolvePath (hookService.dedupKeyFor).
+const DEDUP_PATH_RE = /^[A-Za-z0-9_$-]+(\.[A-Za-z0-9_$-]+)*$/;
+function normalizeDedupPath(v) {
+  if (v === null || v === undefined) return null;
+  const s = String(v).trim();
+  return s ? s : null;
+}
+function validateDedupPath(v) {
+  if (v === undefined) return null;
+  const s = normalizeDedupPath(v);
+  if (s === null) return null;
+  if (typeof v !== 'string') return 'dedup_path must be a string (a dot-path such as body.uuid) or null';
+  if (s.length > 100) return 'dedup_path must be at most 100 characters';
+  if (!DEDUP_PATH_RE.test(s)) return 'dedup_path must be a dot-path of identifier segments, e.g. body.uuid or body.data.0.id';
+  return null;
 }
 
 
@@ -482,8 +514,10 @@ router.post('/api/hooks', manageHooks, async (req, res) => {
   try {
     const { slug, name, description, auth_type, auth_config,
             filter_mode, filter_config, transform_mode, transform_config,
-            active, targets } = req.body;
+            dedup_path, active, targets } = req.body;
     if (!name) return res.status(400).json({ status: 'error', message: 'name is required' });
+    const dedupErr = validateDedupPath(dedup_path);
+    if (dedupErr) return res.status(400).json({ status: 'error', message: dedupErr });
 
     // Optional inline targets (A19.0): validated UP FRONT with the same rules
     // as POST /api/hooks/:hookId/targets, created in the same transaction as
@@ -509,6 +543,7 @@ router.post('/api/hooks', manageHooks, async (req, res) => {
     if (filter_config !== undefined) data.filter_config = JSON.stringify(filter_config);
     if (transform_mode) data.transform_mode = transform_mode;
     if (transform_config !== undefined) data.transform_config = JSON.stringify(transform_config);
+    if (dedup_path !== undefined) data.dedup_path = normalizeDedupPath(dedup_path);
     // active is accepted explicitly so a caller can create a hook DARK
     // (Casey's card always does; the human activates in the editor).
     if (active !== undefined) data.active = active ? 1 : 0;
@@ -557,9 +592,12 @@ router.put('/api/hooks/:id', manageHooks, async (req, res) => {
   try {
     const data = {};
     const allowed = ['slug', 'name', 'description', 'auth_type', 'auth_config',
-                     'filter_mode', 'filter_config', 'transform_mode', 'transform_config', 'active'];
+                     'filter_mode', 'filter_config', 'transform_mode', 'transform_config', 'dedup_path', 'active'];
+    const dedupErr = validateDedupPath(req.body.dedup_path);
+    if (dedupErr) return res.status(400).json({ status: 'error', message: dedupErr });
     for (const key of allowed) {
       if (req.body[key] !== undefined) {
+        if (key === 'dedup_path') { data.dedup_path = normalizeDedupPath(req.body.dedup_path); continue; }
         // JSON-stringify object fields
         if (['auth_config', 'filter_config', 'transform_config'].includes(key) && typeof req.body[key] === 'object') {
           data[key] = JSON.stringify(req.body[key]);

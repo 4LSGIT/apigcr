@@ -1,7 +1,7 @@
 /**
  * tests/hookReceiver.async.test.js
  *
- * The ack-first webhook receiver (async hook receiver S1, 2026-10-28) —
+ * The ack-first webhook receiver (async hook receiver S1, 2026-10-27) —
  * routes/api.hooks.js normal path. hookService and taskQueue are mocked at the
  * module boundary (the drain and the pipeline have their own suites); this
  * suite locks only what the ROUTE guarantees to webhook senders and to the
@@ -27,6 +27,9 @@
  *      split-phase path — executeHook with splitPhase:true, no record, no
  *      doorbell. Any other value, or unset, is ack-first.
  *   7. Capture mode stays synchronous and untouched by the switch.
+ *   8. Dedup (S3): the receiver asks recordExecution for `dedup:true`; a
+ *      duplicate provider event is answered with the same 200 and rings
+ *      nothing (no row exists for it).
  *
  * Run: npx jest tests/hookReceiver.async.test.js
  */
@@ -68,7 +71,7 @@ beforeEach(() => {
   hookService.getHookBySlug.mockReset().mockResolvedValue(HOOK);
   hookService.authenticateRequest.mockReset().mockReturnValue({ valid: true });
   hookService.executeHook.mockReset();
-  hookService.recordExecution.mockReset().mockResolvedValue({ executionId: 4242, truncated: false });
+  hookService.recordExecution.mockReset().mockResolvedValue({ executionId: 4242, truncated: false, duplicate: false, dedupKey: 'evt-1' });
   taskQueue.enqueueHookExecutionDispatch.mockReset().mockResolvedValue(true);
 });
 afterAll(() => { delete process.env.HOOK_ASYNC_ACK; });
@@ -114,7 +117,7 @@ describe('POST /hooks/:slug — ack first, work after', () => {
     expect(slug).toBe('rc-message-out');
     expect(input.body).toEqual({ uuid: 'evt-1', event: '/restapi/v1.0/account/~/extension/~/message-store' });
     expect(input.meta).toMatchObject({ source: 'http', slug: 'rc-message-out' });
-    expect(opts).toBeUndefined();
+    expect(opts).toEqual({ dedup: true });   // the receiver is the ONE caller that dedups (S3)
 
     // Then the doorbell, for THAT row …
     expect(taskQueue.enqueueHookExecutionDispatch).toHaveBeenCalledTimes(1);
@@ -127,6 +130,21 @@ describe('POST /hooks/:slug — ack first, work after', () => {
     expect(enqueueResolvedAt).toBeGreaterThan(0);
     expect(res.receivedAt).toBeGreaterThanOrEqual(enqueueResolvedAt);
 
+    expect(hookService.executeHook).not.toHaveBeenCalled();
+  });
+
+  test('a redelivered provider event (recordExecution says duplicate): same 200 body, no doorbell, nothing else', async () => {
+    hookService.recordExecution.mockResolvedValue({ executionId: null, truncated: false, duplicate: true, dedupKey: 'evt-1' });
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const res = await fire();
+      expect(res.status).toBe(200);
+      expect(JSON.parse(res.body)).toEqual({ status: 'received', slug: 'rc-message-out' });
+      // a WARNING: with a misconfigured dedup_path this line is the only trace
+      expect(warn.mock.calls.some((a) => /duplicate delivery of provider event evt-1/.test(a[0]))).toBe(true);
+    } finally { warn.mockRestore(); }
+    expect(hookService.recordExecution).toHaveBeenCalledTimes(1);
+    expect(taskQueue.enqueueHookExecutionDispatch).not.toHaveBeenCalled();
     expect(hookService.executeHook).not.toHaveBeenCalled();
   });
 

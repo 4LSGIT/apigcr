@@ -551,6 +551,11 @@
               <div class="hint">Return true to pass, false to filter out. Variable: <code>input</code></div>
             </div>
           </div>
+          <div class="fg">
+            <label>Duplicate detection</label>
+            <input type="text" id="f-dedup-path" placeholder="body.uuid" class="mono" maxlength="100" autocomplete="off">
+            <div class="hint">Path of the provider's event id in the received event (RingCentral <code>body.uuid</code>, Quo <code>body.id</code>). A second delivery with the same id is answered 200 and not recorded. Blank = off.</div>
+          </div>
         </div>
 
         <!-- ══ TRANSFORM ══ -->
@@ -961,6 +966,8 @@ window.togglePanelLeft = togglePanelLeft;
     toggleFilterMode();
 
     // Transform
+    E('f-dedup-path').value = h.dedup_path || '';
+
     E('f-transform-mode').value = h.transform_mode || 'passthrough';
     const tc = parseJson(h.transform_config);
     if (h.transform_mode === 'mapper' && tc) {
@@ -3004,6 +3011,7 @@ async function runLiveTest() {
       auth_type, auth_config,
       filter_mode, filter_config,
       transform_mode, transform_config,
+      dedup_path: E('f-dedup-path').value.trim() || null,
     };
 
     try {

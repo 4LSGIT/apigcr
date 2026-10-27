@@ -2,7 +2,7 @@
  * tests/hookDrain.test.js
  *
  * lib/hookDrain.js — the request-bound half of the ack-first webhook receiver
- * (async hook receiver S1, 2026-10-28).
+ * (async hook receiver S1, 2026-10-27).
  *
  * WHAT IS LOCKED SHUT
  *   1. THE CLAIM IS THE IDEMPOTENCY PRIMITIVE. One conditional UPDATE

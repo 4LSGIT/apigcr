@@ -1135,14 +1135,13 @@ the native-side leftovers it surfaced.)
   their queued age; `POST /api/hooks/executions/:id/replay` (manageHooks)
   inserts a NEW row from the old `raw_input` with `meta.replay_of` and rings
   the doorbell — replaces "paste raw_input into Live Test". Six-width survey.
-- **Hook S3 — dedup on the provider's event id.** `hooks.dedup_path` (RC:
-  `body.uuid`; Quo: `body.id` — Quo sends no `webhook-id` header) +
-  `hook_executions.dedup_key VARCHAR(191) NULL` + `UNIQUE (hook_id,
-  dedup_key)`; a duplicate is answered `200 {status:'received'}` with no row.
-  Measured: RC 0 duplicates in 30 d; Quo 5 duplicate `body.id` groups in 14 d,
-  mostly 0–5 s apart, every copy delivered → workflows started twice (Casey
-  manager, 2026-10-27). Deferred by Fred before the Quo figure was known —
-  re-asked in the HOOK session's NEEDS FRED. Schema change (Fred's go).
+- **Hook dedup — guard a misconfigured `dedup_path`.** A path at a non-unique
+  field (an event type, a line number) makes every later event for that hook a
+  "duplicate": answered 200, no row, no Logs-tab trace — the only evidence is
+  the receiver's `console.warn` (S3 review, 2026-10-27). Ideas: refuse a path
+  whose value repeats across the hook's last N executions at save time; a
+  per-hook duplicate counter surfaced in the editor; a TTL on the unique
+  window. Operator-error class; S3 shipped without it.
 - **Hook S3b — collapse the second hop.** A hook-started workflow now pays
   two doorbell hops (receiver → drain, drain → workflow start: ~+1–2 s, and
   the ≤ 60 s cron tail on each). Inside the drain, after `scheduleResume`,

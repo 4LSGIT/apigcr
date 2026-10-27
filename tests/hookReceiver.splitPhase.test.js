@@ -18,7 +18,7 @@
  *   5. Results without `detached` (filtered/captured shapes) are handled —
  *      no crash on the missing key.
  *
- * Since the ack-first receiver (2026-10-28) this is the KILL-SWITCH path:
+ * Since the ack-first receiver (2026-10-27) this is the KILL-SWITCH path:
  * HOOK_ASYNC_ACK='0' (registry hook_async_ack) selects it; the default path is
  * pinned by tests/hookReceiver.async.test.js. The env var is set here before
  * the router loads (firmConfig reads it on every cfg() call; no DB under jest).

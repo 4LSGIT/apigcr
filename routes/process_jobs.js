@@ -270,7 +270,7 @@ async function runJobPass(db, { jobId = null, batchSize = 10 } = {}) {
     } catch (drainErr) {
       console.warn(`[PROCESS-JOBS] domain event batch drain failed (non-fatal): ${drainErr.message}`);
     }
-    // ── Hook executions — CRON FALLBACK (async hook receiver, 2026-10-28)
+    // ── Hook executions — CRON FALLBACK (async hook receiver, 2026-10-27)
     //
     // Same shape and the same position argument as the domain-event block
     // above: housekeeping, BEFORE the job claim, so it runs on every tick.

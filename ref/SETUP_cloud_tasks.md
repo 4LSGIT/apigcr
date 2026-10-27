@@ -201,7 +201,7 @@ CREATE INDEX idx_wf_exec_created ON workflow_executions (created_at);
 **The ~3% silent-fallback tail was fixed structurally on 2026-08-24** by
 split-phase hook dispatch (workflow/sequence targets delivered BEFORE the
 webhook response, so the enqueue never ran throttled), and **superseded on
-2026-10-28 by the ack-first receiver**: `POST /hooks/:slug` now writes the
+2026-10-27 by the ack-first receiver**: `POST /hooks/:slug` now writes the
 `hook_executions` row, awaits ONE Cloud Task on this same `yc-jobs` queue —
 `he-{id}` → `POST /process-hook-execution/:id` — and answers; the hook's
 filter, transform and targets (and the workflow-start enqueue they cause)

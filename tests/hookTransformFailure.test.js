@@ -29,7 +29,7 @@
  *     decision was made — while a filter body that throws or times out is
  *     still a non-match ('filtered') (Fred, 2026-10-27);
  *   - the receiver answers 200 for every failure, Quo included — the 503
- *     path (2026-10-27) is gone: since the ack-first receiver (2026-10-28)
+ *     path (2026-10-27) is gone: since the ack-first receiver (2026-10-27)
  *     the sender is answered before any body runs and a BUSY row is
  *     re-queued by lib/hookDrain (tests/hookDrain.test.js). The receiver
  *     tests here run the KILL-SWITCH path (HOOK_ASYNC_ACK='0'), which is the
@@ -536,7 +536,7 @@ describe('executeHook: a BUSY filter fails the execution, nothing runs after it'
 });
 
 // ─────────────────────────────────────────────────────────────
-// Ack-first receiver (2026-10-28): what executeHook owes the drain
+// Ack-first receiver (2026-10-27): what executeHook owes the drain
 // ─────────────────────────────────────────────────────────────
 
 describe('executeHook and the drain contract', () => {
@@ -547,21 +547,73 @@ describe('executeHook and the drain contract', () => {
     expect(res.status).toBe(200);
     const ins = sqls(db, /^INSERT INTO hook_executions/);
     expect(ins).toHaveLength(1);
-    expect(ins[0].sql).toMatch(/\(hook_id, slug, raw_input, status, error, claimed_at, attempts\) VALUES \(\?, \?, \?, 'received', \?, NOW\(3\), \?\)$/);
+    expect(ins[0].sql).toMatch(/\(hook_id, slug, raw_input, status, error, claimed_at, attempts, dedup_key\) VALUES \(\?, \?, \?, 'received', \?, NOW\(3\), \?, \?\)$/);
     expect(ins[0].params[4]).toBe(1);
+    expect(ins[0].params[5]).toBeNull();   // a synchronous run is never deduplicated — even on a hook with a dedup_path
   });
 
   test('recordExecution for the receiver inserts the row QUEUED: claimed_at NULL, attempts 0', async () => {
     const hook = hookRow();
     const db = makeDb({ hook });
     const r = await hookService.recordExecution(db, hook, hook.slug, INPUT);
-    expect(r).toEqual({ executionId: 500, truncated: false });
+    expect(r).toEqual({ executionId: 500, truncated: false, duplicate: false, dedupKey: null });
     const [ins] = sqls(db, /^INSERT INTO hook_executions/);
-    expect(ins.sql).toMatch(/'received', \?, NULL, \?\)$/);
+    expect(ins.sql).toMatch(/'received', \?, NULL, \?, \?\)$/);
     expect(ins.params[4]).toBe(0);
+    expect(ins.params[5]).toBeNull();      // no dedup asked for
     expect(ins.params[0]).toBe(hook.id);
     expect(ins.params[1]).toBe(hook.slug);
     expect(JSON.parse(ins.params[2])).toEqual(INPUT);
+    expect(r).toMatchObject({ duplicate: false, dedupKey: null });
+  });
+
+  describe('dedup on the provider event id (S3)', () => {
+    const RC = { body: { uuid: 'b1a2c3d4-0000-4000-8000-000000000001', event: '/x' }, headers: {}, query: {}, method: 'POST', meta: { slug: 'rc-call' } };
+    test('dedupKeyFor: the path\'s scalar, as a string; null for no path, no value, a non-scalar; sha256 past 191 chars', () => {
+      expect(hookService.dedupKeyFor({ dedup_path: 'body.uuid' }, RC)).toBe('b1a2c3d4-0000-4000-8000-000000000001');
+      expect(hookService.dedupKeyFor({ dedup_path: ' body.uuid ' }, RC)).toBe('b1a2c3d4-0000-4000-8000-000000000001');
+      expect(hookService.dedupKeyFor({ dedup_path: 'body.id' }, { body: { id: 42 } })).toBe('42');
+      expect(hookService.dedupKeyFor({ dedup_path: 'body.data.0.id' }, { body: { data: [{ id: 'EV1' }] } })).toBe('EV1');
+      expect(hookService.dedupKeyFor({ dedup_path: null }, RC)).toBeNull();
+      expect(hookService.dedupKeyFor({}, RC)).toBeNull();
+      expect(hookService.dedupKeyFor({ dedup_path: 'body.missing' }, RC)).toBeNull();
+      expect(hookService.dedupKeyFor({ dedup_path: 'body' }, RC)).toBeNull();              // an object is not an id
+      expect(hookService.dedupKeyFor({ dedup_path: 'body.ok' }, { body: { ok: true } })).toBeNull();   // nor a boolean
+      expect(hookService.dedupKeyFor({ dedup_path: 'body.list' }, { body: { list: [1] } })).toBeNull();
+      expect(hookService.dedupKeyFor({ dedup_path: 'body.uuid' }, { body: { uuid: '' } })).toBeNull();
+      const long = 'x'.repeat(300);
+      const k = hookService.dedupKeyFor({ dedup_path: 'body.uuid' }, { body: { uuid: long } });
+      expect(k).toMatch(/^[0-9a-f]{64}$/);
+      expect(k).toBe(require('crypto').createHash('sha256').update(long).digest('hex'));
+    });
+
+    test('recordExecution with dedup:true stores the key; without it, NULL — and a hook without a path stores NULL either way', async () => {
+      const hook = hookRow({ dedup_path: 'body.uuid' });
+      let db = makeDb({ hook });
+      let r = await hookService.recordExecution(db, hook, hook.slug, RC, { dedup: true });
+      expect(r).toEqual({ executionId: 500, truncated: false, duplicate: false, dedupKey: 'b1a2c3d4-0000-4000-8000-000000000001' });
+      expect(sqls(db, /^INSERT INTO hook_executions/)[0].params[5]).toBe('b1a2c3d4-0000-4000-8000-000000000001');
+      db = makeDb({ hook });
+      r = await hookService.recordExecution(db, hook, hook.slug, RC);
+      expect(r.dedupKey).toBeNull();
+      expect(sqls(db, /^INSERT INTO hook_executions/)[0].params[5]).toBeNull();
+      const bare = hookRow();
+      db = makeDb({ hook: bare });
+      r = await hookService.recordExecution(db, bare, bare.slug, RC, { dedup: true });
+      expect(r.dedupKey).toBeNull();
+    });
+
+    test('ER_DUP_ENTRY on a keyed INSERT is a duplicate (no row, no throw); the same error without a key is rethrown', async () => {
+      const hook = hookRow({ dedup_path: 'body.uuid' });
+      const dup = Object.assign(new Error("Duplicate entry '22-b1a2…' for key 'hook_executions.uq_hook_dedup'"), { code: 'ER_DUP_ENTRY', errno: 1062 });
+      const db = makeDb({ hook });
+      const real = db.query.bind(db);
+      db.query = async (sql, params) => { if (/^INSERT INTO hook_executions/.test(String(sql).replace(/\s+/g, ' '))) throw dup; return real(sql, params); };
+      await expect(hookService.recordExecution(db, hook, hook.slug, RC, { dedup: true }))
+        .resolves.toEqual({ executionId: null, truncated: false, duplicate: true, dedupKey: 'b1a2c3d4-0000-4000-8000-000000000001' });
+      await expect(hookService.recordExecution(db, hookRow(), 'rc-message-out', RC, { dedup: true })).rejects.toBe(dup);
+      await expect(hookService.recordExecution(db, hook, hook.slug, RC)).rejects.toBe(dup);
+    });
   });
 
   test('executeHook({executionId}) inserts nothing, skips the capture intercept even on an armed hook, and runs the pipeline on that row', async () => {

@@ -1260,7 +1260,7 @@ in ref/database.sql. The rest:
 
 One route `POST /hooks/:slug` replaces per-integration endpoints; each hook
 is a DB row describing auth → filter → transform → ordered delivery
-targets. **Ack first, work after (10-28):** the receiver writes the
+targets. **Ack first, work after (10-27):** the receiver writes the
 `hook_executions` row (status `received`, `claimed_at` NULL — QUEUED), awaits
 a Cloud Tasks doorbell (`taskQueue.enqueueHookExecutionDispatch`, task
 `he-{id}` → `POST /process-hook-execution/:id`) and answers
@@ -1327,7 +1327,7 @@ rule and never delivers a NULL `transform_output`. Dry runs report both
 (`status:'failed', dry_run:true` / a target's `skip_reason` +
 `transform_errors`). Recovery = replaying the row's `raw_input` (Logs → Test
 tab → Live Test). **BUSY is retried by the drain, never by the sender
-(10-28):** a filter or hook transform that got no sandbox slot
+(10-27):** a filter or hook transform that got no sandbox slot
 (`GUEST_CODE_BUSY` — nothing ran) comes back `busy: true`; `hookDrain`
 re-queues the row (status `received`, `claimed_at` NULL, filter/transform
 columns cleared, the tagged error + "re-queued for the next drain (attempt N
@@ -1337,10 +1337,19 @@ is GONE: every sender gets 200 at receipt. RingCentral (hooks 21–23) counts
 non-2xx AND answers slower than 3 s as failures and blacklists the
 subscription after ~10 min (no notice, events dropped, recovery = delete +
 recreate; `rc_renew_subscriptions` GETs each subscription daily and raises a
-deduped daily `error` alert when its status is not `Active`). No dedup on a
-provider's own redelivery yet (Quo sends no `webhook-id`; its event id is
-`body.id` and it DOES redeliver — 5 duplicate groups in 14 d; RC's is
-`body.uuid`, 0 duplicates in 30 d): S3 of the arc, Fred's call. Hooks-lane
+deduped daily `error` alert when its status is not `Active`). **Dedup on the
+provider's event id (S3, 10-27):** `hooks.dedup_path` (a dot-path into the
+event — RC `body.uuid`, Quo `body.id`; Quo sends no `webhook-id` and DOES
+redeliver, 5 duplicate groups in 14 d) is resolved by
+`hookService.dedupKeyFor` at receipt and stored as `hook_executions.dedup_key`
+(UNIQUE with `hook_id`; >191 chars → sha256); a redelivery's INSERT fails
+ER_DUP_ENTRY and the receiver answers the same 200 with NO row and no
+doorbell (`recordExecution` `{dedup:true}` → `duplicate`). Only the
+receiver's normal path dedups: a synchronous run (live-test, replay,
+kill-switch path) is a deliberate re-run and stores NULL; NULL keys never
+collide. Routes validate the path (identifier segments, ≤ 100); the editor's
+Filter tab has the field. Seeded by the S3 migration on hooks 16/17 (Quo) and
+21/22/23 (RC). Hooks-lane
 queue budget 10 s (`GUEST_CODE_QUEUE_WAIT_MS_HOOKS`, queue cap 100) — the
 lane is no longer request-bound. Stale claims (`sweepStale`, 15 min): a
 claimed row still `received` is re-queued while `attempts < 3`, else
@@ -1353,7 +1362,7 @@ bodies use `console.warn` — it still reaches the log as a warning. Authoring
 stays `automations.manage` (B5).
 
 Tables: `hooks`, `hook_targets`, `hook_executions` (raw_input capped 512KB;
-`claimed_at` / `completed_at` DATETIME(3) + `attempts` since 10-28 —
+`claimed_at` / `completed_at` DATETIME(3) + `attempts` + `dedup_key` since 10-27 —
 `completed_at - created_at` is the end-to-end pipeline time), `hook_delivery_logs`,
 shared `credentials`. Files: `services/hookService.js` (+ hookTransforms/
 hookMapper/hookFilter), `routes/api.hooks.js`, `lib/hookDrain.js`,

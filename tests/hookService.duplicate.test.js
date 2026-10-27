@@ -40,16 +40,16 @@ function makeFakeDb(srcHook, srcTargets) {
     const p = state.hookInsert.params;
     // column order in the service INSERT (active=0 / capture_mode='off' literal):
     // slug, name, description, auth_type, auth_config,
-    // filter_mode, filter_config, transform_mode, transform_config,
+    // filter_mode, filter_config, transform_mode, transform_config, dedup_path,
     // last_modified_by, captured_sample, captured_at
     return {
       id: state.newHookId,
       slug: p[0], name: p[1], description: p[2],
       auth_type: p[3], auth_config: p[4],
       filter_mode: p[5], filter_config: p[6],
-      transform_mode: p[7], transform_config: p[8],
-      active: 0, version: 1, last_modified_by: p[9],
-      capture_mode: 'off', captured_sample: p[10], captured_at: p[11],
+      transform_mode: p[7], transform_config: p[8], dedup_path: p[9],
+      active: 0, version: 1, last_modified_by: p[10],
+      capture_mode: 'off', captured_sample: p[11], captured_at: p[12],
       modified_by_name: null,
     };
   }
@@ -106,6 +106,7 @@ function makeFakeDb(srcHook, srcTargets) {
 
 const SRC_HOOK = {
   id: 12,
+  dedup_path: 'body.uuid',
   slug: 'calendly-new-lead',
   name: 'Calendly New Lead',
   description: 'inbound booking events',
@@ -164,9 +165,10 @@ describe('hookService.duplicateHook', () => {
     expect(JSON.parse(hi.params[4])).toEqual(SRC_HOOK.auth_config);
     expect(JSON.parse(hi.params[6])).toEqual(SRC_HOOK.filter_config);
     expect(JSON.parse(hi.params[8])).toEqual(SRC_HOOK.transform_config);
-    expect(hi.params[9]).toBe(99);                                  // duplicating user
-    expect(JSON.parse(hi.params[10])).toEqual(SRC_HOOK.captured_sample); // sample copied
-    expect(hi.params[11]).toBe('2026-07-10 09:00:00');
+    expect(hi.params[9]).toBe('body.uuid');                         // dedup_path copied (S3)
+    expect(hi.params[10]).toBe(99);                                 // duplicating user
+    expect(JSON.parse(hi.params[11])).toEqual(SRC_HOOK.captured_sample); // sample copied
+    expect(hi.params[12]).toBe('2026-07-10 09:00:00');
 
     // targets: both rows, joined extras (cred_name/cred_type) never in params
     expect(db.state.targetInserts).toHaveLength(2);

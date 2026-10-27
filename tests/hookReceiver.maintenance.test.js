@@ -113,7 +113,7 @@ describe('maintenance OFF — the new branch is not taken', () => {
     const res = await fire();
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ status: 'received', slug: 'test-hook' });
-    // Ack first (2026-10-28): the row is written and the doorbell rung; the
+    // Ack first (2026-10-27): the row is written and the doorbell rung; the
     // pipeline runs later from lib/hookDrain, never in this request.
     expect(hookService.recordExecution).toHaveBeenCalledTimes(1);
     expect(hookService.executeHook).not.toHaveBeenCalled();

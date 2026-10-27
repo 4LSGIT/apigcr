@@ -796,9 +796,41 @@ async function buildDryRunPreview(target, hookTransformOutput) {
 /** The raw_input cap. The JSON string is sliced at this many characters (see ref/plans.md: a sliced string is not JSON). */
 const RAW_INPUT_CAP = 512 * 1024;
 
+/** hook_executions.dedup_key is VARCHAR(191); a longer provider id is stored as its sha256 hex. */
+const DEDUP_KEY_MAX = 191;
+
+/**
+ * The provider's event id for this event, per the hook's `dedup_path`
+ * (S3, 2026-10-27): a dot-path into the received event ({body, headers,
+ * query, method, meta}), e.g. RingCentral `body.uuid`, Quo `body.id`. Null
+ * when the hook has no path or the event has no scalar there — null keys
+ * never collide, so such an event is recorded exactly as before. Objects,
+ * arrays and booleans are not ids; only a string / number counts. Over 191
+ * chars → sha256. The column is utf8mb4_bin: ids compare case-sensitively.
+ */
+function dedupKeyFor(hook, input) {
+  const path = hook && typeof hook.dedup_path === 'string' ? hook.dedup_path.trim() : '';
+  if (!path) return null;
+  const { resolvePath } = require('./hookMapper');
+  const v = resolvePath(input, path);
+  if (v == null || (typeof v !== 'string' && typeof v !== 'number')) return null;
+  const s = String(v);
+  if (!s) return null;
+  if (s.length <= DEDUP_KEY_MAX) return s;
+  return require('crypto').createHash('sha256').update(s).digest('hex');
+}
+
 /**
  * Write the execution row for one received event — the first thing that
- * happens to an event, before any code runs (async hook receiver, 2026-10-28).
+ * happens to an event, before any code runs (async hook receiver, 2026-10-27).
+ *
+ * `dedup` (S3): resolve the hook's `dedup_path` against the event and store it
+ * as `dedup_key`; the UNIQUE (hook_id, dedup_key) key makes a REDELIVERED
+ * event's INSERT fail with ER_DUP_ENTRY, which comes back as
+ * `{ executionId: null, duplicate: true, dedupKey }` — the receiver answers
+ * 200 and rings nothing; no row is written. Only the receiver's normal path
+ * asks for this: a synchronous run (live-test, replay, kill-switch path) is
+ * an operator's deliberate re-run and is never deduplicated (key NULL).
  *
  * `claimed` decides who may run the row:
  *   false (the receiver's normal path) — status 'received', claimed_at NULL,
@@ -812,20 +844,32 @@ const RAW_INPUT_CAP = 512 * 1024;
  *
  * @returns {Promise<{ executionId: number, truncated: boolean }>}
  */
-async function recordExecution(db, hook, slug, input, { claimed = false } = {}) {
+async function recordExecution(db, hook, slug, input, { claimed = false, dedup = false } = {}) {
   const rawInputStr = JSON.stringify(input);
   const truncated = rawInputStr.length > RAW_INPUT_CAP;
   const storedInput = truncated ? rawInputStr.slice(0, RAW_INPUT_CAP) : rawInputStr;
-  const [execResult] = await db.query(
-    `INSERT INTO hook_executions (hook_id, slug, raw_input, status, error, claimed_at, attempts)
-     VALUES (?, ?, ?, 'received', ?, ${claimed ? 'NOW(3)' : 'NULL'}, ?)`,
-    [hook.id, slug, storedInput, truncated ? 'raw_input truncated (>512KB)' : null, claimed ? 1 : 0]
-  );
-  return { executionId: execResult.insertId, truncated };
+  const dedupKey = dedup ? dedupKeyFor(hook, input) : null;
+  let execResult;
+  try {
+    [execResult] = await db.query(
+      `INSERT INTO hook_executions (hook_id, slug, raw_input, status, error, claimed_at, attempts, dedup_key)
+       VALUES (?, ?, ?, 'received', ?, ${claimed ? 'NOW(3)' : 'NULL'}, ?, ?)`,
+      [hook.id, slug, storedInput, truncated ? 'raw_input truncated (>512KB)' : null, claimed ? 1 : 0, dedupKey]
+    );
+  } catch (err) {
+    // The unique key did its job: this provider event is already recorded
+    // for this hook. Nothing else raises ER_DUP_ENTRY on this INSERT (id is
+    // auto-increment, no other unique key).
+    if (dedupKey !== null && err && (err.code === 'ER_DUP_ENTRY' || err.errno === 1062)) {
+      return { executionId: null, truncated, duplicate: true, dedupKey };
+    }
+    throw err;
+  }
+  return { executionId: execResult.insertId, truncated, duplicate: false, dedupKey };
 }
 
 /**
- * executionId (async hook receiver, 2026-10-28): the row already exists —
+ * executionId (async hook receiver, 2026-10-27): the row already exists —
  * recordExecution wrote it at receipt and lib/hookDrain claimed it. executeHook
  * then skips its own INSERT and the capture-mode intercept (capture is a
  * RECEIVE-time decision the receiver already made for this event; a hook
@@ -1421,9 +1465,9 @@ async function duplicateHook(db, id, userId) {
     const [r] = await conn.query(
       `INSERT INTO hooks
          (slug, name, description, auth_type, auth_config,
-          filter_mode, filter_config, transform_mode, transform_config,
+          filter_mode, filter_config, transform_mode, transform_config, dedup_path,
           active, last_modified_by, capture_mode, captured_sample, captured_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 'off', ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 'off', ?, ?)`,
       [
         newSlug,
         copyName,
@@ -1434,6 +1478,7 @@ async function duplicateHook(db, id, userId) {
         toJson(src.filter_config),
         src.transform_mode ?? 'passthrough',
         toJson(src.transform_config),
+        src.dedup_path ?? null,
         userId ?? null,
         toJson(src.captured_sample),
         src.captured_at ?? null,
@@ -1533,6 +1578,7 @@ async function getExecution(db, executionId) {
 module.exports = {
   // Pipeline
   recordExecution,
+  dedupKeyFor,
   executeHook,
   REQUEST_BOUND_QUEUE_WAIT_MS,
   executeRetry,

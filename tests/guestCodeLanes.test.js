@@ -242,7 +242,7 @@ describe('the lane table', () => {
         expect(fresh.RESERVED).toEqual({ events: 2, hooks: 1, preview: 0 });
         expect(fresh.QUEUE_WAIT_MS).toEqual({ events: 10000, hooks: 10000, preview: 5000 });
         expect(fresh.MAX_QUEUE).toEqual({ events: 100, hooks: 100, preview: 10 });
-        // Since the ack-first receiver (2026-10-28) the hooks lane is NOT
+        // Since the ack-first receiver (2026-10-27) the hooks lane is NOT
         // request-bound: the sender has its 200 before any body runs, and a
         // waiter that still fails closed is re-queued by lib/hookDrain. The
         // budget is sized like events, and a RingCentral-window arithmetic
