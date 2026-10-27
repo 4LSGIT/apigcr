@@ -348,8 +348,9 @@ where the work happens:
 - **Link…** — adopt the submission onto its entity. The picker follows the
   template's `link_type` (the intake is a case-form, so you pick a case).
   Case-forms with a usable name + phone/email also offer **Create contact +
-  case…**, which runs the standard find-or-create New Client dialog and links
-  to the case it makes.
+  case…**, which runs the standard New Client dialog (with its already-on-file
+  check — [Contacts](../01-YisraCase-overview/02-contacts.md#creating-and-editing-contacts))
+  and links to the case it makes.
 
 - **PDF** — download an archival PDF of the submission (shift-click opens it
   in a tab for printing). Renders fresh and saves nothing, so it is safe to

@@ -734,6 +734,9 @@ async function walk(page, W, record) {
   if (ONLY.has('dialogs')) {
     const DIALOGS = [
       ['new-client', 'newContact()'],
+      // the existing-contact box (fixtures/api/contact-lookup: a long name,
+      // a phone match and an email match), opened by submitting the dialog
+      ['new-client-match', "newContact(); setTimeout(() => { E('NCName').value = 'Jane Testcase'; E('NCPhone').value = '(313) 555-0100'; E('NCEmail').value = 'jane@example.com'; Swal.clickConfirm(); }, 600)"],
       ['new-case', 'NewCaseForm()'],
       ['new-appt', 'newApptDialog({ contactPick: true, casePick: true })'],
       ['new-event', 'newEventDialog({ linkPick: true })'],

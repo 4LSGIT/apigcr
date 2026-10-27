@@ -127,6 +127,25 @@ There is also a **tags** filter, and sorting by any column.
 
 When creating a contact, provide first name, last name, and at minimum a phone number or email address. Middle name is optional.
 
+**Already on file?** Before the New Client dialog creates anyone — from the
+New Client button, a case's **Add Person → Create new**, or New Case's
+**+ New client** — it checks the phone and email against existing contacts.
+If either is on file, the matches are listed and nothing is saved until you
+choose:
+
+- **Use** — the existing contact is used as-is: attached to the case, or the
+  new case and appointment are created on it. Nothing on their record changes.
+- **Create a separate new contact** — a new contact is made. A phone or email
+  belongs to one contact at a time, so the new contact **takes it over** and
+  it ends on the contact that had it. For a spouse sharing a phone that is
+  usually wrong: clear the phone field first and add it later as needed.
+
+Changing the phone or email after choosing asks again.
+
+From a case's **Add Person → Create new** the dialog makes the person only —
+it has no Case Type and no **Add & Open Case**, since the person is being
+added to the case you're on.
+
 When editing, fill in only the fields you are changing. The system will not overwrite fields you leave blank on a partial update — only the fields you submit are modified.
 
 > **Important:** Name changes are handled by the database automatically. If you update `fname`, `mname`, or `lname`, all derived name fields update instantly. You do not need to update `contact_name` or `contact_lfm_name` separately.

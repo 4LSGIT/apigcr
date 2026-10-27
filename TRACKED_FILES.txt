@@ -866,6 +866,7 @@ scripts/mobile-survey/fixtures/api/comms-archive/media/97001/transcript.json
 scripts/mobile-survey/fixtures/api/comms-archive/media/97002/transcript.json
 scripts/mobile-survey/fixtures/api/comms-archive/no-transcribe.json
 scripts/mobile-survey/fixtures/api/comms-archive/search.json
+scripts/mobile-survey/fixtures/api/contact-lookup.json
 scripts/mobile-survey/fixtures/api/contacts/9001.json
 scripts/mobile-survey/fixtures/api/contacts/9001/communications.json
 scripts/mobile-survey/fixtures/api/credentials.json
@@ -1146,6 +1147,7 @@ tests/caseEventService.test.js
 tests/caseId.test.js
 tests/caseMergeShapes.test.js
 tests/casePanelCss.test.js
+tests/caseUi.addClientExisting.test.js
 tests/caseUi.detTab.test.js
 tests/caseUi.stepsPanel.test.js
 tests/caseUi.sync.test.js
@@ -1497,6 +1499,8 @@ tests/moduleLoad.smoke.test.js
 tests/multipartBody.test.js
 tests/mySettings.test.js
 tests/nameKeyOrgKind.test.js
+tests/newCaseNewClient.test.js
+tests/newContactExistingCheck.test.js
 tests/optout.mysql.test.js
 tests/optout.routes.test.js
 tests/optoutAck.test.js

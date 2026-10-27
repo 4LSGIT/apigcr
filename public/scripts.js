@@ -2078,12 +2078,30 @@ function ycApptTypePick(sel, ids) {
      name / phone / email      — pre-fill the fields.
      phone_start_date /
      email_start_date          — show + send the corresponding start-date input.
-     force_create              — intake skips find-or-create (sends duplicate flag).
+     force_create              — skip the existing-contact check (below); the
+                                 orphan-adopt create-new, which ran its own
+                                 contact-lookup first.
+     case_type / case_other_type /
+     case_subtype              — pre-select the Case Type ('Other' + its free
+                                 text) and subtype (NewCaseForm's hand-off).
+     contactOnly               — a contact and nothing else: no Case Type rows
+                                 and no "Add & Open Case", so no case can be
+                                 made (case.html's Add Person — its onSuccess
+                                 attaches a CONTACT to the case it's on).
      suppressOpen              — don't open the new contact/case file after create
                                  (used by the orphan-adopt "create new" flows).
    onSuccess(data)             — fires after a successful create; data is the
                                  contact result (client path) or case result
                                  (case path). Callers read data.status/id/name.
+
+   Existing-contact check (unless force_create): before creating, the phone/
+   email go through GET /api/contact-lookup. Matches are listed in #NCMatch;
+   the user either USES one (no contact write at all — the case/appt attach
+   to it) or creates a separate contact. Never intake's find-and-update: on a
+   single match that path overwrote the matched contact's NAME, so a spouse
+   on a shared phone got renamed. Creating always sends duplicate=duplicate.
+   A separate contact takes over the matched phone/email (createContact ends
+   it on the other contact) — the box says so; clearing the field avoids it.
    ────────────────────────────────────────────────────────────────────────── */
 function newContact(prefill = {}, onSuccess = null) {
   const hasPhoneStart = Object.prototype.hasOwnProperty.call(prefill, 'phone_start_date')
@@ -2091,6 +2109,11 @@ function newContact(prefill = {}, onSuccess = null) {
   const hasEmailStart = Object.prototype.hasOwnProperty.call(prefill, 'email_start_date')
                         && prefill.email_start_date != null;
   const forceCreate = prefill.force_create === true;
+  const contactOnly = prefill.contactOnly === true;
+  // The user's answer to the existing-contact check (see header), tied to the
+  // phone|email it was given for: { key, useId?, useName?, separate? }.
+  let ncChoice = null;
+  let ncMatches = [];
 
   const phoneStartHtml = hasPhoneStart
     ? `<label class="input-label">Phone start date</label>
@@ -2194,7 +2217,8 @@ function newContact(prefill = {}, onSuccess = null) {
          <label class="input-label">Email</label>
          <input style="width:200px;" id="NCEmail" type="text" placeholder="Email Address"><br>
          ${emailStartHtml}
-         <label class="input-label">Case Type</label>
+         <div id="NCMatch" style="display:none;margin:8px 0;padding:8px;border:1px solid var(--warn);background:var(--warn-soft);color:var(--text);border-radius:6px;text-align:left;font-size:0.88em"></div>
+         ${contactOnly ? '' : `<label class="input-label">Case Type</label>
          <select id="NCType" style="width:200px;">
           <option selected value="">Select a case type</option>
           ${ncTypeOptions}
@@ -2205,7 +2229,7 @@ function newContact(prefill = {}, onSuccess = null) {
            <select id="NCSubtype" style="width:200px;"></select><br>
          </span>
          <label class="input-label"></label>
-         <span class="sub-label">Optional, select type to open a case.</span><br>
+         <span class="sub-label">Optional, select type to open a case.</span><br>`}
          ${apptBlockHtml}</div>
          `,
     showCancelButton: true,
@@ -2213,7 +2237,7 @@ function newContact(prefill = {}, onSuccess = null) {
     cancelButtonText: "Cancel",
     confirmButtonText: "Add & Open Client",
     showCloseButton: true,
-    showDenyButton: true,
+    showDenyButton: !contactOnly,
     denyButtonText: "Add & Open Case",
     // The app's third blue (charter section 7 maps #26abe2 -> --accent).
     denyButtonColor: "var(--accent)",
@@ -2249,7 +2273,10 @@ function newContact(prefill = {}, onSuccess = null) {
         if (E("NCSubtypeRow")) E("NCSubtypeRow").style.display = subs.length ? '' : 'none';
         if (E("NCOtherType"))  E("NCOtherType").style.display  = (t === 'Other') ? '' : 'none';
       };
+      if (prefill.case_type && E("NCType")) E("NCType").value = prefill.case_type;
+      if (prefill.case_other_type && E("NCOtherType")) E("NCOtherType").value = prefill.case_other_type;
       syncNCType();
+      if (prefill.case_subtype && E("NCSubtype")) E("NCSubtype").value = prefill.case_subtype;
       if (E("NCType")) E("NCType").addEventListener('change', syncNCType);
 
       // The case_type the registry scopes the appt-type picker by. Resolves
@@ -2266,6 +2293,22 @@ function newContact(prefill = {}, onSuccess = null) {
       ncLoadTypes();
       if (E("NCType"))      E("NCType").addEventListener('change', ncLoadTypes);
       if (E("NCOtherType")) E("NCOtherType").addEventListener('change', ncLoadTypes);
+      // Existing-contact box: "Use" / "Create separately" record the choice;
+      // the next Add & Open click acts on it.
+      E("NCMatch").addEventListener("click", (ev) => {
+        const b = ev.target.closest("button[data-nc]");
+        if (!b) return;
+        const key = _ncKey();
+        if (b.dataset.nc === "use") {
+          const m = ncMatches.find(x => String(x.contact_id) === b.dataset.id);
+          if (!m) return;
+          ncChoice = { key, useId: m.contact_id, useName: m.contact_name || `Contact ${m.contact_id}` };
+        } else {
+          ncChoice = { key, separate: true };
+        }
+        _ncRenderMatch();
+        Swal.resetValidationMessage();
+      });
       const on = E("NCApptOn");
       if (on) on.addEventListener("change", () => {
         E("NCApptBox").style.display = on.checked ? "" : "none";
@@ -2332,7 +2375,8 @@ function newContact(prefill = {}, onSuccess = null) {
     const name = E("NCName").value.trim();
     const phone = E("NCPhone").value.replace(/\D/g, "");
     const email = E("NCEmail").value.trim();
-    const caseTypeRaw = E("NCType").value;
+    // contactOnly renders no #NCType, so this is '' and no case is made.
+    const caseTypeRaw = E("NCType") ? E("NCType").value : '';
     // 'Other' + non-empty free text = a custom opaque type; empty free text
     // falls back to the LITERAL 'Other', which is a real registry category
     // now. Same rule as NewCaseForm and apptform2's createCase() — one
@@ -2393,14 +2437,45 @@ function newContact(prefill = {}, onSuccess = null) {
       }
     }
 
-    try {
-      const body = { name, phone, email };
-      if (hasPhoneStart && E("NCPhoneStart") && E("NCPhoneStart").value) body.phone_start_date = E("NCPhoneStart").value;
-      if (hasEmailStart && E("NCEmailStart") && E("NCEmailStart").value) body.email_start_date = E("NCEmailStart").value;
-      if (forceCreate) body.duplicate = "duplicate";
+    // ── Existing-contact check (see header). An answer given for other
+    //    values doesn't carry: editing the phone/email asks again. ──
+    if (ncChoice && ncChoice.key !== _ncKey()) { ncChoice = null; ncMatches = []; _ncRenderMatch(); }
+    if (!forceCreate && !ncChoice) {
+      let found;
+      try {
+        const q = {};
+        if (phone) q.phone = phone;
+        if (email) q.email = email;
+        found = await P.apiSend("/api/contact-lookup", "GET", q);
+      } catch (err) {
+        Swal.showValidationMessage("Couldn't check for an existing contact — try again.");
+        return false;
+      }
+      ncMatches = (found && found.matches) || [];
+      if (ncMatches.length) {
+        _ncRenderMatch();
+        Swal.showValidationMessage("This phone or email is already on file — choose below.");
+        return false;
+      }
+      ncChoice = { key: _ncKey(), separate: true };   // nothing on file
+    }
 
-      // 1) contact
-      const contactResult = await P.apiSend("/api/intake/contact", "POST", body);
+    try {
+      // 1) contact — an existing one as-is, or a new one (never intake's
+      //    find-and-update, which renamed the matched contact)
+      let contactResult;
+      if (ncChoice && ncChoice.useId != null) {
+        contactResult = {
+          status: "success", action: "existing",
+          id: ncChoice.useId, contact_id: ncChoice.useId, name: ncChoice.useName,
+          message: `Using existing client ${ncChoice.useName}`,
+        };
+      } else {
+        const body = { name, phone, email, duplicate: "duplicate" };
+        if (hasPhoneStart && E("NCPhoneStart") && E("NCPhoneStart").value) body.phone_start_date = E("NCPhoneStart").value;
+        if (hasEmailStart && E("NCEmailStart") && E("NCEmailStart").value) body.email_start_date = E("NCEmailStart").value;
+        contactResult = await P.apiSend("/api/intake/contact", "POST", body);
+      }
 
       // 2) case (always for 'case' mode; for 'client' mode only if type chosen)
       let caseResult = null;
@@ -2437,6 +2512,34 @@ function newContact(prefill = {}, onSuccess = null) {
       Swal.showValidationMessage(err.message || "Failed to create");
       return false;
     }
+  }
+
+  function _ncKey() {
+    return `${E("NCPhone").value.replace(/\D/g, "")}|${E("NCEmail").value.trim().toLowerCase()}`;
+  }
+
+  function _ncRenderMatch() {
+    const box = E("NCMatch");
+    if (!box) return;
+    if (!ncMatches.length) { box.style.display = "none"; box.innerHTML = ""; return; }
+    const tick = (on) => on ? "&#10003; " : "";
+    const rows = ncMatches.map(m => {
+      const by = [m.matched_by_phone && "phone", m.matched_by_email && "email"].filter(Boolean).join(" + ");
+      const nm = escAttr(m.contact_name || `Contact ${m.contact_id}`);
+      return `<div style="margin:6px 0">${tick(ncChoice && ncChoice.useId === m.contact_id)}<b>${nm}</b>
+        <span class="yc-hint">#${escAttr(m.contact_id)} · same ${by}</span>
+        <button type="button" class="cad-create-btn" data-nc="use" data-id="${escAttr(m.contact_id)}">Use</button></div>`;
+    }).join("");
+    const status = (ncChoice && ncChoice.useId != null)
+      ? `<div style="margin-top:6px">Using <b>${escAttr(ncChoice.useName)}</b> as-is — nothing on their record changes. Click Add &amp; Open to continue.</div>`
+      : (ncChoice && ncChoice.separate)
+        ? `<div style="margin-top:6px">A separate new contact will be created. Click Add &amp; Open to continue.</div>`
+        : "";
+    box.innerHTML = `<b>Already on file:</b>${rows}
+      <div style="margin-top:6px"><button type="button" class="cad-create-btn" data-nc="separate">${tick(ncChoice && ncChoice.separate)}Create a separate new contact</button>
+      <div class="yc-hint">The new contact takes over the matching phone/email — it ends on the contact that has it now. To leave it there, clear that field instead.</div></div>
+      ${status}`;
+    box.style.display = "";
   }
 }
 
@@ -3801,12 +3904,25 @@ function splitDocket(raw) {
 
    Success/open behavior mirrors newContact: default opens the new case file
    via the resolved addFile, UNLESS prefill.suppressOpen is set.
+
+   "+ New client" (the shell's plain Cases-tab call only): when the client
+   isn't on file yet, hand off to newContact — the New Client dialog already
+   creates contact + case (+ first appt) in one go — carrying the picker's
+   search term (phone / email / name, same sniff as case.html's add-contact
+   hand-off) and the chosen case type/subtype. Shown only with no contact,
+   no docket and no onSuccess: newContact has no docket fields, and its
+   onSuccess hands back a contact on its client path, not this dialog's case
+   result — so those callers (contact.html, CaseAdoptDialog, courtReview)
+   would lose something across the hand-off.
    ────────────────────────────────────────────────────────────────────────── */
 function NewCaseForm(prefill = {}, onSuccess = null) {
   let picker = null;
   let selectedContactId = (prefill.primary_contact_id != null)
     ? prefill.primary_contact_id
     : null;
+  const canNewClient = selectedContactId == null
+    && !prefill.case_number && !prefill.case_number_full
+    && typeof onSuccess !== 'function';
 
   // Type select is map-driven (fe-case_types via getCaseTypeMap). The 'Other'
   // free-text override is preserved: selecting 'Other' reveals an input that,
@@ -3826,7 +3942,9 @@ function NewCaseForm(prefill = {}, onSuccess = null) {
     title: 'Create new case',
     html: `
       <!-- a field label like its siblings (was a section heading) -->
-      <div class="ncf-field"><label>Primary contact</label><div id="ncf-picker-mount"></div></div>
+      <div class="ncf-field"><label>Primary contact</label><div id="ncf-picker-mount"></div>
+        ${canNewClient ? `<div class="cad-create-row"><button type="button" id="ncf-new-client" class="cad-create-btn">+ New client</button></div>` : ''}
+      </div>
       <div id="ncf-dup-warn" style="display:none;margin:8px 0;padding:8px;border:1px solid var(--warn);background:var(--warn-soft);color:var(--warn);border-radius:6px;text-align:left;font-size:0.88em"></div>
 
       <div class="ncf-field">
@@ -3945,6 +4063,25 @@ function NewCaseForm(prefill = {}, onSuccess = null) {
         const inp = E('ncf-picker-mount') && E('ncf-picker-mount').querySelector('.cp-input');
         if (inp) inp.value = prefill.primary_contact_name;
       }
+
+      // Client not on file → the New Client dialog (see header). Read the
+      // search term and type BEFORE Swal.close(): willClose destroys the picker.
+      const ncBtn = E('ncf-new-client');
+      if (ncBtn) ncBtn.addEventListener('click', () => {
+        const term   = picker ? picker.getQuery() : '';
+        const digits = term.replace(/\D/g, '');
+        const ncPrefill = {
+          case_type:       E('ncf-type').value,
+          case_other_type: (E('ncf-other-type').value || '').trim(),
+          case_subtype:    E('ncf-subtype').value,
+        };
+        if (digits.length === 10)    ncPrefill.phone = digits;
+        else if (term.includes('@')) ncPrefill.email = term;
+        else if (term)               ncPrefill.name  = term;
+        if (prefill.suppressOpen) ncPrefill.suppressOpen = true;
+        Swal.close();
+        newContact(ncPrefill);
+      });
     },
 
     preConfirm: async () => {
@@ -4396,8 +4533,9 @@ async function OrphanAdoptDialog(value, type, onDone = null, opts = {}) {
       });
 
       // Create-new button: close this dialog, hand off to newContact.
-      // force_create makes intake skip find-or-create so a value that
-      // matches an existing contact still creates a fresh one. onSuccess
+      // force_create skips newContact's existing-contact check — this dialog
+      // already listed the matches — so a value that matches an existing
+      // contact still creates a fresh one. onSuccess
       // bubbles a 'created' event up through onDone so the caller (the
       // shell) can re-render the log tab at its current page.
       E('oadCreateNew').addEventListener('click', () => {

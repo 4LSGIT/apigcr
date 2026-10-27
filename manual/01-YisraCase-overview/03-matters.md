@@ -118,6 +118,11 @@ Cases can be created from a contact's record or through the intake flow. When cr
 
 The open date is set to the creation date automatically.
 
+**New Case on the Cases tab** asks you to find the primary contact. If the
+client isn't on file yet, click **+ New client**: it opens the New Client
+dialog with your search text and the chosen case type already filled in, and
+**Add & Open Case** there creates the contact and the case together.
+
 **The Dropbox folder is stage-aware.** A case that already carries a docket
 number is treated as *active* and gets the Active-tree naming convention plus
 the four staff subfolders; anything else is *potential*. The naming templates
