@@ -46,7 +46,7 @@ const tick = (w, ms) => new Promise(r => w.setTimeout(r, ms));
 const CASE_ID = 'AAAAAAAA';
 const SPOUSE = { contact_id: 41, contact_name: 'John Doe', matched_by_phone: { source: 'child_active' }, matched_by_email: null };
 
-async function boot() {
+async function boot({ attachFails = false } = {}) {
   const dom = new JSDOM('<!DOCTYPE html><html><body></body></html>', {
     url: `https://app.4lsg.com/case.html?caseID=${CASE_ID}`,
     runScripts: 'dangerously',
@@ -76,6 +76,7 @@ async function boot() {
     if (url.startsWith('/api/calendar-types/options')) return { status: 'success', data: [] };
     if (url.startsWith('/api/contact-lookup')) return { status: 'success', matches: [SPOUSE], summary: {} };
     if (url === '/api/intake/contact') return { id: 77, status: 'success', name: 'Jane Doe', action: 'created' };
+    if (attachFails && url === `/api/cases/${CASE_ID}/contacts` && method === 'POST') throw new Error('already linked');
     return { status: 'success' };
   };
   window.firmData = {
@@ -159,6 +160,16 @@ describe('case.html Add Person → Create new runs the existing-contact check', 
     expect(attaches(calls).map(c => c.params)).toEqual([{ contact_id: 41, relate_type: 'Secondary' }]);
     expect(swal.toasts.map(t => t.title)).toContain('Added to case');
     expect(errors).toEqual([]);
+  });
+
+  test('Use whose attach fails does not claim a contact was created', async () => {
+    const { window, swal } = await boot({ attachFails: true });
+    await toMatchBox(window, swal);
+    window.document.querySelector('#NCMatch button[data-nc="use"]').click();
+    await submit(window, swal);
+    const titles = swal.toasts.map(t => t.title);
+    expect(titles).toContain("Couldn't add John Doe to case");
+    expect(titles.some(t => /^Created/.test(t))).toBe(false);
   });
 
   test('Create separately → a new contact (duplicate=duplicate) is attached', async () => {

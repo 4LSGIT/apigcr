@@ -122,6 +122,8 @@ The open date is set to the creation date automatically.
 client isn't on file yet, click **+ New client**: it opens the New Client
 dialog with your search text and the chosen case type already filled in, and
 **Add & Open Case** there creates the contact and the case together.
+The button refuses while a docket number is typed (the New Client dialog has
+nowhere to carry it) — clear it and add it on the case afterwards.
 
 **The Dropbox folder is stage-aware.** A case that already carries a docket
 number is treated as *active* and gets the Active-tree naming convention plus

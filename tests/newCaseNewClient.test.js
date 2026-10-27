@@ -116,6 +116,16 @@ describe('NewCaseForm "+ New client"', () => {
       .toEqual({ contact_id: 77, case_type: 'Bankruptcy', case_subtype: 'Chapter 13' });
   });
 
+  test('a typed docket refuses the hand-off instead of dropping it', () => {
+    const { window, swal } = boot();
+    window.NewCaseForm();
+    E(window, 'ncf-full').value = '2:26-bk-12345';
+    E(window, 'ncf-new-client').click();
+    expect(swal.validation).toMatch(/docket/);
+    expect(swal.closed).toBe(0);
+    expect(swal.fired).toEqual(['Create new case']);
+  });
+
   test('phone / email search terms land in their own fields; Other text carries', async () => {
     let { window } = boot();
     window.NewCaseForm();

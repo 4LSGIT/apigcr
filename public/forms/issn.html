@@ -651,6 +651,30 @@
 <script src="/js/yc-forms.js"></script>
 <script>
   const P = window.parent;
+
+  // A co-debtor phone/email another contact ACTIVELY holds — usually the
+  // debtor's, shared by the spouse — stays off the new co-debtor (Fred,
+  // 2026-10-27). Creating with it would MOVE it off the holder (one active
+  // owner per value, contactService.createContact); and before the create
+  // sent duplicate=duplicate, intake's single match UPDATED the holder —
+  // renamed the debtor to the co-debtor and overwrote their DOB/SSN/address.
+  // Returns { phone?, email? } naming who holds each. Throws when the lookup
+  // fails, so the caller creates nothing (fail closed).
+  async function issnHeldValues(phone, email) {
+    if (!phone && !email) return {};
+    const q = { include_ended: 'false', include_legacy_secondary: 'false' };
+    if (phone) q.phone = phone;
+    if (email) q.email = email;
+    const r = await P.apiSend('/api/contact-lookup', 'GET', q);
+    const held = {};
+    const who = (m) => m.contact_name || `contact ${m.contact_id}`;
+    for (const m of (r && r.matches) || []) {
+      if (m.matched_by_phone && m.matched_by_phone.source === 'child_active') held.phone = who(m);
+      if (m.matched_by_email && m.matched_by_email.source === 'child_active') held.email = who(m);
+    }
+    return held;
+  }
+
   const params = new URLSearchParams(location.search);
   const caseId = params.get('case_id');
 
@@ -941,14 +965,17 @@
             P.apiSend(`/api/contacts/${d.cd_contact_id}`, 'PATCH', cdPatch).catch(err =>
               console.warn('[ISSN] Co-debtor update failed:', err));
           } else {
-            // New co-debtor: create via intake route with all fields
+            // New co-debtor: create via intake route with all fields —
+            // always a NEW contact, minus any value someone holds (above).
             try {
+              const held = await issnHeldValues(d.cd_phone, d.cd_email);
               const intakeBody = {
                 firstName: d.cd_fname,
                 middleName: d.cd_mname || '',
                 lastName: d.cd_lname,
-                phone: d.cd_phone || '',
-                email: d.cd_email || '',
+                phone: held.phone ? '' : (d.cd_phone || ''),
+                email: held.email ? '' : (d.cd_email || ''),
+                duplicate: 'duplicate',
               };
               // Optional contact_* fields for the intake route
               if (cdPatch.contact_dob)     intakeBody.contact_dob     = cdPatch.contact_dob;
@@ -967,9 +994,20 @@
                 });
                 document.querySelector('[name="cd_contact_id"]').value = newId;
                 document.querySelector('[name="cd_id"]').value = newId;
+                const left = [held.phone && `phone (${held.phone} has it)`,
+                              held.email && `email (${held.email} has it)`].filter(Boolean);
+                if (left.length && window.Swal) {
+                  Swal.fire({ toast: true, position: 'top-end', icon: 'info', timer: 10000,
+                    showConfirmButton: false, title: 'Co-debtor added',
+                    text: `Left off the shared ${left.join(' and ')}.` });
+                }
               }
             } catch (err) {
               console.warn('[ISSN] Co-debtor create failed:', err);
+              if (window.Swal) {
+                Swal.fire({ toast: true, position: 'top-end', icon: 'error', timer: 10000,
+                  showConfirmButton: false, title: 'Co-debtor not created', text: err.message || '' });
+              }
             }
           }
         }

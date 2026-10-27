@@ -1580,7 +1580,9 @@
                 } catch (err) {
                   Toast.fire({
                     icon: "error",
-                    title: `Created ${data.name || "contact"}, but failed to add to case`,
+                    title: data.action === "existing"
+                      ? `Couldn't add ${data.name || "contact"} to case`
+                      : `Created ${data.name || "contact"}, but failed to add to case`,
                     text: err.message || ""
                   });
                 }

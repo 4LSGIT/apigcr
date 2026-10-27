@@ -136,15 +136,25 @@ choose:
 - **Use** — the existing contact is used as-is: attached to the case, or the
   new case and appointment are created on it. Nothing on their record changes.
 - **Create a separate new contact** — a new contact is made. A phone or email
-  belongs to one contact at a time, so the new contact **takes it over** and
-  it ends on the contact that had it. For a spouse sharing a phone that is
-  usually wrong: clear the phone field first and add it later as needed.
+  belongs to one contact at a time, so where a match says **same phone** /
+  **same email** the new contact **takes it over** and it ends on the contact
+  that has it now. For a spouse sharing a phone that is usually wrong: clear
+  the phone field first and add it later as needed. A match that says **had
+  this phone** is a former or old-style record — nothing moves.
 
-Changing the phone or email after choosing asks again.
+Changing the phone or email at any point before saving asks again. If the
+contact is saved but a later step (the case, the appointment) fails, trying
+again reuses that contact rather than making a second one.
 
 From a case's **Add Person → Create new** the dialog makes the person only —
-it has no Case Type and no **Add & Open Case**, since the person is being
-added to the case you're on.
+no Case Type, no **Add & Open Case** and no appointment box, since the person
+is being added to the case you're on.
+
+**ISSN co-debtor.** Saving the ISSN form with a new co-debtor creates them as a
+new contact. A phone or email that someone already holds — usually the
+debtor's, shared by the spouse — is **left off** the co-debtor (so it stays
+with the debtor), and a notice says which. If the check can't run, the
+co-debtor isn't created and a notice says so; save again.
 
 When editing, fill in only the fields you are changing. The system will not overwrite fields you leave blank on a partial update — only the fields you submit are modified.
 

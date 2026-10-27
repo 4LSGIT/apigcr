@@ -146,7 +146,8 @@
    precedents: picker matching the TEMPLATE's link_type (case → CasePicker,
    contact → ContactPicker, appt → id input — no ApptPicker exists yet), and
    for case-forms a create branch that hands off to scripts.js newContact
-   (find-or-create contact + optional case in one dialog) and links to the
+   (contact — an existing one via its already-on-file check, or a new one —
+   + optional case in one dialog) and links to the
    case it returns. The RG task from wf40 is the NOTIFICATION; this page is
    the WORKSPACE (§8).
 ============================================================================ -->
@@ -583,8 +584,9 @@
      a validation message and the dialog stays open.
 
      Case-forms with a name + (phone|email) in the answers also get a
-     "Create contact + case…" branch: scripts.js newContact (find-or-create
-     contact, optional case in the same dialog, suppressOpen). Its onSuccess
+     "Create contact + case…" branch: scripts.js newContact (new or existing
+     contact via its already-on-file check, optional case in the same dialog,
+     suppressOpen). Its onSuccess
      payload discriminates by `case_relate` (present only on the
      /api/intake/case response): a case → link it; contact-only → the
      submission stays unlinked and says so.

@@ -39,7 +39,7 @@ const tick = (w, ms = 20) => new Promise((r) => w.setTimeout(r, ms));
 
 const JOHN = { contact_id: 41, contact_name: 'John Doe', matched_by_phone: { source: 'child_active' }, matched_by_email: null };
 
-function boot({ matches = [], lookupFails = false } = {}) {
+function boot({ matches = [], lookupFails = false, caseFailsOnce = false } = {}) {
   const dom = new JSDOM('<!DOCTYPE html><html><body></body></html>', { url: 'https://app.4lsg.com/index.html', runScripts: 'dangerously' });
   DOMS.push(dom);
   const { window } = dom;
@@ -52,7 +52,10 @@ function boot({ matches = [], lookupFails = false } = {}) {
       return { status: 'success', matches, summary: {} };
     }
     if (url === '/api/intake/contact') return { id: 77, status: 'success', name: 'Jane Doe', action: 'created' };
-    if (url === '/api/intake/case') return { id: 'AB12', status: 'success', case_relate: 1 };
+    if (url === '/api/intake/case') {
+      if (caseFailsOnce) { caseFailsOnce = false; throw new Error('case step failed'); }
+      return { id: 'AB12', status: 'success', case_relate: 1 };
+    }
     return { status: 'success' };
   };
   window.firmData = {
@@ -171,6 +174,7 @@ describe('newContact existing-contact check', () => {
     await tick(window);
     expect(E(window, 'NCType')).toBeNull();
     expect(E(window, 'NCSubtypeRow')).toBeNull();
+    expect(E(window, 'NCApptOn')).toBeNull();
     expect(swal.last.showDenyButton).toBe(false);
     E(window, 'NCName').value = 'Jane Doe';
     E(window, 'NCPhone').value = '(555) 555-1212';
@@ -184,7 +188,42 @@ describe('newContact existing-contact check', () => {
     window.newContact();
     await tick(window);
     expect(E(window, 'NCType')).not.toBeNull();
+    expect(E(window, 'NCApptOn')).not.toBeNull();
     expect(swal.last.showDenyButton).toBe(true);
+  });
+
+  test('an edit between the lookup and the choice drops the list and looks again', async () => {
+    const { window, calls, swal } = await open({ matches: [JOHN] });
+    await swal.last.preDeny();                                // looked up 555-555-1212
+    E(window, 'NCPhone').value = '(555) 555-0000';            // edited BEFORE choosing
+    click(window, 'button[data-nc="separate"]');
+    expect(swal.validation).toMatch(/changed/);
+    expect(E(window, 'NCMatch').style.display).toBe('none');
+    expect(await swal.last.preDeny()).toBe(false);            // re-checks the new value
+    expect(lookups(calls).map((c) => c.body)).toEqual([{ phone: '5555551212' }, { phone: '5555550000' }]);
+    expect(calls.filter((c) => c.method === 'POST')).toHaveLength(0);
+  });
+
+  test('a retry after a failed case step reuses the contact it created', async () => {
+    const { calls, swal } = await open({ caseFailsOnce: true });
+    expect(await swal.last.preDeny()).toBe(false);            // contact made, case threw
+    expect(swal.validation).toMatch(/case step failed/);
+    expect(await swal.last.preDeny()).not.toBe(false);        // retry
+    expect(posts(calls, '/api/intake/contact')).toHaveLength(1);
+    expect(posts(calls, '/api/intake/case').map((c) => c.body.contact_id)).toEqual([77, 77]);
+  });
+
+  test('a former/legacy match says "had", and only a live one warns it moves', async () => {
+    const FORMER = { contact_id: 52, contact_name: 'Old Owner', matched_by_phone: { source: 'child_ended' }, matched_by_email: null };
+    let { window, swal } = await open({ matches: [FORMER] });
+    await swal.last.preDeny();
+    expect(E(window, 'NCMatch').textContent).toMatch(/#52 · had this phone/);
+    expect(E(window, 'NCMatch').textContent).not.toMatch(/takes over/);
+
+    ({ window, swal } = await open({ matches: [FORMER, JOHN] }));
+    await swal.last.preDeny();
+    expect(E(window, 'NCMatch').textContent).toMatch(/#41 · same phone/);
+    expect(E(window, 'NCMatch').textContent).toMatch(/takes over/);
   });
 
   test('force_create callers skip the check', async () => {
