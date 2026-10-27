@@ -793,6 +793,7 @@ scripts/accessD1ParentKey.js
 scripts/accessD3TaskSessionKey.js
 scripts/accessSec3SensitiveTier.js
 scripts/add-path-headers.js
+scripts/auditLogCredHeaderScrub.js
 scripts/b2SchedulerKeySwap.sh
 scripts/backfill-password-hashes.js
 scripts/backfillAppts.js
@@ -1136,6 +1137,8 @@ tests/assistantSidebar.test.js
 tests/assistantTicket.test.js
 tests/assistantUi.test.js
 tests/assistantWeatherService.test.js
+tests/auditHeaderRedaction.test.js
+tests/auditLogCredHeaderScrub.mysql.test.js
 tests/auditShape.mysql.test.js
 tests/auditShape.test.js
 tests/autoGrow.test.js

@@ -352,12 +352,10 @@ amendments, which bind every slice that touches hosts:
 
 ## From the access-control arc (2026-10-14) — deferred
 
-- **jwt_api_audit_log retention** (~90 days): 134K rows / ~126MB since
-  April, never pruned. Bodies and query are shapes-only since SEC-2, but
-  `headers` still carries `x-su-elevation` (logJwtApiAttempt strips
-  `authorization`/`x-api-key`/`cookie` only), so every stepped-up SU request
-  since 2026-08-16 stores its elevation token — stop writing it, then scrub
-  the column; retention is secrecy as well as size until then.
+- **jwt_api_audit_log retention** (~90 days): 167K rows since April, never
+  pruned. Bodies and query are shapes-only since SEC-2 and credential headers
+  are dropped by name (2026-10-27, history scrubbed by
+  `scripts/auditLogCredHeaderScrub.js`), so retention is size, not secrecy.
 - **schemaDump views**: lib/schemaDump.js dumps BASE TABLEs only; `ai_spend`
   (the schema's first view) never reaches ref/database.sql and db:ref:check
   cannot see it drift. Its migration record is its definition of record
@@ -390,8 +388,8 @@ amendments, which bind every slice that touches hosts:
   fallback and read firmData.currentUser.roles only. (Graduated from
   docs-debt 2026-10-14.)
 - **Old referer header rows in jwt_api_audit_log**: SEC-2 shaped bodies and
-  query_params; SEC-1 write-redacts `authorization`/`x-api-key`/`cookie` and
-  referer credentials (not `x-su-elevation` — entry above), but rows older
+  query_params; credential headers are dropped by name and SEC-1 redacts
+  referer credentials, but rows older
   than 2026-10-12 may still carry credential-bearing referers. The table is
   sensitive-tier-gated now, so exposure is to diagnostic keys only; a
   one-off header scrub is optional hygiene.
@@ -1522,8 +1520,7 @@ role-convention item were confirmed done and dropped).
   to 10 in production"; still 100).
 - **Audit-log hygiene:** 30-day retention cron for `jwt_api_audit_log` and
   `query_log`. (No stored row carries a Bearer token — 0 match `%Bearer %`,
-  2026-10-25; the stored `x-su-elevation` tokens are the access-arc entry
-  above.)
+  2026-10-25.)
 - **Sequence templates:** audit `sequence_templates`/`sequence_steps` for
   duplicate `:placeholders` (resolver now throws on DB errors — behavior change).
 - **newAppt Swal wiring:** `does_appts` filter + staff dropdown in the appt

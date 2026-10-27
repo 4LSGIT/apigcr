@@ -887,11 +887,15 @@ New raw `fetch` with a lifted token is a regression, not a pattern.
   persists them: the hook receiver drops `authorization`/`cookie`/`x-api-key`
   before persisting captures (api.hooks.js SENSITIVE_HEADER_DENYLIST), the
   apiTester audit log redacts the same set, the client diag ring records
-  method/url/status only. ONE known gap: `jwt_api_audit_log`
-  (`lib/auth.jwtOrApiKey` logJwtApiAttempt) deletes the same three but NOT
-  `x-su-elevation`, so every stepped-up SU request stores its elevation token
-  (15-min TTL) in the row's `headers` (ref/plans.md). Keep new logging/capture
-  sites on this side of the line, and strip `x-su-elevation` with the rest.
+  method/url/status only. `jwt_api_audit_log` (`lib/auth.jwtOrApiKey`
+  logJwtApiAttempt) drops by NAME — every header matching
+  `CREDENTIAL_HEADER_RE` (key / token / secret / auth / elevation / password /
+  session, plus exact names like `x-streak-admin`), pinned per header the app
+  accepts by `tests/auditHeaderRedaction.test.js`. A fixed three-name list
+  there stored `x-su-elevation` in 8,926 rows (2026-08-16 → 10-27), scrubbed by
+  `scripts/auditLogCredHeaderScrub.js`. Keep new logging/capture sites on this
+  side of the line; a new credential header whose name doesn't say so joins the
+  regex's exact names and the test's list.
 - *No authored-executable MIME on the app origin:* operator-authored bytes
   never execute on app.4lsg.com. Authored page HTML serves only on
   registered landing hosts — enforced in code: pageService refuses any
