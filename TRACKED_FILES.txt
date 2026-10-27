@@ -612,6 +612,7 @@ ref/migrations/2026-10-26_docs_digest_repoint.console.js
 ref/migrations/2026-10-26_docs_digest_rule.console.js
 ref/migrations/2026-10-27_hook_dedup_key.sql
 ref/migrations/2026-10-27_ingest_rule_edit_stamp_change_log.sql
+ref/migrations/2026-10-27_mailboxes_ingest_state_comment.sql
 ref/migrations/2026-10-27_optout_contact_columns_drop.sql
 ref/migrations/2026-10-28_hook_executions_async_receiver.sql
 ref/migrations/2026-10-28_intake_review_assignee.sql
@@ -847,6 +848,7 @@ scripts/gen_signatures.js
 scripts/hookAsyncReceiverS0.js
 scripts/hookDedupS3.js
 scripts/ingestRuleEditStampAndChangeLog.js
+scripts/mailboxIngestStateComment.js
 scripts/mailboxRepairShellRows.js
 scripts/mobile-survey/README.md
 scripts/mobile-survey/commsDensity.js
@@ -1480,6 +1482,7 @@ tests/logservice.buildcontactlogwhere.test.js
 tests/machineKeyScopes.test.js
 tests/mailboxFetchMerge.test.js
 tests/mailboxGmailParity.console.test.js
+tests/mailboxIngestStateComment.test.js
 tests/mailboxPoison.test.js
 tests/mailboxRepairShellRows.mysql.test.js
 tests/mailboxS0.test.js
