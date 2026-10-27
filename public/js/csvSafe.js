@@ -13,8 +13,11 @@
  * Every CSV exporter routes every cell AND every header through cell():
  *   public/reports.html    downloadCsv → csvText  (saved-report runs)
  *   public/customView.html exportCsv              (views)
- *   public/scripts.js      buildLogCsv            (log export: case, contact,
- *                                                  the main log tab)
+ *   public/scripts.js      buildCsv               (list exports: the log from
+ *                                                  case, contact and the log
+ *                                                  tab; the shell's Cases,
+ *                                                  Contacts, Appts, Events,
+ *                                                  Calendar list; tasks.html)
  *   public/dbConsole.html  CSV button             (SU database console)
  * and the one tabular clipboard copy — dbConsole's Copy (TSV, built to paste
  * straight into a spreadsheet, where a pasted "=…" cell becomes a formula

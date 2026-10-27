@@ -62,12 +62,20 @@ function parseBool(v) {
 
 // ─── LIST ───
 router.get("/api/contacts", jwtOrApiKey, async (req, res) => {
+  // BIRTHDAYS (contactService.birthdayDays): an unknown window must not
+  // silently list everyone.
+  const birthdays = req.query.birthdays || null;
+  if (birthdays && !contactService.BIRTHDAY_WINDOWS.includes(birthdays)) {
+    return res.status(400).json({ status: "error",
+      message: `birthdays must be one of ${contactService.BIRTHDAY_WINDOWS.join(", ")}` });
+  }
   try {
     const result = await contactService.listContacts(req.db, {
       query: req.query.q || req.query.query || "",
       type: req.query.type,
       tags: req.query.tags,
       role: req.query.role,
+      birthdays,
       sort_by: req.query.sort_by || "contact_lname",
       sort_dir: req.query.sort_dir || "ASC",
       limit: req.query.limit || 50,

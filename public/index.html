@@ -3690,6 +3690,7 @@
             persistKey: 'cases',
             onLimit: () => tabCasesGet(0),   // refetch re-reads the store
             onPrint: true,
+            onExport: () => exportListCsv('cases', () => csvFilterOf(params)),
           });
         } else if (!silent) {
           Toast.fire({ icon: "error", title: "No cases found!" });
@@ -3789,33 +3790,41 @@
              sentinel, never a role_code; contactService.ROLE_NONE. -->
         <option value="-none">No roles</option>
       </select></label>
-      <label class="yc-f"><span class="yc-f-l">Filter2</span>
-      <select disabled>
-        <option>All</option>
-        <option>All</option>
-        <option>All</option>
-        <option>All</option>
+      <!-- BIRTHDAYS (SS's request, 2026-10-27) — contactService.birthdayDays.
+           Self-contained: this select and its one line in tabContactsGet. A
+           window lists only birthdays in it, upcoming first. -->
+      <label class="yc-f"><span class="yc-f-l">Birthdays</span>
+      <select id="tabContactsBirthdays" style="width: auto" onchange="tabContactsGet(0)">
+        <option value="">Any</option>
+        <option value="next7">Next 7 days</option>
+        <option value="next30">Next 30 days</option>
+        <option value="this_month">This month</option>
+        <option value="next_month">Next month</option>
       </select></label>
-      <label class="yc-f" data-nocount><span class="yc-f-l">Sort By</span>
-      <select id="tabContactsSort" style="width: auto">
-        <option value="contact_lname ASC">Last Name (a&rarr;z)</option>
-        <option value="contact_lname DESC">Last Name (a&larr;z)</option>
-        <option value="contact_fname ASC">First Name (a&rarr;z)</option>
-        <option value="contact_fname DESC">First Name (a&larr;z)</option>
-      </select></label>
+      <span class="yc-f yc-f-wide" data-nocount><span class="yc-f-l">Order By</span>
+      <select id="tabContactsSort" style="width: auto" data-type="sortBy" onchange="sortSelect(this)">
+        <option value="contact_lname">Last Name</option>
+        <option value="contact_fname">First Name</option>
+        <option value="contact_id">ID</option>
+        <option value="contact_dob">Date of Birth</option>
+      </select>
+      <select id="tabContactsSort2" style="width: auto" data-type="sortDi" onchange="sortSelect(this)">
+        <option value="ASC">Ascending</option>
+        <option value="DESC">Descending</option>
+      </select></span>
       </div>
       <button type="button" class="yc-f-toggle" onclick="ycFiltersToggle(this)" aria-expanded="false"><i class="fa-solid fa-sliders"></i><span class="yc-f-tl">Filters</span><span class="yc-f-count"></span></button>
-      <button class="yc-f-go" onclick="tabContactsGet(0)">Search</button>
+      <button class="yc-f-go" onclick="tabContactsGet(0)" data-type="goButton">Search</button>
     </div>
     <table id="contactsTable" class="logTable">
       <tr>
-        <th>ID</th>
-        <th>Name</th>
+        <th onclick="sort(this, 'contact_id')">ID</th>
+        <th onclick="sort(this, 'contact_lname')">Name</th>
         <th>Phone</th>
         <th>Email</th>
         <th>Address</th>
         <th>Cases</th>
-        <th>Date of Birth</th>
+        <th onclick="sort(this, 'contact_dob')">Date of Birth</th>
       </tr>
     </table>
     <div id="contactsTableFoot"></div>
@@ -3842,8 +3851,8 @@
       E("tabContactsLoad").style.display = "block";
 
       const q = E("tabContactsQuery").value;
-      const sortVal = E("tabContactsSort").value;  // e.g. "contact_lname ASC"
-      const [sort_by, sort_dir] = sortVal.split(" ");
+      const sort_by = E("tabContactsSort").value;
+      const sort_dir = E("tabContactsSort2").value;
 
       const table = E("contactsTable");
       const foot = E("contactsTableFoot");
@@ -3857,6 +3866,8 @@
       // the default-state request stays byte-identical to pre-slice.
       const roleSel = E("tabContactsRole");
       if (roleSel && roleSel.value) params.role = roleSel.value;
+      const bdaySel = E("tabContactsBirthdays");     // BIRTHDAYS
+      if (bdaySel && bdaySel.value) params.birthdays = bdaySel.value;
 
       try {
         const data = await apiSend("/api/contacts", "GET", params);
@@ -3896,6 +3907,7 @@
             persistKey: 'contacts',
             onLimit: () => tabContactsGet(0),
             onPrint: true,
+            onExport: () => exportListCsv('contacts', () => csvFilterOf(params)),
           });
         } else if (!silent) {
           Toast.fire({ icon: "error", title: "No contacts found!" });
@@ -4030,20 +4042,34 @@
       <input id="tabApptsDate1" type="date" style="width: auto; display: none" />
       <label id="tabApptsDateLabel"></label>
       <input id="tabApptsDate2" type="date" style="width: auto; display: none" /></span>
+      <span class="yc-f yc-f-wide" data-nocount><span class="yc-f-l">Order By</span>
+      <select id="tabApptsSort" style="width: auto" data-type="sortBy" onchange="sortSelect(this)">
+        <option value="upcoming">Upcoming first</option>
+        <option value="date">Date</option>
+        <option value="client">Contact Name</option>
+        <option value="case">Case</option>
+        <option value="type">Appt Type</option>
+        <option value="status">Status</option>
+        <option value="with">With</option>
+      </select>
+      <select id="tabApptsSort2" style="width: auto" data-type="sortDi" onchange="sortSelect(this)">
+        <option value="ASC">Ascending</option>
+        <option value="DESC">Descending</option>
+      </select></span>
       </div>
       <button type="button" class="yc-f-toggle" onclick="ycFiltersToggle(this)" aria-expanded="false"><i class="fa-solid fa-sliders"></i><span class="yc-f-tl">Filters</span><span class="yc-f-count"></span></button>
-      <button id="tabApptsButton" class="yc-f-go" onclick="tabApptsGet(0)">Search</button>
+      <button id="tabApptsButton" class="yc-f-go" onclick="tabApptsGet(0)" data-type="goButton">Search</button>
     </div>
     <table id="apptsTable" class="logTable">
       <tr>
         <th>ID</th>
-        <th>Date</th>
+        <th onclick="sort(this, 'date')" data-sort-upcoming="upcoming" title="Upcoming first → oldest first → newest first">Date ⇅</th>
         <th>Time</th>
-        <th>Contact Name</th>
-        <th>Case</th>
-        <th>Appt Type</th>
-        <th>Status</th>
-        <th>With</th>
+        <th onclick="sort(this, 'client')">Contact Name</th>
+        <th onclick="sort(this, 'case')">Case</th>
+        <th onclick="sort(this, 'type')">Appt Type</th>
+        <th onclick="sort(this, 'status')">Status</th>
+        <th onclick="sort(this, 'with')">With</th>
         <th>Update</th>
       </tr>
     </table>
@@ -4099,24 +4125,31 @@
       <input id="tabEventsDate1" type="date" style="width: auto; display: none" />
       <label id="tabEventsDateLabel"></label>
       <input id="tabEventsDate2" type="date" style="width: auto; display: none" /></span>
-      <label class="yc-f" data-nocount><span class="yc-f-l">Sort</span>
-      <select id="tabEventsSort" style="width: auto" onchange="tabEventsGet(0)">
-        <option value="asc" selected>Soonest first</option>
-        <option value="desc">Latest first</option>
-      </select></label>
+      <span class="yc-f yc-f-wide" data-nocount><span class="yc-f-l">Order By</span>
+      <select id="tabEventsSort" style="width: auto" data-type="sortBy" onchange="sortSelect(this)">
+        <option value="upcoming">Upcoming first</option>
+        <option value="date">Date</option>
+        <option value="type">Type</option>
+        <option value="title">Title</option>
+        <option value="status">Status</option>
+      </select>
+      <select id="tabEventsSort2" style="width: auto" data-type="sortDi" onchange="sortSelect(this)">
+        <option value="ASC">Ascending</option>
+        <option value="DESC">Descending</option>
+      </select></span>
       </div>
       <button type="button" class="yc-f-toggle" onclick="ycFiltersToggle(this)" aria-expanded="false"><i class="fa-solid fa-sliders"></i><span class="yc-f-tl">Filters</span><span class="yc-f-count"></span></button>
-      <button id="tabEventsButton" class="yc-f-go" onclick="tabEventsGet(0)">Search</button>
+      <button id="tabEventsButton" class="yc-f-go" onclick="tabEventsGet(0)" data-type="goButton">Search</button>
     </div>
     <table id="eventsTable" class="logTable">
       <tr>
         <th>ID</th>
-        <th>Type</th>
-        <th>Title</th>
-        <th>Date</th>
+        <th onclick="sort(this, 'type')">Type</th>
+        <th onclick="sort(this, 'title')">Title</th>
+        <th onclick="sort(this, 'date')" data-sort-upcoming="upcoming" title="Upcoming first → oldest first → newest first">Date ⇅</th>
         <th>Time</th>
         <th>Blocks</th>
-        <th>Status</th>
+        <th onclick="sort(this, 'status')">Status</th>
         <th>Linked</th>
         <th>Location</th>
         <th>Action</th>
@@ -4162,6 +4195,7 @@
     #tabCalendar .calx-b-superseded { color: var(--text-muted); text-decoration: line-through; }
     #tabCalendar tbody tr { cursor: pointer; }
     #tabCalendar .calx-note { color: var(--text-muted); font-size: 0.85rem; margin-top: 8px; }
+    #tabCalendar .calx-foot-acts { margin-left: 6px; white-space: nowrap; }
     /* U9b-P2 — the quick-action cell. Small buttons, wrapping inside the cell;
        on phones the labels drop and the icons carry title/aria-label, so the
        column stays a column of icons rather than widening the table. */
@@ -4262,6 +4296,20 @@
       <input id="calxFrom" type="date" style="width: auto" />
       <label>to</label>
       <input id="calxTo" type="date" style="width: auto" /></span>
+      <span class="yc-f yc-f-wide" data-nocount><span class="yc-f-l">Order By</span>
+      <select id="calxSortBy" style="width: auto" data-type="sortBy" onchange="sortSelect(this)">
+        <option value="upcoming">Upcoming first</option>
+        <option value="when">When</option>
+        <option value="kind">Kind</option>
+        <option value="title">What</option>
+        <option value="attached">Attached to</option>
+        <option value="with">With</option>
+        <option value="state">State</option>
+      </select>
+      <select id="calxSortDir" style="width: auto" data-type="sortDi" onchange="sortSelect(this)">
+        <option value="ASC">Ascending</option>
+        <option value="DESC">Descending</option>
+      </select></span>
       </div>
       <span class="calx-presets yc-f-row">
         <button data-preset="0">Today</button>
@@ -4270,17 +4318,17 @@
         <button data-preset="90">90d</button>
       </span>
       <button type="button" class="yc-f-toggle" onclick="ycFiltersToggle(this)" aria-expanded="false"><i class="fa-solid fa-sliders"></i><span class="yc-f-tl">Filters</span><span class="yc-f-count"></span></button>
-      <button id="calxButton" class="yc-f-go">Refresh</button>
+      <button id="calxButton" class="yc-f-go" data-type="goButton">Refresh</button>
     </div>
     <iframe id="calxGridFrame" title="Calendar grid"></iframe>
     <table id="calxTable" class="logTable">
       <tr>
-        <th>When</th>
-        <th>Kind</th>
-        <th>What</th>
-        <th>Attached to</th>
-        <th>With</th>
-        <th>State</th>
+        <th onclick="sort(this, 'when')" data-sort-upcoming="upcoming" title="Upcoming first → oldest first → newest first">When ⇅</th>
+        <th onclick="sort(this, 'kind')">Kind</th>
+        <th onclick="sort(this, 'title')">What</th>
+        <th onclick="sort(this, 'attached')">Attached to</th>
+        <th onclick="sort(this, 'with')">With</th>
+        <th onclick="sort(this, 'state')">State</th>
         <th>Actions</th>
       </tr>
     </table>
@@ -4468,6 +4516,49 @@
       return '<span class="calx-key">—</span>';
     }
 
+    /* ORDER — sorted HERE, over the rows the read layer returned: one
+       92-day window holds ~100 live rows against a 500 cap, and when it is
+       capped the footer already says the list is partial. The read layer's
+       order (_byRangeStart: by day, all-day first, then time) is 'when'
+       ascending and every other sort's tie-break. 'upcoming' = today (the
+       browser's local day, as calxISO) and later in that order, then the
+       past newest first. Blank values sort last. */
+    const CALX_SORT_KEYS = {
+      kind: (r) => String(r.kind_key || ''),
+      title: (r) => String(r.title || ''),
+      attached: (r) => {
+        const d = r.display || {};
+        return String(r.link_type === 'contact' ? (d.contact_name || '') : (d.case_label || r.docket || r.case_id || ''));
+      },
+      with: (r) => {
+        const a = (r.attendees || [])[0];
+        if (!a) return '';
+        if (a.party === 'firm') return 'Everyone';
+        if (a.party !== 'user') return '';
+        const u = (window.firmData?.users || []).find(x => Number(x.user) === Number(a.id));
+        return u ? String(u.user_name) : '#' + a.id;
+      },
+      state: (r) => String(r.resolution || r.state || ''),
+    };
+    function calxSortRows(rows, by, dir) {
+      if (by === 'upcoming') {
+        const today = calxISO(new Date());
+        const isPast = (r) => !(String(r.starts_at || '').slice(0, 10) >= today);
+        return rows.filter(r => !isPast(r)).concat(rows.filter(isPast).reverse());
+      }
+      if (by === 'when') return dir === 'DESC' ? rows.slice().reverse() : rows.slice();
+      const key = CALX_SORT_KEYS[by];
+      if (!key) return rows.slice();
+      const at = new Map(rows.map((r, i) => [r, i]));
+      const sign = dir === 'DESC' ? -1 : 1;
+      return rows.slice().sort((a, b) => {
+        const ka = key(a), kb = key(b);
+        if (!ka !== !kb) return ka ? -1 : 1;
+        const c = ka.localeCompare(kb, undefined, { sensitivity: 'base', numeric: true });
+        return c ? c * sign : at.get(a) - at.get(b);
+      });
+    }
+
     function calxWithName(row) {
       // Events: NULL event_with = firm-wide, 0 = nobody. Appts: a real host.
       // The row does not carry the raw column, so this reads the attendee
@@ -4592,7 +4683,7 @@
         // Superseded: a newer call cleared the table after we did and owns
         // it now — and owns the spinner and the button, so leave those too.
         if (seq !== calxSeq) return;
-        calxRows = data.items || [];
+        calxRows = calxSortRows(data.items || [], E('calxSortBy').value, E('calxSortDir').value);
         if (!calxRows.length) {
           const row = table.insertRow();
           row.style.cursor = 'default';
@@ -4637,7 +4728,14 @@
             + (data.has_more
               ? ' · <b style="color:var(--warn)">capped at ' + calxEsc(data.limit)
                 + ' — narrow the window or the filters to see the rest</b>'
-              : '');
+              : '')
+            + ' <span class="calx-foot-acts"><button type="button" data-calx-foot="print">Print</button>'
+            + ' <button type="button" data-calx-foot="export">Export</button></span>';
+          // List view only: the grid hides #calxFoot. Export writes the rows
+          // listed — a capped list exports the capped rows, as the note says.
+          foot.querySelector('[data-calx-foot="print"]').onclick = () => window.print();
+          foot.querySelector('[data-calx-foot="export"]').onclick = () =>
+            exportRowsCsv(CALENDAR_CSV_COLUMNS, calxRows, 'yisracase-calendar');
         }
       } catch (err) {
         if (seq !== calxSeq) return;
@@ -4888,9 +4986,14 @@
       const date1 = E("tabEventsDate1").value;
       const date2 = E("tabEventsDate2").value;
       const q = E("tabEventsQ").value.trim();
-      const sort = E("tabEventsSort").value;
+      // listEvents: sort = 'upcoming' | 'asc' | 'desc'; sort_by a column
+      // (date is its default, so it is never sent).
+      const sortBy = E("tabEventsSort").value;
+      const sort = sortBy === "upcoming" ? "upcoming"
+        : E("tabEventsSort2").value === "DESC" ? "desc" : "asc";
 
       const params = { limit, offset, status, sort };
+      if (sortBy !== "upcoming" && sortBy !== "date") params.sort_by = sortBy;
       if (typeVal) params.type = typeVal;
       if (q) params.q = q;
       // 'none' is listEvents' read-only pseudo-filter for "attached to
@@ -4985,6 +5088,7 @@
             persistKey: 'events',
             onLimit: () => tabEventsGet(0),
             onPrint: true,
+            onExport: () => exportListCsv('events', () => csvFilterOf(params)),
           });
         } else {
           events = "";
@@ -5244,6 +5348,8 @@
       }
 
       if (withUser) params.appt_with = withUser;
+      params.sort_by = E("tabApptsSort").value;      // 'upcoming' = the agenda (route)
+      if (params.sort_by !== "upcoming") params.sort_dir = E("tabApptsSort2").value;
 
 
       // Status filter
@@ -5321,6 +5427,7 @@
             persistKey: 'appts',
             onLimit: () => tabApptsGet(0),
             onPrint: true,
+            onExport: () => exportListCsv('appts', () => csvFilterOf(params)),
           });
         } else if (!silent) {
           Toast.fire({ icon: "error", title: "No appointments found!" });

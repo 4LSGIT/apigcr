@@ -116,7 +116,7 @@ From the Contacts tab, what you type is classified and matched accordingly:
 | Anything containing `@` | An email — primary, secondary, and any row in `contact_emails` |
 | Anything else | A name — full-text on `contact_name`, plus partial matches on the full name, first + last, first alone and last alone |
 
-There is also a **tags** filter, and sorting by any column.
+There is also a **Role** filter. **Order By** sorts by last name, first name, ID or date of birth, either direction — or click the **ID**, **Name** (last name) or **Date of Birth** header; contacts with no date of birth sort last either way. The **Birthdays** filter lists only the contacts whose birthday falls in the next 7 days, the next 30 days, this month or next month, soonest first (a Feb 29 birthday counts as Feb 28 in other years) — **Export** in the footer turns that into a greeting list.
 
 > **You cannot search by date of birth or SSN.** Neither is a search key
 > anywhere in the system. If you only have a birth date, narrow by name first.

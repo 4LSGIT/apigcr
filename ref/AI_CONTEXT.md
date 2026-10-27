@@ -104,8 +104,10 @@ body. Governing migrations in `ref/migrations/`.*
   (visibility is stored, never enforced — the lock is the access control); `POST /api/reports` takes an optional `Idempotency-Key`
   (`reports.create`). Shell destination `reports.report` {id} opens the run
   panel (`reports.html` `ycAssistantOpenDestination` / `ycSubTab.leaf.take`),
-  where CSV export lives. Every human CSV export (Reports, views, the log
-  export, the SU db console's CSV and TSV Copy) builds its cells through
+  where CSV export lives. Every human CSV export (Reports, views, the list
+  exports — `scripts.js` `exportListCsv` / `LIST_CSV` for log, cases,
+  contacts, appts, events, tasks, `exportRowsCsv` for the Calendar list —
+  the SU db console's CSV and TSV Copy) builds its cells through
   `public/js/csvSafe.js` (`= + - @` / tab / CR → `'` prefix; plain numbers
   kept; headers too) — a new exporter goes through it
   (`tests/csvSafe.test.js` fails on a private quoting routine). The report appendix

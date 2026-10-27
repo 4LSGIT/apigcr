@@ -11,6 +11,7 @@
   <script src="/js/diag.js"></script>
   <script src="/js/yc-sync.js"></script>
   <script src="/js/ycPager.js"></script>
+  <script src="/js/csvSafe.js"></script>
   <script src="/scripts.js"></script>
   <link rel="stylesheet" href="/theme.css">
   <script src="/themeSync.js"></script>
@@ -295,6 +296,7 @@ const entityOk = LINK_TYPES.includes(linkType) && !!linkId;
 let limit  = parseInt(YcPager.getLimit('tasks', 100), 10) || 100;
 let offset = 0;
 let taskRows = [];               // last-loaded list, for modals/bulk
+let taskParams = {};             // the query that loaded it, for Export
 const selected = new Set();      // bulk-selected task ids
 
 // ─── Transport (window.top — correct at both nesting depths) ───────────────
@@ -559,6 +561,7 @@ async function fetchTasks(off, quiet) {
   try {
     const data = await api('/api/tasks', 'GET', params);
     taskRows = data.data || [];
+    taskParams = params;
     renderRows(data.total || 0);
   } catch (err) {
     Toast.fire({ icon: 'error', title: 'Error loading tasks', text: err.message });
@@ -651,13 +654,17 @@ function renderRows(total) {
   // Footer — the shared pager directly (js/ycPager.js): windowed numbers +
   // ellipsis-jump, per-page select remembered under its own surface key
   // ('tasks' — the store's legacy fallback still reads the old
-  // yc.tasks.limit pref, so nobody's saved size resets), Print.
+  // yc.tasks.limit pref, so nobody's saved size resets), Print, Export
+  // (scripts.js exportListCsv — the query on screen, through this page's
+  // own transport).
+  const exportParams = taskParams;
   YcPager.renderFooter(foot, {
     total, limit, offset, shown: taskRows.length,
     onPage: (p) => fetchTasks(p * limit),
     persistKey: 'tasks',
     onLimit: (n) => { limit = n; fetchTasks(0); },
     onPrint: true,
+    onExport: () => exportListCsv('tasks', () => csvFilterOf(exportParams), { send: api }),
   });
 }
 

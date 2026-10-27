@@ -142,7 +142,7 @@ Recipients come from the `event_digest_recipients` setting (a list of staff user
 
 ## Where Events Appear
 
-- **The Events tab** in the main interface — all events, filterable by type, status, date range, and text search, sortable by date. New events created here can be linked to a case, a contact, or left unlinked.
+- **The Events tab** in the main interface — all events, filterable by type, status, date range, and text search. It lists **upcoming first** (today, then the future soonest first, then the past newest first); **Order By** or the Type, Title, Date and Status headers sort otherwise, and the Date header steps through upcoming → oldest first → newest first. New events created here can be linked to a case, a contact, or left unlinked.
 - **A case's Events tab** — every event linked to that case. New events created here are locked to the case.
 - **A contact's Events tab** — every event linked to that contact, locked the same way.
 

@@ -54,8 +54,9 @@ relies on. See [Locking](#locking) below.
    and is not a plain number) is saved with a leading `'`, so it opens as
    text — contact names and notes are partly typed by clients, and a CSV must
    never run anything when it is opened. Every CSV YisraCase hands you works
-   this way: views, the activity-log export, and the database console's CSV
-   and Copy.
+   this way: views, the list tabs' Export (Cases, Contacts, Appointments,
+   Events, Tasks, the Calendar list and the activity log), and the database
+   console's CSV and Copy.
 5. **Show the SQL** at the bottom reveals the query. You never have to trust a
    number you can't check.
 

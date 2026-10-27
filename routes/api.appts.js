@@ -28,6 +28,8 @@ const jwtOrApiKey  = require('../lib/auth.jwtOrApiKey');
 const apptService  = require('../services/apptService');
 const calendarTypeService = require('../services/calendarTypeService');   // U2 — type_key on PATCH
 const { escapeLike } = require('../lib/escapeLike');
+const { DateTime } = require('luxon');
+const { FIRM_TZ } = require('../services/timezoneService');
 const { idempotentRequest, sendIdempotencyError } = require('../lib/requestIdempotency');
 
 // ─── LIST ───
@@ -36,6 +38,7 @@ router.get('/api/appts', jwtOrApiKey, async (req, res) => {
   const {
     contact_id, case_id, status, type, exclude_type, from, to, appt_with,
     type_key, exclude_type_key, unmapped, q,
+    sort_by, sort_dir,
     limit = 50, offset = 0
   } = req.query;
 
@@ -144,6 +147,31 @@ router.get('/api/appts', jwtOrApiKey, async (req, res) => {
 
   const whereSql = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
 
+  // ORDER. No sort_by = newest first, what every caller but the shell's
+  // Appts tab has always had. 'upcoming' is the agenda: today and later
+  // soonest first, then the past newest first — "today" is the FIRM-local day
+  // (appt_date is firm-local naive). A column sort puts blanks last and
+  // breaks ties by date, then id, so a page boundary never repeats a row.
+  const APPT_SORTS = {
+    date: 'appts.appt_date', client: 'contacts.contact_name', case: 'cases.case_number',
+    type: 'appts.appt_type', status: 'appts.appt_status', with: 'users.user_name',
+  };
+  const dir = String(sort_dir).toUpperCase() === 'DESC' ? 'DESC' : 'ASC';
+  let orderSql = 'ORDER BY appts.appt_date DESC';
+  const orderParams = [];
+  if (sort_by === 'upcoming') {
+    const todayStart = DateTime.now().setZone(FIRM_TZ).toFormat('yyyy-MM-dd 00:00:00');
+    orderSql = `ORDER BY appts.appt_date < ?,
+                CASE WHEN appts.appt_date >= ? THEN appts.appt_date END ASC,
+                appts.appt_date DESC, appts.appt_id DESC`;
+    orderParams.push(todayStart, todayStart);
+  } else if (sort_by === 'date') {
+    orderSql = `ORDER BY appts.appt_date ${dir}, appts.appt_id ${dir}`;
+  } else if (APPT_SORTS[sort_by]) {
+    const col = APPT_SORTS[sort_by];
+    orderSql = `ORDER BY ${col} IS NULL OR ${col} = '', ${col} ${dir}, appts.appt_date DESC, appts.appt_id DESC`;
+  }
+
   try {
     const [rows] = await db.query(
       `SELECT
@@ -171,9 +199,9 @@ router.get('/api/appts', jwtOrApiKey, async (req, res) => {
        LEFT JOIN users    ON users.user = appts.appt_with
        LEFT JOIN cases    ON appts.appt_case_id = cases.case_id
        ${whereSql}
-       ORDER BY appts.appt_date DESC
+       ${orderSql}
        LIMIT ? OFFSET ?`,
-      [...params, parseInt(limit), parseInt(offset)]
+      [...params, ...orderParams, parseInt(limit), parseInt(offset)]
     );
 
     const [[{ counter }]] = await db.query(

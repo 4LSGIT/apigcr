@@ -383,23 +383,33 @@ function dateTimeParts(dateString) {
    distance. Both used to count parentNode hops (th→tr→tbody→table→tab, and
    select→bar→tab); the .yc-filters bar wraps each control in a unit, which
    adds a hop. closest('.tab-main') is the tab either way; the old hop chain
-   stays as the fallback for a caller outside a .tab-main. */
+   stays as the fallback for a caller outside a .tab-main.
+
+   A date header carrying data-sort-upcoming="<sortBy value>" cycles three
+   ways: upcoming first (today, then later, then the past) → oldest first →
+   newest first → upcoming. Any other header toggles ↑ / ↓. The header's
+   mark: ↑ ascending, ↓ descending, ⇅ upcoming. */
+const sortMarkStrip = (t) => t.replace(/\s*[↑↓⇅]\s*$/, '');
 function sort(header, sort) {
   const parentDiv = header.closest('.tab-main') || header.parentNode.parentNode.parentNode.parentNode;
   const sortBy = parentDiv.querySelector('select[data-type="sortBy"]');
   const sortDi = parentDiv.querySelector('select[data-type="sortDi"]');
   const go = parentDiv.querySelector('button[data-type="goButton"]');
   const headers = parentDiv.querySelectorAll("th");
-  sort = sort || header.innerText.replace(" ↑", "").replace(" ↓", "");
-  if (sortBy.value !== sort) {
+  sort = sort || sortMarkStrip(header.innerText);
+  const upcoming = header.dataset.sortUpcoming;
+  if (upcoming) {
+    if (sortBy.value === sort && sortDi.value === "ASC") sortDi.value = "DESC";
+    else if (sortBy.value === upcoming) { sortBy.value = sort; sortDi.value = "ASC"; }
+    else sortBy.value = upcoming;
+  } else if (sortBy.value !== sort) {
     sortBy.value = sort;
   } else {
     sortDi.value = sortDi.value === "ASC" ? "DESC" : "ASC";
   }
-  headers.forEach(
-    (h) => (h.innerText = h.innerText.replace(" ↑", "").replace(" ↓", ""))
-  );
-  header.innerText += sortDi.value === "ASC" ? " ↑" : " ↓";
+  headers.forEach((h) => (h.innerText = sortMarkStrip(h.innerText)));
+  header.innerText += upcoming && sortBy.value === upcoming ? " ⇅"
+    : sortDi.value === "ASC" ? " ↑" : " ↓";
   go.click();
 }
 
@@ -423,9 +433,11 @@ function sortSelect(element) {
     if (head.onclick) {
       header = head.getAttribute("onclick").split("'")[1];
     }
-    let text = head.innerText.replace(" ↑", "").replace(" ↓", "");
-    if (sortBy.value === header) {
-      head.innerText = `${text} ${sortDi.value === "ASC" ? " ↑" : " ↓"}`;
+    const text = sortMarkStrip(head.innerText);
+    if (head.dataset.sortUpcoming && sortBy.value === head.dataset.sortUpcoming) {
+      head.innerText = `${text} ⇅`;
+    } else if (sortBy.value === header) {
+      head.innerText = `${text} ${sortDi.value === "ASC" ? "↑" : "↓"}`;
     } else {
       head.innerText = text;
     }
@@ -1137,19 +1149,34 @@ function renderLogFooter(containerEl, data, curLimit, offset, jumpFn, exportFn) 
      2. Ask the user via Swal: export a from–to range, or export all (with a
         soft warning when total > MAX_EXPORT_ROWS).
      3. Fetch the chosen range and download.
-   `getFilterParams()` returns the current filter set WITHOUT limit/offset. */
+   `getFilterParams()` returns the current filter set WITHOUT limit/offset.
+   One flow for every paged list: LIST_CSV (below) names each list's endpoint,
+   where its rows and total sit in the response, and its columns. The log is
+   one caller; the shell's Cases / Contacts / Appts / Events tabs and
+   tasks.html pass the params of the fetch that drew their footer, so Export
+   writes the list on screen. None of these routes caps `limit`, which is what
+   lets "export all" be one request. `send` defaults to the shell's apiSend
+   (tasks.html passes its own: it can sit two frames deep). */
 const MAX_EXPORT_ROWS = 10000;
 
 async function exportLogCsv(getFilterParams, filenamePrefix) {
-  filenamePrefix = filenamePrefix || 'yisracase-log';
+  return exportListCsv('log', getFilterParams, { filenamePrefix });
+}
+
+async function exportListCsv(kind, getFilterParams, opts) {
+  const spec = LIST_CSV[kind];
+  if (!spec) throw new Error(`exportListCsv: unknown list "${kind}"`);
+  opts = opts || {};
+  const filenamePrefix = opts.filenamePrefix || spec.prefix;
+  const send = opts.send || ((...a) => P.apiSend(...a));
 
   // ── Step 1: probe for total
   showProcessingSwal();
   let total;
   try {
-    const probe = await P.apiSend('/api/log', 'GET',
+    const probe = await send(spec.endpoint, 'GET',
       { ...getFilterParams(), limit: 1, offset: 0 });
-    total = (probe && probe.total) || 0;
+    total = (probe && probe[spec.total]) || 0;
     Swal.close();
   } catch (err) {
     Swal.close();
@@ -1236,17 +1263,17 @@ async function exportLogCsv(getFilterParams, filenamePrefix) {
   // ── Step 3: fetch range and download
   showProcessingSwal();
   try {
-    const data = await P.apiSend('/api/log', 'GET',
+    const data = await send(spec.endpoint, 'GET',
       { ...getFilterParams(), limit, offset });
     Swal.close();
 
-    const entries = (data && data.entries) || [];
+    const entries = (data && data[spec.rows]) || [];
     if (entries.length === 0) {
       Toast.fire({ icon: 'info', title: 'No rows returned' });
       return;
     }
 
-    const csv = buildLogCsv(entries);
+    const csv = buildCsv(spec.columns, entries);
     const ts = new Date().toISOString().slice(0, 10);
     const rangeSuffix = (from === 1 && to === total) ? '' : `-${from}-${to}`;
     downloadFile(csv, `${filenamePrefix}${rangeSuffix}-${ts}.csv`, 'text/csv;charset=utf-8;');
@@ -1292,11 +1319,184 @@ const LOG_CSV_COLUMNS = [
 // pinned by tests/csvSafe.test.js); a page without it fails the export loudly
 // rather than writing raw cells.
 function buildLogCsv(rows) {
-  const header = ycCsvSafe.line(LOG_CSV_COLUMNS.map(c => c.label));
+  return buildCsv(LOG_CSV_COLUMNS, rows);
+}
+
+function buildCsv(columns, rows) {
+  const header = ycCsvSafe.line(columns.map(c => c.label));
   const lines = rows.map(r =>
-    ycCsvSafe.line(LOG_CSV_COLUMNS.map(c => (c.get ? c.get(r) : r[c.key])))
+    ycCsvSafe.line(columns.map(c => (c.get ? c.get(r) : r[c.key])))
   );
   return '\ufeff' + header + '\r\n' + lines.join('\r\n');
+}
+
+/* Column getters shared by the list exports. A DATE column crosses the wire
+   as UTC-midnight ISO, so the calendar date is its first ten characters \u2014
+   never new Date(), which would shift it west of UTC. The aggregated
+   contacts/cases columns arrive as JSON text or an array, and a case with no
+   contact aggregates to one all-null entry. */
+const csvDate = (v) => (v ? String(v).slice(0, 10) : '');
+const csvList = (v) => (typeof v === 'string' ? JSON.parse(v) : v) || [];
+function csvUserName(id) {
+  const users = (window.firmData && window.firmData.users) || [];
+  const u = users.find(x => Number(x.user) === Number(id));
+  return u ? u.user_name : `#${id}`;
+}
+
+const CASE_CSV_COLUMNS = [
+  { key: 'case_id',      label: 'Case ID' },
+  { key: 'case_number',  label: 'Case Number' },
+  { key: 'case_caption', label: 'Caption' },
+  { key: 'case_type',    label: 'Type' },
+  { key: 'case_subtype', label: 'Subtype' },
+  { key: 'case_chapter', label: 'Chapter' },
+  { key: 'case_stage',   label: 'Stage' },
+  { key: 'case_status',  label: 'Status' },
+  { key: 'case_judge',   label: 'Judge' },
+  { key: 'case_trustee', label: 'Trustee' },
+  { key: 'open',         label: 'Opened' },
+  { key: 'file',         label: 'Filed' },
+  { key: 'close',        label: 'Closed' },
+  { key: 'contacts',     label: 'Contacts', get: (r) => csvList(r.contacts)
+      .filter(c => c.contact_id)
+      .map(c => c.contact_name + (c.contact_relate ? ` (${c.contact_relate})` : ''))
+      .join('; ') },
+];
+
+// Every column the list query returns. Only the PRIMARY phone and email \u2014
+// a contact's other numbers and addresses are not in the list query (a
+// backend change; ref/plans.md). Reports exports those today.
+const CONTACT_CSV_COLUMNS = [
+  { key: 'contact_id',      label: 'Contact ID' },
+  { key: 'contact_name',    label: 'Name' },
+  { key: 'contact_fname',   label: 'First' },
+  { key: 'contact_mname',   label: 'Middle' },
+  { key: 'contact_lname',   label: 'Last' },
+  { key: 'contact_type',    label: 'Type' },
+  { key: 'contact_phone',   label: 'Phone', get: (r) =>
+      (r.contact_phone || '').replace(/(\d{3})(\d{3})(\d{4})/, '$1-$2-$3') },
+  { key: 'contact_email',   label: 'Email' },
+  { key: 'contact_address', label: 'Address' },
+  { key: 'contact_city',    label: 'City' },
+  { key: 'contact_state',   label: 'State' },
+  { key: 'contact_zip',     label: 'Zip' },
+  { key: 'dob',             label: 'DOB' },
+  { key: 'contact_tags',    label: 'Tags' },
+  { key: 'cases',           label: 'Cases', get: (r) => csvList(r.cases)
+      .filter(c => c.case_id)
+      .map(c => c.case_number || c.case_id)
+      .join('; ') },
+];
+
+const APPT_CSV_COLUMNS = [
+  { key: 'id',             label: 'Appt ID' },
+  { key: 'format_date',    label: 'Date' },
+  { key: 'time',           label: 'Time' },
+  { key: 'contact_name',   label: 'Client' },
+  { key: 'appt_client_id', label: 'Client ID' },
+  { key: 'case_number',    label: 'Case Number' },
+  { key: 'appt_case_id',   label: 'Case ID' },
+  { key: 'appt_type',      label: 'Type' },
+  { key: 'appt_length',    label: 'Length (min)' },
+  { key: 'appt_platform',  label: 'Platform' },
+  { key: 'status',         label: 'Status' },
+  { key: 'user_name',      label: 'With' },
+  { key: 'appt_note',      label: 'Note' },
+];
+
+const eventAllDay = (r) => r.event_all_day == 1 || r.event_all_day === true;
+const EVENT_CSV_COLUMNS = [
+  { key: 'event_id',         label: 'Event ID' },
+  { key: 'event_type',       label: 'Type' },
+  { key: 'event_title',      label: 'Title' },
+  { key: 'event_date',       label: 'Date', get: (r) => csvDate(r.event_date) },
+  { key: 'event_time',       label: 'Time', get: (r) => eventAllDay(r) ? 'All day'
+      : (r.event_time ? String(r.event_time).slice(0, 5) : '') },
+  { key: 'event_length',     label: 'Length (min)' },
+  // The tab's Blocks cell: NULL = everyone, 0 = nobody; all-day never blocks.
+  { key: 'event_with',       label: 'Blocks', get: (r) => eventAllDay(r) ? ''
+      : r.event_with == null ? 'Everyone'
+      : Number(r.event_with) === 0 ? 'Nobody' : csvUserName(r.event_with) },
+  { key: 'event_status',     label: 'Status' },
+  { key: 'event_resolution', label: 'Resolution' },
+  { key: 'event_link_type',  label: 'Linked Type' },
+  { key: 'link_label',       label: 'Linked To' },
+  { key: 'event_location',   label: 'Location' },
+  { key: 'event_note',       label: 'Note' },
+];
+
+// taskService.shapeRow's shape, not the table's column names.
+const TASK_CSV_COLUMNS = [
+  { key: 'id',      label: 'Task ID' },
+  { key: 'status',  label: 'Status' },
+  { key: 'title',   label: 'Title' },
+  { key: 'desc',    label: 'Description' },
+  { key: 'due',     label: 'Due',   get: (r) => csvDate(r.due) },
+  { key: 'start',   label: 'Start', get: (r) => csvDate(r.start) },
+  { key: 'to',      label: 'Assigned To', get: (r) => (r.to && r.to.name) || '' },
+  { key: 'from',    label: 'Assigned By', get: (r) => (r.from && r.from.name) || '' },
+  { key: 'link',    label: 'Linked Type', get: (r) => (r.link && r.link.type) || '' },
+  { key: 'link_to', label: 'Linked To',   get: (r) => (r.link && (r.link.title || r.link.id)) || '' },
+  { key: 'created', label: 'Created', get: (r) => r.created
+      ? new Date(r.created).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+      : '' },
+  { key: 'source',  label: 'Source' },
+];
+
+// The Calendar tab's list rows (caseEventService's read shape). starts_at /
+// ends_at are firm-local naive text and go out verbatim.
+const CALENDAR_CSV_COLUMNS = [
+  { key: 'starts_at', label: 'Starts' },
+  { key: 'ends_at',   label: 'Ends' },
+  { key: 'all_day',   label: 'All Day', get: (r) => (r.all_day ? 'Yes' : '') },
+  { key: 'kind_key',  label: 'Kind' },
+  { key: 'title',     label: 'Title' },
+  { key: 'type_key',  label: 'Type Key' },
+  { key: 'source',    label: 'Source' },
+  { key: 'source_id', label: 'Source ID' },
+  { key: 'attached',  label: 'Attached To', get: (r) => {
+      const d = r.display || {};
+      return r.link_type === 'contact' ? (d.contact_name || `Contact #${r.link_id}`)
+        : (d.case_label || r.docket || r.case_id || '');
+    } },
+  { key: 'case_id',   label: 'Case ID' },
+  { key: 'with',      label: 'With', get: (r) => {
+      const a = (r.attendees || [])[0];
+      if (!a) return '';
+      return a.party === 'firm' ? 'Everyone' : a.party === 'user' ? csvUserName(a.id) : '';
+    } },
+  { key: 'state',      label: 'State' },
+  { key: 'resolution', label: 'Resolution' },
+];
+
+/* The paged lists exportListCsv serves: endpoint, the response keys holding
+   the rows and the total (appts names its total `counter`), the columns, and
+   the default file prefix. */
+const LIST_CSV = {
+  log:      { endpoint: '/api/log',      rows: 'entries',  total: 'total',   columns: LOG_CSV_COLUMNS,     prefix: 'yisracase-log' },
+  cases:    { endpoint: '/api/cases',    rows: 'cases',    total: 'total',   columns: CASE_CSV_COLUMNS,    prefix: 'yisracase-cases' },
+  contacts: { endpoint: '/api/contacts', rows: 'contacts', total: 'total',   columns: CONTACT_CSV_COLUMNS, prefix: 'yisracase-contacts' },
+  appts:    { endpoint: '/api/appts',    rows: 'appts',    total: 'counter', columns: APPT_CSV_COLUMNS,    prefix: 'yisracase-appts' },
+  events:   { endpoint: '/api/events',   rows: 'data',     total: 'total',   columns: EVENT_CSV_COLUMNS,   prefix: 'yisracase-events' },
+  tasks:    { endpoint: '/api/tasks',    rows: 'data',     total: 'total',   columns: TASK_CSV_COLUMNS,    prefix: 'yisracase-tasks' },
+};
+
+/** A fetch's params as an export filter: the same query, without its page. */
+function csvFilterOf(params) {
+  const { limit, offset, ...filters } = params || {};
+  return filters;
+}
+
+/** Export rows already in hand (the Calendar list: one capped fetch, no
+ *  paging) \u2014 no probe, no range dialog. */
+function exportRowsCsv(columns, rows, filenamePrefix) {
+  if (!rows || !rows.length) {
+    Toast.fire({ icon: 'info', title: 'Nothing to export' });
+    return;
+  }
+  const ts = new Date().toISOString().slice(0, 10);
+  downloadFile(buildCsv(columns, rows), `${filenamePrefix}-${ts}.csv`, 'text/csv;charset=utf-8;');
+  Toast.fire({ icon: 'success', title: `Exported ${rows.length} rows` });
 }
 
 function downloadFile(content, filename, mimeType) {

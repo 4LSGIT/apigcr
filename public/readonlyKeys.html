@@ -316,7 +316,16 @@
       if (data.ttl) ttlCaps = data.ttl;
 
       if (data.max_ttl_days) {
-        document.getElementById("maxDays").textContent = data.max_ttl_days;
+        // #maxDays lives inside #ttlHint, which a ticked sensitive scope
+        // rewrites (onSensitiveChange) — so it may not exist right now, and
+        // the hint's saved original is what an untick puts back. Update both.
+        const days = String(Number(data.max_ttl_days));
+        const md = document.getElementById("maxDays");
+        if (md) md.textContent = days;
+        const hint = document.getElementById("ttlHint");
+        if (hint.dataset.orig !== undefined) {
+          hint.dataset.orig = hint.dataset.orig.replace(/(<span id="maxDays">)[^<]*(<\/span>)/, `$1${days}$2`);
+        }
       }
 
       if (!data.keys || !data.keys.length) {

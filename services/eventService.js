@@ -1104,7 +1104,13 @@ async function getEvent(db, eventId) {
  *   from      {string?}  event_date >= (YYYY-MM-DD)
  *   to        {string?}  event_date <= (YYYY-MM-DD)
  *   q         {string?}  LIKE on event_title
- *   sort      {string?}  'asc' (soonest first, default) | 'desc' (latest first)
+ *   sort      {string?}  'asc' (oldest date first, default) | 'desc' (newest
+ *                        first) | 'upcoming' (the agenda: today and later
+ *                        soonest first, then the past newest first; "today"
+ *                        is the firm-local day)
+ *   sort_by   {string?}  'date' (default) | 'type' | 'title' | 'status' — a
+ *                        column sort in `sort`'s direction (blanks last, then
+ *                        by date); ignored for 'upcoming'
  *   limit     {number?}  default 100
  *   offset    {number?}  default 0
  *   includeSuperseded {boolean?} default false — see below
@@ -1136,6 +1142,7 @@ async function listEvents(db, {
   to        = null,
   q         = '',
   sort      = 'asc',
+  sort_by   = 'date',
   limit     = 100,
   offset    = 0,
   includeSuperseded = false,
@@ -1208,11 +1215,30 @@ async function listEvents(db, {
 
   const whereSQL = where.length ? `WHERE ${where.join(' AND ')}` : '';
 
-  // Whitelisted sort (no interpolation of user input). 'asc' = soonest first
-  // (default, preserves prior behavior); 'desc' = latest first.
-  const orderSQL = String(sort).toLowerCase() === 'desc'
-    ? 'ORDER BY e.event_date DESC, e.event_time IS NULL ASC, e.event_time DESC'
-    : 'ORDER BY e.event_date ASC, e.event_time IS NULL DESC, e.event_time ASC';
+  // Whitelisted sort (no interpolation of user input). 'asc' = oldest date
+  // first (default, preserves prior behavior); 'desc' = newest first. Within a
+  // day, untimed (all-day) rows lead in either direction's own sense. Every
+  // order ends on event_id, so a page boundary never repeats or skips a row.
+  const sortKey = String(sort).toLowerCase();
+  const BY_DATE_ASC  = 'e.event_date ASC, e.event_time IS NULL DESC, e.event_time ASC, e.event_id ASC';
+  const BY_DATE_DESC = 'e.event_date DESC, e.event_time IS NULL ASC, e.event_time DESC, e.event_id DESC';
+  const EVENT_SORTS = { type: 'e.event_type', title: 'e.event_title', status: 'e.event_status' };
+  const orderParams = [];
+  let orderSQL;
+  if (sortKey === 'upcoming') {
+    const today = DateTime.now().setZone(FIRM_TZ).toISODate();
+    orderSQL = `ORDER BY e.event_date < ?,
+      CASE WHEN e.event_date >= ? THEN e.event_date END ASC,
+      CASE WHEN e.event_date >= ? THEN e.event_time IS NULL END DESC,
+      CASE WHEN e.event_date >= ? THEN e.event_time END ASC,
+      ${BY_DATE_DESC}`;
+    orderParams.push(today, today, today, today);
+  } else if (EVENT_SORTS[sort_by]) {
+    const col = EVENT_SORTS[sort_by];
+    orderSQL = `ORDER BY ${col} IS NULL OR ${col} = '', ${col} ${sortKey === 'desc' ? 'DESC' : 'ASC'}, ${BY_DATE_ASC}`;
+  } else {
+    orderSQL = `ORDER BY ${sortKey === 'desc' ? BY_DATE_DESC : BY_DATE_ASC}`;
+  }
 
   const [[{ total }]] = await db.query(
     `SELECT COUNT(*) AS total FROM events e ${whereSQL}`,
@@ -1231,7 +1257,7 @@ async function listEvents(db, {
      ${whereSQL}
      ${orderSQL}
      LIMIT ? OFFSET ?`,
-    [...params, Number(limit), Number(offset)]
+    [...params, ...orderParams, Number(limit), Number(offset)]
   );
 
   const data = rows.map(r => {

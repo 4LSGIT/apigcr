@@ -1109,6 +1109,23 @@ Active surfaces with known next steps.
 
 ## Feature plans
 
+- **Automated birthday greetings (SS, 2026-10-27).** The Contacts tab's
+  Birthdays filter + Export is the manual path (`contactService.birthdayDays`,
+  built to be pulled out whole). The "top of mind" goal is a scheduled
+  workflow that sends the greeting itself — a daily job over the same
+  month-day predicate, with an opt-out check and a per-year dedupe key. Only
+  190 of 1,108 contacts carry a DOB (live, 2026-10-27), so it is only as good
+  as DOB entry at intake.
+
+- **Contacts export: every phone and email (2026-10-27).** The Contacts tab's
+  Export writes what `contactService.listContacts` returns — the primary
+  `contact_phone` / `contact_email` and one address. A contact's other numbers
+  and emails live in their child tables, which the list query doesn't join; an
+  export carrying them needs a backend opt-in (an `include` param on
+  `GET /api/contacts`, aggregated per contact) plus columns in
+  `CONTACT_CSV_COLUMNS` (`public/scripts.js`). Until then a report exports any
+  shape. Fred, 2026-10-27: simple → ship, complex → defer and rely on Reports.
+
 - **Pinned pages on a second public domain (2026-10-21).** `pages.host` is bound to `landing_hosts` (pageService.assertHostAllowed), but the landing branch of `pageHostMiddleware` canonicalizes every GET on a non-first landing host to `landing_hosts[0]` BEFORE the pin lookup, so a page pinned to e.g. `www.4lsg.com` is accepted at write and never served by GET. No live row is affected (all 8 `pages` rows had `host` NULL on 2026-10-21). RULED (Fred, 2026-10-22): refuse non-canonical hosts at write — done in `pageService.assertHostAllowed` (only `landing_hosts[0]` is accepted). Revisit — check pins before canonicalizing — when a second marketing domain is wanted; converges with YCv3 multi-site (`pages.site_id`).
 - **YisraMail direction (review 2026-10-21; Fred: yes, future plan, nothing
   started).** YisraMail is a bulk **transport** — an email adapter /

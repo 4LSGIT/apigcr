@@ -68,6 +68,8 @@ YisraCase is organized into tabs down the left sidebar, in this order.
 | **More Features** | Everything else, including **Settings** (your own account, password, signature, and who can reach which mailbox and phone line — also one click on "Hi, *your name*!" at the top) — see below |
 | **All** | Every feature you have, in one searchable list — see *Finding any feature* below |
 
+Most list columns sort with a click on their header (↑ ascending, ↓ descending); on Appointments, Events and the Calendar list the date header also has **upcoming first** (⇅) — today, then the future, then the past — and that is where those lists start. The list tabs — Cases, Contacts, Appointments, Events, Tasks and Log — share one footer: page numbers, rows per page, **Print** (the page on screen) and **Export**, which downloads the whole filtered list, or a range of its rows, as a CSV. The Calendar list has Print and Export in its footer too. Need columns a list doesn't show (every phone and email on a contact, say)? A [report](../05-Subsystems/04-reports.md) exports any query.
+
 Opening any record takes you to a detail page that shows everything connected to it: related contacts or cases, appointments, tasks, and the full activity log.
 
 ### The More menu

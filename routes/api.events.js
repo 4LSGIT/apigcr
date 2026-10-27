@@ -39,6 +39,7 @@ router.get('/api/events', jwtOrApiKey, async (req, res) => {
       to:        req.query.to        || null,
       q:         req.query.q || req.query.query || '',
       sort:      req.query.sort || 'asc',
+      sort_by:   req.query.sort_by || 'date',
       limit:     req.query.limit  || 100,
       offset:    req.query.offset || 0,
       includeSuperseded: req.query.include_superseded === '1' || req.query.include_superseded === 'true',

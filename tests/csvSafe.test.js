@@ -14,7 +14,8 @@
  *   2. each exporter, RUN out of its page's own source, writes neutralised
  *      cells and headers: reports.html csvText, customView.html exportCsv,
  *      scripts.js buildLogCsv (the log export), dbConsole.html's CSV button and
- *      its TSV Copy;
+ *      its TSV Copy (the other list exports share buildLogCsv's buildCsv —
+ *      tests/listCsvExport.test.js runs each of them);
  *   3. every page that runs one of them loads /js/csvSafe.js, and no page
  *      under public/ keeps a private CSV quoting routine (a fifth exporter
  *      would have to come through here).
@@ -125,7 +126,7 @@ describe('every exporter writes neutralised cells and headers', () => {
   test('scripts.js buildLogCsv (the log export from case, contact and the log tab)', () => {
     const src = read('scripts.js');
     // eslint-disable-next-line no-new-func
-    const build = new Function('ycCsvSafe', 'logEnteredCsv', `${constSrc(src, 'LOG_CSV_COLUMNS')}\n${block(src, 'function buildLogCsv(')}\nreturn { buildLogCsv, LOG_CSV_COLUMNS };`)(
+    const build = new Function('ycCsvSafe', 'logEnteredCsv', `${constSrc(src, 'LOG_CSV_COLUMNS')}\n${block(src, 'function buildLogCsv(')}\n${block(src, 'function buildCsv(')}\nreturn { buildLogCsv, LOG_CSV_COLUMNS };`)(
       csvSafe, () => '');
     const { buildLogCsv, LOG_CSV_COLUMNS } = build;
     const subjectIdx = LOG_CSV_COLUMNS.findIndex((c) => c.key === 'log_subject');
@@ -164,20 +165,20 @@ describe('every exporter writes neutralised cells and headers', () => {
 describe('every exporting page loads the helper; no private CSV quoting remains', () => {
   const TAG = '<script src="/js/csvSafe.js"></script>';
 
-  test('the four exporter pages and every exportLogCsv caller load /js/csvSafe.js', () => {
+  test('the four exporter pages and every list-export caller load /js/csvSafe.js', () => {
     for (const page of ['reports.html', 'customView.html', 'dbConsole.html']) {
       expect({ page, loads: read(page).includes(TAG) }).toEqual({ page, loads: true });
     }
-    // Every page that calls the log export (scripts.js defines it).
+    // Every page that calls a list export (scripts.js defines them).
     const callers = [];
     const walk = (dir) => {
       for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
         const p = path.join(dir, e.name);
-        if (e.isDirectory()) { if (e.name !== 'vendor') walk(p); } else if (e.name.endsWith('.html') && /exportLogCsv\(/.test(fs.readFileSync(p, 'utf8'))) callers.push(p);
+        if (e.isDirectory()) { if (e.name !== 'vendor') walk(p); } else if (e.name.endsWith('.html') && /export(?:Log|List|Rows)Csv\(/.test(fs.readFileSync(p, 'utf8'))) callers.push(p);
       }
     };
     walk(PUB);
-    expect(callers.map((p) => path.relative(PUB, p)).sort()).toEqual(['case.html', 'contact.html', 'index.html']);
+    expect(callers.map((p) => path.relative(PUB, p)).sort()).toEqual(['case.html', 'contact.html', 'index.html', 'tasks.html']);
     for (const p of callers) {
       const html = fs.readFileSync(p, 'utf8');
       const rel = path.relative(PUB, p);

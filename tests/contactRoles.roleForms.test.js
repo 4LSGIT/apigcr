@@ -352,8 +352,10 @@ describe('createRoleType / updateRoleType', () => {
 /* The PRE-SLICE default-state SQL, captured from the baseline commit
  * (git show baseline:services/contactService.js) before the role filter
  * existed. The no-role path MUST stay byte-identical to it: the filter is
- * an add-on, never a rewrite. */
-const PRE_SQL_MAIN = "SELECT\n     c.contact_id, c.contact_type, c.contact_name,\n     c.contact_fname, c.contact_mname, c.contact_lname,\n     c.contact_phone, c.contact_email,\n     c.contact_address, c.contact_city, c.contact_state, c.contact_zip,\n     c.contact_tags,\n     IFNULL(DATE_FORMAT(c.contact_dob, '%M %e, %Y'), '') AS dob,\n     JSON_ARRAYAGG(\n       JSON_OBJECT(\n         'case_number', COALESCE(ca.case_number_full, ca.case_number, ca.case_id),\n         'case_id',      ca.case_id,\n         'case_type',    ca.case_type,\n         'case_subtype', ca.case_subtype\n       )\n     ) AS cases\n   FROM contacts c\n   LEFT JOIN case_relate cr ON c.contact_id = cr.case_relate_client_id\n   LEFT JOIN cases ca ON cr.case_relate_case_id = ca.case_id\n   \n   GROUP BY c.contact_id\n   ORDER BY c.contact_lname ASC\n   LIMIT ? OFFSET ?";
+ * an add-on, never a rewrite. Updated once, by the list-sorting slice
+ * (2026-10-27): the ORDER BY gained its name / contact_id tie-breakers. The
+ * WHERE is untouched — still nothing at all with no role and no birthdays. */
+const PRE_SQL_MAIN = "SELECT\n     c.contact_id, c.contact_type, c.contact_name,\n     c.contact_fname, c.contact_mname, c.contact_lname,\n     c.contact_phone, c.contact_email,\n     c.contact_address, c.contact_city, c.contact_state, c.contact_zip,\n     c.contact_tags,\n     IFNULL(DATE_FORMAT(c.contact_dob, '%M %e, %Y'), '') AS dob,\n     JSON_ARRAYAGG(\n       JSON_OBJECT(\n         'case_number', COALESCE(ca.case_number_full, ca.case_number, ca.case_id),\n         'case_id',      ca.case_id,\n         'case_type',    ca.case_type,\n         'case_subtype', ca.case_subtype\n       )\n     ) AS cases\n   FROM contacts c\n   LEFT JOIN case_relate cr ON c.contact_id = cr.case_relate_client_id\n   LEFT JOIN cases ca ON cr.case_relate_case_id = ca.case_id\n   \n   GROUP BY c.contact_id\n   ORDER BY c.contact_lname ASC, c.contact_fname ASC, c.contact_id ASC\n   LIMIT ? OFFSET ?";
 const PRE_SQL_COUNT = "SELECT COUNT(DISTINCT c.contact_id) AS total\n   FROM contacts c\n   LEFT JOIN case_relate cr ON c.contact_id = cr.case_relate_client_id\n   LEFT JOIN cases ca ON cr.case_relate_case_id = ca.case_id\n   ";
 
 function captureDb() {

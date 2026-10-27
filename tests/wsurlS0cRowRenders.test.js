@@ -146,7 +146,7 @@ describe.each(VALUES)('wsurl S0c — index.html, data = %s', (_, V) => {
 
   test('tabContactsGet', async () => {
     const w = page({
-      tabContactsLoad: 'div', tabContactsQuery: 'input', tabContactsSort: 'input=contact_lname ASC',
+      tabContactsLoad: 'div', tabContactsQuery: 'input', tabContactsSort: 'input=contact_lname', tabContactsSort2: 'input=ASC',
       tabContactsRole: 'input', contactsTable: 'table', contactsTableFoot: 'div',
     }, `${PAGER} var offsets = {}, contacts; ${fnSrc(INDEX, 'tabContactsGet')}`,
     async () => ({ total: 1, contacts: [{
@@ -164,11 +164,11 @@ describe.each(VALUES)('wsurl S0c — index.html, data = %s', (_, V) => {
     const w = page({
       calxButton: 'input', calxLoad: 'div', calxFrom: 'input=2026-10-01', calxTo: 'input=2026-10-31',
       calxState: 'input=all', calxSuperseded: 'check', calxWith: 'select=', calxTable: 'table',
-      calxFoot: 'div', calxKinds: 'div',
+      calxFoot: 'div', calxKinds: 'div', calxSortBy: 'input=upcoming', calxSortDir: 'input=ASC',
     }, `var calxSeq = 0, calxRows = null;
-        ${['CALX_MONTHS', 'CALX_DAYS', 'CALX_KIND_ICON', 'CALX_RESOLUTION_LABEL', 'CALX_APPT_STATUS']
+        ${['CALX_MONTHS', 'CALX_DAYS', 'CALX_KIND_ICON', 'CALX_RESOLUTION_LABEL', 'CALX_APPT_STATUS', 'CALX_SORT_KEYS']
           .map((c) => constSrc(INDEX, c)).join('\n')}
-        ${['calxEsc', 'calxWhen', 'calxBadge', 'calxAnchor', 'calxWithName', 'calxApptStatus',
+        ${['calxEsc', 'calxISO', 'calxSortRows', 'calxWhen', 'calxBadge', 'calxAnchor', 'calxWithName', 'calxApptStatus',
           'calxActions', 'calxAct', 'calxSelectedKinds', 'calxFilterSentence', 'calxGet']
           .map((f) => fnSrc(INDEX, f)).join('\n')}`,
     async () => ({ has_more: true, limit: V, items: [{
@@ -189,7 +189,7 @@ describe.each(VALUES)('wsurl S0c — index.html, data = %s', (_, V) => {
     const w = page({
       tabEventsButton: 'input', tabEventsLoad: 'div', tabEventsType: 'input', tabEventsStatus: 'input',
       tabEventsTime: 'input', tabEventsDate1: 'input', tabEventsDate2: 'input', tabEventsQ: 'input',
-      tabEventsSort: 'input', tabEventsUnlinked: 'check', eventsTable: 'table', eventsTableFoot: 'div',
+      tabEventsSort: 'input', tabEventsSort2: 'input=ASC', tabEventsUnlinked: 'check', eventsTable: 'table', eventsTableFoot: 'div',
     }, `${PAGER} var offsets = {}, events;
         ${fnSrc(INDEX, 'escHtml')} ${fnSrc(INDEX, 'escAttrJSON')} ${fnSrc(INDEX, 'tabEventsGet')}`,
     async () => ({ total: 1, data: [{
@@ -208,7 +208,8 @@ describe.each(VALUES)('wsurl S0c — index.html, data = %s', (_, V) => {
     const w = page({
       tabApptsButton: 'input', tabApptsLoad: 'div', tabApptsType: 'input=__all__',
       tabApptsStatus: 'input=All', tabApptsTime: 'input', tabApptsDate1: 'input',
-      tabApptsDate2: 'input', tabApptsWith: 'input', apptsTable: 'table', apptsTableFoot: 'div',
+      tabApptsDate2: 'input', tabApptsWith: 'input', tabApptsSort: 'input=upcoming', tabApptsSort2: 'input=ASC',
+      apptsTable: 'table', apptsTableFoot: 'div',
     }, `${PAGER} var offsets = {}, appts, apptsLastLoad = 0; function tabApptsTypesLoad() {}
         ${fnSrc(INDEX, 'tabApptsGet')}`,
     async () => ({ counter: 1, appts: [{

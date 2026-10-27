@@ -49,9 +49,13 @@ input.
 Filters refetch automatically (debounced). The footer names the active filters,
 so an empty list always says *why* it is empty.
 
+The footer also carries **Print** and **Export** (List view only). Export
+downloads the rows listed as a CSV — when the list is capped, the capped
+rows, so narrow the window first if you need the rest.
+
 ## The list
 
-Sorted by start time, ascending; **all-day rows come first within their day**.
+**Upcoming first** by default: today and later in start-time order, then the past newest first. **All-day rows come first within their day.** **Order By** (List view) — or a click on a column header — sorts by When, Kind, What, Attached to, With or State instead; the When header steps through upcoming → oldest first → newest first. The sort runs over the rows listed.
 
 - **What** — the item's label, with its `type_key` muted beside it. A row with
   no registry type reads *unmapped* rather than showing a blank; mint it in

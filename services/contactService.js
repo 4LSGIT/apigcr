@@ -75,6 +75,8 @@ const { assertNoteLengths } = require('../lib/noteLimits');
 const domainEvents = require('../lib/domainEvents'); // Trigger T3
 const fieldDefs = require('./fieldDefService'); // custom fields S2 — cf_ write chokepoint
 const { escapeLike } = require('../lib/escapeLike');
+const { DateTime } = require('luxon');
+const { FIRM_TZ } = require('./timezoneService');
 
 const DEFAULT_LOG_LIMIT = 200;
 
@@ -1800,6 +1802,38 @@ async function _applyAddressPlan(conn, contactId, plan, userId) {
  */
 const ROLE_NONE = '-none';
 
+/* ── BIRTHDAYS (SS's request, 2026-10-27) ────────────────────────────────────
+   Self-contained so it can be pulled out whole: this block, the `birthdays`
+   option and its two uses in listContacts (the WHERE and the ORDER BY), the
+   route's pass-through + 400 in routes/api.contacts.js, and the Contacts
+   tab's Birthdays select (index.html, tabContactsBirthdays).
+
+   A window is a run of FIRM-LOCAL calendar days; the result is the month-day
+   ('MMDD') of each, in order, so a contact matches on DATE_FORMAT(dob,'%m%d')
+   and sorts by FIELD() position — upcoming first, wrapping past Dec 31 with
+   no year arithmetic in SQL. A Feb 29 birthday rides Feb 28 in a non-leap
+   year (placed right after it). */
+const BIRTHDAY_WINDOWS = ['next7', 'next30', 'this_month', 'next_month'];
+
+function birthdayDays(windowKey, todayISO) {
+  if (!BIRTHDAY_WINDOWS.includes(windowKey)) return null;
+  const today = todayISO
+    ? DateTime.fromISO(todayISO, { zone: FIRM_TZ })
+    : DateTime.now().setZone(FIRM_TZ);
+  let start = today.startOf('day');
+  let end;
+  if (windowKey === 'next7')        end = start.plus({ days: 6 });
+  else if (windowKey === 'next30')  end = start.plus({ days: 29 });
+  else if (windowKey === 'this_month') { start = start.startOf('month'); end = start.endOf('month').startOf('day'); }
+  else { start = start.plus({ months: 1 }).startOf('month'); end = start.endOf('month').startOf('day'); }
+  const days = [];
+  for (let d = start; d <= end; d = d.plus({ days: 1 })) {
+    days.push(d.toFormat('MMdd'));
+    if (d.month === 2 && d.day === 28 && !d.isInLeapYear) days.push('0229');
+  }
+  return days;
+}
+
 
 /**
  * List contacts with search, filters, and pagination.
@@ -1812,6 +1846,8 @@ async function listContacts(db, {
   type   = null,
   tags   = null,
   role   = null,
+  birthdays = null,
+  today  = null,      // tests: the firm-local date the birthday window counts from
   sort_by  = 'c.contact_lname',
   sort_dir = 'ASC',
   limit  = 50,
@@ -1819,6 +1855,13 @@ async function listContacts(db, {
 } = {}) {
   const where = [];
   const params = [];
+
+  // BIRTHDAYS — see birthdayDays. Unknown window → the route already 400'd.
+  const bdays = birthdays ? birthdayDays(birthdays, today) : null;
+  if (bdays) {
+    where.push(`DATE_FORMAT(c.contact_dob, '%m%d') IN (${bdays.map(() => '?').join(',')})`);
+    params.push(...bdays);
+  }
 
   if (query) {
     if (/^\d+$/.test(query)) {
@@ -1915,16 +1958,30 @@ async function listContacts(db, {
 
   const whereSQL = where.length ? `WHERE ${where.join(" AND ")}` : "";
 
+  // Every order ends on contact_id so a page boundary never repeats or skips
+  // a row among equal names. DOB: the ~80% with none sort LAST either way.
   const SORT_WHITELIST = {
-    "contact_lname ASC": "c.contact_lname ASC",
-    "contact_lname DESC": "c.contact_lname DESC",
-    "contact_fname ASC": "c.contact_fname ASC",
-    "contact_fname DESC": "c.contact_fname DESC",
+    "contact_lname ASC": "c.contact_lname ASC, c.contact_fname ASC",
+    "contact_lname DESC": "c.contact_lname DESC, c.contact_fname DESC",
+    "contact_fname ASC": "c.contact_fname ASC, c.contact_lname ASC",
+    "contact_fname DESC": "c.contact_fname DESC, c.contact_lname DESC",
+    "contact_id ASC": "c.contact_id ASC",
+    "contact_id DESC": "c.contact_id DESC",
+    "contact_dob ASC": "c.contact_dob IS NULL, c.contact_dob ASC",
+    "contact_dob DESC": "c.contact_dob IS NULL, c.contact_dob DESC",
   };
-  const orderClause =
+  const orderParams = [];
+  let orderClause =
     SORT_WHITELIST[`${sort_by} ${sort_dir}`] ||
     SORT_WHITELIST[sort_by] ||
-    "c.contact_lname ASC";
+    SORT_WHITELIST["contact_lname ASC"];
+  if (bdays) {
+    // BIRTHDAYS — upcoming first, whatever the sort controls say.
+    orderClause = `FIELD(DATE_FORMAT(c.contact_dob, '%m%d'), ${bdays.map(() => '?').join(',')}), `
+      + SORT_WHITELIST["contact_lname ASC"];
+    orderParams.push(...bdays);
+  }
+  orderClause += ", c.contact_id ASC";
 
   const [contacts] = await db.query(
     `SELECT
@@ -1949,7 +2006,7 @@ async function listContacts(db, {
    GROUP BY c.contact_id
    ORDER BY ${orderClause}
    LIMIT ? OFFSET ?`,
-    [...params, parseInt(limit), parseInt(offset)],
+    [...params, ...orderParams, parseInt(limit), parseInt(offset)],
   );
 
   const [[{ total }]] = await db.query(
@@ -3205,6 +3262,8 @@ async function listContactWorkflows(db, contactId, {
 
 module.exports = {
   ROLE_NONE,
+  BIRTHDAY_WINDOWS,
+  birthdayDays,
   listContacts,
   getContact,
   createContact,

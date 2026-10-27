@@ -113,10 +113,14 @@ async function listCases(db, {
 
   const whereSQL = where.length ? `WHERE ${where.join(" AND ")}` : "";
 
+  // The client sorts read the PRIMARY client (any client when a case has no
+  // Primary). A bare co.contact_lname under GROUP BY c.case_id sorted each
+  // multi-client case by whichever joined row MySQL picked (relaxed
+  // ONLY_FULL_GROUP_BY). MIN() keeps it deterministic.
   const SORT_WHITELIST = {
     "c.case_id": "c.case_id",
-    "co.contact_lname": "co.contact_lname",
-    "co.contact_name": "co.contact_name",
+    "co.contact_lname": "COALESCE(MIN(CASE WHEN cr.case_relate_type = 'Primary' THEN co.contact_lname END), MIN(co.contact_lname))",
+    "co.contact_name": "COALESCE(MIN(CASE WHEN cr.case_relate_type = 'Primary' THEN co.contact_name END), MIN(co.contact_name))",
     "c.case_number": "c.case_number",
     "c.case_open_date": "c.case_open_date",
     "c.case_file_date": "c.case_file_date",
@@ -148,7 +152,7 @@ async function listCases(db, {
    LEFT JOIN contacts co ON cr.case_relate_client_id = co.contact_id
    ${whereSQL}
    GROUP BY c.case_id
-   ORDER BY ${orderBy} ${orderDir}
+   ORDER BY ${orderBy} ${orderDir}, c.case_id ${orderDir}
    LIMIT ? OFFSET ?`,
     [...params, parseInt(limit), parseInt(offset)],
   );
