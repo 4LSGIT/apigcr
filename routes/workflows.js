@@ -7,6 +7,7 @@ const {
   advanceWorkflow,
   executeSingleStep,
   resolvePlaceholders,
+  findModifierPlaceholders,
   resolveSingle,
   resolveExecutionContactId,
   InvalidContactIdError,
@@ -241,6 +242,18 @@ function validateInternalFunctionConfig(stepType, config) {
       status: 400,
       error: 'step.config must not contain a "type" key',
       message: 'step.type selects the dispatch; a "type" key inside config is not honoured.'
+    };
+  }
+  // Modifier placeholders. The workflow engine has no modifiers: `{{x|phone}}`
+  // is looked up as a variable named "x|phone" and silently blanks to ''.
+  // Refused here so the author hears it — same choke point and four writers
+  // as the type key. No step in any version carried one (checked 2026-10-27).
+  const modTokens = findModifierPlaceholders(config);
+  if (modTokens.length) {
+    return {
+      status: 400,
+      error: `workflow placeholders do not support |modifiers: ${[...new Set(modTokens)].slice(0, 5).join(', ')}`,
+      message: 'Workflow steps fill {{name}}, {{a.b}}, {{this.x}} and {{env.*}} only; a |modifier makes the whole token resolve to an empty string. Format the value in an earlier step (set_vars or a code step) instead.'
     };
   }
   // custom_code mode key. 'safe' = QuickJS guest engine, 'standard' (or

@@ -906,7 +906,9 @@ request-bound at full CPU; this route, `POST /executions/:id/resume`
 (`mode:'resume'`) and the decision-answer resume (`routes/decisionActions.js`)
 still detach `advanceWorkflow` after the answer (ref/plans.md, Operational).
 Variables: `{{name}}` (init_data/set_vars), `{{this.output.field}}`,
-`{{this.[0]}}`, `{{env.now|executionId|stepNumber}}`.
+`{{this.[0]}}`, `{{env.now}}` / `env.executionId` / `env.stepNumber`. No
+modifiers and no DB lookups (that is `resolverService`): any `{{…|…}}` token
+would blank to `''`, so every step write refuses one (manual 03/06).
 Steps: `{type, config:{function_name, params, set_vars}, error_policy}`;
 policies `ignore` (default) | `abort` | `retry_then_ignore` |
 `retry_then_abort`.

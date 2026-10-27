@@ -256,3 +256,35 @@ describe('step.config may not carry a `type` key (behavioural, b087fa5)', () => 
     expect(r.body.error).toMatch(/must not contain a "type" key/);
   });
 });
+
+describe('workflow placeholders with a |modifier are refused at save (2026-10-27)', () => {
+  // The workflow engine has no modifiers: `{{x|phone}}` is looked up as a
+  // variable named "x|phone" and blanks to '' at run time, silently. The
+  // refusal rides the same choke point as the type key, so every writer has it.
+  const MOD_STEP = { type: 'internal_function',
+    config: { function_name: 'noop', params: { to: '{{contact_phone|phone}}', note: ['ok {{a}}', { deep: 'x {{b|default:y}}' }] } } };
+  test.each(WRITERS)('%s %s refuses a modifier placeholder, anywhere in the config', async (method, url, wrap) => {
+    mockAuth = SU;
+    const r = await send(method, url, wrap(MOD_STEP));
+    expect(r.status).toBe(400);
+    expect(r.body.error).toMatch(/do not support \|modifiers/);
+    expect(r.body.error).toContain('{{contact_phone|phone}}');
+    expect(r.body.error).toContain('{{b|default:y}}');
+  });
+  test('plain, dotted, this. and env. placeholders still save', async () => {
+    mockAuth = SU;
+    // a safe code step: no param validation in the way, and a JS `||` outside
+    // any {{ }} must not trip the scan
+    const r = await send('POST', '/workflows/5/steps', { type: 'custom_code', config: { code_mode: 'safe',
+      code: 'return ["{{x}}", "{{contact.name}}", "{{this.id}}", "{{env.now}}"].join("") || null;' } });
+    expect(r.status).not.toBe(400);
+    expect(r.status).not.toBe(403);
+  });
+  test('findModifierPlaceholders sees what resolvePlaceholders blanks', () => {
+    const { findModifierPlaceholders, resolvePlaceholders } = jest.requireActual('../lib/workflow_engine');
+    const cfg = { s: 'hi {{n|upper}} {{ok}}', arr: ['{{a||b}}'], code: 'return "{{x}}"' };
+    expect(findModifierPlaceholders(cfg)).toEqual(['{{n|upper}}', '{{a||b}}']);
+    expect(resolvePlaceholders('hi {{n|upper}}', { variables: { n: 'v' } })).toBe('hi ');
+    expect(findModifierPlaceholders('no tokens | here')).toEqual([]);
+  });
+});

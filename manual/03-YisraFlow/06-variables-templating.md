@@ -22,7 +22,7 @@ You can also format the value — **but only for `{{table.column}}` placeholders
 {{trigger_data.missing|default:N/A}}    → N/A   (when missing field is empty)
 ```
 
-**Modifiers do not work on workflow variables.** `{{myVar|default:Hello}}` inside a workflow step does **not** fall back to "Hello" — it produces an **empty string**, silently. There is no `|default:` in the workflow engine; the whole thing including the `|` is read as one variable name, which never matches. If you need a fallback in a workflow, set the variable earlier (a `set_vars` on a previous step, or `initData` on the trigger) so it is never missing. See "Two systems, one syntax" below — this trap has cost real production bugs.
+**Modifiers do not work on workflow variables.** `{{myVar|default:Hello}}` inside a workflow step does **not** fall back to "Hello". There is no `|default:` in the workflow engine; the whole thing including the `|` would be read as one variable name, which never matches, and resolve to an empty string. So saving a workflow step whose config holds any `{{…|…}}` token is **refused** (400, naming the tokens) on every step write — add, bulk, edit and patch. If you need a fallback in a workflow, set the variable earlier (a `set_vars` on a previous step, or `initData` on the trigger) so it is never missing. See "Two systems, one syntax" below — this trap has cost real production bugs.
 
 When a `{{table.column}}` placeholder doesn't resolve (the contact doesn't exist, the field is empty, you typed the column wrong), it stays in the text as `{{contacts.contact_fname}}` so you can see what went wrong. A **workflow variable** that doesn't resolve behaves the opposite way: it disappears, leaving an empty string.
 
@@ -37,7 +37,7 @@ When a `{{table.column}}` placeholder doesn't resolve (the contact doesn't exist
 | **Workflow variables** | `lib/workflow_engine.js` `resolveSingle` | workflow step configs, and nothing else | **none** | becomes `''` |
 | **Universal resolver** | `services/resolverService.js` | sequences, hooks, scheduled jobs, campaigns, portal cards, e-sign templates, appts, booking | `default:`, `date:`, `phone`, `upper`, … | left visible as `{{table.column}}` |
 
-**A workflow step's config is NOT run through both.** `lib/workflow_engine.js` never requires `resolverService` — verify with a grep before believing otherwise. A workflow step config gets exactly one pass, the variable pass, and that pass **consumes every `{{…}}` token it sees**: anything it can't resolve is replaced with an empty string. So a `{{table.column|modifier}}` written into a workflow step is not "left for the universal resolver later" — it is destroyed on the way past.
+**A workflow step's config is NOT run through both.** `lib/workflow_engine.js` never requires `resolverService` — verify with a grep before believing otherwise. A workflow step config gets exactly one pass, the variable pass, and that pass **consumes every `{{…}}` token it sees**: anything it can't resolve is replaced with an empty string. So a `{{table.column}}` written into a workflow step is not "left for the universal resolver later" — it is destroyed on the way past (one carrying a `|modifier` is refused at save, above).
 
 Practical consequences for workflow step configs:
 
