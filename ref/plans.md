@@ -1707,3 +1707,9 @@ which never shows it). Two steps:
    these responses (contact page SSN display/edit, forms prefill, sync-bus
    `changes` diffs). Server-side template resolution (`{{contacts.contact_ssn}}`,
    Form 121) reads the DB directly and is unaffected.
+
+## Someday — low-priority ideas
+
+- **Task forwarding** (2026-10-27): while A is out, new tasks for A go to B
+  with a short "forwarded from A" preamble. Hook point: `taskService.createTask`
+  (the only task insert). Watch its 1000-char desc cap.
