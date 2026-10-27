@@ -417,11 +417,10 @@ Mailbox S6 (email raw + attachments) consumes this archive after ~2026-10-25 und
 
 ## 14. Open questions
 
-Answered 2026-10-13 by Fred, folded into §0 and the sections: Q1 → R6; Q2 + Q7 → R9; Q3 → R5; Q4 → R7; Q6 → R8 (and spawned the deferred editable-derived-text idea, `ref/plans.md`); F1 → P2; F2 → P7 (AssemblyAI — same-hour for +$2.8/month; S0 validates against the rubric); F3, F4 → §10; F5 → §8; F6 → §11; F8 → §9 S5.
+Answered 2026-10-13 by Fred, folded into §0 and the sections: Q1 → R6; Q2 + Q7 → R9; Q3 → R5; Q4 → R7; Q6 → R8 (and spawned the deferred editable-derived-text idea, `ref/plans.md`); F1 → P2; F2 → P7 (AssemblyAI — same-hour for +$2.8/month; S0 validates against the rubric); F3, F4 → §10; F5 → §8; F6 → §11; F8 → §9 S5. F7 is closed (arc close, 2026-10-28): the temp Quo API key (minted 2026-08-31) is revoked, and `routes/api.temp.ringcentral.js` and its `temp.ringcentral` key scope are deleted. Credential 9's allowlist keeps `media.ringcentral.com` (live 2026-10-28): the archive sweeps fetch recordings and MMS through it (`services/adapters/phone/ringcentral.js`), so the deleted route's REMOVAL note — narrow it back to `platform.ringcentral.com` — must not be followed.
 
 **Still open:**
 1. **Q5 (SS):** does the engagement letter / recording notice cover transcription? SS owns the legal read; nothing in S0–S1 waits on it (R4).
-2. **F7 (arc close):** revoke the temp Quo API key (minted 2026-08-31) — Fred's, at Quo; open until he confirms it. Its other half is done: `routes/api.temp.ringcentral.js` and its `temp.ringcentral` key scope are deleted. Credential 9's allowlist keeps `media.ringcentral.com` (live 2026-10-28): the archive sweeps fetch recordings and MMS through it (`services/adapters/phone/ringcentral.js`), so the deleted route's REMOVAL note — narrow it back to `platform.ringcentral.com` — must not be followed.
 
 ## 15. At arc close — where learnings go
 
@@ -431,5 +430,4 @@ Per CLAUDE.md's routing table:
 - `ref/INFRA_GCP.md`: bucket, IAM, signing, delete detection.
 - Schema COMMENTs via the migrations.
 - `ref/plans.md`: deferred items (live transcription, per-tenant buckets, stricter grants if wanted later, editable derived text).
-- **F7 reminder:** revoke the temp Quo API key (Fred, at Quo) — the arc is not closed while it is alive. `routes/api.temp.ringcentral.js` is deleted (§14 F7).
 - This doc stays as the design contract, edited in place as slices land.
