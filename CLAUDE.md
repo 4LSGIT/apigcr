@@ -62,15 +62,22 @@ picks per task:
      the generated files), on Fred's explicit go; workers then
      `git reset --hard origin/main`.
    - The push itself is `bash /Users/FRED/apigcr/local/land.sh "<who: what>"
-     [--no-jest] [--dry-run]`, run from a fresh worktree (node_modules + .env
+     [--no-jest] [--dry-run] [--local-suite]`, run from a fresh worktree (node_modules + .env
      symlinked) holding ONE squashed commit — never from Fred's main checkout,
      which another lander may be mid-squash in (it refuses). Inside the
      heavy-gate `land` slot it fetches, rebases (a conflict in the three
      generated files takes origin/main's copy; any other conflict aborts),
      amends so the hook regenerates them over the combined tree (rebase runs
-     no hook), runs full jest (skip only for doc-only), pushes, and ends on
-     one GO / NO-GO. The slot queues the next lander; `heavy-gate.sh status`
-     shows who holds it. Squash with `git reset --soft $(git merge-base HEAD
+     no hook), then runs the full suite on GitHub Actions, not here: it
+     pushes the amended commit to a `land/<slug>-<sha>` branch, waits for the
+     `.github/workflows/node.js.yml` run on that exact SHA (`gh run watch`),
+     fast-forwards main to it, and deletes the branch (skip the suite only
+     for doc-only, `--no-jest`). Ends on one GO / NO-GO naming the run URL.
+     A main that moved during the run makes the push fail: rerun, which
+     rebases and tests the new SHA. `--local-suite` (Actions down) runs jest
+     here instead and takes every cpu slot. The slot queues the next lander;
+     a CI land holds no cpu slot, so suites and surveys run beside it;
+     `heavy-gate.sh status` shows who holds it. Squash with `git reset --soft $(git merge-base HEAD
      origin/main)`, never `git reset --soft origin/main` — not to squash, not
      to dodge a conflict: from a branch on an older base the recommit reverts
      whatever landed since, and the rebase can't see it (2026-10-22, caught
@@ -105,9 +112,10 @@ picks per task:
      commit, so the cost is a wrong conclusion about your own code — a land
      NO-GO on a clean commit, or a bisect chasing a phantom. Bitten three times
      in one evening (2026-10-22) by two sessions each obeying the gate. A land
-     is now EXCLUSIVE in the script (it takes every cpu slot, Fred's go
-     2026-10-22), which closes the land-beside-a-suite case; the rest is on the
-     humans and the managers. Before any full run, `heavy-gate.sh status` —
+     runs its suite on GitHub Actions, so it is not a suite on this machine;
+     a `--local-suite` land is, and is EXCLUSIVE in the script (it takes every
+     cpu slot, Fred's go 2026-10-22). The rest is on the humans and the
+     managers. Before any full run, `heavy-gate.sh status` —
      and if a peer holds a cpu slot, wait or ask, don't start.
      NOTE: `local/` is gitignored, so heavy-gate.sh and land.sh are NOT
      version-controlled. A change to either leaves no git trace and reaches
@@ -155,9 +163,10 @@ Gates beyond Commands & gates below, every model:
     of the machine's 24. That, not the other session, was the main consumer —
     we spent an hour blaming each other's jest runs. `vm_stat` and
     `ps -eo rss=,comm=` take a second; ask Fred to close windows if it's tight.
-  - **Still never run two suites at once across sessions.** A land is
-    exclusive against cpu: hand the machine over explicitly and wait for the
-    GO. Concurrency alone was enough to produce the same symptoms once the
+  - **Still never run two suites at once across sessions.** A
+    `--local-suite` land is exclusive against cpu: hand the machine over
+    explicitly and wait for the GO (a normal land tests on GitHub and needs
+    nothing from the machine). Concurrency alone was enough to produce the same symptoms once the
     desktop had taken its share.
   - A failing suite that passes alone AND passes on main is evidence about the
     machine, not about the branch. Don't "fix" it; measure memory.
@@ -283,7 +292,7 @@ Mechanics: AI_CONTEXT §22 (`v` is string-only — stringify JSON yourself).
 
 ## Commands & gates
 
-- `npm test` — jest; the whole suite takes ~2 min (100–120 s measured Oct 2026; `land.sh` runs it as `npx jest --maxWorkers=2`). Run before and after any change; CI runs the same.
+- `npm test` — jest; the whole suite takes ~2 min (100–120 s measured Oct 2026; `land.sh` runs it as `npx jest --maxWorkers=2`). Run before and after any change. GitHub Actions runs the same suite (`.github/workflows/node.js.yml`: Ubuntu, UTC, node 24.x, jest's default workers, no `.env`; the mysql / Chromium / Dovecot lanes skip exactly as locally) on every `land/**` branch, every push to `main`, PRs to main, and by hand (`gh workflow run node.js.yml --ref main`). It is the land gate's test run. A red run emails the pushing account.
   Behavioural suites that animate (the mascot's) must fast-forward their own clock rather than wait in wall
   clock — one such file put the whole run at 70s before it did. See the header of `tests/mascotSkins.test.js`.
 - `node --check <file>` on every modified JS file, including inline `<script>` blocks extracted from HTML.
@@ -297,7 +306,7 @@ Mechanics: AI_CONTEXT §22 (`v` is string-only — stringify JSON yourself).
 ## Deploy
 
 - Order is absolute: **SQL migration → backend deploy → frontend deploy.** Never reverse.
-- Push to `main` triggers Cloud Build. Commits not touching `package*.json` reuse the npm layer cache.
+- Push to `main` triggers Cloud Build. Commits not touching `package*.json` reuse the npm layer cache. The deploy runs no tests and does not wait for CI: main is gated by `land.sh` waiting for a green run on the same SHA, so a push that bypasses `land.sh` (`git push`, Fred's `git go`) deploys untested. Branch protection on main is the planned enforcement (`ref/plans.md`).
 - **Hand-run production operations** (anything Fred types into Cloud Shell: a data move, a freeze, an infra rebuild) ship as ONE uploaded script with short, re-runnable stage commands — never pasted blocks, no prompts, a time limit on every external call, one unmistakable GO / NO-GO line per stage that names the next command — and every command is dry-run with its exact text against the real app on a local harness before Fred sees it. A stand-in `gcloud` only knows what was modelled, and a parse check stops before gcloud's own client-side checks, which run after it has read the live resource: run every command that CHANGES something through the real gcloud CLI against a stub API too (it refused `--clear-vpc-connector` on production 2026-10-13, after the stand-in and the parse check had both passed it). Worked example and the reasons: `ref/archive/DB_MIGRATION_2026-10.md`. Write freeze: `ref/INFRA_GCP.md` §9.
 - **A migration that needs a session** — `lock_wait_timeout`, a particular `sql_mode`, `LOCK TABLES`, a smoke test in a rolled-back transaction — ships as a node script on ONE connection from `.env` (read-only CHECK by default; `--apply` asserts the live state, writes, verifies the end state, and resumes from wherever a failed run stopped; one GO / NO-GO line), never as SU-console statements: `/admin/db/batch` runs each statement on whichever pooled connection is free, so no session setting reaches the statement it is for. Any ALTER or LOCK TABLES on a live table sets `lock_wait_timeout` low first — the global default is a year, and a metadata lock queued behind a long transaction stalls every query on the table. Worked example: `scripts/customFieldsS5bDrop.js` (+ `ref/migrations/2026-10-13_custom_fields_s5b_drop_clio_columns.sql`).
   When the migration must run BEFORE its slice lands (SQL → backend), run the script from the COMMITTED SHA, not a worker's live tree: `git worktree add --detach ../apigcr-verify-<slice> <sha>`, symlink `node_modules` and `.env` from the main checkout (the script loads `.env` from its own `scripts/..`), hand Fred `cd ../apigcr-verify-<slice> && node scripts/<x>.js [--apply]`. The manager may run the read-only CHECK itself first, so Fred's `--apply` follows a known GO. Before landing, verify the end state live (RO SQL on information_schema), then squash-merge. Proven on access D1 (2026-10-15).

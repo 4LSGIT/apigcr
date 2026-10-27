@@ -1404,8 +1404,8 @@ Active surfaces with known next steps.
   today); (3) consolidate ONE feature family through an assertion-to-risk map;
   (4) runtime budgets per lane, a reason required for any new real-time test,
   flaky tests tracked as owned defects. Constraints: the default `npm test`
-  stays the FULL suite; `land.sh` (the real gate — GitHub CI is advisory,
-  cloudbuild runs no tests), `local/heavy-gate.sh` and CLAUDE.md change
+  stays the FULL suite; `land.sh` (the real gate — it waits for the GitHub
+  Actions run on the landing SHA; cloudbuild runs no tests), `local/heavy-gate.sh` and CLAUDE.md change
   together in one slice; inventory/governance tests (settingsInventory,
   manualReadmeCoverage, CTA eligible-set, ctaInputs, scriptGuard) and
   CLAUDE.md-required timing guards are exempt from pruning (redesign a timing
@@ -1414,6 +1414,21 @@ Active surfaces with known next steps.
   pruning a slice-named suite must be mutation-proven and update every doc
   that cites the file. Review: `local/to review/TEST_SUITE_INDEPENDENT_REVIEW_2026-10-18.md`
   (gitignored).
+
+- **Branch protection on main (remote-land-suite phase 2; Fred approved in
+  principle 2026-10-27, enable ~2026-11-03 after a week of green CI lands).**
+  Require status check `test`, "do not allow bypassing" — every session
+  pushes as the admin account 4LSGIT, so without no-bypass the rule binds
+  nobody. Before Fred clicks, three things ship: (1) a replacement for his
+  `git go` alias (add + commit + push to main) that pushes a `land/fred-<sha>`
+  branch, waits for green, then pushes main; (2) a written break-glass:
+  while the rule is on, an Actions outage blocks EVERY deploy — a
+  `land.sh --local-suite` green is invisible to GitHub and its push is
+  refused too — so the steps to lift the rule and restore it (`gh api -X
+  DELETE repos/4LSGIT/apigcr/branches/main/protection`, then the exact PUT
+  body to restore it) are dry-run and filed with it; (3) land.sh's
+  `--local-suite` NO-GO for a refused push names that break-glass. Flaky
+  suites cost a rerun under the rule, not a blocked deploy.
 
 - **Mid-width table exposure beyond the fixtures (ui-custom H3, 2026-10-15).** H3 gave
   Events / Calendar list (shell) and case People / Appointments their own scroll box at
