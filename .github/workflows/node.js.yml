@@ -1,24 +1,36 @@
+# The land gate's test run. local/land.sh pushes the rebased, amended slice
+# commit to a land/<slug>-<sha> branch, waits for THIS workflow's run on that
+# exact SHA, and fast-forwards main to it only when the run is green. Pushes to
+# main run it again (same SHA after a land; the only test a direct push gets).
+#
+# The runner sees committed files only: no .env, no Cloud SQL proxy, no GCP
+# credential — nothing here can reach production. Suites gated on
+# YC_TEST_MYSQL_URL / PUPPETEER_EXECUTABLE_PATH / YC_TEST_IMAP_* skip, exactly
+# as they do in a local land. The job is named `test` with no matrix, so its
+# check name stays `test` — the name branch protection on main will require.
 name: Node.js CI
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [ "main", "land/**" ]
   pull_request:
     branches: [ "main" ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   test:
     runs-on: ubuntu-latest
-
-    strategy:
-      matrix:
-        node-version: [24.x]
-
+    timeout-minutes: 20
+    env:
+      TZ: UTC
     steps:
       - uses: actions/checkout@v4
-      - name: Use Node.js ${{ matrix.node-version }}
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
-          node-version: ${{ matrix.node-version }}
-      - run: npm install
-      - run: npm test
+          node-version: 24.x
+          cache: npm
+      - run: npm ci
+      - run: npx jest --ci
