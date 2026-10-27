@@ -371,6 +371,18 @@ amendments, which bind every slice that touches hosts:
   orphans up when an item is deleted. (b) role / firm deny rows written through
   the API (0 live 2026-10-16) still hide items while the editor says "Everyone"
   — add a read-only "also hidden by an older rule" note if any ever appear.
+- **Bind `POST /api/public/upload-complete` to a real upload**: it is
+  anonymous (rate limit only) and trusts the body's `case_id`, so anyone who
+  knows a case id can send staff a "client uploaded" email and write a client
+  log row with a comment of their choosing (escaped, ≤ 2000 chars). Document
+  registration can't be spoofed (it lists the case's real folder). Fix: have
+  `get-upload-link` issue a short-lived signed token and require it here.
+  (Docs review 2026-10-27.)
+- **`comms.read_all` and `archives.purge` have no server gate**: both are
+  defined in `lib/capabilities.js` (and mirrored in `public/index.html`) but no
+  route, lib or service checks them — mailbox access reads the role from the
+  DB instead. Wire them, or drop them from the registry so its descriptions
+  stop overstating what is enforced. (Docs review 2026-10-27.)
 - **Require scopes on new yck_ mints**: today omitted scopes = NULL =
   legacy full surface; flip to required once the existing integrations are
   scoped.
@@ -478,8 +490,9 @@ The case / contact Communications tab (AI_CONTEXT §20, manual
   into SQL, and add those four indexes (migration first).
 - **Webhook SMS case-association bridge.** A real text sent from a case's
   Send / log… is absent from the strict case feed: the send writes no
-  frontend log (the provider webhook — wf 18 / 19 — writes it, ~5–30 s
-  later, with phone numbers but no case). Needs a pending-send record the
+  frontend log (ingest writes it seconds later — Quo through hook 16 → wf 18,
+  RingCentral through the outbound delivery sync that hook 22 pokes (AI_CONTEXT
+  §28) — with phone numbers but no case). Needs a pending-send record the
   webhook can claim (line + to + body + window) to stamp
   `log_about_type='case'`.
 - **RULED (Fred, 2026-10-22): accept for now.** Logged-only rows stay ungated (parity with the Log tab, four trusted staff); make the real call inside a future roles/access arc. The `/api/log` fallback-suppression alignment below stays wanted, low priority. Original question kept for that arc: Logged-only feed rows mirror the
@@ -1346,6 +1359,32 @@ Active surfaces with known next steps.
   lazy-require line) and nobody was told. The alert convention says repeated
   → error: escalate when the same (workflow, step) failed in N consecutive
   executions (or N within a day), the sequence scanner likewise.
+- **`DELETE /workflows/:id` answers 500 on any workflow that has ever run.**
+  `fk_workflow_executions_workflow` is `ON DELETE RESTRICT` (steps and
+  versions CASCADE), so the route's final `DELETE FROM workflows` fails, the
+  transaction rolls the step delete back, and the caller gets a generic
+  500 "Failed to delete workflow" — the route's own header says so. Nothing is
+  lost, but the answer reads as a server fault. Fix: inside the transaction,
+  count `workflow_executions` for the id first and answer 409 "N executions —
+  deactivate instead" (`PUT` `active: 0`); keep the 500 for real faults.
+- **Manual workflow start and resume still DETACH `advanceWorkflow` after the
+  202.** `POST /workflows/:id/start` and `POST /executions/:id/resume`
+  (`mode: 'resume'`) answer, then run the advance in an unawaited async block —
+  the post-response path Cloud Run CPU-throttles, which the 2026-08
+  background-CPU slice removed from hook/trigger starts
+  (`actionDispatchers.deliverWorkflow`: INSERT, then `await
+  scheduleResume(executionId, new Date(), 1, db)` before returning). A long or
+  code-heavy run started from the editor therefore crawls (the 20–45× slowdowns
+  and vm-watchdog timeouts the slice measured) and dies with the instance. Fix:
+  same shape as deliverWorkflow — `await scheduleResume(...)` before the 202,
+  no detached block. Tradeoff for Fred: the run then starts on the queue, not
+  in the request — normally within a few seconds (the ≤ 90 s Cloud Tasks
+  doorbell, `enqueueResumeDispatch`), up to the 60 s `/process-jobs` tick when
+  the doorbell fails — and the 202's `status: "processing"` would read
+  `queued`. The single-step resume mode runs synchronously and is unaffected.
+  A third site has the same detached block: the resume after a
+  `request_decision` answer in `routes/decisionActions.js` (after it flips the
+  execution and deletes the pending timeout resume) — fix it in the same slice.
 - **WF27's decision-outcome notes are unlinked.** `logDecisionOutcome`
   (`lib/internal_functions/decisions.js`) links an outcome note to the
   execution's contact, but every WF27 ("static site hit") execution has

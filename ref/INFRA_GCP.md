@@ -26,6 +26,10 @@ location **global**) runs repo `cloudbuild.yaml` → docker build (classic build
 `--cache-from` a `:cache` tag; app image `FROM` a prebuilt base with node+chromium) →
 push to Artifact Registry `us-east1/cloud-run-source-deploy/apigcr/svpcac` → `gcloud run
 services update svpcac --image=...:$COMMIT_SHA`. Push-to-live ≈ 2 min.
+The build runs no tests and does not wait for any: the suite runs on GitHub Actions
+(`.github/workflows/node.js.yml`, on `main` and `land/**` pushes), and `local/land.sh`
+fast-forwards `main` only after a green run on the same SHA. The trigger's `^main$`
+filter is what keeps those `land/**` pushes from deploying — keep it anchored.
 
 **Database:** Cloud SQL for MySQL 8.4, instance **`yc-mysql`** (same project and
 region). Cloud Run reaches it over the Unix socket `/cloudsql/<connection name>`, which
@@ -62,7 +66,7 @@ Front door: `app.4lsg.com` is a **Cloud Run domain mapping** (DNS CNAME →
 | Build trigger (active) | `rmgpgab-svpcac-us-east1-4LSGIT-apigcr--maulx`, id `deae68ad-1912-4a06-9db6-516dab663a64`, location **global** | GitHub App, `4LSGIT/apigcr` push `^main$`, builds `cloudbuild.yaml`, SA = default compute. Two disabled June-2026 triggers remain (buildpack `3a276457`, docker `8934804e`) — keep disabled or delete. |
 | Cloud Scheduler | `process-jobs`, us-east1, `* * * * *`, tz America/Cancun | `POST https://svpcac-<PROJECT_NUMBER>.us-east1.run.app/process-jobs` with header `x-api-key: <yck_ write key>` (value lives in the job config; view with `gcloud scheduler jobs describe`, mint/rotate in the app). Deliberately targets the run.app URL, not the custom domain — **the URL embeds the project number, so it changes on a project rebuild**. attemptDeadline 900 s; retries backoff 5 s→300 s. Tz is DST-less EST; irrelevant at every-minute but don't copy the pattern for daily jobs (FIRM_TZ is America/Detroit). |
 | Cloud Scheduler | `mailbox-ingest`, us-east1, `*/5 * * * *`, tz Etc/UTC (created 2026-10-09) | `POST https://svpcac-<PROJECT_NUMBER>.us-east1.run.app/mailbox-ingest` with header `x-api-key: <yck_ key>` — its OWN key (labelled "scheduler mailbox-ingest"), revocable without touching `process-jobs`. attemptDeadline 600 s; **no retries** (`--max-retry-attempts=0`): every tick is a retry, and the run's `GET_LOCK('mailbox_ingest:<db>')` would turn a retry into a skip. Run budget 240 s (`MAILBOX_INGEST_BUDGET_MS`) sits inside the deadline. Deliberately NOT folded into the `process-jobs` tick: own pause switch (`gcloud scheduler jobs pause mailbox-ingest`), an IMAP-appropriate cadence, and failure isolation (an IMAP stall can't hold `process-jobs` open). Emit kill switch is DB-side: `email_ingest_sources` row `mailbox-imap` `active=0`. |
-| Cloud Tasks | queue `yc-jobs`, us-east1 | Referenced by env `CLOUD_TASKS_LOCATION`/`CLOUD_TASKS_QUEUE`. |
+| Cloud Tasks | queue `yc-jobs`, us-east1 | Referenced by env `CLOUD_TASKS_LOCATION`/`CLOUD_TASKS_QUEUE`. Carries every doorbell (`lib/taskQueue.js`): near-due scheduled jobs (`/process-job/:id`), domain events (`/process-domain-event/:id`) and, since 2026-10-27, every received webhook (`/process-hook-execution/:id`). A doorbell is never the authority — the `process-jobs` tick drains whatever one missed, so a paused queue means ~1 min latency, not loss. |
 | Cloud Tasks | queue `yc-hook-spool`, us-east1 — **PAUSED by design** | The hook spool (`lib/hookSpool.js`): where `POST /hooks/:slug` parks webhooks while `MAINTENANCE_MODE=1`. Paused = capture, resumed = replay to `/internal/hook-replay`. max-concurrent-dispatches 1, **max-attempts -1 (unlimited)**, backoff 30 s→600 s, log sampling 1.0. Leave it paused between uses; a RUNNING state is only correct while draining after a maintenance window. Procedure: §9. |
 | GCS | bucket `uploads.4lsg.com` (US multi-region) | Served via CNAME `uploads.4lsg.com → c.storage.googleapis.com` (HTTP path). |
 | GCS (comms archive) | bucket `lsg-yc-comms-archive`, us-east1 | Call recordings, MMS files, later email (`ref/COMMS_ARCHIVE_DESIGN.md` §4). Default class **Archive**, uniform access, public access prevention **enforced**, soft delete **30 days**. Deliberately NO retention policy, NO Bucket Lock, NO lifecycle rule, versioning off, Google-managed key: "keep ten years" is the absence of deletion, not a rule. The only bucket-level grant is the runtime SA's `roles/storage.objectUser` (create/get/list/delete/update/restore objects): create, get and list for the archive sweep (its pre-flight checks all three), delete for SU purge (`ref/COMMS_ARCHIVE_DESIGN.md` §8). The app serves its bytes only through 5-minute V4 signed URLs (design P5). Holds one non-client object on purpose: `_s0/probe.txt` (the signing check reads it; delete detection and any unregistered-object check skip `_s0/`). Created and checked by `scripts/commsArchive/s0_infra.sh`. Delete detection: the app's nightly job `comms_archive_verify` (`15 7 * * *` UTC) stats 1/7 of the archived objects each night (the whole slice, paged; a slice it cannot finish alerts `comms_archive_verify_incomplete`), so every object is checked every 7 days (within 14 if a night is missed, 21 if two), inside the 30-day soft-delete window while it is still restorable; it skips `_s0/`, alerts `comms_archive_missing`, and runs regardless of the archive kill switch. |
@@ -84,7 +88,9 @@ instance has outgrown the commitment).
 ## 3. Build pipeline (source of truth: `cloudbuild.yaml`, `Dockerfile`, `Dockerfile.base`)
 
 - App image: `Dockerfile` — `FROM us-east1-docker.pkg.dev/lsg-api-425223/svpcac-base/base:1`,
-  `npm ci --omit=dev`, `CMD node server.js`, port 8080.
+  `npm ci --omit=dev`, `CMD node --enable-experimental-regexp-engine server.js` (the flag
+  is load-bearing: CTA clicker-input patterns run on V8's linear-time engine; boot log
+  `[CTA] linear regexp engine`), port 8080.
 - Base image: `Dockerfile.base` — node:24-slim + chromium + fonts-liberation/dejavu (for
   pdfRenderService). Rebuild only for node/chromium security refreshes; **bump the tag**
   (`:2`, `:3`…) and update the `FROM` line in the same commit. Full build/push commands in
@@ -147,7 +153,8 @@ export command). Non-secret values inline.
   `cloudbuild.yaml`'s image-only update carries both forward. **`host` is UNSET in
   prod**: it is the TCP fallback, read only when `INSTANCE_CONNECTION_NAME` is absent
   (that is how a developer machine connects, §10). Optional and unset:
-  `INSTANCE_CONNECTION_NAME_RO` overrides the target for the readonly pool only.
+  `INSTANCE_CONNECTION_NAME_RO` overrides the target for the readonly pool only, and
+  `INSTANCE_CONNECTION_NAME_REPORT` (→ `_RO` → the main one) for the report pool.
   See `lib/dbTarget.js`.
 - **App identity:** `ENVIRONMENT=production`, `APP_URL=https://app.4lsg.com`,
   `FIRM_TIMEZONE=America/Detroit`, `EMAIL_DOMAIN=@4lsg.com`,
@@ -517,8 +524,8 @@ queue until the key they carry is valid again.
 
 **Limits.** An event over ~900 KB cannot be stored in one task → the sender gets 503
 for the whole window. An event between 512 KB and 900 KB is captured but cannot replay
-until the pipeline's oversized-payload handling is fixed (`executeHook` cuts the JSON
-text at 512 KB, which a JSON column rejects — the same event is dropped by the live
+until the pipeline's oversized-payload handling is fixed (`hookService.recordExecution`
+cuts the JSON text at 512 KB, which a JSON column rejects — the same event is dropped by the live
 receiver today); it stays in the queue, visibly. Largest hook payload on record: 24 KB.
 Tasks are kept 31 days.
 

@@ -659,6 +659,10 @@ lines alike (design: `ref/MAILBOX_SYSTEM_DESIGN.md` §4.4, slice S-PH).
   it back (seconds, usually); then it is an ordinary bubble. A short code
   (e.g. a 5-digit verification sender) cannot be texted back. Superusers
   confirm their password first ([elevation](README.md)).
+- **Texts that didn't arrive.** An outbound text the carrier reported as
+  failed carries a red "Not delivered — …" line on its bubble, with the
+  reason in plain words — see [The Communications tab → Texts that didn't
+  arrive](../01-YisraCase-overview/16-communications-tab.md#texts-that-didnt-arrive).
 - **Opted-out recipients.** If a recipient's number is marked
   *opted out* on the contact (the SMS / email opt-out on that phone or email
   row), Send stops and asks first: the message names who opted out, and **OK**

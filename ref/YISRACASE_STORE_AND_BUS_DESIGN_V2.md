@@ -222,7 +222,7 @@ Preview mode: same discipline, form-builder context only. Legacy Jotform ISSN if
 
 A **recipient** contact open in a THIRD frame or browser tab still misses aggregate additions: the scalar `changes` diff arrives and merges, but the newly created phone/email row does not (aggregates never ride the bus — v1 §3.1). Same absence-class as the donor, materially lower severity: the recipient's own scalar mirror is announced and correct, and the missing row is an addition rather than a stale row claiming to be current. Deliberately **not fixed** — extending `yc_refetch` to the recipient would make every aggregate save on the page cost a refetch in every other frame, which is the cost the values-only design exists to avoid. Revisit only if it surfaces in practice.
 
-The revive path (D6) inherits this gap in a slightly sharper form: it carries no `changes` at all, so a recipient open elsewhere misses the scalar mirror move too (`auto_promoted: true` means `contacts.contact_phone` was recomputed) and not just the new row. Still left open, for the same reason plus the reviving page's own triple-fetch. If this is ever closed, close it by giving `contact.html`'s `yc_refetch` branch a coalescing fence FIRST — the fence is the prerequisite, not the emit.
+The revive path (D6) is no longer part of this gap: it carries no `changes` at all, so `POST /api/contact-{phones,emails}` (and `contact-addresses`, and `PATCH` of any of the three) announce `yc_refetch` to the row's own contact as well as to a forced create's donor. That emit became affordable once `contact.html`'s `yc_refetch` branch had its coalescing fence (H4, `entityLastRefetch`) — the fence was the prerequisite, not the emit. The gap above stays for the aggregate PATCH path only.
 
 
 ---

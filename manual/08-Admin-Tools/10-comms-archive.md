@@ -40,6 +40,11 @@ In a phone conversation (see [Phone lines — Comms](08-mailboxes.md#phone-lines
 Bubbles fill in on the next refresh after the archive catches up — usually
 minutes after the call.
 
+The same calls, voicemails, summaries, **Listen** and **Transcript** also show
+on a contact's or case's **Communications** tab, under the same access rules
+([The Communications tab](../01-YisraCase-overview/16-communications-tab.md));
+**Re-summarise** is only here.
+
 ### Re-summarise — Comms → Phone
 
 Anyone who can read a call (not only admins) can ask for a fresh summary:

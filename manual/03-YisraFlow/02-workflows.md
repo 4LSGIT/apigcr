@@ -39,7 +39,7 @@ When something goes wrong:
 
 **Steps** — individual actions. Stored in `workflow_steps`. Three types: `webhook`, `internal_function`, `custom_code`. Each step can read variables via `{{placeholders}}`, write new ones via `set_vars`, and control what happens next via `next_step` (set by `set_next` / `evaluate_condition` / `foreach` / `wait_for` / `schedule_resume`).
 
-**Control steps** — the subset above. They are a **hardcoded whitelist** in `workflow_engine.js` `isControlStep()`; the `controlFlow: true` flag on a function's `__meta` is UI-facing only. A control step's `next_step` is honoured instead of sequential advance — but only when it returns one. A control step that returns no `next_step` (including one that *failed* under the default `ignore` policy) falls through to the following step like any other. Adding a new control function means editing that whitelist too, or its `next_step` is silently ignored.
+**Control steps** — the subset above. `workflow_engine.js` `isControlStep()` derives them from the function's own `__meta`: an `internal_function` step whose function carries `controlFlow: true` (`set_next`, `evaluate_condition`, `foreach`, `request_decision`, `schedule_resume`, `wait_for`). A control step's `next_step` is honoured instead of sequential advance — but only when it returns one. A control step that returns no `next_step` (including one that *failed* under the default `ignore` policy) falls through to the following step like any other. A new function that returns a `next_step` must set `controlFlow: true` on its `__meta`, or its `next_step` is silently ignored (`tests/control.flow.test.js` pins the set).
 
 ### Starting a workflow
 
@@ -171,7 +171,7 @@ Runs a built-in function. See [05-internal-functions.md](05-internal-functions.m
 JS snippet. Two modes, picked with the editor's **Mode** select (`code_mode` in the config):
 
 - **Safe** (`"safe"` — recommended, the default for new steps) — runs in an isolated QuickJS engine. No network, no DB, no `require`, and no `Intl` — pass dates and locale-formatted values in via `input`. Any staff member can add one.
-- **Standard** (`"standard"`, or the key absent — every step from before modes existed) — full JavaScript in the server's Node VM. Requires the **automations.manage** capability (admin / IT / SU). Prefer adding a function under `lib/internal_functions/` instead.
+- **Standard** (`"standard"`, or the key absent — every step from before modes existed) — full JavaScript in a Node VM, run in a separate child process with no environment variables and no database credentials. Requires the **automations.manage** capability (admin / IT / SU). Prefer adding a function under `lib/internal_functions/` instead.
 
 Both modes: no DB access, 60-second default timeout (`timeout_ms` in the config overrides, capped at 5 minutes), no retry safety, `input` and `console.log` in scope.
 
@@ -183,7 +183,7 @@ Both modes: no DB access, 60-second default timeout (`timeout_ms` in the config 
 }
 ```
 
-The last expression evaluated is returned as `{{this}}`.
+The last expression evaluated is returned as `{{this}}`. It must be data: Dates, `undefined` and `NaN`/`Infinity` come through intact, but a function, a symbol or a circular object fails the step with an error saying so.
 
 ### Control flow
 

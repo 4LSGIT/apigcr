@@ -128,6 +128,13 @@ Param spec fields:
 
 - The param validator (`__validateParamsAgainstMeta`) plus `__getMeta` /
   `__getAllMeta` — moved verbatim from the old file.
+- The save-time gates built on it: `__validateFunctionParams` (workflow step
+  writers, scheduled jobs, CTA mints, Casey — refuses an unknown, non-own or
+  `__`-prefixed name and undeclared param keys; `params: null` validates as
+  `{}`), `__validateSequenceFunctionStep` (the sequence step writers — the same
+  plus no `workflowOnly` function) and `__validateParamsMapping` (mapping
+  expressions on trigger / hook / ingest actions). A function without `__meta`
+  still passes the first permissively — one more reason every function has one.
 - `__resetFirmNumberCache` — preserved public handle, re-pointed at
   `services/phoneIngestService.resetFirmNumberCache`.
 - `court.js` additionally exports the `__summarizeCourtActions` /

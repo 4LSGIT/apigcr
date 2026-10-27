@@ -148,7 +148,8 @@ It is AI-generated, so check the recording before relying on it.
   transcript, not from the AI.
 - **Cost:** summaries share the one monthly cap above with transcription. When
   the cap is reached, both wait.
-- **Who saw a summary:** each time a thread shows summaries, one audit record
+- **Who saw a summary:** each time a thread (or a page of a contact's or
+  case's Communications tab) shows summaries, one audit record
   lists which calls' summaries were shown (never their text). Find them in the
   admin audit log, tool `comms_archive`, action `view_summary`.
 - **Purging** a call also blanks every stored AI request and reply for it.

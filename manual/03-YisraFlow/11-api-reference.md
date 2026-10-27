@@ -27,7 +27,7 @@ Standard auth headers: `Authorization: Bearer <jwt>` or `x-api-key: <key>`. The 
 | `/workflows/:id` | GET | Template + ordered steps |
 | `/workflows` | POST | Create template |
 | `/workflows/:id` | PUT | Update template |
-| `/workflows/:id` | DELETE | Delete template (cascades to steps via FK) |
+| `/workflows/:id` | DELETE | Delete template + all its steps and versions. A workflow that has ever run cannot be deleted (`fk_workflow_executions_workflow` is `ON DELETE RESTRICT`): the route answers **500** and rolls back — deactivate it instead (`PUT` `active: 0`; ref/plans.md) |
 | `/workflows/:id/duplicate` | POST | Clone a template |
 | `/workflows/bulk` | POST | Bulk-create / bulk-update workflows + steps in one transaction |
 | `/workflows/:id/steps` | POST | Add a step |
@@ -47,6 +47,8 @@ Standard auth headers: `Authorization: Bearer <jwt>` or `x-api-key: <key>`. The 
 | `/executions/:id` | GET | Current state + variables (`?history=true` for full step log) |
 | `/executions/:id/cancel` | POST | Cancel execution. Requires non-empty `cancel_reason` (≥3 chars). |
 | `/api/contacts/:id/workflows` | GET | Executions tied to one contact (`?scope=active\|all`, `?status=...`) |
+
+**Step writes are validated at save** (workflow and sequence step routes alike): an unknown `function_name`, a param the function does not declare, a missing required param, a `type` key inside `config` and (workflows) an `error_policy` whose `strategy` is not one of the four are all 400s — they used to pass save and fail at run time. **Stale-write precondition:** the five step-mutating routes (insert, PUT, PATCH, DELETE, reorder) of both engines, and `POST /workflows/:id/publish`, take an optional `expected_base` (`{draft_version, step_count, step_fingerprint?}`; publish: `draft_fingerprint`). It is checked inside the write transaction; a mismatch is **409** `{conflict:{changed, expected, actual}}` and nothing is written. The native editors do not send it yet; Ask Casey's cards always do. `POST /workflows/:id/steps` and `POST /sequences/templates/:id/steps` honour an `Idempotency-Key` header.
 
 #### `POST /workflows/:id/start` body shapes
 
@@ -244,11 +246,13 @@ Auth per hook: `none` / `api_key` (default header `x-hook-key`) / `hmac` (defaul
 
 #### Management
 
+Every management route needs the `automations.manage` capability (admin / IT / SU) except two reads open to all staff: the list below and `GET /api/hooks/executions` (the Automation Activity feed — no payloads, no configs).
+
 | Route | Method | Purpose |
 |---|---|---|
-| `/api/hooks` | GET | List hooks |
+| `/api/hooks` | GET | List hooks — any staff user; without `automations.manage` each row omits `auth_config` / `filter_config` / `transform_config` / `captured_sample` |
 | `/api/hooks/:id` | GET | Hook + targets |
-| `/api/hooks` | POST | Create |
+| `/api/hooks` | POST | Create. Optional `active` (create it dark) and inline `targets` (≤ 5, validated like the target route, created in the same transaction); honours `Idempotency-Key` |
 | `/api/hooks/:id` | PUT | Update (auto-bumps `version`) |
 | `/api/hooks/:id` | DELETE | Soft delete (cascades targets) |
 | `/api/hooks/:id/targets` | POST | Add target |

@@ -38,7 +38,7 @@ Matched endpoints (read `MATCHERS` in yc-sync.js for the always-current list —
 | `/api/cases/:id/contacts[/:contactId]` | POST/PATCH/DELETE | `yc_refetch` (relate changes have no column diff) |
 | `/api/cases/:id/merge` | POST | `yc_refetch` to the **survivor only**; dry-run silent |
 | `/api/contacts/:id/booking-link` | POST | `{contact_token}` real value |
-| `/api/contact-phones` · `/api/contact-emails` | POST | `yc_refetch` to the revive donor (shape differs from the PATCH transfer — see the matcher comments; contract tests pin both producers) |
+| `/api/contact-phones` · `/api/contact-emails` · `/api/contact-addresses` | POST · PATCH `/:id` | `yc_refetch` to the row's own contact; a forced phone/email create (revive) also to the donor (shape differs from the PATCH transfer — see the matcher comments; contract tests pin both producers) |
 | `/api/app-settings/:key` (PUT) · `/api/app-settings` (POST create) · `/api/app-settings/:key/restore` (POST) | | `setting:<key>` with `{value}` |
 | `/api/intake/contact` · `/api/intake/case` | POST | `yc_refetch` for `created`/`updated`; `found` is silent (writes nothing) |
 | `/api/appts…` (PATCH, attended/no-show, create, cancel, reschedule — reschedule emits **both** old and new ids) · `/api/events…` (PATCH, complete/cancel, create) | | `yc_refetch` markers |
@@ -76,7 +76,7 @@ Matched endpoints (read `MATCHERS` in yc-sync.js for the always-current list —
 - **Server-side writers are invisible.** Workflows, sequences, court pipeline, `/api/events/batch` — anything not going through a browser's `apiSend`. Fixing this is the "server-side change feed" charter, blocked on a `cases.case_updated` column that doesn't exist yet. *This is the biggest gap.*
 - **BC-absent degrade is asymmetric:** shell subscribers keep working (local dispatch); every iframe goes silently deaf. Accepted — BC is universal in target browsers; case.html's post-advance re-GET is kept as the backstop (design C1).
 - **External-mode YCForms** (`config.external` → bare `fetch`, public host) bypass the funnel. **204/`responseType` responses** return from `apiSend` before the sniff (commented at the site).
-- **A merged-away case's remote surfaces** aren't told (refetching a deleted case would 404; the writing page shows its banner). **A recipient's aggregates** (new phone row from a transfer/revive) don't reach a *third* frame — scalars do.
+- **A merged-away case's remote surfaces** aren't told (refetching a deleted case would 404; the writing page shows its banner). **A recipient's aggregates** from an aggregate-PATCH transfer (the new phone/email row) don't reach a *third* frame — scalars do. (The revive path and the child phone/email/address routes do: they refetch the row's contact.)
 - **Get-or-mint booking-link announces even when it wrote nothing** (route can't distinguish; idempotent, accepted).
 - **Stamp windows drop, not defer**, a legitimate remote event landing inside ~1.5s of the local one; checklistView's inflight fence likewise drops a concurrent remote note. Next event or reload self-corrects.
 - **Whitespace-only edits never ride** (`buildChanges` trims for comparison).

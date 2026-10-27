@@ -32,7 +32,7 @@ the one the task needs (the form warns that they act with the firm's
 credentials). An unknown scope is refused, not dropped. Keys issued
 before scopes existed carry none recorded and keep reaching every surface —
 except the sensitive tables, which only a key minted with `sql.ro.sensitive`
-reads, and `keys.mint`, which only a key minted with it holds. A key that calls something outside its scopes gets a 403 that names
+reads, and `keys.mint` and `tasks.own`, which only a key given them holds. A key that calls something outside its scopes gets a 403 that names
 the missing scope.
 
 The SQL surface, `POST /api/readonly/sql` with the key in the
@@ -53,7 +53,7 @@ It is safe by construction, in layers:
 | Tables | Who can read them |
 |---|---|
 | `app_settings`, `email_ingest_sources` — live credentials | **no key, ever** (400). Use the [DB Console](01-db-console.md). |
-| `jwt_api_audit_log`, `ai_calls`, `comms_transcripts`, `comms_no_transcribe`, `admin_audit_log`, `readonly_query_log` — client communications, AI prompts and replies, audit trails, other sessions' SQL | only a key holding `sql.ro.sensitive`; any other key gets a 403 naming that scope |
+| `jwt_api_audit_log`, `ai_calls`, `comms_transcripts`, `comms_no_transcribe`, `comms_summary_guides`, `admin_audit_log`, `readonly_query_log`, `assistant_chats`, `assistant_chat_messages` — client communications, AI prompts and replies, Ask Casey conversations, audit trails, other sessions' SQL | only a key holding `sql.ro.sensitive`; any other key gets a 403 naming that scope |
 | `ai_spend` — `ai_calls` without its error / prompt / reply text | every key: use it for AI spend and volume questions |
 
 A table name is matched anywhere in the statement, even inside a quoted

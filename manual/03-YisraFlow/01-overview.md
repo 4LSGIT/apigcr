@@ -36,7 +36,8 @@ routes/scheduled_jobs.js        Scheduled Jobs (CRUD)
 routes/process_jobs.js          The heartbeat — claims and dispatches all jobs
 lib/job_executor.js             Executes one_time/recurring jobs (webhook, internal_function,
                                 custom_code, campaign_send, task_due_reminder,
-                                task_start_reminder, task_daily_digest)
+                                task_start_reminder, mail_sent_read_seed,
+                                mail_sent_case_link)
 lib/internal_functions/         The action library shared by all engines — one file
                                 per category, auto-scanned (see its README.md)
 
@@ -155,10 +156,11 @@ The blunt alternative is instance-based billing (`--no-cpu-throttling`), which a
                                            webhook, internal_function,
                                            custom_code, campaign_send,
                                            task_due_reminder,
-                                           task_daily_digest)
+                                           task_start_reminder,
+                                           mail_sent_*)
 ```
 
-The four "special" types (`workflow_resume`, `sequence_step`, `hook_retry`) detach the executor — the receiver returns `dispatched` immediately and a background async block does the real work, marking `completed` or `failed` when done. If the container crashes mid-execution, the job stays `running` until `recoverStuckJobs()` resets it on the next tick.
+The three "special" types (`workflow_resume`, `sequence_step`, `hook_retry`) run their executors concurrently, and the heartbeat request waits for all of them before it answers — so the work runs at full CPU inside the request (a detached block after the answer is CPU-throttled by Cloud Run). Each result reads `dispatched`; the executor marks the job `completed` or `failed`. If the container crashes mid-execution, the job stays `running` until `recoverStuckJobs()` resets it on the next tick.
 
 ### Quick-start examples
 

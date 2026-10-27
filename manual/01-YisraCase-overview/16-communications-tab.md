@@ -127,7 +127,15 @@ Click an item to expand it.
   when you reply from a case feed, the sent mail is tied to that case).
 - **Text / call**: the message body or the call's status and duration, plus
   any archived recording, voicemail, transcript or summary you are allowed to
-  see. **Text back** sends from the same phone line.
+  see. **Text back** sends from the same phone line. A call reads **Phone
+  call** or **Missed call** (with "· voicemail" when one was left) and its
+  length; when it has an AI summary, the collapsed row previews it, marked
+  **AI summary:** (hover for "AI-generated — check the recording before
+  relying on it"). Expanded, it shows the summary, **Listen**, **Transcript**,
+  the voicemail with its own summary, why a call has no transcript, and the
+  **Restricted** badge or a purge note — the same content and rules as
+  Comms → Phone ([Comms archive](../08-Admin-Tools/10-comms-archive.md)).
+  Re-summarise is only in Comms → Phone.
 - **Logged-only**: the logged body and details. There is no reply — nothing
   connects a log entry to a mailbox or line.
 - **Add case tag / Change case tag** (contact feed only): ties the item to one
@@ -172,13 +180,16 @@ Statuses are stamped by an automatic sync (every 10 minutes, plus instantly
 when the provider reports a change) — see the design doc
 `ref/PHONE_DELIVERY_DESIGN.md` for the machinery.
 
-Each NEW failure also sends two automatic emails: a plain-words one to Stuart
-and a technical one to IT. That notice is an ordinary workflow (**Failed SMS
+Each NEW failure also sends automatic notices: a plain-words email to Stuart,
+a technical email to IT, and a text to the firm line the failed text was sent
+from. That notice is an ordinary workflow (**Failed SMS
 workflow**, id 54) — edit it in the workflow builder to change wording or
 recipients; the Config → System setting **Failed-text workflow** says which
-workflow runs (blank switches the emails off). The same unreachable client
+workflow runs (blank switches the notices off). The same unreachable client
 fails again on every new send, so a weekly reminder to a dead number means a
-weekly email until someone fixes the number on the contact.
+weekly round of notices until someone fixes the number on the contact. A failed text
+to one of the firm's own numbers never starts that workflow (its own notice
+could fail the same way and start another); it still shows the badge.
 
 ---
 

@@ -2,11 +2,11 @@
 
 ## For operators
 
-The system has **91 built-in functions** that workflows, sequences, scheduled jobs, hook targets and the email/phone ingest rules can call. Things like "send an SMS," "look up a contact," "create a task," "query the database," "branch to step 7."
+The system has **104 built-in functions** that workflows, sequences, scheduled jobs, hook targets and the email/phone ingest rules can call. Things like "send an SMS," "look up a contact," "create a task," "query the database," "branch to step 7."
 
-You don't usually pick a function by hand from a list — when you build a workflow step or a sequence step, you select **internal_function** as the action type and the UI shows you the available ones in a categorized dropdown with a form field for each parameter. Six are hidden from the pickers (internal plumbing), so a workflow offers **85** and a sequence **74** — sequences don't get the eleven that need workflow machinery.
+You don't usually pick a function by hand from a list — when you build a workflow step or a sequence step, you select **internal_function** as the action type and the UI shows you the available ones in a categorized dropdown with a form field for each parameter. Thirteen are hidden from the pickers (internal plumbing and the scheduled sweepers), so a workflow offers **91** and a sequence **79** — sequences don't get the twelve that need workflow machinery.
 
-The eleven that only work in workflows are the ones that need workflow-specific machinery: branching (`set_next`, `evaluate_condition`, `foreach`), delays (`wait_for`, `schedule_resume`, `wait_until_time`), variable formatting (`format_string`), pausing for a human (`request_decision`), starting another workflow (`start_workflow`), and the two document renderers that write back to the execution (`document_generate_from_template`, `render_submission_pdf`).
+The twelve that only work in workflows are the ones that need workflow-specific machinery: branching (`set_next`, `evaluate_condition`, `foreach`), delays (`wait_for`, `schedule_resume`, `wait_until_time`), variable formatting (`format_string`), pausing for a human (`request_decision`), minting a call-to-action link recorded against the run (`create_cta`), starting another workflow (`start_workflow`), and the two document renderers that write back to the execution (`document_generate_from_template`, `render_submission_pdf`).
 
 Everything else works the same way in any engine that calls it.
 
@@ -32,56 +32,67 @@ async (params, db) => { success: boolean, output?: any, set_vars?: object, next_
 Functions can return:
 - `output` — captured as `{{this.output.X}}` in the next step
 - `set_vars` — merged into workflow `variables` (workflow only — sequences ignore this)
-- `next_step` — workflow-only control flow (only honored on `set_next`, `evaluate_condition`, `schedule_resume`)
+- `next_step` — workflow-only control flow, honored only for functions whose `__meta` carries `controlFlow: true` (`set_next`, `evaluate_condition`, `foreach`, `request_decision`, `schedule_resume`, `wait_for`)
 - `delayed_until` — workflow-only delay (only honored on `wait_for`, `schedule_resume`, `wait_until_time`)
 
 Each function carries a `__meta` block — a JSON description of its params (name, type, required, etc.) that drives the form-driven UI. The reference below pulls directly from those `__meta` blocks; if a future change adds or renames a param, `GET /workflows/functions` is the live source of truth.
 
 ### The function registry
 
-**91 callable functions**, grouped by `__meta` category. Counts in this chapter go stale the moment somebody adds a file, so treat `GET /workflows/functions` as the live source of truth — it serves the registry's own metadata. The meta test (`tests/internal_functions.meta.test.js`) derives its coverage from the registry itself, so a new function without a `__meta` block fails the build rather than appearing here silently.
+**104 callable functions**, grouped by `__meta` category. Counts in this chapter go stale the moment somebody adds a file, so treat `GET /workflows/functions` as the live source of truth — it serves the registry's own metadata. The meta test (`tests/internal_functions.meta.test.js`) derives its coverage from the registry itself, so a new function without a `__meta` block fails the build rather than appearing here silently.
 
-Of the 91: **6** are `uiHidden` (internal plumbing — `court_extract`, `decision_timeout_cleanup`, `set_test_var`, `forward_as_email`, `forward_as_sms`, `portal_callback_reminder`), leaving 85 in the pickers; **11** of those 85 are `workflowOnly`.
+Of the 104: **13** are `uiHidden` (internal plumbing and the recurring sweepers, marked † below), leaving 91 in the workflow picker; **14** are `workflowOnly` (marked *), 12 of them visible, so the sequence picker offers 79.
 
 | Category | Functions |
 |---|---|
-| control (workflow only) | `set_next`, `evaluate_condition` |
-| composition | `start_workflow`, `cancel_workflow_execution`, `create_cta` |
-| variables | `noop`, `set_var`, `format_string` |
-| timing (workflow only) | `schedule_resume`, `wait_for`, `wait_until_time` |
+| control | `set_next`*, `evaluate_condition`*, `foreach`*, `request_decision`*, `decision_timeout_cleanup`*† |
+| composition | `start_workflow`*, `cancel_workflow_execution`, `create_cta`* |
+| variables | `noop`, `set_var`, `format_string`* |
+| timing | `schedule_resume`*, `wait_for`*, `wait_until_time`*, `business_deadline` |
 | communication | `send_sms`, `send_email`, `send_mms` |
+| forwarding | `forward_as_email`†, `forward_as_sms`† |
 | tasks | `create_task`, `run_task_digest` |
-| contacts | `lookup_contact`, `find_contact`, `update_contact` |
+| sequences | `cancel_sequences`, `enroll_sequence` |
+| log | `create_log`, `update_log`, `set_log_about`, `phone_log` |
+| contacts | `lookup_contact`, `find_contact`, `update_contact`, `intake_contact` |
 | users | `lookup_user`, `list_users` |
-| cases | `update_case` |
-| appointments | `create_appointment`, `lookup_appointment`, `update_appointment`, `get_appointments` |
+| cases | `update_case`, `intake_case`, `advance_stage` |
+| court | `validate_case_trustee` |
+| appointments | `create_appointment`, `lookup_appointment`, `update_appointment`, `find_live_calendar_item`, `get_appointments`, `cancel_case_appointments` |
 | events | `create_event`, `update_event`, `complete_event`, `lookup_event`, `get_events`, `run_event_digest`, `sweep_calendar_missed`, `emit_calendar_approaching` |
 | calendar | `gcal_create_event`, `gcal_get_event`, `gcal_update_event`, `gcal_delete_event` |
+| documents | `documents_sync`, `documents_refresh_case_cache`, `documents_attribution_report`, `document_generate_from_template`* |
+| esign | `esign_send_from_template`, `esign_get_status`, `esign_recall` |
 | dropbox | `dropbox_create_folder`, `dropbox_get_shared_link`, `dropbox_list_folder`, `dropbox_move`, `dropbox_rename`, `dropbox_delete`, `dropbox_save_url`, `dropbox_ensure_case_folder` |
-| log | `create_log`, `phone_log` |
-| sequences | `cancel_sequences`, `enroll_sequence` |
+| pdf | `parse_pdf`, `render_submission_pdf`* |
 | connections | `refresh_expiring_oauth_credentials`, `rc_renew_subscriptions`, `gcontacts_sync_pending` |
-| system | `run_error_sweep`, `court_review_retry`, `court_activity_summary`, `generate_firm_blocks`, `cta_expiry_sweep` |
-| general | `query_db` |
-| ai | `query_ai` |
-| dev | `set_test_var` |
-| *(no meta — pipeline-only)* | `court_extract` — intentionally carries no `__meta`; its params are envelope dot-paths that only exist in the email-ingest pipeline, so it must never appear in the step editors. Documented at its definition and exempted by name in the meta test. |
+| general | `query_db`, `update_db`, `insert_db` |
+| ai | `query_ai`, `ai_match` |
+| system | `comms_archive_sweep`†, `comms_archive_media_sweep`†, `comms_archive_verify`†, `comms_summarize_sweep`†, `comms_transcribe_sweep`†, `phone_outbound_sync`†, `court_extract`†, `court_review_retry`, `court_activity_summary`, `cta_expiry_sweep`†, `esign_reconcile`, `esign_remind`, `portal_callback_reminder`†, `report_email`, `run_error_sweep`, `set_system_alert_status`, `generate_firm_blocks`, `set_setting`, `get_setting`, `get_settings`, `sweep_trigger_executions`, `emit_stage_aged` |
+| dev | `set_test_var`*† |
+
+`court_extract` carries only a minimal `uiHidden` meta: its params are envelope dot-paths that exist only in the email-ingest pipeline, so it must never appear in the step editors.
 
 
 ### The recurring-jobs roster
 
-Seventeen of these functions run on a schedule, unattended. When one fails
+Twenty-two of these functions run on a schedule, unattended (and `phone_outbound_sync` runs from its own recurring job too — read its schedule in Scheduled Jobs; `ref/PHONE_DELIVERY_DESIGN.md`). When one fails
 overnight this is the table you want — what it does, when it runs, and where its
 entry is. Cron times are UTC.
 
 | Function | Cron (UTC) | What it does |
 |---|---|---|
+| `comms_archive_sweep` | `*/2 * * * *` | Copies RingCentral call recordings into the private archive before RingCentral's 90-day delete |
+| `comms_archive_media_sweep` | `*/2 * * * *` | Archives Quo call recordings and RingCentral / Quo MMS files |
+| `comms_transcribe_sweep` | `*/2 * * * *` | Transcribes archived recordings and voicemails (off unless `comms_transcribe_mode` says otherwise) |
+| `comms_summarize_sweep` | `*/2 * * * *` | Summarizes transcribed calls (off unless `comms_summarize_mode` says otherwise) |
 | `cta_expiry_sweep` | `*/5 * * * *` | Expires lapsed CTA links; fires their timeout plans |
 | `documents_sync` | `*/10 * * * *` | One bounded increment of the Dropbox→documents sync |
 | `run_error_sweep` | `*/15 * * * *` | Retries and ages out failed jobs |
 | `documents_refresh_case_cache` | `0 */4 * * *` | Rebuilds the case-folder cache |
 | `refresh_expiring_oauth_credentials` | `0 7 * * *` | Renews OAuth credentials before they lapse |
 | `sweep_trigger_executions` | `0 7 * * *` | Trigger-execution retention |
+| `comms_archive_verify` | `15 7 * * *` | Delete detection over one seventh of the archive each night |
 | `rc_renew_subscriptions` | `30 7 * * *` | Renews RingCentral webhook subscriptions |
 | `sweep_calendar_missed` | `0 8 * * *` | Marks passed deadlines `missed`, emitting `calendar.resolved` |
 | `gcontacts_sync_pending` | `0 9 * * *` | Pushes pending contacts to Google Contacts |
@@ -112,12 +123,12 @@ was removed — don't go looking for it.)
 Why these are workflow-only: they need machinery a sequence doesn't have — the
 step graph, the execution's variable bag, or the ability to suspend and resume.
 
-- **Workflow only (13, of which 11 appear in the picker):** `set_next`,
+- **Workflow only (14, of which 12 appear in the picker):** `set_next`,
   `evaluate_condition`, `foreach`, `request_decision`, `start_workflow`,
-  `schedule_resume`, `wait_for`, `wait_until_time`, `format_string`,
-  `document_generate_from_template`, `render_submission_pdf`, plus the hidden
-  `decision_timeout_cleanup` and `set_test_var`.
-- **Both engines (74 in the picker):** everything else.
+  `create_cta`, `schedule_resume`, `wait_for`, `wait_until_time`,
+  `format_string`, `document_generate_from_template`, `render_submission_pdf`,
+  plus the hidden `decision_timeout_cleanup` and `set_test_var`.
+- **Both engines (79 in the picker):** everything else.
 
 Sequences have their own timing model, which is why the `wait_*` family is
 excluded rather than reimplemented.
@@ -335,9 +346,21 @@ Resume at the next occurrence of a clock time.
 | `timezone` | string | optional | IANA TZ; defaults to `FIRM_TIMEZONE` (America/Detroit). |
 | `nextStep` | integer | yes | Step to resume at. |
 
+#### `business_deadline` (both engines)
+
+Computes a Shabbos/Yom-Tov-aware deadline — at least `days` calendar days ahead, landing on the next unrestricted business day at `time` (firm timezone). Returns `deadline_at` (ISO UTC) and `duration` (minutes from now, e.g. `"4020m"`) that `request_decision`'s `timeout` accepts directly — capture it with `set_vars` so a human-in-the-loop timeout never expires over Shabbos. Computes only; never pauses.
+
+| Param | Type | Required | Description |
+|---|---|---|---|
+| `days` | integer | optional (placeholderAllowed), default `2` | Calendar-day floor before the business-day search (0–60). `0` = today if the target time is still ahead. |
+| `time` | string | optional (placeholderAllowed), default `"10:00"` | `HH:mm` 24h, firm timezone. |
+| `from` | string | optional (placeholderAllowed) | Anchor instant (same forms `schedule_resume` accepts). Default now; `duration` is always measured from now. |
+
 ---
 
 ### Communication (both engines)
+
+Every send function (`send_sms`, `send_mms`, `send_email`, `forward_as_*`) refuses a recipient whose phone or email row is opted out — `RECIPIENT_OPTED_OUT`, nothing sent; see [error policies](08-error-policies.md).
 
 #### `send_sms`
 
@@ -635,6 +658,12 @@ Example:
   "phone": "{{trigger.from_phone}}"
 }
 ```
+
+#### `intake_contact`
+
+Create or update a contact by phone/email value match — the same upsert `POST /api/intake/contact` performs. 0 matches → create (needs a name); 1 match → fills BLANK fields and adds the phone/email (a name, DOB, SSN or address on file is never overwritten; empty values never clear) — unless the submitted name differs (case, accents and punctuation ignored): then nothing is written, a review task goes to `intake_review_assignee` (else `default_task_assignee`) and the output carries `name_conflict: true`; 2+ matches → nothing written, `action: "diverged"` with the candidate list (it never guesses); bad input → `action: "invalid"`. Only infrastructure errors throw — branch on `{{this.output.action}}` (`created` / `updated` / `diverged` / `invalid`). Output also carries `contact_id`, `contact_name`, `review_task_id`, `conflicts`, `conflict_ids`.
+
+Params: `name` (or `fname` / `mname` / `lname`, which win per slot; create needs first + last), `phone` (10 digits after normalizing, else invalid), `email`, `duplicate` (`"duplicate"` forces a create), `force_contact_id` (must be one of the diverged candidates), `contact_kind` (`"org"` skips matching and always creates; needs `contact_org_name`), and the contact columns `contact_address` / `_city` / `_state` / `_zip` / `_dob` / `_notes` / `_tags` / `_type` (default `"Client"` on create) / `_pname`. All placeholder-capable.
 
 ---
 
@@ -1235,6 +1264,17 @@ Example:
 }
 ```
 
+#### `intake_case`
+
+Find, reuse, or create a case for a contact — the case half of `POST /api/intake/case`. `reuse: "intake"` (default) reuses the contact's open intake-pipeline case (latest stage-log row on a non-terminal intake stage, across case types), else creates; `"same_type"` returns the newest Open/Pending/Filed case of the same `case_type`, else creates; `"never"` always creates. `case_type` may be blank (an untyped lead case). A create writes the case, its Primary `case_relate` row and a log row, emits `case.created` and ensures the Dropbox folder — but does NOT stage the case: follow with `advance_stage`. Output: `action` (`reused` / `found` / `created` / `invalid`), `case_id`, `case_relate_id` (created), `stage_key` (reused), `other_open_cases`, `message`; bad input is `invalid`, never a throw.
+
+| Param | Type | Required | Description |
+|---|---|---|---|
+| `contact_id` | string | yes (placeholderAllowed) | The contact. |
+| `case_type` | string | optional (placeholderAllowed) | Matter type from the existing vocabulary; blank allowed. |
+| `case_subtype` | string | optional (placeholderAllowed) | e.g. `"Chapter 7"`, ≤ 40 chars. |
+| `reuse` | enum | optional, default `intake` | `intake` / `same_type` / `never`. |
+
 ### Events (both engines)
 
 Events are dated obligations — hearings, deadlines, milestones — distinct from appointments. See [Events](../01-YisraCase-overview/08-events.md).
@@ -1809,6 +1849,18 @@ Example:
 }
 ```
 
+#### `set_system_alert_status`
+
+Acknowledge (`ack` — clears the open-alerts banner) or resolve (`resolve`, implies ack) the open `system_alerts` rows of one `group_key` that existed at the `before` cutoff — the same action as Admin → System Alerts, reversible there with Reopen. New failures still alert. The failure digest's Acknowledge / Resolve buttons are CTA links over this. Params: `action` (`ack` / `resolve`), `group_key`, `before` (ISO UTC; rows created later are untouched), `by` (attribution, default `"cta"`).
+
+### Comms archive and phone delivery sweeps (hidden)
+
+Recurring-job plumbing, `uiHidden` and denied to CTA links (they spend provider, transcription and AI budgets). Each is gated by its own setting and documented with its subsystem:
+
+- `comms_archive_sweep` / `comms_archive_media_sweep` / `comms_archive_verify` — the call-recording and MMS archive (`comms_archive_enabled`; verify runs even while it is off).
+- `comms_transcribe_sweep` / `comms_summarize_sweep` — transcription and summaries ([Comms transcription](../08-Admin-Tools/09-comms-transcription.md)).
+- `phone_outbound_sync` — the outbound SMS delivery sync (`phone_delivery_sync_enabled`; `ref/PHONE_DELIVERY_DESIGN.md`). Params `since` / `until` (window, default the last 48 h), `max_pages`, and `backfill: true` for a hand-run backfill (skips the ingest rules) — never on the recurring job.
+
 ### Dropbox
 
 Eight functions — `dropbox_ensure_case_folder`, `dropbox_create_folder`,
@@ -1886,7 +1938,12 @@ enum, iso_datetime, duration, object, array
 internalFunctions.__getMeta(name)           // → meta block for one function, or null
 internalFunctions.__getAllMeta()            // → { funcName: meta, ... } for all
 internalFunctions.__validateParamsAgainstMeta(name, params)   // → null on success, { error: '...' } on fail
+internalFunctions.__validateFunctionParams(name, params)      // save-time gate: unknown / non-own / `__` name, undeclared param keys, params null as {}
+internalFunctions.__validateSequenceFunctionStep(actionType, actionConfig)  // the same, plus sequence rules (no workflowOnly function)
+internalFunctions.__validateParamsMapping(name, mapping)      // params_mapping surfaces (trigger rules, hook targets, ingest actions)
 ```
+
+`__validateFunctionParams` is the one save-time check behind every workflow step writer, `POST`/`PATCH /scheduled-jobs`, CTA mints and Ask Casey's cards: an unknown function or an undeclared param is refused at save, not discovered at run time.
 
 `GET /workflows/functions` returns `{ workflow: [...], sequence: [...], meta: __getAllMeta() }` for the form-driven UI.
 

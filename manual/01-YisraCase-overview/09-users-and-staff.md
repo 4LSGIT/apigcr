@@ -44,8 +44,8 @@ Edit them with the **Roles** checkboxes in the user's form (Admin → Users):
 | Role | Unlocks today |
 |---|---|
 | `su` | Super-user: the tools in [Admin Tools](../08-Admin-Tools/), and everything below |
-| `it` | Firm settings and System settings edits; template code in the form builder |
-| `admin` | Firm settings edits |
+| `it` | Firm settings and System settings edits; [View as](#it-view-as) (read-only); managing hooks and writing standard-mode code (code steps, scheduled code jobs, code in trigger and ingest rules); template code in the form builder |
+| `admin` | Firm settings edits; managing hooks and writing standard-mode code (code steps, scheduled code jobs, code in trigger and ingest rules) |
 | `attorney` | Reading every mailbox and phone line without a per-channel grant |
 | `form_dev` | Template code in the form builder |
 | `staff` | Nothing extra — the everyday surface every signed-in user has |

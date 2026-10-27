@@ -2,7 +2,7 @@
 # Last updated: 2026-09-14 — compressed to skeleton form (~900 lines from ~3,100); §0 deltas folded into body; per-column facts moved to schema COMMENTs in ref/database.sql
 
 <!-- ================= CURRENCY ================= -->
-<!-- Reviewed-through: 9821110 (docs review #2, 2026-10-13). This doc is a   -->
+<!-- Reviewed-through: 662f02b (docs review #3, 2026-10-27). This doc is a   -->
 <!-- SKELETON: what each subsystem is + the non-guessable invariants +       -->
 <!-- pointers. Depth lives in manual/, schema truth in ref/database.sql      -->
 <!-- (read its COMMENTs), route truth in ref/routes.md, working rules in     -->
@@ -10,10 +10,9 @@
 <!-- KNOWN MISSING SECTIONS (debt: docs/20260914_coverage_gaps): e-sign,     -->
 <!-- portal, YisraForms/templates, reports, pipeline engine, document sync,  -->
 <!-- booking landings. manual/ is authoritative for those meanwhile.        -->
-<!-- CONSCIOUS DEFERRALS (review #2): the seven sections above --            -->
-<!-- large, one arc of their own; U9b calendar-tab doc deltas stay with the  -->
-<!-- U9b arc (its manual chapter + bus-design E12 supersession).             -->
-<!-- Tools (29) is fully filed.                                              -->
+<!-- CONSCIOUS DEFERRALS (review #3): §0's Casey / opt-out / ingest-rule /   -->
+<!-- mailbox / court-parser entries stay until their arcs close (tier 2);    -->
+<!-- §0 entries with no numbered section wait for the sections above.        -->
 <!-- Doc-debt queue: scratch ns=docs. File doc≠code divergences there at    -->
 <!-- discovery; the weekly docs review (DOCS_REVIEW.md) drains it and       -->
 <!-- updates this block.                                                     -->
@@ -161,37 +160,6 @@ body. Governing migrations in `ref/migrations/`.*
   8.4.11): a DROP does not fail on `yc_report`'s per-column grant — the grant
   stays ORPHANED in `mysql.columns_priv` (inert; it re-attaches to a later
   column of the same name) until a re-provision or targeted REVOKE clears it.
-- **Code bodies run in the QuickJS guest (10-26):** trigger match/transform,
-  email/phone ingest rule match/transform, both suppression services and hook
-  filter + hook/target transforms run through `lib/guestCode.js` — QuickJS in
-  the scrubbed sandbox child (`customCodeRunner` batch message), never
-  in-process; `vm` / `new Function` execution is gone from all of them, and
-  the previews/test endpoints use the same engine (test-match batches a whole
-  corpus into ONE child via `guestCode.batchRunner`). Invariants: every site
-  function is async and every caller awaits (match results compare
-  `=== true`); no fallback; failure = the site's own failure semantics;
-  limits 15 s wall / 64 MB / ≤ 4 concurrent children, split into LANES
-  (review 10-27): each call names `events` (triggers, ingest rules,
-  suppressions — reserved 2 of 4), `hooks` (live/replayed hook code —
-  reserved 1) or `preview` (editor tests, dry runs, rule previews,
-  `batchRunner` — the default, reserved 0, at most 1); a waiter past its
-  lane's queue-wait budget (`GUEST_CODE_QUEUE_WAIT_MS_<LANE>`, 10 s / 3 s /
-  5 s) or beyond its queue cap (`GUEST_CODE_MAX_QUEUE_<LANE>`) fails closed
-  (`GUEST_CODE_BUSY`, mapped by each site), logged, alerted
-  `guest_code_saturated:<lane>` (warning, error on a repeat within 30 min,
-  folded per minute; db injected by `startup/init.js`); no `Intl` (locale Date
-  methods silently ignore `timeZone`). The `automations.manage` gates
-  (`ingestCodeGate`, `triggerCodeGate`, hooks B5) are deliberately unchanged
-  — relaxing them is Fred's call after a soak (`ref/plans.md`). Cost: one
-  fork per call, ~40 ms locally. Detail: §16 / §26 / §27 / §28 "Code mode".
-- **Trigger code gate + child flag fails closed (hotfix, 10-26):** trigger
-  rule POST/PUT and `test-draft` carrying a `code` match or transform refuse
-  without `automations.manage` (`lib/triggerCodeGate.js`, 403
-  `missingCapability`); non-code modes stay open to all staff. The bodies
-  now run in the QuickJS guest (entry above; §26 "Code mode"). And
-  `custom_code_child_process` now fails closed — only an explicit
-  `'0'` selects the legacy in-process path; absent / blank / anything else
-  runs the child (§10).
 - **Recipient opt-out (ruling 2026-10-27):** consent is the destination's
   ACTIVE row flag — `contact_phones.sms_optout` / `contact_emails.email_optout`
   (at most one active row per number/address: `uk_phone_active` /
@@ -217,11 +185,6 @@ body. Governing migrations in `ref/migrations/`.*
   staff compose surface; a caller that ignores it simply does not send.
   Exempt by design: the portal login PIN (client-requested, refusing locks
   them out). Manual: 03-YisraFlow/08-error-policies.md, 08-Admin-Tools/08-mailboxes.md.
-- **Ingest code gate (hotfix, 10-26):** every ingest route that accepts a
-  `code` body — rule + suppression create/update, `test-match`,
-  `test-transform`, both channels — refuses it without `automations.manage`
-  (403 `missingCapability`); non-code modes stay open to all staff. The
-  bodies now run in the QuickJS guest (entry above; §27 "Code mode").
 - **Casey reads email/phone ingest rules (A20.0/A20.1, 10-26):** the P12
   kinds take `email_ingest_rule_id` / `phone_ingest_rule_id` (definition,
   references), `email_ingest_execution_id` / `phone_ingest_execution_id` or a
@@ -369,34 +332,6 @@ body. Governing migrations in `ref/migrations/`.*
   the last RAW row's `(date, id)`. Design: `ref/MAILBOX_SYSTEM_DESIGN.md`
   §4.4 "As built (S2P)"; operators: `manual/08-Admin-Tools/08-mailboxes.md`.
 
-- **Maintenance mode / hook spool (10-12):** `MAINTENANCE_MODE=1` on a revision
-  = write freeze. `lib/maintenance.js` gate (mounted in `server.js` after cors +
-  build stamp, BEFORE body parsers / static / the 5xx observer — order is tested)
-  503s everything except `POST /hooks/:slug`, which captures the authenticated
-  event to the PAUSED Cloud Tasks queue `yc-hook-spool` (`lib/hookSpool.js`)
-  instead of executing; replay is `POST /internal/hook-replay`
-  (`routes/internal/hookReplay.js`, internal key only, idempotent on
-  `raw_input.meta.spool_id`). Operator procedure `ref/INFRA_GCP.md` §9; hook-side
-  behaviour `manual/03-YisraFlow/09-yisrahook.md`. Invariants:
-  - **`hookSpool.put()` REJECTS on failure — the opposite of `lib/taskQueue.js`**
-    (which swallows). During a freeze the task is the only copy of the event;
-    the receiver turns a rejection into a 503 so the sender retries. It also
-    ignores the `cloud_tasks_enabled` kill switch.
-  - **A new MACHINE-facing entry point that acks-then-works (2xx regardless of
-    its own failure) needs its own capture path** or it loses events during a
-    freeze — today the hook receiver is the only such route. Everything else is
-    safe to 503: it retries (Gmail Apps Script, schedulers, Cloud Tasks) or is a
-    caller that reads the response. Landing-page form posts
-    (`routes/pageLanding.js`, "always 303") are the same shape with a PERSON on
-    the other end: pages are not served during a freeze and a stale tab's POST
-    gets the maintenance page.
-  - **The spool queue has unlimited attempts (`max-attempts -1`) on purpose.**
-    Cloud Tasks deletes a task when its attempts run out, on any status; here a
-    task must leave the queue only on a 2xx from the replay route. So that
-    route's 2xx means "this event is finished with" — never answer 2xx for
-    something that should be retried.
-  - The gate does not stop non-Express writers; a maintenance revision runs on
-    the read-only DB user as the hard lock.
 - **Comms hub read side is live (mailbox S2, 10-09):** `routes/api.mail.js`
   → `services/mailbox/mailReadService.js`; pane `public/comms.html` (the
   shell's Comms tab `tabComms` + sidebar badge — `commsBadgeSet`/`Refresh` in
@@ -661,25 +596,6 @@ body. Governing migrations in `ref/migrations/`.*
     `cases.clio_matter`, `cases.case_clio_id` and `contacts.contact_clio_id`
     were DROPPED 10-13 (S5-B) — read and write the Clio ids only by the `cf_`
     keys.
-- **SSN is an ordinary column (09-24):** `contacts.contact_ssn` stopped being
-  special. Removed: `resolverService.BLOCKED_COLUMNS.contacts`, the
-  `contact_ssn` / `contact_dob` entries in `lib/reportSchema/manifest.js`
-  `DENIED_COLUMNS`, the strip in `update_contact`, and the omission from
-  `lookup_contact`'s SELECT. `contactService.stripSsn` turned out to be DEAD
-  CODE — defined, exported, imported by caseService, called nowhere — so the
-  "never returned by any function in this service" header rule had been false
-  for some time; `getContact` returns it via `SELECT *`, `getCase`'s clients
-  include via `SELECT co.*`, and `public/case.html` renders it in the Clients
-  table. Rationale: the firm files Form 121 and staff read the number all day.
-  STILL REFUSED, for reasons that are NOT secrecy-from-staff — do not "fix"
-  these: `lib/portalCardEngine.js` (its own deny-by-default whitelist; those
-  values reach a CLIENT browser), `lib/domainEvents.js` (envelopes persist
-  independently of the contact row), and the external-forms prefill ceiling
-  (public unauthenticated endpoint). `listContacts` still omits it — payload
-  size, not secrecy. New modifiers `ssn_mask` (`xxx-xx-6789`) and `ssn_last4`,
-  added to BOTH chains (`services/resolverService.js`, `lib/unplacehold.js`)
-  and matching `esignPrefillService.ssnMasked`. Column COMMENT corrected by
-  `ref/migrations/2026-09-24_contact_ssn_comment.sql`.
 - **G2 document generation (09-01):** `contract_templates.purpose`
   ('esign'|'generate'|'both') + `file_subfolder`;
   `services/documentGenerateService.js`; internal fn
@@ -715,24 +631,6 @@ body. Governing migrations in `ref/migrations/`.*
 - **SYNC-1 delete grace (09-08):** `documents.pending_delete_at` — provider
   delete stamps instead of flipping status; re-add clears; sweeper finalizes
   after grace. Fixes the 09-07 vanish-and-refill incident.
-- **UDS density presets (09-23):** the `yc-theme-vars` localStorage store is
-  two-axis — `preset` (palette) and `density` (compact/comfortable), density
-  values written into BOTH mode sets. Axis membership is the ONE regex
-  `/^--(fs|ctl-h|pad|gap)/` in `themeCustom.html`; `applyPreset`/`applyDensity`
-  each rebuild only their own axis's keys. A token theme.css does NOT restate
-  under `[data-theme="dark"]` is mode-shared (`isShared`): writers put it in
-  both sets and `resetMode` sweeps it from both — it emptied one set only
-  until 2026-09-23, so the page reported a state the app was not in.
-  `scripts/checkThemePresets.js` lifts `PRESETS` only — density values must
-  stay out of it. In `style.css`,
-  `body` and `.logTable` carry `font-size: var(--fs)` (the table restatement
-  is load-bearing: `case.html`/`contact.html` are quirks-mode, no doctype,
-  and quirks tables don't inherit font-size — flip filed in `ref/plans.md`);
-  `.tab-row` caps at `max(850px, 53.125em)`. Depth: `ref/THEME-CHEATSHEET.md`;
-  mode + overrides roam with the account (ui_config user `prefs`, ui-custom
-  S5d; localStorage is its write-through cache, adopted at boot and written
-  through on change by `ycThemePrefs` in index.html; values validated by
-  `lib/uiConfigShape.js` `themeValueProblem`).
 
 ## 1. SYSTEM OVERVIEW
 
@@ -769,7 +667,8 @@ Shared: `scheduled_jobs` unified queue; `lib/internal_functions/` registry;
 calendar); `smsService`/`emailService` (routed via `phone_lines` /
 `email_credentials`); `settingsService`; `timezoneService`; `pabblyService`
 (retiring bridge). All job types drain through `/process-jobs` (Cloud
-Scheduler ~5 min) → per-type handlers in `job_executor.js` / engine modules.
+Scheduler, every minute; near-due jobs also get a Cloud Tasks push — §10) →
+per-type handlers in `job_executor.js` / engine modules.
 
 ## 2. DATABASE — CONCEPTUAL MODEL
 
@@ -804,6 +703,21 @@ share; address edits are UPDATE-in-place, phones/emails end-and-replace).
 Relationships: `contact_relations` + `contact_relation_types` catalog
 (directional flag + reverse_label). Roles: `contact_roles` +
 `contact_role_types` (open vocab, app-validated).
+
+**SSN:** `contacts.contact_ssn` is an ORDINARY column to staff and automation
+(ruling 2026-09-24 — the firm files Form 121): `getContact` (`SELECT *`) and
+`getCase`'s clients (`co.*`) return it, case.html shows it,
+`{{contacts.contact_ssn}}` resolves, reports may select it (the manifest note
+carries its format traps). Modifiers `ssn_mask` (`xxx-xx-6789`) and
+`ssn_last4` exist in BOTH resolver chains (`services/resolverService.js`,
+`lib/unplacehold.js`; esign's `ssnMasked` matches). Still refused, for
+reasons that are NOT secrecy from staff — do not "fix" these:
+`lib/portalCardEngine.js` (its own deny-by-default whitelist; values reach a
+CLIENT browser), `lib/domainEvents.js` envelopes (persist apart from the
+contact row, §26), the external-forms prefill ceiling
+(`services/extFormService.js`, a public unauthenticated endpoint) and Ask
+Casey's conversational reads (§33). `listContacts` omits it — payload size,
+not secrecy.
 
 **Cases:** `case_number`/`case_number_full` opaque free text (docket parsing
 client-only). `case_judge`/`case_trustee` free text AUTHORITATIVE with
@@ -845,7 +759,12 @@ yck_ key with `scopes` reaches only its `route:/` paths (403
 names it carries; NULL scopes = everything (access-control B2,
 lib/capabilities routeAllowed / can). Everything requires it except the public surface:
 `GET /isWorkday`, `GET /api/public/docs/:caseId` (10/min),
-`POST /api/public/get-upload-link`, `POST /hooks/:slug` (120/min per
+`POST /api/public/get-upload-link` (30/min),
+`POST /api/public/upload-complete` (10/min; trusts only the body's
+`case_id` — nothing ties it to an issued link; `files[]`/`comment` capped and
+HTML-escaped; answers first, then emails staff, writes a case log row, and
+registers documents from the SERVER-derived upload folder, never the reported
+names — routes/api.checklists.js), `POST /hooks/:slug` (120/min per
 slug+IP), `GET /r/:slug` (60/min), `GET /auth/oauth/callback`, external
 forms, portal routes. Login limiter still 100/15min (tighten to 10 —
 ref/plans.md).
@@ -950,6 +869,14 @@ route). Conventions:
   supplied"); PATCH rejects `kind`; `status` writable on notes only.
 - Date filters `from`/`to` = YYYY-MM-DD; `to` is inclusive via
   `< DATE_ADD(?, INTERVAL 1 DAY)`.
+- **`Idempotency-Key` header** (optional, user-scoped;
+  `lib/requestIdempotency.withIdempotency`, wired per create route with a
+  server-chosen scope): a repeat replays the stored result (`replayed: true`)
+  instead of writing twice; 409 `in_flight` = retry shortly, 409 `unknown` =
+  verify the record, then use a NEW key (a stale claim is never taken over).
+  Never read from the body; no key = zero extra queries. The claim is an
+  autocommitted INSERT BEFORE the route's own transaction — never inside
+  `withTransaction`.
 
 ## 5. INTERNAL FUNCTIONS
 
@@ -972,7 +899,12 @@ get_setting / get_settings / set_setting / update_db.
 
 Executions: `active → processing → delayed → completed |
 completed_with_errors | failed | cancelled`. Start:
-`POST /workflows/:id/start` → `{executionId}`.
+`POST /workflows/:id/start` → 202 `{executionId}`. Every automated start
+(hook / trigger / ingest targets, `start_workflow`) INSERTs and queues step 1
+as a `workflow_resume` job (`scheduleResume`, awaited) so the run happens
+request-bound at full CPU; this route, `POST /executions/:id/resume`
+(`mode:'resume'`) and the decision-answer resume (`routes/decisionActions.js`)
+still detach `advanceWorkflow` after the answer (ref/plans.md, Operational).
 Variables: `{{name}}` (init_data/set_vars), `{{this.output.field}}`,
 `{{this.[0]}}`, `{{env.now|executionId|stepNumber}}`.
 Steps: `{type, config:{function_name, params, set_vars}, error_policy}`;
@@ -1007,6 +939,11 @@ Timing types: immediate / delay / next_business_day / business_days /
 before_appt_fixed / before_appt (all calendar-aware, firm-TZ timeOfDay).
 Conditions: parameterized SELECT + `assert` map against the row.
 Cancellation is UPDATE (status trail), never DELETE.
+**Config resolution** is `JSON.stringify(action_config)` → `resolve(…,
+escape:'json')` → `JSON.parse` (both serialized-config sites): each
+substituted value is JSON-escaped, so a resolved quote cannot break the parse
+— which used to run the step with its config entirely unresolved (literal
+`{{…}}` in a client SMS). Other resolver callers pass no escape.
 
 ## 8. UNIVERSAL RESOLVER
 
@@ -1030,18 +967,42 @@ scheduling. Routes: `GET /isWorkday` (no auth), `POST /nextBusinessDay`,
 ## 10. SCHEDULED JOBS
 
 Unified `scheduled_jobs` queue, index (status, scheduled_time), drained by
-`/process-jobs`. Scheduling types: `one_time`, `recurring` (cron,
+`/process-jobs` (Cloud Scheduler, every minute; claims ≤ 10 per pass). A
+near-due (≤ 90 s) `workflow_resume` / `sequence_step` row also gets a Cloud
+Tasks doorbell → `POST /process-job/:id`, which claims that one row at once
+(lib/taskQueue; the tick is the fallback). The engine-internal types and
+`hook_retry` run awaited inside the claiming request (`deferredWork`), never
+detached. Scheduling types: `one_time`, `recurring` (cron,
 `max_executions`/`expires_at`); execution flavors in `data.type`: `webhook`,
 `internal_function`, `custom_code` (vm, or QuickJS/WASM guest when config has
 `code_mode:'safe'`; 60s default timeout — lib/job_executor; a standard step's
 vm runs in the scrubbed child unless `custom_code_child_process` is
 explicitly `'0'` — absent fails closed to the child). Engine-internal:
 `workflow_resume`, `sequence_step` (hidden from list unless
-`?internal=true`). App-managed: `task_due_reminder`, `task_daily_digest`,
-`hook_retry` (3 attempts, 120s backoff), `campaign_send`, `mail_sent_read_seed`
-(mailbox S3, §0). Effective retry
-backoff floor = the poll cadence (~5 min). Recurring `internal_function`
-jobs are the house pattern for daily services (oauth refresh, event digest).
+`?internal=true`). App-managed: `task_due_reminder`, `task_start_reminder`,
+`hook_retry` (ONE retry at +60 s — the row's `max_attempts`/`backoff_seconds`
+are never consulted, §16), `campaign_send`, `mail_sent_read_seed` /
+`mail_sent_case_link` (mailbox, §0). `task_daily_digest` is retired (the
+digest is `internal_function` `run_task_digest`). Cadence: Cloud Scheduler
+ticks `/process-jobs` every minute; the doorbell above also covers near-due
+one-time creates; the row stays the authority and the tick the backstop.
+Retries are not pushed, so the effective retry backoff floor = the tick
+(~1 min). Each tick drains `domain_event_queue` and queued `hook_executions`
+(`lib/hookDrain`, the fallback for missed doorbells) BEFORE claiming jobs.
+Recurring `internal_function` jobs are the house pattern for daily services
+(oauth refresh, event digest, the comms-archive sweeps).
+**custom_code invariants:** a STANDARD step (absent/`'standard'` mode) needs
+`automations.manage` at every writer — workflow step routes + `test-step`
+(`lib/codeStepGate.js`) and `POST`/`PATCH /scheduled-jobs`; only the literal
+`'safe'` passes ungated; an unknown mode throws at dispatch, no fallback. The
+result crosses from the child as `__cc`-tagged JSON (Date / `undefined` /
+non-finite numbers survive); a cycle, function or symbol final value is a step
+error — never a throw in the parent's IPC listener, which is uncaught and exits
+the instance. **Dispatch selector:**
+`executeJob` reads `data.type`, and every payload builder (workflow_engine,
+sequenceEngine, `POST /workflows/test-step`) spreads the step config FIRST and
+pins `type` LAST; step writers refuse a config `type` key — a step's config
+can never redirect a step to `custom_code` or `webhook`.
 
 ## 11. APPOINTMENT LIFECYCLE
 
@@ -1071,8 +1032,8 @@ Status values are Title Case with spaces ('No Show', 'Canceled' one L).
 
 ## 12. FRONTEND ARCHITECTURE
 
-**Shell:** `public/index.html` is the ONLY top-level shell (the other 55
-HTML files are panes it loads in iframes; some, like `case.html` /
+**Shell:** `public/index.html` is the ONLY top-level shell (the other
+top-level HTML files are panes it loads in iframes; some, like `case.html` /
 `contact.html`, nest their own). It owns JWT auth + `apiSend()` — apiSend
 MUST stay in the shell; iframes use `const P = window.parent; P.apiSend(...)`.
 `apiSend(endpoint, method='GET', payload=null, extraHeaders={})` → parsed
@@ -1089,10 +1050,10 @@ is declarative: `<select class="userslist" data-userlist-filter="does_appts">`
 same `.filter(u => u.user_type)`. MySQL booleans arrive as 1/0 — truthy
 checks fine, never `=== true`.
 
-**entityData (parent-as-data-source):** `case2.html`/`contact2.html` load
+**entityData (parent-as-data-source):** `case.html`/`contact.html` load
 the entity once into `window.entityData`; child form iframes read it (a
 form's `endpoints.load.path` doubles as the lookup key) instead of
-fetching. contact2 flattens phones/emails/addresses INTO
+fetching. contact.html flattens phones/emails/addresses INTO
 `entityData.contact` for the repeaters.
 
 **Save → refresh → push:** ONLY `yc-forms.js` sends the `form-saved`
@@ -1115,7 +1076,7 @@ masks on repeater inputs (server normalizes); primary-checkbox exclusivity
 + auto-promote logic is form-side; save-time "no primary" guard is the UI's
 job (server aggregate path never auto-promotes).
 
-**Key pages:** case2/contact2 (tabs of iframes: forms/*, sendingform,
+**Key pages:** case/contact (tabs of iframes: forms/*, sendingform,
 communicate), `automationManager.html` (Workflows/Sequences/Jobs/Hooks
 tabs), `campaign.html`, `checklistView(s).html` (§19), `eventform.html`,
 `connections.html` (§21). Swal popups render in the PARENT DOM — inline
@@ -1156,6 +1117,23 @@ pages without style.css too) for dialogs, `.sub-label` (style.css) in the
 pad it with an empty `.input-label` — hidden on phones). Warnings keep
 `--warn`/`--danger`; list-row secondary text (`.cp-sub`, quick-search rows) is
 not a hint.
+
+**Theme tokens (UDS):** `public/theme.css` tokens, overridden per user from
+`themeCustom.html`. The `yc-theme-vars` localStorage store is two-axis —
+`preset` (palette) and `density` (compact/comfortable); density values are
+written into BOTH mode sets. Axis membership is ONE regex,
+`/^--(fs|ctl-h|pad|gap)/` (`DENSITY_KEY`); `applyPreset` / `applyDensity`
+each rebuild only their own axis's keys. A token theme.css does not restate
+under `[data-theme="dark"]` is mode-shared (`isShared`): writers put it in
+both sets and `resetMode` sweeps it from both. `scripts/checkThemePresets.js`
+lifts `PRESETS` only — density values stay out of it. In style.css, `body`
+AND `.logTable` carry `font-size: var(--fs)` (the table restatement is
+load-bearing: case/contact are quirks-mode, no doctype — the doctype slice is
+in `ref/plans.md`); `.tab-row` caps at `max(850px, 53.125em)`. Mode +
+overrides roam with the account (ui_config user `prefs`, §31): localStorage
+is the write-through cache, adopted at boot and written through on change by
+`ycThemePrefs` (index.html); values validated by `lib/uiConfigShape.js`
+`themeValueProblem`. Depth: `ref/THEME-CHEATSHEET.md`.
 
 **Self-sizing textareas:** `autoGrow(el, { max })` (scripts.js) — fits on
 input AND re-fits when the box is shown or re-wraps (ResizeObserver on its
@@ -1222,7 +1200,10 @@ a stage pane to the active page when it has a tile for the panel, else the
 first drill page that has. Leaves: case.html, contact.html, comms.html, and two drill-panel
 panes, automationManager.html + caseConfigManager.html (a gated sub-tab —
 Config's Firm or System — is taken at boot but opened only after its reveal, and only
-if the default is still showing). A new pane: load ycSubTab.js; report from its one
+if the default is still showing). Ask Casey's semantic navigation (§33) reuses
+the same hand-down — `ycSubTab.host.hold(frame, rest)` then `ycLauncher.exec`,
+or the loaded pane's `ycAssistantOpenDestination(rest)` — never the URL;
+`reports.html` is a take-only leaf for it (`report~<id>`, never reports). A new pane: load ycSubTab.js; report from its one
 switch; take once AFTER the content deciding which choices are visible;
 restore by clicking / calling its own switch; never throw on a token. Server:
 `lib/shellLinks.js` builds staff deep links by exact id; legacy `?case=` /
@@ -1249,7 +1230,7 @@ in ref/database.sql. The rest:
    and always BEFORE code that writes new values (relaxed sql_mode coerces
    unknown enum writes to '' silently).
 5. `query_db` limit silently clamps at 1000.
-6. Campaign retry backoff floor = poll cadence (~5 min).
+6. Campaign retry backoff floor = poll cadence (~1 min, the `/process-jobs` tick).
 7. `email_default_from` is the app_settings key (not email_from_default).
 8. Deferred `require()` inside function bodies for circular imports
    (sequenceEngine ↔ internal_functions).
@@ -1272,8 +1253,11 @@ targets. **Ack first, work after (10-27):** the receiver writes the
 `hook_executions` row (status `received`, `claimed_at` NULL — QUEUED), awaits
 a Cloud Tasks doorbell (`taskQueue.enqueueHookExecutionDispatch`, task
 `he-{id}` → `POST /process-hook-execution/:id`) and answers
-`{status:'received', slug}` in ~50–150 ms; 503 only when the maintenance
-spool cannot store an event. `lib/hookDrain.js` runs filter → transform →
+`{status:'received', slug}` in ~50–150 ms (the doorbell RPC is capped at
+1.5 s, `taskQueue.HOOK_DOORBELL_DEADLINE_MS` — a slow Cloud Tasks costs
+latency the cron repays, never an answer past RC's 3 s; every other doorbell
+keeps the 15 s default); 503 only when the maintenance spool cannot store an
+event. `lib/hookDrain.js` runs filter → transform →
 every target request-bound from that route, or from the 60 s `/process-jobs`
 cron (`sweepStale` + `drainBatch`, after a 20 s doorbell grace) when the
 doorbell never landed. The row is the scheduling authority, the task a
@@ -1318,6 +1302,7 @@ body's answer — the house non-match rule). A filter that could not RUN
 (`GUEST_CODE_BUSY`) made no decision: `runFilter` returns `failed`+`busy`,
 the execution is `failed` with `filter_passed=NULL` and the tagged error,
 nothing dispatched (Fred, 10-27 — overrides the non-match rule for BUSY only).
+Engine limits and lanes: §26 "The shared engine".
 
 **A failed transform delivers nothing** (10-27 — the §26 hard semantics, which
 hooks used to break by delivering `{}`): `runTransform` returns `failed: true`
@@ -1369,10 +1354,43 @@ warnings are not counted as causes), anything else `error`. Live
 bodies use `console.warn` — it still reaches the log as a warning. Authoring
 stays `automations.manage` (B5).
 
+**Maintenance freeze — the hook spool:** `MAINTENANCE_MODE=1` on a revision is
+a write freeze. The `lib/maintenance.js` gate (mounted in `server.js` after
+cors + the build stamp, BEFORE body parsers / static / the 5xx observer —
+order is tested) 503s everything except `POST /hooks/:slug`, which captures
+the authenticated event to the PAUSED Cloud Tasks queue `yc-hook-spool`
+(`lib/hookSpool.js`) instead of executing; replay is `POST
+/internal/hook-replay` (`routes/internal/hookReplay.js`, internal key only,
+idempotent on `raw_input.meta.spool_id`). Invariants: `hookSpool.put()`
+REJECTS on failure — the opposite of `lib/taskQueue.js`, which swallows —
+because during a freeze the task is the event's only copy: the receiver turns
+a rejection into a 503 so the sender retries, and `put` ignores the
+`cloud_tasks_enabled` kill switch. The spool queue has unlimited attempts
+(`max-attempts -1`) on purpose: Cloud Tasks deletes a task whose attempts run
+out on any status, and here a task may leave only on a 2xx from the replay
+route — so that route's 2xx means "finished with"; never answer 2xx for
+something that should be retried. A new MACHINE-facing entry point that
+acks-then-works (2xx regardless of its own failure) needs its own capture
+path or it loses events during a freeze; today the hook receiver is the only
+one — everything else retries (Gmail Apps Script, schedulers, Cloud Tasks) or
+reads the response, so a 503 is safe. Landing-page form posts
+(`routes/pageLanding.js`, "always 303") are that shape with a PERSON on the
+other end: pages are not served during a freeze and a stale tab's POST gets
+the maintenance page. The gate does not stop non-Express writers; the
+maintenance revision runs on the read-only DB user as the hard lock.
+Procedure: `ref/INFRA_GCP.md` §9; hook side:
+`manual/03-YisraFlow/09-yisrahook.md`.
+
 Tables: `hooks`, `hook_targets`, `hook_executions` (raw_input capped 512KB;
 `claimed_at` / `completed_at` DATETIME(3) + `attempts` + `dedup_key` since 10-27 —
 `completed_at - created_at` is the end-to-end pipeline time), `hook_delivery_logs`,
-shared `credentials`. Files: `services/hookService.js` (+ hookTransforms/
+shared `credentials`. `hooks.auth_config` secrets (`api_key` → `key`, `hmac` →
+`secret`) are ENCv1-encrypted at rest (`lib/secretAtRest.js`, access B4; every
+write path encrypts, reads are dual — plaintext passes through), decrypted only
+in `hookService.authenticateRequest` and, for the editor, the list/get routes
+for `automations.manage` holders; `duplicateHook` copies ciphertext. Non-holders
+read `GET /api/hooks` without `auth_config` / `filter_config` /
+`transform_config` / `captured_sample`. Files: `services/hookService.js` (+ hookTransforms/
 hookMapper/hookFilter), `routes/api.hooks.js`, `lib/hookDrain.js`,
 `routes/process_jobs.js` (`/process-hook-execution/:id` + the cron fallback). UI:
 automationManager Hooks tab. `server.js` mounts rawBody on `/hooks` for
@@ -1479,7 +1497,8 @@ entityCommsService.js`). Invariants:
   (readable line) — grant-gated through `mailboxService.listReadable`.
   Logged-only (`legacy: true`) = `log` rows of type email/sms/call/court email
   with no source; they carry the Log tab's exposure, NO channel grant check
-  (Fred's ruling on gating them is pending — ref/plans.md).
+  (ruled 2026-10-22: accepted for now, revisit in a roles/access arc —
+  ref/plans.md).
 - **Fallback suppression** is grant-blind: a log row with a source anywhere
   (`mail_messages.log_id`, `phone_event_log.log_id`, or a stored copy whose
   message_id/provider_id equals `log_extra.message_id`) never renders as
@@ -1501,6 +1520,12 @@ entityCommsService.js`). Invariants:
 - Search (`q`) runs server-side over normalized fields (`searchFields`) plus a
   digits-only phone match — never the item JSON. Filtering and paging happen
   in JS after loading every readable row (plans.md performance entry).
+- **Archive content** (recordings, voicemails, transcripts, summaries) is
+  added AFTER grant scoping and the page cut: each page's phone items are
+  decorated per party by `commsArchiveView.decorate` — the same grants and
+  rules as Comms → Phone — so search never reaches a summary or transcript.
+  Every served summary is audited by the route (`admin_audit_log`, tool
+  `comms_archive`, action `view_summary`, ids only).
 - `from_date`/`to_date` (inclusive YYYY-MM-DD) match the FIRM-local day of
   each item's `at` — not the UTC day; `sort=asc` reverses the sort exactly.
   Logged-only items carry `entered_at` (= `log_extra.logged_at`, set only on a
@@ -1575,11 +1600,12 @@ SU-managed, max TTL 3 days, shown once. Every call logs to `readonly_query_log` 
 
 **Scopes (access-control B1):** a key reaches only the surfaces in its
 `readonly_api_keys.scopes` — `sql.ro`, `sql.ro.sensitive`, `scratch`,
-`alert`, `keys.mint`, `temp.clio`, `temp.dropbox`, `temp.ringcentral`,
-`temp.zohosign` (vocabulary `lib/capabilities.js` KEY_SCOPES; each route mounts
+`alert`, `keys.mint`, `tasks.own`, `temp.clio`, `temp.dropbox`,
+`temp.ringcentral`, `temp.zohosign` (vocabulary `lib/capabilities.js` KEY_SCOPES; each route mounts
 `requireKeyScope`). NULL (every key minted before B1) = all of them EXCEPT an
-`explicit` scope — today `sql.ro.sensitive` and `keys.mint`, which a legacy
-key never holds. A `keys.mint` (manager) key mints its own child keys — §30.
+`explicit` scope — today `sql.ro.sensitive`, `keys.mint` and `tasks.own`,
+which a legacy key never holds. A `keys.mint` (manager) key mints its own
+child keys, a `tasks.own` key manages its own tasks — both §30.
 New mints default to `sql.ro`+`scratch`+`alert` — a `temp.*` proxy must be
 named at mint. A miss is a 403 whose body names `missingScope`.
 
@@ -1587,8 +1613,10 @@ named at mint. A miss is a 403 whose body names `missingScope`.
 `SECRET_TABLES` (`app_settings`, `email_ingest_sources`) — refused to every
 key (400). `SENSITIVE_TABLES` (`jwt_api_audit_log`, `ai_calls`,
 `comms_transcripts`, `comms_no_transcribe`, `comms_summary_guides`,
-`admin_audit_log`, `readonly_query_log`) — a 403 naming `sql.ro.sensitive` unless the key holds
-it. The `ai_spend` VIEW (ai_calls minus `error` / `request_excerpt` /
+`admin_audit_log`, `readonly_query_log`, and Ask Casey's `assistant_chats` /
+`assistant_chat_messages`) — a 403 naming `sql.ro.sensitive` unless the key
+holds it. The report-SQL validator (reports preview, Casey's `sql.read`)
+refuses both tiers outright (its deny word-scan, lib/reportSchema/validator). The `ai_spend` VIEW (ai_calls minus `error` / `request_excerpt` /
 `response`; not in `ref/database.sql` — schemaDump dumps base tables only, its
 definition is `ref/migrations/2026-10-14_access_sec3_sensitive_tier.sql`) is
 the ordinary key's spend monitor. A `sql.ro.sensitive` mint needs `sql.ro`
@@ -1702,7 +1730,9 @@ auto-drop when poster/GIF absent. Depth: manual 11-YisraVideo.
 
 ## 25. SCHEMA REF AUTO-GENERATION
 
-`ref/database.sql` regenerates itself: the pre-commit hook runs
+`ref/database.sql` regenerates itself: the pre-commit hook
+(`.githooks/pre-commit`; step 0 is the secret scan, `scripts/secret-scan.js`,
+the only step that can refuse a commit) runs
 `scripts/dump-schema.js` SYNCHRONOUSLY by default (the
 schema change lands in the SAME commit — the old detached default missed
 `court_item_*` by 14 seconds). `SCHEMA_DUMP_ASYNC=1` backgrounds it for one
@@ -1711,8 +1741,9 @@ sync — a no-op unless the hook default is flipped back). A structural
 fingerprint (7 information_schema queries + a `database()` probe, volatile
 fields excluded) gates the full dump — no diff churn. Commands:
 `npm run db:ref` (`--force`, `--check`, `--timing`). DB failure warns and
-exits 0. The hook does NOT touch `ref/routes.md` — regenerate that by hand
-(`node scripts/updateRoutes.js`). A laptop reaches the DB through the Cloud
+exits 0. The same hook regenerates `ref/routes.md` (`scripts/updateRoutes.js`,
+no DB, concurrently with the schema step; `SKIP_ROUTES_DUMP=1` skips it) and
+`TRACKED_FILES.txt`. A laptop reaches the DB through the Cloud
 SQL Auth Proxy, which `dump-schema.js` (and `npm run dev`) start on demand
 via `scripts/ensure-sql-proxy.js` — opt-in by `DEV_SQL_PROXY_INSTANCE` in
 `.env`, inert on Cloud Run and CI; proxy down = the hook warns, skips the
@@ -1791,12 +1822,14 @@ fresh ALS scope (depth resets) — acceptable, executor cadence throttles them.
 A `code` match or transform runs in the QuickJS guest in the sandbox child
 (`triggerService._runCode` → `lib/guestCode.js`; it was `node:vm` in this
 process until 2026-10-26, where the envelope as a host object let the
-constructor walk-back reach `process.env`). Async: `_evaluateMatch` /
+constructor walk-back reach `process.env`). Lane `events` for live rules,
+`preview` for `test` / `test-draft`. Async: `_evaluateMatch` /
 `_runTransform` / `evaluateDraft` are awaited everywhere. 15 s wall
 (`TRIGGER_CODE_TIMEOUT_MS`), timeout error keeps the throttled-instance hint.
 No `Intl`. Every route that ACCEPTS a code body still requires
 `automations.manage`
-(`lib/triggerCodeGate.js`): rule POST/PUT that touch a code-mode side, and
+(`lib/triggerCodeGate.js`, 403 `missingCapability`; non-code modes stay open
+to all staff): rule POST/PUT that touch a code-mode side, and
 `test-draft` with any side not literally a non-code mode. Same invariants as
 §27 "Code mode": fail closed on mode (anything but `conditions` /
 `passthrough` / `mapper` counts as code) and on code-shaped config; a PUT is
@@ -1806,18 +1839,43 @@ edit to a code-mode rule. `test` and `replay` take no code body (stored rules
 only) and stay open. The gate is unchanged by the engine move; relaxing it is
 Fred's decision after a soak (`ref/plans.md`).
 
+**The shared engine (`lib/guestCode.js`)** runs every code body except
+`custom_code` (§10) — §16 hook filters / transforms, §26 triggers, §27–§28
+ingest rules and suppressions — as QuickJS in the scrubbed sandbox child
+(`lib/customCodeRunner.js`), never in-process: no `vm` / `new Function`
+execution remains at these sites, and previews / test endpoints use the same
+engine. Invariants: every site function is async and every caller awaits — an
+un-awaited promise is truthy, so match results compare `=== true`
+(`tests/codeBodySites.guest.test.js` pins the awaits); no fallback — an
+engine failure is the site's own failure. Limits: 15 s wall, 64 MB guest heap
+(`lib/safeCodeRunner.js`), ≤ 4 children at once (`GUEST_CODE_MAX_CHILDREN`,
+~85 MB each), one fork per call (~40 ms). The children are split into LANES
+and every call names one: `events` (triggers, ingest rules, suppressions — 2
+reserved), `hooks` (live / replayed hook code — 1 reserved), `preview`
+(editor tests, dry runs, rule previews, `batchRunner`, Casey's rule reads —
+none reserved, at most 1; the DEFAULT, so a site that forgets its lane never
+takes a production slot). A waiter past its lane's queue-wait budget
+(`GUEST_CODE_QUEUE_WAIT_MS_<LANE>`: 10 s / 10 s / 5 s) or its queue cap
+(`GUEST_CODE_MAX_QUEUE_<LANE>`: 100 / 100 / 10) fails closed as
+`GUEST_CODE_BUSY` (each site maps it), logged and alerted
+`guest_code_saturated:<lane>` — warning, error on a repeat within 30 min
+(preview never escalates), folded to one per lane per minute; the alert db is
+injected by `startup/init.js`. A new code site names its lane in the same
+slice and adds its row to `tests/guestCodeLanes.test.js`.
+
 ### Replay
 `POST /api/triggers/replay` is execution_id-ONLY (review item S10): it
 re-dispatches a RECORDED envelope — real actions, new execution row. Raw
 envelopes are not accepted.
 
-### Event vocabulary (live in code, 2026-09-14)
+### Event vocabulary (`triggerService.EVENT_TYPES` is authoritative)
 `appt.created/attended/no_show/cancelled/rescheduled/reschedule_later`,
 `calendar.scheduled/rescheduled/cancelled/resolved/approaching`,
-`case.updated/stage_advanced/stage_aged/contact_linked/contact_unlinked/
-court_processed/trustee_validated`, `contact.created/updated`,
-`document.created/updated/linked`, `esign.sent/status_changed`,
-`form.submitted`. Nightly synthetic emitters follow one house pattern
+`case.created/updated/stage_advanced/stage_aged/contact_linked/
+contact_unlinked/court_processed/trustee_validated`,
+`checkitem.completed`, `checklist.completed/items_upserted`,
+`contact.created/updated`, `document.created/updated/linked`,
+`esign.sent/status_changed`, `form.submitted`. Nightly synthetic emitters follow one house pattern
 (`emit_stage_aged`, `emit_calendar_approaching`; catalog in the manual).
 
 ## ═══════════════════════════════════════════════════════════════
@@ -1916,13 +1974,15 @@ the sandbox child (`*IngestRuleService._evaluateMatch` / `_runTransform`,
 2026-10-26 they were `new Function('input', code)` in this process with
 `process.env` reachable and no time limit). All async and awaited by
 `evaluateRules` / `evaluateSuppressions`; 15 s wall (`GUEST_CODE_TIMEOUT_MS`);
+live bodies run in lane `events`, every preview / test endpoint in `preview`;
 failure semantics unchanged (match/suppression → non-match + console warning,
 transform → matched + synthetic failed `transform` outcome, no actions). No
 `Intl`: email rule 24 (docs@ digest) computes Detroit time from UTC. The
 previews run the same engine — `test-match` batches its corpus into one child
 (`guestCode.batchRunner`), and Casey's preview captures warnings through a
 per-call `warn` sink, not a console patch. Every route that ACCEPTS a code
-body still requires `automations.manage` (`lib/ingestCodeGate.js`, both channels): rule
+body still requires `automations.manage` (`lib/ingestCodeGate.js`, both channels;
+403 `missingCapability`; non-code modes stay open to all staff): rule
 and suppression POST/PUT that touch a code-mode side, and `test-match` /
 `test-transform` with a code body. Invariants: detection fails closed — any
 mode other than `conditions` (match) or `passthrough`/`mapper` (transform)
@@ -1934,7 +1994,8 @@ suppression. `duplicate` ignores its body and stays open. Casey's
 `automation.preview_ingest_rule` previews stored rules only; Casey's
 code-carrying rule cards go through this gate like any other caller. The gate is
 unchanged by the engine move; relaxing it is Fred's decision after a soak
-(`ref/plans.md`). §28 shares all of this.
+(`ref/plans.md`). Engine limits and lanes: §26 "The shared engine". §28
+shares all of this.
 
 ### Edit stamp, change log, stale-edit precondition
 A rule is live on save with no draft or version, so its edits are made
@@ -2048,10 +2109,14 @@ only via `phoneService.getAdapter()` — ingests whatever the webhooks dropped
   All RC vocabulary (messageStatus, SMS-* codes) lives in the adapter only.
 - **Failed-send dispatch (S3c)**: a verdict TRANSITIONING to `failed` on a
   LIVE run starts the workflow named by
-  `app_settings.phone_delivery_failed_workflow_id` (blank = off; wf 54 live:
-  plain-words email to SS + technical email to IT) via
+  `app_settings.phone_delivery_failed_workflow_id` (blank = off; wf 54 v2 live:
+  plain-words email to SS + technical email to IT + a text to the sending
+  line) via
   `actionDispatchers.dispatchWorkflow` — once per transition, never on
-  re-checks, refinements, or backfills.
+  re-checks, refinements, or backfills, and never when the RECIPIENT is one
+  of the firm's own lines (any `phone_lines` row, active or not; counted as
+  `dispatch_skipped_firm`): a notice that texts a staff line and fails
+  would dispatch another — a loop.
 - Display: `threadItem.delivery` (Comms → Phone bubbles) and
   `entityComms` `phone.delivery` (case/contact feeds) — raw provider code is
   tooltip-only; only the adapter may interpret it.
@@ -2188,7 +2253,12 @@ vocabulary writes — field-defs, calendar-types-admin, pipeline-admin,
 contact-role-types — and app-settings writes of firm / portal / config keys),
 system.settings (app-settings writes AND reads of system / comms / cta keys —
 it + su; admin does not hold it), automations.manage (/api/hooks management +
-pages create-hook). app-settings decides the capability PER KEY from its
+pages create-hook, and every writer of a STANDARD-mode code body: workflow
+step routes + test-step and Casey's step preview via lib/codeStepGate, the
+scheduled-jobs POST/PATCH, email/phone ingest rule + suppression writes and
+tests via lib/ingestCodeGate, trigger rule POST/PUT + test-draft via
+lib/triggerCodeGate — safe mode is open to all staff; CLAUDE.md lists the
+sites), users.impersonate (View-as start, §3). app-settings decides the capability PER KEY from its
 registry home (§32). Roles UI: users pane
 (su grants/revokes need an SU caller; nobody removes their own su).
 
@@ -2196,7 +2266,7 @@ registry home (§32). Roles UI: users pane
 scope firm(''), role, user; UNIQUE over the triple), resolver
 services/entitlementService.deniedFor → `denied[]` in /api/firm-data
 (fail-soft []). item_key = public/js/featureRegistry.js keys or `firm:<slug>` ids;
-`moreSettings` + `helpSupport` undeniable (write-reject AND resolve-strip).
+`moreSettings` + `helpSupport` + `all` undeniable (write-reject AND resolve-strip).
 Visibility-only; CRUD behind firm.settings. Editor: the Firm tab's "Who sees what" section (public/caseconfig/firm.html, ui-custom S3.4) — per-USER denies only; ROLE scoping is the firm registry_overrides `visible_to` allow-list (lib/uiConfigShape.js; su implicit), never role denies.
 A deny (`data-yc-denied`) only HIDES launcher elements — the delegated
 `[data-target]` handler never checks it — so programmatic opens (URL restore,
@@ -2204,8 +2274,8 @@ A deny (`data-yc-denied`) only HIDES launcher elements — the delegated
 denied / admin-gated / firm-hidden ids (wsurl S2, F2 of its review).
 
 **Key scopes.** Both key tables carry `scopes` JSON; NULL = legacy full
-surface MINUS `explicit` scopes (sql.ro.sensitive — a legacy key never
-gains it). Vocabulary + keyAllows/routeAllowed in lib/capabilities.js.
+surface MINUS `explicit` scopes (sql.ro.sensitive, keys.mint, tasks.own — a
+legacy key never gains them). Vocabulary + keyAllows/routeAllowed in lib/capabilities.js.
 Session (ycro_) keys: surface scopes (sql.ro, scratch, alert, temp.*);
 mints default sql.ro+scratch+alert; new bodies are 22-char base62 (old
 64-hex keys valid forever; identity = sha256 of the first two _-segments).
@@ -2387,8 +2457,10 @@ DB-per-tenant plan (ref/plans.md) firm scope simply becomes the tenant's.
   2026-10-16): undeniable, and the resolver puts it back whatever a layout
   says; the sidebar's All is an ordinary, removable item.
 - The Admin page follows the firm's `visible_to` on `admin` (live: it, admin;
-  su always); each Admin tile follows its own `gate` (today every tool but
-  Etch is `su`), so a non-su sees the page with only what they can open.
+  su always); each Admin tile follows its own `gate` (today `su` on every
+  tool but Etch, which is open, and Users, which is `users.impersonate` — it
+  opens for an `it` holder's View-as; user management inside stays SU-only),
+  so a non-su sees the page with only what they can open.
 - DB-authored items carry no code: kinds url | tool | view | page (S6c-5,
   both tiers: the action is just its type — its tiles live in the tier's
   `layout.pages`), plus drawer for a user's own buttons (a list of ids;

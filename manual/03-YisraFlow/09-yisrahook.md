@@ -24,6 +24,8 @@ You wouldn't reach for one when:
 
 **In `automationManager.html` → Hooks tab**, you'll see the list of hooks on the left. Click one to see auth/filter/transform/targets. Each hook has a Logs tab showing recent executions — every received event, what filter said, the transform output, and per-target delivery results.
 
+**Who can manage hooks:** creating, editing, deleting, testing and reading a hook's logs needs the **automations.manage** capability (admin / IT / SU). Every staff user can still read the hook list (other pages' pickers use it), minus the authentication, filter and transform configs and the captured sample, and the Automation Activity feed. A hook's API key or HMAC secret is stored encrypted and shown decrypted only to holders.
+
 When something doesn't fire when you expected:
 1. Open the hook's **Logs** tab. Did the event arrive? What status?
 2. `received` → queued for the drain or still running; normal for a second or two. Stuck longer than a minute → the `/process-jobs` sweep is not running (Scheduled Jobs heartbeat). A `received` row whose `error` says "re-queued for the next drain" found the code sandbox busy and will run again.
@@ -255,7 +257,7 @@ Start a workflow execution.
 
 The transform output becomes `init_data`. `workflow_executions.contact_id` is resolved from the workflow template's `default_contact_id_from` setting against the transform output. No explicit override on this path — if you need that flexibility, use the workflow's `default_contact_id_from` to point at a known field (e.g. `"contact_id"` or `"contactId"`).
 
-Synchronous INSERT, fire-and-forget `advanceWorkflow()`. Hook delivery is logged as success once the INSERT succeeds; a background failure in `advanceWorkflow` does NOT trigger a hook retry — the execution row gets marked `'failed'` instead.
+Synchronous INSERT, then step 1 is queued as a `workflow_resume` job (due now, with a Cloud Tasks push) — the run itself happens a moment later in its own request. The delivery log reads `queued` once the INSERT and the queueing succeed; a later failure inside the run does NOT trigger a hook retry — the execution row gets marked `'failed'` instead.
 
 #### `target_type: 'sequence'`
 
@@ -365,7 +367,7 @@ data:            { execution_id, target_id }
 | Target | Retry behavior |
 |---|---|
 | `http` | Each retry fires a fresh HTTP request — receiver must tolerate duplicates |
-| `workflow` | INSERT-then-advance pattern. Retry re-INSERTs (creates a new execution). Async advance failures do NOT trigger retries. Receivers may see duplicate workflow executions on retry. |
+| `workflow` | INSERT-then-queue pattern. Retry re-INSERTs (creates a new execution). Failures inside the queued run do NOT trigger retries. Receivers may see duplicate workflow executions on retry. |
 | `sequence` | `enrollContact` is guarded against duplicate active enrollments. A retry after a previously-successful enrollment throws "already enrolled" and is captured as a failure (the one retry, above). |
 | `internal_function` | Not inherently idempotent. Side-effect functions will be invoked again. Design accordingly. |
 

@@ -61,7 +61,7 @@ YisraFlow's subsystems (see chapter 1) mostly share the `scheduled_jobs` queue a
   │ one_time / recurring → executeJob()     │
   │   - webhook                              │
   │   - internal_function                    │
-  │   - custom_code (vm sandbox, 5s timeout) │
+  │   - custom_code (sandboxed, 60s default) │
   └─────────────────────────────────────────┘
 ```
 
@@ -141,7 +141,7 @@ pabblyService.send(db, service, data)
 // Scheduled job (one_time / recurring) execution flavors
 { "type": "webhook", "url": "...", "method": "POST", "headers": {...}, "body": {...} }
 { "type": "internal_function", "function_name": "...", "params": {...} }
-{ "type": "custom_code", "code": "...", "input": {...} }  // vm sandbox, 5s timeout
+{ "type": "custom_code", "code": "...", "input": {...}, "code_mode": "safe" }  // sandboxed child, 60s default timeout
 ```
 
 `custom_code` is the nuclear option — no logging, no retry safety, no access to `db`. Use it only for one-off data shaping where you really can't add a function under `lib/internal_functions/`.

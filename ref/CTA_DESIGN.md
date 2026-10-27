@@ -316,8 +316,14 @@ Keyed on explicit `Accept: application/json` (not `*/*`).
   next click; re-enabling an already-expired link without extending in the
   same PATCH → 400.
 - `POST /api/cta/:id/send` (send slice, 2026-10-08) — `{channel:
-  'email'|'sms', to, from?, subject?, email_template?, sms_text?, dry_run?}`;
-  unknown keys 400. **Active only**: `deriveState` ≠ `active` → 409
+  'email'|'sms', to, from?, subject?, email_template?, sms_text?, dry_run?,
+  acknowledge_optout?}`; unknown keys 400. **Opt-out warns** (ruling
+  2026-10-27, the staff-send rule — `optoutService.optoutGate`): a real send
+  whose `to` has an opted-out ACTIVE contact row → 409 `opted_out`, nothing
+  sent or logged, refusal audited, until the body carries
+  `acknowledge_optout: true` (a boolean, else 400; the overridden contact ids
+  land in the send audit); `dry_run` is never gated; the pane's Send rides
+  `public/js/optoutAck.js`. **Active only**: `deriveState` ≠ `active` → 409
   `not_active` (used/disabled/cancelled/expired/exhausted — a dead link is
   not sent).
   Composed by `ctaLinks.composeSend` from the row: email = default CTA email

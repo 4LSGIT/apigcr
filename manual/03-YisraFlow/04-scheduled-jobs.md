@@ -20,7 +20,7 @@ You wouldn't reach for one when:
 The list hides system-internal jobs (`workflow_resume`, `sequence_step`) by default — those are scheduled by other engines. Tick the **Internal** checkbox to see them.
 
 When a job doesn't fire when you expected:
-1. Status `pending` and `scheduled_time` is in the past — the heartbeat will pick it up next tick (within ~5 minutes; soon to be 1 minute).
+1. Status `pending` and `scheduled_time` is in the past — the heartbeat will pick it up next tick (within about a minute).
 2. Status `pending` and `scheduled_time` is in the future — wait until then.
 3. Status `failed` — open the job and see the latest result for the error.
 4. For `recurring` jobs, also check `max_executions` and `expires_at` — once either limit is hit, the job is marked `completed` and won't run again.
@@ -51,7 +51,7 @@ For `one_time` and `recurring` jobs, the *actual execution flavor* is stored in 
 | `campaign_send` | Sends one campaign message to one contact (system-created via Campaign Manager) |
 | `task_due_reminder` | Sends a single task due-date reminder (system-created via taskService) |
 | `task_start_reminder` | Fires at 8am on a deferred task's **start** date — the moment it becomes live, and the assignee's first notice since the assignment email (system-created via taskService). Same skip rules as `task_due_reminder`. See [Tasks](../01-YisraCase-overview/05-tasks.md) |
-| `task_daily_digest` | Runs the morning task digest for one user (system-created) |
+| `mail_sent_read_seed` / `mail_sent_case_link` | After a Comms send: mark the stored copy read for the sender / link it to the case picked in the composer — retried until the copy is stored (system-created by the mail composer) |
 
 When you create a job via `POST /scheduled-jobs`, you pass the **scheduling type** as `type` and the **execution flavor** as `job_type` — the route translates `job_type` into `data.type` for you. (Confusingly, the API parameter name is `job_type` even though it ends up in `data.type` in the row.)
 
@@ -205,13 +205,13 @@ The list endpoint hides `workflow_resume` and `sequence_step` by default. Pass `
 
 ### The job processor heartbeat
 
-`POST /process-jobs` (accepts any method) is the heartbeat. Currently invoked every ~5 minutes by Cloud Scheduler. Each call:
+`POST /process-jobs` (accepts any method) is the heartbeat, invoked every minute by Cloud Scheduler. A `workflow_resume` or `sequence_step` job due within 90 seconds also gets a Cloud Tasks push to `POST /process-job/:id`, which claims and runs that one row at once — the heartbeat is the fallback when the push never lands. Each heartbeat call:
 
 1. Runs `recoverStuckJobs()` — resets `running` jobs >15 min old back to `pending`, resets `processing` workflow executions >15 min old back to `active`.
 2. Atomically claims up to 10 pending jobs (`FOR UPDATE SKIP LOCKED`).
 3. Marks each `running`.
 4. For each job:
-   - Special-case dispatch for `workflow_resume` / `sequence_step` / `hook_retry` (detached background executor — job stays `running` until the executor finishes).
+   - Special-case dispatch for `workflow_resume` / `sequence_step` / `hook_retry` — the executors run concurrently and the request waits for them before answering; the job stays `running` until its executor finishes.
    - All other types go through `executeJob()` synchronously.
 5. Records results to `job_results`, reschedules recurring jobs, handles retries.
 
@@ -233,7 +233,7 @@ Result statuses:
 - `retry_scheduled` — job failed, will retry; includes `attempt` and `error`
 - `failed` — one-time job out of attempts, marked `failed`
 - `advanced_after_failure` — recurring job out of attempts on this cycle, but still rescheduled to next occurrence
-- `dispatched` — special-case (`workflow_resume`/`sequence_step`/`hook_retry`); the executor is running in the background and will mark the job `completed` or `failed` when done
+- `dispatched` — special-case (`workflow_resume`/`sequence_step`/`hook_retry`); the executor marks the job `completed` or `failed` (it has finished by the time the response is sent)
 
 ### Internal job types — system use only
 
@@ -245,7 +245,8 @@ These are scheduled by other engines and you generally don't create them by hand
 | `sequence_step` | `sequenceEngine.js` (via `scheduleStepJob`) | Fire the next step of a sequence enrollment |
 | `hook_retry` | `hookService.js` (after a failed delivery) | Retry one failed hook target |
 | `data.type='task_due_reminder'` | `taskService.scheduleDueReminder()` | Send email/SMS to assignee on task due date |
-| `data.type='task_daily_digest'` | Seeded as recurring | Refresh task statuses + send digest emails per user schedule |
+| `data.type='task_start_reminder'` | `taskService` (deferred tasks) | Notify the assignee on a deferred task's start date |
+| `data.type='mail_sent_read_seed'` / `'mail_sent_case_link'` | `mailboxSendService` (Comms composer sends) | Mark the sent copy read / link it to a case once it is stored |
 | `data.type='campaign_send'` | `campaignService.createCampaign()` | Send one campaign message to one contact |
 
 These appear in `scheduled_jobs` and are processed by `/process-jobs` alongside everything else. The Scheduled Jobs UI hides `workflow_resume` and `sequence_step` by default.
