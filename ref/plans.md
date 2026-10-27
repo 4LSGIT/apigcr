@@ -1543,6 +1543,8 @@ Active surfaces with known next steps.
 ---
 ---
 
+- **zod advisory via puppeteer-core (Dependabot #29, 2026-10-27).** `puppeteer-core` is pinned at 25.3.0 → `chromium-bidi` → zod 3.25.76; the fix is zod 4.6.6, with no 3.x backport. Only reachable by messages from our own headless Chromium (`pdfRenderService`), not user input — so it's deferred, not dismissed. Fix = bump puppeteer-core (25.16.0 pulls a zod-4 chromium-bidi) and re-verify PDF rendering.
+
 ## Carried from AI_CONTEXT §14 retirement (2026-09-14)
 
 Still-live items from the old PENDING/TODO section; verified against code/prod
