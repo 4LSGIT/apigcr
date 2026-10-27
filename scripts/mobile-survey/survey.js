@@ -717,10 +717,24 @@ async function walk(page, W, record) {
   if (ONLY.has('files')) {
     for (const [kind, label, id] of [['case', '26-99999', 'TESTCASE1'], ['client', 'Jane Testcase', '9001']]) {
       await page.evaluate((k, l, i) => addFile(l, k, i), kind, label, id); await sleep(3000);
-      const fr = await frameOf(page, VISIBLE_TAB_FRAME);
+      // Wait for the file page to draw its tabs: under load 3 s is not enough,
+      // and a page read too early yields 0 tabs = 0 surfaces, silently (all 19
+      // case:* surfaces vanished at 1000px, 2026-10-27, exit 0). A page that
+      // draws none within the wait is recorded as a FAILED surface instead.
+      let fr = null, tabs = [];
+      for (const end = Date.now() + 20000; !tabs.length && Date.now() < end; ) {
+        fr = await frameOf(page, VISIBLE_TAB_FRAME);
+        if (fr) tabs = await fr.evaluate(() => [...document.querySelectorAll('.tab')].filter((t) => t.offsetParent)
+          .map((t, i) => ({ i, text: t.textContent.trim().replace(/\s+/g, ' ') }))).catch(() => []);
+        if (!tabs.length) await sleep(500);
+      }
+      if (!tabs.length) {
+        const m = await measure(page, fr);
+        m.boxes = [{ sel: `${kind} file ${id} (drew no tabs within 23 s)`, missing: true }];
+        await record(`${kind}:(no tabs)`, m, await shot(`${kind}_no_tabs`));
+        continue;
+      }
       await fr.evaluate(() => window.Swal && Swal.close());
-      const tabs = await fr.evaluate(() => [...document.querySelectorAll('.tab')].filter((t) => t.offsetParent)
-        .map((t, i) => ({ i, text: t.textContent.trim().replace(/\s+/g, ' ') })));
       for (const t of tabs) {
         if (t.text === 'Refresh') continue;           // opens a reload confirm
         await fr.evaluate((i) => [...document.querySelectorAll('.tab')].filter((t) => t.offsetParent)[i].click(), t.i);
