@@ -1374,19 +1374,16 @@ Active surfaces with known next steps.
 
 - **After the Cloud SQL move (2026-10-13) — cleanup, in this order.** Record:
   `ref/archive/DB_MIGRATION_2026-10.md`; current setup: `ref/INFRA_GCP.md`.
-  (1) Now: raise the GCP budget alert (Cloud SQL alone is ≈ $53/mo; the alert
-  was set for a ≈ $8 bill). (2) After a week or two of clean running: buy the
-  1-year committed-use discount (≈ $53 → ≈ $40). (3) Now — there is no
-  rollback window any more: staff have worked on Cloud SQL since 2026-10-13,
-  and the old revisions name a connector that no longer exists. Delete the
-  cutover copies of client data (the dumps, the parity output and the saved
-  service settings in Cloud Shell's home; the object in the migration bucket).
-  Empty SiteGround's Remote MySQL list: it still admits the released NAT
-  address, which Google can now hand to anyone. Then check that nothing has
-  written to the old SiteGround database since the freeze (newest rows in the
-  busy tables, against 2026-10-13 06:48:48 UTC) — a newer row is a writer still
-  pointed at the old host — and drop it. Cloud SQL's own backups and 7 days of
-  point-in-time recovery are the safety net from here. (4) DONE: the NAT chain
+  (1) Now: raise the GCP budget alert to ≈ $70 (the bill is ≈ $42/mo with the
+  commitment, `INFRA_GCP.md` §2; the alert was set for a ≈ $8 bill). The
+  Budget API is disabled on the project: set it in the console, Billing →
+  Budgets & alerts. (2) DONE 2026-10-27: the 1-year
+  committed-use discount, $0.05/h discounted to 2027-10-27, no auto-renew
+  (`INFRA_GCP.md` §2) — decide the renewal before it ends. (3) DONE: the
+  cutover copies of client data are deleted (Cloud Shell's home and the
+  migration bucket, 2026-10-14) and the SiteGround database is gone
+  (2026-10-25). Cloud SQL's own backups and 7 days of point-in-time recovery
+  are the safety net from here. (4) DONE: the NAT chain
   (connector, NAT, router, static address, subnet) is deleted; the app has no
   fixed egress address (`INFRA_GCP.md` §1).
   (5) No server-wide SELECT time limit exists, the old host had none either,
