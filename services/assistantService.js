@@ -3300,6 +3300,7 @@ async function normalizeIngestActionConfig(db, type, raw, at, ctx = {}) {
     notes.push(...fwd.notes);
     return { config: { function_name: fn, params_mapping: mapping }, summary: fwd.summary, side_effect: sideEffect, notes };
   }
+  let sendTo = null;
   if (fn === 'send_email' || fn === 'send_sms') {
     const channel = fn === 'send_sms' ? 'sms' : 'email';
     const from = literal(mapping.from);
@@ -3310,10 +3311,24 @@ async function normalizeIngestActionConfig(db, type, raw, at, ctx = {}) {
     if (fn === 'send_email' && mapping.attachment_urls !== undefined) {
       throw httpError(422, `${at}: Casey does not author email attachments (attachment_urls are fetched at send time) — tell the user to add them by hand`);
     }
-    notes.push(`SENDS ${channel === 'sms' ? 'A TEXT' : 'AN EMAIL'} from ${sender} to ${show(mapping.to)} on every matching message${literal(mapping.to) == null ? ' — the recipient comes from the message itself' : ''}`);
+    // A literal "to" is a forward by another name: the same classification and
+    // opt-out refusal (ingestLiteralDestination). A JSON value is passed to the
+    // function as-is — a literal the card could not classify — so it is refused.
+    if (mapping.to !== undefined && typeof mapping.to !== 'string') {
+      throw httpError(422, `${at}: ${fn}'s "to" is a quoted literal ${channel === 'sms' ? 'phone number' : 'email address'} or a dot path into the message — not a JSON value`);
+    }
+    const toLit = literal(mapping.to);
+    if (toLit == null) {
+      notes.push(`SENDS ${channel === 'sms' ? 'A TEXT' : 'AN EMAIL'} from ${sender} to ${show(mapping.to)} on every matching message — the recipient comes from the message itself`);
+    } else {
+      const dest = await ingestLiteralDestination(db, channel === 'sms', toLit, at, 'send');
+      sendTo = dest.where;
+      notes.push(`SENDS ${channel === 'sms' ? 'A TEXT' : 'AN EMAIL'} from ${sender} to ${dest.where} on every matching message`);
+      if (!dest.internal) notes.push(`${dest.to} is not a firm address, line or staff member: every matching message sends ${channel === 'sms' ? 'a text' : 'an email'} to someone outside the firm`);
+    }
   }
   const params = Object.entries(mapping).map(([k, v]) => `${k} ← ${show(v)}`).join('; ');
-  return { config: { function_name: fn, params_mapping: mapping }, summary: `calls ${fn}${params ? ` (${params})` : ''}`.slice(0, 1500), side_effect: sideEffect, notes };
+  return { config: { function_name: fn, params_mapping: mapping }, summary: `calls ${fn}${sendTo ? ` to ${sendTo}` : ''}${params ? ` (${params})` : ''}`.slice(0, 1500), side_effect: sideEffect, notes };
 }
 
 // A forward (forward_as_email / forward_as_sms) sends the WHOLE incoming
@@ -3355,11 +3370,26 @@ async function ingestForwardAnnotation(db, fn, mapping, at, ctx, literal) {
   if (toRaw == null) {
     throw httpError(422, `${at}: a forward's destination ("to") is a quoted literal ${sms ? 'phone number' : 'email address'} — Casey never forwards to a value taken out of the incoming message`);
   }
+  const { to, internal, where } = await ingestLiteralDestination(db, sms, toRaw, at, 'forward');
+  const notes = [`FORWARDS every matching message — its full ${sms ? 'text, as an SMS' : 'content'} — to ${where}, from ${sender}`];
+  if (!internal) notes.push(`${to} is not a firm address, line or staff member: every matching client message will be sent to someone outside the firm`);
+  return { summary: `forwards every matching message to ${where} (${fn}, from ${sender})`, notes };
+}
+
+// A QUOTED LITERAL destination of an ingest send — a forward's, or a
+// send_email / send_sms action's literal "to" (Fable review #3: a send to a
+// literal address is a forward by another name, so it gets the same review
+// surface). One address / one 10-digit number, classified firm-internal (a
+// firm domain / mailbox / staff address, or an active firm line / staff
+// phone) or OUTSIDE THE FIRM, and refused when it has opted out (every
+// automation sender refuses it at send time — the action could never
+// deliver). `what` names the action in the refusal ('forward' / 'send').
+async function ingestLiteralDestination(db, sms, toRaw, at, what) {
   let to;
   let internal;
   if (sms) {
     const digits = toRaw.replace(/\D/g, '').replace(/^1(?=\d{10}$)/, '');
-    if (!/^\d{10}$/.test(digits)) throw httpError(422, `${at}: forward destination "${toRaw}" is not a 10-digit phone number`);
+    if (!/^\d{10}$/.test(digits)) throw httpError(422, `${at}: ${what} destination "${toRaw}" is not a 10-digit phone number`);
     to = digits;
     const [[hit]] = await db.query(
       `SELECT (SELECT COUNT(*) FROM phone_lines WHERE phone_number = ? AND active = 1)
@@ -3368,7 +3398,7 @@ async function ingestForwardAnnotation(db, fn, mapping, at, ctx, literal) {
     internal = Number(hit && hit.n) > 0;
   } else {
     to = toRaw.trim();
-    if (!INGEST_FWD_EMAIL_RE.test(to)) throw httpError(422, `${at}: forward destination "${toRaw}" is not one email address`);
+    if (!INGEST_FWD_EMAIL_RE.test(to)) throw httpError(422, `${at}: ${what} destination "${toRaw}" is not one email address`);
     const domains = String(require('../lib/firmConfig').cfg('email_domains') || '').split(',').map((d) => d.trim().toLowerCase()).filter(Boolean);
     const [[hit]] = await db.query(
       `SELECT (SELECT COUNT(*) FROM email_credentials WHERE email = ?)
@@ -3378,12 +3408,9 @@ async function ingestForwardAnnotation(db, fn, mapping, at, ctx, literal) {
   }
   const opted = await require('./optoutService').findOptedOut(db, sms ? 'sms' : 'email', to);
   if (opted.length) {
-    throw httpError(422, `${at}: forward destination ${to} has opted out of ${sms ? 'texts' : 'email'} — automation sends refuse it, so this forward could never be delivered`);
+    throw httpError(422, `${at}: ${what} destination ${to} has opted out of ${sms ? 'texts' : 'email'} — automation sends refuse it, so this ${what} could never be delivered`);
   }
-  const where = internal ? `${to} (firm / staff)` : `${to} — OUTSIDE THE FIRM`;
-  const notes = [`FORWARDS every matching message — its full ${sms ? 'text, as an SMS' : 'content'} — to ${where}, from ${sender}`];
-  if (!internal) notes.push(`${to} is not a firm address, line or staff member: every matching client message will be sent to someone outside the firm`);
-  return { summary: `forwards every matching message to ${where} (${fn}, from ${sender})`, notes };
+  return { to, internal, where: internal ? `${to} (firm / staff)` : `${to} — OUTSIDE THE FIRM` };
 }
 
 // The rule the edit kinds target: exactly one channel key, the evidence must

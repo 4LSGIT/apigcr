@@ -285,6 +285,60 @@ describe('forwards (Fred, 2026-10-27): forward_as_email / forward_as_sms as inge
       .rejects.toThrow(/is not a 10-digit phone number/);
   });
 
+  // Fable review #3: send_email / send_sms to a LITERAL destination is a
+  // forward by another name — the same classification and opt-out refusal
+  // (the shared ingestLiteralDestination). A destination from the message
+  // keeps its own card line and never reaches either.
+  describe('send_email / send_sms with a literal "to" get the forward\'s review surface', () => {
+    const send = (fn, mapping) => fwd(fn, fn === 'send_sms'
+      ? { from: "'2486213656'", message: 'text', ...mapping }
+      : { from: "'automations@4lsg.com'", subject: 'subject', text: 'text', ...mapping });
+
+    test('an outside literal destination is classified OUTSIDE THE FIRM on the summary and the notes', async () => {
+      const mail = (await normalizeActionDraft(fakeDb(), create(send('send_email', { to: "'pat@gmail.com'" })), [])).actions[0];
+      expect(mail.summary).toMatch(/^calls send_email to pat@gmail\.com — OUTSIDE THE FIRM \(/);
+      expect(mail.notes).toEqual([
+        'SENDS AN EMAIL from Automations <automations@4lsg.com> to pat@gmail.com — OUTSIDE THE FIRM on every matching message',
+        'pat@gmail.com is not a firm address, line or staff member: every matching message sends an email to someone outside the firm']);
+      const text = (await normalizeActionDraft(fakeDb(), create(send('send_sms', { to: "'313-555-0100'" })), [])).actions[0];
+      expect(text.summary).toMatch(/^calls send_sms to 3135550100 — OUTSIDE THE FIRM \(/);
+      expect(text.notes.join(' ')).toMatch(/SENDS A TEXT from Main \(2486213656\) to 3135550100 — OUTSIDE THE FIRM .*sends a text to someone outside the firm/);
+    });
+
+    test('a firm / staff literal destination is classified as such, with no outside note', async () => {
+      const mail = (await normalizeActionDraft(fakeDb(), create(send('send_email', { to: "'shoshana@staff.example'" })), [])).actions[0];
+      expect(mail.summary).toMatch(/^calls send_email to shoshana@staff\.example \(firm \/ staff\) \(/);
+      expect(mail.notes).toEqual(['SENDS AN EMAIL from Automations <automations@4lsg.com> to shoshana@staff.example (firm / staff) on every matching message']);
+      const text = (await normalizeActionDraft(fakeDb(), create(send('send_sms', { to: "'(248) 559-2400'" })), [])).actions[0];
+      expect(text.summary).toMatch(/^calls send_sms to 2485592400 \(firm \/ staff\) \(/);
+      expect(text.notes).toHaveLength(1);
+    });
+
+    test('an opted-out literal destination is refused at authoring, shaped like the forward refusal', async () => {
+      await expect(normalizeActionDraft(fakeDb({ optedOut: ['pat@gmail.com'] }), create(send('send_email', { to: "'pat@gmail.com'" })), []))
+        .rejects.toThrow(/send destination pat@gmail\.com has opted out of email — automation sends refuse it, so this send could never be delivered/);
+      await expect(normalizeActionDraft(fakeDb({ optedOut: ['3135550100'] }), create(send('send_sms', { to: "'313-555-0100'" })), []))
+        .rejects.toThrow(/send destination 3135550100 has opted out of texts/);
+    });
+
+    test('a literal must be ONE address / number; a JSON value "to" is refused (it would reach the function unclassified)', async () => {
+      await expect(normalizeActionDraft(fakeDb(), create(send('send_email', { to: "'a@b.com, c@d.com'" })), []))
+        .rejects.toThrow(/send destination "a@b\.com, c@d\.com" is not one email address/);
+      await expect(normalizeActionDraft(fakeDb(), create(send('send_sms', { to: "'555'" })), []))
+        .rejects.toThrow(/send destination "555" is not a 10-digit phone number/);
+      await expect(normalizeActionDraft(fakeDb(), create(send('send_sms', { to: 3135550100 })), []))
+        .rejects.toThrow(/send_sms's "to" is a quoted literal phone number or a dot path into the message — not a JSON value/);
+    });
+
+    test('a destination from the message keeps its card line and is never classified or opt-out checked', async () => {
+      const db = fakeDb({ optedOut: ['pat@gmail.com'] });
+      const mail = (await normalizeActionDraft(db, create(send('send_email', { to: 'from.email' })), [])).actions[0];
+      expect(mail.summary).toBe('calls send_email (from ← "automations@4lsg.com"; subject ← the message\'s subject; text ← the message\'s text; to ← the message\'s from.email)');
+      expect(mail.notes).toEqual(["SENDS AN EMAIL from Automations <automations@4lsg.com> to the message's from.email on every matching message — the recipient comes from the message itself"]);
+      expect(db.seen.filter((s) => /contact_emails|contact_phones|\+ \(SELECT COUNT/.test(s))).toEqual([]);
+    });
+  });
+
   test('a transform change that would break an existing forward is refused', async () => {
     const db = fakeDb({ actions: [{ id: 12, rule_id: 12, name: null, position: 0, active: 1, action_type: 'internal_function',
       config: { function_name: 'forward_as_email', params_mapping: EMAIL } }] });

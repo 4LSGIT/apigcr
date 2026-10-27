@@ -348,6 +348,16 @@ maybe('Casey ingest-rule authoring end to end on real MySQL', () => {
       const outside = await svc.normalizeActionDraft(pool, value('someone@example.org'), []);
       expect(outside.actions[0].summary).toMatch(/someone@example\.org — OUTSIDE THE FIRM/);
       await expect(svc.normalizeActionDraft(pool, value('pat.optout@example.com'), [])).rejects.toThrow(/has opted out of email/);
+      // send_email / send_sms to a LITERAL destination: the same classifier and
+      // opt-out lookup on the same real rows (Fable review #3).
+      const sendValue = (to, fn = 'send_email') => ({ ...value(to), name: `${ch} send ${to}`,
+        actions: [{ action_type: 'internal_function', config: { function_name: fn, params_mapping: fn === 'send_email'
+          ? { from: "'automations@4lsg.com'", to: `'${to}'`, subject: "'s'", text: "'t'" }
+          : { from: "'2486213656'", to: `'${to}'`, message: "'m'" } } }] });
+      expect((await svc.normalizeActionDraft(pool, sendValue('staff@4lsg.example'), [])).actions[0].summary).toMatch(/^calls send_email to staff@4lsg\.example \(firm \/ staff\)/);
+      expect((await svc.normalizeActionDraft(pool, sendValue('248-555-0142', 'send_sms'), [])).actions[0].summary).toMatch(/^calls send_sms to 2485550142 \(firm \/ staff\)/);
+      expect((await svc.normalizeActionDraft(pool, sendValue('someone@example.org'), [])).actions[0].summary).toMatch(/^calls send_email to someone@example\.org — OUTSIDE THE FIRM/);
+      await expect(svc.normalizeActionDraft(pool, sendValue('pat.optout@example.com'), [])).rejects.toThrow(/send destination pat\.optout@example\.com has opted out of email/);
       const res = await apply(ch, staff);
       expect(res.status).toBe(201);
       const [a] = await actionRows(ch, res.body.rule.id);

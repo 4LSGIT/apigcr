@@ -1930,7 +1930,13 @@ card is atomic and carries one precondition. Per-family flag
   pass the route's `__validateParamsMapping`. `send_email` / `send_sms` send
   from a QUOTED LITERAL firm mailbox / line (`literalFirmSender`), never a
   value from the message; the card says who receives it and when the
-  recipient comes from the message itself. **`http` actions are deferred** —
+  recipient comes from the message itself. A QUOTED LITERAL `to` is a forward
+  by another name, so it gets the forward's review surface
+  (`ingestLiteralDestination`, shared with forwards): one address / one
+  10-digit number, classified firm/staff vs OUTSIDE THE FIRM on the summary
+  and notes, and refused at authoring when opted out; a JSON-value `to`
+  (passed to the function as-is, unclassifiable) is refused — a literal is a
+  quoted string, a dot path reads the message. **`http` actions are deferred** —
   the vision says yes; the risk is that an ingest http action ships every
   matching client message to a URL, and A17.4b's literal-URL /
   named-credential contract is not built anywhere yet; the mitigation is to
