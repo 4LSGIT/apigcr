@@ -33,4 +33,9 @@ jobs:
           node-version: 24.x
           cache: npm
       - run: npm ci
-      - run: npx jest --ci
+      # Two workers on the 4-vCPU runner, each restarted past 1 GB between test
+      # files — the same caps a --local-suite land uses. Jest's default (3) let
+      # load-sensitive async suites hit the 5 s test timeout on clean commits:
+      # configShellAccess, commsArchiveService, clioTool, three land NO-GOs on
+      # 2026-10-27, each passing locally on the same SHA.
+      - run: npx jest --ci --maxWorkers=2 --workerIdleMemoryLimit=1G
