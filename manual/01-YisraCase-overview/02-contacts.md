@@ -156,6 +156,18 @@ debtor's, shared by the spouse — is **left off** the co-debtor (so it stays
 with the debtor), and a notice says which. If the check can't run, the
 co-debtor isn't created and a notice says so; save again.
 
+**Website and Calendly leads.** A lead whose phone or email matches one
+contact on file goes onto that contact: blank fields are filled in and a new
+phone or email is added, but nothing already on file — name, date of birth,
+SSN, address — is ever overwritten. If the lead's **name differs** from the
+contact's (spelling, case and accents aside), nothing on the contact changes
+at all: a **Check contact match** task goes to the *Contact-match review*
+person (YisraCase Config → Firm → Routing; blank = the *Default task
+assignee*) listing what the lead submitted — never a date of birth or SSN.
+Same person: copy what's new onto the contact. A different person (often a
+spouse): create them as a new contact. Meanwhile the lead's case and
+follow-up carry on under the matched contact.
+
 When editing, fill in only the fields you are changing. The system will not overwrite fields you leave blank on a partial update — only the fields you submit are modified.
 
 > **Important:** Name changes are handled by the database automatically. If you update `fname`, `mname`, or `lname`, all derived name fields update instantly. You do not need to update `contact_name` or `contact_lfm_name` separately.

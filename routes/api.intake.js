@@ -27,7 +27,8 @@
  * detached, so the response is delayed by scheduling cost only.
  *
  * Response statuses (unchanged):
- *   /contact — 200 created/updated · 400 bad input (invalid phone digits,
+ *   /contact — 200 created/updated (a name_conflict answers as "updated" +
+ *              name_conflict:true — see the service's NAME REVIEW) · 400 bad input (invalid phone digits,
  *              force_contact_id not among matches, incoherent flag combo,
  *              name missing on CREATE path) · 409 divergence · 500
  *   /case    — 200 created/found · 400 bad input · 409 docket collision · 500
@@ -101,6 +102,25 @@ router.post("/api/intake/contact", jwtOrApiKey, async (req, res) => {
           id:         result.contact_id,
           contact_id: result.contact_id,
           name:       result.name,
+        });
+
+      // NAME REVIEW (services/intakeService.js): matched, nothing changed, a
+      // review task opened. Sent as action "updated" so a caller's existing
+      // created|updated branch carries the lead on; name_conflict says what
+      // really happened.
+      case 'name_conflict':
+        return res.json({
+          status:         "success",
+          message:        `client ${result.contact_id} matched under a different name — not changed` +
+                          (result.review_task_id ? `; review task ${result.review_task_id}` : '; review task NOT created'),
+          action:         "updated",
+          id:             result.contact_id,
+          contact_id:     result.contact_id,
+          name:           result.name,
+          name_conflict:  true,
+          existing_name:  result.existing_name,
+          submitted_name: result.submitted_name,
+          review_task_id: result.review_task_id,
         });
 
       case 'created':

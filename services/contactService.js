@@ -164,8 +164,8 @@ function _customLogText(v) {
  * A scalar contact_phone write means "this is the number to use now" — it
  * does NOT mean the old number is dead. The callers are unattended: the
  * intake upsert (services/intakeService.js, behind intake_contact and
- * POST /api/intake/contact) writes whatever a website form or a workflow
- * supplied, matched to an existing contact by ONE of phone/email. Ending
+ * POST /api/intake/contact) writes the phone/email a website form or a
+ * workflow supplied, matched to an existing contact by ONE of them. Ending
  * the prior number there destroyed a reachable number of record — and with
  * it the inbound-comms match for calls and SMS still arriving on it — on
  * the strength of an anonymous form submission. Demoting keeps every number

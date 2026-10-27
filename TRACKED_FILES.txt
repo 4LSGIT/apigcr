@@ -611,6 +611,7 @@ ref/migrations/2026-10-26_docs_digest_repoint.console.js
 ref/migrations/2026-10-26_docs_digest_rule.console.js
 ref/migrations/2026-10-27_ingest_rule_edit_stamp_change_log.sql
 ref/migrations/2026-10-27_optout_contact_columns_drop.sql
+ref/migrations/2026-10-28_intake_review_assignee.sql
 ref/migrations/S1_notes_migration.sql
 ref/migrations/documents_s1.sql
 ref/migrations/documents_s2.sql
@@ -1414,6 +1415,7 @@ tests/ingestRulePreview.routes.test.js
 tests/ingestRuleService.duplicate.test.js
 tests/ingestRuleService.transformFailure.test.js
 tests/ingestService.evaluatorFailure.test.js
+tests/intakeNameReview.mysql.test.js
 tests/internalFn.cancelCaseAppts.test.js
 tests/internalFn.enrollSkipIfEnrolled.test.js
 tests/internal_functions.meta.test.js

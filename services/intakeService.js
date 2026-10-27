@@ -37,6 +37,12 @@
  *      case_type '' (63 such rows live today; staff or ai_match fill it
  *      later). Never enabled on the HTTP surface.
  *
+ *   3. NAME REVIEW (2026-10-28, contact path, both surfaces): a single match
+ *      no longer writes over what is on file — blanks are filled, the
+ *      phone/email added — and a match under a different name writes nothing
+ *      and opens a review task (outcome 'name_conflict'; both wrappers answer
+ *      it as action 'updated' + name_conflict). See the NAME REVIEW block.
+ *
  * NEW (lead flow, no route equivalent):
  *   findIntakeCase(db, contactId) — the contact's most recent case whose
  *     CURRENT pipeline position (latest case_stage_log row) is a
@@ -55,10 +61,13 @@
 
 'use strict';
 
+const crypto             = require('crypto');
 const { parseName }      = require('../lib/parseName');
 const caseService        = require('./caseService');
 const contactService     = require('./contactService');
 const domainEvents       = require('../lib/domainEvents'); // Trigger T3
+const { getSettings }    = require('./settingsService');
+const { alert }          = require('../lib/alerting');
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -118,6 +127,140 @@ async function buildConflicts(db, matches) {
 }
 
 // ─────────────────────────────────────────────────────────────
+// NAME REVIEW (2026-10-28, Fred's ruling) — a single value match under a
+// DIFFERENT name changes nothing on the matched contact; a person decides.
+//
+// Before this, intake's single-match UPDATE wrote the payload's name (and
+// DOB / SSN / address) over whichever contact held the phone or email — a
+// spouse's web lead on a shared phone renamed the other spouse. Now:
+//   - a name never overwrites one (a BLANK name / field is filled);
+//   - a differing first or last name (case, accents, punctuation and spacing
+//     ignored; middle ignored; a part either side leaves blank isn't
+//     compared) writes NOTHING and opens a review task carrying the
+//     SUBMITTED values — never DOB or SSN (the task's assignment email
+//     carries its text);
+//   - the caller still gets the matched contact, so a lead flow continues.
+// Not on the force_contact_id path: there a person already said which
+// contact this is (the name still isn't overwritten).
+// ─────────────────────────────────────────────────────────────
+
+const normName = (s) => String(s ?? '').normalize('NFKD').replace(/[\u0300-\u036f]/g, '')
+  .toLowerCase().replace(/[^\p{L}]/gu, '');
+
+function namesDiffer(cur, submitted) {
+  for (const col of ['contact_fname', 'contact_lname']) {
+    const a = normName(cur[col]);
+    const b = normName(submitted[col]);
+    if (a && b && a !== b) return true;
+  }
+  return false;
+}
+
+// null / '' / an all-zero or unparseable date (mysql2 hands DATE back as a Date).
+function isBlank(v) {
+  if (v == null) return true;
+  if (v instanceof Date) return isNaN(v.getTime());
+  const s = String(v).trim();
+  return s === '' || /^0000-00-00/.test(s);
+}
+
+const ACTIVE_TASK = ['Pending', 'Due Today', 'Overdue'];
+
+/**
+ * `intake_review_assignee`, else `default_task_assignee` — the first that is
+ * an ACTIVE user (user_auth 'authorized%', as firmData computes `active`).
+ * @returns {Promise<number|null>}
+ */
+async function resolveReviewAssignee(db) {
+  const keys = ['intake_review_assignee', 'default_task_assignee'];
+  const vals = await getSettings(db, keys);
+  for (const k of keys) {
+    const id = parseInt(String(vals[k] ?? '').trim(), 10);
+    if (!Number.isInteger(id) || id <= 0) continue;
+    const [[u]] = await db.query(
+      "SELECT user FROM users WHERE user = ? AND user_auth LIKE 'authorized%'", [id]);
+    if (u) return id;
+  }
+  return null;
+}
+
+/**
+ * Open (or find the already-open) review task. Never throws — the lead flow
+ * goes on whatever happens here; a missing assignee is an error-severity
+ * alert (config fault), any other failure a warning.
+ * @returns {Promise<number|null>} task id, or null when none exists
+ */
+async function openNameReviewTask(db, { contactId, existingName, submittedName, matchedBy, body, phone, email }) {
+  const taskService = require('./taskService'); // lazy: keeps this module's load graph as it was
+  try {
+    const assignee = await resolveReviewAssignee(db);
+    if (!assignee) {
+      alert(db, {
+        source: 'app', kind: 'intake_review_no_assignee', severity: 'error',
+        group_key: 'intake_review_no_assignee',
+        title: 'Contact-match review task not created — no assignee',
+        message: `contact=${contactId}: an intake for "${submittedName}" matched "${existingName}" ` +
+                 `by ${matchedBy}; nothing was changed. app_settings intake_review_assignee and ` +
+                 `default_task_assignee are unset or not an active user.`,
+        ref_table: 'contacts', ref_id: contactId,
+      });
+      return null;
+    }
+
+    // One open task per (contact, submitted name): Cloud Tasks / webhook
+    // retries and repeat submissions don't stack.
+    const dedupeKey = `intake-name:${contactId}:` +
+      crypto.createHash('sha1').update(normName(submittedName)).digest('hex').slice(0, 16);
+    const [[open]] = await db.query(
+      `SELECT task_id FROM tasks
+        WHERE task_dedupe_key = ? AND task_status IN (?, ?, ?)
+        LIMIT 1`, [dedupeKey, ...ACTIVE_TASK]);
+    if (open) return open.task_id;
+
+    const lines = [
+      `An intake matched contact #${contactId} (${existingName}) by ${matchedBy}, ` +
+        `but under a different name. Nothing on the contact was changed.`,
+      '',
+      'Submitted:',
+      `  name: ${submittedName}`,
+    ];
+    if (phone) lines.push(`  phone: ${phone}`);
+    if (email) lines.push(`  email: ${email}`);
+    const addr = ['contact_address', 'contact_city', 'contact_state', 'contact_zip']
+      .map(k => (body[k] == null ? '' : String(body[k]).trim())).filter(Boolean).join(', ');
+    if (addr) lines.push(`  address: ${addr}`);
+    const withheld = ['contact_dob', 'contact_ssn'].filter(k => !isBlank(body[k]))
+      .map(k => (k === 'contact_dob' ? 'date of birth' : 'SSN'));
+    if (withheld.length) lines.push(`  (${withheld.join(' and ')} also supplied — not shown here)`);
+    lines.push('',
+      `Same person → copy what's new onto #${contactId}. A different person (e.g. a spouse) → ` +
+      `create them as a new contact. Until then the lead stays on #${contactId}.`);
+
+    const r = await taskService.createTask(db, {
+      from:      0,
+      to:        assignee,
+      title:     `Check contact match: "${submittedName}" → ${existingName}`.slice(0, 100),
+      desc:      lines.join('\n').slice(0, 1000),
+      link_type: 'contact',
+      link_id:   contactId,
+      source:    'intake_name_review',
+    });
+    await db.query('UPDATE tasks SET task_dedupe_key = ? WHERE task_id = ?', [dedupeKey, r.task_id]);
+    return r.task_id;
+  } catch (err) {
+    console.error('[INTAKE] name review task failed:', err.message);
+    alert(db, {
+      source: 'app', kind: 'intake_review_task_failed', severity: 'warning',
+      group_key: 'intake_review_task_failed',
+      title: 'Contact-match review task failed',
+      message: `contact=${contactId} submitted="${submittedName}": ${err.message}`,
+      ref_table: 'contacts', ref_id: contactId,
+    });
+    return null;
+  }
+}
+
+// ─────────────────────────────────────────────────────────────
 // intakeContact
 //
 // Create or update a contact by phone/email match. Transcribed from
@@ -140,6 +283,8 @@ async function buildConflicts(db, matches) {
 //   { outcome:'diverged',       conflicts }                    // 2+ matches, no force
 //   { outcome:'force_mismatch', forceContactId, conflicts }    // conflicts [] on the 0-match case
 //   { outcome:'updated',        contact_id, name }
+//   { outcome:'name_conflict',  contact_id, name, existing_name,
+//                               submitted_name, review_task_id }  // NAME REVIEW above
 //   { outcome:'created',        contact_id, name }
 // ─────────────────────────────────────────────────────────────
 async function intakeContact(db, body = {}, { forceContactId = null } = {}) {
@@ -274,10 +419,41 @@ async function intakeContact(db, body = {}, { forceContactId = null } = {}) {
   // UPDATE branch
   // ─────────────────────────────────────
   if (targetContactId != null) {
+    const [[cur]] = await db.query(
+      `SELECT contact_name, contact_fname, contact_mname, contact_lname,
+              contact_address, contact_city, contact_state, contact_zip,
+              contact_dob, contact_ssn, contact_phone2, contact_email2, contact_pname
+         FROM contacts WHERE contact_id = ?`,
+      [targetContactId]
+    );
+    if (!cur) throw new Error(`intakeContact: matched contact ${targetContactId} not found`);
+
+    // ── NAME REVIEW (header above): a different name → write nothing. ──
+    if (forceContactId == null && nameInUpdate && namesDiffer(cur, nameInUpdate)) {
+      const m = matches[0];
+      const matchedBy = [m.matched_by_phone && 'phone', m.matched_by_email && 'email']
+        .filter(Boolean).join(' and ') || 'phone/email';
+      const submittedName = hasName
+        ? name.trim()
+        : [nameInUpdate.contact_fname, nameInUpdate.contact_mname, nameInUpdate.contact_lname]
+            .map(x => String(x || '').trim()).filter(Boolean).join(' ');
+      const reviewTaskId = await openNameReviewTask(db, {
+        contactId: targetContactId, existingName: cur.contact_name, submittedName, matchedBy,
+        body, phone: normalizedPhone, email: trimmedEmail,
+      });
+      return {
+        outcome: 'name_conflict', contact_id: targetContactId, name: cur.contact_name,
+        existing_name: cur.contact_name, submitted_name: submittedName, review_task_id: reviewTaskId,
+      };
+    }
+
     const updateFields = {};
 
+    // A name never overwrites one — a blank slot is filled.
     if (nameInUpdate) {
-      Object.assign(updateFields, nameInUpdate);
+      for (const [col, v] of Object.entries(nameInUpdate)) {
+        if (isBlank(cur[col]) && !isBlank(v)) updateFields[col] = v;
+      }
     }
 
     // phone/email — only if non-empty truthy supplied. Empty/null does NOT
@@ -291,9 +467,11 @@ async function intakeContact(db, body = {}, { forceContactId = null } = {}) {
       'contact_phone2', 'contact_email2',
       'contact_pname',
     ];
+    // Fill blanks only: a value on file (DOB, SSN, address…) is never
+    // overwritten by an intake — it may be another person's (NAME REVIEW).
     for (const col of UPDATE_OPTIONALS) {
       const v = body[col];
-      if (v !== undefined && v !== null && v !== '') {
+      if (v !== undefined && v !== null && v !== '' && isBlank(cur[col])) {
         updateFields[col] = v;
       }
     }

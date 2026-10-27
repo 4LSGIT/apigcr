@@ -922,10 +922,13 @@
 
        ── BOTH ACTIONS ANNOUNCE, and the reason is not symmetry ──────────────
        `POST /api/intake/contact` is an UPSERT: it resolves the payload's
-       phone/email against existing contacts and updates the match when it
-       finds one. That update writes real columns to a contact that may be open
-       in three frames, so it matters to open surfaces exactly as much as a
-       create does — arguably more, since a create has no open surface yet.
+       phone/email against existing contacts and, on a match, fills blank
+       columns and adds the phone/email. That update writes real columns to a
+       contact that may be open in three frames, so it matters to open surfaces
+       exactly as much as a create does — arguably more, since a create has no
+       open surface yet. (A match under a DIFFERENT name writes nothing but
+       still answers action 'updated' + name_conflict — services/intakeService.js
+       NAME REVIEW; the refetch it announces is then a harmless no-op.)
 
        ── FAILS CLOSED ON `action`, AND THAT IS LOAD-BEARING ────────────────
        `POST /api/intake/case` has a THIRD success shape the other endpoints

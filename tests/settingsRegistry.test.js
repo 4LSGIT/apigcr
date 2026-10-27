@@ -117,6 +117,7 @@ describe('classification snapshot', () => {
     "gcontacts_exclude_email_domains": "system system integrations ui csv",
     "gcontacts_group": "state system state console string",
     "gcs_bucket": "system system platform console string",
+    "intake_review_assignee": "firm firm routing ui user",
     "internal_api_key": "secret console console ui string",
     "internal_api_key_prev": "secret console console ui string",
     "landing_hosts": "system system platform console csv",

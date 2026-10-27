@@ -1030,13 +1030,6 @@ COMMENTs.)
 
 ## From the contact-intake safety slices (2026-10-27) — deferred
 
-- **Server-side intake still renames on a single match** (NEXT SLICE, Fred
-  2026-10-27). `services/intakeService.js` `intakeContact`'s UPDATE branch
-  writes the payload's name (and DOB/SSN/address) over the one contact whose
-  phone/email matched. Live callers: `POST /api/intake/contact` (website /
-  Pabbly / API keys) and the `intake_contact` function in workflows 27
-  ("contact upsert") and 33 ("Upsert contact"). The browser dialogs no longer
-  reach it (newContact and issn.html always send duplicate=duplicate).
 - **Orphan adopt "Create new" doesn't say the value moves.** OrphanAdoptDialog
   hands newContact `force_create`, which skips the already-on-file check for
   every value in the dialog — including a phone/email the user adds there,
