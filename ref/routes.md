@@ -1,7 +1,7 @@
 # Routes
 
-_Generated 2026-10-27T10:51:48.050Z_  
-_812 routes total — DELETE: 66, GET: 339, PATCH: 58, POST: 309, PUT: 37, _ALL: 3_
+_Generated 2026-10-27T22:44:27.054Z_  
+_809 routes total — DELETE: 66, GET: 337, PATCH: 58, POST: 308, PUT: 37, _ALL: 3_
 
 ## Global middleware chain
 
@@ -636,9 +636,6 @@ _812 routes total — DELETE: 66, GET: 339, PATCH: 58, POST: 309, PUT: 37, _ALL:
 | GET | `/api/temp/clio/whoami` | `readonlyApiKeyAuth`, `keyScopeCheck` | — |
 | POST | `/api/temp/dropbox/request` | `readonlyApiKeyAuth`, `keyScopeCheck` | — |
 | GET | `/api/temp/dropbox/whoami` | `readonlyApiKeyAuth`, `keyScopeCheck` | — |
-| GET | `/api/temp/ringcentral/probe` | `readonlyApiKeyAuth`, `keyScopeCheck` | — |
-| POST | `/api/temp/ringcentral/request` | `readonlyApiKeyAuth`, `keyScopeCheck` | — |
-| GET | `/api/temp/ringcentral/whoami` | `readonlyApiKeyAuth`, `keyScopeCheck` | — |
 | POST | `/api/temp/zohosign/request` | `readonlyApiKeyAuth`, `keyScopeCheck` | — |
 | GET | `/api/tools` | `jwtOrApiKey`, `superuserCheck`, `elevationCheck`, `rateLimitMiddleware` | — |
 | POST | `/api/tools` | `jwtOrApiKey`, `superuserCheck`, `elevationCheck`, `rateLimitMiddleware` | — |
@@ -1087,4 +1084,4 @@ _812 routes total — DELETE: 66, GET: 339, PATCH: 58, POST: 309, PUT: 37, _ALL:
 
 ---
 
-_812 routes total — DELETE: 66, GET: 339, PATCH: 58, POST: 309, PUT: 37, _ALL: 3_
+_809 routes total — DELETE: 66, GET: 337, PATCH: 58, POST: 308, PUT: 37, _ALL: 3_

@@ -4,7 +4,7 @@
 
 **Provenance:** this document merges two independent audits of the same commit (audit-1 and audit-2). Every claim either survived cross-verification or was re-verified fresh on 2026-10-05; where the two audits disagreed, §5 records the discrepancy and the ruling. Line citations in this merged document were re-checked against the working tree.
 
-- **Repo:** `4LSGIT/apigcr` @ `540a27bcbafa69e8ca5754e6033704af88690fbd` (shallow clone, `main`).
+- **Repo:** `4LSGIT/apigcr` @ `540a27bcbafa69e8ca5754e6033704af88690fbd` (shallow clone, `main`). Exception: the `api.temp.*` proxy rows and counts (§B2, §B5, §C3, §D3's `ycro_` row, the CRITICAL list's item 3) track the tree after `routes/api.temp.ringcentral.js` was deleted (2026-10-28); surfaces added after the audited commit (child keys, key tasks) are not in them.
 - **Live DB:** readonly key → schema `dbnwqdrfyz9vmq`, MySQL **8.4.6-6**. RO user `uilnnfwkvf7b3@35.227.91.145` holds `GRANT USAGE ON *.*` + `GRANT SELECT ON dbnwqdrfyz9vmq.*` **only** (live `SHOW GRANTS`) — see §E5 for what that makes unverifiable.
 - **Sweep scope:** production code (`lib/ routes/ services/ startup/ scripts/ public/ views/ server.js`); `tests/` excluded except where noted.
 - Target model assumed for classification: DB-per-tenant MySQL + `yc_master` registry, tenant by hostname (`tenant_hosts`), `app.4lsg.com` = tenant #1.
@@ -172,7 +172,7 @@ Firm state lives in three buckets; the middle one is the finding:
 | `services/gcalService.js:66-67` | `DEFAULT_CREDENTIAL_ID = 11` (*"Google Workspace - Stuart@4lsg.com"*), `DEFAULT_CALENDAR_ID = 'primary'` | **Google Calendar** — a named individual's calendar |
 | `services/courtExecutor.js:164, :167, :171` | `TIMED_COURT_CALENDAR_ID = 'primary'` (*"Stuart's OWN Google calendar"*, `:158`), `COURT_EVENT_PROVIDER = 1`, `SHOW_CAUSE_TASK_FALLBACK_USER = 5` | GCal + **bare user ids 1 and 5** hard-bound to 4LSG staff |
 | `services/gContactsService.js:54, :64` | `DEFAULT_CREDENTIAL_ID = 11`; `DEFAULT_EXCLUDE_DOMAINS = ['4lsg.com']` (const, never re-read) | **Google People** |
-| `routes/api.temp.clio.js:60` / `api.temp.ringcentral.js:110` / `api.temp.zohosign.js:48` | `PINNED_CREDENTIAL_ID = 7 / 9 / 13` | Clio / RingCentral / Zoho Sign proxies (⚠️ TEMPORARY) |
+| `routes/api.temp.clio.js:60` / `api.temp.zohosign.js:48` | `PINNED_CREDENTIAL_ID = 7 / 13` | Clio / Zoho Sign proxies (⚠️ TEMPORARY) |
 | `services/aiService.js:67` | `ANTHROPIC_CREDENTIAL_ID = 12` | **Anthropic API billing** |
 | `services/ringcentralService.js:13` | hardcoded Pabbly webhook URL (`connect.pabbly.com/workflow/sendwebhookdata/IjU3…_pc`) | **Pabbly workflow token in source** (legacy) |
 | `services/ringcentralService.js:128, :419`; `routes/ringcentral.js:38-39` | `RINGCENTRAL_CLIENT_ID/SECRET`, `REDIRECT_URI`, inbound `RINGCENTRAL_API_KEY` (also accepted via **query string**) | RingCentral (legacy) — most tenant-hostile inbound auth in the app |
@@ -245,7 +245,7 @@ Note `routes/api.firmData.js:87`: ``SELECT `key`,`value` FROM app_settings WHERE
 | Section | Count |
 |---|---|
 | `app_url` fallback sites (`\|\| 'https://app.4lsg.com'`) | 13 production (12 + publicUrl) |
-| Pinned/default credential ids in code | 8 (Dropbox 8×2, GCal 11, People 11, Clio 7, RC 9, Zoho 13, Anthropic 12) |
+| Pinned/default credential ids in code | 7 (Dropbox 8×2, GCal 11, People 11, Clio 7, Zoho 13, Anthropic 12) |
 | Hardcoded Dropbox folder paths | 4 |
 | `process.env.*` | 73 distinct (23 FIRM / 36 PLATFORM / 5 ambiguous-ruling + dynamic forms) |
 | `app_settings` keys | 72 (48 firm / 8 platform / 8 state-watermark / 5 uncertain) |
@@ -306,7 +306,7 @@ Auth is per-hook, DB-configured — `hookService.authenticateRequest(hook, req)`
 | phone events | — | no standalone receiver — arrive via `/hooks/:slug`; workflow calls `phoneIngestService.ingestPhoneEvent` (`lib/internal_functions/log.js:460-463`) | host via /hooks |
 | `GET /auth/oauth/callback` | `routes/api.oauth.js:238` | none as middleware; `state` is the credential (`:248-250`, per-DB `credentials.oauth_state`) | provider redirects to ONE fixed URI built off `app_url` — per-tenant redirect URIs or a shared platform callback (§3) |
 | legacy: `/ringcentral/send-sms|send-mms` (`routes/ringcentral.js:83, :100` — env `RINGCENTRAL_API_KEY`, query-string accepted `:38-39`), `/dropbox/*` (`routes/dropbox.js:93-150` — env `API_KEY` **or plaintext `users.password` match** `:71-86`), `/logEmail` (`routes/logs.js:157`), `/unplacehold` (`routes/unplacehold.js:30`), `/auth/P_validate` (`routes/temp_auth_validate.js:7`), `/renaReminder` (`renaReminder.jsx:33`) | env shared secrets / per-request creds | retirement-tracked via `trap()` → `legacy_route_log` (`lib/legacyTrap.js` — logs creds in plaintext BY DESIGN for caller fingerprinting, `:8-10`); **flush, don't scope** |
-| `api.temp.{clio,dropbox,ringcentral,zohosign}` proxies (8 routes) | `readonlyApiKeyAuth` | ⚠️ TEMPORARY outbound bridges, pinned credential ids (§B2) |
+| `api.temp.{clio,dropbox,zohosign}` proxies (5 routes) | `readonlyApiKeyAuth` | ⚠️ TEMPORARY outbound bridges, pinned credential ids (§B2) |
 | `/api/ext/forms/:form_key` (4) | `routes/api.ext.forms.js:115, :229, :470, :530` | **none** — `case_id` query param is the bearer (`:127-128`); the file itself calls it *"a 40-bit bearer credential"* (`:77-95`) | **cross-tenant-leak-shaped**: low-entropy id resolving against whichever DB |
 | `/api/public/docs/:caseId` | `routes/api.checklists.js:1092` | **rate limit only — bare caseId, no token**; returns client first name | same shape |
 | `POST /api/public/get-upload-link` | `:1151` | rate limit only | **mints a Dropbox upload link** |
@@ -396,7 +396,7 @@ Under DB-per-tenant with a shared secret:
 |---|---|---|---|---|
 | `yck_` | `lib/apiKeys.js:34, :49` | `jwtOrApiKey:89` → `apiKeys.lookup(req.db, key)` — **but the 60s cache (`:36`) is keyed by `key_hash` with no tenant axis**: a key resolved via tenant A's `req.db` is served from process cache for a request on tenant B's host, and the cached per-tenant `rec.id` is replayed into `touchLastUsed(db, id)` (`:85`) against whatever DB is current | full `jwtOrApiKey` surface, attributed by label | `api_keys.key_hash` |
 | `yci_` | `routes/admin.apiKeys.js:87-96` | `jwtOrApiKey:79-86` vs `cfg('internal_api_key')`/`_prev` (+ refresh-on-miss `:96-114`) — the compare runs against the **un-keyed firmConfig cache**, so until firmConfig is tenant-keyed, any tenant's internal key is accepted on any host | same surface; the Cloud Tasks header credential (`taskQueue:267`) | `app_settings` is_secret rows |
-| `ycro_` | `routes/api.readonlyKeys.js:63` (SU) | `lib/auth.readonly.js` via `req.db` | `/api/readonly/sql`, `/api/scratch/*`, `/api/admin/scratch` reads, `/api/alert/it`, `api.temp.*` proxies (13 endpoints) | `readonly_api_keys.key_hash` |
+| `ycro_` | `routes/api.readonlyKeys.js:63` (SU) | `lib/auth.readonly.js` via `req.db` | `/api/readonly/sql`, `/api/scratch/*`, `/api/admin/scratch` reads, `/api/alert/it`, `api.temp.*` proxies (10 endpoints) | `readonly_api_keys.key_hash` |
 
 **`ycp_` does not exist** — zero hits; portal tokens are unprefixed JWTs with `aud:'contact'` (§4-2).
 
@@ -568,7 +568,7 @@ Deferred to P3/P4 proper: FIRM_TIMEZONE parameterization (6 captures + consumers
 ### CRITICAL (~27) — external side effects land on 4LSG accounts
 1. **Dropbox**: credential fallback 8 (×2) + 4 hardcoded folder paths + legacy env creds (§B2 rows 1-7).
 2. **Google bound to one person**: GCal/People credential 11, `'primary'` calendar ×2, user ids 1 and 5 in courtExecutor (§B2).
-3. **Pinned credential rows**: Clio 7, RC 9, Zoho 13, Anthropic 12 (temp proxies + aiService).
+3. **Pinned credential rows**: Clio 7, Zoho 13, Anthropic 12 (temp proxies + aiService).
 4. **Pabbly workflow token in source** (`ringcentralService.js:13`); RingCentral env creds + query-string inbound key.
 5. **Named staff as default recipients** (`court.js:645`, `trustee.js:85-86`) + the 11 `…@4lsg.com` from-fallbacks that fire exactly on empty config.
 6. **Client-comms hardcodes** `DOCS@4LSG.COM` / `app.4lsg.com/docReq` (7 lines, `api.sending.js`).

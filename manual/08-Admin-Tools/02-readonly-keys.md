@@ -24,7 +24,7 @@ A key reaches only the surfaces in its **scopes**:
 | `alert` | `POST /api/alert/it` — page IT |
 | `keys.mint` | mint, list and revoke its own **child keys** (below) — never ticked by default |
 | `tasks.own` | create **tasks** for active staff and manage the ones it created ([below](#tasks-from-a-session-key)) — the one scope that writes to the firm's records; never ticked by default |
-| `temp.clio`, `temp.dropbox`, `temp.ringcentral`, `temp.zohosign` | the `/api/temp/<provider>/…` proxies — calls to that provider **with the firm's credentials** |
+| `temp.clio`, `temp.dropbox`, `temp.zohosign` | the `/api/temp/<provider>/…` proxies — calls to that provider **with the firm's credentials** |
 
 A new key gets `sql.ro`, `scratch` and `alert` — the boxes ticked by default
 on the create form. The `temp.*` proxies are never granted by default: tick

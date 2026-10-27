@@ -17,7 +17,9 @@
  *   - Per-route surface matrix, driven through each REAL router's own first
  *     two layers (auth, scope — never the handler, so no temp route makes a
  *     provider call): a ["sql.ro"] key passes sql and gets a 403 NAMING the
- *     missing scope everywhere else; a NULL-scopes key passes all 13 mounts.
+ *     missing scope everywhere else; a NULL-scopes key passes every mount
+ *     but the explicit-scope ones. A RETIRED scope (temp.ringcentral) still
+ *     stored in a column is inert: auth holds, no mount passes on it.
  *   - Mints: default ["sql.ro","scratch","alert"] (no temp.*), custom lists
  *     validated and stored, invalid / empty refused with nothing inserted;
  *     the list endpoint surfaces scopes.
@@ -56,7 +58,7 @@ const flush = () => new Promise(r => setImmediate(r));
 describe('KEY_SCOPES vocabulary', () => {
   test('the surface family is exactly the reviewed snapshot', () => {
     expect(Object.keys(KEY_SCOPES)).toEqual([
-      'sql.ro', 'sql.ro.sensitive', 'scratch', 'alert', 'keys.mint', 'tasks.own', 'temp.clio', 'temp.dropbox', 'temp.ringcentral', 'temp.zohosign',
+      'sql.ro', 'sql.ro.sensitive', 'scratch', 'alert', 'keys.mint', 'tasks.own', 'temp.clio', 'temp.dropbox', 'temp.zohosign',
     ]);
     expect(Object.isFrozen(KEY_SCOPES)).toBe(true);
     for (const v of Object.values(KEY_SCOPES)) expect(v.desc).toMatch(/\S/);
@@ -149,7 +151,6 @@ const SURFACE_BY_FILE = {
   'api.keyTasks.js': 'tasks.own',
   'api.temp.clio.js': 'temp.clio',
   'api.temp.dropbox.js': 'temp.dropbox',
-  'api.temp.ringcentral.js': 'temp.ringcentral',
   'api.temp.zohosign.js': 'temp.zohosign',
 };
 
@@ -174,8 +175,8 @@ function readonlyMounts() {
 describe('every readonly-key mount declares its surface', () => {
   const mounts = readonlyMounts();
 
-  test('the inventory: 24 mounts across the 9 files', () => {
-    expect(mounts).toHaveLength(24);
+  test('the inventory: 21 mounts across the 8 files', () => {
+    expect(mounts).toHaveLength(21);
     expect([...new Set(mounts.map(m => m.file))].sort()).toEqual(Object.keys(SURFACE_BY_FILE).sort());
   });
 
@@ -264,6 +265,43 @@ describe('every readonly-key mount declares its surface', () => {
     expect((await throughGate(scratch, '["scratch"]')).passed).toBe(true);
     expect((await throughGate(scratch, '["sql.ro"]')).passed).toBe(false);
   });
+
+  // A RETIRED surface scope (temp.ringcentral, route deleted 2026-10-28) still
+  // stored in a column: auth must not crash and must not widen — the name is
+  // inert. It is no longer a scope at all, so no gate can ask for it.
+  const RETIRED = 'temp.ringcentral';
+
+  test('a retired scope is out of the vocabulary: not a scope, refused at mint grammar, unaskable', () => {
+    expect(isKeyScope(RETIRED)).toBe(false);
+    expect(() => normalizeKeyScopes(['sql.ro', RETIRED])).toThrow(/unknown scope/);
+    expect(() => keyAllows({ scopes: [RETIRED] }, RETIRED)).toThrow(/unknown scope/);
+    expect(() => requireKeyScope(RETIRED)).toThrow(/unknown surface scope/);
+  });
+
+  test('a stored column naming ONLY the retired scope: authenticates, then 403 on every mount', async () => {
+    for (const col of [[RETIRED], JSON.stringify([RETIRED])]) {
+      for (const m of mounts) {
+        const want = SURFACE_BY_FILE[m.file];
+        const r = await throughGate(m, col);
+        expect({ at: `${m.method} ${m.path}`, passed: r.passed, status: r.res.statusCode })
+          .toEqual({ at: `${m.method} ${m.path}`, passed: false, status: 403 });
+        expect(r.res.body).toEqual({ error: `Readonly API key lacks the '${want}' scope`, missingScope: want, keyScopes: [RETIRED] });
+      }
+    }
+  });
+
+  test('a stored column naming the retired scope beside a live one: exactly the live one passes', async () => {
+    for (const m of mounts) {
+      const r = await throughGate(m, ['scratch', RETIRED]);
+      expect({ at: `${m.method} ${m.path}`, passed: r.passed })
+        .toEqual({ at: `${m.method} ${m.path}`, passed: SURFACE_BY_FILE[m.file] === 'scratch' });
+    }
+  });
+
+  test('a child key whose column names the retired scope drops it', () => {
+    expect(caps.childEffectiveScopes(['sql.ro', RETIRED], null)).toEqual(['sql.ro']);
+    expect(caps.childEffectiveScopes([RETIRED], [RETIRED, 'sql.ro'])).toEqual([]);
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -341,6 +379,13 @@ describe('readonly key mints', () => {
       expect(r.status).toBe(400);
       expect(insert(r.db)).toBeUndefined();
     }
+  });
+
+  test('the retired temp.ringcentral (2026-10-28): a mint naming it is a 400, nothing inserted', async () => {
+    const r = await call('POST', '/api/readonly-keys', { label: 'x', scopes: ['sql.ro', 'temp.ringcentral'] });
+    expect(r.status).toBe(400);
+    expect(r.body.error).toMatch(/unknown scope.*temp\.ringcentral/);
+    expect(insert(r.db)).toBeUndefined();
   });
 
   test('ipAllowlist is retired (D1): a mint still sending it is a 400, nothing inserted', async () => {

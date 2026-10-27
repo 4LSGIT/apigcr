@@ -116,6 +116,83 @@ recording, voicemail and file in Comms → Phone:
 - Purging needs an account password. Every user has one today; an account
   without one cannot purge until a password is set.
 
+### The switch and the alerts (SU)
+
+**The switch** is the app setting `comms_archive_enabled` (Config → System,
+*Comms archive & AI*): `1` copies new recordings, voicemails and files into the
+archive; anything else stops copying. Turning it off is always safe — the
+90-day alarm below and the nightly missing-file check keep running while it
+is off. Transcription and summaries have their own switches
+([Comms Transcription](09-comms-transcription.md)).
+
+The archive's alerts appear in **Admin → System Alerts** like any other. Most
+raise at most one row a day (per line or provider where the name carries one).
+A warning never emails on its own; one that repeats becomes an error, which does.
+
+| Alert | What it means — what to do |
+|---|---|
+| `comms_archive_cliff` | A RingCentral call recording 75+ days old is still not archived; RingCentral deletes it at 90. Look at the other archive alerts for why, and tell IT the same day. (`comms_archive_cliff_guard_error`: that check itself failed — tell IT.) |
+| `comms_archive_failed` | Items gave up: a RingCentral call recording passed 90 days, or any other item (a Quo recording, a voicemail, a file) kept failing or waiting for 30 days. Nothing more happens to them by itself. |
+| `comms_archive_gone` | The phone system no longer had the file when the archive asked; it cannot be recovered. Tell IT if the count is surprising. |
+| `comms_archive_stuck` | Items still failing after 8 tries. They keep retrying every 6 hours; tell IT. |
+| `comms_archive_no_auth:<n>` | The phone system's connection (credential `n`) refused the archive. Re-connect it in Connections; nothing was charged. |
+| `comms_archive_storage` | The archive bucket could not be reached or written. Items wait; tell IT. |
+| `comms_archive_adapter:<provider>` | A code or deploy problem: the archive cannot reach that phone system's fetch functions at all, so nothing from it is being archived. Tell IT at once — RingCentral recordings are lost after 90 days. |
+| `comms_archive_no_line:<line>` | Calls on a number that is not set up in Connections → Phone Lines. Add the line; until then those calls wait. |
+| `comms_archive_quo_forbidden:<line>` | Quo refuses that line's recordings, voicemails or files. They wait, re-checked once a day, and turn `failed` after 30 days. See *When Quo refuses a line* below. |
+| `comms_archive_quo_not_yet` | A Quo recording is still "not ready" a day after the call. Usually clears by itself. |
+| `comms_archive_shape_drift`, `comms_archive_session_mismatch`, `comms_archive_quo_status_drift`, `comms_archive_rc_vm_listing_drift` | A phone system answered in a shape the archive does not expect. The items wait, nothing is charged; tell IT. |
+| `comms_archive_rc_vm_listing_stale` | No complete check for new RingCentral voicemails in 6 hours. Tell IT. |
+| `comms_archive_quo_vm_sanity` | Calls have been checked but no Quo voicemail has ever been archived. Tell IT. |
+| `comms_archive_missing` | The nightly check found an archived file missing that nobody purged. Tell IT the same day — a deleted file can be restored for 30 days. |
+| `comms_archive_verify_incomplete` | The nightly missing-file check could not finish. It catches up on the next nights. |
+| `comms_archive_anomaly` | Something a person must look at; the message says what. |
+
+### When Quo refuses a line
+
+Quo can refuse the archive one line's items while every other line works
+(alert `comms_archive_quo_forbidden:<line>`; **Why they wait** in the health
+section below shows it). Those items wait, re-checked once a day, and turn
+`failed` 30 days after they were first found. A `failed` item is never tried
+again on its own, so once Quo confirms the line is fixed, re-arm its items from
+the SU DB console. Line 248-965-5355 (phone line id 3) has been refused since
+2026-10-14, so its items turn `failed` from about 2026-11-13; for another line,
+change `channel_id`.
+
+First check what will be re-armed, and read the counts:
+
+```sql
+SELECT state, kind, COUNT(*) FROM comms_media
+ WHERE channel_id = 3 AND provider = 'quo' AND state IN ('pending', 'failed')
+   AND last_error LIKE 'quo 403%'
+ GROUP BY state, kind;
+```
+
+Then re-arm them; the media sweep tries them again on its next runs:
+
+```sql
+UPDATE comms_media
+   SET state = 'pending', attempts = 0, next_attempt_at = NULL
+ WHERE channel_id = 3 AND provider = 'quo' AND state IN ('pending', 'failed')
+   AND last_error LIKE 'quo 403%';
+```
+
+- **Re-arm only after Quo has fixed the line.** Once an item is 30 days past
+  when it was first found (from about 2026-11-13 for these), a re-armed item
+  gets ONE try. Anything that would otherwise make it wait — refused again
+  (403), an answer in an unexpected shape, a recording still processing, a
+  voicemail still in progress — turns it `failed` on that try, not after 30
+  more days.
+- **A voicemail Quo answers "not found" (404) becomes `none` at once**: its
+  7-day hold has long expired.
+- **A second re-arm does not reach those.** After that try, an item whose
+  last error no longer starts `quo 403`, or whose state is `none`, is outside
+  this `WHERE`; only one refused again (403) is caught by it. Anything else
+  needs IT.
+- Never widen the `WHERE`. It must not reach `archived`, `none` or `gone`
+  items, other lines or RingCentral, and above all never `purged` items — a
+  re-armed purged item would be fetched back into the archive.
+
 ### Health — System Alerts → Comms archive (SU)
 
 **Admin → System Alerts (SU)** has a collapsed **Comms archive** section. Open

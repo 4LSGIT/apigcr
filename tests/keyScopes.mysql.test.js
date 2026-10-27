@@ -132,7 +132,7 @@ d('key scopes on real MySQL', () => {
   });
 
   test('a legacy (NULL) session key passes every surface, scopes null', async () => {
-    for (const s of ['sql.ro', 'scratch', 'alert', 'temp.ringcentral']) {
+    for (const s of ['sql.ro', 'scratch', 'alert', 'temp.zohosign']) {
       const r = await gate('ycro_legacy', s);
       expect(r.passed).toBe(true);
       expect(r.req.auth.scopes).toBeNull();

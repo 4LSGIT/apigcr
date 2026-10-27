@@ -142,6 +142,11 @@ It is AI-generated, so check the recording before relying on it.
     saying two real words, or a call-back number, is enough to get a summary);
   - calls Claude declines. That raises a `comms_summarize_refused` warning, and
     the transcript is unaffected.
+
+  A call skipped for one of these reasons shows **no summary** — even one it
+  had before (a greeting-only call whose summary was redone in bulk, for
+  example). A person's **Re-summarise** is not held to the length and
+  no-speech rules.
 - **Every item is checked against the transcript.** A promised document, a date
   or an amount is kept only if its quoted words are really in the transcript.
   Anything else is dropped. The "jump to" time for an item comes from the
@@ -198,7 +203,8 @@ await apiSend('/api/comms-archive/redo', 'POST', { mode: 'transcript', select: {
 - **While a transcript is redone it is not shown** — Listen still works, and the
   new transcript appears in one step when it is ready (normally minutes). Redo
   items go ahead of new calls in the queue. A summary redo keeps the old summary
-  visible until the new one replaces it.
+  visible until the new one replaces it — unless the new run skips the call
+  (see *What is never summarised*): then it shows no summary.
 - **A redo that fails keeps the old transcript.** If AssemblyAI keeps failing on
   it, or it is skipped (restricted meanwhile, on the do-not-transcribe list,
   too short or too long), the old transcript comes back and its summary is made

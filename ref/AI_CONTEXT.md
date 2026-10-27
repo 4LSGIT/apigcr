@@ -1603,7 +1603,7 @@ SU-managed, max TTL 3 days, shown once. Every call logs to `readonly_query_log` 
 **Scopes (access-control B1):** a key reaches only the surfaces in its
 `readonly_api_keys.scopes` — `sql.ro`, `sql.ro.sensitive`, `scratch`,
 `alert`, `keys.mint`, `tasks.own`, `temp.clio`, `temp.dropbox`,
-`temp.ringcentral`, `temp.zohosign` (vocabulary `lib/capabilities.js` KEY_SCOPES; each route mounts
+`temp.zohosign` (vocabulary `lib/capabilities.js` KEY_SCOPES; each route mounts
 `requireKeyScope`). NULL (every key minted before B1) = all of them EXCEPT an
 `explicit` scope — today `sql.ro.sensitive`, `keys.mint` and `tasks.own`,
 which a legacy key never holds. A `keys.mint` (manager) key mints its own
@@ -2998,3 +2998,111 @@ continues to contain IDs only.
 `routes/api.assistant.js`. Operator docs: manual 05/17. Tests:
 `assistantService`, `assistantAttachmentService`, `assistantTicket`, plus
 `assistantSidebar`, `featureRegistry` and manual coverage.
+
+## ═══════════════════════════════════════════════════════════════
+## 34. COMMS ARCHIVE — RECORDINGS, TRANSCRIPTS, SUMMARIES (comms archive arc, Oct 2026)
+## ═══════════════════════════════════════════════════════════════
+
+**What.** A private, long-retention copy of every call recording, voicemail
+and MMS file the phone providers hold (RingCentral, Quo), in the GCS bucket
+`comms_archive_bucket` (`services/commsArchiveService.js`: put / stat / V4
+signed URL, 5 min for viewers), plus the derived text: AssemblyAI transcripts
+and Claude summaries. Contract and every state machine: `ref/COMMS_ARCHIVE_DESIGN.md`
+(§5 schema, §6 pipeline, §7 access, §8 restrict / purge / redo, §10 alarms).
+Operators: manual 08/09 (transcription, summaries, redo) and 08/10 (where it
+shows, grants, restrict / purge, switch, alerts, health, the Quo re-arm).
+Infra: `ref/INFRA_GCP.md` (bucket, IAM, signing).
+
+**Tables** (each table's COMMENT in `ref/database.sql` is the column truth):
+`comms_media` — the registry, one row per file (`pending | archived | none |
+gone | failed | purged`), never deleted; `channel_id` (the phone line) is the
+grant anchor. `comms_transcripts` — transcript + summary per recording /
+voicemail, never broader than its media row (readers JOIN it). `comms_stt_jobs`
+— every STT job, write-ahead: the spend ledger and the owed-vendor-delete list
+(ids and money only). `comms_summaries` — the summary work queue (no content;
+`skipped` + `skip_reason`). `comms_redo` — transcripts being redone.
+`comms_summary_guides` — a call's re-summarise model + staff note.
+`comms_no_transcribe` — numbers never sent to STT. `comms_eval_items` /
+`comms_eval_reviews` — lane D's evaluation sample (ids and scores only).
+
+**Jobs** — recurring `internal_function` rows, every 2 min unless noted,
+all CTA-denied (`services/ctaService.js`), each safe to run by hand — the
+four sweeps hold a tick lock (a held one returns `skipped:'locked'`); verify
+takes none (idempotent, deduped alerts): `comms_archive_sweep` (RC call
+recordings + the cliff guard), `comms_archive_media_sweep` (Quo recordings,
+RC + Quo voicemails and MMS), `comms_archive_verify` (nightly 07:15 UTC,
+delete detection over 1/7 of the objects), `comms_transcribe_sweep`,
+`comms_summarize_sweep`. Kill switches, read uncached and fail-closed:
+`comms_archive_enabled` (the cliff guard and verify still run while it is
+off), `comms_transcribe_mode` / `comms_summarize_mode` (`off | sample | on`).
+
+**Invariants.**
+- **Providers only through the registry.** A sweep reaches a provider's fetch
+  functions via `commsArchiveCommon.archiveAdapter(provider, fns)` →
+  `phoneService.getAdapter`, which requires `capabilities.archiveFetch` and
+  every function the sweep promises; never `require('./adapters/phone/<p>')`.
+  A miss is the `comms_archive_adapter:<provider>` error from the first tick,
+  never a quiet skip — RC hard-deletes recordings 90 days after the call
+  (`hasCliff`: RC `call_recording` only; the guard pages from day 75).
+- **The tick lock.** `commsArchiveCommon.acquireLock` holds `GET_LOCK` on a
+  dedicated connection, named per database. Nothing is awaited between
+  `acquireLock` and the `try` whose `finally` releases it — a throw there
+  leaked the lock and stalled every later tick (2026-10-14).
+- **Who reads.** `commsArchiveAdmin.canReadMedia`: staff JWT only; the media
+  row's phone line through `mailboxService.getAccess` (re-derived from the
+  event's own line — a mismatch refuses everyone); a line-less row → SU or a
+  read-bypass role; `restricted` → archive admins only. **Archive admin** =
+  `isArchiveAdmin`: SU, or listed in `app_settings comms_archive_admins` (SU
+  console, interim — plans.md swaps it for a capability), and still
+  authorized. Restrict / unrestrict / purge, the do-not-transcribe list and
+  the archive-admin flag use it; redo and health are `superuserOnlyFor`.
+  Every content view, search hit and served summary is audited
+  (`admin_audit_log`, tool `comms_archive`, ids only).
+- **Purge** runs under the row's sweep lock, `PURGE_PARTS` in order —
+  `transcripts` FIRST, as the fence every sweep write is conditional on —
+  then the tombstone; a failed step is a 502 with no tombstone. It clears
+  the bucket objects, the transcript and summary text, and the content of
+  every `ai_calls` row of `consumer_ref` `comms_transcript:<id>`; cost and
+  ids stay. What it cannot reach (Cloud SQL automated backups + PITR, ~7 days; the vendors'
+  TTLs; the providers' originals): design §8.
+- **A skipped summary is never served.** `commsArchiveView.hideSkippedSummaries`
+  (and search's page re-check) hides `summary_text` whose `comms_summaries`
+  row is `skipped` — a summary-mode redo and the sweep's skip both leave the
+  old text on the row. Only `skipped` hides; a pending / calling redo keeps
+  showing the previous summary.
+- **Money.** One monthly cap, `comms_ai_monthly_cap_cents`, summed in ONE
+  place: `commsTranscribeSweep.monthToDateCents` (the STT ledger + this
+  month's `comms_transcript:%` `ai_calls` + `calling` estimates written ahead
+  of each call). Every path charges; a call lost in flight is charged its
+  worst-case estimate.
+
+**Landmines.**
+- `comms_transcripts` carries a FULLTEXT index (`full_text`, `summary_text`),
+  so an ADD COLUMN can be neither INSTANT nor INPLACE — only a table-locking
+  COPY. New per-transcript state goes in a side table: why `comms_redo`
+  exists (and `comms_summary_guides`, which must survive the redo deleting
+  `comms_summaries` rows).
+- `ai_calls` holds NO content for this consumer: the summarize sweep calls
+  `aiService` with `logContent:false` (tokens, cost, status only). Do not
+  look there for summaries, and keep it that way.
+- Sensitive tier (`lib/sqlGuard` SENSITIVE_TABLES, §22): `comms_transcripts`,
+  `comms_no_transcribe`, `comms_summary_guides` and `ai_calls` need
+  `sql.ro.sensitive`; `comms_media`, `comms_stt_jobs`, `comms_summaries` and
+  the eval tables are ordinary.
+- `job_results` is load-bearing: the media sweep reads its own last 240
+  `comms_archive_media_sweep` rows (~8 h) to know when it last completed the
+  RC voicemail listing (`rc_vm_listing`). Any pruning of `job_results` keeps
+  at least 8 h of that job's rows, or the stale-listing alarm misfires.
+- A `failed` row is never retried or rediscovered (discovery tests existence,
+  whatever the state). Re-arming is a hand UPDATE scoped to the cause — the
+  Quo 403 recipe in manual 08/10 is the worked example; never re-arm a
+  `purged` row (it would fetch the content back).
+
+**Pointers.** Services: `commsArchive{Common,Service,Sweep,MediaSweep,Verify,Admin,View,Search,Redo,Resummarize}.js`,
+`commsTranscribe{Sweep,Vendor,Audio,Service}.js`, `commsSummarizeSweep.js`,
+`commsSummaryGround.js`, `commsNoTranscribe.js`, `commsEvalService.js`;
+`lib/aiPrompts/commsSummary.js`; `lib/internal_functions/comms{Archive,Transcribe,Summarize}.js`.
+Routes: `routes/api.commsArchive.js`, `api.commsEval.js`; the archive rides
+`api.phoneComms.js` / `api.entityComms.js` via `commsArchiveView.decorate`
+(§20). Health: `GET /api/comms-archive/health` (System Alerts → Comms archive).
+Deferred work: `ref/plans.md`, the comms phone-tab list.

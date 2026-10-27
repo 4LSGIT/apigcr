@@ -11,7 +11,8 @@
  *     (junk and over-cap are 400s); sensitive is 400 over 24h either way.
  *     childExpiresAt: ≤ 24h, ≤ the parent, whole seconds, a lapsed parent 400.
  *   - Refusals decided before the DB: PATCH with no / NULL scopes, an unknown
- *     scope; machine setScopes / setExpiry the same.
+ *     scope (the retired temp.ringcentral included); machine setScopes /
+ *     setExpiry the same.
  *   - Route ordering: /children/:id/renew vs the SU /:id/renew.
  *   - Machine edits invalidate this instance's lookup cache.
  *   - Both panes (jsdom, their own scripts): edit / renew offered only on keys
@@ -185,6 +186,19 @@ describe('session PATCH / renew — refusals before the DB, 409 on revoked', () 
       }
     });
     expect(editReads(db)).toEqual([]);
+    expect(writes(db)).toEqual([]);
+  });
+
+  test('the retired temp.ringcentral (2026-10-28): a PATCH naming it is a 400 naming the scope, nothing written', async () => {
+    // The stored column still naming it is the realistic case: a full-replacement PATCH that echoes it back.
+    const db = scriptedDb({ id: 7, scopes: ['sql.ro', 'temp.ringcentral'], expires_at: new Date(Date.now() + 3600e3), revoked_at: null, parent_key_id: null });
+    await serve(keysRouter, db, async (base) => {
+      for (const scopes of [['sql.ro', 'temp.ringcentral'], ['temp.ringcentral']]) {
+        const r = await hit(base, 'PATCH', '/api/readonly-keys/7', { su: true, body: { scopes } });
+        expect([JSON.stringify(scopes), r.status]).toEqual([JSON.stringify(scopes), 400]);
+        expect(r.body.error).toMatch(/unknown scope.*temp\.ringcentral/);
+      }
+    });
     expect(writes(db)).toEqual([]);
   });
 

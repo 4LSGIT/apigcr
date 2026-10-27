@@ -38,10 +38,6 @@
    "desc": "/api/temp/dropbox/* — credentialed Dropbox proxy"
   },
   {
-   "name": "temp.ringcentral",
-   "desc": "/api/temp/ringcentral/* — credentialed RingCentral proxy"
-  },
-  {
    "name": "temp.zohosign",
    "desc": "/api/temp/zohosign/* — credentialed Zoho Sign proxy"
   }

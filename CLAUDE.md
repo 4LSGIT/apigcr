@@ -193,6 +193,16 @@ Gates beyond Commands & gates below, every model:
   and required for a service's SQL predicates and the row types it reads
   (mysql2 returns DATE as a `Date`): mocked queries shipped `user_auth = 1`
   vs `'authorized'` and a Date-vs-string window compare green (Oct 2026).
+  A kill is jest's EXIT CODE, never a grepped tail: a `tail -3` missed
+  `Tests: N failed` and reported 9 false survivors (2026-10-25), and a harness
+  exit (127 — macOS has no `timeout` — or 124) is not a kill either.
+  Gated real-engine twins (`*.mysql.test.js`) pointed at the same
+  `YC_TEST_MYSQL_URL` share its `*_test` DB: a twin builds every table it
+  touches, and drops in its before-hook any table a SIBLING creates — ids
+  restart on a rebuild and collide with the sibling's leftover keyed rows
+  (`commsSummarize.audit` vs `commsSummarize`, 2026-10-25). Prove
+  order-independence on a fresh `_test` DB (`--default-time-zone=+00:00`,
+  prod sql_mode) with a forced testSequencer over every order.
 - Retiring a VALUE (an enum string, a magic constant): inventory by the
   COLUMN/claim name, never the literal — comparison idioms
   (indexOf('SU'), startsWith) don't contain the literal. Two frontend SU
