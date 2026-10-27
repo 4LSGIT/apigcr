@@ -44,6 +44,10 @@ are one row with an occurrence count rather than a hundred rows.
 - **Email** uses plain SMTP and must **not** depend on the Connections/OAuth
   system.
 - **SMS fallback** rides RingCentral, which *does* use Connections.
+  When the digest email fails, the sweep texts "alert email delivery
+  failed" **at most once per hour** (the sweep itself retries every 15
+  minutes; the pending alerts stay queued and email as soon as the relay
+  is back). Critical pages are not held by that hour.
 
 So an OAuth outage can still page you by email, and an SMTP outage can still
 page you by SMS. If both are quiet, suspect something broader than either.

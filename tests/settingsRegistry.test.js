@@ -39,6 +39,7 @@ describe('classification snapshot', () => {
     "alert_from_email": "firm firm routing ui email",
     "alert_last_sweep_at": "state system state console date",
     "alert_recipients": "firm firm routing ui csv",
+    "alert_sms_fallback_last_at": "state system state console date",
     "app_url": "system system platform console url",
     "assistant_ai_monthly_cap_cents": "firm system integrations console number",
     "billing_tasks_to": "firm firm routing ui user",

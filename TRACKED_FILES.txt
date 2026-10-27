@@ -1107,6 +1107,7 @@ tests/aiService.attachments.test.js
 tests/aiService.wai.test.js
 tests/aimatch.service.test.js
 tests/alertingDigestCta.test.js
+tests/alertingSmsCooldown.test.js
 tests/alertingStartLatency.test.js
 tests/alertingStuckEnrollments.test.js
 tests/apiAlertIt.routes.test.js
