@@ -13,6 +13,14 @@ const taskService = require('../services/taskService');
 const eventService = require('../services/eventService');
 const apptService = require('../services/apptService');
 const calendarTypeService = require('../services/calendarTypeService');
+const { Settings: LuxonSettings } = require('luxon');
+
+// The action fixtures pin calendar dates (an event on 2026-10-27, a reschedule
+// to 2026-10-28) that the normalizers check against nowLocal(), so Luxon's
+// clock is frozen at the week they were written.
+const realLuxonNow = LuxonSettings.now;
+beforeAll(() => { LuxonSettings.now = () => Date.parse('2026-10-21T16:00:00.000Z'); });
+afterAll(() => { LuxonSettings.now = realLuxonNow; });
 
 // A db for paths that only need the firm spend-cap reads (no settings row →
 // the code default; month-to-date 0¢).
