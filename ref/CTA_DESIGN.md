@@ -178,8 +178,13 @@ persisting.
    set `controlFlow` on it; that routes it through controlTarget
    normalization and the runaway-loop guard), `cta_expiry_sweep`,
    `decision_timeout_cleanup`, `set_test_var` (internal plumbing / dev-only),
-   and `create_cta` (needs a live `_execution_id`; links must not mint
-   links).
+   `create_cta` (needs a live `_execution_id`; links must not mint
+   links), and the provider-budget sweepers — `comms_archive_sweep`,
+   `comms_archive_media_sweep`, `comms_archive_verify`,
+   `phone_outbound_sync`, `comms_transcribe_sweep`,
+   `comms_summarize_sweep` (they spend shared provider/STT/AI budgets and
+   write the private archive or logs; no public link may start them — a
+   deliberate divergence from the other, eligible, sweepers).
 3. **Runtime guard:** the plan runner **fails any step whose result carries
    `delayed_until` or `next_step`** — filter completeness is not load-bearing
    against future flagless timing functions.

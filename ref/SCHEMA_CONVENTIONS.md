@@ -49,6 +49,19 @@ to reach 26 is not a trade. One collation beats the best collation.
 test will tell you before the join does. Normalization migration:
 `ref/migrations/2026-08-17_collation_normalize.sql`.
 
+**The one exception: opaque case-sensitive tokens are `utf8mb4_bin`, on
+purpose.** A column holding a value whose case is meaningful and which is
+never a join key to the core tables — a Dropbox id, a bearer token from
+`lib/token`, an idempotency key, a provider event id — is declared
+column-level `CHARACTER SET utf8mb4 COLLATE utf8mb4_bin`; the table itself
+stays `general_ci`. Under `general_ci` two values differing only in case are
+equal, so ids merge silently (3,000+ Dropbox files shared rows before anyone
+saw an error) and a mixed-case token alphabet loses the entropy it appears to
+have. `tests/schemaCollationBin.test.js` pins the known columns
+(`BIN_COLUMNS`); a migration adding one says why in the column COMMENT and,
+once it has run and `npm run db:ref` has regenerated the dump, adds the column
+to that list. Never "normalize" one of these to `general_ci`.
+
 ## `sql_mode` has no `STRICT_TRANS_TABLES`
 
 Over-length writes truncate silently and implicit NOT-NULL defaults are

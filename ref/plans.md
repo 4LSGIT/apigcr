@@ -353,8 +353,11 @@ amendments, which bind every slice that touches hosts:
 ## From the access-control arc (2026-10-14) — deferred
 
 - **jwt_api_audit_log retention** (~90 days): 134K rows / ~126MB since
-  April, never pruned. Shapes-only since SEC-2, so this is size, not
-  secrecy.
+  April, never pruned. Bodies and query are shapes-only since SEC-2, but
+  `headers` still carries `x-su-elevation` (logJwtApiAttempt strips
+  `authorization`/`x-api-key`/`cookie` only), so every stepped-up SU request
+  since 2026-08-16 stores its elevation token — stop writing it, then scrub
+  the column; retention is secrecy as well as size until then.
 - **schemaDump views**: lib/schemaDump.js dumps BASE TABLEs only; `ai_spend`
   (the schema's first view) never reaches ref/database.sql and db:ref:check
   cannot see it drift. Its migration record is its definition of record
@@ -387,7 +390,8 @@ amendments, which bind every slice that touches hosts:
   fallback and read firmData.currentUser.roles only. (Graduated from
   docs-debt 2026-10-14.)
 - **Old referer header rows in jwt_api_audit_log**: SEC-2 shaped bodies and
-  query_params; HEADERS were already write-redacted (SEC-1) but rows older
+  query_params; SEC-1 write-redacts `authorization`/`x-api-key`/`cookie` and
+  referer credentials (not `x-su-elevation` — entry above), but rows older
   than 2026-10-12 may still carry credential-bearing referers. The table is
   sensitive-tier-gated now, so exposure is to diagnostic keys only; a
   one-off header scrub is optional hygiene.
@@ -911,8 +915,7 @@ COMMENTs.)
   Casey's preview applies the derivation (`ingestRulePreviewService.
   productionEnvelope`); the route adapters do not, to keep the golden. Fix: use
   `productionEnvelope` in `testMatch` / `testTransform` too, and refresh the
-  golden. The `emailIngestSampleService` header still says `body` is "a derived
-  field the production matcher never sees" — false since the catalog-parity fix.
+  golden.
 - **No route or screen reads the ingest rule change log** (A20 slice 1,
   2026-10-27). `{email,phone}_ingest_rule_changes` is written on every real
   rule / action change; Ask Casey's `automation.definition` reads the latest
@@ -1517,9 +1520,10 @@ role-convention item were confirmed done and dropped).
 
 - **Login rate limit 100 → 10** (`routes/auth.login.js` — comment says "change
   to 10 in production"; still 100).
-- **Audit-log hygiene:** one-time cleanup of pre-redaction `jwt_api_audit_log`
-  rows (contain Bearer tokens) + 30-day retention cron for `jwt_api_audit_log`
-  and `query_log`.
+- **Audit-log hygiene:** 30-day retention cron for `jwt_api_audit_log` and
+  `query_log`. (No stored row carries a Bearer token — 0 match `%Bearer %`,
+  2026-10-25; the stored `x-su-elevation` tokens are the access-arc entry
+  above.)
 - **Sequence templates:** audit `sequence_templates`/`sequence_steps` for
   duplicate `:placeholders` (resolver now throws on DB errors — behavior change).
 - **newAppt Swal wiring:** `does_appts` filter + staff dropdown in the appt

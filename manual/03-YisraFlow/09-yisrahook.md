@@ -43,16 +43,18 @@ POST /hooks/:slug
 
 Public endpoint, no `jwtOrApiKey` middleware. Auth is per-hook (configured on the hook row). Lives behind the `rawBody` middleware in `server.js` so HMAC validation can see the unmodified body.
 
-**Response shapes:**
+**Response shapes** (what the sender sees):
 
 ```json
-{ "status": "delivered", "executionId": 1234 }     // all active targets succeeded
-{ "status": "partial",   "executionId": 1234 }     // some succeeded, some queued for retry
-{ "status": "failed",    "executionId": 1234 }     // all active targets failed
-{ "status": "filtered",  "executionId": 1234 }     // event matched no filter conditions
-{ "status": "captured",  "execution_id": 1234 }    // capture mode hit (note snake_case)
-{ "status": "not_found" }                          // no hook with that slug, or inactive
+200 { "status": "received", "slug": "my-hook" }          // every normal path, incl. a duplicate delivery and an unknown slug routed to _catchall
+200 { "status": "captured", "execution_id": 1234 }       // capture mode, this event was the capture (note snake_case)
+200 (empty body, Validation-Token header echoed)          // RingCentral subscription handshake
+401 { "status": "error", "message": "…" }                // per-hook auth failed (no execution row)
+404 { "status": "error", "message": "Hook not found" }   // unknown slug and no _catchall hook
+503 { "status": "error", "message": "…" } + Retry-After: 60   // maintenance, event could not be spooled
 ```
+
+The outcome of the run — `delivered` / `partial` / `failed` / `filtered` / `captured` / `not_found`, with `executionId` — is `executeHook`'s **result**, not the HTTP response: Live Test and other in-process callers see it; a sender never does. Read it on the execution row in the Logs tab.
 
 The receiver answers 200 **before anything runs** — see *Ack first, work after* below — so a dispatch error can never reach the sender; it should retry only on a non-200, which means our auth rejection or the slug not existing. One exception answers `503` + `Retry-After: 60`: maintenance mode when an event cannot be stored — see [During maintenance](#during-maintenance-write-freeze) below.
 

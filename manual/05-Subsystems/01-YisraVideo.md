@@ -5,7 +5,7 @@ YisraVideo is the firm's home-grown video sharing system. It replaces our Dubb s
 ## What you can do with it
 
 - **Upload videos** — MP4 video, optional poster image, optional GIF preview. Each video gets a public landing page with a player, action buttons, and a row of related videos.
-- **Share through any channel** — copy the link straight, send via the campaign manager, drop into a one-off email through the contact's Communication tab, or paste into an external email/text. The link works the same everywhere.
+- **Share through any channel** — copy the link straight, send via the campaign manager, drop into a one-off email through the composer on a contact's or case's Communications tab, or paste into an external email/text. The link works the same everywhere.
 - **Track engagement** — page views, plays, completion percentage, and clicks on each action button — broken down by contact when available.
 - **Action buttons on videos** — each video can have a row of buttons (e.g. "Book My 341 Prep Call", "Upload Documents") that send the viewer wherever you want, with the contact's identity carried through.
 
@@ -62,7 +62,7 @@ There are three buttons on each video in the list:
 
 For high-frequency sending, use the **Insert Video** button found in:
 
-- The **Communication tab** on a contact (SMS panel and Email panel)
+- The composer behind **Send / log…** on a contact's or case's **Communications** tab (SMS panel and Email panel)
 - The **Sending Form** on a case (Other section, both SMS and Email modes)
 - The **Compose** tab in the Campaign Manager (works for both SMS and email campaigns)
 
@@ -72,7 +72,7 @@ Click Insert Video, search and select the video, then choose the format:
 - **SMS with non-RingCentral sender** — inserts the URL as plain text at the cursor.
 - **SMS with RingCentral sender (MMS-capable)** — three options: plain SMS, MMS with poster, MMS with GIF. The MMS options write the URL to the SMS body AND attach the image to the message in one click.
 
-Insertion in single-contact contexts (Communication, Sending Form) substitutes the real contact ID into the URL right away — what you see in the editor is what you'll send. In the Campaign Manager, the URL contains a placeholder that gets filled in per recipient at send time.
+Insertion in single-contact contexts (the Communications composer, Sending Form) substitutes the real contact ID into the URL right away — what you see in the editor is what you'll send. In the Campaign Manager, the URL contains a placeholder that gets filled in per recipient at send time.
 
 ---
 

@@ -21,19 +21,19 @@
  *
  * Pipeline (per inbound POST):
  *   authenticate(apiKey) → ingestEmail(source, envelope, remoteIp)
- *     ├── resolve message_id (headers.message_id → envelope.exim_message_id)
  *     ├── validate required fields
+ *     ├── resolve message_id (headers.message_id → envelope.exim_message_id)
  *     ├── pre-check (source, message_id) for duplicate
  *     ├── INSERT IGNORE email_log (race-safe)
  *     ├── infer direction from from.email domain vs EMAIL_DOMAINS
+ *     ├── Layer 3 automation eval (Slice 2.3 — ALWAYS runs, regardless of
+ *     │   firm-to-firm, suppression OR downstream log-write outcome; matching
+ *     │   rules' transforms run and their actions fire via
+ *     │   lib/actionDispatchers + hookService). Hoisted above the log step
+ *     │   (Slice 2.3.1) and above the firm-to-firm check, so the invariant
+ *     │   ("layers are independent") holds on every branch.
  *     ├── firm-to-firm check (all addresses on a firm domain → skip log)
  *     ├── Layer 2 suppression eval (any matching rule → skip default log; Slice 2.1)
- *     ├── Layer 3 automation eval (Slice 2.3 — ALWAYS runs, regardless of
- *     │   suppression OR downstream log-write outcome; matching rules' transforms
- *     │   run and their actions fire via lib/actionDispatchers + hookService).
- *     │   Slice 2.3.1 hoisted this above the log step so the architectural
- *     │   invariant ("layers are independent") holds even on the
- *     │   INVALID_LOG_LINK_ID error branch.
  *     └── conditional logService.createLogEntry (skipped iff suppressed; failures
  *         on INVALID_LOG_LINK_ID become 'error' status but still carry Layer 3
  *         outcomes in executions.metadata).

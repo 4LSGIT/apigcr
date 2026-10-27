@@ -279,9 +279,15 @@ function _normSince(since) {
  *                              (production truth); on 'logged' rows it is the
  *                              catalog projection with all 12 fields real
  *   fidelity 'reconstructed' → clean-column rebuild: the 4 raw-only fields are
- *                              absent, `to` is a flat string (wire: array of
- *                              {email,name}), and `body` is a derived field
- *                              the production matcher never sees
+ *                              absent and `to` is a flat string (wire: array of
+ *                              {email,name}). `body` here is email_log.body =
+ *                              text || html — the SAME derivation evaluateRules
+ *                              / evaluateSuppressions apply before matching, so
+ *                              production does see it. The divergence runs the
+ *                              other way: a 'full' wire envelope has no `body`,
+ *                              and the native test-match / test-transform
+ *                              evaluate it without that derivation (ref/plans.md,
+ *                              A20 follow-ups)
  *   (Email reconstruction never SKIPS a row — contrast phone's
  *   unparseable_skipped — so there is no skip count here.)
  */
@@ -325,9 +331,10 @@ async function fetchSyntheticEnvelopes(db, { limit, since, until, scope = 'logge
         // headers.all, auth, …). Use it verbatim so test-match and
         // test-transform see production truth; the catalog-shaped rebuild
         // both OMITS wire fields (to.0.email / text / html → false
-        // negatives, found live 2026-07-15 on rule 11) and FABRICATES
-        // fields the matcher never sees (flat `to`, `body` — email_log.body
-        // is derived text||html for the LOG row only → false positives).
+        // negatives, found live 2026-07-15 on rule 11) and FABRICATES a
+        // field the matcher never sees (flat `to` → false positives). Its
+        // `body` is NOT fabricated: evaluateRules derives the same
+        // text||html before matching (catalog-parity fix).
         // Truncated rows (>16KB — most court mail) still get the rebuild;
         // fidelity tells the caller which one it got.
         envelope: intact || _buildEnvelope(row, null),

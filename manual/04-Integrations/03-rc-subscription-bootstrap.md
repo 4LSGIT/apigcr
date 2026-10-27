@@ -435,9 +435,10 @@ Patterns:
 #### Failure mode 3 — Renewal job marked failed
 
 ```sql
-SELECT id, status, last_error, last_run_at FROM scheduled_jobs WHERE id = 374;
+SELECT id, status, active, attempts, scheduled_time, execution_count, updated_at
+  FROM scheduled_jobs WHERE id = 374;
 
-SELECT id, job_id, status, output_data, created_at
+SELECT id, job_id, attempt, status, error_message, output_data, executed_at
   FROM job_results
  WHERE job_id = 374
  ORDER BY id DESC LIMIT 5;

@@ -1430,9 +1430,10 @@ router.put('/sequences/templates/:id/steps/:stepNumber', jwtOrApiKey, async (req
 //                         at position i+1. Numbers absent from the array keep
 //                         their current position.
 //
-// Both paths park rows in a +10000 temp range first. uk_template_step is
-// UNIQUE(template_id, step_number), so a shift whose first row lands on a
-// still-occupied slot collides; same convention as the insert-at path above.
+// Both paths park rows in a +10000 temp range first. uk_template_version_step
+// is UNIQUE(template_id, version, step_number), so a shift whose first row
+// lands on a still-occupied slot collides; same convention as the insert-at
+// path above.
 router.patch('/sequences/templates/:id/steps/reorder', jwtOrApiKey, async (req, res) => {
   const db         = req.db;
   const templateId = parseInt(req.params.id);
@@ -1472,7 +1473,7 @@ router.patch('/sequences/templates/:id/steps/reorder', jwtOrApiKey, async (req, 
         if (from === to) return { moved: null };
 
         // Vacate `from` FIRST — until it is empty the shift below would land
-        // its first row on a still-occupied slot and hit uk_template_step.
+        // its first row on a still-occupied slot and hit uk_template_version_step.
         const [parked] = await connection.query(
           `UPDATE sequence_steps SET step_number = ? WHERE template_id = ? AND version = ? AND step_number = ?`,
           [from + 10000, templateId, editVersion, from]

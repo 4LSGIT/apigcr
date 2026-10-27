@@ -275,7 +275,10 @@ Mechanics: AI_CONTEXT §22 (`v` is string-only — stringify JSON yourself).
 - `fred/<arc>_state` — the arc's working state, written for a cold reader:
   goal, current slice, decisions made, open questions, next step. **This is
   how a fresh manager self-boots on a long arc** — update at session end and
-  after every major decision, not just at arc close.
+  after every major decision, not just at arc close. A PUT is last-write-wins
+  (no version check), so a shared key has ONE owner, named in a parallel-team
+  boot prompt, or every write re-reads and merges just before it — never
+  appends to a copy read minutes ago (12 of Fred's rulings lost, 2026-10-22).
 - `docs/*` — the doc-debt queue (above) + `review_<date>` run records.
 - Session-scoped keys die with their arc (the docs review sweep flags stale
   ones); durable conclusions graduate OUT of scratch via the table above.

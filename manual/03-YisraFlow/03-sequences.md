@@ -77,7 +77,7 @@ Behind the scenes, `sms`/`email`/`task`/`internal_function` all run through `exe
 
 **Save-time validation (sms / email / task / internal_function).** Because all four run as an internal-function call, saving one (add, replace, or a partial update that changes the action type or config) is checked against that function's contract: `action_config.function_name` must name a registered function that is not workflow-only, `params` may hold only the parameters the function declares (an extra or misspelled key is refused by name), and a required parameter that is missing or blank fails the save — not the send. A partial update that changes only timing, conditions, or the error policy is not re-checked, so a step whose function was later renamed can still be edited. Other top-level `action_config` keys (`set_vars`, `_comment`) are left alone.
 
-### Six timing types
+### Seven timing types
 
 | Type | Description | Example |
 |---|---|---|
@@ -88,6 +88,7 @@ Behind the scenes, `sms`/`email`/`task`/`internal_function` all run through `exe
 | `business_days` | N business days from now | `{ "type": "business_days", "value": 2, "timeOfDay": "10:00" }` |
 | `before_appt_fixed` | N hours before `trigger_data.appt_time` | `{ "type": "before_appt_fixed", "hoursBack": 2 }` |
 | `before_appt` | Business-day-aware slot before appt | `{ "type": "before_appt", "hoursBack": 24, "timeOfDay": "10:00" }` |
+| `open_delay` | `delay` (may be 0) after the scheduling moment, rolled forward past any Shabbos / Yom Tov block; optional `jitter` (minutes), `dayWindow` `{start,end}` hours + `rollTime`, `noSunday` | `{ "type": "open_delay", "delay": { "value": 10, "unit": "minutes" }, "jitter": 5 }` |
 
 **Absolute `delay`** — the `at` field accepts:
 - `2026-05-01T14:30:00Z` — explicit UTC
@@ -96,11 +97,11 @@ Behind the scenes, `sms`/`email`/`task`/`internal_function` all run through `exe
 - `2026-05-01` — date-only, interpreted as midnight firm-local
 - `{{trigger_data.field_name}}` — placeholder resolved at fire time (only `trigger_data.X` placeholders, not real-table refs)
 
-Past times are returned as-is — the next `/process-jobs` tick fires them. If a placeholder resolves to empty, the step throws and `error_policy` decides.
+Past times are returned as-is — the next `/process-jobs` tick fires them. If a placeholder resolves to empty, the timing calculation throws while the step is being **scheduled** — before any action runs, so `error_policy` (which wraps only action execution) never sees it. The enrollment is left `active` with no pending step: stuck, alerted and recovered as described under "When something doesn't fire when you expected" above. At enrollment (step 1) the enroll call also fails with the error.
 
-**Random jitter** — every timing type accepts an optional `randomizeMinutes` field. ±N minute symmetric jitter on the computed time. Capped at 1440 (24h). Useful when you don't want a hundred no-show enrollments all firing at exactly 9:00:00 on the same morning.
+**Random jitter** — `delay`, `next_business_day`, `business_days` and `before_appt` accept an optional `randomizeMinutes` field (`open_delay` uses its own `jitter`; `immediate` and `before_appt_fixed` have none). ±N minute symmetric jitter on the computed time. Capped at 1440 (24h). Useful when you don't want a hundred no-show enrollments all firing at exactly 9:00:00 on the same morning.
 
-`next_business_day` and `before_appt` also call `calendarService` and respect Shabbos + Yom Tov — see [07-calendar-service.md](07-calendar-service.md).
+`next_business_day`, `business_days`, `before_appt` and `open_delay` also call `calendarService` and respect Shabbos + Yom Tov — see [07-calendar-service.md](07-calendar-service.md).
 
 ### The check chain — every step
 
@@ -250,9 +251,9 @@ This bypasses cascade matching entirely. `template_type` cannot also be set in t
 
 ### Duplicate-enrollment guard
 
-`_enrollWithTemplate` rejects a new enrollment if an active one already exists for the same `(contact_id, template_id, appt_id)`. The `appt_id` discriminator is what makes appt-scoped types (`pre_appt`, `iss_intake`) work correctly — two different appts for the same contact need two independent enrollments under the same template, and the guard allows that. The check uses MySQL's NULL-safe `<=>` operator, so contact-scoped types with no `appt_id` in `trigger_data` (NULL column value) still get contact-level dedup: `NULL <=> NULL` is true.
+`_enrollWithTemplate` rejects a new enrollment if an active one already exists for the same `(contact_id, template_id, appt_id, signing_request_id)`. The `appt_id` discriminator is what makes appt-scoped types (`pre_appt`, `iss_intake`) work correctly — two different appts for the same contact need two independent enrollments under the same template, and the guard allows that. The check uses MySQL's NULL-safe `<=>` operator, so contact-scoped types with no `appt_id` in `trigger_data` (NULL column value) still get contact-level dedup: `NULL <=> NULL` is true. `signing_request_id` (from `trigger_data.signing_request_id`) works the same way for e-sign reminder sequences: one client with two live signing requests holds two independent enrollments.
 
-Trying to enroll twice for the same `(contact, template, appt)` triple throws `Contact N is already enrolled in sequence "name" for appt M`. Callers should treat this as a no-op (already handled) rather than an error.
+Trying to enroll twice for the same key throws `Contact N is already enrolled in sequence "name"` (suffixed ` for appt M` or ` for signing request M`), with `err.code = 'ALREADY_ENROLLED'` and `err.enrollment_id`. In-process callers that want "already enrolled" to be a no-op key on `err.code`, never the message — a workflow's `enroll_sequence` with `skip_if_enrolled: true` does exactly that. Over HTTP the code is lost: `POST /sequences/enroll` answers **500** `{error: "Failed to enroll contact", message}` for a duplicate like any other failure, so an API caller can tell only by the message text.
 
 ### Cancellation hooks
 

@@ -91,15 +91,17 @@ POST /api/email/ingest        X-Email-Ingest-Key: <per-source key>
   ├─ dedup precheck (source, message_id) → duplicate row, STOP
   ├─ INSERT IGNORE email_log             forensic, race-safe, always
   ├─ infer direction                     from-domain ∈ firm domains ? outgoing : incoming
-  ├─ firm-to-firm check                  all addresses on a firm domain → skip the log
-  ├─ LAYER 2  suppression eval           decides the log write only
   ├─ LAYER 3  automation eval            ALWAYS runs — see below
+  ├─ firm-to-firm check                  all addresses on a firm domain → skipped_firm_to_firm row, STOP
+  ├─ LAYER 2  suppression eval           decides the log write only
   └─ LAYER 1b conditional createLogEntry skipped iff suppressed
         └─ exactly one email_ingest_executions row, every path
 ```
 
-**Layer 3 sits above the log write deliberately.** It was hoisted there so the
-independence invariant holds even on the error branch: if `createLogEntry`
+**Layer 3 sits above the log write — and above the firm-to-firm check —
+deliberately.** Firm-to-firm mail still fires automation; only layer 2 and the
+structured log are skipped, and the `skipped_firm_to_firm` row carries the
+layer-3 outcomes. The hoist also keeps the independence invariant on the error branch: if `createLogEntry`
 fails with `INVALID_LOG_LINK_ID`, the execution row goes to `error` but still
 carries the layer-3 outcomes in `metadata`. An automation must not be lost
 because a log link was wrong.
@@ -137,8 +139,9 @@ Both pipelines share one rule shape (`email_ingest_rules` / `phone_ingest_rules`
 
 Actions hang off `*_ingest_rule_actions` and use the **same four dispatchers as
 YisraHook** (`lib/actionDispatchers.js`, extracted from `hookService` so the two
-systems cannot drift): `workflow`, `sequence`, `hook`, `internal_function`,
-`http`.
+systems cannot drift): `workflow`, `sequence`, `internal_function`, `http`. A
+fifth action type, `hook`, re-enters YisraHook itself (`hookService`) rather
+than going through a dispatcher.
 
 Email match fields include `from.email`, `from.name`, `to`, `subject`, `kind`,
 `source`, `headers.message_id`, `headers.list_id`, `headers.in_reply_to`,
@@ -293,8 +296,10 @@ takes the destination from the message and refuses an opted-out one.
    fire your actions. If you *want* a replay to fire, the Apps Script test
    helper appends `-test-<ts>` to the message id specifically so dedup treats
    it as new.
-5. **Firm-to-firm mail is skipped on email but only *matchable* on phone.**
-   Don't expect a `skipped_firm_to_firm` row on the phone side.
+5. **Firm-to-firm mail skips the log on email but is only *matchable* on phone.**
+   On email, automation rules still fire on it (layer 3 runs first); only
+   suppression and the structured log are skipped. Don't expect a
+   `skipped_firm_to_firm` row on the phone side.
 5b. **A `logged` execution whose metadata says `automation.skipped:
    "backfill"` fired no rules on purpose.** The phone delivery sync's
    backfill ingests old texts with layer 3 explicitly skipped (months-old

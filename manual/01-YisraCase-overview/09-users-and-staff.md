@@ -124,7 +124,11 @@ Every log entry records `log_by` — the user ID of whoever (or whatever process
 
 User accounts are managed from the Admin tab (**Admin → Users**). For
 security, passwords are hashed with bcrypt into `password_hash` and are never
-stored or displayed in plain text. Password resets go through `reset_token` /
+displayed. A legacy plaintext `password` column is still written alongside the
+hash (on user create, admin set-password, reset and change) because a few
+legacy routes still authenticate against it; disabling a user clears both.
+Its retirement is planned (`ref/plans.md`, "Plaintext `users.password`").
+Password resets go through `reset_token` /
 `reset_expires` rather than an admin ever seeing a password.
 
 Staff members can update their own name, username, email, phone, and communication preferences from their profile page without needing admin access. Password changes go through a separate reset flow.

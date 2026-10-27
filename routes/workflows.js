@@ -372,8 +372,10 @@ async function validateStartWorkflowConfig(db, type, config) {
 // ─────────────────────────────────────────────────────────────
 // error_policy retry-ladder budget — background-CPU slice, 2026-08.
 //
-// Workflow advances run request-bound (see routes/process_jobs.js), so
-// executeStep's inter-attempt sleeps are in-request wall-clock. Reject at
+// Queued workflow advances run request-bound (see routes/process_jobs.js), so
+// executeStep's inter-attempt sleeps are in-request wall-clock (POST
+// /workflows/:id/start and /executions/:id/resume still detach their advance
+// after the 202, so there the same sleeps run CPU-throttled). Reject at
 // save time any policy whose ladder alone exceeds the shared budget
 // (RETRY_LADDER_BUDGET_SEC in lib/versionDiff.js — the publish gate applies
 // the same check, catching pre-existing drafts). Defaults mirror
@@ -1999,8 +2001,10 @@ router.post("/workflows/bulk", jwtOrApiKey, async (req, res) => {
 
 /**
  * DELETE /workflows/:id
- * Delete a workflow template and ALL its steps
- * (Executions are kept for history)
+ * Delete a workflow template and ALL its steps.
+ * Executions are NOT kept: fk_workflow_executions_workflow is ON DELETE
+ * RESTRICT, so on a workflow that has ever run the final DELETE fails and
+ * this route answers 500 (the transaction rolls the step delete back).
  */
 router.delete("/workflows/:id", jwtOrApiKey, async (req, res) => {
   const db = req.db;

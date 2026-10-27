@@ -130,7 +130,9 @@ the rest of YisraCase. Consequently:
 
 - the current user's auth and permissions—not model identity—authorize it;
 - the existing route identifies the actor and preserves ordinary audit,
-  validation, linking, notification, and error behavior;
+  linking, notification, and error behavior, and whatever validation the
+  native path has — for assignee/provider eligibility and most terminal state
+  that is none, so the normalizer's proposal-time check is the only one (P2);
 - the model cannot select a URL, HTTP method, or extra request field;
 - the card must show the exact values and material side effects before the
   user's confirming click; and
@@ -2157,13 +2159,13 @@ silently. What the inventory established, for all 26 shipped kinds:
 - **The write route is NOT a validation authority for assignee or provider
   eligibility, and mostly not for terminal state.** `taskService.createTask`
   contains no SELECT at all and never looks `to` up in `users`;
-  `apptService.createAppt` never checks `appt_with`. The governing principle
-  above says the existing route "preserves ordinary validation" — for these
-  fields that is false, and the normalizer's proposal-time check is the only
-  one. The 15-minute TTL and the no-write-from-history rule bound the exposure
-  window; they do not close it. The contact-subrecord family is the exception:
-  its `expected_updated_at` / `expected_primary_id` preconditions make the
-  route the authority, which is what P3 should generalize.
+  `apptService.createAppt` never checks `appt_with`. For these fields the
+  normalizer's proposal-time check is the only one, so a user disabled between
+  proposal and click still receives the write. The 15-minute TTL and the
+  no-write-from-history rule bound the exposure window; they do not close it.
+  The contact-subrecord family is the exception: its `expected_updated_at` /
+  `expected_primary_id` preconditions make the route the authority, which is
+  what P3 should generalize.
 
 The specific gaps are filed in `ref/plans.md` (Ask Casey arc section). Two of
 them — appointment attended/no-show and event field edits on a dead row — are
@@ -2475,8 +2477,8 @@ slice if explain-answers should link back to a specific record.
 ## Recommended execution order
 
 0. The 2026-10-21 fix package landed (`7c8f225`); the P1 browser extraction
-   landed after it. Next are minimal P4 and P5 (course correction 2), both
-   before A6 — P5 pending the ruling recorded in its section.
+   landed after it, then minimal P4 (`3eb7a99`) and the P5 ledger (`49f2475`),
+   both ahead of A6 per course correction 2.
 1. Close P0 and continue P2, P7, and P8 alongside the shipped A4/A4.1/A5 contracts.
 2. Implement A6–A8 with P3 in place; extract P1 only from demonstrated common
    behavior, not as a speculative generic executor.

@@ -14,13 +14,13 @@ Log entries are created automatically for:
 - Status changes on cases
 - SMS messages sent through the system (inbound and outbound)
 - Emails sent through the system (inbound and outbound)
-- Phone calls logged through the Communication tab
+- Phone calls logged through the Communications tab composer
 - Task events (created, completed, deleted, reopened, transferred)
 - Case creation
 - Contact field updates *(written directly by a database trigger)*
 - Form submissions
 
-Manual log entries can also be written for any interaction worth recording — the "Log Without Sending" and "Log Call" options on a contact's Communication tab are the usual entry point.
+Manual log entries can also be written for any interaction worth recording — the "Log Without Sending" and "Log Call" options in the composer behind **Send / log…** on a contact's or case's Communications tab are the usual entry point. From a case, the composer asks which of the case's contacts the entry is for, files it on that contact and marks it as being about the case (see [The Communications Tab](16-communications-tab.md)).
 
 Logging after the fact is expected: **Log Call** has a **When** field (defaults to now) and a **Direction** chooser — *Incoming* swaps the From and To rows so the caller's number is the From — **Log Without Sending** asks when the text or email happened before it logs, and the **Add Log** note on a case or contact Log tab has a **When** field too. The entry then dates, sorts and filters by that time, not by when it was typed. A future time is refused.
 

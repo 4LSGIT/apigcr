@@ -883,11 +883,15 @@ New raw `fetch` with a lifted token is a regression, not a pattern.
 - *No Authorization persistence:* the login token's one durable place is
   localStorage `jwt`; the shell also holds two tab-scoped sessionStorage
   tokens — `su_elev` (SU step-up) and `yc_view_as_jwt` (View-as, below) —
-  and no pane ever receives either. Nothing logs or stores auth headers: the hook
-  receiver strips `authorization`/`cookie`/`x-api-key` before persisting
-  captures (api.hooks.js SENSITIVE_HEADER_DENYLIST), the apiTester audit log
-  redacts the same set, the client diag ring records method/url/status only.
-  Keep new logging/capture sites on this side of the line.
+  and no pane ever receives either. Auth headers are stripped before anything
+  persists them: the hook receiver drops `authorization`/`cookie`/`x-api-key`
+  before persisting captures (api.hooks.js SENSITIVE_HEADER_DENYLIST), the
+  apiTester audit log redacts the same set, the client diag ring records
+  method/url/status only. ONE known gap: `jwt_api_audit_log`
+  (`lib/auth.jwtOrApiKey` logJwtApiAttempt) deletes the same three but NOT
+  `x-su-elevation`, so every stepped-up SU request stores its elevation token
+  (15-min TTL) in the row's `headers` (ref/plans.md). Keep new logging/capture
+  sites on this side of the line, and strip `x-su-elevation` with the rest.
 - *No authored-executable MIME on the app origin:* operator-authored bytes
   never execute on app.4lsg.com. Authored page HTML serves only on
   registered landing hosts — enforced in code: pageService refuses any
@@ -1604,6 +1608,10 @@ the query in the SU db console, which connects as the app user.
 
 **Scratch:** `PUT /api/scratch/:ns/:k` `{v, meta?}` — `v` STRING-ONLY
 (JSON.stringify objects yourself; meta may be JSON), MEDIUMTEXT ceiling.
+The PUT is an unconditional upsert — last write wins, no version or etag — so
+two sessions read-modify-writing one key silently drop each other's updates:
+a shared key has one owner, or each write re-reads and merges immediately
+before it (CLAUDE.md "Scratch").
 `DELETE /api/scratch/:ns/:k`; `DELETE /api/scratch/:ns?confirm=1` wipes.
 `ns`/`k` match `^[a-zA-Z0-9_\-]{1,64}$`. Reads go through the SQL endpoint
 against `rw_scratch`. Live namespaces: `fred` (manager session state),
@@ -1755,9 +1763,12 @@ full CPU. The queue row is the scheduling authority; the task is a doorbell.
 - `trigger_execution_rules` — per-rule outcome detail.
 
 ### Hard semantics (carried from the ingest rule engine — do not soften)
-- A THROWING match counts as NON-match (fail-safe), and is RECORDED —
-  warning on the execution row + `error_count` bump + `trigger_match_failed`
-  alert. Fail-safe, not fail-quiet.
+- A THROWING match counts as NON-match (fail-safe), and in the trigger
+  engine is RECORDED — warning on the execution row + `error_count` bump +
+  `trigger_match_failed` alert. Fail-safe, not fail-quiet. The ingest engines
+  carry only the fail-safe half: their `_evaluateMatch` records a throwing
+  match as a `console.warn` — no execution-row warning, metric or alert
+  (ref/plans.md, A20 ingest reads).
 - `NULL match_config` in conditions mode = NON-match, NOT match-all.
   Explicit always-match is `{operator:'and', conditions:[]}`.
 - A failed transform → rule counts as MATCHED (metrics) but its actions do

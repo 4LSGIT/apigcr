@@ -23,12 +23,15 @@
  *   records each layer's outcome independently in executions.metadata.
  *
  * Pipeline position (set by emailIngestService.ingestEmail):
- *   ...firm-to-firm check → Layer 2 suppression eval → conditional default log
- *      → evaluateRules(db, envelope)  ← THIS MODULE (always runs)
+ *   ...dedup → email_log → direction
+ *      → evaluateRules(db, envelope)  ← THIS MODULE (step 6b, always runs)
+ *      → firm-to-firm check → Layer 2 suppression eval → conditional default log
  *      → write executions row (status = logging-layer outcome) + metadata
  *
- * Duplicates and firm-to-firm hits short-circuit BEFORE either layer runs,
- * so neither suppression nor automation evaluates for emails we never process.
+ * Duplicates short-circuit BEFORE either layer runs. Firm-to-firm does NOT
+ * gate this layer: it is checked after evaluateRules and skips only the
+ * logging side (Layer 2 + the default log), so automation fires on internal
+ * firm-to-firm mail too.
  *
  * Match grammar (mirrors Slice 2.1's suppression service exactly)
  *   - 'conditions' mode reuses services/hookFilter.evaluateConditions.
@@ -73,7 +76,8 @@
  * No caching — every ingest hits the DB. ~100 emails/day forever = trivial.
  * Live SQL rule edits propagate immediately. (Slice 2.1 precedent.)
  *
- * CRUD for these tables is Phase 3. Rules are managed via SQL until then.
+ * CRUD (Phase 3) lives in this file's CRUD section below; routes in
+ * routes/api.emailIngest.js (/api/email-ingest/rules…).
  */
 
 const { evaluateConditions } = require('./hookFilter');

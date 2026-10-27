@@ -89,6 +89,8 @@ Anything else is "soft unresolved" — placeholder stays as-is, doesn't error.
 |---|---|---|
 | `users` | `password` | Credential material |
 | `users` | `password_hash` | Credential material |
+| `cases` | `custom` | Raw custom-field JSON bag — never travels whole; reference a single field by its `cf_` column (see [Custom fields](../05-Subsystems/13-custom-fields.md)) |
+| `contacts` | `custom` | Same |
 
 `contacts.contact_ssn` was on this list until 2026-09-24 and is not any more.
 It resolves like any other column; use `|ssn_mask` or `|ssn_last4` when you
@@ -189,6 +191,7 @@ Workflow executions carry a flat key/value `variables` JSON column. Set from `in
 - `{{this}}` — the entire output of the just-executed step (for webhooks: response body directly)
 - `{{env.executionId}}` — the current execution ID
 - `{{env.stepNumber}}` — the current step number
+- `{{env.now}}` — the current time, ISO 8601 UTC
 
 #### Writing — `set_vars`
 After a step runs, `set_vars` keys/values are merged into the execution's `variables` JSON. Values support full placeholder syntax:
@@ -200,7 +203,7 @@ After a step runs, `set_vars` keys/values are merged into the execution's `varia
   "set_vars": {
     "contactName":  "{{this.output.contact_name}}",
     "contactEmail": "{{this.output.contact_email}}",
-    "primaryPhone": "{{this.output.contact_phone|phone}}"
+    "primaryPhone": "{{this.output.contact_phone}}"
   }
 }
 ```
@@ -208,22 +211,24 @@ After a step runs, `set_vars` keys/values are merged into the execution's `varia
 Subsequent steps can read `{{contactName}}` etc.
 
 #### Variable name rules
-- Must be a valid JS identifier (letters, digits, `_`, no spaces)
-- Reserved names: `this`, `env` (these are special readers, not writable)
-- Names are case-sensitive
+Nothing validates `set_vars` keys — any string is stored and merged. Stick to JS-identifier-style names anyway:
+- Don't name a variable `this` or `env`. Variables resolve **first** (see below), so a variable by either name shadows the step-output / env reader in every later step.
+- A key containing `}` can never be referenced (the placeholder scanner stops at the first `}`), and one containing `|` is only reachable by writing the `|` literally — it is a name character here, not a modifier.
+- Names are case-sensitive.
 
 #### Order of resolution
 
-For workflow steps, placeholders resolve in this order:
+For workflow steps, `resolveSingle` tries each placeholder key in this order and takes the first hit:
 
 ```
-1. {{this.x}}      → output of the just-executed step
-2. {{env.x}}       → executionId, stepNumber
-3. {{varName}}     → workflow variables (init_data + accumulated set_vars)
-4. {{table.col}}   → universal resolver (DB query)
+1. {{varName}}     → a workflow variable whose name is exactly the key
+2. {{a.b.c}}       → a dot / [n] path into the workflow variables
+3. {{this.x}}      → output of the just-executed step
+4. {{env.x}}       → executionId, stepNumber, now
+   anything else   → ''
 ```
 
-This means a workflow variable named `contactId` shadows the `contacts.contact_id` placeholder if you wrote `{{contactId}}` — the engine substitutes the variable first and the resolver never sees a placeholder by that name.
+There is no step 5: the universal resolver is never consulted (see "Two systems, one syntax" above), so a `{{table.col}}` placeholder only resolves if a variable path happens to match it, and a `|modifier` makes the key match nothing.
 
 ### Using the resolver via API
 

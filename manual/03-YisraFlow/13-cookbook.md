@@ -1562,8 +1562,8 @@ A new execution row is created in four places:
 | # | File | Function | Retry-safe? |
 |---|---|---|---|
 | 1 | `routes/workflows.js` | `POST /workflows/:id/start` | N/A (caller handles) |
-| 2 | `services/apptService.js` | `createAppt()` (appt reminder) | Appt lifecycle guards |
-| 3 | `services/hookService.js` | `deliverWorkflow()` (hook → workflow target) | INSERT retries cleanly; async advance doesn't retry (§5.18) |
+| 2 | `lib/actionDispatchers.js` | `deliverWorkflow()` (hook / trigger / ingest → workflow target) | No — a failed `scheduleResume` after the INSERT is re-run as a hook retry and creates a NEW execution (duplicate start over silent drop) |
+| 3 | `lib/internal_functions/composition.js` | `start_workflow` (WF → WF) | No — an `error_policy` retry after a successful INSERT double-starts the child (accepted gap, see the function's header) |
 | 4 | `lib/sequenceEngine.js` | `executeStartWorkflowAction()` (sequence start_workflow step) | **Yes** — checks prior sequence_step_log.output_data for a reusable execution (§3.15) |
 
 **Consequence.** Adding a column to `workflow_executions`, or any new rule

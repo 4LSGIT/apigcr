@@ -120,11 +120,13 @@
  * emitted (live 2026-10-25: an executions row MySQL refused stalled mailbox
  * 2's All Mail for an hour, covered only by the Apps Script). So the NEW pass
  * remembers the UID it failed on — `ingest_state.<folder>.poison`
- * {uid, attempts, first_at, last_error} — and after `limits.quarantineAfter`
- * consecutive failures on that same UID it is QUARANTINED: appended to
- * `quarantined` (the last `limits.quarantineKeep` kept), an ERROR alert names
- * it (`mailbox_ingest_quarantined`), and from the next run on the pass skips
- * it — no fetch, no store, no emission — and the cursor moves past. A row
+ * {uid, uidvalidity, attempts, first_at, last_at, last_error, message_id?,
+ * held?} — and after `limits.quarantineAfter` consecutive failures on that
+ * same UID it is QUARANTINED: appended to `quarantined` as {uid, uidvalidity,
+ * attempts, first_at, at, error, signature, message_id} (the last
+ * `limits.quarantineKeep` kept; `quarantined_total` counts all), an ERROR
+ * alert names it (`mailbox_ingest_quarantined`), and from the next run on the
+ * pass skips it — no fetch, no store, no emission — and the cursor moves past. A row
  * already stored stays as it is, log_id NULL. Its emission never completed —
  * the rules may or may not have run (ingestEmail can throw after Layer 3) —
  * so a human checks and finishes it (the alert says how). The failing UID is

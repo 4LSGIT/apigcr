@@ -78,8 +78,6 @@ consumer changes were needed.
 
 ## `__meta` schema
 
-(Preserved from the old file's metadata-registry header.)
-
 Each function may carry a `__meta` block describing its param shape. Surfaced
 to the UI via `GET /workflows/functions` so the workflow + sequence editors can
 render real form fields instead of a raw JSON textarea. Save-time validation in
@@ -93,27 +91,38 @@ Schema fields:
 | `description` | string | one-line summary shown above the form |
 | `workflowOnly` | boolean | DRIVES the sequence exclusion — `GET /workflows/functions` filters these from the `sequence` list |
 | `uiHidden` | boolean | filtered from the workflow / sequence / scheduled-job / hook pickers (still shown, suffixed "(hidden)", on steps already using the function). The email/phone ingest pickers deliberately ignore it (`applyHidden: false`) — their `/meta` payloads omit the flag entirely |
-| `controlFlow` | boolean | advisory; matches `isControlStep` in engine |
+| `controlFlow` | boolean | LOAD-BEARING: `workflow_engine.isControlStep` honours a step's `next_step` only when this is `true` (`tests/control.flow.test.js`); every carrier also needs a canvas edge case (`tests/workflows.flowgraph.test.js`) |
 | `params` | array | param specs (below) |
 | `exclusiveOneOf` | array of `[name,…]` groups | exactly one must be set |
 | `requiredWith` | array of `[name,…]` groups | at least one must be set |
 | `example` | object | copy/paste starting payload |
+| `ctaInputParams` | object | `{ <param>: { kind: 'recipient'\|'content', html? } }` — opens a param to `/c/` clicker input (`services/ctaService.js` `openedParamSpec`; snapshot in `tests/ctaInputs.test.js`) |
+
+Nothing in `__meta` declares a side-effect class (idempotent / sends /
+writes) for any function.
 
 Param spec fields:
 
 | field | type | meaning |
 |---|---|---|
 | `name` | string | `params[name]` in the runtime call |
-| `type` | string | see `TYPE_VALIDATORS` (validator in `index.js` / routes) |
+| `type` | string | see `_validateType` in `index.js` |
 | `required` | boolean | save-time required check |
 | `placeholderAllowed` | boolean | strings containing `{{var}}` skip type checks |
-| `widget` | string | UI rendering hint (`'phone_line'`, `'email_from'`) |
+| `widget` | string | UI rendering hint (`'phone_line'`, `'phone_line_mms'` — MMS-capable lines only, `'email_from'`) |
 | `multiline` | boolean | UI hint: render as textarea, not `<input>` |
 | `description` | string | helper text below the field |
 | `example` | any | example value |
 | `default` | any | runtime default; informs UI placeholder |
 | `enum` | array | for `type:'enum'` |
 | `min`, `max` | number | bounds for `type:'number'`/`'integer'` |
+| `strictString` | boolean | a string is the ONLY accepted form — no number/object/boolean widening (carriers listed in `index.js` `_validateType`) |
+| `objectAllowed` | boolean | a plain object passes a string param (`create_log.data`, `phone_log.data`) |
+| `booleanAllowed` | boolean | a boolean passes a string param (`evaluate_condition.value`) |
+| `nullishSkipsBlock` | boolean | explicit `null` is a meaningful value: required / group checks use key-presence, not value-presence |
+| `nullTerminates` | boolean | workflow form editor writes a blank field as explicit `null` = end the workflow (`set_next.value`, `foreach.end_step`) |
+| `modeGroup` | string | editors render a mode toggle and show only the active group's fields |
+| `csvList` | boolean | comma-separated list in one string; a quoted-list `params_mapping` literal is rejected at save (see `index.js` CSV LIST PARAMS) |
 
 ## index.js also carries
 
