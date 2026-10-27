@@ -274,7 +274,17 @@ function authenticateRequest(hook, req) {
  * Run the hook-level filter. ASYNC (code mode awaits the guest engine): every
  * caller awaits — an un-awaited promise has no `.passed`, which reads as
  * filtered, and a dropped await on the value would be truthy.
- * @returns {Promise<{ passed: boolean, error?: string }>}
+ * @returns {Promise<{ passed: boolean, error?: string, failed?: true, busy?: true }>}
+ *
+ * A filter that RAN and threw or timed out is the body's own answer: a
+ * NON-match (`passed:false` + error), the house rule for every match-shaped
+ * site (CLAUDE.md guest-code paragraph). Replaying it gives the same answer,
+ * and live code filters lean on it (hooks 22/23 filter most RC events).
+ * GUEST_CODE_BUSY is different — the body never ran, no decision was made —
+ * so it comes back FAILED (`failed` + `busy`, the error tagged
+ * [GUEST_CODE_BUSY] as runTransform tags it): executeHook records the
+ * execution 'failed' (alerted as a warning by _scanHooks, findable, replayable)
+ * instead of 'filtered', which would read as "not for us" (Fred, 2026-10-27).
  */
 async function runFilter(hook, input, { lane = guestCode.LANES.hooks } = {}) {
   const mode = hook.filter_mode;
@@ -299,6 +309,9 @@ async function runFilter(hook, input, { lane = guestCode.LANES.hooks } = {}) {
       })) === true;
       return { passed };
     } catch (err) {
+      if (err && err.code === 'GUEST_CODE_BUSY') {
+        return { passed: false, failed: true, busy: true, error: `Filter code error [${err.code}]: ${err.message}` };
+      }
       return { passed: false, error: `Filter code error: ${err.message}` };
     }
   }
@@ -319,7 +332,7 @@ async function runFilter(hook, input, { lane = guestCode.LANES.hooks } = {}) {
  * @param {object} input         - data to transform
  * @param {{lane?:string}} [opts] - guest-code lane: 'hooks' (live, the default)
  *                                  or 'preview' (dry runs, editor tests)
- * @returns {Promise<{ output: object, errors: string[], failed?: true }>}
+ * @returns {Promise<{ output: object, errors: string[], failed?: true, busy?: true }>}
  *
  * FAILED (`failed: true`) means "nothing usable came out — deliver NOTHING",
  * the ingest/trigger hard semantics (AI_CONTEXT §26: never feed garbage to
@@ -336,7 +349,9 @@ async function runFilter(hook, input, { lane = guestCode.LANES.hooks } = {}) {
  *     recorded on the execution;
  *   - a string config that is not JSON (it used to throw out of executeHook,
  *     leaving the row 'received').
- * Without `failed`, `errors` are warnings beside a usable output.
+ * Without `failed`, `errors` are warnings beside a usable output. `busy` marks
+ * the one failure where the body never ran (GUEST_CODE_BUSY) — the only one a
+ * redelivery of the same event could cure (executeHook's redeliverOnBusy).
  */
 async function runTransform(mode, config, input, { lane = guestCode.LANES.hooks } = {}) {
   if (mode === 'passthrough' || !mode) {
@@ -368,8 +383,9 @@ async function runTransform(mode, config, input, { lane = guestCode.LANES.hooks 
         timeoutMs: guestCode.DEFAULT_TIMEOUT_MS, label: 'hook transform code', lane,
       });
     } catch (err) {
-      const tag = err && err.code === 'GUEST_CODE_BUSY' ? ` [${err.code}]` : '';
-      return { output: {}, errors: [`Transform code error${tag}: ${err.message}`], failed: true };
+      const busy = !!(err && err.code === 'GUEST_CODE_BUSY');
+      const tag = busy ? ` [${err.code}]` : '';
+      return { output: {}, errors: [`Transform code error${tag}: ${err.message}`], failed: true, ...(busy ? { busy: true } : {}) };
     }
     if (output == null || typeof output !== 'object') {
       return {
@@ -551,10 +567,13 @@ async function deliverToTarget(target, hookTransformOutput, db) {
   );
 
   // A failed target transform skips THIS target: nothing is dispatched, the
-  // attempt is a failed delivery (logged, counted, retried — the hook_retry
-  // job re-runs the transform, so a transient GUEST_CODE_BUSY recovers on its
-  // own and a broken body fails its bounded attempts). executeRetry comes
-  // through here too, so a retry obeys the same rule.
+  // attempt is a failed delivery (logged, counted, and given ONE hook_retry
+  // ~60 s later, which re-runs the transform — a transient GUEST_CODE_BUSY
+  // usually recovers there). executeRetry comes through here too, so the
+  // retry obeys the same rule; it never throws on a failed delivery, so
+  // process_jobs marks the job completed and nothing queues a further retry
+  // (the job's max_attempts/backoff are never consulted): a broken body ends
+  // with its delivery log 'failed' after exactly two attempts.
   if (targetTransform.failed) {
     return {
       target_id: target.id,
@@ -773,7 +792,22 @@ async function buildDryRunPreview(target, hookTransformOutput) {
  *   - A slow target's failure cannot block a fast target (it already ran),
  *     and a fast target's failure doesn't skip slow ones — same as serial.
  */
-async function executeHook(db, slug, input, { dryRun = false, hook: preloaded = null, splitPhase = false } = {}) {
+// Appended to the execution's error when the receiver answers 503 for it (no
+// "; " in it: _hookExecutionSeverity splits on that, and the BUSY tag must
+// stay in the same part — the row is still a BUSY-only warning).
+const REDELIVER_NOTE = ' — answered 503, the sender redelivers this event as a new execution (replay by hand only if no later execution of it delivered)';
+
+/**
+ * redeliverOnBusy (2026-10-27): the receiver sets it for a sender whose
+ * redelivery is SAFE to ask for (Quo — routes/api.hooks.js isQuoDelivery).
+ * When the execution failed only because the code sandbox was busy — the
+ * filter or the hook transform got no slot, so the body never ran — AND
+ * nothing was dispatched (both return before any target), the result carries
+ * `redeliver: true` and the receiver answers 503. Never set for RingCentral
+ * (repeated non-2xx blacklists the subscription) and never on a partial
+ * execution: a target that already ran would run again on the redelivery.
+ */
+async function executeHook(db, slug, input, { dryRun = false, hook: preloaded = null, splitPhase = false, redeliverOnBusy = false } = {}) {
   // 1. Look up hook (skip if caller already loaded it, e.g. the receiver route)
   const hook = preloaded || await getHookBySlug(db, slug);
   if (!hook) {
@@ -850,6 +884,29 @@ async function executeHook(db, slug, input, { dryRun = false, hook: preloaded = 
   const lane = dryRun ? guestCode.LANES.preview : guestCode.LANES.hooks;
   const filterResult = await runFilter(hook, input, { lane });
 
+  // A filter that could not RUN (GUEST_CODE_BUSY — runFilter's `failed`) made
+  // no decision: the execution is 'failed', not 'filtered', with
+  // filter_passed NULL (neither passed nor rejected). Nothing is dispatched.
+  if (filterResult.failed) {
+    const redeliver = !dryRun && redeliverOnBusy && filterResult.busy === true;
+    const error = redeliver ? `${filterResult.error}${REDELIVER_NOTE}` : filterResult.error;
+    if (!dryRun && executionId) {
+      await db.query(
+        `UPDATE hook_executions SET filter_passed = NULL, status = 'failed', error = ? WHERE id = ?`,
+        [error, executionId]
+      );
+    }
+    return {
+      status: 'failed',
+      executionId,
+      ...(dryRun ? { dry_run: true } : {}),
+      ...(redeliver ? { redeliver: true } : {}),
+      error,
+      filter: filterResult,
+      targets: [],
+    };
+  }
+
   if (!filterResult.passed) {
     if (!dryRun && executionId) {
       await db.query(
@@ -873,10 +930,12 @@ async function executeHook(db, slug, input, { dryRun = false, hook: preloaded = 
   // and 23 would have started workflows 53 / 20 on empty data. The execution
   // is 'failed' with the error and NO transform_output (nothing was
   // produced); raw_input is kept, so the event is replayable once the cause
-  // clears. Returns before any target and before the split, so the receiver
-  // answers as usual and nothing is detached. Dry runs report the same.
+  // clears. Returns before any target and before the split, so nothing is
+  // detached; the receiver answers 200 — or 503 when `redeliver` (a BUSY-only
+  // failure for a Quo sender, see redeliverOnBusy). Dry runs report the same.
   if (transformResult.failed) {
-    const error = transformResult.errors.join('; ');
+    const redeliver = !dryRun && redeliverOnBusy && transformResult.busy === true;
+    const error = transformResult.errors.join('; ') + (redeliver ? REDELIVER_NOTE : '');
     if (!dryRun && executionId) {
       await db.query(
         `UPDATE hook_executions SET filter_passed = 1, transform_output = NULL, status = 'failed', error = ? WHERE id = ?`,
@@ -887,6 +946,7 @@ async function executeHook(db, slug, input, { dryRun = false, hook: preloaded = 
       status: 'failed',
       executionId,
       ...(dryRun ? { dry_run: true } : {}),
+      ...(redeliver ? { redeliver: true } : {}),
       error,
       filter: filterResult,
       transform: { output: null, errors: transformResult.errors, failed: true },

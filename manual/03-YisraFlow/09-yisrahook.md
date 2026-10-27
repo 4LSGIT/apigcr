@@ -28,7 +28,7 @@ When something doesn't fire when you expected:
 1. Open the hook's **Logs** tab. Did the event arrive? What status?
 2. `received` → still processing or stuck. Check Scheduled Jobs for `hook_retry`.
 3. `filtered` → the filter rejected it. Look at `error` for why.
-4. `partial` or `failed` → look at delivery logs for which target broke. A `failed` row with no delivery logs and an empty transform output means the transform itself failed — read `error`.
+4. `partial` or `failed` → look at delivery logs for which target broke. A `failed` row with no delivery logs and an empty transform output means the transform itself failed — or the code filter could not run (`[GUEST_CODE_BUSY]`) — read `error`.
 5. `captured` → the hook is in capture mode; see Capture Mode below.
 
 ---
@@ -54,7 +54,7 @@ Public endpoint, no `jwtOrApiKey` middleware. Auth is per-hook (configured on th
 { "status": "not_found" }                          // no hook with that slug, or inactive
 ```
 
-The receiver always returns 200 even on dispatch errors — the sender shouldn't retry on our internal failures (they should retry only on a non-200, which means our auth rejection or the slug not existing). The one exception is maintenance mode — see [During maintenance](#during-maintenance-write-freeze) below.
+The receiver returns 200 even on dispatch errors — the sender shouldn't retry on our internal failures (they should retry only on a non-200, which means our auth rejection or the slug not existing). Two exceptions answer `503` + `Retry-After: 60`: maintenance mode when an event cannot be stored — see [During maintenance](#during-maintenance-write-freeze) below — and a Quo event whose code filter or transform found the sandbox busy, with nothing delivered (see *When the code sandbox is busy*).
 
 ### Pipeline
 
@@ -115,7 +115,7 @@ API key mismatch returns 401. HMAC mismatch returns 401. Both write to the audit
 |---|---|---|
 | `none` | — | All events pass |
 | `conditions` | AND/OR group tree (see below) | Evaluated by `hookFilter.evaluateConditions` |
-| `code` | `{ "code": "return input.body.event === 'invoice.paid';" }` | A function body over `input`, run in the isolated code engine (below). Truthy return = pass; a throw or timeout = filtered. |
+| `code` | `{ "code": "return input.body.event === 'invoice.paid';" }` | A function body over `input`, run in the isolated code engine (below). Truthy return = pass; a throw or timeout = filtered (the body's own answer). If the filter could not run at all — "code sandbox busy" — the execution **fails** instead (below). |
 
 #### Conditions tree
 
@@ -155,14 +155,19 @@ Nested groups supported — a `condition` can itself be another `{ match, condit
 
 **A failed transform delivers nothing.** Targets never receive an empty or half-built object in place of the real data:
 
-- **Hook-level transform fails** → the execution is `failed`, its `error` says why, *Transform Output* is empty, and **no target runs**. The sender still gets its usual 200.
-- **A target's own transform fails** → that target is skipped and logged as a failed delivery (error `target transform failed (nothing delivered): …`) and a retry is queued, which runs the transform again. The other targets deliver as normal, so the execution reads `partial` (or `failed` if nothing delivered).
+- **Hook-level transform fails** → the execution is `failed`, its `error` says why, *Transform Output* is empty, and **no target runs**. The sender gets its usual 200 (one exception, Quo — see *When the code sandbox is busy* below).
+- **A target's own transform fails** → that target is skipped and logged as a failed delivery (error `target transform failed (nothing delivered): …`) and ONE retry runs about 60 s later, re-running the transform. If the retry fails too, the delivery stays `failed` — there is no third attempt (see *Retry job* below). The other targets deliver as normal, so the execution reads `partial` (or `failed` if nothing delivered).
 - **Mapper** → if every rule errors and nothing is mapped, that counts as failed. If some rules work, the partial result is delivered and the broken rules are listed in the execution's `error`.
 - **Dry-run test** → shows the same outcome: `"status": "failed", "dry_run": true` with the error, or a target marked `"skip_reason": "target transform failed"` with its `transform_errors`.
 
 To re-run a failed event once the cause is fixed (or the server is no longer busy): open the execution in the **Logs** tab, copy its *Raw Input* into the **Test** tab and click **Live Test**. That runs the whole pipeline again and delivers for real.
 
-**Code filters and transforms** (hook- and target-level) run in an isolated JavaScript engine (QuickJS) in a separate, throwaway process — never inside the server. No `process`, `require`, `fetch`, timers, network or database, and **no `Intl`** (`toLocaleString` ignores `timeZone` silently — compute local times from UTC). `console.log` / `console.warn` reach the server log. 15 s and 64 MB per call (`GUEST_CODE_TIMEOUT_MS`). Because a webhook waits for its answer, a code filter or transform waits at most 3 s for a free sandbox when the server is saturated; past that it fails closed with a "code sandbox busy" error — the filter counts as filtered, a transform fails (nothing delivered, above) — the event is logged in the execution history (so it can be replayed) and a system alert is raised. The webhook sender is NOT asked to send it again: RingCentral blacklists a subscription after a few failed deliveries, which would stop every RingCentral event. Hooks have a reserved share of sandboxes that triggers, ingest and editor tests cannot take, and vice versa. The dry-run test and the transform tester run the same engine as live deliveries.
+**Code filters and transforms** (hook- and target-level) run in an isolated JavaScript engine (QuickJS) in a separate, throwaway process — never inside the server. No `process`, `require`, `fetch`, timers, network or database, and **no `Intl`** (`toLocaleString` ignores `timeZone` silently — compute local times from UTC). `console.log` / `console.warn` reach the server log. 15 s and 64 MB per call (`GUEST_CODE_TIMEOUT_MS`). Hooks have a reserved share of sandboxes that triggers, ingest and editor tests cannot take, and vice versa. The dry-run test and the transform tester run the same engine as live deliveries.
+
+**When the code sandbox is busy.** Because a webhook waits for its answer, each code filter or transform waits at most **1 s** for a free sandbox when the server is saturated (`GUEST_CODE_QUEUE_WAIT_MS_HOOKS`). Past that it fails closed with a "code sandbox busy" error and the body does not run. Both the filter and the transform then **fail the execution** (`failed`, error tagged `[GUEST_CODE_BUSY]`, nothing delivered). The filter does not count as `filtered`, because no decision was made. The event stays in the execution history (so it can be replayed) and a system alert is raised (a warning — the sandbox's own saturation alert escalates). What the sender is told depends on who sent it:
+
+- **Quo** (recognised by its `openphone-signature` header) gets `503` + `Retry-After: 60`, and only when nothing was delivered for the event. Quo retries a failed delivery up to 8 times over about 27 hours and never disables the webhook, and since nothing ran, its redelivery cannot duplicate anything. Each redelivery is a new execution; the failed one's error ends "answered 503, the sender redelivers…". Don't replay that one by hand unless no later execution of the same event delivered.
+- **Everyone else, RingCentral above all, gets the usual 200.** RingCentral treats a non-2xx answer, or one slower than **3 seconds**, as a failed delivery. About 10 minutes of failures blacklist the subscription, and every RingCentral event is lost until it is deleted and re-created (the daily renewal job alerts when that happens — `manual/04-Integrations/03-rc-subscription-bootstrap.md`, Failure mode 4). The 1 s wait is sized so a saturated hook whose filter and transform are both code (rc-message-out, rc-call) still answers inside 3 s: 2 waits + 2 sandbox starts + the workflow start ≈ 2.5 s. That only covers waiting for a sandbox. **A body that is slow to run** (it may take up to 15 s) still blows RingCentral's 3 s window. Keep RingCentral hook bodies trivial; answering first and processing afterwards is a separate design question, not built.
 
 #### Mapper rules
 
@@ -324,10 +329,11 @@ data:            { execution_id, target_id }
 
 `/process-jobs` picks it up, calls `hookService.executeRetry(db, data)`, which:
 1. Loads the original execution and target
-2. Re-runs `deliverToTarget` against the stored `transform_output`
-3. Inserts a fresh `hook_delivery_logs` row
-4. If still failing and attempts remaining → another `hook_retry` queued
-5. Updates the parent `hook_executions.status` (delivered/partial/failed) based on the latest state
+2. Re-runs `deliverToTarget` against the stored `transform_output` (the target's own transform runs again)
+3. Updates that target's latest `hook_delivery_logs` row in place (`attempts + 1`; the first attempt's response/error are overwritten), or inserts one with `attempts = 2` if none exists
+4. On success, flips the parent `hook_executions.status` from failed/partial to `delivered` (or `partial` while another delivery is still failed)
+
+**There is exactly ONE retry.** `executeRetry` records a failed attempt and returns normally, so the job is marked completed and nothing queues another; the `max_attempts: 3` / `backoff_seconds` above are never consulted for this job type. A delivery that fails its retry stays `failed`, and recovery is a replay of the execution (above).
 
 **Retry safety per target type:**
 
@@ -335,10 +341,10 @@ data:            { execution_id, target_id }
 |---|---|
 | `http` | Each retry fires a fresh HTTP request — receiver must tolerate duplicates |
 | `workflow` | INSERT-then-advance pattern. Retry re-INSERTs (creates a new execution). Async advance failures do NOT trigger retries. Receivers may see duplicate workflow executions on retry. |
-| `sequence` | `enrollContact` is guarded against duplicate active enrollments. A retry after a previously-successful enrollment throws "already enrolled" and is captured as a failure (bounded by `max_attempts`). |
+| `sequence` | `enrollContact` is guarded against duplicate active enrollments. A retry after a previously-successful enrollment throws "already enrolled" and is captured as a failure (the one retry, above). |
 | `internal_function` | Not inherently idempotent. Side-effect functions will be invoked again. Design accordingly. |
 
-There is no `no_retry: true` flag yet (planned for v1.3). For now, if you have a non-idempotent target, set `max_attempts: 1` on the retry queueing path — though that's currently hardcoded in `queueRetryJob` and would need a code change.
+There is no `no_retry: true` flag yet (planned for v1.3). Every failed delivery gets its one retry, and a job's `max_attempts` would not prevent it (above), so skipping the retry for a non-idempotent target needs a code change in `queueRetryJob`.
 
 ### Capture mode
 
@@ -366,7 +372,7 @@ When the app runs with `MAINTENANCE_MODE=1` (a database move — `ref/INFRA_GCP.
 
 1. The hook is looked up and the sender authenticated exactly as usual (a bad key is still a 401; an unknown slug with no catch-all is still a 404).
 2. The event — the same `{body, headers, query, method, meta}` object the pipeline would have received — is stored as a task on the paused Cloud Tasks queue `yc-hook-spool`. The sender gets the usual `200 {"status":"received"}`.
-3. If the event could **not** be stored, the sender gets `503` + `Retry-After: 60`. This is the only time the receiver asks a sender to retry on our failure: there is nowhere else to put the event.
+3. If the event could **not** be stored, the sender gets `503` + `Retry-After: 60`: there is nowhere else to put the event. This and a busy code sandbox on a Quo event (above) are the only times the receiver asks a sender to retry on our failure.
 
 Nothing is written to the database during the window: no `hook_executions` row, no capture-mode flip (an armed hook stays armed), no deliveries.
 

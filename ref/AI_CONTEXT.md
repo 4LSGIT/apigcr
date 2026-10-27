@@ -1260,8 +1260,9 @@ in ref/database.sql. The rest:
 
 One route `POST /hooks/:slug` replaces per-integration endpoints; each hook
 is a DB row describing auth → filter → transform → ordered delivery
-targets. 200 returns immediately; processing is async with per-execution +
-per-delivery logs. Depth: `manual/03-YisraFlow/09-yisrahook.md`.
+targets. The receiver answers 200 (503 only for maintenance-spool failure
+and a Quo BUSY, below) after the fast targets; slow ones run detached, with
+per-execution + per-delivery logs. Depth: `manual/03-YisraFlow/09-yisrahook.md`.
 
 Target types: `http` (default) | `workflow` (transform output = init_data;
 INSERT retries cleanly but async advance failure does NOT re-trigger
@@ -1279,7 +1280,11 @@ workflow stores the payload as its sample instead of losing it.
 **Code mode:** a `code` filter, hook transform or target transform runs in
 the QuickJS guest in the sandbox child (`hookService.runFilter` /
 `runTransform` → `lib/guestCode.js`; async, every caller awaits). A filter
-that throws or times out = filtered with `filter_passed=0` + error.
+that throws or times out = filtered with `filter_passed=0` + error (the
+body's answer — the house non-match rule). A filter that could not RUN
+(`GUEST_CODE_BUSY`) made no decision: `runFilter` returns `failed`+`busy`,
+the execution is `failed` with `filter_passed=NULL` and the tagged error,
+nothing dispatched (Fred, 10-27 — overrides the non-match rule for BUSY only).
 
 **A failed transform delivers nothing** (10-27 — the §26 hard semantics, which
 hooks used to break by delivering `{}`): `runTransform` returns `failed: true`
@@ -1289,16 +1294,34 @@ delivers), a mapper whose every rule errored with nothing mapped (a PARTIAL
 mapping delivers, errors recorded), or an unparseable string config.
 Hook-level → the execution is `failed` with the error and a NULL
 `transform_output`, no target runs (before the split-phase partition; the
-receiver still answers 200). Target-level (`deliverToTarget`) → that target
-only: a failed delivery log + `hook_retry` (the retry re-runs the transform),
+receiver answers 200, except below). Target-level (`deliverToTarget`) → that
+target only: a failed delivery log + ONE `hook_retry` at +60 s (re-runs the
+transform; `executeRetry` never throws on a failed delivery, so process_jobs
+completes the job and `max_attempts` is never consulted — no third attempt),
 execution `partial`/`failed` by the usual tally; `executeRetry` obeys the same
 rule and never delivers a NULL `transform_output`. Dry runs report both
 (`status:'failed', dry_run:true` / a target's `skip_reason` +
 `transform_errors`). Recovery = replaying the row's `raw_input` (Logs → Test
-tab → Live Test). The receiver deliberately does NOT 503 on BUSY: RingCentral
-(hooks 21–23) retries ~3× then blacklists the subscription. Alert sweep
-`_scanHooks`: a BUSY-only failure is `warning` (guestCode's
-`guest_code_saturated:hooks` owns escalation), anything else `error`. Live
+tab → Live Test). **503 only for Quo, only when nothing ran:** the receiver
+passes `redeliverOnBusy` when the request carries `openphone-signature`
+(`isQuoDelivery` — Quo signs every delivery; no other sender does);
+executeHook sets `redeliver` only on its two pre-target returns (filter or
+hook transform failed as BUSY), appends the 503 note to the error, and the
+receiver answers 503 + `Retry-After: 60` (Quo retries non-2xx up to 8× over
+~27 h, never disables). A partial execution, a non-BUSY failure, and every
+other sender stay 200 — RingCentral (hooks 21–23) counts non-2xx AND answers
+slower than 3 s as failures and blacklists the subscription after ~10 min
+(no notice, events dropped, recovery = delete + recreate;
+`rc_renew_subscriptions` GETs each subscription daily and raises a deduped
+daily `error` alert when its status is not `Active`). No dedup on redelivery:
+the 503 path dispatched nothing, so a redelivery cannot duplicate (Quo sends
+no `webhook-id`; its event id is `body.id`). Hooks-lane queue budget 1 s
+(`GUEST_CODE_QUEUE_WAIT_MS_HOOKS`, queue cap 20): 2 waits + 2 forks + the
+workflow start ≈ 2.5 s < RC's 3 s; a slow-RUNNING body (≤ 15 s) still blows
+it — an async receiver is a separate question. Alert sweep `_scanHooks`: a
+BUSY-only failure is `warning` (guestCode's `guest_code_saturated:hooks` owns
+escalation; hook-level partial-mapper rule warnings are not counted as
+causes), anything else `error`. Live
 bodies use `console.warn` — it still reaches the log as a warning. Authoring
 stays `automations.manage` (B5).
 

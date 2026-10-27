@@ -6,7 +6,7 @@ This is a one-time manual setup that connects RingCentral's webhook subscription
 
 - RC pushes inbound SMS, outbound SMS, and call-disconnect events to YisraCase
 - Each event drives a log row via workflow 15 (SMS) or workflow 16 (calls)
-- The daily renewal job (`scheduled_jobs` id=374, chapter 4) keeps the subscriptions alive indefinitely — each one renews on day 5 of its 7-day lifecycle
+- The daily renewal job (`scheduled_jobs` id=374, chapter 4) keeps the subscriptions alive indefinitely — each one renews on day 5 of its 7-day lifecycle — and checks every day that RingCentral still reports each one `Active`
 
 You'll come back here when:
 
@@ -16,6 +16,7 @@ You'll come back here when:
 | Got an **IT alert** "RC Subscription removed: \<slug\>" | Skip ahead to **Operational runbook → Failure mode 1: re-bootstrap a single subscription** |
 | Wiping all three subscriptions and starting over | **Rollback** first, then top of doc |
 | Renewal job failing every day | **Operational runbook → Failure mode 3** |
+| Got a system alert "RingCentral subscription Blacklisted" (or Suspended) | **Operational runbook → Failure mode 4** |
 
 **Estimated time:** ~10 minutes for a full three-subscription bootstrap. Run during business hours so the live tests verify the path end-to-end without paging anyone.
 
@@ -448,9 +449,21 @@ Fix:
 
 1. Connections → RingCentral (cred 9) — check `oauth_status`. If `refresh_failed`, click Revoke, then Connect to re-authorize.
 2. Manually trigger the renewal job: Scheduled Jobs → 374 → Reschedule now (or wait for tomorrow's 07:30 UTC run).
-3. Watch the log: `[RC_RENEW] done — N considered, X renewed, Y removed, Z error`.
+3. Watch the log: `[RC_RENEW] done — N considered, X renewed, Y removed, Z error, W not Active`.
 
 If renewal still fails after re-auth: next likely cause is a 403 from RC because the OAuth app lost the `Webhooks` permission — check the RC developer portal app config (`https://developers.ringcentral.com/`).
+
+#### Failure mode 4 — "RingCentral subscription Blacklisted" system alert
+
+RingCentral blacklists a webhook subscription when its deliveries to us fail — a non-2xx answer, or no answer within **3 seconds** — for about 10 minutes. It sends no notice, keeps none of the events it could not deliver, and (per its current docs) never reactivates the subscription: renewing it does not help. The renewal job reads each subscription's `status` from RingCentral every day (a GET, plus the renewal answer when one is due); anything other than `Active` raises an **error** system alert naming the subscription, its hook slug and RingCentral's reason. It repeats once a day until the subscription is replaced. `Suspended` is handled the same way.
+
+Events for that slug stopped flowing when RingCentral blacklisted it (the alert's "since" time, if RingCentral gave one); those events are gone on RingCentral's side.
+
+Fix — re-create **that slug only**:
+
+1. **DELETE the dead subscription** on RingCentral via API Tester — `DELETE /restapi/v1.0/subscription/<subscription_id>` (the id is in the alert).
+2. Follow **Failure mode 1** steps 1–6: same verification token, a fresh create-subscription POST, then replace that slug's entry in `app_settings.rc_subscriptions` with the new `subscription_id` / `expires_at`.
+3. Find out why deliveries failed before it happens again: `hook_executions` for that slug around the blacklist time (failed rows, or none at all — an outage), and the Cloud Run logs for slow answers. The receiver never asks RingCentral to retry, so the usual cause is our side being down or slower than 3 s.
 
 ---
 

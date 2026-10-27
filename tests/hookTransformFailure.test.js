@@ -4,7 +4,7 @@
  *
  * A FAILED hook transform delivers nothing (2026-10-27). It used to: a code
  * transform that threw, timed out or got no sandbox slot (GUEST_CODE_BUSY,
- * the hooks lane's 3 s queue budget) came back `{ output: {}, errors }`, and
+ * the hooks lane's queue budget) came back `{ output: {}, errors }`, and
  * executeHook ignored the errors — wrote `{}` as transform_output and started
  * every condition-less target on it. Live, hooks 22 (rc-message-out → wf 53)
  * and 23 (rc-call → wf 20) are exactly that shape. Hooks now follow the
@@ -25,8 +25,16 @@
  *     saturated by slow bodies, the waiter's webhook answers 200, delivers
  *     nothing, and its stored raw_input replays through /live-test (failing
  *     the same way while still saturated, delivering once it is free);
+ *   - a code FILTER that got no slot (BUSY) fails the execution — no
+ *     decision was made — while a filter body that throws or times out is
+ *     still a non-match ('filtered') (Fred, 2026-10-27);
+ *   - the receiver answers 503 + Retry-After ONLY for a Quo delivery
+ *     (openphone-signature) whose execution failed BUSY-only before any
+ *     target ran; RingCentral, a non-BUSY failure and a partial execution
+ *     stay 200;
  *   - the alert sweep: a BUSY-only failure is a warning (guestCode's own
- *     saturation alert owns the escalation), anything else an error.
+ *     saturation alert owns the escalation), anything else an error; hook-
+ *     level partial-mapper rule warnings are not counted as causes.
  *
  * HARNESS: the REAL guest engine (real forks, real QuickJS — guestCode is not
  * mocked), the real router / hookService / alerting scanner, a recording DB
@@ -393,6 +401,29 @@ function call(db, method, urlPath, { headers = {}, body } = {}) {
     });
   });
 }
+// call() with the response headers (Retry-After).
+function callFull(db, method, urlPath, { headers = {}, body } = {}) {
+  const app = express();
+  app.use(express.json());
+  app.use((req, res, next) => { req.db = db; next(); });
+  app.use(router);
+  return new Promise((resolve, reject) => {
+    const server = app.listen(0, () => {
+      const payload = body === undefined ? null : JSON.stringify(body);
+      const req = http.request({
+        port: server.address().port, path: urlPath, method,
+        headers: Object.assign(payload ? { 'content-type': 'application/json' } : {}, headers),
+      }, (res) => {
+        let data = '';
+        res.on('data', (c) => (data += c));
+        res.on('end', () => { server.close(); let j = null; try { j = JSON.parse(data); } catch (_) {} resolve({ status: res.statusCode, headers: res.headers, body: j }); });
+      });
+      req.on('error', (e) => { server.close(); reject(e); });
+      if (payload) req.write(payload);
+      req.end();
+    });
+  });
+}
 const admin = { authorization: 'Bearer ' + jwt.sign(
   { sub: 5, username: 'it', user_type: 1, user_auth: 'authorized', aud: 'staff', ver: 1, roles: ['admin', 'staff'] },
   process.env.JWT_SECRET, { expiresIn: '1h' }) };
@@ -435,6 +466,143 @@ describe('GUEST_CODE_BUSY through the receiver, then replay', () => {
 });
 
 // ─────────────────────────────────────────────────────────────
+// A code FILTER that got no sandbox slot made no decision → failed
+// (Fred, 2026-10-27 — overrides "failed filter = non-match" for BUSY only)
+// ─────────────────────────────────────────────────────────────
+
+const BUSY_MSG = 'code sandbox busy: no hooks slot within 300ms — failed closed, the body did not run';
+const codeFilterHook = (filterBody, over = {}, targets) =>
+  hookRow({ filter_mode: 'code', filter_config: code(filterBody), ...over }, targets);
+
+describe('runFilter: GUEST_CODE_BUSY fails (no decision); a body that ran and broke is still a non-match', () => {
+  test('BUSY → failed + busy, error tagged like the transform\'s', async () => {
+    const floods = saturateHooks(2000);
+    await until((s) => s.active.hooks === 2, 'hooks lane full');
+    const r = await hookService.runFilter(codeFilterHook('return true;'), INPUT);
+    expect(r).toEqual({ passed: false, failed: true, busy: true, error: `Filter code error [GUEST_CODE_BUSY]: ${BUSY_MSG}` });
+    await Promise.all(floods);
+    await idle();
+  });
+
+  test.each([
+    ['a throw', 'throw new Error("nope")', /^Filter code error: nope$/],
+    ['a timeout', LOOP, /^Filter code error: /],
+  ])('%s → filtered (passed:false + error), never failed', async (_k, body, re) => {
+    const r = await hookService.runFilter(codeFilterHook(body), INPUT);
+    expect(r.passed).toBe(false);
+    expect(r.error).toMatch(re);
+    expect(r.failed).toBeUndefined();
+    expect(r.busy).toBeUndefined();
+  });
+});
+
+describe('executeHook: a BUSY filter fails the execution, nothing runs after it', () => {
+  for (const splitPhase of [false, true]) {
+    test(`BUSY filter → failed, filter_passed NULL, no transform, no target (${splitPhase ? 'split-phase' : 'serial'})`, async () => {
+      const floods = saturateHooks(2000);
+      await until((s) => s.active.hooks === 2, 'hooks lane full');
+      const db = makeDb();
+      const hook = codeFilterHook('return true;', {}, [target(1, 'workflow'), target(2, 'http')]);
+      const r = await hookService.executeHook(db, hook.slug, INPUT, { hook, splitPhase });
+      await Promise.all(floods);
+      await idle();
+
+      expect(mockDispatched).toEqual([]);
+      expect(r).toEqual(expect.objectContaining({ status: 'failed', error: `Filter code error [GUEST_CODE_BUSY]: ${BUSY_MSG}`, targets: [] }));
+      expect(r.transform).toBeUndefined();
+      expect(r.detached).toBeUndefined();
+      expect(r.redeliver).toBeUndefined(); // no redeliverOnBusy from a caller that is not the Quo receiver
+      expect(execUpdates(db)).toHaveLength(1);
+      expect(finalExec(db).sql).toContain("filter_passed = NULL, status = 'failed'");
+      expect(finalExec(db).params).toEqual([`Filter code error [GUEST_CODE_BUSY]: ${BUSY_MSG}`, 500]);
+      expect(sqls(db, /hook_delivery_logs|scheduled_jobs/)).toEqual([]);
+    });
+  }
+
+  test('a filter body that throws still records filtered (filter_passed 0), not failed', async () => {
+    const db = makeDb();
+    const hook = codeFilterHook('throw new Error("nope")');
+    const r = await hookService.executeHook(db, hook.slug, INPUT, { hook });
+    expect(r.status).toBe('filtered');
+    expect(finalExec(db).sql).toContain("filter_passed = 0, status = 'filtered'");
+    expect(mockDispatched).toEqual([]);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────
+// The receiver answers 503 ONLY for Quo, ONLY when nothing was dispatched
+// ─────────────────────────────────────────────────────────────
+
+const QUO = { 'openphone-signature': 'hmac;1;1761530000000;dGVzdA==', 'user-agent': 'node' };
+const RC = { 'user-agent': 'RingCentral-WebHook' };
+
+describe('receiver: 503 + Retry-After for a BUSY-only Quo failure, 200 for everything else', () => {
+  async function postSaturated(hook, headers) {
+    const db = makeDb({ hook });
+    const floods = saturateHooks(2000);
+    await until((s) => s.active.hooks === 2, 'hooks lane full');
+    const res = await callFull(db, 'POST', `/hooks/${hook.slug}`, { headers, body: { phone: '3135550100' } });
+    await Promise.all(floods);
+    await idle();
+    return { db, res };
+  }
+
+  test('Quo, hook transform BUSY → 503, Retry-After 60, nothing dispatched, the row says it was answered 503', async () => {
+    const { db, res } = await postSaturated(hookRow({ slug: 'quo-message' }), QUO);
+    expect(res.status).toBe(503);
+    expect(res.headers['retry-after']).toBe('60');
+    expect(res.body).toEqual({ status: 'error', message: 'Temporarily unavailable — retry shortly' });
+    expect(mockDispatched).toEqual([]);
+    const u = finalExec(db);
+    expect(u.sql).toContain("transform_output = NULL, status = 'failed'");
+    expect(u.params[0]).toMatch(/^Transform code error \[GUEST_CODE_BUSY\]: code sandbox busy.* — answered 503, the sender redelivers this event as a new execution/);
+    expect(u.params[0]).not.toContain('; ');
+    expect(sqls(db, /hook_delivery_logs|scheduled_jobs/)).toEqual([]);
+  });
+
+  test('Quo, code filter BUSY → 503, nothing ran after the filter', async () => {
+    const { db, res } = await postSaturated(codeFilterHook('return true;', { slug: 'quo-call' }), QUO);
+    expect(res.status).toBe(503);
+    expect(res.headers['retry-after']).toBe('60');
+    expect(mockDispatched).toEqual([]);
+    expect(finalExec(db).sql).toContain("filter_passed = NULL, status = 'failed'");
+    expect(finalExec(db).params[0]).toMatch(/^Filter code error \[GUEST_CODE_BUSY\]: .* — answered 503/);
+  });
+
+  test('RingCentral, the same BUSY failure → 200 (a non-2xx risks the subscription), no 503 note', async () => {
+    const { db, res } = await postSaturated(hookRow({ slug: 'rc-call' }), RC);
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ status: 'received', slug: 'rc-call' });
+    expect(mockDispatched).toEqual([]);
+    expect(finalExec(db).params[0]).toBe(`Transform code error [GUEST_CODE_BUSY]: ${BUSY_MSG}`);
+  });
+
+  test('Quo, a NON-busy failure (a body that throws) → 200: a redelivery would fail the same way', async () => {
+    const hook = hookRow({ slug: 'quo-message', transform_config: code('throw new Error("boom")') });
+    const db = makeDb({ hook });
+    const res = await callFull(db, 'POST', `/hooks/${hook.slug}`, { headers: QUO, body: { phone: '3135550100' } });
+    expect(res.status).toBe(200);
+    expect(finalExec(db).params[0]).toBe('Transform code error: boom');
+  });
+
+  test('Quo, a PARTIAL execution (one target BUSY, one delivered) → 200: a redelivery would duplicate the delivered one', async () => {
+    const busyTarget = target(1, 'workflow', { transform_mode: 'code', transform_config: code('return { a: 1 };') });
+    const { res } = await postSaturated(hookRow({ slug: 'quo-message', transform_mode: 'passthrough', transform_config: null },
+      [busyTarget, target(2, 'workflow')]), QUO);
+    expect(res.status).toBe(200);
+    expect(mockDispatched.map((d) => d.target_id)).toEqual([2]);
+  });
+
+  test('Quo, healthy → 200 and delivered (control)', async () => {
+    const hook = hookRow({ slug: 'quo-message' });
+    const db = makeDb({ hook });
+    const res = await callFull(db, 'POST', `/hooks/${hook.slug}`, { headers: QUO, body: { phone: '3135550100' } });
+    expect(res.status).toBe(200);
+    expect(mockDispatched).toEqual([{ type: 'workflow', target_id: 1, output: { phone: '3135550100', kind: 'call' } }]);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────
 // Alert sweep severity
 // ─────────────────────────────────────────────────────────────
 
@@ -449,6 +617,21 @@ describe('_scanHooks severity (alert severity convention)', () => {
     expect(await scan([{ id: 1, hook_id: 22, slug: 'rc-message-out', status: 'failed', error: BUSY }])).toEqual(['warning']);
     // A target-level BUSY (partial, retried) carries the tag inside its target prefix.
     expect(await scan([{ id: 2, hook_id: 22, slug: 'x', status: 'partial', error: `t1: target transform failed (nothing delivered): ${BUSY}` }])).toEqual(['warning']);
+  });
+
+  test('a BUSY filter failure, and a BUSY row answered 503, are warnings', async () => {
+    expect(await scan([
+      { id: 8, hook_id: 17, slug: 'quo-call', status: 'failed', error: `Filter code error [GUEST_CODE_BUSY]: ${BUSY.replace(/^Transform code error \[GUEST_CODE_BUSY\]: /, '')}` },
+      { id: 9, hook_id: 16, slug: 'quo-message', status: 'failed', error: `${BUSY} — answered 503, the sender redelivers this event as a new execution (replay by hand only if no later execution of it delivered)` },
+    ])).toEqual(['warning', 'warning']);
+  });
+
+  test('hook-level partial-mapper rule warnings in front of a BUSY target are not causes → warning; an all-broken mapper alone → error', async () => {
+    expect(await scan([
+      { id: 10, hook_id: 3, slug: 'x', status: 'partial', error: `Rule 1 (→ x): Mapping rule for "x" has no source; Rule 3: missing "to" field; t1: target transform failed (nothing delivered): ${BUSY}` },
+      { id: 11, hook_id: 3, slug: 'x', status: 'failed', error: 'Rule 0: missing "to" field' },
+      { id: 12, hook_id: 3, slug: 'x', status: 'partial', error: 'Rule 1 (→ x): Mapping rule for "x" has no source; t1: HTTP 500' },
+    ])).toEqual(['warning', 'error', 'error']);
   });
 
   test('a body error, a non-object return, a broken target, or BUSY mixed with any of them is an error', async () => {

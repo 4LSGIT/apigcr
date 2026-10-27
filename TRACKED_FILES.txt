@@ -1561,6 +1561,7 @@ tests/processJobs.longJobConnection.test.js
 tests/processJobs.targeted.test.js
 tests/queryAiLoadOrder.test.js
 tests/quoMessageTransform.test.js
+tests/rcRenewSubscriptions.test.js
 tests/refererRedaction.test.js
 tests/refreshonmiss.k3.test.js
 tests/reportGrantEnsureAccount.test.js

@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-10-26T23:41:13.141Z
+-- Generated: 2026-10-27T03:04:07.115Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:12d249552a011022aa5e54b5a614fad5
+-- Fingerprint: sha256:08f7da6bc41283f01200b01eec4fe1d9
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -2224,9 +2224,12 @@ CREATE TABLE `hook_executions` (
   `raw_input` json DEFAULT NULL,
   `filter_passed` tinyint(1) DEFAULT NULL,
   `transform_output` json DEFAULT NULL,
-  `status` enum('received','filtered','processing','delivered','partial','failed','captured') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'received',
+  `status` enum('received','filtered','processing','delivered','partial','failed','captured') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'received' COMMENT 'received = queued for the drain (claimed_at NULL) or running filter and transform (claimed_at set, completed_at NULL); processing = transform written, targets running; filtered | delivered | partial | failed | captured = final. A row stuck in processing after its claim must NOT be re-run automatically — targets may have fired. (Async receiver, 2026-10-28)',
   `error` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci,
-  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `claimed_at` datetime(3) DEFAULT NULL COMMENT 'Async receiver (2026-10-28): when a drain — the Cloud Tasks doorbell POST /process-hook-execution/:id or the /process-jobs cron — claimed this row to run filter, transform and targets. NULL = still queued (status received), or a row that predates the async receiver. The claim is ONE conditional UPDATE (WHERE status = received AND claimed_at IS NULL): Cloud Tasks delivers at least once and the loser of the claim does nothing. A synchronous run (dry run, live-test, /internal/hook-replay, the kill-switch path) sets claimed_at at INSERT so the drain never picks it up.',
+  `completed_at` datetime(3) DEFAULT NULL COMMENT 'Async receiver: when the drain finished and status became final. completed_at - created_at is the end-to-end pipeline time (created_at is receipt). NULL while queued or running, and on rows that predate the async receiver.',
+  `attempts` tinyint unsigned NOT NULL DEFAULT '0' COMMENT 'Async receiver: claims so far, bumped AT claim time (a run that killed its instance has already spent its attempt). The stale sweep (lib/hookDrain.js) re-queues or fails a claimed row that never completed; its window and cap live there.'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- --------------------------------------------------------

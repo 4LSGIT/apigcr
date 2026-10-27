@@ -44,6 +44,11 @@ const EXEMPT = {
     'with sticky-last semantics (`bodies.length > 1 ? bodies.shift() : bodies[0]`) ' +
     'so the final body repeats forever by design. Its DB stub (makeDb) matches on ' +
     'SQL text and has no script array at all. Neither drift direction applies.',
+  'guestCodeLanes.test.js':
+    'fakeForks.shift() hands out held FAKE CHILD PROCESSES for a wrapped ' +
+    'child_process.fork, not DB rows: an empty queue falls through to a real ' +
+    'QuickJS fork by design, and afterEach asserts every requested fake fork ' +
+    'was consumed, so both drift directions are already caught.',
   'scriptGuardCoverage.test.js':
     'this file — its own source text contains the pattern it searches for.',
 };

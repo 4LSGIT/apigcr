@@ -21,6 +21,29 @@
  *
  * NOTHING DISPATCHES: lib/actionDispatchers.dispatch throws and is asserted
  * untouched; lib/alerting is a recorder; no pool exists.
+ *
+ * DETERMINISM (2026-10-27, after a CI flake: 1 run in 13 on a cold 4-vCPU
+ * runner). The occupying load — the "flood" that fills a lane — no longer
+ * runs real slow bodies whose slot frees on the wall clock. It is HELD:
+ * `hold()` makes the next forks fake children (child_process.fork is wrapped
+ * at the lowest layer; guestCode's slot accounting, queueing, budgets and
+ * release-on-exit all run for real) that keep their slot until the test
+ * releases them, then answer and exit. Every production call under test
+ * still forks a REAL child running the REAL QuickJS body. Consequences:
+ *   - a lane's state is asserted right after the calls are made (a grant or
+ *     a queue entry is synchronous inside runBodies) — no polling for it;
+ *   - no assertion depends on how fast a real child starts: a production call
+ *     is only ever made when a slot is free for it (the reservation proofs),
+ *     or into a lane whose slots are held for as long as the test wants (the
+ *     budget proofs — the waiter's own budget timer is the only clock);
+ *   - a held load never frees a slot by itself, so "it ran while the lane was
+ *     flooded" needs no elapsed-time bound;
+ *   - afterEach releases whatever a failed test left held, so one failure
+ *     cannot cascade into the next test (the CI flake's second failure was
+ *     exactly that cascade).
+ * The CI flake reproduces locally by making every child take 700 ms to boot
+ * (a --require preload in the child): the old tests failed the same two
+ * assertions; these pass.
  */
 
 // Read once at module load by guestCode / the services — set before any require.
@@ -64,27 +87,86 @@ jest.setTimeout(60000);
 const SLOW = 'var t = Date.now(); while (Date.now() - t < input.ms) {} return true;';
 const ALWAYS = { operator: 'and', conditions: [] };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-// A slot is released when the child PROCESS is gone (its 'exit'), which can
-// trail the answer by a few ms — so "idle" is awaited, then asserted.
+// A slot is released when the child PROCESS is gone (its 'exit' event), which
+// trails the answer — so "idle" is awaited, then asserted. The limit is only a
+// backstop against a hang, not a latency budget: nothing here asserts speed.
 const IDLE = { active: { events: 0, hooks: 0, preview: 0 }, queued: { events: 0, hooks: 0, preview: 0 }, total: 0 };
 const idle = async () => {
   const t = Date.now();
-  while (JSON.stringify(guestCode._poolState()) !== JSON.stringify(IDLE) && Date.now() - t < 5000) await sleep(10);
+  while (JSON.stringify(guestCode._poolState()) !== JSON.stringify(IDLE) && Date.now() - t < 30000) await sleep(10);
   expect(guestCode._poolState()).toEqual(IDLE);
 };
 
-// Start `n` slow bodies in `lane` (not awaited) and wait until the pool shows
-// them running or queued as expected.
+// ── HELD SLOTS (see DETERMINISM above) ─────────────────────────────────────
+// child_process.fork is wrapped once: while `fakeForks` holds modes, the next
+// fork returns a fake child instead of a process — 'hold' keeps its slot until
+// released, 'auto' answers at once. Otherwise the real fork runs. guestCode
+// reads require('child_process').fork at call time, so this is the lowest
+// layer it has; tests that spy on fork themselves wrap this wrapper.
+const cp = require('child_process');
+const { EventEmitter } = require('events');
+const forkUnwrapped = cp.fork;
+const fakeForks = [];
+const heldChildren = [];
+function fakeChild({ mode, owner }) {
+  const c = new EventEmitter();
+  let msg = null;
+  let done = false;
+  const answer = () => {
+    if (done) return;
+    done = true;
+    // The batch reply shape guestCode reads (one result per input, the body's
+    // `return true` as the tagged wrapper the guest source produces).
+    const batch = ((msg && msg.batch) || []).map(() => ({ ok: true, valueJson: JSON.stringify({ ok: true, value: true }), logs: [] }));
+    c.emit('message', { ok: true, batch });
+    setImmediate(() => c.emit('exit', 0, null));
+  };
+  Object.assign(c, {
+    pid: 900000 + heldChildren.length, connected: true,
+    send(m) { msg = m; if (mode === 'auto') setImmediate(answer); },
+    kill() {}, disconnect() { c.connected = false; }, unref() {},
+    release: answer,
+  });
+  if (mode === 'hold') { heldChildren.push(c); if (owner) owner.push(c); }
+  return c;
+}
+cp.fork = function forkOrFake(...args) {
+  if (fakeForks.length) return fakeChild(fakeForks.shift());
+  return forkUnwrapped.apply(this, args);
+};
+afterAll(() => { cp.fork = forkUnwrapped; });
+
+// Occupy `lane` with `n` calls, of which the first `granted` are expected to
+// get a slot at once (each a held fake child) and the rest to queue. The
+// grants and queue entries happen synchronously inside runBodies, so the
+// caller asserts the pool state right after. `then` lists modes for forks
+// made LATER (e.g. 'auto' for queued calls that run after a release).
+function hold(lane, n, granted, { then = [] } = {}) {
+  const mine = [];
+  fakeForks.push(...Array.from({ length: granted }, () => ({ mode: 'hold', owner: mine })),
+    ...then.map((mode) => ({ mode })));
+  const calls = Array.from({ length: n }, () => guestCode.runBodies('return true;', [{}], { lane, timeoutMs: 6000 }));
+  return {
+    calls,
+    // This hold's children, once their forks have happened (a microtask after
+    // the grant) — then each answers and exits, releasing its slot.
+    async release() {
+      const t = Date.now();
+      while (mine.length < granted && Date.now() - t < 30000) await sleep(5);
+      expect(mine).toHaveLength(granted);
+      for (const c of mine) c.release();
+    },
+  };
+}
+// Real slow bodies (the mixed-flood test wants real forks under contention).
 function flood(lane, n, ms) {
   return Array.from({ length: n }, () => guestCode.runBodies(SLOW, [{ ms }], { lane, timeoutMs: 6000 }));
 }
-async function until(pred, what, limit = 5000) {
-  const t = Date.now();
-  while (!pred(guestCode._poolState())) {
-    if (Date.now() - t > limit) throw new Error(`pool never reached: ${what} — ${JSON.stringify(guestCode._poolState())}`);
-    await sleep(10);
-  }
+function releaseAll() {
+  fakeForks.length = 0;
+  for (const c of heldChildren) c.release();
 }
+const state = () => guestCode._poolState();
 
 let warnSpy;
 let logSpy;
@@ -95,9 +177,14 @@ beforeEach(() => {
   guestCode.setAlertDb(null);
   mockAlert.mockClear();
 });
-afterEach(() => {
+afterEach(async () => {
+  // A failed test must not leave its held slots behind for the next one.
+  const leftover = fakeForks.length;
+  releaseAll();
+  await idle();
   warnSpy.mockRestore();
   logSpy.mockRestore();
+  expect(leftover).toBe(0);  // every fake fork a test asked for was used
   expect(mockDispatchTouches).toEqual([]);
 });
 
@@ -153,20 +240,27 @@ describe('the lane table', () => {
         const fresh = require('../lib/guestCode');
         expect(fresh.MAX_CHILDREN).toBe(4);
         expect(fresh.RESERVED).toEqual({ events: 2, hooks: 1, preview: 0 });
-        expect(fresh.QUEUE_WAIT_MS).toEqual({ events: 10000, hooks: 3000, preview: 5000 });
-        expect(fresh.MAX_QUEUE).toEqual({ events: 100, hooks: 50, preview: 10 });
+        expect(fresh.QUEUE_WAIT_MS).toEqual({ events: 10000, hooks: 1000, preview: 5000 });
+        expect(fresh.MAX_QUEUE).toEqual({ events: 100, hooks: 20, preview: 10 });
+        // RingCentral counts an answer slower than 3 s as a failed delivery
+        // (and blacklists after ~10 min of them). Hooks 22/23 run a code
+        // filter AND a code transform before the response: two full waits +
+        // two forks (~100 ms each on Cloud Run) + the workflow start (≤ ~300 ms)
+        // must still fit. Raising the default past this breaks the budget.
+        expect(2 * fresh.QUEUE_WAIT_MS.hooks + 2 * 100 + 300).toBeLessThan(3000);
       });
     } finally { Object.assign(process.env, saved); }
   });
 
   test('a call that names no lane runs in PREVIEW (a forgotten site can never take a production lane)', async () => {
-    const p = guestCode.runBodies(SLOW, [{ ms: 600 }], { timeoutMs: 6000 });
-    await until((st) => st.active.preview === 1, 'the unnamed call in preview');
-    expect(guestCode._poolState().active).toEqual({ events: 0, hooks: 0, preview: 1 });
-    await p;
-    const q = guestCode.runBody(SLOW, { ms: 600 }, { timeoutMs: 6000 });
-    await until((st) => st.active.preview === 1, 'runBody unnamed in preview');
-    await q;
+    const p = guestCode.runBodies(SLOW, [{ ms: 50 }], { timeoutMs: 6000 });
+    expect(state().active).toEqual({ events: 0, hooks: 0, preview: 1 });   // granted synchronously
+    expect((await p)[0]).toEqual({ ok: true, value: true });
+    await idle();
+    const q = guestCode.runBody(SLOW, { ms: 50 }, { timeoutMs: 6000 });
+    await sleep(0); // runBody reaches runBodies after one microtask hop
+    expect(state().active).toEqual({ events: 0, hooks: 0, preview: 1 });
+    expect(await q).toBe(true);
     await idle();
   });
 
@@ -184,41 +278,49 @@ describe('the lane table', () => {
 });
 
 describe('reservation', () => {
-  test('hooks + previews flooding every slot they may take leave the events floor: a trigger match, an ingest rule and a suppression run at once', async () => {
-    const floods = [...flood('preview', 2, 2500), ...flood('hooks', 3, 2500)];
-    // preview takes 1, hooks 1 — the other 2 stay held for events.
-    await until((s) => s.active.preview === 1 && s.active.hooks === 1 && s.queued.hooks === 2, 'non-events lanes full');
-    const t = Date.now();
-    const [trig, rule, supp] = await Promise.all([
+  test('hooks + previews flooding every slot they may take leave the events floor: a trigger match, an ingest rule and a suppression all run', async () => {
+    // More demand than either lane may have: 2 previews, 3 hooks.
+    const preview_ = hold('preview', 2, 1);
+    const hooks_ = hold('hooks', 3, 1);
+    // preview took 1, hooks 1, the rest queued — the other 2 slots stay held for events.
+    expect(state()).toEqual({ active: { events: 0, hooks: 1, preview: 1 }, queued: { events: 0, hooks: 2, preview: 1 }, total: 2 });
+    // Two events calls at once — exactly the floor, so neither waits for a slot.
+    const [trig, rule] = await Promise.all([
       triggerService.processEvent(triggerDb([triggerRule(21, 'return true;')]), envelope()),
       emailRules._evaluateMatch(ruleOf({ match_mode: 'code', match_config: { code: 'return input.subject === "Hello";' } }), emailEnvelope()),
-      phoneSupp.evaluateSuppressions(suppressionDb('phone_log_suppressions', [{ id: 6, name: 's', match_mode: 'code', match_config: { code: 'return true;' } }]), phoneEvent()),
     ]);
-    const elapsed = Date.now() - t;
+    const supp = await phoneSupp.evaluateSuppressions(suppressionDb('phone_log_suppressions', [{ id: 6, name: 's', match_mode: 'code', match_config: { code: 'return true;' } }]), phoneEvent());
     expect(trig.matchedRuleIds).toEqual([21]);
     expect(rule).toBe(true);
     expect(supp).toEqual({ suppressed: true, matchedRuleIds: [6] });
-    // Well before any flooding body (2.5 s) could have freed a slot.
-    expect(elapsed).toBeLessThan(2000);
-    const st = guestCode._poolState();
-    expect(st.active.hooks + st.active.preview).toBeLessThanOrEqual(2);
-    await Promise.all(floods);
-    await idle();
+    // All three ran while the flood still held its slots (a held slot never
+    // frees by itself; the events slots come back on their children's exit).
+    expect(state().active.hooks).toBe(1);
+    expect(state().active.preview).toBe(1);
+    expect(state().queued.preview).toBe(1);
+    // The queued hooks waiters fail closed at their budget behind the held slot.
+    const hookOut = await Promise.all(hooks_.calls.slice(1));
+    expect(hookOut.every(([r]) => r.error && r.error.code === 'GUEST_CODE_BUSY' && r.error.reason === 'wait_timeout')).toBe(true);
+    fakeForks.push({ mode: 'auto' }); // the queued preview runs once its lane frees
+    await preview_.release();
+    await hooks_.release();
+    const rest = await Promise.all([...preview_.calls, hooks_.calls[0]]);
+    expect(rest.every(([r]) => r.ok)).toBe(true);
   });
 
   test('an events flood leaves hooks their reserved slot: a live hook filter still runs', async () => {
-    const floods = flood('events', 5, 2500);
-    await until((s) => s.active.events === 3 && s.queued.events === 2, 'events lane full');
-    const t = Date.now();
+    const events_ = hold('events', 5, 3);
+    expect(state()).toEqual({ active: { events: 3, hooks: 0, preview: 0 }, queued: { events: 2, hooks: 0, preview: 0 }, total: 3 });
     const r = await hookService.runFilter({ filter_mode: 'code', filter_config: { code: 'return input.body.a === 1;' } }, hookInput());
     expect(r).toEqual({ passed: true });
-    expect(Date.now() - t).toBeLessThan(2000);
-    expect(guestCode._poolState().active.events).toBeLessThanOrEqual(3);
-    // The two queued events waiters fail closed at their 300 ms budget; the three running finish.
-    const done = await Promise.all(floods);
-    expect(done.filter(([r]) => r.ok)).toHaveLength(3);
-    expect(done.filter(([r]) => !r.ok).every(([r]) => r.error.code === 'GUEST_CODE_BUSY')).toBe(true);
-    await idle();
+    expect(state().active.events).toBe(3);
+    // The two queued events waiters fail closed at their 300 ms budget behind the held slots...
+    const queued = await Promise.all(events_.calls.slice(3));
+    expect(queued.every(([q]) => q.error && q.error.code === 'GUEST_CODE_BUSY' && q.error.reason === 'wait_timeout')).toBe(true);
+    // ...and the three holders finish once released.
+    await events_.release();
+    const held = await Promise.all(events_.calls.slice(0, 3));
+    expect(held.every(([h]) => h.ok)).toBe(true);
   });
 
   test('the total never exceeds MAX_CHILDREN across a mixed flood; every call ends ok or fails closed busy — nothing hangs or errs otherwise', async () => {
@@ -248,27 +350,28 @@ describe('reservation', () => {
 });
 
 describe('the queue-wait budget fails closed with each site\'s own semantics', () => {
-  test('hooks: the filter filters with an error, the transform FAILS (tagged busy) — after ~the budget, not the stall', async () => {
-    const floods = flood('hooks', 2, 3000);
-    await until((s) => s.active.hooks === 2, 'hooks lane full');
+  test('hooks: the filter and the transform both FAIL (tagged busy — no decision was made) — after ~the budget, not the stall', async () => {
+    const hooks_ = hold('hooks', 2, 2);
+    expect(state().active.hooks).toBe(2);
     const t = Date.now();
     const [filter, transform] = await Promise.all([
       hookService.runFilter({ filter_mode: 'code', filter_config: { code: 'return true;' } }, hookInput()),
       hookService.runTransform('code', { code: 'return { x: 1 };' }, hookInput()),
     ]);
     const elapsed = Date.now() - t;
-    expect(filter.passed).toBe(false);
-    expect(filter.error).toBe('Filter code error: code sandbox busy: no hooks slot within 300ms — failed closed, the body did not run');
-    expect(transform).toEqual({ output: {}, failed: true, errors: ['Transform code error [GUEST_CODE_BUSY]: code sandbox busy: no hooks slot within 300ms — failed closed, the body did not run'] });
+    expect(filter).toEqual({ passed: false, failed: true, busy: true, error: 'Filter code error [GUEST_CODE_BUSY]: code sandbox busy: no hooks slot within 300ms — failed closed, the body did not run' });
+    expect(transform).toEqual({ output: {}, failed: true, busy: true, errors: ['Transform code error [GUEST_CODE_BUSY]: code sandbox busy: no hooks slot within 300ms — failed closed, the body did not run'] });
     expect(elapsed).toBeGreaterThanOrEqual(280);
-    expect(elapsed).toBeLessThan(1500);
-    await Promise.all(floods);
-    await idle();
+    // The holders never free a slot, so ANY answer is the budget's, not the
+    // stall's; this bound only catches a budget read wrong by an order of magnitude.
+    expect(elapsed).toBeLessThan(3000);
+    await hooks_.release();
+    await Promise.all(hooks_.calls);
   });
 
   test('events: trigger match → non-match + reason, trigger transform → failed (no actions), ingest match → false, ingest transform → failed, suppression → not suppressed', async () => {
-    const floods = flood('events', 3, 3500);
-    await until((s) => s.active.events === 3, 'events lane full');
+    const events_ = hold('events', 3, 3);
+    expect(state().active.events).toBe(3);
     const warns = [];
     const t = Date.now();
     const [trig, trigTr, rule, ruleTr, supp] = await Promise.all([
@@ -294,29 +397,33 @@ describe('the queue-wait budget fails closed with each site\'s own semantics', (
     expect(ruleTr.error).toMatch(busy);
     expect(supp).toEqual({ suppressed: false, matchedRuleIds: [] });
     expect(warnSpy.mock.calls.map((c) => String(c[0])).join('\n')).toMatch(/\[guestCode\] events lane saturated \(wait_timeout\)/);
-    expect(elapsed).toBeLessThan(2500);
-    await Promise.all(floods);
-    await idle();
+    expect(elapsed).toBeLessThan(3000); // the 300 ms budget, not the (endless) hold
+    await events_.release();
+    await Promise.all(events_.calls);
   });
 });
 
 describe('the bounded queue', () => {
   test('beyond MAX_QUEUE a call fails closed AT ONCE; the queued ones still run', async () => {
-    const running = flood('preview', 1, 1200);
-    await until((s) => s.active.preview === 1, 'preview slot taken');
-    const queued = flood('preview', 2, 10);
-    await until((s) => s.queued.preview === 2, 'preview queue full');
+    // One holder, then two waiters that will run (instantly, as fakes) once it frees.
+    const running = hold('preview', 1, 1, { then: ['auto', 'auto'] });
+    const queued = Array.from({ length: 2 }, () => guestCode.runBodies(SLOW, [{ ms: 10 }], { lane: 'preview' }));
+    expect(state()).toEqual({ active: { events: 0, hooks: 0, preview: 1 }, queued: { events: 0, hooks: 0, preview: 2 }, total: 1 });
+    let settledAt = null;
     const t = Date.now();
-    const [over] = await guestCode.runBodies('return 1', [{}], { lane: 'preview' });
-    expect(Date.now() - t).toBeLessThan(100);
+    const overP = guestCode.runBodies('return 1', [{}], { lane: 'preview' }).then((x) => { settledAt = Date.now(); return x; });
+    const [over] = await overP;
+    // Refused without queueing (it never waited for its 4 s budget).
+    expect(settledAt - t).toBeLessThan(1000);
+    expect(state().queued.preview).toBe(2);
     expect(over.ok).toBe(false);
     expect(over.error).toMatchObject({ code: 'GUEST_CODE_BUSY', lane: 'preview', reason: 'queue_full',
       message: 'code sandbox busy: the preview lane queue is full (2 waiting) — failed closed, the body did not run' });
     // runBody rejects with the same error (the call sites' entry point).
     await expect(guestCode.runBody('return 1', {}, {})).rejects.toMatchObject({ code: 'GUEST_CODE_BUSY', reason: 'queue_full' });
-    const done = await Promise.all([...running, ...queued]);
+    await running.release();
+    const done = await Promise.all([...running.calls, ...queued]);
     expect(done.every(([r]) => r.ok)).toBe(true);
-    await idle();
   });
 });
 
@@ -328,11 +435,11 @@ describe('saturation alerts (house severity convention)', () => {
     let offset = 0;
     const nowSpy = jest.spyOn(Date, 'now').mockImplementation(() => realNow.call(Date) + offset);
     try {
-      const floods = flood('hooks', 2, 2500);
-      await until((s) => s.active.hooks === 2, 'hooks lane full');
+      const hooks_ = hold('hooks', 2, 2);
+      expect(state()).toEqual({ active: { events: 0, hooks: 2, preview: 0 }, queued: { events: 0, hooks: 0, preview: 0 }, total: 2 });
       // Three waiters (queue cap 3) and one overflow: 1 queue_full now + 3 wait_timeouts later.
-      const waiters = flood('hooks', 3, 10);
-      await until((s) => s.queued.hooks === 3, 'hooks queue full');
+      const waiters = Array.from({ length: 3 }, () => guestCode.runBodies(SLOW, [{ ms: 10 }], { lane: 'hooks' }));
+      expect(state().queued.hooks).toBe(3);
       const [over] = await guestCode.runBodies('return 1', [{}], { lane: 'hooks' });
       expect(over.error.reason).toBe('queue_full');
       const timedOut = await Promise.all(waiters);
@@ -358,33 +465,33 @@ describe('saturation alerts (house severity convention)', () => {
       await guestCode.runBodies('return 1', [{}], { lane: 'hooks' });
       expect(mockAlert).toHaveBeenCalledTimes(3);
       expect(mockAlert.mock.calls[2][1].severity).toBe('warning');
-      await Promise.all(floods);
+      await hooks_.release();
+      await Promise.all(hooks_.calls);
+      await idle(); // the released slots come back on their children's exit
 
       // preview: a repeat inside the window stays a warning.
-      const pFlood = flood('preview', 1, 1500);
-      await until((s) => s.active.preview === 1, 'preview slot taken');
-      const pq = flood('preview', 2, 10);
-      await until((s) => s.queued.preview === 2, 'preview queue full');
+      const pFlood = hold('preview', 1, 1, { then: ['auto', 'auto'] });
+      const pq = Array.from({ length: 2 }, () => guestCode.runBodies(SLOW, [{ ms: 10 }], { lane: 'preview' }));
+      expect(state()).toEqual({ active: { events: 0, hooks: 0, preview: 1 }, queued: { events: 0, hooks: 0, preview: 2 }, total: 1 });
       await guestCode.runBodies('return 1', [{}], { lane: 'preview' });
       offset += 61 * 1000;
       await guestCode.runBodies('return 1', [{}], { lane: 'preview' });
       const previewAlerts = mockAlert.mock.calls.filter((c) => c[1].group_key === 'guest_code_saturated:preview');
       expect(previewAlerts.map((c) => c[1].severity)).toEqual(['warning', 'warning']);
-      await Promise.all([...pFlood, ...pq]);
+      await pFlood.release();
+      await Promise.all([...pFlood.calls, ...pq]);
     } finally { nowSpy.mockRestore(); }
-    await idle();
   });
 
   test('with no db injected only the log line is written (this module opens no pool)', async () => {
-    const floods = flood('preview', 1, 800);
-    await until((s) => s.active.preview === 1, 'preview slot taken');
-    const pq = flood('preview', 2, 10);
-    await until((s) => s.queued.preview === 2, 'preview queue full');
+    const pFlood = hold('preview', 1, 1, { then: ['auto', 'auto'] });
+    const pq = Array.from({ length: 2 }, () => guestCode.runBodies(SLOW, [{ ms: 10 }], { lane: 'preview' }));
+    expect(state()).toEqual({ active: { events: 0, hooks: 0, preview: 1 }, queued: { events: 0, hooks: 0, preview: 2 }, total: 1 });
     await guestCode.runBodies('return 1', [{}], { lane: 'preview' });
     expect(mockAlert).not.toHaveBeenCalled();
     expect(warnSpy.mock.calls.some((c) => /preview lane saturated \(queue_full\)/.test(String(c[0])))).toBe(true);
-    await Promise.all([...floods, ...pq]);
-    await idle();
+    await pFlood.release();
+    await Promise.all([...pFlood.calls, ...pq]);
   });
 });
 

@@ -133,9 +133,12 @@ const CATCHALL_SLUG = '_catchall';
  * POST /hooks/:slug
  *
  * Receives external webhooks. Authentication is per-hook (not JWT).
- * Always returns 200 to the sender — errors are logged internally.
+ * Returns 200 to the sender — errors are logged internally — with two
+ * exceptions, both a 503 + Retry-After asking for a redelivery that can only
+ * help: a Quo event whose code filter/transform got no sandbox slot (nothing
+ * was dispatched — see the normal path below), and maintenance:
  *
- * ONE EXCEPTION — MAINTENANCE_MODE=1 (lib/maintenance.js). The pipeline must
+ * MAINTENANCE_MODE=1 (lib/maintenance.js). The pipeline must
  * not run (the database is write-frozen), and "200 no matter what" would then
  * mean "acknowledged and lost". So after the usual lookup + authentication the
  * event is CAPTURED to the hook spool (lib/hookSpool.js) and replayed later
@@ -222,7 +225,7 @@ router.post('/hooks/:slug', hookReceiveLimiter, async (req, res) => {
         return res.json({ status: 'received', slug });
       } catch (err) {
         console.error(`[hook] maintenance: could NOT spool ${slug} — answering 503 so the sender retries: ${err.message}`);
-        return maintenanceUnavailable(res);
+        return retryLater(res);
       }
     }
 
@@ -254,16 +257,27 @@ router.post('/hooks/:slug', hookReceiveLimiter, async (req, res) => {
     // response, request-bound at full CPU; http/internal_function targets
     // stay detached exactly as before via the returned `detached` promise.
     // The response body is byte-identical to the old contract, and the
-    // catch keeps the old guarantee: our pipeline errors never turn into
-    // sender-side retries. Filtered/captured results carry no `detached`, nor
-    // does a FAILED hook transform (executeHook fails the execution before
-    // any target runs). That one is still answered 200, GUEST_CODE_BUSY
-    // included: a 503 would buy a redelivery only from a sender that retries,
-    // and RingCentral (hooks 21–23) retries ~3 times in a short window, then
-    // BLACKLISTS the subscription — every RC event lost until it is
-    // re-created. Recovery is a replay of the failed execution's raw_input.
+    // catch keeps the old guarantee: a pipeline that throws never turns into
+    // a sender-side retry. Filtered/captured results carry no `detached`, nor
+    // does a FAILED filter or hook transform (executeHook fails the execution
+    // before any target runs). Those are answered 200 too — with ONE
+    // exception: a Quo delivery (isQuoDelivery) whose execution failed ONLY
+    // because the code sandbox was busy (`redeliver` — the body never ran,
+    // nothing was dispatched) is answered 503 + Retry-After, because Quo
+    // retries non-2xx (up to 8 times over ~27 h) and never disables the
+    // webhook, and its redelivery cannot duplicate anything. Everything else
+    // stays 200, RingCentral (hooks 21–23) above all: RC treats non-2xx and
+    // answers slower than 3 s as failures and, after ~10 min of them,
+    // BLACKLISTS the subscription — every RC event lost until it is deleted
+    // and re-created. Recovery there is a replay of the execution's raw_input.
     try {
-      const result = await hookService.executeHook(db, slug, input, { hook, splitPhase: true });
+      const result = await hookService.executeHook(db, slug, input, {
+        hook, splitPhase: true, redeliverOnBusy: isQuoDelivery(req),
+      });
+      if (result && result.redeliver) {
+        console.warn(`[hook] ${slug}: code sandbox busy, nothing dispatched — answering 503 so Quo redelivers (execution ${result.executionId})`);
+        return retryLater(res);
+      }
       res.json({ status: 'received', slug });
       if (result && result.detached) {
         result.detached.catch((err) => {
@@ -279,20 +293,34 @@ router.post('/hooks/:slug', hookReceiveLimiter, async (req, res) => {
     console.error(`[hook] Receiver error for ${slug}:`, err);
     // In maintenance nothing was stored (the hook lookup itself failed), so a
     // 200 here would be a silent drop — see the route header.
-    if (maintenance.isOn()) return maintenanceUnavailable(res);
+    if (maintenance.isOn()) return retryLater(res);
     // Still return 200 to avoid sender retries on our errors
     res.status(200).json({ status: 'received', slug });
   }
 });
 
-// 503 for a hook event that could not be captured during maintenance. Short
-// Retry-After: unlike the gate's page-level 503, this is a transient storage
-// failure and the sender should come back soon.
-function maintenanceUnavailable(res) {
+// 503 for a hook event the receiver could not take: one that could not be
+// captured during maintenance, or a Quo event whose code filter/transform got
+// no sandbox slot (above). Short Retry-After: unlike the gate's page-level
+// 503, both are transient and the sender should come back soon.
+function retryLater(res) {
   return res.status(503).set('Retry-After', '60').json({
     status: 'error',
     message: 'Temporarily unavailable — retry shortly',
   });
+}
+
+// A delivery from Quo (formerly OpenPhone): it signs every webhook with an
+// `openphone-signature` header. Measured 2026-10-27: present on 2,859 of the
+// 2,866 executions ever recorded for quo-message / quo-call (7 lack it) and
+// on no other slug's — RingCentral sends
+// `User-Agent: RingCentral-WebHook` and no such header. Read from the request,
+// not the hook row, so it holds whichever slug (or the catch-all) Quo posts
+// to. A forged header can only earn its sender a 503 for a busy sandbox.
+const QUO_SIGNATURE_HEADER = 'openphone-signature';
+function isQuoDelivery(req) {
+  const sig = req.get(QUO_SIGNATURE_HEADER);
+  return typeof sig === 'string' && sig.length > 0;
 }
 
 
@@ -888,9 +916,10 @@ router.post('/api/hooks/:id/live-test', manageHooks, async (req, res) => {
 //
 // Transform failures are RESULTS (errors[] in a 200), mirroring
 // runTransform's own posture; only request-shape problems 400. runTransform
-// can THROW on an unparseable string config (its JSON.parse is unguarded —
-// impossible live, where configs come from JSON columns as objects); the
-// safeRun wrapper converts that throw into the same errors[] shape.
+// does not throw on a bad config (an unparseable string config comes back
+// `failed: true` with its error, as every transform failure does); the
+// safeRun wrapper is a backstop that would give an unexpected throw the same
+// errors[] shape.
 //
 // Response: { status:'success', result: { input, pre?, transform:
 //   {output, errors}, resolved_params? } }

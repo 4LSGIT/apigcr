@@ -11,7 +11,10 @@
  *   - executeRetry reading that row back gets a JS null from mysql2 and
  *     delivers nothing;
  *   - a failed TARGET transform persists a 'failed' delivery-log row and a
- *     pending hook_retry job, and the execution reads 'partial'.
+ *     pending hook_retry job, and the execution reads 'partial';
+ *   - a Quo event whose code filter got no sandbox slot is answered 503 and
+ *     lands 'failed' with filter_passed SQL NULL (no decision) and the 503
+ *     note on the error, nothing delivered.
  * Real receiver, real hookService, real guest engine; actionDispatchers.dispatch
  * is a recorder (nothing starts a workflow).
  *
@@ -132,5 +135,35 @@ maybe('a failed hook transform on real MySQL', () => {
     expect(jobs[0].status).toBe('pending');
     const data = typeof jobs[0].data === 'string' ? JSON.parse(jobs[0].data) : jobs[0].data;
     expect(data).toEqual({ execution_id: ex.id, target_id: 20 });
+  });
+
+  test('a Quo event whose code filter finds the sandbox busy → 503, a failed row with filter_passed NULL, nothing delivered', async () => {
+    const guestCode = require('../lib/guestCode');
+    await q(`INSERT INTO hooks (id, slug, name, auth_type, filter_mode, filter_config) VALUES (3, 'quo-busy', 'quo', 'none', 'code', ?)`,
+      [JSON.stringify({ code: 'return true;' })]);
+    await q(`INSERT INTO hook_targets (id, hook_id, target_type, name, position, config) VALUES (30, 3, 'workflow', 'wf', 0, ?)`,
+      [JSON.stringify({ workflow_id: 7 })]);
+    // Both hooks slots (1 reserved + 1 borrowable) held by slow bodies far
+    // longer than the lane's 1 s budget — a slow child start only lengthens
+    // the hold, so the waiter's budget is the only clock that decides.
+    const SLOW = 'var t = Date.now(); while (Date.now() - t < input.ms) {} return true;';
+    const floods = [0, 1].map(() => guestCode.runBodies(SLOW, [{ ms: 4000 }], { lane: 'hooks', timeoutMs: 10000 }));
+    expect(guestCode._poolState().active.hooks).toBe(2);
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    let res;
+    try {
+      res = await fetch(`${base}/hooks/quo-busy`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json', 'openphone-signature': 'hmac;1;1;dGVzdA==' },
+        body: JSON.stringify({ id: 'EVtest', object: 'event' }),
+      });
+    } finally { warn.mockRestore(); }
+    expect(res.status).toBe(503);
+    expect(res.headers.get('retry-after')).toBe('60');
+    const rows = await q('SELECT status, filter_passed, error, transform_output IS NULL AS out_null FROM hook_executions');
+    expect(rows).toEqual([{ status: 'failed', filter_passed: null, out_null: 1,
+      error: expect.stringMatching(/^Filter code error \[GUEST_CODE_BUSY\]: code sandbox busy: no hooks slot within 1000ms .* — answered 503, the sender redelivers/) }]);
+    expect(await q('SELECT COUNT(*) n FROM hook_delivery_logs')).toEqual([{ n: 0 }]);
+    expect(mockDispatched).toEqual([]);
+    await Promise.all(floods);
   });
 });

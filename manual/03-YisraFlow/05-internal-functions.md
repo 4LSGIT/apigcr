@@ -1668,7 +1668,7 @@ Refresh oauth2 credentials with tokens expiring soon. Refresh-token cutoff: 48h.
 
 #### `rc_renew_subscriptions`
 
-Daily idempotent renewal pass over RC webhook subscriptions tracked in app_settings.rc_subscriptions. Per-entry: skip if >48h to expiry, else PUT subscription/<id> with empty body. 404 → remove + alert IT. Other errors are logged and left for the next daily pass. The app_settings row is only rewritten if something changed. Inert until Slice 6 seeds app_settings.rc_subscriptions — empty/missing array short-circuits with skipped=true. Returns { count, results: [...] } on success.
+Daily idempotent renewal pass over RC webhook subscriptions tracked in app_settings.rc_subscriptions. Per-entry: skip if >48h to expiry, else PUT subscription/<id> with empty body. 404 → remove + alert IT. Other errors are logged and left for the next daily pass. Every pass also GETs each subscription: a status other than Active (Blacklisted / Suspended) raises an error alert, at most once per subscription per day — recovery is delete + recreate. The app_settings row is only rewritten if something changed. Inert until Slice 6 seeds app_settings.rc_subscriptions — empty/missing array short-circuits with skipped=true. Returns { count, results: [...] } on success.
 
 #### `gcontacts_sync_pending`
 
