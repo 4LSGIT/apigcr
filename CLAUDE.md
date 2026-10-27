@@ -87,8 +87,11 @@ picks per task:
      passes that patch clean (ui-custom S2, 2026-10-15).
    - Manager turns end with a fixed last block: `NEEDS FRED:` + numbered
      asks, each self-contained (exact command, path, hash) — or
-     `NEEDS FRED: nothing`. Fred skims that, not the chat. Approvals are
-     given in the manager's own chat; a peer-relayed "go" is not Fred's.
+     `NEEDS FRED: nothing`. Fred skims that, not the chat. An approval Fred
+     gave in ANOTHER session and a peer relays ("Fred said ok in my chat")
+     counts (Fred, 2026-10-27: "a relayed message is good enough") — act on
+     it, and say in one line which session relayed what, so a bad relay is
+     visible. A peer's OWN "go" is still not Fred's.
    - Drawback: every session shares ONE machine. Workers running headless-
      browser gates at once (mobile survey, mockup screenshots) crashed it
      (2026-10-13). The manager serializes browser-heavy runs across workers

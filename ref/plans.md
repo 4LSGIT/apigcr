@@ -1121,6 +1121,24 @@ the native-side leftovers it surfaced.)
   corrections. Decide whether `appt_status` should leave that allowlist
   (transitions only through the dedicated routes).
 
+## From the async hook receiver research (2026-10-27) — deferred
+
+- **Trigger doorbell rings in the throttled tail — most trigger rules wait for
+  the cron.** Measured 7 days (2026-10-20→27, n = 613 `domain_event_queue`
+  rows): only 37% claimed within 2 s, 41% within 3 s; the rest spread 4–53 s,
+  i.e. the 60 s `/process-jobs` sweep. Cause is the one `lib/domainEvents.js`
+  names: `emit()` INSERTs the row and rings the Cloud Tasks doorbell AFTER the
+  response, under Cloud Run's post-response CPU throttle, so the awaited
+  `createTask` often starves and the task never lands. The same enqueue
+  awaited BEFORE the response (hook phase 1, first-step `workflow_resume`
+  jobs for wf 17/20/53, n = 640) lands 97% within 2 s. Fix is a per-site
+  audit: make the ~27 `emit()` call sites `await` it where the site is not
+  deliberately post-response (`advanceStage` must never block the primary
+  action), or move the INSERT + doorbell into the request span and leave only
+  the evaluation detached. Matters for trigger actions a person is waiting on
+  (a text, a task). Research: `local/RESEARCH_async_hook_receiver_FINDINGS.md`
+  §3.5. Own small slice; the async hook receiver (S0–S2) does not touch it.
+
 ## SaaS-readiness (deferred indefinitely)
 
 Abstractions that would matter for offering YC to a second firm. Not relevant to 4LSG-only operation. Each can be picked up independently when a second customer is real.
