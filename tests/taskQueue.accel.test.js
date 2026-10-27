@@ -284,6 +284,54 @@ describe('lib/taskQueue.warmup (boot-time, startup/init.js)', () => {
 // /process-jobs cron. lib/domainEvents.emit() must not break because Cloud
 // Tasks is having a bad day.
 
+describe('lib/taskQueue.enqueueHookExecutionDispatch (ack-first webhook receiver)', () => {
+
+  test('targets /process-hook-execution/:id with a bare he-{id} task name, same auth and deadline', async () => {
+    armEnv();
+    const c = fakeClient();
+    taskQueue._test({ client: c });
+
+    const out = await taskQueue.enqueueHookExecutionDispatch(34748);
+    expect(out).toBe(true);
+
+    const [{ parent, task }, callOpts] = c.createTask.mock.calls[0];
+    expect(parent).toBe('projects/test-proj/locations/us-central1/queues/yc-jobs');
+    expect(task.httpRequest.url).toBe('https://app.example.test/process-hook-execution/34748');
+    expect(task.httpRequest.httpMethod).toBe('POST');
+    expect(task.httpRequest.headers['x-api-key']).toBe('yci_test_key');
+    expect(callOpts).toEqual({ timeout: 15000 });
+    // One ring per row (a BUSY re-queue rides the cron, it never rings again)
+    // and ids are never reused, so the bare name cannot collide with the
+    // ~1h completed-name retention.
+    expect(task.name).toBe('projects/test-proj/locations/us-central1/queues/yc-jobs/tasks/he-34748');
+    // Due now (+ the dispatch buffer), never scheduled out.
+    expect(task.scheduleTime.seconds * 1000).toBeLessThanOrEqual(Date.now() + taskQueue.DISPATCH_BUFFER_MS + 1000);
+  });
+
+  test('disabled → false, nothing touched; RPC failure → false, never rejects (the receiver awaits it before answering)', async () => {
+    const c = fakeClient();
+    taskQueue._test({ client: c });
+    await expect(taskQueue.enqueueHookExecutionDispatch(1)).resolves.toBe(false);
+    expect(c.createTask).not.toHaveBeenCalled();
+
+    armEnv();
+    const bad = fakeClient({ createTask: jest.fn(async () => { throw new Error('UNAVAILABLE'); }) });
+    taskQueue._test({ client: bad });
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      await expect(taskQueue.enqueueHookExecutionDispatch(1)).resolves.toBe(false);
+    } finally { warn.mockRestore(); }
+  });
+
+  test('ALREADY_EXISTS (gRPC 6) is silent', async () => {
+    armEnv();
+    const err = new Error('already exists'); err.code = 6;
+    const c = fakeClient({ createTask: jest.fn(async () => { throw err; }) });
+    taskQueue._test({ client: c });
+    await expect(taskQueue.enqueueHookExecutionDispatch(1)).resolves.toBe(false);
+  });
+});
+
 describe('lib/taskQueue.enqueueDomainEventDispatch', () => {
 
   test('targets /process-domain-event/:id with a bare de-{id} task name', async () => {

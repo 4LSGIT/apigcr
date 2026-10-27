@@ -32,6 +32,7 @@ jest.mock('../services/hookService', () => ({
   getHookBySlug: jest.fn(),
   authenticateRequest: jest.fn(() => ({ valid: true })),
   executeHook: jest.fn(),
+  recordExecution: jest.fn(),
 }));
 
 const hookService = require('../services/hookService');
@@ -79,6 +80,7 @@ beforeEach(() => {
   hookService.getHookBySlug.mockReset().mockResolvedValue(HOOK);
   hookService.authenticateRequest.mockReset().mockReturnValue({ valid: true });
   hookService.executeHook.mockReset().mockResolvedValue({ status: 'accepted', executionId: 7, targets: [] });
+  hookService.recordExecution.mockReset().mockResolvedValue({ executionId: 7, truncated: false });
   client = fakeClient();
   hookSpool._test({ client });
   logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
@@ -107,14 +109,17 @@ const storedTask = () => {
 };
 
 describe('maintenance OFF — the new branch is not taken', () => {
-  test('pipeline runs, nothing is spooled', async () => {
+  test('the event is recorded for the drain (ack-first receiver), nothing is spooled', async () => {
     const res = await fire();
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ status: 'received', slug: 'test-hook' });
-    expect(hookService.executeHook).toHaveBeenCalledTimes(1);
-    expect(client.createTask).not.toHaveBeenCalled();
+    // Ack first (2026-10-28): the row is written and the doorbell rung; the
+    // pipeline runs later from lib/hookDrain, never in this request.
+    expect(hookService.recordExecution).toHaveBeenCalledTimes(1);
+    expect(hookService.executeHook).not.toHaveBeenCalled();
+    expect(client.createTask).not.toHaveBeenCalled();   // the SPOOL client — not the doorbell's
     // …and the live input carries no spool markers.
-    const input = hookService.executeHook.mock.calls[0][2];
+    const input = hookService.recordExecution.mock.calls[0][3];
     expect(input.meta).not.toHaveProperty('spool_id');
     expect(input.meta).not.toHaveProperty('spooled');
   });
@@ -130,11 +135,12 @@ describe('maintenance OFF — the new branch is not taken', () => {
 describe('maintenance ON — capture, never execute', () => {
   beforeEach(() => { process.env.MAINTENANCE_MODE = '1'; });
 
-  test('event is spooled; executeHook is NOT called; the 200 body is unchanged', async () => {
+  test('event is spooled; neither executeHook nor recordExecution is called; the 200 body is unchanged', async () => {
     const res = await fire();
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ status: 'received', slug: 'test-hook' });
     expect(hookService.executeHook).not.toHaveBeenCalled();
+    expect(hookService.recordExecution).not.toHaveBeenCalled();
 
     const { task, payload } = storedTask();
     expect(task.httpRequest.url).toBe('https://app.example.test/internal/hook-replay');

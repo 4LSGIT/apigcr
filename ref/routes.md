@@ -1,7 +1,7 @@
 # Routes
 
-_Generated 2026-10-21T20:32:29.341Z_  
-_811 routes total — DELETE: 66, GET: 339, PATCH: 58, POST: 308, PUT: 37, _ALL: 3_
+_Generated 2026-10-27T10:51:48.050Z_  
+_812 routes total — DELETE: 66, GET: 339, PATCH: 58, POST: 309, PUT: 37, _ALL: 3_
 
 ## Global middleware chain
 
@@ -924,6 +924,12 @@ _811 routes total — DELETE: 66, GET: 339, PATCH: 58, POST: 308, PUT: 37, _ALL:
 |--------|------|-------------|---------|
 | POST | `/process-domain-event/:id` | `jwtOrApiKey` | — |
 
+## /process-hook-execution
+
+| Method | Path | Middlewares | Handler |
+|--------|------|-------------|---------|
+| POST | `/process-hook-execution/:id` | `jwtOrApiKey` | — |
+
 ## /process-job
 
 | Method | Path | Middlewares | Handler |
@@ -1081,4 +1087,4 @@ _811 routes total — DELETE: 66, GET: 339, PATCH: 58, POST: 308, PUT: 37, _ALL:
 
 ---
 
-_811 routes total — DELETE: 66, GET: 339, PATCH: 58, POST: 308, PUT: 37, _ALL: 3_
+_812 routes total — DELETE: 66, GET: 339, PATCH: 58, POST: 309, PUT: 37, _ALL: 3_

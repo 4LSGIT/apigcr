@@ -1131,6 +1131,24 @@ the native-side leftovers it surfaced.)
   the evaluation detached. Matters for trigger actions a person is waiting on
   (a text, a task). Research: `local/RESEARCH_async_hook_receiver_FINDINGS.md`
   §3.5. Own small slice; the async hook receiver (S0–S2) does not touch it.
+- **Hook S2 — Logs tab for the queue + a Replay button.** `received` rows show
+  their queued age; `POST /api/hooks/executions/:id/replay` (manageHooks)
+  inserts a NEW row from the old `raw_input` with `meta.replay_of` and rings
+  the doorbell — replaces "paste raw_input into Live Test". Six-width survey.
+- **Hook S3 — dedup on the provider's event id.** `hooks.dedup_path` (RC:
+  `body.uuid`; Quo: `body.id` — Quo sends no `webhook-id` header) +
+  `hook_executions.dedup_key VARCHAR(191) NULL` + `UNIQUE (hook_id,
+  dedup_key)`; a duplicate is answered `200 {status:'received'}` with no row.
+  Measured: RC 0 duplicates in 30 d; Quo 5 duplicate `body.id` groups in 14 d,
+  mostly 0–5 s apart, every copy delivered → workflows started twice (Casey
+  manager, 2026-10-27). Deferred by Fred before the Quo figure was known —
+  re-asked in the HOOK session's NEEDS FRED. Schema change (Fred's go).
+- **Hook S3b — collapse the second hop.** A hook-started workflow now pays
+  two doorbell hops (receiver → drain, drain → workflow start: ~+1–2 s, and
+  the ≤ 60 s cron tail on each). Inside the drain, after `scheduleResume`,
+  run the first step inline (`runJobPass(db, {jobId})`, request-bound) —
+  needs `deliverWorkflow` to surface the job id. Fred accepted the hop for
+  S1; build only if inbound-SMS latency is felt.
 
 ## SaaS-readiness (deferred indefinitely)
 

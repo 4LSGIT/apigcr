@@ -240,14 +240,14 @@ describe('the lane table', () => {
         const fresh = require('../lib/guestCode');
         expect(fresh.MAX_CHILDREN).toBe(4);
         expect(fresh.RESERVED).toEqual({ events: 2, hooks: 1, preview: 0 });
-        expect(fresh.QUEUE_WAIT_MS).toEqual({ events: 10000, hooks: 1000, preview: 5000 });
-        expect(fresh.MAX_QUEUE).toEqual({ events: 100, hooks: 20, preview: 10 });
-        // RingCentral counts an answer slower than 3 s as a failed delivery
-        // (and blacklists after ~10 min of them). Hooks 22/23 run a code
-        // filter AND a code transform before the response: two full waits +
-        // two forks (~100 ms each on Cloud Run) + the workflow start (≤ ~300 ms)
-        // must still fit. Raising the default past this breaks the budget.
-        expect(2 * fresh.QUEUE_WAIT_MS.hooks + 2 * 100 + 300).toBeLessThan(3000);
+        expect(fresh.QUEUE_WAIT_MS).toEqual({ events: 10000, hooks: 10000, preview: 5000 });
+        expect(fresh.MAX_QUEUE).toEqual({ events: 100, hooks: 100, preview: 10 });
+        // Since the ack-first receiver (2026-10-28) the hooks lane is NOT
+        // request-bound: the sender has its 200 before any body runs, and a
+        // waiter that still fails closed is re-queued by lib/hookDrain. The
+        // budget is sized like events, and a RingCentral-window arithmetic
+        // (the old 2 waits + 2 forks + workflow start < 3 s) no longer applies.
+        expect(fresh.QUEUE_WAIT_MS.hooks).toBe(fresh.QUEUE_WAIT_MS.events);
       });
     } finally { Object.assign(process.env, saved); }
   });

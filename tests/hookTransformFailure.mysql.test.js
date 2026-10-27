@@ -12,11 +12,19 @@
  *     delivers nothing;
  *   - a failed TARGET transform persists a 'failed' delivery-log row and a
  *     pending hook_retry job, and the execution reads 'partial';
- *   - a Quo event whose code filter got no sandbox slot is answered 503 and
- *     lands 'failed' with filter_passed SQL NULL (no decision) and the 503
- *     note on the error, nothing delivered.
+ *   - the ACK-FIRST receiver (2026-10-28) end to end on the real table: the
+ *     webhook is answered 200 before any body runs and the row is QUEUED
+ *     (received, claimed_at NULL); lib/hookDrain.drainOne claims it (attempts
+ *     1, claimed_at set); a code filter that finds the sandbox busy RE-QUEUES
+ *     the row (received again, claimed_at NULL, filter_passed NULL, the BUSY
+ *     error with the re-queue note); the next drain claims it again (attempts
+ *     2) and, with the lane free, delivers — completed_at stamped, one
+ *     'queued' delivery log, nothing duplicated; a second drainOne on the
+ *     finished row is already_claimed.
  * Real receiver, real hookService, real guest engine; actionDispatchers.dispatch
- * is a recorder (nothing starts a workflow).
+ * is a recorder (nothing starts a workflow). The first three tests run the
+ * receiver's KILL-SWITCH path (HOOK_ASYNC_ACK='0' — the pipeline inside the
+ * request, which is what makes their rows final at once); the last flips it.
  *
  * ── GATED ON YC_TEST_MYSQL_URL — SKIPPED OTHERWISE ──────────────────────────
  *   mysql -uroot -e "CREATE DATABASE yc_hookfail_test CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci"
@@ -27,6 +35,10 @@
  * through the Cloud SQL proxy.
  */
 
+process.env.HOOK_ASYNC_ACK = '0'; // request-bound path for the row-shape tests; the drain test flips it
+// The hooks lane waits 10 s by default since the ack-first receiver; the BUSY
+// case below holds both slots for 4 s, so the waiter must give up sooner.
+process.env.GUEST_CODE_QUEUE_WAIT_MS_HOOKS = process.env.GUEST_CODE_QUEUE_WAIT_MS_HOOKS || '1000';
 const URL_ = process.env.YC_TEST_MYSQL_URL;
 const maybe = URL_ ? describe : describe.skip;
 const PROD_SQL_MODE = 'IGNORE_SPACE,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION';
@@ -102,6 +114,13 @@ maybe('a failed hook transform on real MySQL', () => {
                                  JSON_TYPE(transform_output) AS out_type FROM hook_executions`);
     expect(rows).toEqual([{ id: expect.any(Number), status: 'failed', filter_passed: 1,
       error: 'Transform code error: boom', out_null: 1, out_type: null }]);
+    // The kill-switch path runs the row SYNCHRONOUSLY, so it is inserted CLAIMED
+    // (attempts 1) and stamped completed_at: the drain can never take it, even
+    // with no doorbell grace — the one guarantee that keeps a synchronous run
+    // from being run a second time by the cron (ack-first receiver, 2026-10-28).
+    const [claimRow] = await q('SELECT claimed_at IS NOT NULL AS claimed, completed_at IS NOT NULL AS completed, attempts FROM hook_executions WHERE id = ?', [rows[0].id]);
+    expect(claimRow).toEqual({ claimed: 1, completed: 1, attempts: 1 });
+    expect(await require('../lib/hookDrain').drainBatch(pool, { graceSeconds: 0 })).toEqual({ processed: 0, results: [], deferred: 0 });
     expect(await q('SELECT COUNT(*) n FROM hook_delivery_logs')).toEqual([{ n: 0 }]);
     expect(await q(`SELECT COUNT(*) n FROM scheduled_jobs WHERE type = 'hook_retry'`)).toEqual([{ n: 0 }]);
     expect(mockDispatched).toEqual([]);
@@ -137,33 +156,52 @@ maybe('a failed hook transform on real MySQL', () => {
     expect(data).toEqual({ execution_id: ex.id, target_id: 20 });
   });
 
-  test('a Quo event whose code filter finds the sandbox busy → 503, a failed row with filter_passed NULL, nothing delivered', async () => {
+  test('ack first, then the drain: a busy code filter re-queues the row, the next drain delivers it once', async () => {
     const guestCode = require('../lib/guestCode');
-    await q(`INSERT INTO hooks (id, slug, name, auth_type, filter_mode, filter_config) VALUES (3, 'quo-busy', 'quo', 'none', 'code', ?)`,
+    const hookDrain = require('../lib/hookDrain');
+    await q(`INSERT INTO hooks (id, slug, name, auth_type, filter_mode, filter_config) VALUES (3, 'rc-busy', 'rc', 'none', 'code', ?)`,
       [JSON.stringify({ code: 'return true;' })]);
     await q(`INSERT INTO hook_targets (id, hook_id, target_type, name, position, config) VALUES (30, 3, 'workflow', 'wf', 0, ?)`,
       [JSON.stringify({ workflow_id: 7 })]);
-    // Both hooks slots (1 reserved + 1 borrowable) held by slow bodies far
-    // longer than the lane's 1 s budget — a slow child start only lengthens
-    // the hold, so the waiter's budget is the only clock that decides.
-    const SLOW = 'var t = Date.now(); while (Date.now() - t < input.ms) {} return true;';
-    const floods = [0, 1].map(() => guestCode.runBodies(SLOW, [{ ms: 4000 }], { lane: 'hooks', timeoutMs: 10000 }));
-    expect(guestCode._poolState().active.hooks).toBe(2);
+
+    process.env.HOOK_ASYNC_ACK = '1';
     const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
-    let res;
+    const log = jest.spyOn(console, 'log').mockImplementation(() => {});
     try {
-      res = await fetch(`${base}/hooks/quo-busy`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json', 'openphone-signature': 'hmac;1;1;dGVzdA==' },
-        body: JSON.stringify({ id: 'EVtest', object: 'event' }),
-      });
-    } finally { warn.mockRestore(); }
-    expect(res.status).toBe(503);
-    expect(res.headers.get('retry-after')).toBe('60');
-    const rows = await q('SELECT status, filter_passed, error, transform_output IS NULL AS out_null FROM hook_executions');
-    expect(rows).toEqual([{ status: 'failed', filter_passed: null, out_null: 1,
-      error: expect.stringMatching(/^Filter code error \[GUEST_CODE_BUSY\]: code sandbox busy: no hooks slot within 1000ms .* — answered 503, the sender redelivers/) }]);
-    expect(await q('SELECT COUNT(*) n FROM hook_delivery_logs')).toEqual([{ n: 0 }]);
-    expect(mockDispatched).toEqual([]);
-    await Promise.all(floods);
+      // 1. The webhook is answered before anything runs; the row is queued.
+      const res = await fire('rc-busy', { uuid: 'rc-evt-1' });
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ status: 'received', slug: 'rc-busy' });
+      const [queued] = await q('SELECT id, status, claimed_at, completed_at, attempts, filter_passed FROM hook_executions');
+      expect(queued).toMatchObject({ status: 'received', claimed_at: null, completed_at: null, attempts: 0, filter_passed: null });
+      expect(mockDispatched).toEqual([]);
+
+      // 2. The drain claims it while both hooks slots are held → BUSY → re-queued.
+      const SLOW = 'var t = Date.now(); while (Date.now() - t < input.ms) {} return true;';
+      const floods = [0, 1].map(() => guestCode.runBodies(SLOW, [{ ms: 4000 }], { lane: 'hooks', timeoutMs: 10000 }));
+      expect(guestCode._poolState().active.hooks).toBe(2);
+      const first = await hookDrain.drainOne(pool, queued.id);
+      expect(first).toEqual({ processed: 1, results: [{ id: queued.id, status: 'requeued', attempts: 1 }] });
+      const [requeued] = await q('SELECT status, claimed_at, completed_at, attempts, filter_passed, transform_output, error FROM hook_executions');
+      expect(requeued).toMatchObject({ status: 'received', claimed_at: null, completed_at: null, attempts: 1, filter_passed: null, transform_output: null });
+      expect(requeued.error).toMatch(/^Filter code error \[GUEST_CODE_BUSY\]: code sandbox busy: no hooks slot within \d+ms .* — re-queued for the next drain \(attempt 1 of 3\)$/);
+      expect(mockDispatched).toEqual([]);
+      await Promise.all(floods);
+
+      // 3. The next drain (the cron, in production) claims it again and delivers.
+      const second = await hookDrain.drainOne(pool, queued.id);
+      expect(second).toEqual({ processed: 1, results: [{ id: queued.id, status: 'delivered' }] });
+      const [done] = await q('SELECT status, attempts, filter_passed, claimed_at IS NOT NULL AS claimed, completed_at IS NOT NULL AS completed, TIMESTAMPDIFF(MICROSECOND, created_at, completed_at) >= 0 AS ordered FROM hook_executions');
+      expect(done).toEqual({ status: 'delivered', attempts: 2, filter_passed: 1, claimed: 1, completed: 1, ordered: 1 });
+      expect(mockDispatched).toEqual([{ type: 'workflow', target_id: 30, output: expect.objectContaining({ body: { uuid: 'rc-evt-1' } }) }]);
+      expect(await q('SELECT target_id, status FROM hook_delivery_logs')).toEqual([{ target_id: 30, status: 'queued' }]);
+
+      // 4. A redelivered doorbell finds nothing to claim.
+      expect(await hookDrain.drainOne(pool, queued.id)).toEqual({ processed: 0, results: [{ id: queued.id, status: 'already_claimed' }] });
+      expect(mockDispatched).toHaveLength(1);
+    } finally {
+      process.env.HOOK_ASYNC_ACK = '0';
+      warn.mockRestore(); log.mockRestore();
+    }
   });
 });

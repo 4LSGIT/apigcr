@@ -1260,9 +1260,34 @@ in ref/database.sql. The rest:
 
 One route `POST /hooks/:slug` replaces per-integration endpoints; each hook
 is a DB row describing auth → filter → transform → ordered delivery
-targets. The receiver answers 200 (503 only for maintenance-spool failure
-and a Quo BUSY, below) after the fast targets; slow ones run detached, with
-per-execution + per-delivery logs. Depth: `manual/03-YisraFlow/09-yisrahook.md`.
+targets. **Ack first, work after (10-28):** the receiver writes the
+`hook_executions` row (status `received`, `claimed_at` NULL — QUEUED), awaits
+a Cloud Tasks doorbell (`taskQueue.enqueueHookExecutionDispatch`, task
+`he-{id}` → `POST /process-hook-execution/:id`) and answers
+`{status:'received', slug}` in ~50–150 ms; 503 only when the maintenance
+spool cannot store an event. `lib/hookDrain.js` runs filter → transform →
+every target request-bound from that route, or from the 60 s `/process-jobs`
+cron (`sweepStale` + `drainBatch`, after a 20 s doorbell grace) when the
+doorbell never landed. The row is the scheduling authority, the task a
+doorbell — the `domain_event_queue` pattern (§T1). Claim = ONE conditional
+UPDATE (`status='received' AND claimed_at IS NULL`, `attempts+1`); Cloud
+Tasks is at-least-once and the loser does nothing. Synchronous runs
+(live-test, `/internal/hook-replay`, the kill-switch path) INSERT their row
+already CLAIMED (`hookService.recordExecution` `claimed:true`), so the drain
+never touches them; `executeHook({executionId})` skips its INSERT and the
+capture intercept (capture is a receive-time decision) and stamps
+`completed_at` on every terminal UPDATE. Kill switch: registry
+`hook_async_ack` — only `'0'` selects the 08-24 split-phase receiver (fast
+targets before the answer). Why: RingCentral requires the 200 within 3000 ms
+and blacklists after ~10 min of late answers; one slow body (≤ 15 s) or a
+saturated hooks lane used to make every RC answer late. Measured before the
+change (30 d, 5,054 RC answers): p99 0.65 s, max 1.46 s — a tail risk, not
+the median. Cost: the workflow start gains a hop (~+1–2 s; the cron tail of
+≤ 60 s now applies to two hops). Both INSERT and enqueue are awaited BEFORE
+`res.json`: a detached enqueue starves under the post-response CPU throttle
+(37% of detached domain-event doorbells land within 2 s vs 97% of awaited
+ones). Research: `local/RESEARCH_async_hook_receiver_FINDINGS.md`. Depth:
+`manual/03-YisraFlow/09-yisrahook.md`.
 
 Target types: `http` (default) | `workflow` (transform output = init_data;
 INSERT retries cleanly but async advance failure does NOT re-trigger
@@ -1293,8 +1318,7 @@ for a code throw / timeout / sandbox failure / `GUEST_CODE_BUSY` (error tagged
 delivers), a mapper whose every rule errored with nothing mapped (a PARTIAL
 mapping delivers, errors recorded), or an unparseable string config.
 Hook-level → the execution is `failed` with the error and a NULL
-`transform_output`, no target runs (before the split-phase partition; the
-receiver answers 200, except below). Target-level (`deliverToTarget`) → that
+`transform_output`, no target runs. Target-level (`deliverToTarget`) → that
 target only: a failed delivery log + ONE `hook_retry` at +60 s (re-runs the
 transform; `executeRetry` never throws on a failed delivery, so process_jobs
 completes the job and `max_attempts` is never consulted — no third attempt),
@@ -1302,32 +1326,38 @@ execution `partial`/`failed` by the usual tally; `executeRetry` obeys the same
 rule and never delivers a NULL `transform_output`. Dry runs report both
 (`status:'failed', dry_run:true` / a target's `skip_reason` +
 `transform_errors`). Recovery = replaying the row's `raw_input` (Logs → Test
-tab → Live Test). **503 only for Quo, only when nothing ran:** the receiver
-passes `redeliverOnBusy` when the request carries `openphone-signature`
-(`isQuoDelivery` — Quo signs every delivery; no other sender does);
-executeHook sets `redeliver` only on its two pre-target returns (filter or
-hook transform failed as BUSY), appends the 503 note to the error, and the
-receiver answers 503 + `Retry-After: 60` (Quo retries non-2xx up to 8× over
-~27 h, never disables). A partial execution, a non-BUSY failure, and every
-other sender stay 200 — RingCentral (hooks 21–23) counts non-2xx AND answers
-slower than 3 s as failures and blacklists the subscription after ~10 min
-(no notice, events dropped, recovery = delete + recreate;
-`rc_renew_subscriptions` GETs each subscription daily and raises a deduped
-daily `error` alert when its status is not `Active`). No dedup on redelivery:
-the 503 path dispatched nothing, so a redelivery cannot duplicate (Quo sends
-no `webhook-id`; its event id is `body.id`). Hooks-lane queue budget 1 s
-(`GUEST_CODE_QUEUE_WAIT_MS_HOOKS`, queue cap 20): 2 waits + 2 forks + the
-workflow start ≈ 2.5 s < RC's 3 s; a slow-RUNNING body (≤ 15 s) still blows
-it — an async receiver is a separate question. Alert sweep `_scanHooks`: a
-BUSY-only failure is `warning` (guestCode's `guest_code_saturated:hooks` owns
-escalation; hook-level partial-mapper rule warnings are not counted as
-causes), anything else `error`. Live
+tab → Live Test). **BUSY is retried by the drain, never by the sender
+(10-28):** a filter or hook transform that got no sandbox slot
+(`GUEST_CODE_BUSY` — nothing ran) comes back `busy: true`; `hookDrain`
+re-queues the row (status `received`, `claimed_at` NULL, filter/transform
+columns cleared, the tagged error + "re-queued for the next drain (attempt N
+of 3)") and the cron runs it again a tick later, up to `MAX_ATTEMPTS` (3),
+then `failed`. The 10-27 Quo 503 path (`redeliverOnBusy` / `isQuoDelivery`)
+is GONE: every sender gets 200 at receipt. RingCentral (hooks 21–23) counts
+non-2xx AND answers slower than 3 s as failures and blacklists the
+subscription after ~10 min (no notice, events dropped, recovery = delete +
+recreate; `rc_renew_subscriptions` GETs each subscription daily and raises a
+deduped daily `error` alert when its status is not `Active`). No dedup on a
+provider's own redelivery yet (Quo sends no `webhook-id`; its event id is
+`body.id` and it DOES redeliver — 5 duplicate groups in 14 d; RC's is
+`body.uuid`, 0 duplicates in 30 d): S3 of the arc, Fred's call. Hooks-lane
+queue budget 10 s (`GUEST_CODE_QUEUE_WAIT_MS_HOOKS`, queue cap 100) — the
+lane is no longer request-bound. Stale claims (`sweepStale`, 15 min): a
+claimed row still `received` is re-queued while `attempts < 3`, else
+abandoned (`failed`); a claimed row in `processing` (transform written,
+targets may have fired) is `failed` and NEVER re-run. Alert sweep
+`_scanHooks`: a BUSY-only failure is `warning` (guestCode's
+`guest_code_saturated:hooks` owns escalation; hook-level partial-mapper rule
+warnings are not counted as causes), anything else `error`. Live
 bodies use `console.warn` — it still reaches the log as a warning. Authoring
 stays `automations.manage` (B5).
 
-Tables: `hooks`, `hook_targets`, `hook_executions` (raw_input capped 512KB),
-`hook_delivery_logs`, shared `credentials`. Files: `services/hookService.js`
-(+ hookTransforms/hookMapper/hookFilter), `routes/api.hooks.js`. UI:
+Tables: `hooks`, `hook_targets`, `hook_executions` (raw_input capped 512KB;
+`claimed_at` / `completed_at` DATETIME(3) + `attempts` since 10-28 —
+`completed_at - created_at` is the end-to-end pipeline time), `hook_delivery_logs`,
+shared `credentials`. Files: `services/hookService.js` (+ hookTransforms/
+hookMapper/hookFilter), `routes/api.hooks.js`, `lib/hookDrain.js`,
+`routes/process_jobs.js` (`/process-hook-execution/:id` + the cron fallback). UI:
 automationManager Hooks tab. `server.js` mounts rawBody on `/hooks` for
 HMAC.
 

@@ -42,6 +42,7 @@ const { listTransforms } = require('../services/hookTransforms');
 const { listOperators } = require('../services/hookFilter');
 const maintenance = require('../lib/maintenance');
 const hookSpool = require('../lib/hookSpool');
+const taskQueue = require('../lib/taskQueue');
 
 
 // Rate limit the public receiver endpoint: 120 req/min per slug+IP
@@ -133,10 +134,30 @@ const CATCHALL_SLUG = '_catchall';
  * POST /hooks/:slug
  *
  * Receives external webhooks. Authentication is per-hook (not JWT).
- * Returns 200 to the sender — errors are logged internally — with two
- * exceptions, both a 503 + Retry-After asking for a redelivery that can only
- * help: a Quo event whose code filter/transform got no sandbox slot (nothing
- * was dispatched — see the normal path below), and maintenance:
+ * Returns 200 to the sender — errors are logged internally — with one
+ * exception, maintenance (below).
+ *
+ * ACK FIRST, WORK AFTER (async hook receiver S1, 2026-10-28). The normal path
+ * writes the event to hook_executions (hookService.recordExecution — status
+ * 'received', queued), rings the Cloud Tasks doorbell
+ * (taskQueue.enqueueHookExecutionDispatch → POST /process-hook-execution/:id,
+ * routes/process_jobs.js) and answers {status:'received', slug} — about
+ * 50–150 ms, no code body of ours in the way. lib/hookDrain runs filter,
+ * transform and targets request-bound from that route, or from the 60 s
+ * /process-jobs cron when the doorbell never landed. RingCentral requires the
+ * 200 within 3000 ms and blacklists after ~10 min of late answers; a slow hook
+ * body (up to 15 s) or a saturated sandbox lane used to make every RC answer
+ * late for as long as it lasted. The row is the scheduling authority; the task
+ * is a doorbell (the domain_event_queue pattern). Both the INSERT and the
+ * enqueue are awaited BEFORE res.json — a detached enqueue starves under Cloud
+ * Run's post-response CPU throttle (measured: 37% of detached domain-event
+ * doorbells land within 2 s vs 97% of awaited ones). A code filter or
+ * transform that finds the sandbox busy is re-queued by the drain and run
+ * again a tick later — no sender is asked to redeliver anything.
+ *
+ * Kill switch: registry key `hook_async_ack` — only an explicit '0' selects
+ * the previous SPLIT-PHASE path (filter, transform and the workflow start
+ * before the answer). Instances converge within 60 s.
  *
  * MAINTENANCE_MODE=1 (lib/maintenance.js). The pipeline must
  * not run (the database is write-frozen), and "200 no matter what" would then
@@ -246,38 +267,35 @@ router.post('/hooks/:slug', hookReceiveLimiter, async (req, res) => {
       }
     }
 
-    // Normal path — SPLIT-PHASE dispatch (2026-08-24). Previously this
-    // responded 200 first and ran the whole pipeline detached, which put
-    // every workflow start — including the Cloud Tasks enqueue whose entire
-    // job is latency — in Cloud Run's throttled post-response tail (measured:
-    // the awaited createTask RPC starved for 5.22s on the flip event, and
-    // ~3% of immediate jobs silently fell back to the 60s cron at idle
-    // hours). Now the FAST targets (workflow/sequence — the latency-critical
-    // ones, and today 100% of live hook traffic) are delivered BEFORE the
-    // response, request-bound at full CPU; http/internal_function targets
-    // stay detached exactly as before via the returned `detached` promise.
-    // The response body is byte-identical to the old contract, and the
-    // catch keeps the old guarantee: a pipeline that throws never turns into
-    // a sender-side retry. Filtered/captured results carry no `detached`, nor
-    // does a FAILED filter or hook transform (executeHook fails the execution
-    // before any target runs). Those are answered 200 too — with ONE
-    // exception: a Quo delivery (isQuoDelivery) whose execution failed ONLY
-    // because the code sandbox was busy (`redeliver` — the body never ran,
-    // nothing was dispatched) is answered 503 + Retry-After, because Quo
-    // retries non-2xx (up to 8 times over ~27 h) and never disables the
-    // webhook, and its redelivery cannot duplicate anything. Everything else
-    // stays 200, RingCentral (hooks 21–23) above all: RC treats non-2xx and
-    // answers slower than 3 s as failures and, after ~10 min of them,
-    // BLACKLISTS the subscription — every RC event lost until it is deleted
-    // and re-created. Recovery there is a replay of the execution's raw_input.
-    try {
-      const result = await hookService.executeHook(db, slug, input, {
-        hook, splitPhase: true, redeliverOnBusy: isQuoDelivery(req),
-      });
-      if (result && result.redeliver) {
-        console.warn(`[hook] ${slug}: code sandbox busy, nothing dispatched — answering 503 so Quo redelivers (execution ${result.executionId})`);
-        return retryLater(res);
+    // Normal path — ACK FIRST (see the route header). Record, ring, answer.
+    // The response body is byte-identical to every earlier contract
+    // ({status:'received', slug}, well under RingCentral's 1024-byte cap), and
+    // the catch keeps the standing guarantee: our failure never turns into a
+    // sender-side retry — a row that could not be written is logged and the
+    // sender still gets 200 (the same loss shape the old pipeline had when its
+    // INSERT failed). enqueue never rejects; a false return means the cron
+    // drains the row within a minute.
+    if (asyncAckEnabled()) {
+      try {
+        const { executionId } = await hookService.recordExecution(db, hook, slug, input);
+        await taskQueue.enqueueHookExecutionDispatch(executionId);
+        return res.json({ status: 'received', slug });
+      } catch (err) {
+        console.error(`[hook] could not record ${slug} (event NOT queued — nothing will run it):`, err);
+        if (!res.headersSent) res.status(200).json({ status: 'received', slug });
+        return;
       }
+    }
+
+    // Kill-switch path (`hook_async_ack` = '0') — the SPLIT-PHASE receiver
+    // (2026-08-24 → 2026-10-28): the FAST targets (workflow/sequence) are
+    // delivered BEFORE the response, request-bound at full CPU; http /
+    // internal_function targets stay detached via the returned `detached`
+    // promise. Kept as the rollback for the ack-first path, not as a mode to
+    // choose: a slow code body here makes RingCentral late. executeHook
+    // inserts its own row CLAIMED, so the drain leaves it alone.
+    try {
+      const result = await hookService.executeHook(db, slug, input, { hook, splitPhase: true });
       res.json({ status: 'received', slug });
       if (result && result.detached) {
         result.detached.catch((err) => {
@@ -299,10 +317,9 @@ router.post('/hooks/:slug', hookReceiveLimiter, async (req, res) => {
   }
 });
 
-// 503 for a hook event the receiver could not take: one that could not be
-// captured during maintenance, or a Quo event whose code filter/transform got
-// no sandbox slot (above). Short Retry-After: unlike the gate's page-level
-// 503, both are transient and the sender should come back soon.
+// 503 for a hook event that could not be captured during maintenance — the
+// one time the honest answer is "send it again" (there is nowhere to put it).
+// Short Retry-After: unlike the gate's page-level 503, this is transient.
 function retryLater(res) {
   return res.status(503).set('Retry-After', '60').json({
     status: 'error',
@@ -310,17 +327,13 @@ function retryLater(res) {
   });
 }
 
-// A delivery from Quo (formerly OpenPhone): it signs every webhook with an
-// `openphone-signature` header. Measured 2026-10-27: present on 2,859 of the
-// 2,866 executions ever recorded for quo-message / quo-call (7 lack it) and
-// on no other slug's — RingCentral sends
-// `User-Agent: RingCentral-WebHook` and no such header. Read from the request,
-// not the hook row, so it holds whichever slug (or the catch-all) Quo posts
-// to. A forged header can only earn its sender a 503 for a busy sandbox.
-const QUO_SIGNATURE_HEADER = 'openphone-signature';
-function isQuoDelivery(req) {
-  const sig = req.get(QUO_SIGNATURE_HEADER);
-  return typeof sig === 'string' && sig.length > 0;
+// The ack-first kill switch. Deferred require: lib/firmConfig is loaded by the
+// app before any route runs, but this file is also mounted bare by tests.
+// Only an explicit '0' selects the split-phase path (settingsRegistry
+// hook_async_ack); unset, blank or anything else = ack first.
+function asyncAckEnabled() {
+  const { cfg } = require('../lib/firmConfig');
+  return cfg('hook_async_ack') !== '0';
 }
 
 

@@ -57,6 +57,7 @@ lib/errorMiddleware.js
 lib/escapeLike.js
 lib/firmConfig.js
 lib/guestCode.js
+lib/hookDrain.js
 lib/hookSpool.js
 lib/ingestCodeGate.js
 lib/ingestSampleProjection.js
@@ -1393,9 +1394,11 @@ tests/helpers/toolShell.js
 tests/helpers/u6aEventsDb.js
 tests/helpers/uiConfigStore.js
 tests/hookAsyncReceiverS0.test.js
+tests/hookDrain.test.js
 tests/hookHmacRawBody.test.js
 tests/hookHmacTimestamped.test.js
 tests/hookMapper.test.js
+tests/hookReceiver.async.test.js
 tests/hookReceiver.maintenance.test.js
 tests/hookReceiver.splitPhase.test.js
 tests/hookReplay.routes.test.js

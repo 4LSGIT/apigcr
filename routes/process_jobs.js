@@ -7,6 +7,7 @@ const { advanceWorkflow, scheduleResume } = require("../lib/workflow_engine");
 const { executeJob }      = require("../lib/job_executor");
 const { executeStep }     = require("../lib/sequenceEngine");
 const domainEventDrain    = require("../lib/domainEventDrain");
+const hookDrain           = require("../lib/hookDrain");
 
 
 /**
@@ -268,6 +269,25 @@ async function runJobPass(db, { jobId = null, batchSize = 10 } = {}) {
       }
     } catch (drainErr) {
       console.warn(`[PROCESS-JOBS] domain event batch drain failed (non-fatal): ${drainErr.message}`);
+    }
+    // ── Hook executions — CRON FALLBACK (async hook receiver, 2026-10-28)
+    //
+    // Same shape and the same position argument as the domain-event block
+    // above: housekeeping, BEFORE the job claim, so it runs on every tick.
+    // The hot path is the doorbell (POST /process-hook-execution/:id); this
+    // drains rows whose doorbell never landed (Cloud Tasks disabled, down,
+    // or the enqueue failed) and the BUSY rows the drain re-queued, after a
+    // short grace so a doorbell in flight is not raced for nothing. Sweep
+    // first: a claim whose instance died is re-queued and taken in the SAME
+    // tick. Both calls swallow their own errors.
+    await hookDrain.sweepStale(db);
+    try {
+      const drainedHooks = await hookDrain.drainBatch(db);
+      if (drainedHooks.processed > 0) {
+        console.log(`[PROCESS-JOBS] drained ${drainedHooks.processed} hook execution(s) via the cron fallback`);
+      }
+    } catch (drainErr) {
+      console.warn(`[PROCESS-JOBS] hook execution batch drain failed (non-fatal): ${drainErr.message}`);
     }
   }
 
@@ -745,6 +765,30 @@ router.post("/process-domain-event/:id", jwtOrApiKey, async (req, res) => {
     console.error(`[PROCESS-DOMAIN-EVENT ${id}] Claim failed:`, err);
     return res.status(500).json({
       error: "Failed to claim domain event",
+      code: err.code || err.errno || null,
+      detail: String(err.message || "").slice(0, 300),
+    });
+  }
+});
+
+// Targeted hook-execution drain — Cloud Tasks push target for the ack-first
+// webhook receiver (routes/api.hooks.js → lib/taskQueue.enqueueHookExecutionDispatch
+// → lib/hookDrain.drainOne). Same contract as the two routes above: malformed
+// id → 400 (never retried), already-claimed → 200 (losing the race to the
+// cron is normal), claim failure → 500 so the task retries (nothing ran). No
+// heartbeat stamp, for the same reason.
+router.post("/process-hook-execution/:id", jwtOrApiKey, async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) {
+    return res.status(400).json({ error: "invalid hook execution id" });
+  }
+  try {
+    const out = await hookDrain.drainOne(req.db, id);
+    res.json(out);
+  } catch (err) {
+    console.error(`[PROCESS-HOOK-EXECUTION ${id}] Claim failed:`, err);
+    return res.status(500).json({
+      error: "Failed to claim hook execution",
       code: err.code || err.errno || null,
       detail: String(err.message || "").slice(0, 300),
     });

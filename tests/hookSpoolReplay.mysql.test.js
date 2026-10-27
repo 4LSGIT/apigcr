@@ -153,6 +153,13 @@ maybe('hook spool: capture → replay on real MySQL', () => {
     const rows = await q('SELECT id, hook_id, slug, raw_input FROM hook_executions');
     expect(rows).toHaveLength(1);
     expect(Number(rows[0].id)).toBe(Number(first.json.execution_id));
+    // A replay runs its row SYNCHRONOUSLY, so it is inserted CLAIMED (ack-first
+    // receiver, 2026-10-28): the drain must never pick it up and run the
+    // event a second time — even with no doorbell grace at all.
+    const [claimRow] = await q('SELECT claimed_at IS NOT NULL AS claimed, completed_at IS NOT NULL AS completed, attempts, status FROM hook_executions WHERE id = ?', [rows[0].id]);
+    expect(claimRow).toEqual({ claimed: 1, completed: 1, attempts: 1, status: 'delivered' });
+    const hookDrain = require('../lib/hookDrain');
+    expect(await hookDrain.drainBatch(pool, { graceSeconds: 0 })).toEqual({ processed: 0, results: [], deferred: 0 });
     const stored = rawInput(rows[0]);
     const sent = JSON.parse(tasks[0].body.toString('utf8'));
     expect(stored.meta.spool_id).toBe(sent.spool_id);

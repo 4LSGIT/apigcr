@@ -56,7 +56,7 @@ const express = require('express');
 // returns (targeted or batch). Every statement (pool or transaction
 // connection) lands in `calls` for assertion.
 
-function makeDb({ claimRows = [] } = {}) {
+function makeDb({ claimRows = [], hookClaimThrows = false } = {}) {
   const calls = [];
   async function query(sql, params) {
     calls.push({ sql, params });
@@ -76,6 +76,13 @@ function makeDb({ claimRows = [] } = {}) {
     // these tests are about routing and wiring, not about draining.
     if (s.includes('SELECT id FROM domain_event_queue')) return [[]];
     if (s.includes('domain_event_queue')) return [{ affectedRows: 0 }];
+    // Ack-first hook receiver: the cron's stale sweep + batch drain and the
+    // targeted route's claim (lib/hookDrain). Nothing queued / nothing stale
+    // by default; the claim can be made to throw (a DB blip → 500 → retry).
+    if (s.includes('hook_executions')) {
+      if (hookClaimThrows && s.startsWith('UPDATE hook_executions SET claimed_at')) throw new Error('ER_LOCK_WAIT_TIMEOUT: simulated');
+      return s.startsWith('SELECT') ? [[]] : [{ affectedRows: 0 }];
+    }
     return [{ affectedRows: 1, insertId: 1 }];
   }
   return {
@@ -267,5 +274,67 @@ describe('/process-jobs (cron batch — externally unchanged)', () => {
     expect(body.processed).toBe(1);
     expect(advanceWorkflow).toHaveBeenCalledWith(7, currentDb);
     expect(heartbeatCalls(currentDb)).toHaveLength(1);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────
+// Ack-first hook receiver — the drain's wiring (lib/hookDrain)
+// ─────────────────────────────────────────────────────────────
+const hookSql = (db) => db.calls.map((c) => c.sql.replace(/\s+/g, ' ')).filter((q) => q.includes('hook_executions'));
+
+describe('hook executions: cron fallback on the batch path, targeted route for the doorbell', () => {
+  test('the batch path sweeps stale claims and drains queued rows, in that order, before the job claim', async () => {
+    currentDb = makeDb();
+    const res = await post('/process-jobs');
+    expect(res.status).toBe(200);
+    const hooks = hookSql(currentDb);
+    // sweep: the doomed-rows read, died mid-delivery, abandoned, revive — then the drain's SELECT
+    expect(hooks[0]).toMatch(/^SELECT id, slug, status FROM hook_executions/);
+    expect(hooks.filter((q) => q.startsWith('UPDATE hook_executions SET status = \'failed\'')).length).toBe(2);
+    expect(hooks.some((q) => q.startsWith('UPDATE hook_executions SET claimed_at = NULL'))).toBe(true);
+    const drainIdx = hooks.findIndex((q) => q.startsWith("SELECT id FROM hook_executions WHERE status = 'received' AND claimed_at IS NULL"));
+    expect(drainIdx).toBe(4);
+    // …and all of it before the scheduled_jobs claim (housekeeping block position)
+    const all = currentDb.calls.map((c) => c.sql.replace(/\s+/g, ' '));
+    const firstHook = all.findIndex((q) => q.includes('hook_executions'));
+    const jobClaim = all.findIndex((q) => q.includes('FROM scheduled_jobs') && q.includes('FOR UPDATE'));
+    expect(firstHook).toBeGreaterThan(-1);
+    expect(jobClaim === -1 || firstHook < jobClaim).toBe(true);
+  });
+
+  test('the targeted job route does NOT run the hook sweep or drain (per-task housekeeping multiplies load)', async () => {
+    currentDb = makeDb({ claimRows: [] });
+    await post('/process-job/50');
+    expect(hookSql(currentDb)).toEqual([]);
+  });
+
+  test('POST /process-hook-execution/:id — malformed id → 400 before any DB work; unauthenticated → 401', async () => {
+    currentDb = makeDb();
+    for (const bad of ['abc', '1.5', '-3', '0']) {
+      expect((await post(`/process-hook-execution/${bad}`)).status).toBe(400);
+    }
+    expect(hookSql(currentDb)).toEqual([]);
+    expect((await fetch(base + '/process-hook-execution/77', { method: 'POST' })).status).toBe(401);
+  });
+
+  test('not claimable (doorbell lost the race, or the row is final) → 200 already_claimed; no heartbeat, no job claim', async () => {
+    currentDb = makeDb();
+    const res = await post('/process-hook-execution/77');
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ processed: 0, results: [{ id: 77, status: 'already_claimed' }] });
+    const claim = hookSql(currentDb).find((q) => q.startsWith('UPDATE hook_executions SET claimed_at = NOW(3), attempts = attempts + 1'));
+    expect(claim).toContain("WHERE id = ? AND status = 'received' AND claimed_at IS NULL");
+    expect(heartbeatCalls(currentDb)).toHaveLength(0);
+    expect(currentDb.calls.some((c) => c.sql.includes('scheduled_jobs'))).toBe(false);
+  });
+
+  test('a claim that throws → 500 (Cloud Tasks retries; nothing ran)', async () => {
+    currentDb = makeDb({ hookClaimThrows: true });
+    const err = jest.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const res = await post('/process-hook-execution/77');
+      expect(res.status).toBe(500);
+      expect(await res.json()).toMatchObject({ error: 'Failed to claim hook execution' });
+    } finally { err.mockRestore(); }
   });
 });

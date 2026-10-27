@@ -286,7 +286,7 @@ function authenticateRequest(hook, req) {
  * execution 'failed' (alerted as a warning by _scanHooks, findable, replayable)
  * instead of 'filtered', which would read as "not for us" (Fred, 2026-10-27).
  */
-async function runFilter(hook, input, { lane = guestCode.LANES.hooks } = {}) {
+async function runFilter(hook, input, { lane = guestCode.LANES.hooks, queueWaitMs } = {}) {
   const mode = hook.filter_mode;
   if (mode === 'none') return { passed: true };
 
@@ -305,7 +305,7 @@ async function runFilter(hook, input, { lane = guestCode.LANES.hooks } = {}) {
   if (mode === 'code') {
     try {
       const passed = (await guestCode.runBody(config?.code || config, input, {
-        timeoutMs: guestCode.DEFAULT_TIMEOUT_MS, truthy: true, label: 'hook filter code', lane,
+        timeoutMs: guestCode.DEFAULT_TIMEOUT_MS, truthy: true, label: 'hook filter code', lane, queueWaitMs,
       })) === true;
       return { passed };
     } catch (err) {
@@ -350,10 +350,10 @@ async function runFilter(hook, input, { lane = guestCode.LANES.hooks } = {}) {
  *   - a string config that is not JSON (it used to throw out of executeHook,
  *     leaving the row 'received').
  * Without `failed`, `errors` are warnings beside a usable output. `busy` marks
- * the one failure where the body never ran (GUEST_CODE_BUSY) — the only one a
- * redelivery of the same event could cure (executeHook's redeliverOnBusy).
+ * the one failure where the body never ran (GUEST_CODE_BUSY) — the only one
+ * running the same event again can cure (lib/hookDrain re-queues the row).
  */
-async function runTransform(mode, config, input, { lane = guestCode.LANES.hooks } = {}) {
+async function runTransform(mode, config, input, { lane = guestCode.LANES.hooks, queueWaitMs } = {}) {
   if (mode === 'passthrough' || !mode) {
     return { output: input, errors: [] };
   }
@@ -380,7 +380,7 @@ async function runTransform(mode, config, input, { lane = guestCode.LANES.hooks 
     try {
       const code = typeof parsed === 'string' ? parsed : parsed?.code;
       output = await guestCode.runBody(code, input, {
-        timeoutMs: guestCode.DEFAULT_TIMEOUT_MS, label: 'hook transform code', lane,
+        timeoutMs: guestCode.DEFAULT_TIMEOUT_MS, label: 'hook transform code', lane, queueWaitMs,
       });
     } catch (err) {
       const busy = !!(err && err.code === 'GUEST_CODE_BUSY');
@@ -557,13 +557,14 @@ function resolveParamsMapping(paramsMapping, targetOutput) {
  * @param {object} hookTransformOutput    - output of the hook-level transform
  * @param {object} db                     - DB pool / req.db (required for internal targets)
  */
-async function deliverToTarget(target, hookTransformOutput, db) {
+async function deliverToTarget(target, hookTransformOutput, db, { queueWaitMs } = {}) {
   // Target-level transform applies to ALL target types — refines the data
   // before it's shaped for the specific delivery mechanism.
   const targetTransform = await runTransform(
     target.transform_mode,
     target.transform_config,
-    hookTransformOutput
+    hookTransformOutput,
+    { queueWaitMs }
   );
 
   // A failed target transform skips THIS target: nothing is dispatched, the
@@ -792,22 +793,61 @@ async function buildDryRunPreview(target, hookTransformOutput) {
  *   - A slow target's failure cannot block a fast target (it already ran),
  *     and a fast target's failure doesn't skip slow ones — same as serial.
  */
-// Appended to the execution's error when the receiver answers 503 for it (no
-// "; " in it: _hookExecutionSeverity splits on that, and the BUSY tag must
-// stay in the same part — the row is still a BUSY-only warning).
-const REDELIVER_NOTE = ' — answered 503, the sender redelivers this event as a new execution (replay by hand only if no later execution of it delivered)';
+/** The raw_input cap. The JSON string is sliced at this many characters (see ref/plans.md: a sliced string is not JSON). */
+const RAW_INPUT_CAP = 512 * 1024;
 
 /**
- * redeliverOnBusy (2026-10-27): the receiver sets it for a sender whose
- * redelivery is SAFE to ask for (Quo — routes/api.hooks.js isQuoDelivery).
- * When the execution failed only because the code sandbox was busy — the
- * filter or the hook transform got no slot, so the body never ran — AND
- * nothing was dispatched (both return before any target), the result carries
- * `redeliver: true` and the receiver answers 503. Never set for RingCentral
- * (repeated non-2xx blacklists the subscription) and never on a partial
- * execution: a target that already ran would run again on the redelivery.
+ * Write the execution row for one received event — the first thing that
+ * happens to an event, before any code runs (async hook receiver, 2026-10-28).
+ *
+ * `claimed` decides who may run the row:
+ *   false (the receiver's normal path) — status 'received', claimed_at NULL,
+ *     attempts 0: QUEUED. The receiver rings the Cloud Tasks doorbell and
+ *     answers the sender; lib/hookDrain claims the row (one conditional
+ *     UPDATE) and runs executeHook with `executionId`.
+ *   true (every synchronous caller: executeHook inserting for itself —
+ *     live-test, the maintenance replay, the kill-switch path) — claimed_at
+ *     set and attempts 1 at INSERT, so the drain can never pick the row up
+ *     while its caller is running it.
+ *
+ * @returns {Promise<{ executionId: number, truncated: boolean }>}
  */
-async function executeHook(db, slug, input, { dryRun = false, hook: preloaded = null, splitPhase = false, redeliverOnBusy = false } = {}) {
+async function recordExecution(db, hook, slug, input, { claimed = false } = {}) {
+  const rawInputStr = JSON.stringify(input);
+  const truncated = rawInputStr.length > RAW_INPUT_CAP;
+  const storedInput = truncated ? rawInputStr.slice(0, RAW_INPUT_CAP) : rawInputStr;
+  const [execResult] = await db.query(
+    `INSERT INTO hook_executions (hook_id, slug, raw_input, status, error, claimed_at, attempts)
+     VALUES (?, ?, ?, 'received', ?, ${claimed ? 'NOW(3)' : 'NULL'}, ?)`,
+    [hook.id, slug, storedInput, truncated ? 'raw_input truncated (>512KB)' : null, claimed ? 1 : 0]
+  );
+  return { executionId: execResult.insertId, truncated };
+}
+
+/**
+ * executionId (async hook receiver, 2026-10-28): the row already exists —
+ * recordExecution wrote it at receipt and lib/hookDrain claimed it. executeHook
+ * then skips its own INSERT and the capture-mode intercept (capture is a
+ * RECEIVE-time decision the receiver already made for this event; a hook
+ * armed after the event was queued must not swallow it) and runs the pipeline
+ * serially inside the drain's request. Every terminal UPDATE stamps
+ * completed_at. A BUSY-only failure (filter or hook transform got no sandbox
+ * slot — nothing ran) returns `busy: true` so the drain can re-queue the row;
+ * nothing here asks a sender to redeliver.
+ */
+/**
+ * Queue budget for a code body while a SENDER waits on the answer — the
+ * receiver's kill-switch path (`splitPhase`), the one place the pipeline
+ * still runs inside the webhook request. RingCentral counts an answer slower
+ * than 3 s as a failure: 2 waits + 2 forks + the workflow start must fit, so
+ * this is the 1 s the hooks lane had while it was request-bound. The lane's
+ * own budget (10 s) is for the drain, where nobody waits. Without this the
+ * rollback switch would make a saturated receiver answer in 20 s — worse than
+ * what it rolls back to (S1 review, finding 3).
+ */
+const REQUEST_BOUND_QUEUE_WAIT_MS = 1000;
+
+async function executeHook(db, slug, input, { dryRun = false, hook: preloaded = null, splitPhase = false, executionId: preRecorded = null } = {}) {
   // 1. Look up hook (skip if caller already loaded it, e.g. the receiver route)
   const hook = preloaded || await getHookBySlug(db, slug);
   if (!hook) {
@@ -826,7 +866,7 @@ async function executeHook(db, slug, input, { dryRun = false, hook: preloaded = 
   //
   // Dry-run never triggers capture — the !dryRun guard enforces that.
   // ────────────────────────────────────────────────────────────
-  if (!dryRun && hook.capture_mode === 'capturing') {
+  if (!dryRun && preRecorded == null && hook.capture_mode === 'capturing') {
     const rawInputStrForCapture = JSON.stringify(input);
     const captureTruncated = rawInputStrForCapture.length > 512 * 1024;
     const storedSample = captureTruncated
@@ -863,36 +903,32 @@ async function executeHook(db, slug, input, { dryRun = false, hook: preloaded = 
     // double-inserting would produce two hook_executions rows per event.
   }
 
-  // Guard against oversized payloads (512 KB limit)
-  const rawInputStr = JSON.stringify(input);
-  const inputTruncated = rawInputStr.length > 512 * 1024;
-  const storedInput = inputTruncated ? rawInputStr.slice(0, 512 * 1024) : rawInputStr;
-
-  // 2. Insert execution row (skip for dry run)
+  // 2. The execution row: pre-recorded by the receiver (the drain hands its
+  // id in), written here as CLAIMED for a synchronous caller, or none for a
+  // dry run.
   let executionId = null;
-  if (!dryRun) {
-    const [execResult] = await db.query(
-      `INSERT INTO hook_executions (hook_id, slug, raw_input, status, error) VALUES (?, ?, ?, 'received', ?)`,
-      [hook.id, slug, storedInput, inputTruncated ? 'raw_input truncated (>512KB)' : null]
-    );
-    executionId = execResult.insertId;
+  if (preRecorded != null) {
+    executionId = preRecorded;
+  } else if (!dryRun) {
+    ({ executionId } = await recordExecution(db, hook, slug, input, { claimed: true }));
   }
 
   // 3. Filter. Code bodies run in the guest-code HOOKS lane (live and
   // replayed events) or the PREVIEW lane (dry runs) — never the events lane
   // triggers and ingest rules are guaranteed (lib/guestCode.js LANES).
   const lane = dryRun ? guestCode.LANES.preview : guestCode.LANES.hooks;
-  const filterResult = await runFilter(hook, input, { lane });
+  // A sender is waiting only on the split-phase (kill-switch) path.
+  const queueWaitMs = splitPhase && !dryRun ? REQUEST_BOUND_QUEUE_WAIT_MS : undefined;
+  const filterResult = await runFilter(hook, input, { lane, queueWaitMs });
 
   // A filter that could not RUN (GUEST_CODE_BUSY — runFilter's `failed`) made
   // no decision: the execution is 'failed', not 'filtered', with
   // filter_passed NULL (neither passed nor rejected). Nothing is dispatched.
   if (filterResult.failed) {
-    const redeliver = !dryRun && redeliverOnBusy && filterResult.busy === true;
-    const error = redeliver ? `${filterResult.error}${REDELIVER_NOTE}` : filterResult.error;
+    const error = filterResult.error;
     if (!dryRun && executionId) {
       await db.query(
-        `UPDATE hook_executions SET filter_passed = NULL, status = 'failed', error = ? WHERE id = ?`,
+        `UPDATE hook_executions SET filter_passed = NULL, status = 'failed', error = ?, completed_at = NOW(3) WHERE id = ?`,
         [error, executionId]
       );
     }
@@ -900,7 +936,7 @@ async function executeHook(db, slug, input, { dryRun = false, hook: preloaded = 
       status: 'failed',
       executionId,
       ...(dryRun ? { dry_run: true } : {}),
-      ...(redeliver ? { redeliver: true } : {}),
+      ...(filterResult.busy === true ? { busy: true } : {}),
       error,
       filter: filterResult,
       targets: [],
@@ -910,7 +946,7 @@ async function executeHook(db, slug, input, { dryRun = false, hook: preloaded = 
   if (!filterResult.passed) {
     if (!dryRun && executionId) {
       await db.query(
-        `UPDATE hook_executions SET filter_passed = 0, status = 'filtered', error = ? WHERE id = ?`,
+        `UPDATE hook_executions SET filter_passed = 0, status = 'filtered', error = ?, completed_at = NOW(3) WHERE id = ?`,
         [filterResult.error || null, executionId]
       );
     }
@@ -922,7 +958,7 @@ async function executeHook(db, slug, input, { dryRun = false, hook: preloaded = 
   }
 
   // 4. Transform
-  const transformResult = await runTransform(hook.transform_mode, hook.transform_config, input, { lane });
+  const transformResult = await runTransform(hook.transform_mode, hook.transform_config, input, { lane, queueWaitMs });
 
   // A FAILED hook transform delivers nothing (ingest/trigger hard semantics,
   // AI_CONTEXT §26 — never feed garbage to actions). It used to write `{}` as
@@ -931,14 +967,13 @@ async function executeHook(db, slug, input, { dryRun = false, hook: preloaded = 
   // is 'failed' with the error and NO transform_output (nothing was
   // produced); raw_input is kept, so the event is replayable once the cause
   // clears. Returns before any target and before the split, so nothing is
-  // detached; the receiver answers 200 — or 503 when `redeliver` (a BUSY-only
-  // failure for a Quo sender, see redeliverOnBusy). Dry runs report the same.
+  // detached. A BUSY-only failure carries `busy: true` for the drain's
+  // re-queue. Dry runs report the same.
   if (transformResult.failed) {
-    const redeliver = !dryRun && redeliverOnBusy && transformResult.busy === true;
-    const error = transformResult.errors.join('; ') + (redeliver ? REDELIVER_NOTE : '');
+    const error = transformResult.errors.join('; ');
     if (!dryRun && executionId) {
       await db.query(
-        `UPDATE hook_executions SET filter_passed = 1, transform_output = NULL, status = 'failed', error = ? WHERE id = ?`,
+        `UPDATE hook_executions SET filter_passed = 1, transform_output = NULL, status = 'failed', error = ?, completed_at = NOW(3) WHERE id = ?`,
         [error, executionId]
       );
     }
@@ -946,7 +981,7 @@ async function executeHook(db, slug, input, { dryRun = false, hook: preloaded = 
       status: 'failed',
       executionId,
       ...(dryRun ? { dry_run: true } : {}),
-      ...(redeliver ? { redeliver: true } : {}),
+      ...(transformResult.busy === true ? { busy: true } : {}),
       error,
       filter: filterResult,
       transform: { output: null, errors: transformResult.errors, failed: true },
@@ -1001,7 +1036,7 @@ async function executeHook(db, slug, input, { dryRun = false, hook: preloaded = 
     }
 
     // Live delivery — pass db so internal targets can reach their engines
-    const deliveryLog = await deliverToTarget(target, transformResult.output, db);
+    const deliveryLog = await deliverToTarget(target, transformResult.output, db, { queueWaitMs });
 
     // Log the delivery.
     // `log_status` (§7) lets a dispatcher record a finer-grained persisted
@@ -1076,7 +1111,7 @@ async function executeHook(db, slug, input, { dryRun = false, hook: preloaded = 
       ].join('; ');
 
       await db.query(
-        `UPDATE hook_executions SET status = ?, error = ? WHERE id = ?`,
+        `UPDATE hook_executions SET status = ?, error = ?, completed_at = NOW(3) WHERE id = ?`,
         [finalStatus, allErrors || null, executionId]
       );
     }
@@ -1497,7 +1532,9 @@ async function getExecution(db, executionId) {
 
 module.exports = {
   // Pipeline
+  recordExecution,
   executeHook,
+  REQUEST_BOUND_QUEUE_WAIT_MS,
   executeRetry,
   authenticateRequest,
   // CRUD — Hooks

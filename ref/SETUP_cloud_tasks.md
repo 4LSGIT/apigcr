@@ -198,16 +198,20 @@ rows/year but permanent):
 CREATE INDEX idx_wf_exec_created ON workflow_executions (created_at);
 ```
 
-**The ~3% silent-fallback tail is now fixed structurally** — the
-post-deploy patch includes split-phase hook dispatch: workflow/sequence
-targets (100% of live hook traffic) are delivered BEFORE the webhook
-response, request-bound at full CPU, so the Cloud Tasks enqueue never runs
-throttled on the hook path. http/internal_function targets stay detached as
-before. Webhook response cost: ~100–300ms typical (was ~83ms), bounded by
-the enqueue's 15s deadline on a Cloud Tasks outage — inside sender timeouts.
-Verification after deploy: the flip-event log signature inverts — expect
-`[taskQueue] enqueued dispatch` BEFORE the hook route's response completes,
-and the enqueue segment at ~50–150ms instead of the measured 0.6–5.2s.
-Re-run the §7 hook→step-1 query after 24h; the tail (jobs landing ~48–60s)
-should be gone entirely, and typical should drop toward ~2–3s with the
-750ms buffer.
+**The ~3% silent-fallback tail was fixed structurally on 2026-08-24** by
+split-phase hook dispatch (workflow/sequence targets delivered BEFORE the
+webhook response, so the enqueue never ran throttled), and **superseded on
+2026-10-28 by the ack-first receiver**: `POST /hooks/:slug` now writes the
+`hook_executions` row, awaits ONE Cloud Task on this same `yc-jobs` queue —
+`he-{id}` → `POST /process-hook-execution/:id` — and answers; the hook's
+filter, transform and targets (and the workflow-start enqueue they cause)
+run inside that task's request (`lib/hookDrain.js`), with the 60 s cron
+draining any row whose doorbell never landed. Queue traffic: +~170 `he-`
+tasks/day (one per inbound webhook; a re-queued BUSY row rides the cron, it
+does not ring again) on top of the `d-`/`de-` tasks — still deep inside the
+free tier, and the queue's 5/s × 5-concurrent caps spread a 9-event burst
+over ~2 s. Verification after deploy: `[taskQueue] enqueued dispatch for hook
+execution N` BEFORE the receiver's response line, then `[hookDrain]`/the
+drain route within ~1–3 s; `completed_at - created_at` on `hook_executions`
+is the end-to-end time (expect ≤ 3 s typical; a 20–80 s value means the
+doorbell was missed and the cron took it).

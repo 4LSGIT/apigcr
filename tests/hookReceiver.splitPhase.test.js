@@ -18,10 +18,16 @@
  *   5. Results without `detached` (filtered/captured shapes) are handled —
  *      no crash on the missing key.
  *
+ * Since the ack-first receiver (2026-10-28) this is the KILL-SWITCH path:
+ * HOOK_ASYNC_ACK='0' (registry hook_async_ack) selects it; the default path is
+ * pinned by tests/hookReceiver.async.test.js. The env var is set here before
+ * the router loads (firmConfig reads it on every cfg() call; no DB under jest).
+ *
  * Run: npx jest tests/hookReceiver.splitPhase.test.js
  */
 
 'use strict';
+process.env.HOOK_ASYNC_ACK = '0';
 
 jest.mock('../services/hookService', () => ({
   getHookBySlug: jest.fn(),
@@ -47,6 +53,7 @@ afterAll((done) => {
   if (server.closeAllConnections) server.closeAllConnections();
   server.close(done);
 });
+afterAll(() => { delete process.env.HOOK_ASYNC_ACK; });
 beforeEach(() => {
   hookService.getHookBySlug.mockReset().mockResolvedValue(HOOK);
   hookService.authenticateRequest.mockReset().mockReturnValue({ valid: true });

@@ -26,7 +26,7 @@ You wouldn't reach for one when:
 
 When something doesn't fire when you expected:
 1. Open the hook's **Logs** tab. Did the event arrive? What status?
-2. `received` → still processing or stuck. Check Scheduled Jobs for `hook_retry`.
+2. `received` → queued for the drain or still running; normal for a second or two. Stuck longer than a minute → the `/process-jobs` sweep is not running (Scheduled Jobs heartbeat). A `received` row whose `error` says "re-queued for the next drain" found the code sandbox busy and will run again.
 3. `filtered` → the filter rejected it. Look at `error` for why.
 4. `partial` or `failed` → look at delivery logs for which target broke. A `failed` row with no delivery logs and an empty transform output means the transform itself failed — or the code filter could not run (`[GUEST_CODE_BUSY]`) — read `error`.
 5. `captured` → the hook is in capture mode; see Capture Mode below.
@@ -54,7 +54,22 @@ Public endpoint, no `jwtOrApiKey` middleware. Auth is per-hook (configured on th
 { "status": "not_found" }                          // no hook with that slug, or inactive
 ```
 
-The receiver returns 200 even on dispatch errors — the sender shouldn't retry on our internal failures (they should retry only on a non-200, which means our auth rejection or the slug not existing). Two exceptions answer `503` + `Retry-After: 60`: maintenance mode when an event cannot be stored — see [During maintenance](#during-maintenance-write-freeze) below — and a Quo event whose code filter or transform found the sandbox busy, with nothing delivered (see *When the code sandbox is busy*).
+The receiver answers 200 **before anything runs** — see *Ack first, work after* below — so a dispatch error can never reach the sender; it should retry only on a non-200, which means our auth rejection or the slug not existing. One exception answers `503` + `Retry-After: 60`: maintenance mode when an event cannot be stored — see [During maintenance](#during-maintenance-write-freeze) below.
+
+### Ack first, work after
+
+Since 2026-10-28 the receiver does three things and answers: it writes the event to `hook_executions` (status `received` — **queued**), rings a Cloud Tasks doorbell for that row, and returns `{"status":"received"}` — about a tenth of a second, with no filter, transform or code body of ours in the way. A moment later the doorbell lands on `POST /process-hook-execution/:id`, which **claims** the row and runs the whole pipeline (filter → transform → every target) inside its own request, at full CPU. If the doorbell never lands (Cloud Tasks off or down), the once-a-minute `/process-jobs` sweep finds the row (after a 20 s grace for a doorbell still in flight) and runs it — a doorbell that fails costs up to about 80 seconds, never the event.
+
+Why: RingCentral requires the 200 within **3 seconds** and, after about 10 minutes of late or non-200 answers, **blacklists** the subscription silently (every RingCentral event lost until it is deleted and re-created — `manual/04-Integrations/03-rc-subscription-bootstrap.md`, Failure mode 4). Before this, a hook body that ran slowly (up to 15 s) or a saturated code sandbox made every RingCentral answer late for as long as it lasted. Now nothing a hook does can make the answer late.
+
+What changes for you:
+
+- In the **Logs** tab a fresh row reads `received` for a second or two, then flips to `filtered` / `delivered` / `failed` as usual. A row that stays `received` for more than a minute means the sweep is not running — check Scheduled Jobs' heartbeat.
+- A workflow started by a hook begins one to two seconds later than before (the extra hop).
+- **A busy code sandbox is no longer a failure.** A code filter or transform that gets no sandbox slot puts the row **back in the queue** (`received`, error tagged `[GUEST_CODE_BUSY]` and "re-queued for the next drain (attempt N of 3)") and the sweep runs it again a minute later, up to three attempts. No sender is asked to redeliver anything (the 2026-10-27 Quo `503` is gone).
+- The claim is one conditional update, so a doorbell delivered twice, or racing the sweep, runs the event **once**. Test fires, Live Test and the maintenance replay run their row synchronously and mark it claimed at insert, so the sweep never touches them.
+- If the server dies mid-run: a row claimed but still `received` (the filter never finished) is re-queued after 15 minutes (three times, then `failed`); a row in `processing` (the transform was written — targets may have fired) is marked `failed` and is **never re-run automatically** — its delivery logs say what ran; replay it by hand if needed. Both outcomes raise an error alert naming the rows.
+- Rollback switch (Settings → platform): `hook_async_ack` = `0` restores the previous receiver, which ran the filter, transform and workflow start before answering (with the old 1 s sandbox wait per code body, whatever the lane's budget is). Use it only to roll back; it reintroduces the RingCentral exposure.
 
 ### Pipeline
 
@@ -71,14 +86,24 @@ POST /hooks/:slug
   authenticateRequest(hook, req) — 401 on fail
         │
         ▼
-  INSERT hook_executions (status='received')
+  INSERT hook_executions (status='received', claimed_at NULL)  ── queued
+        │
+        ▼
+  ring the Cloud Tasks doorbell (he-{id}) ─► answer 200 {"status":"received"}
+        ┆
+        ┆  POST /process-hook-execution/:id (or the 60 s /process-jobs sweep)
+        ▼
+  CLAIM: UPDATE … SET claimed_at = NOW(3), attempts + 1
+         WHERE id = ? AND status='received' AND claimed_at IS NULL   (0 rows → done, someone has it)
         │
         ▼
   runFilter(hook, input)
-        │ failed → UPDATE status='filtered', return
+        │ false → UPDATE status='filtered', completed_at, return
+        │ BUSY  → re-queue (status='received', claimed_at NULL) while attempts < 3, else failed
         ▼
   runTransform(mode, config, input)
-        │ failed → UPDATE status='failed', error, transform_output=NULL, return
+        │ failed → UPDATE status='failed', error, transform_output=NULL, completed_at, return
+        │ BUSY   → re-queue, as above
         ▼  UPDATE status='processing', transform_output=...
         │
         ▼
@@ -93,7 +118,7 @@ POST /hooks/:slug
         └─ on failure: queueRetryJob (hook_retry scheduled job)
         │
         ▼
-  UPDATE hook_executions status:
+  UPDATE hook_executions status (+ completed_at):
         delivered | partial | failed | filtered | captured
 ```
 
@@ -155,7 +180,7 @@ Nested groups supported — a `condition` can itself be another `{ match, condit
 
 **A failed transform delivers nothing.** Targets never receive an empty or half-built object in place of the real data:
 
-- **Hook-level transform fails** → the execution is `failed`, its `error` says why, *Transform Output* is empty, and **no target runs**. The sender gets its usual 200 (one exception, Quo — see *When the code sandbox is busy* below).
+- **Hook-level transform fails** → the execution is `failed`, its `error` says why, *Transform Output* is empty, and **no target runs**. The sender had its 200 long before.
 - **A target's own transform fails** → that target is skipped and logged as a failed delivery (error `target transform failed (nothing delivered): …`) and ONE retry runs about 60 s later, re-running the transform. If the retry fails too, the delivery stays `failed` — there is no third attempt (see *Retry job* below). The other targets deliver as normal, so the execution reads `partial` (or `failed` if nothing delivered).
 - **Mapper** → if every rule errors and nothing is mapped, that counts as failed. If some rules work, the partial result is delivered and the broken rules are listed in the execution's `error`.
 - **Dry-run test** → shows the same outcome: `"status": "failed", "dry_run": true` with the error, or a target marked `"skip_reason": "target transform failed"` with its `transform_errors`.
@@ -164,10 +189,7 @@ To re-run a failed event once the cause is fixed (or the server is no longer bus
 
 **Code filters and transforms** (hook- and target-level) run in an isolated JavaScript engine (QuickJS) in a separate, throwaway process — never inside the server. No `process`, `require`, `fetch`, timers, network or database, and **no `Intl`** (`toLocaleString` ignores `timeZone` silently — compute local times from UTC). `console.log` / `console.warn` reach the server log. 15 s and 64 MB per call (`GUEST_CODE_TIMEOUT_MS`). Hooks have a reserved share of sandboxes that triggers, ingest and editor tests cannot take, and vice versa. The dry-run test and the transform tester run the same engine as live deliveries.
 
-**When the code sandbox is busy.** Because a webhook waits for its answer, each code filter or transform waits at most **1 s** for a free sandbox when the server is saturated (`GUEST_CODE_QUEUE_WAIT_MS_HOOKS`). Past that it fails closed with a "code sandbox busy" error and the body does not run. Both the filter and the transform then **fail the execution** (`failed`, error tagged `[GUEST_CODE_BUSY]`, nothing delivered). The filter does not count as `filtered`, because no decision was made. The event stays in the execution history (so it can be replayed) and a system alert is raised (a warning — the sandbox's own saturation alert escalates). What the sender is told depends on who sent it:
-
-- **Quo** (recognised by its `openphone-signature` header) gets `503` + `Retry-After: 60`, and only when nothing was delivered for the event. Quo retries a failed delivery up to 8 times over about 27 hours and never disables the webhook, and since nothing ran, its redelivery cannot duplicate anything. Each redelivery is a new execution; the failed one's error ends "answered 503, the sender redelivers…". Don't replay that one by hand unless no later execution of the same event delivered.
-- **Everyone else, RingCentral above all, gets the usual 200.** RingCentral treats a non-2xx answer, or one slower than **3 seconds**, as a failed delivery. About 10 minutes of failures blacklist the subscription, and every RingCentral event is lost until it is deleted and re-created (the daily renewal job alerts when that happens — `manual/04-Integrations/03-rc-subscription-bootstrap.md`, Failure mode 4). The 1 s wait is sized so a saturated hook whose filter and transform are both code (rc-message-out, rc-call) still answers inside 3 s: 2 waits + 2 sandbox starts + the workflow start ≈ 2.5 s. That only covers waiting for a sandbox. **A body that is slow to run** (it may take up to 15 s) still blows RingCentral's 3 s window. Keep RingCentral hook bodies trivial; answering first and processing afterwards is a separate design question, not built.
+**When the code sandbox is busy.** Each code filter or transform waits up to **10 s** for a free sandbox when the server is saturated (`GUEST_CODE_QUEUE_WAIT_MS_HOOKS`) — nobody is waiting on it, the sender was answered at receipt. Past that it fails closed with a "code sandbox busy" error and the body does not run; the row goes **back in the queue** and the sweep runs it again a minute later, up to three attempts (see *Ack first, work after*). The filter never counts as `filtered` for a busy sandbox, because no decision was made. On the last attempt the execution is `failed` (error tagged `[GUEST_CODE_BUSY]`, nothing delivered), stays in the execution history for a replay, and the alert sweep reports it as a warning (the sandbox's own saturation alert escalates). **A body that is slow to run** (up to 15 s) delays its own event and nothing else.
 
 #### Mapper rules
 
@@ -372,7 +394,7 @@ When the app runs with `MAINTENANCE_MODE=1` (a database move — `ref/INFRA_GCP.
 
 1. The hook is looked up and the sender authenticated exactly as usual (a bad key is still a 401; an unknown slug with no catch-all is still a 404).
 2. The event — the same `{body, headers, query, method, meta}` object the pipeline would have received — is stored as a task on the paused Cloud Tasks queue `yc-hook-spool`. The sender gets the usual `200 {"status":"received"}`.
-3. If the event could **not** be stored, the sender gets `503` + `Retry-After: 60`: there is nowhere else to put the event. This and a busy code sandbox on a Quo event (above) are the only times the receiver asks a sender to retry on our failure.
+3. If the event could **not** be stored, the sender gets `503` + `Retry-After: 60`: there is nowhere else to put the event. This is the only time the receiver asks a sender to retry on our failure.
 
 Nothing is written to the database during the window: no `hook_executions` row, no capture-mode flip (an armed hook stays armed), no deliveries.
 
