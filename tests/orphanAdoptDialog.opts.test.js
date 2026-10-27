@@ -16,6 +16,9 @@
  *   - the log tab's call (no opts) behaves exactly as before: no search on
  *     open, no name.
  *   - backing out of a force-transfer re-opens the dialog WITH the opts.
+ *   - Create new hands newContact the value as `checked` (it looks up only
+ *     what else is typed there), and warns when a contact holds the value
+ *     NOW (Create new ends it on their record); a former holder gets no warning.
  *
  *   npx jest tests/orphanAdoptDialog.opts.test.js
  */
@@ -32,7 +35,7 @@ const DOMS = [];
 afterEach(() => DOMS.splice(0).forEach((d) => { try { d.window.close(); } catch (_) { /* noop */ } }));
 const tick = (w, ms = 20) => new Promise((r) => w.setTimeout(r, ms));
 
-function boot({ logEarliest = null, onPost = null } = {}) {
+function boot({ logEarliest = null, onPost = null, matches = [] } = {}) {
   const dom = new JSDOM('<!DOCTYPE html><html><head></head><body></body></html>', {
     url: 'https://app.4lsg.com/', runScripts: 'dangerously', pretendToBeVisual: true,
   });
@@ -65,7 +68,7 @@ function boot({ logEarliest = null, onPost = null } = {}) {
   };
   w.apiSend = async (url, method = 'GET', payload = null) => {
     calls.push({ url, method, payload });
-    if (url === '/api/contact-lookup') return { matches: [] };
+    if (url === '/api/contact-lookup') return { matches };
     if (url === '/api/log/orphan-earliest') return { earliest_log_date: logEarliest };
     if (url === '/api/contacts' && method === 'GET') return { contacts: [{ contact_id: 42, contact_name: 'Smith, Ann' }] };
     if (method === 'POST' && onPost) return onPost(url, payload);
@@ -107,7 +110,7 @@ describe('OrphanAdoptDialog opts (comms hub add-to-client)', () => {
     expect(calls.find((c) => c.url === '/api/contacts')).toMatchObject({ method: 'GET', payload: { q: 'Smith, Ann', limit: 20 } });
     fires[0].host.querySelector('#oadStartDate').value = '2026-01-15';
     fires[0].host.querySelector('#oadCreateNew').click();
-    expect(created.map((c) => c.prefill)).toEqual([{ force_create: true, name: 'Smith, Ann', email: 'ann@new.test', email_start_date: '2026-01-15' }]);
+    expect(created.map((c) => c.prefill)).toEqual([{ checked: { email: 'ann@new.test' }, name: 'Smith, Ann', email: 'ann@new.test', email_start_date: '2026-01-15' }]);
   });
 
   test('the log tab\'s call (no opts) is unchanged: no search on open, no name, today when the log never saw it', async () => {
@@ -117,7 +120,26 @@ describe('OrphanAdoptDialog opts (comms hub add-to-client)', () => {
     expect(calls.some((c) => c.url === '/api/contacts')).toBe(false);
     expect(dateDefault(fires[0])).toBe(new Date().toISOString().slice(0, 10));
     fires[0].host.querySelector('#oadCreateNew').click();
-    expect(created[0].prefill).toEqual({ force_create: true, email: 'ann@new.test', email_start_date: new Date().toISOString().slice(0, 10) });
+    expect(created[0].prefill).toEqual({ checked: { email: 'ann@new.test' }, email: 'ann@new.test', email_start_date: new Date().toISOString().slice(0, 10) });
+  });
+
+  test('Create new warns when a contact holds the value now; a former holder or the other channel does not', async () => {
+    const m = (id, name, ph, em) => ({ contact_id: id, contact_name: name, matched_by_phone: ph && { source: ph }, matched_by_email: em && { source: em } });
+    let t = boot({ matches: [m(7, 'Old <Owner>', 'child_ended', null), m(8, 'Ann <i>Holder', 'child_active', null)] });
+    t.w.OrphanAdoptDialog('3135550100', 'phone', null);
+    await tick(t.w);
+    const hint = [...t.fires[0].host.querySelectorAll('.yc-hint')].map((e) => e.textContent).join('|');
+    expect(hint).toMatch(/Create new takes this phone from Ann <i>Holder — it ends on their record\./);
+    expect(t.fires[0].opts.html).not.toMatch(/<Owner>|<i>/);    // names escaped, the hint's too
+    t.fires[0].host.querySelector('#oadCreateNew').click();
+    expect(t.created[0].prefill).toEqual({ checked: { phone: '3135550100' }, phone: '3135550100', phone_start_date: new Date().toISOString().slice(0, 10) });
+
+    for (const ms of [[m(7, 'Old Owner', 'child_ended', null)], [m(8, 'Ann Holder', null, 'child_active')], []]) {
+      t = boot({ matches: ms });
+      t.w.OrphanAdoptDialog('3135550100', 'phone', null);
+      await tick(t.w);
+      expect(t.fires[0].host.textContent).not.toMatch(/Create new takes/);
+    }
   });
 
   test('attach sends the chosen start date; backing out of a force-transfer re-opens WITH the opts', async () => {

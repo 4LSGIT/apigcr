@@ -150,6 +150,14 @@ From a case's **Add Person → Create new** the dialog makes the person only —
 no Case Type, no **Add & Open Case** and no appointment box, since the person
 is being added to the case you're on.
 
+From **Attach phone/email to contact → Create new contact** (an unknown
+number or address in the Log, or Comms' add to a client) the dialog opens
+with that phone or email filled in. It isn't checked again — the attach
+window already listed who matches it — but any other phone or email you type
+there is, as above, without **Use** (you are making a new contact for that
+number). If someone holds that number right now, the attach window says
+**Create new takes it from them**.
+
 **ISSN co-debtor.** Saving the ISSN form with a new co-debtor creates them as a
 new contact. A phone or email that someone already holds — usually the
 debtor's, shared by the spouse — is **left off** the co-debtor (so it stays

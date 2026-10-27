@@ -18,7 +18,9 @@
  *   - "Use" → no contact write at all; the case attaches to the matched id;
  *   - "Create a separate new contact" → intake with duplicate=duplicate;
  *   - editing the phone after choosing asks again;
- *   - a failed lookup fails closed; force_create callers skip the check;
+ *   - a failed lookup fails closed;
+ *   - prefill.checked (the orphan-adopt create-new): that value is not looked
+ *     up again, any other phone/email still is, and the box offers no "Use";
  *   - contactOnly renders no case controls and never creates a case.
  *
  * Run:  npx jest tests/newContactExistingCheck.test.js
@@ -226,10 +228,31 @@ describe('newContact existing-contact check', () => {
     expect(E(window, 'NCMatch').textContent).toMatch(/takes over/);
   });
 
-  test('force_create callers skip the check', async () => {
-    const { calls, swal } = await open({ matches: [JOHN] }, { force_create: true });
+  test('a checked value is not looked up again', async () => {
+    const { calls, swal } = await open({ matches: [JOHN] }, { checked: { phone: '555-555-1212' } });
     expect(await swal.last.preDeny()).not.toBe(false);
     expect(lookups(calls)).toHaveLength(0);
-    expect(posts(calls, '/api/intake/contact')[0].body).toMatchObject({ duplicate: 'duplicate' });
+    expect(posts(calls, '/api/intake/contact')[0].body).toMatchObject({ phone: '5555551212', duplicate: 'duplicate' });
+  });
+
+  test('checked: a phone/email added in the dialog is still checked, and there is no "Use"', async () => {
+    const MAIL = { contact_id: 41, contact_name: 'John Doe', matched_by_phone: null, matched_by_email: { source: 'child_active' } };
+    const { window, calls, swal } = await open({}, { checked: { email: 'Ann@New.test' } });
+    E(window, 'NCEmail').value = ' ann@new.TEST ';           // the checked value, any case
+    expect(await swal.last.preDeny()).not.toBe(false);
+    expect(lookups(calls).map((c) => c.body)).toEqual([{ phone: '5555551212' }]);   // only the phone
+
+    const t = await open({ matches: [MAIL] }, { checked: { phone: '5555550000' } });
+    E(t.window, 'NCEmail').value = 'john@doe.test';            // added here; the phone isn't the checked one either
+    expect(await t.swal.last.preDeny()).toBe(false);
+    expect(lookups(t.calls).map((c) => c.body)).toEqual([{ phone: '5555551212', email: 'john@doe.test' }]);
+    const box = E(t.window, 'NCMatch');
+    expect(box.textContent).toMatch(/#41 · same email/);
+    expect(box.textContent).toMatch(/takes over/);
+    expect(box.querySelector('button[data-nc="use"]')).toBeNull();
+    expect(posts(t.calls, '/api/intake/contact')).toHaveLength(0);
+    click(t.window, 'button[data-nc="separate"]');
+    expect(await t.swal.last.preDeny()).not.toBe(false);
+    expect(posts(t.calls, '/api/intake/contact')[0].body).toMatchObject({ email: 'john@doe.test', duplicate: 'duplicate' });
   });
 });

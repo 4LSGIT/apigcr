@@ -1030,11 +1030,6 @@ COMMENTs.)
 
 ## From the contact-intake safety slices (2026-10-27) — deferred
 
-- **Orphan adopt "Create new" doesn't say the value moves.** OrphanAdoptDialog
-  hands newContact `force_create`, which skips the already-on-file check for
-  every value in the dialog — including a phone/email the user adds there,
-  which the orphan dialog never looked up — and createContact ends an active
-  holder's row ('transferred').
 - **A transfer's donor isn't announced on the sync bus.** "Create a separate
   new contact" announces only the new contact (`public/js/yc-sync.js`
   `intakeGetter`); open frames of the contact that lost the phone/email keep

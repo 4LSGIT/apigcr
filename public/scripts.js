@@ -2278,9 +2278,12 @@ function ycApptTypePick(sel, ids) {
      name / phone / email      — pre-fill the fields.
      phone_start_date /
      email_start_date          — show + send the corresponding start-date input.
-     force_create              — skip the existing-contact check (below); the
-                                 orphan-adopt create-new, which ran its own
-                                 contact-lookup first.
+     checked: { phone?, email? } — values the caller already looked up (the
+                                 orphan-adopt create-new): the existing-contact
+                                 check (below) skips them and still checks any
+                                 other phone/email typed here. The box then
+                                 offers no "Use" — the caller wants a NEW
+                                 contact holding its value.
      case_type / case_other_type /
      case_subtype              — pre-select the Case Type ('Other' + its free
                                  text) and subtype (NewCaseForm's hand-off).
@@ -2296,8 +2299,8 @@ function ycApptTypePick(sel, ids) {
                                  After "Use" the contact result is the existing
                                  contact, action 'existing' — nothing created.
 
-   Existing-contact check (unless force_create): before creating, the phone/
-   email go through GET /api/contact-lookup. Matches are listed in #NCMatch;
+   Existing-contact check: before creating, the phone/email (less any
+   prefill.checked value) go through GET /api/contact-lookup. Matches are listed in #NCMatch;
    the user either USES one (no contact write at all — the case/appt attach
    to it) or creates a separate contact. Never intake's find-and-update: on a
    single match that path overwrote the matched contact's NAME, so a spouse
@@ -2314,7 +2317,11 @@ function newContact(prefill = {}, onSuccess = null) {
                         && prefill.phone_start_date != null;
   const hasEmailStart = Object.prototype.hasOwnProperty.call(prefill, 'email_start_date')
                         && prefill.email_start_date != null;
-  const forceCreate = prefill.force_create === true;
+  // prefill.checked, normalised the way the submit reads the fields.
+  const ck = (prefill.checked && typeof prefill.checked === 'object') ? prefill.checked : {};
+  const checkedPhone = ck.phone ? String(ck.phone).replace(/\D/g, "") : "";
+  const checkedEmail = ck.email ? String(ck.email).trim().toLowerCase() : "";
+  const canUse = !checkedPhone && !checkedEmail;
   const contactOnly = prefill.contactOnly === true;
   // The user's answer to the existing-contact check (see header), tied to the
   // phone|email it was given for: { key, useId?, useName?, separate? }.
@@ -2654,12 +2661,13 @@ function newContact(prefill = {}, onSuccess = null) {
     // ── Existing-contact check (see header). An answer given for other
     //    values doesn't carry: editing the phone/email asks again. ──
     if (ncChoice && ncChoice.key !== _ncKey()) { ncChoice = null; ncMatches = []; _ncRenderMatch(); }
-    if (!forceCreate && !ncChoice) {
+    const q = {};
+    if (phone && phone !== checkedPhone) q.phone = phone;
+    if (email && email.toLowerCase() !== checkedEmail) q.email = email;
+    if (!ncChoice && !Object.keys(q).length) ncChoice = { key: _ncKey(), separate: true };   // the caller checked them all
+    if (!ncChoice) {
       let found;
       try {
-        const q = {};
-        if (phone) q.phone = phone;
-        if (email) q.email = email;
         found = await P.apiSend("/api/contact-lookup", "GET", q);
       } catch (err) {
         Swal.showValidationMessage("Couldn't check for an existing contact — try again.");
@@ -2749,7 +2757,7 @@ function newContact(prefill = {}, onSuccess = null) {
       const nm = escAttr(m.contact_name || `Contact ${m.contact_id}`);
       return `<div style="margin:6px 0">${tick(ncChoice && ncChoice.useId === m.contact_id)}<b>${nm}</b>
         <span class="yc-hint">#${escAttr(m.contact_id)} · ${by}</span>
-        <button type="button" class="cad-create-btn" data-nc="use" data-id="${escAttr(m.contact_id)}">Use</button></div>`;
+        ${canUse ? `<button type="button" class="cad-create-btn" data-nc="use" data-id="${escAttr(m.contact_id)}">Use</button>` : ""}</div>`;
     }).join("");
     const status = (ncChoice && ncChoice.useId != null)
       ? `<div style="margin-top:6px">Using <b>${escAttr(ncChoice.useName)}</b> as-is — nothing on their record changes. Click Add &amp; Open to continue.</div>`
@@ -4630,7 +4638,8 @@ async function CaseAdoptDialog(value, onDone = null) {
         nothing to write — the feed row was stale; re-render via onDone.
         On success → onDone({action:'attached', contact_id, force_used}).
      4. Create new: close, call newContact with the value + chosen start date
-        prefilled (and duplicate='duplicate' so a matching value still creates).
+        prefilled, the value marked checked (newContact looks up only the
+        others; it always creates with duplicate='duplicate').
 
    onDone is invoked ONLY on the attach success path. The create-new path
    delegates file-opening to newContact's own addFile call.
@@ -4695,6 +4704,14 @@ async function OrphanAdoptDialog(value, type, onDone = null, opts = {}) {
     ? `<div class="yc-hint">Earliest seen ${earliest}</div>`
     : '';
 
+  // A contact that holds the value NOW (a row read before someone attached
+  // it): Create new takes it from them — createContact ends their row.
+  const srcOf = (m) => isPhone ? m.matched_by_phone : m.matched_by_email;
+  const holder = matches.find((m) => srcOf(m) && srcOf(m).source === 'child_active');
+  const holderHtml = holder
+    ? `<div class="yc-hint">Create new takes this ${type} from <b>${escAttr(holder.contact_name || ('Contact ' + holder.contact_id))}</b> — it ends on their record.</div>`
+    : '';
+
   // Capture the chosen start date at confirm time. Set by preConfirm so the
   // post-dialog attach flow can read it after the modal closes.
   let chosenStartDate = defaultStart;
@@ -4713,6 +4730,7 @@ async function OrphanAdoptDialog(value, type, onDone = null, opts = {}) {
       <div id="oadMatches">${matchesHtml}</div>
       <div style="margin:0.5em 0;">
         <button type="button" id="oadCreateNew" class="oad-create-btn"><i class="fa-solid fa-user-plus"></i>&nbsp;Create new contact</button>
+        ${holderHtml}
       </div>
       <div class="oad-section-label">Or search for another contact…</div>
       <div id="oadPicker"></div>
@@ -4762,16 +4780,17 @@ async function OrphanAdoptDialog(value, type, onDone = null, opts = {}) {
       });
 
       // Create-new button: close this dialog, hand off to newContact.
-      // force_create skips newContact's existing-contact check — this dialog
-      // already listed the matches — so a value that matches an existing
-      // contact still creates a fresh one. onSuccess
+      // checked: newContact skips the lookup for this value — this dialog
+      // already listed its matches, so it still creates a fresh contact —
+      // and checks any other phone/email typed there (one an active holder
+      // has would move to the new contact). onSuccess
       // bubbles a 'created' event up through onDone so the caller (the
       // shell) can re-render the log tab at its current page.
       E('oadCreateNew').addEventListener('click', () => {
         const chosenDate = (E('oadStartDate') && E('oadStartDate').value) || defaultStart;
         if (picker) picker.destroy();
         Swal.close();
-        const prefill = { force_create: true };
+        const prefill = { checked: isPhone ? { phone: value } : { email: value } };
         if (knownName) prefill.name = knownName;
         if (isPhone) { prefill.phone = value; prefill.phone_start_date = chosenDate; }
         else         { prefill.email = value; prefill.email_start_date = chosenDate; }
