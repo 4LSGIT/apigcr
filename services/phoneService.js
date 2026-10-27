@@ -276,9 +276,9 @@ function credentialMatchesRequirements(cred, requirements) {
 /**
  * Registry accessor — service-side dispatch to a provider adapter goes through
  * HERE, never via require('./adapters/phone/<p>') from another service: one
- * whitelist, one place capability flags mean anything (phone-delivery S1;
- * the archive sweeps' direct requires predate this and are flagged drift).
- * Returns null for an unknown provider.
+ * whitelist, one place capability flags mean anything (phone-delivery S1:
+ * outboundSync; the comms archive sweeps: archiveFetch, via
+ * commsArchiveCommon.archiveAdapter). Returns null for an unknown provider.
  */
 function getAdapter(provider) {
   return ADAPTERS[provider] || null;

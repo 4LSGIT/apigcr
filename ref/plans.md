@@ -522,12 +522,6 @@ failed-send dispatch are live; wf 54 sends the notices.)
 - **Per-number dispatch cooldown** — if the weekly-repeat emails annoy before
   the digest exists, a small `(to, reason)` cooldown in the S3c dispatch is
   the surgical fix.
-- **Archive sweeps bypass the adapter registry** — `commsArchiveSweep.js` and
-  `commsArchiveMediaSweep.js` lazy-require `adapters/phone/*` directly instead
-  of `phoneService.getAdapter()`, and the archive read functions are not
-  declared in `capabilities`. Flagged to the comms-archive arc 2026-10-14;
-  either route through the registry or state the direct-require as deliberate
-  in the sweep headers + COMMS_ARCHIVE_DESIGN §6.
 
 ## From the log-comm-date arc (2026-10-22, arc closed) — deferred
 

@@ -15,9 +15,13 @@
  *      dedicated pooled connection, released (with the connection) in
  *      finally. Loser → {skipped:'locked'}. This makes the RC Heavy budget
  *      single-writer across instances and hand runs.
- *   2. Our-side pre-flight, BEFORE any row is claimed: bucket configured and
- *      the runtime identity holds create/get/list on it. A failure ends the
- *      tick and alerts; no row is touched, no attempt is spent.
+ *   2. Our-side pre-flight, BEFORE any row is claimed: the RingCentral
+ *      adapter, reached through phoneService's registry (never a direct
+ *      require), declares capabilities.archiveFetch and exports RC_FNS; then
+ *      the bucket is configured and the runtime identity holds create/get/list
+ *      on it. A failure ends the tick and alerts (an adapter failure at
+ *      `error` from the first tick — a code defect, not a blip); no row is
+ *      touched, no attempt is spent.
  *   3. Discover (no RC calls): rows for RC call rows inside RC's window,
  *      oldest first. Existence is tested on (source_table, source_id, kind)
  *      REGARDLESS of part — a tsi placeholder's part changes when it is
@@ -85,6 +89,9 @@ const SOURCE = 'phone_event_log';
 // (production's is 14 — its lock name is unchanged). Kept byte-identical to commsArchiveAdmin.SWEEP_LOCKS.
 const LOCK_EXPR = "CONCAT('comms_archive_sweep:', IF(CHAR_LENGTH(DATABASE()) > 32, LEFT(SHA2(DATABASE(), 256), 32), DATABASE()))";
 const ENABLED_KEY = 'comms_archive_enabled';
+// What this sweep calls on the RC adapter — part of what its
+// capabilities.archiveFetch promises (services/adapters/phone/ringcentral.js).
+const RC_FNS = ['checkArchiveAuth', 'findSessionRecordings', 'fetchRecordingContent'];
 
 /** Knobs, read at call time (tests shrink them). */
 const limits = {
@@ -208,7 +215,8 @@ async function _nextDue(db, skipIds) {
 
 /**
  * @param {object} db    mysql2 promise pool (needs getConnection)
- * @param {object} [opts] { heavyPerTick?, rc? (adapter override for tests) }
+ * @param {object} [opts] { heavyPerTick?, rc? (adapter override for tests: used
+ *   as given — production takes the registry's, via common.archiveAdapter) }
  */
 async function runSweep(db, opts = {}) {
   const startedAt = Date.now();
@@ -239,7 +247,7 @@ async function _tick(db, opts, out, acc, startedAt) {
   const heavyBudget = Math.min(
     Number.isFinite(hp) && hp >= 0 ? Math.floor(hp) : limits.heavyPerTick,
     maxHeavyPerTick());
-  const rc = opts.rc || require('./adapters/phone/ringcentral'); // lazy require (convention)
+  let rc = opts.rc || null;   // else the registry's, resolved in the pre-flight (step 2)
   const { getSetting } = require('./settingsService');            // lazy require (convention)
   const { goneIds, failedIds, stuckIds, mismatchIds, noLine } = acc;
 
@@ -251,6 +259,16 @@ async function _tick(db, opts, out, acc, startedAt) {
 
   try {
     // ── 2. Our-side pre-flight: before ANY claim ──────────────────────────
+    if (!rc) {
+      const r = common.archiveAdapter('ringcentral', RC_FNS);
+      if (r.error) {
+        out.stop = 'adapter';
+        out.error = r.error;
+        await common.adapterAlert(db, { provider: 'ringcentral', sweep: 'comms_archive_sweep', error: r.error });
+        return;
+      }
+      rc = r.adapter;
+    }
     try {
       await archive.checkBucket({ timeoutMs: Math.min(io(), 30_000) });
     } catch (err) {
@@ -676,4 +694,4 @@ async function _cliffGuardSafe(db) {
   }
 }
 
-module.exports = { runSweep, discover, cliffGuard, maxHeavyPerTick, limits, LOCK_EXPR, ENABLED_KEY };
+module.exports = { runSweep, discover, cliffGuard, maxHeavyPerTick, limits, LOCK_EXPR, ENABLED_KEY, RC_FNS };

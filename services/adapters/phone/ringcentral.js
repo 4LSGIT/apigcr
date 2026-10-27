@@ -465,7 +465,8 @@ async function listOutbound(db, { credentialId, sinceISO, untilISO, page = 1, pe
 
 module.exports = {
   displayName: 'RingCentral',
-  capabilities: { sms: true, mms: true, outboundSync: true },
+  // archiveFetch (comms archive sweeps): checkArchiveAuth, findSessionRecordings, fetchRecordingContent, fetchMessageAttachment, listVoicemails.
+  capabilities: { sms: true, mms: true, outboundSync: true, archiveFetch: true },
   credentialRequirements: { type: 'oauth2', oauth_status: 'connected' },
   formHints: {
     provider_id: {

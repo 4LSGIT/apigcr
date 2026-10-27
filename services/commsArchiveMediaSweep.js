@@ -27,6 +27,12 @@
  * its own lock CONCAT('comms_archive_media:', DATABASE()), its own budgets, so
  * it can never compete with the cliff sweep.
  *
+ * ── ADAPTERS ───────────────────────────────────────────────────────────────
+ * Reached through phoneService.getAdapter (never a direct require); each must
+ * declare capabilities.archiveFetch and export RC_FNS / QUO_FNS. One that
+ * does not stops its provider for the tick with an `error` alert
+ * (comms_archive_adapter) — no row of it is claimed; the other goes on.
+ *
  * ── DISCOVERY (no provider calls) ──────────────────────────────────────────
  *   Quo calls with raw_extra.provider_status = 'completed' (the only reliable
  *   "answered" signal — call duration is positive on no-answer rows too: it
@@ -80,6 +86,10 @@ const SOURCE = 'phone_event_log';
 // (production's is 14 — its lock name is unchanged). Kept byte-identical to commsArchiveAdmin.SWEEP_LOCKS.
 const LOCK_EXPR = "CONCAT('comms_archive_media:', IF(CHAR_LENGTH(DATABASE()) > 32, LEFT(SHA2(DATABASE(), 256), 32), DATABASE()))";
 const ENABLED_KEY = 'comms_archive_enabled';
+// What this sweep calls on each adapter — part of what the adapter's
+// capabilities.archiveFetch promises (services/adapters/phone/<provider>.js).
+const RC_FNS = ['checkArchiveAuth', 'listVoicemails', 'fetchMessageAttachment'];
+const QUO_FNS = ['checkArchiveAuth', 'getCallVoicemail', 'listCallRecordings', 'getMessage', 'fetchSigned'];
 
 /** Knobs, read at call time (tests shrink them). */
 const limits = {
@@ -535,7 +545,8 @@ const _lane = (row) => `${row.provider}:${row.kind}`;
 
 /**
  * @param {object} db
- * @param {object} [opts] { rc?, quo? (adapter overrides for tests) }
+ * @param {object} [opts] { rc?, quo? (adapter overrides for tests: used as
+ *   given — production takes the registry's, via common.archiveAdapter) }
  */
 async function runMediaSweep(db, opts = {}) {
   const startedAt = Date.now();
@@ -565,8 +576,8 @@ async function _tick(db, opts, out, acc, startedAt) {
   const deadline = startedAt + limits.deadlineMs;
   const hardDeadline = startedAt + limits.hardDeadlineMs;
   const io = () => Math.max(hardDeadline - Date.now(), limits.minIoMs);
-  const rc = opts.rc || require('./adapters/phone/ringcentral');  // lazy require (convention)
-  const quo = opts.quo || require('./adapters/phone/quo');        // lazy require (convention)
+  let rc = opts.rc || null;     // else the registry's, resolved before the row work
+  let quo = opts.quo || null;
   const { getSetting } = require('./settingsService');            // lazy require (convention)
 
   out.enabled = (await getSetting(db, ENABLED_KEY)) === '1';
@@ -666,6 +677,22 @@ async function _tick(db, opts, out, acc, startedAt) {
       acc.drift.push({ id: row.id, lane: _lane(row), what: clamp(what, 200) });
       out.drift++;
     };
+
+    // ── Adapters, through phoneService's registry ─────────────────────────
+    // A provider whose adapter fails the check (missing, no
+    // capabilities.archiveFetch, a promised function absent) is stopped for
+    // the tick and alerted at `error` — never skipped in silence. Its rows
+    // stay pending and unclaimed; the other provider's work goes on.
+    const registryAdapter = async (p, fns) => {
+      const r = common.archiveAdapter(p, fns);
+      if (r.adapter) return r.adapter;
+      stopProvider(p, 'adapter');
+      (out.adapter_errors = out.adapter_errors || {})[p] = r.error;
+      await common.adapterAlert(db, { provider: p, sweep: 'comms_archive_media_sweep', error: r.error });
+      return null;
+    };
+    if (!rc) rc = await registryAdapter('ringcentral', RC_FNS);
+    if (!quo) quo = await registryAdapter('quo', QUO_FNS);
 
     if (limits.captureVoicemails) out.discovered_vm = await discoverQuoVoicemails(db);
 
@@ -1106,7 +1133,9 @@ async function _tick(db, opts, out, acc, startedAt) {
     // -- RC voicemail listing: hourly, stateless, AFTER the row work --
     // Fenced: a listing failure (network, timeout) is drift for the hour; it
     // never stops the rest of the tick.
-    if (limits.captureVoicemails && out.rc_vm_due) {
+    if (limits.captureVoicemails && out.rc_vm_due && !rc) {
+      out.rc_vm_listing = 'incomplete';   // the RC adapter failed its check (alerted above)
+    } else if (limits.captureVoicemails && out.rc_vm_due) {
       out.rc_vm_listed = true;
       try {
         const ok = await _discoverRcVoicemails(db, rc, { hardDeadline, acc, out });
@@ -1395,4 +1424,4 @@ async function _rowAlerts(db, { goneIds, failedIds, stuckIds, drift, listingDrif
   }
 }
 
-module.exports = { runMediaSweep, discoverQuoCalls, discoverMms, discoverQuoVoicemails, unknownQuoCallStatuses, quoMediaId, limits, LOCK_EXPR, QUO_REC_STATUS };
+module.exports = { runMediaSweep, discoverQuoCalls, discoverMms, discoverQuoVoicemails, unknownQuoCallStatuses, quoMediaId, limits, LOCK_EXPR, QUO_REC_STATUS, RC_FNS, QUO_FNS };

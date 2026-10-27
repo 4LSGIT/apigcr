@@ -194,7 +194,8 @@ module.exports = {
   // outboundSync stays false until Quo's API is confirmed to expose delivery
   // status for listing (ref/PHONE_DELIVERY_DESIGN.md §2) — hook 16 only logs
   // message.delivered today, so a failed Quo send is invisible.
-  capabilities: { sms: true, mms: false, outboundSync: false },
+  // archiveFetch (comms archive media sweep): checkArchiveAuth, listCallRecordings, getCallVoicemail, getMessage, fetchSigned.
+  capabilities: { sms: true, mms: false, outboundSync: false, archiveFetch: true },
   credentialRequirements: { type: 'api_key' },
   formHints: {
     provider_id: {

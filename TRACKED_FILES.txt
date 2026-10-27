@@ -1188,6 +1188,8 @@ tests/codeBodySites.guest.test.js
 tests/codeChildResultOrder.test.js
 tests/commsAdminTools.pane.test.js
 tests/commsArchive.lockNames.mysql.test.js
+tests/commsArchive.registry.mysql.test.js
+tests/commsArchive.registry.test.js
 tests/commsArchive.s1b.mysql.test.js
 tests/commsArchive.s1c.mysql.test.js
 tests/commsArchive.s4.mysql.test.js

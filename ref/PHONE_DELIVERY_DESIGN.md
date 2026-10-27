@@ -297,6 +297,6 @@ per-failure emails get loud.
 - Archive-fetcher conventions this copies (never-throw shape, rate headers,
   GET_LOCK, enabled-setting, tick): `services/commsArchiveSweep.js` +
   `ref/COMMS_ARCHIVE_DESIGN.md` §6.
-- Known adjacent drift (NOT this arc): `commsArchiveSweep.js:240` and
-  `commsArchiveMediaSweep.js:562` lazy-require adapters directly instead of
-  dispatching through the registry — flagged to the archive arc 2026-10-14.
+- The comms archive sweeps dispatch through the same registry, gated on
+  their own capability (`capabilities.archiveFetch`) —
+  `ref/COMMS_ARCHIVE_DESIGN.md` §3.

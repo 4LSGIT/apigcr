@@ -7,9 +7,10 @@
  *
  * Pure mechanics, no policy: the lease, the uncharged refund / park, the
  * terminal UPDATE, the archived flip, the anomaly park, the escalating
- * alert, and the tick lock. Each sweep binds the row operations to ITS OWN
- * `limits` object (rowOps(limits)), so a test that tunes one sweep's knobs
- * tunes exactly the helpers that sweep uses.
+ * alert, the tick lock, and the adapter lookup through phoneService's
+ * registry (archiveAdapter / adapterAlert). Each sweep binds the row
+ * operations to ITS OWN `limits` object (rowOps(limits)), so a test that
+ * tunes one sweep's knobs tunes exactly the helpers that sweep uses.
  *
  * Alerting semantics (lib/alerting): a repeated dedup_key is a silent no-op,
  * and the hourly digest emails rows grouped by group_key — see the sweep
@@ -74,6 +75,46 @@ async function acquireLock(db, lockExpr, waitS = 0) {
       }
     },
   };
+}
+
+/**
+ * A provider's archive adapter, reached through phoneService's registry ONLY
+ * (never require('./adapters/phone/<p>') — ref/COMMS_ARCHIVE_DESIGN.md §3):
+ * the adapter must declare capabilities.archiveFetch AND export every
+ * function in `fns` (the ones the calling sweep uses). Returns { adapter } or
+ * { error } — never a quiet null: a sweep that cannot reach a provider says
+ * so (adapterAlert), because RingCentral deletes recordings 90 days after the
+ * call and a provider skipped in silence loses them.
+ */
+function archiveAdapter(provider, fns) {
+  const phoneService = require('./phoneService'); // lazy require (convention)
+  const adapter = phoneService.getAdapter(provider);
+  if (!adapter) return { error: `no ${provider} adapter in phoneService's registry` };
+  if (!adapter.capabilities || adapter.capabilities.archiveFetch !== true) {
+    return { error: `the ${provider} adapter does not declare capabilities.archiveFetch` };
+  }
+  const missing = fns.filter(f => typeof adapter[f] !== 'function');
+  if (missing.length) {
+    return { error: `the ${provider} adapter declares archiveFetch but lacks ${missing.join(', ')}` };
+  }
+  return { adapter };
+}
+
+/**
+ * archiveAdapter failed: a code / deploy defect, not a blip — `error` from the
+ * first occurrence (CLAUDE.md severity convention), one row per provider per
+ * sweep per UTC day. Never throws.
+ */
+function adapterAlert(db, { provider, sweep, error }) {
+  return alert(db, {
+    kind: 'comms_archive_adapter', group_key: `comms_archive_adapter:${provider}`, severity: 'error',
+    title: `Comms archive: the ${provider} adapter cannot archive — its archiving stopped`,
+    message: `${error} (${sweep}). No ${provider} row was claimed and no attempt was spent; every tick ` +
+      `re-checks. Fix services/adapters/phone/${provider}.js (capabilities.archiveFetch and the functions ` +
+      `it promises) or phoneService's ADAPTERS. RingCentral deletes recordings 90 days after the call.`,
+    context: { provider, sweep, error: clamp(error, 300) },
+    dedup_key: `comms_archive_adapter:${provider}:${sweep}:${utcDate()}`,
+  });
 }
 
 /**
@@ -256,4 +297,4 @@ function rowOps(limits, { table = 'comms_media', claimStates = ['pending'] } = {
   };
 }
 
-module.exports = { clamp, utcDate, ageHours, alert, acquireLock, rowOps, hasCliff };
+module.exports = { clamp, utcDate, ageHours, alert, acquireLock, rowOps, hasCliff, archiveAdapter, adapterAlert };
