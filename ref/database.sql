@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-10-27T03:04:07.115Z
+-- Generated: 2026-10-27T11:59:51.310Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:08f7da6bc41283f01200b01eec4fe1d9
+-- Fingerprint: sha256:754f1e3db169d5013a09fe1fe93d24f0
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -2229,7 +2229,8 @@ CREATE TABLE `hook_executions` (
   `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `claimed_at` datetime(3) DEFAULT NULL COMMENT 'Async receiver (2026-10-28): when a drain — the Cloud Tasks doorbell POST /process-hook-execution/:id or the /process-jobs cron — claimed this row to run filter, transform and targets. NULL = still queued (status received), or a row that predates the async receiver. The claim is ONE conditional UPDATE (WHERE status = received AND claimed_at IS NULL): Cloud Tasks delivers at least once and the loser of the claim does nothing. A synchronous run (dry run, live-test, /internal/hook-replay, the kill-switch path) sets claimed_at at INSERT so the drain never picks it up.',
   `completed_at` datetime(3) DEFAULT NULL COMMENT 'Async receiver: when the drain finished and status became final. completed_at - created_at is the end-to-end pipeline time (created_at is receipt). NULL while queued or running, and on rows that predate the async receiver.',
-  `attempts` tinyint unsigned NOT NULL DEFAULT '0' COMMENT 'Async receiver: claims so far, bumped AT claim time (a run that killed its instance has already spent its attempt). The stale sweep (lib/hookDrain.js) re-queues or fails a claimed row that never completed; its window and cap live there.'
+  `attempts` tinyint unsigned NOT NULL DEFAULT '0' COMMENT 'Async receiver: claims so far, bumped AT claim time (a run that killed its instance has already spent its attempt). The stale sweep (lib/hookDrain.js) re-queues or fails a claimed row that never completed; its window and cap live there.',
+  `dedup_key` varchar(191) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin DEFAULT NULL COMMENT 'Async hook receiver S3 (2026-10-27): the provider event id resolved from hooks.dedup_path at receipt (longer than 191 chars: sha256 hex). UNIQUE with hook_id — a redelivered event fails its INSERT and is answered 200 with no row. NULL when the hook has no path, the event no value, or the row was written by a synchronous run (live-test, replay, kill-switch path) — NULLs never collide.'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- --------------------------------------------------------
@@ -2276,6 +2277,7 @@ CREATE TABLE `hooks` (
   `filter_config` json DEFAULT NULL,
   `transform_mode` enum('passthrough','mapper','code') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'passthrough',
   `transform_config` json DEFAULT NULL,
+  `dedup_path` varchar(100) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'Async hook receiver S3 (2026-10-27): dot-path into the received event ({body,headers,query,method,meta}) of the PROVIDER event id — RingCentral body.uuid, Quo body.id. The receiver stores the resolved value as hook_executions.dedup_key; a second event with the same id for this hook is answered 200 and NOT recorded (no row, nothing runs). NULL = no dedup. Edited in the hook editor (Filter tab).',
   `active` tinyint(1) NOT NULL DEFAULT '1',
   `version` int NOT NULL DEFAULT '1',
   `last_modified_by` int DEFAULT NULL,
@@ -4812,6 +4814,7 @@ ALTER TABLE `hook_delivery_logs`
 --
 ALTER TABLE `hook_executions`
   ADD PRIMARY KEY (`id`),
+  ADD UNIQUE KEY `uq_hook_dedup` (`hook_id`,`dedup_key`),
   ADD KEY `idx_hook_created` (`hook_id`,`created_at`),
   ADD KEY `idx_status` (`status`);
 
