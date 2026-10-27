@@ -1023,7 +1023,8 @@ every function carrying a `credential_id` or a fetched URL, `update_db` /
 links with nested step plans), `start_workflow` and `enroll_sequence` (chained
 fan-out), the esign `on_signed`/`on_declined` targets, and the external senders
 other than `send_sms` / `send_email` (`send_mms` — its `attachment_url` is
-fetched — `esign_*`, forwards, the digests and sweeps). `send_sms` and
+fetched — `esign_*`, forwards, the digests and sweeps; forwards are
+authorable as INGEST rule actions since A20.2, not in workflow drafts). `send_sms` and
 `send_email` ARE authorable in workflow and sequence drafts (rulings 14 and
 15, class `external-send`), with the sender held to a literal firm line /
 mailbox or a placeholder from the engine's closed resolvable set, and email
@@ -1867,55 +1868,152 @@ that only from holders of `automations.manage` — `lib/ingestCodeGate.js`).
 Since 2026-10-26 code bodies run in the QuickJS guest (`lib/guestCode.js`);
 the narrowing stands until Fred rules otherwise (`ref/plans.md`); and it prepares an email
 envelope the way `evaluateRules` does (`body` = text || html), which the
-native tester does not on full-fidelity rows (filed). A20.2 adds draft
-(unsaved) conditions/mapper preview if it needs one — with a ReDoS answer for
-model-written `matches`/`regex` patterns first. Original spec: the native
+native tester does not on full-fidelity rows (filed). A20.2 needed no draft
+(unsaved) preview: a Casey-created rule is stored inactive, so this kind
+previews it as soon as it exists; and the ReDoS answer for model-written
+patterns is that A20.2 writes none (a pattern the edited rule already runs may
+be kept). Original spec: the native
 `POST .../rules/test-match` and `.../rules/test-transform` endpoints are the
 dry-run surface, like A17.2's step preview: zero side effects, no actions run.
 The kind must be unable to express anything but those two endpoints.
 
-**A20.2: Author an ingest rule (the write).** Ruled 2026-10-26:
+**A20.2: Author an ingest rule (the write). SHIPPED 2026-10-27** (with A20.3,
+on slice 1's stamp / log / precondition). Ruled 2026-10-26:
 **create-inactive is the draft/publish substitute** for this family — a rule
 born `active: 0` matches nothing and fires nothing, the same born-unrunnable
-property as A17.3's v0 workflow and A19.0's inactive hook; activation stays a
-human act in the native editor. Recorded contract defaults (each stands until
-Fred rules otherwise):
+property as A17.3's v0 workflow and A19.0's inactive hook. Six kinds on the
+card engine, both channels, each ONE request to the rule editor's own route
+(the route prefix comes from a closed two-entry map in the browser, never the
+draft): `ingest_rule.create.v1` (`POST /api/{ch}-ingest/rules`),
+`ingest_rule.update.v1` and `ingest_rule.set_active.v1` (`PUT …/rules/:id`),
+`ingest_rule.action_add.v1` (`POST …/rules/:id/actions`),
+`ingest_rule.action_update.v1` / `ingest_rule.action_remove.v1` (`PUT` /
+`DELETE …/rule-actions/:id`). One card = one change = one request, so every
+card is atomic and carries one precondition. Per-family flag
+`casey_ingest_authoring_enabled`. The P2 matrix covers 42 kinds / 37 mounts.
 
-- Create writes the rule inactive with `conditions` match mode and
-  `passthrough`/`mapper` transform only; Casey never composes `code`-mode
-  match or transform bodies (recorded when those bodies ran in-process; they
-  now run in the QuickJS guest — revisiting this default is Fred's call).
-- Actions mirror A19.0's shape: target an EXISTING workflow or sequence
-  template (or hook), verified at proposal time; `internal_function` actions
-  come from the A17 allowlist; `http` actions follow A17.4b's webhook
-  contract (literal user-supplied URL, named credential, no model-invented
-  destination) or defer to a sub-slice.
-- Edits in THIS slice are limited to INACTIVE rules, with the
-  `expected_base: { definition_updated_at }` precondition the canonical routes
-  take (optional for native callers, required on Casey proposals — P11's
-  shape). Editing an ACTIVE rule is A20.3.
-- Per-family flag (ruling 4), one proposal per answer, exact-id evidence from
-  an A20.0 read, and the prompt-stage registry sweep
-  (`tests/assistantPromptKinds.test.js`) like every family.
+- **Create.** The fixed builder pins `active: 0` (the column defaults to 1)
+  and sends the rule with its actions in ONE request: `POST …/rules` takes
+  optional inline `actions` (≤ 10, the action route's own shape validator up
+  front, its reference validator inside the create's transaction, rows
+  inserted before the change row so the 'create' log entry holds them — a
+  refused reference rolls the rule back) and an optional `Idempotency-Key`
+  (scope `{email,phone}_ingest.rules_create`; the card sends its draft_id).
+  Native callers send neither and are unchanged. The card shows the
+  conditions, the transform, each action in plain words, any notes (a
+  non-catalog match path, a name another rule has, an unpublished target),
+  and the position's evaluation order. Click-time safety is the idempotent
+  draft_id + the 15-minute TTL (A17.3's narrowing — there is no existing
+  record to re-read).
+- **Grammar, built field by field** (services/assistantService.js
+  `normalizeIngestRuleAction`). Conditions: a group tree (`and`/`or`, depth
+  ≤ 5, ≤ 40 leaves) of `{path, op, value}` leaves, ops from hookFilter's own
+  set; an EMPTY group is refused (an empty `and` matches every message).
+  Mapper: `{to, from | template | value, transforms?}` with transform names
+  from hookTransforms' registry. **No new regex:** hookFilter's `matches` and
+  the mapper's `regex:` run on V8's backtracking engine, in-process, on every
+  inbound message (conditions and mapper are not in the guest), so a pattern
+  is admitted only when the rule being edited already runs exactly it (the
+  court rules' live `regex:` descriptors survive an edit); the canonical
+  fix — both on the linear engine — is filed to `ref/plans.md`. Measured live
+  2026-10-27: 0 `matches` conditions; 44 `regex:` descriptors in 28 mapper
+  fields across 5 email rules (6-10, the court mapper rules), every one of
+  which compiles on V8's linear engine — so the canonical fix would
+  grandfather nothing.
+- **Actions** target only EXISTING records the route accepts (workflow by id,
+  active; sequence template BY ID, active — `template_type` is refused
+  because "whichever is active" cannot be pinned on a card; hook by slug,
+  active) or an `internal_function` from the A17 allowlist whose
+  `params_mapping` keys are its declared params (required ones present) and
+  pass the route's `__validateParamsMapping`. `send_email` / `send_sms` send
+  from a QUOTED LITERAL firm mailbox / line (`literalFirmSender`), never a
+  value from the message; the card says who receives it and when the
+  recipient comes from the message itself. **`http` actions are deferred** —
+  the vision says yes; the risk is that an ingest http action ships every
+  matching client message to a URL, and A17.4b's literal-URL /
+  named-credential contract is not built anywhere yet; the mitigation is to
+  build that contract once (A17.4b) and reuse it here. Existing http actions
+  may be renamed, toggled, moved or removed — never re-pointed (Casey cannot
+  see their URL).
+- **Forwards** (Fred's yes, 2026-10-27, ruling 15's logic): `forward_as_email`
+  / `forward_as_sms` are ingest-action authorable, class `external-send`, from
+  a separate list (`lib/caseyAutomationAllowlist.js`
+  `CASEY_INGEST_ACTION_EXTRA` / `caseyIngestActionClass`). Measured: 4 of the
+  13 live ingest internal-function actions are forwards, every one with
+  `event: "$"`, a quoted literal firm sender and a quoted literal staff
+  destination on a passthrough rule — the closed form the card admits. The
+  destination is a quoted literal NEVER taken from the message (no live rule
+  does that, and a sender-chosen destination would make the firm a relay);
+  the card says "forwards every matching message to <dest>", classifies it as
+  firm / staff (a firm email domain, a mailbox, an active firm line, or an
+  authorized staff member's email / phone) or OUTSIDE THE FIRM, and is
+  danger-styled (every send is); an opted-out destination is refused at
+  proposal time (the function refuses it at send time since 05f29bd, so the
+  forward could never deliver); `event` is exactly `"$"` and the rule's
+  transform must be passthrough (a mapper/code output is not an envelope —
+  an update that would switch a forwarding rule's transform is refused).
+  **Not workflow-draft authorable:** the native workflow picker hides them
+  (`__meta.uiHidden`), no live workflow / sequence / hook step uses one, and
+  the workflow sender guardrail does not model a forward's destination —
+  extending it is filed (`ref/plans.md`). `court_extract` stays off both
+  lists.
+- **Edits** (A20.2 for an inactive rule, A20.3 for an active one — the SAME
+  kinds; `live` says which): update covers name, description, position, and
+  match / transform (mode and config always travel together, because the
+  route's gate and validator read an absent mode as the stored one; a switch
+  to passthrough sends `transform_config: null`); `active` is its own kind;
+  action update covers name, config, position, active (never the type). A
+  no-op proposal is refused. **Every edit's `expected_base` is the
+  `definition_updated_at` of the cited `automation.definition` rule row** —
+  the read surface carries the stamp as an ISO instant — and the normalizer
+  refuses when the live stamp no longer equals it (a human edit between
+  Casey's read and the proposal); the browser re-reads `GET …/rules/:id` at
+  click time and refuses before the claim if it moved (correction 1); the
+  route's 409 is the backstop and renders as a refusal ("the rule changed,
+  nothing was written").
+- **Code modes:** Casey may author code-mode match / transform bodies. The
+  vision says yes; ingest code runs in the QuickJS guest since 8327d9e, the
+  boundary that made safe-mode workflow code Casey-authorable (ruling 13);
+  the remaining risk is a wrong body acting on live mail once the rule is
+  active. Mitigations: the card shows the whole body, a create is inactive
+  (preview it with A20.1 first), and the request goes through the canonical
+  ingest code gate, which Fred keeps — so the user's own capability decides:
+  only an `automations.manage` holder can apply it, a plain staff user's card
+  is refused 403 by the route with nothing written, and the card says so up
+  front. **Confirmed by Fred, 2026-10-27.** Relaxing the gate stays Fred's
+  call after the soak.
+- **Read surface:** `automation.definition` on an ingest rule adds
+  `definition_updated_at` to the rule row and the latest five change-log
+  rows as `change` rows (kind, actor, firm-local time, a field-level
+  before/after diff), readable by every staff member like the rule itself
+  (the log holds nothing the rule does not; http URLs and header values were
+  redacted at write) — **confirmed by Fred, 2026-10-27**. That is the "what
+  changed" explanation and the revert path: Casey can prepare the reverse
+  edit as a card.
+- **Not built here:** a deep link from the applied card (the automations
+  manager has no ingest-rule record opener; the card names where to find
+  it), rule delete / duplicate, and a draft (unsaved) preview. Sync bus: no
+  ingest route is in `public/js/yc-sync.js` MATCHERS and no Casey-only emit
+  is added; the precondition is the protection.
 
-**A20.3: Edit an active ingest rule.** Ruled its own slice (Fred, 2026-10-26:
-"it should also be able to edit — that's just its own slice"). An active-rule
-edit is live-on-save with no change history — exactly the trigger-rule hazard —
-so it rests on the two cheap pieces the trigger decision prescribes — built
-canonically, ahead of the Casey kinds, in slice 1 (above):
-
-- the append-only change log, written inside every rule and rule-action
-  write's transaction — the rule's fields and its action rows, before and
-  after, with the actor — giving both the review diff and a manual revert path;
-- the `definition_updated_at` precondition, mandatory on every Casey
-  active-rule proposal. An action write moves its parent rule's stamp, so the
-  one value guards the rule and all of its actions.
-
-Review shows the live rule's before/after diff and says plainly that the edit
-takes effect immediately on matching mail/calls. Same exclusions as A20.2
-(`code` modes, model-invented destinations). Once this lands, trigger-rule
-authoring needs only its own copy of the same two pieces (the A18 trigger
-decision) — the recipes should match.
+**A20.3: Edit an active ingest rule. SHIPPED 2026-10-27** (with A20.2). Ruled
+its own slice (Fred, 2026-10-26: "it should also be able to edit — that's
+just its own slice"). An active-rule edit is live-on-save, so it rests on the
+two pieces the trigger decision prescribes, built canonically in slice 1: the
+append-only change log (the review diff and the revert path) and the
+`definition_updated_at` precondition, mandatory on every Casey edit — an
+action write moves its parent's stamp, so the one value guards the rule and
+all of its actions. The edit kinds are A20.2's; on an ACTIVE rule the card is
+danger-styled, says plainly that the change applies to the very next matching
+email / call / text, shows every changed value before and after, and names the
+change log as the undo. **Activation** (`ingest_rule.set_active.v1`) is in:
+the vision says yes (ruling 17's logic — Casey acts as the user, and the native
+editor lets any staff member flip `active`); the risk is a rule going live on
+real traffic; the mitigation is the danger card naming what it will start and
+on which traffic (every active action listed, the evaluation order, a code
+match/transform called out) plus the change log. **Confirmed by Fred,
+2026-10-27.** Deactivation uses the same card. Once this lands, trigger-rule authoring needs only its own copy of the
+same two pieces (the A18 trigger decision) — the recipes should match.
 
 #### R1: Read-loop continuation — SHIPPED
 
@@ -2049,8 +2147,9 @@ silently. What the inventory established, for all 26 shipped kinds:
   its route scopes. No route file mounts a role, capability or superuser gate.
   The one authorization-shaped refusal in the stack is read-only View-as.
   (Later families add exceptions: `hook.create.v1` needs `automations.manage`,
-  and A14's two send kinds reach the comms hub routes, which check the
-  caller's per-channel `can_send` grant and make an SU step up.)
+  A14's two send kinds reach the comms hub routes, which check the
+  caller's per-channel `can_send` grant and make an SU step up, and an A20
+  ingest-rule card that carries a code body meets the ingest code gate.)
 - **There is no firm/tenant axis.** The schema has no `firm_id` or `tenant_id`,
   so "cross-firm" has no expression here; the row constraints that exist are
   the normalizer's (evidence must name the exact id, the parent must match, the

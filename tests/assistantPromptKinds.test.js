@@ -52,6 +52,7 @@ const PLAN_FAMILY_MARKERS = {
   sms: 'Reviewed direct-send actions are available',
   email: 'Reviewed direct-send actions are available',
   report: 'A reviewed report-draft action is available',
+  ingest_rule: 'Reviewed ingest-rule actions are available',
 };
 
 describe('every shipped action kind is taught to every model stage', () => {
@@ -104,6 +105,7 @@ describe('every shipped action kind is taught to every model stage', () => {
     expect(investigatePrompt).toContain('sequence-step proposals');
     expect(investigatePrompt).toContain('and direct sends');
     expect(investigatePrompt).toContain('and report drafts');
+    expect(investigatePrompt).toContain('ingest-rule proposals');
   });
 });
 
@@ -160,6 +162,17 @@ describe('a job request forces the draft-required path like the other families',
     expect(svc.taskDraftRequested('Add a text reminder step to the no-show sequence')).toBe(true);
     expect(svc.taskDraftRequested('Please insert an email into sequence 12 two days later')).toBe(true);
     expect(svc.taskDraftRequested('Why did the no-show sequence skip step 3?')).toBe(false);
+    // A20.2 / A20.3: ingest-rule-only phrases ride the ingest clause; a bare
+    // "rule" (trigger rules are explain-only) and questions do not.
+    for (const q of ['Create an email rule that forwards court notices to Shoshana', 'Turn off the phone rule for 202',
+      'Deactivate the inbox rule for Clio payments', 'Make a rule for incoming emails from the trustee',
+      'Please rename ingest rule 12 to Court notices']) {
+      expect({ q, forced: svc.taskDraftRequested(q) }).toEqual({ q, forced: true });
+    }
+    for (const q of ['What does email rule 12 do?', 'Why did the ingest rule not match?', 'Show me the phone rules',
+      'Change the trigger rule for new cases']) {
+      expect({ q, forced: svc.taskDraftRequested(q) }).toEqual({ q, forced: false });
+    }
   });
 });
 

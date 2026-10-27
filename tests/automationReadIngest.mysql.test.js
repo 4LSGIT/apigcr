@@ -48,7 +48,9 @@ const SOURCE_KEY = 'test-not-a-key-SOURCESECRET'; // secret-scan: allow
 const RO_TABLES = ['email_ingest_rules', 'email_ingest_rule_actions', 'email_ingest_executions',
   'email_ingest_log_suppressions', 'email_log', 'log', 'phone_ingest_rules', 'phone_ingest_rule_actions',
   'phone_ingest_executions', 'phone_log_suppressions', 'phone_event_log', 'workflows', 'sequence_templates',
-  'hook_targets', 'trigger_rule_actions', 'trigger_rules', 'sequence_steps', 'workflow_steps', 'cta_links'];
+  'hook_targets', 'trigger_rule_actions', 'trigger_rules', 'sequence_steps', 'workflow_steps', 'cta_links',
+  // A20.2: the definition read carries the change log as 'change' rows.
+  'email_ingest_rule_changes', 'phone_ingest_rule_changes'];
 const CHECKSUM_TABLES = [...RO_TABLES, 'hooks', 'credentials', 'email_ingest_sources', 'scheduled_jobs',
   'workflow_executions', 'sequence_enrollments', 'hook_executions'];
 
@@ -237,6 +239,8 @@ maybe('Casey ingest reads + preview on real MySQL', () => {
     expect(head).toMatchObject({ row: 'rule', email_ingest_rule_id: 15, active: true, evaluation_order: 1,
       match_mode: 'conditions', transform_mode: 'code', action_count: 7, active_action_count: 6 });
     expect(head.updated_at).toBeInstanceOf(Date);
+    // A20.2: THE edit stamp, as the ISO instant an edit card bakes into expected_base.
+    expect(head.definition_updated_at).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
     expect(head.transform_config).toContain('case_no');                 // code readable (ruling 9)
     expect(JSON.parse(head.match_config).conditions[0]).toEqual({ path: 'from.email', op: 'ends_with', value: 'uscourts.gov' });
     const act = (id) => rows.find((r) => r.row === 'action' && r.rule_action_id === id);
@@ -249,6 +253,32 @@ maybe('Casey ingest reads + preview on real MySQL', () => {
     expect(act(104).target).toMatch(/hook 7 "Court relay" \(slug court-relay, INACTIVE\)/);
     expect(act(107)).toMatchObject({ active: false });
     expect(rows.filter((r) => r.row === 'action').map((r) => r.rule_action_id)).toEqual([101, 102, 103, 104, 105, 106, 107]);
+  });
+
+  test('definition: the change log rides as field-level change rows, newest first, capped at five', async () => {
+    const before = { rule: { id: 31, name: 'old name', active: 1, position: 0, match_mode: 'conditions', match_config: { operator: 'and', conditions: [] },
+      transform_mode: 'passthrough', transform_config: null }, actions: [{ id: 501, name: 'a', position: 0, active: 1, action_type: 'workflow', config: { workflow_id: 24 } }] };
+    const after = { rule: { ...before.rule, name: 'new name', active: 0 }, actions: [{ ...before.actions[0], active: 0 },
+      { id: 502, name: null, position: 1, active: 1, action_type: 'hook', config: { slug: 'court-relay' } }] };
+    await root.query('DELETE FROM email_ingest_rule_changes WHERE rule_id = 31');
+    for (let i = 0; i < 6; i++) {
+      await root.query(`INSERT INTO email_ingest_rule_changes (rule_id, change_kind, actor_user_id, actor_label, definition_updated_at, before_json, after_json)
+        VALUES (31, 'update', 2, 'staff', NOW(3), ?, ?)`, [JSON.stringify(before), JSON.stringify(after)]);
+    }
+    const rows = await automation.definition(db(), { email_ingest_rule_id: 31 });
+    const changes = rows.filter((r) => r.row === 'change');
+    expect(changes).toHaveLength(automation.CHANGE_ROWS);
+    expect(changes[0].change_id).toBeGreaterThan(changes[1].change_id);
+    expect(changes[0]).toMatchObject({ email_ingest_rule_id: 31, change_kind: 'update', actor: 'staff' });
+    expect(changes[0].changed_at).toMatch(/\(America\/Detroit\)$/);
+    expect(JSON.parse(changes[0].diff)).toEqual([
+      { field: 'name', before: '"old name"', after: '"new name"' },
+      { field: 'active', before: '1', after: '0' },
+      { action: 501, field: 'active', before: '1', after: '0' },
+      { action_added: 502, action_type: 'hook', config: '{"slug":"court-relay"}' },
+    ]);
+    expect(changes[changes.length - 1].note).toMatch(/older changes exist/);
+    await root.query('DELETE FROM email_ingest_rule_changes WHERE rule_id = 31');
   });
 
   test('definition: a 10.7 KB code body comes back whole, in parts under the cell cap; NULL conditions is called out', async () => {

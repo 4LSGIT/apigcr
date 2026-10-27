@@ -1106,6 +1106,227 @@ function hookCreateResult(draft, result) {
   return { hook_id: id };
 }
 
+// Ingest rules (A20.2 / A20.3): email and phone ingest rules, six kinds, each
+// ONE request to the rule editor's own route. The route prefix comes from a
+// closed two-entry map keyed by the server-normalized channel — never a path
+// from the draft. Create pins active:0 (the column defaults to 1!) and rides
+// the draft_id as Idempotency-Key; every edit sends the server-baked
+// expected_base verbatim, so the route refuses a stale card with a 409, and
+// the click-time precheck re-reads the rule first and refuses before the
+// claim when its definition_updated_at moved. The bodies are rebuilt from
+// fixed fields — the draft's display-only annotations (summary, notes,
+// side_effect) never reach the route.
+const INGEST_RULE_ACTION_KINDS = new Set(['ingest_rule.create.v1', 'ingest_rule.update.v1', 'ingest_rule.set_active.v1',
+  'ingest_rule.action_add.v1', 'ingest_rule.action_update.v1', 'ingest_rule.action_remove.v1']);
+const INGEST_RULE_PATHS = Object.freeze({ email: '/api/email-ingest', phone: '/api/phone-ingest' });
+const INGEST_RULE_UPDATE_FIELDS = Object.freeze(['name', 'description', 'position', 'match_mode', 'match_config', 'transform_mode', 'transform_config']);
+const INGEST_ACTION_UPDATE_FIELDS = Object.freeze(['name', 'config', 'position', 'active']);
+
+function ingestRulePath(draft) {
+  const base = Object.prototype.hasOwnProperty.call(INGEST_RULE_PATHS, draft && draft.channel) ? INGEST_RULE_PATHS[draft.channel] : null;
+  if (!base) throw new Error('This ingest rule card names no known channel.');
+  return base;
+}
+
+function ingestRuleId(value, what) {
+  const id = Number(value);
+  if (!Number.isSafeInteger(id) || id < 1) throw new Error(`This ingest rule card carries no usable ${what}.`);
+  return id;
+}
+
+function ingestRuleLabel(draft) {
+  switch (draft && draft.kind) {
+    case 'ingest_rule.create.v1': return 'Create inactive ingest rule';
+    case 'ingest_rule.update.v1': return 'Edit ingest rule';
+    case 'ingest_rule.set_active.v1': return draft.active ? 'Activate ingest rule' : 'Deactivate ingest rule';
+    case 'ingest_rule.action_add.v1': return 'Add ingest rule action';
+    case 'ingest_rule.action_update.v1': return 'Edit ingest rule action';
+    default: return 'Remove ingest rule action';
+  }
+}
+
+function ingestRuleValue(value) {
+  if (value == null || value === '') return '(empty)';
+  return typeof value === 'string' ? value : JSON.stringify(value);
+}
+
+function ingestRuleHead(draft) {
+  const r = draft.rule || {};
+  return `Rule: ${draft.channel} ingest rule #${r.rule_id} "${r.name}" — ${r.active ? 'ACTIVE (live)' : 'inactive'}`;
+}
+
+function ingestRuleSideText(mode, config, side) {
+  if (mode === 'code') return `${side} (CODE, runs in the sandboxed guest engine, 15 s limit): ${config && config.code}`;
+  if (mode === 'passthrough') return `${side}: passthrough — the actions receive the message unchanged`;
+  return `${side} (${mode}): ${ingestRuleValue(config)}`;
+}
+
+function ingestRuleActionLine(action, i) {
+  return `Action ${i + 1}: [${action.action_type}]${action.name ? ` "${action.name}"` : ''} ${action.summary}`;
+}
+
+function ingestRuleText(draft) {
+  const stale = 'Stale check: if anyone changes this rule before you apply, the server refuses the write and Casey must re-read it.';
+  const lines = [];
+  if (draft.kind === 'ingest_rule.create.v1') {
+    const r = draft.rule || {};
+    lines.push('Ingest rule proposal — not applied', `Channel: ${draft.channel} ingest`, `Name: ${r.name}`,
+      `Description: ${r.description || 'Empty'}`,
+      ingestRuleSideText(r.match_mode, r.match_config, 'Match'),
+      ingestRuleSideText(r.transform_mode, r.transform_config, 'Transform'));
+    (draft.actions || []).forEach((a, i) => {
+      lines.push(ingestRuleActionLine(a, i));
+      for (const note of a.notes || []) lines.push(`Action ${i + 1} note: ${note}`);
+    });
+    if (!(draft.actions || []).length) lines.push('Actions: none');
+    lines.push(`Order once active: ${draft.order}`);
+    lines.push('Created INACTIVE: it matches nothing and fires nothing until someone activates it (Casey can prepare that as its own card). Preview it against real messages first.');
+  } else if (draft.kind === 'ingest_rule.set_active.v1') {
+    lines.push(`Ingest rule ${draft.active ? 'activation' : 'deactivation'} proposal — not applied`, ingestRuleHead(draft));
+    for (const line of draft.impact || []) lines.push(`Effect: ${line}`);
+    (draft.actions || []).forEach((a) => lines.push(`Action #${a.rule_action_id}: [${a.action_type}]${a.name ? ` "${a.name}"` : ''}${a.active ? '' : ' (inactive — never fires)'}`));
+    lines.push(`Undo: ${draft.revert_text}`, stale);
+    return lines.join('\n');
+  } else {
+    const titles = {
+      'ingest_rule.update.v1': 'Ingest rule edit proposal — not applied',
+      'ingest_rule.action_add.v1': 'Ingest rule action proposal — not applied',
+      'ingest_rule.action_update.v1': 'Ingest rule action edit proposal — not applied',
+      'ingest_rule.action_remove.v1': 'Ingest rule action removal proposal — not applied',
+    };
+    lines.push(titles[draft.kind], ingestRuleHead(draft), `Live: ${draft.live_text}`);
+    if (draft.kind === 'ingest_rule.action_add.v1') {
+      lines.push(`New action: [${draft.action.action_type}]${draft.action.name ? ` "${draft.action.name}"` : ''} ${draft.action.summary}`);
+      for (const note of draft.action.notes || []) lines.push(`Action note: ${note}`);
+    } else if (draft.kind !== 'ingest_rule.update.v1') {
+      const t = draft.target || {};
+      lines.push(`Action #${t.rule_action_id}: [${t.action_type}]${t.name ? ` "${t.name}"` : ''} — ${t.active ? 'active' : 'inactive'}, config ${t.config}`);
+      if (draft.kind === 'ingest_rule.action_remove.v1') lines.push('Removes this action: the rule stops running it on matching messages.');
+    }
+    for (const [field, value] of Object.entries(draft.changes || {})) {
+      lines.push(`${field} — before: ${ingestRuleValue(draft.before && draft.before[field])}`);
+      lines.push(`${field} — after: ${ingestRuleValue(value)}`);
+    }
+    if (draft.summary) lines.push(`New config does: ${draft.summary}`);
+    for (const note of draft.notes || []) lines.push(`Note: ${note}`);
+    lines.push(`Undo: ${draft.revert_text}`, stale);
+  }
+  if (draft.requires_capability) {
+    lines.push(`Code: this card carries a code body — only a user holding ${draft.requires_capability} can apply it; for anyone else the server refuses it and nothing is written. Read the code line by line.`);
+  }
+  if (draft.kind === 'ingest_rule.create.v1') for (const note of draft.notes || []) lines.push(`Note: ${note}`);
+  return lines.join('\n');
+}
+
+function ingestRuleRequest(draft) {
+  const base = ingestRulePath(draft);
+  if (draft.kind === 'ingest_rule.create.v1') {
+    const r = draft.rule || {};
+    const body = {
+      name: r.name, active: 0, position: Number(r.position) || 0,
+      match_mode: r.match_mode, match_config: r.match_config, transform_mode: r.transform_mode,
+      actions: (draft.actions || []).map((a, i) => {
+        const out = { action_type: a.action_type, config: a.config, active: 1, position: a.position != null ? Number(a.position) : i };
+        if (a.name) out.name = a.name;
+        return out;
+      }),
+    };
+    if (r.transform_mode !== 'passthrough') body.transform_config = r.transform_config;
+    if (r.description) body.description = r.description;
+    return { path: `${base}/rules`, method: 'POST', body, idempotent: true };
+  }
+  const ruleId = ingestRuleId(draft.rule && draft.rule.rule_id, 'rule id');
+  const expected = { expected_base: draft.expected_base };
+  if (draft.kind === 'ingest_rule.update.v1') {
+    const body = { ...expected };
+    for (const field of INGEST_RULE_UPDATE_FIELDS) if (Object.prototype.hasOwnProperty.call(draft.changes || {}, field)) body[field] = draft.changes[field];
+    return { path: `${base}/rules/${ruleId}`, method: 'PUT', body, idempotent: false };
+  }
+  if (draft.kind === 'ingest_rule.set_active.v1') {
+    return { path: `${base}/rules/${ruleId}`, method: 'PUT', body: { active: draft.active ? 1 : 0, ...expected }, idempotent: false };
+  }
+  if (draft.kind === 'ingest_rule.action_add.v1') {
+    const a = draft.action || {};
+    const body = { action_type: a.action_type, config: a.config, active: 1, ...expected };
+    if (a.name) body.name = a.name;
+    if (a.position != null) body.position = Number(a.position);
+    return { path: `${base}/rules/${ruleId}/actions`, method: 'POST', body, idempotent: false };
+  }
+  const actionId = ingestRuleId(draft.target && draft.target.rule_action_id, 'action id');
+  if (draft.kind === 'ingest_rule.action_update.v1') {
+    const body = { ...expected };
+    for (const field of INGEST_ACTION_UPDATE_FIELDS) if (Object.prototype.hasOwnProperty.call(draft.changes || {}, field)) body[field] = draft.changes[field];
+    return { path: `${base}/rule-actions/${actionId}`, method: 'PUT', body, idempotent: false };
+  }
+  if (draft.kind === 'ingest_rule.action_remove.v1') {
+    return { path: `${base}/rule-actions/${actionId}`, method: 'DELETE', body: expected, idempotent: false };
+  }
+  throw new Error('This ingest rule card cannot be applied.');
+}
+
+// The routes answer 204 (no body) to a DELETE, which the shared api() helper
+// reads as a failure; everything else is the shell's apiSend as-is (its
+// ApiError carries status + body, so the engine's 409/4xx handling applies).
+async function ingestRuleDispatch(request, headers) {
+  const r = await P.apiSend(request.path, request.method, request.body, headers || {});
+  if (r == null) {
+    if (request.method === 'DELETE') return { deleted: true };
+    throw new Error('Request failed');
+  }
+  if (r.status === 'error') throw new Error(r.message || r.error || 'Request failed');
+  return r;
+}
+
+function ingestRuleResult(draft, result) {
+  let id;
+  if (draft.kind === 'ingest_rule.action_remove.v1') {
+    if (!(result && result.deleted === true)) throw new Error('The action removal returned no confirmation');
+    id = Number(draft.rule && draft.rule.rule_id);
+  } else if (draft.kind === 'ingest_rule.action_add.v1' || draft.kind === 'ingest_rule.action_update.v1') {
+    id = Number(result && result.action && result.action.rule_id);
+  } else {
+    id = Number(result && result.rule && result.rule.id);
+  }
+  if (!Number.isSafeInteger(id) || id < 1) throw new Error('The ingest rule action returned no usable rule id');
+  if (draft.kind !== 'ingest_rule.create.v1' && id !== Number(draft.rule && draft.rule.rule_id)) {
+    throw new Error('The ingest rule action answered for a different rule');
+  }
+  return { ingest_rule_id: id };
+}
+
+// Click-time freshness (correction 1): every edit re-reads its rule through
+// the editor's GET and refuses BEFORE the claim when the edit stamp moved —
+// the route's 409 stays the backstop for the gap between this read and the
+// write. A create has no existing record to re-read (idempotent draft_id +
+// the 15-minute card TTL, as A17.3).
+async function ingestRulePrecheck(draft) {
+  if (draft.kind === 'ingest_rule.create.v1') return '';
+  const base = ingestRulePath(draft);
+  const ruleId = ingestRuleId(draft.rule && draft.rule.rule_id, 'rule id');
+  let r;
+  try { r = await P.apiSend(`${base}/rules/${ruleId}`, 'GET', null, {}); }
+  catch (e) {
+    if (e && e.status === 404) return 'That ingest rule no longer exists. Nothing was changed.';
+    throw e;
+  }
+  const rule = r && r.rule;
+  if (!rule) return 'That ingest rule no longer exists. Nothing was changed.';
+  const want = Date.parse(draft.expected_base && draft.expected_base.definition_updated_at);
+  const have = rule.definition_updated_at == null ? NaN : Date.parse(rule.definition_updated_at);
+  if (!Number.isFinite(want) || want !== have) {
+    return 'The ingest rule changed since this card was prepared, so nothing was changed. Ask Casey to read the rule again and rebuild the proposal.';
+  }
+  return '';
+}
+
+function openIngestRuleRecord(draft) {
+  const where = draft.channel === 'phone' ? 'Phone' : 'Email';
+  try {
+    P.Swal?.fire({ icon: 'info', title: `${where} ingest rule #${Number(draft.result_ingest_rule_id)}`,
+      text: `Find it under More → Automations → ${where}.${draft.kind === 'ingest_rule.create.v1' ? ' It stays inactive until someone activates it.' : ''}`, heightAuto: false });
+  } catch (_) { /* outside the shell the chat line already names the rule */ }
+}
+
 // Report drafts (A16, ruling 16). The card SAVES one report definition
 // through POST /api/reports — the Reports editor's own create route — with
 // the definition exactly as the server validated and previewed it. The model
@@ -1538,6 +1759,23 @@ const ACTION_FAMILIES = [
     open: (draft) => openAutomationRecord('automations.hook', draft.result_hook_id,
       `Hook #${draft.result_hook_id}`,
       'Find it under More → Automations → Hooks. It stays inactive until you activate it there.'),
+  },
+  {
+    id: 'ingest_rule', kinds: INGEST_RULE_ACTION_KINDS, title: 'Ingest rule', noun: 'ingest rule', errorNoun: 'ingest rule action',
+    label: ingestRuleLabel, text: ingestRuleText, request: ingestRuleRequest, result: ingestRuleResult,
+    precheck: ingestRulePrecheck, dispatch: ingestRuleDispatch,
+    idField: 'ingest_rule_id', appliedKey: 'result_ingest_rule_id',
+    // Danger: anything that changes what runs on live traffic (an ACTIVE
+    // rule's edit, any activation / deactivation), a code body, or a send.
+    danger: (draft) => draft.kind === 'ingest_rule.set_active.v1' || !!draft.live || !!draft.requires_capability
+      || draft.side_effect === 'external-send'
+      || (draft.actions || []).concat(draft.action ? [draft.action] : []).some((a) => a && a.side_effect === 'external-send'),
+    resultText: (payload) => `ingest rule #${payload.ingest_rule_id}`,
+    entity: (draft, payload) => ({ kind: 'ingest_rule', id: String(payload.ingest_rule_id), label: `${draft.channel} ingest rule #${payload.ingest_rule_id}` }),
+    failure: 'The ingest rule action could not be applied.',
+    conflictRefusal: 'The ingest rule changed since this card was prepared, so the server refused the write — nothing was changed. Ask Casey to read the rule again and rebuild the proposal.',
+    reviewWarning: 'Ingest rules act on real incoming mail, calls and texts. A new rule is created INACTIVE; an edit to an ACTIVE rule, an activation, or an action change on an active rule takes effect on the very next matching message — there is no draft or publish step. Every change is recorded in the rule\'s change log. If the rule changed since this card was prepared, nothing is written. Canceling writes nothing.',
+    open: openIngestRuleRecord,
   },
   {
     id: 'report', kinds: REPORT_ACTION_KINDS, title: 'Report', noun: 'report', errorNoun: 'report save',

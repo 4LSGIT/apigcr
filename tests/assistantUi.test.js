@@ -68,6 +68,8 @@ const ACTION_FNS = ['appendDraftField', 'appendDraftFieldsFromText', 'actionDraf
   'workflowPublishLabel', 'workflowPublishChangeLine', 'workflowPublishText', 'workflowPublishRequest', 'workflowPublishResult',
   'hookCreateLabel', 'hookTargetText', 'hookCreateText', 'hookCreateRequest', 'hookCreateResult',
   'sequenceStepActionLabel', 'sequenceStepParamValue', 'sequenceStepText', 'sequenceStepActionRequest', 'sequenceStepActionResult',
+  'ingestRulePath', 'ingestRuleId', 'ingestRuleLabel', 'ingestRuleValue', 'ingestRuleHead', 'ingestRuleSideText', 'ingestRuleActionLine',
+  'ingestRuleText', 'ingestRuleRequest', 'ingestRuleDispatch', 'ingestRuleResult', 'ingestRulePrecheck', 'openIngestRuleRecord',
   'openAutomationRecord',
   'sendIsSms', 'sendActionLabel', 'sendRecipientLine', 'sendOptoutText', 'sendFactLines', 'sendDraftText', 'sendDraftFields', 'sendConfirmText', 'sendActionRequest',
   'sendPrecheck', 'sendActionDispatch', 'sendActionResult', 'sendResultText', 'openSendRecord',
@@ -86,7 +88,8 @@ function actionSandbox(deps = {}) {
     constSrc(html, 'JOB_ACTION_KINDS'), constSrc(html, 'WORKFLOW_ACTION_KINDS'),
     constSrc(html, 'WORKFLOW_STEP_ACTION_KINDS'), constSrc(html, 'WORKFLOW_PUBLISH_ACTION_KINDS'),
     constSrc(html, 'HOOK_ACTION_KINDS'), constSrc(html, 'SEQUENCE_STEP_ACTION_KINDS'), constSrc(html, 'SEND_ACTION_KINDS'),
-    constSrc(html, 'REPORT_ACTION_KINDS'),
+    constSrc(html, 'REPORT_ACTION_KINDS'), constSrc(html, 'INGEST_RULE_ACTION_KINDS'), constSrc(html, 'INGEST_RULE_PATHS'),
+    constSrc(html, 'INGEST_RULE_UPDATE_FIELDS'), constSrc(html, 'INGEST_ACTION_UPDATE_FIELDS'),
     constSrc(html, 'SEQUENCE_STEP_FUNCTIONS'), constSrc(html, 'SEQUENCE_STEP_ERROR_POLICY'),
     ...ACTION_FNS.map((name) => fnSrcAuto(html, name)),
     registry,
@@ -1159,6 +1162,83 @@ describe('Ask Casey action freshness and applied-marker durability (review fix p
     await actionSandbox({ P, api: refusedApi, ledgerApi, saveAssistantMessage: jest.fn() }).executeActionDraft(stale);
     expect(stale.action_draft.refusal_error).toMatch(/^The sequence template changed since this card was prepared/);
     expect(stale.action_draft).not.toHaveProperty('ambiguous_error');
+  });
+
+  // A20.2 / A20.3: the ingest rule family through the SHARED engine. The
+  // click-time precheck re-reads the rule through the editor's GET and
+  // refuses BEFORE the claim when the edit stamp moved; the route's 409
+  // (body.conflict) renders as the rule's own refusal; a removal's 204 is a
+  // confirmed write whose receipt is the parent rule; an ACTIVE rule's edit is
+  // danger-styled; create pins active:0 and sends the draft_id as
+  // Idempotency-Key.
+  test('ingest rule cards: precheck refusal, idempotent inactive create, 204 removal receipt, base-conflict refusal', async () => {
+    const STAMP = '2026-10-27T10:00:00.123Z';
+    const removal = () => ({ action_draft: {
+      draft_id: '5c1d2e3f-4a5b-4c6d-8e7f-0123456789ab', kind: 'ingest_rule.action_remove.v1', status: 'draft', received_at: Date.now(),
+      channel: 'email', rule: { channel: 'email', rule_id: 12, name: 'Court notices', active: 1 }, live: 1,
+      live_text: 'LIVE: this rule is ACTIVE — the change applies to the very next matching email', revert_text: 'change log',
+      target: { rule_action_id: 41, action_type: 'http', name: 'Relay', active: 1, config: '{}' },
+      expected_base: { definition_updated_at: STAMP } } });
+    const ledgerCalls = [];
+    const ledgerApi = jest.fn(async (path, body) => {
+      ledgerCalls.push(path);
+      if (path.endsWith('/claim')) return { outcome: 'in_flight', claimed: true, claim_token: 'tok-ing' };
+      return { outcome: 'applied' };
+    });
+    const Swal = { fire: jest.fn().mockResolvedValue({ isConfirmed: true }) };
+
+    // 1. The stamp moved between the card and the click: refused, NOTHING claimed or written.
+    const moved = { Swal, apiSend: jest.fn(async (path, method) => {
+      if (method === 'GET') return { rule: { id: 12, definition_updated_at: '2026-10-27T10:00:01.000Z' } };
+      throw new Error('a write was attempted');
+    }) };
+    const m1 = removal();
+    await actionSandbox({ P: moved, ledgerApi, saveAssistantMessage: jest.fn() }).executeActionDraft(m1);
+    expect(m1.action_draft.refusal_error).toMatch(/changed since this card was prepared, so nothing was changed/);
+    expect(ledgerCalls).toEqual([]);
+    expect(moved.apiSend.mock.calls.map((c) => c[1])).toEqual(['GET']);
+    expect(Swal.fire.mock.calls[0][0]).toMatchObject({ icon: 'warning', focusCancel: true }); // live rule: danger
+
+    // 2. Same stamp: the DELETE goes out with the base, the 204 is a confirmed removal, the receipt is the rule.
+    const receipts = [];
+    const ledgerApi2 = jest.fn(async (path, body) => {
+      if (path.endsWith('/claim')) return { outcome: 'in_flight', claimed: true, claim_token: 'tok-ing' };
+      receipts.push(body); return { outcome: 'applied' };
+    });
+    const writes = [];
+    const ok = { Swal, apiSend: jest.fn(async (path, method, body, headers) => {
+      if (method === 'GET') return { rule: { id: 12, definition_updated_at: STAMP } };
+      writes.push({ path, method, body, headers }); return null;
+    }) };
+    const m2 = removal();
+    await actionSandbox({ P: ok, ledgerApi: ledgerApi2, saveAssistantMessage: jest.fn() }).executeActionDraft(m2);
+    expect(writes).toEqual([{ path: '/api/email-ingest/rule-actions/41', method: 'DELETE',
+      body: { expected_base: { definition_updated_at: STAMP } }, headers: {} }]);
+    expect(receipts).toEqual([{ claim_token: 'tok-ing', result: { ingest_rule_id: 12 } }]);
+    expect(m2.action_draft.status).toBe('applied');
+
+    // 3. The route's precondition 409 (the gap after the precheck): the rule's own refusal, never "may have applied".
+    const conflict = { Swal, apiSend: jest.fn(async (path, method) => {
+      if (method === 'GET') return { rule: { id: 12, definition_updated_at: STAMP } };
+      throw Object.assign(new Error('changed'), { status: 409, body: { error: 'x', conflict: { changed: 'definition_updated_at', expected: STAMP, actual: 'y' } } });
+    }) };
+    const m3 = removal();
+    await actionSandbox({ P: conflict, ledgerApi: ledgerApi2, saveAssistantMessage: jest.fn() }).executeActionDraft(m3);
+    expect(m3.action_draft.refusal_error).toMatch(/^The ingest rule changed since this card was prepared/);
+    expect(m3.action_draft).not.toHaveProperty('ambiguous_error');
+
+    // 4. Create: no precheck read, POST with active 0 and the Idempotency-Key, receipt = the new rule.
+    const created = [];
+    const createP = { Swal, apiSend: jest.fn(async (path, method, body, headers) => { created.push({ path, method, body, headers }); return { status: 'success', rule: { id: 77 } }; }) };
+    const m4 = { action_draft: { draft_id: '6d2e3f4a-5b6c-4d7e-8f90-123456789abc', kind: 'ingest_rule.create.v1', status: 'draft', received_at: Date.now(),
+      channel: 'phone', rule: { name: 'Clio code', position: 0, match_mode: 'conditions', match_config: { operator: 'and', conditions: [{ path: 'message', op: 'contains', value: 'code' }] },
+        transform_mode: 'passthrough', transform_config: null }, actions: [], order: 'position 0', code: { match: false, transform: false }, requires_capability: null, notes: [] } };
+    await actionSandbox({ P: createP, ledgerApi: ledgerApi2, saveAssistantMessage: jest.fn() }).executeActionDraft(m4);
+    expect(created).toHaveLength(1);
+    expect(created[0]).toMatchObject({ path: '/api/phone-ingest/rules', method: 'POST', headers: { 'Idempotency-Key': m4.action_draft.draft_id },
+      body: { name: 'Clio code', active: 0, actions: [] } });
+    expect(m4.action_draft.status).toBe('applied');
+    expect(m4.action_draft.result_ingest_rule_id).toBe(77);
   });
 
   test('the retry-receipt button is sized like the other card buttons', () => {

@@ -138,6 +138,23 @@ describe('the allowlist snapshot — adding a function is a deliberate review', 
     });
   });
 
+  // A20.2 follow-up (Fred, 2026-10-27): the forwards are authorable as INGEST
+  // rule actions only — a separate list, so they stay OFF the workflow list
+  // (the native workflow picker hides them; the workflow sender guardrail
+  // does not model a forward's destination). Changing either is a review.
+  test('the ingest-action extras, exactly as reviewed — and never on the workflow list', () => {
+    const { CASEY_INGEST_ACTION_EXTRA } = require(path.join(__dirname, '..', 'lib', 'caseyAutomationAllowlist'));
+    expect(Object.fromEntries(CASEY_INGEST_ACTION_EXTRA)).toEqual({
+      forward_as_email: 'external-send', forward_as_sms: 'external-send',
+    });
+    const fns = require(path.join(__dirname, '..', 'lib', 'internal_functions'));
+    for (const name of CASEY_INGEST_ACTION_EXTRA.keys()) {
+      expect({ name, real: typeof fns[name] === 'function', onWorkflowList: CASEY_AUTHORABLE_FUNCTIONS.has(name),
+        hiddenInWorkflowPicker: !!(fns[name].__meta && fns[name].__meta.uiHidden) })
+        .toEqual({ name, real: true, onWorkflowList: false, hiddenInWorkflowPicker: true });
+    }
+  });
+
   test('every allowlisted name is a real registry function', () => {
     const fns = require(path.join(__dirname, '..', 'lib', 'internal_functions'));
     for (const name of CASEY_AUTHORABLE_FUNCTIONS.keys()) {

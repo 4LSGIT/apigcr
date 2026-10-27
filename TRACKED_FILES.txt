@@ -1154,6 +1154,8 @@ tests/caseUi.sync.test.js
 tests/caseUi.timeline.test.js
 tests/caseyActionPermissions.test.js
 tests/caseyHookCreate.test.js
+tests/caseyIngestRule.mysql.test.js
+tests/caseyIngestRule.test.js
 tests/caseyJobCodeAction.test.js
 tests/caseyReportDraft.mysql.test.js
 tests/caseyReportDraft.test.js
@@ -1398,6 +1400,8 @@ tests/hookService.retryRecovery.test.js
 tests/hookService.splitPhase.test.js
 tests/hookSpool.test.js
 tests/hookSpoolReplay.mysql.test.js
+tests/hookTransformFailure.mysql.test.js
+tests/hookTransformFailure.test.js
 tests/hookTransforms.test.js
 tests/hooksGate.test.js
 tests/iconPickerS6a.test.js

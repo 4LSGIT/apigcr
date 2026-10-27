@@ -319,7 +319,24 @@ async function runFilter(hook, input, { lane = guestCode.LANES.hooks } = {}) {
  * @param {object} input         - data to transform
  * @param {{lane?:string}} [opts] - guest-code lane: 'hooks' (live, the default)
  *                                  or 'preview' (dry runs, editor tests)
- * @returns {Promise<{ output: object, errors: string[] }>}
+ * @returns {Promise<{ output: object, errors: string[], failed?: true }>}
+ *
+ * FAILED (`failed: true`) means "nothing usable came out — deliver NOTHING",
+ * the ingest/trigger hard semantics (AI_CONTEXT §26: never feed garbage to
+ * actions). executeHook fails the execution with no target run; a target's
+ * own failed transform fails that target only (deliverToTarget). Failed is:
+ *   - code: a throw, a timeout, a sandbox failure, no sandbox slot in time
+ *     (GUEST_CODE_BUSY — the error carries the [GUEST_CODE_BUSY] tag the
+ *     alert sweep reads), or a return that is not an object (null, undefined,
+ *     a string…). `return {}` is an object and still delivers — an author's
+ *     deliberate empty result (hook 16 returns one for other event types);
+ *   - mapper: errors AND an empty output — every rule broke, nothing mapped
+ *     (triggerService's review-M4 rule). Rules fail one at a time and the
+ *     survivors' values are real, so a PARTIAL mapping delivers, its errors
+ *     recorded on the execution;
+ *   - a string config that is not JSON (it used to throw out of executeHook,
+ *     leaving the row 'received').
+ * Without `failed`, `errors` are warnings beside a usable output.
  */
 async function runTransform(mode, config, input, { lane = guestCode.LANES.hooks } = {}) {
   if (mode === 'passthrough' || !mode) {
@@ -327,23 +344,41 @@ async function runTransform(mode, config, input, { lane = guestCode.LANES.hooks 
   }
 
   // Parse config if stored as JSON string
-  const parsed = typeof config === 'string' ? JSON.parse(config) : config;
+  let parsed;
+  try {
+    parsed = typeof config === 'string' ? JSON.parse(config) : config;
+  } catch (err) {
+    return { output: {}, errors: [`Transform config is not parseable JSON: ${err.message}`], failed: true };
+  }
 
   if (mode === 'mapper') {
     const rules = Array.isArray(parsed) ? parsed : (parsed?.rules || []);
-    return executeMapper(rules, input);
+    const mapped = executeMapper(rules, input);
+    if (mapped.errors.length && !Object.keys(mapped.output || {}).length) {
+      return { output: {}, errors: mapped.errors, failed: true };
+    }
+    return mapped;
   }
 
   if (mode === 'code') {
+    let output;
     try {
       const code = typeof parsed === 'string' ? parsed : parsed?.code;
-      const output = await guestCode.runBody(code, input, {
+      output = await guestCode.runBody(code, input, {
         timeoutMs: guestCode.DEFAULT_TIMEOUT_MS, label: 'hook transform code', lane,
       });
-      return { output: output ?? {}, errors: [] };
     } catch (err) {
-      return { output: {}, errors: [`Transform code error: ${err.message}`] };
+      const tag = err && err.code === 'GUEST_CODE_BUSY' ? ` [${err.code}]` : '';
+      return { output: {}, errors: [`Transform code error${tag}: ${err.message}`], failed: true };
     }
+    if (output == null || typeof output !== 'object') {
+      return {
+        output: {},
+        errors: [`Transform code error: must return an object (got ${output === null ? 'null' : typeof output})`],
+        failed: true,
+      };
+    }
+    return { output, errors: [] };
   }
 
   return { output: input, errors: [`Unknown transform mode: ${mode}`] };
@@ -509,11 +544,30 @@ function resolveParamsMapping(paramsMapping, targetOutput) {
 async function deliverToTarget(target, hookTransformOutput, db) {
   // Target-level transform applies to ALL target types — refines the data
   // before it's shaped for the specific delivery mechanism.
-  const { output: targetOutput } = await runTransform(
+  const targetTransform = await runTransform(
     target.transform_mode,
     target.transform_config,
     hookTransformOutput
   );
+
+  // A failed target transform skips THIS target: nothing is dispatched, the
+  // attempt is a failed delivery (logged, counted, retried — the hook_retry
+  // job re-runs the transform, so a transient GUEST_CODE_BUSY recovers on its
+  // own and a broken body fails its bounded attempts). executeRetry comes
+  // through here too, so a retry obeys the same rule.
+  if (targetTransform.failed) {
+    return {
+      target_id: target.id,
+      request_url: null,
+      request_method: null,
+      request_body: null,
+      response_status: null,
+      response_body: null,
+      status: 'failed',
+      error: `target transform failed (nothing delivered): ${targetTransform.errors.join('; ')}`,
+    };
+  }
+  const targetOutput = targetTransform.output;
 
   const targetType = target.target_type || 'http';
 
@@ -546,11 +600,23 @@ async function deliverToTarget(target, hookTransformOutput, db) {
  * Handles all four target types.
  */
 async function buildDryRunPreview(target, hookTransformOutput) {
-  const { output: targetOutput } = await runTransform(
+  const targetTransform = await runTransform(
     target.transform_mode, target.transform_config, hookTransformOutput,
     { lane: guestCode.LANES.preview }
   );
   const targetType = target.target_type || 'http';
+  // Same rule as live delivery (deliverToTarget): a failed target transform
+  // sends nothing — the preview says so and shows why, never a would_send.
+  if (targetTransform.failed) {
+    return {
+      target_type: targetType,
+      transform_output: null,
+      transform_errors: targetTransform.errors,
+      skip_reason: 'target transform failed',
+      would_send: null,
+    };
+  }
+  const targetOutput = targetTransform.output;
   const targetConfig = parseTargetConfig(target);
 
   if (targetType === 'http') {
@@ -801,6 +867,33 @@ async function executeHook(db, slug, input, { dryRun = false, hook: preloaded = 
   // 4. Transform
   const transformResult = await runTransform(hook.transform_mode, hook.transform_config, input, { lane });
 
+  // A FAILED hook transform delivers nothing (ingest/trigger hard semantics,
+  // AI_CONTEXT §26 — never feed garbage to actions). It used to write `{}` as
+  // transform_output and start every condition-less target on it: hooks 22
+  // and 23 would have started workflows 53 / 20 on empty data. The execution
+  // is 'failed' with the error and NO transform_output (nothing was
+  // produced); raw_input is kept, so the event is replayable once the cause
+  // clears. Returns before any target and before the split, so the receiver
+  // answers as usual and nothing is detached. Dry runs report the same.
+  if (transformResult.failed) {
+    const error = transformResult.errors.join('; ');
+    if (!dryRun && executionId) {
+      await db.query(
+        `UPDATE hook_executions SET filter_passed = 1, transform_output = NULL, status = 'failed', error = ? WHERE id = ?`,
+        [error, executionId]
+      );
+    }
+    return {
+      status: 'failed',
+      executionId,
+      ...(dryRun ? { dry_run: true } : {}),
+      error,
+      filter: filterResult,
+      transform: { output: null, errors: transformResult.errors, failed: true },
+      targets: [],
+    };
+  }
+
   if (!dryRun && executionId) {
     await db.query(
       `UPDATE hook_executions SET filter_passed = 1, transform_output = ?, status = 'processing' WHERE id = ?`,
@@ -1048,6 +1141,13 @@ async function executeRetry(db, { execution_id, target_id }) {
 
   const transformOutput = typeof execution.transform_output === 'string'
     ? JSON.parse(execution.transform_output) : execution.transform_output;
+
+  // An execution whose hook transform FAILED stored no transform_output and
+  // queued no retry; a retry job naming one anyway must not deliver null.
+  if (transformOutput == null) {
+    console.error(`[hook] Retry: execution ${execution_id} has no transform output (hook transform failed) — nothing delivered`);
+    return;
+  }
 
   // Pass db so internal targets can route correctly
   const deliveryLog = await deliverToTarget(target, transformOutput, db);

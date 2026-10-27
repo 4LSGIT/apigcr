@@ -52,6 +52,7 @@ const ingestCodeGate = require('../lib/ingestCodeGate');
 // nothing written. Native callers that send none behave as before. The code
 // gate stays first: refusal → shape check → service.
 const changeLog = require('../services/ingestRuleChangeLog');
+const { idempotentRequest, sendIdempotencyError } = require('../lib/requestIdempotency');
 // Code-mode bodies run in the QuickJS guest engine in the sandbox child
 // (lib/guestCode.js) — every writer and tester that accepts one still refuses
 // it without automations.manage (lib/ingestCodeGate.js; CLAUDE.md, the
@@ -404,11 +405,17 @@ router.post('/api/email-ingest/rules', jwtOrApiKey, async (req, res) => {
   try {
     if (ingestCodeGate.sendRefusal(res, ingestCodeGate.refuseIngestCodeWithoutCapability(
       req.auth, ingestCodeGate.ruleWriteCarriesCode(req.body, null)))) return;
-    const rule = await ruleService.createRule(req.db, req.body, req.auth.userId,
-      { actor: changeLog.actorFromAuth(req.auth) });
-    auditEI(req, { details: { entity: 'rule', entity_id: rule.id, after: rule } });
-    res.status(201).json({ status: 'success', rule });
+    // Optional Idempotency-Key (A20.2 — Ask Casey's rule card sends its
+    // draft_id): a retry replays the first create instead of minting a second
+    // rule. No key = the native editor's create, unchanged. A refusal (400)
+    // releases the claim.
+    const { value: rule, replayed } = await idempotentRequest(req, 'email_ingest.rules_create', () =>
+      ruleService.createRule(req.db, req.body, req.auth.userId,
+        { actor: changeLog.actorFromAuth(req.auth) }));
+    if (!replayed) auditEI(req, { details: { entity: 'rule', entity_id: rule.id, after: rule } });
+    res.status(201).json({ status: 'success', rule, ...(replayed ? { replayed: true } : {}) });
   } catch (err) {
+    if (sendIdempotencyError(res, err)) return;
     if (_handleValidationError(err, res)) return;
     console.error('[email-ingest] create rule error:', err);
     res.status(500).json({ status: 'error', message: err.message });

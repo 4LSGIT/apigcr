@@ -399,6 +399,54 @@ Casey saves a plain report, not a work-list *view* with clickable rows, and
 does not yet change, run, lock or delete existing reports. The off switch is
 the `casey_report_authoring_enabled` setting.
 
+### Email and phone ingest rules
+
+Casey can write the rules that act on incoming mail, calls and texts (More →
+Automations → Email / Phone; how rules work is in the YisraFlow ingest
+chapter). Ask naturally — "make an email rule that starts the deadline workflow
+for 341 notices from the court", "turn off the phone rule for 202", "add a
+task to rule 12", "undo yesterday's change to the court rule". Casey reads the
+rule first (and the records an action points at), then prepares ONE card for
+ONE change:
+
+- **Create a rule.** The new rule is created **inactive**: it matches nothing
+  and fires nothing until someone activates it, so you can preview it against
+  real messages first. The card shows the conditions, the transform, every
+  action in plain words, and where the rule would sit in the evaluation order.
+- **Edit a rule** — its name, description, position, conditions, or
+  transform — and **add, edit, or remove one action**.
+- **Activate or deactivate a rule.** Activation is styled as a warning and
+  lists every action that will start firing on live traffic.
+
+When the rule is **active**, the card says so in plain words: the change
+applies to the very next matching email, call or text — there is no draft and
+no publish step. The card shows each changed value before and after. Every
+change is recorded in the rule's change history, so Casey can tell you what
+changed, when and by whom, and can prepare the reverse edit to undo it.
+
+If anyone changes the rule after Casey read it, the card refuses — Casey
+checks when it prepares the card, the page checks again when you click, and
+the server checks a third time — and nothing is written; ask Casey to prepare
+it again.
+
+Actions start an existing workflow, enroll the contact in an existing sequence
+(the card names where the contact id comes from), pass the message to an
+existing hook, or run one of the functions Casey may author — including
+sending an email or text **from one of the firm's own mailboxes or lines**
+(never from an address taken out of the incoming message; the card says who
+receives it), and **forwarding** every matching message by email or text to an
+address or number you name. A forward's card says "forwards every matching
+message to …", marks a destination outside the firm in capitals, and is styled
+as a warning; Casey never forwards to an address taken from the message, and
+refuses a destination that has opted out. Forwards need the rule's transform to
+stay "passthrough" (the whole message). Casey does not write new regular expressions (they run on every
+message), a rule that matches every message, or actions that send the message
+to an outside web address; it tells you to add those by hand. A rule whose
+conditions or transform are code can be written by Casey too, and the card
+shows the code — but only an administrator, IT or SU user can apply it (the
+server refuses it for everyone else). The off switch is the
+`casey_ingest_authoring_enabled` setting.
+
 ## Models and files
 
 The model selector offers two product-level choices:
@@ -537,8 +585,8 @@ a dry run: it tests an EXISTING rule against a recorded message or a sample and
 reports whether it matches, why not (including a rule whose code throws, which
 the executions table never records), what its transform produces, and what each
 action would do — without starting anything, writing anything, or counting a
-match. Casey cannot create, edit, activate, or reorder ingest rules; it tells
-you what to change in the ingest editor. The answer may additionally contain one
+match. Casey can also change ingest rules through reviewed cards (see *Email
+and phone ingest rules*). The answer may additionally contain one
 server-validated `task.create.v1`, `task.update.v1`, `task.complete.v1`,
 `task.cancel.v1`, `task.reopen.v1`, or `task.transfer.v1` proposal. The proposal
 may instead be one `event.create.v1`, `event.update.v1`, `event.complete.v1`,
@@ -568,6 +616,12 @@ setting);
 Casey never adds email attachments. The same applies when Casey inserts or
 edits a step in an existing workflow, and the publish card names every send
 step and its recipient.
+It may instead be one `ingest_rule.create.v1`, `ingest_rule.update.v1`,
+`ingest_rule.set_active.v1`, `ingest_rule.action_add.v1`,
+`ingest_rule.action_update.v1`, or `ingest_rule.action_remove.v1` proposal for
+an email or phone ingest rule (see *Email and phone ingest rules*): a new rule
+is created inactive, and every edit carries the rule's last-edited stamp so a
+rule changed in the meantime is refused.
 It may instead be one `report.draft.v1` proposal: one new report definition,
 previewed on the card and saved to Reports only when you confirm (see *Making
 a report or an exportable list*); it is the one proposal whose content is a

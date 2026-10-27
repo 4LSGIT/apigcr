@@ -913,23 +913,52 @@ COMMENTs.)
   `productionEnvelope` in `testMatch` / `testTransform` too, and refresh the
   golden. The `emailIngestSampleService` header still says `body` is "a derived
   field the production matcher never sees" — false since the catalog-parity fix.
-- **Nothing reads the ingest rule change log yet** (A20 slice 1, 2026-10-27).
-  `{email,phone}_ingest_rule_changes` is written on every real rule / action
-  change, but no route or screen reads it — SU console / readonly SQL only. A
-  read route (gate it: automations.manage or SU — the rows carry what the rule
-  rows carry, minus the http redactions) and an editor "History" pane with a
-  "restore this version" action would make the revert path a click instead of
-  hand re-entry. No retention needed at ~10 edits/month.
+- **No route or screen reads the ingest rule change log** (A20 slice 1,
+  2026-10-27). `{email,phone}_ingest_rule_changes` is written on every real
+  rule / action change; Ask Casey's `automation.definition` reads the latest
+  five as field-level `change` rows for every staff member (A20.2 — the rows
+  carry what the rule rows carry, minus the http redactions, and the rules are
+  readable by all staff), and Casey can prepare the reverse edit as a card.
+  There is still no native read route: an editor "History" pane with a
+  "restore this version" action would make the revert a click. Gate: RULED
+  (Fred, 2026-10-27) — the log is readable by all staff, like the rules. No
+  retention needed at ~10 edits/month.
 - **A throwing ingest match is fail-quiet.** It is a console warning only —
   no execution-row warning, no metric, no alert — where the trigger engine
   records the same case (AI_CONTEXT §26). A rule that silently throws on every
   message looks like a rule that never matches; consider recording it in
   `_parse_warnings` and an outcome the alerting sweep already watches.
-- **A20.2 draft preview.** The preview kind evaluates stored rules only. If
-  authoring wants to dry-run an unsaved `conditions` / `mapper` draft, decide
-  first how a model-written `matches` operator or mapper `regex` transform is
-  kept linear (`new RegExp` on a staff-reachable path — CLAUDE.md's validator
-  regex rule).
+- **Ingest draft preview.** The preview kind evaluates stored rules only;
+  A20.2 did without one (a Casey-created rule is stored inactive, so it can be
+  previewed at once). A preview of an UNSAVED edit to an ACTIVE rule ("this
+  change would have matched N of the last 40 messages") would sharpen A20.3's
+  card; its conditions/mapper are regex-free by construction, so the ReDoS
+  question is already answered for Casey's drafts.
+- **Run hookFilter `matches` and the mapper `regex:` transform on V8's linear
+  engine** (A20.2, 2026-10-27). Both compile `new RegExp(pattern)` on the
+  backtracking engine, in-process, for every inbound message (ingest), hook
+  event and trigger — a pathological pattern any staff member can save blocks
+  the event loop per message (CLAUDE.md: validator regexes stay linear). CTA
+  input patterns already use the `l` flag (`services/ctaService.js`
+  LINEAR_RE, enabled by the Dockerfile CMD flag). Measured: the 44 live ingest
+  `regex:` descriptors all compile under `l`; hook / trigger / suppression
+  patterns not yet measured. Until then Casey writes no new pattern
+  (preserve-only).
+- **Casey ingest `http` actions** (A20.2). They wait for A17.4b's literal-URL
+  / named-credential contract (build it once, use it for webhook steps and
+  ingest http actions). (Forwards shipped as ingest actions 2026-10-27, Fred's
+  yes; `court_extract` stays off the allowlist.)
+- **Forwards in Casey WORKFLOW drafts** (A20.2 follow-up). `forward_as_email` /
+  `forward_as_sms` are ingest-action authorable only. To make them
+  workflow-draft authorable, `workflowSendAnnotation` must hold a forward's
+  `to` to a literal (or a closed placeholder set) the way it holds the sender,
+  and the `event` param needs an envelope variable the workflow actually has
+  (an ingest- or hook-started run's init data); the native workflow picker
+  hides them today (`__meta.uiHidden`).
+- **Applied ingest card deep link** (A20.2). The automations manager has no
+  ingest-rule record opener (`ASSISTANT_RECORD_BY_SUB` covers workflows,
+  sequences, jobs, hooks), so an applied card shows "find it under More →
+  Automations → Email / Phone" instead of opening the rule.
 
 ## From the Ask Casey arc — A14 direct sends (2026-10-27) — deferred
 

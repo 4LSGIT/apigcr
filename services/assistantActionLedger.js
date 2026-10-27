@@ -26,6 +26,10 @@ const KINDS = new Map([
   ['email.send.v1', 'contact_id'],
   // A16: a saved report definition (POST /api/reports).
   ['report.draft.v1', 'report_id'],
+  // A20.2 / A20.3: the receipt is the ingest rule (both channels; a removed
+  // action's receipt is its parent rule, which the DELETE route does not echo).
+  ...['create', 'update', 'set_active', 'action_add', 'action_update', 'action_remove']
+    .map(k => [`ingest_rule.${k}.v1`, 'ingest_rule_id']),
 ]);
 function fail(status, message) { const e = new Error(message); e.status = status; throw e; }
 function actor(userId) {

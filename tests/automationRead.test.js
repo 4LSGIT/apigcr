@@ -629,7 +629,7 @@ describe('A20.0/A20.1 — the ingest-rule family rides the same kinds', () => {
     expect(svc.answerSystemAppend(approved, [{ kind: 'sql.read', rows: [{ email_ingest_rule_id: 1 }] }])).not.toMatch(/INGEST RULE/);
   });
 
-  test('the ingest rules carry the code-verified semantics and the read-only contract', () => {
+  test('the ingest rules carry the code-verified semantics and the authoring contract', () => {
     const { INGEST_RULE_EXPLAINER } = require(path.join(__dirname, '..', 'lib', 'aiPrompts', 'automationRunExplainer'));
     for (const marker of [
       'suppression hides, it does not cancel',
@@ -641,7 +641,8 @@ describe('A20.0/A20.1 — the ingest-rule family rides the same kinds', () => {
       'NONE of\n   its actions fire',
       'Action failures are isolated',
       'updated_at is\n   NOT "last edited"',
-      'never propose an action card',
+      'definition_updated_at IS',
+      'ONE reviewed ingest_rule.* card',
     ]) {
       expect({ marker, present: INGEST_RULE_EXPLAINER.includes(marker) }).toEqual({ marker, present: true });
     }

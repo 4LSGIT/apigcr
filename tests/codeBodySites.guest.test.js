@@ -194,9 +194,11 @@ const TRANSFORM_SITES = {
     return tr.ok ? { ok: true, output: tr.output } : { ok: false, failed: true };
   },
   'hook transform': async (code) => {
-    // Hook semantics: a failed code transform is {output:{}, errors:[…]}.
+    // Hook semantics (same as the rules since 2026-10-27): a failed code
+    // transform is {failed:true, output:{}, errors:[…]} — executeHook then
+    // delivers nothing.
     const r = await hookService.runTransform('code', { code }, hookInput());
-    return r.errors.length ? { ok: false, failed: true, output: r.output } : { ok: true, output: r.output };
+    return r.failed ? { ok: false, failed: true, output: r.output } : { ok: true, output: r.output };
   },
 };
 
@@ -239,6 +241,13 @@ describe.each(Object.entries(TRANSFORM_SITES))('%s', (name, run) => {
 
   test('a throwing body fails the transform', async () => {
     expect((await run('throw new Error("broken transform")')).ok).toBe(false);
+  });
+
+  test('a non-object return fails the transform; an empty object does not', async () => {
+    for (const body of ['return null;', 'return;', 'return "x";', 'return 5;']) {
+      expect((await run(body)).ok).toBe(false);
+    }
+    expect(await run('return {};')).toEqual({ ok: true, output: {} });
   });
 
   test('an infinite loop fails the transform within the bound', async () => {

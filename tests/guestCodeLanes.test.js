@@ -11,7 +11,7 @@
  *     the events lane its floor, and an events flood leaves hooks theirs;
  *   - the queue-wait budget: a waiter past it FAILS CLOSED with each site's own
  *     failure semantics (match / filter / suppression → non-match; transform →
- *     failed, no actions; hook transform → {} + error);
+ *     failed, no actions; hook transform → failed, no target runs);
  *   - the bounded queue: beyond it a call fails closed at once;
  *   - the saturation alert: logged always; recorded warning on a first
  *     episode, error when the lane saturates again within the repeat window,
@@ -248,7 +248,7 @@ describe('reservation', () => {
 });
 
 describe('the queue-wait budget fails closed with each site\'s own semantics', () => {
-  test('hooks: the filter filters with an error, the transform yields {} with an error — after ~the budget, not the stall', async () => {
+  test('hooks: the filter filters with an error, the transform FAILS (tagged busy) — after ~the budget, not the stall', async () => {
     const floods = flood('hooks', 2, 3000);
     await until((s) => s.active.hooks === 2, 'hooks lane full');
     const t = Date.now();
@@ -259,7 +259,7 @@ describe('the queue-wait budget fails closed with each site\'s own semantics', (
     const elapsed = Date.now() - t;
     expect(filter.passed).toBe(false);
     expect(filter.error).toBe('Filter code error: code sandbox busy: no hooks slot within 300ms — failed closed, the body did not run');
-    expect(transform).toEqual({ output: {}, errors: ['Transform code error: code sandbox busy: no hooks slot within 300ms — failed closed, the body did not run'] });
+    expect(transform).toEqual({ output: {}, failed: true, errors: ['Transform code error [GUEST_CODE_BUSY]: code sandbox busy: no hooks slot within 300ms — failed closed, the body did not run'] });
     expect(elapsed).toBeGreaterThanOrEqual(280);
     expect(elapsed).toBeLessThan(1500);
     await Promise.all(floods);

@@ -238,7 +238,9 @@ rule look like last week?", and how you undo an edit by hand (re-enter the
 `before` values). A save that changes nothing writes nothing. Deleting a rule
 keeps its history. An `http` action's URL (host kept) and literal header
 values are blanked in the history, never in the action itself. There is no
-screen for it yet: an administrator reads it from the DB console.
+screen for it yet: an administrator reads it from the DB console, and Ask Casey
+reads the latest five changes of a rule (what changed, field by field, who and
+when) and can prepare the reverse edit as a reviewed card.
 
 Every edit also moves the rule's `definition_updated_at` — a match never does.
 A caller that wants to be sure it is editing the version it looked at sends
@@ -248,7 +250,32 @@ someone changed the rule since, the write is refused with **409** —
 `{"error": "...", "conflict": {"changed": "definition_updated_at",
 "expected": ..., "actual": ...}}` — and nothing is saved: re-read the rule and
 redo the change. The editor screens don't send it, so they behave exactly as
-before; Casey's ingest-rule edits will always send it.
+before; Casey's ingest-rule cards always send it.
+
+### Ask Casey and ingest rules
+
+Ask Casey can write rules for you through reviewed cards (operator view:
+`manual/05-Subsystems/17-ask-yisracase.md`, *Email and phone ingest rules*):
+create a rule — always **inactive** — edit its name, description, position,
+conditions or transform, add / edit / remove one action, and activate or
+deactivate it, one change per card. Each card is the same request the editor
+sends (`POST /api/{…}-ingest/rules`, `PUT …/rules/:id`, `POST …/rules/:id/actions`,
+`PUT` / `DELETE …/rule-actions/:id`), made by your own click under your own
+login, so everything above applies: the code gate, the change history, and
+the stale-edit check, which every Casey edit sends. A rule create may carry its
+actions inline (`actions`: up to 10, validated like `POST …/actions`, saved in
+the same transaction — a bad one saves nothing) and an optional
+`Idempotency-Key`, so a retried card cannot create the rule twice. What Casey
+will not write: a condition group with no conditions (it would match every
+message), a new `matches` / `regex:` pattern (both run on every message on the
+server's backtracking regex engine — a pattern the rule already has may be
+kept), and `http` actions (an existing one can be renamed, switched off, moved
+or removed, not re-pointed). An email or text action sends from a quoted firm
+mailbox / line literal, never from a value in the incoming message. Casey can
+also write `forward_as_email` / `forward_as_sms` actions — the live forwarding
+shape: `event` `"$"` on a passthrough rule, a quoted firm sender, and a quoted
+destination it shows on the card (marked when it is outside the firm); it never
+takes the destination from the message and refuses an opted-out one.
 
 ### Common pitfalls
 

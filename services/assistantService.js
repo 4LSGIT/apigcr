@@ -2903,8 +2903,762 @@ async function normalizeSendAction(db, value, evidence, { currentUserId = null }
     ssn_warning: sendMentionsSsn(`${value.subject}\n${value.body}`, `${subject}\n${body}`) };
 }
 
+// ── A20.2 / A20.3: email and phone ingest-rule authoring ──────────────────
+//
+// Six kinds, one family, both channels (the phone routes mirror the email
+// routes one-for-one). Every card is ONE request to the native editor's own
+// route, so every card is atomic:
+//   ingest_rule.create.v1         POST   /api/{ch}-ingest/rules          (born INACTIVE)
+//   ingest_rule.update.v1         PUT    /api/{ch}-ingest/rules/:id      (rule fields)
+//   ingest_rule.set_active.v1     PUT    /api/{ch}-ingest/rules/:id      ({active})
+//   ingest_rule.action_add.v1     POST   /api/{ch}-ingest/rules/:id/actions
+//   ingest_rule.action_update.v1  PUT    /api/{ch}-ingest/rule-actions/:id
+//   ingest_rule.action_remove.v1  DELETE /api/{ch}-ingest/rule-actions/:id
+// Create is the draft/publish substitute (ruling 2026-10-26): a rule born
+// active:0 matches nothing and fires nothing. Every EDIT kind carries
+// expected_base {definition_updated_at} copied from the cited A20.0
+// automation.definition rule row — never from a fresh read here — and the
+// live stamp must still equal it (a human edit between Casey's read and this
+// proposal refuses now; one between the proposal and the click is the
+// route's 409). The same kinds edit an INACTIVE rule (A20.2) and an ACTIVE
+// one (A20.3); `live` says which, and an active rule's card states that the
+// change applies to the very next matching message, shows before/after, and
+// names the change log as the revert path.
+//
+// Match / transform grammar is the canonical one (services/hookFilter,
+// services/hookMapper), built field by field here — never a string the
+// model hands over unread. Two narrowings, both stated on refusal:
+//   - regex: hookFilter's `matches` op and the mapper's `regex:` transform
+//     run on V8's BACKTRACKING engine, in this process, on every inbound
+//     message (conditions and mapper are not in the guest). A model-written
+//     pattern could block the event loop per message (CLAUDE.md: keep
+//     validator regexes linear). So a pattern is admitted only when the rule
+//     being edited already runs exactly that pattern; a new one is added by
+//     hand. Canonical fix filed: run both on the linear engine.
+//   - an empty condition group (match-all, or an always-false `or`) is
+//     refused: an empty set matches EVERY message.
+// CODE modes (QuickJS guest, 8327d9e): Casey may write a code match or
+// transform body; the card shows it whole and the native route's ingest code
+// gate (lib/ingestCodeGate.js) decides — only a user holding
+// automations.manage can apply it, and the card says so up front.
+// http actions are NOT authored yet (A17.4b's literal-URL / named-credential
+// contract is unbuilt; an ingest http action ships every matching client
+// message to a URL). Existing http actions may be renamed, toggled,
+// repositioned or removed — never re-pointed.
+const INGEST_RULE_ACTION_KINDS = new Set([
+  'ingest_rule.create.v1', 'ingest_rule.update.v1', 'ingest_rule.set_active.v1',
+  'ingest_rule.action_add.v1', 'ingest_rule.action_update.v1', 'ingest_rule.action_remove.v1',
+]);
+const INGEST_AUTHOR_CHANNELS = Object.freeze({
+  email: Object.freeze({ rules: 'email_ingest_rules', actions: 'email_ingest_rule_actions', ruleKey: 'email_ingest_rule_id',
+    traffic: 'incoming and outgoing email that reaches the ingest pipeline', noun: 'email' }),
+  phone: Object.freeze({ rules: 'phone_ingest_rules', actions: 'phone_ingest_rule_actions', ruleKey: 'phone_ingest_rule_id',
+    traffic: 'calls and texts on the firm lines', noun: 'call/text' }),
+});
+const INGEST_CREATE_KEYS = new Set(['kind', 'channel', 'name', 'description', 'position', 'match_mode', 'match_config',
+  'transform_mode', 'transform_config', 'actions', 'evidence']);
+const INGEST_UPDATE_KEYS = new Set(['kind', 'email_ingest_rule_id', 'phone_ingest_rule_id', 'changes', 'evidence']);
+const INGEST_UPDATE_CHANGE_KEYS = new Set(['name', 'description', 'position', 'match_mode', 'match_config',
+  'transform_mode', 'transform_config']);
+const INGEST_SET_ACTIVE_KEYS = new Set(['kind', 'email_ingest_rule_id', 'phone_ingest_rule_id', 'active', 'evidence']);
+const INGEST_ACTION_ADD_KEYS = new Set(['kind', 'email_ingest_rule_id', 'phone_ingest_rule_id', 'action', 'evidence']);
+const INGEST_ACTION_UPDATE_KEYS = new Set(['kind', 'email_ingest_rule_id', 'phone_ingest_rule_id', 'rule_action_id', 'changes', 'evidence']);
+const INGEST_ACTION_REMOVE_KEYS = new Set(['kind', 'email_ingest_rule_id', 'phone_ingest_rule_id', 'rule_action_id', 'evidence']);
+const INGEST_ACTION_SPEC_KEYS = new Set(['action_type', 'name', 'config', 'position']);
+const INGEST_ACTION_CHANGE_KEYS = new Set(['name', 'config', 'position', 'active']);
+const INGEST_ACTION_CONFIG_KEYS = Object.freeze({
+  workflow: new Set(['workflow_id']),
+  sequence: new Set(['template_id', 'contact_id_field', 'trigger_data_fields']),
+  hook: new Set(['slug']),
+  internal_function: new Set(['function_name', 'params_mapping']),
+});
+const INGEST_CONDITION_OPS = new Set(['equals', 'not_equals', 'contains', 'not_contains', 'starts_with', 'ends_with',
+  'gt', 'gte', 'lt', 'lte', 'exists', 'not_exists', 'in', 'not_in', 'matches']);
+const INGEST_PATH_RE = /^[A-Za-z0-9_]{1,64}(?:\.[A-Za-z0-9_]{1,64}){0,7}$/;
+const INGEST_FORBIDDEN_SEGMENTS = new Set(['__proto__', 'constructor', 'prototype']);
+const INGEST_MAX_ACTIONS = 5;
+const INGEST_MAX_LEAVES = 40;
+const INGEST_MAX_DEPTH = 5;
+const INGEST_MAX_MAPPER_RULES = 40;
+const INGEST_MAX_CONFIG_JSON = 12000;
+const INGEST_MAX_CODE_CHARS = 20000;
+const INGEST_MAX_POSITION = 100000;
+
+function ingestRef(text) { return String(text).slice(0, 200); }
+
+function ingestText(value, field, max, { required = false } = {}) {
+  const text = String(value == null ? '' : value).trim();
+  if (required && !text) throw httpError(422, `The ${field} is required`);
+  if (text.length > max) throw httpError(422, `The ${field} exceeds ${max} characters`);
+  return text;
+}
+
+function ingestPath(value, what) {
+  const text = typeof value === 'string' ? value.trim() : '';
+  if (!INGEST_PATH_RE.test(text) || text.split('.').some((seg) => INGEST_FORBIDDEN_SEGMENTS.has(seg))) {
+    throw httpError(422, `${what} must be a dot path like "subject" or "from.email" (got ${JSON.stringify(value)})`);
+  }
+  return text;
+}
+
+function ingestScalar(value, what) {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'string') {
+    if (value.length > 500) throw httpError(422, `${what} exceeds 500 characters`);
+    return value;
+  }
+  throw httpError(422, `${what} must be a string, number or boolean`);
+}
+
+function ingestConfigJson(value, what) {
+  let json;
+  try { json = JSON.stringify(value); } catch (_) { throw httpError(422, `${what} is not serializable`); }
+  if (json == null || json.length > INGEST_MAX_CONFIG_JSON) {
+    throw httpError(422, `${what} exceeds ${INGEST_MAX_CONFIG_JSON} characters of JSON`);
+  }
+  return JSON.parse(json);
+}
+
+// Every regex pattern the STORED rule already runs — the only patterns a
+// Casey edit may carry (see the header). Conditions: `matches` leaf values;
+// mapper: `regex:` descriptors in rule-level transforms and template tokens.
+function ingestStoredPatterns(rule) {
+  const out = { matches: new Set(), regex: new Set() };
+  if (!rule) return out;
+  const parse = (v) => { if (typeof v !== 'string') return v; try { return JSON.parse(v); } catch (_) { return null; } };
+  const walk = (node) => {
+    if (!node || typeof node !== 'object') return;
+    if (Array.isArray(node.conditions)) { node.conditions.forEach(walk); return; }
+    if (node.op === 'matches' && typeof node.value === 'string') out.matches.add(node.value);
+  };
+  if (rule.match_mode === 'conditions') walk(parse(rule.match_config));
+  if (rule.transform_mode === 'mapper') {
+    const rules = parse(rule.transform_config);
+    for (const r of Array.isArray(rules) ? rules : []) {
+      for (const d of Array.isArray(r && r.transforms) ? r.transforms : []) {
+        if (typeof d === 'string' && /^\s*regex\s*(?::|$)/.test(d)) out.regex.add(d.trim());
+      }
+      if (r && typeof r.template === 'string') {
+        for (const m of r.template.matchAll(/\{\{([\s\S]+?)\}\}/g)) {
+          for (const d of m[1].split('|').slice(1)) if (/^\s*regex\s*(?::|$)/.test(d)) out.regex.add(d.trim());
+        }
+      }
+    }
+  }
+  return out;
+}
+
+function normalizeIngestConditions(raw, ctx) {
+  let leaves = 0;
+  const paths = new Set();
+  const walk = (node, depth, at) => {
+    if (!node || typeof node !== 'object' || Array.isArray(node)) throw httpError(422, `${at} must be a condition object`);
+    if (depth > INGEST_MAX_DEPTH) throw httpError(422, `Conditions nest deeper than ${INGEST_MAX_DEPTH} levels`);
+    if (Object.prototype.hasOwnProperty.call(node, 'conditions') || Object.prototype.hasOwnProperty.call(node, 'operator')) {
+      const extra = Object.keys(node).filter((k) => k !== 'operator' && k !== 'conditions');
+      if (extra.length) throw httpError(422, `${at} carries unsupported fields: ${extra.join(', ')}`);
+      const op = String(node.operator || '').toLowerCase();
+      if (op !== 'and' && op !== 'or') throw httpError(422, `${at} operator must be "and" or "or"`);
+      if (!Array.isArray(node.conditions) || !node.conditions.length) {
+        throw httpError(422, `${at} has no conditions — an empty "and" matches EVERY message and an empty "or" matches none; Casey never authors either (add the conditions that pick out the messages)`);
+      }
+      return { operator: op, conditions: node.conditions.map((c, i) => walk(c, depth + 1, `${at}.conditions[${i}]`)) };
+    }
+    const extra = Object.keys(node).filter((k) => k !== 'path' && k !== 'op' && k !== 'value');
+    if (extra.length) throw httpError(422, `${at} carries unsupported fields: ${extra.join(', ')}`);
+    leaves += 1;
+    if (leaves > INGEST_MAX_LEAVES) throw httpError(422, `Conditions exceed ${INGEST_MAX_LEAVES} leaves`);
+    const path = ingestPath(node.path, `${at}.path`);
+    paths.add(path);
+    const op = node.op;
+    if (!INGEST_CONDITION_OPS.has(op)) {
+      throw httpError(422, `${at}.op "${op}" is not a condition operator — use one of ${[...INGEST_CONDITION_OPS].join(', ')}`);
+    }
+    const leaf = { path, op };
+    if (op === 'exists' || op === 'not_exists') {
+      if (node.value !== undefined) throw httpError(422, `${at}: "${op}" takes no value`);
+      return leaf;
+    }
+    if (op === 'in' || op === 'not_in') {
+      const list = Array.isArray(node.value) ? node.value : [node.value];
+      if (!list.length || list.length > 50) throw httpError(422, `${at}: "${op}" takes 1-50 values`);
+      leaf.value = list.map((v, i) => ingestScalar(v, `${at}.value[${i}]`));
+      return leaf;
+    }
+    if (op === 'matches') {
+      if (typeof node.value !== 'string' || !ctx.patterns.matches.has(node.value)) {
+        throw httpError(422, `${at}: Casey does not write new regular expressions for ingest rules (they run on every message on a backtracking engine) — use contains / starts_with / ends_with / equals / in, or add the pattern by hand in the rule editor`);
+      }
+      leaf.value = node.value;
+      return leaf;
+    }
+    if (node.value === undefined) throw httpError(422, `${at}: "${op}" needs a value`);
+    leaf.value = ingestScalar(node.value, `${at}.value`);
+    return leaf;
+  };
+  const tree = walk(raw, 1, 'match_config');
+  if (!Object.prototype.hasOwnProperty.call(tree, 'conditions')) {
+    throw httpError(422, 'match_config must be a group: {"operator":"and"|"or","conditions":[...]}');
+  }
+  return { config: ingestConfigJson(tree, 'match_config'), paths: [...paths] };
+}
+
+function ingestTransformDescriptor(d, ctx, at) {
+  if (typeof d !== 'string' || !d.trim() || d.length > 300) throw httpError(422, `${at} must be a transform like "trim" or "after:+"`);
+  const { parseTransformDescriptor, listTransforms } = require('./hookTransforms');
+  const name = parseTransformDescriptor(d.trim()).name;
+  if (!listTransforms().includes(name)) {
+    throw httpError(422, `${at}: "${name}" is not a mapper transform — use one of ${listTransforms().join(', ')}`);
+  }
+  if (name === 'regex' && !ctx.patterns.regex.has(d.trim())) {
+    throw httpError(422, `${at}: Casey does not write new regex transforms (they run on every message on a backtracking engine) — use before / after / between / split / replace, or add the regex by hand in the rule editor`);
+  }
+  // Stored verbatim: an argument's edge whitespace is meaningful ("after:Case ").
+  return d;
+}
+
+function normalizeIngestMapper(raw, ctx) {
+  if (!Array.isArray(raw) || !raw.length || raw.length > INGEST_MAX_MAPPER_RULES) {
+    throw httpError(422, `A mapper transform is an array of 1-${INGEST_MAX_MAPPER_RULES} mapping rules {to, from | template | value, transforms?}`);
+  }
+  const rules = raw.map((r, i) => {
+    const at = `transform_config[${i}]`;
+    if (!r || typeof r !== 'object' || Array.isArray(r)) throw httpError(422, `${at} must be a mapping rule object`);
+    const extra = Object.keys(r).filter((k) => !['to', 'from', 'template', 'value', 'transforms'].includes(k));
+    if (extra.length) throw httpError(422, `${at} carries unsupported fields: ${extra.join(', ')}`);
+    const sources = ['from', 'template', 'value'].filter((k) => r[k] !== undefined);
+    if (sources.length !== 1) throw httpError(422, `${at} needs exactly one of from, template, or value`);
+    const out = { to: ingestPath(r.to, `${at}.to`) };
+    if (r.from !== undefined) out.from = ingestPath(r.from, `${at}.from`);
+    if (r.template !== undefined) {
+      if (typeof r.template !== 'string' || !r.template || r.template.length > 2000) {
+        throw httpError(422, `${at}.template must be 1-2000 characters`);
+      }
+      for (const m of r.template.matchAll(/\{\{([\s\S]+?)\}\}/g)) {
+        const [path, ...chain] = m[1].split('|');
+        ingestPath(path.trim(), `${at}.template token path`);
+        chain.forEach((d, j) => ingestTransformDescriptor(d, ctx, `${at}.template token transform ${j + 1}`));
+      }
+      out.template = r.template;
+    }
+    if (r.value !== undefined) out.value = ingestConfigJson(r.value, `${at}.value`);
+    if (r.transforms !== undefined) {
+      if (out.from === undefined) throw httpError(422, `${at}.transforms apply to a "from" rule only (a template carries its own |transforms)`);
+      if (!Array.isArray(r.transforms) || r.transforms.length > 10) throw httpError(422, `${at}.transforms must be an array of at most 10 transforms`);
+      out.transforms = r.transforms.map((d, j) => ingestTransformDescriptor(d, ctx, `${at}.transforms[${j}]`));
+    }
+    return out;
+  });
+  return ingestConfigJson(rules, 'transform_config');
+}
+
+function ingestCodeBody(raw, what) {
+  const code = typeof raw === 'string' ? raw : (raw && typeof raw === 'object' && !Array.isArray(raw) && onlyKeys(raw, new Set(['code'])) ? raw.code : null);
+  if (typeof code !== 'string' || !code.trim()) {
+    throw httpError(422, `${what} in code mode is {"code":"<function body over input, using return>"}`);
+  }
+  if (code.length > INGEST_MAX_CODE_CHARS) throw httpError(422, `${what} code exceeds ${INGEST_MAX_CODE_CHARS} characters`);
+  return { code };
+}
+
+// match side: { match_mode, match_config } in their stored shapes.
+function normalizeIngestMatch(mode, config, ctx) {
+  if (mode === 'conditions') {
+    const c = normalizeIngestConditions(config, ctx);
+    return { match_mode: 'conditions', match_config: c.config, paths: c.paths, code: false };
+  }
+  if (mode === 'code') return { match_mode: 'code', match_config: ingestCodeBody(config, 'match_config'), paths: [], code: true };
+  throw httpError(422, 'match_mode must be "conditions" or "code"');
+}
+
+function normalizeIngestTransform(mode, config, ctx) {
+  if (mode === 'passthrough') {
+    if (config != null) throw httpError(422, 'A passthrough transform takes no transform_config (send null)');
+    return { transform_mode: 'passthrough', transform_config: null, code: false };
+  }
+  if (mode === 'mapper') return { transform_mode: 'mapper', transform_config: normalizeIngestMapper(config, ctx), code: false };
+  if (mode === 'code') return { transform_mode: 'code', transform_config: ingestCodeBody(config, 'transform_config'), code: true };
+  throw httpError(422, 'transform_mode must be "passthrough", "mapper" or "code"');
+}
+
+// The paths a rule tests that are not in its channel's match-field catalog —
+// a card note, never a refusal (live rules use to.0.email and
+// envelope.recipient, both real).
+function ingestUnknownPaths(channel, paths) {
+  if (!paths.length) return [];
+  const catalog = channel === 'email'
+    ? require('./emailIngestMetaService').MATCH_FIELDS : require('./phoneIngestMetaService').MATCH_FIELDS;
+  const known = new Set(catalog.map((f) => f.path));
+  if (channel === 'email') known.add('body'); // derived by evaluateRules (text || html)
+  return paths.filter((p) => !known.has(p));
+}
+
+async function ingestRuleOrder(db, t, position, ruleId = null) {
+  const [[row]] = ruleId == null
+    ? await db.query(`SELECT COUNT(*) AS n FROM ${t.rules} WHERE active = 1 AND position <= ?`, [position])
+    : await db.query(`SELECT COUNT(*) AS n FROM ${t.rules} WHERE active = 1 AND id <> ? AND (position < ? OR (position = ? AND id < ?))`,
+      [ruleId, position, position, ruleId]);
+  const n = Number(row && row.n) || 0;
+  return `position ${position}: evaluated after ${n} active rule${n === 1 ? '' : 's'}. Every matching rule fires — the order only decides whose actions run first.`;
+}
+
+// One action spec → the stored action row shape plus what the card says.
+async function normalizeIngestActionSpec(db, spec, at, ctx = {}) {
+  if (!spec || typeof spec !== 'object' || Array.isArray(spec)) throw httpError(422, `${at} must be an action object`);
+  const extra = Object.keys(spec).filter((k) => !INGEST_ACTION_SPEC_KEYS.has(k));
+  if (extra.length) throw httpError(422, `${at} carries unsupported fields: ${extra.join(', ')} — it takes action_type, name, config, position`);
+  const type = spec.action_type;
+  const name = spec.name == null ? '' : ingestText(spec.name, `${at} name`, 100);
+  let position;
+  if (spec.position !== undefined) {
+    position = Number(spec.position);
+    if (!Number.isSafeInteger(position) || position < 0 || position > INGEST_MAX_POSITION) throw httpError(422, `${at} position must be 0-${INGEST_MAX_POSITION}`);
+  }
+  const { config, summary, side_effect, notes } = await normalizeIngestActionConfig(db, type, spec.config, at, ctx);
+  return { action_type: type, ...(name ? { name } : {}), ...(position !== undefined ? { position } : {}), config, summary, side_effect, notes };
+}
+
+async function normalizeIngestActionConfig(db, type, raw, at, ctx = {}) {
+  if (type === 'http') {
+    throw httpError(422, `${at}: Casey does not author http actions yet — an ingest http action sends every matching message out of the firm, and the literal-URL / named-credential contract (plan A17.4b) is not built. Tell the user to add it by hand in the rule editor`);
+  }
+  const allowed = INGEST_ACTION_CONFIG_KEYS[type];
+  if (!allowed) throw httpError(422, `${at} action_type must be workflow, sequence, hook, or internal_function`);
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw httpError(422, `${at} config must be an object`);
+  const extra = Object.keys(raw).filter((k) => !allowed.has(k));
+  if (extra.length) throw httpError(422, `${at} config carries unsupported fields for a ${type} action: ${extra.join(', ')}`);
+  const notes = [];
+  if (type === 'workflow') {
+    const id = Number(raw.workflow_id);
+    if (!Number.isSafeInteger(id) || id < 1) throw httpError(422, `${at} needs a positive config.workflow_id`);
+    const [[wf]] = await db.query('SELECT id, name, active, current_version FROM workflows WHERE id = ?', [id]);
+    if (!wf) throw httpError(422, `${at}: workflow ${id} does not exist`);
+    if (!wf.active) throw httpError(422, `${at}: workflow ${id} "${wf.name}" is inactive — the route refuses an action on an inactive workflow`);
+    if (!Number(wf.current_version)) notes.push(`workflow ${id} has never been published — every dispatch is refused (an armed capture still records a sample) until a human publishes it`);
+    return { config: { workflow_id: id }, summary: `starts workflow #${id} "${ingestRef(wf.name)}" with the message (the transform output) as its input`, side_effect: 'starts-workflow', notes };
+  }
+  if (type === 'sequence') {
+    if (raw.template_id === undefined) throw httpError(422, `${at} needs config.template_id — Casey names the template by id (a template_type picks "whichever is active", which the card cannot pin)`);
+    const id = Number(raw.template_id);
+    if (!Number.isSafeInteger(id) || id < 1) throw httpError(422, `${at} needs a positive config.template_id`);
+    const [[tpl]] = await db.query('SELECT id, name, active FROM sequence_templates WHERE id = ?', [id]);
+    if (!tpl) throw httpError(422, `${at}: sequence template ${id} does not exist`);
+    if (!tpl.active) throw httpError(422, `${at}: sequence template ${id} "${tpl.name}" is inactive — the route refuses an action on an inactive template`);
+    const field = raw.contact_id_field === undefined ? 'contact_id' : ingestPath(raw.contact_id_field, `${at} config.contact_id_field`);
+    const config = { template_id: id, ...(raw.contact_id_field !== undefined ? { contact_id_field: field } : {}) };
+    if (raw.trigger_data_fields !== undefined) {
+      if (!Array.isArray(raw.trigger_data_fields) || raw.trigger_data_fields.length > 20) throw httpError(422, `${at} config.trigger_data_fields must be at most 20 paths`);
+      config.trigger_data_fields = raw.trigger_data_fields.map((p, i) => ingestPath(p, `${at} config.trigger_data_fields[${i}]`));
+    }
+    notes.push(`the contact is read from "${field}" in the transform output — a message without it fails this action (nothing is enrolled)`);
+    return { config, summary: `enrolls a contact in sequence template #${id} "${ingestRef(tpl.name)}" — its steps may text or email that client`, side_effect: 'enrolls-sequence', notes };
+  }
+  if (type === 'hook') {
+    const slug = typeof raw.slug === 'string' ? raw.slug.trim() : '';
+    if (!slug) throw httpError(422, `${at} needs config.slug of an existing hook`);
+    const [[hook]] = await db.query('SELECT id, slug, name, active FROM hooks WHERE slug = ?', [slug]);
+    if (!hook) throw httpError(422, `${at}: no hook has slug "${slug}"`);
+    if (!hook.active) throw httpError(422, `${at}: hook "${hook.name}" is inactive — the route refuses an action on an inactive hook`);
+    return { config: { slug }, summary: `re-enters hook #${hook.id} "${ingestRef(hook.name)}" with the message as its body`, side_effect: 're-enters-hook', notes };
+  }
+  // internal_function, from the A17 allowlist plus the ingest-only forwards
+  // (lib/caseyAutomationAllowlist.js caseyIngestActionClass); params_mapping
+  // values are EXPRESSIONS over the transform output ('literal', a dot path,
+  // or "$").
+  const { caseyIngestActionClass } = require('../lib/caseyAutomationAllowlist');
+  const fn = raw.function_name;
+  const sideEffect = caseyIngestActionClass(fn);
+  if (!sideEffect) {
+    throw httpError(422, `${at}: "${fn}" is outside Casey's authoring allowlist — swap it for an allowed function or tell the user to add that action by hand`);
+  }
+  const internalFunctions = require('../lib/internal_functions');
+  const meta = internalFunctions.__getMeta(fn);
+  if (meta && meta.workflowOnly) throw httpError(422, `${at}: "${fn}" is workflow-only — an ingest action runs it without the workflow engine's context; start a workflow instead`);
+  const mapping = raw.params_mapping === undefined ? {} : raw.params_mapping;
+  if (!mapping || typeof mapping !== 'object' || Array.isArray(mapping)) throw httpError(422, `${at} config.params_mapping must be an object of param: source`);
+  const declared = meta && Array.isArray(meta.params) ? meta.params : null;
+  const keys = Object.keys(mapping);
+  if (keys.length > 30) throw httpError(422, `${at} config.params_mapping takes at most 30 params`);
+  if (declared) {
+    const names = new Set(declared.map((p) => p.name));
+    const unknown = keys.filter((k) => !names.has(k));
+    if (unknown.length) throw httpError(422, `${at}: ${fn} has no param(s) ${unknown.join(', ')} — its params are ${[...names].join(', ')}`);
+    const missing = declared.filter((p) => p.required && !(p.name in mapping)).map((p) => p.name);
+    if (missing.length) throw httpError(422, `${at}: ${fn} needs ${missing.join(', ')}`);
+  }
+  for (const [k, v] of Object.entries(mapping)) {
+    const ok = v === null || typeof v === 'boolean' || (typeof v === 'number' && Number.isFinite(v)) || (typeof v === 'string' && v.length <= 2000);
+    if (!ok) throw httpError(422, `${at} params_mapping.${k} must be a 'quoted literal', a dot path into the message, "$", or a JSON scalar`);
+  }
+  const pmErr = internalFunctions.__validateParamsMapping(fn, mapping);
+  if (pmErr) throw httpError(422, `${at}: ${pmErr.error}`);
+  const literal = (v) => (typeof v === 'string' && v.length >= 2 && v.startsWith("'") && v.endsWith("'") ? v.slice(1, -1) : null);
+  const show = (v) => (literal(v) != null ? `"${literal(v)}"` : v === '$' ? 'the whole message' : typeof v === 'string' ? `the message's ${v}` : JSON.stringify(v));
+  if (fn === 'forward_as_email' || fn === 'forward_as_sms') {
+    const fwd = await ingestForwardAnnotation(db, fn, mapping, at, ctx, literal);
+    notes.push(...fwd.notes);
+    return { config: { function_name: fn, params_mapping: mapping }, summary: fwd.summary, side_effect: sideEffect, notes };
+  }
+  if (fn === 'send_email' || fn === 'send_sms') {
+    const channel = fn === 'send_sms' ? 'sms' : 'email';
+    const from = literal(mapping.from);
+    if (from == null) {
+      throw httpError(422, `${at}: an ingest ${channel === 'sms' ? 'text' : 'email'} action sends from a quoted literal firm ${channel === 'sms' ? 'line number' : 'mailbox'} (e.g. "'automations@4lsg.com'") — never from a value taken out of the incoming message`);
+    }
+    const sender = await literalFirmSender(db, channel, from);
+    if (fn === 'send_email' && mapping.attachment_urls !== undefined) {
+      throw httpError(422, `${at}: Casey does not author email attachments (attachment_urls are fetched at send time) — tell the user to add them by hand`);
+    }
+    notes.push(`SENDS ${channel === 'sms' ? 'A TEXT' : 'AN EMAIL'} from ${sender} to ${show(mapping.to)} on every matching message${literal(mapping.to) == null ? ' — the recipient comes from the message itself' : ''}`);
+  }
+  const params = Object.entries(mapping).map(([k, v]) => `${k} ← ${show(v)}`).join('; ');
+  return { config: { function_name: fn, params_mapping: mapping }, summary: `calls ${fn}${params ? ` (${params})` : ''}`.slice(0, 1500), side_effect: sideEffect, notes };
+}
+
+// A forward (forward_as_email / forward_as_sms) sends the WHOLE incoming
+// message onward, so its card must name exactly where, from where, and that
+// it happens on every match. Closed forms only — the four live forwards all
+// fit them (measured 2026-10-27: event "$", a quoted literal sender and a
+// quoted literal staff destination, passthrough transforms):
+//   event    exactly "$" on a passthrough rule (the forward sniffs the
+//            envelope; a mapper/code output is not one and would throw);
+//   from     a quoted literal active firm line / configured mailbox;
+//   to       a quoted literal address / number — NEVER a path into the
+//            message (no live rule does it; a destination the sender chooses
+//            would make the firm a relay). Shown on the card, classified as
+//            firm-internal (a firm domain / staff address / firm line or
+//            staff phone) or OUTSIDE THE FIRM, and refused when that
+//            destination has opted out (the function refuses it at send
+//            time — the forward could never succeed);
+//   prefixes quoted literals or absent.
+const INGEST_FWD_EMAIL_RE = /^[^\s@,;<>"']{1,64}@[A-Za-z0-9.-]{1,253}\.[A-Za-z]{2,}$/;
+async function ingestForwardAnnotation(db, fn, mapping, at, ctx, literal) {
+  const sms = fn === 'forward_as_sms';
+  if (mapping.event !== '$') {
+    throw httpError(422, `${at}: a forward's event is "$" — the whole incoming message`);
+  }
+  if (ctx.transformMode && ctx.transformMode !== 'passthrough') {
+    throw httpError(422, `${at}: a forward needs the message itself, so the rule's transform must be passthrough (this rule's is ${ctx.transformMode})`);
+  }
+  for (const k of ['subject_prefix', 'body_prefix']) {
+    if (mapping[k] !== undefined && literal(mapping[k]) == null) {
+      throw httpError(422, `${at}: a forward's ${k} is a quoted literal (e.g. "'Fwd:'")`);
+    }
+  }
+  const from = literal(mapping.from);
+  if (from == null) {
+    throw httpError(422, `${at}: a forward sends from a quoted literal firm ${sms ? 'line number' : 'mailbox'} — never from a value taken out of the incoming message`);
+  }
+  const sender = await literalFirmSender(db, sms ? 'sms' : 'email', from);
+  const toRaw = literal(mapping.to);
+  if (toRaw == null) {
+    throw httpError(422, `${at}: a forward's destination ("to") is a quoted literal ${sms ? 'phone number' : 'email address'} — Casey never forwards to a value taken out of the incoming message`);
+  }
+  let to;
+  let internal;
+  if (sms) {
+    const digits = toRaw.replace(/\D/g, '').replace(/^1(?=\d{10}$)/, '');
+    if (!/^\d{10}$/.test(digits)) throw httpError(422, `${at}: forward destination "${toRaw}" is not a 10-digit phone number`);
+    to = digits;
+    const [[hit]] = await db.query(
+      `SELECT (SELECT COUNT(*) FROM phone_lines WHERE phone_number = ? AND active = 1)
+            + (SELECT COUNT(*) FROM users WHERE (phone = ? OR default_phone = ?) AND user_auth LIKE 'authorized%' AND user_type <> 0) AS n`,
+      [to, to, to]);
+    internal = Number(hit && hit.n) > 0;
+  } else {
+    to = toRaw.trim();
+    if (!INGEST_FWD_EMAIL_RE.test(to)) throw httpError(422, `${at}: forward destination "${toRaw}" is not one email address`);
+    const domains = String(require('../lib/firmConfig').cfg('email_domains') || '').split(',').map((d) => d.trim().toLowerCase()).filter(Boolean);
+    const [[hit]] = await db.query(
+      `SELECT (SELECT COUNT(*) FROM email_credentials WHERE email = ?)
+            + (SELECT COUNT(*) FROM users WHERE (email = ? OR default_email = ?) AND user_auth LIKE 'authorized%' AND user_type <> 0) AS n`,
+      [to, to, to]);
+    internal = domains.includes(to.split('@')[1].toLowerCase()) || Number(hit && hit.n) > 0;
+  }
+  const opted = await require('./optoutService').findOptedOut(db, sms ? 'sms' : 'email', to);
+  if (opted.length) {
+    throw httpError(422, `${at}: forward destination ${to} has opted out of ${sms ? 'texts' : 'email'} — automation sends refuse it, so this forward could never be delivered`);
+  }
+  const where = internal ? `${to} (firm / staff)` : `${to} — OUTSIDE THE FIRM`;
+  const notes = [`FORWARDS every matching message — its full ${sms ? 'text, as an SMS' : 'content'} — to ${where}, from ${sender}`];
+  if (!internal) notes.push(`${to} is not a firm address, line or staff member: every matching client message will be sent to someone outside the firm`);
+  return { summary: `forwards every matching message to ${where} (${fn}, from ${sender})`, notes };
+}
+
+// The rule the edit kinds target: exactly one channel key, the evidence must
+// cite its A20.0 rule row, and the live stamp must still equal the cited one.
+function ingestEditTarget(value) {
+  const hasEmail = value.email_ingest_rule_id !== undefined;
+  const hasPhone = value.phone_ingest_rule_id !== undefined;
+  if (hasEmail === hasPhone) throw httpError(422, 'An ingest rule edit names exactly one of email_ingest_rule_id or phone_ingest_rule_id');
+  const channel = hasEmail ? 'email' : 'phone';
+  const t = INGEST_AUTHOR_CHANNELS[channel];
+  const id = Number(value[t.ruleKey]);
+  if (!Number.isSafeInteger(id) || id < 1) throw httpError(422, `${t.ruleKey} must be a positive integer`);
+  return { channel, t, id };
+}
+
+function ingestEvidenceStamp(refs, evidence, t, id) {
+  for (const ref of refs) {
+    const query = evidence.find((item) => item && item.id === ref.query_id);
+    const row = query && Array.isArray(query.rows) ? query.rows[ref.row_number - 1] : null;
+    if (row && row.row === 'rule' && Number(row[t.ruleKey]) === id && typeof row.definition_updated_at === 'string') {
+      return row.definition_updated_at;
+    }
+  }
+  return null;
+}
+
+async function loadIngestEditBase(db, value, evidence) {
+  const { channel, t, id } = ingestEditTarget(value);
+  const refs = jobDraftEvidence(value.evidence, evidence);
+  const stamp = refs.length ? ingestEvidenceStamp(refs, evidence, t, id) : null;
+  if (!stamp) {
+    throw httpError(422, `The proposal must cite the rule row of an automation.definition read of ${t.ruleKey} ${id} from this investigation — its definition_updated_at is the edit's base`);
+  }
+  const svc = require(channel === 'email' ? './emailIngestRuleService' : './phoneIngestRuleService');
+  const rule = await svc.getById(db, id);
+  if (!rule) throw httpError(422, `${channel} ingest rule ${id} does not exist`);
+  const live = rule.definition_updated_at == null ? NaN : new Date(rule.definition_updated_at).getTime();
+  if (Date.parse(stamp) !== live) {
+    throw httpError(422, `${channel} ingest rule ${id} changed after Casey read it (definition_updated_at ${stamp} → ${Number.isFinite(live) ? new Date(live).toISOString() : 'unknown'}) — read it again with automation.definition and rebuild the change`);
+  }
+  const ruleCard = {
+    channel, rule_id: id, name: String(rule.name || `Rule ${id}`).slice(0, 255),
+    active: rule.active ? 1 : 0, position: Number(rule.position) || 0,
+    match_mode: rule.match_mode, transform_mode: rule.transform_mode,
+    action_count: (rule.actions || []).length,
+  };
+  return { channel, t, id, rule, ruleCard, refs, expected_base: { definition_updated_at: stamp } };
+}
+
+function ingestLiveText(base) {
+  return base.rule.active
+    ? `LIVE: this rule is ACTIVE — the change applies to the very next matching ${base.t.noun} (${base.t.traffic}), with no draft and no publish step`
+    : 'This rule is INACTIVE — live ingest never evaluates it, so nothing changes in what runs until someone activates it';
+}
+
+const INGEST_REVERT_TEXT = 'Undo: every change is recorded before/after in the rule\'s change log — ask Casey what changed and it can prepare the reverse edit, or restore the old values by hand in the rule editor';
+
+function ingestActionCard(a) {
+  return { rule_action_id: Number(a.id), action_type: a.action_type, name: a.name || null,
+    active: a.active ? 1 : 0, position: Number(a.position) || 0 };
+}
+
+async function normalizeIngestRuleAction(db, value, evidence) {
+  if (require('../lib/firmConfig').cfg('casey_ingest_authoring_enabled') === '0') {
+    throw httpError(422, 'Action kind is unavailable');
+  }
+  const kind = value.kind;
+  const base0 = { draft_id: crypto.randomUUID(), kind, status: 'draft' };
+
+  if (kind === 'ingest_rule.create.v1') {
+    const unknown = Object.keys(value).filter((k) => !INGEST_CREATE_KEYS.has(k));
+    if (unknown.length) throw httpError(422, `Ingest rule create carries unsupported fields: ${unknown.join(', ')}`);
+    const t = INGEST_AUTHOR_CHANNELS[value.channel];
+    if (!t) throw httpError(422, 'Ingest rule create needs channel "email" or "phone"');
+    const name = ingestText(value.name, 'ingest rule name', 255, { required: true });
+    const description = ingestText(value.description, 'ingest rule description', 1000);
+    let position = 0;
+    if (value.position !== undefined && value.position !== null) {
+      position = Number(value.position);
+      if (!Number.isSafeInteger(position) || position < 0 || position > INGEST_MAX_POSITION) throw httpError(422, `Ingest rule position must be 0-${INGEST_MAX_POSITION}`);
+    }
+    const ctx = { patterns: ingestStoredPatterns(null) };
+    const match = normalizeIngestMatch(value.match_mode, value.match_config, ctx);
+    const transform = normalizeIngestTransform(value.transform_mode === undefined ? 'passthrough' : value.transform_mode,
+      value.transform_config === undefined ? null : value.transform_config, ctx);
+    const specs = value.actions === undefined ? [] : value.actions;
+    if (!Array.isArray(specs) || specs.length > INGEST_MAX_ACTIONS) throw httpError(422, `Ingest rule create takes 0-${INGEST_MAX_ACTIONS} actions`);
+    const actions = [];
+    for (let i = 0; i < specs.length; i++) {
+      actions.push(await normalizeIngestActionSpec(db, specs[i], `actions[${i}]`, { transformMode: transform.transform_mode, channel: value.channel }));
+    }
+    const [[clash]] = await db.query(`SELECT id FROM ${t.rules} WHERE name = ? LIMIT 1`, [name]);
+    const notes = [];
+    if (clash) notes.push(`another ${value.channel} rule is already named "${name}" (#${clash.id}) — names are not unique, but two alike are easy to confuse`);
+    const unknownPaths = ingestUnknownPaths(value.channel, match.paths);
+    if (unknownPaths.length) notes.push(`tests ${unknownPaths.join(', ')}, which ${unknownPaths.length === 1 ? 'is' : 'are'} not in the ${value.channel} match-field catalog — preview the rule after creating it to check ${unknownPaths.length === 1 ? 'it resolves' : 'they resolve'}`);
+    if (!actions.length) notes.push('no actions: a match is recorded on the execution row and nothing fires');
+    return {
+      ...base0, channel: value.channel,
+      rule: { name, description, position, match_mode: match.match_mode, match_config: match.match_config,
+        transform_mode: transform.transform_mode, transform_config: transform.transform_config },
+      actions,
+      order: await ingestRuleOrder(db, t, position),
+      code: { match: match.code, transform: transform.code },
+      requires_capability: match.code || transform.code ? 'automations.manage' : null,
+      notes,
+      evidence: jobDraftEvidence(value.evidence, evidence),
+    };
+  }
+
+  if (kind === 'ingest_rule.update.v1') {
+    if (!onlyKeys(value, INGEST_UPDATE_KEYS)) throw httpError(422, 'Ingest rule update carries unsupported fields — it takes the rule id, changes, evidence');
+    const changes = value.changes;
+    if (!changes || typeof changes !== 'object' || Array.isArray(changes) || !Object.keys(changes).length) {
+      throw httpError(422, 'Ingest rule update needs at least one change');
+    }
+    const badKeys = Object.keys(changes).filter((k) => !INGEST_UPDATE_CHANGE_KEYS.has(k));
+    if (badKeys.length) {
+      throw httpError(422, `Ingest rule update cannot change ${badKeys.join(', ')} — it edits name, description, position, match_mode/match_config, transform_mode/transform_config${badKeys.includes('active') ? ' (activating or deactivating is ingest_rule.set_active.v1)' : ''}`);
+    }
+    const base = await loadIngestEditBase(db, value, evidence);
+    const ctx = { patterns: ingestStoredPatterns(base.rule) };
+    const out = {};
+    const before = {};
+    if ('name' in changes) { out.name = ingestText(changes.name, 'ingest rule name', 255, { required: true }); before.name = base.rule.name; }
+    if ('description' in changes) { out.description = ingestText(changes.description, 'ingest rule description', 1000); before.description = base.rule.description ?? ''; }
+    if ('position' in changes) {
+      const p = Number(changes.position);
+      if (!Number.isSafeInteger(p) || p < 0 || p > INGEST_MAX_POSITION) throw httpError(422, `Ingest rule position must be 0-${INGEST_MAX_POSITION}`);
+      out.position = p; before.position = Number(base.rule.position) || 0;
+    }
+    let matchCode = false;
+    let transformCode = false;
+    const notes = [];
+    if ('match_mode' in changes || 'match_config' in changes) {
+      // Mode and config always travel together: the route's code gate and
+      // validator both read an absent mode as the STORED one.
+      const mode = 'match_mode' in changes ? changes.match_mode : base.rule.match_mode;
+      if (!('match_config' in changes)) throw httpError(422, 'Changing match_mode needs the new match_config too');
+      const m = normalizeIngestMatch(mode, changes.match_config, ctx);
+      out.match_mode = m.match_mode; out.match_config = m.match_config; matchCode = m.code;
+      before.match_mode = base.rule.match_mode; before.match_config = base.rule.match_config ?? null;
+      const unknownPaths = ingestUnknownPaths(base.channel, m.paths);
+      if (unknownPaths.length) notes.push(`tests ${unknownPaths.join(', ')}, not in the ${base.channel} match-field catalog — preview to check ${unknownPaths.length === 1 ? 'it resolves' : 'they resolve'}`);
+    }
+    if ('transform_mode' in changes || 'transform_config' in changes) {
+      const mode = 'transform_mode' in changes ? changes.transform_mode : base.rule.transform_mode;
+      if (mode !== 'passthrough' && !('transform_config' in changes)) throw httpError(422, 'Changing transform_mode needs the new transform_config too');
+      const tr = normalizeIngestTransform(mode, mode === 'passthrough' ? (changes.transform_config ?? null) : changes.transform_config, ctx);
+      out.transform_mode = tr.transform_mode; out.transform_config = tr.transform_config; transformCode = tr.code;
+      const fwd = tr.transform_mode !== 'passthrough' && (base.rule.actions || []).find((a) => a.action_type === 'internal_function'
+        && a.config && /^forward_as_(?:email|sms)$/.test(a.config.function_name));
+      if (fwd) throw httpError(422, `Action #${fwd.id} forwards the incoming message, which needs a passthrough transform — a ${tr.transform_mode} transform would make every forward fail; remove or change that action first`);
+      before.transform_mode = base.rule.transform_mode; before.transform_config = base.rule.transform_config ?? null;
+    }
+    const { canonical } = require('../lib/versionDiff');
+    // A mode and its config are dropped only TOGETHER (both unchanged): a
+    // config sent without its mode would be read against the stored one.
+    const same = (k) => k in out && canonical(out[k]) === canonical(before[k]);
+    for (const [mode, cfg] of [['match_mode', 'match_config'], ['transform_mode', 'transform_config']]) {
+      if (same(mode) && same(cfg)) { delete out[mode]; delete before[mode]; delete out[cfg]; delete before[cfg]; }
+    }
+    for (const k of ['name', 'description', 'position']) if (same(k)) { delete out[k]; delete before[k]; }
+    if (!Object.keys(out).length) throw httpError(422, 'Ingest rule update changes nothing — every proposed value equals the stored one');
+    if ('position' in out && base.rule.active) notes.push(await ingestRuleOrder(db, base.t, out.position, base.id));
+    return {
+      ...base0, channel: base.channel, rule: base.ruleCard, live: base.rule.active ? 1 : 0,
+      live_text: ingestLiveText(base), revert_text: INGEST_REVERT_TEXT,
+      changes: out, before,
+      code: { match: matchCode, transform: transformCode },
+      requires_capability: matchCode || transformCode ? 'automations.manage' : null,
+      notes, expected_base: base.expected_base, evidence: base.refs,
+    };
+  }
+
+  if (kind === 'ingest_rule.set_active.v1') {
+    if (!onlyKeys(value, INGEST_SET_ACTIVE_KEYS)) throw httpError(422, 'Ingest rule activation carries unsupported fields — it takes the rule id, active, evidence');
+    if (typeof value.active !== 'boolean') throw httpError(422, 'Ingest rule activation needs active: true or false');
+    const base = await loadIngestEditBase(db, value, evidence);
+    const want = value.active ? 1 : 0;
+    if ((base.rule.active ? 1 : 0) === want) throw httpError(422, `${base.channel} ingest rule ${base.id} is already ${want ? 'active' : 'inactive'}`);
+    const acts = (base.rule.actions || []);
+    const firing = acts.filter((a) => a.active);
+    const impact = want
+      ? [`STARTS PROCESSING LIVE TRAFFIC: from the moment you apply, every matching ${base.t.noun} (${base.t.traffic}) runs this rule`,
+        firing.length ? `${firing.length} active action(s) fire on every match: ${firing.map((a) => `#${a.id} ${a.action_type}${a.name ? ` "${a.name}"` : ''}`).join(', ')}` : 'it has no active actions — matches are only recorded',
+        await ingestRuleOrder(db, base.t, Number(base.rule.position) || 0, base.id)]
+      : [`STOPS this rule: matching ${base.t.noun}s are no longer evaluated by it and its ${firing.length} active action(s) stop firing`];
+    if (want && base.rule.match_mode === 'code') impact.push('its match is a code body (sandboxed guest engine, 15 s limit) — a body that throws counts as no match');
+    if (want && base.rule.transform_mode === 'code') impact.push('its transform is a code body — a body that throws skips the actions and records a failed transform');
+    return {
+      ...base0, channel: base.channel, rule: base.ruleCard, live: 1, active: want,
+      actions: acts.map(ingestActionCard), impact, revert_text: INGEST_REVERT_TEXT,
+      expected_base: base.expected_base, evidence: base.refs,
+    };
+  }
+
+  if (kind === 'ingest_rule.action_add.v1') {
+    if (!onlyKeys(value, INGEST_ACTION_ADD_KEYS)) throw httpError(422, 'Ingest rule action add carries unsupported fields — it takes the rule id, action, evidence');
+    const base = await loadIngestEditBase(db, value, evidence);
+    if ((base.rule.actions || []).length >= 10) throw httpError(422, `${base.channel} ingest rule ${base.id} already has ${base.rule.actions.length} actions`);
+    const action = await normalizeIngestActionSpec(db, value.action, 'action', { transformMode: base.rule.transform_mode, channel: base.channel });
+    return {
+      ...base0, channel: base.channel, rule: base.ruleCard, live: base.rule.active ? 1 : 0,
+      live_text: ingestLiveText(base), revert_text: INGEST_REVERT_TEXT,
+      action, existing_actions: (base.rule.actions || []).map(ingestActionCard),
+      expected_base: base.expected_base, evidence: base.refs,
+    };
+  }
+
+  // action_update / action_remove: one existing action row of THIS rule.
+  const isUpdate = kind === 'ingest_rule.action_update.v1';
+  if (!onlyKeys(value, isUpdate ? INGEST_ACTION_UPDATE_KEYS : INGEST_ACTION_REMOVE_KEYS)) {
+    throw httpError(422, `Ingest rule action ${isUpdate ? 'update' : 'remove'} carries unsupported fields`);
+  }
+  const base = await loadIngestEditBase(db, value, evidence);
+  const actionId = Number(value.rule_action_id);
+  const target = (base.rule.actions || []).find((a) => Number(a.id) === actionId);
+  if (!Number.isSafeInteger(actionId) || !target) {
+    throw httpError(422, `Action ${value.rule_action_id} is not one of ${base.channel} ingest rule ${base.id}'s actions`);
+  }
+  const { projectIngestActionConfig } = require('./automationReadService');
+  const [credRows] = await db.query('SELECT id, name FROM credentials');
+  const credentialNames = new Map((credRows || []).map((r) => [Number(r.id), String(r.name)]));
+  const shown = (a) => JSON.stringify(projectIngestActionConfig(a.action_type, a.config, credentialNames)).slice(0, 1500);
+  const targetCard = { ...ingestActionCard(target), config: shown(target) };
+  if (!isUpdate) {
+    return {
+      ...base0, channel: base.channel, rule: base.ruleCard, live: base.rule.active ? 1 : 0,
+      live_text: ingestLiveText(base), revert_text: INGEST_REVERT_TEXT,
+      target: targetCard, expected_base: base.expected_base, evidence: base.refs,
+    };
+  }
+  const changes = value.changes;
+  if (!changes || typeof changes !== 'object' || Array.isArray(changes) || !Object.keys(changes).length) {
+    throw httpError(422, 'Ingest rule action update needs at least one change');
+  }
+  const badKeys = Object.keys(changes).filter((k) => !INGEST_ACTION_CHANGE_KEYS.has(k));
+  if (badKeys.length) throw httpError(422, `Ingest rule action update cannot change ${badKeys.join(', ')} — it edits name, config, position, active (the action type never changes: remove it and add a new one)`);
+  const out = {};
+  const before = {};
+  let action = null;
+  if ('name' in changes) { out.name = changes.name == null ? null : (ingestText(changes.name, 'action name', 100) || null); before.name = target.name || null; }
+  if ('position' in changes) {
+    const p = Number(changes.position);
+    if (!Number.isSafeInteger(p) || p < 0 || p > INGEST_MAX_POSITION) throw httpError(422, `Action position must be 0-${INGEST_MAX_POSITION}`);
+    out.position = p; before.position = Number(target.position) || 0;
+  }
+  if ('active' in changes) {
+    if (typeof changes.active !== 'boolean') throw httpError(422, 'Action active must be true or false');
+    out.active = changes.active ? 1 : 0; before.active = target.active ? 1 : 0;
+  }
+  if ('config' in changes) {
+    if (target.action_type === 'http') {
+      throw httpError(422, 'Casey does not re-point http actions (their URL is not shown to Casey and the A17.4b destination contract is unbuilt) — change it by hand in the rule editor');
+    }
+    action = await normalizeIngestActionConfig(db, target.action_type, changes.config, 'changes', { transformMode: base.rule.transform_mode, channel: base.channel });
+    out.config = action.config; before.config = shown(target);
+  }
+  const { canonical } = require('../lib/versionDiff');
+  if ('config' in out && canonical(out.config) === canonical(target.config)) { delete out.config; delete before.config; action = null; }
+  for (const k of ['name', 'position', 'active']) if (k in out && canonical(out[k]) === canonical(before[k])) { delete out[k]; delete before[k]; }
+  if (!Object.keys(out).length) throw httpError(422, 'Ingest rule action update changes nothing — every proposed value equals the stored one');
+  return {
+    ...base0, channel: base.channel, rule: base.ruleCard, live: base.rule.active ? 1 : 0,
+    live_text: ingestLiveText(base), revert_text: INGEST_REVERT_TEXT,
+    target: targetCard, changes: out, before,
+    ...(action ? { summary: action.summary, side_effect: action.side_effect, notes: action.notes } : {}),
+    expected_base: base.expected_base, evidence: base.refs,
+  };
+}
+
 async function normalizeActionDraft(db, value, evidence, { currentUserId = null, question = '' } = {}) {
   if (value == null) return null;
+  if (value && INGEST_RULE_ACTION_KINDS.has(value.kind)) return normalizeIngestRuleAction(db, value, evidence);
   if (value && REPORT_ACTION_KINDS.has(value.kind)) return normalizeReportDraftAction(db, value, evidence, { currentUserId, question });
   if (value && SEND_ACTION_KINDS.has(value.kind)) return normalizeSendAction(db, value, evidence, { currentUserId });
   if (value && HOOK_ACTION_KINDS.has(value.kind)) return normalizeHookCreateAction(db, value, evidence);
@@ -2979,8 +3733,10 @@ async function repairActionDraft(db, approved, evidence, rejectedValue, rejectio
     outputType: 'json', timeout_ms: ANSWER_TIMEOUT_MS,
     consumerRef: `assistant_task_draft_repair:u${Number(userId) || 0}`,
     // The repair prompt registers 1000 output tokens; a report definition
-    // (SQL + columns_meta + caveats) needs more room to come back whole.
-    ...(reportTurn ? { max_tokens: 4000 } : {}),
+    // (SQL + columns_meta + caveats) needs more room to come back whole, and so
+    // does an ingest rule (conditions + mapper + actions).
+    ...(reportTurn ? { max_tokens: 4000 }
+      : (rejectedValue && String(rejectedValue.kind || '').startsWith('ingest_rule.') ? { max_tokens: 3000 } : {})),
     logContent: false,
   });
   if (!ai.ok) return null;
@@ -3048,7 +3804,13 @@ function taskDraftRequested(question, history = []) {
     /\bwrite\b[^.?!\n]{0,40}\b(?:e-?mail|text message|sms|message)\s+to\b/i.test(request) ||
     /(?:^|[.!?]\s*|\b(?:please|you|to|and|then|go ahead and|let'?s|now)\s+)(?:e-?mail|text|sms|message)\s+(?!me\b|myself\b)\w/i.test(request);
   const send = !toSelf && sendVerb;
-  return task || event || appt || contactSubrecord || job || workflow || hook || sequence || send ||
+  // A20.2 / A20.3: an email or phone INGEST rule. A bare "rule" is too broad
+  // (trigger rules are explain-only), so the noun names the ingest kind: an
+  // ingest rule, an email / inbox / phone / call / text rule, or a rule for
+  // incoming mail / calls / texts.
+  const ingestRule = /\b(?:ingest(?:ion)?\s+rules?|(?:e-?mail|mail|inbox|phone|call|text|sms)\s+(?:ingest\s+)?rules?|rules?\s+(?:for|on)\s+(?:incoming|inbound|new)\s+(?:e-?mails?|mail|calls|texts|messages))\b/i.test(text) &&
+    /\b(?:draft|propose|prepare|create|make|add|build|set up|edit|update|change|modify|fix|tweak|adjust|rename|activate|deactivate|enable|disable|turn on|turn off|remove|delete)\b/i.test(request);
+  return task || event || appt || contactSubrecord || job || workflow || hook || sequence || send || ingestRule ||
     reportDraftRequested(question, history);
 }
 

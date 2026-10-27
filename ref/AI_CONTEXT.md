@@ -48,6 +48,37 @@ body. Governing migrations in `ref/migrations/`.*
   wired scope where a failure does not free the key. Native callers without a
   key are unchanged. Off switch `casey_send_enabled`. Plan:
   ref/ASK_CASEY_ACTIONS_PLAN.md A14.
+- **Casey authors email/phone ingest rules (A20.2 + A20.3, 10-27):** six
+  kinds, each ONE request to the rule editor's own route —
+  `ingest_rule.create.v1` (`POST /api/{ch}-ingest/rules`, born `active: 0`
+  pinned by the browser builder — the column defaults to 1), `.update.v1` /
+  `.set_active.v1` (`PUT …/rules/:id`), `.action_add.v1` (`POST
+  …/rules/:id/actions`), `.action_update.v1` / `.action_remove.v1` (`PUT` /
+  `DELETE …/rule-actions/:id`). `POST …/rules` now takes optional inline
+  `actions` (≤ 10, validated with the action route's own shape + reference
+  checks, inserted in the create's transaction, so the 'create' log row holds
+  them; a refused reference rolls the rule back) and an optional
+  `Idempotency-Key` (`{email,phone}_ingest.rules_create`); native callers
+  are unchanged. Invariants: every edit's `expected_base` is the
+  `definition_updated_at` of the CITED `automation.definition` rule row (the
+  read surface now carries it, plus the change log as field-level `change`
+  rows) and must equal the live stamp at proposal time; the browser re-reads
+  the rule at click time (`GET …/rules/:id`) and refuses before the claim
+  if it moved; the route's 409 renders as a refusal. An ACTIVE rule's card is
+  danger-styled and says the change applies to the next matching message.
+  Grammar built field by field: no empty condition group (match-all), no NEW
+  regex (`matches` / `regex:` run on V8's backtracking engine in-process on
+  every message — a pattern the edited rule already runs may be kept), action
+  configs closed per type, targets existing + active, internal functions from
+  the A17 allowlist plus the ingest-only forwards (`forward_as_email` /
+  `forward_as_sms`: event `"$"` on a passthrough rule, literal firm sender,
+  literal destination classified firm/outside on the card, opted-out
+  destination refused; NOT workflow-draft authorable), `send_email`/`send_sms`
+  from a quoted literal firm sender, no `http` actions (A17.4b unbuilt; existing ones may be renamed /
+  toggled / moved / removed, never re-pointed). Code-mode bodies are
+  authorable; the route's ingest code gate decides (automations.manage).
+  Off switch `casey_ingest_authoring_enabled`. Plan:
+  ref/ASK_CASEY_ACTIONS_PLAN.md A20.2/A20.3.
 - **Ingest rules: edit stamp + change log + stale-edit precondition (A20
   slice 1, 10-27):** `{email,phone}_ingest_rules.definition_updated_at`
   (DATETIME(3)) is THE edit stamp; `updated_at` moves on every match and is
@@ -1248,10 +1279,28 @@ workflow stores the payload as its sample instead of losing it.
 **Code mode:** a `code` filter, hook transform or target transform runs in
 the QuickJS guest in the sandbox child (`hookService.runFilter` /
 `runTransform` → `lib/guestCode.js`; async, every caller awaits). A filter
-that throws or times out = filtered with `filter_passed=0` + error; a
-transform that fails yields `{}` + an error and delivery continues (the hook's
-historical posture). Live bodies use `console.warn` — it still reaches the log
-as a warning. Authoring stays `automations.manage` (B5).
+that throws or times out = filtered with `filter_passed=0` + error.
+
+**A failed transform delivers nothing** (10-27 — the §26 hard semantics, which
+hooks used to break by delivering `{}`): `runTransform` returns `failed: true`
+for a code throw / timeout / sandbox failure / `GUEST_CODE_BUSY` (error tagged
+`[GUEST_CODE_BUSY]`) / a non-object return (`return {}` is an object and
+delivers), a mapper whose every rule errored with nothing mapped (a PARTIAL
+mapping delivers, errors recorded), or an unparseable string config.
+Hook-level → the execution is `failed` with the error and a NULL
+`transform_output`, no target runs (before the split-phase partition; the
+receiver still answers 200). Target-level (`deliverToTarget`) → that target
+only: a failed delivery log + `hook_retry` (the retry re-runs the transform),
+execution `partial`/`failed` by the usual tally; `executeRetry` obeys the same
+rule and never delivers a NULL `transform_output`. Dry runs report both
+(`status:'failed', dry_run:true` / a target's `skip_reason` +
+`transform_errors`). Recovery = replaying the row's `raw_input` (Logs → Test
+tab → Live Test). The receiver deliberately does NOT 503 on BUSY: RingCentral
+(hooks 21–23) retries ~3× then blacklists the subscription. Alert sweep
+`_scanHooks`: a BUSY-only failure is `warning` (guestCode's
+`guest_code_saturated:hooks` owns escalation), anything else `error`. Live
+bodies use `console.warn` — it still reaches the log as a warning. Authoring
+stays `automations.manage` (B5).
 
 Tables: `hooks`, `hook_targets`, `hook_executions` (raw_input capped 512KB),
 `hook_delivery_logs`, shared `credentials`. Files: `services/hookService.js`
@@ -1805,7 +1854,8 @@ with a `code` key) counts whatever the mode says; a PUT that leaves both code
 sides untouched passes, but the native editors re-send the whole record, so a
 user without the capability cannot save any edit to a code-mode rule or
 suppression. `duplicate` ignores its body and stays open. Casey's
-`automation.preview_ingest_rule` previews stored rules only. The gate is
+`automation.preview_ingest_rule` previews stored rules only; Casey's
+code-carrying rule cards go through this gate like any other caller. The gate is
 unchanged by the engine move; relaxing it is Fred's decision after a soak
 (`ref/plans.md`). §28 shares all of this.
 
@@ -1820,7 +1870,9 @@ auditable and guardable instead (A20 slice 1; §0 entry; operator view in
 action write routes take an optional `expected_base: {definition_updated_at}`
 checked under the rule's `FOR UPDATE` lock, AFTER the code gate (refusal →
 shape 400 → service). Native callers send none and are unchanged (golden:
-`tests/fixtures/ingestNativeGolden.json`). §28 shares all of this.
+`tests/fixtures/ingestNativeGolden.json`). Casey's ingest-rule cards (A20.2 /
+A20.3, §0) send it on every edit, and `automation.definition` carries the
+stamp and the latest five change rows. §28 shares all of this.
 
 ### Direction & firm-to-firm
 `from.email` domain ∈ `EMAIL_DOMAINS` → `outgoing`, else `incoming`.

@@ -28,7 +28,7 @@ When something doesn't fire when you expected:
 1. Open the hook's **Logs** tab. Did the event arrive? What status?
 2. `received` → still processing or stuck. Check Scheduled Jobs for `hook_retry`.
 3. `filtered` → the filter rejected it. Look at `error` for why.
-4. `partial` or `failed` → look at delivery logs for which target broke.
+4. `partial` or `failed` → look at delivery logs for which target broke. A `failed` row with no delivery logs and an empty transform output means the transform itself failed — read `error`.
 5. `captured` → the hook is in capture mode; see Capture Mode below.
 
 ---
@@ -78,7 +78,7 @@ POST /hooks/:slug
         │ failed → UPDATE status='filtered', return
         ▼
   runTransform(mode, config, input)
-        │
+        │ failed → UPDATE status='failed', error, transform_output=NULL, return
         ▼  UPDATE status='processing', transform_output=...
         │
         ▼
@@ -151,9 +151,18 @@ Nested groups supported — a `condition` can itself be another `{ match, condit
 |---|---|---|
 | `passthrough` | — | The full input event, unchanged |
 | `mapper` | Array of rules | A new object built from the rules |
-| `code` | `{ "code": "return { ... };" }` | Whatever the function returns (a throw or timeout → `{}` plus an error, and delivery continues) |
+| `code` | `{ "code": "return { ... };" }` | The object the function returns. A throw, a timeout, a "code sandbox busy" error, or a return that is not an object (`null`, nothing, a string) **fails the transform** — see below. `return {}` is an object and is delivered. |
 
-**Code filters and transforms** (hook- and target-level) run in an isolated JavaScript engine (QuickJS) in a separate, throwaway process — never inside the server. No `process`, `require`, `fetch`, timers, network or database, and **no `Intl`** (`toLocaleString` ignores `timeZone` silently — compute local times from UTC). `console.log` / `console.warn` reach the server log. 15 s and 64 MB per call (`GUEST_CODE_TIMEOUT_MS`). Because a webhook waits for its answer, a code filter or transform waits at most 3 s for a free sandbox when the server is saturated; past that it fails closed with a "code sandbox busy" error — the filter counts as filtered, a transform yields `{}` with the error — the event is logged in the execution history (so it can be replayed) and a system alert is raised. Hooks have a reserved share of sandboxes that triggers, ingest and editor tests cannot take, and vice versa. The dry-run test and the transform tester run the same engine as live deliveries.
+**A failed transform delivers nothing.** Targets never receive an empty or half-built object in place of the real data:
+
+- **Hook-level transform fails** → the execution is `failed`, its `error` says why, *Transform Output* is empty, and **no target runs**. The sender still gets its usual 200.
+- **A target's own transform fails** → that target is skipped and logged as a failed delivery (error `target transform failed (nothing delivered): …`) and a retry is queued, which runs the transform again. The other targets deliver as normal, so the execution reads `partial` (or `failed` if nothing delivered).
+- **Mapper** → if every rule errors and nothing is mapped, that counts as failed. If some rules work, the partial result is delivered and the broken rules are listed in the execution's `error`.
+- **Dry-run test** → shows the same outcome: `"status": "failed", "dry_run": true` with the error, or a target marked `"skip_reason": "target transform failed"` with its `transform_errors`.
+
+To re-run a failed event once the cause is fixed (or the server is no longer busy): open the execution in the **Logs** tab, copy its *Raw Input* into the **Test** tab and click **Live Test**. That runs the whole pipeline again and delivers for real.
+
+**Code filters and transforms** (hook- and target-level) run in an isolated JavaScript engine (QuickJS) in a separate, throwaway process — never inside the server. No `process`, `require`, `fetch`, timers, network or database, and **no `Intl`** (`toLocaleString` ignores `timeZone` silently — compute local times from UTC). `console.log` / `console.warn` reach the server log. 15 s and 64 MB per call (`GUEST_CODE_TIMEOUT_MS`). Because a webhook waits for its answer, a code filter or transform waits at most 3 s for a free sandbox when the server is saturated; past that it fails closed with a "code sandbox busy" error — the filter counts as filtered, a transform fails (nothing delivered, above) — the event is logged in the execution history (so it can be replayed) and a system alert is raised. The webhook sender is NOT asked to send it again: RingCentral blacklists a subscription after a few failed deliveries, which would stop every RingCentral event. Hooks have a reserved share of sandboxes that triggers, ingest and editor tests cannot take, and vice versa. The dry-run test and the transform tester run the same engine as live deliveries.
 
 #### Mapper rules
 

@@ -12,13 +12,13 @@
  * THE BOUNDARY BEING TESTED (plan, "Governing principle"): Casey proposes, the
  * staff member's own browser performs the write through the ordinary
  * authenticated route, and "the existing route ... is the final authority".
- * These tests ask that claim two questions for all 36 shipped kinds:
+ * These tests ask that claim two questions for all 42 shipped kinds:
  *   1. what does the route actually gate on?  (section 1 — no DB needed)
  *   2. where is the normalizer stricter than the route, i.e. where is the
  *      route NOT an authority at all?        (section 2 — real MySQL)
  *
  * MEASURED FACTS THIS FILE LOCKS
- *   · Every one of the 36 kinds maps to a route gated by lib/auth.jwtOrApiKey
+ *   · Every one of the 42 kinds maps to a route gated by lib/auth.jwtOrApiKey
  *     and NOTHING else: authentication (staff-audience JWT whose user_auth
  *     starts 'authorized'), no role, no capability, no row/firm scope. The
  *     one nuance is job.code_safe.create.v1 (safe-mode S3): its route carries
@@ -113,6 +113,14 @@ const KINDS = [
   { kind: 'email.send.v1', method: 'POST', path: '/api/mail/send' },
   // A16: the Reports editor's own create route.
   { kind: 'report.draft.v1', method: 'POST', path: '/api/reports' },
+  // A20.2 / A20.3: the ingest rule editor's own routes (email shown; the
+  // phone routes mirror them one-for-one — pinned by the parity test below).
+  { kind: 'ingest_rule.create.v1', method: 'POST', path: '/api/email-ingest/rules' },
+  { kind: 'ingest_rule.update.v1', method: 'PUT', path: '/api/email-ingest/rules/1' },
+  { kind: 'ingest_rule.set_active.v1', method: 'PUT', path: '/api/email-ingest/rules/1' },
+  { kind: 'ingest_rule.action_add.v1', method: 'POST', path: '/api/email-ingest/rules/1/actions' },
+  { kind: 'ingest_rule.action_update.v1', method: 'PUT', path: '/api/email-ingest/rule-actions/1' },
+  { kind: 'ingest_rule.action_remove.v1', method: 'DELETE', path: '/api/email-ingest/rule-actions/1' },
 ];
 
 // The six original families' route files carry NO capability gate at all
@@ -127,7 +135,10 @@ const ROUTE_FILES = [...CAPABILITY_FREE_ROUTE_FILES, 'routes/scheduled_jobs.js',
   'routes/api.phoneComms.js', 'routes/api.mail.js',
   // A16: Reports — writes need a JWT with a userId (requireUser: API keys are
   // 403), no role or capability; the per-row lock lives in reportService.
-  'routes/api.reports.js'];
+  'routes/api.reports.js',
+  // A20.2 / A20.3: the ingest rule routes — jwtOrApiKey, plus the ingest code
+  // gate (automations.manage) on requests that carry a code body only.
+  'routes/api.emailIngest.js', 'routes/api.phoneIngest.js'];
 
 // ── Shared HTTP harness: the real routers behind the real jwtOrApiKey ──────
 // Both sections drive the SAME routers. Section 1 hands them a stub req.db
@@ -178,22 +189,22 @@ function call(a, { method, path: urlPath }, headers = {}, body = {}) {
 const bearer = (t) => ({ authorization: `Bearer ${t}` });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// SECTION 1 — the route-level gate, for all 36 kinds (no database)
+// SECTION 1 — the route-level gate, for all 42 kinds (no database)
 // ═══════════════════════════════════════════════════════════════════════════
 
-describe('P2 — what the canonical write route gates on (all 36 shipped kinds)', () => {
+describe('P2 — what the canonical write route gates on (all 42 shipped kinds)', () => {
   const OLD_SECRET = process.env.JWT_SECRET;
   beforeAll(() => { process.env.JWT_SECRET = SECRET; });
   afterAll(() => { process.env.JWT_SECRET = OLD_SECRET; });
 
   const app = appWith;
 
-  test('the 36 kinds cover 32 distinct route+method mounts', () => {
-    expect(KINDS).toHaveLength(36);
-    expect(new Set(KINDS.map((k) => `${k.method} ${k.path}`)).size).toBe(32);
+  test('the 42 kinds cover 37 distinct route+method mounts', () => {
+    expect(KINDS).toHaveLength(42);
+    expect(new Set(KINDS.map((k) => `${k.method} ${k.path}`)).size).toBe(37);
   });
 
-  test('no token: every kind is 401 — authentication is required for all 36', async () => {
+  test('no token: every kind is 401 — authentication is required for all 42', async () => {
     const a = app();
     for (const k of KINDS) {
       const res = await call(a, k);
@@ -357,6 +368,46 @@ describe('P2 — what the canonical write route gates on (all 36 shipped kinds)'
       expect(mailSpy).not.toHaveBeenCalled();
       expect(typeof mailSend.resolveIdentity).toBe('function');
     } finally { smsSpy.mockRestore(); mailSpy.mockRestore(); }
+  });
+
+  // A20.2 / A20.3: the ingest rule routes gate on authentication, plus the
+  // ingest code gate on a request that CARRIES a code body (match or
+  // transform): a roleless staff token reaches createRule with a conditions
+  // body and is refused 403 with a code body — so a Casey code card applies
+  // only for automations.manage holders, by the route, not the card.
+  test.each(['email', 'phone'])('ingest_rule (%s): conditions reach the service rolelessly; a code body needs automations.manage', async (ch) => {
+    const svc = require(path.join(REPO, `services/${ch}IngestRuleService`));
+    const spy = jest.spyOn(svc, 'createRule').mockImplementation(async () => ({ id: 1, actions: [] }));
+    try {
+      const a = app();
+      const base = { name: 'r', active: 0, match_mode: 'conditions', match_config: { operator: 'and', conditions: [{ path: 'subject', op: 'contains', value: 'x' }] } };
+      for (const roles of [['staff'], [], ['attorney']]) {
+        spy.mockClear();
+        const res = await call(a, { method: 'POST', path: `/api/${ch}-ingest/rules` }, bearer(token({ roles })), base);
+        expect({ roles: roles.join(',') || 'none', status: res.status, reached: spy.mock.calls.length })
+          .toEqual({ roles: roles.join(',') || 'none', status: 201, reached: 1 });
+      }
+      spy.mockClear();
+      const code = await call(a, { method: 'POST', path: `/api/${ch}-ingest/rules` }, bearer(token({ roles: ['staff'] })),
+        { ...base, match_mode: 'code', match_config: { code: 'return true;' } });
+      expect(code.status).toBe(403);
+      expect(code.body.missingCapability).toBe('automations.manage');
+      expect(spy).not.toHaveBeenCalled();
+      const admin = await call(a, { method: 'POST', path: `/api/${ch}-ingest/rules` }, bearer(token({ roles: ['admin', 'staff'] })),
+        { ...base, transform_mode: 'code', transform_config: { code: 'return input;' } });
+      expect(admin.status).toBe(201);
+    } finally { spy.mockRestore(); }
+  });
+
+  test('the phone ingest rule routes mirror the email ones the ingest cards use', () => {
+    const email = read('routes/api.emailIngest.js');
+    const phone = read('routes/api.phoneIngest.js');
+    for (const k of KINDS.filter((x) => x.kind.startsWith('ingest_rule.'))) {
+      const route = k.path.replace('/1', '/:id').replace('/1/', '/:id/');
+      const verb = k.method.toLowerCase();
+      expect({ k: k.kind, email: email.includes(`router.${verb}('${route}'`) }).toEqual({ k: k.kind, email: true });
+      expect({ k: k.kind, phone: phone.includes(`router.${verb}('${route.replace('email-ingest', 'phone-ingest')}'`) }).toEqual({ k: k.kind, phone: true });
+    }
   });
 
   // Row/firm scope: there is none to test, and this is why.

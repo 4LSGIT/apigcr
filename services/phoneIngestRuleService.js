@@ -619,8 +619,9 @@ async function evaluateRules(db, event) {
 // Identical shape to emailIngestRuleService CRUD. json columns
 // (match_config / transform_config / action.config) are stringified on write.
 // match_count / last_matched_at are pipeline-owned and never accepted from the
-// client. Actions are managed via their own endpoints — createRule/updateRule
-// never touch them. Validation reuses services/emailIngestValidator (table-
+// client. Actions are managed via their own endpoints — updateRule never
+// touches them; createRule inserts only the optional inline `actions` of a
+// create (A20.2). Validation reuses services/emailIngestValidator (table-
 // agnostic).
 //
 // CIRCULAR-DEPENDENCY NOTE: emailIngestValidator requires
@@ -724,13 +725,15 @@ async function getById(db, id) {
 }
 
 /**
- * Validate + INSERT a rule (no actions). Returns the row with actions: [].
+ * Validate + INSERT a rule, with its optional inline `actions` (A20.2; absent
+ * = none, the native editor's create). Returns the row with its actions.
  * The INSERT's column default is the first edit stamp; logged as 'create'.
  * @throws {ValidationError}
  */
 async function createRule(db, payload, userId, opts = {}) {
   const { errors } = _validator().validateRule(payload, true);
   if (errors.length) throw new ValidationError(errors);
+  const inlineActions = _inlineActions(payload);
 
   const actor = changeLog.resolveActor(opts, userId);
   const transformMode = payload.transform_mode ?? 'passthrough';
@@ -753,12 +756,56 @@ async function createRule(db, payload, userId, opts = {}) {
       ]
     );
     const ruleId = r.insertId;
+    // Inline actions (A20.2): references checked on the transaction's
+    // connection, rows inserted BEFORE the change row is recorded, so the
+    // 'create' log row carries the whole birth. A refused reference rolls the
+    // rule back with it — nothing half-created.
+    for (let i = 0; i < inlineActions.length; i++) {
+      const a = inlineActions[i];
+      const ref = await _validator().validateActionReferences(conn, a.action_type, a.config);
+      if (ref.errors.length) {
+        throw new ValidationError(ref.errors.map((e) => ({ field: `actions[${i}].${e.field}`, message: e.message })));
+      }
+      await conn.query(
+        `INSERT INTO phone_ingest_rule_actions
+           (rule_id, name, position, active, action_type, config)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [
+          ruleId,
+          (typeof a.name === 'string' && a.name.trim()) ? a.name.trim().slice(0, 100) : null,
+          a.position ?? i,
+          a.active !== undefined ? (a.active ? 1 : 0) : 1,
+          a.action_type,
+          _toJsonColumn(a.config),
+        ]
+      );
+    }
     const created = await getById(conn, ruleId);
     return changeLog.recordChange(conn, _T, {
       ruleId, kind: 'create', actor, beforeRow: null, afterRow: created,
       getRule: (c) => getById(c, ruleId), stampAlready: true,
     });
   });
+}
+
+// The optional inline `actions` of a create (A20.2 — Ask Casey's rule card
+// births a rule WITH its actions in one transaction, so one idempotent
+// request is the whole create). Absent = none (every native caller: the
+// editor adds actions one by one after the save). Shape-checked here with the
+// action route's own validator, BEFORE the transaction; references inside it.
+const MAX_INLINE_ACTIONS = 10;
+function _inlineActions(payload) {
+  const list = payload.actions === undefined ? [] : payload.actions;
+  if (!Array.isArray(list) || list.length > MAX_INLINE_ACTIONS) {
+    throw new ValidationError([{ field: 'actions', message: `must be an array of at most ${MAX_INLINE_ACTIONS} actions` }]);
+  }
+  list.forEach((a, i) => {
+    const { errors } = _validator().validateAction(a, true);
+    if (errors.length) {
+      throw new ValidationError(errors.map((e) => ({ field: `actions[${i}].${e.field}`, message: e.message })));
+    }
+  });
+  return list;
 }
 
 /**

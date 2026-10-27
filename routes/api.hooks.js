@@ -255,7 +255,13 @@ router.post('/hooks/:slug', hookReceiveLimiter, async (req, res) => {
     // stay detached exactly as before via the returned `detached` promise.
     // The response body is byte-identical to the old contract, and the
     // catch keeps the old guarantee: our pipeline errors never turn into
-    // sender-side retries. Filtered/captured results carry no `detached`.
+    // sender-side retries. Filtered/captured results carry no `detached`, nor
+    // does a FAILED hook transform (executeHook fails the execution before
+    // any target runs). That one is still answered 200, GUEST_CODE_BUSY
+    // included: a 503 would buy a redelivery only from a sender that retries,
+    // and RingCentral (hooks 21–23) retries ~3 times in a short window, then
+    // BLACKLISTS the subscription — every RC event lost until it is
+    // re-created. Recovery is a replay of the failed execution's raw_input.
     try {
       const result = await hookService.executeHook(db, slug, input, { hook, splitPhase: true });
       res.json({ status: 'received', slug });

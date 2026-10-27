@@ -574,13 +574,13 @@ async function references(db, { workflow_id, sequence_template_id, email_ingest_
 const INGEST = {
   email: {
     channel: 'email', rules: 'email_ingest_rules', actions: 'email_ingest_rule_actions',
-    executions: 'email_ingest_executions', suppressions: 'email_ingest_log_suppressions',
+    changes: 'email_ingest_rule_changes', executions: 'email_ingest_executions', suppressions: 'email_ingest_log_suppressions',
     ruleKey: 'email_ingest_rule_id', execKey: 'email_ingest_execution_id', suppKey: 'email_ingest_suppression_id',
     execService: () => require('./emailIngestExecutionsService'),
   },
   phone: {
     channel: 'phone', rules: 'phone_ingest_rules', actions: 'phone_ingest_rule_actions',
-    executions: 'phone_ingest_executions', suppressions: 'phone_log_suppressions',
+    changes: 'phone_ingest_rule_changes', executions: 'phone_ingest_executions', suppressions: 'phone_log_suppressions',
     ruleKey: 'phone_ingest_rule_id', execKey: 'phone_ingest_execution_id', suppKey: 'phone_ingest_suppression_id',
     execService: () => require('./phoneIngestExecutionsService'),
   },
@@ -732,7 +732,7 @@ async function ingestTargets(db, actions, credentialNames) {
 async function loadIngestRule(db, ch, id) {
   const [[rule]] = await db.query(
     `SELECT id, name, description, active, position, match_mode, match_config, transform_mode, transform_config,
-            match_count, last_matched_at, last_modified_by, created_at, updated_at
+            match_count, last_matched_at, last_modified_by, created_at, updated_at, definition_updated_at
        FROM ${ch.rules} WHERE id = ?`, [id]);
   if (!rule) throw err(404, `${ch.channel} ingest rule ${id} does not exist`);
   const [actions] = await db.query(
@@ -764,6 +764,11 @@ async function ingestDefinition(db, ch, ruleId) {
     transform_mode: rule.transform_mode, transform_config: transform.cell,
     match_count: rule.match_count, last_matched_at: rule.last_matched_at,
     updated_at: rule.updated_at, last_modified_by: rule.last_modified_by,
+    // THE edit stamp (A20 slice 1): moved only by a real definition change,
+    // never by a match (updated_at moves on every match). An A20.2/A20.3 edit
+    // proposal bakes exactly this value into its expected_base, so the
+    // route refuses the write when the rule changed after this read.
+    definition_updated_at: isoInstant(rule.definition_updated_at),
     action_count: actions.length, active_action_count: actions.filter((a) => a.active).length,
     notes: notes.length ? notes.join('; ') : null,
   }];
@@ -781,7 +786,84 @@ async function ingestDefinition(db, ch, ruleId) {
       target: t.detail,
     });
   }
+  rows.push(...await ingestChanges(db, ch, id));
   return rows;
+}
+
+function isoInstant(value) {
+  if (value == null) return null;
+  const d = value instanceof Date ? value : new Date(value);
+  return Number.isFinite(d.getTime()) ? d.toISOString() : null;
+}
+
+// The rule's change log (A20 slice 1's append-only <channel>_ingest_rule_changes),
+// newest first, as one row per change with a FIELD-LEVEL diff — what "what
+// changed / who changed it / undo that" needs. Readable by every staff
+// member, like the rule itself: the log holds nothing the rule does not
+// (http URLs and literal header values were redacted when it was written),
+// and the actor is a staff username or an API key's label. Every Casey edit
+// lands here too, so the reverse edit is always reconstructible.
+const CHANGE_ROWS = 5;
+const CHANGE_VALUE_CHARS = 400;
+const CHANGE_RULE_FIELDS = ['name', 'description', 'active', 'position', 'match_mode', 'match_config',
+  'transform_mode', 'transform_config'];
+const CHANGE_ACTION_FIELDS = ['name', 'position', 'active', 'action_type', 'config'];
+
+function sortedJson(v) {
+  const sortKeys = (x) => (Array.isArray(x) ? x.map(sortKeys)
+    : (x && typeof x === 'object' ? Object.fromEntries(Object.keys(x).sort().map((k) => [k, sortKeys(x[k])])) : x));
+  return JSON.stringify(sortKeys(v === undefined ? null : v));
+}
+
+function changeDiff(beforeRaw, afterRaw) {
+  const before = parseJson(beforeRaw, null);
+  const after = parseJson(afterRaw, null);
+  if ((before && before._omitted) || (after && after._omitted)) return [{ note: 'a snapshot was too large to store; this change cannot be diffed' }];
+  const out = [];
+  const br = (before && before.rule) || {};
+  const ar = (after && after.rule) || {};
+  for (const f of CHANGE_RULE_FIELDS) {
+    if (!before || !after) break;
+    if (sortedJson(br[f]) !== sortedJson(ar[f])) {
+      out.push({ field: f, before: capJson(br[f] ?? null, CHANGE_VALUE_CHARS), after: capJson(ar[f] ?? null, CHANGE_VALUE_CHARS) });
+    }
+  }
+  const byId = (s) => new Map(((s && s.actions) || []).map((a) => [Number(a.id), a]));
+  const ba = byId(before);
+  const aa = byId(after);
+  for (const [id, a] of aa) {
+    if (!ba.has(id)) { if (before) out.push({ action_added: id, action_type: a.action_type, config: capJson(a.config, CHANGE_VALUE_CHARS) }); continue; }
+    const b = ba.get(id);
+    for (const f of CHANGE_ACTION_FIELDS) {
+      if (sortedJson(b[f]) !== sortedJson(a[f])) {
+        out.push({ action: id, field: f, before: capJson(b[f] ?? null, CHANGE_VALUE_CHARS), after: capJson(a[f] ?? null, CHANGE_VALUE_CHARS) });
+      }
+    }
+  }
+  for (const [id, b] of ba) {
+    if (!aa.has(id) && after) out.push({ action_removed: id, action_type: b.action_type, config: capJson(b.config, CHANGE_VALUE_CHARS) });
+  }
+  return out;
+}
+
+async function ingestChanges(db, ch, ruleId) {
+  const [rows] = await db.query(
+    `SELECT id, change_kind, action_id, duplicated_from_rule_id, actor_user_id, actor_key_id, actor_label,
+            changed_at, definition_updated_at, before_json, after_json
+       FROM ${ch.changes} WHERE rule_id = ? ORDER BY id DESC LIMIT ${CHANGE_ROWS + 1}`, [ruleId]);
+  const shown = rows.slice(0, CHANGE_ROWS);
+  return shown.map((c, i) => ({
+    row: 'change', [ch.ruleKey]: ruleId, change_id: Number(c.id), change_kind: c.change_kind,
+    changed_at: firmLocal(c.changed_at),
+    actor: c.actor_label || (c.actor_user_id != null ? `user #${c.actor_user_id}` : (c.actor_key_id != null ? `api key #${c.actor_key_id}` : 'unknown')),
+    action_id: c.action_id == null ? null : Number(c.action_id),
+    duplicated_from_rule_id: c.duplicated_from_rule_id == null ? null : Number(c.duplicated_from_rule_id),
+    stamp_after: isoInstant(c.definition_updated_at),
+    diff: c.change_kind === 'create' || c.change_kind === 'duplicate' ? 'the rule was created (see the rule and action rows for what it holds now)'
+      : c.change_kind === 'delete' ? 'the rule was deleted'
+      : capJson(changeDiff(c.before_json, c.after_json), 2400),
+    ...(i === shown.length - 1 && rows.length > CHANGE_ROWS ? { note: `older changes exist; only the latest ${CHANGE_ROWS} are shown` } : {}),
+  }));
 }
 
 async function ingestReferences(db, ch, ruleId) {
@@ -1060,4 +1142,5 @@ async function ingestList(db, { ch, what }, { query, cap, since, until }) {
 module.exports = {
   list, definition, run, references, projectStepConfig,
   projectIngestActionConfig, ingestConfigCell, windowBound, INGEST_LIST_TYPES, CODE_PART_CHARS, CODE_PARTS_MAX,
+  changeDiff, CHANGE_ROWS,
 };
