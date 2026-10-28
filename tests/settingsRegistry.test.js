@@ -50,6 +50,7 @@ describe('classification snapshot', () => {
     "casey_ingest_authoring_enabled": "system system platform ui bool",
     "casey_report_authoring_enabled": "system system platform ui bool",
     "casey_sequence_authoring_enabled": "system system platform ui bool",
+    "casey_sequence_enroll_enabled": "system system platform ui bool",
     "casey_send_enabled": "system system platform ui bool",
     "casey_workflow_authoring_enabled": "system system platform ui bool",
     "casey_workflow_start_enabled": "system system platform ui bool",

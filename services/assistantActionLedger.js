@@ -23,6 +23,8 @@ const KINDS = new Map([
   ['hook.create.v1', 'hook_id'],
   ['sequence.step_insert.v1', 'sequence_template_id'],
   ['sequence.publish.v1', 'sequence_template_id'],
+  // A18.4b: the receipt is the new enrollment (POST /sequences/enroll's enrollmentId).
+  ['sequence.enroll.v1', 'enrollment_id'],
   // A14 sends: the receipt is the recipient contact (neither send route returns
   // a durable numeric id of its own for an SMS); the card opens its comms.
   ['sms.send.v1', 'contact_id'],

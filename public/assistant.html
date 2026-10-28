@@ -1284,6 +1284,150 @@ function sequencePublishResult(draft, result) {
   return { sequence_template_id: Number(draft.template.sequence_template_id), published_version: version };
 }
 
+// Sequence enroll (A18.4b): ONE contact into ONE template's PUBLISHED
+// version, NOW, through POST /sequences/enroll (A18.4a's hardened route).
+// The request is pinned here — direct mode by template_id (never
+// template_type), trigger_data {} — and the draft_id rides as
+// Idempotency-Key (scope sequences.enroll): the route keeps the claim once a
+// row can exist, so an unknown outcome can never enroll twice. The card is the
+// server-computed preview from the engine itself; an enrollment is immediate
+// fan-out, so it is danger-styled. Click-time freshness re-reads the template
+// (deactivated, or a different published version, refuses) and the contact's
+// active enrollments (already enrolled refuses) before the ledger claim. The
+// route's coded outcomes are read by knownOutcome: a coded 409 / 503 is a
+// refusal written before any row; SCHEDULING_FAILED is a known FAILURE whose
+// row the engine cancelled; anything else after the claim stays unknown.
+const SEQUENCE_ENROLL_ACTION_KINDS = new Set(['sequence.enroll.v1']);
+
+function sequenceEnrollLabel() { return 'Enroll contact in sequence'; }
+
+function sequenceEnrollStepLine(step) {
+  const head = `step ${step.step_number}: ${step.action_type}${step.function_name ? ` (${step.function_name})` : ''}${step.sends ? ' — MESSAGES THE CLIENT' : ''}`;
+  const placement = step.placement === 'places' ? `runs ${step.when_text}`
+    : step.placement === 'unschedulable' ? 'SKIPPED — its window has already passed'
+      : `TIMING ERROR (${step.timing_error}) — the enrollment stalls here`;
+  const parts = [`${head} — ${step.timing_text}; ${placement}`];
+  if (step.would_skip) parts.push(`would skip at fire time (${step.would_skip})`);
+  if (step.condition_error) parts.push(`condition error — the step would HOLD (${step.condition_error})`);
+  if (step.to != null || step.from != null) parts.push(`to ${step.to == null || step.to === '' ? '(BLANK)' : step.to} from ${step.from == null || step.from === '' ? '(BLANK)' : step.from}`);
+  if (step.subject != null) parts.push(`subject "${step.subject}"`);
+  if (step.message != null) parts.push(`"${step.message}"`);
+  if (step.body != null) parts.push(`body "${step.body}"`);
+  if (step.effect) parts.push(step.effect);
+  if ((step.unresolved || []).length) parts.push(`UNRESOLVED for this enrollment — left in the text as written: ${step.unresolved.join(', ')}`);
+  if (step.resolution_error) parts.push(`placeholders could not be resolved (${step.resolution_error}) — the step would run with its text UNRESOLVED`);
+  return `  ${parts.join('; ')}`;
+}
+
+function sequenceEnrollText(draft) {
+  const t = draft.template || {};
+  const c = draft.contact || {};
+  const lines = ['Sequence enrollment proposal — not enrolled',
+    `Template: #${t.sequence_template_id} "${t.name}"${t.type ? ` (type ${t.type})` : ''} — active, runs published v${t.version} (${t.step_count} steps)${t.has_draft ? `; it also has an unpublished draft — this enrollment runs v${t.version}, NOT the draft` : ''}`,
+    `Contact: ${c.contact_name} (#${c.contact_id})`,
+    'Trigger data: NONE — a contact-scoped enrollment: no appointment, case, user or e-sign request rides with it, so no {{trigger_data.*}}, appointment, case or user placeholder can resolve (each step below lists any it leaves unresolved).',
+    'Already enrolled: no — this contact has no active contact-scoped enrollment in this template (re-checked when you apply).'];
+  if (draft.verdict && draft.verdict !== 'would_proceed') {
+    lines.push(`Template condition: ${draft.verdict}${draft.template_condition_error ? ` (${draft.template_condition_error})` : ''} — the enrollment is created, then stopped at its first step.`);
+  }
+  if (draft.first_step == null) {
+    lines.push('Placement: NO step can be scheduled — the enrollment completes at once and sends nothing.');
+  } else {
+    lines.push(`Placement: the first step to run is step ${draft.first_step}${(draft.skipped_leading || []).length ? ` — step${draft.skipped_leading.length > 1 ? 's' : ''} ${draft.skipped_leading.join(', ')} SKIPPED (window already passed)` : ''}.`);
+  }
+  if (draft.stall_step != null) {
+    lines.push(`STALL: step ${draft.stall_step}'s timing cannot be computed for this enrollment — the enrollment stops there, active with nothing further sent, until someone recovers or cancels it.`);
+  }
+  if ((draft.placeholder_at_steps || []).length) {
+    lines.push(`Placeholder dates: step${draft.placeholder_at_steps.length > 1 ? 's' : ''} ${draft.placeholder_at_steps.join(', ')} use a {{placeholder}} as a fixed delay.at — with no trigger data it resolves EMPTY and that step cannot be scheduled.`);
+  }
+  lines.push(`Steps (the engine's own preview, resolved for this contact${draft.steps_truncated ? `; first ${(draft.steps || []).length} shown` : ''}):`);
+  for (const step of draft.steps || []) lines.push(sequenceEnrollStepLine(step));
+  lines.push(`Sends: ${draft.send_steps} step${draft.send_steps === 1 ? '' : 's'} text or email the client — each goes out as its step comes due, and none can be recalled.`);
+  if ((draft.effects || []).length) {
+    lines.push('External and chaining effects this enrollment can produce:');
+    for (const e of draft.effects) lines.push(`  ${e}`);
+  }
+  if ((draft.starters || []).length) {
+    lines.push('Normally enrolled by:');
+    for (const s of draft.starters) lines.push(`  ${s.source}: "${s.name}"${s.active === 0 ? ' (inactive)' : ''}`);
+  } else {
+    lines.push('Normally enrolled by: nothing references this template — it enrolls only by hand, API, or app-internal callers.');
+  }
+  lines.push(`Running enrollments of this template: ${draft.active_enrollments}.`);
+  lines.push('Effect: enrolls NOW. An enrollment is immediate fan-out — every step above runs as it comes due. The enrollment can be cancelled from the sequence\'s enrollments, but steps already run stay run.');
+  lines.push('Stale check: if the template is deactivated or its published version changes, or the contact becomes enrolled, before you apply, nothing is enrolled.');
+  return lines.join('\n');
+}
+
+function sequenceEnrollRequest(draft) {
+  const tplId = Number(draft.template && draft.template.sequence_template_id);
+  const contactId = Number(draft.contact && draft.contact.contact_id);
+  if (!Number.isSafeInteger(tplId) || tplId < 1 || !Number.isSafeInteger(contactId) || contactId < 1) {
+    throw new Error('This enrollment has no usable template or contact.');
+  }
+  return { path: '/sequences/enroll', method: 'POST', body: { contact_id: contactId, template_id: tplId, trigger_data: {} }, idempotent: true };
+}
+
+async function sequenceEnrollPrecheck(draft) {
+  const tplId = Number(draft.template && draft.template.sequence_template_id);
+  const contactId = Number(draft.contact && draft.contact.contact_id);
+  const reviewed = Number(draft.expected && draft.expected.current_version);
+  const read = await api(`/sequences/templates/${tplId}`, null, 'GET');
+  const tpl = read && read.template;
+  if (!tpl) return 'The sequence template no longer exists. Nothing was enrolled.';
+  if (!tpl.active) return 'The sequence template was deactivated since this card was prepared. Nothing was enrolled.';
+  if (Number(tpl.current_version) !== reviewed) {
+    return `The template's published version changed (v${reviewed} → v${Number(tpl.current_version)}) since this card was prepared. Nothing was enrolled. Ask Casey to prepare it again — the new card previews the version that is live now.`;
+  }
+  const list = await api(`/sequences/enrollments?contact_id=${contactId}&status=active&limit=100`, null, 'GET');
+  const rows = (list && Array.isArray(list.enrollments)) ? list.enrollments : null;
+  const total = Number(list && list.pagination && list.pagination.total);
+  if (!rows || !Number.isFinite(total) || total > rows.length) throw new Error('the contact\'s active enrollments could not be read in full');
+  const dup = rows.find((e) => Number(e.contact_id) === contactId && Number(e.template_id) === tplId
+    && e.appt_id == null && e.signing_request_id == null && e.status === 'active');
+  if (dup) return `${draft.contact.contact_name} is already enrolled in this sequence (active enrollment #${Number(dup.id)}). Nothing was enrolled.`;
+  return '';
+}
+
+function sequenceEnrollResult(draft, result) {
+  const id = Number(result && result.enrollmentId);
+  if (!(result && result.success === true) || !Number.isSafeInteger(id) || id < 1) throw new Error('The enroll returned no usable enrollment id');
+  const first = typeof result.firstJobScheduledAt === 'string' ? result.firstJobScheduledAt.slice(0, 40) : null;
+  return { enrollment_id: id, first_job_scheduled_at: first };
+}
+
+function sequenceEnrollFirstText(payload) {
+  if (!payload.first_job_scheduled_at) return 'no step could be scheduled, so it completed at once and sends nothing';
+  const at = new Date(payload.first_job_scheduled_at);
+  return `its first step is scheduled for ${Number.isNaN(at.getTime()) ? payload.first_job_scheduled_at : at.toLocaleString()}`;
+}
+
+// The enroll route's coded outcomes (routes/sequences.js ENROLL_CODE_STATUS,
+// A18.4a). Keyed on the exact status + code pairs; an idempotency body
+// (body.idempotency) or anything uncoded returns null and stays with the
+// engine's generic rules — an uncoded 409 or 5xx after the claim is unknown.
+function sequenceEnrollKnownOutcome(e) {
+  const body = e && e.body;
+  if (!body || typeof body !== 'object' || body.idempotency) return null;
+  const id = Number(body.enrollment_id);
+  const named = Number.isSafeInteger(id) && id > 0 ? ` #${id}` : '';
+  const refused = 'Refused — nothing enrolled';
+  if (e.status === 409 && body.code === 'ALREADY_ENROLLED') {
+    return { status: refused, text: `Refused — nothing enrolled: the contact is already enrolled in this sequence (active enrollment${named}).` };
+  }
+  if (e.status === 409 && (body.code === 'NEVER_PUBLISHED' || body.code === 'EMPTY_SEQUENCE')) {
+    return { status: refused, text: `Refused — nothing enrolled (${e.message || body.code}): the template changed since this card was reviewed. Ask Casey to prepare the enrollment again.` };
+  }
+  if (e.status === 503 && body.code === 'ENROLL_BUSY') {
+    return { status: refused, text: 'Refused — nothing enrolled: another enrollment of this contact in this sequence was in progress at that moment. Wait a moment, then ask Casey to prepare it again.' };
+  }
+  if (e.status === 500 && body.code === 'SCHEDULING_FAILED') {
+    return { status: 'Failed — nothing will send', text: `Failed — enrollment${named} was created, but its first step could not be scheduled, so no step is scheduled and nothing will send (${e.message || 'scheduling failed'}). Fix the sequence's timing in the sequence editor before enrolling again.` };
+  }
+  return null;
+}
+
 // Applied automation cards deep-link to their record through the shell's
 // semantic navigation (Fred, 2026-10-22: "take the user right there"). The
 // destination ids and token grammar are the SHELL's; this passes only the
@@ -2053,6 +2197,33 @@ const ACTION_FAMILIES = [
       'Find it under More → Automations → Sequences. The published version is now live.'),
   },
   {
+    id: 'sequence_enroll', kinds: SEQUENCE_ENROLL_ACTION_KINDS, title: 'Sequence enrollment', noun: 'enrollment', errorNoun: 'sequence enrollment',
+    label: sequenceEnrollLabel, text: sequenceEnrollText, request: sequenceEnrollRequest,
+    result: sequenceEnrollResult, idField: 'enrollment_id', appliedKey: 'result_enrollment_id',
+    danger: () => true,
+    precheck: sequenceEnrollPrecheck,
+    knownOutcome: sequenceEnrollKnownOutcome,
+    refusalText: (detail) => `Refused — nothing enrolled (${detail}). Ask Casey to prepare the enrollment again.`,
+    refusedStatus: 'Refused — nothing enrolled',
+    confirmText: (draft) => `This enrolls ${draft.contact.contact_name} in "${draft.template.name}" NOW. It cannot be undone: cancelling the enrollment later stops only the steps it has not reached yet.\n\n${sequenceEnrollText(draft)}`,
+    resultText: (payload) => `enrollment #${payload.enrollment_id}`,
+    appliedMessage: (draft, payload, replayed) => replayed
+      ? `This enrollment of ${draft.contact.contact_name} in "${draft.template.name}" had already been made as enrollment #${payload.enrollment_id}; nothing was enrolled a second time.`
+      : `Enrolled ${draft.contact.contact_name} in "${draft.template.name}" (template #${draft.template.sequence_template_id}, v${draft.template.version}): enrollment #${payload.enrollment_id} — ${sequenceEnrollFirstText(payload)}.`,
+    entity: (draft, payload) => ({ kind: 'sequence', id: String(draft.template.sequence_template_id), label: `${draft.template.name} — enrollment #${payload.enrollment_id}` }),
+    failure: 'The sequence enrollment could not be applied.',
+    ambiguousText: (detail) => `Outcome unknown — the contact may or may not have been enrolled${detail ? ` (${detail})` : ''}. Check the sequence's enrollments before enrolling again. Do not apply this card again.`,
+    appliedCopy: (draft) => ({
+      status: `Enrolled — enrollment #${draft.result_enrollment_id}`,
+      warning: `Enrollment #${draft.result_enrollment_id} of ${draft.contact ? draft.contact.contact_name : 'the contact'} in "${draft.template ? draft.template.name : 'the sequence'}" was made using your signed-in account. Its steps run as they come due; steps already run cannot be undone.`,
+      button: `Open enrollment #${draft.result_enrollment_id}`,
+    }),
+    reviewWarning: 'This ENROLLS THE CONTACT NOW in the published version, with no trigger data — every text, email, webhook and chained start listed above happens as its step comes due, and none can be recalled. Cancelling the enrollment later stops only the steps it has not reached. Canceling the dialog enrolls nothing.',
+    open: (draft) => openAutomationRecord('automations.sequence', draft.result_enrollment_id,
+      `Enrollment #${draft.result_enrollment_id}`,
+      'Find it under More → Automations → Sequences, on the template\'s Enrollments tab.', 'enrollment'),
+  },
+  {
     id: 'hook', kinds: HOOK_ACTION_KINDS, title: 'Hook', noun: 'hook', errorNoun: 'hook action',
     label: hookCreateLabel, text: hookCreateText, request: hookCreateRequest, result: hookCreateResult,
     idField: 'hook_id', appliedKey: 'result_hook_id',
@@ -2259,7 +2430,16 @@ async function executeActionDraft(message) {
     // idempotency 409 (body.idempotency) stays ambiguous for every family.
     const refused = claimed && e && e.status >= 400 && e.status < 500
       && (e.status !== 409 || (family.refusal409 === true && !(e.body && e.body.idempotency)));
-    if (optoutDeclined) {
+    // A family whose route answers CODED outcomes the rules below would
+    // misread names them itself (knownOutcome → {text, status} or null): the
+    // sequence enroll route's coded 409 / 503 are refusals written before any
+    // row, and its coded 500 is a known failure whose row was cancelled. An
+    // idempotency body or anything uncoded returns null and falls through.
+    const known = claimed && typeof family.knownOutcome === 'function' ? family.knownOutcome(e) : null;
+    if (known) {
+      draft.refusal_error = known.text;
+      if (known.status) draft.refusal_status = known.status;
+    } else if (optoutDeclined) {
       draft.refusal_error = `${e.message} Ask Casey to prepare it again if you change your mind.`;
     } else if (baseConflict) {
       draft.refusal_error = family.conflictRefusal || 'The workflow changed since this card was prepared, so the server refused the write — nothing was changed. Ask Casey to read the workflow again and rebuild the proposal.';
@@ -2304,7 +2484,7 @@ function applyActionResults(messages, ledger = []) {
     if (row) {
       const family = actionFamily(draft);
       if (family) delete draft[family.appliedKey];
-      draft.status = 'draft'; delete draft.ambiguous_error; delete draft.refusal_error;
+      draft.status = 'draft'; delete draft.ambiguous_error; delete draft.refusal_error; delete draft.refusal_status;
       if (row.kind === draft.kind && row.outcome === 'applied' && family && row.result) {
         draft.status = 'applied'; markActionApplied(family, draft, row.result);
       } else if (row.outcome !== 'not-applied' || row.kind !== draft.kind) {
@@ -2366,7 +2546,7 @@ function hydrateActionDraft(family, host, message, draft) {
   const status = document.createElement('span'); status.className = 'action-draft-status';
   status.textContent = applied ? (appliedCopy ? appliedCopy.status : `Applied — ${family.noun} #${appliedId}`)
     : draft.ambiguous_error ? 'Outcome unknown — check the record'
-      : draft.refusal_error ? (family.refusedStatus || 'Refused — nothing written')
+      : draft.refusal_error ? (draft.refusal_status || family.refusedStatus || 'Refused — nothing written')
       : actionDraftStale(draft) ? 'Expired — not applied' : draft.executing ? 'Applying…' : draft.reviewing ? 'Reviewing…' : 'Proposal — not applied';
   head.append(title, status);
 

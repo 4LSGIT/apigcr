@@ -695,7 +695,25 @@ use the new one), what can enroll contacts in it, every text or email step and
 whom it messages, and the fact that there is no rollback. If anyone edits the
 draft — a step or the template condition — after the card was prepared, the
 publish is refused and nothing changes. The off switch for both sequence cards
-is the `casey_sequence_authoring_enabled` setting. The card
+is the `casey_sequence_authoring_enabled` setting. It may instead be one
+`sequence.enroll.v1` proposal: enrolling ONE contact in ONE active sequence
+template's published version now, with no extra data — no appointment, case
+or signature request rides with it, so a template whose first step needs an
+appointment time or a date from that data is refused (the enrollment would
+fail), and placeholders that need it stay unfilled; the card lists them per
+step. Casey reads both the template and the contact first. The card shows
+every step as the sequence would run it for that contact — when it runs or
+that it would be skipped, and for a text or email the actual recipient,
+sender and wording — plus what normally enrolls the template and how many
+enrollments are running, and it is styled as a warning: every text and email
+step messages the client as it comes due, and cancelling the enrollment
+later stops only the steps not yet reached. A contact already enrolled in the
+template is refused. If the template is deactivated or a new version is
+published before you confirm, or the contact becomes enrolled, nothing is
+enrolled. If the outcome cannot be confirmed, the card says so and offers no
+second enrollment; check the sequence's enrollments. Once applied, the card
+opens the new enrollment. Its off switch is the `casey_sequence_enroll_enabled`
+setting, which is off until set to 1. The card
 shows the full code for review, the browser pins the safe engine in the
 request, and the system off switch is the `casey_code_actions_enabled`
 setting. The proposal

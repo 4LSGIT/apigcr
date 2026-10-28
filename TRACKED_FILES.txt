@@ -1190,6 +1190,8 @@ tests/caseyReportDraft.test.js
 tests/caseySend.routes.test.js
 tests/caseySendAction.mysql.test.js
 tests/caseySendAction.test.js
+tests/caseySequenceEnroll.mysql.test.js
+tests/caseySequenceEnroll.test.js
 tests/caseySequencePublish.mysql.test.js
 tests/caseySequencePublish.test.js
 tests/caseySequenceStep.mysql.test.js

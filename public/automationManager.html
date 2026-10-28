@@ -512,9 +512,14 @@ const ASSISTANT_RECORD_BY_SUB = Object.freeze({
 });
 // A17.7: a third segment may name a SECONDARY record kind the sub-page opens
 // with its own opener — `workflows~<id>~execution` is an applied
-// workflow-start card's run, routed to the pane's execution viewer. Closed
-// vocabulary (mirrors the shell's `records` list); anything else fails closed.
-const ASSISTANT_SECONDARY_RECORDS = Object.freeze({ workflows: Object.freeze(['execution']) });
+// workflow-start card's run, routed to the pane's execution viewer, and
+// `sequences~<id>~enrollment` (A18.4b) an applied sequence-enroll card's
+// enrollment, routed to the sequences pane's enrollment viewer. Closed
+// vocabulary (mirrors the shell's `records` lists); anything else fails closed.
+const ASSISTANT_SECONDARY_RECORDS = Object.freeze({
+  workflows: Object.freeze(['execution']),
+  sequences: Object.freeze(['enrollment']),
+});
 
 function ycAssistantOpenDestination(rest) {
   const parsed = parseAssistantRest(rest);

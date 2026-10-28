@@ -72,6 +72,8 @@ const ACTION_FNS = ['appendDraftField', 'appendDraftFieldsFromText', 'actionDraf
   'hookCreateLabel', 'hookTargetText', 'hookCreateText', 'hookCreateRequest', 'hookCreateResult',
   'sequenceStepActionLabel', 'sequenceStepParamValue', 'sequenceStepText', 'sequenceStepActionRequest', 'sequenceStepActionResult',
   'sequencePublishLabel', 'sequencePublishChangeLine', 'sequencePublishText', 'sequencePublishRequest', 'sequencePublishResult',
+  'sequenceEnrollLabel', 'sequenceEnrollStepLine', 'sequenceEnrollText', 'sequenceEnrollRequest', 'sequenceEnrollPrecheck',
+  'sequenceEnrollResult', 'sequenceEnrollFirstText', 'sequenceEnrollKnownOutcome',
   'ingestRulePath', 'ingestRuleId', 'ingestRuleLabel', 'ingestRuleValue', 'ingestRuleHead', 'ingestRuleSideText', 'ingestRuleActionLine',
   'ingestRuleText', 'ingestRuleRequest', 'ingestRuleDispatch', 'ingestRuleResult', 'ingestRulePrecheck', 'openIngestRuleRecord',
   'openAutomationRecord',
@@ -94,7 +96,7 @@ function actionSandbox(deps = {}) {
     constSrc(html, 'APPT_ACTION_KINDS'), constSrc(html, 'CONTACT_SUBRECORD_ACTION_KINDS'),
     constSrc(html, 'JOB_ACTION_KINDS'), constSrc(html, 'WORKFLOW_ACTION_KINDS'),
     constSrc(html, 'WORKFLOW_STEP_ACTION_KINDS'), constSrc(html, 'WORKFLOW_PUBLISH_ACTION_KINDS'), constSrc(html, 'WORKFLOW_START_ACTION_KINDS'),
-    constSrc(html, 'HOOK_ACTION_KINDS'), constSrc(html, 'SEQUENCE_STEP_ACTION_KINDS'), constSrc(html, 'SEQUENCE_PUBLISH_ACTION_KINDS'), constSrc(html, 'SEND_ACTION_KINDS'),
+    constSrc(html, 'HOOK_ACTION_KINDS'), constSrc(html, 'SEQUENCE_STEP_ACTION_KINDS'), constSrc(html, 'SEQUENCE_PUBLISH_ACTION_KINDS'), constSrc(html, 'SEQUENCE_ENROLL_ACTION_KINDS'), constSrc(html, 'SEND_ACTION_KINDS'),
     constSrc(html, 'REPORT_ACTION_KINDS'), constSrc(html, 'INGEST_RULE_ACTION_KINDS'), constSrc(html, 'INGEST_RULE_PATHS'),
     constSrc(html, 'INGEST_RULE_UPDATE_FIELDS'), constSrc(html, 'INGEST_ACTION_UPDATE_FIELDS'),
     constSrc(html, 'SEQUENCE_STEP_FUNCTIONS'), constSrc(html, 'SEQUENCE_STEP_ERROR_POLICY'),
@@ -1432,6 +1434,186 @@ describe('Ask Casey action freshness and applied-marker durability (review fix p
     // Cancel starts nothing and reads nothing.
     const cancelled = await runStart(startMessage(), { confirm: false });
     expect([cancelled.writes, cancelled.gets, cancelled.ledger]).toEqual([[], [], []]);
+  });
+
+  // A18.4b: the sequence enroll card through the SHARED engine. Pinned: the
+  // click-time re-read (template + the contact's active enrollments) refuses
+  // before the ledger claim, the request is exactly {contact_id, template_id,
+  // trigger_data:{}} keyed by the draft_id, the receipt is the enrollment, the
+  // applied card deep-links to the ENROLLMENT, and the route's coded outcomes
+  // read in A14's vocabulary through the family's knownOutcome.
+  const enrollMessage = (over = {}) => ({ action_draft: {
+    draft_id: '8b1d2e3f-4a5b-4c6d-8e7f-0123456789ab', kind: 'sequence.enroll.v1', status: 'draft', received_at: Date.now(),
+    template: { sequence_template_id: 12, name: 'Lead Drip', type: 'lead', version: 3, step_count: 2, has_draft: 1 },
+    contact: { contact_id: 77, contact_name: 'Dana Client' },
+    verdict: 'would_proceed', first_step: 1, skipped_leading: [], stall_step: null, placeholder_at_steps: [],
+    send_steps: 1, steps_truncated: 0,
+    steps: [
+      { step_number: 1, action_type: 'sms', function_name: 'send_sms', sends: true, timing_text: 'Immediately (about 5 seconds after the previous step, or after enrollment for step 1)',
+        placement: 'places', when_text: 'Wed, Oct 28, 2026, 3:05 PM firm time', to: '3135551234', from: '{{users.default_phone}}', message: 'Hi Dana',
+        unresolved: ['{{users.default_phone}}'] },
+      { step_number: 2, action_type: 'task', function_name: 'create_task', sends: false, timing_text: '2 days after the previous step (or after enrollment for step 1)',
+        placement: 'places', when_text: 'Fri, Oct 30, 2026, 3:05 PM firm time' },
+    ],
+    effects: ['step 1: send_sms — external-send: messages {{contacts.contact_phone}} when this enrollment reaches it'],
+    starters: [{ source: 'hook', name: 'Lead hook', active: 1 }],
+    active_enrollments: 4, expected: { current_version: 3 }, evidence: [],
+    // Model-shaped junk that must never reach the request.
+    trigger_data: { appt_id: 5 }, template_type: 'lead', appt_id: 5,
+    ...over } });
+  const enrollReads = (over = {}) => (path) => {
+    if (path === '/sequences/templates/12') {
+      return { success: true, template: { id: 12, active: 1, current_version: 3, draft_version: 4, ...(over.template || {}) }, steps: [], has_draft: true };
+    }
+    if (path === '/sequences/enrollments?contact_id=77&status=active&limit=100') {
+      const rows = over.rows || [];
+      return { success: true, enrollments: rows, pagination: { page: 1, limit: 100, total: rows.length, totalPages: 1 } };
+    }
+    throw new Error(`unexpected read ${path}`);
+  };
+  function runEnroll(message, { read = enrollReads(), write = async () => ({ success: true, enrollmentId: 812, templateName: 'Lead Drip', totalSteps: 2, firstJobScheduledAt: '2026-10-28T19:05:05.000Z' }), confirm = true } = {}) {
+    const writes = []; const gets = []; const ledger = [];
+    const api = jest.fn(async (path, body, method, headers) => {
+      if (method === 'GET') { gets.push(path); return read(path); }
+      writes.push({ path, body, method, headers }); return write(path, body);
+    });
+    const ledgerApi = jest.fn(async (path, body) => { ledger.push(path.endsWith('/claim') ? 'claim' : { receipt: body }); return path.endsWith('/claim') ? { outcome: 'in_flight', claimed: true, claim_token: 'tok-enroll' } : { outcome: 'applied' }; });
+    const P = { Swal: { fire: jest.fn().mockResolvedValue({ isConfirmed: confirm }) }, ycAssistantNavigate: jest.fn().mockResolvedValue(true) };
+    const history = [];
+    const sandbox = actionSandbox({ P, api, ledgerApi, history, saveAssistantMessage: jest.fn() });
+    return sandbox.executeActionDraft(message).then(() => ({ writes, gets, ledger, P, history, sandbox }));
+  }
+  const coded = (status, body, message = 'Contact 77 is already enrolled') => Object.assign(new Error(message), { status, body });
+
+  test('sequence enroll card: danger dialog, click-time re-read, ONE keyed POST, enrollment receipt and deep link', async () => {
+    const m = enrollMessage();
+    const { writes, gets, ledger, P, history, sandbox } = await runEnroll(m);
+    expect(sandbox.actionFamily(m.action_draft).id).toBe('sequence_enroll');
+    expect(gets).toEqual(['/sequences/templates/12', '/sequences/enrollments?contact_id=77&status=active&limit=100']);
+    expect(writes).toEqual([{ path: '/sequences/enroll', method: 'POST', body: { contact_id: 77, template_id: 12, trigger_data: {} },
+      headers: { 'Idempotency-Key': m.action_draft.draft_id } }]);
+    expect(ledger).toEqual(['claim', { receipt: { claim_token: 'tok-enroll', result: { enrollment_id: 812 } } }]);
+    expect(m.action_draft).toMatchObject({ status: 'applied', result_enrollment_id: 812 });
+    expect(history[0].text).toMatch(/^Enrolled Dana Client in "Lead Drip" \(template #12, v3\): enrollment #812 — its first step is scheduled for /);
+    expect(P.ycAssistantNavigate).toHaveBeenCalledWith('automations.sequence', { id: 812, record: 'enrollment' });
+    const dialog = P.Swal.fire.mock.calls[0][0];
+    expect(dialog).toMatchObject({ icon: 'warning', focusCancel: true, confirmButtonText: 'Enroll contact in sequence' });
+    expect(dialog.text).toMatch(/^This enrolls Dana Client in "Lead Drip" NOW\. It cannot be undone/);
+    expect(dialog.text).toContain('runs published v3 (2 steps); it also has an unpublished draft — this enrollment runs v3, NOT the draft');
+    expect(dialog.text).toContain('Contact: Dana Client (#77)');
+    expect(dialog.text).toContain('Trigger data: NONE — a contact-scoped enrollment');
+    expect(dialog.text).toContain('Placement: the first step to run is step 1.');
+    expect(dialog.text).toContain('  step 1: sms (send_sms) — MESSAGES THE CLIENT — Immediately (about 5 seconds after the previous step, or after enrollment for step 1); runs Wed, Oct 28, 2026, 3:05 PM firm time; to 3135551234 from {{users.default_phone}}; "Hi Dana"; UNRESOLVED for this enrollment — left in the text as written: {{users.default_phone}}');
+    expect(dialog.text).toContain('Sends: 1 step text or email the client');
+    expect(dialog.text).toContain('  hook: "Lead hook"');
+    expect(dialog.text).toContain('An enrollment is immediate fan-out');
+  });
+
+  test('sequence enroll card: stall, skipped steps, nothing placeable and a failing template condition are all on the card', async () => {
+    const m = enrollMessage({ first_step: null, stall_step: 3, placeholder_at_steps: [3], skipped_leading: [1, 2],
+      verdict: 'would_cancel_at_first_step (template condition failed)' });
+    const { P } = await runEnroll(m, { confirm: false });
+    const text = P.Swal.fire.mock.calls[0][0].text;
+    expect(text).toContain('Template condition: would_cancel_at_first_step (template condition failed) — the enrollment is created, then stopped at its first step.');
+    expect(text).toContain('Placement: NO step can be scheduled — the enrollment completes at once and sends nothing.');
+    expect(text).toContain("STALL: step 3's timing cannot be computed for this enrollment — the enrollment stops there");
+    expect(text).toContain('Placeholder dates: step 3 use a {{placeholder}} as a fixed delay.at');
+    const skipped = enrollMessage({ skipped_leading: [1, 2], first_step: 3 });
+    const r = await runEnroll(skipped, { confirm: false });
+    expect(r.P.Swal.fire.mock.calls[0][0].text).toContain('Placement: the first step to run is step 3 — steps 1, 2 SKIPPED (window already passed).');
+  });
+
+  test('sequence enroll card: a deactivated template, a new published version, or an existing enrollment refuses BEFORE the claim', async () => {
+    const cases = [
+      [enrollReads({ template: { active: 0 } }), 'The sequence template was deactivated since this card was prepared. Nothing was enrolled.'],
+      [enrollReads({ template: { current_version: 4, draft_version: null } }), 'The template\'s published version changed (v3 → v4) since this card was prepared. Nothing was enrolled.'],
+      [enrollReads({ rows: [{ id: 5501, contact_id: 77, template_id: 12, appt_id: null, signing_request_id: null, status: 'active' }] }),
+        'Dana Client is already enrolled in this sequence (active enrollment #5501). Nothing was enrolled.'],
+      [(path) => (path === '/sequences/templates/12' ? { success: true } : enrollReads()(path)), 'The sequence template no longer exists. Nothing was enrolled.'],
+    ];
+    for (const [read, why] of cases) {
+      const m = enrollMessage();
+      const { writes, ledger } = await runEnroll(m, { read });
+      expect({ why, writes, ledger }).toEqual({ why, writes: [], ledger: [] });
+      expect(m.action_draft.refusal_error).toContain(why);
+    }
+    // An appointment-scoped enrollment in the same template is a different identity.
+    const ok = await runEnroll(enrollMessage(), { read: enrollReads({ rows: [{ id: 5502, contact_id: 77, template_id: 12, appt_id: 900, signing_request_id: null, status: 'active' }] }) });
+    expect(ok.writes).toHaveLength(1);
+  });
+
+  test('sequence enroll card: coded refusals, the known SCHEDULING_FAILED failure, unknown and replay outcomes', async () => {
+    const refusals = [
+      [coded(409, { error: 'Failed to enroll contact', code: 'ALREADY_ENROLLED', enrollment_id: 5501 }),
+        'Refused — nothing enrolled: the contact is already enrolled in this sequence (active enrollment #5501).', 'Refused — nothing enrolled'],
+      [coded(409, { error: 'Failed to enroll contact', code: 'NEVER_PUBLISHED' }, 'never been published'),
+        'Refused — nothing enrolled (never been published): the template changed since this card was reviewed. Ask Casey to prepare the enrollment again.', 'Refused — nothing enrolled'],
+      [coded(409, { error: 'Failed to enroll contact', code: 'EMPTY_SEQUENCE' }, 'has no steps'),
+        'Refused — nothing enrolled (has no steps): the template changed since this card was reviewed. Ask Casey to prepare the enrollment again.', 'Refused — nothing enrolled'],
+      [coded(503, { error: 'Failed to enroll contact', code: 'ENROLL_BUSY' }, 'lock not granted'),
+        'Refused — nothing enrolled: another enrollment of this contact in this sequence was in progress at that moment. Wait a moment, then ask Casey to prepare it again.', 'Refused — nothing enrolled'],
+      [coded(500, { error: 'Failed to enroll contact', code: 'SCHEDULING_FAILED', enrollment_id: 813 }, 'Enrollment #813 was created but its first step could not be scheduled'),
+        'Failed — enrollment #813 was created, but its first step could not be scheduled, so no step is scheduled and nothing will send (Enrollment #813 was created but its first step could not be scheduled). Fix the sequence\'s timing in the sequence editor before enrolling again.',
+        'Failed — nothing will send'],
+      // A plain 4xx the route raised before the engine (400 / 404) is the generic refusal.
+      [coded(404, { error: 'Template not found' }, 'Template not found'),
+        'Refused — nothing enrolled (Template not found). Ask Casey to prepare the enrollment again.', 'Refused — nothing enrolled'],
+    ];
+    const { JSDOM } = require('jsdom');
+    const dom = new JSDOM('<!doctype html><div></div>');
+    for (const [err, text, chip] of refusals) {
+      const m = enrollMessage();
+      const { sandbox } = await runEnroll(m, { write: async () => { throw err; } });
+      expect(m.action_draft.refusal_error).toBe(text);
+      expect(m.action_draft).not.toHaveProperty('ambiguous_error');
+      const box = actionSandbox({ document: dom.window.document, navigator: dom.window.navigator });
+      const host = dom.window.document.createElement('div');
+      box.hydrateActionDraft(sandbox.actionFamily(m.action_draft), host, m, m.action_draft);
+      expect(host.querySelector('.action-draft-status').textContent).toBe(chip);
+      expect([...host.querySelectorAll('button')].map((b) => b.textContent)).toEqual(['Copy details', 'Discard']);
+    }
+    // An idempotency 409, an uncoded 409 / 5xx and a dead socket are UNKNOWN — the write control goes.
+    for (const err of [
+      coded(409, { idempotency: { outcome: 'in_flight' } }, 'The same request is still being applied.'),
+      coded(409, { code: 'ALREADY_ENROLLED', idempotency: { outcome: 'in_flight' } }, 'still applying'),
+      coded(409, { error: 'conflict' }, 'conflict'),
+      coded(500, { error: 'Failed to enroll contact', message: 'Sequence template #12 is inactive' }, 'Sequence template #12 is inactive'),
+      coded(503, {}, 'Service Unavailable'),
+      new Error('Failed to fetch'),
+    ]) {
+      const m = enrollMessage();
+      await runEnroll(m, { write: async () => { throw err; } });
+      expect(m.action_draft.ambiguous_error).toMatch(/^Outcome unknown — the contact may or may not have been enrolled .*Check the sequence's enrollments before enrolling again\. Do not apply this card again\.$/);
+      expect(m.action_draft).not.toHaveProperty('refusal_error');
+    }
+    // A replay names the first enrollment and says nothing enrolled twice.
+    const replay = enrollMessage();
+    const { history } = await runEnroll(replay, { write: async () => ({ success: true, enrollmentId: 810, firstJobScheduledAt: null, replayed: true }) });
+    expect(history[0].text).toBe('This enrollment of Dana Client in "Lead Drip" had already been made as enrollment #810; nothing was enrolled a second time.');
+    expect(replay.action_draft.result_enrollment_id).toBe(810);
+    // A success that placed no step says so.
+    const none = enrollMessage();
+    const r = await runEnroll(none, { write: async () => ({ success: true, enrollmentId: 811, firstJobScheduledAt: null }) });
+    expect(r.history[0].text).toBe('Enrolled Dana Client in "Lead Drip" (template #12, v3): enrollment #811 — no step could be scheduled, so it completed at once and sends nothing.');
+    // Cancel enrolls nothing and reads nothing.
+    const cancelled = await runEnroll(enrollMessage(), { confirm: false });
+    expect([cancelled.writes, cancelled.gets, cancelled.ledger]).toEqual([[], [], []]);
+    dom.window.close();
+  });
+
+  test('sequence enroll card: a reopened card restores from the ledger, and an applied card offers only the enrollment', () => {
+    const { JSDOM } = require('jsdom');
+    const dom = new JSDOM('<!doctype html><div></div>');
+    const box = actionSandbox({ document: dom.window.document, navigator: dom.window.navigator });
+    const m = enrollMessage({ refusal_error: 'stale', refusal_status: 'Failed — nothing will send' });
+    box.applyActionResults([m], [{ draft_id: m.action_draft.draft_id, kind: 'sequence.enroll.v1', outcome: 'applied', result: { enrollment_id: 812 } }]);
+    expect(m.action_draft).toMatchObject({ status: 'applied', result_enrollment_id: 812 });
+    expect(m.action_draft).not.toHaveProperty('refusal_status');
+    const host = dom.window.document.createElement('div');
+    box.hydrateActionDraft(box.actionFamily(m.action_draft), host, m, m.action_draft);
+    expect(host.querySelector('.action-draft-status').textContent).toBe('Enrolled — enrollment #812');
+    expect([...host.querySelectorAll('button')].map((b) => b.textContent)).toEqual(['Open enrollment #812', 'Copy details']);
+    dom.window.close();
   });
 
   // A20.2 / A20.3: the ingest rule family through the SHARED engine. The

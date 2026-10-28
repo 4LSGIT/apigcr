@@ -7052,13 +7052,16 @@
       // `records` (A17.7): the secondary record kinds a deep link may name
       // ({ id, record }) — vocabulary from this frozen list only, appended to
       // the rest as `<sub>~<id>~<record>`. 'execution' opens that run in the
-      // workflows pane's execution viewer (an applied workflow-start card).
+      // workflows pane's execution viewer (an applied workflow-start card);
+      // 'enrollment' opens that enrollment in the sequences pane's enrollment
+      // viewer (an applied sequence-enroll card, A18.4b).
       'automations.workflow': Object.freeze({
         launcher: 'moreAutomations', page: 'tabMore', panel: 'automationsDiv', sub: 'workflows',
         records: Object.freeze(['execution']),
       }),
       'automations.sequence': Object.freeze({
         launcher: 'moreAutomations', page: 'tabMore', panel: 'automationsDiv', sub: 'sequences',
+        records: Object.freeze(['enrollment']),
       }),
       'automations.job': Object.freeze({
         launcher: 'moreAutomations', page: 'tabMore', panel: 'automationsDiv', sub: 'scheduledJobs',

@@ -173,6 +173,22 @@ describe('A17.7 — every stage teaches workflow start, published-only and input
   });
 });
 
+// A18.4b: the sequence family marker is the step bullet, which used to say
+// "enrolling a contact are not available" — a stage still saying so refuses
+// the new kind (the job lesson), so the exclusion must be gone everywhere.
+describe('A18.4b — every stage teaches sequence enroll, contact-scoped and dataless', () => {
+  test('the plan carries its own enroll bullet and drops the old exclusion', () => {
+    expect(planPrompt).toContain('A reviewed sequence enroll action is available');
+    expect(planPrompt).not.toContain('enrolling a contact are not available');
+  });
+  test('the answer and repair stages teach both evidence ids, no trigger data, and the published version', () => {
+    expect(answerPrompt).toContain('Sequence enroll rules (A18.4b');
+    expect(answerPrompt).toContain('Evidence is REQUIRED and must carry BOTH ids');
+    expect(answerPrompt).toContain('CONTACT-SCOPED ONLY, NO TRIGGER DATA');
+    expect(repairPrompt).toContain('no trigger_data, payload, input, appt_id,\n  signing_request_id, case_id or template_type key');
+  });
+});
+
 describe('a job request forces the draft-required path like the other families', () => {
   const svc = require(path.join(REPO, 'services', 'assistantService'));
 

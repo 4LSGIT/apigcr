@@ -1054,6 +1054,27 @@ COMMENTs.)
   retried x-api-key start still creates two runs. Wiring the editor would be
   a one-line header plus an "already started" message on replay.
 
+## From the Ask Casey arc — A18.4b sequence enroll (2026-10-28) — deferred
+
+- **A reviewed trigger_data payload for Casey enrollments.** A18.4b enrolls
+  contact-scoped only, `trigger_data` pinned `{}`: no `appt_id`,
+  `signing_request_id`, `case_id` or `user`, so templates whose first step is
+  appointment-anchored or dates itself from `{{trigger_data.*}}` are refused
+  (the enroll would fail `SCHEDULING_FAILED`), and `{{users.*}}` /
+  `{{cases.*}}` / `{{trigger_data.*}}` placeholders stay unresolved on the
+  card. A payload slice would need: a closed key set per template (its
+  `test_input` / `captured_input` sample, or the placeholders its published
+  steps read), values shown verbatim on the card and fed to the same
+  `previewEnrollmentSteps(…, {version: 'published'})` call, ids
+  (`appt_id`, `case_id`, `user`) only from evidence rows, and a ruling on
+  whether an appointment-scoped enrollment by chat is wanted at all (today
+  those are born from `apptService` / `esignSendService`). Fred's call.
+- **Opt-out is not on the enroll card.** A sequence send step refuses an
+  opted-out recipient at fire time (`optoutService.assertNotOptedOut`, in the
+  `send_sms` / `send_email` internal functions), so on an opted-out contact
+  that step fails without sending — and the card does not warn.
+  The card could read the contact's active phone/email rows and say so.
+
 ## From the Ask Casey arc — A16 report drafts (2026-10-27) — deferred
 
 - **The other report kinds.** Update (PUT, honouring the lock), run, lock /

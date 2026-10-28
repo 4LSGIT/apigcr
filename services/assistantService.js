@@ -242,8 +242,21 @@ const WORKFLOW_PUBLISH_EFFECT_FNS = new Set(['enroll_sequence', 'start_workflow'
 // external effects, and no rollback route), and expected_base carries the
 // whole-draft fingerprint (steps + the draft's template condition), so a
 // draft edited after the review is refused by the route with a 409.
-const SEQUENCE_ACTION_KINDS = new Set(['sequence.step_insert.v1', 'sequence.publish.v1']);
+// A18.4b adds enroll: ONE contact into ONE template's PUBLISHED version, now,
+// through POST /sequences/enroll (the A18.4a-hardened route: Idempotency-Key
+// = the card's draft_id, per-identity GET_LOCK, coded refusals). It executes
+// rather than authors — a fan-out of every send step to a client — so it has
+// its own off switch (casey_sequence_enroll_enabled, dark unless '1').
+// Contact-scoped only: direct mode by template_id, trigger_data pinned {} —
+// appointment and e-sign reminder enrollments are born from automations
+// (apptService, esignSendService), not from a chat request.
+const SEQUENCE_ACTION_KINDS = new Set(['sequence.step_insert.v1', 'sequence.publish.v1', 'sequence.enroll.v1']);
 const SEQUENCE_PUBLISH_KEYS = new Set(['kind', 'sequence_template_id', 'evidence']);
+const SEQUENCE_ENROLL_KEYS = new Set(['kind', 'sequence_template_id', 'contact_id', 'evidence']);
+// Refused BY NAME (the A17.7 payload-key pattern): every way of handing the
+// enrollment data, and the cascade mode.
+const SEQUENCE_ENROLL_PAYLOAD_KEYS = ['trigger_data', 'triggerData', 'payload', 'input', 'appt_id', 'signing_request_id', 'case_id'];
+const SEQUENCE_ENROLL_MAX_PREVIEW_STEPS = 40;
 // Every sequence_steps.action_type this card has been reviewed against — the
 // route's ALLOWED_ACTION_TYPES (pinned by tests/caseySequencePublish.test.js).
 // None carries a runnable code body (see normalizeSequencePublishAction), so
@@ -2717,19 +2730,7 @@ async function normalizeSequencePublishAction(db, value, evidence) {
     .slice(0, 20)
     .map((row) => ({ source: row.source, name: String(row.source_name || row.source_id || ''), active: row.active === null ? null : (row.active ? 1 : 0) }));
 
-  const effects = [];
-  for (const s of draftSteps) {
-    const cfg = (() => { const c = parseMaybeJson(s.action_config); return c && typeof c === 'object' ? c : {}; })();
-    if (s.action_type === 'webhook') {
-      effects.push(publishWebhookEffect(s.step_number, cfg));
-    } else if (s.action_type === 'start_workflow') {
-      effects.push(`step ${s.step_number}: start_workflow → workflow #${String(cfg.workflow_id).slice(0, 20)} — starts a workflow run on every enrollment that reaches it`);
-    } else {
-      const line = publishFunctionEffect(s.step_number, cfg.function_name, cfg.params, 'on every enrollment that reaches it');
-      if (line) effects.push(line);
-    }
-    if (effects.length >= 20) break;
-  }
+  const effects = sequenceStepEffects(draftSteps, 'on every enrollment that reaches it');
 
   return {
     draft_id: crypto.randomUUID(),
@@ -2755,6 +2756,235 @@ async function normalizeSequencePublishAction(db, value, evidence) {
       step_count: draftSteps.length,
       draft_fingerprint: sequenceDraftFingerprint(draftSteps, condOf(draftV)),
     },
+    evidence: refs,
+  };
+}
+
+// The external/chaining effects a sequence version can produce, one card line
+// each (A18.3 publish, A18.4b enroll; `when` says how often).
+function sequenceStepEffects(steps, when) {
+  const { parseMaybeJson } = require('../lib/versionDiff');
+  const effects = [];
+  for (const s of steps) {
+    const cfg = (() => { const c = parseMaybeJson(s.action_config); return c && typeof c === 'object' ? c : {}; })();
+    if (s.action_type === 'webhook') {
+      effects.push(publishWebhookEffect(s.step_number, cfg));
+    } else if (s.action_type === 'start_workflow') {
+      effects.push(`step ${s.step_number}: start_workflow → workflow #${String(cfg.workflow_id).slice(0, 20)} — starts a workflow run ${when}`);
+    } else {
+      const line = publishFunctionEffect(s.step_number, cfg.function_name, cfg.params, when);
+      if (line) effects.push(line);
+    }
+    if (effects.length >= 20) break;
+  }
+  return effects;
+}
+
+// A stored step's timing in plain words for the enroll card: the authoring
+// renderer when the stored value is one Casey could have written, else the
+// stored JSON itself (a past or placeholder delay.at, a legacy key).
+function sequenceEnrollTimingText(stored) {
+  const timing = require('../lib/versionDiff').parseMaybeJson(stored);
+  try { return normalizeSequenceTiming(timing).text; }
+  catch (_) { return `stored timing ${JSON.stringify(timing == null ? {} : timing).slice(0, 200)}`; }
+}
+
+function seqEnrollText(value, max) {
+  if (value == null) return null;
+  const text = typeof value === 'string' ? value : JSON.stringify(value);
+  return text.length > max ? `${text.slice(0, max)}…` : text;
+}
+
+// One previewEnrollmentSteps entry → one card line set. Webhook URLs are
+// reduced to method + host (publishWebhookEffect); everything else is the
+// RESOLVED value the contact would receive, truncated for the card.
+function sequenceEnrollPreviewStep(entry, stored) {
+  const summary = entry.action_summary && typeof entry.action_summary === 'object' ? entry.action_summary : {};
+  const fn = typeof summary.function_name === 'string' ? summary.function_name : null;
+  const out = {
+    step_number: Number(entry.step_number),
+    action_type: String(entry.action_type || ''),
+    function_name: fn,
+    sends: !!(fn && /^send_/.test(fn)),
+    timing_text: sequenceEnrollTimingText(stored && stored.timing),
+    placement: entry.timing_error ? 'timing_error' : entry.computed_time ? 'places' : 'unschedulable',
+    when_text: entry.computed_time ? seqFirmTime(new Date(entry.computed_time)) : null,
+  };
+  if (entry.timing_error) out.timing_error = seqEnrollText(entry.timing_error, 300);
+  if (entry.would_skip) out.would_skip = String(entry.would_skip);
+  if (entry.condition_error) out.condition_error = seqEnrollText(entry.condition_error, 300);
+  if (entry.resolution_error) out.resolution_error = seqEnrollText(entry.resolution_error, 300);
+  const unresolved = Array.isArray(entry.unresolved) ? entry.unresolved.slice(0, 10).map((u) => seqEnrollText(u, 100)) : [];
+  if (unresolved.length) out.unresolved = unresolved;
+  if (fn === 'send_sms') {
+    Object.assign(out, { to: seqEnrollText(summary.to, 200), from: seqEnrollText(summary.from, 200), message: seqEnrollText(summary.message, 300) });
+  } else if (fn === 'send_email') {
+    Object.assign(out, { to: seqEnrollText(summary.to, 200), from: seqEnrollText(summary.from, 200),
+      subject: seqEnrollText(summary.subject, 300), body: seqEnrollText(summary.body_preview, 300) });
+  } else if (out.action_type === 'webhook') {
+    const { parseMaybeJson } = require('../lib/versionDiff');
+    const cfg = parseMaybeJson(stored && stored.action_config);
+    out.effect = publishWebhookEffect(out.step_number, cfg && typeof cfg === 'object' ? cfg : {});
+  } else if (out.action_type === 'start_workflow') {
+    out.effect = `starts workflow #${seqEnrollText(summary.workflow_id, 20)}`;
+  }
+  return out;
+}
+
+// A18.4b: enroll ONE contact in ONE sequence template's PUBLISHED version,
+// now. Like A17.7's start, an enrollment executes rather than authors — every
+// send step reaches the client as it comes due — so the card is its impact
+// preview, computed HERE:
+//   * the step-by-step preview from the engine itself
+//     (sequenceEngine.previewEnrollmentSteps — POST /sequences/preview's own
+//     seam — with version 'published', because the editor's preview shows a
+//     DRAFT when one exists and an enroll never runs a draft): per step the
+//     placement (places / skipped, window passed / timing error), when, and
+//     the RESOLVED recipient and wording, with unresolved placeholders listed;
+//   * the first-placement walk the enroll itself performs (scheduleFromStep
+//     from step 1): a timing error before any step places is the enroll
+//     FAILING — SCHEDULING_FAILED, the new row cancelled, IT alerted — so the
+//     card is refused rather than knowingly creating that (Fred's ruling,
+//     2026-10-28). A later step's timing error is disclosed: the enrollment
+//     stalls there, active with nothing further sent;
+//   * the already-enrolled state, with the engine's own duplicate predicate
+//     (same contact + template, appt_id / signing_request_id both NULL,
+//     status active) — an existing enrollment refuses the card by id;
+//   * what the version sends, calls and starts, what normally enrolls it, and
+//     how many enrollments are already running.
+// Fixed rules, none model-chosen: direct mode by template_id (never the type
+// cascade), trigger_data pinned {} (every payload key refused by name — a
+// reviewed trigger_data is its own decision, ref/plans.md), and the browser
+// re-reads the template (active, current_version unchanged) and the contact's
+// active enrollments at click time before the ledger claim. A published
+// version is immutable, so an unchanged current_version is an unchanged step
+// set, template condition and walk verdict (trigger_data {} makes the walk
+// independent of anything else).
+async function normalizeSequenceEnrollAction(db, value, evidence) {
+  if (require('../lib/firmConfig').cfg('casey_sequence_enroll_enabled') !== '1') {
+    throw httpError(422, 'Action kind is unavailable');
+  }
+  const isObj = value && typeof value === 'object';
+  const payloadKeys = isObj ? Object.keys(value).filter((k) => SEQUENCE_ENROLL_PAYLOAD_KEYS.includes(k)) : [];
+  if (payloadKeys.length) {
+    throw httpError(422, `Sequence enroll takes no enrollment data (${payloadKeys.join(', ')}) — Casey enrolls a contact with empty trigger data (contact-scoped); appointment and e-sign reminder enrollments come from their own automations`);
+  }
+  if (isObj && Object.prototype.hasOwnProperty.call(value, 'template_type')) {
+    throw httpError(422, 'Sequence enroll never picks a template by type (template_type) — Casey enrolls in the exact sequence_template_id the user named');
+  }
+  const unknown = isObj ? Object.keys(value).filter((k) => !SEQUENCE_ENROLL_KEYS.has(k)) : [];
+  if (unknown.length) {
+    throw httpError(422, `Sequence enroll carries unsupported fields: ${unknown.join(', ')} — it takes sequence_template_id, contact_id and evidence only`);
+  }
+  const templateId = Number(value.sequence_template_id);
+  if (!Number.isSafeInteger(templateId) || templateId < 1) throw httpError(422, 'Sequence enroll needs a positive sequence_template_id');
+  const contactId = Number(value.contact_id);
+  if (!Number.isSafeInteger(contactId) || contactId < 1) throw httpError(422, 'Sequence enroll needs a positive contact_id');
+  const refs = jobDraftEvidence(value.evidence, evidence);
+  if (!refs.length || !evidenceSupportsSequence(refs, evidence, templateId)) {
+    throw httpError(422, 'Sequence enroll evidence does not identify the target template — read it with automation.definition (sequence_template_id) first');
+  }
+  if (!contactEvidenceSupports(refs, evidence, contactId, null)) {
+    throw httpError(422, 'Sequence enroll evidence does not identify the contact — cite a row carrying the exact contact_id (read the contact first)');
+  }
+
+  const [[tpl]] = await db.query(
+    'SELECT id, name, type, active, current_version, draft_version FROM sequence_templates WHERE id = ?', [templateId]);
+  if (!tpl) throw httpError(422, `Sequence template ${templateId} is unavailable`);
+  const version = Number(tpl.current_version);
+  if (!(version > 0)) {
+    throw httpError(422, `Sequence template ${templateId} has never been published — an enroll would be refused (NEVER_PUBLISHED); publish it first`);
+  }
+  if (!tpl.active) throw httpError(422, `Sequence template ${templateId} is inactive — the enroll route refuses it; the user activates it in the sequence editor first`);
+  const [steps] = await db.query(
+    'SELECT * FROM sequence_steps WHERE template_id = ? AND version = ? ORDER BY step_number ASC', [templateId, version]);
+  if (!steps.length) throw httpError(422, `Sequence template ${templateId}'s published version has no steps — an enroll would be refused (EMPTY_SEQUENCE)`);
+  const unreviewed = steps.filter((s) => !SEQUENCE_PUBLISH_ACTION_TYPES.has(s.action_type));
+  if (unreviewed.length) {
+    throw httpError(422, `Sequence template ${templateId}'s published version has step${unreviewed.length > 1 ? 's' : ''} ` +
+      `${unreviewed.map((s) => `${s.step_number} (${s.action_type})`).join(', ')} of a type Casey's enroll card does not cover — the user enrolls in the sequence editor`);
+  }
+
+  const [[contact]] = await db.query('SELECT contact_id, contact_name FROM contacts WHERE contact_id = ? LIMIT 1', [contactId]);
+  if (!contact) throw httpError(422, `Contact ${contactId} is unavailable`);
+  const contactName = String(contact.contact_name || '').trim().slice(0, 200) || `Contact ${contactId}`;
+
+  // The engine's duplicate guard (lib/sequenceEngine _enrollWithTemplate),
+  // exactly, for a contact-scoped enrollment: appt / signing ids both NULL.
+  const [existing] = await db.query(
+    `SELECT id FROM sequence_enrollments
+      WHERE contact_id = ?
+        AND template_id = ?
+        AND (appt_id <=> ?)
+        AND (signing_request_id <=> ?)
+        AND status = 'active'
+      LIMIT 1`,
+    [contactId, templateId, null, null]);
+  if (existing.length) {
+    throw httpError(422, `${contactName} (contact ${contactId}) is already enrolled in "${String(tpl.name || `Template ${templateId}`).slice(0, 200)}" — active enrollment #${existing[0].id}; nothing is proposed (an enroll would be refused ALREADY_ENROLLED)`);
+  }
+
+  const preview = await require('../lib/sequenceEngine').previewEnrollmentSteps(db, {
+    template_id: templateId, contact_id: contactId, trigger_data: {}, version: 'published',
+  });
+  if (!preview || Number(preview.version) !== version || !Array.isArray(preview.steps) || preview.steps.length !== steps.length) {
+    throw httpError(422, `Sequence template ${templateId}'s preview did not cover its published version v${version} — nothing is proposed`);
+  }
+
+  // The enroll's own first-placement walk (scheduleFromStep from step 1).
+  let firstStep = null;
+  let stallStep = null;
+  const skippedLeading = [];
+  for (const entry of preview.steps) {
+    const n = Number(entry.step_number);
+    if (firstStep == null) {
+      if (entry.timing_error) {
+        throw httpError(422, `Sequence template ${templateId}: step ${n}'s timing cannot be computed for an enrollment with no trigger data (${seqEnrollText(entry.timing_error, 300)}) — ` +
+          'the enroll would FAIL (SCHEDULING_FAILED): its new enrollment cancelled and IT alerted, nothing sent. Nothing is proposed; appointment-anchored or placeholder-dated sequences are enrolled by their own automations');
+      }
+      if (entry.computed_time) firstStep = n; else skippedLeading.push(n);
+    } else if (entry.timing_error && stallStep == null) {
+      stallStep = n;
+    }
+  }
+  const placeholderAt = steps.filter((s) => {
+    const t = (() => { try { return typeof s.timing === 'string' ? JSON.parse(s.timing) : s.timing; } catch (_) { return null; } })();
+    return t && t.type === 'delay' && typeof t.at === 'string' && t.at.includes('{{');
+  }).map((s) => Number(s.step_number));
+
+  const [[running]] = await db.query(
+    "SELECT COUNT(*) AS n FROM sequence_enrollments WHERE template_id = ? AND status = 'active'", [templateId]);
+  const starters = workflowStarters(await require('./automationReadService').references(db, { sequence_template_id: templateId }));
+  const byNumber = new Map(steps.map((s) => [Number(s.step_number), s]));
+  const shown = preview.steps.slice(0, SEQUENCE_ENROLL_MAX_PREVIEW_STEPS)
+    .map((entry) => sequenceEnrollPreviewStep(entry, byNumber.get(Number(entry.step_number))));
+
+  return {
+    draft_id: crypto.randomUUID(),
+    kind: 'sequence.enroll.v1',
+    status: 'draft',
+    template: {
+      sequence_template_id: templateId,
+      name: String(tpl.name || `Template ${templateId}`).slice(0, 200),
+      type: tpl.type == null ? null : String(tpl.type).slice(0, 100),
+      version,
+      step_count: steps.length,
+      has_draft: tpl.draft_version != null ? 1 : 0,
+    },
+    contact: { contact_id: contactId, contact_name: contactName },
+    verdict: String(preview.enrollment_verdict || 'would_proceed'),
+    ...(preview.template_condition_error ? { template_condition_error: seqEnrollText(preview.template_condition_error, 300) } : {}),
+    first_step: firstStep,
+    skipped_leading: skippedLeading,
+    stall_step: stallStep,
+    placeholder_at_steps: placeholderAt,
+    send_steps: preview.steps.filter((e) => e.action_summary && /^send_/.test(String(e.action_summary.function_name || ''))).length,
+    steps: shown,
+    steps_truncated: preview.steps.length > SEQUENCE_ENROLL_MAX_PREVIEW_STEPS ? 1 : 0,
+    effects: sequenceStepEffects(steps, 'when this enrollment reaches it'),
+    starters,
+    active_enrollments: Number(running && running.n) || 0,
+    expected: { current_version: version },
     evidence: refs,
   };
 }
@@ -4156,6 +4386,7 @@ async function normalizeActionDraft(db, value, evidence, { currentUserId = null,
   if (value && HOOK_ACTION_KINDS.has(value.kind)) return normalizeHookCreateAction(db, value, evidence);
   if (value && SEQUENCE_ACTION_KINDS.has(value.kind)) {
     if (value.kind === 'sequence.publish.v1') return normalizeSequencePublishAction(db, value, evidence);
+    if (value.kind === 'sequence.enroll.v1') return normalizeSequenceEnrollAction(db, value, evidence);
     return normalizeSequenceStepInsertAction(db, value, evidence);
   }
   if (value && WORKFLOW_ACTION_KINDS.has(value.kind)) {

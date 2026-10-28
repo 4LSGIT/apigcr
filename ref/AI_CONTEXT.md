@@ -371,6 +371,32 @@ body. Governing migrations in `ref/migrations/`.*
   writes are server-side). Tests: `tests/caseyWorkflowStart.test.js`, gated
   `tests/caseyWorkflowStart.mysql.test.js`; plan:
   ref/ASK_CASEY_ACTIONS_PLAN.md A17.7.
+- **Casey enroll card (A18.4b, 10-28):** kind `sequence.enroll.v1` over the
+  A18.4a-hardened `POST /sequences/enroll` (`Idempotency-Key` = draft_id,
+  scope `sequences.enroll`). Contact-scoped only: the fixed builder pins
+  `{contact_id, template_id, trigger_data: {}}`; every enrollment-data key and
+  `template_type` are refused by name. Evidence must carry the template id
+  (`automation.definition`) AND the contact id. Refused: inactive /
+  never-published / empty / unreviewed-type template, missing contact, an
+  active contact-scoped enrollment (the engine's `appt_id <=> NULL AND
+  signing_request_id <=> NULL` predicate), and a first-placement walk that
+  hits a timing error (the enroll would fail `SCHEDULING_FAILED`). The preview
+  is `sequenceEngine.previewEnrollmentSteps(db, {…, version: 'published'})` —
+  an additive, fail-closed option (the editor's default previews the DRAFT
+  when one exists; enroll runs `current_version`); the result carries
+  `version`. The card engine gained a family `knownOutcome(e)` hook: exact
+  status + `code` pairs map to refused (`ALREADY_ENROLLED` / `NEVER_PUBLISHED`
+  / `EMPTY_SEQUENCE` 409, `ENROLL_BUSY` 503) or a known failure
+  (`SCHEDULING_FAILED` 500, "nothing will send"), with `draft.refusal_status`
+  overriding the chip; idempotency bodies and uncoded errors fall through to
+  unknown. Receipt `enrollment_id`; deep link `sequences~<id>~enrollment`
+  (shell `records: ['enrollment']` on `automations.sequence`, manager
+  `ASSISTANT_SECONDARY_RECORDS.sequences`). Off switch
+  `casey_sequence_enroll_enabled` is DARK unless `'1'` (the other Casey flags
+  are on unless `'0'`). No yc-sync matcher (the enroll route has none).
+  Tests: `tests/caseySequenceEnroll.test.js`, gated
+  `tests/caseySequenceEnroll.mysql.test.js`; plan:
+  ref/ASK_CASEY_ACTIONS_PLAN.md A18.4.
 - **Workspace context names the open automation (P13, 10-24):** the
   workflows/sequences sub-pages report their open record through the
   Automations manager (`ycSubRecordChanged`) into the workspace URL

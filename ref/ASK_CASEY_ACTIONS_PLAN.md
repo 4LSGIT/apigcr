@@ -1629,7 +1629,7 @@ must carry that exact id from an `automation.definition` read. Fixed rules:
 
 Known limit, as A17.6: the predicate is direct — a `start_workflow` step or a
 trigger downstream may reach a workflow with standard code; transitive closure
-is not chased. The P2 matrix covers 44 kinds / 39 mounts. Tests:
+is not chased. The P2 matrix covers 45 kinds / 40 mounts (with A18.4b). Tests:
 `tests/caseyWorkflowStart.test.js`, gated `tests/caseyWorkflowStart.mysql.test.js`,
 the UI card in `tests/assistantUi.test.js`, the deep-link grammar in
 `tests/assistantSidebar.test.js`.
@@ -1836,13 +1836,13 @@ carries a record kind that routes to the pane's own record opener; and
 `automation.definition` falls back to `draft_version` when `current_version`
 is 0, so Casey stops misreading unpublished workflows as empty.
 
-**A18.4: Enroll a contact. Deferred past A14.**
+**A18.4: Enroll a contact.**
 
 Enrollment is an external-send fan-out and inherits A14's bar (resolved
 preview, explicit recipients, strong idempotency, an unambiguous outcome).
-Fred's ruling (2026-10-28): harden the native route first; the Casey enroll
-card is a later slice. **A18.4a**, the first half, is that hardening — native,
-no schema change, no card:
+Fred's ruling (2026-10-28): harden the native route first, then the card.
+**A18.4a**, the first half, is that hardening — native, no schema change, no
+card:
 
 - `POST /sequences/enroll` takes an optional `Idempotency-Key` (scope
   `sequences.enroll`) under the workflows.start rule: a refusal raised before
@@ -1862,6 +1862,72 @@ no schema change, no card:
 - Engine codes reach HTTP: `ALREADY_ENROLLED` (with `enrollment_id`),
   `NEVER_PUBLISHED`, `EMPTY_SEQUENCE` are 409; the body keeps the old
   `error` / `message` pair and adds `code`.
+
+**A18.4b: the Casey enroll card. SHIPPED 2026-10-28** — kind
+`sequence.enroll.v1`, through the hardened `POST /sequences/enroll` (the card's
+`draft_id` is the `Idempotency-Key`, scope `sequences.enroll`). Contact-scoped
+only: direct mode by `template_id` with `trigger_data` pinned `{}` by the fixed
+builder; `trigger_data`, `triggerData`, `payload`, `input`, `appt_id`,
+`signing_request_id`, `case_id` and `template_type` are refused by name —
+appointment and e-sign reminder enrollments are born from automations
+(`apptService`, `esignSendService`), not from a chat request; a reviewed
+`trigger_data` slice is filed in `ref/plans.md`. The model supplies only
+`{sequence_template_id, contact_id, evidence}`; evidence must carry the exact
+template id (an `automation.definition` row, as A18.2/A18.3) AND the exact
+contact id (a row with `contact_id`, the A14 / contact-subrecord convention).
+The normalizer refuses an inactive, never-published, empty or
+unreviewed-action-type template, a missing contact, and an active
+contact-scoped enrollment of that contact in that template (the engine's own
+duplicate predicate, `appt_id <=> NULL AND signing_request_id <=> NULL`,
+named by id). **The preview is the engine's**: `previewEnrollmentSteps` (POST
+`/sequences/preview`'s seam) with the additive option `version: 'published'` —
+without it the editor's preview shows the DRAFT when one exists, and an enroll
+never runs a draft (Fred, 2026-10-28: enrolling while someone is mid-edit is
+legitimate, so a draft is disclosed, not refused). The option is fail-closed
+(any other value throws, it never combines with the enrollment shape, a
+never-published template throws) and the result carries `version`, which the
+normalizer asserts equals `current_version`. Per step the card shows the
+timing in words, its placement (when it runs / skipped, window passed /
+timing error), the RESOLVED recipient, sender and wording for this contact,
+and the placeholders the engine's `strict:false` resolution leaves as written
+(no trigger data means no `{{trigger_data.*}}`, appointment, case or user
+placeholder can resolve). The normalizer replays the enroll's own
+first-placement walk (`scheduleFromStep` from step 1): a timing error before
+any step places is the enroll failing — `SCHEDULING_FAILED`, the new row
+cancelled, IT alerted — so the card is REFUSED rather than knowingly creating
+that (Fred's ruling, 2026-10-28); this is what keeps appointment-anchored and
+placeholder-dated templates off the card. A later step's timing error is
+disclosed as a STALL (danger styling), and every absolute `delay.at` holding a
+`{{placeholder}}` is named. Also on the card: the template condition's
+verdict, effects (`sequenceStepEffects`, shared with A18.3), what normally
+enrolls it, the running-enrollment count, and the fan-out statement.
+Click-time precheck: `GET /sequences/templates/:id` (gone / deactivated /
+`current_version` moved refuses — a published version is immutable, and with
+`trigger_data` `{}` the walk verdict depends on nothing else, so an unchanged
+version is an unchanged preview) and `GET /sequences/enrollments?contact_id=…
+&status=active&limit=100` (an active contact-scoped row of this template
+refuses; a list it cannot read in full fails the re-check, nothing claimed).
+**Outcomes** in A14's vocabulary via a family `knownOutcome` hook on the card
+engine, keyed on exact status + `code` pairs (an idempotency body or anything
+uncoded falls through): `ALREADY_ENROLLED` 409 → refused, naming the existing
+enrollment; `NEVER_PUBLISHED` / `EMPTY_SEQUENCE` 409 → refused, stale card;
+`ENROLL_BUSY` 503 → refused, try again in a moment; `SCHEDULING_FAILED` 500 →
+"Failed — nothing will send", naming the enrollment; a plain 4xx (400 / 404) →
+refused; any other 409 / 5xx / dead socket → unknown, write control removed.
+201 → success with the enrollment id and when its first step runs (or that
+none could be scheduled), `replayed` disclosed. Ledger receipt
+`enrollment_id`; the applied card deep-links to the enrollment
+(`ycAssistantNavigate('automations.sequence', {id, record: 'enrollment'})` →
+rest `sequences~<id>~enrollment`, the A17.7 closed `records` grammar; the
+sequences pane's `onFocusRecord` already opens a non-`sequence` record in its
+enrollment viewer). Own off switch `casey_sequence_enroll_enabled`, **dark
+unless `'1'`** (the spec's default-off; every other Casey flag is on unless
+`'0'`). Sync bus: `POST /sequences/enroll` has no `public/js/yc-sync.js`
+matcher and no enrollment view is bus-watched; the card adds no write route.
+Tests: `tests/caseySequenceEnroll.test.js`, gated
+`tests/caseySequenceEnroll.mysql.test.js`, the UI card in
+`tests/assistantUi.test.js`, the deep-link grammar in
+`tests/assistantSidebar.test.js`.
 
 Also note for any later enrollment work: step firing has no "already sent this
 step" check, and `recoverStuckJobs` resets a job sitting in `running` for over
@@ -2399,11 +2465,13 @@ ledger claim leaves the card unknown: **the write control is removed entirely**
 and the user is told to open the record, because offering it again could apply
 the action twice. Copy and Discard remain available.
 
-Still open from P4's full scope: enrollment, replays and other fan-out are
-not wired (their families are not built yet), and an ambiguous outcome is only
-logged server-side, not alerted — that belongs to P7. Sends are wired (A14),
-with the stricter keep-the-claim-on-failure rule described there, and so are
-workflow starts (A17.7, scope `workflows.start`, the same rule).
+Still open from P4's full scope: replays and other fan-out are not wired
+(their families are not built yet), and an ambiguous outcome is only logged
+server-side, not alerted — that belongs to P7. Sends are wired (A14), with the
+stricter keep-the-claim-on-failure rule described there, and so are workflow
+starts (A17.7, scope `workflows.start`, the same rule) and sequence
+enrollments (A18.4b, scope `sequences.enroll`, the same rule plus
+`ENROLL_BUSY` releasing).
 
 #### P5: Durable applied-result persistence
 
@@ -2674,7 +2742,7 @@ slice if explain-answers should link back to a specific record.
    read-only slices A17.0, A17.1, A18.0 and A18.1, which need no write
    machinery and can ship alongside A6-A8. P11 gates every A17/A18 write;
    A17.6 and A18.3 publish additionally need P3 generalized. A17.7 start
-   shipped on A14's send machinery; A18.4 enrollment stays behind it. A20 (ingest rules)
+   shipped on A14's send machinery, and so did A18.4b enrollment (after A18.4a's native hardening). A20 (ingest rules)
    follows A18.2 (Fred, 2026-10-26); its read rungs A20.0/A20.1 have no
    prerequisite beyond the P12 pattern and may bundle.
 6. Expand via P10 gates. Keep destructive/admin/bulk/autonomous work outside

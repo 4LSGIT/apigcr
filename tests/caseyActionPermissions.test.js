@@ -12,13 +12,13 @@
  * THE BOUNDARY BEING TESTED (plan, "Governing principle"): Casey proposes, the
  * staff member's own browser performs the write through the ordinary
  * authenticated route, and "the existing route ... is the final authority".
- * These tests ask that claim two questions for all 44 shipped kinds:
+ * These tests ask that claim two questions for all 45 shipped kinds:
  *   1. what does the route actually gate on?  (section 1 — no DB needed)
  *   2. where is the normalizer stricter than the route, i.e. where is the
  *      route NOT an authority at all?        (section 2 — real MySQL)
  *
  * MEASURED FACTS THIS FILE LOCKS
- *   · Every one of the 44 kinds maps to a route gated by lib/auth.jwtOrApiKey
+ *   · Every one of the 45 kinds maps to a route gated by lib/auth.jwtOrApiKey
  *     and NOTHING else: authentication (staff-audience JWT whose user_auth
  *     starts 'authorized'), no role, no capability, no row/firm scope. The
  *     one nuance is job.code_safe.create.v1 (safe-mode S3): its route carries
@@ -112,6 +112,8 @@ const KINDS = [
   { kind: 'hook.create.v1', method: 'POST', path: '/api/hooks' },
   { kind: 'sequence.step_insert.v1', method: 'POST', path: '/sequences/templates/1/steps' },
   { kind: 'sequence.publish.v1', method: 'POST', path: '/sequences/templates/1/publish' },
+  // A18.4b: the native enroll route (direct template_id, trigger_data {}).
+  { kind: 'sequence.enroll.v1', method: 'POST', path: '/sequences/enroll' },
   { kind: 'sms.send.v1', method: 'POST', path: '/api/phone-lines/3/sms' },
   { kind: 'email.send.v1', method: 'POST', path: '/api/mail/send' },
   // A16: the Reports editor's own create route.
@@ -192,19 +194,19 @@ function call(a, { method, path: urlPath }, headers = {}, body = {}) {
 const bearer = (t) => ({ authorization: `Bearer ${t}` });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// SECTION 1 — the route-level gate, for all 44 kinds (no database)
+// SECTION 1 — the route-level gate, for all 45 kinds (no database)
 // ═══════════════════════════════════════════════════════════════════════════
 
-describe('P2 — what the canonical write route gates on (all 44 shipped kinds)', () => {
+describe('P2 — what the canonical write route gates on (all 45 shipped kinds)', () => {
   const OLD_SECRET = process.env.JWT_SECRET;
   beforeAll(() => { process.env.JWT_SECRET = SECRET; });
   afterAll(() => { process.env.JWT_SECRET = OLD_SECRET; });
 
   const app = appWith;
 
-  test('the 44 kinds cover 39 distinct route+method mounts', () => {
-    expect(KINDS).toHaveLength(44);
-    expect(new Set(KINDS.map((k) => `${k.method} ${k.path}`)).size).toBe(39);
+  test('the 45 kinds cover 40 distinct route+method mounts', () => {
+    expect(KINDS).toHaveLength(45);
+    expect(new Set(KINDS.map((k) => `${k.method} ${k.path}`)).size).toBe(40);
     // A18.3: the matrix is the shipped inventory — the action ledger's KINDS
     // registry (which every shipped kind must join, tests/assistantPromptKinds)
     // — so a new kind that skips this table fails here instead of silently.
@@ -212,7 +214,7 @@ describe('P2 — what the canonical write route gates on (all 44 shipped kinds)'
     expect(KINDS.map((k) => k.kind).sort()).toEqual([...ledger.KINDS.keys()].sort());
   });
 
-  test('no token: every kind is 401 — authentication is required for all 44', async () => {
+  test('no token: every kind is 401 — authentication is required for all 45', async () => {
     const a = app();
     for (const k of KINDS) {
       const res = await call(a, k);

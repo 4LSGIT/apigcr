@@ -183,6 +183,14 @@ describe('Automations → Court Review semantic navigation proof', () => {
     expect(w.open_('hooks~77~execution')).toBe(false);
     expect(w.open_('workflows~77~execution~x')).toBe(false);
     expect(w.focusCalls).toHaveLength(3);
+    // A18.4b: `enrollment` is the sequences pane's own secondary kind (an
+    // applied enroll card) — and only that pane's.
+    expect(w.open_('sequences~812~enrollment')).toBe(true);
+    expect(w.focusCalls[3]).toEqual(['sequences', { id: 812, record: 'enrollment' }]);
+    expect(w.open_('sequences~812~execution')).toBe(false);
+    expect(w.open_('workflows~812~enrollment')).toBe(false);
+    expect(w.open_('hooks~812~enrollment')).toBe(false);
+    expect(w.focusCalls).toHaveLength(4);
     dom.window.close();
   });
 
@@ -198,6 +206,8 @@ describe('Automations → Court Review semantic navigation proof', () => {
     expect(w.boot_('workflows~77~execution')).toEqual(['workflows', { workflows: { id: 77, record: 'execution' } }]);
     expect(w.boot_('workflows~61')).toEqual(['workflows', { workflows: { id: 61, record: 'workflow' } }]);
     expect(w.boot_('workflows~61~evil')).toEqual(['workflows', {}]);
+    expect(w.boot_('sequences~812~enrollment')).toEqual(['sequences', { sequences: { id: 812, record: 'enrollment' } }]);
+    expect(w.boot_('workflows~812~enrollment')).toEqual(['workflows', {}]);
     dom.window.close();
   });
 
@@ -212,6 +222,20 @@ describe('Automations → Court Review semantic navigation proof', () => {
     w.onFocusRecord({ id: 77, record: 'execution' });
     w.onFocusRecord({ id: 61, record: 'workflow' });
     expect(w.calls).toEqual([['execution', 77], ['workflow', 61]]);
+    dom.window.close();
+  });
+
+  test('the sequences pane opens an enrollment-record payload in its enrollment viewer', () => {
+    const PANE = fs.readFileSync(path.join(ROOT, 'public/automation/sequences.html'), 'utf8');
+    const start = PANE.indexOf('window.onFocusRecord = (payload) => {');
+    const src = PANE.slice(start, PANE.indexOf('};', start) + 2);
+    const dom = new JSDOM('<!doctype html>', { runScripts: 'outside-only' });
+    const w = dom.window;
+    w.calls = [];
+    w.eval('function selectSeqTemplate(id) { calls.push(["sequence", id]); }\nfunction viewSequenceEnrollment(id) { calls.push(["enrollment", id]); }\n' + src);
+    w.onFocusRecord({ id: 812, record: 'enrollment' });
+    w.onFocusRecord({ id: 12, record: 'sequence' });
+    expect(w.calls).toEqual([['enrollment', 812], ['sequence', 12]]);
     dom.window.close();
   });
 
@@ -279,11 +303,19 @@ describe('Automations → Court Review semantic navigation proof', () => {
     t.dom.window.close();
     const u = navigationWorld(false);
     for (const [destination, params] of [['automations.workflow', { id: 77, record: 'evil' }], ['automations.workflow', { id: 77, record: 'execution~x' }],
-      ['automations.hook', { id: 77, record: 'execution' }], ['automations.workflow', { id: 77, record: null }]]) {
+      ['automations.hook', { id: 77, record: 'execution' }], ['automations.workflow', { id: 77, record: null }],
+      ['automations.workflow', { id: 77, record: 'enrollment' }], ['automations.sequence', { id: 77, record: 'execution' }]]) {
       await expect(u.w.ycAssistantNavigate(destination, params)).rejects.toThrow(/malformed/);
     }
     expect(u.exec).not.toHaveBeenCalled();
     u.dom.window.close();
+    // A18.4b: the sequence destination's own list carries `enrollment`.
+    const v = navigationWorld(true);
+    const enrolled = v.w.ycAssistantNavigate('automations.sequence', { id: 812, record: 'enrollment' });
+    expect(v.w.ycSubTab.host.lastRest(v.frame)).toBe('sequences~812~enrollment');
+    expect(v.w.ycAssistantChildReady(v.frame, { destination: 'automations.sequence' })).toBe(true);
+    await expect(enrolled).resolves.toEqual({ destination: 'automations.sequence', ready: true });
+    v.dom.window.close();
   });
 
   test('a malformed record id rejects before the launcher runs — the id is shell-validated', async () => {
