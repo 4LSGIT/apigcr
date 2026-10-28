@@ -7323,7 +7323,13 @@
         let body401 = null;
         try { body401 = await res.clone().json(); } catch (_) { }
         if (body401 && body401.code === "elevation_required") {
-          const elevTok = await elevateBlocking();
+          // A sibling request may have elevated while this one was in flight
+          // (panes boot several SU calls at once): reuse that token rather
+          // than prompting again.
+          const held = getSuElevToken();
+          const elevTok = (held && held !== options.headers["X-SU-Elevation"])
+            ? held
+            : await elevateBlocking();
           if (elevTok) {
             options.headers["X-SU-Elevation"] = elevTok;
             res = await fetch(url, options);
@@ -7666,8 +7672,21 @@ function getSuElevToken() {
  * readonly username field) so password managers offer to fill it — a bare
  * SweetAlert input often doesn't trigger them. Enter / manager fill-and-
  * submit fires the form's submit, which is wired to Swal's confirm.
+ *
+ * Single-flight, like loginBlocking: concurrent 401s share ONE prompt and
+ * its token. Without it a second Swal.fire replaced the first popup, the
+ * first caller resolved dismissed (null), and its request surfaced the 401 —
+ * dbConsole's parallel schema + saved-query loads lost one at random.
  */
-async function elevateBlocking() {
+let suElevInProgress = null;
+function elevateBlocking() {
+  if (!suElevInProgress) {
+    suElevInProgress = elevatePrompt().finally(() => { suElevInProgress = null; });
+  }
+  return suElevInProgress;
+}
+
+async function elevatePrompt() {
   const uname =
     (window.AUTH_STATE && AUTH_STATE.username) ||
     (getJwtPayload(AUTH_STATE.jwt) || {}).username || "";
