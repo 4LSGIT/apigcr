@@ -392,8 +392,11 @@ body. Governing migrations in `ref/migrations/`.*
   unknown. Receipt `enrollment_id`; deep link `sequences~<id>~enrollment`
   (shell `records: ['enrollment']` on `automations.sequence`, manager
   `ASSISTANT_SECONDARY_RECORDS.sequences`). Off switch
-  `casey_sequence_enroll_enabled` is DARK unless `'1'` (the other Casey flags
-  are on unless `'0'`). No yc-sync matcher (the enroll route has none).
+  `casey_sequence_enroll_enabled`, on unless `'0'` like every Casey flag
+  (Fred, 2026-10-28: ONE polarity for all of them — a flag that must START
+  dark gets an explicit '0' row seeded at land time, never an inverted code
+  default; it first shipped dark-unless-'1' and was normalized same day).
+  No yc-sync matcher (the enroll route has none).
   Tests: `tests/caseySequenceEnroll.test.js`, gated
   `tests/caseySequenceEnroll.mysql.test.js`; plan:
   ref/ASK_CASEY_ACTIONS_PLAN.md A18.4.

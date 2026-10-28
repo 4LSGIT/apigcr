@@ -1967,9 +1967,11 @@ none could be scheduled), `replayed` disclosed. Ledger receipt
 (`ycAssistantNavigate('automations.sequence', {id, record: 'enrollment'})` →
 rest `sequences~<id>~enrollment`, the A17.7 closed `records` grammar; the
 sequences pane's `onFocusRecord` already opens a non-`sequence` record in its
-enrollment viewer). Own off switch `casey_sequence_enroll_enabled`, **dark
-unless `'1'`** (the spec's default-off; every other Casey flag is on unless
-`'0'`). Sync bus: `POST /sequences/enroll` has no `public/js/yc-sync.js`
+enrollment viewer). Own off switch `casey_sequence_enroll_enabled`, on unless
+`'0'` like every Casey flag (it first shipped dark-unless-`'1'`; Fred ruled
+2026-10-28, same day: ONE polarity for all Casey flags — a family that must
+start dark gets an explicit `'0'` row seeded at land time, never an inverted
+code default — and all `casey_*` settings live in their own settings section). Sync bus: `POST /sequences/enroll` has no `public/js/yc-sync.js`
 matcher and no enrollment view is bus-watched; the card adds no write route.
 Tests: `tests/caseySequenceEnroll.test.js`, gated
 `tests/caseySequenceEnroll.mysql.test.js`, the UI card in

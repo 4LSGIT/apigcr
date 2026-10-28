@@ -248,7 +248,9 @@ const WORKFLOW_PUBLISH_EFFECT_FNS = new Set(['enroll_sequence', 'start_workflow'
 // through POST /sequences/enroll (the A18.4a-hardened route: Idempotency-Key
 // = the card's draft_id, per-identity GET_LOCK, coded refusals). It executes
 // rather than authors — a fan-out of every send step to a client — so it has
-// its own off switch (casey_sequence_enroll_enabled, dark unless '1').
+// its own off switch (casey_sequence_enroll_enabled, on unless '0' — one
+// polarity for every Casey flag, Fred 2026-10-28; a family that must START
+// dark gets an explicit '0' row seeded at land time instead).
 // Contact-scoped only: direct mode by template_id, trigger_data pinned {} —
 // appointment and e-sign reminder enrollments are born from automations
 // (apptService, esignSendService), not from a chat request.
@@ -3292,7 +3294,7 @@ function sequenceEnrollPreviewStep(entry, stored) {
 // set, template condition and walk verdict (trigger_data {} makes the walk
 // independent of anything else).
 async function normalizeSequenceEnrollAction(db, value, evidence) {
-  if (require('../lib/firmConfig').cfg('casey_sequence_enroll_enabled') !== '1') {
+  if (require('../lib/firmConfig').cfg('casey_sequence_enroll_enabled') === '0') {
     throw httpError(422, 'Action kind is unavailable');
   }
   const isObj = value && typeof value === 'object';

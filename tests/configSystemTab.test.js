@@ -98,7 +98,7 @@ async function boot({ values = VALUES, caps = { firm: false, system: true }, wra
   return t;
 }
 
-const PAGE_ORDER = ['platform', 'switches', 'alerts', 'integrations', 'comms', 'state'];
+const PAGE_ORDER = ['platform', 'switches', 'alerts', 'integrations', 'casey', 'comms', 'state'];
 const titleOf = (id) => [...reg.SECTIONS.system, ...reg.SECTIONS.comms].find((s) => s.id === id).title;
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -192,7 +192,7 @@ describe('Save', () => {
     expect(t.puts()).toEqual([['court_ingest_live', '1'], ['alert_cooldown_hours', ' 12 '], ['comms_transcribe_mode', 'on']]);
     expect(['court_ingest_live', 'alert_cooldown_hours', 'comms_transcribe_mode'].map((k) => t.fake.value(k))).toEqual(['1', ' 12 ', 'on']);
     expect([t.w.SystemPage.Page.dirty(), t.topbar().save, t.banner(), t.status('alert_cooldown_hours')]).toEqual([false, false, null, 'Saved']);
-    expect(t.$$('.sy-sec-status').map((s) => s.textContent)).toEqual([...Array(5).fill('All changes saved'), 'Read-only']);
+    expect(t.$$('.sy-sec-status').map((s) => s.textContent)).toEqual([...Array(6).fill('All changes saved'), 'Read-only']);
     expect(t.firmLoads()).toBe(0);
     await t.save();                                         // nothing dirty → nothing sent
     expect(t.puts()).toHaveLength(3);

@@ -761,7 +761,7 @@ published before you confirm, or the contact becomes enrolled, nothing is
 enrolled. If the outcome cannot be confirmed, the card says so and offers no
 second enrollment; check the sequence's enrollments. Once applied, the card
 opens the new enrollment. Its off switch is the `casey_sequence_enroll_enabled`
-setting, which is off until set to 1. The card
+setting (on unless set to 0, like every Casey switch). The card
 shows the full code for review, the browser pins the safe engine in the
 request, and the system off switch is the `casey_code_actions_enabled`
 setting. The proposal

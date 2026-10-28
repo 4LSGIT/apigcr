@@ -11,7 +11,7 @@
  *      POST /sequences/preview's seam) with version 'published' — a template
  *      with an unpublished draft previews the version an enroll RUNS, never
  *      the draft; the engine option itself is additive and fail-closed;
- *   2. refusals: the casey_sequence_enroll_enabled switch (dark unless '1'),
+ *   2. refusals: the casey_sequence_enroll_enabled switch (on unless '0'),
  *      every enrollment-data key BY NAME, template_type BY NAME, unknown keys,
  *      evidence missing either id, a missing / never-published / inactive /
  *      empty / unreviewed-type template, a missing contact, an existing active
@@ -149,12 +149,17 @@ describe('the sequence-enroll normalizer', () => {
     for (const key of ['trigger_data', 'template_type', 'appt_id', 'signing_request_id']) expect(out).not.toHaveProperty(key);
   });
 
-  test('the switch is dark unless exactly "1" — and refuses before anything is read', async () => {
-    for (const v of [undefined, '0', '', 'true', 'yes']) {
-      if (v === undefined) delete process.env.CASEY_SEQUENCE_ENROLL_ENABLED; else process.env.CASEY_SEQUENCE_ENROLL_ENABLED = v;
+  test('the switch is on unless "0" (one polarity for every Casey flag, Fred 2026-10-28) — "0" refuses before anything is read', async () => {
+    process.env.CASEY_SEQUENCE_ENROLL_ENABLED = '0';
+    {
       const { db } = makeDb();
       await expect(normalizeActionDraft(db, enrollDraft(), EVIDENCE)).rejects.toThrow(/^Action kind is unavailable$/);
       expect(db.query).not.toHaveBeenCalled();
+    }
+    // Any other value — unset and blank included — leaves the kind live.
+    for (const v of [undefined, '', '1', 'true']) {
+      if (v === undefined) delete process.env.CASEY_SEQUENCE_ENROLL_ENABLED; else process.env.CASEY_SEQUENCE_ENROLL_ENABLED = v;
+      await expect(normalizeActionDraft(makeDb().db, enrollDraft(), EVIDENCE)).resolves.toMatchObject({ kind: 'sequence.enroll.v1' });
     }
     // The authoring flag is a different family: dark authoring leaves enroll on.
     process.env.CASEY_SEQUENCE_ENROLL_ENABLED = '1';
