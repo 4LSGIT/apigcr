@@ -95,6 +95,9 @@
  * can be placed and bound before it is saved; deleting a button drops its
  * placements and bindings in the same session (it asks first when it has
  * any). Save sends up to three documents, items first; see save().
+ * Since launcher-nits L2 the tab saves ITSELF as it goes (saveButtons): an
+ * add, an edit, a move or a delete PUTs the items document at once and the
+ * panel stays open; placing a button stays under Save, like any arranging.
  *
  * Drawers (ui-custom S5b; called a LIST in every string the user reads since
  * S6c-5 — the stored type stays `drawer`, ids and types being API surface): a
@@ -2412,6 +2415,28 @@
     renderButtons();   // renders the open arrange box too
     renderStatus();
   }
+  // My buttons saves as it goes (launcher-nits L2): an add, an edit, a move
+  // or a delete PUTs the items document at once, without Save and without
+  // closing the panel. extra: the other documents to send with it — a
+  // delete's own cascade (its placements, bindings) where that document had
+  // no unsaved edit before it; one that had waits for Save, so nothing the
+  // user did not ask to save is saved. A refusal keeps the edit, says so,
+  // and Save tries again. focusId: the button to put focus back on.
+  function saveButtons(extra, toastText, focusId, sel) {
+    var parts = its.isDirty() ? [{ key: 'items', doc: its.doc() }] : [];
+    (extra || []).forEach(function (k) { parts.push({ key: k, doc: k === 'layout' ? sess.doc() : scs.doc() }); });
+    if (!parts.length) return Promise.resolve(true);
+    clearErrors();
+    return persist(parts, {
+      toast: toastText,
+      focus: function () {
+        var i = focusId == null ? -1 : its.ids().indexOf(focusId);
+        return (i >= 0 && (mbSec().querySelector('.ymb-row[data-i="' + i + '"] ' + (sel || '[data-act="mb-edit"]'))
+          || mbSec().querySelector('.ymb-row[data-i="' + i + '"] [data-act="mb-edit"]')))
+          || mbSec().querySelector('[data-act="mb-open"]');
+      },
+    });
+  }
   function commitForm() {
     if (saving || !mbForm) return;
     var f = formFields();
@@ -2423,12 +2448,15 @@
       if (first) first.focus();
       return;
     }
+    var editing = mbForm.i >= 0;
     mbForm = null;
     formEl().hidden = true;
     formEl().querySelector('[data-field="refs"] .yle-picker').hidden = true;
     buttonsChanged();
     var b = mbSec().querySelector('.ymb-row[data-i="' + r.i + '"] [data-act="mb-edit"]');
     if (b) b.focus();
+    var saved = its.list()[r.i];
+    saveButtons([], (editing ? 'Saved \u201c' : 'Added \u201c') + saved.label + '\u201d', saved.id);
   }
   function deleteButton(i) {
     var b = its.list()[i];
@@ -2437,6 +2465,7 @@
     var onPages = b.kept ? [] : sess.pagesHolding(b.id);
     var go = function () {
       if (!its || its.list()[i] == null || its.list()[i].id !== b.id) return;
+      var clean = { layout: !sess.isDirty(), shortcuts: !scs.isDirty() };
       var id = its.remove(i);
       if (id == null) return;
       sess.dropId(id);                 // its placements, its own page entry, and off every other page (S6c-5)
@@ -2456,6 +2485,9 @@
       buttonsChanged();
       var left = mbSec().querySelectorAll('.ymb-row [data-act="mb-del"]');
       (left[Math.min(i, left.length - 1)] || mbSec().querySelector('[data-act="mb-open"]')).focus();
+      var next = its.list()[Math.min(i, its.list().length - 1)];
+      saveButtons(['layout', 'shortcuts'].filter(function (k) { return clean[k] && (k === 'layout' ? sess : scs).isDirty(); }),
+        'Deleted \u201c' + b.label + '\u201d', next ? next.id : null, '[data-act="mb-del"]');
     };
     var isPg = b.type === 'page';
     if (!on.length && !combos.length && !drawers.length && !onPages.length && !isPg) { go(); return; }
@@ -2628,6 +2660,7 @@
           buttonsChanged();
           var mv = mbSec().querySelector('.ymb-row[data-i="' + (mi + (act === 'mb-up' ? -1 : 1)) + '"] .yle-' + (act === 'mb-up' ? 'up' : 'down') + ':not(:disabled)');
           (mv || mbSec().querySelector('.ymb-row[data-i="' + (mi + (act === 'mb-up' ? -1 : 1)) + '"] [data-act="mb-edit"]') || mbSec().querySelector('[data-act="mb-open"]')).focus();
+          saveButtons([], 'Order saved', its.ids()[mj], '.yle-' + (act === 'mb-up' ? 'up' : 'down') + ':not(:disabled)');
         }
         return;
       }
@@ -3140,11 +3173,18 @@
       return Promise.resolve(false);
     }
     if (!anyDirty()) { closeNow(); return Promise.resolve(true); }
-    if (typeof window.apiSend !== 'function') { banner('Saving is not available on this page.', true); return Promise.resolve(false); }
     var parts = [];
     if (its.isDirty()) parts.push({ key: 'items', doc: its.doc() });
     if (sess.isDirty()) parts.push({ key: 'layout', doc: sess.doc() });
     if (scs.isDirty()) parts.push({ key: 'shortcuts', doc: scs.doc() });
+    return persist(parts, null);
+  }
+  /** PUT parts in order (see save()). opts null: Save — all saved closes the
+   *  panel. opts { stay, toast, focus }: My buttons' own save (launcher-nits
+   *  L2) — all saved keeps the panel open, makes what saved the stored state,
+   *  toasts opts.toast and focuses opts.focus() (an element or null). */
+  function persist(parts, opts) {
+    if (typeof window.apiSend !== 'function') { banner('Saving is not available on this page.', true); return Promise.resolve(false); }
     var heldIds = Object.create(null);     // the buttons the server holds before this save
     its.storedIds().concat(its.retired()).forEach(function (id) { heldIds[id] = true; });   // retired: not new (review N2)
     saving = true;
@@ -3170,7 +3210,7 @@
       var saved = {}, failed = [], said = [];
       parts.forEach(function (p) { if (res[p.key].ok) saved[p.key] = res[p.key].config; else failed.push(p.key); });
       if (Object.keys(saved).length) applyToShell(saved);
-      if (!failed.length) {
+      if (!failed.length && !opts) {
         closeNow();
         toast('success', 'Saved \u2014 your launcher is updated');
         return true;
@@ -3186,6 +3226,12 @@
       if (hasOwn(saved, 'shortcuts')) storedRefs = userIdsIn([saved.shortcuts, storedRefs ? Object.keys(storedRefs) : []]);
       retargetAll();
       if (Object.keys(saved).length) render(); else renderStatus();
+      if (!failed.length) {
+        toast('success', opts.toast);
+        var f = opts.focus && opts.focus();
+        if (f) f.focus();
+        return true;
+      }
       var multi = parts.length > 1;
       parts.forEach(function (p) {
         var name = PART_NAME[p.key], plural = p.key !== 'layout';

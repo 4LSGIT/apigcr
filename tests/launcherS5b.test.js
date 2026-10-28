@@ -270,7 +270,8 @@ function boot({ items = null, layout = null, shortcuts = null, ro = RO, access =
     if (picker().hidden) form().querySelector('[data-act="mb-ref-pick"]').click();
     picker().querySelector(`.yle-pick-item[data-id="${id}"]`).click();
   };
-  const commit = () => mb().querySelector('[data-act="mb-commit"]').click();
+  // since launcher-nits L2 a committed button saves itself: wait for that PUT
+  const commit = async () => { mb().querySelector('[data-act="mb-commit"]').click(); await flush(); };
   const fieldErr = (k) => mb().querySelector(`[data-err="${k}"]`).textContent;
   const save = async () => { panel().querySelector('.yle-save').click(); await flush(); };
   const dlg = () => d.getElementById('ycToolDialog');
@@ -540,7 +541,7 @@ describe('the editor: drawers in My buttons (for real)', () => {
   let t;
   afterEach(() => t && t.close());
 
-  test('make a drawer: kind Drawer, its contents added from the picker (minus drawers and what it holds), ordered, removed; Save writes it', async () => {
+  test('make a drawer: kind Drawer, its contents added from the picker (minus drawers and what it holds), ordered, removed; Add saves it', async () => {
     const other = DRAWER(['tasks'], { id: 'user:other', label: 'Other' });
     t = boot({ items: [VIEW, other] });
     await t.openEditor();
@@ -559,14 +560,16 @@ describe('the editor: drawers in My buttons (for real)', () => {
     t.form().querySelector('.ymb-ref[data-id="firm:clio"] [data-act="mb-ref-up"]').click();
     t.form().querySelector('.ymb-ref[data-id="tasks"] [data-act="mb-ref-del"]').click();
     expect(t.refsShown()).toEqual(['firm:clio', 'user:leads']);
-    t.commit();
+    await t.commit();
     const row = t.rowOf('Daily');
     expect(row.querySelector('.ymb-sum').textContent).toBe('List · 2 items');   // a drawer reads "List" since S6c-5
     expect([...t.rowOf('My leads').querySelectorAll('.yle-tag')].map((x) => x.textContent)).toEqual(['In “Daily”']);
-    await t.save();
+    expect(t.server.puts.map((p) => p.body.config_key)).toEqual(['items']);   // saved by Add itself (L2)
     const doc = t.server.puts[0].body.config;
     expect(doc.items[2]).toEqual({ id: 'user:daily', label: 'Daily', icon: 'box-open', action: { type: 'drawer', items: ['firm:clio', 'user:leads'] } });
     expect(shape.validate('user', 'items', doc).ok).toBe(true);
+    await t.w.ycLayoutEditor.close();                     // nothing unsaved: closes (a drawer stands down while the editor is open)
+    expect(t.panel().hidden).toBe(true);
     expect(t.w.ycLauncher.exec('user:daily')).toBe(true);
     expect(t.entries()).toEqual(['firm:clio', 'user:leads']);
   });
@@ -578,15 +581,17 @@ describe('the editor: drawers in My buttons (for real)', () => {
     expect(t.refsShown()).toEqual(['tasks', 'moreViews']);
     expect(t.form().querySelector('.ymb-ref[data-id="moreViews"] .yle-tag').textContent).toBe('Unavailable');
     t.mb().querySelector('[data-act="mb-cancel"]').click();
+    t.server.fail.items = { status: 503, message: 'down' };                    // the new button stays unsaved (L2: its own save refused)
     t.mb().querySelector('[data-act="mb-open"]').click();
     t.fill({ type: 'url', label: 'Court site', icon: 'gavel', href: 'https://ecf.example.gov/' });
-    t.commit();
+    await t.commit();
     t.act('My box', 'mb-edit').click();
     t.pickRef('user:court-site');
     t.form().querySelector('.ymb-ref[data-id="moreViews"] [data-act="mb-ref-del"]').click();
-    t.commit();
+    await t.commit();
+    delete t.server.fail.items;
     await t.save();
-    expect(t.server.puts[0].body.config.items[0].action).toEqual({ type: 'drawer', items: ['tasks', 'user:court-site'] });
+    expect(t.server.puts.slice(-1)[0].body.config.items[0].action).toEqual({ type: 'drawer', items: ['tasks', 'user:court-site'] });
   });
 
   test('one level deep in the form: a button a drawer holds can\'t become a drawer; a drawer can\'t take a drawer; 30 at most', async () => {
@@ -594,7 +599,7 @@ describe('the editor: drawers in My buttons (for real)', () => {
     await t.openEditor();
     t.act('My leads', 'mb-edit').click();
     t.fill({ type: 'drawer' });
-    t.commit();
+    await t.commit();
     expect(t.fieldErr('type')).toMatch(/inside the list “My box”: a list can’t go inside a list/);
     // converting it would also never offer itself in the picker
     t.form().querySelector('[data-act="mb-ref-pick"]').click();
@@ -628,16 +633,17 @@ describe('the editor: drawers in My buttons (for real)', () => {
   test('a new button\'s id freezes once a drawer holds it; a new button never takes an id a drawer names', async () => {
     t = boot({ items: [DRAWER(['user:ghost'])] });
     await t.openEditor();
+    t.server.fail.items = { status: 503, message: 'down' };                    // unsaved (L2: its own save refused): its id still follows its name
     t.mb().querySelector('[data-act="mb-open"]').click();
     t.fill({ type: 'url', label: 'Ghost', icon: 'ghost', href: 'https://x.example/' });
-    t.commit();
+    await t.commit();
     expect(t.rowOf('Ghost').getAttribute('data-id')).toBe('user:ghost-2');    // user:ghost is named by the drawer
     t.act('My box', 'mb-edit').click();
     t.pickRef('user:ghost-2');
-    t.commit();
+    await t.commit();
     t.act('Ghost', 'mb-edit').click();
     t.fill({ label: 'Renamed' });
-    t.commit();
+    await t.commit();
     expect(t.rowOf('Renamed').getAttribute('data-id')).toBe('user:ghost-2');  // frozen: the drawer holds it
   });
 
@@ -651,7 +657,7 @@ describe('the editor: drawers in My buttons (for real)', () => {
     expect(asked).toEqual(['Delete “My leads”? Note: it’s in your lists “My box”, “Two”. Deleting it takes it off there too.']);
     expect(t.rowOf('My box').querySelector('.ymb-sum').textContent).toBe('List · 1 item');
     expect(t.rowOf('Two').querySelector('.ymb-sum').textContent).toBe('List · empty');
-    await t.save();
+    expect(t.server.puts.map((p) => p.body.config_key)).toEqual(['items']);   // saved by the delete itself (L2)
     expect(JSON.stringify(t.server.puts[0].body.config)).not.toMatch(/user:leads/);
     expect(t.server.user().items.retired).toEqual(['user:leads']);
   });
@@ -664,8 +670,9 @@ describe('the editor: drawers in My buttons (for real)', () => {
     await t.flush();
     expect(t.refsShown()).toEqual(['user:leads']);
     t.act('My leads', 'mb-down').click();                 // swaps with the drawer being edited
+    await t.flush();                                      // the move saves itself (L2)
     t.fill({ label: 'Box renamed' });
-    t.commit();
+    await t.commit();
     expect(t.rowOf('Box renamed').getAttribute('data-id')).toBe('user:box');
     expect(t.rowOf('My leads').getAttribute('data-id')).toBe('user:leads');
   });
@@ -676,20 +683,22 @@ describe('the editor: drawers in My buttons (for real)', () => {
     const ids = () => [...t.mb().querySelectorAll('.ymb-row')].map((li) => [li.getAttribute('data-id'), li.querySelector('.yle-name').textContent]);
     t.act('My leads', 'mb-edit').click();                 // row 1
     t.act('My leads', 'mb-up').click();                   // its own row moves to 0
+    await t.flush();                                      // the move saves itself (L2)
     t.fill({ label: 'Edited' });
-    t.commit();
+    await t.commit();
     expect(ids()).toEqual([['user:leads', 'Edited'], ['user:court', 'Court site'], ['user:box', 'My box']]);
     t.act('Edited', 'mb-edit').click();                   // row 0
     t.act('Edited', 'mb-down').click();                   // its own row moves to 1
+    await t.flush();                                      // the move saves itself (L2)
     t.fill({ label: 'Edited twice' });
-    t.commit();
+    await t.commit();
     expect(ids()).toEqual([['user:court', 'Court site'], ['user:leads', 'Edited twice'], ['user:box', 'My box']]);
     // delete a row ABOVE the open form (not placed, bound or in a drawer: no question asked)
     t.act('My box', 'mb-edit').click();                   // row 2
     t.act('Court site', 'mb-del').click();                // row 0 goes; the form's row is now 1
     await t.flush();
     t.fill({ label: 'Box renamed' });
-    t.commit();
+    await t.commit();
     expect(ids()).toEqual([['user:leads', 'Edited twice'], ['user:box', 'Box renamed']]);
   });
 
@@ -729,7 +738,7 @@ describe('the round trip', () => {
     t.mb().querySelector('[data-act="mb-open"]').click();
     t.fill({ type: 'drawer', label: 'Daily', icon: 'box-open' });
     t.pickRef('user:leads'); t.pickRef('firm:payroll'); t.pickRef('tasks');
-    t.commit();
+    await t.commit();
     t.act('Daily', 'mb-home').click();
     await t.save();
     expect(t.server.puts.map((p) => p.body.config_key)).toEqual(['items', 'layout']);

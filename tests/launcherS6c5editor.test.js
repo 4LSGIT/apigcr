@@ -395,21 +395,25 @@ describe('2. the user panel, for real', () => {
     expect(t.errors).toEqual([]);
   });
 
-  test('Arrange…: two sections (Tiles, Small buttons; no Reset, no Hidden box); tiles from the picker (two panels, the tab button, a List, a break) and icons; the dots; Save → items then layout with pages; the shell builds the page', async () => {
+  test('Arrange…: two sections (Tiles, Small buttons; no Reset, no Hidden box); tiles from the picker (two panels, the tab button, a List, a break) and icons; the dots; each button saves itself (L2), Save → the layout with pages; the shell builds the page', async () => {
     t = await boot({ store: await seedFirm(makeStore()) });
     await open(t, { section: 'buttons' });
     t.click(t.mb().querySelector('[data-act="mb-open"]'));
     t.setVal('type', 'drawer'); t.setVal('label', 'My box'); t.setVal('icon', 'box-open');
     t.click(t.mb().querySelector('[data-act="mb-commit"]'));
+    await t.flush();                                      // each Add saves itself (L2)
     t.click(t.mb().querySelector('[data-act="mb-open"]'));
     t.setVal('type', 'view'); t.setVal('label', 'Leads tab'); t.setVal('icon', 'table-list'); t.setVal('size', 'tab');
     t.mb().querySelector('#ymb_key').appendChild(Object.assign(t.d.createElement('option'), { value: 'lead_followups', textContent: 'Leads' }));
     t.setVal('key', 'lead_followups');
     t.click(t.mb().querySelector('[data-act="mb-commit"]'));
+    await t.flush();
     t.click(t.mb().querySelector('[data-act="mb-open"]'));
     t.setVal('type', 'page'); t.setVal('label', 'My desk'); t.setVal('icon', 'desktop');
     t.click(t.mb().querySelector('[data-act="mb-commit"]'));
-    expect([t.dot('home') || t.dot('sidebar'), t.dot('buttons')]).toEqual([false, true]);
+    await t.flush();
+    expect([t.dot('home') || t.dot('sidebar'), t.dot('buttons')]).toEqual([false, false]);   // all three saved
+    expect(t.api.calls.filter((c) => c.method === 'PUT').map((c) => c.body.config_key)).toEqual(['items', 'items', 'items']);
     t.click(t.mbRow('My desk').querySelector('[data-act="mb-arrange"]'));
     const box = t.mb().querySelector('.ymb-arrange');
     expect(box.hidden).toBe(false);
@@ -435,17 +439,19 @@ describe('2. the user panel, for real', () => {
     expect([...t.sec(TS).querySelectorAll('.yle-rows .yle-tag')].map((x) => x.textContent)).toEqual(['Added', 'Added', 'Added', 'Added']);
     expect([t.dot('home') || t.dot('sidebar'), t.dot('buttons')]).toEqual([false, true]);
     expect([...t.mbRow('My box').querySelectorAll('.ymb-where .yle-tag')].map((x) => x.textContent)).toEqual(['On “My desk”']);
-    // the page button's id is frozen now that the layout names it
+    // the page button's id is permanent: it was saved when it was added
     t.click(t.mbRow('My desk').querySelector('[data-act="mb-edit"]'));
     t.setVal('label', 'Desk renamed');
-    expect(t.mb().querySelector('.ymb-id-line').textContent).toBe('Its id will be user:my-desk, set from the name.');
+    expect(t.mb().querySelector('.ymb-id-line').textContent).toBe('Its id is user:my-desk (permanent).');
     t.click(t.mb().querySelector('[data-act="mb-commit"]'));
+    await t.flush();                                      // the rename saves itself; the arranged tiles wait for Save
     expect(box.querySelector('.ymb-arrange-title').textContent).toBe('Arrange “Desk renamed”');
+    expect([t.dot('home') || t.dot('sidebar'), t.dot('buttons')]).toEqual([false, true]);
     t.click(box.querySelector('[data-act="mb-arrange-done"]'));
     expect(box.hidden).toBe(true);
     await t.save();
     const puts = t.api.calls.filter((c) => c.method === 'PUT').map((c) => c.body.config_key);
-    expect(puts).toEqual(['items', 'layout']);
+    expect(puts).toEqual(['items', 'items', 'items', 'items', 'layout']);
     const lay = t.store.doc('user', 1, 'layout');
     expect(lay.pages).toEqual({ 'user:my-desk': { tiles: [{ item: 'moreAutomations' }, { item: 'adminUsers' }, { break: true }, { item: 'user:leads-tab' }, { item: 'user:my-box' }], icons: [{ item: 'casey' }] } });
     expect(t.store.doc('user', 1, 'items').items.find((i) => i.id === 'user:my-desk').action).toEqual({ type: 'page' });
@@ -458,7 +464,7 @@ describe('2. the user panel, for real', () => {
     expect(t.errors).toEqual([]);
   });
 
-  test('the cascade: deleting a button on a page takes it off the page (the prompt names the page); deleting the page drops its entry (the prompt says so, the box closes); Save writes neither', async () => {
+  test('the cascade: deleting a button on a page takes it off the page (the prompt names the page); deleting the page drops its entry (the prompt says so, the box closes); each delete saves itself with its cascade (L2), writing neither', async () => {
     const items = { items: [
       { id: 'user:desk', label: 'My desk', icon: 'desktop', action: { type: 'page' } },
       { id: 'user:court', label: 'Court site', icon: 'gavel', action: { type: 'url', href: 'https://ecf.example.gov/', present: 'window' } },
@@ -471,11 +477,11 @@ describe('2. the user panel, for real', () => {
     t.click(t.mbRow('Court site').querySelector('[data-act="mb-del"]'));
     await t.flush();
     expect(t.asked.slice(-1)).toEqual(['Delete “Court site”? Note: it’s on your page “My desk”. Deleting it takes it off there too.']);
-    expect(t.dot('buttons')).toBe(true);
+    expect(t.dot('buttons')).toBe(false);                 // the layout had no unsaved edit: its cascade went with the delete
+    expect(t.api.calls.filter((c) => c.method === 'PUT').map((c) => c.body.config_key)).toEqual(['items', 'layout']);
     t.click(t.mbRow('My desk').querySelector('[data-act="mb-arrange"]'));
     expect(t.names(P('user:desk', 'tiles'))).toEqual(['Cases']);
     expect(t.names(P('user:desk', 'icons'))).toEqual([]);
-    await t.save();
     expect(t.store.doc('user', 1, 'layout').pages).toEqual({ 'user:desk': { tiles: [{ item: 'cases' }], icons: [] } });
     expect(t.pageTiles('user:desk')).toEqual(['cases']);
     // the page itself
@@ -486,7 +492,7 @@ describe('2. the user panel, for real', () => {
     await t.flush();
     expect(t.asked.slice(-1)).toEqual(['Delete “My desk”? Note: it’s on your Home. Deleting it takes it off there too. The page’s own tiles go with it.']);
     expect(t.mb().querySelector('.ymb-arrange').hidden).toBe(true);
-    await t.save();
+    expect(t.api.calls.filter((c) => c.method === 'PUT').map((c) => c.body.config_key)).toEqual(['items', 'layout', 'items', 'layout']);
     const lay = t.store.doc('user', 1, 'layout');
     expect(lay.pages).toEqual({});
     expect(lay.placed.home).toEqual([{ item: 'cases' }]);

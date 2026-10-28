@@ -101,8 +101,11 @@ you've rearranged that surface. You can then move it or hide it like any other.
 
 ## Saving and cancelling
 
-- **Nothing changes until you press Save.** One Save covers all four tabs.
-  It updates your Home, your sidebar, your keyboard shortcuts and your buttons
+- **Your buttons save themselves.** On **My buttons**, adding a button (or
+  changing, moving or deleting one) is saved the moment you do it: a short
+  note says *Added “…”*, and the editor stays open. See [My buttons](#my-buttons).
+- **Everything else waits for Save.** One Save covers the other tabs, and a
+  page's tiles: it updates your Home, your sidebar and your keyboard shortcuts
   straight away, with no reload, and closes the editor. The status
   line at the bottom says *Unsaved changes* or *No changes*; Save is greyed
   out while there is nothing to save.
@@ -237,13 +240,15 @@ button for those.
      or compact, or a tab), type the address, fill the list, or — for a page —
      nothing more here: its tiles are arranged from its row (see
      [Pages](#pages)).
-3. Press **Add button**, then **Save**.
+3. Press **Add button**. That saves it: there is nothing more to press.
 
 Each button in the list shows its icon, its name, what it opens (*Saved view ·
 Leads*, *Link · ecf.example.gov*), and where you have put it (*On Home*, *On
 sidebar*, its keyboard shortcut). **↑ / ↓** set their order, which is their
 order in All and the search. The **pen** edits one, the **bin** deletes it.
-A button you haven't saved yet says **New**.
+Each of these is saved as you do it. If a save is refused, the editor says why
+at the top, the button stays in the list marked **New**, and **Save** tries
+again.
 
 If the lists of tools and saved views can't be loaded, the tab says so: link
 buttons still work, and the lists come back the next time you open the
@@ -276,16 +281,19 @@ A button you make is in **All** and the **Ctrl+K** search straight away, under
 **Mine**. To have it on your Home or sidebar, press **Add to Home** or **Add to
 sidebar** under it in the list (or use **Add a shortcut** on the Home or Sidebar
 tab); then arrange it there like anything else. On the **Keyboard shortcuts**
-tab you can give it a key combination of its own. All of this works before
-you save: the button, its place and its shortcut are saved together.
+tab you can give it a key combination of its own. Putting it somewhere and
+giving it a shortcut are arranging, so they wait for **Save** like any other
+change on those tabs.
 
 ### Deleting a button
 
 The bin deletes a button. If it is on your Home or sidebar, on one of your
 pages, in one of your lists, or has a keyboard shortcut, the editor says so
 and asks first; deleting it takes it off those too, so nothing is left
-pointing at it. Deleting a page takes its own tiles with it. Nothing is gone
-until you Save.
+pointing at it. Deleting a page takes its own tiles with it. The delete is
+saved at once. If you had other unsaved changes on the tab it also touches
+(say, you had just moved a Home tile), that part waits for your **Save**, so
+the delete never saves something you hadn't finished.
 
 ### Things to know
 
@@ -345,11 +353,11 @@ shortcut like any other.
 2. Press **Add to the list** and pick from the picker (type part of a name to
    find it). Anything you have can go in: a feature, a More Features or Admin
    panel, one of your firm's items, or one of your own buttons, even one you
-   made a minute ago and haven't saved. The picker stays open, so you can pick
+   made a minute ago. The picker stays open, so you can pick
    several in a row; **Done** closes it.
 3. **↑ / ↓** set the order the list shows them in, and **×** takes one out.
    A list holds up to **30** items.
-4. Press **Add button**, then **Save**. Put it on your Home or sidebar with
+4. Press **Add button** (that saves it). Put it on your Home or sidebar with
    **Add to Home** / **Add to sidebar**, as with any button.
 
 In the list of buttons, a list says how many items it holds (*List · 4

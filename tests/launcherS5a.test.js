@@ -248,6 +248,8 @@ function boot({ items = null, layout = null, shortcuts = null, retired = null, p
       (e) => Promise.reject(Object.assign(new Error(e.message), { status: e.status || 500, body: { status: 'error', message: e.message, errors: e.errors } })));
   }
   const confirms = [];
+  const toasts = [];
+  w.Toast = { fire: (o) => { toasts.push(o.title); return Promise.resolve(); } };
   let answer = true;
   w.confirm = (text) => { confirms.push(text); return answer; };
   w.ycLauncher.applyAccess({ ...access, ui: w.firmData.ui });
@@ -281,13 +283,14 @@ function boot({ items = null, layout = null, shortcuts = null, retired = null, p
     if (f.type) setVal('type', f.type);
     for (const k of ['label', 'icon', 'key', 'href', 'size']) if (f[k] != null) setVal(k, f[k]);
   };
-  const addButton = (f) => { mb().querySelector('[data-act="mb-open"]').click(); fill(f); mb().querySelector('[data-act="mb-commit"]').click(); };
+  // since launcher-nits L2 a committed button saves itself: wait for that PUT
+  const addButton = async (f) => { mb().querySelector('[data-act="mb-open"]').click(); fill(f); mb().querySelector('[data-act="mb-commit"]').click(); await flush(); };
   const fieldErr = (k) => mb().querySelector(`[data-err="${k}"]`).textContent;
   const layoutRows = (sf) => [...panel().querySelectorAll(`.yle-sec[data-sf="${sf}"] .yle-rows > .yle-row`)].map((li) => (li.querySelector('.yle-name') || {}).textContent);
   const save = async () => { panel().querySelector('.yle-save').click(); await flush(); };
   const dlg = () => d.getElementById('ycToolDialog');
   return {
-    w, d, server, errors, calls, opened, confirms, flush, key, panel, mb, mbRows, rowOf, act, openEditor, setVal, fill, addButton,
+    w, d, server, errors, calls, opened, confirms, toasts, flush, key, panel, mb, mbRows, rowOf, act, openEditor, setVal, fill, addButton,
     fieldErr, layoutRows, save, dlg, answer: (v) => { answer = v; }, tab: () => w.currentMainTabId(), close: () => w.close(),
   };
 }
@@ -381,30 +384,36 @@ describe('the editor\'s My buttons tab (for real)', () => {
     expect(t.mb().querySelector('.ymb-intro').textContent).toMatch(/A link always opens in a new window/);
   });
 
-  test('add a view, a tool and a link: rows marked New, ids from the name, Save writes { items } (validated, items only)', async () => {
+  test('add a view, a tool and a link: each saves itself at once (launcher-nits L2: no Save, the panel stays open), ids from the name, { items } validated', async () => {
     t = boot({ items: [] });
     await t.openEditor();
-    t.addButton({ label: 'Leads', icon: 'star', type: 'view', key: 'lead_followups' });
-    t.addButton({ label: 'Intake', icon: 'clipboard-check', type: 'tool', key: 'qa-intake-tool', size: 'compact' });
-    t.addButton({ label: 'Court site', icon: 'gavel', type: 'url', href: 'https://ecf.example.gov/' });
-    expect(t.mbRows().map((r) => [r.id, r.name, r.tags, r.sum])).toEqual([
-      ['user:leads', 'Leads', ['New'], 'Saved view · Leads <b>follow ups</b>'],
-      ['user:intake', 'Intake', ['New'], 'Tool · Intake checklist (compact)'],
-      ['user:court-site', 'Court site', ['New'], 'Link · ecf.example.gov (new window)'],
-    ]);
-    expect(t.panel().querySelector('.yle-tab[data-pane="buttons"] .yle-tab-dot').hidden).toBe(false);
-    await t.save();
+    await t.addButton({ label: 'Leads', icon: 'star', type: 'view', key: 'lead_followups' });
     expect(t.server.puts.map((p) => p.body.config_key)).toEqual(['items']);
-    const doc = t.server.puts[0].body.config;
+    expect(t.toasts).toEqual(['Added “Leads”']);
+    expect(t.panel().hidden).toBe(false);
+    await t.addButton({ label: 'Intake', icon: 'clipboard-check', type: 'tool', key: 'qa-intake-tool', size: 'compact' });
+    await t.addButton({ label: 'Court site', icon: 'gavel', type: 'url', href: 'https://ecf.example.gov/' });
+    expect(t.mbRows().map((r) => [r.id, r.name, r.tags, r.sum])).toEqual([
+      ['user:leads', 'Leads', [], 'Saved view · Leads <b>follow ups</b>'],
+      ['user:intake', 'Intake', [], 'Tool · Intake checklist (compact)'],
+      ['user:court-site', 'Court site', [], 'Link · ecf.example.gov (new window)'],
+    ]);
+    expect(t.panel().querySelector('.yle-tab[data-pane="buttons"] .yle-tab-dot').hidden).toBe(true);
+    expect(t.w.ycLayoutEditor.isDirty()).toBe(false);
+    expect(t.server.puts.map((p) => p.body.config_key)).toEqual(['items', 'items', 'items']);
+    const doc = t.server.puts[2].body.config;
     expect(doc).toEqual({ items: [
       { id: 'user:leads', label: 'Leads', icon: 'star', action: { type: 'view', key: 'lead_followups', present: 'modal' } },
       { id: 'user:intake', label: 'Intake', icon: 'clipboard-check', action: { type: 'tool', key: 'qa-intake-tool', present: 'modal', size: 'compact' } },
       { id: 'user:court-site', label: 'Court site', icon: 'gavel', action: { type: 'url', href: 'https://ecf.example.gov/', present: 'window' } },
     ] });
     expect(shape.validate('user', 'items', doc).ok).toBe(true);
-    expect(t.panel().hidden).toBe(true);
     expect(t.w.firmData.ui.user.items).toEqual(t.server.user().items);
     expect(t.w.ycLauncher.effectiveRegistry().filter((e) => e.group === 'Mine').map((e) => e.id)).toEqual(['user:leads', 'user:intake', 'user:court-site']);
+    expect(t.panel().querySelector('.yle-save').disabled).toBe(true);           // nothing left to save
+    t.panel().querySelector('.yle-cancel').click();
+    await t.flush();
+    expect([t.panel().hidden, t.confirms, t.server.puts.length]).toEqual([true, [], 3]);   // closes without asking
   });
 
   test('validation: name, icon, the address (https only, never a shell-only page), a chosen view / tool — nothing added', async () => {
@@ -430,37 +439,45 @@ describe('the editor\'s My buttons tab (for real)', () => {
     expect(t.w.ycLayoutEditor.isDirty()).toBe(false);
   });
 
-  test('ids: unique against buttons, ids the layout / shortcuts name, and retired; a new id follows its name until placed; a saved id never changes', async () => {
+  test('ids: unique against buttons, ids the layout / shortcuts name, and retired; an unsaved id follows its name until placed; a saved id never changes', async () => {
     t = boot({ items: [VIEW], retired: ['user:court', 'user:court-2'],
       layout: { placed: { home: [{ item: 'user:intake' }] } }, shortcuts: { bindings: [{ combo: { ctrl: true, meta: true, alt: false, shift: false, key: 'g' }, id: 'user:gone' }] } });
     await t.openEditor();
-    t.addButton({ label: 'My leads', icon: 'star', type: 'view', key: 'lead_followups' });        // user:leads is taken, but the name is "my leads"
-    t.addButton({ label: 'Leads', icon: 'star', type: 'view', key: 'lead_followups' });           // stored user:leads → -2
-    t.addButton({ label: 'Court', icon: 'gavel', type: 'url', href: 'https://x.example/' });     // retired court, court-2 → -3
-    t.addButton({ label: 'Intake', icon: 'c', type: 'tool', key: 'clio-code' });                 // named by the layout → -2
-    t.addButton({ label: 'Gone', icon: 'c', type: 'tool', key: 'clio-code' });                   // named by a shortcut → -2
+    await t.addButton({ label: 'My leads', icon: 'star', type: 'view', key: 'lead_followups' });        // user:leads is taken, but the name is "my leads"
+    await t.addButton({ label: 'Leads', icon: 'star', type: 'view', key: 'lead_followups' });           // stored user:leads → -2
+    // the rest stay unsaved: their own saves are refused (since L2 an add saves itself)
+    t.server.fail.items = { status: 503, message: 'down' };
+    await t.addButton({ label: 'Court', icon: 'gavel', type: 'url', href: 'https://x.example/' });     // retired court, court-2 → -3
+    await t.addButton({ label: 'Intake', icon: 'c', type: 'tool', key: 'clio-code' });                 // named by the layout → -2
+    await t.addButton({ label: 'Gone', icon: 'c', type: 'tool', key: 'clio-code' });                   // named by a shortcut → -2
     expect(t.mbRows().map((r) => r.id)).toEqual(['user:leads', 'user:my-leads', 'user:leads-2', 'user:court-3', 'user:intake-2', 'user:gone-2']);
-    // a new button's id follows its name…
+    expect(t.mbRows().map((r) => r.tags.includes('New'))).toEqual([false, false, false, true, true, true]);
+    // an unsaved button's id follows its name…
     t.act('Court', 'mb-edit').click();
     expect(t.mb().querySelector('.ymb-id-line').textContent).toBe('Its id will be user:court-3, set from the name.');
     t.fill({ label: 'Docket' });
     t.mb().querySelector('[data-act="mb-commit"]').click();
+    await t.flush();
     expect(t.mbRows()[3].id).toBe('user:docket');
     // …until it is placed: then it is frozen
     t.act('Docket', 'mb-home').click();
     t.act('Docket', 'mb-edit').click();
     t.fill({ label: 'Docket sheet' });
     t.mb().querySelector('[data-act="mb-commit"]').click();
+    await t.flush();
     expect(t.mbRows()[3]).toMatchObject({ id: 'user:docket', name: 'Docket sheet' });
     // a saved one never changes
     t.act('My leads', 'mb-edit').click();
     expect(t.mb().querySelector('.ymb-id-line').textContent).toBe('Its id is user:leads (permanent).');
     t.fill({ label: 'Hot leads' });
     t.mb().querySelector('[data-act="mb-commit"]').click();
+    await t.flush();
     expect(t.mbRows()[0]).toMatchObject({ id: 'user:leads', name: 'Hot leads' });
+    delete t.server.fail.items;
+    const before = t.server.puts.length;
     await t.save();
-    expect(t.server.puts[0].body.config.items.map((i) => i.id)).toEqual(['user:leads', 'user:my-leads', 'user:leads-2', 'user:docket', 'user:intake-2', 'user:gone-2']);
-    expect(t.server.puts.map((p) => p.body.config_key)).toEqual(['items', 'layout']);
+    expect(t.server.puts.slice(before).map((p) => p.body.config_key)).toEqual(['items', 'layout']);
+    expect(t.server.puts[before].body.config.items.map((i) => i.id)).toEqual(['user:leads', 'user:my-leads', 'user:leads-2', 'user:docket', 'user:intake-2', 'user:gone-2']);
   });
 
   test('a saved button deleted in this session keeps its id taken: a new one with the same name gets another id (no re-pointing)', async () => {
@@ -468,7 +485,7 @@ describe('the editor\'s My buttons tab (for real)', () => {
     await t.openEditor();
     t.act('Leads', 'mb-del').click();
     await t.flush();
-    t.addButton({ label: 'Leads', icon: 'star', type: 'url', href: 'https://x.example/' });
+    await t.addButton({ label: 'Leads', icon: 'star', type: 'url', href: 'https://x.example/' });
     expect(t.mbRows().map((r) => r.id)).toEqual(['user:leads-2']);
     await t.save();
     expect(t.server.user().items).toEqual({ items: [expect.objectContaining({ id: 'user:leads-2' })], retired: ['user:leads'] });
@@ -503,17 +520,18 @@ describe('the editor\'s My buttons tab (for real)', () => {
     t.panel().querySelector('.yle-tab[data-pane="buttons"]').click();
     await t.flush();
     t.act('My leads', 'mb-up');                                                 // (no-op: first row)
-    t.addButton({ label: 'New one', icon: 'star', type: 'url', href: 'https://x.example/' });
-    t.server.fail.items = { status: 503, message: 'down' };
+    t.server.fail.items = { status: 503, message: 'down' };                      // the new button stays unsaved (L2: its own save refused)
+    await t.addButton({ label: 'New one', icon: 'star', type: 'url', href: 'https://x.example/' });
     await t.save();
-    expect(t.server.puts.map((p) => p.body.config_key)).toEqual(['items', 'layout']);   // sent, not held
+    expect(t.server.puts.map((p) => p.body.config_key)).toEqual(['items', 'items', 'layout']);   // sent, not held
     expect(t.panel().querySelector('.yle-banner').textContent).not.toMatch(/not sent/);
   });
 
   test('"Add to Home" / "Add to sidebar" append a new button to that surface in the same session; the layout tab shows it', async () => {
     t = boot({ items: [] });
     await t.openEditor();
-    t.addButton({ label: 'Leads', icon: 'star', type: 'view', key: 'lead_followups' });
+    t.server.fail.items = { status: 503, message: 'down' };                      // unsaved, as before L2: still placeable
+    await t.addButton({ label: 'Leads', icon: 'star', type: 'view', key: 'lead_followups' });
     t.act('Leads', 'mb-home').click();
     expect(t.mbRows()[0].tags).toEqual(['New', 'On Home']);
     t.act('Leads', 'mb-sidebar').click();
@@ -528,7 +546,7 @@ describe('the editor\'s My buttons tab (for real)', () => {
     expect(t.panel().querySelector('.yle-sec[data-sf="home"] .yle-pick-item[data-id="user:leads"]')).not.toBe(null);
   });
 
-  test('delete a placed + bound button: it asks (naming where), then it is gone everywhere — no dangling entry written', async () => {
+  test('delete a placed + bound button: it asks (naming where), then it is gone everywhere and saved at once (L2) — no dangling entry written', async () => {
     const SC = { bindings: [{ combo: { ctrl: true, meta: true, alt: false, shift: false, key: 'l' }, id: 'user:leads' },
       { combo: { ctrl: true, meta: true, alt: false, shift: false, key: 'e' }, id: 'calendar' }] };
     t = boot({ items: [VIEW, LINK], layout: { placed: { home: [{ item: 'user:leads' }, { item: 'cases' }], sidebar: [{ item: 'user:leads' }, { item: 'tasks' }] } }, shortcuts: SC });
@@ -538,6 +556,7 @@ describe('the editor\'s My buttons tab (for real)', () => {
     await t.flush();
     expect(t.confirms).toEqual(['Delete “My leads”? Note: it’s on your Home and sidebar and bound to ⌃⌘L. Deleting it takes it off there too.']);
     expect(t.mbRows().map((r) => r.id)).toEqual(['user:leads', 'user:court']);   // kept: the user said no
+    expect(t.server.puts).toEqual([]);
     t.answer(true);
     t.act('My leads', 'mb-del').click();
     await t.flush();
@@ -545,24 +564,70 @@ describe('the editor\'s My buttons tab (for real)', () => {
     expect(t.layoutRows('home')).not.toContain('My leads');
     expect(t.layoutRows('sidebar')).not.toContain('My leads');
     expect([...t.panel().querySelectorAll('.ysc-row .yle-name')].map((n) => n.textContent)).toEqual(['Calendar']);
+    // the layout and shortcuts had no unsaved edit: the delete's own cascade is sent with it
+    expect(t.server.puts.map((p) => p.body.config_key)).toEqual(['items', 'layout', 'shortcuts']);
+    expect(t.toasts).toEqual(['Deleted “My leads”']);
+    expect(t.w.ycLayoutEditor.isDirty()).toBe(false);
     // a button nowhere placed or bound goes without asking
     t.act('Court site', 'mb-del').click();
     await t.flush();
     expect(t.confirms).toHaveLength(2);
-    await t.save();
-    expect(t.server.puts.map((p) => p.body.config_key)).toEqual(['items', 'layout', 'shortcuts']);
-    const [items, lay, sc] = t.server.puts.map((p) => p.body.config);
+    expect(t.server.puts.map((p) => p.body.config_key)).toEqual(['items', 'layout', 'shortcuts', 'items']);
+    const [, lay, sc, items] = t.server.puts.map((p) => p.body.config);
     expect(items).toEqual({ items: [] });
     expect(JSON.stringify(lay)).not.toMatch(/user:/);
     expect(sc.bindings.map((b) => b.id)).toEqual(['calendar']);
     expect(t.server.user().items).toEqual({ items: [], retired: ['user:leads', 'user:court'] });   // retired by the server
+    expect(t.panel().hidden).toBe(false);
+    expect(t.panel().querySelector('.yle-save').disabled).toBe(true);           // nothing left to save
+    t.panel().querySelector('.yle-cancel').click();
+    await t.flush();
+    expect([t.panel().hidden, t.confirms.length, t.server.puts.length]).toEqual([true, 2, 4]);   // closes without asking
+  });
+
+  test('L2: an add whose own save is refused says so, stays (tagged New, the tab dotted) and Save sends it again; nothing closes', async () => {
+    t = boot({ items: [VIEW] });
+    await t.openEditor();
+    t.server.fail.items = { status: 503, message: 'Service Unavailable' };
+    await t.addButton({ label: 'Court', icon: 'gavel', type: 'url', href: 'https://x.example/' });
+    expect(t.panel().querySelector('.yle-banner').textContent).toBe('Save failed: Service Unavailable. Your changes are still here.');
+    expect([t.panel().hidden, t.panel().querySelector('#ylePane_buttons').hidden]).toEqual([false, false]);
+    expect(t.mbRows().map((r) => [r.id, r.tags])).toEqual([['user:leads', []], ['user:court', ['New']]]);
+    expect(t.panel().querySelector('.yle-tab[data-pane="buttons"] .yle-tab-dot').hidden).toBe(false);
+    expect(t.toasts).toEqual([]);
+    expect(t.server.user().items.items.map((i) => i.id)).toEqual(['user:leads']);
+    delete t.server.fail.items;
+    await t.save();
+    expect(t.server.puts.map((p) => p.body.config_key)).toEqual(['items', 'items']);
+    expect(t.server.user().items.items.map((i) => i.id)).toEqual(['user:leads', 'user:court']);
     expect(t.panel().hidden).toBe(true);
+  });
+
+  test('L2: a delete never saves an edit the user did not ask to save — a layout with its own unsaved edit keeps the cascade for Save', async () => {
+    const SC = { bindings: [{ combo: { ctrl: true, meta: true, alt: false, shift: false, key: 'l' }, id: 'user:leads' }] };
+    t = boot({ items: [VIEW, LINK], layout: { placed: { home: [{ item: 'user:leads' }, { item: 'cases' }] } }, shortcuts: SC });
+    await t.openEditor('home');
+    const row = [...t.panel().querySelectorAll('.yle-sec[data-sf="home"] .yle-rows > .yle-row')].find((li) => li.querySelector('.yle-name').textContent === 'Contacts');
+    row.querySelector('[data-act="up"]').click();                                // an unsaved Home edit
+    t.panel().querySelector('.yle-tab[data-pane="buttons"]').click();
+    await t.flush();
+    t.act('My leads', 'mb-del').click();
+    await t.flush();
+    expect(t.server.puts.map((p) => p.body.config_key)).toEqual(['items', 'shortcuts']);   // the layout waits
+    expect(JSON.stringify(t.server.user().shortcuts)).not.toMatch(/user:leads/);
+    expect(t.server.user().layout.placed.home[0]).toEqual({ item: 'user:leads' });          // stored as it was
+    expect(t.panel().querySelector('.yle-tab[data-pane="home"] .yle-tab-dot').hidden).toBe(false);
+    expect(t.layoutRows('home')).not.toContain('My leads');
+    await t.save();
+    expect(t.server.puts.slice(2).map((p) => p.body.config_key)).toEqual(['layout']);
+    expect(JSON.stringify(t.server.user().layout)).not.toMatch(/user:leads/);
   });
 
   test('three documents, items FIRST; the items refused → a layout naming a new button is HELD (not sent); what saved is stored', async () => {
     t = boot({ items: [VIEW] });
     await t.openEditor();
-    t.addButton({ label: 'New one', icon: 'star', type: 'url', href: 'https://x.example/' });
+    t.server.fail.items = { status: 400, message: 'Invalid', body: { status: 'error', errors: ['items[1]: <b>no</b>'] } };   // the add's own save (L2) refused too
+    await t.addButton({ label: 'New one', icon: 'star', type: 'url', href: 'https://x.example/' });
     t.act('New one', 'mb-home').click();                                         // layout names the NEW button
     t.panel().querySelector('.yle-tab[data-pane="shortcuts"]').click();          // shortcuts: an edit naming nothing new
     t.panel().querySelector('.ysc-sec [data-act="sc-open"]').click();
@@ -571,9 +636,8 @@ describe('the editor\'s My buttons tab (for real)', () => {
     t.panel().querySelector('.ysc-sec .yle-pick-item[data-id="tasks"]').click();
     t.key(t.panel().querySelector('.ysc-capture'), CMD_CTRL('t'));
     t.panel().querySelector('.ysc-sec [data-act="sc-add"]').click();
-    t.server.fail.items = { status: 400, message: 'Invalid', body: { status: 'error', errors: ['items[1]: <b>no</b>'] } };
     await t.save();
-    expect(t.server.puts.map((p) => p.body.config_key)).toEqual(['items', 'shortcuts']);   // layout held
+    expect(t.server.puts.map((p) => p.body.config_key)).toEqual(['items', 'items', 'shortcuts']);   // the add's, then Save's: layout held
     const banner = t.panel().querySelector('.yle-banner').textContent;
     expect(banner).toBe('The server refused your buttons. See the messages under My buttons. Your launcher layout was not sent: it uses a button that did not save. ' +
       'Your keyboard shortcuts were saved. Your changes are still here.');
@@ -588,7 +652,7 @@ describe('the editor\'s My buttons tab (for real)', () => {
     // the retry sends what is still unsaved, items first
     delete t.server.fail.items;
     await t.save();
-    expect(t.server.puts.slice(2).map((p) => p.body.config_key)).toEqual(['items', 'layout']);
+    expect(t.server.puts.slice(3).map((p) => p.body.config_key)).toEqual(['items', 'layout']);
     expect(t.panel().hidden).toBe(true);
     expect(t.d.querySelector('#tabHome [data-yc-shortcut="user:new-one"]').textContent).toBe('New one');
   });
@@ -596,13 +660,13 @@ describe('the editor\'s My buttons tab (for real)', () => {
   test('items saved, layout refused: the buttons are stored (tab clean), the layout keeps its edit and says so', async () => {
     t = boot({ items: [] });
     await t.openEditor();
-    t.addButton({ label: 'Leads', icon: 'star', type: 'view', key: 'lead_followups' });
+    await t.addButton({ label: 'Leads', icon: 'star', type: 'view', key: 'lead_followups' });
     t.act('Leads', 'mb-sidebar').click();
     t.server.fail.layout = { status: 503, message: 'Service Unavailable' };
     await t.save();
     expect(t.server.puts.map((p) => p.body.config_key)).toEqual(['items', 'layout']);
-    expect(t.panel().querySelector('.yle-banner').textContent)
-      .toBe('Your buttons were saved. Your launcher layout did not save: Service Unavailable. Your changes are still here.');
+    expect(t.panel().querySelector('.yle-banner').textContent)                    // the buttons saved themselves (L2): Save sent the layout alone
+      .toBe('Save failed: Service Unavailable. Your changes are still here.');
     expect(t.panel().querySelector('.yle-tab[data-pane="buttons"] .yle-tab-dot').hidden).toBe(true);
     expect(t.panel().querySelector('.yle-tab[data-pane="sidebar"] .yle-tab-dot').hidden).toBe(false);
     expect(t.panel().querySelector('.yle-tab[data-pane="home"] .yle-tab-dot').hidden).toBe(true);
@@ -627,28 +691,32 @@ describe('the editor\'s My buttons tab (for real)', () => {
     t.act('<img src=x onerror=alert(1)>', 'mb-del').click();
     await t.flush();
     expect(t.confirms[0]).toMatch(/^Delete “<img src=x onerror=alert\(1\)>”\?/);
-    t.addButton({ label: '<b>bold</b>', icon: 'star', type: 'url', href: 'https://x.example/' });
+    await t.addButton({ label: '<b>bold</b>', icon: 'star', type: 'url', href: 'https://x.example/' });
     expect(t.mbRows()[1].name).toBe('<b>bold</b>');
     expect(t.panel().querySelector('img, b')).toBe(null);
   });
 
-  test('while saving, edits are ignored (form, delete, move, add); the selects and boxes are frozen', async () => {
+  test('while saving, edits are ignored (form, delete, move, add, Save); the selects and boxes are frozen', async () => {
     t = boot({ items: [VIEW, LINK] });
     await t.openEditor();
-    t.act('Court site', 'mb-up').click();
     t.server.hold = true;
-    t.panel().querySelector('.yle-save').click();
+    t.act('Court site', 'mb-up').click();                                        // a move saves itself (L2): held in flight
     await t.flush();
+    expect(t.panel().querySelector('.yle-status').textContent).toBe('Saving…');
     t.act('My leads', 'mb-del').click();
     t.act('My leads', 'mb-up').click();
     t.mb().querySelector('[data-act="mb-open"]').click();
+    t.panel().querySelector('.yle-save').click();
     expect(t.mb().querySelector('.ymb-form').hidden).toBe(true);
     expect([...t.mb().querySelectorAll('select')].every((s) => s.disabled)).toBe(true);
     expect(t.mbRows().map((r) => r.id)).toEqual(['user:court', 'user:leads']);
     t.server.release();
     await t.flush();
+    expect(t.server.puts).toHaveLength(1);
     expect(t.server.puts[0].body.config.items.map((i) => i.id)).toEqual(['user:court', 'user:leads']);
-    expect(t.panel().hidden).toBe(true);
+    expect(t.toasts).toEqual(['Order saved']);
+    expect([t.panel().hidden, t.w.ycLayoutEditor.isDirty()]).toEqual([false, false]);
+    expect([...t.mb().querySelectorAll('select')].some((s) => s.disabled)).toBe(false);   // unfrozen
   });
 
   test('the lists can\'t be read: the tab says so; a link button can still be added and saved', async () => {
@@ -657,7 +725,7 @@ describe('the editor\'s My buttons tab (for real)', () => {
     const note = t.mb().querySelector('.ymb-pickers-err');
     expect([note.hidden, note.textContent]).toEqual([false, expect.stringMatching(/Couldn’t load the lists of tools and saved views/)]);
     expect(t.mbRows()[0].sum).toBe('Saved view · lead_followups');
-    t.addButton({ label: 'Court', icon: 'gavel', type: 'url', href: 'https://x.example/' });
+    await t.addButton({ label: 'Court', icon: 'gavel', type: 'url', href: 'https://x.example/' });
     await t.save();
     expect(t.server.puts[0].body.config.items.map((i) => i.id)).toEqual(['user:leads', 'user:court']);
   });
@@ -702,7 +770,7 @@ describe('the round trip', () => {
     t = boot({ items: [] });
     const marker = t.w.__noReload = {};
     await t.openEditor();
-    t.addButton({ label: 'Leads', icon: 'star', type: 'view', key: 'lead_followups' });
+    await t.addButton({ label: 'Leads', icon: 'star', type: 'view', key: 'lead_followups' });
     t.act('Leads', 'mb-home').click();
     t.panel().querySelector('.yle-tab[data-pane="shortcuts"]').click();
     t.panel().querySelector('.ysc-sec [data-act="sc-open"]').click();
@@ -835,6 +903,7 @@ describe('S6a: My buttons choose their icon in the picker', () => {
     expect(t.mb().querySelector('.ymb-icon-prev i').className).toBe('fa-brands fa-github');
     expect(t.mb().querySelector('.ymb-icon-name').textContent).toBe('github · Brands');
     t.mb().querySelector('[data-act="mb-commit"]').click();
+    await t.flush();                                                             // its own save (L2)
     expect(t.mbRows().map((r) => r.id)).toEqual(['user:code']);
     expect(t.rowOf('Code').querySelector('i').className).toBe('fa-brands fa-github yle-ic');
     t.act('Code', 'mb-home').click();
