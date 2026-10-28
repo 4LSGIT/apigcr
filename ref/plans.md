@@ -1075,6 +1075,34 @@ COMMENTs.)
   that step fails without sending — and the card does not warn.
   The card could read the contact's active phone/email rows and say so.
 
+## From the Ask Casey arc — A8 case-contact membership (2026-10-28) — deferred
+
+- **Native sync-bus gap: an open contact page never hears a membership
+  change.** The case-contact routes (POST / PATCH / DELETE
+  `/api/cases/:id/contacts`) announce a `case:<id>` marker only; contact.html
+  subscribes to `contact:<id>` alone, so its Cases list shows the old
+  membership until a reload — for the case page's own Modify dialog and the
+  Casey card alike. Also announcing `contact:<contactId>` (the id is in the
+  URL for PATCH/DELETE, in the body for POST) is a canonical bus change.
+- **The native PATCH `/api/cases/:id/contacts/:contactId` guards nothing.**
+  Raw SQL in the route (no service): it does not validate `relate_type`
+  (relaxed sql_mode stores a non-enum value as ''), emits no domain event (a
+  rule on `case.contact_linked` never sees a role change), answers 500 for a
+  no-op (the update trigger sees the row itself) and for any pair holding two
+  rows. A `caseService.updateCaseContactType` with the add's validation and a
+  `case.contact_role_changed` event would end all four.
+- **No native primary / last-contact / portal rule.** The case page lets
+  staff demote a portal user (any `portal_access_log` row — Casey's
+  definition) below Secondary, leave a case without a Primary,
+  or remove its last contact; only Casey's cards refuse these. A native guard
+  (or at least a warning in the Modify dialog) is a product decision.
+- **Two-row pairs.** The UNIQUE key is (case, contact, type), so the native
+  POST stores a second row for a contact already on the case under another
+  type, which the PATCH can then never change. Casey refuses both; how many
+  live pairs hold two rows is unmeasured (`SELECT case_relate_case_id,
+  case_relate_client_id, COUNT(*) FROM case_relate GROUP BY 1,2 HAVING
+  COUNT(*) > 1`).
+
 ## From the Ask Casey arc — A7 group A case/contact notes (2026-10-28) — deferred
 
 - **Native note-length limits disagree with the route.** The route caps

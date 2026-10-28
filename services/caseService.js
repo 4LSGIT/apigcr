@@ -845,9 +845,16 @@ async function removeCaseContact(db, caseId, contactId, { userId = null } = {}) 
  * Returns rows ordered Primary → Secondary → Other → Bystander, then by name,
  * so a "default to Primary" caller can just take the first row.
  *
+ * `portal_used` (0/1) says whether the contact has ANY portal_access_log row
+ * — a PIN request or a login counts, i.e. the contact has used or tried to use
+ * the client portal. Ask Casey's case-contact cards read it to refuse a
+ * demotion / removal that would hide this case from a portal user (A8). One
+ * EXISTS per row on idx_pal_contact; additive, so callers that do not read it
+ * are unaffected.
+ *
  * @param {object} db
  * @param {string} caseId
- * @returns {Promise<Array<{contact_id, contact_name, contact_phone, contact_email, relate_type, relate_id}>>}
+ * @returns {Promise<Array<{contact_id, contact_name, contact_phone, contact_email, relate_type, relate_id, portal_used}>>}
  */
 async function getCaseContacts(db, caseId) {
   const [rows] = await db.query(
@@ -857,7 +864,8 @@ async function getCaseContacts(db, caseId) {
        co.contact_phone,
        co.contact_email,
        cr.case_relate_type AS relate_type,
-       cr.case_relate_id   AS relate_id
+       cr.case_relate_id   AS relate_id,
+       EXISTS (SELECT 1 FROM portal_access_log pal WHERE pal.contact_id = co.contact_id) AS portal_used
      FROM case_relate cr
      JOIN contacts co ON co.contact_id = cr.case_relate_client_id
      WHERE cr.case_relate_case_id = ?

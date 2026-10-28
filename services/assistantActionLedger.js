@@ -20,6 +20,10 @@ const KINDS = new Map([
   ['case.notes.update.v1', 'case_id'],
   ['case.alerts.update.v1', 'case_id'],
   ['contact.notes.update.v1', 'contact_id'],
+  // A8: the receipt is the case_relate row — an integer PK, so not the
+  // case_id string path: the new row for an add, the reviewed row for a role
+  // change (UPDATE keeps it), the removed row for a remove (DELETE echoes none).
+  ...['add', 'update', 'remove'].map(k => [`case.contact.${k}.v1`, 'case_relate_id']),
   ['job.code_safe.create.v1', 'job_id'],
   ['workflow.draft.v1', 'workflow_id'],
   ['workflow.step_insert.v1', 'workflow_id'],

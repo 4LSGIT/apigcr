@@ -449,6 +449,40 @@ body. Governing migrations in `ref/migrations/`.*
   already on the sync bus and case.html / contact.html / checklistView repaint
   these columns. Off switch `casey_record_edits_enabled` (on unless '0').
   Tests: `tests/caseyRecordText.test.js` + assistantUi; plan: ASK_CASEY_ACTIONS_PLAN A7.
+- **Casey case-contact membership cards (A8, 10-28):** kinds
+  `case.contact.add.v1` (POST `/api/cases/:id/contacts` {contact_id,
+  relate_type}), `case.contact.update.v1` (PATCH `…/contacts/:contactId`
+  {relate_type}), `case.contact.remove.v1` (DELETE it). The native routes
+  guard only the (case, contact, type) UNIQUE key + triggers — the PATCH is raw
+  SQL in the route, validates nothing (a non-enum type stores '' under the
+  relaxed sql_mode) and emits no domain event — so the normalizer is the guard,
+  fail closed: a PORTAL USER — any `portal_access_log` row, PIN requests
+  included on purpose (`caseService.getCaseContacts` carries it per row as
+  `portal_used` 0/1; anything but an explicit 0 counts) — never leaves
+  Primary/Secondary by demotion or removal, whatever `portal_enabled` says
+  (CLAUDE.md portal rule; usage, not the DEFAULT-1 flag that refused
+  everything — manager ruling 2026-10-29); anyone else may, with a danger
+  warning (none when `portal_enabled` is 0); a case's
+  only Primary never leaves (a second Primary is allowed, danger-warned — the
+  swap path); a case's last contact is never removed; a pair with two rows
+  (PATCH/DELETE act on EVERY row of the pair) is refused, and so is an add for
+  a pair already on the case; an add for a case_id over 8 chars refuses
+  (`case_relate_case_id` is varchar(8) — the route would store it truncated).
+  Evidence: add = rows with the exact case_id and contact_id; update/remove =
+  the case_relate row with the exact `case_relate_id` (sql.read — the table is
+  in the curated manifest, no typed read). Freshness: `expected` = the case's
+  whole membership set + the portal flag + (change / remove) `portal_used`;
+  the click-time precheck re-reads GET
+  `/api/cases/:id/contacts` and GET `/api/contacts/:id` and refuses on any
+  difference before the claim. Outcomes: the add's 409 "already linked" and a
+  change/remove 404 "Relationship not found" are before-write refusals
+  (family `knownOutcome`). Receipt: the INTEGER `case_relate_id` (new row /
+  reviewed row / removed row) — not the case_id string path. No
+  Idempotency-Key. Sync: one yc-sync matcher marks `case:<id>` for all three
+  verbs; contact.html never hears it (native gap, ref/plans.md). Off switch
+  `casey_case_contacts_enabled` (on unless '0'). Tests:
+  `tests/caseyCaseContacts.test.js`, gated `tests/caseyCaseContacts.mysql.test.js`;
+  plan: ASK_CASEY_ACTIONS_PLAN A8.
 - **Workspace context names the open automation (P13, 10-24):** the
   workflows/sequences sub-pages report their open record through the
   Automations manager (`ycSubRecordChanged`) into the workspace URL

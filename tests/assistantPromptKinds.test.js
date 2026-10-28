@@ -239,6 +239,32 @@ describe('A7 — every stage teaches case notes / alerts and contact notes, and 
   });
 });
 
+// A8: the 'case' prefix again (case.contact), so the generic family-marker
+// check above sees only the A7 bullet — this block pins A8's own bullet and
+// that every stage teaches the refusals (a stage that does not know them
+// proposes a portal demotion the server then refuses, every time).
+describe('A8 — every stage teaches case contact membership and its refusals', () => {
+  test('the plan carries its own bullet with the case_relate read', () => {
+    expect(planPrompt).toContain('Reviewed case contact actions are available');
+    expect(planPrompt).toContain('case_relate_id, case_relate_case_id AS case_id');
+    expect(planPrompt).toContain('never demotes below Secondary or removes\n  a contact who has used the client portal');
+  });
+  test('the investigate stage names the proposal family', () => {
+    expect(investigatePrompt).toContain('and case contact proposals, which need the case\'s case_relate rows with\n  case_relate_id');
+  });
+  test('the answer and repair stages teach the evidence, the explicit role and the portal / Primary / last-contact refusals', () => {
+    expect(answerPrompt).toContain('Case contact rules (A8');
+    expect(answerPrompt).toContain('relate_type is always explicit');
+    expect(answerPrompt).toContain('demoting a contact who has used the client\n    portal from Primary/Secondary to Other/Bystander');
+    expect(answerPrompt).toContain('any other contact may be demoted or removed and the card warns that\n    they lose portal sight of the case once the portal is live');
+    expect(answerPrompt).toContain('demoting or removing the case\'s ONLY Primary');
+    expect(answerPrompt).toContain('removing the case\'s last contact');
+    expect(answerPrompt).toContain('case-and-contact-notes/case-contact/direct-send');
+    expect(repairPrompt).toContain('evidence is the\n  case_relate row carrying the exact case_relate_id');
+    expect(repairPrompt).toContain('refuse a contact who has used the client portal leaving\n  Primary/Secondary');
+  });
+});
+
 describe('a job request forces the draft-required path like the other families', () => {
   const svc = require(path.join(REPO, 'services', 'assistantService'));
 

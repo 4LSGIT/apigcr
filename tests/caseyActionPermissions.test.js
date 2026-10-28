@@ -12,13 +12,13 @@
  * THE BOUNDARY BEING TESTED (plan, "Governing principle"): Casey proposes, the
  * staff member's own browser performs the write through the ordinary
  * authenticated route, and "the existing route ... is the final authority".
- * These tests ask that claim two questions for all 52 shipped kinds:
+ * These tests ask that claim two questions for all 55 shipped kinds:
  *   1. what does the route actually gate on?  (section 1 — no DB needed)
  *   2. where is the normalizer stricter than the route, i.e. where is the
  *      route NOT an authority at all?        (section 2 — real MySQL)
  *
  * MEASURED FACTS THIS FILE LOCKS
- *   · Every one of the 52 kinds maps to a route gated by lib/auth.jwtOrApiKey
+ *   · Every one of the 55 kinds maps to a route gated by lib/auth.jwtOrApiKey
  *     and NOTHING else: authentication (staff-audience JWT whose user_auth
  *     starts 'authorized'), no role, no capability, no row/firm scope. The
  *     one nuance is job.code_safe.create.v1 (safe-mode S3): its route carries
@@ -112,6 +112,10 @@ const KINDS = [
   { kind: 'case.notes.update.v1', method: 'PATCH', path: '/api/cases/1' },
   { kind: 'case.alerts.update.v1', method: 'PATCH', path: '/api/cases/1' },
   { kind: 'contact.notes.update.v1', method: 'PATCH', path: '/api/contacts/1' },
+  // A8: the case page's own Contacts routes (routes/api.cases.js).
+  { kind: 'case.contact.add.v1', method: 'POST', path: '/api/cases/1/contacts' },
+  { kind: 'case.contact.update.v1', method: 'PATCH', path: '/api/cases/1/contacts/2' },
+  { kind: 'case.contact.remove.v1', method: 'DELETE', path: '/api/cases/1/contacts/2' },
   { kind: 'job.code_safe.create.v1', method: 'POST', path: '/scheduled-jobs' },
   { kind: 'workflow.draft.v1', method: 'POST', path: '/workflows/bulk' },
   { kind: 'workflow.step_insert.v1', method: 'POST', path: '/workflows/1/steps' },
@@ -211,19 +215,19 @@ function call(a, { method, path: urlPath }, headers = {}, body = {}) {
 const bearer = (t) => ({ authorization: `Bearer ${t}` });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// SECTION 1 — the route-level gate, for all 52 kinds (no database)
+// SECTION 1 — the route-level gate, for all 55 kinds (no database)
 // ═══════════════════════════════════════════════════════════════════════════
 
-describe('P2 — what the canonical write route gates on (all 52 shipped kinds)', () => {
+describe('P2 — what the canonical write route gates on (all 55 shipped kinds)', () => {
   const OLD_SECRET = process.env.JWT_SECRET;
   beforeAll(() => { process.env.JWT_SECRET = SECRET; });
   afterAll(() => { process.env.JWT_SECRET = OLD_SECRET; });
 
   const app = appWith;
 
-  test('the 52 kinds cover 46 distinct route+method mounts', () => {
-    expect(KINDS).toHaveLength(52);
-    expect(new Set(KINDS.map((k) => `${k.method} ${k.path}`)).size).toBe(46);
+  test('the 55 kinds cover 49 distinct route+method mounts', () => {
+    expect(KINDS).toHaveLength(55);
+    expect(new Set(KINDS.map((k) => `${k.method} ${k.path}`)).size).toBe(49);
     // A18.3: the matrix is the shipped inventory — the action ledger's KINDS
     // registry (which every shipped kind must join, tests/assistantPromptKinds)
     // — so a new kind that skips this table fails here instead of silently.
@@ -231,7 +235,7 @@ describe('P2 — what the canonical write route gates on (all 52 shipped kinds)'
     expect(KINDS.map((k) => k.kind).sort()).toEqual([...ledger.KINDS.keys()].sort());
   });
 
-  test('no token: every kind is 401 — authentication is required for all 52', async () => {
+  test('no token: every kind is 401 — authentication is required for all 55', async () => {
     const a = app();
     for (const k of KINDS) {
       const res = await call(a, k);
@@ -302,6 +306,11 @@ describe('P2 — what the canonical write route gates on (all 52 shipped kinds)'
       // A7 group A: the generic case / contact PATCH behind the same bare gate.
       ['case text', 'services/caseService', 'updateCase', { method: 'PATCH', path: '/api/cases/1' }, { case_notes: 'x' }, () => ({ case_id: '1', updated_fields: ['case_notes'], changes: {} })],
       ['contact text', 'services/contactService', 'updateContact', { method: 'PATCH', path: '/api/contacts/1' }, { contact_notes: 'x' }, () => ({ contact_id: 1, updated_fields: ['contact_notes'], changes: {} })],
+      // A8: the case-contact add/remove behind the same bare gate (the PATCH
+      // writes through req.db itself — no service to observe; its gate is the
+      // same jwtOrApiKey, pinned by the 401/403 sweeps above).
+      ['case contact add', 'services/caseService', 'addCaseContact', { method: 'POST', path: '/api/cases/1/contacts' }, { contact_id: 2, relate_type: 'Other' }, () => ({ case_relate_id: 5 })],
+      ['case contact remove', 'services/caseService', 'removeCaseContact', { method: 'DELETE', path: '/api/cases/1/contacts/2' }, {}, () => ({ removed: true })],
     ];
     test.each(cases)('%s family', async (_family, modPath, fnName, route, body, result, created = 200) => {
       const mod = require(path.join(REPO, modPath));

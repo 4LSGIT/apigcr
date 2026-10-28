@@ -8,7 +8,9 @@
  * GET    /api/cases/:id                   single + sub-entities (?include=)
  * PATCH  /api/cases/:id                   update fields
  * POST   /api/cases/:id/merge             absorb another case into :id
- * GET    /api/cases/:id/contacts          contacts for case
+ * GET    /api/cases/:id/contacts          contacts for case — rows {contact_id, contact_name,
+ *                                        contact_phone, contact_email, relate_type, relate_id,
+ *                                        portal_used 0/1 (any portal_access_log row)}
  * POST   /api/cases/:id/contacts          add contact to case
  * DELETE /api/cases/:id/contacts/:contactId  remove contact from case
  * GET    /api/cases/:id/tasks             tasks for case (preserved from existing)

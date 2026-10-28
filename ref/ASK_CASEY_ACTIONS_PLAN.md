@@ -689,13 +689,66 @@ workflows — all deliberate consumers of the text.
 descriptive fields, each as its own group with its own refusal table; a
 client-facing group brings the conditional-write precondition (ruling 2).
 
-#### A8: Case-contact membership
+#### A8: Case-contact membership — shipped 2026-10-28
 
 Add, remove, or change one case/contact membership through the dedicated case
 contact routes. Preserve primary-contact, role, and last-contact invariants;
 show both records, old and new role, and any primary-contact effect. This is
 separate from both contact roles and scalar case editing because it changes a
 set and can alter downstream addressing.
+
+**What the routes guard.** Nothing beyond the `case_relate` UNIQUE key
+(case, contact, type) and its two duplicate triggers. There is no native
+primary-contact, last-contact or portal rule, the PATCH validates no type and
+emits no event, and PATCH / DELETE act on every row of the (case, contact)
+pair. So the invariants are the normalizer's, enforced fail-closed and
+re-checked at the click (pinned on a real engine, including the route
+behaviour each refusal rests on: `tests/caseyCaseContacts.mysql.test.js`).
+
+**Shipped contract.** Three kinds: `case.contact.add.v1` (POST
+`/api/cases/:id/contacts` {contact_id, relate_type}), `case.contact.update.v1`
+(PATCH `/api/cases/:id/contacts/:contactId` {relate_type}) and
+`case.contact.remove.v1` (DELETE the same path). relate_type is explicit and
+one of the four (the route's Primary default is never assumed). Refused by
+name: a PORTAL USER — any `portal_access_log` row, carried as `portal_used` on
+each GET `/api/cases/:id/contacts` row (anything but an explicit 0), PIN-only
+rows included on purpose — leaving Primary/Secondary by demotion or removal,
+whatever `portal_enabled` says (manager ruling 2026-10-29: the flag is
+DEFAULT 1 and was 0 for none of 1,109 contacts, so a flag rule refused every
+demotion; usage — 2 pilot contacts that day — is the real signal). Anyone else
+may be demoted or removed with a danger warning that they lose portal sight of
+the case once the portal is live (no warning when `portal_enabled` is 0);
+the case's only Primary leaving (a second Primary is allowed with a danger
+warning — the swap path is promote-then-demote); the case's last contact; a
+pair holding two rows; an add for a pair already on the case in any role
+(stricter than the route, which would store a second row the PATCH can never
+change); an add for a case_id over 8 characters (the column would truncate
+it); a case with more than 50 contacts. Evidence: an add cites rows with the
+exact case_id and contact_id; an update/remove cites the case_relate row with
+the exact `case_relate_id` — the table is in the curated report manifest, so
+`sql.read` reads it and no typed read was needed. The card names the case and
+the contact, the old and new role, the contacts after, and every effect: the
+Primary slot (new Primary, stepping down, TWO PRIMARY warning), the client
+portal (a portal user gaining sight of the case is a warning), which case
+readers count each role, and the trigger event (add fires
+`case.contact_linked`, remove `case.contact_unlinked`, a role change none).
+Freshness: `expected` carries the case's whole membership set, the
+contact's portal flag and (change / remove) its `portal_used`; the click re-reads GET `/api/cases/:id/contacts` and GET
+`/api/contacts/:id` and refuses on any difference before the claim — which is
+also how a contact who used the portal since the card was prepared is refused. Outcomes: the add's 409 "already linked" and a change/remove 404
+"Relationship not found" are before-write refusals ("already removed"); other
+409s and 5xx stay ambiguous. Idempotency: none needed — one claim per draft,
+the UNIQUE key refuses a second card's add, and a second card's remove is a
+404. Receipt: the integer `case_relate_id` (new / reviewed / removed row), not
+A7's case_id string path — the ledger's own rule for a record with an integer
+id. Sync: all three routes share one yc-sync matcher (a `case:<id>` marker),
+so case pages and the shell lists refresh; an open contact page does not (a
+native gap, `ref/plans.md`). Off switch `casey_case_contacts_enabled` (on
+unless '0'). Tests: `tests/caseyCaseContacts.test.js`, gated
+`tests/caseyCaseContacts.mysql.test.js`, `tests/assistantUi.test.js`.
+
+**Deferred.** A swap of two Primaries in one card, fixing two-row pairs, and
+any native guard on the case page (`ref/plans.md`).
 
 #### A9: Case pipeline transitions and requirement overrides
 

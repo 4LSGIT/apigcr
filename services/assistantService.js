@@ -355,6 +355,61 @@ const RECORD_TEXT_FIELDS = Object.freeze({
 });
 const RECORD_TEXT_CASE_KEYS = new Set(['kind', 'case_id', 'value', 'append', 'evidence']);
 const RECORD_TEXT_CONTACT_KEYS = new Set(['kind', 'contact_id', 'value', 'append', 'evidence']);
+// A8: case-contact membership — add ONE contact to a case, change ONE
+// membership's role, or remove ONE membership, through the case page's own
+// routes (POST /api/cases/:id/contacts, PATCH / DELETE
+// /api/cases/:id/contacts/:contactId). The native routes guard nothing beyond
+// the (case, contact, type) UNIQUE key + triggers: no primary-contact rule, no
+// last-contact rule, no portal rule, and the PATCH writes relate_type
+// unvalidated. The normalizer is the guard (fail closed) and the click-time
+// re-read repeats it:
+//   * PORTAL (CLAUDE.md): portal visibility is case_relate_type IN
+//     ('Primary','Secondary'). A PORTAL USER — a contact with ANY
+//     portal_access_log row (getCaseContacts' portal_used) — is NEVER demoted
+//     below Secondary and never removed while Primary/Secondary on the case,
+//     whatever its portal_enabled says. WHY usage and not the flag (manager
+//     ruling 2026-10-29): contacts.portal_enabled is NOT NULL DEFAULT 1 and was
+//     0 for none of 1,109 contacts on 2026-10-29, so a flag rule refuses every
+//     demotion — a quiet exclusion of these kinds. Usage is the real signal:
+//     170 log rows across exactly 2 contacts (the pilot) that day. Pin-only
+//     rows (pin_sent, pin_disabled, pin_capped … — a PIN request with no
+//     login) count ON PURPOSE: the contact tried to enter the portal or staff
+//     meant them to, both intent-to-use, and pulling the case out from under
+//     either is what the invariant exists to prevent. Everyone else may be
+//     demoted / removed with a danger warning that they lose portal sight of
+//     the case once the portal is live — none when portal_enabled is 0 (the
+//     flag explicitly off).
+//   * A case that has a Primary keeps one: the case's only Primary is never
+//     demoted or removed (make the new Primary first). A second Primary is
+//     allowed but danger-flagged — it is the swap path.
+//   * The case's last contact is never removed.
+//   * One membership row per pair: the native PATCH / DELETE act on EVERY row
+//     of the (case, contact) pair, so a pair with two rows (the UNIQUE key is
+//     per type) is refused, and an add for a pair already on the case is too.
+// Freshness: the case's whole membership set, the contact's portal flag and
+// (change / remove) its portal_used are
+// baked into `expected` and re-read at the click. Receipt: case_relate_id (an
+// integer PK — the ledger's rule: a record with an integer id uses it).
+// One per-family switch, casey_case_contacts_enabled (on unless '0').
+const CASE_CONTACT_ACTION_KINDS = new Set(['case.contact.add.v1', 'case.contact.update.v1', 'case.contact.remove.v1']);
+const CASE_CONTACT_KEYS = {
+  'case.contact.add.v1': new Set(['kind', 'case_id', 'contact_id', 'relate_type', 'evidence']),
+  'case.contact.update.v1': new Set(['kind', 'case_id', 'contact_id', 'relate_type', 'evidence']),
+  'case.contact.remove.v1': new Set(['kind', 'case_id', 'contact_id', 'evidence']),
+};
+// The case_relate_type enum, in the native picker's order.
+const CASE_RELATE_TYPES = ['Primary', 'Secondary', 'Other', 'Bystander'];
+// The types the client portal shows a case to (portalCaseService,
+// portalDocsService, portalCallbackService: IN ('Primary','Secondary')).
+const CASE_PORTAL_TYPES = new Set(['Primary', 'Secondary']);
+// case_relate.case_relate_case_id is varchar(8) while cases.case_id is
+// varchar(20): under the relaxed sql_mode a longer id would be stored
+// truncated, i.e. linked to no case.
+const CASE_RELATE_CASE_ID_MAX = 8;
+// A case with more memberships than this is not reviewable on one card.
+const CASE_CONTACT_MEMBERS_MAX = 50;
+// Names listed on the card's "Contacts after" line.
+const CASE_CONTACT_CARD_NAMES = 12;
 const CONTACT_PHONE_UPDATE_KEYS = new Set(['label', 'is_primary', 'sms_optout', 'mms_capable', 'notes']);
 const CONTACT_EMAIL_UPDATE_KEYS = new Set(['label', 'is_primary', 'email_optout', 'notes']);
 const CONTACT_ADDRESS_UPDATE_KEYS = new Set(['address1', 'address2', 'city', 'state', 'zip', 'country', 'label', 'is_primary', 'notes']);
@@ -2058,6 +2113,207 @@ async function normalizeRecordTextAction(db, value, evidence) {
   return spec.record === 'case'
     ? normalizeRecordTextCase(db, value, evidence, spec)
     : normalizeRecordTextContact(db, value, evidence, spec);
+}
+
+// ── A8: case-contact membership ───────────────────────────────────────────
+// The case and its membership set are read through the services behind the
+// case page's own GETs (caseService.getCase, caseService.getCaseContacts — the
+// GET /api/cases/:id/contacts the click-time re-read uses too). The one SQL of
+// this family's own is the contact read, for its portal flag (real-engine
+// twin: tests/caseyCaseContacts.mysql.test.js).
+
+function caseContactError(message) { return httpError(422, message); }
+
+function caseContactType(value, field) {
+  const text = String(value == null ? '' : value).trim().toLowerCase();
+  const type = CASE_RELATE_TYPES.find((t) => t.toLowerCase() === text);
+  if (!type) {
+    throw caseContactError(text
+      ? `${field} "${String(value).slice(0, 40)}" is not a case role — use one of: ${CASE_RELATE_TYPES.join(', ')}`
+      : `A case contact action needs ${field} — one of: ${CASE_RELATE_TYPES.join(', ')} (Casey never assumes the route's default)`);
+  }
+  return type;
+}
+
+async function caseContactState(db, value) {
+  const caseId = String(value.case_id == null ? '' : value.case_id).trim();
+  if (!caseId || caseId.length > 20 || !/^[A-Za-z0-9_-]+$/.test(caseId)) throw caseContactError("A case contact action needs the case's exact case_id");
+  const contactId = Number(value.contact_id);
+  if (!Number.isSafeInteger(contactId) || contactId < 1) throw caseContactError("A case contact action needs the contact's exact positive contact_id");
+  const caseSvc = require('./caseService');
+  const found = await caseSvc.getCase(db, caseId);
+  if (!found || !found.case) throw caseContactError(`Case ${caseId} no longer exists`);
+  const row = found.case;
+  const id = String(row.case_id);
+  const number = String(row.case_number_full || row.case_number || '').trim().slice(0, 40);
+  const [rows] = await db.query('SELECT contact_id, contact_name, contact_kind, portal_enabled FROM contacts WHERE contact_id = ? LIMIT 1', [contactId]);
+  const c = Array.isArray(rows) ? rows[0] : null;
+  if (!c) throw caseContactError(`Contact ${contactId} no longer exists`);
+  const contact = {
+    contact_id: contactId,
+    contact_name: String(c.contact_name || '').trim().slice(0, 200) || `Contact ${contactId}`,
+    contact_kind: c.contact_kind === 'org' ? 'org' : 'person',
+    // NOT NULL DEFAULT 1; anything but an explicit 0 counts as access (fail closed).
+    // (Number(null) is 0, so the off test names the values that mean off.)
+    portal_enabled: c.portal_enabled === 0 || c.portal_enabled === '0' || c.portal_enabled === false ? 0 : 1,
+  };
+  const listed = await caseSvc.getCaseContacts(db, id);
+  const members = (Array.isArray(listed) ? listed : []).map((m) => ({
+    relate_id: Number(m.relate_id), contact_id: Number(m.contact_id),
+    contact_name: String(m.contact_name || '').trim().slice(0, 200) || `Contact ${m.contact_id}`,
+    relate_type: String(m.relate_type || ''),
+    // EXISTS yields 0/1; anything but an explicit 0 counts as used (fail closed).
+    portal_used: m.portal_used === 0 || m.portal_used === '0' || m.portal_used === false ? 0 : 1,
+  }));
+  if (members.length > CASE_CONTACT_MEMBERS_MAX) {
+    throw caseContactError(`Case ${number || id} has ${members.length} contacts — more than one card can review (${CASE_CONTACT_MEMBERS_MAX}). The user changes them on the case's Contacts tab`);
+  }
+  return {
+    caseCard: { case_id: id, case_number: number, case_type: String(row.case_type || '').slice(0, 40) },
+    caseLabel: number || id, contact, members,
+    mine: members.filter((m) => m.contact_id === contactId),
+  };
+}
+
+function caseContactRowCited(refs, evidence, relateId) {
+  return refs.some((ref) => {
+    const query = evidence.find((item) => item && item.id === ref.query_id);
+    const row = query && Array.isArray(query.rows) ? query.rows[ref.row_number - 1] : null;
+    return row && Number(row.case_relate_id) === relateId;
+  });
+}
+
+// What the change does beyond the row: the Primary slot, the client portal,
+// which case readers count the contact, and the trigger event. `warnings`
+// danger-style the card.
+function caseContactEffects(kind, state, from, to) {
+  const { contact, members } = state;
+  const name = contact.contact_name;
+  const effects = []; const warnings = [];
+  const otherPrimaries = members.filter((m) => m.relate_type === 'Primary' && m.contact_id !== contact.contact_id);
+  if (to === 'Primary' && from !== 'Primary') {
+    if (otherPrimaries.length) {
+      warnings.push(`TWO PRIMARY CONTACTS: ${otherPrimaries.map((m) => m.contact_name).join(', ')} stay${otherPrimaries.length > 1 ? '' : 's'} Primary too. Every reader that shows ONE client (the case header and its name in lists, the e-sign and form Primary slots) picks one of them. Change the other to Secondary afterwards unless two Primaries are intended.`);
+    } else {
+      effects.push(`Primary contact: ${name} becomes the case's Primary — the case header and its name in lists, and the e-sign and form Primary slots, read ${name} from now on.`);
+    }
+  } else if (from === 'Primary' && to !== 'Primary') {
+    effects.push(`Primary contact: ${name} stops being Primary; ${otherPrimaries.map((m) => m.contact_name).join(', ')} remain${otherPrimaries.length > 1 ? '' : 's'} the Primary contact.`);
+  }
+  const seesBefore = CASE_PORTAL_TYPES.has(from); const seesAfter = CASE_PORTAL_TYPES.has(to);
+  if (!seesBefore && seesAfter) {
+    if (contact.portal_enabled) {
+      warnings.push(`CLIENT PORTAL: ${name} has client-portal access, so this case — its documents, messages and status — shows in ${name}'s portal from the moment this is saved.`);
+    } else {
+      effects.push(`Client portal: ${name}'s portal access is OFF, so nothing shows now; if it is turned on, this case will show in their portal.`);
+    }
+  } else if (seesBefore && !seesAfter) {
+    // A portal USER is refused before this: here the contact never used it.
+    if (contact.portal_enabled) {
+      warnings.push(`CLIENT PORTAL: once the portal is live, ${name} loses portal visibility of this case (only Primary and Secondary see a case). ${name} has never used the client portal, so Casey allows it.`);
+    } else {
+      effects.push(`Client portal: ${name}'s portal access is OFF; if it is turned back on, this case will NOT show in their portal (only Primary and Secondary see a case).`);
+    }
+  } else if (seesBefore && seesAfter) {
+    effects.push(`Client portal: unchanged — Primary and Secondary both see the case${contact.portal_enabled ? '' : ` (${name}'s portal access is off)`}.`);
+  }
+  const reach = (type) => (type === 'Primary' || type === 'Secondary'
+    ? 'the client portal and mail filing, plus the case\'s automation lists, communications, log and document relinking'
+    : type === 'Other' ? 'the case\'s automation lists, communications, log and document relinking (not the portal)'
+      : 'none of the case\'s automation lists, communications, log, document relinking or portal');
+  if (kind === 'case.contact.remove.v1') {
+    effects.push(`Case readers: ${name} stops counting in ${reach(from)} for this case.`);
+    effects.push(`Trigger event: case.contact_unlinked fires — any trigger rule listening for it runs.`);
+  } else {
+    effects.push(`Case readers: as ${to}, ${name} counts in ${reach(to)}.`);
+    effects.push(kind === 'case.contact.add.v1'
+      ? `Trigger event: case.contact_linked fires (relate_type ${to}) — any trigger rule listening for it runs.`
+      : 'Trigger event: none — the role-change route emits no event, so a rule watching case.contact_linked does not see this change.');
+  }
+  return { effects, warnings };
+}
+
+async function normalizeCaseContactAction(db, value, evidence) {
+  // The per-family switch: '0' and the A8 kinds do not exist.
+  if (require('../lib/firmConfig').cfg('casey_case_contacts_enabled') === '0') {
+    throw httpError(422, 'Action kind is unavailable');
+  }
+  const kind = value.kind;
+  const allowed = CASE_CONTACT_KEYS[kind];
+  const unknown = Object.keys(value).filter((k) => !allowed.has(k));
+  if (unknown.length) {
+    throw caseContactError(`A case contact ${kind.split('.')[2]} carries unsupported fields: ${unknown.join(', ')} — it takes ${[...allowed].filter((k) => k !== 'kind').join(', ')} only`);
+  }
+  const to = kind === 'case.contact.remove.v1' ? null : caseContactType(value.relate_type, 'relate_type');
+  const refs = taskDraftEvidence(value.evidence, evidence);
+  const state = await caseContactState(db, value);
+  const { contact, members, mine, caseLabel } = state;
+  const name = contact.contact_name;
+  let from = null; let relateId = null;
+  if (kind === 'case.contact.add.v1') {
+    if (state.caseCard.case_id.length > CASE_RELATE_CASE_ID_MAX) {
+      throw caseContactError(`Case ${caseLabel}'s id (${state.caseCard.case_id}) is longer than the ${CASE_RELATE_CASE_ID_MAX} characters a case membership stores — nothing is proposed`);
+    }
+    const caseCited = refs.some((ref) => {
+      const query = evidence.find((item) => item && item.id === ref.query_id);
+      const row = query && Array.isArray(query.rows) ? query.rows[ref.row_number - 1] : null;
+      return row && String(row.case_id) === String(value.case_id).trim();
+    });
+    if (!caseCited) throw caseContactError(`Case contact add evidence does not identify case ${caseLabel} — cite a row carrying its exact case_id (read the case first)`);
+    if (!contactEvidenceSupports(refs, evidence, contact.contact_id, null)) {
+      throw caseContactError(`Case contact add evidence does not identify contact ${contact.contact_id} — cite a row carrying its exact contact_id (read the contact first)`);
+    }
+    if (mine.length) {
+      throw caseContactError(`${name} is already on case ${caseLabel} as ${mine.map((m) => `${m.relate_type} (membership #${m.relate_id})`).join(' and ')}. Nothing is proposed — to change the role, propose case.contact.update.v1`);
+    }
+  } else {
+    if (!mine.length) {
+      throw caseContactError(`${name} is not on case ${caseLabel}${kind === 'case.contact.remove.v1' ? ' (already removed)' : ''} — nothing to ${kind === 'case.contact.remove.v1' ? 'remove' : 'change'}`);
+    }
+    if (mine.length > 1) {
+      throw caseContactError(`${name} has ${mine.length} memberships on case ${caseLabel} (${mine.map((m) => m.relate_type).join(', ')}). The case page's change and remove act on every one at once, so Casey cannot change just one — the user fixes it on the case's Contacts tab`);
+    }
+    from = mine[0].relate_type;
+    relateId = mine[0].relate_id;
+    if (!caseContactRowCited(refs, evidence, relateId)) {
+      throw caseContactError(`Case contact ${kind === 'case.contact.remove.v1' ? 'remove' : 'update'} evidence does not identify the membership — cite the case_relate row carrying its exact case_relate_id (${name} on case ${caseLabel})`);
+    }
+    if (to === from) throw caseContactError(`${name} is already ${from} on case ${caseLabel} — that changes nothing`);
+    const leavesPortal = CASE_PORTAL_TYPES.has(from) && !CASE_PORTAL_TYPES.has(to);
+    if (leavesPortal && mine[0].portal_used) {
+      throw caseContactError(`PORTAL: ${name} has ${contact.portal_enabled ? 'client-portal access' : 'used the client portal (its access is off now)'} and is ${from} on case ${caseLabel}; ${to ? `making them ${to}` : 'removing them'} would hide this case from their client portal (only Primary and Secondary see a case). Casey never ${to ? 'demotes' : 'removes'} a contact with portal access — nothing is proposed. If that is intended, the user does it on the case's Contacts tab`);
+    }
+    if (kind === 'case.contact.remove.v1' && members.length === 1) {
+      throw caseContactError(`${name} is case ${caseLabel}'s only contact; removing them would leave the case with no contacts at all (unreachable from any contact page). Casey does not do that — nothing is proposed`);
+    }
+    const primaries = members.filter((m) => m.relate_type === 'Primary');
+    if (from === 'Primary' && to !== 'Primary' && primaries.length === 1) {
+      throw caseContactError(`${name} is case ${caseLabel}'s only Primary contact; ${to ? `making them ${to}` : 'removing them'} would leave the case with NO Primary (the case header and name, the e-sign and form Primary slots read it). Make the new Primary first — propose the other contact as Primary — then change ${name}`);
+    }
+  }
+  const after = kind === 'case.contact.add.v1'
+    ? [...members, { relate_id: 0, contact_id: contact.contact_id, contact_name: name, relate_type: to }]
+    : members.flatMap((m) => (m.relate_id !== relateId ? [m] : to ? [{ ...m, relate_type: to }] : []));
+  after.sort((a, b) => CASE_RELATE_TYPES.indexOf(a.relate_type) - CASE_RELATE_TYPES.indexOf(b.relate_type)
+    || a.contact_name.localeCompare(b.contact_name));
+  const { effects, warnings } = caseContactEffects(kind, state, from, to);
+  return {
+    draft_id: crypto.randomUUID(), kind, status: 'draft',
+    case: state.caseCard,
+    contact: { ...contact, portal_used: kind === 'case.contact.add.v1' ? null : !!mine[0].portal_used },
+    membership: { case_relate_id: relateId, from, to },
+    members_after: after.slice(0, CASE_CONTACT_CARD_NAMES).map((m) => ({ contact_id: m.contact_id, contact_name: m.contact_name, relate_type: m.relate_type })),
+    members_after_total: after.length,
+    effects, warnings,
+    expected: {
+      members: members.map((m) => ({ relate_id: m.relate_id, contact_id: m.contact_id, relate_type: m.relate_type }))
+        .sort((a, b) => a.relate_id - b.relate_id),
+      portal_enabled: contact.portal_enabled,
+      // The target's portal use (change / remove); an add's contact is not a member yet.
+      portal_used: kind === 'case.contact.add.v1' ? null : !!mine[0].portal_used,
+    },
+    evidence: refs,
+  };
 }
 
 async function taskDraftLink(db, value) {
@@ -4977,6 +5233,7 @@ async function normalizeActionDraft(db, value, evidence, { currentUserId = null,
   if (value && CONTACT_SUBRECORD_ACTION_KINDS.has(value.kind)) return normalizeContactSubrecordAction(db, value, evidence);
   if (value && CONTACT_RELATION_ACTION_KINDS.has(value.kind)) return normalizeContactRelationAction(db, value, evidence);
   if (value && RECORD_TEXT_ACTION_KINDS.has(value.kind)) return normalizeRecordTextAction(db, value, evidence);
+  if (value && CASE_CONTACT_ACTION_KINDS.has(value.kind)) return normalizeCaseContactAction(db, value, evidence);
   if (!value || !TASK_ACTION_KINDS.has(value.kind)) throw httpError(422, 'Action kind is unavailable');
   if (value.kind !== 'task.create.v1') return normalizeExistingTaskAction(db, value, evidence);
   if (!onlyKeys(value, TASK_CREATE_KEYS)) throw httpError(422, 'Task draft contains unsupported fields');
@@ -5131,7 +5388,13 @@ function taskDraftRequested(question, history = []) {
   const recordText = /\b(?:notes?|alerts?)\b/i.test(text) &&
     /\b(?:case|file|matter|contact|client|debtor)s?\b/i.test(text) &&
     /\b(?:draft|propose|prepare|add|append|put|write|record|update|change|edit|replace|rewrite|set|clear|empty|remove|delete)\b/i.test(request);
-  return task || event || appt || contactSubrecord || relation || role || recordText || job || workflow || hook || sequence || send || ingestRule ||
+  // A8: a contact joining, leaving or changing role on a case. A case-role
+  // word with a case noun, or "add/remove … to/from the case".
+  const caseContact = (/\b(?:primary|secondary|bystander|co-?debtors?|joint (?:debtor|filer)s?)\b/i.test(text) &&
+      /\b(?:case|file|matter)s?\b/i.test(text) &&
+      /\b(?:add|link|attach|put|remove|unlink|detach|drop|take off|make|change|switch|swap|set|demote|promote)\b/i.test(request)) ||
+    /\b(?:add|link|attach|put|remove|unlink|detach|drop|take)\b[^.?!\n]{0,60}\b(?:to|from|on|off)\s+(?:the|this|that|his|her|their)?\s*(?:case|file|matter)\b/i.test(request);
+  return task || event || appt || contactSubrecord || relation || role || recordText || caseContact || job || workflow || hook || sequence || send || ingestRule ||
     reportDraftRequested(question, history);
 }
 

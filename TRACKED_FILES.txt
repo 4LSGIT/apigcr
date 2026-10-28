@@ -1181,6 +1181,8 @@ tests/caseUi.timeline.test.js
 tests/caseyActionPermissions.test.js
 tests/caseyApptConfirm.mysql.test.js
 tests/caseyApptConfirm.test.js
+tests/caseyCaseContacts.mysql.test.js
+tests/caseyCaseContacts.test.js
 tests/caseyContactRelations.mysql.test.js
 tests/caseyContactRelations.test.js
 tests/caseyHookCreate.test.js

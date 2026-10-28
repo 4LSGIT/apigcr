@@ -412,6 +412,52 @@ tags — is available to Casey; edit those on the case or contact page.
 The off switch for these cards is the `casey_record_edits_enabled` setting (on
 unless set to 0).
 
+### A case's contacts
+
+Casey can add one contact to a case, change one contact's role on a case
+(**Primary**, **Secondary**, **Other** or **Bystander**), or remove one contact
+from a case — one change per card, through the same Contacts routes the case
+page uses. Ask it in plain words ("add Sam to the Debtor case as Secondary",
+"make the witness a Bystander", "take the old employer off this case").
+
+- **The card names both records** — the case and the contact — with the old
+  and new role, and lists the case's contacts as they will be afterwards.
+- **It says what the role changes.** A new **Primary** becomes the client the
+  case header, the case's name in lists, and the e-sign and form Primary slots
+  read. **Primary** and **Secondary** can see the case in the client portal;
+  **Other** counts in the case's automation lists, communications and document
+  filing but not the portal; **Bystander** counts in none of them. Adding a
+  contact fires the "contact linked" trigger event and removing one fires
+  "contact unlinked"; changing a role fires no event.
+- **Warning style** marks a card that removes a contact, gives a contact with
+  portal access sight of the case, takes the case out of a contact's portal
+  (once the portal is live, they no longer see it there), or would leave the
+  case with two Primary contacts.
+- **What Casey will not do, and says so:**
+  - move a contact who has **used** the client portal from Primary or
+    Secondary to Other or Bystander, or remove them while Primary or Secondary
+    — that would hide the case from their portal. "Used" means any visit or
+    login, and also a request for a login PIN. If the change is intended, make
+    it on the case page. Any other contact may be moved or removed; the card
+    warns that once the portal is live they lose sight of the case there;
+  - leave a case without its Primary. To swap Primaries, have Casey make the
+    new contact Primary first (the card warns that the case briefly has two),
+    then change the old one;
+  - remove a case's last contact;
+  - add a contact who is already on the case (ask for a role change instead),
+    or change a contact who holds two roles on the same case — fix that on the
+    case page.
+- **Freshness.** When you confirm, the card re-reads the case's contacts and
+  the contact's portal access and use. If any of them changed since the card
+  was prepared — including the contact using the portal in the meantime —
+  nothing is written; ask Casey to prepare it again.
+- Once applied, the card opens the case. Other open pages showing the case
+  refresh its contacts on their own; an open contact page shows the change
+  after a reload, as it does for a change made on the case page.
+
+The off switch for these cards is the `casey_case_contacts_enabled` setting
+(on unless set to 0).
+
 ### Sending a text or email
 
 Ask Casey can send ONE text message or ONE email to ONE client, now, when you

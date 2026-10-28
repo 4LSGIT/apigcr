@@ -1207,6 +1207,160 @@ function recordTextOpenTarget(draft) {
     : { kind: 'contact', id: Number(t.contact_id), label: String(t.contact_name || 'Contact') };
 }
 
+// Case-contact membership (A8). Add ONE contact to a case, change ONE
+// membership's role, or remove ONE, through the case page's own routes:
+// POST /api/cases/:id/contacts {contact_id, relate_type}, PATCH
+// /api/cases/:id/contacts/:contactId {relate_type}, DELETE the same path. The
+// server refused every demotion/removal of a PORTAL USER (any portal_access_log
+// row — the contacts list's portal_used), a case's only Primary leaving, a
+// case's last contact leaving and two-row pairs, and baked the case's whole
+// membership set, the contact's portal flag and (change / remove) its
+// portal_used into `expected`; the click-time re-read (GET
+// /api/cases/:id/contacts and GET /api/contacts/:id) refuses on ANY
+// difference before the claim, which re-applies all of those checks — a
+// contact who used the portal since the review is refused there. No
+// Idempotency-Key: the ledger allows one claim per draft, a second card's add
+// hits the route's UNIQUE key (409 "already linked", a refusal written before
+// any row), and a remove/change of a row already gone is a 404 refusal. All
+// three routes are on the yc-sync bus (one case:<id> marker matcher), so open
+// case pages and the shell's lists refresh; an open CONTACT page does not hear
+// it (a native gap, ref/plans.md) and shows the change after a reload.
+const CASE_CONTACT_ACTION_KINDS = new Set(['case.contact.add.v1', 'case.contact.update.v1', 'case.contact.remove.v1']);
+const CASE_CONTACT_TYPES = ['Primary', 'Secondary', 'Other', 'Bystander'];
+
+function caseContactLabel(draft) {
+  return ({ 'case.contact.add.v1': 'Add contact to case', 'case.contact.update.v1': 'Change case role',
+    'case.contact.remove.v1': 'Remove contact from case' })[draft && draft.kind] || 'Case contact action';
+}
+
+function caseContactCaseLabel(draft) {
+  const c = draft.case || {};
+  return String(c.case_number || c.case_id || 'Case');
+}
+
+function caseContactText(draft) {
+  const c = draft.case || {}; const p = draft.contact || {}; const m = draft.membership || {};
+  const lines = ['Case contact proposal — not applied', `Action: ${caseContactLabel(draft)}`,
+    `Case: ${caseContactCaseLabel(draft)} (case ${c.case_id}${c.case_type ? `, ${c.case_type}` : ''})`,
+    `Contact: ${p.contact_name} (contact #${p.contact_id}${p.contact_kind ? `, ${p.contact_kind}` : ''})`,
+    `Client portal access: ${p.portal_enabled === 0 ? 'off' : 'on'}${p.portal_used === false ? ' (never used)' : p.portal_used === true ? ' (has used it)' : ''}`];
+  if (draft.kind === 'case.contact.add.v1') lines.push(`Role: not on the case → ${m.to}`);
+  else if (draft.kind === 'case.contact.update.v1') lines.push(`Role: ${m.from} → ${m.to}`, `Membership: #${m.case_relate_id}`);
+  else lines.push(`Role: ${m.from} → removed from the case`, `Membership: #${m.case_relate_id} is deleted`);
+  (draft.warnings || []).forEach((w) => lines.push(`Warning: ${w}`));
+  (draft.effects || []).forEach((e) => lines.push(`Effect: ${e}`));
+  const after = (draft.members_after || []).map((x) => `${x.contact_name} — ${x.relate_type}`);
+  const more = Number(draft.members_after_total || 0) - after.length;
+  lines.push(`Contacts after: ${after.join('; ') || 'none'}${more > 0 ? ` (+${more} more)` : ''}`,
+    `Writes: ${draft.kind === 'case.contact.add.v1' ? 'one new case membership row' : draft.kind === 'case.contact.update.v1' ? 'the role of this one membership row' : 'deletes this one membership row'} — the contact record and the case record are not changed.`,
+    `Stale check: if anyone adds, removes or changes a contact on this case, or ${p.contact_name}'s portal access changes, before you apply, nothing is written.`,
+    'Other open pages: pages showing this case refresh its contacts on their own; an open contact page shows the change after a reload.',
+    'Notification: nothing is sent.');
+  return lines.join('\n');
+}
+
+function caseContactIds(draft) {
+  const c = draft.case || {}; const p = draft.contact || {};
+  const caseId = actionStringReceipt(typeof c.case_id === 'string' ? c.case_id : '');
+  const contactId = Number(p.contact_id);
+  if (!caseId) throw new Error('This card has no usable case id.');
+  if (!Number.isSafeInteger(contactId) || contactId < 1) throw new Error('This card has no usable contact id.');
+  return { caseId, contactId };
+}
+
+function caseContactRequest(draft) {
+  const { caseId, contactId } = caseContactIds(draft);
+  const m = draft.membership || {};
+  const base = `/api/cases/${encodeURIComponent(caseId)}/contacts`;
+  if (draft.kind === 'case.contact.add.v1') {
+    // case_relate.case_relate_case_id is varchar(8): a longer id would be stored truncated.
+    if (caseId.length > 8) throw new Error('This case id is longer than a case membership stores.');
+    if (!CASE_CONTACT_TYPES.includes(m.to)) throw new Error('This card has no usable case role.');
+    return { path: base, method: 'POST', body: { contact_id: contactId, relate_type: m.to } };
+  }
+  const rid = Number(m.case_relate_id);
+  if (!Number.isSafeInteger(rid) || rid < 1) throw new Error('This card has no usable membership id.');
+  if (draft.kind === 'case.contact.update.v1') {
+    if (!CASE_CONTACT_TYPES.includes(m.to) || m.to === m.from) throw new Error('This card has no usable case role.');
+    return { path: `${base}/${contactId}`, method: 'PATCH', body: { relate_type: m.to } };
+  }
+  return { path: `${base}/${contactId}`, method: 'DELETE', body: null };
+}
+
+function caseContactSignature(rows) {
+  return (rows || []).map((r) => `${Number(r.relate_id)}:${Number(r.contact_id)}:${String(r.relate_type || '')}`).sort().join('|');
+}
+
+async function caseContactPrecheck(draft) {
+  const { caseId, contactId } = caseContactIds(draft);
+  caseContactRequest(draft); // a card that cannot be written is never read
+  const p = draft.contact || {}; const m = draft.membership || {};
+  const caseName = `case ${caseContactCaseLabel(draft)}`;
+  if (draft.kind === 'case.contact.add.v1') {
+    try { await api(`/api/cases/${encodeURIComponent(caseId)}`, null, 'GET'); }
+    catch (e) { if (e && e.status === 404) return `Case ${caseContactCaseLabel(draft)} no longer exists. Nothing was written.`; throw e; }
+  }
+  const list = await api(`/api/cases/${encodeURIComponent(caseId)}/contacts`, null, 'GET');
+  const rows = list && Array.isArray(list.contacts) ? list.contacts : null;
+  if (!rows) throw new Error('the case\'s contacts could not be read');
+  if (draft.kind !== 'case.contact.add.v1' && !rows.some((r) => Number(r.relate_id) === Number(m.case_relate_id) && Number(r.contact_id) === contactId)) {
+    return `${p.contact_name} is no longer on ${caseName} as membership #${Number(m.case_relate_id)}${draft.kind === 'case.contact.remove.v1' ? ' — already removed' : ''}. Nothing was written.`;
+  }
+  if (draft.kind !== 'case.contact.add.v1') {
+    // Portal use since the review: anything but an explicit 0 is use, as on the server.
+    const target = rows.find((r) => Number(r.relate_id) === Number(m.case_relate_id));
+    const u = target.portal_used;
+    const used = !(u === 0 || u === '0' || u === false);
+    if (used !== ((draft.expected || {}).portal_used === true)) {
+      return `${p.contact_name}'s use of the client portal changed since this card was prepared (${used ? 'they have now used it, so Casey will not take this case out of their portal' : 'it no longer shows'}). Nothing was written. Ask Casey to prepare it again.`;
+    }
+  }
+  if (caseContactSignature(rows) !== caseContactSignature((draft.expected || {}).members)) {
+    return `The contacts on ${caseName} changed since this card was prepared (someone added, removed or changed one). Nothing was written. Ask Casey to prepare it again.`;
+  }
+  let got;
+  try { got = await api(`/api/contacts/${contactId}`, null, 'GET'); }
+  catch (e) { if (e && e.status === 404) return `${p.contact_name} (contact #${contactId}) no longer exists. Nothing was written.`; throw e; }
+  const contact = got && got.contact;
+  if (!contact || typeof contact !== 'object' || !('portal_enabled' in contact)) throw new Error('the contact\'s portal access could not be read');
+  // Off only when it says so (Number(null) is 0): anything else is access, as on the server.
+  const v = contact.portal_enabled;
+  const portal = v === 0 || v === '0' || v === false ? 0 : 1;
+  if (portal !== Number((draft.expected || {}).portal_enabled)) {
+    return `${p.contact_name}'s client-portal access changed since this card was prepared. Nothing was written. Ask Casey to prepare it again.`;
+  }
+  return '';
+}
+
+function caseContactResult(draft, result) {
+  if (draft.kind === 'case.contact.add.v1') {
+    const id = Number(result && result.case_relate_id);
+    if (!Number.isSafeInteger(id) || id < 1) throw new Error('The case contact route returned no usable membership id');
+    return { case_relate_id: id };
+  }
+  // PATCH and DELETE echo no id: the receipt is the reviewed row (the UPDATE
+  // keeps its id; a removed row's id names what was removed).
+  if (!result || result.status !== 'success') throw new Error('The case contact route did not confirm the change');
+  return { case_relate_id: Number(draft.membership.case_relate_id) };
+}
+
+// The two outcomes the routes answer BEFORE any write, worded for staff: the
+// add's 409 is the UNIQUE key / trigger refusing a row that already exists;
+// PATCH/DELETE's 404 matched no row. Anything else falls through.
+function caseContactKnownOutcome(e) {
+  const body = e && e.body;
+  if (body && body.idempotency) return null;
+  const message = String((e && e.message) || (body && body.message) || '');
+  const refused = 'Refused — nothing written';
+  if (e && e.status === 409 && /already linked/.test(message)) {
+    return { status: refused, text: `Refused — nothing written: that contact is already on this case in that role (${message}). Ask Casey to read the case again.` };
+  }
+  if (e && e.status === 404 && /Relationship not found/.test(message)) {
+    return { status: refused, text: 'Refused — nothing written: that contact is no longer on this case (already removed). Ask Casey to read the case again.' };
+  }
+  return null;
+}
+
 // Safe code jobs (safe-mode S3). The body runs ONCE in the QuickJS guest
 // engine (no network, no DB, no host realm), so the reviewed card schedules a
 // computation, not server-side execution capability. code_mode is pinned
@@ -2539,6 +2693,27 @@ const ACTION_FAMILIES = [
     }),
     reviewWarning: 'This is the CONTACT\'s note, not a case note — review the contact and the change; applying replaces the stored text with exactly the new text. Nothing is sent. Canceling writes nothing.',
     open: (draft) => { const t = recordTextOpenTarget(draft); openEntity('contact', t.id, t.label); },
+  },
+  {
+    // A8: the receipt is the integer case_relate_id (never the case's string id).
+    id: 'case_contact', kinds: CASE_CONTACT_ACTION_KINDS, title: 'Case contact', noun: 'case membership', errorNoun: 'case contact action',
+    label: caseContactLabel, text: caseContactText, request: caseContactRequest, result: caseContactResult,
+    idField: 'case_relate_id', appliedKey: 'result_case_relate_id',
+    // A remove deletes the row; a warning is a second Primary or new portal visibility.
+    danger: (draft) => draft.kind === 'case.contact.remove.v1' || (draft.warnings || []).length > 0,
+    precheck: caseContactPrecheck,
+    knownOutcome: caseContactKnownOutcome,
+    refusalText: (detail) => `Refused — nothing written (${detail}). Ask Casey to prepare it again.`,
+    resultText: (payload) => `case membership #${payload.case_relate_id}`,
+    entity: (draft) => ({ kind: 'case', id: String(draft.case && draft.case.case_id), label: caseContactCaseLabel(draft) }),
+    failure: 'The case contact action could not be applied.',
+    appliedCopy: (draft) => ({
+      status: draft.kind === 'case.contact.remove.v1' ? `Applied — membership #${draft.result_case_relate_id} removed` : `Applied — membership #${draft.result_case_relate_id}`,
+      warning: `${draft.contact ? draft.contact.contact_name : 'The contact'}'s place on case ${caseContactCaseLabel(draft)} was ${draft.kind === 'case.contact.remove.v1' ? 'removed' : 'saved'} using your signed-in account. Every effect listed above applies from now.`,
+      button: `Open ${caseContactCaseLabel(draft)}`,
+    }),
+    reviewWarning: 'Review the case, the contact, the old and new role, and every Primary-contact and client-portal line — the portal and the case\'s own readers follow the role the moment it is saved. Nothing is sent. Canceling writes nothing.',
+    open: (draft) => openEntity('case', String(draft.case && draft.case.case_id), caseContactCaseLabel(draft)),
   },
   {
     id: 'job', kinds: JOB_ACTION_KINDS, title: 'Safe code job', noun: 'scheduled job', errorNoun: 'job action',

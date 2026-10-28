@@ -69,6 +69,8 @@ const ACTION_FNS = ['appendDraftField', 'appendDraftFieldsFromText', 'actionDraf
   'recordTextSpec', 'recordTextLabel', 'recordTextCount', 'recordTextShow', 'recordTextDiff', 'recordTextBefore',
   'recordTextTargetLines', 'recordTextText', 'recordTextDanger', 'recordTextRequest', 'recordTextPrecheck',
   'caseTextResult', 'contactTextResult', 'recordTextOpenTarget',
+  'caseContactLabel', 'caseContactCaseLabel', 'caseContactText', 'caseContactIds', 'caseContactRequest',
+  'caseContactSignature', 'caseContactPrecheck', 'caseContactResult', 'caseContactKnownOutcome',
   'jobActionLabel', 'jobScheduleText', 'jobDraftText', 'jobActionRequest', 'jobActionResult',
   'workflowDraftLabel', 'workflowSendLines', 'workflowDraftStepLine', 'workflowDraftText', 'workflowDraftRequest', 'workflowDraftResult',
   'workflowStepActionLabel', 'workflowStepWorkflowLine', 'workflowStepInsertText', 'workflowStepEditValue',
@@ -103,6 +105,7 @@ function actionSandbox(deps = {}) {
     constSrc(html, 'CONTACT_RELATION_ACTION_KINDS'), constSrc(html, 'CONTACT_ROLE_ACTION_KINDS'),
     constSrc(html, 'CASE_TEXT_ACTION_KINDS'), constSrc(html, 'CONTACT_TEXT_ACTION_KINDS'), constSrc(html, 'RECORD_TEXT_SPECS'),
     constSrc(html, 'RECORD_TEXT_CONTEXT'), constSrc(html, 'RECORD_TEXT_PART_MAX'), constSrc(html, 'RECORD_TEXT_WORD_MAX'),
+    constSrc(html, 'CASE_CONTACT_ACTION_KINDS'), constSrc(html, 'CASE_CONTACT_TYPES'),
     constSrc(html, 'JOB_ACTION_KINDS'), constSrc(html, 'WORKFLOW_ACTION_KINDS'),
     constSrc(html, 'WORKFLOW_STEP_ACTION_KINDS'), constSrc(html, 'WORKFLOW_PUBLISH_ACTION_KINDS'), constSrc(html, 'WORKFLOW_START_ACTION_KINDS'),
     constSrc(html, 'HOOK_ACTION_KINDS'), constSrc(html, 'SEQUENCE_STEP_ACTION_KINDS'), constSrc(html, 'SEQUENCE_PUBLISH_ACTION_KINDS'), constSrc(html, 'SEQUENCE_ENROLL_ACTION_KINDS'), constSrc(html, 'SEND_ACTION_KINDS'),
@@ -2598,6 +2601,203 @@ describe('A7 record text cards (case.notes / case.alerts / contact.notes)', () =
     expect([[...ct.kinds], [...kt.kinds]]).toEqual([['case.notes.update.v1', 'case.alerts.update.v1'], ['contact.notes.update.v1']]);
     expect([ct.appliedKey, kt.appliedKey, ct.idField, kt.idField, ct.stringReceipt, !!kt.stringReceipt]).toEqual(['result_text_case_id', 'result_text_contact_id', 'case_id', 'contact_id', true, false]);
     for (const kind of ['case.update.v1', 'case.source.update.v1', 'contact.update.v1']) expect(box.actionFamily({ kind })).toBe(null);
+    dom.window.close();
+  });
+});
+
+// A8: case-contact membership through the SHARED engine. Pinned: the builder
+// sends only the route's own fields, named by the KIND (POST {contact_id,
+// relate_type}, PATCH {relate_type}, DELETE no body), with no Idempotency-Key;
+// the click-time re-read compares the case's WHOLE membership set and the
+// contact's portal flag and (change / remove) the list row's portal_used, and
+// refuses BEFORE the claim (which is how a contact who used the portal since
+// the card was prepared — a demotion that became a portal-user demotion — is
+// refused); the
+// receipt is the integer case_relate_id; the routes' two before-write refusals
+// (add 409 "already linked", change/remove 404) read as refusals, not as
+// "may have been applied".
+describe('A8 case contact cards (case.contact.add / update / remove)', () => {
+  const CASE_ID = '7KQ2M9XA';
+  const MEMBERS = [
+    { relate_id: 11, contact_id: 77, relate_type: 'Primary', portal_used: 1 },
+    { relate_id: 12, contact_id: 78, relate_type: 'Secondary', portal_used: 1 },
+    { relate_id: 13, contact_id: 90, relate_type: 'Other', portal_used: 0 },
+  ];
+  const draft = (over = {}) => ({ action_draft: {
+    draft_id: '7a7a7a7a-1b2c-4d3e-8f40-123456789abc', kind: 'case.contact.add.v1', status: 'draft', received_at: Date.now(),
+    case: { case_id: CASE_ID, case_number: '25-12345-abc', case_type: 'Chapter 7' },
+    contact: { contact_id: 92, contact_name: 'Nora New', contact_kind: 'person', portal_enabled: 1 },
+    membership: { case_relate_id: null, from: null, to: 'Secondary' },
+    members_after: [{ contact_id: 77, contact_name: 'Dana Client', relate_type: 'Primary' }, { contact_id: 92, contact_name: 'Nora New', relate_type: 'Secondary' }],
+    members_after_total: 4,
+    effects: ['Trigger event: case.contact_linked fires (relate_type Secondary) — any trigger rule listening for it runs.'],
+    warnings: ["CLIENT PORTAL: Nora New has client-portal access, so this case — its documents, messages and status — shows in Nora New's portal from the moment this is saved."],
+    expected: { members: MEMBERS.map(({ portal_used, ...m }) => m), portal_enabled: 1, portal_used: null }, evidence: [],
+    // Model-shaped junk that must never reach a request.
+    relate_type: 'Bystander', case_relate_type: 'Other', contact_id: 1,
+    ...over } });
+  const change = (over = {}) => draft({ draft_id: '6b6b6b6b-1b2c-4d3e-8f40-123456789abc', kind: 'case.contact.update.v1',
+    contact: { contact_id: 90, contact_name: 'Opposing Counsel', contact_kind: 'person', portal_enabled: 0, portal_used: false },
+    membership: { case_relate_id: 13, from: 'Other', to: 'Bystander' }, warnings: [],
+    expected: { members: MEMBERS.map(({ portal_used, ...m }) => m), portal_enabled: 0, portal_used: false }, ...over });
+  const removal = (over = {}) => change({ draft_id: '5c5c5c5c-1b2c-4d3e-8f40-123456789abc', kind: 'case.contact.remove.v1',
+    membership: { case_relate_id: 13, from: 'Other', to: null }, ...over });
+  const reads = (over = {}) => (path) => {
+    if (path === `/api/cases/${CASE_ID}`) { if (over.caseGone) throw Object.assign(new Error('Case not found'), { status: 404 }); return { case: { case_id: CASE_ID } }; }
+    if (path === `/api/cases/${CASE_ID}/contacts`) return over.list || { contacts: (over.members || MEMBERS).map((m) => ({ contact_name: 'n', ...m })) };
+    if (/^\/api\/contacts\/\d+$/.test(path)) {
+      if (over.contactGone) throw Object.assign(new Error('Contact not found'), { status: 404 });
+      return { contact: { contact_id: Number(path.split('/').pop()), portal_enabled: 'portal' in over ? over.portal : (path.endsWith('/92') ? 1 : 0) } };
+    }
+    throw new Error(`unexpected read ${path}`);
+  };
+  function runMember(message, { read = reads(), write = async (path, body, method) => (method === 'POST'
+    ? { status: 'success', case_relate_id: 501 } : { status: 'success', message: 'ok' }), confirm = true } = {}) {
+    const writes = []; const gets = []; const ledger = [];
+    const api = jest.fn(async (path, body, method, headers) => {
+      if (method === 'GET') { gets.push(path); return read(path); }
+      writes.push({ path, body, method, headers }); return write(path, body, method);
+    });
+    const ledgerApi = jest.fn(async (path, body) => { ledger.push(path.endsWith('/claim') ? 'claim' : { receipt: body }); return path.endsWith('/claim') ? { outcome: 'in_flight', claimed: true, claim_token: 'tok-a8' } : { outcome: 'applied' }; });
+    const P = { Swal: { fire: jest.fn().mockResolvedValue({ isConfirmed: confirm }) } };
+    const history = []; const openEntity = jest.fn();
+    const sandbox = actionSandbox({ P, api, ledgerApi, history, openEntity, saveAssistantMessage: jest.fn() });
+    return sandbox.executeActionDraft(message).then(() => ({ writes, gets, ledger, P, history, openEntity, sandbox }));
+  }
+
+  test('add: re-reads case, membership set and portal flag; ONE POST of contact_id + relate_type; integer receipt; opens the case', async () => {
+    const m = draft();
+    const { writes, gets, ledger, P, history, openEntity, sandbox } = await runMember(m);
+    expect(sandbox.actionFamily(m.action_draft).id).toBe('case_contact');
+    expect(gets).toEqual([`/api/cases/${CASE_ID}`, `/api/cases/${CASE_ID}/contacts`, '/api/contacts/92']);
+    expect(writes).toEqual([{ path: `/api/cases/${CASE_ID}/contacts`, method: 'POST', headers: undefined, body: { contact_id: 92, relate_type: 'Secondary' } }]);
+    expect(ledger).toEqual(['claim', { receipt: { claim_token: 'tok-a8', result: { case_relate_id: 501 } } }]);
+    expect(m.action_draft).toMatchObject({ status: 'applied', result_case_relate_id: 501 });
+    expect(history[0].text).toBe('Add contact to case applied to case membership #501.');
+    expect(history[0].entities).toEqual([{ kind: 'case', id: CASE_ID, label: '25-12345-abc' }]);
+    expect(openEntity).toHaveBeenCalledWith('case', CASE_ID, '25-12345-abc');
+    const dialog = P.Swal.fire.mock.calls[0][0];
+    // A portal-exposure warning danger-styles the review.
+    expect(dialog).toMatchObject({ icon: 'warning', focusCancel: true, confirmButtonText: 'Add contact to case' });
+    for (const line of [`Case: 25-12345-abc (case ${CASE_ID}, Chapter 7)`, 'Contact: Nora New (contact #92, person)',
+      'Client portal access: on', 'Role: not on the case → Secondary', 'Warning: CLIENT PORTAL: Nora New has client-portal access',
+      'Effect: Trigger event: case.contact_linked fires', 'Contacts after: Dana Client — Primary; Nora New — Secondary (+2 more)',
+      'Writes: one new case membership row', 'Stale check: if anyone adds, removes or changes a contact on this case']) {
+      expect({ line, shown: dialog.text.includes(line) }).toEqual({ line, shown: true });
+    }
+  });
+
+  test('change role: PATCH {relate_type} only, receipt = the reviewed row; a warning-free change is not danger-styled', async () => {
+    const m = change();
+    const r = await runMember(m);
+    expect(r.gets).toEqual([`/api/cases/${CASE_ID}/contacts`, '/api/contacts/90']);
+    expect(r.writes).toEqual([{ path: `/api/cases/${CASE_ID}/contacts/90`, method: 'PATCH', headers: undefined, body: { relate_type: 'Bystander' } }]);
+    expect(r.ledger[1]).toEqual({ receipt: { claim_token: 'tok-a8', result: { case_relate_id: 13 } } });
+    const dialog = r.P.Swal.fire.mock.calls[0][0];
+    expect(dialog).toMatchObject({ icon: 'question', confirmButtonText: 'Change case role' });
+    expect(dialog.text).toContain('Role: Other → Bystander');
+    expect(dialog.text).toContain('Client portal access: off (never used)');
+    // A route that did not confirm is not a receipt.
+    const unconfirmed = change();
+    await runMember(unconfirmed, { write: async () => ({ message: 'ok' }) });
+    expect(unconfirmed.action_draft.ambiguous_error).toMatch(/did not confirm the change/);
+  });
+
+  test('remove: DELETE with no body, always danger-styled, receipt = the removed row', async () => {
+    const m = removal();
+    const r = await runMember(m);
+    expect(r.writes).toEqual([{ path: `/api/cases/${CASE_ID}/contacts/90`, method: 'DELETE', headers: undefined, body: null }]);
+    expect(r.ledger[1]).toEqual({ receipt: { claim_token: 'tok-a8', result: { case_relate_id: 13 } } });
+    const dialog = r.P.Swal.fire.mock.calls[0][0];
+    expect(dialog).toMatchObject({ icon: 'warning', focusCancel: true, confirmButtonText: 'Remove contact from case' });
+    expect(dialog.text).toContain('Role: Other → removed from the case');
+    expect(dialog.text).toContain('Membership: #13 is deleted');
+  });
+
+  test('the builder fixes route, method and body; a bad card never reaches a read, the claim or the route', async () => {
+    for (const [message, why] of [
+      [draft({ case: { case_id: 'bad id', case_number: 'x' } }), 'This card has no usable case id.'],
+      [draft({ contact: { contact_id: 'x', contact_name: 'N' } }), 'This card has no usable contact id.'],
+      [draft({ case: { case_id: 'ABCDEFGHJK', case_number: 'x' } }), 'longer than a case membership stores'],
+      [draft({ membership: { case_relate_id: null, from: null, to: 'Debtor' } }), 'This card has no usable case role.'],
+      [change({ membership: { case_relate_id: 13, from: 'Other', to: 'Other' } }), 'This card has no usable case role.'],
+      [change({ membership: { case_relate_id: 0, from: 'Other', to: 'Bystander' } }), 'This card has no usable membership id.'],
+      [removal({ membership: { case_relate_id: 'x', from: 'Other', to: null } }), 'This card has no usable membership id.'],
+    ]) {
+      const x = await runMember(message);
+      expect({ why, gets: x.gets, ledger: x.ledger, writes: x.writes }).toEqual({ why, gets: [], ledger: [], writes: [] });
+      expect(message.action_draft.action_error).toContain(why);
+    }
+  });
+
+  test('click-time freshness: any change to the membership set or the portal flag refuses BEFORE the claim', async () => {
+    const changed = MEMBERS.map((m) => (m.contact_id === 78 ? { ...m, relate_type: 'Other' } : m));
+    for (const [message, read, why] of [
+      [change(), reads({ members: changed }), 'The contacts on case 25-12345-abc changed since this card was prepared'],
+      [draft(), reads({ members: [...MEMBERS, { relate_id: 20, contact_id: 92, relate_type: 'Other' }] }), 'The contacts on case 25-12345-abc changed'],
+      [removal(), reads({ members: MEMBERS.filter((m) => m.relate_id !== 13) }), 'Opposing Counsel is no longer on case 25-12345-abc as membership #13 — already removed. Nothing was written.'],
+      [change(), reads({ members: MEMBERS.map((m) => (m.relate_id === 13 ? { ...m, relate_id: 30 } : m)) }), 'is no longer on case 25-12345-abc as membership #13. Nothing was written.'],
+      // Portal access turned ON since the card: this demotion would now hide the case from a portal user.
+      [change(), reads({ portal: 1 }), "Opposing Counsel's client-portal access changed since this card was prepared. Nothing was written."],
+      // Off only when it says so: a null reads as access, so a card baked with access off refuses.
+      [removal(), reads({ portal: null }), "client-portal access changed since this card was prepared"],
+      [draft(), reads({ portal: 0 }), "Nora New's client-portal access changed"],
+      [draft(), reads({ caseGone: true }), 'Case 25-12345-abc no longer exists. Nothing was written.'],
+      // Used the portal since the review (a login or a PIN request): the demotion / removal is now a portal user's.
+      [change(), reads({ members: MEMBERS.map((m) => (m.relate_id === 13 ? { ...m, portal_used: 1 } : m)) }), "Opposing Counsel's use of the client portal changed since this card was prepared (they have now used it, so Casey will not take this case out of their portal). Nothing was written."],
+      [removal(), reads({ members: MEMBERS.map((m) => (m.relate_id === 13 ? { ...m, portal_used: 1 } : m)) }), "use of the client portal changed since this card was prepared"],
+      // Off only when it says so: a list row without the field reads as use.
+      [removal(), reads({ members: MEMBERS.map((m) => (m.relate_id === 13 ? { relate_id: 13, contact_id: 90, relate_type: 'Other' } : m)) }), "use of the client portal changed"],
+      [change(), reads({ contactGone: true }), 'Opposing Counsel (contact #90) no longer exists. Nothing was written.'],
+    ]) {
+      const x = await runMember(message, { read });
+      expect({ why, writes: x.writes, ledger: x.ledger }).toEqual({ why, writes: [], ledger: [] });
+      expect(message.action_draft.refusal_error).toContain(why);
+    }
+    // An unreadable list leaves the card retryable (nothing claimed).
+    const u = change();
+    const ur = await runMember(u, { read: reads({ list: { status: 'success' } }) });
+    expect([ur.writes, ur.ledger]).toEqual([[], []]);
+    expect(u.action_draft.action_error).toMatch(/^Could not re-check the record before applying \(the case's contacts could not be read\)/);
+  });
+
+  test("outcomes: the add's 409 and a change/remove 404 are refusals written before any row; a 500 stays ambiguous", async () => {
+    const dup = draft();
+    await runMember(dup, { write: async () => { throw Object.assign(new Error('Contact 92 is already linked to case 7KQ2M9XA as Secondary'), { status: 409 }); } });
+    expect(dup.action_draft.refusal_error).toBe('Refused — nothing written: that contact is already on this case in that role (Contact 92 is already linked to case 7KQ2M9XA as Secondary). Ask Casey to read the case again.');
+    expect(dup.action_draft.ambiguous_error).toBeUndefined();
+    const gone = removal();
+    await runMember(gone, { write: async () => { throw Object.assign(new Error('Relationship not found'), { status: 404 }); } });
+    expect(gone.action_draft.refusal_error).toBe('Refused — nothing written: that contact is no longer on this case (already removed). Ask Casey to read the case again.');
+    // A 409 that is not the route's own refusal stays ambiguous.
+    const other409 = draft();
+    await runMember(other409, { write: async () => { throw Object.assign(new Error('conflict'), { status: 409 }); } });
+    expect(other409.action_draft.ambiguous_error).toMatch(/may already have been applied/);
+    const lost = change();
+    await runMember(lost, { write: async () => { throw Object.assign(new Error('Internal'), { status: 500 }); } });
+    expect(lost.action_draft.ambiguous_error).toMatch(/may already have been applied/);
+    const noId = draft();
+    await runMember(noId, { write: async () => ({ status: 'success' }) });
+    expect(noId.action_draft.ambiguous_error).toMatch(/returned no usable membership id/);
+  });
+
+  test('reopened cards restore from the ledger with the integer receipt; the three kinds are one family', () => {
+    const { JSDOM } = require('jsdom');
+    const dom = new JSDOM('<!doctype html><div></div>');
+    const box = actionSandbox({ document: dom.window.document, navigator: dom.window.navigator });
+    for (const [m, result, chip] of [[draft(), { case_relate_id: 501 }, 'Applied — membership #501'],
+      [change(), { case_relate_id: 13 }, 'Applied — membership #13'], [removal(), { case_relate_id: 13 }, 'Applied — membership #13 removed']]) {
+      box.applyActionResults([m], [{ draft_id: m.action_draft.draft_id, kind: m.action_draft.kind, outcome: 'applied', result }]);
+      expect([m.action_draft.status, m.action_draft.result_case_relate_id]).toEqual(['applied', result.case_relate_id]);
+      const host = dom.window.document.createElement('div');
+      box.hydrateActionDraft(box.actionFamily(m.action_draft), host, m, m.action_draft);
+      expect(host.querySelector('.action-draft-status').textContent).toBe(chip);
+      expect([...host.querySelectorAll('button')].map((b) => b.textContent)).toEqual(['Open 25-12345-abc', 'Copy details']);
+    }
+    const fam = box.actionFamily({ kind: 'case.contact.remove.v1' });
+    expect([[...fam.kinds], fam.idField, fam.appliedKey, !!fam.stringReceipt])
+      .toEqual([['case.contact.add.v1', 'case.contact.update.v1', 'case.contact.remove.v1'], 'case_relate_id', 'result_case_relate_id', false]);
+    for (const kind of ['case.contact.set.v1', 'case.contacts.update.v1']) expect(box.actionFamily({ kind })).toBe(null);
     dom.window.close();
   });
 });
