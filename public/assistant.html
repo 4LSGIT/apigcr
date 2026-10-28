@@ -525,14 +525,72 @@ function apptActionLabel(draft) {
     'appt.reschedule.v1': 'Reschedule appointment', 'appt.reschedule_later.v1': 'Reschedule later' })[draft.kind] || 'Apply appointment action';
 }
 
-function apptChannelsText(draft) {
-  // An appointment card sends no client SMS/email (course correction 3 — a
-  // client message is a separate A14 send card); the request bodies below
-  // send false whatever an older saved draft carries.
-  return 'None — this appointment card sends no client SMS or email; send a confirmation from the appointment itself, or ask Casey for a separate send card';
+// Client confirmations (create, cancel, reschedule-now; ruling 15's A14 bar).
+// The server prepared one only when the user asked: draft.confirmation names
+// the route's own recipients and senders, and confirm_message is the text the
+// SERVER RESOLVED — the request sends exactly those bytes, and the route's
+// own resolve fills nothing but the client's manage link, which the card
+// shows as a labeled element. A draft without the confirmation object (every
+// card before this, a hand-edited one) sends none, exactly as before.
+function apptManageLinkPattern() { return /\{\{appts\.appt_manage_token(?:\|default:)?\}\}/g; }
+
+function apptConfirmation(draft) {
+  const c = draft && draft.confirmation;
+  if (!c || typeof c !== 'object') return null;
+  const create = draft.kind === 'appt.create.v1';
+  const sms = (create ? draft.confirm_sms : draft.sms) === true && !!c.sms;
+  const email = (create ? draft.confirm_email : draft.email) === true && !!c.email;
+  return sms || email ? { sms, email, message: String(draft.confirm_message || '') } : null;
 }
 
-function apptDraftText(draft) {
+// Belt and braces: the server refuses unresolved text; a card carrying
+// template braces beyond the manage link sends no confirmation at all.
+function apptConfirmFields(draft) {
+  const c = apptConfirmation(draft);
+  if (!c) return { sms: false, email: false, message: '' };
+  if (!c.message.trim() || /\{\{|\}\}/.test(c.message.replace(apptManageLinkPattern(), ' '))) {
+    throw new Error('This confirmation has no resolved text and cannot be applied from a card.');
+  }
+  return c;
+}
+
+function apptConfirmLinkLabel(draft) {
+  return draft.kind === 'appt.cancel.v1' ? '[secure manage link for this appointment — filled in when the message is sent]'
+    : draft.kind === 'appt.reschedule.v1' ? '[secure manage link for the new appointment — generated when it is created]'
+      : '[secure manage link — generated when the appointment is created]';
+}
+
+function apptConfirmDisplay(draft) {
+  return String(draft.confirm_message || '').replace(apptManageLinkPattern(), apptConfirmLinkLabel(draft));
+}
+
+function apptChannelsText(draft) {
+  const c = apptConfirmation(draft);
+  if (!c) return 'None — this appointment card sends no client SMS or email; send a confirmation from the appointment itself, or ask Casey for a separate send card';
+  const conf = draft.confirmation;
+  const phone = (v) => String(v || '').replace(/^(\d{3})(\d{3})(\d{4})$/, '($1) $2-$3');
+  const parts = [];
+  if (c.sms) parts.push(`SMS to ${phone(conf.sms.to)} from ${phone(conf.sms.from)}`);
+  if (c.email) parts.push(`email to ${conf.email.to} from ${conf.email.from}, subject "${conf.email.subject}"`);
+  return `${parts.join('; ')} — sent by the appointment route right after it saves`;
+}
+
+// The confirmation's fact lines (one "Label: value" each — server fields, never
+// message text). Off, it is the one line every shipped card carries.
+function apptConfirmLines(draft) {
+  const lines = [`Client confirmation: ${apptChannelsText(draft)}`];
+  const c = apptConfirmation(draft);
+  if (!c) return lines;
+  const conf = draft.confirmation;
+  if (c.sms && conf.sms.segments) lines.push(`SMS length: about ${conf.sms.segments.segments} segment${conf.sms.segments.segments === 1 ? '' : 's'} (${conf.sms.segments.encoding}, the manage link counted at its longest)`);
+  if (conf.templated || conf.manage_link) lines.push(`Placeholders: already filled in from the records — what you see is exactly what is sent${conf.manage_link ? ', except the manage link, which is filled in when it is sent' : ''}`);
+  if (conf.ssn_warning) lines.push('WARNING: this confirmation contains a Social Security number');
+  lines.push('Consent: checked — the client has not opted out of these channels; re-checked when you click. A confirmation never goes to an opted-out recipient.',
+    'Confirmation effect: goes to the client as soon as the appointment saves. It cannot be recalled.');
+  return lines;
+}
+
+function apptDraftText(draft, withMessage = true) {
   const lines = ['Appointment action proposal — not applied', `Action: ${apptActionLabel(draft)}`];
   if (draft.kind === 'appt.create.v1') {
     lines.push(`Client: ${draft.contact.label} (contact ${draft.contact.contact_id})`,
@@ -541,11 +599,11 @@ function apptDraftText(draft) {
       `Firm-local date/time (${draft.firm_timezone || 'firm timezone'}): ${draft.appt_date}`,
       `Length: ${draft.appt_length} minutes`, `Platform / location: ${draft.appt_platform}`,
       `Provider: ${draft.provider.label} (user ${draft.provider.user_id})`, `Note: ${draft.note || '—'}`,
-      `Client confirmation: ${apptChannelsText(draft)}`,
+      ...apptConfirmLines(draft),
       'Google Calendar: creation will be attempted on the firm calendar and the provider calendar when configured; the firm entry includes the client attendee without Google update emails.',
       'Automation: active no-show sequences are canceled and normal pre-appointment sequences are enrolled.',
       `Singleton effect: ${draft.type.singleton ? 'a prior live appointment of this type for the case may be superseded and its calendar entries deleted' : 'none'}.`);
-    return lines.join('\n');
+    return apptConfirmMessageBlock(lines, draft, withMessage).join('\n');
   }
   const a = draft.appt;
   lines.push(`Appointment: #${a.appt_id} — ${a.type}`, `Current status: ${a.status}`,
@@ -561,25 +619,76 @@ function apptDraftText(draft) {
   if (draft.kind === 'appt.attended.v1') lines.push('Automation: appointment and contact no-show sequences are canceled.', 'Google Calendar: existing entries are kept.');
   if (draft.kind === 'appt.no_show.v1') lines.push(`No-show sequence: ${draft.enroll ? 'enroll when eligible' : 'do not enroll'}.`,
     'Pipeline: an eligible intake case may advance to no-show.', 'Automation: appointment sequences are canceled; Google Calendar entries are kept.');
-  if (draft.kind === 'appt.cancel.v1') lines.push(`Client confirmation: ${apptChannelsText(draft)}`,
+  if (draft.kind === 'appt.cancel.v1') lines.push(...apptConfirmLines(draft),
     `Follow-up task: ${draft.create_task ? 'create for the signed-in user' : 'do not create'}.`,
     `Google Calendar: ${draft.cancel_gcal ? 'delete both existing entries when present' : 'keep existing entries'}.`,
     'Automation: appointment and contact no-show sequences are canceled.');
   if (draft.kind === 'appt.reschedule.v1') lines.push(`New firm-local date/time: ${draft.new_date}`,
-    `Client confirmation: ${apptChannelsText(draft)}`,
+    ...apptConfirmLines(draft),
     'Result: the current appointment becomes Rescheduled and a successor with the same client, case, type, length, platform, and provider is created.',
     'Calendar / automation: old calendar entries and appointment automation are removed; new calendar entries and pre-appointment automation are created.');
   if (draft.kind === 'appt.reschedule_later.v1') lines.push(`Follow-up task: ${draft.create_task ? 'create for the signed-in user' : 'do not create'}.`,
     'Result: this appointment becomes Rescheduled without a successor.',
     'Calendar / automation: existing calendar entries and appointment automation are removed.');
-  return lines.join('\n');
+  return apptConfirmMessageBlock(lines, draft, withMessage).join('\n');
+}
+
+// The confirmation message goes LAST and whole: it can hold any line.
+function apptConfirmMessageBlock(lines, draft, withMessage) {
+  if (!withMessage || !apptConfirmation(draft)) return lines;
+  return [...lines, 'Confirmation message, exactly as sent, between the rules:', '────────', apptConfirmDisplay(draft), '────────'];
+}
+
+// Off, the card renders exactly as before; on, the message is its own field.
+function apptDraftFields(fields, draft) {
+  appendDraftFieldsFromText(fields, apptDraftText(draft, false));
+  if (!apptConfirmation(draft)) return;
+  const term = document.createElement('dt'); term.textContent = 'Confirmation message';
+  const detail = document.createElement('dd'); detail.className = 'action-draft-message';
+  detail.textContent = apptConfirmDisplay(draft);
+  fields.append(term, detail);
+}
+
+function apptConfirmText(draft) {
+  return `${apptDraftText(draft)}\n\nThis changes YisraCase immediately using your signed-in account.${apptConfirmation(draft) ? ' It also sends the client confirmation above, which cannot be recalled.' : ''}`;
+}
+
+// Click-time freshness for the confirmation only (correction 1): the client's
+// number/address on the contact, and its opt-out, re-read through the canonical
+// contact routes. A change refuses before the claim — nothing written or sent.
+async function apptPrecheck(draft) {
+  const c = apptConfirmation(draft);
+  if (!c) return '';
+  const conf = draft.confirmation;
+  const id = Number(draft.kind === 'appt.create.v1' ? draft.contact.contact_id : draft.appt.contact && draft.appt.contact.contact_id);
+  const res = await api(`/api/contacts/${id}`, null, 'GET');
+  const contact = res && res.contact;
+  if (!contact) return 'The client contact no longer exists. Nothing was changed or sent.';
+  const digits = (v) => String(v || '').replace(/\D/g, '').slice(-10);
+  if (c.sms) {
+    if (String(contact.contact_phone || '').trim() !== String(conf.sms.to)) return 'The client\'s phone number changed since this card was prepared. Nothing was changed or sent. Ask Casey to prepare it again.';
+    const list = await api(`/api/contacts/${id}/phones`, null, 'GET');
+    if (((list && list.phones) || []).some((r) => !r.end_date && digits(r.phone) === digits(conf.sms.to) && Number(r.sms_optout) === 1)) {
+      return 'The client\'s number has opted out of texts since this card was prepared, and a confirmation never goes to an opted-out recipient. Nothing was changed or sent. Ask Casey to prepare it again.';
+    }
+  }
+  if (c.email) {
+    if (String(contact.contact_email || '').trim() !== String(conf.email.to)) return 'The client\'s email address changed since this card was prepared. Nothing was changed or sent. Ask Casey to prepare it again.';
+    const list = await api(`/api/contacts/${id}/emails`, null, 'GET');
+    const to = String(conf.email.to).toLowerCase();
+    if (((list && list.emails) || []).some((r) => !r.end_date && String(r.email || '').toLowerCase() === to && Number(r.email_optout) === 1)) {
+      return 'The client\'s email address has opted out since this card was prepared, and a confirmation never goes to an opted-out recipient. Nothing was changed or sent. Ask Casey to prepare it again.';
+    }
+  }
+  return '';
 }
 
 function apptCreateBody(draft) {
+  const c = apptConfirmFields(draft);
   return { contact_id: draft.contact.contact_id, case_id: draft.case ? draft.case.case_id : '',
     appt_type: draft.type.appt_type, type_key: draft.type.type_key, appt_length: draft.appt_length,
     appt_platform: draft.appt_platform, appt_date: draft.appt_date, appt_with: draft.provider.user_id,
-    note: draft.note || '', confirm_sms: false, confirm_email: false, confirm_message: '' };
+    note: draft.note || '', confirm_sms: c.sms, confirm_email: c.email, confirm_message: c.message };
 }
 
 function apptActionRequest(draft) {
@@ -593,11 +702,17 @@ function apptActionRequest(draft) {
   }
   if (draft.kind === 'appt.attended.v1') return { path: `/api/appts/${id}/attended`, method: 'POST', body: { note: draft.note || '' } };
   if (draft.kind === 'appt.no_show.v1') return { path: `/api/appts/${id}/no-show`, method: 'POST', body: { note: draft.note || '', enroll: draft.enroll === true } };
-  if (draft.kind === 'appt.cancel.v1') return { path: '/api/appts/cancel', method: 'POST', body: { appt: id, note: draft.note || '',
-    sms: false, email: false, confirm_message: '',
-    cancel_gcal: draft.cancel_gcal !== false, create_task: draft.create_task === true } };
-  if (draft.kind === 'appt.reschedule.v1') return { path: '/api/appts/reschedule', method: 'POST', body: { appt: id,
-    newDate: draft.new_date, note: draft.note || '', sms: false, email: false, msg: '' } };
+  if (draft.kind === 'appt.cancel.v1') {
+    const c = apptConfirmFields(draft);
+    return { path: '/api/appts/cancel', method: 'POST', body: { appt: id, note: draft.note || '',
+      sms: c.sms, email: c.email, confirm_message: c.message,
+      cancel_gcal: draft.cancel_gcal !== false, create_task: draft.create_task === true } };
+  }
+  if (draft.kind === 'appt.reschedule.v1') {
+    const c = apptConfirmFields(draft);
+    return { path: '/api/appts/reschedule', method: 'POST', body: { appt: id,
+      newDate: draft.new_date, note: draft.note || '', sms: c.sms, email: c.email, msg: c.message } };
+  }
   if (draft.kind === 'appt.reschedule_later.v1') return { path: '/api/appts/reschedule', method: 'POST', body: { appt: id,
     note: draft.note || '', rescheduleLater: true, createTask: draft.create_task === true } };
   throw new Error('Unsupported appointment action');
@@ -1659,8 +1774,11 @@ const ACTION_FAMILIES = [
   {
     id: 'appt', kinds: APPT_ACTION_KINDS, title: 'Appointment action', noun: 'appointment', errorNoun: 'appointment action',
     label: apptActionLabel, text: apptDraftText, request: apptActionRequest, result: apptActionResult,
+    fields: apptDraftFields, confirmText: apptConfirmText,
     idField: 'appt_id', appliedKey: 'result_appt_id',
-    danger: (draft) => ['appt.cancel.v1', 'appt.reschedule.v1', 'appt.reschedule_later.v1'].includes(draft.kind),
+    danger: (draft) => ['appt.cancel.v1', 'appt.reschedule.v1', 'appt.reschedule_later.v1'].includes(draft.kind) || !!apptConfirmation(draft),
+    // Only a card carrying a client confirmation re-reads anything at click time.
+    precheck: apptPrecheck, prechecks: (draft) => !!apptConfirmation(draft),
     resultText: (payload) => `appointment #${payload.appt_id}`,
     entity: (draft, payload) => ({ kind: 'appointment', id: String(payload.appt_id), label: `${draft.kind === 'appt.create.v1' ? draft.type.appt_type : draft.appt.type} #${payload.appt_id}` }),
     failure: 'The appointment action could not be applied.',
@@ -1875,7 +1993,7 @@ async function executeActionDraft(message) {
   // Click-time freshness through canonical reads (a family that declares
   // one): a reviewed target that changed refuses BEFORE the claim, so nothing
   // was claimed or written; a read that fails leaves the card retryable.
-  if (family.precheck) {
+  if (family.precheck && (!family.prechecks || family.prechecks(draft))) {
     let why = '';
     try { why = await family.precheck(draft); }
     catch (e) { draft.action_error = `Could not re-check the record before applying (${e && e.message || 'read failed'}). Nothing was sent or changed.`; draft.executing = false; render(); return; }

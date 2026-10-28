@@ -206,10 +206,21 @@ Creation requires an existing client contact, active meeting type, length,
 platform/location, future firm-local date and time, and active appointment
 provider. A case linked to that contact and a note are optional. The card displays the firm's timezone,
 exact provider, client, case, type key, duration, and whether the type is a
-singleton. An appointment card never sends the client an SMS or email itself:
-the card says so, and the request it sends has confirmation turned off. Send
-any confirmation from the appointment itself, or ask Casey for a separate
-text or email card (see *Sending a text or email*).
+singleton.
+
+An appointment card sends the client nothing unless you ask for a
+confirmation ("book it and text her the details"). Create, cancel and
+reschedule can then carry the appointment's own confirmation text and/or
+email. The card shows the message already filled in from the records, the
+number or address it goes to (the client's phone and email on the contact),
+the firm line or sender it comes from, and the email subject; what you see is
+what is sent, except the client's manage link, shown as
+*[secure manage link …]* and filled in when the message goes out. It goes to
+the client as soon as the appointment saves and cannot be recalled. A client
+who opted out of texts or email cannot get a confirmation on that channel: the
+card is refused, because confirmations are automatic messages. To message an
+opted-out client anyway, ask for a separate text or email card (see
+*Sending a text or email*), which lets you confirm past the opt-out.
 
 Creating an Appointment attempts to create both a firm Google Calendar entry
 and a provider-calendar entry when that provider has a separate calendar. The
@@ -237,8 +248,8 @@ No-show enrollment defaults off. When reviewed on, it may start the normal
 no-show sequence; an eligible intake case may also move to its no-show pipeline
 stage. Attended and no-show cancel Appointment automation but keep existing
 calendar entries. Cancel defaults to deleting both calendar entries and not
-creating a follow-up Task. No cancellation SMS/email is sent; the optional
-follow-up Task is displayed explicitly. Canceling an appointment that is
+creating a follow-up Task. No cancellation SMS/email is sent unless you asked
+for a confirmation; the optional follow-up Task is displayed explicitly. Canceling an appointment that is
 already Canceled, or rescheduling one that is already Rescheduled, is refused
 for every caller (Casey card, native form, second tab), so a repeat never sends
 a second notice or creates a second successor.
@@ -341,8 +352,8 @@ It cannot be recalled.*
 - **What it doesn't do.** No attachments, pictures (MMS), cc/bcc, replies into
   an existing thread, scheduled sends, or messages to several people. The
   email is not filed to a case by the card (a case is only used to fill in
-  case placeholders). An appointment card still never sends its own
-  confirmation; ask for a separate send card or send it from the appointment.
+  case placeholders). An appointment's own confirmation rides on its
+  appointment card instead (see *Appointment actions*).
 - **When you click.** Casey re-checks the number or address first; if it ended,
   changed, or its opt-out changed since the card was prepared, nothing is sent
   and the card says why (ask again — the new card shows the current opt-out). The send then goes through the same Comms send that a person

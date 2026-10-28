@@ -73,12 +73,12 @@ part of this plan.
    it settles and a failure is shown loudly. Still to build: durable
    server-side applied state (P5) and a browser/server idempotency key on
    creates (P4) — two tabs can still double-apply a create.
-3. **No client sends inside A4 until A14.** SHIPPED: appointment create/cancel/
-   reschedule proposals force SMS/email off and drop the model-authored message
-   in the normalizer and again in the browser body. The confirmation path
-   resolves `{{…}}` placeholders (`contacts.contact_ssn` resolves since the
-   2026-09-24 ruling), so model-authored client text waits for A14's resolved
-   preview, explicit recipients, and idempotency.
+3. **No client sends inside A4 until A14.** SHIPPED, then lifted under the A14
+   bar (ruling 15): appointment create/cancel/reschedule proposals carry a
+   client SMS/email confirmation only when the user asks, and the normalizer
+   resolves it BEFORE the card is shown (see *Client confirmations* under
+   A4.1). Off — the default — the flags stay false and any model-authored
+   message is dropped, in the normalizer and again in the browser body.
 4. **P1 extraction is next, before A6.** Four ~150-line families already live
    in `public/assistant.html`; thirteen more are planned. Extract the repeated
    mechanics (freshness, single-flight, marker persistence, review rows) first.
@@ -489,8 +489,8 @@ The shipped contract has seven proposal kinds: `appt.create.v1`,
 `appt.reschedule.v1`, and `appt.reschedule_later.v1`. Create requires a
 verified contact, active meeting type, 1–1,440 minute length, platform, future
 firm-local date/time, and active appointment provider; optional case linked to
-that contact and note are supported. Client SMS/email is forced off (course
-correction 3). The server resolves the
+that contact and note are supported. A client SMS/email confirmation is off
+unless the user asks (*Client confirmations* under A4.1). The server resolves the
 canonical type key and labels; the browser alone maps the normalized proposal
 to `/api/appts*`, and the route supplies `source:'staff'` and authenticated
 actor identity.
@@ -505,13 +505,45 @@ either reschedule form also accept Attended/No Show because the native UI does.
 
 No-show defaults enrollment off and states its possible sequence/pipeline
 effects. Cancel defaults Google Calendar deletion on and follow-up task off;
-it sends nothing to the client (course correction 3). Reschedule-now
+it sends nothing to the client unless a confirmation was asked for. Reschedule-now
 retires the predecessor, deletes its firm/provider calendar entries and
 automation, creates a lineage-linked successor, re-creates calendars and
 automation, and opens the successor. Reschedule-later creates no successor,
 deletes calendar entries/automation, and may create the reviewed follow-up
 task. Create also discloses firm/provider calendar attempts, reminder-sequence
 enrollment, no-show-sequence cancellation, and singleton supersession.
+
+**Client confirmations (A14 bar, ruling 15).** Create, cancel and
+reschedule-now may carry the route's own client confirmation
+(`confirm_sms`/`confirm_email` + `confirm_message` on create, `sms`/`email` +
+`confirm_message` / `msg` on cancel and reschedule) — off unless the user asks.
+The route sends it fire-and-forget after the write
+(`apptService.sendApptConfirmation`) and resolves its `{{…}}` itself,
+non-strict, after the click; so the normalizer resolves it first, STRICT, with
+the same resolver and refs (`{contacts: the client, appts: the row the route
+resolves against}`), and the browser sends that resolved text. The route's
+resolve is then a passthrough for everything but the client's manage link,
+`{{appts.appt_manage_token|default:}}`: it cannot resolve before the
+appointment exists, stays literal in the sent text, and the card shows it as a
+labeled element — the one disclosed exception to shown-is-sent. Create and
+reschedule resolve `{{appts.*}}` from the card's own values shaped as mysql2
+reads the stored row (date/end/length/type/platform/status/note; reschedule as
+the successor: the old type/length/platform at the new time with this note);
+any other appts column refuses, as does a length the signed tinyint would store
+as 127. Cancel resolves against the real row (so status/note read as before the
+cancel) and only checks that a token exists — the token never enters the card.
+An unresolved placeholder, another table, a non-canonical link, or braces left
+after resolution refuse. Recipient and sender are the route's: the contact's
+`contact_phone` / `contact_email`, `sms_default_from` / `email_default_from`;
+the email subject is the route's fixed one. These are automation sends, so an
+opted-out channel REFUSES at proposal (no acknowledge — ruling 17's confirm
+belongs to the direct send cards), as does a missing number, address or
+sender. SMS is capped at 1000 with the link counted at 32 characters. The card
+re-reads the contact (and its phone/email rows' opt-out) at click time and
+refuses on any change; a card without a confirmation reads nothing and is
+byte-for-byte the earlier card. Pinned on a real engine (route resolve over the
+card's text changes only the link, and equals the route's resolve of the raw
+text against the stored row): `tests/caseyApptConfirm.mysql.test.js`.
 
 The canonical `yc-sync` matchers already cover create, narrow update,
 attended, no-show, cancel, and both reschedule result IDs, so no bus or
@@ -689,10 +721,9 @@ unchanged. These are the one family whose route IS an authorization seat
 **Deliberate narrowings:** no attachments, MMS/media, cc/bcc, HTML body,
 reply threading (`in_reply_to_message_fk`), scheduling, multi-recipient or
 bulk sends, and the email's composer Case field (`case_id` → case link) is
-NOT sent — a case only feeds placeholders. Appointment cards keep forcing
-their own confirmations off (course correction 3 unchanged): their routes
-resolve `{{…}}` after the click, so a client message is a separate send card.
-Each is filed in `ref/plans.md`. **Humans and Casey:** since the opt-out
+NOT sent — a case only feeds placeholders. Appointment cards carry their own
+client confirmation under this bar (A4.1 *Client confirmations*). Each narrowing
+is filed in `ref/plans.md`. **Humans and Casey:** since the opt-out
 ruling (2026-10-27) both native routes WARN a person sending from Comms (409
 `opted_out` until `acknowledge_optout:true`), and Casey's card takes the same
 confirm (ruling 17).

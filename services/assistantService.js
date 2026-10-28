@@ -966,21 +966,174 @@ function apptActionBool(value, field, fallback = false) {
   return value;
 }
 
-// Client SMS/email from an Ask Casey card is OFF on the APPOINTMENT cards
-// (course correction 3). A14's send cards (sms.send.v1 / email.send.v1) carry
-// the bar — resolved preview of the exact text, explicit recipient, fresh
-// confirmation, idempotency — but the appointment routes' confirmation path
-// resolves {{…}} itself after the click, so the user would approve text they
-// never saw resolved: the flags stay forced false and the text dropped here,
-// whatever the model asked for, and a client message is a separate send card.
-// The browser maps the same fields to false again (assistant.html
-// apptActionRequest). Routing appointment confirmations through the A14 bar
-// is filed in ref/plans.md.
-function apptActionMessageFields(value, { cancel = false } = {}) {
+// Client confirmations on the APPOINTMENT cards (create, cancel,
+// reschedule-now), held to the A14 bar (ruling 15): the user approves only
+// what they see. The appointment routes send the confirmation fire-and-forget
+// after the write (apptService.sendApptConfirmation) and resolve its {{…}}
+// themselves, NON-STRICT, after the click. So the card resolves it HERE first —
+// same resolver, same refs ({contacts: the client, appts: the row the route
+// resolves against}) — and the browser sends the RESOLVED text. The route's
+// own resolve is then a passthrough for everything but the ONE placeholder
+// that cannot resolve before the appointment exists, the client's manage link
+// {{appts.appt_manage_token|default:}}: it stays literal in the sent text and
+// the card shows it as a labeled element, never as raw braces (the one
+// disclosed exception to shown-is-sent).
+//   - create / reschedule-now: the row the route resolves against does not
+//     exist yet (reschedule resolves against the SUCCESSOR), so {{appts.*}}
+//     resolves from the card's own values, shaped the way mysql2 reads the
+//     stored row (APPT_CONFIRM_PROPOSED_COLUMNS); any other appts column refuses.
+//   - cancel: the real row. The route resolves against the cancelled row, so
+//     a value the cancel itself changes (appt_status, appt_note) is shown — and
+//     sent — as it stood before the cancel.
+// Casey's text is STRICT (an unresolved placeholder refuses), though the route
+// stays non-strict for staff typos. Recipient and sender are the route's own:
+// contacts.contact_phone / contact_email, sms_default_from / email_default_from.
+// These are AUTOMATION sends (apptService skips an opted-out channel silently),
+// so an opted-out recipient REFUSES here — no acknowledge path: ruling 17's
+// acknowledge belongs to the direct send cards, and a confirmation that would
+// be skipped silently is a false promise. Off (the default) is byte-identical
+// to the shipped cards: flags false, message ''.
+const APPT_CONFIRM_MAX = 2000;
+// Mirrors of the subjects apptService.sendApptConfirmation's callers pass
+// (createAppt — reschedule-now goes through it — and cancelAppt); the routes
+// take no subject. Pinned against the service source in the confirmation tests.
+const APPT_CONFIRM_SUBJECT = Object.freeze({ create: 'Appointment Confirmation', cancel: 'Appointment Cancellation Confirmation' });
+// The manage link, in the two spellings the native forms use. Anything else
+// naming appt_manage_token refuses.
+const APPT_MANAGE_LINK_RE = /\{\{appts\.appt_manage_token(?:\|default:)?\}\}/g;
+// A token is 22 base62 characters (lib/token) or a legacy 32-hex; the SMS cap
+// is checked with the longest.
+const APPT_MANAGE_TOKEN_MAX = 32;
+// What a not-yet-created appointment can already answer: the card's own values.
+const APPT_CONFIRM_PROPOSED_COLUMNS = Object.freeze(['appt_date', 'appt_end', 'appt_length', 'appt_type', 'appt_platform', 'appt_status', 'appt_note']);
+// appts.appt_platform enum members; MySQL stores a case-insensitive match as the member.
+const APPT_PLATFORM_ENUM = Object.freeze(['telephone', 'Zoom', 'in-person']);
+// appts.appt_length is a SIGNED tinyint: the production sql_mode stores a
+// longer length as 127 without an error.
+const APPT_LENGTH_STORED_MAX = 127;
+
+/** The appts row the route will resolve against, before it exists — as mysql2 (pool timezone 'Z') reads it. */
+function apptConfirmProposedRow({ appt_date, appt_length, appt_type, appt_platform, note }) {
+  const { DateTime } = require('luxon');
+  // createAppt's own canonicalization (parseUserDateTime → FIRM_TZ wall time).
+  const stored = DateTime.fromJSDate(parseUserDateTime(String(appt_date)), { zone: 'utc' }).setZone(FIRM_TZ).toFormat('yyyy-MM-dd HH:mm:ss');
+  const start = new Date(`${stored.replace(' ', 'T')}Z`);
+  const length = Number(appt_length);
+  const platform = APPT_PLATFORM_ENUM.find((p) => p.toLowerCase() === String(appt_platform || '').trim().toLowerCase()) || '';
+  return {
+    appt_date: start, appt_end: new Date(start.getTime() + length * 60000), appt_length: length,
+    appt_type: String(appt_type || ''), appt_platform: platform, appt_status: 'Scheduled', appt_note: String(note || ''),
+  };
+}
+
+/** The confirmation fields' types and caps, checked before any lookup. */
+function apptActionMessageShape(value) {
   apptActionBool(value.sms ?? value.confirm_sms, 'SMS confirmation');
   apptActionBool(value.email ?? value.confirm_email, 'email confirmation');
-  apptActionText(value.confirm_message, 'confirmation message', 2000);
-  return { [cancel ? 'sms' : 'confirm_sms']: false, [cancel ? 'email' : 'confirm_email']: false, confirm_message: '' };
+  apptActionText(value.confirm_message, 'confirmation message', APPT_CONFIRM_MAX);
+}
+
+async function apptActionMessageFields(db, value, { cancel = false, kind, contactId = null, apptId = null, proposed = null } = {}) {
+  const sms = apptActionBool(value.sms ?? value.confirm_sms, 'SMS confirmation');
+  const email = apptActionBool(value.email ?? value.confirm_email, 'email confirmation');
+  const raw = apptActionText(value.confirm_message, 'confirmation message', APPT_CONFIRM_MAX);
+  const smsKey = cancel ? 'sms' : 'confirm_sms';
+  const emailKey = cancel ? 'email' : 'confirm_email';
+  if (!sms && !email) return { [smsKey]: false, [emailKey]: false, confirm_message: '' };
+  const refuse = (why) => httpError(422, `Appointment confirmation ${why}`);
+  if (!raw) throw refuse('message is required when the SMS or email confirmation is on');
+  if (contactId == null) throw refuse('has nobody to go to: this appointment has no client contact — turn the confirmation off');
+  if (raw.includes('\u0000')) throw refuse('message contains a NUL character');
+
+  const { resolve, scanExpressionRefs } = require('./resolverService');
+  const scan = scanExpressionRefs(raw);
+  if (scan.triggerData) throw refuse('cannot use {{trigger_data.*}} — only {{contacts.*}} and {{appts.*}} resolve in a confirmation');
+  const links = raw.match(APPT_MANAGE_LINK_RE) || [];
+  if (scan.refs.filter((r) => r.table === 'appts' && r.column === 'appt_manage_token').length !== links.length) {
+    throw refuse('names the manage link in a form the card cannot show: write it exactly as {{appts.appt_manage_token|default:}}');
+  }
+  for (const r of scan.refs) {
+    if (r.table === 'contacts' || (r.table === 'appts' && r.column === 'appt_manage_token')) continue;
+    if (r.table !== 'appts') throw refuse(`cannot use {{${r.table}.${r.column}}} — only {{contacts.*}} and {{appts.*}} resolve in a confirmation`);
+    if (proposed && !APPT_CONFIRM_PROPOSED_COLUMNS.includes(r.column)) {
+      throw refuse(`cannot use {{appts.${r.column}}}: it is not known until the appointment is created — use ${APPT_CONFIRM_PROPOSED_COLUMNS.map((c) => `appts.${c}`).join(', ')}, or the manage link`);
+    }
+    if (proposed && (r.column === 'appt_length' || r.column === 'appt_end') && proposed.appt_length > APPT_LENGTH_STORED_MAX) {
+      throw refuse(`cannot use {{appts.${r.column}}}: a ${proposed.appt_length}-minute length is stored as ${APPT_LENGTH_STORED_MAX} — write the length literally`);
+    }
+  }
+  if (links.length && !proposed) {
+    // cancel: the route fills the cancelled row's own token. Its presence is
+    // checked here; the token itself is never read into the card.
+    const [rows] = await db.query('SELECT appt_manage_token IS NOT NULL AS has_link FROM appts WHERE appt_id = ? LIMIT 1', [apptId]);
+    if (!(Array.isArray(rows) && rows[0] && Number(rows[0].has_link) === 1)) throw refuse('cannot include a manage link: this appointment has none');
+  }
+
+  // Resolve with every manage link held out as an inert marker, so it reaches
+  // the sent text literally and in place.
+  let n = 0;
+  const masked = raw.replace(APPT_MANAGE_LINK_RE, () => `\u0000${n++}\u0000`);
+  const text = proposed ? masked.replace(/\{\{(\s*)appts\./g, '{{$1trigger_data.') : masked;
+  const refs = proposed
+    ? { contacts: { contact_id: contactId }, trigger_data: proposed }
+    : { contacts: { contact_id: contactId }, appts: { appt_id: apptId } };
+  const out = await resolve({ db, text, refs, strict: true });
+  if (!out || out.status !== 'success') {
+    const missing = out && Array.isArray(out.unresolved) && out.unresolved.length ? out.unresolved.join(', ')
+      : (out && Array.isArray(out.errors) && out.errors.length ? out.errors.join('; ') : 'a placeholder');
+    throw refuse(`has placeholders that do not resolve (${missing.replace(/trigger_data\./g, 'appts.')}) — write the value literally or drop it; a confirmation never goes out with a literal {{...}} or a blank`);
+  }
+  let resolved = String(out.text);
+  for (let i = 0; i < links.length; i += 1) {
+    if (resolved.split(`\u0000${i}\u0000`).length !== 2) throw refuse('must keep the manage link on its own, not inside another placeholder');
+  }
+  if (/\{\{|\}\}/.test(resolved) || /\{\u0000/.test(resolved)) {
+    throw refuse('still contains "{{" or "}}" after resolution — a confirmation never carries template braces beyond the manage link');
+  }
+  links.forEach((link, i) => { resolved = resolved.split(`\u0000${i}\u0000`).join(link); });
+  resolved = resolved.trim();
+  if (!resolved) throw refuse('message is empty once its placeholders resolve');
+  if (resolved.length > APPT_CONFIRM_MAX) throw refuse(`message exceeds ${APPT_CONFIRM_MAX} characters once its placeholders resolve`);
+  // Self-check with the resolver's own scanner: the route will find exactly the manage links and nothing else.
+  const post = scanExpressionRefs(resolved);
+  if (post.placeholderCount !== links.length || post.refs.some((r) => !(r.table === 'appts' && r.column === 'appt_manage_token'))) {
+    throw refuse('would not reach the route intact');
+  }
+
+  const [contactRows] = await db.query('SELECT contact_phone, contact_email FROM contacts WHERE contact_id = ?', [contactId]);
+  const contact = Array.isArray(contactRows) ? contactRows[0] : null;
+  if (!contact) throw refuse('recipient contact is unavailable');
+  const { getSettings } = require('./settingsService'); // lazy require (convention)
+  const settings = await getSettings(db, ['sms_default_from', 'email_default_from']);
+  const optout = require('./optoutService');
+  const sendable = resolved.replace(APPT_MANAGE_LINK_RE, 'x'.repeat(APPT_MANAGE_TOKEN_MAX));
+  const confirmation = {
+    manage_link: links.length > 0, templated: resolved !== raw, ssn_warning: sendMentionsSsn(raw, resolved),
+    sms: null, email: null,
+  };
+  if (sms) {
+    const to = String(contact.contact_phone || '').trim();
+    if (!to) throw refuse('cannot go by SMS: the client has no phone number on the contact (contacts.contact_phone) — the route would skip it');
+    if (!require('./phoneService').normalizeE164(contact.contact_phone)) throw refuse(`cannot go by SMS: the contact's phone ${to} is not a number the SMS sender accepts`);
+    const from = String(settings.sms_default_from || '').trim();
+    if (!from) throw refuse('cannot go by SMS: no client-facing SMS line is configured (sms_default_from)');
+    if ((await optout.findOptedOut(db, 'sms', contact.contact_phone)).length) {
+      throw refuse(`cannot go by SMS: ${to} opted out of texts. An appointment confirmation is an automation send and never reaches an opted-out recipient — turn the SMS confirmation off (or send a direct text card, which can confirm past the opt-out)`);
+    }
+    try { require('./phoneCommsService').validateMessage(sendable); } catch (err) { throw refuse(`SMS ${err.message}`); }
+    confirmation.sms = { to, from, segments: smsSegments(sendable) };
+  }
+  if (email) {
+    const to = String(contact.contact_email || '').trim();
+    if (!to || !to.includes('@')) throw refuse('cannot go by email: the client has no email address on the contact (contacts.contact_email) — the route would skip it');
+    const from = String(settings.email_default_from || '').trim();
+    if (!from) throw refuse('cannot go by email: no client-facing sender is configured (email_default_from)');
+    if ((await optout.findOptedOut(db, 'email', contact.contact_email)).length) {
+      throw refuse(`cannot go by email: ${to} opted out of email. An appointment confirmation is an automation send and never reaches an opted-out recipient — turn the email confirmation off (or send a direct email card, which can confirm past the opt-out)`);
+    }
+    confirmation.email = { to, from, subject: kind === 'appt.cancel.v1' ? APPT_CONFIRM_SUBJECT.cancel : APPT_CONFIRM_SUBJECT.create };
+  }
+  return { [smsKey]: sms, [emailKey]: email, confirm_message: resolved, confirmation };
 }
 
 function apptActionTarget(row) {
@@ -1035,17 +1188,21 @@ async function normalizeApptAction(db, value, evidence) {
   if (value.kind === 'appt.create.v1') {
     const length = Number(value.appt_length);
     if (!Number.isInteger(length) || length < 1 || length > 1440) throw httpError(422, 'Appointment action length must be 1-1440 minutes');
-    const messages = apptActionMessageFields(value);
+    apptActionMessageShape(value);
     const contact = await apptActionContact(db, value.contact_id);
     const caseRecord = await apptActionCase(db, value.case_id);
     await assertApptContactCaseLink(db, contact, caseRecord);
+    const type = await apptActionType(db, value.appt_type);
+    const appt_platform = apptActionText(value.appt_platform, 'platform', 255, { required: true });
+    const appt_date = apptActionDateTime(value.appt_date);
+    const provider = await apptActionProvider(db, value.appt_with);
+    const note = apptActionText(value.note, 'note', 10000);
+    const messages = await apptActionMessageFields(db, value, { kind: value.kind, contactId: contact.contact_id,
+      proposed: apptConfirmProposedRow({ appt_date, appt_length: length, appt_type: type.appt_type, appt_platform, note }) });
     return {
       draft_id: crypto.randomUUID(), kind: value.kind, status: 'draft', firm_timezone: FIRM_TZ,
-      contact, case: caseRecord,
-      type: await apptActionType(db, value.appt_type), appt_length: length,
-      appt_platform: apptActionText(value.appt_platform, 'platform', 255, { required: true }),
-      appt_date: apptActionDateTime(value.appt_date), provider: await apptActionProvider(db, value.appt_with),
-      note: apptActionText(value.note, 'note', 10000), ...messages, evidence: refs,
+      contact, case: caseRecord, type, appt_length: length, appt_platform, appt_date, provider,
+      note, ...messages, evidence: refs,
     };
   }
   const apptId = apptActionId(value.appt_id);
@@ -1067,13 +1224,24 @@ async function normalizeApptAction(db, value, evidence) {
   const note = apptActionText(value.note, 'note', 10000);
   if (value.kind === 'appt.attended.v1') return { ...base, note };
   if (value.kind === 'appt.no_show.v1') return { ...base, note, enroll: apptActionBool(value.enroll, 'no-show enrollment') };
-  if (value.kind === 'appt.cancel.v1') return { ...base, note, ...apptActionMessageFields(value, { cancel: true }),
-    cancel_gcal: apptActionBool(value.cancel_gcal, 'Google Calendar deletion', true),
-    create_task: apptActionBool(value.create_task, 'follow-up task') };
+  const clientId = row.appt_client_id == null ? null : Number(row.appt_client_id);
+  if (value.kind === 'appt.cancel.v1') {
+    apptActionMessageShape(value);
+    const cancel_gcal = apptActionBool(value.cancel_gcal, 'Google Calendar deletion', true);
+    const create_task = apptActionBool(value.create_task, 'follow-up task');
+    return { ...base, note, ...await apptActionMessageFields(db, value, { cancel: true, kind: value.kind, contactId: clientId, apptId }),
+      cancel_gcal, create_task };
+  }
   if (value.kind === 'appt.reschedule.v1') {
     const newDate = apptActionDateTime(value.new_date, 'new date/time');
     if (newDate === base.appt.date) throw httpError(422, 'Appointment reschedule requires a different date/time');
-    return { ...base, new_date: newDate, note, ...apptActionMessageFields(value, { cancel: true }) };
+    apptActionMessageShape(value);
+    // The route resolves against the SUCCESSOR: the old row's type, length and
+    // platform at the new time, carrying this note (apptService.rescheduleAppt).
+    const proposed = apptConfirmProposedRow({ appt_date: newDate, appt_length: row.appt_length, appt_type: row.appt_type,
+      appt_platform: row.appt_platform, note });
+    return { ...base, new_date: newDate, note,
+      ...await apptActionMessageFields(db, value, { cancel: true, kind: value.kind, contactId: clientId, proposed }) };
   }
   if (value.kind === 'appt.reschedule_later.v1') return { ...base, note,
     create_task: apptActionBool(value.create_task, 'follow-up task') };

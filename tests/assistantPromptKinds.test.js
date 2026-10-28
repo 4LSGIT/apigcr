@@ -223,8 +223,9 @@ describe('a direct planner answer cannot swallow an action request (chat-27 live
 
 // A14 (ruling 15): direct sends are taught to every stage, the forced-draft
 // heuristic fires on a request to message SOMEONE but not on one addressed to
-// the user, and the appointment cards' own send-forcing (course correction 3)
-// is untouched — a client message is a separate send card.
+// the user, and the appointment cards carry their own client confirmation
+// under the same bar (off unless asked; an opted-out channel refuses — an
+// automation send never acknowledges).
 describe('A14 direct sends across the stages', () => {
   const svc = require(path.join(REPO, 'services', 'assistantService'));
 
@@ -266,10 +267,17 @@ describe('A14 direct sends across the stages', () => {
     }
   });
 
-  test('the appointment cards still force their own sends off (course correction 3 unchanged)', () => {
-    expect(answerPrompt).toMatch(/always output confirm_sms\/confirm_email false and confirm_message "" \(the server forces this\)/);
-    expect(repairPrompt).toContain('confirm_sms/confirm_email/sms/email are false and confirm_message is ""');
-    expect(serviceSrc).toContain('// Client SMS/email from an Ask Casey card is OFF');
+  test('appointment confirmations are taught to every stage: off by default, resolved on the card, opt-out refuses', () => {
+    expect(answerPrompt).toContain('Client confirmation (create, cancel, reschedule): OFF by default');
+    expect(answerPrompt).toContain('https://4lsg.com/m/{{appts.appt_manage_token|default:}}');
+    expect(answerPrompt).toContain('never acknowledge past it here');
+    expect(repairPrompt).toContain('stays false with confirm_message "" unless the user');
+    expect(repairPrompt).toContain('{{appts.appt_manage_token|default:}}');
+    expect(planPrompt).toContain('Create, cancel and reschedule can also send the client a');
+    for (const [stage, src] of Object.entries({ answer: answerPrompt, plan: planPrompt, repair: repairPrompt })) {
+      expect({ stage, old: /the server forces this|Appointment cards never send their own client|An appointment card never\s+sends its own client/.test(src) })
+        .toEqual({ stage, old: false });
+    }
   });
 });
 

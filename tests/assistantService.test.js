@@ -599,7 +599,7 @@ describe('assistant appointment actions', () => {
     try {
       await expect(svc.normalizeActionDraft(db, { kind: 'appt.create.v1', contact_id: 1309, case_id: 'C1',
         appt_type: 'Consultation', appt_length: 60, appt_platform: 'Telephone', appt_date: '2026-10-27 09:30',
-        appt_with: 7, note: 'Bring documents', confirm_sms: true, confirm_email: false,
+        appt_with: 7, note: 'Bring documents', confirm_sms: false, confirm_email: false,
         confirm_message: 'Your appointment is confirmed.', evidence: [{ query_id: 'q1', row_number: 1 }] }, evidence)).resolves.toMatchObject({
         kind: 'appt.create.v1', status: 'draft', contact: { contact_id: 1309, label: 'Client' },
         case: { case_id: 'C1', label: '26-1' }, type: { appt_type: 'Consultation', type_key: 'consult', singleton: false },
@@ -648,14 +648,18 @@ describe('assistant appointment actions', () => {
     await expect(svc.normalizeActionDraft(db, { kind: 'appt.create.v1', contact_id: 1309, appt_type: 'Hearing',
       appt_length: 60, appt_platform: 'Court', appt_date: '2026-10-27 09:30', appt_with: 7,
       evidence: ref }, evidence)).rejects.toThrow(/active meeting type/);
-    // A Casey card never carries a client send (A14 bar): the flags are forced
-    // off and model-authored text (placeholders included) is dropped.
-    await expect(svc.normalizeActionDraft({ query: jest.fn().mockResolvedValue([[target]]) }, { kind: 'appt.cancel.v1', appt_id: 55,
-      sms: true, email: true, confirm_message: 'Your SSN is {{contacts.contact_ssn}}', evidence: ref }, evidence))
-      .resolves.toMatchObject({ sms: false, email: false, confirm_message: '' });
+    // Confirmations off (the default): model text is dropped, nothing sends,
+    // and the draft carries no confirmation object — the shipped shape.
+    const off = await svc.normalizeActionDraft({ query: jest.fn().mockResolvedValue([[target]]) }, { kind: 'appt.cancel.v1', appt_id: 55,
+      sms: false, email: false, confirm_message: 'Your SSN is {{contacts.contact_ssn}}', evidence: ref }, evidence);
+    expect(off).toMatchObject({ sms: false, email: false, confirm_message: '' });
+    expect('confirmation' in off).toBe(false);
     await expect(svc.normalizeActionDraft({ query: jest.fn().mockResolvedValue([[target]]) }, { kind: 'appt.reschedule.v1', appt_id: 55,
-      new_date: '2026-10-28 10:00', sms: true, confirm_message: 'Moved', evidence: ref }, evidence))
+      new_date: '2026-10-28 10:00', confirm_message: 'Moved', evidence: ref }, evidence))
       .resolves.toMatchObject({ sms: false, email: false, confirm_message: '' });
+    // On, a channel needs a message (the route's own 400, before any write).
+    await expect(svc.normalizeActionDraft({ query: jest.fn().mockResolvedValue([[target]]) }, { kind: 'appt.cancel.v1', appt_id: 55,
+      sms: true, confirm_message: '  ', evidence: ref }, evidence)).rejects.toThrow(/message is required/);
     await expect(svc.normalizeActionDraft({ query: jest.fn().mockResolvedValue([[target]]) }, { kind: 'appt.cancel.v1', appt_id: 55,
       sms: 'yes', evidence: ref }, evidence)).rejects.toThrow(/must be true or false/);
   });

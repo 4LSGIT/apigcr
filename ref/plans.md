@@ -976,10 +976,13 @@ COMMENTs.)
 - **The email Case field.** The card does not send `case_id`, so a Casey email
   is not case-linked by the hub's `mail_sent_case_link` path; offering it
   means disclosing the case-link job on the card.
-- **Appointment confirmations through the A14 bar.** The appointment routes
-  resolve `confirm_message` placeholders after the click, so the appointment
-  cards keep forcing sends off (course correction 3). Either resolve on the
-  card and send the resolved text, or keep the separate send card.
+- **Appointment-card confirmations: two unchecked edges.** The click-time
+  re-read checks the client's own phone/email rows for an opt-out; an active
+  row for that number/address on ANOTHER contact (the route's opt-out reader
+  counts it) is caught at proposal only. And the sender (`sms_default_from` /
+  `email_default_from`) is checked as set, not as a live, sendable line or
+  credential — a dead sender fails silently after the click, exactly as the
+  native form's confirmation does.
 - **No `yc-sync` matcher for either send route** — an open Comms /
   Communications view does not hear a send from another frame (human or
   Casey); the record arrives later via the provider echo / mail ingest.

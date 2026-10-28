@@ -2905,11 +2905,16 @@ provider (`user_auth LIKE 'authorized%' AND user_type <> 0`, the
 `taskService.findAssignableStaff` predicate — `user_auth` is a varchar), and validates future firm-local `YYYY-MM-DD HH:MM[:SS]` without a
 timezone suffix. Create additionally requires contact, 1–1,440 minute length,
 platform, and time; a case linked to that contact and a note are optional.
-**Casey sends no client SMS/email:** the normalizer forces
+**Client confirmations are off unless asked:** off, the normalizer returns
 `confirm_sms/confirm_email` (`sms/email` on cancel/reschedule) false and drops
-`confirm_message` whatever the model asked, and the browser maps them false
-again — model-authored text through a `{{…}}`-resolving send path is held until
-the plan's A14 bar (resolved preview, explicit recipients, idempotency). The normalized type carries the server-owned `type_key` and
+`confirm_message`, and the browser sends them false. On (create, cancel,
+reschedule-now), the normalizer resolves the message STRICT with the route's
+resolver and refs before the card is shown, the browser sends that resolved
+text, and the route's own non-strict resolve fills only the manage link
+`{{appts.appt_manage_token|default:}}` (shown as a labeled element); recipient,
+sender and subject are the route's, and an opted-out channel refuses (an
+automation send). Contract: `ref/ASK_CASEY_ACTIONS_PLAN.md` A4.1 *Client
+confirmations*. The normalized type carries the server-owned `type_key` and
 singleton flag.
 
 Existing actions need evidence containing the exact `appt_id`; the service
@@ -2924,10 +2929,10 @@ status, GCal/ref/view/hook fields, `source`, and actor are excluded.
 
 No-show defaults `enroll:false` and the review states possible no-show sequence
 and intake-pipeline effects. Cancel defaults `cancel_gcal:true` and
-`create_task:false`; it sends nothing to the client. Reschedule-now retires the predecessor, removes
+`create_task:false`; it sends nothing to the client unless a confirmation was asked for. Reschedule-now retires the predecessor, removes
 old firm/provider calendar entries and automation, creates a lineage-linked
-successor with new calendar/automation, and opens the successor (no client
-message). Reschedule-later creates no successor, removes calendar/
+successor with new calendar/automation, and opens the successor (a client
+confirmation only when asked). Reschedule-later creates no successor, removes calendar/
 automation, and optionally creates the reviewed follow-up Task. Create review
 also discloses firm/provider calendar attempts, no-show cancellation,
 pre-appointment enrollment, and registry singleton supersession.

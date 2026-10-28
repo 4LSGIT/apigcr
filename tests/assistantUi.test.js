@@ -58,6 +58,8 @@ const ACTION_FNS = ['appendDraftField', 'appendDraftFieldsFromText', 'actionDraf
   'taskDraftConfirmation', 'taskActionResult', 'taskDraftFields',
   'eventActionLabel', 'eventTypeText', 'eventProviderText', 'eventReminderText', 'eventDraftText',
   'eventCreateBody', 'eventUpdateBody', 'eventActionRequest', 'eventActionResult',
+  'apptManageLinkPattern', 'apptConfirmation', 'apptConfirmFields', 'apptConfirmLinkLabel', 'apptConfirmDisplay', 'apptConfirmLines',
+  'apptConfirmMessageBlock', 'apptDraftFields', 'apptConfirmText', 'apptPrecheck',
   'apptActionLabel', 'apptChannelsText', 'apptDraftText', 'apptCreateBody', 'apptActionRequest', 'apptActionResult',
   'contactSubrecordActionLabel', 'contactAddressText', 'contactSubrecordValue', 'contactSubrecordDraftText',
   'contactSubrecordCreateBody', 'contactSubrecordActionRequest', 'contactSubrecordActionResult',
@@ -76,6 +78,9 @@ const ACTION_FNS = ['appendDraftField', 'appendDraftFieldsFromText', 'actionDraf
   'reportDraftLabel', 'reportSsnText', 'reportVizText', 'reportCardText', 'reportDraftFields', 'reportConfirmText', 'reportDraftRequest', 'reportDraftResult',
   'actionFamily', 'isActionDraft', 'actionAppliedId', 'markActionApplied', 'confirmActionDraft',
   'executeActionDraft', 'applyActionResults', 'hydrateActionDraft'];
+
+const APPT_CONFIRM_FNS = ['apptManageLinkPattern', 'apptConfirmation', 'apptConfirmFields', 'apptConfirmLinkLabel', 'apptConfirmDisplay', 'apptConfirmLines', 'apptConfirmMessageBlock'];
+const apptFns = (...names) => [...APPT_CONFIRM_FNS, ...names].map((name) => fnSrc(html, name)).join(';');
 
 function actionSandbox(deps = {}) {
   const registry = constSrc(html, 'ACTION_FAMILIES');
@@ -595,7 +600,8 @@ describe('Ask Casey UI wiring', () => {
   });
 
   test('maps every appointment action to one canonical route and exact allowlisted body', () => {
-    const request = new Function(`${fnSrc(html, 'apptCreateBody')};${fnSrc(html, 'apptActionRequest')};return apptActionRequest;`)(); // eslint-disable-line no-new-func
+    const request = new Function(`${apptFns('apptCreateBody', 'apptActionRequest')};return apptActionRequest;`)(); // eslint-disable-line no-new-func
+    // A draft WITHOUT the server's confirmation object sends none, whatever flags it carries.
     const create = { kind: 'appt.create.v1', contact: { contact_id: 1309 }, case: { case_id: 'C1' },
       type: { appt_type: 'Consultation', type_key: 'consult' }, appt_length: 60, appt_platform: 'Telephone',
       appt_date: '2026-10-27 09:30:00', provider: { user_id: 7 }, note: 'Bring documents', confirm_sms: true,
@@ -618,7 +624,7 @@ describe('Ask Casey UI wiring', () => {
   });
 
   test('appointment update review text shows current and proposed material values', () => {
-    const reviewText = new Function(`${fnSrc(html, 'apptActionLabel')};${fnSrc(html, 'apptChannelsText')};${fnSrc(html, 'apptDraftText')};return apptDraftText;`)(); // eslint-disable-line no-new-func
+    const reviewText = new Function(`${apptFns('apptActionLabel', 'apptChannelsText', 'apptDraftText')};return apptDraftText;`)(); // eslint-disable-line no-new-func
     const text = reviewText({ kind: 'appt.update.v1', firm_timezone: 'Asia/Jerusalem',
       appt: { appt_id: 55, type: 'Consultation', status: 'Scheduled', date: '2026-10-27 09:30:00', note: 'Existing note',
         contact: { label: 'Client' }, case: { label: '26-1' }, provider: { label: 'Fred' }, google_calendar: { firm: true, provider: false } },
@@ -673,6 +679,111 @@ describe('Ask Casey UI wiring', () => {
     expect(message.action_draft).toMatchObject({ status: 'draft', executing: false, ambiguous_error: expect.stringContaining('Do not apply this card again') });
     await execute(message);
     expect(api).toHaveBeenCalledTimes(1);
+  });
+
+  // Ruling 15's A14 bar on the appointment cards: off, every card is byte-for-byte
+  // the shipped one; on, the request sends exactly the server-resolved text.
+  const apptFixture = () => {
+    const appt = { appt_id: 55, type: 'Consultation', status: 'Scheduled', date: '2026-10-27 09:30:00', note: 'Existing note',
+      contact: { contact_id: 1309, label: 'Client' }, case: { label: '26-1' }, provider: { label: 'Fred' }, google_calendar: { firm: true, provider: false } };
+    return {
+      create: { kind: 'appt.create.v1', firm_timezone: 'America/Detroit', contact: { contact_id: 1309, label: 'Client' }, case: { case_id: 'C1', label: '26-1' },
+        type: { appt_type: 'Consultation', type_key: 'consult', singleton: false }, appt_length: 60, appt_platform: 'Telephone',
+        appt_date: '2026-10-27 09:30:00', provider: { user_id: 7, label: 'Fred' }, note: 'Bring documents', confirm_sms: false, confirm_email: false, confirm_message: '' },
+      cancel: { kind: 'appt.cancel.v1', appt, note: 'Client called', sms: false, email: false, confirm_message: '', cancel_gcal: true, create_task: false },
+      reschedule: { kind: 'appt.reschedule.v1', appt, new_date: '2026-10-28 10:00:00', note: '', sms: false, email: false, confirm_message: '' },
+    };
+  };
+  const LINK = '{{appts.appt_manage_token|default:}}';
+  const resolvedMsg = `Hi Jane, you are booked for Tuesday at 9:30 AM.\nConsent: yes\nManage: https://4lsg.com/m/${LINK}`;
+  const confirmation = { manage_link: true, templated: true, ssn_warning: false,
+    sms: { to: '3135550100', from: '2485550000', segments: { encoding: 'GSM-7', units: 120, segments: 1 } },
+    email: { to: 'jane@example.com', from: 'office@firm.example', subject: 'Appointment Confirmation' } };
+
+  test('appointment cards without a confirmation are byte-stable: review text and request body', () => {
+    const fns = new Function(`${apptFns('apptActionLabel', 'apptChannelsText', 'apptDraftText', 'apptCreateBody', 'apptActionRequest')};return { apptDraftText, apptActionRequest };`)(); // eslint-disable-line no-new-func
+    const { create, cancel, reschedule } = apptFixture();
+    const none = 'Client confirmation: None — this appointment card sends no client SMS or email; send a confirmation from the appointment itself, or ask Casey for a separate send card';
+    expect(fns.apptDraftText(create)).toBe(['Appointment action proposal — not applied', 'Action: Create appointment', 'Client: Client (contact 1309)',
+      'Case: 26-1 (C1)', 'Type: Consultation (consult)', 'Firm-local date/time (America/Detroit): 2026-10-27 09:30:00', 'Length: 60 minutes',
+      'Platform / location: Telephone', 'Provider: Fred (user 7)', 'Note: Bring documents', none,
+      'Google Calendar: creation will be attempted on the firm calendar and the provider calendar when configured; the firm entry includes the client attendee without Google update emails.',
+      'Automation: active no-show sequences are canceled and normal pre-appointment sequences are enrolled.', 'Singleton effect: none.'].join('\n'));
+    const head = ['Appointment: #55 — Consultation', 'Current status: Scheduled', 'Current firm-local date/time: 2026-10-27 09:30:00', 'Client: Client',
+      'Case: 26-1', 'Provider: Fred', 'Google Calendar entries: firm present; provider absent'];
+    expect(fns.apptDraftText(cancel)).toBe(['Appointment action proposal — not applied', 'Action: Cancel appointment', ...head, 'Note to append: Client called', none,
+      'Follow-up task: do not create.', 'Google Calendar: delete both existing entries when present.', 'Automation: appointment and contact no-show sequences are canceled.'].join('\n'));
+    expect(fns.apptDraftText(reschedule)).toBe(['Appointment action proposal — not applied', 'Action: Reschedule appointment', ...head, 'New firm-local date/time: 2026-10-28 10:00:00', none,
+      'Result: the current appointment becomes Rescheduled and a successor with the same client, case, type, length, platform, and provider is created.',
+      'Calendar / automation: old calendar entries and appointment automation are removed; new calendar entries and pre-appointment automation are created.'].join('\n'));
+    expect(fns.apptActionRequest(create).body).toMatchObject({ confirm_sms: false, confirm_email: false, confirm_message: '' });
+    expect(fns.apptActionRequest(cancel).body).toEqual({ appt: 55, note: 'Client called', sms: false, email: false, confirm_message: '', cancel_gcal: true, create_task: false });
+    expect(fns.apptActionRequest(reschedule).body).toEqual({ appt: 55, newDate: '2026-10-28 10:00:00', note: '', sms: false, email: false, msg: '' });
+  });
+
+  test('a server-prepared confirmation sends exactly the resolved text and shows the manage link as a labeled element', () => {
+    const fns = new Function(`${apptFns('apptActionLabel', 'apptChannelsText', 'apptDraftText', 'apptCreateBody', 'apptActionRequest', 'apptConfirmText')};return { apptDraftText, apptActionRequest, apptConfirmText };`)(); // eslint-disable-line no-new-func
+    const { create, cancel, reschedule } = apptFixture();
+    const c = { ...create, confirm_sms: true, confirm_email: true, confirm_message: resolvedMsg, confirmation };
+    expect(fns.apptActionRequest(c).body).toMatchObject({ confirm_sms: true, confirm_email: true, confirm_message: resolvedMsg });
+    const x = { ...cancel, sms: true, email: false, confirm_message: resolvedMsg, confirmation: { ...confirmation, email: null } };
+    expect(fns.apptActionRequest(x).body).toEqual({ appt: 55, note: 'Client called', sms: true, email: false, confirm_message: resolvedMsg, cancel_gcal: true, create_task: false });
+    const r = { ...reschedule, sms: false, email: true, confirm_message: resolvedMsg, confirmation: { ...confirmation, sms: null } };
+    expect(fns.apptActionRequest(r).body).toEqual({ appt: 55, newDate: '2026-10-28 10:00:00', note: '', sms: false, email: true, msg: resolvedMsg });
+    // A flag the server did not prepare a channel for sends nothing on that channel.
+    expect(fns.apptActionRequest({ ...x, email: true }).body).toMatchObject({ sms: true, email: false });
+
+    const text = fns.apptDraftText(c);
+    expect(text).toContain('Client confirmation: SMS to (313) 555-0100 from (248) 555-0000; email to jane@example.com from office@firm.example, subject "Appointment Confirmation"');
+    expect(text).toContain('except the manage link, which is filled in when it is sent');
+    expect(text).toContain('Confirmation effect: goes to the client as soon as the appointment saves. It cannot be recalled.');
+    expect(text.endsWith(['Confirmation message, exactly as sent, between the rules:', '────────',
+      'Hi Jane, you are booked for Tuesday at 9:30 AM.\nConsent: yes\nManage: https://4lsg.com/m/[secure manage link — generated when the appointment is created]', '────────'].join('\n'))).toBe(true);
+    expect(text).not.toContain('{{');
+    expect(fns.apptDraftText(x)).toContain('[secure manage link for this appointment — filled in when the message is sent]');
+    expect(fns.apptDraftText(r)).toContain('[secure manage link for the new appointment — generated when it is created]');
+    expect(fns.apptConfirmText(c)).toMatch(/It also sends the client confirmation above, which cannot be recalled\.$/);
+    expect(fns.apptConfirmText(create)).toBe(`${fns.apptDraftText(create)}\n\nThis changes YisraCase immediately using your signed-in account.`);
+
+    // Belt and braces: braces beyond the manage link never send.
+    expect(() => fns.apptActionRequest({ ...c, confirm_message: 'Hi {{contacts.contact_fname}}' })).toThrow(/no resolved text/);
+    expect(() => fns.apptActionRequest({ ...c, confirm_message: '  ' })).toThrow(/no resolved text/);
+  });
+
+  test('a confirmation card re-reads the recipient at click time; a card without one reads nothing', async () => {
+    const { create } = apptFixture();
+    const card = () => ({ action_draft: { draft_id: 'appt-conf', status: 'draft', ...create, confirm_sms: true, confirm_email: true,
+      confirm_message: resolvedMsg, confirmation } });
+    const contactApi = ({ phone = '3135550100', smsOpt = 0, emailOpt = 0 } = {}) => jest.fn(async (path) => {
+      if (path === '/api/contacts/1309') return { contact: { contact_id: 1309, contact_phone: phone, contact_email: 'jane@example.com' } };
+      if (path === '/api/contacts/1309/phones') return { phones: [{ id: 1, phone, end_date: null, sms_optout: smsOpt }] };
+      if (path === '/api/contacts/1309/emails') return { emails: [{ id: 1, email: 'jane@example.com', end_date: null, email_optout: emailOpt }] };
+      if (path === '/api/appts') return { status: 'success', data: { appt_id: 90 } };
+      throw new Error(`unexpected ${path}`);
+    });
+    const P = () => ({ Swal: { fire: jest.fn().mockResolvedValue({ isConfirmed: true }) }, showAppt: jest.fn() });
+
+    const changed = contactApi({ phone: '3135550111' }); const m1 = card();
+    await actionSandbox({ P: P(), api: changed, render: jest.fn() }).executeActionDraft(m1);
+    expect(m1.action_draft.refusal_error).toMatch(/phone number changed/);
+    expect(changed.mock.calls.map((c) => c[0])).toEqual(['/api/contacts/1309']);
+
+    const opted = contactApi({ smsOpt: 1 }); const m2 = card();
+    await actionSandbox({ P: P(), api: opted, render: jest.fn() }).executeActionDraft(m2);
+    expect(m2.action_draft.refusal_error).toMatch(/opted out of texts since this card was prepared/);
+    expect(opted.mock.calls.map((c) => c[0])).not.toContain('/api/appts');
+
+    const ok = contactApi(); const p3 = P(); const m3 = card();
+    await actionSandbox({ P: p3, api: ok, render: jest.fn() }).executeActionDraft(m3);
+    expect(p3.Swal.fire).toHaveBeenCalledWith(expect.objectContaining({ icon: 'warning', focusCancel: true }));
+    expect(m3.action_draft).toMatchObject({ status: 'applied', result_appt_id: 90 });
+    const write = ok.mock.calls.find((c) => c[0] === '/api/appts');
+    expect(write[1]).toMatchObject({ confirm_sms: true, confirm_email: true, confirm_message: resolvedMsg });
+
+    const plain = contactApi(); const p4 = P(); const m4 = { action_draft: { draft_id: 'appt-plain', status: 'draft', ...create } };
+    await actionSandbox({ P: p4, api: plain, render: jest.fn() }).executeActionDraft(m4);
+    expect(plain.mock.calls.map((c) => c[0])).toEqual(['/api/appts']);
+    expect(p4.Swal.fire).toHaveBeenCalledWith(expect.objectContaining({ icon: 'question' }));
   });
 
   test('maps every contact subrecord action to one canonical route and exact allowlisted body', () => {
@@ -1248,9 +1359,10 @@ describe('Ask Casey action freshness and applied-marker durability (review fix p
     expect(html).toMatch(/\.action-draft-actions button, \.action-draft-retry \{[^}]*font-size: 12px/);
   });
 
-  test('appointment review text never offers a client send', () => {
-    const channels = new Function(`${fnSrc(html, 'apptChannelsText')};return apptChannelsText;`)(); // eslint-disable-line no-new-func
-    expect(channels({ confirm_sms: true, confirm_message: 'Hi {{contacts.contact_ssn}}' })).toMatch(/^None — this appointment card sends no client SMS or email/);
+  test('appointment review text offers no client send unless the server prepared one', () => {
+    const channels = new Function(`${apptFns('apptChannelsText')};return apptChannelsText;`)(); // eslint-disable-line no-new-func
+    expect(channels({ kind: 'appt.create.v1', confirm_sms: true, confirm_message: 'Hi {{contacts.contact_ssn}}' })).toMatch(/^None — this appointment card sends no client SMS or email/);
+    expect(channels({ kind: 'appt.cancel.v1', sms: true, confirm_message: 'Hi', confirmation: { sms: null, email: null } })).toMatch(/^None — /);
   });
 });
 
