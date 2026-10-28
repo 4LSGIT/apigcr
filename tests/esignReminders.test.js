@@ -382,6 +382,8 @@ describe('sequenceEngine — signing_request_id scoping (real module)', () => {
     const captured = { dupParams: null, insertCols: null, insertParams: null };
     const query = jest.fn(async (sql, params = []) => {
       const s = sql.trim();
+      // A18.4a: the dup check + INSERT run under the per-identity enroll lock.
+      if (/^SELECT GET_LOCK\(/i.test(s)) return [[{ got: 1 }]];
       if (/^SELECT \* FROM sequence_templates WHERE id = \?/i.test(s)) {
         // current_version required since S4 — the enroll funnel fail-louds on
         // never-published templates instead of defaulting to v1.

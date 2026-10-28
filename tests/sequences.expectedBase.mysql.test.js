@@ -150,8 +150,10 @@ d('sequence step routes on real MySQL (P11 sequence half)', () => {
     // Sibling twins on the same YC_TEST_MYSQL_URL (caseySequenceStep,
     // caseySequencePublish) create sequence_enrollments with an FK to
     // sequence_templates; drop that child first or DROP sequence_templates is
-    // refused and every test here fails on a shared _test DB.
-    for (const t of ['sequence_enrollments', ...[...TABLES].reverse()]) await q(`DROP TABLE IF EXISTS \`${t}\``);
+    // refused and every test here fails on a shared _test DB. Likewise
+    // sequence_step_log (FK → sequence_enrollments), built by
+    // sequences.enrollHardening.mysql.
+    for (const t of ['sequence_step_log', 'sequence_enrollments', ...[...TABLES].reverse()]) await q(`DROP TABLE IF EXISTS \`${t}\``);
     const { creates, alters } = schemaFor(TABLES);
     for (const sql of creates) await q(sql);
     for (const sql of alters) await q(sql);

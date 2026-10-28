@@ -1679,7 +1679,8 @@ Two sequence-specific traps the explainer must encode:
 - An absolute-`delay` placeholder that resolves empty throws inside
   *scheduling*, not action execution, so `error_policy` never sees it and the
   enrollment wedges (active with no pending job). `lib/alerting` flags that
-  shape after ~15 minutes.
+  shape after ~15 minutes. On the FIRST step the enroll call itself fails
+  instead (`SCHEDULING_FAILED`) and the new row is cancelled (A18.4a).
 
 **A18.1: Preview an enrollment (read-only).**
 
@@ -1838,13 +1839,29 @@ is 0, so Casey stops misreading unpublished workflows as empty.
 **A18.4: Enroll a contact. Deferred past A14.**
 
 Enrollment is an external-send fan-out and inherits A14's bar (resolved
-preview, explicit recipients, strong idempotency, an unambiguous outcome). The
-route is not ready either: `POST /sequences/enroll` has no idempotency key, its
-duplicate guard is a racy SELECT-then-INSERT with no unique constraint, a
-scheduling throw after the enrollment INSERT leaves an active enrollment with
-no job, and every engine error including `ALREADY_ENROLLED` comes back as an
-HTTP 500 whose `err.code` is not surfaced. Those are canonical fixes, filed to
-`ref/plans.md`; none is a Casey slice.
+preview, explicit recipients, strong idempotency, an unambiguous outcome).
+Fred's ruling (2026-10-28): harden the native route first; the Casey enroll
+card is a later slice. **A18.4a**, the first half, is that hardening — native,
+no schema change, no card:
+
+- `POST /sequences/enroll` takes an optional `Idempotency-Key` (scope
+  `sequences.enroll`) under the workflows.start rule: a refusal raised before
+  any enrollment row exists (400 / 404, the engine's 409s, `ENROLL_BUSY`)
+  releases the claim; `SCHEDULING_FAILED` and any other 5xx keep it. A replay
+  answers the first enrollment with `replayed: true`.
+- The duplicate guard's SELECT and the INSERT run under a per-identity
+  `GET_LOCK` (`seq_enroll_<template>_<contact>_<appt|0>_<signing request|0>`,
+  5 s wait) on ONE pinned connection, in `_enrollWithTemplate` — so every
+  caller (route, hook / trigger targets, `enroll_sequence`, appointment and
+  e-sign reminders) is fenced. A lock not granted is `ENROLL_BUSY` (503),
+  nothing inserted.
+- A first step that cannot be scheduled no longer wedges the row: it is
+  cancelled (`cancel_reason` `scheduling failed: …`), an
+  `enrollment_schedule_failed` error alert is recorded, and the caller gets
+  `SCHEDULING_FAILED` (500) with `enrollment_id`.
+- Engine codes reach HTTP: `ALREADY_ENROLLED` (with `enrollment_id`),
+  `NEVER_PUBLISHED`, `EMPTY_SEQUENCE` are 409; the body keeps the old
+  `error` / `message` pair and adds `code`.
 
 Also note for any later enrollment work: step firing has no "already sent this
 step" check, and `recoverStuckJobs` resets a job sitting in `running` for over

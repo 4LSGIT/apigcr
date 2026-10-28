@@ -1633,6 +1633,9 @@ tests/sensitiveTier.test.js
 tests/sequenceEngine.conditions.test.js
 tests/sequenceEngine.dispatchAndEscape.test.js
 tests/sequences.editor.roundtrip.test.js
+tests/sequences.enrollHardening.mysql.test.js
+tests/sequences.enrollHardening.test.js
+tests/sequences.enrollRoute.test.js
 tests/sequences.ensureDraft.test.js
 tests/sequences.expectedBase.mysql.test.js
 tests/sequences.recover.test.js

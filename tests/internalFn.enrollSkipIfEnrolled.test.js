@@ -109,6 +109,8 @@ describe('sequenceEngine dup guard marker (real engine)', () => {
     const realEngine = jest.requireActual('../lib/sequenceEngine');
     const db = {
       query: jest.fn(async (sql) => {
+        // A18.4a: the dup check + INSERT run under the per-identity enroll lock.
+        if (/^SELECT GET_LOCK\(/i.test(sql)) return [[{ got: 1 }]];
         if (/FROM sequence_templates/i.test(sql)) {
           return [[{
             id: 30, name: 'Post-341 Ch7 — 21/28-day intention reminders (SS)',

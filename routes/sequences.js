@@ -29,7 +29,7 @@ const jwtOrApiKey     = require('../lib/auth.jwtOrApiKey');
 const { enrollContact, enrollContactByTemplateId, previewEnrollmentSteps, cancelSequences, validateTemplateFilters, scheduleFromStep, logStep, CONDITION_ERROR_REASONS, HELD_STEP_SKIPPED } = require('../lib/sequenceEngine');
 const { diffSequenceSteps, validateSequenceDraftShape, canonical, parseMaybeJson, sequenceStepFingerprint, sequenceDraftFingerprint } = require('../lib/versionDiff');
 const internalFunctions = require('../lib/internal_functions'); // __validateSequenceFunctionStep (P11)
-const { idempotentRequest, sendIdempotencyError } = require('../lib/requestIdempotency'); // POST steps (A18.2)
+const { idempotentRequest, sendIdempotencyError, releaseOnRefusalOnly } = require('../lib/requestIdempotency'); // POST steps (A18.2), POST enroll (A18.4a)
 const toJson = v => v == null ? null : (typeof v === 'string' ? v : JSON.stringify(v));
 
 // Normalize the optional `type` column. As of Slice B, sequence_templates.type
@@ -1795,29 +1795,83 @@ router.post('/sequences/enroll', jwtOrApiKey, async (req, res) => {
   }
 
   try {
-    if (hasId) {
-      const idInt = parseInt(template_id, 10);
-      if (!Number.isInteger(idInt) || idInt <= 0) {
-        return res.status(400).json({ error: 'template_id must be a positive integer' });
-      }
-      // 404 on nonexistent template rather than 500 (matches the pattern in
-      // GET /sequences/templates/:id/enrollments). Cheap single-row lookup.
-      const [[tpl]] = await db.query(
-        `SELECT id FROM sequence_templates WHERE id = ?`,
-        [idInt]
-      );
-      if (!tpl) return res.status(404).json({ error: 'Template not found' });
-      const result = await enrollContactByTemplateId(db, contact_id, idInt, trigger_data);
-      return res.status(201).json({ success: true, ...result });
-    }
+    // Optional `Idempotency-Key` header (A18.4a, scope sequences.enroll). An
+    // enrollment is a FAN-OUT like a workflow start — once its row commits,
+    // scheduled steps send — so it takes the workflows.start rule
+    // (releaseOnRefusalOnly): a refusal raised before any enrollment row
+    // exists (400 / 404 below, the engine's 409s, ENROLL_BUSY's 503) gives
+    // the key back; SCHEDULING_FAILED (a row WAS inserted, then cancelled) and
+    // any other failure KEEP the claim, so a repeat of the key is 409
+    // in_flight → unknown and never enrolls twice. A replay answers the FIRST
+    // enrollment (same enrollmentId) with `replayed: true` and enrolls
+    // nothing. No key = unchanged behaviour and no extra query.
+    const { value: enrolled, replayed } = await idempotentRequest(req, 'sequences.enroll', async () => {
+      try {
+        if (hasId) {
+          const idInt = parseInt(template_id, 10);
+          if (!Number.isInteger(idInt) || idInt <= 0) {
+            throw enrollRefusal(400, { error: 'template_id must be a positive integer' });
+          }
+          // 404 on nonexistent template rather than 500 (matches the pattern in
+          // GET /sequences/templates/:id/enrollments). Cheap single-row lookup.
+          const [[tpl]] = await db.query(
+            `SELECT id FROM sequence_templates WHERE id = ?`,
+            [idInt]
+          );
+          if (!tpl) throw enrollRefusal(404, { error: 'Template not found' });
+          const result = await enrollContactByTemplateId(db, contact_id, idInt, trigger_data);
+          return { success: true, ...result };
+        }
 
-    // By-type (cascade) mode — cascade keys come from trigger_data.
-    const result = await enrollContact(db, contact_id, template_type, trigger_data);
-    res.status(201).json({ success: true, ...result });
+        // By-type (cascade) mode — cascade keys come from trigger_data.
+        const result = await enrollContact(db, contact_id, template_type, trigger_data);
+        return { success: true, ...result };
+      } catch (err) {
+        throw enrollFailure(err);
+      }
+    }, { releaseOnError: releaseEnrollClaim });
+
+    res.status(201).json({ ...enrolled, ...(replayed ? { replayed: true } : {}) });
   } catch (err) {
+    if (err && err.enrollResponse) return res.status(err.enrollResponse.status).json(err.enrollResponse.body);
+    if (sendIdempotencyError(res, err)) return;
     res.status(500).json({ error: 'Failed to enroll contact', message: err.message });
   }
 });
+
+// POST /sequences/enroll error mapping (A18.4a). The engine's machine codes
+// (lib/sequenceEngine _enrollWithTemplate) reach the HTTP caller; until then
+// every failure, a duplicate included, was a bare 500. Mapped bodies keep the
+// old `error` / `message` pair (apiSend shows `message`) and ADD `code` (and
+// `enrollment_id` where the engine names a row). Keyed on these exact codes
+// only — a mysql2 error's own err.code (ER_…, PROTOCOL_…) is not surfaced and
+// stays the old 500.
+const ENROLL_CODE_STATUS = {
+  ALREADY_ENROLLED:  409,   // an active enrollment for this identity exists (enrollment_id)
+  NEVER_PUBLISHED:   409,   // template current_version 0 — publish it first
+  EMPTY_SEQUENCE:    409,   // the published version has no steps
+  ENROLL_BUSY:       503,   // the per-identity enroll lock was not granted — nothing inserted
+  SCHEDULING_FAILED: 500,   // row inserted, first step unschedulable, row cancelled (enrollment_id)
+};
+
+function enrollRefusal(status, body) {
+  return Object.assign(new Error(body.error), { status, enrollResponse: { status, body } });
+}
+
+function enrollFailure(err) {
+  if (err && err.enrollResponse) return err;
+  const status = err && Object.prototype.hasOwnProperty.call(ENROLL_CODE_STATUS, err.code) ? ENROLL_CODE_STATUS[err.code] : null;
+  if (!status) return err;
+  const body = { error: 'Failed to enroll contact', message: err.message, code: err.code };
+  if (err.enrollment_id != null) body.enrollment_id = err.enrollment_id;
+  return Object.assign(new Error(err.message), { status, code: err.code, cause: err, enrollResponse: { status, body } });
+}
+
+// The claim is given back only when no enrollment row can exist: a 4xx
+// refusal, or ENROLL_BUSY (the lock was never granted, so the INSERT never ran).
+function releaseEnrollClaim(err) {
+  return releaseOnRefusalOnly(err) || !!(err && err.code === 'ENROLL_BUSY');
+}
 
 // POST /sequences/preview — Slice 8A
 //
@@ -2528,7 +2582,9 @@ router.post('/sequences/enrollments/:id/fire-next', jwtOrApiKey, async (req, res
 //     (no UI button); 409 when the last log row is not a condition-error
 //     hold, so the flag can't silently skip a step that was never held.
 //   - If no log rows exist (enrollment-time wedge — _enrollWithTemplate
-//     INSERTed the enrollment but scheduling the first step threw):
+//     INSERTed the enrollment, scheduling the first step threw, AND its
+//     cancel of that row failed too; since A18.4a a scheduling throw at
+//     enrollment normally cancels the row instead of wedging it):
 //     target is enrollment.current_step (which is 1 from the initial
 //     INSERT).
 //

@@ -908,14 +908,18 @@ and the two marked LIVE BUG are worth landing whether or not A17 ever ships.)
   rolls back as a 500 — the route comment claims executions are kept for
   history. It also checks no hook target, trigger-rule action, sequence step or
   form definition that references the id.
-- **Sequence enrollment has no idempotency and a racy duplicate guard.**
-  `POST /sequences/enroll` takes no `Idempotency-Key`; the duplicate guard is
-  SELECT-then-INSERT over `(contact, template, appt_id, signing_request_id)`
-  with no unique constraint; a scheduling throw after the enrollment INSERT
-  leaves an active enrollment with no job (alerting flags it ~15 min later);
-  and every engine error, `ALREADY_ENROLLED` included, surfaces as an HTTP 500
-  whose `err.code` is dropped. `scheduleStepJob` is likewise check-then-insert
-  with no unique index on `idempotency_key`.
+- **`scheduleStepJob` is check-then-insert with no unique index on
+  `idempotency_key`.** Two concurrent schedulers of the same
+  `seq-<enrollment>-step-<n>` key can both insert. (The enrollment-level
+  gaps — idempotency, the duplicate-guard race, the first-step scheduling
+  wedge, bare-500 errors — were fixed natively in A18.4a; see
+  `ref/ASK_CASEY_ACTIONS_PLAN.md` A18.4.)
+- **The enroll fence assumes the pool.** `_enrollWithTemplate`'s GET_LOCK is
+  released before a caller-owned transaction would commit, so a caller that
+  passed a transaction connection would get a narrowed race, not a closed one.
+  No caller does today; an enrollment inside a transaction would need the lock
+  held to COMMIT, or a unique functional key over the active rows (a schema
+  change).
 - **Sequence step firing can re-send.** `executeStep` has no "already sent this
   step" check and `recoverStuckJobs` returns a job sitting in `running` for
   over 15 minutes to pending, so an SMS or email can go twice. Only

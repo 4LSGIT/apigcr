@@ -228,7 +228,8 @@ const WORKFLOW_PUBLISH_EFFECT_FNS = new Set(['enroll_sequence', 'start_workflow'
 // params and the timing, never the function. Timing takes the engine's full
 // vocabulary (lib/sequenceEngine calculateStepTime) under two guardrails: an
 // absolute delay.at is a LITERAL datetime (a placeholder that resolves empty
-// throws inside scheduling and wedges the enrollment), and the two
+// throws inside scheduling: on a later step it wedges the enrollment, on step
+// 1 every enroll fails SCHEDULING_FAILED and is cancelled), and the two
 // appointment-anchored types are disclosed as silently skipping once their
 // window has passed. No condition, fire_guard, or error_policy is authored —
 // the browser's fixed builder pins the editor's no-retry policy (a retried
@@ -2351,8 +2352,10 @@ function normalizeSequenceTiming(raw) {
       if (typeof raw.at !== 'string' || !raw.at.trim()) fail('delay.at must be a datetime string');
       // Ruling 14 guardrail: LITERAL only. A {{placeholder}} that resolves
       // empty throws inside scheduling, where error_policy never sees it,
-      // and leaves the enrollment active with no job (the A18.0 trap).
-      if (raw.at.includes('{{')) fail('delay.at must be a literal datetime — Casey never writes a {{placeholder}} there, because one that resolves empty wedges the enrollment');
+      // and, on a later step, leaves the enrollment active with no job (the
+      // A18.0 trap); on step 1 every enroll fails SCHEDULING_FAILED and its
+      // new row is cancelled (A18.4a).
+      if (raw.at.includes('{{')) fail('delay.at must be a literal datetime — Casey never writes a {{placeholder}} there, because one that resolves empty fails the step\'s scheduling — it wedges a running enrollment, or fails every new enrollment when it is step 1');
       let at;
       try { at = parseUserDateTime(raw.at); } catch (e) { fail(`delay.at: ${e.message}`); }
       if (!at || isNaN(at.getTime())) fail('delay.at is not a valid datetime');
