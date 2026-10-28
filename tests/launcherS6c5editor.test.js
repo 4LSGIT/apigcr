@@ -476,7 +476,7 @@ describe('2. the user panel, for real', () => {
     expect([...t.mbRow('Court site').querySelectorAll('.ymb-where .yle-tag')].map((x) => x.textContent)).toEqual(['On “My desk”']);
     t.click(t.mbRow('Court site').querySelector('[data-act="mb-del"]'));
     await t.flush();
-    expect(t.asked.slice(-1)).toEqual(['Delete “Court site”? Note: it’s on your page “My desk”. Deleting it takes it off there too.']);
+    expect(t.asked.slice(-1)).toEqual(['Delete “Court site”? Note: it’s on your page “My desk”. Deleting it takes it off there too. This can’t be undone.']);
     expect(t.dot('buttons')).toBe(false);                 // the layout had no unsaved edit: its cascade went with the delete
     expect(t.api.calls.filter((c) => c.method === 'PUT').map((c) => c.body.config_key)).toEqual(['items', 'layout']);
     t.click(t.mbRow('My desk').querySelector('[data-act="mb-arrange"]'));
@@ -490,7 +490,7 @@ describe('2. the user panel, for real', () => {
     expect(t.mb().querySelector('.ymb-arrange').hidden).toBe(false);
     t.click(t.mbRow('My desk').querySelector('[data-act="mb-del"]'));
     await t.flush();
-    expect(t.asked.slice(-1)).toEqual(['Delete “My desk”? Note: it’s on your Home. Deleting it takes it off there too. The page’s own tiles go with it.']);
+    expect(t.asked.slice(-1)).toEqual(['Delete “My desk”? Note: it’s on your Home. Deleting it takes it off there too. The page’s own tiles go with it. This can’t be undone.']);
     expect(t.mb().querySelector('.ymb-arrange').hidden).toBe(true);
     expect(t.api.calls.filter((c) => c.method === 'PUT').map((c) => c.body.config_key)).toEqual(['items', 'layout', 'items', 'layout']);
     const lay = t.store.doc('user', 1, 'layout');

@@ -654,7 +654,7 @@ describe('the editor: drawers in My buttons (for real)', () => {
     await t.openEditor();
     t.act('My leads', 'mb-del').click();
     await t.flush();
-    expect(asked).toEqual(['Delete “My leads”? Note: it’s in your lists “My box”, “Two”. Deleting it takes it off there too.']);
+    expect(asked).toEqual(['Delete “My leads”? Note: it’s in your lists “My box”, “Two”. Deleting it takes it off there too. This can’t be undone.']);
     expect(t.rowOf('My box').querySelector('.ymb-sum').textContent).toBe('List · 1 item');
     expect(t.rowOf('Two').querySelector('.ymb-sum').textContent).toBe('List · empty');
     expect(t.server.puts.map((p) => p.body.config_key)).toEqual(['items']);   // saved by the delete itself (L2)

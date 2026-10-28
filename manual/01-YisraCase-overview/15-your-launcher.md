@@ -310,10 +310,11 @@ change on those tabs.
 
 ### Deleting a button
 
-The bin deletes a button. If it is on your Home or sidebar, on one of your
-pages, in one of your lists, or has a keyboard shortcut, the editor says so
-and asks first; deleting it takes it off those too, so nothing is left
-pointing at it. Deleting a page takes its own tiles with it. The delete is
+The bin deletes a button, and always asks first: the delete is saved at
+once and can't be undone. If the button is on your Home or sidebar, on one
+of your pages or a firm page, in one of your lists, or has a keyboard
+shortcut, the question says so; deleting it takes it off those too, so
+nothing is left pointing at it. Deleting a list doesn't delete what is in it. Deleting a page takes its own tiles with it. The delete is
 saved at once. If you had other unsaved changes on the tab it also touches
 (say, you had just moved a Home tile), that part waits for your **Save**, so
 the delete never saves something you hadn't finished.

@@ -2583,14 +2583,17 @@
         'Deleted \u201c' + b.label + '\u201d', next ? next.id : null, '[data-act="mb-del"]');
     };
     var isPg = b.type === 'page';
-    if (!on.length && !combos.length && !drawers.length && !onPages.length && !isPg) { go(); return; }
+    // Always asked (launcher-nits L2b): since L2 a delete is saved at once —
+    // there is no Cancel to take it back, and a deleted id is never reused.
     var where = [];
     if (on.length) where.push('it’s on your ' + on.map(onName).filter(function (n, k, a) { return a.indexOf(n) === k; }).join(' and '));
     if (onPages.length) where.push((on.length ? '' : 'it’s ') + 'on your page' + (onPages.length > 1 ? 's ' : ' ') + onPages.map(function (p) { return '“' + pageLabel(p) + '”'; }).join(', '));
     if (drawers.length) where.push((on.length || onPages.length ? '' : 'it’s ') + 'in your list' + (drawers.length > 1 ? 's ' : ' ') + drawers.map(function (n) { return '“' + n + '”'; }).join(', '));
     if (combos.length) where.push((on.length || drawers.length || onPages.length ? '' : 'it’s ') + 'bound to ' + combos.join(', '));
     var note = where.length ? ' Note: ' + where.join(' and ') + '. Deleting it takes it off there too.' : '';
-    ask('Delete “' + b.label + '”?' + note + (isPg ? ' The page’s own tiles go with it.' : ''), 'Delete', 'Keep it')
+    var bf = b.type === 'drawer' ? its.fields(i) : null, n = bf && isArr(bf.refs) ? bf.refs.length : 0;
+    var holds = b.type === 'drawer' ? ' It is a list holding ' + (n === 1 ? '1 item' : n + ' items') + (n ? ': they stay, only the list goes.' : '.') : '';
+    ask('Delete “' + b.label + '”?' + holds + note + (isPg ? ' The page’s own tiles go with it.' : '') + ' This can’t be undone.', 'Delete', 'Keep it')
       .then(function (yes) { if (yes && !saving) go(); });
   }
   function placeButton(i, sf) {

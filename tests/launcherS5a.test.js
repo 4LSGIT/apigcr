@@ -554,7 +554,7 @@ describe('the editor\'s My buttons tab (for real)', () => {
     t.answer(false);
     t.act('My leads', 'mb-del').click();
     await t.flush();
-    expect(t.confirms).toEqual(['Delete “My leads”? Note: it’s on your Home and sidebar and bound to ⌃⌘L. Deleting it takes it off there too.']);
+    expect(t.confirms).toEqual(['Delete “My leads”? Note: it’s on your Home and sidebar and bound to ⌃⌘L. Deleting it takes it off there too. This can’t be undone.']);
     expect(t.mbRows().map((r) => r.id)).toEqual(['user:leads', 'user:court']);   // kept: the user said no
     expect(t.server.puts).toEqual([]);
     t.answer(true);
@@ -568,10 +568,10 @@ describe('the editor\'s My buttons tab (for real)', () => {
     expect(t.server.puts.map((p) => p.body.config_key)).toEqual(['items', 'layout', 'shortcuts']);
     expect(t.toasts).toEqual(['Deleted “My leads”']);
     expect(t.w.ycLayoutEditor.isDirty()).toBe(false);
-    // a button nowhere placed or bound goes without asking
+    // a button nowhere placed or bound is asked about too (L2b: the delete is saved at once — no Cancel behind it)
     t.act('Court site', 'mb-del').click();
     await t.flush();
-    expect(t.confirms).toHaveLength(2);
+    expect(t.confirms.slice(2)).toEqual(['Delete “Court site”? This can’t be undone.']);
     expect(t.server.puts.map((p) => p.body.config_key)).toEqual(['items', 'layout', 'shortcuts', 'items']);
     const [, lay, sc, items] = t.server.puts.map((p) => p.body.config);
     expect(items).toEqual({ items: [] });
@@ -582,7 +582,7 @@ describe('the editor\'s My buttons tab (for real)', () => {
     expect(t.panel().querySelector('.yle-save').disabled).toBe(true);           // nothing left to save
     t.panel().querySelector('.yle-cancel').click();
     await t.flush();
-    expect([t.panel().hidden, t.confirms.length, t.server.puts.length]).toEqual([true, 2, 4]);   // closes without asking
+    expect([t.panel().hidden, t.confirms.length, t.server.puts.length]).toEqual([true, 3, 4]);   // closes without asking (3: the two deletes' questions)
   });
 
   test('L2: an add whose own save is refused says so, stays (tagged New, the tab dotted) and Save sends it again; nothing closes', async () => {
@@ -601,6 +601,22 @@ describe('the editor\'s My buttons tab (for real)', () => {
     expect(t.server.puts.map((p) => p.body.config_key)).toEqual(['items', 'items']);
     expect(t.server.user().items.items.map((i) => i.id)).toEqual(['user:leads', 'user:court']);
     expect(t.panel().hidden).toBe(true);
+  });
+
+  test('L2b: a list nobody placed is still asked about, naming what it holds; No keeps it and sends nothing', async () => {
+    const BOX = { id: 'user:box', label: 'My box', icon: 'box-open', action: { type: 'drawer', items: ['tasks', 'user:leads'] } };
+    t = boot({ items: [VIEW, BOX] });
+    await t.openEditor();
+    t.answer(false);
+    t.act('My box', 'mb-del').click();
+    await t.flush();
+    expect(t.confirms).toEqual(['Delete “My box”? It is a list holding 2 items: they stay, only the list goes. This can’t be undone.']);
+    expect([t.mbRows().map((r) => r.id), t.server.puts]).toEqual([['user:leads', 'user:box'], []]);
+    t.answer(true);
+    t.act('My box', 'mb-del').click();
+    await t.flush();
+    expect(t.mbRows().map((r) => r.id)).toEqual(['user:leads']);
+    expect(t.server.puts.map((p) => p.body.config_key)).toEqual(['items']);
   });
 
   test('L2: a delete never saves an edit the user did not ask to save — a layout with its own unsaved edit keeps the cascade for Save', async () => {
