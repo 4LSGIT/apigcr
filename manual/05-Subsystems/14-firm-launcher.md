@@ -177,9 +177,11 @@ a tile or row they add to their own Home or sidebar, All, Ctrl-K or a
 shortcut. A **panel** tile on the page (Automations, Users…) opens that panel
 on the page itself, with the page's own pill strip; each person still sees
 only the tiles they may open (a superuser-only tool is simply not on the page
-for anyone else). Like More Features, the page's tiles are the firm's to
-arrange, not each person's; people arrange their own pages instead
-([Your own launcher → Pages](../01-YisraCase-overview/15-your-launcher.md#pages)).
+for anyone else). Your arrangement is everyone's starting point: each person
+may rearrange a firm page for themselves (move, hide, add), and **Reset**
+brings yours back for them; a tile you **lock** they can move but not hide.
+What you add later shows up for them too, next to its neighbour
+([Your own launcher → Your firm's pages](../01-YisraCase-overview/15-your-launcher.md#your-firms-pages)).
 
 Reloading the browser while on a firm page brings you back to it, with the
 panel you had open on it, and so does a link to it: the address bar names the

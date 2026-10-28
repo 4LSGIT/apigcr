@@ -2535,7 +2535,10 @@ data-yc-page="<item id>">` per effective page item into `#ycPages` (between
 `#tabAdmin` and the stage) — heading as text + ycIcon, tiles as neutrals
 (a panel item's with `data-target`, opening in place on the stage), a
 `.page-egg-row`; contents from that tier's `layout.pages[id]` (`{ tiles,
-icons }`, no base: the lists ARE the page; non-effective items not drawn);
+icons }`; a USER page has no base: the lists ARE the page; a FIRM page's
+lists are the base of the user's own overlay, `ui.user.layout.overlays[id]`
+`{ placed?, removed? }` per part — the surfaces' merge rule, firm locks
+holding, launcher-nits L4b1: `pageRows`; non-effective items not drawn);
 `exec(pageId)` → `openMainTab`; a sidebar neutral for a page carries its
 tab in `data-tab`. The tab id is per session and opaque: the WORKSPACE URL
 never writes it and refuses it as a head. A FIRM page is named there by its

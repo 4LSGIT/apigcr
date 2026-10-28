@@ -529,9 +529,9 @@ describe('the editor\'s Keyboard shortcuts tab (for real)', () => {
     const marker = t.w.__noReload = {};
     expect(await t.openEditor('layout')).toBe(true);
     const tabs = [...t.panel().querySelectorAll('.yle-tab')];
-    expect(tabs.map((b) => b.textContent.replace('•', '').trim())).toEqual(['Home', 'Sidebar', 'Keyboard shortcuts', 'My buttons']);   // My buttons: S5a; Home / Sidebar split: launcher-nits L1
+    expect(tabs.map((b) => b.textContent.replace('•', '').trim())).toEqual(['Home', 'Sidebar', 'Firm pages', 'Keyboard shortcuts', 'My buttons']);   // My buttons: S5a; Home / Sidebar split: launcher-nits L1; Firm pages: L4b1
     expect(t.panel().querySelector('#ylePane_shortcuts').hidden).toBe(true);
-    tabs[2].click();
+    tabs[3].click();
     expect([t.panel().querySelector('#ylePane_shortcuts').hidden, t.panel().querySelector('#ylePane_home').hidden, t.panel().querySelector('#ylePane_sidebar').hidden]).toEqual([false, true, true]);
     expect(t.scSec().querySelector('.ysc-intro').textContent).toMatch(/Shortcuts need a keyboard/);
     expect(t.scRows()).toEqual([['⌃⌘E', 'Calendar', false]]);

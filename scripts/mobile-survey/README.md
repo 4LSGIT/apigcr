@@ -6,7 +6,7 @@ hosts, at the widths you pass:
 
 | Group     | What it opens |
 |-----------|---------------|
-| `tabs`    | every sidebar tab, plus the Calendar tab's List (rows + quick actions) and Grid modes, and All's "Customize my launcher" layout editor (open on Home, its shortcut picker, the Sidebar tab and its section-label box, its Keyboard shortcuts and My buttons tabs) |
+| `tabs`    | every sidebar tab, plus the Calendar tab's List (rows + quick actions) and Grid modes, and All's "Customize my launcher" layout editor (open on Home, its shortcut picker, the Sidebar tab and its section-label box, its Firm pages, Keyboard shortcuts and My buttons tabs) |
 | `panels`  | every More Features / Admin panel (each `[data-target]` tile — new tiles are picked up automatically), plus sub-surfaces for some (below) |
 | `files`   | a case file and a contact file, and every tab inside each (Refresh is skipped: it opens a reload confirm) |
 | `dialogs` | New Client (blank, and with its already-on-file box), New Case, New Appointment, New Event, Reschedule, Show Appointment, the two deadline quick actions (complete, cancel), the two Log adopt dialogs (case docket, phone/email), the Code dialog (opened from the launcher, a long result run in it) |

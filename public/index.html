@@ -708,7 +708,7 @@
         hidePass(hide, firm.renames);
         renderFirmRow();
         layoutPass(firm.locked);
-        buildPages();
+        buildPages(firm.locked);
         refreshDrawer();
         syncButtonTabs();
         try { window.dispatchEvent(new CustomEvent('ycLauncherAccess')); } catch (_) { /* no CustomEvent */ }
@@ -1275,8 +1275,12 @@
       // (per-page memory), its strip shows only ITS tiles' pills.
       //   - Contents: the tier's layout document — ui.firm.layout.pages[id]
       //     for a firm page, ui.user.layout.pages[id] for a user's —
-      //     { tiles: [{item}|{break}], icons: [{item}] }. A page has NO base:
-      //     its stored lists ARE the page (no merge rule, no removed list).
+      //     { tiles: [{item}|{break}], icons: [{item}] }. A user's own page
+      //     has NO base: its stored lists ARE the page. A FIRM page's lists
+      //     are the base of the user's own overlay on it (launcher-nits L4b1,
+      //     ui.user.layout.overlays[id] = { placed?, removed? } per part):
+      //     the surfaces' merge rule, resolve() with the grid / icon-row
+      //     grammar, firm locks holding (pageRows).
       //     An item not in this user's effective registry is not drawn
       //     (denied, firm-hidden, role-restricted, gated: a su tool placed on
       //     a page is unreachable for a non-su by every path), an item once,
@@ -1332,6 +1336,28 @@
         var pages = isObj(tier) && isObj(tier.layout) && isObj(tier.layout.pages) ? tier.layout.pages : null;
         return pages && hasOwn(pages, entry.id) && isObj(pages[entry.id]) ? pages[entry.id] : {};
       }
+      // The user's overlay on a firm page (launcher-nits L4b1), or null.
+      function pageOverlay(id) {
+        var ui = STATE && isObj(STATE.ui) ? STATE.ui : {};
+        var lay = isObj(ui.user) && isObj(ui.user.layout) ? ui.user.layout : null;
+        var ov = lay && isObj(lay.overlays) && hasOwn(lay.overlays, id) ? lay.overlays[id] : null;
+        return isObj(ov) ? ov : null;
+      }
+      // One part of a page as drawn: a user page's list as it is (pageList);
+      // a firm page's under the user's overlay — the surfaces' merge rule
+      // with the firm's list as the base, the part's grammar ('more' /
+      // 'moreIcons'), firm-locked ids never removed by the user.
+      var PAGE_GRAMMAR = { tiles: 'more', icons: 'moreIcons' };   // lib/uiConfigShape.js PAGE_PARTS
+      function pageRows(list, part, ov, byId, locked) {
+        if (!ov) return pageList(list, part === 'tiles' ? 'page' : 'pageIcons', byId);
+        var g = PAGE_GRAMMAR[part], user = { placed: {}, removed: {} };
+        if (isObj(ov.placed) && Object.prototype.toString.call(ov.placed[part]) === '[object Array]') user.placed[g] = ov.placed[part];
+        if (isObj(ov.removed) && Object.prototype.toString.call(ov.removed[part]) === '[object Array]') user.removed[g] = ov.removed[part];
+        var base = Object.prototype.toString.call(list) === '[object Array]' ? list.slice(0, LAYOUT_CAP) : [];
+        return resolve(g, { base: base, user: user, effective: EFFECTIVE, locked: Object.keys(locked || {}) })
+          .filter(function (e) { return e.kind === 'break' || e.id in byId; })
+          .map(function (e) { return e.kind === 'item' ? { kind: 'item', id: e.id } : { kind: 'break' }; });
+      }
       // A page's list → entries { kind:'item', id } | { kind:'break' }: effective items once, breaks on the grid only.
       function pageList(list, surface, byId) {
         var out = [], seen = Object.create(null);
@@ -1383,7 +1409,7 @@
         pg.cur[part] = want;
         return true;
       }
-      function buildPages() {
+      function buildPages(locked) {
         var host = typeof document !== 'undefined' ? document.getElementById('ycPages') : null;
         var entries = pageEntries();
         if (!host) {
@@ -1409,8 +1435,8 @@
           var label = String(entry.label), cls = iconClass(entry.icon);
           setText(pg.text, ' ' + label + ' ');
           pg.icons.forEach(function (i) { if (i.className !== cls) i.className = cls; });
-          var doc = pageDoc(entry);
-          var tiles = pageList(doc.tiles, 'page', byId), icons = pageList(doc.icons, 'pageIcons', byId);
+          var doc = pageDoc(entry), ov = entry.action ? pageOverlay(entry.id) : null;
+          var tiles = pageRows(doc.tiles, 'tiles', ov, byId, locked), icons = pageRows(doc.icons, 'icons', ov, byId, locked);
           var moved = layoutPagePart(pg, 'tiles', tiles, byId);
           layoutPagePart(pg, 'icons', icons, byId);
           // the strip is built from the tiles' text and icons: a different set, label or icon → rebuild
@@ -3434,7 +3460,7 @@
     #ycLayoutEditor .yle-tab.active { border-color: var(--border); border-bottom-color: var(--surface); background: var(--surface); font-weight: 600; }
     #ycLayoutEditor .yle-tab i { color: var(--accent-2); }
     #ycLayoutEditor .yle-tab-dot { color: var(--accent); font-weight: 700; }
-    #ycLayoutEditor .yle-tab-dot[hidden], #ycLayoutEditor .yle-pane[hidden] { display: none; }
+    #ycLayoutEditor .yle-tab-dot[hidden], #ycLayoutEditor .yle-pane[hidden], #ycLayoutEditor .yle-tab[hidden] { display: none; }
     #ycLayoutEditor .ysc-intro { margin: 0 0 8px; }
     #ycLayoutEditor .ysc-rows { list-style: none; margin: 0; padding: 0; }
     #ycLayoutEditor .ysc-kbd { flex: 0 0 auto; }

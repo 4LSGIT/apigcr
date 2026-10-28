@@ -659,3 +659,107 @@ describe('4. firm.html: the Page kind', () => {
     expect(rows[0].querySelector('.fm-ver-view').textContent).toBe('Page “Operations”Row 1: Manuals; Row 2: Users · small buttons: Casey');
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────
+// launcher-nits L4b1 (Fred, 2026-10-28): each person arranges the FIRM's
+// pages for themselves — ui.user.layout.overlays[<firm page id>] =
+// { placed?: { tiles?, icons? }, removed?: { tiles?, icons? } }, the
+// surfaces' merge rule over the firm's page lists, firm locks holding.
+// The real validator, the real service on a store, the real shell and editor.
+describe('7. L4b1 — your arrangement of a firm page', () => {
+  let t;
+  afterEach(() => t && t.close());
+  const OT = 'over:firm:ops:tiles', OI = 'over:firm:ops:icons';
+  const FIRM_OPS = { pages: { 'firm:ops': { tiles: [{ item: 'moreAutomations' }, { item: 'moreManuals' }, { break: true }, { item: 'adminUsers' }], icons: [{ item: 'casey' }] } } };
+  const seedOps = async (store, locked = []) => {
+    await svc.write(store.db, { scope: 'firm', config_key: 'registry_overrides', config: { hidden: [], locked, renames: {}, items: [OPS] } }, ADMIN);
+    await svc.write(store.db, { scope: 'firm', config_key: 'layout', config: FIRM_OPS }, ADMIN);
+    return store;
+  };
+  const OV = { placed: {}, removed: {}, overlays: { 'firm:ops': { placed: { tiles: [{ item: 'adminUsers' }, { item: 'moreAutomations' }] }, removed: { tiles: ['moreManuals'], icons: ['casey'] } } } };
+
+  test('the grammar: user scope only, firm page ids only, each part the page part\'s grammar; a document round-trips', () => {
+    expect(okUser(OV)).toEqual({ ok: true, errors: [], same: true });
+    expect(okFirm({ overlays: {} }).errors).toEqual(['layout: unknown field "overlays"']);
+    expect(okUser({ overlays: { 'user:desk': {} } }).errors).toEqual(['overlays.user:desk: not a firm page id (firm:…)']);
+    expect(okUser({ overlays: { 'firm:ops': { placed: { icons: [{ break: true }] } } } }).ok).toBe(false);
+    expect(okUser({ overlays: { 'firm:ops': { placed: { tiles: [{ item: 'cases' }, { item: 'cases' }] } } } }).ok).toBe(false);
+    expect(okUser({ overlays: { 'firm:ops': { removed: { tiles: 'cases' } } } }).ok).toBe(false);
+    expect(okUser({ overlays: { 'firm:ops': { order: [] } } }).ok).toBe(false);
+  });
+
+  test('the shell draws the firm page under the user\'s overlay: their order, their removals; a firm-locked tile comes back', async () => {
+    t = await boot({ store: await seedUser(await seedOps(makeStore()), { items: [] }, OV) });
+    expect(t.pageTiles('firm:ops')).toEqual(['adminUsers', 'moreAutomations']);   // Manuals removed; the base break goes with a placed order
+    expect(t.pageTab('firm:ops').querySelectorAll('.page-egg-row > *')).toHaveLength(0);   // Casey removed
+    t.close();
+    t = await boot({ store: await seedUser(await seedOps(makeStore(), ['moreManuals']), { items: [] }, OV) });
+    expect(t.pageTiles('firm:ops')).toEqual(['adminUsers', 'moreAutomations', 'moreManuals']);   // locked: back beside its neighbour
+    t.close();
+    t = await boot({ store: await seedOps(makeStore()) });                          // no overlay: the firm's page as it is
+    expect(t.pageTiles('firm:ops')).toEqual(['moreAutomations', 'moreManuals', '|', 'adminUsers']);
+  });
+
+  test('the editor\'s Firm pages tab: the firm\'s tiles as standard rows; hide, move, add; the tab\'s dot; Save writes overlays (validated) and the page follows; reopened, nothing is dirty; Reset puts the firm\'s back', async () => {
+    const store = await seedOps(makeStore());
+    t = await boot({ store });
+    await open(t, { section: 'pages' });
+    expect(t.panel().querySelector('.yle-tab[data-pane="pages"]').hidden).toBe(false);
+    expect(t.panel().querySelector('#ylePane_pages').hidden).toBe(false);
+    expect([...t.panel().querySelectorAll('#ylePane_pages .yle-page-title')].map((h) => h.textContent.trim())).toEqual(['Operations']);
+    expect([...t.panel().querySelectorAll('#ylePane_pages .yle-sec')].map((x) => [x.getAttribute('data-sf'), x.querySelector('h3').textContent])).toEqual([[OT, 'Tiles'], [OI, 'Small buttons']]);
+    expect(t.names(OT)).toEqual(['Automations', 'Manuals', '|', 'Users']);
+    expect(t.sec(OT).querySelector('.yle-reset').textContent).toBe('Reset to the firm’s');
+    expect(t.rowNamed(OT, 'Manuals').querySelector('[data-act="hide"]')).not.toBe(null);   // a firm tile: hidden, not removed
+    t.click(t.rowNamed(OT, 'Manuals').querySelector('[data-act="hide"]'));
+    expect([...t.sec(OT).querySelectorAll('.yle-hidden li')].map((li) => li.textContent)).toEqual([expect.stringMatching(/Manuals/)]);
+    t.click(t.rowNamed(OT, 'Users').querySelector('[data-act="up"]'));
+    t.pick(OT, 'tasks');
+    expect(t.names(OT)).toEqual(['Automations', 'Users', '|', 'Tasks']);
+    expect([t.dot('pages'), t.dot('home'), t.dot('sidebar')]).toEqual([true, false, false]);
+    await t.save();
+    const lay = store.doc('user', 1, 'layout');
+    expect(lay.overlays).toEqual({ 'firm:ops': { placed: { tiles: [{ item: 'moreAutomations' }, { item: 'adminUsers' }, { break: true }, { item: 'tasks' }] }, removed: { tiles: ['moreManuals'] } } });
+    expect(okUser(lay).ok).toBe(true);
+    expect(t.pageTiles('firm:ops')).toEqual(['moreAutomations', 'adminUsers', '|', 'tasks']);
+    expect(t.w.ycLayoutEditor.isOpen()).toBe(false);
+    // reopened from what was saved: nothing to save
+    await open(t, { section: 'pages' });
+    expect([t.w.ycLayoutEditor.isDirty(), t.dot('pages')]).toEqual([false, false]);
+    expect(t.names(OT)).toEqual(['Automations', 'Users', '|', 'Tasks']);
+    t.click(t.sec(OT).querySelector('[data-act="reset"]'));
+    await t.flush();
+    expect(t.asked.slice(-1)).toEqual(['Put “Operations” back the way your firm arranged it? Your arrangement of it is replaced when you Save.']);
+    expect(t.names(OT)).toEqual(['Automations', 'Manuals', '|', 'Users']);
+    await t.save();
+    expect(store.doc('user', 1, 'layout').overlays).toEqual({});
+    expect(t.pageTiles('firm:ops')).toEqual(['moreAutomations', 'moreManuals', '|', 'adminUsers']);
+  });
+
+  test('an overlay on a firm page this person no longer sees rides through a save untouched; a tab with no firm page is hidden', async () => {
+    const ghost = { placed: { tiles: [{ item: 'cases' }] } };
+    t = await boot({ store: await seedUser(makeStore(), { items: [] }, { placed: {}, removed: {}, overlays: { 'firm:gone': ghost } }) });
+    await open(t, { section: 'home' });
+    expect(t.panel().querySelector('.yle-tab[data-pane="pages"]').hidden).toBe(true);
+    expect(t.w.ycLayoutEditor.isDirty()).toBe(false);
+    t.click(t.rowNamed('home', 'Cases').querySelector('[data-act="down"]'));
+    await t.save();
+    expect(t.store.doc('user', 1, 'layout').overlays).toEqual({ 'firm:gone': ghost });
+  });
+
+  test('one of your buttons on a firm page: My buttons says where; deleting it takes it off the page, saved with the delete', async () => {
+    const LEADS = { id: 'user:leads', label: 'Leads', icon: 'star', action: { type: 'url', href: 'https://x.example/', present: 'window' } };
+    const store = await seedUser(await seedOps(makeStore()), { items: [LEADS] }, { placed: {}, removed: {}, overlays: { 'firm:ops': { placed: { tiles: [{ item: 'user:leads' }, { item: 'moreAutomations' }] } } } });
+    t = await boot({ store });
+    expect(t.pageTiles('firm:ops')[0]).toBe('user:leads');
+    await open(t, { section: 'buttons' });
+    expect([...t.mbRow('Leads').querySelectorAll('.ymb-where .yle-tag')].map((x) => x.textContent)).toEqual(['On firm page “Operations”']);
+    t.click(t.mbRow('Leads').querySelector('[data-act="mb-del"]'));
+    await t.flush();
+    expect(t.asked.slice(-1)[0]).toMatch(/^Delete “Leads”\? Note: it’s on your firm page “Operations”\. /);
+    const lay = store.doc('user', 1, 'layout');
+    expect(JSON.stringify(lay)).not.toMatch(/user:leads/);
+    expect(okUser(lay).ok).toBe(true);
+    expect(t.pageTiles('firm:ops')).not.toContain('user:leads');
+  });
+});

@@ -203,7 +203,7 @@
     moreIcons: 'More Features’ small buttons', admin: 'Admin', adminIcons: 'Admin’s small buttons' };
   var CAP = 100;          // lib/uiConfigShape.js CAPS.placed / CAPS.removed
   var ICON_CAP = 12;      // lib/uiConfigShape.js CAPS.icons (an icon row's placed list)
-  function capOf(sf) { var pg = pageOf(sf); return (pg ? pg.part === 'icons' : ICON_SF[sf]) ? ICON_CAP : CAP; }
+  function capOf(sf) { var pg = pageOf(sf); return (pg ? pg.part === 'icons' : ICON_SF[gram(sf)]) ? ICON_CAP : CAP; }
   var LABEL_MAX = 40;     // lib/uiConfigShape.js LABEL_MAX
   var ICON_RE = YI.RE;    // bare slug = solid, or solid: / regular: / brands: + slug (lib/uiConfigShape.js ICON_RE)
   var CONTROL_RE = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/;
@@ -242,7 +242,7 @@
   function copyEntry(e, sf) {
     if (!isObj(e)) return null;
     if (typeof e.item === 'string' && e.item) return { item: e.item };
-    if (e.break === true && BREAK_SF[sf]) return { break: true };
+    if (e.break === true && BREAK_SF[gram(sf)]) return { break: true };
     if (typeof e.label === 'string' && sf === 'sidebar') return { label: e.label };
     return null;
   }
@@ -253,6 +253,37 @@
   function pageOf(sf) {
     var m = typeof sf === 'string' ? PAGE_SF_RE.exec(sf) : null;
     return m ? { id: m[1], part: m[2] } : null;
+  }
+  // The user's OVERLAY on a firm page (launcher-nits L4b1): each part is one
+  // more surface of the session, 'over:<firm id>:<part>', with the firm's
+  // page list as its base — move / hide / show / add / remove / reset like
+  // Home, firm locks holding. Stored nested, in the layout's `overlays`
+  // ({ <id>: { placed?: { tiles?, icons? }, removed?: { tiles?, icons? } } }):
+  // session() flattens it to these surfaces, doc() nests it back.
+  var OVER_SF_RE = /^over:(firm:[a-z0-9-]{1,40}):(tiles|icons)$/;   // the id: lib/uiConfigShape.js FIRM_ID_RE
+  function overSf(id, part) { return 'over:' + id + ':' + part; }
+  /** 'over:<firm id>:<part>' → { id, part }, else null. */
+  function overOf(sf) {
+    var m = typeof sf === 'string' ? OVER_SF_RE.exec(sf) : null;
+    return m ? { id: m[1], part: m[2] } : null;
+  }
+  /** The grammar a surface's lists follow: an overlay part borrows its page part's. */
+  function gram(sf) { var ov = overOf(sf); return ov ? PAGE_PARTS[ov.part] : sf; }
+  function copyOverlay(o) {
+    var out = {};
+    ['placed', 'removed'].forEach(function (half) {
+      if (!isObj(o[half])) return;
+      var lists = {}, any = false;
+      for (var part in PAGE_PARTS) {
+        if (!isArr(o[half][part])) continue;
+        lists[part] = half === 'placed'
+          ? o[half][part].map(function (e) { return copyEntry(e, PAGE_PARTS[part]); }).filter(Boolean)
+          : o[half][part].filter(function (id) { return typeof id === 'string'; });
+        any = true;
+      }
+      if (any) out[half] = lists;
+    });
+    return out;
   }
   function copyPage(p) {
     var out = {};
@@ -276,6 +307,14 @@
     if (isObj(doc.pages)) {
       out.pages = {};
       for (var id in doc.pages) if (hasOwn(doc.pages, id) && isObj(doc.pages[id])) out.pages[id] = copyPage(doc.pages[id]);
+    }
+    if (isObj(doc.overlays)) {
+      out.overlays = {};
+      for (var oid in doc.overlays) {
+        if (!hasOwn(doc.overlays, oid) || !OVER_SF_RE.test(overSf(oid, 'tiles')) || !isObj(doc.overlays[oid])) continue;
+        var ov = copyOverlay(doc.overlays[oid]);
+        if (Object.keys(ov).length) out.overlays[oid] = ov;
+      }
     }
     return out;
   }
@@ -328,6 +367,22 @@
     var SFS = isArr(o.surfaces) ? o.surfaces.slice() : SURFACES.slice();
     var PS = isArr(o.pass) ? o.pass.slice() : PASS.slice();
     var stored = normalize(o.stored, SFS.concat(PS));
+    // what isDirty compares with: the stored document as it is (overlays nested)
+    var storedDoc = JSON.parse(JSON.stringify(stored));
+    // the user's overlays on firm pages (L4b1) become surfaces here: an
+    // overlay part this session doesn't edit (a page gone, not shown) rides
+    // through as stored, like PS
+    if (stored.overlays) {
+      Object.keys(stored.overlays).forEach(function (oid) {
+        ['tiles', 'icons'].forEach(function (part) {
+          var sf = overSf(oid, part), ov = stored.overlays[oid];
+          if (isObj(ov.placed) && isArr(ov.placed[part])) stored.placed[sf] = ov.placed[part];
+          if (isObj(ov.removed) && isArr(ov.removed[part])) stored.removed[sf] = ov.removed[part];
+          if (SFS.indexOf(sf) < 0 && PS.indexOf(sf) < 0 && (hasOwn(stored.placed, sf) || hasOwn(stored.removed, sf))) PS.push(sf);
+        });
+      });
+      delete stored.overlays;
+    }
     var firmDoc = isObj(o.firm) ? o.firm : null;
     var seed = isObj(o.seed) ? o.seed : {};
     var pageIds = isArr(o.pages) ? o.pages.filter(function (id) { return typeof id === 'string'; }) : [];
@@ -361,8 +416,9 @@
       guaranteed[sf] = Object.create(null);
       (GUARANTEED[sf] || []).forEach(function (id) { guaranteed[sf][id] = true; });
     });
+    // an overlay's base IS the firm's list: no firm step on top of it
     function baseRows(sf) {
-      return L.resolveLayout(sf, { base: isArr(base[sf]) ? base[sf] : [], firm: firmDoc, user: null, effective: eff, locked: [] });
+      return L.resolveLayout(gram(sf), { base: isArr(base[sf]) ? base[sf] : [], firm: overOf(sf) ? null : firmDoc, user: null, effective: eff, locked: [] });
     }
     function baseIdsOf(sf) {
       var s = Object.create(null);
@@ -383,17 +439,17 @@
 
     function resolved(sf, st) {
       st = st || S[sf];
-      var user = { placed: {}, removed: {} };
-      if (st.placed) user.placed[sf] = st.placed;
-      user.removed[sf] = st.removed;
-      var rows = L.resolveLayout(sf, { base: isArr(base[sf]) ? base[sf] : [], firm: firmDoc, user: user, effective: eff, locked: lockedList });
+      var g = gram(sf), user = { placed: {}, removed: {} };
+      if (st.placed) user.placed[g] = st.placed;
+      user.removed[g] = st.removed;
+      var rows = L.resolveLayout(g, { base: isArr(base[sf]) ? base[sf] : [], firm: overOf(sf) ? null : firmDoc, user: user, effective: eff, locked: lockedList });
       // the seed (the More firm row): only while nothing is placed here
       if (!st.placed && isArr(seed[sf])) {
         var vis = visibleIds(rows), more = [];
         seed[sf].forEach(function (id) {
           if (typeof id === 'string' && id in byId && !vis[id]) { vis[id] = true; more.push({ kind: 'item', id: id }); }
         });
-        if (more.length) rows = rows.concat(BREAK_SF[sf] ? [{ kind: 'break' }] : [], more);
+        if (more.length) rows = rows.concat(BREAK_SF[g] ? [{ kind: 'break' }] : [], more);
       }
       return rows;
     }
@@ -774,7 +830,7 @@
         sf = sf == null ? 'home' : sf;
         var pg = pageOf(sf);
         if (pg) return pageApi.addBreak(pg);
-        if (!BREAK_SF[sf] || !hasOwn(S, sf)) return false;
+        if (!BREAK_SF[gram(sf)] || !hasOwn(S, sf)) return false;
         var rows = resolved(sf);
         rows.push({ kind: 'break' });
         if (sizeAfter(sf, rows) > capOf(sf)) return false;
@@ -841,9 +897,20 @@
           anyPage = true;
         });
         if (anyPage || stored.pages) out.pages = pages;
+        // the overlay surfaces (L4b1) nest back into `overlays`
+        var overlays = {}, anyOv = false;
+        Object.keys(out.placed).concat(Object.keys(out.removed)).forEach(function (sf) {
+          var ov = overOf(sf);
+          if (!ov) return;
+          var o = overlays[ov.id] || (overlays[ov.id] = {});
+          if (hasOwn(out.placed, sf)) { (o.placed || (o.placed = {}))[ov.part] = out.placed[sf]; delete out.placed[sf]; }
+          if (hasOwn(out.removed, sf)) { (o.removed || (o.removed = {}))[ov.part] = out.removed[sf]; delete out.removed[sf]; }
+          anyOv = true;
+        });
+        if (anyOv || storedDoc.overlays) out.overlays = overlays;
         return out;
       },
-      isDirty: function () { return canonical(api.doc()) !== canonical(stored); },
+      isDirty: function () { return canonical(api.doc()) !== canonical(storedDoc); },
     };
     return api;
   }
@@ -1378,7 +1445,7 @@
   var pickersState = 'idle';   // 'idle' | 'loading' | 'ok' | 'failed' — per opening
   var opening = 0;          // bumps on every show(): a late picker reply for an old opening is dropped
   var mbForm = null;        // the button form while it is open: { i } (-1 = a new one)
-  var PANES = ['home', 'sidebar', 'shortcuts', 'buttons'];
+  var PANES = ['home', 'sidebar', 'pages', 'shortcuts', 'buttons'];
   var USER_PANE_OF = { home: 'home', homeIcons: 'home', sidebar: 'sidebar' };   // a surface's tab
   var KEYS = (window.ycAll && window.ycAll.keys) || null;
   // The firm mode (S6c-3): the panel is built for ONE scope at a time —
@@ -1417,6 +1484,10 @@
     sidebar: 'Reset the sidebar to the standard layout? Your sidebar arrangement is replaced when you Save.',
   };
   var USER_PICK = { home: 'Add a shortcut to Home', homeIcons: 'Add a small button to Home', sidebar: 'Add a shortcut to the sidebar' };
+  var OVER_HINT = {
+    tiles: 'The page\u2019s tiles, left to right; a row break starts a new row.',
+    icons: 'The small round buttons under the tiles (up to 12).',
+  };
   var USER_HINT = { homeIcons: 'The small round buttons under your Home tiles (up to 12). All always stays here: you can move it, not hide it.' };
   var FIRM_HINT = {
     homeIcons: 'The small round buttons under the Home tiles. All always stays here.',
@@ -1438,15 +1509,29 @@
   }
   function paneOf(sf) {
     if (pageOf(sf)) return scope === 'firm' ? 'pages' : 'buttons';
+    if (overOf(sf)) return 'pages';
     if (scope !== 'firm') return PANE_OF[sf] || USER_PANE_OF[sf] || sf;
     for (var i = 0; i < FIRM_PANES.length; i++) if (FIRM_PANES[i].surfaces.indexOf(sf) >= 0) return FIRM_PANES[i].id;
     return FIRM_PANES[0].id;
   }
   /** A section's title: a surface's NAME, a page part's PAGE_PART_NAME. */
   function sfName(sf) {
-    var pg = pageOf(sf);
+    var pg = pageOf(sf) || overOf(sf);
     return pg ? PAGE_PART_NAME[pg.part] : NAME[sf];
   }
+  /** The firm pages this user sees (L4b1): [{ id, label, icon }], All's order. */
+  function firmPagesNow() {
+    return L.effectiveRegistry().filter(function (e) { return e.page && /^firm:/.test(e.id); })
+      .map(function (e) { return { id: e.id, label: String(e.label), icon: e.icon }; });
+  }
+  var overLabels = {};   // firm page id → its label, for this opening (onName, the reset question)
+  /** Where a button is, in words: Home, Home's small buttons, sidebar, or a firm page. */
+  function onName(sf) {
+    var ov = overOf(sf);
+    return ov ? 'firm page \u201c' + (overLabels[ov.id] || ov.id) + '\u201d' : ON_NAME[sf];
+  }
+  /** The overlay sections built for this opening. */
+  function overSurfaces() { return builtSurfaces().filter(function (sf) { return !!overOf(sf); }); }
   function anyDirty() { return !!((sess && sess.isDirty()) || (scs && scs.isDirty()) || (its && its.isDirty())); }
 
   function el(tag, cls, text) {
@@ -1496,7 +1581,7 @@
     var tabs = el('div', 'yle-tabs');
     tabs.setAttribute('role', 'tablist');
     var tabList = firm ? FIRM_PANES.map(function (p) { return [p.id, p.label, p.icon]; })
-      : [['home', 'Home', 'house'], ['sidebar', 'Sidebar', 'bars'], ['shortcuts', 'Keyboard shortcuts', 'keyboard'], ['buttons', 'My buttons', 'star']];
+      : [['home', 'Home', 'house'], ['sidebar', 'Sidebar', 'bars'], ['pages', 'Firm pages', 'layer-group'], ['shortcuts', 'Keyboard shortcuts', 'keyboard'], ['buttons', 'My buttons', 'star']];
     tabList.forEach(function (t) {
       var b = btn('yle-tab', 'tab', null, t[2], t[1]);
       b.setAttribute('data-pane', t[0]);
@@ -1548,6 +1633,13 @@
         SURFACES.forEach(function (sf) { if (USER_PANE_OF[sf] === u[0]) lay.appendChild(buildSection(sf)); });
         body.appendChild(lay);
       });
+      // your firm's pages (L4b1): one block per page, built per opening (buildUserFirmPages)
+      var fpp = pane('pages');
+      fpp.hidden = true;
+      fpp.appendChild(el('p', 'yc-hint yle-intro', 'Your firm\u2019s pages, as you see them. Move, hide or add tiles on each: ' +
+        'your arrangement is yours, and Reset puts the firm\u2019s back. Nothing changes until you Save.'));
+      fpp.appendChild(el('div', 'yle-user-pages'));
+      body.appendChild(fpp);
       var scp = pane('shortcuts');
       scp.hidden = true;
       scp.appendChild(buildShortcutSection());
@@ -1589,18 +1681,19 @@
   // A page's two sections (S6c-5, sf = pageSf(id, part)) take the same markup
   // with no Reset and no "Hidden on this surface" (a page has no base).
   function buildSection(sf) {
-    var pg = pageOf(sf), icons = pg ? pg.part === 'icons' : !!ICON_SF[sf];
+    var pg = pageOf(sf), ov = overOf(sf), icons = pg ? pg.part === 'icons' : !!ICON_SF[gram(sf)];
     var sec = el('section', 'yle-sec' + (pg ? ' yle-page-sec' : ''));
     sec.setAttribute('data-sf', sf);
     var head = el('div', 'yle-sec-head');
     head.appendChild(el('h3', null, sfName(sf)));
     if (!pg) {
       head.appendChild(btn('yle-reset', 'reset', null, 'rotate-left', scope === 'firm' ? 'Reset to standard'
-        : USER_RESET[sf]));
+        : ov ? 'Reset to the firm\u2019s' : USER_RESET[sf]));
     }
     sec.appendChild(head);
     if (pg) sec.appendChild(el('p', 'yc-hint yle-sec-hint', PAGE_PART_HINT[pg.part]));
     else if (scope === 'firm' && FIRM_HINT[sf]) sec.appendChild(el('p', 'yc-hint yle-sec-hint', FIRM_HINT[sf]));
+    else if (ov) sec.appendChild(el('p', 'yc-hint yle-sec-hint', OVER_HINT[ov.part]));
     else if (scope !== 'firm' && USER_HINT[sf]) sec.appendChild(el('p', 'yc-hint yle-sec-hint', USER_HINT[sf]));
     var errs = el('ul', 'yle-errs');
     errs.setAttribute('role', 'alert');
@@ -1611,8 +1704,8 @@
     sec.appendChild(rows);
 
     var adds = el('div', 'yle-adds');
-    adds.appendChild(btn('yle-add', 'pick', null, 'plus', icons ? 'Add a small button' : pg ? 'Add a tile' : 'Add a shortcut'));
-    if (BREAK_SF[sf] || (pg && pg.part === 'tiles')) adds.appendChild(btn('yle-add', 'add-break', null, 'grip-lines', 'Add a row break'));
+    adds.appendChild(btn('yle-add', 'pick', null, 'plus', icons ? 'Add a small button' : pg || ov ? 'Add a tile' : 'Add a shortcut'));
+    if (BREAK_SF[gram(sf)] || (pg && pg.part === 'tiles')) adds.appendChild(btn('yle-add', 'add-break', null, 'grip-lines', 'Add a row break'));
     else if (sf === 'sidebar') adds.appendChild(btn('yle-add', 'label-open', null, 'heading', 'Add a section label'));
     adds.appendChild(el('span', 'yc-hint yle-room'));
     sec.appendChild(adds);
@@ -1637,7 +1730,7 @@
       sec.appendChild(la);
     }
 
-    sec.appendChild(buildPicker(sf, pg ? 'Add to the page' : scope === 'firm' ? 'Add to ' + NAME[sf]
+    sec.appendChild(buildPicker(sf, pg || ov ? 'Add to the page' : scope === 'firm' ? 'Add to ' + NAME[sf]
       : USER_PICK[sf]));
 
     if (!pg) {
@@ -2160,7 +2253,7 @@
       var on = b.kept ? [] : sess.where(b.id), combos = scs.combosOf(b.id), onPages = b.kept ? [] : sess.pagesHolding(b.id);
       if (on.length || combos.length || b.inDrawers.length || onPages.length) {
         var wh = el('span', 'ymb-where');
-        on.forEach(function (sf) { wh.appendChild(el('span', 'yle-tag', 'On ' + ON_NAME[sf])); });
+        on.map(onName).filter(function (n, k, a) { return a.indexOf(n) === k; }).forEach(function (n) { wh.appendChild(el('span', 'yle-tag', 'On ' + n)); });
         onPages.forEach(function (pid) { wh.appendChild(el('span', 'yle-tag', 'On \u201c' + pageLabel(pid) + '\u201d')); });
         b.inDrawers.forEach(function (n) { wh.appendChild(el('span', 'yle-tag', 'In \u201c' + n + '\u201d')); });
         combos.forEach(function (t) { wh.appendChild(el('kbd', 'ysc-kbd', t)); });
@@ -2410,7 +2503,7 @@
   }
   function buttonsChanged() {
     retargetAll();
-    SURFACES.forEach(renderSection);
+    SURFACES.concat(overSurfaces()).forEach(renderSection);
     renderShortcuts();
     renderButtons();   // renders the open arrange box too
     renderStatus();
@@ -2492,7 +2585,7 @@
     var isPg = b.type === 'page';
     if (!on.length && !combos.length && !drawers.length && !onPages.length && !isPg) { go(); return; }
     var where = [];
-    if (on.length) where.push('it’s on your ' + on.map(function (sf) { return ON_NAME[sf]; }).join(' and '));
+    if (on.length) where.push('it’s on your ' + on.map(onName).filter(function (n, k, a) { return a.indexOf(n) === k; }).join(' and '));
     if (onPages.length) where.push((on.length ? '' : 'it’s ') + 'on your page' + (onPages.length > 1 ? 's ' : ' ') + onPages.map(function (p) { return '“' + pageLabel(p) + '”'; }).join(', '));
     if (drawers.length) where.push((on.length || onPages.length ? '' : 'it’s ') + 'in your list' + (drawers.length > 1 ? 's ' : ' ') + drawers.map(function (n) { return '“' + n + '”'; }).join(', '));
     if (combos.length) where.push((on.length || drawers.length || onPages.length ? '' : 'it’s ') + 'bound to ' + combos.join(', '));
@@ -2534,7 +2627,7 @@
     var parts = sess ? sess.dirtyParts() : { surfaces: false, pages: false };
     // a page's tiles are arranged under My buttons (S6c-5): their dot sits there
     var dots = { shortcuts: !!(scs && scs.isDirty()), buttons: !!(its && its.isDirty()) || parts.pages };
-    SURFACES.forEach(function (sf) { if (sess && sess.mode(sf) !== 'stored') dots[USER_PANE_OF[sf]] = true; });
+    SURFACES.concat(overSurfaces()).forEach(function (sf) { if (sess && sess.mode(sf) !== 'stored') dots[paneOf(sf)] = true; });
     if (scope === 'firm') {
       // a firm tab's dot: one of its surfaces differs from what is stored
       dots = {};
@@ -2586,6 +2679,9 @@
       // a page's list (S6c-5): under that page's section when it is built (an open arrange box / the Firm pages pane)
       var pm = key === 'layout' && !hit ? /^pages\.([^.\s]+)\.(tiles|icons)\b/.exec(String(m)) : null;
       if (pm) hit = [null, pageSf(pm[1], pm[2])];
+      // an overlay on a firm page (L4b1): under that page's part
+      var om = key === 'layout' && !hit ? /^overlays\.(firm:[a-z0-9-]+)\.(?:placed|removed)\.(tiles|icons)\b/.exec(String(m)) : null;
+      if (om) hit = [null, overSf(om[1], om[2])];
       if (hit && !secOf(hit[1])) hit = null;   // a surface this panel doesn't show: the banner
       if (hit) {
         var u = secOf(hit[1]).querySelector('.yle-errs');
@@ -2728,6 +2824,7 @@
       case 'reset':
         ask(scope === 'firm'
           ? 'Reset ' + NAME[sf] + ' to the app\u2019s standard layout? The firm\u2019s arrangement of it is replaced when you Save.'
+          : overOf(sf) ? 'Put \u201c' + (overLabels[overOf(sf).id] || overOf(sf).id) + '\u201d back the way your firm arranged it? Your arrangement of it is replaced when you Save.'
           : USER_RESET_ASK[sf],
         'Reset', scope === 'firm' ? 'Keep it' : 'Keep mine').then(function (yes) {
           if (!yes || !sess) return;
@@ -3059,10 +3156,22 @@
     mbArrange = null;
     storedRefs = userIdsIn([storedOf(ui), shortcutsOf(ui)]);
     its = newItemSession(itemsOf(ui));
+    // the firm's pages this user sees (L4b1): two overlay surfaces each, the
+    // firm's lists as their base
+    var fps = firmPagesNow(), flay = firmLayoutOf(ui), fpages = isObj(flay) && isObj(flay.pages) ? flay.pages : {};
+    var obase = {}, osf = [], dl = window.DEFAULT_LAYOUTS || {};
+    for (var dk in dl) if (hasOwn(dl, dk)) obase[dk] = dl[dk];
+    overLabels = {};
+    fps.forEach(function (p) {
+      overLabels[p.id] = p.label;
+      var pd = hasOwn(fpages, p.id) && isObj(fpages[p.id]) ? fpages[p.id] : {};
+      ['tiles', 'icons'].forEach(function (part) { var sf = overSf(p.id, part); osf.push(sf); obase[sf] = isArr(pd[part]) ? pd[part] : []; });
+    });
+    buildUserFirmPages(fps);
     sessOpts = {
-      stored: storedOf(ui), effective: editorEffective(), locked: lockedOf(ui), firm: firmLayoutOf(ui),
-      base: window.DEFAULT_LAYOUTS || {}, registry: window.FEATURE_REGISTRY || {}, groups: editorGroups(),
-      pages: its.pageIds(),
+      stored: storedOf(ui), effective: editorEffective(), locked: lockedOf(ui), firm: flay,
+      base: obase, registry: window.FEATURE_REGISTRY || {}, groups: editorGroups(),
+      pages: its.pageIds(), surfaces: SURFACES.concat(osf),
     };
     sess = session(sessOpts);
     scs = newShortcutSession(shortcutsOf(ui));
@@ -3257,9 +3366,9 @@
       var failedPanes = failed.map(function (k) { return PANE_OF[k]; });
       if (failed.indexOf('layout') >= 0) {
         var errAt = root.querySelector('.yle-sec:not([data-sf="shortcuts"]):not([data-sf="buttons"]) > .yle-errs:not([hidden])');
-        var dirtySf = SURFACES.filter(function (sf) { return sess.mode(sf) !== 'stored'; })[0];
+        var dirtySf = SURFACES.concat(overSurfaces()).filter(function (sf) { return sess.mode(sf) !== 'stored'; })[0];
         failedPanes[failed.indexOf('layout')] = errAt ? errAt.closest('.yle-pane').getAttribute('data-pane')
-          : dirtySf ? USER_PANE_OF[dirtySf] : PANE_OF.layout;
+          : dirtySf ? paneOf(dirtySf) : PANE_OF.layout;
       }
       if (failedPanes.indexOf(paneShown()) < 0) showPane(failedPanes[0]);
       banner(said.join(' '), true);
@@ -3351,6 +3460,26 @@
       h.appendChild(document.createTextNode(' ' + (e ? String(e.label) : id)));
       blk.appendChild(h);
       ['tiles', 'icons'].forEach(function (part) { blk.appendChild(buildSection(pageSf(id, part))); });
+      host.appendChild(blk);
+    });
+  }
+  /** The personal editor's Firm pages tab (L4b1): one block per firm page this
+   *  user sees, its Tiles and Small buttons over the overlay surfaces; the tab
+   *  is hidden when the firm has no page for them. */
+  function buildUserFirmPages(fps) {
+    var host = root.querySelector('.yle-user-pages');
+    if (!host) return;
+    host.textContent = '';
+    var tab = root.querySelector('.yle-tab[data-pane="pages"]');
+    if (tab) tab.hidden = !fps.length;
+    fps.forEach(function (p) {
+      var blk = el('section', 'yle-page-block');
+      blk.setAttribute('data-page', p.id);
+      var h = el('h3', 'yle-page-title');
+      h.appendChild(iconEl(p.icon));
+      h.appendChild(document.createTextNode(' ' + p.label));
+      blk.appendChild(h);
+      ['tiles', 'icons'].forEach(function (part) { blk.appendChild(buildSection(overSf(p.id, part))); });
       host.appendChild(blk);
     });
   }

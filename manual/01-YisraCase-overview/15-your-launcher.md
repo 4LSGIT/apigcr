@@ -34,10 +34,12 @@ catch up to it as the editor opens). If it can't load your layout, it says
 *Couldn't load your current layout; try again* beside the button and doesn't
 open.
 
-The editor has four tabs at the top: **Home** and **Sidebar**, described
-here, **Keyboard shortcuts** (see [Keyboard shortcuts](#keyboard-shortcuts)
-below) and **My buttons** (see [My buttons](#my-buttons) below). A dot on a
-tab means it has unsaved changes.
+The editor has five tabs at the top: **Home** and **Sidebar**, described
+here, **Firm pages** (see [Your firm's pages](#your-firms-pages) below; it
+shows only when your firm has pages you can see), **Keyboard shortcuts** (see
+[Keyboard shortcuts](#keyboard-shortcuts) below) and **My buttons** (see
+[My buttons](#my-buttons) below). A dot on a tab means it has unsaved
+changes.
 
 **Home** has two sections: **Home**, the tiles, and **Home's small
 buttons**, the row of small round buttons under them (up to 12). **Sidebar**
@@ -125,6 +127,27 @@ you've rearranged that surface. You can then move it or hide it like any other.
   If the editor is open in two tabs at once and you save from both, the later
   save replaces the earlier one.
 - While a save is on its way, the editor takes no further changes.
+
+## Your firm's pages
+
+Your firm can make pages of its own: tabs of tiles like More Features (see
+[Firm pages](../05-Subsystems/14-firm-launcher.md#firm-pages)). The firm
+arranges them for everyone, and you can arrange them **for yourself** on the
+**Firm pages** tab. It has one block per page you can see, each with its
+**Tiles** and its **Small buttons**, and works like Home:
+
+- The firm's tiles are your standard items: **Hide** takes one off the page for
+  you (it waits under **Hidden on this surface**, with **Show**), and a tile the
+  firm locked can be moved but not hidden.
+- **↑ / ↓** move a tile, **Add a tile** puts anything you have on the page,
+  **Add a row break** starts a new row, and **×** takes out what you added.
+- **Reset to the firm's** puts that page back the way your firm arranged it
+  (when you Save).
+- When the firm changes a page later, what it adds shows up for you too, next
+  to its neighbour; your own arrangement stays.
+
+Nobody else sees your arrangement of a firm page. Hiding a tile there only
+takes it off that page: it is still in All and Ctrl+K.
 
 ## Reset
 
@@ -491,8 +514,9 @@ arrangement:
   back the firm's arrangement.
 - **Firm pages.** A page your firm made shows as a tab for everyone the firm
   lets see it (**Who sees what**). You can put a firm page on your Home or
-  sidebar, in a list or on your own page, like any item; its tiles are the
-  firm's to arrange.
+  sidebar, in a list or on your own page, like any item. The firm arranges its
+  tiles, and you can rearrange them for yourself (see
+  [Your firm's pages](#your-firms-pages)).
 
 - **Firm hides.** A feature the firm hid is gone from every surface, from your
   layout, from your lists and pages and from **Add a shortcut**. If the firm brings it back, so does your

@@ -466,6 +466,12 @@ async function walk(page, W, record) {
           document.querySelector('#ycLayoutEditor .yle-sec[data-sf="sidebar"] .yle-label-add').scrollIntoView();
         }); await sleep(400);
         await record('tab:tabAll:layout-editor:label', await editorBox(await measure(page, null)), await shot('all_layout_editor_label'));
+        // its Firm pages tab (launcher-nits L4b1, fixtures: the firm page firm:ops): each firm page's
+        // tiles and small buttons as this user arranges them — missing tab = a failure, not a skip
+        const fpTab = await page.evaluate(() => { const b = document.querySelector('#ycLayoutEditor .yle-tab[data-pane="pages"]'); if (b && !b.hidden) { b.click(); return true; } return false; }); await sleep(300);
+        const fpm = await measure(page, null);
+        if (fpTab) await editorBox(fpm); else fpm.boxes = [{ sel: '#ycLayoutEditor Firm pages tab (hidden or missing)', missing: true }];
+        await record('tab:tabAll:layout-editor:firm-pages', fpm, await shot('all_layout_editor_firm_pages'));
         // its Keyboard shortcuts tab (ui-custom S4c, fixtures: ui.user.shortcuts):
         // the list; the add box with its picker; then a feature picked and a
         // refused combo pressed in the keys box (the longest message it draws).

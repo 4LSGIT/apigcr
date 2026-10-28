@@ -594,7 +594,7 @@ describe('3. the panel, firm mode, for real', () => {
     expect(await t.w.ycLayoutEditor.open()).toBe(true);
     await t.flush();
     expect(t.panel().getAttribute('data-scope')).toBe('user');
-    expect([...t.panel().querySelectorAll('.yle-tab')].map((b) => b.getAttribute('data-pane'))).toEqual(['home', 'sidebar', 'shortcuts', 'buttons']);
+    expect([...t.panel().querySelectorAll('.yle-tab')].map((b) => b.getAttribute('data-pane'))).toEqual(['home', 'sidebar', 'pages', 'shortcuts', 'buttons']);
     expect(t.d.querySelectorAll('#ycLayoutEditor')).toHaveLength(1);
     expect(t.names('home').slice(0, 2)).toEqual(['Comms', 'Cases']);
     // while the personal editor is open, the firm mode does not open over it
@@ -764,10 +764,11 @@ describe('6. the personal editor: Home and Sidebar tabs, Home\'s small buttons (
   const secsIn = (pane) => [...t.panel().querySelectorAll(`#ylePane_${pane} .yle-sec`)].map((s) => s.getAttribute('data-sf'));
   const eggs = () => [...t.d.querySelectorAll('#tabHome .home-egg-row .home-egg')].map((b) => b.getAttribute('aria-label'));
 
-  test('four tabs; Home holds the tiles and the small buttons, Sidebar the sidebar; All is "Always here" and can\'t be hidden; Reset per section', async () => {
+  test('the tabs (Firm pages hidden while the firm has none); Home holds the tiles and the small buttons, Sidebar the sidebar; All is "Always here" and can\'t be hidden; Reset per section', async () => {
     t = await boot();
     expect(await userOpen(t)).toBe(true);
-    expect([...t.panel().querySelectorAll('.yle-tab')].map((b) => b.textContent.replace('•', '').trim())).toEqual(['Home', 'Sidebar', 'Keyboard shortcuts', 'My buttons']);
+    expect([...t.panel().querySelectorAll('.yle-tab')].map((b) => b.textContent.replace('•', '').trim())).toEqual(['Home', 'Sidebar', 'Firm pages', 'Keyboard shortcuts', 'My buttons']);
+    expect(t.panel().querySelector('.yle-tab[data-pane="pages"]').hidden).toBe(true);   // the firm has no page (L4b1)
     expect(secsIn('home')).toEqual(['home', 'homeIcons']);
     expect(secsIn('sidebar')).toEqual(['sidebar']);
     expect(t.panel().querySelector('#ylePane_home').hidden).toBe(false);
