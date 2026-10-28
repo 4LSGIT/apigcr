@@ -1600,6 +1600,7 @@ tests/scheduledJobs.doorbell.test.js
 tests/scheduledJobs.sequenceStepGuard.test.js
 tests/schemaCollationBin.test.js
 tests/schemaConventions.test.js
+tests/scratchWritePolicy.test.js
 tests/scriptGuard.setup.js
 tests/scriptGuardCoverage.test.js
 tests/searchRedaction.test.js
