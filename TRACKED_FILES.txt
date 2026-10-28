@@ -857,6 +857,7 @@ scripts/gen_signatures.js
 scripts/hookAsyncReceiverS0.js
 scripts/hookDedupS3.js
 scripts/ingestRuleEditStampAndChangeLog.js
+scripts/launcherC3MoreAdminPages.js
 scripts/mailboxIngestStateComment.js
 scripts/mailboxRepairShellRows.js
 scripts/mobile-survey/README.md
@@ -1482,6 +1483,8 @@ tests/keyScopes.test.js
 tests/keyTasks.mysql.test.js
 tests/keyTasks.test.js
 tests/launcherC1.test.js
+tests/launcherC3.mysql.test.js
+tests/launcherC3.test.js
 tests/launcherS2.test.js
 tests/launcherS31.test.js
 tests/launcherS34.test.js
