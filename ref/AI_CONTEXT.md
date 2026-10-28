@@ -1345,8 +1345,8 @@ the version guard reloads through `window.ycReloadUrl`):
 `?files=c<case_id>|p<contact_id>|b<id>[~rest],…` + `?open=file:<n>` (a file's
 rest lives in its token) or `?open=<mainTabId>[~rest]`. A rest = one
 `~`-joined segment per frame layer, each layer owning its vocabulary (case /
-contact: `data-ws-tab`; comms: email|phone|team; tabMore/tabAdmin and a
-firm page's `firm:<slug>` head (§31): the open drill panel's FEATURE_REGISTRY id; automationManager / caseConfigManager:
+contact: `data-ws-tab`; comms: email|phone|team; tabMore/tabAdmin, a
+firm page's `firm:<slug>` head and the panel tab `tabPanel` (§31): the open drill panel's FEATURE_REGISTRY id; automationManager / caseConfigManager:
 their `SUB_PAGES` id, e.g. `tabMore~moreAutomations~triggers`). Grammar in `public/js/ycSubTab.js`:
 `[A-Za-z0-9_-]{1,32}`, depth ≤4, ≤128, empty = default, invalid → dropped at
 its layer (file/tab kept). Vocabulary or surrogate DB ids ONLY: the URL rides
@@ -2536,7 +2536,13 @@ has no gate — the firm's `visible_to` decides it) − `denied`
 (entitlement_denies, §30) − firm `hidden` − role-restricted (firm
 `visible_to`) + firm items + the user's own buttons ("Mine"), renames applied.
 `ycLauncher.exec(id)` is the ONE programmatic activation (All, Ctrl-K, user
-shortcuts, URL restore) and refuses anything not effective. The All tab +
+shortcuts, URL restore) and refuses anything not effective. It does not need
+a hub tile (launcher-nits C1): a PANEL item opens on the first page that
+shows a tile for it, else on the PANEL TAB (`#tabPanel`, made on first use:
+the page heading and ONE neutral tile for the hosted panel, so the drill
+script, pill strip and URL — `?open=tabPanel~<id>`, restored through exec —
+treat it as a page); the hubs' action items (moreSettings, adminEtch, casey,
+moreAssistant) run their `NO_ELEMENT` call when they have no element. The All tab +
 palette live in `public/js/ycAll.js`, whose single keydown dispatcher also
 runs user shortcuts (the All tab never lists `all` itself; the palette does);
 the personal editor is `public/js/ycLayoutEditor.js` (All > Customize my

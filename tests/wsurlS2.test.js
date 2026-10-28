@@ -561,3 +561,52 @@ describe('launcher-nits L4a — a firm page in the address bar', () => {
     expect(w.ycTakeSubTab($('manFrame'))).toBeNull();
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────
+// launcher-nits C1: the PANEL TAB (a panel no page shows) in the address
+// bar — ?open=tabPanel~<id>[~rest]. Its one tile is the panel it hosts, so
+// the write side is the pages' own; the restore asks exec (no opts.page:
+// exec routes the panel — a page that shows it, else the panel tab).
+describe('launcher-nits C1 — the panel tab in the address bar', () => {
+  const host = (w, id, target) => {
+    const el = w.document.createElement('div');
+    el.id = 'tabPanel'; el.className = 'tab-main yc-hub'; el.style.display = 'none';
+    el.innerHTML = `<h1>X</h1><button class="big-button" data-yc-shortcut="${id}" data-target="${target}">X</button>`;
+    w.document.getElementById('ycPages').before(el);
+    return el;
+  };
+
+  test.each([
+    ['tabPanel', { tab: 'tabHome', rest: '' }],                      // nothing hosted: Home
+    ['tabPanel~moreAutomations', { tab: 'tabPanel', rest: 'moreAutomations' }],
+    ['tabPanel~moreAutomations~workflows~27', { tab: 'tabPanel', rest: 'moreAutomations~workflows~27' }],
+    ['tabPanel~x"><b>', { tab: 'tabHome', rest: '' }],               // an invalid rest: nothing to host
+  ])('?open=%s → %j', (open, want) => {
+    const { w } = shell();
+    expect(JSON.parse(JSON.stringify(w.wsOpenTarget(open)))).toEqual(want);
+  });
+
+  test('written: the hosted panel and its pane\'s rest ride as tabPanel~<id>~<rest>', async () => {
+    const { w, $, tick, lastOpen, showPanel } = shell();
+    host(w, 'moreAutomations', 'automationsDiv');
+    w.enableWorkspaceUrlSync();
+    w.openMainTab('tabPanel');
+    showPanel('automationsDiv', 'tabPanel'); w.syncWorkspaceUrl(); await tick();
+    expect(lastOpen()).toBe('tabPanel~moreAutomations');
+    expect(JSON.parse(JSON.stringify(w.wsFrameOwner($('autoFrame'))))).toEqual({ tab: 'tabPanel', panel: 'moreAutomations' });
+    w.ycReportSubTab($('autoFrame'), 'workflows~27');
+    await tick();
+    expect(lastOpen()).toBe('tabPanel~moreAutomations~workflows~27');
+  });
+
+  test('restored through exec (no page named: exec routes it), its rest held for the pane; refused → Home, nothing held', () => {
+    const { w, $ } = shell();
+    w.FEATURE_REGISTRY = { moreAutomations: { target: 'automationsDiv' }, moreManuals: { target: 'manualsDiv' } };
+    w.openMainTabOnBoot('tabPanel', 'moreAutomations~workflows~27');
+    expect(w.__calls.exec).toEqual(['moreAutomations']);
+    expect(w.ycTakeSubTab($('autoFrame'))).toBe('workflows~27');
+    w.__calls.exec.length = 0; w.__calls.openMainTab.length = 0;
+    w.openMainTabOnBoot('tabPanel', 'adminBogus~x');                  // no such panel: never asked
+    expect([w.__calls.exec, w.__calls.openMainTab]).toEqual([[], ['tabHome']]);
+  });
+});

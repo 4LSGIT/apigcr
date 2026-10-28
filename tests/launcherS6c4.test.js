@@ -297,7 +297,7 @@ describe('3. neutral panel tiles open in place; 4. exec routes by page', () => {
     expect(t.errors).toEqual([]);
   });
 
-  test('a firm-unplaced default tile: exec prefers a page that SHOWS the item; with none, the hidden default still opens its panel (no pill lit)', () => {
+  test('a firm-unplaced default tile: exec prefers a page that SHOWS the item; with none, it opens on the panel tab (launcher-nits C1), its pill lit', () => {
     t.L.applyAccess({ ...SU, ui: ui({ firm: { placed: {
       more: [...placed('more').map((k) => ({ item: k })), { break: true }, { item: 'adminUsers' }],
       admin: placed('admin').filter((k) => k !== 'adminUsers').map((k) => ({ item: k })),
@@ -307,11 +307,11 @@ describe('3. neutral panel tiles open in place; 4. exec routes by page', () => {
     t.w.openMainTab('tabAdmin');
     expect(t.L.exec('adminUsers')).toBe(true);                                                // Admin hides it → More shows it
     expect([t.w.currentMainTabId(), t.onStage(), t.drilled('tabMore')]).toEqual(['tabMore', ['usersDiv'], true]);
-    // nowhere shown: the hidden default on its own page
+    // nowhere shown: the panel tab (C1), not the hidden default on its own page
     t.L.applyAccess({ ...SU, ui: ui({ firm: { placed: { admin: placed('admin').filter((k) => k !== 'adminUsers').map((k) => ({ item: k })) }, removed: { admin: ['adminUsers'] } } }) });
     t.w.openMainTab('tabCases');
     expect(t.L.exec('adminUsers')).toBe(true);
-    expect([t.w.currentMainTabId(), t.onStage(), t.drilled('tabAdmin'), t.activePill('tabAdmin')]).toEqual(['tabAdmin', ['usersDiv'], true, null]);
+    expect([t.w.currentMainTabId(), t.onStage(), t.drilled('tabPanel'), t.activePill('tabPanel'), t.drilled('tabAdmin')]).toEqual(['tabPanel', ['usersDiv'], true, 'usersDiv', false]);
     expect(t.errors).toEqual([]);
   });
 });

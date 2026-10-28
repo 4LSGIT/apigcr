@@ -85,6 +85,9 @@
 //        refuses, not in the effective registry
 //   (p5) staff: the user page shows no su tile (adminUsers, adminDbConsole)
 //        and its strip has no pill for them
+//   (pt1) launcher-nits C1: a panel no page shows (the fixture's adminScratch: off
+//        Admin, on no page) opens on the PANEL TAB, headed with its name, the
+//        URL reading tabPanel~adminScratch; a reload brings it back there
 //   (p6) launcher-nits L4a: a FIRM page IS named — exec('firm:ops') writes
 //        ?open=firm:ops, a panel opened on it firm:ops~<its id>, and a reload
 //        comes back to that page with that panel open on it; ?open=firm:nope
@@ -884,6 +887,23 @@ const activeTab = (page) => page.evaluate(() => window.currentMainTabId());
       check('(p5) staff: the user page draws no su tile and its strip has no su pill',
         !!utab && utiles.length > 3 && !utiles.includes('adminUsers') && !utiles.includes('adminDbConsole') && !upills.includes('usersDiv') && !upills.includes('dbConsoleDiv'),
         JSON.stringify({ utiles, upills }));
+      await ctx.close();
+    }
+
+    {
+      // (pt1) the panel tab (launcher-nits C1)
+      const { page, ctx } = await boot(browser, url, '?open=tabHome');
+      const at = () => page.evaluate(() => ({ cur: currentMainTabId(), open: new URL(location.href).searchParams.get('open'),
+        h1: (document.querySelector('#tabPanel > h1') || {}).textContent || null,
+        stage: [...document.getElementById('ycPanels').children].filter((p) => p.style.display !== 'none').map((p) => p.id),
+        adminDrilled: document.getElementById('tabAdmin').classList.contains('drill-active') }));
+      const ok = await page.evaluate(() => ycLauncher.exec('adminScratch')); await sleep(800);
+      const c = await at();
+      check('(pt1) a panel no page shows opens on the panel tab, headed with its name; the URL names it tabPanel~adminScratch',
+        ok === true && c.cur === 'tabPanel' && c.open === 'tabPanel~adminScratch' && /Scratch \(SU\)/.test(c.h1 || '') && c.stage.join() === 'scratchBrowserDiv' && !c.adminDrilled, JSON.stringify(c));
+      await page.reload({ waitUntil: 'networkidle2' }); await settle(page); await sleep(1000);
+      const r = await at();
+      check('(pt1) …a reload brings it back on the panel tab', r.cur === 'tabPanel' && r.open === 'tabPanel~adminScratch' && r.stage.join() === 'scratchBrowserDiv', JSON.stringify(r));
       await ctx.close();
     }
 

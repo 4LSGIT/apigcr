@@ -1814,7 +1814,14 @@
       // in place, with no tab switch: its onclick is a page call that works
       // from anywhere (toggleMascot, openMainTab('tabAll')), and switching to
       // More to summon the cat would be a visible navigation for nothing.
+      // The hubs' ACTION items (launcher-nits C1) — their tile on More / Admin
+      // is their element while the hubs exist; once a tile is gone (L4b2's
+      // retirement of the hubs) exec runs the same call directly.
       var NO_ELEMENT = {
+        moreSettings: function () { return pageCall('openMainTab', ['tabSettings']); },
+        adminEtch: function () { return pageCall('etchSwal', []); },
+        casey: function () { return pageCall('toggleMascot', []); },
+        moreAssistant: function () { return pageCall('openCasey', [{ expanded: true }]); },
         myTasks: function () {
           var u = window.user;
           return pageCall('openTasksTab', [{ assigned_to: u && u.user, status: 'Incomplete', defer: 'active' }]);
@@ -1844,6 +1851,7 @@
         if ((window.FEATURE_REGISTRY[id] || {}).overlay) {
           var overlayEls = elementsOf(id);
           var overlayEl = overlayEls.more || overlayEls.moreIcons || overlayEls.home || overlayEls.sidebar;
+          if (!overlayEl && hasOwn(NO_ELEMENT, id)) return NO_ELEMENT[id]();
           if (!overlayEl) { warn('exec("' + id + '"): overlay has no rendered element'); return false; }
           overlayEl.click();
           return true;
@@ -1873,10 +1881,21 @@
           var row = m.homeIcons ? 'homeIcons' : m.moreIcons ? 'moreIcons' : m.adminIcons ? 'adminIcons' : null;
           if (row) { m[row].click(); return true; }   // an icon-row button: clicked in place (see NO_ELEMENT)
           if (hasOwn(NO_ELEMENT, id)) return NO_ELEMENT[id]();
+          // a PANEL item with no tile of its own (C1): the page that shows it, else the panel tab
+          if (panelTarget(id)) {
+            var on = gridTileFor(id, null, null, opts && opts.page);
+            return on ? clickTile(on) : openOnPanelTab(id, entry);
+          }
           warn('exec("' + id + '"): no rendered element');
           return false;
         }
         var at = sf === 'home' ? { tab: TAB_OF.home, el: m.home } : gridTileFor(id, m[sf], TAB_OF[sf], opts && opts.page);
+        if (!at) return openOnPanelTab(id, entry);   // its panel, on no page that shows it (C1)
+        return clickTile(at);
+      }
+      // Open a page, then click its tile for the item — unless the panel it
+      // opens is already up there (a panel tile TOGGLES its panel).
+      function clickTile(at) {
         window.openMainTab(at.tab);
         // A panel tile TOGGLES its panel. Arriving from another tab,
         // openMainTab() leaves the page drilled into whatever was open — if
@@ -1892,7 +1911,9 @@
       // user's pages (S6c-5)] that SHOWS one — its default tile `def` (on
       // `home`, when not firm-unplaced) or a neutral panel tile
       // ([data-yc-shortcut=id][data-target], the only neutral kind exec may
-      // click) — else the default tile on its own page, hidden.
+      // click) — else, for an ACTION tile, the default tile on its own page,
+      // hidden (its onclick works from anywhere); for a PANEL, null: no page
+      // shows it, so it opens on the panel tab (launcher-nits C1).
       function gridTileFor(id, def, home, first) {
         var cur = typeof window.currentMainTabId === 'function' ? window.currentMainTabId() : null;
         var pages = [first, cur, TAB_OF.more, TAB_OF.admin].concat(pageTabIds()), seen = {};
@@ -1903,7 +1924,64 @@
           var el = pageTileFor(tabId, id, def, home);
           if (el) return { tab: tabId, el: el };
         }
-        return { tab: home, el: def };
+        return def && !panelTarget(id) ? { tab: home, el: def } : null;
+      }
+      // ── The panel tab (launcher-nits C1, Fred 2026-10-28) ──
+      // Where a panel opens when no page shows a tile for it: the firm took
+      // it off every page (or, once L4b2 retires the hubs, nothing hosts its
+      // default tile). A plain page, made on first use — the page heading
+      // (<i> label <i>) and ONE neutral tile for the panel it hosts — so the
+      // drill script, the pill strip, exec's routing and the WORKSPACE URL
+      // (tabPanel~<id>) treat it as one more page. Never in a layout, never
+      // in the sidebar.
+      var PANEL_TAB = 'tabPanel';
+      /** The registry target (a stage panel id) of a panel item, else null. */
+      function panelTarget(id) {
+        var it = hasOwn(window.FEATURE_REGISTRY || {}, id) ? window.FEATURE_REGISTRY[id] : null;
+        return it && typeof it.target === 'string' && it.target ? it.target : null;
+      }
+      function panelTab() {
+        var el = document.getElementById(PANEL_TAB);
+        if (el) return el;
+        el = document.createElement('div');
+        el.id = PANEL_TAB;
+        el.className = 'tab-main yc-hub';
+        el.style.display = 'none';
+        var h1 = document.createElement('h1');
+        h1.appendChild(document.createElement('i'));
+        h1.appendChild(document.createTextNode(''));
+        h1.appendChild(document.createElement('i'));
+        el.appendChild(h1);
+        var ref = document.getElementById('ycPages') || document.getElementById('ycPanels');
+        if (ref && ref.parentNode) ref.parentNode.insertBefore(el, ref); else document.body.appendChild(el);
+        return el;
+      }
+      function openOnPanelTab(id, entry) {
+        var target = panelTarget(id), panel = target ? document.getElementById(target) : null, stage = document.getElementById('ycPanels');
+        if (!panel || !stage || panel.parentNode !== stage) { warn('exec("' + id + '"): its panel is not on the stage'); return false; }
+        var host = panelTab(), h1 = host.querySelector(':scope > h1'), ic = iconClass(entry.icon);
+        h1.querySelectorAll(':scope > i').forEach(function (i) { if (i.className !== ic) i.className = ic; });
+        setText(h1.childNodes[1], ' ' + entry.label + ' ');
+        var tile = host.querySelector(':scope > .big-button');
+        if (!tile || tile.getAttribute(SHORTCUT_ATTR) !== id) {
+          // another panel: a new tile, and the pill strip (built from the tile) goes with the old one
+          if (tile && typeof window.exitDrillMode === 'function') window.exitDrillMode(host);
+          if (tile) tile.parentNode.removeChild(tile);
+          var strip = host.querySelector(':scope > .feature-strip');
+          if (strip) strip.parentNode.removeChild(strip);
+          tile = document.createElement('button');
+          tile.className = 'big-button';
+          tile.setAttribute(SHORTCUT_ATTR, id);
+          tile.setAttribute('data-target', target);
+          var ti = document.createElement('i');
+          ti.className = iconClass(entry.icon, 'fa-2xl');
+          tile.appendChild(ti);
+          tile.appendChild(document.createElement('br'));
+          tile.appendChild(document.createElement('br'));
+          tile.appendChild(document.createTextNode(String(entry.label)));
+          host.appendChild(tile);
+        }
+        return clickTile({ tab: PANEL_TAB, el: tile });
       }
       function pageTileFor(tabId, id, def, home) {
         var tab = document.getElementById(tabId);
@@ -8544,9 +8622,11 @@ async function initAuth() {
       return Array.from(document.querySelectorAll("#ycPages > .tab-main[data-yc-page]"))
         .filter((el) => WS_FIRM_PAGE_RE.test(el.getAttribute("data-yc-page"))).map((el) => el.id);
     }
-    /** A drill page's surface: the hub's, "page" for a firm page, else null. */
+    /** A drill page's surface: the hub's, "page" for a firm page or the
+     *  panel tab (launcher-nits C1: tabPanel~<id>, its one tile the panel it
+     *  hosts), else null. */
     function wsDrillSurface(tabId) {
-      return WS_DRILL_SURFACE[tabId] || (wsFirmPageId(tabId) ? "page" : null);
+      return WS_DRILL_SURFACE[tabId] || (wsFirmPageId(tabId) || tabId === "tabPanel" ? "page" : null);
     }
 
     /**
@@ -8622,6 +8702,20 @@ async function initAuth() {
       const tab = E(tabId);
       const segs = String(rest || "").split("~");
       const id = segs[0], sub = segs.slice(1).join("~");
+      // the panel tab (C1) has no tile until exec gives it one: exec routes the
+      // panel (to a page that shows it, else this tab); its rest is held for the pane
+      if (tabId === "tabPanel") {
+        if (!id || id.indexOf(":") >= 0 || !L || !L.isReady()) return false;
+        const it = (window.FEATURE_REGISTRY || {})[id];
+        const p = it && typeof it.target === "string" ? E(it.target) : null;
+        const pp = p && p.parentElement === E("ycPanels") ? p.querySelector(":scope > iframe") : null;
+        if (!pp) return false;
+        if (sub) { wsPanelRest[id] = sub; if (window.ycSubTab) ycSubTab.host.hold(pp, sub); }
+        if (L.exec(id) === true) return true;
+        delete wsPanelRest[id];
+        if (window.ycSubTab) ycSubTab.host.take(pp);
+        return false;
+      }
       if (!sf || !tab || !id || id.indexOf(":") >= 0 || !L || !L.isReady()) return false;
       const el = wsPageTile(tab, sf, id, L, true);
       if (!el || !el.hasAttribute("data-target")) return false;
@@ -8665,7 +8759,7 @@ async function initAuth() {
       if (stage && div && div.parentElement === stage) {
         // a drill panel's own pane frame (S4's panes report through this)
         const cur = currentMainTabId();
-        const pages = (wsDrillSurface(cur) ? [cur] : []).concat(Object.keys(WS_DRILL_SURFACE), wsFirmPageTabs()).filter((t, i, a) => a.indexOf(t) === i);
+        const pages = (wsDrillSurface(cur) ? [cur] : []).concat(Object.keys(WS_DRILL_SURFACE), wsFirmPageTabs(), E("tabPanel") ? ["tabPanel"] : []).filter((t, i, a) => a.indexOf(t) === i);
         for (const tabId of pages) {
           const p = wsDrillPanels(tabId).find((x) => x.panel === div);
           if (p) return { tab: tabId, panel: p.id };
@@ -8732,11 +8826,13 @@ async function initAuth() {
       const head = cut < 0 ? raw : raw.slice(0, cut);
       const m = /^file:(\d+)$/.exec(head);
       if (m) return { file: Number(m[1]) };
-      // a firm page by its item id (L4a): its tab is built only when the page is effective for this user
+      const rest = cut < 0 || !window.ycSubTab ? "" : ycSubTab.normalize(raw.slice(cut + 1));
+      // a firm page by its item id (L4a): its tab is built only when the page is effective for this user;
+      // the panel tab (C1) only with the panel it hosts (its restore asks exec, which refuses what isn't yours)
       const tab = WS_FIRM_PAGE_RE.test(head) ? wsFirmPageTabs().find((t) => wsFirmPageId(t) === head) || null
+        : head === "tabPanel" ? (rest ? head : null)
         : wsMainTabAllowed(head) ? head : null;
       if (!tab) return { tab: "tabHome", rest: "" };
-      const rest = cut < 0 || !window.ycSubTab ? "" : ycSubTab.normalize(raw.slice(cut + 1));
       return { tab, rest: rest || "" };
     }
 
@@ -8873,6 +8969,10 @@ async function initAuth() {
           tabSettings: 'Settings', tabAdmin: 'Admin', tabAll: 'All features',
         };
         displayLabel = names[active.tab] || 'Current workspace';
+        if (active.tab === 'tabPanel') {   // the panel tab (launcher-nits C1): the panel's own label
+          const panelItem = window.ycLauncher && ycLauncher.effectiveRegistry().find(function (e) { return e.id === active.rest.split('~')[0]; });
+          if (panelItem) displayLabel = panelItem.label;
+        }
         if (/^firm:/.test(active.tab)) {   // a firm page (launcher-nits L4a): its own label
           const pageItem = window.ycLauncher && ycLauncher.effectiveRegistry().find(function (e) { return e.id === active.tab; });
           if (pageItem) displayLabel = pageItem.label;
@@ -9020,7 +9120,7 @@ async function initAuth() {
      */
     function openMainTabOnBoot(tabId, rest) {
       if (wsDrillSurface(tabId)) {
-        if (!(rest && wsRestoreDrill(tabId, rest))) openMainTab(tabId);
+        if (!(rest && wsRestoreDrill(tabId, rest))) openMainTab(tabId === "tabPanel" ? "tabHome" : tabId);
         return;
       }
       const pane = rest ? E(tabId) && E(tabId).querySelector(":scope > iframe") : null;

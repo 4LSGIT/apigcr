@@ -434,15 +434,15 @@ describe('5. the S6b items: myTasks, logout, casey', () => {
       expect(t.L.exec('nope')).toBe(false);
     });
 
-    test('the dispatch is closed: exactly the unplaced ids, named functions, no eval of the registry string', () => {
+    test('the dispatch is closed: exactly the unplaced ids (and, since launcher-nits C1, the hubs\' four action items), named functions, no eval of the registry string', () => {
       const src = RENDERER_SRC.slice(RENDERER_SRC.indexOf('var NO_ELEMENT = {'), RENDERER_SRC.indexOf('function exec(id, opts) {'));
       expect(src.length).toBeGreaterThan(100);
-      expect([...src.matchAll(/^ {8}(\w+): function/gm)].map((m) => m[1])).toEqual(EXTRAS);
+      expect([...src.matchAll(/^ {8}(\w+): function/gm)].map((m) => m[1])).toEqual(['moreSettings', 'adminEtch', 'casey', 'moreAssistant', ...EXTRAS]);
       expect(src).not.toMatch(/\beval\b|new Function|\.onclick|setTimeout\(\s*['"`]/);
       expect(src).toMatch(/pageCall\('openTasksTab'/);
       expect(src).toMatch(/pageCall\('confirmLogout'/);
       expect(src).toMatch(/pageCall\('openCodeBox'/);
-      expect(src).not.toMatch(/pageCall\('toggleMascot'/);   // casey has an element since S6c
+      expect(src).toMatch(/casey: function \(\) \{ return pageCall\('toggleMascot', \[\]\); \}/);   // C1: used only once casey has no element
       // a registry item with an onclick of its own but no element is not run from it
       t.w.eval('FEATURE_REGISTRY.qaOrphan = { label: "QA", icon: "bug", onclick: "__calls.push([\\"orphan\\"])" };');
       t.L.applyAccess(ACCESS);

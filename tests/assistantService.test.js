@@ -110,6 +110,8 @@ describe('assistant read-plan boundary', () => {
       const ok = (() => { try { svc.normalizeWorkspaceContext(ctx(head)); return true; } catch (e) { expect(e.message).toMatch(/unavailable workspace tab/); return false; } })();
       expect([head, ok]).toEqual([head, FIRM_ID_RE.test(head)]);
     }
+    // the panel tab (launcher-nits C1): a panel no page shows
+    expect(svc.normalizeWorkspaceContext(ctx('tabPanel~adminUsers')).active).toEqual({ kind: 'workspace', tab: 'tabPanel', rest: 'adminUsers' });
   });
 
   test('workspace entity ids are checked before the model sees them', async () => {

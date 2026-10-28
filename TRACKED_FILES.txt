@@ -1479,6 +1479,7 @@ tests/keyScopes.mysql.test.js
 tests/keyScopes.test.js
 tests/keyTasks.mysql.test.js
 tests/keyTasks.test.js
+tests/launcherC1.test.js
 tests/launcherS2.test.js
 tests/launcherS31.test.js
 tests/launcherS34.test.js

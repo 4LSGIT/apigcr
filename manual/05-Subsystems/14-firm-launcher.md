@@ -188,6 +188,10 @@ panel you had open on it, and so does a link to it: the address bar names the
 page by its item's id (`?open=firm:payroll`). Each person's own pages are not
 named there, so a reload on one of those lands on Home.
 
+A panel you leave on **no** page (taken off More Features, Admin and every
+firm page) is still in **All** and **Ctrl+K**: it opens on a tab of its own,
+headed with its name, and a reload or a link brings it back there.
+
 ## Who sees what
 
 The second section decides who sees each launcher item. It lists every item —

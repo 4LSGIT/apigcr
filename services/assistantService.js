@@ -71,6 +71,7 @@ const WORKSPACE_TABS = new Set([
   'tabHome', 'tabCases', 'tabContacts', 'tabAppts', 'tabCalendar', 'tabEvents',
   'tabTasks', 'tabComms', 'tabLogs', 'tabBills', 'tabPipeline', 'tabMore',
   'tabSettings', 'tabAdmin', 'tabAll',
+  'tabPanel',   // the panel tab (launcher-nits C1): a panel no page shows, ?open=tabPanel~<id>
 ]);
 // A firm page's head (launcher-nits L4a): its firm item id — lib/uiConfigShape.js FIRM_ID_RE.
 const WORKSPACE_FIRM_PAGE_RE = /^firm:[a-z0-9-]{1,40}$/;
