@@ -31,9 +31,10 @@ mistake that for completion of the operational program. The following remain
 open before wider rollout or before the higher-impact families that depend on
 them:
 
-- P0: a controlled live multi-round dependency-read test and a staff-fixture
-  smoke test spanning Task, Event, Appointment, and contact-subrecord review,
-  cancellation, success, history restoration, and canonical open-record behavior;
+- P0: a staff-fixture smoke test spanning Task, Event, Appointment, and
+  contact-subrecord review, cancellation, success, history restoration, and
+  canonical open-record behavior (the live multi-round dependency-read test
+  passed 2026-10-28 — see the Read-loop release gate section);
 - P1/P2/P3: decide when to extract the closed registries/review components,
   complete the permission matrix, and extend stale-review protection beyond
   the row-version/current-primary checks already shipped with A5;
@@ -188,14 +189,21 @@ readers can coexist in one investigation. It does not exercise the evidence →
 missing fact → follow-up read loop: the result reported one round and stopped
 with `model_finished`.
 
-Before wider production rollout of reviewed actions, run one live dependency
-test whose second lookup cannot be formed until the first result is known. This
-is still open; the deterministic action suites do not close it. A suitable
-prompt is:
+The gate is CLOSED: run live 2026-10-28 and passed (chat 51 — 2 rounds,
+3 steps; round 2 read contacts/cases by the phone number round 1's comms
+search returned, a value the prompt never contained; citations from both
+rounds; the answer hedges the phone-only identification). The test prompt
+anchored on a street address ("a Seven Mile address") that appears in exactly
+one transcript. The lesson from the first, non-probative attempt stands for
+any rerun: the prompt must not contain the party's name or number — a round's
+steps are planned before any result is seen, so a leaked identifier lets the
+model form every query from the prompt text and finish in one round. A
+rerun's prompt shape:
 
-> Search phone and voicemail for the most recent mention of Mike's
-> Construction. Using only the party returned by that search—not my open
-> workspace—identify the matching contact and summarize their open cases.
+> Search phone and voicemail for the most recent call that mentions
+> [distinctive non-party phrase]. Using only what that search returns — not
+> my open workspace — identify the client on the call, find their matching
+> contact record, and summarize their open cases.
 
 Pass conditions:
 
@@ -2097,7 +2105,8 @@ are gates before higher-impact families. None creates a general Casey executor.
 
 #### P0: Close current release gates
 
-Run the controlled multi-round dependency-read test described above. Add a
+The controlled multi-round dependency-read test ran live and passed 2026-10-28
+(the Read-loop release gate section records the run). Still open: a
 staff-fixture smoke test for shipped Task, Event, Appointment, and contact-
 subrecord review, cancellation, success, history restoration, and canonical
 open-record behavior. Record the known repository-wide stale-test baseline
