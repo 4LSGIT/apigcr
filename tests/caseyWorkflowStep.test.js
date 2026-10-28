@@ -241,6 +241,15 @@ describe('P13 — the workspace context names the open automation record', () =>
     expect(seq.automation).toEqual({ kind: 'sequence_template', id: 5 });
   });
 
+  test('launcher-nits C2: keyed on the rest under every drill head — a firm page (More is firm:more after L4b2), the panel tab, Admin — never another tab\'s vocabulary', () => {
+    for (const head of ['firm:more', 'firm:ops', 'tabPanel', 'tabAdmin']) {
+      expect([head, normalizeWorkspaceContext(ctx(head + '~moreAutomations~workflows~27')).automation]).toEqual([head, { kind: 'workflow', id: 27 }]);
+    }
+    expect(normalizeWorkspaceContext(ctx('tabPanel~moreAutomations~sequences~5')).automation).toEqual({ kind: 'sequence_template', id: 5 });
+    expect(normalizeWorkspaceContext(ctx('tabTasks~moreAutomations~workflows~27')).automation).toBeUndefined();
+    expect(normalizeWorkspaceContext(ctx('tabComms~moreAutomations~workflows~27')).automation).toBeUndefined();
+  });
+
   test('no record segment, other sub-tabs, and other tabs derive nothing', () => {
     expect(normalizeWorkspaceContext(ctx('tabMore~moreAutomations~workflows')).automation).toBeUndefined();
     expect(normalizeWorkspaceContext(ctx('tabMore~moreAutomations~triggers~9')).automation).toBeUndefined();

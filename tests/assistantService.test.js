@@ -114,6 +114,18 @@ describe('assistant read-plan boundary', () => {
     expect(svc.normalizeWorkspaceContext(ctx('tabPanel~adminUsers')).active).toEqual({ kind: 'workspace', tab: 'tabPanel', rest: 'adminUsers' });
   });
 
+  test('tabMore and tabAdmin stay workspace tabs after the hubs are retired (launcher-nits C2 / L4b2 / C4) — do not "clean them up"', () => {
+    // Old signed tickets (validateTicket re-normalizes their canonical_url) and
+    // browser tabs that have not reloaded since the hubs went still carry these
+    // heads: dropping either turns every Casey send from such a tab into a 400.
+    // The shell resolves them client-side as aliases (index.html WS_HUB_ALIAS).
+    const ctx = (open) => ({ v: 1, canonical_url: '/?open=' + encodeURIComponent(open), files: [],
+      active: { kind: 'workspace', tab: open.split('~')[0], rest: open.split('~').slice(1).join('~') } });
+    for (const open of ['tabMore', 'tabMore~moreAutomations~workflows~27', 'tabAdmin', 'tabAdmin~adminUsers']) {
+      expect([open, svc.normalizeWorkspaceContext(ctx(open)).active.tab]).toEqual([open, open.split('~')[0]]);
+    }
+  });
+
   test('workspace entity ids are checked before the model sees them', async () => {
     const db = { query: jest.fn().mockResolvedValueOnce([[]]) };
     await expect(svc.validateWorkspaceContext(db, WORKSPACE)).rejects.toThrow(/case that is unavailable/);

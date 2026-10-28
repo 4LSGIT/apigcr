@@ -275,6 +275,7 @@ function realShell() {
     ${pick(/var wsPanelRest = \{\};/)}
     ${pick(/var WS_DRILL_SURFACE = \{[^}]*\};/)}
     ${pick(/var WS_FIRM_PAGE_RE = [^;\n]*;/)}
+    ${pick(/var WS_HUB_ALIAS = \{[^}]*\};/)}
     ${['wsFirmPageId', 'wsFirmPageTabs', 'wsDrillSurface', 'wsDrillPanels', 'wsPageTile', 'wsOpenPanel', 'wsTabRest', 'wsRestoreDrill', 'wsSetFileRest', 'wsFrameOwner',
       'wsOpenTarget', 'wsMainTabAllowed', 'currentOpenFilesUrl', 'openMainTabOnBoot'].map((n) => fnSrc(SHELL, n)).join('\n')}
     ${assignedFnSrc(SHELL, 'ycReportSubTab')}

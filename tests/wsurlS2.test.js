@@ -126,6 +126,7 @@ function shell({ su = true, denied = [] } = {}) {
     ${pick(/var wsPanelRest = \{\};/)}
     ${pick(/var WS_DRILL_SURFACE = \{[^}]*\};/)}
     ${pick(/var WS_FIRM_PAGE_RE = [^;\n]*;/)}
+    ${pick(/var WS_HUB_ALIAS = \{[^}]*\};/)}
     ${['wsFirmPageId', 'wsFirmPageTabs', 'wsDrillSurface', 'wsDrillPanels', 'wsPageTile', 'wsOpenPanel', 'wsTabRest', 'wsRestoreDrill', 'wsSetFileRest', 'wsFrameOwner',
       'wsOpenTarget', 'wsMainTabAllowed', 'currentOpenFilesUrl', 'openMainTabOnBoot'].map((n) => fnSrc(SHELL, n)).join('\n')}
     ${assignedFnSrc(SHELL, 'ycReportSubTab')}
@@ -608,5 +609,41 @@ describe('launcher-nits C1 — the panel tab in the address bar', () => {
     w.__calls.exec.length = 0; w.__calls.openMainTab.length = 0;
     w.openMainTabOnBoot('tabPanel', 'adminBogus~x');                  // no such panel: never asked
     expect([w.__calls.exec, w.__calls.openMainTab]).toEqual([[], ['tabHome']]);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// launcher-nits C2: once the hubs are gone (L4b2), an old ?open=tabMore… /
+// tabAdmin… is an ALIAS — the firm page that replaced the hub (firm:more /
+// firm:admin), else, with its panel named, the panel tab (exec routes it).
+// While the hub is here, nothing changes.
+describe('launcher-nits C2 — tabMore / tabAdmin as aliases once the hubs are gone', () => {
+  const asMore = (w) => { w.document.getElementById('ycPage-1').setAttribute('data-yc-page', 'firm:more'); };
+  const noHubs = (w) => { w.document.getElementById('tabMore').remove(); w.document.getElementById('tabAdmin').remove(); };
+
+  test('with the hub here: tabMore is tabMore', () => {
+    const { w } = shell();
+    asMore(w);
+    expect(JSON.parse(JSON.stringify(w.wsOpenTarget('tabMore~moreAutomations')))).toEqual({ tab: 'tabMore', rest: 'moreAutomations' });
+  });
+
+  test('hub gone, firm:more built: tabMore… opens firm:more with the rest; tabAdmin… (no firm:admin) the panel tab, or Home with nothing named', () => {
+    const { w } = shell();
+    asMore(w); noHubs(w);
+    expect(JSON.parse(JSON.stringify(w.wsOpenTarget('tabMore~moreAutomations~workflows~27')))).toEqual({ tab: 'ycPage-1', rest: 'moreAutomations~workflows~27' });
+    expect(JSON.parse(JSON.stringify(w.wsOpenTarget('tabMore')))).toEqual({ tab: 'ycPage-1', rest: '' });
+    expect(JSON.parse(JSON.stringify(w.wsOpenTarget('tabAdmin~adminUsers')))).toEqual({ tab: 'tabPanel', rest: 'adminUsers' });
+    expect(JSON.parse(JSON.stringify(w.wsOpenTarget('tabAdmin')))).toEqual({ tab: 'tabHome', rest: '' });
+  });
+
+  test('hub gone, no firm:more page (the firm deleted it): tabMore~<panel> → the panel tab; restored through exec', () => {
+    const { w, $ } = shell();
+    noHubs(w);
+    w.FEATURE_REGISTRY = { moreAutomations: { target: 'automationsDiv' } };
+    const at = w.wsOpenTarget('tabMore~moreAutomations~workflows~27');
+    expect(JSON.parse(JSON.stringify(at))).toEqual({ tab: 'tabPanel', rest: 'moreAutomations~workflows~27' });
+    w.openMainTabOnBoot(at.tab, at.rest);
+    expect(w.__calls.exec).toEqual(['moreAutomations']);
+    expect(w.ycTakeSubTab($('autoFrame'))).toBe('workflows~27');
   });
 });

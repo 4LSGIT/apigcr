@@ -566,7 +566,16 @@ function normalizeWorkspaceContext(raw) {
   // because the browser builds `active` itself and the equality check above
   // compares the two byte for byte. Existence is verified by
   // validateWorkspaceContext on the plan path, like cases and contacts.
-  if (active.kind === 'workspace' && active.tab === 'tabMore') {
+  // Keyed on the REST, not the head (launcher-nits C2): the Automations panel
+  // may be open on More (tabMore~…), on a firm page (firm:<slug>~…, L4a) or on
+  // the panel tab (tabPanel~…, C1) — and once More is a firm page (L4b2) the
+  // live head is firm:more. No head is rewritten anywhere: P13 sees the head
+  // the browser's canonical URL carries — any head whose first rest segment
+  // is a drill panel's id (the hubs, a firm page, the panel tab), never
+  // another tab's own vocabulary.
+  const drillHead = active.kind === 'workspace'
+    && (active.tab === 'tabMore' || active.tab === 'tabAdmin' || active.tab === 'tabPanel' || WORKSPACE_FIRM_PAGE_RE.test(active.tab));
+  if (drillHead) {
     const auto = /^moreAutomations~(workflows|sequences)~(\d{1,10})$/.exec(active.rest);
     if (auto) {
       normalized.automation = {

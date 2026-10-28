@@ -454,7 +454,9 @@ body. Governing migrations in `ref/migrations/`.*
   Automations manager (`ycSubRecordChanged`) into the workspace URL
   (`open=tabMore~moreAutomations~workflows~27`); `assistantService`
   derives and verifies `workspace.automation {kind, id, label}` (403 on a
-  dead id, like a dead case file). The segment also restores the open record
+  dead id, like a dead case file). Keyed on the REST under any drill head —
+  tabMore, tabAdmin, tabPanel or a firm page `firm:<slug>` (launcher-nits C2:
+  More becomes the firm page firm:more) — never under another tab's head. The segment also restores the open record
   on reload via the existing deep-link boot path.
 - **Court NEF dedupe + quiet empty-pool cancel (10-13):** `court_extract`
   claims sha256(normWs(subject)+'\n'+normWs(body)) in `court_email_hashes`
@@ -1358,7 +1360,11 @@ for the dedup refocus. The shell accepts only a file's / main tab's own pane
 frame or a drill panel's direct iframe (not Swal / tool dialogs), shows only
 the ACTIVE view's rest, and never opens anything on a report. `?open=`'s head
 must be a tab the effective registry offers (`wsMainTabAllowed`, after
-applyAccess; else Home); a drill panel reopens ONLY via `ycLauncher.exec(id,
+applyAccess; else Home — Settings by its own item `moreSettings`, launcher-nits
+C2); once a hub tab is gone (L4b2) `tabMore` / `tabAdmin` are ALIASES
+(`WS_HUB_ALIAS`): the firm page `firm:more` / `firm:admin`, else, with a panel
+named, the panel tab — resolved client-side only, the server never rewrites a
+head (`WORKSPACE_TABS` keeps both, for old links and signed tickets); a drill panel reopens ONLY via `ycLauncher.exec(id,
 { page })`, for a plain registry id whose tile ON THAT PAGE has `data-target`
 — its default tile, or a neutral the firm placed there (S6c-4: `tabMore~
 adminUsers` reopens Users on More) — never action/dialog tiles, firm-unplaced

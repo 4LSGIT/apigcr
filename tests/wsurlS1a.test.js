@@ -225,6 +225,7 @@ function shell() {
     ${pick(/var wsPanelRest = \{\};/)}
     ${pick(/var WS_DRILL_SURFACE = \{[^}]*\};/)}
     ${pick(/var WS_FIRM_PAGE_RE = [^;\n]*;/)}
+    ${pick(/var WS_HUB_ALIAS = \{[^}]*\};/)}
     ${['wsFirmPageId', 'wsFirmPageTabs', 'wsDrillSurface', 'wsDrillPanels', 'wsPageTile', 'wsOpenPanel', 'wsTabRest', 'wsRestoreDrill'].map((n) => fnSrc(SHELL, n)).join('\n')}
     ${fnSrc(SHELL, 'wsSetFileRest')}
     ${fnSrc(SHELL, 'wsFrameOwner')}
@@ -348,6 +349,7 @@ describe('shell ?open= — wsOpenTarget / wsMainTabAllowed (fail closed)', () =>
       comms: { sidebar: el({ tab: 'tabComms' }) },
       moreFeatures: { sidebar: el({ tab: 'tabMore', tabAlso: 'tabSettings' }) },
       moreManuals: { more: el({}) },
+      moreSettings: { more: el({}) },                       // undeniable: always effective; it opens tabSettings (C2)
       'firm:x': {},                                         // firm items have no element
     };
     // ui-custom S6c: tabAdmin follows the Admin PAGE item (`admin`), not a tile on its grid
@@ -365,7 +367,7 @@ describe('shell ?open= — wsOpenTarget / wsMainTabAllowed (fail closed)', () =>
     ['tabCases~x', { tab: 'tabCases', rest: 'x' }],
     ['tabComms~a~b~c', { tab: 'tabComms', rest: 'a~b~c' }],
     ['tabComms~x"><b>', { tab: 'tabComms', rest: '' }],     // invalid rest dropped, tab kept
-    ['tabSettings', { tab: 'tabSettings', rest: '' }],       // via data-tab-also
+    ['tabSettings', { tab: 'tabSettings', rest: '' }],       // by its own item, moreSettings (launcher-nits C2)
     ['tabMore', { tab: 'tabMore', rest: '' }],               // via a More tile
     ['tabAll', { tab: 'tabAll', rest: '' }],
     ['tabHome', { tab: 'tabHome', rest: '' }],
@@ -414,6 +416,16 @@ describe('shell ?open= — wsOpenTarget / wsMainTabAllowed (fail closed)', () =>
     expect(u.searchParams.get('files')).toBe('cABCD2345~documents,p1405');   // the files still ride
     show('tabCases');
     expect(new w.URL(w.currentOpenFilesUrl()).searchParams.get('open')).toBe('tabCases');
+  });
+
+  test('launcher-nits C2: Settings restores by its own item — with More\'s row gone (L4b2) too', () => {
+    const { w } = shell();
+    launcher(w);
+    const base = w.ycLauncher.effectiveRegistry;
+    w.ycLauncher.effectiveRegistry = () => base().filter((it) => it.id !== 'moreFeatures');
+    expect(w.wsMainTabAllowed('tabSettings')).toBe(true);
+    w.ycLauncher.effectiveRegistry = () => base().filter((it) => it.id !== 'moreFeatures' && it.id !== 'moreSettings');
+    expect(w.wsMainTabAllowed('tabSettings')).toBe(false);                 // fail closed: no item opens it
   });
 
   test('launcher not ready → Home for everything but Home', () => {

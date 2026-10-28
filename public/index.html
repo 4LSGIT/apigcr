@@ -7976,7 +7976,7 @@ async function initAuth() {
       // 2026-10-16); each Admin tile carries its route's gate in the registry,
       // so the effective registry below decides both — #sbAdmin follows it.
       const isAdmin = String(user.roles || "").split(",").includes("su");
-      E("sbAdmin").style.display = "none";
+      if (E("sbAdmin")) E("sbAdmin").style.display = "none";
 
       Toast.fire({
         icon: "success",
@@ -7994,7 +7994,7 @@ async function initAuth() {
       // effective — never from a role test of its own.
       try {
         const eff = ycLauncher.applyAccess({ isAdmin, denied: window.firmData.denied, ui: window.firmData.ui, roles: String(user.roles || "").split(",").map(r => r.trim()).filter(Boolean) });
-        E("sbAdmin").style.display = eff.some(e => e.id === 'admin') ? "" : "none";
+        if (E("sbAdmin")) E("sbAdmin").style.display = eff.some(e => e.id === 'admin') ? "" : "none";
       } catch (err) { console.error('[ycLauncher] applyAccess failed:', err); }
 
       tasksBadgeRefresh();   // sidebar Tasks badge (fire-and-forget)
@@ -8176,7 +8176,7 @@ async function initAuth() {
       try {
         E("appSidebar").style.display = "none";
         E("hdrUserArea").style.display = "none";
-        E("sbAdmin").style.display = "none";
+        if (E("sbAdmin")) E("sbAdmin").style.display = "none";
         E("myNameIs").innerHTML = "";
       } catch (_) { }
 
@@ -8611,6 +8611,9 @@ async function initAuth() {
      *  Fred's ruling Q4, stands for them); its panel is remembered
      *  (wsPanelRest) but synced only once a named page shows it. */
     var WS_FIRM_PAGE_RE = /^firm:[a-z0-9-]{1,40}$/;   // lib/uiConfigShape.js FIRM_ID_RE
+    /** The firm pages that replace the hubs (L4b2's data step creates them): an old
+     *  ?open=tabMore… / tabAdmin… names them once the hub tab is gone (C2). */
+    var WS_HUB_ALIAS = { tabMore: "firm:more", tabAdmin: "firm:admin" };
     /** The firm page item a tab shows, or null (a hub, a user page, anything else). */
     function wsFirmPageId(tabId) {
       const el = tabId ? E(tabId) : null;
@@ -8828,8 +8831,13 @@ async function initAuth() {
       if (m) return { file: Number(m[1]) };
       const rest = cut < 0 || !window.ycSubTab ? "" : ycSubTab.normalize(raw.slice(cut + 1));
       // a firm page by its item id (L4a): its tab is built only when the page is effective for this user;
-      // the panel tab (C1) only with the panel it hosts (its restore asks exec, which refuses what isn't yours)
-      const tab = WS_FIRM_PAGE_RE.test(head) ? wsFirmPageTabs().find((t) => wsFirmPageId(t) === head) || null
+      // the panel tab (C1) only with the panel it hosts (its restore asks exec, which refuses what isn't yours);
+      // tabMore / tabAdmin once the hubs are gone (L4b2): an ALIAS for the firm page that replaced it, else
+      // — its panel named — the panel tab (exec routes it), so old links and bookmarks keep working (C2)
+      const alias = WS_HUB_ALIAS[head] && !E(head)
+        ? (wsFirmPageTabs().find((t) => wsFirmPageId(t) === WS_HUB_ALIAS[head]) || (rest ? "tabPanel" : null)) : undefined;
+      const tab = alias !== undefined ? alias
+        : WS_FIRM_PAGE_RE.test(head) ? wsFirmPageTabs().find((t) => wsFirmPageId(t) === head) || null
         : head === "tabPanel" ? (rest ? head : null)
         : wsMainTabAllowed(head) ? head : null;
       if (!tab) return { tab: "tabHome", rest: "" };
@@ -8861,7 +8869,9 @@ async function initAuth() {
       const L = window.ycLauncher;
       if (!L || typeof L.isReady !== "function" || !L.isReady()) return false;
       if (id === "tabAll") return true;
-      const pageItem = { tabMore: "moreFeatures", tabAdmin: "admin" }[id];   // (inside: tests extract this function alone)
+      // a tab its own item opens (inside: tests extract this function alone). Settings by
+      // moreSettings, not by More's row's data-tab-also: More goes in L4b2 (launcher-nits C2)
+      const pageItem = { tabMore: "moreFeatures", tabAdmin: "admin", tabSettings: "moreSettings" }[id];
       if (pageItem) return L.effectiveRegistry().some((it) => it.id === pageItem);
       return L.effectiveRegistry().some((it) => {
         const m = L.elementsOf(it.id) || {};
@@ -8977,7 +8987,8 @@ async function initAuth() {
           const pageItem = window.ycLauncher && ycLauncher.effectiveRegistry().find(function (e) { return e.id === active.tab; });
           if (pageItem) displayLabel = pageItem.label;
         }
-        if (active.tab === 'tabMore' && /^moreAutomations(?:~courtReview)?$/.test(active.rest)) {
+        // by the rest, whatever page shows Automations (More, a firm page, the panel tab — C2)
+        if (/^moreAutomations(?:~courtReview)?$/.test(active.rest)) {
           displayLabel = active.rest.endsWith('~courtReview') ? 'Automations → Court Review' : 'Automations';
         }
       }

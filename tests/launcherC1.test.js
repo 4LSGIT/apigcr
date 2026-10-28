@@ -162,3 +162,13 @@ describe('launcher-nits C1 — exec with no hub tiles', () => {
     expect([t.w.currentMainTabId(), t.onStage(), t.$('#tabPanel')]).toEqual(['tabHome', [], null]);
   });
 });
+
+// launcher-nits C2: the Admin hub's sidebar row (#sbAdmin) goes with the hub
+// in L4b2 — every write to it is guarded, or login throws before applyAccess.
+describe('launcher-nits C2 — no write to #sbAdmin without its element', () => {
+  test('each E("sbAdmin") use is guarded', () => {
+    const uses = [...RAW.matchAll(/E\("sbAdmin"\)\.style/g)].map((m) => RAW.slice(Math.max(0, m.index - 20), m.index));
+    expect(uses.length).toBeGreaterThanOrEqual(3);
+    for (const before of uses) expect(before).toMatch(/if \(E\("sbAdmin"\)\) $/);
+  });
+});

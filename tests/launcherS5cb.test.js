@@ -69,6 +69,7 @@ const CURRENT_SRC = fnSrc('currentMainTabId');
 const WS_SRC = [pick(/const YC_LABEL_KEY = "ycFileLabels";/), pick(/var wsMainRest = \{\};/), pick(/var wsPanelRest = \{\};/),
   pick(/var WS_DRILL_SURFACE = \{[^}]*\};/),
   pick(/var WS_FIRM_PAGE_RE = [^;\n]*;/),
+  pick(/var WS_HUB_ALIAS = \{[^}]*\};/),
   ...['wsFirmPageId', 'wsFirmPageTabs', 'wsDrillSurface', 'wsDrillPanels', 'wsOpenPanel', 'wsTabRest', 'wsSetFileRest', 'wsOpenTarget', 'wsMainTabAllowed', 'currentOpenFilesUrl'].map(fnSrc)].join('\n');
 const HIDE_CSS = RAW.match(/<style>\[data-yc-denied\][^<]*<\/style>/)[0];
 

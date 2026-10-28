@@ -112,6 +112,18 @@ describe('Ask Casey sidebar host', () => {
     expect(w.ycAssistantContext().display_label).toBe('Current workspace');
   });
 
+  test('launcher-nits C2: the Automations / Court Review chip reads the rest, under any drill head', () => {
+    const dom = new JSDOM('<!doctype html><body><div id="tabOpenFiles"></div></body>', { url: 'https://app.test/', runScripts: 'outside-only' });
+    const w = dom.window;
+    w.ycSubTab = { normalize: (rest) => rest };
+    w.ycLauncher = { effectiveRegistry: () => [{ id: 'firm:more', label: 'More Features' }, { id: 'moreAutomations', label: 'Automations' }] };
+    w.eval(assignedFnSrc(SHELL, 'ycAssistantContext'));
+    for (const [open, label] of [['firm%3Amore~moreAutomations~courtReview', 'Automations → Court Review'], ['tabPanel~moreAutomations', 'Automations'], ['tabMore~moreAutomations~courtReview', 'Automations → Court Review']]) {
+      w.currentOpenFilesUrl = () => 'https://app.test/?open=' + open;
+      expect([open, w.ycAssistantContext().display_label]).toEqual([open, label]);
+    }
+  });
+
   test('workspace URL synchronization refreshes the long-lived assistant chip', () => {
     const sync = fnSrc(SHELL, 'syncWorkspaceUrl');
     expect(sync).toContain('history.replaceState(null, "", currentOpenFilesUrl())');
