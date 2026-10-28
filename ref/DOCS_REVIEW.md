@@ -1,8 +1,9 @@
-# Docs Review — standing prompt (weekly, Cowork)
+# Docs Review — standing prompt (when Fred asks, Cowork)
 
 Run from the local apigcr clone (git history required — GitHub's API is
-rate-limited from Claude egress IPs, and tarballs carry no history). Skip a
-week only if the debt queue is empty AND no arcs closed.
+rate-limited from Claude egress IPs, and tarballs carry no history). It does
+not run on a schedule: between runs each arc fixes its own doc debt
+(CLAUDE.md, Living documentation).
 
 ## State
 `fred/docs_review_state` in scratch holds

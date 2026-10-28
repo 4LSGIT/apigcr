@@ -20,8 +20,8 @@ Reference material that lives next to the code. Three tiers:
 - `AI_CONTEXT.md` — deep context for AI sessions. Read its CURRENCY header
   first: §0 carries the newest deltas and OVERRIDES the body sections where
   they conflict, so a section found by grep alone can be out of date.
-- `DOCS_REVIEW.md` — the weekly procedure that keeps `AI_CONTEXT.md` and
-  `manual/` honest. Its input is the doc-debt queue in scratch `ns=docs`.
+- `DOCS_REVIEW.md` — the full review that keeps `AI_CONTEXT.md` and
+  `manual/` honest, run when Fred asks. Its input is the doc-debt queue in scratch `ns=docs`.
 - Design contracts still canonical for shipped subsystems:
   `FORM_TEMPLATE_SCHEMA_V1.md`, `EXTERNAL_FORMS_DESIGN.md`,
   `EXTERNAL_CODE_CSS_DECISION.md`, `UNIFIED_EVENTS_DESIGN_V0_5.md`,

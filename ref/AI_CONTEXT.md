@@ -14,8 +14,8 @@
 <!-- mailbox / court-parser entries stay until their arcs close (tier 2);    -->
 <!-- §0 entries with no numbered section wait for the sections above.        -->
 <!-- Doc-debt queue: scratch ns=docs. File doc≠code divergences there at    -->
-<!-- discovery; the weekly docs review (DOCS_REVIEW.md) drains it and       -->
-<!-- updates this block.                                                     -->
+<!-- discovery; each arc fixes its own before it closes (CLAUDE.md,         -->
+<!-- Living documentation). A DOCS_REVIEW.md run, on request, updates this. -->
 <!-- ============================================ -->
 
 ## 0. RECENT DELTAS AWAITING A SECTION HOME
