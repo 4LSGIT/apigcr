@@ -155,9 +155,8 @@ Quo can refuse the archive one line's items while every other line works
 section below shows it). Those items wait, re-checked once a day, and turn
 `failed` 30 days after they were first found. A `failed` item is never tried
 again on its own, so once Quo confirms the line is fixed, re-arm its items from
-the SU DB console. Line 248-965-5355 (phone line id 3) has been refused since
-2026-10-14, so its items turn `failed` from about 2026-11-13; for another line,
-change `channel_id`.
+the SU DB console. The examples use phone line id 3; for another line, change
+`channel_id`.
 
 First check what will be re-armed, and read the counts:
 
@@ -178,9 +177,8 @@ UPDATE comms_media
 ```
 
 - **Re-arm only after Quo has fixed the line.** Once an item is 30 days past
-  when it was first found (from about 2026-11-13 for these), a re-armed item
-  gets ONE try. Anything that would otherwise make it wait — refused again
-  (403), an answer in an unexpected shape, a recording still processing, a
+  when it was first found, a re-armed item gets ONE try. Anything that would
+  otherwise make it wait — refused again (403), an answer in an unexpected shape, a recording still processing, a
   voicemail still in progress — turns it `failed` on that try, not after 30
   more days.
 - **A voicemail Quo answers "not found" (404) becomes `none` at once**: its
@@ -191,7 +189,15 @@ UPDATE comms_media
   needs IT.
 - Never widen the `WHERE`. It must not reach `archived`, `none` or `gone`
   items, other lines or RingCentral, and above all never `purged` items — a
-  re-armed purged item would be fetched back into the archive.
+  re-armed purged item would be fetched back into the archive. The check
+  below re-arms by id, not by widening it.
+- **The same fault can also answer "not found".** While Quo refused line
+  248-965-5355 (2026-10-14 to 10-28), it also answered 404 for 11 recordings
+  and one voicemail that did exist. Those turned `none`, out of reach of the
+  re-arm above. After a fix, IT checks the line's `none` items against Quo
+  and re-arms, by id, only the ones Quo now returns. On 2026-10-28 that
+  brought back all 11 recordings and the voicemail; the other 93 voicemails
+  were real "no voicemail" answers.
 
 ### Health — System Alerts → Comms archive (SU)
 
