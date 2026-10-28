@@ -449,12 +449,12 @@ describe('3. the panel, firm mode, for real', () => {
     expect(t.toasts).toEqual(['Couldn’t load the firm’s arrangement; try again.']);
   });
 
-  test('opens on four tabs (Firm pages joined in S6c-5) and seven surface sections; More lists the grid then the firm row (tagged Firm); All is "Always here"; nothing to save', async () => {
+  test('opens on five tabs (Firm pages joined in S6c-5, Home / Sidebar split in launcher-nits L1) and seven surface sections; More lists the grid then the firm row (tagged Firm); All is "Always here"; nothing to save', async () => {
     t = await boot({ store: await seedClio(makeStore()) });
     expect(await firmOpen(t)).toBe(true);
     expect(t.panel().getAttribute('data-scope')).toBe('firm');
     expect(t.d.getElementById('yleTitle').textContent.trim()).toBe('Arrange pages and defaults for everyone');
-    expect([...t.panel().querySelectorAll('.yle-tab')].map((b) => b.getAttribute('data-pane'))).toEqual(['home', 'more', 'admin', 'pages']);
+    expect([...t.panel().querySelectorAll('.yle-tab')].map((b) => b.getAttribute('data-pane'))).toEqual(['home', 'sidebar', 'more', 'admin', 'pages']);
     expect([...t.panel().querySelectorAll('.yle-sec')].map((s) => s.getAttribute('data-sf'))).toEqual(['home', 'homeIcons', 'sidebar', 'more', 'moreIcons', 'admin', 'adminIcons']);
     expect(t.panel().querySelector('#ylePane_home').hidden).toBe(false);
     expect(t.panel().querySelector('#ylePane_more').hidden).toBe(true);
@@ -594,7 +594,7 @@ describe('3. the panel, firm mode, for real', () => {
     expect(await t.w.ycLayoutEditor.open()).toBe(true);
     await t.flush();
     expect(t.panel().getAttribute('data-scope')).toBe('user');
-    expect([...t.panel().querySelectorAll('.yle-tab')].map((b) => b.getAttribute('data-pane'))).toEqual(['layout', 'shortcuts', 'buttons']);
+    expect([...t.panel().querySelectorAll('.yle-tab')].map((b) => b.getAttribute('data-pane'))).toEqual(['home', 'sidebar', 'shortcuts', 'buttons']);
     expect(t.d.querySelectorAll('#ycLayoutEditor')).toHaveLength(1);
     expect(t.names('home').slice(0, 2)).toEqual(['Comms', 'Cases']);
     // while the personal editor is open, the firm mode does not open over it
@@ -749,5 +749,108 @@ describe('5. the All tab does not list All itself; Ctrl-K and exec keep it', () 
     t.w.openMainTab('tabHome');
     expect(t.L.exec('all')).toBe(true);
     expect(t.w.currentMainTabId()).toBe('tabAll');
+  });
+});
+
+// ── 6. the personal editor's Home and Sidebar tabs (launcher-nits L1) ─────
+// Home and Sidebar are two tabs, and Home's tab holds the user's own icon row
+// (homeIcons — the server took it since S6c; the editor passed it through
+// unseen). Real service + store, the real shell's mounts.
+describe('6. the personal editor: Home and Sidebar tabs, Home\'s small buttons (launcher-nits L1)', () => {
+  let t;
+  afterEach(() => t && t.close());
+  const userOpen = async (t, o) => { const ok = await t.w.ycLayoutEditor.open(o); await t.flush(); return ok; };
+  const dot = (id) => !t.panel().querySelector(`.yle-tab[data-pane="${id}"] .yle-tab-dot`).hidden;
+  const secsIn = (pane) => [...t.panel().querySelectorAll(`#ylePane_${pane} .yle-sec`)].map((s) => s.getAttribute('data-sf'));
+  const eggs = () => [...t.d.querySelectorAll('#tabHome .home-egg-row .home-egg')].map((b) => b.getAttribute('aria-label'));
+
+  test('four tabs; Home holds the tiles and the small buttons, Sidebar the sidebar; All is "Always here" and can\'t be hidden; Reset per section', async () => {
+    t = await boot();
+    expect(await userOpen(t)).toBe(true);
+    expect([...t.panel().querySelectorAll('.yle-tab')].map((b) => b.textContent.replace('•', '').trim())).toEqual(['Home', 'Sidebar', 'Keyboard shortcuts', 'My buttons']);
+    expect(secsIn('home')).toEqual(['home', 'homeIcons']);
+    expect(secsIn('sidebar')).toEqual(['sidebar']);
+    expect(t.panel().querySelector('#ylePane_home').hidden).toBe(false);
+    expect(t.panel().querySelector('#ylePane_sidebar').hidden).toBe(true);
+    expect(t.sec('homeIcons').querySelector('h3').textContent).toBe('Home’s small buttons');
+    expect(t.sec('homeIcons').querySelector('.yle-sec-hint').textContent).toMatch(/up to 12\)\. All always stays here/);
+    expect(t.sec('homeIcons').querySelector('[data-act="pick"]').textContent).toBe('Add a small button');
+    expect(t.sec('homeIcons').querySelector('[data-act="add-break"]')).toBe(null);
+    expect(t.sec('homeIcons').querySelector('.yle-reset').textContent).toBe('Reset small buttons to default');
+    expect(t.names('homeIcons')).toEqual(['All']);
+    const all = t.rowNamed('homeIcons', 'All');
+    expect(all.querySelector('.yle-tag').textContent).toBe('Always here');
+    expect(all.querySelector('[data-act="hide"]').disabled).toBe(true);
+    expect(await userOpen(t, { section: 'sidebar' })).toBe(true);           // already open: switches tab
+    expect(t.panel().querySelector('#ylePane_sidebar').hidden).toBe(false);
+    t.click(t.panel().querySelector('.yle-cancel'));
+    await t.flush();
+    expect(await userOpen(t, { section: 'layout' })).toBe(true);            // the old tab name: Home
+    expect(t.panel().querySelector('#ylePane_home').hidden).toBe(false);
+  });
+
+  test('a small button added on Home lights Home only; Save stores placed.homeIcons (the real validator) and the shell\'s icon row draws it with no reload; Reset clears that section only', async () => {
+    const store = makeStore();
+    t = await boot({ store });
+    await userOpen(t);
+    t.click(t.sec('homeIcons').querySelector('[data-act="pick"]'));
+    t.click(t.sec('homeIcons').querySelector('.yle-pick-item[data-id="casey"]'));
+    expect(t.names('homeIcons')).toEqual(['All', 'Casey']);
+    t.click(t.rowNamed('homeIcons', 'Casey').querySelector('[data-act="up"]'));
+    expect([dot('home'), dot('sidebar')]).toEqual([true, false]);
+    t.click(t.rowNamed('sidebar', 'Cases').querySelector('[data-act="down"]'));
+    expect([dot('home'), dot('sidebar')]).toEqual([true, true]);
+    await t.save();
+    const puts = t.api.calls.filter((c) => c.method === 'PUT');
+    expect(puts.map((p) => [p.body.scope, p.body.config_key])).toEqual([['user', 'layout']]);
+    const stored = store.doc('user', 1, 'layout');
+    expect(stored.placed.homeIcons).toEqual([{ item: 'casey' }, { item: 'all' }]);
+    expect(Object.keys(stored.placed).sort()).toEqual(['homeIcons', 'sidebar']);
+    expect(shape.validate('user', 'layout', stored).ok).toBe(true);
+    expect(t.w.ycLayoutEditor.isOpen()).toBe(false);
+    expect(eggs()).toEqual(['Casey', 'All features']);
+    // Reset small buttons: asks, then deletes homeIcons only — the sidebar keeps the user's order
+    await userOpen(t);
+    t.click(t.sec('homeIcons').querySelector('[data-act="reset"]'));
+    await t.flush();
+    expect(t.asked.slice(-1)).toEqual(['Reset Home’s small buttons to the standard ones? Your arrangement of them is replaced when you Save.']);
+    expect([dot('home'), dot('sidebar')]).toEqual([true, false]);
+    await t.save();
+    const after = store.doc('user', 1, 'layout');
+    expect(after.placed.homeIcons).toBeUndefined();
+    expect(after.removed.homeIcons).toBeUndefined();
+    expect(after.placed.sidebar).toEqual(stored.placed.sidebar);
+    expect(eggs()).toEqual(['All features']);
+  });
+
+  test('a button among Home\'s small buttons is tagged so in My buttons, and its delete prompt names that row (not "sidebar")', async () => {
+    const store = makeStore();
+    const svc = require('../services/uiConfigService');
+    const USER = { type: 'jwt', userId: 1, roles: ['admin'] };
+    await svc.write(store.db, { scope: 'user', config_key: 'items', config: { items: [{ id: 'user:leads', label: 'Leads', icon: 'star', action: { type: 'url', href: 'https://example.com/', present: 'window' } }] } }, USER);
+    await svc.write(store.db, { scope: 'user', config_key: 'layout', config: { placed: { homeIcons: [{ item: 'user:leads' }, { item: 'all' }] } } }, USER);
+    t = await boot({ store });
+    expect(eggs()).toEqual(['Leads', 'All features']);
+    await userOpen(t, { section: 'buttons' });
+    const row = t.panel().querySelector('.ymb-row');
+    expect([...row.querySelectorAll('.yle-tag')].map((x) => x.textContent)).toContain('On Home’s small buttons');
+    t.answer(false);
+    t.click(row.querySelector('[data-act="mb-del"]'));
+    await t.flush();
+    expect(t.asked.slice(-1)[0]).toMatch(/^Delete “Leads”\? Note: it’s on your Home’s small buttons\. Deleting it takes it off there too\./);
+  });
+
+  test('a refused layout save opens the tab its message is under', async () => {
+    t = await boot();
+    await userOpen(t);
+    t.click(t.rowNamed('sidebar', 'Cases').querySelector('[data-act="down"]'));
+    t.tab('buttons');
+    const realApi = t.w.apiSend;
+    t.w.apiSend = (url, method, body) => (method === 'PUT'
+      ? Promise.reject(Object.assign(new Error('Invalid ui config'), { status: 400, body: { status: 'error', errors: ['placed.sidebar[0]: refused'] } }))
+      : realApi(url, method, body));
+    await t.save();
+    expect(t.panel().querySelector('#ylePane_sidebar').hidden).toBe(false);
+    expect([...t.sec('sidebar').querySelectorAll('.yle-errs li')].map((l) => l.textContent)).toEqual(['placed.sidebar[0]: refused']);
   });
 });

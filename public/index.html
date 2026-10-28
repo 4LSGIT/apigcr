@@ -3420,11 +3420,13 @@
     #ycLayoutEditor .yle-sec-hint { margin: 0 0 6px; overflow-wrap: anywhere; }
     #ycLayoutEditor .yle-conflict { margin: 0 0 8px; }
     #ycLayoutEditor .yle-conflict[hidden] { display: none; }
-    /* Its tabs (S4c; My buttons is the third, S5a) and the Keyboard shortcuts tab (S4c). The strip sits
-       between the head and the scrolling body (flex: 0 0 auto, like them). */
-    #ycLayoutEditor .yle-tabs { flex: 0 0 auto; display: flex; gap: 4px; padding: 8px 16px 0; border-bottom: 1px solid var(--border); }
+    /* Its tabs (S4c; My buttons, S5a; Home and Sidebar apart, launcher-nits L1) and the Keyboard
+       shortcuts tab (S4c). The strip sits between the head and the scrolling body (flex: 0 0 auto, like
+       them). It wraps: a tab never shrinks below its longest word (no min-width: 0), so five firm tabs
+       at 320px take a second line instead of drawing over each other. */
+    #ycLayoutEditor .yle-tabs { flex: 0 0 auto; display: flex; flex-wrap: wrap; gap: 4px; padding: 8px 16px 0; border-bottom: 1px solid var(--border); }
     #ycLayoutEditor .yle-tab {
-      flex: 0 1 auto; min-width: 0; margin-bottom: -1px; border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+      flex: 0 1 auto; margin-bottom: -1px; border-radius: var(--radius-sm) var(--radius-sm) 0 0;
       border-color: transparent; background: transparent; white-space: normal; text-align: left;
     }
     #ycLayoutEditor .yle-tab.active { border-color: var(--border); border-bottom-color: var(--surface); background: var(--surface); font-weight: 600; }

@@ -98,11 +98,12 @@ refer to — it gets `firm:payroll-2` instead.
 
 **Arrange pages and defaults…** (at the top of the Launcher section) opens the
 arrangement editor over the app: a card on a computer, the whole screen on a
-phone. It has four tabs:
+phone. It has five tabs:
 
 | Tab | What it arranges |
 |---|---|
-| **Home & sidebar** | The **Home** tiles, the small buttons under them, and the **sidebar** that everyone starts from. |
+| **Home** | The **Home** tiles and the small buttons under them that everyone starts from. |
+| **Sidebar** | The **sidebar** that everyone starts from. |
 | **More Features** | The More Features page: its tiles, where a row breaks, where your firm items sit, and the small buttons under the tiles (Casey's paw). |
 | **Admin** | The Admin page: its tiles, rows and small buttons. |
 | **Firm pages** | Each of the firm's own pages: its tiles and its small buttons (see [Firm pages](#firm-pages)). |

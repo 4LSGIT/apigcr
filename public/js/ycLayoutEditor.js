@@ -1,5 +1,6 @@
 /* public/js/ycLayoutEditor.js — "Customize my launcher": each user's own Home
- * and sidebar layout editor (ui-custom S4b).
+ * and sidebar layout editor (ui-custom S4b; Home and Sidebar are two tabs
+ * since launcher-nits L1).
  *
  * Opened from the All tab's "Customize my launcher" button (#ycAllCustomize):
  * All is mandatory chrome, so the way to undo a layout is always there (PLAN
@@ -12,11 +13,11 @@
  *
  * What it edits: the user's ui_config `layout` document (scope user; grammar:
  * lib/uiConfigShape.js), as the S4a contract has it —
- *   { placed: { home?: [entry…], sidebar?: [entry…] },
- *     removed: { home?: [id…], sidebar?: [id…] } }
- * The document's third surface, homeIcons (Home's icon row, ui-custom S6c),
- * has no section here yet (S6c-3): its placed / removed lists ride through a
- * save untouched (PASS below), so saving Home never drops them.
+ *   { placed: { home?: [entry…], homeIcons?: [entry…], sidebar?: [entry…] },
+ *     removed: { home?: [id…], homeIcons?: [id…], sidebar?: [id…] } }
+ * homeIcons is Home's icon row (ui-custom S6c): the Home tab's "Home's small
+ * buttons" section (launcher-nits L1), up to 12, All always in it
+ * (GUARANTEED: it moves, it can't be hidden).
  * It never merges anything itself. Every list it shows is
  * ycLauncher.resolveLayout(surface, { base: DEFAULT_LAYOUTS[surface], user,
  * effective, locked }) over the surface's working state — the ONE merge the
@@ -60,7 +61,7 @@
  * (theme.css tokens; id-scoped, so it outranks style.css's global input and
  * dark-theme button rules on specificity, never on load order).
  *
- * Keyboard shortcuts (ui-custom S4c): the panel's second tab. The user's
+ * Keyboard shortcuts (ui-custom S4c): the tab after Home and Sidebar. The user's
  * ui_config `shortcuts` document, { bindings: [ { combo, id } ] } — a combo
  * captured by pressing it in the "Keys" box, bound to an item picked from the
  * effective registry (the same picker as Home / sidebar, firm items
@@ -77,7 +78,7 @@
  * rebuilds ycAll's shortcut map (its 'ycLauncherAccess' listener).
  *
  *
- * My buttons (ui-custom S5a): the panel's third tab. The user's ui_config
+ * My buttons (ui-custom S5a): the panel's last tab. The user's ui_config
  * `items` document, { items: [ { id, label, icon, action } ] } — their own
  * buttons, the firm item grammar with user:<slug> ids (lib/uiConfigShape.js):
  * a saved view or a tool (opening in the tool dialog, Large or Compact, or —
@@ -89,7 +90,7 @@
  * /api/ui-config/pickers, read the first time the tab shows. Ids come from the
  * name (user:<slug>), unique against every button, the ids the user's layout
  * and shortcuts name, and the server's retired list; a saved button's id never
- * changes. While the panel is open the other two tabs work from an effective
+ * changes. While the panel is open the other tabs work from an effective
  * registry with the EDITED buttons in it (editorEffective), so a new button
  * can be placed and bound before it is saved; deleting a button drops its
  * placements and bindings in the same session (it asks first when it has
@@ -142,8 +143,8 @@
  * pages tab: one block per firm item of kind page, from the catalogue, with
  * its Tiles and Small buttons sections over `layout.pages['firm:…']`;
  * open({ scope:'firm', section:'pages', page }) lands on one block, which is
- * firm.html's "Arrange its tiles…" on a saved Page item) — four tabs
- * (FIRM_PANES). Same session core and rules as above, with the firm's document as
+ * firm.html's "Arrange its tiles…" on a saved Page item) — five tabs
+ * (FIRM_PANES: Home, Sidebar, More Features, Admin, Firm pages). Same session core and rules as above, with the firm's document as
  * the edited layer over the shipped DEFAULT_LAYOUTS; nothing is locked
  * against the firm itself, except All in Home's icon row (GUARANTEED). The
  * catalogue: the shell's computeEffective as a superuser sees it with the
@@ -168,8 +169,9 @@
  *   pass?, seed?, pages? } — see session().
  *   shortcutSession(o) is the Keyboard shortcuts tab's, itemSession(o) My
  *   buttons': see there.
- *   open({ section: 'shortcuts' | 'buttons' }) opens on that tab (default: the layout);
- *   open({ scope: 'firm', section?: 'home' | 'more' | 'admin' | 'pages', page?, from? }) the firm mode.
+ *   open({ section: 'home' | 'sidebar' | 'shortcuts' | 'buttons' }) opens on that tab (default:
+ *   Home — so does any other name, 'layout', the tab's name before L1, included);
+ *   open({ scope: 'firm', section?: 'home' | 'sidebar' | 'more' | 'admin' | 'pages', page?, from? }) the firm mode.
  */
 (function () {
   'use strict';
@@ -184,12 +186,11 @@
     return;
   }
 
-  var SURFACES = ['home', 'sidebar'];
-  // Surfaces of the user layout this editor does not show (ui-custom S6c:
-  // Home's icon row — the firm mode arranges the firm's; a user's own has no
-  // section yet): their lists are written back as stored, so a save never
-  // drops them. { item } entries only, as the server has it.
-  var PASS = ['homeIcons'];
+  var SURFACES = ['home', 'homeIcons', 'sidebar'];   // lib/uiConfigShape.js LAYOUT_SURFACES
+  // Surfaces of the user layout this editor does not show: their lists are
+  // written back as stored, so a save never drops them. None since
+  // launcher-nits L1 gave Home's icon row its section.
+  var PASS = [];
   // The firm's layout (S6c-3): every surface (lib/uiConfigShape.js FIRM_LAYOUT_SURFACES).
   var FIRM_SURFACES = ['home', 'sidebar', 'homeIcons', 'more', 'moreIcons', 'admin', 'adminIcons'];
   var BREAK_SF = { home: true, more: true, admin: true };              // lib/uiConfigShape.js BREAK_SURFACES
@@ -627,8 +628,8 @@
           return { group: g, items: list.filter(function (e) { return e.group === g; }).map(function (e) { return entryView(sf, e); }) };
         }).filter(function (g) { return g.items.length; });
       },
-      /** The surfaces an id is visible on: ['home'?, 'sidebar'?] (the
-       *  session's surfaces, in order). */
+      /** The surfaces an id is visible on: ['home'?, 'homeIcons'?, 'sidebar'?]
+       *  (the session's surfaces, in order). */
       where: function (id) {
         return SFS.filter(function (sf) { return !!visibleIds(resolved(sf))[id]; });
       },
@@ -1374,7 +1375,8 @@
   var pickersState = 'idle';   // 'idle' | 'loading' | 'ok' | 'failed' — per opening
   var opening = 0;          // bumps on every show(): a late picker reply for an old opening is dropped
   var mbForm = null;        // the button form while it is open: { i } (-1 = a new one)
-  var PANES = ['layout', 'shortcuts', 'buttons'];
+  var PANES = ['home', 'sidebar', 'shortcuts', 'buttons'];
+  var USER_PANE_OF = { home: 'home', homeIcons: 'home', sidebar: 'sidebar' };   // a surface's tab
   var KEYS = (window.ycAll && window.ycAll.keys) || null;
   // The firm mode (S6c-3): the panel is built for ONE scope at a time —
   // 'user' (Customize my launcher) or 'firm' — and rebuilt when the other
@@ -1383,8 +1385,11 @@
   var firmBase;             // the firm mode's base: firm_versions.layout at open (null = no row; undefined = not told → none sent)
   var firmFrom = null;      // what opened the firm mode (a reload keeps it)
   var FIRM_PANES = [
-    { id: 'home', label: 'Home & sidebar', icon: 'house', surfaces: ['home', 'homeIcons', 'sidebar'],
-      intro: 'What everyone\u2019s Home and sidebar start from. Someone who has arranged their own keeps their arrangement; ' +
+    { id: 'home', label: 'Home', icon: 'house', surfaces: ['home', 'homeIcons'],
+      intro: 'What everyone\u2019s Home starts from. Someone who has arranged their own keeps their arrangement; ' +
+        'what you add here is added for them too, next to its neighbour.' },
+    { id: 'sidebar', label: 'Sidebar', icon: 'bars', surfaces: ['sidebar'],
+      intro: 'What everyone\u2019s sidebar starts from. Someone who has arranged their own keeps their arrangement; ' +
         'what you add here is added for them too, next to its neighbour.' },
     { id: 'more', label: 'More Features', icon: 'grip', surfaces: ['more', 'moreIcons'],
       intro: 'The More Features page for everyone: the tiles left to right, a row break starts a new row. Your firm\u2019s own items go wherever you put them.' },
@@ -1401,6 +1406,15 @@
     tiles: 'The page\u2019s big tiles, left to right; a row break starts a new row. A panel opens on the page itself; anything else opens where it always does.',
     icons: 'The small round buttons under the tiles (up to 12).',
   };
+  var ON_NAME = { home: 'Home', homeIcons: 'Home\u2019s small buttons', sidebar: 'sidebar' };   // where a button is (My buttons' tags, the delete prompt)
+  var USER_RESET = { home: 'Reset Home to default', homeIcons: 'Reset small buttons to default', sidebar: 'Reset sidebar to default' };
+  var USER_RESET_ASK = {
+    home: 'Reset Home to the standard layout? Your Home arrangement is replaced when you Save.',
+    homeIcons: 'Reset Home\u2019s small buttons to the standard ones? Your arrangement of them is replaced when you Save.',
+    sidebar: 'Reset the sidebar to the standard layout? Your sidebar arrangement is replaced when you Save.',
+  };
+  var USER_PICK = { home: 'Add a shortcut to Home', homeIcons: 'Add a small button to Home', sidebar: 'Add a shortcut to the sidebar' };
+  var USER_HINT = { homeIcons: 'The small round buttons under your Home tiles (up to 12). All always stays here: you can move it, not hide it.' };
   var FIRM_HINT = {
     homeIcons: 'The small round buttons under the Home tiles. All always stays here.',
     moreIcons: 'The small round buttons under the More Features tiles (Casey\u2019s paw).',
@@ -1421,7 +1435,7 @@
   }
   function paneOf(sf) {
     if (pageOf(sf)) return scope === 'firm' ? 'pages' : 'buttons';
-    if (scope !== 'firm') return PANE_OF[sf] || (SURFACES.indexOf(sf) >= 0 ? 'layout' : sf);
+    if (scope !== 'firm') return PANE_OF[sf] || USER_PANE_OF[sf] || sf;
     for (var i = 0; i < FIRM_PANES.length; i++) if (FIRM_PANES[i].surfaces.indexOf(sf) >= 0) return FIRM_PANES[i].id;
     return FIRM_PANES[0].id;
   }
@@ -1479,7 +1493,7 @@
     var tabs = el('div', 'yle-tabs');
     tabs.setAttribute('role', 'tablist');
     var tabList = firm ? FIRM_PANES.map(function (p) { return [p.id, p.label, p.icon]; })
-      : [['layout', 'Home & sidebar', 'table-cells'], ['shortcuts', 'Keyboard shortcuts', 'keyboard'], ['buttons', 'My buttons', 'star']];
+      : [['home', 'Home', 'house'], ['sidebar', 'Sidebar', 'bars'], ['shortcuts', 'Keyboard shortcuts', 'keyboard'], ['buttons', 'My buttons', 'star']];
     tabList.forEach(function (t) {
       var b = btn('yle-tab', 'tab', null, t[2], t[1]);
       b.setAttribute('data-pane', t[0]);
@@ -1522,12 +1536,15 @@
         body.appendChild(p);
       });
     } else {
-      var lay = pane('layout');
-      lay.appendChild(el('p', 'yc-hint yle-intro',
-        'Arrange your own Home tiles and sidebar. Nothing changes until you Save. ' +
-        'Hiding an item only takes its shortcut away: All and Ctrl+K still list every feature you have.'));
-      SURFACES.forEach(function (sf) { lay.appendChild(buildSection(sf)); });
-      body.appendChild(lay);
+      [['home', 'Arrange your own Home tiles and the small buttons under them.'],
+        ['sidebar', 'Arrange your own sidebar.']].forEach(function (u, i) {
+        var lay = pane(u[0]);
+        lay.hidden = i > 0;
+        lay.appendChild(el('p', 'yc-hint yle-intro', u[1] + ' Nothing changes until you Save. ' +
+          'Hiding an item only takes its shortcut away: All and Ctrl+K still list every feature you have.'));
+        SURFACES.forEach(function (sf) { if (USER_PANE_OF[sf] === u[0]) lay.appendChild(buildSection(sf)); });
+        body.appendChild(lay);
+      });
       var scp = pane('shortcuts');
       scp.hidden = true;
       scp.appendChild(buildShortcutSection());
@@ -1576,11 +1593,12 @@
     head.appendChild(el('h3', null, sfName(sf)));
     if (!pg) {
       head.appendChild(btn('yle-reset', 'reset', null, 'rotate-left', scope === 'firm' ? 'Reset to standard'
-        : sf === 'home' ? 'Reset Home to default' : 'Reset sidebar to default'));
+        : USER_RESET[sf]));
     }
     sec.appendChild(head);
     if (pg) sec.appendChild(el('p', 'yc-hint yle-sec-hint', PAGE_PART_HINT[pg.part]));
     else if (scope === 'firm' && FIRM_HINT[sf]) sec.appendChild(el('p', 'yc-hint yle-sec-hint', FIRM_HINT[sf]));
+    else if (scope !== 'firm' && USER_HINT[sf]) sec.appendChild(el('p', 'yc-hint yle-sec-hint', USER_HINT[sf]));
     var errs = el('ul', 'yle-errs');
     errs.setAttribute('role', 'alert');
     errs.hidden = true;
@@ -1617,7 +1635,7 @@
     }
 
     sec.appendChild(buildPicker(sf, pg ? 'Add to the page' : scope === 'firm' ? 'Add to ' + NAME[sf]
-      : 'Add a shortcut to ' + (sf === 'home' ? 'Home' : 'the sidebar')));
+      : USER_PICK[sf]));
 
     if (!pg) {
       var hw = el('div', 'yle-hidden-wrap');
@@ -2139,7 +2157,7 @@
       var on = b.kept ? [] : sess.where(b.id), combos = scs.combosOf(b.id), onPages = b.kept ? [] : sess.pagesHolding(b.id);
       if (on.length || combos.length || b.inDrawers.length || onPages.length) {
         var wh = el('span', 'ymb-where');
-        on.forEach(function (sf) { wh.appendChild(el('span', 'yle-tag', sf === 'home' ? 'On Home' : 'On sidebar')); });
+        on.forEach(function (sf) { wh.appendChild(el('span', 'yle-tag', 'On ' + ON_NAME[sf])); });
         onPages.forEach(function (pid) { wh.appendChild(el('span', 'yle-tag', 'On \u201c' + pageLabel(pid) + '\u201d')); });
         b.inDrawers.forEach(function (n) { wh.appendChild(el('span', 'yle-tag', 'In \u201c' + n + '\u201d')); });
         combos.forEach(function (t) { wh.appendChild(el('kbd', 'ysc-kbd', t)); });
@@ -2442,7 +2460,7 @@
     var isPg = b.type === 'page';
     if (!on.length && !combos.length && !drawers.length && !onPages.length && !isPg) { go(); return; }
     var where = [];
-    if (on.length) where.push('it’s on your ' + on.map(function (sf) { return sf === 'home' ? 'Home' : 'sidebar'; }).join(' and '));
+    if (on.length) where.push('it’s on your ' + on.map(function (sf) { return ON_NAME[sf]; }).join(' and '));
     if (onPages.length) where.push((on.length ? '' : 'it’s ') + 'on your page' + (onPages.length > 1 ? 's ' : ' ') + onPages.map(function (p) { return '“' + pageLabel(p) + '”'; }).join(', '));
     if (drawers.length) where.push((on.length || onPages.length ? '' : 'it’s ') + 'in your list' + (drawers.length > 1 ? 's ' : ' ') + drawers.map(function (n) { return '“' + n + '”'; }).join(', '));
     if (combos.length) where.push((on.length || drawers.length || onPages.length ? '' : 'it’s ') + 'bound to ' + combos.join(', '));
@@ -2483,7 +2501,8 @@
     root.querySelector('.yle-save').disabled = (!dirty && !Object.keys(labelErr).length && !mbForm) || saving;
     var parts = sess ? sess.dirtyParts() : { surfaces: false, pages: false };
     // a page's tiles are arranged under My buttons (S6c-5): their dot sits there
-    var dots = { layout: parts.surfaces, shortcuts: !!(scs && scs.isDirty()), buttons: !!(its && its.isDirty()) || parts.pages };
+    var dots = { shortcuts: !!(scs && scs.isDirty()), buttons: !!(its && its.isDirty()) || parts.pages };
+    SURFACES.forEach(function (sf) { if (sess && sess.mode(sf) !== 'stored') dots[USER_PANE_OF[sf]] = true; });
     if (scope === 'firm') {
       // a firm tab's dot: one of its surfaces differs from what is stored
       dots = {};
@@ -2676,9 +2695,7 @@
       case 'reset':
         ask(scope === 'firm'
           ? 'Reset ' + NAME[sf] + ' to the app\u2019s standard layout? The firm\u2019s arrangement of it is replaced when you Save.'
-          : sf === 'home'
-            ? 'Reset Home to the standard layout? Your Home arrangement is replaced when you Save.'
-            : 'Reset the sidebar to the standard layout? Your sidebar arrangement is replaced when you Save.',
+          : USER_RESET_ASK[sf],
         'Reset', scope === 'firm' ? 'Keep it' : 'Keep mine').then(function (yes) {
           if (!yes || !sess) return;
           sess.reset(sf);
@@ -3105,12 +3122,12 @@
   // the panel stays open with every edit, what DID save becomes the new
   // stored state (its tab is clean), and the banner says which part failed.
   var PART_NAME = { items: 'buttons', layout: 'launcher layout', shortcuts: 'keyboard shortcuts' };
-  var PANE_OF = { items: 'buttons', layout: 'layout', shortcuts: 'shortcuts' };
+  var PANE_OF = { items: 'buttons', layout: 'home', shortcuts: 'shortcuts' };   // layout: Home, or the tab its first error is under (save)
   function save() {
     if (!isOpen() || saving) return Promise.resolve(false);
     clearErrors();
     if (Object.keys(labelErr).length) {
-      showPane('layout');
+      showPane('sidebar');
       banner('Fix the highlighted section label first.');
       var bad = root.querySelector('.yle-label-in[aria-invalid="true"]');
       if (bad) bad.focus();
@@ -3189,7 +3206,16 @@
         }
       });
       said.push('Your changes are still here.');
-      if (failed.map(function (k) { return PANE_OF[k]; }).indexOf(paneShown()) < 0) showPane(PANE_OF[failed[0]]);
+      // a failed layout is on Home or Sidebar: the tab its first message landed
+      // under, else the first one with unsaved changes
+      var failedPanes = failed.map(function (k) { return PANE_OF[k]; });
+      if (failed.indexOf('layout') >= 0) {
+        var errAt = root.querySelector('.yle-sec:not([data-sf="shortcuts"]):not([data-sf="buttons"]) > .yle-errs:not([hidden])');
+        var dirtySf = SURFACES.filter(function (sf) { return sess.mode(sf) !== 'stored'; })[0];
+        failedPanes[failed.indexOf('layout')] = errAt ? errAt.closest('.yle-pane').getAttribute('data-pane')
+          : dirtySf ? USER_PANE_OF[dirtySf] : PANE_OF.layout;
+      }
+      if (failedPanes.indexOf(paneShown()) < 0) showPane(failedPanes[0]);
       banner(said.join(' '), true);
       return false;
     });

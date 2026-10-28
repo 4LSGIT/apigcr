@@ -369,7 +369,7 @@ describe('the editor\'s My buttons tab (for real)', () => {
     t.panel().querySelector('.yle-tab[data-pane="buttons"]').click();
     await t.flush();
     expect(t.server.gets).toEqual(['/api/ui-config', '/api/ui-config/pickers']);
-    t.panel().querySelector('.yle-tab[data-pane="layout"]').click();
+    t.panel().querySelector('.yle-tab[data-pane="home"]').click();
     t.panel().querySelector('.yle-tab[data-pane="buttons"]').click();
     await t.flush();
     expect(t.server.gets).toHaveLength(2);                                   // once per opening
@@ -604,8 +604,9 @@ describe('the editor\'s My buttons tab (for real)', () => {
     expect(t.panel().querySelector('.yle-banner').textContent)
       .toBe('Your buttons were saved. Your launcher layout did not save: Service Unavailable. Your changes are still here.');
     expect(t.panel().querySelector('.yle-tab[data-pane="buttons"] .yle-tab-dot').hidden).toBe(true);
-    expect(t.panel().querySelector('.yle-tab[data-pane="layout"] .yle-tab-dot').hidden).toBe(false);
-    expect(t.panel().querySelector('#ylePane_layout').hidden).toBe(false);
+    expect(t.panel().querySelector('.yle-tab[data-pane="sidebar"] .yle-tab-dot').hidden).toBe(false);
+    expect(t.panel().querySelector('.yle-tab[data-pane="home"] .yle-tab-dot').hidden).toBe(true);
+    expect(t.panel().querySelector('#ylePane_sidebar').hidden).toBe(false);   // the tab the failed edit is on
     expect(t.mbRows()[0]).toMatchObject({ id: 'user:leads', tags: ['On sidebar'] });   // saved: no "New"
     expect(t.layoutRows('sidebar').slice(-1)).toEqual(['Leads']);
     expect(t.w.ycLauncher.effectiveRegistry().some((e) => e.id === 'user:leads')).toBe(true);   // the shell took the buttons

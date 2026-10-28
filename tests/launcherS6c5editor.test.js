@@ -24,7 +24,7 @@
  *      word "drawer" is nowhere the user reads ("List"); deleting the page
  *      drops its entry (the prompt says so, the box closes); deleting a
  *      button on a page takes it off the page (the prompt names the page);
- *      the dots: a page's tiles light My buttons, not Home & sidebar.
+ *      the dots: a page's tiles light My buttons, not Home or Sidebar.
  *   3. THE FIRM MODE: the fourth tab, Firm pages — a note when the firm has
  *      none; one block per firm page with its two sections; open({ section:
  *      'pages', page }) lands on that block; an arrangement is ONE PUT whose
@@ -409,7 +409,7 @@ describe('2. the user panel, for real', () => {
     t.click(t.mb().querySelector('[data-act="mb-open"]'));
     t.setVal('type', 'page'); t.setVal('label', 'My desk'); t.setVal('icon', 'desktop');
     t.click(t.mb().querySelector('[data-act="mb-commit"]'));
-    expect([t.dot('layout'), t.dot('buttons')]).toEqual([false, true]);
+    expect([t.dot('home') || t.dot('sidebar'), t.dot('buttons')]).toEqual([false, true]);
     t.click(t.mbRow('My desk').querySelector('[data-act="mb-arrange"]'));
     const box = t.mb().querySelector('.ymb-arrange');
     expect(box.hidden).toBe(false);
@@ -433,7 +433,7 @@ describe('2. the user panel, for real', () => {
     expect(t.names(IS)).toEqual(['Casey']);
     expect(t.names(TS)).toEqual(t.names(TS));
     expect([...t.sec(TS).querySelectorAll('.yle-rows .yle-tag')].map((x) => x.textContent)).toEqual(['Added', 'Added', 'Added', 'Added']);
-    expect([t.dot('layout'), t.dot('buttons')]).toEqual([false, true]);
+    expect([t.dot('home') || t.dot('sidebar'), t.dot('buttons')]).toEqual([false, true]);
     expect([...t.mbRow('My box').querySelectorAll('.ymb-where .yle-tag')].map((x) => x.textContent)).toEqual(['On “My desk”']);
     // the page button's id is frozen now that the layout names it
     t.click(t.mbRow('My desk').querySelector('[data-act="mb-edit"]'));
@@ -498,10 +498,10 @@ describe('2. the user panel, for real', () => {
     const items = { items: [{ id: 'user:desk', label: 'My desk', icon: 'desktop', action: { type: 'page' } }] };
     t = await boot({ store: await seedUser(makeStore(), items) });
     await open(t, { section: 'buttons' });
-    expect([t.dot('layout'), t.dot('buttons')]).toEqual([false, false]);
+    expect([t.dot('home') || t.dot('sidebar'), t.dot('buttons')]).toEqual([false, false]);
     t.click(t.mbRow('My desk').querySelector('[data-act="mb-arrange"]'));
     t.pick(P('user:desk', 'tiles'), 'cases');
-    expect([t.dot('layout'), t.dot('buttons')]).toEqual([false, true]);   // a stored page's tiles alone light My buttons, not Home & sidebar
+    expect([t.dot('home') || t.dot('sidebar'), t.dot('buttons')]).toEqual([false, true]);   // a stored page's tiles alone light My buttons, not Home or Sidebar
     const real = t.w.apiSend;
     t.w.apiSend = (url, method, body) => (method === 'PUT' && body.config_key === 'layout'
       ? Promise.reject(Object.assign(new Error('refused'), { status: 400, body: { status: 'error', errors: ['pages.user:desk.tiles[0]: made up', 'pages.user:other.icons[1]: elsewhere'] } }))

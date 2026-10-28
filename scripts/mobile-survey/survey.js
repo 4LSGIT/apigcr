@@ -149,6 +149,25 @@ function measureBox(sel) {
   return { sel, scrollW: box.scrollWidth, clientW: box.clientWidth, offenders: offenders.slice(0, 6) };
 }
 
+// Every element matching sel must hold its own content: one whose content is
+// wider than its box spills over its neighbour while the page still fits, which
+// no scroll check sees (the launcher editor's tabs drew over each other at 320px
+// until launcher-nits L1). Shaped as a box result (the worst one's widths), so
+// the box rule in problems() reports it.
+function measureCrammed(sel) {
+  const els = [...document.querySelectorAll(sel)].filter((el) => getComputedStyle(el).display !== 'none');
+  if (!els.length) return { sel, missing: true };
+  let worst = { scrollW: 0, clientW: 0 };
+  const offenders = [];
+  for (const el of els) {
+    if (el.scrollWidth > el.clientWidth + 1) {
+      offenders.push(`"${el.textContent.trim().slice(0, 30)}" (${el.scrollWidth}/${el.clientWidth}px)`);
+      if (el.scrollWidth - el.clientWidth > worst.scrollW - worst.clientW) worst = { scrollW: el.scrollWidth, clientW: el.clientWidth };
+    }
+  }
+  return { sel: sel + ' (each holds its content)', ...worst, offenders };
+}
+
 // Three ways a dialog overflows: the card itself is off-screen; something
 // pokes out of the card (swal2 lets overflow show); or the content box scrolls
 // sideways — .swal2-html-container is overflow:auto, so a too-wide field is
@@ -411,12 +430,15 @@ async function walk(page, W, record) {
     // full-screen panel over the shell (public/js/ycLayoutEditor.js), over the
     // fixture user layout (fixtures/firm-data.json: a 40-character section
     // label, the unbroken firm label pinned to Home, a locked item); then its
-    // shortcut picker open on Home, then the sidebar's new-label box. Its body
+    // shortcut picker open on Home, then the Sidebar tab and its new-label box. Its body
     // scrolls vertically and clips sideways, so a too-wide row would hide from
     // measureDoc: m.boxes checks the body itself. Opening it edits nothing,
     // so it closes without a prompt.
     if (tabs.includes('tabAll')) {
-      const editorBox = async (m) => { m.boxes = [await page.evaluate(measureBox, '#ycLayoutEditor .yle-body')]; return m; };
+      const editorBox = async (m) => {
+        m.boxes = [await page.evaluate(measureBox, '#ycLayoutEditor .yle-body'), await page.evaluate(measureCrammed, '#ycLayoutEditor .yle-tab')];
+        return m;
+      };
       await page.evaluate(() => openMainTab('tabAll')); await sleep(800);
       // the Ctrl-K palette, whose rows carry the user's keyboard shortcuts
       // (ui-custom S4c): its list scrolls and clips sideways, so m.boxes
@@ -436,6 +458,9 @@ async function walk(page, W, record) {
           document.querySelector('#ycLayoutEditor .yle-sec[data-sf="home"] .yle-picker').scrollIntoView();
         }); await sleep(400);
         await record('tab:tabAll:layout-editor:picker', await editorBox(await measure(page, null)), await shot('all_layout_editor_picker'));
+        // the Sidebar tab (launcher-nits L1: Home and Sidebar are two tabs)
+        await page.evaluate(() => document.querySelector('#ycLayoutEditor .yle-tab[data-pane="sidebar"]').click()); await sleep(300);
+        await record('tab:tabAll:layout-editor:sidebar', await editorBox(await measure(page, null)), await shot('all_layout_editor_sidebar'));
         await page.evaluate(() => {
           document.querySelector('#ycLayoutEditor .yle-sec[data-sf="sidebar"] [data-act="label-open"]').click();
           document.querySelector('#ycLayoutEditor .yle-sec[data-sf="sidebar"] .yle-label-add').scrollIntoView();
@@ -607,7 +632,7 @@ async function walk(page, W, record) {
       }
       // …its "Arrange pages and defaults…" (ui-custom S6c-3): the layout editor in firm mode, drawn in
       // the top document over the fixture firm layout (More with Clio in row 5 and the long firm labels,
-      // the Admin page minus Scratch) — each of its three tabs, then More's picker open. Its body scrolls
+      // the Admin page minus Scratch) — Home, Sidebar, More Features and Admin, then More's picker open. Its body scrolls
       // and clips sideways, so m.boxes checks it. Nothing is edited, so it closes without a prompt. Then
       // the Firm tab's History on "Pages and defaults" with a version's View open.
       if (id === 'caseConfigDiv' && fr) {
@@ -620,10 +645,11 @@ async function walk(page, W, record) {
           return window.top.ycLayoutEditor.isOpen() && window.top.ycLayoutEditor.scope() === 'firm';
         });
         const firmBox = async (m) => {
-          m.boxes = [ok ? await page.evaluate(measureBox, '#ycLayoutEditor .yle-body') : { sel: '#ycLayoutEditor (firm mode did not open)', missing: true }];
+          m.boxes = ok ? [await page.evaluate(measureBox, '#ycLayoutEditor .yle-body'), await page.evaluate(measureCrammed, '#ycLayoutEditor .yle-tab')]
+            : [{ sel: '#ycLayoutEditor (firm mode did not open)', missing: true }];
           return m;
         };
-        for (const pane of ['home', 'more', 'admin']) {
+        for (const pane of ['home', 'sidebar', 'more', 'admin']) {
           if (ok) { await page.evaluate((p) => document.querySelector(`#ycLayoutEditor .yle-tab[data-pane="${p}"]`).click(), pane); await sleep(300); }
           await record('panel:caseConfigDiv:firm-editor:' + pane, await firmBox(await measure(page, null)), await shot('panel_caseconfig_firm_editor_' + pane));
           if (!ok) break;

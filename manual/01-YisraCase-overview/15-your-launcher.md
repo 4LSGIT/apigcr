@@ -34,15 +34,17 @@ catch up to it as the editor opens). If it can't load your layout, it says
 *Couldn't load your current layout; try again* beside the button and doesn't
 open.
 
-The editor has three tabs at the top: **Home & sidebar**, described here,
-**Keyboard shortcuts** (see [Keyboard shortcuts](#keyboard-shortcuts) below)
-and **My buttons** (see [My buttons](#my-buttons) below). A dot on a tab means
-it has unsaved changes.
+The editor has four tabs at the top: **Home** and **Sidebar**, described
+here, **Keyboard shortcuts** (see [Keyboard shortcuts](#keyboard-shortcuts)
+below) and **My buttons** (see [My buttons](#my-buttons) below). A dot on a
+tab means it has unsaved changes.
 
-**Home & sidebar** has two sections, **Home** and **Sidebar**. Each one lists that surface
-exactly as you see it now, top to bottom: features with their icon and name,
-**Row break** rows on Home, and section headings (like *Records*) on the
-sidebar. Each row has buttons on the right:
+**Home** has two sections: **Home**, the tiles, and **Home's small
+buttons**, the row of small round buttons under them (up to 12). **Sidebar**
+has one. Each section lists that surface exactly as you see it now, top to
+bottom: features with their icon and name, **Row break** rows on Home, and
+section headings (like *Records*) on the sidebar. Each row has buttons on the
+right:
 
 | Button | What it does |
 |---|---|
@@ -68,6 +70,11 @@ type. A heading is plain text, 1 to 40 characters.
   one. A shortcut does exactly what the feature does anywhere else. A More
   panel pinned to Home, for example, opens More Features with that panel
   showing.
+- **Add a small button** (Home's small buttons) puts any feature in the row
+  of small round buttons under your Home tiles, the way Casey's paw sits under
+  More Features. A small button shows only its icon; hold the pointer over it
+  for its name. **All** is always in this row: you can move it, but not hide
+  it, so there is always a way back to every feature.
 - **Add a row break** (Home) starts a new row of tiles. Without a break, a row
   holds as many tiles as fit across the screen: the standard Home layout
   has a break after every three tiles.
@@ -94,7 +101,7 @@ you've rearranged that surface. You can then move it or hide it like any other.
 
 ## Saving and cancelling
 
-- **Nothing changes until you press Save.** One Save covers all three tabs.
+- **Nothing changes until you press Save.** One Save covers all four tabs.
   It updates your Home, your sidebar, your keyboard shortcuts and your buttons
   straight away, with no reload, and closes the editor. The status
   line at the bottom says *Unsaved changes* or *No changes*; Save is greyed
@@ -118,10 +125,11 @@ you've rearranged that surface. You can then move it or hide it like any other.
 
 ## Reset
 
-**Reset Home to default** and **Reset sidebar to default** each put **one**
-surface back to the standard layout: your firm's arrangement of it, or the
-app's if your firm hasn't arranged it. They ask first, and take effect when you
-Save. The other surface keeps your arrangement.
+**Reset Home to default**, **Reset small buttons to default** and **Reset
+sidebar to default** each put **one** section back to the standard layout:
+your firm's arrangement of it, or the app's if your firm hasn't arranged it.
+They ask first, and take effect when you Save. The other sections keep your
+arrangement.
 
 ## Keyboard shortcuts
 
@@ -266,7 +274,7 @@ The same picker chooses the icon of your firm's items
 
 A button you make is in **All** and the **Ctrl+K** search straight away, under
 **Mine**. To have it on your Home or sidebar, press **Add to Home** or **Add to
-sidebar** under it in the list (or use **Add a shortcut** on the Home & sidebar
+sidebar** under it in the list (or use **Add a shortcut** on the Home or Sidebar
 tab); then arrange it there like anything else. On the **Keyboard shortcuts**
 tab you can give it a key combination of its own. All of this works before
 you save: the button, its place and its shortcut are saved together.

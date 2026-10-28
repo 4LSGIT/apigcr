@@ -523,16 +523,16 @@ describe('the editor\'s Keyboard shortcuts tab (for real)', () => {
   let t;
   afterEach(() => t && t.close());
 
-  test('a tab beside Home & sidebar; says shortcuts need a keyboard; capture → binding → Save writes the full document; the dispatcher follows, no reload', async () => {
+  test('a tab beside Home and Sidebar; says shortcuts need a keyboard; capture → binding → Save writes the full document; the dispatcher follows, no reload', async () => {
     const stored = { bindings: [B(['ctrl', 'meta'], 'e', 'calendar')] };
     t = boot({ platform: 'MacIntel', shortcuts: stored });
     const marker = t.w.__noReload = {};
     expect(await t.openEditor('layout')).toBe(true);
     const tabs = [...t.panel().querySelectorAll('.yle-tab')];
-    expect(tabs.map((b) => b.textContent.replace('•', '').trim())).toEqual(['Home & sidebar', 'Keyboard shortcuts', 'My buttons']);   // My buttons: S5a
+    expect(tabs.map((b) => b.textContent.replace('•', '').trim())).toEqual(['Home', 'Sidebar', 'Keyboard shortcuts', 'My buttons']);   // My buttons: S5a; Home / Sidebar split: launcher-nits L1
     expect(t.panel().querySelector('#ylePane_shortcuts').hidden).toBe(true);
-    tabs[1].click();
-    expect([t.panel().querySelector('#ylePane_shortcuts').hidden, t.panel().querySelector('#ylePane_layout').hidden]).toEqual([false, true]);
+    tabs[2].click();
+    expect([t.panel().querySelector('#ylePane_shortcuts').hidden, t.panel().querySelector('#ylePane_home').hidden, t.panel().querySelector('#ylePane_sidebar').hidden]).toEqual([false, true, true]);
     expect(t.scSec().querySelector('.ysc-intro').textContent).toMatch(/Shortcuts need a keyboard/);
     expect(t.scRows()).toEqual([['⌃⌘E', 'Calendar', false]]);
 
@@ -548,7 +548,7 @@ describe('the editor\'s Keyboard shortcuts tab (for real)', () => {
     t.addBtn().click();
     expect(t.scRows()).toEqual([['⌃⌘E', 'Calendar', false], ['⌃⌘T', 'Tasks', false]]);
     expect(t.panel().querySelector('.yle-tab[data-pane="shortcuts"] .yle-tab-dot').hidden).toBe(false);
-    expect(t.panel().querySelector('.yle-tab[data-pane="layout"] .yle-tab-dot').hidden).toBe(true);
+    expect(t.panel().querySelector('.yle-tab[data-pane="home"] .yle-tab-dot').hidden).toBe(true);
 
     t.panel().querySelector('.yle-save').click();
     await t.flush();
@@ -658,7 +658,7 @@ describe('the editor\'s Keyboard shortcuts tab (for real)', () => {
     expect(t.scRows()).toEqual([['⌃⌘T', 'Tasks', false]]);                     // shortcut edit kept
     expect(t.w.firmData.ui.user.layout).toEqual(t.server.user.layout);         // the layout reached the shell
     expect(t.w.firmData.ui.user.layout.placed.home[0]).toEqual({ item: 'contacts' });
-    expect(t.panel().querySelector('.yle-tab[data-pane="layout"] .yle-tab-dot').hidden).toBe(true);   // now stored: clean
+    expect(t.panel().querySelector('.yle-tab[data-pane="home"] .yle-tab-dot').hidden).toBe(true);   // now stored: clean
     expect(t.panel().querySelector('.yle-tab[data-pane="shortcuts"] .yle-tab-dot').hidden).toBe(false);
     expect(t.w.ycLayoutEditor.isDirty()).toBe(true);
     // the next Save sends only what is still unsaved
@@ -684,10 +684,10 @@ describe('the editor\'s Keyboard shortcuts tab (for real)', () => {
     await t.flush(); await t.flush();
     expect(t.panel().querySelector('.yle-banner').textContent)
       .toBe('Your launcher layout did not save: UI config request failed. Your keyboard shortcuts were saved. Your changes are still here.');
-    expect(t.panel().querySelector('#ylePane_layout').hidden).toBe(false);
+    expect(t.panel().querySelector('#ylePane_home').hidden).toBe(false);   // the failed layout's edit was on Home
     expect(t.w.firmData.ui.user.shortcuts).toEqual({ bindings: [B(['ctrl', 'meta'], 't', 'tasks')] });
     expect(t.w.firmData.ui.user.layout).toBeUndefined();
-    expect(t.panel().querySelector('.yle-tab[data-pane="layout"] .yle-tab-dot').hidden).toBe(false);
+    expect(t.panel().querySelector('.yle-tab[data-pane="home"] .yle-tab-dot').hidden).toBe(false);
     t.w.ycLayoutEditor.close();                                            // the dispatcher already has the saved shortcut
     await t.flush();
     t.key(t.d.body, CMD_CTRL_T);
